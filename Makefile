@@ -44539,6 +44539,14 @@ test-tensor-gather-rows: $(BIN) runtime/test_tensor_gather_rows_allocation-$(BUI
 	./runtime/test_tensor_gather_rows_allocation-$(BUILD_OBJ_TAG)
 	python3 tests/support/check_tensor_gather_rows.py --cetta ./$(BIN) --output runtime/tensor-gather-rows-qualification
 
+runtime/test_tensor_where_allocation-$(BUILD_OBJ_TAG): tests/support/test_tensor_where_allocation.c src/tensor.h $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/support/test_tensor_where_allocation.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS) -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc
+
+.PHONY: test-tensor-where
+test-tensor-where: $(BIN) runtime/test_tensor_where_allocation-$(BUILD_OBJ_TAG)
+	./runtime/test_tensor_where_allocation-$(BUILD_OBJ_TAG)
+	python3 tests/support/check_tensor_where.py --cetta ./$(BIN) --output runtime/tensor-where-qualification
+
 .PHONY: test-tensor
 test-tensor: $(BIN) runtime/test_tensor-$(BUILD_OBJ_TAG)
 	./runtime/test_tensor-$(BUILD_OBJ_TAG)
@@ -47371,11 +47379,33 @@ test-tensor-program-parameters: $(BIN)
 test-ic-family-transfer: $(BIN)
 	python3 tests/support/check_ic_family_transfer.py --cetta ./$(BIN) --output runtime/ic-family-transfer-qualification
 
+.PHONY: test-ic-source-seeds test-ic-source-families
+test-ic-source-seeds: $(BIN)
+	python3 tests/support/check_ic_source_seeds.py --cetta ./$(BIN) --output runtime/ic-source-seeds-qualification
+
+test-ic-source-families: $(BIN)
+	python3 tests/support/test_ic_family_experiment.py
+	python3 tests/support/check_ic_family_experiment.py --cetta ./$(BIN) --output runtime/ic-source-families-qualification
+
+.PHONY: demo-ic-ilp
+demo-ic-ilp: $(BIN)
+	python3 tools/demo_ic_ilp.py --cetta ./$(BIN) --output runtime/ic-ilp-demo
+
+.PHONY: demo-ic-pln
+demo-ic-pln: $(BIN)
+	bash scripts/run_ic_pln_poc.sh ./$(BIN) runtime/ic-pln-poc
+
 test-ic-library: $(BIN)
 	python3 tests/support/check_ic_library.py --cetta ./$(BIN) --output runtime/ic-library-qualification
 
 test-ic-constructor-trees: $(BIN)
 	python3 tests/support/check_ic_constructor_trees.py --cetta ./$(BIN) --output runtime/ic-constructor-trees-qualification
+
+.PHONY: test-ic-proof-adapter
+test-ic-proof-adapter:
+	python3 tests/support/test_ic_proof_archive.py
+
+test-incremental-compression: test-ic-proof-adapter
 
 test-ic-context-library: $(BIN)
 	python3 tests/support/check_ic_context_library.py --cetta ./$(BIN) --output runtime/ic-context-library-qualification
@@ -47408,7 +47438,33 @@ test-tensor-program-literals: $(BIN)
 test-ic-clustering: $(BIN)
 	python3 tests/support/check_ic_clustering.py --cetta ./$(BIN) --output runtime/ic-clustering-qualification
 
-test-incremental-compression: test-tensor-gather-rows test-tensor-program-literals test-ic-clustering
+test-incremental-compression: test-tensor-gather-rows test-tensor-where test-tensor-program-literals test-ic-clustering
+
+.PHONY: test-ic-piecewise
+test-ic-piecewise: $(BIN)
+	python3 tests/support/check_ic_piecewise.py --cetta ./$(BIN) --output runtime/ic-piecewise-qualification
+
+test-incremental-compression: test-ic-piecewise
+
+IC_THEORY_ROOT ?= $(abspath ../../ic-theory)
+IC_ORIGINAL_TOOLCHAIN ?=
+
+.PHONY: test-ic-interpreter-correspondence test-incremental-compression-joined
+test-ic-interpreter-correspondence:
+	@test -n "$(strip $(IC_ORIGINAL_TOOLCHAIN))" || { \
+		echo 'Set IC_ORIGINAL_TOOLCHAIN to the installed toolchain matching ic-theory/lean-toolchain' >&2; exit 2; \
+	}
+	@test -f "$(METTAPEDIA_LEAN_CHECKOUT)/lakefile.lean" || { \
+		echo 'Set METTAPEDIA_LEAN_ROOT to the Mettapedia Lean project' >&2; exit 2; \
+	}
+	python3 tests/support/test_ic_interpreter_bridge.py
+	python3 tests/support/check_ic_interpreter_bridge.py \
+		--ic-theory "$(IC_THEORY_ROOT)" \
+		--mettapedia "$(abspath $(METTAPEDIA_LEAN_CHECKOUT)/../..)" \
+		--original-toolchain "$(IC_ORIGINAL_TOOLCHAIN)" \
+		--output runtime/ic-original-interpreter-qualification
+
+test-incremental-compression-joined: test-incremental-compression test-ic-interpreter-correspondence
 
 test-ic-numeric-program: $(BIN)
 	python3 tests/support/check_ic_numeric_program.py --cetta ./$(BIN) --output runtime/ic-numeric-program-qualification
@@ -47422,7 +47478,7 @@ test-ic-continuations: $(BIN)
 test-tensor-inverse: $(BIN)
 	python3 tests/support/check_tensor_inverse.py --cetta ./$(BIN) --output runtime/tensor-inverse-qualification
 
-test-incremental-compression: test-ic-reference test-ic-templates test-ic-archive test-ic-search test-work-source-epochs test-compact-dag test-source-codec test-binary-value test-scoped-templates test-ic-scoped-archive test-scoped-grammar test-tensor-sequences test-ic-numeric test-ic-packed-observations test-ic-mil-skeletons test-ic-mil-pruning test-tensor-program-compose test-ic-mil-tensor test-ic-mil-source test-tensor-program-parameters test-ic-family-transfer test-ic-library test-ic-constructor-trees test-ic-context-library test-ic-library-transfer test-ic-library-stack test-ic-library-stack-transfer test-ic-guided-grammar test-ic-context-grammar test-tensor-lexical test-tensor-program test-ic-numeric-program test-ic-numeric-arrays test-ic-continuations test-tensor-inverse
+test-incremental-compression: test-ic-reference test-ic-templates test-ic-archive test-ic-search test-work-source-epochs test-compact-dag test-source-codec test-binary-value test-scoped-templates test-ic-scoped-archive test-scoped-grammar test-tensor-sequences test-ic-numeric test-ic-packed-observations test-ic-mil-skeletons test-ic-mil-pruning test-tensor-program-compose test-ic-mil-tensor test-ic-mil-source test-tensor-program-parameters test-ic-family-transfer test-ic-source-seeds test-ic-source-families test-ic-library test-ic-constructor-trees test-ic-context-library test-ic-library-transfer test-ic-library-stack test-ic-library-stack-transfer test-ic-guided-grammar test-ic-context-grammar test-tensor-lexical test-tensor-program test-ic-numeric-program test-ic-numeric-arrays test-ic-continuations test-tensor-inverse
 
 .PHONY: test-petta-corrected-stable
 test-petta-semantics: test-petta-corrected-stable

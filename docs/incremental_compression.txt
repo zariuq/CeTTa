@@ -5,6 +5,15 @@ The implementation is an authored PeTTa library. It requires no Python or Prolog
 runtime and adds no learner-specific C primitive. Python is used by the separate
 correspondence gates as an independent reference.
 
+For a small runnable IC + ILP example, see docs/ic_ilp_demo.txt. The
+demo-ic-ilp target learns a helper from current library source, verifies the
+complete archive and reconstruction, and uses the helper in typed composition
+with positive and negative examples.
+
+The structural-cost PLN experiment is described in docs/ic_pln_poc.txt. It
+retains an explicit failing gate when two real-source improvements are not
+found; its controlled rule-head tests are separate evidence.
+
 Theory, inspirations and provenance
 ----------------------------------
 The feature/descriptive-map framework, incremental compression theory and ALICE
@@ -833,6 +842,365 @@ reachable valid candidate, and a completed region supplies the corresponding
 minimum-cost bound. These are algorithm laws over cooperative slices; native
 work-handle conformance is checked independently.
 
+FeatureGlobalSearch connects this queue to the shared effective conditional
+interpreter. Each source and checked residual keeps an enumerator of all
+descriptive/feature program pairs. Extraction trials and reconstruction trials
+retain their own bounded evaluator stages; nonreturning trials coexist with
+later pairs and deeper residual searches. One interpreter code is fixed before
+all sources and finite valid chains. Every such nonempty chain is eventually
+published by the actual scheduler, and every finite-prefix publication
+reconstructs the source through the complete mathematical scheme codec.
+
+The greedy variant keeps its local queue until the first checked publication,
+then commits and starts a local search on that residual. Its finite prefixes
+reconstruct, sliced execution composes exactly, and an available valid step
+eventually causes an actual commitment despite competing divergent trials.
+It need not choose a given chain or an ideal shortest feature. Unbounded pair
+enumeration never certifies exhaustion from a finite budget, even on an empty
+source that cannot have a strict feature.
+
+These are the project's eight-turn cost/age algorithms, not an identification
+with the IC paper's dyadic allocation. Mathlib Code.evaln bounds evaluator
+stages and intermediate naturals; it is not a Turing-machine instruction
+counter. The following separate dyadic construction uses machine transitions.
+
+Machine-backed dyadic one-step search
+------------------------------------
+Machines.PrefixPortfolio reuses the existing finite bitstring enumeration,
+Kraft inequality and Levin portfolio. Prefix-free code admission derives the
+phase budget rather than assuming it. Each admitted word keeps its own worker
+configuration. Resuming from a later phase retains those configurations and
+the phase clock; it does not restart their computations.
+
+The main convention admits code lengths at most the phase and allocates
+2^(phase - code_length) slots. The IC pseudocode's strict length comparison
+and its proof's inclusive comparison are kept explicit: strict eligibility
+at phase i+1 matches inclusive eligibility at phase i, with twice the budget.
+This relation concerns allocated slots, including reservations after a halt.
+
+Machines.PrefixMachine connects those workers to Mathlib's actual compiled
+four-stack TM2 transitions, with a finite control-support witness. Its output
+reader requires termination, a single encoded output and canonical encoding.
+A number that decodes to a value is not automatically that value's canonical
+code. The kernel controls distinguish the eighth and ninth transitions of a
+compiled successor, and refuse noncanonical or extra outputs.
+
+FeatureDyadicSearch compiles one checked autoencoder before all sources and
+program pairs. It performs extraction, reconstruction and strict shortening.
+A completed but rejected pair returns no candidate; it cannot hide a later
+worker answer. Every publication reconstructs the source, and every real
+two-way compression step is eventually published with the allocation bound
+
+  allocated_slots <= 4 * 2^L * max(tau, 1),
+
+where tau is its compiled TM2 transition count and L is the complete existing
+canonical record length for [descriptive_program, feature_program]. Exactly,
+
+  L = 7 + length(e2(descriptive_program)) + length(e2(feature_program)).
+
+All framing headers are charged. A proved counterexample shows that arbitrary
+plain programs cannot be framed with one uniform additive overhead. The bound
+does not replace L by raw component lengths plus an assumed constant.
+
+This component is a checked one-step dyadic search. Allocated transition slots
+exclude output decoding, portfolio administration, Lean execution time and native
+learner wall time. No change to the native learner's eight-turn policy is implied.
+
+Retained hierarchical dyadic search
+----------------------------------
+Machines.ResumablePrefixClock turns the inclusive-phase portfolio into a
+single-turn machine. A turn loads a phase or services one worker slot. Its
+complete-phase execution agrees with the existing batched portfolio. Both the
+phase cursor and the unfinished worker states survive a sliced run.
+
+Machines.HierarchicalPrefixSearch gives every codeword its own running,
+rejected or child-search state. A successful local worker opens a child search;
+that branch's later allocations service the child, not a restarted local trial.
+Other workers and child searches remain live, including divergent competitors.
+The construction uses the shared inclusive phase profile. It is not an equality
+with the printed strict-phase pseudocode or the native eight-turn scheduler.
+
+HierarchicalPrefixLaws proves a simultaneous invariant over all branches:
+running configurations are finite prefixes of their actual workers, and every
+child has a real worker readout and a sound retained child search. The Boolean
+path observer agrees with the independently stated retained-path relation.
+Resumption preserves the whole tree, not merely the selected successful path.
+
+FeatureHierarchicalSearch instantiates this machinery with the compiled checked
+four-stack autoencoder. One compiled checker is fixed before all sources and
+finite strict compression chains. Depth equal to the original source length
+loses no such chain, since each successful step strictly shortens the residual.
+Every observed path reconstructs the original through the shared scheme codec.
+For codeword a_i, let L_i be its complete canonical pair-record length and tau_i
+its actual checked-worker TM2 transition count. The live hierarchy reaches the
+chain within B turns, where
+
+  B([]) = 0
+  B((a_i, tau_i) :: rest) = 8 * 2^L_i * (tau_i + 1 + B(rest)).
+
+This equals the fully charged cumulative-weight sum
+
+  sum_i 2^(L_1 + ... + L_i + 3*i) * (tau_i + 1),
+
+with one-based i. Prefix freeness derives the allocation bound; no assumption
+that competing workers terminate is needed. HierarchicalPrefixCost independently
+counts successful local transitions and administrative selectors on the branch
+actually serviced by each root turn. At most one worker transition and at most
+source_length selectors occur per root turn. Debit totals compose across resume.
+
+The focused controls run a two-level search with a shorter endless competitor
+and two successful siblings at both levels. They distinguish insufficient fuel,
+wrong answers, depth limits and unadmitted words; they also execute a real
+compiled four-stack worker and a two-step compression chain.
+
+The audit checks the safe logical declarations and their theorem dependencies.
+Lean-generated recursive compiler implementations are recorded separately,
+matched to safe definitions with the same types, universe parameters and module
+owners, and never used as kernel proof evidence. Direct references to nonlogical
+helpers in the checked types or bodies are refused.
+The control proofs are kernel checked without native decision procedures.
+
+This is a recursive allocation result, not the full interpreter-time theorem.
+Phase-list construction, worker initialization, output decoding and description
+materialization have variable costs outside the selector count. A linear join
+from the compiled checked-worker count to the underlying interpreter's separate
+extraction/reconstruction costs, strict-profile realization and quantitative
+greedy commitments remain qualification obligations. No native speedup follows.
+
+Original machine-time components
+-------------------------------
+Computability.StackMachinePortTime derives fixed push/pop constants from the
+actual finite command table. A macrostep can contain several primitive stack
+operations. For a completed clean run with distinct input/output ports,
+
+  input_cells <= machine_pop_bound * original_transitions
+  output_cells <= machine_push_bound * original_transitions.
+
+The port condition is necessary: the actual in-place identity returns an
+arbitrarily long input word in one transition. It therefore refutes every
+uniform output-length/time factor if that condition is omitted.
+
+StackMachineOutputRelay executes the original machine, the existing two-pass
+physical handoff and a symbol-by-symbol copy into a separate output arena.
+An original run taking t transitions and returning n cells has a relay run
+within t + 6*n + 4 transitions. If the source already has distinct ports, the
+output term is paid by its computed push bound. Otherwise the general bound
+retains an explicit 6*input_cells term; in-place output does not become free
+physical copying.
+
+StackMachineCompositionReflection extracts the first original halting prefix
+from the actual completed composite trace. With a clean-halting source, relay
+outputs reflect to original outputs, and the relay itself has clean halts.
+Here clean means the canonical output configuration, with other stacks empty
+and registers reset, not merely a halted label. A dirty-halt control shows why
+this is a real semantic premise.
+
+Machines.FiniteStackWorker connects counted finite-machine executions to the
+retained searcher in the same transition budget. Readouts reflect to counted
+executions for clean-halting machines. Input construction and interpretation
+of a returned physical word remain separate operations.
+
+HierarchicalSourceTime joins two original source runs through the actual
+physical composition. With distinct first-program ports the local bound is
+
+  (1 + 2*first_machine_push_bound)*first_time + second_time + 2.
+
+Actual typed source-call paths are converted to retained-worker paths, then
+reached by the existing live hierarchy with its cumulative codeword-weight
+bound. This is not a fast-compiler assumption. The concrete controls execute
+copying and bit-negation programs, preserve order and duplicate positions,
+distinguish the last transition from insufficient fuel, and replay two-call
+source witnesses with their computed timing constants.
+
+StackMachineContextCall retains the original argument on physical stacks while
+the source program runs with its original transition count. Two argument passes
+prepare the call. Output collection, reversal, a disjoint delimiter and argument
+restoration produce an ordered tagged argument/result packet. The actual bound is
+
+  source_time + 3*input_cells + 2*output_cells + 5.
+
+For separated source ports the computed pop/push constants absorb both lengths
+into a uniform linear source-time bound. In-place sources retain an explicit
+input-copy term. Completed caller traces contain an actual original halting
+prefix: the caller cannot turn source divergence into completion. Clean source
+halts give canonical caller outputs and same-budget original-run reflection.
+Controls cover changed and empty results, empty arguments, duplicate positions,
+insufficient budgets, divergence and unhidden source garbage. This tagged physical
+interface is not a second binary archive format or an IC acceptance checker.
+
+FiniteSupportMachine restricts a proved closed finite label support to its actual
+members. Original registers and physical stacks are unchanged. Embedding and
+erasure preserve counted executions in both directions, with the same budget.
+An out-of-support total-selector fallback supplies no source-correspondence law;
+the closure proof is required and an omitted-target control refutes its absence.
+
+FiniteCompiledMachine instantiates this restriction with the existing compiler's
+codeSupp theorem. Its finite table is fixed before all inputs, not reconstructed
+for each source argument. The resulting four-stack program has the original
+machine-transition count. Its context-preserving caller returns the original
+encoded input and result with the explicit word-copy bound above. Canonical
+halts are proved at admitted trList inputs. The context and retained-worker
+interfaces support that per-input contract without postulating clean behavior
+on arbitrary malformed stack words. Controls compare the original nine-step
+successor, its nine-step finite package and its 21-step context call, and recover
+an actual original run from the observed caller packet. Input encoding and
+output interpretation remain separate operations, not hidden constant-time work.
+
+ConditionalSourceMachine presents one fixed source code before all program and
+condition strings. It uses two separate fields of the existing trList physical
+representation, rather than an uncharged outer natural-pair operation. Every
+effective conditional algorithm with an exact natural-word codec has such a
+presentation, including the existing plain universal conditional interpreter.
+Source soundness and eventual completion are proved from the actual compiler;
+context packets reflect both the original query and a genuine conditional
+output with a counted source run. No compiler-speed or outer-encoding bound is
+inferred from effective representability. The query reader rejects missing,
+extra, unterminated and noncanonical fields. Actual-machine controls distinguish
+program/condition order and change the input data while keeping the code fixed.
+This input framing does not make the conditional program domain prefix-free.
+
+NaturalWordEncoding consolidates the exact dense word/natural codec used by the
+independent theory. Both round trips and primitive recursiveness are proved on
+the shared foundations. The original-interpreter client proves encoder and
+decoder correspondence, and this fifth shared interface is compiled by both
+toolchains. The independent source remains unchanged.
+
+NaturalWordMachine performs the physical conversion. One finite borrow and one
+optional bit suffice; no growing natural or whole word enters the registers.
+A scan and restoration produce the canonical compiler natural field, including
+its delimiter, within 2*word_bits+3 original transitions. The field has between
+word_bits+1 and word_bits+2 cells; a two-field query has between total_bits+2
+and total_bits+4 cells. An already present suffix is retained without traversal;
+placing or copying that suffix is still a caller action. A query run prepends
+the encoded program to an already encoded condition. Controls include leading
+zeros, an empty word, insufficient fuel, a 64-bit carry/borrow case and an
+uninterpreted contextual suffix. These are formal machine counts, not native
+CeTTa timing or allocation measurements.
+
+FramedHeadCall executes an unchanged source on the first delimited field and
+replaces only that field. The rest of the frame is physically copied in order,
+including empty fields, delimiters and duplicate occurrences. The bound is
+t+2*head_cells+2*output_cells+2*tail_cells+6. Completed calls reflect to an actual
+counted source execution at the admitted input. A divergent source cannot
+produce a completed caller; a missing first delimiter does not become an empty
+argument. FramedFieldAssembly uses fixed groups of field indices to concatenate,
+reorder or duplicate fields through the existing indexed template machine.
+
+ICSourceCalls composes those mechanisms into two dependent calls. Starting from
+[descriptive,feature,original], it forms the first query, keeps the original
+metadata, then constructs the second query from the first returned residual.
+The result frame is [rebuilt,feature,residual,original]. Both calls use the same
+unchanged source. Its bound is t1+t2+128*(input_frame_cells+residual_cells+
+rebuilt_cells+1), charging assembly, call setup, copying and physical handoff.
+ICConditionalCalls joins the pipeline to the fixed conditional-interpreter
+presentation: source code is selected before all task words. For the exact
+dense codec, the additional bound is 128*(the five word lengths+14). Input
+encoding preparation remains outside this clock. Actual compiled controls
+increment the second argument: the first call returns 4 from 3, then the second
+returns 5 from that residual. Substituting the original 3 is rejected as a wrong
+result. This is a call-dataflow control, not successful compression.
+
+WordDropLastMachine uses one pending symbol and a physical reversal to remove
+a final symbol. NaturalWordDecodingMachine composes the existing digit reader
+and binary incrementer with that buffer. On a canonical dense natural field,
+the increment exposes the original word followed by its high sentinel; removing
+it recovers every original bit. The bound is 24*(word_bits+1), including both
+handoffs. Mapping a complete ordered frame costs at most 32*input_frame_cells+2.
+Stored natural-field length is not original word length: the equally sized
+fields for natural 2 and natural 3 decode to one and two original bits.
+Arbitrary malformed natural-field admission is outside this image-domain law.
+
+FramedCompressionCheck reads four original-word fields. It compares rebuilt
+and original bits in order, while one marker for each feature or residual bit
+is debited by original bits. Extra original bits are required for strict
+shortening; leftover credit or unequal reconstruction refuses. Its output is
+some(verdict) followed by the complete residual/feature frame. It counts all
+reads, reversals, cleanup and publication within 4*(input_frame_cells+1).
+Empty candidate fields, equal cost, wrong reconstruction, missing delimiters
+and extra fields have distinct positive or refusal controls.
+
+ICPhysicalCheck joins the dependent calls, dense decoding and this check.
+For already encoded tasks its bound is t1+t2+256*(the five word lengths+9).
+One fixed plain universal source precedes all task words. Terminal traces
+reflect to both genuine source computations without assuming termination.
+Every completed worker readout decodes to the mathematical executePair outcome,
+including a completed refusal; either divergent source invocation prevents
+publication. A compiled local source fixture supplies an accepted step and
+a wrong reconstruction, both through the complete physical body. These are
+mathematical IC word-cost controls, not complete native library-archive savings.
+
+ICPreparedCheck starts with the original descriptive, feature and source words.
+The existing framed mapper physically encodes every occurrence within
+11*input_frame_cells+2 transitions. Its handoff and the checked body give the
+joined bound t1+t2+288*(the five word lengths+9), with sound readout and clean
+halts at the admitted original-word task. Serialized candidate-pair parsing
+is a preceding stage, not an operation hidden in this preparation clock.
+
+ICSourceClock declares the underlying source clock explicitly. A real
+output-separated relay runs the original source, then transfers and copies
+its result; original time t yields the bound t+6*output_cells+4. Completed
+relay runs reflect original source runs at admitted queries without totality
+assumptions. Its distinct physical ports supply actual input/output bounds.
+One factor kappa, derived from that fixed relay's finite push/pop table before
+all task words, bounds prepared checking by kappa*(normalized_Tg+normalized_Tf+1).
+This does not identify normalized time with the old in-place interpreter clock.
+
+PreparedICSearch retains that admitted prepared-worker interface. Its entryWorker
+instead receives the actual raw candidate/source job and physically parses the
+candidate before preparing and checking it. Every finite emitted candidate
+reconstructs and strictly compresses, without assuming prior candidate admission.
+Each valid step is published within
+4*2^L*kappa_entry*(normalized_Tg+normalized_Tf+1) allocated worker slots, where L
+is the complete existing pair-code length and kappa_entry=4*kappa. A single
+normalized universal source precedes every task. Eligibility enumeration, initial
+materialization, observer decoding and variable-cost scheduler administration
+remain outside this slot clock. This is not the full hierarchical ALICE or
+quantitative Greedy theorem.
+
+BinaryCountdownMachine supplies the in-place counter needed by a physical E2
+reader. It retains the counter width, reports success or zero explicitly, and
+charges borrow scanning and restoration. A zero-bit potential proves amortized
+debit-plus-one-payload-step costs; additional caller flag/dispatch operations
+remain separate. Every reachable counter configuration uses at most input
+width+1 physical stack cells, including publication. A 65-bit fixture crosses
+64 zero bits and stays within 66 cells at every budget. E2 binaryBits headers
+are big-endian; pushing them reverses them into the little-endian counter.
+An unreversed-header control catches the wrong numerical count.
+
+E2PairMachine physically reads the unchanged seven-bit count header followed by
+the two E2 fields in pairCode(g,f). Its two-field input frame [pairCode(g,f),x]
+becomes the three-field output frame [g,f,x], preserving empty fields, bit order
+and duplicate occurrences. It validates the leading bit of nonempty binary
+length headers and uses the countdown in the same arena. Status-prefix removal
+and payload transfer share one fixed machine statement. The full valid-job bound
+is 8*(input_job_cells+1), including cleanup, reversal and publication. Conversely,
+every terminal execution implies an exact canonical job and the same output.
+Malformed, truncated, noncanonical and extended jobs enter a nonpublishing
+rejection loop; this is partial admission, not finite search exhaustion.
+
+ICEntryCheck composes that parser with ICPreparedCheck. The complete worker bound
+is t1+t2+320*(L+source_bits+residual_bits+rebuilt_bits+9). Its completed readout
+agrees with the mathematical autoencoder, including completed refusals, and
+invalid candidate codewords cannot complete at any budget. ICSourceClock derives
+the fixed kappa_entry factor from actual normalized-source I/O bounds.
+
+An independently spelled valid fixture publishes at transition 42, not 41;
+another preserves three empty fields. Missing boundaries, extra fields and a
+redundant zero-length header do not publish. A malformed 65-bit length announcing
+2^64 payload bits reaches rejection with its counter still 65 bits wide. This
+snapshot is not an all-reachable-state parser-space theorem or native-heap result.
+
+The native artifact checker and the generic compiled autoencoder already exist.
+ICConditionalCalls alone still returns an unchecked packet; ICPhysicalCheck is
+the separately checked encoded-input body, ICPreparedCheck adds original-word
+encoding, and ICEntryCheck adds physical candidate admission. Scheduler
+eligibility/enumeration, initial materialization, observer decoding and variable
+hierarchy administration still need a complete end-to-end cost join.
+Effectiveness does not give the old general-purpose compiler a linear-time law.
+Strict-profile realization and quantitative greedy timing
+also remain open. Source-time component qualification is not native speedup,
+WILLIAM-family discovery or held-out library evidence.
+
 Compression.ScopedGuidance compares interleaved capture checking with generation
 followed by the actual whole-pattern matcher. It proves equality of the complete
 ordered candidate lists, including repeated candidates and shared captures.
@@ -955,10 +1323,209 @@ on arbitrarily large sources. A cross-format control also shows why framing
 cannot be inferred from bytes: a raw packet can be a valid E2 field whose
 decoded payload is a different bit string.
 
-Remaining full-paper obligations include additional b-compression results,
-global ALICE/Greedy-ALICE interleaving, randomness-test correspondences and the
-remaining interpreter correspondences to the independent development. The
-existing eight-turn cooperative queue theorem is not a global ALICE theorem.
+Features and finite-string randomness tests
+------------------------------------------
+FeatureRandomness proves IC Theorem 5.1 over the shared effective partial
+interpreter. A fixed feature program gives each source the greatest saving
+source_length - residual_length - 1 among its genuinely reconstructing,
+strictly compressing residuals, or zero when there is no such residual.
+One interpreter code, chosen before all feature programs, supplies uniform
+primitive-recursive bounded-stage approximations. They are monotone and
+eventually attain the value at each source; this gives no computable stopping
+test for the limiting value. The counting proof uses output determinism of
+the partial interpreter, not an arbitrary many-answer relation. Native source
+observations and branch alternatives retain their own declared contracts.
+
+For every source length n and threshold m the exact density bound is
+
+  2^m * card({x : length(x) = n and deficiency(x) >= m}) <= 2^n.
+
+No subtraction is truncated in that formula. The equivalent natural-power
+interface used in the independent development needs both its bound by
+2^(n-m) and empty levels when n < m. The shared equivalence proves why that
+empty-level condition is necessary. A concrete negative control shows that
+the truncated natural-power inequality alone can accept an invalid level.
+
+RandomnessLevelSearch constructs an effective, append-only enumeration of
+each level. Approximation times, source indices and evaluator stages are
+dovetailed. Each newly discovered string gets one persistent index; later
+discoveries never move an old address. The decoder searches for a fixed-width
+index word of length n-m without deciding that the level is exhausted.
+The same stable address book supplies one partial-recursive encoder for the
+whole level. Every emitted residual has the declared width and decodes back
+to its source; qualifying sources eventually receive such a residual.
+
+FeatureRandomnessConverse proves IC Theorem 5.2 for compiler-universal
+effective prefix machines and instantiates it with the existing concrete
+trimmed prefix host. One feature covers every source whose deficiency exceeds
+the feature's length. Its normalized length is exactly m-1. A binary threshold
+header and one complete self-delimiting padding word pay for that normalization;
+arbitrary ignored trailing bits are not assumed legal prefix programs.
+Unboundedness gives an explicit source above the threshold, so the common
+feature's class is nonempty. One actual descriptive-map program on the same
+prefix host extracts all qualifying residuals. Both programs are selected
+before the source quantifier, not separately chosen literal encoders.
+
+FiniteBitStrings owns the effective enumeration, cardinality and fixed-width
+index laws shared with PrefixPortfolio. The scheduler's existing public law
+names remain available. Controls cover delayed earlier discoveries, repeated
+strings, required padding delimiters, all nonempty suffixes, a bounded zero
+test and a genuinely unbounded test induced by a fixed duplication program.
+The declaration audit checks every new logical declaration's axiom closure.
+
+  lake build Mettapedia.Examples.Compression.FeatureRandomnessControls
+
+These are finite-string test theorems, not an infinite-sequence measure-space
+formalization, a runtime speed claim or evidence that a learned predicate
+generalizes on real programs. Practical encoded-cost decrease supplies no
+ideal shortest-feature or randomness-test hypothesis.
+
+Uniform information for shortest b-features
+------------------------------------------
+FeatureResidualCap, FeatureBInformation, FeatureBDecomposition and FeatureBChain
+establish the b-restricted information results of IC Lemma 3.5 on the shared
+source interpreter and prefix reference machines. A minimum b-feature is not
+assumed to be a minimum unrestricted feature. The same bounded residual is
+retained when constructing a competing reconstruction program.
+
+For every real factor b >= 1, its condition on natural residual lengths is
+exactly a natural cap floor(source_length / b). The cap is explicit search
+data, not a computation comparing arbitrary real numbers. One actual split-
+description compiler handles sources whose shortest description is longer
+than their residual cap. This supplies a uniform source-conditioned feature
+bound and a polynomial bound on the number of minimum b-features.
+
+The map compiler reads an E1-framed binary cap followed by the feature's prefix
+description. It filters individual residual candidates before selecting an
+answer, retaining later answers even when earlier computations diverge. Its
+length bound includes every cap/header bit. The minimum b-map has length at
+most 8 * floor(log2(source_length + 1)) plus a fixed overhead. No noncomputable
+real factor is stored as a callable or granted a comparison oracle.
+
+The information development proves incompressibility, both conditional
+independence directions, joint independence, and source/feature/residual
+decomposition. Its chain representation retains actual minimum b-programs
+and their selected outputs. Both the incremental information discrepancy and
+pairwise absolute signed information have uniform logarithmic budgets, with
+coefficient 22. All compiler constants precede every factor and source.
+
+Existing RationalScheme values map into these chains. The existing geometric
+iteration bound then gives the squared-logarithmic information overhead for
+every fixed b > 1, including an empty final residual. This is an ideal
+information bound, not a new near-optimal native archive-length claim.
+
+  lake build Mettapedia.Examples.Compression.FeatureBControls
+
+Canonical-machine controls discharge the actual interpreter, reference and
+chain-rule premises on arbitrarily large sources. A concrete two-stage chain
+checks positional splitting and reconstruction. Negative controls distinguish
+b-minimality from unrestricted minimality, the residual-cap boundary, missing
+headers and a search with no permissible residual. Unit-factor minima agree
+with ordinary minima; the logarithmic iteration estimate still requires b > 1.
+
+Original-interpreter correspondence
+-----------------------------------
+ConditionalProgramModel owns the shared partial-program and universality
+interfaces and the plain minimum-length functional. FeaturePredicates and
+FeatureBPredicates own the corresponding feature predicates. Their existing
+public names are unchanged; the mathematical theorem files reuse these owners.
+The same interface source compiles under both participating Lean toolchains.
+
+tests/support/lean/ic_original_interpreter_bridge.lean instantiates the shared
+model with the actual original programToCode decoder and exact word codec.
+Execution, divergence and termination correspond for every original program
+string, condition and output, including malformed programs. Program lengths
+and plain conditional minimum lengths agree exactly. Ordinary feature and
+map minima agree, as do b-restricted predicates for positive natural factors.
+The natural-factor observation at zero is explicitly different from a real
+zero-factor inequality and is not included in that correspondence.
+
+The original machine's concrete compiler layout supplies the shared notion
+of constant-prefix universality. The complete compiler-prefix length includes
+the original exact-pair header and both sentinel fields. This is a semantic
+and length result, not a machine-time bound. It does not identify the minimum
+programs of two different universal interpreters.
+
+Controls retain the original empty-program zero fallback and show how the
+stored-prefix reader preserves appended residual suffixes. That reader alone
+does not establish membership in the separately defined PrefixRuns domain.
+The shared codec requires both natural/word round trips; one-sided inverses
+can lose symbols or admit unrepresented natural outputs.
+
+  make test-ic-interpreter-correspondence \
+    IC_THEORY_ROOT="$IC_THEORY_SOURCE" \
+    IC_ORIGINAL_TOOLCHAIN="$IC_ORIGINAL_TOOLCHAIN" \
+    METTAPEDIA_LEAN_ROOT="$METTAPEDIA_LEAN_PROJECT"
+
+The gate reuses each existing project cache and builds only its declared
+targets. Original-toolchain objects for the shared interfaces are separate
+qualification outputs, not copied caches. It checks that all relevant source
+bytes, pins and manifests remain unchanged during the run. Lean source paths
+are recorded without source fingerprints. Original reference linter warnings
+are recorded separately; shared sources and the bridge client must be warning-
+free. Every bridge declaration's logical dependencies are audited.
+The physical-entry completion claims additionally require the named parser
+reflection, clean-halt, invalid-candidate, reconstruction and retained-allocation
+theorems in that audit. Removing any one refuses the receipt.
+
+Original prefix-coded programs and reference comparison
+-------------------------------------------------------
+FramedProgramModel composes contextual field codes. Each decoder recovers its
+field and the untouched suffix. The complete two-field parser checks both
+the end of the frame and canonical re-encoding. These laws derive prefix
+freeness of the admitted frames without assuming that the underlying source
+interpreter itself has a prefix-free domain.
+
+The original-prefix bridge uses the actual E1 and E2 encoders of ic-theory.
+It proves primitive recursion for the original numerical length encoding and
+the contextual readers, and connects every original PrefixRuns observation
+to the shared framed partial algorithm. The program-length sets and minimum
+prefix-coded description lengths agree exactly. Incomplete frames, noncanonical
+length encodings and every nonempty extension of a complete frame are refused.
+The original plain interpreter's malformed-program behavior remains unchanged
+inside the decoded head. This is the complete PrefixRuns domain, not the
+permissive stored-prefix reader considered in isolation.
+
+FramedPrefixMachine realizes that partial algorithm as an effective conditional
+prefix-free machine. Its existing minimum-length functional agrees with the
+framed algorithm's length-set infimum. A source-universal plain interpreter
+and the declared condition pairing provide a single compiled head that applies
+any fixed effective prefix machine to all its payloads and conditions.
+
+For a genuine effective prefix reference V and the fixed framed profile F,
+one constant C, chosen before every condition c and output x, gives
+
+  K_V(x | c) <= K_F(x | c) + C
+  K_F(x | c) <= K_V(x | c) + 2 * floor(log2(K_V(x | c) + 1)) + C.
+
+The original E2 payload satisfies the required fully charged logarithmic bound.
+The lower comparison uses an actual reference-machine simulation. The upper
+comparison pays for the complete payload frame and fixed head code. These
+results do not establish constant-overhead reference universality of F or
+identify minimum programs in different universal interpreters.
+
+The two-toolchain gate above also checks this prefix bridge and the shared
+FramedPrefixControls. The latter instantiate the existing shared E1/E2 codes,
+the canonical plain interpreter and the genuine trimmed prefix reference.
+They retain source-wide representation, contextual round trips, empty-header
+costs, noncanonical refusals and the uniform two-sided comparison.
+
+  make test-incremental-compression-joined \
+    IC_THEORY_ROOT="$IC_THEORY_SOURCE" \
+    IC_ORIGINAL_TOOLCHAIN="$IC_ORIGINAL_TOOLCHAIN" \
+    METTAPEDIA_LEAN_ROOT="$METTAPEDIA_LEAN_PROJECT"
+
+This joins the current native mechanism gate with that theorem qualification.
+Passing it is not evidence of complete numerical-family discovery, held-out
+real-program utility or improved execution costs; those results retain their
+own workload-specific acceptance conditions.
+
+Remaining full-paper timing obligations are the underlying-interpreter and
+variable-cost administration join, strict-profile realization and quantitative
+Greedy-ALICE commitments. The retained hierarchy supplies the cumulative
+allocation bound, not those missing cost correspondences. The global cost/age
+algorithm is not identified with the paper's allocation policy. Practical
+encoded-cost decrease still supplies no ideal minimum or held-out hypothesis.
 
 The optional source capability audit reads the independent WILLIAM checkout and
 IC theory without executing or importing their implementations:
@@ -971,6 +1538,46 @@ The ledger records fourteen declared sequence/regression/matrix tasks and the
 two unconditionally skipped clustering-discovery tests. It marks native
 numerical discovery, held-out applications and remaining theorem bridges as
 qualification obligations. Declaration or skip counts never become pass counts.
+
+Opt-in equational proof-data experiment
+-------------------------------------
+Roger Veroff's AIM project makes Prover9 proof files available at:
+
+  https://www.cs.unm.edu/~veroff/AIM_REDONE/
+
+A related learned-advice project is AIMLEAP by Chad Brown, Bartosz Piotrowski
+and Josef Urban:
+
+  https://github.com/ai4reason/aimleap
+
+The optional adapter below reads a separately obtained local .pf file. It does
+not download, redistribute or import external implementation code. It admits
+unambiguous first-order unit equations, preserving identifier spelling, argument
+order and duplicate occurrences. Unsupported records are counted explicitly.
+The original proof file is unchanged; source formatting and inference metadata
+are not observations of the admitted equation-tree archive.
+
+  make BUILD=core ENABLE_LIB_PROLOG=0 test-ic-proof-adapter
+  python3 tests/support/check_ic_proof_archive.py --proof "$PROVER9_PROOF" \
+    --cetta "$CETTA" --output runtime/ic-proof-pilot --rows 24 --pairs 3
+
+The full admitted forest is imported as chronological compact DAG records.
+Only the declared selected equation group is offered to bounded IC1 pair
+proposals. Candidate definitions, calls, dictionaries and substitutions are
+charged by the ordinary archive codec, and accepted candidates reconstruct
+every selected root in its original order. The selection policy uses syntax,
+not which candidate happens to pass. There is no all-pairs discovery sweep.
+
+The receipt distinguishes adapter peak RSS, native-process peak RSS and
+DAG-owned retained bytes. The last quantity excludes evaluator storage and is
+not a whole-process reclamation claim. Handles are closed and stale access is
+checked. Timeout or an incomplete observation fails qualification.
+
+The archive is proof data, not proof evidence: this experiment does not check
+the derivation, prove an extracted equation universally, run ILP over the proof
+or measure hint quality. Learned hints require a separate advice task, honest
+positive/negative labels and held-out prover runs. Unseen equations are not
+negative theorem examples merely because they are absent from this proof.
 
 Finite affine fitting and packed sequences
 ------------------------------------------
@@ -1176,7 +1783,8 @@ independently of IC search. Its operator family is ordinary immutable data:
   (TP:Family "TF1" ((TP:Operator name input-sorts output-sort recipe) ...))
 
 The closed recipes are Add, Subtract, Multiply, Divide, Less, Greater, Scan,
-Concatenate, Permute, Broadcast, BroadcastLike, Matvec, Sum, Gather and GatherRows,
+Concatenate, Permute, Broadcast, BroadcastLike, Matvec, Sum, Gather, GatherRows,
+Where, WhereBool and WhereI64,
 prefixed TP:. Sorts
 are the text labels F64Tensor, BoolTensor and I64Tensor. Admission inspects
 actual packed storage, dtype and finite stored values; declared language types
@@ -2223,10 +2831,66 @@ their ordinary failure results rather than gaining an assumed totality law.
   make test-tensor-program-parameters
   lake build Mettapedia.Examples.Compression.ParameterizedDagControls
 
+Conditional tensor programs and bounded piecewise fitting
+--------------------------------------------------------
+The ordinary tensor library exposes:
+
+  (tensor:where bool-condition when-true when-false)
+
+All three shapes must agree exactly, and branch dtypes must match. Selection
+copies the chosen scalar bits, including signed zero and nonfinite payloads;
+it performs no numerical operation and no implicit broadcasting. A missing
+condition or missing selected value produces missing output. Missing support
+in an unselected branch does not erase a selected value. Present false is not
+absence. Output order and duplicate value occurrences remain coordinate-wise.
+
+For example, condition (True False), true values (7 8), and false values (3 4)
+produce (7 4). A two-cell condition with a scalar branch is refused, even when
+that branch would never be selected. These are strict tensor operands, not
+lazy code branches: effects and faults while constructing either branch are
+not eliminated. Unknown operand types retain ordinary uninterpreted syntax.
+
+The native implementation counts selected stored support before allocating
+the output, then copies it in logical order. Sparse inputs need no dense
+shape-sized scratch buffer. All supported scalar dtypes, sparse layouts,
+strided views, empty shapes and scalar tensors use the same interface.
+
+TP:Where, TP:WhereBool and TP:WhereI64 give typed three-operand recipes for
+F64Tensor, BoolTensor and I64Tensor results. The authored operator module
+projects these same contracts. Existing TP1 recipes and ordinal positions
+are unchanged; new recipes are appended to the qualification family.
+
+  make test-tensor-where
+  make test-ic-piecewise
+  lake build Mettapedia.Examples.Compression.TensorSelectionControls
+
+The piecewise gate fits declared finite parameter templates for Boolean
+decision composition, shared-intercept piecewise affine regression and a
+conditional increment followed by an ordered cumulative scan. It separately
+discovers conditional operand references from the complete declared
+one-operation grammar for all three result sorts. Production fitting,
+materialization and prediction run in CeTTa; an independent recursive Python
+implementation supplies expected candidates and complete NC2/TP1 bytes.
+Negative examples, original masks, changed input shapes, boundary predictions,
+cancellation/resumption and a correct-but-larger tree are checked. Predictions
+consume both the native fitted result and a standalone serialized model.
+
+TensorSelection proves logical-coordinate selection, checked length refusal,
+ordered packed traversal and agreement of its separate counting/writing
+passes. It also proves that array compilation of finite decision trees agrees
+with an independently path-following interpreter, for admitted fault-free
+payloads. Strict fault controls do not license lazy branch rewriting. These
+are algorithm-level laws, not a proof of C storage or IEEE implementations.
+
+This gate exhausts only its declared finite templates and one-operation
+regions. It does not discover arbitrary decision-tree structures, run
+WILLIAM's search, establish full task-family parity, or measure a runtime
+speedup. New numerical inputs are not held-out real MeTTa programs.
+
 Frozen helper transfer between source families
 ---------------------------------------------
-The PeTTa source-context inventory includes get-metatype/1 as an eager value
-observation, matching its actual argument-demand convention. This does not
+The PeTTa source-context inventory includes get-metatype/1 and size-atom/1 as
+eager value observations, matching their argument-demand conventions. This does not
 admit arbitrary source reflection, infer purity from a type label, or authorize
 native callback specialization. The source profile still refuses redefined
 standard operators and retains code, quotation and binding barriers.
@@ -2245,8 +2909,8 @@ native discovery. Related numerical files share one evaluation family, and
 generated dialect variants are not separate training/test evidence. Complete
 cost includes the chosen name, definition, calls and all receiving source forms.
 
-The frozen helper currently replaces seven sites in the finite-parameter DAG
-library, shrinking its complete source archive from 40,413 to 40,218 bytes.
+The earlier fixed-helper panel replaced seven sites in the finite-parameter DAG
+library, shrinking its then-current complete archive from 40,413 to 40,218 bytes.
 The entire exported receiving library passes its 66-control numerical fitting
 gate, including new-input predictions. The list library has no matches; the
 transform, forward-DAG and search-control receiving files have matches but
@@ -2263,7 +2927,8 @@ check_tensor_program_parameters.py --library-source accepts an explicit complete
 export for receiving-component qualification without installing it.
 
 bench_ic_parameter_reuse.py measures the actual parameter selector through
-original/learned sources and default/reference routes. Seven paired runs of
+original/learned sources and default/reference routes. The retained earlier
+panel used seven paired runs of
 4,096 calls retain a median paired default-route ratio of about 1.017: the
 learned source is slightly slower, not faster. Peak child RSS is about 2% higher.
 Every sample is retained. This panel supplies no retained-heap accounting,
@@ -2271,6 +2936,49 @@ verified compiler-admission result or same-contract bulk implementation; these
 are explicit omissions, not successful measurements. Native training extraction,
 checking and export process time is recorded separately by the qualification
 receipt. Exported helpers remain review candidates, not automatic source edits.
+
+Training-only structural selection across three corpora
+------------------------------------------------------
+lib_ic_source_seeds ranks same-head packet pairs by shared constructor nodes,
+with explicit source indices breaking ties. The ordinary priority heap retains
+every scored pair. A requested prefix declares the candidate region; omitted
+pairs are not justified pruning and no whole-grammar optimum is claimed.
+All scoring and selection run in MeTTa. Reconstruction and full encoded cost,
+not the structural score, authorize acceptance.
+
+  make test-ic-source-seeds
+  make test-ic-source-families
+
+The fixed manifest in tests/fixtures/ic_source_families.json separates program
+families in each of the list/combinator, term/row and tensor/postings corpora.
+Generated dialect variants follow their source family. A whole-document clone
+check also refuses renaming-only copies across partitions. The bounded gate
+trains on three actual libraries, freezes every selected name and definition,
+then records the full three-by-seven receiving matrix, including no learned
+library, no matches and unprofitable proposals. It snapshots the ordinary import
+closure and rejects changed dependencies or binary/source provenance.
+This is a fixed development/validation cohort, including previously inspected
+receiving controls. It is not an untouched blind final test. Its accepted
+transfer requalifies a known case through native training-only selection.
+
+With twelve structurally ranked seeds and at most two stages per training
+library, the list donor has no accepted feature; the schema and numerical
+donors each learn one. The schema donor's expression-kind helper transfers to
+the parameter library at seven sites, with complete bytes 40,459 -> 40,234.
+The other twenty matrix entries are negative outcomes. The accepted receiving
+library passes all 66 parameter-consumer controls, including prediction. Other
+rewritten receiving sources preserve the declared ordered query cohorts; this
+is not a proof of all-input behavioral equivalence. Complete native bytes and
+reconstruction are checked independently in Python.
+
+RegionExhausted refers only to each declared twelve-seed region. Preparation
+and search are timed separately, including structural ranking. Imports, process
+loading and construction of the packed argument are charged in whole-process
+observations, outside the inner preparation timer. The experiment
+explicitly releases observed continuations. No four-form execution panel,
+retained-heap reduction, arbitrary discovery or broad three-corpus utility is
+claimed. These bounded controls are part of the joined IC gate; larger regions
+remain explicit runs of the experiment driver.
 
 Bounded prototype discovery and new-point prediction
 --------------------------------------------------

@@ -1,0 +1,48 @@
+; Training-only structural ordering for an explicitly bounded seed region.
+; Scores never authorize a rewrite or supply a lower bound on encoded cost.
+!(import! &self (library lib_ic_library_stack))
+!(import! &self (library heap))
+
+(= (source-seeds:shared $first $second)
+   (case ($first $second)
+     ((((IC:Node $head $children) (IC:Node $other $arguments))
+       (if (== $head $other)
+         (+ 1 (source-seeds:shared-many $children $arguments)) 0))
+      ($different-shapes 0))))
+(= (source-seeds:shared-many $first $second)
+   (if (or (== $first ()) (== $second ())) 0
+     (+ (source-seeds:shared (car-atom $first) (car-atom $second))
+        (source-seeds:shared-many (cdr-atom $first) (cdr-atom $second)))))
+(= (source-seeds:later $first $tail $left $right $heap)
+   (if (== $tail ()) $heap
+     (case ($first (car-atom $tail))
+       ((((IC:Packet $slots ((IC:Node $head $children)))
+           (IC:Packet $same ((IC:Node $other $arguments))))
+         (let $next
+           (if (and (== $slots $same) (== $head $other))
+             (let $score (source-seeds:shared (IC:Node $head $children) (IC:Node $other $arguments))
+               (heap:insert $heap (Seed:Order (- 0 $score) $left $right) ($left $right))) $heap)
+           (source-seeds:later $first (cdr-atom $tail) $left (+ $right 1) $next)))
+        ($not-node-packets (source-seeds:later $first (cdr-atom $tail) $left (+ $right 1) $heap))))))
+(= (source-seeds:collect $packets $index $heap)
+   (if (== $packets ()) $heap
+     (let $next (source-seeds:later (car-atom $packets) (cdr-atom $packets) $index (+ $index 1) $heap)
+       (source-seeds:collect (cdr-atom $packets) (+ $index 1) $next))))
+(= (source-seeds:take $heap $limit)
+   (if (== $limit 0) ()
+     (case (heap:take $heap)
+       ((Heap:Empty ())
+        ((Heap:Item $order $pair $rest)
+          (let $tail (source-seeds:take $rest (- $limit 1)) (cons-atom $pair $tail)))))))
+(= (source-seeds:region $packets $limit)
+   (if (binary:unsigned? $limit)
+     (let $heap (source-seeds:collect $packets 0 (heap:empty))
+       (Library:SeedRegion (source-seeds:take $heap $limit) (heap:size $heap)))
+     (Library:Refused InvalidSeedLimit)))
+(= (ic:source-seed-region $prepared $limit)
+   (case $prepared
+     (((Library:DeferredPrepared $document $archive $sites)
+       (case (ic-archive:prepare $archive)
+         (((IC:PreparedArchive $tree $catalog $packets) (source-seeds:region $packets $limit))
+          ($invalid-projection (Library:Refused InvalidProjection)))))
+      ($invalid-task (Library:Refused InvalidTask)))))
