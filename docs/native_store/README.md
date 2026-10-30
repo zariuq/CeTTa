@@ -28,15 +28,15 @@ end or kill the writer process, reopen from disk in a new process, and query
 the same committed values, multiplicities and occurrence identities. Test
 interrupted publication and lost replies as well as clean shutdown. The
 owning durable-Space adapter now passes the scoped gates described below. The
-shared server must expose that same persistence and query core; its request
-ownership, cancellation and full release qualification remain unfinished.
+MeTTa-configured local service also passes the scoped connection/cursor and
+restart gates below. Full workload, backup and release qualification remain.
 
 The first bounded service milestone targets the actual local ledger/queue workloads.
 Its durability and isolation requirements remain strict while its API stays
 small. The broader graph/query curriculum remains a subsequent milestone.
 
 - Reuse the existing durable owner and shared Space matcher/source/cursors.
-  Finish the public owning captured-Space adapter; keep persisted programs inert.
+  The public owning captured-Space adapter keeps persisted programs inert.
 - Start with coordinated single-writer publication and captured readers. Whole-
   revision validation is an acceptable conservative first policy: concurrent
   changes conflict, including changes affecting absent/aggregate/path reads.
@@ -67,10 +67,11 @@ Verify acknowledged commits survive the modeled failures and uncertain outcomes
 remain recoverable. Process-kill tests alone do not establish real power-loss
 durability: retain the documented filesystem assumptions and I/O fault tests.
 
-The missing integration is not covered merely by existing store unit tests or
-the older named-space service. That service currently materializes query
-snapshots; replace that path with shared incremental cursors before claiming
-large-KB paging. Live migration remains a separately authorized step.
+Remaining release requirements are not covered merely by existing store unit
+tests or the older named-space service. The latter materializes query snapshots;
+the MeTTa-configured path below instead owns shared incremental cursors.
+Selective access paths and measured large-KB scaling remain open. Live
+migration remains a separately authorized step.
 
 ACT may become a native immutable base/segment under the same durability owner.
 Its reader and format qualification need not block the first workload release
@@ -138,8 +139,9 @@ the guarantees here cover writes made through this collection interface.
 Captured atom Spaces are read-only and own their snapshot independently of
 the original owner/view handles. Their resources follow ordinary evaluator
 Space lifetime and are released at session teardown. An existing captured
-Space survives later commits and physical compaction. Per-request retirement
-in a long-lived server is a separate, unfinished gate. Transactional payload
+Space survives later commits and physical compaction. Raw Space values retain
+their ordinary session lifetime; the request-owned cursor below supplies the
+separate service resource lifetime. Transactional payload
 contexts without the ordinary Space owner are refused. Cross-dialect service
 admission is not implied by the PeTTa tests.
 
@@ -360,3 +362,100 @@ release through the value worker.
 MeTTapedia's checked `Mettapedia.Machines.NativeStorePublication` model. This
 is finite conformance evidence. The Lean model states its filesystem
 assumptions; neither it nor the tests prove the C implementation or fsync.
+
+## MeTTa handlers with connection-owned resources
+
+`examples/native_kb_server.metta` is a small MeTTa program using the same
+`durable_space` library as embedded applications. The existing value worker's
+`--serve` mode supplies connections and resource lifetimes. It adds no query
+evaluator or independent storage owner. The older named-space service remains
+a separate compatibility path; its materialized snapshots are not used here.
+
+After building `value-worker`, set `CETTA_KB_DIRECTORY` to an existing private
+store directory and `CETTA_KB_SOCKET` to an absolute Unix socket path. Its
+immediate parent must be an owned private directory. Run:
+
+```sh
+VALUE_WORKER --serve --lang petta /absolute/path/to/examples/native_kb_server.metta kb-server:configuration
+```
+
+`VALUE_WORKER` denotes the configured worker executable printed by the build.
+An adjacent startup lock serializes socket ownership. A clean stop removes its
+socket; restart can remove the stale owned socket left by a killed process.
+Store recovery and durable acknowledgement remain the native store owner's
+responsibility. Session tokens do not survive a server restart.
+
+The trusted configuration returns `(ValueServiceV1 socket data routes limits)`.
+Routes are `(ServiceRouteV1 operation Read|Write handler)`; limits are
+`(ServiceLimitsV1 clients resources frame-bytes idle-ms owned-resource-bytes
+fuel)`. Each handler receives ordinary data:
+
+```metta
+(ServiceCallV1 configured-data (ServicePeerV1 kernel-uid ReadOnly|ReadWrite)
+  resource-or-ServiceNoResourceV1 argument)
+```
+
+Only the configured handler is invoked. Client arguments are quoted values;
+they are not executable request source. The server accepts same-UID clients
+on a mode-0600 socket. This initial account-level admission does not implement
+cross-account grants, delegation or network authentication. Route labels are
+trusted configuration: they must accurately describe their handler's effects.
+
+CSP1 frames carry CAV1 `(request id body)` and `(reply id ok|error value)`.
+The service accepts these envelopes:
+
+- `(CallV1 operation argument)` invokes a configured operation.
+- `(UseV1 token operation argument)` supplies that connection's retained
+  native resource to its configured handler.
+- `(DropV1 token)` closes a resource immediately. Disconnect and idle expiry
+  close every resource owned by that connection.
+- `(ReadOnlyV1)` irreversibly attenuates that connection; subsequent Write
+  routes refuse before invoking a handler. It is not an account-wide policy.
+- `(StatsV1)` reports connected clients, resource count and permanent arena
+  bytes. It is a health measurement, not a full process memory census.
+
+A handler returning `(ServiceKeepV1 owning-native-handle metadata)` exports
+`(ServiceResourceV1 token metadata)`. The host retains the protected handle
+in its own arena and checks its storage census. A token from another connection
+or server incarnation refuses. Serialized native identifiers do not confer
+ownership. Limits bound frame/cache buffers, connections and retained
+resources. One outstanding frame per connection supplies backpressure.
+
+The example exposes Snapshot, Create, Query, Next, Cancel, Commit, Resolve and
+Compact. Query uses the supplied captured view. Next grants bounded matcher
+work and checkpoints the live cursor; the template is projected as data.
+Commits validate the same explicitly supplied informing view. This does not
+automatically enroll arbitrary earlier application reads. Current queries use
+the complete prefix-scan fallback and may return `StoreQueryTooLarge` if a row
+exceeds the configured output allowance.
+
+The last exact request/reply is cached per connection until another id arrives.
+Reusing that id with different bytes refuses. This transport replay cache is
+not durable exactly-once execution. Create and Commit use the library's durable
+request ids and command receipts; after a lost reply, Resolve checks those
+receipts, including after restart.
+
+`ServiceRefusedV1` denotes rejection before a handler ran. `ServiceFailedV1`
+may follow effects and never implies rollback. Fuel, cancellation, stack,
+capacity, invalidation, host failure and paused evaluation retain distinct
+failure reasons. An empty or nonsingle handler result is not a successful
+empty query. Cursor cancellation is serviced between handler calls; it cannot
+preempt a synchronous native primitive or an in-progress publication.
+
+The `(library space_service)` client reuses its existing transport with
+`space:connect`, `space:exchange` and `space:disconnect`. A successful connect
+returns `(SpaceConnected connection)`. Exchange takes a complete request and
+timeout in milliseconds. The protected connection survives copied owners and
+closes when its last receiving arena retires. A failed exchange closes the
+stream and preserves unavailable versus uncertain delivery. The original
+one-shot `space:call` remains available; each call disconnects, so it cannot
+retain this service's resources across calls.
+
+`test-native-kb-service` checks both Python and native MeTTa clients, captured
+readers across compaction, token/handle forgery refusals, stale commits,
+lost-reply recovery, crash/restart, transport replay, bounded clients/resources,
+idle/partial-frame cleanup, explicit and automatic connection retirement,
+incomplete handler outcomes, and repeated query/cancel memory measurements.
+It is a scoped service milestone. Backup/restore, selective durable indexes,
+application constraints and application transition parity remain required
+before any live replacement is qualified.

@@ -19,6 +19,7 @@ typedef struct { CettaDiskStoreScope *items; unsigned char **allocated; size_t c
 
 static void free_owner(void *p) { cetta_disk_store_close(p); }
 static void free_view(void *p) { cetta_disk_store_view_close(p); }
+static void view_storage(const void *p,CettaStorageCensus *census) { cetta_disk_store_view_storage_census(p,census); }
 static void free_reader(void *p) { cetta_disk_blob_reader_close(p); }
 static void free_query(void *p) { cetta_disk_query_close(p); }
 static void query_storage(const void *p,CettaStorageCensus *census) { cetta_disk_query_storage_census(p,census); }
@@ -60,6 +61,9 @@ static bool number(Atom *value,uint64_t *out) {
 static Atom *own(CettaLibraryContext *ctx,Arena *a,const char *kind,void *p,CettaNativeHandleFreeFn release) {
     uint64_t id=0;
     if (!cetta_native_handle_alloc(ctx,kind,p,release,&id)) { release(p); return NULL; }
+    if (kind==view_kind && !cetta_native_handle_set_storage(ctx,kind,id,view_storage)) {
+        cetta_native_handle_close(ctx,kind,id);return NULL;
+    }
     Atom *handle=cetta_native_handle_owned_atom(ctx,a,kind,id);
     if (!handle) cetta_native_handle_close(ctx,kind,id);
     return handle;

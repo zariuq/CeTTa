@@ -1,0 +1,61 @@
+; A native durable KB configured and handled in ordinary MeTTa. The runtime
+; supplies CSP1 connections, peer identity, route rights and resource owners.
+!(import! &self (library durable_space))
+!(import! &self (library system))
+
+(= (kb-server:configuration)
+  (let* (($directory (system:getenv-or-default "CETTA_KB_DIRECTORY" ""))
+         ($socket (system:getenv-or-default "CETTA_KB_SOCKET" ""))
+         ((StoreOpened $owner) (store:open $directory "create")))
+    (ValueServiceV1 $socket (KbConfigurationV1 $owner)
+      ((ServiceRouteV1 Snapshot Read kb-server:snapshot)
+       (ServiceRouteV1 Create Write kb-server:create)
+       (ServiceRouteV1 Query Read kb-server:query)
+       (ServiceRouteV1 Next Read kb-server:next)
+       (ServiceRouteV1 Cancel Read kb-server:cancel)
+       (ServiceRouteV1 Commit Write kb-server:commit)
+       (ServiceRouteV1 Resolve Read kb-server:resolve)
+       (ServiceRouteV1 Compact Write kb-server:compact))
+      (ServiceLimitsV1 16 64 262144 30000 67108864 1000000))))
+
+(= (kb-server:snapshot (ServiceCallV1 (KbConfigurationV1 $owner) $peer $unused $arguments))
+  (case (store:snapshot $owner)
+    (((StoreSnapshot $view $epoch $revision) (ServiceKeepV1 $view (KbViewV1 $epoch $revision)))
+     ($error $error))))
+
+(= (kb-server:create (ServiceCallV1 (KbConfigurationV1 $owner) $peer $unused (CreateV1 $collection $request)))
+  (case (store:snapshot $owner)
+    (((StoreSnapshot $view $epoch $revision)
+      (let* (($answer (durable-space:create $owner $view $collection $request))
+             ($_ (store:close $view))) $answer))
+     ($error $error))))
+
+(= (kb-server:query (ServiceCallV1 $configuration $peer $view (QueryV1 $collection $pattern $template)))
+  (case (durable-space:cursor $view $collection $pattern $template)
+    (((StoreQueryOpened $query $epoch $revision) (ServiceKeepV1 $query (KbQueryV1 $epoch $revision)))
+     ($error $error))))
+
+(= (kb-server:next (ServiceCallV1 $configuration $peer $query (NextV1 $sequence)))
+  (let $answer (store:space-query-next $query $sequence 128 131072)
+    (case (store:space-query-checkpoint $query)
+      ((StoreQueryCheckpointed $answer) ($failure $failure)))))
+
+(= (kb-server:cancel (ServiceCallV1 $configuration $peer $query $arguments))
+  (store:space-query-cancel $query))
+
+(= (kb-server:commit (ServiceCallV1 (KbConfigurationV1 $owner) $peer $view (CommitV1 $collection $request $changes)))
+  (if (== (get-metatype $changes) Expression)
+    (if (<= (size-atom $changes) 128)
+      (durable-space:commit $owner $view $collection $request $changes)
+      (StoreRefused edit-count-limit))
+    (StoreRefused edit-list)))
+
+(= (kb-server:resolve (ServiceCallV1 (KbConfigurationV1 $owner) $peer $unused (ResolveV1 $request $command)))
+  (knowledge:resolve $owner $request $command 1048576))
+
+(= (kb-server:compact (ServiceCallV1 (KbConfigurationV1 $owner) $peer $unused $arguments))
+  (case (store:compact $owner)
+    (((StoreSnapshot $view $epoch $revision)
+      (let* (($_ (store:close $view)) ($collected (store:collect $owner)))
+        (StoreCompacted $epoch $revision $collected)))
+     ($error $error))))

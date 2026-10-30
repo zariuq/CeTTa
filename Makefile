@@ -897,7 +897,7 @@ SRC += src/petta_contract_core.c
 SRC += src/gslt_language_manifest_v1.c
 SRC += src/gslt_support_profile_v1.c
 SRC += src/library_io.c src/library_cwp.c src/library_proc_run.c src/library_sqlite.c src/proc_owner.c src/http_worker.c src/ws.c src/telegram_transport.c src/library_durable.c
-SRC += src/atom_wire.c src/library_space_service.c src/ipc_client.c src/host_notice.c
+SRC += src/atom_wire.c src/library_space_service.c src/ipc_client.c src/host_notice.c src/value_service.c
 SRC += $(SIWC_SRC)
 SRC += $(JSON_GSLT_RUNTIME_SRC)
 SRC += $(PETTA_TYPECHECK_CENSUS_SRC)
@@ -49581,6 +49581,10 @@ test-space-service-scopes: $(SPACE_SERVICE_SCOPES_TEST_BIN)
 	$(SPACE_SERVICE_SCOPES_TEST_BIN)
 test-space-service: test-space-service-commit test-space-service-scopes $(SPACE_SERVICE_BIN) $(BIN) $(VALUE_WORKER_BIN)
 	python3 tests/test_space_service.py $(SPACE_SERVICE_BIN) $(BIN) $(VALUE_WORKER_BIN)
+
+.PHONY: test-native-kb-service
+test-native-kb-service: value-worker
+	python3 tests/support/check_native_kb_service.py $(VALUE_WORKER_BIN)
 
 .PHONY: test-native-store-transactions test-native-store-scopes
 NATIVE_STORE_LEAN_PROJECT ?=

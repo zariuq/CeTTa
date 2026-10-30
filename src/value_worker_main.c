@@ -6,6 +6,7 @@
 #include "parser.h"
 #include "petta_compiled_reader.h"
 #include "symbol.h"
+#include "value_service.h"
 #include <errno.h>
 #include <signal.h>
 #include <stdio.h>
@@ -30,10 +31,12 @@ int main(int argc, char **argv) {
     CettaRelativeModulePolicy import_mode = CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY;
     bool import_mode_overridden = false;
     unsigned long threads = 0;
+    bool serving = false;
     int first = 1;
     while (first < argc && argv[first][0] == '-') {
         const char *option = argv[first++];
         if (!strcmp(option, "--")) break;
+        if (!strcmp(option, "--serve")) { serving = true; continue; }
         if (first >= argc) goto usage;
         if (!strcmp(option, "--lang")) {
             const char *name = argv[first++];
@@ -119,6 +122,14 @@ int main(int argc, char **argv) {
             &scratch, &permanent, &registry, -1, NULL, &error)) {
         fprintf(stderr, "worker: module import failed\n");
         if (error) { atom_print(error, stderr); fputc('\n', stderr); }
+        goto done;
+    }
+    if (serving) {
+        if (language != CETTA_LANGUAGE_PETTA) {
+            fputs("value service: only PeTTa handlers are qualified\n",stderr);
+            goto done;
+        }
+        rc=cetta_value_service_run(libraries,&top,&registry,&permanent,entry);
         goto done;
     }
     for (;;) {
@@ -221,5 +232,6 @@ usage:
     fprintf(stderr, "usage: cetta-value-worker [--lang petta|prime] "
         "[--profile NAME] [--import-mode upstream|relative|ancestor-walk] "
         "[--num-threads N] MODULE ENTRY\n");
+    fputs("       cetta-value-worker --serve [--lang petta] MODULE CONFIGURATION\n",stderr);
     return 2;
 }
