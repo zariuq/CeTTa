@@ -1,4 +1,4 @@
-; Directional matching is opt-in in extended profiles. A mismatch has no
+; Importing pat enables directional matching in PeTTa. A mismatch has no
 ; answer; a native fault is not a mismatch. Policies select binding permission:
 ; match% binds left patterns, %match binds right patterns, unify permits both,
 ; variant returns one simultaneous bijective renaming for the whole batch.

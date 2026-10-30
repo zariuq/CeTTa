@@ -274,7 +274,8 @@ typedef struct AtomDeepCopyMemo {
     uint64_t snapshot_epoch;
     const HashConsTable *global_owner;
     uint64_t global_instance, global_symbols;
-    uint32_t global_count;
+    uint32_t global_count, global_symbol_count;
+    const Atom *global_unit;
     struct AtomDeepCopyMemo *global_nodes;
     /* Whether copies drop HE's evaluated marks (a space storing syntax). */
     bool strip_he_marks;
@@ -2173,7 +2174,7 @@ static uint32_t atom_hash_fold(Atom *root, bool value_mode,
                 child, 0u, atom_hash_expr_seed(child, value_mode)};
             continue;
         }
-        result = ATOM_HASH_SPELL(frame->hash);
+        result = ATOM_HASH_SPELL(atom_hash_expr_finish(frame->hash));
         if (!value_mode && len > 1u && g_atom_hash_read_scope_depth == 0u &&
             atom_is_hash_stable(frame->node))
             atom_hash_cache_store(frame->node, result);
@@ -2205,7 +2206,7 @@ static uint32_t atom_hash_compute(Atom *atom) {
                 return atom_hash_fold(atom, false, true);
             hash = ((hash << 5) + hash) ^ child_hash;
         }
-        return ATOM_HASH_SPELL(hash);
+        return ATOM_HASH_SPELL(atom_hash_expr_finish(hash));
     }
     return atom_hash_fold(atom, false, true);
 }
@@ -2360,6 +2361,7 @@ static bool atom_hashcons_graph_admitted(const Atom *atom) {
     switch (atom->kind) {
     case ATOM_SYMBOL:
         expected = atom_flags_for_symbol_id(atom->symbol_number);
+        expected_structural_facts |= ATOM_STRUCTURAL_SYMBOLIC;
         break;
     case ATOM_VAR:
         if (var_id_is_none(atom->var_id) ||
@@ -4116,11 +4118,13 @@ static inline __attribute__((always_inline)) uint32_t atom_summary_finish(
     uint32_t structural_facts =
         (summary->all_facts & ATOM_STRUCTURAL_FACTS_VALID)
         ? ATOM_STRUCTURAL_FACTS_VALID |
+              (summary->all_facts & ATOM_STRUCTURAL_SYMBOLIC) |
               (summary->any_facts & ~(ATOM_STRUCTURAL_FACTS_VALID |
                                       ATOM_STRUCTURAL_GENERATION_CLOSED |
                                       ATOM_STRUCTURAL_OWNER_CLOSED |
                                       ATOM_STRUCTURAL_FRONT_SLACK |
-                                      ATOM_STRUCTURAL_STRING_STORAGE))
+                                      ATOM_STRUCTURAL_STRING_STORAGE |
+                                      ATOM_STRUCTURAL_SYMBOLIC))
         : 0u;
     bool generation_closed = summary->generation_closed;
     if (summary->missing) {
@@ -4228,7 +4232,7 @@ Atom *atom_symbol_id(Arena *a, SymbolId sym_id) {
     temp.symbol_number = sym_id;
     temp.arena_id = a->identity;
     temp.hash_cache = 0;
-    temp.structural_facts = ATOM_STRUCTURAL_FACTS_VALID;
+    temp.structural_facts = ATOM_STRUCTURAL_FACTS_VALID | ATOM_STRUCTURAL_SYMBOLIC;
     Atom *shared = atom_maybe_hashcons(a, &temp);
     if (shared) return shared;
     /* A canonical symbol goes to the scalar owner only into an empty slot,
@@ -4269,7 +4273,7 @@ Atom *atom_symbol_canonical(SymbolId sym_id) {
         .symbol_number = sym_id,
         .arena_id = 0u,
         .name_key = NULL,
-        .structural_facts = ATOM_STRUCTURAL_FACTS_VALID,
+        .structural_facts = ATOM_STRUCTURAL_FACTS_VALID | ATOM_STRUCTURAL_SYMBOLIC,
     };
     if (atom_is_hash_stable(made))
         made->hash_cache = atom_hash_compute(made);
@@ -5340,12 +5344,12 @@ static Atom g_atom_empty_list = {
     .symbol_number = SYMBOL_ID_NONE,
     .arena_id = 0u,
     .name_key = NULL,
-    .hash_cache = ATOM_HASH_SPELL(ATOM_LIST_TAG_HASH_STEP(
+    .hash_cache = ATOM_HASH_SPELL(ATOM_HASH_EXPR_FINISH(ATOM_LIST_TAG_HASH_STEP(
         ATOM_LIST_TAG_HASH_STEP(
             ATOM_LIST_TAG_HASH_STEP(
                 ATOM_LIST_TAG_HASH_STEP(5381u, ATOM_EXPR), 1u),
             0u),
-        ATOM_HASH_SPELL(ATOM_LIST_TAG_HASH(CETTA_INTERNAL_TAG_LIST)))),
+        ATOM_HASH_SPELL(ATOM_LIST_TAG_HASH(CETTA_INTERNAL_TAG_LIST))))),
     .structural_facts = ATOM_STRUCTURAL_FACTS_VALID |
                         ATOM_STRUCTURAL_HAS_INTERNAL_TAG |
                         ATOM_STRUCTURAL_HAS_LIST,
@@ -5391,7 +5395,9 @@ Atom *atom_prime_held_payload(Atom *atom) {
     return atom_prime_held_is(atom) ? atom->expr.elems[1] : atom;
 }
 
-static bool g_atom_prime_held_made = false;
+/* A process-wide monotone hint, shared by worker-local arenas. The arenas'
+ * own handoff protocol still governs publication and lifetime of each atom. */
+static _Atomic bool g_atom_prime_held_made = false;
 
 Atom *atom_prime_held_wrap(Arena *a, Atom *atom) {
     if (!a || !atom || atom_prime_held_is(atom)) return atom;
@@ -5400,12 +5406,12 @@ Atom *atom_prime_held_wrap(Arena *a, Atom *atom) {
     if (atom_prime_need_capability_value(atom)) return atom;
     Atom *tag = atom_internal_tag(a, CETTA_INTERNAL_TAG_PRIME_HELD);
     if (tag)
-        g_atom_prime_held_made = true;
+        atomic_store_explicit(&g_atom_prime_held_made, true, memory_order_relaxed);
     return tag ? atom_expr2(a, tag, atom) : NULL;
 }
 
 bool atom_prime_held_made(void) {
-    return g_atom_prime_held_made;
+    return atomic_load_explicit(&g_atom_prime_held_made, memory_order_relaxed);
 }
 
 static bool atom_held_query_descends(void *context, Arena *arena, Atom *atom) {
@@ -5426,7 +5432,7 @@ static Atom *atom_held_query_build(void *context, Arena *arena, Atom *atom,
 }
 
 bool atom_contains_prime_held(const Atom *atom) {
-    if (!atom || !g_atom_prime_held_made ||
+    if (!atom || !atom_prime_held_made() ||
         !atom_structural_may_have_internal_tag(atom)) return false;
     Arena scratch;
     arena_init_detached(&scratch);
@@ -5567,7 +5573,7 @@ static Atom *atom_held_strip_build(void *context, Arena *arena, Atom *atom,
 }
 
 Atom *atom_prime_held_strip(Arena *arena, Atom *atom) {
-    return g_atom_prime_held_made
+    return atom_prime_held_made()
         ? atom_graph_image(NULL, arena, atom, atom_held_strip_descends,
                            atom_held_strip_build) : atom;
 }
@@ -6412,6 +6418,7 @@ Atom *atom_expr_suffix(Arena *a, Atom *expression, CettaExprLen offset) {
     uint32_t departed_any = 0u;
     uint32_t departed_lacks = 0u;
     uint32_t departed_facts = 0u;
+    uint32_t departed_lacks_facts = 0u;
     bool departed_known = true;
     /* A list in the older generation is closed for that arena, not this
      * one, so the view's closure is folded afresh for this arena. */
@@ -6427,15 +6434,19 @@ Atom *atom_expr_suffix(Arena *a, Atom *expression, CettaExprLen offset) {
         departed_any |= departed->flags;
         departed_lacks |= ~departed->flags;
         departed_facts |= departed->structural_facts;
+        departed_lacks_facts |= ~departed->structural_facts;
         closure_inherits = closure_inherits &&
             atom_summary_closed_child(departed, a->identity);
         generation_inherits = generation_inherits &&
             atom_generation_admits(a->identity, a->older_identity, departed);
     }
+    /* A symbolic term is one whose every element is: a fact the suffix
+     * holds when no remaining element lacks it, as a required flag. */
+    const uint32_t facts_all = ATOM_STRUCTURAL_SYMBOLIC;
     const uint32_t facts_any = ~(ATOM_STRUCTURAL_FACTS_VALID |
                                  ATOM_STRUCTURAL_GENERATION_CLOSED |
                                  ATOM_STRUCTURAL_OWNER_CLOSED |
-                                 ATOM_STRUCTURAL_FRONT_SLACK);
+                                 ATOM_STRUCTURAL_FRONT_SLACK | facts_all);
     const uint32_t owner_evidence = ATOM_STRUCTURAL_FACTS_VALID |
                                     ATOM_STRUCTURAL_OWNER_CLOSED;
     if (departed_known &&
@@ -6450,17 +6461,21 @@ Atom *atom_expr_suffix(Arena *a, Atom *expression, CettaExprLen offset) {
         uint32_t find_any = departed_any & flags & ATOM_SUMMARY_INHERITED;
         uint32_t find_facts = departed_facts & facts & facts_any;
         uint32_t find_all = departed_lacks & ~flags & ATOM_SUMMARY_REQUIRED;
+        uint32_t find_all_facts = departed_lacks_facts & ~facts & facts_all;
         for (CettaExprIndex index = 0u;
-             (find_any | find_facts | find_all) != 0u && index < len;
+             (find_any | find_facts | find_all | find_all_facts) != 0u &&
+             index < len;
              index++) {
             const Atom *child = elems[index];
             find_any &= ~child->flags;
             find_facts &= ~child->structural_facts;
             find_all &= child->flags;
+            find_all_facts &= child->structural_facts;
         }
         flags &= ~find_any;
         facts &= ~find_facts;
         flags |= find_all;
+        facts |= find_all_facts;
         flags = atom_summary_head_adjust(elems[0], flags);
         if (!closure_inherits) {
             /* A departed child was open for the arena, so closure is folded
@@ -6692,6 +6707,9 @@ Atom *atom_expr_prepend(Arena *a, Atom *head, Atom *list) {
         if (!head_closed)
             flags &= ~ATOM_FLAG_ARENA_CLOSED;
         flags = atom_summary_head_adjust(head, flags);
+        /* The facts are the list's and the head's, as a fold gives them:
+         * a string's storage stays with the string, and the term is
+         * symbolic only when the head and every element of the list are. */
         uint32_t facts =
             (list->structural_facts & ~(ATOM_STRUCTURAL_GENERATION_CLOSED |
                                         ATOM_STRUCTURAL_OWNER_CLOSED |
@@ -6699,7 +6717,11 @@ Atom *atom_expr_prepend(Arena *a, Atom *head, Atom *list) {
             (head->structural_facts & ~(ATOM_STRUCTURAL_FACTS_VALID |
                                         ATOM_STRUCTURAL_GENERATION_CLOSED |
                                         ATOM_STRUCTURAL_OWNER_CLOSED |
-                                        ATOM_STRUCTURAL_FRONT_SLACK));
+                                        ATOM_STRUCTURAL_FRONT_SLACK |
+                                        ATOM_STRUCTURAL_STRING_STORAGE));
+        if ((list->structural_facts & head->structural_facts &
+             ATOM_STRUCTURAL_SYMBOLIC) == 0u)
+            facts &= ~ATOM_STRUCTURAL_SYMBOLIC;
         if ((flags & ATOM_FLAG_ARENA_CLOSED) == 0u &&
             atom_graph_is_owner_closed_for_arena(a, list) &&
             atom_graph_is_owner_closed_for_arena(a, head))
@@ -7075,7 +7097,7 @@ void atom_visit_set_free(AtomVisitSet *set) {
 
 static inline __attribute__((always_inline)) bool atom_walk_any(
     const Atom *root, AtomTreePredicate predicate, AtomTreePredicate barrier,
-    void *context, bool unique) {
+    void *context, bool unique, size_t allowance, bool *complete) {
     enum { INLINE_CAPACITY = 64 };
     const Atom *inline_stack[INLINE_CAPACITY];
     const Atom **stack = inline_stack;
@@ -7085,8 +7107,15 @@ static inline __attribute__((always_inline)) bool atom_walk_any(
     bool fault = false;
     bool found = false;
 
-    if (!root || !predicate)
+    if (complete)
+        *complete = true;
+    if (!root)
         return false;
+    if (!predicate) {
+        if (complete)
+            *complete = false;
+        return false;
+    }
     stack[length++] = root;
     while (length > 0u && !found) {
         const Atom *node = stack[--length];
@@ -7097,16 +7126,26 @@ static inline __attribute__((always_inline)) bool atom_walk_any(
         if (unique && node != root && node->kind == ATOM_EXPR && node->expr.len &&
             !fault && !atom_visit_set_add(&seen, node, &fault) && !fault)
             continue;
+        if (complete && fault)
+            goto incomplete;
         if (barrier && barrier(node, context))
             continue;
+        if (complete) {
+            if (!allowance)
+                goto incomplete;
+            allowance--;
+        }
         if (predicate(node, context)) {
             found = true;
             break;
         }
         if (node->kind != ATOM_EXPR || node->expr.len == 0u)
             continue;
-        if (node->expr.len > (CettaExprLen)(SIZE_MAX - length))
+        if (node->expr.len > (CettaExprLen)(SIZE_MAX - length)) {
+            if (complete)
+                goto incomplete;
             cetta_oom(SIZE_MAX);
+        }
         size_t needed = length + (size_t)node->expr.len;
         if (needed > capacity) {
             size_t next_capacity = capacity;
@@ -7117,23 +7156,38 @@ static inline __attribute__((always_inline)) bool atom_walk_any(
                 }
                 next_capacity *= 2u;
             }
-            if (next_capacity > SIZE_MAX / sizeof(*stack))
+            if (next_capacity > SIZE_MAX / sizeof(*stack)) {
+                if (complete)
+                    goto incomplete;
                 cetta_oom(SIZE_MAX);
+            }
             if (stack == inline_stack) {
-                const Atom **grown = cetta_malloc(
-                    next_capacity * sizeof(*grown));
+                const Atom **grown = complete
+                    ? malloc(next_capacity * sizeof(*grown))
+                    : cetta_malloc(next_capacity * sizeof(*grown));
+                if (!grown)
+                    goto incomplete;
                 memcpy((void *)grown, inline_stack,
                        length * sizeof(*grown));
                 stack = grown;
             } else {
-                stack = cetta_realloc(
-                    (void *)stack, next_capacity * sizeof(*stack));
+                const Atom **grown = complete
+                    ? realloc((void *)stack, next_capacity * sizeof(*stack))
+                    : cetta_realloc((void *)stack, next_capacity * sizeof(*stack));
+                if (!grown)
+                    goto incomplete;
+                stack = grown;
             }
             capacity = next_capacity;
         }
         for (CettaExprIndex i = node->expr.len; i > 0u; i--)
             stack[length++] = node->expr.elems[i - 1u];
     }
+    goto finished;
+incomplete:
+    if (complete)
+        *complete = false;
+finished:
     if (stack != inline_stack)
         free((void *)stack);
     if (unique)
@@ -7143,21 +7197,28 @@ static inline __attribute__((always_inline)) bool atom_walk_any(
 
 
 bool atom_tree_any(const Atom *root, AtomTreePredicate predicate, void *context) {
-    return atom_walk_any(root, predicate, NULL, context, false);
+    return atom_walk_any(root, predicate, NULL, context, false, SIZE_MAX, NULL);
 }
 
 bool atom_graph_any(const Atom *root, AtomTreePredicate predicate, void *context) {
-    return atom_walk_any(root, predicate, NULL, context, true);
+    return atom_walk_any(root, predicate, NULL, context, true, SIZE_MAX, NULL);
 }
 
 bool atom_tree_any_pruned(const Atom *root, AtomTreePredicate predicate,
                           AtomTreePredicate barrier, void *context) {
-    return atom_walk_any(root, predicate, barrier, context, false);
+    return atom_walk_any(root, predicate, barrier, context, false, SIZE_MAX, NULL);
 }
 
 bool atom_graph_any_pruned(const Atom *root, AtomTreePredicate predicate,
                            AtomTreePredicate barrier, void *context) {
-    return atom_walk_any(root, predicate, barrier, context, true);
+    return atom_walk_any(root, predicate, barrier, context, true, SIZE_MAX, NULL);
+}
+
+bool atom_graph_any_checked(const Atom *root, AtomTreePredicate predicate,
+                            AtomTreePredicate barrier, void *context,
+                            size_t allowance, bool *complete) {
+    assert(complete);
+    return atom_walk_any(root, predicate, barrier, context, true, allowance, complete);
 }
 
 /* ── Comparison ─────────────────────────────────────────────────────────── */
@@ -7481,6 +7542,13 @@ static __attribute__((noinline)) bool atom_eq_walk(Atom *a, Atom *b, AtomCompare
     int small = atom_eq_flat_tree(a, b);
     if (small >= 0)
         return small != 0;
+    if ((a->structural_facts & b->structural_facts &
+         ATOM_STRUCTURAL_SYMBOLIC) != 0u) {
+        uint32_t left_hash = atom_hash_cache_load(a);
+        uint32_t right_hash = atom_hash_cache_load(b);
+        if (left_hash != 0u && right_hash != 0u && left_hash != right_hash)
+            return false;
+    }
     small = atom_eq_small_tree(a, b);
     if (small >= 0)
         return small != 0;
@@ -7542,6 +7610,7 @@ static inline __attribute__((always_inline)) void atom_compare_push(
                               AtomCompareStack *work, Atom *left, Atom *right,
                               AtomCompareMode mode, size_t scope,
                               bool fresh_scope) {
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_ATOM_COMPARE_PAIR);
     if (fresh_scope) {
         if (work->scope_len == work->scope_capacity) {
             size_t grown = work->scope_capacity * 2u;
@@ -8367,6 +8436,8 @@ static void atom_deep_copy_memo_init(AtomDeepCopyMemo *memo) {
     memo->global_owner = NULL;
     memo->global_instance = memo->global_symbols = 0u;
     memo->global_count = 0u;
+    memo->global_symbol_count = 0u;
+    memo->global_unit = NULL;
     memo->global_nodes = NULL;
     memo->strip_he_marks = g_atom_deep_copy_strip_he_marks != 0u;
     memo->loan_arenas = NULL;
@@ -9338,13 +9409,29 @@ static Atom *const atom_checkpoint_static_roots[] = {
 /* Build from actual held table keys before reading any child header. The
  * service is serial here: table growth may occur between calls, never during
  * this validation. Header caches are not an immutable-cell equality claim. */
+typedef struct {
+    AtomDeepCopyMemo *nodes;
+    AtomDeepCopyGlobalInspection *inspection;
+    size_t limit;
+} AtomGlobalSymbolCapture;
+
+static bool atom_deep_copy_global_symbol(void *raw, void *context) {
+    AtomGlobalSymbolCapture *capture=context;
+    Atom *atom=raw;
+    return atom && atom_deep_copy_memo_store_inspected(capture->nodes,atom,atom,
+        capture->inspection,capture->limit);
+}
+
 static bool atom_deep_copy_global_capture(const HashConsTable *owner,
         uint64_t instance, uint64_t symbols, size_t inspection_limit,
         AtomDeepCopyGlobalInspection *inspection, AtomDeepCopyMemo **result,
-        uint32_t *captured_count) {
+        uint32_t *captured_count, uint32_t *captured_symbols,
+        const Atom **captured_unit) {
     if(!instance || owner!=g_hashcons || instance!=hashcons_instance_id(owner))return false;
     uint32_t count=owner->used, size=owner->size;
     Atom **table=owner->table;
+    uint32_t canonical_count=symbol_canonical_count(g_symbols);
+    Atom *unit=atomic_load_explicit(&g_atom_unit_canonical,memory_order_acquire);
     if(!atom_deep_copy_inspect(inspection,inspection_limit,0u,1u))return false;
     AtomDeepCopyMemo *nodes=malloc(sizeof(*nodes));
     if (!nodes) return false;
@@ -9358,6 +9445,11 @@ static bool atom_deep_copy_global_capture(const HashConsTable *owner,
     for (size_t i=0u;i<sizeof(atom_checkpoint_static_roots)/sizeof(*atom_checkpoint_static_roots);i++)
         if (!atom_deep_copy_memo_store_inspected(nodes,atom_checkpoint_static_roots[i],
             atom_checkpoint_static_roots[i],inspection,inspection_limit)) goto done;
+    AtomGlobalSymbolCapture capture={nodes,inspection,inspection_limit};
+    if (!symbol_canonical_visit(g_symbols,symbols,canonical_count,
+            atom_deep_copy_global_symbol,&capture)) goto done;
+    if (unit && !atom_deep_copy_memo_store_inspected(nodes,unit,unit,
+            inspection,inspection_limit)) goto done;
     for (uint32_t i=0u;i<size;i++) {
         if (!atom_deep_copy_inspect(inspection,inspection_limit,1u,0u)) goto done;
         Atom *atom=table[i];
@@ -9384,11 +9476,14 @@ static bool atom_deep_copy_global_capture(const HashConsTable *owner,
         }
     }
     ready=owner==g_hashcons&&instance==hashcons_instance_id(owner)&&
-        symbols==symbol_table_instance_id(g_symbols)&&owner->table==table&&
+        symbols==symbol_table_instance_id(g_symbols)&&
+        symbol_canonical_count(g_symbols)==canonical_count&&
+        atomic_load_explicit(&g_atom_unit_canonical,memory_order_acquire)==unit&&owner->table==table&&
         owner->size==size&&owner->used==count;
 done:
     if (!ready) { atom_deep_copy_memo_free(nodes);free(nodes);return false; }
-    *result=nodes;*captured_count=count;return true;
+    *result=nodes;*captured_count=count;*captured_symbols=canonical_count;
+    *captured_unit=unit;return true;
 }
 
 bool atom_deep_copy_session_restrict_globals(AtomDeepCopySession *session,
@@ -9404,11 +9499,13 @@ bool atom_deep_copy_session_restrict_globals(AtomDeepCopySession *session,
         owner->used>owner->size||!g_symbols||!inspection_limit) return false;
     uint64_t instance=hashcons_instance_id(owner),symbols=symbol_table_instance_id(g_symbols);
     if (!instance||instance==UINT64_MAX||!symbols) return false;
-    AtomDeepCopyMemo *nodes=NULL;uint32_t count=0u;
-    if (!atom_deep_copy_global_capture(owner,instance,symbols,inspection_limit,inspection,&nodes,&count))
+    AtomDeepCopyMemo *nodes=NULL;uint32_t count=0u,canonical_count=0u;const Atom *unit=NULL;
+    if (!atom_deep_copy_global_capture(owner,instance,symbols,inspection_limit,inspection,
+            &nodes,&count,&canonical_count,&unit))
         return false;
     session->memo.global_owner=owner;session->memo.global_instance=instance;
     session->memo.global_symbols=symbols;session->memo.global_count=count;
+    session->memo.global_symbol_count=canonical_count;session->memo.global_unit=unit;
     session->memo.global_nodes=nodes;return true;
 }
 
@@ -9427,7 +9524,10 @@ bool atom_deep_copy_session_global_extension_budget(const AtomDeepCopySession *s
         (session->memo.arenas&&!atom_deep_copy_arena_map_current(session))) return false;
     /* Same-owner allocation is append-only until reclamation. A rehash
      * changes bucket storage, not these held immutable logical cells. */
-    if (owner->used==session->memo.global_count) return true;
+    uint32_t canonical_count=symbol_canonical_count(g_symbols);
+    const Atom *unit=atomic_load_explicit(&g_atom_unit_canonical,memory_order_acquire);
+    if (owner->used==session->memo.global_count&&
+        canonical_count==session->memo.global_symbol_count&&unit==session->memo.global_unit) return true;
     if (!atom_checkpoint_global_budget(owner,node_limit,bytes,work)||
         session->memo.global_nodes->cap>SIZE_MAX-*work) return false;
     *work+=session->memo.global_nodes->cap;return true;
@@ -9442,9 +9542,11 @@ bool atom_deep_copy_session_extend_globals(AtomDeepCopySession *session,
     if (!atom_deep_copy_session_global_extension_budget(session,owner,node_limit,&bytes,&work)||
         bytes>additional_bytes) return false;
     if (!bytes) return true;
-    AtomDeepCopyMemo *old=session->memo.global_nodes,*nodes=NULL;uint32_t count=0u;
+    AtomDeepCopyMemo *old=session->memo.global_nodes,*nodes=NULL;
+    uint32_t count=0u,canonical_count=0u;const Atom *unit=NULL;
     if (!atom_deep_copy_global_capture(owner,session->memo.global_instance,
-        session->memo.global_symbols,inspection_limit,inspection,&nodes,&count)) return false;
+        session->memo.global_symbols,inspection_limit,inspection,&nodes,&count,
+        &canonical_count,&unit)) return false;
     bool ready=false;
     for (size_t i=0u;i<old->cap;i++) {
         if (!atom_deep_copy_inspect(inspection,inspection_limit,1u,0u)) goto done;
@@ -9454,12 +9556,15 @@ bool atom_deep_copy_session_extend_globals(AtomDeepCopySession *session,
     }
     ready=owner==g_hashcons&&session->memo.global_instance==hashcons_instance_id(owner)&&
         session->memo.global_symbols==symbol_table_instance_id(g_symbols)&&owner->used==count&&
+        symbol_canonical_count(g_symbols)==canonical_count&&
+        atomic_load_explicit(&g_atom_unit_canonical,memory_order_acquire)==unit&&
         (!session->memo.arenas||atom_deep_copy_arena_map_current(session));
 done:
     if (!ready) {atom_deep_copy_memo_free(nodes);free(nodes);return false;}
     /* Only the membership carrier changes. All Atom, buffer and object
      * forwarding, mapped arena authority and source keys stay untouched. */
     session->memo.global_nodes=nodes;session->memo.global_count=count;
+    session->memo.global_symbol_count=canonical_count;session->memo.global_unit=unit;
     atom_deep_copy_memo_free(old);free(old);return true;
 }
 
@@ -9655,6 +9760,11 @@ bool atom_deep_copy_session_targets(const AtomDeepCopySession *session,
                                     const Arena *dst) {
     return session && dst && session->dst == dst &&
         (!session->memo.arenas || atom_deep_copy_private_destination(session, dst));
+}
+
+bool atom_deep_copy_session_private_destination(const AtomDeepCopySession *session) {
+    return session && !session->failed && atom_deep_copy_arena_map_current(session) &&
+        atom_deep_copy_session_targets(session, session->dst);
 }
 
 bool atom_deep_copy_destination_enter(AtomDeepCopySession *session,
@@ -10265,7 +10375,8 @@ bool atom_deep_copy_session_install_inventory(AtomDeepCopySession *session,
         !atom_deep_copy_arena_map_current(session) ||
         atom_deep_copy_session_inventory(session, kind))
         return false;
-    AtomDeepCopyInventory *entry = cetta_malloc(sizeof(*entry));
+    AtomDeepCopyInventory *entry = malloc(sizeof(*entry));
+    if (!entry) return false;
     cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_METADATA_ALLOC_BYTES,
                            sizeof(*entry));
     *entry = (AtomDeepCopyInventory){.kind = kind, .value = inventory,
@@ -11206,9 +11317,12 @@ void hashcons_storage_census(const HashConsTable *hc, CettaStorageCensus *census
 bool atom_checkpoint_global_budget(const HashConsTable *owner,size_t limit,
     size_t *bytes,size_t *work) {
     const size_t statics=sizeof(atom_checkpoint_static_roots)/sizeof(*atom_checkpoint_static_roots);
-    if(!bytes||!work||!owner||owner!=g_hashcons||!hashcons_instance_id(owner)||owner->used>owner->size||
-        owner->used>limit||owner->used>SIZE_MAX-statics)return false;
-    size_t n=(size_t)owner->used+statics;
+    uint32_t canonical_count=symbol_canonical_count(g_symbols);
+    Atom *unit=atomic_load_explicit(&g_atom_unit_canonical,memory_order_acquire);
+    if(!bytes||!work||!owner||owner!=g_hashcons||!g_symbols||!hashcons_instance_id(owner)||owner->used>owner->size||
+        owner->used>limit||
+        owner->used>SIZE_MAX-statics||canonical_count>SIZE_MAX-statics-owner->used)return false;
+    size_t n=(size_t)owner->used+statics+canonical_count+(unit?1u:0u);
     if(n>SIZE_MAX/(8u*sizeof(AtomDeepCopyMemoSlot)))return false;
     size_t arrays=n*8u*sizeof(AtomDeepCopyMemoSlot);
     size_t fixed=sizeof(AtomDeepCopySession)+sizeof(AtomDeepCopyMemo);
@@ -11218,7 +11332,8 @@ bool atom_checkpoint_global_budget(const HashConsTable *owner,size_t limit,
      * arbitrary edge multiplicity may require more. The service stops
      * at its supplied allowance and returns the actual metered prefix. */
     if(n>SIZE_MAX/n||n*n>SIZE_MAX/16u||owner->size>SIZE_MAX-n*n*16u)return false;
-    *bytes=fixed+arrays;*work=(size_t)owner->size+n*n*16u;return true;
+    if(canonical_count>SIZE_MAX-(size_t)owner->size-n*n*16u)return false;
+    *bytes=fixed+arrays;*work=(size_t)owner->size+canonical_count+n*n*16u;return true;
 }
 bool atom_checkpoint_global_contains(const AtomDeepCopySession *domain,
     const Atom *atom,const CettaCheckpointCompare *read) {

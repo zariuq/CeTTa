@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include "petta_compiled_reader.h"
 #include "parser.h"
 
@@ -8,11 +9,15 @@
 #include "symbol.h"
 #include "var_index.h"
 
+#include <fcntl.h>
 #include <limits.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 typedef struct {
     SymbolId spelling;
@@ -320,21 +325,21 @@ bool petta_compiled_reader_v1_prepare(
     return true;
 }
 
-int petta_compiled_reader_v1_parse_bytes_ids(
-    PeTTaCompiledReaderV1 *reader, const uint8_t *input,
-    size_t input_len, TermUniverse *universe, AtomId **out_ids,
-    PeTTaCompiledReaderV1Receipt *receipt, char *error_buf,
-    size_t error_buf_size) {
+/* The forms of INPUT from START, at most MAX_FORMS, with *END_OUT where
+ * the next would start: the parse both the whole-input entry and a
+ * document's slices take. */
+static int petta_compiled_reader_v1_parse_from(
+    PeTTaCompiledReaderV1 *reader, const uint8_t *input, size_t input_len,
+    size_t start, uint32_t max_forms, TermUniverse *universe,
+    AtomId **out_ids, GSLTDirectPeTTaReaderV1Receipt *direct_receipt,
+    size_t *end_out, char *error_buf, size_t error_buf_size) {
     PeTTaProjectionContextV1 context = {0};
     GSLTDirectPeTTaProjectionV1 projection;
-    GSLTDirectPeTTaReaderV1Receipt direct_receipt;
     int result;
     if (error_buf && error_buf_size > 0u)
         error_buf[0] = '\0';
     if (out_ids)
         *out_ids = NULL;
-    if (receipt)
-        memset(receipt, 0, sizeof(*receipt));
     if (!reader || !reader->ready || reader->owner_symbols != g_symbols ||
         reader->owner_symbols_instance_id !=
             symbol_table_instance_id(g_symbols) ||
@@ -356,12 +361,26 @@ int petta_compiled_reader_v1_parse_bytes_ids(
         .finish_form = petta_projection_finish_form,
         .list = petta_projection_list,
     };
-    memset(&direct_receipt, 0, sizeof(direct_receipt));
-    result = gslt_direct_petta_reader_v1_parse_bytes_ids(
-        reader->plan, input, input_len, &projection, out_ids,
-        &direct_receipt, error_buf, error_buf_size);
+    memset(direct_receipt, 0, sizeof(*direct_receipt));
+    result = gslt_direct_petta_reader_v1_parse_bytes_ids_from(
+        reader->plan, input, input_len, start, max_forms, &projection,
+        out_ids, direct_receipt, end_out, error_buf, error_buf_size);
     cetta_var_index_free(&context.variable_index);
     free(context.variables);
+    return result;
+}
+
+int petta_compiled_reader_v1_parse_bytes_ids(
+    PeTTaCompiledReaderV1 *reader, const uint8_t *input,
+    size_t input_len, TermUniverse *universe, AtomId **out_ids,
+    PeTTaCompiledReaderV1Receipt *receipt, char *error_buf,
+    size_t error_buf_size) {
+    GSLTDirectPeTTaReaderV1Receipt direct_receipt;
+    if (receipt)
+        memset(receipt, 0, sizeof(*receipt));
+    int result = petta_compiled_reader_v1_parse_from(
+        reader, input, input_len, 0u, UINT32_MAX, universe, out_ids,
+        &direct_receipt, NULL, error_buf, error_buf_size);
     if (result < 0)
         return -1;
     if (receipt) {
@@ -496,6 +515,84 @@ done:
         (void)fclose(file);
     free(bytes);
     return ok;
+}
+
+bool petta_compiled_document_v1_open(PeTTaCompiledDocumentV1 *document,
+                                     const char *filename) {
+    struct stat status;
+    if (!document)
+        return false;
+    *document = (PeTTaCompiledDocumentV1){.fd = -1};
+    if (!filename)
+        return false;
+    document->fd = open(filename, O_RDONLY);
+    if (document->fd < 0 || fstat(document->fd, &status) != 0 ||
+        status.st_size < 0) {
+        petta_compiled_document_v1_close(document);
+        return false;
+    }
+    document->len = (size_t)status.st_size;
+    if (document->len == 0u)
+        return true;
+    void *map = mmap(NULL, document->len, PROT_READ, MAP_PRIVATE,
+                     document->fd, 0);
+    if (map == MAP_FAILED) {
+        petta_compiled_document_v1_close(document);
+        return false;
+    }
+    document->bytes = map;
+    return true;
+}
+
+int petta_compiled_document_v1_next(PeTTaCompiledReaderV1 *reader,
+                                    PeTTaCompiledDocumentV1 *document,
+                                    uint32_t max_forms,
+                                    TermUniverse *universe, AtomId **out_ids,
+                                    char *error_buf, size_t error_buf_size) {
+    GSLTDirectPeTTaReaderV1Receipt direct_receipt;
+    size_t end = 0u;
+    if (out_ids)
+        *out_ids = NULL;
+    if (!document || max_forms == 0u)
+        return -1;
+    if (document->pos >= document->len)
+        return 0;
+    int result = petta_compiled_reader_v1_parse_from(
+        reader, document->bytes, document->len, document->pos, max_forms,
+        universe, out_ids, &direct_receipt, &end, error_buf, error_buf_size);
+    if (result >= 0)
+        document->pos = end;
+    return result;
+}
+
+void petta_compiled_document_v1_release_read(
+    PeTTaCompiledDocumentV1 *document) {
+    if (!document || !document->bytes)
+        return;
+    size_t page = (size_t)sysconf(_SC_PAGESIZE);
+    size_t through = document->pos / page * page;
+    if (through <= document->released)
+        return;
+    (void)madvise((uint8_t *)document->bytes + document->released,
+                  through - document->released, MADV_DONTNEED);
+    document->released = through;
+}
+
+void petta_compiled_document_v1_rewind(PeTTaCompiledDocumentV1 *document) {
+    if (!document)
+        return;
+    document->pos = 0u;
+    document->released = 0u;
+}
+
+void petta_compiled_document_v1_close(PeTTaCompiledDocumentV1 *document) {
+    if (!document)
+        return;
+    if (document->bytes)
+        (void)munmap((void *)document->bytes, document->len);
+    if (document->fd >= 0)
+        (void)close(document->fd);
+    *document = (PeTTaCompiledDocumentV1){.fd = -1};
 }
 
 int petta_compiled_reader_v1_parse_file_ids(

@@ -59,6 +59,7 @@
 (: search-policy (-> Atom Atom))
 (: new-space (-> SpaceType))
 (: new-space (-> Atom SpaceType))
+(: new-space (-> Atom Atom SpaceType))
 (: space-set-backend! (-> SpaceType Atom (->)))
 (: space-set-match-backend! (-> SpaceType Atom (->)))
 (: space-len (-> SpaceType Number))
@@ -342,7 +343,7 @@
   (@return "Results produced by evaluating the body against the snapshot-bound space"))
 
 (@doc new-space
-  (@desc "Creates a fresh mutable space. The HE-compatible form is (new-space). The extended/he-prime form accepts semantic kinds such as stack, queue, hash, or set, and also explicit engine selectors such as native or pathmap. Stack and queue produce ordered spaces with explicit peek/pop/get/truncate behavior under their chosen discipline. Hash-space keeps unordered atomspace semantics but adds efficient exact-membership and nodup support for stable closed atoms. A set space holds each atom once: adding an atom it already holds, or an alpha-variant of one, changes nothing. The MORK lane is no longer constructed through generic new-space: use (mork:new-space) from lib/mork.metta when you want the explicit MORK API.")
+  (@desc "Creates a fresh mutable space. The HE-compatible form is (new-space). The extended/he-prime form accepts semantic kinds such as stack, queue, hash, or set, and also explicit engine selectors such as native or pathmap. Stack and queue produce ordered spaces with explicit peek/pop/get/truncate behavior under their chosen discipline. Hash-space keeps unordered atomspace semantics but adds efficient exact-membership and nodup support for stable closed atoms. A set space holds each atom once: adding an atom it already holds, or an alpha-variant of one, changes nothing. A kind may be followed by a profile: strict keeps only what the kind needs and reads its rows for a general match; full also keeps the general indexes. Stack and queue are strict unless made full, the other kinds full unless made strict; both profiles answer every operation alike. The MORK lane is no longer constructed through generic new-space: use (mork:new-space) from lib/mork.metta when you want the explicit MORK API.")
   (@params (
     (@param "Optional selector such as stack, queue, hash, native, or pathmap in extension profiles")))
   (@return "Fresh space value"))

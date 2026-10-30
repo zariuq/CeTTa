@@ -5,7 +5,7 @@
 !(import! &self str)
 
 ; Bind the durable host decision space before matching its injected records.
-(: tg-host:match (-> Atom Atom %Undefined%))
+(: tg-host:match (-> Atom Proc %Undefined%))
 (= (tg-host:match $pattern $template)
    (chain (context-space) $space (match $space $pattern $template){$pattern}))
 

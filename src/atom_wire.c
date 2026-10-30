@@ -65,7 +65,14 @@ static CettaAtomWireStatus encode(Writer *w, const Atom *a, unsigned depth) {
         if (bits > CETTA_ATOM_WIRE_NODES) return ATOM_WIRE_LIMIT;
     } else if (a->kind == ATOM_GROUNDED) {
         switch (a->ground.gkind) {
-        case GV_INT: tag = 'I'; memcpy(&bits, &a->ground.ival, 8); break;
+        case GV_INT:
+            /* An owning identifier is a resource reference, not its printed
+             * integer. Encoding it would silently erase the lifetime and
+             * authority carried by the value. Plain identifier data remains
+             * ordinary portable syntax. */
+            if (a->structural_facts & ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID)
+                return ATOM_WIRE_UNSUPPORTED;
+            tag = 'I'; memcpy(&bits, &a->ground.ival, 8); break;
         case GV_FLOAT: tag = 'F'; memcpy(&bits, &a->ground.fval, 8); break;
         case GV_BOOL: tag = a->ground.bval ? 'Y' : 'N'; break;
         case GV_STRING: tag = 'T'; text = a->ground.sval; len = atom_string_len(a); break;

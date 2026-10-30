@@ -21,17 +21,19 @@
       "source": "durable/activity.metta",
       "output": "durable/activity.metta",
       "source_sha256": "ef55a22d881c32be516b0492d95864bdf3b891d2e2129c2cf864a732c72c4307",
-      "output_sha256": "232ac799356ae610f920cdf4a06aadc83519771d6587b8529123daf9ae9191e2",
+      "output_sha256": "f7666bbfee1565a05a5bdc9a8e89d0ec821d8c5aa588cf05dcb3992cdb1a0e3f",
       "edits": 32,
-      "code_diagnostics": 0
+      "code_diagnostics": 0,
+      "dialect_replacements": 1
     },
     {
       "source": "durable/telegram.metta",
       "output": "durable/telegram.metta",
       "source_sha256": "f012eb36e777ea4d7f71164a3a9c9778be24cfb50e92b30c26e2fca17063e9ac",
-      "output_sha256": "d4fc7af57454398825089618a76fa072e7cb11abf323c99962a252c6c207f288",
+      "output_sha256": "0dcccc8a101581ada652bf403bebd7b98e4d8c48f3f2766ad6053df2c1a676fa",
       "edits": 48,
-      "code_diagnostics": 0
+      "code_diagnostics": 0,
+      "dialect_replacements": 1
     },
     {
       "source": "durable/telegram_agent.metta",
@@ -108,8 +110,8 @@
     {
       "source": "ilp/metagol_core.metta",
       "output": "ilp/metagol_core.metta",
-      "source_sha256": "125f62a3b65c980d15b8044707f11a7023d11fd9e637c6c0395583b9716e1cd0",
-      "output_sha256": "4b8d973e65811b41778247cf7c29e503bbfec5bb64909dc850bc68db1be3e6ed",
+      "source_sha256": "8018fe69d799b1f4d56d2a84e1d98d0db7a8fe9fec71046f21dd8b50e67fea3e",
+      "output_sha256": "dc4685d88bc3ce36473c2f6e925acad36feb19bdb2ba4a45cf64e7ccbcfd287c",
       "edits": 25,
       "code_diagnostics": 0
     },
@@ -498,8 +500,8 @@
     {
       "source": "stdlib.metta",
       "output": "stdlib.metta",
-      "source_sha256": "ec033960d719a27a63ff5e6345be512538f1576122e6cf7bfe1e8942e5ce00c3",
-      "output_sha256": "747a32bfe9ede1f302b751ae0285613055762b3e5e440245c9e839e89fed4659",
+      "source_sha256": "ba92a8a55c8648c587531a429e9176a2bc6c128ab0af2f2c07dbb43a85ea266d",
+      "output_sha256": "24921f86799368558b3bc2a522eaaf0bc662977b676ab92decde15412abe59dc",
       "edits": 63,
       "code_diagnostics": 2
     },
@@ -507,9 +509,10 @@
       "source": "str.metta",
       "output": "str.metta",
       "source_sha256": "f797092d3ce245aa94f7f16e91a5e7f4e96475fe7b4612b5310c552e6394f4f2",
-      "output_sha256": "e74062f46d7c77fa8e7facc68871a676055b80145f5e5d2192b291ccd2fb8ab5",
+      "output_sha256": "169a9d8339354479f8aba7edb9c2b8843353bb3a2275fd9043b3e112da817a77",
       "edits": 48,
-      "code_diagnostics": 0
+      "code_diagnostics": 0,
+      "dialect_replacements": 4
     },
     {
       "source": "system.metta",
@@ -686,7 +689,7 @@
     {
       "source": "store.metta",
       "generator": "library_spelling.py",
-      "output_sha256": "dfa8889fdf59d8aaaf0ba23d3ba2ffdcd06e813b1f238156dfc0a8020c42405b"
+      "output_sha256": "0c58ef1d6fd2741e21cfc3a3bcbff7e19bb283ff7e3b3d418635b10cd64c429f"
     },
     {
       "source": "syntax.metta",

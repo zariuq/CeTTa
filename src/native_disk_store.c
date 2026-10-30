@@ -316,6 +316,17 @@ static bool same_domain(CettaDiskStore *store,const CettaDiskStoreView *expected
     return expected && expected->device==store->device && expected->inode==store->inode &&
         !memcmp(expected->meta.epoch,current->meta.epoch,16);
 }
+CettaDiskStoreStatus cetta_disk_store_check_view(CettaDiskStore *store,
+        const CettaDiskStoreView *view) {
+    if (!store || !view) return CETTA_STORE_INVALID;
+    if (store->uncertain) return CETTA_STORE_RECOVERY_REQUIRED;
+    CettaDiskStoreView *current=NULL;
+    CettaDiskStoreStatus status=cetta_disk_store_snapshot(store,&current);
+    if (status==CETTA_STORE_OK && !same_domain(store,view,current))
+        status=CETTA_STORE_CONFLICT;
+    cetta_disk_store_view_close(current);
+    return status;
+}
 static bool same_root(const CettaDiskStoreView *left,const CettaDiskStoreView *right) {
     return left->meta.revision==right->meta.revision && left->meta.root==right->meta.root &&
         left->meta.end==right->meta.end && !memcmp(left->meta.segment,right->meta.segment,16);

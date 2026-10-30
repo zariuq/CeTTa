@@ -22,6 +22,7 @@ typedef enum {
 typedef struct {
     uint64_t universe_instance_id;
     uint64_t universe_storage_epoch;
+    uint64_t universe_collection_epoch;
     AtomId context_id;
     AtomId term_id;
     AtomId type_id;

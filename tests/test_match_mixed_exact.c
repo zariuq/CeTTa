@@ -12,18 +12,26 @@ static Atom *row(Arena *arena, Atom *value) {
     return atom_expr2(arena, atom_symbol(arena, "row"), value);
 }
 
+static int compare_index(const void *left, const void *right) {
+    CettaIndex a = *(const CettaIndex *)left, b = *(const CettaIndex *)right;
+    return (a > b) - (a < b);
+}
+
 /* A query may name rows it has not matched yet; its consumer matches each
  * one (space_subst_match_with_seed). The answers are the rows that match,
- * in row order. Inside a concurrent scope every named row is already an
- * exact match. */
+ * each as often as it occurs; a multiset promises no order. Inside a
+ * concurrent scope every named row is already an exact match. */
 static void assert_rows(Space *space, Arena *arena, Atom *query,
                         const CettaIndex *expected, size_t count) {
+    enum { MAX_ROWS = 8u };
+    assert(count <= MAX_ROWS);
     SubstMatchSet matches;
     space_subst_query(space, arena, query, &matches);
     bool concurrent = cetta_shared_transition_scope_active();
     if (concurrent)
         assert(matches.len == count);
-    size_t answers = 0u;
+    CettaIndex answers[MAX_ROWS];
+    size_t answer_count = 0u;
     for (CettaIndex index = 0u; index < matches.len; index++) {
         if (concurrent)
             assert(matches.items[index].exact);
@@ -32,11 +40,17 @@ static void assert_rows(Space *space, Arena *arena, Atom *query,
                                          NULL, arena, &bindings))
             continue;
         bindings_free(&bindings);
-        assert(answers < count);
-        assert(matches.items[index].atom_idx == expected[answers]);
-        answers++;
+        assert(answer_count < count);
+        answers[answer_count++] = matches.items[index].atom_idx;
     }
-    assert(answers == count);
+    assert(answer_count == count);
+    CettaIndex wanted[MAX_ROWS];
+    for (size_t i = 0u; i < count; i++)
+        wanted[i] = expected[i];
+    qsort(answers, count, sizeof(*answers), compare_index);
+    qsort(wanted, count, sizeof(*wanted), compare_index);
+    for (size_t i = 0u; i < count; i++)
+        assert(answers[i] == wanted[i]);
     smset_free(&matches);
 }
 
@@ -132,6 +146,6 @@ int main(void) {
     }
     var_intern_free(&variables);
     symbol_table_free(&symbols);
-    puts("PASS: exact shortcuts preserve open rows and ordered duplicates");
+    puts("PASS: exact shortcuts preserve open rows and duplicates");
     return 0;
 }

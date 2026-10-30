@@ -250,6 +250,10 @@ PeTTaNamedArity petta_semantics_registered_named_arity(
 Atom *petta_semantics_success_value(Arena *arena);
 bool petta_semantics_library_reference(
     const Atom *atom, PeTTaLibraryReference *reference);
+/* (str json) is a batch of literal import specifications; (library str)
+ * remains one descriptor. No member is evaluated to discover an import. */
+bool petta_semantics_import_batch(const Atom *atom,
+    Atom *const **members, CettaExprLen *count);
 bool petta_semantics_library_path_effect(
     const Atom *atom, PeTTaLibraryPathEffect *effect);
 

@@ -3397,6 +3397,7 @@ static Space *rho_promote_payload_space(Arena *persistent,
     space_init_with_universe(stable,
                              visible ? visible->native.universe : NULL);
     stable->kind = visible->kind;
+    space_set_strict(stable, visible->strict);
     stable->payload_owner_epoch = 0;
     stable->payload_export_owner_epoch = export_owner_epoch;
     /* Cleanup ownership precedes recursive exposure. A later refusal can

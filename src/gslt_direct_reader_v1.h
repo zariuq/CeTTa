@@ -395,6 +395,16 @@ int gslt_direct_petta_reader_v1_parse_bytes_ids(
     size_t input_len, const GSLTDirectPeTTaProjectionV1 *projection,
     AtomId **out_ids, GSLTDirectPeTTaReaderV1Receipt *receipt,
     char *error_buf, size_t error_buf_size);
+/* The forms of INPUT from byte offset START, at most MAX_FORMS of them
+ * (UINT32_MAX: every one), with *END_OUT set to where the next form would
+ * start: INPUT_LEN once the input is read through.  The ids are those the
+ * whole-input entry gives for the same forms. */
+int gslt_direct_petta_reader_v1_parse_bytes_ids_from(
+    const GSLTDirectPeTTaReaderV1Plan *plan, const uint8_t *input,
+    size_t input_len, size_t start, uint32_t max_forms,
+    const GSLTDirectPeTTaProjectionV1 *projection, AtomId **out_ids,
+    GSLTDirectPeTTaReaderV1Receipt *receipt, size_t *end_out,
+    char *error_buf, size_t error_buf_size);
 
 /* One term of the form LanguageDef, from input that holds exactly that term
  * between the form's separators.  The document layer takes no part: there is

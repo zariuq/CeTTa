@@ -3365,7 +3365,8 @@ static bool grounded_builds_value_head(Atom *head) {
     SymbolId id = atom_symbol_current_id(head);
     return id == g_builtin_syms.parse ||
            id == g_builtin_syms.parse_first ||
-           id == g_builtin_syms.readln_bang;
+           id == g_builtin_syms.readln_bang ||
+           (he_typing_is_op_id && he_typing_is_op_id(id));
 }
 
 bool grounded_op_is_sequence_constructor(SymbolId id) {

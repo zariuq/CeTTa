@@ -92,7 +92,7 @@ static bool prime_replay_compare_task(const PrimeEvalStackTask *a,const PrimeEva
     if(a->space!=b->space)return false;
 #define RT(f) RC_FIELDS("task",a,b,f)
     RT(kind);RT(pure_authority);RT(fuel);RT(preserve_bindings);RT(strict_ready_argument);
-    RT(dynamic_env_initialized);RT(seed_env_initialized);RT(control_scoring);
+    RT(dynamic_env_initialized);RT(dynamic_env_is_seed);RT(seed_env_initialized);RT(control_scoring);
 #undef RT
     RC_P("task.space",a->space,b->space);if(!read->arena(read->context,"task.arena",a->arena,b->arena))return false;
     RC_P("task.target",a->target,b->target);
@@ -300,10 +300,12 @@ static bool prime_replay_compare_frame(const PrimeEvalStackFrame *a,const PrimeE
     RC_P("frame.target",a->target,b->target);if(!read->arena(read->context,"frame.heap_owner",a->heap_owner,b->heap_owner))return false;
     RC_P("frame.advice",a->control_advice,b->control_advice);
     RC_F("frame.dialect_advice_capacity",a->control_return_advice_capacity,b->control_return_advice_capacity);
-    RC_F("frame.pending_advice_limit",a->control_pending_return_limit,b->control_pending_return_limit);
-    RC_A("frame.pending_advice_key",a->control_pending_return_advice.key,b->control_pending_return_advice.key);
-    RC_A("frame.pending_advice_bound",a->control_pending_return_advice.bound,b->control_pending_return_advice.bound);
-    RC_P("frame.pending_advice",a->control_pending_return_advice.advice,b->control_pending_return_advice.advice);
+    RC_F("frame.return_pending",a->control_return_pending,b->control_return_pending);
+    RC_F("frame.pending_advice_begin",a->control_return_pending_begin,b->control_return_pending_begin);
+    RC_F("frame.pending_advice_end",a->control_return_pending_end,b->control_return_pending_end);
+    RC_A("frame.pending_advice_key",a->control_return_pending_advice.key,b->control_return_pending_advice.key);
+    RC_A("frame.pending_advice_bound",a->control_return_pending_advice.bound,b->control_return_pending_advice.bound);
+    RC_P("frame.pending_advice",a->control_return_pending_advice.advice,b->control_return_pending_advice.advice);
 #define FA(f) RC_A("frame."#f,a->f,b->f)
     FA(control_key);FA(control_bound);FA(atom);FA(etype);FA(strict_source);FA(then_branch);FA(else_branch);
     FA(weight_subject);FA(weight_algebra);FA(weight_trace);FA(ref);
@@ -858,7 +860,7 @@ static bool prime_replay_compare_control_fields_in(const PrimeNativeControl *a,
     RC_F("control.handle",a->handle_id,b->handle_id);RC_F("control.leased",a->leased,b->leased);
 #define CC(f) RC_FIELDS("control",a,b,f)
     CC(frame_sequence);CC(open_source_frames);CC(active_allowance);CC(active_spent);
-    CC(key_generation);CC(active_scoring);CC(pure_authority);CC(worker_execution);CC(pure_call_refused);
+    CC(key_generation);CC(active_scoring);CC(pure_authority);CC(worker_execution);
     CC(effect_pending);CC(need_pending);CC(open_frames);CC(failed);CC(invalidated);
     CC(reclaims_frames);
     CC(completion);CC(owned_arena);CC(resource_pending);CC(cost_enabled);

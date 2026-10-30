@@ -1,6 +1,7 @@
 #ifndef CETTA_PETTA_COMPILED_READER_H
 #define CETTA_PETTA_COMPILED_READER_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -65,5 +66,32 @@ int petta_compiled_reader_v1_parse_file_ids(
     TermUniverse *universe, AtomId **out_ids,
     PeTTaCompiledReaderV1Receipt *receipt, char *error_buf,
     size_t error_buf_size);
+
+/* A PeTTa source file read a slice of forms at a time, over a read-only
+ * mapping of it, so that a document too large to parse whole keeps only
+ * the slice being run.  The pages of the forms read through can be handed
+ * back to the system; a rewind reads the file again from its start. */
+typedef struct {
+    int fd;
+    const uint8_t *bytes;
+    size_t len;
+    size_t pos;
+    size_t released;
+} PeTTaCompiledDocumentV1;
+
+bool petta_compiled_document_v1_open(PeTTaCompiledDocumentV1 *document,
+                                     const char *filename);
+/* The next slice, at most MAX_FORMS forms, as ids in *OUT_IDS (the caller
+ * frees them): their count, 0 once the document is read through, -1 when
+ * the source is outside the reader's language. */
+int petta_compiled_document_v1_next(PeTTaCompiledReaderV1 *reader,
+                                    PeTTaCompiledDocumentV1 *document,
+                                    uint32_t max_forms,
+                                    TermUniverse *universe, AtomId **out_ids,
+                                    char *error_buf, size_t error_buf_size);
+void petta_compiled_document_v1_release_read(
+    PeTTaCompiledDocumentV1 *document);
+void petta_compiled_document_v1_rewind(PeTTaCompiledDocumentV1 *document);
+void petta_compiled_document_v1_close(PeTTaCompiledDocumentV1 *document);
 
 #endif /* CETTA_PETTA_COMPILED_READER_H */

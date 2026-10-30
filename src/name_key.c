@@ -129,23 +129,20 @@ NameKeyTable *name_key_table_new_with_hash_mask(size_t bucket_count,
                                                 uint32_t hash_mask) {
     size_t count = name_key_bucket_count(bucket_count);
     if (count == 0u) return NULL;
-    NameKeyTable *table = cetta_malloc(sizeof(*table));
-    memset(table, 0, sizeof(*table));
-    arena_init(&table->arena);
-    table->buckets = cetta_malloc(sizeof(*table->buckets) * count);
-    memset(table->buckets, 0, sizeof(*table->buckets) * count);
+    NameKeyTable *table = calloc(1u, sizeof(*table));
+    if (!table) return NULL;
+    table->buckets = calloc(count, sizeof(*table->buckets));
     table->bucket_count = count;
     table->by_id_cap = 16u;
-    table->by_id = cetta_malloc(sizeof(*table->by_id) * table->by_id_cap);
-    memset(table->by_id, 0, sizeof(*table->by_id) * table->by_id_cap);
+    table->by_id = calloc(table->by_id_cap, sizeof(*table->by_id));
     table->hash_mask = hash_mask;
-    if (pthread_mutex_init(&table->mutex, NULL) != 0) {
-        arena_free(&table->arena);
+    if (!table->buckets || !table->by_id || pthread_mutex_init(&table->mutex, NULL) != 0) {
         free(table->by_id);
         free(table->buckets);
         free(table);
         return NULL;
     }
+    arena_init(&table->arena);
     return table;
 }
 

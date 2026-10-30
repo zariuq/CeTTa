@@ -68,6 +68,8 @@ typedef struct {
     SymbolId id;
 } SymbolSlot;
 
+typedef struct SymbolCanonicalChunk SymbolCanonicalChunk;
+
 #define SYMBOL_ENTRY_CHUNK_BITS 14u
 #define SYMBOL_ENTRY_CHUNK_SIZE (1u << SYMBOL_ENTRY_CHUNK_BITS)
 #define SYMBOL_ENTRY_CHUNK_MASK (SYMBOL_ENTRY_CHUNK_SIZE - 1u)
@@ -81,12 +83,24 @@ typedef struct {
 
     SymbolEntry **entry_chunks;
     _Atomic uint32_t entry_len;
+    /* Immutable table-owned atoms in publication order. Chunks and entries
+     * are append-only until table destruction; canonical_count publishes a
+     * complete prefix. This lets checkpoint domains enumerate actual global
+     * atoms without scanning every interned spelling. */
+    SymbolCanonicalChunk *canonical_first, *canonical_last;
+    _Atomic uint32_t canonical_count;
     pthread_mutex_t write_mutex;
     SymbolTableStats stats;
     /* Lazily populated spelling index, protected by write_mutex. Entries are
      * immutable scalar sequences; opaque non-UTF-8 spellings are counted. */
     CettaScalarTrie *name_trie;
     uint32_t name_trie_count, name_trie_invalid;
+    /* The spellings, packed into chunks freed with the table: a symbol lives
+     * as long as its table, so its spelling costs its bytes and no more.
+     * Protected by write_mutex. */
+    struct SymbolSpellingChunk *spelling_chunks;
+    char *spelling_free;
+    size_t spelling_left;
 } SymbolTable;
 
 /* Non-destructive marker substrate. Unmarked bytes are diagnostics, never
@@ -1249,6 +1263,12 @@ void *symbol_canonical_atom(const SymbolTable *st, SymbolId id);
  * the published atom, which is `atom` only when it won; NULL for an id the
  * table does not hold.  The table frees the published atom. */
 void *symbol_publish_canonical_atom(SymbolTable *st, SymbolId id, void *atom);
+uint32_t symbol_canonical_count(const SymbolTable *st);
+typedef bool (*SymbolCanonicalVisitor)(void *atom, void *context);
+/* Visit exactly one stable published prefix. Concurrent later publication
+ * makes the visit fail rather than silently widening its checkpoint domain. */
+bool symbol_canonical_visit(const SymbolTable *st, uint64_t instance,
+    uint32_t count, SymbolCanonicalVisitor visit, void *context);
 bool symbol_eq_cstr(const SymbolTable *st, SymbolId id, const char *text);
 
 

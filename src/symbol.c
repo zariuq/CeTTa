@@ -120,11 +120,48 @@ static void *symbol_malloc(size_t size) {
     return ptr;
 }
 
+/* Spellings are packed into chunks of this many bytes; a longer one than an
+ * eighth of a chunk gets a block of its own. */
+#define SYMBOL_SPELLING_CHUNK_BYTES 65536u
+
+struct SymbolSpellingChunk {
+    struct SymbolSpellingChunk *next;
+    char bytes[];
+};
+
+static char *symbol_spelling_alloc(SymbolTable *st, size_t size) {
+    if (size > SYMBOL_SPELLING_CHUNK_BYTES / 8u) {
+        struct SymbolSpellingChunk *own =
+            symbol_malloc(sizeof(*own) + size);
+        own->next = st->spelling_chunks;
+        st->spelling_chunks = own;
+        return own->bytes;
+    }
+    if (st->spelling_left < size) {
+        struct SymbolSpellingChunk *chunk =
+            symbol_malloc(sizeof(*chunk) + SYMBOL_SPELLING_CHUNK_BYTES);
+        chunk->next = st->spelling_chunks;
+        st->spelling_chunks = chunk;
+        st->spelling_free = chunk->bytes;
+        st->spelling_left = SYMBOL_SPELLING_CHUNK_BYTES;
+    }
+    char *at = st->spelling_free;
+    st->spelling_free += size;
+    st->spelling_left -= size;
+    return at;
+}
+
 static void *symbol_calloc(size_t count, size_t size) {
     void *ptr = calloc(count == 0 ? 1 : count, size == 0 ? 1 : size);
     if (!ptr) symbol_oom(count * size);
     return ptr;
 }
+
+enum { SYMBOL_CANONICAL_CHUNK_SIZE = 256u };
+struct SymbolCanonicalChunk {
+    struct SymbolCanonicalChunk *next;
+    void *atoms[SYMBOL_CANONICAL_CHUNK_SIZE];
+};
 
 static uint64_t symbol_hash_bytes(const uint8_t *bytes, uint32_t len) {
     uint64_t h = 1469598103934665603ULL;
@@ -249,10 +286,15 @@ void symbol_table_init(SymbolTable *st) {
     st->name_trie = NULL;
     st->name_trie_count = 1u;
     st->name_trie_invalid = 0u;
+    st->spelling_chunks = NULL;
+    st->spelling_free = NULL;
+    st->spelling_left = 0u;
     st->entry_chunks = symbol_calloc(SYMBOL_ENTRY_CHUNK_COUNT, sizeof(SymbolEntry *));
     symbol_table_note_metadata(
         st, (uint64_t)SYMBOL_ENTRY_CHUNK_COUNT * sizeof(SymbolEntry *));
     atomic_init(&st->entry_len, 0);
+    st->canonical_first = st->canonical_last = NULL;
+    atomic_init(&st->canonical_count, 0u);
     if (pthread_mutex_init(&st->write_mutex, NULL) != 0) {
         fprintf(stderr, "fatal: failed to initialize symbol table mutex\n");
         abort();
@@ -269,7 +311,6 @@ void symbol_table_free(SymbolTable *st) {
     for (uint32_t i = 1; i < entry_len; i++) {
         SymbolEntry *entry = symbol_table_entry_mut(st, (SymbolId)i);
         if (!entry) continue;
-        free((void *)entry->bytes);
         entry->bytes = NULL;
         free(atomic_load_explicit(&entry->canonical_atom,
                                   memory_order_relaxed));
@@ -283,14 +324,29 @@ void symbol_table_free(SymbolTable *st) {
         free(st->entry_chunks);
     }
     free(st->slots);
+    SymbolCanonicalChunk *canonical = st->canonical_first;
+    while (canonical) {
+        SymbolCanonicalChunk *next = canonical->next;
+        free(canonical);
+        canonical = next;
+    }
+    while (st->spelling_chunks) {
+        struct SymbolSpellingChunk *next = st->spelling_chunks->next;
+        free(st->spelling_chunks);
+        st->spelling_chunks = next;
+    }
+    st->spelling_free = NULL;
+    st->spelling_left = 0u;
     cetta_scalar_trie_free(st->name_trie);
     st->name_trie = NULL;
     st->name_trie_count = st->name_trie_invalid = 0u;
     pthread_mutex_destroy(&st->write_mutex);
     st->entry_chunks = NULL;
     st->slots = NULL;
+    st->canonical_first = st->canonical_last = NULL;
     st->instance_id = 0u;
     atomic_store_explicit(&st->entry_len, 0, memory_order_relaxed);
+    atomic_store_explicit(&st->canonical_count, 0u, memory_order_relaxed);
     st->slot_cap = 0;
     st->slot_used = 0;
     st->stats = (SymbolTableStats){0};
@@ -324,7 +380,7 @@ static SymbolId symbol_intern_span_hashed_unlocked(SymbolTable *st,
                 fprintf(stderr, "fatal: symbol table exhausted symbol id space\n");
                 abort();
             }
-            char *copy = symbol_malloc((size_t)len + 1);
+            char *copy = symbol_spelling_alloc(st, (size_t)len + 1);
             memcpy(copy, bytes, len);
             copy[len] = '\0';
 
@@ -740,15 +796,57 @@ void *symbol_publish_canonical_atom(SymbolTable *st, SymbolId id, void *atom) {
     if (!st || !atom || id == SYMBOL_ID_NONE ||
         id >= atomic_load_explicit(&st->entry_len, memory_order_acquire))
         return NULL;
+    pthread_mutex_lock(&st->write_mutex);
     SymbolEntry *chunk = symbol_table_entry_chunk(st, id);
-    if (!chunk)
-        return NULL;
-    void *published = NULL;
-    if (atomic_compare_exchange_strong_explicit(
-            &chunk[id & SYMBOL_ENTRY_CHUNK_MASK].canonical_atom, &published,
-            atom, memory_order_acq_rel, memory_order_acquire))
-        return atom;
+    void *published = chunk ? atomic_load_explicit(
+        &chunk[id & SYMBOL_ENTRY_CHUNK_MASK].canonical_atom,memory_order_relaxed) : NULL;
+    if (!published && chunk) {
+        uint32_t count=atomic_load_explicit(&st->canonical_count,memory_order_relaxed);
+        if ((count % SYMBOL_CANONICAL_CHUNK_SIZE)==0u) {
+            SymbolCanonicalChunk *next=symbol_calloc(1u,sizeof(*next));
+            if (st->canonical_last) st->canonical_last->next=next;
+            else st->canonical_first=next;
+            st->canonical_last=next;
+            symbol_table_note_metadata(st,sizeof(*next));
+        }
+        st->canonical_last->atoms[count % SYMBOL_CANONICAL_CHUNK_SIZE]=atom;
+        /* Publish catalogue membership before the entry can expose the atom. */
+        atomic_store_explicit(&st->canonical_count,count+1u,memory_order_release);
+        atomic_store_explicit(&chunk[id & SYMBOL_ENTRY_CHUNK_MASK].canonical_atom,
+            atom,memory_order_release);
+        published=atom;
+    }
+    pthread_mutex_unlock(&st->write_mutex);
     return published;
+}
+
+uint32_t symbol_canonical_count(const SymbolTable *st) {
+    return st ? atomic_load_explicit(&st->canonical_count,memory_order_acquire) : 0u;
+}
+
+bool symbol_canonical_visit(const SymbolTable *st, uint64_t instance,
+        uint32_t count, SymbolCanonicalVisitor visit, void *context) {
+    if (!st || !instance || symbol_table_instance_id(st)!=instance ||
+        symbol_canonical_count(st)!=count || (count && !visit)) return false;
+    /* canonical_count is the release/acquire publication boundary for the
+     * append-only pointers below. At zero there is no publishing store to
+     * synchronize with, so do not touch canonical_first. The final count
+     * check still rejects a concurrent first publication. */
+    if (!count)
+        return symbol_table_instance_id(st)==instance &&
+            symbol_canonical_count(st)==0u;
+    const SymbolCanonicalChunk *chunk=st->canonical_first;
+    uint32_t visited=0u;
+    while (visited<count) {
+        if (!chunk) return false;
+        uint32_t available=count-visited;
+        if (available>SYMBOL_CANONICAL_CHUNK_SIZE) available=SYMBOL_CANONICAL_CHUNK_SIZE;
+        for (uint32_t i=0u;i<available;i++)
+            if (!chunk->atoms[i] || !visit(chunk->atoms[i],context)) return false;
+        visited+=available;
+        if (visited<count) chunk=chunk->next;
+    }
+    return symbol_table_instance_id(st)==instance && symbol_canonical_count(st)==count;
 }
 
 bool symbol_eq_cstr(const SymbolTable *st, SymbolId id, const char *text) {

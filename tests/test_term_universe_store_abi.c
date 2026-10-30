@@ -2162,6 +2162,16 @@ static uint32_t test_integer_hashing_to(uint32_t target) {
     return (h * 33u) ^ target;
 }
 
+/* The inverse of the finish an expression's hash takes after its fold. */
+static uint32_t hash_unfinish(uint32_t h) {
+    h ^= h >> 16;
+    h *= 0x7ed1b41du;
+    h ^= (h >> 13) ^ (h >> 26);
+    h *= 0xa5cb9243u;
+    h ^= h >> 16;
+    return h;
+}
+
 static void test_record_hash_is_atom_hash(void) {
     Arena arena, persistent;
     arena_init(&arena);
@@ -2172,7 +2182,8 @@ static void test_record_hash_is_atom_hash(void) {
     Atom *zero = atom_int(&arena, (int64_t)test_integer_hashing_to(0u));
     Atom *f = atom_symbol(&arena, "f");
     Atom *probe = atom_expr2(&arena, f, atom_int(&arena, 7));
-    uint32_t x = atom_hash(probe) ^ atom_hash(probe->expr.elems[1]);
+    uint32_t x = hash_unfinish(atom_hash(probe)) ^
+        atom_hash(probe->expr.elems[1]);
     Atom *zero_expr = atom_expr2(
         &arena, f, atom_int(&arena, (int64_t)test_integer_hashing_to(x)));
     assert(atom_hash(zero) == ATOM_HASH_ZERO_SPELLING);

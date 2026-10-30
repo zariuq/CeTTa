@@ -514,8 +514,34 @@ typedef struct {
     CettaSharedReturnCheckpoint *source, *image;
 } CopiedCheckpoint;
 
-CettaSharedReturnProducer *cetta_shared_return_producer_copy(
-    CettaSharedReturnProducer *source, const CettaSharedReturnCopy *copy) {
+struct CettaSharedReturnCopyPlan {
+    CettaSharedReturnProducer *source,*image;
+    CettaSharedReturnCopy copy;
+    CopiedCheckpoint *checkpoints;
+    size_t held;
+};
+
+void cetta_shared_return_producer_copy_plan_free(
+        CettaSharedReturnCopyPlan *plan) {
+    if(!plan)return;
+    CettaSharedReturnProducer *image=plan->image;
+    if(image) {
+        cetta_owned_execution_cancel(&image->execution);
+        cetta_occurrence_log_free(image->log);
+        image->log=NULL;
+    }
+    for(size_t i=0u;i<plan->held;i++) {
+        cetta_shared_return_checkpoint_release(plan->checkpoints[i].image);
+        cetta_shared_return_checkpoint_release(plan->checkpoints[i].source);
+    }
+    free(plan->checkpoints);
+    cetta_shared_return_producer_free(plan->source);
+    cetta_shared_return_producer_free(image);
+    free(plan);
+}
+
+CettaSharedReturnCopyPlan *cetta_shared_return_producer_copy_prepare(
+        CettaSharedReturnProducer *source,const CettaSharedReturnCopy *copy) {
     if (!source || source->copy_pending || !source->references ||
         source->references == SIZE_MAX || !copy || !copy->producer ||
         !copy->capture || !copy->compatible ||
@@ -526,60 +552,66 @@ CettaSharedReturnProducer *cetta_shared_return_producer_copy(
         (!source->detached && (!copy->execution || !source->execution.computation ||
             !source->execution.relocatable || source->execution.retiring)))
         return NULL;
+    CettaSharedReturnCopyPlan *plan=calloc(1u,sizeof(*plan));
+    if(!plan)return NULL;
     source->references++;
-    CettaSharedReturnProducer *image = calloc(1u, sizeof(*image));
-    CopiedCheckpoint *checkpoints = NULL;
-    size_t held = 0u;
-    bool ready = false;
-    if (!image)
-        goto done;
+    plan->source=source;plan->copy=*copy;
+    CettaSharedReturnProducer *image=calloc(1u,sizeof(*image));
+    plan->image=image;
+    if(!image)goto fail;
     *image = (CettaSharedReturnProducer){.references = 1u, .copy_pending = true,
         .capture = copy->capture, .compatible = copy->compatible,
         .context = copy->image_context, .refusal = source->refusal,
         .detached = source->detached, .checkpoint_pin = source->checkpoint_pin,
         .checkpoint_pin_active = source->checkpoint_pin_active};
     if (source->checkpoints) {
-        checkpoints = calloc(source->checkpoints, sizeof(*checkpoints));
-        if (!checkpoints)
-            goto done;
+        plan->checkpoints=calloc(source->checkpoints,sizeof(*plan->checkpoints));
+        if(!plan->checkpoints)goto fail;
     }
     CettaSharedReturnCheckpoint *previous = NULL, *checkpoint = source->checkpoint_head;
     uint64_t oldest = UINT64_MAX;
-    while (checkpoint && held < source->checkpoints) {
+    while (checkpoint && plan->held < source->checkpoints) {
         if (checkpoint->producer != source || checkpoint->previous != previous ||
             !checkpoint->references || !cetta_shared_return_checkpoint_retain(checkpoint))
-            goto done;
-        checkpoints[held++].source = checkpoint;
+            goto fail;
+        plan->checkpoints[plan->held++].source=checkpoint;
         if (checkpoint->position < oldest)
             oldest = checkpoint->position;
         previous = checkpoint;
         checkpoint = checkpoint->next;
     }
-    if (checkpoint || held != source->checkpoints)
-        goto done;
-    if (held) {
+    if(checkpoint||plan->held!=source->checkpoints)goto fail;
+    if(plan->held) {
         uint64_t pin;
-        if (!cetta_occurrence_log_position(source->log, source->checkpoint_pin, &pin) || pin != oldest)
-            goto done;
+        if (!cetta_occurrence_log_position(source->log, source->checkpoint_pin, &pin) ||
+            pin != oldest)
+            goto fail;
     }
-    /* Allocate every checkpoint before exposing any image edge. Insertion
-     * in reverse preserves the original owner list as well as its pin. */
-    for (size_t i = held; i > 0u; i--) {
-        CopiedCheckpoint *pair = &checkpoints[i - 1u];
+    for(size_t i=plan->held;i>0u;i--) {
+        CopiedCheckpoint *pair=&plan->checkpoints[i-1u];
         pair->image = checkpoint_allocate(image, pair->source->position,
             pair->source->retains_producer);
-        if (!pair->image)
-            goto done;
+        if(!pair->image)goto fail;
         checkpoint_adopt(pair->image);
     }
-    if (!copy->producer(copy->context, source, image))
-        goto done;
-    for (size_t i = 0u; i < held; i++)
-        if (!copy->checkpoint(copy->context, checkpoints[i].source, checkpoints[i].image))
-            goto done;
-    image->log = cetta_occurrence_log_copy(source->log, copy->row, copy->context);
-    if (!image->log)
-        goto done;
+    if(!copy->producer(copy->context,source,image))goto fail;
+    for(size_t i=0u;i<plan->held;i++)
+        if(!copy->checkpoint(copy->context,plan->checkpoints[i].source,
+                plan->checkpoints[i].image))goto fail;
+    return plan;
+fail:
+    cetta_shared_return_producer_copy_plan_free(plan);
+    return NULL;
+}
+
+CettaSharedReturnProducer *cetta_shared_return_producer_copy_finish(
+        CettaSharedReturnCopyPlan *plan) {
+    if(!plan||!plan->source||!plan->image)return NULL;
+    CettaSharedReturnProducer *source=plan->source,*image=plan->image;
+    const CettaSharedReturnCopy *copy=&plan->copy;
+    bool ready=false;
+    image->log=cetta_occurrence_log_copy(source->log,copy->row,copy->context);
+    if(!image->log)goto done;
     if (!source->detached) {
         CettaOwnedExecution execution = {0};
         if (!copy->execution(copy->context, &source->execution, &execution))
@@ -594,28 +626,31 @@ CettaSharedReturnProducer *cetta_shared_return_producer_copy(
             goto done;
         }
     } else image->execution = source->execution;
-    /* A temporary construction share is not an owner of an operational
-     * checkpoint. The receiving graph must have adopted every live image. */
-    for (size_t i = 0u; i < held; i++)
-        if (checkpoints[i].image->references <= 1u)
+    for(size_t i=0u;i<plan->held;i++)
+        if(plan->checkpoints[i].image->references<=1u)
             goto done;
     image->copy_pending = false;
-    ready = true;
+    ready=true;
 done:
-    if (image && !ready) {
+    if(!ready) {
         cetta_owned_execution_cancel(&image->execution);
         cetta_occurrence_log_free(image->log);
         image->log = NULL;
     }
-    for (size_t i = 0u; i < held; i++) {
-        cetta_shared_return_checkpoint_release(checkpoints[i].image);
-        cetta_shared_return_checkpoint_release(checkpoints[i].source);
+    for(size_t i=0u;i<plan->held;i++) {
+        cetta_shared_return_checkpoint_release(plan->checkpoints[i].image);
+        cetta_shared_return_checkpoint_release(plan->checkpoints[i].source);
     }
-    free(checkpoints);
-    cetta_shared_return_producer_free(source);
-    if (!ready) {
-        cetta_shared_return_producer_free(image);
-        return NULL;
-    }
+    free(plan->checkpoints);plan->checkpoints=NULL;plan->held=0u;
+    cetta_shared_return_producer_free(source);plan->source=NULL;
+    plan->image=NULL;free(plan);
+    if(!ready) {cetta_shared_return_producer_free(image);return NULL;}
     return image;
+}
+
+CettaSharedReturnProducer *cetta_shared_return_producer_copy(
+        CettaSharedReturnProducer *source,const CettaSharedReturnCopy *copy) {
+    CettaSharedReturnCopyPlan *plan=
+        cetta_shared_return_producer_copy_prepare(source,copy);
+    return plan?cetta_shared_return_producer_copy_finish(plan):NULL;
 }

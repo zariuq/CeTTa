@@ -80,6 +80,29 @@ static Atom *he_instruction_refusal_readback(Atom *syntax, Atom *carrier,
     return syntax;
 }
 
+/* The public instruction boundary removes raw Empty events; a delimiter
+ * keeps them for ordinary completion. NotReducible restores the saved
+ * source image. A returned function must acquire its own public codomain
+ * before its body runs, so it cannot use the generic tail carrier. */
+typedef enum {
+    HE_INSTRUCTION_OMIT,
+    HE_INSTRUCTION_REFUSAL,
+    HE_INSTRUCTION_INTERPRET,
+    HE_INSTRUCTION_TAIL,
+} HeInstructionCompletion;
+
+static HeInstructionCompletion he_instruction_completion(Arena *arena,
+    Atom *value, Atom *expected, bool public_instruction, bool allow_tail) {
+    if (!value || (public_instruction && atom_is_legacy_empty_sentinel(value)))
+        return HE_INSTRUCTION_OMIT;
+    if (he_not_reducible(value))
+        return HE_INSTRUCTION_REFUSAL;
+    if (allow_tail && atom_head_symbol_id(value) != g_builtin_syms.function &&
+        eval_atom_type_demand(arena, value, expected) == HE_TYPE_INTERPRET)
+        return HE_INSTRUCTION_TAIL;
+    return HE_INSTRUCTION_INTERPRET;
+}
+
 /* (chain <nested> $v <template>) binds $v in <template>, and function and
  * collapse-bind carry code.  An environment reaches a chain's nested
  * computation at once and its template only after the selected result has
@@ -718,7 +741,6 @@ typedef struct {
     Atom *atom;
     /* Named reduction that produced this function, when one is known. */
     Atom *function_caller;
-    Atom *unused_type;
     Atom *syntax;
     Bindings env;
     OutcomeSet inner;
@@ -757,7 +779,7 @@ static void he_instruction_push(CettaOwnedFrameStack *stack,
                             &frame->env, &frame->syntax);
     eval_gc_root_frame_suspend_precisely(&frame->lexical);
     eval_gc_root_frame_enter_outcome_continuation(
-        &frame->pending, NULL, 0u, &frame->inner, target);
+        &frame->pending, &frame->function_caller, 1u, &frame->inner, target);
     cetta_owned_frame_push(stack, &frame->continuation);
 }
 
@@ -1228,19 +1250,21 @@ static void he_instruction_resume(CettaOwnedFrameStack *stack) {
                 expr_arg(atom, control.source), child_fuel, &frame->env, &frame->inner, NULL, NULL);
         }
     } else if (control.operation == CETTA_CONTROL_RETURN_SCOPE) {
-        if (expr_arg(atom, control.source)->kind != ATOM_EXPR) {
-            outcome_set_add(os, atom_error(a, frame->syntax,
-                atom_symbol(a, "IncorrectNumberOfArguments")), &frame->env);
+        Atom *body = expr_arg(atom, control.source);
+        if (body->kind != ATOM_EXPR) {
+            Atom *error = active_profile_uses_rust_he_compat_semantics()
+                ? call_signature_error(a,frame->syntax,"(function (: <body> Expression))")
+                : atom_error(a,frame->syntax,atom_symbol(a,"IncorrectNumberOfArguments"));
+            outcome_set_add(os,error,&frame->env);
         } else {
             frame->phase = HE_INSTRUCTION_FUNCTION;
-            Atom *body = expr_arg(atom, control.source);
-            if (!he_minimal_instruction(body) &&
-                atom_head_symbol_id(body) != g_builtin_syms.return_text)
-                eval_for_caller(s, a, NULL, body, child_fuel,
-                    &frame->env, true, &frame->inner);
+            bool step = active_profile_uses_rust_he_compat_semantics() ||
+                he_minimal_instruction(body) || atom_head_symbol_id(body)==g_builtin_syms.return_text;
+            if (step)
+                he_instruction_push(stack,HE_INSTRUCTION_RUN,s,a,body,child_fuel,
+                    &frame->env,&frame->inner,NULL,NULL);
             else
-                he_instruction_push(stack, HE_INSTRUCTION_RUN, s, a,
-                    body, child_fuel, &frame->env, &frame->inner, NULL, NULL);
+                eval_for_caller(s,a,NULL,body,child_fuel,&frame->env,true,&frame->inner);
         }
     } else if (control.operation == CETTA_CONTROL_COLLECT) {
         frame->phase = HE_INSTRUCTION_COLLAPSE;
@@ -1356,7 +1380,7 @@ static void he_instruction_resume(CettaOwnedFrameStack *stack) {
         he_instruction_pop(stack);
 }
 
-static void he_instruction_run_kernel(HeInstructionKind kind, Space *s,
+static void he_instruction_run_with_caller(HeInstructionKind kind, Space *s,
     Arena *a, Atom *atom, int fuel, const Bindings *prefix, OutcomeSet *os,
     const CettaControlOperationPlan *control, Atom *syntax, Atom *function_caller) {
     CettaOwnedFrameStack stack = {0};
@@ -1372,13 +1396,7 @@ static void he_instruction_run_kernel(HeInstructionKind kind, Space *s,
 static void he_instruction_run(HeInstructionKind kind, Space *s, Arena *a,
     Atom *atom, int fuel, const Bindings *prefix, OutcomeSet *os,
     const CettaControlOperationPlan *control, Atom *syntax) {
-    he_instruction_run_kernel(kind, s, a, atom, fuel, prefix, os, control, syntax, NULL);
-}
-
-static void he_instruction_run_with_caller(HeInstructionKind kind, Space *s,
-    Arena *a, Atom *atom, int fuel, const Bindings *prefix, OutcomeSet *os,
-    Atom *function_caller) {
-    he_instruction_run_kernel(kind, s, a, atom, fuel, prefix, os, NULL, NULL, function_caller);
+    he_instruction_run_with_caller(kind,s,a,atom,fuel,prefix,os,control,syntax,NULL);
 }
 
 static void he_minimal_run(Space *s, Arena *a, Atom *atom, int fuel,
@@ -1448,13 +1466,8 @@ static bool he_eval_typed_instruction(Space *s, Arena *a, Atom *atom, Atom *codo
      * off the C stack without giving them a separate execution path. */
     if (allow_tail && minimal.len == 1u && !eval_unwinding()) {
         Atom *result = outcome_atom_materialize(a, &minimal.items[0]);
-        if (result && !atom_is_legacy_empty_sentinel(result) &&
-            !he_not_reducible(result) &&
-            /* A returned function is a fresh public invocation. Its own
-             * Atom codomain must be acquired before interpreting its body;
-             * the generic tail carrier instead treats it as a delimiter. */
-            atom_head_symbol_id(result) != g_builtin_syms.function &&
-            eval_atom_type_demand(a, result, live[1]) == HE_TYPE_INTERPRET) {
+        if (he_instruction_completion(a, result, live[1], true, true) ==
+                HE_INSTRUCTION_TAIL) {
             bool copied = bindings_copy(tail_env, &minimal.items[0].env);
             if (copied) {
                 *tail_next = result;
@@ -1468,8 +1481,10 @@ static bool he_eval_typed_instruction(Space *s, Arena *a, Atom *atom, Atom *codo
     }
     for (CettaCount i = 0u; i < minimal.len && !eval_unwinding(); i++) {
         Atom *result = outcome_atom_materialize(a, &minimal.items[i]);
-        if (!result || atom_is_legacy_empty_sentinel(result)) continue;
-        if (he_not_reducible(result)) {
+        HeInstructionCompletion completion = he_instruction_completion(
+            a, result, live[1], true, false);
+        if (completion == HE_INSTRUCTION_OMIT) continue;
+        if (completion == HE_INSTRUCTION_REFUSAL) {
             result = he_instruction_refusal_readback(live[0], live[0], control);
             outcome_set_add(os, result, &minimal.items[i].env);
         } else {
@@ -1515,24 +1530,18 @@ static void he_eval_invocation_delimiter(Space *s, Arena *a, Atom *atom,
         atom_head_symbol_id(atom) == g_builtin_syms.function;
     if (raw_function)
         he_instruction_run_with_caller(HE_INSTRUCTION_RUN, s, a, atom, fuel,
-            &env, &returned, invocation);
+            &env, &returned, NULL, NULL, invocation);
     else
         he_minimal_run(s, a, atom, fuel, &env, &returned);
     for (CettaCount i = 0u; i < returned.len && !eval_unwinding(); i++) {
         Atom *result = outcome_atom_materialize(a, &returned.items[i]);
-        if (he_not_reducible(result))
-            outcome_set_add(os, he_call_return_atom(live[2], result),
-                &returned.items[i].env);
-        else if (raw_function && result &&
-                 (atom_is_error(result) ||
-                  atom_is_legacy_empty_sentinel(result)))
-            /* function_ret already classified these. The caller does not
-             * interpret an error or Empty, and does not execute the body. */
-            outcome_set_add(os, result, &returned.items[i].env);
-        else if (result)
-            /* The minimal function returned a value. The same type demand
-             * as any other call interprets it, or keeps it when the demand
-             * is Atom. */
+        HeInstructionCompletion completion = he_instruction_completion(a,result,live[1],false,false);
+        if (completion == HE_INSTRUCTION_OMIT) continue;
+        if (completion == HE_INSTRUCTION_REFUSAL)
+            outcome_set_add(os,he_call_return_atom(live[2],result),&returned.items[i].env);
+        else if (raw_function && (atom_is_error(result) || atom_is_legacy_empty_sentinel(result)))
+            outcome_set_add(os,result,&returned.items[i].env);
+        else
             eval_for_caller(s, a, live[1], result, fuel,
                             &returned.items[i].env, preserve_bindings, os);
     }

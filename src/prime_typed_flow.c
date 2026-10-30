@@ -84,6 +84,8 @@ bool cetta_prime_typed_values_cohere_private_v1(
             value->universe != first->universe ||
             value->universe_instance_id != first->universe_instance_id ||
             value->universe_storage_epoch != first->universe_storage_epoch ||
+            value->universe_collection_epoch !=
+                first->universe_collection_epoch ||
             value->context_id != first->context_id ||
             !cetta_nik_direct_authority_token_v1_equal(
                 &value->authority_token, &first->authority_token)) {
@@ -371,6 +373,7 @@ CettaPrimeTypedValueV1 *cetta_prime_typed_value_allocate_private_v1(
         .universe = universe,
         .universe_instance_id = universe->instance_id,
         .universe_storage_epoch = universe->storage_epoch,
+        .universe_collection_epoch = universe->collection_epoch,
         .context_id = context_id,
         .term_id = term_id,
         .type_id = type_id,
@@ -434,6 +437,8 @@ bool cetta_prime_typed_value_v1_is_current(
            value->universe_instance_id == space->native.universe->instance_id &&
            value->universe_storage_epoch ==
                space->native.universe->storage_epoch &&
+           value->universe_collection_epoch ==
+               space->native.universe->collection_epoch &&
            cetta_prime_typing_direct_authority_token_v1_is_current(
                &value->authority_token, space,
                CETTA_PRIME_TYPED_FLOW_POLICY_V1);
@@ -764,6 +769,7 @@ bool cetta_prime_typed_value_v1_metadata(
     *metadata_out = (CettaPrimeTypedValueMetadataV1){
         .universe_instance_id = value->universe_instance_id,
         .universe_storage_epoch = value->universe_storage_epoch,
+        .universe_collection_epoch = value->universe_collection_epoch,
         .context_id = value->context_id,
         .term_id = value->term_id,
         .type_id = value->type_id,
@@ -821,7 +827,9 @@ bool cetta_prime_typed_value_v1_erase(
     if (!value || !live_universe || !destination ||
         value->universe != live_universe ||
         value->universe_instance_id != live_universe->instance_id ||
-        value->universe_storage_epoch != live_universe->storage_epoch) {
+        value->universe_storage_epoch != live_universe->storage_epoch ||
+        value->universe_collection_epoch !=
+            live_universe->collection_epoch) {
         return false;
     }
     Atom *term = term_universe_copy_atom(

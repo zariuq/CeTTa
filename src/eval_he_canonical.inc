@@ -2903,7 +2903,7 @@ static void he_canonical_resume_instruction(HeCanonicalFrame *frame) {
                 &frame->env, &frame->work, &control, frame->live[0]);
             if (active_profile_uses_rust_he_compat_semantics() &&
                 frame->instructions.top &&
-                head == g_builtin_syms.function) {
+                control.operation == CETTA_CONTROL_RETURN_SCOPE) {
                 HeCanonicalFrame *parent = (HeCanonicalFrame *)frame->link.next;
                 if (parent && parent->atom && parent->atom != frame->atom &&
                     atom_head_symbol_id(parent->atom) != g_builtin_syms.function)
@@ -2948,16 +2948,14 @@ static void he_canonical_resume_instruction(HeCanonicalFrame *frame) {
         return;
     }
     bool raw_function_result = active_profile_uses_rust_he_compat_semantics() &&
-        head == g_builtin_syms.function;
+        control.operation == CETTA_CONTROL_RETURN_SCOPE;
     if (frame->phase == 3u) {
         if (!raw_function_result && frame->typed && frame->selected &&
             frame->work.len == 1u && !eval_unwinding()) {
             Outcome *source = &frame->work.items[0];
             Atom *value = outcome_atom_materialize(a, source);
-            if (value && !atom_is_legacy_empty_sentinel(value) &&
-                !he_not_reducible(value) &&
-                atom_head_symbol_id(value) != g_builtin_syms.function &&
-                eval_atom_type_demand(a, value, frame->type) == HE_TYPE_INTERPRET) {
+            if (he_instruction_completion(a, value, frame->type, true, true) ==
+                    HE_INSTRUCTION_TAIL) {
                 frame->phase = 5u;
                 he_canonical_tail_push(frame, value, frame->type,
                     &source->env, &frame->paths);
@@ -2973,30 +2971,17 @@ static void he_canonical_resume_instruction(HeCanonicalFrame *frame) {
         } else {
             Outcome *source = &frame->work.items[frame->index++];
             Atom *value = outcome_atom_materialize(a, source);
-            if (!value || (frame->typed && atom_is_legacy_empty_sentinel(value)))
+            HeInstructionCompletion completion = he_instruction_completion(
+                a, value, frame->type, frame->typed, false);
+            if (completion == HE_INSTRUCTION_OMIT)
                 return;
-            if (raw_function_result) {
-                /* Errors, Empty, and NotReducible stay on this frame.
-                 * publish_raw_return still turns NotReducible into the
-                 * saved call. A public function is itself the call, so
-                 * its NotReducible answers this call. Any other returned
-                 * value is a caller step at this frame's type. */
-                if (frame->typed && he_not_reducible(value))
-                    outcome_set_add(&frame->paths, frame->atom, &source->env);
-                else if (atom_is_error(value) || he_not_reducible(value) ||
-                    atom_is_legacy_empty_sentinel(value))
-                    outcome_set_add(&frame->paths, value, &source->env);
-                else
-                    he_canonical_push(HE_CANONICAL_CALLER, frame->space, a,
-                        value, frame->type, frame->fuel, &source->env,
-                        frame->preserve_bindings, &frame->paths);
-                return;
-            }
-            if (he_not_reducible(value)) {
+            if (completion == HE_INSTRUCTION_REFUSAL) {
                 if (frame->typed)
                     value = he_instruction_refusal_readback(
                         frame->live[0], frame->atom, control);
                 outcome_set_add(&frame->paths, value, &source->env);
+            } else if (raw_function_result && (atom_is_error(value) || atom_is_legacy_empty_sentinel(value))) {
+                outcome_set_add(&frame->paths,value,&source->env);
             } else {
                 he_canonical_push(HE_CANONICAL_CALLER, frame->space, a,
                     value, frame->type, frame->fuel, &source->env,

@@ -270,7 +270,7 @@ def main():
         text=True, capture_output=True, timeout=30)
     assert run.returncode == 0 and run.stdout.splitlines()[-1] == '((2 (Summary 2 0.5)))', (
         run.stdout, run.stderr)
-    surface = prefix.replace('(library postings)', 'postings') + '''
+    public_api = prefix.replace('(library postings)', 'postings') + '''
 !(let $p (postings:prepare-blocks ((("a") 0 0) (("a") 1 1)))
    (postings:fold-table-by-before $p (("a" 0.25)) 2 fold-bucket (Summary 0 0.0) fold-summary))
 !(let $p (postings:prepare-blocks ((("a") 0 0) (("a") 1 1)))
@@ -281,7 +281,7 @@ def main():
                fold-bucket (Summary 0 0.0) fold-summary))) ColumnsOK ColumnsBad))'''
     for language, flags in [('he', ['--profile', 'extended']), ('prime', [])]:
         run = subprocess.run([str(args.cetta.resolve()), '--lang', language, *flags,
-                              '-e', surface], cwd=ROOT, text=True, capture_output=True, timeout=30)
+                              '-e', public_api], cwd=ROOT, text=True, capture_output=True, timeout=30)
         assert run.returncode == 0 and run.stdout.splitlines()[-2:] == [
             '[((0 (Summary 2 0.5)))]', '[ColumnsOK]'], (
             language, run.stdout, run.stderr)

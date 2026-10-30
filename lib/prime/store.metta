@@ -4,6 +4,8 @@
 
 (: __cetta_lib_store_open (-> String String Atom))
 (: __cetta_lib_store_snapshot (-> Atom Atom))
+(: __cetta_lib_store_view_info (-> Atom Atom))
+(: __cetta_lib_store_check_view (-> Atom Atom Atom))
 (: __cetta_lib_store_commit (-> Atom Atom Atom Atom))
 (: __cetta_lib_store_commit_scoped (-> Atom Atom Atom Atom Atom Atom))
 (: __cetta_lib_store_get (-> Atom String Number Atom))
@@ -22,6 +24,8 @@
 (: __cetta_lib_store_key_to_i64 (-> String Atom))
 (= (store:open $path $mode) (function (case (__cetta_lib_store_open $path $mode) (($result (return $result))))))
 (= (store:snapshot $store) (function (case (__cetta_lib_store_snapshot $store) (($result (return $result))))))
+(= (store:view-info $view) (function (case (__cetta_lib_store_view_info $view) (($result (return $result))))))
+(= (store:check-view $store $view) (function (case (__cetta_lib_store_check_view $store $view) (($result (return $result))))))
 (= (store:commit $store $view $ops) (function (case (__cetta_lib_store_commit $store $view $ops) (($result (return $result))))))
 (= (store:commit-scoped $store $view $reads $writes $ops) (function (case (__cetta_lib_store_commit_scoped $store $view $reads $writes $ops) (($result (return $result))))))
 (= (store:get $view $key $bytes) (function (case (__cetta_lib_store_get $view $key $bytes) (($result (return $result))))))

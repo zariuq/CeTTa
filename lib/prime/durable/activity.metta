@@ -4,7 +4,7 @@
 !(import! &self durable:worker)
 !(import! &self durable:timer)
 
-(: activity:match (-> Atom Atom %Undefined%))
+(: activity:match (-> Atom Proc %Undefined%))
 (= (activity:match $pattern $template)
    (chain (context-space) $space (match $space $pattern $template){$pattern}))
 

@@ -1,0 +1,15 @@
+true
+true
+true
+((destination b) (destination b))
+(selected)
+true
+true
+()
+(selected selected)
+((destination b) (destination b))
+(kept a)
+rejected
+(kept b)
+(kept c)
+(selected selected let-subject case-subject)

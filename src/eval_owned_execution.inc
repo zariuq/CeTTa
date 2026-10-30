@@ -459,6 +459,21 @@ static Atom *eval_owned_residual_import(void *context, Atom *value) {
     return atom_deep_copy_session_copy(context, value);
 }
 
+static Atom *eval_owned_prime_captures(EvalOwnedResidual *residual,
+        Atom *continuation, Bindings *environment) {
+    BindingsIterator iterator={.bindings=residual->captures};
+    Binding capture;
+    while (continuation && residual->captures && bindings_iterator_next(&iterator,&capture)) {
+        Atom *port=capture.name_key
+            ? atom_var_with_name_key(residual->arena,capture.name_key,capture.var_id)
+            : atom_var_with_id(residual->arena,"__captured",capture.var_id);
+        Atom *value=binding_value_materialize(residual->arena,capture.value);
+        continuation=port && value ? prime_substitute_returned_value(
+            residual->arena,continuation,port,value,environment,CETTA_CALL_RESULT_COMPLETED_VALUE) : NULL;
+    }
+    return continuation;
+}
+
 /* An ordinary residual worker retains its body, bindings and answer images.
  * Values are materialized at the same publication boundary as the former
  * recursive residual interpreter, not when a source packet changes workers. */
@@ -476,6 +491,8 @@ typedef struct {
     Bindings selected_env;
     bool owns_selected_env;
     bool started;
+    bool caller_entry;
+    bool normalize_result;
 } EvalOwnedResidualWork;
 
 static CettaOwnedExecutionStep eval_owned_residual_next(void *context,
@@ -491,8 +508,12 @@ static CettaOwnedExecutionStep eval_owned_residual_next(void *context,
         eval_gc_external_owner_guard_enter(&borrowed);
         __attribute__((cleanup(petta_host_branch_leave)))
         PettaHostBranchGuard branch = petta_host_branch_enter();
-        metta_call_with_env(residual->answers->space, residual->arena,
-            work->body, NULL, -1, work->bindings, &work->values);
+        if (work->caller_entry)
+            eval_for_caller(residual->answers->space,residual->arena,NULL,
+                work->body,-1,work->bindings,work->normalize_result,&work->values);
+        else
+            metta_call_with_env(residual->answers->space, residual->arena,
+                work->body, NULL, -1, work->bindings, &work->values);
         /* The enclosing evaluator already owns the completion/fuel purse.
          * Observe it here instead of constructing one boundary per item. */
         work->completion = g_eval_completion_tracker
@@ -516,7 +537,9 @@ static CettaOwnedExecutionStep eval_owned_residual_next(void *context,
                                    : cetta_call_completed_value(value),
         .environment = &outcome->env,
     };
-    returned->outcome.result_form = outcome->result_form;
+    returned->outcome.result_form = work->normalize_result && !outcome->delayed &&
+        outcome->result_form==CETTA_CALL_RESULT_EXPRESSION
+        ? CETTA_CALL_RESULT_COMPLETED_VALUE : outcome->result_form;
     return CETTA_OWNED_EXECUTION_RETURN;
 }
 
@@ -546,10 +569,12 @@ static void eval_owned_residual_open(EvalOwnedResidualWork *work,
 typedef struct {
     EvalOwnedResidual *residual;
     EvalOwnedResidualWork child;
+    EvalOwnedResidualWork normalization;
+    CettaOwnedBind normalized_bind;
 } EvalOwnedResidualBind;
 
-static bool eval_owned_residual_continue(void *context,
-        const CettaOwnedReturn *returned, CettaOwnedExecution *execution) {
+static bool eval_owned_residual_continue_ready(void *context,
+        const CettaOwnedReturn *returned, CettaOwnedExecution *execution, bool normalized) {
     EvalOwnedResidualBind *bind = context;
     EvalOwnedResidual *residual = bind->residual;
     CettaCallResultForm form = returned->outcome.result_form;
@@ -578,6 +603,7 @@ static bool eval_owned_residual_continue(void *context,
         Atom *continuation = prime_substitute_returned_value(
             residual->arena, residual->resumption, residual->hole, value,
             &bind->child.selected_env, form);
+        continuation=eval_owned_prime_captures(residual,continuation,&bind->child.selected_env);
         if (!continuation) {
             residual->ok = false;
             cetta_owned_execution_cancel(&proposed);
@@ -585,13 +611,23 @@ static bool eval_owned_residual_continue(void *context,
         }
         bind->child.body = continuation;
         bind->child.bindings = &bind->child.selected_env;
+        bind->child.caller_entry = true;
         *execution = proposed;
         return true;
     }
-    /* This source adapter admits only inert completed values. A value
-     * outside that fragment must not be reinterpreted as source, and a
-     * refusal after production must not restart the producer. */
+    /* HE already has an explicit completed-value representation. Copy the
+     * mark onto the returned value; never mutate the producer's syntax. */
     if (form == CETTA_CALL_RESULT_COMPLETED_VALUE &&
+        eval_current_language_id() == CETTA_LANGUAGE_HE) {
+        value=he_answer_as_value(residual->arena,value);
+        if (!value) {
+            residual->ok=false;eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
+            return false;
+        }
+    }
+    /* Other source adapters retain their existing admission boundary. */
+    if (eval_current_language_id() != CETTA_LANGUAGE_HE &&
+        !normalized && form == CETTA_CALL_RESULT_COMPLETED_VALUE &&
         !atom_is_constructor_normal_form(
             residual->answers->space, residual->arena, value, -1)) {
         eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
@@ -605,13 +641,15 @@ static bool eval_owned_residual_continue(void *context,
     bind->child.owns_selected = true;
     BindingsIterator captures = {.bindings = residual->captures};
     Binding capture;
-    while (residual->captures && bindings_iterator_next(&captures, &capture))
-        if (!bindings_builder_add_id_fresh(&bind->child.selected,
-                capture.var_id, capture.spelling, capture.value.skeleton))
-            goto refused;
+    while (residual->captures && bindings_iterator_next(&captures, &capture)) {
+        Atom *captured=binding_value_materialize(residual->arena,capture.value);
+        if (eval_current_language_id()==CETTA_LANGUAGE_HE)
+            captured=he_answer_as_value(residual->arena,captured);
+        if (!captured || !bindings_builder_add_id_fresh(&bind->child.selected,
+                capture.var_id, capture.spelling, captured)) goto refused;
+    }
     if (!bindings_builder_add_var_fresh(&bind->child.selected,
-            residual->hole, returned->outcome.term))
-        goto refused;
+            residual->hole,value)) goto refused;
     bind->child.bindings = bindings_builder_bindings(&bind->child.selected);
     if (form == CETTA_CALL_RESULT_EXPRESSION) {
         /* Source syntax is inserted before the caller interprets it. A
@@ -630,12 +668,77 @@ refused:
     return false;
 }
 
+/* Normalization executes only the newly returned source. Captured values
+ * join its earned answers afterward, so they never become source again. */
+static bool eval_owned_residual_normalized(void *context,
+        const CettaOwnedReturn *returned,CettaOwnedExecution *execution) {
+    return eval_owned_residual_continue_ready(context,returned,execution,true);
+}
+
+static bool eval_owned_residual_continue(void *context,
+        const CettaOwnedReturn *returned,CettaOwnedExecution *execution) {
+    EvalOwnedResidualBind *bind=context;
+    if (eval_current_language_id()!=CETTA_LANGUAGE_PRIME &&
+        returned->outcome.kind==CETTA_CALL_VALUE && !returned->outcome.delayed &&
+        returned->outcome.result_form==CETTA_CALL_RESULT_EXPRESSION) {
+        CettaOwnedExecution producer={0};
+        eval_owned_residual_open(&bind->normalization,bind->residual,
+            returned->outcome.term,returned->environment,&producer);
+        bind->normalization.caller_entry=true;
+        bind->normalization.normalize_result=true;
+        if (cetta_owned_bind_open(execution,&bind->normalized_bind,&producer,
+                eval_owned_residual_normalized,bind)) return true;
+        cetta_owned_execution_cancel(&producer);
+        bind->residual->ok=false;
+        eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
+        return false;
+    }
+    return eval_owned_residual_continue_ready(context,returned,execution,false);
+}
+
 static bool eval_owned_residual_body(Atom *body, const Bindings *bindings,
                                     void *context);
 
 /* A resumption consumes the same return packet as a terminal receiver.
  * Its expression-shaped hole must not reactivate an earned value. */
-
+static bool eval_owned_residual_return(Outcome *outcome,
+                                       EvalOwnedResidual *residual) {
+    Atom *value = outcome_atom_materialize(residual->arena, outcome);
+    if (!value) {
+        if (!eval_unwinding()) return true;
+        residual->ok = false;
+        return false;
+    }
+    if (atom_is_legacy_empty_sentinel(value))
+        return true;
+    if (!residual->resumption) {
+        CettaOwnedReturn returned = {
+            .outcome = outcome->delayed
+                ? cetta_call_suspended(value, outcome->delayed)
+                : cetta_call_completed_value(value),
+            .environment = &outcome->env,
+        };
+        returned.outcome.result_form = outcome->result_form;
+        residual->ok = residual->consume(residual->consumer, &returned);
+        return residual->ok;
+    }
+    CettaOwnedReturn returned={.outcome=outcome->delayed
+        ? cetta_call_suspended(value,outcome->delayed) : cetta_call_completed_value(value),
+        .environment=&outcome->env};
+    returned.outcome.result_form=outcome->result_form;
+    EvalOwnedResidualBind bind={.residual=residual};
+    CettaOwnedExecution execution={0};
+    if (!eval_owned_residual_continue(&bind,&returned,&execution)) return false;
+    CettaOwnedExecutionStep step;
+    do {
+        step=cetta_owned_execution_sequence(&execution,UINT64_MAX,residual->consume,residual->consumer);
+    } while (step==CETTA_OWNED_EXECUTION_PAUSED && !execution.has_pending);
+    CettaEvalCompletion completion=execution.completion;
+    cetta_owned_execution_cancel(&execution);
+    if (completion!=CETTA_EVAL_COMPLETE) eval_mark_incomplete(completion);
+    residual->ok=step==CETTA_OWNED_EXECUTION_COMPLETE && completion==CETTA_EVAL_COMPLETE;
+    return residual->ok;
+}
 
 /* The ordinary evaluator owns a declined equation body. Its already-decoded
  * caller becomes an owned child computation. Source acceptance and context
@@ -653,19 +756,8 @@ static bool eval_owned_residual_body(Atom *body, const Bindings *bindings,
         PettaHostBranchGuard branch = petta_host_branch_enter();
         metta_call_with_env(residual->answers->space, residual->arena,
             body, NULL, -1, bindings, &values);
-        for (CettaCount index = 0u; residual->ok && index < values.len; index++) {
-            Outcome *outcome = &values.items[index];
-            Atom *value = outcome_atom_materialize(residual->arena, outcome);
-            if (!value || atom_is_legacy_empty_sentinel(value))
-                continue;
-            CettaOwnedReturn returned = {
-                .outcome = outcome->delayed ? cetta_call_suspended(value, outcome->delayed)
-                                           : cetta_call_completed_value(value),
-                .environment = &outcome->env,
-            };
-            returned.outcome.result_form = outcome->result_form;
-            residual->ok = residual->consume(residual->consumer, &returned);
-        }
+        for (CettaCount index=0u;residual->ok && index<values.len;index++)
+            (void)eval_owned_residual_return(&values.items[index],residual);
         outcome_set_free(&values);
         return residual->ok && !eval_unwinding();
     }

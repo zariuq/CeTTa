@@ -7963,6 +7963,30 @@ static void test_program_revision_view_transport(
         &lease, &target, hot_target_equations, HOT_COUNT);
     petta_program_candidate_snapshot_lease_release(&lease);
 
+    /* Identity-bound workers retain the semantic source roles. An
+       alpha-equivalent target, including its shallow transaction image,
+       has no authority to borrow source-universe execution pointers. */
+    assert(petta_program_revision_view_source_candidate_lease(
+        &data_source_projection, &source, hot, &lease, NULL));
+    assert(lease.len == HOT_COUNT);
+    for (size_t i = 0u; i < lease.len; i++)
+        assert(lease.items[i].rhs_plan);
+    petta_program_candidate_snapshot_lease_release(&lease);
+    assert(!petta_program_revision_view_source_candidate_lease(
+        &projection, &target, hot, &lease, NULL));
+    Space *private_target = space_heap_clone_shallow(&target);
+    assert(private_target);
+    assert(petta_program_private_image_candidate_lease(
+        program, &projection, &target, private_target, hot, &lease, NULL));
+    assert(lease.len == HOT_COUNT);
+    for (size_t i = 0u; i < lease.len; i++) {
+        assert(!lease.items[i].rhs_plan);
+        assert(!lease.items[i].equation_template);
+    }
+    petta_program_candidate_snapshot_lease_release(&lease);
+    space_free(private_target);
+    free(private_target);
+
     /* A variable-headed equation remains an authored occurrence and is the
        only candidate for an otherwise absent relation. */
     assert(petta_program_revision_view_equation_lease(
@@ -8074,6 +8098,245 @@ static void test_program_revision_view_transport(
     space_free(&source);
     puts("PASS: revision-bound equation selection preserves ordered"
          " occurrences and falls back safely after mutation");
+}
+
+typedef struct {
+    Space *source, *image;
+    PettaTransactionCatalog *catalog;
+} TestPrivateProgramImage;
+
+static PettaTransactionCatalog *test_private_program_catalog(void *raw, const Space *space) {
+    TestPrivateProgramImage *image = raw;
+    return image->image == space ? image->catalog : NULL;
+}
+static Space *test_private_program_map(void *raw, Space *space) {
+    TestPrivateProgramImage *image = raw;
+    return image->source == space ? image->image : space;
+}
+static Space *test_private_program_image_at(void *raw, size_t index) {
+    return index == 0u ? ((TestPrivateProgramImage *)raw)->image : NULL;
+}
+static PettaProgramPrivateScope test_private_program_scope(
+        PettaProgram *program, TestPrivateProgramImage *image) {
+    return (PettaProgramPrivateScope){.program = program, .context = image,
+        .catalog = test_private_program_catalog, .map = test_private_program_map,
+        .image_at = test_private_program_image_at};
+}
+
+static void test_program_transferred_roles(TermUniverse *universe, Arena *arena) {
+    Arena foreign_arena;
+    TermUniverse foreign_universe;
+    arena_init(&foreign_arena);
+    arena_set_runtime_kind(&foreign_arena, CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
+    term_universe_init(&foreign_universe);
+    term_universe_set_persistent_arena(&foreign_universe, &foreign_arena);
+    Space source, target, later;
+    space_init_with_universe(&source, &foreign_universe);
+    space_init_with_universe(&target, universe);
+    space_init_with_universe(&later, universe);
+    PettaProgram *program = petta_program_new();
+    assert(program && petta_program_enable_analysis(program));
+    add_compiled_program_equation(program, &source, &foreign_arena,
+        "(= (transport-id $x) $x)");
+    add_compiled_program_equation(program, &source, &foreign_arena,
+        "(= (transport-id $x) $x)");
+    add_compiled_program_equation(program, &source, &foreign_arena,
+        "(= (transport-held) (transport-later 7))");
+    add_indexed_program_equation(program, &source, &foreign_arena,
+        "(: transport-type-marker TransportType)");
+    SymbolId held_head = symbol_intern_cstr(g_symbols, "transport-held");
+    PettaCandidateSnapshotLease original = {0};
+    assert(petta_program_candidate_snapshot_lease_profiled(
+        program, &source, held_head, &original, NULL));
+    assert(original.len == 1u && original.items[0].rhs_plan &&
+           !original.items[0].rhs_plan->contains_call);
+    uint8_t original_role = original.items[0].rhs_plan->role;
+    petta_program_candidate_snapshot_lease_release(&original);
+    /* Recompiling against the new global domain would incorrectly turn the
+     * held body into a call. Transport must retain the authored decision. */
+    add_compiled_program_equation(program, &later, arena,
+        "(= (transport-later $x) $x)");
+    for (CettaIndex i = 0u; i < space_length64(&source); i++)
+        assert(space_admit_atom(&target, arena,
+            atom_deep_copy(arena, space_get_at64(&source, i))));
+    assert(petta_program_transfer_space_roles(program, &source, &target));
+    PettaCandidateSnapshotLease copied = {0};
+    assert(petta_program_candidate_snapshot_lease_profiled(
+        program, &target, held_head, &copied, NULL));
+    assert(copied.len == 1u && copied.items[0].rhs_plan->role == original_role &&
+           !copied.items[0].rhs_plan->contains_call);
+    assert(!arena_owns_ptr(&foreign_arena, copied.items[0].equation));
+    assert(!arena_owns_ptr(&foreign_arena, copied.items[0].activation_layout.rhs));
+    petta_program_candidate_snapshot_lease_release(&copied);
+    petta_program_forget_space(program, &source);
+    space_free(&source);
+    term_universe_free(&foreign_universe);
+    arena_free(&foreign_arena);
+    assert(petta_program_candidate_snapshot_lease_profiled(program, &target,
+        symbol_intern_cstr(g_symbols, "transport-id"), &copied, NULL));
+    assert(copied.len == 2u && copied.items[0].equation_template &&
+           copied.items[1].equation_template);
+    petta_program_candidate_snapshot_lease_release(&copied);
+    Atom **types = NULL;
+    assert(petta_program_declared_types(program,
+        parse_one(arena, "transport-type-marker"), arena, &types) == 1u);
+    assert(atom_eq(types[0], parse_one(arena, "TransportType")));
+    free(types);
+    petta_program_free(program);
+    space_free(&target);
+    space_free(&later);
+    puts("PASS: transported spaces retain occurrence roles, duplicate equations and types after source retirement");
+}
+
+static void test_private_transient_value_isolation(TermUniverse *universe, Arena *arena) {
+    Space source;
+    space_init_with_universe(&source, universe);
+    PettaProgram *program = petta_program_new();
+    assert(program && petta_program_synchronize_space(program, &source));
+    Arena input;
+    arena_init_detached(&input);
+    const Arena *sources[] = {&input};
+    PettaTranslationEnvironment environment = {.source_arenas = sources,
+        .source_arena_count = 1u, .host_identity = g_symbols,
+        .symbol_table_instance = symbol_table_instance_id(g_symbols)};
+    Atom *future = parse_one(&input, "(private-value-future 7)");
+    assert(transient_plan_is_value(program, future, &environment));
+    Space *working = space_heap_clone_shallow(&source);
+    assert(working);
+    PettaTransactionCatalog *catalog = petta_program_transaction_catalog_new(
+        program, &source, working, true);
+    assert(catalog);
+    TestPrivateProgramImage image = {&source, working, catalog};
+    PettaProgramPrivateScope scope = test_private_program_scope(program, &image);
+    petta_program_private_scope_enter(&scope);
+    add_compiled_program_equation(program, working, arena,
+        "(= (private-value-future $x) $x)");
+    /* A public positive value certificate is inapplicable to this private
+     * definition revision even when the syntax/arena addresses are identical. */
+    assert(!transient_plan_is_value(program, future, &environment));
+    Atom *payload = atom_int(&input, 0);
+    Atom *head = atom_symbol(&input, "private-payload-box");
+    Atom *trees[128];
+    for (size_t i = 0u; i < 128u; i++)
+        trees[i] = payload = atom_expr2(&input, head, payload);
+    const PettaPlanNode *value = petta_program_plan_transient(program, payload, &environment);
+    assert(value && value->role == PETTA_PLAN_VALUE && value->child_count == 0u);
+    CettaStorageCensus warm = {0};
+    petta_program_storage_census(program, &warm);
+    cetta_storage_finish(&warm);
+    assert(!warm.incomplete && !warm.overflow);
+    size_t bytes = warm.bytes;
+    cetta_storage_census_free(&warm);
+    for (size_t i = 0u; i < 128u; i++) {
+        const PettaPlanNode *plan = petta_program_plan_transient(program, trees[i], &environment);
+        assert(plan == value);
+    }
+    CettaStorageCensus after = {0};
+    petta_program_storage_census(program, &after);
+    cetta_storage_finish(&after);
+    assert(!after.incomplete && !after.overflow && after.bytes == bytes);
+    cetta_storage_census_free(&after);
+    petta_program_private_scope_leave(&scope);
+    assert(transient_plan_is_value(program, future, &environment));
+    petta_program_transaction_catalog_free(catalog);
+    space_free(working); free(working);
+    petta_program_free(program);
+    space_free(&source);
+    arena_free(&input);
+    puts("PASS: private value admission isolates public certificates and retains constant plan storage for data shapes");
+}
+
+static void test_program_private_catalog_scope(TermUniverse *universe, Arena *arena) {
+    Space source;
+    space_init_with_universe(&source, universe);
+    PettaProgram *program = petta_program_new();
+    assert(program);
+    add_compiled_program_equation(program, &source, arena, "(= (private-keep $x) $x)");
+    assert(petta_program_enable_analysis(program));
+    SymbolId keep = symbol_intern_cstr(g_symbols, "private-keep");
+    Atom *future = parse_one(arena, "(private-future)");
+    const PettaPlanNode *before = petta_program_plan_current(program, future);
+    assert(before && !before->relation_head_admitted);
+    PettaCandidateSnapshotLease held = {0};
+    assert(petta_program_candidate_snapshot_lease_profiled(program, &source, keep, &held, NULL));
+    assert(held.len == 1u && held.items[0].rhs_plan && held.items[0].rhs_plan->role == PETTA_PLAN_VALUE);
+    const PettaPlanNode *held_plan = held.items[0].rhs_plan;
+
+    Space *outer = space_heap_clone_shallow(&source);
+    assert(outer);
+    PettaTransactionCatalog *outer_catalog = petta_program_transaction_catalog_new(program, &source, outer, true);
+    assert(outer_catalog);
+    TestPrivateProgramImage outer_image = {&source, outer, outer_catalog};
+    PettaProgramPrivateScope outer_scope = test_private_program_scope(program, &outer_image);
+    petta_program_private_scope_enter(&outer_scope);
+    add_compiled_program_equation(program, outer, arena, "(= (private-future) 99)");
+    Atom *declaration = parse_one(arena, "(: private-type-marker PrivateType)");
+    space_add(outer, declaration);
+    assert(petta_program_note_add(program, outer, declaration, NULL));
+    Atom *type_subject = parse_one(arena, "private-type-marker");
+    Atom **types = NULL;
+    assert(petta_program_declared_types(program, type_subject, arena, &types) == 1u);
+    free(types); types = NULL;
+    const PettaPlanNode *inside = petta_program_plan_current(program, future);
+    assert(inside && inside->relation_head_admitted && space_length64(&source) == 1u);
+
+    Space *inner = space_heap_clone_shallow(outer);
+    assert(inner);
+    PettaTransactionCatalog *inner_catalog = petta_program_transaction_catalog_new(program, outer, inner, true);
+    assert(inner_catalog);
+    TestPrivateProgramImage inner_image = {outer, inner, inner_catalog};
+    PettaProgramPrivateScope inner_scope = test_private_program_scope(program, &inner_image);
+    petta_program_private_scope_enter(&inner_scope);
+    add_compiled_program_equation(program, inner, arena, "(= (private-inner $x) $x)");
+    PettaCandidateSnapshotLease private_lease = {0};
+    assert(petta_program_candidate_snapshot_lease_profiled(program, inner, keep, &private_lease, NULL));
+    assert(private_lease.len == 1u && private_lease.items[0].rhs_plan == held_plan);
+    petta_program_candidate_snapshot_lease_release(&private_lease);
+    assert(petta_program_transaction_reserve_publication(program, 1u));
+    space_replace_contents(outer, inner);
+    petta_program_transaction_catalog_publish(program, outer, inner_catalog);
+    petta_program_private_scope_leave(&inner_scope);
+    petta_program_transaction_catalog_free(inner_catalog);
+    space_free(inner); free(inner);
+    Atom *inner_call = parse_one(arena, "(private-inner x)");
+    const PettaPlanNode *nested = petta_program_plan_current(program, inner_call);
+    assert(nested && nested->relation_head_admitted && space_length64(outer) == 4u);
+
+    /* Leaving a private scope must restore public callability, including
+       after a nested publication. A failed reservation publishes nothing. */
+    petta_program_private_scope_leave(&outer_scope);
+    const PettaPlanNode *outside = petta_program_plan_current(program, future);
+    assert(outside && !outside->relation_head_admitted);
+    assert(petta_program_declared_types(program, type_subject, arena, &types) == 0u);
+    free(types); types = NULL;
+    assert(!petta_program_transaction_reserve_publication(program, SIZE_MAX));
+    assert(space_length64(&source) == 1u);
+    petta_program_private_scope_enter(&outer_scope);
+    assert(petta_program_transaction_reserve_publication(program, 1u));
+    space_replace_contents(&source, outer);
+    petta_program_transaction_catalog_publish(program, &source, outer_catalog);
+    petta_program_private_scope_leave(&outer_scope);
+    petta_program_transaction_catalog_free(outer_catalog);
+    space_free(outer); free(outer);
+    const PettaPlanNode *published = petta_program_plan_current(program, future);
+    assert(published && published->relation_head_admitted && space_length64(&source) == 4u);
+    assert(petta_program_declared_types(program, type_subject, arena, &types) == 1u);
+    free(types);
+    assert(held.items[0].rhs_plan == held_plan && held_plan->role == PETTA_PLAN_VALUE);
+    petta_program_candidate_snapshot_lease_release(&held);
+
+    Arena foreign_arena;
+    TermUniverse foreign_universe;
+    Space foreign;
+    arena_init(&foreign_arena);
+    arena_set_runtime_kind(&foreign_arena, CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
+    term_universe_init(&foreign_universe);
+    term_universe_set_persistent_arena(&foreign_universe, &foreign_arena);
+    space_init_with_universe(&foreign, &foreign_universe);
+    assert(!petta_program_transaction_catalog_new(program, &source, &foreign, true));
+    space_free(&foreign); term_universe_free(&foreign_universe); arena_free(&foreign_arena);
+    petta_program_free(program); space_free(&source);
+    puts("PASS: private catalogs isolate callability, compose nested publication and retain active source plans");
 }
 
 static void test_program_analysis_sidecar_interop(
@@ -16023,8 +16286,9 @@ typedef struct {
     uint64_t spent;
     CettaSourceStep pending;
     bool blocked;
-    CettaSourceStep admitted[128];
+    CettaSourceStep admitted[512];
     size_t length;
+    bool cancel_after_effect;
     SymbolId effect_head;
     int64_t effects[4];
     size_t effect_count;
@@ -16035,7 +16299,8 @@ static bool source_accounting_permit(void *context, const CettaSourceStep *step)
     assert(step && step->source.root && step->source.debit == step->debit);
     if (probe->blocked)
         assert(resume_source_equal(probe->pending, *step));
-    if (!probe->physical || step->debit > probe->purse) {
+    if (!probe->physical || step->debit > probe->purse ||
+        (probe->cancel_after_effect && probe->effect_count)) {
         probe->pending = *step;
         probe->blocked = true;
         return false;
@@ -16354,6 +16619,218 @@ static void test_source_effect_accounting(TermUniverse *universe, Arena *answers
     puts("PASS: 144 priced-source effect, failure and binding continuations preserve independent budgets");
 }
 
+/* Compare the actual admitted schedule across slices. Query roots are
+ * fresh; declaration roots retain their identity within this program. */
+static void source_segment_same_receipts(const CettaSourceStep *first,
+        const CettaSourceStep *later, size_t count) {
+    for (size_t index = 0u; index < count; index++) {
+        assert(first[index].phase == later[index].phase &&
+            first[index].debit == later[index].debit &&
+            first[index].source.position == later[index].source.position &&
+            first[index].source.debit == later[index].source.debit);
+        bool first_query = first[index].source.root == first[0].source.root;
+        bool later_query = later[index].source.root == later[0].source.root;
+        assert(first_query == later_query);
+        if (!first_query)
+            assert(first[index].source.root == later[index].source.root);
+    }
+}
+
+static bool source_segment_activation_admitted(void *context, Space *space,
+        SymbolId head, CettaExprLen arity) {
+    (void)context;
+    bool defined = false, dynamic = false;
+    return space_query_static_effect_for_head(space, head, &defined, &dynamic) ==
+        CETTA_GSLT_QUERY_EFFECT_PURE && defined && !dynamic &&
+        space_head_call_untyped(space, head, arity);
+}
+
+static void test_metered_body_segments(TermUniverse *universe, Arena *persistent,
+        Arena *answers, bool receipts) {
+    const char *bodies[] = {
+        "(let $v (meter-leaf $x) (let $p (Pair $v $v) $p))",
+        "(let 7 (meter-leaf $x) (Pair 7 7))",
+        "(let $v (meter-leaf $x) (empty))",
+    };
+    const int64_t effects[][3] = {{7, 7, 9}, {7, 7, 0}, {7, 0, 0}};
+    const size_t counts[] = {3u, 2u, 1u};
+    const size_t answers_count[] = {3u, 2u, 0u};
+    const size_t allowances[] = {0u, 1u, 2u, 64u, 1024u};
+    const uint32_t debits[] = {0u, 1u, 3u};
+    unsigned checks = 0u;
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    CettaRuntimeStats initial, final;
+    bool stats_enabled = cetta_runtime_stats_is_enabled();
+    cetta_runtime_stats_enable();
+    cetta_runtime_stats_snapshot(&initial);
+#endif
+    for (size_t fixture = 0u; fixture < 3u; fixture++)
+    for (size_t cost = 0u; cost < 3u; cost++) {
+        Space space;
+        space_init_with_universe(&space, universe);
+        PettaProgram *program = petta_program_new();
+        assert(program);
+        char root[320];
+        snprintf(root, sizeof(root), "(= (metered-body $x) %s)", bodies[fixture]);
+        const char *definitions[] = {"(= (meter-leaf $x) 7)", "(= (meter-leaf $x) 7)",
+            "(= (meter-leaf $x) 9)", root};
+        for (size_t index = 0u; index < sizeof(definitions) / sizeof(*definitions); index++) {
+            Atom *equation = parse_one(persistent, definitions[index]);
+            const PettaPlanNode *authored = petta_program_plan_dynamic_add(program, equation);
+            assert(authored);
+            const PettaPlanNode *priced = source_accounting_priced_plan(persistent, authored, debits[cost]);
+            space_add(&space, equation);
+            assert(petta_program_note_add(program, &space,
+                space_get_at64(&space, space_length64(&space) - 1u), priced));
+        }
+        Atom *query = parse_one(answers, fixture == 2u
+            ? "(progn (println! 7) (metered-body $input))"
+            : "(let (Pair $first $second) (metered-body $input) (let $_ (println! $first) (Pair $first $second)))");
+        const PettaPlanNode *query_plan = source_accounting_priced_plan(answers,
+            petta_program_plan_current(program, query), debits[cost]);
+        CettaSourceStep reference[512];
+        size_t reference_len = 0u;
+        for (size_t physical = 5u; physical-- > 0u;)
+        for (size_t credit = 5u; credit-- > 0u;)
+        for (unsigned cancellation = 0u; cancellation < 2u; cancellation++)
+        for (unsigned delayed = 0u; delayed < 2u; delayed++) {
+            SourceAccountingProbe probe = {.program = program,
+                .physical = allowances[physical], .purse = allowances[credit],
+                .cancel_after_effect = cancellation != 0u,
+                .effect_head = g_builtin_syms.println_bang};
+            PettaMachineHost host = {.context = &probe,
+                .candidate_snapshot_lease = source_accounting_catalog,
+                .equation_activation_relation_admissible = source_segment_activation_admitted,
+                .permit_transition = source_accounting_permit,
+                .classify = source_accounting_classify, .classify_may_override = true,
+                .evaluate = source_accounting_effect,
+                .admit_branch_capture = source_accounting_capture};
+            PettaMachine machine;
+            assert(petta_machine_init_with_plan(&machine, &space, answers, query,
+                query_plan, NULL, &host));
+            if (delayed) {
+                CettaDelayService *service = cetta_delay_service_new();
+                VarId pending = fresh_var_id();
+                assert(service && cetta_delay_suspend(service, 0u, CETTA_DELAY_CLIENT_PROLOG,
+                    atom_symbol(answers, "pending-source-control"), &pending, 1u, false));
+                assert(petta_machine_inherit_delayed_goals(&machine, service));
+                cetta_delay_service_free(service);
+            }
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+            CettaRuntimeStats before_run, after_run;
+            cetta_runtime_stats_snapshot(&before_run);
+#endif
+            size_t seen = 0u;
+            for (unsigned attempt = 0u;; attempt++) {
+                assert(attempt < 2048u);
+                Atom *answer = NULL;
+                Bindings environment;
+                PettaMachineStep step = petta_machine_next(&machine, &answer, &environment);
+                if (step == PETTA_MACHINE_STEP_ANSWER) {
+                    assert(seen < answers_count[fixture]);
+                    Atom *value = bindings_apply_if_vars(&environment, answers, answer);
+                    char expected[64];
+                    int64_t item = effects[fixture][seen];
+                    snprintf(expected, sizeof(expected), "(Pair %lld %lld)",
+                        (long long)item, (long long)item);
+                    assert(value && atom_alpha_eq(value, parse_one(answers, expected)));
+                    seen++;
+                }
+                bindings_free(&environment);
+                assert(probe.effect_count <= counts[fixture]);
+                for (size_t index = 0u; index < probe.effect_count; index++)
+                    assert(probe.effects[index] == effects[fixture][index]);
+                if (step == PETTA_MACHINE_STEP_EXHAUSTED)
+                    break;
+                if (step == PETTA_MACHINE_STEP_ANSWER)
+                    continue;
+                assert(step == PETTA_MACHINE_STEP_SUSPENDED && probe.blocked);
+                uint64_t spent = probe.spent;
+                size_t done = probe.effect_count, admitted = probe.length;
+                CettaOwnedContinuation saved;
+                cetta_owned_continuation_init(&saved);
+                CettaContinuationStatus captured = capture_relational_continuation(&machine, &saved);
+                if (delayed) {
+                    /* This external snapshot API cannot transport the live
+                     * solver. Refusal must leave the resident caller usable. */
+                    assert(captured == CETTA_CONTINUATION_UNSUPPORTED);
+                } else {
+                    assert(captured == CETTA_CONTINUATION_READY);
+                    assert(restore_relational_continuation(&machine, &saved) == CETTA_CONTINUATION_READY);
+                }
+                cetta_owned_continuation_destroy(&saved);
+                assert(petta_machine_next(&machine, &answer, &environment) == PETTA_MACHINE_STEP_SUSPENDED);
+                bindings_free(&environment);
+                assert(probe.spent == spent && probe.effect_count == done && probe.length == admitted);
+                probe.physical = allowances[physical] ? allowances[physical] : 1u;
+                probe.purse = allowances[credit] > debits[cost] ? allowances[credit]
+                    : debits[cost] ? debits[cost] : 1u;
+                if (probe.effect_count)
+                    probe.cancel_after_effect = false;
+            }
+            assert(seen == answers_count[fixture] && probe.effect_count == counts[fixture]);
+            if (physical == 4u && credit == 4u && !cancellation && !delayed) {
+                reference_len = probe.length;
+                memcpy(reference, probe.admitted, reference_len * sizeof(*reference));
+                if (receipts) {
+                    uint64_t roots[512];
+                    size_t root_count = 0u;
+                    printf("source-segment %zu %u", fixture, debits[cost]);
+                    for (size_t i = 0u; i < reference_len; i++) {
+                        size_t root = 0u;
+                        for (; root < root_count; root++)
+                            if (roots[root] == reference[i].source.root) break;
+                        if (root == root_count) roots[root_count++] = reference[i].source.root;
+                        printf(" %u/%zu/%u/%llu", (unsigned)reference[i].phase, root,
+                            reference[i].source.position, (unsigned long long)reference[i].debit);
+                    }
+                    putchar('\n');
+                }
+            }
+            assert(reference_len == probe.length);
+            source_segment_same_receipts(reference, probe.admitted, reference_len);
+            uint64_t invoice = 0u;
+            for (size_t index = 0u; index < probe.length; index++)
+                invoice += probe.admitted[index].source.position ? debits[cost] : 1u;
+            assert(invoice == probe.spent);
+            PettaMachineStats stats;
+            assert(petta_machine_stats(&machine, &stats) && stats.transitions);
+            size_t compute_visits = 0u;
+            for (size_t i = 0u; i < probe.length; i++)
+                compute_visits += probe.admitted[i].phase == CETTA_SOURCE_COMPUTE;
+            assert(stats.transitions == compute_visits);
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+            cetta_runtime_stats_snapshot(&after_run);
+            if (delayed || getenv("CETTA_PETTA_BODY_RESUME_SEGMENT_REFERENCE"))
+                assert(after_run.counters[CETTA_RUNTIME_COUNTER_PETTA_BODY_RESUME_SEGMENT_COMMIT] ==
+                    before_run.counters[CETTA_RUNTIME_COUNTER_PETTA_BODY_RESUME_SEGMENT_COMMIT]);
+#endif
+            petta_machine_destroy(&machine);
+            checks++;
+        }
+        petta_program_free(program);
+        space_free(&space);
+    }
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    cetta_runtime_stats_snapshot(&final);
+    uint64_t committed = final.counters[CETTA_RUNTIME_COUNTER_PETTA_BODY_RESUME_SEGMENT_COMMIT] -
+        initial.counters[CETTA_RUNTIME_COUNTER_PETTA_BODY_RESUME_SEGMENT_COMMIT];
+    if (getenv("CETTA_PETTA_BODY_RESUME_SEGMENT_REFERENCE"))
+        assert(!committed);
+    else {
+        if (!committed)
+            fprintf(stderr, "metered segments attempted=%llu declined=%llu activation=%llu\n",
+                (unsigned long long)(final.counters[CETTA_RUNTIME_COUNTER_PETTA_BODY_RESUME_SEGMENT_ATTEMPT] - initial.counters[CETTA_RUNTIME_COUNTER_PETTA_BODY_RESUME_SEGMENT_ATTEMPT]),
+                (unsigned long long)(final.counters[CETTA_RUNTIME_COUNTER_PETTA_BODY_RESUME_SEGMENT_DECLINE] - initial.counters[CETTA_RUNTIME_COUNTER_PETTA_BODY_RESUME_SEGMENT_DECLINE]),
+                (unsigned long long)(final.counters[CETTA_RUNTIME_COUNTER_PETTA_EQUATION_ACTIVATION_PLAN_ADMITTED] - initial.counters[CETTA_RUNTIME_COUNTER_PETTA_EQUATION_ACTIVATION_PLAN_ADMITTED]));
+        assert(committed);
+    }
+    if (!stats_enabled)
+        cetta_runtime_stats_disable();
+#endif
+    printf("PASS: %u metered caller segments preserve source receipts, independent slices, cancellation and effects\n", checks);
+}
+
 typedef struct {
     size_t attempts;
     size_t accepted;
@@ -16445,12 +16922,13 @@ int main(int argc, char **argv) {
     bool transient_only = argc == 2 && strcmp(argv[1], "--transient-plans") == 0;
     bool native_only = argc == 2 && strcmp(argv[1], "--native-return") == 0;
     bool safety_only = argc == 2 && strcmp(argv[1], "--safety-catalog") == 0;
+    bool revision_only = argc == 2 && strcmp(argv[1], "--revision-views") == 0;
     bool source_only = argc == 2 && strcmp(argv[1], "--source-accounting") == 0;
     bool admission_only = argc == 2 && strcmp(argv[1], "--callee-admission") == 0;
     bool catalog_only = argc == 2 && strcmp(argv[1], "--catalog-append") == 0;
-    if (argc != 1 && !worker_only && !resume_only && !arity_only && !transient_only &&
-        !native_only && !safety_only && !source_only && !admission_only && !catalog_only) {
-        fputs("usage: test_petta_search_machine [--worker-ownership|--resume-contract|--arity-contract|--transient-plans|--native-return|--safety-catalog|--source-accounting|--callee-admission|--catalog-append]\n", stderr);
+    bool segments_only = argc == 2 && strcmp(argv[1], "--source-segments") == 0;
+    if (argc != 1 && !worker_only && !resume_only && !arity_only && !native_only && !source_only && !admission_only && !catalog_only && !segments_only && !safety_only && !revision_only && !transient_only) {
+        fputs("usage: test_petta_search_machine [--worker-ownership|--resume-contract|--arity-contract|--native-return|--source-accounting|--callee-admission|--catalog-append|--source-segments]\n", stderr);
         return 2;
     }
     Arena persistent;
@@ -16474,6 +16952,13 @@ int main(int argc, char **argv) {
     g_symbols = &symbols;
     g_var_intern = &variables;
     test_native_argument_observation();
+    if (revision_only) {
+        test_program_revision_view_transport(&universe, &persistent);
+        test_program_private_catalog_scope(&universe, &persistent);
+        test_program_transferred_roles(&universe, &persistent);
+        test_private_transient_value_isolation(&universe, &persistent);
+        goto release_owners;
+    }
     if (transient_only) {
         test_transient_value_plan_lifetime();
         test_transient_plan_keys_own_their_storage();
@@ -16483,6 +16968,17 @@ int main(int argc, char **argv) {
         test_program_case_safety_projection(&universe, &persistent);
         test_program_safety_foreign_callability(&universe, &persistent);
         test_program_safety_cache_scope(&universe, &persistent);
+    if (segments_only) {
+        test_metered_body_segments(&universe, &persistent, &answers, true);
+        goto release_owners;
+    }
+    if (catalog_only) {
+        test_notified_catalog_append(&universe, &persistent);
+        test_unnotified_catalog_append(&universe, &persistent);
+        goto release_owners;
+    }
+    if (admission_only) {
+        test_callee_admission_scope(&universe, &persistent);
         goto release_owners;
     }
     if (catalog_only) {
@@ -16512,8 +17008,9 @@ int main(int argc, char **argv) {
     test_count_binder_visibility(&universe, &persistent, &answers);
     test_source_accounting(&universe, &persistent, &answers);
     test_source_effect_accounting(&universe, &answers);
+    test_metered_body_segments(&universe, &persistent, &answers, false);
     test_callee_admission_scope(&universe, &persistent);
-    if (source_only)
+    if (source_only || safety_only || revision_only)
         goto release_owners;
     test_resume_contract(&universe, &answers);
     if (resume_only)
@@ -16626,6 +17123,9 @@ int main(int argc, char **argv) {
         &universe, &persistent);
     test_program_revision_view_transport(
         &universe, &persistent);
+    test_program_private_catalog_scope(&universe, &persistent);
+    test_program_transferred_roles(&universe, &persistent);
+    test_private_transient_value_isolation(&universe, &persistent);
     test_program_analysis_sidecar_interop(
         &universe, &persistent, &answers);
     test_typed_data_purity_boundary(

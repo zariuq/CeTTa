@@ -1,0 +1,3 @@
+[()]
+[(-> Atom %Undefined%)]
+[(quote (+ 1 2))]

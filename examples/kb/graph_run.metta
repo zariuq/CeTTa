@@ -1,0 +1,7 @@
+!(import! &self "graph_curriculum.metta")
+!(import! &self (library system))
+(= (graph-curriculum:argument $value)
+   (case (get-metatype $value) ((Symbol (str:symbol->string $value)) ($other $value))))
+!(if (system:has-args)
+     (graph-curriculum:run (graph-curriculum:argument (system:arg 0)))
+     (CurriculumUsage "Supply an existing private store directory."))

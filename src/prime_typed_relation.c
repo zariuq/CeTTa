@@ -52,6 +52,8 @@ static bool prime_typed_relation_capture_current_authority(
                space->native.universe->instance_id &&
            reference->universe_storage_epoch ==
                space->native.universe->storage_epoch &&
+           reference->universe_collection_epoch ==
+               space->native.universe->collection_epoch &&
            cetta_prime_typing_direct_authority_token_v1(
                space, CETTA_PRIME_TYPED_FLOW_POLICY_V1, token_out) &&
            cetta_nik_direct_authority_token_v1_equal(

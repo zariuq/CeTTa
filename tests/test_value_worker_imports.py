@@ -54,12 +54,22 @@ def main():
         explicit = Worker(args.worker.resolve(), entry, "worker-imports:run",
                           language="petta", import_mode="upstream")
         try:
-            expected = E("worker-imports:leaf", 41)
-            if encode(worker.call(41)) != encode(expected) or encode(explicit.call(41)) != encode(expected):
-                raise AssertionError("default import policy changed")
+            # Corrected stable's default resolves at the source file. The
+            # explicit working-directory compatibility override is separate.
+            if worker.call(41) != 42:
+                raise AssertionError("corrected stable default is not source-relative")
+            if encode(explicit.call(41)) != encode(E("worker-imports:leaf", 41)):
+                raise AssertionError("explicit working-directory override changed")
             checks += 2
         finally:
             worker.close(); explicit.close()
+        default_cli = subprocess.run([str(args.binary.resolve()), "--lang", "petta", str(driver)],
+                                     capture_output=True, text=True, timeout=60)
+        if default_cli.returncode or [line for line in default_cli.stdout.splitlines()
+                                     if line.startswith("(RESULT ")] != ["(RESULT 42)"]:
+            raise AssertionError(("default CLI import", default_cli.returncode,
+                                  default_cli.stdout, default_cli.stderr))
+        checks += 1
         # Only ancestor-walk can find a leaf above the importing module.
         deeper = nested / "deeper"
         deeper.mkdir()
