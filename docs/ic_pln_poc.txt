@@ -1,0 +1,94 @@
+PLN structural-compression proof of concept
+==========================================
+
+  make BUILD=core ENABLE_LIB_PROLOG=0 CETTA_TEST_ISOLATED=1 demo-ic-pln
+
+The fixed target is two successive accepted abstractions from the current
+lib/petta/lib_pln.metta. Each search starts in a fresh CeTTa process, reading
+the artifact written by the preceding stage. One command prints PASS or FAIL
+for every required row and returns a failing status when the target is unmet.
+No Python is used by this command.
+
+Cost
+----
+  cost(atom)       = 1
+  cost(expression) = 1 + sum(cost(children))
+
+An empty expression costs one. All terms of the stored rewritten source are
+counted, including every definition, declaration, parameter occurrence, call
+and delayed argument. Each learned definition appears once in that source.
+Changing a symbol's spelling does not change this score. Variable-inventory
+metadata, comments and layout are outside the structural measure. Serialized
+bytes are reported separately. Node count is a program-size objective, not
+an assertion about the length of a binary code for arbitrary literals.
+
+The library lib/petta/lib_ic_library_cost.metta exposes:
+
+  (ic:library-cost Nodes artifact)
+  (ic:library-cost Bytes artifact)
+  (ic:library-check Nodes original current candidate)
+  (ic:continue-library Nodes RuleHeads artifact suffix quantum region)
+
+Existing calls retain byte-based acceptance. Explicit Bytes has the same
+meaning. Nodes is available for source archives ST1, LC1, LC2 and LM1, and
+measures the stored program before expansion. Both policies require the
+candidate to reconstruct the original observation. A prepared Nodes search
+records its policy in the observation checked during resumption.
+
+Finish table
+------------
+G1  One reproducible command; the input and runtime remain unchanged.
+G2  Two successive accepted features, each strictly reducing node count.
+G3  Native decoding equals the normalized original by cmp; an AWK counter
+    agrees with native node counts at every stage.
+G4  Nineteen original/rewritten PLN execution cases agree in fresh processes:
+    transitive similarity, deduction, revision, modus ponens, negation,
+    equivalence-to-implication and empty-result cases.
+G5  Both searches pause and resume to byte-identical artifacts.
+G6  Cost-policy controls and refusal of a malformed final archive pass.
+
+The controls include a longer name that changes byte acceptance but leaves
+structural acceptance unchanged; the reverse decision; equal-cost refusal;
+wrong-original and malformed-artifact refusals; and a changed search policy.
+
+Results are retained in runtime/ic-pln-poc/run.*/. The artifacts A0, A1 and A2,
+normalized source, learned definitions, per-helper use counts, execution logs,
+node/byte table and provenance are reviewable. The source library is not edited.
+
+Search boundary
+---------------
+The example uses the explicit RuleHeads adapter. It searches standard operator
+positions in untyped equations, including first-order constructor patterns in
+their heads. Head patterns and their variable equality constraints remain
+unchanged. Constructor boundaries can be traversed in declaration-only source
+when the constructor has no intrinsic meaning or local/visible equation or type
+declaration. Constructor roots are not themselves candidate operators. Annotated
+rules, variable-headed patterns, binding forms and unavailable captures remain
+outside this profile. Deferred retains the original plain-head search region.
+
+The bounded command selects up to 64 structurally ranked seed pairs
+per stage and prints both the selected count and the available count. Exhaustion
+refers to that declared region. The counter, grammar and search limits are
+fixed before running the example.
+
+The current real-source run does not meet G2: 2207 -> 2186 -> 2186 nodes,
+with one accepted feature followed by none. Its other checks pass. A separate
+attempt to finish the full expanded first-stage region (385 pairs) exhausted
+the process memory allowance before returning a result. That attempt provides
+no full-region completeness claim. The command therefore remains a failing
+application gate, not a declaration that the two-feature PLN target is met.
+
+The source-admission controls have a separate command:
+
+  bash scripts/check_ic_rule_heads.sh path/to/cetta
+
+They include a deliberately repetitive, controlled rule corpus with two
+accepted features; it establishes that the mechanism can iterate. It does not
+replace G2's requirement on the real PLN file. Original and rewritten versions
+also agree on choice multiplicity, empty results, effects, repeated head
+variables, quotation and an error case.
+
+Small executable PLN examples are in examples/petta/pln_truth_examples.metta.
+
+The separate IC/ILP example remains available through demo-ic-ilp; its finite
+composition template is described in docs/ic_ilp_demo.txt.

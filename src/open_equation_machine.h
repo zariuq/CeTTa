@@ -343,13 +343,14 @@ typedef struct {
                            const CettaInvocation *invocation,
                            CettaCallOutcome *outcome);
     /* The search machine's own path for `(add-atom space payload)` with a
-     * ground payload, which it takes once the call's arguments are values:
+     * ground payload, or one holding variables where the set keeps the row
+     * as its alpha key, which it takes once the call's arguments are values:
      * the payload joins `target` and `result_out` is the host's result or
      * error, built in `arena`.  False where the machine would evaluate the
      * call otherwise (an override of the operation, a transaction, a
      * payload that changes the program), before any effect. True commits
      * entry; a missing result is a provider fault, never a refusal. */
-    bool (*admit_ground_atom)(void *context, Space *root, Space *target,
+    bool (*admit_atom)(void *context, Space *root, Space *target,
                               Arena *arena, Atom *call, Atom **result_out);
     /* The search machine's own path for PeTTa's named state over values:
      * `(get-state name)` reads the value the name holds, and
@@ -462,6 +463,9 @@ typedef struct {
     bool (*execute_pure_callable)(void *context, void *prepared, Arena *arena,
                                   Atom *const *arguments, uint32_t arity,
                                   CettaCallOutcome *outcome);
+    /* Immutable worker availability of this prepared artifact, not an
+     * input refusal or execution authority. NULL/false keeps scalar probing. */
+    bool (*callable_answers_only)(void *context, const void *prepared);
     /* A continuation-bearing worker of the same opaque callable plan. NULL
      * refuses before entry. Values borrow the caller through the first pull;
      * the cursor owns any residual before the caller resumes. */

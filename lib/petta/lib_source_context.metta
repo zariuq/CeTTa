@@ -6,11 +6,25 @@
 ; retain a strict value observation in a skeleton; this grants no purity or
 ; arbitrary-syntax reflection permission, and redefinitions remain refused.
 !(import! &self (library lib_source_scope))
+!(import! &self (library str))
+
+; Query declarations without evaluating a captured left-hand side. The match
+; includes visible imports and uses a fresh source-variable frame.
+(= (source-context:declaration-at? $reader $kind $name $arity $bare)
+   (let* (($names (map-atom (source-scope:indices (+ $arity 1) 0) $index
+                    (Syntax:PlainName (str:concat "source_query_" (str:number->string $index)))))
+          ($arguments (map-atom (source-scope:indices $arity 0) $index (Syntax:Variable $index)))
+          ($head (Syntax:Literal Symbol (binary:utf8 $name)))
+          ($left (if $bare $head (Syntax:Expr (cons-atom $head $arguments))))
+          ($term (Syntax:Expr ((Syntax:Literal Symbol (binary:utf8 $kind)) $left (Syntax:Variable $arity))))
+          ($document (Syntax:Document "ST1" $reader ((Syntax:Form $names $term))))
+          ($pattern (parse (syntax:write $document))))
+     (not (== (collapse (match (context-space) $pattern True)) ()))))
 
 (= (source-context:operations)
    (("+" 2) ("-" 2) ("*" 2) ("/" 2) ("%" 2) ("==" 2)
     ("<" 2) (">" 2) ("<=" 2) (">=" 2) ("if" 3)
-    ("and" 2) ("or" 2) ("not" 1) ("get-metatype" 1)))
+    ("and" 2) ("or" 2) ("not" 1) ("get-metatype" 1) ("size-atom" 1)))
 (= (source-context:call $term)
    (case $term
      (((Syntax:Expr $children)

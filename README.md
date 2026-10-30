@@ -5,15 +5,22 @@ runs several MeTTa dialects over one shared substrate (atoms, spaces,
 matching, indexing and memory management), and it hosts native proof kernels
 for HOL Light, MM0 and Megalodon.
 
-PeTTa is the default language. CeTTa runs the PeTTa language of release
-1.0.6, the most widely used MeTTa dialect, so PeTTa programs run directly.
-Hyperon Experimental MeTTa and the other languages are selected with `--lang`.
+PeTTa is the default language: corrected stable PeTTa, with its reference,
+accepted repairs and differences described in
+[the compatibility contract](docs/petta_compatibility.txt). Hyperon
+Experimental MeTTa and the other languages are selected with `--lang`.
 
 ```bash
 make
 ./cetta program.metta              # PeTTa
 ./cetta --lang he program.metta    # Hyperon Experimental MeTTa
+./cetta -e '!(+ 1 2)'             # one inline PeTTa query
 ```
+
+Each dialect has its own evaluation and typing rules. Start with PeTTa or HE;
+the [execution semantic ledger](docs/native_returns.txt) records the boundaries
+that integration tests protect. Checked algorithm laws and native qualification
+are separate from formal verification of the C implementation.
 
 ## Languages
 
@@ -22,17 +29,23 @@ implementation, and a program is written for one of them.
 
 | `--lang` | Language | Profiles (`--profile`) |
 |---|---|---|
-| `petta` (default) | PeTTa, as released in version 1.0.6 | `extended` adds CeTTa's labeled extensions; `typecheck-v2` and `typecheck-v3` add native type checking (`petta@1.1`); `petta@1.1.c` is the typed line with declarations as call contracts |
+| `petta` (default) | Corrected stable PeTTa | `extended` adds CeTTa's labeled extensions; `typecheck-v2` and `typecheck-v3` add opt-in native type checking (`petta@1.1`); `petta@1.1.c` is the typed line with declarations as call contracts |
 | `he` | Hyperon Experimental MeTTa 0.2.10, in CeTTa's fork | `he` (default) is the fork with its deliberate differences; `he-compat` keeps the Rust implementation's behavior where `he` differs; `extended` adds CeTTa's labeled extensions; `he-prime` adds dependent binders and typed inhabitation search |
-| `prime` | the MeTTa-Prime 0.0.1 draft | |
+| `prime` | Experimental local Prime adapter, very much a work in progress | Frozen compatibility endpoint `prime@0.0.1` |
 | `hol-light` | the HOL Light kernel, checking HOLR proof streams | `standard` (default), `open`, `sealed` |
 | `rhocalc` | the reflective higher-order rho-calculus | `strict-core`, `cost`, `rhometta` |
 | `mm2` | MM2 programs, lowered directly and run on MORK | `gslt` |
 
-`--lang <name>@<version>` names a version: `petta@1.0.6`, `petta@1.1`
+`--lang <name>@<version>` names a contract: `petta@stable-fixed`, `petta@1.1`
 (typed PeTTa), `petta@1.1.c`, `he@0.2.10` (the Hyperon Experimental release
 CeTTa's HE forks; every HE profile) and `prime@0.0.1`. See
-`docs/language_versions.txt`.
+[the language contracts](docs/language_versions.txt). The historical
+`petta@1.0.6` selector is retired; old commits retain that reference.
+
+Prime in this tree is very WIP. For active Prime exploration, use
+[`godelclaw/CeTTa`, branch `cetta-ours`](https://github.com/godelclaw/CeTTa/tree/cetta-ours),
+the version used by the Gödelclaw agents. It has its own development and
+qualification history; this tree's frozen Prime endpoint does not track it.
 
 `./cetta --list-languages` lists every language of the binary, including the
 experimental generated ones (`zero`, `subzero`, `zerouv`, `gslt-il`,
@@ -112,7 +125,7 @@ The same chainer in HE, and the HE stdlib's higher-order operations:
 [(3 4)]
 ```
 
-A dependent result type in Prime:
+A local Prime smoke example (experimental):
 
 ```bash
 ./cetta --lang prime examples/prime/dependent_telescope.metta
@@ -124,7 +137,7 @@ refused there and accepted under `open`:
 
 ```bash
 ./cetta --lang hol-light tests/hol_light/fixtures/d1-minimal.hrs
-./cetta --lang hol-light tests/hol_light/fixtures/dag-new-axiom.hrs
+./cetta --lang hol-light tests/hol_light/fixtures/dag-new-axiom.hrs  # refusal; exits 1
 ./cetta --lang hol-light --profile open tests/hol_light/fixtures/dag-new-axiom.hrs
 ```
 
@@ -148,11 +161,17 @@ rho-calculus.
 
 ## Libraries
 
-Import a library with `(import! &self <name>)`. The names below load under
+Import a library with `!(import! &self <name>)`. The names below load under
 the same name in PeTTa, HE and Prime.
+
+Nonstandard PeTTa libraries require an explicit import. For example,
+`(str:starts-with "abc" "a")` stays data until `!(import! &self str)` loads
+the string library. `!(import! &self (str json))` loads both libraries in
+order. Importing one library does not open unrelated names.
 
 | Library | Provides |
 |---|---|
+| `str` | qualified string operations |
 | `re` | regular expressions with a module-authored syntax: compiled and reusable patterns, ordered captures, look-around, Unicode classes, and scalar tries for literal search (`examples/regex_*.metta`) |
 | `fs`, `io` | owned files and directories, streaming text input and output (`docs/filesystem_observations_v1.txt`, `docs/text_preparation_v1.txt`) |
 | `json` | JSON reading and writing |
@@ -181,6 +200,7 @@ kernel checks and what it leaves to the dialect.
 
 | Lane | Use | Command |
 |---|---|---|
+| Semantic contracts | focused source/value, completion and sidecar checks | `make test-execution-semantic-ledger test-petta-corrected-stable` |
 | Regular development | fast feedback after ordinary changes | `make test-correctness test-profiles bench-light` |
 | Full correctness | before review or merge | `make test-correctness-all test-profiles` |
 | Routine readiness | correctness, sanitizers, capacity and performance regressions | `make main-readiness-routine` |
@@ -197,8 +217,10 @@ make BUILD=python test-tsan
 make test-asan-main
 ```
 
-`make test-petta-release-reference` checks that the default PeTTa semantics
-and libraries are those of release 1.0.6.
+`make test-petta-release-reference` validates the pinned PeTTa reference and
+library metadata. `make test-petta-corrected-stable` checks the current accepted
+observations. The [compatibility contract](docs/petta_compatibility.txt) explains
+which repairs supersede historical reference behavior.
 
 ## Bridge builds (MORK and PathMap)
 
@@ -281,16 +303,22 @@ $ ./cetta --lang he --profile extended benchmarks/test_tilepuzzle.metta
 ```
 
 A queue space holds the frontier and a hash space the visited states. This
-run takes about half a minute and several gigabytes of memory.
+is a larger example, rather than a quick installation check; its cost depends
+on the build, space representation and machine.
 
 ### A 1.4M-atom genomic workload (HE)
 
 ```
-$ timeout 15 ./cetta --lang he benchmarks/bench_bio_1M.metta 2>/dev/null | head -3
+$ ./cetta --lang he benchmarks/bench_bio_1M.metta
 === Phase 1: Direct targets of rs10000544 (depth 1, 1.4M atoms) ===
 === Phase 2: Diseases from rs10000544 (depth 2) ===
 === Phase 3: TF regulatory targets of rs10000544 (depth 2) ===
+...
 ```
+
+This workload loads its input data before querying it. Keep the complete
+output when checking results; a printed phase heading alone does not establish
+that a query completed. See the benchmark's input paths before running it.
 
 ## Repository map
 
@@ -308,6 +336,27 @@ $ timeout 15 ./cetta --lang he benchmarks/bench_bio_1M.metta 2>/dev/null | head 
 - `docs/`, `specs/`: kernel contracts, language versions and designs
 - `examples/`, `tests/`, `benchmarks/`: runnable programs, the checked suite
   and workloads
+
+## Working on CeTTa
+
+Start with the contract for the dialect you are changing:
+[PeTTa compatibility](docs/petta_compatibility.txt),
+[language versions](docs/language_versions.txt), and the shared
+[execution and ownership contract](docs/native_returns.txt). A passing program
+in one dialect does not establish another dialect's behavior.
+
+`tests/test_manifest.tsv` records each fixture's dialect, profile, build and
+expected-observation policy. Add a small regression with an independent
+expected result, then run its affected targets from the Tests table. Preserve
+duplicate answers, variable sharing and declared ordering; an equal answer
+count alone is insufficient. Run the full readiness campaign on a frozen
+candidate before release.
+
+Generated code lives under `src/generated/` and `runtime/generated/`. Change
+its owning input or generator under `lib/`, `langdef/` or `tools/`, and let the
+Makefile regenerate its outputs. Runtime optimizations should reuse the common
+plans, bindings and tagged call outcomes; the execution contract identifies
+their ownership and fallback rules.
 
 ## Command line
 

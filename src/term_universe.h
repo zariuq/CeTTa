@@ -168,6 +168,20 @@ typedef struct {
     bool counted;
 } TermUniverseRootProviderEntry;
 
+/* A registry's index, kept once a registry holds many holders: open
+ * addressing from a holder's (function, context) to its slot.  An empty
+ * cell has fn 0. */
+typedef struct {
+    uintptr_t fn;
+    void *ctx;
+    size_t slot;
+} TermUniverseRegistryCell;
+
+typedef struct {
+    TermUniverseRegistryCell *cells;
+    size_t mask;
+} TermUniverseRegistryIndex;
+
 typedef enum {
     TERM_UNIVERSE_COLLECTION_OFF = 0,
     /* Find and report what a collection would reclaim; free nothing. */
@@ -232,9 +246,11 @@ struct TermUniverse {
     TermUniverseStoreFormatObserverEntry *observers;
     size_t observer_len;
     size_t observer_cap;
+    TermUniverseRegistryIndex observer_index;
     TermUniverseRootProviderEntry *root_providers;
     size_t root_provider_len;
     size_t root_provider_cap;
+    TermUniverseRegistryIndex root_provider_index;
     TermUniverseCollectionMode collection_mode;
     /* Collect at every safe point offered, and often inside statements: the
      * policy of a build with collection checks, and of tests. */
@@ -253,9 +269,13 @@ struct TermUniverse {
      * estimate of the garbage made since. */
     uint64_t collection_released;
     /* A collection is due once the entries made since the last reach
-     * collection_due, or the rows released reach collection_due_released. */
+     * collection_due, the rows released reach collection_due_released, or
+     * the record bytes held exceed those held after the last by
+     * collection_due_bytes. */
     uint64_t collection_due;
     uint64_t collection_due_released;
+    uint64_t collection_bytes_after;
+    uint64_t collection_due_bytes;
     /* Counting: the least wait for the next collection after one that found
      * little garbage among its candidates, doubled each time; 0 otherwise. */
     uint64_t collection_backoff;
@@ -263,6 +283,11 @@ struct TermUniverse {
      * one bit each. */
     uint64_t *collection_dead;
     size_t collection_dead_words;
+#if CETTA_BUILD_WITH_TERM_UNIVERSE_COLLECTION_CHECKS
+    /* With collection checks: the candidates counting collections examined
+     * since the last that was checked in full (a recount and a trace). */
+    uint64_t collection_unchecked;
+#endif
     /* Variable supports of reclaimed terms.  A holder of a decoded atom may
      * keep its support, and the atom outlives its entry, so the support is
      * kept until the storage is reset. */
@@ -526,9 +551,23 @@ static inline void term_universe_release(TermUniverse *universe, AtomId id) {
  * whose count fell to zero, reach their due; tracing, when enough entries
  * were made, or enough rows released, since the last collection.  Cheap
  * enough to ask at every step. */
+/* The record bytes a universe holds: its pool, less the freed records
+ * kept for reuse and the holes left until compaction.  Only a collection
+ * frees records, so between collections it only grows. */
+static inline uint64_t term_universe_held_record_bytes(
+    const TermUniverse *universe) {
+    uint64_t loose = universe->record_free_bytes + universe->record_hole_bytes;
+    return (uint64_t)universe->blob_len > loose
+        ? (uint64_t)universe->blob_len - loose : 0u;
+}
+
 static inline bool term_universe_collection_due(const TermUniverse *universe) {
     if (universe->collection_mode == TERM_UNIVERSE_COLLECTION_OFF)
         return false;
+    uint64_t held = term_universe_held_record_bytes(universe);
+    if (held >= universe->collection_bytes_after &&
+        held - universe->collection_bytes_after >= universe->collection_due_bytes)
+        return true;
     if (universe->counting)
         return (uint64_t)universe->len - universe->collection_len_after +
                    universe->zero_len >=
@@ -550,6 +589,31 @@ bool term_universe_atom_is_stable(Atom *atom);
  * term_universe_canonicalize_atom, this is not a presentation-preserving
  * epoch cleanup and must not be used to materialize user-visible terms. */
 Atom *term_universe_alpha_canonicalize_atom(Arena *dst, Atom *src);
+/* The alpha key of the stored term `id`, read from its record and stored:
+ * its variables renamed by first occurrence, left to right, as
+ * term_universe_alpha_canonicalize_atom renames an atom's, and each ground
+ * part kept as it is.  Nothing is decoded.  CETTA_ATOM_ID_NONE when a part
+ * holding a variable is no plain expression (tu_plain_expr), when
+ * the term has more distinct variables or deeper nesting than a record walk
+ * takes, or when the universe cannot store a part; the caller decodes. */
+AtomId term_universe_alpha_key_id(TermUniverse *universe, AtomId id);
+/* The alpha key of `atom` when the universe holds it, found by a walk that
+ * renames its variables as term_universe_alpha_canonicalize_atom renames
+ * them and looks each part up, making nothing and copying nothing.
+ * CETTA_ATOM_ID_NONE when the universe does not hold it; then *declined
+ * says whether the walk could not answer (a list, a value without a stable
+ * record, more variables or deeper nesting than it renames), and the caller
+ * copies instead. */
+AtomId term_universe_alpha_key_lookup(const TermUniverse *universe,
+                                      Atom *atom, bool *declined);
+/* The alpha key of `atom`, stored: its variables renamed as
+ * term_universe_alpha_key_lookup renames them, and every part made that the
+ * universe does not hold.  CETTA_ATOM_ID_NONE when the walk cannot take the
+ * atom apart (as the lookup declines) or the universe cannot store a part. */
+AtomId term_universe_store_alpha_key(TermUniverse *universe, Atom *atom);
+/* Whether term_universe_store_alpha_key forms `atom`'s key, short of the
+ * universe's own failures; nothing is stored. */
+bool term_universe_alpha_key_forms(Atom *atom);
 AtomId term_universe_store_atom_id(TermUniverse *universe, Arena *fallback,
                                    Atom *src);
 /* Store a source term owned by one resettable arena.  Reused expression
@@ -559,6 +623,11 @@ AtomId term_universe_store_atom_id_from_source_arena(
     TermUniverse *universe, Arena *fallback, const Arena *source_arena,
     Atom *src);
 AtomId term_universe_lookup_atom_id(const TermUniverse *universe, Atom *src);
+/* The entry the view `atom` was read from (term_universe_view_atom), while
+ * the universe's instance and epochs are those it was read under, else
+ * CETTA_ATOM_ID_NONE. */
+AtomId term_universe_view_origin(const TermUniverse *universe,
+                                 const Atom *atom);
 /* Non-inserting lookup of an expression presented as borrowed child
  * coordinates.  This is structurally identical to lookup of an expression
  * Atom with those children, but it never manufactures that wrapper. */
@@ -591,6 +660,15 @@ Atom *term_universe_get_atom(const TermUniverse *universe, AtomId id);
  * until the entry is first read as an atom, except for an entry without a
  * record, whose atom it always is. */
 Atom *term_universe_decoded_atom_at(const TermUniverse *universe, AtomId id);
+/* The stored term `id` as a view built in `dst`: an expression over the
+ * universe's own atoms of its atoms (symbols, numbers, strings) and over
+ * its variables, built in `dst` as the universe decodes them, which the
+ * owner of `dst` reclaims with it, and which no longer-lived structure may
+ * keep.  The universe's atom of `id` instead when it has decoded it, when
+ * `dst` interns what it builds, and when `id` is a part a view does not
+ * take apart (tu_plain_expr), or one nested too deep. */
+Atom *term_universe_view_atom(const TermUniverse *universe, Arena *dst,
+                              AtomId id);
 Atom *term_universe_copy_atom(const TermUniverse *universe, Arena *dst,
                               AtomId id);
 /* Read ordinary symbol leaves while copying a form. The callback's meaning
@@ -724,6 +802,46 @@ static inline AtomId tu_child(const TermUniverse *universe, AtomId id,
 }
 
 bool tu_has_vars(const TermUniverse *universe, AtomId id);
+/* The record header of `id`, an id read from a record or from a space's
+ * rows, which name this universe's entries: only an entry without a record
+ * has none.  Checked as tu_hdr checks in builds with collection checks. */
+static inline const CettaTermHdr *tu_hdr_stored(const TermUniverse *universe,
+                                                AtomId id) {
+#if CETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS ||     CETTA_BUILD_WITH_TERM_UNIVERSE_COLLECTION_CHECKS
+    return term_universe_hdr_checked(universe, id);
+#else
+    const TermEntry *entry = &universe->entries[id];
+    return entry->byte_off != CETTA_TERM_ENTRY_BLOB_NONE
+        ? (const CettaTermHdr *)(universe->blob_pool + entry->byte_off)
+        : NULL;
+#endif
+}
+
+/* The value of the integer whose record header is `hdr`: its eight bytes
+ * follow the header. */
+static inline int64_t tu_int_from_header(const CettaTermHdr *hdr) {
+    int64_t value = 0;
+    memcpy(&value, hdr + 1, sizeof(value));
+    return value;
+}
+
+bool tu_plain_expr(const TermUniverse *universe, AtomId id,
+                          const CettaTermHdr *hdr);
+/* Whether the stored term `id`, with header `hdr` (NULL when it has none),
+ * is ground and, when an expression, one a reader may take apart element
+ * by element and build again: not empty, headed by no internal tag (lists,
+ * cells, compounds and partials are), with an ordinary representation. */
+static inline bool tu_plain_ground(const TermUniverse *universe, AtomId id,
+                                   const CettaTermHdr *hdr) {
+    if (!hdr || (hdr->aux32 & CETTA_TERM_HDR_HAS_VARS) != 0u)
+        return false;
+    if (hdr->tag != ATOM_EXPR)
+        return true;
+    uint32_t len = hdr->aux32 & CETTA_TERM_HDR_DATA_MASK;
+    if (hdr->sym_or_head != SYMBOL_ID_NONE && len != 3u)
+        return len != 0u;
+    return tu_plain_expr(universe, id, hdr);
+}
 
 AtomId tu_intern_symbol(TermUniverse *universe, SymbolId sym_id);
 AtomId tu_intern_var(TermUniverse *universe, SymbolId sym_id, VarId var_id);

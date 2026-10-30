@@ -70,6 +70,14 @@ def predict(rows, root, inputs, operators):
         _tag, op, _parameters, children = row
         values = [visit(child) for child in children]
         recipe, _sorts, output, _alternatives = operators[op]
+        if recipe in ('TP:Where', 'TP:WhereBool', 'TP:WhereI64'):
+            if values[0][0] != 'BoolTensor' or not values[1][0] == values[2][0] == output:
+                raise ValueError('sort')
+            if values[0][1] != values[1][1] or values[1][1] != values[2][1]:
+                raise ValueError('shape')
+            return array(values[0][1], {point: values[1 if flag else 2][2][point]
+                                       for point, flag in values[0][2].items()
+                                       if point in values[1 if flag else 2][2]}, output)
         left, right = values
         if recipe == "TP:Matvec":
             if len(left[1]) != 2 or len(right[1]) != 1 or left[1][1] != right[1][0]:

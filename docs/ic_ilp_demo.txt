@@ -1,0 +1,55 @@
+Runnable IC + ILP proof of concept
+=================================
+
+From the repository root:
+
+  make BUILD=core ENABLE_LIB_PROLOG=0 CETTA_TEST_ISOLATED=1 demo-ic-ilp
+
+The MeTTa program is examples/petta/ic_ilp_poc.metta. It reads the current
+lib/petta/lib_ic_numeric_arrays.metta as source data. All seed selection,
+compression, acceptance, resumption and ILP search run in CeTTa. The Python
+driver runs the example, checks the bytes and reconstruction independently,
+and writes the results into runtime/ic-ilp-demo/.
+
+The example has a fixed, small search region: the twelve highest-ranked
+same-head seed pairs, selected by the ordinary source learner. No occurrence
+coordinates or helper bodies are supplied to that search. A second search
+starts from the resulting archive. The output reports when that region has
+no further improvement. Running the first search in two pieces must give
+the same artifact, statistics and completion reason as the uninterrupted run.
+
+The repeated source fragment decides whether a tensor kind uses exact
+comparison. Its learned definition and rewritten calls are stored together.
+Every decoder field and helper name counts toward the reported archive size.
+The native expander and a separate Python implementation must recover the
+same source syntax. ST1 preserves admitted syntax and variable relationships;
+comments and whitespace are not part of that observation. Eight calls to the
+original and rewritten enclosing functions are also compared in fresh processes.
+
+The unchanged learned helper then becomes typed ILP background vocabulary.
+Two explicitly supplied tests can follow it: an exact-result test and a
+deliberately over-permissive test. A supplied map-of-composition template
+has two type-correct fillings. Both fit the positive example. A negative
+example eliminates the over-permissive program. The survivor is evaluated
+on new lists, including an unknown tensor kind, duplicate entries and an
+empty list. Contradictory examples and an incompatible target sort must
+produce no candidate.
+
+This ILP experiment demonstrates finite composition from examples. The
+map/chain template and the two tests are supplied; their discovery is not
+claimed. Only the source-compression stage claims an encoded-size reduction.
+
+Outputs:
+
+  learned-helper.metta       The extracted runnable definition.
+  learned-library.metta      The definition and rewritten original library.
+  learned.sic                The complete compressed source artifact.
+  ilp-background.sb1         The complete source vocabulary used by ILP.
+  result.json               Costs, selected program, predictions and checks.
+  *-execution.metta          Original/rewritten execution probes.
+  *.stdout, *.stderr         Native execution records.
+
+The source library is read without editing or installing the learned helper.
+To inspect the native record directly, use the same core binary to run
+examples/petta/ic_ilp_poc.metta with --lang petta. Its output includes packed
+artifact data; the Python driver presents the concise view.

@@ -11,6 +11,7 @@
 typedef struct Space Space;
 typedef struct DiscNode DiscNode;
 typedef struct CettaSpacePathIndex CettaSpacePathIndex;
+typedef struct CettaSpacePathShape CettaSpacePathShape;
 typedef struct CettaSpaceHeadIndex CettaSpaceHeadIndex;
 typedef struct CettaMorkSpaceHandle CettaMorkSpaceHandle;
 
@@ -70,6 +71,10 @@ typedef struct {
     uint32_t match_trie_pins;
     SpacePinnedOccurrences *pinned;
     CettaSpacePathIndex *path_indexes;
+    /* The flat shapes whose lookups choose among several columns, and the
+     * rent each has paid toward its next column's index; retired with the
+     * path indexes. */
+    CettaSpacePathShape *path_shapes;
     /* The rows of each head and length (space_path_index.h), and the
      * retired ones cursors pinned to the current view still read. */
     CettaSpaceHeadIndex *head_index;

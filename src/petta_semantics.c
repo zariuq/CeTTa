@@ -106,6 +106,7 @@ typedef struct {
     bool form_by_symbol_ready;
     bool cons_shape_facts_ready;
     SymbolId true_text;
+    SymbolId not_equal;
     SymbolId false_text;
     SymbolId test;
     SymbolId progn;
@@ -412,6 +413,7 @@ static const PeTTaSymbolIds *petta_symbol_ids_refresh(void) {
     };
     if (g_symbols) {
         ids.true_text = symbol_intern_cstr(g_symbols, "true");
+        ids.not_equal = symbol_intern_cstr(g_symbols, "!=");
         ids.false_text = symbol_intern_cstr(g_symbols, "false");
         ids.test = symbol_intern_cstr(g_symbols, "test");
         ids.progn = symbol_intern_cstr(g_symbols, "progn");
@@ -2808,6 +2810,68 @@ bool petta_semantics_match_existence_observer_shape(
     return match && match->kind == ATOM_EXPR &&
         match->expr.len == 4u &&
         atom_is_symbol_id(match->expr.elems[0], g_builtin_syms.match);
+}
+
+/* Whether ATOM is what an existence observer compares with: (), or the
+ * integer 0 a count meets (*COUNTED). */
+static bool petta_semantics_existence_against(const Atom *atom,
+                                              bool *counted) {
+    *counted = atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_INT &&
+        atom->ground.ival == 0;
+    return *counted || (atom->kind == ATOM_EXPR && atom->expr.len == 0u);
+}
+
+bool petta_semantics_existence_view(const Atom *expression,
+                                    SymbolId primary_reify,
+                                    PeTTaExistenceView *view) {
+    if (!expression || expression->kind != ATOM_EXPR ||
+        expression->expr.len != 3u ||
+        expression->expr.elems[0]->kind != ATOM_SYMBOL)
+        return false;
+    bool counted = false;
+    if (!petta_semantics_existence_against(expression->expr.elems[1],
+                                           &counted) &&
+        !petta_semantics_existence_against(expression->expr.elems[2],
+                                           &counted))
+        return false;
+    SymbolId head = expression->expr.elems[0]->sym_id;
+    bool negated = head != g_builtin_syms.op_eq;
+    if (negated && head != petta_symbol_ids()->not_equal)
+        return false;
+    for (CettaExprIndex side = 1u; side <= 2u; side++) {
+        const Atom *observed = expression->expr.elems[side];
+        if (!petta_semantics_existence_against(
+                expression->expr.elems[3u - side], &counted))
+            continue;
+        const Atom *reified = observed;
+        if (counted) {
+            if (observed->kind != ATOM_EXPR || observed->expr.len != 2u ||
+                !atom_is_symbol_id(observed->expr.elems[0],
+                                   g_builtin_syms.size_atom))
+                continue;
+            reified = observed->expr.elems[1];
+        }
+        if (reified->kind != ATOM_EXPR || reified->expr.len != 2u ||
+            reified->expr.elems[0]->kind != ATOM_SYMBOL ||
+            (reified->expr.elems[0]->sym_id != primary_reify &&
+             reified->expr.elems[0]->sym_id != g_builtin_syms.collapse))
+            continue;
+        const Atom *match = reified->expr.elems[1];
+        bool once = match->kind == ATOM_EXPR && match->expr.len == 2u &&
+            atom_is_symbol_id(match->expr.elems[0], g_builtin_syms.once);
+        if (once)
+            match = match->expr.elems[1];
+        if (match->kind != ATOM_EXPR || match->expr.len != 4u ||
+            !atom_is_symbol_id(match->expr.elems[0], g_builtin_syms.match))
+            continue;
+        if (view)
+            *view = (PeTTaExistenceView){
+                .observed = side, .counted = counted, .once = once,
+                .negated = negated, .match = match,
+            };
+        return true;
+    }
+    return false;
 }
 
 bool petta_semantics_is_value_let(SymbolId head) {

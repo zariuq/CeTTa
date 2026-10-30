@@ -17,6 +17,9 @@ Module TensorProgramOperators {
       Gather . F64Tensor ::= "gather(" F64Tensor "," I64Tensor ")";
       BroadcastLike . F64Tensor ::= "broadcast-like(" F64Tensor "," F64Tensor ")";
       GatherRows . F64Tensor ::= "gather-rows(" F64Tensor "," I64Tensor ")";
+      Where . F64Tensor ::= "where(" BoolTensor "," F64Tensor "," F64Tensor ")";
+      WhereBool . BoolTensor ::= "where-bool(" BoolTensor "," BoolTensor "," BoolTensor ")";
+      WhereI64 . I64Tensor ::= "where-i64(" BoolTensor "," I64Tensor "," I64Tensor ")";
     }
   }
   theory Operators()
