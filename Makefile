@@ -3491,6 +3491,7 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/causal/feedback.metta \
 	tests/prime/held_equality.metta \
 	tests/prime/held_patterns.metta \
+	tests/prime/held_value_pattern_inspection.metta \
 	tests/prime/stored_variable_identity.metta \
 	tests/prime/error_continues.metta \
 	tests/prime/no_value_kinds.metta \

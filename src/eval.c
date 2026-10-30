@@ -14422,6 +14422,7 @@ static Atom *prime_need_reify_match_value(
 static bool prime_pattern_takes_quotation_apart(const Atom *pattern,
                                                 uint32_t depth);
 static Atom *prime_quotations_as_data(Space *s, Arena *a, Atom *atom);
+static Atom *prime_quotation_as_data(Space *s, Arena *a, Atom *quotation);
 
 static PrimeLetMatchStatus prime_let_match_body(
     Space *space, const AbtSignature *signature, Arena *arena,
@@ -31548,6 +31549,7 @@ typedef struct {
     Atom *source;
     Atom *pattern;
     bool in_code;
+    bool held_syntax;
     Atom **destination;
     Atom **children;
     const CettaPrimeContext **context_frames;
@@ -31904,8 +31906,55 @@ prime_need_reification_run(PrimeNeedReification *state,
             if (pattern_query) {
                 /* Structural code inspection follows the pattern. Wildcard
                  * fields retain their original closure and owned cells. */
-                if (!frame->pattern || frame->pattern->kind == ATOM_VAR ||
-                    !frame->source || !atom_has_registry_refs(frame->source)) {
+                if (!frame->pattern || frame->pattern->kind == ATOM_VAR) {
+                    *frame->destination = frame->held_syntax
+                        ? atom_prime_held_wrap(arena, frame->source)
+                        : frame->source;
+                    if (!*frame->destination) goto fail;
+                    len--;
+                    continue;
+                }
+                /* Inspect data at the constrained positions of the pattern.
+                 * Its wildcard fields remain held, including code-shaped
+                 * values. No private cell inside held syntax is resolved. */
+                if (atom_prime_held_is(frame->source) &&
+                    !atom_prime_held_is(frame->pattern)) {
+                    frame->source = atom_prime_held_payload(frame->source);
+                    frame->held_syntax = true;
+                }
+                if (frame->held_syntax) {
+                    /* Quoted binders use the existing code-aware view.
+                     * Wrapping their slots as ordinary data would erase
+                     * binding structure before canonical code matching. */
+                    if(atom_is_quotation(frame->source) &&
+                        prime_semantics_code_pattern(frame->pattern)) {
+                        *frame->destination=prime_quotation_as_data(
+                            ready_space,arena,frame->source);
+                        if(!*frame->destination)goto fail;
+                        len--;
+                        continue;
+                    }
+                    if (!frame->source || frame->source->kind != ATOM_EXPR ||
+                        frame->pattern->kind != ATOM_EXPR ||
+                        atom_authored_len(frame->pattern) !=
+                            atom_authored_len(frame->source)) {
+                        *frame->destination = frame->source;
+                        len--;
+                        continue;
+                    }
+                    if (!cetta_expr_len_mul_fits_size(
+                            frame->source->expr.len, sizeof(Atom *)))
+                        goto fail;
+                    frame->children = frame->source->expr.len
+                        ? arena_alloc(arena, sizeof(*frame->children) *
+                            (size_t)frame->source->expr.len) : NULL;
+                    if (frame->source->expr.len && !frame->children) goto fail;
+                    frame->entered = true;
+                    continue;
+                }
+                if (!frame->source ||
+                    (!atom_has_registry_refs(frame->source) &&
+                     !atom_structural_may_have_internal_tag(frame->source))) {
                     *frame->destination = frame->source;
                     len--;
                     continue;
@@ -31934,7 +31983,9 @@ prime_need_reification_run(PrimeNeedReification *state,
             /* Structural summaries propagate through contexts and compounds.
              * Ordinary pattern subgraphs contain no private carrier to
              * resolve; keep them without a traversal or reconstruction. */
-            if (match_value && !atom_has_registry_refs(frame->source)) {
+            if (match_value && !atom_has_registry_refs(frame->source) &&
+                !(pattern_query &&
+                  atom_structural_may_have_internal_tag(frame->source))) {
                 *frame->destination = frame->source;
                 len--;
                 continue;
@@ -32349,6 +32400,7 @@ prime_need_reification_run(PrimeNeedReification *state,
                             child_index < atom_authored_len(frame->pattern)
                             ? frame->pattern->expr.elems[child_index] : NULL,
                         .in_code = frame->in_code,
+                        .held_syntax = frame->held_syntax,
                         .retain_values = frame->retain_values,
                         .preserve_demand = persist_sharing && child_index == 1u &&
                             (prime_need_is_promise(frame->source) ||
@@ -32455,7 +32507,10 @@ static Atom *prime_need_reify_mode(
     Arena *arena, Atom *root, const PrimeNeedSnapshot *snapshot,
     PrimeNeedReifyMode mode, const Bindings *environment,
     Space *ready_space, Atom *pattern) {
-    if (!arena || !root || !snapshot || !prime_need_snapshot_present(snapshot))
+    if (!arena || !root || !snapshot ||
+        (!prime_need_snapshot_present(snapshot) &&
+         !(mode == PRIME_NEED_REIFY_PATTERN_QUERY &&
+           atom_structural_may_have_internal_tag(root))))
         return root;
     PrimeNeedReifyMemo *memo=NULL;
     if (mode==PRIME_NEED_REIFY_OBSERVATION) {
@@ -92922,10 +92977,12 @@ tail_call: ;
          * spread out, one code per argument. */
         Atom *keys = lift_let ? atom->expr.elems[2] : NULL;
         Atom *codes = lift_let ? atom->expr.elems[3] : NULL;
-        bool spread = lift_let && keys->kind == ATOM_EXPR &&
-                      keys->expr.len > 0u && !atom_is_quotation(keys) &&
+        Atom *key_form = keys ? atom_prime_held_payload(keys) : NULL;
+        bool spread = key_form && key_form->kind == ATOM_EXPR &&
+                      key_form->expr.len > 0u && !atom_is_quotation(key_form) &&
                       codes->kind == ATOM_EXPR && !atom_is_quotation(codes) &&
-                      codes->expr.len == keys->expr.len;
+                      !atom_prime_held_is(codes) &&
+                      codes->expr.len == key_form->expr.len;
         size_t count = spread
             ? 4u + (size_t)codes->expr.len : (size_t)atom->expr.len;
         Atom **elems = arena_alloc(a, sizeof(*elems) * count);
@@ -92946,7 +93003,7 @@ tail_call: ;
         }
         size_t pending = 0u;
         for (size_t i = spread ? 3u : (size_t)first_code; i < count; i++) {
-            if (atom_is_quotation(elems[i]) ||
+            if (atom_is_quotation(elems[i]) || atom_prime_held_is(elems[i]) ||
                 prime_need_cached_value_ready(elems[i], CURRENT_ENV))
                 continue;
             Atom *holder = atom_var_with_id(a, "code", fresh_var_id());
