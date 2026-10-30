@@ -91364,11 +91364,17 @@ static void metta_call_owned(Space *s, Arena *a, Atom *atom, Atom *etype, int fu
      * its own result set.  That target must not outlive the native caller.
      * Run a child driver to completion, then restore the enclosing driver;
      * scheduling it into the enclosing frontier would retain a dangling
-     * result pointer.  Finite-fuel calls retain their existing accounting. */
-    bool child_borrow = g_prime_eval_stack_driver && fuel < 0 &&
+     * result pointer. The caller's fuel and completion purse remain in force.
+     * A retained native service needs the same boundary even when reached
+     * directly through a typed argument instead of an authored equation. */
+    bool child_borrow = g_prime_eval_stack_driver &&
         !prime_eval_stack_target_is_owned(os);
+    bool native_child = child_borrow &&
+        eval_current_language_id() == CETTA_LANGUAGE_PRIME &&
+        cetta_library_native_execution_supported(
+            g_library_context, atom_head_symbol_id(atom));
     if (prefix_limit != 0u ||
-        (stack_root_admitted &&
+        ((stack_root_admitted || native_child) &&
          (!g_prime_eval_stack_driver || child_borrow))) {
         if (top) {
             /* The explicit weighted entry already holds its whole call and
