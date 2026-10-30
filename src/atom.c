@@ -2489,8 +2489,16 @@ static bool atom_intern_identical(Atom *a, Atom *b) {
         return false;
     for (CettaExprIndex i = 0u; i < a->expr.len; i++) {
         leaf = atom_intern_leaf_compare(a->expr.elems[i], b->expr.elems[i]);
-        if (leaf < 0)
+        if (leaf < 0) {
+            /* The table places atoms by their structural hash, so identical
+             * atoms hash alike: cached hashes that differ settle it before
+             * a comparison that would walk both terms. */
+            uint32_t ha = atom_hash_cache_load(a);
+            uint32_t hb = atom_hash_cache_load(b);
+            if (ha != 0u && hb != 0u && ha != hb)
+                return false;
             return atom_compare_driver(a, b, ATOM_COMPARE_INTERN, false);
+        }
         if (!leaf)
             return false;
     }
