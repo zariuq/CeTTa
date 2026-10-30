@@ -2,6 +2,7 @@
 #include "library.h"
 #include "native_disk_store.h"
 #include "native_disk_space.h"
+#include "native_disk_query.h"
 #include "native_handle.h"
 #include "atom_wire.h"
 #include "eval.h"
@@ -12,12 +13,15 @@
 
 static const char *owner_kind="disk-store",*view_kind="disk-store-view";
 static const char *reader_kind="disk-store-body",*scan_kind="disk-store-scan";
+static const char *query_kind="disk-space-query";
 typedef struct { CettaDiskCursor *cursor; CettaDiskBuffer last; CettaDiskBlob blob; uint64_t position; bool done; } Scan;
 typedef struct { CettaDiskStoreScope *items; unsigned char **allocated; size_t count; } Scopes;
 
 static void free_owner(void *p) { cetta_disk_store_close(p); }
 static void free_view(void *p) { cetta_disk_store_view_close(p); }
 static void free_reader(void *p) { cetta_disk_blob_reader_close(p); }
+static void free_query(void *p) { cetta_disk_query_close(p); }
+static void query_storage(const void *p,CettaStorageCensus *census) { cetta_disk_query_storage_census(p,census); }
 static void free_scan(void *p) {
     Scan *scan=p; cetta_disk_cursor_close(scan->cursor); cetta_disk_buffer_free(&scan->last); free(scan);
 }
@@ -58,6 +62,16 @@ static Atom *own(CettaLibraryContext *ctx,Arena *a,const char *kind,void *p,Cett
     if (!cetta_native_handle_alloc(ctx,kind,p,release,&id)) { release(p); return NULL; }
     Atom *handle=cetta_native_handle_owned_atom(ctx,a,kind,id);
     if (!handle) cetta_native_handle_close(ctx,kind,id);
+    return handle;
+}
+static Atom *own_query(CettaLibraryContext *ctx,Arena *a,CettaDiskQuery *query) {
+    uint64_t id=0;
+    if (!cetta_native_handle_alloc(ctx,query_kind,query,free_query,&id)) { free_query(query);return NULL; }
+    if (!cetta_native_handle_set_storage(ctx,query_kind,id,query_storage)) {
+        cetta_native_handle_close(ctx,query_kind,id);return NULL;
+    }
+    Atom *handle=cetta_native_handle_owned_atom(ctx,a,query_kind,id);
+    if (!handle) cetta_native_handle_close(ctx,query_kind,id);
     return handle;
 }
 static Atom *unsigned_value(Arena *a,uint64_t value) {
@@ -148,9 +162,9 @@ static bool acquire(CettaLibraryContext *ctx,const char *kind,Atom *handle,
                     CettaNativeHandleUseMode mode,CettaNativeHandleUse *use) {
     return cetta_native_handle_acquire_owned(ctx,kind,handle,mode,use);
 }
-static Atom *space_view(CettaLibraryContext *ctx,Arena *a,Atom **args,uint32_t n) {
+static Atom *space_view(CettaLibraryContext *ctx,Arena *a,Atom **args,uint32_t n,bool streaming) {
     CettaDiskBytes key;
-    if (n!=2 || !string(args[1],&key)) return refused(a,"invalid-space-view");
+    if (n!=(streaming ? 4u : 2u) || !string(args[1],&key)) return refused(a,"invalid-space-view");
     /* Other dialects have different Space discovery/execution paths. Keep
      * their public admission explicit until those paths are qualified. */
     if (ctx->session.language_id!=CETTA_LANGUAGE_PETTA)
@@ -159,7 +173,7 @@ static Atom *space_view(CettaLibraryContext *ctx,Arena *a,Atom **args,uint32_t n
      * An unqualified transactional payload must not acquire a live foreign
      * capability by receiving a raw Space pointer. */
     Arena *storage=eval_current_persistent_arena();
-    if (!storage || eval_payload_transactional() || ctx->term_universe.persistent_arena!=storage)
+    if (!streaming && (!storage || eval_payload_transactional() || ctx->term_universe.persistent_arena!=storage))
         return refused(a,"space-owner-context");
     CettaNativeHandleUse use={0};
     if (!acquire(ctx,view_kind,args[0],CETTA_NATIVE_HANDLE_USE_LIFETIME,&use)) return refused(a,"closed-view");
@@ -182,7 +196,16 @@ static Atom *space_view(CettaLibraryContext *ctx,Arena *a,Atom **args,uint32_t n
         prefix.size && prefix.size<=root->key_limit && number(record->expr.elems[2],&count) &&
         !(key.size>=prefix.size && !memcmp(key.data,prefix.data,prefix.size));
     if (!valid) result=refused(a,read!=CETTA_DISK_OK ? "space-metadata-read" : "space-metadata-format");
-    else {
+    else if (streaming) {
+        CettaDiskQuery *query=NULL;
+        CettaDiskStoreStatus status=cetta_disk_query_open(view,prefix,count,args[2],args[3],&query);
+        if (status!=CETTA_STORE_OK) result=status_value(a,status);
+        else {
+            Atom *handle=own_query(ctx,a,query);
+            result=handle ? atom_expr(a,(Atom *[]){atom_symbol(a,"StoreQueryOpened"),handle,
+                view_epoch_value(a,view),unsigned_value(a,cetta_disk_store_view_revision(view))},4) : refused(a,"capacity");
+        }
+    } else {
         Space *space=arena_alloc(storage,sizeof(*space));
         if (!space) { result=refused(a,"capacity");arena_free(&metadata);goto done; }
         space_init_with_universe(space,&ctx->term_universe);
@@ -201,7 +224,46 @@ done:
 }
 Atom *cetta_store_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **args,uint32_t n) {
     if (!ctx || !a || !head) return NULL;
-    if (atom_is_symbol(head,"__cetta_lib_store_space_view")) return space_view(ctx,a,args,n);
+    if (atom_is_symbol(head,"__cetta_lib_store_space_view")) return space_view(ctx,a,args,n,false);
+    if (atom_is_symbol(head,"__cetta_lib_store_space_query_open")) return space_view(ctx,a,args,n,true);
+    bool query_next=atom_is_symbol(head,"__cetta_lib_store_space_query_next");
+    bool query_checkpoint=atom_is_symbol(head,"__cetta_lib_store_space_query_checkpoint");
+    bool query_cancel=atom_is_symbol(head,"__cetta_lib_store_space_query_cancel");
+    if (query_next || query_checkpoint || query_cancel) {
+        uint64_t sequence=0,work=0,maximum=0;
+        if (n!=(query_next ? 4u : 1u) || (query_next &&
+            (!number(args[1],&sequence) || !number(args[2],&work) || !number(args[3],&maximum) || maximum>CETTA_ATOM_WIRE_BYTES)))
+            return refused(a,"invalid-space-query");
+        CettaNativeHandleUse use={0};
+        if (!acquire(ctx,query_kind,args[0],CETTA_NATIVE_HANDLE_USE_EXCLUSIVE,&use)) return refused(a,"closed-or-busy-query");
+        CettaDiskQuery *query=cetta_native_handle_use_resource(&use);Atom *result=NULL;
+        if (query_checkpoint) result=cetta_disk_query_checkpoint(query)
+            ? atom_symbol(a,"StoreQueryCheckpointed") : refused(a,"capacity");
+        else {
+            CettaDiskBytes packet={0};size_t required=0;
+            CettaDiskQueryStep step=query_cancel ? cetta_disk_query_cancel(query)
+                : cetta_disk_query_next(query,sequence,work,(size_t)maximum,&packet,&required);
+            switch (step) {
+            case CETTA_DISK_QUERY_ROW: {
+                Atom *record=NULL;
+                CettaAtomWireStatus decoded=cetta_atom_wire_decode(a,packet.data,packet.size,&record);
+                if (decoded!=ATOM_WIRE_OK) result=refused(a,decoded==ATOM_WIRE_NOMEM ? "capacity" : "query-packet");
+                else result=atom_expr(a,(Atom *[]){atom_symbol(a,"StoreQueryRow"),unsigned_value(a,sequence),
+                    record->expr.elems[1],record->expr.elems[2]},4);
+                break;
+            }
+            case CETTA_DISK_QUERY_TOO_LARGE: result=atom_expr2(a,atom_symbol(a,"StoreQueryTooLarge"),unsigned_value(a,required));break;
+            case CETTA_DISK_QUERY_PAUSED: result=atom_symbol(a,"StoreQueryPaused");break;
+            case CETTA_DISK_QUERY_END: result=atom_symbol(a,"StoreQueryEnd");break;
+            case CETTA_DISK_QUERY_STALE: result=atom_symbol(a,"StoreQueryStale");break;
+            case CETTA_DISK_QUERY_CANCELLED: result=atom_symbol(a,"StoreQueryCancelled");break;
+            case CETTA_DISK_QUERY_INCOMPLETE: result=atom_expr2(a,atom_symbol(a,"StoreQueryFailed"),atom_symbol(a,"incomplete"));break;
+            case CETTA_DISK_QUERY_INVALIDATED: result=atom_expr2(a,atom_symbol(a,"StoreQueryFailed"),atom_symbol(a,"invalidated"));break;
+            case CETTA_DISK_QUERY_CAPACITY: result=atom_expr2(a,atom_symbol(a,"StoreQueryFailed"),atom_symbol(a,"capacity"));break;
+            }
+        }
+        cetta_native_handle_use_release(&use);return result;
+    }
     if (atom_is_symbol(head,"__cetta_lib_store_key_i64")) {
         if (n!=1 || args[0]->kind!=ATOM_GROUNDED || args[0]->ground.gkind!=GV_INT) return refused(a,"invalid-integer");
         uint64_t value=(uint64_t)args[0]->ground.ival ^ (UINT64_C(1)<<63);unsigned char bytes[8];
@@ -243,8 +305,8 @@ Atom *cetta_store_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **a
     }
     if (atom_is_symbol(head,"__cetta_lib_store_close")) {
         if (n!=1) return refused(a,"invalid-close");
-        const char *kinds[]={owner_kind,view_kind,reader_kind,scan_kind};
-        for (size_t i=0;i<4;++i) {
+        const char *kinds[]={owner_kind,view_kind,reader_kind,scan_kind,query_kind};
+        for (size_t i=0;i<sizeof(kinds)/sizeof(*kinds);++i) {
             CettaNativeHandleUse use={0};uint64_t id=0;
             if (!acquire(ctx,kinds[i],args[0],CETTA_NATIVE_HANDLE_USE_LIFETIME,&use)) continue;
             bool closed=cetta_native_handle_arg(args[0],kinds[i],&id) && cetta_native_handle_close(ctx,kinds[i],id);

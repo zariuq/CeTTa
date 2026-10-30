@@ -6,6 +6,10 @@
 (: __cetta_lib_store_view_info (-> Atom Atom))
 (: __cetta_lib_store_check_view (-> Atom Atom Atom))
 (: __cetta_lib_store_space_view (-> Atom String Atom))
+(: __cetta_lib_store_space_query_open (-> Atom String Atom Atom Atom))
+(: __cetta_lib_store_space_query_next (-> Atom Number Number Number Atom))
+(: __cetta_lib_store_space_query_checkpoint (-> Atom Atom))
+(: __cetta_lib_store_space_query_cancel (-> Atom Atom))
 (: __cetta_lib_store_commit (-> Atom Atom Atom Atom))
 (: __cetta_lib_store_commit_scoped (-> Atom Atom Atom Atom Atom Atom))
 (: __cetta_lib_store_get (-> Atom String Number Atom))
@@ -39,6 +43,19 @@
 ; resulting read-only Space owns its snapshot independently of the handles.
 (= (store:space-view $view $metadata-key)
    (function (case (__cetta_lib_store_space_view $view $metadata-key) (($result (return $result))))))
+; A request-owned cursor over that same captured Space/matcher. Query syntax
+; is held data; row templates are instantiated without evaluation. Sequence
+; retries replay the last offered row until the next sequence is requested.
+; Checkpoint between pages/work quanta to retire earlier arena allocations.
+(: store:space-query-open (-> %Undefined% String Atom Atom %Undefined%))
+(= (store:space-query-open $view $metadata-key $pattern $template)
+   (function (case (__cetta_lib_store_space_query_open $view $metadata-key $pattern $template) (($result (return $result))))))
+(= (store:space-query-next $query $sequence $transitions $maximum-bytes)
+   (function (case (__cetta_lib_store_space_query_next $query $sequence $transitions $maximum-bytes) (($result (return $result))))))
+(= (store:space-query-checkpoint $query)
+   (function (case (__cetta_lib_store_space_query_checkpoint $query) (($result (return $result))))))
+(= (store:space-query-cancel $query)
+   (function (case (__cetta_lib_store_space_query_cancel $query) (($result (return $result))))))
 (= (store:commit $store $view $ops)
    (function (case (__cetta_lib_store_commit $store $view $ops) (($result (return $result))))))
 (= (store:commit-scoped $store $view $reads $writes $ops)

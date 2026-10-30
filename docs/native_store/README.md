@@ -168,6 +168,56 @@ publication/compaction. These scoped tests do not establish power-loss
 durability beyond the native owner's documented filesystem/fault model, nor
 complete the broader service, constraint, index or backup acceptance.
 
+### Request-owned pattern cursors
+
+`(durable-space:cursor view collection pattern template)` returns
+`(StoreQueryOpened query epoch revision)`. It owns a private captured Space,
+universe and the existing `SpaceQueryCursor`. It exposes no raw Space pointer.
+Patterns and templates are portable data; shared variables are freshened
+together on opening. Templates are instantiated as data, without evaluation.
+Use ordinary MeTTa code on the returned values for further computation.
+
+- `(store:space-query-next query sequence transitions maximum-bytes)` returns
+  `(StoreQueryRow sequence value occurrence-identities)`, `StoreQueryPaused`,
+  `StoreQueryEnd`, `(StoreQueryTooLarge required-bytes)`, `StoreQueryStale`,
+  `StoreQueryCancelled` or `(StoreQueryFailed reason)`.
+- Sequence starts at zero. Repeating the last offered sequence returns the
+  same row without advancing, until the next sequence is requested. Equal
+  values from distinct occurrences remain distinct rows. An undersized byte
+  budget retains its pending row; it does not skip it.
+- `(store:space-query-checkpoint query)` relocates live continuation/template
+  state into the next arena and retires the previous arena. Call it between
+  pages or work quanta to avoid retaining all prior answer allocations.
+  A refused checkpoint leaves the original cursor and replay row unchanged.
+- `(store:space-query-cancel query)` releases its captured root, cursor and
+  arenas immediately. An already completed cursor remains `StoreQueryEnd`;
+  otherwise cancellation returns `StoreQueryCancelled`. `store:close` releases
+  the remaining owning handle. Unreturned handles also retire with the request
+  arena, using the existing native-handle lifetime mechanism.
+
+`StoreQueryFailed` is terminal for that cursor and releases its captured root.
+It preserves failure as a distinct outcome; it does not turn prior rows into a
+complete result or silently reopen a newer revision.
+
+These are iteration/lifetime operations over the shared Space matcher, not a
+second query evaluator. The lower-level constructor is
+`(store:space-query-open view metadata-key pattern template)`. Syntax and each
+row must fit the existing CAV1 limits. Work limits count matcher transitions,
+not wall-clock time or all primitive byte costs. Network framing needs its own
+reply-envelope allowance, deadlines and resource quotas.
+
+`test-native-disk-query` checks data/identity replay, pending row byte limits,
+checkpoint refusal, variable sharing, sixteen interleaved captured readers,
+old roots across compaction and immediate cleanup on errors/end/cancel. Its
+4,096-row flat scan checks checkpointed retention independently of prior rows.
+`test-persistent-query-worker` compares an executable MeTTa quoted-template
+reference, then measures repeated completed, closed, cancelled and abandoned
+cursors in a fresh long-lived worker. Tests explicitly import their assertion
+library and include a deliberately false assertion as a negative control.
+These cursor gates do not yet establish socket disconnect handling or the
+complete service acceptance. Session-lived `store:space-view` keeps its
+ordinary Space lifetime; this cursor provides the bounded request owner.
+
 ## Owners and snapshots
 
 Import `(library store)` in PeTTa, or `store` in HE and Prime.

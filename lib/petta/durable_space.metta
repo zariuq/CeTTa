@@ -8,6 +8,7 @@
 (= (durable-space:wire-limit) 1048576)
 (: durable-space:create (-> %Undefined% %Undefined% Atom Atom %Undefined%))
 (: durable-space:capture (-> %Undefined% Atom %Undefined%))
+(: durable-space:cursor (-> %Undefined% Atom Atom Atom %Undefined%))
 (= (durable-space:metadata $collection) (knowledge:address "space/meta/v1/" $collection))
 (= (durable-space:prefix $collection)
   (case (knowledge:address "space/rows/v1/" $collection)
@@ -16,6 +17,10 @@
 (= (durable-space:capture $view $collection)
   (case (durable-space:metadata $collection)
     (((KnowledgeAddressV1 $key) (store:space-view $view $key)) ($error $error))))
+
+(= (durable-space:cursor $view $collection $pattern $template)
+  (case (durable-space:metadata $collection)
+    (((KnowledgeAddressV1 $key) (store:space-query-open $view $key $pattern $template)) ($error $error))))
 
 ; A new collection must have neither metadata nor orphaned rows. The scan
 ; reads at most one key at/after the prefix and closes on every outcome.
