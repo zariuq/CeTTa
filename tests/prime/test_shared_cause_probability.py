@@ -23,13 +23,13 @@ SOURCE = ROOT / "tests/prime/shared_cause_probability.metta"
 BINARY = Path(os.environ.get("CETTA_BIN", ROOT / "cetta"))
 
 
-def run_native():
+def run_native(source=SOURCE):
     common = [str(BINARY), "--lang", "prime"]
     plain = subprocess.run(
-        common + [str(SOURCE)], text=True, capture_output=True, check=False
+        common + [str(source)], text=True, capture_output=True, check=False
     )
     traced = subprocess.run(
-        common + ["--emit-prime-need-trace", str(SOURCE)],
+        common + ["--emit-prime-need-trace", str(source)],
         text=True,
         capture_output=True,
         check=False,
@@ -52,6 +52,24 @@ def run_native():
     return forms
 
 
+def cause_outcome(answer):
+    observed = answer.events_named("observe-cell")
+    require(observed, "a goal receipt has no source observation")
+    # A receipt can retain both production and later delivery of that same
+    # immutable update. Event count is not a count of independent causes.
+    require(all(event_field(event, "after") == "heads" for event in observed),
+            "a goal was justified by a different outcome")
+    identities = {
+        (event_field(event, "need-session"), event_field(event, "producer"))
+        for event in observed
+    }
+    require(len(identities) == 1, "one explanation combines distinct source outcomes")
+    identity = next(iter(identities))
+    require(all(part not in (None, "0") for part in identity),
+            "an observation does not identify a completed producer outcome")
+    return identity
+
+
 def main() -> int:
     forms = run_native()
     answers = [
@@ -69,20 +87,20 @@ def main() -> int:
     }
     require(len(rules) == 2, "distinct rule occurrences were collapsed")
 
-    observations = []
-    for answer in answers:
-        observed = answer.events_named("observe-cell")
-        require(len(observed) == 1, "a goal receipt lacks one exact observation")
-        event = observed[0]
-        observations.append((
-            event_field(event, "need-session"),
-            event_field(event, "cell"),
-            event_field(event, "after"),
-        ))
+    observations = [cause_outcome(answer) for answer in answers]
+    cells = {(event_field(event, "need-session"), event_field(event, "cell"))
+             for answer in answers for event in answer.events_named("observe-cell")}
+    require(len(cells) == 1, "the shared fixture no longer uses one argument cell")
     require(
         len(set(observations)) == 1,
         "the two explanations do not share one producer outcome",
     )
+
+    independent = run_native(ROOT / "tests/prime/shared_cause_probability_independent.metta")
+    separate = [answer for answer in independent[1] if answer.value == "goal"]
+    require(len(separate) == 2, "the independent control lost a goal occurrence")
+    require(len({cause_outcome(answer) for answer in separate}) == 2,
+            "equal outcomes of independent cells were merged into one cause")
 
     fair_heads = Fraction(1, 2)
     dependence_aware = fair_heads
