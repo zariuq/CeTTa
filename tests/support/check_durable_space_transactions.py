@@ -9,7 +9,7 @@ import tempfile
 
 
 binary = str(Path(sys.argv[1]).resolve())
-header = "!(import! &self (library durable_space))\n!(import! &self (library system))\n"
+header = "!(import! &self (library durable_space))\n!(import! &self (library system))\n!(import! &self (library lib_he))\n"
 
 
 def sequence(bindings, body):
@@ -42,6 +42,9 @@ changes = "((SpaceInsertV1 a (edge alice bob)) (SpaceInsertV1 b (edge alice bob)
 
 with tempfile.TemporaryDirectory(prefix="cetta-space-transactions-", dir=os.environ.get("TMPDIR")) as folder:
     root = Path(folder)
+    negative = subprocess.run([binary, "--lang", "petta", str(write(root, "false-assertion", "(assertEqual 1 2)"))],
+                              stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
+    assert negative.returncode != 0 and "Assertion failed" in negative.stdout, negative
     (root / "store").mkdir(mode=0o700)
     seed = sequence([
         ("(StoreOpened $o)", '(store:open "STORE_PATH" "create")'),

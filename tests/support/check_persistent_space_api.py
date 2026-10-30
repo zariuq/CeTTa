@@ -10,7 +10,7 @@ import tempfile
 
 
 binary = str(Path(sys.argv[1]).resolve())
-imports = "!(import! &self (library store))\n!(import! &self pat)\n"
+imports = "!(import! &self (library store))\n!(import! &self pat)\n!(import! &self (library lib_he))\n"
 
 
 def program(root, name, source):
@@ -76,8 +76,8 @@ reader = '''
  ($_ (assertEqual (collapse (match $s (saved-program) found)) (found)))
  ($_ (assertEqual (foldall + (match $s (edge alice $who) 1) 0) 2))
  ($_ (assertEqual (size-atom (collapse (match $s (, (edge alice $x) (edge alice $y)) ($x $y)))) 4))
- ($_ (assertEqual (catch (add-atom $s (edge alice carol)) (Error $call ReadOnlySpace) refused) refused))
- ($_ (assertEqual (catch (remove-atom $s (edge alice bob)) (Error $call ReadOnlySpace) refused) refused)))
+ ($_ (assertEqual (let (Error $add_call ReadOnlySpace) (catch (add-atom $s (edge alice carol))) refused) refused))
+ ($_ (assertEqual (let (Error $remove_call ReadOnlySpace) (catch (remove-atom $s (edge alice bob))) refused) refused)))
  (collapse (let (pat:hit ((pat:row (pat:occurrence $instance $revision $identity) $original $instantiated)) $w)
                  (pat:query $s match% (edge alice $who))
                  (println! (IDENTITY $identity)))))
@@ -86,6 +86,8 @@ reader = '''
 
 with tempfile.TemporaryDirectory(prefix="cetta-persistent-space-", dir=os.environ.get("TMPDIR")) as folder:
     root = Path(folder)
+    negative = run(program(root, "false-assertion", "!(assertEqual 1 2)\n"), expect=None)
+    assert negative.returncode != 0 and "Assertion failed" in negative.stdout, negative
     refused = root / "language-refusal.metta"
     refused.write_text('!(import! &self store)\n!(store:space-view not-a-live-view "metadata")\n')
     for language in ("he", "prime"):
