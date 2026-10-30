@@ -19,6 +19,16 @@ static uint64_t monotonic_ns(void) {
     if (clock_gettime(CLOCK_MONOTONIC, &t)) return 0;
     return (uint64_t)t.tv_sec * UINT64_C(1000000000) + (uint64_t)t.tv_nsec;
 }
+static Atom *evaluation_failure(Arena *arena,const EvalOutcome *outcome) {
+    static const char *names[]={"complete","fuel","cancelled","stack","capacity",
+        "invalidated","host-failure","effect-denied","paused"};
+    const char *reason=(unsigned)outcome->completion<sizeof(names)/sizeof(*names)
+        ? names[outcome->completion] : "unknown-completion";
+    Atom *detail=outcome->results.len==1 && atom_is_error(outcome->results.items[0])
+        ? outcome->results.items[0] : atom_unit(arena);
+    return atom_expr(arena,(Atom *[]){atom_symbol(arena,"WorkerEvaluationFailure"),atom_symbol(arena,reason),
+        atom_int(arena,(int64_t)outcome->results.len),atom_bool(arena,outcome->petta_raised_error),detail},5);
+}
 
 /* A private, parent-owned worker. The operator selects the module and
  * entry point; CSP1 carries values, never generated source text. This is an
@@ -173,7 +183,7 @@ int main(int argc, char **argv) {
             !atom_is_error(outcome.results.items[0]);
         Atom *parts[5] = {atom_symbol(&scratch,"reply"), request->expr.elems[1],
             atom_symbol(&scratch,complete ? "ok" : "error"), complete ? outcome.results.items[0] :
-            atom_symbol(&scratch,"incomplete-or-nonsingle-result")};
+            evaluation_failure(&scratch,&outcome)};
         if (profile) {
             SymbolTableStats stats;
             symbol_table_stats_snapshot(&symbols, &stats);
@@ -194,8 +204,8 @@ int main(int argc, char **argv) {
              * rather than implying that any effects can be retried. */
             free(bytes); bytes = NULL;
             Atom *failure[] = {parts[0], parts[1], atom_symbol(&scratch,"error"),
-                              atom_symbol(&scratch,"unencodable-result")};
-            reply = atom_expr(&scratch, failure, 4);
+                              atom_symbol(&scratch,"unencodable-result"),parts[4]};
+            reply = atom_expr(&scratch, failure, profile ? 5 : 4);
             valid = cetta_atom_wire_encode(reply, &bytes, &length) == ATOM_WIRE_OK;
         }
         if (valid) {
