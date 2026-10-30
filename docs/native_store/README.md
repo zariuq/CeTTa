@@ -5,6 +5,12 @@ For native ACT snapshot readers backing ordinary MeTTa spaces, see the
 separates byte-format compatibility from occurrence, query and durable-owner
 acceptance; it is a design contract, not an implementation-completion claim.
 
+The [DAS interface intake](DAS_INTEGRATION.txt) records a pinned upstream API
+review and external-Space qualification gates. It covers reusable streaming,
+cancellation and authorization mechanisms, while keeping occurrence identity,
+captured revisions and publication guarantees explicit. No DAS adapter is
+implemented by that design checkpoint.
+
 `store` is a SQLite-free, persistent byte-key interface. Applications define
 records, key layouts, indexes, queries, constraints and receipts in MeTTa.
 The native owner validates snapshots and publishes one immutable root for a

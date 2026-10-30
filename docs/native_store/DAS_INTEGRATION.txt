@@ -1,0 +1,184 @@
+DAS integration with ordinary CeTTa spaces — API intake and qualification plan
+2026-10-30
+
+STATUS
+Design and source review only. No DAS adapter, server deployment, distributed
+transaction layer or performance superiority is claimed by this document.
+The native persistent-space work remains the first-release implementation.
+
+SOURCE PIN
+Repository: https://github.com/singnet/das
+Commit: dac998abe820a5488d151c1a2304363974203b27
+Commit date:2026-10-29. Read the current C++ monorepo, not a historical Python
+package as though it defined the current API. Recheck compatibility before
+changing the pin. The research reports inform questions; source establishes
+the observations below.
+
+ARCHITECTURE
+
+ ordinary MeTTa match / pat:query / shared continuations
+                          |
+                owned Space source interface
+                 /           |             \
+       native durable    ACT snapshot    DAS external source
+       captured roots     captured root   declared read profile
+
+All adapters must state the semantics they actually provide. DAS can supply
+remote storage/query sources and service mechanisms. A future CeTTa provider
+could also expose selected local operations to DAS. Neither direction requires
+a separate CeTTa query language or an application-specific database engine.
+
+INITIAL ADOPTION DECISION
+Begin with a small read-only external-source prototype and an explicit
+capability profile. Reuse DAS's execution/stream/cancel interface where it
+meets the lifetime contract; keep ordinary matching and local durable
+publication in their existing CeTTa owners. Choose any later writable backend
+or provider integration only after semantic and workload qualification.
+
+A remote service lacking captured-view evidence can still be offered as an
+explicit best-effort external source. It cannot silently satisfy the stable
+captured-read contract used by local KB transactions. Snapshot vectors disclose
+which constituent views were read; they do not themselves prove a globally
+serializable state across servers.
+
+VERIFIED INTERFACE MAP AT THE PIN
+
+1. src/atomdb/AtomDB.h
+   Provides atom/node/link lookup, existence, matching, pattern HandleSets,
+   outgoing targets, incoming sets, add/upsert/merge, deletion and counts.
+   Bulk add methods include is_transactional=false. The comments explicitly
+   qualify merge-enabled adds by a single writer per handle and warn that
+   earlier batch items may already be applied on a duplicate-rejection error.
+   A transactional flag does not establish every backend's guarantees.
+   The inspected public interface has no captured revision/view token argument
+   spanning successive queries. This is an interface observation, not a claim
+   that every underlying DBMS lacks transactions or snapshots.
+   AtomDB get_uid() may be empty; qualify a stable source-domain identity
+   rather than assuming this field supplies a unique persistent namespace.
+
+2. src/atomdb/AtomDBAPITypes.h
+   HandleList/HandleSet and their iterators are useful candidate surfaces.
+   They are not a persistent occurrence-identity contract. AtomDB's default
+   add semantics are upsert by atom identity, rather than insertion of a fresh
+   independently referenced duplicate occurrence.
+
+3. src/hasher/Hasher.h and expression_hasher.cc
+   The current implementation uses MD5-based content handles, including
+   recursively derived link handles. Do not substitute the older PoC's hash
+   scheme or assume that an independently chosen SHA-256 encoding interoperates.
+   Carry a pinned identity/encoding scheme and verify decoded atom structure
+   where identity crosses a trust boundary. Keep any stronger canonical digest
+   explicitly separate from the DAS-compatible handle.
+   Content identity, membership, occurrence identity and authority are distinct.
+
+4. src/atomdb/ProtectedAtomDB.h and auth/AuthorizationManifest.h
+   ProtectedAtomDB wraps a backend with Keychain-sensitive access checks and
+   schema-based read/write profiles. Translate scoped CeTTa grants explicitly;
+   possession of an atom handle is not an authorization grant. Verify endpoint
+   authentication and profile/revocation behavior separately from storage APIs.
+
+5. src/agents/query_engine
+   QueryElement/QueryNode model asynchronous flow with an explicit finished
+   indication. QueryAnswer contains handles, variable assignments, optional
+   MeTTa mappings and ranking-related data. The inspected answer representation
+   does not attach a captured source revision. Confirm variable and binding
+   semantics before pushing a pattern into this engine.
+
+6. src/agents/command_router/http_api
+   POST /command-router/executions starts an execution.
+   GET /command-router/executions/:id reports status.
+   WS /command-router/ws/:id streams buffered events/answers.
+   POST /command-router/executions/:id/cancel requests cancellation.
+   The code distinguishes queued/running work, terminal results and errors,
+   and bounds event storage. Cancellation acceptance says cancel_requested;
+   clients must separately observe termination. WebSocket closing alone does
+   not establish successful query completion or remote cleanup.
+
+   A WebSocket session starts reading stored events at index0. A reconnecting
+   adapter must handle replay by execution/chunk sequence while retaining
+   legitimate equal answers from distinct occurrences or derivations.
+   Per-execution limits and queue admission are useful server mechanisms, but
+   do not by themselves establish an end-to-end credit/backpressure protocol.
+
+7. src/atomdb/morkdb/MorkDB.h and MorkDB.cc
+   MorkDB derives from RedisMongoDB and performs pattern queries through a
+   MORK client, then constructs local handle/assignment results. This is more
+   than a generic file-reader ABI. Audit inherited operations and cross-store
+   publication before assuming it supplies one atomic write domain. At this
+   pin delete_link reports unsupported and returns false; an adapter must not
+   present this as a successful deletion.
+   query_for_pattern first obtains a vector of raw expressions. Streaming
+   those answers over HTTP does not prove that the server avoided materializing
+   the underlying result set before emitting a page. Measure source work and
+   retained memory, as well as client-visible chunks.
+
+REQUIRED ADAPTER CONTRACT
+
+- Own the connection, execution ID, row buffers and cursor for their declared
+  lifetimes. Closing a cursor requests cancellation and handles the terminal
+  acknowledgement/deadline explicitly. Local resource release and confirmed
+  remote cleanup are different observations.
+- Preserve More/Paused/Complete/Cancelled/Failed/Unknown outcomes. A dropped
+  connection, empty poll, attention-limited prefix or accepted cancellation is
+  not proof of a complete empty result. Preserve already received partial data
+  together with its incompleteness status.
+- Tag the backend/identity codec and validate native atom mappings. Preserve
+  MeTTa value kinds, open terms, variable sharing and inert stored programs.
+  Use shared Space matching when pushdown is not proved equivalent.
+- Advertise set-style content views honestly. To qualify as an occurrence bag,
+  supply stable occurrence IDs and multiplicity/provenance records; never
+  manufacture occurrence IDs from traversal positions or deduplicate by payload.
+- Pin a source view for every leg/page of a captured query. If the backend has
+  no supported view token, use an explicitly captured local materialization for
+  small oracle cases or expose only its weaker external-source profile.
+  Whole-KB materialization does not meet the incremental large-KB requirement.
+- Include source identity, actual revision evidence and authorization scope in
+  cache keys. Unknown freshness and revocation state remain unknown. A content
+  handle alone cannot validate mutable membership or permissions.
+- Keep query-informed writes behind complete dependency validation. Absent,
+  aggregate and recursive/path reads require scopes or conservative validation.
+  Unversioned remote reads cannot authorize a native transaction merely because
+  all returned rows have stable content handles.
+- Preserve attention order as a declared ranking policy, separately from
+  completeness and logical identity. Cross-source scores require a common
+  scoring context or an explicit conversion. Early stopping yields partial data.
+- Charge request budgets for actual source visits, transfer, decode and retained
+  resources. Cancelled or disconnected remote work is not automatically free.
+
+FORMAL QUALIFICATION
+
+Mettapedia.Machines.ExternalSpaceAdapter supplies counterexamples/contracts for:
+- content-set projection losing occurrence multiplicity;
+- reopening one source between join legs manufacturing an answer present in
+  neither revision;
+- socket closure and cancel-request acceptance being weaker than terminal
+  completion or remote-settlement acknowledgement.
+
+The models describe admission obligations; they do not certify DAS's C++ code
+or an unimplemented CeTTa adapter. Existing SourceSnapshot, SnapshotBatch and
+ToolFailureFeedback results provide additional reusable contracts for captured
+inputs, coordinated publication and failure-preserving observations.
+
+NEXT IMPLEMENTATION GATES
+1. Publish an explicit backend capability/identity manifest at a pinned revision.
+2. Build a local scripted stream fixture; test errors, cancellation, disconnect,
+   replay, duplicate equal rows and unknown/captured revision profiles.
+3. Connect that fixture through the existing owned Space source/cursor path;
+   compare bindings, multiplicity, completeness and ownership with an ordinary
+   Space. No new independent matcher or permission system.
+4. Only then run a bounded read-only integration against an explicitly selected
+   DAS instance. Keep protocol/backend failures distinguishable from non-match.
+5. Evaluate a CeTTa-backed DAS provider and writable integration as separate
+   capabilities. Preserve the original single-machine native-KB acceptance gates.
+
+Measure equivalent workloads and semantics before adoption. MORK comparisons
+must include the best qualified relevant build, including experimental leapfrog
+where it applies; record build options and complete answers. A research report's
+capacity estimate is not a measured performance or correctness result.
+
+PRIMARY SOURCE LINKS
+https://github.com/singnet/das/blob/dac998abe820a5488d151c1a2304363974203b27/src/atomdb/AtomDB.h
+https://github.com/singnet/das/blob/dac998abe820a5488d151c1a2304363974203b27/src/atomdb/ProtectedAtomDB.h
+https://github.com/singnet/das/blob/dac998abe820a5488d151c1a2304363974203b27/src/hasher/Hasher.h
+https://github.com/singnet/das/blob/dac998abe820a5488d151c1a2304363974203b27/src/agents/command_router/http_api/CommandRouterHttpAPI.cc
+https://github.com/singnet/das/blob/dac998abe820a5488d151c1a2304363974203b27/src/agents/command_router/http_api/CommandExecution.cc
