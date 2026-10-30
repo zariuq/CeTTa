@@ -27,8 +27,9 @@ First qualify persistent ordinary Spaces across fresh processes: commit data,
 end or kill the writer process, reopen from disk in a new process, and query
 the same committed values, multiplicities and occurrence identities. Test
 interrupted publication and lost replies as well as clean shutdown. The
-owning durable-Space adapter is the next implementation gate. The shared
-server then exposes that same qualified persistence and query core.
+owning durable-Space adapter now passes the scoped gates described below. The
+shared server must expose that same persistence and query core; its request
+ownership, cancellation and full release qualification remain unfinished.
 
 The first bounded service milestone targets the actual local ledger/queue workloads.
 Its durability and isolation requirements remain strict while its API stays
@@ -86,6 +87,86 @@ when its offsets and frame checksums happen to be valid. Earlier prototype
 read as version 2. Preserve and re-export those offline prototype stores with
 their matching implementation. Portable bindings must check the ABI before
 passing a root structure.
+
+## Captured persistent atom Spaces
+
+The PeTTa library `(library durable_space)` maintains collections of ordinary
+atoms over the native owner. It supplies writes and metadata; it does not
+implement another query language or matcher.
+
+- `(durable-space:create owner view collection request-id)` creates an empty
+  collection if its metadata and occurrence range are absent.
+- `(durable-space:commit owner view collection request-id changes)` accepts a
+  list of `(SpaceInsertV1 local-id atom)`, `(SpaceUpdateV1 reference atom)` and
+  `(SpaceDeleteV1 reference)` edits. At most one edit may name an occurrence
+  in a batch. Update/delete require an existing occurrence. Counts, atom bytes
+  and an immutable application receipt publish atomically.
+- Creation returns `(KnowledgeCommittedV1 (SpaceCreatedV1 collection) epoch
+  revision)`. Edits return `(KnowledgeCommittedV1 (SpaceAppliedV1 references)
+  epoch revision)`, listing inserted references in input order. A retry of the
+  identical command returns `(KnowledgeReplayedV1 original-answer)`; different
+  commands under the same request id refuse. Recovery/receipt inspection uses
+  `knowledge:resolve` from the same library foundation.
+- `(durable-space:capture view collection)` returns `(StoreSpace space epoch
+  revision)`. Ordinary `match`, `get-atoms`, and imported `pat` queries read
+  the captured occurrences through the shared incremental Space cursor.
+  This adapter has a complete prefix-scan fallback, not a selective atom index.
+
+For example, with a captured `view` and an initialized `claims` collection:
+
+```metta
+(let (StoreSpace $claims $epoch $revision)
+     (durable-space:capture $view claims)
+     (match $claims (, (supports $e $c) (source $e $origin)) ($c $origin)))
+```
+
+Collection/request/local identifiers are ground portable values. An inserted
+occurrence reference is `(StoreOccurrenceV1 epoch key)`. Keys include the
+collection, insertion request and local id; equal payloads remain distinct.
+The receipt prevents a deleted occurrence from being recreated by replaying
+its original insertion. An update keeps its reference. A new insertion under
+a new request has a new reference. References are identifiers, not authority.
+The owner handle remains the write capability.
+
+All writes conservatively validate the supplied view's complete logical
+revision. Keep that same view for queries informing a write; capturing a newer
+view after an earlier read does not validate that earlier read. Automatic
+observation enrollment across arbitrary computations is not established by
+this helper. Raw `store:` edits can bypass its collection/receipt invariants;
+the guarantees here cover writes made through this collection interface.
+
+Captured atom Spaces are read-only and own their snapshot independently of
+the original owner/view handles. Their resources follow ordinary evaluator
+Space lifetime and are released at session teardown. An existing captured
+Space survives later commits and physical compaction. Per-request retirement
+in a long-lived server is a separate, unfinished gate. Transactional payload
+contexts without the ordinary Space owner are refused. Cross-dialect service
+admission is not implied by the PeTTa tests.
+
+Stored rules and callable expressions remain data. Merely reading them does
+not install an equation catalog. CAV1 preserves sharing within each stored
+atom, with fresh runtime variables on decoding; runtime variable ids are not
+durable identities. The current portable codec bounds each encoded packet to
+one MiB, including the complete receipt/command envelope. Oversize or
+unsupported values refuse before publication. Optional SQL-style nulls and
+coercions are not introduced.
+
+The lower-level `(store:space-view view metadata-key)` reads a CAV1
+`(StoreSpaceV1 prefix occurrence-count)` descriptor in that same captured root.
+Every value under the nonempty prefix must be one CAV1 atom; its full key
+identifies an occurrence. The descriptor must lie outside that prefix. A full
+scan checks the declared count. Corrupt atom bytes, count mismatches and I/O
+failures are incomplete execution, never successful empty or partial bags.
+Use `durable_space` to maintain this descriptor rather than editing it by hand.
+
+Qualification targets: `test-native-disk-space`, `test-persistent-space-api`,
+`test-durable-space-transactions`, existing `test-space-source-cursor` and
+`test-native-disk-store`. They cover fresh-process kill/reopen, changed symbol
+allocation, duplicate/open atoms, inert programs, stable references, lost
+replies, atomic edits, stale/absent-read conflicts and old readers across
+publication/compaction. These scoped tests do not establish power-loss
+durability beyond the native owner's documented filesystem/fault model, nor
+complete the broader service, constraint, index or backup acceptance.
 
 ## Owners and snapshots
 

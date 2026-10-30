@@ -4677,6 +4677,11 @@ test-all: test-persistent-space-api
 test-persistent-space-api: $(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) $(PYTHON) tests/support/check_persistent_space_api.py ./$(BIN)
 
+.PHONY: test-durable-space-transactions
+test-all: test-durable-space-transactions
+test-durable-space-transactions: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) $(PYTHON) tests/support/check_durable_space_transactions.py ./$(BIN)
+
 PATTERN_OCCURRENCE_DROP_BIN = runtime/test_pattern_occurrence_drop-$(BUILD_OBJ_TAG)
 $(PATTERN_OCCURRENCE_DROP_BIN): tests/test_pattern_query_cursor.c tests/test_pattern_occurrence_drop.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Wl,--wrap=space_occurrence_cursor_next -o $@ tests/test_pattern_query_cursor.c tests/test_pattern_occurrence_drop.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)

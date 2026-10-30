@@ -203,6 +203,23 @@
          ($error $error))))
      ($error $error))))
 
+; The caller has checked its receipt in this view. Validate the whole logical
+; revision, including every query/absence/aggregate dependency, without a
+; comparison scan of the complete key range. Facts and receipt still publish
+; in one native commit domain.
+(= (knowledge:publish-whole-ready $owner $view $identity $command $answer $operations)
+  (case (knowledge:receipt-address $identity)
+    (((KnowledgeAddressV1 $key)
+      (case (store:encode (KnowledgeReceiptV1 $identity $command $answer))
+        (((StoreEncoded $bytes)
+          (let $all (cons-atom ops (cons-atom (put $key $bytes) (cdr-atom $operations)))
+            (case (store:commit $owner $view $all)
+              (((StoreSnapshot $updated $epoch $revision)
+                (let $closed (store:close $updated) (KnowledgeCommittedV1 $answer $epoch $revision)))
+               ($error $error)))))
+         ($error $error))))
+     ($error $error))))
+
 ; Recovery establishes a fresh durable view before inspecting the receipt.
 ; Missing or unreadable evidence never grants authority for an external call.
 (= (knowledge:resolve $owner $identity $command $maximum-bytes)
