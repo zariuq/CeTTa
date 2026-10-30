@@ -8155,6 +8155,82 @@ static unsigned stale_native_tail_controls(void) {
     return checks;
 }
 
+/* Data may spell an effectful call without entering it. Actual effects still
+ * need the caller's authority, including after a value has been captured. */
+static unsigned data_admission_inquiries;
+static bool data_admission_inquiry(void *context, Space *space,
+    PettaMachineOperation operation, const PettaMachineOperationView *view) {
+    (void)context; (void)space; (void)operation; (void)view;
+    data_admission_inquiries++;
+    return true;
+}
+
+static unsigned data_authority_controls(void) {
+    Arena arena; arena_init_detached(&arena);
+    Space space; space_init(&space);
+    Registry registry; registry_init(&registry);
+    Registry *previous_registry = g_registry; g_registry = &registry;
+    registry_bind(&registry, "&self", atom_space(&arena, &space));
+    CettaLibraryContext context;
+    cetta_library_context_init_for_language_profile(
+        &context, CETTA_LANGUAGE_PRIME, cetta_profile_prime_default());
+    CettaLibraryContext *previous_library = eval_swap_library_context(&context);
+    EvalExecutionScope execution = {0};
+    eval_execution_scope_enter(&execution, &space);
+    PrimeEvalStackDriver *previous_driver = g_prime_eval_stack_driver;
+    CettaEvalEpisode *previous_episode = g_eval_completion_tracker;
+    unsigned checks = 0u;
+    for (unsigned mode = 0u; mode < 9u; mode++) {
+        OutcomeSet answers; outcome_set_init_with_owner(&answers, &arena);
+        PrimeEvalStackDriver caller = {
+            .arena = &arena, .root_target = &answers,
+            .pure_authority = mode < 4u || mode == 7u,
+            .call_permit = data_admission_inquiry,
+        };
+        g_prime_eval_stack_driver = &caller;
+        CettaEvalEpisode episode = cetta_eval_episode_begin(NULL, -1);
+        g_eval_completion_tracker = &episode;
+        Atom *call = prepared_fixture_atom(&arena, mode >= 7u
+            ? "(add-atom &self actual-write)" : mode == 6u
+            ? "(add-atom &self stored-program)" : "(println! must-not-run)");
+        if (mode == 0u || mode == 4u || mode == 6u)
+            call = prime_completed_value(&space, &arena, call);
+        if (mode == 1u) call = atom_prime_held_wrap(&arena, call);
+        Atom *expected = mode == 2u || mode == 5u ? atom_atom_type(&arena) : NULL;
+        data_admission_inquiries = 0u;
+        metta_call_impl_owned(&space, &arena, call, expected, -1, false,
+            NULL, -1, &answers, NULL);
+        if (mode == 3u || mode == 7u) {
+            assert(!answers.len && episode.completion != CETTA_EVAL_COMPLETE);
+            checks++;
+        } else if (mode == 8u) {
+            assert(episode.completion == CETTA_EVAL_COMPLETE && answers.len == 1u);
+            assert(space_contains_exact(&space, atom_symbol(&arena, "actual-write")));
+            checks += 2u;
+        } else {
+            assert(episode.completion == CETTA_EVAL_COMPLETE && !caller.failed);
+            assert(answers.len == 1u && atom_eq(answers.items[0].atom, call));
+            assert(!data_admission_inquiries);
+            checks += 3u;
+        }
+        assert(!space_contains_exact(&space, atom_symbol(&arena, "stored-program")));
+        if (mode < 8u)
+            assert(!space_contains_exact(&space, atom_symbol(&arena, "actual-write")));
+        checks++;
+        prime_eval_stack_abandon(&caller);
+        prepared_pure_program_cache_free(&caller.prepared_pure_cache);
+        outcome_set_free(&answers);
+    }
+    g_prime_eval_stack_driver = previous_driver;
+    g_eval_completion_tracker = previous_episode;
+    eval_execution_scope_leave(&execution);
+    eval_swap_library_context(previous_library);
+    cetta_library_context_free(&context);
+    g_registry = previous_registry; registry_free(&registry);
+    space_free(&space); arena_free(&arena);
+    return checks;
+}
+
 int main(int argc, char **argv) {
     SymbolTable symbols;
     VarInternTable variables;
@@ -8163,6 +8239,7 @@ int main(int argc, char **argv) {
     var_intern_init(&variables);
     g_symbols = &symbols;
     g_var_intern = &variables;
+    bool data_authority_only = argc == 2 && strcmp(argv[1], "--data-authority") == 0;
     bool availability_only = argc == 2 && strcmp(argv[1], "--worker-availability") == 0;
     bool refusal_only = argc == 2 && strcmp(argv[1], "--source-refusal") == 0;
     bool episode_only = argc == 2 && strcmp(argv[1], "--episode-contract") == 0;
@@ -8178,9 +8255,11 @@ int main(int argc, char **argv) {
     bool conditional_only = argc == 2 && strcmp(argv[1], "--conditional-continuation") == 0;
     bool resumption_only = argc == 2 && strcmp(argv[1], "--contextual-resumption") == 0;
     bool stale_tail_only = argc == 2 && strcmp(argv[1], "--stale-native-tail") == 0;
-    assert(argc == 1 || refusal_only || availability_only || episode_only || prime_data_only || fold_only || callee_only || lexical_only || body_only || collection_failure_only || bound_completion_only || resumption_only || conditional_only || stale_tail_only || caller_dag_only || he_completion_only);
+    assert(argc == 1 || data_authority_only || refusal_only || availability_only || episode_only || prime_data_only || fold_only || callee_only || lexical_only || body_only || collection_failure_only || bound_completion_only || resumption_only || conditional_only || stale_tail_only || caller_dag_only || he_completion_only);
     unsigned checks = prepared_worker_availability();
-    if (refusal_only)
+    if (data_authority_only)
+        checks += data_authority_controls();
+    else if (refusal_only)
         checks += source_admission_refusal_controls() + he_source_refusal_controls();
     else if (he_completion_only)
         checks += he_instruction_completion_controls(true);
@@ -8211,6 +8290,7 @@ int main(int argc, char **argv) {
         checks += episode_accounting() + evaluator_episode_consumers();
     else if (!availability_only)
         checks += source_admission_refusal_controls() + he_source_refusal_controls() + he_instruction_completion_controls(false) + frozen_source_caller_controls() + stale_native_tail_controls() + conditional_native_continuation_controls() + native_frontier_rejoin_controls() + branching_native_frontier_controls() + caller_dag_scaling_controls() + contextual_resumption_controls() + bound_native_completion_controls() + relational_body_destination_controls() + oem_body_retention_controls() + prepared_body_entry_controls() + lexical_native_tail_controls() + lexical_packet_controls() + oem_callee_owner_controls() + fold_completion_controls() + prepared_syntax_data_controls() + episode_accounting() + evaluator_episode_consumers() + source_computation_plans() + cold_function_type_cache() + source_invocation_plans() + prepared_computation_plans() + generic_budget_checks() + source_collection_plans() + source_case_plans() + captured_binding_projection_controls() + he_instruction_plan_controls() + he_canonical_plan_controls() + he_instruction_source_gc_controls() + ordinary_invocation_consumers() + shared_compilation_refusals() + closed_failure_cache() + ready_invocation_controls() + evaluator_consumers() + projected_roots() + residual_consumers() + prepared_native_consumers() + scalar_callable_admission();
+    if (argc == 1) checks += data_authority_controls();
     eval_match_decision_cache_free_for_current_thread();
     eval_profiled_type_cache_free_for_current_thread();
     space_execution_analysis_cache_free_for_current_thread();

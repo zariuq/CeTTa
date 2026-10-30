@@ -91737,6 +91737,19 @@ tail_call: ;
         if (match_grade && !g_prime_eval_stack_driver && language_id != CETTA_LANGUAGE_PRIME &&
             native_weight_run_root(s,a,atom,etype,fuel,CURRENT_ENV,preserve_bindings,os)) return;
     }
+    /* Returning data does not enter the operation its payload spells. */
+    HeTypeDemand demand = eval_atom_type_demand(a, atom, etype);
+    if (demand == HE_TYPE_KEEP) {
+        outcome_set_add(os, atom, &_empty);
+        return;
+    }
+
+    /* A completed value answers itself (prime_completed_value). */
+    if (prime_is_completed_value(atom)) {
+        outcome_set_add(os, atom, &_empty);
+        return;
+    }
+
     PrimeEvalStackDriver *refusal_driver=g_prime_eval_stack_driver;
     uint64_t refusal_generation=refusal_driver &&
         refusal_driver->call_refusal_generation
@@ -91827,12 +91840,6 @@ tail_call: ;
                                          preserve_bindings,os)) return;
     }
 
-    HeTypeDemand demand = eval_atom_type_demand(a, atom, etype);
-    if (demand == HE_TYPE_KEEP) {
-        outcome_set_add(os, atom, &_empty);
-        return;
-    }
-
     /* A symbol the Prime program defines evaluates by its definition. */
     if (demand == HE_TYPE_CAST && prime_symbol_is_defined(s, atom)) {
         prime_symbol_demand(s, a, atom, fuel, os, PRIME_SYMBOL_DEMAND_CALL, NULL);
@@ -91876,12 +91883,6 @@ tail_call: ;
         outcome_set_free(&answered);
         return;
     }
-    /* A completed value answers itself (prime_completed_value). */
-    if (prime_is_completed_value(atom)) {
-        outcome_set_add(os, atom, &_empty);
-        return;
-    }
-
     /*
      * Canonical PeTTa closures are evaluator values, not ordinary tuple
      * syntax.  In particular, a partially applied multi-argument lambda is
