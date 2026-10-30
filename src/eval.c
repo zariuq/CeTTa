@@ -25731,7 +25731,14 @@ static Space *resolve_single_space_arg(Space *s, Arena *a, Atom *space_expr, int
     result_set_init(&rs);
     metta_eval(s, a, NULL, space_expr, fuel, &rs);
     for (CettaCount i = 0; i < rs.len; i++) {
-        sp = resolve_registry_space_payload(g_registry, rs.items[i]);
+        Atom *candidate = rs.items[i];
+        Space *role = resolve_context_role(s, a, candidate);
+        if (role) {
+            sp = prime_need_call_context_read(
+                s, atom_symbol_current_id(candidate), role) ? role : NULL;
+            break;
+        }
+        sp = resolve_registry_space_payload(g_registry, candidate);
         if (sp) break;
     }
     result_set_free(&rs);
