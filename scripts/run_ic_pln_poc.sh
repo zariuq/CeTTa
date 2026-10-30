@@ -3,6 +3,11 @@
 set -Eeuo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 BIN=$(realpath "${1:-$ROOT/cetta}")
+SEEDS=${IC_PLN_SEEDS:-64}
+if [[ ! $SEEDS =~ ^[1-9][0-9]*$ || ${#SEEDS} -gt 4 || $SEEDS -gt 1000 ]]; then
+    printf 'IC_PLN_SEEDS must be an integer from 1 to 1000\n' >&2
+    exit 2
+fi
 OUTPUT=${2:-$ROOT/runtime/ic-pln-poc}
 mkdir -p "$OUTPUT"
 OUTPUT=$(realpath "$OUTPUT")
@@ -58,6 +63,7 @@ on_error() {
 trap on_error ERR
 
 printf 'PLN structural compression\n' | tee "$RUN/summary.txt"
+printf 'Candidate limit per stage: %s\n' "$SEEDS" | tee -a "$RUN/summary.txt"
 sha256sum "$BIN" "$SOURCE" "$GLUE" scripts/run_ic_pln_poc.sh \
     lib/petta/lib_ic_library_cost.metta lib/petta/lib_ic_packed.metta \
     tests/petta/ic_library_cost.metta tests/support/count_metta_nodes.awk > "$RUN/provenance.sha256"
@@ -67,7 +73,7 @@ binary "$RUN/A0.dec" "$RUN/A0.sic"
 
 learn() {
     local label=$1 input=$2 suffix=$3 split=$4 output=$5
-    stage "$label" "(pln-poc:learn $(quote "$RUN/$input.dec") $(quote "$suffix") $split $(quote "$RUN/$output.dec") $(quote "$RUN/$output.helpers.metta"))"
+    stage "$label" "(pln-poc:learn $(quote "$RUN/$input.dec") $(quote "$suffix") $split $(quote "$RUN/$output.dec") $(quote "$RUN/$output.helpers.metta") $SEEDS)"
     binary "$RUN/$output.dec" "$RUN/$output.sic"
     grep '^[(]PLN:Stage ' "$RUN/$label.stdout" | tee -a "$RUN/summary.txt"
 }
@@ -87,9 +93,9 @@ fi
 
 stage decode "(pln-poc:decode $(quote "$RUN/A2.dec") $(quote "$RUN/decoded.metta"))"
 stage export "(pln-poc:export $(quote "$RUN/A2.dec") $(quote "$RUN/rewritten.metta"))"
-stage export-first "(pln-poc:export $(quote "$RUN/A1.dec") $(quote "$RUN/first.metta"))"
+stage export-first "(pln-poc:export $(quote "$RUN/A1.dec") $(quote "$RUN/stage1-source.metta"))"
 count0=$(awk -f tests/support/count_metta_nodes.awk "$RUN/original.normalized.metta")
-count1=$(awk -f tests/support/count_metta_nodes.awk "$RUN/first.metta")
+count1=$(awk -f tests/support/count_metta_nodes.awk "$RUN/stage1-source.metta")
 count2=$(awk -f tests/support/count_metta_nodes.awk "$RUN/rewritten.metta")
 if cmp -s "$RUN/original.normalized.metta" "$RUN/decoded.metta" \
    && [[ $count0 -eq $n0 && $count1 -eq $n1 && $count2 -eq $n2 ]]; then

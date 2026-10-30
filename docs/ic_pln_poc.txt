@@ -1,6 +1,16 @@
 PLN structural-compression proof of concept
 ==========================================
 
+The retained two-feature, /safe-aware experiment is now available separately:
+
+  make BUILD=core ENABLE_LIB_PROLOG=0 CETTA_TEST_ISOLATED=1 demo-ic-pln-mvp
+
+See experiments/ic_pln_mvp/README.txt for its frozen-profile contract, native
+replay capsule and known semantic limits. It reaches 2207 -> 2186 -> 2180 nodes
+on the unchanged real source. The stock-profile command below is deliberately
+unchanged: its narrower structural vocabulary still fails the second-feature
+gate. Experimental archives must travel with their matching profile.
+
   make BUILD=core ENABLE_LIB_PROLOG=0 CETTA_TEST_ISOLATED=1 demo-ic-pln
 
 The fixed target is two successive accepted abstractions from the current
@@ -70,6 +80,13 @@ The bounded command selects up to 64 structurally ranked seed pairs
 per stage and prints both the selected count and the available count. Exhaustion
 refers to that declared region. The counter, grammar and search limits are
 fixed before running the example.
+
+IC_PLN_SEEDS selects another limit from 1 to 1000 before the run. For example:
+
+  IC_PLN_SEEDS=1000 make BUILD=core ENABLE_LIB_PROLOG=0 CETTA_TEST_ISOLATED=1 demo-ic-pln
+
+This changes only the declared candidate region; scoring and reconstruction
+checks are identical. The selected limit is recorded in the run summary.
 
 The current real-source run does not meet G2: 2207 -> 2186 -> 2186 nodes,
 with one accepted feature followed by none. Its other checks pass. A separate

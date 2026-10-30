@@ -47837,6 +47837,10 @@ demo-ic-ilp: $(BIN)
 demo-ic-pln: $(BIN)
 	bash scripts/run_ic_pln_poc.sh ./$(BIN) runtime/ic-pln-poc
 
+.PHONY: demo-ic-pln-mvp
+demo-ic-pln-mvp: $(BIN)
+	bash experiments/ic_pln_mvp/run.sh ./$(BIN) runtime/ic-pln-mvp
+
 test-ic-library: $(BIN)
 	python3 tests/support/check_ic_library.py --cetta ./$(BIN) --output runtime/ic-library-qualification
 
