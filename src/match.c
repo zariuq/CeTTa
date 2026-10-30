@@ -11846,6 +11846,182 @@ bool match_types_builder(Atom *actual, Atom *expected, BindingsBuilder *bb,
 
 /* ── Bidirectional matching (match_atoms from HE spec metta.md:577-617) ── */
 
+enum { CETTA_OPEN_PATTERN_PLAN_DEPTH_LIMIT = 256u };
+
+typedef struct {
+    Arena *owner;
+    const BindingsFrameSchema *schema;
+    const VarId *variable_ids;
+    uint32_t variable_count;
+} OpenPatternCompiler;
+
+static bool open_pattern_plan_compile_node(
+        const OpenPatternCompiler *compiler, Atom *source,
+        Atom **ancestors, uint32_t depth,
+        CettaOpenPatternPlan *out) {
+    if (!compiler || !source || !ancestors || !out ||
+        depth > CETTA_OPEN_PATTERN_PLAN_DEPTH_LIMIT) {
+        return false;
+    }
+    for (uint32_t index = 0u; index < depth; index++) {
+        if (ancestors[index] == source)
+            return false;
+    }
+    uint32_t variable_count = compiler->variable_count;
+    const VarId *variable_ids = compiler->variable_ids;
+    *out = (CettaOpenPatternPlan){
+        .source = source,
+        .kind = source->kind,
+        .variable_ids = variable_count <= 64u
+            ? variable_ids : NULL,
+    };
+    if (source->kind == ATOM_VAR) {
+        if (variable_count > 64u)
+            return true;
+        uint32_t slot = 0u;
+        if (!bindings_frame_schema_find_slot(
+                compiler->schema, source->var_id, &slot)) {
+            return false;
+        }
+        out->variable_mask = UINT64_C(1) << slot;
+        return true;
+    }
+    if (source->kind != ATOM_EXPR)
+        return true;
+    if ((source->expr.len != 0u && !source->expr.elems) ||
+        source->expr.len > SIZE_MAX / sizeof(*out->children)) {
+        return false;
+    }
+    out->child_count = source->expr.len;
+    if (source->expr.len == 0u)
+        return true;
+    CettaOpenPatternPlan *children = arena_alloc(
+        compiler->owner,
+        sizeof(*children) * (size_t)source->expr.len);
+    if (!children)
+        return false;
+    out->children = children;
+    ancestors[depth] = source;
+    uint64_t seen_variables = 0u;
+    for (CettaExprIndex index = 0u;
+         index < source->expr.len; index++) {
+        if (!open_pattern_plan_compile_node(
+                compiler, source->expr.elems[index],
+                ancestors, depth + 1u, &children[index])) {
+            return false;
+        }
+        out->repeated_variable_mask |=
+            children[index].repeated_variable_mask |
+            (seen_variables & children[index].variable_mask);
+        seen_variables |= children[index].variable_mask;
+    }
+    out->variable_mask = seen_variables;
+    return true;
+}
+
+static bool open_pattern_plan_node_count(
+        const CettaOpenPatternPlan *plan, size_t *count_out) {
+    if (!plan || !count_out)
+        return false;
+    size_t count = 1u;
+    if (plan->kind == ATOM_EXPR) {
+        if ((plan->child_count != 0u && !plan->children) ||
+            (size_t)plan->child_count > SIZE_MAX - count) {
+            return false;
+        }
+        for (CettaExprIndex index = 0u;
+             index < plan->child_count; index++) {
+            size_t child_count = 0u;
+            if (!open_pattern_plan_node_count(
+                    &plan->children[index], &child_count) ||
+                child_count > SIZE_MAX - count) {
+                return false;
+            }
+            count += child_count;
+        }
+    }
+    *count_out = count;
+    return true;
+}
+
+static bool open_pattern_plan_linearize(
+        const CettaOpenPatternPlan *plan,
+        CettaOpenPatternInstruction *program,
+        size_t program_len, size_t *cursor) {
+    if (!plan || !program || !cursor || *cursor >= program_len)
+        return false;
+    size_t root = (*cursor)++;
+    program[root] = (CettaOpenPatternInstruction){
+        .source = plan->source,
+        .variable_mask = plan->variable_mask,
+    };
+    if (plan->kind == ATOM_EXPR) {
+        if (plan->child_count != 0u && !plan->children)
+            return false;
+        for (CettaExprIndex index = 0u;
+             index < plan->child_count; index++) {
+            if (!open_pattern_plan_linearize(
+                    &plan->children[index], program,
+                    program_len, cursor)) {
+                return false;
+            }
+        }
+    }
+    size_t span = *cursor - root;
+    if (span == 0u || span > UINT32_MAX)
+        return false;
+    program[root].subtree_span = (uint32_t)span;
+    return true;
+}
+
+bool cetta_open_pattern_plan_lower_linear(
+        Arena *owner, CettaOpenPatternPlan *root) {
+    if (!owner || !root)
+        return false;
+    size_t instruction_count = 0u;
+    if (!open_pattern_plan_node_count(
+            root, &instruction_count) ||
+        instruction_count == 0u ||
+        instruction_count > UINT32_MAX ||
+        instruction_count > SIZE_MAX /
+            sizeof(CettaOpenPatternInstruction)) {
+        return false;
+    }
+    CettaOpenPatternInstruction *instructions = arena_alloc(
+        owner,
+        instruction_count * sizeof(*instructions));
+    if (!instructions)
+        return false;
+    size_t cursor = 0u;
+    if (!open_pattern_plan_linearize(
+            root, instructions, instruction_count, &cursor) ||
+        cursor != instruction_count ||
+        instructions[0].source != root->source ||
+        instructions[0].variable_mask != root->variable_mask ||
+        instructions[0].subtree_span != instruction_count) {
+        return false;
+    }
+    root->linear_program = instructions;
+    root->linear_program_len = (uint32_t)instruction_count;
+    return true;
+}
+
+CettaOpenPatternPlan *cetta_open_pattern_plan_compile(
+        Arena *owner, Atom *source, const BindingsFrameSchema *schema) {
+    /* A list is matched through its logical elements and rest. */
+    if (!owner || !source || !schema || atom_structural_may_have_list(source))
+        return NULL;
+    CettaOpenPatternPlan *plan = arena_alloc(owner, sizeof(*plan));
+    if (!plan)
+        return NULL;
+    OpenPatternCompiler compiler = {.owner = owner, .schema = schema,
+        .variable_ids = bindings_frame_schema_source_ids(schema),
+        .variable_count = bindings_frame_schema_len(schema)};
+    Atom *ancestors[CETTA_OPEN_PATTERN_PLAN_DEPTH_LIMIT + 1u];
+    return open_pattern_plan_compile_node(&compiler, source, ancestors, 0u, plan)
+        ? plan : NULL;
+}
+
 static bool match_atoms_epoch_worklist(Atom *left, Atom *right,
                                        Bindings *bindings,
                                        BindingsBuilder *builder,
@@ -12831,6 +13007,7 @@ retry_pair:
              right_plan->kind != right->kind)) {
             goto fail;
         }
+        AtomKind right_shape = right_plan ? right_plan->kind : right->kind;
         if (left == right &&
             match_shared_ground_reflexivity_try(
                 left, right, right_plan == NULL,
@@ -12948,7 +13125,7 @@ retry_pair:
                 left_frame = NULL;
                 goto retry_pair;
             }
-            if (right->kind == ATOM_VAR) {
+            if (right_shape == ATOM_VAR) {
                 VarId right_id = right_original
                     ? var_epoch_id(right->var_id, right_epoch)
                     : right->var_id;
@@ -13036,7 +13213,7 @@ retry_pair:
             if (!added) goto fail;
             continue;
         }
-        if (right->kind == ATOM_VAR) {
+        if (right_shape == ATOM_VAR) {
             VarId right_id = right_original
                 ? var_epoch_id(right->var_id, right_epoch)
                 : right->var_id;
@@ -13078,7 +13255,7 @@ retry_pair:
             if (!added) goto fail;
             continue;
         }
-        if (left->kind == ATOM_SYMBOL && right->kind == ATOM_SYMBOL) {
+        if (left->kind == ATOM_SYMBOL && right_shape == ATOM_SYMBOL) {
             if (left->sym_id != right->sym_id) {
                 if (attempt_resolving_bound)
                     attempt_repeated_var = true;
@@ -13086,7 +13263,7 @@ retry_pair:
             }
             continue;
         }
-        if (left->kind == ATOM_GROUNDED && right->kind == ATOM_GROUNDED) {
+        if (left->kind == ATOM_GROUNDED && right_shape == ATOM_GROUNDED) {
             if (!atom_eq(left, right)) {
                 if (attempt_resolving_bound)
                     attempt_repeated_var = true;
@@ -13096,7 +13273,7 @@ retry_pair:
         }
         if (!atom_petta_decomposition_compatible(left, right))
             goto fail;
-        if (left->kind == ATOM_EXPR && right->kind == ATOM_EXPR &&
+        if (left->kind == ATOM_EXPR && right_shape == ATOM_EXPR &&
             (match_expr_is_list(left) || match_expr_is_list(right))) {
             MatchListMeeting meet;
             if (match_list_meet(a, left, right, &meet) != MATCH_LIST_ELEMENTS ||
@@ -13145,11 +13322,13 @@ retry_pair:
                 goto fail;
             continue;
         }
-        if (left->kind != ATOM_EXPR || right->kind != ATOM_EXPR ||
-            left->expr.len != right->expr.len ||
+        CettaExprLen right_width = right_plan ? right_plan->child_count
+            : right_shape == ATOM_EXPR ? right->expr.len : 0u;
+        if (left->kind != ATOM_EXPR || right_shape != ATOM_EXPR ||
+            left->expr.len != right_width ||
             (right_plan &&
-             (right_plan->child_count != right->expr.len ||
-              (right->expr.len != 0u && !right_plan->children)))) {
+             (right_width != right->expr.len ||
+              (right_width != 0u && !right_plan->children)))) {
             if (attempt_resolving_bound)
                 attempt_repeated_var = true;
             goto fail;
@@ -13179,7 +13358,7 @@ retry_pair:
         {
             CettaExprIndex nch = left->expr.len;
             CettaExprIndex first = 0u;
-            if (right_plan && nch > 0u &&
+            if (right_frame_region && right_plan && nch > 0u &&
                 match_plan_fails_before_bind(left, right_plan, nch)) {
                 if (attempt_resolving_bound)
                     attempt_repeated_var = true;
@@ -14398,4 +14577,17 @@ bool bindings_eq(Bindings *a, Bindings *b) {
     if (matched && matched != matched_stack)
         free(matched);
     return true;
+}
+
+/* The ordinary plan reader uses the same ordered walk and write policy.
+ * A private frame owns the separate early-refutation permission above. */
+bool match_atoms_epoch_builder_planned(
+        Atom *left, Atom *right, const CettaOpenPatternPlan *right_plan,
+        BindingsBuilder *builder, Arena *arena, CettaFrameIdentity epoch) {
+    if (!right_plan || right_plan->source != right)
+        return match_atoms_epoch_builder(left, right, builder, arena, epoch);
+    return match_atoms_epoch_views_worklist(
+        left, BINDING_VALUE_MATERIALIZED, CETTA_FRAME_IDENTITY_NONE, 0u,
+        right, NULL, builder, arena, epoch,
+        BINDING_VALUE_CONTEXTUAL, false, NULL, right_plan, NULL);
 }

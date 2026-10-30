@@ -307,6 +307,8 @@
   (value sequence-last)
   (value collect)
   (value match-branches)
+  (value dispatch)
+  (value first-success)
   ; These operations are selected by dialect elaboration of an occurrence,
   ; without giving its value or constructor head new source-call authority.
   (implicit-operation return-value)
@@ -369,10 +371,14 @@
   (source-head function 1 return-scope (operands 0 absent absent) (fold evaluate))
   (source-head superpose 1 ordered-choice (operands 0 absent absent) (fold none))
   (source-head collapse 1 collect (operands 0 absent absent) (fold none))
+  (source-head once 1 first-success (operands 0 absent absent) (fold none))
   (source-head case 2 match-branches (operands 0 1 absent) (fold none))
   (source-head empty 0 failure (operands absent absent absent) (fold none))
   (dialect-form petta cut 0 scoped-commit (operands absent absent absent) (fold none))
-  (dialect-form petta catch 1 handle (operands 0 absent absent) (fold none)))
+  (dialect-form petta catch 1 handle (operands 0 absent absent) (fold none))
+  ; Dispatch prepares a written application's operands and enters its head;
+  ; a held application already supplies values. Force interprets code instead.
+  (dialect-form petta reduce 1 dispatch (operands 0 absent absent) (fold none)))
 
 (gslt determinate-fold-continuation
   (sort Control)
