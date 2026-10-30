@@ -17,6 +17,7 @@ tests/gc/test_eval_gc_indirect_state_stream.metta	he	metta	extended	main	native	
 tests/gc/test_eval_gc_nested_outcome_roots.metta	he	metta	extended	main	native	test	golden	-
 tests/gc/test_eval_gc_precise_let_suspension.metta	he	metta	extended	main	native	test-eval-gc-adversarial	golden	tail-safe eval GC adversarial golden regression
 tests/generated/semiring_query_laws.metta	he	metta	extended	main	native	test	golden	-
+tests/he/prepared_completed_values.metta	he	metta		main	native	test	golden	prepared arguments retain completed-value and type-completion authority
 tests/he/search_controller_host_owned_refusal.metta	he	metta		main	native	test	golden	host-owned equations conservatively retain canonical HE control
 tests/he/search_controller_structural_equations.metta	he	metta		main	native	test	golden	qualified eager structural equations share the continuation hub
 tests/he_a1_symbols.metta	he	metta	extended	main	native	test	golden	-
@@ -90,6 +91,7 @@ tests/prime/practical/atp_indexed_example.metta	prime	metta		any	native	test-pri
 tests/prime/practical/atp_resolution_replay.metta	prime	metta		any	native	test-prime	golden	Prime ATP example regression
 tests/prime/practical/atp_resolution_search.metta	prime	metta		any	native	test-prime	golden	Prime ATP example regression
 tests/prime/practical/atp_superposition_replay.metta	prime	metta		any	native	test-prime	golden	Prime ATP example regression
+tests/prime/practical/first_order_resolution_input_demand.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/practical/first_order_resolution_input_unification.metta	prime	metta		any	native	test-prime	golden	TPTP resolution-example regression
 tests/prime/practical/need_control_branch_discriminators.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/practical/prism_agenda_policy_contrast.metta	he	metta	extended	main	native	test	property	assertion-only property without golden oracle
