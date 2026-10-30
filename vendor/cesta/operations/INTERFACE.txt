@@ -1,0 +1,147 @@
+Operation contracts
+-------------------
+
+An operation contract declares a native operation's facts once. A theory of
+a module declares one vocabulary and its operations as equations:
+
+  cesta operations check MODULE THEORY
+  cesta operations rows MODULE THEORY
+  cesta operations metta MODULE THEORY
+  cesta operations tables MODULE THEORY
+  cesta operations protocols MODULE THEORY
+  cesta operations header MODULE THEORY -o OUTPUT.h
+
+check reads the table, refuses malformed declarations with a reason, and
+prints the normalized form. rows prints the lists and rows a runtime keeps,
+derived from the table; header prints the same as ordinary C X-macros, and
+metta as (query-head SPELLING EFFECT) lines for a runtime's execution-contract
+specification.
+
+Declaration
+-----------
+
+  (Vocabulary) == (Vocabulary "cesta-operation/1"
+    (Resources (Resource space "store") (Resource work "scratch") ...)
+    (Charges transition ...)
+    (Profiles he_extended prime ...))
+
+  (work_take) == (Operation "cesta-operation/1"
+    (Spelling "work-take") (Symbol work_take) (Dispatch "special")
+    (Forms (Form (Arg EVALUATION DEMAND OWNERSHIP) ...) ...)
+    (Footprint (Reads RESOURCE ...) (Writes RESOURCE ...))
+    (Context (Blocks YES-NO) (Branches YES-NO) (Progress P) (Charges C ...))
+    (Result R)
+    (Declared (Static YES-NO) (TypePure YES-NO) (Speculative YES-NO)
+              (Replay "transparent"|"refused" [(Through ARITY ...)]))
+    (Profiles P ...))
+
+Resources   each is a "store", which a query observes, or "scratch".
+Spelling    the operation's name as programs write it.
+Symbol      a C identifier for its rows; quoted when the module language
+            keeps the word as a keyword, (Symbol "let").
+Dispatch    "grounded" (a value operation on closed values), "control",
+            "special" or "unknown".
+Forms       one form per accepted arity; each argument's evaluation ("value",
+            "atom"), demand ("data", "whnf", "source-type", "shape", "value",
+            "structure", "pattern") and ownership ("borrow", "consume").
+Footprint   what the operation's head reads and writes, never its operands';
+            the runtime composes operands. (Footprint "unknown") when no one
+            has established it.
+Context     blocking, branching, progress ("single", "bounded", "steps",
+            "suspends") and the cost charges it makes.
+Result      "fresh", "shared" or "borrowed".
+Declared    the columns a runtime keeps for its own reasons: static dispatch,
+            the type-level conversion licence, admission under speculation,
+            and replay, with the arities a replay scan passes through.
+
+Any word may be "unknown" where it says so above, and (Forms) or (Profiles)
+may be empty: a fact no one has established is never read as a default. In
+particular an unknown footprint is not an empty one.
+
+Checks
+------
+
+A table is refused when a name, spelling or symbol repeats; a resource,
+charge or profile is undeclared; two forms share an arity; a replay passes
+through a form the operation lacks; a word is not one of the admitted words;
+a type-level operation declares a read or a write, branches or blocks; a pure
+grounded operation lacks the type-level licence; or an operation that writes
+is admitted under speculation.
+
+Derived rows
+------------
+
+  Static        the operations declared static.
+  Pure          grounded operations whose footprint is known to be empty.
+  TypePure      type-level operations beyond Pure.
+  Speculative   operations admitted under speculation beyond Pure.
+  Query         known footprints that touch a store: 2 if the operation writes
+                one, else 1 if it reads one.
+  Unknown       operations whose footprint is unknown.
+
+Evidence
+--------
+
+MeTTapedia's OperationContracts proves, for footprints: the Boolean
+independence check is the resource frontier's Independent (a write consumes
+and produces its resource); two footprints are independent exactly when the
+two operations' access rights (none, read, consume) are separate at every
+resource; an operation that reads and writes nothing is independent of every
+operation. Under an explicit Conforms hypothesis (each concrete footprint lies
+within its declared one), operations with independent declared footprints have
+the same causal dependency view in either order. Two operations with
+independent footprints can still be told apart by an ordered-stream observer,
+so ordered output needs a certificate of its own.
+
+For tables: tableOk is the decidable check above; admitted_laws states what
+it guarantees of every operation; the derived rows are lowerRows, and a
+recorded query row carries an operation's derived effect, while operations
+the runtime admits under speculation are not known writers. The admission
+decides that the printed table keeps its laws and that the printed rows are
+its derived rows. Large tables are decided in chunks joined by proved append
+lemmas, comparing names through an injective code into the natural numbers.
+
+Not proved: that a C handler stays within its declared footprint. That is the
+Conforms hypothesis, tested where it is tested, never claimed.
+
+Shared tables and cost protocols
+--------------------------------
+
+tables prints the shared cesta-tables/1 representation of operation
+identities, resources, charges, profiles and their reference relations.
+Their uniqueness and reference checks use the same validator as registry
+and counter data. Effect laws still use OperationContracts.
+
+A vocabulary may additionally declare, after Profiles:
+
+  (ChargeKinds (step analysisStep) (transition quantum) (other "unknown"))
+
+Each label must be declared in Charges, appear at most once, and name a
+NativeCostLedger.Kind or explicitly remain unknown. An omitted association
+is unknown. An operation may add (ProgressBound N): N is positive, and only
+bounded progress or single progress with N=1 permits it. Single progress
+defaults to bound 1; other omitted bounds are unknown.
+
+protocols prints one cesta-operation-protocol/1 record per operation, with
+exactly its charge labels in declaration order, their associated native
+ledger kinds, its progress and inspection bound, and replay permission.
+The existing check and rows formats are unchanged. The protocol record
+does not itself claim a concrete handler's termination or invoice accuracy.
+
+OperationCostProtocol uses the existing NativeCostLedger event valuation
+and Cursor protocol. It proves exact retained-budget accounting, chronological
+invoices including paid failure/suspension, inert terminal states, budget
+and inspection-call bounds, composition across scheduler pauses, and fresh
+replay billing. Unknown charge kinds are refused rather than charged zero.
+A decreasing rank on an actual handler continuation proves finite cursor
+observation; a written bound alone does not. Zero billed work alone cannot
+guarantee termination. Controls cover all these distinctions.
+
+Admission checks operation labels, progress, replay and bound well-formedness.
+The legacy normalized operation record omits the vocabulary's kind mapping
+and an optional numeric bound, so that check alone cannot establish those
+two source associations. test-operation-protocol separately compares the
+actual normalized profiles with independently specified fixture mappings
+and bounds, and rejects their corruption. Neither check establishes a C
+handler's effects, invoices or progress refinement; those remain explicit
+implementation obligations.

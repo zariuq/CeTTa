@@ -1,0 +1,128 @@
+Cesta semantic interface, version 1
+
+The semantic layer gives a C translation unit its own C meaning: every name is
+bound to the entity it denotes and every expression has C11's type for it,
+together with its value category and the implicit conversions applied to it.
+The AST is unchanged. Each fact is an annotation on an AST node, and the
+exports locate nodes by byte extents in the parsed source.
+
+Commands
+
+  cesta bind     [--std=c11|gnu11] [--dialect=gcc|clang] PREPROCESSED-C
+  cesta types    [--std=c11|gnu11] [--dialect=gcc|clang] [--abi=ABI] PREPROCESSED-C
+  cesta probe    [...same options...] PREPROCESSED-C
+  cesta explicit [...same options...] PREPROCESSED-C
+  cesta census   [...same options...] PREPROCESSED-C
+  cesta abi-tables [--abi=ABI]
+
+bind lists entities and every identifier occurrence that denotes one:
+  (entity ID KIND NAME LINKAGE SCOPE DECLARATION-OFFSET)
+  (use OFFSET ENTITY ROLE VISIBLE-DECLARATION-OFFSET [folded])
+types lists each entity's type, each complete record's layout, and each
+expression in tree order:
+  (expr BEGIN END "TYPE" CATEGORY [(cast KIND)] (CONVERSION "TO")... [(bits N)] [(value V)] [(folded)])
+Types are written as C type names. A conversion is named by the operation it
+performs, in the vocabulary C compilers use for implicit casts
+(LValueToRValue, ArrayToPointerDecay, IntegralCast, NullToPointer, ...),
+in the order the enclosing context applies them.
+
+probe writes the unit back with every typed expression E rewritten as a
+generic selection that keeps E's value, type and category and whose never
+evaluated controlling expression compares E's type with the elaborated one.
+Eligible integer constant expressions of up to 64 bits also compare their
+values. Known short-circuit results with nonconstant operands are not included
+in that value check. Refusals name the expression's source extent. Record sizes, alignments and
+member offsets, and enumeration constants, are asserted after the unit.
+explicit writes every conversion that changes representation as a cast to its
+target; census classifies what each conversion does to values (preserving,
+sign change, narrowing, ...). abi-tables prints the target's integer
+promotions and usual arithmetic conversions over all arithmetic types.
+
+Binding
+
+bind, types and census accept --json-lines before --cc. Each line contains the
+command and one record as explicitly tagged list, symbol and text atoms.
+Valid UTF-8 uses value; other byte strings use hexadecimal bytes. Numeric
+spelling remains a symbol, so transport never changes an atom's kind.
+Source preprocessing adds original spelling positions and macro expansion
+chains to records. Refusals use the same original positions and expansion notes.
+
+Ordinary identifiers follow the profile's scope program: the scope hook data
+that classifies typedef names during parsing is executed again over the
+tree. The parser and binder therefore use one declared scope policy; their
+implementations are independently checked. Tags share those
+scopes, labels have function scope, and members are resolved by type during
+elaboration. Declarations with linkage denote one entity per translation unit.
+Names that compilers predeclare (__builtin_*, __atomic_*, __func__) bind to
+builtin entities.
+
+Types and targets
+
+The types are C11's: the standard and extended integer types with plain char
+distinct, the standard and TS 18661-3 floating types, complex types,
+enumerations, pointers, arrays, functions, structures and unions, with
+qualifiers. Typedef names are kept as sugar and never change a type's
+identity. Implementation-defined choices belong to a target ABI:
+
+  x86_64-sysv-lp64      the default
+  i386-sysv-ilp32
+  x86_64-windows-llp64
+
+An ABI gives scalar sizes and alignments, floating formats, the signedness of
+char, the types of size_t, ptrdiff_t and wchar_t, and how an enumeration's
+integer type is chosen. The System V targets use System V record and bit-field
+allocation; the Windows target uses Microsoft's allocation policy. The aligned,
+packed and mode attributes participate in layout. The target also determines
+the representation of __builtin_va_list.
+
+GCC and Clang read the same GNU C slightly differently, and the dialect
+option selects which: Clang reads the TS 18661-3 type names as identifiers,
+gives an incremented bit-field the field's declared type where GCC keeps its
+width, and spells __PRETTY_FUNCTION__ as the function's signature where GCC
+spells its name.
+
+Constraints
+
+Elaboration refuses, at the offending node, the constraint violations that
+both GCC and Clang refuse: assignment to a non-modifiable lvalue, use of a
+void value, operand and assignment types C does not allow, a call with the
+wrong number of arguments, sizeof of an incomplete type, conflicting
+declarations of one entity, and the like.
+
+Evidence
+
+The tests check this layer against independent compilers on every corpus
+configuration, in both compilers' preprocessing: Clang's AST for binding,
+value categories and conversion chains; probes compiled by GCC and by Clang
+for types, layouts and constants; Clang's IR for the conversions written as
+casts, with value-losing mutations as controls; and GCC's conversion warnings
+for the census. The integer promotions and usual arithmetic conversions of all
+three targets are kernel-checked against a Lean model of C11's arithmetic
+types. These are separate pieces of evidence about this implementation on
+these programs; they do not assert a proof of the elaborator.
+
+Boundaries
+
+Inputs are preprocessed C. GNU vector types are refused. Values are folded for
+integer constant expressions up to 64 bits.
+
+Qualification
+
+make check runs local native syntax, presentation and semantic controls.
+make test retains the corpus, compiler and Lean kernel gates. Completed semantic
+units carry content-bound test-evidence receipts: the binary, checker scripts,
+compiler tools and libraries, environment, full build command, source and both
+preprocessed inputs are checked before reuse. Results are also fingerprinted;
+failed results are rechecked. --fresh forces a new corpus run. These receipts
+record tests on fixed inputs; they are not universal correctness proofs.
+The compiler oracles retain the recorded type/code-generation options; a
+selected ABI that disagrees with an option such as -fpack-struct fails layout
+qualification.
+
+Explicit-conversion comparisons report raw IR equality separately. Only metadata
+referenced as inline-assembly source locations and weaker memory-intrinsic
+alignment facts may differ in the normalized comparison. Each alignment change
+is recorded; stronger assumptions and changes to instructions, pointers, lengths
+or volatility fail the gate. Object equality is reported independently. This
+diagnostic rewrite is separate from ordinary presentation compilation, whose
+qualification requires matching native objects.

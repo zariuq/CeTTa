@@ -1,0 +1,100 @@
+Cesta in the Prime draft
+========================
+
+The default build uses Cesta over the selected native compiler. The checked
+commit protocol, layouts and tables are declarations used by that build.
+Ordinary C remains available for incremental authoring; checked regions state
+their own guarantees. Merely compiling a C file through the driver does not
+prove its ownership, effects or revision discipline.
+
+The bundled source under vendor/cesta builds the tool on demand. SOURCE.json
+records every source digest, its base commit and whether the snapshot includes
+working changes. The tool cache key includes source contents, compiler identity
+and the build recipe. No executable checksum tied to someone's build directory
+is needed. Building the same snapshot with the same compiler and environment
+in different directories produces the same tool executable.
+
+Update from an upstream commit:
+
+  make cesta-update CESTA_REPO=path/to/cesta CESTA_REV=HEAD
+
+Try the compiler's current working source, including uncommitted features:
+
+  make cesta-update CESTA_REPO=path/to/cesta CESTA_UPDATE_WORKTREE=1
+
+Both prepare a candidate, run the declared generated-file, native/Cesta
+identity, project and protocol controls, and promote only after success. A
+failed candidate stays under runtime/cesta/candidates; the existing bundle
+stays active. Successful promotion preserves the previous source under
+runtime/cesta/previous. Neither command commits or pushes. A working snapshot
+is labelled as such; its base commit alone is not its content identity.
+Commit the reviewed bundle with the runtime changes when sharing the build.
+
+For a temporary local tool trial without replacing the bundle:
+
+  make CESTA_SRC=path/to/cesta
+
+For a plain-C build or export:
+
+  make CESTA_BUILD=0
+  make export-c
+
+The export has a native-compiler Makefile and needs no Cesta installation.
+make test-cesta-project-build compares its declared project to Make's runtime
+link, and make test-cesta-build-identity compares the Cesta and native routes.
+The project preserves exact object order and per-source options. It declares
+the configuration header and operational-reader generators. Make still owns
+the larger stage-0, library-blob and baked-parser bootstrap; those prepared
+artifacts enter the declared project explicitly. Regenerate the project after
+changing configuration. This is not a claim that the entire Make graph has
+been replaced.
+
+For a warning-only syntax/binding/type census during development:
+
+  make CESTA_READ_WARNINGS=1
+
+Reader limitations remain warnings, including under -Werror. Native compiler
+errors still fail. Ownership and protocol admission are separate checks.
+The census uses its own object configuration, so enabling it also checks files
+whose ordinary native objects are already current. Cesta-only updates retain
+ordinary C objects; authored units and census objects track the Cesta tool.
+
+Performance profiles
+--------------------
+
+  make CETTA_LTO=1
+  make pgo CETTA_LTO=1 PGO_BIN=runtime/cetta-profiled
+
+The LTO route uses GCC fat objects. Test links using --wrap select their native
+code so failure injection remains effective. Ordinary executable links retain
+LTO. make test-cesta-lto-wrap exercises direct and nested response-file forms.
+LTO and PGO remain explicit build choices; a compiler option alone is not a
+measured performance result.
+
+tools/cetta_pgo_workloads.json declares training and held-out programs. Prime
+typed-search capacity, call-sharing and sequence fixtures participate in training;
+the held-out files are never training inputs. Related search workloads share
+a family, so held-out results measure those inputs, not broad generalization.
+Training must match the non-instrumented reference on every execution and stop
+on a timeout, failure or changed output. Each run owns a separate profile
+namespace and records binary, workload and profile digests under runtime/pgo.
+PGO_MANIFEST selects another declared split; PGO_TIMEOUT selects its timeout.
+
+Compare the held-out inputs with interleaved repeats:
+
+  python3 tools/cetta_pgo_measure.py --binary base=runtime/cetta-base \
+    --binary profiled=runtime/cetta-profiled --output runtime/pgo/measurements.json
+
+Every sample must have the same successful output. Hardware counters are
+reported only when available; wall-time ranges remain visible. Run the
+correctness gates before interpreting a performance comparison. The known
+evaluator failures in the draft require fixes by the evaluator owners; build
+identity and training-output identity do not discharge those semantic tests.
+
+Current profile qualification also records a GCC -Wstringop-overflow diagnostic
+at binding/name_space.h's atomic owner acquisition. The code relies on an
+issued name having a backing chunk; the returned cell is nevertheless nullable.
+The existing PGO -Wno-error policy also demotes this classified warning while
+allowing unclassified missing-count diagnostics. Treat the profile as
+experimental until that policy is narrowed and the allocator diagnostic is
+resolved. Successful samples do not establish that invariant for every caller.

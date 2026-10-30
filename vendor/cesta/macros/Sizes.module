@@ -1,0 +1,53 @@
+Module Sizes {
+  Theory Checked() {
+    Empty Terms {
+      ArrayBytes . Expr ::= "(" "array-bytes" DeclarationSpecifiers DeclarationSpecifiers DeclarationSpecifiers Expr Expr ")";
+      DoubledCapacity . Expr ::= "(" "doubled-capacity" DeclarationSpecifiers Expr Expr Expr ")";
+    }
+    Equations {
+      (ArrayBytes element count size length out) == (Macro "cesta-macro/3"
+        (Profile "gnu11")
+        (Ports (CompilerBuiltin multiply "__builtin_mul_overflow"))
+        (Arguments
+          (Arg element (CType void) "syntax" (Evaluation "syntax"))
+          (Arg count (CType void) "syntax" (Evaluation "syntax"))
+          (Arg size (CType void) "syntax" (Evaluation "syntax"))
+          (Arg length (CType (TypeArgument count)) "value" (Evaluation "once"))
+          (Arg out (CType (TypeArgument size)) "addressable-modifiable" (Evaluation "once")))
+        (Result (CType int) "value")
+        (Locals (Local bytes "ordinary") (Local accepted "ordinary"))
+        (Template (block
+          (var (TypeArgument size) (LocalRef "ordinary" bytes))
+          (var int (LocalRef "ordinary" accepted) 0)
+          ("if" ("!" (call (CompilerRef multiply) (Argument length)
+                            (sizeof type (TypeArgument element))
+                            ("&" (LocalRef "ordinary" bytes))))
+            (block
+              ("=" (Argument out) (LocalRef "ordinary" bytes))
+              ("=" (LocalRef "ordinary" accepted) 1)))
+          (LocalRef "ordinary" accepted))));
+      (DoubledCapacity count initial capacity out) == (Macro "cesta-macro/3"
+        (Profile "gnu11")
+        (Ports (CompilerBuiltin add "__builtin_add_overflow"))
+        (Arguments
+          (Arg count (CType void) "syntax" (Evaluation "syntax"))
+          (Arg initial (CType (TypeArgument count)) "value" (Evaluation "once"))
+          (Arg capacity (CType (TypeArgument count)) "value" (Evaluation "once"))
+          (Arg out (CType (TypeArgument count)) "addressable-modifiable" (Evaluation "once")))
+        (Result (CType int) "value")
+        (Locals (Local next "ordinary") (Local accepted "ordinary"))
+        (Template (block
+          (_Static_assert (">" (cast (TypeArgument count) ("-" 1)) 0)
+            "\"doubled-capacity count must be unsigned\"")
+          (var (TypeArgument count) (LocalRef "ordinary" next) (Argument initial))
+          (var int (LocalRef "ordinary" accepted) 1)
+          ("if" (Argument capacity)
+            ("if" (call (CompilerRef add) (Argument capacity) (Argument capacity)
+                        ("&" (LocalRef "ordinary" next)))
+              ("=" (LocalRef "ordinary" accepted) 0)))
+          ("if" (LocalRef "ordinary" accepted)
+            ("=" (Argument out) (LocalRef "ordinary" next)))
+          (LocalRef "ordinary" accepted))));
+    }
+  }
+}

@@ -1,0 +1,63 @@
+Module Worklists {
+  Theory Growable() {
+    Empty Terms {
+      Push . Expr ::= "(" "worklist-push" DeclarationSpecifiers DeclarationSpecifiers Expr Expr Expr Expr Expr ")";
+    }
+    Equations {
+      (Push element count resize buffer length capacity value) == (Macro "cesta-macro/3"
+        (Profile "gnu11")
+        (Ports
+          (CompilerBuiltin add "__builtin_add_overflow")
+          (CompilerBuiltin multiply "__builtin_mul_overflow"))
+        (Arguments
+          (Arg element (CType void) "syntax" (Evaluation "syntax"))
+          (Arg count (CType void) "syntax" (Evaluation "syntax"))
+          (Arg resize (CType void ("*" ("function" ("c:ParenthesizedDeclarator" ("*" TypeSlot))
+                       (void ("*" old)) (TypeArgument count)))) "value" (Evaluation "once"))
+          (Arg buffer (CType (TypeArgument element) ("*" TypeSlot)) "addressable-modifiable" (Evaluation "once"))
+          (Arg length (CType (TypeArgument count)) "addressable-modifiable" (Evaluation "once"))
+          (Arg capacity (CType (TypeArgument count)) "addressable-modifiable" (Evaluation "once"))
+          (Arg value (CType (TypeArgument element)) "value" (Evaluation "once")))
+        (Result (CType int) "value")
+        (Locals
+          (Local next_capacity "ordinary") (Local bytes "ordinary")
+          (Local replacement "ordinary") (Local accepted "ordinary"))
+        (Template (block
+          (_Static_assert (">" (cast (TypeArgument count) ("-" 1)) 0)
+            "\"worklist count must be unsigned\"")
+          (var (TypeArgument count) (LocalRef "ordinary" next_capacity))
+          (var (TypeArgument count) (LocalRef "ordinary" bytes))
+          (var (TypeArgument element) ("*" (LocalRef "ordinary" replacement)))
+          (var int (LocalRef "ordinary" accepted) 1)
+          ("if" ("||" ("==" ("&" (Argument length)) ("&" (Argument capacity)))
+                      ("||" (">" (Argument length) (Argument capacity))
+                             ("&&" (Argument capacity) ("!" (Argument buffer)))))
+            ("=" (LocalRef "ordinary" accepted) 0))
+          ("if" ("&&" (LocalRef "ordinary" accepted) ("==" (Argument length) (Argument capacity)))
+            (block
+              ("if" ("==" (Argument capacity) 0)
+                ("=" (LocalRef "ordinary" next_capacity) 8)
+                ("if" (call (CompilerRef add) (Argument capacity) (Argument capacity)
+                            ("&" (LocalRef "ordinary" next_capacity)))
+                  ("=" (LocalRef "ordinary" accepted) 0)))
+              ("if" ("&&" (LocalRef "ordinary" accepted)
+                           (call (CompilerRef multiply) (LocalRef "ordinary" next_capacity)
+                             (sizeof type (TypeArgument element)) ("&" (LocalRef "ordinary" bytes))))
+                ("=" (LocalRef "ordinary" accepted) 0))
+              ("if" (LocalRef "ordinary" accepted)
+                (block
+                  ("=" (LocalRef "ordinary" replacement)
+                    (call (Argument resize) (Argument buffer) (LocalRef "ordinary" bytes)))
+                  ("if" ("!" (LocalRef "ordinary" replacement))
+                    ("=" (LocalRef "ordinary" accepted) 0)
+                    (block
+                      ("=" (Argument buffer) (LocalRef "ordinary" replacement))
+                      ("=" (Argument capacity) (LocalRef "ordinary" next_capacity))))))))
+          ("if" (LocalRef "ordinary" accepted)
+            (block
+              ("=" ("[]" (Argument buffer) (Argument length)) (Argument value))
+              ("++" (Argument length))))
+          (LocalRef "ordinary" accepted))));
+    }
+  }
+}

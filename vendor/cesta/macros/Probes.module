@@ -1,0 +1,21 @@
+Module Probes {
+  Theory Switched() {
+    Empty Terms {
+      Probe . Statement ::= "(" "probe" Expr Expr ")";
+    }
+    Equations {
+      (Probe enabled effect) == (Macro "cesta-macro/3"
+        (Profile "gnu11")
+        (Ports (CompilerBuiltin constant "__builtin_constant_p"))
+        (Arguments
+          (Arg enabled (CType void) "syntax" (Evaluation "syntax"))
+          (Arg effect (CType void) "syntax" (Evaluation "syntax")))
+        (Result (CType void) "statement")
+        (Locals)
+        (Template (block
+          (_Static_assert (call (CompilerRef constant) (Argument enabled))
+            "\"probe switch must be a constant expression\"")
+          ("?:" (Argument enabled) (cast void (Argument effect)) (cast void 0)))));
+    }
+  }
+}

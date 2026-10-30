@@ -1,0 +1,21 @@
+{- Independently written C-Mera-style view. Token-prefix spellings are opaque
+   atoms to host pattern matching. This is not a Common Lisp reader or macro
+   compatibility layer. The common structural forms interpret the same C tree. -}
+import "CompactC.module" as common
+Module CMeraStylePresentation {
+  Theory CMeraForms() {
+    Empty Terms {
+      CMeraFunction . FunctionDefinition ::=
+        "(" "function" CGeneralName ParameterTypeList "->" DeclarationSpecifiers [BlockItem] ")";
+      CMeraPointerName . Declarator ::= "*" CGeneralName;
+      CMeraIndirectionName . Expr16 ::= "*" COrdinaryName;
+    }
+    Equations {
+      (CMeraFunction name parameters spec body) ==
+        (FunctionDefinition spec (Declarator (FunctionDeclarator (NameDeclarator name) parameters)) (List) (Block body));
+      (CMeraPointerName name) == (PointerDeclarator (Pointer (NoTypeQualifiers)) (NameDeclarator name));
+      (CMeraIndirectionName name) == (Indirection (Var name));
+    }
+  }
+  Theory CMeraStyle() { CMeraForms() \/ common.CompactC() }
+}

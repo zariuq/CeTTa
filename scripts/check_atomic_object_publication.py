@@ -39,9 +39,11 @@ $(ATOMIC_GATE_ROOT)/unsafe.o: $(ATOMIC_GATE_ROOT)/payload.c $(ATOMIC_GATE_ROOT)/
 \t$(CC) $(CFLAGS) $(DEPFLAGS) -MT "$@" -MF "$(@:.o=.d)" -c -o "$@" "$<"
 """)
     driver = work / "compiler.py"
+    # Only object compiles take part; the Makefile's own toolchain probes at
+    # parse time (a link to /dev/null) pass straight to the compiler.
     driver.write_text("""import os, pathlib, subprocess, sys, time
 args = sys.argv[1:]
-if os.environ.get('ATOMIC_GATE_SOURCE') not in args:
+if '-c' not in args or os.environ.get('ATOMIC_GATE_SOURCE') not in args:
     raise SystemExit(subprocess.call(['cc', *args]))
 output = pathlib.Path(args[args.index('-o') + 1])
 output.write_bytes(b'')
@@ -118,16 +120,23 @@ raise SystemExit(subprocess.call(['cc', *args]))
         unrelated_marker = work / 'unrelated.started'
         unrelated_release = work / 'unrelated.release'
         unrelated_release.write_text('continue')
+        probe_env = dict(os.environ, ATOMIC_GATE_SOURCE=str(work / 'payload.c'),
+                         ATOMIC_GATE_MARKER=str(unrelated_marker),
+                         ATOMIC_GATE_RELEASE=str(unrelated_release),
+                         ATOMIC_GATE_TIMEOUT=str(args.timeout), ATOMIC_GATE_FAIL='1')
         unrelated = subprocess.run(
             [sys.executable, str(driver), '-c', str(work / 'main.c'),
              '-o', str(work / 'unrelated.o')], cwd=ROOT,
-            env=dict(os.environ, ATOMIC_GATE_SOURCE=str(work / 'payload.c'),
-                     ATOMIC_GATE_MARKER=str(unrelated_marker),
-                     ATOMIC_GATE_RELEASE=str(unrelated_release),
-                     ATOMIC_GATE_TIMEOUT=str(args.timeout), ATOMIC_GATE_FAIL='1'),
+            env=probe_env,
             capture_output=True, timeout=args.timeout)
         check(unrelated.returncode == 0 and not unrelated_marker.exists(),
               'unrelated compiler calls cannot signal publication readiness')
+        preprocessed = subprocess.run(
+            [sys.executable, str(driver), '-E', str(work / 'payload.c'),
+             '-o', str(work / 'preprocessed.i')], cwd=ROOT,
+            env=probe_env, capture_output=True, timeout=args.timeout)
+        check(preprocessed.returncode == 0 and not unrelated_marker.exists(),
+              'source preprocessing cannot signal object publication readiness')
         seed = launch("seed")
         await_open("seed", seed)
         check(release("seed", seed) == 0 and linked_value() == "7", "initial object links")
