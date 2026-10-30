@@ -1597,8 +1597,41 @@ that shares the original demand. Cache updates, imports and independent frame
 transport preserve this role. It grants no force or inspection authority.
 Undeclared parameters keep the existing inferred template behavior.
 
-Native services receive ordinary atom values without private held carriers.
+Native services must inspect ordinary atom values rather than treating private
+held carriers as guest syntax.
 Explicit interpreters open code at their own boundary. A space also stores
 ordinary atoms: the existing graph projection removes private held carriers
 before publication, preserving shared subterms. The read boundary supplies the
 data role again. Registry values keep their separate value-role protocol.
+
+Selecting an if branch demands that branch's computation; it does not activate
+a held value forwarded by the caller. Explicit eval still activates that value.
+Reading a held True or False inspects the Boolean without evaluating arbitrary
+held syntax in the condition position. The same distinction applies to native
+typing: the checker inspects the underlying syntax, including its variable
+sharing, rather than treating a private data carrier as an unknown constructor.
+
+A matching wrapper declares its pattern as Atom and its executable template
+as Proc. The template runs after matching, once per answer occurrence, and is
+not demanded when there are no answers. Values bound from stored atoms remain
+data when forwarded through that template. Streaming string helpers likewise
+use Proc for a computed state or segment argument, allowing a state constructor
+to run before its result is inspected.
+
+Patterns that inspect held quotations use the same binder-aware code view as
+ordinary quotations. A bound name cannot become a free name merely because
+the quoted value crossed a data boundary; extracted contextual code retains
+the binders needed for an explicit opening.
+
+Native typing verdicts use the existing completed-value return form. Returning
+proof evidence does not invoke an equation that happens to share its head.
+A KEEP demand or a completed Prime value returns before executable-call
+admission; retaining such data grants no permission to execute its payload.
+
+A computed space selector that produces a context-role name uses the same
+role policy and read observation as that literal name. Ordinary registry-name
+fallback retains its existing behavior.
+
+A native service reached through borrowed synchronous interpretation uses an
+ordinary owned child receiver while the borrowing caller stays live. Retained
+or controlled ancestors keep their existing admission and lifetime boundary.
