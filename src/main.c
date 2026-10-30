@@ -2415,6 +2415,10 @@ typedef struct {
     char *inline_buf;
     Atom **atoms;
     AtomId *atom_ids;
+    int atom_count;
+    /* The first form the run has yet to finish: forms before it ran, or
+     * were loaded into a space, which holds them as rows. */
+    int atom_first;
     FILE *output_spool;
     Arena *arena;
     bool arena_initialized;
@@ -2446,7 +2450,22 @@ typedef struct {
     CettaGsltRevisionedSpaceProviderV1 *gslt_revisioned_space_provider;
     CettaGsltAbtProviderV1 *gslt_abt_provider;
     CettaGsltOwnedProviderRegistryV1 gslt_physical_providers;
+    /* A PeTTa document read a slice of forms at a time, and its reader. */
+    PeTTaCompiledReaderV1 *petta_reader;
+    PeTTaCompiledDocumentV1 petta_document;
+    bool petta_document_open;
 } CettaMainCleanup;
+
+/* The document's forms the run has yet to finish stay in the universe. */
+static void cetta_main_document_roots(const TermUniverse *universe,
+                                      TermUniverseRootVisit visit,
+                                      void *visit_context, void *ctx) {
+    const CettaMainCleanup *cleanup = ctx;
+    (void)universe;
+    int first = cleanup->atom_first > 0 ? cleanup->atom_first : 0;
+    for (int i = first; cleanup->atom_ids && i < cleanup->atom_count; i++)
+        visit(visit_context, cleanup->atom_ids[i]);
+}
 
 static void cetta_main_cleanup_registry_spaces(
     Registry *registry, Space *root_space, PettaProgram *petta_program,
@@ -2519,6 +2538,9 @@ static bool cetta_main_cleanup(CettaMainCleanup *cleanup) {
     cleanup->atoms = NULL;
     free(cleanup->atom_ids);
     cleanup->atom_ids = NULL;
+    if (cleanup->petta_document_open)
+        petta_compiled_document_v1_close(&cleanup->petta_document);
+    cleanup->petta_document_open = false;
     parser_clear_document_ids_backend(cleanup->document_reader_context);
     if (cleanup->document_reader_free)
         cleanup->document_reader_free(cleanup->document_reader_context);
@@ -2555,6 +2577,9 @@ static bool cetta_main_cleanup(CettaMainCleanup *cleanup) {
     }
 
     if (cleanup->libraries_initialized) {
+        term_universe_remove_root_provider(
+            &cleanup->libraries->term_universe, cetta_main_document_roots,
+            cleanup);
         cetta_library_context_free(cleanup->libraries);
         cleanup->libraries_initialized = false;
     }
@@ -2600,6 +2625,131 @@ static bool cetta_main_cleanup(CettaMainCleanup *cleanup) {
         cleanup->hashcons_initialized = false;
     }
     return ok;
+}
+
+/* A PeTTa document this large is read a slice of forms at a time: each
+ * slice is parsed, run and dropped, with a collection between slices, so
+ * one slice of parsed forms lives at a time.  A first pass over the slices
+ * checks every form and predeclares the equations, so a fault in the
+ * source is reported before anything runs.  CETTA_PETTA_SLICE_BYTES and
+ * CETTA_PETTA_SLICE_FORMS set the bound and the slice. */
+enum { MAIN_PETTA_SLICE_FORMS = 1u << 18 };
+#define MAIN_PETTA_SLICE_BYTES (UINT64_C(32) << 20)
+
+static uint64_t main_petta_slice_setting(const char *name, uint64_t value) {
+    const char *text = getenv(name);
+    if (!text || !*text)
+        return value;
+    char *end = NULL;
+    unsigned long long parsed = strtoull(text, &end, 10);
+    return end && *end == '\0' && parsed > 0u ? (uint64_t)parsed : value;
+}
+
+static bool main_document_exec_at(
+    const TermUniverse *universe, const AtomId *atom_ids,
+    int atom_count, int index, AtomId *payload, int *width);
+
+/* The predeclarations of the equations among IDS; false when one cannot be
+ * made. */
+static bool main_petta_predeclare_forms(CettaLibraryContext *libraries,
+                                        Space *space, AtomId *ids, int n) {
+    int index = 0;
+    while (index < n) {
+        int width = 0;
+        if (main_document_exec_at(&libraries->term_universe, ids, n, index,
+                                  NULL, &width)) {
+            index += width;
+            continue;
+        }
+        if (!petta_program_form_id_may_affect_metadata(
+                &libraries->term_universe, ids[index])) {
+            index++;
+            continue;
+        }
+        Atom *declaration =
+            term_universe_get_atom(&libraries->term_universe, ids[index]);
+        if (petta_program_admits_equation(libraries->petta_program,
+                                          declaration) &&
+            !petta_program_predeclare_equation(libraries->petta_program,
+                                               space, declaration))
+            return false;
+        index++;
+    }
+    return true;
+}
+
+/* Whether to read FILENAME a slice at a time, with its document open. */
+static bool main_petta_open_slices(CettaMainCleanup *cleanup,
+                                   const char *filename) {
+    if (!cleanup->petta_reader || !filename ||
+        !petta_compiled_document_v1_open(&cleanup->petta_document, filename))
+        return false;
+    uint64_t len = cleanup->petta_document.len;
+    if (len < main_petta_slice_setting("CETTA_PETTA_SLICE_BYTES",
+                                       MAIN_PETTA_SLICE_BYTES) ||
+        len > UINT32_MAX) {
+        petta_compiled_document_v1_close(&cleanup->petta_document);
+        return false;
+    }
+    cleanup->petta_document_open = true;
+    return true;
+}
+
+/* The next slice of the document, in place of the last: its count of
+ * forms, 0 once the document is read through, -1 on a fault (reported).
+ * The last slice is dropped and collected first.  CHECK reads it for the
+ * first pass, which builds only the forms the predeclaration reads
+ * (petta_compiled_document_v1_check_next). */
+static int main_petta_next_slice(CettaMainCleanup *cleanup,
+                                 TermUniverse *universe, AtomId **atom_ids,
+                                 bool check) {
+    free(*atom_ids);
+    *atom_ids = NULL;
+    cleanup->atom_ids = NULL;
+    cleanup->atom_count = 0;
+    cleanup->atom_first = 0;
+    petta_compiled_document_v1_release_read(&cleanup->petta_document);
+    (void)term_universe_collect_at_safe_point(universe, NULL);
+    char error[512] = {0};
+    uint32_t forms = (uint32_t)main_petta_slice_setting(
+        "CETTA_PETTA_SLICE_FORMS", MAIN_PETTA_SLICE_FORMS);
+    int n = check
+        ? petta_compiled_document_v1_check_next(
+              cleanup->petta_reader, &cleanup->petta_document, forms,
+              universe, atom_ids, error, sizeof(error))
+        : petta_compiled_document_v1_next(
+              cleanup->petta_reader, &cleanup->petta_document, forms,
+              universe, atom_ids, error, sizeof(error));
+    if (n < 0) {
+        fprintf(stderr, "error: compiled PeTTa reader: %s\n",
+                error[0] ? error : "unreadable document");
+        return -1;
+    }
+    cleanup->atom_ids = *atom_ids;
+    cleanup->atom_count = n;
+    return n;
+}
+
+/* The first pass: every form checked and every equation predeclared, a
+ * slice at a time; then the document is read again from its start. */
+static bool main_petta_check_slices(CettaMainCleanup *cleanup,
+                                    CettaLibraryContext *libraries,
+                                    Space *space, AtomId **atom_ids) {
+    for (;;) {
+        int n = main_petta_next_slice(cleanup, &libraries->term_universe,
+                                      atom_ids, true);
+        if (n < 0)
+            return false;
+        if (n == 0)
+            break;
+        if (!main_petta_predeclare_forms(libraries, space, *atom_ids, n)) {
+            fprintf(stderr,
+                    "error: could not predeclare PeTTa equation head\n");
+            return false;
+        }
+    }
+    petta_compiled_document_v1_rewind(&cleanup->petta_document);
+    return true;
 }
 
 static bool main_document_exec_at(
@@ -2730,6 +2880,8 @@ static MainPettaBlockLoadResult main_petta_load_declaration_block(
     bool ok = true;
     Arena diagnostic_arena;
     arena_init(&diagnostic_arena);
+    if (atom_count > 0)
+        space_dense_prepare_adds(space, atom_ids, (CettaCount)atom_count);
     for (int index = 0; ok && index < atom_count; index++) {
         /* A fact is only stored: the program reads equations and type
          * declarations, so nothing else is decoded for it. */
@@ -3755,6 +3907,8 @@ static int cetta_main(int argc, char **argv) {
     cetta_library_context_init_for_language_profile(&libraries, lang->id, profile);
     cleanup.libraries_initialized = true;
     term_universe_set_persistent_arena(&libraries.term_universe, &arena);
+    (void)term_universe_add_root_provider(
+        &libraries.term_universe, cetta_main_document_roots, &cleanup);
     cetta_library_context_set_exec_path(&libraries, argv[0]);
     cetta_library_context_set_script_path(&libraries, script_path);
     cetta_library_context_set_cli_args(&libraries, argc, argv, script_arg_start);
@@ -3879,6 +4033,7 @@ static int cetta_main(int argc, char **argv) {
             : petta_compiled_reader_v1_new();
         cleanup.document_reader_context = petta_compiled_reader;
         cleanup.document_reader_free = main_petta_compiled_reader_free;
+        cleanup.petta_reader = petta_compiled_reader;
         if (!petta_compiled_reader ||
             !petta_compiled_reader_v1_prepare(
                 petta_compiled_reader, reader_error,
@@ -3967,7 +4122,13 @@ static int cetta_main(int argc, char **argv) {
     }
 
     if (!lang_is_mm2) {
-        n = inline_text
+        /* Its slices are read where the document is processed. */
+        bool sliced = lang->id == CETTA_LANGUAGE_PETTA && !inline_text &&
+            !compile_mode && !run_cli &&
+            !(profile && cetta_profile_uses_petta_typing(profile)) &&
+            main_petta_open_slices(&cleanup, filename);
+        n = sliced ? 0
+            : inline_text
             ? parse_metta_text_ids_diagnostic(
                   inline_text, &libraries.term_universe, &atom_ids,
                   document_reader_error, sizeof(document_reader_error))
@@ -4000,6 +4161,8 @@ static int cetta_main(int argc, char **argv) {
             free(source);
         }
         cleanup.atom_ids = atom_ids;
+        cleanup.atom_count = n;
+        cleanup.atom_first = 0;
         if (n < 0) {
             if (document_reader_error[0]) {
                 const char *reader_name =
@@ -4254,37 +4417,24 @@ process_petta_document:
      * declarations here; executable payloads can add heads later through the
      * ordinary dynamic-definition seam.
      */
-    if (lang->id == CETTA_LANGUAGE_PETTA) {
-        int declaration_index = 0;
-        while (declaration_index < n) {
-            int declaration_exec_width = 0;
-            if (main_document_exec_at(
-                    &libraries.term_universe, atom_ids, n,
-                    declaration_index, NULL,
-                    &declaration_exec_width)) {
-                declaration_index += declaration_exec_width;
-                continue;
-            }
-            if (!petta_program_form_id_may_affect_metadata(
-                    &libraries.term_universe,
-                    atom_ids[declaration_index])) {
-                declaration_index++;
-                continue;
-            }
-            Atom *declaration = term_universe_get_atom(
-                &libraries.term_universe,
-                atom_ids[declaration_index]);
-            if (petta_program_admits_equation(libraries.petta_program, declaration) &&
-                !petta_program_predeclare_equation(
-                    libraries.petta_program, &space, declaration)) {
-                fprintf(
-                    stderr,
-                    "error: could not predeclare PeTTa equation head\n");
-                rc = 1;
-                goto cleanup;
-            }
-            declaration_index++;
+    if (lang->id == CETTA_LANGUAGE_PETTA && cleanup.petta_document_open) {
+        if (!main_petta_check_slices(&cleanup, &libraries, &space,
+                                     &atom_ids)) {
+            rc = 1;
+            goto cleanup;
         }
+        n = main_petta_next_slice(&cleanup, &libraries.term_universe,
+                                  &atom_ids, false);
+        if (n < 0) {
+            rc = 1;
+            goto cleanup;
+        }
+    } else if (lang->id == CETTA_LANGUAGE_PETTA &&
+               !main_petta_predeclare_forms(&libraries, &space, atom_ids,
+                                            n)) {
+        fprintf(stderr, "error: could not predeclare PeTTa equation head\n");
+        rc = 1;
+        goto cleanup;
     }
 
     /* Compile mode: load all atoms into space, emit LLVM IR, exit */
@@ -4381,8 +4531,10 @@ process_petta_document:
     }
 
     /* Process top-level atoms */
+petta_next_slice:
     i = 0;
     while (i < n) {
+        cleanup.atom_first = i;
         if (lang_is_mm2) {
             Atom *at = atoms[i];
 
@@ -4417,6 +4569,8 @@ process_petta_document:
                    This makes CeTTa safe for unlimited chaining iterations. */
                 arena_free(&eval_arena);
                 cetta_foreign_drain_releases();
+                (void)term_universe_collect_at_safe_point(
+                    &libraries.term_universe, NULL);
                 arena_init(&eval_arena);
                 arena_set_runtime_kind(&eval_arena, CETTA_ARENA_RUNTIME_KIND_EVAL);
                 arena_set_hashcons(
@@ -4695,6 +4849,8 @@ process_petta_document:
             eval_reset_form_gc_survivor();
             arena_free(&eval_arena);
             cetta_foreign_drain_releases();
+            (void)term_universe_collect_at_safe_point(
+                &libraries.term_universe, NULL);
             arena_init(&eval_arena);
             arena_set_runtime_kind(&eval_arena, CETTA_ARENA_RUNTIME_KIND_EVAL);
             arena_set_hashcons(
@@ -4770,6 +4926,19 @@ process_petta_document:
         }
         i = block_end;
     }
+    /* A document read a slice at a time goes on with its next slice. */
+    if (cleanup.petta_document_open && !stop_document_sequence && i >= n) {
+        n = main_petta_next_slice(&cleanup, &libraries.term_universe,
+                                  &atom_ids, false);
+        if (n < 0) {
+            rc = 1;
+            goto cleanup;
+        }
+        if (n > 0)
+            goto petta_next_slice;
+        petta_compiled_document_v1_close(&cleanup.petta_document);
+        cleanup.petta_document_open = false;
+    }
 
 petta_document_complete:
     if (!stop_document_sequence &&
@@ -4785,11 +4954,15 @@ petta_document_complete:
         free(atom_ids);
         atom_ids = NULL;
         cleanup.atom_ids = NULL;
+        cleanup.atom_count = 0;
+        cleanup.atom_first = 0;
         document_reader_error[0] = '\0';
         n = parse_metta_file_ids_diagnostic(
             filename, &libraries.term_universe, &atom_ids,
             document_reader_error, sizeof(document_reader_error));
         cleanup.atom_ids = atom_ids;
+        cleanup.atom_count = n;
+        cleanup.atom_first = 0;
         if (n < 0) {
             if (document_reader_error[0]) {
                 fprintf(stderr, "error: compiled PeTTa reader: %s\n",

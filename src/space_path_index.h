@@ -10,6 +10,11 @@ typedef struct CettaSpacePathIndex CettaSpacePathIndex;
 typedef enum {
     CETTA_SPACE_PATH_SYMBOL_KEY = 0,
     CETTA_SPACE_PATH_INTEGER_KEY,
+    /* A ground term keyed by its universe id. */
+    CETTA_SPACE_PATH_TERM_KEY,
+    /* The bound prefix after the head: a mix of the ids of the first
+     * columns, each a value equal only to itself or a ground term. */
+    CETTA_SPACE_PATH_PREFIX_KEY,
 } CettaSpacePathKeyKind;
 
 /* A path is a vector of expression-child positions. Each index belongs to
@@ -42,11 +47,24 @@ static inline bool space_path_index_leads(const Atom *pattern) {
         pattern->expr.elems[1] && pattern->expr.elems[1]->kind == ATOM_VAR;
 }
 
+/* Whether a column's value is keyed by its term: a ground term whose leaves
+ * are all symbols, a nested constant such as a level (S (S Z)).  Equal such
+ * terms are one id, and only such a term can match it, so its id selects the
+ * rows exactly, where the trie would hold every row's term and cuts a deep
+ * one to a wildcard. */
+bool space_path_index_term_key_admits(const Atom *element);
+
 /* A scalar prefix needs no second access path. Keep this admission test a
  * leaf; only nested patterns enter the explicit coordinate walker. */
 static inline bool space_path_index_may_select(const Atom *pattern) {
     if (!pattern || pattern->kind != ATOM_EXPR || !atom_has_vars(pattern))
         return false;
+    for (CettaExprIndex position = 1u; position < pattern->expr.len; position++) {
+        const Atom *child = pattern->expr.elems[position];
+        if (child && child->kind == ATOM_EXPR &&
+            space_path_index_term_key_admits(child))
+            return true;
+    }
     /* A two-coordinate bound prefix followed by one free scalar: the bound
      * field's position index answers it when that field is a symbol or an
      * integer; a ground nested prefix stays with the trie. */
@@ -82,6 +100,36 @@ static inline bool space_path_index_may_select(const Atom *pattern) {
 
 bool space_path_index_candidates(
     Space *space, Atom *pattern, CettaIndex **out, CettaIndex *count);
+/* The rows of a pattern's head that its first bound column after the head
+ * keys (a symbol, an integer or a ground symbolic term) admits, from that
+ * column's index: an exact count's candidates, however broad, with no trie.
+ * The index is built when `build` asks; false when no column is keyed or
+ * the Space keeps no such index. */
+bool space_path_index_lead_candidates(Space *space, Atom *pattern, bool build,
+                                      CettaIndex **out, CettaIndex *count);
+/* The rows of a pattern's head whose first columns hold the pattern's bound
+ * prefix (symbols, integers, strings, truth values, ground terms of
+ * symbols), with the rows open there: a hash probe of the index kept for
+ * that prefix's length, built when `build` asks, where the trie would
+ * descend the prefix holding every row of the space.  False when the
+ * pattern binds no prefix or the Space keeps no such index. */
+bool space_path_index_prefix_candidates(Space *space, Atom *pattern, bool build,
+                                        CettaIndex **out, CettaIndex *count);
+/* space_path_index_prefix_candidates, building the index, for a flat
+ * pattern given by ids: headed by the symbol HEAD, and each of COLUMNS[1]
+ * to COLUMNS[LEN - 1] a value's id, a symbol, an integer, a string or a
+ * truth value, or CETTA_ATOM_ID_NONE where the pattern holds a variable. */
+bool space_path_index_prefix_candidates_ids(Space *space, SymbolId head,
+                                            const AtomId *columns,
+                                            CettaExprLen len,
+                                            CettaIndex **out,
+                                            CettaIndex *count);
+/* The number of leading columns after a pattern's head that a prefix key
+ * can hold, 0 when it binds none. */
+size_t space_path_index_prefix_bound(const Atom *pattern);
+/* Retire the indexes of bound prefixes alone: the trie, once built, descends
+ * every prefix they key. */
+void space_path_indexes_retire_prefixes(Space *space);
 void space_path_indexes_note_add(Space *space, AtomId id, CettaIndex position);
 /* Candidates from an index that already serves this pattern's shape, as
  * physical rows, without building one and only when no open row needs

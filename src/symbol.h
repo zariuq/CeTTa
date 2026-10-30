@@ -57,6 +57,12 @@ typedef struct {
      * immutable scalar sequences; opaque non-UTF-8 spellings are counted. */
     CettaScalarTrie *name_trie;
     uint32_t name_trie_count, name_trie_invalid;
+    /* The spellings, packed into chunks freed with the table: a symbol lives
+     * as long as its table, so its spelling costs its bytes and no more.
+     * Protected by write_mutex. */
+    struct SymbolSpellingChunk *spelling_chunks;
+    char *spelling_free;
+    size_t spelling_left;
 } SymbolTable;
 
 static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
