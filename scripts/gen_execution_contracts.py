@@ -758,6 +758,8 @@ class Spec:
             "sequence-last": (False, False, False),
             "collect": (True, False, False),
             "match-branches": (True, True, False),
+            "dispatch": (True, False, False),
+            "first-success": (True, False, False),
         }
         if set(self.control_operations) != set(slot_shapes):
             raise SpecError("control operations must have a native operand-layout scheme")

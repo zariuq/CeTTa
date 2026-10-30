@@ -12545,10 +12545,13 @@ static bool prepared_pure_answer_cursor_reserve(
             &cursor->argument_cap, cursor->argument_len + arity);
 }
 
+/* A fresh entry rolls back to its entry position. Tail replacement instead
+ * supplies the earlier caller position, keeping the two marks distinct. */
 static void prepared_pure_answer_cursor_push_reserved(
     CettaPreparedPureAnswerCursor *cursor, uint32_t head_index,
-    Atom *const *arguments, uint32_t arity, ArenaMark mark,
+    Atom *const *arguments, uint32_t arity, const ArenaMark *rollback_mark,
     const PreparedPureContinuation *continuation) {
+    ArenaMark entered = arena_mark(cursor->arena);
     size_t base = cursor->argument_len;
     if (arity > 0u)
         memcpy(&cursor->arguments[base], arguments,
@@ -12557,8 +12560,8 @@ static void prepared_pure_answer_cursor_push_reserved(
         .head_index = head_index,
         .arity = arity,
         .argument_base = base,
-        .mark = mark,
-        .alternative_mark = arena_mark(cursor->arena),
+        .mark = rollback_mark ? *rollback_mark : entered,
+        .alternative_mark = entered,
         .continuation = continuation,
     };
     cursor->argument_len += arity;
@@ -12992,8 +12995,7 @@ static CettaPreparedPureAnswerCursor *prepared_pure_answer_cursor_open_entry(
     ok = ok && prepared_pure_answer_cursor_reserve(cursor, arity);
     if (ok) {
         prepared_pure_answer_cursor_push_reserved(
-            cursor, head_index, arguments, arity,
-            arena_mark(cursor->arena), NULL);
+            cursor, head_index, arguments, arity, NULL, NULL);
         ok = head_index == PREPARED_PURE_ROOT_FRAME ||
             prepared_pure_answer_cursor_see_head(cursor, head_index);
     }
@@ -13231,9 +13233,8 @@ static PreparedPureRunResult prepared_pure_native_retain(
     if (entered)
         cetta_owned_execution_init(&native->producer, &native->returns,
                                   cetta_call_return_next, NULL);
-    ArenaMark mark = arena_mark(cursor->arena);
     prepared_pure_answer_cursor_push_reserved(cursor, PREPARED_PURE_NATIVE_FRAME,
-        ok ? owned : arguments, arity, mark, NULL);
+        ok ? owned : arguments, arity, NULL, NULL);
     cursor->frames[cursor->frame_len - 1u].native = native;
     if (!ok) {
         (void)prepared_pure_answer_cursor_handoff(cursor,
@@ -13574,7 +13575,7 @@ static PreparedPureRunResult prepared_pure_answer_cursor_enter(
     ArenaMark child_mark = prepared_pure_answer_cursor_retire_call(
         cursor, frame_index, step_mark);
     prepared_pure_answer_cursor_push_reserved(
-        cursor, callee, arguments, arity, child_mark, callee_continuation);
+        cursor, callee, arguments, arity, &child_mark, callee_continuation);
     if (arguments != inline_arguments)
         free(arguments);
     if (step->kind == PREPARED_PURE_STEP_TAIL)
@@ -14505,7 +14506,7 @@ CettaPreparedPureCursorStep cetta_prepared_pure_answer_cursor_next(
             cursor->frame_len--;
         }
         prepared_pure_answer_cursor_push_reserved(
-            cursor, callee, tail_arguments, arity, child_mark, inherited);
+            cursor, callee, tail_arguments, arity, &child_mark, inherited);
         if (tail_arguments != inline_tail_arguments)
             free(tail_arguments);
         if (!cursor->owns_arena)
@@ -15526,7 +15527,7 @@ static bool prepared_pure_code_enter_frontier(CettaPreparedPureAnswerCursor *cur
     ArenaMark mark = prepared_pure_answer_cursor_retire_call(
         cursor, cursor->frame_len - 1u, arena_mark(cursor->arena));
     prepared_pure_answer_cursor_push_reserved(cursor, code->auxiliary,
-        owned, arity, mark, saved);
+        owned, arity, &mark, saved);
     if (!prepared_pure_answer_cursor_see_head(cursor, code->auxiliary)) {
         (void)prepared_pure_answer_cursor_handoff(cursor, CETTA_PREPARED_PURE_HANDOFF_UNSUPPORTED);
         return false;

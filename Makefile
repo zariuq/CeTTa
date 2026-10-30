@@ -5379,7 +5379,7 @@ $(NATIVE_CONDITIONAL_CONTEXT_TEST_OBJ): tests/test_native_conditional_context.c 
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -Isrc -c $< -o $@
 
 $(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN): $(NATIVE_CONDITIONAL_CONTEXT_TEST_OBJ) $(filter-out src/eval.%,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS)
-	$(CC) $(CFLAGS) -o $@ $^ -Wl,--wrap=grounded_call,--wrap=cetta_library_call_native_prepared_view,--wrap=cetta_library_call_native,--wrap=cetta_invocation_materialize,--wrap=space_query_effect_for_head,--wrap=malloc,--wrap=calloc,--wrap=cetta_prepared_pure_program_compile_closed $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $^ -Wl,--wrap=grounded_call,--wrap=cetta_library_call_native_prepared_view,--wrap=cetta_library_call_native,--wrap=cetta_invocation_materialize,--wrap=match_atoms_epoch_builder_planned,--wrap=space_query_effect_for_head,--wrap=malloc,--wrap=calloc,--wrap=cetta_prepared_pure_program_compile_closed $(LDFLAGS)
 
 .PHONY: test-native-conditional-context
 test-all: test-native-conditional-context
@@ -47223,6 +47223,16 @@ test-petta-search-machine: test-petta-plan-owner
 test-petta-plan-owner: $(PETTA_PLAN_OWNER_TEST_BIN)
 	@$(call cetta_exec,./$(PETTA_PLAN_OWNER_TEST_BIN))
 
+PETTA_PLAN_KEY_TEST_BIN = runtime/test_petta_plan_key-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+PETTA_PLAN_KEY_TEST_OBJS = $(filter-out src/petta_program.%,$(FALLBACK_EVAL_TEST_LINK_OBJ))
+$(PETTA_PLAN_KEY_TEST_BIN): tests/support/test_petta_plan_key.c src/petta_program.c src/petta_program.h $(PETTA_PLAN_KEY_TEST_OBJS) $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $< $(PETTA_PLAN_KEY_TEST_OBJS) $(BRIDGE_DEPS) -Wl,--wrap=malloc,--wrap=realloc $(LDFLAGS)
+
+.PHONY: test-petta-plan-key
+test-petta-search-machine test-execution-semantic-ledger: test-petta-plan-key
+test-petta-plan-key: $(PETTA_PLAN_KEY_TEST_BIN)
+	@$(call cetta_exec,./$(PETTA_PLAN_KEY_TEST_BIN))
+
 # Native Megalodon tests (native/megalodon/test.mk).
 include native/megalodon/test.mk
 
@@ -47653,7 +47663,7 @@ test-petta-corrected-stable: $(BIN)
 	python3 tests/support/check_petta_corrected_stable.py $(BIN)
 
 .PHONY: test-execution-semantic-ledger
-test-execution-semantic-ledger: $(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN) $(PETTA_SEARCH_MACHINE_TEST_BIN)
+test-execution-semantic-ledger: $(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN) $(PETTA_SEARCH_MACHINE_TEST_BIN) test-prepared-pure-answer-producer test-execution-control-plans
 	@$(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN) --semantic-ledger
 	@$(PETTA_SEARCH_MACHINE_TEST_BIN) --semantic-ledger
 
