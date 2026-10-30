@@ -4325,12 +4325,8 @@ Atom *atom_symbol_data(Arena *a, const char *name) {
 }
 
 #if CETTA_MANAGED_SYMBOLS
-static Atom *atom_symbol_data_span_hashed(
+static Atom *atom_symbol_spelled_new(
         Arena *a, const char *bytes, uint32_t len, uint64_t hash) {
-    SymbolId known = symbol_lookup_span_hashed(
-        g_symbols, (const uint8_t *)bytes, len, hash);
-    if (known != SYMBOL_ID_NONE)
-        return atom_symbol_id(a, known);
     size_t size = sizeof(Atom) + sizeof(CettaSymbolSpelling) + (size_t)len + 1u;
     Atom *atom = arena_alloc(a, size);
     *atom = (Atom){.kind = ATOM_SYMBOL, .arena_id = a->identity,
@@ -4351,6 +4347,13 @@ static Atom *atom_symbol_data_span_hashed(
     atomic_fetch_add_explicit(&managed_symbol_allocated_bytes, (uint64_t)len + 1u, memory_order_relaxed);
     if (bytes[0] == '&') atom->flags |= ATOM_FLAG_HAS_REGISTRY_REFS;
     return atom;
+}
+static Atom *atom_symbol_data_span_hashed(
+        Arena *a, const char *bytes, uint32_t len, uint64_t hash) {
+    SymbolId known = symbol_lookup_span_hashed(
+        g_symbols, (const uint8_t *)bytes, len, hash);
+    return known != SYMBOL_ID_NONE ? atom_symbol_id(a, known)
+        : atom_symbol_spelled_new(a, bytes, len, hash);
 }
 #endif
 
@@ -8929,9 +8932,24 @@ static Atom *atom_deep_copy_mapped_leaf(Arena *dst, Atom *source,
           source->ground.gkind == GV_INTERNAL_TAG));
     Atom *copy;
     if (plain) {
-        copy = arena_alloc(dst, sizeof(*copy));
-        atom_header_copy(copy, source);
-        copy->arena_id = dst->identity;
+#if CETTA_MANAGED_SYMBOLS
+        if (source->kind == ATOM_SYMBOL && atom_symbol_is_spelled(source)) {
+            /* Relocation must preserve a private node's identity while owning
+             * its spelling after the source arena is retired. A header copy
+             * alone retains a dangling spelling pointer. */
+            copy = atom_symbol_spelled_new(dst, source->spelling->bytes,
+                source->spelling->len, source->spelling->hash);
+            const CettaSymbolSpelling *spelling = copy->spelling;
+            atom_header_copy(copy, source);
+            copy->spelling = spelling;
+            copy->arena_id = dst->identity;
+        } else
+#endif
+        {
+            copy = arena_alloc(dst, sizeof(*copy));
+            atom_header_copy(copy, source);
+            copy->arena_id = dst->identity;
+        }
     } else {
         /* A Prime context has a further independently owned syntax graph;
          * its existing opaque copy does not use this enclosing memo. */
