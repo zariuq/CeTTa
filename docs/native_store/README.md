@@ -21,6 +21,54 @@ The named-space and older durable-runtime interfaces have not yet migrated to
 this owner. The byte-store library is available for qualification; adding it
 does not migrate an application's existing database.
 
+## First SQLite-replacement milestone
+
+The first bounded service milestone targets the actual local ledger/queue workloads.
+Its durability and isolation requirements remain strict while its API stays
+small. The broader graph/query curriculum remains a subsequent milestone.
+
+- Reuse the existing durable owner and shared Space matcher/source/cursors.
+  Finish the public owning captured-Space adapter; keep persisted programs inert.
+- Start with coordinated single-writer publication and captured readers. Whole-
+  revision validation is an acceptable conservative first policy: concurrent
+  changes conflict, including changes affecting absent/aggregate/path reads.
+  Only qualify narrower dependencies when needed; preserve one commit domain.
+- Atomically publish records, indexes, invariant decisions and durable receipts.
+  A repeated request ID with the same operation retrieves its original outcome;
+  reusing the ID for a different operation refuses. This does not guarantee
+  exactly-once external actions.
+- Retain one query's view/cursor owner while streaming bounded results. Explicit
+  close, cancellation, disconnect and deadlines release local resources. Any
+  cursor surviving a protocol message remains server-owned and client-scoped;
+  a serialized native handle is not that ownership mechanism.
+- Reuse local transport/framing and existing caller authorization. Bound message
+  sizes, queued work and result buffers; preserve conflict, busy, corruption,
+  unsupported-version, incomplete and uncertain-publication outcomes.
+- Provide the access paths required by the chosen workload and correct scan
+  fallbacks. First-page work must be incremental; report full scans and resource
+  exhaustion rather than calling them complete empty results.
+- Supply recover, checkpoint/compact, health and a tested backup/restore path.
+  A quiesced backup is an acceptable initial operation; copying a changing
+  collection of files without a captured/quiesced publication boundary is not.
+
+Qualification requires crash/fault injection around publication, concurrent
+claim/uniqueness and stale-read tests, lost-reply retries, corruption/truncation
+refusal, old readers surviving compaction, cancellation/disconnect lifetime
+tests, backup/restore and transition parity against the chosen SQLite domain.
+Verify acknowledged commits survive the modeled failures and uncertain outcomes
+remain recoverable. Process-kill tests alone do not establish real power-loss
+durability: retain the documented filesystem assumptions and I/O fault tests.
+
+The missing integration is not covered merely by existing store unit tests or
+the older named-space service. That service currently materializes query
+snapshots; replace that path with shared incremental cursors before claiming
+large-KB paging. Live migration remains a separately authorized step.
+
+ACT may become a native immutable base/segment under the same durability owner.
+Its reader and format qualification need not block the first workload release
+over the existing index. Federation, multi-writer distributed commits, online
+resharding, SQL/Cypher syntax and a full cost optimizer are later capabilities.
+
 The disk ABI is version 2 (`cetta_disk_abi_version`), with a generation in every
 `CettaDiskRoot`. A checksummed `CSD2` segment header carries the same generation
 as the `CDS2` manifest. Reopening through the wrong segment is refused even

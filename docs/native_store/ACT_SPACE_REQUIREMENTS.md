@@ -10,6 +10,14 @@ queries continue to use the existing matcher, binding rules and query cursors.
 The reader supplies storage access; the surrounding Space adapter and durable
 publication owner supply the remaining database guarantees.
 
+ACT can supply the native durable backing of a Space, including immutable
+base segments and checkpoints. It is not limited to interchange. A practical
+layout combines a captured ACT base with a mutable delta and the existing
+journal/publication owner. Base, delta, dictionaries, occurrence metadata and
+receipts must describe one atomically published view. The current native
+disk-root API is format-specific; attaching ACT needs an adapter and effective
+view validation, rather than passing ACT bytes to the existing index decoder.
+
 ## 1. Integration boundary
 
 ```text

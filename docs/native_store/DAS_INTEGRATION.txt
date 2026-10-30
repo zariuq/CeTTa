@@ -19,9 +19,18 @@ ARCHITECTURE
  ordinary MeTTa match / pat:query / shared continuations
                           |
                 owned Space source interface
-                 /           |             \
-       native durable    ACT snapshot    DAS external source
-       captured roots     captured root   declared read profile
+                  /                     \
+        local durable Space          DAS external source
+        publication/recovery owner   declared read profile
+                  |
+        versioned backing roots
+        current index; ACT base/segments when qualified
+
+ACT can be native durable backing, not merely an import/export alternative.
+The format supplies stored bytes/indexes; the owner supplies commit, recovery
+and reader-retention semantics. The current store root API is tied to the
+native disk-index format, so using ACT underneath it requires an explicit
+adapter or a qualified ACT-base/native-delta layout under one published root.
 
 All adapters must state the semantics they actually provide. DAS can supply
 remote storage/query sources and service mechanisms. A future CeTTa provider
@@ -29,6 +38,10 @@ could also expose selected local operations to DAS. Neither direction requires
 a separate CeTTa query language or an application-specific database engine.
 
 INITIAL ADOPTION DECISION
+The local SQLite-replacement milestone does not require a running DAS service
+or completion of federation. Apply this intake to avoid duplicating useful
+mechanisms, then qualify external-source integration as a separate capability.
+
 Begin with a small read-only external-source prototype and an explicit
 capability profile. Reuse DAS's execution/stream/cancel interface where it
 meets the lifetime contract; keep ordinary matching and local durable
