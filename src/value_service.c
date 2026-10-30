@@ -25,7 +25,7 @@ typedef struct {
     Buffer input,output,last_request,last_reply;
     Arena cache;Atom *last_id;uint64_t deadline;
 } Connection;
-typedef struct { bool live;size_t client;Arena arena;Atom *handle;char kind[128],token[64];uint64_t id; } Resource;
+typedef struct { bool live,value;size_t client;Arena arena;Atom *handle;char kind[128],token[64];uint64_t id; } Resource;
 typedef struct { Atom *operation;const char *entry;bool write; } Route;
 typedef struct {
     CettaLibraryContext *context;Space *program;Registry *registry;Arena *permanent;
@@ -89,7 +89,9 @@ static bool handle_info(Host *host,Atom *handle,char kind[128],uint64_t *id,Cett
 }
 static void resource_close(Host *host,Resource *resource) {
     if (!resource->live) return;
-    cetta_native_handle_close(host->context,resource->kind,resource->id);
+    /* Value states move their arena-backed holders into the successor. Their
+     * retirement drops those holders rather than revoking a moved alias. */
+    if (!resource->value) cetta_native_handle_close(host->context,resource->kind,resource->id);
     arena_free(&resource->arena);memset(resource,0,sizeof(*resource));
 }
 static Resource *resource_find(Host *host,size_t client,Atom *token) {
@@ -97,13 +99,71 @@ static Resource *resource_find(Host *host,size_t client,Atom *token) {
     for (size_t i=0;i<host->resource_count;i++) if (host->resources[i].live && host->resources[i].client==client && !strcmp(host->resources[i].token,name)) return &host->resources[i];
     return NULL;
 }
+static bool owned_handle_leaf(Atom *value) {
+    return tagged(value,"NativeHandle",3) &&
+        (value->expr.elems[2]->structural_facts & ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID);
+}
+static bool contains_handle(Atom *value,const char *kind,uint64_t id,unsigned depth) {
+    if (!value || depth>CETTA_ATOM_WIRE_DEPTH) return false;
+    uint64_t present;
+    if (owned_handle_leaf(value)) return cetta_native_handle_arg(value,kind,&present) && present==id;
+    if (value->kind==ATOM_EXPR) for (size_t i=0;i<value->expr.len;i++)
+        if (contains_handle(value->expr.elems[i],kind,id,depth+1)) return true;
+    return false;
+}
+static Resource *handle_owner(Host *host,const char *kind,uint64_t id) {
+    for (size_t i=0;i<host->resource_count;i++) {
+        Resource *r=&host->resources[i];
+        if (r->live && (r->value ? contains_handle(r->handle,kind,id,0)
+                                : r->id==id && !strcmp(r->kind,kind))) return r;
+    }
+    return NULL;
+}
+/* State is portable syntax with owned native handles as opaque leaves. Check
+ * those leaves in this registry, and reject untracked heap/evaluator values.
+ * The portable shadow erases handles only for shape/size validation; it never
+ * becomes an executable state or transferable capability. */
+static Atom *state_shadow(Host *host,Arena *arena,Atom *value,unsigned depth,size_t *nodes,bool fresh,const char **failure) {
+    if (!value) { *failure="state-format";return NULL; }
+    if (depth>CETTA_ATOM_WIRE_DEPTH || ++*nodes>CETTA_ATOM_WIRE_NODES) { *failure="state-limit";return NULL; }
+    if (owned_handle_leaf(value)) {
+        char kind[128];uint64_t id;CettaNativeHandleUse use={0};
+        if (!handle_info(host,value,kind,&id,&use)) { *failure="state-unowned-handle";return NULL; }
+        bool valid=!fresh || !handle_owner(host,kind,id);
+        cetta_native_handle_use_release(&use);
+        if (!valid) { *failure="state-already-owned";return NULL; }
+        return atom_symbol(arena,"ServiceOpaqueV1");
+    }
+    if (value->kind!=ATOM_EXPR) return value;
+    if (value->expr.len>CETTA_ATOM_WIRE_NODES-*nodes) { *failure="state-limit";return NULL; }
+    Atom **items=arena_alloc(arena,value->expr.len*sizeof(*items));
+    if (value->expr.len && !items) return NULL;
+    for (size_t i=0;i<value->expr.len;i++) {
+        items[i]=state_shadow(host,arena,value->expr.elems[i],depth+1,nodes,fresh,failure);
+        if (!items[i]) return NULL;
+    }
+    return atom_expr(arena,items,value->expr.len);
+}
+static const char *state_failure(Host *host,Atom *value,bool fresh) {
+    Arena shape;arena_init_detached(&shape);size_t nodes=0;Buffer bytes={0};
+    const char *failure=NULL;Atom *shadow=state_shadow(host,&shape,value,0,&nodes,fresh,&failure);
+    CettaAtomWireStatus status=shadow ? cetta_atom_wire_encode(shadow,&bytes.data,&bytes.size) : ATOM_WIRE_NOMEM;
+    if (!failure && status!=ATOM_WIRE_OK) failure=status==ATOM_WIRE_NOMEM ? "state-capacity"
+        : status==ATOM_WIRE_LIMIT ? "state-limit" : "state-format";
+    clear(&bytes);arena_free(&shape);return failure;
+}
 static bool resources_fit(Host *host) {
     CettaStorageCensus census={0};bool ready=true;
     for (size_t i=0;ready && i<host->resource_count;i++) if (host->resources[i].live) {
         Resource *r=&host->resources[i];CettaNativeHandleUse use={0};
-        ready=cetta_native_handle_acquire_owned(host->context,r->kind,r->handle,CETTA_NATIVE_HANDLE_USE_EXCLUSIVE,&use);
-        if (ready) cetta_native_handle_use_storage(&use,&census);
-        cetta_native_handle_use_release(&use);
+        if (r->value) {
+            ready=!state_failure(host,r->handle,false);
+            if (ready) arena_storage_census(&r->arena,&census);
+        } else {
+            ready=cetta_native_handle_acquire_owned(host->context,r->kind,r->handle,CETTA_NATIVE_HANDLE_USE_EXCLUSIVE,&use);
+            if (ready) cetta_native_handle_use_storage(&use,&census);
+            cetta_native_handle_use_release(&use);
+        }
     }
     cetta_storage_finish(&census);ready=ready && !census.incomplete && !census.overflow && !census.invalidated && census.bytes<=host->owned_limit;
     cetta_storage_census_free(&census);return ready;
@@ -130,20 +190,32 @@ static Atom *keep(Host *host,size_t client,Arena *arena,Atom *result,Resource **
     Atom *handle=result->expr.elems[1],*metadata=result->expr.elems[2];char kind[128];uint64_t id;
     CettaNativeHandleUse use={0};
     if (!handle_info(host,handle,kind,&id,&use)) return failure(arena,true,"unowned-resource");
-    Resource *available=NULL,*existing=NULL;
+    Resource *available=NULL,*existing=handle_owner(host,kind,id);
     for (size_t i=0;i<host->resource_count;i++) {
         Resource *r=&host->resources[i];
         if (!r->live && !available) available=r;
-        if (r->live && r->id==id && !strcmp(r->kind,kind)) existing=r;
     }
     cetta_native_handle_use_release(&use);
-    if (existing && existing->client!=client) return failure(arena,true,"resource-already-owned");
+    if (existing && (existing->value || existing->client!=client)) return failure(arena,true,"resource-already-owned");
     if (existing) return atom_expr3(arena,atom_symbol(arena,"ServiceResourceV1"),atom_string(arena,existing->token),metadata);
     if (!available || host->next_resource==UINT64_MAX) {
         cetta_native_handle_close(host->context,kind,id);return failure(arena,true,"resource-limit");
     }
     Resource *r=available;arena_init_detached(&r->arena);
     r->handle=atom_deep_copy(&r->arena,handle);r->client=client;r->id=id;strcpy(r->kind,kind);
+    snprintf(r->token,sizeof(r->token),"%s-%llx",host->boot,(unsigned long long)host->next_resource++);r->live=true;*added=r;
+    if (!r->handle || !resources_fit(host)) { resource_close(host,r);*added=NULL;return failure(arena,true,"resource-budget"); }
+    return atom_expr3(arena,atom_symbol(arena,"ServiceResourceV1"),atom_string(arena,r->token),metadata);
+}
+static Atom *keep_value(Host *host,size_t client,Arena *arena,Atom *result,Resource **added) {
+    Atom *value=result->expr.elems[1],*metadata=result->expr.elems[2];
+    const char *reason=state_failure(host,value,true);
+    if (reason) return failure(arena,true,reason);
+    Resource *available=NULL;
+    for (size_t i=0;i<host->resource_count;i++) if (!host->resources[i].live) { available=&host->resources[i];break; }
+    if (!available || host->next_resource==UINT64_MAX) return failure(arena,true,"resource-limit");
+    Resource *r=available;arena_init_detached(&r->arena);r->value=true;r->client=client;
+    r->handle=atom_deep_copy(&r->arena,value);
     snprintf(r->token,sizeof(r->token),"%s-%llx",host->boot,(unsigned long long)host->next_resource++);r->live=true;*added=r;
     if (!r->handle || !resources_fit(host)) { resource_close(host,r);*added=NULL;return failure(arena,true,"resource-budget"); }
     return atom_expr3(arena,atom_symbol(arena,"ServiceResourceV1"),atom_string(arena,r->token),metadata);
@@ -163,9 +235,12 @@ static Atom *dispatch(Host *host,size_t index,Arena *arena,Atom *body,Resource *
         resource_close(host,r);return atom_symbol(arena,"ServiceClosedV1");
     }
     Atom *operation=NULL,*argument=NULL,*resource=atom_symbol(arena,"ServiceNoResourceV1");
+    Resource *consumed=NULL;
     if (tagged(body,"CallV1",3)) { operation=body->expr.elems[1];argument=body->expr.elems[2]; }
-    else if (tagged(body,"UseV1",4)) {
+    else if (tagged(body,"UseV1",4) || tagged(body,"UseValueV1",4)) {
         Resource *r=resource_find(host,index,body->expr.elems[1]);if (!r) return failure(arena,false,"unknown-resource");
+        if (r->value!=atom_is_symbol(body->expr.elems[0],"UseValueV1")) return failure(arena,false,"resource-mode");
+        if (r->value) consumed=r;
         operation=body->expr.elems[2];argument=body->expr.elems[3];resource=r->handle;
     } else return failure(arena,false,"request-shape");
     Route *route=route_find(host,operation);
@@ -174,8 +249,13 @@ static Atom *dispatch(Host *host,size_t index,Arena *arena,Atom *body,Resource *
     Atom *peer=atom_expr3(arena,atom_symbol(arena,"ServicePeerV1"),atom_int(arena,c->uid),atom_symbol(arena,c->readonly ? "ReadOnly" : "ReadWrite"));
     Atom *input=atom_expr(arena,(Atom *[]){atom_symbol(arena,"ServiceCallV1"),host->data,peer,resource,argument},5);
     *ran=true;Atom *result=evaluate(host,arena,route->entry,input);
+    /* UseValue moves a linear continuation. Success transfers its owned
+     * leaves through the copied result; failure retires it explicitly. The
+     * exact request/reply cache handles wire retries before token lookup. */
+    if (consumed) resource_close(host,consumed);
     if (!result) return failure(arena,true,host->evaluation_failure);
     if (tagged(result,"ServiceKeepV1",3)) return keep(host,index,arena,result,added);
+    if (tagged(result,"ServiceKeepValueV1",3)) return keep_value(host,index,arena,result,added);
     if (!resources_fit(host)) {
         for (size_t i=0;i<host->resource_count;i++) if (host->resources[i].live && host->resources[i].client==index) resource_close(host,&host->resources[i]);
         return failure(arena,true,"resource-budget");

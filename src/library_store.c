@@ -370,6 +370,14 @@ Atom *cetta_store_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **a
             atom_expr2(a,atom_symbol(a,"StoreCollected"),unsigned_value(a,removed));
         cetta_native_handle_use_release(&use);return answer;
     }
+    if (atom_is_symbol(head,"__cetta_lib_store_view_clone")) {
+        CettaNativeHandleUse use={0};
+        if (n!=1 || !acquire(ctx,view_kind,args[0],CETTA_NATIVE_HANDLE_USE_EXCLUSIVE,&use)) return refused(a,"closed-view");
+        CettaDiskStoreView *copy=NULL;
+        CettaDiskStoreStatus status=cetta_disk_store_view_clone(cetta_native_handle_use_resource(&use),&copy);
+        cetta_native_handle_use_release(&use);
+        return status==CETTA_STORE_OK ? view_value(ctx,a,copy,false,NULL) : status_value(a,status);
+    }
     if (atom_is_symbol(head,"__cetta_lib_store_view_info")) {
         if (n!=1) return refused(a,"invalid-view-info");
         CettaNativeHandleUse use={0};

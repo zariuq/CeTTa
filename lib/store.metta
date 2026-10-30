@@ -4,6 +4,7 @@
 (: __cetta_lib_store_open (-> String String Atom))
 (: __cetta_lib_store_snapshot (-> Atom Atom))
 (: __cetta_lib_store_view_info (-> Atom Atom))
+(: __cetta_lib_store_view_clone (-> Atom Atom))
 (: __cetta_lib_store_check_view (-> Atom Atom Atom))
 (: __cetta_lib_store_space_view (-> Atom String Atom))
 (: __cetta_lib_store_space_query_open (-> Atom String Atom Atom Atom))
@@ -37,6 +38,9 @@
 ; a publisher or a later transaction's read dependencies.
 (= (store:view-info $view)
    (function (case (__cetta_lib_store_view_info $view) (($result (return $result))))))
+; Independent owning handle to this captured root, not a newer snapshot.
+(= (store:view-clone $view)
+   (function (case (__cetta_lib_store_view_clone $view) (($result (return $result))))))
 (= (store:check-view $store $view)
    (function (case (__cetta_lib_store_check_view $store $view) (($result (return $result))))))
 ; The named metadata record is (StoreSpaceV1 prefix occurrence-count), encoded

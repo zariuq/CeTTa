@@ -354,6 +354,10 @@ Import `(library store)` in PeTTa, or `store` in HE and Prime.
   snapshot handle. These are its captured coordinates, even after later
   publications. The call creates no resource and does not validate a publisher
   or a transaction's read dependencies.
+- `(store:view-clone view)` returns `(StoreSnapshot independent-view epoch
+  revision)` for that same captured root. Closing the original handle does not
+  close the clone. This is an independent read lifetime, not a newer snapshot
+  or a publisher capability. It uses the existing native view clone mechanism.
 - `(store:check-view owner view)` returns `StoreViewValid` when a live publisher
   and captured view belong to the same physical store domain and epoch. A
   publisher awaiting recovery is refused. An older revision remains valid;
@@ -538,6 +542,52 @@ in its own arena and checks its storage census. A token from another connection
 or server incarnation refuses. Serialized native identifiers do not confer
 ownership. Limits bound frame/cache buffers, connections and retained
 resources. One outstanding frame per connection supplies backpressure.
+
+### MeTTa continuation values
+
+`(ServiceKeepValueV1 value metadata)` retains an ordinary MeTTa value as a
+connection-owned resource and returns the same `ServiceResourceV1` envelope.
+It can hold a traversal frontier, a visited set and owning native cursor/view
+leaves together. The host supplies retention and token ownership; the MeTTa
+program supplies the algorithm. This adds no graph evaluator or query language.
+
+The value profile is bounded portable syntax plus actual owning native handles
+from the current registry. It preserves variable sharing and inert terms.
+Raw Spaces, evaluator closures and other unsupported heap values refuse rather
+than acquiring a guessed lifetime. Printed `(NativeHandle kind integer)` syntax
+without an owning identifier remains data; retaining it grants no authority.
+A stale or foreign owning holder refuses. A live native leaf already exported
+by another retained resource refuses, including on the same connection. Clone
+a captured view explicitly when a continuation needs independent ownership.
+
+Advance such a resource with `(UseValueV1 token operation argument)`. Preflight
+refusals, such as wrong connection, mode, route or ReadOnly rights, preserve the
+state. Once its handler is invoked, that token is consumed. A successful step
+can return `ServiceKeepValueV1` with a successor state and page metadata, yielding
+a fresh token. A completed/cancelled step returns its terminal result. An invoked
+handler failure, bad successor or reply-limit failure retires the consumed state;
+it never leaves an apparently resumable token after hidden cursor advancement.
+
+The last exact wire request/reply cache is checked before token lookup. Repeating
+that request id and identical body returns its original successor/page without
+advancing again, despite consumption of the input token. A different body under
+the cached id refuses. The cache retains one request, not an arbitrary history
+or a durable continuation across restart. Disconnect and restart retire states.
+An uncertain transport outcome does not authorize inventing a new step id.
+
+State arenas and transitive native resources enter the existing ownership census
+and byte budget. Format, ownership, size, capacity and resource-limit failures
+remain explicit. Dropping or moving a value retires its arena-backed holders;
+it does not explicitly revoke a native handle that a successor has retained.
+Direct native resources retain their existing explicit-close semantics.
+
+`test-native-service-state` checks variable sharing, inert/error-looking data,
+independent views through compaction, exact replay, consumed/stale tokens,
+cross-connection and ReadOnly refusals, malformed/closed/literal handles, unsupported
+heap values, depth/byte/resource limits, invoked failures, oversized replies,
+completion/cancellation, disconnect/restart and fixed-KB lifetime measurements.
+This is the continuation boundary for paged MeTTa algorithms; it does not claim
+the graph/relational curriculum itself is complete.
 
 The example exposes Snapshot, Create, Query, Next, Cancel, QueryInfo, Commit,
 Resolve, Backup and Compact. Create accepts either `CreateV1` or
