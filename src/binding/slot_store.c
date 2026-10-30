@@ -397,6 +397,14 @@ static bool bindings_frame_index_initialize_entry(
         }
         memcpy(storage.schema->source_ids, source_ids,
                (size_t)source_len * sizeof(*storage.schema->source_ids));
+        /* A spare has storage capacity, not the new source's presentation.
+         * Its old name keys may even point into an already retired arena.
+         * Raw inventories learn presentation anew; prepared schemas above
+         * keep the caller-supplied presentation. */
+        for (uint32_t slot = 0u; slot < source_len; slot++)
+            storage.schema->spellings[slot] = SYMBOL_ID_NONE;
+        memset(storage.schema->name_keys, 0,
+               (size_t)source_len * sizeof(*storage.schema->name_keys));
         bindings_frame_schema_publish(storage.schema, source_len);
     }
     storage.epoch = epoch;

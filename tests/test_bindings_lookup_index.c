@@ -34,6 +34,37 @@ static VarId test_id(uint32_t ordinal) {
                             (uint64_t)ordinal * UINT64_C(0x10001));
 }
 
+static void test_reused_frame_presentation(Arena *arena) {
+    BindingsBuilder builder;
+    bool ready=bindings_builder_init(&builder,NULL);
+    CHECK(ready,"presentation reuse builder initializes");
+    if (!ready) return;
+    Atom *out=atom_var_with_id(arena,"presentation-result",test_id(9901));
+    Atom *head=atom_symbol(arena,"presentation-edge"),*value=atom_symbol(arena,"presentation-value");
+    Atom *pattern=atom_expr3(arena,head,value,out);
+    uint32_t mark=bindings_builder_save(&builder);
+    {
+        CETTA_FRAME_IDENTITY_SCOPE(scope);
+        CettaFrameIdentity epoch=CETTA_FRAME_IDENTITY_NONE;
+        CHECK(cetta_frame_identity_scope_try(&scope,&epoch),"first source frame obtains identity");
+        Atom *old=atom_var_with_name_key(arena,atom_string(arena,"old-presentation"),test_id(9902));
+        Atom *candidate=atom_expr3(arena,head,old,old);
+        CHECK(match_atoms_epoch_builder(pattern,candidate,&builder,arena,epoch),
+              "structured candidate installs source presentation");
+        bindings_builder_rollback(&builder,mark);
+    }
+    {
+        CETTA_FRAME_IDENTITY_SCOPE(scope);
+        CettaFrameIdentity epoch=CETTA_FRAME_IDENTITY_NONE;
+        CHECK(cetta_frame_identity_scope_try(&scope,&epoch),"replacement source frame obtains identity");
+        Atom *next=atom_var_with_name_key(arena,atom_string(arena,"new-presentation"),test_id(9903));
+        CHECK(match_atoms_epoch_builder(pattern,next,&builder,arena,epoch),
+              "reused frame storage must not retain the previous source's presentation");
+        bindings_builder_rollback(&builder,mark);
+    }
+    bindings_builder_free(&builder);
+}
+
 /* Exercise both logical merge routes without an evaluator linked in. Scope
  * selection, old receipt data and rollback belong to the common product. */
 static void test_prime_occurrence_product(Arena *arena, unsigned mode, bool live) {
@@ -1735,6 +1766,7 @@ static void test_manufactured_presentation_reuses_private_capacity(void) {
     CETTA_FRAME_IDENTITY_SCOPE(identities);
     Arena arena;
     arena_init(&arena);
+    test_reused_frame_presentation(&arena);
     CettaFrameIdentity identity = cetta_frame_identity_scope_fresh(&identities);
     BindingsBuilder builder;
     CHECK(bindings_builder_init(&builder, NULL), "initialize private presentation test");
