@@ -216,10 +216,11 @@ static const struct {
     {"@>=", "(-> $a $b Bool)"},
     {"//", "(-> Number Number Number)"},
     {"new-space", "(-> Atom SpaceType)"},
+    {"new-space", "(-> Atom Atom SpaceType)"},
 };
 
 #define HE_GROUNDED_TYPE_SLOTS 256u
-#define HE_GROUNDED_TYPES_PER_NAME 2u
+#define HE_GROUNDED_TYPES_PER_NAME 3u
 
 /* Upstream's types first, then CeTTa's extended signatures. */
 typedef struct {

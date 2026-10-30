@@ -842,7 +842,14 @@
           "source_fuel": "Decline under explicit or inherited semantic fuel. Physical refill preserves the actual frontier and current authority; it does not replenish source fuel. Producer and publication allowances remain independent.",
           "retirement": "CPS entry and register-budget handoff share exhausted-caller retirement. Native producer loans remain live until child retirement. The 65-step control rejects retained exhausted frames and repeated native work.",
           "ownership": "Native-capable search cursors detach entry operands before effects. Stable call admission owns the authority callback; parent collection, cancellation and interleaved readers preserve independent pending returns.",
-          "availability": "Host construction omits prepared workers when reference execution or semantic fuel makes them unavailable. This is a configuration fact, not failed native execution."
+          "availability": "Host construction omits prepared workers when reference execution or semantic fuel makes them unavailable. This is a configuration fact, not failed native execution.",
+          "caller_dag": "Parent handoff decodes each retained caller record once and selects shared roots. Immutable step/parent plans are interned outside normal traced payload values. Branch bindings remain authoritative in the existing search context. Equal source syntax does not merge different local snapshots.",
+          "remaining_alternatives": "After the parent consumes the exact moved producer and caller bodies, current authority resumes the original compiled alternatives without replay. Changed authority installs the previously frozen equation/caller frontier. Pending worlds are traced as one Atom graph, and derived record pointers are refreshed after collection.",
+          "caller_storage_model": "PreparedCallerStorage proves explicit separated plan/data lookups and transitions refine combined caller nodes for every bounded run, including malformed-address refusal. Native interning, capture installation, lifetime and source charging remain separate obligations.",
+          "caller_source_model": "PreparedCallerProjection checks independent normalized syntax and role-plan projection against the register-node language, including lexical bindings, branches, operand order and current callee answers. Native pointer and source-debit correspondence remain separate obligations.",
+          "caller_plans": "Lowering projects normalized caller plans into the source adapter owner before effects. The parent reads those saved plans without live head reclassification. Initial Space invalidation can transfer callers and untried leased alternatives only with complete saved plans and current host authority. Missing plans and revoked host authority retain the actual entered packet.",
+          "ordinary_metered_segments": "Eligible ordinary body segments admit each retained source visit before stack removal and preserve the canonical collection/transition boundary. Active delay or table state retains the full scheduler; analysis and evidence observers retain existing boundaries. Canonical receipts, source prices 0/1/3, independent physical/source allowances, cancellation and snapshot refusal have controls.",
+          "source_word_admission_model": "SourceWordAdmission proves annotation erasure with direct bounded-word payment around a raw contextual operation, complete residual/ledger refinement, physical slices and split resumption. Inline annotations refuse and completed code-shaped values stay data. Native goal selection, remaining elaboration and collection/ABI correspondence remain open."
         }
       },
       "sequencing_contract": {
@@ -2387,6 +2394,34 @@
     {
       "construction": "Mettapedia/Machines/ContextualInvocation.lean",
       "application": "Borrowed ready invocations join the existing native field-reader and certified partial-expansion models to contextual CBPV entry. Exact post-entry computations and continuations agree, including ordered arguments, lexical scopes, source debits and arbitrary later slices; native admission and C correspondence remain separate. InvocationLayout additionally relates source list destructuring to compiled array ranges and contextual argument worklists, including body identity, lexical operands, duplicates and stale-head rejection. Native descriptor, demand, charging and C correspondence obligations remain explicit."
+    },
+    {
+      "construction": "Mettapedia/Machines/HEInstructionCompletion.lean",
+      "application": "The shared HE instruction-completion decision refines the maintained call-return judgment, retaining expected type and reached bindings. Public Empty omission, refusal restoration and separately admitted tail carriers are explicit. Returned functions retain their own public codomain; producer-completed marker-shaped data uses its distinct completion judgment. Native type-demand correspondence, profile readback, source debit and C ownership remain separate obligations.",
+      "native": [
+        "src/eval_he_boundary.inc:he_instruction_completion",
+        "src/eval_he_canonical.inc:he_canonical_resume_instruction"
+      ],
+      "control": "tests/test_native_conditional_context.c:he_instruction_completion_controls"
+    },
+    {
+      "construction": "Mettapedia/Machines/NativeProjectionObservation.lean",
+      "application": "Memoized support folds refine independent reachability and the complete projection-support criterion. Unknown observation is distinct from a negative program fact. Native projection uses the common checked graph observer and the existing template admission limit before effects. Pruning flags, predicate allowances, allocation and C pointer correspondence remain separate obligations; model bounds count metadata combinations.",
+      "native": [
+        "src/atom.c:atom_graph_any_checked",
+        "src/native_query.c:native_query_projects"
+      ],
+      "control": "tests/test_native_query_projection.c"
+    },
+    {
+      "construction": "Mettapedia/Machines/PreparedRefusalCache.lean",
+      "application": "Stage-qualified refusal evidence and revision-aware lookup/retention preserve the independent compiler-script reference and fallback. Completed source assessments are callee facts, not frontend failures; incomplete analysis, changed authority and unavailable allocation do not install evidence. Repeated source observations are bounded after retention. Literal classifier correspondence and stability of every legacy frontend factory refusal remain open; null compiler results are not certified by this model.",
+      "native": [
+        "src/eval.c:prepared_pure_program_cache_has_decline_head",
+        "src/eval.c:prepared_pure_closed_invocation_plan",
+        "src/eval.c:petta_eval_machine_collect_closed_answers"
+      ],
+      "control": "tests/test_native_conditional_context.c:source_admission_refusal_controls,he_source_refusal_controls"
     }
   ],
   "cross_tree_reconciliation": [
@@ -2403,7 +2438,7 @@
       "separately_discovered": "A scoped-query control exposed missing trial coverage in OEM cardinality matching. The existing reversible trial protocol now covers that consumer.",
       "separate_semantic_design": [
         "New space disciplines and cross-engine algebra choices",
-        "Canonical bag/set collapse and dictionary surface",
+        "Canonical bag/set collapse and dictionary interface",
         "Additional Prime fold and binder elaboration"
       ],
       "representation_lesson": "Sequence tags are representation data. Existing shared sequence views must remain authoritative for list consumers; this package does not import new collection syntax or change the Prime policy."

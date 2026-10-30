@@ -137,6 +137,20 @@ typedef struct {
     CettaSharedReturnCompatible compatible;
     void *image_context;
 } CettaSharedReturnCopy;
+/* Two-phase form for copying a mutually referring producer cohort. PREPARE
+ * allocates and registers the unpublished producer and checkpoint shells but
+ * copies no rows and executes no computation callback. After every producer
+ * in the enclosing graph has been prepared, FINISH copies buffered rows and
+ * the paid execution. It consumes the plan on success or refusal. FREE
+ * cancels an unfinished plan. This is the cycle-safe primitive; the one-shot
+ * wrapper below is equivalent to PREPARE followed immediately by FINISH. */
+typedef struct CettaSharedReturnCopyPlan CettaSharedReturnCopyPlan;
+CettaSharedReturnCopyPlan *cetta_shared_return_producer_copy_prepare(
+    CettaSharedReturnProducer *source,const CettaSharedReturnCopy *copy);
+CettaSharedReturnProducer *cetta_shared_return_producer_copy_finish(
+    CettaSharedReturnCopyPlan *plan);
+void cetta_shared_return_producer_copy_plan_free(
+    CettaSharedReturnCopyPlan *plan);
 CettaSharedReturnProducer *cetta_shared_return_producer_copy(
     CettaSharedReturnProducer *source, const CettaSharedReturnCopy *copy);
 /* Release the caller's producer share. Reader checkpoints retain the same

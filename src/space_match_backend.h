@@ -19,7 +19,43 @@ typedef enum {
     SPACE_ENGINE_NATIVE_CANDIDATE_EXACT = 1,
     SPACE_ENGINE_PATHMAP = 2,
     SPACE_ENGINE_MORK = 3,
+    /* A read-only host-supplied occurrence source. Its operation table, rather than
+     * native shadow rows, owns the source's storage contract. */
+    SPACE_ENGINE_SOURCE = 4,
 } SpaceEngine;
+
+typedef enum {
+    SPACE_OCCURRENCE_CURSOR_END = 0,
+    SPACE_OCCURRENCE_CURSOR_ITEM,
+    SPACE_OCCURRENCE_CURSOR_INVALIDATED,
+    SPACE_OCCURRENCE_CURSOR_INCOMPLETE,
+    SPACE_OCCURRENCE_CURSOR_CAPACITY,
+} SpaceOccurrenceCursorStep;
+
+/* Incremental candidates, not a second matcher. The source owns its captured
+ * view and traversal; next lends a row until the next source operation. The
+ * ordinary matcher copies that row into its receiving arena before retaining
+ * bindings. Positional sources identify occurrences by index; other sources
+ * must supply identity below rather than expose a traversal counter as an
+ * occurrence identity. A clone owns independent traversal
+ * and must neither recapture a newer view nor perform a query. Transient
+ * decode arenas must be detached from process-wide interning. Patterns
+ * supplied to open/select are call-scoped: encode bounds or own a copy;
+ * retaining a caller's Atom pointer across nursery relocation is invalid. */
+typedef struct SpaceSourceCursorOps {
+    bool (*clone)(const void *source, bool rewind, void **out);
+    /* Reopen candidates against the same captured source, never its live
+     * publisher. NULL keeps the complete captured scan as a correct fallback. */
+    bool (*select)(const void *source, Atom *pattern, void **out,
+        SpaceOccurrenceCursorStep *failure);
+    SpaceOccurrenceCursorStep (*next)(void *source, CettaIndex *index);
+    Atom *(*atom)(const void *source, CettaIndex index);
+    /* Stable, ground occurrence identity. NULL means this source really uses
+     * the ordinary Space's positional coordinates, not a scan-local counter. */
+    Atom *(*identity)(const void *source, CettaIndex index);
+    void (*free)(void *source);
+    CettaStorageVisitor storage;
+} SpaceSourceCursorOps;
 
 /* A batch accelerator is never the mutation authority.  UNSUPPORTED asks the
    Space layer to replay the same ordered occurrences through the singular
@@ -64,6 +100,9 @@ typedef struct {
     /* Cold flat queries can consume the encoded sequence before a full
      * trie is worth retaining. Repeated scans exhaust this startup allowance. */
     uint8_t cold_flat_scans;
+    /* The head a count over variables last scanned: a second count of it
+     * builds the head index, a first one only scans. */
+    SymbolId head_count_scanned;
     uint32_t match_trie_pins;
     SpacePinnedOccurrences *pinned;
     CettaSpacePathIndex *path_indexes;
@@ -180,6 +219,18 @@ typedef struct {
 
 typedef struct SpaceMatchBackendOps {
     const char *name;
+    /* NULL pattern opens a complete captured scan. A non-NULL pattern may
+     * select a complete candidate superset; canonical matching is unchanged.
+     * Failure after admission stays explicit, never an empty successful scan
+     * or permission to retry through a materializing backend fallback. */
+    const SpaceSourceCursorOps *occurrence_ops;
+    /* On refusal, failure distinguishes capacity from an incomplete or stale
+     * source. The output stays NULL, or supplies a releasable partial owner. */
+    bool (*occurrence_open)(Space *space, Atom *pattern, void **out,
+        SpaceOccurrenceCursorStep *failure);
+    /* Optional owner census for non-native storage; called with the Space.
+     * Cursor traversal owners have their separate occurrence_ops->storage. */
+    void (*storage)(const Space *space, CettaStorageCensus *census);
     /* Primary storage access seam.
        Positive example: a real backend-owned pathmap space can answer length
        and projection through its own state instead of pretending the native C
@@ -257,6 +308,8 @@ typedef struct {
     SpaceMatchNativeState native;
     PathmapLocalState pathmap;
     MorkImportedState mork;
+    /* Owned according to the source backend's free operation. */
+    void *source;
 } SpaceMatchBackend;
 
 typedef bool (*CettaMorkBindingsVisitor)(const Bindings *bindings, void *ctx);
@@ -315,6 +368,8 @@ typedef enum {
     SPACE_MATCH_BACKEND_ERROR_NONE = 0,
     SPACE_MATCH_BACKEND_ERROR_NATIVE_SPACE_TOO_LARGE = 1,
     SPACE_MATCH_BACKEND_ERROR_PACKET_TOO_LARGE = 2,
+    SPACE_MATCH_BACKEND_ERROR_QUERY_UNAVAILABLE = 3,
+    SPACE_MATCH_BACKEND_ERROR_READ_ONLY = 4,
 } SpaceMatchBackendError;
 
 void space_match_backend_clear_error(void);

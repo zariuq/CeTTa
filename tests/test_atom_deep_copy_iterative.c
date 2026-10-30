@@ -1,4 +1,7 @@
 #include <assert.h>
+#include <pthread.h>
+#include <sched.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -8,6 +11,63 @@
 #include "tests/test_runtime_stats_stubs.h"
 
 enum { COPY_DEPTH = 100000 };
+
+typedef struct {
+    _Atomic bool *start;
+    Arena source;
+    Arena destination;
+    Atom *held;
+    Atom *value;
+} HeldProjectionThread;
+
+static void *project_held_on_worker(void *context) {
+    HeldProjectionThread *worker = context;
+    arena_init_detached(&worker->source);
+    arena_init_detached(&worker->destination);
+    while (!atomic_load_explicit(worker->start, memory_order_acquire))
+        sched_yield();
+    for (unsigned i = 0u; i < 256u; i++) {
+        worker->value = atom_int(&worker->source, (int64_t)i);
+        worker->held = atom_prime_held_wrap(&worker->source, worker->value);
+        assert(worker->held && atom_prime_held_made());
+        assert(atom_contains_prime_held(worker->held));
+        assert(!atom_contains_prime_held(worker->value));
+        assert(atom_prime_held_strip(&worker->destination, worker->held) ==
+               worker->value);
+    }
+    return NULL;
+}
+
+/* Each worker owns its arenas; only the monotone held-tag summary is shared.
+ * A joined worker's value must also project correctly on another thread. */
+static void check_parallel_held_projection(void) {
+    enum { WORKERS = 4 };
+    _Atomic bool start = false;
+    HeldProjectionThread workers[WORKERS] = {0};
+    pthread_t threads[WORKERS];
+    for (unsigned i = 0u; i < WORKERS; i++) {
+        workers[i].start = &start;
+        assert(pthread_create(&threads[i], NULL, project_held_on_worker,
+                              &workers[i]) == 0);
+    }
+    atomic_store_explicit(&start, true, memory_order_release);
+    for (unsigned i = 0u; i < WORKERS; i++)
+        assert(pthread_join(threads[i], NULL) == 0);
+    assert(atom_prime_held_made());
+    Arena destination;
+    arena_init_detached(&destination);
+    for (unsigned i = 0u; i < WORKERS; i++) {
+        assert(atom_contains_prime_held(workers[i].held));
+        assert(atom_prime_held_strip(&destination, workers[i].held) ==
+               workers[i].value);
+        assert(atom_prime_held_strip(&destination, workers[i].value) ==
+               workers[i].value);
+        arena_free(&workers[i].destination);
+        arena_free(&workers[i].source);
+    }
+    arena_free(&destination);
+    puts("PASS: held values project across worker-owned arenas and joined threads");
+}
 
 typedef struct { unsigned visits, refuse_at; } TestGraphProjection;
 
@@ -979,6 +1039,45 @@ static void check_copy_slices(void) {
     puts("PASS: sliced graph copy retains one shared DAG, exact debit, inert zero grants and cancellation; changed roots/profiles/epochs refuse");
 }
 
+static void check_global_canonical_domain(void) {
+    HashConsTable table;
+    hashcons_init_compact(&table);
+    HashConsTable *previous_hashcons=g_hashcons;
+    g_hashcons=&table;
+    Arena source,destination;
+    arena_init_detached(&source);arena_init_detached(&destination);
+    arena_set_hashcons(&source,&table);arena_set_hashcons(&destination,&table);
+    SymbolId first_id=symbol_intern_cstr(g_symbols,"checkpoint-global-first");
+    Atom *first=atom_symbol_canonical(first_id),*unit=atom_unit_canonical();
+    assert(first && unit && !first->arena_id && !unit->arena_id &&
+        symbol_canonical_count(g_symbols)>0u);
+    AtomDeepCopySession *session=atom_deep_copy_session_new(&destination);
+    size_t bytes=0u,work=0u;
+    assert(session && atom_checkpoint_global_budget(&table,100000u,&bytes,&work));
+    AtomDeepCopyGlobalInspection inspected={0};
+    assert(atom_deep_copy_session_restrict_globals(session,&table,work,&inspected));
+    AtomDeepCopyArenaPair pair={&source,&destination};
+    assert(atom_deep_copy_session_set_runtime_arena_map(session,&pair,1u));
+    assert(atom_deep_copy_session_copy(session,first)==first &&
+        atom_deep_copy_session_copy(session,unit)==unit);
+
+    SymbolId later_id=symbol_intern_cstr(g_symbols,"checkpoint-global-later");
+    Atom *later=atom_symbol_canonical(later_id);
+    assert(later && later!=first && symbol_canonical_count(g_symbols)>1u);
+    size_t extra_bytes=0u,extra_work=0u;
+    assert(atom_deep_copy_session_global_extension_budget(session,&table,100000u,
+        &extra_bytes,&extra_work) && extra_bytes && extra_work);
+    inspected=(AtomDeepCopyGlobalInspection){0};
+    assert(atom_deep_copy_session_extend_globals(session,&table,100000u,extra_work,
+        extra_bytes,&inspected) && atom_deep_copy_session_copy(session,later)==later &&
+        atom_deep_copy_session_copy(session,first)==first &&
+        atom_deep_copy_session_copy(session,unit)==unit);
+    atom_deep_copy_session_free(session);
+    arena_free(&destination);arena_free(&source);
+    g_hashcons=previous_hashcons;hashcons_free(&table);
+    puts("PASS: checkpoint global domains retain canonical symbols and unit and extend by published prefix");
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena source;
@@ -987,11 +1086,13 @@ int main(void) {
     Atom *list;
     Atom *copy;
 
+    check_parallel_held_projection();
     symbol_table_init(&symbols);
     symbol_table_init_builtins(&symbols, &g_builtin_syms);
     g_symbols = &symbols;
     g_hashcons = NULL;
     g_var_intern = NULL;
+    check_global_canonical_domain();
     check_copy_slices();
     check_copy_destination_scope();
     check_copy_metadata_identities();

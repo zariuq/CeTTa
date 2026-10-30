@@ -2,6 +2,7 @@
 #include "native_disk_index.h"
 #include "native_journal.h"
 #include "native_sha256.h"
+#include "storage_census.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -570,6 +571,15 @@ CettaDiskStatus cetta_disk_cursor_next(CettaDiskCursor *cursor,CettaDiskBuffer *
     return CETTA_DISK_END;
 }
 const CettaDiskRoot *cetta_disk_cursor_root(const CettaDiskCursor *cursor) { return cursor ? &cursor->root : NULL; }
+void cetta_disk_cursor_storage_census(const CettaDiskCursor *cursor, CettaStorageCensus *census) {
+    if (!cursor || !cetta_storage_object(census,cursor,sizeof(*cursor),CETTA_STORAGE_BLOCK)) return;
+    cetta_storage_array(census,cursor->pending,cursor->capacity,sizeof(*cursor->pending),0);
+    cetta_storage_array(census,cursor->ancestry,cursor->ancestry_capacity,sizeof(*cursor->ancestry),0);
+    cetta_storage_object(census,cursor->terminal.data,
+        cursor->terminal.size ? cursor->terminal.size : 1,CETTA_STORAGE_BLOCK);
+    cetta_storage_object(census,cursor->previous.data,
+        cursor->previous.size ? cursor->previous.size : 1,CETTA_STORAGE_BLOCK);
+}
 void cetta_disk_cursor_close(CettaDiskCursor *cursor) {
     if (cursor) {
         close(cursor->root.fd); free(cursor->pending);free(cursor->ancestry);

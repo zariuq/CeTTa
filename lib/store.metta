@@ -3,6 +3,8 @@
 ; The directory already exists durably and is private to the owner.
 (: __cetta_lib_store_open (-> String String Atom))
 (: __cetta_lib_store_snapshot (-> Atom Atom))
+(: __cetta_lib_store_view_info (-> Atom Atom))
+(: __cetta_lib_store_check_view (-> Atom Atom Atom))
 (: __cetta_lib_store_commit (-> Atom Atom Atom Atom))
 (: __cetta_lib_store_commit_scoped (-> Atom Atom Atom Atom Atom Atom))
 (: __cetta_lib_store_get (-> Atom String Number Atom))
@@ -24,6 +26,12 @@
    (function (case (__cetta_lib_store_open $path $mode) (($result (return $result))))))
 (= (store:snapshot $store)
    (function (case (__cetta_lib_store_snapshot $store) (($result (return $result))))))
+; Captured coordinates only; this neither takes a new snapshot nor validates
+; a publisher or a later transaction's read dependencies.
+(= (store:view-info $view)
+   (function (case (__cetta_lib_store_view_info $view) (($result (return $result))))))
+(= (store:check-view $store $view)
+   (function (case (__cetta_lib_store_check_view $store $view) (($result (return $result))))))
 (= (store:commit $store $view $ops)
    (function (case (__cetta_lib_store_commit $store $view $ops) (($result (return $result))))))
 (= (store:commit-scoped $store $view $reads $writes $ops)

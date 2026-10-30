@@ -3370,18 +3370,68 @@ done:
         source,sizeof(*source)) : NULL;
 }
 
+typedef struct {
+    PrimeNeedReaderValue source, image;
+} PrimeNeedReaderPreparedPair;
+typedef struct {
+    PrimeNeedReaderPreparedPair *entries;
+    size_t length, capacity;
+    bool failed;
+} PrimeNeedReaderPreparation;
+static const char prime_need_reader_preparation_kind;
+
+static void prime_need_reader_preparation_release(void *raw) {
+    PrimeNeedReaderPreparation *inventory=raw;
+    for (size_t i=0u; i<inventory->length; i++) {
+        PrimeNeedReaderPreparedPair pair=inventory->entries[i];
+        if (pair.image.value && pair.image.operations && pair.image.operations->release)
+            pair.image.operations->release(pair.image.value);
+        pair.source.operations->release(pair.source.value);
+    }
+    free(inventory->entries);
+    free(inventory);
+}
+static void prime_need_reader_preparation_storage(const void *raw, CettaStorageCensus *census) {
+    const PrimeNeedReaderPreparation *inventory=raw;
+    if (!cetta_storage_object(census,inventory,sizeof(*inventory),CETTA_STORAGE_BLOCK)) return;
+    cetta_storage_array(census,inventory->entries,inventory->capacity,sizeof(*inventory->entries),0u);
+    for (size_t i=0u;i<inventory->length;i++) {
+        const PrimeNeedReaderValue values[]={inventory->entries[i].source,inventory->entries[i].image};
+        for (size_t j=0u;j<2u;j++) if (values[j].value) {
+            if (values[j].operations && values[j].operations->storage)
+                values[j].operations->storage(values[j].value,census);
+            else cetta_storage_refuse(census,"ReaderPreparedOwnerStorage");
+        }
+    }
+}
+static bool prime_need_reader_preparation_failed(const AtomDeepCopySession *session) {
+    const PrimeNeedReaderPreparation *inventory=atom_deep_copy_session_inventory(
+        session,&prime_need_reader_preparation_kind);
+    return inventory && inventory->failed;
+}
+
+static CettaMatchCompletion prime_need_reader_preparation_refused(AtomDeepCopySession *session) {
+    PrimeNeedReaderPreparation *inventory=atom_deep_copy_session_inventory(
+        session,&prime_need_reader_preparation_kind);
+    if (inventory) inventory->failed=true;
+    return CETTA_MATCH_INCOMPLETE;
+}
+
 PrimeNeedReaderContext *prime_need_reader_context_copy_lookup(
     const PrimeNeedReaderContext *source,const AtomDeepCopySession *session) {
-    if (!source || source->length>source->capacity ||
+    if (!atom_deep_copy_session_private_destination(session) ||
+        prime_need_reader_preparation_failed(session) ||
+        !source || source->length>source->capacity ||
         source->capacity>(SIZE_MAX-sizeof(*source))/sizeof(*source->entries)) return NULL;
     size_t bytes=sizeof(*source)+source->capacity*sizeof(*source->entries);
     return prime_need_reader_copy_image(session,&prime_need_reader_context_copy_kind,source,bytes);
 }
 
-CettaMatchCompletion prime_need_reader_context_copy_with_session(
-    const PrimeNeedReaderContext *source,Arena *owner,
-    AtomDeepCopySession *session,PrimeNeedReaderContext **out) {
-    if (!out || !atom_deep_copy_session_targets(session,owner)) return CETTA_MATCH_INCOMPLETE;
+static CettaMatchCompletion prime_need_reader_context_copy_mapped(
+    const PrimeNeedReaderContext *source, AtomDeepCopySession *session,
+    PrimeNeedReaderContext **out) {
+    if (!out || !atom_deep_copy_session_private_destination(session) ||
+        prime_need_reader_preparation_failed(session)) return CETTA_MATCH_INCOMPLETE;
     if (!source) return prime_need_reader_context_share(NULL,out);
     if (source->length>source->capacity || !source->lineage ||
         !atomic_load_explicit(&source->references,memory_order_relaxed) ||
@@ -3418,6 +3468,84 @@ CettaMatchCompletion prime_need_reader_context_copy_with_session(
     }
     prime_need_reader_context_replace(out,image);
     return CETTA_MATCH_MATCHED;
+}
+
+CettaMatchCompletion prime_need_reader_context_copy_with_session(
+    const PrimeNeedReaderContext *source, Arena *owner,
+    AtomDeepCopySession *session, PrimeNeedReaderContext **out) {
+    if (!atom_deep_copy_session_targets(session, owner)) return CETTA_MATCH_INCOMPLETE;
+    return prime_need_reader_context_copy_mapped(source, session, out);
+}
+
+/* Prepared values and their source keys belong to the session, even when
+ * a later entry fails. A failed inventory refuses further reader publication;
+ * the caller discards the unpublished enclosing copy and all its inventories. */
+CettaMatchCompletion prime_need_reader_context_prepare_copy_with_session(
+    const PrimeNeedReaderContext *source, AtomDeepCopySession *session,
+    PrimeNeedReaderValueCopy prepare, void *state, PrimeNeedReaderContext **out) {
+    if (!out || !atom_deep_copy_session_private_destination(session) ||
+        prime_need_reader_preparation_failed(session) ||
+        (source && (!prepare || !source->lineage ||
+         !atomic_load_explicit(&source->references,memory_order_relaxed) ||
+         source->length>source->capacity ||
+         source->capacity>(SIZE_MAX-sizeof(*source))/sizeof(*source->entries))))
+        return prime_need_reader_preparation_refused(session);
+    if (!source || prime_need_reader_context_copy_lookup(source,session))
+        return prime_need_reader_context_copy_mapped(source,session,out);
+    for (size_t i=0u;i<source->length;i++) {
+        PrimeNeedReaderEntry entry=source->entries[i];
+        const PrimeNeedReaderValueOps *ops=entry.reader.operations;
+        if (!entry.key || (i && source->entries[i-1u].key>=entry.key) ||
+            (!entry.reader.value && ops) ||
+            (entry.reader.value && (!ops || !ops->retain || !ops->release ||
+             !ops->copy_kind || !ops->copy_size))) return prime_need_reader_preparation_refused(session);
+    }
+    PrimeNeedReaderPreparation *inventory=atom_deep_copy_session_inventory(
+        session,&prime_need_reader_preparation_kind);
+    if (!inventory) {
+        inventory=calloc(1u,sizeof(*inventory));
+        if (!inventory) return prime_need_reader_preparation_refused(session);
+        if (!atom_deep_copy_session_install_inventory(session,&prime_need_reader_preparation_kind,
+                inventory,prime_need_reader_preparation_release,prime_need_reader_preparation_storage)) {
+            free(inventory);return prime_need_reader_preparation_refused(session);
+        }
+    }
+    if (source->length>SIZE_MAX-inventory->length) return prime_need_reader_preparation_refused(session);
+    size_t required=inventory->length+source->length;
+    if (required>inventory->capacity) {
+        if (required>SIZE_MAX/sizeof(*inventory->entries)) return prime_need_reader_preparation_refused(session);
+        PrimeNeedReaderPreparedPair *entries=realloc(inventory->entries,required*sizeof(*entries));
+        if (!entries) return prime_need_reader_preparation_refused(session);
+        inventory->entries=entries;inventory->capacity=required;
+    }
+    CettaMatchCompletion result=CETTA_MATCH_INCOMPLETE;
+    for (size_t i=0u;i<source->length;i++) {
+        PrimeNeedReaderValue value=source->entries[i].reader,image={0};
+        if (prime_need_reader_copy_value(session,value,&image)) continue;
+        const PrimeNeedReaderValueOps *ops=value.operations;
+        if (atom_deep_copy_session_object_original(session,ops->copy_kind,value.value,ops->copy_size) ||
+            !ops->retain(value.value)) goto failed;
+        PrimeNeedReaderPreparedPair *entry=&inventory->entries[inventory->length++];
+        *entry=(PrimeNeedReaderPreparedPair){.source=value};
+        /* Failure outputs are unspecified and do not transfer a share. */
+        result=prepare(state,&value,&image);
+        if (result!=CETTA_MATCH_MATCHED) goto failed;
+        result=CETTA_MATCH_INCOMPLETE;
+        if (!image.value || image.value==value.value || image.operations!=ops ||
+            atom_deep_copy_session_object_forwarded(session,ops->copy_kind,image.value,ops->copy_size) ||
+            !atom_deep_copy_session_object_record(session,ops->copy_kind,
+                value.value,image.value,ops->copy_size)) {
+            if (image.value && image.operations && image.operations->release)
+                image.operations->release(image.value);
+            goto failed;
+        }
+        entry->image=image;
+    }
+    result=prime_need_reader_context_copy_mapped(source,session,out);
+    if (result==CETTA_MATCH_MATCHED) return result;
+failed:
+    inventory->failed=true;
+    return result;
 }
 
 CettaMatchCompletion prime_need_reader_context_update(const PrimeNeedReaderContext *base,
@@ -4198,12 +4326,35 @@ static CettaMatchCompletion prime_need_state_order_value(const PrimeNeedStateOrd
     *out = value; return CETTA_MATCH_MATCHED;
 }
 
+static CettaMatchCompletion prime_need_state_inventory_version(
+    const PrimeNeedStateInventory *inventory, StateCell *cell, Atom **out,
+    uint64_t *out_write_event_id) {
+    PrimeNeedStateOrder order = {0};
+    Atom *value = NULL;
+    CettaMatchCompletion result = prime_need_state_order(inventory,cell,&order);
+    if (result == CETTA_MATCH_MATCHED) result = prime_need_state_order_value(&order,&value);
+    if (result == CETTA_MATCH_MATCHED) {
+        size_t last = SIZE_MAX;
+        if (out_write_event_id) for (size_t i = 0u; i < order.count; i++) {
+            if (order.events[i]->event.kind != PRIME_NEED_RECEIPT_WRITE_STATE) continue;
+            /* The value check established comparable, acyclic writes. Only
+             * their canonical ancestry selects the supplying occurrence. */
+            if (last == SIZE_MAX || prime_need_state_order_after(&order,last,i)) last = i;
+        }
+        if (last != SIZE_MAX && value != order.events[last]->event.after)
+            result = atom_capture_identical_checked(value,order.events[last]->event.after);
+        if (result == CETTA_MATCH_MATCHED) {
+            *out = value;
+            if (out_write_event_id)
+                *out_write_event_id = last == SIZE_MAX ? 0u : order.events[last]->event_id;
+        }
+    }
+    prime_need_state_order_free(&order); return result;
+}
+
 static CettaMatchCompletion prime_need_state_inventory_value(
     const PrimeNeedStateInventory *inventory, StateCell *cell, Atom **out) {
-    PrimeNeedStateOrder order = {0};
-    CettaMatchCompletion result = prime_need_state_order(inventory,cell,&order);
-    if (result == CETTA_MATCH_MATCHED) result = prime_need_state_order_value(&order,out);
-    prime_need_state_order_free(&order); return result;
+    return prime_need_state_inventory_version(inventory,cell,out,NULL);
 }
 
 CettaMatchCompletion prime_need_branch_state_same_writes_checked(
@@ -4638,6 +4789,12 @@ bool prime_need_recording_readable(const PrimeNeedReceipt *receipt) {
         return !atomic_load_explicit(&group->forgotten, memory_order_acquire);
     return receipt->owner && arena_retains_owner(
         receipt->owner, group, prime_need_recording_release);
+}
+
+bool prime_need_recording_same_group(
+        const PrimeNeedReceipt *left,const PrimeNeedReceipt *right) {
+    return left&&right&&left->recording&&right->recording&&
+        left->recording->group==right->recording->group;
 }
 
 bool prime_need_recording_erased(const PrimeNeedReceipt *receipt) {
@@ -5157,6 +5314,60 @@ static bool prime_need_state_join_nodes(Arena *owner, uint64_t session,
     return true;
 }
 
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+CettaMatchCompletion prime_need_receipt_join_qualified(
+        Arena *owner, PrimeNeedReceipt *dst, const PrimeNeedReceipt *src) {
+    if (!prime_need_owner_admissible(owner) || !dst)
+        return CETTA_MATCH_INCOMPLETE;
+    if (!src) return CETTA_MATCH_MATCHED;
+    PrimeNeedReceipt left=*dst,right=*src;
+    bool scoped=g_prime_need_recording_scope&&g_prime_need_recording_scope->recording&&
+        (!left.recording || prime_need_recording_same_group(&left,g_prime_need_recording_scope));
+    PrimeNeedRecordingSlice *target=scoped
+        ? g_prime_need_recording_scope->recording : left.recording;
+    if (right.recording && !prime_need_recording_readable(&right)) {
+        if (!prime_need_recording_erased(&right)) return CETTA_MATCH_INCOMPLETE;
+        if (target) prime_need_recording_omit(target);
+        return CETTA_MATCH_MATCHED;
+    }
+    if (target && right.recording && target->group!=right.recording->group) {
+        prime_need_recording_omit(target);
+        return CETTA_MATCH_MATCHED;
+    }
+    bool merged=true;
+    if (scoped)
+        merged=prime_need_recording_merge_scoped(&left,&right);
+    else if (left.recording || right.recording)
+        merged=prime_need_recording_merge(&left,&right);
+    else {
+        bool left_present=prime_need_receipt_present(&left);
+        bool right_present=prime_need_receipt_present(&right);
+        if (left_present && right_present && left.session_id!=right.session_id)
+            return CETTA_MATCH_REFUTED;
+        if (left_present && !prime_need_receipt_promote(owner,&left))
+            return CETTA_MATCH_INCOMPLETE;
+        if (right_present && !prime_need_receipt_promote(owner,&right))
+            return CETTA_MATCH_INCOMPLETE;
+        if (!right_present) {
+            *dst=left;return CETTA_MATCH_MATCHED;
+        }
+        if (!left_present || !prime_need_receipt_has_events(&left)) left=right;
+        else if (!prime_need_receipt_has_events(&right) ||
+                prime_need_branch_state_is_ancestor(&right,&left)) {}
+        else if (prime_need_branch_state_is_ancestor(&left,&right)) left=right;
+        else {
+            const PrimeNeedReceiptFrame *join=NULL;
+            merged=prime_need_state_join_nodes(owner,left.session_id,left.top,right.top,&join);
+            if (merged) {left.top=join;left.owner=owner;}
+        }
+    }
+    if (!merged || !prime_need_receipt_promote(owner,&left))
+        return CETTA_MATCH_INCOMPLETE;
+    *dst=left;
+    return CETTA_MATCH_MATCHED;
+}
+#endif
+
 bool prime_need_branch_state_merge_nonempty(
     PrimeNeedBranchState *dst, const PrimeNeedBranchState *src) {
     cetta_runtime_stats_inc(
@@ -5605,6 +5816,56 @@ bool prime_need_receipt_resample_branch_local(
 }
 #endif
 
+CettaMatchCompletion prime_need_branch_state_lookup_version_checked(
+    const PrimeNeedBranchState *state, StateCell *cell,
+    Atom **out_value, uint64_t *out_write_event_id) {
+    if (!state || !cell || !out_value || !out_write_event_id) return CETTA_MATCH_INCOMPLETE;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    if (state->recording) return CETTA_MATCH_INCOMPLETE;
+#endif
+    if (!prime_need_branch_state_present(state)) {
+        if (state->top || state->owner || state->session_id) return CETTA_MATCH_INCOMPLETE;
+        *out_value = NULL;
+        *out_write_event_id = 0u;
+        return CETTA_MATCH_MATCHED;
+    }
+    PrimeNeedStateInventory inventory = {0};
+    CettaMatchCompletion result = prime_need_state_inventory(state,NULL,&inventory);
+    for (size_t i = 0u; result == CETTA_MATCH_MATCHED && i < inventory.event_count; i++)
+        if (inventory.events[i]->event.kind != PRIME_NEED_RECEIPT_READ_STATE &&
+            inventory.events[i]->event.kind != PRIME_NEED_RECEIPT_WRITE_STATE)
+            result = CETTA_MATCH_INCOMPLETE;
+    if (result == CETTA_MATCH_MATCHED)
+        result = prime_need_state_inventory_version(&inventory,cell,out_value,out_write_event_id);
+    prime_need_state_inventory_free(&inventory);
+    return result;
+}
+
+CettaMatchCompletion prime_need_branch_state_holds_write_checked(
+        const PrimeNeedBranchState *state,StateCell *cell,
+        uint64_t write_event_id,bool *out_held) {
+    if (!state||!cell||!write_event_id||!out_held) return CETTA_MATCH_INCOMPLETE;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    if (state->recording) return CETTA_MATCH_INCOMPLETE;
+#endif
+    if (!prime_need_branch_state_present(state)) {
+        if (state->top||state->owner||state->session_id) return CETTA_MATCH_INCOMPLETE;
+        *out_held=false;return CETTA_MATCH_MATCHED;
+    }
+    PrimeNeedStateInventory inventory={0};
+    CettaMatchCompletion result=prime_need_state_inventory(state,NULL,&inventory);
+    size_t at=result==CETTA_MATCH_MATCHED
+        ? prime_need_state_event_position(&inventory,write_event_id) : SIZE_MAX;
+    if (result==CETTA_MATCH_MATCHED && at!=SIZE_MAX) {
+        const PrimeNeedReceiptEvent *event=&inventory.events[at]->event;
+        if (event->kind!=PRIME_NEED_RECEIPT_WRITE_STATE||event->state_cell!=cell)
+            result=CETTA_MATCH_REFUTED;
+    }
+    if (result==CETTA_MATCH_MATCHED) *out_held=at!=SIZE_MAX;
+    prime_need_state_inventory_free(&inventory);
+    return result;
+}
+
 CettaMatchCompletion prime_need_branch_state_lookup_checked(const PrimeNeedBranchState *state,
     StateCell *cell, Atom **out_value) {
     if (!state || !cell || !out_value) return CETTA_MATCH_INCOMPLETE;
@@ -5658,6 +5919,39 @@ bool prime_need_branch_state_value(const PrimeNeedBranchState *state,
     return true;
 }
 
+static CettaMatchCompletion prime_need_state_inventory_checked(
+        const PrimeNeedBranchState *state,PrimeNeedStateInventory *inventory) {
+    if(!state || !inventory || !prime_need_branch_state_present(state))
+        return CETTA_MATCH_INCOMPLETE;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    if(state->recording) return CETTA_MATCH_INCOMPLETE;
+#endif
+    CettaMatchCompletion result=prime_need_state_inventory(state,NULL,inventory);
+    for(size_t i=0u;result==CETTA_MATCH_MATCHED && i<inventory->event_count;i++)
+        if(inventory->events[i]->event.kind!=PRIME_NEED_RECEIPT_READ_STATE &&
+            inventory->events[i]->event.kind!=PRIME_NEED_RECEIPT_WRITE_STATE)
+            result=CETTA_MATCH_INCOMPLETE;
+    return result;
+}
+
+/* When production earned no State suffix, its requester contributes no State
+ * constraint to delivery. Validate the receiver on its own terms, including
+ * an exactly absent world or a well-formed world from another session. */
+static CettaMatchCompletion prime_need_state_preserved_recipient_checked(
+        const PrimeNeedBranchState *recipient) {
+    if(!recipient) return CETTA_MATCH_INCOMPLETE;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    if(recipient->recording) return CETTA_MATCH_INCOMPLETE;
+#endif
+    if(!prime_need_branch_state_present(recipient))
+        return recipient->top || recipient->session_id || recipient->owner
+            ? CETTA_MATCH_INCOMPLETE : CETTA_MATCH_MATCHED;
+    PrimeNeedStateInventory checked={0};
+    CettaMatchCompletion result=prime_need_state_inventory_checked(recipient,&checked);
+    prime_need_state_inventory_free(&checked);
+    return result;
+}
+
 CettaMatchCompletion prime_need_branch_state_import_suffix(Arena *owner,
     const PrimeNeedBranchState *common, const PrimeNeedBranchState *entrance,
     const PrimeNeedBranchState *production, const PrimeNeedBranchState *recipient,
@@ -5675,22 +5969,9 @@ CettaMatchCompletion prime_need_branch_state_import_suffix(Arena *owner,
 #endif
     }
     if (no_state_source) {
-#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
-        if (recipient->recording) return CETTA_MATCH_INCOMPLETE;
-#endif
-        if (!prime_need_branch_state_present(recipient)) {
-            if (recipient->top || recipient->session_id || recipient->owner)
-                return CETTA_MATCH_INCOMPLETE;
-        } else {
-            PrimeNeedStateInventory checked = {0};
-            CettaMatchCompletion valid = prime_need_state_inventory(recipient, NULL, &checked);
-            for (size_t i = 0u; valid == CETTA_MATCH_MATCHED && i < checked.event_count; i++)
-                if (checked.events[i]->event.kind != PRIME_NEED_RECEIPT_READ_STATE &&
-                    checked.events[i]->event.kind != PRIME_NEED_RECEIPT_WRITE_STATE)
-                    valid = CETTA_MATCH_INCOMPLETE;
-            prime_need_state_inventory_free(&checked);
-            if (valid != CETTA_MATCH_MATCHED) return valid;
-        }
+        CettaMatchCompletion valid=
+            prime_need_state_preserved_recipient_checked(recipient);
+        if(valid!=CETTA_MATCH_MATCHED) return valid;
         *out = *recipient;
         return CETTA_MATCH_MATCHED;
     }
@@ -5699,25 +5980,31 @@ CettaMatchCompletion prime_need_branch_state_import_suffix(Arena *owner,
     CettaMatchCompletion result = CETTA_MATCH_INCOMPLETE;
     bool *missing = NULL, *source_events = NULL, *held = NULL;
     const PrimeNeedReceiptFrame **mapped = NULL;
-    for (size_t i = 0u; i < 4u; i++) {
+    for (size_t i = 0u; i < 3u; i++) {
         result = CETTA_MATCH_INCOMPLETE;
-        if (!prime_need_branch_state_present(states[i]) ||
-            states[i]->session_id != common->session_id) goto done;
-#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
-        if (states[i]->recording) goto done;
-#endif
-        result = prime_need_state_inventory(states[i], NULL, &inv[i]);
-        if (result != CETTA_MATCH_MATCHED) goto done;
-        for (size_t j = 0u; j < inv[i].event_count; j++)
-            if (inv[i].events[j]->event.kind != PRIME_NEED_RECEIPT_READ_STATE &&
-                inv[i].events[j]->event.kind != PRIME_NEED_RECEIPT_WRITE_STATE) {
-                result = CETTA_MATCH_INCOMPLETE; goto done;
-            }
+        if(states[i]->session_id!=common->session_id) goto done;
+        result=prime_need_state_inventory_checked(states[i],&inv[i]);
+        if(result!=CETTA_MATCH_MATCHED) goto done;
     }
     result = prime_need_state_inventory_subset(c, e);
     if (result != CETTA_MATCH_MATCHED) goto done;
     result = prime_need_state_inventory_subset(e, p);
     if (result != CETTA_MATCH_MATCHED) goto done;
+    /* A static domain may mention State that this row never observed. If the
+     * producer earned no physical State node beyond its entrance, preserve the
+     * recipient world without requiring the first requester's entrance branch
+     * to be its ancestor. Actual read/write suffixes take the checks below. */
+    result = prime_need_state_inventory_subset(p, e);
+    if (result == CETTA_MATCH_MATCHED) {
+        result=prime_need_state_preserved_recipient_checked(recipient);
+        if(result==CETTA_MATCH_MATCHED) *out=*recipient;
+        goto done;
+    }
+    if (result == CETTA_MATCH_INCOMPLETE) goto done;
+    result=CETTA_MATCH_INCOMPLETE;
+    if(recipient->session_id!=common->session_id) goto done;
+    result=prime_need_state_inventory_checked(recipient,r);
+    if(result!=CETTA_MATCH_MATCHED) goto done;
     result = prime_need_state_inventory_subset(c, r);
     if (result != CETTA_MATCH_MATCHED) goto done;
     size_t n = p->physical.len, k = p->event_count;
@@ -5970,6 +6257,7 @@ void prime_need_receipt_graph_free(PrimeNeedReceiptGraph *graph) {
     if (!graph)
         return;
     free(graph->nodes);
+    prime_need_recording_release(graph->recording_owner);
     *graph = (PrimeNeedReceiptGraph){0};
 }
 
@@ -6149,16 +6437,149 @@ static bool prime_need_receipt_graph_payload_equal(
             (a->after && b->after && atom_eq(a->after, b->after)));
 }
 
+/* The caller holds the carrier's metadata owner. A nonzero-to-nonzero CAS
+ * competes with the final payload release: storage cannot be resurrected
+ * after that release wins. Retain the shell before acquiring payload, and
+ * transfer both references to the graph only after checking read permission.
+ * This is lifetime protection, not publication/snapshot synchronization. */
+static PrimeNeedReceiptGraphStatus prime_need_receipt_graph_hold_recording(
+    const PrimeNeedReceipt *receipt, PrimeNeedRecording **out) {
+    PrimeNeedRecordingSlice *slice=receipt->recording;
+    PrimeNeedRecording *group=slice->group;
+    if (!group || receipt->session_id!=group->session_id)
+        return PRIME_NEED_RECEIPT_GRAPH_INVALID;
+    bool borrowed=receipt->owner==&slice->arena;
+    if (!borrowed && (!receipt->owner || !arena_retains_owner(
+            receipt->owner,group,prime_need_recording_release)))
+        return PRIME_NEED_RECEIPT_GRAPH_INVALID;
+    prime_need_recording_carrier_retain(group);
+    size_t readers=atomic_load_explicit(&group->payload_references,memory_order_acquire);
+    while (readers && readers!=SIZE_MAX) {
+        if (atomic_compare_exchange_weak_explicit(&group->payload_references,
+                &readers,readers+1u,memory_order_acquire,memory_order_acquire)) {
+            if (borrowed && atomic_load_explicit(&group->forgotten,memory_order_acquire)) {
+                prime_need_recording_release(group);
+                return PRIME_NEED_RECEIPT_GRAPH_ABSENT;
+            }
+            *out=group;
+            return PRIME_NEED_RECEIPT_GRAPH_COMPLETE;
+        }
+    }
+    prime_need_recording_carrier_release(group);
+    return readers==SIZE_MAX ? PRIME_NEED_RECEIPT_GRAPH_REFUSED
+        : borrowed ? PRIME_NEED_RECEIPT_GRAPH_ABSENT : PRIME_NEED_RECEIPT_GRAPH_INVALID;
+}
+
+typedef enum {
+    PRIME_NEED_ANCHOR_CACHED_COMPLETION,
+    PRIME_NEED_ANCHOR_STATE_WRITE,
+} PrimeNeedAnchorKind;
+
+static void prime_need_receipt_anchor_omit(PrimeNeedReceipt *dst) {
+    bool scoped=g_prime_need_recording_scope&&g_prime_need_recording_scope->recording&&
+        (!dst||!dst->recording||prime_need_recording_same_group(
+            dst,g_prime_need_recording_scope));
+    PrimeNeedRecordingSlice *target=scoped
+        ? g_prime_need_recording_scope->recording : dst ? dst->recording : NULL;
+    if (target) prime_need_recording_omit(target);
+}
+
+static bool prime_need_receipt_anchor_matches(const PrimeNeedReceiptEvent *event,
+        PrimeNeedAnchorKind kind,uint64_t first,uint64_t second,uint64_t third) {
+    return kind==PRIME_NEED_ANCHOR_CACHED_COMPLETION
+        ? event->kind==PRIME_NEED_RECEIPT_OBSERVE_CELL&&event->producer_completed&&
+          event->need_session_id==first&&event->thunk_id==second&&
+          event->producer_update_id==third
+        : event->kind==PRIME_NEED_RECEIPT_WRITE_STATE&&event->state_event_id==first;
+}
+
+static CettaMatchCompletion prime_need_receipt_select_anchor(
+        const PrimeNeedReceipt *receipt,PrimeNeedAnchorKind kind,
+        uint64_t first,uint64_t second,uint64_t third,
+        const PrimeNeedReceiptFrame **selected) {
+    PrimeNeedReceiptFrames events={0};
+    if (!prime_need_receipt_collect_events(receipt,&events)) return CETTA_MATCH_INCOMPLETE;
+    CettaMatchCompletion result=CETTA_MATCH_MATCHED;
+    for (size_t i=0u;i<events.len;i++) {
+        if (!prime_need_receipt_anchor_matches(
+                &events.items[i]->event,kind,first,second,third)) continue;
+        if (*selected && (*selected)->event_id!=events.items[i]->event_id) {
+            result=CETTA_MATCH_REFUTED;break;
+        }
+        *selected=events.items[i];
+    }
+    prime_need_receipt_frames_free(&events);
+    return result;
+}
+
+static CettaMatchCompletion prime_need_receipt_join_anchor_qualified(
+        Arena *owner,PrimeNeedReceipt *dst,const PrimeNeedReceipt *catalogue,
+        PrimeNeedAnchorKind kind,uint64_t first,uint64_t second,uint64_t third,
+        bool *found) {
+    if (!prime_need_owner_admissible(owner)||!dst||!catalogue||!found||!first)
+        return CETTA_MATCH_INCOMPLETE;
+    const PrimeNeedReceiptFrame *selected=NULL;
+    CettaMatchCompletion result=prime_need_receipt_select_anchor(
+        dst,kind,first,second,third,&selected);
+    if (result!=CETTA_MATCH_MATCHED) return result;
+    if (selected) {*found=true;return CETTA_MATCH_MATCHED;}
+    PrimeNeedRecording *pin=NULL;
+    if (catalogue->recording) {
+        PrimeNeedReceiptGraphStatus held=prime_need_receipt_graph_hold_recording(catalogue,&pin);
+        if (held==PRIME_NEED_RECEIPT_GRAPH_ABSENT) {
+            prime_need_receipt_anchor_omit(dst);*found=false;return CETTA_MATCH_MATCHED;
+        }
+        if (held!=PRIME_NEED_RECEIPT_GRAPH_COMPLETE) return CETTA_MATCH_INCOMPLETE;
+    }
+    result=prime_need_receipt_select_anchor(
+        catalogue,kind,first,second,third,&selected);
+    if (result!=CETTA_MATCH_MATCHED) goto done;
+    if (!selected) {
+        if (catalogue->recording) {
+            prime_need_receipt_anchor_omit(dst);*found=false;result=CETTA_MATCH_MATCHED;
+        } else result=CETTA_MATCH_INCOMPLETE;
+        goto done;
+    }
+    {
+        PrimeNeedReceipt anchor=*catalogue;anchor.top=selected;
+        result=prime_need_receipt_join_qualified(owner,dst,&anchor);
+        if (result==CETTA_MATCH_MATCHED) *found=true;
+    }
+done:
+    prime_need_recording_release(pin);
+    return result;
+}
+
+CettaMatchCompletion prime_need_receipt_join_cached_anchor_qualified(
+        Arena *owner,PrimeNeedReceipt *dst,const PrimeNeedReceipt *catalogue,
+        uint64_t need_session_id,uint64_t thunk_id,uint64_t update_id,bool *found) {
+    if (!need_session_id||!thunk_id||!update_id) return CETTA_MATCH_INCOMPLETE;
+    return prime_need_receipt_join_anchor_qualified(owner,dst,catalogue,
+        PRIME_NEED_ANCHOR_CACHED_COMPLETION,need_session_id,thunk_id,update_id,found);
+}
+
+CettaMatchCompletion prime_need_receipt_join_state_anchor_qualified(
+        Arena *owner,PrimeNeedReceipt *dst,const PrimeNeedReceipt *catalogue,
+        uint64_t state_event_id,bool *found) {
+    return prime_need_receipt_join_anchor_qualified(owner,dst,catalogue,
+        PRIME_NEED_ANCHOR_STATE_WRITE,state_event_id,0u,0u,found);
+}
+
 PrimeNeedReceiptGraphStatus prime_need_receipt_graph_collect(
     const PrimeNeedReceipt *receipt, PrimeNeedReceiptGraph *out) {
+    if (!receipt || !out) return PRIME_NEED_RECEIPT_GRAPH_INVALID;
     PrimeNeedReceipt absent = {0};
-    if (receipt && receipt->recording && !prime_need_recording_readable(receipt)) {
-        if (!prime_need_recording_erased(receipt)) return PRIME_NEED_RECEIPT_GRAPH_INVALID;
-        receipt = &absent;
+    PrimeNeedRecording *recording_owner=NULL;
+    if (receipt->recording) {
+        PrimeNeedReceiptGraphStatus held=prime_need_receipt_graph_hold_recording(receipt,&recording_owner);
+        if (held==PRIME_NEED_RECEIPT_GRAPH_ABSENT) receipt=&absent;
+        else if (held!=PRIME_NEED_RECEIPT_GRAPH_COMPLETE) return held;
     }
-    if (!receipt || !out || (receipt->top && receipt->session_id == 0u))
+    if (receipt->top && receipt->session_id == 0u) {
+        prime_need_recording_release(recording_owner);
         return PRIME_NEED_RECEIPT_GRAPH_INVALID;
-    PrimeNeedReceiptGraph graph = {.session_id = receipt->session_id};
+    }
+    PrimeNeedReceiptGraph graph = {.session_id = receipt->session_id,.recording_owner=recording_owner};
     if (receipt->recording)
         graph.incomplete = prime_need_recording_status(
             receipt->recording->group).incomplete;

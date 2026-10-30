@@ -13,6 +13,8 @@ import sys
 import time
 import uuid
 
+from cetta_readiness_model import terminate_process_session
+
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -41,12 +43,13 @@ $(ATOMIC_GATE_ROOT)/unsafe.o: $(ATOMIC_GATE_ROOT)/payload.c $(ATOMIC_GATE_ROOT)/
     # parse time (a link to /dev/null) pass straight to the compiler.
     driver.write_text("""import os, pathlib, subprocess, sys, time
 args = sys.argv[1:]
-if '-c' not in args:
+if '-c' not in args or os.environ.get('ATOMIC_GATE_SOURCE') not in args:
     raise SystemExit(subprocess.call(['cc', *args]))
-pathlib.Path(args[args.index('-o') + 1]).write_bytes(b'')
+output = pathlib.Path(args[args.index('-o') + 1])
+output.write_bytes(b'')
 marker = os.environ.get('ATOMIC_GATE_MARKER')
 if marker:
-    pathlib.Path(marker).write_text('output opened')
+    pathlib.Path(marker).write_text(str(output))
     deadline = time.monotonic() + float(os.environ['ATOMIC_GATE_TIMEOUT'])
     while not pathlib.Path(os.environ['ATOMIC_GATE_RELEASE']).exists():
         if time.monotonic() >= deadline:
@@ -76,11 +79,13 @@ raise SystemExit(subprocess.call(['cc', *args]))
             env.pop(key, None)
         env.update(ATOMIC_GATE_MARKER=str(work / (label + ".started")),
                    ATOMIC_GATE_RELEASE=str(work / (label + ".release")),
+                   ATOMIC_GATE_SOURCE=str(work / 'payload.c'),
                    ATOMIC_GATE_TIMEOUT=str(args.timeout),
                    ATOMIC_GATE_FAIL="1" if fail else "0")
         log = (work / (label + ".log")).open("w")
         proc = subprocess.Popen(command + [str(work / (target + ".o"))], cwd=ROOT,
-                                env=env, stdout=log, stderr=subprocess.STDOUT)
+                                env=env, stdout=log, stderr=subprocess.STDOUT,
+                                start_new_session=True)
         children.append((proc, log))
         return proc
 
@@ -110,6 +115,28 @@ raise SystemExit(subprocess.call(['cc', *args]))
                                  makefile, re.M)
                 check(rule is not None and '$(call compile_c_object,' in rule[1],
                       target + ' uses the exercised publication boundary')
+        # Included makefiles may run compiler probes before the requested
+        # target. Their output must not release this test's synchronization.
+        unrelated_marker = work / 'unrelated.started'
+        unrelated_release = work / 'unrelated.release'
+        unrelated_release.write_text('continue')
+        probe_env = dict(os.environ, ATOMIC_GATE_SOURCE=str(work / 'payload.c'),
+                         ATOMIC_GATE_MARKER=str(unrelated_marker),
+                         ATOMIC_GATE_RELEASE=str(unrelated_release),
+                         ATOMIC_GATE_TIMEOUT=str(args.timeout), ATOMIC_GATE_FAIL='1')
+        unrelated = subprocess.run(
+            [sys.executable, str(driver), '-c', str(work / 'main.c'),
+             '-o', str(work / 'unrelated.o')], cwd=ROOT,
+            env=probe_env,
+            capture_output=True, timeout=args.timeout)
+        check(unrelated.returncode == 0 and not unrelated_marker.exists(),
+              'unrelated compiler calls cannot signal publication readiness')
+        preprocessed = subprocess.run(
+            [sys.executable, str(driver), '-E', str(work / 'payload.c'),
+             '-o', str(work / 'preprocessed.i')], cwd=ROOT,
+            env=probe_env, capture_output=True, timeout=args.timeout)
+        check(preprocessed.returncode == 0 and not unrelated_marker.exists(),
+              'source preprocessing cannot signal object publication readiness')
         seed = launch("seed")
         await_open("seed", seed)
         check(release("seed", seed) == 0 and linked_value() == "7", "initial object links")
@@ -139,6 +166,8 @@ raise SystemExit(subprocess.call(['cc', *args]))
         (work / "unsafe.d").write_bytes(dep.read_bytes())
         unsafe = launch("unsafe", target="unsafe", fail=True)
         await_open("unsafe", unsafe)
+        check((work / 'unsafe.started').read_text() == str(work / 'unsafe.o'),
+              'negative control opened the intended object')
         check((work / "unsafe.o").stat().st_size == 0,
               "in-place negative control exposes the interrupted output")
         check(release("unsafe", unsafe) != 0,
@@ -147,9 +176,7 @@ raise SystemExit(subprocess.call(['cc', *args]))
         return 0
     finally:
         for proc, log in children:
-            if proc.poll() is None:
-                proc.terminate()
-                proc.wait(timeout=args.timeout)
+            terminate_process_session(proc)
             log.close()
 
 

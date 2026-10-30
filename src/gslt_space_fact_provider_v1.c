@@ -245,6 +245,7 @@ bool cetta_gslt_space_fact_provider_primary_active_v1(
             provider->space.match_backend.pathmap.bridge.bridge_space &&
             !provider->space.match_backend.pathmap.bridge.bridge_unavailable;
     case SPACE_ENGINE_MORK:
+    case SPACE_ENGINE_SOURCE:
         return false;
     }
     return false;

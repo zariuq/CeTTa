@@ -98,6 +98,8 @@ for reference in (False, True):
     for language in ("he", "petta"):
         for source, answers in cases:
             check(language, source, answers, reference=reference)
+    for source, answers in cases:
+        check('petta', source, answers, profile=None, reference=reference)
 
 for language in ("he", "petta"):
     for call, reason in (
@@ -120,9 +122,8 @@ for language in ("he", "petta"):
         "(pat:is-variant (f $x $y) (f $y $x))",
     ):
         check(language, "!" + call, [call], imported=False, renamed=True)
-        # Import alone does not change a base dialect's unknown operation.
-        check(language, "!" + call, [call], profile="he" if language == "he" else None,
-              renamed=True)
+        if language == 'he':
+            check(language, "!" + call, [call], profile="he", renamed=True)
 
 assert variable_names('(p $x $x)') != variable_names('(p $x $y)')
 assert variable_names('(text "$x")') != variable_names('(text "$y")')

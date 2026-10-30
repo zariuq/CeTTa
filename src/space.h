@@ -13,6 +13,7 @@
 #include "checkpoint_compare.h"
 #include "subst_tree.h"
 #include "term_universe.h"
+#include "space_dense.h"
 
 /* ── Discrimination Trie (à la Vampire SubstitutionTree) ───────────────── */
 
@@ -207,6 +208,18 @@ typedef struct {
     CettaIndex id_present_synced_len; /* logical prefix already reflected in id_present (lazy catch-up) */
     bool id_present_dirty;    /* removal/bulk invalidated bits: clear + full resync on next membership query */
     bool id_present_incomplete; /* pointer-backed rows omitted from the canonical projection */
+    /* The bitset's keys that are no row's id, the alpha-canonical forms of
+     * rows with variables: the bitset holds them, one reference a key set. */
+    AtomId *id_present_keys;
+    CettaIndex id_present_key_len, id_present_key_cap;
+    /* The heads whose ground facts the space keeps as bits (space.c, "Relations
+     * kept as bits"); NULL while it keeps none.  The pairs they hold, over
+     * every head, which every positional read past the rows asks. */
+    struct SpaceDense *dense;
+    CettaCount dense_pairs;
+    /* The head last found to keep rows, whose facts an add asks no more
+     * than their header. */
+    SymbolId dense_rows_head;
     bool eq_idx_dirty;
     bool ty_idx_dirty;
     bool exact_idx_dirty;
@@ -242,6 +255,11 @@ typedef struct Space {
             CettaIndex id_present_synced_len;
             bool id_present_dirty;
             bool id_present_incomplete;
+            AtomId *id_present_keys;
+            CettaIndex id_present_key_len, id_present_key_cap;
+            struct SpaceDense *dense;
+            CettaCount dense_pairs;
+            SymbolId dense_rows_head;
             bool eq_idx_dirty;
             bool ty_idx_dirty;
             bool exact_idx_dirty;
@@ -257,6 +275,10 @@ typedef struct Space {
         };
     };
     SpaceKind kind;
+    /* Strict: the space keeps only what its kind needs, and a general match
+     * reads its rows in turn; full: it keeps the general indexes too.  Both
+     * answer every operation alike. */
+    bool strict;
     /* A live projection of a module's own storage, not a writable overlay. */
     bool module_own_view;
     /* Process-local lifetime identity.  A revision identifies a state only
@@ -382,7 +404,12 @@ bool space_init_module_own_view(Space *s, Space *module);
 bool space_module_own_view_select(Space *view, Space *storage);
 void space_module_own_view_release(Space *view, Space *storage);
 static inline Space *space_mutation_target(Space *s) {
-    return s && s->module_own_view ? (Space *)s->overlay_base : s;
+    s = s && s->module_own_view ? (Space *)s->overlay_base : s;
+    if (s && s->match_backend.kind == SPACE_ENGINE_SOURCE) {
+        space_match_backend_set_error(SPACE_MATCH_BACKEND_ERROR_READ_ONLY);
+        return NULL;
+    }
+    return s;
 }
 void space_init(Space *s);
 /* Mark the current contents as imported-module atoms.  False, leaving the
@@ -525,6 +552,63 @@ bool space_admit_atoms_batch_from_source_arena(
 TermUniverseError space_term_universe_last_error_code(const Space *s);
 void space_linearize(Space *s);
 void space_mark_derived_state_dirty(Space *s);
+/* Take, or drop, the reference each live row holds on its atom, when the
+ * rows are adopted or given up wholesale. */
+void space_rows_hold(Space *s);
+void space_rows_release(Space *s);
+
+/* Relations kept as bits.  The facts a space keeps as bits count in its
+ * length and answer its membership tests, adds and removals; a reader of
+ * rows that does not read bits gives them back to the rows first:
+ * space_dense_settle for every head, or for the head HEAD only
+ * (SYMBOL_ID_NONE: every head).  space_dense_settle_for_pattern settles the
+ * head a pattern names, or every head when its head is not a symbol. */
+void space_dense_settle(Space *s, SymbolId head);
+void space_dense_settle_for_pattern(Space *s, const Atom *pattern);
+void space_dense_settle_for_patterns(Space *s, Atom *const *patterns,
+                                     CettaExprLen count);
+/* The pairs held as bits, over every head. */
+static inline CettaCount space_dense_pairs(const Space *s) {
+    return s ? s->native.dense_pairs : 0u;
+}
+/* Count the facts the bits hold that match (h a b), given as COLUMNS: each
+ * a variable, distinct from the others, which takes anything, or a ground
+ * atom.  A head that is a variable reads every relation kept as bits.
+ * False when the bits cannot answer: in a concurrent-evaluation scope, or
+ * for a column a number other than an integer, which may equal one by
+ * value. */
+bool space_dense_count_columns(const Space *s, Atom *const *columns,
+                               CettaCount *count);
+/* The bits of HEAD, or NULL when the space keeps none for it (or a
+ * concurrent-evaluation scope is open).  Facts of HEAD may also be rows:
+ * a reader of bits asks the rows too, between space_dense_reading_bits_begin
+ * and _end, which keep the guards from giving the bits back meanwhile. */
+const CettaDenseRelation *space_dense_relation(const Space *s,
+                                               SymbolId head);
+/* Whether no row can match a fact of `head` beside its bits: the head keeps
+ * bits, none of its facts is a row, and no row's head is open. */
+bool space_dense_head_rows_absent(Space *s, SymbolId head);
+/* Whether a pattern names a head the space keeps as bits: the native
+ * query's loops read bits; the planners that read rows would give them
+ * back to the rows. */
+bool space_dense_meets_patterns(const Space *s, Atom *const *patterns,
+                                size_t count);
+void space_dense_reading_bits_begin(void);
+void space_dense_reading_bits_end(void);
+/* Before adding IDS: a head whose facts among them reach the threshold
+ * for bits takes bits now, so that none of them is a row. */
+void space_dense_prepare_adds(Space *s, const AtomId *ids, CettaCount count);
+/* Whether the space may keep the facts of HEAD as bits: it admits bits,
+ * and HEAD has not given its bits back to rows. */
+bool space_dense_may_hold(const Space *s, SymbolId head);
+/* Add the facts (h a b): h by its symbol and id, each (a, b) by two ids in
+ * PAIRS.  While the space keeps h as bits the facts need no records; the
+ * others are rows.  A set adds no fact it holds. */
+bool space_add_dense_pairs(Space *s, SymbolId head, AtomId head_id,
+                           const AtomId *pairs, CettaCount count);
+/* Take the pair of the ground fact ATOM from the bits, by its parts (a fact
+ * kept as bits may have no record of its own): the copies removed, 0 or 1. */
+CettaCount space_dense_remove_ground(Space *s, Atom *atom);
 void space_discard_native_logical_view(Space *s);
 /* Drop the full logical tuple projection while retaining revision-independent
  * equation/type descriptors. The backend mutation caller remains responsible
@@ -552,10 +636,21 @@ typedef void (*SpaceInstanceRetiredHook)(uint64_t instance);
 void space_set_instance_retired_hook(SpaceInstanceRetiredHook hook);
 const char *space_kind_name(SpaceKind kind);
 bool space_kind_from_name(const char *name, SpaceKind *out);
+void space_set_strict(Space *s, bool strict);
 bool space_is_ordered(const Space *s);
 bool space_is_stack(const Space *s);
 bool space_is_queue(const Space *s);
 bool space_is_hash(const Space *s);
+/* Whether a general match reads LEN rows in turn instead of an index: a
+ * small space, or a strict one. */
+static inline bool space_match_reads_rows(const Space *s, CettaIndex len) {
+    return len <= MATCH_TRIE_THRESHOLD || (s && s->strict);
+}
+/* The exact index is kept by a full space, and by a hash space, whose
+ * lookups are its kind's own. */
+static inline bool space_keeps_exact_index(const Space *s) {
+    return s && (!s->strict || s->kind == SPACE_KIND_HASH);
+}
 bool space_is_set(const Space *s);
 AtomId space_get_atom_id_at(const Space *s, uint32_t idx);
 CettaCount space_length64(const Space *s);
@@ -647,6 +742,10 @@ bool space_read_view_capture(const Space *space, SpaceReadView *out);
 bool space_read_view_clone(const SpaceReadView *source, SpaceReadView *out);
 bool space_read_view_is_current(const SpaceReadView *view);
 bool space_read_view_has_native_occurrences(const SpaceReadView *view);
+/* Native occurrence pins, or one standalone backend with the explicit
+ * incremental occurrence interface. This does not grant native index access. */
+bool space_read_view_has_incremental_occurrences(const SpaceReadView *view);
+bool space_read_view_uses_occurrence_source(const SpaceReadView *view);
 bool space_read_view_visit(const SpaceReadView *view,
     bool (*visitor)(SpaceReadToken read, void *context), void *context);
 void space_read_view_release(SpaceReadView *view);
@@ -871,13 +970,10 @@ typedef struct {
     bool has_last;
     CettaIndex last_logical;
     CettaIndex last_row;
+    const SpaceSourceCursorOps *source_ops;
+    void *source_state;
+    SpaceOccurrenceCursorStep source_failure;
 } SpaceOccurrenceCursor;
-
-typedef enum {
-    SPACE_OCCURRENCE_CURSOR_END = 0,
-    SPACE_OCCURRENCE_CURSOR_ITEM,
-    SPACE_OCCURRENCE_CURSOR_INVALIDATED,
-} SpaceOccurrenceCursorStep;
 
 void space_occurrence_cursor_init_empty(SpaceOccurrenceCursor *cursor);
 bool space_occurrence_cursor_init(Space *s, Atom *pattern,
@@ -898,6 +994,8 @@ bool space_occurrence_cursor_clone_unstarted(
  * rows, ceiling, and next occurrence as the source. */
 bool space_occurrence_cursor_clone(
     const SpaceOccurrenceCursor *src, SpaceOccurrenceCursor *dst);
+bool space_occurrence_cursor_select(const SpaceOccurrenceCursor *captured,
+    Atom *pattern, SpaceOccurrenceCursor *out);
 /* Select and lend the next captured row in one shared read transition.
  * An optional payload stays borrowed from the pinned view; the optional
  * index has view-local coordinates. No matching is performed. */
@@ -906,6 +1004,13 @@ SpaceOccurrenceCursorStep space_occurrence_cursor_next(
 /* The atom at an index the cursor yielded, from the rows it captured. */
 Atom *space_occurrence_cursor_atom(const SpaceOccurrenceCursor *cursor,
                                    CettaIndex index);
+/* Native rows remain borrowed from their pin. A backend source's lent row is
+ * copied into the receiving arena so later source advancement or release
+ * cannot invalidate an answer, matcher or binding which retains the value. */
+Atom *space_occurrence_cursor_receive_atom(const SpaceOccurrenceCursor *cursor,
+    CettaIndex index, Arena *arena);
+Atom *space_occurrence_cursor_identity(const SpaceOccurrenceCursor *cursor,
+    CettaIndex index, Arena *arena);
 void space_occurrence_cursor_release(SpaceOccurrenceCursor *cursor);
 void space_occurrence_cursor_storage_census(const SpaceOccurrenceCursor *cursor,
                                            CettaStorageCensus *census);
@@ -1271,6 +1376,20 @@ bool registry_unbind_symbol(Registry *r, const Atom *name);
 Atom *registry_entry_symbol(const Registry *r, uint32_t index, Arena *owner);
 bool registry_copy_entry(Registry *dst, const Registry *src,
                           uint32_t index, Atom *value);
+
+/* Prepare a replacement binding namespace without changing its destination.
+ * Values remain caller-owned. The caller holds exclusive binding access from
+ * preparation through publication; the separate named-state namespace is
+ * neither copied nor replaced. Publication consumes the prepared namespace
+ * without allocation and invalidates borrowed entry/key pointers. */
+typedef struct RegistryBindingPublication RegistryBindingPublication;
+RegistryBindingPublication *registry_binding_publication_new(Registry *destination);
+bool registry_binding_publication_copy(RegistryBindingPublication *publication,
+    const Registry *source, uint32_t index, Atom *value);
+void registry_binding_publication_commit(RegistryBindingPublication *publication);
+void registry_binding_publication_free(RegistryBindingPublication *publication);
+void registry_binding_publication_storage(const RegistryBindingPublication *publication,
+    CettaStorageCensus *census);
 void registry_bind(Registry *r, const char *name, Atom *value);
 Atom *registry_lookup(Registry *r, const char *name);
 bool registry_bind_name(Registry *r, Atom *name_key, Atom *value);
@@ -1566,6 +1685,13 @@ typedef bool (*SpaceQueryWitnessVisitor)(SpaceReadToken read,
     CettaIndex logical_index, void *context);
 bool space_query_cursor_visit_witnesses(const SpaceQueryCursor *cursor,
     SpaceQueryWitnessVisitor visitor, void *context);
+/* General occurrence identities. The positional visitor above refuses a
+ * non-positional witness before invoking its visitor at all. Both visitors
+ * report evidence, not mutation authority or a complete read footprint. */
+typedef bool (*SpaceQueryOccurrenceVisitor)(SpaceReadToken read,
+    Atom *identity, void *context);
+bool space_query_cursor_visit_occurrences(const SpaceQueryCursor *cursor,
+    SpaceQueryOccurrenceVisitor visitor, void *context);
 void space_query_cursor_free(SpaceQueryCursor *cursor);
 void space_query_cursor_storage_census(const SpaceQueryCursor *cursor,
                                        CettaStorageCensus *census);

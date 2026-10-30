@@ -94,6 +94,11 @@ void outcome_set_storage_census(const OutcomeSet *os, CettaStorageCensus *census
  * identity-mapped regions retain their separate caller lifetime contracts. */
 bool outcome_set_copy_to_arena(const OutcomeSet *source, OutcomeSet *destination,
     Arena *arena, AtomDeepCopySession *atoms);
+/* Same physical occurrence copy, within a still-retained source episode.
+ * Reader handles remain qualified by that episode instead of being erased or
+ * treated as independently checkpointed resources. */
+bool outcome_set_copy_to_episode(const OutcomeSet *source,OutcomeSet *destination,
+    Arena *arena,AtomDeepCopySession *atoms);
 
 /* An owned copy of a quiescent Prime search checkpoint. NEW accepts an owning
  * prime-search residual from the current library context and reserves its
@@ -476,6 +481,7 @@ bool eval_current_uses_rust_he_compat_semantics(void) __attribute__((weak));
 bool eval_current_builtin_allowed(const char *name) __attribute__((weak));
 bool eval_current_pattern_module_enabled(void) __attribute__((weak));
 uint32_t eval_current_pattern_control_arity(SymbolId head) __attribute__((weak));
+uint32_t eval_current_pattern_operation_arity(SymbolId head) __attribute__((weak));
 uint64_t eval_current_native_observer_mask(void) __attribute__((weak));
 SymbolId eval_current_pattern_head(SymbolId head) __attribute__((weak));
 Space *eval_resolve_space_read(Space *space) __attribute__((weak));

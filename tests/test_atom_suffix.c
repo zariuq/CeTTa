@@ -124,6 +124,33 @@ static Atom *list(Arena *arena, Atom **items, CettaExprLen length) {
     return atom_expr(arena, items, length);
 }
 
+/* A list with a head prepended carries the summary its children fold to:
+ * in particular it is symbolic only when the head and every element of the
+ * list are. */
+static void check_prepends(Arena *arena, Atom *tail, Atom **heads,
+                           size_t count) {
+    for (size_t i = 0u; i < count; i++) {
+        Atom *prepended = atom_expr_prepend(arena, heads[i], tail);
+        Atom *items[8];
+        assert(tail->expr.len + 1u <= 8u);
+        items[0] = heads[i];
+        for (CettaExprLen index = 0u; index < tail->expr.len; index++)
+            items[index + 1u] = tail->expr.elems[index];
+        Atom *folded = atom_expr(arena, items, tail->expr.len + 1u);
+        assert(prepended != NULL && folded != NULL);
+        assert(atom_eq(prepended, folded));
+        assert(prepended->flags == folded->flags);
+        /* Front slack says where the prepended list's storage has room, not
+         * what the list holds. */
+        assert((prepended->structural_facts & ~ATOM_STRUCTURAL_FRONT_SLACK) ==
+               (folded->structural_facts & ~ATOM_STRUCTURAL_FRONT_SLACK));
+        assert(var_id_eq(prepended->var_id, folded->var_id));
+        assert(((prepended->structural_facts & ATOM_STRUCTURAL_SYMBOLIC) != 0u) ==
+               ((heads[i]->structural_facts & tail->structural_facts &
+                 ATOM_STRUCTURAL_SYMBOLIC) != 0u));
+    }
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena arena;
@@ -175,6 +202,21 @@ int main(void) {
     check_suffixes(&arena, list(&arena, departed_handle, 3u), true);
     Atom *arriving_handle[] = { a, handle, atom_int(&arena, 7) };
     check_suffixes(&arena, list(&arena, arriving_handle, 3u), true);
+
+    /* A list whose first element alone is not a symbol: every suffix that
+     * leaves it behind is symbolic, as its fold is. */
+    Atom *symbolic_tail[] = { atom_int(&arena, 1), a, fa, b };
+    check_suffixes(&arena, list(&arena, symbolic_tail, 4u), true);
+
+    /* Prepending to a symbolic list and to one that is not. */
+    Atom *symbols_only[] = { a, b, fa };
+    Atom *f1 = atom_expr2(&arena, f, atom_int(&arena, 1));
+    Atom *heads[] = {
+        b, atom_int(&arena, 5), x, atom_string(&arena, "s"), fa, f1,
+    };
+    check_prepends(&arena, list(&arena, symbols_only, 3u), heads, 6u);
+    Atom *with_number[] = { atom_int(&arena, 1), b };
+    check_prepends(&arena, list(&arena, with_number, 2u), heads, 6u);
 
     /* Children allocated in another arena are not closed for this one. */
     Atom *foreign = atom_expr2(&other, atom_symbol(&other, "g"),
@@ -244,6 +286,6 @@ int main(void) {
     arena_free(&arena);
     symbol_table_free(&symbols);
     g_symbols = NULL;
-    puts("PASS: expression suffixes share storage and carry the folded summary");
+    puts("PASS: expression suffixes share storage, and suffixes and prepended lists carry the folded summary");
     return 0;
 }

@@ -469,13 +469,22 @@ static TfStatus tf_each_match(TfFire *f, Space *space, Atom *pattern,
     TfStatus status = TF_CONTINUE;
     for (;;) {
         Atom *candidate = NULL;
+        CettaIndex index = 0u;
         SpaceOccurrenceCursorStep step =
-            space_occurrence_cursor_next(&cursor, NULL, &candidate);
+            space_occurrence_cursor_next(&cursor, &index, &candidate);
         if (step == SPACE_OCCURRENCE_CURSOR_END)
             break;
-        if (step == SPACE_OCCURRENCE_CURSOR_INVALIDATED) {
+        if (step != SPACE_OCCURRENCE_CURSOR_ITEM) {
             status = f->effects ? TF_ERROR : TF_FAIL;
             break;
+        }
+        ArenaMark candidate_mark = arena_mark(f->scratch);
+        if (cursor.source_ops) {
+            candidate = space_occurrence_cursor_receive_atom(&cursor, index, f->scratch);
+            if (!candidate) {
+                status = f->effects ? TF_ERROR : TF_FAIL;
+                break;
+            }
         }
         if (!candidate)
             continue;
@@ -492,9 +501,12 @@ static TfStatus tf_each_match(TfFire *f, Space *space, Atom *pattern,
             }
         }
         uint32_t mark = bindings_builder_save(&f->builder);
-        if (match_atoms_builder(pattern, candidate, &f->builder, f->scratch))
+        bool matched = match_atoms_builder(pattern, candidate, &f->builder, f->scratch);
+        if (matched)
             status = visit(f, data);
         bindings_builder_rollback(&f->builder, mark);
+        if (!matched && cursor.source_ops)
+            arena_reset(f->scratch, candidate_mark);
         if (status != TF_CONTINUE)
             break;
     }
