@@ -56,6 +56,20 @@ def main():
         f"src/input-{i:03d}.metta": b"sur" + b"face\n" for i in range(65)
     }
     cases["many_excluded_files"] = {f"src/input-{i:03d}.o": b"sur" + b"face\n" for i in range(97)}
+    pinned_name = 'examples/import_error_' + 'sur' + 'face.metta'
+    reference_field = ('  "' + pinned_name + '": "' + 'a' * 64 + '",\n').encode()
+    observation_field = ('  "source": "' + pinned_name + '",\n').encode()
+    cases.update({
+        "pinned_reference": {"langdef/petta/reference.json": reference_field},
+        "pinned_observation": {"tests/petta/corrected_stable_observations.json": observation_field},
+        "pinned_wrong_path": {"src/reference.json": reference_field},
+        "pinned_wrong_field": {"langdef/petta/reference.json": observation_field},
+        "pinned_wrong_digest": {"langdef/petta/reference.json": reference_field.replace(b'a' * 64, b'a' * 63)},
+        "pinned_extra_text": {"tests/petta/corrected_stable_observations.json": observation_field.rstrip() + b' extra\n'},
+        "pinned_nearby_content": {"langdef/petta/reference.json": reference_field + b'"note": "sur' + b'face"\n'},
+        "pinned_unicode_space": {"langdef/petta/reference.json": '\u2003'.encode() + reference_field},
+        "pinned_invalid_bytes": {"tests/petta/corrected_stable_observations.json": observation_field.rstrip() + b'\xff\n'},
+    })
     for cut in range(1, 8):
         cases[f"literal_seam_{cut}"] = {"src/example.metta": b"x" * (65536 - cut)
             + ("ſur" + "face\n").encode()}
@@ -140,13 +154,13 @@ def main():
             if protected is not None: protected.chmod(restore_mode)
     original = (ROOT / "scripts/check_precise_vocabulary.metta").read_text()
     preparation = '(str:concat "(?i)" (vocabulary:needle))'
-    invocation = '      (vocabulary:main)))'
+    invocation = '      (vocabulary:prepare-pinned)))'
     assert original.count(preparation) == original.count(invocation) == 1
     faults = {
         "regex_preparation_failure": original.replace(preparation,
             '(str:concat "(?unknown)" (vocabulary:needle))'),
         "regex_execution_failure": original.replace(invocation,
-            '      (let $closed (re:close $pattern) (vocabulary:main))))'),
+            '      (let $closed (re:close $pattern) (vocabulary:prepare-pinned))))'),
     }
     for name, program in faults.items():
         root = output / name

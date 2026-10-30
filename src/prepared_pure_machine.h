@@ -15,6 +15,38 @@
  * outside the fragment is rejected and remains on the ordinary evaluator.
  */
 typedef struct CettaPreparedPureProgram CettaPreparedPureProgram;
+
+typedef enum {
+    CETTA_PREPARED_PURE_COMPILE_UNCERTIFIED,
+    CETTA_PREPARED_PURE_COMPILE_READY,
+    CETTA_PREPARED_PURE_COMPILE_INPUT_REFUSED,
+    CETTA_PREPARED_PURE_COMPILE_RESOURCE_REFUSED,
+    CETTA_PREPARED_PURE_COMPILE_INVALIDATED,
+    CETTA_PREPARED_PURE_COMPILE_STABLE_REFUSED,
+} CettaPreparedPureCompileStatus;
+
+enum {
+    CETTA_PREPARED_PURE_REFUSE_SCALAR = 1u,
+    CETTA_PREPARED_PURE_REFUSE_ANSWERS = 2u,
+};
+
+/* Preparation metadata, never an evaluation outcome. A failure can certify
+ * the other demand without certifying its own: a prior answer gate survives
+ * a later uncertified scalar failure. Unclassified failures remain retryable.
+ * The source is borrowed for the duration of its owner's preparation scope. */
+typedef struct {
+    SpaceProgramToken source;
+    CettaPreparedPureCompileStatus status;
+    uint8_t refusals;
+} CettaPreparedPureCompileReport;
+
+static inline bool cetta_prepared_pure_compile_refused(
+        const CettaPreparedPureCompileReport *report, Space *space, bool answers) {
+    return report &&
+        (report->refusals & (answers ? CETTA_PREPARED_PURE_REFUSE_ANSWERS
+                                   : CETTA_PREPARED_PURE_REFUSE_SCALAR)) != 0u &&
+        space_program_token_matches_live_space(report->source, space);
+}
 /* Whether the prepared machine can call `head` with `arity` arguments: the
  * dialect leaves the head untyped, or it is an HE head whose one signature
  * has that arity and value-class parameters and range (Number, String, Bool
@@ -241,11 +273,12 @@ bool cetta_prepared_pure_program_use_native_tail_returns(
 /* Compile a closed, deterministic, effect-free expression into the same
  * explicit-stack machine used by prepared folds.  Callable arguments are
  * retained as machine suspensions and forced according to call_mode. The
- * optional answer_frontend_refusal is false on success. True reports that
- * answer compilation would refuse under the same current source, callbacks,
- * call mode, ready arguments and equality semantics: either a shared terminal
- * dialect refusal before the first demand read, or an explicit single-result
- * gate reached before that read. Failure alone supplies no such evidence. */
+ * optional report separates this attempt's status from certified refusals.
+ * A generic ready entry can retain a terminal dialect refusal for this
+ * demand; crossing demands additionally requires a shared terminal refusal
+ * before demand inspection, or an explicit answer-excluding gate. Failure
+ * alone supplies no certificate. Remaining callback/authority inputs must
+ * stay fixed before any caller publishes a refusal. */
 CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed(
     Space *space, Atom *expression,
     CettaGsltPureCallMode call_mode,
@@ -260,7 +293,7 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed(
     bool entry_arguments_are_values,
     bool total_structural_equality,
     CettaMatchDecisionSemanticIdentity match_decision_semantics,
-    bool *answer_frontend_refusal);
+    CettaPreparedPureCompileReport *report);
 
 /* Compile the finite answer-producing fragment of a closed pure relation.
  * An equation whose body is a fully determined value, or a pure tail call on
@@ -282,7 +315,8 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed_answers(
     const CettaPreparedPureSourceView *source_view,
     bool entry_arguments_are_values,
     bool total_structural_equality,
-    CettaMatchDecisionSemanticIdentity match_decision_semantics);
+    CettaMatchDecisionSemanticIdentity match_decision_semantics,
+    CettaPreparedPureCompileReport *report);
 
 bool cetta_prepared_pure_program_is_current(
     const CettaPreparedPureProgram *program);

@@ -545,14 +545,15 @@ typedef struct {
         const Bindings *environment, OutcomeSet *outcomes,
         CettaCallOutcome *end);
     /*
-     * Ground `add-atom` after the space argument is a value and the payload
-     * has been substituted.  The host owns storage, typing, and program
+     * `add-atom` after the space argument is a value and the payload has
+     * been substituted: a ground payload, or one holding variables where
+     * the set keeps the row as its alpha key (space_keys_open_row).  The host owns storage, typing, and program
      * observation through the shared admit authority.  Returning false
      * declines to ordinary host evaluation.  On true, `*result` is the
      * language success value or an error atom. True commits entry; a
      * missing result is a host fault and cannot reopen ordinary evaluation.
      */
-    bool (*admit_ground_atom)(
+    bool (*admit_atom)(
         void *context, Space *space, Arena *arena,
         Atom *call, Atom **result);
     /*
@@ -566,6 +567,17 @@ typedef struct {
         void *context, Space *space, Arena *arena, Atom *query,
         const PettaPlanNode *plan, bool count_only, bool wrap_collection,
         Atom **value);
+    /* The same for a query whose source reads everything before it makes
+     * anything (a collection spread by superpose). */
+    CettaNativeQueryStatus (*native_collect_snapshot)(
+        void *context, Space *space, Arena *arena, Atom *query,
+        const PettaPlanNode *plan, bool count_only, bool wrap_collection,
+        Atom **value);
+    /* The same for `(match S P (let PAT T E))` answered once for each
+     * distinct instance of T (a collection's unique-atom spread). */
+    CettaNativeQueryStatus (*native_collect_distinct_snapshot)(
+        void *context, Space *space, Arena *arena, Atom *query,
+        bool count_only, Atom **value);
     PettaSpecializeResult (*prepare_call)(
         void *context, Space *space, Arena *result_arena,
         Atom *call, Atom **prepared_call);
@@ -601,12 +613,14 @@ typedef struct {
         void *context, Space *space, SymbolId head, CettaExprLen arity);
     /* For a language whose producers complete before their callers consume
      * them: the closed call's finite answers from the same producer its
-     * canonical evaluator uses, run to completion.  True with every answer
-     * in `outcomes`; false publishes nothing and leaves the call to equation
-     * search. */
+     * canonical evaluator uses, run to completion. True transfers completed
+     * data occurrences in `outcomes`. False with COMPLETE publishes nothing
+     * and leaves the invocation to equation search. An incomplete cause
+     * stops the caller without publishing the unconsumed frontier or retrying
+     * the producer. Completion metadata remains separate from answer shape. */
     bool (*collect_closed_answers)(
         void *context, Space *space, Arena *result_arena,
-        Atom *prepared_call, OutcomeSet *outcomes);
+        Atom *prepared_call, OutcomeSet *outcomes, CettaEvalCompletion *completion);
     /* Whether a ground term evaluates to itself in the host language: a
      * grounded value, a symbol nothing defines, or a term of constructors
      * with no error field. */

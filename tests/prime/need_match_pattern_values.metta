@@ -29,3 +29,14 @@
 ; A value needs no forcing; quote keeps its argument as written.
 !(q 2)
 !(qq (+ 1 1))
+; A bound pattern cell can choose, and repeated occurrences share its value
+; and committed effects. Other syntax in the same pattern stays data.
+(= (lp $x) (let (pair $x $x $y) (pair 2 2 shared) $y))
+(= (noisy-two) (let $_ (println! demanded) 2))
+!(l (either))
+!(lp (either))
+!(lp (noisy-two))
+!(collapse (let (fact (+ 1 1) $y) (fact 2 two) $y))
+; A mismatching cell and a quoted expression do not become fresh binders.
+!(collapse (l 1))
+!(collapse (l (quote (+ 1 1))))

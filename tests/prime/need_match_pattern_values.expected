@@ -1,3 +1,4 @@
+demanded
 [two, wild]
 [b]
 [two]
@@ -7,3 +8,9 @@
 [syn, wild]
 [two, wild]
 [(quote (+ 1 1))]
+[two]
+[shared]
+[shared]
+[()]
+[()]
+[()]

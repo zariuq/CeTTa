@@ -12,6 +12,11 @@ static Atom *row(Arena *arena, SymbolId head, Atom *first, Atom *second) {
     return atom_expr(arena, children, 3u);
 }
 
+static Atom *row4(Arena *arena, Atom *head, Atom *first, Atom *second, Atom *third) {
+    Atom *children[] = {head, first, second, third};
+    return atom_expr(arena, children, 4u);
+}
+
 static void add(Space *space, Atom *term) {
     AtomId id = term_universe_store_atom_id(space->native.universe, NULL, term);
     assert(id != CETTA_ATOM_ID_NONE);
@@ -282,8 +287,12 @@ static void test_nested_paths(TermUniverse *universe, Arena *arena) {
         nested(arena, wrapper, atom_symbol_id(arena, selected), DEPTH));
     compare_reference(&space, arena, query);
     CettaSpacePathIndexInfo info;
+    /* A ground term of symbols after a variable is one id however deep: its
+     * column is keyed by that id.  The row open there, the whole variable
+     * and the list carrier stay open. */
     assert(space_path_indexes_info(&space, &info));
-    assert(info.path_length == DEPTH + 1u && info.uncertain_rows == 3u);
+    assert(info.path_length == 1u && info.key_kind == CETTA_SPACE_PATH_TERM_KEY &&
+           info.uncertain_rows == 3u);
     /* A rigid constructor is also a usable coordinate when it has no children. */
     for (int64_t index = 0; index < 24; index++) {
         Atom *child = atom_symbol_id(arena, index % 8 == 0 ? selected : rejected);
@@ -294,6 +303,15 @@ static void test_nested_paths(TermUniverse *universe, Arena *arena) {
                                        atom_expr(arena, &child, 1u)));
     assert(space_path_indexes_info(&space, &info));
     assert(info.index_count == 2u && info.path_length == 2u);
+    /* A deep term ending in a number is no id a query names: the index keys
+     * the number at its deepest leaf. */
+    for (int64_t index = 0; index < 24; index++)
+        add(&space, row(arena, head, atom_int(arena, 100 + index),
+            nested(arena, wrapper, atom_int(arena, index % 8), DEPTH)));
+    compare_reference(&space, arena, row(arena, head, atom_var(arena, "deep-output"),
+        nested(arena, wrapper, atom_int(arena, 3), DEPTH)));
+    assert(space_path_indexes_info(&space, &info));
+    assert(info.index_count == 3u && info.path_length == DEPTH + 1u);
     space_free(&space);
 }
 
@@ -332,6 +350,187 @@ static void test_unrelated_rows(TermUniverse *universe, Arena *arena, CettaCount
     printf("PASS: path index %llu rows; 12 lookups retain 4 occurrence candidates; %zu bytes\n",
            (unsigned long long)rows, info.retained_bytes);
     space_free(&space);
+}
+
+/* A flat shape that binds two columns after its variable reads the shorter
+ * posting.  The constant relation column is indexed first; once its lookups
+ * have read as many rows as a build reads, the object column they vary is
+ * indexed over the shape's head and serves them.  Rows open at either
+ * column, a variable head, another head and a whole variable stay
+ * candidates wherever they may match, through removals and adds.  A shape
+ * whose first column already selects builds nothing more. */
+static void test_shortest_column(TermUniverse *universe, Arena *arena) {
+    Space space;
+    space_init_with_universe(&space, universe);
+    space.kind = SPACE_KIND_STACK;
+    Atom *head = atom_symbol_id(arena, symbol_intern_cstr(g_symbols, "column-choice-row"));
+    Atom *relations[4];
+    for (int index = 0; index < 4; index++) {
+        char name[32];
+        snprintf(name, sizeof(name), "column-choice-r%d", index);
+        relations[index] = atom_symbol_id(arena, symbol_intern_cstr(g_symbols, name));
+    }
+    Atom *selected = relations[1];
+    /* Object k's rows are k, k + 203, ...: one of each relation. */
+    for (int64_t index = 0; index < 800; index++)
+        add(&space, row4(arena, head, atom_int(arena, index), relations[index % 4],
+                         atom_int(arena, index % 203)));
+    Atom *correlated = atom_var(arena, "column-choice-correlated");
+    add(&space, row4(arena, head, atom_int(arena, 900), selected,
+                     atom_var(arena, "column-choice-open-object")));
+    add(&space, row4(arena, head, atom_int(arena, 901),
+                     atom_var(arena, "column-choice-open-relation"), atom_int(arena, 7)));
+    add(&space, row4(arena, head, correlated, selected, correlated));
+    add(&space, row4(arena, atom_var(arena, "column-choice-open-head"),
+                     atom_int(arena, 902), selected, atom_int(arena, 7)));
+    add(&space, row4(arena, atom_symbol_id(arena, symbol_intern_cstr(g_symbols,
+                         "column-choice-other")), atom_int(arena, 903), selected,
+                     atom_int(arena, 7)));
+    add(&space, atom_var(arena, "column-choice-whole"));
+    space_match_native_ensure_trie(&space);
+    Atom *output = atom_var(arena, "column-choice-output");
+    for (int64_t object = 0; object < 203; object++)
+        compare_reference(&space, arena,
+            row4(arena, head, output, selected, atom_int(arena, object)));
+    CettaSpacePathIndexInfo info;
+    assert(space_path_indexes_info(&space, &info));
+    assert(info.index_count == 2u);
+    /* Object 7's four rows and the row open at its relation, the variable
+     * head and the whole variable, and the two rows of the head open at the
+     * object; the relation column would offer over two hundred. */
+    Atom *query = row4(arena, head, output, selected, atom_int(arena, 7));
+    CettaIndex *positions = NULL, count = 0u;
+    assert(space_path_index_candidates(&space, query, &positions, &count));
+    assert(count == 9u);
+    free(positions);
+    /* A variable head reads only indexes over every row. */
+    for (int64_t object = 0; object < 24; object++)
+        compare_reference(&space, arena, row4(arena,
+            atom_var(arena, "column-choice-query-head"), output, selected,
+            atom_int(arena, object)));
+    uint8_t *removed = calloc((size_t)space_length64(&space), 1u);
+    assert(removed);
+    for (CettaIndex position = 0u; position < 800u; position += 7u)
+        removed[position] = 1u;
+    CettaCount removed_count;
+    assert(space_remove_occurrence_mask_stable(&space, removed,
+        space_length64(&space), &removed_count));
+    free(removed);
+    for (int64_t object = 0; object < 203; object += 5)
+        compare_reference(&space, arena,
+            row4(arena, head, output, selected, atom_int(arena, object)));
+    for (int64_t index = 0; index < 40; index++)
+        add(&space, row4(arena, head, atom_int(arena, 1000 + index), selected,
+                         atom_int(arena, index)));
+    for (int64_t object = 0; object < 40; object++)
+        compare_reference(&space, arena,
+            row4(arena, head, output, selected, atom_int(arena, object)));
+    space_free(&space);
+
+    Space selective;
+    space_init_with_universe(&selective, universe);
+    selective.kind = SPACE_KIND_STACK;
+    Atom *keyed = atom_symbol_id(arena, symbol_intern_cstr(g_symbols, "column-choice-keyed"));
+    Atom *tag = atom_symbol_id(arena, symbol_intern_cstr(g_symbols, "column-choice-tag"));
+    for (int64_t index = 0; index < 800; index++)
+        add(&selective, row4(arena, keyed, atom_int(arena, index),
+                             atom_int(arena, index % 400), tag));
+    space_match_native_ensure_trie(&selective);
+    for (int64_t repeat = 0; repeat < 2; repeat++) {
+        for (int64_t value = 0; value < 400; value++)
+            compare_reference(&selective, arena,
+                row4(arena, keyed, output, atom_int(arena, value), tag));
+    }
+    assert(space_path_indexes_info(&selective, &info));
+    assert(info.index_count == 1u);
+    space_free(&selective);
+    puts("PASS: a flat shape reads its shortest column; its varied column is built once its lookups have read a build's rows");
+}
+
+/* A pattern that binds a prefix after its head reads the index of that
+ * prefix, where the trie would hold every row of the space: lookups bound
+ * on one and on two leading columns answer as a full scan does, with rows
+ * open in the prefix, rows of another head, a variable head and a whole
+ * variable among them, through removals and adds, and counted.  No trie is
+ * built; once one is, the prefix indexes it supersedes are retired. */
+static void test_bound_prefix(TermUniverse *universe, Arena *arena) {
+    Space space;
+    space_init_with_universe(&space, universe);
+    space.kind = SPACE_KIND_STACK;
+    Atom *head = atom_symbol_id(arena, symbol_intern_cstr(g_symbols, "prefix-row"));
+    Atom *other = atom_symbol_id(arena, symbol_intern_cstr(g_symbols, "prefix-other"));
+    for (int64_t index = 0; index < 600; index++)
+        add(&space, row4(arena, head, atom_int(arena, index % 30),
+                         atom_int(arena, index % 7), atom_int(arena, index)));
+    add(&space, row4(arena, head, atom_var(arena, "prefix-open-first"),
+                     atom_int(arena, 3), atom_int(arena, 900)));
+    add(&space, row4(arena, head, atom_int(arena, 4),
+                     atom_var(arena, "prefix-open-second"), atom_int(arena, 901)));
+    add(&space, row4(arena, head, atom_int(arena, 4), atom_float(arena, 3.0),
+                     atom_int(arena, 902)));
+    add(&space, row4(arena, atom_var(arena, "prefix-open-head"), atom_int(arena, 4),
+                     atom_int(arena, 3), atom_int(arena, 903)));
+    add(&space, row4(arena, other, atom_int(arena, 4), atom_int(arena, 3),
+                     atom_int(arena, 904)));
+    add(&space, atom_var(arena, "prefix-whole"));
+    Atom *output = atom_var(arena, "prefix-output");
+    /* Spend the one-shot allowance as cold scans, then read by indexes. */
+    for (int64_t first = 0; first < 30; first++) {
+        compare_reference(&space, arena,
+            row4(arena, head, atom_int(arena, first), output,
+                 atom_var(arena, "prefix-rest")));
+        for (int64_t second = 0; second < 7; second++)
+            compare_reference(&space, arena,
+                row4(arena, head, atom_int(arena, first), atom_int(arena, second),
+                     output));
+    }
+    assert(!space.match_backend.native.match_trie);
+    CettaIndex *positions = NULL, count = 0u;
+    Atom *query = row4(arena, head, atom_int(arena, 4), atom_int(arena, 3), output);
+    assert(space_path_index_prefix_candidates(&space, query, false, &positions, &count));
+    /* The rows of (4 3): 600 / 210 of them, and the rows open in the
+     * prefix or holding a float there, the variable head and the whole
+     * variable; never the other head's row. */
+    for (CettaIndex next = 0u; next < count; next++)
+        assert(space_get_atom_id_at64(&space, positions[next]) !=
+               term_universe_lookup_atom_id(universe,
+                   row4(arena, other, atom_int(arena, 4), atom_int(arena, 3),
+                        atom_int(arena, 904))));
+    assert(count <= 3u + 6u);
+    free(positions);
+    uint64_t counted = 0u;
+    CettaIndex examined = 0u;
+    if (space_match_count_flat_linear64(&space, arena, query, &counted, &examined)) {
+        uint64_t expected = 0u;
+        for (CettaIndex position = 0u; position < space_length64(&space); position++)
+            expected += direct_match(&space, arena, query, position);
+        assert(counted == expected);
+    }
+    assert(!space.match_backend.native.match_trie);
+    uint8_t *removed = calloc((size_t)space_length64(&space), 1u);
+    assert(removed);
+    for (CettaIndex position = 0u; position < 600u; position += 11u)
+        removed[position] = 1u;
+    CettaCount removed_count;
+    assert(space_remove_occurrence_mask_stable(&space, removed,
+        space_length64(&space), &removed_count));
+    free(removed);
+    for (int64_t index = 0; index < 60; index++)
+        add(&space, row4(arena, head, atom_int(arena, index % 30),
+                         atom_int(arena, 3), atom_int(arena, 1000 + index)));
+    for (int64_t first = 0; first < 30; first += 3)
+        compare_reference(&space, arena,
+            row4(arena, head, atom_int(arena, first), atom_int(arena, 3), output));
+    CettaSpacePathIndexInfo info;
+    assert(space_path_indexes_info(&space, &info));
+    space_match_native_ensure_trie(&space);
+    assert(space.match_backend.native.match_trie);
+    assert(!space_path_indexes_info(&space, &info) ||
+           info.key_kind != CETTA_SPACE_PATH_PREFIX_KEY);
+    compare_reference(&space, arena,
+        row4(arena, head, atom_int(arena, 4), atom_int(arena, 3), output));
+    space_free(&space);
+    puts("PASS: a bound prefix reads its index, not the trie, and answers as a scan does");
 }
 
 /* Compare the unindexed candidate stream with the complete matcher in both
@@ -429,6 +628,8 @@ int main(void) {
     test_nested_paths(&universe, &scratch);
     test_unrelated_rows(&universe, &scratch, 1024u);
     test_unrelated_rows(&universe, &scratch, 2048u);
+    test_shortest_column(&universe, &scratch);
+    test_bound_prefix(&universe, &scratch);
 #if CETTA_BUILD_WITH_RUNTIME_STATS
     CettaRuntimeStats stats;
     cetta_runtime_stats_snapshot(&stats);

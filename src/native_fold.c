@@ -3,6 +3,7 @@
 #include "eval.h"
 #include "fold_algebra.h"
 #include "match.h"
+#include "petta_semantics.h"
 #include "stats.h"
 
 #include <stdlib.h>
@@ -164,16 +165,56 @@ static bool native_fold_step_declarations_numeric(Space *space, Arena *arena,
     return numeric;
 }
 
+/* A lambda of two places as PeTTa evaluates `(|-> ($item $acc) body)`:
+ * a registered callable whose two nested layers share one identity, its
+ * body canonical locally-nameless syntax.  Opened, the body reads the item
+ * and the accumulator; a lambda capturing variables declines. */
+static Atom *native_fold_open_lambda(Arena *arena, Atom *function,
+                                     VarId *item, VarId *accumulator) {
+    int64_t identity = 0;
+    if (!arena || !atom_petta_callable_identity(function, &identity) ||
+        atom_has_vars(function))
+        return NULL;
+    Atom *places[2] = {
+        atom_var_with_id(arena, "$__fold_item", fresh_var_id()),
+        atom_var_with_id(arena, "$__fold_acc", fresh_var_id()),
+    };
+    Atom *body = function;
+    for (size_t place = 0u; place < 2u; place++) {
+        int64_t layer = 0;
+        if (!places[place] || !body ||
+            !atom_petta_callable_identity(body, &layer) ||
+            layer != identity || !petta_semantics_lambda_body(body, NULL))
+            return NULL;
+        body = cetta_petta_open_callable(arena, body, places[place]);
+    }
+    if (!body || petta_semantics_lambda_body(body, NULL))
+        return NULL;
+    *item = places[0]->var_id;
+    *accumulator = places[1]->var_id;
+    return body;
+}
+
 /* `function`, applied as (function item accumulator): a builtin operation,
- * or the one pure equation of a named function. */
+ * the one pure equation of a named function, or a lambda of two places. */
 static bool native_fold_function_decode(
-    Space *space, Atom *function, CettaFoldStep *out) {
-    if (!function || function->kind != ATOM_SYMBOL || !out)
+    Space *space, Arena *arena, Atom *function, CettaFoldStep *out) {
+    if (!function || !out ||
+        (function->kind != ATOM_SYMBOL && function->kind != ATOM_EXPR))
         return false;
     CettaFoldExpr expr = {0};
     uint8_t root = 0u;
     CettaFoldExprKind kind;
-    if (native_fold_operation_kind(function->sym_id, &kind)) {
+    if (function->kind == ATOM_EXPR) {
+        VarId param_acc = VAR_ID_NONE;
+        VarId param_item = VAR_ID_NONE;
+        Atom *body = native_fold_open_lambda(arena, function, &param_item,
+                                             &param_acc);
+        if (!body ||
+            !native_fold_decode(body, param_item, param_acc, 0u, &expr,
+                                &root))
+            return false;
+    } else if (native_fold_operation_kind(function->sym_id, &kind)) {
         uint8_t item = 0u;
         uint8_t accumulator = 0u;
         if (!cetta_fold_expr_leaf(&expr, CETTA_FOLD_EXPR_ITEM, 0, &item) ||
@@ -200,11 +241,33 @@ static bool native_fold_function_decode(
 static bool native_fold_step_admitted(Space *space, Arena *arena,
                                       Atom *function, CettaFoldStep *out) {
     CettaFoldExprKind kind;
-    if (!native_fold_function_decode(space, function, out))
+    if (!native_fold_function_decode(space, arena, function, out))
         return false;
-    return native_fold_operation_kind(function->sym_id, &kind) ||
+    /* A lambda declares nothing. */
+    return function->kind == ATOM_EXPR ||
+           native_fold_operation_kind(function->sym_id, &kind) ||
            native_fold_step_declarations_numeric(space, arena,
                                                  function->sym_id);
+}
+
+/* Whether every application of the step has a value: only a floor
+ * remainder by what may be zero has none.  An accumulator leaving int64
+ * continues exactly. */
+static bool native_fold_step_total(const CettaFoldStep *step) {
+#if CETTA_BUILD_WITH_GMP
+    for (uint8_t node = 0u; node < step->source.len; node++) {
+        const CettaFoldExprNode *at = &step->source.nodes[node];
+        if (at->kind != CETTA_FOLD_EXPR_FREM)
+            continue;
+        const CettaFoldExprNode *divisor = &step->source.nodes[at->right];
+        if (divisor->kind != CETTA_FOLD_EXPR_LITERAL || divisor->literal == 0)
+            return false;
+    }
+    return true;
+#else
+    (void)step;
+    return false;
+#endif
 }
 
 static bool native_fold_column_of(
@@ -384,6 +447,11 @@ static CettaNativeFoldRoute native_fold_route(
         bool counted = item_constant && pattern_count >= 3u &&
             space_native_relational_count(
                 space, arena, patterns, pattern_count, NULL, &matches);
+        /* One flat pattern is counted as a collection of it is. */
+        CettaIndex examined = 0u;
+        if (item_constant && !counted && pattern_count == 1u)
+            counted = space_match_count_flat_linear64(
+                space, arena, patterns[0], &matches, &examined);
         if (!item_constant ||
             (!counted &&
              !space_native_flat_conjunction_count(
@@ -452,6 +520,42 @@ static CettaNativeFoldRoute native_fold_route(
         return CETTA_NATIVE_FOLD_DECLINED;
     return native_fold_publish(arena, answer, reduced)
         ? CETTA_NATIVE_FOLD_MOMENTS : CETTA_NATIVE_FOLD_DECLINED;
+}
+
+bool cetta_native_fold_counts_answers(Space *space, Arena *arena,
+                                      Atom *function, Atom *initial) {
+    CettaFoldStep fold;
+    return !native_fold_arith_reference_forced() &&
+           !(eval_petta_steps_are_typed && eval_petta_steps_are_typed()) &&
+           space && arena && function && initial &&
+           initial->kind == ATOM_GROUNDED && initial->ground.gkind == GV_INT &&
+           native_fold_step_admitted(space, arena, function, &fold) &&
+           !fold.uses_item && native_fold_step_total(&fold);
+}
+
+bool cetta_native_fold_repeat(Space *space, Arena *arena, Atom *function,
+                              Atom *initial, uint64_t count, Atom **answer) {
+    CettaFoldStep fold;
+    if (!cetta_native_fold_counts_answers(space, arena, function, initial) ||
+        !native_fold_step_admitted(space, arena, function, &fold) || !answer)
+        return false;
+    int64_t reduced = 0;
+    bool published = false;
+    if (cetta_fold_step_repeat(&fold, 0, count, initial->ground.ival,
+                               &reduced) == CETTA_FOLD_OK) {
+        published = native_fold_publish(arena, answer, reduced);
+    } else {
+        /* The closed form left int64: take the steps one by one, exactly. */
+        NativeFoldScan scan = {
+            .step = &fold, .accumulator = initial->ground.ival, .ok = true};
+        for (uint64_t index = 0u; scan.ok && index < count; index++)
+            scan.ok = native_fold_scan_step(&scan, 0);
+        published = scan.ok && native_fold_publish_scan(arena, answer, &scan);
+        native_fold_scan_free(&scan);
+    }
+    if (published)
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_NATIVE_FOLD_RUN);
+    return published;
 }
 
 CettaNativeFoldRoute cetta_native_foldall(
