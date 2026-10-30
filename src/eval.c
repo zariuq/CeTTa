@@ -56699,6 +56699,21 @@ static bool prime_eval_stack_schedule_native_service(
     if (!driver || eval_current_language_id() != CETTA_LANGUAGE_PRIME ||
         !cetta_library_native_execution_supported(g_library_context, atom_head_symbol_id(call)))
         return false;
+    /* Synchronous interpretation can borrow native locals while demanding
+     * a child head. The enclosing driver cannot retain that receiver. Give
+     * the service an ordinary owned child before opening it, keeping those
+     * locals fixed until it returns. Retained owners keep their boundary. */
+    bool borrowed=driver->arena!=arena || driver->poison_depth ||
+        driver->raw_call_depth!=1u || !prime_eval_stack_target_is_owned(target);
+    bool synchronous=!driver->retain_bind_calls && !driver->control;
+    for(PrimeEvalStackDriver *parent=driver->authority_parent;
+        synchronous && parent;parent=parent->authority_parent)
+        synchronous=!parent->retain_bind_calls && !parent->control;
+    if(borrowed && synchronous && driver->prepared_opaque_frames!=SIZE_MAX) {
+        prime_eval_stack_run_root_call(space,arena,call,NULL,fuel,
+            preserve_bindings,target,0u,environment,false);
+        return true;
+    }
     if (driver->arena != arena || driver->poison_depth || driver->raw_call_depth != 1u ||
         !prime_eval_stack_target_is_owned(target) || driver->prepared_opaque_frames == SIZE_MAX) {
         driver->capacity_blocked = true;
