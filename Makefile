@@ -3507,6 +3507,7 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/need_demand_modes.metta \
 	tests/prime/atom_proc_roles.metta \
 	tests/prime/atom_proc_forwarding.metta \
+	tests/prime/declared_metatype_arguments.metta \
 	tests/prime/held_sequence_iteration.metta \
 	tests/prime/first_class_contexts.metta \
 	tests/prime/if_atom_data_boundary.metta \
@@ -3542,6 +3543,7 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/held_equality.metta \
 	tests/prime/held_patterns.metta \
 	tests/prime/held_value_pattern_inspection.metta \
+	tests/prime/read_value_operands.metta \
 	tests/prime/library_template_values.metta \
 	tests/prime/streaming_state_values.metta \
 	tests/prime/library_quote_declarations.metta \
@@ -3553,8 +3555,10 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/atom_result_type.metta \
 	tests/prime/computed_lambda_arguments.metta \
 	tests/prime/let_bound_learner.metta \
+	tests/prime/let_source_answers.metta \
 	tests/prime/data_head_patterns.metta \
 	tests/prime/lambda_names.metta \
+	tests/prime/binder_display_names.metta \
 	tests/prime/need_sequential_unification_refinement.metta \
 	tests/prime/relational_first_demand.metta \
 	tests/prime/first_answer_demand.metta \
@@ -25380,6 +25384,56 @@ test-prime-route-agreement: $(BIN)
 		done; \
 	done; \
 	echo "Prime route agreement: $$pass passed, $$fail failed"; \
+	[ $$fail -eq 0 ]
+
+# Experimental: what explicit evaluation does with a residual, a value
+# returned in expression form (`--prime-eval-residuals answered|completed|
+# carried`, or the same pragma).  The fixture runs under each mode on every
+# route; the pragma spelling switches mid-file; an HE profile refuses the
+# flag.  `answered` is the default.
+PRIME_EVAL_RESIDUAL_FIXTURES = tests/prime/eval_residuals/residual_modes.metta
+.PHONY: test-prime-eval-residuals
+test-prime: test-prime-eval-residuals
+test-prime-eval-residuals: $(BIN)
+	@pass=0; fail=0; \
+	for f in $(PRIME_EVAL_RESIDUAL_FIXTURES); do \
+		for mode in answered completed carried; do \
+			exp="$${f%.metta}.$$mode.expected"; \
+			for route in default reference fuel; do \
+				flags=""; envs=""; \
+				if [ $$route = fuel ]; then flags="--fuel 1000000"; fi; \
+				if [ $$route = reference ]; then envs="CETTA_PRIME_RELATIONAL_PLAN_REFERENCE=1"; fi; \
+				result=$$(env $$envs timeout $(PRIME_COMPLETION_TIMEOUT) $(CETTA_BIN_INVOKE) --lang prime \
+					--prime-eval-residuals $$mode $$flags "$$f" 2>&1); \
+				status=$$?; \
+				if [ $$status -eq 0 ] && [ "$$result" = "$$(cat "$$exp")" ]; then \
+					pass=$$((pass + 1)); \
+				else \
+					echo "FAIL: $$f under $$mode on the $$route route (exit $$status)"; \
+					diff <(cat "$$exp") <(echo "$$result") | head -20; \
+					fail=$$((fail + 1)); \
+				fi; \
+			done; \
+		done; \
+	done; \
+	f=tests/prime/eval_residuals/residual_modes_pragma.metta; \
+	result=$$(timeout $(PRIME_COMPLETION_TIMEOUT) $(CETTA_BIN_INVOKE) --lang prime "$$f" 2>&1); \
+	if [ $$? -eq 0 ] && [ "$$result" = "$$(cat "$${f%.metta}.expected")" ]; then \
+		pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: $$f"; \
+		diff <(cat "$${f%.metta}.expected") <(echo "$$result") | head -20; \
+		fail=$$((fail + 1)); \
+	fi; \
+	if $(CETTA_BIN_INVOKE) --lang he --profile extended \
+		--prime-eval-residuals answered $(PRIME_EVAL_RESIDUAL_FIXTURES) \
+		>/dev/null 2>&1; then \
+		echo "FAIL: the Prime residual switch changed an HE profile"; \
+		fail=$$((fail + 1)); \
+	else \
+		pass=$$((pass + 1)); \
+	fi; \
+	echo "Prime eval residual modes: $$pass passed, $$fail failed"; \
 	[ $$fail -eq 0 ]
 
 # A connective's absorbed operand is never evaluated without the explicit

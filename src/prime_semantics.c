@@ -7255,6 +7255,39 @@ static bool prime_key_free_after(Arena *arena,
     return prime_binder_occurs_free_in(arena, key, body, pattern);
 }
 
+static bool prime_spelling_unused(SymbolId id, void *context) {
+    return id != *(const SymbolId *)context;
+}
+
+/* The fresh variable that renames the binder `key`.  It shows the binder's
+ * name, with the least numeric suffix that no symbol or variable of `scope`
+ * spells, so the printed term reads back as the same term. */
+static Atom *prime_fresh_binder(Arena *arena, const Atom *key,
+                                Atom *const *scope, size_t count) {
+    const char *name =
+        key && key->kind == ATOM_SYMBOL ? atom_symbol_bytes((Atom *)key)
+        : key && key->kind == ATOM_VAR && key->symbol_number != SYMBOL_ID_NONE
+            ? symbol_bytes(g_symbols, key->symbol_number) : NULL;
+    if (!name) name = "binder";
+    size_t size = strlen(name) + 24u;
+    char *spelling = cetta_malloc(size);
+    Atom *fresh = NULL;
+    for (unsigned long long suffix = 0u;; suffix++) {
+        if (suffix) snprintf(spelling, size, "%s%llu", name, suffix);
+        else snprintf(spelling, size, "%s", name);
+        SymbolId id = symbol_lookup_cstr(g_symbols, spelling);
+        bool unused = true;
+        for (size_t i = 0u; unused && id != SYMBOL_ID_NONE && i < count; i++)
+            unused = atom_visit_syntax_symbols(scope[i], prime_spelling_unused,
+                                               &id);
+        if (!unused) continue;
+        fresh = atom_var_with_id(arena, spelling, fresh_var_id());
+        break;
+    }
+    free(spelling);
+    return fresh;
+}
+
 /* Substitute `value` for the binder with key `key` in a telescope's written
  * types, its own names and its body.  `group_syntax` holds each group's
  * current syntax and is updated in place, as `own` is.  A binder or own
@@ -7291,7 +7324,14 @@ static bool prime_subst_telescope_in(
                 continue;
             /* The binder would capture a name the value uses. Rename it.
              * Alpha-equivalent binders must not change the value. */
-            Atom *fresh = atom_var_with_id(arena, "binder", fresh_var_id());
+            Atom **scope = arena_alloc(arena, sizeof(Atom *) * (count + 3u));
+            if (!scope) return false;
+            memcpy(scope, group_syntax, sizeof(Atom *) * count);
+            scope[count] = *body;
+            scope[count + 1u] = own ? *own : NULL;
+            scope[count + 2u] = value;
+            Atom *fresh = prime_fresh_binder(arena, name_key, scope,
+                                             count + 3u);
             if (!fresh ||
                 !prime_subst_telescope_in(arena, groups + g + 1u,
                                           count - g - 1u,
@@ -7602,10 +7642,11 @@ Atom *prime_semantics_subst_var(Arena *arena, Atom *term, Atom *var,
 }
 
 /* A lambda with the binder or own name `key` renamed to a fresh variable
- * throughout its scope (alpha conversion).  The lambda itself when `key`
- * binds nothing in it. */
+ * throughout its scope (alpha conversion), shown apart from the names of
+ * `inserted`, the values substitution puts in that scope.  The lambda itself
+ * when `key` binds nothing in it. */
 static Atom *prime_lambda_rename_binder(Arena *arena, Atom *term,
-                                        const Atom *key) {
+                                        const Atom *key, Atom *inserted) {
     PrimeLambdaTelescope telescope;
     if (!prime_lambda_telescope(arena, term, &telescope)) return NULL;
     Atom **groups = arena_alloc(arena, sizeof(Atom *) * telescope.count);
@@ -7621,7 +7662,8 @@ static Atom *prime_lambda_rename_binder(Arena *arena, Atom *term,
             Atom *name_key = prime_binder_key(
                 cetta_prime_lambda_binder_name_v1(&group, i));
             if (!name_key || !prime_same_key(name_key, key)) continue;
-            Atom *fresh = atom_var_with_id(arena, "binder", fresh_var_id());
+            Atom *scope[] = {term, inserted};
+            Atom *fresh = prime_fresh_binder(arena, name_key, scope, 2u);
             if (!fresh ||
                 !prime_subst_telescope_in(arena, telescope.groups + g + 1u,
                                           telescope.count - g - 1u,
@@ -7949,7 +7991,7 @@ static Atom *prime_env_subst_lambda(PrimeEnvSubst *s, Atom *term,
                                        telescope.count, body, telescope.own)
                 : term;
         }
-        term = prime_lambda_rename_binder(s->arena, term, captured);
+        term = prime_lambda_rename_binder(s->arena, term, captured, body);
         if (!term) {
             s->failed = true;
             return NULL;

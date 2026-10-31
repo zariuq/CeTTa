@@ -1965,12 +1965,12 @@ static Atom *grounded_format_args(Arena *a, Atom *head, Atom **args, uint32_t na
     if (!(args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_STRING))
         return grounded_string_error(a, head, args, nargs,
                                      "format-args expects format string as a first argument and expression as a second argument");
-    if (args[1]->kind != ATOM_EXPR)
+    Atom *arg_list = atom_prime_held_payload(args[1]);
+    if (arg_list->kind != ATOM_EXPR)
         return grounded_string_error(a, head, args, nargs, "Atom is not an ExpressionAtom");
 
     const char *fmt = args[0]->ground.sval;
     size_t fmt_len = args[0]->ground.slen;
-    Atom *arg_list = args[1];
     StringBuf sb;
     sb_init(&sb);
     uint32_t argi = 0;
@@ -2003,11 +2003,11 @@ static int grounded_sort_strings_cmp(const void *lhs, const void *rhs) {
 static Atom *grounded_sort_strings(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if (nargs != 1)
         return grounded_incorrect_arity(a, head, args, nargs);
-    if (args[0]->kind != ATOM_EXPR)
+    Atom *list = atom_prime_held_payload(args[0]);
+    if (list->kind != ATOM_EXPR)
         return grounded_string_error(a, head, args, nargs,
                                      "sort-strings expects expression with strings as a first argument");
 
-    Atom *list = args[0];
     Atom **sorted = arena_alloc(a, sizeof(Atom *) * list->expr.len);
     for (CettaExprIndex i = 0; i < list->expr.len; i++) {
         Atom *elem = list->expr.elems[i];
@@ -3894,12 +3894,13 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
     if (head_id == g_builtin_syms.print_alternatives_bang) {
         if (nargs != 2)
             return grounded_incorrect_arity(a, head, args, nargs);
-        if (args[1]->kind != ATOM_EXPR)
+        Atom *alternatives = atom_prime_held_payload(args[1]);
+        if (alternatives->kind != ATOM_EXPR)
             return grounded_string_error(a, head, args, nargs, "Atom is not an ExpressionAtom");
         char *label = atom_to_string(a, args[0]);
-        printf("%" PRIu64 " %s:\n", (uint64_t)args[1]->expr.len, label);
-        for (CettaExprIndex i = 0; i < args[1]->expr.len; i++) {
-            char *rendered = atom_to_string(a, args[1]->expr.elems[i]);
+        printf("%" PRIu64 " %s:\n", (uint64_t)alternatives->expr.len, label);
+        for (CettaExprIndex i = 0; i < alternatives->expr.len; i++) {
+            char *rendered = atom_to_string(a, alternatives->expr.elems[i]);
             printf("    %s\n", rendered);
         }
         fflush(stdout);

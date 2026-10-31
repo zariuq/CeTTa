@@ -697,24 +697,28 @@ HeTypeApplicability he_type_call_applicable(
                 if (!apply_bindings_move(&next, &paths.items[p])) goto incomplete;
                 continue;
             }
-            if (check == HE_TYPE_ARGUMENT_METATYPE &&
-                atom_meta_type_accepts(arena, expected, argument)) {
+            bool metatype_fits = check == HE_TYPE_ARGUMENT_METATYPE &&
+                atom_meta_type_accepts(arena, expected, argument);
+            if (check == HE_TYPE_ARGUMENT_METATYPE && !metatype_fits &&
+                !services->infer_after_metatype_mismatch) {
+                Atom **actual = NULL;
+                uint32_t count = services->infer(services->context, argument, &actual);
+                for (uint32_t t = 0u; services->metatype_by_declared_type &&
+                     !metatype_fits && t < count; t++)
+                    metatype_fits = atom_eq(actual[t], expected);
+                bool saved = metatype_fits || he_type_errors_push(errors, argument_error(
+                    arena, expression, i + 1u, expected,
+                    count ? actual[0] : get_meta_type(arena, argument)));
+                free(actual);
+                if (!saved) goto incomplete;
+                if (!metatype_fits) continue;
+            }
+            if (metatype_fits) {
                 BindingsBuilder candidate;
                 if (!bindings_builder_init(&candidate, &paths.items[p])) goto incomplete;
                 bool matched = apply_bind_domain(services, &candidate, domain, argument, dependent);
                 bool saved = !matched || apply_bindings_clone(&next, bindings_builder_bindings(&candidate));
                 bindings_builder_free(&candidate);
-                if (!saved) goto incomplete;
-                continue;
-            }
-            if (check == HE_TYPE_ARGUMENT_METATYPE &&
-                !services->infer_after_metatype_mismatch) {
-                Atom **actual = NULL;
-                uint32_t count = services->infer(services->context, argument, &actual);
-                Atom *first = count ? actual[0] : get_meta_type(arena, argument);
-                bool saved = he_type_errors_push(errors, argument_error(
-                    arena, expression, i + 1u, expected, first));
-                free(actual);
                 if (!saved) goto incomplete;
                 continue;
             }
