@@ -1,5 +1,47 @@
 # A metagraph database in MeTTa
 
+## Computed properties with the native memo
+
+`space_computed_curriculum.metta` derives syntax-node counts from ordinary
+stored program records, using the existing `lib_memo` implementation. It adds
+three memberships to the existing curriculum collection:
+
+```text
+two equal emit records: Seq ── Use parse    check record: Use parse
+                         └─── Use parse
+node counts:                  3, 3                     1
+```
+
+```sh
+mkdir -m 700 computed-space
+./cetta --lang petta --run-contract examples/kb/space_computed_run.metta "$PWD/computed-space"
+```
+
+The same `KqSpace`/select/map plan runs embedded and through
+`space-computed:configuration`. It scans ground stored rows incrementally,
+then passes each syntax value explicitly to the recursive pure callback.
+Equal syntax can reuse its numerical calculation while every result retains
+its own occurrence reference. No whole-KB copy or durable cache is created.
+
+Every data dependency must be in the memoized function's arguments. This
+example reads no mutable Space, clock or external service inside that function.
+Existing native memo invalidation follows helper-code changes; the query's
+program watch refuses mixed-code continuation. A new data value has a different
+argument key. Program code itself is loaded explicitly; stored syntax and
+code-shaped fields remain inert. Unsupported ground syntax returns
+`ComputedSyntaxRefusedV1` with provenance. Open stored rows cannot manufacture
+memo arguments through schema binding.
+
+`make test-computed-queries` checks native hit/miss counters, duplicate
+occurrences, captured old data, new data/code answers, informed commits,
+retractions, restart/receipts and repeated cancellation/disconnect. The first
+query has two native cache misses; repeating it increases hits without further
+misses. The cache is process-local and optional: correctness must not depend
+on a warm entry. This qualifies pure row-derived memoization. Recursive graph
+tabling over captured durable views still needs its separate contract and
+witness; corrected PeTTa's ordinary table declarations retain their existing
+static-world semantics.
+
 ## Numerical evidence with declared origin units
 
 `space_evidence_curriculum.metta` extends the existing claims collection with
