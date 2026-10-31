@@ -60,6 +60,27 @@ typedef bool (*CettaNativeQueryApplyHoles)(
     void *context, const CettaNativeQueryEffect *effect, SymbolId head,
     const CettaSkeleton *skeleton, const AtomId *holes, size_t count);
 
+/* How a filter compares its operands' instances: by id, alike or apart,
+ * or as integers, LEFT less than RIGHT or not. */
+typedef enum {
+    CETTA_NATIVE_FILTER_ALIKE,
+    CETTA_NATIVE_FILTER_APART,
+    CETTA_NATIVE_FILTER_LESS,
+    CETTA_NATIVE_FILTER_NOT_LESS,
+} CettaNativeFilterOp;
+
+/* A comparison a filtered query's solutions meet (CettaNativeQuery.filters):
+ * the instances of LEFT and RIGHT, a variable or an atom each, compared as
+ * OP says. */
+typedef struct {
+    Atom *left;
+    Atom *right;
+    CettaNativeFilterOp op;
+} CettaNativeQueryFilter;
+
+/* The most comparisons a query's solutions meet. */
+#define CETTA_NATIVE_QUERY_FILTERS 4u
+
 typedef struct {
     Space *source;
     Atom *const *patterns;
@@ -101,14 +122,12 @@ typedef struct {
     Atom *guard_pattern;
     Atom *else_atom;
     bool else_empty;
-    /* When set (EFFECTS only, without a guard), each solution compares the
-     * instances of filter_left and filter_right, a variable or an atom
-     * each, by id: where their equality is filter_equal it makes the
-     * effects and answers template_atom, and otherwise answers else_atom,
-     * or nothing when else_empty. */
-    Atom *filter_left;
-    Atom *filter_right;
-    bool filter_equal;
+    /* When set (EFFECTS only), each solution compares the instances of each
+     * filter's left and right by id: one that meets every filter goes on
+     * to the guard, when there is one, and the effects; one that does not
+     * answers else_atom, or nothing when else_empty, and reads no guard. */
+    const CettaNativeQueryFilter *filters;
+    size_t filter_count;
     /* When set, the template's applications headed by these variables
      * answer themselves where their values cannot be applied: each
      * solution asks head_inert of each value, and a value that can be

@@ -27297,7 +27297,15 @@ static bool petta_machine_try_match_existence_observer(
         !petta_semantics_existence_view(
             expression, petta_machine_reify_head(machine), &view))
         return false;
-    if (!is_grounded_op(expression->expr.elems[0]->sym_id))
+    /* The comparison is an operation of the session: one of CeTTa's own,
+     * or a function of PeTTa's library still as the library defines it, as
+     * != is unless the program's Prolog redefined it.  Without the library
+     * != is data. */
+    SymbolId comparison = expression->expr.elems[0]->sym_id;
+    if (!is_grounded_op(comparison) &&
+        !(machine->host.library_function_current &&
+          machine->host.library_function_current(machine->host.context,
+                                                 comparison, 2u)))
         return false;
     /* Each intrinsic from the comparison down to the match, none of which
      * may have acquired authored equations. */

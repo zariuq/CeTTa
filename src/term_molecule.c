@@ -62,21 +62,20 @@ static inline bool mol_unbound(const CettaMolStore *store, uint32_t cell) {
            store->cells[cell].at == cell;
 }
 
+/* The cells and the frames that read them share one capacity, published
+ * once both hold it: a store refused a growth stays one a later branch may
+ * use. */
 static CettaMolResult mol_cell_of(CettaMolStore *store, uint32_t frame,
                                   CettaMol *cell_out) {
-    uint32_t cap = store->cell_cap;
+    uint32_t cells_cap = store->cell_cap;
+    uint32_t frames_cap = store->cell_cap;
     if (store->cell_len == UINT32_MAX - 1u ||
-        !mol_reserve((void **)&store->cells, &store->cell_cap,
-                     store->cell_len + 1u, sizeof(*store->cells)))
+        !mol_reserve((void **)&store->cells, &cells_cap,
+                     store->cell_len + 1u, sizeof(*store->cells)) ||
+        !mol_reserve((void **)&store->cell_frames, &frames_cap,
+                     store->cell_len + 1u, sizeof(*store->cell_frames)))
         return CETTA_MOL_DECLINE;
-    if (store->cell_cap != cap) {
-        uint32_t *frames = realloc(store->cell_frames,
-                                   (size_t)store->cell_cap *
-                                       sizeof(*frames));
-        if (!frames)
-            return CETTA_MOL_DECLINE;
-        store->cell_frames = frames;
-    }
+    store->cell_cap = cells_cap;
     uint32_t cell = store->cell_len++;
     store->cells[cell] = (CettaMol){CETTA_ATOM_ID_NONE, cell};
     store->cell_frames[cell] = frame;
