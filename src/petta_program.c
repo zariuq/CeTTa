@@ -1813,8 +1813,16 @@ static bool petta_program_type_declaration_view(
 
 bool petta_program_form_id_may_affect_metadata(const TermUniverse *universe,
                                                AtomId id) {
-    if (!universe || tu_kind(universe, id) != ATOM_EXPR ||
-        tu_arity(universe, id) != 3u)
+    if (!universe || tu_kind(universe, id) != ATOM_EXPR)
+        return false;
+    CettaExprLen arity = tu_arity(universe, id);
+    /* Graded equations have a coefficient and possibly an admission field.
+     * They establish callability in the same declaration block as their
+     * ordinary callers. Use the common syntax view for these longer forms. */
+    if (arity == 4u || arity == 5u)
+        return space_equation_view(term_universe_get_atom(universe, id),
+                                   true, NULL, NULL, NULL);
+    if (arity != 3u)
         return false;
     SymbolId head = tu_head_sym(universe, id);
     return head == g_builtin_syms.equals ||

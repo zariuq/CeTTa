@@ -348,6 +348,15 @@
       "code_diagnostics": 0
     },
     {
+      "source": "lts.metta",
+      "output": "lts.metta",
+      "source_sha256": "9ac957641320fc750d1b6e1bf0403122e0d9c3b85ef7e3b92309b4b37c3c96c2",
+      "output_sha256": "f127053ed5669611ff6219604b044d32b3440b0f59f96621ff95ccd01accb5f6",
+      "edits": 0,
+      "code_diagnostics": 0,
+      "dialect_replacements": 6
+    },
+    {
       "source": "mailbox.metta",
       "output": "mailbox.metta",
       "source_sha256": "737557e9faf71c3b06a1c0b4b6752248e5dbf981824fc8337ae711b95e629fec",
@@ -374,8 +383,8 @@
     {
       "source": "native_history.metta",
       "output": "native_history.metta",
-      "source_sha256": "953c5364eb43d7acd3b040741ac017dd52d213779a4cf8837989898f6345d56c",
-      "output_sha256": "0605a7a403bba87d7943820e9c470af2ac02db81fc83b01a495faa64671b52d7",
+      "source_sha256": "ae005473cec29c752945fc4e387dce0d260063e282dee26406a674df31dcd09a",
+      "output_sha256": "5fa9e3546a9692ea5cb2492bd0c993d4ba0c32652264114b16c86ca5a4a93da0",
       "edits": 17,
       "code_diagnostics": 0
     },

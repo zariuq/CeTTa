@@ -96,8 +96,11 @@ for language in ("he", "petta"):
     inert = call.replace("&self", "ModuleSpace(GroundingSpace-top)") if language == "he" else call
     for reference in (False, True):
         check(language, "!" + call, [inert], imported=False, reference=reference)
-        check(language, "!" + call, [inert],
-              profile="he" if language == "he" else None, reference=reference)
+        if language == "he":
+            check(language, "!" + call, [inert], profile="he", reference=reference)
+        else:
+            check(language, "(p a)\n!" + images(call, "ready"), ["(ready)"],
+                  profile=None, reference=reference)
         late = ("(p a)\n(= (late-query) " + call + ")\n!(late-query)\n"
                 "!(import! &self pat)\n!" + images("(late-query)", "ready") +
                 ("\n!" + images("(let $code (late-query) (eval $code))", "ready")

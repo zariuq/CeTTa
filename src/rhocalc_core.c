@@ -5895,6 +5895,7 @@ typedef enum {
     RHO_CANONICAL_COMPARE,
     RHO_CANONICAL_CHOOSE_COPY,
     RHO_CANONICAL_CHOOSE_REMAP,
+    RHO_CANONICAL_ENUMERATE_BUILD,
     RHO_CANONICAL_DISCARD,
     RHO_CANONICAL_FINISH,
     RHO_CANONICAL_BUILD
@@ -5939,6 +5940,9 @@ typedef struct {
     uint32_t component_key_count;
     bool best_view_ready,candidate_ready,comparison_live,found,done,quiescent;
     bool retire_selected;
+    bool enumerate, yielded;
+    uint64_t enumerated_build_steps, enumerated_copy_steps, enumerated_merge_steps;
+    uint64_t enumerated_children, enumerated_bytes;
 } RhoCanonicalCursor;
 
 static void rho_canonical_cursor_init(RhoCanonicalCursor *cursor, RhoMachine *machine) {
@@ -6322,6 +6326,12 @@ static bool rho_canonical_cursor_advance(RhoCanonicalCursor *cursor) {
         if (!rho_reaction_view_cursor_take(&cursor->view_job)) return false;
         rho_reaction_view_cursor_free(&cursor->view_job);
         cursor->candidate_ready=true;
+        if (cursor->enumerate) {
+            if (!rho_reaction_build_cursor_begin(&cursor->build,machine->arena,&cursor->candidate_view))
+                return false;
+            cursor->phase=RHO_CANONICAL_ENUMERATE_BUILD;
+            return true;
+        }
         if (!cursor->found) return rho_canonical_cursor_choose(cursor,0);
         cursor->comparison_live=true;
         if (!rho_reaction_compare_init(&cursor->comparison,&cursor->candidate_view,&cursor->best_view))
@@ -6381,6 +6391,20 @@ static bool rho_canonical_cursor_advance(RhoCanonicalCursor *cursor) {
             cursor->phase=RHO_CANONICAL_DISCARD;
             return true;
         }
+    case RHO_CANONICAL_ENUMERATE_BUILD:
+        if (!rho_reaction_build_cursor_advance(&cursor->build)) return false;
+        if (!cursor->build.done) return true;
+        cursor->next=cursor->build.result;
+        if (!rho_run_charge(&cursor->enumerated_build_steps,cursor->build.steps) ||
+            !rho_run_charge(&cursor->enumerated_copy_steps,cursor->build.copy_steps) ||
+            !rho_run_charge(&cursor->enumerated_merge_steps,cursor->build.merge_steps) ||
+            !rho_run_charge(&cursor->enumerated_children,cursor->build.children) ||
+            !rho_run_charge(&cursor->enumerated_bytes,cursor->build.bytes)) return false;
+        rho_reaction_build_cursor_free(&cursor->build);
+        cursor->found=true;
+        cursor->yielded=true;
+        cursor->phase=RHO_CANONICAL_DISCARD;
+        return true;
     case RHO_CANONICAL_DISCARD:
         if (cursor->candidate_ready) {
             if (cursor->candidate_view.body_len) {
@@ -6406,6 +6430,12 @@ static bool rho_canonical_cursor_advance(RhoCanonicalCursor *cursor) {
         return true;
     case RHO_CANONICAL_FINISH:
         cursor->quiescent=!cursor->found;
+        if (cursor->enumerate) {
+            cursor->next=NULL;
+            cursor->completed_scans=1u;
+            cursor->done=true;
+            return true;
+        }
         if (cursor->found) {
             /* Draft assembly requires a noninterning arena. Synchronous
              * interning profiles keep their admitted atomic constructor. */
@@ -6455,11 +6485,11 @@ static void rho_canonical_cursor_account(const RhoCanonicalCursor *cursor,
     account->key_bytes+=cursor->substitution.account.key_bytes;
     account->construction_children+=cursor->substitution.account.construction_children;
     account->construction_bytes+=cursor->substitution.account.construction_bytes;
-    account->reaction_build_steps+=cursor->build.steps;
-    account->reaction_copy_steps+=cursor->build.copy_steps;
-    account->reaction_merge_steps+=cursor->build.merge_steps;
-    account->reaction_children+=cursor->build.children;
-    account->reaction_bytes+=cursor->build.bytes;
+    account->reaction_build_steps+=cursor->build.steps+cursor->enumerated_build_steps;
+    account->reaction_copy_steps+=cursor->build.copy_steps+cursor->enumerated_copy_steps;
+    account->reaction_merge_steps+=cursor->build.merge_steps+cursor->enumerated_merge_steps;
+    account->reaction_children+=cursor->build.children+cursor->enumerated_children;
+    account->reaction_bytes+=cursor->build.bytes+cursor->enumerated_bytes;
     account->channel_scan_probes+=cursor->channel_scan_probes;
     account->matching_pairs+=cursor->matching_pairs;
     account->body_candidates+=cursor->body_candidates;
@@ -12062,6 +12092,8 @@ void rhocalc_run_close(RhocalcRun *run) {
     while (rhocalc_run_release_poll(&run, UINT64_MAX, true, NULL) !=
             CETTA_OWNED_RELEASE_COMPLETE) {}
 }
+
+#include "rhocalc_frontier.inc"
 
 bool rhocalc_reduce_to_quiescence_with_eval_context(
     Arena *arena, Atom *proc, const RhoRuntimeProfile *profile,

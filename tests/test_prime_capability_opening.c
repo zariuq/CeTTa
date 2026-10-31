@@ -977,7 +977,7 @@ int main(void) {
     arena_init(&arena);
     arena_set_hashcons(&arena, NULL);
     cetta_library_context_init_for_language_profile(&context, CETTA_LANGUAGE_PRIME,
-                                                   cetta_profile_prime_default());
+                                                  cetta_profile_prime_default());
     eval_set_library_context(&context);
     prime_need_snapshot_init(&g_prime_need_active);
     assert(prime_need_snapshot_begin(&g_prime_need_active));

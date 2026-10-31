@@ -94,7 +94,9 @@ identity and training-output identity do not discharge those semantic tests.
 Current profile qualification also records a GCC -Wstringop-overflow diagnostic
 at binding/name_space.h's atomic owner acquisition. The code relies on an
 issued name having a backing chunk; the returned cell is nevertheless nullable.
-The existing PGO -Wno-error policy also demotes this classified warning while
-allowing unclassified missing-count diagnostics. Treat the profile as
-experimental until that policy is narrowed and the allocator diagnostic is
+PGO preserves -Werror, uses -fprofile-correction for inconsistent execution
+counts and exempts only the named missing-profile diagnostic for untrained
+functions. Code diagnostics and structural profile mismatches remain errors.
+The allocator diagnostic can therefore stop a new profile build. Treat the
+profile as experimental until that finding and full profile qualification are
 resolved. Successful samples do not establish that invariant for every caller.

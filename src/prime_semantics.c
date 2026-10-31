@@ -3439,9 +3439,53 @@ static void prime_kernel_query_record(
     }
 }
 
-static PrimeRegularTermCheckingDecision prime_resolve_declared_regular_term(
+/* A dependency walk may ask for many declarations in one unchanged
+ * source. Preserve their checked preparation, while each query keeps its
+ * ordinary checking and complete authority-currentness tests. The busy bit
+ * prevents reentrant synthesis from modifying a borrowed in-progress frame. */
+struct CettaPrimeDeclarationContextMemoV1 {
+    struct CettaPrimeDeclarationContextMemoV1 *previous;
+    PrimeRegularDeclarationContext declarations;
+    Space *space;
+    Arena *arena;
+    uint64_t arena_epoch;
+    uint32_t arena_identity;
+    const SymbolTable *symbols;
+    uint64_t symbol_instance;
+    CettaLanguageId language;
+    CettaPrimeInterpretation *interpretation;
+    CettaNikDirectAuthorityTokenV1 authority;
+    bool busy;
+};
+static _Thread_local CettaPrimeDeclarationContextMemoV1 *g_prime_regular_dependency_cache;
+
+CettaPrimeDeclarationContextMemoV1 *prime_semantics_declaration_context_memo_enter(Space *space,Arena *arena) {
+    if(!space || !arena || !arena->identity)return NULL;
+    CettaPrimeDeclarationContextMemoV1 *cache=calloc(1u,sizeof(*cache));
+    if(!cache)return NULL;
+    if(!cetta_prime_typing_direct_authority_token_v1(space,UINT32_C(0x4445434c),
+            &cache->authority)) {free(cache);return NULL;}
+    cache->interpretation=prime_interpretation_capture_current();
+    if(!cache->interpretation) {free(cache);return NULL;}
+    cache->space=space;cache->arena=arena;cache->arena_epoch=arena->reset_epoch;
+    cache->arena_identity=arena->identity;cache->symbols=g_symbols;
+    cache->symbol_instance=symbol_table_instance_id(g_symbols);
+    cache->language=eval_current_language_id();
+    cache->previous=g_prime_regular_dependency_cache;
+    g_prime_regular_dependency_cache=cache;
+    return cache;
+}
+void prime_semantics_declaration_context_memo_leave(CettaPrimeDeclarationContextMemoV1 *cache) {
+    if(!cache)return;
+    assert(cache==g_prime_regular_dependency_cache && !cache->busy);
+    g_prime_regular_dependency_cache=cache->previous;
+    prime_regular_declaration_context_free(&cache->declarations);
+    prime_interpretation_release(cache->interpretation);
+    free(cache);
+}
+static PrimeRegularTermCheckingDecision prime_resolve_declared_regular_term_in_context(
     Space *space, Arena *arena, Atom *term, Atom *expected,
-    PrimeResourceLedger *ledger, bool synthesize, bool normalize) {
+    PrimeResourceLedger *ledger, bool synthesize, bool normalize, PrimeRegularDeclarationContext *declarations) {
     if (!space || !arena || !term || !ledger ||
         (!synthesize && !expected))
         return (PrimeRegularTermCheckingDecision){0};
@@ -3464,13 +3508,12 @@ static PrimeRegularTermCheckingDecision prime_resolve_declared_regular_term(
     CettaPrimeRegularKernelBudget judgment_steps =
         prime_regular_kernel_budget(ledger);
     recognition_budget.within = &judgment_steps;
-    PrimeRegularDeclarationContext declarations = {0};
     PrimeRegularDeclaredElaboration declaration_elaboration =
         prime_elaborate_declared_regular_term(
-            space, arena, term, &declarations, &recognition_budget);
+            space, arena, term, declarations, &recognition_budget);
     if (declaration_elaboration.status !=
         CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) {
-        prime_regular_declaration_context_free(&declarations);
+
         if (!declaration_elaboration.owned)
             return (PrimeRegularTermCheckingDecision){0};
         prime_account_exhausted_recognition(
@@ -3488,11 +3531,11 @@ static PrimeRegularTermCheckingDecision prime_resolve_declared_regular_term(
     if (!synthesize) {
         PrimeRegularDeclaredElaboration expected_elaboration =
             prime_elaborate_declared_regular_term(
-                space, arena, expected, &declarations,
+                space, arena, expected, declarations,
                 &recognition_budget);
         if (expected_elaboration.status !=
             CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) {
-            prime_regular_declaration_context_free(&declarations);
+
             if (!expected_elaboration.owned)
                 return (PrimeRegularTermCheckingDecision){0};
             prime_account_exhausted_recognition(
@@ -3505,16 +3548,16 @@ static PrimeRegularTermCheckingDecision prime_resolve_declared_regular_term(
         expected_lowered = expected_elaboration.lowered;
     }
 
-    if (!normalize && declarations.count == 0u &&
+    if (!normalize && declarations->count == 0u &&
         (synthesize || !prime_kernel_query_capturing())) {
-        prime_regular_declaration_context_free(&declarations);
+
         return (PrimeRegularTermCheckingDecision){0};
     }
 
     CettaPrimeRegularKernelBudget budget = prime_regular_kernel_budget(ledger);
     if (!prime_regular_declaration_charge(
             &budget, recognition_budget.spent)) {
-        prime_regular_declaration_context_free(&declarations);
+
         prime_account_regular_kernel(
             ledger, synthesize ? PRIME_RESOURCE_SYNTHESIS
                                : PRIME_RESOURCE_CHECKING,
@@ -3526,12 +3569,12 @@ static PrimeRegularTermCheckingDecision prime_resolve_declared_regular_term(
 
     PrimeRegularDeclarationOccurrenceResult instantiated_term =
         prime_regular_declaration_instantiate_occurrences_rec(
-            arena, &declarations, lowered.pattern, &budget);
+            arena, declarations, lowered.pattern, &budget);
     if (instantiated_term.status !=
             CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED ||
         !instantiated_term.pattern) {
         CettaPrimeRegularKernelStatus status = instantiated_term.status;
-        prime_regular_declaration_context_free(&declarations);
+
         prime_account_regular_kernel(
             ledger, synthesize ? PRIME_RESOURCE_SYNTHESIS
                                : PRIME_RESOURCE_CHECKING,
@@ -3548,13 +3591,13 @@ static PrimeRegularTermCheckingDecision prime_resolve_declared_regular_term(
     if (!synthesize) {
         PrimeRegularDeclarationOccurrenceResult instantiated_expected =
             prime_regular_declaration_instantiate_occurrences_rec(
-                arena, &declarations, expected_lowered.pattern, &budget);
+                arena, declarations, expected_lowered.pattern, &budget);
         if (instantiated_expected.status !=
                 CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED ||
             !instantiated_expected.pattern) {
             CettaPrimeRegularKernelStatus status =
                 instantiated_expected.status;
-            prime_regular_declaration_context_free(&declarations);
+
             prime_account_regular_kernel(
                 ledger, PRIME_RESOURCE_CHECKING, &budget);
             return prime_declared_term_decision(
@@ -3577,7 +3620,7 @@ static PrimeRegularTermCheckingDecision prime_resolve_declared_regular_term(
             elaborated.status == CETTA_PRIME_REGULAR_PATTERN_BUDGET_EXHAUSTED
                 ? CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED
                 : CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE;
-        prime_regular_declaration_context_free(&declarations);
+
         prime_account_regular_kernel(
             ledger, synthesize ? PRIME_RESOURCE_SYNTHESIS
                                : PRIME_RESOURCE_CHECKING,
@@ -3603,7 +3646,7 @@ static PrimeRegularTermCheckingDecision prime_resolve_declared_regular_term(
                     CETTA_PRIME_REGULAR_PATTERN_BUDGET_EXHAUSTED
                 ? CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED
                 : CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE;
-            prime_regular_declaration_context_free(&declarations);
+
             prime_account_regular_kernel(
                 ledger, PRIME_RESOURCE_CHECKING, &budget);
             return prime_declared_term_decision(
@@ -3618,14 +3661,14 @@ static PrimeRegularTermCheckingDecision prime_resolve_declared_regular_term(
     }
 
     Atom *context = prime_regular_declaration_kernel_context(
-        space, arena, &declarations, &budget);
+        space, arena, declarations, &budget);
 
     if (!synthesize && prime_kernel_query_capturing()) {
         prime_kernel_query_record(
-            declarations.count > 0u ? "declared" : "closed", context, NULL,
+            declarations->count > 0u ? "declared" : "closed", context, NULL,
             elaborated.term, expected_intrinsic,
-            declarations.level_parameters, declarations.level_parameter_count);
-        prime_regular_declaration_context_free(&declarations);
+            declarations->level_parameters, declarations->level_parameter_count);
+
         prime_account_regular_kernel(
             ledger, PRIME_RESOURCE_CHECKING, &budget);
         return prime_declared_term_decision(
@@ -3639,22 +3682,22 @@ static PrimeRegularTermCheckingDecision prime_resolve_declared_regular_term(
         computed =
             cetta_prime_regular_kernel_normalize_intrinsic_instantiating_levels_v1(
                 arena, context, elaborated.term,
-                declarations.level_parameters,
-                declarations.level_parameter_count, &budget);
+                declarations->level_parameters,
+                declarations->level_parameter_count, &budget);
         result = (CettaPrimeRegularKernelResult){
             computed.status, computed.type, computed.reason};
     } else if (synthesize) {
         result =
             cetta_prime_regular_kernel_synth_intrinsic_instantiating_levels_v1(
                 arena, context, elaborated.term,
-                declarations.level_parameters,
-                declarations.level_parameter_count, &budget);
+                declarations->level_parameters,
+                declarations->level_parameter_count, &budget);
     } else {
         result =
             cetta_prime_regular_kernel_check_intrinsic_instantiating_levels_v1(
                 arena, context, elaborated.term, expected_intrinsic,
-                declarations.level_parameters,
-                declarations.level_parameter_count, &budget);
+                declarations->level_parameters,
+                declarations->level_parameter_count, &budget);
     }
     bool current = cetta_prime_typing_direct_authority_token_v1_is_current(
         &authority_token, space, UINT32_C(0x4445434c));
@@ -3662,12 +3705,12 @@ static PrimeRegularTermCheckingDecision prime_resolve_declared_regular_term(
                         result.status ==
                             CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED
         ? prime_regular_declaration_quote_intrinsic(
-              arena, &declarations, result.type)
+              arena, declarations, result.type)
         : NULL;
     Atom *quoted_term = result.status ==
                             CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED
         ? prime_regular_declaration_quote_intrinsic(
-              arena, &declarations, elaborated.term)
+              arena, declarations, elaborated.term)
         : NULL;
     Atom *detail = result.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED
         ? (synthesize ? quoted_type : expected)
@@ -3677,9 +3720,9 @@ static PrimeRegularTermCheckingDecision prime_resolve_declared_regular_term(
                   : "declared-regular-checking");
     if (normalize && result.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) {
         Atom *normal = prime_regular_declaration_quote_intrinsic(
-            arena, &declarations, computed.term);
+            arena, declarations, computed.term);
         Atom *source_type = prime_regular_declaration_quote_intrinsic(
-            arena, &declarations, computed.source_type);
+            arena, declarations, computed.source_type);
         normal = normal ? cetta_prime_regular_term_quote_named_v1(arena, normal) : NULL;
         source_type = source_type
             ? cetta_prime_regular_term_quote_named_v1(arena, source_type) : NULL;
@@ -3694,7 +3737,7 @@ static PrimeRegularTermCheckingDecision prime_resolve_declared_regular_term(
             detail = prime_expr1(arena, "normal-form-quotation-failed");
         }
     }
-    prime_regular_declaration_context_free(&declarations);
+
     prime_account_regular_kernel(
         ledger, synthesize ? PRIME_RESOURCE_SYNTHESIS
                            : PRIME_RESOURCE_CHECKING,
@@ -3716,6 +3759,35 @@ static PrimeRegularTermCheckingDecision prime_resolve_declared_regular_term(
             prime_expr1(arena, "declaration-term-quotation-failed"), NULL);
     return prime_declared_term_decision(
         true, result.status, detail, quoted_term);
+}
+
+static PrimeRegularTermCheckingDecision prime_resolve_declared_regular_term(
+    Space *space,Arena *arena,Atom *term,Atom *expected,
+    PrimeResourceLedger *ledger,bool synthesize,bool normalize) {
+    CettaPrimeDeclarationContextMemoV1 *cache=g_prime_regular_dependency_cache;
+    bool reuse=cache && synthesize && !normalize && !prime_kernel_query_capturing() &&
+        cache->space==space && cache->arena==arena && !cache->busy &&
+        cache->arena_epoch==arena->reset_epoch && cache->arena_identity==arena->identity &&
+        cache->symbols==g_symbols && cache->symbol_instance==symbol_table_instance_id(g_symbols) &&
+        cache->language==eval_current_language_id() && prime_interpretation_is_current(cache->interpretation);
+
+    if(reuse && !cetta_prime_typing_direct_authority_token_v1_is_current(
+            &cache->authority,space,UINT32_C(0x4445434c))) {
+        prime_regular_declaration_context_free(&cache->declarations);
+        reuse=cetta_prime_typing_direct_authority_token_v1(
+            space,UINT32_C(0x4445434c),&cache->authority);
+    }
+    PrimeRegularDeclarationContext local={0};
+    PrimeRegularDeclarationContext *declarations=reuse ? &cache->declarations : &local;
+    if(reuse)cache->busy=true;
+    PrimeRegularTermCheckingDecision result=prime_resolve_declared_regular_term_in_context(
+        space,arena,term,expected,ledger,synthesize,normalize,declarations);
+    if(reuse) {
+        cache->busy=false;
+        if(!result.owned || result.status!=CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
+            prime_regular_declaration_context_free(&cache->declarations);
+    } else prime_regular_declaration_context_free(&local);
+    return result;
 }
 
 static PrimeFormStatus prime_form_declared_regular_type(
@@ -7577,6 +7649,40 @@ static bool prime_key_free_after(const PrimeInterpretation *interpretation, Aren
     return prime_binder_occurs_free_in(interpretation, arena, key, body, pattern);
 }
 
+static bool prime_spelling_unused(SymbolId id, void *context) {
+    return id != *(const SymbolId *)context;
+}
+
+/* The fresh variable that renames the binder `key`.  It shows the binder's
+ * name, with the least numeric suffix that no symbol or variable of `scope`
+ * spells, so the printed term reads back as the same term. */
+static Atom *prime_fresh_binder(Arena *arena, const Atom *key,
+                                Atom *const *scope, size_t count) {
+    const char *name =
+        key && key->kind == ATOM_SYMBOL ? atom_symbol_bytes((Atom *)key)
+        : key && key->kind == ATOM_VAR && key->symbol_number != SYMBOL_ID_NONE
+            ? symbol_bytes(g_symbols, key->symbol_number) : NULL;
+    if (!name) name = "binder";
+    size_t size = strlen(name) + 24u;
+    char *spelling = cetta_malloc(size);
+    if (!spelling) return NULL;
+    Atom *fresh = NULL;
+    for (unsigned long long suffix = 0u;; suffix++) {
+        if (suffix) snprintf(spelling, size, "%s%llu", name, suffix);
+        else snprintf(spelling, size, "%s", name);
+        SymbolId id = symbol_lookup_cstr(g_symbols, spelling);
+        bool unused = true;
+        for (size_t i = 0u; unused && id != SYMBOL_ID_NONE && i < count; i++)
+            unused = atom_visit_syntax_symbols(scope[i], prime_spelling_unused,
+                                               &id);
+        if (!unused) continue;
+        fresh = atom_var_with_id(arena, spelling, fresh_var_id());
+        break;
+    }
+    free(spelling);
+    return fresh;
+}
+
 /* Substitute `value` for the binder with key `key` in a telescope's written
  * types, its own names and its body.  `group_syntax` holds each group's
  * current syntax and is updated in place, as `own` is.  A binder or own
@@ -7613,7 +7719,14 @@ static bool prime_subst_telescope_in(const PrimeInterpretation *interpretation,
                 continue;
             /* The binder would capture a name the value uses. Rename it.
              * Alpha-equivalent binders must not change the value. */
-            Atom *fresh = atom_var_with_id(arena, "binder", fresh_var_id());
+            Atom **scope = arena_alloc(arena, sizeof(Atom *) * (count + 3u));
+            if (!scope) return false;
+            memcpy(scope, group_syntax, sizeof(Atom *) * count);
+            scope[count] = *body;
+            scope[count + 1u] = own ? *own : NULL;
+            scope[count + 2u] = value;
+            Atom *fresh = prime_fresh_binder(arena, name_key, scope,
+                                             count + 3u);
             if (!fresh ||
                 !prime_subst_telescope_in(interpretation, arena, groups + g + 1u,
                                           count - g - 1u,
@@ -7921,10 +8034,11 @@ static Atom *prime_semantics_subst_var_interpreted(const PrimeInterpretation *in
 }
 
 /* A lambda with the binder or own name `key` renamed to a fresh variable
- * throughout its scope (alpha conversion).  The lambda itself when `key`
- * binds nothing in it. */
+ * throughout its scope (alpha conversion), shown apart from the names of
+ * `inserted`, the values substitution puts in that scope.  The lambda itself
+ * when `key` binds nothing in it. */
 static Atom *prime_lambda_rename_binder(const PrimeInterpretation *interpretation, Arena *arena, Atom *term,
-                                        const Atom *key) {
+                                        const Atom *key, Atom *inserted) {
     PrimeLambdaTelescope telescope;
     if (!prime_lambda_telescope(arena, term, &telescope)) return NULL;
     Atom **groups = arena_alloc(arena, sizeof(Atom *) * telescope.count);
@@ -7940,7 +8054,8 @@ static Atom *prime_lambda_rename_binder(const PrimeInterpretation *interpretatio
             Atom *name_key = prime_binder_key(
                 cetta_prime_lambda_binder_name_v1(&group, i));
             if (!name_key || !prime_same_key(name_key, key)) continue;
-            Atom *fresh = atom_var_with_id(arena, "binder", fresh_var_id());
+            Atom *scope[] = {term, inserted};
+            Atom *fresh = prime_fresh_binder(arena, name_key, scope, 2u);
             if (!fresh ||
                 !prime_subst_telescope_in(interpretation, arena, telescope.groups + g + 1u,
                                           telescope.count - g - 1u,
@@ -8269,7 +8384,7 @@ static Atom *prime_env_subst_lambda(PrimeEnvSubst *s, Atom *term,
                                        telescope.count, body, telescope.own)
                 : term;
         }
-        term = prime_lambda_rename_binder(s->interpretation, s->arena, term, captured);
+        term = prime_lambda_rename_binder(s->interpretation, s->arena, term, captured, body);
         if (!term) {
             s->failed = true;
             return NULL;
