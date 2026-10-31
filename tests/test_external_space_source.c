@@ -242,17 +242,21 @@ int main(void) {
     space_query_cursor_free(identities);assert(!input.live && !input.active);
     SpaceQueryCursor *old=space_query_cursor_new_captured(&external,&arena,edge,NULL);assert(old);first_row(old);
     SpaceQueryCursor *copy=space_query_cursor_clone(old);assert(copy);size_t opened=input.opened;
-    input.published=input.captured=&later;input.events=single;input.event_count=2;
+    input.published=&later;input.events=single;input.event_count=2;
     assert(drain(old,&arena,edge,rows,&terminal)==2 && terminal==SPACE_QUERY_CURSOR_END);
     assert(drain(copy,&arena,edge,rows,&terminal)==2 && terminal==SPACE_QUERY_CURSOR_END && input.opened==opened);
     space_query_cursor_free(old);space_query_cursor_free(copy);
-    SpaceQueryCursor *fresh=space_query_cursor_new_captured(&external,&arena,edge,NULL);assert(fresh);
+    /* A captured Space handle is immutable. The later generation gets a new
+     * handle, rather than changing data beneath an unchanged Space token. */
+    Source later_input={.captured=&later,.published=&later,.events=single,.event_count=2,
+        .authorized=true,.require_bag=true,.ack_immediately=true};Space later_space;initialize_space(&later_space,&later_input);
+    SpaceQueryCursor *fresh=space_query_cursor_new_captured(&later_space,&arena,edge,NULL);assert(fresh);
     assert(drain(fresh,&arena,edge,rows,&terminal)==1 && terminal==SPACE_QUERY_CURSOR_END &&
         atom_eq(rows[0],parse(&arena,"(edge a b)")));space_query_cursor_free(fresh);
-    input.captured=&set;input.require_bag=false;
-    fresh=space_query_cursor_new_captured(&external,&arena,edge,NULL);assert(fresh);
+    space_free(&later_space);later_input.captured=&set;later_input.require_bag=false;initialize_space(&later_space,&later_input);
+    fresh=space_query_cursor_new_captured(&later_space,&arena,edge,NULL);assert(fresh);
     assert(drain(fresh,&arena,edge,rows,&terminal)==1 && terminal==SPACE_QUERY_CURSOR_END);
-    space_query_cursor_free(fresh);assert(!input.live && !input.active);
+    space_query_cursor_free(fresh);assert(!later_input.live && !later_input.active);space_free(&later_space);
     input.captured=input.published=&captured;input.require_bag=true;input.events=replay;input.event_count=sizeof(replay)/sizeof(*replay);
     old=space_query_cursor_new_captured(&external,&arena,edge,NULL);assert(old);first_row(old);
     input.authorized=false;input.authority_generation++;
@@ -262,12 +266,12 @@ int main(void) {
     bindings_free(&result);space_query_cursor_free(old);assert(!input.live && !input.active);
     puts("PASS: clones retain data/stream generations; declared content-set view differs from bag; revoked readers do not revive");
     Snapshot empty={facts,0,20,true,true};const Event end[]={{COMPLETE,0,0}};
-    input.captured=&empty;input.events=end;input.event_count=1;
+    space_free(&external);input.captured=&empty;input.events=end;input.event_count=1;initialize_space(&external,&input);
     size_t empty_polls=input.polls;
     fresh=space_query_cursor_new_captured(&external,&arena,edge,NULL);assert(fresh);
     assert(!drain(fresh,&arena,edge,rows,&terminal) && terminal==SPACE_QUERY_CURSOR_END && input.polls>empty_polls);
     space_query_cursor_free(fresh);assert(!input.live && !input.active);
-    input.captured=&captured;
+    space_free(&external);input.captured=&captured;initialize_space(&external,&input);
     const Event failures[][3]={{{WAIT,0,0},{ERROR,0,0}},{{ROW,0,0},{DROP,0,0}},
         {{CANCEL_ACCEPTED,0,0},{WAIT,0,0},{CANCELLED,0,0}},{{ROW,1,1}},{{ROW,0,0},{COMPLETE,0,0}}};
     const size_t lengths[]={2,2,3,1,2};
@@ -281,13 +285,13 @@ int main(void) {
     }
     input.events=replay;input.event_count=sizeof(replay)/sizeof(*replay);
     for(size_t mode=0;mode<2;mode++) {
-        input.captured=mode ? &set : &unknown;
+        space_free(&external);input.captured=mode ? &set : &unknown;initialize_space(&external,&input);
         Atom *pattern=parse(&arena,"(edge $x $y)");SpaceQueryCursorStep terminal;Atom *rows[32];
         SpaceQueryCursor *cursor=space_query_cursor_new_captured(&external,&arena,pattern,NULL);
         assert(cursor && !drain(cursor,&arena,pattern,rows,&terminal) && terminal==SPACE_QUERY_CURSOR_INCOMPLETE);
         space_query_cursor_free(cursor);assert(!input.live && !input.active);
     }
-    input.captured=&captured;input.ack_immediately=false;
+    space_free(&external);input.captured=&captured;input.ack_immediately=false;initialize_space(&external,&input);
     const Event cancel[]={{CANCEL_ACCEPTED,0,0},{WAIT,0,0}};input.events=cancel;input.event_count=2;
     SpaceOccurrenceCursor accepted;space_occurrence_cursor_init_empty(&accepted);
     assert(space_occurrence_cursor_init_scan(&external,&accepted));

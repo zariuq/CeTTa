@@ -212,7 +212,8 @@ The source scans complete candidates; remote query pushdown is unqualified.
 
 Data root and execution stream are retained together. Clones/selectors neither
 recapture a later publisher nor start a new remote query. Fresh captures can
-read a later generation while old readers finish the original. An unknown
+read a later generation through a new immutable Space handle while old readers
+finish the original. An unknown
 revision refuses captured-read admission. An explicit content-set profile can
 be read as such, but cannot satisfy a requested occurrence-bag profile.
 Revocation invalidates a reader; a later regrant cannot revive that old cursor.
@@ -232,7 +233,7 @@ for payload or occurrence identity. The corresponding private Lean model has
 nine laws/counterexamples. Neither certifies C, a network peer, immutable remote
 execution, authentication or backend snapshots.
 
-The mock owns an already available finite immutable stream. Its independent
+The mock is single-threaded and owns an already available finite immutable stream. Its independent
 rewind/clone capability is stronger than has been established for a running
 DAS execution. It does not demonstrate large remote result retention, streaming
 backpressure, reconnection integrity, bounded DAS server memory, an actual DAS
