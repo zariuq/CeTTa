@@ -15,17 +15,17 @@ reads the space.  Its six to twelve queries are joins of two to four legs
 whose later legs bind a prefix or every column, with fixed atoms and
 repeated variables, collected sorted and counted.  Each program runs on
 the native path and with CETTA_NATIVE_QUERY_REFERENCE=1, where no query is
-native; every variable named alike and each collection compared as a bag,
-the two outputs must agree.  A program the reference path cannot run
+native. Collections compare as bags under a consistent variable renaming;
+sharing, literal strings and ordered fields stay exact.  A program the reference path cannot run
 fails.
 """
 import argparse
 import os
 import random
-import re
 import subprocess
 import sys
 import tempfile
+from compare_answers import CollectionTrace
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 BINARY = ("R", "S")
@@ -117,31 +117,6 @@ def program(rng):
     return "\n".join(lines + statements) + "\n"
 
 
-def elements(text):
-    items, depth, start = [], 0, 0
-    for i, c in enumerate(text):
-        if c == '(':
-            depth += 1
-        elif c == ')':
-            depth -= 1
-        elif c == ' ' and depth == 0:
-            if i > start:
-                items.append(text[start:i])
-            start = i + 1
-    if start < len(text):
-        items.append(text[start:])
-    return items
-
-
-def canonical(output):
-    lines = []
-    for line in re.sub(r"\$[A-Za-z0-9_#]+", "$_", output).splitlines():
-        if line.startswith("(") and line.endswith(")"):
-            line = "(" + " ".join(sorted(elements(line[1:-1]))) + ")"
-        lines.append(line)
-    return "\n".join(lines)
-
-
 def run(binary, path, reference):
     env = dict(os.environ)
     env.pop("CETTA_NATIVE_QUERY_REFERENCE", None)
@@ -150,7 +125,7 @@ def run(binary, path, reference):
     p = subprocess.run([binary, "--profile", "extended", "--lang", "petta", path],
                        cwd=ROOT, env=env, capture_output=True, text=True,
                        timeout=120)
-    return p.returncode, canonical(p.stdout)
+    return p.returncode, CollectionTrace(p.stdout, ordered_lines=range(len(p.stdout.splitlines())) if p.returncode else ())
 
 
 def main():

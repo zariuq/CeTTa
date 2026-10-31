@@ -74,6 +74,11 @@ Optional:
 - libcurl: `make ENABLE_HTTP=1` enables the HTTP operations
 - Rust/Cargo and `MORK` and `PathMap` checkouts, for the bridge builds below
 
+The Prolog library supplies some PeTTa primitives in addition to the native
+ones; it is separate from Python support. With `ENABLE_LIB_PROLOG=0`, an
+unregistered operation stays uninterpreted. Optimized execution follows the
+same availability rule as ordinary execution.
+
 ## Build
 
 ```bash
@@ -84,6 +89,10 @@ make BUILD=core     # a smaller binary without Python
 The build bootstraps the stdlib in two stages. `./cetta --version` prints the
 version and build mode of the binary, and `./cetta --help` the full command
 line.
+
+When relocating a binary, keep `lib/` beside it or in its parent directory so
+explicit imports can find their source libraries. Running from the checkout
+also makes those libraries available.
 
 | Mode | Includes | Python |
 |------|----------|--------|
@@ -161,8 +170,8 @@ rho-calculus.
 
 ## Libraries
 
-Import a library with `!(import! &self <name>)`. The names below load under
-the same name in PeTTa, HE and Prime.
+Import a library with `!(import! &self <name>)`. Libraries may supply dialect
+overlays; use examples and contracts for the dialect you selected.
 
 Nonstandard PeTTa libraries require an explicit import. For example,
 `(str:starts-with "abc" "a")` stays data until `!(import! &self str)` loads
@@ -179,7 +188,8 @@ order. Importing one library does not open unrelated names.
 | `mm0kernel` | the native MM0 verifier for MM0 specifications and MMB proofs (`docs/mm0_native.txt`) |
 | `megalodon` | native Megalodon (Mathdata) proof checking |
 | `lib_pln`, `lib_wmpln` | Probabilistic Logic Networks |
-| `mork` | the MORK and MM2 interface (bridge builds) |
+| `mork` | HE's MORK helper interface (bridge builds) |
+| `(library lib_mm2)` | PeTTa's reference MORK operations over `&mork` (bridge builds) |
 
 ## Proof kernels
 
@@ -223,6 +233,32 @@ make test-asan-main
 library metadata. `make test-petta-corrected-stable` checks the current accepted
 observations. The [compatibility contract](docs/petta_compatibility.txt) explains
 which repairs supersede historical reference behavior.
+
+For changes to foreign callbacks, run:
+
+```bash
+make test-python-callback-completion \
+     test-petta-libpl-callback-completion \
+     test-petta-libpl-callback-source
+```
+
+These exercise the installed providers, including interrupted evaluation,
+cleanup, nested entry and preservation of completed data. A provider disabled
+in the selected build reports an explicit skip; qualify the corresponding
+enabled build before accepting a change to that provider.
+
+For changes to conditional answers and delayed goals, run
+`make test-conditional-registration test-delay-service test-petta-constraints`.
+These checks cover whole-packet validation, wakeup multiplicity and shared
+binding-history rollback.
+
+Readiness needs `METTAPEDIA_ROOT` pointing to the Lean project, and the frozen
+consolidation baseline's `CETTA_CONSOLIDATION_BASELINE_RECEIPT` and
+`CETTA_CONSOLIDATION_BASELINE_SHA256` (the receipt's digest). The exhaustive
+tier also needs `PETTA_ORACLE_ROOT`, a pinned checkout or source snapshot;
+its source files and hashes are checked before testing. Validate the selected
+inputs and inspect the commands first with
+`python3 scripts/cetta_main_readiness.py --tier exhaustive --dry-run`.
 
 ## Bridge builds (MORK and PathMap)
 
@@ -291,8 +327,8 @@ $ ./cetta --lang he benchmarks/bench_backchain_heavy_nilbc.metta | tail -1
 [(: (r-mortal r01 r01c) (mortal r01)), (: (r-mortal r02 r02c) (mortal r02)), ...]
 ```
 
-`(: (r-mortal r01 r01c) (mortal r01))` reads: r01 is mortal, by the rule
-r-mortal applied to the evidence r01c.
+`(: (r-mortal r01 r01c) (mortal r01))` means that r01 is mortal, using
+researcher proof r01 and curiosity proof r01c.
 
 ### Breadth-first search over 181,440 states (HE)
 
@@ -325,8 +361,8 @@ that a query completed. See the benchmark's input paths before running it.
 ## Repository map
 
 - `src/`: the runtime: atoms and symbols (`atom.c`, `symbol.c`), matching and
-  bindings (`match.c`, `binding/`), spaces (`space.c`), the evaluators
-  (`eval.c` for HE and Prime, `petta_*.c` for PeTTa), grounded operations
+  bindings (`match.c`, `binding/`), spaces (`space.c`), shared invocation and
+  dialect entrypoints (`eval.c`), PeTTa search and plans (`petta_*.c`), grounded operations
   (`grounded.c`), readers (`parser.c` and the compiled dialect readers), the
   term universe (`term_universe.c`) and the CLI (`main.c`)
 - `native/`: the native modules, among them the HOL Light, MM0 and Megalodon

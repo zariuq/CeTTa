@@ -984,6 +984,8 @@ SHARED_RETURN_PRODUCER_TEST_OBJ = runtime/bootstrap/test_shared_return_producer.
 SHARED_RETURN_PRODUCER_TEST_BIN = runtime/test_shared_return_producer-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 NATIVE_CONDITIONAL_CONTEXT_TEST_OBJ = runtime/bootstrap/test_native_conditional_context.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 NATIVE_CONDITIONAL_CONTEXT_TEST_BIN = runtime/test_native_conditional_context-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+CONDITIONAL_REGISTRATION_TEST_OBJ = runtime/bootstrap/test_conditional_registration.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+CONDITIONAL_REGISTRATION_TEST_BIN = runtime/test_conditional_registration-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 ANSWER_STORAGE_TEST_OBJ = runtime/bootstrap/test_answer_storage.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 ANSWER_STORAGE_TEST_BIN = runtime/test_answer_storage-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 OWNED_RETURN_IMAGE_TEST_OBJ = runtime/bootstrap/test_owned_return_image.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
@@ -3621,25 +3623,25 @@ all: $(BIN)
 	@echo "Tip: ./$(BIN) -v prints the active version and build mode"
 
 core:
-	@$(MAKE) BUILD=core $(BIN)
+	@$(MAKE) BUILD=core all
 
 python:
-	@$(MAKE) BUILD=python $(BIN)
+	@$(MAKE) BUILD=python all
 
 mork:
-	@$(MAKE) BUILD=mork $(BIN)
+	@$(MAKE) BUILD=mork all
 
 main:
-	@$(MAKE) BUILD=main $(BIN)
+	@$(MAKE) BUILD=main all
 
 pathmap:
-	@$(MAKE) BUILD=pathmap $(BIN)
+	@$(MAKE) BUILD=pathmap all
 
 full:
-	@$(MAKE) BUILD=full $(BIN)
+	@$(MAKE) BUILD=full all
 
 profile:
-	@$(MAKE) BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 ENABLE_RUNTIME_TIMING=1 $(BIN)
+	@$(MAKE) BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 ENABLE_RUNTIME_TIMING=1 all
 
 bench-metamath-d5: $(BIN)
 	@./scripts/bench_metamath_d5.sh
@@ -3967,6 +3969,16 @@ test-arena-block-growth: $(ARENA_BLOCK_GROWTH_TEST_BIN)
 # each waiting goal once, in suspension order; queue a goal suspended on a
 # bound variable; roll back to any mark; rebase onto compacted checkpoints.
 DELAY_SERVICE_TEST_BIN = runtime/test_delay_service-$(BUILD_OBJ_TAG)
+DELAY_SERVICE_INDEX_TEST_BIN = runtime/test_delay_service_index-$(BUILD_OBJ_TAG)
+
+$(DELAY_SERVICE_INDEX_TEST_BIN): tests/test_delay_service_index.c src/delay_service.c src/delay_service.h src/atom.c src/binding/frame_identity.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) -DCETTA_TEST_HOOKS=1 -DCETTA_RUNTIME_STATS_NOOP=1 $(CFLAGS) -o $@ tests/test_delay_service_index.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/term_canon.c $(LDFLAGS)
+
+.PHONY: test-delay-service-index
+test-delay-service test-execution-semantic-ledger: test-delay-service-index
+test-delay-service-index: $(DELAY_SERVICE_INDEX_TEST_BIN)
+	@$(call cetta_exec,./$(DELAY_SERVICE_INDEX_TEST_BIN))
 
 $(DELAY_SERVICE_TEST_BIN): tests/test_delay_service.c src/delay_service.c src/delay_service.h src/atom.c src/binding/frame_identity.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
@@ -5376,6 +5388,18 @@ test-all: test-shared-return-producer
 test-shared-return-producer: $(SHARED_RETURN_PRODUCER_TEST_BIN)
 	@$(call cetta_exec,./$(SHARED_RETURN_PRODUCER_TEST_BIN))
 	@$(call cetta_exec,./$(SHARED_RETURN_PRODUCER_TEST_BIN)) --prime-native
+
+$(CONDITIONAL_REGISTRATION_TEST_OBJ): tests/test_conditional_registration.c src/petta_search_machine.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -Isrc -c $< -o $@
+
+$(CONDITIONAL_REGISTRATION_TEST_BIN): $(CONDITIONAL_REGISTRATION_TEST_OBJ) $(filter-out src/petta_search_machine.%,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ -Wl,--wrap=cetta_delay_service_new,--wrap=cetta_delay_suspend $(LDFLAGS)
+
+.PHONY: test-conditional-registration
+test-all test-execution-semantic-ledger: test-conditional-registration
+test-conditional-registration: $(CONDITIONAL_REGISTRATION_TEST_BIN)
+	@$(call cetta_exec,./$(CONDITIONAL_REGISTRATION_TEST_BIN))
 
 $(NATIVE_CONDITIONAL_CONTEXT_TEST_OBJ): tests/test_native_conditional_context.c src/eval.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
@@ -48041,3 +48065,38 @@ test-execution-semantic-ledger: $(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN) $(PETTA_S
 	@$(PETTA_SEARCH_MACHINE_TEST_BIN) --semantic-ledger
 
 main-readiness-routine main-readiness-exhaustive: test-execution-semantic-ledger
+
+.PHONY: test-python-callback-completion
+test-execution-semantic-ledger: test-python-callback-completion
+test-python-callback-completion: $(BIN)
+ifeq ($(ENABLE_PYTHON),1)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_python_callback_completion.py ./$(BIN)
+else
+	@echo "SKIP: Python callback completion (Python support disabled)"
+endif
+
+.PHONY: test-petta-libpl-callback-completion
+test-execution-semantic-ledger test-petta-libpl: test-petta-libpl-callback-completion
+.PHONY: test-petta-libpl-callback-source
+test-execution-semantic-ledger test-petta-libpl: test-petta-libpl-callback-source
+test-petta-libpl-callback-source: $(BIN)
+ifeq ($(LIB_PROLOG_ENABLED),1)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_libpl_callback_source.py ./$(BIN)
+else
+	@echo "SKIP: Prolog callback source entry (embedded Prolog disabled)"
+endif
+
+ifeq ($(LIB_PROLOG_ENABLED),1)
+PETTA_CALLBACK_PROBE = runtime/libpl_callback_probe-$(BUILD_OBJ_TAG).so
+$(PETTA_CALLBACK_PROBE): tests/support/libpl_callback_probe.c src/eval_completion.h \
+		src/stats.h src/generated/cetta_runtime_counters.generated.h
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Isrc -fPIC -shared \
+		$(LIB_PROLOG_CFLAGS) -o $@ $< $(LIB_PROLOG_LDFLAGS)
+
+test-petta-libpl-callback-completion: $(BIN) $(PETTA_CALLBACK_PROBE)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_libpl_callback_completion.py \
+		./$(BIN) $(PETTA_CALLBACK_PROBE) $(if $(filter 1,$(ENABLE_RUNTIME_STATS)),--stats,)
+else
+test-petta-libpl-callback-completion: $(BIN)
+	@echo "SKIP: Prolog callback completion (embedded Prolog disabled)"
+endif

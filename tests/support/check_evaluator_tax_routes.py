@@ -106,6 +106,35 @@ def program(call: str, repeats: int) -> str:
             f'     (let $text "{literal}" {call}))))\n')
 
 
+def expected_results(repeats: int) -> dict[str, int]:
+    """A character-level oracle, independent of regex/list execution."""
+    text = UNIT * repeats
+    steering = sum(char in '\\"()' for char in text)
+    depth, quoted, escaped = 0, False, False
+    for char in text:
+        if escaped:
+            escaped = False
+        elif quoted:
+            if char == '\\':
+                escaped = True
+            elif char == '"':
+                quoted = False
+        elif char == '"':
+            quoted = True
+        elif char == '(':
+            depth += 1
+        elif char == ')' and depth:
+            depth -= 1
+    return {
+        'base': 0, 'base-cons': 0,
+        'if-let': steering, 'heads': steering, 'user-heads': steering,
+        'by-case': steering, 'via-case': steering, 'via-let': steering,
+        'with-and': text.count(')'),
+        'with-not': steering - text.count('"'),
+        'scan': depth, 'scan-via-case': depth,
+    }
+
+
 def run(binary: Path, path: Path, extra: dict[str, str] | None = None,
         instructions: bool = False):
     env = {k: v for k, v in os.environ.items() if not k.startswith("CETTA_")}
@@ -139,6 +168,7 @@ def main() -> int:
         directory = args.output or Path(temporary)
         directory.mkdir(parents=True, exist_ok=True)
         answers, failures = {}, []
+        expected = expected_results(args.repeats)
         for name, (call, baseline, compiled, budget) in SHAPES.items():
             path = directory / f"{name}.metta"
             path.write_text(program(call, args.repeats))
@@ -154,7 +184,16 @@ def main() -> int:
             if any(r.returncode for r in routes) or len(outputs) != 1:
                 failures.append(f"{name}: routes disagree or fail")
                 continue
-            answers[name] = default.stdout.strip().splitlines()[-1]
+            printed = default.stdout.strip().splitlines()
+            try:
+                answer = int(printed[-1])
+            except (ValueError, IndexError):
+                failures.append(f"{name}: no numeric loop result; verify the runtime's source libraries")
+                continue
+            if answer != expected[name]:
+                failures.append(f"{name}: result {answer}, expected {expected[name]}")
+                continue
+            answers[name] = str(answer)
             hosts = [line.removeprefix("open-equations host ")
                      for line in default.stderr.splitlines()
                      if line.startswith("open-equations host ")]
@@ -176,7 +215,13 @@ def main() -> int:
                 for repeats in (args.repeats, 2 * args.repeats):
                     path = directory / f"{name}-{repeats}.metta"
                     path.write_text(program(SHAPES[name][0], repeats))
-                    counted.append(run(binary, path, instructions=True)[1])
+                    result, count = run(binary, path, instructions=True)
+                    printed = result.stdout.strip().splitlines()
+                    if (result.returncode or not printed or count is None or
+                            printed[-1] != str(expected_results(repeats)[name])):
+                        failures.append(f"{name}: incomplete instruction observation at length {repeats}")
+                        return None
+                    counted.append(count)
                 return counted[1] - counted[0]
             baselines = {name: growth(name) for name, shape in SHAPES.items()
                          if shape[1] is None}
@@ -184,7 +229,10 @@ def main() -> int:
             for name, (call, baseline, compiled, budget) in SHAPES.items():
                 if baseline is None:
                     continue
-                per = (growth(name) - baselines[baseline]) / steps
+                measured = growth(name)
+                if measured is None or baselines[baseline] is None:
+                    continue
+                per = (measured - baselines[baseline]) / steps
                 over = per > budget
                 print(f"{name:16}{per:18.0f}{budget:9}{'  OVER' if over else ''}")
                 if over:

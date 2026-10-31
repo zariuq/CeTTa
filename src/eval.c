@@ -962,7 +962,9 @@ static void eval_mark_incomplete(CettaEvalCompletion completion) {
 /* An interrupted native call cannot be treated as ordinary relational
  * failure by a caller's fallback branch. The enclosing episode unwinds;
  * unlike a local depth cutoff, no later call may perform an effect. */
-static void eval_mark_interrupted(CettaEvalCompletion completion) {
+void eval_mark_interrupted(CettaEvalCompletion completion) {
+    if (completion == CETTA_EVAL_COMPLETE)
+        return;
     eval_mark_incomplete(completion);
     if (g_eval_completion_tracker)
         g_eval_completion_tracker->interrupted = true;
@@ -2135,6 +2137,10 @@ static Atom *mork_handle_syntax_error(Arena *a, Atom *call,
 }
 
 static Atom *make_call_expr(Arena *a, Atom *head, Atom **args, uint32_t nargs);
+static bool dispatch_native_op(Space *s, Arena *a, Atom *head, Atom **args, uint32_t nargs, CettaCallOutcome *outcome);
+static bool sequence_native_call(Space *space, Arena *arena,
+    CettaCallOutcome outcome, bool expression_is_value, Atom *expected_type,
+    const Bindings *environment, OutcomeSet *outcomes, Atom **expression);
 static void metta_eval_bind(Space *s, Arena *a, Atom *atom, int fuel, OutcomeSet *os);
 static bool prime_need_ref_is_active(Atom *atom, uint64_t *thunk_id);
 static Atom *prime_need_source_argument(Atom *argument, bool *projected);
@@ -2339,30 +2345,38 @@ static Atom *minimal_foldl_llist_expression(Arena *arena, CettaCallOutcome resul
     return eval_call_outcome_atom(arena, result);
 }
 
-static Atom *dispatch_named_native(Space *s, Arena *a, SymbolId head_id,
-                                   Atom **args, uint32_t nargs) {
-    __attribute__((cleanup(eval_gc_external_owner_guard_leave)))
-    EvalGcExternalOwnerGuard borrowed_values = {0};
-    eval_gc_external_owner_guard_enter(&borrowed_values);
-    Atom *head = atom_symbol_id(a, head_id);
-    if (head_id == g_builtin_syms.minimal_foldl_llist)
-        return minimal_foldl_llist_expression(a,
-            eval_minimal_foldl_llist(a, head, args, nargs));
-    CettaCallOutcome outcome;
-    if (grounded_call(a, head, args, nargs, &outcome) ||
-        (g_library_context &&
-         cetta_library_call_native(g_library_context, s, a, head, args,
-                                   nargs, &outcome)))
-        return eval_call_outcome_atom(a, outcome);
-    return NULL;
-}
-
 static Atom *rewrite_error_call(Arena *a, Atom *syntax_atom, Atom *result) {
     if (!result || !atom_is_error(result) || result->kind != ATOM_EXPR ||
         result->expr.len < 3) {
         return result;
     }
     return atom_error(a, syntax_atom, result->expr.elems[2]);
+}
+
+/* The primitive worker owns backend admission and provider priority. Its
+ * callers establish public-name policy and synchronous argument lifetime. */
+static inline bool dispatch_native_implementation(Space *space, Arena *arena,
+    Atom *head, Atom **arguments, uint32_t count, CettaCallOutcome *outcome) {
+    return grounded_call(arena, head, arguments, count, outcome) ||
+        (g_library_context && cetta_library_call_native(g_library_context,
+            space, arena, head, arguments, count, outcome));
+}
+
+/* Alias presentation may name the public scalar call, but never changes
+ * admission, control, pending obligations or a frontier's container. */
+static bool dispatch_native_alias(Space *space, Arena *arena, Atom *source,
+    SymbolId head, Atom **arguments, uint32_t count, CettaCallOutcome *outcome) {
+    __attribute__((cleanup(eval_gc_external_owner_guard_leave)))
+    EvalGcExternalOwnerGuard borrowed_values = {0};
+    eval_gc_external_owner_guard_enter(&borrowed_values);
+    if (!dispatch_native_implementation(space, arena, atom_symbol_id(arena, head),
+                                        arguments, count, outcome))
+        return false;
+    if (cetta_call_outcome_shape_valid(*outcome) &&
+        (outcome->kind != CETTA_CALL_VALUE ||
+         !cetta_call_result_is_frontier(outcome->result_form)))
+        outcome->term = rewrite_error_call(arena, source, outcome->term);
+    return true;
 }
 
 static bool emit_generic_mork_handle_native_syntax(
@@ -2377,11 +2391,12 @@ static bool emit_generic_mork_handle_native_syntax(
     for (uint32_t i = 0; i < nargs; i++) {
         resolved_args[i] = resolve_registry_refs(a, args[i]);
     }
-    Atom *result = dispatch_named_native(s, a, explicit_head_id, resolved_args, nargs);
-    if (!result) {
+    CettaCallOutcome outcome;
+    if (!dispatch_native_alias(s, a, syntax_atom, explicit_head_id,
+                               resolved_args, nargs, &outcome))
         return false;
-    }
-    outcome_set_add(os, rewrite_error_call(a, syntax_atom, result), &empty);
+    Atom *expression = NULL;
+    (void)sequence_native_call(s, a, outcome, true, NULL, &empty, os, &expression);
     return true;
 }
 
@@ -3845,14 +3860,10 @@ static Atom *outcome_preview_atom(const Outcome *out) {
     return record ? record->result : NULL;
 }
 
-static bool dispatch_native_op(Space *s, Arena *a, Atom *head, Atom **args, uint32_t nargs, CettaCallOutcome *outcome);
 static bool dispatch_native_invocation(Space *s, Arena *a,
                                        const CettaInvocation *invocation,
                                        CettaCallOutcome *outcome);
-static Atom *native_outcome_expression(Arena *a, CettaCallOutcome outcome);
-static bool sequence_native_call(Space *space, Arena *arena,
-    CettaCallOutcome outcome, bool expression_is_value, Atom *expected_type,
-    const Bindings *environment, OutcomeSet *outcomes, Atom **expression);
+static Atom *he_one_step_native_expression(Arena *a, CettaCallOutcome outcome);
 static bool try_stream_count_size_collapse(Space *s, Arena *a, Atom *atom,
                                            const Bindings *current_env, int fuel,
                                            CettaCallOutcome *outcome);
@@ -7900,16 +7911,21 @@ static EvalSpaceMutationEffect eval_apply_space_removal(
     return effect;
 }
 
-static Atom *dispatch_native_space_mutation(Space *s, Arena *a, Atom *head,
-                                            Atom **args, uint32_t nargs) {
+static bool dispatch_native_space_mutation(Space *s, Arena *a, Atom *head,
+    Atom **args, uint32_t nargs, CettaCallOutcome *outcome) {
     if (!head || head->kind != ATOM_SYMBOL || nargs != 2 || !g_registry)
-        return NULL;
+        return false;
 
     SymbolId head_id = head->sym_id;
     bool is_add = head_id == g_builtin_syms.add_atom;
     bool is_remove = head_id == g_builtin_syms.remove_atom;
     if (!is_add && !is_remove)
-        return NULL;
+        return false;
+    if (!args || !args[0] || !args[1]) {
+        eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+        *outcome = cetta_call_interrupted();
+        return true;
+    }
 
     __attribute__((cleanup(cetta_shared_transition_guard_leave)))
     CettaSharedTransitionGuard shared_transition = {0};
@@ -7928,48 +7944,54 @@ static Atom *dispatch_native_space_mutation(Space *s, Arena *a, Atom *head,
         Atom **resolved_args = arena_alloc(a, sizeof(Atom *) * nargs);
         for (uint32_t i = 0; i < nargs; i++)
             resolved_args[i] = resolve_registry_refs(a, args[i]);
-        Atom *result = dispatch_named_native(s, a, explicit_head_id,
-                                             resolved_args, nargs);
-        if (result)
-            return rewrite_error_call(a, call, result);
+        if (dispatch_native_alias(s, a, call, explicit_head_id,
+                                   resolved_args, nargs, outcome))
+            return true;
     }
 
     Atom *mork_handle_error = guard_mork_handle_syntax(
         s, a, call, space_ref, fuel, syntax, explicit_syntax);
-    if (mork_handle_error)
-        return mork_handle_error;
+    if (mork_handle_error) {
+        *outcome = cetta_call_value(mork_handle_error);
+        return true;
+    }
 
     Space *target = resolve_single_space_arg_write(s, a, space_ref, fuel);
     if (!target)
         target = petta_ensure_named_space(s, a, space_ref);
     if (!target) {
-        return space_arg_error(a, call,
-                               is_add
-                                   ? "add-atom expects a space as the first argument"
-                                   : "remove-atom expects a space as the first argument");
+        *outcome = cetta_call_value(space_arg_error(a, call,
+            is_add ? "add-atom expects a space as the first argument"
+                   : "remove-atom expects a space as the first argument"));
+        return true;
     }
 
     Atom *mork_error = guard_mork_space_syntax(
         a, call, target, syntax, explicit_syntax);
-    if (mork_error)
-        return mork_error;
+    if (mork_error) {
+        *outcome = cetta_call_value(mork_error);
+        return true;
+    }
 
     if (space_match_backend_is_attached_compiled(target) &&
         !space_match_backend_materialize_attached(
             target, eval_storage_arena(a))) {
-        return space_backend_or_symbol_error(
-            a, call, "AttachedCompiledSpaceMaterializeFailed");
+        *outcome = cetta_call_value(space_backend_or_symbol_error(
+            a, call, "AttachedCompiledSpaceMaterializeFailed"));
+        return true;
     }
 
     payload = petta_flatten_closed_open_cons(a, payload);
     EvalSpaceMutationEffect effect = is_add
         ? eval_apply_space_addition(target, a, call, payload, false)
         : eval_apply_space_removal(target, a, call, payload);
-    if (effect.error)
-        return effect.error;
-    if (!effect.emit_result)
-        return NULL;
-    return atom_unit(a);
+    if (!effect.emit_result) {
+        eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_CAPACITY);
+        *outcome = cetta_call_interrupted();
+    } else {
+        *outcome = cetta_call_value(effect.error ? effect.error : atom_unit(a));
+    }
+    return true;
 }
 
 /* PeTTa's builtins are predicates: the value a grounded operation returns is
@@ -8059,10 +8081,8 @@ static bool dispatch_native_invocation(Space *s, Arena *a,
                 s, a, args[0], eval_get_default_fuel())) {
             Atom *resolved = resolve_registry_refs(a, args[0]);
             Atom *mork_args[] = { resolved };
-            Atom *result = dispatch_named_native(
-                s, a, g_builtin_syms.lib_mork_space_size, mork_args, 1);
-            *outcome = cetta_call_value(rewrite_error_call(a, call, result));
-            return result != NULL;
+            return dispatch_native_alias(s, a, call,
+                g_builtin_syms.lib_mork_space_size, mork_args, 1u, outcome);
         }
         Atom *handle_error = guard_mork_handle_syntax(
             s, a, call, args[0], eval_get_default_fuel(), "size", "mork:size");
@@ -8080,11 +8100,8 @@ static bool dispatch_native_invocation(Space *s, Arena *a,
             }
         }
     }
-    Atom *space_mutation = dispatch_native_space_mutation(s, a, head, args, nargs);
-    if (space_mutation) {
-        *outcome = cetta_call_value(space_mutation);
+    if (dispatch_native_space_mutation(s, a, head, args, nargs, outcome))
         return true;
-    }
     if (head &&
         atom_is_symbol_id(head, g_builtin_syms.minimal_foldl_llist)) {
         *outcome = eval_minimal_foldl_llist(a, head, args, nargs);
@@ -8092,12 +8109,7 @@ static bool dispatch_native_invocation(Space *s, Arena *a,
             *outcome = cetta_call_value(minimal_foldl_llist_expression(a, *outcome));
         return outcome->term != NULL;
     }
-    if (grounded_call(a, head, args, nargs, outcome) ||
-        (g_library_context &&
-         cetta_library_call_native(g_library_context, s, a, head, args,
-                                   nargs, outcome)))
-        return true;
-    return false;
+    return dispatch_native_implementation(s, a, head, args, nargs, outcome);
 }
 
 /* The vector ABI owns its borrowed descriptor here; source dispatchers
@@ -8110,14 +8122,14 @@ static __attribute__((noinline)) bool dispatch_native_op(
             .supplied = {.atoms = args, .count = nargs}}, outcome);
 }
 
-static Atom *native_outcome_expression(Arena *a, CettaCallOutcome outcome) {
+static Atom *he_one_step_native_expression(Arena *a, CettaCallOutcome outcome) {
     if (!cetta_call_outcome_shape_valid(outcome)) {
         eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
         return NULL;
     }
     Atom *result = eval_call_outcome_atom(a, outcome);
-    /* Legacy atom-only clients retain the explicit value delimiter.  The
-     * invocation boundary below consumes structured producer provenance. */
+    /* This separately observable syntax interface retains its explicit
+     * delimiter; ordinary invocation consumes producer provenance. */
     if (!result || outcome.kind != CETTA_CALL_VALUE ||
         outcome.result_form == CETTA_CALL_RESULT_EXPRESSION ||
         outcome.result_form == CETTA_CALL_RESULT_EXPRESSION_FRONTIER)
@@ -28837,8 +28849,11 @@ static void eval_for_caller_with_owned_prefix(
 }
 
 bool eval_petta_from_lib_prolog(
-    Arena *arena, Atom *expression, ResultSet *results) {
-    if (!arena || !expression || !results ||
+    Arena *arena, Atom *expression, ResultSet *results,
+    CettaEvalCompletion *completion) {
+    if (completion)
+        *completion = CETTA_EVAL_COMPLETE;
+    if (!arena || !expression || !results || !completion ||
         eval_current_language_id() != CETTA_LANGUAGE_PETTA ||
         !g_eval_root_space || !g_library_context) {
         return false;
@@ -28859,31 +28874,49 @@ bool eval_petta_from_lib_prolog(
     g_petta_directive_report = (PettaDirectiveReport){0};
     g_petta_source_plan = NULL;
     g_petta_source_plan_atom = expression;
-    eval_for_caller(
-        g_eval_root_space, arena, NULL, expression,
-        eval_current_effective_fuel_limit(), &empty, false, &outcomes);
+    CettaEvalEpisode episode;
+    eval_completion_child_begin(&episode);
+    int fuel = eval_current_effective_fuel_limit();
+    if (episode.budget_limited) {
+        /* Dynamic callback syntax has no retained source-debit receipt.
+         * Canonical entry owns its visit; precharging here would charge an
+         * equation twice, while direct primitive dispatch would omit it. */
+        metta_eval_bind_typed(
+            g_eval_root_space, arena, NULL, expression, fuel, &outcomes);
+    } else {
+        eval_for_caller(g_eval_root_space, arena, NULL, expression,
+                        fuel, &empty, false, &outcomes);
+    }
     bindings_free(&empty);
     Atom *callback_raise = petta_eval_take_raise();
     bool callback_raised = callback_raise ||
         g_petta_directive_report.raised;
-    for (CettaCount index = 0u; index < outcomes.len; index++) {
+    for (CettaCount index = 0u;
+         episode.completion == CETTA_EVAL_COMPLETE && index < outcomes.len;
+         index++) {
         Atom *value = outcome_atom_materialize(arena, &outcomes.items[index]);
         if (callback_raised && !callback_raise &&
             index + 1u == outcomes.len)
             callback_raise = value;
-        if (!callback_raised && value && !atom_is_petta_no_result(value))
+        if (episode.completion == CETTA_EVAL_COMPLETE &&
+            !callback_raised && value && !atom_is_petta_no_result(value))
             result_set_add(results, value);
     }
     outcome_set_free(&outcomes);
+    if (episode.completion != CETTA_EVAL_COMPLETE)
+        eval_mark_interrupted(episode.completion);
+    *completion = eval_completion_child_end(&episode);
+    if (*completion != CETTA_EVAL_COMPLETE)
+        results->len = 0u;
     g_petta_pending_raise = enclosing_raise;
     g_petta_directive_report = enclosing_report;
     g_petta_source_plan = enclosing_plan;
     g_petta_source_plan_atom = enclosing_plan_atom;
     /* A failed callback carries only its raised error; the adapter converts
      * that control outcome into a Prolog exception. */
-    if (callback_raise)
+    if (*completion == CETTA_EVAL_COMPLETE && callback_raise)
         result_set_add(results, callback_raise);
-    return !callback_raised;
+    return *completion == CETTA_EVAL_COMPLETE && !callback_raised;
 }
 
 static void eval_direct_outcomes(Space *s, Arena *a, Atom *type, Atom *atom, int fuel,
@@ -46518,6 +46551,10 @@ static bool petta_native_region_emptiness(Space *root, Atom *test,
         test->expr.elems[0]->kind != ATOM_SYMBOL)
         return false;
     SymbolId op = test->expr.elems[0]->sym_id;
+    /* A spelling is not authority to interpret it.  In particular, !=
+     * remains data in builds without its PeTTa primitive. */
+    if (!is_grounded_op(op))
+        return false;
     Atom *left = test->expr.elems[1];
     Atom *right = test->expr.elems[2];
     Atom *found = NULL;
@@ -52243,7 +52280,8 @@ static bool prepared_pure_closed_invocation_try(
         invocation->head.skeleton->kind != ATOM_SYMBOL)
         return false;
     CETTA_SCOPED_SHARED_TRANSITION(prepared_pure_observation);
-    if (program_cache && program_cache->entries) {
+    if (program_cache && (program_cache->entries ||
+            (entry_arguments_are_values && program_cache->backoff.len))) {
         CettaLanguageId early_language_id =
             eval_current_language_id();
         CettaGsltPureCallMode early_call_mode =
@@ -52258,7 +52296,7 @@ static bool prepared_pure_closed_invocation_try(
         /* A call whose arguments are still syntax compiles its head's
          * program together with them, so it fails wherever the head's
          * program over values already failed. */
-        if (prepared_pure_program_cache_has_decline_head(
+        if (program_cache->entries && (prepared_pure_program_cache_has_decline_head(
                 program_cache, space, invocation->head.skeleton->sym_id, arity, early_source_view.root,
                 early_language_id, early_call_mode, false,
                 entry_arguments_are_values,
@@ -52267,10 +52305,27 @@ static bool prepared_pure_closed_invocation_try(
              prepared_pure_program_cache_has_decline_head(
                  program_cache, space, invocation->head.skeleton->sym_id, arity, early_source_view.root,
                  early_language_id, early_call_mode, false, true,
-                 early_total_structural_equality, PREPARED_PURE_ENTRY_INQUIRY))) {
+                 early_total_structural_equality, PREPARED_PURE_ENTRY_INQUIRY)))) {
             cetta_runtime_stats_inc(
                 CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_DECLINE);
             return false;
+        }
+        /* A current pause selects ordinary execution before preparation.
+         * It supplies no source or input refusal certificate. Ready operands
+         * fix this inquiry's interpretation; syntax inquiries retain the
+         * post-preparation lookup below because preparation may make them
+         * ready. Successful compilation clears the same key's pause. */
+        if (entry_arguments_are_values) {
+            PreparedPureBackoffSlot *early_pause = prepared_pure_backoff_slot(
+                program_cache, invocation->head.skeleton->sym_id, arity,
+                early_language_id, early_call_mode, false, early_source_view.root,
+                true, early_total_structural_equality, false);
+            if (prepared_pure_backoff_take_pause(program_cache, space,
+                    early_language_id, early_pause)) {
+                cetta_runtime_stats_inc(
+                    CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_DECLINE);
+                return false;
+            }
         }
     }
     PreparedPureClosedCallPlan plan;
@@ -52318,7 +52373,8 @@ static bool prepared_pure_closed_invocation_try(
         prepared_pure_backoff_slot(program_cache, pause_head, arity,
             language_id, call_mode, false, source_view.root,
             cache_entry_arguments_are_values, total_structural_equality, false);
-    if (prepared_pure_backoff_take_pause(program_cache, space, language_id, pause)) {
+    if (!entry_arguments_are_values &&
+        prepared_pure_backoff_take_pause(program_cache, space, language_id, pause)) {
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_DECLINE);
         return false;
@@ -61133,7 +61189,7 @@ static void he_one_step_ready_call(Space *s, Arena *a, Atom *atom,
         CettaCallOutcome outcome;
         if (dispatch_native_op(s, a, head, atom->expr.elems + 1u,
                                atom->expr.len - 1u, &outcome)) {
-            Atom *direct = native_outcome_expression(a, outcome);
+            Atom *direct = he_one_step_native_expression(a, outcome);
             if (direct)
                 result_set_add(rs, direct);
             return;

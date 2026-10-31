@@ -382,7 +382,7 @@ CettaForeignStatus cetta_foreign_region_start(
         !predicate || !arguments || PL_current_query() != region->caller_query)
         return CETTA_FOREIGN_INVALID;
     region->query = PL_open_query(module,
-        PL_Q_NODEBUG | PL_Q_CATCH_EXCEPTION | PL_Q_EXT_STATUS,
+        PL_Q_NODEBUG | PL_Q_CATCH_EXCEPTION | PL_Q_EXT_STATUS | PL_Q_ALLOW_YIELD,
         predicate, arguments);
     return region->query ? CETTA_FOREIGN_OK : CETTA_FOREIGN_CAPACITY;
 }

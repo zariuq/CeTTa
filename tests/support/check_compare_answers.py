@@ -5,12 +5,15 @@ and nothing else is forgiven.
 
 usage: check_compare_answers.py CETTA"""
 import subprocess
+import itertools
+import collections
 import sys
 import tempfile
 import json
 import os
 from pathlib import Path
-from compare_answers import answers_equal, observe_framed, compare_framed, compare_completed_runs, MARKER
+from compare_answers import (answers_equal, observe_framed, compare_framed,
+                             compare_completed_runs, collapse_equal, CollectionTrace, TOKEN, MARKER)
 
 HERE = Path(__file__).resolve().parent
 TOOL = HERE / 'compare_answers.py'
@@ -38,6 +41,76 @@ def agrees(lang, program, expected, actual, cetta):
         return subprocess.run(cmd, capture_output=True).returncode == 0
 
 
+def collection_trace_failures():
+    failures = []
+    cases = [
+        ('bag rename/permutation', '((p $x) (q $x))', '((q $a) (p $a))', (), True),
+        ('lost sharing', '((p $x) (q $x))', '((q $a) (p $b))', (), False),
+        ('merged distinct variables', '((p $x) (q $y))', '((p $a) (q $a))', (), False),
+        ('literal variable text', '("cost $x")', '("cost $y")', (), False),
+        ('nested fields', '((p 1 2))', '((p 2 1))', (), False),
+        ('ordered data probe', '(p 1 2)', '(p 2 1)', (0,), False),
+        ('multiplicity', '(1 1 2)', '(1 2 2)', (), False),
+        ('chronology', 'first\nsecond', 'second\nfirst', (), False),
+        ('answer block permutation', 'seg-begin\n(p $x $x)\n7\nseg-end',
+         'seg-begin\n7\n(p $a $a)\nseg-end', (), True),
+        ('empty block is an observation', 'seg-begin\nseg-end', '', (), False),
+        ('quoted parentheses', '("(a b)")', '("(b a)")', (), False),
+        ('backtracking path', '((e $x $y) (e $y $z))',
+         '((e $b $c) (e $a $b))', (), True),
+        ('cycle differs from path', '((e $x $y) (e $y $z))',
+         '((e $a $b) (e $b $a))', (), False),
+    ]
+    for name, left, right, ordered, wanted in cases:
+        if (CollectionTrace(left, ordered_lines=ordered) ==
+                CollectionTrace(right, ordered_lines=ordered)) != wanted:
+            failures.append('collection trace: ' + name)
+    for invalid in ('seg-begin', 'seg-end', 'seg-begin\nseg-begin\nseg-end'):
+        try:
+            CollectionTrace(invalid)
+            failures.append('malformed collection trace accepted')
+        except ValueError:
+            pass
+
+    # Independently enumerate complete variable bijections. This oracle does
+    # not use candidate grouping, search frames, or rollback trails.
+    def oracle(left, right):
+        left = [TOKEN.findall(atom) for atom in left]
+        right = [TOKEN.findall(atom) for atom in right]
+        first = sorted({token for atom in left for token in atom if token.startswith('$')})
+        second = sorted({token for atom in right for token in atom if token.startswith('$')})
+        if len(first) != len(second):
+            return False
+        target = collections.Counter(tuple(atom) for atom in right)
+        for renamed in itertools.permutations(second):
+            mapping = dict(zip(first, renamed))
+            if collections.Counter(tuple(mapping.get(token, token) for token in atom)
+                                   for atom in left) == target:
+                return True
+        return False
+
+    first = ['(p $x $x)', '(p $x $y)', '(q $x)', '(q "$x")', '(q 7)']
+    second = ['(p $a $a)', '(p $a $b)', '(q $a)', '(q "$x")', '(q 7)']
+    lefts = [bag for n in range(4) for bag in itertools.combinations_with_replacement(first, n)]
+    rights = [bag for n in range(4) for bag in itertools.combinations_with_replacement(second, n)]
+    for left in lefts:
+        for right in rights:
+            wanted = oracle(left, right)
+            if collapse_equal('(' + ' '.join(left) + ')', '(' + ' '.join(right) + ')') != wanted:
+                failures.append('collection bijection oracle mismatch')
+                return failures
+    left = '(' + ' '.join(f'(p $x{i} {i})' for i in range(2000)) + ')'
+    right = '(' + ' '.join(f'(p $a{i} {i})' for i in reversed(range(2000))) + ')'
+    if not collapse_equal(left, right):
+        failures.append('large open collection refused')
+    broken = right.replace('$a1 ', '$a0 ', 1)
+    if collapse_equal(left, broken):
+        failures.append('large collection merged distinct variables')
+    if not failures:
+        print(f'PASS: collection trace protocol, {len(lefts) * len(rights)} independent bijection checks and 2000 open elements')
+    return failures
+
+
 def main():
     cetta = sys.argv[1]
     expected = '"first"\n"second"\ntrue\n1\n2\n3\ntrue\n(1 2 3)\n'
@@ -57,7 +130,7 @@ def main():
         ('order inside an answer', 'first\nsecond\n[()]\n[1, 2, 3]\n[()]\n[(1 2 3)]\n', True),
         ('effects reordered', 'second\nfirst\n[()]\n[1, 2, 3]\n[()]\n[(1 2 3)]\n', False),
     ]
-    failures = []
+    failures = collection_trace_failures()
     independent = [
         ('alpha sharing', ['(p $x $x)'], ['(p $a $a)'], False, True),
         ('alias lost', ['(p $x $x)'], ['(p $a $b)'], False, False),
