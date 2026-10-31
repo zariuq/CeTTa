@@ -71,10 +71,15 @@ an offline oracle, not the runtime backend. The
 [query contract](../../docs/native_store/README.md#relational-composition-over-ordinary-spaces)
 documents ownership, completion, callback authority and current limits.
 
-Callbacks must remain pure and fixed during the query lifetime. Automatic
-program pinning/invalidation and program-aware write decisions remain open;
-ordinary captured data and whole-revision write validation are already shared
-with the durable Space API. Portable in-memory pattern examples remain below.
+Callbacks must remain pure. Ordinary-Space cursors now invalidate on application
+code/declaration changes, and defer optional specialization publication while
+the program is observed. Query-informed writes can retain a data/program read
+context through completion and commit through the same durable Space writer.
+The query contract documents `kbq:read-context`, `durable-query:commit-command`
+and the service's `RelOpenRead`/`RelReadPage`/`RelReadCommit` operations. Contexts
+provide dependencies; they grant neither write authority nor proof that an
+embedded caller finished its query. Portable in-memory pattern examples remain
+below.
 
 ## Earlier point-store reference examples
 

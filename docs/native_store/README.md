@@ -49,8 +49,8 @@ Select uses the existing `RelTrue`/`RelFalse`/`RelUnknown` policy; comparisons
 use the existing Boolean contract. Zero/multiple callback answers and invalid
 predicate values fail explicitly. Callback arguments are freshened before
 invocation, preserving sharing within each argument group without allowing a
-filter or comparator to bind a source row or its continuation tail. Keep
-application code and runtime semantics fixed for a cursor's lifetime. These
+filter or comparator to bind a source row or its continuation tail. Ordinary
+Space queries capture an owned program observation as described below. These
 callbacks must not perform effects or hidden/external reads. The library does
 not automatically enroll arbitrary callback reads into a transaction.
 
@@ -78,8 +78,8 @@ empty output. Each logical step advances bounded matcher work, but a pure
 callback or final bounded sort is not a fixed wall-clock quantum. `KqWork`
 reports logical steps, candidate visits and decoded bytes, not all physical
 index I/O or evaluator instructions. Inspect shows current active access paths.
-`KqSpaceObservationV1` is descriptive; query-informed writes still retain and
-validate the original informing view through the ordinary collection writer.
+`KqSpaceObservationV1` is descriptive; query-informed writes retain actual
+data/program handles through the ordinary collection writer.
 
 `examples/native_space_query_server.metta` reuses the existing service owner
 and linear continuations with Read routes RelOpen/Page/Inspect/Cancel. RelOpen
@@ -111,14 +111,83 @@ graph reachability, one-occurrence retraction and fresh-process recovery.
 matching, with bindings, bags, identities, paging order, quotas, callback
 failures, policy refusals, captured reads and cleanup. `test-space-curriculum`
 checks the two datasets in embedded and service modes across restart and
-compaction. The full KB/DB qualification remains unfinished. In particular,
-automatic program pinning/invalidation for code changes during derived queries
-and program-aware query-informed commits remain open. Raw Space/program
-revision counters have not been qualified as user-code-change-only clocks.
-A reduced witness maps the first page with an old callback, redefines it,
-then maps the second page with the new callback at the same database revision.
-The fixed-program restriction is therefore substantive. Pinning or explicit
-invalidation must be implemented before claiming live-code query consistency.
+compaction. The full KB/DB qualification remains unfinished.
+
+### Program observations and query-informed writes
+
+An ordinary-Space relational or graph cursor owns a native program watch in
+addition to its captured data view. Each step checks the watch before and after
+advancing. Changes to the application equation/declaration projection, its
+base/module dependencies, language/profile, imported-library availability,
+admission or library paths produce `(StoreRefused program-invalidated)`.
+Root data-only edits do not invalidate this program observation. The check is
+conservative: even an unrelated equation edit may invalidate a query. Earlier
+pages remain provisional if the eventual result is incomplete or invalidated;
+no mixed-code row from the failing step is returned. Attempted work is counted.
+
+PeTTa's optional specializer can publish generated equations on a first call.
+While a program is observed, specialization publication for its captured
+root/base/module closure is deferred; existing canonical execution remains
+authoritative. Authored edits remain live, and invalidate observations. Other
+programs can specialize normally; closing the last observer permits future
+specialization again. This avoids treating compiler-generated clauses as an
+application edit without guessing from generated symbol names. Canonical
+execution can cost more than specialization on some workloads.
+
+The low-level operations are `store:program-watch-open`,
+`store:program-watch-clone` and `store:program-watch-check`. A clone retains
+the original observation, including its invalidation; it never recaptures a
+newer program. Watches own metadata, not source Space headers. Saving a printed
+handle or program identity grants no authority, and a retired/reinitialized
+root cannot revive an old observation. Close a watch with `store:close`.
+
+For decisions that will cause writes, capture the context before consuming
+the query, retain it through complete execution, and use the shared writer:
+
+```metta
+(kbq:read-context cursor) ; (DurableReadContextV1 data-view program-watch)
+(kbq:commit-read owner context collection request-id changes)
+(kbq:commit-read-command owner context collection request-id command changes)
+(kbq:close-read-context context)
+```
+
+Graph cursors expose `kbg:read-context`; both use `(library durable_query)` and
+`durable-query:commit`, `durable-query:commit-command`,
+`durable-query:close-context`. Each context independently owns its view/watch
+and survives cursor completion. It provides dependencies, not write authority
+or proof of completion. Embedded callers must establish complete execution
+themselves and keep all influencing reads on that view. Arbitrary callback
+reads are not automatically enrolled.
+
+Receipt lookup comes first: the same request/command replays an existing
+receipt despite stale data or program observations; a changed command refuses.
+For a new operation, the original data view and program watch are validated
+through `store:commit-guarded`, publishing facts, postings, counts and receipt
+in the same native commit. Program validation and publication share the
+existing physical-transition critical interval. Concurrent evaluators must
+enter the existing shared-execution scope; the local service serializes
+application execution. No MeTTa callback runs under the publication guard.
+
+The example service adds `RelOpenRead`, `RelReadPage`, `RelReadCommit` and
+`RelReadCancel`. Open has the same `(RelOpenV1 plan maximum-row-bytes)` argument.
+Pages use `(RelPageV1 count work-steps)`. Completion retains an opaque linear
+read context; only that completed phase accepts
+`(RelReadCommitV1 collection request-id command changes)` with at most 128 edits.
+The commit route requires Write authority. A read context cannot grant it.
+Invoking a wrong phase consumes/releases that state; a host-level permission
+refusal leaves it available for cancellation. Disconnect/cancel releases all
+views and watches. Contexts are process-local: after restart resolve durable
+receipts before starting a fresh query or retrying a write.
+
+`test-program-query` covers live/transitive/declaration/import/absent-callee
+invalidation, unchanged cold calls, data-only changes, graph decisions,
+receipt-first retries, stale/closed/forged observations, phase/permission
+checks, lost replies, restart and repeated cancellation/disconnect. Native
+tests cover specialization deferral/restoration, enrollment failures and an
+actual code-edit/publication race. The separate sequential Lean model does
+not prove the C implementation, optimizer equivalence or filesystem behavior.
+Callback approval and these watches are not a sandbox: impure callback
+effects cannot be rolled back by discarding their query result.
 
 For native ACT snapshot readers backing ordinary MeTTa spaces, see the
 [ACT/Space integration requirements](ACT_SPACE_REQUIREMENTS.md). That document
