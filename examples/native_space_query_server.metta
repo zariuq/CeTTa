@@ -16,6 +16,7 @@
     (case $plan
       (((KqRows $rows) True)
        ((KqSpace $collection $pattern $template) True)
+       ((KqRange $collection $arity $position $lower $upper $pattern $template) True)
        ((KqUnion $plans) (query-server:allowed-plans? $plans))
        ((KqBind $left $pattern $right) (and (query-server:allowed-plan? $left) (query-server:allowed-plan? $right)))
        ((KqOptional $left $pattern $right $missing) (and (query-server:allowed-plan? $left) (query-server:allowed-plan? $right)))

@@ -2,6 +2,7 @@
 ; Joins remain MeTTa control flow; matching, identities and candidates belong
 ; to the same native Space source used by match and pat.
 !(import! &self "durable_query.metta")
+!(import! &self "query_range_source.metta")
 
 (: kbq:open-space (-> %Undefined% Atom Number %Undefined%))
 (: kbq:begin-space (-> %Undefined% Atom Atom Atom Number %Undefined%))
@@ -106,6 +107,7 @@
 (= (kbq:space-access $state)
   (case $state
     (((KqSpaceStateV1 $query $sequence $maximum $keys $bytes) (store:space-query-info $query))
+     ((KqRangeStateV1 $config $pending $source $point) (range-i:inspect $config $source $point))
      ((KqRowsState $rows) KqNoActiveScanV1)
      ((KqPipeStateV1 $kind $active $config $data $maximum)
       (KqPipelineAccessV1 $kind $maximum (kbq:space-access $active)))
