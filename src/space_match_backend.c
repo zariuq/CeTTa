@@ -1646,6 +1646,15 @@ static bool native_count_flat_expression_coordinates(
  * contextual grounded values remain exact without forcing every ordinary
  * ground row through binding construction.
  */
+static bool native_count_suffix_candidates(
+    Space *space, Atom *pattern, CettaIndex **candidates, CettaIndex *count) {
+    return !space_has_marks(space) &&
+        space->match_backend.native.cold_flat_scans >= NATIVE_COLD_FLAT_SCAN_LIMIT &&
+        !space_match_reads_rows(space, space->native.len) &&
+        space_path_index_leads(pattern) && space_path_index_may_select(pattern) &&
+        space_path_index_candidates(space, pattern, candidates, count);
+}
+
 static bool native_count_flat_linear(
     Space *s, Arena *scratch, Atom *pattern,
     uint64_t *count, CettaIndex *examined) {
@@ -1674,28 +1683,32 @@ static bool native_count_flat_linear(
     bool rigid = false;
     for (CettaExprIndex column = 0u; column < pattern->expr.len; column++)
         rigid |= pattern->expr.elems[column]->kind != ATOM_VAR;
-    /* Once the one-shot allowance is spent, a count that binds a prefix
-     * reads that prefix's index where it would build the trie. */
+    /* Warm aggregates use the same selective suffix access as ordinary
+     * matching. A trie count must not bypass a bound column after a free
+     * one merely because it can avoid materializing candidate rows. */
     CettaIndex *candidates = NULL;
     CettaIndex candidate_len = 0u;
-    bool prefixed = rigid && !state->match_trie &&
+    bool warm = rigid &&
         state->cold_flat_scans >= NATIVE_COLD_FLAT_SCAN_LIMIT &&
-        !space_match_reads_rows(s, s->native.len) &&
-        space_path_index_prefix_candidates(s, pattern, true, &candidates,
-                                           &candidate_len);
-    bool indexed = prefixed || native_count_index_ready(s, rigid);
+        !space_match_reads_rows(s, s->native.len);
+    bool selected = native_count_suffix_candidates(
+        s, pattern, &candidates, &candidate_len);
+    if (!selected && warm && !state->match_trie)
+        selected = space_path_index_prefix_candidates(
+            s, pattern, true, &candidates, &candidate_len);
+    bool indexed = selected || native_count_index_ready(s, rigid);
     /* The trie holds live rows only, so its counts and candidates need no
      * contraction; a scan reads rows by logical position and does. */
     if (!indexed)
         space_settle_marks(s);
-    if (!prefixed && indexed && native_count_rigid_occurrences(
+    if (!selected && indexed && native_count_rigid_occurrences(
             state, pattern, count, examined)) {
         return true;
     }
-    if (!prefixed && indexed && native_count_flat_expression_coordinates(
+    if (!selected && indexed && native_count_flat_expression_coordinates(
             state, pattern->expr.elems, pattern->expr.len, count, examined))
         return true;
-    if (!prefixed)
+    if (!selected)
         candidate_len = indexed
             ? native_candidates(s, pattern, &candidates)
             : s->native.len;
@@ -1969,16 +1982,19 @@ static bool native_count_flat_linear_view(
      * trie would hold every row's term, and every row added thereafter. */
     CettaIndex *keyed_rows = NULL;
     CettaIndex keyed_len = 0u;
-    bool keyed = false;
+    AtomExprBorrowedView probe_view;
+    Atom *probe = rigid && complete && atom_expr_borrowed_view_init(
+        &probe_view, columns, column_count) ? &probe_view.root : NULL;
+    bool keyed = probe && native_count_suffix_candidates(
+        s, probe, &keyed_rows, &keyed_len);
     bool by_head = false;
     bool scan_head = false;
     CettaSpaceHeadCursor head_cursor;
     /* A space with marked rows counts by the trie, which leaves them out, as
      * it did: these indexes are read by row, and settling the marks for them
      * would read the whole space at every count after a removal. */
-    if (rigid && complete && !space_is_ordered(s) && !state->match_trie &&
+    if (!keyed && probe && !space_is_ordered(s) && !state->match_trie &&
         !space_has_marks(s)) {
-        Atom *probe = atom_expr(scratch, columns, column_count);
         /* An index the queries keep serves at once; counts that keep coming
          * build one once the cold allowance is spent, as they would the trie. */
         /* A prefix of two columns or more is keyed whole, which selects at

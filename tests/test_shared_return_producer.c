@@ -2021,12 +2021,151 @@ static void test_prepared_native_continuation(void) {
     puts("PASS: prepared native continuations preserve tagged data, frontiers, zero, control and replacement without replay");
 }
 
+
+typedef struct {
+    CettaCallOutcome packet;
+    CettaEvalCompletion completion;
+    bool entered;
+    unsigned attempts, effects;
+} NativeDispositionProbe;
+static bool native_disposition_reply(void *context, Space *space, Arena *arena,
+        const CettaInvocation *invocation, CettaCallOutcome *outcome,
+        CettaEvalCompletion *completion) {
+    (void)space; (void)arena;
+    NativeDispositionProbe *probe = context;
+    CettaExprLen arity;
+    assert(cetta_invocation_arity(invocation, &arity) && arity == 1u);
+    probe->attempts++;
+    probe->effects += probe->entered;
+    *outcome = probe->packet;
+    *completion = probe->completion;
+    return probe->entered;
+}
+static void test_native_disposition(void) {
+    Arena source;
+    arena_init(&source);
+    Space space;
+    space_init(&space);
+    NativeDispositionProbe probe = {0};
+    CettaPreparedPureSourceView view = {
+        .native_context = &probe, .native_call = native_disposition_reply};
+    Atom *expression = parse(&source, "(__cetta_lib_json_parse_v1 $item)");
+    CettaPreparedPureProgram *program = cetta_prepared_pure_program_compile(
+        &space, expression, fresh_var_id(), expression->expr.elems[1]->var_id,
+        CETTA_GSLT_PURE_CALL_EAGER, atom_bool, atom_expr,
+        cetta_prepared_pure_constructs_expression_always, NULL, NULL, NULL,
+        NULL, &view, true,
+        (CettaMatchDecisionSemanticIdentity){
+            .compiler_identity = cetta_match_decision_compiler_identity()});
+    assert(program && cetta_prepared_pure_program_use_native_tail_returns(program));
+    Atom *data = parse(&source, "(readln!)");
+    CettaCallOutcome packets[] = {
+        cetta_call_completed_value(data), cetta_call_failure(), cetta_call_interrupted(),
+        cetta_call_raised(atom_error(&source, atom_symbol(&source, "native"),
+                                    atom_unit(&source))),
+        cetta_call_suspended(atom_int(&source, 7),
+            atom_expr2(&source, atom_unit(&source), atom_unit(&source)))};
+    unsigned count = 0u;
+    for (unsigned entered = 0u; entered < 2u; entered++)
+    for (unsigned cause = CETTA_EVAL_COMPLETE;
+         cause <= CETTA_EVAL_INCOMPLETE_HOST_FAILURE; cause++)
+    for (unsigned packet = 0u; packet < sizeof(packets)/sizeof(*packets); packet++) {
+        probe.packet = packets[packet];
+        probe.completion = (CettaEvalCompletion)cause;
+        probe.entered = entered != 0u;
+        probe.attempts = probe.effects = 0u;
+        CettaCallOutcome returned = {0};
+        Atom *argument = atom_int(&source, 1);
+        bool handled = cetta_prepared_pure_program_execute_controlled(program, &source,
+            argument, argument, NULL, NULL, &returned);
+        bool expected = entered || cause != CETTA_EVAL_COMPLETE;
+        assert(handled == expected && probe.attempts == 1u && probe.effects == entered);
+        if (cause != CETTA_EVAL_COMPLETE)
+            assert(returned.kind == CETTA_CALL_INTERRUPTED);
+        else if (entered)
+            assert(returned.kind == probe.packet.kind &&
+                returned.result_form == probe.packet.result_form &&
+                returned.term == probe.packet.term && returned.delayed == probe.packet.delayed);
+        count++;
+    }
+    cetta_prepared_pure_program_free(program);
+    space_free(&space);
+    arena_free(&source);
+    printf("PASS: %u native callback dispositions preserve entry and completion\n", count);
+}
+
+typedef struct { unsigned holds, retains, releases; } DeclinedPacketOwner;
+static void declined_packet_retain(void *context) {
+    DeclinedPacketOwner *owner = context;
+    owner->holds++; owner->retains++;
+}
+static void declined_packet_release(void *context) {
+    DeclinedPacketOwner *owner = context;
+    assert(owner->holds); owner->holds--; owner->releases++;
+}
+static void test_declined_packet_ownership(void) {
+    Arena source, payload;
+    arena_init(&source); arena_init(&payload);
+    TermUniverse universe; term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &source);
+    Space space; space_init_with_universe(&space, &universe);
+    assert(space_admit_atom(&space, &source, parse(&source,
+        "(= (declined-box $x) (Box (__cetta_lib_json_parse_v1 $x)))")));
+    NativeDispositionProbe probe = {0};
+    CettaPreparedPureSourceView view = {.native_context = &probe,
+        .native_call = native_disposition_reply};
+    CettaPreparedPureProgram *program = cetta_prepared_pure_program_compile_closed_answers(
+        &space, parse(&source, "(declined-box 1)"), CETTA_GSLT_PURE_CALL_EAGER,
+        atom_bool, atom_expr, cetta_prepared_pure_constructs_expression_always,
+        NULL, NULL, NULL, NULL, &view, true, true,
+        (CettaMatchDecisionSemanticIdentity){
+            .compiler_identity = cetta_match_decision_compiler_identity()}, NULL);
+    assert(program);
+    DeclinedPacketOwner owner = {0};
+    Atom *untransferred = atom_native_handle_identifier(&payload, 777, &owner,
+        declined_packet_retain, declined_packet_release);
+    assert(untransferred && owner.holds == 1u && owner.retains == 1u);
+    CettaPreparedPureAnswerCursorOptions options = {
+        .limits = {.max_transitions = 1024u, .max_scratch_bytes = 1024u * 1024u,
+            .construct_allocation_bound = atom_expr_allocation_bound},
+        .allow_continuations = true};
+    for (unsigned delayed = 0u; delayed < 2u; delayed++) {
+        probe.packet = delayed ? cetta_call_suspended(atom_int(&source, 7), untransferred)
+            : cetta_call_completed_value(untransferred);
+        probe.entered = false; probe.completion = CETTA_EVAL_COMPLETE;
+        probe.attempts = probe.effects = 0u;
+        CettaPreparedPureAnswerCursor *cursor =
+            cetta_prepared_pure_answer_cursor_open(program, &options);
+        assert(cursor);
+        CettaOwnedReturn returned = {0};
+        CettaEvalCompletion completion = CETTA_EVAL_COMPLETE;
+        CettaOwnedExecutionStep step =
+            cetta_prepared_pure_answer_cursor_return(cursor, &returned, &completion);
+        assert(step == CETTA_OWNED_EXECUTION_HANDOFF &&
+            cetta_prepared_pure_answer_cursor_handoff_reason(cursor) ==
+                CETTA_PREPARED_PURE_HANDOFF_NATIVE_RETURN);
+        assert(probe.attempts == 1u && probe.effects == 0u);
+        if (owner.retains != 1u)
+            fprintf(stderr,"declined packet ownership: delayed%u retains%u holds%u\n",
+                delayed, owner.retains, owner.holds);
+        assert(owner.holds == 1u && owner.retains == 1u && owner.releases == 0u);
+        cetta_prepared_pure_answer_cursor_close(cursor);
+        assert(owner.holds == 1u && owner.retains == 1u && owner.releases == 0u);
+    }
+    cetta_prepared_pure_program_free(program);
+    space_free(&space); term_universe_free(&universe); arena_free(&source);
+    arena_free(&payload);
+    assert(owner.holds == 0u && owner.retains == 1u && owner.releases == 1u);
+    puts("PASS: declined native storage acquires no value or delayed owner");
+}
+
 int main(int argc, char **argv) {
+    bool disposition_only = argc == 2 && strcmp(argv[1], "--disposition") == 0;
     bool reference_native = argc == 2 && strcmp(argv[1], "--native-reference") == 0;
     bool prime_native = argc == 2 && strcmp(argv[1], "--prime-native") == 0;
-    assert(argc == 1 || reference_native || prime_native ||
+    assert(argc == 1 || disposition_only || reference_native || prime_native ||
            (argc == 2 && strcmp(argv[1], "--oem-native") == 0));
-    oem_native_fixture = argc == 2 && !prime_native;
+    oem_native_fixture = argc == 2 && !prime_native && !disposition_only;
     oem_native_enabled = oem_native_fixture && !reference_native;
     assert(setenv("CETTA_OPEN_EQUATIONS_REFERENCE",
                   oem_native_fixture && !reference_native ? "0" : "1", 1) == 0);
@@ -2038,9 +2177,14 @@ int main(int argc, char **argv) {
     g_symbols = &symbols;
     var_intern_init(&variables);
     g_var_intern = &variables;
-    if (prime_native) {
+    if (disposition_only) {
+        test_declined_packet_ownership();
+        test_native_disposition();
+    } else if (prime_native) {
         test_prime_native_return_boundary();
     } else if (!oem_native_fixture) {
+        test_declined_packet_ownership();
+        test_native_disposition();
         test_refusal_and_owned_graph();
         test_authority_and_detachment();
         test_construction_and_terminal_states();
@@ -2053,7 +2197,7 @@ int main(int argc, char **argv) {
         test_invocation_operands();
         test_native_projection_consumers();
     }
-    if (!prime_native)
+    if (!prime_native && !disposition_only)
         test_native_evaluator_boundary(oem_native_fixture);
     cetta_lib_prolog_global_shutdown();
     cetta_foreign_global_shutdown();
