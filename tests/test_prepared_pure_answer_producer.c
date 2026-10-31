@@ -31,9 +31,10 @@ static Atom *parse(Arena *arena, const char *text) {
     return atom;
 }
 
-static void init_with_view(Fixture *fixture, const char *const *equations,
+static void init_with_views(Fixture *fixture, const char *const *equations,
                            size_t count, const char *call,
                            CettaPreparedPureExpressionViewFn expression_view,
+                           CettaPreparedPurePatternViewFn pattern_view,
                            CettaPreparedPureBooleanValue boolean_value) {
     memset(fixture, 0, sizeof(*fixture));
     fixture->unmatched_call = CETTA_PREPARED_PURE_UNMATCHED_DECLINES;
@@ -56,7 +57,7 @@ static void init_with_view(Fixture *fixture, const char *const *equations,
         &fixture->space, parse(&fixture->source, call),
         CETTA_GSLT_PURE_CALL_EAGER, boolean_value, atom_expr,
         cetta_prepared_pure_constructs_expression_always,
-        NULL, NULL, expression_view, NULL, NULL, true, true,
+        NULL, NULL, expression_view, pattern_view, NULL, true, true,
         (CettaMatchDecisionSemanticIdentity){
             .compiler_identity = cetta_match_decision_compiler_identity(),
         }, NULL);
@@ -72,6 +73,14 @@ static void init_with_view(Fixture *fixture, const char *const *equations,
                     entry->expr.elems[0]->sym_id, entry->expr.len - 1u));
         abort();
     }
+}
+
+static void init_with_view(Fixture *fixture, const char *const *equations,
+                           size_t count, const char *call,
+                           CettaPreparedPureExpressionViewFn expression_view,
+                           CettaPreparedPureBooleanValue boolean_value) {
+    init_with_views(fixture, equations, count, call, expression_view,
+                    NULL, boolean_value);
 }
 
 static void init(Fixture *fixture, const char *const *equations,
@@ -1206,6 +1215,73 @@ static CettaPreparedPureExpressionViewState zero_view(
         : CETTA_PREPARED_PURE_EXPRESSION_DEFAULT;
 }
 
+static CettaPreparedPureExpressionViewState case_view(
+    const Atom *expression, const CettaComputationPlan *computation,
+    CettaPreparedPureExpressionView *view) {
+    if (expression && expression->kind == ATOM_EXPR &&
+        expression->expr.len == 3u &&
+        atom_is_symbol_id(expression->expr.elems[0], g_builtin_syms.case_text))
+        return CETTA_PREPARED_PURE_EXPRESSION_SELECT;
+    return zero_view(expression, computation, view);
+}
+
+static unsigned pair_pattern_trials;
+
+/* A dialect view may refuse a value without declaring a mismatch. The
+ * successful view checks the constructor and exposes its two fields. */
+static CettaPreparedPurePatternViewState pair_pattern_view(
+        const Atom *pattern, const Atom *value,
+        CettaPreparedPurePatternView *view) {
+    SymbolId pair = symbol_intern_cstr(g_symbols, "Pair");
+    if (pattern->kind != ATOM_EXPR || pattern->expr.len != 3u ||
+        !atom_is_symbol_id(pattern->expr.elems[0], pair))
+        return CETTA_PREPARED_PURE_PATTERN_VIEW_NOT_APPLICABLE;
+    pair_pattern_trials++;
+    if (value->kind != ATOM_EXPR || value->expr.len != 3u)
+        return CETTA_PREPARED_PURE_PATTERN_VIEW_MISMATCH;
+    if (atom_is_symbol_id(value->expr.elems[0],
+                         symbol_intern_cstr(g_symbols, "Opaque")))
+        return CETTA_PREPARED_PURE_PATTERN_VIEW_UNDECIDED;
+    if (!atom_is_symbol_id(value->expr.elems[0], pair))
+        return CETTA_PREPARED_PURE_PATTERN_VIEW_MISMATCH;
+    view->pattern_children = pattern->expr.elems + 1u;
+    view->value_children = value->expr.elems + 1u;
+    view->child_count = 2u;
+    return CETTA_PREPARED_PURE_PATTERN_VIEW_DECOMPOSE;
+}
+
+static void test_case_match_once(void) {
+    const char *equations[] = {
+        "(= (two $a $b) (First $a $b))",
+        "(= (two $a $b) (Second $a $b))",
+        "(= (trial $value) (case $value "
+        "(((Pair $x $x) (two $x $x)) "
+        "((Pair $left $right) (two $left $right)))))",
+    };
+    const char *calls[] = {
+        "(trial (Pair a b))", "(trial (Pair a a))", "(trial (Opaque a b))",
+    };
+    for (unsigned mode = 0u; mode < 3u; mode++) {
+        Fixture fixture;
+        init_with_views(&fixture, equations, 3u, calls[mode],
+                        case_view, pair_pattern_view, atom_bool);
+        assert(cetta_prepared_pure_program_has_branches(fixture.program));
+        pair_pattern_trials = 0u;
+        if (mode < 2u) {
+            fixture.expected[0] = mode ? "(First a a)" : "(First a b)";
+            fixture.expected[1] = mode ? "(Second a a)" : "(Second a b)";
+        }
+        uint64_t tails = 0u;
+        CettaPreparedPureAnswersResult result = run(&fixture, &tails);
+        assert(result == (mode == 2u ? CETTA_PREPARED_PURE_ANSWERS_DECLINED
+                                    : CETTA_PREPARED_PURE_ANSWERS_COMPLETE));
+        assert(fixture.answers == (mode == 2u ? 0u : 2u));
+        assert(pair_pattern_trials == (mode == 0u ? 2u : 1u));
+        destroy(&fixture);
+    }
+    puts("prepared case: one match per tried arm, rollback, first success and refusal passed");
+}
+
 /* Each answer of a call resumes its caller's body from the same state. */
 static void test_continuation_permutations(void) {
     const char *equations[] = {
@@ -2149,6 +2225,7 @@ int main(void) {
     test_cursor_collection_preserves_shared_frontier();
     test_cursor_collection_keeps_transition_limit();
     test_cursor_limit_keeps_frontier();
+    test_case_match_once();
     test_continuation_permutations();
     test_continuation_detach();
     test_continuation_unmatched_call_rules();

@@ -188,6 +188,11 @@ Atom *abt_shift(const AbtSignature *signature, Arena *arena,
                 int64_t delta, uint64_t cutoff, Atom *term);
 Atom *abt_subst(const AbtSignature *signature, Arena *arena,
                 uint64_t index, Atom *substitution, Atom *term);
+/* Remove a surrounding binder prefix in one traversal. `parameters` are
+   free variable atoms in outer-to-inner parameter order, not argument data.
+   Inner indices remain bound; outer indices decrease by `count`. */
+Atom *abt_subst_vars(const AbtSignature *signature, Arena *arena,
+                     Atom *const *parameters, CettaExprLen count, Atom *term);
 
 /* Locally-nameless seams.  close replaces structurally equal occurrences of
    name with (idx depth); open performs the inverse replacement without the
