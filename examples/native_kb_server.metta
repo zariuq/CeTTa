@@ -1,6 +1,7 @@
 ; A native durable KB configured and handled in ordinary MeTTa. The runtime
 ; supplies CSP1 connections, peer identity, route rights and resource owners.
 !(import! &self (library durable_space))
+!(import! &self (library durable_reindex))
 !(import! &self (library system))
 
 (= (kb-server:configuration)
@@ -16,6 +17,9 @@
        (ServiceRouteV1 QueryInfo Read kb-server:query-info)
        (ServiceRouteV1 ReadOccurrence Read kb-server:read-occurrence)
        (ServiceRouteV1 Commit Write kb-server:commit)
+       (ServiceRouteV1 ReindexOpen Write kb-server:reindex-open)
+       (ServiceRouteV1 ReindexPage Write kb-server:reindex-page)
+       (ServiceRouteV1 ReindexCancel Read kb-server:reindex-cancel)
        (ServiceRouteV1 Resolve Read kb-server:resolve)
        (ServiceRouteV1 Backup Write kb-server:backup)
        (ServiceRouteV1 Compact Write kb-server:compact))
@@ -68,6 +72,24 @@
 
 (= (kb-server:resolve (ServiceCallV1 (KbConfigurationV1 $owner) $peer $unused (ResolveV1 $request $command)))
   (knowledge:resolve $owner $request $command 1048576))
+
+(= (kb-server:reindex-open (ServiceCallV1 (KbConfigurationV1 $owner) $peer $view (ReindexOpenV1 $collection $request $maximum)))
+  (if (and (durable-index:integer? $maximum) (and (>= $maximum 64) (<= $maximum 67108864)))
+    (case (durable-space:reindex-open $owner $view $collection $request $maximum)
+      (((SpaceReindexOpenedV1 $state)
+        (ServiceKeepValueV1 $state (durable-space:reindex-progress $state)))
+       ($terminal $terminal)))
+    (SpaceRefusedV1 reindex-spool-limit)))
+
+(= (kb-server:reindex-page (ServiceCallV1 (KbConfigurationV1 $owner) $peer $state (ReindexPageV1 $steps)))
+  (if (and (durable-index:integer? $steps) (and (> $steps 0) (<= $steps 128)))
+    (case (durable-space:reindex-page $owner $state $steps)
+      (((SpaceReindexMoreV1 $next $progress) (ServiceKeepValueV1 $next $progress))
+       ($terminal $terminal)))
+    (let $_ (durable-space:reindex-close $state) (SpaceRefusedV1 reindex-page-limit))))
+
+(= (kb-server:reindex-cancel (ServiceCallV1 $configuration $peer $state $arguments))
+  (durable-space:reindex-close $state))
 
 (= (kb-server:backup (ServiceCallV1 $configuration $peer $view (BackupV1 $destination)))
   (store:backup $view $destination))

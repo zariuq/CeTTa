@@ -207,8 +207,8 @@ Boolean-like fields while extracting them, leaving logically incomplete
 postings despite valid storage checksums. The current reader ignores their
 postings and scans the fact range. Their edits refuse with
 `SpaceRefusedV1 index-upgrade-required`; replaying an existing receipt remains
-available. A separate explicit rebuild/export upgrade is required before such
-a collection resumes writes. It is not silently relabelled as V3. New V3
+available. The explicit rebuild below is required before such a collection
+resumes writes. It is not silently relabelled as V3. New V3
 collections use data-preserving field selection. This is a collection metadata
 version, independent of the native CSD2 storage ABI and language selectors.
 
@@ -216,8 +216,85 @@ Complete posting keys must fit the native key limit (currently 65,536 bytes).
 An otherwise portable wide string may therefore fit an unindexed collection
 but refuse in an indexed projection. Such a write returns `StoreRefused invalid`
 atomically, without a fact or success receipt. No posting is silently omitted.
-Large declarations and batches remain subject to the existing codec/commit
-limits. Rebuilding indexes on existing collections is not implemented.
+Individual declarations, records and staging messages remain subject to the
+existing codec/key limits. A paged rebuild can stage a transaction larger than
+one codec message without materializing its entire operation list.
+
+### Paged index maintenance
+
+Import `(library durable_reindex)` and use:
+
+```metta
+(durable-space:reindex-open owner view collection request-id maximum-spool-bytes)
+(durable-space:reindex-page owner state steps)
+(durable-space:reindex-progress state)
+(durable-space:reindex-close state)
+```
+
+Open returns `(SpaceReindexOpenedV1 state)` or a receipt replay/error. Page
+returns `(SpaceReindexMoreV1 successor progress)` until it returns the final
+commit/error. Treat the state as a linear owner: continue with its successor,
+or close it when abandoning the operation. It retains an independent captured
+view, a temporary native batch and at most one active scan/query cursor.
+An invalid embedded page argument is refused before advancing; the caller
+still owns that state and must close it or retry with valid arguments. The
+example server retires a state when an invoked page handler rejects its limit.
+Progress is `(SpaceReindexProgressV1 phase rows count spool-bytes maximum
+staged-operations)`, with phases `Clearing`, `Filling`, and `Ready`.
+
+The library clears every declared posting range in the private batch, scans
+the original facts through the ordinary Space cursor, and stages corrected
+postings. It preserves fact records, occurrence identities and multiplicity.
+Only after the full scan finishes and its count agrees does it stage current
+metadata and `(KnowledgeReceiptV1 request-id (SpaceReindexV1 collection)
+(SpaceReindexedV1 collection count))`. One whole-revision commit publishes all
+of these together. Concurrent writes conservatively conflict, including writes
+to other collections. A conflict or quota/error response does not certify any
+part of the new index. An uncertain commit uses the existing recovery/receipt
+resolution contract. A completed identical request replays its receipt.
+
+V1, historical V2 and current V3 metadata are accepted explicitly. V2 stays
+scan-only and refuses normal edits until publication completes. Old captured
+readers keep their original view through publication and compaction. A large
+record or posting still has to fit its individual codec/native key limit.
+
+The reusable native primitives are `store:batch-open`, `store:batch-add`,
+`store:batch-info`, and `store:commit-batch`. They use two roots in one private
+CSD2 file to normalize puts/removals by key; an empty value remains different
+from removal. The file is unlinked immediately. Closing or crashing discards
+unpublished operations; the rare name left between creation and unlink is
+collectible. Staging does not publish a revision or create a durable resumable
+job. After a crash, start a new rebuild or resolve its final durable receipt.
+These primitives confer no owner/write authority and add no retry receipt by
+themselves. They reuse the existing byte index, lock, journal and sync path.
+
+The spool limit bounds retained disk extent, not the final published store or
+aggregate disk use across clients. A refused append may temporarily write one
+candidate beyond that limit before truncating it; failure to truncate poisons
+the batch. Heap use consists of traversal state and bounded input/value data,
+not a corpus-sized edit list. Clearing/filling are paged; final native commit
+is synchronous and holds the writer lock while applying the normalized batch.
+It cannot be preempted by a service cancellation. Larger maintenance therefore
+still needs measured publication latency before use on a busy service.
+
+The example server adds `ReindexOpen` and `ReindexPage` as Write routes and
+`ReindexCancel` as a Read route, so cleanup remains available after ReadOnly
+attenuation. Open borrows a view with `(ReindexOpenV1 collection request-id
+maximum-spool-bytes)` and returns a connection-owned value state. Page uses
+`UseValueV1` with `(ReindexPageV1 steps)`; Cancel uses `UseValueV1` too. Its
+example limits are 64 MiB per spool and 128 steps per page. Disconnect retires
+the owned state. Retrying the exact last transport request follows the existing
+linear-continuation replay rule.
+
+`test-durable-reindex` covers a rebuild larger than one CAV1 message, duplicate
+occurrences, open/shared variables, Boolean-like symbols/native values, inert
+rules, scan-only V2 with a missing posting, old readers, a competing write,
+quotas, cancellation/disconnect, lost replies, process restart, receipt replay,
+compaction and resumption of normal indexed edits. It also checks fixed-KB
+cancellation lifetimes. Native batch fault tests cover partial writes, sync
+failures, kills during creation/staging/publication, uncertain publication,
+last-operation normalization and domain/revision checks. These are scoped
+failure experiments, not a hardware power-loss proof.
 
 `(store:space-query-info query)` returns `(StoreQueryInfo scans indexed-traversals
 candidates decoded-bytes overflow)`, including after end or cancellation while
@@ -674,8 +751,9 @@ completion/cancellation, disconnect/restart and fixed-KB lifetime measurements.
 This is the continuation boundary for paged MeTTa algorithms; it does not claim
 the graph/relational curriculum itself is complete.
 
-The example exposes Snapshot, Create, Query, Next, Cancel, QueryInfo, Commit,
-Resolve, Backup and Compact. Create accepts either `CreateV1` or
+The example exposes Snapshot, Create, Query, Next, Cancel, QueryInfo,
+ReadOccurrence, Commit, ReindexOpen/Page/Cancel, Resolve, Backup and Compact.
+Create accepts either `CreateV1` or
 `(CreateIndexedV1 collection request-id indexes)`. Query uses the supplied
 captured view and its declared access paths. Next grants bounded matcher
 work and checkpoints the live cursor; the template is projected as data.
