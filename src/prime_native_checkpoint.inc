@@ -543,6 +543,11 @@ static bool parent_copy_equation(PrimeParentCopy *copy,
 }
 static bool parent_copy_frame(PrimeParentCopy *copy, const PrimeEvalStackFrame *source,
     PrimeEvalStackFrame *image) {
+    if(source->call_force_service)return parent_copy_refuse(copy,"PendingProducerServiceOwner");
+    if(source->call_force_attempt.ready &&
+        (source->kind!=PRIME_EVAL_STACK_FRAME_FORCE || !source->call_force_reader ||
+         source->control_retired))
+        return parent_copy_refuse(copy,"CallForceAttemptState");
     if(source->context && !copy->retain_reader_contexts)
         return parent_copy_refuse(copy,"FrameContextOwner");
     PrimeEvalStackFrame *next=image->control_next;
@@ -706,6 +711,8 @@ static bool parent_copy_work(PrimeParentCopy *copy,const CettaOwnedContinuation 
     CettaOwnedContinuation *out) {
     if(source->provider!=&prime_native_work_provider||!source->payload)return parent_copy_refuse(copy,"WorkProvider");
     const PrimeNativeWork *s=source->payload;
+    if(s->force_service || s->service_request || s->service_park_reserved)
+        return parent_copy_refuse(copy,"PendingProducerServiceOwner");
     if(s->owner!=copy->source||s->dialect||s->parallel ||
         (s->resource_step ?
             (!parent_copy_transaction_work(copy->source,source) ||
@@ -774,8 +781,15 @@ static bool parent_copy_quiescent_in_profile(const PrimeNativeControl *source,
      * unknown grant or silently retain a callback's original context. */
     bool owned_driver=driver_owner&&
         prime_need_production_driver_owned(&source->driver,driver_owner);
+    if(source->force_services) {
+        if(refusal)*refusal="PendingProducerServiceOwner";
+        return false;
+    }
     if (source->driver.authority_parent || source->driver.call_permit_parent ||
+        source->driver.scope_node || source->driver.scope_failure_owner ||
+        source->driver.scope_policy_projection ||
         (!owned_driver&&(source->driver.call_permit || source->driver.call_permit_context ||
+        source->driver.capture_scope ||
         source->driver.call_refusal_generation ||
         source->driver.call_refusal_retained || source->driver.call_refusal_context ||
         source->driver.observe_space_read || source->driver.space_read_context ||
@@ -1311,6 +1325,12 @@ static bool prime_native_parent_copy_with_session_profile(const PrimeNativeContr
     outcome_set_init(&image->output);
     image->driver.control=image;image->driver.arena=image_storage;
     image->driver.authority_parent=NULL;image->driver.call_permit_parent=NULL;
+    image->driver.capture_scope=NULL;image->driver.scope_node=NULL;
+    image->driver.scope_failure_owner=NULL;image->driver.scope_policy_projection=false;
+    image->driver.scope_control_pure=false;image->driver.scope_scoring=false;
+    image->driver.scope_invocation_incomplete=false;
+    image->force_services=NULL;image->force_service_focus=NULL;
+    image->force_service_park_reservations=0u;
     image->driver.call_permit=NULL;image->driver.call_permit_context=NULL;
     image->driver.call_refusal_generation=NULL;
     image->driver.call_refusal_retained=NULL;
@@ -1465,6 +1485,8 @@ static bool prime_native_parent_copy_with_session_profile(const PrimeNativeContr
     if(ok){image->parked_count=source->parked_count;for(size_t i=0;i<source->parked_count;i++){image->parked[i]=transport[queued+i].prepared;memset(&transport[queued+i].prepared,0,sizeof(transport[queued+i].prepared));}}
     if(ok) {
         image->force_retry.admitted=source->force_retry.admitted;
+        image->force_retry.prepared=source->force_retry.prepared;
+        image->force_retry.call_refusal=source->force_retry.call_refusal;
         if(retry_count) {
             size_t index=queued+source->parked_count;
             image->force_retry.continuation=transport[index].prepared;

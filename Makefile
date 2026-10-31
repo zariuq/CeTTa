@@ -50219,7 +50219,9 @@ test-native-control-leases: $(NATIVE_CONTROL_LEASES_TEST_BIN)
 	@$(call cetta_exec,./$(NATIVE_CONTROL_LEASES_TEST_BIN))
 # The refusal controls must reject each faulty rule: a reader that takes a
 # refused call for a pause (it polls a state that nothing can change), and a
-# fallback that reruns a demand after a row or a world effect was observed.
+# fallback that reruns a demand after a row or a world effect was observed,
+# a nested refusal that terminates its owner, and a refusal masking a later
+# independent owner failure.
 # Each case names the failed check that must report it.
 NATIVE_CONTROL_LEASES_REFUSAL_MUTANT = runtime/test-native-control-leases-refusal-$(BUILD_OBJ_TAG)
 .PHONY: test-native-control-leases-refusal-mutation
@@ -50228,7 +50230,12 @@ test-native-control-leases-refusal-mutation: tests/test_native_control_leases.c 
 	@mkdir -p runtime
 	@set -eu; \
 	for case in 'REFUSAL_PAUSE:polls\.stalled' 'FALLBACK_AFTER_ROWS:demand\.driver\.top==frame' \
-		'FALLBACK_AFTER_EFFECTS:world_effects && slot->source->call_refusals && episode\.interrupted'; do \
+		'FALLBACK_AFTER_EFFECTS:world_effects && slot->source->call_refusals && episode\.interrupted' \
+		'REFUSAL_DEPENDENCY_TERMINAL:same && correct' \
+		'REFUSAL_MASKS_OWNER:restricted\.completion==reason' \
+		'CALL_REFUSAL_REQUEUE:work && parent && pending' \
+		'CALL_RETRY_PREFLIGHT_BYPASS:denied && retry->continuation.payload==work' \
+		'CALL_REFUSAL_FLAG_RESET:failed->agenda->failed'; do \
 		mutation=$${case%%:*}; expected=$${case#*:}; \
 		binary=$(NATIVE_CONTROL_LEASES_REFUSAL_MUTANT)-$$mutation; \
 		$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_PRIME_NEED_MUTATION_$$mutation=1 \

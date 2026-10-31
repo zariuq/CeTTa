@@ -6489,7 +6489,16 @@ typedef enum {
     PRIME_SHAPE_BODY,
 } PrimeShapeRole;
 
-#define PRIME_SHAPE_ARGS 8u
+typedef struct {
+    uint8_t role;
+    SymbolId word;
+} PrimeScopeShapeItem;
+
+typedef struct {
+    _Atomic size_t references;
+    size_t count;
+    PrimeScopeShapeItem items[];
+} PrimeScopeShapeItems;
 
 struct PrimeScopeShape {
     SymbolId binder;          /* the declared form's head */
@@ -6497,14 +6506,41 @@ struct PrimeScopeShape {
     bool source_form;         /* one of `binder`'s source forms */
     bool rest;                /* the items after the head repeat */
     CettaExprLen len;         /* the number of items, without `...` */
-    uint8_t role[PRIME_SHAPE_ARGS];
-    SymbolId word[PRIME_SHAPE_ARGS];
+    PrimeScopeShapeItems *items;
 };
 
 typedef struct {
     PrimeScopeShape *items;
     size_t len, cap;
 } PrimeScopeShapes;
+
+static void prime_scope_shape_retain(const PrimeScopeShape *shape) {
+    if (!shape->items) return;
+    size_t previous = atomic_fetch_add_explicit(&shape->items->references,
+        1u, memory_order_relaxed);
+    assert(previous && previous < SIZE_MAX);
+    (void)previous;
+}
+
+static void prime_scope_shape_release(const PrimeScopeShape *shape) {
+    if (!shape->items) return;
+    size_t previous = atomic_fetch_sub_explicit(&shape->items->references,
+        1u, memory_order_acq_rel);
+    assert(previous);
+    if (previous == 1u) free(shape->items);
+}
+
+static void prime_scope_shapes_truncate(PrimeScopeShapes *shapes, size_t len) {
+    assert(len <= shapes->len);
+    while (shapes->len > len)
+        prime_scope_shape_release(&shapes->items[--shapes->len]);
+}
+
+static void prime_scope_shapes_free(PrimeScopeShapes *shapes) {
+    prime_scope_shapes_truncate(shapes, 0u);
+    free(shapes->items);
+    memset(shapes, 0, sizeof(*shapes));
+}
 
 struct CettaPrimeInterpretation {
     _Atomic size_t references;
@@ -6542,7 +6578,7 @@ static CettaPrimeInterpretation *prime_interpretation_new(
     view->comparison_language = language;
     view->comparison_compat = he_compat;
     view->symbols = symbol_table_instance_id(g_symbols);
-    view->len = view->capacity = count;
+    view->capacity = count;
     return view;
 }
 
@@ -6558,6 +6594,8 @@ void prime_interpretation_release(CettaPrimeInterpretation *view) {
     size_t previous = atomic_fetch_sub_explicit(&view->references, 1u, memory_order_acq_rel);
     assert(previous);
     if (previous != 1u) return;
+    for (size_t i = 0u; i < view->len; i++)
+        prime_scope_shape_release(&view->items[i]);
     free(view->items);
     free(view);
 }
@@ -6658,6 +6696,11 @@ void prime_interpretation_storage(const CettaPrimeInterpretation *view,
         CettaStorageCensus *census) {
     if (!view || !cetta_storage_object(census, view, sizeof(*view), CETTA_STORAGE_BLOCK)) return;
     cetta_storage_array(census, view->items, view->capacity, sizeof(*view->items), 0u);
+    for (size_t i = 0u; i < view->len; i++) {
+        const PrimeScopeShapeItems *items = view->items[i].items;
+        cetta_storage_array(census, items, items->count,
+            sizeof(*items->items), sizeof(*items));
+    }
 }
 
 void prime_interpretation_selection_storage(const CettaPrimeInterpretationSelection *selection,
@@ -6676,7 +6719,8 @@ static bool prime_scope_shape_equal(const PrimeScopeShape *a,
         a->len != b->len)
         return false;
     for (CettaExprIndex i = 0u; i < a->len; i++)
-        if (a->role[i] != b->role[i] || a->word[i] != b->word[i])
+        if (a->items->items[i].role != b->items->items[i].role ||
+            a->items->items[i].word != b->items->items[i].word)
             return false;
     return true;
 }
@@ -6731,11 +6775,16 @@ static bool prime_interpretation_publish(CettaPrimeInterpretationSelection *sele
     }
     if (before->len) memcpy(next->items, before->items, before->len * sizeof(*next->items));
     next->len = before->len;
+    for (size_t i = 0u; i < next->len; i++)
+        prime_scope_shape_retain(&next->items[i]);
     for (size_t i = 0u; i < added_len; i++) {
         bool known = false;
         for (size_t k = 0u; k < next->len && !known; k++)
             known = prime_scope_shape_equal(&next->items[k], &added->items[i]);
-        if (!known) next->items[next->len++] = added->items[i];
+        if (!known) {
+            next->items[next->len++] = added->items[i];
+            prime_scope_shape_retain(&added->items[i]);
+        }
     }
     pthread_mutex_lock(&selection->mutex);
     bool accepted = selection->current == before;
@@ -6751,12 +6800,15 @@ static bool prime_scope_shapes_push(PrimeScopeShapes *set,
                                     const PrimeScopeShape *shape) {
     if (set->len == set->cap) {
         size_t cap = set->cap ? set->cap * 2u : 8u;
+        if (cap <= set->cap || cap > SIZE_MAX / sizeof(*set->items))
+            return false;
         PrimeScopeShape *grown = realloc(set->items, sizeof(*grown) * cap);
         if (!grown) return false;
         set->items = grown;
         set->cap = cap;
     }
     set->items[set->len++] = *shape;
+    prime_scope_shape_retain(shape);
     return true;
 }
 
@@ -6770,19 +6822,19 @@ static CettaExprIndex prime_scope_item_at(const PrimeScopeShape *shape,
 static PrimeShapeRole prime_scope_role_at(const PrimeScopeShape *shape,
                                           CettaExprIndex index) {
     CettaExprIndex item = prime_scope_item_at(shape, index);
-    return item < shape->len ? (PrimeShapeRole)shape->role[item]
+    return item < shape->len ? (PrimeShapeRole)shape->items->items[item].role
                              : PRIME_SHAPE_ANY;
 }
 
 static bool prime_scope_shape_fits(const PrimeScopeShape *shape,
                                    const Atom *term) {
     CettaExprLen len = term->expr.len;
-    if (shape->rest ? len + 1u < shape->len : len != shape->len)
+    if (shape->rest ? len < shape->len - 1u : len != shape->len)
         return false;
     for (CettaExprIndex i = 0u; i < len; i++) {
         CettaExprIndex item = prime_scope_item_at(shape, i);
-        if (shape->role[item] == PRIME_SHAPE_WORD &&
-            !atom_is_symbol_id(term->expr.elems[i], shape->word[item]))
+        if (shape->items->items[item].role == PRIME_SHAPE_WORD &&
+            !atom_is_symbol_id(term->expr.elems[i], shape->items->items[item].word))
             return false;
     }
     return true;
@@ -6867,63 +6919,90 @@ static Atom *prime_scope_form_patterns(const PrimeInterpretation *interpretation
     return result;
 }
 
-/* A declaration read from a document, `(scope:binder SHAPE)` or
- * `(scope:source H SHAPE)`.  False for any other form, and for a
- * declaration it cannot read (that stays data). */
-static bool prime_scope_shape_read(TermUniverse *u, AtomId id,
-                                   PrimeScopeShape *out) {
-    if (tu_kind(u, id) != ATOM_EXPR) return false;
+typedef enum {
+    PRIME_SCOPE_SHAPE_DATA,
+    PRIME_SCOPE_SHAPE_DECLARATION,
+    PRIME_SCOPE_SHAPE_INCOMPLETE,
+} PrimeScopeShapeRead;
+
+static uint8_t prime_scope_shape_role(SymbolId sym, CettaExprIndex index,
+                                       bool source) {
+    if (!index && !source) return PRIME_SHAPE_WORD;
+    const char *word = symbol_bytes(g_symbols, sym);
+    if (word && strcmp(word, "_") == 0) return PRIME_SHAPE_ANY;
+    if (word && strcmp(word, "value") == 0) return PRIME_SHAPE_VALUE;
+    if (word && strcmp(word, "pattern") == 0) return PRIME_SHAPE_PATTERN;
+    if (word && strcmp(word, "source") == 0) return PRIME_SHAPE_SOURCE;
+    if (word && strcmp(word, "body") == 0) return PRIME_SHAPE_BODY;
+    return PRIME_SHAPE_WORD;
+}
+
+/* Unknown or malformed declarations stay data. A valid declaration whose
+ * storage cannot be prepared refuses the document without publishing it. */
+static PrimeScopeShapeRead prime_scope_shape_read(TermUniverse *u, AtomId id,
+                                                 PrimeScopeShape *out) {
+    if (tu_kind(u, id) != ATOM_EXPR) return PRIME_SCOPE_SHAPE_DATA;
     CettaExprLen n = tu_arity(u, id);
-    if (n != 2u && n != 3u) return false;
+    if (n != 2u && n != 3u) return PRIME_SCOPE_SHAPE_DATA;
     AtomId head = tu_child(u, id, 0u);
-    if (tu_kind(u, head) != ATOM_SYMBOL) return false;
+    if (tu_kind(u, head) != ATOM_SYMBOL) return PRIME_SCOPE_SHAPE_DATA;
     const char *name = symbol_bytes(g_symbols, tu_sym(u, head));
     bool source;
     if (name && n == 2u && strcmp(name, "scope:binder") == 0) source = false;
     else if (name && n == 3u && strcmp(name, "scope:source") == 0) source = true;
-    else return false;
-    memset(out, 0, sizeof(*out));
-    out->source_form = source;
+    else return PRIME_SCOPE_SHAPE_DATA;
+    PrimeScopeShape result = {.source_form = source};
     if (source) {
         AtomId binder = tu_child(u, id, 1u);
-        if (tu_kind(u, binder) != ATOM_SYMBOL) return false;
-        out->binder = tu_sym(u, binder);
+        if (tu_kind(u, binder) != ATOM_SYMBOL) return PRIME_SCOPE_SHAPE_DATA;
+        result.binder = tu_sym(u, binder);
     }
     AtomId shape = tu_child(u, id, source ? 2u : 1u);
-    if (tu_kind(u, shape) != ATOM_EXPR) return false;
+    if (tu_kind(u, shape) != ATOM_EXPR) return PRIME_SCOPE_SHAPE_DATA;
     CettaExprLen len = tu_arity(u, shape);
-    if (len < 2u || len > PRIME_SHAPE_ARGS) return false;
-    out->len = len;
+    if (len < 2u) return PRIME_SCOPE_SHAPE_DATA;
+    result.len = len;
     bool binds = false;
+    uint8_t first_role = PRIME_SHAPE_WORD;
     for (CettaExprIndex i = 0u; i < len; i++) {
         AtomId item = tu_child(u, shape, i);
-        if (tu_kind(u, item) != ATOM_SYMBOL) return false;
+        if (tu_kind(u, item) != ATOM_SYMBOL) return PRIME_SCOPE_SHAPE_DATA;
         SymbolId sym = tu_sym(u, item);
         const char *word = symbol_bytes(g_symbols, sym);
         if (word && strcmp(word, "...") == 0) {
-            if (i + 1u != len || out->rest ||
-                i <= (out->role[0] == PRIME_SHAPE_WORD ? 1u : 0u))
-                return false;
-            out->rest = true;
-            out->len = len - 1u;
+            if (i + 1u != len || result.rest ||
+                i <= (first_role == PRIME_SHAPE_WORD ? 1u : 0u))
+                return PRIME_SCOPE_SHAPE_DATA;
+            result.rest = true;
+            result.len = len - 1u;
             continue;
         }
-        uint8_t role = PRIME_SHAPE_WORD;
-        if (i == 0u && !source) role = PRIME_SHAPE_WORD;
-        else if (word && strcmp(word, "_") == 0) role = PRIME_SHAPE_ANY;
-        else if (word && strcmp(word, "value") == 0) role = PRIME_SHAPE_VALUE;
-        else if (word && strcmp(word, "pattern") == 0) role = PRIME_SHAPE_PATTERN;
-        else if (word && strcmp(word, "source") == 0) role = PRIME_SHAPE_SOURCE;
-        else if (word && strcmp(word, "body") == 0) role = PRIME_SHAPE_BODY;
-        out->role[i] = role;
-        if (role == PRIME_SHAPE_WORD) out->word[i] = sym;
+        uint8_t role = prime_scope_shape_role(sym, i, source);
+        if (!i) first_role = role;
         if (role == PRIME_SHAPE_PATTERN || role == PRIME_SHAPE_SOURCE)
             binds = true;
     }
-    out->head = out->role[0] == PRIME_SHAPE_WORD ? out->word[0]
-                                                 : SYMBOL_ID_NONE;
-    if (!source) out->binder = out->head;
-    return source || binds;
+    if (!source && !binds) return PRIME_SCOPE_SHAPE_DATA;
+    if (result.len > (SIZE_MAX - sizeof(PrimeScopeShapeItems)) /
+            sizeof(PrimeScopeShapeItem))
+        return PRIME_SCOPE_SHAPE_INCOMPLETE;
+    size_t count = (size_t)result.len;
+    result.items = malloc(sizeof(*result.items) +
+        count * sizeof(*result.items->items));
+    if (!result.items) return PRIME_SCOPE_SHAPE_INCOMPLETE;
+    atomic_init(&result.items->references, 1u);
+    result.items->count = count;
+    for (CettaExprIndex i = 0u; i < result.len; i++) {
+        SymbolId sym = tu_sym(u, tu_child(u, shape, i));
+        uint8_t role = prime_scope_shape_role(sym, i, source);
+        result.items->items[i] = (PrimeScopeShapeItem){
+            .role = role, .word = role == PRIME_SHAPE_WORD ? sym : SYMBOL_ID_NONE};
+    }
+    result.head = first_role == PRIME_SHAPE_WORD
+        ? result.items->items[0].word : SYMBOL_ID_NONE;
+    if (!source) result.binder = result.head;
+    *out = result;
+    return PRIME_SCOPE_SHAPE_DECLARATION;
 }
 
 /* The declarations a library holds, read where a document imports it: the
@@ -7002,8 +7081,12 @@ static bool prime_scope_read_library_shapes(PrimeCompiledReaderV1 *provided, con
     bool ok = n >= 0;
     for (int i = 0; i < n && ok; i++) {
         PrimeScopeShape shape;
-        if (prime_scope_shape_read(&universe, ids[i], &shape))
+        PrimeScopeShapeRead read = prime_scope_shape_read(&universe, ids[i], &shape);
+        if (read == PRIME_SCOPE_SHAPE_INCOMPLETE) ok = false;
+        if (read == PRIME_SCOPE_SHAPE_DECLARATION) {
             ok = prime_scope_shapes_push(out, &shape);
+            prime_scope_shape_release(&shape);
+        }
     }
     free(ids);
     term_universe_free(&universe);
@@ -7067,7 +7150,7 @@ static bool prime_scope_library_shapes(CettaLibraryContext *ctx, PrimeCompiledRe
         } else {
             ok = false;
         }
-        if (!ok) g_prime_scope_library_shapes.len = first;
+        if (!ok) prime_scope_shapes_truncate(&g_prime_scope_library_shapes, first);
     }
     for (size_t i = 0u; ok && known && i < known->count; i++)
         ok = prime_scope_shapes_push(
@@ -7100,9 +7183,14 @@ static bool prime_scope_shapes_scan(CettaLibraryContext *library, PrimeCompiledR
             tu_kind(u, forms[i - 1u]) == ATOM_SYMBOL &&
             tu_sym(u, forms[i - 1u]) == g_builtin_syms.bang;
         PrimeScopeShape shape;
-        if (!after_bang && prime_scope_shape_read(u, forms[i], &shape) &&
-            !prime_scope_shapes_push(doc, &shape))
-            return false;
+        if (after_bang) continue;
+        PrimeScopeShapeRead read = prime_scope_shape_read(u, forms[i], &shape);
+        if (read == PRIME_SCOPE_SHAPE_INCOMPLETE) return false;
+        if (read == PRIME_SCOPE_SHAPE_DECLARATION) {
+            bool added = prime_scope_shapes_push(doc, &shape);
+            prime_scope_shape_release(&shape);
+            if (!added) return false;
+        }
     }
     size_t whole = doc->len;
     for (size_t i = 0u; i < count; i++) {
@@ -7112,8 +7200,12 @@ static bool prime_scope_shapes_scan(CettaLibraryContext *library, PrimeCompiledR
         if (!after_bang) continue;
         size_t before = doc->len;
         PrimeScopeShape shape;
-        if (prime_scope_shape_read(u, forms[i], &shape)) {
-            if (!prime_scope_shapes_push(doc, &shape)) return false;
+        PrimeScopeShapeRead read = prime_scope_shape_read(u, forms[i], &shape);
+        if (read == PRIME_SCOPE_SHAPE_INCOMPLETE) return false;
+        if (read == PRIME_SCOPE_SHAPE_DECLARATION) {
+            bool added = prime_scope_shapes_push(doc, &shape);
+            prime_scope_shape_release(&shape);
+            if (!added) return false;
         } else if (!prime_scope_library_shapes(library, reader, prime_scope_import_spec(
                        u, forms[i]), doc)) {
             return false;
@@ -14482,7 +14574,7 @@ static bool prime_semantics_elaborate_read_forms_interpreted(const PrimeInterpre
     size_t *shape_positions = NULL;
     if (!prime_scope_shapes_scan(library, reader, universe, forms, count, &doc_shapes,
                                  &shape_positions)) {
-        free(doc_shapes.items);
+        prime_scope_shapes_free(&doc_shapes);
         free(shape_positions);
         snprintf(g_prime_elab_error, sizeof g_prime_elab_error,
                  "the declared binding forms could not be read");
@@ -14572,7 +14664,7 @@ static bool prime_semantics_elaborate_read_forms_interpreted(const PrimeInterpre
     if (ok && library)
         ok = prime_interpretation_publish(library->prime_interpretation, &doc_shapes,
             g_prime_scope_reading_document ? &main_profile : NULL, NULL);
-    free(doc_shapes.items);
+    prime_scope_shapes_free(&doc_shapes);
     free(shape_positions);
     if (ok && counting && !planning) prime_scope_census_print(census);
     if (ok && planning) printf("{\"kind\":\"complete\",\"forms\":%zu}\n", count);

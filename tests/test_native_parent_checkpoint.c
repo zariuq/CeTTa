@@ -113,6 +113,7 @@ static bool seen(Arena *a,Atom *v,const Outcome *occurrence,void *raw){const Bin
 return true;}
 typedef struct {
  uint64_t steps; CettaNativeCostSnapshot total; bool closed,pending; size_t count;
+ size_t force_attempts_consumed;
  size_t event_count; CettaNativeCostEvent events[8192];
  size_t lengths[32]; int64_t factors[32][16]; char values[32][2048];
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
@@ -129,6 +130,10 @@ static bool exact_io(int fd,void *buffer,size_t size,bool writing){
 static size_t checks,failures;
 static size_t inspection_copies,readiness_copies,work_readiness_copies;
 static bool inspection_refusals_checked;
+static bool force_attempt_cases_active;
+static size_t force_attempts_staged,force_attempts_copied;
+static size_t force_attempts_consumed,force_attempts_image_consumed;
+static size_t force_attempts_progressed,force_attempts_completed;
 static const size_t expected_answers[]={1u,3u,2u,0u,3u,2u,2u,2u,0u,2u,2u,0u,3u,7u,3u,2u,2u,2u,1u};
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
 static size_t causal_frame_views;
@@ -138,6 +143,112 @@ static void request_causal_receipt(Atom *answer,const PrimeNeedReceipt *receipt,
 #endif
 #define CHECK(x) do{checks++;if(!(x)){failures++;fprintf(stderr,"FAIL %u/%u %s\n",client,cut,#x);}}while(0)
 #include "native_parent_run_scope.inc"
+
+/* Stage one real provider visit at an enrolled FORCE, leaving its requester
+ * result pending. No synthetic result or reader position is installed. */
+static bool checkpoint_force_attempt_stage(PrimeNativeControl *control,
+ unsigned client,unsigned cut,uint64_t *sequence) {
+ PrimeNativeRunGuard run;prime_native_run_enter(control,&run);
+ PrimeEvalStackFrame *prior_top=control->driver.top;
+ uint64_t prior_occurrence=control->active_occurrence;
+ bool staged=false;
+ for(size_t i=0u;i<cetta_continuation_hub_length(&control->hub)&&!staged;i++) {
+  const CettaOwnedContinuation *entry=cetta_continuation_hub_at(&control->hub,i);
+  PrimeNativeWork *work=entry->provider==&prime_native_work_provider?entry->payload:NULL;
+  PrimeEvalStackFrame *frame=work?work->frame:NULL;
+  if(!frame||frame->kind!=PRIME_EVAL_STACK_FRAME_FORCE||!frame->call_force_reader||
+     frame->call_force_attempt.ready||frame->control_closed||frame->control_retired||
+     !prime_native_control_frame_ready(frame)||!frame->env_initialized)continue;
+  control->driver.top=frame;control->active_occurrence=entry->occurrence_id;
+  {
+   __attribute__((cleanup(prime_eval_stack_context_leave)))
+   PrimeEvalContextGuard context=prime_eval_stack_context_enter(frame->context);
+   __attribute__((cleanup(prime_eval_authority_leave)))
+   PrimeEvalAuthorityGuard authority=prime_eval_authority_enter(frame->pure_authority);
+   __attribute__((cleanup(prime_need_active_leave))) PrimeNeedActiveGuard active;
+   prime_need_active_enter_captured(&active,&frame->env);
+   PrimeNeedCallForceReader *reader=frame->call_force_reader;
+   if(cetta_shared_return_checkpoint_peek(reader->position).kind==CETTA_SHARED_DELIVERY_PAUSED) {
+    PrimeNeedForceProduction *producer=reader->slot->source;
+    const CettaOwnedExecution *execution=cetta_shared_return_producer_execution(reader->slot->producer);
+    uint64_t dispatched=producer->dispatches,accepted=execution->accepted;
+    bool terminal=execution->terminal;
+    CettaEvalEpisode producing=cetta_eval_episode_begin(NULL,1000000);
+    CettaEvalEpisode *previous=g_eval_completion_tracker;g_eval_completion_tracker=&producing;
+    uint64_t position=UINT64_MAX;
+    CHECK(cetta_shared_return_checkpoint_position(reader->position,&position));
+    staged=prime_need_call_force_advance(frame);
+    g_eval_completion_tracker=previous;
+    CHECK(staged&&frame->call_force_attempt.ready&&frame->call_force_reader==reader);
+    uint64_t after=UINT64_MAX;
+    CHECK(cetta_shared_return_checkpoint_position(reader->position,&after)&&after==position);
+    if(staged) {
+     CHECK(!producing.interrupted&&producing.completion==CETTA_EVAL_COMPLETE);
+     CHECK(producer->dispatches>dispatched||execution->accepted>accepted||
+         (!terminal&&execution->terminal));
+     force_attempts_progressed+=producer->dispatches>dispatched;
+     force_attempts_completed+=frame->call_force_attempt.step==CETTA_SHARED_RETURN_COMPLETE;
+     *sequence=frame->control_sequence;force_attempts_staged++;
+     printf("FORCE_ATTEMPT_STAGE %u/%u sequence=%"PRIu64" step=%u source=%u spent=%"PRIu64"\n",
+      client,cut,*sequence,(unsigned)frame->call_force_attempt.step,
+      (unsigned)frame->call_force_attempt.source_completion,frame->call_force_attempt.steps_spent);
+    }
+   }
+  }
+ }
+ control->driver.top=prior_top;
+ prime_native_run_leave(&run);control->active_occurrence=prior_occurrence;
+ return staged;
+}
+
+static PrimeEvalStackFrame *checkpoint_force_attempt_frame(PrimeNativeControl *control,
+ uint64_t sequence) {
+ for(PrimeEvalStackFrame *frame=control->frames;frame;frame=frame->control_next)
+  if(frame->control_sequence==sequence&&frame->call_force_attempt.ready)return frame;
+ return NULL;
+}
+
+/* Consume the transported result in a fresh episode. Its original provider
+ * visit is already paid, and neither publication nor another poll is owed. */
+static bool checkpoint_force_attempt_consume(PrimeNativeControl *control,uint64_t sequence,
+ unsigned client,unsigned cut) {
+ size_t failures_before=failures;
+ PrimeEvalStackFrame *frame=checkpoint_force_attempt_frame(control,sequence);
+ CHECK(frame&&frame->kind==PRIME_EVAL_STACK_FRAME_FORCE&&frame->call_force_reader);
+ if(!frame||!frame->call_force_reader)return false;
+ PrimeNeedCallForceReader *reader=frame->call_force_reader;
+ PrimeNeedForceProduction *source=reader->slot->source;
+ const CettaOwnedExecution *execution=cetta_shared_return_producer_execution(reader->slot->producer);
+ uint64_t dispatches=source->dispatches,accepted=execution->accepted,steps=control->steps;
+ uint64_t source_steps=source->agenda?source->agenda->steps:0u;
+ CettaCount cursor=source->resident.cursor,rows=frame->target->len;
+ uint64_t position=UINT64_MAX;CHECK(cetta_shared_return_checkpoint_position(reader->position,&position));
+ CettaNativeCostSnapshot cost=control->event_cost.total;size_t events=control->event_cost.length;
+ PrimeNativeRunGuard run;prime_native_run_enter(control,&run);
+ PrimeEvalStackFrame *prior_top=control->driver.top;control->driver.top=frame;
+ {
+  __attribute__((cleanup(prime_eval_stack_context_leave)))
+  PrimeEvalContextGuard context=prime_eval_stack_context_enter(frame->context);
+  __attribute__((cleanup(prime_eval_authority_leave)))
+  PrimeEvalAuthorityGuard authority=prime_eval_authority_enter(frame->pure_authority);
+  __attribute__((cleanup(prime_need_active_leave))) PrimeNeedActiveGuard active;
+  prime_need_active_enter_captured(&active,&frame->env);
+  CettaEvalEpisode receiving=cetta_eval_episode_begin(NULL,37);
+  CettaEvalEpisode *previous=g_eval_completion_tracker;g_eval_completion_tracker=&receiving;
+  prime_need_call_force_resume(frame);
+  g_eval_completion_tracker=previous;
+  CHECK(!frame->call_force_attempt.ready&&!receiving.interrupted&&
+   receiving.completion==CETTA_EVAL_COMPLETE&&!receiving.steps_spent&&receiving.budget_remaining==37u);
+ }
+ control->driver.top=prior_top;prime_native_run_leave(&run);
+ uint64_t after=UINT64_MAX;
+ CHECK(frame->call_force_reader==reader&&cetta_shared_return_checkpoint_position(reader->position,&after)&&after==position);
+ CHECK(source->dispatches==dispatches&&source->resident.cursor==cursor&&execution->accepted==accepted&&
+  (!source->agenda||source->agenda->steps==source_steps)&&frame->target->len==rows&&control->steps==steps);
+ CHECK(!memcmp(&cost,&control->event_cost.total,sizeof(cost))&&control->event_cost.length==events);
+ if(failures==failures_before)force_attempts_consumed++;
+ return failures==failures_before;
+}
 
 /* A checkpoint can own several arenas. Map every advertised owner and the
  * externally borrowed syntax/space arenas before copying any payload. */
@@ -363,6 +474,10 @@ static void one(unsigned client,unsigned cut){
  bindings_free(&inherited);
  Result a={0},b={0},prefix={0};arena_init(&a.storage);arena_init(&b.storage);arena_init(&prefix.storage);
  prime_native_control_run(source,cut,policy.selection?checkpoint_first_seen:seen,&prefix);
+ uint64_t attempt_sequence=0u;
+ bool attempt_staged=force_attempt_cases_active&&
+  checkpoint_force_attempt_stage(source,client,cut,&attempt_sequence);
+ if(force_attempt_cases_active)CHECK(attempt_staged);
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
  for(const PrimeEvalStackFrame *f=source->frames;f;f=f->control_next) {
   if(f->before_receipt.top)causal_frame_views++;
@@ -449,6 +564,14 @@ static void one(unsigned client,unsigned cut){
  }
  if(copied){
   CopyRelation relation;CHECK(copy_relation(source,image,&relation));
+  if(attempt_staged) {
+   PrimeEvalStackFrame *original_attempt=checkpoint_force_attempt_frame(source,attempt_sequence);
+   PrimeEvalStackFrame *copied_attempt=checkpoint_force_attempt_frame(image,attempt_sequence);
+   CHECK(original_attempt&&copied_attempt&&original_attempt!=copied_attempt&&
+       copied_attempt->call_force_reader&&
+       copied_attempt->call_force_reader!=original_attempt->call_force_reader);
+   if(original_attempt&&copied_attempt)force_attempts_copied++;
+  }
   for(const PrimeEvalStackFrame *f=source->frames;f;f=f->control_next) {
    const PrimeNeedEquationContinuation *eq=f->equation_search;if(!eq)continue;
    inspection_copies+=eq->inspect_incrementally && eq->inspection.length>0u;
@@ -482,8 +605,10 @@ static void one(unsigned client,unsigned cut){
   assert(pipe(channel)==0);fflush(NULL);child=fork();assert(child>=0);
   if(!child){
    close(channel[0]);assert(cetta_native_handle_close(lib,"prime-search",source_handle));source=NULL;
+   bool attempt_consumed=!attempt_staged||checkpoint_force_attempt_consume(image,attempt_sequence,client,cut);
    checkpoint_scope_run(image,3000u,&b,&syntax,client,cut);
    ForkObservation *observed=calloc(1u,sizeof(*observed));assert(observed);
+   observed->force_attempts_consumed=attempt_staged&&attempt_consumed?1u:0u;
    observed->steps=image->steps;observed->total=image->event_cost.total;
    observed->event_count=image->event_cost.length;assert(observed->event_count<=8192u);
    memcpy(observed->events,image->event_cost.events,observed->event_count*sizeof(*observed->events));
@@ -504,6 +629,7 @@ static void one(unsigned client,unsigned cut){
   }
   close(channel[1]);
  }
+ if(attempt_staged)CHECK(checkpoint_force_attempt_consume(source,attempt_sequence,client,cut));
  checkpoint_scope_run(source,3000u,&a,&syntax,client,cut);
  uint64_t steps=source->steps;bool closed=prime_native_control_closed(source),pending=prime_native_control_waiting_verdict(source);
  CettaNativeCostSnapshot total=source->event_cost.total;
@@ -522,6 +648,10 @@ static void one(unsigned client,unsigned cut){
     WIFSIGNALED(status),WIFSIGNALED(status)?WTERMSIG(status):-1);
   CHECK(received&&WIFEXITED(status)&&WEXITSTATUS(status)==0);
   if(received){
+   if(attempt_staged) {
+    CHECK(observed->force_attempts_consumed==1u);
+    force_attempts_image_consumed+=observed->force_attempts_consumed;
+   }
    image_steps=observed->steps;CHECK(observed->steps==steps);CHECK(!memcmp(&observed->total,&total,sizeof(total)));
    CHECK(observed->event_count==event_count);
    for(size_t e=0;e<event_count&&e<observed->event_count;e++){
@@ -570,8 +700,29 @@ copy_unavailable:
  cetta_library_context_free(lib);free(lib);eval_set_library_context(NULL);registry_free(&reg);g_registry=NULL;space_free(&space);arena_free(&syntax);
 }
 
+/* Both cuts contain an actual enrolled reader: an unfinished source visit
+ * and the visit that establishes its complete frontier. */
+static void force_attempt_copy_cases(void) {
+ const unsigned client=12u,cut=0u;
+ size_t staged=force_attempts_staged,copied=force_attempts_copied;
+ size_t consumed=force_attempts_consumed,images=force_attempts_image_consumed;
+ size_t progressed=force_attempts_progressed,completed=force_attempts_completed;
+ force_attempt_cases_active=true;
+ const unsigned boundaries[]={112u,120u};
+ for(size_t i=0u;i<sizeof(boundaries)/sizeof(*boundaries);i++)one(12u,boundaries[i]);
+ force_attempt_cases_active=false;
+ CHECK(force_attempts_staged-staged==sizeof(boundaries)/sizeof(*boundaries)&&
+  force_attempts_copied-copied==force_attempts_staged-staged&&
+  force_attempts_consumed-consumed==force_attempts_staged-staged&&
+  force_attempts_image_consumed-images==force_attempts_staged-staged&&
+  force_attempts_progressed>progressed&&force_attempts_completed>completed);
+ printf("FORCE_ATTEMPT_COPIES staged=%zu copied=%zu original_consumed=%zu retired_origin_image_consumed=%zu\n",
+  force_attempts_staged-staged,force_attempts_copied-copied,
+  force_attempts_consumed-consumed,force_attempts_image_consumed-images);
+}
+
 /* A copied parent must carry the installed continuation cut, not replay the
- * visible prefix and not retain the source graph.  Exercise both retirement
+ * visible prefix and not retain the source graph. Exercise both retirement
  * orders after source and image choose different requesting worlds. */
 static void installed_context_fork_checkpoint_cases(void) {
  for(unsigned mode=0u;mode<2u;mode++) {
@@ -1633,6 +1784,11 @@ static void allocator_domain_cases(void) {
 }
 
 int main(int argc,char **argv){SymbolTable syms;symbol_table_init(&syms);symbol_table_init_builtins(&syms,&g_builtin_syms);g_symbols=&syms;VarInternTable vars;var_intern_init(&vars);g_var_intern=&vars;g_hashcons=NULL;
+ if(argc==2&&!strcmp(argv[1],"--force-attempt")) {
+  force_attempt_copy_cases();
+  eval_release_temporary_spaces();eval_match_decision_cache_free_for_current_thread();var_intern_free(&vars);g_var_intern=NULL;
+  symbol_table_free(&syms);g_symbols=NULL;printf("CHECKS %zu FAILURES %zu\n",checks,failures);return failures?1:0;
+ }
  if(argc==2&&!strcmp(argv[1],"--allocator-domain")) {
   allocator_domain_cases();
   eval_match_decision_cache_free_for_current_thread();var_intern_free(&vars);g_var_intern=NULL;
@@ -1677,6 +1833,7 @@ int main(int argc,char **argv){SymbolTable syms;symbol_table_init(&syms);symbol_
  hidden_active_history_and_resume_cases();
  return_advice_copy_cases();
  eval_return_debt_copy_cases();
+ force_attempt_copy_cases();
  opaque_service_copy_cases();
  installed_context_fork_checkpoint_cases();
  const unsigned cuts[]={0,1,3,7,13,19,31,49,79,149,163,401};

@@ -1910,8 +1910,9 @@ static bool prime_native_parallel_join_owned(PrimeNativeControl *owner,
             owner->driver.capacity_blocked = true;
             return false;
         }
-        owner->parked = cetta_realloc(owner->parked, (count + 1u) * sizeof(*owner->parked));
-        owner->parked_capacity = count + 1u;
+        if(!prime_need_force_service_reserve(owner,1u)) {
+            owner->driver.capacity_blocked=true;return false;
+        }
         owner->parked[count] = *owned;
         owner->parked_count++;
         *owned = (CettaOwnedContinuation){0};

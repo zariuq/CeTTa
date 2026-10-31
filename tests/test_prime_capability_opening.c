@@ -976,8 +976,8 @@ int main(void) {
     g_hashcons = NULL;
     arena_init(&arena);
     arena_set_hashcons(&arena, NULL);
-    cetta_eval_session_init(&context.session, CETTA_LANGUAGE_PRIME,
-                           cetta_profile_prime_default());
+    cetta_library_context_init_for_language_profile(&context, CETTA_LANGUAGE_PRIME,
+                                                   cetta_profile_prime_default());
     eval_set_library_context(&context);
     prime_need_snapshot_init(&g_prime_need_active);
     assert(prime_need_snapshot_begin(&g_prime_need_active));
@@ -1076,6 +1076,7 @@ int main(void) {
 
     prime_need_snapshot_init(&g_prime_need_active);
     eval_set_library_context(NULL);
+    cetta_library_context_free(&context);
     arena_free(&arena);
     var_intern_free(&variables);
     symbol_table_free(&symbols);
