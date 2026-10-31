@@ -4,6 +4,7 @@
 ; Non-ground or missing endpoints are outside this projection, not variables
 ; to instantiate. Other fields may contain arbitrary inert values.
 !(import! &self "kb.metta")
+!(import! &self "graph_data.metta")
 
 (= (kbg:direction? $direction) (or (== $direction out) (== $direction in)))
 (= (kbg:spec? $spec)
@@ -178,8 +179,9 @@
      (let* ((($path $tail) (decons-atom $front)) ((KgPath $nodes $edges $depth) $path)
             ($pending (KgFrontier $tail $back (- $queued 1) $seen $count $best)))
        (if (kbg:at-limit? $mode $depth $best) (KgSkip $pending KgIdle 0 0 0)
-         (let $position (if (== $direction out) $from $to)
-           (case (kb:query-open $view (KbArgument $relation $position (car-atom $nodes)) $bytes)
+         (let* (($position (if (== $direction out) $from $to))
+                ((KgDataV1 $here) (kbg:data-at $nodes 0)))
+           (case (kb:query-open $view (KbArgument $relation $position $here) $bytes)
              (((KbCursor $v $scan $p $prefix $budget $rows $keys $decoded)
                (KgSkip $pending
                  (KgScan (KbCursor $v $scan $p $prefix $budget $rows $keys $decoded) $path) 0 0 0))
@@ -191,7 +193,8 @@
    (case $fact
      (((KbFact $identity $stored $fields)
        (if (and (< $from (size-atom $fields)) (< $to (size-atom $fields)))
-         (let* (($source (index-atom $fields $from)) ($target (index-atom $fields $to)))
+         (let* (((KgDataV1 $source) (kbg:data-at $fields $from))
+                ((KgDataV1 $target) (kbg:data-at $fields $to)))
            (if (and (knowledge:ground-identity? $source) (knowledge:ground-identity? $target))
                (KgEdge $identity $source $target) KgNotEdge)) KgNotEdge))
       ($bad (KbRefused graph-row)))))
@@ -222,8 +225,8 @@
 (= (kbg:triangle-result $result)
    (case $result
      (((KgVisit (KgSome (KgPath $nodes $edges 3)) $frontier $offered $stop)
-       (let* (($a (index-atom $nodes 0)) ($b (index-atom $nodes 1))
-              ($c (index-atom $nodes 2)) ($end (index-atom $nodes 3)))
+       (let* (((KgDataV1 $a) (kbg:data-at $nodes 0)) ((KgDataV1 $b) (kbg:data-at $nodes 1))
+              ((KgDataV1 $c) (kbg:data-at $nodes 2)) ((KgDataV1 $end) (kbg:data-at $nodes 3)))
          (case (kbg:triangle? $a $b $c $end)
            ((True (KgVisit (KgSome (KgPath $nodes $edges 3)) $frontier $offered $stop))
             (False (KgVisit KgNone $frontier $offered $stop))
@@ -234,7 +237,8 @@
           ((KgFrontier $front $back $queued $seen $count $best) $frontier)
           ((KgPath $nodes $edges $depth) $path)
           ((KgEdge $identity $source $target) $edge)
-          ($next-node (if (== $direction out) $target $source))
+          ((KgDataV1 $next-node)
+            (if (== $direction out) (KgDataV1 $target) (KgDataV1 $source)))
           ($next-depth (+ $depth 1))
           ($next-path (KgPath (cons-atom $next-node $nodes) (cons-atom $identity $edges) $next-depth)))
      (case $mode
