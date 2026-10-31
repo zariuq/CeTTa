@@ -767,6 +767,8 @@ struct CettaPreparedPureProgram {
     /* The survivor arena's size after the last major collection. */
     size_t gc_major_survivor_bytes;
     size_t gc_low_reclaim_growth_bytes;
+    /* A failed structural inspection supplies no stable compiler refusal. */
+    bool compile_inspection_incomplete;
 
 };
 
@@ -837,11 +839,18 @@ static bool prepared_pure_is_space_node(const Atom *atom, void *context) {
  * machine's matchers compare structure, so in HE a value holding a space is
  * matched by the canonical evaluator.  The identity-grounded summary bit
  * proves the absence of a space in O(1). */
-static bool prepared_pure_he_value_holds_space(const Atom *value) {
-    return value && atom_has_identity_grounded(value) &&
-        eval_current_language_id &&
-        eval_current_language_id() == CETTA_LANGUAGE_HE &&
-        atom_graph_any(value, prepared_pure_is_space_node, NULL);
+static bool prepared_pure_he_value_holds_space(const Atom *value, bool *complete) {
+    if (complete)
+        *complete = true;
+    if (!value || !atom_has_identity_grounded(value) ||
+        !eval_current_language_id || eval_current_language_id() != CETTA_LANGUAGE_HE)
+        return false;
+    bool finished = false;
+    bool found = atom_graph_any_checked(value, prepared_pure_is_space_node,
+        NULL, NULL, SIZE_MAX, &finished);
+    if (complete)
+        *complete = finished;
+    return !finished || found;
 }
 
 /* A frontend refusal can cross result demands only before the compiler
@@ -2193,11 +2202,17 @@ static bool prepared_pure_add_node(
         program->node_len >= UINT32_MAX ||
         program->child_len > UINT32_MAX - child_count)
         return false;
-    if (node.kind == PREPARED_PURE_LITERAL &&
-        prepared_pure_he_value_holds_space(node.atom))
-        return prepared_pure_reject(
-            program, "a literal holds a space, which HE matches by query",
-            node.atom);
+    if (node.kind == PREPARED_PURE_LITERAL) {
+        bool complete = true;
+        if (prepared_pure_he_value_holds_space(node.atom, &complete)) {
+            if (!complete) {
+                program->compile_inspection_incomplete = true;
+                return false;
+            }
+            return prepared_pure_reject(
+                program, "a literal holds a space, which HE matches by query", node.atom);
+        }
+    }
     if (!prepared_pure_reserve(
             (void **)&program->children, sizeof(*program->children),
             &program->child_cap, program->child_len + child_count) ||
@@ -11979,6 +11994,10 @@ static void prepared_pure_compile_failure_report(
         report->status = CETTA_PREPARED_PURE_COMPILE_INVALIDATED;
         return;
     }
+    if (program && program->compile_inspection_incomplete) {
+        report->status = CETTA_PREPARED_PURE_COMPILE_RESOURCE_REFUSED;
+        return;
+    }
     if (program && generic_entry && entry_values && mode == CETTA_GSLT_PURE_CALL_EAGER) {
         if (program->compile_shared_view_refused) {
             report->refusals = answers ? CETTA_PREPARED_PURE_REFUSE_ANSWERS
@@ -12232,10 +12251,13 @@ bool cetta_prepared_pure_program_use_exportable_booleans(
         return false;
     if (program->boolean_atoms_ready) {
         for (size_t index = 0u; index < program->node_len; index++) {
-            if (program->nodes[index].atom && atom_graph_any(
-                    program->nodes[index].atom, prepared_pure_is_cached_boolean,
-                    program))
-                return false;
+            if (program->nodes[index].atom) {
+                bool complete = false;
+                bool private_boolean = atom_graph_any_checked(program->nodes[index].atom,
+                    prepared_pure_is_cached_boolean, NULL, program, SIZE_MAX, &complete);
+                if (!complete || private_boolean)
+                    return false;
+            }
         }
     }
     program->exports_boolean_results = true;
@@ -12914,7 +12936,7 @@ static bool prepared_pure_he_entry_arguments_without_space(
     const CettaPreparedPureProgram *program) {
     for (size_t i = 0u; program->entry_arguments &&
              i < program->entry_argument_count; i++) {
-        if (prepared_pure_he_value_holds_space(program->entry_arguments[i]))
+        if (prepared_pure_he_value_holds_space(program->entry_arguments[i], NULL))
             return false;
     }
     return true;
@@ -13033,7 +13055,7 @@ CettaPreparedPureAnswerCursor *cetta_prepared_pure_answer_cursor_open_body(
         if (!arguments[index] || atom_has_vars(arguments[index]) ||
             atom_has_identity_grounded(arguments[index]) ||
             atom_has_thread_local_resource(arguments[index]) ||
-            prepared_pure_he_value_holds_space(arguments[index]))
+            prepared_pure_he_value_holds_space(arguments[index], NULL))
             return NULL;
     return prepared_pure_answer_cursor_open_entry(program, arguments, arity,
         PREPARED_PURE_ROOT_FRAME, options);
@@ -16263,9 +16285,9 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
             &program->slot_cap, program->body.local_count))
         return prepared_pure_runtime_decline(
             program, "invalid or stale execution request", NULL);
-    if (prepared_pure_he_value_holds_space(accumulator) ||
-        prepared_pure_he_value_holds_space(item) ||
-        prepared_pure_he_value_holds_space(runtime_expression) ||
+    if (prepared_pure_he_value_holds_space(accumulator, NULL) ||
+        prepared_pure_he_value_holds_space(item, NULL) ||
+        prepared_pure_he_value_holds_space(runtime_expression, NULL) ||
         (closed && !prepared_pure_he_entry_arguments_without_space(program)))
         return prepared_pure_runtime_decline(
             program, "a value holds a space, which HE matches by query",
@@ -17149,11 +17171,15 @@ static bool prepared_pure_value_has_callable_node(
 }
 
 bool cetta_prepared_pure_program_value_is_fully_evaluated(
-    CettaPreparedPureProgram *program, Atom *value) {
-    return program && value &&
-           !atom_graph_any_pruned(value,
-               prepared_pure_value_has_callable_node,
-               prepared_pure_result_data_barrier, program);
+    CettaPreparedPureProgram *program, Atom *value, bool *complete) {
+    if (complete)
+        *complete = false;
+    if (!program || !value || !complete)
+        return false;
+    bool callable = atom_graph_any_checked(value,
+        prepared_pure_value_has_callable_node,
+        prepared_pure_result_data_barrier, program, SIZE_MAX, complete);
+    return *complete && !callable;
 }
 
 Arena *cetta_prepared_pure_program_closed_survivor_arena(

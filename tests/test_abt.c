@@ -15,7 +15,7 @@
 
 enum {
     ABT_DEEP_TERM_DEPTH = CETTA_ABT_MUTATION == 0 ? 100000 : 1000,
-    ABT_EXPECTED_CHECKS = 117 + 45,
+    ABT_EXPECTED_CHECKS = 117 + 45 + 22,
 };
 
 static unsigned failures = 0;
@@ -52,6 +52,83 @@ static Atom *node4(Arena *arena, const char *head,
 
 static Atom *var(Arena *arena, int64_t index) {
     return node1(arena, "idx", atom_int(arena, index));
+}
+
+static void test_parameter_span(Arena *arena, const AbtSignature *signature) {
+    Atom *parameters[257];
+    for (unsigned index = 0u; index < 257u; index++)
+        parameters[index] = atom_var_with_id(arena, "$parameter",
+            var_id_from_base(10001u + index));
+    const unsigned widths[] = {0u, 1u, 2u, 3u, 17u, 65u, 257u};
+    for (unsigned trial = 0u; trial < sizeof(widths) / sizeof(*widths); trial++) {
+        unsigned count = widths[trial];
+        Atom *body = node3(arena, "SpanBody", var(arena, 0),
+            node2(arena, "Pair", var(arena, count), var(arena, count + 3u)),
+            node2(arena, "Lam", atom_symbol(arena, "T"),
+                node2(arena, "Pair", var(arena, 0), var(arena, count + 1u))));
+        Atom *reference = body;
+        for (unsigned index = 0u; index < count; index++)
+            reference = node2(arena, "Lam", atom_symbol(arena, "T"), reference);
+        for (unsigned index = 0u; reference && index < count; index++)
+            reference = abt_subst(signature, arena, 0u, parameters[index],
+                reference->expr.elems[2]);
+        Atom *actual = abt_subst_vars(signature, arena, parameters, count, body);
+        CHECK(actual && reference && atom_eq(actual, reference),
+              "parameter span agrees with successive binder elimination");
+    }
+    Atom *body = node3(arena, "Positions", var(arena, 0), var(arena, 1), var(arena, 2));
+    CHECK(atom_eq(abt_subst_vars(signature, arena, parameters, 3u, body),
+          node3(arena, "Positions", parameters[2], parameters[1], parameters[0])),
+          "parameter span preserves outer-to-inner argument order");
+    body = node2(arena, "Lam", atom_symbol(arena, "T"),
+        node3(arena, "Positions", var(arena, 0), var(arena, 1), var(arena, 3)));
+    CHECK(atom_eq(abt_subst_vars(signature, arena, parameters, 3u, body),
+          node2(arena, "Lam", atom_symbol(arena, "T"),
+            node3(arena, "Positions", var(arena, 0), parameters[2], parameters[0]))),
+          "parameter span protects inner binders and lifts its position");
+    CHECK(atom_eq(abt_subst_vars(signature, arena, parameters, 3u, var(arena, 5)),
+          var(arena, 2)), "parameter span lowers outer indices by its full width");
+    CHECK(atom_eq(abt_subst_vars(signature, arena, parameters, 2u,
+          node1(arena, "quote", var(arena, 1))), node1(arena, "quote", parameters[0])),
+          "parameter span retains lexical scope inside quotation");
+    Atom *aliases[] = {parameters[0], parameters[0]};
+    CHECK(atom_eq(abt_subst_vars(signature, arena, aliases, 2u,
+          node2(arena, "Pair", var(arena, 0), var(arena, 1))),
+          node2(arena, "Pair", parameters[0], parameters[0])),
+          "parameter span preserves shared replacement variables");
+    Atom *shared = node2(arena, "Pair", var(arena, 0), var(arena, 1));
+    body = node3(arena, "Shared", shared, shared,
+        node2(arena, "Lam", atom_symbol(arena, "T"), shared));
+    Atom *actual = abt_subst_vars(signature, arena, parameters, 2u, body);
+    CHECK(actual && actual->expr.elems[1] == actual->expr.elems[2] &&
+          atom_eq(actual->expr.elems[3]->expr.elems[2],
+              node2(arena, "Pair", var(arena, 0), parameters[1])),
+          "parameter span shares one depth and separates another");
+    CHECK(abt_subst_vars(signature, arena, NULL, 0u, body) == body,
+          "empty parameter span leaves its body unchanged");
+    CHECK(abt_subst_vars(signature, arena, NULL, 2u, body) == NULL,
+          "parameter span rejects a missing vector");
+    CHECK(abt_subst_vars(signature, arena, parameters, UINT64_C(1) << 63, body) == NULL,
+          "parameter span rejects an unrepresentable binder count");
+    Atom *invalid[] = {parameters[0], NULL};
+    CHECK(abt_subst_vars(signature, arena, invalid, 2u, body) == NULL,
+          "parameter span rejects a missing variable");
+    invalid[1] = node1(arena, "readln!", atom_int(arena, 7));
+    CHECK(abt_subst_vars(signature, arena, invalid, 2u, body) == NULL,
+          "parameter span rejects argument data as a parameter variable");
+    CHECK(abt_subst_vars(signature, arena, parameters, 2u, var(arena, -1)) == NULL,
+          "parameter span rejects a negative index");
+    CHECK(abt_subst_vars(signature, arena, parameters, 2u,
+          node2(arena, "idx", atom_int(arena, 0), atom_int(arena, 1))) == NULL,
+          "parameter span rejects a malformed index");
+    Atom *cycle = node1(arena, "Cycle", atom_int(arena, 0));
+    cycle->expr.elems[1] = cycle;
+    CHECK(abt_subst_vars(signature, arena, parameters, 2u, cycle) == NULL,
+          "parameter span rejects a cyclic body");
+    AbtSignature unavailable = *signature;
+    unavailable.in_term_binders = 1u;
+    CHECK(abt_subst_vars(&unavailable, arena, parameters, 2u, body) == NULL,
+          "parameter span keeps canonical signature admission");
 }
 
 static void test_default_signature_blob(Arena *arena) {
@@ -1086,6 +1163,7 @@ int main(void) {
           "operational default signature admitted");
     test_shift_and_substitution(&arena, &signature);
     test_locally_nameless_seams(&arena, &signature);
+    test_parameter_span(&arena, &signature);
     test_named_readback(&arena, &signature);
     test_deep_and_cyclic_inputs(&arena, &signature);
     test_named_binders(&arena);

@@ -8859,7 +8859,10 @@ static bool collect_structural_var_failed(const Atom *atom, void *context) {
 static bool collect_structural_vars(Atom *atom, FreeVarSet *free_vars) {
     if (atom && !atom_has_vars(atom) && (atom->flags & ATOM_FLAG_TERM_STABLE))
         return true;
-    return !atom_graph_any(atom, collect_structural_var_failed, free_vars);
+    bool complete = false;
+    bool failed = atom_graph_any_checked(atom, collect_structural_var_failed,
+        NULL, free_vars, SIZE_MAX, &complete);
+    return complete && !failed;
 }
 
 static bool collect_free_vars_rec(Atom *atom, BoundVarStack *bound, FreeVarSet *free_vars);
@@ -9845,6 +9848,27 @@ Atom *cetta_petta_open_callable(
     const AbtSignature *signature = runtime_abt_signature(arena);
     return signature
         ? abt_subst(signature, arena, 0u, parameter, body)
+        : NULL;
+}
+
+Atom *cetta_petta_open_callable_parameters(
+    Arena *arena, Atom *callable, Atom *const *parameters, CettaExprLen count) {
+    if (!arena || !callable || (count && !parameters))
+        return NULL;
+    if (!count)
+        return callable;
+    if (count == 1u) {
+        if (!parameters[0] || parameters[0]->kind != ATOM_VAR)
+            return NULL;
+        return cetta_petta_open_callable(arena, callable, parameters[0]);
+    }
+    Atom *body = callable;
+    for (CettaExprIndex index = 0u; index < count; index++)
+        if (!petta_semantics_lambda_body(body, &body))
+            return NULL;
+    const AbtSignature *signature = runtime_abt_signature(arena);
+    return signature
+        ? abt_subst_vars(signature, arena, parameters, count, body)
         : NULL;
 }
 
@@ -14132,8 +14156,10 @@ static bool hyperpose_atom_has_nonspace_identity(
 
 static bool hyperpose_atom_parent_portable(Atom *atom) {
     if (eval_current_language_id() == CETTA_LANGUAGE_PETTA) {
-        return !atom_graph_any(
-            atom, hyperpose_atom_has_nonspace_identity, NULL);
+        bool complete = false;
+        bool identity = atom_graph_any_checked(atom,
+            hyperpose_atom_has_nonspace_identity, NULL, NULL, SIZE_MAX, &complete);
+        return complete && !identity;
     }
     return !hyperpose_atom_has_thread_local_resource(atom);
 }
@@ -18715,13 +18741,15 @@ static PreparedFoldResult prepared_foldl_single_result(
             .accumulator = accumulator,
         };
         if (candidate->kind == ATOM_EXPR &&
-            accumulator->kind == ATOM_EXPR &&
-            (atom_graph_any(
-                 candidate, prepared_fold_is_accumulator, &occurrence) ||
-             prepared_fold_sequence_retains_accumulator(
-                 candidate, accumulator))) {
-            outcome = PREPARED_FOLD_NOT_APPLICABLE;
-            break;
+            accumulator->kind == ATOM_EXPR) {
+            bool complete = false;
+            bool retains = atom_graph_any_checked(candidate,
+                prepared_fold_is_accumulator, NULL, &occurrence, SIZE_MAX, &complete);
+            if (!complete || retains ||
+                prepared_fold_sequence_retains_accumulator(candidate, accumulator)) {
+                outcome = PREPARED_FOLD_NOT_APPLICABLE;
+                break;
+            }
         }
         unsigned destination = active ^ 1u;
         arena_reset(&carry[destination], carry_origin[destination]);
@@ -18886,16 +18914,22 @@ static bool prepared_collection_force_item(
         if (partial)
             value = expanded;
     }
-    if (!cetta_prepared_pure_program_value_is_fully_evaluated(
-            program, value) &&
-        !cetta_prepared_pure_program_execute_closed_expression_controlled(
-            program, scratch, value, 0u,
-            eval_prepared_pure_interrupt_poll, NULL, &value)) {
+    bool complete = false;
+    bool ready = cetta_prepared_pure_program_value_is_fully_evaluated(
+        program, value, &complete);
+    if (!complete)
         return false;
+    if (!ready) {
+        if (!cetta_prepared_pure_program_execute_closed_expression_controlled(
+                program, scratch, value, 0u,
+                eval_prepared_pure_interrupt_poll, NULL, &value))
+            return false;
+        ready = cetta_prepared_pure_program_value_is_fully_evaluated(
+            program, value, &complete);
+        if (!complete || !ready)
+            return false;
     }
-    if (!cetta_prepared_pure_program_value_is_fully_evaluated(
-            program, value) ||
-        hyperpose_atom_has_thread_local_resource(value)) {
+    if (hyperpose_atom_has_thread_local_resource(value)) {
         return false;
     }
     *value_out = value;
@@ -44229,9 +44263,10 @@ static bool petta_eval_machine_open_relation_declined(
 
 static bool petta_eval_machine_execute_prepared_pure_call(
     void *context, Space *space, Arena *result_arena,
-    Atom *prepared_call, CettaCallOutcome *outcome) {
-    return prepared_pure_closed_call_try(
-        space, result_arena, prepared_call, -1, true, true,
+    const CettaInvocation *invocation, Atom *source_call,
+    CettaCallOutcome *outcome) {
+    return prepared_pure_closed_invocation_try(
+        space, result_arena, invocation, source_call, -1, true, true,
         petta_eval_machine_prepared_pure_cache(context), outcome);
 }
 
@@ -51679,8 +51714,9 @@ static bool atom_is_requested_symbol(const Atom *atom, void *context) {
 }
 
 /* Admission observes the complete source graph without interpreting it. */
-static bool atom_mentions_symbol_id(Atom *root, SymbolId symbol) {
-    return atom_graph_any(root, atom_is_requested_symbol, &symbol);
+static bool atom_mentions_symbol_id(Atom *root, SymbolId symbol, bool *complete) {
+    return atom_graph_any_checked(root, atom_is_requested_symbol, NULL,
+        &symbol, SIZE_MAX, complete);
 }
 
 static bool prepared_pure_closed_invocation_plan(
@@ -51732,10 +51768,19 @@ static bool prepared_pure_closed_invocation_plan(
         if (binding_value_is_contextual(value) || !argument || atom_has_vars(argument))
             return prepared_pure_precheck_refuse(
                 CETTA_RUNTIME_COUNTER_PREPARED_PURE_PRECHECK_OPEN, "open call", call);
-        if (eval_current_language_id() == CETTA_LANGUAGE_HE &&
-            atom_mentions_symbol_id(argument, g_builtin_syms.not_reducible))
-            return prepared_pure_precheck_refuse(
-                CETTA_RUNTIME_COUNTER_PREPARED_PURE_PRECHECK_DISPATCH, "call-return marker", call);
+        if (eval_current_language_id() == CETTA_LANGUAGE_HE) {
+            bool complete = false;
+            bool marker = atom_mentions_symbol_id(
+                argument, g_builtin_syms.not_reducible, &complete);
+            if (!complete)
+                return prepared_pure_precheck_refuse(
+                    CETTA_RUNTIME_COUNTER_PREPARED_PURE_PRECHECK_RESOURCE,
+                    "incomplete source graph", call);
+            if (marker)
+                return prepared_pure_precheck_refuse(
+                    CETTA_RUNTIME_COUNTER_PREPARED_PURE_PRECHECK_DISPATCH,
+                    "call-return marker", call);
+        }
         if (atom_has_registry_refs(argument) || hyperpose_atom_has_thread_local_resource(argument))
             return prepared_pure_precheck_refuse(
                 CETTA_RUNTIME_COUNTER_PREPARED_PURE_PRECHECK_RESOURCE, "external resource", call);
@@ -51913,14 +51958,14 @@ static bool petta_open_lexical_source(
     if (atom_petta_callable_identity(body, &remaining) && remaining == identity &&
         petta_semantics_lambda_body(body, NULL))
         return false;
-    body = callable;
     for (uint32_t index = 0u; body && index < arity; index++) {
         Atom *parameter = atom_var_with_id(owner, parameter_name, fresh_var_id());
         if (!parameter)
             return false;
         source->parameters[index] = parameter;
-        body = cetta_petta_open_callable(owner, body, parameter);
     }
+    body = cetta_petta_open_callable_parameters(
+        owner, callable, source->parameters, arity);
     if (!body)
         return false;
     source->body = body;

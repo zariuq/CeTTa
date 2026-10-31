@@ -80,7 +80,45 @@ static unsigned observation_controls(Arena *arena, Atom *variable, Atom *absent)
         fail_allocator = 0u;
         assert(!found && !complete && failed_allocations == 1u);
     }
-    return 8u;
+    Atom *self = atom_expr(arena, &variable, 1u);
+    self->expr.elems[0] = self;
+    observed = (Observation){.variable = absent->var_id};
+    assert(!atom_graph_any_checked(self, observes_variable, NULL, &observed, 1u,
+        &complete) && complete && observed.visits == 1u);
+    observed.visits = 0u;
+    assert(!atom_graph_any(self, observes_variable, &observed) && observed.visits == 1u);
+    observed.visits = 0u;
+    assert(!atom_graph_any_checked(self, observes_variable, NULL, &observed, 0u,
+        &complete) && !complete && !observed.visits);
+
+    Atom *child = atom_expr(arena, &variable, 1u);
+    Atom *root = atom_expr2(arena, child, variable);
+    child->expr.elems[0] = root;
+    observed = (Observation){.variable = variable->var_id};
+    assert(atom_graph_any_checked(root, observes_variable, NULL, &observed, 3u,
+        &complete) && complete && observed.visits == 3u);
+    observed = (Observation){.variable = absent->var_id};
+    assert(!atom_graph_any_checked(root, observes_variable, NULL, &observed, 3u,
+        &complete) && complete && observed.visits == 3u);
+
+    child->expr.elems[0] = child;
+    observed = (Observation){.variable = variable->var_id};
+    assert(atom_graph_any_checked(root, observes_variable, NULL, &observed, 3u,
+        &complete) && complete && observed.visits == 3u);
+    observed.visits = failed_allocations = 0u;
+    fail_allocator = 2u;
+    bool found = atom_graph_any_checked(root, observes_variable, NULL,
+        &observed, 3u, &complete);
+    fail_allocator = 0u;
+    assert(!found && !complete && failed_allocations == 1u && observed.visits == 1u);
+    observed.visits = 0u;
+    assert(atom_graph_any_checked(root, observes_variable, NULL, &observed, 3u,
+        &complete) && complete && observed.visits == 3u);
+
+    AtomVisitSet overflow = {.len = SIZE_MAX};
+    bool fault = false;
+    assert(!atom_visit_set_add(&overflow, root, &fault) && fault);
+    return 17u;
 }
 
 typedef struct {

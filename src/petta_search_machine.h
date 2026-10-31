@@ -581,11 +581,15 @@ typedef struct {
     PettaSpecializeResult (*prepare_call)(
         void *context, Space *space, Arena *result_arena,
         Atom *call, Atom **prepared_call);
-    /* A closed revision-pinned pure call returns its completed value,
-     * logical failure or interruption. Only false declines the realization. */
+    /* A closed revision-pinned pure invocation borrows its ready operands
+     * synchronously. `source_call` is optional syntax already owned by the
+     * caller; admission must not require a reconstructed call expression.
+     * Returns a completed value, logical failure or interruption. Only false
+     * declines the realization, with the borrowed invocation untouched. */
     bool (*execute_prepared_pure_call)(
         void *context, Space *space, Arena *result_arena,
-        Atom *prepared_call, CettaCallOutcome *outcome);
+        const CettaInvocation *invocation, Atom *source_call,
+        CettaCallOutcome *outcome);
     /* A revision-keyed program fact: the relation has already declined
      * prepared compilation, so no closed call of it executes there.  Read
      * before a call is proved closed or materialized; false means only

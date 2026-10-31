@@ -24,6 +24,10 @@ struct CettaPettaTokenSpaceClauseRegistry;
  */
 Atom *cetta_petta_open_callable(
     Arena *arena, Atom *callable, Atom *parameter);
+/* Open a consecutive callable prefix to free parameter variables, in
+ * outer-to-inner order. Argument values remain in the caller's bindings. */
+Atom *cetta_petta_open_callable_parameters(
+    Arena *arena, Atom *callable, Atom *const *parameters, CettaExprLen count);
 
 struct CettaPettaTokenSpaceClauseRegistry *
 cetta_petta_token_space_clause_registry_new(void);

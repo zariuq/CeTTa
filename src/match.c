@@ -8089,8 +8089,12 @@ static bool bindings_captured_support_present(const Atom *atom, void *unused) {
 }
 
 bool bindings_value_has_captured_support(const Atom *value) {
-    return value && atom_has_identity_grounded(value) &&
-        atom_graph_any(value, bindings_captured_support_present, NULL);
+    if (!value || !atom_has_identity_grounded(value))
+        return false;
+    bool complete = false;
+    bool found = atom_graph_any_checked(value, bindings_captured_support_present,
+        NULL, NULL, SIZE_MAX, &complete);
+    return !complete || found;
 }
 
 bool bindings_collect_support(const Bindings *bindings,

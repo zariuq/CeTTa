@@ -46,7 +46,10 @@
   28: substitution replaces occurrences shadowed by a binder
   29: named alpha equality compares binder names
   30: an (Each field position) scope does not bind
-  31: binders renamed apart may repeat an earlier binder's name */
+  31: binders renamed apart may repeat an earlier binder's name
+  32: a parameter span reverses replacement order
+  33: a parameter span ignores its inner binders
+  34: a parameter span does not lower outer indices */
 
 void abt_signature_init(AbtSignature *signature) {
     signature->entries = NULL;
@@ -840,6 +843,7 @@ typedef enum {
     ABT_TRANSFORM_CLOSE,
     ABT_TRANSFORM_OPEN,
     ABT_TRANSFORM_BIND,
+    ABT_TRANSFORM_SUBST_VARS,
 } AbtTransformKind;
 
 typedef struct {
@@ -847,6 +851,8 @@ typedef struct {
     int64_t delta;
     uint64_t index;
     Atom *replacement;
+    Atom *const *parameters;
+    CettaExprLen parameter_count;
 } AbtTransform;
 
 typedef enum { ABT_TASK_VISIT, ABT_TASK_BUILD } AbtTaskKind;
@@ -1002,6 +1008,18 @@ static Atom *abt_transform_var(const AbtSignature *signature, Arena *arena,
                                uint64_t variable) {
     uint64_t target = 0;
     switch (transform->kind) {
+    case ABT_TRANSFORM_SUBST_VARS: {
+        if (CETTA_ABT_MUTATION == 33) depth = 0u;
+        if (variable < depth) return original;
+        uint64_t offset = variable - depth;
+        if (offset < transform->parameter_count) {
+            CettaExprIndex position = CETTA_ABT_MUTATION == 32
+                ? offset : transform->parameter_count - 1u - offset;
+            return transform->parameters[position];
+        }
+        return CETTA_ABT_MUTATION == 34 ? original
+            : abt_make_idx(arena, variable - transform->parameter_count);
+    }
     case ABT_TRANSFORM_SHIFT: {
         if (transform->index > UINT64_MAX - depth) return NULL;
         target = transform->index + depth;
@@ -1213,6 +1231,25 @@ Atom *abt_subst(const AbtSignature *signature, Arena *arena,
         .delta = 0,
         .index = index,
         .replacement = substitution,
+    };
+    return abt_transform_term(signature, arena, &transform, term);
+}
+
+Atom *abt_subst_vars(const AbtSignature *signature, Arena *arena,
+                     Atom *const *parameters, CettaExprLen count, Atom *term) {
+    if (!signature || !arena || !term || signature->in_term_binders > 0u ||
+        (count && !parameters) || count > INT64_MAX)
+        return NULL;
+    for (CettaExprIndex index = 0u; index < count; index++)
+        if (!parameters[index] || parameters[index]->kind != ATOM_VAR)
+            return NULL;
+    if (!count) return term;
+    if (count == 1u)
+        return abt_subst(signature, arena, 0u, parameters[0], term);
+    AbtTransform transform = {
+        .kind = ABT_TRANSFORM_SUBST_VARS,
+        .parameters = parameters,
+        .parameter_count = count,
     };
     return abt_transform_term(signature, arena, &transform, term);
 }
