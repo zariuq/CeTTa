@@ -11713,8 +11713,46 @@ static OemRun oem_start_callable_answers(CettaOpenEquationCursor *cursor,
     if (!cursor->runtime.open_callable_answers || !cursor->runtime.next_callable_answer)
         return OEM_RUN_DECLINED;
     const OemTemplate *destination = &program->templates[step->pattern];
-    CettaPreparedPureAnswerCursor *callee = cursor->runtime.open_callable_answers(
-        cursor->runtime.context, prepared, &cursor->region, arguments, arity);
+    CettaPreparedPureAnswerCursor *callee = NULL;
+    CettaOwnedReturn initial = {0};
+    bool entered_body = false;
+    uint32_t destination_cell = 0u;
+    bool free_receiver = destination->kind == OEM_T_SLOT &&
+        (!locals[destination->slot] || oem_is_cell(cursor,
+            oem_deref(cursor, locals[destination->slot]), &destination_cell));
+    if (free_receiver && cursor->runtime.enter_callable_answers) {
+        CettaEvalCompletion completion = CETTA_EVAL_COMPLETE;
+        CettaOwnedExecutionStep first = cursor->runtime.enter_callable_answers(
+            cursor->runtime.context, prepared, &cursor->region, arguments, arity,
+            &callee, &initial, &completion);
+        if (first == CETTA_OWNED_EXECUTION_RETURN && initial.final && !callee)
+            return oem_entered_call_result(cursor, program, pc, locals, local_count,
+                cont, depth, step, initial.outcome, value_out);
+        if (first == CETTA_OWNED_EXECUTION_COMPLETE && completion == CETTA_EVAL_COMPLETE)
+            return OEM_RUN_FAILED;
+        if (first == CETTA_OWNED_EXECUTION_INTERRUPTED || completion != CETTA_EVAL_COMPLETE) {
+            cetta_prepared_pure_answer_cursor_close(callee);
+            cursor->handoff = completion == CETTA_EVAL_INCOMPLETE_CANCELLED
+                ? CETTA_OPEN_EQUATION_HANDOFF_INTERRUPT
+                : completion == CETTA_EVAL_INCOMPLETE_INVALIDATED
+                    ? CETTA_OPEN_EQUATION_HANDOFF_INVALIDATED
+                    : completion == CETTA_EVAL_INCOMPLETE_CAPACITY
+                        ? CETTA_OPEN_EQUATION_HANDOFF_CAPACITY
+                        : CETTA_OPEN_EQUATION_HANDOFF_SERVICE_ERROR;
+            return OEM_RUN_FAULT;
+        }
+        if ((first != CETTA_OWNED_EXECUTION_HANDOFF &&
+             first != CETTA_OWNED_EXECUTION_PAUSED) ||
+            (first == CETTA_OWNED_EXECUTION_PAUSED && !callee) ||
+            (first == CETTA_OWNED_EXECUTION_HANDOFF && callee)) {
+            cetta_prepared_pure_answer_cursor_close(callee);
+            return oem_service_fault(cursor);
+        }
+        entered_body = callee != NULL;
+    }
+    if (!callee)
+        callee = cursor->runtime.open_callable_answers(
+            cursor->runtime.context, prepared, &cursor->region, arguments, arity);
     if (!callee)
         return OEM_RUN_DECLINED;
     OemCont *resume = arena_alloc(&cursor->region, sizeof(*resume));
@@ -11750,7 +11788,7 @@ static OemRun oem_start_callable_answers(CettaOpenEquationCursor *cursor,
 before_entry_capacity:
     cetta_prepared_pure_answer_cursor_close(callee);
     cursor->handoff = CETTA_OPEN_EQUATION_HANDOFF_CAPACITY;
-    return OEM_RUN_HANDOFF;
+    return entered_body ? OEM_RUN_FAULT : OEM_RUN_HANDOFF;
 }
 
 static OemRun oem_lexical_callable_step(

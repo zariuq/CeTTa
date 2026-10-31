@@ -6,6 +6,7 @@ from __future__ import annotations
 import datetime as dt
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import platform
@@ -177,6 +178,8 @@ def explicit_input_identity(root: Path) -> dict[str, str]:
         "tools/check_petta_release_reference.py",
         "tests/support/compare_answers.py",
         "tests/support/check_compare_answers.py",
+        "tests/support/check_execution_lean_models.py",
+        "tests/support/check_gparse_core_property.py",
     ]
     result: dict[str, str] = {}
     for name in paths:
@@ -220,16 +223,22 @@ def artifact_identity(
             key: value for key, value in consolidation_baseline(root).items()
             if key != "binary"
         },
+        "performance_baseline": {
+            key: value for key, value in (frozen_performance_baseline(root) or {
+                "commit": PERFORMANCE_BASELINE_COMMIT,
+                "source_kind": "checkout",
+            }).items() if key not in ("binary", "stats_binary", "receipt")
+        },
         "candidate": working_tree_content_identity(root),
         "binaries": binary_identity(root),
         "inputs": explicit_input_identity(root),
         "compiler_and_build": build_configuration_identity(root),
-        "dependencies": dependency_identity(
+        "dependencies": {**dependency_identity(
             {
                 "PathMap": root.parent / "PathMap",
                 "MORK": root.parent / "MORK",
             }
-        ),
+        ), "ExecutionTheory": execution_theory_identity(root, mettapedia_root)},
         "property_schema": manifest["schema"],
         "property_manifest_sha256": model_sha256_file(root / PROPERTY_MANIFEST),
         "source_anchors": anchors,
@@ -240,6 +249,25 @@ def source_identity(artifact: dict[str, Any]) -> dict[str, Any]:
     """Require the same semantic inputs throughout a tier's execution."""
     return {**calibration_subject(artifact), "tier": artifact["tier"],
             "petta_oracle": artifact.get("petta_oracle")}
+
+
+def execution_theory_identity(root: Path, mettapedia: Path) -> dict[str, Any]:
+    spec = importlib.util.spec_from_file_location(
+        "cetta_execution_theory", root / "tests/support/check_execution_lean_models.py")
+    if spec is None or spec.loader is None:
+        raise RuntimeError("execution theory checker is missing")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    receipt = Path(os.environ.get(
+        "EXECUTION_MODEL_RECEIPT", "runtime/execution-models/theory-receipt.json")).expanduser()
+    if not receipt.is_absolute():
+        receipt = root / receipt
+    try:
+        return module.receipt_identity(mettapedia, receipt)
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise RuntimeError(
+            "execution theory evidence is missing or stale; "
+            "run make test-execution-theory with METTAPEDIA_ROOT") from error
 
 
 def ledger_record_path(root: Path, tier: str, key: str) -> Path:
@@ -337,9 +365,42 @@ def baseline_source_is_usable(root: Path) -> bool:
     return True
 
 
+def frozen_performance_baseline(root: Path) -> dict[str, Any] | None:
+    """Reuse the normal and stats artifacts without retaining their checkout."""
+    explicit = os.environ.get("CETTA_PERF_BASELINE_ROOT", "")
+    if not explicit:
+        return None
+    directory = Path(explicit).expanduser().resolve()
+    paths = [directory / name for name in ("baseline.json", "baseline-stats.json")]
+    if not any(path.is_file() for path in paths):
+        return None
+    if not all(path.is_file() for path in paths):
+        raise RuntimeError("frozen performance baseline needs normal and stats receipts")
+    normal, stats = [load_frozen_baseline(
+        root, path, model_sha256_file(path), PERFORMANCE_BASELINE_COMMIT,
+        expected_runtime_stats=index,
+    ) for index, path in enumerate(paths)]
+    for key in ("source_archive_sha256", "source_manifest_sha256",
+                "dependencies_sha256", "library_sha256", "build"):
+        if normal[key] != stats[key]:
+            raise RuntimeError("frozen performance baseline builds have different " + key)
+    return {**normal, "source_kind": "frozen", "receipt": str(paths[0]),
+            "stats_binary": stats["binary"],
+            "stats_binary_sha256": stats["binary_sha256"],
+            "stats_receipt_sha256": stats["receipt_sha256"],
+            "stats_build_receipt_sha256": stats["build_receipt_sha256"]}
+
+
 def prepare_performance_baseline(
     candidate_root: Path, evidence: Path
 ) -> dict[str, str]:
+    frozen = frozen_performance_baseline(candidate_root)
+    if frozen is not None:
+        print("MAIN-READINESS PERFORMANCE BASELINE frozen "
+              f"commit={PERFORMANCE_BASELINE_COMMIT[:12]} "
+              f"sha256={frozen['binary_sha256']} "
+              f"stats_sha256={frozen['stats_binary_sha256']}", flush=True)
+        return frozen
     explicit = os.environ.get("CETTA_PERF_BASELINE_ROOT", "")
     candidates = [Path(explicit).expanduser().resolve()] if explicit else [
         path for path in worktree_paths(candidate_root)
@@ -357,8 +418,8 @@ def prepare_performance_baseline(
         break
     if baseline_root is None:
         raise RuntimeError(
-            "no source-clean worktree at the pinned performance baseline; "
-            "set CETTA_PERF_BASELINE_ROOT to one"
+            "no source-clean checkout at the pinned performance baseline; "
+            "set CETTA_PERF_BASELINE_ROOT to a checkout or frozen artifact directory"
         )
 
     log_path = evidence / "00-performance-baseline-build.log"
@@ -477,6 +538,8 @@ def common_readiness_commands() -> list[list[str]]:
     # for accepted repairs and intentional differences from its reference.
     return [["make", "BUILD=main", target]
             for target in PETTA_CONTRACT_TARGETS] + [
+        ["make", "BUILD=main", "test-execution-theory"],
+        ["make", "BUILD=main", "test-execution-semantic-ledger"],
         ["make", "BUILD=main", "test-correctness-all"],
         ["make", "BUILD=main", "test-profiles"],
         ["make", "BUILD=main", "test-asan"],
@@ -750,7 +813,7 @@ def main() -> int:
         return 0
     try:
         performance_baseline = prepare_performance_baseline(root, evidence)
-    except RuntimeError as exc:
+    except (RuntimeError, ValueError, OSError) as exc:
         summary = {
             "schema": EVIDENCE_SCHEMA,
             "tier": args.tier,
@@ -768,6 +831,10 @@ def main() -> int:
         print(f"EVIDENCE {evidence}", flush=True)
         return 2
     environment["RHO_BENCH_BASELINE_BIN"] = performance_baseline["binary"]
+    if performance_baseline.get("source_kind") == "frozen":
+        environment["RHO_BENCH_BASELINE_RECEIPT"] = performance_baseline["receipt"]
+        environment["RHO_BENCH_BASELINE_RECEIPT_SHA256"] = performance_baseline["receipt_sha256"]
+        environment["RHO_BENCH_BASELINE_SOURCE_COMMIT"] = performance_baseline["commit"]
     environment["CETTA_READINESS_BASELINE_STATS_BIN"] = performance_baseline[
         "stats_binary"
     ]

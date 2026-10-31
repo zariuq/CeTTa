@@ -974,7 +974,9 @@ static void test_native_evaluator_boundary(bool oem) {
                 assert(outcome.results.len == 1u);
                 assert(atom_eq(outcome.results.items[0], atom_int(&arena, 9)));
             } else if (mode == 7u) {
-                assert(outcome.completion == CETTA_EVAL_INCOMPLETE_CAPACITY);
+                /* Invalid producer metadata fails preflight before capacity
+                 * reservation; allocation refusal has a separate control. */
+                assert(outcome.completion == CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
             } else {
                 assert(outcome.completion == CETTA_EVAL_COMPLETE);
                 assert(outcome.results.len == 1u);
@@ -1686,7 +1688,9 @@ static void test_owned_bind(void) {
 
 static unsigned prepared_native_attempts;
 static bool prepared_native_call(void *context, Space *space, Arena *arena,
-        const CettaInvocation *invocation, CettaCallOutcome *outcome) {
+        const CettaInvocation *invocation, CettaCallOutcome *outcome,
+        CettaEvalCompletion *completion) {
+    *completion = CETTA_EVAL_COMPLETE;
     (void)context; (void)space;
     CettaExprLen arity;
     assert(cetta_invocation_arity(invocation, &arity) && arity == 1u);
@@ -2051,6 +2055,8 @@ int main(int argc, char **argv) {
     }
     if (!prime_native)
         test_native_evaluator_boundary(oem_native_fixture);
+    cetta_lib_prolog_global_shutdown();
+    cetta_foreign_global_shutdown();
     symbol_table_free(&symbols);
     var_intern_free(&variables);
     g_symbols = NULL;

@@ -17182,7 +17182,9 @@ static bool eval_prepared_pure_head_admitted(void *context, Space *space, Symbol
  * the saved continuation. Only legacy scalar expressions are finalized here. */
 static bool eval_prepared_pure_native_call(
         void *context, Space *space, Arena *arena,
-        const CettaInvocation *invocation, CettaCallOutcome *returned) {
+        const CettaInvocation *invocation, CettaCallOutcome *returned,
+        CettaEvalCompletion *completion) {
+    *completion = CETTA_EVAL_COMPLETE;
     CettaLibraryContext *library = context;
     CettaExprLen arity = 0u;
     if (!library || !space || !arena || !returned ||
@@ -17194,14 +17196,38 @@ static bool eval_prepared_pure_native_call(
         : cetta_invocation_materialize_arguments(arena, invocation);
     if (!arguments)
         return false;
-    CettaCallOutcome outcome = {0};
-    if (!head ||
-        !cetta_library_call_native_prepared_view(
-            library, space, arena, head, arguments,
-            (uint32_t)arity, &outcome)) {
+    if (!head)
         return false;
+    /* A clean unlimited episode already records exactly this phase's first
+     * cause. Older diagnostics and borrowed purses need an isolated child. */
+    CettaEvalEpisode *parent = g_eval_completion_tracker;
+    bool isolated = !parent || parent->completion != CETTA_EVAL_COMPLETE ||
+        parent->interrupted || parent->budget_limited;
+    CettaEvalEpisode native;
+    if (isolated)
+        eval_completion_child_begin(&native);
+    if (g_eval_completion_tracker->interrupted) {
+        *completion = g_eval_completion_tracker->completion;
+        g_eval_completion_tracker = parent;
+        if (isolated)
+            (void)cetta_eval_episode_end(&native);
+        *returned = cetta_call_interrupted();
+        return true;
     }
+    CettaCallOutcome outcome = {0};
+    bool entered = cetta_library_call_native_prepared_view(
+        library, space, arena, head, arguments, (uint32_t)arity, &outcome);
+    g_eval_completion_tracker = parent;
+    CettaEvalCompletion own = isolated
+        ? cetta_eval_episode_end(&native) : parent->completion;
+    *completion = own;
+    if (!entered)
+        return false;
     Atom *raised = petta_eval_take_raise();
+    if (own != CETTA_EVAL_COMPLETE) {
+        *returned = cetta_call_interrupted();
+        return true;
+    }
     if (raised)
         outcome = cetta_call_raised(raised);
     eval_native_qualify_result(head->sym_id, (uint32_t)arity, &outcome);
@@ -42060,7 +42086,7 @@ static void petta_eval_machine_advance_semantic_authority(
     X(4u, translator_revision)
 
 #define PETTA_ANSWER_AUTHORITY_WORDS(X) \
-    X(5u, library ? cetta_library_petta_admission_revision(library) : 0u) \
+    X(5u, admission_revision) \
     X(6u, library && library->lib_prolog \
         ? petta_libpl_capability_revision(library->lib_prolog) : 0u) \
     X(7u, library ? library->active_mask : 0u)
@@ -53240,6 +53266,8 @@ static bool petta_eval_machine_answer_authority_token(
         token->length + 3u > PETTA_MACHINE_AUTHORITY_WORD_CAPACITY)
         return false;
     CettaLibraryContext *library = eval_context->library_context;
+    uint64_t admission_revision = library
+        ? cetta_library_petta_admission_revision(library) : 0u;
 #define PETTA_STORE_ANSWER_WORD(index, value) token->words[index] = (value);
     PETTA_ANSWER_AUTHORITY_WORDS(PETTA_STORE_ANSWER_WORD)
 #undef PETTA_STORE_ANSWER_WORD
@@ -53247,22 +53275,40 @@ static bool petta_eval_machine_answer_authority_token(
     return true;
 }
 
-static bool petta_eval_machine_answer_authority_current(
-    const PettaEvalMachineContext *context, const PettaMachineAuthorityToken *token) {
+static inline __attribute__((always_inline)) bool
+petta_eval_machine_answer_authority_for_symbols(
+    const PettaEvalMachineContext *context, const PettaMachineAuthorityToken *token,
+    uint64_t symbol_table_instance) {
     if (!context || !token || token->length != PETTA_ANSWER_AUTHORITY_WORD_COUNT)
         return false;
     CettaLibraryContext *library = context->library_context;
     CettaLibPrologReadToken foreign = library && library->lib_prolog
         ? cetta_lib_prolog_read_token(library->lib_prolog)
         : (CettaLibPrologReadToken){0};
-    uint64_t translator_revision = library
-        ? cetta_library_petta_translator_rule_revision(library) : 0u;
+    if (symbol_table_instance &&
+        symbol_table_instance != symbol_table_instance_id(g_symbols))
+        return false;
+    bool registries_current = symbol_table_instance && library &&
+        library->petta_translator_symbol_table_instance == symbol_table_instance &&
+        library->petta_tabled_symbol_table_instance == symbol_table_instance &&
+        library->petta_memo.symbol_table_instance == symbol_table_instance;
+    uint64_t translator_revision = !library ? 0u : registries_current
+        ? library->petta_translator_rule_revision
+        : cetta_library_petta_translator_rule_revision(library);
+    uint64_t admission_revision = !library ? 0u : registries_current
+        ? library->petta_admission_revision
+        : cetta_library_petta_admission_revision(library);
 #define PETTA_CHECK_AUTHORITY_WORD(index, value) \
     if (token->words[index] != (value)) return false;
     PETTA_SEMANTIC_AUTHORITY_WORDS(PETTA_CHECK_AUTHORITY_WORD)
     PETTA_ANSWER_AUTHORITY_WORDS(PETTA_CHECK_AUTHORITY_WORD)
 #undef PETTA_CHECK_AUTHORITY_WORD
     return true;
+}
+
+static bool petta_eval_machine_answer_authority_current(
+    const PettaEvalMachineContext *context, const PettaMachineAuthorityToken *token) {
+    return petta_eval_machine_answer_authority_for_symbols(context, token, 0u);
 }
 
 /* The compiled open equation tier.  A relation is admitted when every
@@ -53835,6 +53881,7 @@ static CettaOpenEquationProgram *petta_eval_open_compile_callable(
 typedef struct {
     PettaEvalMachineContext *context;
     CettaLibraryContext *library;
+    uint64_t symbol_table_instance;
     PettaMachineAuthorityToken token;
 } PettaCallableAuthority;
 
@@ -53845,10 +53892,14 @@ typedef struct {
 
 static bool petta_eval_callable_authority_current(const void *context) {
     const PettaCallableAuthority *authority = context;
-    return authority && authority->library == g_library_context &&
+    return authority && authority->context &&
+        authority->library == g_library_context &&
         authority->context->library_context == authority->library &&
-        petta_eval_machine_answer_authority_current(
-            authority->context, &authority->token);
+        (authority->symbol_table_instance
+            ? petta_eval_machine_answer_authority_for_symbols(authority->context,
+                &authority->token, authority->symbol_table_instance)
+            : petta_eval_machine_answer_authority_current(authority->context,
+                &authority->token));
 }
 
 /* Elaborate a lexical body once. Scalar/tail and continuation-bearing
@@ -53889,6 +53940,7 @@ static void *petta_eval_open_prepare_pure_callable(
             return NULL;
         authority->context = eval_context;
         authority->library = eval_context->library_context;
+        authority->symbol_table_instance = symbol_table_instance_id(g_symbols);
         CettaPreparedPureSourceView source_view =
             prepared_pure_source_view_for_language(
                 CETTA_LANGUAGE_PETTA, source.body);
@@ -53950,6 +54002,42 @@ static CettaPreparedPureAnswerCursor *petta_eval_open_callable_answers(
         .continuation_context = plan->body_authority,
     };
     return cetta_prepared_pure_answer_cursor_open_body(plan->program, arguments, arity, &options);
+}
+
+static CettaOwnedExecutionStep petta_eval_open_enter_callable_answers(
+        void *context, void *prepared, Arena *arena, Atom *const *arguments,
+        uint32_t arity, CettaPreparedPureAnswerCursor **remaining,
+        CettaOwnedReturn *returned, CettaEvalCompletion *completion) {
+    (void)context;
+    PettaPreparedCallable *plan = prepared;
+    *remaining = NULL; *returned = (CettaOwnedReturn){0}; *completion = CETTA_EVAL_COMPLETE;
+    if (!plan || !plan->body_authority) return CETTA_OWNED_EXECUTION_HANDOFF;
+    __attribute__((cleanup(eval_gc_external_owner_guard_leave))) EvalGcExternalOwnerGuard borrowed = {0};
+    eval_gc_external_owner_guard_enter(&borrowed);
+    CettaEvalEpisode phase; eval_completion_child_begin(&phase);
+    CettaOwnedExecutionStep step = CETTA_OWNED_EXECUTION_INTERRUPTED;
+    if (!phase.interrupted) {
+        size_t scratch = prepared_pure_nursery_budget_bytes();
+        if (!scratch) scratch = 256u * ARENA_BLOCK_SIZE;
+        CettaPreparedPureAnswerCursorOptions options = {
+            .arena = arena, .borrowed_until_escape = true,
+            .limits = {.max_transitions = UINT64_MAX, .max_scratch_bytes = scratch,
+                .construct_allocation_bound = petta_semantics_construct_value_allocation_bound},
+            .unmatched_call = CETTA_PREPARED_PURE_UNMATCHED_FAILS,
+            .interrupt_poll = eval_prepared_pure_interrupt_poll,
+            .interrupt_poll_interval = 256u, .allow_continuations = true,
+            .continuation_current = petta_eval_callable_authority_current,
+            .continuation_context = plan->body_authority};
+        step = cetta_prepared_pure_body_enter(plan->program, arguments, arity,
+            &options, remaining, returned, completion);
+    }
+    CettaEvalCompletion own = eval_completion_child_end(&phase);
+    if (own != CETTA_EVAL_COMPLETE) {
+        cetta_prepared_pure_answer_cursor_close(*remaining); *remaining = NULL;
+        *returned = (CettaOwnedReturn){0}; *completion = own;
+        return CETTA_OWNED_EXECUTION_INTERRUPTED;
+    }
+    return step;
 }
 
 static bool petta_eval_open_execute_pure_callable(
@@ -54128,6 +54216,7 @@ static CettaOpenEquationCursor *petta_eval_machine_open_relation_cursor(
         .execute_pure_callable = petta_eval_open_execute_pure_callable,
         .callable_answers_only = petta_eval_open_callable_answers_only,
         .open_callable_answers = petta_eval_open_callable_answers,
+        .enter_callable_answers = petta_eval_open_enter_callable_answers,
         .next_callable_answer = petta_eval_machine_next_answer_cursor,
         .release_pure_callable = petta_eval_open_release_pure_callable,
         .execute_pure_relation = he ? NULL : petta_eval_open_execute_pure_relation,

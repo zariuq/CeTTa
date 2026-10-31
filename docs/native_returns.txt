@@ -1740,8 +1740,8 @@ The prepared callee may also report that its artifact has only an answer
 worker. That immutable fact is queried once per prepared artifact and avoids
 probing a scalar executor that cannot run it. An absent report keeps the
 existing probe; an input-dependent execution refusal cannot establish worker
-absence. Actual results still cross the owned cursor and final authority
-boundary. Native controls check constant signature reads, single metadata
+absence. Actual results retain their explicit completed or pending role;
+only pending computation requires current execution authority. Native controls check constant signature reads, single metadata
 inquiry, and the existing OEM-to-prepared entered-return protocol.
 
 A failed lexical preparation retains no negative worker fact. The pure
@@ -2175,3 +2175,63 @@ previous frames. The source-to-buffer join, exact dialect-zero/raise policy,
 source credit settlement and C ownership remain separately qualified. Native
 controls compare source-budget observations with direct canonical execution and
 reject publication-before-completion and wrapper-debit mutations.
+
+Deferred native entry and completion
+------------------------------------
+
+prepared_native_completion_next places deferred invocation and delivery in one
+owned child episode. The episode begins before the provider is called, even
+without an enclosing tracker. A strong inherited interruption enters no new
+work. The child's actual incomplete cause blocks both terminal packet loans
+and buffered publication before packet shape can select an interpretation.
+A previously entered packet skips invocation and retains its established role.
+
+The parent keeps its first diagnostic independently. A weak parent diagnostic
+does not spoil a successful child or replace the child's own cause. A provider
+that reports interruption without a specific cause retains cancellation as its
+fallback. Repeated pulls of a stopped entry cannot invoke or deliver again.
+
+BufferedResidualReturn.NativeEntry refines an independent source workflow by
+explicit entry, invocation, packet selection, delivery and settlement steps.
+The laws preserve worlds, private images, completion and ordered phase events;
+the existing owned packet driver supplies context and delayed-check handling.
+Native controls include missing, clean, weak and strongly interrupted parents,
+entered packets, duplicate completed data, all incomplete causes and retained
+terminal states. They reject missing scope, copied parent diagnostics,
+interpretation after native failure, lost terminal causes and provider replay.
+Provider implementations, admission, allocation and C lifetimes remain native
+qualification obligations.
+
+Completed body entry and remaining work
+---------------------------------------
+
+An admitted lexical answer body enters the existing register worker with its
+ready arguments. One completed value returns directly, and established logical
+failure returns no occurrence. A suspension promotes the original entry mark,
+ready arguments, current registers and program counter into the existing answer
+cursor. Native packets, caller records and alternatives survive that transfer;
+the worker never restarts an entered provider. Bound destinations retain their
+pre-entry admission and ordinary cursor route. Small physical allowances use
+that same retained route. Source credit remains separate.
+
+Both entrances use one cursor initializer and the same worker and readback
+algorithm. Idle borrowed storage remains bounded and has no live roots. An
+allocation failure before entry may decline or recover through the reserve
+helper; either outcome leaves native effects unstarted until reservation has
+succeeded. A failure after entry cannot request replay.
+
+A native invocation reports its own completion cause with its tagged result.
+An incomplete provider cannot authorize a second effect by returning a value.
+The host isolates older diagnostics and finite source purses in a child episode;
+a clean unlimited episode can record the synchronous phase directly. Completed
+work remains completed after later declaration changes. Pending callers, native
+producers, cancellation and reopened work retain their own continuation rules.
+
+ParameterizedBodyEntry.CompletedCursor relates an independent eager source to
+the retained worker for physical slices, split execution and supplied source
+prices. BufferedResidualReturn.EpisodeReuse verifies synchronous episode reuse
+for effect, debit, completion and parent-accounting observations. It excludes
+tracker-pointer, ancestry and inactive-counter inspection. Native controls
+separately check those adapters, GC loans, exact causes, reservation failures,
+authority changes and final publication. C implementation verification remains
+a separate obligation.

@@ -501,6 +501,12 @@ typedef struct {
         void *context, Space *space, Arena *arena, Atom *query,
         const struct PettaPlanNode *plan, bool count_only,
         bool wrap_collection, Atom **value);
+    /* Optional direct entry of an answer body. A final return has no cursor;
+     * suspension transfers the already-entered cursor; refusal enters none. */
+    CettaOwnedExecutionStep (*enter_callable_answers)(void *context, void *prepared,
+        Arena *arena, Atom *const *arguments, uint32_t arity,
+        struct CettaPreparedPureAnswerCursor **remaining, CettaOwnedReturn *returned,
+        CettaEvalCompletion *completion);
 } CettaOpenEquationRuntime;
 
 /* Install the owning machine's pure guard service before the cursor runs.

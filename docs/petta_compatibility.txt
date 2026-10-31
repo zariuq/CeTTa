@@ -43,6 +43,25 @@ older Undefined fallback and partial-codomain rejection observations.
 Qualification
 -------------
 
+The three top-level named-space import and batch-copy reproducers are
+cross-dialect diagnostics, not programs with one portable output transcript:
+tests/test_import_named_space_reuse_petta_seam_repro.metta,
+tests/test_nested_import_named_space_visibility_petta_repro.metta, and
+tests/test_space_batch_copy_petta_seam_repro.metta. Fresh imports and explicit per-atom or
+fold copies provide the portable controls. Repeated named imports and queries
+over module dependencies retain their dialect's policies. CeTTa's retained
+native add-atoms operation is not registered by the pinned SWI reference;
+its positive and override controls are tests/petta/add_atoms_batch.metta and
+tests/petta/add_atoms_override.metta. It is not evidence that the reference
+implements batch insertion. These diagnostics retain their own dispositions
+instead of contributing passing cases to a universal compatibility count.
+
+Two other fixtures without golden transcripts have executable property gates:
+test-gparse-gslt-core requires all 20 authored assertions and settled native
+query reports; test-rhocalc-cost-observer-transparency checks both state and
+cost-counter observations. Their absence of a golden file does not mean that
+their observations are unchecked.
+
 make test-petta-release-reference verifies source/library identities and
 selected default observations. make test-petta-corrected-stable qualifies
 selected settled requirements, including positive and negative controls for
