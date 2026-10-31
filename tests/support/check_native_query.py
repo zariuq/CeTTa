@@ -643,8 +643,11 @@ def program(rng):
                 region = ("(let $ps (collapse (match &q (q $x) (w $x))) "
                           "(let $a (superpose $ps) (add-atom &q $a)))")
             elif form == 4:
+                # The lists are sorted: a space promises no order of a
+                # collection, and relations read their facts in an order of
+                # their own.
                 region = ("(let $ps (collapse (match &q (q $x) $x)) "
-                          "(collapse (let $a (superpose $ps) (pair $a $ps))))")
+                          "(sort-atom (collapse (let $a (superpose $ps) (pair $a (sort-atom $ps))))))")
             else:
                 region = ("(let $ps (collapse (match &self (edge $x $y) $y)) "
                           "(size-atom (collapse (let $a (superpose $ps) (add-atom &q (q $a))))))")

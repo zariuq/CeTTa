@@ -355,7 +355,10 @@ typedef struct {
 
 #define CETTA_ATOM_ID_NONE UINT64_MAX
 #define CETTA_ATOM_ID_MAX ((AtomId)(UINT64_MAX - 1u))
-#define CETTA_TERM_ENTRY_BLOB_NONE UINT64_MAX
+#define CETTA_TERM_ENTRY_BLOB_NONE UINT32_MAX
+/* Records lie in the pool at this alignment, and an entry names its
+ * record's place in these units. */
+#define CETTA_TERM_ENTRY_ALIGN 8u
 
 static inline size_t cetta_atom_id_storage_width_bytes_from_bits(
     uint32_t bits) {
@@ -425,14 +428,22 @@ typedef struct {
 } CettaTermHdr;
 
 typedef struct TermEntry {
-    uint64_t byte_off;
-    uint32_t byte_len;
+    /* Where the record lies in the record pool, in units of
+     * CETTA_TERM_ENTRY_ALIGN bytes; NONE for an entry without a record.
+     * Its length is its header's (term_universe_record_bytes). */
+    uint32_t record;
     /* The record's coordinate in the intern table, kept so the table grows
-     * and the record is placed without reading the record again. */
+     * and the record is placed or removed without reading the record. */
     uint32_t coordinate;
 } TermEntry;
 
+/* The byte offset of an entry's record in the record pool. */
+static inline size_t term_universe_entry_offset(const TermEntry *entry) {
+    return (size_t)entry->record * CETTA_TERM_ENTRY_ALIGN;
+}
+
 _Static_assert(sizeof(AtomId) == 8, "AtomId must remain 64-bit");
+_Static_assert(sizeof(TermEntry) == 8, "a term entry is eight bytes");
 _Static_assert(CETTA_ATOM_ID_NONE == UINT64_MAX, "AtomId sentinel must stay all-ones");
 _Static_assert(sizeof(VarId) == 16, "VarId is two words: base and epoch");
 _Static_assert(sizeof(CettaTermHdr) == 16, "CettaTermHdr ABI drifted");
@@ -611,6 +622,24 @@ AtomId term_universe_alpha_key_lookup(const TermUniverse *universe,
  * universe does not hold.  CETTA_ATOM_ID_NONE when the walk cannot take the
  * atom apart (as the lookup declines) or the universe cannot store a part. */
 AtomId term_universe_store_alpha_key(TermUniverse *universe, Atom *atom);
+/* An alpha key made part by part: the variables numbered so far, by first
+ * occurrence.  A fact cut into a skeleton's holes keeps one across its
+ * holes, in preorder, so each hole holds the part the whole key would. */
+enum { TERM_UNIVERSE_ALPHA_KEY_VARS = 64u };
+typedef struct {
+    VarId source[TERM_UNIVERSE_ALPHA_KEY_VARS];
+    uint32_t len;
+} TermUniverseAlphaParts;
+/* The part ATOM of an alpha key under PARTS, stored; CETTA_ATOM_ID_NONE
+ * where the key would not form. */
+AtomId term_universe_store_alpha_key_part(TermUniverse *universe, Atom *atom,
+                                          TermUniverseAlphaParts *parts);
+/* As above, looked up only: CETTA_ATOM_ID_NONE when the universe holds no
+ * such part, with *DECLINED where the key would not form. */
+AtomId term_universe_alpha_key_lookup_part(const TermUniverse *universe,
+                                           Atom *atom,
+                                           TermUniverseAlphaParts *parts,
+                                           bool *declined);
 /* Whether term_universe_store_alpha_key forms `atom`'s key, short of the
  * universe's own failures; nothing is stored. */
 bool term_universe_alpha_key_forms(Atom *atom);
@@ -720,12 +749,12 @@ static inline const CettaTermHdr *tu_hdr(const TermUniverse *universe,
     if (!universe || id >= universe->len)
         return NULL;
     const TermEntry *entry = &universe->entries[id];
-    if (entry->byte_off == CETTA_TERM_ENTRY_BLOB_NONE ||
-        entry->byte_len < sizeof(CettaTermHdr) || !universe->blob_pool ||
-        entry->byte_off > universe->blob_len ||
-        entry->byte_len > universe->blob_len - entry->byte_off)
+    size_t off = term_universe_entry_offset(entry);
+    if (entry->record == CETTA_TERM_ENTRY_BLOB_NONE || !universe->blob_pool ||
+        off > universe->blob_len ||
+        sizeof(CettaTermHdr) > universe->blob_len - off)
         return NULL;
-    return (const CettaTermHdr *)(universe->blob_pool + entry->byte_off);
+    return (const CettaTermHdr *)(universe->blob_pool + off);
 #endif
 }
 
@@ -753,6 +782,12 @@ static inline SymbolId tu_head_sym(const TermUniverse *universe, AtomId id) {
 }
 
 uint32_t tu_hash32(const TermUniverse *universe, AtomId id);
+/* The coordinate in the intern table of the record of `id`: 0 for an
+ * entry without one. */
+uint32_t term_universe_coordinate_of(const TermUniverse *universe, AtomId id);
+/* The bytes the record of `id` takes in the record pool, read from its
+ * header: 0 for an entry without one. */
+size_t term_universe_record_bytes_of(const TermUniverse *universe, AtomId id);
 SymbolId tu_sym(const TermUniverse *universe, AtomId id);
 VarId tu_var_id(const TermUniverse *universe, AtomId id);
 AtomId tu_var_name_key_id(const TermUniverse *universe, AtomId id);
@@ -811,8 +846,9 @@ static inline const CettaTermHdr *tu_hdr_stored(const TermUniverse *universe,
     return term_universe_hdr_checked(universe, id);
 #else
     const TermEntry *entry = &universe->entries[id];
-    return entry->byte_off != CETTA_TERM_ENTRY_BLOB_NONE
-        ? (const CettaTermHdr *)(universe->blob_pool + entry->byte_off)
+    return entry->record != CETTA_TERM_ENTRY_BLOB_NONE
+        ? (const CettaTermHdr *)(universe->blob_pool +
+                                 term_universe_entry_offset(entry))
         : NULL;
 #endif
 }

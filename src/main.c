@@ -2556,6 +2556,13 @@ static bool cetta_main_cleanup(CettaMainCleanup *cleanup) {
     cetta_gslt_language_free(cleanup->gslt_language);
     cleanup->gslt_language = NULL;
 
+    /* The run is over and no collection follows: the rows the spaces
+     * release from here on are not counted, which would only list them as
+     * candidates of a universe about to be freed, at the run's peak. */
+    if (cleanup->libraries_initialized)
+        term_universe_set_collection_mode(&cleanup->libraries->term_universe,
+                                          TERM_UNIVERSE_COLLECTION_OFF);
+
     if (cleanup->registry_initialized) {
         if (cleanup->space_initialized) {
             cetta_main_cleanup_registry_spaces(

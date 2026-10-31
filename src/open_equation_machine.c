@@ -7196,6 +7196,10 @@ typedef struct OemLazyRows {
     SpaceOccurrenceCursor occurrences;
     const TermUniverse *universe;
     AtomId next;
+    /* The next row when it is a fact the space keeps as a skeleton and
+     * holes, which it lends no record: its index among the cursor's kept
+     * facts; SIZE_MAX otherwise. */
+    size_t next_kept;
 } OemLazyRows;
 
 /* The cells a host goal left the region through, in the order of the
@@ -10269,18 +10273,21 @@ static OemRun oem_match_fallback_host(
     Atom **locals, uint32_t local_count, const OemCont *cont, uint32_t depth,
     const OemStep *step);
 
-/* The id of the next row a lazy match offers, or CETTA_ATOM_ID_NONE when
+/* Read the next row a lazy match offers into LAZY: its id, or for a fact
+ * kept as a skeleton and holes its index among the kept facts; false when
  * it has none.  Nothing of the row is decoded. */
-static AtomId oem_lazy_rows_fetch(CettaOpenEquationCursor *cursor,
-                                  OemLazyRows *lazy) {
+static bool oem_lazy_rows_fetch(CettaOpenEquationCursor *cursor,
+                                OemLazyRows *lazy) {
     for (;;) {
-        AtomId row = CETTA_ATOM_ID_NONE;
-        if (space_occurrence_cursor_next_id(&lazy->occurrences, NULL, &row) !=
+        lazy->next = CETTA_ATOM_ID_NONE;
+        lazy->next_kept = SIZE_MAX;
+        if (space_occurrence_cursor_next_kept(&lazy->occurrences, &lazy->next,
+                                              &lazy->next_kept) !=
             SPACE_OCCURRENCE_CURSOR_ITEM)
-            return CETTA_ATOM_ID_NONE;
+            return false;
         cursor->stats.match_candidates++;
-        if (row != CETTA_ATOM_ID_NONE)
-            return row;
+        if (lazy->next != CETTA_ATOM_ID_NONE || lazy->next_kept != SIZE_MAX)
+            return true;
     }
 }
 
@@ -10317,9 +10324,7 @@ static bool oem_match_lazy(CettaOpenEquationCursor *cursor,
         return false;
     }
     lazy->universe = space_occurrence_cursor_universe(&lazy->occurrences);
-    lazy->next = lazy->universe ? oem_lazy_rows_fetch(cursor, lazy)
-                                : CETTA_ATOM_ID_NONE;
-    if (lazy->next == CETTA_ATOM_ID_NONE) {
+    if (!lazy->universe || !oem_lazy_rows_fetch(cursor, lazy)) {
         oem_lazy_rows_release(lazy);
         *run = OEM_RUN_FAILED;
         return true;
@@ -18006,6 +18011,73 @@ static __attribute__((noinline)) OemRun oem_try_stored(
     return OEM_RUN_CALLED;
 }
 
+/* A region term unified with the subtree at node *I of a kept fact's
+ * SKELETON, its holes from HOLES at *H: the spine is compared node by node,
+ * as oem_unify_stored compares a stored expression, and each hole is the
+ * stored part it holds.  A term the spine cannot be compared with node by
+ * node (a variable's cell, a list) meets the subtree's record, built then. */
+static OemUnify oem_unify_skeleton(CettaOpenEquationCursor *cursor, Atom *term,
+                                   const TermUniverse *universe,
+                                   const CettaSkeleton *skeleton, uint32_t *i,
+                                   const AtomId *holes, uint32_t *h,
+                                   uint32_t depth) {
+    const CettaSkeletonNode *node = &skeleton->nodes[*i];
+    if (node->len == 0u) {
+        (*i)++;
+        AtomId part = holes[(*h)++];
+        OemUnify unified = OEM_UNIFY_OK;
+        if (!oem_stored_symbol_meets(universe, term, part, depth, &unified))
+            unified = oem_unify_stored(cursor, term, universe, part, depth);
+        return unified;
+    }
+    Atom *value = oem_deref(cursor, term);
+    uint32_t cell = 0u;
+    if (oem_is_cell(cursor, value, &cell) || oem_is_list_cell(value) ||
+        (value->kind == ATOM_EXPR &&
+         oem_value_representation(value) != PETTA_VALUE_ORDINARY)) {
+        AtomId whole = cetta_skeleton_build_at((TermUniverse *)universe,
+                                               skeleton, i, holes, h);
+        return whole != CETTA_ATOM_ID_NONE
+            ? oem_unify_stored(cursor, term, universe, whole, depth)
+            : OEM_UNIFY_ERROR;
+    }
+    if (value->kind != ATOM_EXPR || value->expr.len != node->len)
+        return value->kind == ATOM_VAR ? OEM_UNIFY_ERROR : OEM_UNIFY_FAIL;
+    OemUnify unified = OEM_UNIFY_OK;
+    if (!oem_stored_symbol_meets(universe, value->expr.elems[0],
+                                 node->head_id, depth + 1u, &unified))
+        unified = oem_unify_stored(cursor, value->expr.elems[0], universe,
+                                   node->head_id, depth + 1u);
+    if (unified != OEM_UNIFY_OK)
+        return unified;
+    (*i)++;
+    for (CettaExprIndex c = 1u; c < value->expr.len; c++) {
+        unified = oem_unify_skeleton(cursor, value->expr.elems[c], universe,
+                                     skeleton, i, holes, h, depth + 1u);
+        if (unified != OEM_UNIFY_OK)
+            return unified;
+    }
+    return OEM_UNIFY_OK;
+}
+
+/* One kept fact of a lazy match, given as its spine and holes, tried as
+ * oem_try_stored tries a row: no record of it is made. */
+static __attribute__((noinline)) OemRun oem_try_kept(
+                                CettaOpenEquationCursor *cursor,
+                                Atom *pattern, const TermUniverse *universe,
+                                const CettaSkeleton *skeleton,
+                                const AtomId *holes) {
+    cursor->stats.match_candidates++;
+    cursor->fresh_var_len = 0u;
+    CETTA_SCOPED_SHARED_TRANSITION(read);
+    uint32_t i = 0u, h = 0u;
+    OemUnify unified = oem_unify_skeleton(cursor, pattern, universe, skeleton,
+                                          &i, holes, &h, 0u);
+    if (unified != OEM_UNIFY_OK)
+        return unified == OEM_UNIFY_FAIL ? OEM_RUN_FAILED : OEM_RUN_HANDOFF;
+    return OEM_RUN_CALLED;
+}
+
 /* One stored row of a lazy match whose frame keeps no built pattern, as
  * oem_try_candidate_in_place tries a row. */
 static __attribute__((noinline)) OemRun oem_try_stored_in_place(
@@ -19393,12 +19465,30 @@ oem_cursor_run_mode(CettaOpenEquationCursor *cursor, uint32_t base,
             Atom *candidate = NULL;
             const TermUniverse *stored_universe = NULL;
             AtomId stored = CETTA_ATOM_ID_NONE;
+            /* A kept fact read ahead: its spine, which stands while the
+             * space does, and its holes, copied before the frame may go. */
+            const CettaSkeleton *kept_spine = NULL;
+            AtomId kept_holes[CETTA_SKELETON_HOLES];
+            bool more = false;
             if (frame->lazy_rows) {
                 /* The row read ahead, and the one after it read now: a
                  * frame with none left goes before its last row runs. */
                 stored_universe = frame->lazy->universe;
                 stored = frame->lazy->next;
-                frame->lazy->next = oem_lazy_rows_fetch(cursor, frame->lazy);
+                if (frame->lazy->next_kept != SIZE_MAX) {
+                    if (frame->args && frame->args[0]) {
+                        const AtomId *holes = NULL;
+                        space_occurrence_cursor_kept_fact(
+                            &frame->lazy->occurrences, frame->lazy->next_kept,
+                            &kept_spine, &holes);
+                        memcpy(kept_holes, holes,
+                               kept_spine->holes * sizeof(*kept_holes));
+                    } else {
+                        stored = space_occurrence_cursor_lend_kept(
+                            &frame->lazy->occurrences, frame->lazy->next_kept);
+                    }
+                }
+                more = oem_lazy_rows_fetch(cursor, frame->lazy);
             } else {
                 if (frame->next >= frame->rows->len) {
                     oem_pop_frame(cursor);
@@ -19408,10 +19498,12 @@ oem_cursor_run_mode(CettaOpenEquationCursor *cursor, uint32_t base,
             }
             Atom *pattern = frame->args ? frame->args[0] : NULL;
             const OemCont *resume = frame->cont;
-            if (frame->lazy_rows ? frame->lazy->next == CETTA_ATOM_ID_NONE
-                                 : frame->next >= frame->rows->len)
+            if (frame->lazy_rows ? !more : frame->next >= frame->rows->len)
                 oem_pop_frame(cursor);
-            if (stored_universe)
+            if (stored_universe && kept_spine)
+                run = oem_try_kept(cursor, pattern, stored_universe,
+                                   kept_spine, kept_holes);
+            else if (stored_universe)
                 run = pattern
                     ? oem_try_stored(cursor, pattern, stored_universe, stored)
                     : oem_try_stored_in_place(cursor, resume,

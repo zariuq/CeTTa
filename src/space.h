@@ -13,6 +13,7 @@
 #include "term_universe.h"
 #include "space_dense.h"
 #include "space_tuples.h"
+#include "space_skeleton.h"
 
 /* ── Discrimination Trie (à la Vampire SubstitutionTree) ───────────────── */
 
@@ -435,6 +436,11 @@ bool space_atom_id_requires_authored_order(const Space *s,
    as one publication; unsupported fragments retain singular semantics. */
 bool space_add_atom_ids_batch(Space *s, const AtomId *atom_ids,
                               CettaCount atom_count);
+/* As space_add_atom_ids_batch, for atoms each its own alpha key (ground,
+ * or with its variables numbered as an alpha key numbers them): a set finds
+ * the ones it holds by their ids. */
+bool space_add_alpha_keys_batch(Space *s, const AtomId *keys,
+                                CettaCount count);
 bool space_admit_atom(Space *s, Arena *fallback, Atom *atom);
 bool space_admit_atom_from_source_arena(
     Space *s, Arena *fallback, const Arena *source_arena, Atom *atom);
@@ -484,12 +490,15 @@ static inline uint64_t space_dense_epoch(const Space *s) {
 bool space_dense_count_columns(const Space *s, Atom *const *columns,
                                CettaExprLen len, CettaCount *count);
 /* A head's relation as its readers see it: ARITY columns, held as BITS
- * (two columns) or as a TABLE (the other unset). */
+ * (two columns) or as a TABLE (the other unset).  DEEP: a relation of deep
+ * facts whose spine is its head over holes, whose columns may hold
+ * expressions. */
 typedef struct {
     uint32_t arity;
     AtomId head_id;
     const CettaDenseRelation *bits;
     CettaTupleTable *table;
+    bool deep;
 } SpaceDenseForm;
 /* The relation of HEAD in *FORM; false when the space keeps none for it
  * (or a concurrent-evaluation scope is open).  Facts of HEAD may also be
@@ -497,6 +506,11 @@ typedef struct {
  * space_dense_reading_begin and _end, which keep the guards from giving
  * the relation back meanwhile. */
 bool space_dense_form(const Space *s, SymbolId head, SpaceDenseForm *form);
+/* Whether the relation PATTERN's head keeps is flat (a relation of deep
+ * facts whose spine is the head over holes is), with PATTERN's length: then
+ * each of PATTERN's elements reads one column of the relation's facts, an
+ * expression holding variables matching the column's terms. */
+bool space_dense_flat_reads(const Space *s, const Atom *pattern);
 /* The relation's facts whose columns equal FIXED's (CETTA_DENSE_ANY free;
  * FIXED NULL leaves every column free), visited or counted, and every fact
  * held, counted.  A walk may build an index of the relation: it takes no
@@ -513,9 +527,23 @@ const CettaDenseRelation *space_dense_relation(const Space *s,
 /* Whether no row can match a fact of `head` beside its relation: the head
  * keeps a relation, none of its facts is a row, and no row's head is open. */
 bool space_dense_head_rows_absent(Space *s, SymbolId head);
+/* The spine of the relation of deep facts S keeps for HEAD, copied into
+ * OUT; false when S keeps none. */
+bool space_dense_deep_spine(Space *s, SymbolId head, CettaSkeleton *out);
+/* Add to the set S the COUNT facts of HEAD whose holes under SPINE are
+ * HOLES (SPINE->holes ids each), as adding each fact's atom would: into
+ * HEAD's relation while it keeps that spine, unless the set holds the fact,
+ * and as a row otherwise.  False when a fact could not be added. */
+bool space_add_deep_holes(Space *s, SymbolId head, const CettaSkeleton *spine,
+                          const AtomId *holes, CettaCount count);
 /* Whether a pattern names a head the space keeps a relation of its columns
  * for: the native query's loops read relations; the planners that read
  * rows would give them back to the rows. */
+/* Whether one of PATTERNS may read the facts of a relation of deep facts
+ * (its head keeps facts as a skeleton and holes), which the joins over
+ * relations do not read. */
+bool space_dense_deep_meets(const Space *s, Atom *const *patterns,
+                            size_t count);
 bool space_dense_meets_patterns(const Space *s, Atom *const *patterns,
                                 size_t count);
 /* Whether no fact a relation of the space keeps can match any of the
@@ -858,6 +886,21 @@ SpaceOccurrenceCursorStep space_occurrence_cursor_next(
 SpaceOccurrenceCursorStep space_occurrence_cursor_next_id(
     SpaceOccurrenceCursor *cursor, CettaIndex *logical_index_out,
     AtomId *id_out);
+/* As space_occurrence_cursor_next_id, but a fact the space keeps in a
+ * relation of deep facts comes without a record: as its index among the
+ * cursor's kept facts in *KEPT_OUT (SIZE_MAX for any other row, which comes
+ * as its id in *ID_OUT). */
+SpaceOccurrenceCursorStep space_occurrence_cursor_next_kept(
+    SpaceOccurrenceCursor *cursor, AtomId *id_out, size_t *kept_out);
+/* The spine and holes of the kept fact KEPT a cursor yielded: the holes
+ * stay valid while the cursor lives, the spine while its space does. */
+void space_occurrence_cursor_kept_fact(const SpaceOccurrenceCursor *cursor,
+                                       size_t kept,
+                                       const CettaSkeleton **skeleton_out,
+                                       const AtomId **holes_out);
+/* The record of the kept fact KEPT, made when it is first lent. */
+AtomId space_occurrence_cursor_lend_kept(SpaceOccurrenceCursor *cursor,
+                                         size_t kept);
 /* The universe naming the rows a cursor lends by id. */
 TermUniverse *space_occurrence_cursor_universe(
     const SpaceOccurrenceCursor *cursor);

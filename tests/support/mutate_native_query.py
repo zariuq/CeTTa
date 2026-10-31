@@ -32,8 +32,33 @@ mutations = {
                   "            .space = loops->space,"),
     "open-row-removal": ("bool certified = !effects[effect].removal;",
                          "bool certified = true;"),
-    "guard-ignored": ("space_holds_atom_id_exact(query->guard_space, probe))",
-                      "space_holds_atom_id_exact(query->guard_space, CETTA_ATOM_ID_NONE))"),
+    # A guard's instance with no record taken for an absent row, though a
+    # relation holds facts with no record of each.
+    "guard-recordless": ("        if (probe == CETTA_ATOM_ID_NONE &&\n            space_dense_facts(query->guard_space) != 0u) {",
+                         "        if (probe == CETTA_ATOM_ID_NONE &&\n            space_dense_facts(query->guard_space) == UINT64_MAX) {"),
+    # A guard's variables summed out of a join no effect reads them in.
+    "guard-summed": (": effect == effect_count + 2u ? run.guard",
+                     ": effect == effect_count + 2u ? NULL"),
+    # A filter read with its equality reversed.
+    "filter-polarity": ("        if ((left == right) != query->filter_equal)",
+                        "        if ((left == right) == query->filter_equal)"),
+    # Under an insert, an instance an earlier solution made read as absent.
+    "insert-unkeyed": ("    *held = native_query_keys_contain(keys, key);",
+                       "    *held = false && native_query_keys_contain(keys, key);"),
+    # A join summed over a variable though an empty branch answers nothing.
+    "else-summed": ("        bool summed = (query->count_only || run.answer->ground) &&\n            !query->else_empty;",
+                    "        bool summed = (query->count_only || run.answer->ground);"),
+    # An empty branch counted as an answer.
+    "else-answers": ("        run->unanswered += weight;\n        return true;",
+                     "        run->unanswered += 0u;\n        return true;"),
+    # A nested column over a relation's table taken as matching anything.
+    "nested-kept-ignored": ("                matched = native_query_nested_match(loops, leg->nested[c],\n                                                    &node, column, fresh,",
+                            "                matched = true || native_query_nested_match(loops, leg->nested[c],\n                                                    &node, column, fresh,"),
+    # A relation whose holes hold variables read as a flat table.
+    "flat-spine-open": ("    if (!skeleton || head->open_holes != 0u || skeleton->count < 2u ||",
+                        "    if (!skeleton || skeleton->count < 2u ||"),
+    "guard-ignored": ("space_holds_atom_id_exact(query->guard_space, probe);",
+                      "space_holds_atom_id_exact(query->guard_space, CETTA_ATOM_ID_NONE);"),
     "guard-unchecked": ("for (size_t effect = 0u; guard_space && effect < effect_count;",
                         "for (size_t effect = effect_count; guard_space && effect < effect_count;"),
     "guard-uncertified": ("petta_native_query_guard_certified(guard_space, guard_pattern) &&",
@@ -126,10 +151,8 @@ mutations = {
                         "        plan.raw_arguments == 0u &&\n        (plan.translated_arguments == arguments || true);"),
     "typed-observed": ("        petta_machine_var_occurrences(body, binder->var_id) != 0u ||\n        !petta_machine_native_collect_admitted(machine) ||",
                        "        !petta_machine_native_collect_admitted(machine) ||"),
-    "insert-filter": ("        if ((i == 0u || fresh[i] != fresh[i - 1u]) &&\n            !space_holds_atom_id_exact(made->target, fresh[i]))",
-                      "        if (true)"),
-    "guard-plain": ("        petta_native_query_defined(root, g_builtin_syms.if_text) ||\n        petta_native_query_defined(root, g_builtin_syms.op_eq) ||",
-                    "        (petta_native_query_defined(root, g_builtin_syms.if_text) && false) ||\n        (petta_native_query_defined(root, g_builtin_syms.op_eq) && false) ||"),
+    "guard-plain": ("        if (petta_native_query_defined(root, head) ||\n            petta_native_query_defined(root, g_builtin_syms.collapse) ||",
+                    "        if ((petta_native_query_defined(root, head) && false) ||\n            petta_native_query_defined(root, g_builtin_syms.collapse) ||"),
     "nested-constant": ("    case NATIVE_QUERY_NODE_CONSTANT:\n        return term == at->id;",
                         "    case NATIVE_QUERY_NODE_CONSTANT:\n        return true;"),
     "dense-summed": ("run->summed[w] |= row[w];",

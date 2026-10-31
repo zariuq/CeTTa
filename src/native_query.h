@@ -39,7 +39,9 @@ typedef struct {
 } CettaNativeQueryEffect;
 
 /* Make an effect for instances, with the dialect's semantics; the dialect
- * has already judged its shape.  False when the effect fails. */
+ * has already judged its shape.  Each instance is its own alpha key: ground,
+ * or with its variables numbered as an alpha key numbers them.  False when
+ * the effect fails. */
 typedef bool (*CettaNativeQueryApply)(void *context,
                                       const CettaNativeQueryEffect *effect,
                                       const AtomId *ids, size_t count);
@@ -49,6 +51,14 @@ typedef bool (*CettaNativeQueryApply)(void *context,
 typedef bool (*CettaNativeQueryApplyTuples)(
     void *context, const CettaNativeQueryEffect *effect, Atom *head,
     AtomId head_id, uint32_t arity, const AtomId *tuples, size_t count);
+
+/* Add the instances of an addition into a set keeping a relation of deep
+ * facts for HEAD, by their holes under SKELETON, the relation's spine when
+ * the query began: COUNT instances of SKELETON->holes ids each, which need
+ * no records. */
+typedef bool (*CettaNativeQueryApplyHoles)(
+    void *context, const CettaNativeQueryEffect *effect, SymbolId head,
+    const CettaSkeleton *skeleton, const AtomId *holes, size_t count);
 
 typedef struct {
     Space *source;
@@ -63,6 +73,8 @@ typedef struct {
     CettaNativeQueryApply apply;
     /* Optional: additions into relations, by the columns of each fact. */
     CettaNativeQueryApplyTuples apply_tuples;
+    /* Optional: additions into relations of deep facts, by holes. */
+    CettaNativeQueryApplyHoles apply_holes;
     void *apply_context;
     /* Only the number of answers is wanted. */
     bool count_only;
@@ -79,12 +91,24 @@ typedef struct {
     /* When set (EFFECTS only), each solution first asks whether a row of
      * guard_space is the instance of guard_pattern, which the solution
      * makes ground: with none it makes the effects and answers
-     * template_atom; with one it makes none and answers else_atom.  The
-     * rows asked are those the query began with: no effect changes a row
-     * the guard reads. */
+     * template_atom; with one it makes none and answers else_atom, or
+     * nothing when else_empty.  The rows asked are those the query began
+     * with: no effect changes a row the guard reads, but an insert
+     * (CettaNativeQueryEffect.insert), which adds the guard's own instance,
+     * and a solution meeting an instance an earlier one inserted reads it
+     * held. */
     Space *guard_space;
     Atom *guard_pattern;
     Atom *else_atom;
+    bool else_empty;
+    /* When set (EFFECTS only, without a guard), each solution compares the
+     * instances of filter_left and filter_right, a variable or an atom
+     * each, by id: where their equality is filter_equal it makes the
+     * effects and answers template_atom, and otherwise answers else_atom,
+     * or nothing when else_empty. */
+    Atom *filter_left;
+    Atom *filter_right;
+    bool filter_equal;
     /* When set, the template's applications headed by these variables
      * answer themselves where their values cannot be applied: each
      * solution asks head_inert of each value, and a value that can be
@@ -133,6 +157,13 @@ typedef struct {
  * applied; every variable of a template must occur in a pattern.  ARENA
  * holds temporary terms and the answers. */
 CettaNativeQueryStatus cetta_native_query_run(
+    const CettaNativeQuery *query, Arena *arena,
+    CettaNativeQueryResult *result);
+
+/* The run of a query a leg of which reads a relation of deep facts:
+ * joins over facts holding variables, read by ids (native_open_query.c).
+ * DECLINED, having made nothing, where it is not admitted. */
+CettaNativeQueryStatus cetta_native_open_query_run(
     const CettaNativeQuery *query, Arena *arena,
     CettaNativeQueryResult *result);
 
