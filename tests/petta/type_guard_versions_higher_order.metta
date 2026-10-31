@@ -93,3 +93,17 @@
 !(remove-atom &self (: d Nat))
 !(add-atom &hokb (link d e))
 !(collapse (hop upd stop (S (S (S (S (S Z))))) (reach a $y)))
+
+; A function argument that may raise is called as the dispatch it was, under
+; the dispatch's handler: the specializer writes `(reduce (ctx-stop ...))`.
+; The version reads that dispatch as the call it holds, so the chainer keeps
+; its version (the make target reads the verdict); a goal the stop names
+; cuts the chain at once.
+(: Ctx Type)
+(: MkCtx (-> $a Nat Ctx))
+(: ctx-upd (-> $a Ctx Ctx))
+(= (ctx-upd $q (MkCtx $g $d)) (MkCtx $g (dec $d)))
+(: ctx-stop (-> $a Ctx Bool))
+(= (ctx-stop $q (MkCtx $g $d)) (or (is-zero $d) (== $g stop-here)))
+!(collapse (hop ctx-upd ctx-stop (MkCtx goal (S (S Z))) (reach a $y)))
+!(collapse (hop ctx-upd ctx-stop (MkCtx stop-here (S (S Z))) (reach a $y)))

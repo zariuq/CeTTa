@@ -12,6 +12,7 @@
 #include "subst_tree.h"
 #include "term_universe.h"
 #include "space_dense.h"
+#include "space_tuples.h"
 
 /* ── Discrimination Trie (à la Vampire SubstitutionTree) ───────────────── */
 
@@ -207,11 +208,15 @@ typedef struct {
      * rows with variables: the bitset holds them, one reference a key set. */
     AtomId *id_present_keys;
     CettaIndex id_present_key_len, id_present_key_cap;
-    /* The heads whose ground facts the space keeps as bits (space.c, "Relations
-     * kept as bits"); NULL while it keeps none.  The pairs they hold, over
-     * every head, which every positional read past the rows asks. */
+    /* The heads whose ground facts the space keeps in relations (space.c,
+     * "Relations kept as bits or tables"); NULL while it keeps none.  The
+     * facts they hold, over every head, which every positional read past the
+     * rows asks.  The epoch moves whenever a head is made, takes its
+     * relation or gives it back: a reader that keeps a head's relation
+     * between uses checks it. */
     struct SpaceDense *dense;
-    CettaCount dense_pairs;
+    CettaCount dense_facts;
+    uint64_t dense_epoch;
     /* The head last found to keep rows, whose facts an add asks no more
      * than their header. */
     SymbolId dense_rows_head;
@@ -251,7 +256,8 @@ typedef struct Space {
             AtomId *id_present_keys;
             CettaIndex id_present_key_len, id_present_key_cap;
             struct SpaceDense *dense;
-            CettaCount dense_pairs;
+            CettaCount dense_facts;
+            uint64_t dense_epoch;
             SymbolId dense_rows_head;
             bool eq_idx_dirty;
             bool ty_idx_dirty;
@@ -447,10 +453,10 @@ void space_mark_derived_state_dirty(Space *s);
 void space_rows_hold(Space *s);
 void space_rows_release(Space *s);
 
-/* Relations kept as bits.  The facts a space keeps as bits count in its
- * length and answer its membership tests, adds and removals; a reader of
- * rows that does not read bits gives them back to the rows first:
- * space_dense_settle for every head, or for the head HEAD only
+/* Relations kept as bits or tables.  The facts a space keeps in relations
+ * count in its length and answer its membership tests, adds and removals; a
+ * reader of rows that does not read relations gives them back to the rows
+ * first: space_dense_settle for every head, or for the head HEAD only
  * (SYMBOL_ID_NONE: every head).  space_dense_settle_for_pattern settles the
  * head a pattern names, or every head when its head is not a symbol. */
 void space_dense_settle(Space *s, SymbolId head);
@@ -460,47 +466,81 @@ void space_dense_settle_for_pattern(Space *s, const Atom *pattern);
 void space_dense_settle_for_head(Space *s, SymbolId head, CettaExprLen len);
 void space_dense_settle_for_patterns(Space *s, Atom *const *patterns,
                                      CettaExprLen count);
-/* The pairs held as bits, over every head. */
-static inline CettaCount space_dense_pairs(const Space *s) {
-    return s ? s->native.dense_pairs : 0u;
+/* The facts held in relations, over every head. */
+static inline CettaCount space_dense_facts(const Space *s) {
+    return s ? s->native.dense_facts : 0u;
 }
-/* Count the facts the bits hold that match (h a b), given as COLUMNS: each
- * a variable, distinct from the others, which takes anything, or a ground
- * atom.  A head that is a variable reads every relation kept as bits.
- * False when the bits cannot answer: in a concurrent-evaluation scope, or
- * for a column a number other than an integer, which may equal one by
- * value. */
+/* A value that moves whenever the space's relations change form: a head
+ * made (its entries may move), a relation taken or given back. */
+static inline uint64_t space_dense_epoch(const Space *s) {
+    return s ? s->native.dense_epoch : 0u;
+}
+/* Count the facts the relations hold that match (h c1 ... ck), given as
+ * the LEN COLUMNS: each a variable, distinct from the others, which takes
+ * anything, or a ground atom.  A head that is a variable reads every
+ * relation of k columns.  False when the relations cannot answer: in a
+ * concurrent-evaluation scope, for a column a number other than an
+ * integer, which may equal one by value, or for columns no relation has. */
 bool space_dense_count_columns(const Space *s, Atom *const *columns,
-                               CettaCount *count);
-/* The bits of HEAD, or NULL when the space keeps none for it (or a
- * concurrent-evaluation scope is open).  Facts of HEAD may also be rows:
- * a reader of bits asks the rows too, between space_dense_reading_bits_begin
- * and _end, which keep the guards from giving the bits back meanwhile. */
+                               CettaExprLen len, CettaCount *count);
+/* A head's relation as its readers see it: ARITY columns, held as BITS
+ * (two columns) or as a TABLE (the other unset). */
+typedef struct {
+    uint32_t arity;
+    AtomId head_id;
+    const CettaDenseRelation *bits;
+    CettaTupleTable *table;
+} SpaceDenseForm;
+/* The relation of HEAD in *FORM; false when the space keeps none for it
+ * (or a concurrent-evaluation scope is open).  Facts of HEAD may also be
+ * rows: a reader of a relation asks the rows too, between
+ * space_dense_reading_begin and _end, which keep the guards from giving
+ * the relation back meanwhile. */
+bool space_dense_form(const Space *s, SymbolId head, SpaceDenseForm *form);
+/* The relation's facts whose columns equal FIXED's (CETTA_DENSE_ANY free;
+ * FIXED NULL leaves every column free), visited or counted, and every fact
+ * held, counted.  A walk may build an index of the relation: it takes no
+ * fact and changes no answer. */
+bool space_dense_form_each(SpaceDenseForm form, const CettaDenseId *fixed,
+                           CettaTupleVisit visit, void *context);
+uint64_t space_dense_form_count(SpaceDenseForm form,
+                                const CettaDenseId *fixed);
+uint64_t space_dense_form_facts(SpaceDenseForm form);
+/* The bits of HEAD, or NULL when the space keeps no bits for it: the
+ * relations of two columns that are bits, as space_dense_form gives them. */
 const CettaDenseRelation *space_dense_relation(const Space *s,
                                                SymbolId head);
-/* Whether no row can match a fact of `head` beside its bits: the head keeps
- * bits, none of its facts is a row, and no row's head is open. */
+/* Whether no row can match a fact of `head` beside its relation: the head
+ * keeps a relation, none of its facts is a row, and no row's head is open. */
 bool space_dense_head_rows_absent(Space *s, SymbolId head);
-/* Whether a pattern names a head the space keeps as bits: the native
- * query's loops read bits; the planners that read rows would give them
- * back to the rows. */
+/* Whether a pattern names a head the space keeps a relation of its columns
+ * for: the native query's loops read relations; the planners that read
+ * rows would give them back to the rows. */
 bool space_dense_meets_patterns(const Space *s, Atom *const *patterns,
                                 size_t count);
-void space_dense_reading_bits_begin(void);
-void space_dense_reading_bits_end(void);
+/* Whether no fact a relation of the space keeps can match any of the
+ * patterns: each is an expression whose head is a symbol with no relation
+ * of its columns, so a reader of them may read the rows alone. */
+bool space_dense_patterns_miss(const Space *s, Atom *const *patterns,
+                               size_t count);
+void space_dense_reading_begin(void);
+void space_dense_reading_end(void);
 /* Before adding IDS: a head whose facts among them reach the threshold
- * for bits takes bits now, so that none of them is a row. */
+ * for a relation takes its relation now, so that none of them is a row. */
 void space_dense_prepare_adds(Space *s, const AtomId *ids, CettaCount count);
-/* Whether the space may keep the facts of HEAD as bits: it admits bits,
- * and HEAD has not given its bits back to rows. */
+/* Whether the space may keep the facts of HEAD in a relation: it admits
+ * relations, and HEAD has not given its relation back to rows. */
 bool space_dense_may_hold(const Space *s, SymbolId head);
-/* Add the facts (h a b): h by its symbol and id, each (a, b) by two ids in
- * PAIRS.  While the space keeps h as bits the facts need no records; the
- * others are rows.  A set adds no fact it holds. */
-bool space_add_dense_pairs(Space *s, SymbolId head, AtomId head_id,
-                           const AtomId *pairs, CettaCount count);
-/* Take the pair of the ground fact ATOM from the bits, by its parts (a fact
- * kept as bits may have no record of its own): the copies removed, 0 or 1. */
+/* Add the facts (h c1 ... ck), k = ARITY: h by its symbol and id, each
+ * fact by the k ids of its columns in TUPLES.  While the space keeps a
+ * relation of k columns for h the facts need no records; the others are
+ * rows.  A set adds no fact it holds. */
+bool space_add_dense_tuples(Space *s, SymbolId head, AtomId head_id,
+                            uint32_t arity, const AtomId *tuples,
+                            CettaCount count);
+/* Take the ground fact ATOM from its relation, by its parts (a fact a
+ * relation keeps may have no record of its own): the copies removed, 0 or
+ * 1. */
 CettaCount space_dense_remove_ground(Space *s, Atom *atom);
 void space_discard_native_logical_view(Space *s);
 /* Drop the full logical tuple projection while retaining revision-independent
@@ -779,6 +819,14 @@ typedef struct {
     bool has_last;
     CettaIndex last_logical;
     CettaIndex last_row;
+    /* The facts the space's relation for the pattern kept when the cursor
+     * began, lent after the rows, at logical indexes from the ceiling on;
+     * shared by clones.  kept_turn: the rows are done, and kept_last is the
+     * fact lent last. */
+    struct SpaceKeptOccurrences *kept;
+    size_t kept_next;
+    size_t kept_last;
+    bool kept_turn;
 } SpaceOccurrenceCursor;
 
 typedef enum {
@@ -862,7 +910,7 @@ bool space_exact_frontier_certified_head(Space *s, SymbolId head,
                                          CettaExprLen len);
 /* Whether no row holding a variable is under HEAD or without a symbol head,
  * read from the exact index as space_exact_frontier_certified reads it,
- * without settling the facts kept as bits, which are ground.  False when
+ * without settling the facts kept in relations, which are ground.  False when
  * the index cannot answer, or the space has imports. */
 bool space_exact_head_certified(Space *s, SymbolId head);
 /* Remove every row equal to one of the ground atoms IDS, all of head HEAD,
