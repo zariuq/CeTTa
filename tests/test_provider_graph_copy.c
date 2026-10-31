@@ -24,7 +24,8 @@ static CettaBranchAdmission probe_admission(void *raw, Space *space) {
         .capacity=CETTA_BRANCH_CAPTURE_MULTI_SHOT,
         .authority={.words={0x4f574e4544u,authority->revision},.length=2u}};
 }
-static bool probe_permit(void *raw) {
+static bool probe_permit(void *raw, const CettaSourceStep *source) {
+    (void)source;
     ProbeAuthority *authority=raw;
     if(!authority->remaining)return false;
     authority->remaining--;return true;

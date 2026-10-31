@@ -200,14 +200,16 @@
        ia:budget-exhausted
        (ia:drain-on (ia:run (__cetta_lib_interaction_agenda-step ())) $budget)))
 
+; The next budget is a number before the next round starts, so the rounds do
+; not build a chain of pending subtractions.
 (= (ia:drain-on $i $budget)
    (case $i
      (((ia:done ia:quiescent) ia:quiescent)
       ((ia:done (ia:process $p))
-       (let $_ (collapse (eval $p)) (ia:drain (- $budget 1))))
+       (let $_ (collapse (eval $p)) (let $next (- $budget 1) (ia:drain $next))))
       ((ia:done (ia:fired $x))
-       (let $_ (collapse (eval $x)) (ia:drain (- $budget 1))))
-      ($other (ia:drain (- $budget 1))))))
+       (let $_ (collapse (eval $x)) (let $next (- $budget 1) (ia:drain $next))))
+      ($other (let $next (- $budget 1) (ia:drain $next))))))
 
 ;; ---- processes and names ---------------------------------------------------------
 

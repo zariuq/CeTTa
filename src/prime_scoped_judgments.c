@@ -734,8 +734,11 @@ static void sj_admission_follows_contents(uint64_t from, uint64_t to) {
     }
 }
 
+static void sj_env_retires_instance(uint64_t instance);
+
 static void sj_admission_retires_instance(uint64_t instance) {
     CETTA_SCOPED_SHARED_TRANSITION(retirement);
+    sj_env_retires_instance(instance);
     if (!g_admission_space_capacity) return;
     size_t slot = sj_admission_space_slot(instance, g_admission_space_capacity);
     SjAdmissionSpace **link = &g_admission_spaces[slot];
@@ -776,6 +779,7 @@ void prime_scoped_judgment_storage_census(CettaStorageCensus *census) {
 }
 
 void prime_scoped_judgment_follow_space_contents(void) {
+    CETTA_SCOPED_SHARED_TRANSITION(subscription);
     static bool follows_contents = false;
     if (!follows_contents) {
         space_set_contents_moved_hook(sj_admission_follows_contents);
@@ -951,6 +955,39 @@ typedef struct {
 static SjSetEnv g_set_envs[SJ_PROFILE_COUNT];
 static SjSetEnv *g_current_set_env = &g_set_envs[SJ_PROFILE_HOL];
 #define g_set_env (*g_current_set_env)
+
+/* The derived overlay borrows its source universe. Retire that view while
+ * the source header and universe are still alive, including views reached
+ * through an overlay chain. Invalidation precedes recursive Space retirement. */
+static void sj_env_retires_instance(uint64_t instance) {
+    for(size_t i=0u;i<SJ_PROFILE_COUNT;i++) {
+        SjSetEnv *env=&g_set_envs[i];
+        if(!env->overlay_ready)continue;
+        bool own=env->overlay.instance_id==instance;
+        bool borrowed=env->base_instance==instance;
+        for(const Space *base=env->overlay.overlay_base;!borrowed && base;base=base->overlay_base)
+            borrowed=base->instance_id==instance;
+        if(!own && !borrowed)continue;
+        env->overlay_ready=false;
+        env->base_instance=0u;env->base_revision=0u;
+        env->constant_count=0u;env->current_constant_count=0u;
+        env->current_instance=0u;env->current_revision=0u;
+        env->current_mutation=0u;env->current_admission=0u;
+        for(size_t d=0u;d<env->def_count;d++) {
+            for(size_t r=0u;r<env->defs[d].rule_count;r++)free(env->defs[d].rules[r].pats);
+            free(env->defs[d].rules);
+        }
+        free(env->defs);env->defs=NULL;env->def_count=0u;
+        env->kernel_rules=NULL;
+        if(env->kernel_rule_arena_ready) {
+            env->kernel_rule_arena_ready=false;
+            arena_free(&env->kernel_rule_arena);
+        }
+        env->stored=NULL;env->stored_count=0u;
+        env->stored_atoms=NULL;env->stored_atom_count=0u;
+        if(!own)space_free(&env->overlay);
+    }
+}
 
 #include "prime_common_set_profile.inc"
 
@@ -1289,6 +1326,7 @@ static bool sj_space_reads_through(const Space *space, const Space *overlay) {
 }
 
 static SjSetEnv *sj_env(Space *space) {
+    prime_scoped_judgment_follow_space_contents();
     SjTheoryProfile profile = sj_space_profile(space);
     /* Internal type/declaration services may use the logical core without
      * interpreting set: forms. No set constants or axioms enter that core. */
@@ -4928,8 +4966,14 @@ static bool sj_dependencies_current_as(SjProofState *st, Atom *record,
             prior->require_admission == require_admission)
             return sj_dependencies_walk(st, record, depth, require_admission, prior->memo, &height);
     }
+    CettaPrimeDeclarationContextMemoV1 *declarations=
+        prime_semantics_declaration_context_memo_enter(&st->env->overlay,st->arena);
+    CettaPrimeRegularKernelContextMemoV1 *contexts=
+        cetta_prime_regular_kernel_context_memo_enter_v1(st->arena);
     g_dependency_walk = &walk;
     bool current = sj_dependencies_walk(st, record, depth, require_admission, &memo, &height);
+    cetta_prime_regular_kernel_context_memo_leave_v1(contexts);
+    prime_semantics_declaration_context_memo_leave(declarations);
     g_dependency_walk = walk.outer;
     return current;
 }

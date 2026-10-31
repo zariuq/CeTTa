@@ -5782,13 +5782,23 @@ typedef struct {
     Atom *call;
     RhocalcRun *run;
     RhocalcValueObservation *values;
+    RhocalcFrontier *frontier;
+    Atom *frontier_tuple;
+    CettaExprIndex frontier_position;
+    bool data_only;
     bool started, returned;
 } LibraryNativeExecution;
 
 bool cetta_library_native_execution_supported(const CettaLibraryContext *ctx, SymbolId head) {
-    return ctx && (ctx->active_mask & CETTA_LIBRARY_RHOMETTA) &&
+    return ctx && (((ctx->active_mask & CETTA_LIBRARY_RHOMETTA) &&
         (head == g_builtin_syms.lib_rhometta_run_canonical ||
-         head == g_builtin_syms.lib_rhometta_values);
+         head == g_builtin_syms.lib_rhometta_values)) ||
+        ((ctx->active_mask & CETTA_LIBRARY_LTS) && head==g_builtin_syms.lib_lts_rho_transitions));
+}
+
+bool cetta_library_native_execution_data_only(const CettaLibraryContext *ctx, SymbolId head) {
+    return ctx && (ctx->active_mask & CETTA_LIBRARY_LTS) &&
+        head==g_builtin_syms.lib_lts_rho_transitions;
 }
 
 static bool library_native_execution_current(void *raw) {
@@ -5801,7 +5811,7 @@ static bool library_native_execution_current(void *raw) {
         job->library->session.profile == job->profile &&
         eval_current_registry() == job->context.registry &&
         eval_current_persistent_arena() == job->context.persistent_arena &&
-        (job->library->active_mask & CETTA_LIBRARY_RHOMETTA);
+        (job->library->active_mask & (job->data_only ? CETTA_LIBRARY_LTS : CETTA_LIBRARY_RHOMETTA));
 }
 
 static void library_native_execution_release(void *raw) {
@@ -5809,6 +5819,7 @@ static void library_native_execution_release(void *raw) {
     if (!job) return;
     rhocalc_run_close(job->run);
     rhocalc_values_close(job->values);
+    rhocalc_frontier_close(job->frontier);
     free(job);
 }
 
@@ -5817,6 +5828,11 @@ static CettaOwnedReleaseStep library_native_execution_release_poll(void *raw,
     LibraryNativeExecution *job = raw;
     uint64_t spent = 0u;
     if (used) *used = 0u;
+    if (job->frontier) {
+        CettaOwnedReleaseStep status=rhocalc_frontier_release_poll(&job->frontier,
+            allowance,allow_atomic,&spent);
+        if(status!=CETTA_OWNED_RELEASE_COMPLETE) {if(used)*used=spent;return status;}
+    }
     if (job->run) {
         CettaOwnedReleaseStep status = rhocalc_run_release_poll(&job->run,
             allowance, allow_atomic, &spent);
@@ -5865,18 +5881,52 @@ static CettaOwnedExecutionStep library_native_execution_next(void *raw,
             *completion = CETTA_EVAL_INCOMPLETE_CAPACITY;
             return CETTA_OWNED_EXECUTION_INTERRUPTED;
         }
-        if (atom_is_symbol_id(job->call->expr.elems[0], g_builtin_syms.lib_rhometta_values))
+        if (job->data_only)
+            job->frontier=rhocalc_frontier_open_held(job->arena,input);
+        else if (atom_is_symbol_id(job->call->expr.elems[0], g_builtin_syms.lib_rhometta_values))
             job->values = rhocalc_values_open(job->arena, input);
         else {
             RhoRuntimeProfile profile = {.scheduler_policy = RHO_SCHEDULER_CANONICAL,
                 .reduction_limit = 100000u, .thread_count = 1u};
             job->run = rhocalc_run_open_held(job->arena, input, &profile, &job->context);
         }
-        if (!job->run && !job->values) {
+        if (!job->run && !job->values && !job->frontier) {
             *completion = CETTA_EVAL_INCOMPLETE_HOST_FAILURE;
             return CETTA_OWNED_EXECUTION_INTERRUPTED;
         }
         return CETTA_OWNED_EXECUTION_PAUSED;
+    }
+    if (job->frontier) {
+        if(!job->frontier_tuple) {
+            RhocalcRunStatus status=rhocalc_frontier_poll(job->frontier,1u,NULL);
+            if(status==RHOCALC_RUN_PENDING)return CETTA_OWNED_EXECUTION_PAUSED;
+            if(status!=RHOCALC_RUN_DONE) {
+                if(!rhocalc_frontier_invalid_input(job->frontier)) {
+                    *completion=CETTA_EVAL_INCOMPLETE_HOST_FAILURE;
+                    return CETTA_OWNED_EXECUTION_INTERRUPTED;
+                }
+                const char *message=rhocalc_frontier_error(job->frontier);
+                Atom *error=lts_rho_transitions_error(job->arena,job->call->expr.elems+1u,
+                    job->call->expr.len-1u,atom_string(job->arena,message ? message : "expected strict-core rho process"));
+                *returned=(CettaOwnedReturn){.outcome=cetta_call_completed_value(error),.final=true};
+                job->returned=true;
+                return CETTA_OWNED_EXECUTION_RETURN;
+            }
+            if(!rhocalc_frontier_result(job->frontier,&job->frontier_tuple) ||
+                    !job->frontier_tuple || job->frontier_tuple->kind!=ATOM_EXPR) {
+                *completion=CETTA_EVAL_INCOMPLETE_HOST_FAILURE;
+                return CETTA_OWNED_EXECUTION_INTERRUPTED;
+            }
+        }
+        if(job->frontier_position==job->frontier_tuple->expr.len) {
+            job->returned=true;
+            return CETTA_OWNED_EXECUTION_COMPLETE;
+        }
+        Atom *value=job->frontier_tuple->expr.elems[job->frontier_position++];
+        bool final=job->frontier_position==job->frontier_tuple->expr.len;
+        *returned=(CettaOwnedReturn){.outcome=cetta_call_completed_value(value),.final=final};
+        job->returned=final;
+        return CETTA_OWNED_EXECUTION_RETURN;
     }
     RhocalcRunStatus status = job->run
         ? rhocalc_run_poll(job->run, 1u, NULL)
@@ -5909,7 +5959,7 @@ static CettaOwnedExecutionStep library_native_execution_next(void *raw,
 bool cetta_library_native_execution_open(CettaLibraryContext *ctx, Space *space,
     Arena *arena, Atom *call, const RhocalcPayloadProvider *payload,
     CettaOwnedExecution *out) {
-    if (!ctx || !(ctx->active_mask & CETTA_LIBRARY_RHOMETTA) || !space || !arena ||
+    if (!ctx || !space || !arena ||
         !call || call->kind != ATOM_EXPR || !call->expr.len ||
         !call->expr.elems[0] || call->expr.elems[0]->kind != ATOM_SYMBOL ||
         !out || out->computation ||
@@ -5922,6 +5972,7 @@ bool cetta_library_native_execution_open(CettaLibraryContext *ctx, Space *space,
     job->arena_identity = arena->identity; job->arena_epoch = arena->reset_epoch;
     job->symbol_instance = symbol_table_instance_id(g_symbols);
     job->language = ctx->session.language_id; job->profile = ctx->session.profile;
+    job->data_only=cetta_library_native_execution_data_only(ctx,atom_symbol_current_id(call->expr.elems[0]));
     if (!rhometta_eval_context_from_current(ctx, space, &job->context)) {
         free(job); return false;
     }

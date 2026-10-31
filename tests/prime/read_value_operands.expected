@@ -1,0 +1,17 @@
+3 words:
+    b
+    c
+    a
+[()]
+[()]
+[()]
+[()]
+["b c"]
+[(formatted "b c")]
+[(formatted "3-1")]
+[("a" "b" "c")]
+[(sorted ("a" "b" "c"))]
+[(printed ())]
+[(sets (3 1 2 1 9) (3 2 1) (3 1))]
+[(Error (format-args "{}" 5) Atom is not an ExpressionAtom)]
+[(Error (sort-strings (3 1 2 1)) sort-strings expects expression with strings as a first argument)]

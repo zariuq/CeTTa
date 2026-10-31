@@ -1,6 +1,7 @@
 #include "prime_regular_kernel.h"
 #include "prime_level.h"
 #include "stats.h"
+#include "symbol.h"
 
 #include <inttypes.h>
 #include <limits.h>
@@ -5340,7 +5341,57 @@ static PrimeRegularKernelInfer regular_infer(
         "regular-inference-missing-constructor");
 }
 
+/* Successful context formation is pure once universe solving is absent.
+ * Keep an owned syntax key so a later mutable caller graph cannot change
+ * what was checked. Key comparison uses exact data identity, not a profile's
+ * value equality. Each use still checks its actual term and resource bank. */
+typedef struct PrimeRegularContextMemoEntry {
+    struct PrimeRegularContextMemoEntry *next;
+    Atom *snapshot;
+    uint32_t hash;
+    uint64_t length;
+} PrimeRegularContextMemoEntry;
+struct CettaPrimeRegularKernelContextMemoV1 {
+    struct CettaPrimeRegularKernelContextMemoV1 *previous;
+    Arena *owner;
+    uint64_t epoch;
+    uint32_t arena_identity;
+    const SymbolTable *symbols;
+    uint64_t symbol_instance;
+    Arena storage;
+    PrimeRegularContextMemoEntry *entries;
+    uint64_t hits,stored;
+};
+static _Thread_local CettaPrimeRegularKernelContextMemoV1 *g_regular_context_memo;
+bool cetta_prime_regular_kernel_context_memo_stats_v1(
+    const CettaPrimeRegularKernelContextMemoV1 *memo,uint64_t *hits,uint64_t *stored) {
+    if(!memo)return false;
+    if(hits)*hits=memo->hits;
+    if(stored)*stored=memo->stored;
+    return true;
+}
+CettaPrimeRegularKernelContextMemoV1 *cetta_prime_regular_kernel_context_memo_enter_v1(Arena *owner) {
+    if(!owner || !owner->identity)return NULL;
+    CettaPrimeRegularKernelContextMemoV1 *memo=calloc(1u,sizeof(*memo));
+    if(!memo)return NULL;
+    memo->owner=owner;memo->epoch=owner->reset_epoch;
+    memo->arena_identity=owner->identity;memo->symbols=g_symbols;
+    memo->symbol_instance=symbol_table_instance_id(g_symbols);
+    arena_init_detached(&memo->storage);
+    if(!memo->storage.identity) {arena_free(&memo->storage);free(memo);return NULL;}
+    memo->previous=g_regular_context_memo;g_regular_context_memo=memo;
+    return memo;
+}
+void cetta_prime_regular_kernel_context_memo_leave_v1(CettaPrimeRegularKernelContextMemoV1 *memo) {
+    if(!memo)return;
+    if(memo!=g_regular_context_memo)abort();
+    g_regular_context_memo=memo->previous;
+    arena_free(&memo->storage);free(memo);
+}
 static CettaPrimeRegularKernelStatus regular_context_valid(
+    Arena *,Atom *,CettaPrimeRegularKernelBudget *,uint64_t *,
+    const char **,PrimeRegularLevelInstantiation *);
+static CettaPrimeRegularKernelStatus regular_context_valid_uncached(
     Arena *arena, Atom *context, CettaPrimeRegularKernelBudget *budget,
     uint64_t *length_out, const char **reason_out,
     PrimeRegularLevelInstantiation *instantiation) {
@@ -5409,6 +5460,42 @@ static CettaPrimeRegularKernelStatus regular_context_valid(
     if (domain_status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED && length_out)
         *length_out = local_entry ? tail_length + 1u : tail_length;
     return domain_status;
+}
+
+static CettaPrimeRegularKernelStatus regular_context_valid(
+    Arena *arena,Atom *context,CettaPrimeRegularKernelBudget *budget,
+    uint64_t *length_out,const char **reason_out,PrimeRegularLevelInstantiation *instantiation) {
+    CettaPrimeRegularKernelContextMemoV1 *memo=g_regular_context_memo;
+    bool admitted=memo && !instantiation && context && memo->owner==arena &&
+        memo->epoch==arena->reset_epoch && memo->arena_identity==arena->identity &&
+        memo->symbols==g_symbols && memo->symbol_instance==symbol_table_instance_id(g_symbols);
+    uint32_t hash=admitted ? atom_hash(context) : 0u;
+    if(admitted)for(PrimeRegularContextMemoEntry *entry=memo->entries;entry;entry=entry->next)
+        if(entry->hash==hash && atom_data_identical(entry->snapshot,context)) {
+            if(!regular_spend(budget)) {
+                if(reason_out)*reason_out="context-budget";
+                return CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED;
+            }
+            if(memo->hits!=UINT64_MAX)memo->hits++;
+            if(length_out)*length_out=entry->length;
+            return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+        }
+    uint64_t length=0u;
+    CettaPrimeRegularKernelStatus status=regular_context_valid_uncached(
+        arena,context,budget,&length,reason_out,instantiation);
+    if(status==CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) {
+        if(length_out)*length_out=length;
+        if(admitted) {
+            Atom *snapshot=atom_deep_copy(&memo->storage,context);
+            if(snapshot) {
+                PrimeRegularContextMemoEntry *entry=arena_alloc(&memo->storage,sizeof(*entry));
+                *entry=(PrimeRegularContextMemoEntry){.next=memo->entries,.snapshot=snapshot,.hash=hash,.length=length};
+                memo->entries=entry;
+                if(memo->stored!=UINT64_MAX)memo->stored++;
+            }
+        }
+    }
+    return status;
 }
 
 struct CettaPrimeRegularKernelPreparedExpectedV1 {

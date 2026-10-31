@@ -327,6 +327,17 @@ bool prime_interpretation_is_current(const CettaPrimeInterpretation *interpretat
 bool prime_interpretation_equal(const CettaPrimeInterpretation *left,
     const CettaPrimeInterpretation *right);
 
+typedef struct CettaPrimeDeclarationContextMemoV1 CettaPrimeDeclarationContextMemoV1;
+/* Reuse checked declaration preparation within one synchronous dependency
+ * walk. The source, arena and runtime symbol storage stay live. Reuse checks
+ * the complete direct-authority token, arena identity/epoch, language and
+ * captured interpretation. Nested synthesis uses its own temporary context;
+ * term checking and source-currentness checks still run for each query. */
+CettaPrimeDeclarationContextMemoV1 *
+prime_semantics_declaration_context_memo_enter(Space *space, Arena *arena);
+void prime_semantics_declaration_context_memo_leave(
+    CettaPrimeDeclarationContextMemoV1 *memo);
+
 /* The profile of a document that declares none: lexical-fresh per-call
  * reference, or for the scope experiment's census and output comparison,
  * CETTA_PRIME_SCOPE_DEFAULT=ownership[/lifetime/readout] (an elaboration

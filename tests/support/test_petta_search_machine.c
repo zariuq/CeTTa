@@ -3548,7 +3548,7 @@ static Atom *add_indexed_program_equation(
     return stored;
 }
 
-static void test_program_metadata_projection(Arena *arena) {
+static void test_program_metadata_projection(Arena *arena, TermUniverse *universe) {
     assert(!petta_program_atom_affects_metadata(
         parse_one(arena, "(num (M Z))")));
     assert(petta_program_atom_affects_metadata(
@@ -3564,6 +3564,26 @@ static void test_program_metadata_projection(Arena *arena) {
         parse_one(arena, "(: (step value) Atom)")));
     assert(!petta_program_atom_affects_metadata(
         parse_one(arena, "(: step)")));
+
+    /* The compact-row filter must retain graded heads before a block's
+     * caller plans are compiled. Malformed grades do not declare a head. */
+    const struct { const char *source; bool metadata; } rows[] = {
+        {"(=w (step $x) (next $x) 1)", true},
+        {"(=w (step $x) (next $x) 1 (admit good))", true},
+        {"(= (step $x) (next $x) (where 1))", true},
+        {"(= (step $x) (next $x) (where 1 (admit good)))", true},
+        {"(sample a b c)", false},
+        {"(sample a b c d)", false},
+        {"(=w (step $x) (next $x) 1 (admit bad extra))", false},
+        {"(= (step $x) (next $x) (where 1 (admit bad extra)))", false},
+    };
+    for (size_t index = 0u; index < sizeof(rows) / sizeof(rows[0]); index++) {
+        AtomId id = term_universe_store_atom_id(universe, arena,
+                                                parse_one(arena, rows[index].source));
+        assert(id != CETTA_ATOM_ID_NONE);
+        assert(petta_program_form_id_may_affect_metadata(universe, id) ==
+               rows[index].metadata);
+    }
 }
 
 static void test_program_callability_head_kinds(Arena *arena) {
@@ -11004,9 +11024,10 @@ static void test_deterministic_heap_collection(
     Atom *query = atom_expr(answers, query_items, 2u);
     assert(list && query);
 
+    PettaMachineHost host = {.measure_stats = true};
     PettaMachine machine;
     assert(petta_machine_init(
-        &machine, space, answers, query, NULL, NULL));
+        &machine, space, answers, query, NULL, &host));
     Atom *answer = NULL;
     Bindings environment;
     assert(petta_machine_next(
@@ -16968,6 +16989,8 @@ int main(int argc, char **argv) {
         test_program_case_safety_projection(&universe, &persistent);
         test_program_safety_foreign_callability(&universe, &persistent);
         test_program_safety_cache_scope(&universe, &persistent);
+        goto release_owners;
+    }
     if (segments_only) {
         test_metered_body_segments(&universe, &persistent, &answers, true);
         goto release_owners;
@@ -17034,7 +17057,7 @@ int main(int argc, char **argv) {
     test_flat_fold_overlay_admission(&answers);
     test_native_runtime_named_arity();
     test_semantic_form_facts();
-    test_program_metadata_projection(&answers);
+    test_program_metadata_projection(&answers, &universe);
     test_program_callability_head_kinds(&answers);
     test_compiled_graph_transport(&universe, &persistent);
     test_compiled_return_provenance(&universe, &persistent);

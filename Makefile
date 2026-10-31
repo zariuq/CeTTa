@@ -787,10 +787,9 @@ endif
 ifeq ($(CETTA_PGO),generate)
 OPTIMIZE_CFLAGS += -fprofile-generate -fprofile-update=atomic
 else ifeq ($(CETTA_PGO),use)
-# GCC reports gaps in the counts (a callee the instrumented build inlined
-# away) as warnings without an option of their own; they stay warnings here.
-# The default build compiles the same sources with every warning an error.
-OPTIMIZE_CFLAGS += -fprofile-use -fprofile-partial-training -Wno-missing-profile -Wno-error
+# Correct inconsistent execution counts without demoting code diagnostics.
+# Untrained functions may lack profiles; structural mismatches remain errors.
+OPTIMIZE_CFLAGS += -fprofile-use -fprofile-partial-training -fprofile-correction -Wno-missing-profile
 else ifneq ($(CETTA_PGO),)
 $(error CETTA_PGO is generate or use)
 endif
@@ -1413,6 +1412,9 @@ RHOCALC_ABT_SUBSTITUTION_TEST_SRC = tests/support/test_rhocalc_abt_substitution.
 RHOCALC_ABT_SUBSTITUTION_TEST_OBJ = runtime/bootstrap/test_rhocalc_abt_substitution.$(BUILD_OBJ_TAG).o
 RHOCALC_ABT_SUBSTITUTION_TEST_BIN = runtime/test_rhocalc_abt_substitution-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 RHOCALC_ABT_SUBSTITUTION_TEST_LINK_OBJ = $(filter-out src/rhocalc_core.%,$(FALLBACK_EVAL_TEST_LINK_OBJ))
+RHOCALC_FRONTIER_TEST_SRC = tests/support/test_rhocalc_frontier.c
+RHOCALC_FRONTIER_TEST_OBJ = runtime/bootstrap/test_rhocalc_frontier.$(BUILD_OBJ_TAG).o
+RHOCALC_FRONTIER_TEST_BIN = runtime/test_rhocalc_frontier-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 RHOCALC_WORK_CENSUS_OBJ = runtime/bootstrap/test_rhocalc_work_census.$(BUILD_OBJ_TAG).o
 RHOCALC_WORK_CENSUS_BIN = runtime/test_rhocalc_work_census-$(BUILD_OBJ_TAG)
 LIB_PARSE_GLL_UTF8_FOREST_TEST_SRC = tests/support/test_lib_parse_gll_utf8_forest.c
@@ -3507,6 +3509,7 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/need_demand_modes.metta \
 	tests/prime/atom_proc_roles.metta \
 	tests/prime/atom_proc_forwarding.metta \
+	tests/prime/declared_metatype_arguments.metta \
 	tests/prime/held_sequence_iteration.metta \
 	tests/prime/first_class_contexts.metta \
 	tests/prime/if_atom_data_boundary.metta \
@@ -3542,6 +3545,7 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/held_equality.metta \
 	tests/prime/held_patterns.metta \
 	tests/prime/held_value_pattern_inspection.metta \
+	tests/prime/read_value_operands.metta \
 	tests/prime/library_template_values.metta \
 	tests/prime/streaming_state_values.metta \
 	tests/prime/library_quote_declarations.metta \
@@ -3553,8 +3557,10 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/atom_result_type.metta \
 	tests/prime/computed_lambda_arguments.metta \
 	tests/prime/let_bound_learner.metta \
+	tests/prime/let_source_answers.metta \
 	tests/prime/data_head_patterns.metta \
 	tests/prime/lambda_names.metta \
+	tests/prime/binder_display_names.metta \
 	tests/prime/need_sequential_unification_refinement.metta \
 	tests/prime/relational_first_demand.metta \
 	tests/prime/first_answer_demand.metta \
@@ -7497,6 +7503,7 @@ DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d) \
 	$(PRIME_READER_AST_ORACLE_OBJ:.o=.d) \
 	$(PAYLOAD_MAP_CAPACITY_TEST_OBJ:.o=.d) \
 	$(RHOCALC_ABT_SUBSTITUTION_TEST_OBJ:.o=.d) \
+	$(RHOCALC_FRONTIER_TEST_OBJ:.o=.d) \
 	$(RHOCALC_WORK_CENSUS_OBJ:.o=.d) \
 	$(OSLF_NATIVE_TYPE_VM_V1_OBJ:.o=.d) \
 	$(OSLF_NATIVE_TYPE_VM_V1_TEST_OBJ:.o=.d) \
@@ -8553,6 +8560,24 @@ $(RHOCALC_ABT_SUBSTITUTION_TEST_BIN): $(RHOCALC_ABT_SUBSTITUTION_TEST_OBJ) $(RHO
 $(RHOCALC_ABT_SUBSTITUTION_TEST_OBJ): $(RHOCALC_ABT_SUBSTITUTION_TEST_SRC) src/rhocalc_core.c src/segmented_array.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
+
+$(RHOCALC_FRONTIER_TEST_OBJ): $(RHOCALC_FRONTIER_TEST_SRC) src/rhocalc_core.c src/rhocalc_frontier.inc $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
+
+$(RHOCALC_FRONTIER_TEST_BIN): $(RHOCALC_FRONTIER_TEST_OBJ) $(RHOCALC_ABT_SUBSTITUTION_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-rhocalc-frontier.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+.PHONY: test-rhocalc-frontier
+test-rhocalc-frontier: $(RHOCALC_FRONTIER_TEST_BIN)
+	@./$(RHOCALC_FRONTIER_TEST_BIN)
+
+test-rhocalc: test-rhocalc-frontier
 
 $(RHOCALC_WORK_CENSUS_OBJ): $(RHOCALC_ABT_SUBSTITUTION_TEST_SRC) src/rhocalc_core.c src/segmented_array.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
@@ -25387,6 +25412,56 @@ test-prime-route-agreement: $(BIN)
 		done; \
 	done; \
 	echo "Prime route agreement: $$pass passed, $$fail failed"; \
+	[ $$fail -eq 0 ]
+
+# Experimental: what explicit evaluation does with a residual, a value
+# returned in expression form (`--prime-eval-residuals answered|completed|
+# carried`, or the same pragma).  The fixture runs under each mode on every
+# route; the pragma spelling switches mid-file; an HE profile refuses the
+# flag.  `answered` is the default.
+PRIME_EVAL_RESIDUAL_FIXTURES = tests/prime/eval_residuals/residual_modes.metta
+.PHONY: test-prime-eval-residuals
+test-prime: test-prime-eval-residuals
+test-prime-eval-residuals: $(BIN)
+	@pass=0; fail=0; \
+	for f in $(PRIME_EVAL_RESIDUAL_FIXTURES); do \
+		for mode in answered completed carried; do \
+			exp="$${f%.metta}.$$mode.expected"; \
+			for route in default reference fuel; do \
+				flags=""; envs=""; \
+				if [ $$route = fuel ]; then flags="--fuel 1000000"; fi; \
+				if [ $$route = reference ]; then envs="CETTA_PRIME_RELATIONAL_PLAN_REFERENCE=1"; fi; \
+				result=$$(env $$envs timeout $(PRIME_COMPLETION_TIMEOUT) $(CETTA_BIN_INVOKE) --lang prime \
+					--prime-eval-residuals $$mode $$flags "$$f" 2>&1); \
+				status=$$?; \
+				if [ $$status -eq 0 ] && [ "$$result" = "$$(cat "$$exp")" ]; then \
+					pass=$$((pass + 1)); \
+				else \
+					echo "FAIL: $$f under $$mode on the $$route route (exit $$status)"; \
+					diff <(cat "$$exp") <(echo "$$result") | head -20; \
+					fail=$$((fail + 1)); \
+				fi; \
+			done; \
+		done; \
+	done; \
+	f=tests/prime/eval_residuals/residual_modes_pragma.metta; \
+	result=$$(timeout $(PRIME_COMPLETION_TIMEOUT) $(CETTA_BIN_INVOKE) --lang prime "$$f" 2>&1); \
+	if [ $$? -eq 0 ] && [ "$$result" = "$$(cat "$${f%.metta}.expected")" ]; then \
+		pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: $$f"; \
+		diff <(cat "$${f%.metta}.expected") <(echo "$$result") | head -20; \
+		fail=$$((fail + 1)); \
+	fi; \
+	if $(CETTA_BIN_INVOKE) --lang he --profile extended \
+		--prime-eval-residuals answered $(PRIME_EVAL_RESIDUAL_FIXTURES) \
+		>/dev/null 2>&1; then \
+		echo "FAIL: the Prime residual switch changed an HE profile"; \
+		fail=$$((fail + 1)); \
+	else \
+		pass=$$((pass + 1)); \
+	fi; \
+	echo "Prime eval residual modes: $$pass passed, $$fail failed"; \
 	[ $$fail -eq 0 ]
 
 # A connective's absorbed operand is never evaluated without the explicit

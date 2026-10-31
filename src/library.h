@@ -515,6 +515,10 @@ bool cetta_library_call_native(CettaLibraryContext *ctx, Space *space,
  * its first preparation, final materialization and cleanup have atomic costs. */
 struct RhocalcPayloadProvider;
 bool cetta_library_native_execution_supported(const CettaLibraryContext *ctx, SymbolId head);
+/* Owned services whose complete interpretation consumes immutable data and
+ * does not dispatch payload code or access external state. This classifies
+ * execution effects; callers still establish source and input authority. */
+bool cetta_library_native_execution_data_only(const CettaLibraryContext *ctx, SymbolId head);
 bool cetta_library_native_execution_open(CettaLibraryContext *ctx, Space *space,
     Arena *arena, Atom *call, const struct RhocalcPayloadProvider *payload,
     CettaOwnedExecution *out);
