@@ -103,6 +103,17 @@ NativeCallReturn.MinimalObservation checks this readback against an independent
 source observer. Private-name observation and native correspondence remain
 separate obligations.
 
+Existence observers use the comparison operation of the current session.
+Grounded comparisons and unchanged standard-library comparisons may share
+the membership lowering. Without the library, an unknown comparison remains
+data. After Prolog redefines a library comparison, execution uses that new
+meaning. The library checks its registered foreign predicate once per
+capability revision; compiled regions retain this dependency in their host
+read trace. Operation spelling or registered arity alone is insufficient.
+An opaque Prolog goal may change its namespace between callbacks and after
+its last callback. The installed host callbacks advance the existing
+namespace revision on entry and exit, including incomplete and raised exits.
+
 eval_native_application_on returns false only when the direct route declines.
 An admitted call reports its actual CettaCallOutcome, including logical failure
 and interruption. A missing value from a handled VALUE result is a host failure;
@@ -2235,3 +2246,85 @@ tracker-pointer, ancestry and inactive-counter inspection. Native controls
 separately check those adapters, GC loans, exact causes, reservation failures,
 authority changes and final publication. C implementation verification remains
 a separate obligation.
+
+Native callback disposition
+----------------------------
+
+The prepared scalar and cursor workers share one invocation classifier. A
+callback's own incomplete cause takes priority over its handled flag and
+packet storage. Complete false is a pre-entry decline and transfers no packet;
+complete true transfers the exact tagged result. An unused logical-zero or
+interruption tag cannot turn a decline into an entered result. No stable
+program refusal follows from such a native decline. A separate later request
+may enter when the provider becomes available.
+
+BufferedResidualReturn.CallbackDisposition joins an independent source to the
+explicit invoke/classify/ordinary/finish client. It preserves reached worlds,
+parent first cause and ordered events while distinguishing implicit fallback
+from a fresh request. The provider's truthful entry flag and unused C storage
+lifetime remain native ABI obligations. The classifier creates no source debit.
+
+Native continuation caller entry
+--------------------------------
+
+An ordinary relational continuation reads one retained caller-DAG root, as the
+parent search machine does. Each caller keeps its program-owned role plan and
+immutable captures; entry does not rebuild a nested source call or elaborate
+that chain against later declarations. Captures reach the branch before the
+entered packet can wake a delayed goal. Completed data, raised control and
+logical failure use the existing tagged return installer. Root zero returns
+directly to the consumer. The temporary graph vectors may be released after
+entry; its syntax owner and program plans remain live through the worker.
+
+The parent-splice and ordinary-entry paths share that ordered installer. A
+native frame derives its input port from the caller payload, with no separate
+cached hole or duplicate collection root. PreparedCallerStorage.run_split_exact
+and PreparedCallerProjection.read_project supply the maintained algorithm and
+role-reading laws; native controls separately check actual plans, shared and
+distinct variables, code-shaped data, scope, collection and packet delivery.
+Dialect-specific buffered residual completion retains its existing source
+adapter and qualification boundary.
+
+Tagged raises and source error observation
+------------------------------------------
+
+The raised tag is the producer's control decision. Its non-null payload need
+not have an Error constructor, and an Error-shaped completed value remains
+data. The search machine's one unwind operation consumes that classification
+without testing the payload's syntax again. Its callers establish control
+through a tagged packet, a raised cursor event, an explicit error-producing
+operation, or the dialect's own source/type policy.
+
+The unwind operation materializes the payload before restoring the catch's
+bindings and choices. Runtime dispatch retains its recovery scope, catch
+returns data, protected collection alternatives are abandoned, and enclosing
+alternatives remain live. NativeCallReturn.read_refines and the contextual
+CBPV handler semantics are parametric in the fault carrier. Native controls
+compare identical payloads as values and raises across ordinary, prepared and
+open-equation admission, including shared variables and code-shaped data.
+
+Completed HE producers
+----------------------
+
+The shared machine classifies a collection occurrence using its typed control
+role and the language's completion policy. HE error values enter the existing
+fallback channel; PeTTa Error-shaped data remains a preferred value. Both the
+materialized collector and counted collector use that classification.
+
+An empty retained bank does not imply that no answer has appeared: a pure
+producer may already have streamed successes. Buffered presentation and the
+final unbanked return share the same visibility decision. A final error is
+suppressed after a success; an all-error producer retains its errors and a
+final success keeps its direct return and authored variable coordinates.
+
+Completion owns this decision before a consumer sees its value. The former
+recursive Error scan over completed answers and whole-query source retry are
+removed. A completed division-by-zero result therefore keeps its actual
+native result instead of computing the same source fault again.
+
+HEProducerCompletion relates an independent batch reference to the incremental
+success stream and fallback bank, including the final shortcut, duplicates,
+empty input, physical cuts and carrier transport. Its observation is a pure,
+unmetered completed finite frontier; it does not authorize early-prefix or
+effectful fusion. Native source admission, error classification, collection
+ownership and primitive entry counts retain their own controls.
