@@ -15061,14 +15061,16 @@ static bool query_equation_emit_decoded_epoch(Atom *lhs, Atom *rhs,
 static CettaMatchCompletion query_equation_match_decoded_checked(
     Atom *lhs,Atom *query,Arena *arena,CettaFrameIdentity epoch,
     Bindings *environment,uint64_t pair_budget) {
-    const BindingsStructureHooks *hooks=bindings_structure_hooks();
-    if (hooks && hooks->code_pattern && hooks->code_match && hooks->code_pattern(lhs)) {
+    BindingsStructureHooks captured_structure __attribute__((cleanup(bindings_structure_hooks_release))) = {0};
+    if (!bindings_structure_hooks_capture(&captured_structure, bindings_structure_hooks())) return CETTA_MATCH_INCOMPLETE;
+    const BindingsStructureHooks *hooks = &captured_structure;
+    if (hooks && hooks->code_pattern && hooks->code_match && hooks->code_pattern(hooks->context, lhs)) {
         if (pair_budget!=UINT64_MAX) return CETTA_MATCH_INCOMPLETE;
         Bindings none;bindings_init(&none);
         Atom *instance=bindings_apply_epoch(&none,arena,lhs,epoch);
         bindings_free(&none);
         bool matched=false;
-        bool complete=instance && hooks->code_match(arena,instance,query,environment,&matched);
+        bool complete=instance && hooks->code_match(hooks->context, arena,instance,query,environment,&matched);
         return !complete ? CETTA_MATCH_INCOMPLETE : matched ? CETTA_MATCH_MATCHED : CETTA_MATCH_REFUTED;
     }
     BindingsBuilder builder;bindings_builder_init_owned(&builder,environment);
@@ -15418,10 +15420,12 @@ static void query_bucket_legacy(Space *s, EqBucket *bucket, Atom *query,
 static bool query_equation_match_code_head(Atom *lhs, Atom *query, Arena *a,
                                            CettaFrameIdentity epoch, Bindings *merged,
                                            bool *handled) {
-    const BindingsStructureHooks *hooks = bindings_structure_hooks();
+    BindingsStructureHooks captured_structure __attribute__((cleanup(bindings_structure_hooks_release))) = {0};
+    if (!bindings_structure_hooks_capture(&captured_structure, bindings_structure_hooks())) { *handled = true; return false; }
+    const BindingsStructureHooks *hooks = &captured_structure;
     *handled = false;
     if (!hooks || !hooks->code_pattern || !hooks->code_match || !lhs ||
-        !hooks->code_pattern(lhs))
+        !hooks->code_pattern(hooks->context, lhs))
         return false;
     *handled = true;
     Bindings none;
@@ -15430,7 +15434,7 @@ static bool query_equation_match_code_head(Atom *lhs, Atom *query, Arena *a,
     bindings_free(&none);
     bool matched = false;
     return instance &&
-           hooks->code_match(a, instance, query, merged, &matched) &&
+           hooks->code_match(hooks->context, a, instance, query, merged, &matched) &&
            matched;
 }
 
@@ -15923,9 +15927,15 @@ query_equations_member(Space *s, Atom *query, Arena *a,
        binders read as a fresh variable: alpha-equivalent code is spelled
        apart, and each candidate is matched binder by binder
        (bindings_structure_hooks). */
-    const BindingsStructureHooks *hooks = bindings_structure_hooks();
+    BindingsStructureHooks captured_structure __attribute__((cleanup(bindings_structure_hooks_release))) = {0};
+    if (!bindings_structure_hooks_capture(&captured_structure, bindings_structure_hooks())) {
+        query_visible_var_set_free(&visible);
+        sink->incomplete = true;
+        return;
+    }
+    const BindingsStructureHooks *hooks = &captured_structure;
     Atom *selection = hooks && hooks->code_selection
-        ? hooks->code_selection(a, query) : query;
+        ? hooks->code_selection(hooks->context, a, query) : query;
     if (!selection) {
         query_visible_var_set_free(&visible);
         return;
@@ -16632,7 +16642,7 @@ static Atom *prepared_equation_instantiate_rec(
         for (CettaExprIndex i = 0u; i < plan->arity; i++)
             if (var_id_eq(plan->registers[i], source->var_id))
                 return hooks && hooks->code_reading && depth > 0u
-                    ? hooks->code_reading(register_values[i])
+                    ? hooks->code_reading(hooks->context, register_values[i])
                     : register_values[i];
         return NULL;
     }
@@ -16656,10 +16666,10 @@ static Atom *prepared_equation_instantiate_rec(
     if (result && hooks && hooks->formed_node && source->expr.len > 0u &&
         source->expr.elems[0]->kind == ATOM_VAR &&
         result->expr.elems[0]->kind == ATOM_SYMBOL)
-        result = hooks->formed_node(arena, result, depth > 0u);
+        result = hooks->formed_node(hooks->context, arena, result, depth > 0u);
     else if (result && hooks && hooks->own_list &&
              atom_sequence_is_own_list(source))
-        result = hooks->own_list(arena, result);
+        result = hooks->own_list(hooks->context, arena, result);
     return result;
 }
 
@@ -16686,8 +16696,11 @@ Atom *space_prepared_equation_instantiate_ground(
         evidence |= CETTA_GSLT_EVIDENCE_GROUND_CALL;
     if (!cetta_gslt_prepared_equation_call_admitted(evidence))
         return NULL;
+    BindingsStructureHooks captured_structure __attribute__((cleanup(bindings_structure_hooks_release))) = {0};
+    if (!bindings_structure_hooks_capture(&captured_structure, bindings_structure_hooks())) return NULL;
+    const BindingsStructureHooks *hooks = &captured_structure;
     return prepared_equation_instantiate_rec(
-        plan, plan->rhs, register_values, arena, bindings_structure_hooks(),
+        plan, plan->rhs, register_values, arena, hooks,
         0u);
 }
 

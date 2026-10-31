@@ -254,6 +254,7 @@ static bool prime_replay_compare_frame(const PrimeEvalStackFrame *a,const PrimeE
     RF(control_generation);RF(dialect_source_success);RF(dialect_source_is_call);RF(dialect_error_index);
     RF(kind);RF(pure_authority);RF(state);RF(fuel);RF(preserve_bindings);RF(env_initialized);RF(child_initialized);
     RF(force_pending_initialized);RF(force_pending_observed);RF(force_published);RF(force_retry_pending);
+    RF(return_retry_pending);
     RF(index);RF(branch_index);RF(variable_branches_active);RF(normalization_child_index);RF(tuple_bind);
     RF(normalization_value_ready);RF(normalization_return_value_ready);RF(normalization_result_form);
     RF(strict_argument);RF(strict_mode);RF(strict_error_is_data);RF(weight_index);RF(weight_ownership_parked);
@@ -533,11 +534,13 @@ static bool prime_replay_compare_work(const PrimeNativeWork *a,const PrimeNative
     RC_P("work.owner",a->owner,b->owner);RC_P("work.parent",a->parent,b->parent);
     RC_P("work.frame",a->frame,b->frame);RC_P("work.advice",a->advice,b->advice);
     RC_S("work.task_initialized",a->task_initialized,b->task_initialized);
+    RC_S("work.task_preparation_pending",a->task_preparation_pending,b->task_preparation_pending);
     RC_S("work.parallel_refused",a->parallel_refused,b->parallel_refused);
     RC_S("work.prepared_publication",a->prepared_publication,b->prepared_publication);
     RC_S("work.scoring",a->scoring,b->scoring);
     RC_A("work.key",a->key,b->key);RC_A("work.bound",a->bound,b->bound);
-    if(a->task_initialized!=b->task_initialized)return false;
+    if(a->task_initialized!=b->task_initialized||
+       a->task_preparation_pending!=b->task_preparation_pending)return false;
     return prime_replay_compare_text(a->key_text,b->key_text,read)&&
         (!a->task_initialized||prime_replay_compare_task(&a->task,&b->task,read));
 }

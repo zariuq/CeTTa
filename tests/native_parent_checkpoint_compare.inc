@@ -180,10 +180,18 @@ static bool copy_relation(const PrimeNativeControl *s,const PrimeNativeControl *
         copy_identity(r,15,sf->force_waiters,df->force_waiters);
         copy_identity(r,15,sf->force_waiter_next,df->force_waiter_next);
         copy_identity(r,15,sf->open_force_next,df->open_force_next);
+        /* Allocation capabilities are relocated, independently of shared
+         * immutable payloads. A copied FORCE cannot publish into its source. */
+        if(!sf->control_retired&&
+           (sf->arena!=s->driver.arena||df->arena!=d->driver.arena||
+            ((sf->heap_owner==NULL)!=(df->heap_owner==NULL))||
+            (sf->heap_owner&&(sf->heap_owner!=s->driver.arena||
+                             df->heap_owner!=d->driver.arena))))r->valid=false;
         if(sf->kind!=df->kind||sf->state!=df->state||sf->control_sequence!=df->control_sequence||sf->index!=df->index||
            sf->force_pending_initialized!=df->force_pending_initialized||
            sf->force_pending_observed!=df->force_pending_observed||sf->force_published!=df->force_published||
            sf->force_retry_pending!=df->force_retry_pending||
+           sf->return_retry_pending!=df->return_retry_pending||
            sf->normalization_value_ready!=df->normalization_value_ready||
            sf->normalization_return_value_ready!=df->normalization_return_value_ready||
            sf->normalization_result_form!=df->normalization_result_form)r->valid=false;
@@ -256,14 +264,25 @@ static bool copy_relation(const PrimeNativeControl *s,const PrimeNativeControl *
         copy_identity(r,15,s->open_force_buckets[i],d->open_force_buckets[i]);
     size_t queued=cetta_continuation_hub_length(&s->hub);
     if(queued!=cetta_continuation_hub_length(&d->hub)||s->parked_count!=d->parked_count)return false;
-    for(size_t i=0;i<queued+s->parked_count;i++){
-        const CettaOwnedContinuation *a=i<queued?cetta_continuation_hub_at(&s->hub,i):&s->parked[i-queued];
-        const CettaOwnedContinuation *b=i<queued?cetta_continuation_hub_at(&d->hub,i):&d->parked[i-queued];
+    bool retry=s->force_retry.continuation.payload!=NULL;
+    if(retry!=(d->force_retry.continuation.payload!=NULL)||
+       s->force_retry.admitted!=d->force_retry.admitted)return false;
+    for(size_t i=0;i<queued+s->parked_count+(retry?1u:0u);i++){
+        const CettaOwnedContinuation *a=i<queued?cetta_continuation_hub_at(&s->hub,i):
+            i<queued+s->parked_count?&s->parked[i-queued]:&s->force_retry.continuation;
+        const CettaOwnedContinuation *b=i<queued?cetta_continuation_hub_at(&d->hub,i):
+            i<queued+d->parked_count?&d->parked[i-queued]:&d->force_retry.continuation;
         const PrimeNativeWork *x=a->payload,*y=b->payload;
         if(a->occurrence_id!=b->occurrence_id||a->parent_occurrence_id!=b->parent_occurrence_id||
            ((a->resume_store!=0)!=(b->resume_store!=0))||
-           (a->resume_store&&(a->resume_store!=s->hub.store.identity||b->resume_store!=d->hub.store.identity))||x->task_initialized!=y->task_initialized)r->valid=false;
+           (a->resume_store&&(a->resume_store!=s->hub.store.identity||b->resume_store!=d->hub.store.identity))||
+           (a->resume_lease==0u)!=(b->resume_lease==0u)||
+           x->owner!=s||y->owner!=d||x->task_initialized!=y->task_initialized||
+           x->task_preparation_pending!=y->task_preparation_pending)r->valid=false;
+        copy_identity(r,15,x->frame,y->frame);copy_identity(r,15,x->parent,y->parent);
+        copy_identity(r,10,x->advice,y->advice);
         if(x->task_initialized){
+            if(x->task.kind!=y->task.kind||x->task.pure_authority!=y->task.pure_authority)r->valid=false;
             if(x->task.dynamic_env_initialized)copy_bindings(r,&x->task.dynamic_env,&y->task.dynamic_env);
             if(x->task.seed_env_initialized)copy_bindings(r,&x->task.seed_env,&y->task.seed_env);
         }

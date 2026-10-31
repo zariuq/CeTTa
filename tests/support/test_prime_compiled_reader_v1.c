@@ -270,6 +270,38 @@ static void source_frontend_cases(TestCounts *counts,
             "raw grammar stays syntax-only while executable source carries elaborated scope records");
     }
     free(raw); free(elaborated); elaborated = NULL;
+    size_t source_length = strlen(source);
+    uint8_t *bytes = malloc(source_length);
+    if (bytes) memcpy(bytes, source, source_length);
+    count = bytes ? prime_semantics_read_source_bytes_ids(NULL, bytes,
+        source_length, universe, &elaborated, error, sizeof(error)) : -1;
+    expect(counts, count == 2 && !other_calls &&
+        atom_graph_any(term_universe_get_atom(universe, elaborated[1]),
+            reader_scope_record, NULL),
+        "captured non-terminated bytes use the executable scope elaborator and their own reader");
+    free(bytes); free(elaborated); elaborated = NULL;
+    static const uint8_t bounded[] = {'(', 'x', ')', ')'};
+    count = prime_semantics_read_source_bytes_ids(reader, bounded, 3u,
+        universe, &elaborated, error, sizeof(error));
+    Atom *bounded_form = count == 1
+        ? term_universe_get_atom(universe, elaborated[0]) : NULL;
+    expect(counts, bounded_form && bounded_form->kind == ATOM_EXPR &&
+        bounded_form->expr.len == 1u && atom_is_symbol(bounded_form->expr.elems[0], "x"),
+        "a captured source slice does not read an invalid suffix outside its length");
+    free(elaborated); elaborated = NULL;
+    count = prime_semantics_read_source_bytes_ids(reader, bounded, sizeof(bounded),
+        universe, &elaborated, error, sizeof(error));
+    expect(counts, count < 0 && !elaborated && error[0],
+        "an invalid suffix inside the captured slice refuses the complete document");
+    static const uint8_t embedded_zero[] = "(ok)\0(unfinished";
+    count = prime_semantics_read_source_bytes_ids(reader, embedded_zero,
+        sizeof(embedded_zero) - 1u, universe, &elaborated, error, sizeof(error));
+    expect(counts, count < 0 && !elaborated && error[0],
+        "a zero byte cannot truncate captured source into a different valid program");
+    count = prime_semantics_read_source_bytes_ids(reader, (const uint8_t *)"", 0u,
+        universe, &elaborated, error, sizeof(error));
+    expect(counts, count == 0 && !elaborated,
+        "an empty captured image is an empty document");
     const char *bad[] = {"(unfinished", "(= (bad $x) (chain 1 $v $v){7})"};
     for (size_t i = 0u; i < sizeof(bad)/sizeof(*bad); i++) {
         count = prime_semantics_read_source_text_ids(reader,bad[i],universe,

@@ -14,6 +14,10 @@ typedef struct CettaLibraryContext CettaLibraryContext;
 /* Cooperatively poll the active execution's interruption at a blocking
  * native boundary. A true result must release owned host work and unwind. */
 bool eval_native_interrupted(void);
+/* Stop a synchronous native call with its incomplete cause in the current
+ * borrowed episode. No episode pointer, retry licence or ownership escapes;
+ * an adapter retaining the outcome must also retain its completion owner. */
+void eval_native_interrupt(CettaEvalCompletion completion);
 /* Opaque revision of a live owned retained computation; NULL if not owned. */
 Atom *eval_current_work_epoch(Arena *arena, Atom *handle);
 struct CettaPettaTokenSpaceClauseRegistry;
