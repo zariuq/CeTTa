@@ -257,7 +257,7 @@ tests/test_get_type_space_arity.metta	he	metta	extended	main	native	test	golden	
 tests/test_get_type_space_nonspace_error.metta	he	metta	extended	main	native	test	golden	-
 tests/test_git_module_arity.metta	he	metta	extended	main	native	test	golden	-
 tests/test_git_module_missing.metta	he	metta	extended	main	native	test	golden	-
-tests/test_gparse_gslt_core.metta	he	metta	extended	main	native	test	property	assertion-only property without golden oracle
+tests/test_gparse_gslt_core.metta	he	metta	extended	main	native	test	property	20 authored assertions checked by test-gparse-gslt-core
 tests/test_gparse_native_backend_report.metta	he	metta	extended	main	native	test	golden	-
 tests/test_gparse_native_dispatch.metta	he	metta	extended	main	native	test	golden	-
 tests/test_gparse_native_dual_forest_signature.metta	he	metta	extended	main	native	test	golden	-
@@ -352,7 +352,7 @@ tests/test_import_fresh_name_conformance.metta	he	metta	extended	main	native	tes
 tests/test_import_mm2_module_syntax.metta	he	metta	extended	mork	pathmap	test-backend-dedicated	golden	dedicated backend or bridge golden regression
 tests/test_import_mm2_mork_session_lowering.metta	he	metta	extended	mork	pathmap	test-backend-dedicated	golden	dedicated backend or bridge golden regression
 tests/test_import_modules.metta	he	metta	extended	main	native	test	golden	-
-tests/test_import_named_space_reuse_petta_seam_repro.metta	he	metta	extended	main	native	test	diagnostic	diagnostic witness without golden oracle
+tests/test_import_named_space_reuse_petta_seam_repro.metta	he	metta	extended	main	native	test	diagnostic	cross-dialect witness for fresh imports, batch copying and repeated named imports
 tests/test_import_nested_depth.metta	he	metta	extended	main	native	test	golden	-
 tests/test_import_parse_failure.metta	he	metta	extended	main	native	test	golden	-
 tests/test_import_partial_arity.metta	he	metta	extended	main	native	test	golden	-
@@ -424,7 +424,7 @@ tests/test_lts_he_syntax.metta	he	metta	extended	main	native	test	golden	-
 tests/test_lts_mi_syntax.metta	he	metta	extended	main	native	test	golden	-
 tests/test_lts_rho_cost_causal_trace.metta	he	metta	extended	main	native	test	golden	-
 tests/test_lts_rho_cost_location.metta	he	metta	extended	main	native	test	golden	-
-tests/test_lts_rho_cost_observer_transparency.metta	he	metta	extended	main	native	test	diagnostic	diagnostic witness without golden oracle
+tests/test_lts_rho_cost_observer_transparency.metta	he	metta	extended	main	native	test	property	state and counter observations checked by test-rhocalc-cost-observer-transparency
 tests/test_lts_rho_cost_parallel_branches.metta	he	metta	extended	main	native	test	golden	-
 tests/test_lts_rho_cost_parallel_runtime_stats.metta	he	metta	extended	runtime-stats	native	test-runtime-stats-lane	golden	runtime-stats lane golden regression
 tests/test_lts_rho_cost_search_budget.metta	he	metta	extended	main	native	test	golden	-
@@ -499,7 +499,7 @@ tests/test_mork_runtime_stats_isolation.metta	he	metta	extended	runtime-stats	pa
 tests/test_mork_zipper_syntax.metta	he	metta	extended	mork	pathmap	test-backend-dedicated	golden	dedicated backend or bridge golden regression
 tests/test_namespace_sugar_guardrails.metta	he	metta	extended	python	native	test-python	golden	Python-enabled build golden regression
 tests/test_native_count_collapse_match_regression.metta	he	metta	extended	runtime-stats	native	test-runtime-stats-lane	golden	runtime-stats lane golden regression
-tests/test_nested_import_named_space_visibility_petta_repro.metta	he	metta	extended	main	native	test	diagnostic	diagnostic witness without golden oracle
+tests/test_nested_import_named_space_visibility_petta_repro.metta	he	metta	extended	main	native	test	diagnostic	cross-dialect witness for dependency-visible named-space queries
 tests/test_new_space_arity.metta	he	metta	extended	main	native	test	golden	-
 tests/test_new_space_mork_syntax.metta	he	metta	extended	mork	pathmap	test-backend-dedicated	golden	dedicated backend or bridge golden regression
 tests/test_new_state_arity.metta	he	metta	extended	main	native	test	golden	-
@@ -623,7 +623,7 @@ tests/test_size_atom_collapse_cross_engine_regression.metta	he	metta	extended	pa
 tests/test_size_syntax.metta	he	metta	extended	main	native	test	golden	-
 tests/test_sort_strings.metta	he	metta	extended	main	native	test	golden	-
 tests/test_space_batch_copy_optimizer_guards.metta	he	metta	extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
-tests/test_space_batch_copy_petta_seam_repro.metta	he	metta	extended	main	native	test	diagnostic	diagnostic witness without golden oracle
+tests/test_space_batch_copy_petta_seam_repro.metta	he	metta	extended	main	native	test	diagnostic	cross-dialect witness for batch, per-atom and fold copying
 tests/test_space_batch_copy_syntax.metta	he	metta	extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
 tests/test_space_engine_backend.metta	he	metta	extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
 tests/test_space_head_chains.metta	he	metta	extended	main	native	test	golden	-
