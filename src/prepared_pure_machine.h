@@ -240,12 +240,15 @@ typedef struct {
     /* Execute a native whose head/arity was positively admitted by the
      * generated intrinsic contract. False declines before native entry.
      * True transfers the tagged result, including zero or raised control.
+     * Completion reports this invocation's own cause, independently of any
+     * enclosing diagnostic; incomplete calls authorize no following work.
      * The native context is separate because a language's source-plan owner
      * and its library registry have distinct lifetimes and representations. */
     void *native_context;
     bool (*native_call)(
         void *context, Space *space, Arena *arena,
-        const CettaInvocation *invocation, CettaCallOutcome *outcome);
+        const CettaInvocation *invocation, CettaCallOutcome *outcome,
+        CettaEvalCompletion *completion);
 } CettaPreparedPureSourceView;
 
 CettaPreparedPureProgram *cetta_prepared_pure_program_compile(
@@ -525,6 +528,16 @@ typedef struct {
  * reject only when no instantiation can meet the consumer. The callback
  * neither retains the shape nor changes logical bindings. */
 typedef bool (*CettaPreparedPureAnswerAdmissionFn)(void *context, const Atom *shape);
+/* Enter the same body worker without installing an enumeration root.
+ * RETURN is one final completed value; COMPLETE is established logical
+ * failure. PAUSED transfers the exact entered cursor. HANDOFF has entered
+ * no work and owns no cursor. Interruption carries its actual cause. */
+CettaOwnedExecutionStep cetta_prepared_pure_body_enter(
+    CettaPreparedPureProgram *program, Atom *const *arguments, uint32_t arity,
+    const CettaPreparedPureAnswerCursorOptions *options,
+    CettaPreparedPureAnswerCursor **remaining, CettaOwnedReturn *returned,
+    CettaEvalCompletion *completion);
+
 bool cetta_prepared_pure_answer_cursor_set_admission(
     CettaPreparedPureAnswerCursor *cursor, CettaPreparedPureAnswerAdmissionFn admit,
     void *context);
@@ -573,8 +586,9 @@ CettaOwnedExecutionStep cetta_prepared_pure_answer_cursor_return(
     void *cursor, CettaOwnedReturn *returned, CettaEvalCompletion *completion);
 
 /* Read the retained equation frontier without interpreting or polling it.
- * Untried equations, no-rule observations, handoff and stale source authority
- * refuse completion. A withdrawn answer restores an unfinished equation. */
+ * Untried equations, no-rule observations and handoff refuse completion.
+ * Established exhaustion needs no new execution authority. A withdrawn
+ * answer restores an unfinished equation and revokes that certificate. */
 bool cetta_prepared_pure_answer_cursor_frontier_is_complete(
     const CettaPreparedPureAnswerCursor *cursor);
 
@@ -855,5 +869,6 @@ void cetta_prepared_pure_program_release_closed_execution(
 
 void cetta_prepared_pure_program_free(
     CettaPreparedPureProgram *program);
+
 
 #endif /* CETTA_PREPARED_PURE_MACHINE_H */

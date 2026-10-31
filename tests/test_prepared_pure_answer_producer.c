@@ -1819,6 +1819,12 @@ static void test_cursor_final_frontier(void) {
     assert(!cetta_prepared_pure_answer_cursor_frontier_is_complete(cursor));
     expect_answer(&fixture, cursor, "0");
     assert(cetta_prepared_pure_answer_cursor_frontier_is_complete(cursor));
+    assert(cetta_prepared_pure_answer_cursor_unyield(cursor));
+    assert(!cetta_prepared_pure_answer_cursor_frontier_is_complete(cursor));
+    assert(space_admit_atom(&fixture.space, &fixture.source,
+        parse(&fixture.source, "(= (final-pick 0) 99)")));
+    Atom *reopened = NULL;
+    assert(cetta_prepared_pure_answer_cursor_next(cursor, &reopened) == CETTA_PREPARED_PURE_CURSOR_HANDOFF);
     cetta_prepared_pure_answer_cursor_close(cursor);
     destroy(&fixture);
 
@@ -1846,7 +1852,9 @@ static void test_cursor_final_frontier(void) {
     assert(cetta_prepared_pure_answer_cursor_frontier_is_complete(cursor));
     assert(space_admit_atom(&fixture.space, &fixture.source,
                            parse(&fixture.source, "(= (final-leaf $x) 99)")));
-    assert(!cetta_prepared_pure_answer_cursor_frontier_is_complete(cursor));
+    assert(cetta_prepared_pure_answer_cursor_frontier_is_complete(cursor));
+    assert(!cetta_prepared_pure_answer_cursor_unyield(cursor));
+    assert(cetta_prepared_pure_answer_cursor_next(cursor, &answer) == CETTA_PREPARED_PURE_CURSOR_EXHAUSTED);
     cetta_prepared_pure_answer_cursor_close(cursor);
     destroy(&fixture);
 
@@ -1940,7 +1948,7 @@ static void test_owned_final_reply_pause_and_effects(void) {
     destroy(&fixture);
 }
 
-static void test_owned_final_authority_revalidation(void) {
+static void test_owned_final_survives_authority_change(void) {
     const char *equations[] = {"(= (owned-final 0) 0)"};
     for (unsigned during_accept = 0u; during_accept < 2u; ++during_accept) {
         Fixture fixture;
@@ -1958,19 +1966,35 @@ static void test_owned_final_authority_revalidation(void) {
             assert(execution.has_pending && execution.pending.final && consumer.effects == 0u);
             assert(space_admit_atom(&fixture.space, &fixture.source,
                 parse(&fixture.source, "(= (owned-final 0) 1)")));
-            assert(!cetta_prepared_pure_answer_cursor_frontier_is_complete(cursor));
+            assert(cetta_prepared_pure_answer_cursor_frontier_is_complete(cursor));
             consumer.reject = false;
         }
         assert(cetta_owned_execution_sequence(&execution, 1u,
-            final_reply_accept, &consumer) == CETTA_OWNED_EXECUTION_PAUSED);
+            final_reply_accept, &consumer) == CETTA_OWNED_EXECUTION_COMPLETE);
         assert(consumer.effects == 1u && execution.accepted == 1u &&
-               !execution.has_pending && !execution.terminal);
-        assert(cetta_owned_execution_sequence(&execution, 1u,
-            final_reply_accept, &consumer) == CETTA_OWNED_EXECUTION_HANDOFF);
-        assert(execution.completion == CETTA_EVAL_INCOMPLETE_INVALIDATED &&
+               !execution.has_pending && execution.terminal);
+        assert(cetta_owned_execution_sequence(&execution, 0u,
+            final_reply_accept, &consumer) == CETTA_OWNED_EXECUTION_COMPLETE);
+        assert(execution.completion == CETTA_EVAL_COMPLETE &&
                consumer.effects == 1u && execution.accepted == 1u);
         cetta_owned_execution_cancel(&execution);
         assert(consumer.effects == 1u);
+        CettaPreparedPureProgram *old_program = fixture.program;
+        fixture.program = cetta_prepared_pure_program_compile_closed_answers(
+            &fixture.space, parse(&fixture.source, "(owned-final 0)"),
+            CETTA_GSLT_PURE_CALL_EAGER, atom_bool, atom_expr,
+            cetta_prepared_pure_constructs_expression_always,
+            NULL, NULL, NULL, NULL, NULL, true, true,
+            (CettaMatchDecisionSemanticIdentity){.compiler_identity = cetta_match_decision_compiler_identity()}, NULL);
+        assert(fixture.program);
+        CettaPreparedPureAnswerCursor *fresh = open_cursor(&fixture, true);
+        expect_answer(&fixture, fresh, "0");
+        expect_answer(&fixture, fresh, "1");
+        Atom *extra = NULL;
+        assert(cetta_prepared_pure_answer_cursor_next(fresh, &extra) == CETTA_PREPARED_PURE_CURSOR_EXHAUSTED);
+        cetta_prepared_pure_answer_cursor_close(fresh);
+        cetta_prepared_pure_program_free(fixture.program);
+        fixture.program = old_program;
         destroy(&fixture);
     }
 }
@@ -2246,7 +2270,7 @@ int main(void) {
     test_owned_cursor_final_answer();
     test_owned_final_reply_pause_and_effects();
     test_callee_cursor_entry_admission();
-    test_owned_final_authority_revalidation();
+    test_owned_final_survives_authority_change();
     test_owned_cursor_authority();
     test_owned_shared_payload();
     symbol_table_free(&symbols);

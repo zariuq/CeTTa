@@ -19407,6 +19407,8 @@ else
 	@$(MAKE) BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 RHOCOST_COMMIT_AUDIT=$(RHOCOST_COMMIT_AUDIT) $@
 endif
 
+test-all: test-rhocalc-cost-observer-transparency
+
 test-rhocalc-cost-commit-audit:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 RHOCOST_COMMIT_AUDIT=1 test-rhocalc-cost-commit-audit-body
 
@@ -21205,6 +21207,11 @@ test-lib-parse-native-gparse: $(BIN)
 		diff <(cat tests/test_gparse_native_backend_report.expected) <(echo "$$result") | head -20; \
 		exit 1; \
 	fi
+
+.PHONY: test-gparse-gslt-core
+test test-all: test-gparse-gslt-core
+test-gparse-gslt-core: $(BIN) tests/support/check_gparse_core_property.py tests/test_gparse_gslt_core.metta
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_gparse_core_property.py "$(CETTA_SCRIPT_BIN)"
 
 test-lib-parse-generalized-native-integration: $(BIN)
 	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he tests/test_gparse_native_generalized_integration.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
@@ -48060,11 +48067,16 @@ test-petta-activation-source-budget: $(BIN)
 test-execution-semantic-ledger: test-petta-activation-source-budget
 
 .PHONY: test-execution-semantic-ledger
+.PHONY: test-execution-theory
+EXECUTION_MODEL_RECEIPT ?= runtime/execution-models/theory-receipt.json
+test-execution-theory:
+	@test -n "$(METTAPEDIA_ROOT)" || { echo 'Set METTAPEDIA_ROOT to the Lean project root'; exit 1; }
+	@python3 tests/support/check_execution_lean_models.py --mettapedia "$(METTAPEDIA_ROOT)" \
+		--receipt "$(EXECUTION_MODEL_RECEIPT)"
+
 test-execution-semantic-ledger: $(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN) $(PETTA_SEARCH_MACHINE_TEST_BIN) test-prepared-pure-answer-producer test-execution-control-plans
 	@$(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN) --semantic-ledger
 	@$(PETTA_SEARCH_MACHINE_TEST_BIN) --semantic-ledger
-
-main-readiness-routine main-readiness-exhaustive: test-execution-semantic-ledger
 
 .PHONY: test-python-callback-completion
 test-execution-semantic-ledger: test-python-callback-completion

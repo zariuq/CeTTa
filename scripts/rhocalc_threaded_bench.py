@@ -11,6 +11,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 import random
+import shlex
 
 from rhocalc_bench_provenance import PROVENANCE_FIELDS, benchmark_provenance
 from rhocalc_paired_samples import AdaptivePairedPolicy, collect_interleaved
@@ -338,6 +339,12 @@ def main(argv: list[str]) -> int:
     )
     if args.baseline_bin:
         replay += f" --baseline-bin {args.baseline_bin}"
+    if args.baseline_receipt:
+        replay += (
+            f" --baseline-receipt {shlex.quote(args.baseline_receipt)}"
+            f" --baseline-receipt-sha256 {shlex.quote(args.baseline_receipt_sha256)}"
+            f" --baseline-source-commit {shlex.quote(args.baseline_source_commit)}"
+        )
     if args.adaptive:
         replay += " --adaptive"
     print(f"SEED {args.seed}")
