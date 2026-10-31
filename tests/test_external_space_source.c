@@ -261,6 +261,13 @@ int main(void) {
     Bindings result;bindings_init(&result);assert(space_query_cursor_step(old,&result)==SPACE_QUERY_CURSOR_INVALIDATED);
     bindings_free(&result);space_query_cursor_free(old);assert(!input.live && !input.active);
     puts("PASS: clones retain data/stream generations; declared content-set view differs from bag; revoked readers do not revive");
+    Snapshot empty={facts,0,20,true,true};const Event end[]={{COMPLETE,0,0}};
+    input.captured=&empty;input.events=end;input.event_count=1;
+    size_t empty_polls=input.polls;
+    fresh=space_query_cursor_new_captured(&external,&arena,edge,NULL);assert(fresh);
+    assert(!drain(fresh,&arena,edge,rows,&terminal) && terminal==SPACE_QUERY_CURSOR_END && input.polls>empty_polls);
+    space_query_cursor_free(fresh);assert(!input.live && !input.active);
+    input.captured=&captured;
     const Event failures[][3]={{{WAIT,0,0},{ERROR,0,0}},{{ROW,0,0},{DROP,0,0}},
         {{CANCEL_ACCEPTED,0,0},{WAIT,0,0},{CANCELLED,0,0}},{{ROW,1,1}},{{ROW,0,0},{COMPLETE,0,0}}};
     const size_t lengths[]={2,2,3,1,2};
