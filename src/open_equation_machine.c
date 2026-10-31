@@ -11805,10 +11805,17 @@ static OemRun oem_lexical_callable_step(
             *entry = (OemPureCallable){
                 .identity = identity,
                 .arity = arity,
-                .prepared = cursor->runtime.prepare_pure_callable(
-                    cursor->runtime.context, program->space, &cursor->names,
-                    head, arity),
             };
+        }
+        /* The signature receipt survives a failed worker preparation. A
+         * null worker supplies no certificate for later preparation. */
+        if (!entry->prepared) {
+            ArenaMark source_mark = arena_mark(&cursor->names);
+            entry->prepared = cursor->runtime.prepare_pure_callable(
+                cursor->runtime.context, program->space, &cursor->names,
+                head, arity);
+            if (!entry->prepared)
+                arena_reset(&cursor->names, source_mark);
             entry->answers_only = entry->prepared && cursor->runtime.callable_answers_only &&
                 cursor->runtime.callable_answers_only(cursor->runtime.context, entry->prepared);
         }
@@ -11898,6 +11905,10 @@ static const CettaOpenEquationProgram *oem_callable_program(
         return NULL;
     CettaOpenEquationProgram *prepared = cursor->runtime.compile_callable(
         cursor->runtime.context, space, head, arity);
+    /* This callback exports no refusal certificate. Only a prepared
+     * program can populate the revision-qualified worker cache. */
+    if (!prepared)
+        return NULL;
     if (!space_program_token_is_current(now)) {
         cetta_open_equation_program_release(prepared);
         return NULL;
@@ -12773,11 +12784,17 @@ static OemRun oem_entered_call_result(CettaOpenEquationCursor *cursor,
         for (CettaExprIndex index = 0u; index < outcome.term->expr.len; index++)
             if (!outcome.term->expr.elems[index])
                 return oem_service_fault(cursor);
+    bool variable_scan_complete = true;
+    bool foreign_variables = false;
+    if (outcome.kind == CETTA_CALL_VALUE &&
+        outcome.result_form == CETTA_CALL_RESULT_COMPLETED_VALUE &&
+        atom_has_vars(outcome.term))
+        foreign_variables = atom_graph_any_checked(outcome.term,
+            oem_foreign_result_variable, NULL, cursor, SIZE_MAX, &variable_scan_complete);
     if (outcome.kind == CETTA_CALL_SUSPENDED || outcome.kind == CETTA_CALL_INTERRUPTED ||
         (outcome.kind == CETTA_CALL_VALUE &&
          (outcome.result_form != CETTA_CALL_RESULT_COMPLETED_VALUE ||
-          (atom_has_vars(outcome.term) && atom_graph_any(outcome.term,
-              oem_foreign_result_variable, cursor)) ||
+          !variable_scan_complete || foreign_variables ||
           atom_has_thread_local_resource(outcome.term))))
         return oem_native_return_host(cursor, program, pc, locals, local_count,
                                       cont, depth, step, outcome);

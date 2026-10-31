@@ -836,8 +836,10 @@ bool cetta_prepared_pure_program_execute_closed_expression_controlled(
  * suspended computation anywhere in value.  Producer consumers use this to
  * preserve eager element evaluation while allowing the collection tail to
  * remain suspended. */
+/* An incomplete inspection grants neither readiness nor permission to run
+ * the value as code. COMPLETE is required. */
 bool cetta_prepared_pure_program_value_is_fully_evaluated(
-    CettaPreparedPureProgram *program, Atom *value);
+    CettaPreparedPureProgram *program, Atom *value, bool *complete);
 
 /* A collected closed execution can return a result owned by the program's
  * invocation survivor arena.  The result remains valid until the next

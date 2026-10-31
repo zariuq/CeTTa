@@ -1027,7 +1027,7 @@ PETTA_COMPILED_READER_TEST_BIN = runtime/test_petta_compiled_reader_v1-$(BUILD_C
 PETTA_COMPILED_READER_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ) $(COMPILED_READER_RUNTIME_OBJ)
 PETTA_SEARCH_MACHINE_TEST_SRC = tests/support/test_petta_search_machine.c
 PETTA_SEARCH_MACHINE_TEST_OBJ = runtime/bootstrap/test_petta_search_machine.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
-PETTA_SEARCH_MACHINE_TEST_BIN = runtime/test_petta_search_machine-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+PETTA_SEARCH_MACHINE_TEST_BIN = runtime/test_petta_search_machine-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 NATIVE_QUERY_PROJECTION_TEST_BIN = runtime/test_native_query_projection-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 PETTA_SEARCH_MACHINE_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
 PETTA_TYPECHECK_V2_GUARD_LANGDEF_TEST_SRC = tests/support/test_petta_typecheck_v2_guard_langdef.c
@@ -1952,7 +1952,7 @@ REGISTRY_LOOKUP_BENCH_SRC = benchmarks/prime/bench_registry_lookup.c
 REGISTRY_LOOKUP_BENCH_OBJ = runtime/bootstrap/bench_registry_lookup.$(BUILD_OBJ_TAG).o
 REGISTRY_LOOKUP_BENCH_BIN = runtime/bench_registry_lookup-$(BUILD_OBJ_TAG)
 REGISTRY_LOOKUP_BENCH_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
-ABT_MUTATION_IDS = 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31
+ABT_MUTATION_IDS = 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34
 ABT_MUTATION_TEST_BINS = $(foreach id,$(ABT_MUTATION_IDS),runtime/test_abt_mutation-$(BUILD_OBJ_TAG)-$(id))
 GROUNDED_STANDALONE_SRC = src/grounded.c src/petta_semantics.c src/term_graph.c src/abt.c src/atom_blob.c
 GROUNDED_STANDALONE_DEPS = $(GROUNDED_STANDALONE_SRC) $(ABT_DEFAULT_SIGNATURES_BLOB)
@@ -5380,7 +5380,7 @@ $(NATIVE_CONDITIONAL_CONTEXT_TEST_OBJ): tests/test_native_conditional_context.c 
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -Isrc -c $< -o $@
 
 $(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN): $(NATIVE_CONDITIONAL_CONTEXT_TEST_OBJ) $(filter-out src/eval.%,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS)
-	$(CC) $(CFLAGS) -o $@ $^ -Wl,--wrap=grounded_call,--wrap=cetta_library_call_native_prepared_view,--wrap=cetta_library_call_native,--wrap=cetta_invocation_materialize,--wrap=petta_semantics_lambda_arity,--wrap=match_atoms_epoch_builder_planned,--wrap=space_query_effect_for_head,--wrap=malloc,--wrap=calloc,--wrap=cetta_prepared_pure_program_compile_closed $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $^ -Wl,--wrap=grounded_call,--wrap=cetta_library_call_native_prepared_view,--wrap=cetta_library_call_native,--wrap=cetta_invocation_materialize,--wrap=petta_semantics_lambda_arity,--wrap=match_atoms_epoch_builder_planned,--wrap=space_query_effect_for_head,--wrap=malloc,--wrap=calloc,--wrap=cetta_prepared_pure_program_compile_closed,--wrap=atom_graph_any_checked,--wrap=cetta_prepared_pure_program_execute_closed_expression_controlled $(LDFLAGS)
 
 .PHONY: test-native-conditional-context
 test-all: test-native-conditional-context
@@ -5388,6 +5388,20 @@ test-native-conditional-context: $(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN)
 	@$(call cetta_exec,./$(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN))
 	@CETTA_PREPARED_PURE_REFERENCE=1 $(call cetta_exec,./$(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN)) --worker-availability
 	@CETTA_OEM_COLLECT_STRESS=1 $(call cetta_exec,./$(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN)) --borrowed-collection-failure
+
+PREPARED_QUERY_INVOCATION_TEST_OBJ = runtime/bootstrap/test_prepared_query_invocation.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+PREPARED_QUERY_INVOCATION_TEST_BIN = runtime/test_prepared_query_invocation-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+-include $(PREPARED_QUERY_INVOCATION_TEST_OBJ:.o=.d)
+$(PREPARED_QUERY_INVOCATION_TEST_OBJ): tests/test_prepared_query_invocation.c src/petta_search_machine.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+$(PREPARED_QUERY_INVOCATION_TEST_BIN): $(PREPARED_QUERY_INVOCATION_TEST_OBJ) $(filter-out src/petta_search_machine.%,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+.PHONY: test-prepared-query-invocation
+test-petta-search-machine test-execution-semantic-ledger: test-prepared-query-invocation
+test-prepared-query-invocation: $(PREPARED_QUERY_INVOCATION_TEST_BIN)
+	@$(call cetta_exec,./$(PREPARED_QUERY_INVOCATION_TEST_BIN))
 
 .PHONY: test-oem-native-returns
 test-all: test-oem-native-returns
@@ -6032,7 +6046,7 @@ test-abt-scope-construction-candidates: $(BIN)
 test-abt: $(ABT_TEST_BIN) test-abt-mm2-boundary test-rhocalc-abt-substitution test-abt-mutations test-abt-default-signatures test-lib-parse-abt-bridge test-abt-integration-ledger
 	@result=$$(./$(ABT_TEST_BIN) 2>&1); \
 	printf '%s\n' "$$result"; \
-	if [ "$$(printf '%s\n' "$$result" | grep -Fxc '(ABTCoreSummary 162 162 0)')" -ne 1 ] || \
+	if [ "$$(printf '%s\n' "$$result" | grep -Fxc '(ABTCoreSummary 184 184 0)')" -ne 1 ] || \
 	   [ "$$(printf '%s\n' "$$result" | grep -Fxc 'PASS: iterative capture-avoiding ABT core')" -ne 1 ]; then \
 		echo "FAIL: ABT core exact summary absent or duplicated"; \
 		exit 1; \
@@ -47495,6 +47509,20 @@ test-petta-search-machine test-execution-semantic-ledger: test-petta-plan-key
 test-petta-plan-key: $(PETTA_PLAN_KEY_TEST_BIN)
 	@$(call cetta_exec,./$(PETTA_PLAN_KEY_TEST_BIN))
 
+PETTA_LAMBDA_SPAN_BUDGET_TEST_OBJ = runtime/bootstrap/test_lambda_span_budget.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+PETTA_LAMBDA_SPAN_BUDGET_TEST_BIN = runtime/test_lambda_span_budget-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+-include $(PETTA_LAMBDA_SPAN_BUDGET_TEST_OBJ:.o=.d)
+$(PETTA_LAMBDA_SPAN_BUDGET_TEST_OBJ): tests/support/test_lambda_span_budget.c src/petta_program.h src/petta_search_machine.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+$(PETTA_LAMBDA_SPAN_BUDGET_TEST_BIN): $(PETTA_LAMBDA_SPAN_BUDGET_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+.PHONY: test-petta-lambda-span-budget
+test-petta-search-machine test-petta-semantics test-execution-semantic-ledger: test-petta-lambda-span-budget
+test-petta-lambda-span-budget: $(PETTA_LAMBDA_SPAN_BUDGET_TEST_BIN)
+	@$(call cetta_exec,./$(PETTA_LAMBDA_SPAN_BUDGET_TEST_BIN))
+
 # Native Megalodon tests (native/megalodon/test.mk).
 include native/megalodon/test.mk
 
@@ -47975,6 +48003,12 @@ test-incremental-compression: test-ic-reference test-ic-templates test-ic-archiv
 test-petta-semantics: test-petta-corrected-stable
 test-petta-corrected-stable: $(BIN)
 	python3 tests/support/check_petta_corrected_stable.py $(BIN)
+
+.PHONY: test-petta-activation-source-budget
+test-petta-activation-source-budget: $(BIN)
+	python3 tests/support/check_petta_activation_source_budget.py ./$(BIN)
+
+test-execution-semantic-ledger: test-petta-activation-source-budget
 
 .PHONY: test-execution-semantic-ledger
 test-execution-semantic-ledger: $(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN) $(PETTA_SEARCH_MACHINE_TEST_BIN) test-prepared-pure-answer-producer test-execution-control-plans

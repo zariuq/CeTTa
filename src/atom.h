@@ -1544,7 +1544,9 @@ bool atom_visit_set_add(AtomVisitSet *set, const Atom *atom, bool *fault);
 void atom_visit_set_free(AtomVisitSet *set);
 
 /* atom_tree_any for a predicate whose answer at a node does not depend on
- * the path to it: each distinct subexpression is visited once. */
+ * the path to it: each distinct subexpression is visited once, including
+ * cycles through the root. Exact queries require visited storage; admission
+ * which must refuse on storage failure uses atom_graph_any_checked. */
 bool atom_graph_any(const Atom *root, AtomTreePredicate predicate,
                     void *context);
 /* A barrier is a semantic value boundary: neither the predicate nor its

@@ -10971,6 +10971,16 @@ static PettaEquationSlotMatch petta_machine_equation_slot_match(
      * keeps its established goal boundaries. */
     bool activation_candidate =
         petta_equation_body_activation_enabled() &&
+        /* A value return has the same single source visit through either
+         * operand representation. Compound activation regions still lack
+         * a canonical debit refinement: retain the ordinary planned entry
+         * before their work starts whenever a source purse is active. This
+         * is inquiry-specific, never a reusable program refusal. */
+        (!machine->host.permit_transition ||
+         machine->host.unlimited_transition_budget ||
+         (rhs_plan && rhs_plan->role == PETTA_PLAN_VALUE &&
+          petta_plan_computation(rhs_plan).control.operation ==
+              CETTA_CONTROL_RETURN_VALUE)) &&
         !payload_observed &&
         (!query_closed || (equation_template && rhs->kind == ATOM_EXPR &&
             ((rhs->expr.len == 3u && atom_is_symbol_id(
@@ -14570,7 +14580,10 @@ static bool petta_machine_schedule_sequence(PettaMachineImpl *machine,
             pushed = petta_push_solve_scoped_planned(machine,
                 expression->expr.elems[child], body ? expected : joined,
                 parent->barrier, child_plan, frame, epoch, first_entry);
-            if (pushed && activation && position > 0u)
+            /* The retained plan owns this continuation in either operand
+             * representation. Metered resumption keeps each canonical
+             * admission and collection boundary before removing the goal. */
+            if (pushed && plan && position > 0u)
                 pushed = petta_mark_top_goal_segment_resume(machine);
         }
         if (!pushed) {
@@ -20533,6 +20546,9 @@ static size_t petta_machine_prune_empty_guard_candidates(
 static bool petta_machine_execute_prepared_call(
         PettaMachineImpl *machine, Atom *call, Atom *expected,
         CettaCallOutcome *outcome);
+static bool petta_machine_execute_prepared_query(
+        PettaMachineImpl *machine, const PettaSpaceQueryView *query,
+        Atom *expected, CettaCallOutcome *outcome);
 static bool petta_machine_deliver_prepared_return(PettaMachineImpl *machine,
         CettaCallOutcome outcome, Atom *expected, uint32_t barrier,
         bool resolved, PettaMachineStep *failure);
@@ -20561,7 +20577,7 @@ static bool petta_machine_value_root_is_error(
     return true;
 }
 static bool petta_machine_collect_closed_answers(
-        PettaMachineImpl *machine, Atom *call, Atom *expected,
+        PettaMachineImpl *machine, const PettaSpaceQueryView *query, Atom *expected,
         uint32_t barrier, bool *taken_out);
 static bool petta_machine_start_answer_producer(
     PettaMachineImpl *machine, const PettaSpaceQueryView *query,
@@ -20851,10 +20867,9 @@ static bool petta_machine_start_space_query(
                  query->operands.count));
         if (!determinate_declined &&
             petta_machine_space_query_closed(machine, query)) {
-            Atom *call = petta_machine_materialize_space_query(machine, query);
             CettaCallOutcome returned;
-            if (call && petta_machine_execute_prepared_call(
-                    machine, call, expected, &returned)) {
+            if (petta_machine_execute_prepared_query(
+                    machine, query, expected, &returned)) {
                 PettaMachineStep failure = PETTA_MACHINE_STEP_EXHAUSTED;
                 bool answered = petta_machine_deliver_prepared_return(
                     machine, returned, expected, barrier, false, &failure);
@@ -20867,7 +20882,7 @@ static bool petta_machine_start_space_query(
             determinate_declined = true;
             bool taken = false;
             bool answered = petta_machine_collect_closed_answers(
-                machine, call, expected, barrier, &taken);
+                machine, query, expected, barrier, &taken);
             if (taken)
                 return answered;
         }
@@ -29643,21 +29658,26 @@ done:
  * equation use or choice, when fuel is bounded, or when a translator rule or
  * tabled relation owns the head.  Shared by the single-result and the
  * finite-answer prepared paths. */
-static bool petta_machine_prepared_call_blocked(
-        PettaMachineImpl *machine, Atom *call) {
+static bool petta_machine_prepared_head_blocked(
+        PettaMachineImpl *machine, SymbolId head, CettaExprLen arity) {
     if (!machine->host.unlimited_transition_budget ||
         machine->host.analysis || machine->host.externalize_equation_choices ||
         machine->host.prepare_resolved_call || machine->host.begin_relation_call ||
-        machine->host.record_equation_use || !call ||
-        call->kind != ATOM_EXPR || call->expr.len == 0u ||
-        call->expr.elems[0]->kind != ATOM_SYMBOL)
+        machine->host.record_equation_use || head == SYMBOL_ID_NONE)
         return true;
-    SymbolId head = call->expr.elems[0]->sym_id;
     return (machine->host.translator_rule_contains &&
             machine->host.translator_rule_contains(machine->host.context, head)) ||
            (machine->host.tabled_relation_contains &&
             machine->host.tabled_relation_contains(
-                machine->host.context, head, call->expr.len - 1u));
+                machine->host.context, head, arity));
+}
+
+static bool petta_machine_prepared_call_blocked(
+        PettaMachineImpl *machine, Atom *call) {
+    return !call || call->kind != ATOM_EXPR || !call->expr.len ||
+        call->expr.elems[0]->kind != ATOM_SYMBOL ||
+        petta_machine_prepared_head_blocked(
+            machine, call->expr.elems[0]->sym_id, call->expr.len - 1u);
 }
 
 /* Read closedness at most once per call view.  The view is borrowed for one
@@ -29745,26 +29765,76 @@ static bool petta_machine_execute_prepared_call(
         !petta_machine_value_result_admitted(machine, expected) ||
         petta_machine_prepared_call_blocked(machine, call))
         return false;
+    CettaInvocation invocation = {
+        .head = binding_value_from_atom(call->expr.elems[0]),
+        .supplied = {.atoms = call->expr.elems + 1u, .count = call->expr.len - 1u},
+    };
     return machine->host.execute_prepared_pure_call(
-        machine->host.context, machine->space, &machine->heap, call, outcome);
+        machine->host.context, machine->space, &machine->heap,
+        &invocation, call, outcome);
+}
+
+/* Query coordinates are borrowed until the callee returns. Resolve them once
+ * through the existing binding service; only a callee which needs source
+ * syntax materializes the whole invocation. */
+static bool petta_machine_execute_prepared_query(
+        PettaMachineImpl *machine, const PettaSpaceQueryView *query,
+        Atom *expected, CettaCallOutcome *outcome) {
+    if (query->whole)
+        return petta_machine_execute_prepared_call(
+            machine, query->whole, expected, outcome);
+    if (!machine->host.execute_prepared_pure_call ||
+        !petta_machine_value_result_admitted(machine, expected) ||
+        !query->head || query->head->kind != ATOM_SYMBOL ||
+        petta_machine_prepared_head_blocked(
+            machine, query->head->sym_id, query->operands.count))
+        return false;
+    CettaInvocation invocation = {
+        .head = binding_value_from_atom(query->head), .supplied = query->operands,
+    };
+    BindingValue inline_values[8];
+    if (query->argument_views) {
+        CettaExprLen arity = query->operands.count;
+        if (!cetta_expr_len_mul_fits_size(arity, sizeof(BindingValue)))
+            return false;
+        BindingValue *values = arity <= 8u ? inline_values
+            : arena_alloc(&machine->heap, (size_t)arity * sizeof(*values));
+        if (!values)
+            return false;
+        for (CettaExprIndex index = 0u; index < arity; index++)
+            if (!petta_space_query_argument_value(query, index, &values[index]))
+                return false;
+        invocation.supplied = (CettaArgumentSpan){.values = values, .count = arity};
+    }
+    CettaInvocation resolved;
+    if (!cetta_invocation_resolve_arguments(&machine->heap,
+            search_context_bindings(&machine->search), &invocation, true, &resolved))
+        return false;
+    return machine->host.execute_prepared_pure_call(
+        machine->host.context, machine->space, &machine->heap,
+        &resolved, NULL, outcome);
 }
 
 /* A completed finite producer lends data occurrences to one outcome choice.
  * Only refusal before entry leaves the invocation to equation search. An
  * incomplete producer stops this caller with its actual completion cause. */
 static bool petta_machine_collect_closed_answers(
-        PettaMachineImpl *machine, Atom *call, Atom *expected,
+        PettaMachineImpl *machine, const PettaSpaceQueryView *query, Atom *expected,
         uint32_t barrier, bool *taken_out) {
     *taken_out = false;
-    if (!machine->host.collect_closed_answers || !call ||
+    if (!machine->host.collect_closed_answers || !query || !query->head ||
+        query->head->kind != ATOM_SYMBOL ||
         !petta_machine_value_result_admitted(machine, expected) ||
-        petta_machine_prepared_call_blocked(machine, call) ||
+        petta_machine_prepared_head_blocked(
+            machine, query->head->sym_id, query->operands.count) ||
         (machine->host.answer_cursor_declined &&
          machine->host.answer_cursor_declined(machine->host.context,
-             machine->space, call->expr.elems[0]->sym_id,
-             call->expr.len - 1u)))
+             machine->space, query->head->sym_id, query->operands.count)))
         return false;
     ArenaMark mark = arena_mark(&machine->heap);
+    Atom *call = petta_machine_materialize_space_query(machine, query);
+    if (!call)
+        return false;
     OutcomeSet *answers = cetta_malloc(sizeof(*answers));
     outcome_set_init_with_owner(answers, &machine->heap);
     CettaEvalCompletion completion = CETTA_EVAL_COMPLETE;
@@ -37575,20 +37645,34 @@ static bool petta_machine_dispatch_goal(
             }
             body = callable;
             while (taken < arguments &&
-                   petta_semantics_lambda_body(body, NULL)) {
-                Atom *parameter = petta_fresh_variable(machine);
-                body = parameter
-                    ? cetta_petta_open_callable(
-                          &machine->heap, body, parameter)
+                   petta_semantics_lambda_body(body, &body))
+                taken++;
+            Atom *single_parameter = NULL;
+            Atom **parameters = taken == 1u ? &single_parameter
+                : cetta_expr_len_mul_fits_size(taken, sizeof(Atom *))
+                    ? arena_alloc(&machine->heap, sizeof(*parameters) * (size_t)taken)
                     : NULL;
-                if (!body) {
+            if (!parameters) {
+                *failure = PETTA_MACHINE_STEP_CAPACITY;
+                return false;
+            }
+            for (CettaExprIndex index = 0u; index < taken; index++) {
+                parameters[index] = petta_fresh_variable(machine);
+                if (!parameters[index]) {
                     *failure = PETTA_MACHINE_STEP_CAPACITY;
                     return false;
                 }
+            }
+            body = cetta_petta_open_callable_parameters(
+                &machine->heap, callable, parameters, taken);
+            if (!body) {
+                *failure = PETTA_MACHINE_STEP_CAPACITY;
+                return false;
+            }
+            for (CettaExprIndex index = 0u; index < taken; index++) {
                 if (!petta_machine_unify(
-                        machine, parameter, first->expr.elems[1u + taken]))
+                        machine, parameters[index], first->expr.elems[1u + index]))
                     return false;
-                taken++;
             }
         }
         if (taken == arguments) {

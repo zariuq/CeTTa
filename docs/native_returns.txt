@@ -1669,6 +1669,46 @@ absence. Actual results still cross the owned cursor and final authority
 boundary. Native controls check constant signature reads, single metadata
 inquiry, and the existing OEM-to-prepared entered-return protocol.
 
+A failed lexical preparation retains no negative worker fact. The pure
+worker cache keeps its checked signature, retries its missing worker, and
+rewinds temporary source allocations on refusal. The OEM body cache retains
+only nonnull, revision-qualified programs. Neither callback exports a stable
+refusal certificate; the named-call compiler report remains the owner of
+certified refusals. CallablePreparation proves the worker/fallback selection
+trace and reuse of successful plans. Native controls cover a temporary
+refusal, host acceptance followed by native recovery, bounded failed-source
+storage, and cancellation before accepting the host answer.
+
+Ordinary lambda application and lexical compiler preparation use the same
+parameter-span opener. A full prefix is opened to fresh variable atoms in one
+depth-aware ABT traversal, then ordinary execution binds those variables to
+the already ready arguments in their established order. Actual argument data
+is not inserted into canonical syntax. Unary opening retains its existing
+specialization. ParameterSpanOpening proves agreement with successive unary
+binder elimination, including nested scopes and higher-index decrement.
+Native controls separately cover malformed/cyclic terms, sharing at different
+depths, quoted data, effects, partial application and wide captures.
+test-petta-lambda-span-budget independently varies source credit and physical
+slices at 0, 1, 2, 3, 64 and 1024. Replenishing credit and resuming a stopped
+machine preserves its transition prefix, ordered value and exact debit.
+
+Closed query entry lends a CettaInvocation directly to prepared admission.
+The ordinary machine resolves argument coordinates through the existing
+binding service; the callee owns source-policy, worker and current-authority
+checks. An already materialized source call may accompany the invocation.
+Otherwise only a callee requiring compilation observes whole-call syntax;
+cached execution and early refusal need no reconstructed call expression.
+Known finite-frontend refusals are consulted before building their syntax.
+Tagged return delivery and ordinary alternatives keep their existing owner.
+ContextualInvocation.resolution_refines and charged_entry_refines provide
+the argument-reader and contextual entry laws. Native controls additionally
+cover dynamic and partial heads, wide spans and lexical constructor values;
+they reject reconstructing source at the borrowed entrance.
+test_prepared_query_invocation supplies still-scoped query fields directly:
+aliases resolve in the live world without rewriting the borrowed source.
+The native caller control also requires one finite-frontend inquiry per entry,
+preserving the inquiry's retry bookkeeping.
+
 A retained constraint owner, dormant goal, queued wake or table entry keeps
 the ordinary scheduling boundary. Unlimited source credit does not establish
 that no work can precede the next computation. A drained context may readmit
@@ -1919,3 +1959,55 @@ Shared observers and collection
     Evidence: test_tiny_collection_policy_offers, test_interleaved_collection_offers
     and tests/test_term_universe_collection.c; CollectionTriggerPolicy and
     CollectionOfferScheduling prove the policy/scheduling algorithms, not C.
+
+Checked structural inspection
+
+Graph queries used for admission report completion separately from their
+Boolean observation. An incomplete scan proves neither presence nor absence.
+It cannot certify readiness, authorize execution of returned data, or install
+a stable compiler refusal. A compiler literal-space inspection that runs out
+of storage reports RESOURCE_REFUSED; a later inquiry may retry. Collection
+consumers return control before forcing a value whose readiness is unknown.
+A value already established ready reuses that observation within the same
+unchanged program authority.
+
+After native entry, unknown variable ownership transfers the actual packet
+and saved caller through the existing OEM host boundary. It does not replay
+the source call. Portability and captured-support consumers retain their
+existing resource/conservative outcomes. Exact semantic graph observations
+require visited storage; they cannot fall back to tree traversal over cycles.
+
+GraphInspection proves the finite worklist's positive/negative soundness and
+the root-bit/memo projection laws. The native graph and conditional-context
+controls cover root/non-root cycles, exhausted observation allowances, real
+visited-storage failure, retry, readiness refusal and entered-packet sharing.
+Pointer validity, allocation and concrete C execution remain native obligations.
+
+Activation admission under a source purse
+
+Equation activation also needs a source-debit refinement before finite-fuel
+entry. A VALUE occurrence with an explicit RETURN_VALUE word has the same
+single visit through the activation and ordinary operand representations.
+An absent permission callback or an established unlimited transition budget
+retains existing activation admission. Otherwise compound bodies enter the
+ordinary planned path before their work starts. This inquiry-specific refusal
+is not stored as a stable program refusal, and does not revoke unbounded
+activation. Physical windows remain independently enforced.
+
+ActivationBudgetAdmission checks the metadata guard against independent source
+cases, and joins the admitted value step to the source-word machine's exact
+bounded-state refinement. It proves no internal source price for compound
+activation. Native controls vary source purses and physical windows, require
+finite compound refusal and finite value admission, and retain unbounded
+admission. The computed-pattern fixture checks its committed effect and
+canonical answer boundary independently of agreement between routes.
+
+Planned sequence continuations carry their resume mark through ordinary as well
+as activation-backed operands. Both use the existing metered word worker, which
+rechecks retained-context admission and physical room, pays the source visit,
+and keeps the ordinary collection boundary before removing each saved goal.
+The continuation mark comes from the common sequence plan; operand storage is
+not a scheduling certificate. Unplanned continuations retain the ordinary
+loop. SourceResumeBoundary and SourceStepSelection supply the maintained
+composition/selection laws. The live metered segment controls require commits
+even with activation disabled, and refuse commits when the segment is disabled.
