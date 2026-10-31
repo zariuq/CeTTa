@@ -20,6 +20,13 @@
 CettaDiskStoreStatus cetta_disk_space_capture(Space *target,
     const CettaDiskStoreView *view, CettaDiskBytes prefix, uint64_t occurrence_count);
 
+/* Exact one-occurrence view, with cardinality obtained by lookup in the
+ * captured root. A longer key sharing its prefix is a different occurrence.
+ * This reuses ordinary matching/identity/lifetime contracts and grants no
+ * mutation authority. ABSENT leaves target unchanged. */
+CettaDiskStoreStatus cetta_disk_space_capture_point(Space *target,
+    const CettaDiskStoreView *view, CettaDiskBytes key);
+
 /* Optional candidate indexes over one expression arity/position (head is
  * position zero). A posting key is PREFIX + "/exact/" + CAV1(value) + "/" +
  * full fact key, or PREFIX + "/any/" + full fact key. Its value is empty;

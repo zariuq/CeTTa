@@ -8,6 +8,7 @@
 #include "eval.h"
 #include "shared_transition.h"
 #include "petta_specializer.h"
+#include "petta_semantics.h"
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,6 +19,52 @@ static const char *reader_kind="disk-store-body",*scan_kind="disk-store-scan";
 static const char *query_kind="disk-space-query";
 static const char *batch_kind="disk-store-batch";
 static const char *program_kind="program-watch";
+/* A stored-data range uses portable scalars and the existing term order.
+ * It does not instantiate variables or evaluate callable-looking symbols. */
+static bool scalar_value(const Atom *value) {
+    if (!value) return false;
+    if (value->kind==ATOM_SYMBOL) return true;
+    if (value->kind!=ATOM_GROUNDED) return false;
+    switch (value->ground.gkind) {
+    case GV_INT: case GV_FLOAT: case GV_STRING: case GV_BOOL:
+    case GV_BIGINT: case GV_RATIONAL: return true;
+    default: return false;
+    }
+}
+static bool scalar_bound(Atom *bound,const Atom **value,bool *exclusive) {
+    *value=NULL;*exclusive=false;
+    if (atom_is_symbol(bound,"NoBound")) return true;
+    if (!bound || bound->kind!=ATOM_EXPR || bound->expr.len!=2) return false;
+    bool strict=atom_is_symbol(bound->expr.elems[0],"Exclusive");
+    if ((!strict && !atom_is_symbol(bound->expr.elems[0],"Inclusive")) ||
+            !scalar_value(bound->expr.elems[1])) return false;
+    *value=bound->expr.elems[1];*exclusive=strict;return true;
+}
+/* First signed-integer ordinal satisfying integer >/>= bound. None is the
+ * conceptual ordinal2^64. At most65 comparisons; never round via double. */
+static bool integer_cut(const Atom *bound,bool strict,bool *exists,uint64_t *ordinal) {
+    uint64_t low=0,high=UINT64_MAX;*exists=false;*ordinal=0;
+    for (;;) {
+        uint64_t middle=low+(high-low)/2;
+        Atom value={0};value.kind=ATOM_GROUNDED;value.ground.gkind=GV_INT;
+        value.ground.ival=(int64_t)(middle^(UINT64_C(1)<<63));int order=0;
+        if (!petta_semantics_term_compare(&value,bound,&order)) return false;
+        if (order>0 || (!strict && order==0)) {
+            *exists=true;*ordinal=middle;
+            if (!middle) break;
+            high=middle-1;
+        } else {
+            if (middle==UINT64_MAX) break;
+            low=middle+1;
+        }
+        if (low>high) break;
+    }
+    return true;
+}
+static Atom *ordinal_key(Arena *arena,uint64_t ordinal) {
+    unsigned char bytes[8];for(size_t i=8;i>0;i--){bytes[i-1]=(unsigned char)ordinal;ordinal>>=8;}
+    return atom_string_n(arena,(const char *)bytes,8);
+}
 typedef struct {
     SpaceProgramToken token;
     PettaProgramReadBarrier *barrier;
@@ -289,6 +336,38 @@ done:
 }
 Atom *cetta_store_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **args,uint32_t n) {
     if (!ctx || !a || !head) return NULL;
+    if (atom_is_symbol(head,"__cetta_lib_store_scalar_order")) {
+        int order=0;
+        if (n!=2 || !scalar_value(args[0]) || !scalar_value(args[1]) ||
+                !petta_semantics_term_compare(args[0],args[1],&order)) return refused(a,"invalid-scalar");
+        return atom_expr2(a,atom_symbol(a,"StoreScalarOrderV1"),atom_int(a,order<0 ? -1 : order>0 ? 1 : 0));
+    }
+    bool scalar_range=atom_is_symbol(head,"__cetta_lib_store_scalar_range");
+    bool integer_window=atom_is_symbol(head,"__cetta_lib_store_integer_window");
+    if (scalar_range || integer_window) {
+        const Atom *lower=NULL,*upper=NULL;bool lo_strict=false,hi_strict=false;
+        if (n!=(scalar_range ? 3u : 2u) ||
+                !scalar_bound(args[scalar_range ? 1 : 0],&lower,&lo_strict) ||
+                !scalar_bound(args[scalar_range ? 2 : 1],&upper,&hi_strict)) return refused(a,"invalid-scalar-bound");
+        if (scalar_range) {
+            int lo=0,hi=0;bool inside=scalar_value(args[0]);
+            if (inside && lower) {
+                if (!petta_semantics_term_compare(args[0],lower,&lo)) return refused(a,"invalid-scalar-order");
+                inside=lo>0 || (!lo_strict && !lo);
+            }
+            if (inside && upper) {
+                if (!petta_semantics_term_compare(args[0],upper,&hi)) return refused(a,"invalid-scalar-order");
+                inside=hi<0 || (!hi_strict && !hi);
+            }
+            return atom_symbol(a,inside ? "StoreScalarWithinV1" : "StoreScalarOutsideV1");
+        }
+        uint64_t first=0,last=0;bool has_first=true,has_last=false;
+        if ((lower && !integer_cut(lower,lo_strict,&has_first,&first)) ||
+                (upper && !integer_cut(upper,!hi_strict,&has_last,&last))) return refused(a,"invalid-scalar-order");
+        if (!has_first || (has_last && first>=last)) return atom_symbol(a,"StoreIntegerWindowEmptyV1");
+        return atom_expr3(a,atom_symbol(a,"StoreIntegerWindowV1"),ordinal_key(a,first),
+            has_last ? ordinal_key(a,last) : atom_symbol(a,"NoBound"));
+    }
     bool program_open=atom_is_symbol(head,"__cetta_lib_store_program_watch_open");
     bool program_clone=atom_is_symbol(head,"__cetta_lib_store_program_watch_clone");
     bool program_check=atom_is_symbol(head,"__cetta_lib_store_program_watch_check");
@@ -323,6 +402,21 @@ Atom *cetta_store_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **a
     }
     if (atom_is_symbol(head,"__cetta_lib_store_space_view")) return space_view(ctx,a,args,n,false);
     if (atom_is_symbol(head,"__cetta_lib_store_space_query_open")) return space_view(ctx,a,args,n,true);
+    if (atom_is_symbol(head,"__cetta_lib_store_space_point_query_open")) {
+        CettaDiskBytes key;
+        if (n!=4 || !string(args[1],&key)) return refused(a,"invalid-space-point-query");
+        CettaNativeHandleUse use={0};
+        if (!acquire(ctx,view_kind,args[0],CETTA_NATIVE_HANDLE_USE_LIFETIME,&use)) return refused(a,"closed-view");
+        CettaDiskStoreView *view=cetta_native_handle_use_resource(&use);CettaDiskQuery *query=NULL;
+        CettaDiskStoreStatus status=cetta_disk_query_open_point(view,key,args[2],args[3],&query);
+        Atom *result=NULL;
+        if (status==CETTA_STORE_OK) {
+            Atom *handle=own_query(ctx,a,query);
+            result=handle ? atom_expr(a,(Atom *[]){atom_symbol(a,"StoreQueryOpened"),handle,
+                view_epoch_value(a,view),unsigned_value(a,cetta_disk_store_view_revision(view))},4) : refused(a,"capacity");
+        } else result=status==CETTA_STORE_ABSENT ? atom_symbol(a,"StoreAbsent") : status_value(a,status);
+        cetta_native_handle_use_release(&use);return result;
+    }
     bool query_next=atom_is_symbol(head,"__cetta_lib_store_space_query_next");
     bool query_checkpoint=atom_is_symbol(head,"__cetta_lib_store_space_query_checkpoint");
     bool query_info=atom_is_symbol(head,"__cetta_lib_store_space_query_info");

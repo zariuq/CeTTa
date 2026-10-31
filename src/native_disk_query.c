@@ -44,9 +44,9 @@ void cetta_disk_query_close(CettaDiskQuery *query) {
     release_query(query);packet_clear(query);free(query);
 }
 
-CettaDiskStoreStatus cetta_disk_query_open_indexed(const CettaDiskStoreView *view,
+static CettaDiskStoreStatus query_open(const CettaDiskStoreView *view,
         CettaDiskBytes prefix,uint64_t count,const CettaDiskSpaceIndex *indexes,
-        size_t index_count,Atom *pattern,Atom *template,CettaDiskQuery **out) {
+        size_t index_count,Atom *pattern,Atom *template,bool point,CettaDiskQuery **out) {
     if (!out) return CETTA_STORE_INVALID;
     *out=NULL;
     if (!view || !pattern || !template) return CETTA_STORE_INVALID;
@@ -57,7 +57,8 @@ CettaDiskStoreStatus cetta_disk_query_open_indexed(const CettaDiskStoreView *vie
     term_universe_init(&query->universe);
     term_universe_set_persistent_arena(&query->universe,&query->source_arena);
     space_init_with_universe(&query->source,&query->universe);query->live=true;
-    CettaDiskStoreStatus status=cetta_disk_space_capture_indexed(&query->source,view,prefix,count,indexes,index_count);
+    CettaDiskStoreStatus status=point ? cetta_disk_space_capture_point(&query->source,view,prefix) :
+        cetta_disk_space_capture_indexed(&query->source,view,prefix,count,indexes,index_count);
     if (status!=CETTA_STORE_OK) goto failed;
     query->revision=cetta_disk_store_view_revision(view);
     Arena packet;arena_init_detached(&packet);
@@ -81,6 +82,15 @@ CettaDiskStoreStatus cetta_disk_query_open_indexed(const CettaDiskStoreView *vie
     *out=query;return CETTA_STORE_OK;
 failed:
     cetta_disk_query_close(query);return status;
+}
+CettaDiskStoreStatus cetta_disk_query_open_indexed(const CettaDiskStoreView *view,
+        CettaDiskBytes prefix,uint64_t count,const CettaDiskSpaceIndex *indexes,
+        size_t index_count,Atom *pattern,Atom *template,CettaDiskQuery **out) {
+    return query_open(view,prefix,count,indexes,index_count,pattern,template,false,out);
+}
+CettaDiskStoreStatus cetta_disk_query_open_point(const CettaDiskStoreView *view,
+        CettaDiskBytes key,Atom *pattern,Atom *template,CettaDiskQuery **out) {
+    return query_open(view,key,1,NULL,0,pattern,template,true,out);
 }
 CettaDiskStoreStatus cetta_disk_query_open(const CettaDiskStoreView *view,
         CettaDiskBytes prefix,uint64_t count,Atom *pattern,Atom *template,CettaDiskQuery **out) {

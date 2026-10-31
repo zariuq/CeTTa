@@ -27,6 +27,10 @@ typedef enum {
 CettaDiskStoreStatus cetta_disk_query_open(const CettaDiskStoreView *view,
     CettaDiskBytes prefix, uint64_t count, Atom *pattern, Atom *template,
     CettaDiskQuery **out);
+/* The same owning matcher over one exact stored occurrence. Its original
+ * stable membership identity survives; prefix-related keys are excluded. */
+CettaDiskStoreStatus cetta_disk_query_open_point(const CettaDiskStoreView *view,
+    CettaDiskBytes key, Atom *pattern, Atom *template, CettaDiskQuery **out);
 CettaDiskStoreStatus cetta_disk_query_open_indexed(const CettaDiskStoreView *view,
     CettaDiskBytes prefix, uint64_t count, const CettaDiskSpaceIndex *indexes,
     size_t index_count, Atom *pattern, Atom *template, CettaDiskQuery **out);

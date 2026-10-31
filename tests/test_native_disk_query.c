@@ -90,6 +90,42 @@ static CettaDiskStoreView *put(CettaDiskStore *store,CettaDiskStoreView *base,co
     CettaDiskOp op={false,bytes(key),{encoded,length}};CettaDiskStoreView *view=NULL;
     assert(cetta_disk_store_commit(store,base,&op,1,&view)==CETTA_STORE_OK);free(encoded);return view;
 }
+static CettaDiskStoreView *point_queries(CettaDiskStore *store,CettaDiskStoreView *base,Arena *data) {
+    CettaDiskQuery *query=NULL;
+    Atom *pattern=parse(data,"(point $x)"),*projection=pattern->expr.elems[1];
+    assert(cetta_disk_query_open_point(base,bytes("one"),pattern,projection,&query)==CETTA_STORE_ABSENT && !query);
+    CettaDiskStoreView *child=put(store,base,"one/child",parse(data,"(point child)"));
+    assert(cetta_disk_query_open_point(child,bytes("one"),pattern,projection,&query)==CETTA_STORE_ABSENT && !query);
+    CettaDiskStoreView *captured=put(store,child,"one",parse(data,"(point original)"));cetta_disk_store_view_close(child);
+    assert(cetta_disk_query_open_point(captured,bytes("one"),pattern,projection,&query)==CETTA_STORE_OK && query);
+    assert(cetta_disk_query_checkpoint(query));
+    CettaDiskStoreView *updated=put(store,captured,"one",parse(data,"(point updated)"));cetta_disk_store_view_close(captured);
+    CettaDiskBytes packet;assert(next(query,0,1,SIZE_MAX,&packet,NULL)==CETTA_DISK_QUERY_ROW);
+    Atom *row=decode(data,packet);assert(atom_is_symbol(row->expr.elems[1],"original"));
+    Atom *ids=row->expr.elems[2];assert(ids->expr.len==1 &&
+        atom_string_equals_cstr(ids->expr.elems[0]->expr.elems[2],"one"));
+    assert(cetta_disk_query_checkpoint(query));
+    assert(next(query,1,1,SIZE_MAX,&packet,NULL)==CETTA_DISK_QUERY_END);
+    CettaDiskSpaceStatistics statistics={0};assert(cetta_disk_query_statistics(query,&statistics) && statistics.candidates==1);
+    cetta_disk_query_close(query);
+    assert(cetta_disk_query_open_point(updated,bytes("one"),pattern,projection,&query)==CETTA_STORE_OK);
+    assert(drain(query,1,1,NULL,NULL)==1);cetta_disk_query_close(query);
+    assert(cetta_disk_query_open_point(updated,bytes("one"),parse(data,"(point absent)"),projection,&query)==CETTA_STORE_OK);
+    assert(drain(query,1,1,NULL,NULL)==0);cetta_disk_query_close(query);
+    CettaDiskStoreView *with_empty=put(store,updated,"",parse(data,"(point empty-key)"));cetta_disk_store_view_close(updated);
+    assert(cetta_disk_query_open_point(with_empty,bytes(""),pattern,projection,&query)==CETTA_STORE_OK);
+    assert(drain(query,1,1,NULL,NULL)==1);cetta_disk_query_close(query);
+    size_t before=descriptors();
+    for(size_t i=0;i<1000;i++) {
+        assert(cetta_disk_query_open_point(with_empty,bytes("one"),pattern,projection,&query)==CETTA_STORE_OK);
+        if(i%2)assert(drain(query,1,1,NULL,NULL)==1);
+        else assert(cetta_disk_query_cancel(query)==CETTA_DISK_QUERY_CANCELLED);
+        cetta_disk_query_close(query);
+    }
+    assert(descriptors()==before);
+    puts("PASS: exact point queries retain original identities/captured values, exclude prefix siblings and reuse shared matching");
+    return with_empty;
+}
 
 int main(int argc,char **argv) {
     assert(argc==2);SymbolTable symbols;symbol_table_init(&symbols);
@@ -231,6 +267,7 @@ int main(int argc,char **argv) {
     assert(cetta_disk_query_open(view,bytes("facts/"),9,atom_space(&data,&unavailable),atom_int(&data,1),&query)==CETTA_STORE_INVALID && !query);
     space_free(&unavailable);
 
+    newer=point_queries(store,view,&data);cetta_disk_store_view_close(view);view=newer;
     cetta_disk_store_view_close(view);cetta_disk_store_close(store);
     arena_free(&data);symbol_table_free(&symbols);
     puts("PASS: captured query owners preserve replay, bindings and witnesses, release on end/cancel, and bound page-arena history");
