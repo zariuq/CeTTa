@@ -136,6 +136,9 @@ CettaCount eval_outcome_value_count(const EvalOutcome *outcome);
 CettaCount eval_outcome_fault_count(const EvalOutcome *outcome);
 CettaEvalZeroStatus eval_outcome_zero_status(const EvalOutcome *outcome);
 const char *eval_completion_reason(CettaEvalCompletion completion);
+/* A native callback with incomplete work terminates its enclosing episode.
+ * The first cause remains authoritative through catches and later entries. */
+void eval_mark_interrupted(CettaEvalCompletion completion);
 uint64_t eval_current_c_stack_budget_bytes(void);
 typedef struct {
     uintptr_t anchor;
@@ -176,8 +179,10 @@ void eval_top_with_registry_outcome(
     Space *s, Arena *a, Arena *persistent, Registry *r, Atom *expr,
     EvalOutcome *outcome, CettaPrimeNeedAnswerObserver observer,
     void *observer_context);
-/* Re-entrant callback used only by the optional PeTTa/libpl adapter. */
-bool eval_petta_from_lib_prolog(Arena *a, Atom *expr, ResultSet *results);
+/* Re-entrant callback used only by the optional PeTTa/libpl adapter. An
+ * incomplete callback exports no partial rows; completion is mandatory. */
+bool eval_petta_from_lib_prolog(Arena *a, Atom *expr, ResultSet *results,
+                              CettaEvalCompletion *completion);
 /* Reclaim completed top-level temporaries. During a callback into an active
  * evaluator this defers cleanup to that caller's completion boundary. */
 void eval_release_temporary_spaces(void);

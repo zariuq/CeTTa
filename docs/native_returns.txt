@@ -112,8 +112,17 @@ EvalNativeDemand distinguishes ready arguments, immediate arguments and the
 ordinary HE entry that must establish an untyped boundary. Selecting these
 obligations no longer depends on whether the caller requests result metadata.
 Ordinary caller attempts share one delivery implementation before trying an
-applied source representation. Remaining atom-only clients use the explicit
-native_outcome_expression projection after the call has been admitted.
+applied source representation. HE's one-step syntax observer retains the
+explicit he_one_step_native_expression projection after the call has been
+admitted.
+
+Native space aliases share the primitive worker's backend admission and
+provider priority with ordinary invocation. Public-operation visibility stays
+at its own entry boundary. An entered failure, interruption or empty frontier
+does not reopen admission, and a suspended value retains its delayed goals.
+Public error blame can be presented for a scalar packet; an Error-shaped
+frontier container remains a collection of separate occurrences. Pending
+expression frontiers use the same completion service as other native callers.
 
 The atom-only caller and the Prolog eval/2 callback consume the same tagged
 completion service as ordinary native sequences. Completed data crosses that
@@ -121,9 +130,55 @@ boundary as data, without function/return syntax. Explicit failure contributes
 no occurrence; a value named Empty remains a value. The callback's projection
 removes only PeTTa's private no-result token and preserves its error boundary.
 
+The Prolog eval/2 callback checks the enclosing completion before publishing
+answers. Incomplete evaluation releases its private answer state and yields to
+the native query owner. It is neither Prolog failure nor a completed partial
+list: guest success branches, failure branches and exception handlers do not
+continue from that yield. Resuming it reports interruption without evaluating
+the source again. Closing the query prunes the yielded control and performs its
+cleanup once. Cleanup can have committed Prolog effects; re-entering MeTTa
+cannot perform new evaluator work after interruption. The first incomplete
+cause survives cleanup faults. Signature registration uses the same boundary.
+
+With an explicit or inherited source-fuel purse, dynamic callback syntax enters
+the canonical source evaluator. That evaluator owns its entrance and body
+visits. The callback neither prepays a second entrance nor dispatches a native
+primitive around those visits. Unlimited execution retains direct invocation.
+Completed packets remain data; their delivery does not introduce a fresh
+computation entrance. Native controls compare debit, remaining credit, values
+and committed effects at each bounded prefix against canonical entry.
+
+An external nested query that disallows yielding receives SWI's reserved unwind
+exception. That fallback can execute catch recovery before rethrowing; it does
+not certify that recovery is effect-free. A guest-originated yield has no
+scheduler at the synchronous native boundary and records incomplete host
+failure. Neither route grants permission to replay an entered operation.
+
+Python's MeTTa.run callback observes EvalOutcome before converting a completed
+row. An incomplete evaluation raises a Python RuntimeError, including when the
+evaluator already produced values. A known uncaught PeTTa raise also raises;
+completed Error-shaped data and caught errors remain ordinary row values.
+Complete logical failure contributes an empty row. Prime keeps its existing
+fault-as-data policy. HE retains its separate document-runner policy.
+
+Both Python routes use the same row-to-Python conversion. A failed conversion
+releases the private row and accumulated result list. Parse failure is reported
+when reached: earlier committed effects survive, later source stays unentered,
+and the callback returns no partial list. A caught Python exception cannot
+clear an enclosing evaluator's incomplete cause. CallbackCompletion compares
+the array loop with an independent recursive observer, preserving actual world
+transitions, duplicates, failure cutoff and the unentered suffix. The Prolog
+eval/2 adapter's interruption and canonical source entry have their own native
+controls; retained solver-epoch export remains a separate ownership boundary.
+
 PeTTa ready calls retain conditional-answer obligations in the OutcomeSet that
-the search machine installs into its delay service. Malformed obligations are
-refused. Raised errors and logical failure stay control outcomes at the PeTTa
+the search machine installs into its delay service. The registration owner
+validates the whole carried/component payload before acquiring a service,
+observing its retained owner, reserving history or withdrawing goals. Its entry
+state already contains the caller's established bindings; this validation does
+not undo the producer's entered work. A malformed host packet terminates with
+host failure; it is distinct from capacity failure and from pre-entry refusal.
+Raised errors and logical failure stay control outcomes at the PeTTa
 native sequence boundary, while a completed Error datum remains a value.
 
 Streamed cardinality produces a closed integer. At native entry this immediate
@@ -401,8 +456,9 @@ accepted returns; these administrative pauses do not define source fuel.
 Compiled-to-ordinary residual execution uses this sequence for its decoded
 caller continuation. The source image and selected binding context outlive
 the child; publication refusal stops the retained computation. A whole-call
-collector over already-ready values remains a native leaf. Applying the
-generic per-element protocol there failed its size-series cost checks.
+collector over already-ready values remains a native leaf. Both callers use
+the same source evaluation/completion owner and row projection. Applying the
+generic per-element protocol to the leaf failed its size-series cost checks.
 Compiled-cursor controls also compose their existing owned execution adapter
 with the sequence. Prepared-native lowering uses the retained boundary below.
 
@@ -1213,6 +1269,14 @@ The v2 receipt joins a complete source archive, its Git tree, the normal-build
 receipt and binary, and the exact runtime library staged beside that binary.
 These checks identify the artifact; they do not prove compiler correspondence.
 
+Exhaustive readiness also pins the corrected-stable PeTTa oracle's executable
+source membership and file digests. A checkout must name the pinned revision;
+a source snapshot is identified by its checked contents and never by an
+enclosing repository. The oracle manifest joins the tier's evidence identity
+and is revalidated at completion. The shared-prefix calibration identity stays
+independent of this exhaustive-only oracle. Dry runs validate these inputs and
+print the selected commands without entering the heavy campaign.
+
 Both readiness tiers retain the historical gates and add paired pure/cost rho
 matrices against c632ecd1, with their own output files and a five-percent wall
 time bound. These matrices require the exact reference commit and binary;
@@ -1538,6 +1602,17 @@ Program, capability, library and profile changes clear a pending pause before
 it can suppress an attempt. BackoffRetryCost checks the retry cost and recovery
 bounds; uncertified_compile_refusal_controls checks the native countdown,
 immediate resource/input recovery, authority changes and the cap.
+
+Ready-value callers consult a current pause before frontend preparation. The
+inquiry retains language, call mode, source identity, result demand, operand
+interpretation and equality policy; authority validation clears stale pauses.
+A paused inquiry selects the complete ordinary continuation. Syntax inquiries
+consult the normalized key after preparation. Actual prepared entry retains its
+existing input and callee admission checks. PreparedPauseEntry proves equal
+route selection, the removed metadata-read certificate and the independent
+source/physical continuation join. In the forced-refusal retry control, source
+analysis follows compilation attempts. Separate controls preserve the syntax
+inquiry and enter the common caller directly after declaration changes.
 
 The controlled scalar executor validates the retained source program before
 worker entry. Lexical scalar adapters and unary collection workers rely on
@@ -1987,20 +2062,49 @@ Activation admission under a source purse
 
 Equation activation also needs a source-debit refinement before finite-fuel
 entry. A VALUE occurrence with an explicit RETURN_VALUE word has the same
-single visit through the activation and ordinary operand representations.
-An absent permission callback or an established unlimited transition budget
-retains existing activation admission. Otherwise compound bodies enter the
-ordinary planned path before their work starts. This inquiry-specific refusal
-is not stored as a stable program refusal, and does not revoke unbounded
-activation. Physical windows remain independently enforced.
+single visit through either operand representation. A structurally admitted
+BRANCH word retains the ordinary condition and selector visits, borrowing its
+arms until selection. Other compound entries use ordinary planned execution.
+The selected child independently uses exact native operand slots, canonical
+ready-call preparation, or materialization at the already-paid SOLVE boundary.
+No parent branch is reconstructed just to enter its selected child.
 
-ActivationBudgetAdmission checks the metadata guard against independent source
-cases, and joins the admitted value step to the source-word machine's exact
-bounded-state refinement. It proves no internal source price for compound
-activation. Native controls vary source purses and physical windows, require
-finite compound refusal and finite value admission, and retain unbounded
-admission. The computed-pattern fixture checks its committed effect and
-canonical answer boundary independently of agreement between routes.
+An absent permission callback or an established unlimited transition budget
+retains existing activation admission. Finite refusal is inquiry-specific and
+is not a stable program refusal. Physical windows are enforced independently.
+ActivationBudgetAdmission checks this metadata judgment and its bounded-word
+join. ActivationBranchEntry independently reads the branch layout, proves the
+selector-stack entry against a source transition, and retains the complete
+source/physical state. Neither certifies arbitrary compound internal charges.
+Native controls vary both purses and windows, cover admitted branch/value
+entry and selected computed-pattern fallback, and retain unbounded admission.
+The computed-pattern fixture checks its committed effect and canonical answer
+boundary independently of agreement between routes.
+
+Prepared first-match branches share the same test-and-bind admission in the
+single-answer and resumable lowerings. When both refer to the same prepared
+pattern and ready operand, one match installs the selected bindings. A mismatch
+jumps to the next arm with the entrance locals intact; an undecidable match
+declines instead of taking that arm. Calls cannot enter while preparing a
+fused test operand. General conditions retain their ordinary branch path.
+The dialect pattern view is a deterministic read under retained program
+authority; computed or effectful patterns keep their owning evaluator.
+
+The step interpreter and register code consume this match-branch instruction.
+Native-aware lowering splits nested control into continuation steps before
+register emission and relocates each step target once. PatternBranchFusion
+checks the two-stage reference against the single-match algorithm, distinguishes
+refusal from exhaustion and joins the selected continuation to the maintained
+source/physical boundary.
+Native controls cover repeated variables, rollback, first success, refusal and
+selected bindings across a native return with pending duplicate alternatives.
+Consumer refusal and physical allowances remain independent controls. The
+evaluator-tax gate retains its independent answers and instruction limits.
+
+An observer rewrite additionally requires the comparison primitive to exist
+in the active build and dialect. A spelling alone supplies no execution
+authority: an unregistered != remains data, including inside an existence test.
+The native-query controls compare both routes in Prolog-backed and core builds.
 
 Planned sequence continuations carry their resume mark through ordinary as well
 as activation-backed operands. Both use the existing metered word worker, which
@@ -2011,3 +2115,63 @@ not a scheduling certificate. Unplanned continuations retain the ordinary
 loop. SourceResumeBoundary and SourceStepSelection supply the maintained
 composition/selection laws. The live metered segment controls require commits
 even with activation disabled, and refuse commits when the segment is disabled.
+
+Conditional-answer registration
+-------------------------------
+
+Ordinary outcome selection, copied collapse answers, fold state, open collection
+handoff and prepared conditional returns share petta_machine_delay_install.
+The carried variables withdraw the call's previous suspended obligations;
+ordered answer components enter the existing delay service once each. A goal
+whose watched variable is already bound is queued immediately. Bindings and
+registration changes share the existing history, so backtracking restores them
+together. Registering a completed packet does not execute its goal syntax.
+
+A component retains its exact variable array, including sharing and repeated
+occurrences. Its watch index is a set of variables for that goal. Construction
+checks only the newest goal's records in the selected bucket, including hash
+collisions. Capacity is reserved for the full incoming component before index
+construction; a single large batch does not inherit a small fixed bucket count.
+Binding, withdrawal, goal lookup, reach and clone therefore see the same goal
+once even if its variable array repeats a variable. Two distinct
+goals with equal contents remain separate occurrences.
+
+ConditionalRegistration proves independent batch withdrawal/registration equal
+to incremental use of ConstraintPropagation.TableState. Its bucket-local index
+refines source variable membership, preserving goal multiplicity and wake order.
+Malformed-suffix and duplicate-watch controls distinguish the invalid algorithms.
+Native controls cover no mutation or owner hooks on malformed packets, shared
+trail rollback, bound/unbound registration, repeated variables, source/clone
+readback, and terminal failures with untried alternatives and committed effects.
+
+A resource failure after entry does not authorize producer replay. The machine
+owns its actual partial registration until retirement. The component-prefix
+model does not prove atomic allocation failure inside a C service operation;
+retained solver export, payload copying and C lifetimes remain native obligations.
+
+Buffered ordinary residual completion
+-------------------------------------
+
+eval_owned_residual_evaluate establishes the whole private ordinary result
+image and its own completion. It borrows the existing source purse through one
+child episode, including when no enclosing tracker is installed. Only actual
+source work is settled; the adapter adds no entrance debit. An enclosing first
+incomplete cause remains intact. A prior nonterminal parent diagnostic is not
+substituted for the new source computation's own result.
+
+An incomplete source cannot publish its private prefix or start a consumer
+child. Previously accepted frames and committed producer effects stay earned.
+The direct leaf and owned cursor share eval_owned_residual_project after this
+completion boundary. Projection keeps the row's environment and delayed goals,
+filters the source dialect's established no-result marker, and never executes
+returned data. A later materialization failure is a typed host failure; it is
+not an ordinary empty row and does not authorize skipping to a later row.
+
+BufferedResidualReturn proves the independent source observer against a direct
+accumulator leaf and an array-indexing cursor, then joins the cursor to the
+maintained owned driver. Prefix, refusal, split execution, duplicate and
+conditional packet laws preserve arbitrary accepted publication effects and
+previous frames. The source-to-buffer join, exact dialect-zero/raise policy,
+source credit settlement and C ownership remain separately qualified. Native
+controls compare source-budget observations with direct canonical execution and
+reject publication-before-completion and wrapper-debit mutations.
