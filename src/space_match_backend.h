@@ -30,11 +30,18 @@ typedef enum {
     SPACE_OCCURRENCE_CURSOR_INVALIDATED,
     SPACE_OCCURRENCE_CURSOR_INCOMPLETE,
     SPACE_OCCURRENCE_CURSOR_CAPACITY,
+    /* One bounded poll made no row available. The captured traversal remains
+     * live; neither exhaustion nor a terminal storage failure is implied. */
+    SPACE_OCCURRENCE_CURSOR_PROGRESS,
 } SpaceOccurrenceCursorStep;
 
 /* Incremental candidates, not a second matcher. The source owns its captured
  * view and traversal; next lends a row until the next source operation. The
- * ordinary matcher copies that row into its receiving arena before retaining
+ * next may return PROGRESS without a row; callers must yield or explicitly
+ * refuse unsupported suspension, never turn it into a successful non-match.
+ * Each next call performs bounded work rather than waiting indefinitely for
+ * a remote event. END requires positive evidence of complete exhaustion.
+ * The ordinary matcher copies that row into its receiving arena before retaining
  * bindings. Positional sources identify occurrences by index; other sources
  * must supply identity below rather than expose a traversal counter as an
  * occurrence identity. A clone owns independent traversal

@@ -203,6 +203,30 @@
          ($error $error))))
      ($error $error))))
 
+; The caller has checked its receipt in this view. Validate the whole logical
+; revision, including every query/absence/aggregate dependency, without a
+; comparison scan of the complete key range. Facts and receipt still publish
+; in one native commit domain.
+(= (knowledge:publish-whole-ready $owner $view $identity $command $answer $operations)
+  (knowledge:publish-whole-policy $owner $view $identity $command $answer $operations NoProgramWatchV1))
+(= (knowledge:publish-whole-guarded-ready $owner $view $watch $identity $command $answer $operations)
+  (knowledge:publish-whole-policy $owner $view $identity $command $answer $operations (ProgramWatchV1 $watch)))
+(= (knowledge:publish-whole-policy $owner $view $identity $command $answer $operations $policy)
+  (case (knowledge:receipt-address $identity)
+    (((KnowledgeAddressV1 $key)
+      (case (store:encode (KnowledgeReceiptV1 $identity $command $answer))
+        (((StoreEncoded $bytes)
+          (let $all (cons-atom ops (cons-atom (put $key $bytes) (cdr-atom $operations)))
+            (case (case $policy
+                    ((NoProgramWatchV1 (store:commit $owner $view $all))
+                     ((ProgramWatchV1 $watch) (store:commit-guarded $owner $view $watch $all))
+                     ($bad (KnowledgeRefusedV1 publication-policy))))
+              (((StoreSnapshot $updated $epoch $revision)
+                (let $closed (store:close $updated) (KnowledgeCommittedV1 $answer $epoch $revision)))
+               ($error $error)))))
+         ($error $error))))
+     ($error $error))))
+
 ; Recovery establishes a fresh durable view before inspecting the receipt.
 ; Missing or unreadable evidence never grants authority for an external call.
 (= (knowledge:resolve $owner $identity $command $maximum-bytes)

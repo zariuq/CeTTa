@@ -1186,6 +1186,13 @@ CettaNativeQueryStatus cetta_native_query_run(
     TermUniverse *universe = query->source->native.universe;
     if (!universe)
         return CETTA_NATIVE_QUERY_DECLINED;
+    /* These loops address the native row indexes. An occurrence source has
+     * no such rows: its empty native shadow is not an empty answer bag.
+     * Leave it to the ordinary incremental matcher. Listed rows are already
+     * values and use the source only for its term universe. */
+    if (!query->rows &&
+        !space_match_backend_has_native_occurrences(query->source))
+        return CETTA_NATIVE_QUERY_DECLINED;
     bool effects = query->consumer == CETTA_NATIVE_QUERY_EFFECTS;
     bool deferred = false;
     for (size_t effect = 0u; effects && effect < query->effect_count;

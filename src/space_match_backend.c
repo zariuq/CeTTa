@@ -11271,6 +11271,12 @@ bool space_match_backend_accepts_space(const Space *s, SpaceEngine kind) {
 
 bool space_match_backend_try_set(Space *s, SpaceEngine kind) {
     CETTA_SCOPED_SHARED_TRANSITION(transition);
+    /* A captured source has no native shadow to convert. Reconfiguration
+     * would discard its rows and change an immutable view into a writer. */
+    if (s && s->match_backend.kind == SPACE_ENGINE_SOURCE) {
+        space_match_backend_set_error(SPACE_MATCH_BACKEND_ERROR_READ_ONLY);
+        return false;
+    }
     if (!space_match_backend_accepts_space(s, kind) ||
         space_match_backend_unavailable_reason(kind))
         return false;
@@ -13030,6 +13036,8 @@ SpaceQueryCursorStep space_query_cursor_step_with_budget(SpaceQueryCursor *curso
     if (work->matcher) goto match_candidate;
     CettaIndex index = 0u;
     SpaceOccurrenceCursorStep step = space_occurrence_cursor_next(&work->occurrences, &index, NULL);
+    if (step == SPACE_OCCURRENCE_CURSOR_PROGRESS)
+        return SPACE_QUERY_CURSOR_PROGRESS;
     if (step == SPACE_OCCURRENCE_CURSOR_INVALIDATED)
         return SPACE_QUERY_CURSOR_INVALIDATED;
     if (step == SPACE_OCCURRENCE_CURSOR_CAPACITY || step == SPACE_OCCURRENCE_CURSOR_INCOMPLETE) {

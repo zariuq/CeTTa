@@ -21190,6 +21190,10 @@ static bool petta_machine_advance_choice(
             SpaceOccurrenceCursorStep step =
                 space_occurrence_cursor_next(
                     &choice->as.match.occurrences, &candidate_index, &candidate);
+            if (step == SPACE_OCCURRENCE_CURSOR_PROGRESS) {
+                *failure = PETTA_MACHINE_STEP_SUSPENDED;
+                return false;
+            }
             if (step == SPACE_OCCURRENCE_CURSOR_END) {
                 choice->as.match.occurrence_exhausted = true;
                 return false;
@@ -25420,6 +25424,10 @@ static bool petta_machine_start_match_choice_policy(
             machine, &machine->choices[machine->choice_len - 1u],
             &failure)) {
         petta_choice_retire_exhausted(machine);
+        return true;
+    }
+    if (failure == PETTA_MACHINE_STEP_SUSPENDED) {
+        machine->suspended_choice = true;
         return true;
     }
     petta_choice_pop(machine);
@@ -40189,6 +40197,25 @@ static bool petta_machine_dispatch_goal(
                 machine, first->expr.elems[1], second,
                 goal.barrier, failure);
         }
+        /* The strict Space operand is already a value. Read a source by
+         * the same captured occurrence choice as match, instead of asking
+         * the host to materialize its absent native shadow. A fresh whole-
+         * row pattern preserves duplicates and returns stored code as data. */
+        if (head_id == g_builtin_syms.get_atoms && first->expr.len == 2u &&
+            machine->host.resolve_space) {
+            Space *source = machine->host.resolve_space(
+                machine->host.context, machine->space, &machine->heap,
+                first->expr.elems[1]);
+            if (source && source->match_backend.kind == SPACE_ENGINE_SOURCE) {
+                Atom *row = petta_fresh_variable(machine);
+                if (!row) {
+                    *failure = PETTA_MACHINE_STEP_CAPACITY;
+                    return false;
+                }
+                return petta_machine_start_match_choice(machine, source,
+                    row, row, second, goal.barrier, NULL);
+            }
+        }
         bool direct =
             goal.kind == PETTA_GOAL_HOST_STRICT_READY
                 ? is_grounded_op(head_id)
@@ -41233,6 +41260,8 @@ dispatch_body_resume_segment:
                           impl, &goal, &failure)
                     : false;
         if (dispatched) {
+            if (impl->suspended_choice)
+                return PETTA_MACHINE_STEP_SUSPENDED;
             if (petta_machine_check_type_obligations(
                     impl, &failure)) {
                 bool resume_candidate =

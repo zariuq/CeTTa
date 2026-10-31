@@ -16,6 +16,117 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
+#include <limits.h>
+
+typedef struct {
+    SpaceProgramToken token;
+    uint64_t module_epoch;
+    size_t parent;
+    uint32_t edge;
+} PettaObservedProgram;
+struct PettaProgramReadBarrier {
+    unsigned references;
+    PettaObservedProgram *members;
+    size_t len,capacity;
+    struct PettaProgramReadBarrier *next;
+};
+static pthread_mutex_t program_read_lock=PTHREAD_MUTEX_INITIALIZER;
+static PettaProgramReadBarrier *program_reads;
+static atomic_size_t program_read_count;
+
+static bool program_read_member(PettaProgramReadBarrier *barrier,const Space *space,
+        size_t parent,uint32_t edge) {
+    if (!space) return true;
+    uint64_t instance=space_instance_id(space);if (!instance) return false;
+    for (size_t i=0;i<barrier->len;i++) if (barrier->members[i].token.space==space &&
+            barrier->members[i].token.instance_id==instance) return true;
+    if (barrier->len==barrier->capacity) {
+        size_t capacity=barrier->capacity ? barrier->capacity*2 : 8;
+        if (capacity<barrier->capacity || capacity>SIZE_MAX/sizeof(*barrier->members)) return false;
+        void *members=realloc(barrier->members,capacity*sizeof(*barrier->members));
+        if (!members) return false;
+        barrier->members=members;barrier->capacity=capacity;
+    }
+    barrier->members[barrier->len++]=(PettaObservedProgram){
+        .token=space_program_token(space),.module_epoch=space->module_dependency_epoch,
+        .parent=parent,.edge=edge};return true;
+}
+PettaProgramReadBarrier *petta_program_read_barrier_new(const Space *root) {
+    if (!root) return NULL;
+    CETTA_SCOPED_SHARED_TRANSITION(program_read_capture);
+    PettaProgramReadBarrier *barrier=calloc(1,sizeof(*barrier));
+    if (!barrier) return NULL;
+    bool valid=program_read_member(barrier,root,SIZE_MAX,UINT32_MAX);
+    for (size_t i=0;valid && i<barrier->len;i++) {
+        const Space *space=barrier->members[i].token.space;
+        valid=program_read_member(barrier,space->overlay_base,i,UINT32_MAX);
+        for (uint32_t d=0;valid && d<space->dep_count;d++) valid=program_read_member(barrier,space->deps[d],i,d);
+    }
+    if (!valid) { free(barrier->members);free(barrier);return NULL; }
+    barrier->references=1;
+    pthread_mutex_lock(&program_read_lock);barrier->next=program_reads;program_reads=barrier;
+    atomic_fetch_add_explicit(&program_read_count,1,memory_order_release);
+    pthread_mutex_unlock(&program_read_lock);
+    return barrier;
+}
+bool petta_program_read_barrier_retain(PettaProgramReadBarrier *barrier) {
+    if (!barrier) return false;
+    pthread_mutex_lock(&program_read_lock);
+    bool valid=barrier->references && barrier->references<UINT_MAX;
+    if (valid) barrier->references++;
+    pthread_mutex_unlock(&program_read_lock);return valid;
+}
+void petta_program_read_barrier_free(PettaProgramReadBarrier *barrier) {
+    if (!barrier) return;
+    pthread_mutex_lock(&program_read_lock);
+    if (!barrier->references) abort();
+    bool last=!--barrier->references;
+    if (last) {
+        PettaProgramReadBarrier **slot=&program_reads;
+        while (*slot && *slot!=barrier) slot=&(*slot)->next;
+        if (!*slot) abort();
+        *slot=barrier->next;
+        atomic_fetch_sub_explicit(&program_read_count,1,memory_order_release);
+    }
+    pthread_mutex_unlock(&program_read_lock);
+    if (last) { free(barrier->members);free(barrier); }
+}
+bool petta_program_read_barrier_active(const Space *space) {
+    if (!space || !atomic_load_explicit(&program_read_count,memory_order_acquire)) return false;
+    uint64_t instance=space_instance_id(space);bool found=false;
+    pthread_mutex_lock(&program_read_lock);
+    for (const PettaProgramReadBarrier *barrier=program_reads;barrier && !found;barrier=barrier->next)
+        for (size_t i=0;i<barrier->len;i++) if (barrier->members[i].token.space==space &&
+            barrier->members[i].token.instance_id==instance) { found=true;break; }
+    pthread_mutex_unlock(&program_read_lock);return found;
+}
+bool petta_program_read_barrier_current(const PettaProgramReadBarrier *barrier,const Space *root) {
+    if (!barrier || !barrier->len || !root) return false;
+    CETTA_SCOPED_SHARED_TRANSITION(program_read_validation);
+    for (size_t i=0;i<barrier->len;i++) {
+        const PettaObservedProgram *member=&barrier->members[i];const Space *live=root;
+        if (i) {
+            /* The parent was reached from the live root and validated earlier
+             * in this walk. Follow its current edge before touching a child;
+             * a saved child identity alone is never safe to dereference. */
+            if (member->parent>=i) return false;
+            const Space *parent=barrier->members[member->parent].token.space;
+            if (member->edge==UINT32_MAX) live=parent->overlay_base;
+            else {
+                if (member->edge>=parent->dep_count) return false;
+                live=parent->deps[member->edge];
+            }
+        }
+        if (!space_program_token_matches_live_space(member->token,live) ||
+                member->module_epoch!=live->module_dependency_epoch) return false;
+    }
+    return true;
+}
+void petta_program_read_barrier_storage(const PettaProgramReadBarrier *barrier,CettaStorageCensus *census) {
+    if (barrier && cetta_storage_object(census,barrier,sizeof(*barrier),CETTA_STORAGE_BLOCK))
+        cetta_storage_array(census,barrier->members,barrier->capacity,sizeof(*barrier->members),0);
+}
 
 typedef struct {
     Atom **items;
@@ -4730,12 +4841,14 @@ PettaSpecializeResult petta_specializer_prepare_call(
     Space *space, PettaProgram *program,
     Arena *persistent_arena,
     Arena *result_arena, Atom *call, Atom **out_call) {
+    CETTA_SCOPED_SHARED_TRANSITION(specializer_preparation);
     if (out_call)
         *out_call = call;
     if (!space || !persistent_arena || !result_arena ||
         !call || !out_call) {
         return PETTA_SPECIALIZE_CAPACITY;
     }
+    if (petta_program_read_barrier_active(space)) return PETTA_SPECIALIZE_UNCHANGED;
     size_t record_checkpoint = g_petta_specializations.len;
     PettaSpecializerContext context = {
         .space = space,
