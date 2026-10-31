@@ -201,7 +201,9 @@ kernel checks and what it leaves to the dialect.
 | Lane | Use | Command |
 |---|---|---|
 | Semantic contracts | focused source/value, completion and sidecar checks | `make test-execution-semantic-ledger test-petta-corrected-stable` |
-| Regular development | fast feedback after ordinary changes | `make test-correctness test-profiles bench-light` |
+| Regular development | representative suite in the current build | `make test` |
+| Dialect/profile changes | admission, imports and dialect boundaries | `make test-profiles` |
+| Performance changes | focused benchmark correctness and cost checks | `make bench-light` |
 | Full correctness | before review or merge | `make test-correctness-all test-profiles` |
 | Routine readiness | correctness, sanitizers, capacity and performance regressions | `make main-readiness-routine` |
 | Main readiness | before merging to main or releasing | `make main-readiness-exhaustive` |
@@ -347,8 +349,9 @@ in one dialect does not establish another dialect's behavior.
 
 `tests/test_manifest.tsv` records each fixture's dialect, profile, build and
 expected-observation policy. Add a small regression with an independent
-expected result, then run its affected targets from the Tests table. Preserve
-duplicate answers, variable sharing and declared ordering; an equal answer
+expected result, then run its affected Makefile target and the current build's
+regular suite. Use the broader lanes in the Tests table as the change requires.
+Preserve duplicate answers, variable sharing and declared ordering; an equal answer
 count alone is insufficient. Run the full readiness campaign on a frozen
 candidate before release.
 
@@ -368,7 +371,7 @@ their ownership and fallback rules.
 ./cetta --list-languages
 ./cetta --count-only <file>          result counts only
 ./cetta --quiet <file>               hide [()] success results
-./cetta --fuel <-1|n> <file>         evaluation budget, -1 unlimited
+./cetta --fuel <-1|n> <file>         evaluation budget, positive n or -1 unlimited
 ./cetta --num-threads <n> <file>     OS threads for parallel-capable execution
 ./cetta --space-engine <name> <file> select the space engine
 ./cetta --compile <file.metta>       emit LLVM IR

@@ -247,7 +247,13 @@
         "admission": "No retained constraint owner, dormant goal or queued wake, and no retained table entry. Source credit does not establish this context fact. Draining may readmit the same caller.",
         "control": "tests/support/test_petta_search_machine.c:test_unmetered_delayed_segments; body, IF and tail guard mutants are caught. Prepared-condition coverage was added after a tail mutant survived the first fixture.",
         "proof": "Mettapedia/Machines/SourceResumeBoundary.lean; guarded prefix and ordinary suffix compose into the maintained source-word machine, preserving the complete residual and logical count. Solver synchronization, native word correspondence and C memory remain separate obligations."
-      }
+      },
+      "metered_activation_admission": "An active finite source inquiry admits activation only for a VALUE plan with an explicit RETURN_VALUE word. Compound bodies keep the ordinary planned entry before body execution. Missing/unlimited permission retains independent activation admission; bounded refusal never becomes a stable program refusal.",
+      "metered_activation_evidence": [
+        "Mettapedia.Machines.ActivationBudgetAdmission",
+        "metered_activation_controls",
+        "tests/support/check_petta_activation_source_budget.py"
+      ]
     },
     {
       "id": "dense-and-exclusive-frame-slots",
@@ -492,6 +498,32 @@
         {
           "file": "src/eval.c",
           "symbol": "petta_eval_open_callable_answers_only"
+        },
+        {
+          "file": "src/open_equation_machine.c",
+          "symbols": [
+            "oem_lexical_callable_step",
+            "oem_callable_program"
+          ]
+        },
+        {
+          "file": "src/eval.c",
+          "symbols": [
+            "cetta_petta_open_callable",
+            "cetta_petta_open_callable_parameters"
+          ]
+        },
+        {
+          "file": "src/abt.c",
+          "symbol": "abt_subst_vars"
+        },
+        {
+          "file": "src/petta_search_machine.c",
+          "symbol": "petta_machine_execute_prepared_query"
+        },
+        {
+          "file": "src/petta_search_machine.c",
+          "symbol": "petta_machine_collect_closed_answers"
         }
       ],
       "admission": "Readiness, type authority, computation/data provenance and result demand are separate judgments. Prepared cursor construction retains a handle without entering work; first execution and resumption own optional host-authority admission. A lexical preparation precheck cannot replace that entry check.",
@@ -607,6 +639,12 @@
           "symbols": [
             "oem_build_builtin_entry"
           ]
+        },
+        {
+          "file": "src/petta_search_machine.c",
+          "symbols": [
+            "petta_machine_execute_prepared_query"
+          ]
         }
       ],
       "case_source_evidence": "literal_case_default is derived from the authored arm, retained during value-plan collapse and included in plan content identity. A variable or computed pattern that evaluates to Empty remains a data pattern. Current source plans govern classification; printed shape alone is insufficient. Computed intrinsic Booleans use the prepared program's representation constructor, as ordinary dialect returns do; raw grounded Boolean leaves cannot select their own publication spelling.",
@@ -615,8 +653,8 @@
         "family": "ready-call-and-result-contracts",
         "counts": {
           "type": 66,
-          "call": 30,
-          "reference": 35
+          "call": 41,
+          "reference": 46
         },
         "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
       },
@@ -693,7 +731,23 @@
         "admission": "Reuse the existing language-owned ready-relation inquiry, including specialization, arity, declarations and foreign dispatch. Preserve observed/finite-fuel entry boundaries. Refusal is before callee entry; a handled failure cannot replay.",
         "consumer": "Ordinary CALL_READY and unlimited APPLY_READY use the same service. Admitted private partials omit the eager syntax expansion; consumers can still request concrete query syntax.",
         "validation": "Native consumer controls intercept expansion, including empty captures, complete captures, refusal and finite-fuel paths. Public controls retain declared error-scope, held-operand and mutation laws.",
-        "proof": "Mettapedia.Machines.ContextualInvocation; independent argument readers, contextual kernel entry and subsequent slices. Native C admission/lifetimes remain separate."
+        "proof": "Mettapedia.Machines.ContextualInvocation; independent argument readers, contextual kernel entry and subsequent slices. Native C admission/lifetimes remain separate.",
+        "prepared_entry": {
+          "source": "src/petta_search_machine.c:petta_machine_execute_prepared_query",
+          "callee": "src/eval.c:prepared_pure_closed_invocation_try",
+          "input": "The existing CettaInvocation and authoritative argument resolution; already owned source syntax is optional.",
+          "contract": "Only the callee materializes whole-call syntax when its compilation needs it. Admission and current authority remain callee-owned; entered outcomes retain the existing delivery boundary.",
+          "controls": [
+            "caller_result_controls: dynamic head, completed partial, nine arguments and lexical constructor; no reconstructed syntax at borrowed entry",
+            "tests/test_prepared_query_invocation.c: 40 scoped query controls over aliases, 0/1/8/9/65 arguments, metadata views and four outcomes",
+            "caller_result_controls: finite-frontend inquiry occurs exactly once"
+          ],
+          "laws": [
+            "Mettapedia.Machines.ContextualInvocation.resolution_refines",
+            "Mettapedia.Machines.ContextualInvocation.charged_entry_refines"
+          ],
+          "remaining": "Finite-answer and open-cursor frontends retain their current syntax observation boundaries; no new negative-admission certificate is inferred."
+        }
       },
       "common_sequence_execution": {
         "source": "src/petta_search_machine.c:petta_machine_schedule_sequence",
@@ -875,6 +929,31 @@
         ],
         "native_control": "tests/test_native_conditional_context.c:callable_signature_reuse_controls",
         "boundary": "The source model assumes immutable identity-to-parameter registration. Native registration, mutable admission, cursor lifetime and C correspondence remain separately tested obligations."
+      },
+      "qualified_callable_preparation": {
+        "model": "Mettapedia.Machines.CallablePreparation",
+        "laws": [
+          "step_refines",
+          "trace_refines",
+          "signature_survives",
+          "failed_preparation_remains_retryable",
+          "missing_plan_is_not_a_refusal_certificate"
+        ],
+        "native_control": "tests/test_native_conditional_context.c:callable_preparation_retry_controls",
+        "scope": "Exact-signature caches retain only successful workers; a failed pure preparation rolls back temporary source storage and remains retryable. OEM body compilation publishes only positive plans under its existing source/authority stamp. The callbacks export no stable-refusal certificate; no entered result is replayed."
+      },
+      "qualified_parameter_span": {
+        "model": "Mettapedia.Machines.ParameterSpanOpening",
+        "law": "unary_opening_refines",
+        "owner": "cetta_petta_open_callable_parameters",
+        "lowering": "abt_subst_vars",
+        "admission": "A consecutive private callable prefix opens to free parameter variables. Argument values remain in the existing binding state. Unary opening is the retained specialization.",
+        "native_controls": [
+          "tests/test_abt.c:test_parameter_span",
+          "tests/petta/lambda_parameter_scope.metta",
+          "tests/support/test_lambda_span_budget.c"
+        ],
+        "remaining": "Native scope-declaration correspondence, source charging and complete ordinary-plan migration remain separate obligations."
       }
     },
     {
@@ -1094,7 +1173,8 @@
           "control": "tests/test_native_conditional_context.c:caller_result_controls and caller_real_collection_controls",
           "algorithm_law": "Mettapedia.Machines.SourceCondition.source_steps_refine"
         }
-      ]
+      ],
+      "inspection_handoff": "If inspection of an entered completed value cannot establish cursor-local variable ownership, OEM transfers the actual completed packet and caller through its existing host-return boundary, preserving sharing without replay."
     },
     {
       "id": "continuation-frame-stack",
@@ -1155,7 +1235,14 @@
           "reference": 3
         },
         "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
-      }
+      },
+      "ordinary_planned_segments": "The common sequence scheduler marks planned ordinary and activation-backed successors alike. The existing segment worker retains per-goal source/physical admission and collection before removing a goal; retained constraint/table work and observers preserve the full boundary. Unplanned continuations keep ordinary scheduling.",
+      "ordinary_segment_evidence": [
+        "Mettapedia.Machines.SourceResumeBoundary.contextual_slice_refines",
+        "Mettapedia.Machines.SourceStepSelection.slice_refines",
+        "test_metered_body_segments",
+        "test_unmetered_delayed_segments"
+      ]
     },
     {
       "id": "immutable-syntax-and-generation-sharing",
@@ -1370,6 +1457,14 @@
         {
           "file": "src/match.c",
           "symbol": "bindings_resolve_value_root"
+        },
+        {
+          "file": "src/atom.c",
+          "symbol": "atom_graph_any_checked"
+        },
+        {
+          "file": "src/prepared_pure_machine.c",
+          "symbol": "cetta_prepared_pure_program_value_is_fully_evaluated"
         }
       ],
       "admission": "Immutable direct support is stable; its images depend on the current logical store and lexical frame. Ordered frame inventory reuses an exact singleton fact at each subtree, qualifies its full coordinate under the value's current context, and retains the first occurrence only.",
@@ -1423,11 +1518,19 @@
         "file": "benchmarks/mam_families/evaluator_transfer_callers.json",
         "family": "variable-support-and-groundness",
         "counts": {
-          "call": 25,
-          "reference": 25
+          "call": 40,
+          "reference": 40
         },
         "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
-      }
+      },
+      "inspection_contract": "Completed checked graph inspection may establish presence or absence. Incomplete inspection grants no readiness, purity, portability or execution permission. Root cycles use a separate visited bit; non-root branching nodes use the common visited set. Exact semantic graph queries require storage rather than an unsafe tree fallback.",
+      "inspection_evidence": [
+        "Mettapedia.Machines.GraphInspection",
+        "tests/test_native_query_projection.c",
+        "graph_consumer_refusal_controls",
+        "he_source_refusal_controls",
+        "lexical_packet_controls"
+      ]
     },
     {
       "id": "occurs-check-certificates",
@@ -1755,7 +1858,8 @@
           "reference": 28
         },
         "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
-      }
+      },
+      "inspection_refusal": "An unfinished literal-space inspection is a resource refusal with no stable-refusal bits. Input marker checks refuse before entry without changing a warmed cache. A later complete retry rechecks current authority."
     },
     {
       "id": "foreign-observer-authority",
@@ -2412,7 +2516,7 @@
       }
     }
   ],
-  "coverage": "All 29 named families have dispositions, source anchors, a typed native-use census across all 340 linked C translation units in both build configurations, and admission/validity/cost obligations. The 109 named anchors include the compiler report and publication boundary. Caller-by-caller semantic transfer completion, dynamic callback qualification and complete ordinary-route workload baselines remain open.",
+  "coverage": "All 29 named families have dispositions, source anchors, a typed native-use census across all 340 linked C translation units in both build configurations, and admission/validity/cost obligations. The 118 named anchors include the compiler report and publication boundary. Caller-by-caller semantic transfer completion, dynamic callback qualification and complete ordinary-route workload baselines remain open.",
   "review_reconciliation": [
     {
       "idea": "Shared call contract over existing engines",
