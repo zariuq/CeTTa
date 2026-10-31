@@ -28,7 +28,8 @@ struct CettaTelegramScheduler {
     CettaReadyQueue input_ready, effect_ready;
     size_t watch_bytes;
     CettaDurableWatch *inbox;
-    bool output_turn, effects_behind, workers_waiting;
+    bool output_turn, effects_behind, workers_waiting, inputs_behind;
+    Cursor input_from;
     /* Exact occurrence positions, including multiple effects in one commit. */
     Cursor behind_from, waiting_from;
     CettaDurableWatch *ready; /* the agent's unread tasks, while requests wait */
@@ -81,18 +82,46 @@ static CettaDurableStatus key_watch(CettaTelegramScheduler *s, const char *space
     if (r==DURABLE_OK) r=cetta_durable_watch_new(o,remaining(s),&e->watch);
     cetta_durable_observation_free(o); if (r==DURABLE_OK) adopt(s,e->watch); return r;
 }
+typedef struct { const char *key;size_t index,lane; } Submission;
+static int compare_submission(const void *a,const void *b) {
+    return strcmp(((const Submission *)a)->key,((const Submission *)b)->key);
+}
+/* Admission hint only: the decision still validates lane ordering against its
+ * captured reads. Waiting successors cannot crowd out delivery completions. */
+static bool *input_candidates(const CettaDurableSnapshot *v) {
+    bool *eligible=calloc(v->count?v->count:1,sizeof(*eligible));
+    Submission *submissions=calloc(v->count?v->count:1,sizeof(*submissions));
+    if (!eligible || !submissions) {free(eligible);free(submissions);return NULL;}
+    size_t count=0;
+    for (size_t i=0;i<v->count;++i) {
+        eligible[i]=true;const char *key=v->records[i].key;
+        const char *last=strrchr(key,'.');
+        if (!strncmp(key,"submission/",11) && last && last[1])
+            submissions[count++]=(Submission){key,i,(size_t)(last-key)+1};
+    }
+    qsort(submissions,count,sizeof(*submissions),compare_submission);
+    for (size_t i=1;i<count;++i) {
+        const Submission *p=&submissions[i-1],*c=&submissions[i];
+        if (p->lane==c->lane && !strncmp(p->key,c->key,c->lane)) eligible[c->index]=false;
+    }
+    free(submissions);return eligible;
+}
 static CettaDurableStatus refresh_inputs(CettaTelegramScheduler *s) {
     CettaDurableStatus r=s->inbox?cetta_durable_watch_current(s->store,s->inbox):DURABLE_CONFLICT;
-    if (r!=DURABLE_CONFLICT) return r;
+    if (r!=DURABLE_OK && r!=DURABLE_CONFLICT) return r;
+    if (r==DURABLE_OK && !s->inputs_behind) return r;
+    if (!s->inputs_behind) s->input_from=(Cursor){-1,-1};
     drop_watch(s,&s->inbox);
     CettaDurableScope q={DURABLE_SPACE,"host.inbox",NULL}; CettaDurableObservation *o=NULL;
     r=cetta_durable_observe(s->store,&q,1,&o); if (r!=DURABLE_OK) return r;
     const CettaDurableSnapshot *v=cetta_durable_observation_view(o,0);
+    bool *eligible=input_candidates(v);
+    if (!eligible) {cetta_durable_observation_free(o);return DURABLE_NOMEM;}
     for (CettaReadyLink *p=s->input_ready.first;p;p=p->next) ((Entry *)p)->seen=false;
     /* Remove consumed entries before adding arrivals, so a full queue can
      * make progress without a transient extra slot. */
     for (CettaReadyLink *p=s->input_ready.first;p;p=p->next)
-        for (size_t j=0;j<v->count;++j) if (!strcmp(((Entry *)p)->key,v->records[j].key)) {
+        for (size_t j=0;j<v->count;++j) if (eligible[j] && !strcmp(((Entry *)p)->key,v->records[j].key)) {
             Entry *e=(Entry *)p; e->seen=true;
             if (e->cursor.revision!=v->records[j].revision) {
                 drop_watch(s,&e->watch); e->reported=false;
@@ -104,16 +133,20 @@ static CettaDurableStatus refresh_inputs(CettaTelegramScheduler *s) {
         next=p->next;
         if (!((Entry *)p)->seen) remove_entry(s,(Entry *)p);
     }
-    /* A full queue is backpressure, not a fault: inputs past its capacity stay
-     * in the inbox and are added as consumed entries leave it, since every
-     * consumption changes the inbox this refresh watches. */
-    for (size_t j=0;j<v->count && r==DURABLE_OK;++j)
-        r=append(s->inputs,&s->input_ready,v->records[j].key,
-            (Cursor){v->records[j].revision,v->records[j].position});
-    if (r==DURABLE_LIMIT) r=DURABLE_OK;
+    /* Keep a moving admission window. Waiting entries may leave RAM, but
+     * remain durable. Always restarting at the oldest prefix can exclude the
+     * very completion that releases those entries. */
+    s->inputs_behind=false;
+    for (size_t j=0;j<v->count && r==DURABLE_OK;++j) {
+        Cursor cursor={v->records[j].revision,v->records[j].position};
+        if (!eligible[j] || !earlier(s->input_from,cursor)) continue;
+        r=append(s->inputs,&s->input_ready,v->records[j].key,cursor);
+        if (r==DURABLE_LIMIT) { s->inputs_behind=true;r=DURABLE_OK;break; }
+        s->input_from=cursor;
+    }
     if (r==DURABLE_OK) r=cetta_durable_watch_new(o,remaining(s),&s->inbox);
     if (r==DURABLE_OK) adopt(s,s->inbox);
-    cetta_durable_observation_free(o); return r;
+    free(eligible);cetta_durable_observation_free(o); return r;
 }
 static CettaDurableStatus input(CettaTelegramScheduler *s, Entry *e) {
     CettaHostDecision *d=NULL;
@@ -141,6 +174,7 @@ static CettaDurableStatus input(CettaTelegramScheduler *s, Entry *e) {
         if (r==DURABLE_CONFLICT || r==DURABLE_BUSY) { cetta_host_decision_free(d); return DURABLE_OK; }
         if (!fatal(r)) {
             CettaDurableStatus w=cetta_host_watch(d,remaining(s),&e->watch);
+            if (w==DURABLE_LIMIT) w=cetta_host_watch_revision(d,remaining(s),&e->watch);
             if (w!=DURABLE_OK) r=w; else adopt(s,e->watch);
         }
         if (!empty && !fatal(r) && !e->reported) { report(s,"input-policy",e->key,r); e->reported=true; }
@@ -159,12 +193,15 @@ static CettaDurableStatus output(CettaTelegramScheduler *s, Entry *e) {
     if (r==DURABLE_OK && (a==TELEGRAM_DONE || a==TELEGRAM_FOREIGN)) {
         remove_entry(s,e); return DURABLE_OK;
     }
-    if (r==DURABLE_OK && a==TELEGRAM_WORKER) {
-        char id[65]; r=cetta_worker_register(s->store,e->key,s->config.agent.worker,id);
+    if (r==DURABLE_OK && (a==TELEGRAM_WORKER || a==TELEGRAM_CONTROL_WORKER)) {
+        char id[65];
+        r=a==TELEGRAM_CONTROL_WORKER
+            ? cetta_worker_register_control(s->store,e->key,s->config.agent.worker,id)
+            : cetta_worker_register(s->store,e->key,s->config.agent.worker,id);
         if (r==DURABLE_OK) {
             increment(&s->stats.published); remove_entry(s,e); return DURABLE_OK;
         }
-        /* The agent has as many unread tasks as it may. The request stays in
+        /* Resource pressure leaves the immutable request in
          * the outbox and leaves this queue, which belongs to work that can
          * proceed; it is offered again when the agent reads a task. An absent
          * agent never stops the service or delays its replies. */
@@ -262,14 +299,17 @@ CettaDurableStatus cetta_telegram_scheduler_step(CettaTelegramScheduler *s, unsi
         if (e->watch) {
             r=cetta_durable_watch_current(s->store,e->watch);
             if (r==DURABLE_BUSY) continue;
-            if (r==DURABLE_OK) continue;
+            if (r==DURABLE_OK) {
+                if (!send && s->inputs_behind) remove_entry(s,e);
+                continue;
+            }
             if (r!=DURABLE_CONFLICT) return failed(s,r);
             drop_watch(s,&e->watch); e->reported=false;
         }
         r=send?output(s,e):input(s,e);
         if (r==DURABLE_BUSY) continue;
         if (r!=DURABLE_OK) return failed(s,r);
-        if (!send && e->cursor.revision==-1) remove_entry(s,e);
+        if (!send && (e->cursor.revision==-1 || (e->watch && s->inputs_behind))) remove_entry(s,e);
     }
     return DURABLE_OK;
 }

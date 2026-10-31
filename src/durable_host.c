@@ -941,3 +941,9 @@ done:
     for (size_t i=0;i<3+nw+ne;++i) free((void *)ops[i].data);
     arena_free(&a); return status;
 }
+
+CettaDurableStatus cetta_host_watch_revision(const CettaHostDecision *d,
+        size_t budget,CettaDurableWatch **out) {
+    if (!d) return DURABLE_INVALID;
+    return cetta_durable_watch_revision_new(d->observation,budget,out);
+}

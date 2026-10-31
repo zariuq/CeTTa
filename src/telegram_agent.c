@@ -426,7 +426,9 @@ CettaDurableStatus cetta_telegram_agent_admit(CettaDurableStore *store,
         }
         if (strcmp(version,"1")) { s=DURABLE_VERSION; goto done; }
         if (!cetta_worker_validate((void *)c->worker,payload,reply)) { s=DURABLE_INVALID; goto done; }
-        *admission=TELEGRAM_WORKER; goto done;
+        *admission=channel_mode(c) && form(reply,"tg-channel:asked",4)
+            ? TELEGRAM_CONTROL_WORKER : TELEGRAM_WORKER;
+        goto done;
     }
     if (strcmp(channel,"telegram.action")) { *admission=TELEGRAM_FOREIGN; goto done; }
     /* A command's own message is never ordered behind a chat lane or held
