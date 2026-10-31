@@ -18,7 +18,8 @@ def main():
     binary = os.environ.get("CETTA_BIN", args.cetta)
     directory = Path("runtime/prime_capability_opening")
     directory.mkdir(parents=True, exist_ok=True)
-    for depth in (0, 31, 32, 33, 63, 64, 65, 128, 512):
+    depths = (0, 1, 2, 31, 32, 33, 63, 64, 65, 128, 512)
+    for depth in depths:
         source = "!(import! &self list)\n"
         for target in (3, 4):
             source += (
@@ -37,7 +38,7 @@ def main():
                 f"FAIL: capability opening at depth {depth}: "
                 f"exit {result.returncode}\n{result.stdout}{result.stderr}"
             )
-    print("PASS: Prime filter templates preserve matches and misses at nine depths")
+    print(f"PASS: Prime filter templates preserve matches and misses at {len(depths)} depths")
 
 
 if __name__ == "__main__":

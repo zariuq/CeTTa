@@ -1838,7 +1838,7 @@ static unsigned scalar_callable_admission(void) {
     }
     unsigned polls = 0u;
     assert(cetta_prepared_pure_program_execute_controlled(((PettaPreparedCallable *)compiled)->program, &owner,
-        arguments[0], arguments[0], lexical_completion_interrupt, &polls, &result));
+        arguments[0], arguments[0], lexical_completion_interrupt, &polls, &result, NULL));
     assert(result.kind == CETTA_CALL_INTERRUPTED && polls == 1u);
     checks += 2u;
     petta_eval_open_release_pure_callable(&context, compiled);
@@ -5173,7 +5173,7 @@ static unsigned bound_native_completion_controls(void) {
         bool entered = false;
         CettaOwnedReturn pending;
         assert(step == CETTA_OWNED_EXECUTION_HANDOFF && completion == CETTA_EVAL_COMPLETE &&
-            cetta_prepared_pure_answer_cursor_native_boundary(cursor, &invocation, &entered, &pending));
+            cetta_prepared_pure_answer_cursor_native_boundary(cursor, &invocation, &entered, &pending, NULL));
         assert(entered && pending.outcome.kind == CETTA_CALL_SUSPENDED &&
             pending.outcome.term == pending.outcome.delayed->expr.elems[0] &&
             pending.outcome.term == pending.outcome.delayed->expr.elems[1]);
@@ -5243,7 +5243,7 @@ static unsigned bound_native_completion_controls(void) {
         assert(completion == CETTA_EVAL_COMPLETE);
         if (item >= 5u) {
             assert(!count && step == CETTA_OWNED_EXECUTION_HANDOFF &&
-                cetta_prepared_pure_answer_cursor_native_boundary(cursor, &invocation, &entered, &returned));
+                cetta_prepared_pure_answer_cursor_native_boundary(cursor, &invocation, &entered, &returned, NULL));
             assert(entered && returned.environment == &environment && returned.outcome.term == held &&
                 returned.outcome.kind == (item == 7u ? CETTA_CALL_SUSPENDED : CETTA_CALL_VALUE));
             if (item == 7u)
@@ -5740,7 +5740,7 @@ static unsigned contextual_resumption_controls(void) {
         assert(cetta_prepared_pure_answer_cursor_return(cursor, &pending, &completion) == CETTA_OWNED_EXECUTION_HANDOFF);
         CettaInvocation invocation;
         bool entered = false;
-        assert(cetta_prepared_pure_answer_cursor_native_boundary(cursor, &invocation, &entered, &pending) && entered);
+        assert(cetta_prepared_pure_answer_cursor_native_boundary(cursor, &invocation, &entered, &pending, NULL) && entered);
         assert(pending.outcome.kind == CETTA_CALL_SUSPENDED);
         Arena output;
         arena_init_detached(&output);
@@ -5775,7 +5775,7 @@ static unsigned contextual_resumption_controls(void) {
         outcome_set_free(&values);
         checks++;
         CettaOwnedReturn after;
-        assert(cetta_prepared_pure_answer_cursor_native_boundary(cursor, &invocation, &entered, &after) &&
+        assert(cetta_prepared_pure_answer_cursor_native_boundary(cursor, &invocation, &entered, &after, NULL) &&
             after.outcome.term == pending.outcome.term && after.outcome.delayed == pending.outcome.delayed);
         bindings_free(&captures);
         cetta_prepared_pure_answer_cursor_close(cursor);
@@ -6071,7 +6071,7 @@ static unsigned prepared_body_entry_controls(void) {
         CettaInvocation invocation;
         bool entered = false;
         CettaOwnedReturn snapshot;
-        assert(cetta_prepared_pure_answer_cursor_native_boundary(cursor, &invocation, &entered, &snapshot));
+        assert(cetta_prepared_pure_answer_cursor_native_boundary(cursor, &invocation, &entered, &snapshot, NULL));
         assert(entered && snapshot.outcome.kind == CETTA_CALL_VALUE &&
             snapshot.outcome.result_form == CETTA_CALL_RESULT_COMPLETED_VALUE &&
             atom_eq(snapshot.outcome.term, atom_int(&source, 17)) &&
@@ -6541,7 +6541,7 @@ static unsigned conditional_native_continuation_controls(void) {
         CettaInvocation invocation;
         bool entered = false;
         assert(cetta_prepared_pure_answer_cursor_native_boundary(cursor, &invocation,
-            &entered, &pending) && entered &&
+            &entered, &pending, NULL) && entered &&
             cetta_prepared_pure_answer_cursor_native_transfer_ready(cursor));
         CettaOwnedExecution refused = {.computation = &completion};
         assert(!cetta_prepared_pure_answer_cursor_take_native(cursor, &refused) &&
@@ -6593,7 +6593,7 @@ static unsigned conditional_native_continuation_controls(void) {
             CETTA_OWNED_EXECUTION_HANDOFF);
         CettaInvocation invocation;
         bool entered = false;
-        assert(cetta_prepared_pure_answer_cursor_native_boundary(cursor, &invocation, &entered, &pending) && entered);
+        assert(cetta_prepared_pure_answer_cursor_native_boundary(cursor, &invocation, &entered, &pending, NULL) && entered);
         Arena answers;
         arena_init_detached(&answers);
         PreparedNativeContinuation *worker = prepared_native_continuation_new(&space, &answers, cursor, &pending);
@@ -7020,7 +7020,7 @@ static unsigned native_frontier_rejoin_controls(void) {
         }
         CettaInvocation invocation; bool entered = false;
         assert(unfinished == (long_chain ? 1u : 2u) && cetta_prepared_pure_answer_cursor_native_boundary(
-            cursor, &invocation, &entered, &returned) && entered && returned.outcome.term &&
+            cursor, &invocation, &entered, &returned, NULL) && entered && returned.outcome.term &&
             returned.outcome.term->kind == ATOM_VAR && prepared_calls == 1u);
         Atom *pending = returned.outcome.term;
         CettaOwnedExecution moved = {0};
@@ -7514,7 +7514,7 @@ static unsigned branching_native_frontier_controls(void) {
         !invalid.nodes && !invalid.roots && !invalid.length && !invalid.root_count);
     CettaInvocation invocation;
     bool entered = false;
-    assert(cetta_prepared_pure_answer_cursor_native_boundary(cursor, &invocation, &entered, &packet) &&
+    assert(cetta_prepared_pure_answer_cursor_native_boundary(cursor, &invocation, &entered, &packet, NULL) &&
         entered && packet.outcome.term && atom_has_vars(packet.outcome.term));
     Atom *retained = packet.outcome.term;
     for (unsigned at = 1u; at <= observed.reads && at <= 3u; at++) {
@@ -7524,7 +7524,7 @@ static unsigned branching_native_frontier_controls(void) {
             sizeof(selected) / sizeof(*selected), &reading, observe_caller_read, &refusing,
             &refused_graph) && !refused_graph.nodes && !refused_graph.roots &&
             !refused_graph.length && !refused_graph.root_count);
-        assert(cetta_prepared_pure_answer_cursor_native_boundary(cursor, &invocation, &entered, &packet) &&
+        assert(cetta_prepared_pure_answer_cursor_native_boundary(cursor, &invocation, &entered, &packet, NULL) &&
             entered && packet.outcome.term == retained && prepared_calls == 1u);
     }
     assert(cetta_prepared_pure_answer_cursor_native_transfer_ready(cursor));
@@ -7673,7 +7673,7 @@ static unsigned branching_native_frontier_controls(void) {
     assert(cetta_prepared_pure_answer_cursor_return(cursor, &packet, &completion) ==
         CETTA_OWNED_EXECUTION_HANDOFF && completion == CETTA_EVAL_INCOMPLETE_INVALIDATED &&
         cetta_prepared_pure_answer_cursor_handoff_reason(cursor) == CETTA_PREPARED_PURE_HANDOFF_STALE);
-    assert(cetta_prepared_pure_answer_cursor_native_boundary(cursor, &invocation, &entered, &packet) &&
+    assert(cetta_prepared_pure_answer_cursor_native_boundary(cursor, &invocation, &entered, &packet, NULL) &&
         entered && packet.outcome.term && atom_eq(packet.outcome.term, atom_int(&source, 17)) &&
         prepared_calls == 1u && space_length64(&space) == before_stale + 1u);
     retained = packet.outcome.term;
@@ -8132,14 +8132,14 @@ static unsigned stale_native_tail_controls(void) {
             CETTA_OWNED_EXECUTION_HANDOFF && completion == CETTA_EVAL_INCOMPLETE_INVALIDATED);
         CettaInvocation invocation;
         bool entered = false;
-        assert(cetta_prepared_pure_answer_cursor_native_boundary(cursor, &invocation, &entered, &returned) &&
+        assert(cetta_prepared_pure_answer_cursor_native_boundary(cursor, &invocation, &entered, &returned, NULL) &&
             entered && atom_eq(returned.outcome.term, atom_int(&source, 17)));
         Atom *packet = returned.outcome.term;
         CettaOwnedExecution refused = {0};
         assert(!cetta_prepared_pure_answer_cursor_native_transfer_ready(cursor) &&
             !cetta_prepared_pure_answer_cursor_take_native(cursor, &refused) &&
             !refused.computation && cetta_prepared_pure_answer_cursor_native_boundary(
-                cursor, &invocation, &entered, &returned) && returned.outcome.term == packet);
+                cursor, &invocation, &entered, &returned, NULL) && returned.outcome.term == packet);
         cetta_prepared_pure_answer_cursor_close(cursor);
         assert(prepared_calls == 1u && !prepared_effects);
         checks++;

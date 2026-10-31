@@ -339,12 +339,16 @@ typedef struct {
     /* Execute a native whose head/arity was positively admitted by the
      * generated intrinsic contract. False declines before native entry.
      * True transfers the tagged result, including zero or raised control.
+     * Completion belongs to this invocation, independently of the receiver's
+     * episode. A false return with incomplete completion is a preparation
+     * refusal; it never licenses fallback or claims native entry.
      * The native context is separate because a language's source-plan owner
      * and its library registry have distinct lifetimes and representations. */
     void *native_context;
     bool (*native_call)(
         void *context, Space *space, Arena *arena,
-        const CettaInvocation *invocation, CettaCallOutcome *outcome);
+        const CettaInvocation *invocation, CettaCallOutcome *outcome,
+        CettaEvalCompletion *completion);
 } CettaPreparedPureSourceView;
 
 CettaPreparedPureProgram *cetta_prepared_pure_program_compile(
@@ -546,7 +550,8 @@ bool cetta_prepared_pure_program_execute_controlled(
     CettaPreparedPureProgram *program, Arena *arena,
     Atom *accumulator, Atom *item,
     CettaPreparedPureInterruptPollFn interrupt_poll,
-    void *interrupt_context, CettaCallOutcome *outcome);
+    void *interrupt_context, CettaCallOutcome *outcome,
+    CettaEvalCompletion *completion);
 
 /* Execute using a caller-owned scratch arena.  A nonzero nursery budget
  * enables copying collection at the machine's generated-root loop boundary;
@@ -831,7 +836,7 @@ CettaPreparedPureHandoffReason cetta_prepared_pure_answer_cursor_handoff_reason(
  * resumption of compiled work. */
 bool cetta_prepared_pure_answer_cursor_native_boundary(
     CettaPreparedPureAnswerCursor *cursor, CettaInvocation *invocation,
-    bool *entered, CettaOwnedReturn *returned);
+    bool *entered, CettaOwnedReturn *returned, CettaEvalCompletion *completion);
 /* Move a replacement producer for that boundary into the retained cursor.
  * An entered packet remains live until the replacement finishes. A stale or
  * interrupted cursor refuses the move without changing either owner. */

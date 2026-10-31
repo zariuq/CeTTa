@@ -3579,6 +3579,15 @@ static bool arg_space(Atom *at, Space **out) {
     return false;
 }
 
+static Atom *arg_read_space(Arena *arena, Atom *argument, Space **space) {
+    if (!arg_space(argument, space))
+        return he_reject(arena, he_reason(arena, "first-argument-not-a-space"));
+    *space = eval_observe_space_read(*space);
+    if (!*space || eval_native_interrupted())
+        return he_unknown(arena, he_reason(arena, "space-observation-incomplete"));
+    return NULL;
+}
+
 static Atom *arg_fuel(Arena *a, Atom *at, uint64_t *out) {
     if (!(at->kind == ATOM_GROUNDED && at->ground.gkind == GV_INT))
         return he_reject(a, he_reason(a, "fuel-not-an-integer"));
@@ -3590,11 +3599,21 @@ static Atom *arg_fuel(Arena *a, Atom *at, uint64_t *out) {
 
 /* ── dispatch ──────────────────────────────────────────────────────────── */
 
-static const char *const HE_OP_NAMES[] = {
-    "normalize-type", "check-type-refinements",
-    "is-consistent", "check-type",
-    "search-inhabitants", "search-first-inhabitant",
-    "type-forward-step", "type-forward-closure",
+typedef struct {
+    const char *name;
+    uint32_t data_arguments;
+    CettaHeTypingService service;
+} HeTypingOperation;
+
+static const HeTypingOperation HE_OPS[] = {
+    {"normalize-type", 2u, {CETTA_HE_TYPING_SPACE_READ, true}},
+    {"check-type-refinements", 2u, {CETTA_HE_TYPING_SPACE_READ, true}},
+    {"is-consistent", 3u, {CETTA_HE_TYPING_STRUCTURAL, false}},
+    {"check-type", 6u, {CETTA_HE_TYPING_SPACE_READ, true}},
+    {"search-inhabitants", 2u, {CETTA_HE_TYPING_SPACE_READ, true}},
+    {"search-first-inhabitant", 2u, {CETTA_HE_TYPING_SPACE_READ, true}},
+    {"type-forward-step", 0u, {CETTA_HE_TYPING_SPACE_WRITE, true}},
+    {"type-forward-closure", 0u, {CETTA_HE_TYPING_SPACE_WRITE, true}},
 };
 
 #define HE_OP_ID_CACHE_CAP 16u
@@ -3605,11 +3624,13 @@ typedef struct {
     SymbolId minimum;
     SymbolId maximum;
     SymbolId slots[HE_OP_ID_CACHE_CAP];
+    const HeTypingOperation *operations[HE_OP_ID_CACHE_CAP];
 } HeOpIdCache;
 
 static _Thread_local HeOpIdCache g_he_op_id_cache;
 
-static void he_op_id_cache_insert(HeOpIdCache *cache, SymbolId id) {
+static void he_op_id_cache_insert(HeOpIdCache *cache, SymbolId id,
+        const HeTypingOperation *operation) {
     if (id == SYMBOL_ID_NONE)
         return;
     if (id < cache->minimum)
@@ -3623,6 +3644,7 @@ static void he_op_id_cache_insert(HeOpIdCache *cache, SymbolId id) {
         slot = (slot + 1u) & (HE_OP_ID_CACHE_CAP - 1u);
     }
     cache->slots[slot] = id;
+    cache->operations[slot] = operation;
 }
 
 static void he_op_id_cache_refresh(void) {
@@ -3633,15 +3655,15 @@ static void he_op_id_cache_refresh(void) {
     };
     if (g_symbols) {
         for (size_t i = 0u;
-             i < sizeof HE_OP_NAMES / sizeof HE_OP_NAMES[0]; i++) {
+             i < sizeof HE_OPS / sizeof HE_OPS[0]; i++) {
             he_op_id_cache_insert(
-                &cache, symbol_intern_cstr(g_symbols, HE_OP_NAMES[i]));
+                &cache, symbol_intern_cstr(g_symbols, HE_OPS[i].name), &HE_OPS[i]);
         }
     }
     g_he_op_id_cache = cache;
 }
 
-bool he_typing_is_op_id(SymbolId id) {
+static const HeTypingOperation *he_typing_operation_id(SymbolId id) {
     uint64_t table_instance_id = symbol_table_instance_id(g_symbols);
     if (g_he_op_id_cache.table != g_symbols ||
         g_he_op_id_cache.table_instance_id != table_instance_id) {
@@ -3651,29 +3673,40 @@ bool he_typing_is_op_id(SymbolId id) {
      * authoritative for holes and interleaved names inside these bounds. */
     if (!g_he_op_id_cache.table || id < g_he_op_id_cache.minimum ||
         id > g_he_op_id_cache.maximum)
-        return false;
+        return NULL;
     size_t slot = ((size_t)id * UINT32_C(2654435761)) &
         (HE_OP_ID_CACHE_CAP - 1u);
     for (size_t probe = 0u; probe < HE_OP_ID_CACHE_CAP; probe++) {
         SymbolId candidate = g_he_op_id_cache.slots[slot];
         if (candidate == SYMBOL_ID_NONE)
-            return false;
+            return NULL;
         if (candidate == id)
-            return true;
+            return g_he_op_id_cache.operations[slot];
         slot = (slot + 1u) & (HE_OP_ID_CACHE_CAP - 1u);
     }
-    return false;
+    return NULL;
+}
+
+bool he_typing_is_op_id(SymbolId id) {
+    return he_typing_operation_id(id) != NULL;
+}
+
+bool he_typing_op_service_id(SymbolId id, CettaHeTypingService *service) {
+    const HeTypingOperation *operation = he_typing_operation_id(id);
+    if (!operation || !service) return false;
+    *service = operation->service;
+    return true;
 }
 
 bool he_typing_is_op(const char *name) {
     if (!name) return false;
-    for (size_t i = 0; i < sizeof HE_OP_NAMES / sizeof HE_OP_NAMES[0]; i++)
-        if (strcmp(name, HE_OP_NAMES[i]) == 0) return true;
+    for (size_t i = 0; i < sizeof HE_OPS / sizeof HE_OPS[0]; i++)
+        if (strcmp(name, HE_OPS[i].name) == 0) return true;
     return false;
 }
 
 /* Which argument positions arrive as DATA (unevaluated) for each typing op.
- * Kept beside HE_OP_NAMES so the op syntax and its argument policy cannot
+ * Kept beside HE_OPS so the op syntax and its argument policy cannot
  * drift apart; the evaluator consults this instead of naming ops itself. */
 bool he_typing_op_data_arg(const char *name, uint32_t arg_index) {
     /* Asked for each argument of each evaluated tuple: an ordinary head is
@@ -3681,16 +3714,10 @@ bool he_typing_op_data_arg(const char *name, uint32_t arg_index) {
     if (!name || (name[0] != 'n' && name[0] != 'c' && name[0] != 'i' &&
                   name[0] != 's'))
         return false;
-    if (strcmp(name, "normalize-type") == 0 ||
-        strcmp(name, "check-type-refinements") == 0)
-        return arg_index == 1;
-    if (strcmp(name, "is-consistent") == 0)
-        return arg_index == 0 || arg_index == 1;
-    if (strcmp(name, "check-type") == 0)
-        return arg_index == 1 || arg_index == 2;
-    if (strcmp(name, "search-inhabitants") == 0 ||
-        strcmp(name, "search-first-inhabitant") == 0)
-        return arg_index == 1;
+    if (arg_index >= 32u) return false;
+    for (size_t i = 0; i < sizeof HE_OPS / sizeof HE_OPS[0]; i++)
+        if (strcmp(name, HE_OPS[i].name) == 0)
+            return (HE_OPS[i].data_arguments & (UINT32_C(1) << arg_index)) != 0u;
     return false;
 }
 
@@ -3717,8 +3744,8 @@ Atom *he_typing_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         if (nargs != 3)
             return he_reject(a, he_reason(a, "normalize-type-arity"));
         Space *sp = NULL;
-        if (!arg_space(args[0], &sp))
-            return he_reject(a, he_reason(a, "first-argument-not-a-space"));
+        Atom *space_problem = arg_read_space(a, args[0], &sp);
+        if (space_problem) return space_problem;
         uint64_t fuel = 0;
         Atom *bad = arg_fuel(a, args[2], &fuel);
         if (bad) return bad;
@@ -3743,8 +3770,8 @@ Atom *he_typing_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         if (nargs != 3)
             return he_reject(a, he_reason(a, "check-type-refinements-arity"));
         Space *sp = NULL;
-        if (!arg_space(args[0], &sp))
-            return he_reject(a, he_reason(a, "first-argument-not-a-space"));
+        Atom *space_problem = arg_read_space(a, args[0], &sp);
+        if (space_problem) return space_problem;
         uint64_t fuel = 0;
         Atom *bad = arg_fuel(a, args[2], &fuel);
         if (bad) return bad;
@@ -3781,8 +3808,8 @@ Atom *he_typing_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         if (nargs != 4)
             return he_reject(a, he_reason(a, "check-type-arity"));
         Space *sp = NULL;
-        if (!arg_space(args[0], &sp))
-            return he_reject(a, he_reason(a, "first-argument-not-a-space"));
+        Atom *space_problem = arg_read_space(a, args[0], &sp);
+        if (space_problem) return space_problem;
         uint64_t fuel = 0;
         Atom *bad = arg_fuel(a, args[3], &fuel);
         if (bad) return bad;
@@ -3797,8 +3824,8 @@ Atom *he_typing_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         if (nargs == 6 && !chain_parse_search_policy(args[5], &policy))
             return he_reject(a, he_reason(a, "unsupported-typing-search-policy"));
         Space *sp = NULL;
-        if (!arg_space(args[0], &sp))
-            return he_reject(a, he_reason(a, "first-argument-not-a-space"));
+        Atom *space_problem = arg_read_space(a, args[0], &sp);
+        if (space_problem) return space_problem;
         uint32_t depth = 0, limit = 0;
         Atom *bad = NULL;
         if (!chain_arg_nat(a, args[2], &depth, "depth-not-natural", &bad))
@@ -3832,8 +3859,8 @@ Atom *he_typing_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
                     a, he_reason(a, "unsupported-typing-search-policy"));
         }
         Space *sp = NULL;
-        if (!arg_space(args[0], &sp))
-            return he_reject(a, he_reason(a, "first-argument-not-a-space"));
+        Atom *space_problem = arg_read_space(a, args[0], &sp);
+        if (space_problem) return space_problem;
         uint32_t depth = 0;
         Atom *bad = NULL;
         if (!chain_arg_nat(a, args[2], &depth, "depth-not-natural", &bad))

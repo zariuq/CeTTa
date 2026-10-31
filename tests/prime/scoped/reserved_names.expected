@@ -1,6 +1,6 @@
 [(3 42)]
 (Error (= (std:+ $a $b) 99) (reserved-name std:+ standard-original))
-(Error (: std:get-type (-> Atom BogusType)) (reserved-name std:get-type standard-original))
+(Error (: std:get-type (-> Proc BogusType)) (reserved-name std:get-type standard-original))
 [(Error (add-atom &self (= (std:if $c $a $b) forged)) (reserved-name std:if standard-original))]
 [3]
 [(), ()]

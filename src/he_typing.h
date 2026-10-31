@@ -42,6 +42,21 @@ bool he_typing_is_op(const char *name) __attribute__((weak));
  * at every gradual-typing capability probe. */
 bool he_typing_is_op_id(SymbolId id) __attribute__((weak));
 
+/* Service admission describes direct resource access and possible evaluator
+ * re-entry. It grants neither effect authority nor permission to publish.
+ * Authored computations reached by a read service keep their own checks. */
+typedef enum {
+    CETTA_HE_TYPING_STRUCTURAL,
+    CETTA_HE_TYPING_SPACE_READ,
+    CETTA_HE_TYPING_SPACE_WRITE
+} CettaHeTypingResourceAccess;
+typedef struct {
+    CettaHeTypingResourceAccess access;
+    bool evaluator_entry;
+} CettaHeTypingService;
+bool he_typing_op_service_id(SymbolId id, CettaHeTypingService *service)
+    __attribute__((weak));
+
 /* True when arg_index of the named typing op is a DATA argument that must
  * reach the op unevaluated.  Lives beside the op table so the syntax and its
  * argument policy stay in one place.  Weak for the same standalone-binary

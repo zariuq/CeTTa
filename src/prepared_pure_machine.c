@@ -2511,9 +2511,11 @@ static bool prepared_pure_bind_var_index(
 }
 
 static bool prepared_pure_pattern_needs_host(const Atom *pattern) {
-    const BindingsStructureHooks *structure = bindings_structure_hooks();
+    BindingsStructureHooks captured_structure __attribute__((cleanup(bindings_structure_hooks_release))) = {0};
+    if (!bindings_structure_hooks_capture(&captured_structure, bindings_structure_hooks())) return true;
+    const BindingsStructureHooks *structure = &captured_structure;
     return (structure && structure->code_pattern &&
-            structure->code_pattern(pattern)) ||
+            structure->code_pattern(structure->context, pattern)) ||
         (eval_current_language_id &&
          eval_current_language_id() == CETTA_LANGUAGE_PRIME &&
          prime_semantics_pattern_takes_code_apart(pattern));
@@ -14035,7 +14037,8 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
     size_t nursery_budget_bytes,
     CettaPreparedPureInterruptPollFn interrupt_poll,
     void *interrupt_context,
-    Atom **result_out, CettaCallOutcome *outcome, bool *native_entered);
+    Atom **result_out, CettaCallOutcome *outcome, bool *native_entered,
+    CettaEvalCompletion *completion);
 
 static bool PREPARED_PURE_HOT prepared_pure_run_code_from(
     CettaPreparedPureProgram *program, Arena *arena, uint32_t first_code,
@@ -14144,7 +14147,8 @@ static bool prepared_pure_native_replacement(void *context,
 static PreparedPureRunResult prepared_pure_native_invoke(
         CettaPreparedPureAnswerCursor *cursor, Atom *head, Atom *const *arguments,
         uint32_t arity, bool execute, CettaCallOutcome *outcome, bool *entered,
-        Atom **inline_value) {
+        Atom **inline_value, CettaEvalCompletion *completion) {
+    *completion = CETTA_EVAL_COMPLETE;
     CettaPreparedPureProgram *program = cursor->program;
     if (!prepared_pure_answer_cursor_reserve(cursor, arity))
         goto capacity;
@@ -14158,7 +14162,7 @@ static PreparedPureRunResult prepared_pure_native_invoke(
         .supplied = {.atoms = arguments, .count = arity}};
     *entered = execute && program->source_view.native_call &&
         program->source_view.native_call(program->source_view.native_context,
-            program->space, cursor->arena, &invocation, outcome);
+            program->space, cursor->arena, &invocation, outcome, completion);
     cursor->native_started |= *entered;
     if (*entered && (!cetta_prepared_pure_program_is_current(program) ||
             (cursor->continuation_current &&
@@ -14166,13 +14170,14 @@ static PreparedPureRunResult prepared_pure_native_invoke(
         (void)prepared_pure_answer_cursor_handoff(cursor, CETTA_PREPARED_PURE_HANDOFF_STALE);
         return PREPARED_PURE_RUN_HANDOFF;
     }
-    if (*entered && outcome->kind == CETTA_CALL_VALUE && outcome->term &&
+    if (*entered && *completion == CETTA_EVAL_COMPLETE &&
+        outcome->kind == CETTA_CALL_VALUE && outcome->term &&
         outcome->result_form == CETTA_CALL_RESULT_COMPLETED_VALUE &&
         !atom_has_vars(outcome->term) && !atom_has_thread_local_resource(outcome->term)) {
         *inline_value = outcome->term;
         return PREPARED_PURE_RUN_ANSWER;
     }
-    if (*entered && outcome->kind == CETTA_CALL_FAILURE)
+    if (*entered && *completion == CETTA_EVAL_COMPLETE && outcome->kind == CETTA_CALL_FAILURE)
         return PREPARED_PURE_RUN_CONTINUE;
     return PREPARED_PURE_RUN_HANDOFF;
 capacity:
@@ -14183,7 +14188,7 @@ capacity:
 static PreparedPureRunResult prepared_pure_native_retain(
         CettaPreparedPureAnswerCursor *cursor, Atom *head, Atom *const *arguments,
         uint32_t arity, CettaCallOutcome outcome, bool entered,
-        const PreparedPureContinuation *continuation) {
+        const PreparedPureContinuation *continuation, CettaEvalCompletion completion) {
     /* Synchronous native calls borrow their operands. Only a retained native
      * producer can outlive the parent's current heap segment. Own its full
      * frontier before installing the opaque producer, while detachment can
@@ -14221,6 +14226,7 @@ static PreparedPureRunResult prepared_pure_native_retain(
     if (entered)
         cetta_owned_execution_init(&native->producer, &native->returns,
                                   cetta_call_return_next, NULL);
+    native->producer.completion = completion;
     ArenaMark mark = arena_mark(cursor->arena);
     prepared_pure_answer_cursor_push_reserved(cursor, PREPARED_PURE_NATIVE_FRAME,
         ok ? owned : arguments, arity, mark, NULL);
@@ -14231,6 +14237,7 @@ static PreparedPureRunResult prepared_pure_native_retain(
         return PREPARED_PURE_RUN_HANDOFF;
     }
     if (!entered) {
+        cetta_eval_completion_record(&cursor->completion, completion);
         (void)prepared_pure_answer_cursor_handoff(cursor,
             CETTA_PREPARED_PURE_HANDOFF_NATIVE_RETURN);
         return PREPARED_PURE_RUN_HANDOFF;
@@ -14268,8 +14275,9 @@ static PreparedPureRunResult prepared_pure_answer_cursor_native(
         cursor->scratch_remaining = scratch;
     CettaCallOutcome outcome = {0};
     bool entered = false;
+    CettaEvalCompletion completion;
     PreparedPureRunResult result = prepared_pure_native_invoke(cursor, node.atom,
-        arguments, arity, execute_native, &outcome, &entered, inline_value);
+        arguments, arity, execute_native, &outcome, &entered, inline_value, &completion);
     if (result != PREPARED_PURE_RUN_HANDOFF ||
         (cursor->handoff != CETTA_PREPARED_PURE_HANDOFF_NONE &&
          cursor->handoff != CETTA_PREPARED_PURE_HANDOFF_STALE))
@@ -14290,7 +14298,7 @@ static PreparedPureRunResult prepared_pure_answer_cursor_native(
         }
     }
     result = prepared_pure_native_retain(cursor, node.atom, arguments, arity,
-        outcome, entered, continuation);
+        outcome, entered, continuation, completion);
     if (!captured) {
         (void)prepared_pure_answer_cursor_handoff(cursor, CETTA_PREPARED_PURE_HANDOFF_LIMIT);
         return PREPARED_PURE_RUN_HANDOFF;
@@ -14467,7 +14475,7 @@ static bool prepared_pure_answer_step_return(
               step->register_count, true, 0u, NULL, NULL, &value, outcome)
         : prepared_pure_program_execute_internal(
               program, cursor->arena, NULL, NULL, NULL, step->node,
-              slot_count, true, 0u, NULL, NULL, &value, outcome, NULL);
+              slot_count, true, 0u, NULL, NULL, &value, outcome, NULL, NULL);
     program->frame_len = 0u;
     program->value_len = 0u;
     program->slot_len = slot_count;
@@ -14922,7 +14930,7 @@ static const CettaOwnedReturn *prepared_pure_native_pending(
 
 bool cetta_prepared_pure_answer_cursor_native_boundary(
         CettaPreparedPureAnswerCursor *cursor, CettaInvocation *invocation,
-        bool *entered, CettaOwnedReturn *returned) {
+        bool *entered, CettaOwnedReturn *returned, CettaEvalCompletion *completion) {
     if (!cursor || !invocation || !entered || !returned ||
         (cursor->handoff != CETTA_PREPARED_PURE_HANDOFF_NATIVE_RETURN &&
          cursor->handoff != CETTA_PREPARED_PURE_HANDOFF_STALE) ||
@@ -14938,6 +14946,7 @@ bool cetta_prepared_pure_answer_cursor_native_boundary(
     if (frame->head_index != PREPARED_PURE_NATIVE_FRAME || !frame->native)
         return false;
     const PreparedPureNativeFrame *native = frame->native;
+    if (completion) *completion = native->producer.completion;
     *invocation = (CettaInvocation){.head = binding_value_from_atom(native->head),
         .supplied = {.atoms = &cursor->arguments[frame->argument_base], .count = frame->arity}};
     *entered = native->entered;
@@ -14957,6 +14966,23 @@ bool cetta_prepared_pure_answer_cursor_native_boundary(
     return false;
 }
 
+/* While this handoff is installed the cursor performs no further work.
+ * Only an explicit replacement owner can acknowledge this attempt. */
+static bool prepared_pure_preparation_refused(
+        const CettaPreparedPureAnswerCursor *cursor, CettaEvalCompletion cause) {
+    if (!cursor || cursor->handoff != CETTA_PREPARED_PURE_HANDOFF_NATIVE_RETURN ||
+        !cursor->frame_len ||
+        (cause != CETTA_EVAL_INCOMPLETE_CAPACITY && cause != CETTA_EVAL_INCOMPLETE_HOST_FAILURE) ||
+        cursor->completion != cause)
+        return false;
+    const PreparedPureAnswerFrame *frame = &cursor->frames[cursor->frame_len - 1u];
+    const PreparedPureNativeFrame *native = frame->head_index == PREPARED_PURE_NATIVE_FRAME
+        ? frame->native : NULL;
+    return native && !native->entered && !native->producer.computation &&
+        !native->producer.has_pending && !native->bindings && !native->transferred &&
+        !native->body_active && native->producer.completion == cause;
+}
+
 bool cetta_prepared_pure_answer_cursor_complete_native(
         CettaPreparedPureAnswerCursor *cursor, CettaOwnedExecution *replacement,
         bool completes_callers) {
@@ -14964,7 +14990,7 @@ bool cetta_prepared_pure_answer_cursor_complete_native(
     bool entered;
     CettaOwnedReturn returned;
     if (!replacement || !replacement->computation || !replacement->next ||
-        !cetta_prepared_pure_answer_cursor_native_boundary(cursor, &call, &entered, &returned))
+        !cetta_prepared_pure_answer_cursor_native_boundary(cursor, &call, &entered, &returned, NULL))
         return false;
     if (cursor->handoff != CETTA_PREPARED_PURE_HANDOFF_NATIVE_RETURN)
         return false;
@@ -14972,9 +14998,15 @@ bool cetta_prepared_pure_answer_cursor_complete_native(
     if (completes_callers && !entered)
         return false;
     if (!entered) {
+        if (cursor->completion != CETTA_EVAL_COMPLETE &&
+            !prepared_pure_preparation_refused(cursor, cursor->completion))
+            return false;
         native->producer = *replacement;
         *replacement = (CettaOwnedExecution){0};
         native->entered = cursor->native_started = true;
+        /* A new owner acknowledges the refused preparation attempt, not
+         * an entered call. Its own completion now governs this frontier. */
+        cursor->completion = CETTA_EVAL_COMPLETE;
     } else if (native->bindings && native->bindings->bind.awaiting_body &&
                native->producer.terminal) {
         if (!cetta_owned_bind_resume(&native->producer, &native->bindings->bind, replacement))
@@ -15016,7 +15048,7 @@ bool cetta_prepared_pure_answer_cursor_native_transfer_ready(
     bool entered = false;
     if (!cursor || !cursor->native_transfer_requested || !cursor->owns_arena ||
         !cetta_prepared_pure_answer_cursor_native_boundary(
-            cursor, &invocation, &entered, &returned) || !entered)
+            cursor, &invocation, &entered, &returned, NULL) || !entered)
         return false;
     const PreparedPureNativeFrame *native = cursor->frames[cursor->frame_len - 1u].native;
     bool stale = cursor->handoff == CETTA_PREPARED_PURE_HANDOFF_STALE;
@@ -15088,11 +15120,13 @@ bool cetta_prepared_pure_answer_cursor_resume_native(
         CettaOwnedExecution *execution, CettaOwnedExecution *replacement) {
     if (!execution || execution == replacement || !execution->terminal ||
         execution->stop != CETTA_OWNED_EXECUTION_HANDOFF ||
-        execution->completion != CETTA_EVAL_COMPLETE ||
         execution->next != cetta_prepared_pure_answer_cursor_return ||
+        (execution->completion != CETTA_EVAL_COMPLETE &&
+         !prepared_pure_preparation_refused(execution->computation, execution->completion)) ||
         !cetta_prepared_pure_answer_cursor_complete_native(
             execution->computation, replacement, false))
         return false;
+    execution->completion = CETTA_EVAL_COMPLETE;
     execution->terminal = false;
     execution->stop = CETTA_OWNED_EXECUTION_PAUSED;
     return true;
@@ -15207,9 +15241,11 @@ prepared_pure_answer_cursor_next_kernel(
             const CettaOwnedReturn *returned = NULL;
             CettaOwnedExecutionStep next = cetta_owned_execution_loan(&native->producer, &returned);
             if (next == CETTA_OWNED_EXECUTION_COMPLETE) {
-                if (native->producer.completion != CETTA_EVAL_COMPLETE)
+                if (native->producer.completion != CETTA_EVAL_COMPLETE) {
+                    cetta_eval_completion_record(&cursor->completion, native->producer.completion);
                     return prepared_pure_answer_cursor_handoff(cursor,
                         CETTA_PREPARED_PURE_HANDOFF_NATIVE_RETURN);
+                }
                 prepared_pure_answer_cursor_pop_native(cursor);
                 continue;
             }
@@ -16584,11 +16620,12 @@ static bool prepared_pure_code_readback(CettaPreparedPureAnswerCursor *cursor,
  * tagged return and live continuation in one copy episode. */
 static void prepared_pure_code_retain(CettaPreparedPureAnswerCursor *cursor,
         const PreparedPureContinuation *outer, Atom *head, Atom *const *arguments,
-        uint32_t arity, CettaCallOutcome outcome, bool entered) {
+        uint32_t arity, CettaCallOutcome outcome, bool entered,
+        CettaEvalCompletion completion) {
     const PreparedPureContinuation *continuation = outer;
     bool ok = prepared_pure_code_readback(cursor, NULL, outer, &continuation);
     (void)prepared_pure_native_retain(cursor, head, arguments, arity,
-        outcome, entered, continuation);
+        outcome, entered, continuation, completion);
     if (!ok)
         (void)prepared_pure_answer_cursor_handoff(cursor, CETTA_PREPARED_PURE_HANDOFF_LIMIT);
 }
@@ -16810,15 +16847,17 @@ static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_run_code_worker(
                         CETTA_GSLT_PREPARED_PURE_INTRINSIC_LIBRARY_VALUE_DISPATCH) {
                     CettaCallOutcome outcome = {0};
                     bool entered = false;
+                    CettaEvalCompletion completion;
                     PreparedPureRunResult called = prepared_pure_native_invoke(
-                        cursor, node->atom, values, count, true, &outcome, &entered, &value);
+                        cursor, node->atom, values, count, true, &outcome, &entered, &value,
+                        &completion);
                     if (called == PREPARED_PURE_RUN_CONTINUE)
                         goto empty;
                     if (called == PREPARED_PURE_RUN_HANDOFF) {
                         if (cursor->handoff == CETTA_PREPARED_PURE_HANDOFF_NONE ||
                             cursor->handoff == CETTA_PREPARED_PURE_HANDOFF_STALE)
                             prepared_pure_code_retain(cursor, continuation, node->atom,
-                                values, count, outcome, entered);
+                                values, count, outcome, entered, completion);
                         goto residual;
                     }
                 } else {
@@ -17276,11 +17315,13 @@ declined:
         CettaCallOutcome outcome = {0};
         bool entered = false;
         Atom *unused = NULL;
+        CettaEvalCompletion completion;
         (void)prepared_pure_native_invoke(cursor, decline_node->atom,
-            arguments, active_code->operand_count, false, &outcome, &entered, &unused);
+            arguments, active_code->operand_count, false, &outcome, &entered, &unused,
+            &completion);
         if (cursor->handoff == CETTA_PREPARED_PURE_HANDOFF_NONE)
             prepared_pure_code_retain(cursor, continuation, decline_node->atom,
-                arguments, active_code->operand_count, outcome, false);
+                arguments, active_code->operand_count, outcome, false, completion);
         goto residual;
     }
     if (cursor)
@@ -17368,7 +17409,9 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_retained(
     CettaPreparedPureInterruptPollFn interrupt_poll,
     void *interrupt_context,
     Atom **result_out, CettaPreparedPureClosedExecution *execution,
-    CettaCallOutcome *outcome, bool *native_entered) {
+    CettaCallOutcome *outcome, bool *native_entered,
+    CettaEvalCompletion *completion) {
+    if (completion) *completion = CETTA_EVAL_COMPLETE;
     if (native_entered) *native_entered = false;
     if (result_out)
         *result_out = NULL;
@@ -18316,7 +18359,7 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_retained(
              * fault rather than retry an operation that has already entered. */
             if (program->source_view.native_call(
                     program->source_view.native_context, program->space,
-                    arena, &invocation, outcome)) {
+                    arena, &invocation, outcome, completion)) {
                 *native_entered = true;
                 prepared_pure_memo_clear(program);
                 program->frame_len = program->value_len = program->slot_len = 0u;
@@ -18409,7 +18452,9 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
     size_t nursery_budget_bytes,
     CettaPreparedPureInterruptPollFn interrupt_poll,
     void *interrupt_context,
-    Atom **result_out, CettaCallOutcome *outcome, bool *native_entered) {
+    Atom **result_out, CettaCallOutcome *outcome, bool *native_entered,
+    CettaEvalCompletion *completion) {
+    if (completion) *completion = CETTA_EVAL_COMPLETE;
     if (native_entered) *native_entered=false;
     if (result_out) *result_out=NULL;
     if (outcome) *outcome=(CettaCallOutcome){0};
@@ -18417,7 +18462,7 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
                    program->optional_result)) return false;
     return prepared_pure_program_execute_retained(program,arena,accumulator,item,
         runtime_expression,step_node,step_slot_count,closed,nursery_budget_bytes,
-        interrupt_poll,interrupt_context,result_out,NULL,outcome,native_entered);
+        interrupt_poll,interrupt_context,result_out,NULL,outcome,native_entered,completion);
 }
 
 bool cetta_prepared_pure_program_execute(
@@ -18426,22 +18471,31 @@ bool cetta_prepared_pure_program_execute(
     return prepared_pure_program_execute_internal(
         program, arena, accumulator, item, NULL,
         PREPARED_PURE_RUNTIME_NODE, 0u, false, 0u,
-        NULL, NULL, result_out, NULL, NULL);
+        NULL, NULL, result_out, NULL, NULL, NULL);
 }
 
 bool cetta_prepared_pure_program_execute_controlled(
     CettaPreparedPureProgram *program, Arena *arena,
     Atom *accumulator, Atom *item,
     CettaPreparedPureInterruptPollFn interrupt_poll,
-    void *interrupt_context, CettaCallOutcome *outcome) {
+    void *interrupt_context, CettaCallOutcome *outcome,
+    CettaEvalCompletion *completion) {
     if (!outcome)
         return false;
+    CettaEvalCompletion local_completion = CETTA_EVAL_COMPLETE;
+    if (!completion) completion = &local_completion;
     Atom *value = NULL;
     bool native_entered = false;
     bool completed = prepared_pure_program_execute_internal(
         program, arena, accumulator, item, NULL,
         PREPARED_PURE_RUNTIME_NODE, 0u, false, 0u,
-        interrupt_poll, interrupt_context, &value, outcome, &native_entered);
+        interrupt_poll, interrupt_context, &value, outcome, &native_entered, completion);
+    if (!completed && !native_entered && *completion != CETTA_EVAL_COMPLETE) {
+        *outcome = cetta_call_interrupted();
+        return true;
+    }
+    if (*completion == CETTA_EVAL_COMPLETE && outcome->kind == CETTA_CALL_INTERRUPTED)
+        *completion = CETTA_EVAL_INCOMPLETE_CANCELLED;
     if (completed)
         *outcome = cetta_call_completed_value(value);
     return completed || native_entered || outcome->kind == CETTA_CALL_FAILURE ||
@@ -18476,7 +18530,7 @@ bool cetta_prepared_pure_program_execute_closed_controlled(
         program, arena, NULL, NULL, NULL,
         PREPARED_PURE_RUNTIME_NODE, 0u, true,
         nursery_budget_bytes, interrupt_poll, interrupt_context,
-        &value, outcome, NULL);
+        &value, outcome, NULL, NULL);
     if (completed)
         *outcome = cetta_call_completed_value(value);
     return completed || outcome->kind == CETTA_CALL_FAILURE ||
@@ -18492,7 +18546,7 @@ bool cetta_prepared_pure_program_execute_closed_expression_controlled(
         program, arena, NULL, NULL, expression,
         PREPARED_PURE_RUNTIME_NODE, 0u, true,
         nursery_budget_bytes, interrupt_poll, interrupt_context,
-        result_out, NULL, NULL);
+        result_out, NULL, NULL, NULL);
 }
 
 typedef struct {
@@ -18526,7 +18580,7 @@ CettaPreparedPureOptionalResult cetta_prepared_pure_program_execute_closed_optio
         program, arena, NULL, NULL, NULL, PREPARED_PURE_RUNTIME_NODE, 0u,
         true, nursery_budget_bytes,
         interrupt_poll ? prepared_pure_optional_poll : NULL, &poll,
-        result_out, NULL, &returned, NULL);
+        result_out, NULL, &returned, NULL, NULL);
     if (poll.interrupted || returned.kind == CETTA_CALL_INTERRUPTED)
         return CETTA_PREPARED_PURE_OPTIONAL_INTERRUPTED;
     if (returned.kind == CETTA_CALL_FAILURE)
@@ -19056,7 +19110,7 @@ CettaPreparedClosedStep cetta_prepared_pure_closed_step(
             ? prepared_pure_run_code_from(program,arena,program->body.first_code,
                 program->body.register_count,false,0u,NULL,NULL,answer,NULL)
             : prepared_pure_program_execute_retained(program,arena,NULL,NULL,NULL,
-                PREPARED_PURE_RUNTIME_NODE,0u,true,0u,NULL,NULL,answer,execution,NULL,NULL);
+                PREPARED_PURE_RUNTIME_NODE,0u,true,0u,NULL,NULL,answer,execution,NULL,NULL,NULL);
         *spent=allowance-execution->remaining;
         if (ok) {
             status=execution->status=program->optional_empty

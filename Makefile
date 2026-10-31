@@ -1413,6 +1413,9 @@ RHOCALC_ABT_SUBSTITUTION_TEST_SRC = tests/support/test_rhocalc_abt_substitution.
 RHOCALC_ABT_SUBSTITUTION_TEST_OBJ = runtime/bootstrap/test_rhocalc_abt_substitution.$(BUILD_OBJ_TAG).o
 RHOCALC_ABT_SUBSTITUTION_TEST_BIN = runtime/test_rhocalc_abt_substitution-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 RHOCALC_ABT_SUBSTITUTION_TEST_LINK_OBJ = $(filter-out src/rhocalc_core.%,$(FALLBACK_EVAL_TEST_LINK_OBJ))
+RHOCALC_FRONTIER_TEST_SRC = tests/support/test_rhocalc_frontier.c
+RHOCALC_FRONTIER_TEST_OBJ = runtime/bootstrap/test_rhocalc_frontier.$(BUILD_OBJ_TAG).o
+RHOCALC_FRONTIER_TEST_BIN = runtime/test_rhocalc_frontier-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 RHOCALC_WORK_CENSUS_OBJ = runtime/bootstrap/test_rhocalc_work_census.$(BUILD_OBJ_TAG).o
 RHOCALC_WORK_CENSUS_BIN = runtime/test_rhocalc_work_census-$(BUILD_OBJ_TAG)
 LIB_PARSE_GLL_UTF8_FOREST_TEST_SRC = tests/support/test_lib_parse_gll_utf8_forest.c
@@ -4669,7 +4672,7 @@ $(PATTERN_BINDINGS_TEST_BIN): tests/test_pattern_bindings.c src/petta_semantics.
 PATTERN_BINDINGS_PRIME_TEST_BIN = runtime/test_pattern_bindings_prime-$(BUILD_OBJ_TAG)
 $(PATTERN_BINDINGS_PRIME_TEST_BIN): tests/test_pattern_bindings.c src/match.h src/prime_semantics.h $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_PATTERN_ACTUAL_PRIME_HOOKS=1 -o $@ tests/test_pattern_bindings.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS) $(LDFLAGS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_PATTERN_ACTUAL_PRIME_HOOKS=1 -o $@ tests/test_pattern_bindings.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS) $(LDFLAGS) -Wl,--wrap=calloc -Wl,--wrap=malloc
 
 .PHONY: test-pattern-bindings
 test-all: test-pattern-bindings
@@ -7501,6 +7504,7 @@ DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d) \
 	$(PRIME_READER_AST_ORACLE_OBJ:.o=.d) \
 	$(PAYLOAD_MAP_CAPACITY_TEST_OBJ:.o=.d) \
 	$(RHOCALC_ABT_SUBSTITUTION_TEST_OBJ:.o=.d) \
+	$(RHOCALC_FRONTIER_TEST_OBJ:.o=.d) \
 	$(RHOCALC_WORK_CENSUS_OBJ:.o=.d) \
 	$(OSLF_NATIVE_TYPE_VM_V1_OBJ:.o=.d) \
 	$(OSLF_NATIVE_TYPE_VM_V1_TEST_OBJ:.o=.d) \
@@ -8557,6 +8561,24 @@ $(RHOCALC_ABT_SUBSTITUTION_TEST_BIN): $(RHOCALC_ABT_SUBSTITUTION_TEST_OBJ) $(RHO
 $(RHOCALC_ABT_SUBSTITUTION_TEST_OBJ): $(RHOCALC_ABT_SUBSTITUTION_TEST_SRC) src/rhocalc_core.c src/segmented_array.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
+
+$(RHOCALC_FRONTIER_TEST_OBJ): $(RHOCALC_FRONTIER_TEST_SRC) src/rhocalc_core.c src/rhocalc_frontier.inc $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
+
+$(RHOCALC_FRONTIER_TEST_BIN): $(RHOCALC_FRONTIER_TEST_OBJ) $(RHOCALC_ABT_SUBSTITUTION_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-rhocalc-frontier.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+.PHONY: test-rhocalc-frontier
+test-rhocalc-frontier: $(RHOCALC_FRONTIER_TEST_BIN)
+	@./$(RHOCALC_FRONTIER_TEST_BIN)
+
+test-rhocalc: test-rhocalc-frontier
 
 $(RHOCALC_WORK_CENSUS_OBJ): $(RHOCALC_ABT_SUBSTITUTION_TEST_SRC) src/rhocalc_core.c src/segmented_array.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
@@ -24425,8 +24447,8 @@ test-prime-native-proof-search-mutations: $(BIN)
 	done; \
 	for mutation in native-check-disabled undetermined-accepted solved-slot-disabled result-executed; do \
 		case "$$mutation" in \
-			result-executed) source=src/main.c; \
-				objects="$(filter-out $(filter src/main.%,$(OBJ)),$(OBJ))";; \
+			result-executed) source=src/eval.c; \
+				objects="$(filter-out $(filter src/eval.%,$(OBJ)),$(OBJ))";; \
 			*) source=src/he_typing.c; \
 				objects="$(filter-out $(filter src/he_typing.%,$(OBJ)),$(OBJ))";; \
 		esac; \
@@ -24441,10 +24463,17 @@ test-prime-native-proof-search-mutations: $(BIN)
 			*) fixture=tests/prime/scoped/native_dependent_search;; \
 		esac; \
 		status=0; \
-		$(call cetta_exec,./$$mutation_dir/$$mutation) --lang prime "$$fixture.metta" \
+		timeout $(PRIME_COMPLETION_TIMEOUT) $(call cetta_exec,./$$mutation_dir/$$mutation) --lang prime "$$fixture.metta" \
 			>"$$mutation_dir/$$mutation.out" 2>&1 || status=$$?; \
 		if [ $$status -ne 0 ]; then \
 			echo "FAIL: $$mutation failed to execute (status $$status)"; exit 1; \
+		fi; \
+		if [ "$$mutation" = result-executed ]; then \
+			baseline_hits=$$(grep -c '^RESULT_PACKET_EXECUTED$$' "$$mutation_dir/baseline-native_dependent_search.out" || true); \
+			mutant_hits=$$(grep -c '^RESULT_PACKET_EXECUTED$$' "$$mutation_dir/result-executed.out" || true); \
+			if [ "$$baseline_hits" -ne 1 ] || [ "$$mutant_hits" -le "$$baseline_hits" ]; then \
+				echo 'FAIL: result-execution fault did not activate the returned packet'; exit 1; \
+			fi; \
 		fi; \
 		if cmp -s "$$fixture.expected" "$$mutation_dir/$$mutation.out"; then \
 			echo "FAIL: $$mutation survived proof-search controls"; exit 1; \
@@ -25544,7 +25573,7 @@ test-prime-capability-opening: $(BIN) $(PRIME_CAPABILITY_OPEN_TEST_BIN)
 $(PRIME_CAPABILITY_OPEN_TEST_BIN): tests/test_prime_capability_opening.c src/eval.c $(BUILD_CONFIG_HEADER) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_prime_capability_opening.c \
-		$(filter-out src/eval.$(BUILD_OBJ_TAG).o src/eval.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS) $(LDFLAGS)
+		$(filter-out src/eval.$(BUILD_OBJ_TAG).o src/eval.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS) $(LDFLAGS) -Wl,--wrap=calloc,--wrap=cetta_library_call_native_prepared_view,--wrap=cetta_library_call_native
 
 # The evaluator paths Prime shares with PeTTa and HE are exercised here too,
 # so a change on those paths cannot regress Prime unseen.
@@ -33576,7 +33605,7 @@ test-prime-compiled-reader-v1: test-prime-compiled-reader-direct-generated-v1 te
 	@result=$$(./$(PRIME_COMPILED_READER_TEST_BIN) 2>&1); \
 	printf '%s\n' "$$result"; \
 	if [ "$$(printf '%s\n' "$$result" | \
-		grep -Fxc '(PrimeCompiledReaderV1Summary 206 206 0 cases 85)')" -ne 1 ]; then \
+		grep -Fxc '(PrimeCompiledReaderV1Summary 211 211 0 cases 85)')" -ne 1 ]; then \
 		echo "FAIL: compiled Prime reader exact differential summary absent or duplicated"; \
 		exit 1; \
 	fi; \
@@ -50243,7 +50272,7 @@ $(NATIVE_PARENT_CHECKPOINT_TEST_BIN): $(NATIVE_PARENT_CHECKPOINT_TEST_SOURCE) te
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(NATIVE_PARENT_CHECKPOINT_TEST_SOURCE) \
 		$(if $(filter 1,$(ENABLE_PRIME_EVAL_STACK)),$(filter-out src/eval.$(BUILD_OBJ_TAG).o src/eval.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ)),$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS) $(LDFLAGS) \
-		$(if $(filter 1,$(ENABLE_PRIME_EVAL_STACK)),-Wl$(comma)--wrap=free -Wl$(comma)--wrap=calloc,)
+		$(if $(filter 1,$(ENABLE_PRIME_EVAL_STACK)),-Wl$(comma)--wrap=free -Wl$(comma)--wrap=calloc -Wl$(comma)--wrap=malloc,)
 .PHONY: test-native-parent-checkpoint
 test-native-parent-checkpoint: $(NATIVE_PARENT_CHECKPOINT_TEST_BIN)
 	@$(call cetta_exec,./$(NATIVE_PARENT_CHECKPOINT_TEST_BIN))

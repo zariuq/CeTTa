@@ -304,3 +304,28 @@
 !(ready-code:query-pass (quote (empty)))
 !(ready-code:query-pass (quote (println! must-not-run)))
 !(ready-code:query-let (quote (ready-code:first 69 70)))
+
+; One explicit activation does not recursively activate its own result.
+; Ordinary residual rows remain residual, even when their head is declared.
+(: ready-eval-residual (-> Number Number))
+!(eval (ready-eval-residual 5))
+!(eval (quote (ready-eval-residual 6)))
+!(eval (parse "(+ 1 2)"))
+(= (ready-eval-once) (cons-atom + (2 3)))
+!(eval (parse "(ready-eval-once)"))
+!(size-atom (collapse (eval (parse "()"))))
+!(size-atom (collapse (eval (superpose ()))))
+
+; The source finishes before its code rows activate; equal code occurrences
+; still activate separately. Activation never repeats the source effects.
+!(bind! &ready-eval-log (new-space))
+(= (ready-eval-a) (let $_ (add-atom &ready-eval-log active-a) 1))
+(= (ready-eval-b) (let $_ (add-atom &ready-eval-log active-b) 2))
+(= (ready-eval-codes)
+   (superpose
+     ((let $_ (add-atom &ready-eval-log source-a) (parse "(ready-eval-a)"))
+      (let $_ (add-atom &ready-eval-log source-b) (parse "(ready-eval-b)")))))
+!(eval (ready-eval-codes))
+!(collapse (get-atoms &ready-eval-log))
+!(eval (superpose ((parse "(ready-eval-a)") (parse "(ready-eval-a)"))))
+!(collapse (get-atoms &ready-eval-log))

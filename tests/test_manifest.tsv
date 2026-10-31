@@ -105,10 +105,16 @@ tests/prime/function_faults.metta	prime	metta		any	native	test-prime	golden	Prim
 tests/prime/held_equality.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/held_patterns.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/held_sequence_iteration.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/held_value_pattern_inspection.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/if_atom_data_boundary.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/inert_if_values.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/lambda_names.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/let_bound_learner.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/let_source_answers.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/library_history_declarations.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/library_langdef_declarations.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/library_quote_declarations.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/library_template_values.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/lift_brackets.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/native_hyp_path.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/need_activation_operand.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
@@ -276,6 +282,7 @@ tests/prime/scoped/wide_equation_pick40.metta	prime	metta		any	native	test-prime
 tests/prime/scoped/wide_equation_pick64.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/search_controller_frontier.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/stored_variable_identity.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/streaming_state_values.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/symbols/admission_conservative.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/symbols/cyclic_prefix.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/symbols/graded_production.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression

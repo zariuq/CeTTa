@@ -5966,6 +5966,47 @@ const BindingsStructureHooks *bindings_structure_hooks(void) {
     return g_bindings_structure_hooks;
 }
 
+bool bindings_structure_hooks_capture(BindingsStructureHooks *out,
+        const BindingsStructureHooks *source) {
+    if (!out || out == source) return false;
+    *out = (BindingsStructureHooks){0};
+    if (!source) return true;
+    if ((source->capture || source->context) && (!source->retain || !source->release)) return false;
+    BindingsStructureHooks captured = *source;
+    if (source->capture) {
+        captured.context = NULL;
+        if (!source->capture(source->context, &captured.context)) {
+            if (captured.context) source->release(captured.context);
+            return false;
+        }
+        captured.capture = NULL;
+    } else if (source->retain) {
+        source->retain(source->context);
+    }
+    if (captured.is_current && !captured.is_current(captured.context)) {
+        if (captured.release) captured.release(captured.context);
+        return false;
+    }
+    *out = captured;
+    return true;
+}
+
+void bindings_structure_hooks_release(BindingsStructureHooks *hooks) {
+    if (!hooks) return;
+    if (!hooks->capture && hooks->release) hooks->release(hooks->context);
+    *hooks = (BindingsStructureHooks){0};
+}
+
+void bindings_structure_hooks_storage(const BindingsStructureHooks *hooks,
+        CettaStorageCensus *census) {
+    if (!hooks || !hooks->context) return;
+    if (hooks->capture || !hooks->storage) {
+        cetta_storage_refuse(census, "BindingInterpretationOwner");
+        return;
+    }
+    hooks->storage(hooks->context, census);
+}
+
 enum { BINDINGS_APPLY_INLINE_FRAMES = 32u };
 
 typedef struct {
@@ -6135,6 +6176,7 @@ typedef struct {
     uint32_t seen_len, depth, expressions;
     CettaExprIndex prefix;
     const BindingsStructureHooks *hooks;
+    BindingsStructureHooks owned_hooks;
     BindingApplyGraph *graph;
     BindingApplyGraph observed;
     BindingsApplyFrame inline_items[BINDINGS_APPLY_INLINE_FRAMES];
@@ -6145,9 +6187,13 @@ typedef struct {
 
 static inline void bindings_apply_walk_init(BindingsApplyWalk *walk,
         BindingsApplyFold *fold, Atom *atom, BindingsApplyScope scope,
-        uint32_t seen_len, bool epoch_fold, BindingApplyGraph *graph) {
+        uint32_t seen_len, bool epoch_fold, BindingApplyGraph *graph,
+        const BindingsStructureHooks *structure) {
     *walk = (BindingsApplyWalk){.fold = fold, .atom = atom, .scope = scope,
-        .seen_len = seen_len, .hooks = g_bindings_structure_hooks, .graph = graph};
+        .seen_len = seen_len, .graph = graph};
+    if (!bindings_structure_hooks_capture(&walk->owned_hooks, structure))
+        walk->phase = BINDINGS_WALK_REFUSED;
+    else if (structure) walk->hooks = &walk->owned_hooks;
     walk->frames = (BindingsApplyFrames){.items = walk->inline_items,
         .cap = BINDINGS_APPLY_INLINE_FRAMES};
     walk->may_observe = !walk->hooks && !graph && !epoch_fold &&
@@ -6159,6 +6205,7 @@ static void bindings_apply_walk_release(BindingsApplyWalk *walk) {
         atom_expr_assembly_free(walk->frames.items[i].assembly);
     if (walk->frames.heap) free(walk->frames.items);
     free(walk->observed.entries);
+    bindings_structure_hooks_release(&walk->owned_hooks);
 }
 
 /* One traversal serves synchronous and retained callers. Synchronous entry
@@ -6275,7 +6322,7 @@ ascend:
         if (walk->result) {
             if (hooks && hooks->code_reading && child_depth > 0u &&
                 elems[top->next]->kind == ATOM_VAR) {
-                walk->result = hooks->code_reading(walk->result);
+                walk->result = hooks->code_reading(hooks->context, walk->result);
                 if (!walk->result) goto failed;
             }
             if (!top->draft && !top->assembly && walk->result != elems[top->next]) {
@@ -6312,10 +6359,10 @@ ascend:
         if (walk->result && changed && hooks && hooks->formed_node &&
             len > 0u && elems[0]->kind == ATOM_VAR &&
             walk->result->expr.elems[0] && walk->result->expr.elems[0]->kind == ATOM_SYMBOL)
-            walk->result = hooks->formed_node(fold->a, walk->result, top->code_depth > 0u);
+            walk->result = hooks->formed_node(hooks->context, fold->a, walk->result, top->code_depth > 0u);
         else if (walk->result && changed && hooks && hooks->own_list &&
                 atom_sequence_is_own_list(top->atom))
-            walk->result = hooks->own_list(fold->a, walk->result);
+            walk->result = hooks->own_list(hooks->context, fold->a, walk->result);
         if (walk->graph && walk->graph->cap) {
             BindingApplyGraphEntry *entry = bindings_apply_graph_slot(walk->graph,
                 top->atom, top->scope, top->code_depth);
@@ -6364,7 +6411,8 @@ static inline Atom *bindings_apply_fold_impl(BindingsApplyFold *fold, Atom *atom
         BindingsApplyScope scope, uint32_t seen_len, bool epoch_fold,
         BindingApplyGraph *graph) {
     BindingsApplyWalk walk;
-    bindings_apply_walk_init(&walk, fold, atom, scope, seen_len, epoch_fold, graph);
+    bindings_apply_walk_init(&walk, fold, atom, scope, seen_len, epoch_fold, graph,
+        bindings_structure_hooks());
     BindingsApplyWalkPhase phase = bindings_apply_walk_drive(&walk, epoch_fold, false);
     Atom *result = phase == BINDINGS_WALK_COMPLETE ? walk.result : NULL;
     bindings_apply_walk_release(&walk);
@@ -6377,7 +6425,6 @@ struct BindingsApplySession {
     BindingApplySeen seen;
     BindingApplyMemo memo;
     BindingApplyGraph graph, active_path;
-    BindingsStructureHooks hooks;
     VarId seen_inline[BINDINGS_SEEN_STACK_CAP];
     VarId memo_ids[BINDINGS_MEMO_STACK_CAP];
     Atom *memo_values[BINDINGS_MEMO_STACK_CAP];
@@ -6400,19 +6447,21 @@ BindingsApplySession *bindings_apply_session_new(const Bindings *b, Arena *a,
     session->fold = (BindingsApplyFold){.b = (Bindings *)b, .a = a,
         .seen = &session->seen, .memo = &session->memo,
         .track_cycles = b->cycle_state != BINDINGS_CYCLE_ACYCLIC};
-    const BindingsStructureHooks *hooks = bindings_structure_hooks();
-    if (hooks) session->hooks = *hooks;
+    bool identity = (!bindings_has_bound_values(b) &&
+        binding_value_kind(source) == BINDING_VALUE_MATERIALIZED) || !atom_has_vars(source.skeleton);
+    const BindingsStructureHooks *hooks = identity ? NULL : bindings_structure_hooks();
     if (shared_graph && !session->fold.track_cycles)
         session->graph.active_path = hooks ? &session->active_path : NULL;
     bindings_apply_walk_init(&session->walk, &session->fold, source.skeleton,
         (BindingsApplyScope){.epoch = binding_value_epoch(source),
             .kind = binding_value_kind(source)}, 0u, false,
-        shared_graph && !session->fold.track_cycles ? &session->graph : NULL);
-    session->walk.hooks = hooks ? &session->hooks : NULL;
+        shared_graph && !session->fold.track_cycles ? &session->graph : NULL, hooks);
+    if (session->walk.phase == BINDINGS_WALK_REFUSED) {
+        bindings_apply_session_free(session);
+        return NULL;
+    }
     /* Preserve the existing identity cases, including their borrowed root. */
-    if ((!bindings_has_bound_values(b) &&
-            binding_value_kind(source) == BINDING_VALUE_MATERIALIZED) ||
-            !atom_has_vars(source.skeleton)) {
+    if (identity) {
         session->walk.phase = BINDINGS_WALK_ASCEND;
         session->walk.result = source.skeleton;
     }
@@ -6427,7 +6476,9 @@ BindingsApplyStatus bindings_apply_session_advance(BindingsApplySession *session
     if (!session || !result || !used) return BINDINGS_APPLY_REFUSED;
     if (session->arena->identity != session->arena_identity ||
             session->arena->reset_epoch != session->arena_epoch ||
-            session->arena->hashcons != session->hashcons) {
+            session->arena->hashcons != session->hashcons ||
+            (session->walk.hooks && session->walk.hooks->is_current &&
+             !session->walk.hooks->is_current(session->walk.hooks->context))) {
         session->walk.phase = BINDINGS_WALK_REFUSED;
         return BINDINGS_APPLY_REFUSED;
     }

@@ -99,8 +99,8 @@
 
 ; Project a unique labelled field from an already returned report. The result
 ; quotes its payload; inspecting a field never grants permission to execute it.
-; Duplicate labels refuse even when their values agree. Observation values
-; participate in the same uniqueness check as its labelled fields.
+; Duplicate labels refuse even when their values agree. Observation's first
+; payload is positional values, separate from its labelled fields.
 (: HistoryField (-> Atom Atom Atom Atom))
 (: history:field-scan (-> Atom Atom Number Atom %Undefined%))
 (: history:field-row (-> Atom Atom Atom Number Atom %Undefined%))

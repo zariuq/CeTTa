@@ -49,4 +49,4 @@
    (respond $type (ctx:bind ctx:empty treat $natural)))
 
 ; ---- The intensional face.
-!(get-type (policy False))
+!(let $regime (policy False) (get-type $regime))
