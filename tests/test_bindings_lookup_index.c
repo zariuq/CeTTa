@@ -51,6 +51,21 @@ static void test_reused_frame_presentation(Arena *arena) {
         Atom *candidate=atom_expr3(arena,head,old,old);
         CHECK(match_atoms_epoch_builder(pattern,candidate,&builder,arena,epoch),
               "structured candidate installs source presentation");
+        const BindingsFrameIndexEntry *frame=NULL;uint32_t slot=0;
+        VarId coordinate=var_epoch_id(old->var_id,epoch);
+        bool found=bindings_frame_index_find_coordinate(&builder.current,coordinate,&frame,&slot);
+        CHECK(found,"source presentation has a retained coordinate");
+        if (found) {
+            Atom *original=bindings_frame_slot_name_key(frame,slot);
+            Arena temporary;arena_init_detached(&temporary);
+            Atom *image=atom_string(&temporary,"old-presentation");
+            CHECK(bindings_frame_index_ensure_presentation(&builder.current,coordinate,SYMBOL_ID_NONE,image),
+                  "an equal temporary presentation is compatible");
+            found=bindings_frame_index_find_coordinate(&builder.current,coordinate,&frame,&slot);
+            CHECK(found && bindings_frame_slot_name_key(frame,slot)==original,
+                  "an equal temporary image must not replace the retained presentation");
+            arena_free(&temporary);
+        }
         bindings_builder_rollback(&builder,mark);
     }
     {

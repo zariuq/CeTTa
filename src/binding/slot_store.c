@@ -594,7 +594,10 @@ bool bindings_frame_index_ensure_presentation_slot(
     }
     bool needs_spelling = existing_spelling == SYMBOL_ID_NONE &&
         spelling != SYMBOL_ID_NONE;
-    bool needs_key = name_key && existing_key != name_key;
+    /* An equal presentation supplies no new information. In particular a
+     * temporary matching image must not replace the longer-lived key already
+     * attached to this frame; rollback may retire that image immediately. */
+    bool needs_key = name_key && !existing_key;
     if (!needs_spelling && !needs_key)
         return true;
     if (!bindings_frame_index_detach(bindings))
