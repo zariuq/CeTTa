@@ -49572,7 +49572,7 @@ test-math-native: $(MATH_NATIVE_TEST_BIN)
 test-all: test-math-native test-math-parts
 STORE_AUTHORITY_TEST_BIN = runtime/test-store-authority-$(BUILD_OBJ_TAG)
 $(STORE_AUTHORITY_TEST_BIN): tests/support/test_store_authority.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(COMPILED_READER_RUNTIME_OBJ) $(BRIDGE_DEPS)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $^ $(LDFLAGS) -Wl,--wrap=cetta_native_handle_alloc
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $^ $(LDFLAGS) -Wl,--wrap=cetta_native_handle_alloc,--wrap=eval_current_root_space,--wrap=cetta_disk_store_commit,--wrap=space_program_token_matches_live_space
 .PHONY: test-store-authority
 test-store-authority: $(STORE_AUTHORITY_TEST_BIN)
 	$<

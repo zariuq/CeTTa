@@ -25225,6 +25225,9 @@ Arena *eval_current_persistent_arena(void) {
 CettaLibraryContext *eval_current_library_context(void) {
     return g_library_context;
 }
+Space *eval_current_root_space(void) {
+    return g_eval_root_space;
+}
 
 /* Use the native provider's actual import/loaded-module availability, not a
  * second naming rule. Standalone clients without that provider get no credit. */

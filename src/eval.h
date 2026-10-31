@@ -572,6 +572,9 @@ bool eval_prime_install_standard_library(Space *space, Arena *arena);
  * The scoped caller restores the returned context before yielding. */
 CettaLibraryContext *eval_swap_library_context(CettaLibraryContext *next);
 CettaLibraryContext *eval_current_library_context(void);
+/* The live application root of the current top evaluation. Observation only;
+ * callers retain no lifetime/authority by saving this borrowed pointer. */
+Space *eval_current_root_space(void);
 
 /* A Prime typing judgment, or Prime's `get-type`, is in progress.  An entry
  * to HE's type engine made inside one is counted for the census.  Evaluation

@@ -6,6 +6,8 @@
 #include "native_handle.h"
 #include "atom_wire.h"
 #include "eval.h"
+#include "shared_transition.h"
+#include "petta_specializer.h"
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,6 +17,17 @@ static const char *owner_kind="disk-store",*view_kind="disk-store-view";
 static const char *reader_kind="disk-store-body",*scan_kind="disk-store-scan";
 static const char *query_kind="disk-space-query";
 static const char *batch_kind="disk-store-batch";
+static const char *program_kind="program-watch";
+typedef struct {
+    SpaceProgramToken token;
+    PettaProgramReadBarrier *barrier;
+    const CettaProfile *profile;
+    CettaLanguageId language;
+    uint64_t imports,admission,paths;
+} ProgramWatch;
+static void free_program(void *p) {
+    ProgramWatch *watch=p;petta_program_read_barrier_free(watch->barrier);free(watch);
+}
 typedef struct { CettaDiskCursor *cursor; CettaDiskBuffer last; CettaDiskBlob blob; uint64_t position; bool done; } Scan;
 typedef struct { CettaDiskStoreScope *items; unsigned char **allocated; size_t count; } Scopes;
 
@@ -25,6 +38,22 @@ static void free_reader(void *p) { cetta_disk_blob_reader_close(p); }
 static void free_query(void *p) { cetta_disk_query_close(p); }
 static void query_storage(const void *p,CettaStorageCensus *census) { cetta_disk_query_storage_census(p,census); }
 static void free_batch(void *p) { cetta_disk_store_batch_close(p); }
+static void program_storage(const void *p,CettaStorageCensus *census) {
+    const ProgramWatch *watch=p;
+    if (watch && cetta_storage_object(census,p,sizeof(ProgramWatch),CETTA_STORAGE_BLOCK))
+        petta_program_read_barrier_storage(watch->barrier,census);
+}
+static bool program_current(CettaLibraryContext *ctx,const ProgramWatch *watch) {
+    /* Compare with the actual live root; never dereference a saved identity.
+     * A retired/reinitialized root cannot revive this in-process observation. */
+    bool valid=ctx && watch && watch->profile==ctx->session.profile &&
+        watch->language==ctx->session.language_id && watch->imports==ctx->active_mask &&
+        watch->admission==ctx->petta_admission_revision &&
+        watch->paths==ctx->petta_library_paths.revision &&
+        space_program_token_matches_live_space(watch->token,eval_current_root_space()) &&
+        petta_program_read_barrier_current(watch->barrier,eval_current_root_space());
+    return valid;
+}
 static void free_scan(void *p) {
     Scan *scan=p; cetta_disk_cursor_close(scan->cursor); cetta_disk_buffer_free(&scan->last); free(scan);
 }
@@ -71,6 +100,7 @@ static Atom *own(CettaLibraryContext *ctx,Arena *a,const char *kind,void *p,Cett
     if (!cetta_native_handle_alloc(ctx,kind,p,release,&id)) { release(p); return NULL; }
     CettaStorageVisitor visitor=kind==view_kind ? view_storage
         : kind==batch_kind ? cetta_disk_store_batch_storage_census
+        : kind==program_kind ? program_storage
         : kind==scan_kind ? scan_storage : NULL;
     if (visitor && !cetta_native_handle_set_storage(ctx,kind,id,visitor)) {
         cetta_native_handle_close(ctx,kind,id);return NULL;
@@ -259,6 +289,38 @@ done:
 }
 Atom *cetta_store_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **args,uint32_t n) {
     if (!ctx || !a || !head) return NULL;
+    bool program_open=atom_is_symbol(head,"__cetta_lib_store_program_watch_open");
+    bool program_clone=atom_is_symbol(head,"__cetta_lib_store_program_watch_clone");
+    bool program_check=atom_is_symbol(head,"__cetta_lib_store_program_watch_check");
+    if (program_open || program_clone || program_check) {
+        if (n!=(program_open ? 0u : 1u)) return refused(a,"invalid-program-watch");
+        CETTA_SCOPED_SHARED_TRANSITION(program_observation);
+        ProgramWatch captured={0};CettaNativeHandleUse use={0};
+        if (program_open) {
+            Space *root=eval_current_root_space();
+            if (!root || ctx->session.language_id!=CETTA_LANGUAGE_PETTA) return refused(a,"program-profile");
+            captured=(ProgramWatch){.token=space_program_token(root),.profile=ctx->session.profile,
+                .language=ctx->session.language_id,.imports=ctx->active_mask,
+                .admission=ctx->petta_admission_revision,.paths=ctx->petta_library_paths.revision};
+            captured.barrier=petta_program_read_barrier_new(root);
+            if (!captured.barrier) return refused(a,"capacity");
+        } else {
+            if (!acquire(ctx,program_kind,args[0],CETTA_NATIVE_HANDLE_USE_LIFETIME,&use)) return refused(a,"closed-program-watch");
+            captured=*(ProgramWatch *)cetta_native_handle_use_resource(&use);
+            if (program_check) {
+                bool current=program_current(ctx,&captured);
+                cetta_native_handle_use_release(&use);
+                return current ? atom_symbol(a,"StoreProgramCurrent") : refused(a,"program-invalidated");
+            }
+            bool retained=petta_program_read_barrier_retain(captured.barrier);
+            cetta_native_handle_use_release(&use);
+            if (!retained) return refused(a,"capacity");
+        }
+        ProgramWatch *watch=malloc(sizeof(*watch));
+        if (!watch) { petta_program_read_barrier_free(captured.barrier);return refused(a,"capacity"); }
+        *watch=captured;Atom *handle=own(ctx,a,program_kind,watch,free_program);
+        return handle ? atom_expr2(a,atom_symbol(a,"StoreProgramWatch"),handle) : refused(a,"capacity");
+    }
     if (atom_is_symbol(head,"__cetta_lib_store_space_view")) return space_view(ctx,a,args,n,false);
     if (atom_is_symbol(head,"__cetta_lib_store_space_query_open")) return space_view(ctx,a,args,n,true);
     bool query_next=atom_is_symbol(head,"__cetta_lib_store_space_query_next");
@@ -358,7 +420,7 @@ Atom *cetta_store_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **a
     }
     if (atom_is_symbol(head,"__cetta_lib_store_close")) {
         if (n!=1) return refused(a,"invalid-close");
-        const char *kinds[]={owner_kind,view_kind,reader_kind,scan_kind,query_kind,batch_kind};
+        const char *kinds[]={owner_kind,view_kind,reader_kind,scan_kind,query_kind,batch_kind,program_kind};
         for (size_t i=0;i<sizeof(kinds)/sizeof(*kinds);++i) {
             CettaNativeHandleUse use={0};uint64_t id=0;
             if (!acquire(ctx,kinds[i],args[0],CETTA_NATIVE_HANDLE_USE_LIFETIME,&use)) continue;
@@ -454,30 +516,43 @@ Atom *cetta_store_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **a
     }
     bool commit_call=atom_is_symbol(head,"__cetta_lib_store_commit"),scoped_call=atom_is_symbol(head,"__cetta_lib_store_commit_scoped");
     bool batch_commit=atom_is_symbol(head,"__cetta_lib_store_commit_batch");
-    if (commit_call || scoped_call || batch_commit) {
-        if (n!=(scoped_call ? 5u : 3u)) return refused(a,"invalid-commit");
+    bool guarded_commit=atom_is_symbol(head,"__cetta_lib_store_commit_guarded");
+    if (commit_call || scoped_call || batch_commit || guarded_commit) {
+        if (n!=(scoped_call ? 5u : guarded_commit ? 4u : 3u)) return refused(a,"invalid-commit");
         CettaNativeHandleUse owner={0},view={0};
         if (!acquire(ctx,owner_kind,args[0],CETTA_NATIVE_HANDLE_USE_EXCLUSIVE,&owner)) return refused(a,"closed-or-busy");
         if (!acquire(ctx,view_kind,args[1],CETTA_NATIVE_HANDLE_USE_LIFETIME,&view)) {
             cetta_native_handle_use_release(&owner);return refused(a,"closed-view");
         }
         CettaDiskOp *ops=NULL;size_t count=0;Scopes reads={0},writes={0};CettaDiskStoreView *result=NULL;
-        CettaNativeHandleUse batch={0};
+        CettaNativeHandleUse batch={0},watch={0};
+        if (guarded_commit && !acquire(ctx,program_kind,args[2],CETTA_NATIVE_HANDLE_USE_LIFETIME,&watch)) {
+            cetta_native_handle_use_release(&view);cetta_native_handle_use_release(&owner);
+            return refused(a,"closed-program-watch");
+        }
         if (batch_commit && !acquire(ctx,batch_kind,args[2],CETTA_NATIVE_HANDLE_USE_EXCLUSIVE,&batch)) {
             cetta_native_handle_use_release(&view);cetta_native_handle_use_release(&owner);
             return refused(a,"closed-or-busy-batch");
         }
-        bool valid=batch_commit || operations(args[scoped_call ? 4 : 2],&ops,&count);
+        bool valid=batch_commit || operations(args[scoped_call ? 4 : guarded_commit ? 3 : 2],&ops,&count);
         if (valid && scoped_call) valid=scopes(args[2],"reads",&reads) && scopes(args[3],"writes",&writes);
         CettaDiskStoreStatus status=CETTA_STORE_INVALID;
-        if (valid) status=batch_commit ? cetta_disk_store_commit_batch(cetta_native_handle_use_resource(&owner),
+        /* The program observation and disk publication are one validation
+         * interval in the existing physical-transition domain. No MeTTa
+         * callback executes while that guard or the writer lock is held. */
+        CettaSharedTransitionGuard publication={0};
+        if (guarded_commit) cetta_shared_transition_guard_enter(&publication);
+        bool program_valid=!guarded_commit || program_current(ctx,cetta_native_handle_use_resource(&watch));
+        if (valid && program_valid) status=batch_commit ? cetta_disk_store_commit_batch(cetta_native_handle_use_resource(&owner),
             cetta_native_handle_use_resource(&view),cetta_native_handle_use_resource(&batch),&result) : scoped_call ? cetta_disk_store_commit_scoped(cetta_native_handle_use_resource(&owner),
             cetta_native_handle_use_resource(&view),reads.items,reads.count,writes.items,writes.count,ops,count,&result) :
             cetta_disk_store_commit(cetta_native_handle_use_resource(&owner),cetta_native_handle_use_resource(&view),ops,count,&result);
+        cetta_shared_transition_guard_leave(&publication);
         free(ops);scopes_free(&reads);scopes_free(&writes);
+        cetta_native_handle_use_release(&watch);
         cetta_native_handle_use_release(&batch);
         cetta_native_handle_use_release(&view);
-        Atom *answer=status==CETTA_STORE_OK ? view_value(ctx,a,result,true,cetta_native_handle_use_resource(&owner)) : status_value(a,status);
+        Atom *answer=!program_valid ? refused(a,"program-invalidated") : status==CETTA_STORE_OK ? view_value(ctx,a,result,true,cetta_native_handle_use_resource(&owner)) : status_value(a,status);
         cetta_native_handle_use_release(&owner);return answer;
     }
     if (atom_is_symbol(head,"__cetta_lib_store_get") || atom_is_symbol(head,"__cetta_lib_store_blob_open")) {

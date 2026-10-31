@@ -6,6 +6,10 @@
 (: __cetta_lib_store_view_info (-> Atom Atom))
 (: __cetta_lib_store_view_clone (-> Atom Atom))
 (: __cetta_lib_store_check_view (-> Atom Atom Atom))
+(: __cetta_lib_store_program_watch_open (-> Atom))
+(: __cetta_lib_store_program_watch_clone (-> Atom Atom))
+(: __cetta_lib_store_program_watch_check (-> Atom Atom))
+(: __cetta_lib_store_commit_guarded (-> Atom Atom Atom Atom Atom))
 (: __cetta_lib_store_space_view (-> Atom String Atom))
 (: __cetta_lib_store_space_query_open (-> Atom String Atom Atom Atom))
 (: __cetta_lib_store_space_query_next (-> Atom Number Number Number Atom))
@@ -47,6 +51,14 @@
    (function (case (__cetta_lib_store_view_clone $view) (($result (return $result))))))
 (= (store:check-view $store $view)
    (function (case (__cetta_lib_store_check_view $store $view) (($result (return $result))))))
+(= (store:program-watch-open)
+   (function (case (__cetta_lib_store_program_watch_open) (($result (return $result))))))
+(= (store:program-watch-clone $watch)
+   (function (case (__cetta_lib_store_program_watch_clone $watch) (($result (return $result))))))
+(= (store:program-watch-check $watch)
+   (function (case (__cetta_lib_store_program_watch_check $watch) (($result (return $result))))))
+(= (store:commit-guarded $store $view $watch $ops)
+   (function (case (__cetta_lib_store_commit_guarded $store $view $watch $ops) (($result (return $result))))))
 ; The named metadata record is (StoreSpaceV1 prefix occurrence-count), encoded
 ; with store:encode in the same captured store as the atom rows. Each value
 ; under prefix is one CAV1 atom and its key is the occurrence identity. The
