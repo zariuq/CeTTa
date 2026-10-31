@@ -246,13 +246,15 @@
 (= (durable-space:publish $owner $view $request $command $key $prefix $next $ops $created)
   (durable-space:publish-indexed $owner $view $request $command $key $prefix $next $ops $created ()))
 (= (durable-space:publish-indexed $owner $view $request $command $key $prefix $next $ops $created $indexes)
+  (durable-space:publish-policy $owner $view $request $command $key $prefix $next $ops $created $indexes NoProgramWatchV1))
+(= (durable-space:publish-policy $owner $view $request $command $key $prefix $next $ops $created $indexes $policy)
   (case (store:key-i64 $next)
     (((StoreKeyBytes $integer)
       (let $record (durable-space:descriptor $prefix $next $indexes)
       (case (store:encode $record)
         (((StoreEncoded $body)
-          (knowledge:publish-whole-ready $owner $view $request $command
-            (SpaceAppliedV1 $created) (cons-atom ops (cons-atom (put $key $body) $ops))))
+          (knowledge:publish-whole-policy $owner $view $request $command
+            (SpaceAppliedV1 $created) (cons-atom ops (cons-atom (put $key $body) $ops)) $policy))
          ($error $error)))))
      ($other (SpaceRefusedV1 metadata-count)))))
 
@@ -266,6 +268,9 @@
 ; rechecking a retry; owner authority is still required for publication.
 (: durable-space:commit-command (-> %Undefined% %Undefined% Atom Atom Atom Atom %Undefined%))
 (= (durable-space:commit-command $owner $view $collection $request $command $changes)
+  (durable-space:commit-policy $owner $view $collection $request $command $changes NoProgramWatchV1))
+(: durable-space:commit-policy (-> %Undefined% %Undefined% Atom Atom Atom Atom Atom %Undefined%))
+(= (durable-space:commit-policy $owner $view $collection $request $command $changes $policy)
     (case (knowledge:receipt $view $request $command (durable-space:wire-limit))
       ((KnowledgeReceiptAbsentV1
         (case (durable-space:metadata $collection)
@@ -278,7 +283,7 @@
                       (((StoreViewInfo $epoch $revision)
                         (case (durable-space:stage-indexed $view $epoch $prefix $request $changes () $count () () $indexes)
                           (((SpacePreparedV1 $next $ops $created)
-                            (durable-space:publish-indexed $owner $view $request $command $key $prefix $next $ops $created $indexes))
+                            (durable-space:publish-policy $owner $view $request $command $key $prefix $next $ops $created $indexes $policy))
                            ($error $error))))
                        ($error $error))))
                    ($error $error))))

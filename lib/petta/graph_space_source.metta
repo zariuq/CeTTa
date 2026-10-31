@@ -1,6 +1,6 @@
 ; Edge iteration for the existing MeTTa graph walker over captured ordinary
 ; Spaces. Only this adapter knows the collection and native query interface.
-!(import! &self "durable_space.metta")
+!(import! &self "durable_query.metta")
 
 (: kbg:open-space (-> %Undefined% Atom Number Atom Number Number %Undefined%))
 (: kbg-space:project (-> Atom Atom Number Atom Number Atom %Undefined%))
@@ -14,7 +14,12 @@
               (((StoreSnapshot $copy $epoch $revision)
                 (let* (($source (KgSpaceV1 $copy $collection $arity))
                        ($cursor (kbg:open $source $plan $bytes $states)))
-                  (if (kbg:cursor? $cursor) $cursor
+                  (if (kbg:cursor? $cursor)
+                    (case (store:program-watch-open)
+                      (((StoreProgramWatch $watch)
+                        (let (KgCursor $base $config $mode $frontier $active $work) $cursor
+                          (KgCursor (KgSpaceV2 $copy $collection $arity $watch) $config $mode $frontier $active $work)))
+                       ($failure (let $_ (kbg:close $cursor) $failure))))
                     (let $_ (store:close $copy) $cursor))))
                ($failure $failure)))
             (KbRefused graph-field-position)))
@@ -30,21 +35,45 @@
          ($failure $failure))))
     (kb:validate-view $source)))
 (= (kbg:source-close-view $source)
-  (if (knowledge:tagged? $source KgSpaceV1 4)
-    (let (KgSpaceV1 $view $collection $arity) $source (store:close $view)) KgClosed))
+  (if (knowledge:tagged? $source KgSpaceV2 5)
+    (let (KgSpaceV2 $view $collection $arity $watch) $source
+      (let* (($_ (store:close $view)) ($_ (store:close $watch))) KgClosed))
+    (if (knowledge:tagged? $source KgSpaceV1 4)
+      (let (KgSpaceV1 $view $collection $arity) $source (store:close $view)) KgClosed)))
+(= (kbg:base-source $source)
+  (if (knowledge:tagged? $source KgSpaceV2 5)
+    (let (KgSpaceV2 $view $collection $arity $watch) $source
+      (KgSpaceV1 $view $collection $arity)) $source))
+(= (kbg:program-check $source)
+  (if (knowledge:tagged? $source KgSpaceV2 5)
+    (let (KgSpaceV2 $view $collection $arity $watch) $source (store:program-watch-check $watch)) StoreProgramCurrent))
+(= (kbg:read-context $cursor)
+  (if (kbg:cursor? $cursor)
+    (let (KgCursor $source $config $mode $frontier $active $work) $cursor
+      (case $source
+        (((KgSpaceV2 $view $collection $arity $watch) (durable-query:context $view $watch))
+         ($other (KbRefused program-observation-required))))) (KbRefused graph-cursor)))
 (= (kbg:source-observe $source $relation)
-  (if (knowledge:tagged? $source KgSpaceV1 4)
+  (if (knowledge:tagged? $source KgSpaceV2 5)
+    (kbg:source-observe (kbg:base-source $source) $relation)
+   (if (knowledge:tagged? $source KgSpaceV1 4)
     (let (KgSpaceV1 $view $collection $arity) $source
       (case (store:view-info $view)
         (((StoreViewInfo $epoch $revision) (KgSpaceObservationV1 $epoch $revision $collection))
          ($failure $failure))))
-    (kb:observe-selector $source (KbRelation $relation))))
+    (kb:observe-selector $source (KbRelation $relation)))))
 ; Observed counters describe the current adjacency scan, not a cost forecast
 ; or the total graph traversal. The ordinary KgWork carries cumulative visits
 ; and decoded bytes, including the additional original-occurrence reads.
 (= (kbg:inspect-space $cursor)
   (if (kbg:cursor? $cursor)
-    (let (KgCursor (KgSpaceV1 $view $collection $arity) $config $mode $frontier $active $work) $cursor
+    (let (KgCursor $source $config $mode $frontier $active $work) $cursor
+      (kbg:inspect-source $source $config $mode $frontier $active $work)) (KbRefused graph-cursor)))
+(= (kbg:inspect-source $source $config $mode $frontier $active $work)
+  (case $source
+    (((KgSpaceV2 $view $collection $arity $watch)
+      (kbg:inspect-source (KgSpaceV1 $view $collection $arity) $config $mode $frontier $active $work))
+     ((KgSpaceV1 $view $collection $arity)
       (case (store:view-info $view)
         (((StoreViewInfo $epoch $revision)
           (let $access
@@ -53,7 +82,8 @@
                 (store:space-query-info $query))
                ($idle KgNoActiveScanV1)))
             (KgSpaceInspectionV1 $epoch $revision $collection $arity $work $access)))
-         ($failure $failure)))) (KbRefused graph-cursor)))
+         ($failure $failure))))
+     ($failure (KbRefused graph-source)))))
 
 ; Recursive activations supply distinct holes. A repeated placeholder would
 ; accidentally equate unrelated endpoint/property fields.

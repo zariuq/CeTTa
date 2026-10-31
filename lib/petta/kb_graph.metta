@@ -313,7 +313,27 @@
 (= (kbg:step $cursor)
    (if (kbg:cursor? $cursor) (kbg:step-ready $cursor) (KbRefused graph-cursor)))
 (= (kbg:step-ready (KgCursor $view $config $mode $frontier $active (KgWork $steps $keys $bytes $offered)))
-   (case (kbg:advance $view $config $mode $frontier $active)
+   (case (kbg:program-check $view)
+     ((StoreProgramCurrent
+       (let* (($base (kbg:base-source $view))
+              ($answer (kbg:advance $base $config $mode $frontier $active)))
+         (case (kbg:program-check $view)
+           ((StoreProgramCurrent (kbg:step-result $view $config $mode $steps $keys $bytes $offered $answer))
+            ($failure
+              (let* (((KgDiscardedV1 $k $d $n) (kbg:discard-step $answer))
+                     ($_ (kbg:source-close-view $view)))
+                (KgFailed $failure (KgWork (+ $steps 1) (+ $keys $k) (+ $bytes $d) (+ $offered $n)))))))))
+      ($failure
+        (let* (($_ (kbg:close-active $active)) ($_ (kbg:source-close-view $view)))
+          (KgFailed $failure (KgWork $steps $keys $bytes $offered)))))))
+(= (kbg:discard-step $answer)
+  (case $answer
+    (((KgVisited $row $pending $next $k $d $n) (let $_ (kbg:close-active $next) (KgDiscardedV1 $k $d $n)))
+     ((KgSkip $pending $next $k $d $n) (let $_ (kbg:close-active $next) (KgDiscardedV1 $k $d $n)))
+     ((KgEnd $k $d) (KgDiscardedV1 $k $d 0))
+     ((KgFail $failure $k $d) (KgDiscardedV1 $k $d 0)))))
+(= (kbg:step-result $view $config $mode $steps $keys $bytes $offered $outcome)
+   (case $outcome
      (((KgVisited $answer $pending $next $k $d $enqueued)
        (let $continuation (KgCursor $view $config $mode $pending $next
                              (KgWork (+ $steps 1) (+ $keys $k) (+ $bytes $d) (+ $offered $enqueued)))

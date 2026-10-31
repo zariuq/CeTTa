@@ -199,7 +199,28 @@
 (= (kbq:step $cursor)
    (if (kbq:cursor? $cursor) (kbq:step-ready $cursor) (KbRefused query-cursor)))
 (= (kbq:step-ready (KqCursor $view $state $steps $keys $bytes))
-   (case (kbq:advance $state)
+   (case (kbq:program-check $view)
+     ((StoreProgramCurrent
+       (let $answer (kbq:advance $state)
+         (kbq:checked-step $view $answer $steps $keys $bytes)))
+      ($failure
+       (let* (($_ (kbq:close-state $state)) ($_ (kbq:source-close-view $view)))
+         (KqFailed $failure (KqWork $steps $keys $bytes)))))))
+(= (kbq:checked-step $view $answer $steps $keys $bytes)
+   (case (kbq:program-check $view)
+     ((StoreProgramCurrent (kbq:step-result $view $answer $steps $keys $bytes))
+      ($failure
+       (let (KqDiscardedV1 $k $b) (kbq:discard-step $answer)
+         (let $_ (kbq:source-close-view $view)
+           (KqFailed $failure (KqWork (+ $steps 1) (+ $keys $k) (+ $bytes $b)))))))))
+(= (kbq:discard-step $answer)
+  (case $answer
+    (((KqOut $row $next $k $b) (let $_ (kbq:close-state $next) (KqDiscardedV1 $k $b)))
+     ((KqSkip $next $k $b) (let $_ (kbq:close-state $next) (KqDiscardedV1 $k $b)))
+     ((KqEnd $k $b) (KqDiscardedV1 $k $b))
+     ((KqFail $error $k $b) (KqDiscardedV1 $k $b)))))
+(= (kbq:step-result $view $answer $steps $keys $bytes)
+   (case $answer
      (((KqOut $row $next $extra $decoded)
        (KqYield $row (KqCursor $view $next (+ $steps 1) (+ $keys $extra) (+ $bytes $decoded))))
       ((KqSkip $next $extra $decoded)
