@@ -101,6 +101,10 @@ struct CettaLibPrologRuntime {
     uint64_t symbol_table_instance;
     uint64_t revision;
     _Atomic uint64_t capability_revision;
+    /* For each standard bridge (petta_libpl_standard_bridges), whether its
+     * predicate is still the foreign one the library registered, with the
+     * capability revision it was asked at: revision << 1 | current. */
+    _Atomic uint64_t bridge_current[8];
     /*
      * Names proven to have neither a live predicate at any arity nor an
      * arity/2 declaration.  The reference resolves every application head
@@ -907,53 +911,62 @@ static foreign_t petta_libpl_standard_add_builtin_signatures(
  * explicit bridge table.  The table is also the installation invariant: a
  * row cannot advertise an arity without registering its implementation.
  */
+static const PettaLibplStandardBridge petta_libpl_standard_bridges[] = {
+    {
+        .name = "add_builtin_signatures",
+        .function_arity = 1u,
+        .implementation =
+            (pl_function_t)petta_libpl_standard_add_builtin_signatures,
+        .nondeterministic = true,
+    },
+    {
+        .name = "==",
+        .function_arity = 2u,
+        .implementation =
+            (pl_function_t)petta_libpl_standard_equal,
+    },
+    {
+        .name = "!=",
+        .function_arity = 2u,
+        .implementation =
+            (pl_function_t)petta_libpl_standard_not_equal,
+    },
+    {
+        .name = "eval",
+        .function_arity = 1u,
+        .implementation =
+            (pl_function_t)petta_libpl_standard_eval,
+        .nondeterministic = true,
+    },
+    {
+        .name = "swrite",
+        .function_arity = 1u,
+        .implementation =
+            (pl_function_t)petta_libpl_standard_swrite,
+    },
+    {
+        .name = "py-call",
+        .function_arity = 1u,
+        .implementation =
+            (pl_function_t)petta_libpl_grounded_bridge,
+    },
+};
+#define PETTA_LIBPL_STANDARD_BRIDGE_COUNT \
+    (sizeof(petta_libpl_standard_bridges) / \
+     sizeof(petta_libpl_standard_bridges[0]))
+_Static_assert(PETTA_LIBPL_STANDARD_BRIDGE_COUNT <=
+                   sizeof(((CettaLibPrologRuntime *)0)->bridge_current) /
+                       sizeof(uint64_t),
+               "each standard bridge has a currency slot");
+
 static bool petta_libpl_install_standard_bridges(
     CettaLibPrologRuntime *runtime) {
-    static const PettaLibplStandardBridge bridges[] = {
-        {
-            .name = "add_builtin_signatures",
-            .function_arity = 1u,
-            .implementation =
-                (pl_function_t)petta_libpl_standard_add_builtin_signatures,
-            .nondeterministic = true,
-        },
-        {
-            .name = "==",
-            .function_arity = 2u,
-            .implementation =
-                (pl_function_t)petta_libpl_standard_equal,
-        },
-        {
-            .name = "!=",
-            .function_arity = 2u,
-            .implementation =
-                (pl_function_t)petta_libpl_standard_not_equal,
-        },
-        {
-            .name = "eval",
-            .function_arity = 1u,
-            .implementation =
-                (pl_function_t)petta_libpl_standard_eval,
-            .nondeterministic = true,
-        },
-        {
-            .name = "swrite",
-            .function_arity = 1u,
-            .implementation =
-                (pl_function_t)petta_libpl_standard_swrite,
-        },
-        {
-            .name = "py-call",
-            .function_arity = 1u,
-            .implementation =
-                (pl_function_t)petta_libpl_grounded_bridge,
-        },
-    };
     if (!runtime || !runtime->module_name)
         return false;
     for (size_t index = 0u;
-         index < sizeof(bridges) / sizeof(bridges[0]); index++) {
-        const PettaLibplStandardBridge *bridge = &bridges[index];
+         index < PETTA_LIBPL_STANDARD_BRIDGE_COUNT; index++) {
+        const PettaLibplStandardBridge *bridge =
+            &petta_libpl_standard_bridges[index];
         if (bridge->function_arity >= (size_t)INT_MAX ||
             !PL_register_foreign_in_module(
                 runtime->module_name, bridge->name,
@@ -5706,6 +5719,80 @@ bool petta_libpl_predicate_defined(
     }
     petta_libpl_leave(claimed);
     return exists;
+}
+
+/* Whether NAME/ARITY in the runtime's module is a foreign predicate, as the
+ * library registers its bridges: a consult or an assertion of the
+ * program's makes it a Prolog one, an abolish takes it away. */
+static bool petta_libpl_predicate_foreign(CettaLibPrologRuntime *runtime,
+                                          const char *name, size_t arity) {
+    static predicate_t property;
+    if (!property)
+        property = PL_predicate("predicate_property", 2, "system");
+    fid_t frame = PL_open_foreign_frame();
+    if (!frame)
+        return false;
+    term_t args = PL_new_term_refs(2);
+    term_t head = PL_new_term_ref();
+    term_t parts = PL_new_term_refs(2);
+    atom_t name_atom = PL_new_atom(name);
+    functor_t head_functor = PL_new_functor_sz(name_atom, arity);
+    atom_t colon = PL_new_atom(":");
+    functor_t qualified = PL_new_functor(colon, 2);
+    atom_t module_atom = PL_new_atom(runtime->module_name);
+    atom_t foreign = PL_new_atom("foreign");
+    bool asked = args && head && parts && head_functor && qualified &&
+                 PL_put_functor(head, head_functor) &&
+                 PL_put_atom(parts, module_atom) &&
+                 PL_put_term(parts + 1, head) &&
+                 PL_cons_functor_v(args, qualified, parts) &&
+                 PL_put_atom(args + 1, foreign);
+    bool is_foreign = asked &&
+        PL_call_predicate(NULL, PL_Q_NODEBUG | PL_Q_CATCH_EXCEPTION,
+                          property, args);
+    PL_unregister_atom(name_atom);
+    PL_unregister_atom(colon);
+    PL_unregister_atom(module_atom);
+    PL_unregister_atom(foreign);
+    PL_discard_foreign_frame(frame);
+    return is_foreign;
+}
+
+bool petta_libpl_standard_function_current(
+    CettaLibPrologRuntime *runtime, SymbolId name, size_t arity) {
+    if (!runtime || !runtime->module_name || !g_symbols ||
+        name == SYMBOL_ID_NONE)
+        return false;
+    SymbolSpelling spelling = symbol_spelling(g_symbols, name);
+    size_t bridge = 0u;
+    while (bridge < PETTA_LIBPL_STANDARD_BRIDGE_COUNT &&
+           (petta_libpl_standard_bridges[bridge].function_arity != arity ||
+            strlen(petta_libpl_standard_bridges[bridge].name) !=
+                spelling.len ||
+            memcmp(petta_libpl_standard_bridges[bridge].name,
+                   spelling.bytes, spelling.len) != 0))
+        bridge++;
+    if (bridge == PETTA_LIBPL_STANDARD_BRIDGE_COUNT)
+        return false;
+    /* An engine not started has run none of the program's Prolog. */
+    if (!runtime->prepared)
+        return true;
+    uint64_t revision = atomic_load_explicit(&runtime->capability_revision,
+                                             memory_order_acquire);
+    uint64_t asked = atomic_load_explicit(&runtime->bridge_current[bridge],
+                                          memory_order_acquire);
+    if (asked >> 1 == revision)
+        return (asked & 1u) != 0u;
+    bool claimed = false;
+    if (!petta_libpl_enter(&claimed))
+        return false;
+    bool current = petta_libpl_predicate_foreign(
+        runtime, petta_libpl_standard_bridges[bridge].name, arity + 1u);
+    petta_libpl_leave(claimed);
+    atomic_store_explicit(&runtime->bridge_current[bridge],
+                          revision << 1 | (current ? 1u : 0u),
+                          memory_order_release);
+    return current;
 }
 
 /*

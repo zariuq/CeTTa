@@ -301,6 +301,26 @@ static bool native_query_exact_value(NativeQueryLoops *loops, AtomId id) {
     return true;
 }
 
+/* Whether the atom an id names is equal only to itself, as
+ * native_query_exact_value asks, without its record of terms met. */
+static bool native_query_id_exact(const TermUniverse *universe, AtomId id) {
+    const CettaTermHdr *header = tu_hdr(universe, id);
+    if (!header)
+        return false;
+    if (header->tag == ATOM_SYMBOL)
+        return true;
+    if (header->tag == ATOM_GROUNDED)
+        return header->subtag == GV_INT || header->subtag == GV_BOOL ||
+            header->subtag == GV_STRING;
+    if (header->tag != ATOM_EXPR || tu_has_vars(universe, id))
+        return false;
+    for (CettaExprIndex c = 0u; c < tu_arity(universe, id); c++) {
+        if (!native_query_id_exact(universe, tu_child(universe, id, c)))
+            return false;
+    }
+    return true;
+}
+
 /* Whether an atom a pattern fixes is equal only to itself. */
 static bool native_query_exact_atom(Atom *atom) {
     if (atom->kind == ATOM_SYMBOL)
@@ -1722,10 +1742,10 @@ typedef struct {
     /* Solutions the enumeration counted whose branch answers nothing
      * (CettaNativeQuery.else_empty). */
     uint64_t unanswered;
-    /* A filtered query's operands (CettaNativeQuery.filter_left); NULL
-     * otherwise. */
-    const NativeQueryTemplate *filter_left;
-    const NativeQueryTemplate *filter_right;
+    /* A filtered query's operands, each filter's left and right in turn
+     * (CettaNativeQuery.filters). */
+    const NativeQueryTemplate *filters;
+    size_t filter_count;
 } NativeQueryRun;
 
 /* Whether the instance `id` of a distinct query's key is new: recorded,
@@ -1911,12 +1931,14 @@ static bool native_query_inserted_before(NativeQueryRun *run,
 /* Whether an addition makes its instances by tuples: its data is
  * (h X1 ... Xk), h a symbol and each Xi an atom or a variable, into a set
  * that may keep h in a relation.  The space takes each tuple into the
- * relation once h has one, and as a row before (space_add_dense_tuples). */
+ * relation once h has one, and as a row before (space_add_dense_tuples).
+ * An insert is one too: the run knows the instances it made by the
+ * guard's values (native_query_inserted_before), not by records. */
 static bool native_query_adds_tuples(const CettaNativeQuery *query,
                                      const CettaNativeQueryEffect *effect,
                                      const NativeQueryTemplate *data) {
     const NativeQueryNode *nodes = data->nodes;
-    if (!query->apply_tuples || effect->removal || effect->insert ||
+    if (!query->apply_tuples || effect->removal ||
         !space_is_set(effect->target) || data->len < 3u ||
         data->len > CETTA_TUPLE_MAX_ARITY + 2u ||
         nodes[0].kind != NATIVE_QUERY_NODE_EXPRESSION ||
@@ -1928,6 +1950,36 @@ static bool native_query_adds_tuples(const CettaNativeQuery *query,
         if (nodes[c].kind == NATIVE_QUERY_NODE_EXPRESSION)
             return false;
     return space_dense_may_hold(effect->target, nodes[1].atom->sym_id);
+}
+
+/* Whether the guard's instance, a flat fact (h c1 ... ck), is one a flat
+ * relation of the guard's space keeps for h, and then in *HELD whether the
+ * relation holds it, asked by its columns.  False where the guard is no
+ * flat fact or h keeps no flat relation of k columns. */
+static bool native_query_guard_columns(const NativeQueryRun *run,
+                                       const AtomId *values, bool *held) {
+    const NativeQueryTemplate *guard = run->guard;
+    const NativeQueryNode *nodes = guard->nodes;
+    if (guard->len < 3u || guard->len > CETTA_TUPLE_MAX_ARITY + 2u ||
+        nodes[0].kind != NATIVE_QUERY_NODE_EXPRESSION ||
+        nodes[0].arity + 1u != guard->len ||
+        nodes[1].kind != NATIVE_QUERY_NODE_CONSTANT || !nodes[1].atom ||
+        nodes[1].atom->kind != ATOM_SYMBOL)
+        return false;
+    uint32_t arity = (uint32_t)(guard->len - 2u);
+    AtomId columns[CETTA_TUPLE_MAX_ARITY];
+    for (uint32_t c = 0u; c < arity; c++) {
+        const NativeQueryNode *column = &nodes[c + 2u];
+        if (column->kind == NATIVE_QUERY_NODE_EXPRESSION)
+            return false;
+        columns[c] = column->kind == NATIVE_QUERY_NODE_CONSTANT
+            ? column->id : values[column->slot];
+        if (columns[c] == CETTA_ATOM_ID_NONE)
+            return false;
+    }
+    return space_dense_holds_columns(run->query->guard_space,
+                                     nodes[1].atom->sym_id, columns, arity,
+                                     held);
 }
 
 static bool native_query_visit(void *context, const AtomId *values,
@@ -1953,30 +2005,61 @@ static bool native_query_visit(void *context, const AtomId *values,
             return true;
         weight = 1u;
     }
-    /* A filtered solution compares its operands by id: one whose equality
-     * is not the effects' answers the other branch. */
-    if (run->filter_left) {
+    /* A filtered solution compares each filter's operands, by id or as
+     * integers: one a filter refuses answers the other branch. */
+    for (size_t filter = 0u; filter < run->filter_count; filter++) {
         size_t position = 0u;
-        AtomId left = native_query_instance_id(run->filter_left, &position,
-                                               run->universe, values);
+        AtomId left = native_query_instance_id(&run->filters[2u * filter],
+                                               &position, run->universe,
+                                               values);
         position = 0u;
-        AtomId right = native_query_instance_id(run->filter_right, &position,
-                                                run->universe, values);
+        AtomId right = native_query_instance_id(
+            &run->filters[2u * filter + 1u], &position, run->universe,
+            values);
         if (left == CETTA_ATOM_ID_NONE || right == CETTA_ATOM_ID_NONE)
             return false;
-        if ((left == right) != query->filter_equal)
+        CettaNativeFilterOp op = query->filters[filter].op;
+        bool met;
+        if (op == CETTA_NATIVE_FILTER_ALIKE ||
+            op == CETTA_NATIVE_FILTER_APART) {
+            /* Ids tell apart only values each equal to itself alone: a
+             * value of another kind declines the run, which has made no
+             * effect. */
+            if (left != right &&
+                (!native_query_id_exact(run->universe, left) ||
+                 !native_query_id_exact(run->universe, right)))
+                return false;
+            met = (left == right) == (op == CETTA_NATIVE_FILTER_ALIKE);
+        } else {
+            /* Integers compare by value; any other value declines the run,
+             * and the ordinary path compares it, or raises. */
+            if (tu_kind(run->universe, left) != ATOM_GROUNDED ||
+                tu_ground_kind(run->universe, left) != GV_INT ||
+                tu_kind(run->universe, right) != ATOM_GROUNDED ||
+                tu_ground_kind(run->universe, right) != GV_INT)
+                return false;
+            met = (tu_int(run->universe, left) <
+                   tu_int(run->universe, right)) ==
+                (op == CETTA_NATIVE_FILTER_LESS);
+        }
+        if (!met)
             return native_query_else(run, values, weight);
     }
     /* A guarded solution reads its guard: a row or a fact that is the
      * guard's instance takes the other branch, which makes no effect.  A
-     * relation holds its facts with no record of each: where the space
-     * keeps any, an instance the universe has no record of is made and
-     * asked for all the same. */
+     * relation holds its facts with no record of each.  An instance the
+     * universe has no record of is held by no row, each row having one: a
+     * flat relation answers it by its columns, and for a relation of deep
+     * facts the record is made and asked for all the same. */
     if (run->guard) {
         size_t position = 0u;
         AtomId probe = native_query_lookup_id(run->guard, &position,
                                               run->universe, values);
-        if (probe == CETTA_ATOM_ID_NONE &&
+        bool held = false;
+        bool by_columns = probe == CETTA_ATOM_ID_NONE &&
+            space_dense_facts(query->guard_space) != 0u &&
+            native_query_guard_columns(run, values, &held);
+        if (probe == CETTA_ATOM_ID_NONE && !by_columns &&
             space_dense_facts(query->guard_space) != 0u) {
             position = 0u;
             probe = native_query_instance_id(run->guard, &position,
@@ -1984,8 +2067,9 @@ static bool native_query_visit(void *context, const AtomId *values,
             if (probe == CETTA_ATOM_ID_NONE)
                 return false;
         }
-        bool held = probe != CETTA_ATOM_ID_NONE &&
-            space_holds_atom_id_exact(query->guard_space, probe);
+        if (!by_columns)
+            held = probe != CETTA_ATOM_ID_NONE &&
+                space_holds_atom_id_exact(query->guard_space, probe);
         /* Under an insert, a solution meeting an instance an earlier one
          * made reads it held. */
         if (!held && run->inserting &&
@@ -2375,8 +2459,9 @@ CettaNativeQueryStatus cetta_native_query_run(
          !query->else_atom == !query->else_empty ||
          query->guard_space->native.universe != universe))
         return CETTA_NATIVE_QUERY_DECLINED;
-    if (query->filter_left &&
-        (!effects || !query->filter_right || query->guard_space ||
+    if (query->filter_count &&
+        (!effects || !query->filters ||
+         query->filter_count > CETTA_NATIVE_QUERY_FILTERS ||
          !query->else_atom == !query->else_empty))
         return CETTA_NATIVE_QUERY_DECLINED;
     /* Legs read afresh are read by the loops alone, over rows. */
@@ -2392,6 +2477,9 @@ CettaNativeQueryStatus cetta_native_query_run(
         deferred |= made->removal || made->refused_head_count != 0u;
     }
     deferred |= query->snapshot;
+    /* A filter declines a run whose values its ids cannot tell apart, which
+     * must then have made no effect. */
+    deferred |= query->filter_count != 0u;
     /* Patterns over several spaces join by the index loops alone, each leg
      * reading its own space's rows. */
     bool one_space = true;
@@ -2507,7 +2595,8 @@ CettaNativeQueryStatus cetta_native_query_run(
     }
     size_t effect_count = effects ? query->effect_count : 0u;
     NativeQueryTemplate *templates =
-        malloc(sizeof(*templates) * (effect_count + 6u));
+        malloc(sizeof(*templates) *
+               (effect_count + 4u + 2u * query->filter_count));
     NativeQueryIds *pending =
         calloc(effect_count ? effect_count : 1u, sizeof(*pending));
     NativeQueryIds *waiting =
@@ -2528,13 +2617,16 @@ CettaNativeQueryStatus cetta_native_query_run(
         admitted =
             native_query_compile(&templates[effect_count + 2u], &variables,
                                  universe, arena, false, query->else_atom);
-    /* A filter's operands are made as the instances' ids are. */
-    if (admitted && query->filter_left)
+    /* Filters' operands are made as the instances' ids are. */
+    for (size_t filter = 0u; admitted && filter < query->filter_count;
+         filter++)
         admitted =
-            native_query_compile(&templates[effect_count + 4u], &variables,
-                                 universe, arena, true, query->filter_left) &&
-            native_query_compile(&templates[effect_count + 5u], &variables,
-                                 universe, arena, true, query->filter_right);
+            native_query_compile(&templates[effect_count + 4u + 2u * filter],
+                                 &variables, universe, arena, true,
+                                 query->filters[filter].left) &&
+            native_query_compile(&templates[effect_count + 5u + 2u * filter],
+                                 &variables, universe, arena, true,
+                                 query->filters[filter].right);
     /* Under an insert, the guard's variables key the instances made. */
     bool inserting = false;
     size_t guard_slots[NATIVE_QUERY_LEG_ARITY];
@@ -2625,10 +2717,8 @@ CettaNativeQueryStatus cetta_native_query_run(
         .loops = loops,
         .inserting = inserting,
         .inserted = {.width = guard_width},
-        .filter_left = query->filter_left ? &templates[effect_count + 4u]
-                                          : NULL,
-        .filter_right = query->filter_left ? &templates[effect_count + 5u]
-                                           : NULL,
+        .filters = &templates[effect_count + 4u],
+        .filter_count = query->filter_count,
     };
     memcpy(run.guard_slots, guard_slots, guard_width * sizeof(*guard_slots));
     for (size_t i = 0u; i < inert_slot_count; i++)
@@ -2663,7 +2753,8 @@ CettaNativeQueryStatus cetta_native_query_run(
         summed = summed || run.distinct;
         bool kept[NATIVE_QUERY_VARIABLES] = {false};
         bool any_kept = false;
-        for (size_t effect = 0u; summed && effect < effect_count + 5u;
+        for (size_t effect = 0u;
+             summed && effect < effect_count + 3u + 2u * run.filter_count;
              effect++) {
             const NativeQueryTemplate *made =
                 effect < effect_count ? &templates[effect]
@@ -2671,8 +2762,7 @@ CettaNativeQueryStatus cetta_native_query_run(
                     ? (distinct_summed ? run.answer : NULL)
                 : effect == effect_count + 1u ? run.distinct
                 : effect == effect_count + 2u ? run.guard
-                : effect == effect_count + 3u ? run.filter_left
-                : run.filter_right;
+                : &run.filters[effect - effect_count - 3u];
             for (size_t node = 0u; made && node < made->len; node++) {
                 if (made->nodes[node].kind == NATIVE_QUERY_NODE_VARIABLE) {
                     kept[made->nodes[node].slot] = true;

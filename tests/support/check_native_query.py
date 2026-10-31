@@ -1037,7 +1037,11 @@ def program(rng):
     # Equations a round adds: a function the template calls gains an
     # equation keyed by each row as the round runs, and PeTTa calls it in
     # each later row with the equations the earlier rows added; the native
-    # path, which reads the program once, declines a round adding one.
+    # path, which reads the program once, declines a round adding one.  The
+    # call reads the key its own row adds, and the body is the key's, so the
+    # rows sharing a key answer alike whatever order they come in, which is
+    # unobservable; a function no equation defined when the line was read
+    # keeps its calls as data.
     # Controls: an argument of two answers, which PeTTa evaluates once
     # before the call, to a function whose body reads its parameter twice or
     # not at all; and a call inside a join whose variables the body's own
@@ -1051,10 +1055,10 @@ def program(rng):
                                  "(lreach $b)"), live.randrange(1, 5)):
             lines.append(f"!(let $h (collapse (match &self (edge $a $b) {call})) (sort-atom $h))")
         for index in range(live.randrange(1, 4)):
-            effect = live.choice(("(add-atom &self (= (lf $b) (lextra $b)))",
-                                  "(add-atom &self (= (lf $a) (lagain $a)))",
-                                  "(add-atom &self (= (lg $b) $a))"))
-            call = live.choice(("(lf $a)", "(lf $b)", "(lg $a)", "(lf (ltwo))"))
+            effect, call = live.choice((
+                ("(add-atom &self (= (lf $b) (lextra $b)))", "(lf $b)"),
+                ("(add-atom &self (= (lf $a) (lagain $a)))", "(lf $a)"),
+                ("(add-atom &self (= (lg $b) (lback $b)))", "(lg $b)")))
             lines.append(f"!(let $h (collapse (match &self (edge $a $b) "
                          f"(let $u {effect} {call}))) (sort-atom $h))")
         lines.append("!(let $h (collapse (match &self (edge $a $b) (lf (ltwo)))) (sort-atom $h))")

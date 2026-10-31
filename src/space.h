@@ -278,6 +278,9 @@ typedef struct Space {
      * reads its rows in turn; full: it keeps the general indexes too.  Both
      * answer every operation alike. */
     bool strict;
+    /* Heads take their relations from their first fact
+     * (space_dense_threshold), as under CETTA_SPACE_DENSE=eager. */
+    bool dense_from_first;
     /* A live projection of a module's own storage, not a writable overlay. */
     bool module_own_view;
     /* Process-local lifetime identity.  A revision identifies a state only
@@ -300,9 +303,11 @@ typedef struct Space {
     bool declares_subtypes;
     /* Process-wide unique prefix stamp, refreshed at initialization and when
        a publication may rewrite an already visible prefix.  Append-only
-       publications preserve it.  An overlay folds the stamps of its actual
-       base chain into projection currency, so unrelated Spaces cannot
-       invalidate its equation view. */
+       publications preserve it: the rows keep their positions and new rows
+       follow them, while the facts kept in relations, which follow the
+       rows, move as rows are appended (space_rule_rows64).  An overlay
+       folds the stamps of its actual base chain into projection currency,
+       so unrelated Spaces cannot invalidate its equation view. */
     uint64_t prefix_epoch;
     /* Space engine state is explicit so native, PathMap, and MORK lanes can
        share one runtime seam without confusing storage with execution. */
@@ -527,6 +532,17 @@ const CettaDenseRelation *space_dense_relation(const Space *s,
 /* Whether no row can match a fact of `head` beside its relation: the head
  * keeps a relation, none of its facts is a row, and no row's head is open. */
 bool space_dense_head_rows_absent(Space *s, SymbolId head);
+/* Whether the space keeps a flat relation of ARITY columns for HEAD, and
+ * then in *HELD whether it holds the fact (HEAD c1 ... ck) of the ids
+ * COLUMNS, which needs no record of its own. */
+bool space_dense_holds_columns(const Space *s, SymbolId head,
+                               const AtomId *columns, uint32_t arity,
+                               bool *held);
+/* Whether a fact the space keeps in a relation may meet PATTERN: some are
+ * kept, and the pattern is no expression headed by a symbol, or its head
+ * keeps facts in a relation.  A reader of rows alone answers PATTERN only
+ * where this is false. */
+bool space_dense_may_meet(const Space *s, const Atom *pattern);
 /* The spine of the relation of deep facts S keeps for HEAD, copied into
  * OUT; false when S keeps none. */
 bool space_dense_deep_spine(Space *s, SymbolId head, CettaSkeleton *out);
@@ -609,6 +625,12 @@ Atom *space_get_at64(const Space *s, CettaIndex idx);
  * space_get_at64 reads it. */
 Atom *space_view_at64(const Space *s, CettaIndex idx, Arena *dst);
 Atom *space_get_at(const Space *s, uint32_t idx);
+/* The logical positions that may hold a rule or a declaration: the rows,
+ * which come before the facts kept in relations.  An append-only
+ * publication keeps them in place and adds after them, so a reader of the
+ * space's rules that reads on from where it stopped counts these, not the
+ * length, whose relation facts move as rows are appended. */
+CettaCount space_rule_rows64(const Space *s);
 bool space_row_may_be_rule(const Space *s, CettaIndex idx);
 bool space_view_row_may_be_rule(const Space *s, CettaIndex index);
 Atom *space_peek(const Space *s);
