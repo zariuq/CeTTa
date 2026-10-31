@@ -472,6 +472,28 @@ Range answers are bags. Index and full-scan enumeration order may differ.
 Use KqOrder for ordered pagination, retaining its existing membership
 tie-breaker policy. Explain/inspect distinguish integer seeks plus other-scalar
 fallback from complete scans, and show the active scan/point statistics.
+
+For an explicitly indexed ordered Int64 projection, use:
+
+```metta
+(KqIndexedI64Range collection arity position lower upper pattern template)
+```
+
+This operation requires the declared range index and emits stored Int64
+projection values in ascending order, with stable occurrence-key ties. Other
+scalar kinds are outside its domain, including numerically equal floats. It
+does not traverse their fallback bucket. Bounds use the same exact integer
+window calculation; matching/templates still use the ordinary owning Space
+matcher. Missing indexes return `(KbRefused ordered-integer-index-required)`.
+`KqOrder` over a complete filtered scan provides the executable reference and
+remains available when a blocking sort is appropriate. Explain/inspect expose
+`IndexedI64AscendingV1`. This adds no storage format or publication owner.
+
+`test-indexed-i64-order` checks mixed kinds, randomized physical IDs, signed
+limits, fractional bounds, equal-value occurrence ties, embedded/service
+pages, captured publication/compaction, missing indexes and cancellation.
+An integer-empty collection with 512 other-scalar rows completes without
+decoding those rows. Ordinary `KqRange` retains its bag and scan contracts.
 Pages retain their captured root even when publication, compaction and
 collection occur before a later candidate is matched. Malformed or stale extra
 postings, missing referenced facts and wrong domains fail explicitly rather
