@@ -354,6 +354,75 @@ lifetime sweep checks descriptor and retained-arena stability. This small policy
 example is not a replacement for a production gateway's deadlines, accounting,
 dispatch or external-effect recovery rules, and does not authorize live migration.
 
+### Graph traversal through ordinary Space cursors
+
+`(kbg:open-space view collection arity plan maximum-bytes maximum-states)`
+uses the existing MeTTa graph walker over `durable-space:cursor`. Import
+`(library kb_graph)`. Arity includes the relation head; field positions in
+`(KgRelation relation source-position target-position)` exclude it. For binary
+`(depends parser checker)` edges, use arity three and positions zero and one.
+
+```text
+     parser --(x2)--> checker ---+
+       |                        v
+       +-----------> optimizer → runtime
+       ^                         |
+       +-------------------------+
+
+two parser→checker occurrences remain two edges
+reachability returns each endpoint once
+shortest/all retains distinct tied edge-occurrence paths
+```
+
+Plans are `KgNeighbours`, `KgReach`, `KgPaths`, `KgTriangles` and `KgShortest`,
+as exercised in `test-space-graph`. They select incoming/outgoing direction.
+Paths carry nodes, stable edge occurrences and distance. Bounded paths enumerate
+walks with an explicit finite maximum. Triangles are directed anchored cycles
+with three distinct vertices. Reachability uses positive-length paths, so a
+cycle can make its start reachable. Shortest `one` chooses one tied path; `all`
+returns every tied occurrence path. A start equal to its goal has a zero-length
+seed path. No separately stored vertex catalogue is implied by this edge view.
+
+The profile projects actual stored expression occurrences with ground relation
+and endpoint identities. A match template may instantiate a stored variable;
+that alone does not establish a ground stored edge. The adapter retrieves the
+original occurrence before admitting it. Open rows still participate normally
+in ordinary `match`; they are excluded from this finite graph projection.
+Computed/open relations need a separately specified finite-domain source.
+
+Graph identities use exact portable values. Integers, floats, signed zero,
+native Boolean values and Boolean-like symbols remain distinct data where their
+encodings differ. Data selectors keep an item in a constructor until it is
+bound, preventing expression completion from interpreting it. Safe symbol/string
+probes use candidate indexes. Other identities use broader candidates and exact
+post-filtering; connective-looking relation heads use a complete scan. Stored
+rules and callable-looking identities remain inert.
+
+`kbg:page` returns a bounded page plus `KgMore`, `KgPaused`, `KgComplete` or
+`KgFailure`. The cursor owns an independent clone of its captured root. Close
+with `kbg:close`; end/error closes it automatically. Both frontier and visited
+state have an explicit state allowance. This reference frontier uses linear
+visited lookup and does not claim an optimized graph planner. `KgWork` counts
+graph steps, candidate visits and decoded fact bytes, including successful
+original-occurrence reads. It does not count all metadata/tree I/O. Where a
+failure prevents observing counters, no complete cost accounting is implied.
+
+`kbg:inspect-space` describes captured coordinates and the current adjacency
+cursor's observed `StoreQueryInfo`, when active. `kbg:observe` returns
+`KgSpaceObservationV1` coordinates for this source; they are descriptive, not
+a writable read-set certificate. Keep the original informing view for a write
+and validate its whole revision. The older `kbg:explain`/point observation
+contract describes the legacy KbFact reference source, not this collection.
+
+`examples/native_space_graph_server.metta` reuses the existing server and adds
+GraphOpen, GraphPage, GraphInspect and GraphCancel handlers. They retain the
+MeTTa cursor using the same connection-owned continuation protocol. No graph
+traversal is implemented in the host. The test fixture invokes the same walker
+embedded, including after closing its original owner/view. Generated finite
+graph oracles and adversarial cases compare both paths with exhaustive results,
+including multiplicity, stable identities, ties, retractions and compaction.
+The full relational and claims/evidence curriculum remains separate work.
+
 ## Owners and snapshots
 
 Import `(library store)` in PeTTa, or `store` in HE and Prime.
