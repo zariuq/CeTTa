@@ -62,6 +62,26 @@ PettaSpecializeResult petta_specializer_prepare_call(
     Arena *persistent_arena, Arena *result_arena,
     Atom *call, Atom **out_call);
 
+/* An explicit read of one program projection may span several evaluations.
+ * While observed, its root/base/module closure uses canonical execution
+ * instead of publishing optional specialization clauses into that program.
+ * Authored edits remain permitted and invalidate the observer's own tokens.
+ * Capture requires the source closure quiescent/alive; this owns metadata,
+ * not source headers. Release never dereferences a saved source identity.
+ * Retain/clone does not recapture or admit a newer projection. */
+typedef struct PettaProgramReadBarrier PettaProgramReadBarrier;
+PettaProgramReadBarrier *petta_program_read_barrier_new(const Space *root);
+bool petta_program_read_barrier_retain(PettaProgramReadBarrier *barrier);
+void petta_program_read_barrier_free(PettaProgramReadBarrier *barrier);
+void petta_program_read_barrier_storage(const PettaProgramReadBarrier *barrier,
+    CettaStorageCensus *census);
+bool petta_program_read_barrier_active(const Space *space);
+/* Validate each captured member through its current edge from a previously
+ * validated live parent. In particular base equation appends are observed
+ * even when a root prefix-continuation token alone remains current. */
+bool petta_program_read_barrier_current(const PettaProgramReadBarrier *barrier,
+    const Space *root);
+
 PettaSpecializerRelationAdmission
 petta_specializer_relation_execution_admission(
     Space *space, SymbolId source);

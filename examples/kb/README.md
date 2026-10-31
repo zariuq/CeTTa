@@ -1,5 +1,131 @@
 # A metagraph database in MeTTa
 
+## Moving a collection between processes or stores
+
+`examples/native_transfer_server.metta` serves the same ordinary Space
+queries and adds bounded logical import/export. The independent client is:
+
+```sh
+python3 tools/cetta_space_transfer.py service.sock export claims claims.csx
+python3 tools/cetta_space_transfer.py service.sock import copied-claims copy-001 claims.csx
+```
+
+The archive carries original encoded atoms, duplicate occurrences and index
+declarations. A copy creates new destination memberships with a durable
+origin-to-destination map. References inside atoms remain original references;
+applications can explicitly translate them with `durable-space:import-origin`.
+Use the existing captured backup/restore for exact identity-preserving recovery.
+Staging is invisible; facts, rebuilt indexes, origin mappings and retry receipt
+publish together. Truncation, bad completion and capacity failure refuse.
+`make test-space-transfer` exercises the embedded, service and file paths.
+
+## Ordinary persistent Spaces
+
+The current path is `space_curriculum.metta`: one ordinary persistent Space,
+with the same MeTTa plans embedded and served. From the repository root:
+
+```sh
+mkdir -m 700 demo-space
+./cetta --lang petta --run-contract examples/kb/space_run.metta "$PWD/demo-space"
+```
+
+Repeat the command to reopen committed data. Installation receipts prevent
+duplicate insertion. This uses the native core runtime and existing durable
+publication owner. It does not require Python, SWI-Prolog or SQLite at runtime.
+
+```text
+ordinary atoms → shared Space pattern cursor → MeTTa joins/folds/paths
+                        |
+                 captured durable root
+                        |
+              same embedded/server owner
+```
+
+The five lessons return:
+
+| Lesson | Expected logical result |
+| --- | --- |
+| Claims/evidence/source join | Four supports, each retaining judgement, evidence and source occurrence references |
+| Optional evidence | Four present rows and one explicit absence for judgement4/claim2 |
+| Two-hop dependencies from emit | Five occurrence paths: dep3/dep2, dep4/dep1, dep4/dep5, dep6/dep1, dep6/dep5 |
+| Supports grouped by source origin | `(RelGroup origin1 3)` and `(RelGroup origin2 1)` |
+| Explicit distinct origins, then count | `2` |
+
+Four supports are not four independent sources. A copied article and duplicate
+extraction retain their lineage and supporting occurrences. Two distinct
+origins alone do not prove statistical independence either. The example keeps
+the illustrative assessments as data; it does not invent numerical evidence
+weights or claim a calibrated truth value.
+
+The payload's logical identifier and its `StoreOccurrenceV1` membership
+identity are separate. Query projections carry occurrence references explicitly.
+Retracting one evidence occurrence leaves its judgement/source and other
+supporting occurrences intact. Stored equations remain inert data.
+
+The same application is a local server using the existing CSP1/CAV1 worker:
+
+```sh
+CETTA_KB_DIRECTORY="$PWD/demo-space" CETTA_KB_SOCKET="$PWD/demo-space.sock" \
+  path/to/cetta-value-worker --serve --lang petta \
+  examples/kb/space_curriculum.metta space-curriculum:configuration
+```
+
+Use the value-worker executable produced by `make value-worker`.
+The application combines ordinary query, mutation, graph, maintenance and
+backup handlers over the same collection. It declares its reviewed pure row
+functions in the server program; policy-looking KB facts grant nothing.
+For its dependency atoms `(dependency logical-id source target)`, graph
+projection uses `(KgRelation dependency 1 2)` and arity4: the logical edge
+identifier occupies field0. Reachability from `emit` returns parse/check/lex.
+The socket is local, private and same-user. This command starts an example,
+not an automatic migration or deployment of another application's store.
+
+`tests/support/check_space_curriculum.py VALUE_WORKER` checks both execution
+modes, fresh-process reinstall/reopen, paging, graph reachability, a single
+evidence retraction, compaction and restart. The generic
+`tests/support/check_space_query.py VALUE_WORKER` additionally checks generated
+joins and numeric count/sum/min/max/average against SQLite, explicit distinct,
+canonical ordering ties, slicing, callback errors and state limits. SQLite is
+an offline oracle, not the runtime backend. The
+[query contract](../../docs/native_store/README.md#relational-composition-over-ordinary-spaces)
+documents ownership, completion, callback authority and current limits.
+
+Callbacks must remain pure. Ordinary-Space cursors now invalidate on application
+code/declaration changes, and defer optional specialization publication while
+the program is observed. Query-informed writes can retain a data/program read
+context through completion and commit through the same durable Space writer.
+The query contract documents `kbq:read-context`, `durable-query:commit-command`
+and the service's `RelOpenRead`/`RelReadPage`/`RelReadCommit` operations. Contexts
+provide dependencies; they grant neither write authority nor proof that an
+embedded caller finished its query. Portable in-memory pattern examples remain
+below.
+
+## Scalar ranges and program dependencies
+
+`space_range_curriculum.metta` adds a scalar-range chapter over the same native
+owner and ordinary query interface:
+
+```sh
+./cetta --lang petta --run-contract examples/kb/space_range_run.metta "$PWD/demo-space"
+```
+
+It creates a separate example collection in that store, preserving the earlier
+lesson installation and receipts. The three results are: programs with size
+10..30 (`check 10`, `parse 20`, `compile 20.5`); two distinct memberships of
+`emit 40`; and three range-to-dependency paths (`parse→lex`, twice `emit→parse`).
+The float remains eligible through the other-scalar fallback. Row bags have
+explicit occurrence references; enumeration order is unspecified. Reopening
+the example preserves data and IDs through installation receipts.
+These are synthetic program sizes. See the
+[range contract](../../docs/native_store/README.md#stored-scalar-ranges)
+for stored-data projection, scalar ordering, access paths and current limits.
+
+## Earlier point-store reference examples
+
+The older `curriculum.metta`/`graph_curriculum.metta` examples below retain the
+point-store reference interface for comparison. New KB applications use the
+ordinary-Space path above; these examples are not a second production backend.
+
 The two datasets are synthetic. Run the native example from the repository root:
 
 ```sh
@@ -50,7 +176,8 @@ It reports three outgoing edge occurrences from `emit`, three incoming edge
 occurrences at `parse`, the distinct reachable programs `{check, parse, lex}`,
 and both shortest paths to `lex`: `(dep4 dep1)` and `(dep6 dep1)`. The isolated
 program has no reachable endpoint. Repeating the command preserves these
-results. Constraints and the multi-client server remain under development.
+results. These older commands do not exercise the ordinary-Space constraint
+or multi-client service adapters described above.
 
 `curriculum.metta` exports `curriculum:run path`. The CLI and native value worker
 invoke this same entry. It installs all records atomically, captures a new
@@ -62,7 +189,7 @@ datasets. Its four query answers are in `portable_patterns.expected`; module
 import acknowledgements are separate. This portable portion can run on PeTTa
 as well as CeTTa. The durable `store:` interface is native to CeTTa.
 
-## Graph interface
+## Earlier graph reference interface
 
 Import `(library kb_graph)`. A graph specification is
 `(KgRelation relation source-field target-field)`, using zero-based positions.

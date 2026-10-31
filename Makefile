@@ -927,7 +927,7 @@ SRC += src/tensor_dense_v1.c
 SRC += src/producer_dependencies.c src/producer_schedule.c
 SRC += src/fallible_alloc.c
 SRC += src/occurrence_log.c src/shared_return_producer.c src/owned_return_image.c
-SRC += src/native_disk_index.c src/native_disk_store.c src/library_store.c src/library_math.c
+SRC += src/native_disk_index.c src/native_disk_store.c src/native_disk_space.c src/native_disk_query.c src/library_store.c src/library_math.c
 SRC += src/library_supervise.c $(DURABLE_SRC)
 # Shared opaque authority (lib_seal): runtime objects and the seal library.
 SRC += src/seal.c native/seal_module.c
@@ -946,7 +946,7 @@ SRC += src/petta_contract_core.c
 SRC += src/gslt_language_manifest_v1.c
 SRC += src/gslt_support_profile_v1.c
 SRC += src/library_io.c src/library_cwp.c src/library_proc_run.c src/library_sqlite.c src/proc_owner.c src/http_worker.c src/ws.c src/telegram_transport.c src/library_durable.c
-SRC += src/atom_wire.c src/library_space_service.c src/ipc_client.c src/host_notice.c
+SRC += src/atom_wire.c src/library_space_service.c src/ipc_client.c src/host_notice.c src/value_service.c
 SRC += $(SIWC_SRC)
 SRC += $(JSON_GSLT_RUNTIME_SRC)
 SRC += $(PETTA_TYPECHECK_CENSUS_SRC)
@@ -4718,6 +4718,105 @@ $(SPACE_SOURCE_CURSOR_TEST_BIN): tests/test_space_source_cursor.c $(FALLBACK_EVA
 test-all: test-space-source-cursor
 test-space-source-cursor: $(SPACE_SOURCE_CURSOR_TEST_BIN)
 	@$(PYTHON) -c 'import os,subprocess,tempfile; d=tempfile.TemporaryDirectory(prefix="cetta-space-source-", dir=os.environ.get("TMPDIR")); subprocess.run(["./$(SPACE_SOURCE_CURSOR_TEST_BIN)",d.name],check=True)'
+
+EXTERNAL_SPACE_SOURCE_TEST_BIN = runtime/test_external_space_source-$(BUILD_OBJ_TAG)
+$(EXTERNAL_SPACE_SOURCE_TEST_BIN): tests/test_external_space_source.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_external_space_source.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
+.PHONY: test-external-space-source
+test-all: test-external-space-source
+test-external-space-source: $(EXTERNAL_SPACE_SOURCE_TEST_BIN) value-worker
+	$<
+	$(PYTHON) tests/support/check_external_stream_reference.py $(VALUE_WORKER_BIN)
+
+.PHONY: test-space-point-query
+test-all: test-space-point-query
+test-space-point-query: value-worker
+	$(PYTHON) tests/support/check_point_query.py $(VALUE_WORKER_BIN)
+
+.PHONY: test-store-scalar-window
+test-all: test-store-scalar-window
+test-store-scalar-window: value-worker
+	$(PYTHON) tests/support/check_scalar_window.py $(VALUE_WORKER_BIN)
+
+.PHONY: test-scalar-indexes test-scalar-ranges test-scalar-range-curriculum
+test-all: test-scalar-indexes test-scalar-ranges test-scalar-range-curriculum
+test-scalar-indexes: value-worker
+	$(PYTHON) tests/support/check_scalar_indexes.py $(VALUE_WORKER_BIN)
+test-scalar-ranges: value-worker
+	$(PYTHON) tests/support/check_scalar_ranges.py $(VALUE_WORKER_BIN)
+test-scalar-range-curriculum: value-worker
+	$(PYTHON) tests/support/check_scalar_range_curriculum.py $(VALUE_WORKER_BIN)
+
+.PHONY: test-space-transfer
+test-all: test-space-transfer
+test-space-transfer: value-worker
+	$(PYTHON) tests/support/check_space_transfer.py $(VALUE_WORKER_BIN)
+
+.PHONY: test-graph-service-quantum
+test-all: test-graph-service-quantum
+test-graph-service-quantum: value-worker
+	$(PYTHON) tests/support/check_graph_service_quantum.py $(VALUE_WORKER_BIN)
+
+NATIVE_DISK_SPACE_TEST_BIN = runtime/test_native_disk_space-$(BUILD_OBJ_TAG)
+$(NATIVE_DISK_SPACE_TEST_BIN): tests/test_native_disk_space.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_native_disk_space.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
+.PHONY: test-native-disk-space
+test-all: test-native-disk-space
+test-native-disk-space: $(NATIVE_DISK_SPACE_TEST_BIN)
+	@$(PYTHON) tests/support/check_native_disk_space_restart.py ./$(NATIVE_DISK_SPACE_TEST_BIN)
+
+.PHONY: test-persistent-space-api
+test-all: test-persistent-space-api
+test-persistent-space-api: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) $(PYTHON) tests/support/check_persistent_space_api.py ./$(BIN)
+
+.PHONY: test-durable-space-transactions
+test-all: test-durable-space-transactions
+test-durable-space-transactions: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) $(PYTHON) tests/support/check_durable_space_transactions.py ./$(BIN)
+
+NATIVE_DISK_QUERY_TEST_BIN = runtime/test_native_disk_query-$(BUILD_OBJ_TAG)
+$(NATIVE_DISK_QUERY_TEST_BIN): tests/test_native_disk_query.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Wl,--wrap=space_query_cursor_copy_to_arena -o $@ tests/test_native_disk_query.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
+.PHONY: test-native-disk-query
+test-all: test-native-disk-query
+test-native-disk-query: $(NATIVE_DISK_QUERY_TEST_BIN)
+	@$(PYTHON) -c 'import os,subprocess,tempfile; d=tempfile.TemporaryDirectory(prefix="cetta-disk-query-", dir=os.environ.get("TMPDIR")); subprocess.run(["./$(NATIVE_DISK_QUERY_TEST_BIN)",d.name],check=True)'
+
+NATIVE_DISK_SPACE_INDEX_TEST_BIN = runtime/test_native_disk_space_index-$(BUILD_OBJ_TAG)
+$(NATIVE_DISK_SPACE_INDEX_TEST_BIN): tests/test_native_disk_space_index.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_native_disk_space_index.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
+.PHONY: test-native-disk-space-index
+test-all: test-native-disk-space-index
+test-native-disk-space-index: $(NATIVE_DISK_SPACE_INDEX_TEST_BIN)
+	@$(PYTHON) -c 'import os,subprocess,tempfile; d=tempfile.TemporaryDirectory(prefix="cetta-disk-space-index-", dir=os.environ.get("TMPDIR")); subprocess.run(["./$(NATIVE_DISK_SPACE_INDEX_TEST_BIN)",d.name],check=True)'
+
+.PHONY: test-persistent-query-worker
+test-all: test-persistent-query-worker
+test-persistent-query-worker: value-worker
+	@$(PYTHON) tests/support/check_persistent_query_worker.py ./$(VALUE_WORKER_BIN)
+
+.PHONY: test-indexed-space-api test-worker-failure-feedback test-space-invariants test-native-service-state test-space-graph test-durable-reindex test-space-query test-space-curriculum test-program-query
+test-all: test-indexed-space-api test-worker-failure-feedback test-space-invariants test-native-service-state test-space-graph test-durable-reindex test-space-query test-space-curriculum test-program-query
+test-indexed-space-api: value-worker
+	$(PYTHON) tests/support/check_indexed_spaces.py $(VALUE_WORKER_BIN)
+test-worker-failure-feedback: value-worker
+	$(PYTHON) tests/support/check_worker_failure_feedback.py $(VALUE_WORKER_BIN)
+test-space-invariants: value-worker
+	$(PYTHON) tests/support/check_space_invariants.py $(VALUE_WORKER_BIN)
+test-native-service-state: value-worker
+	$(PYTHON) tests/support/check_native_service_state.py $(VALUE_WORKER_BIN)
+test-space-graph: value-worker
+	$(PYTHON) tests/support/check_space_graph.py $(VALUE_WORKER_BIN)
+test-durable-reindex: value-worker
+	$(PYTHON) tests/support/check_durable_reindex.py $(VALUE_WORKER_BIN)
+test-space-query: value-worker
+	$(PYTHON) tests/support/check_space_query.py $(VALUE_WORKER_BIN)
+test-program-query: value-worker
+	$(PYTHON) tests/support/check_program_query.py $(VALUE_WORKER_BIN)
+test-space-curriculum: value-worker
+	$(PYTHON) tests/support/check_space_curriculum.py $(VALUE_WORKER_BIN)
 
 PATTERN_OCCURRENCE_DROP_BIN = runtime/test_pattern_occurrence_drop-$(BUILD_OBJ_TAG)
 $(PATTERN_OCCURRENCE_DROP_BIN): tests/test_pattern_query_cursor.c tests/test_pattern_occurrence_drop.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
@@ -49598,7 +49697,7 @@ test-native-disk-index: runtime/test-native-disk-index
 .PHONY: test-native-disk-store
 runtime/test-native-disk-store: tests/test_native_disk_store.c src/native_disk_store.c src/native_disk_store.h src/native_disk_index.c src/native_disk_index.h src/native_journal.c src/native_journal.h src/native_sha256.c src/native_sha256.h
 	@mkdir -p runtime
-	$(CC) -O2 -Wall -Wextra -Werror -std=c11 -Isrc tests/test_native_disk_store.c src/native_disk_store.c src/native_disk_index.c src/native_journal.c src/native_sha256.c -Wl,--wrap=write,--wrap=fsync,--wrap=renameat -o $@
+	$(CC) -O2 -Wall -Wextra -Werror -std=c11 -Isrc tests/test_native_disk_store.c src/native_disk_store.c src/native_disk_index.c src/native_journal.c src/native_sha256.c -Wl,--wrap=write,--wrap=fsync,--wrap=renameat,--wrap=openat -o $@
 test-native-disk-store: runtime/test-native-disk-store
 	$<
 LIBRARY_IMPORT_CATALOG_TEST_BIN = runtime/test-library-import-catalog-$(BUILD_OBJ_TAG)
@@ -49627,7 +49726,12 @@ $(VALUE_WORKER_OBJ): src/value_worker_main.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -MF $(@:.o=.d) -c $< -o $@
 $(VALUE_WORKER_BIN): $(VALUE_WORKER_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(COMPILED_READER_RUNTIME_OBJ) $(BRIDGE_DEPS)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/value-worker.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
 value-worker: $(VALUE_WORKER_BIN)
 	@echo "Built $(VALUE_WORKER_BIN)"
 
@@ -49650,7 +49754,7 @@ test-math-native: $(MATH_NATIVE_TEST_BIN)
 test-all: test-math-native test-math-parts
 STORE_AUTHORITY_TEST_BIN = runtime/test-store-authority-$(BUILD_OBJ_TAG)
 $(STORE_AUTHORITY_TEST_BIN): tests/support/test_store_authority.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(COMPILED_READER_RUNTIME_OBJ) $(BRIDGE_DEPS)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $^ $(LDFLAGS) -Wl,--wrap=cetta_native_handle_alloc
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $^ $(LDFLAGS) -Wl,--wrap=cetta_native_handle_alloc,--wrap=eval_current_root_space,--wrap=cetta_disk_store_commit,--wrap=space_program_token_matches_live_space
 .PHONY: test-store-authority
 test-store-authority: $(STORE_AUTHORITY_TEST_BIN)
 	$<
@@ -49691,6 +49795,10 @@ test-space-service-scopes: $(SPACE_SERVICE_SCOPES_TEST_BIN)
 	$(SPACE_SERVICE_SCOPES_TEST_BIN)
 test-space-service: test-space-service-commit test-space-service-scopes $(SPACE_SERVICE_BIN) $(BIN) $(VALUE_WORKER_BIN)
 	python3 tests/test_space_service.py $(SPACE_SERVICE_BIN) $(BIN) $(VALUE_WORKER_BIN)
+
+.PHONY: test-native-kb-service
+test-native-kb-service: value-worker
+	python3 tests/support/check_native_kb_service.py $(VALUE_WORKER_BIN)
 
 .PHONY: test-native-store-transactions test-native-store-scopes
 NATIVE_STORE_LEAN_PROJECT ?=

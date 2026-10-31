@@ -11090,7 +11090,12 @@ static Atom *dispatch_native_space_mutation(Space *s, Arena *a, Atom *head,
     if (mork_handle_error)
         return mork_handle_error;
 
-    Space *target = resolve_single_space_arg_write(s, a, space_ref, fuel);
+    Space *read_target = resolve_single_space_arg(s, a, space_ref, fuel);
+    Space *storage_target = read_target && read_target->module_own_view
+        ? (Space *)read_target->overlay_base : read_target;
+    if (storage_target && storage_target->match_backend.kind == SPACE_ENGINE_SOURCE)
+        return atom_error(a, call, atom_symbol(a, "ReadOnlySpace"));
+    Space *target = payload_resolve_space_write(read_target);
     if (!target)
         target = petta_ensure_named_space(s, a, space_ref);
     if (!target) {
@@ -25309,6 +25314,9 @@ Arena *eval_current_persistent_arena(void) {
 CettaLibraryContext *eval_current_library_context(void) {
     return g_library_context;
 }
+Space *eval_current_root_space(void) {
+    return g_eval_root_space;
+}
 
 /* Use the native provider's actual import/loaded-module availability, not a
  * second naming rule. Standalone clients without that provider get no credit. */
@@ -34519,8 +34527,15 @@ bool eval_space_mutation_contract_kind(
         outcome_set_add(outcomes, mork_handle_error, &empty);
         return true;
     }
-    Space *target = resolve_single_space_arg_write(
-        root, arena, space_ref, fuel);
+    Space *read_target = resolve_single_space_arg(root, arena, space_ref, fuel);
+    Space *storage_target = read_target && read_target->module_own_view
+        ? (Space *)read_target->overlay_base : read_target;
+    if (storage_target && storage_target->match_backend.kind == SPACE_ENGINE_SOURCE) {
+        outcome_set_add(outcomes,
+            atom_error(arena, call, atom_symbol(arena, "ReadOnlySpace")), &empty);
+        return true;
+    }
+    Space *target = payload_resolve_space_write(read_target);
     if (!target)
         target = petta_ensure_named_space(root, arena, space_ref);
     if (!target) {

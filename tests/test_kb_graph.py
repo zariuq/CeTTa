@@ -48,6 +48,22 @@ class GraphTests(unittest.TestCase):
         self.assertEqual(answer[0], S("KgPages"), answer)
         return tuple(row for page in answer[1] for row in page)
 
+    def test_boolean_data_identities_survive_selection(self):
+        self.edges([("start", "start", True), ("native", True, "native-target"),
+                    ("capital", S("False"), S("True")), ("word", S("True"), "symbol-target")])
+        for start, expected in [("start", [True, "native-target"]), (True, ["native-target"]),
+                                (S("False"), [S("True"), "symbol-target"])]:
+            self.assertEqual(self.bag(self.rows(E("KgReach", self.spec, start, S("out")))), self.bag(expected))
+
+    def test_boolean_data_triangle_and_shortest(self):
+        self.edges([("one", True, S("False")), ("two", S("False"), "c"), ("three", "c", True)])
+        triangles = self.rows(E("KgTriangles", self.spec, True, S("out")))
+        self.assertEqual(len(triangles), 1)
+        self.assertEqual(encode(triangles[0][1]), encode((True, S("False"), "c", True)))
+        paths = self.rows(E("KgShortest", self.spec, True, "c", S("all"), S("out")))
+        self.assertEqual(len(paths), 1)
+        self.assertEqual(encode(paths[0][1]), encode((True, S("False"), "c")))
+
     @staticmethod
     def bag(rows):
         return sorted(encode(row) for row in rows)

@@ -6,6 +6,7 @@
 #include "parser.h"
 #include "petta_compiled_reader.h"
 #include "symbol.h"
+#include "value_service.h"
 #include <errno.h>
 #include <signal.h>
 #include <stdio.h>
@@ -17,6 +18,16 @@ static uint64_t monotonic_ns(void) {
     struct timespec t;
     if (clock_gettime(CLOCK_MONOTONIC, &t)) return 0;
     return (uint64_t)t.tv_sec * UINT64_C(1000000000) + (uint64_t)t.tv_nsec;
+}
+static Atom *evaluation_failure(Arena *arena,const EvalOutcome *outcome) {
+    static const char *names[]={"complete","fuel","cancelled","stack","capacity",
+        "invalidated","host-failure","effect-denied","paused"};
+    const char *reason=(unsigned)outcome->completion<sizeof(names)/sizeof(*names)
+        ? names[outcome->completion] : "unknown-completion";
+    Atom *detail=outcome->results.len==1 && atom_is_error(outcome->results.items[0])
+        ? outcome->results.items[0] : atom_unit(arena);
+    return atom_expr(arena,(Atom *[]){atom_symbol(arena,"WorkerEvaluationFailure"),atom_symbol(arena,reason),
+        atom_int(arena,(int64_t)outcome->results.len),atom_bool(arena,outcome->petta_raised_error),detail},5);
 }
 
 /* A private, parent-owned worker. The operator selects the module and
@@ -30,10 +41,12 @@ int main(int argc, char **argv) {
     CettaRelativeModulePolicy import_mode = CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY;
     bool import_mode_overridden = false;
     unsigned long threads = 0;
+    bool serving = false;
     int first = 1;
     while (first < argc && argv[first][0] == '-') {
         const char *option = argv[first++];
         if (!strcmp(option, "--")) break;
+        if (!strcmp(option, "--serve")) { serving = true; continue; }
         if (first >= argc) goto usage;
         if (!strcmp(option, "--lang")) {
             const char *name = argv[first++];
@@ -121,6 +134,14 @@ int main(int argc, char **argv) {
         if (error) { atom_print(error, stderr); fputc('\n', stderr); }
         goto done;
     }
+    if (serving) {
+        if (language != CETTA_LANGUAGE_PETTA) {
+            fputs("value service: only PeTTa handlers are qualified\n",stderr);
+            goto done;
+        }
+        rc=cetta_value_service_run(libraries,&top,&registry,&permanent,entry);
+        goto done;
+    }
     for (;;) {
         arena_free(&scratch); arena_init(&scratch);
         arena_set_runtime_kind(&scratch, CETTA_ARENA_RUNTIME_KIND_EVAL);
@@ -162,7 +183,7 @@ int main(int argc, char **argv) {
             !atom_is_error(outcome.results.items[0]);
         Atom *parts[5] = {atom_symbol(&scratch,"reply"), request->expr.elems[1],
             atom_symbol(&scratch,complete ? "ok" : "error"), complete ? outcome.results.items[0] :
-            atom_symbol(&scratch,"incomplete-or-nonsingle-result")};
+            evaluation_failure(&scratch,&outcome)};
         if (profile) {
             SymbolTableStats stats;
             symbol_table_stats_snapshot(&symbols, &stats);
@@ -183,8 +204,8 @@ int main(int argc, char **argv) {
              * rather than implying that any effects can be retried. */
             free(bytes); bytes = NULL;
             Atom *failure[] = {parts[0], parts[1], atom_symbol(&scratch,"error"),
-                              atom_symbol(&scratch,"unencodable-result")};
-            reply = atom_expr(&scratch, failure, 4);
+                              atom_symbol(&scratch,"unencodable-result"),parts[4]};
+            reply = atom_expr(&scratch, failure, profile ? 5 : 4);
             valid = cetta_atom_wire_encode(reply, &bytes, &length) == ATOM_WIRE_OK;
         }
         if (valid) {
@@ -221,5 +242,6 @@ usage:
     fprintf(stderr, "usage: cetta-value-worker [--lang petta|prime] "
         "[--profile NAME] [--import-mode upstream|relative|ancestor-walk] "
         "[--num-threads N] MODULE ENTRY\n");
+    fputs("       cetta-value-worker --serve [--lang petta] MODULE CONFIGURATION\n",stderr);
     return 2;
 }

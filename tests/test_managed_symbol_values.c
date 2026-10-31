@@ -25,6 +25,23 @@ static void *register_worker(void *result) {
     return NULL;
 }
 
+static void relocated_spelling(void) {
+    Arena source, destination;
+    arena_init_detached(&source);arena_init_detached(&destination);
+    const char bytes[]={'r',0,(char)0xff,'x'};
+    Atom *symbol=atom_symbol_data_n(&source,bytes,sizeof(bytes));
+    Atom *root=atom_expr2(&source,symbol,symbol);
+    AtomDeepCopySession *copy=atom_deep_copy_session_new(&destination);
+    AtomDeepCopyArenaPair pair={&source,&destination};
+    assert(copy && atom_deep_copy_session_set_arena_map(copy,&pair,1));
+    Atom *image=atom_deep_copy_session_copy(copy,root);
+    assert(image && image!=root && image->expr.elems[0]==image->expr.elems[1]);
+    assert(image->expr.elems[0]!=symbol && image->expr.elems[0]->spelling!=symbol->spelling);
+    atom_deep_copy_session_free(copy);arena_free(&source);
+    expect_bytes(image->expr.elems[0],bytes,sizeof(bytes));
+    arena_free(&destination);
+}
+
 int main(void) {
     _Static_assert(sizeof(void *) != 8 || sizeof(Atom) == 64,
                    "Preserve the growable-identity 64-bit Atom layout");
@@ -34,6 +51,7 @@ int main(void) {
     g_symbols = &table;
     g_hashcons = NULL;
     g_var_intern = NULL;
+    relocated_spelling();
     Arena source, destination;
     arena_init(&source);
     arena_init(&destination);

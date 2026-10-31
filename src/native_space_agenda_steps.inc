@@ -160,6 +160,7 @@ static CettaSpaceAgendaStep AGENDA_OP(select_step)(CettaSpaceAgenda *a) {
     CettaIndex index;
     SpaceOccurrenceCursorStep step = space_occurrence_cursor_next(&a->selection,&index,NULL);
     AGENDA_CHARGE(a,CETTA_AGENDA_CHARGE_SELECTION,CETTA_COST_QUEUE_VISIT,1u);
+    if (step == SPACE_OCCURRENCE_CURSOR_PROGRESS) return CETTA_SPACE_AGENDA_PROGRESS;
     if (step == SPACE_OCCURRENCE_CURSOR_ITEM) {
         Atom *row = space_occurrence_cursor_atom(&a->selection,index);
         if (!row) return pending(a,"SelectionProjection");
@@ -773,6 +774,7 @@ static CettaSpaceAgendaStep AGENDA_OP(join_step)(CettaSpaceAgenda *a) {
     SpaceOccurrenceCursorStep step=level->exhausted ? SPACE_OCCURRENCE_CURSOR_END :
         level->pending_row ? SPACE_OCCURRENCE_CURSOR_ITEM :
         space_occurrence_cursor_next(&level->cursor,&index,NULL);
+    if(step==SPACE_OCCURRENCE_CURSOR_PROGRESS)return CETTA_SPACE_AGENDA_PROGRESS;
     if(step==SPACE_OCCURRENCE_CURSOR_INVALIDATED)return pending(a,"CapturedCursor");
     if(step==SPACE_OCCURRENCE_CURSOR_END) {
         (void)AGENDA_OBSERVE_EVENT(a,CETTA_AGENDA_EVENT_QUERY_END,a->depth,

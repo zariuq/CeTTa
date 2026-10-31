@@ -2567,12 +2567,21 @@ static SpaceOccurrenceCursorStep space_occurrence_cursor_next_locked(
         if (cursor->source_failure) return cursor->source_failure;
         CettaIndex index = 0u;
         SpaceOccurrenceCursorStep step = cursor->source_ops->next(cursor->source_state, &index);
+        switch (step) {
+        case SPACE_OCCURRENCE_CURSOR_END: case SPACE_OCCURRENCE_CURSOR_ITEM:
+        case SPACE_OCCURRENCE_CURSOR_INVALIDATED: case SPACE_OCCURRENCE_CURSOR_INCOMPLETE:
+        case SPACE_OCCURRENCE_CURSOR_CAPACITY: case SPACE_OCCURRENCE_CURSOR_PROGRESS:
+            break;
+        default:
+            step = SPACE_OCCURRENCE_CURSOR_INCOMPLETE;
+        }
         if (step == SPACE_OCCURRENCE_CURSOR_ITEM) {
             if (!cursor->source_ops->atom(cursor->source_state, index))
                 step = SPACE_OCCURRENCE_CURSOR_INCOMPLETE;
             else if (logical_index_out) *logical_index_out = index;
         }
-        if (step != SPACE_OCCURRENCE_CURSOR_ITEM && step != SPACE_OCCURRENCE_CURSOR_END)
+        if (step != SPACE_OCCURRENCE_CURSOR_ITEM && step != SPACE_OCCURRENCE_CURSOR_END &&
+                step != SPACE_OCCURRENCE_CURSOR_PROGRESS)
             cursor->source_failure = step;
         return step;
     }

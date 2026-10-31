@@ -4,6 +4,8 @@
 ; Non-ground or missing endpoints are outside this projection, not variables
 ; to instantiate. Other fields may contain arbitrary inert values.
 !(import! &self "kb.metta")
+!(import! &self "graph_data.metta")
+!(import! &self "graph_space_source.metta")
 
 (= (kbg:direction? $direction) (or (== $direction out) (== $direction in)))
 (= (kbg:spec? $spec)
@@ -43,7 +45,7 @@
 ; It is not a byte or wall-clock limit. Per-edge decoded bytes and page steps
 ; have independent limits. Continuations are consumed once and own one scan.
 (= (kbg:open $view $plan $bytes $states)
-   (case (kb:validate-view $view)
+   (case (kbg:source-validate $view)
      ((KbViewReady (kbg:open-ready $view $plan $bytes $states)) ($error $error))))
 (= (kbg:open-ready $view $plan $bytes $states)
    (if (and (kb:integer? $bytes) (kb:integer? $states))
@@ -113,14 +115,7 @@
      (if (knowledge:headed? $active)
        (case $active
          (((KgSeed $path) (kbg:path? $path))
-          ((KgScan $scan $path)
-           (if (knowledge:tagged? $scan KbCursor 9)
-             (let (KbCursor $v $s $position $prefix $budget $rows $keys $bytes) $scan
-               (and (kbg:path? $path)
-                 (and (kbg:nonnegative? $position)
-                   (and (kbg:nonnegative? $budget)
-                     (and (kbg:nonnegative? $rows)
-                       (and (kbg:nonnegative? $keys) (kbg:nonnegative? $bytes))))))) False))
+          ((KgScan $scan $path) (and (kbg:path? $path) (kbg:source-scan? $scan)))
           ($bad False))) False)))
 ; This is shape validation, not authentication of a serialized continuation.
 ; All control state is ground; native operations still validate owned handles.
@@ -140,13 +135,15 @@
    (if (kbg:cursor? $cursor)
      (let (KgCursor $view (KgConfig (KgRelation $relation $from $to) $direction $bytes $limit)
             $mode $frontier $active $work) $cursor
-       (kb:observe-selector $view (KbRelation $relation))) (KbRefused graph-cursor)))
+       (kbg:source-observe $view $relation)) (KbRefused graph-cursor)))
 (= (kbg:close-active $active)
    (case $active
-     (((KgScan $scan $path) (let $closed (kb:query-close $scan) KgClosed))
+     (((KgScan $scan $path) (let $closed (kbg:source-close $scan) KgClosed))
       (KgIdle KgClosed) ((KgSeed $path) KgClosed) ($bad (KbRefused graph-state)))))
 (= (kbg:close $cursor)
-   (if (kbg:cursor? $cursor) (kbg:close-active (index-atom $cursor 5))
+   (if (kbg:cursor? $cursor)
+     (let* (($_ (kbg:close-active (index-atom $cursor 5)))
+            ($_ (kbg:source-close-view (index-atom $cursor 1)))) KgClosed)
        (KbRefused graph-cursor)))
 
 (= (kbg:path-value (KgPath $nodes $edges $length))
@@ -178,12 +175,12 @@
      (let* ((($path $tail) (decons-atom $front)) ((KgPath $nodes $edges $depth) $path)
             ($pending (KgFrontier $tail $back (- $queued 1) $seen $count $best)))
        (if (kbg:at-limit? $mode $depth $best) (KgSkip $pending KgIdle 0 0 0)
-         (let $position (if (== $direction out) $from $to)
-           (case (kb:query-open $view (KbArgument $relation $position (car-atom $nodes)) $bytes)
-             (((KbCursor $v $scan $p $prefix $budget $rows $keys $decoded)
-               (KgSkip $pending
-                 (KgScan (KbCursor $v $scan $p $prefix $budget $rows $keys $decoded) $path) 0 0 0))
-              ($error (KgFail $error 0 0)))))))))
+         (let* (($position (if (== $direction out) $from $to))
+                ((KgDataV1 $here) (kbg:data-at $nodes 0)))
+           (let $opened (kbg:source-open $view (KbArgument $relation $position $here) $bytes)
+             (if (kbg:source-scan? $opened)
+               (KgSkip $pending (KgScan $opened $path) 0 0 0)
+               (KgFail $opened 0 0))))))))
 
 ; The exact argument index is a domain selector. Validate the other endpoint
 ; before treating a record as a graph edge; never instantiate stored variables.
@@ -191,7 +188,8 @@
    (case $fact
      (((KbFact $identity $stored $fields)
        (if (and (< $from (size-atom $fields)) (< $to (size-atom $fields)))
-         (let* (($source (index-atom $fields $from)) ($target (index-atom $fields $to)))
+         (let* (((KgDataV1 $source) (kbg:data-at $fields $from))
+                ((KgDataV1 $target) (kbg:data-at $fields $to)))
            (if (and (knowledge:ground-identity? $source) (knowledge:ground-identity? $target))
                (KgEdge $identity $source $target) KgNotEdge)) KgNotEdge))
       ($bad (KbRefused graph-row)))))
@@ -222,8 +220,8 @@
 (= (kbg:triangle-result $result)
    (case $result
      (((KgVisit (KgSome (KgPath $nodes $edges 3)) $frontier $offered $stop)
-       (let* (($a (index-atom $nodes 0)) ($b (index-atom $nodes 1))
-              ($c (index-atom $nodes 2)) ($end (index-atom $nodes 3)))
+       (let* (((KgDataV1 $a) (kbg:data-at $nodes 0)) ((KgDataV1 $b) (kbg:data-at $nodes 1))
+              ((KgDataV1 $c) (kbg:data-at $nodes 2)) ((KgDataV1 $end) (kbg:data-at $nodes 3)))
          (case (kbg:triangle? $a $b $c $end)
            ((True (KgVisit (KgSome (KgPath $nodes $edges 3)) $frontier $offered $stop))
             (False (KgVisit KgNone $frontier $offered $stop))
@@ -234,7 +232,8 @@
           ((KgFrontier $front $back $queued $seen $count $best) $frontier)
           ((KgPath $nodes $edges $depth) $path)
           ((KgEdge $identity $source $target) $edge)
-          ($next-node (if (== $direction out) $target $source))
+          ((KgDataV1 $next-node)
+            (if (== $direction out) (KgDataV1 $target) (KgDataV1 $source)))
           ($next-depth (+ $depth 1))
           ($next-path (KgPath (cons-atom $next-node $nodes) (cons-atom $identity $edges) $next-depth)))
      (case $mode
@@ -283,22 +282,27 @@
 
 (= (kbg:scan $config $mode $frontier $source $path)
    (let* (((KgConfig $spec $direction $budget $limit) $config)
-          ((KbCursor $view $handle $position $prefix $b $rows $keys $decoded) $source))
-     (case (kb:query-next $source)
-       (((KbYield $fact (KbCursor $v $s $p $f $bytes $n $k $d))
-         (let* (($next (KbCursor $v $s $p $f $bytes $n $k $d))
+          ((KgSourceWork $keys $decoded) (kbg:source-work $source)))
+     (case (kbg:source-next $source $budget)
+       (((KbYield $fact $next)
+         (let* (((KgSourceWork $k $d) (kbg:source-work $next))
                 ($edge (kbg:edge $spec $direction $fact)))
            (if (== $edge KgNotEdge) (KgSkip $frontier (KgScan $next $path) (- $k $keys) (- $d $decoded) 0)
              (case (kbg:visit $config $mode $frontier $path $edge)
                (((KgVisit $answer $pending $enqueued $stop)
-                 (let $active (if $stop (let $closed (kb:query-close $next) KgIdle) (KgScan $next $path))
+                 (let $active (if $stop (let $closed (kbg:source-close $next) KgIdle) (KgScan $next $path))
                    (KgVisited $answer
                      (if $stop (KgFrontier () () 0 () 0 KgNoDistance) $pending)
                      $active (- $k $keys) (- $d $decoded) $enqueued)))
-                ($error (let $closed (kb:query-close $next) (KgFail $error (- $k $keys) (- $d $decoded)))))))))
+                ($error (let $closed (kbg:source-close $next) (KgFail $error (- $k $keys) (- $d $decoded)))))))))
+        ((KbContinue $next)
+         (let (KgSourceWork $k $d) (kbg:source-work $next)
+           (KgSkip $frontier (KgScan $next $path) (- $k $keys) (- $d $decoded) 0)))
         ((KbEnd (KbWork $n $k $d))
-         (let $closed (kb:query-close $source) (KgSkip $frontier KgIdle (- $k $keys) (- $d $decoded) 0)))
-        ($error (let $closed (kb:query-close $source) (KgFail $error 0 0)))))))
+         (let $closed (kbg:source-close $source) (KgSkip $frontier KgIdle (- $k $keys) (- $d $decoded) 0)))
+        ((KgSourceFailureV1 $error $k $d)
+         (let $closed (kbg:source-close $source) (KgFail $error (- $k $keys) (- $d $decoded))))
+        ($error (let $closed (kbg:source-close $source) (KgFail $error 0 0)))))))
 
 (= (kbg:advance $view $config $mode $frontier $active)
    (case $active
@@ -309,7 +313,27 @@
 (= (kbg:step $cursor)
    (if (kbg:cursor? $cursor) (kbg:step-ready $cursor) (KbRefused graph-cursor)))
 (= (kbg:step-ready (KgCursor $view $config $mode $frontier $active (KgWork $steps $keys $bytes $offered)))
-   (case (kbg:advance $view $config $mode $frontier $active)
+   (case (kbg:program-check $view)
+     ((StoreProgramCurrent
+       (let* (($base (kbg:base-source $view))
+              ($answer (kbg:advance $base $config $mode $frontier $active)))
+         (case (kbg:program-check $view)
+           ((StoreProgramCurrent (kbg:step-result $view $config $mode $steps $keys $bytes $offered $answer))
+            ($failure
+              (let* (((KgDiscardedV1 $k $d $n) (kbg:discard-step $answer))
+                     ($_ (kbg:source-close-view $view)))
+                (KgFailed $failure (KgWork (+ $steps 1) (+ $keys $k) (+ $bytes $d) (+ $offered $n)))))))))
+      ($failure
+        (let* (($_ (kbg:close-active $active)) ($_ (kbg:source-close-view $view)))
+          (KgFailed $failure (KgWork $steps $keys $bytes $offered)))))))
+(= (kbg:discard-step $answer)
+  (case $answer
+    (((KgVisited $row $pending $next $k $d $n) (let $_ (kbg:close-active $next) (KgDiscardedV1 $k $d $n)))
+     ((KgSkip $pending $next $k $d $n) (let $_ (kbg:close-active $next) (KgDiscardedV1 $k $d $n)))
+     ((KgEnd $k $d) (KgDiscardedV1 $k $d 0))
+     ((KgFail $failure $k $d) (KgDiscardedV1 $k $d 0)))))
+(= (kbg:step-result $view $config $mode $steps $keys $bytes $offered $outcome)
+   (case $outcome
      (((KgVisited $answer $pending $next $k $d $enqueued)
        (let $continuation (KgCursor $view $config $mode $pending $next
                              (KgWork (+ $steps 1) (+ $keys $k) (+ $bytes $d) (+ $offered $enqueued)))
@@ -319,8 +343,10 @@
       ((KgSkip $pending $next $k $d $enqueued)
        (KgContinue (KgCursor $view $config $mode $pending $next
          (KgWork (+ $steps 1) (+ $keys $k) (+ $bytes $d) (+ $offered $enqueued)))))
-      ((KgEnd $k $d) (KgDone (KgWork (+ $steps 1) (+ $keys $k) (+ $bytes $d) $offered)))
-      ((KgFail $error $k $d) (KgFailed $error (KgWork (+ $steps 1) (+ $keys $k) (+ $bytes $d) $offered))))))
+      ((KgEnd $k $d)
+       (let $_ (kbg:source-close-view $view) (KgDone (KgWork (+ $steps 1) (+ $keys $k) (+ $bytes $d) $offered))))
+      ((KgFail $error $k $d)
+       (let $_ (kbg:source-close-view $view) (KgFailed $error (KgWork (+ $steps 1) (+ $keys $k) (+ $bytes $d) $offered)))))))
 (= (kbg:page $cursor $count $fuel)
    (if (kbg:cursor? $cursor)
      (if (and (kb:integer? $count) (kb:integer? $fuel))
