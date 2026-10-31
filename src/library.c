@@ -1484,6 +1484,30 @@ bool cetta_library_petta_memo_is_enabled(
         ctx->petta_memo.exact_arities[exact].head == head;
 }
 
+void cetta_library_petta_memo_configure(
+    CettaLibraryContext *ctx, const CettaPettaMemoState *proposed) {
+    if (!ctx || !proposed)
+        return;
+    CettaPettaMemoState *current = &ctx->petta_memo;
+    bool changed = current->strategy != proposed->strategy ||
+        current->unique_limit != proposed->unique_limit ||
+        current->size_limit_bytes != proposed->size_limit_bytes ||
+        current->float_precision != proposed->float_precision ||
+        current->answer_limit != proposed->answer_limit ||
+        current->aggregate != proposed->aggregate;
+    if (!changed)
+        return;
+    current->strategy = proposed->strategy;
+    current->unique_limit = proposed->unique_limit;
+    current->size_limit_bytes = proposed->size_limit_bytes;
+    current->float_precision = proposed->float_precision;
+    current->answer_limit = proposed->answer_limit;
+    current->aggregate = proposed->aggregate;
+    /* A generation records even A -> B -> A. Comparing only current policy
+     * values could revive an already invalidated program observation. */
+    cetta_library_petta_admission_advance(ctx);
+}
+
 void cetta_library_petta_memo_clear_stats(
     CettaLibraryContext *ctx) {
     if (!ctx)
