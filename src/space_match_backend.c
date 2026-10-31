@@ -13036,6 +13036,8 @@ SpaceQueryCursorStep space_query_cursor_step_with_budget(SpaceQueryCursor *curso
     if (work->matcher) goto match_candidate;
     CettaIndex index = 0u;
     SpaceOccurrenceCursorStep step = space_occurrence_cursor_next(&work->occurrences, &index, NULL);
+    if (step == SPACE_OCCURRENCE_CURSOR_PROGRESS)
+        return SPACE_QUERY_CURSOR_PROGRESS;
     if (step == SPACE_OCCURRENCE_CURSOR_INVALIDATED)
         return SPACE_QUERY_CURSOR_INVALIDATED;
     if (step == SPACE_OCCURRENCE_CURSOR_CAPACITY || step == SPACE_OCCURRENCE_CURSOR_INCOMPLETE) {

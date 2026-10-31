@@ -21190,6 +21190,10 @@ static bool petta_machine_advance_choice(
             SpaceOccurrenceCursorStep step =
                 space_occurrence_cursor_next(
                     &choice->as.match.occurrences, &candidate_index, &candidate);
+            if (step == SPACE_OCCURRENCE_CURSOR_PROGRESS) {
+                *failure = PETTA_MACHINE_STEP_SUSPENDED;
+                return false;
+            }
             if (step == SPACE_OCCURRENCE_CURSOR_END) {
                 choice->as.match.occurrence_exhausted = true;
                 return false;
@@ -25420,6 +25424,10 @@ static bool petta_machine_start_match_choice_policy(
             machine, &machine->choices[machine->choice_len - 1u],
             &failure)) {
         petta_choice_retire_exhausted(machine);
+        return true;
+    }
+    if (failure == PETTA_MACHINE_STEP_SUSPENDED) {
+        machine->suspended_choice = true;
         return true;
     }
     petta_choice_pop(machine);
@@ -41252,6 +41260,8 @@ dispatch_body_resume_segment:
                           impl, &goal, &failure)
                     : false;
         if (dispatched) {
+            if (impl->suspended_choice)
+                return PETTA_MACHINE_STEP_SUSPENDED;
             if (petta_machine_check_type_obligations(
                     impl, &failure)) {
                 bool resume_candidate =

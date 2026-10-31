@@ -6,6 +6,7 @@
 #include "library_pattern.h"
 #include "native_disk_store.h"
 #include "atom_wire.h"
+#include "transform_core.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -23,7 +24,8 @@ bool __wrap_bindings_promote_logical_delta_to_arena(Bindings *result, const Bind
 typedef struct {
     const CettaDiskRoot *root;
     size_t count, opened, selected, decoded, live;
-    bool fail_open, fail_clone, fail_next;
+    bool fail_open, fail_clone, fail_next,bad_step;
+    size_t waits, polls;
     const PettaMachine *measured_machine;
     size_t peak_machine_bytes;
 } Source;
@@ -138,6 +140,12 @@ static bool source_select(const void *raw, Atom *pattern, void **out, SpaceOccur
 
 static SpaceOccurrenceCursorStep source_next(void *raw, CettaIndex *index) {
     SourceCursor *cursor = raw;
+    cursor->owner->polls++;
+    if (cursor->owner->waits) {
+        cursor->owner->waits--;
+        return SPACE_OCCURRENCE_CURSOR_PROGRESS;
+    }
+    if (cursor->owner->bad_step) return (SpaceOccurrenceCursorStep)99;
     if (cursor->owner->measured_machine) {
         size_t live=petta_machine_retained_bytes(cursor->owner->measured_machine);
         if(live>cursor->owner->peak_machine_bytes) cursor->owner->peak_machine_bytes=live;
@@ -252,6 +260,71 @@ static PettaMachineStep next_answer(PettaMachine *machine, Atom **answer) {
     PettaMachineStep step = petta_machine_next(machine, answer, &environment);
     bindings_free(&environment);
     return step;
+}
+
+static bool tf_source(void *context,Atom *reference,Space **space) {
+    (void)reference;*space=context;return true;
+}
+static Atom *tf_unused_edit(void *context,Atom *reference,Atom *value) {
+    (void)context;(void)reference;(void)value;assert(!"read-only source transform attempted an edit");return NULL;
+}
+static bool tf_unused_eval(void *context,Arena *arena,Atom *value,Atom ***results,size_t *count,Atom **error) {
+    (void)context;(void)arena;(void)value;(void)results;(void)count;(void)error;
+    assert(!"read-only source transform attempted evaluation");return false;
+}
+static void paused_source(Space *source,Source *input,Arena *arena,const PettaMachineHost *host) {
+    input->waits=3;SpaceOccurrenceCursor raw;space_occurrence_cursor_init_empty(&raw);
+    assert(space_occurrence_cursor_init_scan(source,&raw));
+    for(size_t i=0;i<3;i++) {
+        Atom *row=(Atom *)(uintptr_t)1;
+        assert(space_occurrence_cursor_next(&raw,NULL,&row)==SPACE_OCCURRENCE_CURSOR_PROGRESS && !row);
+    }
+    assert(space_occurrence_cursor_next(&raw,NULL,NULL)==SPACE_OCCURRENCE_CURSOR_ITEM);
+    space_occurrence_cursor_release(&raw);assert(!input->live);
+    input->bad_step=true;space_occurrence_cursor_init_empty(&raw);
+    assert(space_occurrence_cursor_init_scan(source,&raw));
+    assert(space_occurrence_cursor_next(&raw,NULL,NULL)==SPACE_OCCURRENCE_CURSOR_INCOMPLETE);
+    input->bad_step=false;
+    assert(space_occurrence_cursor_next(&raw,NULL,NULL)==SPACE_OCCURRENCE_CURSOR_INCOMPLETE);
+    space_occurrence_cursor_release(&raw);assert(!input->live);
+    input->waits=3;size_t before=input->decoded;
+    SpaceQueryCursor *query=space_query_cursor_new_captured(source,arena,parse(arena,"(p 1 $y)"),NULL);assert(query);
+    Bindings row;bindings_init(&row);size_t calls=0;
+    while(input->waits) {
+        size_t polls=input->polls;
+        assert(space_query_cursor_step_with_budget(query,1,&row)==SPACE_QUERY_CURSOR_PROGRESS);
+        assert(input->polls-polls<=1 && input->decoded==before && ++calls<100);
+    }
+    SpaceQueryCursor *clone=space_query_cursor_clone(query);assert(clone);
+    Atom *answers[32];Atom *projection=parse(arena,"$y");
+    assert(collect(query,arena,projection,answers)==4 && collect(clone,arena,projection,answers)==4);
+    space_query_cursor_free(query);space_query_cursor_free(clone);bindings_free(&row);assert(!input->live);
+    const char *calls_text[]={"(match &self (p 1 $y) $y)","(pat:query &self match% (p 1 $y))"};
+    const size_t expected[]={4,3};
+    for(size_t mode=0;mode<2;mode++) {
+        PettaMachine machine;assert(petta_machine_init(&machine,source,arena,parse(arena,calls_text[mode]),NULL,host));
+        input->waits=3;size_t found=0,paused=0;PettaMachineStep step;Atom *value=NULL;
+        do {
+            step=next_answer(&machine,&value);
+            if(step==PETTA_MACHINE_STEP_ANSWER) {found++;input->waits=2;}
+            else if(step==PETTA_MACHINE_STEP_SUSPENDED) paused++;
+            else assert(step==PETTA_MACHINE_STEP_EXHAUSTED);
+            assert(paused<100);
+        } while(step!=PETTA_MACHINE_STEP_EXHAUSTED);
+        assert(found==expected[mode] && paused==3+found*2);
+        petta_machine_destroy(&machine);assert(!input->live);
+    }
+    CettaTransformHost tf={.context=source,.resolve_space=tf_source,.remove_atom=tf_unused_edit,
+        .add_atom=tf_unused_edit,.evaluate=tf_unused_eval};Atom *result=NULL;
+    Atom *absent=parse(arena,"(tf:fire &self ((absent (missing $x))) witness)");
+    input->waits=1;size_t polls=input->polls,opened=input->opened;
+    assert(cetta_transform_fire(source,arena,absent,&tf,&result)==CETTA_TRANSFORM_DECLINED && input->waits==1 && !input->live && input->polls==polls && input->opened==opened);
+    input->waits=0;
+    input->fail_open=true;
+    assert(cetta_transform_fire(source,arena,absent,&tf,&result)==CETTA_TRANSFORM_DECLINED && !input->live && input->polls==polls && input->opened==opened);
+    input->fail_open=false;
+    assert(cetta_transform_fire(source,arena,absent,&tf,&result)==CETTA_TRANSFORM_DECLINED && !input->live && input->polls==polls && input->opened==opened);
+    puts("PASS: source polls yield, resume, clone and suspend match/pat; synchronous transforms hand off before polling");
 }
 
 static void need_product_sharing(Space *source) {
@@ -644,6 +717,17 @@ int main(int argc, char **argv) {
 
     space_add(&ordinary,parse(&persistent,"(= (source-read $x) (match &db (p $x $y) $y))"));
     space_add(&ordinary,parse(&persistent,"(= (source-read $x) hidden-fallback)"));
+    PettaMachine paused_dispatch;
+    assert(petta_machine_init(&paused_dispatch,&ordinary,&answers,
+        parse(&answers,"(let $f source-read ($f 1))"),NULL,&host));
+    input.waits=2;Atom *paused_answer=NULL;
+    assert(next_answer(&paused_dispatch,&paused_answer)==PETTA_MACHINE_STEP_SUSPENDED);
+    assert(next_answer(&paused_dispatch,&paused_answer)==PETTA_MACHINE_STEP_SUSPENDED);
+    assert(next_answer(&paused_dispatch,&paused_answer)==PETTA_MACHINE_STEP_ANSWER && atom_eq(paused_answer,parse(&answers,"1")));
+    size_t dispatched_count=1;PettaMachineStep dispatched_step;
+    while((dispatched_step=next_answer(&paused_dispatch,&paused_answer))==PETTA_MACHINE_STEP_ANSWER)dispatched_count++;
+    assert(dispatched_step==PETTA_MACHINE_STEP_EXHAUSTED && dispatched_count==5);
+    petta_machine_destroy(&paused_dispatch);assert(!input.live && !input.waits);
     input.fail_next=true;
     PettaMachine dispatched;
     assert(petta_machine_init(&dispatched,&ordinary,&answers,
@@ -659,6 +743,7 @@ int main(int argc, char **argv) {
     need_product_sharing(&source); assert(input.live==0);
     framed_alias_sharing(&source); assert(input.live==0);
     shifted_constraint_sharing(); assert(input.live==0);
+    paused_source(&source,&input,&answers,&host);
     for(unsigned failure=1;failure<=2;failure++) {
         promotion_failure=failure;
         cursor=space_query_cursor_new_captured(&source,&answers,query,NULL); assert(cursor);
