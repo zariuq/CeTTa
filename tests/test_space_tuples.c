@@ -1,6 +1,6 @@
 /* A relation kept as a table of tuples agrees with a plain list of its
  * tuples under random adds, removals, membership tests, walks and counts
- * with random bound columns, for arities 1 to 5 and id ranges small enough
+ * with random bound columns, for every supported arity and id ranges small enough
  * to collide; walks build sides on the way, which later adds and removals
  * keep in step. */
 #include "space_tuples.h"
@@ -128,7 +128,7 @@ int main(void) {
     CettaTupleTable bad;
     assert(!cetta_tuple_table_init(&bad, 0u));
     assert(!cetta_tuple_table_init(&bad, CETTA_TUPLE_MAX_ARITY + 1u));
-    for (uint32_t arity = 1; arity <= 5; arity++) {
+    for (uint32_t arity = 1; arity <= CETTA_TUPLE_MAX_ARITY; arity++) {
         run(arity, 8u, 6000u);
         run(arity, 64u, 6000u);
         run(arity, 512u, 6000u);

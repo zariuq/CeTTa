@@ -267,13 +267,24 @@ bool cetta_delay_suspend(CettaDelayService *service, uint32_t trail_mark,
                          const VarId *vars, uint32_t var_len,
                          bool bound_now) {
     if (!service || !goal || (var_len && !vars) ||
+        service->goal_len == UINT32_MAX ||
+        var_len > UINT32_MAX - service->watch_len ||
         !delay_grow((void **)&service->goals, &service->goal_cap,
                     service->goal_len + 1u, sizeof(*service->goals)) ||
         !delay_grow((void **)&service->watches, &service->watch_cap,
                     service->watch_len + var_len, sizeof(*service->watches)))
         return false;
-    if ((service->linked + var_len) * 2u > service->bucket_cap &&
-        !delay_rehash(service, service->bucket_cap * 2u))
+    /* Reserve for the whole component, including a large first batch.
+     * One doubling per call would leave its bucket chains growing with the
+     * batch and make goal-local membership construction quadratic. */
+    uint64_t needed = ((uint64_t)service->linked + var_len) * 2u;
+    uint32_t bucket_cap = service->bucket_cap;
+    while (bucket_cap < needed) {
+        if (bucket_cap > UINT32_MAX / 2u)
+            return false;
+        bucket_cap *= 2u;
+    }
+    if (bucket_cap != service->bucket_cap && !delay_rehash(service, bucket_cap))
         return false;
     ArenaMark storage = arena_mark(&service->arena);
     Atom *owned = atom_deep_copy(&service->arena, goal);
@@ -294,7 +305,7 @@ bool cetta_delay_suspend(CettaDelayService *service, uint32_t trail_mark,
         .goal = {client, owned, owned_vars, var_len, !bound_now},
         .storage = storage,
         .first_watch = service->watch_len,
-        .watch_count = bound_now ? 0u : var_len,
+        .watch_count = 0u,
     };
     if (bound_now) {
         if (!delay_grow((void **)&service->queue, &service->queue_cap,
@@ -306,11 +317,23 @@ bool cetta_delay_suspend(CettaDelayService *service, uint32_t trail_mark,
     }
     for (uint32_t v = 0u; v < var_len; v++) {
         uint32_t bucket = delay_bucket(vars[v], service->bucket_cap);
+        /* The retained variable list preserves sharing and occurrences.
+         * Its watch index is a set: one binding wakes this goal once.
+         * Only this newest goal's entries can contain a duplicate here. */
+        uint32_t cursor = service->buckets[bucket];
+        while (cursor && service->watches[cursor - 1u].goal == index) {
+            if (var_id_eq(service->watches[cursor - 1u].var, vars[v]))
+                break;
+            cursor = service->watches[cursor - 1u].next;
+        }
+        if (cursor && service->watches[cursor - 1u].goal == index)
+            continue;
         service->watches[service->watch_len] =
             (DelayWatch){vars[v], index, service->buckets[bucket]};
         service->buckets[bucket] = ++service->watch_len;
+        service->goals[index].watch_count++;
     }
-    service->linked += var_len;
+    service->linked += service->goals[index].watch_count;
     service->suspended++;
     return true;
 }

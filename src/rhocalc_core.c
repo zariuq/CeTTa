@@ -5343,7 +5343,10 @@ static bool rho_atom_is_active_process(const Atom *atom, void *context) {
 }
 
 static bool rho_proc_is_quiet(Atom *proc) {
-    return !atom_graph_any(proc, rho_atom_is_active_process, NULL);
+    bool complete = false;
+    bool active = atom_graph_any_checked(proc, rho_atom_is_active_process,
+        NULL, NULL, SIZE_MAX, &complete);
+    return complete && !active;
 }
 
 /* C3 support: a grounded value is identity-bearing (not freely copyable) when

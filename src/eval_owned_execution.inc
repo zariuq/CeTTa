@@ -394,32 +394,29 @@ typedef struct {
     bool started;
 } EvalOwnedResidualWork;
 
-static CettaOwnedExecutionStep eval_owned_residual_next(void *context,
+/* Establish the private result image before either residual caller can
+ * consume it. One child episode preserves completion even without an outer
+ * tracker, and settles only the source work actually performed. */
+static CettaEvalCompletion eval_owned_residual_evaluate(
+        EvalOwnedResidual *residual, Atom *body, const Bindings *bindings,
+        OutcomeSet *values) {
+    __attribute__((cleanup(eval_gc_external_owner_guard_leave)))
+    EvalGcExternalOwnerGuard borrowed = {0};
+    eval_gc_external_owner_guard_enter(&borrowed);
+    __attribute__((cleanup(petta_host_branch_leave)))
+    PettaHostBranchGuard branch = petta_host_branch_enter();
+    CettaEvalEpisode episode;
+    eval_completion_child_begin(&episode);
+    metta_call_with_env(residual->answers->space, residual->arena,
+        body, NULL, -1, bindings, values);
+    return eval_completion_child_end(&episode);
+}
+
+/* The source evaluator has established these rows as values. Projection
+ * retains each row's context and obligations; it never executes the value. */
+static inline CettaOwnedExecutionStep eval_owned_residual_project(
+        EvalOwnedResidual *residual, Outcome *outcome,
         CettaOwnedReturn *returned, CettaEvalCompletion *completion) {
-    EvalOwnedResidualWork *work = context;
-    EvalOwnedResidual *residual = work->residual;
-    if (!work->started) {
-        work->started = true;
-        /* The ordinary callback borrows this worker's captured code and
-         * logical context until its entire result image is established. */
-        __attribute__((cleanup(eval_gc_external_owner_guard_leave)))
-        EvalGcExternalOwnerGuard borrowed = {0};
-        eval_gc_external_owner_guard_enter(&borrowed);
-        __attribute__((cleanup(petta_host_branch_leave)))
-        PettaHostBranchGuard branch = petta_host_branch_enter();
-        metta_call_with_env(residual->answers->space, residual->arena,
-            work->body, NULL, -1, work->bindings, &work->values);
-        /* The enclosing evaluator already owns the completion/fuel purse.
-         * Observe it here instead of constructing one boundary per item. */
-        work->completion = g_eval_completion_tracker
-            ? g_eval_completion_tracker->completion : CETTA_EVAL_COMPLETE;
-    }
-    if (work->position == work->values.len) {
-        cetta_eval_completion_record(completion, work->completion);
-        return work->completion == CETTA_EVAL_COMPLETE
-            ? CETTA_OWNED_EXECUTION_COMPLETE : CETTA_OWNED_EXECUTION_INTERRUPTED;
-    }
-    Outcome *outcome = &work->values.items[work->position++];
     Atom *value = outcome_atom_materialize(residual->arena, outcome);
     if (!value) {
         cetta_eval_completion_record(completion, CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
@@ -433,6 +430,26 @@ static CettaOwnedExecutionStep eval_owned_residual_next(void *context,
         .environment = &outcome->env,
     };
     return CETTA_OWNED_EXECUTION_RETURN;
+}
+
+static CettaOwnedExecutionStep eval_owned_residual_next(void *context,
+        CettaOwnedReturn *returned, CettaEvalCompletion *completion) {
+    EvalOwnedResidualWork *work = context;
+    if (!work->started) {
+        work->started = true;
+        work->completion = eval_owned_residual_evaluate(work->residual,
+            work->body, work->bindings, &work->values);
+    }
+    /* An interrupted buffered producer has no published occurrence. Its
+     * effects remain entered, while the private value prefix is retired. */
+    if (work->completion != CETTA_EVAL_COMPLETE) {
+        cetta_eval_completion_record(completion, work->completion);
+        return CETTA_OWNED_EXECUTION_INTERRUPTED;
+    }
+    if (work->position == work->values.len)
+        return CETTA_OWNED_EXECUTION_COMPLETE;
+    return eval_owned_residual_project(work->residual,
+        &work->values.items[work->position++], returned, completion);
 }
 
 static void eval_owned_residual_release(void *context) {
@@ -500,21 +517,19 @@ static bool eval_owned_residual_body(Atom *body, const Bindings *bindings,
          * computation or resumable ownership boundary is needed here. */
         OutcomeSet values;
         outcome_set_init(&values);
-        __attribute__((cleanup(petta_host_branch_leave)))
-        PettaHostBranchGuard branch = petta_host_branch_enter();
-        metta_call_with_env(residual->answers->space, residual->arena,
-            body, NULL, -1, bindings, &values);
-        for (CettaCount index = 0u; residual->ok && index < values.len; index++) {
-            Outcome *outcome = &values.items[index];
-            Atom *value = outcome_atom_materialize(residual->arena, outcome);
-            if (!value || atom_is_legacy_empty_sentinel(value))
-                continue;
-            CettaOwnedReturn returned = {
-                .outcome = outcome->delayed ? cetta_call_suspended(value, outcome->delayed)
-                                           : cetta_call_completed_value(value),
-                .environment = &outcome->env,
-            };
-            residual->ok = residual->consume(residual->consumer, &returned);
+        CettaEvalCompletion completion = eval_owned_residual_evaluate(
+            residual, body, bindings, &values);
+        for (CettaCount index = 0u; completion == CETTA_EVAL_COMPLETE &&
+                residual->ok && index < values.len; index++) {
+            CettaOwnedReturn returned;
+            CettaOwnedExecutionStep step = eval_owned_residual_project(
+                residual, &values.items[index], &returned, &completion);
+            if (step == CETTA_OWNED_EXECUTION_RETURN)
+                residual->ok = residual->consume(residual->consumer, &returned);
+        }
+        if (completion != CETTA_EVAL_COMPLETE) {
+            eval_mark_incomplete(completion);
+            residual->ok = false;
         }
         outcome_set_free(&values);
         return residual->ok && !eval_unwinding();

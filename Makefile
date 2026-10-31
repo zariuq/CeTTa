@@ -986,6 +986,8 @@ SHARED_RETURN_PRODUCER_TEST_OBJ = runtime/bootstrap/test_shared_return_producer.
 SHARED_RETURN_PRODUCER_TEST_BIN = runtime/test_shared_return_producer-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 NATIVE_CONDITIONAL_CONTEXT_TEST_OBJ = runtime/bootstrap/test_native_conditional_context.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 NATIVE_CONDITIONAL_CONTEXT_TEST_BIN = runtime/test_native_conditional_context-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+CONDITIONAL_REGISTRATION_TEST_OBJ = runtime/bootstrap/test_conditional_registration.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+CONDITIONAL_REGISTRATION_TEST_BIN = runtime/test_conditional_registration-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 ANSWER_STORAGE_TEST_OBJ = runtime/bootstrap/test_answer_storage.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 ANSWER_STORAGE_TEST_BIN = runtime/test_answer_storage-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 OWNED_RETURN_IMAGE_TEST_OBJ = runtime/bootstrap/test_owned_return_image.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
@@ -1030,7 +1032,7 @@ PETTA_COMPILED_READER_TEST_BIN = runtime/test_petta_compiled_reader_v1-$(BUILD_C
 PETTA_COMPILED_READER_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ) $(COMPILED_READER_RUNTIME_OBJ)
 PETTA_SEARCH_MACHINE_TEST_SRC = tests/support/test_petta_search_machine.c
 PETTA_SEARCH_MACHINE_TEST_OBJ = runtime/bootstrap/test_petta_search_machine.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
-PETTA_SEARCH_MACHINE_TEST_BIN = runtime/test_petta_search_machine-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+PETTA_SEARCH_MACHINE_TEST_BIN = runtime/test_petta_search_machine-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 NATIVE_QUERY_PROJECTION_TEST_BIN = runtime/test_native_query_projection-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 PETTA_SEARCH_MACHINE_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
 PETTA_TYPECHECK_V2_GUARD_LANGDEF_TEST_SRC = tests/support/test_petta_typecheck_v2_guard_langdef.c
@@ -1955,7 +1957,7 @@ REGISTRY_LOOKUP_BENCH_SRC = benchmarks/prime/bench_registry_lookup.c
 REGISTRY_LOOKUP_BENCH_OBJ = runtime/bootstrap/bench_registry_lookup.$(BUILD_OBJ_TAG).o
 REGISTRY_LOOKUP_BENCH_BIN = runtime/bench_registry_lookup-$(BUILD_OBJ_TAG)
 REGISTRY_LOOKUP_BENCH_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
-ABT_MUTATION_IDS = 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31
+ABT_MUTATION_IDS = 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34
 ABT_MUTATION_TEST_BINS = $(foreach id,$(ABT_MUTATION_IDS),runtime/test_abt_mutation-$(BUILD_OBJ_TAG)-$(id))
 GROUNDED_STANDALONE_SRC = src/grounded.c src/petta_semantics.c src/term_graph.c src/abt.c src/atom_blob.c
 GROUNDED_STANDALONE_DEPS = $(GROUNDED_STANDALONE_SRC) $(ABT_DEFAULT_SIGNATURES_BLOB)
@@ -3625,25 +3627,25 @@ all: $(BIN)
 	@echo "Tip: ./$(BIN) -v prints the active version and build mode"
 
 core:
-	@$(MAKE) BUILD=core $(BIN)
+	@$(MAKE) BUILD=core all
 
 python:
-	@$(MAKE) BUILD=python $(BIN)
+	@$(MAKE) BUILD=python all
 
 mork:
-	@$(MAKE) BUILD=mork $(BIN)
+	@$(MAKE) BUILD=mork all
 
 main:
-	@$(MAKE) BUILD=main $(BIN)
+	@$(MAKE) BUILD=main all
 
 pathmap:
-	@$(MAKE) BUILD=pathmap $(BIN)
+	@$(MAKE) BUILD=pathmap all
 
 full:
-	@$(MAKE) BUILD=full $(BIN)
+	@$(MAKE) BUILD=full all
 
 profile:
-	@$(MAKE) BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 ENABLE_RUNTIME_TIMING=1 $(BIN)
+	@$(MAKE) BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 ENABLE_RUNTIME_TIMING=1 all
 
 bench-metamath-d5: $(BIN)
 	@./scripts/bench_metamath_d5.sh
@@ -3971,6 +3973,16 @@ test-arena-block-growth: $(ARENA_BLOCK_GROWTH_TEST_BIN)
 # each waiting goal once, in suspension order; queue a goal suspended on a
 # bound variable; roll back to any mark; rebase onto compacted checkpoints.
 DELAY_SERVICE_TEST_BIN = runtime/test_delay_service-$(BUILD_OBJ_TAG)
+DELAY_SERVICE_INDEX_TEST_BIN = runtime/test_delay_service_index-$(BUILD_OBJ_TAG)
+
+$(DELAY_SERVICE_INDEX_TEST_BIN): tests/test_delay_service_index.c src/delay_service.c src/delay_service.h src/atom.c src/binding/frame_identity.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) -DCETTA_TEST_HOOKS=1 -DCETTA_RUNTIME_STATS_NOOP=1 $(CFLAGS) -o $@ tests/test_delay_service_index.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/term_canon.c $(LDFLAGS)
+
+.PHONY: test-delay-service-index
+test-delay-service test-execution-semantic-ledger: test-delay-service-index
+test-delay-service-index: $(DELAY_SERVICE_INDEX_TEST_BIN)
+	@$(call cetta_exec,./$(DELAY_SERVICE_INDEX_TEST_BIN))
 
 $(DELAY_SERVICE_TEST_BIN): tests/test_delay_service.c src/delay_service.c src/delay_service.h src/atom.c src/binding/frame_identity.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
@@ -5381,12 +5393,24 @@ test-shared-return-producer: $(SHARED_RETURN_PRODUCER_TEST_BIN)
 	@$(call cetta_exec,./$(SHARED_RETURN_PRODUCER_TEST_BIN))
 	@$(call cetta_exec,./$(SHARED_RETURN_PRODUCER_TEST_BIN)) --prime-native
 
+$(CONDITIONAL_REGISTRATION_TEST_OBJ): tests/test_conditional_registration.c src/petta_search_machine.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -Isrc -c $< -o $@
+
+$(CONDITIONAL_REGISTRATION_TEST_BIN): $(CONDITIONAL_REGISTRATION_TEST_OBJ) $(filter-out src/petta_search_machine.%,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ -Wl,--wrap=cetta_delay_service_new,--wrap=cetta_delay_suspend $(LDFLAGS)
+
+.PHONY: test-conditional-registration
+test-all test-execution-semantic-ledger: test-conditional-registration
+test-conditional-registration: $(CONDITIONAL_REGISTRATION_TEST_BIN)
+	@$(call cetta_exec,./$(CONDITIONAL_REGISTRATION_TEST_BIN))
+
 $(NATIVE_CONDITIONAL_CONTEXT_TEST_OBJ): tests/test_native_conditional_context.c src/eval.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -Isrc -c $< -o $@
 
 $(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN): $(NATIVE_CONDITIONAL_CONTEXT_TEST_OBJ) $(filter-out src/eval.%,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS)
-	$(CC) $(CFLAGS) -o $@ $^ -Wl,--wrap=grounded_call,--wrap=cetta_library_call_native_prepared_view,--wrap=cetta_library_call_native,--wrap=cetta_invocation_materialize,--wrap=petta_semantics_lambda_arity,--wrap=match_atoms_epoch_builder_planned,--wrap=space_query_effect_for_head,--wrap=malloc,--wrap=calloc,--wrap=cetta_prepared_pure_program_compile_closed $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $^ -Wl,--wrap=grounded_call,--wrap=cetta_library_call_native_prepared_view,--wrap=cetta_library_call_native,--wrap=cetta_invocation_materialize,--wrap=petta_semantics_lambda_arity,--wrap=match_atoms_epoch_builder_planned,--wrap=space_query_effect_for_head,--wrap=malloc,--wrap=calloc,--wrap=cetta_prepared_pure_program_compile_closed,--wrap=atom_graph_any_checked,--wrap=cetta_prepared_pure_program_execute_closed_expression_controlled $(LDFLAGS)
 
 .PHONY: test-native-conditional-context
 test-all: test-native-conditional-context
@@ -5394,6 +5418,20 @@ test-native-conditional-context: $(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN)
 	@$(call cetta_exec,./$(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN))
 	@CETTA_PREPARED_PURE_REFERENCE=1 $(call cetta_exec,./$(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN)) --worker-availability
 	@CETTA_OEM_COLLECT_STRESS=1 $(call cetta_exec,./$(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN)) --borrowed-collection-failure
+
+PREPARED_QUERY_INVOCATION_TEST_OBJ = runtime/bootstrap/test_prepared_query_invocation.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+PREPARED_QUERY_INVOCATION_TEST_BIN = runtime/test_prepared_query_invocation-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+-include $(PREPARED_QUERY_INVOCATION_TEST_OBJ:.o=.d)
+$(PREPARED_QUERY_INVOCATION_TEST_OBJ): tests/test_prepared_query_invocation.c src/petta_search_machine.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+$(PREPARED_QUERY_INVOCATION_TEST_BIN): $(PREPARED_QUERY_INVOCATION_TEST_OBJ) $(filter-out src/petta_search_machine.%,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+.PHONY: test-prepared-query-invocation
+test-petta-search-machine test-execution-semantic-ledger: test-prepared-query-invocation
+test-prepared-query-invocation: $(PREPARED_QUERY_INVOCATION_TEST_BIN)
+	@$(call cetta_exec,./$(PREPARED_QUERY_INVOCATION_TEST_BIN))
 
 .PHONY: test-oem-native-returns
 test-all: test-oem-native-returns
@@ -6038,7 +6076,7 @@ test-abt-scope-construction-candidates: $(BIN)
 test-abt: $(ABT_TEST_BIN) test-abt-mm2-boundary test-rhocalc-abt-substitution test-abt-mutations test-abt-default-signatures test-lib-parse-abt-bridge test-abt-integration-ledger
 	@result=$$(./$(ABT_TEST_BIN) 2>&1); \
 	printf '%s\n' "$$result"; \
-	if [ "$$(printf '%s\n' "$$result" | grep -Fxc '(ABTCoreSummary 162 162 0)')" -ne 1 ] || \
+	if [ "$$(printf '%s\n' "$$result" | grep -Fxc '(ABTCoreSummary 184 184 0)')" -ne 1 ] || \
 	   [ "$$(printf '%s\n' "$$result" | grep -Fxc 'PASS: iterative capture-avoiding ABT core')" -ne 1 ]; then \
 		echo "FAIL: ABT core exact summary absent or duplicated"; \
 		exit 1; \
@@ -47632,6 +47670,20 @@ test-petta-search-machine test-execution-semantic-ledger: test-petta-plan-key
 test-petta-plan-key: $(PETTA_PLAN_KEY_TEST_BIN)
 	@$(call cetta_exec,./$(PETTA_PLAN_KEY_TEST_BIN))
 
+PETTA_LAMBDA_SPAN_BUDGET_TEST_OBJ = runtime/bootstrap/test_lambda_span_budget.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+PETTA_LAMBDA_SPAN_BUDGET_TEST_BIN = runtime/test_lambda_span_budget-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+-include $(PETTA_LAMBDA_SPAN_BUDGET_TEST_OBJ:.o=.d)
+$(PETTA_LAMBDA_SPAN_BUDGET_TEST_OBJ): tests/support/test_lambda_span_budget.c src/petta_program.h src/petta_search_machine.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+$(PETTA_LAMBDA_SPAN_BUDGET_TEST_BIN): $(PETTA_LAMBDA_SPAN_BUDGET_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+.PHONY: test-petta-lambda-span-budget
+test-petta-search-machine test-petta-semantics test-execution-semantic-ledger: test-petta-lambda-span-budget
+test-petta-lambda-span-budget: $(PETTA_LAMBDA_SPAN_BUDGET_TEST_BIN)
+	@$(call cetta_exec,./$(PETTA_LAMBDA_SPAN_BUDGET_TEST_BIN))
+
 # Native Megalodon tests (native/megalodon/test.mk).
 include native/megalodon/test.mk
 
@@ -48113,9 +48165,50 @@ test-petta-semantics: test-petta-corrected-stable
 test-petta-corrected-stable: $(BIN)
 	python3 tests/support/check_petta_corrected_stable.py $(BIN)
 
+.PHONY: test-petta-activation-source-budget
+test-petta-activation-source-budget: $(BIN)
+	python3 tests/support/check_petta_activation_source_budget.py ./$(BIN)
+
+test-execution-semantic-ledger: test-petta-activation-source-budget
+
 .PHONY: test-execution-semantic-ledger
 test-execution-semantic-ledger: $(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN) $(PETTA_SEARCH_MACHINE_TEST_BIN) test-prepared-pure-answer-producer test-execution-control-plans
 	@$(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN) --semantic-ledger
 	@$(PETTA_SEARCH_MACHINE_TEST_BIN) --semantic-ledger
 
 main-readiness-routine main-readiness-exhaustive: test-execution-semantic-ledger
+
+.PHONY: test-python-callback-completion
+test-execution-semantic-ledger: test-python-callback-completion
+test-python-callback-completion: $(BIN)
+ifeq ($(ENABLE_PYTHON),1)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_python_callback_completion.py ./$(BIN)
+else
+	@echo "SKIP: Python callback completion (Python support disabled)"
+endif
+
+.PHONY: test-petta-libpl-callback-completion
+test-execution-semantic-ledger test-petta-libpl: test-petta-libpl-callback-completion
+.PHONY: test-petta-libpl-callback-source
+test-execution-semantic-ledger test-petta-libpl: test-petta-libpl-callback-source
+test-petta-libpl-callback-source: $(BIN)
+ifeq ($(LIB_PROLOG_ENABLED),1)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_libpl_callback_source.py ./$(BIN)
+else
+	@echo "SKIP: Prolog callback source entry (embedded Prolog disabled)"
+endif
+
+ifeq ($(LIB_PROLOG_ENABLED),1)
+PETTA_CALLBACK_PROBE = runtime/libpl_callback_probe-$(BUILD_OBJ_TAG).so
+$(PETTA_CALLBACK_PROBE): tests/support/libpl_callback_probe.c src/eval_completion.h \
+		src/stats.h src/generated/cetta_runtime_counters.generated.h
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Isrc -fPIC -shared \
+		$(LIB_PROLOG_CFLAGS) -o $@ $< $(LIB_PROLOG_LDFLAGS)
+
+test-petta-libpl-callback-completion: $(BIN) $(PETTA_CALLBACK_PROBE)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_libpl_callback_completion.py \
+		./$(BIN) $(PETTA_CALLBACK_PROBE) $(if $(filter 1,$(ENABLE_RUNTIME_STATS)),--stats,)
+else
+test-petta-libpl-callback-completion: $(BIN)
+	@echo "SKIP: Prolog callback completion (embedded Prolog disabled)"
+endif
