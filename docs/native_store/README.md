@@ -1,5 +1,55 @@
 # Native byte stores
 
+## Measuring ordinary Space queries
+
+`tests/support/bench_ordinary_space.py` measures the current ordinary-Space
+adapters, embedded and served. The older `bench_kb_graph.py` exercises the
+prototype `KbPut` schema and remains historical evidence for that interface.
+
+```sh
+python3 tests/support/bench_ordinary_space.py runtime/cetta-value-worker-core \
+  --output results/ordinary-spaces --sizes 64 128 256 512 \
+  --shapes chain star skew cycle random --repeats 3
+```
+
+Use the actual worker path produced by the configured build. Output must be
+a new directory. Each case retains its durable store and raw measurements.
+`--indexing both` also runs complete scans; the default uses declared exact
+indexes. Node identifiers are strings, which these indexes qualify exactly.
+Random graphs have three independently sampled outgoing occurrences per node;
+parallel occurrences are preserved. These are small synthetic neighbourhood
+and aggregation shapes, not a conforming LDBC benchmark.
+
+Every query checks encoded answer bags and original occurrence identities
+against an independent Python graph/join/count reference. Shortest-one checks
+distance and every returned edge identity; it permits any correctly tied path.
+The service repeats complete reads with page sizes1 and32. The first-neighbour
+measurement waits through paused pages for an actual row or complete absence,
+then closes unused input. It does not count a paused empty page as a result.
+
+The receipt separates loading with initial index maintenance, paged index
+rebuilding, compaction, fresh-process queries, warm samples and acknowledged
+insert/delete updates. A fresh process is admitted with Echo before its first
+query; admission time is recorded separately. OS caches are not dropped, so
+this is not a cold-disk measurement. Physical file lengths/blocks include
+metadata, journal/index overhead and receipts. A separate bounded byte-cursor
+census reports logical key/value bytes for facts, postings and receipts; those
+are not isolated physical index-page sizes. RSS per fact includes the runtime
+baseline; HWM is cumulative. Native permanent/scratch metrics and result bytes
+remain separate. Reciprocal median serial latency is not concurrent saturation
+throughput. Empirical p95 from fewer than20samples equals the maximum sample.
+
+The shape sweep exposed a service scheduling limit: a512-node star shortest
+query completed embedded but GraphPage256 exhausted the handler's evaluator
+budget. The example graph service now advances at most64logical steps per turn,
+honoring any smaller caller budget and returning Paused with the same captured
+continuation. `test-graph-service-quantum` checks that separating case, actual
+step deltas, zero/small budgets, path identities and resource cleanup. This
+does not make one logical step a constant CPU cost. Linear visited-list checks,
+whole-state validation and continuation ownership still contribute measured
+overhead as the frontier grows; larger workloads may require further metering
+or data-structure work. Exhaustion remains explicit rather than empty output.
+
 ## Bounded logical collection transfer
 
 `(library space_transfer)` copies ordinary durable collections through the
