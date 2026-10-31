@@ -10,7 +10,7 @@ import time
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "tools")]
-from space_service_client import E, S, Var, encode
+from space_service_client import E, S, Var, FloatBits, encode
 from value_worker_client import Worker
 from check_native_kb_service import Server, Client, await_resources
 from check_space_query import rows, bag, open_query, drain, use
@@ -118,6 +118,24 @@ def main():
             assert after.get("cache_hit", 0) > before.get("cache_hit", 0) and after.get("cache_miss", 0) == before.get("cache_miss", 0)
             checks.append("embedded-and-service-cache-and-logical-equivalence")
 
+            token, _ = complete(first, read_open(first))
+            assert other.route("ComputedPolicy", S("count")) == S("true")
+            policy_write = decision(first, token, "changed-policy-decision")
+            assert policy_write == E("StoreRefused", S("program-invalidated")), policy_write
+            before_fallback = stats(first)
+            incompatible = remote(first)
+            assert bag(incompatible) == bag(initial), incompatible
+            assert stats(first) == before_fallback
+            assert other.route("ComputedPolicy", S("none")) == S("true")
+            token = read_open(first)
+            assert other.route("ComputedPolicy", S("count")) == S("true")
+            assert other.route("ComputedPolicy", S("none")) == S("true")
+            failed = use(first, token, "RelReadPage", E("RelPageV1", 1, 8))
+            assert failed[0] == S("RelPageV1") and failed[2][0] == S("Failed") and failed[2][1] == E("StoreRefused", S("program-invalidated")), failed
+            await_resources(first, 0)
+            assert bag(remote(first)) == bag(initial)
+            checks.append("memo-policy-invalidates-context-and-reference-fallback-preserves-results")
+
             held = read_open(first); held, paused = read_page(first, held, fuel=0)
             assert paused == E("RelPageV1", (), S("Paused")), paused
             removed = initial[0][4][0]
@@ -152,15 +170,26 @@ def main():
             checks.append("program-watch-and-transitive-native-memo-invalidation")
 
             inert = E("Use", E("println!", S("ACCIDENTAL_EXECUTION")))
-            invalid = E("=", E("stored-program"), E("println!", S("ACCIDENTAL_EXECUTION")))
+            invalid = E("println!", S("ACCIDENTAL_EXECUTION"))
+            near = [FloatBits.of(1.0000000000001), FloatBits.of(1.0000000000002)]
             changes(other, "extra-syntax", [
                 E("SpaceInsertV1", 0, E("program-syntax", S("inert"), S("emit"), inert)),
                 E("SpaceInsertV1", 1, E("program-syntax", S("invalid"), S("check"), invalid)),
-                E("SpaceInsertV1", 2, E("program-syntax", Var(0), Var(1), E("Use", Var(2))))])
+                E("SpaceInsertV1", 2, E("program-syntax", Var(0), Var(1), E("Use", Var(2)))),
+                *[E("SpaceInsertV1", index + 3, E("program-syntax", S("near" + str(index)), S("check"), value))
+                  for index, value in enumerate(near)]])
             values = remote(first)
-            assert len(values) == 5, values
+            assert len(values) == 7, values
             assert next(row for row in values if row[1] == S("inert"))[3] == 2
             assert next(row for row in values if row[1] == S("invalid"))[3] == E("ComputedSyntaxRefusedV1", invalid)
+            for index, value in enumerate(near):
+                observed = next(row for row in values if row[1] == S("near" + str(index)))
+                assert observed[3] == E("ComputedSyntaxRefusedV1", value), observed
+            assert other.route("ComputedPolicy", S("count")) == S("true")
+            before_fallback = stats(first)
+            assert bag(remote(first)) == bag(values)
+            assert stats(first) == before_fallback
+            assert other.route("ComputedPolicy", S("none")) == S("true")
             checks.append("open-data-excluded-before-binding-and-stored-code-remains-inert")
 
             prior = first.route("Resolve", E("ResolveV1", "computed-current", E("ComputedDecisionV1", "computed-current")))
@@ -169,7 +198,7 @@ def main():
             assert first.route("Resolve", E("ResolveV1", "computed-current", E("ComputedDecisionV1", "computed-current"))) == prior
             assert stats(first) == {}, stats(first)
             recovered = remote(first)
-            assert len(recovered) == 5
+            assert len(recovered) == 7
             recovered_by_id = {encode(row[4][0]): row for row in recovered}
             assert set(recovered_by_id) == {encode(row[4][0]) for row in values}
             assert sorted(row[3] for row in recovered if type(row[3]) is int) == [1, 1, 3, 5]
