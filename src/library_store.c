@@ -285,22 +285,38 @@ static Atom *space_view(CettaLibraryContext *ctx,Arena *a,Atom **args,uint32_t n
     CettaDiskBytes prefix;uint64_t count=0;
     bool version2=record && record->kind==ATOM_EXPR && record->expr.len==4 && atom_is_symbol(record->expr.elems[0],"StoreSpaceV2");
     bool version3=record && record->kind==ATOM_EXPR && record->expr.len==4 && atom_is_symbol(record->expr.elems[0],"StoreSpaceV3");
+    bool version4=record && record->kind==ATOM_EXPR && record->expr.len==4 && atom_is_symbol(record->expr.elems[0],"StoreSpaceV4");
     bool valid=decoded==ATOM_WIRE_OK && record && record->kind==ATOM_EXPR &&
-        ((record->expr.len==3 && atom_is_symbol(record->expr.elems[0],"StoreSpaceV1")) || version2 || version3) && string(record->expr.elems[1],&prefix) &&
+        ((record->expr.len==3 && atom_is_symbol(record->expr.elems[0],"StoreSpaceV1")) || version2 || version3 || version4) && string(record->expr.elems[1],&prefix) &&
         prefix.size && prefix.size<=root->key_limit && number(record->expr.elems[2],&count) &&
         !(key.size>=prefix.size && !memcmp(key.data,prefix.data,prefix.size));
     CettaDiskSpaceIndex *indexes=NULL;size_t index_count=0;
-    if (valid && (version2 || version3)) {
+    if (valid && (version2 || version3 || version4)) {
         Atom *items=record->expr.elems[3];valid=items->kind==ATOM_EXPR;
         if (valid && items->expr.len) {
-            index_count=items->expr.len;indexes=calloc(index_count,sizeof(*indexes));
+            size_t declared=items->expr.len;indexes=calloc(declared,sizeof(*indexes));
             if (!indexes) { result=refused(a,"capacity");arena_free(&metadata);goto done; }
-            for (size_t i=0;valid && i<index_count;i++) {
-                Atom *item=items->expr.elems[i];uint64_t arity=0,position=0;
-                valid=item->kind==ATOM_EXPR && item->expr.len==4 && atom_is_symbol(item->expr.elems[0],"StoreSpaceIndexV1") &&
+            for (size_t i=0;valid && i<declared;i++) {
+                Atom *item=items->expr.elems[i];uint64_t arity=0,position=0;CettaDiskBytes index_prefix={0};
+                bool exact=item->kind==ATOM_EXPR && item->expr.len==4 && atom_is_symbol(item->expr.elems[0],"StoreSpaceIndexV1");
+                bool range=version4 && item->kind==ATOM_EXPR && item->expr.len==4 && atom_is_symbol(item->expr.elems[0],"StoreSpaceRangeIndexV1");
+                valid=(exact || range) &&
                     number(item->expr.elems[1],&arity) && arity && arity<=UINT32_MAX &&
-                    number(item->expr.elems[2],&position) && position<arity && string(item->expr.elems[3],&indexes[i].prefix);
-                indexes[i].arity=(uint32_t)arity;indexes[i].position=(uint32_t)position;
+                    number(item->expr.elems[2],&position) && position<arity && string(item->expr.elems[3],&index_prefix) &&
+                    index_prefix.size && index_prefix.size<=root->key_limit &&
+                    !(index_prefix.size>=prefix.size && !memcmp(index_prefix.data,prefix.data,prefix.size)) &&
+                    !(prefix.size>=index_prefix.size && !memcmp(prefix.data,index_prefix.data,index_prefix.size));
+                for (size_t j=0;valid && j<i;j++) {
+                    Atom *previous=items->expr.elems[j];CettaDiskBytes previous_prefix;
+                    valid=string(previous->expr.elems[3],&previous_prefix);
+                    if (valid && ((index_prefix.size>=previous_prefix.size && !memcmp(index_prefix.data,previous_prefix.data,previous_prefix.size)) ||
+                        (previous_prefix.size>=index_prefix.size && !memcmp(previous_prefix.data,index_prefix.data,index_prefix.size)) ||
+                        (atom_eq(item->expr.elems[0],previous->expr.elems[0]) && atom_eq(item->expr.elems[1],previous->expr.elems[1]) &&
+                         atom_eq(item->expr.elems[2],previous->expr.elems[2])))) valid=false;
+                }
+                /* Range postings are candidate domains for explicit range
+                 * queries, not a new equality normalization for match. */
+                if (valid && exact) indexes[index_count++]=(CettaDiskSpaceIndex){(uint32_t)arity,(uint32_t)position,index_prefix};
             }
         }
     }
@@ -309,8 +325,9 @@ static Atom *space_view(CettaLibraryContext *ctx,Arena *a,Atom **args,uint32_t n
         CettaDiskQuery *query=NULL;
         /* V2's historical MeTTa projection could interpret Boolean-like
          * fields and leave incomplete postings. Keep its facts readable by
-         * the complete scan; only V3 declares data-preserving projections. */
-        CettaDiskStoreStatus status=cetta_disk_query_open_indexed(view,prefix,count,indexes,version3 ? index_count : 0,args[2],args[3],&query);
+         * the complete scan; V3/V4 declare data-preserving exact projections.
+         * V4 range descriptors are used only by explicit range queries. */
+        CettaDiskStoreStatus status=cetta_disk_query_open_indexed(view,prefix,count,indexes,version3 || version4 ? index_count : 0,args[2],args[3],&query);
         if (status!=CETTA_STORE_OK) result=status_value(a,status);
         else {
             Atom *handle=own_query(ctx,a,query);
@@ -321,7 +338,7 @@ static Atom *space_view(CettaLibraryContext *ctx,Arena *a,Atom **args,uint32_t n
         Space *space=arena_alloc(storage,sizeof(*space));
         if (!space) { result=refused(a,"capacity");free(indexes);arena_free(&metadata);goto done; }
         space_init_with_universe(space,&ctx->term_universe);
-        CettaDiskStoreStatus status=cetta_disk_space_capture_indexed(space,view,prefix,count,indexes,version3 ? index_count : 0);
+        CettaDiskStoreStatus status=cetta_disk_space_capture_indexed(space,view,prefix,count,indexes,version3 || version4 ? index_count : 0);
         if (status!=CETTA_STORE_OK) { space_free(space);result=status_value(a,status); }
         else if (!eval_track_new_space(space)) { space_free(space);result=refused(a,"capacity"); }
         else {
@@ -405,6 +422,7 @@ Atom *cetta_store_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **a
     if (atom_is_symbol(head,"__cetta_lib_store_space_point_query_open")) {
         CettaDiskBytes key;
         if (n!=4 || !string(args[1],&key)) return refused(a,"invalid-space-point-query");
+        if (ctx->session.language_id!=CETTA_LANGUAGE_PETTA) return refused(a,"space-language");
         CettaNativeHandleUse use={0};
         if (!acquire(ctx,view_kind,args[0],CETTA_NATIVE_HANDLE_USE_LIFETIME,&use)) return refused(a,"closed-view");
         CettaDiskStoreView *view=cetta_native_handle_use_resource(&use);CettaDiskQuery *query=NULL;

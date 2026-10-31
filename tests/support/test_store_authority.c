@@ -161,6 +161,12 @@ int main(void) {
     symbol_table_init_builtins(&symbols,&g_builtin_syms);
     CettaLibraryContext ctx;cetta_library_context_init(&ctx);
     Arena arena;arena_init_detached(&arena);
+    CettaLanguageId language=ctx.session.language_id;ctx.session.language_id=CETTA_LANGUAGE_PRIME;
+    Atom *point_args[]={atom_symbol(&arena,"not-a-view"),atom_string(&arena,"key"),
+        atom_symbol(&arena,"pattern"),atom_symbol(&arena,"template")};
+    Atom *point_refused=call(&ctx,&arena,"__cetta_lib_store_space_point_query_open",point_args,4);
+    check(shape(point_refused,"StoreRefused",2) && atom_is_symbol(point_refused->expr.elems[1],"space-language"));
+    ctx.session.language_id=language;
     char directory[]="runtime/store-authority.XXXXXX";check(mkdtemp(directory));
     Atom *open_args[]={atom_string(&arena,directory),atom_string(&arena,"create")};
     Atom *opened=call(&ctx,&arena,"__cetta_lib_store_open",open_args,2);check(shape(opened,"StoreOpened",2));
