@@ -4,16 +4,21 @@
 #include "library.h"
 #include "native_handle.h"
 #include "parser.h"
+#include "prime_semantics.h"
 #include "session.h"
 #include "space.h"
 #include "symbol.h"
 #include "term_universe.h"
 
 #include <assert.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 static bool grounded_profile_contract(void) {
     CettaLibraryContext he_prime = {0};
@@ -80,8 +85,25 @@ static uint32_t declared_type_count(Space *space, Arena *arena, Atom *subject) {
     return count;
 }
 
+static bool new_space_signatures(Space *space, Arena *arena, Atom *subject,
+                                 uint32_t expected_count) {
+    static const char *const expected[] = {
+        "(-> SpaceType)", "(-> Atom SpaceType)", "(-> Atom Atom SpaceType)"};
+    Atom **types = NULL;
+    uint32_t count = space_get_declared_types(space, arena, subject, &types);
+    bool ok = count == expected_count &&
+        count <= sizeof(expected) / sizeof(*expected);
+    for (uint32_t i = 0u; ok && i < count; i++) {
+        size_t pos = 0u;
+        Atom *signature = parse_sexpr(arena, expected[i], &pos);
+        ok = signature && atom_eq(types[i], signature);
+    }
+    free(types);
+    return ok;
+}
+
 /* HE's grounded operation types follow the active session, not the process:
- * new-space's extended signature appears outside he-compat only, and no
+ * new-space's kind/profile signatures appear outside he-compat only, and no
  * grounded type exists outside HE. */
 static bool he_grounded_type_session_contract(Space *space, Arena *arena) {
     /* A library context is megabytes: the four live on the heap. */
@@ -108,29 +130,41 @@ static bool he_grounded_type_session_contract(Space *space, Arena *arena) {
     Atom *plus = atom_symbol_id(arena, g_builtin_syms.op_plus);
 
     eval_set_library_context(he_extended);
-    bool extended_ok = declared_type_count(space, arena, new_space) == 2u &&
+    bool extended_ok = new_space_signatures(space, arena, new_space, 3u) &&
         declared_type_count(space, arena, plus) == 1u;
     eval_set_library_context(he_compat);
-    bool compat_ok = declared_type_count(space, arena, new_space) == 1u &&
+    bool compat_ok = new_space_signatures(space, arena, new_space, 1u) &&
         declared_type_count(space, arena, plus) == 1u;
     eval_set_library_context(petta);
-    bool petta_ok = declared_type_count(space, arena, new_space) == 0u &&
+    bool petta_ok = new_space_signatures(space, arena, new_space, 0u) &&
         declared_type_count(space, arena, plus) == 0u;
     eval_set_library_context(prime);
-    bool prime_ok = declared_type_count(space, arena, plus) == 0u;
+    bool prime_ok = new_space_signatures(space, arena, new_space, 0u) &&
+        declared_type_count(space, arena, plus) == 0u;
     eval_set_library_context(he_extended);
     bool extended_again_ok =
-        declared_type_count(space, arena, new_space) == 2u;
+        new_space_signatures(space, arena, new_space, 3u);
     eval_set_library_context(he_compat);
     bool compat_again_ok =
-        declared_type_count(space, arena, new_space) == 1u;
+        new_space_signatures(space, arena, new_space, 1u);
+    bool ok = extended_ok && compat_ok && petta_ok && prime_ok &&
+        extended_again_ok && compat_again_ok;
+    if (!ok) {
+        CettaLibraryContext *contexts[] = {he_extended, he_compat, petta, prime};
+        const char *names[] = {"he-extended", "he-compat", "petta", "prime"};
+        for (size_t i = 0u; i < sizeof(contexts) / sizeof(*contexts); i++) {
+            eval_set_library_context(contexts[i]);
+            fprintf(stderr, "%s grounded types: new-space=%u plus=%u\n", names[i],
+                declared_type_count(space, arena, new_space),
+                declared_type_count(space, arena, plus));
+        }
+    }
     eval_set_library_context(NULL);
     free(he_extended);
     free(he_compat);
     free(petta);
     free(prime);
-    return extended_ok && compat_ok && petta_ok && prime_ok &&
-           extended_again_ok && compat_again_ok;
+    return ok;
 }
 
 static Atom *module_atom(Arena *arena, const char *text) {
@@ -214,6 +248,245 @@ static bool module_types_are(Space *space, Arena *arena, const char *subject,
             return false;                                                 \
         }                                                                 \
     } while (0)
+
+/* A bounded set of generated fixtures is reused under an exclusive lock.
+ * Profile runs cannot rewrite one another's selected source versions. */
+static const char SOURCE_IMAGE_DIRECTORY[] = "runtime/bootstrap/source-image-controls";
+
+static bool source_image_write(const char *name, const char *text) {
+    char path[PATH_MAX];
+    int n = snprintf(path, sizeof(path), "%s/%s.metta", SOURCE_IMAGE_DIRECTORY, name);
+    if (n <= 0 || (size_t)n >= sizeof(path)) return false;
+    FILE *file = fopen(path, "wb");
+    if (!file) return false;
+    size_t length = strlen(text);
+    bool ok = fwrite(text, 1u, length, file) == length;
+    return fclose(file) == 0 && ok;
+}
+
+static bool source_image_capture(CettaLibraryContext *ctx, CettaModuleSpecKind kind,
+    const char *name, Arena *arena, CettaModuleSourceReference **reference, Atom **error) {
+    CettaModuleSpec spec = {.kind = kind};
+    int a = snprintf(spec.raw_spec, sizeof(spec.raw_spec), "%s", name);
+    int b = snprintf(spec.path_or_member, sizeof(spec.path_or_member), "%s", name);
+    return a > 0 && (size_t)a < sizeof(spec.raw_spec) &&
+        b > 0 && (size_t)b < sizeof(spec.path_or_member) &&
+        cetta_library_module_source_capture(ctx, &spec, arena, reference, error);
+}
+
+static bool source_image_scope_query(CettaLibraryContext *ctx, const char *spec,
+    bool expected_read, bool expected_binding) {
+    char text[1024];
+    int n = snprintf(text, sizeof(text),
+        "(scope:profile lexical-fresh per-call reference)\n"
+        "!(import! &self %s)\n!(let $x outer (frozen-pick seed $x $x))\n", spec);
+    if (n <= 0 || (size_t)n >= sizeof(text)) return false;
+    Arena arena; arena_init(&arena);
+    TermUniverse universe; term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &arena);
+    AtomId *ids = NULL;
+    char error[512];
+    CettaLibraryContext *previous = eval_swap_library_context(ctx);
+    int count = prime_semantics_read_source_text_ids(NULL, text, &universe,
+        &ids, error, sizeof(error));
+    eval_swap_library_context(previous);
+    Atom *query = count > 0 ? term_universe_get_atom(&universe, ids[count - 1]) : NULL;
+    Atom *outer = query && query->kind == ATOM_EXPR && query->expr.len >= 4u &&
+        atom_is_symbol_id(query->expr.elems[0], g_builtin_syms.let) ? query->expr.elems[1] : NULL;
+    Atom *body = outer ? query->expr.elems[3] : NULL;
+    bool shaped = outer && outer->kind == ATOM_VAR && body && body->kind == ATOM_EXPR &&
+        body->expr.len == 4u && atom_is_symbol(body->expr.elems[0], "frozen-pick") &&
+        body->expr.elems[2]->kind == ATOM_VAR && body->expr.elems[3]->kind == ATOM_VAR &&
+        var_id_eq(body->expr.elems[2]->var_id, body->expr.elems[3]->var_id);
+    bool binding = shaped && !var_id_eq(outer->var_id, body->expr.elems[2]->var_id);
+    bool ok = expected_read ? shaped && binding == expected_binding
+        : count < 0 && !ids && error[0];
+    if (!ok) fprintf(stderr, "source image scope %s: forms=%d binding=%d error=%s\n",
+        spec, count, binding, error);
+    if (!ok && query) fprintf(stderr, "source image query: %s\n", atom_to_string(&arena, query));
+    free(ids); term_universe_free(&universe); arena_free(&arena);
+    return ok;
+}
+
+static bool module_source_image_contract(void) {
+    bool ok = false;
+    int lock_fd = -1;
+    CettaLibraryContext *contexts[3] = {NULL, NULL, NULL};
+    bool initialized[3] = {false, false, false};
+    CettaModuleSourceReference *a = NULL, *b = NULL, *alias = NULL;
+    CettaModuleSourceReference *parent = NULL, *child = NULL, *bad = NULL, *native = NULL;
+    CettaModuleSourceReference *words = NULL, *include_words = NULL, *git = NULL;
+    CettaModuleSourceScope scope = {0};
+    bool foreign_directory = false;
+    CettaLibraryContext *previous = eval_current_library_context();
+    Arena persistent, scratch; arena_init(&persistent); arena_init(&scratch);
+    TermUniverse universe; term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    Space spaces[3]; Registry registries[3];
+    for (size_t i = 0u; i < 3u; i++) {
+        space_init_with_universe(&spaces[i], &universe); registry_init(&registries[i]);
+        registry_bind_id(&registries[i], g_builtin_syms.self, atom_space(&persistent, &spaces[i]));
+    }
+#define SOURCE_CHECK(condition) do { if (!(condition)) { \
+    fprintf(stderr, "source image contract line %d: %s\n", __LINE__, #condition); \
+    goto cleanup; } } while (0)
+    SOURCE_CHECK(mkdir(SOURCE_IMAGE_DIRECTORY, 0700) == 0 || errno == EEXIST);
+    char lock_path[PATH_MAX];
+    snprintf(lock_path, sizeof(lock_path), "%s/lock", SOURCE_IMAGE_DIRECTORY);
+    lock_fd = open(lock_path, O_CREAT | O_RDWR, 0600);
+    SOURCE_CHECK(lock_fd >= 0);
+    struct flock lock = {.l_type = F_WRLCK, .l_whence = SEEK_SET};
+    int locked;
+    do { locked = fcntl(lock_fd, F_SETLKW, &lock); } while (locked < 0 && errno == EINTR);
+    SOURCE_CHECK(locked == 0);
+    static const char version_a[] =
+        "(scope:binder (frozen-pick value pattern body))\n(= (frozen-value) A)\n";
+    static const char version_b[] = "(= (frozen-value) B)\n";
+    SOURCE_CHECK(source_image_write("main", "") && source_image_write("frozen_shapes", version_a) &&
+        source_image_write("frozen_parent", "!(import! &self frozen_child)\n(= (parent-value) parent)\n") &&
+        source_image_write("frozen_child", "(= (child-value) A)\n") &&
+        source_image_write("bad_shapes", "(scope:binder (unfinished") &&
+        source_image_write("unprepared", "(= (unprepared-value) forbidden)\n"));
+    for (size_t i = 0u; i < 3u; i++) {
+        contexts[i] = calloc(1u, sizeof(*contexts[i]));
+        SOURCE_CHECK(contexts[i]);
+        cetta_library_context_init_for_language_profile(contexts[i], CETTA_LANGUAGE_PRIME,
+            cetta_profile_prime_default());
+        initialized[i] = true;
+        cetta_library_context_set_script_path(contexts[i],
+            "runtime/bootstrap/source-image-controls/main.metta");
+        if (i == 0u) {
+            contexts[i]->module_mounts = calloc(1u, sizeof(*contexts[i]->module_mounts));
+            SOURCE_CHECK(contexts[i]->module_mounts);
+            contexts[i]->module_mount_cap = contexts[i]->module_mount_len = 1u;
+            CettaModuleMount *mount = calloc(1u, sizeof(*mount));
+            contexts[i]->module_mounts[0] = mount;
+            SOURCE_CHECK(mount);
+            mount->provider_kind = CETTA_MODULE_PROVIDER_GIT_REMOTE;
+            mount->profile_visibility_mask = cetta_profile_mask(cetta_profile_prime_default());
+            snprintf(mount->namespace_name, sizeof(mount->namespace_name), "frozen_git");
+            int written = snprintf(mount->root_path, sizeof(mount->root_path),
+                "%s/%s/frozen_shapes.metta", contexts[i]->working_dir, SOURCE_IMAGE_DIRECTORY);
+            SOURCE_CHECK(written > 0 && (size_t)written < sizeof(mount->root_path));
+            contexts[i]->session.module_policy.provider_flags |= CETTA_MODULE_PROVIDER_GIT;
+        }
+        if (i < 2u) SOURCE_CHECK(cetta_library_source_catalogue_begin(contexts[i]));
+    }
+    Atom *error = NULL;
+    SOURCE_CHECK(source_image_capture(contexts[0], CETTA_MODULE_SPEC_MODULE_NAME, "frozen_shapes", &scratch, &a, &error));
+    const uint8_t *a_bytes, *alias_bytes; size_t a_length, alias_length; const char *path;
+    SOURCE_CHECK(cetta_library_module_source_view(a, &a_bytes, &a_length, &path) &&
+        a_length == strlen(version_a) && !memcmp(a_bytes, version_a, a_length));
+    SOURCE_CHECK(source_image_write("frozen_shapes", version_b));
+    SOURCE_CHECK(source_image_capture(contexts[0], CETTA_MODULE_SPEC_RELATIVE_FILE, path, &scratch, &alias, &error) &&
+        cetta_library_module_source_view(alias, &alias_bytes, &alias_length, NULL) &&
+        alias_bytes == a_bytes && alias_length == a_length);
+    SOURCE_CHECK(source_image_capture(contexts[1], CETTA_MODULE_SPEC_MODULE_NAME, "frozen_shapes", &scratch, &b, &error));
+    SOURCE_CHECK(source_image_capture(contexts[0], CETTA_MODULE_SPEC_MODULE_NAME, "frozen_git", &scratch, &git, &error));
+    uint32_t route_flags = contexts[0]->session.module_policy.provider_flags;
+    contexts[0]->session.module_policy.provider_flags &= ~CETTA_MODULE_PROVIDER_REGISTERED_ROOTS;
+    SOURCE_CHECK(cetta_library_module_source_lookup(contexts[0], "frozen_git", NULL, NULL) ==
+        CETTA_MODULE_SOURCE_REFUSED && !cetta_library_module_source_enter(contexts[0], git, &scope) &&
+        cetta_library_module_source_view(git, NULL, NULL, NULL));
+    contexts[0]->session.module_policy.provider_flags = route_flags;
+    SOURCE_CHECK(source_image_scope_query(contexts[0], "frozen_shapes", true, true) &&
+        source_image_scope_query(contexts[1], "frozen_shapes", true, false) &&
+        source_image_scope_query(contexts[0], "frozen_shapes", true, true));
+    SOURCE_CHECK(source_image_capture(contexts[0], CETTA_MODULE_SPEC_MODULE_NAME, "frozen_parent", &scratch, &parent, &error));
+    SOURCE_CHECK(cetta_library_module_source_enter(contexts[0], parent, &scope));
+    SOURCE_CHECK(contexts[0]->import_dir_len < contexts[0]->import_dir_cap);
+    snprintf(contexts[0]->import_dirs[contexts[0]->import_dir_len++], PATH_MAX, ".");
+    foreign_directory = true;
+    SOURCE_CHECK(!source_image_capture(contexts[0], CETTA_MODULE_SPEC_MODULE_NAME, "frozen_child", &scratch, &child, &error) &&
+        !child && !cetta_library_module_source_leave(&scope) && scope.active);
+    contexts[0]->import_dir_len--; foreign_directory = false;
+    SOURCE_CHECK(source_image_capture(contexts[0], CETTA_MODULE_SPEC_MODULE_NAME, "frozen_child", &scratch, &child, &error));
+    SOURCE_CHECK(cetta_library_module_source_leave(&scope));
+    SOURCE_CHECK(!cetta_library_module_source_enter(contexts[1], parent, &scope));
+    SOURCE_CHECK(source_image_write("frozen_child", "(= (child-value) B)\n"));
+    SOURCE_CHECK(source_image_capture(contexts[0], CETTA_MODULE_SPEC_MODULE_NAME, "bad_shapes", &scratch, &bad, &error));
+    SOURCE_CHECK(source_image_write("bad_shapes", version_a));
+    SOURCE_CHECK(source_image_scope_query(contexts[0], "bad_shapes", false, false) &&
+        source_image_scope_query(contexts[1], "bad_shapes", true, true) &&
+        source_image_scope_query(contexts[0], "bad_shapes", false, false));
+    eval_set_library_context(contexts[0]);
+    CettaLibraryMask mask = contexts[0]->active_mask;
+    SOURCE_CHECK(source_image_capture(contexts[0], CETTA_MODULE_SPEC_STDLIB, "str", &scratch, &native, &error) &&
+        contexts[0]->active_mask == mask);
+    SOURCE_CHECK(cetta_library_import_module(contexts[0], "str", &spaces[0], false,
+        &scratch, &persistent, &registries[0], -1, NULL, &error) && contexts[0]->active_mask != mask);
+    SOURCE_CHECK(source_image_capture(contexts[0], CETTA_MODULE_SPEC_MODULE_NAME, "math", &scratch, &words, &error));
+    SOURCE_CHECK(cetta_library_source_catalogue_freeze(contexts[0]));
+    SOURCE_CHECK(cetta_library_import_module(contexts[0], "math", &spaces[0], false,
+        &scratch, &persistent, &registries[0], -1, NULL, &error));
+    SOURCE_CHECK(!cetta_library_context_prime_snapshot_source_admitted(contexts[0]));
+    SOURCE_CHECK(cetta_library_include_module(contexts[0], "frozen_shapes", &spaces[0],
+        &scratch, &persistent, &registries[0], -1, NULL, &error));
+    SOURCE_CHECK(module_equation_answers(&spaces[0], &scratch, "(frozen-value)", "A"));
+    SOURCE_CHECK(cetta_library_include_module(contexts[0], "frozen_parent", &spaces[0],
+        &scratch, &persistent, &registries[0], -1, NULL, &error));
+    SOURCE_CHECK(module_equation_answers(&spaces[0], &scratch, "(child-value)", "A"));
+    SpaceReadToken before = space_read_token(&spaces[0]);
+    SOURCE_CHECK(!cetta_library_include_module(contexts[0], "unprepared", &spaces[0],
+        &scratch, &persistent, &registries[0], -1, NULL, &error) &&
+        atom_is_symbol(error, "ModuleSourceNotCaptured") && space_read_token_is_current(before));
+    uint32_t flags = contexts[0]->session.module_policy.provider_flags;
+    contexts[0]->session.module_policy.provider_flags = 0u;
+    SOURCE_CHECK(cetta_library_module_source_lookup(contexts[0], "frozen_shapes", NULL, NULL) ==
+        CETTA_MODULE_SOURCE_REFUSED && cetta_library_module_source_view(a, NULL, NULL, NULL));
+    contexts[0]->session.module_policy.provider_flags = flags;
+    char saved = contexts[0]->working_dir[0]; contexts[0]->working_dir[0] = '#';
+    SOURCE_CHECK(cetta_library_module_source_lookup(contexts[0], "frozen_shapes", NULL, NULL) ==
+        CETTA_MODULE_SOURCE_REFUSED);
+    contexts[0]->working_dir[0] = saved;
+    eval_set_library_context(contexts[1]);
+    SOURCE_CHECK(cetta_library_include_module(contexts[1], "frozen_shapes", &spaces[1],
+        &scratch, &persistent, &registries[1], -1, NULL, &error) &&
+        module_equation_answers(&spaces[1], &scratch, "(frozen-value)", "B"));
+    SOURCE_CHECK(source_image_capture(contexts[1], CETTA_MODULE_SPEC_STDLIB, "math",
+        &scratch, &include_words, &error) && !contexts[1]->active_mask);
+    SOURCE_CHECK(cetta_library_source_catalogue_freeze(contexts[1]));
+    SOURCE_CHECK(cetta_library_include_module(contexts[1], "math", &spaces[1],
+        &scratch, &persistent, &registries[1], -1, NULL, &error) && contexts[1]->active_mask);
+    mask = contexts[1]->active_mask;
+    contexts[1]->session.module_policy.provider_flags = 0u;
+    SOURCE_CHECK(!cetta_library_import_module(contexts[1], "str", &spaces[1], false,
+        &scratch, &persistent, &registries[1], -1, NULL, &error) && contexts[1]->active_mask == mask);
+    eval_set_library_context(contexts[2]);
+    SOURCE_CHECK(cetta_library_include_module(contexts[2], "frozen_shapes", &spaces[2],
+        &scratch, &persistent, &registries[2], -1, NULL, &error) &&
+        !cetta_library_source_catalogue_begin(contexts[2]));
+    eval_set_library_context(previous);
+    cetta_library_context_free(contexts[0]); initialized[0] = false;
+    SOURCE_CHECK(cetta_library_module_source_view(a, &a_bytes, &a_length, NULL) &&
+        a_length == strlen(version_a) && !memcmp(a_bytes, version_a, a_length) &&
+        !cetta_library_module_source_enter(contexts[0], a, &scope));
+    CettaStorageCensus census = {0};
+    cetta_library_module_source_storage(a, &census); cetta_storage_finish(&census);
+    bool counted = !census.incomplete && !census.invalidated && !census.overflow && census.bytes > a_length;
+    cetta_storage_census_free(&census);
+    SOURCE_CHECK(counted);
+    ok = true;
+cleanup:
+    if (foreign_directory) contexts[0]->import_dir_len--;
+    cetta_library_module_source_leave(&scope);
+    eval_set_library_context(previous);
+    for (size_t i = 0u; i < 3u; i++) {
+        if (initialized[i]) cetta_library_context_free(contexts[i]);
+        free(contexts[i]); registry_free(&registries[i]); space_free(&spaces[i]);
+    }
+    cetta_library_module_source_release(a); cetta_library_module_source_release(b);
+    cetta_library_module_source_release(alias); cetta_library_module_source_release(parent);
+    cetta_library_module_source_release(child); cetta_library_module_source_release(bad);
+    cetta_library_module_source_release(native);
+    cetta_library_module_source_release(words);
+    cetta_library_module_source_release(include_words);
+    cetta_library_module_source_release(git);
+    term_universe_free(&universe); arena_free(&scratch); arena_free(&persistent);
+    if (lock_fd >= 0) close(lock_fd);
+    return ok;
+#undef SOURCE_CHECK
+}
 
 /* HE's ModuleSpace: a space reads its own atoms, then those it imports as a
  * prefix, then each dependency's own atoms in import order.  Listing and
@@ -1388,6 +1661,10 @@ int main(void) {
     }
     if (!he_grounded_type_session_contract(&space, &arena)) {
         fprintf(stderr, "HE grounded type session contract failure\n");
+        goto cleanup;
+    }
+    if (!module_source_image_contract()) {
+        fprintf(stderr, "retained module source image contract failure\n");
         goto cleanup;
     }
     if (!space_module_dependency_contract()) {

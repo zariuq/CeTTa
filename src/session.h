@@ -210,6 +210,8 @@ typedef struct {
     uint32_t profile_visibility_mask;
 } CettaModuleMount;
 
+struct CettaModuleSourceImage;
+
 typedef struct {
     CettaModuleSpec spec;
     CettaModuleProviderKind provider_kind;
@@ -219,6 +221,9 @@ typedef struct {
     Space *execution_target_space;
     bool target_is_fresh;
     bool transactional;
+    /* Borrowed from the selected library's retained source catalogue. */
+    const struct CettaModuleSourceImage *source_image;
+    CettaModuleProviderFlags source_requirements;
 } CettaImportPlan;
 
 typedef struct {

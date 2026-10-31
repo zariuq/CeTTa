@@ -548,6 +548,7 @@ static CettaOwnedExecutionStep owned_bind_next(void *context,
             return CETTA_OWNED_EXECUTION_RETURN;
         }
         if (outcome.kind == CETTA_CALL_INTERRUPTED) {
+            cetta_eval_completion_record(completion, bind->producer.completion);
             cetta_eval_completion_record(completion, CETTA_EVAL_INCOMPLETE_CANCELLED);
             return CETTA_OWNED_EXECUTION_INTERRUPTED;
         }
