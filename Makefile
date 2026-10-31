@@ -4663,6 +4663,15 @@ test-all: test-space-source-cursor
 test-space-source-cursor: $(SPACE_SOURCE_CURSOR_TEST_BIN)
 	@$(PYTHON) -c 'import os,subprocess,tempfile; d=tempfile.TemporaryDirectory(prefix="cetta-space-source-", dir=os.environ.get("TMPDIR")); subprocess.run(["./$(SPACE_SOURCE_CURSOR_TEST_BIN)",d.name],check=True)'
 
+EXTERNAL_SPACE_SOURCE_TEST_BIN = runtime/test_external_space_source-$(BUILD_OBJ_TAG)
+$(EXTERNAL_SPACE_SOURCE_TEST_BIN): tests/test_external_space_source.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_external_space_source.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
+.PHONY: test-external-space-source
+test-all: test-external-space-source
+test-external-space-source: $(EXTERNAL_SPACE_SOURCE_TEST_BIN) value-worker
+	$<
+	$(PYTHON) tests/support/check_external_stream_reference.py $(VALUE_WORKER_BIN)
+
 NATIVE_DISK_SPACE_TEST_BIN = runtime/test_native_disk_space-$(BUILD_OBJ_TAG)
 $(NATIVE_DISK_SPACE_TEST_BIN): tests/test_native_disk_space.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p runtime

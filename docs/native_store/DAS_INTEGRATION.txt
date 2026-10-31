@@ -2,9 +2,10 @@ DAS integration with ordinary CeTTa spaces — API intake and qualification plan
 2026-10-30
 
 STATUS
-Design and source review only. No DAS adapter, server deployment, distributed
-transaction layer or performance superiority is claimed by this document.
-The native persistent-space work remains the first-release implementation.
+Pinned API intake plus a qualified local scripted-source experiment. No live
+DAS client/backend, server deployment, distributed transaction layer or
+performance superiority is claimed. Native persistent Spaces remain the
+first-release implementation.
 
 SOURCE PIN
 Repository: https://github.com/singnet/das
@@ -172,16 +173,79 @@ or an unimplemented CeTTa adapter. Existing SourceSnapshot, SnapshotBatch and
 ToolFailureFeedback results provide additional reusable contracts for captured
 inputs, coordinated publication and failure-preserving observations.
 
-NEXT IMPLEMENTATION GATES
-1. Publish an explicit backend capability/identity manifest at a pinned revision.
-2. Build a local scripted stream fixture; test errors, cancellation, disconnect,
-   replay, duplicate equal rows and unknown/captured revision profiles.
-3. Connect that fixture through the existing owned Space source/cursor path;
-   compare bindings, multiplicity, completeness and ownership with an ordinary
-   Space. No new independent matcher or permission system.
-4. Only then run a bounded read-only integration against an explicitly selected
+SCRIPTED SOURCE CHECKPOINT
+
+test-external-space-source supplies a finite in-process protocol fixture through
+the existing SpaceSourceCursorOps interface. It is not a second query engine:
+ordinary captured Space cursors perform all matching and joins. Its explicit
+profile is CAV1 test mappings, one fixture identity domain, immutable captured
+enumeration, stable occurrence memberships, read-only access and no durable
+write validation. This mapping is not the DAS MD5-compatible identity codec.
+
+The generic occurrence interface now has PROGRESS: one bounded poll supplied
+no row. The ordinary query cursor yields progress, and PeTTa match/pat suspend
+with their exact choice retained. Later polls resume that choice, including
+first-row suspension and an equation-dispatched match with other alternatives.
+Progress does not latch a terminal failure or charge a candidate-row visit.
+An unknown source result code becomes sticky INCOMPLETE.
+
+ wait / replay frame -> progress -> resume captured traversal
+ row                -> shared matching + occurrence witness
+ explicit end       -> complete only for the full captured enumeration
+ error / disconnect -> incomplete, preserving an already published prefix
+
+The synchronous native transform realization declines occurrence sources during
+pure planning, before opening or polling them. The authored MeTTa definition
+remains authoritative and owns ordinary match suspension/error handling; this
+fixture checks preflight handoff, not a full remote transform. Existing native agenda selection/discovery
+can yield progress; the fixture does not qualify external mutation through
+those paths. Native-only fast paths retain their existing admission rules;
+older synchronous service consumers refuse unfinished reads as backend errors.
+
+Replay is validated against immutable frame coordinates in the captured test
+manifest. A repeated frame is ignored; equal payloads at different occurrences
+remain distinct. The fixture exposes namespaced supplied membership identities,
+not traversal positions as fact IDs. It compares six patterns/joins against an
+ordinary in-memory Space, including repeated variables, distinct variables
+binding the same value, shared open variables and inert stored equations.
+The source scans complete candidates; remote query pushdown is unqualified.
+
+Data root and execution stream are retained together. Clones/selectors neither
+recapture a later publisher nor start a new remote query. Fresh captures can
+read a later generation while old readers finish the original. An unknown
+revision refuses captured-read admission. An explicit content-set profile can
+be read as such, but cannot satisfy a requested occurrence-bag profile.
+Revocation invalidates a reader; a later regrant cannot revive that old cursor.
+These are fixture profile checks, not proof of DAS authorization/revocation.
+
+Cancellation acceptance is not terminal acknowledgement. Closing the last
+local cursor requests cancellation; an unacknowledged remote execution remains
+an owner obligation. The fixture bounds these obligations and refuses admission
+when full. Explicit acknowledgement releases them. Local cursor clones do not
+cancel work still held by another reader. Repeated decode/clone/cancel controls
+measure retained cursor storage separately from the borrowed finite fixture.
+
+tests/support/external_stream_reference.metta is an executable finite MeTTa
+reference for polling, frame coordinates, replay, prefix failures and terminal
+states; its test has19checks. Frame coordinates in that reference do not stand
+for payload or occurrence identity. The corresponding private Lean model has
+nine laws/counterexamples. Neither certifies C, a network peer, immutable remote
+execution, authentication or backend snapshots.
+
+The mock owns an already available finite immutable stream. Its independent
+rewind/clone capability is stronger than has been established for a running
+DAS execution. It does not demonstrate large remote result retention, streaming
+backpressure, reconnection integrity, bounded DAS server memory, an actual DAS
+codec or cross-source transactional dependencies. Unversioned external reads
+cannot supply a durable-query write context through this fixture.
+
+REMAINING IMPLEMENTATION GATES
+1. Select a real backend/codec profile with evidence for the captured-view,
+   cursor replay/clone and authorization guarantees actually used. Preserve
+   the intake pin or qualify a new one explicitly.
+2. Only then run a bounded read-only integration against an explicitly selected
    DAS instance. Keep protocol/backend failures distinguishable from non-match.
-5. Evaluate a CeTTa-backed DAS provider and writable integration as separate
+3. Evaluate a CeTTa-backed DAS provider and writable integration as separate
    capabilities. Preserve the original single-machine native-KB acceptance gates.
 
 Measure equivalent workloads and semantics before adoption. MORK comparisons

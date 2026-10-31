@@ -1,0 +1,32 @@
+; Finite executable reference for polling an immutable captured enumeration.
+; Frame coordinates are not occurrence identities or payloads. The reversed
+; received-coordinate list is reference evidence, not a native cursor layout.
+(: external-ref:run (-> %Undefined% %Undefined%))
+(: external-ref:step (-> Atom Atom %Undefined%))
+(: external-ref:answer (-> Atom Atom %Undefined%))
+(= (external-ref:run (Step $state $event)) (external-ref:step $state $event))
+(= (external-ref:answer $kind $state) (quote (StreamPollV1 $kind $state)))
+(= (external-ref:step (StreamReadV1 $count $next $seen $phase $requested $settled) $event)
+  (if (== $phase Running)
+    (case $event
+      ((Wait (external-ref:answer Progress (StreamReadV1 $count $next $seen Running $requested $settled)))
+       (CancelAccepted (external-ref:answer Progress (StreamReadV1 $count $next $seen Running Requested $settled)))
+       (Cancelled (external-ref:answer Incomplete (StreamReadV1 $count $next $seen Cancelled $requested Settled)))
+       (Error (external-ref:answer Incomplete (StreamReadV1 $count $next $seen Failed $requested Settled)))
+       (Drop (external-ref:answer Incomplete (StreamReadV1 $count $next $seen Unknown $requested Unsettled)))
+       (End
+         (if (== $next $count)
+           (external-ref:answer Complete (StreamReadV1 $count $next $seen Complete $requested Settled))
+           (external-ref:answer Incomplete (StreamReadV1 $count $next $seen Failed $requested Unsettled))))
+       ((Frame $sequence $coordinate)
+         (if (and (== $sequence $coordinate) (and (>= $coordinate 0) (< $coordinate $count)))
+           (if (< $sequence $next)
+             (external-ref:answer Progress (StreamReadV1 $count $next $seen Running $requested $settled))
+             (if (== $sequence $next)
+               (let* (($after (+ $next 1)) ($received (cons-atom $coordinate $seen)))
+                 (external-ref:answer (Item $coordinate) (StreamReadV1 $count $after $received Running $requested $settled)))
+               (external-ref:answer Incomplete (StreamReadV1 $count $next $seen Failed $requested Unsettled))))
+           (external-ref:answer Incomplete (StreamReadV1 $count $next $seen Failed $requested Unsettled))))
+       ($bad (external-ref:answer Incomplete (StreamReadV1 $count $next $seen Failed $requested Unsettled)))))
+    (let $kind (if (== $phase Complete) Complete Incomplete)
+      (external-ref:answer $kind (StreamReadV1 $count $next $seen $phase $requested $settled)))))

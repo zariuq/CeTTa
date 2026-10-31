@@ -200,6 +200,18 @@ cancellation and authorization mechanisms, while keeping occurrence identity,
 captured revisions and publication guarantees explicit. No DAS adapter is
 implemented by that design checkpoint.
 
+The subsequent scripted-source checkpoint is qualified by
+`test-external-space-source` and `test-space-source-cursor`. An occurrence
+source can yield `SPACE_OCCURRENCE_CURSOR_PROGRESS` for one bounded empty
+poll; ordinary query cursors yield progress and PeTTa match/pat retain their
+choice and suspend. Only explicit source exhaustion completes a read.
+The synchronous transform optimization hands occurrence sources to its
+authored MeTTa implementation before opening/polling them. The finite external
+fixture checks replay, membership identities, captured generations, profile
+refusals, revocation and cancellation acknowledgement, with an executable MeTTa
+polling reference. See the intake's scripted-source section for its limits:
+this is not a live DAS client, backend snapshot proof or foreign write context.
+
 `store` is a SQLite-free, persistent byte-key interface. Applications define
 records, key layouts, indexes, queries, constraints and receipts in MeTTa.
 The native owner validates snapshots and publishes one immutable root for a
