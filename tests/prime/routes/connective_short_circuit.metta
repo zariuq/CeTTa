@@ -67,3 +67,26 @@
 ; The absorbed answer is the first operand's own value.
 !(== (both (> 0 1) (loop)) False)
 !(== (either (> 1 0) (loop)) True)
+
+; Pattern fields of computed sequences are earned data. Boolean observers
+; consume those truth values while preserving their scalar checks.
+(= (boolean:rows) ((True True) (True True) (True True)))
+(= (boolean:mixed) ((True True) (True False) (True True)))
+!(let $rows (boolean:rows)
+   (foldl-atom $rows True $acc $row
+     (let ($left $right) $row (and $acc (if $left $right True)))))
+!(let $rows (boolean:mixed)
+   (foldl-atom $rows True $acc $row
+     (let ($left $right) $row (and $acc (if $left $right True)))))
+!(let $rows (boolean:rows)
+   (foldl-atom $rows False $acc $row
+     (let ($left $right) $row (or $acc (if $left $right False)))))
+!(let $xs (boolean:rows)
+   (map-atom $xs $row (let ($left $right) $row (xor $left $right))))
+!(let $xs (boolean:rows)
+   (map-atom $xs $row (let ($left $right) $row (not $left))))
+(= (boolean:bad-rows) ((True 1)))
+!(let $xs (boolean:bad-rows)
+   (map-atom $xs $row (let ($left $right) $row (and $left $right))))
+; Reading a Boolean operand does not activate quoted code.
+!(let $code (quote (println! connective-code-must-stay-data)) (not $code))

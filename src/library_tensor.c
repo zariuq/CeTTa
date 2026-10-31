@@ -482,11 +482,13 @@ static Atom *zip_map(Space *space, Arena *destination, Atom **args) {
         Atom *value = NULL;
         if (lexical) {
             CettaCallOutcome returned;
-            if (!cetta_prepared_pure_program_execute_controlled(
+            CettaEvalCompletion completion = CETTA_EVAL_COMPLETE;
+            bool executed = cetta_prepared_pure_program_execute_controlled(
                     program, &scratch, call_args[1],
                     count + captured == 2u ? call_args[2] : call_args[1],
-                    tensor_callback_stop, NULL, &returned) ||
-                returned.kind != CETTA_CALL_VALUE ||
+                    tensor_callback_stop, NULL, &returned, &completion);
+            if (completion != CETTA_EVAL_COMPLETE) eval_native_interrupt(completion);
+            if (!executed || completion != CETTA_EVAL_COMPLETE || returned.kind != CETTA_CALL_VALUE ||
                 returned.result_form != CETTA_CALL_RESULT_COMPLETED_VALUE ||
                 !returned.term)
                 goto cleanup;

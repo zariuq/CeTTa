@@ -717,15 +717,16 @@ incomplete:
  * only the existing owning native-handle token supplies authority. */
 static Atom *prime_native_history_record_handle(Atom *input,
     const char *record,const char *label,CettaExprIndex first_field) {
+    input=atom_prime_held_payload(input);
     if(!input||input->kind!=ATOM_EXPR||!input->expr.len||
-        !atom_is_symbol(input->expr.elems[0],record))return input;
+        !atom_is_symbol(atom_prime_held_payload(input->expr.elems[0]),record))return input;
     Atom *holder=NULL;
     for(CettaExprIndex i=first_field;i<input->expr.len;i++) {
-        Atom *field=input->expr.elems[i];
+        Atom *field=atom_prime_held_payload(input->expr.elems[i]);
         if(field&&field->kind==ATOM_EXPR&&field->expr.len==2u&&
-            atom_is_symbol(field->expr.elems[0],label)) {
+            atom_is_symbol(atom_prime_held_payload(field->expr.elems[0]),label)) {
             if(holder)return NULL;
-            holder=field->expr.elems[1];
+            holder=atom_prime_held_payload(field->expr.elems[1]);
         }
     }
     return holder;

@@ -6,6 +6,7 @@
 #include <stdint.h>
 
 #include "atom.h"
+#include "lang.h"
 #include "call_outcome.h"
 #include "nik_direct_authority.h"
 #include "prime_typing_authority.h"
@@ -272,7 +273,7 @@ Atom *prime_semantics_beta_value(Arena *arena, Atom *call,
  * (prime_semantics_env_apply) never enters a quotation in value position,
  * and authored forms are sealed when they are elaborated
  * (prime_semantics_elaborate_form). */
-void prime_quote_seal_set(bool active);
+bool prime_quote_seal_set(bool active);
 bool prime_quote_seal_active(void);
 
 /* Lambda scope profiles (docs/prime/scope-policy-spectrum-20261006.md): an
@@ -303,6 +304,40 @@ typedef struct {
     uint8_t readout;
 } CettaPrimeScopeProfile;
 
+/* A captured interpretation owns its declaration image, independently of
+ * the library that selected it. It grants no authority over resources in
+ * terms or bindings. Symbol storage remains with the enclosing runtime. */
+typedef struct CettaPrimeInterpretation CettaPrimeInterpretation;
+typedef struct CettaPrimeInterpretationSelection CettaPrimeInterpretationSelection;
+CettaPrimeInterpretationSelection *prime_interpretation_selection_new(
+    CettaLanguageId language, bool he_compat, bool seal);
+CettaPrimeInterpretationSelection *prime_interpretation_selection_copy(
+    const CettaPrimeInterpretationSelection *source);
+void prime_interpretation_selection_free(CettaPrimeInterpretationSelection *selection);
+void prime_interpretation_selection_storage(
+    const CettaPrimeInterpretationSelection *selection, CettaStorageCensus *census);
+CettaPrimeInterpretation *prime_interpretation_capture(
+    const CettaPrimeInterpretationSelection *selection);
+CettaPrimeInterpretation *prime_interpretation_capture_current(void);
+void prime_interpretation_retain(CettaPrimeInterpretation *interpretation);
+void prime_interpretation_release(CettaPrimeInterpretation *interpretation);
+void prime_interpretation_storage(const CettaPrimeInterpretation *interpretation,
+    CettaStorageCensus *census);
+bool prime_interpretation_is_current(const CettaPrimeInterpretation *interpretation);
+bool prime_interpretation_equal(const CettaPrimeInterpretation *left,
+    const CettaPrimeInterpretation *right);
+
+typedef struct CettaPrimeDeclarationContextMemoV1 CettaPrimeDeclarationContextMemoV1;
+/* Reuse checked declaration preparation within one synchronous dependency
+ * walk. The source, arena and runtime symbol storage stay live. Reuse checks
+ * the complete direct-authority token, arena identity/epoch, language and
+ * captured interpretation. Nested synthesis uses its own temporary context;
+ * term checking and source-currentness checks still run for each query. */
+CettaPrimeDeclarationContextMemoV1 *
+prime_semantics_declaration_context_memo_enter(Space *space, Arena *arena);
+void prime_semantics_declaration_context_memo_leave(
+    CettaPrimeDeclarationContextMemoV1 *memo);
+
 /* The profile of a document that declares none: lexical-fresh per-call
  * reference, or for the scope experiment's census and output comparison,
  * CETTA_PRIME_SCOPE_DEFAULT=ownership[/lifetime/readout] (an elaboration
@@ -322,7 +357,7 @@ bool prime_scope_profile_from_atom(const Atom *decl,
 /* The profile in force while the program runs, under which code formed at
  * run time (parse) is elaborated: the main document's own profile, then each
  * query declaration `!(scope:profile ...)` evaluated, from its position on. */
-void prime_scope_runtime_profile_set(CettaPrimeScopeProfile profile);
+bool prime_scope_runtime_profile_set(CettaPrimeScopeProfile profile);
 CettaPrimeScopeProfile prime_scope_runtime_profile(void);
 /* The scope census (CETTA_PRIME_SCOPE_CENSUS, read by main.c): while the main
  * document is read, each form is elaborated under every ownership option
@@ -436,9 +471,12 @@ bool prime_semantics_elaborate_read_forms(TermUniverse *universe,
 /* Read executable Prime source: recognize its compiled grammar, project its
  * syntax, then elaborate document scopes. The raw compiled-reader APIs keep
  * their syntax-only contract. A NULL reader selects a temporary prepared
- * reader; neither entry installs or replaces the session's document reader.
+ * reader; these entries never replace the session's document reader.
  * Host syntax settings are restored on both success and refusal. */
 struct PrimeCompiledReaderV1;
+int prime_semantics_read_source_bytes_ids(struct PrimeCompiledReaderV1 *reader,
+    const uint8_t *bytes, size_t length, TermUniverse *universe, AtomId **out_ids,
+    char *error_buf, size_t error_buf_size);
 int prime_semantics_read_source_text_ids(struct PrimeCompiledReaderV1 *reader,
     const char *text, TermUniverse *universe, AtomId **out_ids,
     char *error_buf, size_t error_buf_size);

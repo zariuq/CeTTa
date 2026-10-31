@@ -1074,9 +1074,9 @@ def weight_licence_dependencies(gate):
 
 
     if getattr(gate, 'language', 'prime') == 'petta':
-        # A missing logical location is empty, but has no physical query cursor.
-        # bind! accepts new-state in this dialect and does not create a Space.
-        source = '!(bind! &licence-absent (new-space)) ' + slow
+        # Leave this logical location unregistered: binding new-space would
+        # create a physical Space and test the empty-cursor case above again.
+        source = slow
         source += f'(=w (licence-answer) (licence-slow 120 '
         source += f'(match &licence-absent (stored-computation $code) $code)) {tenth}) '
         source += '(=w (licence-answer) Visible 1) '

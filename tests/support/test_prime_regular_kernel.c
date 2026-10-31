@@ -7,6 +7,8 @@
 #include "prime_typed_flow.h"
 #include "prime_typed_flow_boundary.h"
 #include "prime_semantics.h"
+#include "library.h"
+#include "eval.h"
 #include "space.h"
 #include "stats.h"
 #include "symbol.h"
@@ -453,6 +455,123 @@ static void check_rules_as_data(Arena *arena) {
           "without its rules nothing computes");
 }
 
+static uint64_t context_memo_hits(CettaPrimeRegularKernelContextMemoV1 *memo) {
+    uint64_t hits=0u;
+    CHECK(cetta_prime_regular_kernel_context_memo_stats_v1(memo,&hits,NULL),
+          "context memo reports its actual successful reuse");
+    return hits;
+}
+
+static CettaPrimeRegularKernelResult context_memo_query(
+    Arena *arena,Atom *context,Atom *term,uint64_t steps) {
+    CettaPrimeRegularKernelBudget budget;
+    cetta_prime_regular_kernel_budget_init(&budget,true,steps);
+    return cetta_prime_regular_kernel_synth_intrinsic_v1(arena,context,term,&budget);
+}
+
+static void check_context_memo(void) {
+    Arena work,foreign;
+    arena_init(&work);arena_init(&foreign);
+    Atom *good=parse_one(&work,"(PrimeCtxCons U0 PrimeCtxNil)");
+    Atom *term=parse_one(&work,"(idx 0)");
+    CettaPrimeRegularKernelResult reference=context_memo_query(&work,good,term,100000u);
+    CHECK(reference.status==CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED,"reference context is formed");
+    CettaPrimeRegularKernelContextMemoV1 *memo=cetta_prime_regular_kernel_context_memo_enter_v1(&work);
+    CHECK(memo!=NULL,"context memo scope is allocated");
+    if(!memo)goto done;
+    CettaPrimeRegularKernelResult first=context_memo_query(&work,good,term,100000u);
+    CHECK(first.status==reference.status && atom_data_identical(first.type,reference.type),
+          "first memoized query agrees with ordinary checking");
+    uint64_t hits=context_memo_hits(memo);
+    Atom *same=parse_one(&work,"(PrimeCtxCons U0 PrimeCtxNil)");
+    CettaPrimeRegularKernelResult second=context_memo_query(&work,same,term,100000u);
+    CHECK(second.status==first.status && atom_data_identical(second.type,first.type),
+          "structurally equal context returns exactly the checked type");
+    CHECK(context_memo_hits(memo)>hits,"equal fresh context actually reuses a checked snapshot");
+    hits=context_memo_hits(memo);
+    CHECK(context_memo_query(&work,same,term,0u).status==CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED,
+          "a cache hit grants no work to an empty budget");
+    CHECK(context_memo_hits(memo)==hits,"zero budget does not count a successful cache hit");
+    good->expr.elems[1]=parse_one(&work,"(idx 0)");
+    CHECK(context_memo_query(&work,good,parse_one(&work,"U0"),100000u).status!=CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED,
+          "mutating caller syntax cannot mutate its admitted snapshot");
+    Atom *duplicate=parse_one(&work,"(PrimeCtxDecl (DeclConst A) U0 (PrimeCtxDecl (DeclConst A) U0 PrimeCtxNil))");
+    CHECK(context_memo_query(&work,duplicate,parse_one(&work,"U0"),100000u).status!=CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED,
+          "duplicate declaration keys remain invalid under memoization");
+    Atom *floating=parse_one(&work,"(PrimeCtxCons (Sort (LevelConst 0.0)) PrimeCtxNil)");
+    CHECK(context_memo_query(&work,floating,parse_one(&work,"U0"),100000u).status!=CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED,
+          "numeric value equality cannot validate a different intrinsic representation");
+    hits=context_memo_hits(memo);
+    CHECK(context_memo_query(&foreign,parse_one(&foreign,"(PrimeCtxCons U0 PrimeCtxNil)"),
+            parse_one(&foreign,"(idx 0)"),100000u).status==reference.status,
+          "another arena still has ordinary checking");
+    CHECK(context_memo_hits(memo)==hits,"another arena cannot consume this scope's memo");
+    CettaPrimeRegularKernelContextMemoV1 *nested=cetta_prime_regular_kernel_context_memo_enter_v1(&work);
+    CHECK(nested!=NULL,"a nested context memo has its own owner");
+    if(nested) {
+        CHECK(context_memo_query(&work,same,term,100000u).status==reference.status,"nested memo checks its own input");
+        cetta_prime_regular_kernel_context_memo_leave_v1(nested);
+    }
+    hits=context_memo_hits(memo);
+    CHECK(context_memo_query(&work,same,term,100000u).status==reference.status,"leaving a child restores the parent memo");
+    CHECK(context_memo_hits(memo)>hits,"restored parent retains its earned context validation");
+    ArenaMark mark=arena_mark(&work);
+    (void)parse_one(&work,"(unrelated allocation)");
+    arena_reset(&work,mark);
+    hits=context_memo_hits(memo);
+    CHECK(context_memo_query(&work,parse_one(&work,"(PrimeCtxCons U0 PrimeCtxNil)"),
+            parse_one(&work,"(idx 0)"),100000u).status==reference.status,
+          "reset arena uses a freshly checked context");
+    CHECK(context_memo_hits(memo)==hits,"an arena reset invalidates scope reuse");
+    cetta_prime_regular_kernel_context_memo_leave_v1(memo);
+done:
+    arena_free(&foreign);arena_free(&work);
+}
+
+static bool declaration_memo_query(Arena *arena,Space *space,
+    CettaPrimeTypingSynthesisObservationV1 *observation) {
+    CettaPrimeTypingSynthesisCandidateV1 candidate={
+        .term=parse_one(arena,"memoX"),.steps_limited=true,.steps=100000u};
+    bool observed=cetta_prime_typing_observe_synthesis_v1(arena,space,&candidate,observation);
+    CettaNikStatusV1 status=CETTA_NIK_STATUS_UNDETERMINED;
+    bool readout=observed && cetta_prime_typing_authority_observation_v1_status(&observation->authority,&status);
+    return readout && status==CETTA_NIK_STATUS_ESTABLISHED;
+}
+
+static void check_declaration_context_memo(void) {
+    Arena persistent,work;
+    arena_init(&persistent);arena_init(&work);
+    TermUniverse universe;
+    term_universe_init(&universe);term_universe_set_persistent_arena(&universe,&persistent);
+    Space source;space_init_with_universe(&source,&universe);
+    CettaLibraryContext library;
+    cetta_library_context_init_for_language_profile(&library,CETTA_LANGUAGE_PRIME,cetta_profile_prime_default());
+    CettaLibraryContext *previous=eval_swap_library_context(&library);
+    Atom *old_type=parse_one(&work,"(: memoX memoT)");
+    space_add(&source,parse_one(&work,"(: memoT (u 0))"));
+    space_add(&source,old_type);
+    CettaPrimeDeclarationContextMemoV1 *memo=prime_semantics_declaration_context_memo_enter(&source,&work);
+    CHECK(memo!=NULL,"declaration memo owns a captured interpretation");
+    CettaPrimeTypingSynthesisObservationV1 first={0},again={0},changed={0},reference={0};
+    CHECK(declaration_memo_query(&work,&source,&first),"declared constant has a checked type in the memo scope");
+    CHECK(declaration_memo_query(&work,&source,&again),"unchanged source remains available");
+    CHECK(atom_data_identical(first.authority.payload,again.authority.payload),
+          "reused declaration preparation preserves its exact type");
+    CHECK(space_remove(&source,old_type),"source mutation removes the actual old declaration");
+    space_add(&source,parse_one(&work,"(: memoX (u 0))"));
+    CHECK(declaration_memo_query(&work,&source,&changed),"changed declaration is checked in the new source");
+    CHECK(!atom_data_identical(first.authority.payload,changed.authority.payload),
+          "a changed source cannot retain the old synthesized type");
+    prime_semantics_declaration_context_memo_leave(memo);
+    CHECK(declaration_memo_query(&work,&source,&reference),"ordinary checking still accepts the changed source");
+    CHECK(atom_data_identical(changed.authority.payload,reference.authority.payload),
+          "source invalidation agrees exactly with checking without the memo");
+    eval_swap_library_context(previous);
+    cetta_library_context_free(&library);
+    space_free(&source);term_universe_free(&universe);
+    arena_free(&work);arena_free(&persistent);
+}
+
 int main(int argc, char **argv) {
     if (argc != 3) {
         fprintf(
@@ -482,6 +601,8 @@ int main(int argc, char **argv) {
     g_symbols = &symbols;
     g_var_intern = &variables;
 
+    check_context_memo();
+    check_declaration_context_memo();
     check_computed_intrinsic_forms(&arena);
     check_rules_as_data(&arena);
 

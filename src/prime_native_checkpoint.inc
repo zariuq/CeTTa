@@ -133,12 +133,15 @@ static bool parent_copy_outcomes(PrimeParentCopy *copy, const OutcomeSet *source
             copy->atoms,prime_need_call_reader_context_copy_with_session))) ||
         parent_copy_refuse(copy, "OutcomeOwner");
 }
-static bool parent_copy_owner(PrimeParentCopy *copy, Arena **owner) {
+/* A retained immutable prefix does not authorize writing through one of its
+ * arena pointers. Allocation targets need the same issued mapping as a full
+ * checkpoint, including current source/destination identities. */
+static bool parent_copy_allocation_owner(PrimeParentCopy *copy, Arena **owner) {
     if (!*owner) return true;
     Arena *storage=parent_copy_image_storage(copy);
     Arena *mapped = NULL;
     if (!atom_deep_copy_session_destination_for_owner(copy->atoms,*owner,&mapped))
-        return copy->retain_reader_contexts;
+        return parent_copy_refuse(copy, "PrivateOwner");
     if(!storage || mapped!=storage)
         return parent_copy_refuse(copy, "PrivateOwner");
     *owner = mapped;
@@ -299,8 +302,16 @@ static bool parent_copy_visible(PrimeParentCopy *copy, const MatchVisibleVarSet 
     if(source->len>source->cap)return parent_copy_refuse(copy,"VisibleExtent");
     PC_ARRAY(image,source,items,source->cap);
     for(size_t i=0u;i<image->len;i++) {
-        PC_ATOM(&image->items[i],name_key);PC_ATOM(&image->items[i],presentation_cache);
-        if(!parent_copy_owner(copy,&image->items[i].presentation_arena))return false;
+        PC_ATOM(&image->items[i],name_key);
+        if(copy->retain_reader_contexts) {
+            /* This tag describes where the memo was built. A borrowed atom
+             * must not be relabelled as an allocation in the new arena. */
+            image->items[i].presentation_cache=NULL;
+            image->items[i].presentation_arena=NULL;
+        } else {
+            PC_ATOM(&image->items[i],presentation_cache);
+            if(!parent_copy_allocation_owner(copy,&image->items[i].presentation_arena))return false;
+        }
     }
     return true;
 }
@@ -360,7 +371,7 @@ static bool parent_copy_task(PrimeParentCopy *copy, const PrimeEvalStackTask *so
     memset(&image->seed_env,0,sizeof(image->seed_env));
     image->dynamic_env_initialized=false;image->seed_env_initialized=false;
     if(!parent_copy_admits_space(copy,source->context,source->space) ||
-        !parent_copy_owner(copy,&image->arena))
+        !parent_copy_allocation_owner(copy,&image->arena))
         return parent_copy_refuse(copy,"TaskSpace");
     PC_EDGE(image,source,target,parent_copy_outcome_kind);
     PC_ATOM(image,atom);PC_ATOM(image,etype);PC_ATOM(image,control_key);
@@ -599,7 +610,7 @@ static bool parent_copy_frame(PrimeParentCopy *copy, const PrimeEvalStackFrame *
     PC_EDGE(image,source,force_waiter_next,parent_copy_frame_kind);
     PC_EDGE(image,source,open_force_next,parent_copy_frame_kind);
     PC_EDGE(image,source,target,parent_copy_outcome_kind);
-    if(!parent_copy_owner(copy,&image->arena)||!parent_copy_owner(copy,&image->heap_owner))return false;
+    if(!parent_copy_allocation_owner(copy,&image->arena)||!parent_copy_allocation_owner(copy,&image->heap_owner))return false;
     PC_ATOM(image,atom);PC_ATOM(image,etype);PC_ATOM(image,control_key);PC_ATOM(image,control_bound);
     PC_ATOM(image,strict_source);PC_ATOM(image,then_branch);PC_ATOM(image,else_branch);
     PC_ATOM(image,weight_subject);PC_ATOM(image,weight_algebra);PC_ATOM(image,weight_trace);PC_ATOM(image,ref);

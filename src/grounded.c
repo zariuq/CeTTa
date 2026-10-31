@@ -26,6 +26,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+/* Standalone primitive clients have no enclosing evaluation episode. */
+#if defined(__APPLE__)
+void eval_native_interrupt(CettaEvalCompletion) __attribute__((weak_import));
+#elif defined(__GNUC__)
+void eval_native_interrupt(CettaEvalCompletion) __attribute__((weak));
+#endif
+
 #if defined(__GNUC__)
 __attribute__((weak))
 #endif
@@ -581,6 +588,27 @@ Atom *cetta_fold_bind_step_atom(Arena *a, Atom *atom,
  * operation constructs its own error, never by an Error it returns as data
  * (grounded_call). */
 static __thread bool g_grounded_raised;
+static __thread bool g_grounded_interrupted;
+
+/* These observers read authored syntax. Private held-data carriers are
+ * transparent at every position, while opaque resources remain leaves.
+ * Projection refusal is an interrupted observation, never inequality. */
+static bool grounded_observe_syntax_pair(
+    Arena *arena, Atom **args, Atom **left, Atom **right) {
+    *left = args[0];
+    *right = args[1];
+    if (!eval_current_language_id ||
+        eval_current_language_id() != CETTA_LANGUAGE_PRIME)
+        return true;
+    *left = atom_prime_held_strip(arena, *left);
+    *right = *left ? atom_prime_held_strip(arena, *right) : NULL;
+    if (*left && *right)
+        return true;
+    if (eval_native_interrupt)
+        eval_native_interrupt(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+    g_grounded_interrupted = true;
+    return false;
+}
 
 /* The operation's own error: (Error call reason), raised. */
 static Atom *grounded_raise(Arena *a, Atom *head, Atom **args,
@@ -3401,11 +3429,21 @@ bool grounded_call(Arena *a, Atom *head, Atom **args, uint32_t nargs,
     /* An operation run inside another, by a callback, keeps the enclosing
      * operation's mark. */
     bool enclosing_raised = g_grounded_raised;
+    bool enclosing_interrupted = g_grounded_interrupted;
     g_grounded_raised = false;
+    g_grounded_interrupted = false;
     Atom *result = grounded_dispatch(a, head, args, nargs);
     bool raised = g_grounded_raised;
+    bool interrupted = g_grounded_interrupted;
     g_grounded_raised = enclosing_raised;
-    if (!result || !out)
+    g_grounded_interrupted = enclosing_interrupted;
+    if (!out)
+        return false;
+    if (interrupted) {
+        *out = cetta_call_interrupted();
+        return true;
+    }
+    if (!result)
         return false;
     if (raised && atom_is_error(result) &&
         grounded_current_language_is_petta())
@@ -3857,13 +3895,17 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
     if (head_id == g_builtin_syms.alpha_eq) {
         if (nargs != 2)
             return grounded_incorrect_arity(a, head, args, nargs);
-        return atom_alpha_eq(args[0], args[1]) ? atom_true(a) : atom_false(a);
+        Atom *left, *right;
+        if (!grounded_observe_syntax_pair(a, args, &left, &right)) return NULL;
+        return atom_alpha_eq(left, right) ? atom_true(a) : atom_false(a);
     }
 
     if (head_id == g_builtin_syms.if_equal) {
         if (nargs != 4)
             return grounded_incorrect_arity(a, head, args, nargs);
-        return atom_alpha_eq(args[0], args[1]) ? args[2] : args[3];
+        Atom *left, *right;
+        if (!grounded_observe_syntax_pair(a, args, &left, &right)) return NULL;
+        return atom_alpha_eq(left, right) ? args[2] : args[3];
     }
 
     if (head_id == g_builtin_syms.sealed_text) {
@@ -4269,8 +4311,10 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
 
     /* ── Equality of values (any atom type) ────────────────────────────── */
     if (head_id == g_builtin_syms.op_eq && nargs == 2) {
-        Atom *left = atom_prime_held_payload(args[0]);
-        Atom *right = atom_prime_held_payload(args[1]);
+        Atom *left, *right;
+        if (!grounded_observe_syntax_pair(a, args, &left, &right)) return NULL;
+        left = atom_prime_held_payload(left);
+        right = atom_prime_held_payload(right);
         /* In Prime `==` compares authored terms: inferred ownership is not
          * part of them, and bound names are compared by position, never by
          * spelling (prime_semantics_binders_eq). */
@@ -4285,6 +4329,23 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
     }
 
     /* ── Boolean ops ───────────────────────────────────────────────────── */
+    /* A computed sequence or match can supply a held scalar. Truth-value
+     * observation reads that value, just as sequence and equality observers
+     * read their operands. Unwrapping never evaluates held expression data. */
+    if (eval_current_language_id &&
+        eval_current_language_id() == CETTA_LANGUAGE_PRIME &&
+        ((head_id == g_builtin_syms.op_not && nargs == 1u) ||
+         ((head_id == g_builtin_syms.op_and || head_id == g_builtin_syms.op_or ||
+           head_id == g_builtin_syms.op_xor) && nargs == 2u))) {
+        Atom *values[2] = {NULL, NULL};
+        bool held = false;
+        for (uint32_t i = 0u; i < nargs; i++) {
+            values[i] = atom_prime_held_payload(args[i]);
+            held = held || values[i] != args[i];
+        }
+        if (held)
+            return grounded_dispatch_open(a, head, values, nargs);
+    }
     if (head_id == g_builtin_syms.op_not) {
         if (nargs != 1)
             return grounded_incorrect_arity(a, head, args, nargs);

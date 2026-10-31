@@ -1,7 +1,12 @@
 /* Complete parent copying through registered residual ownership. Fork is a
  * test-only equal-start allocator context, with one evaluator thread and no
  * active foreign engine; it does not implement production replay. */
+#define _GNU_SOURCE
+#include "../src/eval.h"
+static bool checkpoint_bindings_clone(Bindings *,const Bindings *);
+#define bindings_clone checkpoint_bindings_clone
 #include "../src/eval.c"
+#undef bindings_clone
 #include "parser.h"
 #include <assert.h>
 #include <inttypes.h>
@@ -14,9 +19,50 @@ static const void *recording_retirement_watch;
 static unsigned recording_retirements;
 static _Thread_local bool checkpoint_calloc_refuse;
 static _Thread_local size_t checkpoint_calloc_countdown;
+static _Thread_local bool checkpoint_eval_projection_refuse;
+static _Thread_local bool checkpoint_eval_task_refuse;
+static _Thread_local bool checkpoint_function_clone_refuse;
+static bool checkpoint_bindings_clone(Bindings *to,const Bindings *from) {
+ PrimeEvalStackFrame *frame=g_prime_eval_stack_driver?g_prime_eval_stack_driver->top:NULL;
+ if(checkpoint_function_clone_refuse&&frame&&frame->kind==PRIME_EVAL_STACK_FRAME_LET&&
+    atom_head_symbol_id(frame->atom)==g_builtin_syms.function&&frame->index) {
+  checkpoint_function_clone_refuse=false;bindings_init(to);return false;
+ }
+ return bindings_clone(to,from);
+}
+static bool checkpoint_return_task_scope(void) {
+ PrimeEvalStackFrame *frame=g_prime_eval_stack_driver?g_prime_eval_stack_driver->top:NULL;
+ if(!frame)return false;
+ if(frame->kind==PRIME_EVAL_STACK_FRAME_LET&&
+    atom_head_symbol_id(frame->atom)==g_builtin_syms.eval&&frame->index)return true;
+ frame=frame->control_parent;
+ return frame&&frame->kind==PRIME_EVAL_STACK_FRAME_LET&&
+  atom_head_symbol_id(frame->atom)==g_builtin_syms.function&&
+  frame->state==PRIME_EVAL_STACK_FRAME_DEMAND;
+}
 void __real_free(void *pointer);
+void *__real_malloc(size_t size);
 void *__real_calloc(size_t count,size_t size);
+void *__wrap_malloc(size_t size) {
+ if(checkpoint_eval_task_refuse&&size==sizeof(PrimeNativeWork)&&checkpoint_return_task_scope()) {
+  checkpoint_eval_task_refuse=false;errno=ENOMEM;return NULL;
+ }
+ return __real_malloc(size);
+}
 void *__wrap_calloc(size_t count,size_t size) {
+ /* Optimizers may lower the queue's malloc-and-zero to calloc. Both
+  * representations must refuse the same selected activation allocation. */
+ if(checkpoint_eval_task_refuse&&size&&count<=SIZE_MAX/size&&
+    count*size==sizeof(PrimeNativeWork)&&checkpoint_return_task_scope()) {
+  checkpoint_eval_task_refuse=false;errno=ENOMEM;return NULL;
+ }
+ if(checkpoint_eval_projection_refuse && g_prime_eval_stack_driver &&
+    g_prime_eval_stack_driver->top &&
+    g_prime_eval_stack_driver->top->kind==PRIME_EVAL_STACK_FRAME_LET &&
+    g_prime_eval_stack_driver->top->index &&
+    atom_head_symbol_id(g_prime_eval_stack_driver->top->atom)==g_builtin_syms.eval) {
+  checkpoint_eval_projection_refuse=false;errno=ENOMEM;return NULL;
+ }
  if(checkpoint_calloc_refuse){checkpoint_calloc_refuse=false;errno=ENOMEM;return NULL;}
  if(checkpoint_calloc_countdown&&!--checkpoint_calloc_countdown){errno=ENOMEM;return NULL;}
  return __real_calloc(count,size);
@@ -83,7 +129,7 @@ static bool exact_io(int fd,void *buffer,size_t size,bool writing){
 static size_t checks,failures;
 static size_t inspection_copies,readiness_copies,work_readiness_copies;
 static bool inspection_refusals_checked;
-static const size_t expected_answers[]={1u,3u,2u,0u,3u,2u,2u,2u,0u,2u,2u,0u,3u,7u,3u};
+static const size_t expected_answers[]={1u,3u,2u,0u,3u,2u,2u,2u,0u,2u,2u,0u,3u,7u,3u,2u,2u,2u,1u};
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
 static size_t causal_frame_views;
 static void request_causal_receipt(Atom *answer,const PrimeNeedReceipt *receipt,void *context) {
@@ -161,8 +207,27 @@ static void checkpoint_fork_demand_close(CheckpointForkDemand *demand) {
  outcome_set_free(&demand->output);bindings_free(&demand->environment);
 }
 
+typedef struct {
+ PrimeNeedForceProduction *source;
+ bool private_allocators;
+} CheckpointForkSelection;
+
+static bool checkpoint_fork_allocators_private(const PrimeNeedForceProduction *source) {
+ if(!source||source->agenda||!source->resident.initialized)return false;
+ const PrimeEvalStackDriver *driver=&source->resident.driver;
+ if(driver->arena!=&source->storage||
+   (driver->task_ready&&driver->task.arena!=&source->storage))return false;
+ for(const PrimeEvalStackFrame *frame=driver->top;frame;
+     frame=(const PrimeEvalStackFrame *)frame->continuation.next)
+  if(frame->arena!=&source->storage||
+    (frame->heap_owner&&frame->heap_owner!=&source->storage))return false;
+ return true;
+}
+
 static bool checkpoint_fork_force_existing(PrimeNativeControl *control,
- PrimeNeedCallSourceCell *cell,Space *here,Space *home,Atom *answer) {
+ PrimeNeedCallSourceCell *cell,Space *here,Space *home,Atom *answer,
+ CheckpointForkSelection *selection) {
+ if(selection)*selection=(CheckpointForkSelection){0};
  if(!control||!control->owned_top_episode||!cell||!here||!home||!answer)return false;
  PrimeNativeRunGuard run;prime_native_run_enter(control,&run);
  EvalContextState saved=eval_context_capture();
@@ -182,6 +247,10 @@ static bool checkpoint_fork_force_existing(PrimeNativeControl *control,
  PrimeNeedActiveGuard active;prime_need_active_enter_captured(&active,&environment);
  bool scheduled=ready&&prime_need_call_force(control->space,arena,cell->reference,
   cell->thunk,-1,&output,true);
+ if(selection&&scheduled&&driver.top&&driver.top->call_force_reader) {
+  selection->source=driver.top->call_force_reader->slot->source;
+  selection->private_allocators=checkpoint_fork_allocators_private(selection->source);
+ }
  bool completed=scheduled&&checkpoint_fork_drive(&driver,100000u);
  ready=completed&&output.len==1u&&atom_eq(output.items[0].atom,answer);
  if(!ready) {
@@ -202,6 +271,57 @@ static bool checkpoint_fork_force_existing(PrimeNativeControl *control,
  return ready;
 }
 
+typedef struct {ArenaMark mark;uint64_t reset;uint32_t identity;} CheckpointArenaSnapshot;
+static CheckpointArenaSnapshot checkpoint_arena_snapshot(const Arena *arena) {
+ return (CheckpointArenaSnapshot){.mark=arena_mark(arena),.reset=arena->reset_epoch,.identity=arena->identity};
+}
+static bool checkpoint_arena_unchanged(const Arena *arena,CheckpointArenaSnapshot before) {
+ ArenaMark now=arena_mark(arena),old=before.mark;
+ return arena->identity==before.identity&&arena->reset_epoch==before.reset&&
+  now.head==old.head&&now.used==old.used&&now.live_bytes==old.live_bytes&&
+  now.managed_symbol_count==old.managed_symbol_count&&now.managed_symbol_bytes==old.managed_symbol_bytes&&
+  now.external_bytes==old.external_bytes&&now.persistent_bytes==old.persistent_bytes&&
+  now.reserved_bytes==old.reserved_bytes&&now.block_count==old.block_count&&
+  now.finalizers==old.finalizers&&now.frame_identity_len==old.frame_identity_len;
+}
+
+/* Create a descendant's own second cut, then two grandchildren from it.
+ * Inspect their write destinations before executing their actual suffixes.
+ * This tests allocator isolation; it grants no concurrent hub admission. */
+static void checkpoint_fork_descendant_allocators(PrimeNativeControl *control,
+ PrimeNeedCallSourceCell *cell,Space *here,Space *home_x,Space *home_y,Space *home_z,
+ Arena *syntax,Space *log) {
+ unsigned client=520u,cut=0u;
+ PrimeNeedForceProduction *origin=cell->slots->source;
+ CheckpointForkSelection first={0},left={0},right={0};
+ CHECK(checkpoint_fork_force_existing(control,cell,here,home_x,
+  parse(syntax,"(Pair B X)"),&first));
+ CHECK(first.source&&first.source!=origin&&first.private_allocators&&log->len==1u);
+ if(!first.source)return;
+ PrimeNeedCallForkPoint *point=first.source->fork_parent;
+ CHECK(point&&point->installed&&point->origin==first.source&&
+  (point->roles&EVAL_CONTEXT_ROLE_HOME)&&point->snapshot&&point->snapshot->fork_template);
+ if(!point||!point->snapshot)return;
+ CHECK(checkpoint_fork_allocators_private(point->snapshot));
+ CheckpointArenaSnapshot old=checkpoint_arena_snapshot(&origin->storage);
+ CheckpointArenaSnapshot parent=checkpoint_arena_snapshot(&first.source->storage);
+ CheckpointArenaSnapshot prepared=checkpoint_arena_snapshot(&point->snapshot->storage);
+ CHECK(checkpoint_fork_force_existing(control,cell,here,home_y,
+  parse(syntax,"(Pair B Y)"),&left));
+ CHECK(left.source&&left.source!=first.source&&left.private_allocators&&log->len==1u);
+ CHECK(checkpoint_arena_unchanged(&origin->storage,old)&&
+  checkpoint_arena_unchanged(&first.source->storage,parent)&&
+  checkpoint_arena_unchanged(&point->snapshot->storage,prepared));
+ CHECK(checkpoint_fork_force_existing(control,cell,here,home_z,
+  parse(syntax,"(Pair B Z)"),&right));
+ CHECK(right.source&&right.source!=first.source&&right.source!=left.source&&
+  right.private_allocators&&log->len==1u);
+ CHECK(left.source&&right.source&&left.source->storage.identity!=right.source->storage.identity);
+ CHECK(checkpoint_arena_unchanged(&origin->storage,old)&&
+  checkpoint_arena_unchanged(&first.source->storage,parent)&&
+  checkpoint_arena_unchanged(&point->snapshot->storage,prepared));
+}
+
 static void one(unsigned client,unsigned cut){
  Arena syntax;arena_init(&syntax);arena_set_hashcons(&syntax,NULL);Space space;space_init(&space);
  Registry reg;registry_init(&reg);g_registry=&reg;registry_bind(&reg,"&self",atom_space(&syntax,&space));
@@ -215,11 +335,17 @@ static void one(unsigned client,unsigned cut){
  "(= (rank-view (Box $tag A $x)) Early)", "(= (rank-view (Box $tag $x 7)) $tag)",
  "(= (rank-residual-source) (Box A (rank-residual-tail)))", "(= (rank-residual-source) (Box (rank-residual-head) B))",
  "(= (rank-residual-tail) (superpose (8 8)))", "(= (rank-residual-head) 8)",
- "(= (rank-residual-view (Box 7 $x)) Rule0)", "(= (rank-residual-view (Box $x 7)) Rule1)"};
+ "(= (rank-residual-view (Box 7 $x)) Rule0)", "(= (rank-residual-view (Box $x 7)) Rule1)",
+ "(: checkpoint-eval-residual (-> Number Number))",
+ "(= (checkpoint-eval-ready) (cons-atom + (3 4)))"};
  for(size_t i=0;i<sizeof(rows)/sizeof(*rows);i++)space_add(&space,parse(&syntax,rows[i]));
  const char *programs[]={"(Pair (weight:where 2 3) (weight:where 5 7))","(paired (weigh-by-self (coin)))","(match &self (D $x) $x (where 2))","(weight:where 7 Mystery (admit accepted))","(weight:read (algebra 0 1 + *) (paired (weigh-by-self (coin))))","(weight:read (algebra 1000000 0 min +) (priced))","(weight:read (algebra 1000000 0 min +) (offers))","(superpose (A B C))","(superpose (A A A))","(superpose (A A A))","(superpose (3 1))","(superpose ())",
  "(inspect (Pair (stuck $v B) (stuck $v B)) (Box (field)))",
- "(rank-view (rank-source))", "(rank-residual-view (rank-residual-source))"};
+ "(rank-view (rank-source))", "(rank-residual-view (rank-residual-source))",
+ "(eval (superpose ((checkpoint-eval-residual 5) (checkpoint-eval-residual 5))))",
+ "(eval (superpose ((parse \"(checkpoint-eval-ready)\") (parse \"(checkpoint-eval-ready)\"))))",
+ "(function (superpose ((eval (parse \"(return A)\")) (eval (parse \"(return A)\")))))",
+ "(function (superpose ()))"};
  PrimeNativeControl *source=malloc(sizeof(*source));assert(source);CettaSearchPolicySpec policy={.native_control=true,.all=true,.retain=true,.workers=1u,.work_budget=UINT64_MAX,.costs=true};
  if(client>=5u&&client<=6u){policy.by_weight=true;policy.descending=false;policy.priority=2;policy.age_share=2;policy.weight_law=prime_need_symbols()->law_nonnegative_sum;}
  if(client>=7u&&client<=11u){policy.selection=client<=9u?1:2;policy.all=false;policy.goal_pattern=parse(&syntax,"$bundle");policy.goal_expression=client>=10u?policy.goal_pattern:parse(&syntax,client==8u?"False":"True");}
@@ -606,18 +732,26 @@ static void installed_context_fork_checkpoint_cases(void) {
   cetta_prime_checkpoint_copy_free(copy);
 
   if(!mode) {
+   checkpoint_fork_descendant_allocators(source,source_cell,&right,&home_left,
+    &home_right,&home_third,&syntax,&log);
    CHECK(checkpoint_fork_force_existing(source,source_cell,&left,&home_right,
-    parse(&syntax,"(Pair A Y)")));CHECK(log.len==1u);
+    parse(&syntax,"(Pair A Y)"),NULL));CHECK(log.len==1u);
    CHECK(cetta_native_handle_close(lib,"prime-search",source_id));source=NULL;
+   checkpoint_fork_descendant_allocators(image,image_cell,&right,&home_left,
+    &home_right,&home_third,&syntax,&log);
    CHECK(checkpoint_fork_force_existing(image,image_cell,&third,&home_third,
-    parse(&syntax,"(Pair C Z)")));CHECK(log.len==1u);
+    parse(&syntax,"(Pair C Z)"),NULL));CHECK(log.len==1u);
    CHECK(cetta_native_handle_close(lib,"prime-search",image_id));image=NULL;
   } else {
+   checkpoint_fork_descendant_allocators(image,image_cell,&right,&home_left,
+    &home_right,&home_third,&syntax,&log);
    CHECK(checkpoint_fork_force_existing(image,image_cell,&left,&home_right,
-    parse(&syntax,"(Pair A Y)")));CHECK(log.len==1u);
+    parse(&syntax,"(Pair A Y)"),NULL));CHECK(log.len==1u);
    CHECK(cetta_native_handle_close(lib,"prime-search",image_id));image=NULL;
+   checkpoint_fork_descendant_allocators(source,source_cell,&right,&home_left,
+    &home_right,&home_third,&syntax,&log);
    CHECK(checkpoint_fork_force_existing(source,source_cell,&third,&home_third,
-    parse(&syntax,"(Pair C Z)")));CHECK(log.len==1u);
+    parse(&syntax,"(Pair C Z)"),NULL));CHECK(log.len==1u);
    CHECK(cetta_native_handle_close(lib,"prime-search",source_id));source=NULL;
   }
   arena_free(&seed.storage);
@@ -686,6 +820,131 @@ static void return_advice_copy_cases(void) {
   if(mode==0u)CHECK(to.control_return_advice[0].key->ground.ival==1&&to.control_return_advice[1].bound->ground.ival==11&&mapped.key->ground.ival==29);
   free(to.control_return_advice);
   arena_free(&image.storage);
+ }
+}
+
+/* Copy an actual earned eval return while its publication occurrence is
+ * leased for retry. Retiring either parent must leave the other independent. */
+static void eval_return_debt_copy_cases(void) {
+ for(unsigned boundary=0u;boundary<5u;boundary++)for(unsigned mode=0u;mode<4u;mode++) {
+  unsigned client=430u+4u*boundary+mode,cut=0u;
+  Arena syntax;arena_init(&syntax);arena_set_hashcons(&syntax,NULL);
+  Space space,log;space_init(&space);space_init(&log);
+  Registry registry;registry_init(&registry);g_registry=&registry;
+  registry_bind(&registry,"&self",atom_space(&syntax,&space));
+  registry_bind(&registry,"&eval-copy-log",atom_space(&syntax,&log));
+  CettaLibraryContext *library=malloc(sizeof(*library));assert(library);
+  cetta_library_context_init_for_language_profile(library,CETTA_LANGUAGE_PRIME,cetta_profile_prime_default());
+  eval_set_library_context(library);
+  PrimeNativeControl *source=calloc(1u,sizeof(*source));assert(source);
+  CettaSearchPolicySpec policy={.native_control=true,.all=true,.retain=true,
+   .workers=1u,.work_budget=UINT64_MAX};
+  const char *text=boundary<2u
+   ? "(eval (let $_ (add-atom &eval-copy-log Prefix) (parse \"(let $_ (add-atom &eval-copy-log Activated) 7)\")))"
+   : boundary==2u
+    ? "(function (let $_ (add-atom &eval-copy-log Prefix) (let $_ (add-atom &eval-copy-log Activated) (return 7))))"
+    : boundary==3u ? "(function (let $_ (add-atom &eval-copy-log Prefix) (return 7)))"
+    : "(function (let $_ (add-atom &eval-copy-log Prefix) (superpose ())))";
+  Atom *program=parse(&syntax,text);
+  size_t prefix_size=boundary==2u?0u:1u;
+  bool activation=boundary<3u;
+  CHECK(prime_native_control_init(source,&space,&syntax,program,-1,true,
+   (CettaObservationDemand){.completion=CETTA_OBSERVATION_COMPLETE_BAG},&policy,NULL,NULL,NULL));
+  Result prefix={0};arena_init(&prefix.storage);
+  PrimeEvalStackFrame *frame=NULL;
+  for(unsigned step=0u;step<300u&&!frame;step++) {
+   prime_native_control_run(source,1u,seen,&prefix);
+   for(PrimeEvalStackFrame *candidate=source->frames;candidate;candidate=candidate->control_next)
+    if(candidate->kind==PRIME_EVAL_STACK_FRAME_LET&&!candidate->control_retired&&
+       atom_head_symbol_id(candidate->atom)==(boundary<2u?g_builtin_syms.eval:g_builtin_syms.function)&&
+       (boundary<2u?true:boundary==2u?candidate->state==PRIME_EVAL_STACK_FRAME_DEMAND:
+                       candidate->state==PRIME_EVAL_STACK_FRAME_ITERATE)&&
+       !candidate->control_pending&&candidate->child.len==((boundary==2u||boundary==4u)?0u:1u)&&
+       !candidate->index) {frame=candidate;break;}
+  }
+  CHECK(frame&&prefix.count==0u&&log.len==prefix_size);assert(frame);
+  if(boundary<2u) {
+  Outcome *earned=&frame->child.items[0];
+  CHECK(earned->kind==CETTA_OUTCOME_INLINE&&earned->result_form==CETTA_CALL_RESULT_COMPLETED_VALUE);
+  Atom *protected=atom_he_evaluated_copy(frame->arena,outcome_atom_materialize(frame->arena,earned));
+  CHECK(protected&&prime_is_completed_value(protected));assert(protected);
+  earned->atom=earned->materialized_atom=protected;
+  }
+  size_t selected=SIZE_MAX;
+  for(size_t i=0u;i<cetta_continuation_hub_length(&source->hub);i++) {
+   const CettaOwnedContinuation *continuation=cetta_continuation_hub_at(&source->hub,i);
+   const PrimeNativeWork *work=continuation->payload;
+   if(continuation->provider==&prime_native_work_provider&&work->frame==frame&&!work->task_initialized)
+    selected=i;
+  }
+  CHECK(selected!=SIZE_MAX);assert(selected!=SIZE_MAX);
+  PrimeNativeRunGuard run;prime_native_run_enter(source,&run);
+  if(mode==3u)source->driver.capacity_blocked=true;
+  checkpoint_eval_projection_refuse=boundary==0u;
+  checkpoint_eval_task_refuse=boundary==1u||boundary==2u;
+  checkpoint_function_clone_refuse=boundary>=3u;bool accepted=false;
+  uint64_t paid=prime_native_control_step_kernel(source,1u,false,NULL,selected,&accepted,&source->force_retry);
+  source->steps+=paid;
+  prime_native_run_leave(&run);
+  CHECK(accepted&&!checkpoint_eval_projection_refuse&&!checkpoint_eval_task_refuse&&!checkpoint_function_clone_refuse&&paid==1u&&frame->return_retry_pending&&
+   frame->index==0u&&frame->child.len==(boundary==2u?0u:1u)&&source->driver.capacity_blocked&&log.len==prefix_size);
+  if(mode==3u) {
+   CHECK(!source->force_retry.admitted&&!source->force_retry.continuation.payload);
+   prime_native_control_destroy(source);
+   goto finished;
+  }
+  CHECK(source->force_retry.admitted&&source->force_retry.continuation.payload);
+  assert(frame->return_retry_pending&&source->force_retry.continuation.payload);
+  uint64_t source_id=0u,image_id=0u;
+  CHECK(cetta_native_handle_alloc(library,"prime-search",source,prime_native_control_destroy,&source_id));
+  source->handle_id=source_id;
+  Atom *holder=cetta_native_handle_owned_atom(library,&syntax,"prime-search",source_id);assert(holder);
+  CettaContinuationStatus status;
+  CettaPrimeCheckpointCopy *copy=cetta_prime_checkpoint_copy_new(library,holder,&status);
+  CHECK(copy&&status==CETTA_CONTINUATION_READY);assert(copy);
+  size_t pair_count=0u;AtomDeepCopyArenaPair *pairs=checkpoint_arena_pairs(copy,&syntax,&space,true,&pair_count);
+  CHECK(pairs);assert(pairs);
+  AtomDeepCopySession *atoms=atom_deep_copy_session_new(pairs[0].destination);assert(atoms);
+  CHECK(atom_deep_copy_session_set_arena_map(atoms,pairs,pair_count));free(pairs);
+  status=cetta_prime_checkpoint_copy_prepare(copy,atoms);
+  if(status!=CETTA_CONTINUATION_READY)fprintf(stderr,"EVAL_DEBT_COPY %s\n",cetta_prime_checkpoint_copy_refusal(copy));
+  CHECK(status==CETTA_CONTINUATION_READY);assert(status==CETTA_CONTINUATION_READY);
+  PrimeNativeControl *image=copy->image;CopyRelation relation;
+  CHECK(copy_relation(source,image,&relation)&&image->force_retry.admitted&&
+   image->force_retry.continuation.payload!=source->force_retry.continuation.payload);
+  const PrimeNativeWork *copied=image->force_retry.continuation.payload;
+  CHECK(copied->frame!=frame&&copied->frame->return_retry_pending&&copied->frame->index==0u&&
+   copied->frame->arena==image->driver.arena&&copied->frame->child.len==(boundary==2u?0u:1u));
+  atom_deep_copy_session_free(atoms);
+  Atom *image_holder=NULL;
+  CHECK(cetta_prime_checkpoint_copy_publish(copy,&syntax,&image_holder)==CETTA_CONTINUATION_READY&&
+   cetta_native_handle_arg(image_holder,"prime-search",&image_id));
+  cetta_prime_checkpoint_copy_free(copy);
+  PrimeNativeControl *survivor=mode==1u?source:image;
+  CHECK(cetta_native_handle_close(library,"prime-search",mode==1u?image_id:source_id));
+  if(mode==2u) {
+   CHECK(cetta_native_handle_close(library,"prime-search",image_id)&&log.len==prefix_size);
+  } else {
+   prime_native_run_enter(survivor,&run);
+   survivor->driver.capacity_blocked=false;accepted=false;
+   paid=prime_native_control_step_kernel(survivor,1u,false,NULL,SIZE_MAX,&accepted,&survivor->force_retry);
+   prime_native_run_leave(&run);
+   CHECK(accepted&&paid==0u&&!survivor->force_retry.continuation.payload&&!survivor->driver.capacity_blocked&&log.len==prefix_size);
+   Result result={0};arena_init(&result.storage);
+   prime_native_control_run(survivor,10000u,seen,&result);
+   CHECK(result.count==1u&&prime_native_control_closed(survivor)&&
+    log.len==(activation?2u:1u)&&atom_is_symbol(space_get_at64(&log,0u),"Prefix"));
+   if(activation)CHECK(atom_is_symbol(space_get_at64(&log,1u),"Activated"));
+   if(boundary==4u)CHECK(atom_is_error(result.values[0])&&
+    atom_is_symbol(expr_arg(result.values[0],1u),"NoReturn"));
+   else CHECK(atom_eq(result.values[0],atom_int(&result.storage,7)));
+   CHECK(cetta_native_handle_close(library,"prime-search",mode==1u?source_id:image_id));
+   arena_free(&result.storage);
+  }
+finished:
+  arena_free(&prefix.storage);eval_release_temporary_spaces();
+  cetta_library_context_free(library);free(library);eval_set_library_context(NULL);
+  registry_free(&registry);g_registry=NULL;space_free(&log);space_free(&space);arena_free(&syntax);
  }
 }
 
@@ -1326,7 +1585,59 @@ static void ambient_execution_scope_cases(void) {
  g_eval_execution=previous;
 }
 
+/* An allocation destination needs an issued, current mapping. Retaining
+ * syntax does not grant permission to allocate in an arbitrary old arena. */
+static void allocator_domain_cases(void) {
+ unsigned client=220u,cut=0u;
+ Arena source,image,unrelated;arena_init(&source);arena_init(&image);arena_init(&unrelated);
+ Space space;space_init(&space);
+ PrimeEvalStackDriver original={.arena=&source},destination={.arena=&image};
+ AtomDeepCopySession *atoms=atom_deep_copy_session_new(&image);assert(atoms);
+ AtomDeepCopyArenaPair pair={.source=&source,.destination=&image};
+ CHECK(atom_deep_copy_session_set_arena_map(atoms,&pair,1u));
+ for(unsigned retained=0u;retained<2u;retained++) {
+  PrimeParentCopy copy={.source_driver=&original,.image_driver=&destination,
+   .source_space=&space,.image_storage=&image,.atoms=atoms,.retain_reader_contexts=retained};
+  Arena *owner=NULL;
+  CHECK(parent_copy_allocation_owner(&copy,&owner)&&!owner);
+  owner=&source;CHECK(parent_copy_allocation_owner(&copy,&owner)&&owner==&image&&!copy.refusal);
+  owner=&unrelated;
+  CHECK(!parent_copy_allocation_owner(&copy,&owner)&&owner==&unrelated);
+  CHECK(copy.refusal&&!strcmp(copy.refusal,"PrivateOwner"));
+ }
+ PrimeParentCopy copy={.source_driver=&original,.image_driver=&destination,
+  .source_space=&space,.image_storage=&image,.atoms=atoms,.retain_reader_contexts=true};
+ Atom *value=atom_expr2(&source,atom_symbol(&source,"AllocatorValue"),atom_int(&source,7));
+ PrimeEvalStackTask task={.kind=PRIME_EVAL_STACK_TASK_CALL,.space=&space,.arena=&source,.atom=value};
+ PrimeEvalStackTask copied={0};
+ CHECK(parent_copy_task(&copy,&task,&copied)&&copied.arena==&image&&task.arena==&source);
+ prime_eval_stack_task_free(&copied);
+ task.arena=&unrelated;PrimeEvalStackTask before=task;copy.refusal=NULL;
+ bool accepted=parent_copy_task(&copy,&task,&copied);
+ CHECK(!accepted&&!memcmp(&task,&before,sizeof(task)));
+ if(accepted)prime_eval_stack_task_free(&copied);
+ MatchVisibleVarRef entry={.name_key=atom_symbol(&source,"allocator-key"),
+  .presentation_cache=atom_var(&source,"allocator-presentation"),.presentation_arena=&source};
+ MatchVisibleVarSet visible={.items=&entry,.len=1u,.cap=1u},projected={0};copy.refusal=NULL;
+ CHECK(parent_copy_visible(&copy,&visible,&projected));
+ CHECK(projected.len==1u&&projected.items&&projected.items[0].name_key==entry.name_key);
+ CHECK(projected.items&&!projected.items[0].presentation_cache&&!projected.items[0].presentation_arena);
+ free(projected.items);
+ /* Same address, new arena identity: stale mapping is not an absent edge. */
+ arena_free(&source);arena_init(&source);copy.refusal=NULL;
+ Arena *stale=&source;
+ CHECK(!parent_copy_allocation_owner(&copy,&stale)&&stale==&source);
+ CHECK(copy.refusal&&!strcmp(copy.refusal,"PrivateOwner"));
+ atom_deep_copy_session_free(atoms);space_free(&space);
+ arena_free(&unrelated);arena_free(&image);arena_free(&source);
+}
+
 int main(int argc,char **argv){SymbolTable syms;symbol_table_init(&syms);symbol_table_init_builtins(&syms,&g_builtin_syms);g_symbols=&syms;VarInternTable vars;var_intern_init(&vars);g_var_intern=&vars;g_hashcons=NULL;
+ if(argc==2&&!strcmp(argv[1],"--allocator-domain")) {
+  allocator_domain_cases();
+  eval_match_decision_cache_free_for_current_thread();var_intern_free(&vars);g_var_intern=NULL;
+  symbol_table_free(&syms);g_symbols=NULL;printf("CHECKS %zu FAILURES %zu\n",checks,failures);return failures?1:0;
+ }
  if(argc==2&&!strcmp(argv[1],"--ambient-execution")) {
   ambient_execution_scope_cases();
   eval_match_decision_cache_free_for_current_thread();var_intern_free(&vars);g_var_intern=NULL;
@@ -1348,21 +1659,29 @@ int main(int argc,char **argv){SymbolTable syms;symbol_table_init(&syms);symbol_
   eval_release_temporary_spaces();eval_match_decision_cache_free_for_current_thread();var_intern_free(&vars);g_var_intern=NULL;
   symbol_table_free(&syms);g_symbols=NULL;printf("CHECKS %zu FAILURES %zu\n",checks,failures);return failures?1:0;
  }
+ if(argc==2&&!strcmp(argv[1],"--eval-return-debt")) {
+  eval_return_debt_copy_cases();
+  eval_release_temporary_spaces();eval_match_decision_cache_free_for_current_thread();var_intern_free(&vars);g_var_intern=NULL;
+  symbol_table_free(&syms);g_symbols=NULL;printf("CHECKS %zu FAILURES %zu\n",checks,failures);return failures?1:0;
+ }
  if(argc==2&&!strcmp(argv[1],"--installed-fork")) {
   installed_context_fork_checkpoint_cases();
   eval_release_temporary_spaces();eval_match_decision_cache_free_for_current_thread();var_intern_free(&vars);g_var_intern=NULL;
   symbol_table_free(&syms);g_symbols=NULL;printf("CHECKS %zu FAILURES %zu\n",checks,failures);return failures?1:0;
  }
+ allocator_domain_cases();
  ambient_execution_scope_cases();
  borrowed_authority_checkpoint_cases();
  hidden_active_disposal_cases();
  active_service_replacement_case();
  hidden_active_history_and_resume_cases();
  return_advice_copy_cases();
+ eval_return_debt_copy_cases();
  opaque_service_copy_cases();
  installed_context_fork_checkpoint_cases();
  const unsigned cuts[]={0,1,3,7,13,19,31,49,79,149,163,401};
- for(unsigned c=0;c<15;c++)for(size_t i=0;i<sizeof(cuts)/sizeof(*cuts);i++)one(c,cuts[i]);
+ for(unsigned c=0;c<sizeof(expected_answers)/sizeof(*expected_answers);c++)
+  for(size_t i=0;i<sizeof(cuts)/sizeof(*cuts);i++)one(c,cuts[i]);
  for(unsigned cut=80u;cut<=128u;cut+=4u)one(12u,cut);
  printf("INSPECTION_COPIES %zu CURRENT_READINESS %zu WORK_READINESS %zu\n",
   inspection_copies,readiness_copies,work_readiness_copies);

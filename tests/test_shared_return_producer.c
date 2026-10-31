@@ -2418,8 +2418,10 @@ static void test_owned_bind(void) {
 
 static unsigned prepared_native_attempts;
 static bool prepared_native_call(void *context, Space *space, Arena *arena,
-        const CettaInvocation *invocation, CettaCallOutcome *outcome) {
+        const CettaInvocation *invocation, CettaCallOutcome *outcome,
+        CettaEvalCompletion *completion) {
     (void)context; (void)space;
+    if (completion) *completion = CETTA_EVAL_COMPLETE;
     CettaExprLen arity;
     assert(cetta_invocation_arity(invocation, &arity) && arity == 1u);
     prepared_native_attempts++;
@@ -2565,7 +2567,7 @@ static void test_prepared_native_continuation(void) {
             CettaInvocation call;
             bool entered;
             CettaOwnedReturn snapshot;
-            assert(cetta_prepared_pure_answer_cursor_native_boundary(cursor, &call, &entered, &snapshot));
+            assert(cetta_prepared_pure_answer_cursor_native_boundary(cursor, &call, &entered, &snapshot, NULL));
             const CettaOwnedReturn *pending = entered ? &snapshot : NULL;
             assert(entered == (native_mode != 18u));
             if (native_mode == 6u)

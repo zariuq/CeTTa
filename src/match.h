@@ -919,9 +919,17 @@ static inline bool bindings_logically_empty(const Bindings *b) {
  *                its value stands in its place.  NULL fails the
  *                application. */
 typedef struct {
-    Atom *(*formed_node)(Arena *a, Atom *node, bool in_code);
-    Atom *(*code_reading)(Atom *image);
-    Atom *(*own_list)(Arena *a, Atom *list);
+    void *context;
+    /* A provider captures its interpretation once; a captured closure has
+     * capture == NULL and retains the same immutable owner on copying. */
+    bool (*capture)(void *context, void **owned_context);
+    void (*retain)(void *context);
+    void (*release)(void *context);
+    void (*storage)(const void *context, CettaStorageCensus *census);
+    bool (*is_current)(const void *context);
+    Atom *(*formed_node)(const void *context, Arena *a, Atom *node, bool in_code);
+    Atom *(*code_reading)(const void *context, Atom *image);
+    Atom *(*own_list)(const void *context, Arena *a, Atom *list);
     /* The match of a pattern that takes code apart: the equation query and
      * the space query call these after selecting a candidate.
      *   code_pattern  whether matching `pattern` takes code apart (it holds
@@ -930,17 +938,26 @@ typedef struct {
      *                 binder by binder: *matched is false when they do not
      *                 match, and `bindings` is then unchanged.  False on
      *                 failure. */
-    bool (*code_pattern)(const Atom *pattern);
-    bool (*code_match)(Arena *a, Atom *pattern, Atom *value,
+    bool (*code_pattern)(const void *context, const Atom *pattern);
+    bool (*code_match)(const void *context, Arena *a, Atom *pattern, Atom *value,
                        Bindings *bindings, bool *matched);
     /*   code_selection  `term` as an index reads it to select candidates:
      *                   code that holds binders, whose spellings decide
      *                   nothing, a fresh variable.  `term` itself when it
      *                   holds none; NULL on failure. */
-    Atom *(*code_selection)(Arena *a, Atom *term);
+    Atom *(*code_selection)(const void *context, Arena *a, Atom *term);
 } BindingsStructureHooks;
 void bindings_structure_hooks_set(const BindingsStructureHooks *hooks);
 const BindingsStructureHooks *bindings_structure_hooks(void);
+/* out must be distinct and empty. A provider returns one owned context on
+ * success; any non-NULL context returned on refusal is released here.
+ * Providers and non-NULL captured contexts require retain/release together.
+ * Stateless hooks need neither. Refusal clears out and preserves source. */
+bool bindings_structure_hooks_capture(BindingsStructureHooks *out,
+    const BindingsStructureHooks *source);
+void bindings_structure_hooks_release(BindingsStructureHooks *hooks);
+void bindings_structure_hooks_storage(const BindingsStructureHooks *hooks,
+    CettaStorageCensus *census);
 /* Whether the children of `atom` stand one quotation deeper: a quotation
  * `(quote X)`, and the forms with its head that carry a list last. */
 static inline bool bindings_structure_quotes_children(const Atom *atom) {
@@ -963,8 +980,9 @@ typedef enum {
 } BindingsApplyStatus;
 /* Retain the existing value-application traversal. The caller holds an
  * unchanged logical binding image and the source graph, its payload owners
- * and runtime context. The hook table is copied; callback runtime state is
- * still supplied by that context. shared_graph selects the same acyclic
+ * and runtime resources. The hook closure captures and owns the selected
+ * binding interpretation; changing or retiring its library does not change
+ * a pending application. shared_graph selects the same acyclic
  * node-sharing interpretation as bindings_apply_graph; cycles keep the
  * ordinary variable-path interpretation.
  *

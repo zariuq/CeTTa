@@ -237,8 +237,10 @@ def main():
     marker = way_a.index("[written]") + 1
     declared_answers = on[marker:marker + declared]
     on_answers = on[:marker] + on[marker + declared:]
-    report(all(line.startswith("[") and line.endswith("]") and "False" not in line
-               for line in declared_answers),
+    admitted_names = [match.group(1) for line in declarations()
+                      if (match := re.match(r"^!\(hol:(?:numerals|oracle)\s+&self\s+(\S+)\s", line))]
+    report(len(admitted_names) == declared and
+           declared_answers == [f"[{name}]" for name in admitted_names],
            f"{declared} declarations admitted")
     same = len(on_answers) == len(way_a) and all(
         without_costs(x) == without_costs(y) for x, y in zip(on_answers, way_a))
