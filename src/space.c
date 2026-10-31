@@ -6013,8 +6013,18 @@ static bool space_set_holds(Space *s, AtomId atom_id, Atom *atom);
 /* HEAD's relation takes the fact of COLUMNS: true when the add is done,
  * false when the fact is to be a row (a multiset's second copy, or no
  * room, which gives the relation back). */
+static bool space_dense_take_publishing(Space *s, SpaceDenseHead *head,
+                                        const AtomId *columns, bool publish);
+
 static bool space_dense_take(Space *s, SpaceDenseHead *head,
                              const AtomId *columns) {
+    return space_dense_take_publishing(s, head, columns, true);
+}
+
+/* Take the fact of COLUMNS into HEAD's relation; PUBLISH: publish the
+ * mutation here, where a batch does not publish its facts at once. */
+static bool space_dense_take_publishing(Space *s, SpaceDenseHead *head,
+                                        const AtomId *columns, bool publish) {
     uint32_t numbered = space_dense_kept_numbered(head);
     bool oom = false;
     bool added;
@@ -6036,8 +6046,9 @@ static bool space_dense_take(Space *s, SpaceDenseHead *head,
     if (!added)
         return s->kind == SPACE_KIND_SET;
     s->native.dense_facts++;
-    space_publish_mutation(s, SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY,
-                           SPACE_MUTATION_PREFIX_APPEND_ONLY);
+    if (publish)
+        space_publish_mutation(s, SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY,
+                               SPACE_MUTATION_PREFIX_APPEND_ONLY);
     /* A relation whose columns outgrow its facts is worth more as rows. */
     if (space_dense_kept_numbered(head) != numbered && !space_dense_worth(head))
         space_dense_settle_head(s, head);
@@ -6341,6 +6352,13 @@ bool space_add_dense_tuples(Space *s, SymbolId head, AtomId head_id,
         counting->head_id = head_id;
         space_dense_promote(target, counting);
     }
+    /* The head's relation, found once, and again after a fact goes to the
+     * rows, which may make heads; the space admits relations or not for
+     * the whole batch. */
+    bool admits = space_dense_admits(target);
+    SpaceDenseHead *entry = target->native.dense
+        ? space_dense_find(target->native.dense, head) : NULL;
+    bool taken = false;
     for (CettaCount i = 0u; i < count; i++) {
         AtomId kids[CETTA_TUPLE_MAX_ARITY + 1u];
         kids[0] = head_id;
@@ -6351,26 +6369,33 @@ bool space_add_dense_tuples(Space *s, SymbolId head, AtomId head_id,
         }
         /* Until the head takes its relation, the facts are rows, which
          * count toward it (space_dense_route_add). */
-        SpaceDenseHead *entry = target->native.dense
-            ? space_dense_find(target->native.dense, head) : NULL;
         if (entry && entry->state == SPACE_DENSE_KEPT && !entry->skeleton &&
-            entry->arity == arity && space_dense_admits(target) && columns) {
-            /* A row of a set holding the fact has a record of it. */
-            if (target->kind == SPACE_KIND_SET) {
+            entry->arity == arity && admits && columns) {
+            /* A row of a set holding the fact has a record of it; a head
+             * keeping no row has none. */
+            if (target->kind == SPACE_KIND_SET && entry->rows != 0u) {
                 AtomId row = tu_expr_lookup_ids(universe, kids, arity + 1u);
                 if (row != CETTA_ATOM_ID_NONE &&
                     space_set_holds(target, row, NULL))
                     continue;
             }
-            if (entry->state == SPACE_DENSE_KEPT &&
-                space_dense_take(target, entry, &kids[1]))
+            if (space_dense_take_publishing(target, entry, &kids[1], false)) {
+                taken = true;
                 continue;
+            }
         }
         AtomId id = tu_expr_from_ids(universe, kids, arity + 1u);
         if (id == CETTA_ATOM_ID_NONE)
             return false;
         space_add_stored_id(target, id, NULL);
+        entry = target->native.dense
+            ? space_dense_find(target->native.dense, head) : NULL;
     }
+    /* Nothing reads the space between two facts of one batch. */
+    if (taken)
+        space_publish_mutation(target,
+                               SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY,
+                               SPACE_MUTATION_PREFIX_APPEND_ONLY);
     return true;
 }
 

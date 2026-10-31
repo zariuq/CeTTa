@@ -342,6 +342,13 @@ typedef enum {
     PETTA_GOAL_PREPARED_CALLER_RESUME,
     /* Resume untouched compiled alternatives after a parent-owned segment. */
     PETTA_GOAL_PREPARED_CONTINUE,
+    /* One solution's turn in a filtered match
+     * (petta_machine_try_filtered_match): `first`, the taken branch, under
+     * `plan`, while the space's equation and declaration revisions are
+     * `answer_weight` and `choice_index`, those the test was read under;
+     * otherwise `third`, the whole template, under `third_plan`, its test
+     * read again.  Either answers `second`. */
+    PETTA_GOAL_FILTERED_TAKEN,
 } PettaGoalKind;
 
 typedef struct PettaPreparedCallerPlan {
@@ -653,6 +660,7 @@ static void petta_machine_record_goal_class(
     case PETTA_GOAL_CATCH_READY:
     case PETTA_GOAL_DISPATCH_RECOVER:
     case PETTA_GOAL_FAIL:
+    case PETTA_GOAL_FILTERED_TAKEN:
         stats->control_goal_transitions++;
         return;
     case PETTA_GOAL_HOST_STRICT_READY:
@@ -27073,6 +27081,146 @@ static bool petta_machine_start_language_match(
         machine, choices, body, expected, barrier, failure);
 }
 
+/* The distinct variables of ATOM occurring in SCOPE, added to VARS, which
+ * holds *COUNT and room for CAP; false where there are more. */
+static bool petta_machine_scoped_variables(Atom *atom, const Atom *scope,
+                                           Atom **vars, size_t cap,
+                                           size_t *count) {
+    if (atom->kind == ATOM_VAR) {
+        if (petta_machine_var_occurrences(scope, atom->var_id) == 0u)
+            return true;
+        for (size_t i = 0u; i < *count; i++) {
+            if (var_id_eq(vars[i]->var_id, atom->var_id))
+                return true;
+        }
+        if (*count == cap)
+            return false;
+        vars[(*count)++] = atom;
+        return true;
+    }
+    if (atom->kind != ATOM_EXPR)
+        return true;
+    for (CettaExprIndex i = 0u; i < atom->expr.len; i++) {
+        if (!petta_machine_scoped_variables(atom->expr.elems[i], scope, vars,
+                                            cap, count))
+            return false;
+    }
+    return true;
+}
+
+static bool petta_machine_is_empty_form(const Atom *atom) {
+    return atom->kind == ATOM_EXPR && atom->expr.len == 1u &&
+        atom_is_symbol_id(atom->expr.elems[0], g_builtin_syms.empty_form);
+}
+
+/* `(match S P (if TEST THEN (empty)))`, either branch empty, TEST
+ * comparisons of the solutions' values that the host reads natively
+ * (native_filter): the host collects, on the occurrences visible when the
+ * match begins, the solutions TEST passes, as tuples of the template's
+ * variables that P binds; each tuple binds them, and THEN runs under its
+ * own plan, as the match runs it once TEST has passed.  TEST reads no space
+ * and makes no effect, so the solutions it refuses may all come first, the
+ * match's solutions taking any order.  It reads the rules, which a run of
+ * THEN may change: a solution whose turn comes after they changed runs the
+ * whole template (PETTA_GOAL_FILTERED_TAKEN).  *HANDLED stays false where
+ * the host declines, having done nothing. */
+static __attribute__((cold, noinline)) bool petta_machine_try_filtered_match(
+    PettaMachineImpl *machine, Atom *reference, Atom *pattern,
+    Atom *template, Atom *expected, uint32_t barrier,
+    const PettaPlanNode *template_plan, bool *handled,
+    PettaMachineStep *failure) {
+    enum { PETTA_FILTERED_MATCH_VARIABLES = 16u };
+    *handled = false;
+    if (!machine->host.native_filter || !template_plan ||
+        !petta_machine_native_collect_admitted(machine) ||
+        space_has_dependencies(machine->space) ||
+        template->kind != ATOM_EXPR || template->expr.len != 4u ||
+        !atom_is_symbol_id(template->expr.elems[0], g_builtin_syms.if_text))
+        return false;
+    CettaExprIndex taken =
+        petta_machine_is_empty_form(template->expr.elems[3]) ? 2u
+        : petta_machine_is_empty_form(template->expr.elems[2]) ? 3u : 0u;
+    const PettaPlanNode *taken_plan = taken
+        ? petta_plan_child(template_plan, taken) : NULL;
+    if (!taken_plan)
+        return false;
+    const Bindings *environment = search_context_bindings(&machine->search);
+    Atom *resolved = petta_machine_apply_bindings(
+        machine, environment, &machine->heap, template);
+    Atom *resolved_pattern = petta_machine_apply_bindings(
+        machine, environment, &machine->heap, pattern);
+    if (!resolved || !resolved_pattern) {
+        *failure = PETTA_MACHINE_STEP_CAPACITY;
+        return false;
+    }
+    /* The tuple of the template's variables that P binds, as data: THEN
+     * reads them, and so does TEST where it is read again. */
+    Atom *parts[1u + PETTA_FILTERED_MATCH_VARIABLES];
+    size_t count = 0u;
+    if (!petta_machine_scoped_variables(resolved, resolved_pattern,
+                                        parts + 1u,
+                                        PETTA_FILTERED_MATCH_VARIABLES,
+                                        &count))
+        return false;
+    parts[0] = atom_symbol(&machine->heap, "filtered-solution");
+    Atom *tuple = parts[0]
+        ? atom_expr(&machine->heap, parts, (CettaExprLen)(count + 1u))
+        : NULL;
+    Atom *branch[4] = {resolved->expr.elems[0], resolved->expr.elems[1],
+                       resolved->expr.elems[2], resolved->expr.elems[3]};
+    branch[taken] = tuple;
+    Atom *test = tuple ? atom_expr(&machine->heap, branch, 4u) : NULL;
+    Atom *query_parts[4] = {
+        atom_symbol_id(&machine->heap, g_builtin_syms.match), reference,
+        resolved_pattern, test,
+    };
+    Atom *query = test && query_parts[0]
+        ? atom_expr(&machine->heap, query_parts, 4u) : NULL;
+    if (!query) {
+        *failure = PETTA_MACHINE_STEP_CAPACITY;
+        return false;
+    }
+    uint64_t equations = space_equation_revision(machine->space);
+    uint64_t declarations = space_declaration_revision(machine->space);
+    Atom *solutions = NULL;
+    CettaNativeQueryStatus status = machine->host.native_filter(
+        machine->host.context, machine->space, &machine->heap, query,
+        &solutions);
+    if (status == CETTA_NATIVE_QUERY_DECLINED)
+        return false;
+    *handled = true;
+    if (status != CETTA_NATIVE_QUERY_DONE || !solutions ||
+        solutions->kind != ATOM_EXPR) {
+        *failure = PETTA_MACHINE_STEP_CAPACITY;
+        return false;
+    }
+    OutcomeSet *outcomes = cetta_malloc(sizeof(*outcomes));
+    outcome_set_init_with_owner(outcomes, &machine->heap);
+    Bindings empty;
+    bindings_init(&empty);
+    for (CettaExprIndex i = 0u; i < solutions->expr.len; i++)
+        outcome_set_add(outcomes, solutions->expr.elems[i], &empty);
+    bindings_free(&empty);
+    if (!petta_goal_push(machine, &(PettaGoal){
+            .kind = PETTA_GOAL_FILTERED_TAKEN,
+            .barrier = barrier,
+            .first = template->expr.elems[taken],
+            .second = expected,
+            .third = template,
+            .plan = taken_plan,
+            .third_plan = template_plan,
+            .choice_index = (size_t)declarations,
+            .answer_weight = equations,
+        })) {
+        outcome_set_free(outcomes);
+        free(outcomes);
+        *failure = PETTA_MACHINE_STEP_CAPACITY;
+        return false;
+    }
+    return petta_machine_start_outcome_choice(machine, outcomes, tuple,
+                                              barrier);
+}
+
 static bool petta_machine_start_ready_match_mode(
     PettaMachineImpl *machine, Atom *reference, Atom *pattern,
     Atom *template, Atom *expected, uint32_t barrier,
@@ -27232,6 +27380,17 @@ static bool petta_machine_start_ready_match_mode(
      * original plan no longer describes that expression. */
     if (match_template != template)
         template_plan = NULL;
+    /* A template branching on comparisons of the solutions' values runs its
+     * taken branch for the solutions they pass
+     * (petta_machine_try_filtered_match). */
+    if (!row_only && match_pattern == pattern && template_plan) {
+        bool handled = false;
+        bool started = petta_machine_try_filtered_match(
+            machine, reference, pattern, template, expected, barrier,
+            template_plan, &handled, failure);
+        if (handled)
+            return started;
+    }
     return petta_machine_start_match_choice(
         machine, target, match_pattern, match_template,
         expected, barrier, template_plan);
@@ -36789,6 +36948,18 @@ static bool petta_machine_dispatch_goal(
         machine->pending_answer_weight =
             goal.answer_weight;
         return true;
+    }
+
+    if (goal.kind == PETTA_GOAL_FILTERED_TAKEN) {
+        bool read = goal.answer_weight ==
+                space_equation_revision(machine->space) &&
+            goal.choice_index == space_declaration_revision(machine->space);
+        if (petta_push_solve_planned(machine, read ? goal.first : goal.third,
+                                     goal.second, goal.barrier,
+                                     read ? goal.plan : goal.third_plan))
+            return true;
+        *failure = PETTA_MACHINE_STEP_CAPACITY;
+        return false;
     }
 
     if (goal.builtin_only &&

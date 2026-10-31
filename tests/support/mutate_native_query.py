@@ -34,8 +34,8 @@ mutations = {
                          "bool certified = true;"),
     # A guard's instance with no record taken for an absent row, though a
     # relation holds facts with no record of each.
-    "guard-recordless": ("        if (probe == CETTA_ATOM_ID_NONE &&\n            space_dense_facts(query->guard_space) != 0u) {",
-                         "        if (probe == CETTA_ATOM_ID_NONE &&\n            space_dense_facts(query->guard_space) == UINT64_MAX) {"),
+    "guard-recordless": ("        bool by_columns = probe == CETTA_ATOM_ID_NONE &&\n            space_dense_facts(query->guard_space) != 0u &&\n            native_query_guard_columns(run, values, &held);\n        if (probe == CETTA_ATOM_ID_NONE && !by_columns &&\n            space_dense_facts(query->guard_space) != 0u) {",
+                         "        bool by_columns = probe == CETTA_ATOM_ID_NONE &&\n            space_dense_facts(query->guard_space) == UINT64_MAX &&\n            native_query_guard_columns(run, values, &held);\n        if (probe == CETTA_ATOM_ID_NONE && !by_columns &&\n            space_dense_facts(query->guard_space) == UINT64_MAX) {"),
     # A guard's variables summed out of a join no effect reads them in.
     "guard-summed": (": effect == effect_count + 2u ? run.guard",
                      ": effect == effect_count + 2u ? NULL"),
@@ -219,6 +219,42 @@ mutations = {
     # A guard reading a relation by columns taken as never holding.
     "guard-columns-unheld": ("    *held = space_dense_kept_contains(entry, columns);\n    return true;",
                              "    *held = false;\n    return true;"),
+    # A filtered match's test kept after a run of its branch changed the
+    # rules, its host's collection reading no filter, and a tuple binding
+    # the taken branch's variables alone, which the test read again needs.
+    "filtered-test-stale": ("        bool read = goal.answer_weight ==\n                space_equation_revision(machine->space) &&\n            goal.choice_index == space_declaration_revision(machine->space);",
+                            "        bool read = true;"),
+    "filtered-unfiltered": ("        .filters = conj.filters,\n        .filter_count = conj.filter_count,\n        .else_empty = true,\n    };",
+                            "        .filters = conj.filters,\n        .filter_count = 0u,\n        .else_empty = true,\n    };"),
+    "filtered-tuple-taken": ("    if (!petta_machine_scoped_variables(resolved, resolved_pattern,",
+                             "    if (!petta_machine_scoped_variables(resolved->expr.elems[taken], resolved_pattern,"),
+    # A scalar fold taking a tuple headed by a callable value for data,
+    # reading a strict order as loose, and wrapping a sum past 64 bits.
+    "scalar-head-unchecked": ("    if (!petta_scalar_symbol_inert(program->root, head))\n        return false;",
+                              "    if (false)\n        return false;"),
+    "scalar-order-loose": ("            value = a.i < b.i;",
+                           "            value = a.i <= b.i;"),
+    "scalar-sum-wrapped": ("            if (__builtin_add_overflow(a.i, b.i, &value))\n                return false;",
+                           "            value = (int64_t)((uint64_t)a.i + (uint64_t)b.i);"),
+    # A saturation region taking every rule with a static premise for one
+    # that cannot fire.
+    "dead-rule-any": ("            live[f] = kb[p] || !petta_region_premise_empty(region,\n                                                           premises[p]);",
+                      "            live[f] = kb[p] && !petta_region_premise_empty(region,\n                                                           premises[p]);"),
+    # A grouped count giving a solution every group's count, letting through
+    # an addition the count reads, and counting a group with no solution of
+    # the count as one.
+    "grouped-key-ignored": ("            found = table[slot].key ? table[slot].count : 0u;",
+                            "            found = (uint64_t)grouped->expr.len;"),
+    "grouped-reads-ignored": ("            (effects[i].target == counted_source &&\n             petta_native_query_reads(counted, effects[i].data)))",
+                              "            (effects[i].target == counted_source && !counted))"),
+    "grouped-absent-one": ("            found = table[slot].key ? table[slot].count : 0u;",
+                           "            found = table[slot].key ? table[slot].count : 1u;"),
+    # A list spread over a match keeping its first row alone, or its rows as
+    # a set.
+    "listed-rows-dropped": ("        if (ok)\n            space_add(bag, fact);",
+                            "        if (ok && i == 0u)\n            space_add(bag, fact);"),
+    "listed-bag-set": ("    bag->kind = SPACE_KIND_HASH;",
+                       "    bag->kind = SPACE_KIND_SET;"),
     "afresh-unchecked": ("static bool native_query_afresh_unmet(NativeQueryRun *run) {\n",
                          "static bool native_query_afresh_unmet(NativeQueryRun *run) {\n    return true;\n"),
     "afresh-ignored": ("                    native.afresh |= UINT64_C(1) << leg;",
