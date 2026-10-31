@@ -1,5 +1,61 @@
 # A metagraph database in MeTTa
 
+## Numerical evidence with declared origin units
+
+`space_evidence_curriculum.metta` extends the existing claims collection with
+separate synthetic count records. It leaves the original illustrative
+`Assessment` values unchanged and never converts them into measured evidence.
+
+```sh
+mkdir -m 700 evidence-space
+./cetta --lang petta --run-contract examples/kb/space_evidence_run.metta "$PWD/evidence-space"
+```
+
+```text
+station batch: 8 positive,2 negative ─┬─ source1 ─ evidence1,evidence4
+                                    └─ source2(copy) ─ evidence2
+survey batch:  1 positive,4 negative ─── source3 ─ evidence3
+                         |
+                 one contribution per origin/claim
+                         |
+                 9 positive,6 negative
+```
+
+This lesson stipulates independent trial batches, a canonical origin/claim
+unit and context-size parameter kappa=1. Distinct source names or disjoint
+documents alone do not establish a statistical sampling model. Origin labels
+are inputs assumed consistent with source lineage; the demo does not discover
+hidden dependence or authenticate those labels. More complex partial overlap
+requires a separate evidence policy.
+
+The already existing `lib_wmpln_evidence` supplies componentwise revision and
+the count-to-STV view. The numerical subset used here is qualified for finite
+nonnegative Int64 input counts: strength is positive/total (zero at total0),
+and confidence is total/(total+kappa). Confidence is this chosen evidence
+weight view, not the probability that a news statement is true. The example
+returns counts(9,6), strength0.6 and confidence15/16. Naively summing joined
+copies would return(25,10), strength5/7 and confidence35/36.
+
+Ordinary `KqSpace`, select, bind, optional, order, group, fold and map implement
+the lesson over one captured view. A stored-ground-data projection runs before
+schema binding so an open calibration atom cannot manufacture counts for an
+origin. That projection uses bounded complete scans; it is not advertised as
+an indexed numerical-evidence engine. Sorting is explicit, and the result
+retains judgement, supporting-evidence, source and calibration occurrence IDs.
+Equal copies contribute once but remain visible in the provenance. Conflicting,
+missing or invalid calibrations produce `EvidenceRevisionRefusedV1` with their
+provenance, instead of choosing the first value or silently using zero. With
+no supporting evidence, counts and confidence are zero; the library's strength0
+convention carries no positive evidential support for either verdict.
+
+The same plans run through `space-curriculum:configuration` with this module
+loaded, or embedded with `space-evidence:run`. `make test-space-evidence`
+checks the existing arithmetic subset against an independent rational oracle,
+copies/conflicts/missing counts/open data, inert code-shaped fields, original
+identities, captured retraction/compaction, fresh-process and service restart,
+canonical provenance order and cancellation cleanup. These assumptions and
+checks do not establish real-world calibration or a runtime refinement proof.
+
 ## Moving a collection between processes or stores
 
 `examples/native_transfer_server.metta` serves the same ordinary Space

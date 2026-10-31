@@ -4701,6 +4701,11 @@ test-all: test-graph-service-quantum
 test-graph-service-quantum: value-worker
 	$(PYTHON) tests/support/check_graph_service_quantum.py $(VALUE_WORKER_BIN)
 
+.PHONY: test-space-evidence
+test-all: test-space-evidence
+test-space-evidence: value-worker
+	$(PYTHON) tests/support/check_space_evidence.py $(VALUE_WORKER_BIN)
+
 NATIVE_DISK_SPACE_TEST_BIN = runtime/test_native_disk_space-$(BUILD_OBJ_TAG)
 $(NATIVE_DISK_SPACE_TEST_BIN): tests/test_native_disk_space.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p runtime
