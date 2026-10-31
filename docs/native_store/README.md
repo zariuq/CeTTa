@@ -1,5 +1,125 @@
 # Native byte stores
 
+## Relational composition over ordinary Spaces
+
+`(library kb_query)` now connects its existing MeTTa join/optional/semi/anti
+and union control flow to the ordinary captured Space cursor. It adds no
+native relational matcher or separate persistent KB schema:
+
+```metta
+(kbq:open-space view (KqSpace collection pattern template) maximum-row-bytes)
+(kbq:page cursor row-count work-steps)
+(kbq:inspect-space cursor)
+(kbq:close cursor)
+```
+
+Open returns a linear `KqCursor` owning an independent clone of the captured
+root. The original view can be released after open. Each Space leaf uses the
+same unifier, candidate indexes and request-owned cursor as ordinary matching.
+It returns `(SpaceAnswerV1 instantiated-template occurrence-references)`;
+conjunction references remain in premise order. This is a projected answer,
+not a copy of the original stored fact. `durable-space:read` retrieves the
+original occurrence. Duplicate memberships remain distinct until an explicit
+projection/distinct operation discards that information.
+
+`KqBind`, `KqOptional`, `KqSemi`, `KqAnti` and `KqUnion` retain their existing
+MeTTa semantics. A dependent inner leaf opens against the same captured root,
+even if publication/compaction happens before it is reached. Templates may
+explicitly carry outer occurrence references into later results. Projection
+does not automatically accumulate provenance from discarded outer fields.
+Optional absence uses its explicit caller-provided value; an empty tuple is
+an ordinary present value. Paused or failed inner execution is never absence.
+Semi/anti stop once a right answer settles existence; unused later work is
+not executed. Union preserves multiplicity.
+
+Additional ordinary MeTTa row stages are:
+
+```metta
+(KqMap source function-name)
+(KqSelect source predicate-name)
+(KqDistinct source equivalent-name maximum-encoded-state-bytes)
+(KqFold source initial step-name maximum-encoded-state-bytes)
+(KqGroup source key-name equivalent-name initial step-name maximum-encoded-state-bytes)
+(KqOrder source less-name maximum-encoded-state-bytes)
+(KqSlice source offset count)
+```
+
+Callbacks are explicitly invoked pure, deterministic, single-answer functions.
+Select uses the existing `RelTrue`/`RelFalse`/`RelUnknown` policy; comparisons
+use the existing Boolean contract. Zero/multiple callback answers and invalid
+predicate values fail explicitly. Callback arguments are freshened before
+invocation, preserving sharing within each argument group without allowing a
+filter or comparator to bind a source row or its continuation tail. Keep
+application code and runtime semantics fixed for a cursor's lifetime. These
+callbacks must not perform effects or hidden/external reads. The library does
+not automatically enroll arbitrary callback reads into a transaction.
+
+Distinct takes an explicit equivalence. `kb:alpha-equal` compares canonical
+open terms, including within-row variable sharing; `kb:equal` requires ground
+values. Fold incrementally retains one accumulator. Group reuses the existing
+`rel` grouping machinery and retains groups rather than the input corpus.
+Fold emits its specified initial value on empty input; an empty group query
+emits no groups. The example numeric accumulator demonstrates count, sum,
+minimum, maximum and average with explicit absence for empty extrema/average.
+Numeric and null/coercion policies belong to the chosen functions.
+
+Order buffers only its bounded query rows, then reuses the existing merge sort.
+Equal primary keys compare canonical CAV1 row bytes, including carried stable
+occurrence references. Equal projected rows remain duplicates. Slice advances
+incrementally and closes unused input when its limit is reached; count zero
+does not invoke source callbacks. Fold/group/order have blocking output: they
+must establish complete input before returning a final aggregate/sorted row.
+Explain reports this distinction rather than calling them streaming output.
+
+State budgets bound encoded retained values, not an exact heap/CPU charge.
+The service additionally accounts for actual retained continuation resources.
+An oversized state/row or incomplete evaluation is a failure, never successful
+empty output. Each logical step advances bounded matcher work, but a pure
+callback or final bounded sort is not a fixed wall-clock quantum. `KqWork`
+reports logical steps, candidate visits and decoded bytes, not all physical
+index I/O or evaluator instructions. Inspect shows current active access paths.
+`KqSpaceObservationV1` is descriptive; query-informed writes still retain and
+validate the original informing view through the ordinary collection writer.
+
+`examples/native_space_query_server.metta` reuses the existing service owner
+and linear continuations with Read routes RelOpen/Page/Inspect/Cancel. RelOpen
+uses an existing view and `(RelOpenV1 plan maximum-row-bytes)`. Other operations
+use `UseValueV1`; page takes `(RelPageV1 count work-steps)`. Example limits are
+128 KiB per row,32rows and4096logical steps per page. A large page can still
+exceed the transport frame and fail explicitly; choose smaller pages for large
+rows. Disconnect, cancellation, completion and failure release query owners.
+
+Service callbacks must be fixed names declared in the trusted application
+program as `(QueryPureCallbackV1 function-name)`. The generic server declares
+none. It validates all plan branches before opening; data-dependent callback
+names are refused. Policy-looking facts in the stored KB add no authority.
+ReadOnly clients retain read/query/cancel access, not permission to invoke any
+loaded library function. Approval still requires review of the function's
+effects and dependencies; a name allowlist does not prove purity. Embedded
+applications use their normal explicit invocation authority.
+
+`examples/kb/space_curriculum.metta` installs synthetic claims/evidence and
+program/dependency data in one ordinary persistent collection, exposes the
+same plans embedded/server, and combines graph and relational handlers over
+that collection. Four supporting occurrences have only two source origins;
+judgement, evidence and source occurrence references survive the join. The
+lesson reports origin dependence without inventing numerical evidence weights.
+It covers optional evidence, grouping, distinct origins, two-hop dependencies,
+graph reachability, one-occurrence retraction and fresh-process recovery.
+
+`test-space-query` compares generated joins against SQLite and raw Space
+matching, with bindings, bags, identities, paging order, quotas, callback
+failures, policy refusals, captured reads and cleanup. `test-space-curriculum`
+checks the two datasets in embedded and service modes across restart and
+compaction. The full KB/DB qualification remains unfinished. In particular,
+automatic program pinning/invalidation for code changes during derived queries
+and program-aware query-informed commits remain open. Raw Space/program
+revision counters have not been qualified as user-code-change-only clocks.
+A reduced witness maps the first page with an old callback, redefines it,
+then maps the second page with the new callback at the same database revision.
+The fixed-program restriction is therefore substantive. Pinning or explicit
+invalidation must be implemented before claiming live-code query consistency.
+
 For native ACT snapshot readers backing ordinary MeTTa spaces, see the
 [ACT/Space integration requirements](ACT_SPACE_REQUIREMENTS.md). That document
 separates byte-format compatibility from occurrence, query and durable-owner
