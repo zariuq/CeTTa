@@ -235,8 +235,8 @@ The caller's view/owner may close after open. No write authority is acquired.
 
 This operation lets an index-selected occurrence return through ordinary
 matching without copying a corpus or inventing a filtered Space cardinality.
-Declared scalar range queries/index maintenance are still unfinished; point
-matching alone does not claim that capability. `test-native-disk-query` and
+Declared scalar ranges use this operation as described below.
+`test-native-disk-query` and
 `test-space-point-query` cover exact/prefix-related and empty keys, missing
 records, captured values, identities, checkpoints and bounded repeated cleanup.
 
@@ -258,7 +258,72 @@ to doubles. Other scalar families need their own candidates and residual
 predicate; this window alone is not a complete heterogeneous range query.
 `test-store-scalar-window` compares MeTTa term-order references and an
 independent exact ceil/floor oracle. Declared posting maintenance and bounded
-range cursor/service integration remain unfinished.
+range cursor/service integration are described below.
+
+## Stored scalar ranges
+
+Declare `(SpaceRangeIndexV1 expression-arity field-position)` through
+`durable-space:create-indexed`. It can coexist with an exact `SpaceIndexV1`
+on the same projection. New mixed descriptors use `StoreSpaceV4`; exact-only
+and unindexed collections retain their existing versions. Facts, old/new
+postings, counts, metadata and receipts still publish in one native owner
+commit. `durable-space:reindex-open/page` rebuilds both descriptor kinds through
+the same bounded staging/batch mechanism. A range descriptor hidden under V3
+refuses; historical V2 stays scan-only until its existing upgrade operation.
+
+```metta
+(KqRange collection arity position lower upper pattern template)
+```
+
+Import `(library kb_query)` and open/page/inspect/close this plan with the
+ordinary `kbq:open-space` interface. Positions include the expression head at
+zero. The stored record must have the declared arity and a portable scalar at
+that position. This is a stored-data projection: whole-variable records,
+unbound fields and compound fields are outside it, even if a separate ordinary
+match could instantiate one numerically. They remain queryable with `KqSpace`.
+Range filtering does not bind variables or evaluate stored code.
+
+`pattern` is one atomic row pattern; conjunction/alternative roots refuse.
+Compose relational conditions with the existing KqBind/Optional/Semi/Anti
+operators. Each eligible exact occurrence is passed to the same Space matcher
+and instantiated data template used elsewhere. Results are ordinary
+`SpaceAnswerV1` values with original membership references. Duplicate payloads
+retain distinct occurrences and ordinary matching owns all variable bindings.
+
+Bounds and scalar ordering use the contract above. Integer postings seek the
+exact Int64 candidate window; all other portable scalars retain their separate
+candidate bucket and residual comparison. An empty integer interval never
+discards other scalars. Without a declared range index, the same predicate
+consumes a complete captured Space scan with count/identity validation. No
+corpus is copied before a first page. A candidate may be decoded for its stored
+field and again by its owning point matcher; counters include those actual
+logical visits/decoded bytes. This is not a physical index-I/O or CPU charge.
+
+Range answers are bags. Index and full-scan enumeration order may differ.
+Use KqOrder for ordered pagination, retaining its existing membership
+tie-breaker policy. Explain/inspect distinguish integer seeks plus other-scalar
+fallback from complete scans, and show the active scan/point statistics.
+Pages retain their captured root even when publication, compaction and
+collection occur before a later candidate is matched. Malformed or stale extra
+postings, missing referenced facts and wrong domains fail explicitly rather
+than become successful empty output. Index completeness relies on the same
+qualified-writer/metadata trust boundary as existing exact candidate indexes.
+
+The existing RelOpen/Page/Inspect/Cancel service routes accept KqRange without
+a second transport or matcher. RelOpenRead/ReadPage/ReadCommit retain its same
+data/program observations through completion. Full-revision validation covers
+absent-range phantoms as well as positive reads; write authority is unchanged.
+Cancelled/disconnected states release their scans, point owners, views and
+watches. Incomplete execution and errors remain distinct from absence.
+
+`test-scalar-indexes` checks posting bytes, cross-family updates/deletion,
+ordinary match compatibility, mixed descriptors, repair, retries and corruption.
+`test-scalar-ranges` compares index/full-scan results with an independent exact
+ordering oracle and exercises joins, ordered paging, invalid inputs, service
+replay, captured compaction, data/code conflicts, absent-range phantoms, restart
+receipts and repeated cancellation/disconnect. Scalar-family access paths are
+explicit; acceleration of every other scalar family is a later measured
+optimization. Broader whole-project scaling/application acceptance remains open.
 
 ## First SQLite-replacement milestone
 

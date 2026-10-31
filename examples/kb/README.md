@@ -81,6 +81,26 @@ provide dependencies; they grant neither write authority nor proof that an
 embedded caller finished its query. Portable in-memory pattern examples remain
 below.
 
+## Scalar ranges and program dependencies
+
+`space_range_curriculum.metta` adds a scalar-range chapter over the same native
+owner and ordinary query interface:
+
+```sh
+./cetta --lang petta --run-contract examples/kb/space_range_run.metta "$PWD/demo-space"
+```
+
+It creates a separate example collection in that store, preserving the earlier
+lesson installation and receipts. The three results are: programs with size
+10..30 (`check 10`, `parse 20`, `compile 20.5`); two distinct memberships of
+`emit 40`; and three range-to-dependency paths (`parse→lex`, twice `emit→parse`).
+The float remains eligible through the other-scalar fallback. Row bags have
+explicit occurrence references; enumeration order is unspecified. Reopening
+the example preserves data and IDs through installation receipts.
+These are synthetic program sizes. See the
+[range contract](../../docs/native_store/README.md#stored-scalar-ranges)
+for stored-data projection, scalar ordering, access paths and current limits.
+
 ## Earlier point-store reference examples
 
 The older `curriculum.metta`/`graph_curriculum.metta` examples below retain the

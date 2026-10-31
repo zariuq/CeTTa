@@ -4682,6 +4682,15 @@ test-all: test-store-scalar-window
 test-store-scalar-window: value-worker
 	$(PYTHON) tests/support/check_scalar_window.py $(VALUE_WORKER_BIN)
 
+.PHONY: test-scalar-indexes test-scalar-ranges test-scalar-range-curriculum
+test-all: test-scalar-indexes test-scalar-ranges test-scalar-range-curriculum
+test-scalar-indexes: value-worker
+	$(PYTHON) tests/support/check_scalar_indexes.py $(VALUE_WORKER_BIN)
+test-scalar-ranges: value-worker
+	$(PYTHON) tests/support/check_scalar_ranges.py $(VALUE_WORKER_BIN)
+test-scalar-range-curriculum: value-worker
+	$(PYTHON) tests/support/check_scalar_range_curriculum.py $(VALUE_WORKER_BIN)
+
 NATIVE_DISK_SPACE_TEST_BIN = runtime/test_native_disk_space-$(BUILD_OBJ_TAG)
 $(NATIVE_DISK_SPACE_TEST_BIN): tests/test_native_disk_space.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p runtime
