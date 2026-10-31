@@ -222,6 +222,44 @@ The named-space and older durable-runtime interfaces have not yet migrated to
 this owner. The byte-store library is available for qualification; adding it
 does not migrate an application's existing database.
 
+## Exact occurrence matching
+
+`(store:space-point-query-open view key pattern template)` opens the same
+owning Space matcher over one exact stored CAV1 occurrence. Its cardinality is
+established by lookup; keys that merely share its prefix are excluded. The
+result is `StoreQueryOpened`, or `StoreAbsent` for a missing key. Empty keys
+have the byte store's usual meaning. The original `StoreOccurrenceV1` identity
+and captured revision are preserved. Patterns/templates remain jointly scoped
+data, with the existing unifier, replay, checkpoint, cancellation and cleanup.
+The caller's view/owner may close after open. No write authority is acquired.
+
+This operation lets an index-selected occurrence return through ordinary
+matching without copying a corpus or inventing a filtered Space cardinality.
+Declared scalar range queries/index maintenance are still unfinished; point
+matching alone does not claim that capability. `test-native-disk-query` and
+`test-space-point-query` cover exact/prefix-related and empty keys, missing
+records, captured values, identities, checkpoints and bounded repeated cleanup.
+
+`store:scalar-order left right` compares portable stored scalars with the
+existing PeTTa term-order contract and returns `(StoreScalarOrderV1 -1|0|1)`.
+`store:scalar-range value lower upper` is the corresponding stored-data
+predicate, returning `StoreScalarWithinV1` or `StoreScalarOutsideV1`. Scalars
+are symbols, strings, Booleans, integers, floats, big integers and rationals.
+Variables, expressions and native resources are outside this projection.
+Bounds are `NoBound`, `(Inclusive scalar)` or `(Exclusive scalar)`; invalid
+bounds refuse explicitly. The comparison preserves the established mixed
+number, NaN, signed-zero and float/exact tie rules; it adds no coercion.
+
+`store:integer-window lower upper` returns `StoreIntegerWindowEmptyV1` or
+`(StoreIntegerWindowV1 first-ordered-key exclusive-end-key-or-NoBound)`.
+The keys use `store:key-i64` ordering. At most 65 existing term comparisons
+per bound find the exact Int64 candidate interval without converting integers
+to doubles. Other scalar families need their own candidates and residual
+predicate; this window alone is not a complete heterogeneous range query.
+`test-store-scalar-window` compares MeTTa term-order references and an
+independent exact ceil/floor oracle. Declared posting maintenance and bounded
+range cursor/service integration remain unfinished.
+
 ## First SQLite-replacement milestone
 
 First qualify persistent ordinary Spaces across fresh processes: commit data,

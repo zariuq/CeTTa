@@ -4672,6 +4672,16 @@ test-external-space-source: $(EXTERNAL_SPACE_SOURCE_TEST_BIN) value-worker
 	$<
 	$(PYTHON) tests/support/check_external_stream_reference.py $(VALUE_WORKER_BIN)
 
+.PHONY: test-space-point-query
+test-all: test-space-point-query
+test-space-point-query: value-worker
+	$(PYTHON) tests/support/check_point_query.py $(VALUE_WORKER_BIN)
+
+.PHONY: test-store-scalar-window
+test-all: test-store-scalar-window
+test-store-scalar-window: value-worker
+	$(PYTHON) tests/support/check_scalar_window.py $(VALUE_WORKER_BIN)
+
 NATIVE_DISK_SPACE_TEST_BIN = runtime/test_native_disk_space-$(BUILD_OBJ_TAG)
 $(NATIVE_DISK_SPACE_TEST_BIN): tests/test_native_disk_space.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p runtime
