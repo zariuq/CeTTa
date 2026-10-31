@@ -9634,7 +9634,7 @@ static inline bool oem_parts_may_meet(uint64_t pattern, uint64_t row) {
  * bits count too: reading every row would give them back to rows. */
 static bool oem_space_small(const Space *space) {
     return space->native.len - space->native.marked +
-               space_dense_pairs(space) <= MATCH_TRIE_THRESHOLD;
+               space_dense_facts(space) <= MATCH_TRIE_THRESHOLD;
 }
 
 static bool oem_small_space_rows(CettaOpenEquationCursor *cursor,

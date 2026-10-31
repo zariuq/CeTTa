@@ -774,6 +774,7 @@ SRC += src/library_syntax.c
 SRC += src/str_stream.c
 SRC += src/relational_plan.c src/relational_cursor.c src/native_query.c src/dense_relation.c
 SRC += src/space_dense.c
+SRC += src/space_tuples.c
 SRC += src/space_path_index.c
 SRC += src/producer_reads.c
 SRC += src/producer_dependencies.c src/producer_schedule.c
@@ -1961,7 +1962,7 @@ PARSER_STANDALONE_SRC = src/parser.c src/name_key.c
 # standalone linker that includes match.c must include the snapshot algebra.
 MATCH_STANDALONE_SRC = src/match.c src/binding/closure.c src/binding/frame_schema.c src/binding/slot_store.c src/binding/activation_view.c src/prime_need.c
 SHARED_TRANSITION_STANDALONE_SRC = src/shared_transition.c
-SPACE_STANDALONE_SRC = src/space.c src/space_dense.c src/space_path_index.c src/binding/rule.c src/fixpoint.c
+SPACE_STANDALONE_SRC = src/space.c src/space_dense.c src/space_tuples.c src/space_path_index.c src/binding/rule.c src/fixpoint.c
 SPACE_STANDALONE_DEPS = $(SPACE_STANDALONE_SRC) $(wildcard src/*.h src/binding/*.h) Makefile
 RELATIONAL_STANDALONE_SRC = src/relational_plan.c src/relational_cursor.c src/native_query.c src/dense_relation.c
 SPACE_MATCH_BACKEND_STANDALONE_SRC = src/space_match_backend.c $(RELATIONAL_STANDALONE_SRC)
@@ -1973,6 +1974,7 @@ MORK_QUERY_ADMISSION_FALLBACK_TEST_BIN = runtime/test_mork_query_admission_fallb
 SPACE_TERM_UNIVERSE_MEMBERSHIP_TEST_BIN = runtime/test_space_term_universe_membership-$(BUILD_OBJ_TAG)
 TERM_UNIVERSE_COLLECTION_TEST_BIN = runtime/test_term_universe_collection-$(BUILD_OBJ_TAG)
 SPACE_DENSE_TEST_BIN = runtime/test_space_dense-$(BUILD_OBJ_TAG)
+SPACE_TUPLES_TEST_BIN = runtime/test_space_tuples-$(BUILD_OBJ_TAG)
 TERM_UNIVERSE_STORE_ABI_TEST_BIN = runtime/test_term_universe_store_abi-$(BUILD_OBJ_TAG).runtime-stats
 TERM_UNIVERSE_STORE_ABI_REFERENCE_TEST_BIN = runtime/test_term_universe_store_abi-$(BUILD_OBJ_TAG).disc-int-linear-reference.runtime-stats
 TERM_UNIVERSE_BACKEND_ADD_ABI_TEST_BIN = runtime/test_term_universe_backend_add_abi-$(BUILD_OBJ_TAG).runtime-stats
@@ -6213,16 +6215,25 @@ $(SPACE_DENSE_TEST_BIN): tests/test_space_dense.c src/space_dense.c src/space_de
 	@mkdir -p runtime
 	$(CC) $(CFLAGS) -Isrc -o $@ tests/test_space_dense.c src/space_dense.c
 
+# A relation kept as a table of tuples agrees with a list of its tuples under
+# random adds, removals, membership tests, counts and walks.
+$(SPACE_TUPLES_TEST_BIN): tests/test_space_tuples.c src/space_tuples.c \
+		src/space_tuples.h src/space_dense.h
+	@mkdir -p runtime
+	$(CC) $(CFLAGS) -Isrc -o $@ tests/test_space_tuples.c src/space_tuples.c
+
 # Programs whose answers must not depend on whether a relation is kept as
-# bits: each runs with bits off and with bits from a head's first fact,
-# compared with its expected answers as bags, since bits read a relation in
-# an order of their own.
-SPACE_DENSE_PROGRAMS = dense_relations dense_relations_derived term_keyed_columns
+# bits or a table: each runs with relations off and with relations from a
+# head's first fact, compared with its expected answers as bags, since
+# relations read their facts in an order of their own.
+SPACE_DENSE_PROGRAMS = dense_relations dense_relations_derived term_keyed_columns \
+	dense_relations_columns dense_relations_equations
 
 .PHONY: test-space-dense
-test-space-dense: $(SPACE_DENSE_TEST_BIN) $(BIN) \
+test-space-dense: $(SPACE_DENSE_TEST_BIN) $(SPACE_TUPLES_TEST_BIN) $(BIN) \
 		$(foreach t,$(SPACE_DENSE_PROGRAMS),tests/petta/$(t).metta tests/petta/$(t).expected)
 	@$(call cetta_exec,./$(SPACE_DENSE_TEST_BIN))
+	@$(call cetta_exec,./$(SPACE_TUPLES_TEST_BIN))
 	@set -eu; actual=$$(mktemp); trap 'rm -f "$$actual"' EXIT; \
 	for t in $(SPACE_DENSE_PROGRAMS); do \
 		for mode in off eager; do \
@@ -6232,11 +6243,11 @@ test-space-dense: $(SPACE_DENSE_TEST_BIN) $(BIN) \
 				--program tests/petta/$$t.metta \
 				--expected tests/petta/$$t.expected --actual "$$actual" \
 				--cetta $(CETTA_BIN_INVOKE) --profile extended --lang petta; then \
-				echo "FAIL: $$t, relations as bits $$mode"; exit 1; \
+				echo "FAIL: $$t, relations kept $$mode"; exit 1; \
 			fi; \
 		done; \
 	done; \
-	echo "PASS: relations kept as bits answer as rows do ($(SPACE_DENSE_PROGRAMS))"
+	echo "PASS: relations kept as bits or tables answer as rows do ($(SPACE_DENSE_PROGRAMS))"
 
 # A dense relation kept as bits grows by its bits: from one size to twice it,
 # its peak memory grows by at most a third of what it grows as rows.
@@ -6268,12 +6279,16 @@ test-space-profiles-scaling: $(BIN) tests/support/check_space_profiles_scaling.p
 		$(SPACE_PROFILES_SCALING_ITEMS)
 
 # A count asked once rents a scan and builds no index; counts that keep
-# coming buy their column's index.
+# coming buy their column's index: as rows, and as a table of tuples, whose
+# column index is small enough to measure only at a larger size.
 COUNT_FOOTPRINT_FACTS ?= 200000
+COUNT_FOOTPRINT_TABLE_FACTS ?= 600000
 .PHONY: test-count-footprint
 test-count-footprint: $(BIN) tests/support/check_count_footprint.py
+	@CETTA_SPACE_DENSE=off $(CETTA_SCRIPT_RUN_ENV) python3 \
+		tests/support/check_count_footprint.py $(COUNT_FOOTPRINT_FACTS)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_count_footprint.py \
-		$(COUNT_FOOTPRINT_FACTS)
+		$(COUNT_FOOTPRINT_TABLE_FACTS)
 
 # The counting checks must catch a hold, a release, a cascade or a reused
 # slot's candidacy gone missing.  The mutants check in full at every
@@ -28362,6 +28377,13 @@ test-petta-type-guard-versions-higher-order: $(BIN) tests/petta/type_guard_versi
 			exit 1; \
 		fi; \
 	done; \
+	verdicts=$$(CETTA_PETTA_VERSIONS_DEBUG=1 $(call cetta_exec,./$(BIN)) \
+		--lang petta tests/petta/type_guard_versions_higher_order.metta 2>&1 >/dev/null); \
+	if ! printf '%s\n' "$$verdicts" | grep -qF 'contract hop_Spec_[ctx-upd,ctx-stop]/4: version'; then \
+		echo "FAIL: a chainer whose function argument is called as a dispatch keeps its version"; \
+		printf '%s\n' "$$verdicts" | grep -F 'hop_Spec_' | head -5; \
+		exit 1; \
+	fi; \
 	echo "PASS: versions of higher-order and calling functions keep the protocol's answers"
 
 .PHONY: test-petta-type-guard-versions
@@ -28941,11 +28963,12 @@ test-petta-semantics: test-native-query
 # terms; rows and effects the native path declines among them.  Fixtures:
 # let bodies that are effects, ground or not, and calls that are neither;
 # nested columns with fixed parts and repeated variables, and rows holding a
-# variable or a float inside a term.  The stored-row law: a lazy match's
-# rows, read from their records, answer as the same rows decoded.  The
-# id-probe law: a native join's legs read the same rows by the ids of their
-# columns as by their probes, in spaces past the row-by-row threshold, with
-# rows holding variables and rows marked by removals.
+# variable or a float inside a term; matches inside matches whose effects
+# meet a later read of theirs, and whose effects meet none.  The stored-row
+# law: a lazy match's rows, read from their records, answer as the same rows
+# decoded.  The id-probe law: a native join's legs read the same rows by the
+# ids of their columns as by their probes, in spaces past the row-by-row
+# threshold, with rows holding variables and rows marked by removals.
 test-native-query: $(BIN) tests/support/check_native_query.py \
 		tests/support/check_snapshot_regions.py \
 		tests/support/check_oem_stored_rows.py \
@@ -28957,7 +28980,9 @@ test-native-query: $(BIN) tests/support/check_native_query.py \
 		tests/petta/native_nested_columns.metta \
 		tests/petta/native_nested_columns.expected \
 		tests/petta/native_open_row_removal.metta \
-		tests/petta/native_open_row_removal.expected
+		tests/petta/native_open_row_removal.expected \
+		tests/petta/native_afresh_reads.metta \
+		tests/petta/native_afresh_reads.expected
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_native_query.py ./$(BIN) --programs 200
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_snapshot_regions.py ./$(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_oem_stored_rows.py ./$(BIN) --programs 200
@@ -28971,7 +28996,7 @@ test-native-query: $(BIN) tests/support/check_native_query.py \
 		exit 1; \
 	fi; \
 	echo "PASS: rows holding variables meet a cell built at run time"
-	@for stem in native_effect_bodies native_nested_columns native_open_row_removal; do \
+	@for stem in native_effect_bodies native_nested_columns native_open_row_removal native_afresh_reads; do \
 		for route in "" CETTA_NATIVE_QUERY_REFERENCE=1; do \
 			answers=$$(env $$route $(CETTA_BIN_INVOKE) --profile extended \
 				--lang petta tests/petta/$$stem.metta 2>&1); \
@@ -28982,7 +29007,7 @@ test-native-query: $(BIN) tests/support/check_native_query.py \
 			fi; \
 		done; \
 	done; \
-	echo "PASS: let bodies, nested columns and removals of rows holding variables answer alike on the native and ordinary paths"
+	echo "PASS: let bodies, nested columns, removals of rows holding variables and matches read afresh after effects answer alike on the native and ordinary paths"
 
 .PHONY: test-native-query-stats
 test-petta-semantics: test-native-query-stats
@@ -29042,11 +29067,11 @@ test-native-query-mutations: $(BIN) tests/support/check_native_query.py \
 	@set -eu; \
 	mutation_dir=runtime/bootstrap/native-query-mutations-$(BUILD_OBJ_TAG); \
 	mkdir -p "$$mutation_dir"; \
-	for kind in copies collected-copies instance-slot atom-slot flush disjoint level-key loop-bound loop-release rows-fixed dense-summed dense-link dense-repeat dense-popcount dense-diagonal nested-repeat nested-constant leg-space open-row-removal guard-ignored guard-unchecked guard-uncertified directive-answers fold-count fold-places inline-arguments inline-typed inline-equations guard-plain destructure-oem-count case-default arith-op insert-filter snapshot-occurrence scope-let scope-legs scope-template scope-binding scope-value scope-own typed-hold typed-arguments typed-observed dispatch-unique exists-negated exists-machine exists-counted fold-each guard-case-set exists-case-branch exists-oem-case snapshot-stream-scope admit-unresolved head-inert let-head bag-summed distinct-ignored distinct-count unique-extended inline-arity; do \
+	for kind in copies collected-copies instance-slot atom-slot flush disjoint level-key loop-bound loop-release rows-fixed dense-summed dense-link dense-repeat dense-popcount dense-diagonal nested-repeat nested-constant leg-space open-row-removal guard-ignored guard-unchecked guard-uncertified directive-answers fold-count fold-places inline-arguments inline-typed inline-equations guard-plain destructure-oem-count case-default arith-op insert-filter snapshot-occurrence scope-let scope-legs scope-template scope-binding scope-value scope-own typed-hold typed-arguments typed-observed dispatch-unique exists-negated exists-machine exists-counted fold-each guard-case-set exists-case-branch exists-oem-case snapshot-stream-scope admit-unresolved head-inert let-head bag-summed distinct-ignored distinct-count unique-extended inline-arity afresh-unchecked afresh-ignored; do \
 		case "$$kind" in \
 			level-key) module=relational_cursor;; \
 			dense-*) module=dense_relation;; \
-			open-row-removal|guard-unchecked|guard-uncertified|guard-plain|directive-answers|inline-*|case-default|arith-op|scope-let|scope-legs|dispatch-unique|guard-case-set|snapshot-stream-scope|let-head) module=eval;; \
+			open-row-removal|guard-unchecked|guard-uncertified|guard-plain|directive-answers|inline-*|case-default|arith-op|scope-let|scope-legs|dispatch-unique|guard-case-set|snapshot-stream-scope|let-head|afresh-ignored) module=eval;; \
 			fold-count|snapshot-occurrence|scope-binding|scope-value|typed-*|exists-machine|fold-each|exists-case-branch|unique-extended) module=petta_search_machine;; \
 			fold-places) module=native_fold;; \
 			destructure-oem-count|exists-negated|exists-oem-case|admit-unresolved) module=open_equation_machine;; \
@@ -29068,7 +29093,7 @@ test-native-query-mutations: $(BIN) tests/support/check_native_query.py \
 			exit 1; \
 		fi; \
 	done; \
-	echo "PASS: the native query law rejects all sixty mutants"
+	echo "PASS: the native query law rejects all sixty-two mutants"
 
 .PHONY: test-oem-stored-rows-mutations
 # The stored-row law rejects each defect a mutant of the open equation

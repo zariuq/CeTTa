@@ -1010,17 +1010,10 @@ static bool contract_eval(ContractScan *scan, Atom *expr,
     }
     if (plan->computation.control.operation == CETTA_CONTROL_MATCH_BRANCHES)
         return contract_case(scan, expr, plan, depth, out);
-    if (cetta_control_operation_is_control_form(plan->computation.control))
-        return false;
-    bool static_call = head->kind == ATOM_SYMBOL &&
-        plan->role == PETTA_PLAN_STATIC_CALL;
-    if (static_call && expr->expr.len == 4u &&
-        head->sym_id == g_builtin_syms.match)
-        return contract_match(scan, expr, plan, depth, out);
     /* `(reduce (f a…))` over a written call is that call under the run-time
      * dispatch's handler, which the compiled call keeps. */
-    if (static_call && expr->expr.len == 2u &&
-        petta_semantics_form(head->sym_id) == PETTA_FORM_REDUCE &&
+    if (plan->computation.control.operation == CETTA_CONTROL_DISPATCH &&
+        plan->role == PETTA_PLAN_STATIC_CALL && expr->expr.len == 2u &&
         plan->child_count == 2u) {
         Atom *call = expr->expr.elems[1];
         const PettaPlanNode *call_plan = &plan->children[1];
@@ -1031,6 +1024,13 @@ static bool contract_eval(ContractScan *scan, Atom *expr,
             return false;
         return contract_eval(scan, call, call_plan, depth + 1u, out);
     }
+    if (cetta_control_operation_is_control_form(plan->computation.control))
+        return false;
+    bool static_call = head->kind == ATOM_SYMBOL &&
+        plan->role == PETTA_PLAN_STATIC_CALL;
+    if (static_call && expr->expr.len == 4u &&
+        head->sym_id == g_builtin_syms.match)
+        return contract_match(scan, expr, plan, depth, out);
     if (static_call && head->sym_id == scan->head &&
         expr->expr.len == scan->arity + 1u)
         return contract_self_call(scan, expr, plan, depth, out);

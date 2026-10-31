@@ -2220,8 +2220,166 @@ static bool space_occurrence_cursor_capture(
     return space_read_token_prefix_intact(cursor->read);
 }
 
+/* ── Facts a relation kept, lent by occurrence cursors ─────────────────── */
+
+/* The facts of a space's relation that a pattern selects, taken when an
+ * occurrence cursor begins and lent after its rows: their columns, and each
+ * fact's record once a cursor has lent it.  It lists its ids to the
+ * collector while it lives, so a fact lent stays while a cursor sharing it
+ * lives, and the columns stay though the relation goes. */
+typedef struct SpaceKeptOccurrences {
+    uint32_t references;
+    uint32_t arity;
+    TermUniverse *universe;
+    AtomId head_id;
+    size_t len, cap;
+    AtomId *columns;
+    AtomId *records;
+} SpaceKeptOccurrences;
+
+static void space_kept_occurrences_roots(const TermUniverse *universe,
+                                         TermUniverseRootVisit visit,
+                                         void *visit_context, void *ctx) {
+    const SpaceKeptOccurrences *kept = ctx;
+    (void)universe;
+    visit(visit_context, kept->head_id);
+    for (size_t i = 0u; i < kept->len * kept->arity; i++)
+        visit(visit_context, kept->columns[i]);
+    for (size_t i = 0u; kept->records && i < kept->len; i++) {
+        if (kept->records[i] != CETTA_ATOM_ID_NONE)
+            visit(visit_context, kept->records[i]);
+    }
+}
+
+static void space_kept_occurrences_release(SpaceKeptOccurrences *kept) {
+    if (!kept || --kept->references != 0u)
+        return;
+    term_universe_remove_root_provider(kept->universe,
+                                       space_kept_occurrences_roots, kept);
+    free(kept->columns);
+    free(kept->records);
+    free(kept);
+}
+
+static bool space_kept_occurrences_push(void *context,
+                                        const CettaDenseId *tuple) {
+    SpaceKeptOccurrences *kept = context;
+    if (kept->len == kept->cap) {
+        size_t cap = kept->cap ? kept->cap * 2u : 16u;
+        AtomId *columns = realloc(kept->columns,
+                                  cap * kept->arity * sizeof(*columns));
+        if (!columns)
+            return false;
+        kept->columns = columns;
+        kept->cap = cap;
+    }
+    for (uint32_t c = 0u; c < kept->arity; c++)
+        kept->columns[kept->len * kept->arity + c] = (AtomId)tuple[c];
+    kept->len++;
+    return true;
+}
+
+/* The facts of the space's relation that PATTERN selects, for an occurrence
+ * cursor beginning now.  NULL when no relation of the space answers for the
+ * pattern: its readers give the relation back to the rows first.  A column
+ * that is an expression selects none of the relation's facts, whose columns
+ * are atoms; a number other than an integer may equal one by value, which
+ * the rows decide. */
+static SpaceKeptOccurrences *space_dense_occurrences(Space *s,
+                                                     const Atom *pattern) {
+    if (!s || space_dense_facts(s) == 0u || !pattern ||
+        pattern->kind != ATOM_EXPR || pattern->expr.len < 2u ||
+        pattern->expr.len > CETTA_TUPLE_MAX_ARITY + 1u ||
+        pattern->expr.elems[0]->kind != ATOM_SYMBOL)
+        return NULL;
+    SpaceDenseForm form;
+    if (!space_dense_form(s, pattern->expr.elems[0]->sym_id, &form) ||
+        (CettaExprLen)form.arity + 1u != pattern->expr.len)
+        return NULL;
+    CettaDenseId fixed[CETTA_TUPLE_MAX_ARITY];
+    bool none = false;
+    for (uint32_t c = 0u; c < form.arity; c++) {
+        Atom *column = pattern->expr.elems[c + 1u];
+        fixed[c] = CETTA_DENSE_ANY;
+        if (column->kind == ATOM_VAR)
+            continue;
+        if (column->kind == ATOM_EXPR) {
+            none = true;
+            continue;
+        }
+        if (column->kind != ATOM_SYMBOL &&
+            (column->kind != ATOM_GROUNDED ||
+             (column->ground.gkind != GV_INT &&
+              column->ground.gkind != GV_BOOL &&
+              column->ground.gkind != GV_STRING)))
+            return NULL;
+        AtomId id = term_universe_lookup_atom_id(s->native.universe, column);
+        if (id == CETTA_ATOM_ID_NONE)
+            none = true;
+        else
+            fixed[c] = id;
+    }
+    SpaceKeptOccurrences *kept = calloc(1u, sizeof(*kept));
+    if (!kept)
+        return NULL;
+    kept->references = 1u;
+    kept->arity = form.arity;
+    kept->universe = s->native.universe;
+    kept->head_id = form.head_id;
+    bool ok = none || space_dense_form_each(form, fixed,
+                                            space_kept_occurrences_push, kept);
+    if (ok && kept->len != 0u) {
+        kept->records = malloc(kept->len * sizeof(*kept->records));
+        ok = kept->records != NULL;
+        for (size_t i = 0u; ok && i < kept->len; i++)
+            kept->records[i] = CETTA_ATOM_ID_NONE;
+    }
+    if (!ok || !term_universe_add_root_provider(
+                   kept->universe, space_kept_occurrences_roots, kept)) {
+        free(kept->columns);
+        free(kept->records);
+        free(kept);
+        return NULL;
+    }
+    return kept;
+}
+
+/* The record of fact I, made when it is first lent. */
+static AtomId space_kept_occurrences_id(SpaceKeptOccurrences *kept, size_t i) {
+    if (kept->records[i] == CETTA_ATOM_ID_NONE) {
+        AtomId kids[CETTA_TUPLE_MAX_ARITY + 1u];
+        kids[0] = kept->head_id;
+        memcpy(&kids[1], &kept->columns[i * kept->arity],
+               kept->arity * sizeof(*kids));
+        kept->records[i] = tu_expr_from_ids(kept->universe, kids,
+                                            kept->arity + 1u);
+    }
+    return kept->records[i];
+}
+
+static bool space_occurrence_cursor_init_rows(Space *s, Atom *pattern,
+                                              SpaceOccurrenceCursor *cursor);
+
+/* The rows the pattern may match, then the facts the space's relation for
+ * it kept: the relation stays, and only the facts lent get records. */
 bool space_occurrence_cursor_init(Space *s, Atom *pattern,
                                   SpaceOccurrenceCursor *cursor) {
+    SpaceKeptOccurrences *kept = space_dense_occurrences(s, pattern);
+    if (!kept)
+        return space_occurrence_cursor_init_rows(s, pattern, cursor);
+    space_dense_reading_begin();
+    bool ok = space_occurrence_cursor_init_rows(s, pattern, cursor);
+    space_dense_reading_end();
+    if (!ok) {
+        space_kept_occurrences_release(kept);
+        return false;
+    }
+    cursor->kept = kept;
+    return true;
+}
+
+static bool space_occurrence_cursor_init_rows(Space *s, Atom *pattern,
+                                              SpaceOccurrenceCursor *cursor) {
     space_dense_settle_for_pattern(s, pattern);
     CETTA_SCOPED_SHARED_TRANSITION(transition);
     space_occurrence_cursor_init_empty(cursor);
@@ -2336,11 +2494,15 @@ static bool space_occurrence_cursor_copy(
     dst->heap_len = 0u;
     dst->occurrences = NULL;
     dst->pinned = false;
+    if (dst->kept)
+        dst->kept->references++;
     if (rewind) {
         dst->full_next = 0u;
         dst->flat_next = 0u;
         dst->head = src->head_start;
         dst->has_last = false;
+        dst->kept_next = 0u;
+        dst->kept_turn = false;
     }
     if (src->flat_mode && src->flat_len > 0u) {
         dst->flat = cetta_malloc(sizeof(*dst->flat) * (size_t)src->flat_len);
@@ -2412,7 +2574,7 @@ static bool space_occurrence_cursor_yield(
 /* Inlined into both readers, the atom's and the id's, as it was into the
  * one reader there was. */
 static inline __attribute__((always_inline)) SpaceOccurrenceCursorStep
-space_occurrence_cursor_next_locked(
+space_occurrence_cursor_next_row(
     SpaceOccurrenceCursor *cursor, CettaIndex *logical_index_out) {
     if (logical_index_out)
         *logical_index_out = 0u;
@@ -2554,6 +2716,26 @@ static Atom *space_pinned_occurrences_atom_at_row(
         : NULL;
 }
 
+/* The next row, then the next fact the relation kept. */
+static inline __attribute__((always_inline)) SpaceOccurrenceCursorStep
+space_occurrence_cursor_next_locked(
+    SpaceOccurrenceCursor *cursor, CettaIndex *logical_index_out) {
+    if (!cursor || !cursor->kept_turn) {
+        SpaceOccurrenceCursorStep step =
+            space_occurrence_cursor_next_row(cursor, logical_index_out);
+        if (step != SPACE_OCCURRENCE_CURSOR_END || !cursor->kept)
+            return step;
+        cursor->kept_turn = true;
+        cursor->has_last = false;
+    }
+    if (cursor->kept_next >= cursor->kept->len)
+        return SPACE_OCCURRENCE_CURSOR_END;
+    cursor->kept_last = cursor->kept_next++;
+    if (logical_index_out)
+        *logical_index_out = cursor->ceiling + (CettaIndex)cursor->kept_last;
+    return SPACE_OCCURRENCE_CURSOR_ITEM;
+}
+
 SpaceOccurrenceCursorStep space_occurrence_cursor_next(
         SpaceOccurrenceCursor *cursor, CettaIndex *logical_index_out, Atom **atom_out) {
     CETTA_SCOPED_SHARED_TRANSITION(transition);
@@ -2561,9 +2743,17 @@ SpaceOccurrenceCursorStep space_occurrence_cursor_next(
         *atom_out = NULL;
     SpaceOccurrenceCursorStep step =
         space_occurrence_cursor_next_locked(cursor, logical_index_out);
-    if (step == SPACE_OCCURRENCE_CURSOR_ITEM && atom_out)
-        *atom_out = space_pinned_occurrences_atom_at_row(
-            cursor->occurrences, cursor->last_row);
+    if (step == SPACE_OCCURRENCE_CURSOR_ITEM && atom_out) {
+        if (cursor->kept_turn) {
+            AtomId id = space_kept_occurrences_id(cursor->kept,
+                                                  cursor->kept_last);
+            *atom_out = id != CETTA_ATOM_ID_NONE
+                ? term_universe_get_atom(cursor->kept->universe, id) : NULL;
+        } else {
+            *atom_out = space_pinned_occurrences_atom_at_row(
+                cursor->occurrences, cursor->last_row);
+        }
+    }
     return step;
 }
 
@@ -2576,8 +2766,10 @@ SpaceOccurrenceCursorStep space_occurrence_cursor_next_id(
     SpaceOccurrenceCursorStep step =
         space_occurrence_cursor_next_locked(cursor, logical_index_out);
     if (step == SPACE_OCCURRENCE_CURSOR_ITEM && id_out)
-        *id_out = space_pinned_occurrences_id_at_row(cursor->occurrences,
-                                                     cursor->last_row);
+        *id_out = cursor->kept_turn
+            ? space_kept_occurrences_id(cursor->kept, cursor->kept_last)
+            : space_pinned_occurrences_id_at_row(cursor->occurrences,
+                                                 cursor->last_row);
     return step;
 }
 
@@ -2595,6 +2787,14 @@ Atom *space_occurrence_cursor_atom(const SpaceOccurrenceCursor *cursor,
         cursor ? cursor->occurrences : NULL;
     if (!occurrences)
         return NULL;
+    /* Past the ceiling are the facts the relation kept. */
+    if (cursor->kept && index >= cursor->ceiling) {
+        size_t i = (size_t)(index - cursor->ceiling);
+        AtomId id = i < cursor->kept->len
+            ? space_kept_occurrences_id(cursor->kept, i) : CETTA_ATOM_ID_NONE;
+        return id != CETTA_ATOM_ID_NONE
+            ? term_universe_get_atom(cursor->kept->universe, id) : NULL;
+    }
     if (cursor->has_last && cursor->last_logical == index)
         return space_pinned_occurrences_atom_at_row(occurrences, cursor->last_row);
     if (occurrences->space)
@@ -2611,6 +2811,7 @@ void space_occurrence_cursor_release(SpaceOccurrenceCursor *cursor) {
         return;
     if (cursor->pinned)
         space_pinned_occurrences_release(cursor->occurrences);
+    space_kept_occurrences_release(cursor->kept);
     free(cursor->nodes);
     free(cursor->leaf_pos);
     free(cursor->flat);
@@ -4860,48 +5061,57 @@ void space_rows_release(Space *s) {
         space_release_rows(s, 0u, s->native.len);
 }
 
-/* ── Relations kept as bits ─────────────────────────────────────────────── */
+/* ── Relations kept as bits or tables ───────────────────────────────────── */
 
 /*
- * A multiset or set space may keep the ground facts (h a b) of a head h as
- * bits (space_dense.h): the facts whose rows are data only, whose columns
- * are atoms equal only to themselves.  The space is then its rows and, for
- * each such head, a set of pairs.  A copy of a pair the bits hold already is
- * a row, so the space is the same bag; a removal takes a row copy first and
- * a pair after, which leaves the same bag either way.
+ * A multiset or set space may keep the ground facts (h c1 ... ck) of a head
+ * h out of its rows: the facts of k columns, 1 <= k <= CETTA_TUPLE_MAX_ARITY,
+ * whose columns are atoms equal only to themselves.  The head's relation is
+ * bits when k is two (space_dense.h) and a table of tuples otherwise
+ * (space_tuples.h).  The space is then its rows and, for each such head, its
+ * relation.  A copy of a fact the relation holds already is a row, so the
+ * space is the same bag; a removal takes a row copy first and a fact after,
+ * which leaves the same bag either way.
  *
- * The bits answer adds, removals, membership, the length and the native
- * query's legs.  Every other reader gives a head's pairs back to the rows
+ * The relations answer adds, removals, membership, the length and the native
+ * query's legs.  Every other reader gives a head's facts back to the rows
  * first (space_dense_settle): positional reads past the rows, and patterns
  * whose head is the head or is not a symbol.  The facts then stay rows.
  *
- * A head is counted while its facts are rows; once they are enough for bits,
- * its later facts go to bits, while bits cost less than rows would.
- * CETTA_SPACE_DENSE=eager gives a head bits from its first fact, so a run
- * reads bits wherever a head qualifies; =off keeps every fact a row.
+ * A head is counted while its facts are rows; once they are enough, its
+ * later facts go to its relation, while that costs less than rows would.  A
+ * head's relation has the columns of the first fact counted; facts of the
+ * head with other columns stay rows.  CETTA_SPACE_DENSE=eager keeps a head's
+ * relation from its first fact, so a run reads relations wherever a head
+ * qualifies; =off keeps every fact a row.
  */
 enum {
     SPACE_DENSE_COUNTING = 0,
-    SPACE_DENSE_BITS,
+    SPACE_DENSE_KEPT,
     SPACE_DENSE_ROWS,
 };
 
 #define SPACE_DENSE_THRESHOLD 4096u
-/* What a fact costs as a row, in bytes, against which its bits are weighed:
- * its record, entry, intern slot, row and index entries. */
+/* What a fact costs as a row, in bytes, against which its relation is
+ * weighed: its record, entry, intern slot, row and index entries. */
 #define SPACE_DENSE_ROW_BYTES 96u
 
 typedef struct {
     SymbolId head;
     AtomId head_id;
     uint8_t state;
-    /* Counting: the head's facts added as rows.  Bits: at least as many as
+    /* The columns of the facts the relation holds: the first counted
+     * fact's. */
+    uint8_t arity;
+    /* Counting: the head's facts added as rows.  Kept: at least as many as
      * its facts kept as rows, those left at promotion and any added since;
      * zero when none is. */
     CettaCount rows;
     /* The head's facts in a batch about to be added (space_dense_prepare_adds). */
     CettaCount batch;
+    /* Kept: the relation, bits for two columns and a table otherwise. */
     CettaDenseRelation bits;
+    CettaTupleTable table;
 } SpaceDenseHead;
 
 struct SpaceDense {
@@ -4910,21 +5120,30 @@ struct SpaceDense {
     /* Head symbol -> position plus one, open-addressed. */
     uint32_t *index;
     uint32_t index_mask;
-    /* Giving bits back to rows, which changes no fact of the space: the
-     * rows it adds publish nothing. */
+    /* Giving a relation back to rows, which changes no fact of the space:
+     * the rows it adds publish nothing. */
     bool settling;
     /* A row whose head is open (a variable, a term without a symbol head, or
-     * one stored without a record) has been in the space since these bits
+     * one stored without a record) has been in the space since its relations
      * began: such a row may stand for a fact of any head. */
     bool open_rows;
 };
 
-/* Readers of bits on this thread: the guards leave the bits alone while one
- * reads them and asks the rows for the rest. */
-static _Thread_local uint32_t g_space_dense_reading_bits = 0u;
+/* Readers of relations on this thread: the guards leave the relations alone
+ * while one reads them and asks the rows for the rest. */
+static _Thread_local uint32_t g_space_dense_reading = 0u;
 
-/* CETTA_SPACE_DENSE_TRACE=1 prints each head that takes bits and each that
- * gives them back. */
+/* The source of dense epochs: each change of form takes a fresh one, so no
+ * value repeats across spaces or their relations' lives. */
+static _Atomic uint64_t g_space_dense_epochs = 0u;
+
+static void space_dense_touch(Space *s) {
+    s->native.dense_epoch = atomic_fetch_add_explicit(
+        &g_space_dense_epochs, 1u, memory_order_relaxed) + 1u;
+}
+
+/* CETTA_SPACE_DENSE_TRACE=1 prints each head that takes a relation and each
+ * that gives one back. */
 static bool space_dense_trace(void) {
     static int trace = -1;
     if (trace < 0) {
@@ -4935,7 +5154,7 @@ static bool space_dense_trace(void) {
 }
 
 /* CETTA_SPACE_DENSE: off (or 0) keeps every fact a row; eager gives a head
- * bits from its first fact; anything else, or nothing, from
+ * its relation from its first fact; anything else, or nothing, from
  * SPACE_DENSE_THRESHOLD facts. */
 enum { SPACE_DENSE_MODE_OFF, SPACE_DENSE_MODE_ON, SPACE_DENSE_MODE_EAGER };
 
@@ -4956,14 +5175,14 @@ static bool space_dense_off(void) {
     return space_dense_mode() == SPACE_DENSE_MODE_OFF;
 }
 
-/* The facts a head takes bits at. */
+/* The facts a head takes its relation at. */
 static uint64_t space_dense_threshold(void) {
     return space_dense_mode() == SPACE_DENSE_MODE_EAGER ? 1u
                                                          : SPACE_DENSE_THRESHOLD;
 }
 
-/* Whether the space may keep bits: a native multiset or set space of its
- * own rows only, outside a concurrent-evaluation scope. */
+/* Whether the space may keep relations: a native multiset or set space of
+ * its own rows only, outside a concurrent-evaluation scope. */
 static bool space_dense_admits(const Space *s) {
     return s && (s->kind == SPACE_KIND_ATOM || s->kind == SPACE_KIND_SET) &&
            !s->module_own_view && !space_has_overlay_base(s) &&
@@ -4974,7 +5193,7 @@ static bool space_dense_admits(const Space *s) {
            !cetta_shared_transition_scope_active() && !space_dense_off();
 }
 
-/* A column the bits can hold: an atom equal only to itself, so its id is
+/* A column a relation can hold: an atom equal only to itself, so its id is
  * its identity. */
 static bool space_dense_column(const TermUniverse *universe, AtomId id) {
     const CettaTermHdr *hdr = tu_hdr(universe, id);
@@ -4987,29 +5206,38 @@ static bool space_dense_column(const TermUniverse *universe, AtomId id) {
             hdr->subtag == GV_STRING);
 }
 
-/* Whether the row ID is a fact the bits could hold: a ground (h a b) whose
- * row is data only, a and b columns the bits hold. */
+/* Whether an expression of LEN elements has the columns of a fact some
+ * relation could hold. */
+static inline bool space_dense_fact_len(uint32_t len) {
+    return len >= 2u && len <= CETTA_TUPLE_MAX_ARITY + 1u;
+}
+
+/* Whether the row ID is a fact a relation could hold: a ground
+ * (h c1 ... ck) of a head other than the program's (=, =%, :, <:), each
+ * column one a relation holds.  Its columns go to COLUMNS and their number
+ * to *ARITY. */
 static bool space_dense_fact(const Space *s, AtomId id, SymbolId *head,
-                             AtomId *head_id, AtomId *a, AtomId *b) {
+                             AtomId *head_id, AtomId *columns,
+                             uint32_t *arity) {
     const TermUniverse *universe = s->native.universe;
     const CettaTermHdr *hdr = tu_hdr(universe, id);
     if (!hdr || hdr->tag != ATOM_EXPR ||
-        (hdr->aux32 & CETTA_TERM_HDR_DATA_MASK) != 3u ||
+        !space_dense_fact_len(hdr->aux32 & CETTA_TERM_HDR_DATA_MASK) ||
         hdr->sym_or_head == SYMBOL_ID_NONE)
         return false;
     SymbolId h = hdr->sym_or_head;
     if (h == g_builtin_syms.equals || h == g_builtin_syms.equals_percent ||
         h == g_builtin_syms.colon || h == g_builtin_syms.subtype)
         return false;
-    AtomId first = tu_child_from_header(universe, hdr, 1u);
-    AtomId second = tu_child_from_header(universe, hdr, 2u);
-    if (!space_dense_column(universe, first) ||
-        !space_dense_column(universe, second))
-        return false;
+    uint32_t k = (hdr->aux32 & CETTA_TERM_HDR_DATA_MASK) - 1u;
+    for (uint32_t c = 0u; c < k; c++) {
+        columns[c] = tu_child_from_header(universe, hdr, c + 1u);
+        if (!space_dense_column(universe, columns[c]))
+            return false;
+    }
     *head = h;
     *head_id = tu_child_from_header(universe, hdr, 0u);
-    *a = first;
-    *b = second;
+    *arity = k;
     return true;
 }
 
@@ -5031,6 +5259,81 @@ static SpaceDenseHead *space_dense_find(const struct SpaceDense *dense,
     }
 }
 
+/* ── A head's relation, whichever its form ── */
+
+static inline bool space_dense_bits(const SpaceDenseHead *head) {
+    return head->arity == 2u;
+}
+
+static uint64_t space_dense_kept_facts(const SpaceDenseHead *head) {
+    return space_dense_bits(head) ? cetta_dense_relation_pairs(&head->bits)
+                                  : cetta_tuple_table_tuples(&head->table);
+}
+
+/* The ids the relation numbers, in order of numbering. */
+static uint32_t space_dense_kept_numbered(const SpaceDenseHead *head) {
+    return space_dense_bits(head) ? head->bits.len : head->table.len;
+}
+
+static AtomId space_dense_kept_id(const SpaceDenseHead *head, uint32_t n) {
+    return (AtomId)(space_dense_bits(head) ? head->bits.ids[n]
+                                           : head->table.ids[n]);
+}
+
+static uint64_t space_dense_kept_bytes(const SpaceDenseHead *head) {
+    return space_dense_bits(head) ? cetta_dense_relation_bytes(&head->bits)
+                                  : cetta_tuple_table_bytes(&head->table);
+}
+
+static void space_dense_kept_free(SpaceDenseHead *head) {
+    cetta_dense_relation_free(&head->bits);
+    cetta_tuple_table_free(&head->table);
+}
+
+/* A pair visit of bits seen as a visit of tuples. */
+typedef struct {
+    CettaTupleVisit visit;
+    void *context;
+} SpaceDensePairVisit;
+
+static bool space_dense_pair_as_tuple(void *context, CettaDenseId a,
+                                      CettaDenseId b) {
+    const SpaceDensePairVisit *pair = context;
+    CettaDenseId tuple[2] = {a, b};
+    return pair->visit(pair->context, tuple);
+}
+
+bool space_dense_form_each(SpaceDenseForm form, const CettaDenseId *fixed,
+                           CettaTupleVisit visit, void *context) {
+    if (form.bits) {
+        SpaceDensePairVisit pair = {.visit = visit, .context = context};
+        return cetta_dense_relation_each(form.bits,
+            fixed ? fixed[0] : CETTA_DENSE_ANY,
+            fixed ? fixed[1] : CETTA_DENSE_ANY,
+            space_dense_pair_as_tuple, &pair);
+    }
+    return cetta_tuple_table_each(form.table, fixed, visit, context);
+}
+
+uint64_t space_dense_form_count(SpaceDenseForm form,
+                                const CettaDenseId *fixed) {
+    if (form.bits) {
+        CettaDenseId a = fixed ? fixed[0] : CETTA_DENSE_ANY;
+        CettaDenseId b = fixed ? fixed[1] : CETTA_DENSE_ANY;
+        if (a == CETTA_DENSE_ANY && b == CETTA_DENSE_ANY)
+            return cetta_dense_relation_pairs(form.bits);
+        if (a != CETTA_DENSE_ANY && b != CETTA_DENSE_ANY)
+            return cetta_dense_relation_contains(form.bits, a, b) ? 1u : 0u;
+        return cetta_dense_relation_count(form.bits, a, b);
+    }
+    return cetta_tuple_table_count(form.table, fixed);
+}
+
+uint64_t space_dense_form_facts(SpaceDenseForm form) {
+    return form.bits ? cetta_dense_relation_pairs(form.bits)
+                     : cetta_tuple_table_tuples(form.table);
+}
+
 /* Whether a row's head is open: it may stand for a fact of any head. */
 static bool space_dense_row_head_open(const TermUniverse *universe, AtomId id) {
     const CettaTermHdr *hdr = tu_hdr(universe, id);
@@ -5038,9 +5341,10 @@ static bool space_dense_row_head_open(const TermUniverse *universe, AtomId id) {
            (hdr->tag == ATOM_EXPR && hdr->sym_or_head == SYMBOL_ID_NONE);
 }
 
-/* The head's entry, made when it is new; NULL without room. */
+/* The head's entry, made when it is new with relations of ARITY columns;
+ * NULL without room, or when its relation has other columns. */
 static SpaceDenseHead *space_dense_head(Space *s, SymbolId head,
-                                        AtomId head_id) {
+                                        AtomId head_id, uint32_t arity) {
     struct SpaceDense *dense = s->native.dense;
     if (!dense) {
         dense = calloc(1u, sizeof(*dense));
@@ -5053,7 +5357,7 @@ static SpaceDenseHead *space_dense_head(Space *s, SymbolId head,
     }
     SpaceDenseHead *found = space_dense_find(dense, head);
     if (found)
-        return found;
+        return found->arity == arity ? found : NULL;
     if (!dense->index || (uint64_t)(dense->len + 1u) * 2u >
                              (uint64_t)dense->index_mask + 1u) {
         uint32_t size = dense->index ? (dense->index_mask + 1u) * 2u : 16u;
@@ -5080,12 +5384,16 @@ static SpaceDenseHead *space_dense_head(Space *s, SymbolId head,
         dense->cap = cap;
     }
     SpaceDenseHead *entry = &dense->heads[dense->len];
-    *entry = (SpaceDenseHead){.head = head, .head_id = head_id};
+    *entry = (SpaceDenseHead){.head = head, .head_id = head_id,
+                              .arity = (uint8_t)arity};
     cetta_dense_relation_init(&entry->bits);
+    if (!cetta_tuple_table_init(&entry->table, arity))
+        return NULL;
     uint32_t i = space_dense_head_hash(head) & dense->index_mask;
     while (dense->index[i] != 0u)
         i = (i + 1u) & dense->index_mask;
     dense->index[i] = ++dense->len;
+    space_dense_touch(s);
     return entry;
 }
 
@@ -5093,24 +5401,34 @@ static void space_dense_release_id(void *context, CettaDenseId id) {
     term_universe_release(((Space *)context)->native.universe, (AtomId)id);
 }
 
-/* Hold the ids numbered from FROM on, as the bits' references. */
-static void space_dense_hold_numbered(Space *s, const SpaceDenseHead *head,
-                                      uint32_t from) {
-    for (uint32_t n = from; n < head->bits.len; n++)
-        space_hold_row(s, (AtomId)head->bits.ids[n]);
+static void space_dense_kept_release(Space *s, const SpaceDenseHead *head) {
+    if (space_dense_bits(head))
+        cetta_dense_relation_each_numbered(&head->bits, space_dense_release_id,
+                                           s);
+    else
+        cetta_tuple_table_each_numbered(&head->table, space_dense_release_id,
+                                        s);
 }
 
-/* The ids a space's bits hold: each head's own and its numbered columns. */
+/* Hold the ids numbered from FROM on, as the relation's references. */
+static void space_dense_hold_numbered(Space *s, const SpaceDenseHead *head,
+                                      uint32_t from) {
+    for (uint32_t n = from; n < space_dense_kept_numbered(head); n++)
+        space_hold_row(s, space_dense_kept_id(head, n));
+}
+
+/* The ids a space's relations hold: each head's own and its numbered
+ * columns. */
 static void space_dense_list(const Space *s, TermUniverseRootVisit visit,
                              void *visit_context) {
     const struct SpaceDense *dense = s->native.dense;
     for (uint32_t i = 0u; dense && i < dense->len; i++) {
         const SpaceDenseHead *head = &dense->heads[i];
-        if (head->state != SPACE_DENSE_BITS)
+        if (head->state != SPACE_DENSE_KEPT)
             continue;
         visit(visit_context, head->head_id);
-        for (uint32_t n = 0u; n < head->bits.len; n++)
-            visit(visit_context, (AtomId)head->bits.ids[n]);
+        for (uint32_t n = 0u; n < space_dense_kept_numbered(head); n++)
+            visit(visit_context, space_dense_kept_id(head, n));
     }
 }
 
@@ -5119,71 +5437,83 @@ static void space_add_stored_id(Space *s, AtomId atom_id, Atom *backend_atom);
 typedef struct {
     Space *space;
     AtomId head_id;
+    uint32_t arity;
 } SpaceDenseSettle;
 
-static bool space_dense_settle_pair(void *context, CettaDenseId a,
-                                    CettaDenseId b) {
+static bool space_dense_settle_tuple(void *context, const CettaDenseId *tuple) {
     SpaceDenseSettle *settle = context;
-    AtomId kids[3] = {settle->head_id, (AtomId)a, (AtomId)b};
-    AtomId id = tu_expr_from_ids(settle->space->native.universe, kids, 3u);
+    AtomId kids[CETTA_TUPLE_MAX_ARITY + 1u];
+    kids[0] = settle->head_id;
+    for (uint32_t c = 0u; c < settle->arity; c++)
+        kids[c + 1u] = (AtomId)tuple[c];
+    AtomId id = tu_expr_from_ids(settle->space->native.universe, kids,
+                                 settle->arity + 1u);
     if (id == CETTA_ATOM_ID_NONE) {
-        fputs("CeTTa: no room to give a relation's bits back to rows\n",
-              stderr);
+        fputs("CeTTa: no room to give a relation back to rows\n", stderr);
         abort();
     }
     space_add_stored_id(settle->space, id, NULL);
     return true;
 }
 
-/* Give HEAD's pairs back to the rows; the head stays rows from now on. */
+/* The relation of a head it keeps, as readers see it. */
+static SpaceDenseForm space_dense_head_form(SpaceDenseHead *head) {
+    return space_dense_bits(head)
+        ? (SpaceDenseForm){.arity = 2u, .head_id = head->head_id,
+                           .bits = &head->bits}
+        : (SpaceDenseForm){.arity = head->arity, .head_id = head->head_id,
+                           .table = &head->table};
+}
+
+/* Give HEAD's facts back to the rows; the head stays rows from now on. */
 static void space_dense_settle_head(Space *s, SpaceDenseHead *head) {
     if (head->state == SPACE_DENSE_ROWS)
         return;
-    bool bits = head->state == SPACE_DENSE_BITS;
+    bool kept = head->state == SPACE_DENSE_KEPT;
     head->state = SPACE_DENSE_ROWS;
-    if (!bits)
+    if (!kept)
         return;
+    space_dense_touch(s);
     struct SpaceDense *dense = s->native.dense;
+    uint64_t facts = space_dense_kept_facts(head);
     if (space_dense_trace())
-        fprintf(stderr, "space bits: %s gives %" PRIu64 " pairs back to rows\n",
-                symbol_bytes(g_symbols, head->head),
-                cetta_dense_relation_pairs(&head->bits));
-    s->native.dense_pairs -= cetta_dense_relation_pairs(&head->bits);
-    /* The pairs become rows, which take their own references, before the
-     * bits drop theirs.  The space holds the same facts at the same
+        fprintf(stderr, "space relations: %s gives %" PRIu64 " facts back to rows\n",
+                symbol_bytes(g_symbols, head->head), facts);
+    s->native.dense_facts -= facts;
+    /* The facts become rows, which take their own references, before the
+     * relation drops its own.  The space holds the same facts at the same
      * positions, so the rows publish no mutation: its revision, and every
      * observation of it, stand. */
-    SpaceDenseSettle settle = {.space = s, .head_id = head->head_id};
+    SpaceDenseSettle settle = {.space = s, .head_id = head->head_id,
+                               .arity = head->arity};
     dense->settling = true;
-    (void)cetta_dense_relation_each(&head->bits, CETTA_DENSE_ANY,
-                                    CETTA_DENSE_ANY, space_dense_settle_pair,
-                                    &settle);
+    (void)space_dense_form_each(space_dense_head_form(head), NULL,
+                                space_dense_settle_tuple, &settle);
     dense->settling = false;
-    cetta_dense_relation_each_numbered(&head->bits, space_dense_release_id, s);
+    space_dense_kept_release(s, head);
     term_universe_release(s->native.universe, head->head_id);
-    cetta_dense_relation_free(&head->bits);
+    space_dense_kept_free(head);
     head->rows = 0u;
 }
 
 void space_dense_settle(Space *s, SymbolId head) {
-    if (!s || s->native.dense_pairs == 0u ||
-        g_space_dense_reading_bits != 0u)
+    if (!s || s->native.dense_facts == 0u || g_space_dense_reading != 0u)
         return;
     struct SpaceDense *dense = s->native.dense;
     if (head != SYMBOL_ID_NONE) {
         SpaceDenseHead *entry = space_dense_find(dense, head);
-        if (entry && entry->state == SPACE_DENSE_BITS)
+        if (entry && entry->state == SPACE_DENSE_KEPT)
             space_dense_settle_head(s, entry);
         return;
     }
     for (uint32_t i = 0u; i < dense->len; i++) {
-        if (dense->heads[i].state == SPACE_DENSE_BITS)
+        if (dense->heads[i].state == SPACE_DENSE_KEPT)
             space_dense_settle_head(s, &dense->heads[i]);
     }
 }
 
 void space_dense_settle_for_pattern(Space *s, const Atom *pattern) {
-    if (!s || s->native.dense_pairs == 0u)
+    if (!s || s->native.dense_facts == 0u)
         return;
     if (pattern && pattern->kind == ATOM_EXPR && pattern->expr.len != 0u &&
         pattern->expr.elems[0]->kind == ATOM_SYMBOL) {
@@ -5191,110 +5521,146 @@ void space_dense_settle_for_pattern(Space *s, const Atom *pattern) {
                                     pattern->expr.len);
         return;
     }
-    /* A symbol reads no fact the bits hold. */
+    /* A symbol reads no fact a relation holds. */
     if (pattern && pattern->kind == ATOM_SYMBOL)
         return;
     space_dense_settle(s, SYMBOL_ID_NONE);
 }
 
 void space_dense_settle_for_head(Space *s, SymbolId head, CettaExprLen len) {
-    /* A pattern of another arity reads no fact the bits hold. */
-    if (!s || s->native.dense_pairs == 0u || len != 3u)
+    if (!s || s->native.dense_facts == 0u)
         return;
-    space_dense_settle(s, head);
+    /* A pattern of other columns than the head's relation reads none of
+     * its facts. */
+    const SpaceDenseHead *entry = space_dense_find(s->native.dense, head);
+    if (entry && entry->state == SPACE_DENSE_KEPT &&
+        (CettaExprLen)entry->arity + 1u == len)
+        space_dense_settle(s, head);
 }
 
 void space_dense_settle_for_patterns(Space *s, Atom *const *patterns,
                                      CettaExprLen count) {
     for (CettaExprLen i = 0u; patterns && i < count &&
-             space_dense_pairs(s) != 0u; i++)
+             space_dense_facts(s) != 0u; i++)
         space_dense_settle_for_pattern(s, patterns[i]);
+}
+
+bool space_dense_form(const Space *s, SymbolId head, SpaceDenseForm *form) {
+    SpaceDenseHead *entry =
+        s ? space_dense_find(s->native.dense, head) : NULL;
+    if (!entry || entry->state != SPACE_DENSE_KEPT ||
+        cetta_shared_transition_scope_active())
+        return false;
+    *form = space_dense_head_form(entry);
+    return true;
 }
 
 bool space_dense_meets_patterns(const Space *s, Atom *const *patterns,
                                 size_t count) {
-    for (size_t i = 0u; patterns && i < count && space_dense_pairs(s) != 0u;
+    for (size_t i = 0u; patterns && i < count && space_dense_facts(s) != 0u;
          i++) {
         const Atom *pattern = patterns[i];
-        if (pattern && pattern->kind == ATOM_EXPR && pattern->expr.len == 3u &&
+        SpaceDenseForm form;
+        if (pattern && pattern->kind == ATOM_EXPR && pattern->expr.len != 0u &&
             pattern->expr.elems[0]->kind == ATOM_SYMBOL &&
-            space_dense_relation(s, pattern->expr.elems[0]->sym_id))
+            space_dense_form(s, pattern->expr.elems[0]->sym_id, &form) &&
+            (CettaExprLen)form.arity + 1u == pattern->expr.len)
             return true;
     }
     return false;
 }
 
-bool space_dense_count_columns(const Space *s, Atom *const *columns,
-                               CettaCount *count) {
-    *count = 0u;
+bool space_dense_patterns_miss(const Space *s, Atom *const *patterns,
+                               size_t count) {
+    if (space_dense_facts(s) == 0u)
+        return true;
+    /* A concurrent scope reads no relation, so it cannot tell. */
     if (cetta_shared_transition_scope_active())
         return false;
+    for (size_t i = 0u; i < count; i++) {
+        const Atom *pattern = patterns ? patterns[i] : NULL;
+        if (!pattern || pattern->kind != ATOM_EXPR || pattern->expr.len == 0u ||
+            pattern->expr.elems[0]->kind != ATOM_SYMBOL)
+            return false;
+        SpaceDenseForm form;
+        if (space_dense_form(s, pattern->expr.elems[0]->sym_id, &form) &&
+            (CettaExprLen)form.arity + 1u == pattern->expr.len)
+            return false;
+    }
+    return true;
+}
+
+bool space_dense_count_columns(const Space *s, Atom *const *columns,
+                               CettaExprLen len, CettaCount *count) {
+    *count = 0u;
+    if (cetta_shared_transition_scope_active() || !space_dense_fact_len(len))
+        return false;
     const struct SpaceDense *dense = s ? s->native.dense : NULL;
-    CettaDenseId fixed[3] = {CETTA_DENSE_ANY, CETTA_DENSE_ANY,
-                             CETTA_DENSE_ANY};
-    bool held = dense && s->native.dense_pairs != 0u;
-    for (int c = 0; c < 3; c++) {
+    CettaDenseId fixed[CETTA_TUPLE_MAX_ARITY];
+    bool held = dense && s->native.dense_facts != 0u;
+    for (CettaExprLen c = 0u; c < len; c++) {
         Atom *column = columns[c];
+        if (c != 0u)
+            fixed[c - 1u] = CETTA_DENSE_ANY;
         if (column->kind == ATOM_VAR)
             continue;
-        /* The bits compare columns by identity; a number other than an
+        /* The relations compare columns by identity; a number other than an
          * integer may equal one by value, which the rows decide. */
         if (column->kind == ATOM_GROUNDED && column->ground.gkind != GV_INT &&
             column->ground.gkind != GV_BOOL &&
             column->ground.gkind != GV_STRING)
             return false;
-        if (c == 0 || !held)
+        if (c == 0u || !held)
             continue;
         /* An atom the universe lacks is in no fact. */
         AtomId id = term_universe_lookup_atom_id(s->native.universe, column);
         if (id == CETTA_ATOM_ID_NONE)
             held = false;
         else
-            fixed[c] = id;
+            fixed[c - 1u] = id;
     }
     for (uint32_t i = 0u; held && i < dense->len; i++) {
-        const SpaceDenseHead *head = &dense->heads[i];
-        if (head->state != SPACE_DENSE_BITS ||
+        SpaceDenseHead *head = &dense->heads[i];
+        if (head->state != SPACE_DENSE_KEPT ||
+            (CettaExprLen)head->arity + 1u != len ||
             (columns[0]->kind != ATOM_VAR &&
              (columns[0]->kind != ATOM_SYMBOL ||
               columns[0]->sym_id != head->head)))
             continue;
-        *count += cetta_dense_relation_count(&head->bits, fixed[1], fixed[2]);
+        *count += space_dense_form_count(space_dense_head_form(head), fixed);
     }
     return true;
 }
 
 const CettaDenseRelation *space_dense_relation(const Space *s,
                                                SymbolId head) {
-    const SpaceDenseHead *entry =
-        s ? space_dense_find(s->native.dense, head) : NULL;
-    if (!entry || entry->state != SPACE_DENSE_BITS ||
-        cetta_shared_transition_scope_active())
-        return NULL;
-    return &entry->bits;
+    SpaceDenseForm form;
+    return space_dense_form(s, head, &form) ? form.bits : NULL;
 }
 
-/* Whether bits cost less than the facts would as rows. */
+/* Whether the relation costs less than its facts would as rows. */
 static bool space_dense_worth(const SpaceDenseHead *head) {
-    return cetta_dense_relation_bytes(&head->bits) <=
-           (cetta_dense_relation_pairs(&head->bits) + 64u) *
-               SPACE_DENSE_ROW_BYTES;
+    return space_dense_kept_bytes(head) <=
+           (space_dense_kept_facts(head) + 64u) * SPACE_DENSE_ROW_BYTES;
 }
 
-/* HEAD's facts go to bits from now on, the bits holding its id.  Its rows
- * stay rows: moving them would shift the positions a reader walking the
- * rows holds, and the space is the same bag either way.  Its count of rows
- * stays, as the rows it keeps. */
+/* HEAD's facts go to its relation from now on, which holds its id.  Its
+ * rows stay rows: moving them would shift the positions a reader walking
+ * the rows holds, and the space is the same bag either way.  Its count of
+ * rows stays, as the rows it keeps. */
 static void space_dense_promote(Space *s, SpaceDenseHead *head) {
     if (space_dense_trace())
-        fprintf(stderr, "space bits: %s takes bits after %" PRIu64 " rows\n",
-                symbol_bytes(g_symbols, head->head), (uint64_t)head->rows);
-    head->state = SPACE_DENSE_BITS;
+        fprintf(stderr, "space relations: %s takes %s of %u columns after %"
+                PRIu64 " rows\n", symbol_bytes(g_symbols, head->head),
+                space_dense_bits(head) ? "bits" : "a table",
+                (unsigned)head->arity, (uint64_t)head->rows);
+    head->state = SPACE_DENSE_KEPT;
     space_hold_row(s, head->head_id);
+    space_dense_touch(s);
 }
 
-/* A fact added as a row: one more row of its head if the head keeps bits;
- * a row whose head is open is noted as such. */
+/* A fact added as a row: one more row of its head if the head keeps a
+ * relation; a row whose head is open is noted as such. */
 static void space_dense_note_row(Space *s, AtomId atom_id) {
     if (__builtin_expect(!s->native.dense, 1) || !s->native.universe)
         return;
@@ -5304,11 +5670,11 @@ static void space_dense_note_row(Space *s, AtomId atom_id) {
     }
     const CettaTermHdr *hdr = tu_hdr(s->native.universe, atom_id);
     if (!hdr || hdr->tag != ATOM_EXPR ||
-        (hdr->aux32 & CETTA_TERM_HDR_DATA_MASK) != 3u ||
+        !space_dense_fact_len(hdr->aux32 & CETTA_TERM_HDR_DATA_MASK) ||
         hdr->sym_or_head == SYMBOL_ID_NONE)
         return;
     SpaceDenseHead *head = space_dense_find(s->native.dense, hdr->sym_or_head);
-    if (head && head->state == SPACE_DENSE_BITS && head->rows != UINT64_MAX)
+    if (head && head->state == SPACE_DENSE_KEPT && head->rows != UINT64_MAX)
         head->rows++;
 }
 
@@ -5316,32 +5682,41 @@ bool space_dense_head_rows_absent(Space *s, SymbolId head) {
     if (!s || !s->native.dense || s->native.dense->open_rows)
         return false;
     const SpaceDenseHead *entry = space_dense_find(s->native.dense, head);
-    return entry && entry->state == SPACE_DENSE_BITS && entry->rows == 0u;
+    return entry && entry->state == SPACE_DENSE_KEPT && entry->rows == 0u;
 }
 
 static bool space_set_holds(Space *s, AtomId atom_id, Atom *atom);
 
-/* HEAD's bits take the pair (A, B): true when the add is done, false when
- * the fact is to be a row (a multiset's second copy, or no room, which
- * gives the bits back). */
-static bool space_dense_take_pair(Space *s, SpaceDenseHead *head, AtomId a,
-                                  AtomId b) {
-    uint32_t numbered = head->bits.len;
+/* HEAD's relation takes the fact of COLUMNS: true when the add is done,
+ * false when the fact is to be a row (a multiset's second copy, or no
+ * room, which gives the relation back). */
+static bool space_dense_take(Space *s, SpaceDenseHead *head,
+                             const AtomId *columns) {
+    uint32_t numbered = space_dense_kept_numbered(head);
     bool oom = false;
-    bool added = cetta_dense_relation_add(&head->bits, a, b, &oom);
+    bool added;
+    if (space_dense_bits(head)) {
+        added = cetta_dense_relation_add(&head->bits, columns[0], columns[1],
+                                         &oom);
+    } else {
+        CettaDenseId tuple[CETTA_TUPLE_MAX_ARITY];
+        for (uint32_t c = 0u; c < head->arity; c++)
+            tuple[c] = columns[c];
+        added = cetta_tuple_table_add(&head->table, tuple, &oom);
+    }
     space_dense_hold_numbered(s, head, numbered);
     if (oom) {
         space_dense_settle_head(s, head);
         return false;
     }
-    /* A set holds the pair once; a multiset keeps the copy as a row. */
+    /* A set holds the fact once; a multiset keeps the copy as a row. */
     if (!added)
         return s->kind == SPACE_KIND_SET;
-    s->native.dense_pairs++;
+    s->native.dense_facts++;
     space_publish_mutation(s, SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY,
                            SPACE_MUTATION_PREFIX_APPEND_ONLY);
-    /* A relation whose columns outgrow its pairs is worth more as rows. */
-    if (head->bits.len != numbered && !space_dense_worth(head))
+    /* A relation whose columns outgrow its facts is worth more as rows. */
+    if (space_dense_kept_numbered(head) != numbered && !space_dense_worth(head))
         space_dense_settle_head(s, head);
     return true;
 }
@@ -5351,23 +5726,26 @@ void space_dense_prepare_adds(Space *s, const AtomId *ids, CettaCount count) {
     if (!s || !ids || count < space_dense_threshold() || !space_dense_admits(s))
         return;
     /* A batch is mostly runs of one head: the first fact of a run says
-     * whether its head could take bits, and the rest count by their
-     * headers.  Promotion is policy only: a fact the bits cannot hold
-     * stays a row whatever its head's state. */
+     * whether its head could take a relation, and the rest count by their
+     * headers.  Promotion is policy only: a fact no relation can hold stays
+     * a row whatever its head's state. */
     const TermUniverse *universe = s->native.universe;
     SpaceDenseHead *head = NULL;
     SymbolId run = SYMBOL_ID_NONE;
     for (CettaCount i = 0u; i < count; i++) {
         const CettaTermHdr *hdr = tu_hdr(universe, ids[i]);
         if (!hdr || hdr->tag != ATOM_EXPR ||
-            (hdr->aux32 & CETTA_TERM_HDR_DATA_MASK) != 3u)
+            !space_dense_fact_len(hdr->aux32 & CETTA_TERM_HDR_DATA_MASK))
             continue;
         if (hdr->sym_or_head != run) {
             run = hdr->sym_or_head;
             SymbolId head_sym;
-            AtomId head_id, a, b;
-            head = space_dense_fact(s, ids[i], &head_sym, &head_id, &a, &b)
-                ? space_dense_head(s, head_sym, head_id) : NULL;
+            AtomId head_id;
+            AtomId columns[CETTA_TUPLE_MAX_ARITY];
+            uint32_t arity = 0u;
+            head = space_dense_fact(s, ids[i], &head_sym, &head_id, columns,
+                                    &arity)
+                ? space_dense_head(s, head_sym, head_id, arity) : NULL;
             /* Counting holds nothing: the head's id is a fact's of the
              * batch. */
             if (head && head->state == SPACE_DENSE_COUNTING)
@@ -5386,16 +5764,16 @@ void space_dense_prepare_adds(Space *s, const AtomId *ids, CettaCount count) {
     }
 }
 
-/* Route an added row: true when the bits took the fact (or a set holds its
- * pair already), false when it is to be a row. */
+/* Route an added row: true when a relation took the fact (or a set holds it
+ * already), false when it is to be a row. */
 static bool space_dense_route_add(Space *s, AtomId atom_id) {
     /* A row is always a right answer, so the fact's header is asked first:
-     * most facts no bits could hold, or of the head last found to keep
+     * most facts no relation could hold, or of the head last found to keep
      * rows, need no more. */
     const CettaTermHdr *hdr = s->native.universe
         ? tu_hdr(s->native.universe, atom_id) : NULL;
     if (!hdr || hdr->tag != ATOM_EXPR ||
-        (hdr->aux32 & CETTA_TERM_HDR_DATA_MASK) != 3u)
+        !space_dense_fact_len(hdr->aux32 & CETTA_TERM_HDR_DATA_MASK))
         return false;
     SymbolId h = hdr->sym_or_head;
     if (h == SYMBOL_ID_NONE || h == s->native.dense_rows_head ||
@@ -5404,13 +5782,15 @@ static bool space_dense_route_add(Space *s, AtomId atom_id) {
         !space_dense_admits(s))
         return false;
     SymbolId head_sym;
-    AtomId head_id, a, b;
-    if (!space_dense_fact(s, atom_id, &head_sym, &head_id, &a, &b)) {
-        /* An expression in a column: the bits cannot hold the fact. */
+    AtomId head_id;
+    AtomId columns[CETTA_TUPLE_MAX_ARITY];
+    uint32_t arity = 0u;
+    if (!space_dense_fact(s, atom_id, &head_sym, &head_id, columns, &arity)) {
+        /* An expression in a column: no relation can hold the fact. */
         s->native.dense_rows_head = h;
         return false;
     }
-    SpaceDenseHead *head = space_dense_head(s, head_sym, head_id);
+    SpaceDenseHead *head = space_dense_head(s, head_sym, head_id, arity);
     if (!head)
         return false;
     if (head->state == SPACE_DENSE_ROWS) {
@@ -5423,25 +5803,26 @@ static bool space_dense_route_add(Space *s, AtomId atom_id) {
             return false;
         }
         /* Counting holds nothing: the head's id is taken from this fact,
-         * whose record holds it now.  The fact goes to the bits, so it is
-         * not one of the rows the head keeps. */
+         * whose record holds it now.  The fact goes to the relation, so it
+         * is not one of the rows the head keeps. */
         head->head_id = head_id;
         space_dense_promote(s, head);
-        if (head->state != SPACE_DENSE_BITS) {
+        if (head->state != SPACE_DENSE_KEPT) {
             head->rows++;
             return false;
         }
     }
-    /* A set holds a fact once, whether as a row or as bits.  Asking the rows
-     * may read the whole space, so the head is looked at again after. */
+    /* A set holds a fact once, whether as a row or in its relation.  Asking
+     * the rows may read the whole space, so the head is looked at again
+     * after. */
     if (s->kind == SPACE_KIND_SET && space_set_holds(s, atom_id, NULL))
         return true;
-    if (head->state != SPACE_DENSE_BITS)
+    if (head->state != SPACE_DENSE_KEPT)
         return false;
-    return space_dense_take_pair(s, head, a, b);
+    return space_dense_take(s, head, columns);
 }
 
-/* A column the bits can hold, given as an atom: as space_dense_column. */
+/* A column a relation can hold, given as an atom: as space_dense_column. */
 static bool space_dense_column_atom(const Atom *atom) {
     return atom->kind == ATOM_SYMBOL ||
            (atom->kind == ATOM_GROUNDED &&
@@ -5449,35 +5830,42 @@ static bool space_dense_column_atom(const Atom *atom) {
              atom->ground.gkind == GV_STRING));
 }
 
-/* Add ATOM by its parts when the space keeps its relation as bits: a fact
- * kept as bits needs no record of its own.  True when the bits took it, or
- * a set holds it already; false leaves the add to a record and the rows. */
+/* Add ATOM by its parts when the space keeps its relation: a fact a
+ * relation keeps needs no record of its own.  True when the relation took
+ * it, or a set holds it already; false leaves the add to a record and the
+ * rows. */
 static bool space_dense_add_parts(Space *s, Atom *atom) {
     if (__builtin_expect(!s->native.dense, 1) || !atom ||
-        atom->kind != ATOM_EXPR || atom->expr.len != 3u ||
+        atom->kind != ATOM_EXPR || !space_dense_fact_len(atom->expr.len) ||
         atom->expr.elems[0]->kind != ATOM_SYMBOL ||
         atom->expr.elems[0]->sym_id == s->native.dense_rows_head)
         return false;
     SpaceDenseHead *head = space_dense_find(s->native.dense,
                                             atom->expr.elems[0]->sym_id);
-    if (!head || head->state != SPACE_DENSE_BITS || !space_dense_admits(s) ||
-        !space_dense_column_atom(atom->expr.elems[1]) ||
-        !space_dense_column_atom(atom->expr.elems[2]))
+    if (!head || head->state != SPACE_DENSE_KEPT ||
+        (CettaExprLen)head->arity + 1u != atom->expr.len ||
+        !space_dense_admits(s))
         return false;
+    for (uint32_t c = 0u; c < head->arity; c++)
+        if (!space_dense_column_atom(atom->expr.elems[c + 1u]))
+            return false;
     TermUniverse *universe = s->native.universe;
     /* A row of a set holding the fact has a record of it. */
     if (s->kind == SPACE_KIND_SET) {
         AtomId row = term_universe_lookup_atom_id(universe, atom);
         if (row != CETTA_ATOM_ID_NONE && space_set_holds(s, row, NULL))
             return true;
-        if (head->state != SPACE_DENSE_BITS)
+        if (head->state != SPACE_DENSE_KEPT)
             return false;
     }
-    AtomId a = term_universe_store_atom_id(universe, NULL, atom->expr.elems[1]);
-    AtomId b = term_universe_store_atom_id(universe, NULL, atom->expr.elems[2]);
-    if (a == CETTA_ATOM_ID_NONE || b == CETTA_ATOM_ID_NONE)
-        return false;
-    return space_dense_take_pair(s, head, a, b);
+    AtomId columns[CETTA_TUPLE_MAX_ARITY];
+    for (uint32_t c = 0u; c < head->arity; c++) {
+        columns[c] = term_universe_store_atom_id(universe, NULL,
+                                                 atom->expr.elems[c + 1u]);
+        if (columns[c] == CETTA_ATOM_ID_NONE)
+            return false;
+    }
+    return space_dense_take(s, head, columns);
 }
 
 bool space_dense_may_hold(const Space *s, SymbolId head) {
@@ -5489,42 +5877,48 @@ bool space_dense_may_hold(const Space *s, SymbolId head) {
     return !entry || entry->state != SPACE_DENSE_ROWS;
 }
 
-bool space_add_dense_pairs(Space *s, SymbolId head, AtomId head_id,
-                           const AtomId *pairs, CettaCount count) {
+bool space_add_dense_tuples(Space *s, SymbolId head, AtomId head_id,
+                            uint32_t arity, const AtomId *tuples,
+                            CettaCount count) {
     Space *target = space_mutation_target(s);
-    if (!target || (count && !pairs) || !space_tracks_atom_ids(target))
+    if (!target || (count && !tuples) || !space_tracks_atom_ids(target) ||
+        !space_dense_fact_len(arity + 1u))
         return false;
     TermUniverse *universe = target->native.universe;
-    /* Facts enough to take bits take them from the first. */
+    /* Facts enough to take a relation take it from the first. */
     SpaceDenseHead *counting = count >= space_dense_threshold() &&
             space_dense_admits(target)
-        ? space_dense_head(target, head, head_id) : NULL;
+        ? space_dense_head(target, head, head_id, arity) : NULL;
     if (counting && counting->state == SPACE_DENSE_COUNTING) {
         counting->head_id = head_id;
         space_dense_promote(target, counting);
     }
     for (CettaCount i = 0u; i < count; i++) {
-        AtomId kids[3] = {head_id, pairs[2u * i], pairs[2u * i + 1u]};
-        /* Until the head takes bits, the facts are rows, which count
-         * toward it (space_dense_route_add). */
+        AtomId kids[CETTA_TUPLE_MAX_ARITY + 1u];
+        kids[0] = head_id;
+        bool columns = true;
+        for (uint32_t c = 0u; c < arity; c++) {
+            kids[c + 1u] = tuples[(size_t)arity * i + c];
+            columns = columns && space_dense_column(universe, kids[c + 1u]);
+        }
+        /* Until the head takes its relation, the facts are rows, which
+         * count toward it (space_dense_route_add). */
         SpaceDenseHead *entry = target->native.dense
             ? space_dense_find(target->native.dense, head) : NULL;
-        if (entry && entry->state == SPACE_DENSE_BITS &&
-            space_dense_admits(target) &&
-            space_dense_column(universe, kids[1]) &&
-            space_dense_column(universe, kids[2])) {
+        if (entry && entry->state == SPACE_DENSE_KEPT &&
+            entry->arity == arity && space_dense_admits(target) && columns) {
             /* A row of a set holding the fact has a record of it. */
             if (target->kind == SPACE_KIND_SET) {
-                AtomId row = tu_expr_lookup_ids(universe, kids, 3u);
+                AtomId row = tu_expr_lookup_ids(universe, kids, arity + 1u);
                 if (row != CETTA_ATOM_ID_NONE &&
                     space_set_holds(target, row, NULL))
                     continue;
             }
-            if (entry->state == SPACE_DENSE_BITS &&
-                space_dense_take_pair(target, entry, kids[1], kids[2]))
+            if (entry->state == SPACE_DENSE_KEPT &&
+                space_dense_take(target, entry, &kids[1]))
                 continue;
         }
-        AtomId id = tu_expr_from_ids(universe, kids, 3u);
+        AtomId id = tu_expr_from_ids(universe, kids, arity + 1u);
         if (id == CETTA_ATOM_ID_NONE)
             return false;
         space_add_stored_id(target, id, NULL);
@@ -5532,117 +5926,152 @@ bool space_add_dense_pairs(Space *s, SymbolId head, AtomId head_id,
     return true;
 }
 
-/* Whether the space holds the fact ATOM_ID among its bits. */
-static bool space_dense_holds(const Space *s, AtomId atom_id) {
-    if (!s || s->native.dense_pairs == 0u)
-        return false;
-    SymbolId head_sym;
-    AtomId head_id, a, b;
-    if (!space_dense_fact(s, atom_id, &head_sym, &head_id, &a, &b))
-        return false;
-    const SpaceDenseHead *head = space_dense_find(s->native.dense, head_sym);
-    return head && head->state == SPACE_DENSE_BITS &&
-           cetta_dense_relation_contains(&head->bits, a, b);
+/* Whether the relation of HEAD holds the fact of COLUMNS. */
+static bool space_dense_kept_contains(const SpaceDenseHead *head,
+                                      const AtomId *columns) {
+    if (space_dense_bits(head))
+        return cetta_dense_relation_contains(&head->bits, columns[0],
+                                             columns[1]);
+    CettaDenseId tuple[CETTA_TUPLE_MAX_ARITY];
+    for (uint32_t c = 0u; c < head->arity; c++)
+        tuple[c] = columns[c];
+    return cetta_tuple_table_contains(&head->table, tuple);
 }
 
-/* The bits and pair of the ground fact (h a b) given as atoms, found by
- * its parts: a fact the bits hold may have no record of its own, but its
- * columns are numbered, so held.  False when no bits could hold it. */
-static bool space_dense_parts(const Space *s, SymbolId head, Atom *first,
-                              Atom *second, SpaceDenseHead **head_out,
-                              AtomId *a, AtomId *b) {
-    if (!s || space_dense_pairs(s) == 0u || head == SYMBOL_ID_NONE ||
-        !first || !second || atom_has_vars(first) || atom_has_vars(second))
+/* Take the fact of COLUMNS from HEAD's relation: true when it held it. */
+static bool space_dense_kept_remove(SpaceDenseHead *head,
+                                    const AtomId *columns) {
+    if (space_dense_bits(head))
+        return cetta_dense_relation_remove(&head->bits, columns[0],
+                                           columns[1]);
+    CettaDenseId tuple[CETTA_TUPLE_MAX_ARITY];
+    for (uint32_t c = 0u; c < head->arity; c++)
+        tuple[c] = columns[c];
+    return cetta_tuple_table_remove(&head->table, tuple);
+}
+
+/* Whether the space holds the fact ATOM_ID in a relation. */
+static bool space_dense_holds(const Space *s, AtomId atom_id) {
+    if (!s || s->native.dense_facts == 0u)
+        return false;
+    SymbolId head_sym;
+    AtomId head_id;
+    AtomId columns[CETTA_TUPLE_MAX_ARITY];
+    uint32_t arity = 0u;
+    if (!space_dense_fact(s, atom_id, &head_sym, &head_id, columns, &arity))
+        return false;
+    const SpaceDenseHead *head = space_dense_find(s->native.dense, head_sym);
+    return head && head->state == SPACE_DENSE_KEPT && head->arity == arity &&
+           space_dense_kept_contains(head, columns);
+}
+
+/* The relation and columns of the ground fact (HEAD a1 ... an) given by its
+ * arguments: a fact a relation holds may have no record of its own, but its
+ * columns are numbered, so held.  False when no relation could hold it. */
+static bool space_dense_parts(const Space *s, SymbolId head,
+                              Atom *const *arguments, CettaExprLen count,
+                              SpaceDenseHead **head_out, AtomId *columns) {
+    if (!s || space_dense_facts(s) == 0u || head == SYMBOL_ID_NONE ||
+        !arguments || !space_dense_fact_len(count + 1u))
         return false;
     SpaceDenseHead *entry = space_dense_find(s->native.dense, head);
-    if (!entry || entry->state != SPACE_DENSE_BITS)
+    if (!entry || entry->state != SPACE_DENSE_KEPT ||
+        (CettaExprLen)entry->arity != count)
         return false;
-    *a = term_universe_lookup_atom_id(s->native.universe, first);
-    *b = term_universe_lookup_atom_id(s->native.universe, second);
+    for (uint32_t c = 0u; c < entry->arity; c++) {
+        Atom *column = arguments[c];
+        if (!column || atom_has_vars(column))
+            return false;
+        columns[c] = term_universe_lookup_atom_id(s->native.universe, column);
+        if (columns[c] == CETTA_ATOM_ID_NONE)
+            return false;
+    }
     *head_out = entry;
-    return *a != CETTA_ATOM_ID_NONE && *b != CETTA_ATOM_ID_NONE;
+    return true;
 }
 
 static bool space_dense_atom_parts(const Space *s, Atom *atom,
-                                   SpaceDenseHead **head_out, AtomId *a,
-                                   AtomId *b) {
-    return atom && atom->kind == ATOM_EXPR && atom->expr.len == 3u &&
+                                   SpaceDenseHead **head_out,
+                                   AtomId *columns) {
+    return atom && atom->kind == ATOM_EXPR && atom->expr.len != 0u &&
            atom->expr.elems[0]->kind == ATOM_SYMBOL &&
            space_dense_parts(s, atom->expr.elems[0]->sym_id,
-                             atom->expr.elems[1], atom->expr.elems[2],
-                             head_out, a, b);
+                             atom->expr.elems + 1, atom->expr.len - 1u,
+                             head_out, columns);
 }
 
-/* Whether the bits hold ATOM. */
+/* Whether a relation holds ATOM. */
 static bool space_dense_holds_atom(const Space *s, Atom *atom) {
     SpaceDenseHead *head = NULL;
-    AtomId a = CETTA_ATOM_ID_NONE, b = CETTA_ATOM_ID_NONE;
-    return space_dense_atom_parts(s, atom, &head, &a, &b) &&
-           cetta_dense_relation_contains(&head->bits, a, b);
+    AtomId columns[CETTA_TUPLE_MAX_ARITY];
+    return space_dense_atom_parts(s, atom, &head, columns) &&
+           space_dense_kept_contains(head, columns);
 }
 
-/* Take the pair of the ground fact ATOM from the bits: 1 when they held
- * it, 0 otherwise. */
+/* Take the ground fact ATOM from its relation: 1 when it held it, 0
+ * otherwise. */
 CettaCount space_dense_remove_ground(Space *s, Atom *atom) {
     SpaceDenseHead *head = NULL;
-    AtomId a = CETTA_ATOM_ID_NONE, b = CETTA_ATOM_ID_NONE;
-    if (!space_dense_atom_parts(s, atom, &head, &a, &b) ||
-        !cetta_dense_relation_remove(&head->bits, a, b))
+    AtomId columns[CETTA_TUPLE_MAX_ARITY];
+    if (!space_dense_atom_parts(s, atom, &head, columns) ||
+        !space_dense_kept_remove(head, columns))
         return 0u;
-    s->native.dense_pairs--;
+    s->native.dense_facts--;
     space_note_released(s, 1u);
     space_publish_mutation(s, SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY,
                            SPACE_MUTATION_PREFIX_REWRITTEN);
     return 1u;
 }
 
-/* Remove ATOM_ID from the bits: true when they held it.  A copy kept as a
- * row is just as good to remove; either leaves the same bag. */
+/* Remove ATOM_ID from its relation: true when it held it.  A copy kept as
+ * a row is just as good to remove; either leaves the same bag. */
 static bool space_dense_route_remove(Space *s, AtomId atom_id) {
-    if (s->native.dense_pairs == 0u)
+    if (s->native.dense_facts == 0u)
         return false;
     SymbolId head_sym;
-    AtomId head_id, a, b;
-    if (!space_dense_fact(s, atom_id, &head_sym, &head_id, &a, &b))
+    AtomId head_id;
+    AtomId columns[CETTA_TUPLE_MAX_ARITY];
+    uint32_t arity = 0u;
+    if (!space_dense_fact(s, atom_id, &head_sym, &head_id, columns, &arity))
         return false;
     SpaceDenseHead *head = space_dense_find(s->native.dense, head_sym);
-    if (!head || head->state != SPACE_DENSE_BITS ||
-        !cetta_dense_relation_remove(&head->bits, a, b))
+    if (!head || head->state != SPACE_DENSE_KEPT || head->arity != arity ||
+        !space_dense_kept_remove(head, columns))
         return false;
-    s->native.dense_pairs--;
+    s->native.dense_facts--;
     space_note_released(s, 1u);
     space_publish_mutation(s, SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY,
                            SPACE_MUTATION_PREFIX_REWRITTEN);
     return true;
 }
 
-void space_dense_reading_bits_begin(void) {
-    g_space_dense_reading_bits++;
+void space_dense_reading_begin(void) {
+    g_space_dense_reading++;
 }
 
-void space_dense_reading_bits_end(void) {
-    g_space_dense_reading_bits--;
+void space_dense_reading_end(void) {
+    g_space_dense_reading--;
 }
 
-/* Free the bits with the space: their references go. */
+/* Free the relations with the space: their references go. */
 static void space_dense_free(Space *s) {
     struct SpaceDense *dense = s->native.dense;
     if (!dense)
         return;
     for (uint32_t i = 0u; i < dense->len; i++) {
         SpaceDenseHead *head = &dense->heads[i];
-        if (head->state == SPACE_DENSE_BITS) {
-            cetta_dense_relation_each_numbered(&head->bits,
-                                               space_dense_release_id, s);
+        if (head->state == SPACE_DENSE_KEPT) {
+            space_dense_kept_release(s, head);
             term_universe_release(s->native.universe, head->head_id);
         }
-        cetta_dense_relation_free(&head->bits);
+        space_dense_kept_free(head);
     }
     free(dense->heads);
     free(dense->index);
     free(dense);
     s->native.dense = NULL;
-    s->native.dense_pairs = 0u;
+    s->native.dense_facts = 0u;
+    space_dense_touch(s);
 }
 
 /* ── Removal marks ───────────────────────────────────────────────────────── */
@@ -5829,10 +6258,10 @@ bool space_remove_logical_positions(Space *s, const CettaIndex *positions,
          s->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) ||
         !s->native.atom_ids || s->native.start != 0u)
         return false;
-    /* A position past the rows names a fact kept as bits: they become rows,
-     * at the positions they had. */
-    if (space_dense_pairs(s) != 0u &&
-        positions[count - 1u] >= space_length64(s) - space_dense_pairs(s))
+    /* A position past the rows names a fact kept in a relation: the
+     * relations become rows, at the positions their facts had. */
+    if (space_dense_facts(s) != 0u &&
+        positions[count - 1u] >= space_length64(s) - space_dense_facts(s))
         space_dense_settle(s, SYMBOL_ID_NONE);
     /* Pinned readers keep the rows and marks they began with. */
     space_pinned_occurrences_detach(s);
@@ -6511,7 +6940,8 @@ static void space_native_storage_init_empty(Space *s, TermUniverse *universe) {
     s->native.id_present_key_len = 0u;
     s->native.id_present_key_cap = 0u;
     s->native.dense = NULL;
-    s->native.dense_pairs = 0u;
+    s->native.dense_facts = 0u;
+    s->native.dense_epoch = 0u;
     s->native.dense_rows_head = SYMBOL_ID_NONE;
     s->native.eq_idx_dirty = false;
     s->native.ty_idx_dirty = false;
@@ -6716,7 +7146,7 @@ static bool space_add_dependency_link(Space *importer, Space *dependency) {
 }
 
 bool space_add_dependency(Space *importer, Space *dependency) {
-    /* A space that composes others keeps no bits. */
+    /* A space that composes others keeps no relations. */
     space_dense_settle(importer, SYMBOL_ID_NONE);
     return importer && !importer->module_own_view &&
            space_add_dependency_link(importer, dependency);
@@ -6764,10 +7194,10 @@ bool space_row_may_be_rule(const Space *s, CettaIndex idx) {
         (s->match_backend.kind != SPACE_ENGINE_NATIVE &&
          s->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT))
         return true;
-    /* Past the rows are facts kept as bits, data and never rules: they stay
-     * bits for the asking. */
-    if (space_dense_pairs(s) != 0u &&
-        idx >= space_length64(s) - space_dense_pairs(s))
+    /* Past the rows are facts kept in relations, data and never rules: they
+     * stay in their relations for the asking. */
+    if (space_dense_facts(s) != 0u &&
+        idx >= space_length64(s) - space_dense_facts(s))
         return false;
     const CettaTermHdr *header =
         tu_hdr(s->native.universe, space_get_atom_id_at64(s, idx));
@@ -8436,7 +8866,7 @@ static bool id_present_sync(Space *s) {
         return false;
     /* The bitset covers the rows; the facts kept as bits answer for
      * themselves. */
-    CettaCount logical_len = space_length64(s) - space_dense_pairs(s);
+    CettaCount logical_len = space_length64(s) - space_dense_facts(s);
     if (s->native.id_present_dirty ||
         s->native.id_present_synced_len > logical_len) {
         id_present_clear(&s->native);
@@ -8702,7 +9132,7 @@ static void space_add_stored_id_as(Space *s, AtomId atom_id,
     /* A row stored as its own presence key, the bitset synced up to it:
      * the bitset takes it now, and no later sync reads its key again. */
     if (set_checked && !s->native.id_present_dirty &&
-        space_dense_pairs(s) == 0u &&
+        space_dense_facts(s) == 0u &&
         s->native.id_present_synced_len + 1u == s->native.len &&
         id_present_set(&s->native, atom_id))
         s->native.id_present_synced_len = s->native.len;
@@ -8854,7 +9284,7 @@ bool space_add_atom_ids_batch(Space *s, const AtomId *atom_ids,
 static bool space_add_atom_ids_batch_rows(Space *s, const AtomId *atom_ids,
                                           CettaCount atom_count);
 
-/* The facts of a batch the bits take leave it; the rest are rows. */
+/* The facts of a batch the relations take leave it; the rest are rows. */
 static bool space_add_atom_ids_batch_bag(Space *s, const AtomId *atom_ids,
                                          CettaCount atom_count) {
     Space *target = space_mutation_target(s);
@@ -9057,7 +9487,7 @@ TermUniverseError space_term_universe_last_error_code(const Space *s) {
 
 /* The route space_admit_atom_impl takes for an open row of a PeTTa
  * set keeping its own records: no backend stores the row directly, its
- * relation's bits never take a row with variables, and the row is kept as
+ * relations never take a row with variables, and the row is kept as
  * its alpha key when the key forms. */
 bool space_keys_open_row(Space *s, Atom *atom) {
     s = space_mutation_target(s);
@@ -10228,7 +10658,7 @@ bool space_contains_atom_id(const Space *s, AtomId atom_id) {
         return false;
     if (space_dense_holds(s, atom_id))
         return true;
-    logical_len = space_length64(s) - space_dense_pairs(s);
+    logical_len = space_length64(s) - space_dense_facts(s);
     for (CettaIndex i = 0; i < logical_len; i++) {
         if (space_get_atom_id_at64(s, i) == atom_id)
             return true;
@@ -10434,15 +10864,15 @@ static bool space_contract_occurrence_mask(
         return false;
 
     CettaCount logical_len = space_length64(s);
-    /* Facts kept as bits follow the rows.  Settling marks covers the rows
-     * alone; a mask over the whole sequence gives the bits to the rows
-     * first, at the positions they had. */
-    if (space_dense_pairs(s) != 0u) {
+    /* Facts kept in relations follow the rows.  Settling marks covers the
+     * rows alone; a mask over the whole sequence gives the relations to the
+     * rows first, at the positions their facts had. */
+    if (space_dense_facts(s) != 0u) {
         if (!settling && mask_len == logical_len) {
             space_dense_settle(s, SYMBOL_ID_NONE);
             logical_len = space_length64(s);
         }
-        logical_len -= space_dense_pairs(s);
+        logical_len -= space_dense_facts(s);
     }
     if (mask_len != logical_len)
         return false;
@@ -10757,7 +11187,7 @@ Atom *space_get_at(const Space *s, uint32_t idx) {
 
 Atom *space_view_at64(const Space *s, CettaIndex idx, Arena *dst) {
     if (s && dst && s->native.universe && !space_has_overlay_base(s) &&
-        space_dense_pairs(s) == 0u &&
+        space_dense_facts(s) == 0u &&
         (s->match_backend.kind == SPACE_ENGINE_NATIVE ||
          s->match_backend.kind == SPACE_ENGINE_NATIVE_CANDIDATE_EXACT)) {
         CETTA_SCOPED_SHARED_TRANSITION(read);
@@ -11125,16 +11555,14 @@ bool space_contains_exact_symbol_application(
     }
     if (!id_present_sync(s))
         return false;
-    if (argument_count == 2u) {
-        SpaceDenseHead *dense_head = NULL;
-        AtomId a = CETTA_ATOM_ID_NONE, b = CETTA_ATOM_ID_NONE;
-        if (space_dense_parts(s, head, arguments[0], arguments[1],
-                              &dense_head, &a, &b) &&
-            cetta_dense_relation_contains(&dense_head->bits, a, b)) {
-            if (out_applicable)
-                *out_applicable = true;
-            return true;
-        }
+    SpaceDenseHead *dense_head = NULL;
+    AtomId columns[CETTA_TUPLE_MAX_ARITY];
+    if (space_dense_parts(s, head, arguments, argument_count, &dense_head,
+                          columns) &&
+        space_dense_kept_contains(dense_head, columns)) {
+        if (out_applicable)
+            *out_applicable = true;
+        return true;
     }
     AtomId query_id = term_universe_lookup_symbol_application(
         s->native.universe, head, arguments, argument_count);
@@ -11259,8 +11687,8 @@ bool space_contains_for_add_nodup(Space *s, Atom *atom) {
         return found;
 
     bool alpha_fallback = atom_has_vars(atom);
-    /* The facts kept as bits are ground and were looked for above. */
-    CettaCount logical_len = space_length64(s) - space_dense_pairs(s);
+    /* The facts kept in relations are ground and were looked for above. */
+    CettaCount logical_len = space_length64(s) - space_dense_facts(s);
     for (CettaIndex index = 0u; index < logical_len; index++) {
         Atom *candidate = space_get_at64(s, index);
         if (!candidate)
@@ -11395,8 +11823,8 @@ bool space_remove_exact_ids(Space *s, SymbolId head, const AtomId *ids,
         if (!atom_id_is_exact_indexable(s, ids[i]))
             return false;
     }
-    /* Each id's pair goes from the bits; its row copies, below. */
-    for (size_t i = 0u; space_dense_pairs(s) != 0u && i < count; i++)
+    /* Each id's fact goes from its relation; its row copies, below. */
+    for (size_t i = 0u; space_dense_facts(s) != 0u && i < count; i++)
         (void)space_dense_route_remove(s, ids[i]);
     CettaIndex *positions = NULL;
     CettaIndex position_len = 0u, position_cap = 0u;
