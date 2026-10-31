@@ -57,8 +57,9 @@ outside its scope, and unique-atom is rarely extended by an equation.  A
 program the ordinary path cannot run fails.  Every
 program runs twice, with CETTA_NATIVE_QUERY_REFERENCE=1 the second time, and
 every collection is printed sorted.  Atoms holding variables print with
-fresh names in an order that follows them, so the outputs are compared with
-every variable named alike and every printed collection's elements sorted.
+fresh names in an order that follows them. Collected results compare as bags
+under one consistent variable renaming, preserving sharing, literal strings
+and ordered fields inside each answer.
 With --stats, the binary is a runtime-stats build, and the native path must
 also have answered at least one collection per program on average, and
 joined by rows of bits in at least one program in five, rows it builds for
@@ -68,10 +69,10 @@ agreement is not vacuous.
 import argparse
 import os
 import random
-import re
 import subprocess
 import sys
 import tempfile
+from compare_answers import CollectionTrace
 import zlib
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -1064,43 +1065,7 @@ def program(rng):
     return "\n".join(lines) + "\n"
 
 
-def elements(text):
-    """The top-level elements of a printed collection's inside."""
-    items, depth, start = [], 0, 0
-    for i, c in enumerate(text):
-        if c == '(':
-            depth += 1
-        elif c == ')':
-            depth -= 1
-        elif c == ' ' and depth == 0:
-            if i > start:
-                items.append(text[start:i])
-            start = i + 1
-    if start < len(text):
-        items.append(text[start:])
-    return items
-
-
-def canonical(output):
-    lines = []
-    segment = None
-    for line in re.sub(r"\$[A-Za-z0-9_#]+", "$_", output).splitlines():
-        # a directive's answers, between markers, are a bag of lines
-        if line == "seg-begin":
-            segment = []
-        elif line == "seg-end" and segment is not None:
-            lines.extend(sorted(segment))
-            segment = None
-        elif segment is not None:
-            segment.append(line)
-        else:
-            if line.startswith("(") and line.endswith(")"):
-                line = "(" + " ".join(sorted(elements(line[1:-1]))) + ")"
-            lines.append(line)
-    return "\n".join(lines)
-
-
-def run(binary, path, reference, stats):
+def run(binary, path, reference, stats, ordered_lines=()):
     env = dict(os.environ)
     env.pop("CETTA_NATIVE_QUERY_REFERENCE", None)
     if reference:
@@ -1119,7 +1084,7 @@ def run(binary, path, reference, stats):
         if fields[:2] in (["runtime-counter", "dense-relation-admission"],
                           ["runtime-counter", "native-query-bits-leg"]):
             dense += int(fields[2])
-    return (p.returncode, canonical(p.stdout)), admissions, dense
+    return (p.returncode, CollectionTrace(p.stdout, ordered_lines=range(len(p.stdout.splitlines())) if p.returncode else ordered_lines)), admissions, dense
 
 
 # Programs the ordinary path ends with an error, which the native path must
@@ -1128,6 +1093,17 @@ def run(binary, path, reference, stats):
 FIXED = [
     "(edge 1 2)\n(edge 2 3)\n(= (lf $x) (lbase $x))\n"
     "!(let $h (collapse (match &self (edge $a $b) (lf $a $b))) (sort-atom $h))\n",
+    # != is a primitive only in some builds.  Rewriting its spelling into
+    # an existence test must not give an unknown operation a meaning.
+    "(edge 0 2)\n(edge 0 2)\n(edge 2 1)\n"
+    "!(bind! &b (new-space))\n"
+    "!(!= 1 0)\n"
+    "(= (put-if-absent $S $A) "
+    "(if (!= (size-atom (collapse (match $S $A t))) 0) "
+    "present (add-atom $S $A)))\n"
+    "!(size-atom (collapse (match &self (edge $x $y) "
+    "(put-if-absent &b (seen $x)))))\n"
+    "!(let $h (collapse (match &b (seen $v) $v)) (sort-atom $h))\n",
 ]
 
 
@@ -1146,8 +1122,19 @@ def main():
             path = os.path.join(work, f"fixed_{number}.metta")
             with open(path, "w") as f:
                 f.write(source)
-            native, _, _ = run(binary, path, False, args.stats)
-            reference, _, _ = run(binary, path, True, args.stats)
+            ordered = (0,) if number == 1 else ()
+            native, _, _ = run(binary, path, False, args.stats, ordered_lines=ordered)
+            reference, _, _ = run(binary, path, True, args.stats, ordered_lines=ordered)
+            if number == 1:
+                expected = (
+                    (0, CollectionTrace("true\n3\n(0 2)\n", ordered_lines=ordered)),
+                    (0, CollectionTrace("(!= 1 0)\n3\n(0 0 2)\n", ordered_lines=ordered)),
+                )
+                if any(observation not in expected for observation in (native, reference)):
+                    print("FAIL: the existence rewrite disagrees with primitive availability")
+                    print("native:", native)
+                    print("reference:", reference)
+                    return 1
             if native != reference:
                 print(f"FAIL: fixed program {number} ends differently on the native path")
                 print(source)

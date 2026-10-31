@@ -39,6 +39,67 @@ static const char *take_name(CettaDelayService *service, uint32_t mark) {
     return symbol_bytes(g_symbols, goal.goal->sym_id);
 }
 
+static void repeated_watches(Arena *arena) {
+    const uint32_t widths[] = {1u, 3u, 65u, 257u, 1025u, 4097u};
+    for (unsigned size = 0u; size < sizeof(widths) / sizeof(widths[0]); size++)
+    for (uint32_t repeats = 1u; repeats <= 3u; repeats++)
+    for (uint32_t copies = 1u; copies <= 3u; copies++)
+    for (unsigned withdraw = 0u; withdraw < 2u; withdraw++) {
+        uint32_t width = widths[size], count = width * repeats;
+        VarId *vars = malloc(sizeof(*vars) * count);
+        CHECK(vars != NULL, "allocate repeated watch input");
+        if (!vars) return;
+        for (uint32_t at = 0u; at < count; at++)
+            vars[at] = var_id_from_base(10000u + at % width);
+        CettaDelayService *service = cetta_delay_service_new();
+        CHECK(service != NULL, "allocate repeated watch service");
+        if (!service) { free(vars); return; }
+        for (uint32_t copy = 0u; copy < copies; copy++)
+            CHECK(cetta_delay_suspend(service, copy + 1u,
+                CETTA_DELAY_CLIENT_PROLOG, goal_named(arena, "same-goal"),
+                vars, count, false), "retain distinct equal goals");
+        /* A clone rebuilds its index from the exact retained lists. */
+        CettaDelayService *cloned = cetta_delay_service_clone(service);
+        for (unsigned route = 0u; route < 2u; route++) {
+            CettaDelayService *current = route ? cloned : service;
+            CHECK(current != NULL, "clone repeated watch service");
+            if (!current) continue;
+            const CettaDelayGoal *goals[3];
+            CHECK(cetta_delay_goals_on(current, vars[0], goals, 3u) == copies,
+                "watch lookup returns each goal once, retaining equal occurrences");
+            const CettaDelayGoal **reached = NULL;
+            uint32_t reached_count = 0u;
+            CHECK(cetta_delay_reach(current, vars, count, &reached, &reached_count)
+                && reached_count == copies, "reach agrees with watch lookup");
+            free(reached);
+            if (withdraw) {
+                CHECK(cetta_delay_withdraw(current, 100u, vars[0]),
+                    "withdraw repeated watches once");
+                CHECK(!cetta_delay_has_woken(current) && !cetta_delay_watching(current),
+                    "withdrawal leaves no watch or counter residue");
+                cetta_delay_rollback(current, 100u);
+            }
+            CHECK(cetta_delay_bound(current, 101u, vars[0]), "bind repeated watches");
+            for (uint32_t copy = 0u; copy < copies; copy++) {
+                CettaDelayGoal goal;
+                bool taken = cetta_delay_take_woken(current, 102u, &goal);
+                CHECK(taken && goal.var_len == count,
+                    "queue preserves each distinct goal and exact variable list");
+                if (taken) CHECK(memcmp(goal.vars, vars, sizeof(*vars) * count) == 0,
+                    "retained variable occurrences remain exact");
+            }
+            CHECK(!cetta_delay_has_woken(current) && !cetta_delay_watching(current),
+                "one wake per goal leaves no watch or counter residue");
+            cetta_delay_rollback(current, 101u);
+            CHECK(cetta_delay_goals_on(current, vars[width - 1u], goals, 3u) == copies,
+                "rollback restores every unique watch");
+        }
+        cetta_delay_service_free(cloned);
+        cetta_delay_service_free(service);
+        free(vars);
+    }
+}
+
 int main(void) {
     SymbolTable symbols;
     symbol_table_init(&symbols);
@@ -220,6 +281,7 @@ int main(void) {
           "a thousand withdrawn goals leave nothing indexed");
     cetta_delay_service_free(indexed);
 
+    repeated_watches(&arena);
     arena_free(&arena);
     g_symbols = NULL;
     symbol_table_free(&symbols);
