@@ -1,5 +1,24 @@
 # A metagraph database in MeTTa
 
+## Moving a collection between processes or stores
+
+`examples/native_transfer_server.metta` serves the same ordinary Space
+queries and adds bounded logical import/export. The independent client is:
+
+```sh
+python3 tools/cetta_space_transfer.py service.sock export claims claims.csx
+python3 tools/cetta_space_transfer.py service.sock import copied-claims copy-001 claims.csx
+```
+
+The archive carries original encoded atoms, duplicate occurrences and index
+declarations. A copy creates new destination memberships with a durable
+origin-to-destination map. References inside atoms remain original references;
+applications can explicitly translate them with `durable-space:import-origin`.
+Use the existing captured backup/restore for exact identity-preserving recovery.
+Staging is invisible; facts, rebuilt indexes, origin mappings and retry receipt
+publish together. Truncation, bad completion and capacity failure refuse.
+`make test-space-transfer` exercises the embedded, service and file paths.
+
 ## Ordinary persistent Spaces
 
 The current path is `space_curriculum.metta`: one ordinary persistent Space,

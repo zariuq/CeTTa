@@ -1,5 +1,117 @@
 # Native byte stores
 
+## Bounded logical collection transfer
+
+`(library space_transfer)` copies ordinary durable collections through the
+existing captured byte cursors and atomic publication owner. It introduces
+no second fact store or matcher. Physical backup/restore, described below,
+preserves a store's epoch and occurrence identities. A logical copy creates
+new destination occurrences and records their origins explicitly.
+
+```text
+captured collection → header · row · row · completion footer
+                                      |
+                         private disk-backed operation batch
+                                      |
+                 facts + indexes + origin map + receipt → commit
+```
+
+Embedded export uses `durable-space:export-open view collection frame-bytes`,
+`export-next state` and `export-close state`. Open returns
+`(SpaceExportOpenedV1 state header)`. Next returns
+`(SpaceExportMoreV1 next-state row)` or
+`(SpaceExportCompleteV1 footer)`, closing the captured owner at completion.
+Each step reads one key and at most one bounded value. The original view
+may be closed after open. Publication, compaction and collection do not
+change the exported snapshot. Metadata count mismatches fail at completion.
+
+The portable records are:
+
+```metta
+(SpaceExportHeaderV1 source-epoch source-revision source-collection count index-specs)
+(SpaceExportRowV1 sequence original-occurrence encoded-CAV1-atom)
+(SpaceExportEndV1 count chain-digest)
+```
+
+Row sequence starts at zero; source keys must be strictly increasing in
+byte order within the source collection. Index specifications travel;
+postings are rebuilt from the original atoms. Payloads stay CAV1 bytes so
+open variables, sharing within one atom, Booleans versus symbols, numeric
+representations and callable-looking data remain distinct and inert. The
+digest starts as SHA256(CAV1(header)); each row replaces it with
+SHA256(CAV1(`(SpaceExportLinkV1 previous-hex-digest row)`)). This is an
+integrity/retry fingerprint, not a signature or source-authentication claim.
+
+Import uses `durable-space:import-open owner view new-collection request-id
+header expected-digest spool-maximum`, followed by `import-row state row`
+and `import-finish owner state footer`. The destination collection must be
+absent, without orphaned rows, postings or import-map entries. Open returns
+`(SpaceImportOpenedV1 state)` or an existing durable receipt. Row returns
+`(SpaceImportMoreV1 next-state (SpaceImportMappingV1 origin destination))`.
+These mappings are provisional until finish commits. `import-close` cancels;
+`import-progress` reports rows, retained spool bytes, maximum and staged ops.
+All continuations are linear: use the returned state once, then retire it.
+A copied older state refuses once its shared spool advances.
+
+No collection data or successful receipt is visible during staging. Finish
+checks declared/received counts, ordered origins, canonical payload encoding,
+computed/footer/expected digests and the current spool operation count.
+It commits facts, metadata, rebuilt exact/range indexes, origin mappings and
+the request receipt together under conservative whole-revision validation.
+A competing publication conflicts; cancellation, failure, disconnect or
+process death before publication discards the unlinked spool. Publication
+uses the existing journal and synchronization rules. Lost replies require
+receipt resolution before a retry; the same command replays without copying
+again, while a changed header/digest with the same request id collides.
+
+Destination identities are derived from destination epoch/collection,
+request and sequence. Equal payloads remain distinct. References *inside*
+payloads keep their original meaning; import never rewrites arbitrary
+terms. After commit, `durable-space:import-origin view collection request
+origin` returns `StoreDecoded(SpaceImportMappingV1 origin destination)`, or
+`SpaceImportOriginAbsentV1`. Applications can translate references explicitly.
+Exact whole-store restore remains the operation for preserving all identities.
+
+`examples/native_transfer_server.metta` adds these routes to the same query
+server. ExportOpen borrows a snapshot via `UseV1`; ExportNext/ExportCancel
+use the returned linear `UseValueV1` ticket. ImportOpen similarly borrows a
+snapshot, then ImportRow/ImportFinish/ImportCancel use linear tickets.
+Export and origin lookup require Read; import staging/publication require
+Write. Cancellation remains available after read-only attenuation. Tickets
+are connection-owned; disconnect releases native handles and staging files.
+No client-selected server file path is involved.
+
+`tools/cetta_space_transfer.py` is an optional independent Python client;
+the MeTTa server and embedded library require no Python runtime. It stores
+`CSX1` plus big-endian four-byte-length CAV1 frames: header, rows, footer,
+then EOF. Frames are at most 128 KiB. Import validates the complete file,
+rewinds and streams it again; the publisher independently checks the expected
+digest. Memory retention is bounded by a frame and the server's existing
+disk-backed batch, rather than the collection size. Export creates a new
+file, fsyncs it and its directory, and refuses overwrite. An interrupted
+file lacks valid completion and is refused by import.
+
+```sh
+python3 tools/cetta_space_transfer.py service.sock export claims claims.csx
+python3 tools/cetta_space_transfer.py service.sock import copied-claims copy-001 claims.csx
+```
+
+The initial transfer contract accepts V1/V3/V4 collections, with a 128 KiB
+maximum encoded row and an explicitly bounded spool (the example service
+allows 64 MiB). A larger single fact refuses explicitly; it is not silently
+omitted. This format is a portable application archive, not ACT or a new
+durable storage format. The existing durable owner still owns recovery.
+V2 collections require the existing reindex upgrade before logical export.
+
+`test-space-transfer` compares encoded bags, variable sharing, duplicate
+memberships, durable origin mappings and ordinary/range queries after copy.
+It exercises embedded/service/file execution, snapshots across publication,
+malformed/truncated/reordered streams, stale spool aliases, frame/spool
+limits, read-only and foreign-ticket refusal, conflicts, disconnect/crash,
+lost-reply receipt recovery, compaction and repeated cancellation cleanup.
+These are scoped transfer checks, not a hardware power-loss proof or full
+application-transition qualification.
+
 ## Relational composition over ordinary Spaces
 
 `(library kb_query)` now connects its existing MeTTa join/optional/semi/anti

@@ -4691,6 +4691,11 @@ test-scalar-ranges: value-worker
 test-scalar-range-curriculum: value-worker
 	$(PYTHON) tests/support/check_scalar_range_curriculum.py $(VALUE_WORKER_BIN)
 
+.PHONY: test-space-transfer
+test-all: test-space-transfer
+test-space-transfer: value-worker
+	$(PYTHON) tests/support/check_space_transfer.py $(VALUE_WORKER_BIN)
+
 NATIVE_DISK_SPACE_TEST_BIN = runtime/test_native_disk_space-$(BUILD_OBJ_TAG)
 $(NATIVE_DISK_SPACE_TEST_BIN): tests/test_native_disk_space.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p runtime
