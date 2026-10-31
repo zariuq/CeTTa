@@ -196,12 +196,13 @@ static Atom *space_view(CettaLibraryContext *ctx,Arena *a,Atom **args,uint32_t n
     free(body);
     CettaDiskBytes prefix;uint64_t count=0;
     bool version2=record && record->kind==ATOM_EXPR && record->expr.len==4 && atom_is_symbol(record->expr.elems[0],"StoreSpaceV2");
+    bool version3=record && record->kind==ATOM_EXPR && record->expr.len==4 && atom_is_symbol(record->expr.elems[0],"StoreSpaceV3");
     bool valid=decoded==ATOM_WIRE_OK && record && record->kind==ATOM_EXPR &&
-        ((record->expr.len==3 && atom_is_symbol(record->expr.elems[0],"StoreSpaceV1")) || version2) && string(record->expr.elems[1],&prefix) &&
+        ((record->expr.len==3 && atom_is_symbol(record->expr.elems[0],"StoreSpaceV1")) || version2 || version3) && string(record->expr.elems[1],&prefix) &&
         prefix.size && prefix.size<=root->key_limit && number(record->expr.elems[2],&count) &&
         !(key.size>=prefix.size && !memcmp(key.data,prefix.data,prefix.size));
     CettaDiskSpaceIndex *indexes=NULL;size_t index_count=0;
-    if (valid && version2) {
+    if (valid && (version2 || version3)) {
         Atom *items=record->expr.elems[3];valid=items->kind==ATOM_EXPR;
         if (valid && items->expr.len) {
             index_count=items->expr.len;indexes=calloc(index_count,sizeof(*indexes));
@@ -218,7 +219,10 @@ static Atom *space_view(CettaLibraryContext *ctx,Arena *a,Atom **args,uint32_t n
     if (!valid) result=refused(a,read!=CETTA_DISK_OK ? "space-metadata-read" : "space-metadata-format");
     else if (streaming) {
         CettaDiskQuery *query=NULL;
-        CettaDiskStoreStatus status=cetta_disk_query_open_indexed(view,prefix,count,indexes,index_count,args[2],args[3],&query);
+        /* V2's historical MeTTa projection could interpret Boolean-like
+         * fields and leave incomplete postings. Keep its facts readable by
+         * the complete scan; only V3 declares data-preserving projections. */
+        CettaDiskStoreStatus status=cetta_disk_query_open_indexed(view,prefix,count,indexes,version3 ? index_count : 0,args[2],args[3],&query);
         if (status!=CETTA_STORE_OK) result=status_value(a,status);
         else {
             Atom *handle=own_query(ctx,a,query);
@@ -229,7 +233,7 @@ static Atom *space_view(CettaLibraryContext *ctx,Arena *a,Atom **args,uint32_t n
         Space *space=arena_alloc(storage,sizeof(*space));
         if (!space) { result=refused(a,"capacity");free(indexes);arena_free(&metadata);goto done; }
         space_init_with_universe(space,&ctx->term_universe);
-        CettaDiskStoreStatus status=cetta_disk_space_capture_indexed(space,view,prefix,count,indexes,index_count);
+        CettaDiskStoreStatus status=cetta_disk_space_capture_indexed(space,view,prefix,count,indexes,version3 ? index_count : 0);
         if (status!=CETTA_STORE_OK) { space_free(space);result=status_value(a,status); }
         else if (!eval_track_new_space(space)) { space_free(space);result=refused(a,"capacity"); }
         else {

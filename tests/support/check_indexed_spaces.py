@@ -62,7 +62,10 @@ def main():
                       E("whole", Var(0)), E("edge", 0.0, S("zero")), E("edge", -0.0, S("signed-zero")),
                       E("edge", "alice", S("text")), E("edge", E("nested", S("value")), S("nested")),
                       E("danger"), E("=", E("inert-rule"), E("println!", S("ACCIDENTAL_EXECUTION"))),
-                      Var(0), E("edge", "a\0b", S("nul")), E("edge", S("+"), S("native-operator"))]
+                      Var(0), E("edge", "a\0b", S("nul")), E("edge", S("+"), S("native-operator")),
+                      E("edge", True, S("native-true")), E("edge", False, S("native-false")),
+                      E("edge", S("True"), S("capital-true")), E("edge", S("False"), S("capital-false")),
+                      E("edge", S("true"), S("lower-true")), E("edge", S("false"), S("lower-false"))]
             values += [E("noise", S(f"subject-{i}"), S(f"object-{i}")) for i in range(256)]
             # Multiple bounded commits keep application receipts inside CAV1.
             references = []
@@ -80,6 +83,7 @@ def main():
                       (E(",", E("edge", S("alice"), x), E("edge", x, y)), E("pair", x, y)),
                       (E("danger"), E("danger")), (E("missing", S("absent"), x), x),
                       (E("edge", S("+"), x), x), (E("=", E("inert-rule"), x), x)]
+            probes += [(E("edge", value, x), x) for value in [True, False, S("True"), S("False"), S("true"), S("false")]]
             comparisons = []
             for probe_number, (pattern, template) in enumerate(probes):
                 actual = call(E("Query", pattern, template))
@@ -200,11 +204,24 @@ def main():
                     samples.append(server.sample(client, index - 63))
             assert len({sample["descriptors"] for sample in samples}) == 1, samples
             assert len({sample["stats"][2] for sample in samples}) == 1, samples
+            # Historical V2 indexes may be logically incomplete despite valid
+            # file checksums. The reader must scan facts, and edits must wait
+            # for an explicit index upgrade instead of asserting V3 validity.
+            before_legacy = call(E("Query", E("edge", S("eve"), x), x))
+            assert call(E("LegacyMissingV2"))[0] == S("LegacyMissingV2")
+            legacy_info = call(E("Info"))
+            legacy = call(E("Query", E("edge", S("eve"), x), x))
+            assert bag(row[1] for row in legacy[1]) == bag(row[1] for row in before_legacy[1]), legacy
+            assert legacy[2][1] > 0 and legacy[2][2] == 0, legacy
+            refused = call(E("Commit", "legacy-write", (E("SpaceInsertV1", 0, E("legacy-no-write")),)))
+            assert refused == E("SpaceRefusedV1", S("index-upgrade-required")), refused
+            assert call(E("Info")) == legacy_info
             report = {"facts": len(values), "independent_pattern_comparisons": len(probes),
                       "comparisons": comparisons, "service_info": info[1:],
                       "atomic_update_delete_replay": True, "captured_index_survives_compaction": True,
                       "restart_preserves_occurrences_and_indexes": True,
                       "backup_restore_preserves_index_access": True,
+                      "legacy_v2_scan_only": True, "legacy_v2_edits_refused": True,
                       "post_warmup_indexed_service_rounds": args.rounds, "lifetime_samples": samples}
             if args.output: args.output.write_text(json.dumps(report, indent=2) + "\n")
             print(json.dumps(report, indent=2))

@@ -14,6 +14,7 @@
        (ServiceRouteV1 Next Read kb-server:next)
        (ServiceRouteV1 Cancel Read kb-server:cancel)
        (ServiceRouteV1 QueryInfo Read kb-server:query-info)
+       (ServiceRouteV1 ReadOccurrence Read kb-server:read-occurrence)
        (ServiceRouteV1 Commit Write kb-server:commit)
        (ServiceRouteV1 Resolve Read kb-server:resolve)
        (ServiceRouteV1 Backup Write kb-server:backup)
@@ -54,6 +55,9 @@
 
 (= (kb-server:query-info (ServiceCallV1 $configuration $peer $query $arguments))
   (store:space-query-info $query))
+
+(= (kb-server:read-occurrence (ServiceCallV1 $configuration $peer $view (OccurrenceReadV1 $collection $reference $maximum)))
+  (durable-space:read $view $collection $reference $maximum))
 
 (= (kb-server:commit (ServiceCallV1 (KbConfigurationV1 $owner) $peer $view (CommitV1 $collection $request $changes)))
   (if (== (get-metatype $changes) Expression)

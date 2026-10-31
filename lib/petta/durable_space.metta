@@ -23,6 +23,28 @@
   (case (durable-space:metadata $collection)
     (((KnowledgeAddressV1 $key) (store:space-query-open $view $key $pattern $template)) ($error $error))))
 
+; Read one original occurrence, not an instantiated match template. The view
+; supplies authority; epoch/collection/reference checks prevent cross-domain
+; reads. The encoded byte count describes this additional point read.
+(: durable-space:read (-> %Undefined% Atom Atom Number %Undefined%))
+(= (durable-space:read $view $collection $reference $maximum)
+  (case (durable-space:prefix $collection)
+    (((KnowledgeAddressV1 $prefix)
+      (case (store:view-info $view)
+        (((StoreViewInfo $epoch $revision)
+          (case (durable-space:reference-key $reference $epoch $prefix)
+            (((KnowledgeAddressV1 $key)
+              (case (store:get $view $key $maximum)
+                (((StoreValue $body)
+                  (case (store:decode $body)
+                    (((StoreDecoded $atom) (SpaceOccurrenceReadV1 $atom (str:byte-length $body)))
+                     ($failure $failure))))
+                 (StoreAbsent SpaceOccurrenceAbsentV1)
+                 ($failure $failure))))
+             ($failure $failure))))
+         ($failure $failure))))
+     ($failure $failure))))
+
 ; One bounded first-answer probe over the shared matcher. A paused/failed
 ; search is never absence. The temporary cursor closes on every outcome.
 (: durable-space:probe (-> %Undefined% Atom Atom Atom Number %Undefined%))
@@ -50,7 +72,7 @@
      ($error $error))))
 
 (= (durable-space:descriptor $prefix $count $indexes)
-  (if (== $indexes ()) (StoreSpaceV1 $prefix $count) (StoreSpaceV2 $prefix $count $indexes)))
+  (if (== $indexes ()) (StoreSpaceV1 $prefix $count) (StoreSpaceV3 $prefix $count $indexes)))
 (= (durable-space:index-prefixes-empty? $view $indexes)
   (if (== $indexes ()) True
     (let (StoreSpaceIndexV1 $arity $position $prefix) (car-atom $indexes)
@@ -106,8 +128,10 @@
             (case $record
               (((StoreSpaceV1 $stored $count)
                 (durable-space:state-fields $collection $prefix $stored $count ()))
-               ((StoreSpaceV2 $stored $count $indexes)
+               ((StoreSpaceV3 $stored $count $indexes)
                 (durable-space:state-fields $collection $prefix $stored $count $indexes))
+               ((StoreSpaceV2 $stored $count $indexes)
+                (SpaceRefusedV1 index-upgrade-required))
                ($other (SpaceRefusedV1 metadata-format))))
             (SpaceRefusedV1 metadata-format)))
          ($error $error))))

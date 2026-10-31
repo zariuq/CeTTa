@@ -120,6 +120,12 @@ implement another query language or matcher.
   the captured occurrences through the shared incremental Space cursor.
   Eligible declared indexes select candidates; other patterns use a complete
   prefix scan. Both paths use the same matcher and occurrence identities.
+- `(durable-space:read view collection reference maximum-bytes)` fetches one
+  original occurrence from that captured root. Success is
+  `(SpaceOccurrenceReadV1 atom encoded-bytes)`; a missing occurrence is
+  `SpaceOccurrenceAbsentV1`. Wrong epoch/collection, invalid bytes, I/O and
+  size failures remain explicit. This returns original data, rather than a
+  match template in which stored variables may have been instantiated.
 
 For example, with a captured `view` and an initialized `claims` collection:
 
@@ -177,7 +183,7 @@ outgoing and incoming candidate access. A probe uses the last declared eligible
 projection whose pattern field is a symbol or string. This is a deterministic
 selection rule, not a cardinality optimizer or an intersection of indexes.
 
-An indexed collection stores `(StoreSpaceV2 prefix occurrence-count indexes)`;
+An indexed collection stores `(StoreSpaceV3 prefix occurrence-count indexes)`;
 each index descriptor is `(StoreSpaceIndexV1 arity position index-prefix)`.
 Symbol/string fields have exact postings. Other fields and whole-variable
 occurrences have wildcard postings. A selective read merges those two disjoint
@@ -195,6 +201,16 @@ The library refuses orphaned index prefixes during creation. Dangling or malform
 postings fail execution explicitly. Raw byte-store writes can bypass these
 invariants, including deleting a required posting; selective reads do not audit
 the entire index for missing postings. Use the collection writer consistently.
+
+Historical `StoreSpaceV2` collections used a projection that could interpret
+Boolean-like fields while extracting them, leaving logically incomplete
+postings despite valid storage checksums. The current reader ignores their
+postings and scans the fact range. Their edits refuse with
+`SpaceRefusedV1 index-upgrade-required`; replaying an existing receipt remains
+available. A separate explicit rebuild/export upgrade is required before such
+a collection resumes writes. It is not silently relabelled as V3. New V3
+collections use data-preserving field selection. This is a collection metadata
+version, independent of the native CSD2 storage ABI and language selectors.
 
 Complete posting keys must fit the native key limit (currently 65,536 bytes).
 An otherwise portable wide string may therefore fit an unindexed collection

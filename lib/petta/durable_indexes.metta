@@ -3,6 +3,7 @@
 ; all other projected values and whole-variable facts use the wildcard range.
 !(import! &self "knowledge.metta")
 !(import! &self (library list))
+!(import! &self "atom_data.metta")
 
 (: durable-index:exact? (-> Atom Bool))
 (: durable-index:postings (-> Atom String Atom %Undefined%))
@@ -71,7 +72,7 @@
     ((Variable SpaceIndexAnyV1)
      (Expression
        (if (== (size-atom $atom) $arity)
-         (let $field (index-atom $atom $position) (SpaceIndexFieldV1 $field)) SpaceIndexSkipV1))
+         (let (AtomDataV1 $field) (atom-data:item $atom $position) (SpaceIndexFieldV1 $field)) SpaceIndexSkipV1))
      ($other SpaceIndexSkipV1))))
 (= (durable-index:bucket $prefix $field)
   (if (durable-index:exact? $field)
