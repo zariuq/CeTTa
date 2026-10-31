@@ -21236,7 +21236,7 @@ test-lib-parse-native-gparse: $(BIN)
 	fi
 
 .PHONY: test-gparse-gslt-core
-test test-all: test-gparse-gslt-core
+test-all: test-gparse-gslt-core
 test-gparse-gslt-core: $(BIN) tests/support/check_gparse_core_property.py tests/test_gparse_gslt_core.metta
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_gparse_core_property.py "$(CETTA_SCRIPT_BIN)"
 
@@ -29065,7 +29065,17 @@ test-native-query: $(BIN) tests/support/check_native_query.py \
 		tests/petta/native_count_relations.metta \
 		tests/petta/native_count_relations.expected \
 		tests/petta/relaxation_region.metta \
-		tests/petta/relaxation_region.expected
+		tests/petta/relaxation_region.expected \
+		tests/petta/native_filtered_match.metta \
+		tests/petta/native_filtered_match.expected \
+		tests/petta/native_scalar_fold.metta \
+		tests/petta/native_scalar_fold.expected \
+		tests/petta/saturation_dead_rules.metta \
+		tests/petta/saturation_dead_rules.expected \
+		tests/petta/native_grouped_counts.metta \
+		tests/petta/native_grouped_counts.expected \
+		tests/petta/native_listed_match.metta \
+		tests/petta/native_listed_match.expected
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_native_query.py ./$(BIN) --programs 200
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_snapshot_regions.py ./$(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_oem_stored_rows.py ./$(BIN) --programs 200
@@ -29091,7 +29101,7 @@ test-native-query: $(BIN) tests/support/check_native_query.py \
 		done; \
 	done; \
 	echo "PASS: let bodies, nested columns, removals of rows holding variables and matches read afresh after effects answer alike on the native and ordinary paths"
-	@for stem in native_open_joins dense_relations_set_once native_guard_kept_facts native_guard_reads native_filter native_guard_spellings native_comparison_redefined native_guard_conjunctions native_order_filters saturation_region native_count_relations relaxation_region; do \
+	@for stem in native_open_joins dense_relations_set_once native_guard_kept_facts native_guard_reads native_filter native_guard_spellings native_comparison_redefined native_guard_conjunctions native_order_filters saturation_region native_count_relations relaxation_region native_filtered_match native_scalar_fold saturation_dead_rules native_grouped_counts native_listed_match; do \
 		for route in "" CETTA_SPACE_DENSE=eager CETTA_NATIVE_QUERY_REFERENCE=1 \
 				"CETTA_SPACE_DENSE=eager CETTA_NATIVE_QUERY_REFERENCE=1"; do \
 			answers=$$(env $$route $(CETTA_BIN_INVOKE) --profile extended \
@@ -29103,7 +29113,7 @@ test-native-query: $(BIN) tests/support/check_native_query.py \
 			fi; \
 		done; \
 	done; \
-	echo "PASS: joins over facts holding variables, read from relations of deep facts, sets holding each fact once, guards over facts a relation holds, guards in the spellings programs use and filters on values answer as the ordinary path does"
+	echo "PASS: joins over facts holding variables, read from relations of deep facts, sets holding each fact once, guards over facts a relation holds, guards in the spellings programs use, filters on values, matches running a branch for the solutions filters pass, folds over scalars, regions with rules that cannot fire, grouped counts and lists spread over matches answer as the ordinary path does"
 
 # Defects in the joins over facts holding variables, each caught by the open
 # joins fixture, read with relations from a head's first fact or as counted
@@ -29207,7 +29217,15 @@ endif
 # function with another arity than its equation's taken for an application.
 # A relaxation region runs the read-while-removed fixture natively, so the
 # gate reads that fixture on the ordinary path too, where a relation is read
-# while its facts are removed.
+# while its facts are removed.  A filtered match keeps its test after a run
+# changed the rules, collects without its filters, or binds the taken
+# branch's variables alone.  A scalar fold takes a tuple headed by a
+# callable value for data, reads a strict order as loose, or wraps a sum
+# past 64 bits.  A saturation region takes a rule reading a static premise
+# for one that cannot fire.  A grouped count gives a solution every group's
+# count, lets through an addition the count reads, or counts a group with
+# no solution as one.  A list spread over a match drops rows after the
+# first, or keeps its rows as a set.
 test-native-query-mutations: $(BIN) tests/support/check_native_query.py \
 		tests/support/mutate_native_query.py \
 		tests/petta/native_guard_kept_facts.metta \
@@ -29234,16 +29252,26 @@ test-native-query-mutations: $(BIN) tests/support/check_native_query.py \
 		tests/petta/native_count_relations.metta \
 		tests/petta/native_count_relations.expected \
 		tests/petta/relaxation_region.metta \
-		tests/petta/relaxation_region.expected
+		tests/petta/relaxation_region.expected \
+		tests/petta/native_filtered_match.metta \
+		tests/petta/native_filtered_match.expected \
+		tests/petta/native_scalar_fold.metta \
+		tests/petta/native_scalar_fold.expected \
+		tests/petta/saturation_dead_rules.metta \
+		tests/petta/saturation_dead_rules.expected \
+		tests/petta/native_grouped_counts.metta \
+		tests/petta/native_grouped_counts.expected \
+		tests/petta/native_listed_match.metta \
+		tests/petta/native_listed_match.expected
 	@set -eu; \
 	mutation_dir=runtime/bootstrap/native-query-mutations-$(BUILD_OBJ_TAG); \
 	mkdir -p "$$mutation_dir"; \
-	for kind in copies collected-copies instance-slot atom-slot flush disjoint level-key loop-bound loop-release rows-fixed dense-summed dense-link dense-repeat dense-popcount dense-diagonal nested-repeat nested-constant leg-space open-row-removal guard-ignored guard-unchecked guard-uncertified directive-answers fold-count fold-places inline-arguments inline-typed inline-equations guard-plain destructure-oem-count case-default arith-op snapshot-occurrence scope-let scope-legs scope-template scope-binding scope-value scope-own typed-hold typed-arguments typed-observed dispatch-unique exists-negated exists-machine exists-machine-equal region-coverage-ignored region-views-dropped count-relations-ignored count-variable-skipped relax-min-ignored relax-two-values-ignored guard-columns-unheld exists-oem-operation guard-operation exists-counted fold-each guard-case-set exists-case-branch exists-oem-case snapshot-stream-scope admit-unresolved head-inert let-head bag-summed distinct-ignored distinct-count unique-extended inline-arity afresh-unchecked afresh-ignored guard-recordless guard-summed insert-unkeyed else-summed else-answers filter-polarity conjunction-filter-ignored conjunction-polarity order-flipped order-unchecked nested-kept-ignored flat-spine-open relation-removal-attached dead-equation-any types-held-ignored types-checked-ignored; do \
+	for kind in copies collected-copies instance-slot atom-slot flush disjoint level-key loop-bound loop-release rows-fixed dense-summed dense-link dense-repeat dense-popcount dense-diagonal nested-repeat nested-constant leg-space open-row-removal guard-ignored guard-unchecked guard-uncertified directive-answers fold-count fold-places inline-arguments inline-typed inline-equations guard-plain destructure-oem-count case-default arith-op snapshot-occurrence scope-let scope-legs scope-template scope-binding scope-value scope-own typed-hold typed-arguments typed-observed dispatch-unique exists-negated exists-machine exists-machine-equal region-coverage-ignored region-views-dropped count-relations-ignored count-variable-skipped relax-min-ignored relax-two-values-ignored guard-columns-unheld exists-oem-operation guard-operation exists-counted fold-each guard-case-set exists-case-branch exists-oem-case snapshot-stream-scope admit-unresolved head-inert let-head bag-summed distinct-ignored distinct-count unique-extended inline-arity afresh-unchecked afresh-ignored guard-recordless guard-summed insert-unkeyed else-summed else-answers filter-polarity conjunction-filter-ignored conjunction-polarity order-flipped order-unchecked nested-kept-ignored flat-spine-open relation-removal-attached dead-equation-any types-held-ignored types-checked-ignored filtered-test-stale filtered-unfiltered filtered-tuple-taken scalar-head-unchecked scalar-order-loose scalar-sum-wrapped dead-rule-any grouped-key-ignored grouped-reads-ignored grouped-absent-one listed-rows-dropped listed-bag-set; do \
 		case "$$kind" in \
 			level-key) module=relational_cursor;; \
 			dense-*) module=dense_relation;; \
-			open-row-removal|guard-unchecked|guard-uncertified|guard-plain|directive-answers|inline-*|case-default|arith-op|scope-let|scope-legs|dispatch-unique|guard-case-set|snapshot-stream-scope|let-head|afresh-ignored|dead-equation-any|types-held-ignored|types-checked-ignored|guard-operation|conjunction-polarity|region-coverage-ignored|region-views-dropped|relax-min-ignored|relax-two-values-ignored) module=eval;; \
-			fold-count|snapshot-occurrence|scope-binding|scope-value|typed-*|exists-machine|exists-machine-equal|fold-each|exists-case-branch|unique-extended) module=petta_search_machine;; \
+			open-row-removal|guard-unchecked|guard-uncertified|guard-plain|directive-answers|inline-*|case-default|arith-op|scope-let|scope-legs|dispatch-unique|guard-case-set|snapshot-stream-scope|let-head|afresh-ignored|dead-equation-any|types-held-ignored|types-checked-ignored|guard-operation|conjunction-polarity|region-coverage-ignored|region-views-dropped|relax-min-ignored|relax-two-values-ignored|filtered-unfiltered|scalar-*|dead-rule-any|grouped-*|listed-*) module=eval;; \
+			fold-count|snapshot-occurrence|scope-binding|scope-value|typed-*|exists-machine|exists-machine-equal|fold-each|exists-case-branch|unique-extended|filtered-test-stale|filtered-tuple-taken) module=petta_search_machine;; \
 			fold-places) module=native_fold;; \
 			destructure-oem-count|exists-negated|exists-oem-case|exists-oem-operation|admit-unresolved) module=open_equation_machine;; \
 			scope-own|scope-template) module=petta_program;; \
@@ -29262,7 +29290,7 @@ test-native-query-mutations: $(BIN) tests/support/check_native_query.py \
 			"$$mutation_dir/$$kind.o" $(filter-out FORCE,$(BRIDGE_DEPS)) $(LDFLAGS); \
 		if $(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_native_query.py \
 				"$$mutation_dir/$$kind" --programs 200 > "$$mutation_dir/$$kind.log" 2>&1 && \
-			( for stem in native_guard_kept_facts native_guard_reads native_filter dense_relations_flat_deep dense_relations_read_while_removed native_guard_spellings native_comparison_redefined native_guard_conjunctions native_order_filters saturation_region native_count_relations relaxation_region; do \
+			( for stem in native_guard_kept_facts native_guard_reads native_filter dense_relations_flat_deep dense_relations_read_while_removed native_guard_spellings native_comparison_redefined native_guard_conjunctions native_order_filters saturation_region native_count_relations relaxation_region native_filtered_match native_scalar_fold saturation_dead_rules native_grouped_counts native_listed_match; do \
 				for route in "" CETTA_SPACE_DENSE=eager; do \
 					[ "$$(env $$route "$$mutation_dir/$$kind" --profile extended \
 						--lang petta tests/petta/$$stem.metta 2>&1)" = \
@@ -29277,7 +29305,7 @@ test-native-query-mutations: $(BIN) tests/support/check_native_query.py \
 			exit 1; \
 		fi; \
 	done; \
-	echo "PASS: the native query law, or the guard fixtures, reject all eighty-seven mutants"
+	echo "PASS: the native query law, or the guard fixtures, reject all ninety-nine mutants"
 
 .PHONY: test-oem-stored-rows-mutations
 # The stored-row law rejects each defect a mutant of the open equation

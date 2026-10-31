@@ -122,9 +122,9 @@ typedef struct {
     Atom *guard_pattern;
     Atom *else_atom;
     bool else_empty;
-    /* When set (EFFECTS only), each solution compares the instances of each
-     * filter's left and right by id: one that meets every filter goes on
-     * to the guard, when there is one, and the effects; one that does not
+    /* When set, each solution compares the instances of each filter's left
+     * and right by id: one that meets every filter goes on to the guard,
+     * when there is one, and the effects, then answers; one that does not
      * answers else_atom, or nothing when else_empty, and reads no guard. */
     const CettaNativeQueryFilter *filters;
     size_t filter_count;
