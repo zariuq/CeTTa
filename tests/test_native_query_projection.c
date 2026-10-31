@@ -155,7 +155,7 @@ static void projection_control(unsigned depth, unsigned shape, bool accepted,
     space_add(&source, atom_expr3(&arena, p, a, b));
     space_add(&source, atom_expr3(&arena, p, d, b));
     space_add(&source, atom_expr3(&arena, q, b, c));
-    assert(space_dense_pairs(&source) == 3u);
+    assert(space_dense_facts(&source) == 3u);
     Atom *x = atom_var(&arena, "x"), *y = atom_var(&arena, "y");
     Atom *z = atom_var(&arena, "z"), *outside = atom_var(&arena, "outside");
     Atom *patterns[] = {atom_expr3(&arena, p, x, y), atom_expr3(&arena, q, y, z)};
