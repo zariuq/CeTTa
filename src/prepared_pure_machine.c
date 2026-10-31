@@ -217,6 +217,8 @@ typedef enum {
     /* A native invocation over ready operand values. Its tagged return
      * either continues inline or remains an owned producer on the frontier. */
     PREPARED_PURE_STEP_NATIVE,
+    /* Match and bind on success; a mismatch jumps to target. */
+    PREPARED_PURE_STEP_MATCH_ELSE,
 } PreparedPureStepKind;
 
 typedef struct {
@@ -767,6 +769,8 @@ struct CettaPreparedPureProgram {
     /* The survivor arena's size after the last major collection. */
     size_t gc_major_survivor_bytes;
     size_t gc_low_reclaim_growth_bytes;
+    /* A failed structural inspection supplies no stable compiler refusal. */
+    bool compile_inspection_incomplete;
 
 };
 
@@ -837,11 +841,18 @@ static bool prepared_pure_is_space_node(const Atom *atom, void *context) {
  * machine's matchers compare structure, so in HE a value holding a space is
  * matched by the canonical evaluator.  The identity-grounded summary bit
  * proves the absence of a space in O(1). */
-static bool prepared_pure_he_value_holds_space(const Atom *value) {
-    return value && atom_has_identity_grounded(value) &&
-        eval_current_language_id &&
-        eval_current_language_id() == CETTA_LANGUAGE_HE &&
-        atom_graph_any(value, prepared_pure_is_space_node, NULL);
+static bool prepared_pure_he_value_holds_space(const Atom *value, bool *complete) {
+    if (complete)
+        *complete = true;
+    if (!value || !atom_has_identity_grounded(value) ||
+        !eval_current_language_id || eval_current_language_id() != CETTA_LANGUAGE_HE)
+        return false;
+    bool finished = false;
+    bool found = atom_graph_any_checked(value, prepared_pure_is_space_node,
+        NULL, NULL, SIZE_MAX, &finished);
+    if (complete)
+        *complete = finished;
+    return !finished || found;
 }
 
 /* A frontend refusal can cross result demands only before the compiler
@@ -2193,11 +2204,17 @@ static bool prepared_pure_add_node(
         program->node_len >= UINT32_MAX ||
         program->child_len > UINT32_MAX - child_count)
         return false;
-    if (node.kind == PREPARED_PURE_LITERAL &&
-        prepared_pure_he_value_holds_space(node.atom))
-        return prepared_pure_reject(
-            program, "a literal holds a space, which HE matches by query",
-            node.atom);
+    if (node.kind == PREPARED_PURE_LITERAL) {
+        bool complete = true;
+        if (prepared_pure_he_value_holds_space(node.atom, &complete)) {
+            if (!complete) {
+                program->compile_inspection_incomplete = true;
+                return false;
+            }
+            return prepared_pure_reject(
+                program, "a literal holds a space, which HE matches by query", node.atom);
+        }
+    }
     if (!prepared_pure_reserve(
             (void **)&program->children, sizeof(*program->children),
             &program->child_cap, program->child_len + child_count) ||
@@ -10337,6 +10354,34 @@ static bool prepared_pure_lower_operands(
     return true;
 }
 
+/* Whether an if's then branch binds the pattern its condition tests, to
+ * the value the test reads: the test and the bind are then one match.
+ * `*body_out` is the bind's body. */
+static bool prepared_pure_test_binds(
+    const CettaPreparedPureProgram *program,
+    const PreparedPureNode *condition, uint32_t then_node,
+    uint32_t *body_out) {
+    if ((condition->auxiliary & PREPARED_PURE_OBSERVE_PATTERN_TEST) == 0u ||
+        condition->child_count != 1u ||
+        condition->first_child >= program->child_len ||
+        then_node >= program->node_len)
+        return false;
+    uint32_t tested =
+        condition->auxiliary & ~PREPARED_PURE_OBSERVE_PATTERN_TEST;
+    const PreparedPureNode *then = &program->nodes[then_node];
+    if (tested >= program->bind_pattern_len ||
+        then->kind != PREPARED_PURE_BIND || then->child_count != 2u ||
+        then->auxiliary >= program->bind_pattern_len ||
+        then->first_child > program->child_len ||
+        2u > program->child_len - then->first_child ||
+        program->children[then->first_child] !=
+            program->children[condition->first_child] ||
+        program->bind_patterns[then->auxiliary].pattern !=
+            program->bind_patterns[tested].pattern)
+        return false;
+    *body_out = program->children[then->first_child + 1u];
+    return true;
+}
 /* Lower one node of an answer producer's body into steps, in the order the
  * executor evaluates it: operands left to right, a condition before its
  * selected branch, a bound expression before its pattern and body.  A node
@@ -10400,16 +10445,38 @@ static bool prepared_pure_lower_node_in_source(
         uint32_t condition = 0u;
         uint32_t branch = 0u;
         uint32_t join = 0u;
+        uint32_t condition_node = children[0];
+        uint32_t bind_body = 0u;
+        uint32_t bind_pattern = 0u;
+        bool match_branch = condition_node < program->node_len &&
+            program->nodes[condition_node].kind == PREPARED_PURE_OBSERVE &&
+            prepared_pure_test_binds(program, &program->nodes[condition_node],
+                                     then_node, &bind_body);
+        /* No call may enter while preparing the tested value. Its binding
+         * is installed before the selected body; a mismatch leaves the
+         * original locals for the next arm. */
+        if (match_branch) {
+            bind_pattern = program->nodes[then_node].auxiliary;
+            const PreparedPureNode *test = &program->nodes[condition_node];
+            condition_node = program->children[test->first_child];
+            match_branch = prepared_pure_value_tree(program, condition_node, 0u);
+            if (match_branch)
+                then_node = bind_body;
+            else
+                condition_node = children[0];
+        }
         bool lowered_condition =
             prepared_pure_zipper_push(lowering, &node, 0u, NULL) &&
             prepared_pure_lower_to_slot(
-                lowering, children[0], depth, &condition);
+                lowering, condition_node, depth, &condition);
         prepared_pure_zipper_pop(lowering);
         if (!lowered_condition ||
             !prepared_pure_emit_step(
                 lowering,
                 (PreparedPureStep){
-                    .kind = PREPARED_PURE_STEP_BRANCH, .slot = condition},
+                    .kind = match_branch ? PREPARED_PURE_STEP_MATCH_ELSE
+                                         : PREPARED_PURE_STEP_BRANCH,
+                    .slot = condition, .auxiliary = bind_pattern},
                 &branch) ||
             !prepared_pure_lower_node(
                 lowering, then_node, tail, destination, depth + 1u) ||
@@ -10973,35 +11040,6 @@ static bool prepared_pure_code_operands(
 
 /* Lower one node into code that puts its value in `destination`, or, in
  * tail position, answers it for the body. */
-/* Whether an if's then branch binds the pattern its condition tests, to
- * the value the test reads: the test and the bind are then one match.
- * `*body_out` is the bind's body. */
-static bool prepared_pure_code_test_binds(
-    const CettaPreparedPureProgram *program,
-    const PreparedPureNode *condition, uint32_t then_node,
-    uint32_t *body_out) {
-    if ((condition->auxiliary & PREPARED_PURE_OBSERVE_PATTERN_TEST) == 0u ||
-        condition->child_count != 1u ||
-        condition->first_child >= program->child_len ||
-        then_node >= program->node_len)
-        return false;
-    uint32_t tested =
-        condition->auxiliary & ~PREPARED_PURE_OBSERVE_PATTERN_TEST;
-    const PreparedPureNode *then = &program->nodes[then_node];
-    if (tested >= program->bind_pattern_len ||
-        then->kind != PREPARED_PURE_BIND || then->child_count != 2u ||
-        then->auxiliary >= program->bind_pattern_len ||
-        then->first_child > program->child_len ||
-        2u > program->child_len - then->first_child ||
-        program->children[then->first_child] !=
-            program->children[condition->first_child] ||
-        program->bind_patterns[then->auxiliary].pattern !=
-            program->bind_patterns[tested].pattern)
-        return false;
-    *body_out = program->children[then->first_child + 1u];
-    return true;
-}
-
 static bool prepared_pure_code_node(
     PreparedPureCodeLowering *lowering, uint32_t node_index, bool tail,
     uint32_t destination, uint32_t depth) {
@@ -11130,7 +11168,7 @@ static bool prepared_pure_code_node(
         bool emitted = false;
         uint32_t bind_body = 0u;
         if (condition->kind == PREPARED_PURE_OBSERVE &&
-            prepared_pure_code_test_binds(
+            prepared_pure_test_binds(
                 program, condition, then_node, &bind_body)) {
             /* The pattern test and the then branch's bind of the same
              * pattern to the same value, as one match. */
@@ -11800,6 +11838,12 @@ static __attribute__((noinline, cold)) bool prepared_pure_lower_native_code(Cett
                     .kind = PREPARED_PURE_CODE_MATCH, .auxiliary = step.auxiliary},
                     &step.slot, 1u, NULL);
                 break;
+            case PREPARED_PURE_STEP_MATCH_ELSE:
+                ok = prepared_pure_code_emit(program, (PreparedPureCode){
+                    .kind = PREPARED_PURE_CODE_MATCH_ELSE,
+                    .auxiliary = step.auxiliary, .target = step.target},
+                    &step.slot, 1u, NULL);
+                break;
             case PREPARED_PURE_STEP_BRANCH:
                 ok = prepared_pure_code_emit(program, (PreparedPureCode){
                     .kind = PREPARED_PURE_CODE_BRANCH, .target = step.target},
@@ -11826,7 +11870,9 @@ static __attribute__((noinline, cold)) bool prepared_pure_lower_native_code(Cett
         positions[body->step_count] = (uint32_t)program->code_len;
         for (size_t i = start; ok && i < program->code_len; i++) {
             PreparedPureCode *code = &program->code[i];
-            if (code->kind != PREPARED_PURE_CODE_BRANCH && code->kind != PREPARED_PURE_CODE_JUMP)
+            if (code->kind != PREPARED_PURE_CODE_BRANCH &&
+                code->kind != PREPARED_PURE_CODE_MATCH_ELSE &&
+                code->kind != PREPARED_PURE_CODE_JUMP)
                 continue;
             if (code->target < body->first_step ||
                 code->target - body->first_step > body->step_count) {
@@ -11977,6 +12023,10 @@ static void prepared_pure_compile_failure_report(
     report->refusals = 0u;
     if (!space_program_token_matches_live_space(report->source, space)) {
         report->status = CETTA_PREPARED_PURE_COMPILE_INVALIDATED;
+        return;
+    }
+    if (program && program->compile_inspection_incomplete) {
+        report->status = CETTA_PREPARED_PURE_COMPILE_RESOURCE_REFUSED;
         return;
     }
     if (program && generic_entry && entry_values && mode == CETTA_GSLT_PURE_CALL_EAGER) {
@@ -12232,10 +12282,13 @@ bool cetta_prepared_pure_program_use_exportable_booleans(
         return false;
     if (program->boolean_atoms_ready) {
         for (size_t index = 0u; index < program->node_len; index++) {
-            if (program->nodes[index].atom && atom_graph_any(
-                    program->nodes[index].atom, prepared_pure_is_cached_boolean,
-                    program))
-                return false;
+            if (program->nodes[index].atom) {
+                bool complete = false;
+                bool private_boolean = atom_graph_any_checked(program->nodes[index].atom,
+                    prepared_pure_is_cached_boolean, NULL, program, SIZE_MAX, &complete);
+                if (!complete || private_boolean)
+                    return false;
+            }
         }
     }
     program->exports_boolean_results = true;
@@ -12914,7 +12967,7 @@ static bool prepared_pure_he_entry_arguments_without_space(
     const CettaPreparedPureProgram *program) {
     for (size_t i = 0u; program->entry_arguments &&
              i < program->entry_argument_count; i++) {
-        if (prepared_pure_he_value_holds_space(program->entry_arguments[i]))
+        if (prepared_pure_he_value_holds_space(program->entry_arguments[i], NULL))
             return false;
     }
     return true;
@@ -13033,7 +13086,7 @@ CettaPreparedPureAnswerCursor *cetta_prepared_pure_answer_cursor_open_body(
         if (!arguments[index] || atom_has_vars(arguments[index]) ||
             atom_has_identity_grounded(arguments[index]) ||
             atom_has_thread_local_resource(arguments[index]) ||
-            prepared_pure_he_value_holds_space(arguments[index]))
+            prepared_pure_he_value_holds_space(arguments[index], NULL))
             return NULL;
     return prepared_pure_answer_cursor_open_entry(program, arguments, arity,
         PREPARED_PURE_ROOT_FRAME, options);
@@ -13744,7 +13797,8 @@ static PreparedPureRunResult prepared_pure_answer_cursor_run(
             }
             break;
         }
-        case PREPARED_PURE_STEP_MATCH: {
+        case PREPARED_PURE_STEP_MATCH:
+        case PREPARED_PURE_STEP_MATCH_ELSE: {
             if (step->slot >= body->frame_slot_count ||
                 step->auxiliary >= program->bind_pattern_len ||
                 !program->slots[step->slot])
@@ -13753,8 +13807,13 @@ static PreparedPureRunResult prepared_pure_answer_cursor_run(
                 prepared_pure_match_bind_pattern(
                     program, &program->bind_patterns[step->auxiliary], 0u,
                     program->slots[step->slot]);
-            if (matched == PREPARED_PURE_MATCH_MISMATCH)
+            if (matched == PREPARED_PURE_MATCH_MISMATCH) {
+                if (step->kind == PREPARED_PURE_STEP_MATCH_ELSE) {
+                    pc = step->target;
+                    break;
+                }
                 return PREPARED_PURE_RUN_CONTINUE;
+            }
             if (matched != PREPARED_PURE_MATCH_MATCHED)
                 goto unsupported;
             pc++;
@@ -13792,7 +13851,7 @@ unsupported:
         fprintf(stderr, "prepared-pure step program stops at step %u (%s)\n",
                 pc, body && pc - body->first_step < body->step_count
                     ? (const char *[]){"eval", "call", "tail", "match",
-                                       "branch", "jump", "return", "fail", "native"}
+                                       "branch", "jump", "return", "fail", "native", "match-else"}
                           [program->steps[pc].kind]
                     : "resumption");
     prepared_pure_answer_cursor_restore_step(
@@ -13879,7 +13938,8 @@ bool cetta_prepared_pure_answer_cursor_native_frontier_complete(const CettaPrepa
 
 bool cetta_prepared_pure_program_has_branches(const CettaPreparedPureProgram *program) {
     for (size_t i = 0u; program && i < program->step_len; i++)
-        if (program->steps[i].kind == PREPARED_PURE_STEP_BRANCH)
+        if (program->steps[i].kind == PREPARED_PURE_STEP_BRANCH ||
+            program->steps[i].kind == PREPARED_PURE_STEP_MATCH_ELSE)
             return true;
     return false;
 }
@@ -16263,9 +16323,9 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
             &program->slot_cap, program->body.local_count))
         return prepared_pure_runtime_decline(
             program, "invalid or stale execution request", NULL);
-    if (prepared_pure_he_value_holds_space(accumulator) ||
-        prepared_pure_he_value_holds_space(item) ||
-        prepared_pure_he_value_holds_space(runtime_expression) ||
+    if (prepared_pure_he_value_holds_space(accumulator, NULL) ||
+        prepared_pure_he_value_holds_space(item, NULL) ||
+        prepared_pure_he_value_holds_space(runtime_expression, NULL) ||
         (closed && !prepared_pure_he_entry_arguments_without_space(program)))
         return prepared_pure_runtime_decline(
             program, "a value holds a space, which HE matches by query",
@@ -17149,11 +17209,15 @@ static bool prepared_pure_value_has_callable_node(
 }
 
 bool cetta_prepared_pure_program_value_is_fully_evaluated(
-    CettaPreparedPureProgram *program, Atom *value) {
-    return program && value &&
-           !atom_graph_any_pruned(value,
-               prepared_pure_value_has_callable_node,
-               prepared_pure_result_data_barrier, program);
+    CettaPreparedPureProgram *program, Atom *value, bool *complete) {
+    if (complete)
+        *complete = false;
+    if (!program || !value || !complete)
+        return false;
+    bool callable = atom_graph_any_checked(value,
+        prepared_pure_value_has_callable_node,
+        prepared_pure_result_data_barrier, program, SIZE_MAX, complete);
+    return *complete && !callable;
 }
 
 Arena *cetta_prepared_pure_program_closed_survivor_arena(

@@ -15297,11 +15297,15 @@ static bool source_segment_bind_wake(void *context, Arena *arena,
 }
 
 static bool source_segment_true(void *context, Space *space, Arena *arena,
-        Atom *call, CettaCallOutcome *outcome) {
+        const CettaInvocation *invocation, Atom *source_call,
+        CettaCallOutcome *outcome) {
     (void)space;
-    if (!call || call->kind != ATOM_EXPR || call->expr.len != 2u ||
-        !atom_is_symbol(call->expr.elems[0], "wake-truth") ||
-        !call->expr.elems[1] || call->expr.elems[1]->kind != ATOM_GROUNDED)
+    (void)source_call;
+    CettaExprLen arity = 0u;
+    if (!cetta_invocation_arity(invocation, &arity) || arity != 1u ||
+        !atom_is_symbol(invocation->head.skeleton, "wake-truth") ||
+        !cetta_invocation_argument(invocation, 0u).skeleton ||
+        cetta_invocation_argument(invocation, 0u).skeleton->kind != ATOM_GROUNDED)
         return false;
     ((SourceAccountingProbe *)context)->condition_entries++;
     *outcome = cetta_call_completed_value(atom_bool(arena, true));
@@ -15603,8 +15607,7 @@ static void test_metered_body_segments(TermUniverse *universe, Arena *persistent
     cetta_runtime_stats_snapshot(&final);
     uint64_t committed = final.counters[CETTA_RUNTIME_COUNTER_PETTA_BODY_RESUME_SEGMENT_COMMIT] -
         initial.counters[CETTA_RUNTIME_COUNTER_PETTA_BODY_RESUME_SEGMENT_COMMIT];
-    if (!source_segment_activation_enabled() ||
-        getenv("CETTA_PETTA_BODY_RESUME_SEGMENT_REFERENCE"))
+    if (getenv("CETTA_PETTA_BODY_RESUME_SEGMENT_REFERENCE"))
         assert(!committed);
     else {
         if (!committed)

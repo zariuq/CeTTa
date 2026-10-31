@@ -6171,8 +6171,20 @@ static size_t atom_visit_slot(const Atom *atom, size_t cap) {
 }
 
 bool atom_visit_set_add(AtomVisitSet *set, const Atom *atom, bool *fault) {
+    if (set->len == SIZE_MAX || set->len + 1u > SIZE_MAX / 2u) {
+        *fault = true;
+        return false;
+    }
     if ((set->len + 1u) * 2u > set->cap) {
+        if (set->cap > SIZE_MAX / 2u) {
+            *fault = true;
+            return false;
+        }
         size_t cap = set->cap ? set->cap * 2u : 64u;
+        if (cap > SIZE_MAX / sizeof(*set->slots)) {
+            *fault = true;
+            return false;
+        }
         const Atom **slots = calloc(cap, sizeof(*slots));
         if (!slots) {
             *fault = true;
@@ -6209,15 +6221,6 @@ void atom_visit_set_free(AtomVisitSet *set) {
 static inline __attribute__((always_inline)) bool atom_walk_any(
     const Atom *root, AtomTreePredicate predicate, AtomTreePredicate barrier,
     void *context, bool unique, size_t allowance, bool *complete) {
-    enum { INLINE_CAPACITY = 64 };
-    const Atom *inline_stack[INLINE_CAPACITY];
-    const Atom **stack = inline_stack;
-    size_t capacity = INLINE_CAPACITY;
-    size_t length = 0u;
-    AtomVisitSet seen = {0};
-    bool fault = false;
-    bool found = false;
-
     if (complete)
         *complete = true;
     if (!root)
@@ -6227,18 +6230,50 @@ static inline __attribute__((always_inline)) bool atom_walk_any(
             *complete = false;
         return false;
     }
+    if (root->kind != ATOM_EXPR || !root->expr.len) {
+        if (barrier && barrier(root, context))
+            return false;
+        if (complete && !allowance) {
+            *complete = false;
+            return false;
+        }
+        return predicate(root, context);
+    }
+    enum { INLINE_CAPACITY = 64 };
+    const Atom *inline_stack[INLINE_CAPACITY];
+    const Atom **stack = inline_stack;
+    size_t capacity = INLINE_CAPACITY;
+    size_t length = 0u;
+    AtomVisitSet seen = {0};
+    bool fault = false;
+    bool found = false;
+    bool root_seen = false;
     stack[length++] = root;
     while (length > 0u && !found) {
         const Atom *node = stack[--length];
         if (!node)
             continue;
-        /* A subexpression met again was answered where it was first met;
-         * where the set cannot grow the walk goes on as a tree walk. */
+        /* The root uses one local bit instead of an allocated set entry.
+         * A back edge to it still denotes an already visited expression. */
+        if (unique && node == root) {
+            if (root_seen)
+                continue;
+            root_seen = true;
+        }
+        /* A subexpression met again was answered where it was first met. */
         if (unique && node != root && node->kind == ATOM_EXPR && node->expr.len &&
             !fault && !atom_visit_set_add(&seen, node, &fault) && !fault)
             continue;
-        if (complete && fault)
-            goto incomplete;
+        if (fault) {
+            if (complete)
+                goto incomplete;
+            /* Exact graph queries cannot fall back to a tree traversal:
+             * a non-root cycle would no longer have a termination guard. */
+            size_t next = seen.cap > SIZE_MAX / 2u ? SIZE_MAX
+                : seen.cap ? seen.cap * 2u : 64u;
+            cetta_oom(next > SIZE_MAX / sizeof(*seen.slots)
+                ? SIZE_MAX : next * sizeof(*seen.slots));
+        }
         if (barrier && barrier(node, context))
             continue;
         if (complete) {
