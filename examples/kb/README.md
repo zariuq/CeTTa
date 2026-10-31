@@ -32,6 +32,13 @@ code-shaped fields remain inert. Unsupported ground syntax returns
 `ComputedSyntaxRefusedV1` with provenance. Open stored rows cannot manufacture
 memo arguments through schema binding.
 
+The lesson uses the native memo with unaggregated results and its uncached
+MeTTa reference for incompatible policies. It preserves the caller's settings
+and returns the same node counts. Policy changes invalidate active program
+watches, including a change followed by restoring the original policy. Cached
+refusal statuses attach the original input outside the cache, so floating-key
+normalization cannot substitute another input in the diagnostic.
+
 `make test-computed-queries` checks native hit/miss counters, duplicate
 occurrences, captured old data, new data/code answers, informed commits,
 retractions, restart/receipts and repeated cancellation/disconnect. The first

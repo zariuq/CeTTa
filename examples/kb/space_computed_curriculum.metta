@@ -8,15 +8,19 @@
 ; The argument contains every data dependency. Neither this function nor its
 ; callees read a mutable Space, consult a clock or perform application effects.
 (: space-computed:nodes (-> Atom %Undefined%))
+(: space-computed:nodes-reference (-> Atom %Undefined%))
 (= (space-computed:leaf-weight) 1)
-(= (space-computed:nodes $body)
+(= (space-computed:nodes $body) (space-computed:count-node space-computed:nodes $body))
+(= (space-computed:nodes-reference $body) (space-computed:count-node space-computed:nodes-reference $body))
+(: space-computed:count-node (-> Atom Atom %Undefined%))
+(= (space-computed:count-node $recur $body)
   (case $body
     (((Use $module) (space-computed:leaf-weight))
      ((Seq $left $right)
-      (let* (($a (space-computed:nodes $left)) ($b (space-computed:nodes $right)))
+      (let* (($a ($recur $left)) ($b ($recur $right)))
         (if (and (kb:integer? $a) (kb:integer? $b))
-          (+ 1 (+ $a $b)) (ComputedSyntaxRefusedV1 $body))))
-     ($invalid (ComputedSyntaxRefusedV1 $body)))))
+          (+ 1 (+ $a $b)) ComputedSyntaxRefusedV1)))
+     ($invalid ComputedSyntaxRefusedV1))))
 !(memoize space-computed:nodes)
 
 ; Check ground stored rows before schema binding, so open data cannot invent
@@ -26,7 +30,18 @@
            (knowledge:tagged? $fact program-syntax 4)) RelTrue RelFalse))
 (= (space-computed:annotate
     (SpaceAnswerV1 (program-syntax $syntax $program $body) $references))
-  (ComputedProgramV1 $syntax $program (space-computed:nodes $body) $references))
+  (let $count (if (space-computed:policy-compatible?)
+                 (space-computed:nodes $body) (space-computed:nodes-reference $body))
+    (ComputedProgramV1 $syntax $program
+      (if (== $count ComputedSyntaxRefusedV1) (ComputedSyntaxRefusedV1 $body) $count) $references)))
+; Do not silently change the caller's global memo settings. In particular,
+; aggregate=count would count answers rather than return a syntax-node count.
+; Use the uncached MeTTa reference when the policy changes the return value.
+(= (space-computed:policy-compatible?)
+  (case (get-memoize-config)
+    ((((strategy $s) (unique-limit $n) (size-limit $b) (float $f)
+       (answer-limit $a) (aggregate none)) True)
+     ($other False))))
 (= (space-computed:plan)
   (KqMap
     (KqSelect (KqSpace curriculum $fact $fact) space-computed:syntax-row?)
