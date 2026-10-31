@@ -1,5 +1,12 @@
 # Native byte stores
 
+The target is a metagraph KB/DB integrated with ordinary MeTTa Spaces.
+Persistence, captured views, atomic updates, indexes and cursors extend that
+Space abstraction; MeTTa libraries compose its relational and graph queries.
+Embedded programs and server clients use the same core and storage owner.
+The queue example is one application of these capabilities. The contracts and
+qualification scopes below describe the current implementation.
+
 ## Measuring ordinary Space queries
 
 `tests/support/bench_ordinary_space.py` measures the current ordinary-Space

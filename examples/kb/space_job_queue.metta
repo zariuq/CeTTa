@@ -214,20 +214,29 @@
       (jobs:recover-loop $next $now $sequence $counter $count $edits))
      ((KqPage $rows (KqFailure $error $work)) $error)
      ($failure (let $_ (kbq:close $cursor) $failure)))))
-(= (jobs:recover-row $next
-    (SpaceAnswerV1 (GatewayJobV1 $id running $first $ready $running $effect
-      (GatewayFieldsV1 $fp $request $effect $cancel $value $error $outputs $deadline)) ($reference))
-    $now $sequence $counter $count $edits)
-  (let* (($state (if (== $effect write) uncertain failed))
-         ($job (GatewayJobV1 $id $state $first GatewayInactiveV1 GatewayInactiveV1 $effect
-           (GatewayFieldsV1 $fp $request $effect $cancel $value (SomeValueV1 "gateway-restarted") $outputs $deadline)))
-         ($event (GatewayEventV1 $id $sequence
-           $state $now (GatewayErrorDetailV1 "gateway-restarted")))
-         ($changes (cons-atom (SpaceUpdateV1 $reference $job)
-           (cons-atom (SpaceInsertV1 (recovery $sequence) $event) $edits))))
-    (if (== $next GatewayRecoveryEndV1)
-      (jobs:recover-end (+ $sequence 1) $counter (+ $count 1) $changes)
-      (jobs:recover-loop $next $now (+ $sequence 1) $counter (+ $count 1) $changes))))
+(= (jobs:recover-row $next $row $now $sequence $counter $count $edits)
+  (case $row
+    (((SpaceAnswerV1 (GatewayJobV1 $id running $first $ready $running $effect
+         (GatewayFieldsV1 $fp $request $effect $cancel $value $error $outputs $deadline)) ($reference))
+      (let* (($state (if (== $effect write) uncertain failed))
+             ($job (GatewayJobV1 $id $state $first GatewayInactiveV1 GatewayInactiveV1 $effect
+               (GatewayFieldsV1 $fp $request $effect $cancel $value (SomeValueV1 "gateway-restarted") $outputs $deadline)))
+             ($event (GatewayEventV1 $id $sequence
+               $state $now (GatewayErrorDetailV1 "gateway-restarted")))
+             ($changes (cons-atom (SpaceUpdateV1 $reference $job)
+               (cons-atom (SpaceInsertV1 (recovery $sequence) $event) $edits))))
+        (if (== $next GatewayRecoveryEndV1)
+          (jobs:recover-end (+ $sequence 1) $counter (+ $count 1) $changes)
+          (jobs:recover-loop $next $now (+ $sequence 1) $counter (+ $count 1) $changes))))
+     ($bad
+      (let $_ (if (kbq:cursor? $next) (kbq:close $next) GatewayRecoveryClosedV1)
+        (jobs:recovery-error $row))))))
+(: jobs:recovery-error (-> Atom %Undefined%))
+(= (jobs:recovery-error $row)
+  (case $row
+    (((SpaceAnswerV1 (GatewayJobV1 $id $s $n $q $r $e $f) $refs)
+      (GatewayRefusedV1 recovery-row $id))
+     ($bad (GatewayRefusedV1 recovery-row)))))
 (= (jobs:recover-end $sequence $counter $count $edits)
   (GatewayPlanV1 (GatewayRecoveredV1 $count)
     (if (== $count 0) ()
