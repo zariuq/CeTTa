@@ -150,8 +150,37 @@ static void ownership_controls(void) {
     assert(x.retains==x.releases+x.other_releases && y.retains==y.releases);
 }
 
+static void live_span_controls(void) {
+    Arena a, other; arena_init_detached(&a); arena_init_detached(&other);
+    assert(!arena_has_live_span(NULL, &a, sizeof(a)) &&
+        !arena_has_live_span(&a, NULL, 1u));
+    unsigned char *prefix = arena_alloc(&a, 64u);
+    void *foreign = arena_alloc(&other, 64u);
+    assert(prefix && foreign && arena_has_live_span(&a, prefix, 64u));
+    assert(arena_has_live_span(&a, prefix + 63u, 1u) &&
+        !arena_has_live_span(&a, prefix + 63u, 2u) &&
+        !arena_has_live_span(&a, prefix, 65u) &&
+        !arena_has_live_span(&a, prefix, 0u) &&
+        !arena_has_live_span(&a, foreign, 64u) &&
+        !arena_has_live_span(&a, prefix, SIZE_MAX));
+    ArenaMark mark = arena_mark(&a);
+    void *removed = arena_alloc(&a, 64u);
+    assert(removed && arena_has_live_span(&a, removed, 64u));
+    arena_reset(&a, mark);
+    assert(arena_owns_ptr(&a, removed) && !arena_has_live_span(&a, removed, 1u) &&
+        arena_has_live_span(&a, prefix, 64u));
+    size_t large = a.head->capacity * 2u;
+    void *spare = arena_alloc(&a, large);
+    assert(spare && arena_has_live_span(&a, spare, large));
+    arena_reset(&a, mark);
+    assert(arena_owns_ptr(&a, spare) && !arena_has_live_span(&a, spare, 1u));
+    arena_free(&a); arena_free(&other);
+    puts("PASS: live spans exclude foreign storage, spare capacity, truncated prefixes and overflow");
+}
+
 
 int main(void) {
+    live_span_controls();
     ownership_controls();
     accounting_controls();
     randomized_ownership();

@@ -192,6 +192,15 @@ static bool copy_relation(const PrimeNativeControl *s,const PrimeNativeControl *
            sf->force_pending_observed!=df->force_pending_observed||sf->force_published!=df->force_published||
            sf->force_retry_pending!=df->force_retry_pending||
            sf->return_retry_pending!=df->return_retry_pending||
+           sf->call_force_attempt.ready!=df->call_force_attempt.ready||
+           sf->call_force_attempt.step!=df->call_force_attempt.step||
+           sf->call_force_attempt.completion!=df->call_force_attempt.completion||
+           sf->call_force_attempt.source_completion!=df->call_force_attempt.source_completion||
+           sf->call_force_attempt.refusal_reason!=df->call_force_attempt.refusal_reason||
+           sf->call_force_attempt.steps_spent!=df->call_force_attempt.steps_spent||
+           sf->call_force_attempt.refused!=df->call_force_attempt.refused||
+           sf->call_force_attempt.preparation_incomplete!=df->call_force_attempt.preparation_incomplete||
+           sf->call_force_attempt.interrupted!=df->call_force_attempt.interrupted||
            sf->normalization_value_ready!=df->normalization_value_ready||
            sf->normalization_return_value_ready!=df->normalization_return_value_ready||
            sf->normalization_result_form!=df->normalization_result_form)r->valid=false;
@@ -266,7 +275,9 @@ static bool copy_relation(const PrimeNativeControl *s,const PrimeNativeControl *
     if(queued!=cetta_continuation_hub_length(&d->hub)||s->parked_count!=d->parked_count)return false;
     bool retry=s->force_retry.continuation.payload!=NULL;
     if(retry!=(d->force_retry.continuation.payload!=NULL)||
-       s->force_retry.admitted!=d->force_retry.admitted)return false;
+       s->force_retry.admitted!=d->force_retry.admitted ||
+       s->force_retry.prepared!=d->force_retry.prepared ||
+       s->force_retry.call_refusal!=d->force_retry.call_refusal)return false;
     for(size_t i=0;i<queued+s->parked_count+(retry?1u:0u);i++){
         const CettaOwnedContinuation *a=i<queued?cetta_continuation_hub_at(&s->hub,i):
             i<queued+s->parked_count?&s->parked[i-queued]:&s->force_retry.continuation;

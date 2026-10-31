@@ -255,6 +255,11 @@ static bool prime_replay_compare_frame(const PrimeEvalStackFrame *a,const PrimeE
     RF(kind);RF(pure_authority);RF(state);RF(fuel);RF(preserve_bindings);RF(env_initialized);RF(child_initialized);
     RF(force_pending_initialized);RF(force_pending_observed);RF(force_published);RF(force_retry_pending);
     RF(return_retry_pending);
+    RF(call_force_attempt.ready);RF(call_force_attempt.step);
+    RF(call_force_attempt.completion);RF(call_force_attempt.source_completion);
+    RF(call_force_attempt.refusal_reason);RF(call_force_attempt.steps_spent);
+    RF(call_force_attempt.refused);RF(call_force_attempt.preparation_incomplete);
+    RF(call_force_attempt.interrupted);
     RF(index);RF(branch_index);RF(variable_branches_active);RF(normalization_child_index);RF(tuple_bind);
     RF(normalization_value_ready);RF(normalization_return_value_ready);RF(normalization_result_form);
     RF(strict_argument);RF(strict_mode);RF(strict_error_is_data);RF(weight_index);RF(weight_ownership_parked);
@@ -535,12 +540,16 @@ static bool prime_replay_compare_work(const PrimeNativeWork *a,const PrimeNative
     RC_P("work.frame",a->frame,b->frame);RC_P("work.advice",a->advice,b->advice);
     RC_S("work.task_initialized",a->task_initialized,b->task_initialized);
     RC_S("work.task_preparation_pending",a->task_preparation_pending,b->task_preparation_pending);
+    RC_S("work.service_resume",a->service_resume,b->service_resume);
+    RC_S("work.service_park_reserved",a->service_park_reserved,b->service_park_reserved);
     RC_S("work.parallel_refused",a->parallel_refused,b->parallel_refused);
     RC_S("work.prepared_publication",a->prepared_publication,b->prepared_publication);
     RC_S("work.scoring",a->scoring,b->scoring);
     RC_A("work.key",a->key,b->key);RC_A("work.bound",a->bound,b->bound);
     if(a->task_initialized!=b->task_initialized||
-       a->task_preparation_pending!=b->task_preparation_pending)return false;
+       a->task_preparation_pending!=b->task_preparation_pending ||
+       a->service_resume!=b->service_resume || a->service_park_reserved!=b->service_park_reserved ||
+       a->force_service || b->force_service || a->service_request || b->service_request)return false;
     return prime_replay_compare_text(a->key_text,b->key_text,read)&&
         (!a->task_initialized||prime_replay_compare_task(&a->task,&b->task,read));
 }
@@ -558,8 +567,11 @@ static bool prime_replay_compare_force_retry(const PrimeNativeForceRetry *a,
     const PrimeNativeForceRetry *b,const CettaCheckpointCompare *read) {
     bool present_a=a->continuation.payload!=NULL, present_b=b->continuation.payload!=NULL;
     RC_S("control.force_retry_admitted",a->admitted,b->admitted);
+    RC_S("control.force_retry_prepared",a->prepared,b->prepared);
+    RC_S("control.force_retry_call_refusal",a->call_refusal,b->call_refusal);
     RC_S("control.force_retry_present",present_a,present_b);
-    if(a->admitted!=b->admitted || present_a!=present_b) return false;
+    if(a->admitted!=b->admitted || a->prepared!=b->prepared ||
+        a->call_refusal!=b->call_refusal || present_a!=present_b) return false;
     return !present_a || prime_replay_compare_continuation(
         &a->continuation,&b->continuation,read);
 }

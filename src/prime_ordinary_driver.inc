@@ -452,12 +452,12 @@ static bool prime_ordinary_driver_transfer_admitted(
         prime_ordinary_scope_has_no_permit,NULL)==PRIME_EVAL_SCOPE_WALK_COMPLETE;
 }
 
-static bool prime_eval_stack_promote_ordinary(PrimeEvalStackDriver *source,
+static PrimeNativeControl *prime_ordinary_frontier_adopt(PrimeEvalStackDriver *source,
     Space *space,Atom *expression,int fuel,const Bindings *environment,uint32_t workers) {
     /* Explicit owned roots install their controller before source entry.
      * A nested synchronous root retains its caller's return receiver and
      * invocation checks; moving it cannot detach that borrowed ancestry. */
-    if(!prime_ordinary_driver_transfer_admitted(source) || source!=g_prime_eval_stack_driver || source->control || workers<2u ||
+    if(!prime_ordinary_driver_transfer_admitted(source) || source!=g_prime_eval_stack_driver || source->control || workers<1u ||
         source->streaming || source->running_task || source->active_task ||
         source->root_call_running || source->raw_call_depth || source->bind_depth ||
         source->poison_depth || source->capacity_blocked || source->failed ||
@@ -466,13 +466,13 @@ static bool prime_eval_stack_promote_ordinary(PrimeEvalStackDriver *source,
         (!source->task_ready && !source->top) || cetta_parallel_worker_active() ||
         cetta_native_cost_observer_active() || cetta_shared_transition_guard_held_by_current_thread() ||
         eval_current_language_id()!=CETTA_LANGUAGE_PRIME ||
-        active_search_table_mode()!=CETTA_TABLE_MODE_NONE)return false;
+        active_search_table_mode()!=CETTA_TABLE_MODE_NONE)return NULL;
     size_t count=source->frame_depth;
     if(count>SIZE_MAX/sizeof(PrimeEvalStackFrame *) ||
         source->continuations.depth!=count ||
-        source->continuations.top!=(CettaOwnedFrameLink *)source->top)return false;
+        source->continuations.top!=(CettaOwnedFrameLink *)source->top)return NULL;
     PrimeEvalStackFrame **frames=count?calloc(count,sizeof(*frames)):NULL;
-    if(count && !frames)return false;
+    if(count && !frames)return NULL;
     size_t found=0u;
     for(PrimeEvalStackFrame *frame=source->top;frame;frame=(PrimeEvalStackFrame *)frame->continuation.next) {
         if(found==count || frame->arena!=source->arena || frame->control_sequence ||
@@ -481,7 +481,7 @@ static bool prime_eval_stack_promote_ordinary(PrimeEvalStackDriver *source,
             frame->kind>=PRIME_EVAL_STACK_FRAME_CONTROL_SCORE)goto decline;
         frames[found++]=frame;
     }
-    if(found!=count)return free(frames),false;
+    if(found!=count)return free(frames),NULL;
     for(size_t i=0u;i<count;i++)
         if(!prime_ordinary_target(source,frames,count,frames[i]->target))goto decline;
     if(source->task_ready && (!prime_ordinary_target(source,frames,count,source->task.target) ||
@@ -539,6 +539,8 @@ static bool prime_eval_stack_promote_ordinary(PrimeEvalStackDriver *source,
      * Atoms, environments, cell snapshots and frame addresses stay intact. */
     OutcomeSet *target=source->root_target;
     prime_ordinary_move_outcomes(&control->output,target);
+    control->service_synchronous=true;
+    control->service_enclosing_episode=g_prime_top_storage_owner;
     control->driver=*source;
     control->driver.control=control;control->driver.ordinary_ordered=true;
     control->driver.ordinary_shared_source=shared_source;
@@ -576,6 +578,20 @@ static bool prime_eval_stack_promote_ordinary(PrimeEvalStackDriver *source,
     control->published=prefix;control->delivered_count=prefix;
     for(size_t i=0u;i<(size_t)prefix;i++)control->delivered[i]=true;
     memset(source,0,sizeof(*source));
+    free(frames);return control;
+release:
+    prime_native_control_destroy(control);
+decline:
+    free(frames);return NULL;
+}
+
+static bool prime_eval_stack_promote_ordinary(PrimeEvalStackDriver *source,
+    Space *space,Atom *expression,int fuel,const Bindings *environment,uint32_t workers) {
+    if(workers<2u)return false;
+    OutcomeSet *target=source->root_target;
+    PrimeNativeControl *control=prime_ordinary_frontier_adopt(
+        source,space,expression,fuel,environment,workers);
+    if(!control)return false;
     prime_native_control_run(control,UINT64_MAX,prime_ordinary_observe,NULL);
 #ifdef CETTA_PRIME_ORDINARY_TEST_OBSERVER
     prime_ordinary_test_finished(control);
@@ -585,11 +601,7 @@ static bool prime_eval_stack_promote_ordinary(PrimeEvalStackDriver *source,
         !prime_native_source_drained(control))
         eval_mark_incomplete(control->completion==CETTA_EVAL_COMPLETE?
             CETTA_EVAL_INCOMPLETE_CAPACITY:control->completion);
-    prime_native_control_destroy(control);free(frames);return true;
-release:
-    prime_native_control_destroy(control);
-decline:
-    free(frames);return false;
+    prime_native_control_destroy(control);return true;
 }
 
 /* A fresh capsule may use the ordinary exclusive continuation stack. Its

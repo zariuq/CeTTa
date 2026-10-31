@@ -742,6 +742,17 @@ bool arena_owns_ptr(const Arena *a, const void *ptr) {
            arena_block_list_owns_ptr(a->spare, ptr);
 }
 
+bool arena_has_live_span(const Arena *arena, const void *source, size_t bytes) {
+    if (!arena || !source || !bytes) return false;
+    uintptr_t address = (uintptr_t)source;
+    for (const ArenaBlock *block = arena->head; block; block = block->next) {
+        uintptr_t start = (uintptr_t)block->data;
+        if (address >= start && address - start <= block->used &&
+            bytes <= block->used - (address - start)) return true;
+    }
+    return false;
+}
+
 bool arena_owns_atom(const Arena *a, const Atom *atom) {
     return a && atom && a->identity != 0u &&
            atom->arena_id == a->identity;
@@ -9934,31 +9945,19 @@ bool atom_deep_copy_session_destination_for_owner(
     return false;
 }
 
-static bool atom_deep_copy_arena_has_span(const Arena *arena,
-    const void *source, size_t bytes) {
-    if (!arena || !source || !bytes) return false;
-    uintptr_t address = (uintptr_t)source;
-    for (const ArenaBlock *block = arena->head; block; block = block->next) {
-        uintptr_t start = (uintptr_t)block->data;
-        if (address >= start && address - start <= block->used &&
-            bytes <= block->used - (address - start)) return true;
-    }
-    return false;
-}
-
 bool atom_deep_copy_session_owner_of_span(const AtomDeepCopySession *session,
     const void *source, size_t bytes, const Arena *fallback,
     const Arena **source_owner, Arena **image_owner) {
     if (!session || !source_owner || !image_owner || !session->dst ||
         !atom_deep_copy_arena_map_current(session)) return false;
     if (!session->memo.arenas) {
-        if (!atom_deep_copy_arena_has_span(fallback, source, bytes)) return false;
+        if (!arena_has_live_span(fallback, source, bytes)) return false;
         *source_owner = fallback; *image_owner = session->dst;
         return true;
     }
     for (size_t i = 0u; i < session->memo.arena_count; i++) {
         AtomDeepCopyArenaPair pair = session->memo.arenas[i].pair;
-        if (atom_deep_copy_arena_has_span(pair.source, source, bytes)) {
+        if (arena_has_live_span(pair.source, source, bytes)) {
             *source_owner = pair.source; *image_owner = pair.destination;
             return true;
         }

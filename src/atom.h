@@ -1069,6 +1069,9 @@ void *arena_alloc(Arena *a, size_t size);
 bool atom_expr_allocation_bound(CettaExprLen length, size_t *bytes_out);
 char *arena_strdup(Arena *a, const char *s);
 bool  arena_owns_ptr(const Arena *a, const void *ptr);
+/* A nonempty span in the populated prefix of an active block. Spare blocks
+ * and capacity beyond the used prefix do not establish a live allocation. */
+bool  arena_has_live_span(const Arena *a, const void *ptr, size_t bytes);
 bool  arena_owns_atom(const Arena *a, const Atom *atom);
 /* Exact compositional ownership predicate: every arena-owned pointer in the
  * atom graph belongs to `arena`; globally owned immutable nodes are also

@@ -275,12 +275,20 @@ static bool source_image_capture(CettaLibraryContext *ctx, CettaModuleSpecKind k
 }
 
 static bool source_image_scope_query(CettaLibraryContext *ctx, const char *spec,
-    bool expected_read, bool expected_binding) {
-    char text[1024];
+    size_t values, bool expected_read, bool expected_binding) {
+    char text[4096];
     int n = snprintf(text, sizeof(text),
         "(scope:profile lexical-fresh per-call reference)\n"
-        "!(import! &self %s)\n!(let $x outer (frozen-pick seed $x $x))\n", spec);
+        "!(import! &self %s)\n!(let $x outer (frozen-pick", spec);
     if (n <= 0 || (size_t)n >= sizeof(text)) return false;
+    size_t length = (size_t)n;
+    for (size_t i = 0u; i < values; i++) {
+        n = snprintf(text + length, sizeof(text) - length, " seed");
+        if (n <= 0 || (size_t)n >= sizeof(text) - length) return false;
+        length += (size_t)n;
+    }
+    n = snprintf(text + length, sizeof(text) - length, " $x $x))\n");
+    if (n <= 0 || (size_t)n >= sizeof(text) - length) return false;
     Arena arena; arena_init(&arena);
     TermUniverse universe; term_universe_init(&universe);
     term_universe_set_persistent_arena(&universe, &arena);
@@ -295,10 +303,11 @@ static bool source_image_scope_query(CettaLibraryContext *ctx, const char *spec,
         atom_is_symbol_id(query->expr.elems[0], g_builtin_syms.let) ? query->expr.elems[1] : NULL;
     Atom *body = outer ? query->expr.elems[3] : NULL;
     bool shaped = outer && outer->kind == ATOM_VAR && body && body->kind == ATOM_EXPR &&
-        body->expr.len == 4u && atom_is_symbol(body->expr.elems[0], "frozen-pick") &&
-        body->expr.elems[2]->kind == ATOM_VAR && body->expr.elems[3]->kind == ATOM_VAR &&
-        var_id_eq(body->expr.elems[2]->var_id, body->expr.elems[3]->var_id);
-    bool binding = shaped && !var_id_eq(outer->var_id, body->expr.elems[2]->var_id);
+        body->expr.len == values + 3u && atom_is_symbol(body->expr.elems[0], "frozen-pick") &&
+        body->expr.elems[values + 1u]->kind == ATOM_VAR &&
+        body->expr.elems[values + 2u]->kind == ATOM_VAR &&
+        var_id_eq(body->expr.elems[values + 1u]->var_id, body->expr.elems[values + 2u]->var_id);
+    bool binding = shaped && !var_id_eq(outer->var_id, body->expr.elems[values + 1u]->var_id);
     bool ok = expected_read ? shaped && binding == expected_binding
         : count < 0 && !ids && error[0];
     if (!ok) fprintf(stderr, "source image scope %s: forms=%d binding=%d error=%s\n",
@@ -340,7 +349,9 @@ static bool module_source_image_contract(void) {
     do { locked = fcntl(lock_fd, F_SETLKW, &lock); } while (locked < 0 && errno == EINTR);
     SOURCE_CHECK(locked == 0);
     static const char version_a[] =
-        "(scope:binder (frozen-pick value pattern body))\n(= (frozen-value) A)\n";
+        "(scope:binder (frozen-pick value pattern body))\n"
+        "(scope:binder (frozen-pick value value value value value value pattern body))\n"
+        "(= (frozen-value) A)\n";
     static const char version_b[] = "(= (frozen-value) B)\n";
     SOURCE_CHECK(source_image_write("main", "") && source_image_write("frozen_shapes", version_a) &&
         source_image_write("frozen_parent", "!(import! &self frozen_child)\n(= (parent-value) parent)\n") &&
@@ -389,9 +400,11 @@ static bool module_source_image_contract(void) {
         CETTA_MODULE_SOURCE_REFUSED && !cetta_library_module_source_enter(contexts[0], git, &scope) &&
         cetta_library_module_source_view(git, NULL, NULL, NULL));
     contexts[0]->session.module_policy.provider_flags = route_flags;
-    SOURCE_CHECK(source_image_scope_query(contexts[0], "frozen_shapes", true, true) &&
-        source_image_scope_query(contexts[1], "frozen_shapes", true, false) &&
-        source_image_scope_query(contexts[0], "frozen_shapes", true, true));
+    SOURCE_CHECK(source_image_scope_query(contexts[0], "frozen_shapes", 1u, true, true) &&
+        source_image_scope_query(contexts[1], "frozen_shapes", 1u, true, false) &&
+        source_image_scope_query(contexts[0], "frozen_shapes", 1u, true, true) &&
+        source_image_scope_query(contexts[0], "frozen_shapes", 6u, true, true) &&
+        source_image_scope_query(contexts[1], "frozen_shapes", 6u, true, false));
     SOURCE_CHECK(source_image_capture(contexts[0], CETTA_MODULE_SPEC_MODULE_NAME, "frozen_parent", &scratch, &parent, &error));
     SOURCE_CHECK(cetta_library_module_source_enter(contexts[0], parent, &scope));
     SOURCE_CHECK(contexts[0]->import_dir_len < contexts[0]->import_dir_cap);
@@ -406,9 +419,10 @@ static bool module_source_image_contract(void) {
     SOURCE_CHECK(source_image_write("frozen_child", "(= (child-value) B)\n"));
     SOURCE_CHECK(source_image_capture(contexts[0], CETTA_MODULE_SPEC_MODULE_NAME, "bad_shapes", &scratch, &bad, &error));
     SOURCE_CHECK(source_image_write("bad_shapes", version_a));
-    SOURCE_CHECK(source_image_scope_query(contexts[0], "bad_shapes", false, false) &&
-        source_image_scope_query(contexts[1], "bad_shapes", true, true) &&
-        source_image_scope_query(contexts[0], "bad_shapes", false, false));
+    SOURCE_CHECK(source_image_scope_query(contexts[0], "bad_shapes", 1u, false, false) &&
+        source_image_scope_query(contexts[1], "bad_shapes", 1u, true, true) &&
+        source_image_scope_query(contexts[1], "bad_shapes", 6u, true, true) &&
+        source_image_scope_query(contexts[0], "bad_shapes", 1u, false, false));
     eval_set_library_context(contexts[0]);
     CettaLibraryMask mask = contexts[0]->active_mask;
     SOURCE_CHECK(source_image_capture(contexts[0], CETTA_MODULE_SPEC_STDLIB, "str", &scratch, &native, &error) &&
