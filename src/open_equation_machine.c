@@ -407,9 +407,9 @@ typedef struct {
     /* Some two equations differ in their heads' first structural tests,
      * which a call can then decide between as it enters. */
     bool first_tests_differ;
-    /* Immutable source eligibility for prepared entry. The callee owns
-     * current admission and stable refusal; this program does not cache
-     * observations about a particular input or caller. */
+    /* Optional prepared-route eligibility. Unsupported call policies keep
+     * this region's equations. The callee still owns current execution
+     * admission and stable refusal; this hint certifies neither. */
     bool pure_entry_candidate;
     /* An exact source-recognized algebraic fold.  These constructor ids are
      * only an execution certificate for the relation whose complete source
@@ -465,7 +465,7 @@ typedef struct {
 typedef enum {
     OEM_READ_RELATION, OEM_READ_PROTOCOL, OEM_READ_BODY, OEM_READ_HEAD,
     OEM_READ_BUILTIN, OEM_READ_BUILTIN_EQUATIONS, OEM_READ_DELAY,
-    OEM_READ_IDENTITY,
+    OEM_READ_IDENTITY, OEM_READ_LIBRARY_FUNCTION,
 } OemHostReadKind;
 
 typedef struct {
@@ -818,7 +818,8 @@ static uint32_t oem_host_read_mask(const CettaOpenEquationHost *host) {
         (!!host->builtin_allowed << OEM_READ_BUILTIN) |
         (!!host->builtin_equations << OEM_READ_BUILTIN_EQUATIONS) |
         (!!host->may_delay << OEM_READ_DELAY) |
-        (!!host->retains_variable_identity << OEM_READ_IDENTITY);
+        (!!host->retains_variable_identity << OEM_READ_IDENTITY) |
+        (!!host->library_function_current << OEM_READ_LIBRARY_FUNCTION);
 }
 
 static bool oem_host_query(const CettaOpenEquationHost *host, Space *space,
@@ -840,6 +841,9 @@ static bool oem_host_query(const CettaOpenEquationHost *host, Space *space,
         return host->may_delay(host->context, read->head, read->arity);
     case OEM_READ_IDENTITY:
         return host->retains_variable_identity(host->context, read->head);
+    case OEM_READ_LIBRARY_FUNCTION:
+        return host->library_function_current(host->context, read->head,
+                                              read->arity);
     }
     return false;
 }
@@ -930,6 +934,13 @@ static bool oem_record_identity(void *context, SymbolId head) {
         .kind = OEM_READ_IDENTITY, .head = head,
     });
 }
+static bool oem_record_library_function(void *context, SymbolId head,
+                                        uint32_t arity) {
+    OemHostRecorder *recorder = context;
+    return oem_host_record(recorder, recorder->program->space, (OemHostRead){
+        .kind = OEM_READ_LIBRARY_FUNCTION, .head = head, .arity = arity,
+    });
+}
 
 /* Sort the finite trace once: no growing linear membership scan during
  * compilation, and repeated expression reads share their copied syntax. */
@@ -984,6 +995,8 @@ static CettaOpenEquationHost oem_recording_host(OemHostRecorder *recorder) {
         host.may_delay = oem_record_delay;
     if (host.retains_variable_identity)
         host.retains_variable_identity = oem_record_identity;
+    if (host.library_function_current)
+        host.library_function_current = oem_record_library_function;
     return host;
 }
 
@@ -2216,12 +2229,21 @@ static bool oem_existence_constant_template(Atom *template) {
  * ignore it, as the search machine requires before it answers the observer
  * by membership: an atomic constant, or a position the plan reads as a
  * value, which the step checks to be one when it runs (oem_exists_step).
- * No intrinsic of the observer (the comparison, size-atom, the
+ * The comparison is an operation of the session: one of CeTTa's own, or a
+ * function of PeTTa's library still as the library defines it, as != is
+ * unless the program's Prolog redefined it (without the library, != is
+ * data).  No intrinsic of the observer (the comparison, size-atom, the
  * reification, once, match) may have acquired authored equations, which
  * the host runs. */
 static bool oem_existence_admitted(const OemCompile *compile, const Atom *expr,
                                    const PettaPlanNode *plan,
                                    const PeTTaExistenceView *view) {
+    SymbolId comparison = expr->expr.elems[0]->sym_id;
+    if (!is_grounded_op(comparison) &&
+        !(compile->host && compile->host->library_function_current &&
+          compile->host->library_function_current(compile->host->context,
+                                                  comparison, 2u)))
+        return false;
     const Atom *heads[5];
     const PettaPlanNode *plans[5];
     uint32_t count = 0u;
@@ -6745,6 +6767,8 @@ static bool oem_compile_relation(CettaOpenEquationProgram *program,
                 !program->relations[relation_index].local &&
                     !program->relations[relation_index].body_is_data &&
                     arity <= OEM_PURE_RELATION_INLINE_ARGS &&
+                    cetta_prepared_pure_call_policy_supported(program->space,
+                                                              head, arity) &&
                     oem_steps_call_relation(program, first_step, head,
                                             arity);
     if (algebraic_drop) {

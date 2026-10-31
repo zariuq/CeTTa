@@ -13228,6 +13228,23 @@ static bool prepared_pure_native_replacement(void *context,
     return true;
 }
 
+/* An incomplete callback cannot decline into another execution. A complete
+ * pre-entry decline transfers no output storage, whatever it contains. */
+static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_invoke_native_source(
+        CettaPreparedPureProgram *program, Arena *arena,
+        const CettaInvocation *invocation, bool execute,
+        CettaCallOutcome *outcome, CettaEvalCompletion *completion) {
+    *completion = CETTA_EVAL_COMPLETE;
+    bool entered = execute && program->source_view.native_call &&
+        program->source_view.native_call(program->source_view.native_context,
+            program->space, arena, invocation, outcome, completion);
+    if (*completion != CETTA_EVAL_COMPLETE)
+        *outcome = cetta_call_interrupted();
+    else if (!entered)
+        *outcome = (CettaCallOutcome){0};
+    return entered;
+}
+
 /* Prepare storage before entry. The tagged result decides whether ordinary
  * value execution can continue; an entered residual is never invoked again. */
 static PreparedPureRunResult prepared_pure_native_invoke(
@@ -13245,10 +13262,9 @@ static PreparedPureRunResult prepared_pure_native_invoke(
     }
     CettaInvocation invocation = {.head = binding_value_from_atom(head),
         .supplied = {.atoms = arguments, .count = arity}};
-    CettaEvalCompletion completion = CETTA_EVAL_COMPLETE;
-    *entered = execute && program->source_view.native_call &&
-        program->source_view.native_call(program->source_view.native_context,
-            program->space, cursor->arena, &invocation, outcome, &completion);
+    CettaEvalCompletion completion;
+    *entered = prepared_pure_invoke_native_source(program, cursor->arena,
+        &invocation, execute, outcome, &completion);
     cursor->native_started |= *entered;
     if (completion != CETTA_EVAL_COMPLETE) {
         cetta_eval_completion_record(&cursor->completion, completion);
@@ -17175,13 +17191,11 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
             /* There is no local continuation after this call. Keep the
              * provider's packet verbatim, even if malformed: its caller must
              * fault rather than retry an operation that has already entered. */
-            CettaEvalCompletion completion = CETTA_EVAL_COMPLETE;
-            if (program->source_view.native_call(
-                    program->source_view.native_context, program->space,
-                    arena, &invocation, outcome, &completion)) {
-                if (completion != CETTA_EVAL_COMPLETE)
-                    *outcome = cetta_call_interrupted();
-                *native_entered = true;
+            CettaEvalCompletion completion;
+            bool entered = prepared_pure_invoke_native_source(program, arena,
+                &invocation, true, outcome, &completion);
+            if (entered || completion != CETTA_EVAL_COMPLETE) {
+                *native_entered = entered;
                 prepared_pure_memo_clear(program);
                 program->frame_len = program->value_len = program->slot_len = 0u;
                 return false;

@@ -42948,6 +42948,15 @@ static bool petta_eval_machine_foreign_predicate_defined(
                name, (size_t)arity);
 }
 
+static bool petta_eval_machine_library_function_current(
+    void *context, SymbolId name, CettaExprLen arity) {
+    PettaEvalMachineContext *eval_context = context;
+    return eval_context && eval_context->library_context &&
+           petta_libpl_standard_function_current(
+               eval_context->library_context->lib_prolog,
+               name, (size_t)arity);
+}
+
 /*
  * Temp-row equation lifecycle for native named spaces.  On the reference
  * runtime every space IS a Prolog dynamic predicate, so the chainer's temp
@@ -49325,6 +49334,8 @@ static PettaMachineHost petta_eval_machine_host(
             petta_eval_machine_foreign_named_arity_resolving,
         .foreign_predicate_defined =
             petta_eval_machine_foreign_predicate_defined,
+        .library_function_current =
+            petta_eval_machine_library_function_current,
         .extension_call =
             petta_eval_machine_extension_call,
         .candidate_snapshot_lease = context->library_context &&
@@ -49429,23 +49440,12 @@ static PreparedNativeContinuation *prepared_native_continuation_new(
         return NULL;
     work->arena = arena;
     bindings_init(&work->environment);
-    Bindings captures;
-    bindings_init(&captures);
-    Atom *hole = atom_var_with_id(arena, "__native_return", fresh_var_id());
-    Atom *query = NULL;
+    CettaPreparedPureCallerGraph callers = {0};
+    size_t selected = frames - 1u;
     AtomDeepCopySession *copy = atom_deep_copy_session_new(arena);
-    bool ok = hole && copy &&
-        cetta_prepared_pure_answer_cursor_frame_resumption(cursor, frames - 1u,
-            arena, hole, eval_owned_residual_import, copy, &captures, &query);
+    bool ok = copy && cetta_prepared_pure_answer_cursor_read_callers(cursor,
+        &selected, 1u, arena, eval_owned_residual_import, copy, &callers);
     atom_deep_copy_session_free(copy);
-    BindingsBuilder world;
-    bool owns_world = ok && bindings_builder_init(&world, returned->environment);
-    ok = ok && owns_world;
-    BindingsIterator iterator = {.bindings = &captures};
-    Binding capture;
-    while (ok && bindings_iterator_next(&iterator, &capture))
-        ok = bindings_builder_add_id_fresh(&world, capture.var_id,
-            capture.spelling, capture.value.skeleton);
     work->context = (PettaEvalMachineContext){
         .fuel = -1,
         .controller_quantum_active = true,
@@ -49476,20 +49476,12 @@ static PreparedNativeContinuation *prepared_native_continuation_new(
         prepared_pure_match_decision_semantics(CETTA_GSLT_PURE_CALL_EAGER));
     host.permit_transition = petta_eval_machine_permit_controller_transition;
     host.unlimited_transition_budget = false;
-    const Arena *source_arenas[] = {arena};
-    const PettaPlanNode *plan = ok && host.translate_source
-        ? host.translate_source(host.context, space, query, source_arenas, 1u) : NULL;
-    /* Freeze the continuation's positional classifications before installing
-     * the native packet: a woken goal may mutate callable declarations. */
-    ok = ok && (!host.translate_source || plan);
     if (ok)
-        ok = petta_machine_init_with_return(&work->machine, space, arena,
-            query, plan, hole, returned->outcome, bindings_builder_bindings(&world), &host);
+        ok = petta_machine_init_with_caller_return(&work->machine, space, arena,
+            &callers, returned, &host);
     if (ok && g_petta_eval_delay_service)
         ok = petta_machine_inherit_delayed_goals(&work->machine, g_petta_eval_delay_service);
-    if (owns_world)
-        bindings_builder_free(&world);
-    bindings_free(&captures);
+    cetta_prepared_pure_caller_graph_free(&callers);
     if (!ok) {
         prepared_native_continuation_free(work);
         return NULL;
@@ -49543,17 +49535,6 @@ static CettaOwnedExecutionStep prepared_native_continuation_next(
         : step == PETTA_MACHINE_STEP_CAPACITY ? CETTA_EVAL_INCOMPLETE_CAPACITY
         : CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
     return CETTA_OWNED_EXECUTION_INTERRUPTED;
-}
-
-static bool petta_eval_error_node(const Atom *atom, void *context) {
-    (void)context;
-    return atom->kind == ATOM_EXPR && atom_is_error((Atom *)atom);
-}
-
-/* Inspect complete values, including quoted fields, for the HE completion
- * policy. This observation has no evaluation or forcing authority. */
-static bool petta_eval_atom_holds_error(Atom *atom) {
-    return atom_graph_any(atom, petta_eval_error_node, NULL);
 }
 
 /* Drop the outcomes a run added from `len` on. */
@@ -50041,14 +50022,6 @@ static __attribute__((noinline)) bool petta_eval_machine_run(
         return true;
     }
 
-    /* HE's errors follow rules the shared machine does not keep everywhere:
-     * a completed producer drops an error beside a success, a collection's
-     * value is evaluated again where it is read, a structure's fields fault
-     * in order.  A run whose answers hold an error and which changed no
-     * space is declined, and the canonical evaluator gives its answers. */
-    uint64_t he_run_epoch = g_he_shared_execution
-        ? space_global_mutation_epoch() : 0u;
-    bool he_error_answer = false;
     if (!frontier_admitted) {
         /* Keep the canonical inline driver physically separate from owned
          * scheduling.  The inactive path performs no controller bookkeeping
@@ -50090,8 +50063,6 @@ static __attribute__((noinline)) bool petta_eval_machine_run(
                     answer = petta_flatten_closed_open_cons(
                         arena, answer);
                 }
-                if (g_he_shared_execution && !he_error_answer)
-                    he_error_answer = petta_eval_atom_holds_error(answer);
                 CettaCount added_before = machine_outcomes->len;
                 outcome_set_add_prefixed(
                     arena, machine_outcomes, answer, &environment,
@@ -50353,8 +50324,6 @@ static __attribute__((noinline)) bool petta_eval_machine_run(
                     answer = petta_flatten_closed_open_cons(
                         arena, answer);
                 }
-                if (g_he_shared_execution && !he_error_answer)
-                    he_error_answer = petta_eval_atom_holds_error(answer);
                 CettaCount added_before = machine_outcomes->len;
                 outcome_set_add_prefixed(
                     arena, machine_outcomes, answer, &environment,
@@ -50654,12 +50623,6 @@ static __attribute__((noinline)) bool petta_eval_machine_run(
             if (!cetta_act_profile_store(act_directory, &act_record))
                 context.controller_stats.act_profile_store_failures++;
         }
-    }
-    if (he_error_answer && !machine_declined &&
-        space_global_mutation_epoch() == he_run_epoch) {
-        petta_eval_machine_outcomes_truncate(machine_outcomes,
-                                             run_outcomes_start);
-        machine_declined = true;
     }
     if (petta_eval_machine_stats_enabled()) {
         PettaMachineStats stats;
@@ -53326,6 +53289,12 @@ static bool petta_open_equations_reference_forced(void) {
     return value == 1;
 }
 
+static bool petta_eval_open_library_function_current(void *context,
+                                                     SymbolId name,
+                                                     uint32_t arity) {
+    return petta_eval_machine_library_function_current(context, name, arity);
+}
+
 /* A goal that may answer with goals delayed on its variables: a call into
  * the embedded Prolog, which translatePredicate and callPredicate make, #+
  * makes when too few of its values are known, and a name only the Prolog
@@ -53587,6 +53556,8 @@ static CettaOpenEquationHost petta_eval_open_compile_host(
         .may_delay = petta_eval_open_may_delay,
         .retains_variable_identity = eval_current_pattern_module_enabled()
             ? petta_eval_open_retains_variable_identity : NULL,
+        .library_function_current = language == CETTA_LANGUAGE_PETTA
+            ? petta_eval_open_library_function_current : NULL,
         .count_fusion = count_fusion,
         .preserve_collection_observer = language == CETTA_LANGUAGE_PETTA
             ? petta_eval_preserve_collection_observer : NULL,

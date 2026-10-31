@@ -108,6 +108,11 @@ typedef struct {
      * Until the region can transport those dependencies between host calls,
      * the complete relation stays in the canonical search machine. */
     bool (*retains_variable_identity)(void *context, SymbolId head);
+    /* Whether NAME at ARITY arguments is a function of PeTTa's library
+     * still as the library defines it, no Prolog the program ran having
+     * redefined it.  NULL: the session has no such library. */
+    bool (*library_function_current)(void *context, SymbolId name,
+                                     uint32_t arity);
     /* Whether a let binder that only counting operations read takes its
      * producer's count, as the search machine's let/count fusion does. */
     bool count_fusion;

@@ -238,8 +238,9 @@ typedef struct {
      * callees, and at runtime-created application boundaries. */
     bool (*head_admitted)(void *context, Space *space, SymbolId head);
     /* Execute a native whose head/arity was positively admitted by the
-     * generated intrinsic contract. False declines before native entry.
-     * True transfers the tagged result, including zero or raised control.
+     * generated intrinsic contract. False with complete invocation status
+     * declines before entry and transfers no packet. True with complete
+     * status transfers the tagged result, including zero or raised control.
      * Completion reports this invocation's own cause, independently of any
      * enclosing diagnostic; incomplete calls authorize no following work.
      * The native context is separate because a language's source-plan owner
