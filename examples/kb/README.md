@@ -38,6 +38,8 @@ facts, changed indexes, event receipts and retry outcomes publish together.
 Observation time is not a new logical command on retry. A changed intent
 under the same operation ID refuses. Per-job receipt sorting is explicit.
 Original job membership identities survive state updates and restart.
+Submit retries use the trusted dispatcher's fingerprint as the intent identity;
+a changed deadline alone does not create another job.
 
 Transition commands carry a trusted observation time. The caller must take
 that observation at its decision boundary; the queue does not authenticate a
@@ -49,7 +51,8 @@ caller action: the store cannot infer whether an external process still runs.
 The qualification client under `tests/support` never dispatches anything.
 
 `make test-space-job-queue` checks core transitions, races, durable retries,
-restart, more than 128 jobs, read-only rights and cleanup. For actual SQLite
+restart, more than 128 jobs, atomic recovery of four 300 KB payloads, malformed
+recovery-row refusals, read-only rights and cleanup. For actual SQLite
 transition comparison, pass `--reference-store /path/to/execution_gateway/store.py`
 to `tests/support/check_job_queue.py`. The source hash and scope are recorded.
 

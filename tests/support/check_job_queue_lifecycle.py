@@ -10,9 +10,10 @@ import time
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
-from space_service_client import E, S
+from space_service_client import E, S, MAX_BYTES
 from check_native_kb_service import Client, await_resources
 from check_job_queue import NativeStore
+from value_worker_client import Worker
 
 
 def main():
@@ -23,6 +24,14 @@ def main():
     p.add_argument("--output", type=Path)
     args = p.parse_args(); assert args.bulk_jobs > 128 and args.rounds > 0
     checks=[]
+    guard=Worker(args.worker.resolve(),ROOT/"tests/support/job_queue_fixture.metta","job-fixture:run",language="petta")
+    try:
+        assert guard.call(E("RejectRecoveryRow",S("malformed-row")))==E("GatewayRefusedV1",S("recovery-row"))
+        for references in [(),(S("left"),S("right"))]:
+            malformed=E("SpaceAnswerV1",E("GatewayJobV1","bad-job",S("running"),1,S("inactive"),1,S("read"),S("bad-fields")),references)
+            assert guard.call(E("RejectRecoveryRow",malformed))==E("GatewayRefusedV1",S("recovery-row"),"bad-job")
+        checks.append("malformed-recovery-rows-refuse-explicitly-and-name-job-when-available")
+    finally:guard.close()
     with tempfile.TemporaryDirectory(prefix="queue-lifecycle-") as directory:
         root=Path(directory);native=NativeStore(args.worker.resolve(),root,"example-agent",service=True)
         other=Client(native.server.path);extra=[]
@@ -32,8 +41,8 @@ def main():
             view,_=client.snapshot()
             try:return apply_at(client,view,identifier,command)
             finally:client.drop(view)
-        def submit(identifier,effect="read"):
-            request=dict(id=identifier,tool="synthetic",arguments=[],input=None,deadline=1000000.0)
+        def submit(identifier,effect="read",payload=None):
+            request=dict(id=identifier,tool="synthetic",arguments=[],input=payload,deadline=1000000.0)
             native.now+=1;native.submit(request,"fingerprint-"+identifier,effect)
         def race(commands):
             peers=[native.client,other];captured=[peer.snapshot() for peer in peers]
@@ -100,7 +109,9 @@ def main():
                 time.sleep(.005)
             else:raise AssertionError("lost reply did not resolve")
             lost.close();extra.remove(lost);other.close();native.client.close()
-            native.server.stop(crash=True);native.server.start();native.client=Client(native.server.path);other=Client(native.server.path)
+            native.server.stop(crash=True);native.server.start()
+            native.client=Client(native.server.path, maximum_reply_bytes=MAX_BYTES)
+            other=Client(native.server.path)
             assert resolve()==settled
             assert native.get("write-job")["state"]==native.get("read-job")["state"]=="running"
             assert native.inspect("write-job")[0][2][0]==original_ref
@@ -124,6 +135,12 @@ def main():
             assert native.claim() is None
             assert native.get("bulk-"+str(args.bulk_jobs-1))["result"]==args.bulk_jobs-1
             checks.append("more-than-128-jobs-with-terminal-history-preserve-fifo")
+
+            for index in range(4):submit("medium-"+str(index),"write","x"*300000)
+            for index in range(4):assert native.claim()["id"]=="medium-"+str(index)
+            native.recover()
+            assert all(native.get("medium-"+str(index))["state"]=="uncertain" for index in range(4))
+            checks.append("atomic-recovery-of-four300kb-jobs-exceeds-single-wire-envelope")
 
             other.close();other=None
             samples=[]
