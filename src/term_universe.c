@@ -16,7 +16,6 @@
 #include <execinfo.h>
 #endif
 
-#define CETTA_TERM_ENTRY_ALIGN 8u
 #define CETTA_TERM_UNIVERSE_COPY_MEMO_INLINE_CAP 64u
 #define CETTA_TERM_UNIVERSE_SOURCE_MEMO_CAP (1u << 16)
 #define CETTA_TERM_VARIABLE_SUPPORT_BLOCK_SIZE 64u
@@ -1370,17 +1369,16 @@ static bool term_universe_migrate_store_format_probing(
     for (size_t i = 0; i < universe->len; i++) {
         TermEntry src_entry = universe->entries[i];
         rewritten[i] = (TermEntry){
-            .byte_off = CETTA_TERM_ENTRY_BLOB_NONE,
-            .byte_len = 0,
+            .record = CETTA_TERM_ENTRY_BLOB_NONE,
             .coordinate = src_entry.coordinate,
         };
         if (!term_universe_entry_has_blob(&src_entry))
             continue;
 
         const CettaTermHdr *hdr =
-            (const CettaTermHdr *)(universe->blob_pool + src_entry.byte_off);
-        const uint8_t *payload =
-            universe->blob_pool + src_entry.byte_off + sizeof(CettaTermHdr);
+            (const CettaTermHdr *)(universe->blob_pool +
+                                   term_universe_entry_offset(&src_entry));
+        const uint8_t *payload = (const uint8_t *)(hdr + 1);
         size_t payload_len = 0;
         if (!term_universe_record_payload_len(universe, hdr, &payload_len)) {
             term_universe_set_error(universe,
@@ -1628,7 +1626,6 @@ Atom *term_universe_canonicalize_atom(Arena *dst, Atom *src) {
 }
 
 enum {
-    TERM_UNIVERSE_ALPHA_KEY_VARS = 64u,
     TERM_UNIVERSE_ALPHA_KEY_DEPTH = 512u,
 };
 
@@ -1655,8 +1652,11 @@ static AtomId term_universe_alpha_key_at(TermUniverse *universe, AtomId id,
         }
         if (vars->len == TERM_UNIVERSE_ALPHA_KEY_VARS)
             return CETTA_ATOM_ID_NONE;
-        AtomId key = tu_intern_var(universe, SYMBOL_ID_NONE,
-                                   var_id_from_base(vars->len + 1u));
+        /* A variable that is already the key's next one is its own key. */
+        VarId numbered = var_id_from_base(vars->len + 1u);
+        AtomId key = hdr->sym_or_head == SYMBOL_ID_NONE &&
+                hdr->subtag == 0u && var_id_eq(var, numbered)
+            ? id : tu_intern_var(universe, SYMBOL_ID_NONE, numbered);
         if (key == CETTA_ATOM_ID_NONE)
             return CETTA_ATOM_ID_NONE;
         vars->source[vars->len] = var;
@@ -1677,14 +1677,18 @@ static AtomId term_universe_alpha_key_at(TermUniverse *universe, AtomId id,
         children[index] = tu_child_from_header(universe, hdr, index);
     AtomId result = CETTA_ATOM_ID_NONE;
     CettaExprIndex index = 0u;
+    bool own = true;
     for (; index < len; index++) {
-        children[index] = term_universe_alpha_key_at(
+        AtomId key = term_universe_alpha_key_at(
             universe, children[index], vars, depth + 1u);
-        if (children[index] == CETTA_ATOM_ID_NONE)
+        if (key == CETTA_ATOM_ID_NONE)
             break;
+        own = own && key == children[index];
+        children[index] = key;
     }
+    /* An expression whose elements are their own keys is its own key. */
     if (index == len)
-        result = tu_expr_from_ids(universe, children, len);
+        result = own ? id : tu_expr_from_ids(universe, children, len);
     if (children != inline_children)
         free(children);
     return result;
@@ -1879,26 +1883,54 @@ static void term_universe_free_decoded(TermUniverse *universe) {
 }
 
 static bool term_universe_entry_has_blob(const TermEntry *entry) {
-    return entry && entry->byte_off != CETTA_TERM_ENTRY_BLOB_NONE &&
-           entry->byte_len >= sizeof(CettaTermHdr);
+    return entry && entry->record != CETTA_TERM_ENTRY_BLOB_NONE;
 }
 
+/* The bytes of the record whose header is HDR, as its creation sized
+ * them: 0 for a header no record has. */
+static size_t term_universe_record_bytes(const TermUniverse *universe,
+                                         const CettaTermHdr *hdr) {
+    size_t payload_len = 0u;
+    if (!term_universe_record_payload_len(universe, hdr, &payload_len) ||
+        payload_len > SIZE_MAX - sizeof(CettaTermHdr) -
+                          (CETTA_TERM_ENTRY_ALIGN - 1u))
+        return 0u;
+    return term_universe_align_up(sizeof(CettaTermHdr) + payload_len);
+}
+
+/* The record of ENTRY, when it lies whole in the pool. */
+static const uint8_t *term_universe_entry_record(const TermUniverse *universe,
+                                                 const TermEntry *entry) {
+    if (!term_universe_entry_has_blob(entry) || !universe->blob_pool)
+        return NULL;
+    size_t off = term_universe_entry_offset(entry);
+    if (off > universe->blob_len ||
+        sizeof(CettaTermHdr) > universe->blob_len - off)
+        return NULL;
+    const uint8_t *record = universe->blob_pool + off;
+    size_t bytes =
+        term_universe_record_bytes(universe, (const CettaTermHdr *)record);
+    return bytes != 0u && bytes <= universe->blob_len - off ? record : NULL;
+}
+
+/* The record of ID for reading: its header lies in the pool, and a record
+ * is whole by its creation (term_universe_append_raw_record). */
 static const uint8_t *term_universe_entry_bytes(const TermUniverse *universe,
                                                 AtomId id) {
     const TermEntry *entry = term_universe_entry(universe, id);
-    if (!term_universe_entry_has_blob(entry))
+    if (!term_universe_entry_has_blob(entry) || !universe->blob_pool)
         return NULL;
-    if (!universe->blob_pool || entry->byte_off > universe->blob_len ||
-        entry->byte_len > universe->blob_len - entry->byte_off) {
+    size_t off = term_universe_entry_offset(entry);
+    if (off > universe->blob_len ||
+        sizeof(CettaTermHdr) > universe->blob_len - off)
         return NULL;
-    }
-    return universe->blob_pool + entry->byte_off;
+    return universe->blob_pool + off;
 }
 
 const CettaTermHdr *term_universe_hdr_checked(const TermUniverse *universe,
                                               AtomId id) {
-    const uint8_t *bytes = term_universe_entry_bytes(universe, id);
-    return bytes ? (const CettaTermHdr *)bytes : NULL;
+    return (const CettaTermHdr *)term_universe_entry_record(
+        universe, term_universe_entry(universe, id));
 }
 
 static const uint8_t *term_universe_payload(const TermUniverse *universe,
@@ -3035,6 +3067,11 @@ static bool term_universe_append_raw_record(TermUniverse *universe,
         return false;
     if (payload_len > SIZE_MAX - sizeof(CettaTermHdr))
         return false;
+    /* An entry keeps no length: a record's is its header's. */
+    size_t header_payload_len = 0u;
+    if (!term_universe_record_payload_len(universe, hdr, &header_payload_len) ||
+        header_payload_len != payload_len)
+        return false;
     size_t raw_len = sizeof(CettaTermHdr) + payload_len;
     if (raw_len > SIZE_MAX - (CETTA_TERM_ENTRY_ALIGN - 1u))
         return false;
@@ -3054,6 +3091,13 @@ static bool term_universe_append_raw_record(TermUniverse *universe,
     } else {
         if (off > SIZE_MAX - total_len)
             return false;
+        /* An entry names a record's place in 32 bits of 8-byte units. */
+        if ((off + total_len) / CETTA_TERM_ENTRY_ALIGN >=
+            CETTA_TERM_ENTRY_BLOB_NONE) {
+            term_universe_set_error(universe,
+                                    TERM_UNIVERSE_ERROR_STORAGE_TOO_LARGE);
+            return false;
+        }
         if (!term_universe_blob_reserve(universe, off + total_len))
             return false;
     }
@@ -3066,8 +3110,7 @@ static bool term_universe_append_raw_record(TermUniverse *universe,
 
     if (!reused)
         universe->blob_len += total_len;
-    out_entry->byte_off = off;
-    out_entry->byte_len = (uint32_t)total_len;
+    out_entry->record = (uint32_t)(off / CETTA_TERM_ENTRY_ALIGN);
     return true;
 }
 
@@ -3140,14 +3183,15 @@ static AtomId term_universe_insert_new_record(TermUniverse *universe,
     }
 
     TermEntry entry = {
-        .byte_off = CETTA_TERM_ENTRY_BLOB_NONE,
-        .byte_len = 0,
+        .record = CETTA_TERM_ENTRY_BLOB_NONE,
         .coordinate = coordinate,
     };
     if (!term_universe_append_raw_record(universe, hdr, payload, payload_len,
                                          &entry)) {
         return CETTA_ATOM_ID_NONE;
     }
+    size_t record_bytes =
+        term_universe_align_up(sizeof(CettaTermHdr) + payload_len);
 
     size_t physical_index = universe->len;
     bool reused = term_universe_take_free_slot(universe, &physical_index);
@@ -3155,8 +3199,8 @@ static AtomId term_universe_insert_new_record(TermUniverse *universe,
     if (id == CETTA_ATOM_ID_NONE) {
         if (reused)
             term_universe_return_free_slot(universe, physical_index);
-        term_universe_free_record_bytes(universe, entry.byte_off,
-                                        entry.byte_len);
+        term_universe_free_record_bytes(
+            universe, term_universe_entry_offset(&entry), record_bytes);
         return CETTA_ATOM_ID_NONE;
     }
     if (!reused)
@@ -3195,14 +3239,14 @@ static AtomId term_universe_insert_new_record(TermUniverse *universe,
     }
     if (!published) {
         universe->entries[physical_index] =
-            (TermEntry){.byte_off = CETTA_TERM_ENTRY_BLOB_NONE};
+            (TermEntry){.record = CETTA_TERM_ENTRY_BLOB_NONE};
         (void)term_universe_set_decoded_at(universe, physical_index, NULL);
         if (reused)
             term_universe_return_free_slot(universe, physical_index);
         else
             universe->len--;
-        term_universe_free_record_bytes(universe, entry.byte_off,
-                                        entry.byte_len);
+        term_universe_free_record_bytes(
+            universe, term_universe_entry_offset(&entry), record_bytes);
         return CETTA_ATOM_ID_NONE;
     }
     universe->live_entries++;
@@ -3212,7 +3256,7 @@ static AtomId term_universe_insert_new_record(TermUniverse *universe,
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_INSERT);
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_BYTE_ENTRY);
     cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_BLOB_BYTES,
-                            entry.byte_len);
+                            record_bytes);
     return id;
 }
 
@@ -5937,10 +5981,7 @@ static AtomId term_universe_store_prepared_atom_id(TermUniverse *universe,
         if (universe->free_slot_len == 0u &&
             !term_universe_reserve_entries(universe, universe->len + 1))
             return CETTA_ATOM_ID_NONE;
-        TermEntry entry = {
-            .byte_off = CETTA_TERM_ENTRY_BLOB_NONE,
-            .byte_len = 0,
-        };
+        TermEntry entry = {.record = CETTA_TERM_ENTRY_BLOB_NONE};
         Atom *decoded = term_universe_store_persistent_atom(universe, src);
         if (!decoded)
             return CETTA_ATOM_ID_NONE;
@@ -6205,10 +6246,7 @@ static AtomId term_universe_alpha_key_var_lookup(const TermUniverse *universe,
 
 /* The variables an alpha key lookup has renamed, in order of first
  * occurrence. */
-typedef struct {
-    VarId source[TERM_UNIVERSE_ALPHA_KEY_VARS];
-    uint32_t len;
-} TermUniverseAlphaLookupVars;
+typedef TermUniverseAlphaParts TermUniverseAlphaLookupVars;
 
 static AtomId term_universe_alpha_key_lookup_at(
     const TermUniverse *universe, Atom *atom,
@@ -6344,6 +6382,41 @@ AtomId term_universe_store_alpha_key(TermUniverse *universe, Atom *atom) {
     TermUniverseAlphaLookupVars vars;
     vars.len = 0u;
     return term_universe_store_alpha_key_at(universe, atom, &vars, 0u);
+}
+
+size_t term_universe_record_bytes_of(const TermUniverse *universe, AtomId id) {
+    const uint8_t *record = term_universe_entry_bytes(universe, id);
+    return record ? term_universe_record_bytes(universe,
+                                               (const CettaTermHdr *)record)
+                  : 0u;
+}
+
+uint32_t term_universe_coordinate_of(const TermUniverse *universe, AtomId id) {
+    size_t index = 0u;
+    if (!term_universe_atom_id_to_physical_index(universe, id, &index) ||
+        !term_universe_entry_has_blob(&universe->entries[index]))
+        return 0u;
+    return universe->entries[index].coordinate;
+}
+
+AtomId term_universe_store_alpha_key_part(TermUniverse *universe, Atom *atom,
+                                          TermUniverseAlphaParts *parts) {
+    if (!universe || !atom || !parts)
+        return CETTA_ATOM_ID_NONE;
+    return term_universe_store_alpha_key_at(universe, atom, parts, 1u);
+}
+
+AtomId term_universe_alpha_key_lookup_part(const TermUniverse *universe,
+                                           Atom *atom,
+                                           TermUniverseAlphaParts *parts,
+                                           bool *declined) {
+    if (!universe || !atom || !parts || !declined) {
+        if (declined)
+            *declined = true;
+        return CETTA_ATOM_ID_NONE;
+    }
+    return term_universe_alpha_key_lookup_at(universe, atom, parts, 1u,
+                                             declined);
 }
 
 bool term_universe_alpha_key_forms(Atom *atom) {
@@ -6850,13 +6923,10 @@ typedef void (*TermUniverseChildVisit)(void *context, size_t parent,
 static inline void term_universe_record_children(
     const TermUniverse *universe, size_t index, TermUniverseChildVisit visit,
     void *context) {
-    const TermEntry *entry = &universe->entries[index];
-    if (!term_universe_entry_has_blob(entry) || !universe->blob_pool ||
-        entry->byte_off > universe->blob_len ||
-        entry->byte_len > universe->blob_len - entry->byte_off)
+    const CettaTermHdr *hdr = (const CettaTermHdr *)term_universe_entry_record(
+        universe, &universe->entries[index]);
+    if (!hdr)
         return;
-    const CettaTermHdr *hdr =
-        (const CettaTermHdr *)(universe->blob_pool + entry->byte_off);
     const uint8_t *payload = (const uint8_t *)(hdr + 1);
     if (hdr->tag == ATOM_EXPR) {
         uint32_t arity = term_universe_aux_data(hdr);
@@ -7196,10 +7266,15 @@ static void term_universe_variable_support_forget(TermUniverse *universe,
 
 /* Close the live records over the freed bytes, in the order they lie in the
  * pool, which a reused record no longer ties to the order of the entries.
- * A bit per eight bytes marks where a live record starts, and each record
- * names its entry in its first word while the entry keeps that word, so one
- * pass up the pool moves every record down, in place. */
+ * A bit per eight bytes marks where a live record starts.  While the records
+ * move, each one's first word names its entry and its length, and the entry,
+ * a word long, keeps the record's first word, so one pass up the pool moves
+ * every record down, in place, with nothing beside the bits. */
 static void term_universe_compact_records(TermUniverse *universe) {
+    _Static_assert(sizeof(TermEntry) == sizeof(uint64_t),
+                   "an entry holds its record's first word while records move");
+    if (universe->len > UINT32_MAX)
+        return;
     size_t slots = universe->blob_len / CETTA_TERM_ENTRY_ALIGN;
     uint64_t *starts = calloc(slots / 64u + 1u, sizeof(*starts));
     if (!starts)
@@ -7208,34 +7283,41 @@ static void term_universe_compact_records(TermUniverse *universe) {
         TermEntry *entry = &universe->entries[index];
         if (!term_universe_entry_has_blob(entry))
             continue;
-        if (entry->byte_off % CETTA_TERM_ENTRY_ALIGN != 0u ||
-            entry->byte_off > universe->blob_len ||
-            entry->byte_len > universe->blob_len - entry->byte_off) {
+        if (!term_universe_entry_record(universe, entry)) {
             fputs("CeTTa: a term record lies outside the record pool\n",
                   stderr);
             abort();
         }
-        size_t slot = (size_t)(entry->byte_off / CETTA_TERM_ENTRY_ALIGN);
+        size_t slot = (size_t)entry->record;
         starts[slot >> 6] |= (uint64_t)1u << (slot & 63u);
-        uint8_t *record = universe->blob_pool + entry->byte_off;
+        uint8_t *record = universe->blob_pool + term_universe_entry_offset(entry);
         uint64_t first_word = term_universe_load_u64(record);
-        term_universe_store_u64(record, (uint64_t)index);
-        entry->byte_off = first_word;
+        term_universe_store_u64(record, (uint64_t)index |
+                                            ((uint64_t)entry->coordinate << 32));
+        memcpy(entry, &first_word, sizeof(first_word));
     }
     size_t to = 0u;
     for (size_t word = 0u; word <= slots / 64u; word++) {
         for (uint64_t bits = starts[word]; bits; bits &= bits - 1u) {
             size_t off = (word * 64u + (size_t)__builtin_ctzll(bits)) *
                          CETTA_TERM_ENTRY_ALIGN;
-            TermEntry *entry = &universe->entries[term_universe_load_u64(
-                universe->blob_pool + off)];
+            uint64_t named = term_universe_load_u64(universe->blob_pool + off);
+            TermEntry *entry = &universe->entries[(uint32_t)named];
+            /* The header, its first word from the entry and the rest from
+             * the record, gives the record's length. */
+            CettaTermHdr header;
+            memcpy(&header, entry, sizeof(uint64_t));
+            memcpy((uint8_t *)&header + sizeof(uint64_t),
+                   universe->blob_pool + off + sizeof(uint64_t),
+                   sizeof(header) - sizeof(uint64_t));
+            size_t bytes = term_universe_record_bytes(universe, &header);
             if (off != to)
                 memmove(universe->blob_pool + to, universe->blob_pool + off,
-                        entry->byte_len);
-            term_universe_store_u64(universe->blob_pool + to,
-                                    entry->byte_off);
-            entry->byte_off = to;
-            to += entry->byte_len;
+                        bytes);
+            memcpy(universe->blob_pool + to, &header, sizeof(uint64_t));
+            entry->record = (uint32_t)(to / CETTA_TERM_ENTRY_ALIGN);
+            entry->coordinate = (uint32_t)(named >> 32);
+            to += bytes;
         }
     }
     free(starts);
@@ -7277,9 +7359,11 @@ static bool term_universe_collect_traced(TermUniverse *universe,
     report->roots = mark.roots;
     report->invalid_roots = mark.invalid_roots;
     for (size_t index = 0u; index < universe->len; index++) {
-        const TermEntry *entry = &universe->entries[index];
-        uint64_t bytes =
-            term_universe_entry_has_blob(entry) ? entry->byte_len : 0u;
+        const uint8_t *record =
+            term_universe_entry_record(universe, &universe->entries[index]);
+        uint64_t bytes = record
+            ? term_universe_record_bytes(universe, (const CettaTermHdr *)record)
+            : 0u;
         if (bytes) {
             report->records++;
             report->record_bytes += bytes;
@@ -7619,13 +7703,10 @@ static void term_universe_counting_start(TermUniverse *universe) {
         memset(universe->counts, 0, universe->len * sizeof(*universe->counts));
     TU_COLLECTION_PROBE_ENTER();
     for (size_t index = 0u; index < universe->len; index++) {
-        const TermEntry *entry = &universe->entries[index];
-        if (!term_universe_entry_has_blob(entry) ||
-            entry->byte_off > universe->blob_len ||
-            entry->byte_len > universe->blob_len - entry->byte_off)
+        const CettaTermHdr *hdr = (const CettaTermHdr *)
+            term_universe_entry_record(universe, &universe->entries[index]);
+        if (!hdr)
             continue;
-        const CettaTermHdr *hdr =
-            (const CettaTermHdr *)(universe->blob_pool + entry->byte_off);
         term_universe_hold_record_children(universe, hdr,
                                            (const uint8_t *)(hdr + 1));
     }
@@ -7795,8 +7876,9 @@ static void term_universe_free_entry(TermUniverse *universe, size_t index,
     if (term_universe_entry_has_blob(entry)) {
         term_universe_record_children(universe, index,
                                       term_universe_release_child, universe);
-        const CettaTermHdr *hdr =
-            (const CettaTermHdr *)(universe->blob_pool + entry->byte_off);
+        const CettaTermHdr *hdr = (const CettaTermHdr *)(
+            universe->blob_pool + term_universe_entry_offset(entry));
+        size_t bytes = term_universe_record_bytes(universe, hdr);
         if (hdr->tag == ATOM_GROUNDED && hdr->subtag == GV_INT)
             term_universe_integer_remove(
                 universe, term_universe_load_i64((const uint8_t *)(hdr + 1)),
@@ -7804,12 +7886,12 @@ static void term_universe_free_entry(TermUniverse *universe, size_t index,
         else
             term_universe_intern_remove(
                 universe, term_universe_intern_tag(entry->coordinate), id);
-        report->reclaimed_record_bytes += entry->byte_len;
-        term_universe_free_record_bytes(universe, entry->byte_off,
-                                        entry->byte_len);
+        report->reclaimed_record_bytes += bytes;
+        term_universe_free_record_bytes(
+            universe, term_universe_entry_offset(entry), bytes);
     }
     term_universe_variable_support_forget(universe, index);
-    *entry = (TermEntry){.byte_off = CETTA_TERM_ENTRY_BLOB_NONE};
+    *entry = (TermEntry){.record = CETTA_TERM_ENTRY_BLOB_NONE};
     universe->live_entries--;
     report->reclaimed++;
 #if CETTA_BUILD_WITH_TERM_UNIVERSE_COLLECTION_CHECKS

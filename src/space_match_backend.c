@@ -11733,6 +11733,9 @@ static bool space_match_dense_pattern_count(const Space *s, Atom *pattern,
         pattern->expr.len > CETTA_TUPLE_MAX_ARITY + 1u)
         return false;
     Atom *const *columns = pattern->expr.elems;
+    /* A deep relation aligns the pattern itself (space_dense_count_columns). */
+    if (space_dense_deep_meets(s, &pattern, 1u))
+        return space_dense_count_columns(s, columns, pattern->expr.len, bits);
     for (CettaExprIndex c = 0u; c < pattern->expr.len; c++) {
         if (columns[c]->kind != ATOM_VAR) {
             if (atom_has_vars(columns[c]))
