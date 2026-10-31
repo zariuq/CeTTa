@@ -43,12 +43,12 @@ typedef struct {
 typedef bool (*CettaNativeQueryApply)(void *context,
                                       const CettaNativeQueryEffect *effect,
                                       const AtomId *ids, size_t count);
-/* Add the instances of an addition whose data is (h X Y), into a set that
- * keeps h as bits: h as its symbol atom and id, each instance as the two
- * ids of its columns in PAIRS.  The instances need no records. */
-typedef bool (*CettaNativeQueryApplyPairs)(
+/* Add the instances of an addition whose data is (h X1 ... Xk), into a set
+ * that may keep h in a relation: h as its symbol atom and id, each instance
+ * as the k ids of its columns in TUPLES.  The instances need no records. */
+typedef bool (*CettaNativeQueryApplyTuples)(
     void *context, const CettaNativeQueryEffect *effect, Atom *head,
-    AtomId head_id, const AtomId *pairs, size_t count);
+    AtomId head_id, uint32_t arity, const AtomId *tuples, size_t count);
 
 typedef struct {
     Space *source;
@@ -61,8 +61,8 @@ typedef struct {
     const CettaNativeQueryEffect *effects;
     size_t effect_count;
     CettaNativeQueryApply apply;
-    /* Optional: additions into relations kept as bits, by pairs. */
-    CettaNativeQueryApplyPairs apply_pairs;
+    /* Optional: additions into relations, by the columns of each fact. */
+    CettaNativeQueryApplyTuples apply_tuples;
     void *apply_context;
     /* Only the number of answers is wanted. */
     bool count_only;
@@ -102,6 +102,15 @@ typedef struct {
      * declines the run, which must then have made no effect: it collects,
      * or its effects wait for the end. */
     Atom *distinct_key;
+    /* EFFECTS over the space's rows: the patterns the dialect reads afresh
+     * for each solution of the patterns before them, after the effects
+     * those solutions made, where an effect may change a row they read
+     * (bit i for pattern i).  The run reads them with the patterns before
+     * each read in their order, and makes its effects only if no instance
+     * of one meets such a pattern under bindings it was read with: then
+     * every read saw the rows the query began with.  Otherwise it
+     * declines, having made none. */
+    uint64_t afresh;
 } CettaNativeQuery;
 
 typedef enum {

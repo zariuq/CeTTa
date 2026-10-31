@@ -23543,7 +23543,7 @@ enum { PREPARED_PURE_DECLINE_SLOTS = 64u };
  * compilations keep being refused is compiled at its 1st, 2nd, 4th, 8th, ...
  * call, then once every 2^PREPARED_PURE_BACKOFF_CAP calls.  `epoch` is the
  * cache's backoff epoch plus one when written, so a slot from before the
- * entries were last cleared never answers. */
+ * entries were last cleared never answers; zero ends the pause. */
 typedef struct {
     uint64_t epoch;
     SymbolId head;
@@ -23559,9 +23559,22 @@ typedef struct {
 } PreparedPureBackoffSlot;
 
 enum {
-    PREPARED_PURE_BACKOFF_SLOTS = 256u,
     PREPARED_PURE_BACKOFF_CAP = 16u,
+    PREPARED_PURE_BACKOFF_CHUNK = 64u,
 };
+
+/* The pauses, one slot per key.  Slots live in chunks that never move, so a
+ * slot a caller holds across a compilation stays in place while the cache
+ * lives; an open-addressed index of slot numbers plus one finds a key's
+ * slot.  The cache's backoff epoch moving past `epoch` clears them all. */
+typedef struct {
+    PreparedPureBackoffSlot **chunks;
+    uint32_t chunk_len;
+    uint32_t len;
+    uint32_t *index;
+    uint32_t index_mask;
+    uint64_t epoch;
+} PreparedPureBackoffTable;
 
 /* Compiled entry programs are invocation-local executable metadata.  The
  * owning evaluator guarantees root_space remains live until this cache is
@@ -23573,9 +23586,9 @@ struct PreparedPureProgramCache {
      * under an older generation are not read. */
     uint64_t entry_generation;
     PreparedPureDeclineSlot decline_slots[PREPARED_PURE_DECLINE_SLOTS];
-    /* Pauses after uncertified compile refusals, allocated at the first;
-     * cleared with the entries by advancing the epoch. */
-    PreparedPureBackoffSlot *backoff;
+    /* Pauses after uncertified compile refusals, one per key; cleared with
+     * the entries by advancing the epoch. */
+    PreparedPureBackoffTable backoff;
     uint64_t backoff_epoch;
     Space *root_space;
     /* What compiled entries read besides the program: the libraries the
@@ -23583,6 +23596,11 @@ struct PreparedPureProgramCache {
      * the language and its profile.  A program that would read the
      * registry's bindings is declined, so the registry is no key. */
     SpaceProgramToken program;
+    /* The global mutation clock when `program` was last found current.
+     * Every change the token reads moves the clock, so while the clock
+     * stands there the token is still current. */
+    uint64_t program_current_clock;
+    bool program_current_known;
     uint64_t capability_revision;
     uint32_t library_mask;
     const CettaProfile *profile;
@@ -23604,23 +23622,10 @@ struct PreparedPureProgramCache {
     bool replay_storage_ready;
 };
 
-/* The pause slot of a closed call's key, or NULL: with CREATE, a slot is
- * taken for the key (allocating the table at the first). */
-static PreparedPureBackoffSlot *prepared_pure_backoff_slot(
-    PreparedPureProgramCache *cache, SymbolId head, CettaExprLen arity,
-    CettaLanguageId language_id, CettaGsltPureCallMode call_mode,
-    bool answer_producer, const void *source_identity, bool entry_values, bool equality,
-    bool create) {
-    if (!cache)
-        return NULL;
-    if (!cache->backoff) {
-        if (!create)
-            return NULL;
-        cache->backoff =
-            calloc(PREPARED_PURE_BACKOFF_SLOTS, sizeof(*cache->backoff));
-        if (!cache->backoff)
-            return NULL;
-    }
+static uint64_t prepared_pure_backoff_hash(
+    SymbolId head, CettaExprLen arity, CettaLanguageId language_id,
+    CettaGsltPureCallMode call_mode, bool answer_producer,
+    const void *source_identity, bool entry_values, bool equality) {
     uint64_t h = (uint64_t)head * UINT64_C(0x9e3779b97f4a7c15) ^
                  (uint64_t)(uintptr_t)source_identity ^
                  ((uint64_t)arity << 40) ^ ((uint64_t)language_id << 52) ^
@@ -23630,23 +23635,117 @@ static PreparedPureBackoffSlot *prepared_pure_backoff_slot(
     h ^= h >> 31;
     h *= UINT64_C(0xbf58476d1ce4e5b9);
     h ^= h >> 29;
-    PreparedPureBackoffSlot *slot =
-        &cache->backoff[h & (PREPARED_PURE_BACKOFF_SLOTS - 1u)];
-    if (slot->epoch == cache->backoff_epoch + 1u && slot->head == head &&
-        slot->arity == arity && slot->language_id == language_id &&
-        slot->call_mode == call_mode && slot->answer_producer == answer_producer &&
-        slot->source_identity == source_identity &&
-        slot->entry_arguments_are_values == entry_values &&
-        slot->total_structural_equality == equality)
-        return slot;
-    if (!create)
+    return h;
+}
+
+static inline PreparedPureBackoffSlot *prepared_pure_backoff_at(
+    const PreparedPureBackoffTable *table, uint32_t n) {
+    return &table->chunks[n / PREPARED_PURE_BACKOFF_CHUNK]
+                         [n % PREPARED_PURE_BACKOFF_CHUNK];
+}
+
+/* Room in the index for NEED slots at three quarters' load. */
+static bool prepared_pure_backoff_reserve(PreparedPureBackoffTable *table,
+                                          uint32_t need) {
+    uint32_t size = table->index ? table->index_mask + 1u : 64u;
+    while ((uint64_t)need * 4u > (uint64_t)size * 3u) {
+        if (size > UINT32_MAX / 2u)
+            return false;
+        size *= 2u;
+    }
+    if (table->index && size == table->index_mask + 1u)
+        return true;
+    uint32_t *index = calloc(size, sizeof(*index));
+    if (!index)
+        return false;
+    for (uint32_t n = 0u; n < table->len; n++) {
+        const PreparedPureBackoffSlot *slot = prepared_pure_backoff_at(table, n);
+        uint32_t i = (uint32_t)prepared_pure_backoff_hash(
+            slot->head, slot->arity, slot->language_id, slot->call_mode,
+            slot->answer_producer, slot->source_identity,
+            slot->entry_arguments_are_values,
+            slot->total_structural_equality) & (size - 1u);
+        while (index[i] != 0u)
+            i = (i + 1u) & (size - 1u);
+        index[i] = n + 1u;
+    }
+    free(table->index);
+    table->index = index;
+    table->index_mask = size - 1u;
+    return true;
+}
+
+/* The pause slot of a closed call's key, or NULL: with CREATE, the key's
+ * slot is made when it has none, or started afresh when its pause ended. */
+static PreparedPureBackoffSlot *prepared_pure_backoff_slot(
+    PreparedPureProgramCache *cache, SymbolId head, CettaExprLen arity,
+    CettaLanguageId language_id, CettaGsltPureCallMode call_mode,
+    bool answer_producer, const void *source_identity, bool entry_values, bool equality,
+    bool create) {
+    if (!cache)
         return NULL;
+    PreparedPureBackoffTable *table = &cache->backoff;
+    uint64_t now = cache->backoff_epoch + 1u;
+    if (table->epoch != now) {
+        /* The entries were cleared since: so are the pauses. */
+        if (table->index)
+            memset(table->index, 0,
+                   (size_t)(table->index_mask + 1u) * sizeof(*table->index));
+        table->len = 0u;
+        table->epoch = now;
+    }
+    if (table->len == 0u && !create)
+        return NULL;
+    uint64_t h = prepared_pure_backoff_hash(head, arity, language_id,
+        call_mode, answer_producer, source_identity, entry_values, equality);
+    for (uint32_t i = table->index ? (uint32_t)h & table->index_mask : 0u;
+         table->index && table->index[i] != 0u;
+         i = (i + 1u) & table->index_mask) {
+        PreparedPureBackoffSlot *slot =
+            prepared_pure_backoff_at(table, table->index[i] - 1u);
+        if (slot->head != head || slot->arity != arity ||
+            slot->language_id != language_id || slot->call_mode != call_mode ||
+            slot->answer_producer != answer_producer ||
+            slot->source_identity != source_identity ||
+            slot->entry_arguments_are_values != entry_values ||
+            slot->total_structural_equality != equality)
+            continue;
+        if (slot->epoch == now)
+            return slot;
+        if (!create)
+            return NULL;
+        slot->epoch = now;
+        slot->refusals = 0u;
+        slot->skip = 0u;
+        return slot;
+    }
+    if (!create || table->len >= UINT32_MAX - 1u ||
+        !prepared_pure_backoff_reserve(table, table->len + 1u))
+        return NULL;
+    uint32_t chunk = table->len / PREPARED_PURE_BACKOFF_CHUNK;
+    if (chunk == table->chunk_len) {
+        PreparedPureBackoffSlot **chunks = realloc(
+            table->chunks, (size_t)(chunk + 1u) * sizeof(*chunks));
+        if (!chunks)
+            return NULL;
+        table->chunks = chunks;
+        chunks[chunk] = calloc(PREPARED_PURE_BACKOFF_CHUNK, sizeof(**chunks));
+        if (!chunks[chunk])
+            return NULL;
+        table->chunk_len = chunk + 1u;
+    }
+    uint32_t i = (uint32_t)h & table->index_mask;
+    while (table->index[i] != 0u)
+        i = (i + 1u) & table->index_mask;
+    uint32_t n = table->len++;
+    PreparedPureBackoffSlot *slot = prepared_pure_backoff_at(table, n);
     *slot = (PreparedPureBackoffSlot){
-        .epoch = cache->backoff_epoch + 1u, .head = head, .arity = arity,
+        .epoch = now, .head = head, .arity = arity,
         .language_id = language_id, .call_mode = call_mode,
         .answer_producer = answer_producer, .source_identity = source_identity,
         .entry_arguments_are_values = entry_values,
         .total_structural_equality = equality};
+    table->index[i] = n + 1u;
     return slot;
 }
 
@@ -23687,14 +23786,18 @@ static void prepared_pure_program_cache_free(
     if (!cache)
         return;
     prepared_pure_program_cache_clear_entries(cache);
-    free(cache->backoff);
-    cache->backoff = NULL;
+    for (uint32_t c = 0u; c < cache->backoff.chunk_len; c++)
+        free(cache->backoff.chunks[c]);
+    free(cache->backoff.chunks);
+    free(cache->backoff.index);
+    cache->backoff = (PreparedPureBackoffTable){0};
     if (cache->execution_scratch_ready) {
         arena_free(&cache->execution_scratch);
         cache->execution_scratch_ready = false;
     }
     cache->root_space = NULL;
     memset(&cache->program, 0, sizeof(cache->program));
+    cache->program_current_known = false;
     cache->capability_revision = 0u;
     cache->library_mask = 0u;
     cache->profile = NULL;
@@ -23736,7 +23839,26 @@ static Arena *prepared_pure_program_cache_execution_scratch(
     return &cache->execution_scratch;
 }
 
-static bool prepared_pure_program_cache_prepare_revision(
+/* The check below when nothing moved: the clock stands where the program
+ * was last found current, and the libraries, profile, language and
+ * capability are those it was found current under.  Inline at the callers,
+ * so a consult of a paused relation pays a few loads. */
+static inline bool prepared_pure_program_cache_still_current(
+    const PreparedPureProgramCache *cache, const Space *space,
+    uint64_t capability_revision) {
+    return cache && space && cache->root_space == space &&
+        cache->program_current_known &&
+        cache->program_current_clock == space_global_mutation_epoch() &&
+        cache->capability_revision == capability_revision &&
+        cache->library_mask ==
+            (g_library_context ? g_library_context->active_mask : 0u) &&
+        cache->profile == active_profile() &&
+        cache->language == active_language_id();
+}
+
+/* Out of line, so the callers' inline common case keeps no frame. */
+static __attribute__((noinline, cold)) bool
+prepared_pure_program_cache_check_revision(
     PreparedPureProgramCache *cache, Space *space,
     uint64_t capability_revision) {
     if (!cache || !space || cache->root_space != space)
@@ -23744,19 +23866,39 @@ static bool prepared_pure_program_cache_prepare_revision(
     uint32_t library_mask = g_library_context ? g_library_context->active_mask : 0u;
     const CettaProfile *profile = active_profile();
     CettaLanguageId language = eval_current_language_id();
-    if (space_program_token_matches_live_space(
-            cache->program, space) &&
-        cache->capability_revision == capability_revision &&
+    /* Read before the token: a change after this read moves the clock past
+     * the stamp, and the next check reads the token again. */
+    uint64_t clock = space_global_mutation_epoch();
+    if (cache->capability_revision == capability_revision &&
         cache->library_mask == library_mask && cache->profile == profile &&
-        cache->language == language)
+        cache->language == language &&
+        ((cache->program_current_known &&
+          cache->program_current_clock == clock) ||
+         space_program_token_matches_live_space(cache->program, space))) {
+        cache->program_current_clock = clock;
+        cache->program_current_known = true;
         return true;
+    }
     prepared_pure_program_cache_clear_entries(cache);
     cache->program = space_program_token(space);
     cache->capability_revision = capability_revision;
     cache->library_mask = library_mask;
     cache->profile = profile;
     cache->language = language;
+    /* A token that cannot match the live space is read again each time. */
+    cache->program_current_clock = clock;
+    cache->program_current_known = cache->program.instance_id != 0u &&
+        cache->program.base_dependency_epoch != UINT64_MAX;
     return cache->program.instance_id != 0u;
+}
+
+static inline bool prepared_pure_program_cache_prepare_revision(
+    PreparedPureProgramCache *cache, Space *space,
+    uint64_t capability_revision) {
+    return prepared_pure_program_cache_still_current(
+               cache, space, capability_revision) ||
+        prepared_pure_program_cache_check_revision(
+            cache, space, capability_revision);
 }
 
 /* A compiler callback may change authority or reenter this cache. Observe
@@ -44253,7 +44395,7 @@ static bool petta_eval_machine_prepared_refused(
     /* A pause is only an optimization hint under the same authority.
      * A changed program, library, profile or capability clears it before
      * deciding to take the ordinary path for this call. */
-    if (inquiry == PREPARED_PURE_ENTRY_INQUIRY && program_cache->backoff) {
+    if (inquiry == PREPARED_PURE_ENTRY_INQUIRY && program_cache->backoff.len) {
         PreparedPureBackoffSlot *pause = prepared_pure_backoff_slot(
             program_cache, head, arity, language_id, call_mode, false,
             prepared_pure_source_view_for_language(language_id, NULL).root,
@@ -45691,23 +45833,24 @@ static bool petta_native_query_apply(void *context,
               context, effect->target, effect->call, ids, count);
 }
 
-/* Additions into a relation the target set keeps as bits, by the pairs of
- * their columns: the same facts petta_eval_machine_add_ground_instances
- * adds, without a record of each. */
-static bool petta_native_query_apply_pairs(void *context,
-                                           const CettaNativeQueryEffect *effect,
-                                           Atom *head, AtomId head_id,
-                                           const AtomId *pairs, size_t count) {
+/* Additions into a relation the target set may keep, by the columns of
+ * each fact: the same facts petta_eval_machine_add_ground_instances adds,
+ * without a record of each. */
+static bool petta_native_query_apply_tuples(void *context,
+                                            const CettaNativeQueryEffect *effect,
+                                            Atom *head, AtomId head_id,
+                                            uint32_t arity, const AtomId *tuples,
+                                            size_t count) {
     (void)context;
     Atom *call = effect->call;
     if (!effect->target || !head || head->kind != ATOM_SYMBOL || !call ||
-        call->kind != ATOM_EXPR || call->expr.len != 3u || (count && !pairs))
+        call->kind != ATOM_EXPR || call->expr.len != 3u || (count && !tuples))
         return false;
     __attribute__((cleanup(cetta_shared_transition_guard_leave)))
     CettaSharedTransitionGuard shared_transition = {0};
     cetta_shared_transition_guard_enter(&shared_transition);
-    if (!space_add_dense_pairs(effect->target, head->sym_id, head_id, pairs,
-                               (CettaCount)count))
+    if (!space_add_dense_tuples(effect->target, head->sym_id, head_id, arity,
+                                tuples, (CettaCount)count))
         return false;
     petta_specializer_note_mutation(effect->target, call->expr.elems[2]);
     return true;
@@ -47249,11 +47392,14 @@ static CettaNativeQueryStatus petta_eval_machine_native_collect(
             guard_space = NULL;
     }
     if (made) {
-        /* PeTTa reads each pattern of a conjunction afresh for every row
-         * before it, after the effects of the rows already answered; the
-         * native path reads them all first.  The two agree when no effect
-         * can change a row a pattern reads.  A list's rows are a value,
-         * which no effect changes; its effects name the universe. */
+        /* PeTTa reads the first pattern of a conjunction once, before any
+         * effect, and each later one afresh for every row before it, after
+         * the effects of the rows already answered; the native path reads
+         * them all first.  The two agree when no effect changes a row a
+         * pattern read: a pattern an effect may change is read afresh by
+         * the run, which certifies that none did (CettaNativeQuery.afresh).
+         * A list's rows are a value, which no effect changes; its effects
+         * name the universe. */
         if (listed)
             native.source = effects[0].target;
         for (size_t effect = 0u; !listed && effect < effect_count; effect++) {
@@ -47270,7 +47416,7 @@ static CettaNativeQueryStatus petta_eval_machine_native_collect(
                 if (!snapshot &&
                     petta_native_query_reads(native.patterns[leg],
                                              effects[effect].data))
-                    return CETTA_NATIVE_QUERY_DECLINED;
+                    native.afresh |= UINT64_C(1) << leg;
                 if (!certified &&
                     !space_exact_head_certified(
                         read, effects[effect].data->expr.elems[0]->sym_id))
@@ -47309,7 +47455,7 @@ static CettaNativeQueryStatus petta_eval_machine_native_collect(
         native.effects = effects;
         native.effect_count = effect_count;
         native.apply = petta_native_query_apply;
-        native.apply_pairs = petta_native_query_apply_pairs;
+        native.apply_tuples = petta_native_query_apply_tuples;
         native.apply_context = context;
     } else {
         bool answers = template_rewritten

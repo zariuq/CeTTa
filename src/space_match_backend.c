@@ -5431,8 +5431,9 @@ bool space_match_backend_logical_len_u32_checked(const Space *s, uint32_t *out_l
         SPACE_MATCH_BACKEND_ERROR_NATIVE_SPACE_TOO_LARGE, out_len);
 }
 
-/* The rows, then the facts kept as bits (space.c): a read past the rows
- * gives the bits back to the rows first, at the positions they had. */
+/* The rows, then the facts kept in relations (space.c): a read past the
+ * rows gives the relations back to the rows first, at the positions their
+ * facts had. */
 static uint64_t space_match_backend_row_len64(const Space *s) {
     if (s->match_backend.ops && s->match_backend.ops->logical_len)
         return s->match_backend.ops->logical_len(s);
@@ -5441,14 +5442,14 @@ static uint64_t space_match_backend_row_len64(const Space *s) {
 
 static void space_match_backend_settle_past_rows(const Space *s,
                                                  uint64_t idx) {
-    if (space_dense_pairs(s) != 0u && idx >= space_match_backend_row_len64(s))
+    if (space_dense_facts(s) != 0u && idx >= space_match_backend_row_len64(s))
         space_dense_settle((Space *)s, SYMBOL_ID_NONE);
 }
 
 uint64_t space_match_backend_logical_len64(const Space *s) {
     if (!s)
         return 0;
-    return space_match_backend_row_len64(s) + space_dense_pairs(s);
+    return space_match_backend_row_len64(s) + space_dense_facts(s);
 }
 
 AtomId space_match_backend_get_atom_id_at(const Space *s, uint32_t idx) {
@@ -11721,17 +11722,18 @@ Atom *space_match_candidate_at64(const Space *s, CettaIndex idx) {
     return space_match_backend_candidate_at64(s, idx);
 }
 
-/* The facts kept as bits that a flat pattern (h a b) matches, when the bits
- * can answer for them: every column a ground atom or a variable that occurs
- * once.  The rows answer for the rest, read between
- * space_dense_reading_bits_begin and _end. */
+/* The facts kept in relations that a flat pattern (h c1 ... ck) matches,
+ * when the relations can answer for them: every column a ground atom or a
+ * variable that occurs once.  The rows answer for the rest, read between
+ * space_dense_reading_begin and _end. */
 static bool space_match_dense_pattern_count(const Space *s, Atom *pattern,
                                             CettaCount *bits) {
-    if (!s || !pattern || space_dense_pairs(s) == 0u ||
-        pattern->kind != ATOM_EXPR || pattern->expr.len != 3u)
+    if (!s || !pattern || space_dense_facts(s) == 0u ||
+        pattern->kind != ATOM_EXPR || pattern->expr.len < 2u ||
+        pattern->expr.len > CETTA_TUPLE_MAX_ARITY + 1u)
         return false;
     Atom *const *columns = pattern->expr.elems;
-    for (CettaExprIndex c = 0u; c < 3u; c++) {
+    for (CettaExprIndex c = 0u; c < pattern->expr.len; c++) {
         if (columns[c]->kind != ATOM_VAR) {
             if (atom_has_vars(columns[c]))
                 return false;
@@ -11743,19 +11745,22 @@ static bool space_match_dense_pattern_count(const Space *s, Atom *pattern,
                 return false;
         }
     }
-    return space_dense_count_columns(s, columns, bits);
+    return space_dense_count_columns(s, columns, pattern->expr.len, bits);
 }
 
 static bool space_match_dense_view_count(
     const Space *s, const CettaGsltTermViewV1 *view,
     CettaGsltTermViewOpenBindingObservationV1 open_bindings,
     CettaCount *bits) {
-    Atom *columns[3];
-    return s && view && view->source && space_dense_pairs(s) != 0u &&
-           view->source->kind == ATOM_EXPR && view->source->expr.len == 3u &&
-           cetta_gslt_term_view_project_expression_coordinates_v1(
-               view, open_bindings, columns, 3u) &&
-           space_dense_count_columns(s, columns, bits);
+    Atom *columns[CETTA_TUPLE_MAX_ARITY + 1u];
+    if (!s || !view || !view->source || space_dense_facts(s) == 0u ||
+        view->source->kind != ATOM_EXPR || view->source->expr.len < 2u ||
+        view->source->expr.len > CETTA_TUPLE_MAX_ARITY + 1u)
+        return false;
+    CettaExprLen len = view->source->expr.len;
+    return cetta_gslt_term_view_project_expression_coordinates_v1(
+               view, open_bindings, columns, len) &&
+           space_dense_count_columns(s, columns, len, bits);
 }
 
 static bool space_match_count_add_bits(uint64_t *count, CettaCount bits) {
@@ -11774,10 +11779,10 @@ bool space_match_count_flat_linear64(
     uint64_t *count, CettaIndex *examined) {
     CettaCount bits = 0u;
     if (space_match_dense_pattern_count(s, pattern, &bits)) {
-        space_dense_reading_bits_begin();
+        space_dense_reading_begin();
         bool admitted = space_match_count_flat_linear_rows64(
             s, scratch, pattern, count, examined);
-        space_dense_reading_bits_end();
+        space_dense_reading_end();
         return admitted && space_match_count_add_bits(count, bits);
     }
     space_dense_settle_for_pattern(s, pattern);
@@ -11824,10 +11829,10 @@ bool space_match_count_flat_linear_view64(
     CettaIndex *examined) {
     CettaCount bits = 0u;
     if (space_match_dense_view_count(s, view, open_bindings, &bits)) {
-        space_dense_reading_bits_begin();
+        space_dense_reading_begin();
         bool admitted = space_match_count_flat_linear_view_rows64(
             s, scratch, view, open_bindings, count, examined);
-        space_dense_reading_bits_end();
+        space_dense_reading_end();
         return admitted && space_match_count_add_bits(count, bits);
     }
     space_dense_settle_for_pattern(s, view ? view->source : NULL);
@@ -11883,10 +11888,10 @@ bool space_match_exists_flat_linear_view64(
                 *examined = 0u;
             return exists && examined;
         }
-        space_dense_reading_bits_begin();
+        space_dense_reading_begin();
         bool admitted = space_match_exists_flat_linear_view_rows64(
             s, scratch, view, open_bindings, exists, examined);
-        space_dense_reading_bits_end();
+        space_dense_reading_end();
         return admitted;
     }
     space_dense_settle_for_pattern(s, view ? view->source : NULL);
