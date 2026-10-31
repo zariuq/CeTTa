@@ -1903,6 +1903,7 @@ static void print_usage(FILE *out) {
     fputs("       cetta --emit-runtime-stats <file.metta> # dump runtime counters to stderr after execution\n", out);
     fputs("       cetta --emit-prime-need-trace <file.metta> # emit exact Prime occurrences, receipts, and completion to stderr\n", out);
     fputs("       cetta --lang prime --prime-rewrite-frontier <monolithic|candidate-local|demand-cohort> <file.metta>\n", out);
+    fputs("       cetta --lang prime --prime-eval-residuals <answered|completed|carried> <file.metta> # experimental: how eval treats a returned residual\n", out);
     fputs("       cetta --lang prime --oracle-audit <file.metta>    # replay every oracle answer through the declared equations; stop on a mismatch\n", out);
     fputs("       cetta --lang prime --oracle-residues <file.metta> # check oracle sums and products modulo three primes; stop on a mismatch\n", out);
     fputs("       cetta --eval-hashcons <file.metta>      # experimental: hash-cons eval-arena atoms\n", out);
@@ -3200,6 +3201,7 @@ static int cetta_main(int argc, char **argv) {
     bool petta_strict = false;
     bool petta_strict_det = false;
     const char *prime_rewrite_frontier = NULL;
+    const char *prime_eval_residuals = NULL;
     bool eval_hashcons = false;
     bool list_profiles = false;
     bool translate_mode = false;
@@ -3357,6 +3359,23 @@ static int cetta_main(int argc, char **argv) {
                 return 2;
             }
             prime_rewrite_frontier = value;
+            continue;
+        }
+        if (strcmp(argv[i], "--prime-eval-residuals") == 0) {
+            if (i + 1 >= argc) {
+                print_usage(stderr);
+                return 1;
+            }
+            const char *value = argv[++i];
+            if (strcmp(value, "answered") != 0 &&
+                strcmp(value, "completed") != 0 &&
+                strcmp(value, "carried") != 0) {
+                fprintf(stderr,
+                        "error: invalid Prime eval residuals '%s'\n",
+                        value);
+                return 2;
+            }
+            prime_eval_residuals = value;
             continue;
         }
         if (strcmp(argv[i], "--eval-hashcons") == 0) {
@@ -3616,6 +3635,7 @@ static int cetta_main(int argc, char **argv) {
             list_profiles || source_endpoint.syntax != CETTA_SYNTAX_AUTO ||
             import_mode_overridden || petta_strict || petta_strict_det ||
             emit_prime_need_trace || prime_rewrite_frontier ||
+            prime_eval_residuals ||
             prefer_rationals_cli || curried_arrows_cli || eval_hashcons ||
             fuel_override_requested ||
             num_threads_requested || rho_reduction_limit_requested ||
@@ -3705,6 +3725,12 @@ static int cetta_main(int argc, char **argv) {
     if (prime_rewrite_frontier && lang->id != CETTA_LANGUAGE_PRIME) {
         fprintf(stderr,
                 "error: --prime-rewrite-frontier requires --lang prime\n");
+        free(inline_buf);
+        return 2;
+    }
+    if (prime_eval_residuals && lang->id != CETTA_LANGUAGE_PRIME) {
+        fprintf(stderr,
+                "error: --prime-eval-residuals requires --lang prime\n");
         free(inline_buf);
         return 2;
     }
@@ -4049,6 +4075,11 @@ static int cetta_main(int argc, char **argv) {
         cetta_eval_session_record_generic_setting(
             &libraries.session, "prime-rewrite-frontier",
             CETTA_EVAL_OPTION_VALUE_SYMBOL, prime_rewrite_frontier, 0);
+    }
+    if (prime_eval_residuals) {
+        cetta_eval_session_record_generic_setting(
+            &libraries.session, "prime-eval-residuals",
+            CETTA_EVAL_OPTION_VALUE_SYMBOL, prime_eval_residuals, 0);
     }
     eval_set_library_context(&libraries);
     cleanup.parser_rational_literals_old =

@@ -48,6 +48,7 @@ tests/prime/atom_proc_forwarding.metta	prime	metta		any	native	test-prime	golden
 tests/prime/atom_proc_roles.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/atom_result_type.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/authored_frontier_chaining.metta	prime	metta		any	native	test-prime	golden	Prime authored bounded-chaining integration canary with independent kernel checking
+tests/prime/binder_display_names.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/cardinality_observer_dynamic_space.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/causal/adaptive_policy.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/causal/composition_regions.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
@@ -95,6 +96,7 @@ tests/prime/conformance/written_domains.metta	prime	metta		any	native	test-prime
 tests/prime/data_atom_path_a.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/data_head_patterns.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/data_holding.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/declared_metatype_arguments.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/demand/bubbles.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/error_continues.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/first_answer_demand.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
@@ -106,6 +108,7 @@ tests/prime/held_sequence_iteration.metta	prime	metta		any	native	test-prime	gol
 tests/prime/if_atom_data_boundary.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/lambda_names.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/let_bound_learner.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/let_source_answers.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/lift_brackets.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/native_hyp_path.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/need_activation_operand.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
@@ -170,6 +173,7 @@ tests/prime/profiles/megalodon_hotg/trinity/list_param.extensional.metta	prime	m
 tests/prime/profiles/megalodon_hotg/trinity/power-in-universe.metta	prime	metta		any	native	test-prime-profile-megalodon-hotg	golden	Explicit Megalodon HOTG profile regression
 tests/prime/profiles/megalodon_hotg/trinity/stream.family.metta	prime	metta		any	native	test-prime-profile-megalodon-hotg	golden	Explicit Megalodon HOTG profile regression
 tests/prime/quote_head_matching.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/read_value_operands.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/ready_values.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/relational_first_demand.metta	prime	metta		any	native	test-prime	golden	Prime root first-answer demand, fallback, and nested-search regression
 tests/prime/rule_machine_compile.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression

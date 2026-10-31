@@ -1352,7 +1352,9 @@ static __thread PrimeNeedSymbolIds g_prime_need_symbol_ids = {0};
 
 /* The heads of `lift` (prime_semantics_lift_let, prime_semantics_lift_app)
  * and of its second stage, which applies an operation to evaluated
- * arguments, and of `noreduce-eq`, which Prime reads natively. */
+ * arguments, of the second stages of `unquote` and `eval`, which take the
+ * values their operand returned, and of `noreduce-eq`, which Prime reads
+ * natively. */
 typedef struct {
     SymbolTable *table;
     uint64_t table_instance_id;
@@ -1365,6 +1367,7 @@ typedef struct {
     SymbolId meta_substitute;
     SymbolId binding_mark;
     SymbolId open_code;
+    SymbolId eval_value;
 } PrimeLiftSymbolIds;
 
 static __thread PrimeLiftSymbolIds g_prime_lift_symbol_ids = {0};
@@ -1396,6 +1399,8 @@ static const PrimeLiftSymbolIds *prime_lift_symbols(void) {
                 symbol_intern_cstr(g_symbols, ":=");
             g_prime_lift_symbol_ids.open_code =
                 symbol_intern_cstr(g_symbols, "unquote:code");
+            g_prime_lift_symbol_ids.eval_value =
+                symbol_intern_cstr(g_symbols, "eval:value");
         }
     }
     return &g_prime_lift_symbol_ids;
@@ -1538,14 +1543,24 @@ bool cetta_prime_open_code_head(SymbolId head) {
            head == prime_lift_symbols()->open_code;
 }
 
+/* The second stage of `eval`, in Prime: the explicit evaluation of a value
+ * the operand returned (`eval`, the minimal instruction). */
+static bool prime_eval_value_head(SymbolId head) {
+    return eval_current_language_id() == CETTA_LANGUAGE_PRIME &&
+           head != SYMBOL_ID_NONE &&
+           head == prime_lift_symbols()->eval_value;
+}
+
 /* Heads the Prime evaluator owns for the relational plan: the scoped
- * judgments, `lift`, and the opening of code, which the relational machine
- * hands to the evaluator (petta_eval_machine_classify_host). */
+ * judgments, `lift`, the opening of code and the second stage of `eval`,
+ * which the relational machine hands to the evaluator
+ * (petta_eval_machine_classify_host). */
 bool cetta_prime_host_intrinsic_head(SymbolId head) {
     return prime_scoped_judgment_is_head_id(head) ||
            cetta_prime_lift_head(head) ||
            cetta_prime_scope_declaration_head(head) ||
-           cetta_prime_open_code_head(head);
+           cetta_prime_open_code_head(head) ||
+           prime_eval_value_head(head);
 }
 
 /* The symbols are interned once per symbol table; prime_need_symbols checks
@@ -3692,6 +3707,43 @@ int eval_current_effective_fuel_limit(void) {
 
 static const CettaEvalOptionEntry *active_eval_option(const char *key) {
     return cetta_evaluator_options_find(active_eval_options_const(), key);
+}
+
+/* Experimental, Prime only: what explicit evaluation (`eval`) does with a
+ * residual, a value returned in expression form, such as a call no equation
+ * answers.  `(pragma! prime-eval-residuals <mode>)`, or
+ * `--prime-eval-residuals <mode>`:
+ *   answered   the default: eval's second stage answers it as it stands;
+ *   completed  a call no equation answers is a completed value: a binding
+ *              reads it as data, and explicit evaluation runs its code;
+ *   carried    `chain` binds a closed residual as a pending computation, as
+ *              `let` binds it, which explicit evaluation forces.
+ * A quotation's answer is a completed value in every mode.  An open residual
+ * carries neither mark nor cell; the second stage runs it once in every mode,
+ * which gives it again.  Neither alternative is the selected semantics. */
+typedef enum {
+    PRIME_EVAL_RESIDUALS_ANSWERED = 0,
+    PRIME_EVAL_RESIDUALS_COMPLETED,
+    PRIME_EVAL_RESIDUALS_CARRIED,
+} PrimeEvalResiduals;
+
+static PrimeEvalResiduals prime_eval_residuals(void) {
+    const CettaEvalOptionEntry *option = active_eval_option(
+        "prime-eval-residuals");
+    if (!option)
+        return PRIME_EVAL_RESIDUALS_ANSWERED;
+    if (strcmp(option->repr, "completed") == 0)
+        return PRIME_EVAL_RESIDUALS_COMPLETED;
+    if (strcmp(option->repr, "carried") == 0)
+        return PRIME_EVAL_RESIDUALS_CARRIED;
+    return PRIME_EVAL_RESIDUALS_ANSWERED;
+}
+
+/* The result form of a residual: completed under the `completed` mode. */
+static CettaCallResultForm prime_residual_result_form(void) {
+    return eval_current_language_id() == CETTA_LANGUAGE_PRIME &&
+           prime_eval_residuals() == PRIME_EVAL_RESIDUALS_COMPLETED
+        ? CETTA_CALL_RESULT_COMPLETED_VALUE : CETTA_CALL_RESULT_EXPRESSION;
 }
 
 /* Without dependent telescopes, an HE typing judgment depends on the term,
@@ -30126,6 +30178,7 @@ static bool check_function_applicable(
         .first_applicable = language == CETTA_LANGUAGE_HE,
         .infer_after_metatype_mismatch = language == CETTA_LANGUAGE_HE ||
             prime_runtime_classifier_changed(s),
+        .metatype_by_declared_type = language == CETTA_LANGUAGE_PRIME,
         .report_refined_result = active_profile_uses_rust_he_compat_semantics(),
         .require_positive_type = prime_runtime_classifier_changed(s),
     };
@@ -31266,7 +31319,8 @@ static bool prime_need_is_explicit_control_form(const Atom *atom) {
             head == syms->weight_exact_rational ||
             head == syms->cost_storage || head == syms->cost_inspect ||
             head == syms->cost_trace || head == syms->cost_run ||
-            head == syms->history_checkpoint || head == syms->history_dispose;
+            head == syms->history_checkpoint || head == syms->history_dispose ||
+            head == prime_lift_symbols()->eval_value;
     case 3u:
         return head == syms->suspension_restrict ||
             head == syms->same_suspension || head == syms->same_origin ||
@@ -35373,12 +35427,22 @@ static Atom *prime_chain_substitute_suspensions(
  * them as syntax: a template's variable is bound through a chain
  * (atom-subst), a variable listed to `sealed` is kept.  A cell would hide
  * them from such operations, and substituting by binder scope would rename
- * a binder that mentions one. */
+ * a binder that mentions one.
+ *
+ * A closed value in expression form takes the variable's place as written,
+ * unless the `carried` residual mode is selected (prime_eval_residuals):
+ * the chain then carries its form, as a let binding does, and code
+ * positions receive a pending cell whose origin is the value. */
 static Atom *prime_chain_open_value(const AbtSignature *signature, Arena *a,
                                     Atom *scoped_body, Atom *value,
                                     CettaCallResultForm result_form,
                                     PrimeChainSubstitution *sub) {
-    if (result_form != CETTA_CALL_RESULT_COMPLETED_VALUE || !value ||
+    bool carried = result_form == CETTA_CALL_RESULT_EXPRESSION &&
+        value && (value->kind == ATOM_EXPR || value->kind == ATOM_SYMBOL) &&
+        eval_current_language_id() == CETTA_LANGUAGE_PRIME &&
+        prime_eval_residuals() == PRIME_EVAL_RESIDUALS_CARRIED;
+    if ((result_form != CETTA_CALL_RESULT_COMPLETED_VALUE && !carried) ||
+        !value ||
         (value->kind != ATOM_EXPR && value->kind != ATOM_SYMBOL) ||
         atom_has_vars(value))
         return abt_subst(signature, a, 0u, value, scoped_body);
@@ -45779,11 +45843,13 @@ static void prime_need_search_equations_monolithic(
              * pending arguments stay behind their cells, in the branch
              * heap, as the pending fields of every value do
              * (prime_need_suspend_pending_fields): shown as source here,
-             * they would be computed by no later observer. */
+             * they would be computed by no later observer.  Its form is
+             * an expression's unless the `completed` residual mode is
+             * selected (prime_eval_residuals). */
             outcome_set_add(search->residuals, query, env);
             if (search->residuals->len)
                 search->residuals->items[search->residuals->len - 1u].result_form =
-                    CETTA_CALL_RESULT_EXPRESSION;
+                    prime_residual_result_form();
 #endif
         }
         return;
@@ -48520,7 +48586,11 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                             }
 query_done:
                             if (!dispatched && !eval_unwinding()) {
-                                call_terms.items[ci].result_form = CETTA_CALL_RESULT_EXPRESSION;
+                                /* A declared call no equation answers: an
+                                 * expression, unless the `completed`
+                                 * residual mode is selected. */
+                                call_terms.items[ci].result_form =
+                                    prime_residual_result_form();
                                 outcome_set_add_existing_move(&func_results, &call_terms.items[ci]);
                             }
                         }
@@ -55781,7 +55851,7 @@ static void prime_eval_stack_resume_equation_search_ready(
                 residuals, query, &current->env);
             if (residuals->len > first) {
                 residuals->items[first].result_form =
-                    CETTA_CALL_RESULT_EXPRESSION;
+                    prime_residual_result_form();
                 prime_need_equation_metadata_record(&owner->residual_metadata, first,
                     (PrimeNeedEquationPacketInfo){.kind = PRIME_NEED_PACKET_OBSERVATION,
                         .world_order = owner == continuation ? continuation->current_world_order : 0u});
@@ -61053,7 +61123,8 @@ static bool prime_native_expression_safe_in(Space *space, Arena *arena,
             safe=opened && prime_eval_stack_support_buffer_push(&scan,opened);
             continue;
         }
-        if (opening_head==g_builtin_syms.eval && authored_len==2u) {
+        if ((opening_head==g_builtin_syms.eval ||
+             prime_eval_value_head(opening_head)) && authored_len==2u) {
             safe=prime_eval_stack_support_buffer_push(&scan,atom->expr.elems[1]);
             continue;
         }
@@ -61260,7 +61331,8 @@ static bool prime_native_actual_call_allowed(Space *space, Arena *arena,
     /* Opening held code only forms the next call. That call still crosses
      * this guard, so opening grants no authority to the operation it names. */
     if (cetta_prime_open_code_head(head) ||
-        (head == g_builtin_syms.eval && atom_authored_len(call) == 2u) ||
+        ((head == g_builtin_syms.eval || prime_eval_value_head(head)) &&
+         atom_authored_len(call) == 2u) ||
         (atom_authored_len(call)==3u &&
             (head==g_builtin_syms.eval || head==g_builtin_syms.evalc ||
                 head==g_builtin_syms.ctx_colon_capture)))
@@ -71481,7 +71553,8 @@ static PettaMachineHostMode petta_eval_machine_classify_host(
         (prime_scoped_judgment_is_head_id(atom_symbol_current_id(head)) ||
          cetta_prime_lift_head(atom_symbol_current_id(head)) ||
          cetta_prime_scope_declaration_head(atom_symbol_current_id(head)) ||
-         cetta_prime_open_code_head(atom_symbol_current_id(head)))) {
+         cetta_prime_open_code_head(atom_symbol_current_id(head)) ||
+         prime_eval_value_head(atom_symbol_current_id(head)))) {
         return PETTA_MACHINE_HOST_READY_OVERRIDE;
     }
     if (head->kind == ATOM_SYMBOL && grounded_op_is_pattern(atom_symbol_current_id(head))) {
@@ -93733,6 +93806,38 @@ prime_need_next_strict_argument: ;
         return;
     }
 
+    /* ── eval:value, the second stage of eval ──────────────────────────── */
+    if (nargs == 1 && prime_eval_value_head(head_id)) {
+        /* The operand is a value that eval's operand returned.  A value that
+         * holds code, a held value, a completed value or a ready cell, runs
+         * as that code.  The chain passes an open value as written, whatever
+         * its form, so an open expression runs once as code too: a completed
+         * one gives what its code gives, as it does bound by `let`, and a call
+         * no equation answers gives itself again.  Any other expression, such
+         * as a closed call no equation answers or a quotation, is the answer
+         * as it stands, in expression form: evaluating it again would only
+         * return it again. */
+        Atom *value = bindings_apply_if_vars(CURRENT_ENV, a, expr_arg(atom, 0));
+        Atom *code = value ? prime_need_ready_code(a, value, CURRENT_ENV) : NULL;
+        if (code)
+            TAIL_REENTER(code);
+        if (value && (atom_prime_held_is(value) ||
+                      prime_is_completed_value(value))) {
+            outcome_set_add(os, atom_error(a, atom,
+                atom_symbol(a, "OutOfMemory")), &_empty);
+            return;
+        }
+        if (value && value->kind == ATOM_EXPR &&
+            !atom_has_vars(expr_arg(atom, 0))) {
+            CettaCount first = os->len;
+            outcome_set_add(os, expr_arg(atom, 0), &_empty);
+            if (os->len > first)
+                os->items[first].result_form = CETTA_CALL_RESULT_EXPRESSION;
+            return;
+        }
+        TAIL_REENTER(expr_arg(atom, 0));
+    }
+
     /* ── eval (minimal instruction) ────────────────────────────────────── */
     if (head_id == g_builtin_syms.eval) {
         /* (eval <atom> <space>): the explicit-context spelling; runs with
@@ -93804,13 +93909,16 @@ prime_need_next_strict_argument: ;
             TAIL_REENTER(atom_prime_held_payload(evaluated_argument));
         if (language_id == CETTA_LANGUAGE_PRIME && !held_code &&
             evaluated_argument && evaluated_argument->kind == ATOM_EXPR) {
-            /* `eval` is the ordinary bind of its operand followed by eval of
-             * each returned value. Use the existing retained `chain` owner
-             * instead of a stack-local answer set: a refusal in either the
-             * operand or selected code then keeps the exact continuation. */
+            /* `eval` is the ordinary bind of its operand followed by the
+             * second stage on each returned value (`eval:value`), which runs
+             * a value that holds code.  Use the existing retained `chain`
+             * owner instead of a stack-local answer set: a refusal in either
+             * the operand or selected code then keeps the exact
+             * continuation. */
             Atom *value=atom_var_with_id(a,"eval-value",fresh_var_id());
             Atom *resume=value
-                ? atom_expr2(a,atom_symbol_id(a,g_builtin_syms.eval),value) : NULL;
+                ? atom_expr2(a,atom_symbol_id(a,
+                    prime_lift_symbols()->eval_value),value) : NULL;
             Atom *next=resume
                 ? atom_expr(a,(Atom *[]){atom_symbol_id(a,g_builtin_syms.chain),
                     evaluated_argument,value,resume},4u) : NULL;
