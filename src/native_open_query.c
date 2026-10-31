@@ -198,7 +198,7 @@ CettaNativeQueryStatus cetta_native_open_query_run(
     bool effects = query->consumer == CETTA_NATIVE_QUERY_EFFECTS;
     size_t effect_count = effects ? query->effect_count : 0u;
     TermUniverse *universe = query->source->native.universe;
-    if (query->rows || query->guard_space || query->filter_left ||
+    if (query->rows || query->guard_space || query->filter_count ||
         query->inert_head_count ||
         query->distinct_key || query->pattern_count > NATIVE_OPEN_LEGS ||
         effect_count > NATIVE_OPEN_EFFECTS ||

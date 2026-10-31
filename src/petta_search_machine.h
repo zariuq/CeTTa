@@ -677,6 +677,11 @@ typedef struct {
      * registering nothing.  NULL: it defines none. */
     bool (*foreign_predicate_defined)(
         void *context, SymbolId name, CettaExprLen arity);
+    /* Whether NAME at ARITY arguments is a function of PeTTa's library
+     * still as the library defines it, no Prolog the program ran having
+     * redefined it.  NULL: the session has no such library. */
+    bool (*library_function_current)(
+        void *context, SymbolId name, CettaExprLen arity);
     /* `end`: how a recognized call ended (call_outcome.h), FAILURE after
      * its answers or RAISED with its error. */
     /* `delay`: the machine's delayed goals, which the call carries in and

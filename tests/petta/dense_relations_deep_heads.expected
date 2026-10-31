@@ -1,0 +1,9 @@
+8
+((a b c) (a b d) (a c c) (a d d) (b b c) (b d c) (c c c))
+((a b c) (a b d) (a c c) (a d d) (b b c) (b d c) (c c c))
+((b c) (b d) (c c) (d d))
+((a c) (a d) (b c))
+2
+3
+(a a c)
+2

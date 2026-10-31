@@ -16,11 +16,24 @@
  * identity decline; a kept fact unifies as its record does, walked or with
  * the pattern aligned once with its spine; an instance's key and holes are
  * the alpha key and cut its atom has, a stored key read under a free frame
- * being its own; a term already its alpha key is its own key.  Random pairs
- * of terms unify as a reference unifier over atoms unifies them. */
+ * being its own; a term already its alpha key is its own key; a store
+ * refused a growth stays one a later branch may use.  Random pairs of terms
+ * unify as a reference unifier over atoms unifies them. */
 
 static Arena g_arena;
 static TermUniverse g_universe;
+
+/* The test links realloc wrapped: a growth of G_REFUSED, once armed, is
+ * refused. */
+void *__real_realloc(void *pointer, size_t bytes);
+static void *g_refused;
+void *__wrap_realloc(void *pointer, size_t bytes) {
+    if (g_refused && pointer == g_refused) {
+        g_refused = NULL;
+        return NULL;
+    }
+    return __real_realloc(pointer, bytes);
+}
 
 static Atom *sym(const char *name) { return atom_symbol(&g_arena, name); }
 static Atom *var(const char *name) { return atom_var(&g_arena, name); }
@@ -437,6 +450,23 @@ int main(void) {
     }
     assert(unified > 1000 && failed > 1000);
 
+    /* The frames' growth refused: the cell declines, the capacity
+     * published is one the frames hold, and the cells a later branch makes
+     * read their frames. */
+    CettaMolStore grown;
+    cetta_mol_store_init(&grown, &g_universe);
+    CettaMol cell;
+    for (uint32_t i = 0u; i < 16u; i++)
+        assert(cetta_mol_cell(&grown, &cell) == CETTA_MOL_OK);
+    g_refused = grown.cell_frames;
+    assert(cetta_mol_cell(&grown, &cell) == CETTA_MOL_DECLINE);
+    assert(!g_refused && grown.cell_len == 16u && grown.cell_cap == 16u);
+    for (uint32_t i = 16u; i < 40u; i++) {
+        assert(cetta_mol_cell(&grown, &cell) == CETTA_MOL_OK);
+        assert(cell.at == i && grown.cell_frames[i] == CETTA_MOL_GROUND);
+    }
+    cetta_mol_store_free(&grown);
+
     cetta_mol_store_free(&m);
     term_universe_free(&g_universe);
     arena_free(&persistent);
@@ -444,8 +474,9 @@ int main(void) {
     var_intern_free(&var_intern);
     symbol_table_free(&symbols);
     printf("PASS: molecules unify renamed apart with the occurs check, undo, "
-           "decline inexact values, unify kept facts as their records and "
-           "make instances' keys and holes (%d unified, %d failed at random)\n",
+           "decline inexact values, unify kept facts as their records, "
+           "make instances' keys and holes and survive a refused growth "
+           "(%d unified, %d failed at random)\n",
            unified, failed);
     return 0;
 }

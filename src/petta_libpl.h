@@ -80,6 +80,15 @@ void petta_libpl_warn_redefined(
 bool petta_libpl_predicate_defined(
     CettaLibPrologRuntime *runtime, SymbolId name, size_t arity);
 
+/* Whether NAME/ARITY is a function PeTTa's library defines, its predicate
+ * still the library's own: no Prolog the program ran (a consult, an
+ * assertion, a goal it called) has redefined it.  An engine this runtime
+ * has not started has run none of the program's Prolog and is not started
+ * to say so; a started one is asked once for each capability revision.
+ * False without the library. */
+bool petta_libpl_standard_function_current(
+    CettaLibPrologRuntime *runtime, SymbolId name, size_t arity);
+
 /*
  * Execute one optional foreign-predicate boundary.  `recognized` separates
  * an unavailable/unregistered form from a predicate whose valid result bag
