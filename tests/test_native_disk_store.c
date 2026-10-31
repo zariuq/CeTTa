@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "native_disk_store.h"
 #include "native_journal.h"
+#include "storage_census.h"
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -21,7 +22,7 @@ static unsigned checks;
 static ssize_t write_remaining=-1;
 static int sync_failure=-1,sync_fail_at,sync_calls,rename_failure,rename_after_success;
 static int pause_ready=-1,pause_resume=-1;
-static bool pause_lock;
+static bool pause_lock,pause_batch;
 static off_t drop_unsynced_to=-1;
 ssize_t __real_write(int,const void *,size_t);
 int __real_fsync(int);
@@ -31,8 +32,9 @@ int __wrap_openat(int directory,const char *name,int flags,...) {
     int mode=0;
     if (flags&O_CREAT) { va_list arguments;va_start(arguments,flags);mode=va_arg(arguments,int);va_end(arguments); }
     int fd=__real_openat(directory,name,flags,mode);
-    if (fd>=0 && pause_lock && pause_ready>=0 && (flags&O_CREAT) && !strcmp(name,"writer.lock")) {
-        int ready=pause_ready,resume=pause_resume;pause_lock=false;pause_ready=pause_resume=-1;char byte='x';
+    if (fd>=0 && pause_ready>=0 && (flags&O_CREAT) &&
+        ((pause_lock && !strcmp(name,"writer.lock")) || (pause_batch && !strncmp(name,".batch-",7)))) {
+        int ready=pause_ready,resume=pause_resume;pause_lock=pause_batch=false;pause_ready=pause_resume=-1;char byte='x';
         if (__real_write(ready,&byte,1)!=1 || read(resume,&byte,1)!=1) _exit(2);
         close(ready);close(resume);
     }
@@ -541,6 +543,152 @@ static void backup_cases(const char *root) {
     for (unsigned i=0;i<DESTINATIONS;i++) empty_directory(destinations[i]);
     empty_directory(source);
 }
+static void batch_crash_cases(const char *parent) {
+    for (unsigned phase=0;phase<3;phase++) {
+        char path[512];check(snprintf(path,sizeof(path),"%s/batch-kill-%u",parent,phase)>0 && !mkdir(path,0700));
+        CettaDiskStore *store=open_store(path);CettaDiskStoreView *base=snapshot(store);
+        CettaDiskOp ops[]={ {.key=text("fact"),.value=text("payload")},
+            {.key=text("posting"),.value=text("")}, {.key=text("receipt"),.value=text("done")} };
+        int ready[2],resume[2];check(!pipe(ready) && !pipe(resume));pid_t child=fork();check(child>=0);
+        if (!child) {
+            close(ready[0]);close(resume[1]);CettaDiskStoreBatch *batch=NULL;CettaDiskStoreView *out=NULL;
+            if (!phase) { pause_batch=true;pause_ready=ready[1];pause_resume=resume[0]; }
+            check(cetta_disk_store_batch_open(store,base,1048576,&batch)==CETTA_STORE_OK);
+            if (phase==1) { pause_ready=ready[1];pause_resume=resume[0]; }
+            check(cetta_disk_store_batch_add(batch,ops,3)==CETTA_STORE_OK);
+            if (phase==2) { pause_ready=ready[1];pause_resume=resume[0]; }
+            check(cetta_disk_store_commit_batch(store,base,batch,&out)==CETTA_STORE_OK);
+            _exit(0);
+        }
+        close(ready[1]);close(resume[0]);char byte;check(read(ready[0],&byte,1)==1);
+        expect(base,"fact",NULL);expect(base,"posting",NULL);expect(base,"receipt",NULL);
+        check(!kill(child,SIGKILL));close(ready[0]);close(resume[1]);int status;
+        check(waitpid(child,&status,0)==child && WIFSIGNALED(status) && WTERMSIG(status)==SIGKILL);
+        CettaDiskStoreView *after=snapshot(store);
+        check(cetta_disk_store_view_revision(after)==0);
+        expect(after,"fact",NULL);expect(after,"posting",NULL);expect(after,"receipt",NULL);
+        uint64_t removed=0;check(cetta_disk_store_collect(store,&removed)==CETTA_STORE_OK && removed==(!phase ? 1u : 0u));
+        CettaDiskStoreBatch *retry=NULL;CettaDiskStoreView *out=NULL;
+        check(cetta_disk_store_batch_open(store,after,1048576,&retry)==CETTA_STORE_OK);
+        check(cetta_disk_store_batch_add(retry,ops,3)==CETTA_STORE_OK);
+        check(cetta_disk_store_commit_batch(store,after,retry,&out)==CETTA_STORE_OK);
+        expect(out,"fact","payload");expect(out,"posting","");expect(out,"receipt","done");
+        cetta_disk_store_batch_close(retry);cetta_disk_store_view_close(base);
+        cetta_disk_store_view_close(after);cetta_disk_store_view_close(out);cetta_disk_store_close(store);empty_directory(path);
+    }
+    for (unsigned after=0;after<2;after++) {
+        char path[512];check(snprintf(path,sizeof(path),"%s/batch-unknown-%u",parent,after)>0 && !mkdir(path,0700));
+        CettaDiskStore *store=open_store(path);CettaDiskStoreView *base=snapshot(store),*out=NULL;
+        CettaDiskStoreBatch *batch=NULL;CettaDiskOp ops[]={ {.key=text("fact"),.value=text("value")},
+            {.key=text("posting"),.value=text("")}, {.key=text("receipt"),.value=text("done")} };
+        check(cetta_disk_store_batch_open(store,base,1048576,&batch)==CETTA_STORE_OK);
+        check(cetta_disk_store_batch_add(batch,ops,3)==CETTA_STORE_OK);
+        rename_failure=!after;rename_after_success=after;
+        check(cetta_disk_store_commit_batch(store,base,batch,&out)==CETTA_STORE_UNKNOWN && !out);
+        rename_failure=rename_after_success=0;
+        check(cetta_disk_store_commit_batch(store,base,batch,&out)==CETTA_STORE_RECOVERY_REQUIRED && !out);
+        check(cetta_disk_store_recover(store,&out)==CETTA_STORE_OK);
+        expect(out,"fact",after ? "value" : NULL);expect(out,"posting",after ? "" : NULL);expect(out,"receipt",after ? "done" : NULL);
+        check(cetta_disk_store_view_revision(out)==after);
+        cetta_disk_store_view_close(out);cetta_disk_store_view_close(base);cetta_disk_store_batch_close(batch);cetta_disk_store_close(store);empty_directory(path);
+    }
+}
+static void operation_batches(const char *parent) {
+    char path[512],other_path[512];
+    check(snprintf(path,sizeof(path),"%s/batch",parent)>0 && !mkdir(path,0700));
+    check(snprintf(other_path,sizeof(other_path),"%s/other",parent)>0 && !mkdir(other_path,0700));
+    CettaDiskStore *store=open_store(path),*other=open_store(other_path);
+    CettaDiskStoreView *base=snapshot(store),*other_base=snapshot(other),*out=NULL;
+    CettaDiskStoreBatch *batch=NULL;
+    check(cetta_disk_store_batch_open(store,base,0,&batch)==CETTA_STORE_INVALID && !batch);
+    check(cetta_disk_store_batch_open(store,base,UINT64_C(64)*1024*1024,&batch)==CETTA_STORE_OK);
+    uint64_t extent=0,maximum=0,staged=0;
+    check(cetta_disk_store_batch_info(batch,&extent,&maximum,&staged) && extent==CETTA_DISK_SEGMENT_HEADER_BYTES && staged==0);
+    CettaDiskOp edits[]={
+        {.key=text("a"),.value=text("one")}, {.key=text("a"),.value=text("two")},
+        {.key=text("empty"),.value=text("")}, {.key=text("gone"),.value=text("old")},
+        {.remove=true,.key=text("gone")}, {.remove=true,.key=text("missing")},
+        {.key=text("recreated"),.value=text("first")}, {.remove=true,.key=text("recreated")},
+        {.key=text("recreated"),.value=text("last")}};
+    check(cetta_disk_store_batch_add(batch,edits,sizeof(edits)/sizeof(*edits))==CETTA_STORE_OK);
+    CettaDiskStoreView *untouched=snapshot(store);
+    check(cetta_disk_store_view_revision(untouched)==0);expect(untouched,"a",NULL);
+    cetta_disk_store_view_close(untouched);
+    int busy=openat(AT_FDCWD,path,O_RDONLY|O_DIRECTORY);check(busy>=0);
+    int lock=openat(busy,"writer.lock",O_RDWR);check(lock>=0 && !flock(lock,LOCK_EX|LOCK_NB));
+    CettaDiskOp while_busy={.key=text("staged-while-busy"),.value=text("private")};
+    check(cetta_disk_store_batch_add(batch,&while_busy,1)==CETTA_STORE_OK);
+    check(cetta_disk_store_commit_batch(store,base,batch,&out)==CETTA_STORE_BUSY && !out);
+    close(lock);close(busy);
+    check(cetta_disk_store_commit_batch(other,other_base,batch,&out)==CETTA_STORE_INVALID && !out);
+    CettaStorageCensus census={0};cetta_disk_store_batch_storage_census(batch,&census);cetta_storage_finish(&census);
+    size_t retained=census.bytes;check(retained && !census.incomplete);cetta_storage_census_free(&census);
+    /* Many individually bounded messages can form a transaction larger than
+     * one CAV1 packet; the operation corpus lives in the private byte index. */
+    char value[4096];memset(value,'x',sizeof(value));
+    for (unsigned i=0;i<512;i++) {
+        char key[32];check(snprintf(key,sizeof(key),"bulk/%08u",i)>0);
+        CettaDiskOp op={.key=text(key),.value={(unsigned char *)value,sizeof(value)}};
+        check(cetta_disk_store_batch_add(batch,&op,1)==CETTA_STORE_OK);
+    }
+    memset(value,'z',sizeof(value)); /* The staged bytes do not borrow input. */
+    check(cetta_disk_store_batch_info(batch,&extent,&maximum,&staged) && staged==522 && extent>2*1024*1024 && extent<=maximum);
+    cetta_disk_store_batch_storage_census(batch,&census);cetta_storage_finish(&census);
+    check(census.bytes==retained && !census.incomplete);cetta_storage_census_free(&census);
+    /* Partial append and synchronization failure do not publish any prefix. */
+    write_remaining=100;
+    check(cetta_disk_store_commit_batch(store,base,batch,&out)==CETTA_STORE_IO && !out);
+    write_remaining=-1;untouched=snapshot(store);expect(untouched,"a",NULL);cetta_disk_store_view_close(untouched);
+    sync_calls=0;sync_fail_at=1;
+    check(cetta_disk_store_commit_batch(store,base,batch,&out)==CETTA_STORE_IO && !out);
+    sync_fail_at=0;
+    check(cetta_disk_store_commit_batch(store,base,batch,&out)==CETTA_STORE_OK && out);
+    check(cetta_disk_store_view_revision(out)==1);
+    expect(out,"a","two");expect(out,"empty","");expect(out,"gone",NULL);expect(out,"missing",NULL);
+    expect(out,"recreated","last");expect(out,"staged-while-busy","private");expect(base,"a",NULL);
+    CettaDiskBlob blob;check(cetta_disk_lookup(cetta_disk_store_view_root(out),text("bulk/00000511"),&blob)==CETTA_DISK_OK && blob.size==4096);
+    unsigned char copied[4096];size_t got=0;
+    check(cetta_disk_blob_read(cetta_disk_store_view_root(out),blob,0,copied,sizeof(copied),&got)==CETTA_DISK_OK && got==sizeof(copied));
+    for (size_t i=0;i<sizeof(copied);i++) check(copied[i]=='x');
+    CettaDiskStoreView *conflict=NULL;
+    check(cetta_disk_store_commit_batch(store,base,batch,&conflict)==CETTA_STORE_CONFLICT && !conflict);
+    cetta_disk_store_batch_close(batch);batch=NULL;
+    /* A refused staging call retains earlier acknowledged operations, while
+     * discarding every operation in that new call. */
+    check(cetta_disk_store_batch_open(store,out,16384,&batch)==CETTA_STORE_OK);
+    CettaDiskOp first={.key=text("quota/kept"),.value=text("yes")};
+    check(cetta_disk_store_batch_add(batch,&first,1)==CETTA_STORE_OK);
+    unsigned char huge[32768];memset(huge,'h',sizeof(huge));
+    CettaDiskOp refused[]={ {.key=text("quota/not-kept"),.value=text("no")},
+        {.key=text("quota/large"),.value={huge,sizeof(huge)}} };
+    check(cetta_disk_store_batch_add(batch,refused,2)==CETTA_STORE_LIMIT);
+    check(cetta_disk_store_batch_info(batch,&extent,&maximum,&staged) && staged==1 && extent<=maximum);
+    write_remaining=1;
+    check(cetta_disk_store_batch_add(batch,refused,1)==CETTA_STORE_IO);
+    write_remaining=-1;
+    CettaDiskStoreView *after=NULL;
+    check(cetta_disk_store_commit_batch(store,out,batch,&after)==CETTA_STORE_OK);
+    expect(after,"quota/kept","yes");expect(after,"quota/not-kept",NULL);expect(after,"quota/large",NULL);
+    cetta_disk_store_batch_close(batch);batch=NULL;
+    /* A closed publisher does not own the temporary file's lifetime. */
+    check(cetta_disk_store_batch_open(store,after,1048576,&batch)==CETTA_STORE_OK);
+    first=(CettaDiskOp){.key=text("reopen"),.value=text("same-domain")};
+    check(cetta_disk_store_batch_add(batch,&first,1)==CETTA_STORE_OK);
+    cetta_disk_store_close(store);store=open_store(path);
+    CettaDiskStoreView *reopened=snapshot(store),*published=NULL;
+    check(cetta_disk_store_commit_batch(store,reopened,batch,&published)==CETTA_STORE_OK);
+    expect(published,"reopen","same-domain");cetta_disk_store_batch_close(batch);
+    /* Reserved scratch names left in the create/unlink crash window are
+     * harmless and collectible; ordinary user-named files are preserved. */
+    int directory=open(path,O_RDONLY|O_DIRECTORY);check(directory>=0);
+    int abandoned=openat(directory,".batch-0123456789abcdef0123456789abcdef",O_WRONLY|O_CREAT|O_EXCL,0600);check(abandoned>=0);close(abandoned);
+    uint64_t removed=0;check(cetta_disk_store_collect(store,&removed)==CETTA_STORE_OK && removed==1);
+    check(faccessat(directory,".batch-0123456789abcdef0123456789abcdef",F_OK,0)<0 && errno==ENOENT);close(directory);
+    cetta_disk_store_view_close(published);cetta_disk_store_view_close(reopened);cetta_disk_store_view_close(after);
+    cetta_disk_store_view_close(out);cetta_disk_store_view_close(base);cetta_disk_store_view_close(other_base);
+    cetta_disk_store_close(other);cetta_disk_store_close(store);
+    empty_directory(path);empty_directory(other_path);
+}
 int main(void) {
     char root[]="runtime/disk-store-test.XXXXXX"; check(mkdtemp(root));
     const char *labels[]={"ordinary","lock","unknown-before","unknown-after","partial","corrupt","sync-data","sync-manifest","sync-directory","scoped","parallel","spenders","collection-confirmation","live-builder","lost-writeback","ownership","old-version","wrong-header","view-domain-a","view-domain-b","backups"};
@@ -558,6 +706,8 @@ int main(void) {
     ownership(paths[15]);old_manifest_version(paths[16]);wrong_segment_header(paths[17]);
     view_domains(paths[18],paths[19]);
     backup_cases(paths[20]);
+    operation_batches(root);
+    batch_crash_cases(root);
     for (size_t i=0;i<CASES;++i) empty_directory(paths[i]);
     check(!rmdir(root)); printf("native disk store: %u checks passed\n",checks); return 0;
 }

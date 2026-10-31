@@ -32,6 +32,12 @@ struct CettaDiskStoreView {
     dev_t device;
     ino_t inode;
 };
+struct CettaDiskStoreBatch {
+    CettaDiskRoot puts, removes;
+    dev_t device;ino_t inode;unsigned char epoch[16];
+    uint64_t maximum, staged;
+    bool failed;
+};
 
 static uint64_t get_number(const unsigned char *p) {
     uint64_t value=0;
@@ -433,14 +439,108 @@ static CettaDiskStoreStatus scope_equal(const CettaDiskStoreView *before,
 done:
     cetta_disk_cursor_close(old); cetta_disk_cursor_close(now); return status;
 }
+void cetta_disk_store_batch_close(CettaDiskStoreBatch *batch) {
+    if (!batch) return;
+    if (batch->puts.fd>=0) close(batch->puts.fd);
+    free(batch);
+}
+void cetta_disk_store_batch_storage_census(const void *raw,CettaStorageCensus *census) {
+    if (raw) cetta_storage_object(census,raw,sizeof(CettaDiskStoreBatch),CETTA_STORAGE_BLOCK);
+}
+bool cetta_disk_store_batch_info(const CettaDiskStoreBatch *batch,uint64_t *bytes,uint64_t *maximum,uint64_t *staged) {
+    if (!batch || batch->failed || !bytes || !maximum || !staged) return false;
+    *bytes=batch->puts.end;*maximum=batch->maximum;*staged=batch->staged;return true;
+}
+CettaDiskStoreStatus cetta_disk_store_batch_open(CettaDiskStore *store,
+        const CettaDiskStoreView *view,uint64_t maximum,CettaDiskStoreBatch **out) {
+    if (!out) return CETTA_STORE_INVALID;
+    *out=NULL;
+    if (!store || !view || maximum<CETTA_DISK_SEGMENT_HEADER_BYTES || maximum>INT64_MAX) return CETTA_STORE_INVALID;
+    CettaDiskStoreStatus status=cetta_disk_store_check_view(store,view);
+    if (status!=CETTA_STORE_OK) return status;
+    unsigned char generation[16];if (!random_bytes(generation)) return CETTA_STORE_IO;
+    static const char digits[]="0123456789abcdef";char name[40];memcpy(name,".batch-",7);
+    for (size_t i=0;i<16;i++) { name[7+i*2]=digits[generation[i]>>4];name[8+i*2]=digits[generation[i]&15]; }
+    name[39]=0;
+    int fd=openat(store->directory,name,O_RDWR|O_CREAT|O_EXCL|O_CLOEXEC|O_NOFOLLOW,0600);
+    if (fd<0) return open_error();
+    if (unlinkat(store->directory,name,0) && errno!=ENOENT) { close(fd);return CETTA_STORE_IO; }
+    status=disk_status(cetta_disk_segment_create(fd,generation));
+    if (status!=CETTA_STORE_OK) { close(fd);return status; }
+    CettaDiskStoreBatch *batch=calloc(1,sizeof(*batch));
+    if (!batch) { close(fd);return CETTA_STORE_NOMEM; }
+    batch->puts=(CettaDiskRoot){.fd=fd,.end=CETTA_DISK_SEGMENT_HEADER_BYTES,
+        .key_limit=view->root.key_limit,.value_limit=view->root.value_limit};
+    memcpy(batch->puts.segment,generation,16);batch->removes=batch->puts;
+    batch->device=view->device;batch->inode=view->inode;memcpy(batch->epoch,view->meta.epoch,16);
+    batch->maximum=maximum;*out=batch;return CETTA_STORE_OK;
+}
+CettaDiskStoreStatus cetta_disk_store_batch_add(CettaDiskStoreBatch *batch,const CettaDiskOp *operations,size_t count) {
+    if (!batch || batch->failed || (count && !operations)) return CETTA_STORE_INVALID;
+    if (count>UINT64_MAX-batch->staged) return CETTA_STORE_LIMIT;
+    CettaDiskRoot puts=batch->puts,removes=batch->removes;
+    CettaDiskStatus status=CETTA_DISK_OK;
+    for (size_t i=0;i<count;i++) {
+        CettaDiskOp put=operations[i],remove={.remove=!operations[i].remove,.key=operations[i].key};
+        CettaDiskRoot next;
+        status=cetta_disk_build(&puts,&put,1,&next);
+        if (status!=CETTA_DISK_OK) break;
+        puts=next;if (puts.end>batch->maximum) { status=CETTA_DISK_LIMIT;break; }
+        removes.end=puts.end;
+        status=cetta_disk_build(&removes,&remove,1,&next);
+        if (status!=CETTA_DISK_OK) break;
+        removes=next;puts.end=removes.end;
+        if (puts.end>batch->maximum) { status=CETTA_DISK_LIMIT;break; }
+    }
+    if (status!=CETTA_DISK_OK) {
+        if (ftruncate(batch->puts.fd,(off_t)batch->puts.end)) { batch->failed=true;return CETTA_STORE_IO; }
+        return disk_status(status);
+    }
+    batch->puts=puts;batch->removes=removes;batch->staged+=count;return CETTA_STORE_OK;
+}
+static CettaDiskStoreStatus batch_build(const CettaDiskStoreBatch *batch,
+        const CettaDiskRoot *base,CettaDiskRoot *candidate) {
+    CettaDiskRoot result=*base;
+    for (size_t stream=0;stream<2;stream++) {
+        const CettaDiskRoot *source=stream ? &batch->puts : &batch->removes;
+        CettaDiskCursor *cursor=NULL;CettaDiskStatus status=cetta_disk_cursor_open(source,&cursor);
+        if (status!=CETTA_DISK_OK) return disk_status(status);
+        for (;;) {
+            CettaDiskBuffer key={0};CettaDiskBlob blob;
+            status=cetta_disk_cursor_next(cursor,&key,&blob);
+            if (status==CETTA_DISK_END) break;
+            if (status!=CETTA_DISK_OK) { cetta_disk_buffer_free(&key);break; }
+            unsigned char *body=NULL;size_t got=0;
+            if (blob.size>SIZE_MAX || (!stream && blob.size)) status=CETTA_DISK_CORRUPT;
+            else {
+                body=malloc(blob.size ? (size_t)blob.size : 1);
+                if (!body) status=CETTA_DISK_NOMEM;
+                else status=cetta_disk_blob_read(source,blob,0,body,(size_t)blob.size,&got);
+                if (status==CETTA_DISK_OK && got!=blob.size) status=CETTA_DISK_CORRUPT;
+            }
+            if (status==CETTA_DISK_OK) {
+                CettaDiskOp operation={.remove=!stream,.key={key.data,key.size},.value={body,got}};
+                CettaDiskRoot next;status=cetta_disk_build(&result,&operation,1,&next);
+                if (status==CETTA_DISK_OK) result=next;
+            }
+            free(body);cetta_disk_buffer_free(&key);
+            if (status!=CETTA_DISK_OK) break;
+        }
+        cetta_disk_cursor_close(cursor);
+        if (status!=CETTA_DISK_END) return disk_status(status);
+    }
+    *candidate=result;return CETTA_STORE_OK;
+}
 static CettaDiskStoreStatus commit(CettaDiskStore *store,
         const CettaDiskStoreView *expected,const CettaDiskOp *operations,size_t count,
     const CettaDiskStoreScope *reads,size_t read_count,const CettaDiskStoreScope *writes,size_t write_count,
-    bool scoped,CettaDiskStoreView **committed) {
+    bool scoped,const CettaDiskStoreBatch *batch,CettaDiskStoreView **committed) {
     if (!committed) return CETTA_STORE_INVALID;
     *committed=NULL;
     if (!store || !expected || (count && !operations) || (read_count && !reads) ||
         (write_count && !writes)) return CETTA_STORE_INVALID;
+    if (batch && (scoped || batch->failed || count || batch->device!=expected->device ||
+        batch->inode!=expected->inode || memcmp(batch->epoch,expected->meta.epoch,16))) return CETTA_STORE_INVALID;
     if (store->uncertain) return CETTA_STORE_RECOVERY_REQUIRED;
     int lock=-1,manifest=-1; CettaDiskStoreView *current=NULL;
     CettaDiskStoreStatus status=acquire(store,true,&lock);
@@ -481,7 +581,8 @@ static CettaDiskStoreStatus commit(CettaDiskStore *store,
         status=CETTA_STORE_IO; goto done;
     }
     CettaDiskRoot candidate;
-    status=disk_status(cetta_disk_build(&current->root,operations,count,&candidate));
+    status=batch ? batch_build(batch,&current->root,&candidate)
+        : disk_status(cetta_disk_build(&current->root,operations,count,&candidate));
     if (status!=CETTA_STORE_OK) goto done;
     status=disk_status(cetta_disk_sync(&candidate));
     if (status!=CETTA_STORE_OK) goto done;
@@ -501,7 +602,12 @@ done:
 CettaDiskStoreStatus cetta_disk_store_commit(CettaDiskStore *store,
         const CettaDiskStoreView *expected,const CettaDiskOp *operations,size_t count,
         CettaDiskStoreView **committed) {
-    return commit(store,expected,operations,count,NULL,0,NULL,0,false,committed);
+    return commit(store,expected,operations,count,NULL,0,NULL,0,false,NULL,committed);
+}
+CettaDiskStoreStatus cetta_disk_store_commit_batch(CettaDiskStore *store,
+        const CettaDiskStoreView *expected,const CettaDiskStoreBatch *batch,CettaDiskStoreView **committed) {
+    if (!batch) { if (committed) *committed=NULL;return CETTA_STORE_INVALID; }
+    return commit(store,expected,NULL,0,NULL,0,NULL,0,false,batch,committed);
 }
 CettaDiskStoreStatus cetta_disk_store_commit_scoped(CettaDiskStore *store,
         const CettaDiskStoreView *expected,const CettaDiskStoreScope *reads,size_t read_count,
@@ -511,7 +617,7 @@ CettaDiskStoreStatus cetta_disk_store_commit_scoped(CettaDiskStore *store,
         if (committed) *committed=NULL;
         return CETTA_STORE_INVALID;
     }
-    return commit(store,expected,operations,count,reads,read_count,writes,write_count,true,committed);
+    return commit(store,expected,operations,count,reads,read_count,writes,write_count,true,NULL,committed);
 }
 CettaDiskStoreStatus cetta_disk_store_recover(CettaDiskStore *store,CettaDiskStoreView **out) {
     if (!out) return CETTA_STORE_INVALID;
@@ -592,6 +698,16 @@ CettaDiskStoreStatus cetta_disk_store_collect(CettaDiskStore *store,uint64_t *re
         struct dirent *entry=readdir(scan);
         if (!entry) { if (errno) status=CETTA_STORE_IO; break; }
         const char *name=entry->d_name;
+        /* A process may die between creating a volatile batch and unlinking
+         * its name. These names are never published or reopened: removing an
+         * active name is safe too, since its creator already owns the fd. */
+        if (strlen(name)==39 && !strncmp(name,".batch-",7) &&
+            strspn(name+7,"0123456789abcdef")==32) {
+            int unlinked=unlinkat(store->directory,name,0);
+            if (unlinked && errno!=ENOENT) { status=CETTA_STORE_IO;break; }
+            if (!unlinked) ++*removed;
+            errno=0;continue;
+        }
         if (strlen(name)!=44 || strncmp(name,"segment-",8) || strcmp(name+40,".csi") ||
             !strcmp(name,retained)) continue;
         size_t hex=strspn(name+8,"0123456789abcdef");
