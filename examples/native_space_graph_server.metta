@@ -6,11 +6,16 @@
 (= (graph-server:configuration)
   (let (ValueServiceV1 $socket $data $routes $limits) (kb-server:configuration)
     (ValueServiceV1 $socket $data
-      (list:append $routes
+      (list:append $routes (graph-server:routes)) $limits)))
+(= (graph-server:routes)
         ((ServiceRouteV1 GraphOpen Read graph-server:open)
          (ServiceRouteV1 GraphPage Read graph-server:page)
          (ServiceRouteV1 GraphInspect Read graph-server:inspect)
-         (ServiceRouteV1 GraphCancel Read graph-server:cancel))) $limits)))
+         (ServiceRouteV1 GraphCancel Read graph-server:cancel)
+         (ServiceRouteV1 GraphOpenRead Read graph-server:open-read)
+         (ServiceRouteV1 GraphReadPage Read graph-server:read-page)
+         (ServiceRouteV1 GraphReadCommit Write graph-server:read-commit)
+         (ServiceRouteV1 GraphReadCancel Read graph-server:read-cancel)))
 (= (graph-server:open (ServiceCallV1 $configuration $peer $view (GraphOpenV1 $collection $arity $plan $states)))
   (let $cursor (kbg:open-space $view $collection $arity $plan 131072 $states)
     (if (kbg:cursor? $cursor)
@@ -31,3 +36,40 @@
   (let $_ (kbg:close $cursor) GraphCancelledV1))
 (= (graph-server:inspect (ServiceCallV1 $configuration $peer $cursor $unused))
   (let $information (kbg:inspect-space $cursor) (ServiceKeepValueV1 $cursor $information)))
+
+; Keep the original data/program observation independently of the walker.
+; Only actual completion changes the opaque connection-owned phase to one
+; from which a query-informed write is allowed.
+(= (graph-server:open-read $call)
+  (case (graph-server:open $call)
+    (((ServiceKeepValueV1 $cursor $metadata)
+      (case (kbg:read-context $cursor)
+        (((DurableReadContextV1 $view $watch)
+          (ServiceKeepValueV1 (GraphReadSessionV1 $cursor (DurableReadContextV1 $view $watch)) $metadata))
+         ($failure (let $_ (kbg:close $cursor) $failure)))))
+     ($failure $failure))))
+(= (graph-server:close-read $state)
+  (case $state
+    (((GraphReadSessionV1 $cursor $context)
+      (let* (($_ (kbg:close $cursor)) ($_ (durable-query:close-context $context))) GraphReadClosedV1))
+     ((GraphReadCompleteV1 $context) (durable-query:close-context $context))
+     ($bad GraphReadClosedV1))))
+(= (graph-server:read-page (ServiceCallV1 $configuration $peer $state $arguments))
+  (case $state
+    (((GraphReadSessionV1 $cursor $context)
+      (case (graph-server:page (ServiceCallV1 $configuration $peer $cursor $arguments))
+        (((ServiceKeepValueV1 $next $page)
+          (ServiceKeepValueV1 (GraphReadSessionV1 $next $context) $page))
+         ((GraphPageV1 $rows (Complete $work))
+          (ServiceKeepValueV1 (GraphReadCompleteV1 $context) (GraphPageV1 $rows (Complete $work))))
+         ($failure (let $_ (durable-query:close-context $context) $failure)))))
+     ($bad (let $_ (graph-server:close-read $state) (KbRefused graph-read-phase))))))
+(= (graph-server:read-commit
+    (ServiceCallV1 (KbConfigurationV1 $owner) $peer $state (GraphReadCommitV1 $collection $request $command $changes)))
+  (case $state
+    (((GraphReadCompleteV1 $context)
+      (let* (($answer (durable-query:commit-command $owner $context $collection $request $command $changes))
+             ($_ (durable-query:close-context $context))) $answer))
+     ($bad (let $_ (graph-server:close-read $state) (KbRefused graph-read-phase))))))
+(= (graph-server:read-cancel (ServiceCallV1 $configuration $peer $state $arguments))
+  (let $_ (graph-server:close-read $state) GraphReadClosedV1))

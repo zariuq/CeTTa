@@ -538,8 +538,9 @@ Remaining release requirements are not covered merely by existing store unit
 tests or the older named-space service. The latter materializes query snapshots;
 the MeTTa-configured path below instead owns shared incremental cursors.
 Declared symbol/string candidate indexes now use the shared Space cursor, with
-small chain-join measurements described below. Scalar range indexes, broad
-workload qualification and large-KB scaling remain open. Live migration remains
+small chain-join measurements described below. Declared scalar ranges are also
+qualified below; broad application-workload qualification and large-KB scaling
+remain open. Live migration remains
 a separately authorized step.
 
 ACT may become a native immutable base/segment under the same durability owner.
@@ -965,6 +966,53 @@ embedded, including after closing its original owner/view. Generated finite
 graph oracles and adversarial cases compare both paths with exhaustive results,
 including multiplicity, stable identities, ties, retractions and compaction.
 The full relational and claims/evidence curriculum remains separate work.
+
+### Completed graph reads and informed writes
+
+The same server exposes `GraphOpenRead`, `GraphReadPage`, `GraphReadCommit` and
+`GraphReadCancel`. Open accepts `GraphOpenV1` and independently retains the
+original data view and program watch. Page accepts `GraphPageV1`; More and
+Paused retain an unfinished phase. Only an actual Complete result yields the
+opaque completed phase accepted by:
+
+```metta
+(GraphReadCommitV1 collection request-id command changes)
+```
+
+The runtime owns the phase and connection-local token. Client-supplied phase
+syntax cannot manufacture one. An unfinished, failed or wrong-family phase
+cannot publish. Wrong-phase invocation releases its state; a host-level
+read-only refusal leaves the state available for cancellation. Completion
+does not grant Write authority. Cancel, failure and disconnect release both
+the traversal and its independent read context.
+
+For a new write, the shared `durable-query:commit-command` validates the
+original whole data revision and program observation. It never refreshes those
+dependencies to authorize a decision made on older answers. This conservative
+policy also rejects unrelated intervening publication. Historical receipt
+lookup precedes stale-observation checks, while changed commands refuse.
+After restart, resolve the durable receipt before reopening a query; process
+tokens are not persistent identities. Writes use existing frame, codec and
+retained-resource budgets, with no additional fixed graph edit-count ceiling.
+
+```text
+captured:   a --> b --> c     shortest distance = 2
+published:  a ----------> c  a new direct edge
+
+old query completes on its original view: 2
+old query-informed write: conflict
+new query: 1
+```
+
+`test-graph-read-commit` checks that separating example, negative reachability,
+parallel edge occurrences changing all shortest ties, optional/anti/aggregate
+insertion phantoms, code edits during and after reads, phase and authority
+refusals, lost replies, restart, receipt collision, more than 128 small edits,
+and repeated cancellation/disconnect. A deliberately rebased data context
+incorrectly publishes a negative decision and is rejected by the same test.
+These finite examples qualify the shared conservative dependency policy;
+they do not enroll hidden callback/external reads or complete application
+transition qualification.
 
 ## Owners and snapshots
 

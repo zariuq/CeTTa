@@ -4746,8 +4746,8 @@ test-all: test-persistent-query-worker
 test-persistent-query-worker: value-worker
 	@$(PYTHON) tests/support/check_persistent_query_worker.py ./$(VALUE_WORKER_BIN)
 
-.PHONY: test-indexed-space-api test-worker-failure-feedback test-space-invariants test-native-service-state test-space-graph test-durable-reindex test-space-query test-space-curriculum test-program-query
-test-all: test-indexed-space-api test-worker-failure-feedback test-space-invariants test-native-service-state test-space-graph test-durable-reindex test-space-query test-space-curriculum test-program-query
+.PHONY: test-indexed-space-api test-worker-failure-feedback test-space-invariants test-native-service-state test-space-graph test-durable-reindex test-space-query test-space-curriculum test-program-query test-graph-read-commit
+test-all: test-indexed-space-api test-worker-failure-feedback test-space-invariants test-native-service-state test-space-graph test-durable-reindex test-space-query test-space-curriculum test-program-query test-graph-read-commit
 test-indexed-space-api: value-worker
 	$(PYTHON) tests/support/check_indexed_spaces.py $(VALUE_WORKER_BIN)
 test-worker-failure-feedback: value-worker
@@ -4764,6 +4764,8 @@ test-space-query: value-worker
 	$(PYTHON) tests/support/check_space_query.py $(VALUE_WORKER_BIN)
 test-program-query: value-worker
 	$(PYTHON) tests/support/check_program_query.py $(VALUE_WORKER_BIN)
+test-graph-read-commit: value-worker
+	$(PYTHON) tests/support/check_graph_read_commit.py $(VALUE_WORKER_BIN)
 test-space-curriculum: value-worker
 	$(PYTHON) tests/support/check_space_curriculum.py $(VALUE_WORKER_BIN)
 
