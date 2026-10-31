@@ -45743,7 +45743,8 @@ static bool petta_eval_machine_admit_ground_instances(
 }
 
 /* Add instances that petta_eval_machine_admit_ground_instances admitted,
- * with the effects their one-at-a-time additions would have. */
+ * or the native engines made as their own alpha keys, with the effects
+ * their one-at-a-time additions would have. */
 static bool petta_eval_machine_add_ground_instances(
     void *context, Space *space, Atom *call, const AtomId *ids,
     size_t count) {
@@ -45754,7 +45755,7 @@ static bool petta_eval_machine_add_ground_instances(
     __attribute__((cleanup(cetta_shared_transition_guard_leave)))
     CettaSharedTransitionGuard shared_transition = {0};
     cetta_shared_transition_guard_enter(&shared_transition);
-    if (!space_add_atom_ids_batch(space, ids, (CettaCount)count))
+    if (!space_add_alpha_keys_batch(space, ids, (CettaCount)count))
         return false;
     petta_specializer_note_mutation(space, call->expr.elems[2]);
     return true;
@@ -45856,6 +45857,29 @@ static bool petta_native_query_apply_tuples(void *context,
     return true;
 }
 
+/* Additions into a relation of deep facts the target set keeps, by the
+ * holes of each fact: the same facts petta_eval_machine_add_ground_instances
+ * adds, without a record of each. */
+static bool petta_native_query_apply_holes(void *context,
+                                           const CettaNativeQueryEffect *effect,
+                                           SymbolId head,
+                                           const CettaSkeleton *skeleton,
+                                           const AtomId *holes, size_t count) {
+    (void)context;
+    Atom *call = effect->call;
+    if (!effect->target || !skeleton || !call || call->kind != ATOM_EXPR ||
+        call->expr.len != 3u || (count && !holes))
+        return false;
+    __attribute__((cleanup(cetta_shared_transition_guard_leave)))
+    CettaSharedTransitionGuard shared_transition = {0};
+    cetta_shared_transition_guard_enter(&shared_transition);
+    if (!space_add_deep_holes(effect->target, head, skeleton, holes,
+                              (CettaCount)count))
+        return false;
+    petta_specializer_note_mutation(effect->target, call->expr.elems[2]);
+    return true;
+}
+
 /* An effect a native query can make: `(add-atom R D)` or `(remove-atom R D)`
  * of data D into a space R named without evaluation, neither operation
  * redefined by the program, which the host admits as a batch.  *ANSWER is
@@ -45936,6 +45960,8 @@ static bool petta_native_region_answers_itself(Space *root, Atom *atom,
  * is, or itself an effect, made after the others and answering what it
  * answers.  A call, ground or not, is no data: answered as written it would
  * be neither made nor evaluated. */
+static bool petta_native_query_defined(Space *root, SymbolId symbol);
+
 static bool petta_native_query_effects(
     void *context, Space *root, Arena *arena, Atom *template,
     const PettaPlanNode *plan, CettaNativeQueryEffect *effects,
@@ -45950,6 +45976,35 @@ static bool petta_native_query_effects(
     }
     if (template->kind != ATOM_EXPR || template->expr.len < 3u)
         return false;
+    /* `(progn E1 ... En)`: each form but the last an effect whose value is
+     * dropped, the last an effect or data, which answers. */
+    if (template->expr.elems[0]->kind == ATOM_SYMBOL &&
+        petta_semantics_form(template->expr.elems[0]->sym_id) ==
+            PETTA_FORM_PROGN &&
+        !petta_native_query_defined(root, template->expr.elems[0]->sym_id)) {
+        size_t forms = template->expr.len - 1u;
+        if (forms > PETTA_NATIVE_QUERY_EFFECTS)
+            return false;
+        Atom *last = template->expr.elems[forms];
+        Atom *last_answer = last;
+        size_t made = forms - 1u;
+        if (!petta_native_region_answers_itself(root, last, 0u)) {
+            if (!petta_native_query_effect(context, root, arena, last,
+                                           &effects[made], &last_answer))
+                return false;
+            made++;
+        }
+        for (size_t index = 0u; index + 1u < forms; index++) {
+            Atom *dropped = NULL;
+            if (!petta_native_query_effect(context, root, arena,
+                                           template->expr.elems[1u + index],
+                                           &effects[index], &dropped))
+                return false;
+        }
+        *effect_count = made;
+        *answer = last_answer;
+        return true;
+    }
     Atom *const *binders = NULL;
     size_t binder_count = 0u;
     Atom *single[2] = {NULL, NULL};
@@ -47093,53 +47148,150 @@ static bool petta_native_query_guard_case(void *context, Space *root,
     return true;
 }
 
-/* `(if (== (collapse (match S P D)) ()) THEN ELSE)`, the empty expression
- * on either side: each row of S meeting P answers D, an atom answered as
- * it is, so the collapse is empty exactly when no row meets P.  The guard
- * is S and P; THEN is one effect; ELSE an atom answered as it is.  The case
- * that petta_native_query_guard_case reads is one too. */
+/* Whether ATOM is `(empty)`, which answers nothing. */
+static bool petta_native_query_empty(Space *root, Atom *atom) {
+    return atom->kind == ATOM_EXPR && atom->expr.len == 1u &&
+        atom_is_symbol_id(atom->expr.elems[0], g_builtin_syms.empty_form) &&
+        !petta_native_query_defined(root, g_builtin_syms.empty_form);
+}
+
+/* The match TEST observes, and whether TEST holds exactly when no row
+ * meets it (*absent) or exactly when one does: an existence view of the
+ * match (petta_semantics_existence_view: its collapse or its count against
+ * nothing, once or not), `not` of a test, or a call of a function of one
+ * equation whose body is a test. */
+static bool petta_native_query_guard_test(Space *root, Arena *arena,
+                                          Atom *test, uint32_t depth,
+                                          Atom **match, bool *absent) {
+    if (depth > 4u || test->kind != ATOM_EXPR || test->expr.len == 0u ||
+        test->expr.elems[0]->kind != ATOM_SYMBOL)
+        return false;
+    SymbolId head = test->expr.elems[0]->sym_id;
+    if (head == g_builtin_syms.op_not && test->expr.len == 2u &&
+        !petta_native_query_defined(root, head)) {
+        if (!petta_native_query_guard_test(root, arena, test->expr.elems[1],
+                                           depth + 1u, match, absent))
+            return false;
+        *absent = !*absent;
+        return true;
+    }
+    PeTTaExistenceView view;
+    if (petta_semantics_existence_view(test, g_builtin_syms.collapse,
+                                       &view)) {
+        if (petta_native_query_defined(root, head) ||
+            petta_native_query_defined(root, g_builtin_syms.collapse) ||
+            petta_native_query_defined(root, g_builtin_syms.match) ||
+            (view.counted &&
+             petta_native_query_defined(root, g_builtin_syms.size_atom)) ||
+            (view.once &&
+             petta_native_query_defined(root, g_builtin_syms.once)))
+            return false;
+        *match = (Atom *)view.match;
+        *absent = !view.negated;
+        return true;
+    }
+    Atom *body = petta_native_query_inline(root, arena, test);
+    return body && petta_native_query_guard_test(root, arena, body,
+                                                 depth + 1u, match, absent);
+}
+
+/* `(if TEST A B)` whose TEST observes a match (match S P D), as
+ * petta_native_query_guard_test reads it: each row of S meeting P answers
+ * D, an atom answered as it is, so the match answers nothing exactly when
+ * no row meets P.  The guard is S and P; THEN, the branch taken when no
+ * row meets P, holds the effects; ELSE, the other, is an atom answered as
+ * it is, or `(empty)`, which answers nothing (*else_empty).  The case that
+ * petta_native_query_guard_case reads is one too. */
 static bool petta_native_query_guard(void *context, Space *root,
                                      Arena *arena, Atom *body,
                                      Space **guard_space,
                                      Atom **guard_pattern, Atom **then_call,
-                                     Atom **else_atom) {
+                                     Atom **else_atom, bool *else_empty) {
+    *else_empty = false;
     if (body->kind == ATOM_EXPR && body->expr.len == 3u &&
         atom_is_symbol_id(body->expr.elems[0], g_builtin_syms.case_text))
         return petta_native_query_guard_case(context, root, arena, body,
                                              guard_space, guard_pattern,
                                              then_call, else_atom);
     if (body->kind != ATOM_EXPR || body->expr.len != 4u ||
-        !atom_is_symbol_id(body->expr.elems[0], g_builtin_syms.if_text))
+        !atom_is_symbol_id(body->expr.elems[0], g_builtin_syms.if_text) ||
+        petta_native_query_defined(root, g_builtin_syms.if_text))
         return false;
-    Atom *test = body->expr.elems[1];
-    if (test->kind != ATOM_EXPR || test->expr.len != 3u ||
-        !atom_is_symbol_id(test->expr.elems[0], g_builtin_syms.op_eq))
+    Atom *match = NULL;
+    bool absent = false;
+    if (!petta_native_query_guard_test(root, arena, body->expr.elems[1], 0u,
+                                       &match, &absent) ||
+        !petta_native_query_is_match(match))
         return false;
-    Atom *left = test->expr.elems[1];
-    Atom *right = test->expr.elems[2];
-    Atom *collapsed =
-        right->kind == ATOM_EXPR && right->expr.len == 0u ? left
-        : left->kind == ATOM_EXPR && left->expr.len == 0u ? right : NULL;
-    if (!collapsed || collapsed->kind != ATOM_EXPR ||
-        collapsed->expr.len != 2u ||
-        !atom_is_symbol_id(collapsed->expr.elems[0], g_builtin_syms.collapse) ||
-        !petta_native_query_is_match(collapsed->expr.elems[1]) ||
-        petta_native_query_defined(root, g_builtin_syms.if_text) ||
-        petta_native_query_defined(root, g_builtin_syms.op_eq) ||
-        petta_native_query_defined(root, g_builtin_syms.collapse) ||
-        petta_native_query_defined(root, g_builtin_syms.match))
-        return false;
-    Atom *match = collapsed->expr.elems[1];
+    Atom *then_branch = body->expr.elems[absent ? 2u : 3u];
+    Atom *other = body->expr.elems[absent ? 3u : 2u];
+    bool empty = petta_native_query_empty(root, other);
     Space *space = petta_native_query_space(context, root, arena,
                                             match->expr.elems[1]);
     if (!space || match->expr.elems[2]->kind != ATOM_EXPR ||
         !petta_native_query_inert(root, match->expr.elems[3]) ||
-        !petta_native_query_inert(root, body->expr.elems[3]))
+        (!empty && !petta_native_query_inert(root, other)))
         return false;
     *guard_space = space;
     *guard_pattern = match->expr.elems[2];
-    *then_call = body->expr.elems[2];
-    *else_atom = body->expr.elems[3];
+    *then_call = then_branch;
+    *else_atom = empty ? NULL : other;
+    *else_empty = empty;
+    return true;
+}
+
+/* `(if (== A B) X Y)` with A and B each a variable or an atom answered as
+ * it is, one of them a variable: a filter on the solutions' values, which
+ * the native path compares by id as PeTTa compares them as terms.  One
+ * branch is the effects (*then_call), made where the operands' equality is
+ * *equal; the other an atom answered as it is or `(empty)`. */
+static bool petta_native_query_filter(Space *root, Atom *body, Atom **left,
+                                      Atom **right, bool *equal,
+                                      Atom **then_call, Atom **else_atom,
+                                      bool *else_empty) {
+    if (body->kind != ATOM_EXPR || body->expr.len != 4u ||
+        !atom_is_symbol_id(body->expr.elems[0], g_builtin_syms.if_text) ||
+        petta_native_query_defined(root, g_builtin_syms.if_text))
+        return false;
+    Atom *test = body->expr.elems[1];
+    if (test->kind != ATOM_EXPR || test->expr.len != 3u ||
+        !atom_is_symbol_id(test->expr.elems[0], g_builtin_syms.op_eq) ||
+        petta_native_query_defined(root, g_builtin_syms.op_eq))
+        return false;
+    Atom *a = test->expr.elems[1];
+    Atom *b = test->expr.elems[2];
+    if ((a->kind != ATOM_VAR && !petta_native_query_inert(root, a)) ||
+        (b->kind != ATOM_VAR && !petta_native_query_inert(root, b)) ||
+        (a->kind != ATOM_VAR && b->kind != ATOM_VAR))
+        return false;
+    Atom *x = body->expr.elems[2];
+    Atom *y = body->expr.elems[3];
+    bool x_quiet = petta_native_query_empty(root, x) ||
+        petta_native_query_inert(root, x);
+    bool y_quiet = petta_native_query_empty(root, y) ||
+        petta_native_query_inert(root, y);
+    if (x_quiet == y_quiet)
+        return false;
+    Atom *other = x_quiet ? x : y;
+    *left = a;
+    *right = b;
+    *equal = !x_quiet;
+    *then_call = x_quiet ? y : x;
+    *else_empty = petta_native_query_empty(root, other);
+    *else_atom = *else_empty ? NULL : other;
+    return true;
+}
+
+/* Whether every variable ATOM holds occurs in SCOPE. */
+static bool petta_native_query_names_within(Atom *atom, Atom *scope) {
+    if (atom->kind == ATOM_VAR)
+        return petta_native_query_mentions(scope, atom->var_id);
+    if (atom->kind != ATOM_EXPR || !atom_has_vars(atom))
+        return true;
+    for (CettaExprIndex i = 0u; i < atom->expr.len; i++) {
+        if (!petta_native_query_names_within(atom->expr.elems[i], scope))
+            return false;
+    }
     return true;
 }
 
@@ -47239,6 +47391,10 @@ static Atom *petta_native_region_snapshot_stream(Space *root, Arena *arena,
     return fused ? atom_expr(arena, elems, 4u) : NULL;
 }
 
+static CettaNativeQueryStatus petta_native_region_pure_stream(
+    void *context, Space *root, Arena *arena, Atom *query, bool count_only,
+    bool wrap_collection, Atom **value);
+
 static CettaNativeQueryStatus petta_eval_machine_native_collect(
     void *context, Space *root, Arena *arena, Atom *query,
     const PettaPlanNode *plan, bool count_only, bool wrap_collection,
@@ -47275,6 +47431,10 @@ static CettaNativeQueryStatus petta_eval_machine_native_collect(
     }
     if (query_rewritten)
         plan = NULL;
+    CettaNativeQueryStatus streamed = petta_native_region_pure_stream(
+        context, root, arena, query, count_only, wrap_collection, value);
+    if (streamed != CETTA_NATIVE_QUERY_DECLINED)
+        return streamed;
     if (query->kind != ATOM_EXPR || query->expr.len != 4u ||
         atom_structural_may_have_list_carrier(query) ||
         petta_eval_machine_classify_host(context, root, query) ==
@@ -47365,6 +47525,10 @@ static CettaNativeQueryStatus petta_eval_machine_native_collect(
     Space *guard_space = NULL;
     Atom *guard_pattern = NULL;
     Atom *else_atom = NULL;
+    bool else_empty = false;
+    Atom *filter_left = NULL;
+    Atom *filter_right = NULL;
+    bool filter_equal = false;
     bool made = petta_native_query_effects(context, root, arena, template,
                                            template_plan, effects,
                                            &effect_count, &answer);
@@ -47379,17 +47543,30 @@ static CettaNativeQueryStatus petta_eval_machine_native_collect(
         made = body &&
             petta_native_query_guard(context, root, arena, body, &guard_space,
                                      &guard_pattern, &then_call,
-                                     &else_atom) &&
+                                     &else_atom, &else_empty) &&
             guard_space->native.universe == source->native.universe &&
             petta_native_query_guard_certified(guard_space, guard_pattern) &&
-            (petta_native_query_effect(context, root, arena, then_call,
-                                       &effects[0], &answer) ||
-             petta_native_query_effect_checked(context, root, arena,
-                                               then_call, &effects[0],
-                                               &answer));
-        effect_count = made ? 1u : 0u;
-        if (!made)
+            petta_native_query_effects(context, root, arena, then_call, NULL,
+                                       effects, &effect_count, &answer);
+        if (!made) {
             guard_space = NULL;
+            effect_count = 0u;
+            /* A filter on the solutions' values (petta_native_query_filter). */
+            made = petta_native_query_filter(root, body, &filter_left,
+                                             &filter_right, &filter_equal,
+                                             &then_call, &else_atom,
+                                             &else_empty) &&
+                petta_native_query_effects(context, root, arena, then_call,
+                                           NULL, effects, &effect_count,
+                                           &answer);
+            if (!made) {
+                filter_left = NULL;
+                filter_right = NULL;
+                else_atom = NULL;
+                else_empty = false;
+                effect_count = 0u;
+            }
+        }
     }
     if (made) {
         /* PeTTa reads the first pattern of a conjunction once, before any
@@ -47447,15 +47624,33 @@ static CettaNativeQueryStatus petta_eval_machine_native_collect(
                        effects[effect].data->expr.elems[0]->sym_id)))))
                 return CETTA_NATIVE_QUERY_DECLINED;
         }
+        /* Under an insert, a solution meeting an instance an earlier one
+         * made reads it held, and the branch's effects are made once for
+         * each instance: none may name a variable the guard does not, or
+         * the solution making them would matter. */
+        bool inserts = false;
+        for (size_t effect = 0u; effect < effect_count; effect++)
+            inserts = inserts || effects[effect].insert;
+        for (size_t effect = 0u; inserts && effect < effect_count; effect++) {
+            if (!effects[effect].insert &&
+                !petta_native_query_names_within(effects[effect].data,
+                                                 guard_pattern))
+                return CETTA_NATIVE_QUERY_DECLINED;
+        }
         native.guard_space = guard_space;
         native.guard_pattern = guard_pattern;
         native.else_atom = else_atom;
+        native.else_empty = else_empty;
+        native.filter_left = filter_left;
+        native.filter_right = filter_right;
+        native.filter_equal = filter_equal;
         native.consumer = CETTA_NATIVE_QUERY_EFFECTS;
         native.template_atom = answer;
         native.effects = effects;
         native.effect_count = effect_count;
         native.apply = petta_native_query_apply;
         native.apply_tuples = petta_native_query_apply_tuples;
+        native.apply_holes = petta_native_query_apply_holes;
         native.apply_context = context;
     } else {
         bool answers = template_rewritten
@@ -47505,6 +47700,193 @@ static CettaNativeQueryStatus petta_eval_machine_native_collect(
         *value = result.collection;
     }
     return *value ? CETTA_NATIVE_QUERY_DONE : CETTA_NATIVE_QUERY_FAILED;
+}
+
+/* The answers of a run the evaluator made, appended to ITEMS (unless only
+ * counted); false for one that did not end as a bag of answers. */
+static bool petta_native_region_stream_answers(Arena *arena, OutcomeSet *made,
+                                               CettaCallOutcome end,
+                                               bool count_only, Atom ***items,
+                                               size_t *len, size_t *cap,
+                                               uint64_t *count) {
+    if (end.kind != CETTA_CALL_FAILURE)
+        return false;
+    for (CettaCount i = 0u; i < made->len; i++) {
+        if (made->items[i].delayed)
+            return false;
+        if (count_only) {
+            (*count)++;
+            continue;
+        }
+        Atom *answer = outcome_atom_materialize(arena, &made->items[i]);
+        if (!answer)
+            return false;
+        if (*len == *cap) {
+            size_t grown = *cap ? *cap * 2u : 16u;
+            Atom **moved = realloc(*items, grown * sizeof(*moved));
+            if (!moved)
+                return false;
+            *items = moved;
+            *cap = grown;
+        }
+        (*items)[(*len)++] = answer;
+        (*count)++;
+    }
+    return true;
+}
+
+/* `(let* (($v P) B ...) M)` whose first binding P calls a function that
+ * reads no space and makes no effect, on arguments that are atoms: P's
+ * answers, in the order the evaluator gives them, each run as B's lets
+ * around M with $v bound to it, natively where the host admits
+ * the run and by the evaluator otherwise.  P's answers cannot depend on what
+ * the runs make, and each run ends before the next begins, as the let*
+ * runs them.  DECLINED, having made nothing, when the first run is not
+ * admitted. */
+static CettaNativeQueryStatus petta_native_region_pure_stream(
+    void *context, Space *root, Arena *arena, Atom *query, bool count_only,
+    bool wrap_collection, Atom **value) {
+    PettaEvalMachineContext *eval_context = context;
+    if (!eval_context || eval_context->distinct_key ||
+        query->kind != ATOM_EXPR || query->expr.len != 3u ||
+        !atom_is_symbol_id(query->expr.elems[0], g_builtin_syms.let_star) ||
+        query->expr.elems[1]->kind != ATOM_EXPR ||
+        query->expr.elems[1]->expr.len == 0u ||
+        !petta_native_region_plain(root, g_builtin_syms.let_star))
+        return CETTA_NATIVE_QUERY_DECLINED;
+    Atom *binds = query->expr.elems[1];
+    Atom *first = binds->expr.elems[0];
+    if (first->kind != ATOM_EXPR || first->expr.len != 2u ||
+        first->expr.elems[0]->kind != ATOM_VAR)
+        return CETTA_NATIVE_QUERY_DECLINED;
+    Atom *producer = first->expr.elems[1];
+    if (producer->kind != ATOM_EXPR || producer->expr.len == 0u ||
+        producer->expr.elems[0]->kind != ATOM_SYMBOL)
+        return CETTA_NATIVE_QUERY_DECLINED;
+    for (CettaExprIndex i = 1u; i < producer->expr.len; i++) {
+        if (producer->expr.elems[i]->kind == ATOM_EXPR ||
+            producer->expr.elems[i]->kind == ATOM_VAR)
+            return CETTA_NATIVE_QUERY_DECLINED;
+    }
+    bool defined = false;
+    if (space_query_effect_for_head(root, producer->expr.elems[0]->sym_id,
+                                    &defined) !=
+            CETTA_GSLT_QUERY_EFFECT_PURE ||
+        !defined)
+        return CETTA_NATIVE_QUERY_DECLINED;
+    /* The later bindings, as the lets the region reads one by one. */
+    Atom *rest = query->expr.elems[2];
+    Atom *let = atom_symbol_id(arena, g_builtin_syms.let);
+    if (binds->expr.len > 1u && !petta_native_region_plain(root, g_builtin_syms.let))
+        return CETTA_NATIVE_QUERY_DECLINED;
+    for (CettaExprLen i = binds->expr.len; rest && i-- > 1u;) {
+        Atom *bind = binds->expr.elems[i];
+        if (!let || bind->kind != ATOM_EXPR || bind->expr.len != 2u)
+            return CETTA_NATIVE_QUERY_DECLINED;
+        Atom *elems[4] = {let, bind->expr.elems[0], bind->expr.elems[1], rest};
+        rest = atom_expr(arena, elems, 4u);
+    }
+    if (!rest)
+        return CETTA_NATIVE_QUERY_DECLINED;
+    OutcomeSet values;
+    outcome_set_init(&values);
+    CettaCallOutcome end = cetta_call_failure();
+    bool evaluated = petta_eval_machine_evaluate_host(
+        context, root, arena, producer, NULL, &values, &end, NULL);
+    Atom **bound = evaluated && end.kind == CETTA_CALL_FAILURE &&
+                   values.len != 0u
+        ? arena_alloc(arena, sizeof(*bound) * (size_t)values.len) : NULL;
+    for (CettaCount i = 0u; bound && i < values.len; i++) {
+        bound[i] = values.items[i].delayed
+            ? NULL : outcome_atom_materialize(arena, &values.items[i]);
+        if (!bound[i] || atom_has_vars(bound[i]))
+            bound = NULL;
+    }
+    CettaCount value_count = values.len;
+    outcome_set_free(&values);
+    if (!bound)
+        return CETTA_NATIVE_QUERY_DECLINED;
+    Atom **items = NULL;
+    size_t item_len = 0u, item_cap = 0u;
+    uint64_t count = 0u;
+    CettaNativeQueryStatus status = CETTA_NATIVE_QUERY_DONE;
+    for (CettaCount i = 0u; status == CETTA_NATIVE_QUERY_DONE &&
+                            i < value_count; i++) {
+        Atom *run = petta_native_region_substitute(arena, rest,
+                                                   first->expr.elems[0],
+                                                   bound[i]);
+        Atom *made = NULL;
+        CettaNativeQueryStatus ran = run
+            ? petta_eval_machine_native_collect(context, root, arena, run,
+                                                NULL, count_only, false, &made)
+            : CETTA_NATIVE_QUERY_FAILED;
+        if (ran == CETTA_NATIVE_QUERY_DECLINED && i == 0u) {
+            status = CETTA_NATIVE_QUERY_DECLINED;
+            break;
+        }
+        if (ran == CETTA_NATIVE_QUERY_DECLINED) {
+            /* A later run the host declines is the evaluator's. */
+            OutcomeSet answers;
+            outcome_set_init(&answers);
+            CettaCallOutcome stop = cetta_call_failure();
+            bool ok = petta_eval_machine_evaluate_host(
+                          context, root, arena, run, NULL, &answers, &stop,
+                          NULL) &&
+                petta_native_region_stream_answers(arena, &answers, stop,
+                                                   count_only, &items,
+                                                   &item_len, &item_cap,
+                                                   &count);
+            outcome_set_free(&answers);
+            if (!ok)
+                status = CETTA_NATIVE_QUERY_FAILED;
+            continue;
+        }
+        if (ran != CETTA_NATIVE_QUERY_DONE || !made) {
+            status = CETTA_NATIVE_QUERY_FAILED;
+            break;
+        }
+        if (count_only) {
+            count += made->kind == ATOM_GROUNDED &&
+                    made->ground.gkind == GV_INT && made->ground.ival >= 0
+                ? (uint64_t)made->ground.ival : 0u;
+            continue;
+        }
+        for (CettaExprIndex k = 0u; k < made->expr.len; k++) {
+            if (item_len == item_cap) {
+                size_t grown = item_cap ? item_cap * 2u : 16u;
+                Atom **moved = realloc(items, grown * sizeof(*moved));
+                if (!moved) {
+                    status = CETTA_NATIVE_QUERY_FAILED;
+                    break;
+                }
+                items = moved;
+                item_cap = grown;
+            }
+            items[item_len++] = made->expr.elems[k];
+        }
+    }
+    if (status == CETTA_NATIVE_QUERY_DONE) {
+        if (count_only) {
+            *value = count > (uint64_t)INT64_MAX ? NULL
+                : wrap_collection
+                    ? atom_counted_collection(arena, (int64_t)count)
+                    : atom_int(arena, (int64_t)count);
+        } else {
+            Atom *collection = atom_expr_builder_begin(
+                arena, (CettaExprLen)item_len);
+            if (collection) {
+                if (item_len)
+                    memcpy(collection->expr.elems, items,
+                           sizeof(*items) * item_len);
+                collection = atom_expr_builder_finish(arena, collection);
+            }
+            *value = collection;
+        }
+        if (!*value)
+            status = CETTA_NATIVE_QUERY_FAILED;
+    }
+    free(items);
+    return status;
 }
 
 /* The native collection of a query whose source reads everything before
