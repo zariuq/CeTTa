@@ -17,12 +17,16 @@
       (let (StoreViewInfo $epoch $revision) (store:view-info $view)
         (ServiceKeepValueV1 $cursor (GraphOpenedV1 $epoch $revision))) $cursor)))
 (= (graph-server:page (ServiceCallV1 $configuration $peer $cursor (GraphPageV1 $count $fuel)))
-  (case (kbg:page $cursor $count $fuel)
+  ; Logical graph steps have nonconstant cost as retained frontier/visited
+  ; state grows. Keep service turns smaller than the caller's upper bound;
+  ; unfinished work returns Paused with the same captured query continuation.
+  (let $quantum (if (kb:integer? $fuel) (if (> $fuel 64) 64 $fuel) $fuel)
+   (case (kbg:page $cursor $count $quantum)
     (((KgPage $rows (KgMore $next)) (ServiceKeepValueV1 $next (GraphPageV1 $rows More)))
      ((KgPage $rows (KgPaused $next)) (ServiceKeepValueV1 $next (GraphPageV1 $rows Paused)))
      ((KgPage $rows (KgComplete $work)) (GraphPageV1 $rows (Complete $work)))
      ((KgPage $rows (KgFailure $error $work)) (GraphPageV1 $rows (Failed $error $work)))
-     ($failure $failure))))
+     ($failure $failure)))))
 (= (graph-server:cancel (ServiceCallV1 $configuration $peer $cursor $unused))
   (let $_ (kbg:close $cursor) GraphCancelledV1))
 (= (graph-server:inspect (ServiceCallV1 $configuration $peer $cursor $unused))
