@@ -70598,16 +70598,8 @@ static bool petta_memo_native_control_try(
                 }
             }
             if (valid) {
-                CettaPettaMemoState *current =
-                    &library_context->petta_memo;
-                current->strategy = proposed.strategy;
-                current->unique_limit = proposed.unique_limit;
-                current->size_limit_bytes =
-                    proposed.size_limit_bytes;
-                current->float_precision =
-                    proposed.float_precision;
-                current->answer_limit = proposed.answer_limit;
-                current->aggregate = proposed.aggregate;
+                cetta_library_petta_memo_configure(
+                    library_context, &proposed);
                 result = petta_semantics_success_value(arena);
             }
         }

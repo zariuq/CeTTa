@@ -508,6 +508,10 @@ bool cetta_library_petta_memo_enable(
 bool cetta_library_petta_memo_is_enabled(
     CettaLibraryContext *ctx, SymbolId head,
     bool exact_arity, CettaExprLen arity);
+/* Apply an already validated policy. Actual changes advance the existing
+ * admission revision, so captured program observations cannot span them. */
+void cetta_library_petta_memo_configure(
+    CettaLibraryContext *ctx, const CettaPettaMemoState *proposed);
 void cetta_library_petta_memo_clear(CettaLibraryContext *ctx);
 void cetta_library_petta_memo_invalidate(
     CettaLibraryContext *ctx, SymbolId head);

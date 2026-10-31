@@ -287,6 +287,13 @@ conservative: even an unrelated equation edit may invalidate a query. Earlier
 pages remain provisional if the eventual result is incomplete or invalidated;
 no mixed-code row from the failing step is returned. Attempted work is counted.
 
+Native memo policy is part of that observation. Changing aggregation,
+floating-key precision, answer limits or retention settings advances the same
+admission generation. Even a policy change followed by restoring the original
+settings invalidates the old watch. Reapplying identical settings and reading
+or resetting hit/miss statistics leave it current. This conservatively includes
+retention-only changes; it does not change the standalone memoization contract.
+
 PeTTa's optional specializer can publish generated equations on a first call.
 While a program is observed, specialization publication for its captured
 root/base/module closure is deferred; existing canonical execution remains
