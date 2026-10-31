@@ -2460,7 +2460,7 @@ CettaNativeQueryStatus cetta_native_query_run(
          query->guard_space->native.universe != universe))
         return CETTA_NATIVE_QUERY_DECLINED;
     if (query->filter_count &&
-        (!effects || !query->filters ||
+        (!query->filters ||
          query->filter_count > CETTA_NATIVE_QUERY_FILTERS ||
          !query->else_atom == !query->else_empty))
         return CETTA_NATIVE_QUERY_DECLINED;

@@ -13170,9 +13170,9 @@ static bool oem_template_may_be_call(const CettaOpenEquationProgram *program,
 
 /* Whether a collection could be one the host answers natively, read from
  * its template before anything is built.  The host answers a body that is
- * a match, or a let over a superposed list whose body makes effects:
- * add-atom or remove-atom, or a let or let* binding them.  A collection
- * that certainly builds any other body never reaches it. */
+ * a match, or a let over a superposed list whose body makes effects
+ * (add-atom or remove-atom, or a let or let* binding them) or is a match.
+ * A collection that certainly builds any other body never reaches it. */
 static bool oem_native_collect_may_admit(
     const CettaOpenEquationProgram *program, uint32_t control_index) {
     const OemTemplate *control = &program->templates[control_index];
@@ -13196,12 +13196,14 @@ static bool oem_native_collect_may_admit(
     SymbolId effects[2] = {g_builtin_syms.add_atom, g_builtin_syms.remove_atom};
     SymbolId lets[1] = {g_builtin_syms.let};
     SymbolId let_stars[1] = {g_builtin_syms.let_star};
+    SymbolId matches[1] = {g_builtin_syms.match};
     uint32_t list = program->template_children[body->first + 2u];
     uint32_t made = program->template_children[body->first + 3u];
     return oem_template_may_be(program, list, 2u, lists, 1u) &&
         (oem_template_may_be(program, made, 3u, effects, 2u) ||
          oem_template_may_be(program, made, 4u, lets, 1u) ||
-         oem_template_may_be(program, made, 3u, let_stars, 1u));
+         oem_template_may_be(program, made, 3u, let_stars, 1u) ||
+         oem_template_may_be(program, made, 4u, matches, 1u));
 }
 
 /* The native collections a step asked its host for and the host declined,

@@ -48121,9 +48121,29 @@ static AtomId petta_region_key(PettaRegion *region, Atom *head,
     return best;
 }
 
-/* Complete coverage: every premise of every rule in K fires that rule. */
+/* Whether a static premise, (static SPACE PATTERN), has no row or fact to
+ * meet now: no row is a candidate and no relation may meet PATTERN.  The
+ * region does not write SPACE, or not PATTERN's relation of K, so it has
+ * none through the run. */
+static bool petta_region_premise_empty(PettaRegion *region, Atom *premise) {
+    Space *space = petta_native_query_space(region->context, region->root,
+                                            region->arena,
+                                            premise->expr.elems[1]);
+    Atom *pattern = premise->expr.elems[2];
+    if (!space || space_dense_may_meet(space, pattern))
+        return false;
+    CettaIndex *candidates = NULL;
+    CettaIndex count = space_match_candidates64(space, pattern, &candidates);
+    free(candidates);
+    return count == 0u;
+}
+
+/* Complete coverage: every premise of every rule in K fires that rule.  A
+ * rule one of whose static premises has nothing to meet never fires while
+ * the region runs, in its rounds as in the depth-first run, and needs none. */
 static bool petta_region_covered(PettaRegion *region) {
     AtomId keys[PETTA_REGION_FIRES];
+    bool live[PETTA_REGION_FIRES];
     for (size_t f = 0u; f < region->fire_count; f++) {
         Atom *head = NULL;
         Atom *premises[PETTA_REGION_LEGS + 1u];
@@ -48132,6 +48152,10 @@ static bool petta_region_covered(PettaRegion *region) {
         if (!petta_region_rule(region, &region->fires[f], &head, premises, kb,
                                &count))
             return false;
+        live[f] = true;
+        for (size_t p = 1u; live[f] && p < count; p++)
+            live[f] = kb[p] || !petta_region_premise_empty(region,
+                                                           premises[p]);
         keys[f] = petta_region_key(region, head, premises, count, 0u);
         if (keys[f] == CETTA_ATOM_ID_NONE)
             return false;
@@ -48141,6 +48165,8 @@ static bool petta_region_covered(PettaRegion *region) {
         Atom *premises[PETTA_REGION_LEGS + 1u];
         bool kb[PETTA_REGION_LEGS + 1u];
         size_t count = 0u;
+        if (!live[f])
+            continue;
         if (!petta_region_rule(region, &region->fires[f], &head, premises, kb,
                                &count))
             return false;
@@ -48932,6 +48958,329 @@ static CettaNativeQueryStatus petta_relaxation_region_run(
     return status;
 }
 
+/* ── Listed matches ─────────────────────────────────────────────────────
+ * `(let PAT (superpose (R1 ... Rk)) (match S P T))`: for each row, in its
+ * multiplicity, PAT bound to it, the match's solutions under those
+ * bindings.  The rows become facts `(listed-row R)` of a bag of their own,
+ * and the query `(match ROWS (listed-row PAT) (match S P T))`, which the
+ * native path joins as nested legs, the rows read as the let spreads them.
+ * Declined where a row holds a variable or the joined query declines, and
+ * for a list of fewer than PETTA_LISTED_MATCH_ROWS rows, which costs less
+ * spread row by row than a bag set up and freed for it. */
+enum { PETTA_LISTED_MATCH_ROWS = 16u };
+static CettaNativeQueryStatus petta_eval_machine_native_collect(
+    void *context, Space *root, Arena *arena, Atom *query,
+    const PettaPlanNode *plan, bool count_only, bool wrap_collection,
+    Atom **value);
+
+static CettaNativeQueryStatus petta_listed_match_run(
+    void *context, Space *root, Arena *arena, Atom *query, bool count_only,
+    bool wrap_collection, Atom **value) {
+    Atom *rows = query->expr.elems[2]->expr.elems[1];
+    Atom *tag = atom_symbol(arena, "listed-row");
+    if (!tag || petta_native_query_defined(root, tag->sym_id) ||
+        rows->kind != ATOM_EXPR || rows->expr.len < PETTA_LISTED_MATCH_ROWS ||
+        atom_has_vars(rows) ||
+        atom_structural_may_have_list_carrier(rows))
+        return CETTA_NATIVE_QUERY_DECLINED;
+    Space *bag = cetta_malloc(sizeof(Space));
+    if (!bag)
+        return CETTA_NATIVE_QUERY_DECLINED;
+    space_init_with_universe(bag, eval_current_term_universe());
+    bag->kind = SPACE_KIND_HASH;
+    space_set_strict(bag, false);
+    if (!space_match_backend_try_set(bag, SPACE_ENGINE_NATIVE)) {
+        space_free(bag);
+        free(bag);
+        return CETTA_NATIVE_QUERY_DECLINED;
+    }
+    bool ok = true;
+    for (CettaExprIndex i = 0u; ok && i < rows->expr.len; i++) {
+        Atom *fact = atom_expr2(arena, tag, rows->expr.elems[i]);
+        ok = fact != NULL;
+        if (ok)
+            space_add(bag, fact);
+    }
+    Atom *row_pattern = ok ? atom_expr2(arena, tag, query->expr.elems[1])
+                           : NULL;
+    Atom *parts[4] = {atom_symbol_id(arena, g_builtin_syms.match),
+                      atom_space(arena, bag), row_pattern,
+                      query->expr.elems[3]};
+    Atom *joined = parts[0] && parts[1] && row_pattern
+        ? atom_expr(arena, parts, 4u) : NULL;
+    CettaNativeQueryStatus status = joined
+        ? petta_eval_machine_native_collect(context, root, arena, joined,
+                                            NULL, count_only,
+                                            wrap_collection, value)
+        : CETTA_NATIVE_QUERY_DECLINED;
+    space_free(bag);
+    free(bag);
+    return status;
+}
+
+/* ── Grouped counts ─────────────────────────────────────────────────────
+ * `(match S P (let $n (size-atom (collapse (match S2 Q X))) BODY))`, the
+ * count also written as a call of a function of one equation whose body it
+ * is: for each solution of P, the number of solutions of Q under its
+ * bindings, bound to $n, then BODY, additions the native path makes.  X
+ * answers itself, so each solution of Q is one answer to count, and no
+ * addition of BODY can be a row Q reads, so the counts do not depend on the
+ * order the solutions take.  They are taken first: one native collection of
+ * Q over S2, its solutions grouped by the values of P's variables Q names,
+ * where each solution of P finds its count (none: zero).  BODY then runs
+ * over the solutions of P, each with its count, as a listed query.
+ * Declined, having made nothing, where any part declines. */
+enum { PETTA_GROUPED_COUNT_VARS = 15u };
+
+typedef struct {
+    Atom *key;
+    uint32_t hash;
+    uint64_t count;
+} PettaGroupedCount;
+
+/* The distinct variables of ATOM that occur in SCOPE and are not SKIP, added
+ * to VARS, which holds *COUNT; false where there are more than fit. */
+static bool petta_grouped_count_vars(Atom *atom, Atom *scope, const Atom *skip,
+                                     Atom **vars, size_t *count) {
+    if (atom->kind == ATOM_VAR) {
+        if ((skip && var_id_eq(atom->var_id, skip->var_id)) ||
+            !petta_native_query_mentions(scope, atom->var_id))
+            return true;
+        for (size_t i = 0u; i < *count; i++) {
+            if (var_id_eq(vars[i]->var_id, atom->var_id))
+                return true;
+        }
+        if (*count == PETTA_GROUPED_COUNT_VARS)
+            return false;
+        vars[(*count)++] = atom;
+        return true;
+    }
+    if (atom->kind != ATOM_EXPR)
+        return true;
+    for (CettaExprIndex i = 0u; i < atom->expr.len; i++) {
+        if (!petta_grouped_count_vars(atom->expr.elems[i], scope, skip, vars,
+                                      count))
+            return false;
+    }
+    return true;
+}
+
+/* The native collection of TEMPLATE over the solutions of PATTERN in
+ * SOURCE: an expression of its instances, or NULL where it declines. */
+static Atom *petta_grouped_count_collect(Space *source, Arena *arena,
+                                         Atom **pattern, Atom *template) {
+    CettaNativeQuery query = {
+        .source = source,
+        .patterns = pattern,
+        .pattern_count = 1u,
+        .template_atom = template,
+        .consumer = CETTA_NATIVE_QUERY_COLLECT,
+    };
+    CettaNativeQueryResult result = {0};
+    if (cetta_native_query_run(&query, arena, &result) !=
+            CETTA_NATIVE_QUERY_DONE ||
+        !result.collection || result.collection->kind != ATOM_EXPR)
+        return NULL;
+    for (CettaExprIndex i = 0u; i < result.collection->expr.len; i++) {
+        if (atom_has_vars(result.collection->expr.elems[i]))
+            return NULL;
+    }
+    return result.collection;
+}
+
+static CettaNativeQueryStatus petta_eval_machine_native_collect(
+    void *context, Space *root, Arena *arena, Atom *query,
+    const PettaPlanNode *plan, bool count_only, bool wrap_collection,
+    Atom **value);
+
+static CettaNativeQueryStatus petta_grouped_count_run(
+    void *context, Space *root, Arena *arena, Atom *query, bool count_only,
+    bool wrap_collection, Atom **value) {
+    if (!context || !petta_native_query_is_match(query))
+        return CETTA_NATIVE_QUERY_DECLINED;
+    Atom *pattern = query->expr.elems[2];
+    Atom *template = query->expr.elems[3];
+    Atom *inlined = petta_native_query_inline(root, arena, template);
+    if (inlined)
+        template = inlined;
+    if (pattern->kind != ATOM_EXPR || pattern->expr.len == 0u ||
+        atom_is_symbol_id(pattern->expr.elems[0], g_builtin_syms.comma) ||
+        template->kind != ATOM_EXPR || template->expr.len != 4u ||
+        !atom_is_symbol_id(template->expr.elems[0], g_builtin_syms.let) ||
+        petta_native_query_defined(root, g_builtin_syms.let) ||
+        template->expr.elems[1]->kind != ATOM_VAR)
+        return CETTA_NATIVE_QUERY_DECLINED;
+    Atom *n = template->expr.elems[1];
+    Atom *body = template->expr.elems[3];
+    Atom *count = template->expr.elems[2];
+    Atom *count_inlined = petta_native_query_inline(root, arena, count);
+    if (count_inlined)
+        count = count_inlined;
+    /* `(size-atom (collapse (match S2 Q X)))`, X answering itself. */
+    Atom *collapse = petta_native_region_counted(root, count);
+    Atom *match = collapse && collapse->kind == ATOM_EXPR &&
+            collapse->expr.len == 2u &&
+            atom_is_symbol_id(collapse->expr.elems[0],
+                              g_builtin_syms.collapse) &&
+            !petta_native_query_defined(root, g_builtin_syms.collapse)
+        ? collapse->expr.elems[1] : NULL;
+    if (!match || !petta_native_query_is_match(match) ||
+        petta_native_query_defined(root, g_builtin_syms.match))
+        return CETTA_NATIVE_QUERY_DECLINED;
+    Atom *counted = match->expr.elems[2];
+    Space *source = petta_native_query_space(context, root, arena,
+                                             query->expr.elems[1]);
+    Space *counted_source = petta_native_query_space(context, root, arena,
+                                                     match->expr.elems[1]);
+    if (!source || !counted_source ||
+        counted_source->native.universe != source->native.universe ||
+        counted->kind != ATOM_EXPR || counted->expr.len == 0u ||
+        atom_is_symbol_id(counted->expr.elems[0], g_builtin_syms.comma) ||
+        !petta_native_region_answers_itself(root, match->expr.elems[3], 0u) ||
+        petta_native_query_mentions(match, n->var_id) ||
+        petta_native_query_mentions(pattern, n->var_id))
+        return CETTA_NATIVE_QUERY_DECLINED;
+    /* BODY's additions, none of which may be a row Q reads. */
+    CettaNativeQueryEffect effects[PETTA_NATIVE_QUERY_EFFECTS];
+    size_t effect_count = 0u;
+    Atom *answer = NULL;
+    if (!petta_native_query_effects(context, root, arena, body, NULL, effects,
+                                    &effect_count, &answer))
+        return CETTA_NATIVE_QUERY_DECLINED;
+    for (size_t i = 0u; i < effect_count; i++) {
+        if (effects[i].removal ||
+            (effects[i].target == counted_source &&
+             petta_native_query_reads(counted, effects[i].data)))
+            return CETTA_NATIVE_QUERY_DECLINED;
+    }
+    /* The values each solution of P carries: its variables Q or BODY reads;
+     * the key: those Q reads. */
+    Atom *vars[PETTA_GROUPED_COUNT_VARS];
+    size_t var_count = 0u;
+    Atom *keys[PETTA_GROUPED_COUNT_VARS];
+    size_t key_count = 0u;
+    Atom *reads[2] = {counted, body};
+    Atom *read = atom_expr(arena, reads, 2u);
+    if (!read ||
+        !petta_grouped_count_vars(pattern, read, n, vars, &var_count) ||
+        !petta_grouped_count_vars(pattern, counted, n, keys, &key_count))
+        return CETTA_NATIVE_QUERY_DECLINED;
+    Atom *tag = atom_symbol(arena, "grouped-count");
+    if (!tag || petta_native_query_defined(root, tag->sym_id))
+        return CETTA_NATIVE_QUERY_DECLINED;
+    Atom *parts[PETTA_GROUPED_COUNT_VARS + 2u];
+    parts[0] = tag;
+    for (size_t i = 0u; i < var_count; i++)
+        parts[i + 1u] = vars[i];
+    Atom *outer_tuple = atom_expr(arena, parts, (CettaExprLen)(var_count + 1u));
+    for (size_t i = 0u; i < key_count; i++)
+        parts[i + 1u] = keys[i];
+    Atom *key_tuple = atom_expr(arena, parts, (CettaExprLen)(key_count + 1u));
+    if (!outer_tuple || !key_tuple)
+        return CETTA_NATIVE_QUERY_DECLINED;
+    /* Where each key sits in the solutions of P. */
+    size_t key_at[PETTA_GROUPED_COUNT_VARS];
+    for (size_t k = 0u; k < key_count; k++) {
+        key_at[k] = SIZE_MAX;
+        for (size_t v = 0u; v < var_count; v++) {
+            if (var_id_eq(vars[v]->var_id, keys[k]->var_id))
+                key_at[k] = v;
+        }
+        if (key_at[k] == SIZE_MAX)
+            return CETTA_NATIVE_QUERY_DECLINED;
+    }
+    Atom *solutions = petta_grouped_count_collect(
+        source, arena, &query->expr.elems[2], outer_tuple);
+    Atom *grouped = solutions
+        ? petta_grouped_count_collect(counted_source, arena,
+                                      &match->expr.elems[2], key_tuple)
+        : NULL;
+    if (!grouped)
+        return CETTA_NATIVE_QUERY_DECLINED;
+    /* The counts by key, in a table of twice the keys met at most. */
+    size_t cap = 16u;
+    while (cap < (size_t)grouped->expr.len * 2u)
+        cap <<= 1u;
+    PettaGroupedCount *table = calloc(cap, sizeof(*table));
+    if (!table)
+        return CETTA_NATIVE_QUERY_DECLINED;
+    for (CettaExprIndex i = 0u; i < grouped->expr.len; i++) {
+        Atom *key = grouped->expr.elems[i];
+        uint32_t hash = atom_hash(key);
+        size_t slot = hash & (cap - 1u);
+        while (table[slot].key &&
+               (table[slot].hash != hash || !atom_eq(table[slot].key, key)))
+            slot = (slot + 1u) & (cap - 1u);
+        table[slot].key = key;
+        table[slot].hash = hash;
+        table[slot].count++;
+    }
+    /* Each solution of P with its count. */
+    Atom **rows = solutions->expr.len
+        ? arena_alloc(arena, sizeof(*rows) * (size_t)solutions->expr.len)
+        : NULL;
+    bool ok = !solutions->expr.len || rows;
+    for (CettaExprIndex i = 0u; ok && i < solutions->expr.len; i++) {
+        Atom *solution = solutions->expr.elems[i];
+        if (solution->kind != ATOM_EXPR ||
+            solution->expr.len != var_count + 1u) {
+            ok = false;
+            break;
+        }
+        parts[0] = tag;
+        for (size_t k = 0u; k < key_count; k++)
+            parts[k + 1u] = solution->expr.elems[key_at[k] + 1u];
+        Atom *key = atom_expr(arena, parts, (CettaExprLen)(key_count + 1u));
+        uint64_t found = 0u;
+        if (key) {
+            uint32_t hash = atom_hash(key);
+            size_t slot = hash & (cap - 1u);
+            while (table[slot].key &&
+                   (table[slot].hash != hash ||
+                    !atom_eq(table[slot].key, key)))
+                slot = (slot + 1u) & (cap - 1u);
+            found = table[slot].key ? table[slot].count : 0u;
+        }
+        for (size_t v = 0u; v < var_count; v++)
+            parts[v + 1u] = solution->expr.elems[v + 1u];
+        parts[var_count + 1u] = found <= (uint64_t)INT64_MAX
+            ? atom_int(arena, (int64_t)found) : NULL;
+        rows[i] = key && parts[var_count + 1u]
+            ? atom_expr(arena, parts, (CettaExprLen)(var_count + 2u)) : NULL;
+        ok = rows[i] != NULL;
+    }
+    free(table);
+    if (!ok)
+        return CETTA_NATIVE_QUERY_DECLINED;
+    /* BODY over the rows, as `(let (tag V... $n) (superpose ROWS) BODY)`. */
+    parts[0] = tag;
+    for (size_t v = 0u; v < var_count; v++)
+        parts[v + 1u] = vars[v];
+    parts[var_count + 1u] = n;
+    Atom *row_pattern = atom_expr(arena, parts, (CettaExprLen)(var_count + 2u));
+    Atom *row_list = atom_expr(arena, rows, solutions->expr.len);
+    Atom *spread[2] = {atom_symbol_id(arena, g_builtin_syms.superpose),
+                       row_list};
+    Atom *superposed = row_list && spread[0] ? atom_expr(arena, spread, 2u)
+                                             : NULL;
+    Atom *listed_parts[4] = {atom_symbol_id(arena, g_builtin_syms.let),
+                             row_pattern, superposed, body};
+    Atom *listed = row_pattern && superposed && listed_parts[0]
+        ? atom_expr(arena, listed_parts, 4u) : NULL;
+    if (!listed)
+        return CETTA_NATIVE_QUERY_DECLINED;
+    if (solutions->expr.len == 0u) {
+        *value = count_only
+            ? (wrap_collection ? atom_counted_collection(arena, 0)
+                               : atom_int(arena, 0))
+            : atom_unit(arena);
+        return *value ? CETTA_NATIVE_QUERY_DONE : CETTA_NATIVE_QUERY_FAILED;
+    }
+    return petta_eval_machine_native_collect(context, root, arena, listed,
+                                             NULL, count_only,
+                                             wrap_collection, value);
+}
+
 static CettaNativeQueryStatus petta_eval_machine_native_collect(
     void *context, Space *root, Arena *arena, Atom *query,
     const PettaPlanNode *plan, bool count_only, bool wrap_collection,
@@ -48960,6 +49309,14 @@ static CettaNativeQueryStatus petta_eval_machine_native_collect(
             context, root, arena, query, count_only, wrap_collection, value);
         if (saturated != CETTA_NATIVE_QUERY_DECLINED)
             return saturated;
+    }
+    /* A count of a match under each solution of another, taken in one pass
+     * (petta_grouped_count_run). */
+    if (context) {
+        CettaNativeQueryStatus counted = petta_grouped_count_run(
+            context, root, arena, query, count_only, wrap_collection, value);
+        if (counted != CETTA_NATIVE_QUERY_DECLINED)
+            return counted;
     }
     Atom *fused = context ? petta_native_region_snapshot_stream(root, arena,
                                                                 query)
@@ -48994,6 +49351,13 @@ static CettaNativeQueryStatus petta_eval_machine_native_collect(
             PETTA_MACHINE_HOST_READY_OVERRIDE)
         return CETTA_NATIVE_QUERY_DECLINED;
     bool listed = petta_native_query_listed(query);
+    /* A list spread over a match, `(let PAT (superpose (R...)) (match S P
+     * T))`: its rows, each `(listed-row R)` in a bag of their own, joined
+     * with the match as nested legs (petta_listed_match_run). */
+    if (listed && context &&
+        petta_native_query_is_match(query->expr.elems[3]))
+        return petta_listed_match_run(context, root, arena, query, count_only,
+                                      wrap_collection, value);
     if (!listed &&
         !atom_is_symbol_id(query->expr.elems[0], g_builtin_syms.match))
         return CETTA_NATIVE_QUERY_DECLINED;
@@ -49148,11 +49512,20 @@ static CettaNativeQueryStatus petta_eval_machine_native_collect(
         /* A guard is read on the snapshot too: no effect may change a
          * row it reads, and none may write the space whose equation was
          * inlined. */
+        /* Adding exactly the row the guard probes into its space is an
+         * insert (G10) under a count, and where the branches answer only
+         * what the guard's variables make: then which solution meets an
+         * instance first changes no answer. */
+        bool answers_by_guard = guard_space && guard_pattern &&
+            (!answer || petta_native_query_names_within(answer,
+                                                        guard_pattern)) &&
+            (else_empty ||
+             (else_atom && petta_native_query_names_within(else_atom,
+                                                           guard_pattern)));
         for (size_t effect = 0u; guard_space && effect < effect_count;
              effect++) {
-            /* Under a count, adding exactly the row the guard probes into
-             * its space is an insert (G10). */
-            if (count_only && effects[effect].target == guard_space &&
+            if ((count_only || answers_by_guard) &&
+                effects[effect].target == guard_space &&
                 effects[effect].target != root && !effects[effect].removal &&
                 atom_eq(effects[effect].data, guard_pattern)) {
                 effects[effect].insert = true;
@@ -49242,6 +49615,58 @@ static CettaNativeQueryStatus petta_eval_machine_native_collect(
     } else {
         *value = result.collection;
     }
+    return *value ? CETTA_NATIVE_QUERY_DONE : CETTA_NATIVE_QUERY_FAILED;
+}
+
+/* `(match S P (if TEST DATA (empty)))`, either branch empty, P one pattern,
+ * TEST comparisons of the solutions' values the native path reads (its
+ * filters) and DATA an atom answering itself: the instances of DATA for the
+ * solutions TEST passes, collected natively on the occurrences of S visible
+ * now.  It reads no other space and makes no effect; DECLINED, having read
+ * nothing, where any of that does not hold (PettaMachineHost.native_filter). */
+static CettaNativeQueryStatus petta_eval_machine_native_filter(
+    void *context, Space *root, Arena *arena, Atom *query, Atom **value) {
+    *value = NULL;
+    if (!cetta_native_query_enabled() || !root || !arena || !query ||
+        eval_current_language_id() != CETTA_LANGUAGE_PETTA ||
+        !petta_native_query_is_match(query) ||
+        atom_structural_may_have_list_carrier(query))
+        return CETTA_NATIVE_QUERY_DECLINED;
+    Atom *pattern = query->expr.elems[2];
+    if (pattern->kind != ATOM_EXPR || pattern->expr.len == 0u ||
+        atom_is_symbol_id(pattern->expr.elems[0], g_builtin_syms.comma))
+        return CETTA_NATIVE_QUERY_DECLINED;
+    Space *source = petta_native_query_space(context, root, arena,
+                                             query->expr.elems[1]);
+    Space *guard_space = NULL;
+    Atom *guard_pattern = NULL;
+    PettaNativeConjunction conj = {.filter_count = 0u};
+    Atom *data = NULL;
+    Atom *else_atom = NULL;
+    bool else_empty = false;
+    if (!source ||
+        !petta_native_query_branch(context, root, arena, query->expr.elems[3],
+                                   &guard_space, &guard_pattern, &conj, &data,
+                                   &else_atom, &else_empty) ||
+        guard_space || !else_empty || conj.filter_count == 0u || !data ||
+        !petta_native_region_answers_itself(root, data, 0u))
+        return CETTA_NATIVE_QUERY_DECLINED;
+    CettaNativeQuery native = {
+        .source = source,
+        .patterns = &query->expr.elems[2],
+        .pattern_count = 1u,
+        .template_atom = data,
+        .consumer = CETTA_NATIVE_QUERY_COLLECT,
+        .filters = conj.filters,
+        .filter_count = conj.filter_count,
+        .else_empty = true,
+    };
+    CettaNativeQueryResult result = {0};
+    CettaNativeQueryStatus status =
+        cetta_native_query_run(&native, arena, &result);
+    if (status != CETTA_NATIVE_QUERY_DONE)
+        return status;
+    *value = result.collection;
     return *value ? CETTA_NATIVE_QUERY_DONE : CETTA_NATIVE_QUERY_FAILED;
 }
 
@@ -49788,6 +50213,447 @@ static PettaMachineFoldResult petta_eval_flatten_fold(
     return *out ? PETTA_MACHINE_FOLD_VALUE : PETTA_MACHINE_FOLD_NOT_APPLICABLE;
 }
 
+/* ── Scalar folds ────────────────────────────────────────────────────────
+ * `(foldl-atom Items Initial $a $x STEP)` whose step makes the next
+ * accumulator from scalars: STEP an expression of the scalar language, or a
+ * call of a function of one equation `(= (f P Q) BODY)` on the two binders,
+ * a parameter a variable or (the accumulator's) a flat tuple of distinct
+ * variables, and BODY an expression of the scalar language.  That language:
+ * variables, integers and symbols no rule defines; `(if TEST X Y)` on
+ * `(== A B)` or an order of integers; sums and differences of integers; and
+ * flat tuples of these, data where their head is no callable value.  The
+ * fold runs natively, the accumulator's fields in registers.  It declines,
+ * having published nothing, where a value is one it does not read (an order
+ * or a sum over a value that is no integer, a sum past 64 bits, a tuple
+ * headed by a callable value, an accumulator of another shape than its
+ * parameter), and the ordinary fold runs. */
+enum {
+    PETTA_SCALAR_REGISTERS = 16u,
+    PETTA_SCALAR_NODES = 128u,
+    PETTA_SCALAR_SYMBOLS = 8u,
+};
+
+typedef enum {
+    PETTA_SCALAR_VAR,
+    PETTA_SCALAR_CONST,
+    PETTA_SCALAR_IF,
+    PETTA_SCALAR_EQ,
+    /* LEFT < RIGHT, and LEFT <= RIGHT. */
+    PETTA_SCALAR_LT,
+    PETTA_SCALAR_LE,
+    PETTA_SCALAR_ADD,
+    PETTA_SCALAR_SUB,
+    PETTA_SCALAR_TUPLE,
+} PettaScalarOp;
+
+typedef struct {
+    PettaScalarOp op;
+    /* VAR: the register.  TUPLE: its first element's index in `elements`
+     * and its length.  Otherwise: the operands' nodes. */
+    uint16_t slot;
+    uint16_t child[3];
+    uint16_t first;
+    uint16_t len;
+    Atom *atom;
+} PettaScalarNode;
+
+typedef struct {
+    bool integer;
+    int64_t i;
+    /* A symbol, where not an integer. */
+    Atom *atom;
+} PettaScalarValue;
+
+typedef struct {
+    Space *root;
+    PettaScalarNode nodes[PETTA_SCALAR_NODES];
+    uint16_t node_count;
+    uint16_t elements[PETTA_SCALAR_NODES];
+    uint16_t element_count;
+    Atom *vars[PETTA_SCALAR_REGISTERS];
+    uint16_t var_count;
+    /* Symbols met at a tuple's head and found to be no callable value. */
+    SymbolId inert[PETTA_SCALAR_SYMBOLS];
+    uint16_t inert_count;
+} PettaScalarProgram;
+
+/* Whether HEAD names nothing a call could run: no rule, operation or
+ * intrinsic. */
+static bool petta_scalar_symbol_inert(Space *root, SymbolId head) {
+    return !petta_native_query_defined(root, head) && !is_grounded_op(head) &&
+        !symbol_id_is_builtin(head) && !petta_program_head_is_intrinsic(head);
+}
+
+/* A form of the scalar language whose head no rule extends. */
+static bool petta_scalar_form(Space *root, Atom *atom, SymbolId head,
+                              CettaExprLen len) {
+    return atom->kind == ATOM_EXPR && atom->expr.len == len &&
+        atom_is_symbol_id(atom->expr.elems[0], head) &&
+        !petta_native_query_defined(root, head);
+}
+
+static int petta_scalar_node(PettaScalarProgram *program, PettaScalarOp op) {
+    if (program->node_count == PETTA_SCALAR_NODES)
+        return -1;
+    program->nodes[program->node_count] = (PettaScalarNode){.op = op};
+    return program->node_count++;
+}
+
+/* ATOM compiled into PROGRAM: its node, or -1 where it is not of the scalar
+ * language.  RESULT: ATOM is the step's value, where a tuple may stand. */
+static int petta_scalar_compile(PettaScalarProgram *program, Atom *atom,
+                                bool result) {
+    Space *root = program->root;
+    if (atom->kind == ATOM_VAR) {
+        for (uint16_t i = 0u; i < program->var_count; i++) {
+            if (var_id_eq(program->vars[i]->var_id, atom->var_id)) {
+                int node = petta_scalar_node(program, PETTA_SCALAR_VAR);
+                if (node >= 0)
+                    program->nodes[node].slot = i;
+                return node;
+            }
+        }
+        return -1;
+    }
+    if ((atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_INT) ||
+        (atom->kind == ATOM_SYMBOL &&
+         petta_scalar_symbol_inert(root, atom->sym_id))) {
+        int node = petta_scalar_node(program, PETTA_SCALAR_CONST);
+        if (node >= 0)
+            program->nodes[node].atom = atom;
+        return node;
+    }
+    if (atom->kind != ATOM_EXPR || atom->expr.len == 0u)
+        return -1;
+    if (petta_scalar_form(root, atom, g_builtin_syms.if_text, 4u)) {
+        int test = petta_scalar_compile(program, atom->expr.elems[1], false);
+        if (test < 0 || program->nodes[test].op < PETTA_SCALAR_EQ ||
+            program->nodes[test].op > PETTA_SCALAR_LE)
+            return -1;
+        int then_node = petta_scalar_compile(program, atom->expr.elems[2],
+                                             result);
+        int else_node = then_node >= 0
+            ? petta_scalar_compile(program, atom->expr.elems[3], result)
+            : -1;
+        int node = else_node >= 0
+            ? petta_scalar_node(program, PETTA_SCALAR_IF) : -1;
+        if (node < 0)
+            return -1;
+        program->nodes[node].child[0] = (uint16_t)test;
+        program->nodes[node].child[1] = (uint16_t)then_node;
+        program->nodes[node].child[2] = (uint16_t)else_node;
+        return node;
+    }
+    /* `(== A B)`, an order of integers (`(> A B)` is `(< B A)`), and sums
+     * and differences of integers. */
+    SymbolId head_id = atom->expr.elems[0]->kind == ATOM_SYMBOL
+        ? atom->expr.elems[0]->sym_id : SYMBOL_ID_NONE;
+    PettaScalarOp op = PETTA_SCALAR_TUPLE;
+    if (head_id == g_builtin_syms.op_eq)
+        op = PETTA_SCALAR_EQ;
+    else if (head_id == g_builtin_syms.op_lt || head_id == g_builtin_syms.op_gt)
+        op = PETTA_SCALAR_LT;
+    else if (head_id == g_builtin_syms.op_le || head_id == g_builtin_syms.op_ge)
+        op = PETTA_SCALAR_LE;
+    else if (head_id == g_builtin_syms.op_plus)
+        op = PETTA_SCALAR_ADD;
+    else if (head_id == g_builtin_syms.op_minus)
+        op = PETTA_SCALAR_SUB;
+    if (op != PETTA_SCALAR_TUPLE) {
+        bool swap = head_id == g_builtin_syms.op_gt ||
+            head_id == g_builtin_syms.op_ge;
+        if (!petta_scalar_form(root, atom, head_id, 3u))
+            return -1;
+        int left = petta_scalar_compile(program, atom->expr.elems[1], false);
+        int right = left >= 0
+            ? petta_scalar_compile(program, atom->expr.elems[2], false) : -1;
+        int node = right >= 0 ? petta_scalar_node(program, op) : -1;
+        if (node < 0)
+            return -1;
+        program->nodes[node].child[0] = (uint16_t)(swap ? right : left);
+        program->nodes[node].child[1] = (uint16_t)(swap ? left : right);
+        return node;
+    }
+    /* A tuple: a head that is a variable, an integer or a symbol naming
+     * nothing callable, over scalars. */
+    Atom *head = atom->expr.elems[0];
+    if (!result ||
+        !(head->kind == ATOM_VAR ||
+          (head->kind == ATOM_GROUNDED && head->ground.gkind == GV_INT) ||
+          (head->kind == ATOM_SYMBOL &&
+           petta_scalar_symbol_inert(root, head->sym_id))) ||
+        program->element_count + atom->expr.len > PETTA_SCALAR_NODES)
+        return -1;
+    uint16_t first = program->element_count;
+    program->element_count += (uint16_t)atom->expr.len;
+    for (CettaExprIndex i = 0u; i < atom->expr.len; i++) {
+        int element = petta_scalar_compile(program, atom->expr.elems[i],
+                                           false);
+        if (element < 0 || program->nodes[element].op == PETTA_SCALAR_TUPLE)
+            return -1;
+        program->elements[first + i] = (uint16_t)element;
+    }
+    int node = petta_scalar_node(program, PETTA_SCALAR_TUPLE);
+    if (node >= 0) {
+        program->nodes[node].first = first;
+        program->nodes[node].len = (uint16_t)atom->expr.len;
+    }
+    return node;
+}
+
+/* A scalar's value: an integer, or a symbol; false for any other atom. */
+static bool petta_scalar_read(Atom *atom, PettaScalarValue *value) {
+    if (atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_INT) {
+        *value = (PettaScalarValue){.integer = true, .i = atom->ground.ival};
+        return true;
+    }
+    if (atom->kind == ATOM_SYMBOL) {
+        *value = (PettaScalarValue){.atom = atom};
+        return true;
+    }
+    return false;
+}
+
+/* NODE's value under REGISTERS; false where it reads a value the language
+ * does not (the fold then declines). */
+static bool petta_scalar_eval(PettaScalarProgram *program, uint16_t index,
+                              const PettaScalarValue *registers,
+                              PettaScalarValue *out) {
+    const PettaScalarNode *node = &program->nodes[index];
+    switch (node->op) {
+    case PETTA_SCALAR_VAR:
+        *out = registers[node->slot];
+        return true;
+    case PETTA_SCALAR_CONST:
+        return petta_scalar_read(node->atom, out);
+    case PETTA_SCALAR_IF: {
+        PettaScalarValue test;
+        if (!petta_scalar_eval(program, node->child[0], registers, &test))
+            return false;
+        return petta_scalar_eval(program, node->child[test.i ? 1 : 2],
+                                 registers, out);
+    }
+    case PETTA_SCALAR_EQ:
+    case PETTA_SCALAR_LT:
+    case PETTA_SCALAR_LE:
+    case PETTA_SCALAR_ADD:
+    case PETTA_SCALAR_SUB: {
+        PettaScalarValue a, b;
+        if (!petta_scalar_eval(program, node->child[0], registers, &a) ||
+            !petta_scalar_eval(program, node->child[1], registers, &b))
+            return false;
+        if (node->op == PETTA_SCALAR_EQ) {
+            /* Integers and symbols are each equal to themselves alone. */
+            bool equal = a.integer == b.integer &&
+                (a.integer ? a.i == b.i
+                           : a.atom->sym_id == b.atom->sym_id);
+            *out = (PettaScalarValue){.integer = true, .i = equal};
+            return true;
+        }
+        if (!a.integer || !b.integer)
+            return false;
+        int64_t value = 0;
+        switch (node->op) {
+        case PETTA_SCALAR_LT:
+            value = a.i < b.i;
+            break;
+        case PETTA_SCALAR_LE:
+            value = a.i <= b.i;
+            break;
+        case PETTA_SCALAR_ADD:
+            if (__builtin_add_overflow(a.i, b.i, &value))
+                return false;
+            break;
+        default:
+            if (__builtin_sub_overflow(a.i, b.i, &value))
+                return false;
+            break;
+        }
+        *out = (PettaScalarValue){.integer = true, .i = value};
+        return true;
+    }
+    case PETTA_SCALAR_TUPLE:
+        return false;
+    }
+    return false;
+}
+
+/* The tuple a step's value reaches through its tests, its fields into
+ * NEXT, which has room for WIDTH; false where the value is no tuple of
+ * WIDTH fields, a field is unread, or the head is a callable symbol. */
+static bool petta_scalar_step(PettaScalarProgram *program, uint16_t index,
+                              const PettaScalarValue *registers,
+                              PettaScalarValue *next, uint16_t width) {
+    const PettaScalarNode *node = &program->nodes[index];
+    while (node->op == PETTA_SCALAR_IF) {
+        PettaScalarValue test;
+        if (!petta_scalar_eval(program, node->child[0], registers, &test))
+            return false;
+        node = &program->nodes[node->child[test.i ? 1 : 2]];
+    }
+    if (node->op != PETTA_SCALAR_TUPLE) {
+        return width == 0u &&
+            petta_scalar_eval(program, (uint16_t)(node - program->nodes),
+                              registers, next);
+    }
+    if (node->len != width)
+        return false;
+    for (uint16_t f = 0u; f < width; f++) {
+        if (!petta_scalar_eval(program, program->elements[node->first + f],
+                               registers, &next[f]))
+            return false;
+    }
+    if (next[0].integer)
+        return true;
+    /* A tuple headed by a symbol is data only where the symbol names
+     * nothing a call could run. */
+    SymbolId head = next[0].atom->sym_id;
+    for (uint16_t i = 0u; i < program->inert_count; i++) {
+        if (program->inert[i] == head)
+            return true;
+    }
+    if (!petta_scalar_symbol_inert(program->root, head))
+        return false;
+    if (program->inert_count < PETTA_SCALAR_SYMBOLS)
+        program->inert[program->inert_count++] = head;
+    return true;
+}
+
+static Atom *petta_scalar_atom(Arena *arena, const PettaScalarValue *value) {
+    return value->integer ? atom_int(arena, value->i) : value->atom;
+}
+
+/* The fold, natively, where its step is of the scalar language. */
+static PettaMachineFoldResult petta_eval_scalar_fold(
+    PettaEvalMachineContext *owner, Space *space, Arena *arena, Atom *items,
+    Atom *initial, Atom *accumulator, Atom *item, Atom *step,
+    const PettaPlanNode *plan, const Bindings *environment, Atom **out) {
+    if (!cetta_native_query_enabled() || !owner || owner->transaction ||
+        owner->fuel >= 0 || !space || !arena || !items || !initial ||
+        !step || !accumulator || !item ||
+        eval_current_language_id() != CETTA_LANGUAGE_PETTA ||
+        cetta_profile_uses_petta_typing(active_profile()) ||
+        prime_need_receipt_observer_requested() ||
+        gslt_match_chain_trace_active() ||
+        accumulator->kind != ATOM_VAR || item->kind != ATOM_VAR ||
+        var_id_eq(accumulator->var_id, item->var_id) ||
+        !cetta_observation_environment_var_is_private(environment,
+                                                      accumulator->var_id) ||
+        !cetta_observation_environment_var_is_private(environment,
+                                                      item->var_id))
+        return PETTA_MACHINE_FOLD_NOT_APPLICABLE;
+    Atom *ready = bindings_apply_if_vars(environment, arena, items);
+    Atom *start = bindings_apply_if_vars(environment, arena, initial);
+    Atom *const *elements = NULL;
+    CettaExprLen count = 0u;
+    if (!ready || !start || atom_has_vars(start) ||
+        !atom_sequence_view(ready, &elements, &count))
+        return PETTA_MACHINE_FOLD_NOT_APPLICABLE;
+    PettaScalarProgram *program = arena_alloc(arena, sizeof(*program));
+    if (!program)
+        return PETTA_MACHINE_FOLD_NOT_APPLICABLE;
+    *program = (PettaScalarProgram){.root = space};
+    /* The parameters: the accumulator's pattern, then the item. */
+    Atom *pattern = accumulator;
+    Atom *body = step;
+    if (plan && plan->role == PETTA_PLAN_STATIC_CALL &&
+        step->kind == ATOM_EXPR && step->expr.len == 3u &&
+        step->expr.elems[0]->kind == ATOM_SYMBOL &&
+        petta_native_query_defined(space, step->expr.elems[0]->sym_id) &&
+        !is_grounded_op(step->expr.elems[0]->sym_id) &&
+        !symbol_id_is_builtin(step->expr.elems[0]->sym_id)) {
+        /* A call of a function the program defines. */
+        SymbolId head = step->expr.elems[0]->sym_id;
+        if (space_head_declares_type(space, head))
+            return PETTA_MACHINE_FOLD_NOT_APPLICABLE;
+        Atom *lhs[2];
+        Atom *rhs[2];
+        size_t equations = 0u;
+        bool forward = atom_eq(step->expr.elems[1], accumulator) &&
+            atom_eq(step->expr.elems[2], item);
+        bool backward = atom_eq(step->expr.elems[1], item) &&
+            atom_eq(step->expr.elems[2], accumulator);
+        if (!(forward || backward) || petta_program_head_is_intrinsic(head) ||
+            !petta_region_equations(space, head, lhs, rhs, 2u, &equations) ||
+            equations != 1u || lhs[0]->expr.len != 3u)
+            return PETTA_MACHINE_FOLD_NOT_APPLICABLE;
+        pattern = lhs[0]->expr.elems[forward ? 1u : 2u];
+        item = lhs[0]->expr.elems[forward ? 2u : 1u];
+        body = rhs[0];
+        if (item->kind != ATOM_VAR)
+            return PETTA_MACHINE_FOLD_NOT_APPLICABLE;
+    } else if (!plan || plan->role != PETTA_PLAN_STATIC_CALL) {
+        /* A step written in place is the scalar language over the two
+         * binders, or the fold declines when it is compiled. */
+        return PETTA_MACHINE_FOLD_NOT_APPLICABLE;
+    }
+    uint16_t width = 0u;
+    if (pattern->kind == ATOM_EXPR) {
+        if (pattern->expr.len == 0u ||
+            pattern->expr.len >= PETTA_SCALAR_REGISTERS ||
+            start->kind != ATOM_EXPR ||
+            start->expr.len != pattern->expr.len)
+            return PETTA_MACHINE_FOLD_NOT_APPLICABLE;
+        width = (uint16_t)pattern->expr.len;
+        for (uint16_t f = 0u; f < width; f++) {
+            Atom *field = pattern->expr.elems[f];
+            if (field->kind != ATOM_VAR)
+                return PETTA_MACHINE_FOLD_NOT_APPLICABLE;
+            for (uint16_t g = 0u; g < f; g++) {
+                if (var_id_eq(program->vars[g]->var_id, field->var_id))
+                    return PETTA_MACHINE_FOLD_NOT_APPLICABLE;
+            }
+            program->vars[program->var_count++] = field;
+        }
+    } else if (pattern->kind == ATOM_VAR) {
+        program->vars[program->var_count++] = pattern;
+    } else {
+        return PETTA_MACHINE_FOLD_NOT_APPLICABLE;
+    }
+    for (uint16_t g = 0u; g < program->var_count; g++) {
+        if (var_id_eq(program->vars[g]->var_id, item->var_id))
+            return PETTA_MACHINE_FOLD_NOT_APPLICABLE;
+    }
+    uint16_t item_slot = program->var_count;
+    program->vars[program->var_count++] = item;
+    int top = petta_scalar_compile(program, body, true);
+    if (top < 0)
+        return PETTA_MACHINE_FOLD_NOT_APPLICABLE;
+    /* The accumulator and the items, read before any step. */
+    PettaScalarValue registers[PETTA_SCALAR_REGISTERS];
+    PettaScalarValue next[PETTA_SCALAR_REGISTERS];
+    if (width) {
+        for (uint16_t f = 0u; f < width; f++) {
+            if (!petta_scalar_read(start->expr.elems[f], &registers[f]))
+                return PETTA_MACHINE_FOLD_NOT_APPLICABLE;
+        }
+    } else if (!petta_scalar_read(start, &registers[0])) {
+        return PETTA_MACHINE_FOLD_NOT_APPLICABLE;
+    }
+    for (CettaExprIndex i = 0u; i < count; i++) {
+        if ((i & 1023u) == 0u && eval_native_interrupted())
+            return PETTA_MACHINE_FOLD_INTERRUPTED;
+        if (!petta_scalar_read(elements[i], &registers[item_slot]) ||
+            !petta_scalar_step(program, (uint16_t)top, registers, next,
+                               width))
+            return PETTA_MACHINE_FOLD_NOT_APPLICABLE;
+        memcpy(registers, next,
+               sizeof(*registers) * (width ? width : 1u));
+    }
+    if (!width) {
+        *out = petta_scalar_atom(arena, &registers[0]);
+    } else {
+        Atom *fields[PETTA_SCALAR_REGISTERS];
+        for (uint16_t f = 0u; f < width; f++) {
+            fields[f] = petta_scalar_atom(arena, &registers[f]);
+            if (!fields[f])
+                return PETTA_MACHINE_FOLD_NOT_APPLICABLE;
+        }
+        *out = atom_expr(arena, fields, width);
+    }
+    return *out ? PETTA_MACHINE_FOLD_VALUE : PETTA_MACHINE_FOLD_NOT_APPLICABLE;
+}
+
 static PettaMachineFoldResult petta_eval_machine_foldl_single_result(
     void *context, Space *space, Arena *arena,
     Atom *items, Atom *initial,
@@ -49799,6 +50665,11 @@ static PettaMachineFoldResult petta_eval_machine_foldl_single_result(
         eval_context, space, arena, items, initial, accumulator_binder, item_binder,
         step_expression, step_plan, environment, result_out);
     if (flattened != PETTA_MACHINE_FOLD_NOT_APPLICABLE) return flattened;
+    PettaMachineFoldResult scalar = petta_eval_scalar_fold(
+        eval_context, space, arena, items, initial, accumulator_binder,
+        item_binder, step_expression, step_plan, environment, result_out);
+    if (scalar != PETTA_MACHINE_FOLD_NOT_APPLICABLE)
+        return scalar;
     __attribute__((cleanup(petta_source_plan_scope_leave))) PettaSourcePlanScope source_scope = {0};
     petta_source_plan_scope_enter(&source_scope, step_plan, step_expression);
     PreparedFoldResult result = prepared_foldl_single_result(
@@ -51123,6 +51994,7 @@ static PettaMachineHost petta_eval_machine_host(
             petta_eval_machine_native_collect_snapshot,
         .native_collect_distinct_snapshot =
             petta_eval_machine_native_collect_distinct_snapshot,
+        .native_filter = petta_eval_machine_native_filter,
         .prepare_call = g_he_shared_execution
             ? NULL : petta_eval_machine_prepare_call,
         .prepared_pure_call_declined =
