@@ -22,9 +22,10 @@ the native path matches part by part.  Rows holding variables or floats, at
 top level or inside a pair, are among them: the native path declines those,
 and they must answer the same.  Matches inside matches, over the matched
 space, a bag or a set and sharing variables, are joined natively as one
-conjunction unless an effect may change a row one of them reads, a
-removal included that takes a row holding a variable which a pattern
-reads, though the two fix different atoms.  Variables are read outside
+conjunction; where an effect may change a row a later one of them reads,
+which it reads afresh, the run makes its effects only if none met such a
+read, a removal included that takes a row holding a variable which a
+pattern reads, though the two fix different atoms.  Variables are read outside
 the construct that binds them: a let's or a case clause's variable that
 the pattern binds first or an if branch reads, a let's variable read after
 the let or passed in by a caller, a collected match's variables read by

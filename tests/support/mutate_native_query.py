@@ -142,6 +142,10 @@ mutations = {
                        "bits += row[w] != 0u;"),
     "dense-diagonal": ("base[key >> 6u] &= ~(UINT64_C(1) << (key & 63u));",
                        "(void)key;"),
+    "afresh-unchecked": ("static bool native_query_afresh_unmet(NativeQueryRun *run) {\n",
+                         "static bool native_query_afresh_unmet(NativeQueryRun *run) {\n    return true;\n"),
+    "afresh-ignored": ("                    native.afresh |= UINT64_C(1) << leg;",
+                       "                    (void)0;"),
 }
 old, new = mutations[kind]
 assert source.count(old) == 1, (kind, source.count(old))
