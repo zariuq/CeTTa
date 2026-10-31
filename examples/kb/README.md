@@ -1,5 +1,62 @@
 # A metagraph database in MeTTa
 
+## Durable application queue
+
+`space_job_queue.metta` implements controlled queue transitions using ordinary
+facts, captured queries, indexes and one atomic publication per operation.
+It never runs a tool. Its transition shape is qualified against the existing
+execution gateway's SQLite `Store` class when that reference is supplied.
+
+```text
+submit → queued → running → succeeded / failed / cancelled
+            |        |
+         cancel      +→ caller-requested recovery:
+                         interrupted read  → failed
+                         interrupted write → uncertain
+```
+
+```sh
+mkdir -m 700 queue-space
+./cetta --lang petta --run-contract examples/kb/space_job_queue_run.metta "$PWD/queue-space"
+```
+
+The example uses synthetic time, submits and claims one job, and prints its
+facts and ordered receipts. Repeating it replays those operations. A committed
+or replayed queue outcome grants no authority to repeat an external action.
+
+The service entry is `jobs:configuration`, using `CETTA_KB_DIRECTORY`,
+`CETTA_KB_SOCKET` and `CETTA_JOB_AGENT`. Embedded `jobs:run` and service `Apply`
+use the same transition function. The service offers captured `Snapshot`,
+`Find`, `EventsOpen`/`RelPage`/`RelCancel`, `Resolve` and `Compact` operations;
+its write surface excludes arbitrary fact edits. Effect labels must come
+from the trusted dispatcher configuration. This is storage, not a dispatcher.
+
+Ready and running jobs expose separate Int64 order projections. The explicit
+`KqIndexedI64Range` cursor gives FIFO order without scanning terminal history.
+Job IDs and sequence values are unique through the closed transition policy;
+facts, changed indexes, event receipts and retry outcomes publish together.
+Observation time is not a new logical command on retry. A changed intent
+under the same operation ID refuses. Per-job receipt sorting is explicit.
+Original job membership identities survive state updates and restart.
+
+Transition commands carry a trusted observation time. The caller must take
+that observation at its decision boundary; the queue does not authenticate a
+client-supplied clock or tool classification. A production gateway adapter
+still needs that caller qualification before replacing its SQLite store.
+
+Storage-server restart preserves running jobs. Dispatch recovery is a separate
+caller action: the store cannot infer whether an external process still runs.
+The qualification client under `tests/support` never dispatches anything.
+
+`make test-space-job-queue` checks core transitions, races, durable retries,
+restart, more than 128 jobs, read-only rights and cleanup. For actual SQLite
+transition comparison, pass `--reference-store /path/to/execution_gateway/store.py`
+to `tests/support/check_job_queue.py`. The source hash and scope are recorded.
+
+This does not qualify live migration. The current CAV envelope has an existing
+1 MiB limit: a 2 MiB valid SQLite request is explicitly refused before a native
+write. Wider payload framing remains work. No job-count limit was introduced.
+
 ## Computed properties with the native memo
 
 `space_computed_curriculum.metta` derives syntax-node counts from ordinary
