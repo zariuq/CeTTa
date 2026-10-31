@@ -3,6 +3,8 @@
 !(import! &self (library lib_memo))
 
 (QueryPureCallbackV1 space-computed:syntax-row?)
+; The annotation's memo-policy read is covered by the query's program watch.
+; Other mutable configuration needs its own captured observation contract.
 (QueryPureCallbackV1 space-computed:annotate)
 
 ; The argument contains every data dependency. Neither this function nor its
