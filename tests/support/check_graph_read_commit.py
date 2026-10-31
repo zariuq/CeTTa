@@ -135,6 +135,53 @@ def main():
             await_resources(first, 0)
             scenarios.append("wrong-family-consumes-and-closes-context")
 
+            for operation in ("GraphReadPage", "GraphReadCommit", "GraphReadCancel"):
+                view, _ = first.snapshot()
+                plain = first.route("GraphOpen", E("GraphOpenV1", S("sample"), 3, reach, 4096), view)
+                first.drop(view)
+                assert plain[0] == S("ServiceResourceV1"), plain
+                argument = (E("GraphPageV1", 1, 8) if operation == "GraphReadPage"
+                            else decision("plain-cursor"))
+                refused = use(first, plain[1], operation, argument)
+                expected = (S("GraphReadClosedV1") if operation == "GraphReadCancel"
+                            else E("KbRefused", S("graph-read-phase")))
+                assert refused == expected, refused
+                await_resources(first, 0)
+            for operation in ("GraphReadPage", "RelReadPage"):
+                completed, _ = complete(first, open_read(first))
+                prefix = "Graph" if operation.startswith("Graph") else "Rel"
+                refused = use(first, completed, operation, E(prefix + "PageV1", 1, 8))
+                assert refused == E("KbRefused", S("graph-read-phase" if prefix == "Graph" else "query-read-phase")), refused
+                await_resources(first, 0)
+            running = open_read(first)
+            refused = use(first, running, "GraphPage", E("GraphPageV1", 1, 8))
+            assert refused == E("KbRefused", S("graph-cursor")), refused
+            await_resources(first, 0)
+            running = open_read(first)
+            assert use(first, running, "GraphCancel") == S("GraphCancelledV1")
+            await_resources(first, 0)
+            running = open_read(first)
+            inspected = use(first, running, "GraphInspect")
+            assert inspected[0] == S("ServiceResourceV1"), inspected
+            assert inspected[2] == E("KbRefused", S("graph-cursor")), inspected
+            await_resources(first, 1); cancel(first, inspected[1])
+            await_resources(first, 0)
+            scenarios.append("old-and-relational-routes-cannot-consume-graph-phases-as-cursors")
+
+            view, _ = first.snapshot()
+            malformed = first.route("GraphOpenRead", E("GraphOpenV1", S("sample")), view)
+            first.drop(view)
+            assert malformed == E("KbRefused", S("graph-read-shape")), malformed
+            for operation, argument in [("GraphReadPage", E("GraphPageV1", 1)),
+                                        ("GraphReadCommit", E("GraphReadCommitV1", S("sample")))]:
+                running = open_read(first)
+                assert use(first, running, operation, argument) == E("KbRefused", S("graph-read-shape"))
+                await_resources(first, 0)
+            completed, _ = complete(first, open_read(first))
+            assert use(first, completed, "GraphReadCommit", E("GraphReadCommitV1")) == E("KbRefused", S("graph-read-shape"))
+            await_resources(first, 0)
+            scenarios.append("malformed-arguments-refuse-without-echoing-protected-state")
+
             missing = E("KqOptional", E("KqRows", (S("c1"),)), Var(0),
                         E("KqSpace", S("sample"), E("rating", Var(0), Var(1)), Var(1)), S("NoRating"))
             anti = E("KqAnti", E("KqRows", (S("allowed"),)), Var(0),

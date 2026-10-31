@@ -994,6 +994,19 @@ lookup precedes stale-observation checks, while changed commands refuse.
 After restart, resolve the durable receipt before reopening a query; process
 tokens are not persistent identities. Writes use existing frame, codec and
 retained-resource budgets, with no additional fixed graph edit-count ceiling.
+Malformed open/page/commit arguments return `(KbRefused graph-read-shape)`;
+malformed page/commit calls also release their consumed session. Cross-family
+calls cannot manufacture a completed phase. Legacy inspect keeps exactly one
+resource with a cursor refusal, so the owning client can still cancel it.
+
+A captured session pins its old publication until release. Compaction can
+publish a new root while that reader continues. Collection can unlink obsolete
+names; captured readers' open descriptors keep the old data alive. Connection idle expiry and explicit
+cancel/disconnect release these views. An active client can retain a snapshot
+across repeated publication; the resource-value byte budget does not establish
+a bound on the older storage it pins. Snapshot age and pinned-storage
+accounting remain operational work. The fixed-size cleanup tests below do not
+qualify bounded disk use under an indefinitely held reader and growing writes.
 
 ```text
 captured:   a --> b --> c     shortest distance = 2
