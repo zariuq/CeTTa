@@ -20,7 +20,8 @@ from value_worker_client import Worker
 
 
 class Client:
-    def __init__(self, path):
+    def __init__(self, path, *, maximum_reply_bytes=262144):
+        self.maximum_reply_bytes = maximum_reply_bytes
         self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.socket.settimeout(10)
         self.socket.connect(str(path))
@@ -43,7 +44,7 @@ class Client:
         header = self.read(8)
         assert header[:4] == b"CSP1", header
         size = struct.unpack(">I", header[4:])[0]
-        assert 4 <= size <= 262144, size
+        assert 4 <= size <= self.maximum_reply_bytes, size
         data = self.read(size)
         value = decode(data)
         assert value[:3] == (S("reply"), identifier, S("ok" if ok else "error")), value

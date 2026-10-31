@@ -4711,6 +4711,14 @@ test-all: test-computed-queries
 test-computed-queries: value-worker $(BIN)
 	$(PYTHON) tests/support/check_computed_queries.py $(VALUE_WORKER_BIN) --cli $(BIN)
 
+.PHONY: test-indexed-i64-order test-space-job-queue
+test-all: test-indexed-i64-order test-space-job-queue
+test-indexed-i64-order: value-worker
+	$(PYTHON) tests/support/check_indexed_i64_order.py $(VALUE_WORKER_BIN)
+test-space-job-queue: value-worker
+	$(PYTHON) tests/support/check_job_queue.py $(VALUE_WORKER_BIN)
+	$(PYTHON) tests/support/check_job_queue_lifecycle.py $(VALUE_WORKER_BIN)
+
 NATIVE_DISK_SPACE_TEST_BIN = runtime/test_native_disk_space-$(BUILD_OBJ_TAG)
 $(NATIVE_DISK_SPACE_TEST_BIN): tests/test_native_disk_space.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p runtime
