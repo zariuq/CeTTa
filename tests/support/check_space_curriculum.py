@@ -26,6 +26,9 @@ def main():
         server = Server(args.worker.resolve(), root, module=module, entry="space-curriculum:configuration")
         client = None
         try:
+            assert worker.call(E("Install", 42)) == E("KbRefused", S("curriculum-path"))
+            assert worker.call(E("Install", "")) == E("StoreRefused", S("invalid-open"))
+            assert worker.call(E("Install", str(root / "absent"))) == E("StoreRefused", S("absent"))
             assert worker.call(E("Install", str(path)))[0] == S("KnowledgeCommittedV1")
             plans = worker.call(S("Plans"))
             assert plans[0] == S("CurriculumPlansV1"), plans
@@ -83,6 +86,7 @@ def main():
                       "embedded_service_and_fresh_process_equivalence": True,
                       "graph_and_relational_same_collection": True,
                       "single_occurrence_retraction_compaction_restart": True,
+                      "installer_refusals_are_explicit": True,
                       "numerical_evidence_revision": "not asserted; source counts are not independent weights"}
             if args.output: args.output.write_text(json.dumps(report, indent=2) + "\n")
             print(json.dumps(report, indent=2))
