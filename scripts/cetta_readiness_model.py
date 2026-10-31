@@ -100,7 +100,8 @@ def verify_source_archive(
 
 
 def load_frozen_baseline(
-    repository: Path, receipt_path: Path, expected_sha256: str, expected_commit: str
+    repository: Path, receipt_path: Path, expected_sha256: str, expected_commit: str,
+    *, expected_runtime_stats: int = 0,
 ) -> dict[str, Any]:
     """Admit a caller-pinned source/archive/binary cohort, never an enclosing repo.
 
@@ -134,8 +135,8 @@ def load_frozen_baseline(
             or not isinstance(source.get("dependencies"), dict)
             or not isinstance(build.get("build"), str)
             or not build["build"]
-            or build.get("runtime_stats") != 0):
-        raise ReadinessModelError("frozen baseline source and normal build receipts disagree")
+            or build.get("runtime_stats") != expected_runtime_stats):
+        raise ReadinessModelError("frozen baseline source and build receipts disagree")
     tree = subprocess.check_output(
         ["git", "ls-tree", "-rz", expected_commit], cwd=repository
     )
@@ -671,6 +672,7 @@ def calibration_subject(artifact: Mapping[str, Any]) -> dict[str, Any]:
         "property_manifest_sha256",
         "source_anchors",
         "consolidation_baseline",
+        "performance_baseline",
     )
     missing = [key for key in required if key not in artifact]
     if missing:
@@ -688,6 +690,7 @@ def calibration_subject(artifact: Mapping[str, Any]) -> dict[str, Any]:
         "property_manifest_sha256": artifact["property_manifest_sha256"],
         "source_anchors": artifact["source_anchors"],
         "consolidation_baseline": artifact["consolidation_baseline"],
+        "performance_baseline": artifact["performance_baseline"],
     }
 
 

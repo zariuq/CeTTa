@@ -8,7 +8,7 @@
   "translation_units_per_configuration": 341,
   "tracked_translation_units_per_configuration": 338,
   "generated_translation_units_per_configuration": 3,
-  "named_anchors": 143,
+  "named_anchors": 147,
   "tool_source_sha256": "83fdb8cb9c30878f9e83d4fe6e48fa316339758be2c5f22c15a275503f83de64",
   "libclang_sha256": "2c262ccd53ce702daa87c95aa84b2936e13c14f974504dc58f3ed93b12def23b",
   "source_files": {
@@ -76,15 +76,15 @@
     "src/petta_semantics.c": "c324d70ff3e828538ba40193d3c89df819d2fa5467cd8ea1606c54b266f3cf21",
     "src/petta_numeric.c": "fb01f4927aef9e44479d93ea95f4c20c57672e7c9d100819ab78fbe6c11963f0",
     "src/petta_runtime.c": "2c30c92a8459e990be01f14557a3b18f762cf843a88d932ad6ae630641c6e022",
-    "src/prepared_pure_machine.c": "8cb96f389a0c6d161fcb3731f557a6c8cbe60c77c8c170f69f723a5765b1654e",
+    "src/prepared_pure_machine.c": "a078a740ca7c78af1465a7c542eaa7e261cec1dccdd7cad00bd785309789d486",
     "src/owned_execution.c": "39fea58db4ab57321195cce5f653d23bd53ff3d142332d34faee85470f3259e8",
     "src/answer_storage.c": "6a86f35932a2562748df41037de8a7091bd90f2e2b520d18b8055c275e56ce3e",
     "src/fold_algebra.c": "213dfd18fd69eb3c951b657996d27c1920c8f0a833a9aa970e08758872323d6f",
     "src/native_fold.c": "a28f0d62d04704f940f0fe7c4a8b45d20ff064db4e1c7a2fa92e9d27822ae422",
     "src/exec_saturation.c": "6e08aa6bf52713dbeeb398ec2dc1a368b065bb9c37f6320eaab1b6f88f33775a",
     "src/transform_core.c": "bb0ffe3f1e966299361ec8c0d316f8771e9af3735bee1de786c9324bda0c236a",
-    "src/open_equation_machine.c": "591ac8c4a66b7ae566a05b71afbd4fe7f8860bcb698b9675e831f73a64317cb9",
-    "src/eval.c": "000206467d223692f470e33a4a703c174c61f471c7050078fd3b67bec34f43a0",
+    "src/open_equation_machine.c": "bda0513eb49e093d205585fee3bec62364d8a5a6de82367fe5e0c809abca77ce",
+    "src/eval.c": "55894972b0aac2a7d69b52c7824acac1c9751f4848d69d25110c03323d2a313e",
     "src/grounded.c": "d8b9b719fe735f678fb0b841762549625f4818cdd69b6f8a17f1aca68a2fa2a5",
     "src/he_macro_expansion.c": "9179e0651921f48246627fccc9cf8b56402aa085dea98508d8cb47adb118e2fa",
     "src/he_typing.c": "e314b3c9f4a4b013c950db591227953ea9582fbcc37710aac606c117cc1fd12c",
@@ -543,7 +543,7 @@
     "src/eval_he_execution.inc": "cc026161e4d64174cf5fc930c8f37a7ac12561220cb2e27b2cf25c40c7a6e434",
     "src/eval_he_pattern_control.inc": "6e6f9faeea428b861e7b0496121a8563f4655d32a0311d5996a1198fe6dbfce5",
     "src/eval_he_value_index.inc": "011c3c4f1e13d74237f7ff97211532579bb282c67ef6e40a70c250c5d4518478",
-    "src/eval_owned_execution.inc": "f8c33d06fc992f955394b12c1b38f2730f889683c482c207761767fb5696f7ec",
+    "src/eval_owned_execution.inc": "53860dfdef6c4837be8da01a4c572b0fe801f22b3f793dfefe2783e981f40b1c",
     "src/eval_work.inc": "d263649b45d5e2f47fb3cdc1c199d56362801e82ba9016e2207fa1ed57b56347",
     "src/exact_integer.h": "5fb6c02deceb8f4670f27bae37e0ef7caeafffcc33ddfff444bfb163c2a1143a",
     "src/exec_saturation.h": "1c698d78c78720c989d8b6d603e7bd382938348a89e9313c8c45cc03fef5fdd8",
@@ -684,7 +684,7 @@
     "src/nik_runtime.h": "b238fca8d5ac52839257c280e69d9d761a0cbc4e77dd71cca5dc4a5463ca4043",
     "src/nik_runtime_internal.h": "ce0f21c104db181a3d6884d8b6a7a6473bea42f3be7fe30578da0eb876bdde1f",
     "src/occurrence_log.h": "35254b8ee597d44b68cf8104a152c59240c7c437da974657d94c1a1f9431bcb8",
-    "src/open_equation_machine.h": "509a1880d4bc112acfe278b59e5dca9be815d3514e0194dfdbf6990664558a7e",
+    "src/open_equation_machine.h": "3b2de894142087a9c300a6f30f1fe03118bddfe5237cfe0b63712811d1701672",
     "src/owned_execution.h": "f5548d2a73822931f2a48788eff412b27c623900203532471f847b69988095c5",
     "src/owned_return_image.h": "c28960edb010d97f380393e99bce1971b97c0dc58df89a654598a160894288be",
     "src/parallel_executor.h": "b67adfd6b37ebfa4d42ead283a73a36412e3d0ad18e63ce71fb4fa77db2bf518",
@@ -710,7 +710,7 @@
     "src/petta_typecheck_census.h": "a03c91ef851633ccc6a682b8abf550b5e7b7023e3b528e78343d798423dd0b6d",
     "src/petta_typecheck_v3.h": "1a86619db55d8687d818a428098325e1ac65eff634af7e3194dd35a79472f702",
     "src/petta_typecheck_v3_decision_v1.h": "aabe342b69ec9dd9380b6353ed81da1a24f5e526984a6460b802d91e7d3cfffb",
-    "src/prepared_pure_machine.h": "46bc8c58b05041e16dc6e4c6dfc37ec45c68d697af391745d85fd5df06ec9afc",
+    "src/prepared_pure_machine.h": "027cfb0fcaccf0c9065ab817f482a32099bf96c9e69af262932b4f3d0572309c",
     "src/prime_compiled_reader.h": "bbabea220806cc045fea17aa1a4505cf4799f6b177c079231e57fc6bfa49da54",
     "src/prime_level.h": "218cc7e1002b7c0abc73a3f132a70f552c1e734c681209352e16dcb6535f6ad6",
     "src/prime_native_calculus.h": "022860e0000b3d46d84c5edebe87d346bc0e0666ab51a7b9b0eae2d58c442d1b",
@@ -800,7 +800,7 @@
     "tools/gslt_native_emission_v1.h": "06e042f29f1456cc0e4582732e4b23fc402d2f604938ad482d81d5c6e1867dfe",
     "vendor/sqlite/sqlite3.h": "919e7f2e8ed1d8f56ac17b412b8971c76aa5d1a879752cc6058f75e7d5910e1d"
   },
-  "scope": "Typed-use census for the 143 named mechanism anchors across all 341 linked runtime C translation units in each recorded build configuration, including three generated units. Indirect callback bodies, dynamic MeTTa calls, external plugins, runtime reachability and semantic admission need their own evidence. Actual build defines and generated parser-header selection are retained in the qualification receipt.",
+  "scope": "Typed-use census for the 147 named mechanism anchors across all 341 linked runtime C translation units in each recorded build configuration, including three generated units. Indirect callback bodies, dynamic MeTTa calls, external plugins, runtime reachability and semantic admission need their own evidence. Actual build defines and generated parser-header selection are retained in the qualification receipt.",
   "families": [
     {
       "id": "ordered-head-candidates",
@@ -847,9 +847,9 @@
           "caller": "petta_eval_machine_candidate_snapshot_lease",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 44237,
+          "line": 44263,
           "column": 12,
-          "offset": 1753864,
+          "offset": 1754939,
           "configurations": [
             "main",
             "normal"
@@ -861,9 +861,9 @@
           "caller": "petta_eval_machine_candidate_snapshot_lease",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 44237,
+          "line": 44263,
           "column": 12,
-          "offset": 1753864,
+          "offset": 1754939,
           "configurations": [
             "main",
             "normal"
@@ -1126,9 +1126,9 @@
           "caller": "oem_run_body_mode",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 14645,
+          "line": 14683,
           "column": 42,
-          "offset": 663355,
+          "offset": 665483,
           "configurations": [
             "main",
             "normal"
@@ -1140,9 +1140,9 @@
           "caller": "oem_run_body_mode",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 14645,
+          "line": 14683,
           "column": 42,
-          "offset": 663355,
+          "offset": 665483,
           "configurations": [
             "main",
             "normal"
@@ -3530,9 +3530,9 @@
           "caller": "oem_fast_host_step",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 12927,
+          "line": 12965,
           "column": 28,
-          "offset": 587253,
+          "offset": 589381,
           "configurations": [
             "main",
             "normal"
@@ -3544,9 +3544,9 @@
           "caller": "oem_fast_host_step",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 12927,
+          "line": 12965,
           "column": 28,
-          "offset": 587253,
+          "offset": 589381,
           "configurations": [
             "main",
             "normal"
@@ -3666,24 +3666,28 @@
         "cetta_petta_open_callable_parameters",
         "cetta_prepared_pure_answer_cursor_open",
         "cetta_prepared_pure_answer_cursor_open_body",
+        "cetta_prepared_pure_body_enter",
         "eval_native_application_on",
         "eval_native_for_caller",
         "oem_build_builtin_entry",
         "oem_callable_program",
         "oem_lexical_callable_step",
+        "petta_eval_machine_answer_authority_for_symbols",
         "petta_eval_open_callable_answers_only",
+        "petta_eval_open_enter_callable_answers",
         "petta_machine_collect_closed_answers",
         "petta_machine_dispatch_solve",
         "petta_machine_execute_prepared_query",
         "petta_open_lexical_source",
         "petta_prepared_pure_expression_view",
+        "prepared_pure_answer_cursor_body_root",
         "prepared_pure_answer_cursor_open_entry",
         "prepared_pure_open_lexical_source"
       ],
       "counts": {
         "type": 66,
-        "call": 41,
-        "reference": 46
+        "call": 48,
+        "reference": 54
       },
       "uses": [
         {
@@ -3874,9 +3878,9 @@
           "caller": "petta_typecheck_v2_analysis_service",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 42183,
+          "line": 42209,
           "column": 14,
-          "offset": 1675053,
+          "offset": 1676128,
           "configurations": [
             "main",
             "normal"
@@ -3930,9 +3934,9 @@
           "caller": "petta_open_lexical_source",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52122,
+          "line": 52148,
           "column": 9,
-          "offset": 2116791,
+          "offset": 2117866,
           "configurations": [
             "main",
             "normal"
@@ -3944,9 +3948,9 @@
           "caller": "petta_open_lexical_source",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52124,
+          "line": 52150,
           "column": 20,
-          "offset": 2116856,
+          "offset": 2117931,
           "configurations": [
             "main",
             "normal"
@@ -3958,9 +3962,9 @@
           "caller": "prepared_pure_open_lexical_source",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52163,
+          "line": 52189,
           "column": 9,
-          "offset": 2118457,
+          "offset": 2119532,
           "configurations": [
             "main",
             "normal"
@@ -3972,9 +3976,9 @@
           "caller": "prepared_pure_open_lexical_source",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52165,
+          "line": 52191,
           "column": 20,
-          "offset": 2118522,
+          "offset": 2119597,
           "configurations": [
             "main",
             "normal"
@@ -3986,9 +3990,9 @@
           "caller": "prepared_pure_compile_lexical_source_values",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52187,
+          "line": 52213,
           "column": 29,
-          "offset": 2119399,
+          "offset": 2120474,
           "configurations": [
             "main",
             "normal"
@@ -4000,9 +4004,9 @@
           "caller": "prepared_pure_compile_lexical_values",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52219,
+          "line": 52245,
           "column": 5,
-          "offset": 2120951,
+          "offset": 2122026,
           "configurations": [
             "main",
             "normal"
@@ -4014,9 +4018,9 @@
           "caller": "petta_eval_open_compile_callable",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 53820,
+          "line": 53866,
           "column": 5,
-          "offset": 2196231,
+          "offset": 2198392,
           "configurations": [
             "main",
             "normal"
@@ -4028,9 +4032,9 @@
           "caller": "petta_eval_open_prepare_pure_callable",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 53863,
+          "line": 53914,
           "column": 5,
-          "offset": 2198029,
+          "offset": 2200459,
           "configurations": [
             "main",
             "normal"
@@ -4042,9 +4046,9 @@
           "caller": "petta_eval_machine_type_calls",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 47860,
+          "line": 47886,
           "column": 28,
-          "offset": 1916364,
+          "offset": 1917439,
           "configurations": [
             "main",
             "normal"
@@ -4756,9 +4760,9 @@
           "caller": "petta_open_lexical_source",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52150,
+          "line": 52176,
           "column": 12,
-          "offset": 2117977,
+          "offset": 2119052,
           "configurations": [
             "main",
             "normal"
@@ -4770,9 +4774,9 @@
           "caller": "petta_open_lexical_source",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52150,
+          "line": 52176,
           "column": 12,
-          "offset": 2117977,
+          "offset": 2119052,
           "configurations": [
             "main",
             "normal"
@@ -4812,9 +4816,9 @@
           "caller": "prepared_pure_closed_answers_try",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52873,
+          "line": 52899,
           "column": 9,
-          "offset": 2152049,
+          "offset": 2153124,
           "configurations": [
             "main",
             "normal"
@@ -4826,9 +4830,9 @@
           "caller": "prepared_pure_closed_answers_try",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52873,
+          "line": 52899,
           "column": 9,
-          "offset": 2152049,
+          "offset": 2153124,
           "configurations": [
             "main",
             "normal"
@@ -4840,9 +4844,9 @@
           "caller": "petta_eval_machine_open_answer_cursor",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 53146,
+          "line": 53172,
           "column": 18,
-          "offset": 2165015,
+          "offset": 2166090,
           "configurations": [
             "main",
             "normal"
@@ -4854,9 +4858,9 @@
           "caller": "petta_eval_machine_open_answer_cursor",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 53146,
+          "line": 53172,
           "column": 18,
-          "offset": 2165015,
+          "offset": 2166090,
           "configurations": [
             "main",
             "normal"
@@ -4868,9 +4872,9 @@
           "caller": "eval_owned_answers_open",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 350,
+          "line": 347,
           "column": 9,
-          "offset": 16272,
+          "offset": 16159,
           "configurations": [
             "main",
             "normal"
@@ -4882,9 +4886,9 @@
           "caller": "eval_owned_answers_open",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 350,
+          "line": 347,
           "column": 9,
-          "offset": 16272,
+          "offset": 16159,
           "configurations": [
             "main",
             "normal"
@@ -4896,9 +4900,9 @@
           "caller": "cetta_prepared_pure_program_visit_closed_answers",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 15326,
+          "line": 15360,
           "column": 9,
-          "offset": 658505,
+          "offset": 660028,
           "configurations": [
             "main",
             "normal"
@@ -4910,9 +4914,9 @@
           "caller": "cetta_prepared_pure_program_visit_closed_answers",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 15326,
+          "line": 15360,
           "column": 9,
-          "offset": 658505,
+          "offset": 660028,
           "configurations": [
             "main",
             "normal"
@@ -4924,9 +4928,9 @@
           "caller": "petta_eval_open_callable_answers",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 53952,
+          "line": 54004,
           "column": 12,
-          "offset": 2202392,
+          "offset": 2204902,
           "configurations": [
             "main",
             "normal"
@@ -4938,9 +4942,37 @@
           "caller": "petta_eval_open_callable_answers",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 53952,
+          "line": 54004,
           "column": 12,
-          "offset": 2202392,
+          "offset": 2204902,
+          "configurations": [
+            "main",
+            "normal"
+          ]
+        },
+        {
+          "symbol": "cetta_prepared_pure_body_enter",
+          "kind": "call",
+          "caller": "petta_eval_open_enter_callable_answers",
+          "owner": "src/eval.c",
+          "file": "src/eval.c",
+          "line": 54031,
+          "column": 16,
+          "offset": 2206607,
+          "configurations": [
+            "main",
+            "normal"
+          ]
+        },
+        {
+          "symbol": "cetta_prepared_pure_body_enter",
+          "kind": "reference",
+          "caller": "petta_eval_open_enter_callable_answers",
+          "owner": "src/eval.c",
+          "file": "src/eval.c",
+          "line": 54031,
+          "column": 16,
+          "offset": 2206607,
           "configurations": [
             "main",
             "normal"
@@ -4952,9 +4984,9 @@
           "caller": "eval_native_for_caller",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 28732,
+          "line": 28758,
           "column": 10,
-          "offset": 1131531,
+          "offset": 1132650,
           "configurations": [
             "main",
             "normal"
@@ -4966,9 +4998,9 @@
           "caller": "eval_native_for_caller",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 28732,
+          "line": 28758,
           "column": 10,
-          "offset": 1131531,
+          "offset": 1132650,
           "configurations": [
             "main",
             "normal"
@@ -4980,9 +5012,9 @@
           "caller": "metta_call_impl",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 54913,
+          "line": 55002,
           "column": 13,
-          "offset": 2245750,
+          "offset": 2250395,
           "configurations": [
             "main",
             "normal"
@@ -4994,9 +5026,9 @@
           "caller": "metta_call_impl",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 54913,
+          "line": 55002,
           "column": 13,
-          "offset": 2245750,
+          "offset": 2250395,
           "configurations": [
             "main",
             "normal"
@@ -5008,9 +5040,9 @@
           "caller": "metta_call_impl",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 55316,
+          "line": 55405,
           "column": 17,
-          "offset": 2262673,
+          "offset": 2267318,
           "configurations": [
             "main",
             "normal"
@@ -5022,9 +5054,9 @@
           "caller": "metta_call_impl",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 55316,
+          "line": 55405,
           "column": 17,
-          "offset": 2262673,
+          "offset": 2267318,
           "configurations": [
             "main",
             "normal"
@@ -5064,9 +5096,9 @@
           "caller": "eval_for_caller",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 28807,
+          "line": 28833,
           "column": 9,
-          "offset": 1134998,
+          "offset": 1136117,
           "configurations": [
             "main",
             "normal"
@@ -5078,9 +5110,9 @@
           "caller": "eval_for_caller",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 28807,
+          "line": 28833,
           "column": 9,
-          "offset": 1134998,
+          "offset": 1136117,
           "configurations": [
             "main",
             "normal"
@@ -5092,9 +5124,9 @@
           "caller": "eval_for_caller",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 28817,
+          "line": 28843,
           "column": 9,
-          "offset": 1135399,
+          "offset": 1136518,
           "configurations": [
             "main",
             "normal"
@@ -5106,9 +5138,9 @@
           "caller": "eval_for_caller",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 28817,
+          "line": 28843,
           "column": 9,
-          "offset": 1135399,
+          "offset": 1136518,
           "configurations": [
             "main",
             "normal"
@@ -5204,9 +5236,9 @@
           "caller": "oem_lexical_callable_step",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 11825,
+          "line": 11863,
           "column": 18,
-          "offset": 535165,
+          "offset": 537293,
           "configurations": [
             "main",
             "normal"
@@ -5218,9 +5250,9 @@
           "caller": "oem_lexical_callable_step",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 11825,
+          "line": 11863,
           "column": 18,
-          "offset": 535165,
+          "offset": 537293,
           "configurations": [
             "main",
             "normal"
@@ -5232,9 +5264,9 @@
           "caller": "oem_lexical_callable_step",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 11872,
+          "line": 11910,
           "column": 23,
-          "offset": 537048,
+          "offset": 539176,
           "configurations": [
             "main",
             "normal"
@@ -5246,9 +5278,9 @@
           "caller": "oem_lexical_callable_step",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 11872,
+          "line": 11910,
           "column": 23,
-          "offset": 537048,
+          "offset": 539176,
           "configurations": [
             "main",
             "normal"
@@ -5260,9 +5292,9 @@
           "caller": "oem_apply_step",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 11962,
+          "line": 12000,
           "column": 32,
-          "offset": 541583,
+          "offset": 543711,
           "configurations": [
             "main",
             "normal"
@@ -5274,9 +5306,9 @@
           "caller": "oem_apply_step",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 11962,
+          "line": 12000,
           "column": 32,
-          "offset": 541583,
+          "offset": 543711,
           "configurations": [
             "main",
             "normal"
@@ -5288,9 +5320,9 @@
           "caller": "oem_apply_step",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 11999,
+          "line": 12037,
           "column": 26,
-          "offset": 543198,
+          "offset": 545326,
           "configurations": [
             "main",
             "normal"
@@ -5302,9 +5334,65 @@
           "caller": "oem_apply_step",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 11999,
+          "line": 12037,
           "column": 26,
-          "offset": 543198,
+          "offset": 545326,
+          "configurations": [
+            "main",
+            "normal"
+          ]
+        },
+        {
+          "symbol": "petta_eval_machine_answer_authority_for_symbols",
+          "kind": "call",
+          "caller": "petta_eval_machine_answer_authority_current",
+          "owner": "src/eval.c",
+          "file": "src/eval.c",
+          "line": 53311,
+          "column": 12,
+          "offset": 2172887,
+          "configurations": [
+            "main",
+            "normal"
+          ]
+        },
+        {
+          "symbol": "petta_eval_machine_answer_authority_for_symbols",
+          "kind": "reference",
+          "caller": "petta_eval_machine_answer_authority_current",
+          "owner": "src/eval.c",
+          "file": "src/eval.c",
+          "line": 53311,
+          "column": 12,
+          "offset": 2172887,
+          "configurations": [
+            "main",
+            "normal"
+          ]
+        },
+        {
+          "symbol": "petta_eval_machine_answer_authority_for_symbols",
+          "kind": "call",
+          "caller": "petta_eval_callable_authority_current",
+          "owner": "src/eval.c",
+          "file": "src/eval.c",
+          "line": 53899,
+          "column": 15,
+          "offset": 2199682,
+          "configurations": [
+            "main",
+            "normal"
+          ]
+        },
+        {
+          "symbol": "petta_eval_machine_answer_authority_for_symbols",
+          "kind": "reference",
+          "caller": "petta_eval_callable_authority_current",
+          "owner": "src/eval.c",
+          "file": "src/eval.c",
+          "line": 53899,
+          "column": 15,
+          "offset": 2199682,
           "configurations": [
             "main",
             "normal"
@@ -5316,9 +5404,23 @@
           "caller": "petta_eval_machine_open_relation_cursor",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 54129,
+          "line": 54217,
           "column": 34,
-          "offset": 2210776,
+          "offset": 2215347,
+          "configurations": [
+            "main",
+            "normal"
+          ]
+        },
+        {
+          "symbol": "petta_eval_open_enter_callable_answers",
+          "kind": "reference",
+          "caller": "petta_eval_machine_open_relation_cursor",
+          "owner": "src/eval.c",
+          "file": "src/eval.c",
+          "line": 54219,
+          "column": 35,
+          "offset": 2215487,
           "configurations": [
             "main",
             "normal"
@@ -5610,9 +5712,9 @@
           "caller": "prepared_pure_open_lexical_source",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52174,
+          "line": 52200,
           "column": 10,
-          "offset": 2118912,
+          "offset": 2119987,
           "configurations": [
             "main",
             "normal"
@@ -5624,9 +5726,9 @@
           "caller": "prepared_pure_open_lexical_source",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52174,
+          "line": 52200,
           "column": 10,
-          "offset": 2118912,
+          "offset": 2119987,
           "configurations": [
             "main",
             "normal"
@@ -5638,9 +5740,9 @@
           "caller": "petta_eval_open_compile_callable",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 53821,
+          "line": 53867,
           "column": 18,
-          "offset": 2196275,
+          "offset": 2198436,
           "configurations": [
             "main",
             "normal"
@@ -5652,9 +5754,9 @@
           "caller": "petta_eval_open_compile_callable",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 53821,
+          "line": 53867,
           "column": 18,
-          "offset": 2196275,
+          "offset": 2198436,
           "configurations": [
             "main",
             "normal"
@@ -5666,9 +5768,9 @@
           "caller": "prepared_pure_expression_view_for_language",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 17247,
+          "line": 17273,
           "column": 16,
-          "offset": 672110,
+          "offset": 673229,
           "configurations": [
             "main",
             "normal"
@@ -5680,9 +5782,9 @@
           "caller": "prepared_pure_compile_lexical_source_values",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52192,
+          "line": 52218,
           "column": 27,
-          "offset": 2119680,
+          "offset": 2120755,
           "configurations": [
             "main",
             "normal"
@@ -5694,9 +5796,9 @@
           "caller": "prepared_pure_compile_lexical_source_values",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52207,
+          "line": 52233,
           "column": 9,
-          "offset": 2120359,
+          "offset": 2121434,
           "configurations": [
             "main",
             "normal"
@@ -5708,9 +5810,93 @@
           "caller": "petta_eval_open_prepare_pure_callable",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 53903,
+          "line": 53955,
           "column": 13,
-          "offset": 2200233,
+          "offset": 2202743,
+          "configurations": [
+            "main",
+            "normal"
+          ]
+        },
+        {
+          "symbol": "prepared_pure_answer_cursor_body_root",
+          "kind": "call",
+          "caller": "prepared_pure_code_retain",
+          "owner": "src/prepared_pure_machine.c",
+          "file": "src/prepared_pure_machine.c",
+          "line": 15592,
+          "column": 5,
+          "offset": 671074,
+          "configurations": [
+            "main",
+            "normal"
+          ]
+        },
+        {
+          "symbol": "prepared_pure_answer_cursor_body_root",
+          "kind": "reference",
+          "caller": "prepared_pure_code_retain",
+          "owner": "src/prepared_pure_machine.c",
+          "file": "src/prepared_pure_machine.c",
+          "line": 15592,
+          "column": 5,
+          "offset": 671074,
+          "configurations": [
+            "main",
+            "normal"
+          ]
+        },
+        {
+          "symbol": "prepared_pure_answer_cursor_body_root",
+          "kind": "call",
+          "caller": "prepared_pure_code_enter_frontier",
+          "owner": "src/prepared_pure_machine.c",
+          "file": "src/prepared_pure_machine.c",
+          "line": 15607,
+          "column": 5,
+          "offset": 671933,
+          "configurations": [
+            "main",
+            "normal"
+          ]
+        },
+        {
+          "symbol": "prepared_pure_answer_cursor_body_root",
+          "kind": "reference",
+          "caller": "prepared_pure_code_enter_frontier",
+          "owner": "src/prepared_pure_machine.c",
+          "file": "src/prepared_pure_machine.c",
+          "line": 15607,
+          "column": 5,
+          "offset": 671933,
+          "configurations": [
+            "main",
+            "normal"
+          ]
+        },
+        {
+          "symbol": "prepared_pure_answer_cursor_body_root",
+          "kind": "call",
+          "caller": "cetta_prepared_pure_body_enter",
+          "owner": "src/prepared_pure_machine.c",
+          "file": "src/prepared_pure_machine.c",
+          "line": 16348,
+          "column": 5,
+          "offset": 707462,
+          "configurations": [
+            "main",
+            "normal"
+          ]
+        },
+        {
+          "symbol": "prepared_pure_answer_cursor_body_root",
+          "kind": "reference",
+          "caller": "cetta_prepared_pure_body_enter",
+          "owner": "src/prepared_pure_machine.c",
+          "file": "src/prepared_pure_machine.c",
+          "line": 16348,
+          "column": 5,
+          "offset": 707462,
           "configurations": [
             "main",
             "normal"
@@ -5722,9 +5908,9 @@
           "caller": "cetta_prepared_pure_answer_cursor_open",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 13075,
+          "line": 13099,
           "column": 12,
-          "offset": 554314,
+          "offset": 555268,
           "configurations": [
             "main",
             "normal"
@@ -5736,9 +5922,9 @@
           "caller": "cetta_prepared_pure_answer_cursor_open",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 13075,
+          "line": 13099,
           "column": 12,
-          "offset": 554314,
+          "offset": 555268,
           "configurations": [
             "main",
             "normal"
@@ -5750,9 +5936,9 @@
           "caller": "cetta_prepared_pure_answer_cursor_open_body",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 13091,
+          "line": 13115,
           "column": 12,
-          "offset": 555153,
+          "offset": 556114,
           "configurations": [
             "main",
             "normal"
@@ -5764,9 +5950,37 @@
           "caller": "cetta_prepared_pure_answer_cursor_open_body",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 13091,
+          "line": 13115,
           "column": 12,
-          "offset": 555153,
+          "offset": 556114,
+          "configurations": [
+            "main",
+            "normal"
+          ]
+        },
+        {
+          "symbol": "prepared_pure_answer_cursor_open_entry",
+          "kind": "call",
+          "caller": "cetta_prepared_pure_body_enter",
+          "owner": "src/prepared_pure_machine.c",
+          "file": "src/prepared_pure_machine.c",
+          "line": 16301,
+          "column": 45,
+          "offset": 704903,
+          "configurations": [
+            "main",
+            "normal"
+          ]
+        },
+        {
+          "symbol": "prepared_pure_answer_cursor_open_entry",
+          "kind": "reference",
+          "caller": "cetta_prepared_pure_body_enter",
+          "owner": "src/prepared_pure_machine.c",
+          "file": "src/prepared_pure_machine.c",
+          "line": 16301,
+          "column": 45,
+          "offset": 704903,
           "configurations": [
             "main",
             "normal"
@@ -5778,9 +5992,9 @@
           "caller": "prepared_pure_compile_lexical_values",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52220,
+          "line": 52246,
           "column": 10,
-          "offset": 2120987,
+          "offset": 2122062,
           "configurations": [
             "main",
             "normal"
@@ -5792,9 +6006,9 @@
           "caller": "prepared_pure_compile_lexical_values",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52220,
+          "line": 52246,
           "column": 10,
-          "offset": 2120987,
+          "offset": 2122062,
           "configurations": [
             "main",
             "normal"
@@ -5806,9 +6020,9 @@
           "caller": "petta_eval_open_prepare_pure_callable",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 53864,
+          "line": 53915,
           "column": 10,
-          "offset": 2198065,
+          "offset": 2200495,
           "configurations": [
             "main",
             "normal"
@@ -5820,9 +6034,9 @@
           "caller": "petta_eval_open_prepare_pure_callable",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 53864,
+          "line": 53915,
           "column": 10,
-          "offset": 2198065,
+          "offset": 2200495,
           "configurations": [
             "main",
             "normal"
@@ -5862,9 +6076,9 @@
         "petta_solver_try_call"
       ],
       "counts": {
-        "type": 100,
-        "reference": 98,
-        "call": 89
+        "type": 109,
+        "reference": 100,
+        "call": 91
       },
       "uses": [
         {
@@ -5887,9 +6101,9 @@
           "caller": "emit_completed_native_call",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 23150,
+          "line": 23176,
           "column": 5,
-          "offset": 903034,
+          "offset": 904153,
           "configurations": [
             "main",
             "normal"
@@ -5901,9 +6115,9 @@
           "caller": "complete_native_expression_frontier",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 23189,
+          "line": 23215,
           "column": 5,
-          "offset": 905174,
+          "offset": 906293,
           "configurations": [
             "main",
             "normal"
@@ -5915,9 +6129,9 @@
           "caller": "complete_native_expression_frontier",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 23229,
+          "line": 23255,
           "column": 5,
-          "offset": 907247,
+          "offset": 908366,
           "configurations": [
             "main",
             "normal"
@@ -5929,9 +6143,9 @@
           "caller": "emit_unquoted_mork_rows",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 32824,
+          "line": 32850,
           "column": 5,
-          "offset": 1296141,
+          "offset": 1297260,
           "configurations": [
             "main",
             "normal"
@@ -5943,9 +6157,9 @@
           "caller": "petta_eval_machine_deliver_native_return",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 47680,
+          "line": 47706,
           "column": 5,
-          "offset": 1908811,
+          "offset": 1909886,
           "configurations": [
             "main",
             "normal"
@@ -5971,9 +6185,9 @@
           "caller": "",
           "owner": "",
           "file": "src/eval_owned_execution.inc",
-          "line": 889,
+          "line": 886,
           "column": 5,
-          "offset": 40665,
+          "offset": 40552,
           "configurations": [
             "main",
             "normal"
@@ -5985,9 +6199,9 @@
           "caller": "prepared_native_completion_next",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 936,
+          "line": 941,
           "column": 31,
-          "offset": 43050,
+          "offset": 43247,
           "configurations": [
             "main",
             "normal"
@@ -5999,9 +6213,9 @@
           "caller": "prepared_native_completion_next",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 949,
+          "line": 952,
           "column": 35,
-          "offset": 43784,
+          "offset": 43890,
           "configurations": [
             "main",
             "normal"
@@ -6055,9 +6269,9 @@
           "caller": "",
           "owner": "",
           "file": "src/prepared_pure_machine.c",
-          "line": 12404,
+          "line": 12405,
           "column": 5,
-          "offset": 526506,
+          "offset": 526507,
           "configurations": [
             "main",
             "normal"
@@ -6069,9 +6283,9 @@
           "caller": "",
           "owner": "",
           "file": "src/prepared_pure_machine.c",
-          "line": 12410,
+          "line": 12411,
           "column": 5,
-          "offset": 526675,
+          "offset": 526676,
           "configurations": [
             "main",
             "normal"
@@ -6083,9 +6297,9 @@
           "caller": "prepared_pure_native_replacement",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 13201,
+          "line": 13225,
           "column": 23,
-          "offset": 559639,
+          "offset": 560607,
           "configurations": [
             "main",
             "normal"
@@ -6097,9 +6311,9 @@
           "caller": "prepared_pure_native_retain",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 13285,
+          "line": 13316,
           "column": 24,
-          "offset": 564013,
+          "offset": 565326,
           "configurations": [
             "main",
             "normal"
@@ -6125,9 +6339,9 @@
           "caller": "emit_completed_native_call",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 23156,
+          "line": 23182,
           "column": 5,
-          "offset": 903233,
+          "offset": 904352,
           "configurations": [
             "main",
             "normal"
@@ -6139,9 +6353,9 @@
           "caller": "complete_native_expression_frontier",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 23191,
+          "line": 23217,
           "column": 5,
-          "offset": 905270,
+          "offset": 906389,
           "configurations": [
             "main",
             "normal"
@@ -6153,9 +6367,9 @@
           "caller": "complete_native_expression_frontier",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 23231,
+          "line": 23257,
           "column": 5,
-          "offset": 907409,
+          "offset": 908528,
           "configurations": [
             "main",
             "normal"
@@ -6167,9 +6381,9 @@
           "caller": "emit_unquoted_mork_rows",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 32826,
+          "line": 32852,
           "column": 5,
-          "offset": 1296280,
+          "offset": 1297399,
           "configurations": [
             "main",
             "normal"
@@ -6181,9 +6395,9 @@
           "caller": "petta_eval_machine_next_answer_cursor",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 44355,
+          "line": 44381,
           "column": 5,
-          "offset": 1759078,
+          "offset": 1760153,
           "configurations": [
             "main",
             "normal"
@@ -6195,9 +6409,9 @@
           "caller": "petta_eval_machine_deliver_native_return",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 47684,
+          "line": 47710,
           "column": 5,
-          "offset": 1908976,
+          "offset": 1910051,
           "configurations": [
             "main",
             "normal"
@@ -6209,37 +6423,9 @@
           "caller": "prepared_native_continuation_new",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 49397,
+          "line": 49423,
           "column": 15,
-          "offset": 1984793,
-          "configurations": [
-            "main",
-            "normal"
-          ]
-        },
-        {
-          "symbol": "CettaOwnedReturn",
-          "kind": "type",
-          "caller": "prepared_native_continuation_next",
-          "owner": "src/eval.c",
-          "file": "src/eval.c",
-          "line": 49476,
-          "column": 43,
-          "offset": 1988493,
-          "configurations": [
-            "main",
-            "normal"
-          ]
-        },
-        {
-          "symbol": "CettaOwnedReturn",
-          "kind": "type",
-          "caller": "prepared_native_continuation_next",
-          "owner": "src/eval.c",
-          "file": "src/eval.c",
-          "line": 49492,
-          "column": 26,
-          "offset": 1989328,
+          "offset": 1985868,
           "configurations": [
             "main",
             "normal"
@@ -6252,8 +6438,36 @@
           "owner": "src/eval.c",
           "file": "src/eval.c",
           "line": 49502,
+          "column": 43,
+          "offset": 1989568,
+          "configurations": [
+            "main",
+            "normal"
+          ]
+        },
+        {
+          "symbol": "CettaOwnedReturn",
+          "kind": "type",
+          "caller": "prepared_native_continuation_next",
+          "owner": "src/eval.c",
+          "file": "src/eval.c",
+          "line": 49518,
+          "column": 26,
+          "offset": 1990403,
+          "configurations": [
+            "main",
+            "normal"
+          ]
+        },
+        {
+          "symbol": "CettaOwnedReturn",
+          "kind": "type",
+          "caller": "prepared_native_continuation_next",
+          "owner": "src/eval.c",
+          "file": "src/eval.c",
+          "line": 49528,
           "column": 22,
-          "offset": 1989824,
+          "offset": 1990899,
           "configurations": [
             "main",
             "normal"
@@ -6265,9 +6479,9 @@
           "caller": "prepared_pure_answer_buffer_return",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52630,
+          "line": 52656,
           "column": 15,
-          "offset": 2140091,
+          "offset": 2141166,
           "configurations": [
             "main",
             "normal"
@@ -6279,9 +6493,51 @@
           "caller": "petta_eval_machine_next_answer_cursor",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 53161,
+          "line": 53187,
           "column": 9,
-          "offset": 2165680,
+          "offset": 2166755,
+          "configurations": [
+            "main",
+            "normal"
+          ]
+        },
+        {
+          "symbol": "CettaOwnedReturn",
+          "kind": "type",
+          "caller": "petta_eval_open_enter_callable_answers",
+          "owner": "src/eval.c",
+          "file": "src/eval.c",
+          "line": 54010,
+          "column": 9,
+          "offset": 2205216,
+          "configurations": [
+            "main",
+            "normal"
+          ]
+        },
+        {
+          "symbol": "CettaOwnedReturn",
+          "kind": "type",
+          "caller": "petta_eval_open_enter_callable_answers",
+          "owner": "src/eval.c",
+          "file": "src/eval.c",
+          "line": 54013,
+          "column": 37,
+          "offset": 2205378,
+          "configurations": [
+            "main",
+            "normal"
+          ]
+        },
+        {
+          "symbol": "CettaOwnedReturn",
+          "kind": "type",
+          "caller": "petta_eval_open_enter_callable_answers",
+          "owner": "src/eval.c",
+          "file": "src/eval.c",
+          "line": 54037,
+          "column": 22,
+          "offset": 2206937,
           "configurations": [
             "main",
             "normal"
@@ -6335,9 +6591,9 @@
           "caller": "eval_owned_residual_project",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 419,
+          "line": 416,
           "column": 9,
-          "offset": 18967,
+          "offset": 18854,
           "configurations": [
             "main",
             "normal"
@@ -6349,9 +6605,9 @@
           "caller": "eval_owned_residual_project",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 427,
+          "line": 424,
           "column": 18,
-          "offset": 19368,
+          "offset": 19255,
           "configurations": [
             "main",
             "normal"
@@ -6363,9 +6619,9 @@
           "caller": "eval_owned_residual_next",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 436,
+          "line": 433,
           "column": 9,
-          "offset": 19711,
+          "offset": 19598,
           "configurations": [
             "main",
             "normal"
@@ -6377,9 +6633,9 @@
           "caller": "eval_owned_residual_continue",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 480,
+          "line": 477,
           "column": 15,
-          "offset": 21453,
+          "offset": 21340,
           "configurations": [
             "main",
             "normal"
@@ -6391,9 +6647,9 @@
           "caller": "eval_owned_residual_body",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 524,
+          "line": 521,
           "column": 13,
-          "offset": 23616,
+          "offset": 23503,
           "configurations": [
             "main",
             "normal"
@@ -6405,9 +6661,9 @@
           "caller": "eval_owned_consume_item",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 644,
+          "line": 641,
           "column": 58,
-          "offset": 29073,
+          "offset": 28960,
           "configurations": [
             "main",
             "normal"
@@ -6419,9 +6675,9 @@
           "caller": "eval_owned_fold_return",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 703,
+          "line": 700,
           "column": 57,
-          "offset": 31499,
+          "offset": 31386,
           "configurations": [
             "main",
             "normal"
@@ -6433,9 +6689,9 @@
           "caller": "eval_owned_tail_return",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 749,
+          "line": 746,
           "column": 57,
-          "offset": 33592,
+          "offset": 33479,
           "configurations": [
             "main",
             "normal"
@@ -6447,9 +6703,9 @@
           "caller": "prepared_native_continuation_new",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 875,
+          "line": 872,
           "column": 11,
-          "offset": 40164,
+          "offset": 40051,
           "configurations": [
             "main",
             "normal"
@@ -6461,9 +6717,9 @@
           "caller": "prepared_native_continuation_next",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 877,
+          "line": 874,
           "column": 39,
-          "offset": 40297,
+          "offset": 40184,
           "configurations": [
             "main",
             "normal"
@@ -6475,9 +6731,9 @@
           "caller": "prepared_native_completion_next",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 899,
+          "line": 896,
           "column": 9,
-          "offset": 40970,
+          "offset": 40857,
           "configurations": [
             "main",
             "normal"
@@ -6489,9 +6745,9 @@
           "caller": "prepared_native_completion_open",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 973,
+          "line": 979,
           "column": 15,
-          "offset": 44770,
+          "offset": 44911,
           "configurations": [
             "main",
             "normal"
@@ -6503,9 +6759,9 @@
           "caller": "prepared_pure_next_return",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 1039,
+          "line": 1045,
           "column": 9,
-          "offset": 47983,
+          "offset": 48124,
           "configurations": [
             "main",
             "normal"
@@ -6517,9 +6773,9 @@
           "caller": "prepared_pure_next_return",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 1061,
+          "line": 1067,
           "column": 9,
-          "offset": 49092,
+          "offset": 49233,
           "configurations": [
             "main",
             "normal"
@@ -6542,12 +6798,40 @@
         {
           "symbol": "CettaOwnedReturn",
           "kind": "type",
+          "caller": "oem_start_callable_answers",
+          "owner": "src/open_equation_machine.c",
+          "file": "src/open_equation_machine.c",
+          "line": 11717,
+          "column": 5,
+          "offset": 530165,
+          "configurations": [
+            "main",
+            "normal"
+          ]
+        },
+        {
+          "symbol": "CettaOwnedReturn",
+          "kind": "type",
           "caller": "",
           "owner": "",
           "file": "src/open_equation_machine.h",
           "line": 476,
           "column": 55,
           "offset": 28363,
+          "configurations": [
+            "main",
+            "normal"
+          ]
+        },
+        {
+          "symbol": "CettaOwnedReturn",
+          "kind": "type",
+          "caller": "",
+          "owner": "",
+          "file": "src/open_equation_machine.h",
+          "line": 508,
+          "column": 59,
+          "offset": 30583,
           "configurations": [
             "main",
             "normal"
@@ -6993,9 +7277,9 @@
           "caller": "prepared_pure_native_replacement",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 13188,
+          "line": 13212,
           "column": 15,
-          "offset": 559001,
+          "offset": 559969,
           "configurations": [
             "main",
             "normal"
@@ -7007,51 +7291,9 @@
           "caller": "prepared_pure_native_pending",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 13985,
-          "column": 14,
-          "offset": 596207,
-          "configurations": [
-            "main",
-            "normal"
-          ]
-        },
-        {
-          "symbol": "CettaOwnedReturn",
-          "kind": "type",
-          "caller": "cetta_prepared_pure_answer_cursor_native_boundary",
-          "owner": "src/prepared_pure_machine.c",
-          "file": "src/prepared_pure_machine.c",
-          "line": 13994,
-          "column": 24,
-          "offset": 596630,
-          "configurations": [
-            "main",
-            "normal"
-          ]
-        },
-        {
-          "symbol": "CettaOwnedReturn",
-          "kind": "type",
-          "caller": "cetta_prepared_pure_answer_cursor_native_boundary",
-          "owner": "src/prepared_pure_machine.c",
-          "file": "src/prepared_pure_machine.c",
-          "line": 14013,
-          "column": 18,
-          "offset": 597672,
-          "configurations": [
-            "main",
-            "normal"
-          ]
-        },
-        {
-          "symbol": "CettaOwnedReturn",
-          "kind": "type",
-          "caller": "cetta_prepared_pure_answer_cursor_native_boundary",
-          "owner": "src/prepared_pure_machine.c",
-          "file": "src/prepared_pure_machine.c",
           "line": 14016,
-          "column": 11,
-          "offset": 597751,
+          "column": 14,
+          "offset": 597520,
           "configurations": [
             "main",
             "normal"
@@ -7063,9 +7305,51 @@
           "caller": "cetta_prepared_pure_answer_cursor_native_boundary",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 14022,
+          "line": 14025,
+          "column": 24,
+          "offset": 597943,
+          "configurations": [
+            "main",
+            "normal"
+          ]
+        },
+        {
+          "symbol": "CettaOwnedReturn",
+          "kind": "type",
+          "caller": "cetta_prepared_pure_answer_cursor_native_boundary",
+          "owner": "src/prepared_pure_machine.c",
+          "file": "src/prepared_pure_machine.c",
+          "line": 14044,
+          "column": 18,
+          "offset": 598985,
+          "configurations": [
+            "main",
+            "normal"
+          ]
+        },
+        {
+          "symbol": "CettaOwnedReturn",
+          "kind": "type",
+          "caller": "cetta_prepared_pure_answer_cursor_native_boundary",
+          "owner": "src/prepared_pure_machine.c",
+          "file": "src/prepared_pure_machine.c",
+          "line": 14047,
+          "column": 11,
+          "offset": 599064,
+          "configurations": [
+            "main",
+            "normal"
+          ]
+        },
+        {
+          "symbol": "CettaOwnedReturn",
+          "kind": "type",
+          "caller": "cetta_prepared_pure_answer_cursor_native_boundary",
+          "owner": "src/prepared_pure_machine.c",
+          "file": "src/prepared_pure_machine.c",
+          "line": 14053,
           "column": 22,
-          "offset": 598008,
+          "offset": 599321,
           "configurations": [
             "main",
             "normal"
@@ -7077,9 +7361,9 @@
           "caller": "cetta_prepared_pure_answer_cursor_complete_native",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 14034,
+          "line": 14065,
           "column": 5,
-          "offset": 598401,
+          "offset": 599714,
           "configurations": [
             "main",
             "normal"
@@ -7091,9 +7375,9 @@
           "caller": "cetta_prepared_pure_answer_cursor_native_transfer_ready",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 14084,
+          "line": 14115,
           "column": 5,
-          "offset": 600600,
+          "offset": 601913,
           "configurations": [
             "main",
             "normal"
@@ -7105,9 +7389,9 @@
           "caller": "cetta_prepared_pure_answer_cursor_next",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 14265,
+          "line": 14299,
           "column": 19,
-          "offset": 609899,
+          "offset": 611396,
           "configurations": [
             "main",
             "normal"
@@ -7119,9 +7403,9 @@
           "caller": "cetta_prepared_pure_answer_cursor_return",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 14618,
+          "line": 14649,
           "column": 24,
-          "offset": 628126,
+          "offset": 629470,
           "configurations": [
             "main",
             "normal"
@@ -7133,9 +7417,65 @@
           "caller": "cetta_prepared_pure_answer_cursor_return",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 14631,
+          "line": 14662,
           "column": 23,
-          "offset": 628851,
+          "offset": 630195,
+          "configurations": [
+            "main",
+            "normal"
+          ]
+        },
+        {
+          "symbol": "CettaOwnedReturn",
+          "kind": "type",
+          "caller": "cetta_prepared_pure_body_enter",
+          "owner": "src/prepared_pure_machine.c",
+          "file": "src/prepared_pure_machine.c",
+          "line": 16282,
+          "column": 48,
+          "offset": 703735,
+          "configurations": [
+            "main",
+            "normal"
+          ]
+        },
+        {
+          "symbol": "CettaOwnedReturn",
+          "kind": "type",
+          "caller": "cetta_prepared_pure_body_enter",
+          "owner": "src/prepared_pure_machine.c",
+          "file": "src/prepared_pure_machine.c",
+          "line": 16285,
+          "column": 18,
+          "offset": 703842,
+          "configurations": [
+            "main",
+            "normal"
+          ]
+        },
+        {
+          "symbol": "CettaOwnedReturn",
+          "kind": "type",
+          "caller": "cetta_prepared_pure_body_enter",
+          "owner": "src/prepared_pure_machine.c",
+          "file": "src/prepared_pure_machine.c",
+          "line": 16333,
+          "column": 37,
+          "offset": 706656,
+          "configurations": [
+            "main",
+            "normal"
+          ]
+        },
+        {
+          "symbol": "CettaOwnedReturn",
+          "kind": "type",
+          "caller": "cetta_prepared_pure_body_enter",
+          "owner": "src/prepared_pure_machine.h",
+          "file": "src/prepared_pure_machine.h",
+          "line": 538,
+          "column": 48,
+          "offset": 27738,
           "configurations": [
             "main",
             "normal"
@@ -7147,9 +7487,9 @@
           "caller": "cetta_prepared_pure_answer_cursor_return",
           "owner": "src/prepared_pure_machine.h",
           "file": "src/prepared_pure_machine.h",
-          "line": 573,
+          "line": 586,
           "column": 19,
-          "offset": 29709,
+          "offset": 30497,
           "configurations": [
             "main",
             "normal"
@@ -7161,9 +7501,9 @@
           "caller": "cetta_prepared_pure_answer_cursor_native_boundary",
           "owner": "src/prepared_pure_machine.h",
           "file": "src/prepared_pure_machine.h",
-          "line": 615,
+          "line": 629,
           "column": 20,
-          "offset": 32036,
+          "offset": 32889,
           "configurations": [
             "main",
             "normal"
@@ -7567,9 +7907,9 @@
           "caller": "eval_owned_residual_body",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 542,
+          "line": 539,
           "column": 10,
-          "offset": 24410,
+          "offset": 24297,
           "configurations": [
             "main",
             "normal"
@@ -7581,9 +7921,9 @@
           "caller": "eval_owned_residual_body",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 542,
+          "line": 539,
           "column": 10,
-          "offset": 24410,
+          "offset": 24297,
           "configurations": [
             "main",
             "normal"
@@ -7595,9 +7935,9 @@
           "caller": "cetta_prepared_pure_answer_cursor_complete_native",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 14057,
+          "line": 14088,
           "column": 14,
-          "offset": 599523,
+          "offset": 600836,
           "configurations": [
             "main",
             "normal"
@@ -7609,9 +7949,9 @@
           "caller": "cetta_prepared_pure_answer_cursor_complete_native",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 14057,
+          "line": 14088,
           "column": 14,
-          "offset": 599523,
+          "offset": 600836,
           "configurations": [
             "main",
             "normal"
@@ -7623,9 +7963,9 @@
           "caller": "prepared_pure_closed_answers_try",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52886,
+          "line": 52912,
           "column": 44,
-          "offset": 2152759,
+          "offset": 2153834,
           "configurations": [
             "main",
             "normal"
@@ -7637,9 +7977,9 @@
           "caller": "prepared_pure_closed_answers_try",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52886,
+          "line": 52912,
           "column": 44,
-          "offset": 2152759,
+          "offset": 2153834,
           "configurations": [
             "main",
             "normal"
@@ -7651,9 +7991,9 @@
           "caller": "eval_owned_residual_body",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 550,
+          "line": 547,
           "column": 16,
-          "offset": 24698,
+          "offset": 24585,
           "configurations": [
             "main",
             "normal"
@@ -7665,9 +8005,9 @@
           "caller": "eval_owned_residual_body",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 550,
+          "line": 547,
           "column": 16,
-          "offset": 24698,
+          "offset": 24585,
           "configurations": [
             "main",
             "normal"
@@ -7679,9 +8019,9 @@
           "caller": "eval_owned_collapsed_consume",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 676,
+          "line": 673,
           "column": 36,
-          "offset": 30462,
+          "offset": 30349,
           "configurations": [
             "main",
             "normal"
@@ -7693,9 +8033,9 @@
           "caller": "eval_owned_collapsed_consume",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 676,
+          "line": 673,
           "column": 36,
-          "offset": 30462,
+          "offset": 30349,
           "configurations": [
             "main",
             "normal"
@@ -7707,9 +8047,9 @@
           "caller": "eval_owned_collapsed_fold",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 827,
+          "line": 824,
           "column": 11,
-          "offset": 37623,
+          "offset": 37510,
           "configurations": [
             "main",
             "normal"
@@ -7721,9 +8061,9 @@
           "caller": "eval_owned_collapsed_fold",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 827,
+          "line": 824,
           "column": 11,
-          "offset": 37623,
+          "offset": 37510,
           "configurations": [
             "main",
             "normal"
@@ -7735,9 +8075,9 @@
           "caller": "eval_owned_collapsed_fold",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 840,
+          "line": 837,
           "column": 20,
-          "offset": 38379,
+          "offset": 38266,
           "configurations": [
             "main",
             "normal"
@@ -7749,9 +8089,9 @@
           "caller": "eval_owned_collapsed_fold",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 840,
+          "line": 837,
           "column": 20,
-          "offset": 38379,
+          "offset": 38266,
           "configurations": [
             "main",
             "normal"
@@ -7791,9 +8131,9 @@
           "caller": "prepared_pure_next_return",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 1046,
+          "line": 1052,
           "column": 40,
-          "offset": 48413,
+          "offset": 48554,
           "configurations": [
             "main",
             "normal"
@@ -7805,9 +8145,9 @@
           "caller": "prepared_pure_next_return",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 1046,
+          "line": 1052,
           "column": 40,
-          "offset": 48413,
+          "offset": 48554,
           "configurations": [
             "main",
             "normal"
@@ -7847,9 +8187,9 @@
           "caller": "cetta_prepared_pure_answer_cursor_resume_transitions",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 13976,
+          "line": 14007,
           "column": 28,
-          "offset": 595888,
+          "offset": 597201,
           "configurations": [
             "main",
             "normal"
@@ -7861,9 +8201,9 @@
           "caller": "cetta_prepared_pure_answer_cursor_resume_native",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 14161,
+          "line": 14192,
           "column": 28,
-          "offset": 604639,
+          "offset": 605952,
           "configurations": [
             "main",
             "normal"
@@ -7875,9 +8215,9 @@
           "caller": "cetta_prepared_pure_answer_cursor_own_execution",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 14681,
+          "line": 14715,
           "column": 9,
-          "offset": 630877,
+          "offset": 632400,
           "configurations": [
             "main",
             "normal"
@@ -8085,9 +8425,9 @@
           "caller": "handle_dispatch",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 36412,
+          "line": 36438,
           "column": 59,
-          "offset": 1447627,
+          "offset": 1448746,
           "configurations": [
             "main",
             "normal"
@@ -8099,9 +8439,9 @@
           "caller": "handle_dispatch",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 36412,
+          "line": 36438,
           "column": 59,
-          "offset": 1447627,
+          "offset": 1448746,
           "configurations": [
             "main",
             "normal"
@@ -8113,9 +8453,9 @@
           "caller": "handle_dispatch",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 36677,
+          "line": 36703,
           "column": 43,
-          "offset": 1461397,
+          "offset": 1462516,
           "configurations": [
             "main",
             "normal"
@@ -8127,9 +8467,9 @@
           "caller": "handle_dispatch",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 36677,
+          "line": 36703,
           "column": 43,
-          "offset": 1461397,
+          "offset": 1462516,
           "configurations": [
             "main",
             "normal"
@@ -8141,9 +8481,9 @@
           "caller": "handle_dispatch",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 36828,
+          "line": 36854,
           "column": 43,
-          "offset": 1468528,
+          "offset": 1469647,
           "configurations": [
             "main",
             "normal"
@@ -8155,9 +8495,9 @@
           "caller": "handle_dispatch",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 36828,
+          "line": 36854,
           "column": 43,
-          "offset": 1468528,
+          "offset": 1469647,
           "configurations": [
             "main",
             "normal"
@@ -8533,9 +8873,9 @@
           "caller": "emit_completed_native_call",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 23167,
+          "line": 23193,
           "column": 9,
-          "offset": 903836,
+          "offset": 904955,
           "configurations": [
             "main",
             "normal"
@@ -8547,9 +8887,9 @@
           "caller": "emit_completed_native_call",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 23167,
+          "line": 23193,
           "column": 9,
-          "offset": 903836,
+          "offset": 904955,
           "configurations": [
             "main",
             "normal"
@@ -8561,9 +8901,9 @@
           "caller": "sequence_native_call",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 23265,
+          "line": 23291,
           "column": 9,
-          "offset": 909073,
+          "offset": 910192,
           "configurations": [
             "main",
             "normal"
@@ -8575,9 +8915,9 @@
           "caller": "sequence_native_call",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 23265,
+          "line": 23291,
           "column": 9,
-          "offset": 909073,
+          "offset": 910192,
           "configurations": [
             "main",
             "normal"
@@ -8589,9 +8929,9 @@
           "caller": "sequence_native_call",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 23269,
+          "line": 23295,
           "column": 9,
-          "offset": 909217,
+          "offset": 910336,
           "configurations": [
             "main",
             "normal"
@@ -8603,9 +8943,9 @@
           "caller": "sequence_native_call",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 23269,
+          "line": 23295,
           "column": 9,
-          "offset": 909217,
+          "offset": 910336,
           "configurations": [
             "main",
             "normal"
@@ -8617,9 +8957,9 @@
           "caller": "sequence_native_call",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 23289,
+          "line": 23315,
           "column": 13,
-          "offset": 910231,
+          "offset": 911350,
           "configurations": [
             "main",
             "normal"
@@ -8631,9 +8971,9 @@
           "caller": "sequence_native_call",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 23289,
+          "line": 23315,
           "column": 13,
-          "offset": 910231,
+          "offset": 911350,
           "configurations": [
             "main",
             "normal"
@@ -8645,9 +8985,9 @@
           "caller": "eval_transform_evaluate",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 25986,
+          "line": 26012,
           "column": 9,
-          "offset": 1022233,
+          "offset": 1023352,
           "configurations": [
             "main",
             "normal"
@@ -8659,9 +8999,9 @@
           "caller": "eval_transform_evaluate",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 25986,
+          "line": 26012,
           "column": 9,
-          "offset": 1022233,
+          "offset": 1023352,
           "configurations": [
             "main",
             "normal"
@@ -8673,9 +9013,9 @@
           "caller": "eval_petta_from_lib_prolog",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 28907,
+          "line": 28933,
           "column": 9,
-          "offset": 1139517,
+          "offset": 1140636,
           "configurations": [
             "main",
             "normal"
@@ -8687,9 +9027,9 @@
           "caller": "eval_petta_from_lib_prolog",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 28907,
+          "line": 28933,
           "column": 9,
-          "offset": 1139517,
+          "offset": 1140636,
           "configurations": [
             "main",
             "normal"
@@ -8701,9 +9041,9 @@
           "caller": "emit_unquoted_mork_rows",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 32837,
+          "line": 32863,
           "column": 9,
-          "offset": 1296860,
+          "offset": 1297979,
           "configurations": [
             "main",
             "normal"
@@ -8715,9 +9055,9 @@
           "caller": "emit_unquoted_mork_rows",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 32837,
+          "line": 32863,
           "column": 9,
-          "offset": 1296860,
+          "offset": 1297979,
           "configurations": [
             "main",
             "normal"
@@ -8729,9 +9069,9 @@
           "caller": "prepared_minimal_worker_readback",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 37973,
+          "line": 37999,
           "column": 5,
-          "offset": 1512943,
+          "offset": 1514062,
           "configurations": [
             "main",
             "normal"
@@ -8743,9 +9083,9 @@
           "caller": "prepared_minimal_worker_readback",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 37973,
+          "line": 37999,
           "column": 5,
-          "offset": 1512943,
+          "offset": 1514062,
           "configurations": [
             "main",
             "normal"
@@ -8757,9 +9097,9 @@
           "caller": "petta_eval_machine_permit_transition",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 42611,
+          "line": 42637,
           "column": 9,
-          "offset": 1691383,
+          "offset": 1692458,
           "configurations": [
             "main",
             "normal"
@@ -8771,9 +9111,9 @@
           "caller": "petta_eval_machine_permit_transition",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 42611,
+          "line": 42637,
           "column": 9,
-          "offset": 1691383,
+          "offset": 1692458,
           "configurations": [
             "main",
             "normal"
@@ -8785,9 +9125,9 @@
           "caller": "petta_eval_machine_deliver_native_return",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 47658,
+          "line": 47684,
           "column": 9,
-          "offset": 1907744,
+          "offset": 1908819,
           "configurations": [
             "main",
             "normal"
@@ -8799,9 +9139,9 @@
           "caller": "petta_eval_machine_deliver_native_return",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 47658,
+          "line": 47684,
           "column": 9,
-          "offset": 1907744,
+          "offset": 1908819,
           "configurations": [
             "main",
             "normal"
@@ -8813,9 +9153,9 @@
           "caller": "petta_eval_machine_deliver_native_return",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 47672,
+          "line": 47698,
           "column": 13,
-          "offset": 1908485,
+          "offset": 1909560,
           "configurations": [
             "main",
             "normal"
@@ -8827,9 +9167,9 @@
           "caller": "petta_eval_machine_deliver_native_return",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 47672,
+          "line": 47698,
           "column": 13,
-          "offset": 1908485,
+          "offset": 1909560,
           "configurations": [
             "main",
             "normal"
@@ -8841,9 +9181,9 @@
           "caller": "petta_eval_machine_deliver_native_return",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 47695,
+          "line": 47721,
           "column": 9,
-          "offset": 1909525,
+          "offset": 1910600,
           "configurations": [
             "main",
             "normal"
@@ -8855,9 +9195,9 @@
           "caller": "petta_eval_machine_deliver_native_return",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 47695,
+          "line": 47721,
           "column": 9,
-          "offset": 1909525,
+          "offset": 1910600,
           "configurations": [
             "main",
             "normal"
@@ -8869,9 +9209,9 @@
           "caller": "eval_pattern_query_ready",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 49577,
+          "line": 49603,
           "column": 9,
-          "offset": 1993545,
+          "offset": 1994620,
           "configurations": [
             "main",
             "normal"
@@ -8883,9 +9223,9 @@
           "caller": "eval_pattern_query_ready",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 49577,
+          "line": 49603,
           "column": 9,
-          "offset": 1993545,
+          "offset": 1994620,
           "configurations": [
             "main",
             "normal"
@@ -8897,9 +9237,9 @@
           "caller": "prepared_pure_closed_invocation_try",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52500,
+          "line": 52526,
           "column": 9,
-          "offset": 2134835,
+          "offset": 2135910,
           "configurations": [
             "main",
             "normal"
@@ -8911,9 +9251,9 @@
           "caller": "prepared_pure_closed_invocation_try",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52500,
+          "line": 52526,
           "column": 9,
-          "offset": 2134835,
+          "offset": 2135910,
           "configurations": [
             "main",
             "normal"
@@ -8925,9 +9265,9 @@
           "caller": "prepared_pure_closed_answers_try",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52905,
+          "line": 52931,
           "column": 17,
-          "offset": 2153779,
+          "offset": 2154854,
           "configurations": [
             "main",
             "normal"
@@ -8939,9 +9279,9 @@
           "caller": "prepared_pure_closed_answers_try",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52905,
+          "line": 52931,
           "column": 17,
-          "offset": 2153779,
+          "offset": 2154854,
           "configurations": [
             "main",
             "normal"
@@ -8953,9 +9293,9 @@
           "caller": "prepared_pure_closed_answers_try",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52935,
+          "line": 52961,
           "column": 13,
-          "offset": 2155350,
+          "offset": 2156425,
           "configurations": [
             "main",
             "normal"
@@ -8967,9 +9307,9 @@
           "caller": "prepared_pure_closed_answers_try",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52935,
+          "line": 52961,
           "column": 13,
-          "offset": 2155350,
+          "offset": 2156425,
           "configurations": [
             "main",
             "normal"
@@ -8981,9 +9321,9 @@
           "caller": "he_complete_prepared_answer",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 54334,
+          "line": 54423,
           "column": 9,
-          "offset": 2220307,
+          "offset": 2224952,
           "configurations": [
             "main",
             "normal"
@@ -8995,9 +9335,9 @@
           "caller": "he_complete_prepared_answer",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 54334,
+          "line": 54423,
           "column": 9,
-          "offset": 2220307,
+          "offset": 2224952,
           "configurations": [
             "main",
             "normal"
@@ -9009,9 +9349,9 @@
           "caller": "metta_call_impl",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 60526,
+          "line": 60615,
           "column": 13,
-          "offset": 2497079,
+          "offset": 2501724,
           "configurations": [
             "main",
             "normal"
@@ -9023,9 +9363,9 @@
           "caller": "metta_call_impl",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 60526,
+          "line": 60615,
           "column": 13,
-          "offset": 2497079,
+          "offset": 2501724,
           "configurations": [
             "main",
             "normal"
@@ -9037,9 +9377,9 @@
           "caller": "metta_call_impl",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 60535,
+          "line": 60624,
           "column": 13,
-          "offset": 2497509,
+          "offset": 2502154,
           "configurations": [
             "main",
             "normal"
@@ -9051,9 +9391,9 @@
           "caller": "metta_call_impl",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 60535,
+          "line": 60624,
           "column": 13,
-          "offset": 2497509,
+          "offset": 2502154,
           "configurations": [
             "main",
             "normal"
@@ -9194,6 +9534,62 @@
           "line": 2222,
           "column": 9,
           "offset": 93463,
+          "configurations": [
+            "main",
+            "normal"
+          ]
+        },
+        {
+          "symbol": "eval_mark_interrupted",
+          "kind": "call",
+          "caller": "prepared_native_completion_next",
+          "owner": "src/eval_owned_execution.inc",
+          "file": "src/eval_owned_execution.inc",
+          "line": 915,
+          "column": 17,
+          "offset": 41833,
+          "configurations": [
+            "main",
+            "normal"
+          ]
+        },
+        {
+          "symbol": "eval_mark_interrupted",
+          "kind": "reference",
+          "caller": "prepared_native_completion_next",
+          "owner": "src/eval_owned_execution.inc",
+          "file": "src/eval_owned_execution.inc",
+          "line": 915,
+          "column": 17,
+          "offset": 41833,
+          "configurations": [
+            "main",
+            "normal"
+          ]
+        },
+        {
+          "symbol": "eval_mark_interrupted",
+          "kind": "call",
+          "caller": "prepared_native_completion_next",
+          "owner": "src/eval_owned_execution.inc",
+          "file": "src/eval_owned_execution.inc",
+          "line": 936,
+          "column": 13,
+          "offset": 42986,
+          "configurations": [
+            "main",
+            "normal"
+          ]
+        },
+        {
+          "symbol": "eval_mark_interrupted",
+          "kind": "reference",
+          "caller": "prepared_native_completion_next",
+          "owner": "src/eval_owned_execution.inc",
+          "file": "src/eval_owned_execution.inc",
+          "line": 936,
+          "column": 13,
+          "offset": 42986,
           "configurations": [
             "main",
             "normal"
@@ -9345,9 +9741,9 @@
           "caller": "eval_owned_answers_finish_residual",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 624,
+          "line": 621,
           "column": 17,
-          "offset": 28514,
+          "offset": 28401,
           "configurations": [
             "main",
             "normal"
@@ -9359,9 +9755,9 @@
           "caller": "eval_owned_residual_next",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 440,
+          "line": 437,
           "column": 28,
-          "offset": 19900,
+          "offset": 19787,
           "configurations": [
             "main",
             "normal"
@@ -9373,9 +9769,9 @@
           "caller": "eval_owned_residual_next",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 440,
+          "line": 437,
           "column": 28,
-          "offset": 19900,
+          "offset": 19787,
           "configurations": [
             "main",
             "normal"
@@ -9387,9 +9783,9 @@
           "caller": "eval_owned_residual_body",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 520,
+          "line": 517,
           "column": 42,
-          "offset": 23390,
+          "offset": 23277,
           "configurations": [
             "main",
             "normal"
@@ -9401,9 +9797,9 @@
           "caller": "eval_owned_residual_body",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 520,
+          "line": 517,
           "column": 42,
-          "offset": 23390,
+          "offset": 23277,
           "configurations": [
             "main",
             "normal"
@@ -9415,9 +9811,9 @@
           "caller": "eval_owned_residual_open",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 470,
+          "line": 467,
           "column": 49,
-          "offset": 21184,
+          "offset": 21071,
           "configurations": [
             "main",
             "normal"
@@ -9429,9 +9825,9 @@
           "caller": "prepared_native_completion_next",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 958,
+          "line": 964,
           "column": 11,
-          "offset": 44229,
+          "offset": 44370,
           "configurations": [
             "main",
             "normal"
@@ -9443,9 +9839,9 @@
           "caller": "prepared_native_completion_next",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 958,
+          "line": 964,
           "column": 11,
-          "offset": 44229,
+          "offset": 44370,
           "configurations": [
             "main",
             "normal"
@@ -9457,9 +9853,9 @@
           "caller": "eval_owned_residual_next",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 451,
+          "line": 448,
           "column": 12,
-          "offset": 20434,
+          "offset": 20321,
           "configurations": [
             "main",
             "normal"
@@ -9471,9 +9867,9 @@
           "caller": "eval_owned_residual_next",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 451,
+          "line": 448,
           "column": 12,
-          "offset": 20434,
+          "offset": 20321,
           "configurations": [
             "main",
             "normal"
@@ -9485,9 +9881,9 @@
           "caller": "eval_owned_residual_body",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 525,
+          "line": 522,
           "column": 44,
-          "offset": 23686,
+          "offset": 23573,
           "configurations": [
             "main",
             "normal"
@@ -9499,9 +9895,9 @@
           "caller": "eval_owned_residual_body",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 525,
+          "line": 522,
           "column": 44,
-          "offset": 23686,
+          "offset": 23573,
           "configurations": [
             "main",
             "normal"
@@ -9905,9 +10301,9 @@
           "caller": "",
           "owner": "",
           "file": "src/eval.c",
-          "line": 36974,
+          "line": 37000,
           "column": 5,
-          "offset": 1472996,
+          "offset": 1474115,
           "configurations": [
             "main",
             "normal"
@@ -10031,9 +10427,9 @@
           "caller": "prime_eval_stack_push",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 38278,
+          "line": 38304,
           "column": 5,
-          "offset": 1524664,
+          "offset": 1525783,
           "configurations": [
             "main",
             "normal"
@@ -10045,9 +10441,9 @@
           "caller": "prime_eval_stack_push",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 38278,
+          "line": 38304,
           "column": 5,
-          "offset": 1524664,
+          "offset": 1525783,
           "configurations": [
             "main",
             "normal"
@@ -10622,9 +11018,9 @@
           "caller": "metta_call_impl",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 56112,
+          "line": 56201,
           "column": 19,
-          "offset": 2299014,
+          "offset": 2303659,
           "configurations": [
             "main",
             "normal"
@@ -10636,9 +11032,9 @@
           "caller": "metta_call_impl",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 56112,
+          "line": 56201,
           "column": 19,
-          "offset": 2299014,
+          "offset": 2303659,
           "configurations": [
             "main",
             "normal"
@@ -10650,9 +11046,9 @@
           "caller": "metta_call_impl",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 56733,
+          "line": 56822,
           "column": 26,
-          "offset": 2329471,
+          "offset": 2334116,
           "configurations": [
             "main",
             "normal"
@@ -10664,9 +11060,9 @@
           "caller": "metta_call_impl",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 56733,
+          "line": 56822,
           "column": 26,
-          "offset": 2329471,
+          "offset": 2334116,
           "configurations": [
             "main",
             "normal"
@@ -10678,9 +11074,9 @@
           "caller": "metta_eval_one_step_let_star",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 61019,
+          "line": 61108,
           "column": 18,
-          "offset": 2515919,
+          "offset": 2520564,
           "configurations": [
             "main",
             "normal"
@@ -10692,9 +11088,9 @@
           "caller": "metta_eval_one_step_let_star",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 61019,
+          "line": 61108,
           "column": 18,
-          "offset": 2515919,
+          "offset": 2520564,
           "configurations": [
             "main",
             "normal"
@@ -10846,9 +11242,9 @@
           "caller": "oem_list_step",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 12358,
+          "line": 12396,
           "column": 22,
-          "offset": 560358,
+          "offset": 562486,
           "configurations": [
             "main",
             "normal"
@@ -10860,9 +11256,9 @@
           "caller": "oem_list_step",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 12358,
+          "line": 12396,
           "column": 22,
-          "offset": 560358,
+          "offset": 562486,
           "configurations": [
             "main",
             "normal"
@@ -10874,9 +11270,9 @@
           "caller": "oem_activate",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 15010,
+          "line": 15048,
           "column": 23,
-          "offset": 680841,
+          "offset": 682969,
           "configurations": [
             "main",
             "normal"
@@ -10888,9 +11284,9 @@
           "caller": "oem_activate",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 15010,
+          "line": 15048,
           "column": 23,
-          "offset": 680841,
+          "offset": 682969,
           "configurations": [
             "main",
             "normal"
@@ -11042,9 +11438,9 @@
           "caller": "prepared_pure_execute_intrinsic",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 8416,
+          "line": 8417,
           "column": 23,
-          "offset": 351244,
+          "offset": 351245,
           "configurations": [
             "main",
             "normal"
@@ -11056,9 +11452,9 @@
           "caller": "prepared_pure_execute_intrinsic",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 8416,
+          "line": 8417,
           "column": 23,
-          "offset": 351244,
+          "offset": 351245,
           "configurations": [
             "main",
             "normal"
@@ -11479,9 +11875,9 @@
           "caller": "prepared_foldl_single_result",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 18758,
+          "line": 18784,
           "column": 28,
-          "offset": 735256,
+          "offset": 736375,
           "configurations": [
             "main",
             "normal"
@@ -11493,9 +11889,9 @@
           "caller": "prepared_foldl_single_result",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 18758,
+          "line": 18784,
           "column": 28,
-          "offset": 735256,
+          "offset": 736375,
           "configurations": [
             "main",
             "normal"
@@ -11507,9 +11903,9 @@
           "caller": "atom_mentions_symbol_id",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 51901,
+          "line": 51927,
           "column": 12,
-          "offset": 2106255,
+          "offset": 2107330,
           "configurations": [
             "main",
             "normal"
@@ -11521,9 +11917,9 @@
           "caller": "atom_mentions_symbol_id",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 51901,
+          "line": 51927,
           "column": 12,
-          "offset": 2106255,
+          "offset": 2107330,
           "configurations": [
             "main",
             "normal"
@@ -11619,9 +12015,9 @@
           "caller": "oem_entered_call_result",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 12792,
+          "line": 12830,
           "column": 29,
-          "offset": 580484,
+          "offset": 582612,
           "configurations": [
             "main",
             "normal"
@@ -11633,9 +12029,9 @@
           "caller": "oem_entered_call_result",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 12792,
+          "line": 12830,
           "column": 29,
-          "offset": 580484,
+          "offset": 582612,
           "configurations": [
             "main",
             "normal"
@@ -11675,9 +12071,9 @@
           "caller": "cetta_prepared_pure_program_use_exportable_booleans",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 12287,
+          "line": 12288,
           "column": 40,
-          "offset": 521945,
+          "offset": 521946,
           "configurations": [
             "main",
             "normal"
@@ -11689,9 +12085,9 @@
           "caller": "cetta_prepared_pure_program_use_exportable_booleans",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 12287,
+          "line": 12288,
           "column": 40,
-          "offset": 521945,
+          "offset": 521946,
           "configurations": [
             "main",
             "normal"
@@ -11703,9 +12099,9 @@
           "caller": "cetta_prepared_pure_program_value_is_fully_evaluated",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 17217,
+          "line": 17331,
           "column": 21,
-          "offset": 749942,
+          "offset": 755841,
           "configurations": [
             "main",
             "normal"
@@ -11717,9 +12113,9 @@
           "caller": "cetta_prepared_pure_program_value_is_fully_evaluated",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 17217,
+          "line": 17331,
           "column": 21,
-          "offset": 749942,
+          "offset": 755841,
           "configurations": [
             "main",
             "normal"
@@ -12459,9 +12855,9 @@
           "caller": "prepared_collection_force_item",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 18930,
+          "line": 18956,
           "column": 18,
-          "offset": 741755,
+          "offset": 742874,
           "configurations": [
             "main",
             "normal"
@@ -12473,9 +12869,9 @@
           "caller": "prepared_collection_force_item",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 18930,
+          "line": 18956,
           "column": 18,
-          "offset": 741755,
+          "offset": 742874,
           "configurations": [
             "main",
             "normal"
@@ -12487,9 +12883,9 @@
           "caller": "prepared_collection_force_item",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 18939,
+          "line": 18965,
           "column": 17,
-          "offset": 742136,
+          "offset": 743255,
           "configurations": [
             "main",
             "normal"
@@ -12501,9 +12897,9 @@
           "caller": "prepared_collection_force_item",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 18939,
+          "line": 18965,
           "column": 17,
-          "offset": 742136,
+          "offset": 743255,
           "configurations": [
             "main",
             "normal"
@@ -12752,9 +13148,9 @@
           "caller": "oem_unify_trial",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 12617,
+          "line": 12655,
           "column": 23,
-          "offset": 572692,
+          "offset": 574820,
           "configurations": [
             "main",
             "normal"
@@ -12766,9 +13162,9 @@
           "caller": "oem_unify_trial",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 12617,
+          "line": 12655,
           "column": 23,
-          "offset": 572692,
+          "offset": 574820,
           "configurations": [
             "main",
             "normal"
@@ -12780,9 +13176,9 @@
           "caller": "oem_type_guard_step",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 14097,
+          "line": 14135,
           "column": 28,
-          "offset": 637466,
+          "offset": 639594,
           "configurations": [
             "main",
             "normal"
@@ -12794,9 +13190,9 @@
           "caller": "oem_type_guard_step",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 14097,
+          "line": 14135,
           "column": 28,
-          "offset": 637466,
+          "offset": 639594,
           "configurations": [
             "main",
             "normal"
@@ -12808,9 +13204,9 @@
           "caller": "oem_activate",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 14888,
+          "line": 14926,
           "column": 32,
-          "offset": 674597,
+          "offset": 676725,
           "configurations": [
             "main",
             "normal"
@@ -12822,9 +13218,9 @@
           "caller": "oem_activate",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 14888,
+          "line": 14926,
           "column": 32,
-          "offset": 674597,
+          "offset": 676725,
           "configurations": [
             "main",
             "normal"
@@ -12836,9 +13232,9 @@
           "caller": "oem_activate",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 14906,
+          "line": 14944,
           "column": 36,
-          "offset": 675422,
+          "offset": 677550,
           "configurations": [
             "main",
             "normal"
@@ -12850,9 +13246,9 @@
           "caller": "oem_activate",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 14906,
+          "line": 14944,
           "column": 36,
-          "offset": 675422,
+          "offset": 677550,
           "configurations": [
             "main",
             "normal"
@@ -12864,9 +13260,9 @@
           "caller": "oem_activate",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 14958,
+          "line": 14996,
           "column": 23,
-          "offset": 678101,
+          "offset": 680229,
           "configurations": [
             "main",
             "normal"
@@ -12878,9 +13274,9 @@
           "caller": "oem_activate",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 14958,
+          "line": 14996,
           "column": 23,
-          "offset": 678101,
+          "offset": 680229,
           "configurations": [
             "main",
             "normal"
@@ -12892,9 +13288,9 @@
           "caller": "oem_activate",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 15073,
+          "line": 15111,
           "column": 15,
-          "offset": 683599,
+          "offset": 685727,
           "configurations": [
             "main",
             "normal"
@@ -12906,9 +13302,9 @@
           "caller": "oem_activate",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 15073,
+          "line": 15111,
           "column": 15,
-          "offset": 683599,
+          "offset": 685727,
           "configurations": [
             "main",
             "normal"
@@ -12920,9 +13316,9 @@
           "caller": "oem_activate",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 15090,
+          "line": 15128,
           "column": 24,
-          "offset": 684452,
+          "offset": 686580,
           "configurations": [
             "main",
             "normal"
@@ -12934,9 +13330,9 @@
           "caller": "oem_activate",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 15090,
+          "line": 15128,
           "column": 24,
-          "offset": 684452,
+          "offset": 686580,
           "configurations": [
             "main",
             "normal"
@@ -12948,9 +13344,9 @@
           "caller": "oem_direct_relation_value",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 17118,
+          "line": 17156,
           "column": 19,
-          "offset": 773100,
+          "offset": 775228,
           "configurations": [
             "main",
             "normal"
@@ -12962,9 +13358,9 @@
           "caller": "oem_direct_relation_value",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 17118,
+          "line": 17156,
           "column": 19,
-          "offset": 773100,
+          "offset": 775228,
           "configurations": [
             "main",
             "normal"
@@ -12976,9 +13372,9 @@
           "caller": "oem_unmatched_value",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 17163,
+          "line": 17201,
           "column": 19,
-          "offset": 775206,
+          "offset": 777334,
           "configurations": [
             "main",
             "normal"
@@ -12990,9 +13386,9 @@
           "caller": "oem_unmatched_value",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 17163,
+          "line": 17201,
           "column": 19,
-          "offset": 775206,
+          "offset": 777334,
           "configurations": [
             "main",
             "normal"
@@ -13004,9 +13400,9 @@
           "caller": "oem_unify_row",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 17681,
+          "line": 17719,
           "column": 16,
-          "offset": 797910,
+          "offset": 800038,
           "configurations": [
             "main",
             "normal"
@@ -13018,9 +13414,9 @@
           "caller": "oem_unify_row",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 17681,
+          "line": 17719,
           "column": 16,
-          "offset": 797910,
+          "offset": 800038,
           "configurations": [
             "main",
             "normal"
@@ -13032,9 +13428,9 @@
           "caller": "oem_unify_row",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 17685,
+          "line": 17723,
           "column": 23,
-          "offset": 798059,
+          "offset": 800187,
           "configurations": [
             "main",
             "normal"
@@ -13046,9 +13442,9 @@
           "caller": "oem_unify_row",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 17685,
+          "line": 17723,
           "column": 23,
-          "offset": 798059,
+          "offset": 800187,
           "configurations": [
             "main",
             "normal"
@@ -13060,9 +13456,9 @@
           "caller": "oem_unify_row",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 17693,
+          "line": 17731,
           "column": 23,
-          "offset": 798410,
+          "offset": 800538,
           "configurations": [
             "main",
             "normal"
@@ -13074,9 +13470,9 @@
           "caller": "oem_unify_row",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 17693,
+          "line": 17731,
           "column": 23,
-          "offset": 798410,
+          "offset": 800538,
           "configurations": [
             "main",
             "normal"
@@ -13088,9 +13484,9 @@
           "caller": "oem_unify_stored",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 17886,
+          "line": 17924,
           "column": 23,
-          "offset": 808028,
+          "offset": 810156,
           "configurations": [
             "main",
             "normal"
@@ -13102,9 +13498,9 @@
           "caller": "oem_unify_stored",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 17886,
+          "line": 17924,
           "column": 23,
-          "offset": 808028,
+          "offset": 810156,
           "configurations": [
             "main",
             "normal"
@@ -13116,9 +13512,9 @@
           "caller": "oem_unify_stored",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 17907,
+          "line": 17945,
           "column": 20,
-          "offset": 809059,
+          "offset": 811187,
           "configurations": [
             "main",
             "normal"
@@ -13130,9 +13526,9 @@
           "caller": "oem_unify_stored",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 17907,
+          "line": 17945,
           "column": 20,
-          "offset": 809059,
+          "offset": 811187,
           "configurations": [
             "main",
             "normal"
@@ -13144,9 +13540,9 @@
           "caller": "oem_unify_stored",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 17935,
+          "line": 17973,
           "column": 16,
-          "offset": 810585,
+          "offset": 812713,
           "configurations": [
             "main",
             "normal"
@@ -13158,9 +13554,9 @@
           "caller": "oem_unify_stored",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 17935,
+          "line": 17973,
           "column": 16,
-          "offset": 810585,
+          "offset": 812713,
           "configurations": [
             "main",
             "normal"
@@ -13172,9 +13568,9 @@
           "caller": "oem_unify_stored",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 17939,
+          "line": 17977,
           "column": 23,
-          "offset": 810844,
+          "offset": 812972,
           "configurations": [
             "main",
             "normal"
@@ -13186,9 +13582,9 @@
           "caller": "oem_unify_stored",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 17939,
+          "line": 17977,
           "column": 23,
-          "offset": 810844,
+          "offset": 812972,
           "configurations": [
             "main",
             "normal"
@@ -13200,9 +13596,9 @@
           "caller": "cetta_open_equation_cursor_accept",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 19216,
+          "line": 19254,
           "column": 15,
-          "offset": 866400,
+          "offset": 868528,
           "configurations": [
             "main",
             "normal"
@@ -13214,9 +13610,9 @@
           "caller": "cetta_open_equation_cursor_accept",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 19216,
+          "line": 19254,
           "column": 15,
-          "offset": 866400,
+          "offset": 868528,
           "configurations": [
             "main",
             "normal"
@@ -13228,9 +13624,9 @@
           "caller": "oem_cursor_run_mode",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 19352,
+          "line": 19390,
           "column": 23,
-          "offset": 872729,
+          "offset": 874857,
           "configurations": [
             "main",
             "normal"
@@ -13242,9 +13638,9 @@
           "caller": "oem_cursor_run_mode",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 19352,
+          "line": 19390,
           "column": 23,
-          "offset": 872729,
+          "offset": 874857,
           "configurations": [
             "main",
             "normal"
@@ -13256,9 +13652,9 @@
           "caller": "oem_cursor_run_mode",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 19394,
+          "line": 19432,
           "column": 36,
-          "offset": 874719,
+          "offset": 876847,
           "configurations": [
             "main",
             "normal"
@@ -13270,9 +13666,9 @@
           "caller": "oem_cursor_run_mode",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 19394,
+          "line": 19432,
           "column": 36,
-          "offset": 874719,
+          "offset": 876847,
           "configurations": [
             "main",
             "normal"
@@ -13354,9 +13750,9 @@
           "caller": "oem_unify_trial",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 12616,
+          "line": 12654,
           "column": 5,
-          "offset": 572637,
+          "offset": 574765,
           "configurations": [
             "main",
             "normal"
@@ -13368,9 +13764,9 @@
           "caller": "oem_unify_trial",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 12616,
+          "line": 12654,
           "column": 5,
-          "offset": 572637,
+          "offset": 574765,
           "configurations": [
             "main",
             "normal"
@@ -13382,9 +13778,9 @@
           "caller": "oem_run_body_mode",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 14644,
+          "line": 14682,
           "column": 17,
-          "offset": 663274,
+          "offset": 665402,
           "configurations": [
             "main",
             "normal"
@@ -13396,9 +13792,9 @@
           "caller": "oem_run_body_mode",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 14644,
+          "line": 14682,
           "column": 17,
-          "offset": 663274,
+          "offset": 665402,
           "configurations": [
             "main",
             "normal"
@@ -13410,9 +13806,9 @@
           "caller": "oem_run_body_mode",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 14676,
+          "line": 14714,
           "column": 13,
-          "offset": 664979,
+          "offset": 667107,
           "configurations": [
             "main",
             "normal"
@@ -13424,9 +13820,9 @@
           "caller": "oem_run_body_mode",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 14676,
+          "line": 14714,
           "column": 13,
-          "offset": 664979,
+          "offset": 667107,
           "configurations": [
             "main",
             "normal"
@@ -13785,9 +14181,9 @@
           "caller": "prepared_pure_program_cache_refusal_current",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 23957,
+          "line": 23983,
           "column": 12,
-          "offset": 937743,
+          "offset": 938862,
           "configurations": [
             "main",
             "normal"
@@ -13799,9 +14195,9 @@
           "caller": "prepared_pure_program_cache_refusal_current",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 23957,
+          "line": 23983,
           "column": 12,
-          "offset": 937743,
+          "offset": 938862,
           "configurations": [
             "main",
             "normal"
@@ -13813,9 +14209,9 @@
           "caller": "prepared_collection_cached_replay_safe",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 24005,
+          "line": 24031,
           "column": 10,
-          "offset": 939981,
+          "offset": 941100,
           "configurations": [
             "main",
             "normal"
@@ -13827,9 +14223,9 @@
           "caller": "prepared_collection_cached_replay_safe",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 24005,
+          "line": 24031,
           "column": 10,
-          "offset": 939981,
+          "offset": 941100,
           "configurations": [
             "main",
             "normal"
@@ -13841,9 +14237,9 @@
           "caller": "prepared_pure_program_cache_lookup",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 51284,
+          "line": 51310,
           "column": 10,
-          "offset": 2077939,
+          "offset": 2079014,
           "configurations": [
             "main",
             "normal"
@@ -13855,9 +14251,9 @@
           "caller": "prepared_pure_program_cache_lookup",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 51284,
+          "line": 51310,
           "column": 10,
-          "offset": 2077939,
+          "offset": 2079014,
           "configurations": [
             "main",
             "normal"
@@ -13869,9 +14265,9 @@
           "caller": "prepared_pure_program_cache_has_decline_head",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 51341,
+          "line": 51367,
           "column": 10,
-          "offset": 2080403,
+          "offset": 2081478,
           "configurations": [
             "main",
             "normal"
@@ -13883,9 +14279,9 @@
           "caller": "prepared_pure_program_cache_has_decline_head",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 51341,
+          "line": 51367,
           "column": 10,
-          "offset": 2080403,
+          "offset": 2081478,
           "configurations": [
             "main",
             "normal"
@@ -13897,9 +14293,9 @@
           "caller": "prepared_pure_program_cache_insert",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 51443,
+          "line": 51469,
           "column": 10,
-          "offset": 2084813,
+          "offset": 2085888,
           "configurations": [
             "main",
             "normal"
@@ -13911,9 +14307,9 @@
           "caller": "prepared_pure_program_cache_insert",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 51443,
+          "line": 51469,
           "column": 10,
-          "offset": 2084813,
+          "offset": 2085888,
           "configurations": [
             "main",
             "normal"
@@ -13925,9 +14321,9 @@
           "caller": "prepared_pure_program_cache_insert_decline_head",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 51467,
+          "line": 51493,
           "column": 9,
-          "offset": 2086207,
+          "offset": 2087282,
           "configurations": [
             "main",
             "normal"
@@ -13939,9 +14335,9 @@
           "caller": "prepared_pure_program_cache_insert_decline_head",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 51467,
+          "line": 51493,
           "column": 9,
-          "offset": 2086207,
+          "offset": 2087282,
           "configurations": [
             "main",
             "normal"
@@ -13976,9 +14372,9 @@
           "caller": "prepared_pure_program_cache_publish_report",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 51492,
+          "line": 51518,
           "column": 15,
-          "offset": 2087668,
+          "offset": 2088743,
           "configurations": [
             "main",
             "normal"
@@ -13990,9 +14386,9 @@
           "caller": "prepared_pure_closed_invocation_try",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52402,
+          "line": 52428,
           "column": 5,
-          "offset": 2129776,
+          "offset": 2130851,
           "configurations": [
             "main",
             "normal"
@@ -14004,9 +14400,9 @@
           "caller": "prepared_pure_closed_answers_try",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52773,
+          "line": 52799,
           "column": 5,
-          "offset": 2146836,
+          "offset": 2147911,
           "configurations": [
             "main",
             "normal"
@@ -14018,9 +14414,9 @@
           "caller": "petta_eval_machine_open_answer_cursor",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 53099,
+          "line": 53125,
           "column": 5,
-          "offset": 2162817,
+          "offset": 2163892,
           "configurations": [
             "main",
             "normal"
@@ -14032,9 +14428,9 @@
           "caller": "prepared_pure_program_new",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 9677,
+          "line": 9678,
           "column": 5,
-          "offset": 406347,
+          "offset": 406348,
           "configurations": [
             "main",
             "normal"
@@ -14046,9 +14442,9 @@
           "caller": "prepared_pure_compile_failure_report",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 12018,
+          "line": 12019,
           "column": 9,
-          "offset": 509528,
+          "offset": 509529,
           "configurations": [
             "main",
             "normal"
@@ -14060,9 +14456,9 @@
           "caller": "prepared_pure_program_compile_closed_mode",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 12064,
+          "line": 12065,
           "column": 27,
-          "offset": 511712,
+          "offset": 511713,
           "configurations": [
             "main",
             "normal"
@@ -14074,9 +14470,9 @@
           "caller": "prepared_pure_program_compile_closed_mode",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 12066,
+          "line": 12067,
           "column": 20,
-          "offset": 511789,
+          "offset": 511790,
           "configurations": [
             "main",
             "normal"
@@ -14088,9 +14484,9 @@
           "caller": "prepared_pure_program_compile_closed_mode",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 12079,
+          "line": 12080,
           "column": 20,
-          "offset": 512357,
+          "offset": 512358,
           "configurations": [
             "main",
             "normal"
@@ -14102,9 +14498,9 @@
           "caller": "cetta_prepared_pure_program_compile_closed",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 12176,
+          "line": 12177,
           "column": 5,
-          "offset": 516891,
+          "offset": 516892,
           "configurations": [
             "main",
             "normal"
@@ -14116,9 +14512,9 @@
           "caller": "cetta_prepared_pure_program_compile_closed_answers",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 12199,
+          "line": 12200,
           "column": 5,
-          "offset": 517999,
+          "offset": 518000,
           "configurations": [
             "main",
             "normal"
@@ -14144,9 +14540,9 @@
           "caller": "cetta_prepared_pure_program_compile_closed",
           "owner": "src/prepared_pure_machine.h",
           "file": "src/prepared_pure_machine.h",
-          "line": 296,
+          "line": 299,
           "column": 5,
-          "offset": 15039,
+          "offset": 15231,
           "configurations": [
             "main",
             "normal"
@@ -14158,9 +14554,9 @@
           "caller": "cetta_prepared_pure_program_compile_closed_answers",
           "owner": "src/prepared_pure_machine.h",
           "file": "src/prepared_pure_machine.h",
-          "line": 319,
+          "line": 322,
           "column": 5,
-          "offset": 16320,
+          "offset": 16512,
           "configurations": [
             "main",
             "normal"
@@ -14172,9 +14568,9 @@
           "caller": "prepared_pure_program_cache_publish_report",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 51497,
+          "line": 51523,
           "column": 13,
-          "offset": 2087945,
+          "offset": 2089020,
           "configurations": [
             "main",
             "normal"
@@ -14186,9 +14582,9 @@
           "caller": "prepared_pure_program_cache_publish_report",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 51497,
+          "line": 51523,
           "column": 13,
-          "offset": 2087945,
+          "offset": 2089020,
           "configurations": [
             "main",
             "normal"
@@ -14200,9 +14596,9 @@
           "caller": "prepared_collection_pull_single_result",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 19029,
+          "line": 19055,
           "column": 15,
-          "offset": 745953,
+          "offset": 747072,
           "configurations": [
             "main",
             "normal"
@@ -14214,9 +14610,9 @@
           "caller": "prepared_collection_pull_single_result",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 19029,
+          "line": 19055,
           "column": 15,
-          "offset": 745953,
+          "offset": 747072,
           "configurations": [
             "main",
             "normal"
@@ -14228,9 +14624,9 @@
           "caller": "eval_prepare_pure_value_call",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52104,
+          "line": 52130,
           "column": 12,
-          "offset": 2116019,
+          "offset": 2117094,
           "configurations": [
             "main",
             "normal"
@@ -14242,9 +14638,9 @@
           "caller": "eval_prepare_pure_value_call",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52104,
+          "line": 52130,
           "column": 12,
-          "offset": 2116019,
+          "offset": 2117094,
           "configurations": [
             "main",
             "normal"
@@ -14256,9 +14652,9 @@
           "caller": "prepared_pure_closed_invocation_try",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52407,
+          "line": 52433,
           "column": 19,
-          "offset": 2130048,
+          "offset": 2131123,
           "configurations": [
             "main",
             "normal"
@@ -14270,9 +14666,9 @@
           "caller": "prepared_pure_closed_invocation_try",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52407,
+          "line": 52433,
           "column": 19,
-          "offset": 2130048,
+          "offset": 2131123,
           "configurations": [
             "main",
             "normal"
@@ -14284,9 +14680,9 @@
           "caller": "prepared_pure_closed_invocation_try",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52525,
+          "line": 52551,
           "column": 31,
-          "offset": 2136129,
+          "offset": 2137204,
           "configurations": [
             "main",
             "normal"
@@ -14298,9 +14694,9 @@
           "caller": "prepared_pure_closed_invocation_try",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52525,
+          "line": 52551,
           "column": 31,
-          "offset": 2136129,
+          "offset": 2137204,
           "configurations": [
             "main",
             "normal"
@@ -14312,9 +14708,9 @@
           "caller": "prepared_pure_closed_answers_try",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52776,
+          "line": 52802,
           "column": 19,
-          "offset": 2147004,
+          "offset": 2148079,
           "configurations": [
             "main",
             "normal"
@@ -14326,9 +14722,9 @@
           "caller": "prepared_pure_closed_answers_try",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52776,
+          "line": 52802,
           "column": 19,
-          "offset": 2147004,
+          "offset": 2148079,
           "configurations": [
             "main",
             "normal"
@@ -14340,9 +14736,9 @@
           "caller": "petta_eval_machine_open_answer_cursor",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 53102,
+          "line": 53128,
           "column": 19,
-          "offset": 2162985,
+          "offset": 2164060,
           "configurations": [
             "main",
             "normal"
@@ -14354,9 +14750,9 @@
           "caller": "petta_eval_machine_open_answer_cursor",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 53102,
+          "line": 53128,
           "column": 19,
-          "offset": 2162985,
+          "offset": 2164060,
           "configurations": [
             "main",
             "normal"
@@ -14368,9 +14764,9 @@
           "caller": "eval_owned_answers_open",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 321,
+          "line": 316,
           "column": 24,
-          "offset": 14875,
+          "offset": 14651,
           "configurations": [
             "main",
             "normal"
@@ -14382,9 +14778,9 @@
           "caller": "eval_owned_answers_open",
           "owner": "src/eval_owned_execution.inc",
           "file": "src/eval_owned_execution.inc",
-          "line": 321,
+          "line": 316,
           "column": 24,
-          "offset": 14875,
+          "offset": 14651,
           "configurations": [
             "main",
             "normal"
@@ -14396,9 +14792,9 @@
           "caller": "petta_eval_open_program_acquire_entry",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 53719,
+          "line": 53765,
           "column": 41,
-          "offset": 2191706,
+          "offset": 2193867,
           "configurations": [
             "main",
             "normal"
@@ -14410,9 +14806,9 @@
           "caller": "petta_eval_open_program_acquire_entry",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 53719,
+          "line": 53765,
           "column": 41,
-          "offset": 2191706,
+          "offset": 2193867,
           "configurations": [
             "main",
             "normal"
@@ -14424,9 +14820,9 @@
           "caller": "petta_eval_open_program_current",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 53753,
+          "line": 53799,
           "column": 17,
-          "offset": 2193212,
+          "offset": 2195373,
           "configurations": [
             "main",
             "normal"
@@ -14438,9 +14834,9 @@
           "caller": "petta_eval_open_program_current",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 53753,
+          "line": 53799,
           "column": 17,
-          "offset": 2193212,
+          "offset": 2195373,
           "configurations": [
             "main",
             "normal"
@@ -14452,9 +14848,9 @@
           "caller": "petta_eval_machine_owned_multishot_admits_root",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 48550,
+          "line": 48576,
           "column": 12,
-          "offset": 1947635,
+          "offset": 1948710,
           "configurations": [
             "main",
             "normal"
@@ -14466,9 +14862,9 @@
           "caller": "petta_eval_machine_owned_multishot_admits_root",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 48550,
+          "line": 48576,
           "column": 12,
-          "offset": 1947635,
+          "offset": 1948710,
           "configurations": [
             "main",
             "normal"
@@ -14480,9 +14876,9 @@
           "caller": "petta_eval_machine_admits_root",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 48646,
+          "line": 48672,
           "column": 22,
-          "offset": 1951765,
+          "offset": 1952840,
           "configurations": [
             "main",
             "normal"
@@ -14494,9 +14890,9 @@
           "caller": "petta_eval_machine_admits_root",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 48646,
+          "line": 48672,
           "column": 22,
-          "offset": 1951765,
+          "offset": 1952840,
           "configurations": [
             "main",
             "normal"
@@ -14564,9 +14960,9 @@
           "caller": "petta_eval_machine_prepared_refused",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 44471,
+          "line": 44497,
           "column": 13,
-          "offset": 1765169,
+          "offset": 1766244,
           "configurations": [
             "main",
             "normal"
@@ -14578,9 +14974,9 @@
           "caller": "petta_eval_machine_prepared_refused",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 44471,
+          "line": 44497,
           "column": 13,
-          "offset": 1765169,
+          "offset": 1766244,
           "configurations": [
             "main",
             "normal"
@@ -14592,9 +14988,9 @@
           "caller": "prepared_pure_closed_invocation_try",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52323,
+          "line": 52349,
           "column": 17,
-          "offset": 2126145,
+          "offset": 2127220,
           "configurations": [
             "main",
             "normal"
@@ -14606,9 +15002,9 @@
           "caller": "prepared_pure_closed_invocation_try",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52323,
+          "line": 52349,
           "column": 17,
-          "offset": 2126145,
+          "offset": 2127220,
           "configurations": [
             "main",
             "normal"
@@ -14620,9 +15016,9 @@
           "caller": "prepared_pure_closed_invocation_try",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52377,
+          "line": 52403,
           "column": 9,
-          "offset": 2128668,
+          "offset": 2129743,
           "configurations": [
             "main",
             "normal"
@@ -14634,9 +15030,9 @@
           "caller": "prepared_pure_closed_invocation_try",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52377,
+          "line": 52403,
           "column": 9,
-          "offset": 2128668,
+          "offset": 2129743,
           "configurations": [
             "main",
             "normal"
@@ -14648,9 +15044,9 @@
           "caller": "prepared_pure_closed_answers_try",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52769,
+          "line": 52795,
           "column": 9,
-          "offset": 2146596,
+          "offset": 2147671,
           "configurations": [
             "main",
             "normal"
@@ -14662,9 +15058,9 @@
           "caller": "prepared_pure_closed_answers_try",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52769,
+          "line": 52795,
           "column": 9,
-          "offset": 2146596,
+          "offset": 2147671,
           "configurations": [
             "main",
             "normal"
@@ -14676,9 +15072,9 @@
           "caller": "petta_eval_machine_answer_cursor_declined",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 53180,
+          "line": 53206,
           "column": 9,
-          "offset": 2166603,
+          "offset": 2167678,
           "configurations": [
             "main",
             "normal"
@@ -14690,9 +15086,9 @@
           "caller": "petta_eval_machine_answer_cursor_declined",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 53180,
+          "line": 53206,
           "column": 9,
-          "offset": 2166603,
+          "offset": 2167678,
           "configurations": [
             "main",
             "normal"
@@ -14704,9 +15100,9 @@
           "caller": "petta_eval_machine_execute_prepared_pure_call",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 44443,
+          "line": 44469,
           "column": 12,
-          "offset": 1763630,
+          "offset": 1764705,
           "configurations": [
             "main",
             "normal"
@@ -14718,9 +15114,9 @@
           "caller": "petta_eval_machine_execute_prepared_pure_call",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 44443,
+          "line": 44469,
           "column": 12,
-          "offset": 1763630,
+          "offset": 1764705,
           "configurations": [
             "main",
             "normal"
@@ -14732,9 +15128,9 @@
           "caller": "prepared_pure_closed_call_try",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52576,
+          "line": 52602,
           "column": 12,
-          "offset": 2138377,
+          "offset": 2139452,
           "configurations": [
             "main",
             "normal"
@@ -14746,9 +15142,9 @@
           "caller": "prepared_pure_closed_call_try",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52576,
+          "line": 52602,
           "column": 12,
-          "offset": 2138377,
+          "offset": 2139452,
           "configurations": [
             "main",
             "normal"
@@ -14760,9 +15156,9 @@
           "caller": "petta_eval_open_execute_pure_relation",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 54029,
+          "line": 54117,
           "column": 10,
-          "offset": 2205804,
+          "offset": 2210375,
           "configurations": [
             "main",
             "normal"
@@ -14774,9 +15170,9 @@
           "caller": "petta_eval_open_execute_pure_relation",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 54029,
+          "line": 54117,
           "column": 10,
-          "offset": 2205804,
+          "offset": 2210375,
           "configurations": [
             "main",
             "normal"
@@ -14788,9 +15184,9 @@
           "caller": "prepared_pure_program_compile_closed_mode",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 12107,
+          "line": 12108,
           "column": 9,
-          "offset": 513824,
+          "offset": 513825,
           "configurations": [
             "main",
             "normal"
@@ -14802,9 +15198,9 @@
           "caller": "prepared_pure_program_compile_closed_mode",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 12107,
+          "line": 12108,
           "column": 9,
-          "offset": 513824,
+          "offset": 513825,
           "configurations": [
             "main",
             "normal"
@@ -14816,9 +15212,9 @@
           "caller": "prepared_pure_program_compile_closed_mode",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 12131,
+          "line": 12132,
           "column": 9,
-          "offset": 514849,
+          "offset": 514850,
           "configurations": [
             "main",
             "normal"
@@ -14830,9 +15226,9 @@
           "caller": "prepared_pure_program_compile_closed_mode",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 12131,
+          "line": 12132,
           "column": 9,
-          "offset": 514849,
+          "offset": 514850,
           "configurations": [
             "main",
             "normal"
@@ -14844,9 +15240,9 @@
           "caller": "prepared_pure_program_compile_closed_mode",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 12137,
+          "line": 12138,
           "column": 9,
-          "offset": 515162,
+          "offset": 515163,
           "configurations": [
             "main",
             "normal"
@@ -14858,9 +15254,9 @@
           "caller": "prepared_pure_program_compile_closed_mode",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 12137,
+          "line": 12138,
           "column": 9,
-          "offset": 515162,
+          "offset": 515163,
           "configurations": [
             "main",
             "normal"
@@ -14872,9 +15268,9 @@
           "caller": "prepared_pure_program_compile_closed_mode",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 12152,
+          "line": 12153,
           "column": 9,
-          "offset": 515874,
+          "offset": 515875,
           "configurations": [
             "main",
             "normal"
@@ -14886,9 +15282,9 @@
           "caller": "prepared_pure_program_compile_closed_mode",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 12152,
+          "line": 12153,
           "column": 9,
-          "offset": 515874,
+          "offset": 515875,
           "configurations": [
             "main",
             "normal"
@@ -14900,9 +15296,9 @@
           "caller": "petta_eval_machine_prepared_refused",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 44476,
+          "line": 44502,
           "column": 12,
-          "offset": 1765342,
+          "offset": 1766417,
           "configurations": [
             "main",
             "normal"
@@ -14914,9 +15310,9 @@
           "caller": "petta_eval_machine_prepared_refused",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 44476,
+          "line": 44502,
           "column": 12,
-          "offset": 1765342,
+          "offset": 1766417,
           "configurations": [
             "main",
             "normal"
@@ -14928,9 +15324,9 @@
           "caller": "prepared_pure_closed_invocation_plan",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 51936,
+          "line": 51962,
           "column": 13,
-          "offset": 2108027,
+          "offset": 2109102,
           "configurations": [
             "main",
             "normal"
@@ -14942,9 +15338,9 @@
           "caller": "prepared_pure_closed_invocation_plan",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 51936,
+          "line": 51962,
           "column": 13,
-          "offset": 2108027,
+          "offset": 2109102,
           "configurations": [
             "main",
             "normal"
@@ -14956,9 +15352,9 @@
           "caller": "prepared_pure_closed_invocation_try",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52299,
+          "line": 52325,
           "column": 40,
-          "offset": 2124583,
+          "offset": 2125658,
           "configurations": [
             "main",
             "normal"
@@ -14970,9 +15366,9 @@
           "caller": "prepared_pure_closed_invocation_try",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52299,
+          "line": 52325,
           "column": 40,
-          "offset": 2124583,
+          "offset": 2125658,
           "configurations": [
             "main",
             "normal"
@@ -14984,9 +15380,9 @@
           "caller": "prepared_pure_closed_invocation_try",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52305,
+          "line": 52331,
           "column": 14,
-          "offset": 2124974,
+          "offset": 2126049,
           "configurations": [
             "main",
             "normal"
@@ -14998,9 +15394,9 @@
           "caller": "prepared_pure_closed_invocation_try",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52305,
+          "line": 52331,
           "column": 14,
-          "offset": 2124974,
+          "offset": 2126049,
           "configurations": [
             "main",
             "normal"
@@ -15012,9 +15408,9 @@
           "caller": "prepared_pure_closed_answers_try",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52725,
+          "line": 52751,
           "column": 13,
-          "offset": 2144442,
+          "offset": 2145517,
           "configurations": [
             "main",
             "normal"
@@ -15026,9 +15422,9 @@
           "caller": "prepared_pure_closed_answers_try",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52725,
+          "line": 52751,
           "column": 13,
-          "offset": 2144442,
+          "offset": 2145517,
           "configurations": [
             "main",
             "normal"
@@ -15040,9 +15436,9 @@
           "caller": "petta_eval_machine_answer_cursor_declined",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 53184,
+          "line": 53210,
           "column": 12,
-          "offset": 2166766,
+          "offset": 2167841,
           "configurations": [
             "main",
             "normal"
@@ -15054,9 +15450,9 @@
           "caller": "petta_eval_machine_answer_cursor_declined",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 53184,
+          "line": 53210,
           "column": 12,
-          "offset": 2166766,
+          "offset": 2167841,
           "configurations": [
             "main",
             "normal"
@@ -15068,9 +15464,9 @@
           "caller": "petta_eval_machine_collect_closed_answers",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 53213,
+          "line": 53239,
           "column": 10,
-          "offset": 2168235,
+          "offset": 2169310,
           "configurations": [
             "main",
             "normal"
@@ -15082,9 +15478,9 @@
           "caller": "petta_eval_machine_collect_closed_answers",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 53213,
+          "line": 53239,
           "column": 10,
-          "offset": 2168235,
+          "offset": 2169310,
           "configurations": [
             "main",
             "normal"
@@ -15096,9 +15492,9 @@
           "caller": "prepared_pure_closed_invocation_try",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52420,
+          "line": 52446,
           "column": 13,
-          "offset": 2130629,
+          "offset": 2131704,
           "configurations": [
             "main",
             "normal"
@@ -15110,9 +15506,9 @@
           "caller": "prepared_pure_closed_invocation_try",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52420,
+          "line": 52446,
           "column": 13,
-          "offset": 2130629,
+          "offset": 2131704,
           "configurations": [
             "main",
             "normal"
@@ -15124,9 +15520,9 @@
           "caller": "prepared_pure_closed_answers_try",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52787,
+          "line": 52813,
           "column": 9,
-          "offset": 2147493,
+          "offset": 2148568,
           "configurations": [
             "main",
             "normal"
@@ -15138,9 +15534,9 @@
           "caller": "prepared_pure_closed_answers_try",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 52787,
+          "line": 52813,
           "column": 9,
-          "offset": 2147493,
+          "offset": 2148568,
           "configurations": [
             "main",
             "normal"
@@ -15152,9 +15548,9 @@
           "caller": "petta_eval_machine_open_answer_cursor",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 53112,
+          "line": 53138,
           "column": 13,
-          "offset": 2163476,
+          "offset": 2164551,
           "configurations": [
             "main",
             "normal"
@@ -15166,9 +15562,9 @@
           "caller": "petta_eval_machine_open_answer_cursor",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 53112,
+          "line": 53138,
           "column": 13,
-          "offset": 2163476,
+          "offset": 2164551,
           "configurations": [
             "main",
             "normal"
@@ -15712,9 +16108,9 @@
           "caller": "prepared_unary_collection_single_result",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 17666,
+          "line": 17692,
           "column": 18,
-          "offset": 690244,
+          "offset": 691363,
           "configurations": [
             "main",
             "normal"
@@ -15726,9 +16122,9 @@
           "caller": "prepared_unary_collection_single_result",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 17666,
+          "line": 17692,
           "column": 18,
-          "offset": 690244,
+          "offset": 691363,
           "configurations": [
             "main",
             "normal"
@@ -15796,9 +16192,9 @@
           "caller": "prepared_pure_execute_intrinsic",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 8376,
+          "line": 8377,
           "column": 16,
-          "offset": 349220,
+          "offset": 349221,
           "configurations": [
             "main",
             "normal"
@@ -15810,9 +16206,9 @@
           "caller": "prepared_pure_execute_intrinsic",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 8376,
+          "line": 8377,
           "column": 16,
-          "offset": 349220,
+          "offset": 349221,
           "configurations": [
             "main",
             "normal"
@@ -15824,9 +16220,9 @@
           "caller": "prepared_pure_scalar_float_operation",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 8738,
+          "line": 8739,
           "column": 10,
-          "offset": 364771,
+          "offset": 364772,
           "configurations": [
             "main",
             "normal"
@@ -15838,9 +16234,9 @@
           "caller": "prepared_pure_scalar_float_operation",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 8738,
+          "line": 8739,
           "column": 10,
-          "offset": 364771,
+          "offset": 364772,
           "configurations": [
             "main",
             "normal"
@@ -15852,9 +16248,9 @@
           "caller": "prepared_pure_ready_float_scalar",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 13439,
+          "line": 13470,
           "column": 12,
-          "offset": 571363,
+          "offset": 572676,
           "configurations": [
             "main",
             "normal"
@@ -15866,9 +16262,9 @@
           "caller": "prepared_pure_ready_float_scalar",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 13439,
+          "line": 13470,
           "column": 12,
-          "offset": 571363,
+          "offset": 572676,
           "configurations": [
             "main",
             "normal"
@@ -15880,9 +16276,9 @@
           "caller": "prepared_pure_scalar_numbers",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 15441,
+          "line": 15475,
           "column": 12,
-          "offset": 663581,
+          "offset": 665104,
           "configurations": [
             "main",
             "normal"
@@ -15894,9 +16290,9 @@
           "caller": "prepared_pure_scalar_numbers",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 15441,
+          "line": 15475,
           "column": 12,
-          "offset": 663581,
+          "offset": 665104,
           "configurations": [
             "main",
             "normal"
@@ -15908,9 +16304,9 @@
           "caller": "prepared_pure_inline_register_scalar",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 8866,
+          "line": 8867,
           "column": 12,
-          "offset": 370468,
+          "offset": 370469,
           "configurations": [
             "main",
             "normal"
@@ -15922,9 +16318,9 @@
           "caller": "prepared_pure_inline_register_scalar",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 8866,
+          "line": 8867,
           "column": 12,
-          "offset": 370468,
+          "offset": 370469,
           "configurations": [
             "main",
             "normal"
@@ -16033,9 +16429,9 @@
           "caller": "prepared_pure_run_code_worker",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 15713,
+          "line": 15749,
           "column": 27,
-          "offset": 676922,
+          "offset": 678547,
           "configurations": [
             "main",
             "normal"
@@ -16047,9 +16443,9 @@
           "caller": "prepared_pure_run_code_worker",
           "owner": "src/prepared_pure_machine.c",
           "file": "src/prepared_pure_machine.c",
-          "line": 15713,
+          "line": 15749,
           "column": 27,
-          "offset": 676922,
+          "offset": 678547,
           "configurations": [
             "main",
             "normal"
@@ -16075,9 +16471,9 @@
           "caller": "eval_try_petta_native_fold",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 61735,
+          "line": 61824,
           "column": 9,
-          "offset": 2545496,
+          "offset": 2550141,
           "configurations": [
             "main",
             "normal"
@@ -16089,9 +16485,9 @@
           "caller": "eval_try_petta_native_fold",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 61735,
+          "line": 61824,
           "column": 9,
-          "offset": 2545496,
+          "offset": 2550141,
           "configurations": [
             "main",
             "normal"
@@ -16131,9 +16527,9 @@
           "caller": "oem_algebraic_run",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 17089,
+          "line": 17127,
           "column": 15,
-          "offset": 771929,
+          "offset": 774057,
           "configurations": [
             "main",
             "normal"
@@ -16145,9 +16541,9 @@
           "caller": "oem_algebraic_run",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 17089,
+          "line": 17127,
           "column": 15,
-          "offset": 771929,
+          "offset": 774057,
           "configurations": [
             "main",
             "normal"
@@ -16159,9 +16555,9 @@
           "caller": "oem_algebraic_run",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 17077,
+          "line": 17115,
           "column": 15,
-          "offset": 771325,
+          "offset": 773453,
           "configurations": [
             "main",
             "normal"
@@ -16173,9 +16569,9 @@
           "caller": "oem_algebraic_run",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 17077,
+          "line": 17115,
           "column": 15,
-          "offset": 771325,
+          "offset": 773453,
           "configurations": [
             "main",
             "normal"
@@ -16201,9 +16597,9 @@
           "caller": "eval_try_exec_saturation",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 25850,
+          "line": 25876,
           "column": 9,
-          "offset": 1016551,
+          "offset": 1017670,
           "configurations": [
             "main",
             "normal"
@@ -16215,9 +16611,9 @@
           "caller": "eval_try_exec_saturation",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 25850,
+          "line": 25876,
           "column": 9,
-          "offset": 1016551,
+          "offset": 1017670,
           "configurations": [
             "main",
             "normal"
@@ -16634,9 +17030,9 @@
           "caller": "oem_run_body_mode",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 14645,
+          "line": 14683,
           "column": 42,
-          "offset": 663355,
+          "offset": 665483,
           "configurations": [
             "main",
             "normal"
@@ -16648,9 +17044,9 @@
           "caller": "oem_run_body_mode",
           "owner": "src/open_equation_machine.c",
           "file": "src/open_equation_machine.c",
-          "line": 14645,
+          "line": 14683,
           "column": 42,
-          "offset": 663355,
+          "offset": 665483,
           "configurations": [
             "main",
             "normal"
@@ -17024,9 +17420,9 @@
           "caller": "match_purity_graph_node",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 29355,
+          "line": 29381,
           "column": 20,
-          "offset": 1156183,
+          "offset": 1157302,
           "configurations": [
             "main",
             "normal"
@@ -17038,9 +17434,9 @@
           "caller": "match_purity_graph_node",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 29355,
+          "line": 29381,
           "column": 20,
-          "offset": 1156183,
+          "offset": 1157302,
           "configurations": [
             "main",
             "normal"
@@ -17052,9 +17448,9 @@
           "caller": "match_user_head_shown_pure",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 29544,
+          "line": 29570,
           "column": 33,
-          "offset": 1163935,
+          "offset": 1165054,
           "configurations": [
             "main",
             "normal"
@@ -17066,9 +17462,9 @@
           "caller": "match_user_head_shown_pure",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 29544,
+          "line": 29570,
           "column": 33,
-          "offset": 1163935,
+          "offset": 1165054,
           "configurations": [
             "main",
             "normal"
@@ -18132,9 +18528,9 @@
           "caller": "metta_call_impl",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 59013,
+          "line": 59102,
           "column": 14,
-          "offset": 2431117,
+          "offset": 2435762,
           "configurations": [
             "main",
             "normal"
@@ -18146,9 +18542,9 @@
           "caller": "metta_call_impl",
           "owner": "src/eval.c",
           "file": "src/eval.c",
-          "line": 59013,
+          "line": 59102,
           "column": 14,
-          "offset": 2431117,
+          "offset": 2435762,
           "configurations": [
             "main",
             "normal"
