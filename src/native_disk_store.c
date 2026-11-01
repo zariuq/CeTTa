@@ -208,17 +208,8 @@ static CettaDiskStoreStatus publish(CettaDiskStore *store,int *manifest,const Me
 CettaDiskStoreLimits cetta_disk_store_limits(void) {
     return (CettaDiskStoreLimits){65536,UINT32_MAX-1u};
 }
-CettaDiskStoreStatus cetta_disk_store_open(const char *path,bool create,
+static CettaDiskStoreStatus store_open_directory(int directory,bool create,
         const CettaDiskStoreLimits *limits,CettaDiskStore **out) {
-    if (!out) return CETTA_STORE_INVALID;
-    *out=NULL;
-    if (!path || !*path) return CETTA_STORE_INVALID;
-    int directory=open(path,O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW);
-    if (directory<0) {
-        int code=errno;struct stat entry;
-        if (code==ENOTDIR && !lstat(path,&entry) && S_ISLNK(entry.st_mode)) return CETTA_STORE_OWNERSHIP;
-        errno=code;return code==ENOENT ? CETTA_STORE_ABSENT : open_error();
-    }
     struct stat st;
     if (fstat(directory,&st)) { close(directory);return CETTA_STORE_IO; }
     if (st.st_uid!=geteuid() || (st.st_mode&077)) { close(directory);return CETTA_STORE_OWNERSHIP; }
@@ -271,6 +262,67 @@ CettaDiskStoreStatus cetta_disk_store_open(const char *path,bool create,
     if (lock>=0) close(lock);
     if (status!=CETTA_STORE_OK) { cetta_disk_store_close(store); return status; }
     *out=store; return CETTA_STORE_OK;
+}
+CettaDiskStoreStatus cetta_disk_store_open(const char *path,bool create,
+        const CettaDiskStoreLimits *limits,CettaDiskStore **out) {
+    if (!out) return CETTA_STORE_INVALID;
+    *out=NULL;
+    if (!path || !*path) return CETTA_STORE_INVALID;
+    int directory=open(path,O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW);
+    if (directory<0) {
+        int code=errno;struct stat entry;
+        if (code==ENOTDIR && !lstat(path,&entry) && S_ISLNK(entry.st_mode)) return CETTA_STORE_OWNERSHIP;
+        errno=code;return code==ENOENT ? CETTA_STORE_ABSENT : open_error();
+    }
+    return store_open_directory(directory,create,limits,out);
+}
+
+/* Create only the requested leaf. The already-existing parent is retained
+ * while its directory entry is synchronized; initialization uses the opened
+ * leaf descriptor, so a path replacement cannot redirect this owner. */
+CettaDiskStoreStatus cetta_disk_store_open_created(const char *path,
+        const CettaDiskStoreLimits *limits,CettaDiskStore **out) {
+    if (!out) return CETTA_STORE_INVALID;
+    *out=NULL;
+    if (!path || !*path) return CETTA_STORE_INVALID;
+    char *copy=strdup(path);
+    if (!copy) return CETTA_STORE_NOMEM;
+    size_t length=strlen(copy);
+    while (length>1 && copy[length-1]=='/') copy[--length]=0;
+    char *slash=strrchr(copy,'/');
+    const char *leaf=slash ? slash+1 : copy;
+    const char *parent=".";
+    if (slash) { *slash=0;parent=slash==copy ? "/" : copy; }
+    if (!*leaf) { free(copy);return CETTA_STORE_INVALID; }
+    int parent_fd=open(parent,O_RDONLY|O_DIRECTORY|O_CLOEXEC);
+    if (parent_fd<0) { CettaDiskStoreStatus status=open_error();free(copy);return status; }
+    struct stat parent_stat;
+    if (fstat(parent_fd,&parent_stat) || parent_stat.st_uid!=geteuid() ||
+            (parent_stat.st_mode&077)) {
+        close(parent_fd);free(copy);return CETTA_STORE_OWNERSHIP;
+    }
+    if (mkdirat(parent_fd,leaf,0700) && errno!=EEXIST) {
+        CettaDiskStoreStatus status=open_error();close(parent_fd);free(copy);return status;
+    }
+    int directory=openat(parent_fd,leaf,O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW);
+    if (directory<0) {
+        CettaDiskStoreStatus status=open_error();struct stat entry;
+        if (!fstatat(parent_fd,leaf,&entry,AT_SYMLINK_NOFOLLOW) && S_ISLNK(entry.st_mode))
+            status=CETTA_STORE_OWNERSHIP;
+        close(parent_fd);free(copy);return status;
+    }
+    bool durable=synchronize(parent_fd);
+    close(parent_fd);free(copy);
+    if (!durable) { close(directory);return CETTA_STORE_IO; }
+    return store_open_directory(directory,true,limits,out);
+}
+
+bool cetta_disk_store_view_same_domain(const CettaDiskStoreView *left,
+        const CettaDiskStoreView *right) {
+    return left && right && left->device==right->device && left->inode==right->inode;
+}
+bool cetta_disk_store_has_domain(const CettaDiskStore *store,const CettaDiskStoreView *view) {
+    return store && view && store->device==view->device && store->inode==view->inode;
 }
 void cetta_disk_store_close(CettaDiskStore *store) {
     if (store) { close(store->directory); free(store); }

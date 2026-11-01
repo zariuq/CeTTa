@@ -201,6 +201,9 @@ int main(int argc, char **argv) {
     space_storage_census(&overlay, &census); assert(!census.incomplete && !census.overflow); cetta_storage_census_free(&census);
     SpaceOccurrenceCursor survivor; assert(space_occurrence_cursor_init_scan(&overlay, &survivor));
     space_free(&overlay); assert(drain(&survivor) == 6); space_occurrence_cursor_release(&survivor);
+    added=removed=atom_symbol(&answers,"not-cleared");
+    assert(!space_source_overlay_changes(&overlay,&answers,&added,&removed));
+    assert(!added && !removed);
     space_free(&reference);
 
     /* A generated update stream agrees with the native Space oracle for every

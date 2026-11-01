@@ -4805,6 +4805,11 @@ test-all: test-space-workspace
 test-space-workspace: $(BIN)
 	$(PYTHON) tests/support/check_space_workspace.py $(BIN)
 
+.PHONY: test-db
+test-all: test-db
+test-db: $(BIN) $(VALUE_WORKER_BIN)
+	$(PYTHON) tests/support/check_db.py $(BIN) --worker $(VALUE_WORKER_BIN)
+
 .PHONY: test-petta-bounded-removal
 test-all: test-petta-bounded-removal
 test-petta-bounded-removal: $(BIN)

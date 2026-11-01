@@ -689,8 +689,42 @@ static void operation_batches(const char *parent) {
     cetta_disk_store_close(other);cetta_disk_store_close(store);
     empty_directory(path);empty_directory(other_path);
 }
+static void create_directory(const char *root) {
+    char path[512],link[512],public_path[512],public_child[512],failed[512],missing[512],manifest[1024];
+    snprintf(path,sizeof(path),"%s/created",root);
+    snprintf(link,sizeof(link),"%s/created-link",root);
+    snprintf(public_path,sizeof(public_path),"%s/public",root);
+    snprintf(public_child,sizeof(public_child),"%s/public/child",root);
+    snprintf(failed,sizeof(failed),"%s/failed-sync",root);
+    snprintf(missing,sizeof(missing),"%s/absent/child",root);
+    CettaDiskStore *store=NULL;
+    check(cetta_disk_store_open_created(path,NULL,&store)==CETTA_STORE_OK);
+    struct stat st;check(!stat(path,&st) && !(st.st_mode&077));
+    CettaDiskStoreView *view=snapshot(store);check(cetta_disk_store_view_revision(view)==0);
+    cetta_disk_store_view_close(view);cetta_disk_store_close(store);store=NULL;
+    check(cetta_disk_store_open_created(path,NULL,&store)==CETTA_STORE_OK);
+    cetta_disk_store_close(store);store=NULL;
+    check(!symlink("created",link));
+    check(cetta_disk_store_open_created(link,NULL,&store)==CETTA_STORE_OWNERSHIP && !store);
+    check(!unlink(link));
+    check(!mkdir(public_path,0700));check(!chmod(public_path,0755));
+    check(cetta_disk_store_open_created(public_child,NULL,&store)==CETTA_STORE_OWNERSHIP && !store);
+    check(cetta_disk_store_open_created(public_path,NULL,&store)==CETTA_STORE_OWNERSHIP && !store);
+    check(!rmdir(public_path));
+    sync_calls=0;sync_fail_at=1;
+    check(cetta_disk_store_open_created(failed,NULL,&store)==CETTA_STORE_IO && !store);
+    sync_fail_at=0;
+    snprintf(manifest,sizeof(manifest),"%s/root.csl",failed);
+    check(access(manifest,F_OK)<0 && errno==ENOENT);
+    check(cetta_disk_store_open_created(failed,NULL,&store)==CETTA_STORE_OK);
+    cetta_disk_store_close(store);store=NULL;
+    check(cetta_disk_store_open_created(missing,NULL,&store)!=CETTA_STORE_OK && !store);
+    check(cetta_disk_store_open_created("",NULL,&store)==CETTA_STORE_INVALID && !store);
+    empty_directory(failed);empty_directory(path);
+}
 int main(void) {
     char root[]="runtime/disk-store-test.XXXXXX"; check(mkdtemp(root));
+    create_directory(root);
     const char *labels[]={"ordinary","lock","unknown-before","unknown-after","partial","corrupt","sync-data","sync-manifest","sync-directory","scoped","parallel","spenders","collection-confirmation","live-builder","lost-writeback","ownership","old-version","wrong-header","view-domain-a","view-domain-b","backups"};
     enum { CASES=sizeof(labels)/sizeof(*labels) };char paths[CASES][256];
     for (size_t i=0;i<CASES;++i) {

@@ -1,5 +1,66 @@
 # A metagraph database in MeTTa
 
+## Using persistent Spaces
+
+```metta
+!(import! &self (library db))
+!(db:open claims "claims.db")
+!(db:transaction claims
+   (|-> ($facts)
+     (let* (($_ (add-atom $facts (supports e1 c1)))
+            ($_ (add-atom $facts (source e1 paper7))))
+       done)))
+!(match (db:snapshot claims)
+        (, (supports $e $claim) (source $e $origin))
+        ($claim $origin))
+!(db:close claims)
+```
+
+This creates or reopens a native store in `claims.db`; its immediate parent
+must already be a private, process-owned directory with a durable entry.
+`claims` is a PeTTa named-state connection. A connection value may
+also be kept in a local `let`. Re-running these inserts preserves duplicates,
+as ordinary Spaces do.
+
+`db:snapshot` returns a pinned read-only Space. The transaction callback gets
+an ordinary editable Space with read-your-writes. Its complete answer bag and
+changes publish together; an empty computation, error or incomplete evaluation
+publishes no changes. The temporary edit Space closes on every outcome.
+Programs stored as atoms remain data. No transaction body is retried automatically.
+Same-store nested transactions/publications are refused, including through
+a second connection to the same directory; this interface does not provide savepoints.
+Effects on files, named state, other stores or external services are outside
+this database's rollback/isolation contract.
+
+`db:add connection atom` and `db:remove connection pattern [maximum]` are
+one-operation transactions. The two-argument removal preserves PeTTa's
+remove-all behavior; the optional non-negative integer maximum is an upper bound on occurrences.
+
+For large results, use `db:query connection pattern template`, followed by
+`db:page cursor answer-count work-quantum`. It returns
+`(db:page-result rows status)`. A simple-query row is
+`(db:row value occurrence-references)`; advanced plans retain their result
+values. Status is `db:complete`,
+`(db:more cursor)`, `(db:paused cursor)` or `(db:failed reason)`. A zero work
+quantum preserves a paused continuation. Completed and failed execution paths release their
+resources; invalid-argument errors leave the unconsumed cursor available for
+correction or closure. Use `db:close cursor` when abandoning a live continuation. Ordering
+remains explicit in the existing query plans, available through `db:query-plan`.
+
+Services can retain a request identity and operation description, then use
+`db:transaction-result connection collection request operation body`.
+A matching receipt returns the original answers before considering the body.
+`db:resolve connection collection request operation` recovers and inspects that
+receipt after an uncertain reply. A missing database receipt does not authorize
+repeating an external effect. Ordinary calls return values or `(Error ...)`;
+the explicit transaction result also distinguishes committed, replayed and aborted.
+
+`db:ensure connection collection index-specs` creates a named collection.
+`db:snapshot` and `db:transaction` accept a collection argument when needed.
+The default collection is `data`. Public `db` operations are currently qualified
+on PeTTa. They use the existing store owner, Space matcher and compositional
+query libraries. Remote connection construction is not exposed by this module.
+
 ## Durable application queue
 
 `space_job_queue.metta` implements controlled queue transitions using ordinary

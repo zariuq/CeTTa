@@ -285,13 +285,18 @@
 (= (durable-space:publish-indexed $owner $view $request $command $key $prefix $next $ops $created $indexes)
   (durable-space:publish-policy $owner $view $request $command $key $prefix $next $ops $created $indexes NoProgramWatchV1))
 (= (durable-space:publish-policy $owner $view $request $command $key $prefix $next $ops $created $indexes $policy)
+  (durable-space:publish-result-policy $owner $view $request $command $key $prefix $next $ops $created $indexes $policy DefaultSpaceResultV1))
+; A scoped transaction may durably retain its portable return values in the
+; same receipt/metadata/index publication. Existing callers keep their result.
+(= (durable-space:publish-result-policy $owner $view $request $command $key $prefix $next $ops $created $indexes $policy $answer)
   (case (store:key-i64 $next)
     (((StoreKeyBytes $integer)
       (let $record (durable-space:descriptor $prefix $next $indexes)
       (case (store:encode $record)
         (((StoreEncoded $body)
           (knowledge:publish-whole-policy $owner $view $request $command
-            (SpaceAppliedV1 $created) (cons-atom ops (cons-atom (put $key $body) $ops)) $policy))
+            (if (== $answer DefaultSpaceResultV1) (SpaceAppliedV1 $created) $answer)
+            (cons-atom ops (cons-atom (put $key $body) $ops)) $policy))
          ($error $error)))))
      ($other (SpaceRefusedV1 metadata-count)))))
 
@@ -308,6 +313,9 @@
   (durable-space:commit-policy $owner $view $collection $request $command $changes NoProgramWatchV1))
 (: durable-space:commit-policy (-> %Undefined% %Undefined% Atom Atom Atom Atom Atom %Undefined%))
 (= (durable-space:commit-policy $owner $view $collection $request $command $changes $policy)
+  (durable-space:commit-policy-result $owner $view $collection $request $command $changes $policy DefaultSpaceResultV1))
+(: durable-space:commit-policy-result (-> %Undefined% %Undefined% Atom Atom Atom Atom Atom Atom %Undefined%))
+(= (durable-space:commit-policy-result $owner $view $collection $request $command $changes $policy $answer)
     (case (knowledge:receipt $view $request $command (durable-space:wire-limit))
       ((KnowledgeReceiptAbsentV1
         (case (durable-space:metadata $collection)
@@ -320,7 +328,7 @@
                       (((StoreViewInfo $epoch $revision)
                         (case (durable-space:stage-indexed $view $epoch $prefix $request $changes () $count () () $indexes)
                           (((SpacePreparedV1 $next $ops $created)
-                            (durable-space:publish-policy $owner $view $request $command $key $prefix $next $ops $created $indexes $policy))
+                            (durable-space:publish-result-policy $owner $view $request $command $key $prefix $next $ops $created $indexes $policy $answer))
                            ($error $error))))
                        ($error $error))))
                    ($error $error))))
