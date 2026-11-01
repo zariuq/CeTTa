@@ -1162,6 +1162,7 @@ static void term_universe_clear_storage(TermUniverse *universe) {
     universe->integer_slots = NULL;
     universe->integer_mask = 0;
     universe->integer_used = 0;
+    universe->integer_key = cetta_placement_key_next();
     universe->ptr_slots = NULL;
     universe->ptr_mask = 0;
     universe->ptr_used = 0;
@@ -1227,6 +1228,7 @@ bool term_universe_init_with_store_format(TermUniverse *universe,
     universe->integer_slots = NULL;
     universe->integer_mask = 0;
     universe->integer_used = 0;
+    universe->integer_key = cetta_placement_key_next();
     universe->ptr_slots = NULL;
     universe->ptr_mask = 0;
     universe->ptr_used = 0;
@@ -2715,6 +2717,71 @@ static size_t term_universe_integer_hash(uint64_t prefix) {
     return (size_t)x;
 }
 
+/* The slot a page's home is, under the table's key. */
+static size_t term_universe_integer_home(const TermUniverse *universe,
+                                         uint64_t prefix) {
+    return term_universe_integer_hash(prefix ^ universe->integer_key) &
+           universe->integer_mask;
+}
+
+/* How far a page may sit from its home: 8 log2(cap) slots, at least 64,
+ * about twice the farthest a random placement reaches at two-thirds load. */
+static size_t term_universe_integer_reach(size_t cap) {
+    size_t log2_cap = 0u;
+    while (((size_t)1u << log2_cap) < cap)
+        log2_cap++;
+    size_t reach = 8u * log2_cap;
+    return reach < 64u ? 64u : reach;
+}
+
+/* Place every page in a table of CAP slots under KEY.  A page that would
+ * sit out of reach takes the table to twice the slots while it is more than
+ * a quarter full, and to a fresh key otherwise, until every page is within
+ * reach (BoundedProbeTable.Within). */
+static bool term_universe_integer_rebuild(TermUniverse *universe, size_t cap,
+                                          uint64_t key) {
+    for (;;) {
+        if (cap > SIZE_MAX / sizeof(CettaIntegerInternSlot)) {
+            term_universe_set_error(universe,
+                                    TERM_UNIVERSE_ERROR_STORAGE_TOO_LARGE);
+            return false;
+        }
+        CettaIntegerInternSlot *slots = calloc(cap, sizeof(*slots));
+        if (!slots) {
+            term_universe_set_error(universe,
+                                    TERM_UNIVERSE_ERROR_ALLOCATION_FAILED);
+            return false;
+        }
+        size_t reach = term_universe_integer_reach(cap);
+        bool within = true;
+        for (size_t i = 0u; within && universe->integer_slots &&
+                            i <= universe->integer_mask; i++) {
+            CettaIntegerInternSlot entry = universe->integer_slots[i];
+            if (!entry.page)
+                continue;
+            size_t home = term_universe_integer_hash(entry.prefix ^ key) &
+                          (cap - 1u);
+            size_t pos = home;
+            while (slots[pos].page)
+                pos = (pos + 1u) & (cap - 1u);
+            within = ((pos - home) & (cap - 1u)) <= reach;
+            slots[pos] = entry;
+        }
+        if (within) {
+            free(universe->integer_slots);
+            universe->integer_slots = slots;
+            universe->integer_mask = cap - 1u;
+            universe->integer_key = key;
+            return true;
+        }
+        free(slots);
+        if (universe->integer_used > cap / 4u)
+            cap *= 2u;
+        else
+            key = cetta_placement_key_next();
+    }
+}
+
 static bool term_universe_integer_reserve(TermUniverse *universe,
                                            size_t additional) {
     if (additional > SIZE_MAX - universe->integer_used)
@@ -2728,26 +2795,8 @@ static bool term_universe_integer_reserve(TermUniverse *universe,
     }
     if (universe->integer_slots && cap == universe->integer_mask + 1u)
         return true;
-    if (cap > SIZE_MAX / sizeof(CettaIntegerInternSlot))
-        goto too_large;
-    CettaIntegerInternSlot *slots = calloc(cap, sizeof(*slots));
-    if (!slots) {
-        term_universe_set_error(universe, TERM_UNIVERSE_ERROR_ALLOCATION_FAILED);
-        return false;
-    }
-    for (size_t i = 0u; universe->integer_slots && i <= universe->integer_mask; i++) {
-        CettaIntegerInternSlot entry = universe->integer_slots[i];
-        if (!entry.page)
-            continue;
-        size_t pos = term_universe_integer_hash(entry.prefix) & (cap - 1u);
-        while (slots[pos].page)
-            pos = (pos + 1u) & (cap - 1u);
-        slots[pos] = entry;
-    }
-    free(universe->integer_slots);
-    universe->integer_slots = slots;
-    universe->integer_mask = cap - 1u;
-    return true;
+    return term_universe_integer_rebuild(universe, cap,
+                                         universe->integer_key);
 too_large:
     term_universe_set_error(universe, TERM_UNIVERSE_ERROR_STORAGE_TOO_LARGE);
     return false;
@@ -2761,18 +2810,26 @@ static CettaIntegerInternPage *term_universe_integer_page(
     if (!universe || !universe->integer_slots)
         return NULL;
     uint64_t prefix = (uint64_t)value >> TERM_UNIVERSE_INTEGER_PAGE_BITS;
-    size_t pos = term_universe_integer_hash(prefix) & universe->integer_mask;
-    for (;; pos = (pos + 1u) & universe->integer_mask) {
+    size_t pos = term_universe_integer_home(universe, prefix);
+    /* Every page sits within reach of its home: a page farther on is
+     * absent (BoundedProbeTable.lookup_iff). */
+    size_t reach = term_universe_integer_reach(universe->integer_mask + 1u);
+    for (size_t step = 0u;; step++, pos = (pos + 1u) & universe->integer_mask) {
         CettaIntegerInternSlot slot = universe->integer_slots[pos];
         if (probes)
             (*probes)++;
         if (!slot.page) {
             if (vacancy)
-                *vacancy = pos;
+                *vacancy = step <= reach ? pos : SIZE_MAX;
             return NULL;
         }
         if (slot.prefix == prefix)
             return slot.page;
+        if (step >= reach) {
+            if (vacancy)
+                *vacancy = SIZE_MAX;
+            return NULL;
+        }
     }
 }
 
@@ -2842,6 +2899,18 @@ static CettaIntegerInternPage *term_universe_integer_prepare(
         if (!term_universe_integer_reserve(universe, 1u))
             return NULL;
         (void)term_universe_integer_page(universe, value, &vacancy, NULL);
+        while (vacancy == SIZE_MAX) {
+            /* Out of reach: a larger table while it is more than a quarter
+             * full, a fresh key otherwise. */
+            size_t cap = universe->integer_mask + 1u;
+            bool grown = universe->integer_used > cap / 4u;
+            if (!term_universe_integer_rebuild(
+                    universe, grown ? cap * 2u : cap,
+                    grown ? universe->integer_key
+                          : cetta_placement_key_next()))
+                return NULL;
+            (void)term_universe_integer_page(universe, value, &vacancy, NULL);
+        }
         page = calloc(1u, sizeof(*page));
         if (!page)
             goto allocation_failed;
@@ -3837,9 +3906,9 @@ bool tu_intern_ints(TermUniverse *universe, const int64_t *values,
         if (!term_universe_integer_reserve(universe, length))
             return false;
         for (size_t i = 0u; i < length; i++) {
-            size_t home = term_universe_integer_hash(
-                (uint64_t)values[first + i] >> TERM_UNIVERSE_INTEGER_PAGE_BITS) &
-                universe->integer_mask;
+            size_t home = term_universe_integer_home(
+                universe,
+                (uint64_t)values[first + i] >> TERM_UNIVERSE_INTEGER_PAGE_BITS);
             __builtin_prefetch(&universe->integer_slots[home], 1, 1);
         }
         for (size_t i = 0u; i < length; i++) {
@@ -7127,10 +7196,10 @@ static size_t term_universe_integer_slot_of(const TermUniverse *universe,
     if (!universe->integer_slots)
         return SIZE_MAX;
     uint64_t prefix = (uint64_t)value >> TERM_UNIVERSE_INTEGER_PAGE_BITS;
-    for (size_t pos = term_universe_integer_hash(prefix) &
-                      universe->integer_mask;
-         universe->integer_slots[pos].page;
-         pos = (pos + 1u) & universe->integer_mask) {
+    size_t reach = term_universe_integer_reach(universe->integer_mask + 1u);
+    size_t pos = term_universe_integer_home(universe, prefix);
+    for (size_t step = 0u; step <= reach && universe->integer_slots[pos].page;
+         step++, pos = (pos + 1u) & universe->integer_mask) {
         if (universe->integer_slots[pos].prefix == prefix)
             return pos;
     }
@@ -7152,9 +7221,8 @@ static void term_universe_integer_release(TermUniverse *universe,
     size_t hole = slot;
     for (size_t next = (hole + 1u) & mask; universe->integer_slots[next].page;
          next = (next + 1u) & mask) {
-        size_t home =
-            term_universe_integer_hash(universe->integer_slots[next].prefix) &
-            mask;
+        size_t home = term_universe_integer_home(
+            universe, universe->integer_slots[next].prefix);
         if (((next - home) & mask) >= ((next - hole) & mask)) {
             universe->integer_slots[hole] = universe->integer_slots[next];
             hole = next;

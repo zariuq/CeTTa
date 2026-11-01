@@ -4547,6 +4547,8 @@ Atom *atom_rational_from_mpq(Arena *a, const mpq_t value) {
 #endif
 
 Atom *atom_space(Arena *a, void *space_ptr) {
+    if (space_atom_hold)
+        space_atom_hold(a, space_ptr);
     Atom *at = arena_alloc(a, sizeof(Atom));
     *at = atom_grounded_leaf(a, GV_SPACE);
     at->ground.ptr = space_ptr;

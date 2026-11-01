@@ -146,7 +146,9 @@ typedef struct {
 } ImportedFlatBucket;
 
 typedef struct {
-    ImportedFlatBucket buckets[STREE_BUCKETS];
+    /* STREE_BUCKETS buckets by head, made by the first entry with a head:
+     * a space whose engine never fills them keeps none. */
+    ImportedFlatBucket *buckets;
     ImportedFlatBucket wildcard;
     /* Ownership of the fallback buckets, independent of bridge validity. */
     bool flat_has_entries;

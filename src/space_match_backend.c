@@ -2607,12 +2607,14 @@ static void imported_projection_clear(ImportedBridgeState *st) {
 }
 
 static void imported_flat_state_clear(ImportedBridgeState *st) {
-    if (!st->flat_has_entries)
-        return;
-    for (uint32_t i = 0; i < STREE_BUCKETS; i++)
-        imported_bucket_free(&st->buckets[i]);
-    imported_bucket_free(&st->wildcard);
-    st->flat_has_entries = false;
+    if (st->flat_has_entries) {
+        for (uint32_t i = 0; st->buckets && i < STREE_BUCKETS; i++)
+            imported_bucket_free(&st->buckets[i]);
+        imported_bucket_free(&st->wildcard);
+        st->flat_has_entries = false;
+    }
+    free(st->buckets);
+    st->buckets = NULL;
 }
 
 static void imported_state_free(ImportedBridgeState *st) {
@@ -7720,16 +7722,27 @@ static void imported_bucket_add_entry(ImportedBridgeState *st,
     imported_bucket_push_builder(st, bucket, &b, atom_idx, atom_has_vars(atom));
 }
 
+/* HEAD's bucket, the buckets made with the state's first entry with a
+ * head. */
+static ImportedFlatBucket *imported_head_bucket(ImportedBridgeState *st,
+                                                SymbolId head) {
+    if (!st->buckets) {
+        st->buckets = cetta_malloc(sizeof(*st->buckets) * STREE_BUCKETS);
+        memset(st->buckets, 0, sizeof(*st->buckets) * STREE_BUCKETS);
+    }
+    return &st->buckets[stree_head_hash(head)];
+}
+
 static ImportedFlatBucket *imported_bucket_for_atom(ImportedBridgeState *st, Atom *atom) {
     SymbolId head = atom_head_sym(atom);
-    return head != SYMBOL_ID_NONE ? &st->buckets[stree_head_hash(head)] : &st->wildcard;
+    return head != SYMBOL_ID_NONE ? imported_head_bucket(st, head) : &st->wildcard;
 }
 
 static ImportedFlatBucket *imported_bucket_for_atom_id(ImportedBridgeState *st,
                                                        const TermUniverse *universe,
                                                        AtomId atom_id) {
     SymbolId head = tu_head_sym(universe, atom_id);
-    return head != SYMBOL_ID_NONE ? &st->buckets[stree_head_hash(head)] : &st->wildcard;
+    return head != SYMBOL_ID_NONE ? imported_head_bucket(st, head) : &st->wildcard;
 }
 
 static void imported_rebuild_flat(Space *s) {
@@ -8593,8 +8606,9 @@ imported_candidates_flat(Space *s, Atom *pattern, CettaIndex **out) {
     CettaIndex len = 0, cap = 0;
     SymbolId head = atom_head_sym(pattern);
     if (head != SYMBOL_ID_NONE) {
-        ImportedFlatBucket *bucket = &st->buckets[stree_head_hash(head)];
-        for (CettaIndex i = 0; i < bucket->len; i++) {
+        ImportedFlatBucket *bucket = st->buckets
+            ? &st->buckets[stree_head_hash(head)] : NULL;
+        for (CettaIndex i = 0; bucket && i < bucket->len; i++) {
             if (len >= cap) {
                 cap = cap ? cap * 2 : 8;
                 *out = cetta_realloc(*out, sizeof(CettaIndex) * cap);
@@ -8602,7 +8616,7 @@ imported_candidates_flat(Space *s, Atom *pattern, CettaIndex **out) {
             (*out)[len++] = bucket->entries[i].atom_idx;
         }
     } else {
-        for (uint32_t bi = 0; bi < STREE_BUCKETS; bi++) {
+        for (uint32_t bi = 0; st->buckets && bi < STREE_BUCKETS; bi++) {
             ImportedFlatBucket *bucket = &st->buckets[bi];
             for (CettaIndex i = 0; i < bucket->len; i++) {
                 if (len >= cap) {
@@ -8658,10 +8672,12 @@ static void imported_query_flat(Space *s, Arena *a, Atom *query, SubstMatchSet *
     imported_flatten_atom(&q, query);
     SymbolId head = atom_head_sym(query);
     if (head != SYMBOL_ID_NONE) {
-        imported_collect_bucket(&st->buckets[stree_head_hash(head)],
-                                q.items, q.len, s->native.universe, a, out);
+        if (st->buckets)
+            imported_collect_bucket(&st->buckets[stree_head_hash(head)],
+                                    q.items, q.len, s->native.universe, a,
+                                    out);
     } else {
-        for (uint32_t bi = 0; bi < STREE_BUCKETS; bi++)
+        for (uint32_t bi = 0; st->buckets && bi < STREE_BUCKETS; bi++)
             imported_collect_bucket(&st->buckets[bi], q.items, q.len,
                                     s->native.universe, a, out);
     }
@@ -10239,9 +10255,10 @@ static CettaIndex imported_pattern_estimate(Space *s, Atom *pattern) {
         return 0;
     SymbolId head = atom_head_sym(pattern);
     if (head != SYMBOL_ID_NONE)
-        return st->buckets[stree_head_hash(head)].len + st->wildcard.len;
+        return (st->buckets ? st->buckets[stree_head_hash(head)].len : 0u) +
+            st->wildcard.len;
     CettaIndex total = st->wildcard.len;
-    for (uint32_t bi = 0; bi < STREE_BUCKETS; bi++)
+    for (uint32_t bi = 0; st->buckets && bi < STREE_BUCKETS; bi++)
         total += st->buckets[bi].len;
     return total;
 }

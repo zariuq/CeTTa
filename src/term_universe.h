@@ -240,6 +240,9 @@ struct TermUniverse {
     struct CettaIntegerInternSlot *integer_slots;
     size_t integer_mask;
     size_t integer_used;
+    /* Mixed into every page's home, so crafted integers cannot share one
+       (term_universe_integer_home). */
+    uint64_t integer_key;
     uint8_t *ptr_slots;
     size_t ptr_mask;
     size_t ptr_used;

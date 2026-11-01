@@ -29480,6 +29480,87 @@ test-term-universe-deep-terms-scaling: $(BIN) tests/support/check_deep_terms_sca
 
 test-all: test-term-universe-deep-terms test-term-universe-deep-terms-scaling
 
+.PHONY: test-space-holds
+# A space new-space makes lives while something holds it: a row, a name or a
+# state cell keeps it readable in later requests, with freed memory poisoned.
+test-space-holds: $(BIN) tests/petta/new_space_holds.metta \
+		tests/petta/new_space_holds.expected
+	@set -eu; \
+	for perturb in "" 165; do \
+		for profile in "" "--profile extended"; do \
+			actual=$$(MALLOC_PERTURB_=$$perturb $(CETTA_BIN_INVOKE) $$profile --lang petta \
+				tests/petta/new_space_holds.metta 2>&1) || true; \
+			if [ "$$actual" != "$$(cat tests/petta/new_space_holds.expected)" ]; then \
+				echo "FAIL: held spaces ($$profile, perturb $$perturb)"; \
+				diff <(cat tests/petta/new_space_holds.expected) \
+					<(printf '%s\n' "$$actual") | head -10; \
+				exit 1; \
+			fi; \
+		done; \
+	done; \
+	echo "PASS: spaces kept by a row, a name or a state cell outlive their requests"
+
+test-all: test-space-holds
+
+.PHONY: test-set-presence-churn
+# A set keeps its rows through removals and adds, with freed memory poisoned,
+# and churning it costs time linear in the churn: each removal takes its row's
+# key out of the presence bits instead of leaving them to be rebuilt.
+test-set-presence-churn: $(BIN) tests/petta/set_presence_churn.metta \
+		tests/petta/set_presence_churn.expected tests/support/check_set_churn_scaling.py
+	@set -eu; \
+	for perturb in "" 165; do \
+		actual=$$(MALLOC_PERTURB_=$$perturb $(CETTA_BIN_INVOKE) --profile extended --lang petta \
+			tests/petta/set_presence_churn.metta 2>&1) || true; \
+		if [ "$$actual" != "$$(cat tests/petta/set_presence_churn.expected)" ]; then \
+			echo "FAIL: set presence churn (perturb $$perturb)"; \
+			diff <(cat tests/petta/set_presence_churn.expected) \
+				<(printf '%s\n' "$$actual") | head -10; \
+			exit 1; \
+		fi; \
+	done
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_set_churn_scaling.py ./$(BIN)
+
+test-all: test-set-presence-churn
+
+.PHONY: test-presence-set-form
+# A set's presence keys take the form their density allows: kept as a table
+# through adds, removals that shift keys back, re-adds and duplicates, a set
+# answers as a set, with freed memory poisoned; small sets in a large universe
+# cost what they hold, not a bit an id.
+test-presence-set-form: $(BIN) tests/petta/presence_table_churn.metta \
+		tests/petta/presence_table_churn.expected tests/support/check_presence_set_memory.py
+	@set -eu; \
+	for perturb in "" 165; do \
+		actual=$$(MALLOC_PERTURB_=$$perturb $(CETTA_BIN_INVOKE) --profile extended --lang petta \
+			tests/petta/presence_table_churn.metta 2>&1) || true; \
+		if [ "$$actual" != "$$(cat tests/petta/presence_table_churn.expected)" ]; then \
+			echo "FAIL: presence table churn (perturb $$perturb)"; \
+			diff <(cat tests/petta/presence_table_churn.expected) \
+				<(printf '%s\n' "$$actual") | head -10; \
+			exit 1; \
+		fi; \
+	done
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_presence_set_memory.py ./$(BIN)
+
+test-all: test-presence-set-form
+
+.PHONY: test-integer-flood
+# Integers crafted to share one home in the integer table load about as fast
+# as random ones: the table places its pages under a key nobody can predict.
+test-integer-flood: $(BIN) tests/support/check_integer_flood.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_integer_flood.py ./$(BIN)
+
+test-all: test-integer-flood
+
+.PHONY: test-symbol-flood
+# Spellings crafted to share one home in the symbol table intern about as
+# fast as random ones: the table hashes spellings under a key of its own.
+test-symbol-flood: $(BIN) tests/support/check_symbol_flood.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_symbol_flood.py ./$(BIN)
+
+test-all: test-symbol-flood
+
 .PHONY: test-space-remove-absent-scaling
 # Removing an atom a space does not hold costs the same in a space eight
 # times larger; a row holding a variable still unifies with a ground removal.
