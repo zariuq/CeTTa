@@ -1,9 +1,180 @@
 #include <assert.h>
 #include <stdio.h>
+#include <pthread.h>
+#include <stdlib.h>
+#include <signal.h>
+#include <sys/wait.h>
+#include <unistd.h>
 #include <string.h>
 
 #include "atom.h"
 #include "symbol.h"
+
+/* Observe allocation lifetime rather than private chunk headers. Library
+ * allocations outside a measured owner lifetime are left untouched. */
+typedef struct { void *pointer; size_t bytes; bool live; } OwnedAllocation;
+static OwnedAllocation allocations[256];
+static size_t allocation_count, free_attempts;
+static bool observe_allocations;
+static pthread_mutex_t allocation_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+void *__real_malloc(size_t);
+void *__real_calloc(size_t, size_t);
+void __real_free(void *);
+
+static void record_allocation(void *pointer, size_t bytes) {
+    if (!observe_allocations || !pointer)
+        return;
+    pthread_mutex_lock(&allocation_mutex);
+    assert(allocation_count < sizeof(allocations) / sizeof(*allocations));
+    allocations[allocation_count++] = (OwnedAllocation){pointer, bytes, true};
+    pthread_mutex_unlock(&allocation_mutex);
+}
+void *__wrap_malloc(size_t bytes) {
+    void *pointer = __real_malloc(bytes);
+    record_allocation(pointer, bytes);
+    return pointer;
+}
+void *__wrap_calloc(size_t count, size_t bytes) {
+    void *pointer = __real_calloc(count, bytes);
+    record_allocation(pointer, count * bytes);
+    return pointer;
+}
+void __wrap_free(void *pointer) {
+    if (observe_allocations) {
+        pthread_mutex_lock(&allocation_mutex);
+        free_attempts++;
+        if (pointer) {
+            size_t index = allocation_count;
+            while (index && !(allocations[index - 1u].live &&
+                    allocations[index - 1u].pointer == pointer))
+                index--;
+            assert(index && "release must name one live allocation owner");
+            allocations[index - 1u].live = false;
+        }
+        pthread_mutex_unlock(&allocation_mutex);
+    }
+    __real_free(pointer);
+}
+static void begin_ownership_observation(void) {
+    assert(!observe_allocations);
+    allocation_count = free_attempts = 0u;
+    observe_allocations = true;
+}
+static void end_ownership_observation(void) {
+    for (size_t index = 0u; index < allocation_count; index++)
+        assert(!allocations[index].live && "every allocated chunk must retire");
+    observe_allocations = false;
+}
+
+typedef struct { VarInternTable *table; VarId ids[5]; } InternWorker;
+static const SymbolId sparse_spellings[] = {
+    1u, (1u << 14u) - 1u, 1u << 14u, UINT32_C(0x80000000), UINT32_MAX};
+static void *intern_sparse(void *context) {
+    InternWorker *worker = context;
+    for (unsigned round = 0u; round < 256u; round++)
+        for (unsigned index = 0u; index < 5u; index++) {
+            VarId id = var_intern(worker->table, sparse_spellings[index]);
+            assert(!var_id_is_none(id));
+            if (round)
+                assert(var_id_eq(id, worker->ids[index]));
+            worker->ids[index] = id;
+        }
+    return NULL;
+}
+static void test_sparse_owner_lifetime(void) {
+    VarInternTable table;
+    VarId earlier = VAR_ID_NONE;
+    for (unsigned generation = 0u; generation < 4u; generation++) {
+        begin_ownership_observation();
+        var_intern_init(&table);
+        InternWorker workers[8] = {0};
+        pthread_t threads[8];
+        for (unsigned worker = 0u; worker < 8u; worker++) {
+            workers[worker].table = &table;
+            assert(!pthread_create(&threads[worker], NULL, intern_sparse, &workers[worker]));
+        }
+        for (unsigned worker = 0u; worker < 8u; worker++)
+            assert(!pthread_join(threads[worker], NULL));
+        for (unsigned index = 0u; index < 5u; index++) {
+            for (unsigned worker = 0u; worker < 8u; worker++)
+                assert(var_id_eq(workers[0].ids[index], workers[worker].ids[index]));
+            for (unsigned other = index + 1u; other < 5u; other++)
+                assert(!var_id_eq(workers[0].ids[index], workers[0].ids[other]));
+        }
+        assert(!var_id_eq(earlier, workers[0].ids[0]));
+        earlier = workers[0].ids[0];
+        VarId fresh = var_intern(&table, SYMBOL_ID_NONE);
+        assert(!var_id_eq(fresh, var_intern(&table, SYMBOL_ID_NONE)));
+        size_t owned = allocation_count;
+        size_t before = free_attempts;
+        var_intern_free(&table);
+        assert(!table.chunks && !table.owned_chunks);
+        assert(free_attempts - before == owned);
+        end_ownership_observation();
+    }
+    begin_ownership_observation();
+    var_intern_init(&table);
+    var_intern_free(&table);
+    assert(free_attempts == allocation_count);
+    end_ownership_observation();
+    puts("PASS: sparse variable chunks retire once; concurrent identity, high IDs and repeated owners");
+}
+
+static void test_symbol_extent_exhaustion(void) {
+    for (unsigned missing = 0u; missing < 2u; missing++) {
+        pid_t child = fork();
+        assert(child >= 0);
+        if (!child) {
+            assert(freopen("/dev/null", "w", stderr));
+            SymbolTable table;
+            symbol_table_init(&table);
+            SymbolId existing = symbol_intern_cstr(&table, "existing-at-capacity");
+            atomic_store_explicit(&table.entry_len, UINT32_MAX, memory_order_relaxed);
+            if (missing)
+                (void)symbol_intern_cstr(&table, "exhausted-extent");
+            else
+                assert(symbol_intern_cstr(&table, "existing-at-capacity") == existing);
+            _Exit(0);
+        }
+        int status = 0;
+        assert(waitpid(child, &status, 0) == child);
+        if (missing)
+            assert(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT);
+        else
+            assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    }
+}
+
+static void test_symbol_owner_lifetime(void) {
+    const unsigned sizes[] = {0u, 1u, (1u << SYMBOL_ENTRY_CHUNK_BITS) - 1u,
+        1u << SYMBOL_ENTRY_CHUNK_BITS, (1u << SYMBOL_ENTRY_CHUNK_BITS) + 1u};
+    SymbolTable *saved = g_symbols;
+    for (unsigned sample = 0u; sample < 5u; sample++) {
+        begin_ownership_observation();
+        SymbolTable table;
+        symbol_table_init(&table);
+        g_symbols = &table;
+        for (unsigned index = 0u; index < sizes[sample]; index++) {
+            char name[48];
+            snprintf(name, sizeof(name), "owned-symbol-%u", index);
+            SymbolId id = symbol_intern_cstr(&table, name);
+            assert(id == index + 1u);
+            if (!index || index + 1u == sizes[sample]) {
+                Atom *canonical = atom_symbol_canonical(id);
+                assert(canonical && canonical == atom_symbol_canonical(id));
+            }
+        }
+        size_t before = free_attempts;
+        symbol_table_free(&table);
+        assert(!table.entry_chunks && !table.slots && !table.spelling_chunks &&
+            !table.instance_id && atomic_load(&table.entry_len) == 0u);
+        assert(free_attempts - before <= allocation_count + sizes[sample] + 8u);
+        end_ownership_observation();
+    }
+    g_symbols = saved;
+    puts("PASS: empty, exact and partial symbol chunks retire with their canonical atoms");
+}
 
 /* Interning identifies a variable by its id, its spelling and its
  * structural name.  Two variables that share an id and nothing else stay
@@ -21,6 +192,9 @@ static void collision_identity(Atom *stored, Atom *candidate, bool equal) {
 }
 
 int main(void) {
+    test_sparse_owner_lifetime();
+    test_symbol_owner_lifetime();
+    test_symbol_extent_exhaustion();
     SymbolTable symbols;
     HashConsTable table;
     Arena arena;

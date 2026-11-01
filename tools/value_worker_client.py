@@ -17,6 +17,21 @@ class WorkerUnavailable(RuntimeError):
     """A disposable evaluator failed; its outstanding reply was discarded."""
 
 
+class WorkerEvaluationError(RuntimeError):
+    """An evaluation or single-result failure; effects may already have occurred.
+
+    The stream remains synchronized. This result grants no rollback or retry.
+    Older/unencodable failure bodies remain available through detail.
+    """
+    def __init__(self, detail):
+        self.detail = detail
+        self.completion = self.answer_count = self.raised_error = self.diagnostic = None
+        if (isinstance(detail, tuple) and len(detail) == 5 and detail[0] == S("WorkerEvaluationFailure")
+                and type(detail[2]) is int and isinstance(detail[3], bool)):
+            self.completion, self.answer_count, self.raised_error, self.diagnostic = detail[1:]
+        super().__init__("worker refused: " + repr(detail))
+
+
 class Worker:
     def __init__(self, binary, module, entry, timeout=30, profile=False,
                  *, language=None, num_threads=None, language_profile=None, import_mode=None):
@@ -122,6 +137,8 @@ class Worker:
                 decoded_at = time.perf_counter_ns() if self.profile else 0
                 if not isinstance(response, tuple) or len(response) != (5 if self.profile else 4) or response[:2] != (S("reply"), request_id):
                     raise ValueError("uncorrelated worker reply")
+                if response[2] not in (S("ok"), S("error")):
+                    raise ValueError("invalid worker status")
                 if self.profile:
                     fields = response[4]
                     if not isinstance(fields, tuple) or len(fields) != 7 or fields[0] != S("WorkerMetrics") or not all(isinstance(x, int) and x >= 0 for x in fields[1:]):
@@ -132,8 +149,12 @@ class Worker:
                         transfer_and_worker_ns=received_at-encoded_at, client_decode_ns=decoded_at-received_at,
                         request_bytes=len(packet), reply_bytes=length+8)
                 if response[2] != S("ok"):
-                    raise RuntimeError("worker refused: " + repr(response[3]))
+                    raise WorkerEvaluationError(response[3])
                 return response[3]
+            except WorkerEvaluationError:
+                # A correlated, fully decoded failure is an application
+                # outcome. Its frame is consumed; keep the process and state.
+                raise
             except (OSError, EOFError, ValueError) as error:
                 # A timed-out request must never contaminate a later call.
                 self._discard()

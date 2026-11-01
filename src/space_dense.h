@@ -11,8 +11,10 @@
  * One numbering covers the atoms of both columns; each numbered first
  * column has a row over the numbers of its second column: a sorted array
  * while that takes fewer bytes than bits up to its largest number, then
- * bits.  The relation is a set: a space that holds a pair more than once
- * keeps the other copies as rows.
+ * bits.  Rows by the second column are kept too once probes binding only
+ * the second column have paid for them by reading every row.  The relation
+ * is a set: a space that holds a pair more than once keeps the other copies
+ * as rows.
  *
  * Ids are the universe's: the store neither interns nor reads terms, and a
  * caller that counts references holds each numbered id while it is numbered
@@ -26,6 +28,18 @@ typedef uint64_t CettaDenseId;
 #define CETTA_DENSE_ANY UINT64_MAX
 #define CETTA_DENSE_ROW_BITS UINT32_C(0x80000000)
 
+/* One side of a relation: a row per number of one column, NULL until that
+ * number first appears there, holding the other column's numbers paired
+ * with it.  row_len[n] is a sorted array's count of numbers, or with
+ * CETTA_DENSE_ROW_BITS a row of bits' count of words. */
+typedef struct {
+    void **rows;
+    uint32_t *row_len;
+    uint32_t row_cap;
+    /* The bytes the rows take. */
+    uint64_t row_bytes;
+} CettaDenseSide;
+
 typedef struct {
     /* The numbering: number -> id, and an open-addressed table id -> number
      * plus one. */
@@ -33,15 +47,16 @@ typedef struct {
     uint32_t len, cap;
     uint32_t *slots;
     uint32_t slot_mask;
-    /* Rows, one per number used in the first column; NULL until that
-     * number first appears there.  row_len[n] is a sorted array's count of
-     * numbers, or with CETTA_DENSE_ROW_BITS a row of bits' count of words. */
-    void **rows;
-    uint32_t *row_len;
-    uint32_t row_cap;
-    /* Pairs held, and the bytes the rows take. */
+    /* Rows by the first column: the pairs themselves. */
+    CettaDenseSide first;
+    /* Rows by the second column, kept once probes binding only the second
+     * column have read as many rows as building it reads, and kept in step
+     * from then on; the rows those probes have read so far. */
+    CettaDenseSide second;
+    bool second_kept;
+    uint64_t second_rent;
+    /* Pairs held. */
     uint64_t pairs;
-    uint64_t row_bytes;
 } CettaDenseRelation;
 
 void cetta_dense_relation_init(CettaDenseRelation *rel);

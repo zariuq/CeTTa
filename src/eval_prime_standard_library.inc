@@ -20,6 +20,8 @@ typedef struct {
     size_t count;
     uint64_t identity;
     uint64_t symbols;
+    CettaSymbolIndex names,originals;
+    bool indexed;
 } PrimeStandardLibrary;
 
 static _Atomic uint64_t g_prime_standard_identity = 1u;
@@ -41,27 +43,64 @@ static int prime_standard_head_order(const void *left, const void *right) {
 static PrimeStandardHead *prime_standard_head(SymbolId name) {
     PrimeStandardLibrary *library = prime_standard_library();
     if (!library) return NULL;
+    if(library->indexed) {
+        size_t index=cetta_symbol_index_find(&library->names,name);
+        return index==SIZE_MAX ? NULL : &library->heads[index];
+    }
     PrimeStandardHead key = {.name = name};
     return bsearch(&key, library->heads, library->count,
                    sizeof(*library->heads), prime_standard_head_order);
 }
 
-static SymbolId prime_standard_native_head(SymbolId name) {
-    if (!prime_standard_library()) return name;
+/* The immutable library owns both spellings for its whole lifetime. This
+ * indexes only their exact identities; live program edits are checked by
+ * the ordinary declaration/currentness path after lookup. */
+static PrimeStandardHead *prime_standard_alias(PrimeStandardLibrary *library,SymbolId name) {
+    if(library->indexed) {
+        size_t index=cetta_symbol_index_find(&library->originals,name);
+        return index==SIZE_MAX ? NULL : &library->heads[index];
+    }
     const char *spelling = symbol_bytes(g_symbols, name);
-    if (!spelling || strncmp(spelling, "std:", 4u) != 0) return name;
+    if (!spelling || strncmp(spelling, "std:", 4u) != 0) return NULL;
     PrimeStandardHead *head = prime_standard_head(
         symbol_lookup_cstr(g_symbols, spelling + 4u));
-    return head && head->native && head->original == name ? head->name : name;
+    return head && head->original==name ? head : NULL;
+}
+
+static bool prime_standard_prepare_index(PrimeStandardLibrary *library) {
+    library->indexed=false;
+    for(size_t i=0u;i<library->count;i++) {
+        const PrimeStandardHead *head=&library->heads[i];
+        const char *alias=symbol_bytes(g_symbols,head->original);
+        /* Binary symbol names are valid. The legacy alias route uses C
+         * strings, so admit the index only when that route returns the same
+         * public identity, including for embedded-NUL spellings. */
+        if(head->name==SYMBOL_ID_NONE || head->original==SYMBOL_ID_NONE ||
+            !alias || strncmp(alias,"std:",4u)!=0 ||
+            symbol_lookup_cstr(g_symbols,alias+4u)!=head->name ||
+            cetta_symbol_index_find(&library->names,head->name)!=SIZE_MAX ||
+            cetta_symbol_index_find(&library->originals,head->original)!=SIZE_MAX ||
+            !cetta_symbol_index_put(&library->names,head->name,i) ||
+            !cetta_symbol_index_put(&library->originals,head->original,i)) {
+            cetta_symbol_index_free(&library->names);
+            cetta_symbol_index_free(&library->originals);
+            return false;
+        }
+    }
+    library->indexed=true;
+    return true;
+}
+
+static SymbolId prime_standard_native_head(SymbolId name) {
+    PrimeStandardLibrary *library=prime_standard_library();
+    PrimeStandardHead *head=library ? prime_standard_alias(library,name) : NULL;
+    return head && head->native ? head->name : name;
 }
 
 static SymbolId prime_standard_origin_head(SymbolId name) {
-    if (!prime_standard_library()) return name;
-    const char *spelling = symbol_bytes(g_symbols, name);
-    if (!spelling || strncmp(spelling, "std:", 4u) != 0) return name;
-    PrimeStandardHead *head = prime_standard_head(
-        symbol_lookup_cstr(g_symbols, spelling + 4u));
-    return head && head->original == name ? head->name : name;
+    PrimeStandardLibrary *library=prime_standard_library();
+    PrimeStandardHead *head=library ? prime_standard_alias(library,name) : NULL;
+    return head ? head->name : name;
 }
 
 static bool prime_standard_public_native(SymbolId name) {
@@ -93,6 +132,8 @@ static void prime_standard_library_free(void *opaque) {
         free(library->heads[i].types);
     }
     free(library->heads);
+    cetta_symbol_index_free(&library->names);
+    cetta_symbol_index_free(&library->originals);
     arena_free(&library->arena);
     free(library);
 }
@@ -254,6 +295,7 @@ bool eval_prime_install_standard_library(Space *space, Arena *arena) {
             }
     }
     qsort(library->heads, library->count, sizeof(*library->heads), prime_standard_head_order);
+    (void)prime_standard_prepare_index(library);
     g_library_context->prime_standard_library = library;
     g_library_context->prime_standard_library_free = prime_standard_library_free;
     space_add(space, atom_expr3(arena,

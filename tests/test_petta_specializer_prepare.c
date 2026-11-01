@@ -5,6 +5,7 @@
 #include "space.h"
 #include "symbol.h"
 #include "petta_specializer.h"
+#include "storage_census.h"
 
 /* Direct boundary test for the specializer's surviving API.  The prepared
  * evaluation lanes now absorb the whole-program shapes the old stats-based
@@ -30,6 +31,48 @@ static Atom *wide_first_order_value(Arena *a) {
     for (unsigned i = 1u; i < 67u; i++)
         elems[i] = atom_symbol(a, "a");
     return atom_expr(a, elems, 67u);
+}
+
+static void program_read_barriers(Arena *persistent,Arena *result) {
+    Space root,module,overlay,other;
+    space_init(&root);space_init(&module);space_init(&other);
+    Atom *fn=atom_var(persistent,"observed-fn"),*item=atom_var(persistent,"observed-item");
+    Atom *apply=atom_expr3(persistent,atom_symbol(persistent,"="),
+        atom_expr3(persistent,atom_symbol(persistent,"observed-apply"),fn,item),atom_expr2(persistent,fn,item));
+    Atom *step=atom_expr3(persistent,atom_symbol(persistent,"="),
+        atom_expr2(persistent,atom_symbol(persistent,"observed-step"),item),
+        atom_expr3(persistent,atom_symbol(persistent,"+"),item,atom_int(persistent,1)));
+    space_add(&root,apply);space_add(&root,step);space_add(&other,apply);space_add(&other,step);
+    CHECK(space_add_dependency(&root,&module),"program barrier dependency installed");
+    CHECK(space_init_overlay_local(&overlay,&root),"program barrier overlay installed");
+    CettaCount before=space_length64(&root);
+    PettaProgramReadBarrier *barrier=petta_program_read_barrier_new(&overlay);
+    CHECK(barrier,"program read barrier captured");
+    CHECK(petta_program_read_barrier_active(&root) && petta_program_read_barrier_active(&module) &&
+        petta_program_read_barrier_active(&overlay),"barrier covers root base and module closure");
+    CHECK(!petta_program_read_barrier_active(&other),"unrelated program keeps its optimizer");
+    Atom *call=atom_expr3(result,atom_symbol(result,"observed-apply"),atom_symbol(result,"observed-step"),atom_int(result,7)),*out=NULL;
+    CHECK(petta_specializer_prepare_call(&root,NULL,persistent,result,call,&out)==PETTA_SPECIALIZE_UNCHANGED &&
+        out==call && space_length64(&root)==before,"observed source defers optional derivation before any publication");
+    CHECK(petta_specializer_prepare_call(&other,NULL,persistent,result,call,&out)==PETTA_SPECIALIZE_REWRITTEN &&
+        space_length64(&other)>2,"unrelated source still specializes during observation");
+    CHECK(petta_program_read_barrier_retain(barrier),"clone retains original read restriction");
+    CettaStorageCensus census={0};petta_program_read_barrier_storage(barrier,&census);cetta_storage_finish(&census);
+    size_t bytes=census.bytes;CHECK(bytes>0 && !census.incomplete,"barrier storage has complete accounting");
+    petta_program_read_barrier_storage(barrier,&census);cetta_storage_finish(&census);
+    CHECK(census.bytes==bytes,"shared barrier accounting deduplicates ownership");cetta_storage_census_free(&census);
+    petta_program_read_barrier_free(barrier);
+    CHECK(petta_program_read_barrier_active(&root),"retiring one clone keeps source observed");
+    petta_program_read_barrier_free(barrier);
+    CHECK(!petta_program_read_barrier_active(&root),"last close releases optimizer restriction");
+    CHECK(petta_specializer_prepare_call(&root,NULL,persistent,result,call,&out)==PETTA_SPECIALIZE_REWRITTEN &&
+        space_length64(&root)>before,"ordinary specialization resumes after last observer");
+    space_free(&overlay);space_free(&other);
+    barrier=petta_program_read_barrier_new(&root);CHECK(barrier,"retirement witness captures source");
+    uint64_t instance=space_instance_id(&root);space_free(&root);space_free(&module);space_init(&root);
+    CHECK(space_instance_id(&root)!=instance && !petta_program_read_barrier_active(&root),
+        "reused header cannot inherit an old observation");
+    petta_program_read_barrier_free(barrier);space_free(&root);
 }
 
 int main(void) {
@@ -575,6 +618,8 @@ int main(void) {
               PETTA_SPECIALIZER_RELATION_IRRELEVANT,
           "isomorphic implication forest is a shape read");
     bindings_builder_free(&open_bindings);
+
+    program_read_barriers(&persistent,&result);
 
     if (failures == 0u)
         printf("PASS: specializer prepare boundary (%u checks)\n", checks);

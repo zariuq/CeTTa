@@ -134,6 +134,37 @@ bool cetta_prepared_pure_closed_own_execution(
     CettaOwnedExecution *driver, CettaPreparedPureClosedExecution *execution,
     const void *owner, uint64_t quantum);
 
+typedef enum {
+    CETTA_PREPARED_PURE_COMPILE_UNCERTIFIED,
+    CETTA_PREPARED_PURE_COMPILE_READY,
+    CETTA_PREPARED_PURE_COMPILE_INPUT_REFUSED,
+    CETTA_PREPARED_PURE_COMPILE_RESOURCE_REFUSED,
+    CETTA_PREPARED_PURE_COMPILE_INVALIDATED,
+    CETTA_PREPARED_PURE_COMPILE_STABLE_REFUSED,
+} CettaPreparedPureCompileStatus;
+
+enum {
+    CETTA_PREPARED_PURE_REFUSE_SCALAR = 1u,
+    CETTA_PREPARED_PURE_REFUSE_ANSWERS = 2u,
+};
+
+/* Preparation metadata, never an evaluation outcome. A failure can certify
+ * the other demand without certifying its own: a prior answer gate survives
+ * a later uncertified scalar failure. Unclassified failures remain retryable.
+ * The source is borrowed for the duration of its owner's preparation scope. */
+typedef struct {
+    SpaceProgramToken source;
+    CettaPreparedPureCompileStatus status;
+    uint8_t refusals;
+} CettaPreparedPureCompileReport;
+
+static inline bool cetta_prepared_pure_compile_refused(
+        const CettaPreparedPureCompileReport *report, Space *space, bool answers) {
+    return report &&
+        (report->refusals & (answers ? CETTA_PREPARED_PURE_REFUSE_ANSWERS
+                                   : CETTA_PREPARED_PURE_REFUSE_SCALAR)) != 0u &&
+        space_program_token_matches_live_space(report->source, space);
+}
 /* Whether the prepared machine can call `head` with `arity` arguments: the
  * dialect leaves the head untyped, or it is an HE head whose one signature
  * has that arity and value-class parameters and range (Number, String, Bool
@@ -323,6 +354,12 @@ typedef struct {
 } CettaPreparedPureSourceProjection;
 typedef const void *(*CettaPreparedPureProjectSourceFn)(
     void *context, const CettaPreparedPureSourceProjection *projection);
+/* True only when `source_view` has an immutable identity retained by
+ * `context` for the lifetime of every cache that uses this adapter. A
+ * temporary source descriptor may still be compiled and executed once, but
+ * its address cannot key a reusable program or refusal. */
+typedef bool (*CettaPreparedPureSourceIdentityRetainedFn)(
+    void *context, const void *source_view);
 typedef struct {
     void *context;
     const void *root;
@@ -332,6 +369,7 @@ typedef struct {
     CettaPreparedPureSourceChildFn child;
     CettaPreparedPureEquationSourceFn equation_rhs;
     CettaPreparedPureProjectSourceFn project_source;
+    CettaPreparedPureSourceIdentityRetainedFn cache_identity_retained;
     /* Decline a named executable occurrence whose admitted rule semantics
      * this compiler cannot realize. Checked during compilation, including
      * callees, and at runtime-created application boundaries. */
@@ -376,11 +414,12 @@ bool cetta_prepared_pure_program_use_native_tail_returns(
 /* Compile a closed, deterministic, effect-free expression into the same
  * explicit-stack machine used by prepared folds.  Callable arguments are
  * retained as machine suspensions and forced according to call_mode. The
- * optional answer_frontend_refusal is false on success. True reports that
- * answer compilation would refuse under the same current source, callbacks,
- * call mode, ready arguments and equality semantics: either a shared terminal
- * dialect refusal before the first demand read, or an explicit single-result
- * gate reached before that read. Failure alone supplies no such evidence. */
+ * optional report separates this attempt's status from certified refusals.
+ * A generic ready entry can retain a terminal dialect refusal for this
+ * demand; crossing demands additionally requires a shared terminal refusal
+ * before demand inspection, or an explicit answer-excluding gate. Failure
+ * alone supplies no certificate. Remaining callback/authority inputs must
+ * stay fixed before any caller publishes a refusal. */
 CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed(
     Space *space, Atom *expression,
     CettaGsltPureCallMode call_mode,
@@ -395,7 +434,7 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed(
     bool entry_arguments_are_values,
     bool total_structural_equality,
     CettaMatchDecisionSemanticIdentity match_decision_semantics,
-    bool *answer_frontend_refusal);
+    CettaPreparedPureCompileReport *report);
 
 /* Prepare an eager value-argument call once for a receiver accepting either
  * an ordinary value or an optional result. Prefer the ordinary result ABI
@@ -415,7 +454,8 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed_result(
     const CettaPreparedPureSourceView *source_view,
     bool entry_arguments_are_values,
     bool total_structural_equality,
-    CettaMatchDecisionSemanticIdentity match_decision_semantics);
+    CettaMatchDecisionSemanticIdentity match_decision_semantics,
+    CettaPreparedPureCompileReport *report);
 
 /* Compile an eager, effect-free at-most-one worker from actual equations.
  * Arguments must have the supplied value interpretation; unsupported code
@@ -476,7 +516,8 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed_answers(
     const CettaPreparedPureSourceView *source_view,
     bool entry_arguments_are_values,
     bool total_structural_equality,
-    CettaMatchDecisionSemanticIdentity match_decision_semantics);
+    CettaMatchDecisionSemanticIdentity match_decision_semantics,
+    CettaPreparedPureCompileReport *report);
 
 /* Every reachable authored head has disjoint WHNF alternatives. This is
  * classification only; it executes no call and grants no service authority. */
@@ -1062,8 +1103,10 @@ bool cetta_prepared_pure_program_execute_closed_expression_controlled(
  * suspended computation anywhere in value.  Producer consumers use this to
  * preserve eager element evaluation while allowing the collection tail to
  * remain suspended. */
+/* An incomplete inspection grants neither readiness nor permission to run
+ * the value as code. COMPLETE is required. */
 bool cetta_prepared_pure_program_value_is_fully_evaluated(
-    CettaPreparedPureProgram *program, Atom *value);
+    CettaPreparedPureProgram *program, Atom *value, bool *complete);
 
 /* A collected closed execution can return a result owned by the program's
  * invocation survivor arena.  The result remains valid until the next

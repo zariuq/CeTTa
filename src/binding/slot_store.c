@@ -397,6 +397,14 @@ static bool bindings_frame_index_initialize_entry(
         }
         memcpy(storage.schema->source_ids, source_ids,
                (size_t)source_len * sizeof(*storage.schema->source_ids));
+        /* A spare has storage capacity, not the new source's presentation.
+         * Its old name keys may even point into an already retired arena.
+         * Raw inventories learn presentation anew; prepared schemas above
+         * keep the caller-supplied presentation. */
+        for (uint32_t slot = 0u; slot < source_len; slot++)
+            storage.schema->spellings[slot] = SYMBOL_ID_NONE;
+        memset(storage.schema->name_keys, 0,
+               (size_t)source_len * sizeof(*storage.schema->name_keys));
         bindings_frame_schema_publish(storage.schema, source_len);
     }
     storage.epoch = epoch;
@@ -586,7 +594,10 @@ bool bindings_frame_index_ensure_presentation_slot(
     }
     bool needs_spelling = existing_spelling == SYMBOL_ID_NONE &&
         spelling != SYMBOL_ID_NONE;
-    bool needs_key = name_key && existing_key != name_key;
+    /* An equal presentation supplies no new information. In particular a
+     * temporary matching image must not replace the longer-lived key already
+     * attached to this frame; rollback may retire that image immediately. */
+    bool needs_key = name_key && !existing_key;
     if (!needs_spelling && !needs_key)
         return true;
     if (!bindings_frame_index_detach(bindings))

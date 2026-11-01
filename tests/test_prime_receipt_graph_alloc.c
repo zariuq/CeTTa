@@ -104,6 +104,71 @@ static CettaMatchCompletion reader_allocation_clear(uint64_t key,
     (void)value;*clear=state && key!=22u;
     return CETTA_MATCH_MATCHED;
 }
+
+static CettaMatchCompletion reader_allocation_clear_page_boundary(uint64_t key,
+        const PrimeNeedReaderValue *value,void *state,bool *clear) {
+    (void)value;(void)state;*clear=key==64u||key==65u;
+    return CETTA_MATCH_MATCHED;
+}
+
+static void check_reader_context_pages(void) {
+    ReaderAllocationOwner owner={0},image={0};
+    PrimeNeedReaderValue value={&owner,&reader_allocation_ops};
+    PrimeNeedReaderContext *ascending=NULL,*same=NULL,*tombstone=NULL,*cleared=NULL;
+    PrimeNeedReaderContext *odd=NULL,*even=NULL,*merged=NULL,*imported=NULL,*copied=NULL;
+    for(uint64_t key=1u;key<=130u;key++)
+        assert(prime_need_reader_context_update(ascending,key,&value,&ascending)==
+            CETTA_MATCH_MATCHED);
+    PrimeNeedReaderValue observed={0};
+    const uint64_t probes[]={1u,64u,65u,128u,129u,130u};
+    for(size_t i=0u;i<sizeof(probes)/sizeof(*probes);i++)
+        assert(prime_need_reader_context_lookup(ascending,probes[i],&observed)&&
+            observed.value==&owner);
+    assert(prime_need_reader_context_update(ascending,64u,&value,&same)==
+        CETTA_MATCH_MATCHED&&same==ascending);
+    prime_need_reader_context_release(same);same=NULL;
+    assert(prime_need_reader_context_update(ascending,65u,NULL,&tombstone)==
+        CETTA_MATCH_MATCHED&&!prime_need_reader_context_lookup(tombstone,65u,&observed)&&
+        prime_need_reader_context_lookup(tombstone,64u,&observed)&&
+        prime_need_reader_context_lookup(tombstone,130u,&observed));
+    assert(prime_need_reader_context_clear_if(tombstone,
+        reader_allocation_clear_page_boundary,NULL,&cleared)==CETTA_MATCH_MATCHED&&
+        !prime_need_reader_context_lookup(cleared,64u,&observed)&&
+        !prime_need_reader_context_lookup(cleared,65u,&observed)&&
+        prime_need_reader_context_lookup(cleared,63u,&observed)&&
+        prime_need_reader_context_lookup(cleared,66u,&observed));
+    for(uint64_t key=1u;key<=130u;key++) {
+        PrimeNeedReaderContext **target=(key&1u)?&odd:&even;
+        assert(prime_need_reader_context_update(*target,key,&value,target)==
+            CETTA_MATCH_MATCHED);
+    }
+    assert(prime_need_reader_context_merge(odd,even,&merged)==CETTA_MATCH_MATCHED);
+    for(uint64_t key=1u;key<=130u;key++)
+        assert(prime_need_reader_context_lookup(merged,key,&observed)&&
+            observed.value==&owner);
+    assert(prime_need_reader_context_import(odd,merged,NULL,&imported)==
+        CETTA_MATCH_MATCHED);
+    for(uint64_t key=1u;key<=130u;key++)
+        assert(prime_need_reader_context_lookup(imported,key,&observed)==((key&1u)==0u));
+    Arena destination;arena_init_detached(&destination);
+    AtomDeepCopySession *session=atom_deep_copy_session_new(&destination);
+    assert(session&&atom_deep_copy_session_object_record(session,
+        &reader_allocation_copy_kind,&owner,&image,sizeof(owner))&&
+        prime_need_reader_context_copy_with_session(ascending,&destination,session,&copied)==
+            CETTA_MATCH_MATCHED&&copied!=ascending&&
+        prime_need_reader_context_lookup(copied,65u,&observed)&&observed.value==&image&&
+        prime_need_reader_context_lookup(copied,130u,&observed)&&observed.value==&image);
+    prime_need_reader_context_release(copied);
+    atom_deep_copy_session_free(session);arena_free(&destination);
+    assert(!image.references);
+    prime_need_reader_context_release(imported);prime_need_reader_context_release(merged);
+    prime_need_reader_context_release(even);prime_need_reader_context_release(odd);
+    prime_need_reader_context_release(cleared);prime_need_reader_context_release(tombstone);
+    prime_need_reader_context_release(ascending);
+    assert(!owner.references);
+    puts("PASS: reader contexts preserve values, deltas and ownership across three immutable pages");
+}
+
 static void check_reader_context_refusal(void) {
     ReaderAllocationOwner owner={0};
     PrimeNeedReaderValue value={&owner,&reader_allocation_ops};
@@ -654,6 +719,7 @@ int main(void) {
     prime_need_receipt_graph_free(&graph);
     prime_need_receipt_graph_free(&complete);
     check_reader_context_refusal();
+    check_reader_context_pages();
     check_reader_copy_refusal();
     check_production_support_refusal(&arena);
     check_read_capture_transport();

@@ -3,6 +3,13 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <sys/types.h>
+
+/* Shared local service listener and CSP1 framing. Stale owned socket files
+ * may be removed after a connection probe; callers serialize startup. */
+int cetta_ipc_listen(const char *path, mode_t mode, gid_t group, int backlog);
+bool cetta_ipc_csp_header(unsigned char header[8], size_t bytes);
+bool cetta_ipc_csp_size(const unsigned char header[8], size_t maximum, size_t *bytes);
 
 /* Native bytes only. The evaluator owns this nonblocking local transaction;
  * readiness never evaluates or acknowledges its reply. */

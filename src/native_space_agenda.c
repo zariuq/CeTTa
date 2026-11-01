@@ -1357,6 +1357,7 @@ CettaSpaceAgendaDiscoveryStep cetta_space_agenda_discovery_step(
     if (!cetta_space_agenda_discovery_current(d)) {
         d->pending="StaleDiscoverySource";return CETTA_SPACE_DISCOVERY_INVALIDATED;
     }
+    if (step==SPACE_OCCURRENCE_CURSOR_PROGRESS) return CETTA_SPACE_DISCOVERY_PROGRESS;
     if (step==SPACE_OCCURRENCE_CURSOR_END) {
         d->exhausted=true;return CETTA_SPACE_DISCOVERY_EXHAUSTED;
     }

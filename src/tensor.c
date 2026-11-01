@@ -355,6 +355,54 @@ CettaTensorStatus cetta_tensor_gather_rows(const CettaTensor *t,
     free(shape); free(data); free(coordinates); return status;
 }
 
+CettaTensorStatus cetta_tensor_where(const CettaTensor *condition,
+    const CettaTensor *when_true, const CettaTensor *when_false, CettaTensor **out) {
+    if (!out) return CETTA_TENSOR_VALUE;
+    *out = NULL;
+    if (!condition || !when_true || !when_false) return CETTA_TENSOR_VALUE;
+    if (condition->dtype != CETTA_TENSOR_BOOL || when_true->dtype != when_false->dtype)
+        return CETTA_TENSOR_DTYPE;
+    const CettaTensor *branches[] = {when_false, when_true};
+    for (size_t i = 0; i < 2; i++)
+        if (condition->rank != branches[i]->rank || (condition->rank &&
+            memcmp(condition->shape, branches[i]->shape, condition->rank * sizeof(size_t))))
+            return CETTA_TENSOR_SHAPE;
+    size_t n = cetta_tensor_stored(condition), used = 0;
+    size_t width = cetta_tensor_itemsize(when_true->dtype);
+    /* Count actual selected support first: a sparse condition can describe
+     * a huge logical shape without requiring a dense result allocation. */
+    for (size_t i = 0; i < n; i++) {
+        size_t coordinate = stored_coordinate(condition, i);
+        const unsigned char *flag = stored_value(condition, i);
+        if (element(branches[*flag], coordinate)) used++;
+    }
+    bool dense = used == condition->count;
+    if (used > SIZE_MAX / width || (!dense && used > SIZE_MAX / sizeof(size_t)))
+        return CETTA_TENSOR_OVERFLOW;
+    unsigned char *data = used ? malloc(used * width) : NULL;
+    size_t *coordinates = !dense && used ? malloc(used * sizeof(*coordinates)) : NULL;
+    if (used && (!data || (!dense && !coordinates))) {
+        free(data); free(coordinates); return CETTA_TENSOR_NOMEM;
+    }
+    size_t written = 0;
+    for (size_t i = 0; i < n; i++) {
+        size_t coordinate = stored_coordinate(condition, i);
+        const unsigned char *flag = stored_value(condition, i);
+        const unsigned char *value = element(branches[*flag], coordinate);
+        if (!value) continue;
+        if (!dense) coordinates[written] = coordinate;
+        memcpy(data + written * width, value, width); written++;
+    }
+    CettaTensorStatus status;
+    if (dense) {
+        status = cetta_tensor_new_take(when_true->dtype, condition->shape, condition->rank,
+                                      data, used * width, out);
+        if (status == CETTA_TENSOR_OK) data = NULL;
+    } else status = cetta_tensor_coo(when_true->dtype, condition->shape, condition->rank,
+                                   coordinates, data, used, CETTA_TENSOR_REJECT, out);
+    free(data); free(coordinates); return status;
+}
+
 CettaTensorStatus cetta_tensor_merge(const CettaTensor *left,
     const CettaTensor *right, CettaTensorDuplicates duplicates, CettaTensor **out) {
     if (!out) return CETTA_TENSOR_VALUE;

@@ -11,7 +11,18 @@ from gen_execution_contracts import Spec, SpecError
 def main():
     text = (ROOT / 'lib/gslt_execution_contracts.metta').read_text()
     spec = Spec(text)
-    assert len(spec.control_plans) == 11
+    assert len(spec.control_plans) == 12
+    first = '(source-head once 1 first-success (operands 0 absent absent) (fold none))'
+    for replacement in [
+            first + '\n  ' + first,
+            first.replace('operands 0', 'operands absent'),
+            first.replace('operands 0', 'operands 1'),
+            first.replace('fold none', 'fold evaluate')]:
+        try:
+            Spec(text.replace(first, replacement))
+        except SpecError:
+            continue
+        raise AssertionError(('invalid first-success plan was admitted', replacement))
     selection = '(source-head case 2 match-branches (operands 0 1 absent) (fold none))'
     for replacement in [
             selection + '\n  ' + selection,
@@ -24,7 +35,19 @@ def main():
         except SpecError:
             continue
         raise AssertionError(('invalid case plan was admitted', replacement))
-    assert len(spec.control_forms) == 2
+    assert len(spec.control_forms) == 3
+    dispatch = '(dialect-form petta reduce 1 dispatch (operands 0 absent absent) (fold none))'
+    for replacement in [
+            dispatch + '\n  ' + dispatch,
+            dispatch.replace('operands 0', 'operands absent'),
+            dispatch.replace('operands 0', 'operands 1'),
+            dispatch.replace('fold none', 'fold evaluate'),
+            dispatch.replace('petta reduce', 'he reduce')]:
+        try:
+            Spec(text.replace(dispatch, replacement))
+        except SpecError:
+            continue
+        raise AssertionError(('invalid dispatch plan was admitted', replacement))
     assert len(spec.variadic_forms) == 2
     collection = '(source-head collapse 1 collect (operands 0 absent absent) (fold none))'
     for replacement in [

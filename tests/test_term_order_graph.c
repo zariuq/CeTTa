@@ -1,5 +1,6 @@
 #include "petta_semantics.h"
 #include "term_graph.h"
+#include "term_canon.h"
 #include "stats.h"
 #include "tests/test_runtime_stats_stubs.h"
 
@@ -386,6 +387,112 @@ static Atom *loan_rewrite_leaf(Arena *arena, Atom *source, void *context) {
     return atom_deep_copy(arena, source);
 }
 
+/* An independent owning-session route is both the reference and the
+ * negative control for eliminating the transient heap container. */
+static bool mapped_heap_reference(Arena *dst,Atom *const *sources,Atom **images,
+    size_t count,AtomDeepCopyLeafMap map,void *context) {
+    if(!dst || !map || (count && (!sources || !images)) ||
+        count>SIZE_MAX/sizeof(*images)) return false;
+    if(!count) return true;
+    AtomDeepCopySession *session=atom_deep_copy_session_new_mapped(dst,map,context);
+    if(!session) return false;
+    bool ok=true;
+    for(size_t i=0u;ok && i<count;i++) {
+        images[i]=atom_deep_copy_session_copy(session,sources[i]);
+        ok=images[i]!=NULL;
+    }
+    atom_deep_copy_session_free(session);
+    return ok;
+}
+
+#ifdef CETTA_TEST_MAPPED_BATCH_HEAP_REFERENCE
+bool __wrap_atom_deep_copy_terms_mapped(Arena *dst,Atom *const *sources,Atom **images,
+    size_t count,AtomDeepCopyLeafMap map,void *context) {
+    return mapped_heap_reference(dst,sources,images,count,map,context);
+}
+#endif
+
+typedef struct {size_t integers;bool refuse;} BatchMapProbe;
+static Atom *batch_map_leaf(Arena *arena,Atom *source,void *raw) {
+    BatchMapProbe *probe=raw;
+    if(source->kind==ATOM_GROUNDED && source->ground.gkind==GV_INT) {
+        probe->integers++;
+        if(probe->refuse && source->ground.ival==-1) return NULL;
+        return atom_int(arena,source->ground.ival+100);
+    }
+    return atom_deep_copy(arena,source);
+}
+
+static void mapped_batch_cases(void) {
+    Arena source,destination;arena_init(&source);arena_init(&destination);
+    Atom *leaf=atom_int(&source,7);
+    Atom *pair=atom_expr3(&source,atom_symbol(&source,"batch-pair"),leaf,leaf);
+    Atom *outer=atom_expr2(&source,atom_symbol(&source,"batch-outer"),pair);
+    Atom *roots[]={pair,outer,pair};Atom *images[3]={0};
+    BatchMapProbe probe={0};
+    test_runtime_stats_reset_counters();
+    assert(atom_deep_copy_terms_mapped(&destination,roots,images,3u,batch_map_leaf,&probe));
+    uint64_t batch_alloc=test_runtime_stats_counter(CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_METADATA_ALLOC_BYTES);
+    uint64_t batch_free=test_runtime_stats_counter(CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_METADATA_FREE_BYTES);
+    uint64_t batch_nodes=test_runtime_stats_counter(CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_NODE);
+    assert(probe.integers==1u && images[0]==images[2] && images[0]!=pair &&
+        images[1]->expr.elems[1]==images[0] &&
+        images[0]->expr.elems[1]==images[0]->expr.elems[2] &&
+        images[0]->expr.elems[1]->ground.ival==107 && leaf->ground.ival==7);
+    BatchMapProbe heap_probe={0};Atom *heap_images[3]={0};
+    test_runtime_stats_reset_counters();
+    assert(mapped_heap_reference(&destination,roots,heap_images,3u,batch_map_leaf,&heap_probe));
+    uint64_t heap_alloc=test_runtime_stats_counter(CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_METADATA_ALLOC_BYTES);
+    uint64_t heap_free=test_runtime_stats_counter(CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_METADATA_FREE_BYTES);
+    if(!(heap_alloc>batch_alloc && heap_free>batch_free &&
+        heap_alloc-batch_alloc==heap_free-batch_free &&
+        batch_alloc==batch_free && heap_alloc==heap_free)) {
+        fputs("FAIL: mapped batch retains transient heap session metadata\n",stderr);
+        exit(1);
+    }
+    assert(test_runtime_stats_counter(CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_NODE)==batch_nodes);
+    assert(heap_probe.integers==1u && heap_images[0]==heap_images[2] &&
+        heap_images[1]->expr.elems[1]==heap_images[0] && atom_eq(heap_images[0],images[0]));
+    Atom *again=NULL;
+    assert(atom_deep_copy_terms_mapped(&destination,images,&again,1u,batch_map_leaf,&probe));
+    assert(again!=images[0] && again->expr.elems[1]->ground.ival==207 && probe.integers==2u);
+
+    Atom *variable=atom_var_with_id(&source,"batch-x",var_id_from_base(3u));
+    Atom *forms[]={atom_expr3(&source,atom_symbol(&source,"batch-f"),variable,variable),
+                   atom_expr2(&source,atom_symbol(&source,"batch-g"),variable)};
+    Atom *original=forms[0];
+    assert(cetta_instantiate_frame_terms(&destination,forms,2u));
+    Atom *fresh=forms[0]->expr.elems[1];
+    assert(forms[0]!=original && fresh->kind==ATOM_VAR &&
+        forms[0]->expr.elems[2]==fresh && forms[1]->expr.elems[1]==fresh &&
+        !var_id_eq(fresh->var_id,variable->var_id));
+    Atom *second[]={original};
+    assert(cetta_instantiate_frame_terms(&destination,second,1u));
+    assert(!var_id_eq(second[0]->expr.elems[1]->var_id,fresh->var_id));
+
+    Atom *sentinel=atom_int(&destination,999);
+    Atom *refused_roots[]={atom_int(&source,3),atom_int(&source,-1),atom_int(&source,5)};
+    Atom *refused_images[]={sentinel,sentinel,sentinel};
+    ArenaMark mark=arena_mark(&destination);
+    probe=(BatchMapProbe){.refuse=true};
+    assert(!atom_deep_copy_terms_mapped(&destination,refused_roots,refused_images,3u,
+        batch_map_leaf,&probe));
+    assert(probe.integers==2u && refused_images[0]->ground.ival==103 &&
+        !refused_images[1] && refused_images[2]==sentinel && refused_roots[1]->ground.ival==-1);
+    arena_reset(&destination,mark);
+    assert(atom_deep_copy_terms_mapped(&destination,NULL,NULL,0u,batch_map_leaf,&probe));
+    assert(!atom_deep_copy_terms_mapped(NULL,roots,images,1u,batch_map_leaf,&probe));
+    assert(!atom_deep_copy_terms_mapped(&destination,NULL,images,1u,batch_map_leaf,&probe));
+    assert(!atom_deep_copy_terms_mapped(&destination,roots,NULL,1u,batch_map_leaf,&probe));
+    assert(!atom_deep_copy_terms_mapped(&destination,roots,images,1u,NULL,&probe));
+    assert(!atom_deep_copy_terms_mapped(&destination,roots,images,SIZE_MAX,batch_map_leaf,&probe));
+    arena_free(&source);
+    assert(images[0]->expr.elems[1]->ground.ival==107 &&
+        again->expr.elems[1]->ground.ival==207 && forms[1]->expr.elems[1]==fresh);
+    arena_free(&destination);
+    puts("PASS: local mapped batches preserve root sharing, fresh frame scopes, mapping and refused-prefix cleanup");
+}
+
 static Atom *loan_resolve_leaf(void *context, Atom *source) {
     Atom *replacement = context;
     return source->kind == ATOM_GROUNDED && source->ground.gkind == GV_INT
@@ -546,6 +653,7 @@ int main(void) {
     g_symbols = &symbols;
     arena_init(&arena);
     semantic_walk_barriers(&arena);
+    mapped_batch_cases();
     scoped_copy_loans();
     expression_boundary_cases(&arena);
     finite_cases(&arena);

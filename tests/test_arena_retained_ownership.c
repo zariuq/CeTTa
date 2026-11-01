@@ -4,6 +4,28 @@
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <errno.h>
+
+static size_t refuse_after,allocation_calls;
+static bool refusal_hit;
+void *__real_malloc(size_t);
+void *__real_calloc(size_t,size_t);
+void *__real_realloc(void *,size_t);
+static bool allocation_refused(void) {
+    if(!refuse_after)return false;
+    allocation_calls++;
+    if(--refuse_after)return false;
+    refusal_hit=true;errno=ENOMEM;return true;
+}
+void *__wrap_malloc(size_t size) {
+    return allocation_refused()?NULL:__real_malloc(size);
+}
+void *__wrap_calloc(size_t count,size_t width) {
+    return allocation_refused()?NULL:__real_calloc(count,width);
+}
+void *__wrap_realloc(void *pointer,size_t size) {
+    return allocation_refused()?NULL:__real_realloc(pointer,size);
+}
 
 enum { OWNERS = 300, OPS = 400000, MAXMARKS = 64 };
 static int holds_a[OWNERS], holds_b[OWNERS];
@@ -213,9 +235,90 @@ static void retained_owner_walk_controls(void) {
     puts("PASS: complete retained-owner walk preserves identity, holds and stopped predicates");
 }
 
+static void allocation_refusal_controls(void) {
+    const unsigned prefixes[]={0u,4u,8u};
+    const size_t requests[]={5u,2u,4u};
+    size_t refusals=0u;
+    for(size_t p=0u;p<sizeof(prefixes)/sizeof(*prefixes);p++) {
+        unsigned prefix=prefixes[p];
+        for(size_t fault=0u;fault<=requests[p];fault++) {
+            Arena a;arena_init_detached(&a);Owner owners[10]={0};
+            for(unsigned i=0u;i<prefix;i++)
+                assert(arena_retain_owner(&a,&owners[i],owner_retain,owner_release));
+            ArenaMark mark=arena_mark(&a);
+            const void *finalizers=a.finalizers;
+            size_t external=a.external_bytes;
+            allocation_calls=0u;refusal_hit=false;
+            refuse_after=fault?fault:SIZE_MAX;
+            bool acquired=arena_retain_owner(&a,&owners[prefix],owner_retain,owner_release);
+            refuse_after=0u;
+            if(!fault) {
+                assert(acquired&&!refusal_hit&&allocation_calls==requests[p]);
+            } else {
+                assert(!acquired&&refusal_hit&&allocation_calls==fault);
+                assert(!owners[prefix].holds&&!owners[prefix].retains&&
+                    a.finalizers==finalizers&&a.external_bytes==external);
+                assert(!arena_retains_owner(&a,&owners[prefix],owner_release));
+                for(unsigned i=0u;i<prefix;i++) {
+                    assert(owners[i].holds==1u&&owners[i].retains==1u);
+                    assert(arena_retains_owner(&a,&owners[i],owner_release));
+                    assert(arena_retained_owner_at(&a,owner_release,i)==&owners[prefix-1u-i]);
+                }
+                assert(!arena_retained_owner_at(&a,owner_release,prefix));
+                arena_reset(&a,mark);
+                assert(arena_at_mark(&a,mark));
+                assert(arena_retain_owner(&a,&owners[prefix],owner_retain,owner_release));
+                refusals++;
+            }
+            refusal_hit=false;allocation_calls=0u;refuse_after=1u;
+            assert(arena_retain_owner(&a,&owners[prefix],owner_retain,owner_release));
+            refuse_after=0u;
+            assert(!refusal_hit&&!allocation_calls&&owners[prefix].holds==1u);
+            arena_reset(&a,mark);
+            assert(!owners[prefix].holds&&arena_at_mark(&a,mark));
+            for(unsigned i=0u;i<prefix;i++)assert(owners[i].holds==1u);
+            arena_free(&a);assert(charge(&a)==0u);
+            for(size_t i=0u;i<sizeof(owners)/sizeof(*owners);i++)
+                assert(!owners[i].holds&&owners[i].retains==owners[i].releases);
+        }
+    }
+    assert(refusals==11u);
+    puts("PASS: all 11 owner-acquisition allocation refusals preserve holds, order, rollback and retry");
+}
+
+static void live_span_controls(void) {
+    Arena a, other; arena_init_detached(&a); arena_init_detached(&other);
+    assert(!arena_has_live_span(NULL, &a, sizeof(a)) &&
+        !arena_has_live_span(&a, NULL, 1u));
+    unsigned char *prefix = arena_alloc(&a, 64u);
+    void *foreign = arena_alloc(&other, 64u);
+    assert(prefix && foreign && arena_has_live_span(&a, prefix, 64u));
+    assert(arena_has_live_span(&a, prefix + 63u, 1u) &&
+        !arena_has_live_span(&a, prefix + 63u, 2u) &&
+        !arena_has_live_span(&a, prefix, 65u) &&
+        !arena_has_live_span(&a, prefix, 0u) &&
+        !arena_has_live_span(&a, foreign, 64u) &&
+        !arena_has_live_span(&a, prefix, SIZE_MAX));
+    ArenaMark mark = arena_mark(&a);
+    void *removed = arena_alloc(&a, 64u);
+    assert(removed && arena_has_live_span(&a, removed, 64u));
+    arena_reset(&a, mark);
+    assert(arena_owns_ptr(&a, removed) && !arena_has_live_span(&a, removed, 1u) &&
+        arena_has_live_span(&a, prefix, 64u));
+    size_t large = a.head->capacity * 2u;
+    void *spare = arena_alloc(&a, large);
+    assert(spare && arena_has_live_span(&a, spare, large));
+    arena_reset(&a, mark);
+    assert(arena_owns_ptr(&a, spare) && !arena_has_live_span(&a, spare, 1u));
+    arena_free(&a); arena_free(&other);
+    puts("PASS: live spans exclude foreign storage, spare capacity, truncated prefixes and overflow");
+}
+
 
 int main(void) {
     retained_owner_walk_controls();
+    allocation_refusal_controls();
+    live_span_controls();
     ownership_controls();
     accounting_controls();
     randomized_ownership();

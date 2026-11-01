@@ -6,8 +6,44 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
+
+bool cetta_ipc_csp_header(unsigned char header[8],size_t bytes) {
+    if (bytes<4 || bytes>UINT32_MAX) return false;
+    memcpy(header,"CSP1",4);
+    for (size_t i=0;i<4;i++) header[4+i]=(unsigned char)(bytes>>(24-8*i));
+    return true;
+}
+bool cetta_ipc_csp_size(const unsigned char header[8],size_t maximum,size_t *bytes) {
+    if (!bytes || memcmp(header,"CSP1",4)) return false;
+    size_t size=0;for (size_t i=4;i<8;i++) size=(size<<8)|header[i];
+    if (size<4 || size>maximum) return false;
+    *bytes=size;return true;
+}
+int cetta_ipc_listen(const char *path,mode_t mode,gid_t group,int backlog) {
+    struct sockaddr_un address={.sun_family=AF_UNIX};
+    size_t n=path ? strlen(path) : 0;
+    if (!n || path[0]!='/' || n>=sizeof(address.sun_path)) return -1;
+    memcpy(address.sun_path,path,n+1);struct stat st;
+    if (!lstat(path,&st)) {
+        if (!S_ISSOCK(st.st_mode) || st.st_uid!=geteuid()) return -1;
+        int probe=socket(AF_UNIX,SOCK_STREAM|SOCK_CLOEXEC|SOCK_NONBLOCK,0);
+        if (probe<0) return -1;
+        int result=connect(probe,(struct sockaddr *)&address,sizeof(address));
+        int saved=errno;close(probe);
+        if (!result || (saved!=ECONNREFUSED && saved!=ENOENT)) return -1;
+        if (unlink(path)) return -1;
+    } else if (errno!=ENOENT) return -1;
+    int fd=socket(AF_UNIX,SOCK_STREAM|SOCK_CLOEXEC|SOCK_NONBLOCK,0);
+    if (fd<0) return -1;
+    if (bind(fd,(struct sockaddr *)&address,sizeof(address)) ||
+        (group!=(gid_t)-1 && chown(path,(uid_t)-1,group)) || chmod(path,mode) || listen(fd,backlog)) {
+        close(fd);return -1;
+    }
+    return fd;
+}
 
 struct CettaIpcClient {
     int fd;

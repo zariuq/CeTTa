@@ -18,6 +18,22 @@
    (function
      (chain (eval (__cetta_lib_space_id ())) $result (return $result))))
 
+; Persistent connections own server resources until explicit disconnect or
+; retirement of the last protected connection handle. An uncertain exchange
+; closes the stream; resolve durable receipts through a fresh connection.
+(: space:connect (-> String Number Expression))
+(: space:exchange (-> %Undefined% Atom Number Expression))
+(: space:disconnect (-> %Undefined% Expression))
+(: __cetta_lib_space_connect (-> Atom Atom Atom))
+(: __cetta_lib_space_exchange (-> Atom Atom Atom Atom))
+(: __cetta_lib_space_disconnect (-> Atom Atom))
+(= (space:connect $socket $timeout)
+   (function (chain (eval (__cetta_lib_space_connect $socket $timeout)) $result (return $result))))
+(= (space:exchange $connection $request $timeout)
+   (function (chain (eval (__cetta_lib_space_exchange $connection $request $timeout)) $result (return $result))))
+(= (space:disconnect $connection)
+   (function (chain (eval (__cetta_lib_space_disconnect $connection)) $result (return $result))))
+
 (= (space:list $socket)
    (function
      (let $rid (space:request-id)

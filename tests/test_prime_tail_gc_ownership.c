@@ -112,11 +112,12 @@ static void gc_guard_case(unsigned mode) {
     eval_gc_survivor_reset();
 }
 
-/* Pending delivery is an independent root. A transient state carrier first
- * declines collection. Its caller-owned cell then permits explicit world
- * preparation; both collectors preserve the pending payload and world. */
-static void pending_force_gc_case(bool queued) {
-    Arena arena, owner; arena_init(&arena); arena_init(&owner);
+/* Pending delivery is an independent root. Its logical world is raised to
+ * the episode before both stack and queued collection; its visible payload
+ * then moves even though no child/target row points to that payload. */
+static void pending_force_gc_case(bool queued, unsigned foreign) {
+    Arena arena, owner, unrelated;
+    arena_init(&arena); arena_init(&owner); arena_init(&unrelated);
     arena_set_hashcons(&arena, NULL); arena_set_hashcons(&owner, NULL);
     Space space; space_init(&space);
     PrimeNativeControl control = {0};
@@ -154,12 +155,26 @@ static void pending_force_gc_case(bool queued) {
         frame->thunk_id, frame->evaluator_id, atom_deep_copy(&owner, payload), &cached));
     Bindings pending; assert(bindings_clone(&pending, &frame->env));
     *bindings_need_mut(&pending) = cached;
-    StateCell *state = arena_alloc(&owner, sizeof(*state)); assert(state);
-    *state = (StateCell){.value=atom_int(&owner,0)};
+    Atom *state_value = atom_int(foreign == 2u ? &unrelated : &owner, 0);
+    ArenaMark before_cell = arena_mark(&owner);
+    StateCell *state = arena_alloc(foreign == 1u ? &unrelated : &owner, sizeof(*state));
+    assert(state);
+    *state = (StateCell){.value=state_value};
+    if (foreign == 3u)
+        state->content_type = atom_expr2(&unrelated, atom_symbol(&unrelated, "Type"),
+            atom_int(&unrelated, 0));
     PrimeNeedBranchState branch = {0};
     assert(prime_need_branch_state_begin(&arena, &branch));
     assert(prime_need_branch_state_write(&arena, &branch, state, state->value,
         atom_int(&arena, 9), bindings_branch_state_mut(&pending)));
+    if (foreign == 4u) state->value = atom_space(&owner, &space);
+    if (foreign == 5u) state->payload_owner_epoch = 1u;
+    if (foreign == 6u) state->payload_export_owner_epoch = 1u;
+    if (foreign == 7u) {
+        arena_reset(&owner, before_cell);
+        assert(arena_owns_ptr(&owner, state) &&
+            !arena_has_live_span(&owner, state, sizeof(*state)));
+    }
     CettaWeightLedger factor = {0};
     assert(cetta_weight_ledger_append(&arena, &factor, prime_need_fresh_source_occurrence(),
         prime_need_fresh_source_occurrence(), atom_int(&arena, 3), &factor));
@@ -172,12 +187,20 @@ static void pending_force_gc_case(bool queued) {
     else {driver->top = frame; driver->frame_depth = 1u;}
     size_t collections = g_eval_gc.collections;
     eval_gc_external_owner_enter();
-    assert(!(queued ? prime_native_control_collect(&control) : prime_eval_stack_collect(driver)));
-    assert(g_eval_gc.collections == collections && frame->force_pending.items[0].atom == payload);
-    assert(bindings_branch_state_view(&frame->force_pending.items[0].env)->owner == &arena);
-    assert(bindings_promote_atoms_to_arena(&frame->force_pending.items[0].env, &owner));
-    assert(queued ? prime_native_control_collect(&control) : prime_eval_stack_collect(driver));
+    bool collected = queued ? prime_native_control_collect(&control) : prime_eval_stack_collect(driver);
     eval_gc_external_owner_leave();
+    if (foreign) {
+        assert(!collected && g_eval_gc.collections == collections &&
+            frame->index == 0u && frame->force_pending.len == 1u &&
+            frame->force_pending.items[0].atom == payload &&
+            bindings_occurrence_token(&frame->force_pending.items[0].env) == occurrence &&
+            bindings_branch_state_view(&frame->force_pending.items[0].env)->owner == &arena &&
+            frame->force_pending_observed && frame->force_retry_pending && frame->force_published &&
+            control.output.len == 0u);
+        printf("PendingForceGC queued %u foreign %u collected 0 retained 1\n", queued, foreign);
+        goto cleanup;
+    }
+    assert(collected);
     assert(g_eval_gc.collections == collections + 1u);
     Outcome *row = &frame->force_pending.items[0];
     assert(row->atom != payload && row->atom->kind == ATOM_EXPR && row->atom->expr.len == 3u &&
@@ -188,18 +211,22 @@ static void pending_force_gc_case(bool queued) {
         !arena_owns_ptr(&arena, bindings_weight_view(&row->env)->last));
     Atom *read = NULL;
     assert(prime_need_branch_state_value(bindings_branch_state_view(&row->env), state, &read) &&
-        read->ground.ival == 9);
+        read->ground.ival == 9 && state->value == state_value &&
+        state->value->kind == ATOM_GROUNDED && state->value->ground.gkind == GV_INT &&
+        state->value->ground.ival == 0);
     PrimeNeedCellView kept;
     assert(prime_need_snapshot_lookup(bindings_need_view(&row->env), frame->thunk_id, &kept) &&
         kept.cache_state == PRIME_NEED_CACHE_VALUE);
     prime_eval_stack_publish_force_plain(frame);
     assert(control.output.len == 1u && frame->index == 1u && !frame->force_pending.len &&
         !frame->force_retry_pending && bindings_occurrence_token(&control.output.items[0].env) == occurrence);
+    printf("PendingForceGC queued %u collected 1 delivered 1\n", queued);
+cleanup:
     driver->top = NULL; control.frames = NULL;
     prime_eval_stack_frame_free(frame); outcome_set_free(&control.output);
     g_prime_eval_stack_driver = NULL; g_prime_need_owner = g_prime_need_episode_owner = NULL;
-    space_free(&space); arena_free(&arena); arena_free(&owner); eval_gc_survivor_reset();
-    printf("PendingForceGC queued %u collected 1 delivered 1\n", queued);
+    space_free(&space); arena_free(&arena); arena_free(&owner);
+    arena_free(&unrelated); eval_gc_survivor_reset();
 }
 
 static void delayed_outcome_gc_case(bool queued) {
@@ -556,7 +583,7 @@ int main(void) {
     g_var_intern = &variables;
     g_hashcons = NULL;
     cetta_library_context_init_for_language_profile(&context, CETTA_LANGUAGE_PRIME,
-                           cetta_profile_prime_default());
+        cetta_profile_prime_default());
     eval_set_default_fuel(-1);
     eval_set_library_context(&context);
     eval_gc_init_once();
@@ -564,8 +591,10 @@ int main(void) {
     g_eval_gc.budget_bytes = 1024u;
     cetta_runtime_stats_enable();
     for (unsigned mode = 0u; mode < 5u; mode++) gc_guard_case(mode);
-    pending_force_gc_case(false);
-    pending_force_gc_case(true);
+    for (unsigned foreign = 0u; foreign < 8u; foreign++) {
+        pending_force_gc_case(false, foreign);
+        pending_force_gc_case(true, foreign);
+    }
     delayed_outcome_gc_case(false);
     delayed_outcome_gc_case(true);
     call_source_birth_case();

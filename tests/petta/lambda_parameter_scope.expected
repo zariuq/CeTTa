@@ -7,3 +7,13 @@
 ((|-> (outer) outer) 5)
 (2 1)
 ((|-> (outer) outer))
+(Triple 11 22 33)
+(Pair 11 22)
+(Pair 11 22)
+(readln!)
+(Pair 11 22)
+(Pair 33 1)
+((Pair 11 33) (Pair 22 33))
+(Pair 11 22)
+7
+66
