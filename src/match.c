@@ -14285,16 +14285,15 @@ static bool stored_grounded_equal(Atom *left,
     return false;
 }
 
-/* A decoded TermUniverse node belongs to its persistent arena.  Keep open
- * nodes as syntax plus activation context; only a universe without a
- * decodable persistent node needs the arena-local materialized fallback. */
+/* Record-backed nodes keep their persistent syntax; opaque images are held
+ * by the binding arena. Open nodes retain their activation context. */
 static bool term_universe_match_binding_value(
         const TermUniverse *universe, Arena *fallback,
         AtomId id, CettaFrameIdentity epoch, BindingValue *out) {
     if (!universe || id == CETTA_ATOM_ID_NONE || !out)
         return false;
     bool open = tu_has_vars(universe, id);
-    Atom *persistent = term_universe_get_atom(universe, id);
+    Atom *persistent = term_universe_scoped_atom(universe, fallback, id);
     if (persistent) {
         *out = open
             ? binding_value_from_persistent_context(persistent, epoch)
@@ -14320,7 +14319,7 @@ static bool match_atoms_atom_id_epoch_worklist(
      * cyclic environment uses the existing guarded contextual matcher so
      * only cycles reachable from this comparison can reject it. */
     if (bindings_has_loop(b)) {
-        Atom *right = term_universe_get_atom((TermUniverse *)candidate_universe, right_id);
+        Atom *right = term_universe_scoped_atom(candidate_universe, a, right_id);
         return right && match_decoded_atoms_worklist(
             left_value, binding_value_from_persistent_context(right, epoch),
             b, NULL, a, false);
@@ -14352,8 +14351,8 @@ retry_pair:
         left = left_value.skeleton;
         const CettaTermHdr *right_header = tu_hdr(candidate_universe, right_id);
         if (!right_header) {
-            Atom *right = term_universe_get_atom(
-                (TermUniverse *)candidate_universe, right_id);
+            Atom *right = term_universe_scoped_atom(
+                candidate_universe, a, right_id);
             if (!right || !match_atoms_epoch_views_worklist(
                     left, binding_value_kind(left_value),
                     binding_value_epoch(left_value), 0u, right, b, NULL, a, epoch,
@@ -14455,8 +14454,8 @@ retry_pair:
                       tu_child_from_header(candidate_universe, right_header, 0u)))))) {
                 /* Lists meet in the contextual matcher, which builds the
                  * rest a list pattern is bound to. */
-                Atom *right = term_universe_get_atom(
-                    (TermUniverse *)candidate_universe, right_id);
+                Atom *right = term_universe_scoped_atom(
+                    candidate_universe, a, right_id);
                 if (!right || !match_atoms_epoch_views_worklist(
                         left, binding_value_kind(left_value),
                         binding_value_epoch(left_value), 0u, right, b, NULL, a, epoch,

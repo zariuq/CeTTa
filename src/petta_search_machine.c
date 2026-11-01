@@ -5385,6 +5385,12 @@ static void petta_choice_release(
 static bool petta_choice_push_at_goal_trail_mark(
     PettaMachineImpl *machine, PettaChoice choice,
     size_t goal_trail_mark) {
+    if (space_atom_hold) {
+        if (choice.kind == PETTA_CHOICE_MATCH)
+            space_atom_hold(&machine->heap, choice.as.match.space);
+        else if (choice.kind == PETTA_CHOICE_TRANSACTION)
+            space_atom_hold(&machine->heap, choice.as.transaction.previous_space);
+    }
     if (!choice.source_root)
         choice.source_root = machine->current_source_root;
     /*
@@ -6447,7 +6453,7 @@ static bool petta_activation_roots_add_epoch_root(
          * structurally equivalent transient atom may carry different VarIds,
          * so it must retain the exact traversal fallback. */
         if (id != CETTA_ATOM_ID_NONE &&
-            term_universe_get_atom(universe, id) == atom &&
+            term_universe_peek_atom(universe, id) == atom &&
             !term_universe_variable_support(
                 universe, id, &variable_support)) {
             variable_support = NULL;
@@ -7251,6 +7257,12 @@ static bool petta_copy_supported_choice_atoms(
     const PettaMachineHost *host) {
     if (!session || !choice)
         return false;
+    if (space_atom_hold) {
+        if (choice->kind == PETTA_CHOICE_MATCH)
+            space_atom_hold(destination, choice->as.match.space);
+        else if (choice->kind == PETTA_CHOICE_TRANSACTION)
+            space_atom_hold(destination, choice->as.transaction.previous_space);
+    }
     if (!atom_deep_copy_session_retain_frame(
             session, choice->manufacture_epoch))
         return false;
@@ -7661,6 +7673,11 @@ static bool petta_machine_collect_choice_heap(
         arena_free(&machine->tenured);
         machine->tenured = next_tenured;
         arena_set_runtime_kind(&machine->tenured, CETTA_ARENA_RUNTIME_KIND_SURVIVOR);
+    }
+    /* With no older objects, the minor trace covered the whole managed
+     * heap. Its retained bytes establish the live-data baseline just as a
+     * major trace does; recopying that fresh promotion adds no information. */
+    if (major || before_tenured_bytes == 0u) {
         machine->tenured_major_after = petta_machine_next_major_threshold(
             arena_accounted_live_bytes(&machine->tenured));
     }
@@ -8114,6 +8131,8 @@ static bool petta_owned_continuation_copy_atoms_with_session(
     AtomDeepCopySession *session) {
     if (!continuation || !destination || !session)
         return false;
+    if (space_atom_hold)
+        space_atom_hold(destination, (void *)continuation->authority.space_read.space);
     bool ok = true;
     continuation->readout.query = petta_copy_optional_atom(
         session, continuation->readout.query, &ok);
@@ -8823,6 +8842,8 @@ static CettaContinuationStatus petta_continuation_capture(
     ArenaMark term_mark = arena_mark(&owned->terms.pool->owner);
     size_t term_bytes_before = arena_accounted_live_bytes(
         &owned->terms.pool->owner);
+    if (space_atom_hold)
+        space_atom_hold(&owned->terms.pool->owner, source->space);
     owned->authority.source_machine_instance = source->instance_id;
     owned->authority.space_read = read;
     owned->authority.capture_authority = authority;
@@ -10035,7 +10056,7 @@ static bool petta_machine_collect_deterministic_heap(
     machine->heap_promoted_last = promoted_bytes;
     machine->heap_collect_after =
         petta_machine_nursery_window(machine);
-    if (major) {
+    if (major || before_tenured_bytes == 0u) {
         machine->tenured_major_after =
             petta_machine_next_major_threshold(
                 arena_accounted_live_bytes(&machine->tenured));
@@ -10180,8 +10201,14 @@ static bool petta_machine_maybe_collect(
         return false;
     if (binding_count > machine->stats.maximum_binding_entries)
         machine->stats.maximum_binding_entries = binding_count;
+    /* An open equation machine's stable exports go to the tenured arena
+     * directly (oem_resolve_stable), past the nursery: tenured grown to its
+     * major threshold is due as a full nursery is, or a loop the machine
+     * runs inside one statement keeps every export until the statement
+     * ends. */
+    bool tenured_due = tenured_live >= machine->tenured_major_after;
     if (machine->choice_len != 0u) {
-        if (nursery_live >= machine->heap_collect_after) {
+        if (nursery_live >= machine->heap_collect_after || tenured_due) {
             if (!petta_choice_heap_evacuation_supported(machine)) {
                 cetta_runtime_stats_inc(
                     CETTA_RUNTIME_COUNTER_PETTA_CHOICE_HEAP_COLLECTION_DECLINED);
@@ -10189,6 +10216,9 @@ static bool petta_machine_maybe_collect(
                     petta_machine_choice_collection_retry_threshold(
                         nursery_live,
                         petta_machine_nursery_window(machine));
+                if (tenured_due)
+                    machine->tenured_major_after =
+                        petta_machine_next_major_threshold(tenured_live);
             } else if (!petta_machine_collect_choice_heap(machine))
                 return false;
         }
@@ -10206,7 +10236,7 @@ static bool petta_machine_maybe_collect(
      * not collect on every branch.
      */
     if (nursery_live <
-            machine->heap_collect_after &&
+            machine->heap_collect_after && !tenured_due &&
         builder->growth_count <
             machine->binding_growth_collect_after) {
         return true;
@@ -19965,7 +19995,7 @@ static bool petta_machine_advance_choice(
                  * transitions of the shared universe. */
                 CETTA_SCOPED_SHARED_TRANSITION(read);
                 candidate = choice->as.match.pattern_query
-                    ? term_universe_get_atom(universe, stored)
+                    ? term_universe_scoped_atom(universe, &machine->heap, stored)
                     : term_universe_view_atom(universe, &machine->heap,
                                               stored);
             }
@@ -39875,6 +39905,8 @@ static bool petta_machine_init_internal(
             &impl->activation_frames[index].frame);
     }
     arena_init(&impl->plan_arena);
+    if (space_atom_hold)
+        space_atom_hold(&impl->plan_arena, space);
     /* Most derived descriptors are small. Larger plans retain geometric
      * arena growth without keeping a full worker block for a few pointers. */
     arena_set_block_capacity(&impl->plan_arena, ARENA_BLOCK_SIZE / 16u);
@@ -40135,7 +40167,13 @@ static __attribute__((noinline)) void petta_machine_collect_offered(
  * of the step loop and still requires a quiescent transition boundary. */
 static inline __attribute__((always_inline)) void petta_machine_offer_collection(
         PettaMachineImpl *impl, uint32_t steps_open) {
-    if (g_petta_machine_steps_open != steps_open || !impl->space)
+    if (!impl->space)
+        return;
+    if (space_reclamation_due && space_reclamation_due() && space_reclaim_unheld &&
+        !cetta_shared_transition_scope_active()) {
+        (void)space_reclaim_unheld();
+    }
+    if (g_petta_machine_steps_open != steps_open)
         return;
     TermUniverse *universe = impl->space->native.universe;
     if (universe && term_universe_collection_due(universe))

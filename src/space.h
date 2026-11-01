@@ -220,6 +220,7 @@ typedef struct {
      * rows with variables: the bitset holds them, one reference a key set. */
     AtomId *id_present_keys;
     CettaIndex id_present_key_len, id_present_key_cap;
+    TermUniverseResourceOwner *resource_owner;
     /* The heads whose ground facts the space keeps in relations (space.c,
      * "Relations kept as bits or tables"); NULL while it keeps none.  The
      * facts they hold, over every head, which every positional read past the
@@ -270,6 +271,7 @@ typedef struct Space {
             bool id_present_shared;
             AtomId *id_present_keys;
             CettaIndex id_present_key_len, id_present_key_cap;
+            TermUniverseResourceOwner *resource_owner;
             struct SpaceDense *dense;
             CettaCount dense_facts;
             uint64_t dense_epoch;
@@ -447,6 +449,18 @@ uint32_t space_session_grounded_symbol_types(SymbolId symbol,
                                              Atom *const **types)
     __attribute__((weak));
 void space_free(Space *s);
+/* Explicit holds for native descriptors that borrow a temporary Space
+ * without carrying an Atom. The token survives an explicit owner teardown;
+ * releasing it never dereferences the retired Space. Embeddings without
+ * temporary-space ownership may omit these hooks. */
+void *space_lifetime_pin(Space *s) __attribute__((weak));
+void space_lifetime_unpin(void *hold) __attribute__((weak));
+void space_lifetime_rebase(Space *s, const Space *base) __attribute__((weak));
+/* Drain released temporary-space owners at an evaluator-safe boundary.
+ * False when an enclosing execution still requires deferred cleanup. */
+bool space_reclaim_unheld(void) __attribute__((weak));
+void space_reclaim_resource_cycles(TermUniverse *) __attribute__((weak));
+bool space_reclamation_due(void) __attribute__((weak));
 void space_execution_analysis_cache_free_for_current_thread(void);
 Atom *space_store_atom(Space *s, Arena *fallback, Atom *atom);
 void space_add(Space *s, Atom *atom);

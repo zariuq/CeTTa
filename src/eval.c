@@ -17,6 +17,7 @@
 #include "open_equation_machine.h"
 #include "search_control_advice.h"
 #include "shared_transition.h"
+#include "u64_index.h"
 #include "grounded.h"
 #include "library_pattern.h"
 #include "library_binary.h"
@@ -301,6 +302,7 @@ typedef struct {
 typedef struct {
     EvalExecutionContext *owner;
     EvalExecutionContext *previous;
+    void *root_hold;
 } EvalExecutionScope;
 
 static __thread EvalExecutionContext *g_eval_execution = NULL;
@@ -317,6 +319,7 @@ static void eval_execution_scope_enter(EvalExecutionScope *scope, Space *root) {
     scope->previous = g_eval_execution;
     scope->owner = cetta_malloc(sizeof(*scope->owner));
     *scope->owner = (EvalExecutionContext){.root_space = root, .scoped = true};
+    scope->root_hold = space_lifetime_pin(root);
     g_eval_execution = scope->owner;
 }
 
@@ -1371,6 +1374,7 @@ typedef struct {
  * space (a branch, the session's end) finds it gone. */
 typedef struct SpaceHold {
     Space *space;               /* NULL once the space is freed */
+    void *base_hold;
     PettaProgram *petta_program;
     /* The set listing the space after a safe point found it held, and its
        index there; NULL before that and once a branch adopts the space. */
@@ -1387,6 +1391,8 @@ typedef struct SpaceHold {
 
 static pthread_mutex_t g_space_hold_mutex = PTHREAD_MUTEX_INITIALIZER;
 static SpaceHold *g_space_hold_queue = NULL;
+static _Atomic uint64_t g_space_release_epoch = 0u;
+static _Thread_local uint64_t g_space_release_seen = 0u;
 /* Held spaces made since this thread's last safe point. */
 static __thread TempSpaceSet g_made_spaces = {0};
 /* Held spaces a safe point found held: each is examined again only when its
@@ -2933,6 +2939,8 @@ static void eval_execution_scope_leave(EvalExecutionScope *scope) {
     g_eval_execution = scope->previous;
     free(scope->owner);
     scope->owner = NULL;
+    space_lifetime_unpin(scope->root_hold);
+    scope->root_hold = NULL;
 }
 
 /* Public results leave the invocation before any of its banks are released.
@@ -3223,6 +3231,9 @@ static bool petta_space_remove_pattern_all(
         return false;
 
     CettaCount receipt_len = 0u;
+    Arena receipt_arena __attribute__((cleanup(arena_free)));
+    arena_init_detached(&receipt_arena);
+    arena_set_block_growth(&receipt_arena, 256u);
     SpaceReadToken source = space_read_token(space);
     Arena scratch;
     arena_init(&scratch);
@@ -3268,7 +3279,9 @@ static bool petta_space_remove_pattern_all(
         }
         CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
         AtomId atom_id = space_get_atom_id_at64(space, index);
-        Atom *candidate = space_get_at64(space, index);
+        Atom *candidate = atom_id != CETTA_ATOM_ID_NONE && space->universe
+            ? term_universe_scoped_atom(space->universe, &receipt_arena, atom_id)
+            : space_get_at64(space, index);
         if (linear && candidate && candidate->kind == ATOM_EXPR &&
             atom_petta_value_representation(candidate) == PETTA_VALUE_ORDINARY &&
             !atom_is_list(candidate) && !atom_is_list_rest(candidate) &&
@@ -20332,8 +20345,10 @@ static void space_hold_retain(void *record) {
 static void space_hold_release(void *record) {
     SpaceHold *hold = record;
     bool forget = false;
+    bool released = false;
     pthread_mutex_lock(&g_space_hold_mutex);
     if (--hold->holds == 0u) {
+        released = true;
         if (!hold->space) {
             forget = !hold->queued;
         } else if (!hold->queued) {
@@ -20343,18 +20358,42 @@ static void space_hold_release(void *record) {
         }
     }
     pthread_mutex_unlock(&g_space_hold_mutex);
+    if (released && !forget)
+        atomic_fetch_add_explicit(&g_space_release_epoch, 1u, memory_order_relaxed);
     if (forget)
         free(hold);
 }
 
 void space_atom_hold(Arena *a, void *space) {
     SpaceHold *hold = space ? ((Space *)space)->arena_hold : NULL;
-    if (!hold || arena_retain_owner(a, hold, space_hold_retain,
-                                    space_hold_release))
+    if (!hold || arena_retain_owner_sized(a, hold, space_hold_retain,
+                                          space_hold_release, sizeof(Space)))
         return;
     pthread_mutex_lock(&g_space_hold_mutex);
     hold->pinned = true;
     pthread_mutex_unlock(&g_space_hold_mutex);
+}
+
+void *space_lifetime_pin(Space *space) {
+    SpaceHold *hold = space ? space->arena_hold : NULL;
+    if (hold)
+        space_hold_retain(hold);
+    return hold;
+}
+
+void space_lifetime_unpin(void *hold) {
+    if (hold)
+        space_hold_release(hold);
+}
+
+void space_lifetime_rebase(Space *space, const Space *base) {
+    SpaceHold *hold = space ? space->arena_hold : NULL;
+    if (!hold)
+        return;
+    void *fresh = space_lifetime_pin((Space *)base);
+    void *previous = hold->base_hold;
+    hold->base_hold = fresh;
+    space_lifetime_unpin(previous);
 }
 
 /* Remove HOLD's entry from its home set; the caller holds the lock. */
@@ -20383,6 +20422,8 @@ static void space_hold_detach(Space *space) {
     bool forget = hold->holds == 0u && !hold->queued;
     pthread_mutex_unlock(&g_space_hold_mutex);
     space->arena_hold = NULL;
+    space_lifetime_unpin(hold->base_hold);
+    hold->base_hold = NULL;
     if (forget)
         free(hold);
 }
@@ -20415,6 +20456,7 @@ static void held_space_register(Space *space, bool published_as_copy) {
         g_library_context ? g_library_context->petta_program : NULL;
     SpaceHold *hold = cetta_malloc(sizeof(*hold));
     *hold = (SpaceHold){.space = space, .petta_program = program,
+                        .base_hold = space_lifetime_pin((Space *)space->overlay_base),
                         .published_as_copy = published_as_copy};
     space->arena_hold = hold;
     /* A space that cannot be listed is pinned: its owner, the session,
@@ -20431,7 +20473,8 @@ static bool space_published_as_copy(Space *space) {
 
 /* A safe point: free the spaces made since the last one that no arena holds,
    list the held ones, and free the listed spaces whose last hold went. */
-static void eval_release_unheld_spaces(void) {
+static size_t eval_release_unheld_spaces(void) {
+    size_t released = 0u;
     for (CettaCount i = 0; i < g_made_spaces.len; i++) {
         EvalTrackedSpace tracked = g_made_spaces.items[i];
         SpaceHold *hold = tracked.space->arena_hold;
@@ -20444,8 +20487,10 @@ static void eval_release_unheld_spaces(void) {
             hold->pinned = true;
         }
         pthread_mutex_unlock(&g_space_hold_mutex);
-        if (unheld)
+        if (unheld) {
             eval_free_held_space(tracked);
+            released++;
+        }
     }
     free(g_made_spaces.items);
     g_made_spaces.items = NULL;
@@ -20481,9 +20526,30 @@ static void eval_release_unheld_spaces(void) {
         pthread_mutex_unlock(&g_space_hold_mutex);
         if (forget)
             free(hold);
-        if (tracked.space)
+        if (tracked.space) {
             eval_free_held_space(tracked);
+            released++;
+        }
     }
+    return released;
+}
+
+#include "eval_space_cycles.inc"
+
+bool space_reclaim_unheld(void) {
+    /* Invocation roots and suspended native readers own explicit holds.
+     * Releasing unheld resources does not clear any invocation's banks. */
+    if (cetta_shared_transition_scope_active())
+        return false;
+    g_space_release_seen = atomic_load_explicit(
+        &g_space_release_epoch, memory_order_relaxed);
+    eval_release_unheld_spaces();
+    return true;
+}
+
+bool space_reclamation_due(void) {
+    return g_space_release_seen != atomic_load_explicit(
+        &g_space_release_epoch, memory_order_relaxed);
 }
 
 /* The thread's held spaces go with the thread or the session. */
@@ -20669,7 +20735,15 @@ void eval_release_temporary_spaces(void) {
         free(g_eval_execution);
         g_eval_execution = NULL;
     }
-    eval_release_unheld_spaces();
+    /* Closing an overlay can release its base. Complete the local cascade
+     * at request completion; foreign-owner queues alone cannot keep this
+     * loop running. */
+    do {
+        g_space_release_seen = atomic_load_explicit(
+            &g_space_release_epoch, memory_order_relaxed);
+        if (eval_release_unheld_spaces() == 0u)
+            break;
+    } while (space_reclamation_due());
 }
 
 void eval_reset_form_gc_survivor(void) {
@@ -50403,12 +50477,14 @@ static PettaMachineFoldResult petta_eval_flatten_fold(
  * variables, and BODY an expression of the scalar language.  That language:
  * variables, integers and symbols no rule defines; `(if TEST X Y)` on
  * `(== A B)` or an order of integers; sums and differences of integers; and
- * flat tuples of these, data where their head is no callable value.  The
- * fold runs natively, the accumulator's fields in registers.  It declines,
- * having published nothing, where a value is one it does not read (an order
- * or a sum over a value that is no integer, a sum past 64 bits, a tuple
- * headed by a callable value, an accumulator of another shape than its
- * parameter), and the ordinary fold runs. */
+ * flat tuples of these, data where their head is no callable value.  A
+ * comparison stands only as an `if` test: its value, true or false, is
+ * read there as 1 or 0, which as a result, a field or an operand would be a
+ * number.  The fold runs natively, the accumulator's fields in registers.
+ * It declines, having published nothing, where a value is one it does not
+ * read (an order or a sum over a value that is no integer, a sum past 64
+ * bits, a tuple headed by a callable value, an accumulator of another
+ * shape than its parameter), and the ordinary fold runs. */
 enum {
     PETTA_SCALAR_REGISTERS = 16u,
     PETTA_SCALAR_NODES = 128u,
@@ -50481,6 +50557,21 @@ static int petta_scalar_node(PettaScalarProgram *program, PettaScalarOp op) {
     return program->node_count++;
 }
 
+static int petta_scalar_compile(PettaScalarProgram *program, Atom *atom,
+                                bool result);
+
+/* ATOM compiled as a value, not a test: -1 where it is a comparison, whose
+ * 0 or 1 stands for true or false only where an `if` reads it.  The
+ * ordinary fold publishes the Boolean, compares it with numbers as unequal
+ * and refuses to add it. */
+static int petta_scalar_value(PettaScalarProgram *program, Atom *atom,
+                              bool result) {
+    int node = petta_scalar_compile(program, atom, result);
+    return node >= 0 && program->nodes[node].op >= PETTA_SCALAR_EQ &&
+                   program->nodes[node].op <= PETTA_SCALAR_LE
+        ? -1 : node;
+}
+
 /* ATOM compiled into PROGRAM: its node, or -1 where it is not of the scalar
  * language.  RESULT: ATOM is the step's value, where a tuple may stand. */
 static int petta_scalar_compile(PettaScalarProgram *program, Atom *atom,
@@ -50512,10 +50603,10 @@ static int petta_scalar_compile(PettaScalarProgram *program, Atom *atom,
         if (test < 0 || program->nodes[test].op < PETTA_SCALAR_EQ ||
             program->nodes[test].op > PETTA_SCALAR_LE)
             return -1;
-        int then_node = petta_scalar_compile(program, atom->expr.elems[2],
-                                             result);
+        int then_node = petta_scalar_value(program, atom->expr.elems[2],
+                                           result);
         int else_node = then_node >= 0
-            ? petta_scalar_compile(program, atom->expr.elems[3], result)
+            ? petta_scalar_value(program, atom->expr.elems[3], result)
             : -1;
         int node = else_node >= 0
             ? petta_scalar_node(program, PETTA_SCALAR_IF) : -1;
@@ -50546,9 +50637,9 @@ static int petta_scalar_compile(PettaScalarProgram *program, Atom *atom,
             head_id == g_builtin_syms.op_ge;
         if (!petta_scalar_form(root, atom, head_id, 3u))
             return -1;
-        int left = petta_scalar_compile(program, atom->expr.elems[1], false);
+        int left = petta_scalar_value(program, atom->expr.elems[1], false);
         int right = left >= 0
-            ? petta_scalar_compile(program, atom->expr.elems[2], false) : -1;
+            ? petta_scalar_value(program, atom->expr.elems[2], false) : -1;
         int node = right >= 0 ? petta_scalar_node(program, op) : -1;
         if (node < 0)
             return -1;
@@ -50569,8 +50660,8 @@ static int petta_scalar_compile(PettaScalarProgram *program, Atom *atom,
     uint16_t first = program->element_count;
     program->element_count += (uint16_t)atom->expr.len;
     for (CettaExprIndex i = 0u; i < atom->expr.len; i++) {
-        int element = petta_scalar_compile(program, atom->expr.elems[i],
-                                           false);
+        int element = petta_scalar_value(program, atom->expr.elems[i],
+                                         false);
         if (element < 0 || program->nodes[element].op == PETTA_SCALAR_TUPLE)
             return -1;
         program->elements[first + i] = (uint16_t)element;
@@ -50798,7 +50889,7 @@ static PettaMachineFoldResult petta_eval_scalar_fold(
     }
     uint16_t item_slot = program->var_count;
     program->vars[program->var_count++] = item;
-    int top = petta_scalar_compile(program, body, true);
+    int top = petta_scalar_value(program, body, true);
     if (top < 0)
         return PETTA_MACHINE_FOLD_NOT_APPLICABLE;
     /* The accumulator and the items, read before any step. */

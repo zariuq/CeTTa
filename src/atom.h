@@ -828,6 +828,18 @@ bool arena_frame_identity_owned_test(const Arena *a,
  * Ordinary atom copies must still transport their payload into the destination. */
 bool arena_retain_owner(Arena *a, void *owner,
                         void (*retain)(void *), void (*release)(void *));
+/* The same hold, charging BYTES of the immutable external resource on its
+ * first acquisition in this arena segment. Repeated holds are uncharged;
+ * a reset drops the charge with the hold. */
+bool arena_retain_owner_sized(Arena *a, void *owner,
+                              void (*retain)(void *), void (*release)(void *),
+                              size_t bytes);
+/* Enumerate each currently retained (owner, release) pair once. The visitor
+ * borrows the pair and must not reset or mutate this arena. */
+typedef void (*ArenaOwnerVisit)(void *context, void *owner,
+                                void (*release)(void *));
+void arena_visit_retained_owners(const Arena *a, ArenaOwnerVisit visit,
+                                  void *context);
 
 /* Allocation policy consults these aggregates at every machine transition.
  * Keep the overflow behavior visible to the compiler while atom.c retains

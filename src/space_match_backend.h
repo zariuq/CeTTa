@@ -71,6 +71,8 @@ typedef struct {
     uint32_t match_trie_pins;
     SpacePinnedOccurrences *pinned;
     CettaSpacePathIndex *path_indexes;
+    struct CettaSpacePathDirectory *path_directory;
+    uint32_t path_query_depth;
     /* The flat shapes whose lookups choose among several columns, and the
      * rent each has paid toward its next column's index; retired with the
      * path indexes. */
