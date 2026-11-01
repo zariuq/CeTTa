@@ -198,6 +198,86 @@ static void projection_control(unsigned depth, unsigned shape, bool accepted,
     arena_free(&arena);
 }
 
+typedef struct {
+    Applied stored;
+    size_t calls;
+    size_t fail_at;
+    size_t max_batch;
+} StreamApplied;
+
+static bool stream_apply(void *context, const CettaNativeQueryEffect *effect,
+                          const AtomId *ids, size_t count) {
+    StreamApplied *state = context;
+    state->calls++;
+    if (count > state->max_batch)
+        state->max_batch = count;
+    if (state->fail_at == state->calls)
+        return false;
+    return apply(&state->stored, effect, ids, count);
+}
+
+static void stream_control(bool snapshot, size_t fail_at, bool bad_tail) {
+    Arena arena;
+    arena_init(&arena);
+    TermUniverse universe;
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &arena);
+    Space source, target;
+    space_init_with_universe(&source, &universe);
+    space_init_with_universe(&target, &universe);
+    target.kind = SPACE_KIND_SET;
+    Atom *edge = atom_symbol(&arena, "edge");
+    Atom *path = atom_symbol(&arena, "path");
+    Atom *next = atom_symbol(&arena, "next");
+    Atom *zero = atom_int(&arena, 0);
+    /* The shorter outer relation has a duplicate. Each outer answer has
+     * more than one chunk of inner answers before the unsupported tail. */
+    space_add(&source, atom_expr3(&arena, edge, zero, zero));
+    space_add(&source, atom_expr3(&arena, edge, atom_int(&arena, 1), zero));
+    space_add(&source, atom_expr3(&arena, edge, zero, zero));
+    for (unsigned i = 0u; i < 5000u; i++)
+        space_add(&source, atom_expr3(&arena, next, zero, atom_int(&arena, i)));
+    if (bad_tail)
+        space_add(&source, atom_expr3(&arena, edge, atom_float(&arena, 0.5), zero));
+    Atom *x = atom_var(&arena, "stream_x");
+    Atom *y = atom_var(&arena, "stream_y");
+    Atom *z = atom_var(&arena, "stream_z");
+    Atom *patterns[] = {atom_expr3(&arena, edge, x, y),
+                        atom_expr3(&arena, next, y, z)};
+    CettaNativeQueryEffect effect = {
+        .target = &target, .data = atom_expr3(&arena, path, x, z),
+    };
+    StreamApplied state = {.stored = {.universe = &universe, .target = &target},
+                            .fail_at = fail_at};
+    CettaNativeQuery query = {.source = &source, .patterns = patterns,
+        .pattern_count = 2u, .template_atom = zero,
+        .consumer = CETTA_NATIVE_QUERY_EFFECTS, .effects = &effect,
+        .effect_count = 1u, .apply = stream_apply, .apply_context = &state,
+        .count_only = true, .snapshot = snapshot};
+    CettaNativeQueryResult result;
+    CettaNativeQueryStatus status = cetta_native_query_run(&query, &arena, &result);
+    if (bad_tail) {
+        /* The ordinary scalar loop cannot read a float by exact ids. It
+         * must reach the open-row worker before making any effect. */
+        assert(status == CETTA_NATIVE_QUERY_DONE && result.answers == 4u * 5000u);
+        assert(state.calls == 1u && state.stored.applied == 4u * 5000u);
+        assert(space_length64(&target) == 3u * 5000u);
+    } else if (fail_at) {
+        assert(status == CETTA_NATIVE_QUERY_FAILED && state.calls == fail_at);
+        assert(state.stored.applied == (fail_at - 1u) * 4096u);
+        assert(space_length64(&target) > 0u || fail_at == 1u);
+    } else {
+        assert(status == CETTA_NATIVE_QUERY_DONE && result.answers == 3u * 5000u);
+        assert(state.stored.applied == 3u * 5000u && state.calls == 4u);
+        assert(space_length64(&target) == 2u * 5000u);
+    }
+    assert(bad_tail || state.max_batch <= 4096u);
+    space_free(&target);
+    space_free(&source);
+    term_universe_free(&universe);
+    arena_free(&arena);
+}
+
 int main(void) {
     assert(setenv("CETTA_SPACE_DENSE", "eager", 1) == 0);
     SymbolTable symbols;
@@ -223,6 +303,12 @@ int main(void) {
         projection_control(cases[i].depth, cases[i].shape, cases[i].accepted, count);
         checks++;
     }
+    stream_control(false, 0u, false);
+    stream_control(true, 0u, false);
+    stream_control(false, 1u, false);
+    stream_control(false, 2u, false);
+    stream_control(false, 0u, true);
+    checks += 5u;
     symbol_table_free(&symbols);
     var_intern_free(&variables);
     g_symbols = NULL;
