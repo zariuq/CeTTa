@@ -34,6 +34,7 @@
 (: __cetta_lib_store_collect (-> Atom Atom))
 (: __cetta_lib_store_backup (-> Atom String Atom))
 (: __cetta_lib_store_close (-> Atom Atom))
+(: __cetta_lib_store_value_byte_limit (-> Atom))
 (: __cetta_lib_store_encode (-> Atom Atom))
 (: __cetta_lib_store_decode (-> String Atom))
 (: __cetta_lib_store_key_i64 (-> Number Atom))
@@ -143,3 +144,10 @@
    (function (case (__cetta_lib_store_key_i64 $integer) (($result (return $result))))))
 (= (store:key->i64 $bytes)
    (function (case (__cetta_lib_store_key_to_i64 $bytes) (($result (return $result))))))
+
+; Older engines have no byte-policy primitive; their historical policy stays
+; usable. The host selects a newer policy before loading the program.
+(: store:value-byte-limit (-> Number))
+(= (store:value-byte-limit)
+   (let $limit (function (case (__cetta_lib_store_value_byte_limit) (($result (return $result)))))
+     (if (== (get-metatype $limit) Grounded) $limit 1048576)))

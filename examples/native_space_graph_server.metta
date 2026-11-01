@@ -17,7 +17,7 @@
          (ServiceRouteV1 GraphReadCommit Write graph-server:read-commit)
          (ServiceRouteV1 GraphReadCancel Read graph-server:read-cancel)))
 (= (graph-server:open (ServiceCallV1 $configuration $peer $view (GraphOpenV1 $collection $arity $plan $states)))
-  (let $cursor (kbg:open-space $view $collection $arity $plan 131072 $states)
+  (let $cursor (kbg:open-space $view $collection $arity $plan (store:value-byte-limit) $states)
     (if (kbg:cursor? $cursor)
       (let (StoreViewInfo $epoch $revision) (store:view-info $view)
         (ServiceKeepValueV1 $cursor (GraphOpenedV1 $epoch $revision))) $cursor)))

@@ -28410,6 +28410,7 @@ static PrimeHolGuest *prime_hol_guest(Arena *a, Atom **reason_out) {
     cetta_library_context_init_for_language_profile(
         &guest->context, CETTA_LANGUAGE_PRIME, cetta_profile_prime_default());
     guest->context_ready = true;
+    guest->context.value_byte_limit = cetta_library_value_byte_limit(host);
     term_universe_set_persistent_arena(&guest->context.term_universe,
                                        &guest->arena);
     memcpy(guest->context.root_dir, root, (size_t)root_len + 1u);
@@ -28619,6 +28620,7 @@ static PrimeHolGuest *prime_lf_guest(Arena *a, Atom **reason_out) {
     cetta_library_context_init_for_language_profile(
         &guest->context, CETTA_LANGUAGE_PRIME, cetta_profile_prime_default());
     guest->context_ready = true;
+    guest->context.value_byte_limit = cetta_library_value_byte_limit(host);
     term_universe_set_persistent_arena(&guest->context.term_universe,
                                        &guest->arena);
     memcpy(guest->context.root_dir, root, (size_t)root_len + 1u);

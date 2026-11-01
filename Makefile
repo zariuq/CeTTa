@@ -4711,6 +4711,11 @@ test-all: test-computed-queries
 test-computed-queries: value-worker $(BIN)
 	$(PYTHON) tests/support/check_computed_queries.py $(VALUE_WORKER_BIN) --cli $(BIN)
 
+.PHONY: test-large-space-values
+test-large-space-values: value-worker $(BIN)
+	$(PYTHON) tests/support/check_large_space_values.py $(VALUE_WORKER_BIN) --cli $(BIN)
+test-all: test-large-space-values
+
 .PHONY: test-indexed-i64-order test-space-job-queue
 test-all: test-indexed-i64-order test-space-job-queue
 test-indexed-i64-order: value-worker
@@ -49642,6 +49647,14 @@ $(MATH_NATIVE_TEST_BIN): tests/support/test_math_native.c $(FALLBACK_EVAL_TEST_L
 test-math-native: $(MATH_NATIVE_TEST_BIN)
 	$<
 test-all: test-math-native test-math-parts
+VALUE_BYTE_POLICY_TEST_BIN = runtime/test-value-byte-policy-$(BUILD_OBJ_TAG)
+$(VALUE_BYTE_POLICY_TEST_BIN): tests/support/test_value_byte_policy.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(COMPILED_READER_RUNTIME_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+.PHONY: test-value-byte-policy
+test-value-byte-policy: $(VALUE_BYTE_POLICY_TEST_BIN)
+	$<
+test-all: test-value-byte-policy
+
 STORE_AUTHORITY_TEST_BIN = runtime/test-store-authority-$(BUILD_OBJ_TAG)
 $(STORE_AUTHORITY_TEST_BIN): tests/support/test_store_authority.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(COMPILED_READER_RUNTIME_OBJ) $(BRIDGE_DEPS)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $^ $(LDFLAGS) -Wl,--wrap=cetta_native_handle_alloc,--wrap=eval_current_root_space,--wrap=cetta_disk_store_commit,--wrap=space_program_token_matches_live_space

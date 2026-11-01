@@ -7,7 +7,7 @@
 (: kbq:open-space (-> %Undefined% Atom Number %Undefined%))
 (: kbq:begin-space (-> %Undefined% Atom Atom Atom Number %Undefined%))
 (= (kbq:open-space $view $plan $bytes)
-  (if (and (kb:integer? $bytes) (and (> $bytes 0) (<= $bytes 1048576)))
+  (if (and (kb:integer? $bytes) (and (> $bytes 0) (<= $bytes (durable-space:wire-limit))))
     (case (store:view-clone $view)
       (((StoreSnapshot $copy $epoch $revision)
         (case (kbq:open (KqSpaceViewV1 $copy) $plan $bytes)

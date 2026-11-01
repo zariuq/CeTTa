@@ -4,7 +4,9 @@
 (= (danger) (println! ACCIDENTAL_EXECUTION))
 
 (= (state-server:configuration)
-  (let (ValueServiceV1 $socket $data $routes $limits) (kb-server:configuration)
+  ; Keep transport smaller than the value policy to separate reply refusal
+  ; from retained-state admission in the failure controls.
+  (let (ValueServiceV1 $socket $data $routes (ServiceLimitsV1 $clients $resources $frame $idle $owned $fuel)) (kb-server:configuration)
     (ValueServiceV1 $socket $data
       (list:append $routes
         ((ServiceRouteV1 OpenState Read state-server:open)
@@ -19,7 +21,8 @@
          (ServiceRouteV1 InspectState Read state-server:inspect)
          (ServiceRouteV1 ClosedState Read state-server:closed)
          (ServiceRouteV1 DeepState Read state-server:deep)
-         (ServiceRouteV1 HeapState Read state-server:heap))) $limits)))
+         (ServiceRouteV1 HeapState Read state-server:heap)))
+      (ServiceLimitsV1 $clients $resources 262144 $idle $owned $fuel))))
 (= (state-server:limited-configuration)
   (let (ValueServiceV1 $socket $data $routes $limits) (state-server:configuration)
     (ValueServiceV1 $socket $data $routes (ServiceLimitsV1 4 3 262144 10000 65536 1000000))))

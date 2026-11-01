@@ -157,7 +157,7 @@
            ($error $error))))
        ($error $error))))))
 (= (durable-index:old-postings $view $indexes $key)
-  (case (store:get $view $key 1048576)
+  (case (store:get $view $key (store:value-byte-limit))
     (((StoreValue $body)
       (case (store:decode $body)
         (((StoreDecoded $atom) (durable-index:postings $indexes $key $atom))

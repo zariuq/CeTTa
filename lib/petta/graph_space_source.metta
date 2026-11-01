@@ -134,7 +134,7 @@
             (KbFact $identity $head $fields) KgNotEdge) KgNotEdge)) KgNotEdge) KgNotEdge))
 (= (kbg:source-next $scan $maximum)
   (if (knowledge:tagged? $scan KgSpaceScanV1 12)
-    (kbg-space:next $scan (if (> $maximum 1048576) 1048576 $maximum))
+    (kbg-space:next $scan (if (> $maximum (store:value-byte-limit)) (store:value-byte-limit) $maximum))
     (kb:query-next $scan)))
 (= (kbg-space:next (KgSpaceScanV1 $view $collection $arity $relation $position $start $query $sequence $keys $native $points) $maximum)
   (let* (($answer (store:space-query-next $query $sequence 1 $maximum))

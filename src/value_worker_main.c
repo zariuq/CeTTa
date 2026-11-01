@@ -41,6 +41,7 @@ int main(int argc, char **argv) {
     CettaRelativeModulePolicy import_mode = CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY;
     bool import_mode_overridden = false;
     unsigned long threads = 0;
+    size_t maximum_bytes = CETTA_ATOM_WIRE_BYTES;
     bool serving = false;
     int first = 1;
     while (first < argc && argv[first][0] == '-') {
@@ -62,6 +63,12 @@ int main(int argc, char **argv) {
         } else if (!strcmp(option, "--import-mode")) {
             if (!cetta_relative_module_policy_from_name(argv[first++], &import_mode)) goto usage;
             import_mode_overridden = true;
+        } else if (!strcmp(option, "--value-bytes")) {
+            const char *value = argv[first++]; char *end = NULL;
+            if (!*value || strspn(value, "0123456789") != strlen(value)) goto usage;
+            errno = 0; unsigned long long parsed = strtoull(value, &end, 10);
+            if (errno || *end || parsed < 4 || parsed > UINT32_MAX || parsed > SIZE_MAX) goto usage;
+            maximum_bytes = (size_t)parsed;
         } else if (!strcmp(option, "--num-threads")) {
             char *end = NULL;
             threads_repr = argv[first++];
@@ -89,6 +96,7 @@ int main(int argc, char **argv) {
     CettaLibraryContext *libraries = calloc(1, sizeof(*libraries));
     if (!libraries) return 1;
     cetta_library_context_init_for_language_profile(libraries, language, worker_profile);
+    libraries->value_byte_limit = maximum_bytes;
     if (import_mode_overridden)
         cetta_eval_session_set_relative_module_policy(&libraries->session, import_mode);
     term_universe_set_persistent_arena(&libraries->term_universe, &permanent);
@@ -151,13 +159,13 @@ int main(int argc, char **argv) {
         if (got != 8 || memcmp(header, "CSP1", 4)) break;
         size_t length = 0;
         for (size_t i = 4; i < 8; ++i) length = (length << 8) | header[i];
-        if (length < 4 || length > CETTA_ATOM_WIRE_BYTES) break;
+        if (length < 4 || length > maximum_bytes) break;
         unsigned char *bytes = malloc(length);
         if (!bytes) break;
         Atom *request = NULL;
         bool valid = fread(bytes, 1, length, stdin) == length;
         uint64_t decode_start = monotonic_ns();
-        valid = valid && cetta_atom_wire_decode(&scratch, bytes, length, &request) == ATOM_WIRE_OK;
+        valid = valid && cetta_atom_wire_decode_bounded(&scratch, bytes, length, maximum_bytes, &request) == ATOM_WIRE_OK;
         uint64_t decode_ns = monotonic_ns() - decode_start;
         free(bytes);
         if (!valid || request->kind != ATOM_EXPR || request->expr.len != 3 ||
@@ -197,7 +205,7 @@ int main(int argc, char **argv) {
         }
         Atom *reply = atom_expr(&scratch, parts, profile ? 5 : 4);
         bytes = NULL;
-        valid = cetta_atom_wire_encode(reply, &bytes, &length) == ATOM_WIRE_OK;
+        valid = cetta_atom_wire_encode_bounded(reply, maximum_bytes, &bytes, &length) == ATOM_WIRE_OK;
         if (!valid) {
             /* The computation finished, but its value is outside CAV1.
              * Keep the evaluator and its state alive, reporting no result
@@ -206,7 +214,7 @@ int main(int argc, char **argv) {
             Atom *failure[] = {parts[0], parts[1], atom_symbol(&scratch,"error"),
                               atom_symbol(&scratch,"unencodable-result"),parts[4]};
             reply = atom_expr(&scratch, failure, profile ? 5 : 4);
-            valid = cetta_atom_wire_encode(reply, &bytes, &length) == ATOM_WIRE_OK;
+            valid = cetta_atom_wire_encode_bounded(reply, maximum_bytes, &bytes, &length) == ATOM_WIRE_OK;
         }
         if (valid) {
             for (size_t i = 0; i < 4; ++i) header[i+4] = (unsigned char)(length >> (24-8*i));
@@ -241,7 +249,7 @@ done:
 usage:
     fprintf(stderr, "usage: cetta-value-worker [--lang petta|prime] "
         "[--profile NAME] [--import-mode upstream|relative|ancestor-walk] "
-        "[--num-threads N] MODULE ENTRY\n");
+        "[--num-threads N] [--value-bytes N] MODULE ENTRY\n");
     fputs("       cetta-value-worker --serve [--lang petta] MODULE CONFIGURATION\n",stderr);
     return 2;
 }

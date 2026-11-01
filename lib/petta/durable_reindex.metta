@@ -116,7 +116,7 @@
     (SpaceReindexContinueV1 (SpaceReindexStateV1 $v $c $r $m $p $n $i $pending ReindexIdleV1 Clearing $rows $batch))))
 (= (durable-reindex:fill (SpaceReindexStateV1 $view $c $r $m $p $count $indexes $pending (ReindexQueryV1 $query $sequence) $phase $rows $batch))
   (let $state (SpaceReindexStateV1 $view $c $r $m $p $count $indexes $pending (ReindexQueryV1 $query $sequence) Filling $rows $batch)
-    (case (store:space-query-next $query $sequence 128 1048576)
+    (case (store:space-query-next $query $sequence 128 (store:value-byte-limit))
       (((StoreQueryRow $same $atom ($reference))
         (let (StoreViewInfo $epoch $revision) (store:view-info $view)
           (case (durable-space:reference-key $reference $epoch $p)

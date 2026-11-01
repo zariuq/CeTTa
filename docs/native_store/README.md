@@ -7,24 +7,48 @@ Embedded programs and server clients use the same core and storage owner.
 The queue example is one application of these capabilities. The contracts and
 qualification scopes below describe the current implementation.
 
-## Native portable-value byte allowances
+## Portable-value byte policy
 
-`cetta_atom_wire_encode_bounded` and `cetta_atom_wire_decode_bounded` accept an
-explicit byte allowance while preserving CAV1 bytes and the existing node,
-nesting and variable safeguards. Their original entry points retain the
-original default allowance. Captured disk Spaces and owning query cursors have
-corresponding bounded open/capture forms. Cursors retain that policy through
-cloning and checkpointing; it grants no mutation authority.
+The execution owner selects `--value-bytes N` before the MeTTa program loads.
+The default remains one MiB. The same policy reaches codec operations,
+captured disk Spaces, owning query cursors, MeTTa helpers, native synchronous
+and asynchronous clients, and worker/service framing. It grants no mutation
+rights. Private contexts and cursor clones retain the selected allowance.
 
-Native qualification covers a 2 MiB binary string and tensor, duplicate large
-fact occurrences, declared candidate indexes, captured deletion, and a pending
-row retried with a larger page allowance. An insufficient source allowance
-reports capacity; an insufficient page allowance preserves the pending row
-and reports its required size. Neither becomes an empty successful answer.
+```sh
+./cetta --lang petta --value-bytes 8388608 project.metta
+python3 tests/support/check_large_space_values.py "$WORKER" --cli ./cetta
+```
 
-This is the native part of larger-value support. MeTTa wrappers and worker/
-service framing still use their existing allowance; their budget propagation
-and end-to-end larger-value qualification remain unfinished.
+Use the worker produced by the configured build. The Python `Worker` and
+framed-client constructors accept `maximum_bytes`; codec `encode`, `decode`
+and `frame` accept the same keyword. A value-service configuration may choose
+a smaller transport frame within the execution allowance. Example query and
+graph services derive their byte limits from the host policy. Stateful query
+operators retain their explicit, separately requested state-byte budgets.
+
+`make test-large-space-values` qualifies 2 MiB values with an 8 MiB execution
+allowance: ordinary in-memory/captured matching, distinct occurrence IDs,
+exact/range indexes, graph neighbourhoods, retained query state, paging/replay,
+updates/deletes/reindexing, compaction and process restart. The native clients
+round-trip large requests and read database facts over an owned connection.
+The standalone CLI commits and reopens a large fact in separate processes.
+Smaller policies refuse explicitly without turning exhaustion into absence.
+The example services no longer impose an additional 128-edit transaction cap;
+request bytes, evaluator work and native transaction validation still apply.
+
+For an actual gateway SQLite transition comparison, supply `--reference-store`
+with its `execution_gateway/store.py`. This qualifies selected metadata
+transitions, not production dispatch, live accounting migration or hardware
+power-loss behaviour.
+
+The C `cetta_atom_wire_*_bounded` and bounded disk-Space/query entry points
+accept explicit byte allowances. Their original entry points retain the
+original default. CAV1 bytes, shape safeguards and wire length fields are
+unchanged. Request/reply envelopes count toward framing budgets; a byte
+allowance is not a claim of constant physical memory or unlimited term depth.
+Old interpreters using the current coherent library set retain the historical
+policy through the guarded getter; the running agents' SDK is not upgraded.
 
 ## Measuring ordinary Space queries
 
@@ -367,7 +391,7 @@ The example service adds `RelOpenRead`, `RelReadPage`, `RelReadCommit` and
 `RelReadCancel`. Open has the same `(RelOpenV1 plan maximum-row-bytes)` argument.
 Pages use `(RelPageV1 count work-steps)`. Completion retains an opaque linear
 read context; only that completed phase accepts
-`(RelReadCommitV1 collection request-id command changes)` with at most 128 edits.
+`(RelReadCommitV1 collection request-id command changes)`, subject to the execution byte/work budgets.
 The commit route requires Write authority. A read context cannot grant it.
 Invoking a wrong phase consumes/releases that state; a host-level permission
 refusal leaves it available for cancellation. Disconnect/cancel releases all
