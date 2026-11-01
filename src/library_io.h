@@ -6,6 +6,9 @@
 typedef struct CettaIoRuntime CettaIoRuntime;
 
 CettaIoRuntime *cetta_io_runtime_new(void);
+/* Portable CSP1 value policy, fixed before requests are submitted. Other
+ * providers retain their own request-specific byte allowances. */
+CettaIoRuntime *cetta_io_runtime_new_with_value_limit(size_t maximum_bytes);
 void cetta_io_runtime_free(CettaIoRuntime *runtime);
 
 /*

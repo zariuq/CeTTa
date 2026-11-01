@@ -49,7 +49,7 @@ static const char *text(Atom *a) { return a && a->kind==ATOM_GROUNDED && a->grou
 static bool natural(Atom *a,uint64_t *value) { if (!a || a->kind!=ATOM_GROUNDED || a->ground.gkind!=GV_INT || a->ground.ival<0) return false;*value=(uint64_t)a->ground.ival;return true; }
 static Atom *failure(Arena *a,bool ran,const char *reason) { return atom_expr2(a,atom_symbol(a,ran ? "ServiceFailedV1" : "ServiceRefusedV1"),atom_symbol(a,reason)); }
 static Atom *reply(Arena *a,Atom *id,bool ok,Atom *value) { return atom_expr(a,(Atom *[]){atom_symbol(a,"reply"),id,atom_symbol(a,ok ? "ok" : "error"),value},4); }
-static bool encode(Atom *atom,Buffer *out) { return cetta_atom_wire_encode(atom,&out->data,&out->size)==ATOM_WIRE_OK; }
+static bool encode(Host *host,Atom *atom,Buffer *out) { return cetta_atom_wire_encode_bounded(atom,host->frame,&out->data,&out->size)==ATOM_WIRE_OK; }
 static const char *incomplete_reason(CettaEvalCompletion completion) {
     switch (completion) {
     case CETTA_EVAL_INCOMPLETE_FUEL: return "handler-fuel";
@@ -147,7 +147,7 @@ static Atom *state_shadow(Host *host,Arena *arena,Atom *value,unsigned depth,siz
 static const char *state_failure(Host *host,Atom *value,bool fresh) {
     Arena shape;arena_init_detached(&shape);size_t nodes=0;Buffer bytes={0};
     const char *failure=NULL;Atom *shadow=state_shadow(host,&shape,value,0,&nodes,fresh,&failure);
-    CettaAtomWireStatus status=shadow ? cetta_atom_wire_encode(shadow,&bytes.data,&bytes.size) : ATOM_WIRE_NOMEM;
+    CettaAtomWireStatus status=shadow ? cetta_atom_wire_encode_bounded(shadow,cetta_library_value_byte_limit(host->context),&bytes.data,&bytes.size) : ATOM_WIRE_NOMEM;
     if (!failure && status!=ATOM_WIRE_OK) failure=status==ATOM_WIRE_NOMEM ? "state-capacity"
         : status==ATOM_WIRE_LIMIT ? "state-limit" : "state-format";
     clear(&bytes);arena_free(&shape);return failure;
@@ -265,20 +265,20 @@ static Atom *dispatch(Host *host,size_t index,Arena *arena,Atom *body,Resource *
 static bool respond(Host *host,size_t index) {
     Connection *c=&host->clients[index];Arena arena;arena_init_detached(&arena);Atom *request=NULL;Buffer encoded={0};bool valid=false;
     Resource *added=NULL;bool ran=false;
-    if (cetta_atom_wire_decode(&arena,c->input.data,c->input.size,&request)!=ATOM_WIRE_OK || !tagged(request,"request",3)) goto done;
+    if (cetta_atom_wire_decode_bounded(&arena,c->input.data,c->input.size,host->frame,&request)!=ATOM_WIRE_OK || !tagged(request,"request",3)) goto done;
     Atom *id=request->expr.elems[1];
     if (!text(id) || !atom_string_len(id) || atom_string_len(id)>128) goto done;
     if (c->last_id && atom_string_equal(c->last_id,id)) {
         if (c->last_request.size==c->input.size && !memcmp(c->last_request.data,c->input.data,c->input.size)) { valid=queue(host,c,c->last_reply);goto done; }
-        if (!encode(reply(&arena,id,false,failure(&arena,false,"request-id-collision")),&encoded)) goto done;
+        if (!encode(host,reply(&arena,id,false,failure(&arena,false,"request-id-collision")),&encoded)) goto done;
         valid=queue(host,c,encoded);goto done;
     }
     Atom *body=dispatch(host,index,&arena,request->expr.elems[2],&added,&ran);
     bool ok=!tagged(body,"ServiceFailedV1",2) && !tagged(body,"ServiceRefusedV1",2);
-    if (!encode(reply(&arena,id,ok,body),&encoded) || encoded.size>host->frame) {
+    if (!encode(host,reply(&arena,id,ok,body),&encoded) || encoded.size>host->frame) {
         if (added) { resource_close(host,added);added=NULL; }
         clear(&encoded);
-        if (!encode(reply(&arena,id,false,failure(&arena,ran,"reply-limit")),&encoded)) goto done;
+        if (!encode(host,reply(&arena,id,false,failure(&arena,ran,"reply-limit")),&encoded)) goto done;
     }
     clear(&c->last_request);clear(&c->last_reply);arena_free(&c->cache);arena_init_detached(&c->cache);c->last_id=NULL;
     if (!copy(&c->last_request,c->input) || !copy(&c->last_reply,encoded)) goto done;
@@ -323,7 +323,7 @@ static bool configure(Host *host,const char *entry) {
     host->path=text(config->expr.elems[1]);host->data=config->expr.elems[2];Atom *routes=config->expr.elems[3],*limits=config->expr.elems[4];
     if (!host->path || host->path[0]!='/' || !routes || routes->kind!=ATOM_EXPR || !routes->expr.len || !tagged(limits,"ServiceLimitsV1",7)) return false;
     uint64_t values[6];for (size_t i=0;i<6;i++) if (!natural(limits->expr.elems[i+1],&values[i])) return false;
-    if (!values[0] || values[0]>1024 || !values[1] || values[1]>4096 || values[2]<1024 || values[2]>CETTA_ATOM_WIRE_BYTES ||
+    if (!values[0] || values[0]>1024 || !values[1] || values[1]>4096 || values[2]<1024 || values[2]>UINT32_MAX || values[2]>cetta_library_value_byte_limit(host->context) ||
         !values[3] || values[3]>3600000 || !values[4] || values[4]>SIZE_MAX || !values[5] || values[5]>INT32_MAX) return false;
     host->client_count=(size_t)values[0];host->resource_count=(size_t)values[1];host->frame=(size_t)values[2];host->idle=values[3];host->owned_limit=(size_t)values[4];host->fuel=(int)values[5];
     host->route_count=routes->expr.len;host->routes=calloc(host->route_count,sizeof(*host->routes));

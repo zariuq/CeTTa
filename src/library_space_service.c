@@ -112,9 +112,12 @@ static Atom *call(CettaLibraryContext *ctx,Arena *a, Atom **args, uint32_t n,boo
         return atom_error(a,source,atom_string(a,"socket must be a short absolute path"));
     unsigned char *bytes = NULL;
     size_t size = 0, progress = 0;
-    CettaAtomWireStatus status = cetta_atom_wire_encode(args[1], &bytes, &size);
+    CettaAtomWireStatus status = cetta_atom_wire_encode_bounded(args[1], cetta_library_value_byte_limit(ctx), &bytes, &size);
     if (status != ATOM_WIRE_OK)
         return atom_error(a, source, atom_string(a, cetta_atom_wire_status_name(status)));
+    if (size > UINT32_MAX || size > SIZE_MAX - 8u) {
+        free(bytes);return atom_error(a,source,atom_string(a,"frame-size-limit"));
+    }
     unsigned char header[8] = {'C', 'S', 'P', '1'};
     for (size_t i = 0; i < 4; ++i) header[4 + i] = (unsigned char)(size >> (24 - 8 * i));
     uint64_t deadline = now_ms() + (uint64_t)args[2]->ground.ival;
@@ -140,13 +143,13 @@ static Atom *call(CettaLibraryContext *ctx,Arena *a, Atom **args, uint32_t n,boo
     if (memcmp(header, "CSP1", 4)) goto done;
     size = 0;
     for (size_t i = 4; i < 8; ++i) size = (size << 8) | header[i];
-    if (size < 4 || size > CETTA_ATOM_WIRE_BYTES) goto done;
+    if (size < 4 || size > cetta_library_value_byte_limit(ctx)) goto done;
     bytes = malloc(size);
     if (!bytes) { failure = "memory"; goto done; }
     if (!transfer(fd, bytes, size, false, deadline, &progress)) {
         failure = "timeout-or-disconnect"; goto done;
     }
-    if (cetta_atom_wire_decode(a, bytes, size, &result) != ATOM_WIRE_OK ||
+    if (cetta_atom_wire_decode_bounded(a, bytes, size, cetta_library_value_byte_limit(ctx), &result) != ATOM_WIRE_OK ||
         !result || result->kind != ATOM_EXPR || result->expr.len != 4 ||
         !atom_is_symbol(result->expr.elems[0], "reply") ||
         !same_text(id, result->expr.elems[1]) ||

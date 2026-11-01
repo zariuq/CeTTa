@@ -56,9 +56,11 @@ recovery-row refusals, read-only rights and cleanup. For actual SQLite
 transition comparison, pass `--reference-store /path/to/execution_gateway/store.py`
 to `tests/support/check_job_queue.py`. The source hash and scope are recorded.
 
-This does not qualify live migration. The current CAV envelope has an existing
-1 MiB limit: a 2 MiB valid SQLite request is explicitly refused before a native
-write. Wider payload framing remains work. No job-count limit was introduced.
+This does not qualify live migration. The portable-value allowance defaults
+to one MiB and is selected before loading with `--value-bytes N`. The large-value
+qualification uses an 8 MiB allowance and compares a 2 MiB request against the
+actual SQLite store, embedded and served. Smaller policies refuse explicitly.
+No job-count limit was introduced.
 
 ## Computed properties with the native memo
 

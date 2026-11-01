@@ -67,6 +67,7 @@ static void finish(CettaIpcClient *c, const char *error) {
 CettaIpcClient *cetta_ipc_client_new(const char *path, CettaIpcFraming framing,
     const void *request, size_t size, uint64_t timeout, size_t max_reply) {
     if (!path || !request || !size || !max_reply) return NULL;
+    if (framing == CETTA_IPC_CSP && (size > UINT32_MAX || size > SIZE_MAX - 8u)) return NULL;
     struct sockaddr_un address = {.sun_family = AF_UNIX};
     if (!path[0] || strlen(path) >= sizeof(address.sun_path)) return NULL;
     CettaIpcClient *c = calloc(1, sizeof(*c));

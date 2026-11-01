@@ -51,6 +51,7 @@
 #include <ctype.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <errno.h>
 #include <unistd.h>
 
 static char alt_stack_buf[16384];  /* alternate signal stack for SIGSEGV handler */
@@ -1592,7 +1593,7 @@ static int run_rhocalc_cli(const char *filename,
                            const RhoRuntimeProfile *profile,
                            int argc,
                            char **argv,
-                           int script_arg_start) {
+                           int script_arg_start, size_t value_bytes) {
     int rc = 0;
     int n = 0;
     Atom **atoms = NULL;
@@ -1622,6 +1623,7 @@ static int run_rhocalc_cli(const char *filename,
     if (semantic_profile == RHOCALC_SEMANTIC_PROFILE_RHOMETTA) {
         cetta_library_context_init_for_language_profile(
             &libraries, CETTA_LANGUAGE_RHOCALC, NULL);
+        if (value_bytes) libraries.value_byte_limit = value_bytes;
         libraries_initialized = true;
         if (argv && argc > 0)
             cetta_library_context_set_exec_path(&libraries, argv[0]);
@@ -1914,6 +1916,7 @@ static void print_usage(FILE *out) {
     fputs("       cetta --curried-arrows <file.metta>    # HE he/extended: read function types curried (partial and over-application)\n", out);
     fputs("       cetta --fuel <-1|n> <file.metta>       # -1 unlimited, n positive\n", out);
     fputs("       cetta --num-threads <n> <file>             # set OS-thread budget for parallel-capable execution\n", out);
+    fputs("       cetta --value-bytes <n> <file>             # portable-value byte allowance\n", out);
     fputs("       cetta --rho-reduction-limit <n> <file>            # run at most n strict-core rho COMM reductions (default 100000)\n", out);
     fputs("       cetta --rho-scheduler <canonical|rotating> <file> # select strict-core rho reduction policy\n", out);
     fputs("       cetta --lang mm2 [--steps <n>] <file.mm2> # upstream MORK ABI\n", out);
@@ -3210,6 +3213,7 @@ static int cetta_main(int argc, char **argv) {
     bool fuel_override_requested = false;
     uint32_t num_threads = 1u;
     bool num_threads_requested = false;
+    size_t value_bytes = 0;
     uint32_t rho_reduction_limit = CETTA_RHOCALC_DEFAULT_REDUCTION_LIMIT;
     bool rho_reduction_limit_requested = false;
     RhoSchedulerPolicy rho_scheduler = RHO_SCHEDULER_CANONICAL;
@@ -3403,6 +3407,19 @@ static int cetta_main(int argc, char **argv) {
             }
             fuel_override = (int)parsed;
             fuel_override_requested = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--value-bytes") == 0) {
+            if (i + 1 >= argc) { print_usage(stderr); return 2; }
+            const char *value = argv[++i]; char *endp = NULL;
+            errno = 0;
+            unsigned long long parsed = strtoull(value, &endp, 10);
+            if (!*value || strspn(value, "0123456789") != strlen(value) ||
+                errno || !endp || *endp || parsed < 4 || parsed > INT64_MAX || parsed > SIZE_MAX) {
+                fprintf(stderr, "error: invalid portable-value byte allowance '%s'\n", value);
+                return 2;
+            }
+            value_bytes = (size_t)parsed;
             continue;
         }
         if (strcmp(argv[i], "--num-threads") == 0) {
@@ -3618,7 +3635,7 @@ static int cetta_main(int argc, char **argv) {
             emit_prime_need_trace || prime_rewrite_frontier ||
             prefer_rationals_cli || curried_arrows_cli || eval_hashcons ||
             fuel_override_requested ||
-            num_threads_requested || rho_reduction_limit_requested ||
+            num_threads_requested || value_bytes || rho_reduction_limit_requested ||
             rho_scheduler_requested ||
             mm2_step_limit != CETTA_MM2_DEFAULT_RUN_STEPS ||
             space_engine != SPACE_ENGINE_NATIVE;
@@ -3733,7 +3750,7 @@ static int cetta_main(int argc, char **argv) {
         RhocalcSemanticProfileId output_profile =
             rhocalc_semantic_profile_for_endpoint(&target_endpoint);
         if (rho_reduction_limit_requested || rho_scheduler_requested ||
-            num_threads_requested) {
+            num_threads_requested || value_bytes) {
             fprintf(stderr, "error: runtime thread/reduction flags do not combine with --translate\n");
             free(inline_buf);
             return 2;
@@ -3764,7 +3781,7 @@ static int cetta_main(int argc, char **argv) {
     }
 
     if (lang->id == CETTA_LANGUAGE_HOL_LIGHT) {
-        if (inline_text || compile_mode || compile_stdlib_mode || num_threads_requested ||
+        if (inline_text || compile_mode || compile_stdlib_mode || num_threads_requested || value_bytes ||
             rho_reduction_limit_requested || rho_scheduler_requested || petta_strict || petta_strict_det ||
             import_mode_overridden || eval_hashcons || prefer_rationals_cli || space_engine_requested ||
             gslt_realization_requested || langdef_proof_execution_requested ||
@@ -3814,7 +3831,7 @@ static int cetta_main(int argc, char **argv) {
         }
         int rho_rc = run_rhocalc_cli(
             filename, inline_text, semantic_profile, syntax, &rho_profile,
-            argc, argv, script_arg_start);
+            argc, argv, script_arg_start, value_bytes);
         if (emit_runtime_stats) {
             CettaRuntimeStats stats;
             cetta_runtime_stats_snapshot(&stats);
@@ -4004,6 +4021,7 @@ static int cetta_main(int argc, char **argv) {
     }
 
     cetta_library_context_init_for_language_profile(&libraries, lang->id, profile);
+    if (value_bytes) libraries.value_byte_limit = value_bytes;
     cleanup.libraries_initialized = true;
     term_universe_set_persistent_arena(&libraries.term_universe, &arena);
     (void)term_universe_add_root_provider(
@@ -4037,6 +4055,13 @@ static int cetta_main(int argc, char **argv) {
         cetta_eval_session_record_generic_setting(
             &libraries.session, "curried-arrows",
             CETTA_EVAL_OPTION_VALUE_SYMBOL, "on", 0);
+    }
+    if (value_bytes) {
+        char repr[32];
+        snprintf(repr, sizeof(repr), "%llu", (unsigned long long)value_bytes);
+        cetta_eval_session_record_generic_setting(
+            &libraries.session, "value-bytes", CETTA_EVAL_OPTION_VALUE_INT,
+            repr, (int64_t)value_bytes);
     }
     if (num_threads_requested) {
         char repr[32];

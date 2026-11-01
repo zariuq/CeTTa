@@ -38,17 +38,17 @@ def some(value, *, encoded=True):
 
 class NativeStore:
     """Qualification client only: a replayed claim grants no dispatch right."""
-    def __init__(self, binary, root, agent, *, service):
+    def __init__(self, binary, root, agent, *, service, maximum_bytes=MAX_BYTES):
         self.path = root / "store"; self.path.mkdir(mode=0o700)
         self.agent, self.now, self.serial = agent, 0.0, 0
-        self.worker = Worker(binary, ROOT / "examples/kb/space_job_queue.metta", "jobs:run", language="petta")
+        self.worker = Worker(binary, ROOT / "examples/kb/space_job_queue.metta", "jobs:run", language="petta", maximum_bytes=maximum_bytes)
         initial = self.worker.call(E("Initialize", str(self.path), agent))
         assert initial[0] == S("KnowledgeCommittedV1"), initial
         self.server, self.client = None, None
         if service:
-            self.server = Server(binary, root, module=ROOT / "examples/kb/space_job_queue.metta", entry="jobs:configuration")
+            self.server = Server(binary, root, module=ROOT / "examples/kb/space_job_queue.metta", entry="jobs:configuration", maximum_bytes=maximum_bytes)
             self.server.environment["CETTA_JOB_AGENT"] = agent
-            self.server.start(); self.client = Client(self.server.path, maximum_reply_bytes=MAX_BYTES)
+            self.server.start(); self.client = Client(self.server.path, maximum_reply_bytes=maximum_bytes, maximum_request_bytes=maximum_bytes)
 
     def close(self):
         if self.client: self.client.close()
