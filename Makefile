@@ -4815,6 +4815,12 @@ test-all: test-constraint-curriculum
 test-constraint-curriculum: $(VALUE_WORKER_BIN)
 	$(PYTHON) tests/support/check_constraint_curriculum.py $(VALUE_WORKER_BIN)
 
+.PHONY: test-recursive-computed-graph
+test-all: test-recursive-computed-graph
+test-recursive-computed-graph: $(VALUE_WORKER_BIN)
+	$(PYTHON) tests/support/check_recursive_computed_graph.py $(VALUE_WORKER_BIN) \
+		--output runtime/recursive-computed-graph.json
+
 .PHONY: test-db-concurrency bench-db-concurrency
 test-db-concurrency: $(VALUE_WORKER_BIN)
 	$(PYTHON) tests/support/bench_db_concurrency.py $(VALUE_WORKER_BIN) \
