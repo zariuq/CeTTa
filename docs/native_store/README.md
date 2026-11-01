@@ -7,6 +7,25 @@ Embedded programs and server clients use the same core and storage owner.
 The queue example is one application of these capabilities. The contracts and
 qualification scopes below describe the current implementation.
 
+## Native portable-value byte allowances
+
+`cetta_atom_wire_encode_bounded` and `cetta_atom_wire_decode_bounded` accept an
+explicit byte allowance while preserving CAV1 bytes and the existing node,
+nesting and variable safeguards. Their original entry points retain the
+original default allowance. Captured disk Spaces and owning query cursors have
+corresponding bounded open/capture forms. Cursors retain that policy through
+cloning and checkpointing; it grants no mutation authority.
+
+Native qualification covers a 2 MiB binary string and tensor, duplicate large
+fact occurrences, declared candidate indexes, captured deletion, and a pending
+row retried with a larger page allowance. An insufficient source allowance
+reports capacity; an insufficient page allowance preserves the pending row
+and reports its required size. Neither becomes an empty successful answer.
+
+This is the native part of larger-value support. MeTTa wrappers and worker/
+service framing still use their existing allowance; their budget propagation
+and end-to-end larger-value qualification remain unfinished.
+
 ## Measuring ordinary Space queries
 
 `tests/support/bench_ordinary_space.py` measures the current ordinary-Space
