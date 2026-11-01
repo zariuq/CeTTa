@@ -123,6 +123,21 @@ static void test_shared_hashing(Arena *arena) {
     }
 }
 
+static void test_borrowed_symbol(Arena *arena) {
+    const char *names[] = {"borrowed-head", "&borrowed-resource", "True", "Empty"};
+    for (unsigned i = 0u; i < sizeof(names) / sizeof(names[0]); i++) {
+        SymbolId symbol = symbol_intern_cstr(g_symbols, names[i]);
+        Atom borrowed;
+        atom_init_symbol(&borrowed, symbol);
+        Atom *owned = atom_symbol_id(arena, symbol);
+        assert(!borrowed.arena_id && borrowed.flags == owned->flags &&
+            borrowed.structural_facts == owned->structural_facts &&
+            var_id_is_none(borrowed.var_id));
+        assert(atom_eq(&borrowed, owned) && atom_hash(&borrowed) == atom_hash(owned));
+        assert(!atom_eq(&borrowed, atom_int(arena, i)));
+    }
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena arena;
@@ -136,6 +151,7 @@ int main(void) {
 
     test_zero_spelling(&arena);
     test_shared_hashing(&arena);
+    test_borrowed_symbol(&arena);
 
     arena_free(&arena);
     symbol_table_free(&symbols);

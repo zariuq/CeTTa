@@ -33,7 +33,10 @@ OPS = [("Add", "TP:Add", ["F64Tensor", "F64Tensor"], "F64Tensor"),
        ("Sum", "TP:Sum", ["F64Tensor"], "F64Tensor"),
        ("Gather", "TP:Gather", ["F64Tensor", "I64Tensor"], "F64Tensor"),
        ("BroadcastLike", "TP:BroadcastLike", ["F64Tensor", "F64Tensor"], "F64Tensor"),
-       ("GatherRows", "TP:GatherRows", ["F64Tensor", "I64Tensor"], "F64Tensor")]
+       ("GatherRows", "TP:GatherRows", ["F64Tensor", "I64Tensor"], "F64Tensor"),
+       ("Where", "TP:Where", ["BoolTensor", "F64Tensor", "F64Tensor"], "F64Tensor"),
+       ("WhereBool", "TP:WhereBool", ["BoolTensor", "BoolTensor", "BoolTensor"], "BoolTensor"),
+       ("WhereI64", "TP:WhereI64", ["BoolTensor", "I64Tensor", "I64Tensor"], "I64Tensor")]
 FAMILY = ["TP:Family", Text("TF1"), [["TP:Operator", Text(name), list(map(Text, inputs)), Text(output), recipe]
                                       for name, recipe, inputs, output in OPS]]
 DTYPES = {"F64Tensor": "f64", "I64Tensor": "i64", "BoolTensor": "bool"}
@@ -110,6 +113,12 @@ def reference(roots, rows, inputs):
         code, parameters, children=row[1:]
         values=[visit(child) for child in children]
         sort=OPS[code][3]; _, shape, left=values[0]
+        if code in (15, 16, 17):
+            assert values[0][0] == 'BoolTensor' and values[1][0] == values[2][0] == sort
+            assert shape == values[1][1] == values[2][1]
+            return array(shape, {point: values[1 if flag else 2][2][point]
+                                 for point, flag in left.items()
+                                 if point in values[1 if flag else 2][2]}, sort)
         if code < 6:
             _, other_shape, right=values[1]
             assert shape==other_shape and left.keys()==right.keys()
@@ -221,6 +230,18 @@ def main():
     for shape, data in (((3,),[1.0,2.0,3.0]), ((2,2),[0.0,1.0,2.0,3.0]), ((0,2),[])):
         fixtures.append(([2],[('input',0,'F64Tensor'),('input',1,'F64Tensor'),('op',13,[],[0,1])],
                          [array((),[2.5]),array(shape,data)]))
+    for operation, sort, left, right in (
+            (15, 'F64Tensor', [-0., 2., 3.], [7., 8., 9.]),
+            (16, 'BoolTensor', [True, False, True], [False, True, False]),
+            (17, 'I64Tensor', [1, 2, 3], [7, 8, 9])):
+        fixtures.append(([3], [('input', 0, 'BoolTensor'), ('input', 1, sort), ('input', 2, sort),
+                               ('op', operation, [], [0, 1, 2])],
+                         [array((3,), [True, False, True], 'BoolTensor'),
+                          array((3,), left, sort), array((3,), right, sort)]))
+    fixtures.append(([3], [('input', 0, 'BoolTensor'), ('input', 1, 'F64Tensor'), ('input', 2, 'F64Tensor'),
+                           ('op', 15, [], [0, 1, 2])],
+                     [array((3,), {(0,): True, (1,): False}, 'BoolTensor'),
+                      array((3,), {(0,): -0., (2,): 9.}), array((3,), {})]))
     blobs=[]
     for roots, rows, inputs in fixtures:
         blob, forest=program(roots,rows); blobs.append(blob)
@@ -279,6 +300,18 @@ def main():
     add(f"(program-test:view (tensor-program:run {byte_tensor(overflow)} "
         f"({source_array(array((1,),[1.0]))} {source_array(array((1,),[0.0]))})))",
         ["ProgramResult",[["TP:Fault","Operation"]]])
+    # Selection consumes values, not lazy code. A bad computation in the
+    # unused branch still propagates through the strict TP1 DAG.
+    strict_selection, _ = program([4], [('constant', array((1,), [True], 'BoolTensor')),
+        ('input', 0, 'F64Tensor'), ('input', 1, 'F64Tensor'), ('op', 3, [], [1, 2]),
+        ('op', 15, [], [0, 1, 3])])
+    add(f'(program-test:view (tensor-program:run {byte_tensor(strict_selection)} '
+        f'({source_array(array((1,), [1.]))} {source_array(array((1,), [0.]))})))',
+        ['ProgramResult', [['TP:Fault', 'Operation']]])
+    where_rows = [('input', 0, 'F64Tensor'), ('input', 1, 'F64Tensor'), ('input', 2, 'F64Tensor'),
+                  ('op', 15, [], [0, 1, 2])]
+    _, wrong_where = program([3], where_rows)
+    add(f'(tensor-program:pack {construct(FAMILY)} {construct(wrong_where)})', ['TP:Fault', 'Types'])
     used_fault,_forest=program([2,0],[('input',0,'F64Tensor'),('input',7,'F64Tensor'),('op',0,[],[0,1])])
     add(f"(program-test:view (tensor-program:run {byte_tensor(used_fault)} ({source_array(a)})))",
         ["ProgramResult",[["TP:Fault","InputIndex"],[json.dumps("F64Tensor"),observation(a[1],a[2],"f64")]]])

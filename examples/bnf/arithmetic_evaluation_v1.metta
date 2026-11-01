@@ -1,7 +1,7 @@
 ; Rosetta Code "Arithmetic evaluation": parse with a grammar, build an AST,
 ; evaluate the AST. The parser is produced by lib_bnf from the EBNF file;
 ; the AST is built from the derivation and evaluated by ordinary equations.
-!(import! &self lib/lib_bnf.metta)
+!(import! &self ../../lib/lib_bnf.metta)
 
 ; --- derivation -> AST ------------------------------------------------------
 ; An expression derivation is: ws term (ws addop ws term)* ws

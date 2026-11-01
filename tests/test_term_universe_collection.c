@@ -487,6 +487,64 @@ static void test_freed_records_are_reused_and_compacted(void) {
 /* Integers live in pages by value rather than in the intern table.  A
  * reclaimed integer leaves its page, and the page's other integers stay
  * found, through the page's promotion from sparse to dense. */
+/* Pages of integers go with their values: rooted values keep exactly their
+ * pages, unrooted ones none, and rounds of ever-new integers leave nothing
+ * behind and no larger table. */
+static void test_integer_pages_go_with_their_values(void) {
+    Arena persistent;
+    arena_init(&persistent);
+    TermUniverse universe;
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    term_universe_set_collection_mode(&universe,
+                                      TERM_UNIVERSE_COLLECTION_RECLAIM);
+    TestIds roots = {0};
+    assert(term_universe_add_root_provider(&universe, test_list_roots,
+                                           &roots));
+    enum { VALUES = 64 * 512, EVERY = 97 };
+    static bool kept_page[64];
+    size_t kept_pages = 0u;
+    for (int64_t value = 0; value < VALUES; value++) {
+        AtomId id = tu_intern_int(&universe, value);
+        if (value % EVERY == 0) {
+            test_ids_push(&roots, id);
+            if (!kept_page[value / 512]) {
+                kept_page[value / 512] = true;
+                kept_pages++;
+            }
+        }
+    }
+    TermUniverseCollectionReport report;
+    assert(term_universe_collect(&universe, &report));
+    assert(universe.integer_used == kept_pages);
+    for (size_t i = 0u; i < roots.len; i++) {
+        int64_t value = tu_int(&universe, roots.ids[i]);
+        assert(value % EVERY == 0);
+        assert(tu_intern_int(&universe, value) == roots.ids[i]);
+    }
+    for (int64_t value = 1; value < VALUES; value += EVERY)
+        assert(tu_int(&universe, tu_intern_int(&universe, value)) == value);
+    roots.len = 0u;
+    assert(term_universe_collect(&universe, &report));
+    assert(universe.integer_used == 0u);
+    size_t mask = universe.integer_mask;
+    for (int64_t round = 0; round < 64; round++) {
+        for (int64_t value = 0; value < 4096; value++)
+            assert(tu_intern_int(&universe, VALUES + round * 4096 + value) !=
+                   CETTA_ATOM_ID_NONE);
+        assert(term_universe_collect(&universe, &report));
+        assert(universe.integer_used == 0u);
+    }
+    assert(universe.integer_mask == mask);
+    printf("PASS: integer pages go with their values (%zu pages kept for "
+           "%d rooted, none after; 64 rounds of fresh values leave none)\n",
+           kept_pages, (VALUES + EVERY - 1) / EVERY);
+    term_universe_remove_root_provider(&universe, test_list_roots, &roots);
+    free(roots.ids);
+    term_universe_free(&universe);
+    arena_free(&persistent);
+}
+
 static void test_integer_pages_release_reclaimed_values(void) {
     Arena persistent;
     arena_init(&persistent);
@@ -569,6 +627,156 @@ static void test_read_of_reclaimed_entry_traps(void) {
 }
 #endif
 
+/* Holders the registry test registers: two functions of each kind, so two
+ * holders may share a context. */
+static void registry_provider_a(const TermUniverse *universe,
+                                TermUniverseRootVisit visit,
+                                void *visit_context, void *provider_context) {
+    (void)universe; (void)visit; (void)visit_context; (void)provider_context;
+}
+
+static void registry_provider_b(const TermUniverse *universe,
+                                TermUniverseRootVisit visit,
+                                void *visit_context, void *provider_context) {
+    (void)universe; (void)visit; (void)visit_context; (void)provider_context;
+}
+
+static bool registry_observer_a(TermUniverse *universe,
+                                TermUniverseStoreFormat old_format,
+                                TermUniverseStoreFormat new_format, void *ctx) {
+    (void)universe; (void)old_format; (void)new_format; (void)ctx;
+    return true;
+}
+
+static bool registry_observer_b(TermUniverse *universe,
+                                TermUniverseStoreFormat old_format,
+                                TermUniverseStoreFormat new_format, void *ctx) {
+    (void)universe; (void)old_format; (void)new_format; (void)ctx;
+    return true;
+}
+
+enum { REGISTRY_TEST_HOLDERS = 600u };
+
+/* Every slot holds a held key, each held key exactly once. */
+static void registry_check_providers(const TermUniverse *universe,
+                                     bool held[][2], size_t held_count,
+                                     const int *contexts,
+                                     TermUniverseRootProvider fns[2]) {
+    static bool seen[REGISTRY_TEST_HOLDERS][2];
+    memset(seen, 0, sizeof(seen));
+    assert(universe->root_provider_len == held_count);
+    for (size_t i = 0u; i < universe->root_provider_len; i++) {
+        const TermUniverseRootProviderEntry *entry = &universe->root_providers[i];
+        size_t h = (size_t)((const int *)entry->ctx - contexts);
+        unsigned f = entry->fn == fns[0] ? 0u : 1u;
+        assert(h < REGISTRY_TEST_HOLDERS && entry->fn == fns[f]);
+        assert(held[h][f] && !seen[h][f]);
+        seen[h][f] = true;
+    }
+}
+
+static void registry_check_observers(const TermUniverse *universe,
+                                     bool held[][2], size_t held_count,
+                                     const int *contexts,
+                                     TermUniverseStoreFormatObserver fns[2]) {
+    static bool seen[REGISTRY_TEST_HOLDERS][2];
+    memset(seen, 0, sizeof(seen));
+    assert(universe->observer_len == held_count);
+    for (size_t i = 0u; i < universe->observer_len; i++) {
+        const TermUniverseStoreFormatObserverEntry *entry = &universe->observers[i];
+        size_t h = (size_t)((const int *)entry->ctx - contexts);
+        unsigned f = entry->fn == fns[0] ? 0u : 1u;
+        assert(h < REGISTRY_TEST_HOLDERS && entry->fn == fns[f]);
+        assert(held[h][f] && !seen[h][f]);
+        seen[h][f] = true;
+    }
+}
+
+/* A universe's registries keep exactly the holders a plain set keeps, each
+ * in one slot: random adds, duplicate adds and removals, growing past and
+ * shrinking below the size where the index starts, in fresh universes and
+ * in ones whose index outlives the shrink. */
+static void test_registries_keep_their_holders(void) {
+    static int contexts[REGISTRY_TEST_HOLDERS];
+    static bool providers[REGISTRY_TEST_HOLDERS][2];
+    static bool observers[REGISTRY_TEST_HOLDERS][2];
+    TermUniverseRootProvider provider_fns[2] = {registry_provider_a,
+                                                registry_provider_b};
+    TermUniverseStoreFormatObserver observer_fns[2] = {registry_observer_a,
+                                                       registry_observer_b};
+    uint64_t state = UINT64_C(0x2545f4914f6cdd1d);
+    unsigned checks = 0u;
+    for (unsigned round = 0u; round < 6u; round++) {
+        TermUniverse universe;
+        term_universe_init(&universe);
+        memset(providers, 0, sizeof(providers));
+        memset(observers, 0, sizeof(observers));
+        size_t provider_count = 0u, observer_count = 0u;
+        /* Small rounds stay near the index's threshold; large ones cross it
+         * both ways, phases favouring adds, then removals. */
+        size_t span = round < 2u ? 24u : REGISTRY_TEST_HOLDERS;
+        for (unsigned step = 0u; step < 40000u; step++) {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            size_t h = (size_t)(state % span);
+            unsigned f = (unsigned)(state >> 40) & 1u;
+            bool favour_add = (step / 2500u) % 2u == 0u;
+            bool add = ((state >> 48) & 3u) != 0u ? favour_add : !favour_add;
+            bool observer = ((state >> 52) & 1u) != 0u;
+            if (observer) {
+                if (add) {
+                    assert(term_universe_add_store_format_observer(
+                        &universe, observer_fns[f], &contexts[h]));
+                    if (!observers[h][f]) {
+                        observers[h][f] = true;
+                        observer_count++;
+                    }
+                } else {
+                    term_universe_remove_store_format_observer(
+                        &universe, observer_fns[f], &contexts[h]);
+                    if (observers[h][f]) {
+                        observers[h][f] = false;
+                        observer_count--;
+                    }
+                }
+                assert(universe.observer_len == observer_count);
+            } else {
+                if (add) {
+                    assert(term_universe_add_root_provider(
+                        &universe, provider_fns[f], &contexts[h]));
+                    if (!providers[h][f]) {
+                        providers[h][f] = true;
+                        provider_count++;
+                    }
+                } else {
+                    term_universe_remove_root_provider(
+                        &universe, provider_fns[f], &contexts[h]);
+                    if (providers[h][f]) {
+                        providers[h][f] = false;
+                        provider_count--;
+                    }
+                }
+                assert(universe.root_provider_len == provider_count);
+            }
+            if (step % 61u == 0u) {
+                registry_check_providers(&universe, providers, provider_count,
+                                         contexts, provider_fns);
+                registry_check_observers(&universe, observers, observer_count,
+                                         contexts, observer_fns);
+                checks++;
+            }
+        }
+        registry_check_providers(&universe, providers, provider_count,
+                                 contexts, provider_fns);
+        registry_check_observers(&universe, observers, observer_count,
+                                 contexts, observer_fns);
+        term_universe_free(&universe);
+    }
+    printf("PASS: registries keep exactly their holders through %u checks, "
+           "indexed and scanned\n", checks);
+}
+
 int main(void) {
     SymbolTable symbols;
     VarInternTable var_intern;
@@ -578,10 +786,12 @@ int main(void) {
     test_collection_matches_reachability(false);
     test_collection_matches_reachability(true);
     test_integer_pages_release_reclaimed_values();
+    test_integer_pages_go_with_their_values();
     test_inhibited_safe_point_collects_nothing();
     test_saturated_counts_keep_their_entries();
     test_freed_records_are_reused_and_compacted();
     test_freed_slots_are_reused();
+    test_registries_keep_their_holders();
 #if CETTA_BUILD_WITH_TERM_UNIVERSE_COLLECTION_CHECKS
     test_read_of_reclaimed_entry_traps();
 #endif

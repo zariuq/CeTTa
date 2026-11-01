@@ -18,3 +18,21 @@
    (== () (collapse (once (match $Space $Atom $Atom)))))
 !(expression-existence &existence-space (key a))
 !(expression-existence &existence-space (key missing))
+
+; A selected arm binds its pattern even when its body does not use it.
+!(let $r (case (once (match &existence-space (key a) hit))
+              ((Empty absent) ($v present)))
+   (Case $r $v))
+; An already-bound pattern must still match the produced key.
+!(collapse (let $v other
+   (case (once (match &existence-space (key a) hit))
+         ((Empty absent) ($v present)))))
+; A variable whose value is Empty does not acquire literal default authority.
+!(collapse (let $e (quote Empty)
+   (case (once (match &existence-space (key missing) hit))
+         (($e absent) ($v present)))))
+; A completed expression-shaped key remains data in the caller's binding.
+!(let $held (quote (+ 1 2))
+   (let $r (case (once (match &existence-space (key a) $held))
+                ((Empty absent) ($v present)))
+      (Case $r $v)))

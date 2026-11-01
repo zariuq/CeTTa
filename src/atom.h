@@ -202,6 +202,11 @@ static inline bool cetta_internal_tag_is_term_stable(int64_t tag) {
 }
 
 #define ATOM_FLAG_HAS_VARS 0x01u
+/* A view of a term stored in a term universe: an AtomStoredOrigin stands just
+ * before the atom and names the term's entry (term_universe_view_origin).
+ * Only the view itself has it; an atom made from it (a copy, a suffix, a
+ * relocation, an expression over it) is another atom and leaves it unset. */
+#define ATOM_FLAG_STORED_ORIGIN 0x02u
 #define ATOM_FLAG_HAS_REGISTRY_REFS 0x04u
 #define ATOM_FLAG_HASH_STABLE 0x08u
 #define ATOM_FLAG_HASHCONS_ELIGIBLE 0x10u
@@ -754,13 +759,35 @@ static inline uint32_t atom_hash_cache_load(const Atom *atom) {
     return __atomic_load_n(&atom->hash_cache, __ATOMIC_RELAXED);
 }
 
-/* Copy an atom's header, reading its hash cache as the atomic word it is. */
+/* Take `hash` as the structural hash of `atom` when atom_hash would cache
+ * one: the hash a stored record of the same term carries, which is its
+ * atom_hash. */
+void atom_hash_cache_adopt(Atom *atom, uint32_t hash);
+
+/* The entry a view was read from: its universe, the universe's instance and
+ * the epochs under which the id names the entry's term. */
+typedef struct {
+    const void *owner;
+    uint64_t instance_id;
+    uint64_t storage_epoch;
+    uint64_t collection_epoch;
+    uint64_t id;
+} AtomStoredOrigin;
+
+static inline const AtomStoredOrigin *atom_stored_origin(const Atom *atom) {
+    return atom && (atom->flags & ATOM_FLAG_STORED_ORIGIN) != 0u
+        ? (const AtomStoredOrigin *)(const void *)atom - 1 : NULL;
+}
+
+/* Copy an atom's header, reading its hash cache as the atomic word it is.
+ * The copy is another atom: it names no stored entry. */
 static inline void atom_header_copy(Atom *dst, const Atom *src) {
     size_t after = offsetof(Atom, hash_cache) + sizeof(src->hash_cache);
     memcpy(dst, src, offsetof(Atom, hash_cache));
     dst->hash_cache = atom_hash_cache_load(src);
     memcpy((char *)dst + after, (const char *)src + after,
            sizeof(Atom) - after);
+    dst->flags &= ~ATOM_FLAG_STORED_ORIGIN;
 }
 
 static inline bool atom_is_he_evaluated(const Atom *atom) {
@@ -983,6 +1010,7 @@ bool arena_frame_identity_owned_test(const Arena *a,
 #endif
 /* Retain an immutable external owner once per arena lifetime segment. A reset
  * releases owners first retained after its mark; earlier owners remain live.
+ * Refusal acquires no owner; allocated index capacity may remain charged.
  * Ordinary atom copies must still transport their payload into the destination. */
 bool arena_retain_owner_with_storage(Arena *a, void *owner,
     void (*retain)(void *), void (*release)(void *), CettaStorageVisitor storage);
@@ -1222,6 +1250,9 @@ typedef _Atomic(uint64_t) VarInternEntry;
 typedef struct {
     _Atomic(VarInternEntry *) *chunks;
     pthread_mutex_t write_mutex;
+    /* Sparse directories keep a separate list of their allocated owners.
+     * Only the writer changes it; disposal requires quiescent readers. */
+    struct VarInternChunk *owned_chunks;
 } VarInternTable;
 
 void    var_intern_init(VarInternTable *t);
@@ -1301,6 +1332,9 @@ typedef bool (*AtomSymbolVisitor)(SymbolId id, void *context);
 bool atom_visit_syntax_symbols(const Atom *root, AtomSymbolVisitor visit,
                                void *context);
 void atom_pin_syntax_symbols(const Atom *root);
+/* Initialize borrowed symbol metadata without allocation or an arena owner.
+ * Storage must outlive its readers; escaping terms use an owning constructor. */
+void atom_init_symbol(Atom *target, SymbolId sym_id);
 /* The symbol's one atom owned by the symbol table (no arena): for atoms a
  * compiled program hands to terms that may outlive it.  NULL without a
  * table or for an id it does not hold. */
@@ -1671,6 +1705,11 @@ const CettaPrimeContext *atom_prime_context_value(const Atom *atom);
 Atom *atom_prime_context_lookup(const CettaPrimeContext *context, Atom *key);
 uint32_t atom_prime_context_depth(const CettaPrimeContext *context);
 Atom *atom_expr(Arena *a, Atom **elems, CettaExprLen len);
+/* atom_expr of a view read from a stored entry, with `origin` standing just
+ * before it when the arena places the expression right after it; otherwise
+ * the plain expression. */
+Atom *atom_expr_with_origin(Arena *a, Atom **elems, CettaExprLen len,
+                            const AtomStoredOrigin *origin);
 /* A read-only expression header over borrowed coordinates. The header and
  * vector are valid only for the consuming call; neither may be retained or
  * returned as an owned result. Structural summaries grant no ownership. */
@@ -1844,7 +1883,9 @@ bool atom_visit_set_add(AtomVisitSet *set, const Atom *atom, bool *fault);
 void atom_visit_set_free(AtomVisitSet *set);
 
 /* atom_tree_any for a predicate whose answer at a node does not depend on
- * the path to it: each distinct subexpression is visited once. */
+ * the path to it: each distinct subexpression is visited once, including
+ * cycles through the root. Exact queries require visited storage; admission
+ * which must refuse on storage failure uses atom_graph_any_checked. */
 bool atom_graph_any(const Atom *root, AtomTreePredicate predicate,
                     void *context);
 /* A barrier is a semantic value boundary: neither the predicate nor its
@@ -2207,6 +2248,14 @@ bool atom_deep_copy_session_loan_arenas(AtomDeepCopySession *session,
  * its callback inventory before reclaiming abandoned destination storage. */
 AtomDeepCopySession *atom_deep_copy_session_new_mapped(
     Arena *dst, AtomDeepCopyLeafMap map, void *context);
+/* Copy a finite expression DAG's roots in one call with the same mapped
+ * memo. Session storage stays local; payload ownership follows copy() and
+ * the mapper's contract. Inputs and mapper/context stay live throughout.
+ * On refusal a prefix of images
+ * may be populated: the caller stages roots and reclaims abandoned storage
+ * only after return. Destination-owned inputs are still mapped. */
+bool atom_deep_copy_terms_mapped(Arena *dst, Atom *const *sources, Atom **images,
+    size_t count, AtomDeepCopyLeafMap map, void *context);
 /* The session copies out of a region its caller releases right after it:
  * the atoms `arena` allocated since `mark`.  A copied atom of that region
  * then records its copy in place instead of in the session's table, since

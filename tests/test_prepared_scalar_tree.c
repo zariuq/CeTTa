@@ -51,7 +51,7 @@ static void check_list_equality(Space *space, Arena *source, Arena *scratch,
     program = cetta_prepared_pure_program_compile_closed_answers(
         space, call, CETTA_GSLT_PURE_CALL_EAGER, atom_bool, atom_expr,
         cetta_prepared_pure_constructs_expression_always,
-        NULL, NULL, NULL, NULL, NULL, true, true, identity);
+        NULL, NULL, NULL, NULL, NULL, true, true, identity, NULL);
     assert(program);
     CettaPreparedPureAnswerLimits limits = {
         .max_transitions = 1024u, .max_scratch_bytes = 1024u * 1024u,

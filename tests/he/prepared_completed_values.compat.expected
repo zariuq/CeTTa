@@ -1,0 +1,8 @@
+[(retained-box 7)]
+[(retained-box 7), (retained-box 7)]
+[(retained-held (println! "must remain data"))]
+[(retained-id (retained-box 7))]
+[(retained-id (retained-box 7))]
+[(Pair (retained-box 7) 1), (Pair (retained-box 7) 1)]
+[7, (retained-box 7)]
+[(retained-box 7)]

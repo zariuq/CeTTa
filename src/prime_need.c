@@ -3,7 +3,6 @@
 #include "native_cost.h"
 #include "identity_counter.h"
 #include <assert.h>
-
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
@@ -82,8 +81,12 @@ enum {
 
 struct PrimeNeedHeapIndexNode {
     const PrimeNeedFrame *value;
+    uint64_t key;
     uint16_t child_mask;
     uint16_t child_count;
+    /* Branches inspect this nibble; leaves use the full-width sentinel.
+     * `key` names a descendant, including every skipped prefix digit. */
+    uint8_t depth;
     const PrimeNeedHeapIndexNode *children[];
 };
 
@@ -132,9 +135,47 @@ static PrimeNeedHeapIndexNode *prime_need_heap_index_node_alloc(
         CETTA_RUNTIME_COUNTER_PRIME_NEED_HEAP_INDEX_NODE_BYTES,
         (uint64_t)bytes);
     node->value = NULL;
+    node->key = 0u;
     node->child_mask = 0u;
     node->child_count = child_count;
+    node->depth = PRIME_NEED_HEAP_INDEX_LEVELS;
     return node;
+}
+
+static unsigned prime_need_heap_index_digit(uint64_t key,unsigned depth) {
+    return (unsigned)((key >> ((PRIME_NEED_HEAP_INDEX_LEVELS-depth-1u)*
+        PRIME_NEED_HEAP_INDEX_BITS_PER_LEVEL)) & UINT64_C(0xf));
+}
+
+static bool prime_need_heap_index_prefix_equal(uint64_t left,uint64_t right,
+    unsigned depth) {
+    if(!depth)return true;
+    if(depth==PRIME_NEED_HEAP_INDEX_LEVELS)return left==right;
+    unsigned shift=(PRIME_NEED_HEAP_INDEX_LEVELS-depth)*PRIME_NEED_HEAP_INDEX_BITS_PER_LEVEL;
+    return (left>>shift)==(right>>shift);
+}
+
+static unsigned prime_need_heap_index_difference(uint64_t left,uint64_t right) {
+    uint64_t different=left^right;
+    return different ? (unsigned)__builtin_clzll(different)/PRIME_NEED_HEAP_INDEX_BITS_PER_LEVEL
+        : PRIME_NEED_HEAP_INDEX_LEVELS;
+}
+
+/* Call after validating the held child headers. Each branch keeps its
+ * representative as the representative of that key's immediate child. */
+static bool prime_need_heap_index_representative_valid(const PrimeNeedHeapIndexNode *node) {
+    if(node->depth==PRIME_NEED_HEAP_INDEX_LEVELS)return node->value!=NULL;
+    uint16_t bit=(uint16_t)(UINT16_C(1)<<prime_need_heap_index_digit(node->key,node->depth));
+    if(!(node->child_mask&bit))return false;
+    size_t position=prime_need_popcount16((uint16_t)(node->child_mask&(uint16_t)(bit-1u)));
+    return node->children[position]->key==node->key;
+}
+
+static PrimeNeedHeapIndexNode *prime_need_heap_index_leaf(Arena *owner,
+    uint64_t key,const PrimeNeedFrame *value) {
+    PrimeNeedHeapIndexNode *leaf=prime_need_heap_index_node_alloc(owner,0u);
+    if(leaf) {leaf->key=key;leaf->value=value;}
+    return leaf;
 }
 
 static bool prime_need_heap_index_insert_at(
@@ -145,20 +186,33 @@ static bool prime_need_heap_index_insert_at(
         depth > PRIME_NEED_HEAP_INDEX_LEVELS)
         return false;
 
-    if (depth == PRIME_NEED_HEAP_INDEX_LEVELS) {
-        PrimeNeedHeapIndexNode *leaf =
-            prime_need_heap_index_node_alloc(owner, 0u);
-        if (!leaf)
-            return false;
-        leaf->value = value;
-        *out = leaf;
-        return true;
+    if(!base) {
+        PrimeNeedHeapIndexNode *leaf=prime_need_heap_index_leaf(owner,thunk_id,value);
+        if(!leaf)return false;
+        *out=leaf;return true;
+    }
+    if(base->depth<depth || base->depth>PRIME_NEED_HEAP_INDEX_LEVELS)return false;
+    unsigned different=prime_need_heap_index_difference(base->key,thunk_id);
+    if(different<depth)return false;
+    if(different<base->depth) {
+        PrimeNeedHeapIndexNode *leaf=prime_need_heap_index_leaf(owner,thunk_id,value);
+        PrimeNeedHeapIndexNode *branch=leaf ? prime_need_heap_index_node_alloc(owner,2u) : NULL;
+        if(!branch)return false;
+        unsigned old_digit=prime_need_heap_index_digit(base->key,different);
+        unsigned new_digit=prime_need_heap_index_digit(thunk_id,different);
+        branch->depth=(uint8_t)different;branch->key=base->key;
+        branch->child_mask=(uint16_t)((UINT16_C(1)<<old_digit)|(UINT16_C(1)<<new_digit));
+        branch->children[old_digit<new_digit ? 0u : 1u]=base;
+        branch->children[old_digit<new_digit ? 1u : 0u]=leaf;
+        *out=branch;return true;
+    }
+    if(base->depth==PRIME_NEED_HEAP_INDEX_LEVELS) {
+        PrimeNeedHeapIndexNode *leaf=prime_need_heap_index_leaf(owner,thunk_id,value);
+        if(!leaf)return false;
+        *out=leaf;return true;
     }
 
-    unsigned shift =
-        (PRIME_NEED_HEAP_INDEX_LEVELS - depth - 1u) *
-        PRIME_NEED_HEAP_INDEX_BITS_PER_LEVEL;
-    unsigned slot = (unsigned)((thunk_id >> shift) & UINT64_C(0xf));
+    unsigned slot = prime_need_heap_index_digit(thunk_id,base->depth);
     uint16_t bit = (uint16_t)(UINT16_C(1) << slot);
     uint16_t old_mask = base ? base->child_mask : 0u;
     bool replacing = (old_mask & bit) != 0u;
@@ -168,7 +222,7 @@ static bool prime_need_heap_index_insert_at(
         replacing ? base->children[position] : NULL;
     const PrimeNeedHeapIndexNode *new_child = NULL;
     if (!prime_need_heap_index_insert_at(
-            owner, old_child, thunk_id, depth + 1u, value, &new_child))
+            owner, old_child, thunk_id, base->depth + 1u, value, &new_child))
         return false;
 
     uint16_t new_mask = (uint16_t)(old_mask | bit);
@@ -177,7 +231,7 @@ static bool prime_need_heap_index_insert_at(
         prime_need_heap_index_node_alloc(owner, new_count);
     if (!node)
         return false;
-    node->value = base ? base->value : NULL;
+    node->key=base->key;node->depth=base->depth;
     node->child_mask = new_mask;
 
     size_t old_position = 0u;
@@ -200,28 +254,26 @@ static const PrimeNeedFrame *prime_need_heap_index_lookup(
     size_t *steps_out) {
     const PrimeNeedHeapIndexNode *cursor = root;
     size_t steps = 0u;
-    for (unsigned depth = 0u;
-         depth < PRIME_NEED_HEAP_INDEX_LEVELS; depth++) {
-        if (!cursor)
-            goto not_found;
-        unsigned shift =
-            (PRIME_NEED_HEAP_INDEX_LEVELS - depth - 1u) *
-            PRIME_NEED_HEAP_INDEX_BITS_PER_LEVEL;
-        unsigned slot =
-            (unsigned)((thunk_id >> shift) & UINT64_C(0xf));
-        uint16_t bit = (uint16_t)(UINT16_C(1) << slot);
+    unsigned minimum=0u;
+    while(cursor) {
         steps++;
+        if(cursor->depth<minimum || cursor->depth>PRIME_NEED_HEAP_INDEX_LEVELS ||
+           !prime_need_heap_index_prefix_equal(cursor->key,thunk_id,cursor->depth))
+            goto not_found;
+        if(cursor->depth==PRIME_NEED_HEAP_INDEX_LEVELS) {
+            if(steps_out)*steps_out=steps;
+            return cursor->value;
+        }
+        unsigned slot=prime_need_heap_index_digit(thunk_id,cursor->depth);
+        uint16_t bit = (uint16_t)(UINT16_C(1) << slot);
         if ((cursor->child_mask & bit) == 0u)
             goto not_found;
         size_t position = prime_need_popcount16(
             (uint16_t)(cursor->child_mask &
                        (uint16_t)(bit - 1u)));
+        minimum=cursor->depth+1u;
         cursor = cursor->children[position];
     }
-    steps++;
-    if (steps_out)
-        *steps_out = steps;
-    return cursor ? cursor->value : NULL;
 
 not_found:
     if (steps_out)
@@ -1434,14 +1486,35 @@ typedef struct {
     uint64_t update_id;
 } PrimeNeedReadDependency;
 
+typedef enum {
+    PRIME_NEED_READ_SUPPORT_LEAF,
+    PRIME_NEED_READ_SUPPORT_UNION,
+} PrimeNeedReadSupportKind;
+
+typedef struct PrimeNeedReadSupport PrimeNeedReadSupport;
+struct PrimeNeedReadSupport {
+    _Atomic size_t references;
+    PrimeNeedReadSupportKind kind;
+    uint8_t kinds;
+    uint64_t minimum[3],maximum[3];
+    PrimeNeedReadSupport *left,*right,*retiring;
+    PrimeNeedReadDependency *reads;
+    size_t length;
+    bool has_origins;
+};
+
 struct PrimeNeedReadCapture {
     PrimeNeedSnapshot context;
     PrimeNeedSnapshot entrance;
+    PrimeNeedReadSupport *support;
     PrimeNeedReadDependency *reads;
     size_t length;
     size_t capacity;
     bool complete;
 };
+
+static void prime_need_reader_reference_retain(_Atomic size_t *references);
+static bool prime_need_reader_reference_release(_Atomic size_t *references);
 
 static _Thread_local PrimeNeedReadScope *g_prime_need_read_scope;
 static _Thread_local bool g_prime_need_read_observing;
@@ -1629,6 +1702,211 @@ static bool prime_need_capture_query(const PrimeNeedSnapshot *snapshot,
     return true;
 }
 
+static bool prime_need_read_dependency_same(
+        const PrimeNeedReadDependency *left,
+        const PrimeNeedReadDependency *right) {
+    return left->kind==right->kind&&left->key==right->key&&
+        (left->kind!=PRIME_NEED_READ_IMPORT||
+            atom_capture_identical(left->origin,right->origin));
+}
+
+static void prime_need_read_support_retain(PrimeNeedReadSupport *support) {
+    if(support)prime_need_reader_reference_retain(&support->references);
+}
+
+static void prime_need_read_support_release(PrimeNeedReadSupport *support) {
+    if(!support||!prime_need_reader_reference_release(&support->references))return;
+    PrimeNeedReadSupport *pending=support;
+    while(pending) {
+        PrimeNeedReadSupport *node=pending;
+        pending=node->retiring;
+        PrimeNeedReadSupport *children[]={node->left,node->right};
+        for(size_t i=0u;i<2u;i++)if(children[i]&&
+                prime_need_reader_reference_release(&children[i]->references)) {
+            children[i]->retiring=pending;pending=children[i];
+        }
+        free(node->reads);free(node);
+    }
+}
+
+static void prime_need_read_support_note(
+        PrimeNeedReadSupport *support,const PrimeNeedReadDependency *read) {
+    unsigned kind=(unsigned)read->kind;
+    uint8_t bit=(uint8_t)(1u<<kind);
+    if(!(support->kinds&bit)) {
+        support->minimum[kind]=support->maximum[kind]=read->key;
+        support->kinds|=bit;
+    } else {
+        if(read->key<support->minimum[kind])support->minimum[kind]=read->key;
+        if(read->key>support->maximum[kind])support->maximum[kind]=read->key;
+    }
+}
+
+static PrimeNeedReadSupport *prime_need_read_support_leaf(
+        const PrimeNeedReadDependency *reads,size_t length) {
+    if(!length)return NULL;
+    if(!reads||length>SIZE_MAX/sizeof(*reads))return NULL;
+    PrimeNeedReadSupport *support=calloc(1u,sizeof(*support));
+    if(!support)return NULL;
+    atomic_init(&support->references,1u);
+    support->kind=PRIME_NEED_READ_SUPPORT_LEAF;
+    support->reads=malloc(length*sizeof(*support->reads));
+    if(!support->reads) {prime_need_read_support_release(support);return NULL;}
+    memcpy(support->reads,reads,length*sizeof(*support->reads));
+    support->length=length;
+    for(size_t i=0u;i<length;i++) {
+        PrimeNeedReadDependency *read=&support->reads[i];
+        support->has_origins|=read->origin!=NULL;
+        prime_need_read_support_note(support,read);
+    }
+    return support;
+}
+
+static PrimeNeedReadSupport *prime_need_read_support_union(
+        PrimeNeedReadSupport *left,PrimeNeedReadSupport *right) {
+    if(!left) {prime_need_read_support_retain(right);return right;}
+    if(!right||left==right) {prime_need_read_support_retain(left);return left;}
+    PrimeNeedReadSupport *support=calloc(1u,sizeof(*support));
+    if(!support)return NULL;
+    atomic_init(&support->references,1u);
+    support->kind=PRIME_NEED_READ_SUPPORT_UNION;
+    support->left=left;support->right=right;
+    prime_need_read_support_retain(left);prime_need_read_support_retain(right);
+    support->kinds=(uint8_t)(left->kinds|right->kinds);
+    support->has_origins=left->has_origins||right->has_origins;
+    for(unsigned kind=0u;kind<3u;kind++) {
+        uint8_t bit=(uint8_t)(1u<<kind);
+        if(!(support->kinds&bit))continue;
+        if(!(left->kinds&bit)) {
+            support->minimum[kind]=right->minimum[kind];
+            support->maximum[kind]=right->maximum[kind];
+        } else if(!(right->kinds&bit)) {
+            support->minimum[kind]=left->minimum[kind];
+            support->maximum[kind]=left->maximum[kind];
+        } else {
+            support->minimum[kind]=left->minimum[kind]<right->minimum[kind]
+                ?left->minimum[kind]:right->minimum[kind];
+            support->maximum[kind]=left->maximum[kind]>right->maximum[kind]
+                ?left->maximum[kind]:right->maximum[kind];
+        }
+    }
+    return support;
+}
+
+static bool prime_need_read_support_may_hold(
+        const PrimeNeedReadSupport *support,const PrimeNeedReadDependency *read) {
+    unsigned kind=(unsigned)read->kind;
+    uint8_t bit=(uint8_t)(1u<<kind);
+    return support&&(support->kinds&bit)&&
+        read->key>=support->minimum[kind]&&read->key<=support->maximum[kind];
+}
+
+static CettaMatchCompletion prime_need_read_support_contains(
+        const PrimeNeedReadSupport *support,const PrimeNeedReadDependency *read) {
+    if(!prime_need_read_support_may_hold(support,read))return CETTA_MATCH_REFUTED;
+    const PrimeNeedReadSupport *local[64],**pending=local;
+    size_t length=1u,capacity=sizeof(local)/sizeof(*local);
+    pending[0]=support;
+    CettaMatchCompletion result=CETTA_MATCH_REFUTED;
+    while(length) {
+        const PrimeNeedReadSupport *node=pending[--length];
+        if(!prime_need_read_support_may_hold(node,read))continue;
+        if(node->kind==PRIME_NEED_READ_SUPPORT_LEAF) {
+            for(size_t i=0u;i<node->length;i++)
+                if(prime_need_read_dependency_same(&node->reads[i],read)) {
+                    result=CETTA_MATCH_MATCHED;goto done;
+                }
+            continue;
+        }
+        const PrimeNeedReadSupport *children[]={node->left,node->right};
+        for(size_t i=0u;i<2u;i++)if(prime_need_read_support_may_hold(children[i],read)) {
+            if(length==capacity) {
+                if(capacity>SIZE_MAX/2u||capacity*2u>SIZE_MAX/sizeof(*pending)) {
+                    result=CETTA_MATCH_INCOMPLETE;goto done;
+                }
+                size_t grown=capacity*2u;
+                const PrimeNeedReadSupport **next=malloc(grown*sizeof(*next));
+                if(!next) {result=CETTA_MATCH_INCOMPLETE;goto done;}
+                memcpy(next,pending,length*sizeof(*next));
+                if(pending!=local)free(pending);
+                pending=next;capacity=grown;
+            }
+            pending[length++]=children[i];
+        }
+    }
+done:
+    if(pending!=local)free(pending);
+    return result;
+}
+
+typedef CettaMatchCompletion (*PrimeNeedReadDependencyVisitor)(
+    const PrimeNeedReadDependency *,void *);
+
+static CettaMatchCompletion prime_need_read_support_visit(
+        const PrimeNeedReadSupport *support,
+        PrimeNeedReadDependencyVisitor visit,void *state) {
+    if(!support)return CETTA_MATCH_MATCHED;
+    const PrimeNeedReadSupport *local[64],**pending=local;
+    size_t length=1u,capacity=sizeof(local)/sizeof(*local);
+    pending[0]=support;
+    CettaMatchCompletion result=CETTA_MATCH_MATCHED;
+    while(length) {
+        const PrimeNeedReadSupport *node=pending[--length];
+        if(node->kind==PRIME_NEED_READ_SUPPORT_LEAF) {
+            for(size_t i=0u;i<node->length;i++) {
+                result=visit(&node->reads[i],state);
+                if(result!=CETTA_MATCH_MATCHED)goto done;
+            }
+            continue;
+        }
+        const PrimeNeedReadSupport *children[]={node->right,node->left};
+        for(size_t i=0u;i<2u;i++)if(children[i]) {
+            if(length==capacity) {
+                if(capacity>SIZE_MAX/2u||capacity*2u>SIZE_MAX/sizeof(*pending)) {
+                    result=CETTA_MATCH_INCOMPLETE;goto done;
+                }
+                size_t grown=capacity*2u;
+                const PrimeNeedReadSupport **next=malloc(grown*sizeof(*next));
+                if(!next) {result=CETTA_MATCH_INCOMPLETE;goto done;}
+                memcpy(next,pending,length*sizeof(*next));
+                if(pending!=local)free(pending);
+                pending=next;capacity=grown;
+            }
+            pending[length++]=children[i];
+        }
+    }
+done:
+    if(pending!=local)free(pending);
+    return result;
+}
+
+static PrimeNeedReadSupport *prime_need_read_capture_support_snapshot(
+        const PrimeNeedReadCapture *capture,bool *complete) {
+    *complete=false;
+    if(!capture)return NULL;
+    PrimeNeedReadSupport *local=capture->length
+        ?prime_need_read_support_leaf(capture->reads,capture->length):NULL;
+    if(capture->length&&!local)return NULL;
+    PrimeNeedReadSupport *support=local
+        ?prime_need_read_support_union(capture->support,local):capture->support;
+    if(!local)prime_need_read_support_retain(support);
+    prime_need_read_support_release(local);
+    if((capture->length||capture->support)&&!support)return NULL;
+    *complete=true;
+    return support;
+}
+
+static CettaMatchCompletion prime_need_read_capture_visit(
+        const PrimeNeedReadCapture *capture,
+        PrimeNeedReadDependencyVisitor visit,void *state) {
+    if(!capture||!visit)return CETTA_MATCH_INCOMPLETE;
+    for(size_t i=0u;i<capture->length;i++) {
+        CettaMatchCompletion result=visit(&capture->reads[i],state);
+        if(result!=CETTA_MATCH_MATCHED)return result;
+    }
+    return prime_need_read_support_visit(capture->support,visit,state);
+}
+
 PrimeNeedReadCapture *prime_need_read_capture_new(const PrimeNeedSnapshot *context,
                                                 const PrimeNeedSnapshot *entrance) {
     if (!context || !entrance || !prime_need_snapshot_present(context) ||
@@ -1645,14 +1923,30 @@ void prime_need_read_capture_free(PrimeNeedReadCapture *capture) {
     if (!capture) return;
     for (PrimeNeedReadScope *scope = g_prime_need_read_scope; scope; scope = scope->previous)
         assert(scope->capture != capture);
+    prime_need_read_support_release(capture->support);
     free(capture->reads);
     free(capture);
+}
+
+static void prime_need_read_support_storage(const void *raw,
+        CettaStorageCensus *census) {
+    const PrimeNeedReadSupport *support=raw;
+    if(!support||!cetta_storage_object(census,support,sizeof(*support),
+            CETTA_STORAGE_BLOCK))return;
+    cetta_storage_array(census,support->reads,support->length,
+        sizeof(*support->reads),0u);
+    if(support->left)cetta_storage_schedule(census,support->left,
+        prime_need_read_support_storage);
+    if(support->right)cetta_storage_schedule(census,support->right,
+        prime_need_read_support_storage);
 }
 
 void prime_need_read_capture_storage(const PrimeNeedReadCapture *capture,CettaStorageCensus *census) {
     if(!capture || !cetta_storage_object(census,capture,sizeof(*capture),CETTA_STORAGE_BLOCK)) return;
     cetta_storage_array(census,capture->reads,capture->capacity,sizeof(*capture->reads),0u);
     if(capture->length>capture->capacity) {cetta_storage_refuse(census,"NeedReadCaptureExtent");return;}
+    if(capture->support)cetta_storage_schedule(census,capture->support,
+        prime_need_read_support_storage);
     prime_need_snapshot_storage_census(&capture->context,census);
     prime_need_snapshot_storage_census(&capture->entrance,census);
 }
@@ -1661,21 +1955,46 @@ PrimeNeedReadCapture *prime_need_read_capture_copy(const PrimeNeedReadCapture *c
     if (!capture) return NULL;
     PrimeNeedReadCapture *copy = prime_need_read_capture_new(&capture->context, &capture->entrance);
     if (!copy) return NULL;
-    if (capture->length) {
-        if (capture->length > SIZE_MAX / sizeof(*copy->reads)) {
-            free(copy);
-            return NULL;
-        }
-        copy->reads = malloc(capture->length * sizeof(*copy->reads));
-        if (!copy->reads) {
-            free(copy);
-            return NULL;
-        }
-        memcpy(copy->reads, capture->reads, capture->length * sizeof(*copy->reads));
-    }
-    copy->length = copy->capacity = capture->length;
+    bool frozen=false;
+    copy->support=prime_need_read_capture_support_snapshot(capture,&frozen);
+    if(!frozen) {prime_need_read_capture_free(copy);return NULL;}
     copy->complete = capture->complete;
     return copy;
+}
+
+typedef struct {const PrimeNeedSnapshot *entrance;} PrimeNeedReadCaptureValidation;
+static CettaMatchCompletion prime_need_read_capture_validate_dependency(
+        const PrimeNeedReadDependency *read,void *raw) {
+    const PrimeNeedReadCaptureValidation *validation=raw;
+    uint64_t thunk=0u,update=0u;
+    return prime_need_capture_query(validation->entrance,read->kind,read->key,
+        read->origin,&thunk,&update) ? CETTA_MATCH_MATCHED : CETTA_MATCH_INCOMPLETE;
+}
+
+typedef struct {
+    AtomDeepCopySession *session;
+    PrimeNeedReadDependency *reads;
+    size_t length,capacity;
+} PrimeNeedReadCaptureCopy;
+
+static CettaMatchCompletion prime_need_read_capture_copy_dependency(
+        const PrimeNeedReadDependency *read,void *raw) {
+    PrimeNeedReadCaptureCopy *copy=raw;
+    if(copy->length==copy->capacity) {
+        size_t capacity=copy->capacity ? copy->capacity*2u : 8u;
+        if(capacity<=copy->capacity||capacity>SIZE_MAX/sizeof(*copy->reads))
+            return CETTA_MATCH_INCOMPLETE;
+        void *next=realloc(copy->reads,capacity*sizeof(*copy->reads));
+        if(!next)return CETTA_MATCH_INCOMPLETE;
+        copy->reads=next;copy->capacity=capacity;
+    }
+    PrimeNeedReadDependency image=*read;
+    if(image.origin) {
+        image.origin=atom_deep_copy_session_copy(copy->session,image.origin);
+        if(!image.origin)return CETTA_MATCH_INCOMPLETE;
+    }
+    copy->reads[copy->length++]=image;
+    return CETTA_MATCH_MATCHED;
 }
 
 PrimeNeedReadCapture *prime_need_read_capture_copy_with_session(
@@ -1687,39 +2006,35 @@ PrimeNeedReadCapture *prime_need_read_capture_copy_with_session(
         (!!capture->reads != !!capture->capacity) ||
         !prime_need_snapshot_present(&capture->context) ||
         !prime_need_snapshot_is_ancestor(&capture->context,&capture->entrance)) return NULL;
-    /* The read coordinates must describe the advertised entrance. Copying
-     * malformed support must not turn it into permission for another world. */
-    for(size_t i=0u;i<capture->length;i++) {
-        const PrimeNeedReadDependency *read=&capture->reads[i];
-        uint64_t thunk=0u,update=0u;
-        if (!prime_need_capture_query(&capture->entrance,read->kind,read->key,
-                read->origin,&thunk,&update) ||
-            thunk!=read->thunk_id || update!=read->update_id) return NULL;
-    }
+    /* Shared support stores coordinates, not one entrance's expected value.
+     * Every copy reinterprets those coordinates against its exact cuts. */
+    PrimeNeedReadCaptureValidation source_validation={&capture->entrance};
+    if(capture->complete&&prime_need_read_capture_visit(capture,
+            prime_need_read_capture_validate_dependency,&source_validation)
+            !=CETTA_MATCH_MATCHED)return NULL;
     PrimeNeedReadCapture *copy=calloc(1u,sizeof(*copy));
     if (!copy) return NULL;
     copy->context=capture->context;copy->entrance=capture->entrance;
-    copy->length=capture->length;copy->capacity=capture->capacity;
     copy->complete=capture->complete;
-    if (copy->capacity) {
-        copy->reads=malloc(copy->capacity*sizeof(*copy->reads));
-        if (!copy->reads) goto fail;
-        memcpy(copy->reads,capture->reads,copy->length*sizeof(*copy->reads));
-    }
     if (!prime_need_snapshot_copy_with_session(destination,session,&copy->context) ||
         !prime_need_snapshot_copy_with_session(destination,session,&copy->entrance) ||
         !prime_need_snapshot_is_ancestor(&copy->context,&copy->entrance)) goto fail;
-    for(size_t i=0u;i<copy->length;i++) {
-        PrimeNeedReadDependency *read=&copy->reads[i];
-        if (read->origin) {
-            read->origin=atom_deep_copy_session_copy(session,read->origin);
-            if (!read->origin) goto fail;
-        }
-        uint64_t thunk=0u,update=0u;
-        if (!prime_need_capture_query(&copy->entrance,read->kind,read->key,
-                read->origin,&thunk,&update) ||
-            thunk!=read->thunk_id || update!=read->update_id) goto fail;
+    PrimeNeedReadCaptureCopy support_copy={.session=session};
+    if(prime_need_read_capture_visit(capture,
+            prime_need_read_capture_copy_dependency,&support_copy)
+            !=CETTA_MATCH_MATCHED) {
+        free(support_copy.reads);goto fail;
     }
+    if(support_copy.length) {
+        copy->support=prime_need_read_support_leaf(
+            support_copy.reads,support_copy.length);
+        if(!copy->support) {free(support_copy.reads);goto fail;}
+    }
+    free(support_copy.reads);
+    PrimeNeedReadCaptureValidation image_validation={&copy->entrance};
+    if(copy->complete&&prime_need_read_capture_visit(copy,
+            prime_need_read_capture_validate_dependency,&image_validation)
+            !=CETTA_MATCH_MATCHED)goto fail;
     return copy;
 fail:
     prime_need_read_capture_free(copy);
@@ -1777,17 +2092,23 @@ static void prime_need_capture_observe(const PrimeNeedSnapshot *snapshot,
             capture->complete = false;
             continue;
         }
+        PrimeNeedReadDependency read = {.kind = kind, .key = key, .origin = origin};
         bool present = false;
         for (size_t i = 0u; i < capture->length; i++) {
-            const PrimeNeedReadDependency *read = &capture->reads[i];
-            if (read->kind == kind && read->key == key &&
-                (kind != PRIME_NEED_READ_IMPORT || atom_capture_identical(read->origin, origin))) {
+            if (prime_need_read_dependency_same(&capture->reads[i],&read)) {
                 present = true;
                 break;
             }
         }
+        if(!present&&capture->support) {
+            CettaMatchCompletion held=prime_need_read_support_contains(
+                capture->support,&read);
+            if(held==CETTA_MATCH_INCOMPLETE) {
+                capture->complete=false;continue;
+            }
+            present=held==CETTA_MATCH_MATCHED;
+        }
         if (present) continue;
-        PrimeNeedReadDependency read = {.kind = kind, .key = key, .origin = origin};
         if (!prime_need_capture_query(&capture->entrance, kind, key, origin,
                                       &read.thunk_id, &read.update_id)) {
             capture->complete = false;
@@ -1841,9 +2162,87 @@ static bool prime_need_import_has_earned_update(const PrimeNeedSnapshot *product
         earned.update_id == held.update_id;
 }
 
-CettaMatchCompletion prime_need_snapshot_import_production_checked(Arena *owner,
+static CettaMatchCompletion prime_need_import_propagate_one(
+        const PrimeNeedReadDependency *read,void *raw) {
+    prime_need_capture_observe(raw,read->kind,read->key,read->origin);
+    return CETTA_MATCH_MATCHED;
+}
+
+static void prime_need_import_propagate_support(
+        const PrimeNeedReadCapture *capture,
+        const PrimeNeedSnapshot *recipient) {
+    if (!g_prime_need_read_scope || g_prime_need_read_observing) return;
+    bool frozen=false;
+    PrimeNeedReadSupport *support=
+        prime_need_read_capture_support_snapshot(capture,&frozen);
+    /* Import coordinates carry Atom identity. Until their dedicated delta
+     * owner exists, retain the earlier per-capture transport for those rare
+     * dependencies instead of sharing a borrowed Atom pointer. */
+    if(frozen&&support&&support->has_origins) {
+        CettaMatchCompletion copied=prime_need_read_capture_visit(capture,
+            prime_need_import_propagate_one,(void *)recipient);
+        if(copied!=CETTA_MATCH_MATCHED)
+            for(PrimeNeedReadScope *scope=g_prime_need_read_scope;scope;
+                    scope=scope->resident_boundary ? NULL : scope->previous)
+                if(scope->capture)scope->capture->complete=false;
+        prime_need_read_support_release(support);
+        return;
+    }
+    bool previous=g_prime_need_read_observing;
+    g_prime_need_read_observing=true;
+    for(PrimeNeedReadScope *scope=g_prime_need_read_scope;scope;
+            scope=scope->resident_boundary ? NULL : scope->previous) {
+        PrimeNeedReadCapture *target=scope->capture;
+        if(!target||!target->complete)continue;
+        if(!frozen||!recipient||
+            !prime_need_snapshot_is_ancestor(&target->entrance,recipient)) {
+            target->complete=false;continue;
+        }
+        PrimeNeedReadSupport *joined=
+            prime_need_read_support_union(target->support,support);
+        if((target->support||support)&&!joined) {
+            target->complete=false;continue;
+        }
+        prime_need_read_support_release(target->support);
+        target->support=joined;
+    }
+    g_prime_need_read_observing=previous;
+    prime_need_read_support_release(support);
+}
+
+typedef struct {
+    const PrimeNeedReadCapture *capture;
+    const PrimeNeedSnapshot *production,*recipient;
+    uint64_t floor;
+} PrimeNeedImportReadCheck;
+
+static CettaMatchCompletion prime_need_import_check_read(
+        const PrimeNeedReadDependency *read,void *raw) {
+    PrimeNeedImportReadCheck *check=raw;
+    uint64_t expected_thunk=0u,expected_update=0u;
+    uint64_t actual_thunk=0u,actual_update=0u;
+    if(!prime_need_capture_query(&check->capture->entrance,read->kind,
+            read->key,read->origin,&expected_thunk,&expected_update)||
+        !prime_need_capture_query(check->recipient,read->kind,
+            read->key,read->origin,&actual_thunk,&actual_update))
+        return CETTA_MATCH_INCOMPLETE;
+    if(actual_thunk==expected_thunk&&actual_update==expected_update)
+        return CETTA_MATCH_MATCHED;
+    uint64_t earned_thunk=0u,earned_update=0u;
+    if(!prime_need_capture_query(check->production,read->kind,
+            read->key,read->origin,&earned_thunk,&earned_update))
+        return CETTA_MATCH_INCOMPLETE;
+    return actual_thunk==earned_thunk&&actual_update==earned_update&&
+        prime_need_import_has_earned_update(check->production,check->recipient,
+            check->floor,actual_thunk)
+        ?CETTA_MATCH_MATCHED:CETTA_MATCH_REFUTED;
+}
+
+static CettaMatchCompletion prime_need_snapshot_import_production_kernel(Arena *owner,
     const PrimeNeedReadCapture *capture, const PrimeNeedSnapshot *production,
-    uint64_t thunk_id, const PrimeNeedSnapshot *recipient, PrimeNeedSnapshot *out) {
+    uint64_t thunk_id, const PrimeNeedSnapshot *recipient, PrimeNeedSnapshot *out,
+    bool borrow_production,bool *borrowed) {
+    if(borrowed)*borrowed=false;
     if (!prime_need_owner_admissible(owner) || !capture || !capture->complete ||
         !production || !recipient || !out || !thunk_id)
         return CETTA_MATCH_INCOMPLETE;
@@ -1861,19 +2260,25 @@ CettaMatchCompletion prime_need_snapshot_import_production_checked(Arena *owner,
         (completed.cache_state != PRIME_NEED_CACHE_VALUE &&
          completed.cache_state != PRIME_NEED_CACHE_STABLE_FAULT)) return CETTA_MATCH_INCOMPLETE;
 
-    for (size_t i = 0u; i < capture->length; i++) {
-        const PrimeNeedReadDependency *read = &capture->reads[i];
-        uint64_t actual_thunk, actual_update;
-        if (!prime_need_capture_query(recipient, read->kind, read->key, read->origin,
-                                     &actual_thunk, &actual_update)) return CETTA_MATCH_INCOMPLETE;
-        if (actual_thunk == read->thunk_id && actual_update == read->update_id) continue;
-        uint64_t earned_thunk, earned_update;
-        if (!prime_need_capture_query(production, read->kind, read->key, read->origin,
-                                     &earned_thunk, &earned_update)) return CETTA_MATCH_INCOMPLETE;
-        if (actual_thunk != earned_thunk || actual_update != earned_update ||
-            !prime_need_import_has_earned_update(production, recipient, floor, actual_thunk))
-            return CETTA_MATCH_REFUTED;
+    /* With the identical entrance frontier there is no history to graft:
+     * PRODUCTION is already the checked descendant of RECIPIENT.  The
+     * borrowing host must retain its physical producer before publishing
+     * OUT. Generic imports keep the self-contained replay below. */
+    if(borrow_production&&borrowed&&
+        recipient->session_id==capture->entrance.session_id&&
+        recipient->top==capture->entrance.top) {
+        PrimeNeedSnapshot imported=*production;
+        if(imported.max_storage_key<recipient->max_storage_key)
+            imported.max_storage_key=recipient->max_storage_key;
+        prime_need_import_propagate_support(capture,recipient);
+        *out=imported;*borrowed=true;
+        return CETTA_MATCH_MATCHED;
     }
+
+    PrimeNeedImportReadCheck read_check={capture,production,recipient,floor};
+    CettaMatchCompletion reads=prime_need_read_capture_visit(
+        capture,prime_need_import_check_read,&read_check);
+    if(reads!=CETTA_MATCH_MATCHED)return reads;
 
     uint64_t extent = production->top->depth - floor;
     if (extent > SIZE_MAX / sizeof(const PrimeNeedFrame *)) return CETTA_MATCH_INCOMPLETE;
@@ -1937,13 +2342,25 @@ CettaMatchCompletion prime_need_snapshot_import_production_checked(Arena *owner,
     if (production->max_storage_key > imported.max_storage_key)
         imported.max_storage_key = production->max_storage_key;
     /* A nested production inherits the external support of reused rows. */
-    if (g_prime_need_read_scope && !g_prime_need_read_observing)
-        for (size_t i = 0u; i < capture->length; i++) {
-            PrimeNeedReadDependency read = capture->reads[i];
-            prime_need_capture_observe(recipient, read.kind, read.key, read.origin);
-        }
+    prime_need_import_propagate_support(capture,recipient);
     *out = imported;
     return CETTA_MATCH_MATCHED;
+}
+
+CettaMatchCompletion prime_need_snapshot_import_production_checked(Arena *owner,
+    const PrimeNeedReadCapture *capture, const PrimeNeedSnapshot *production,
+    uint64_t thunk_id, const PrimeNeedSnapshot *recipient, PrimeNeedSnapshot *out) {
+    return prime_need_snapshot_import_production_kernel(owner,capture,production,
+        thunk_id,recipient,out,false,NULL);
+}
+
+CettaMatchCompletion prime_need_snapshot_import_production_borrowed_checked(Arena *owner,
+    const PrimeNeedReadCapture *capture, const PrimeNeedSnapshot *production,
+    uint64_t thunk_id, const PrimeNeedSnapshot *recipient, PrimeNeedSnapshot *out,
+    bool *borrowed) {
+    if(!borrowed)return CETTA_MATCH_INCOMPLETE;
+    return prime_need_snapshot_import_production_kernel(owner,capture,production,
+        thunk_id,recipient,out,true,borrowed);
 }
 
 bool prime_need_snapshot_import_production(Arena *owner,
@@ -2428,7 +2845,7 @@ static const char prime_need_index_copy_kind;
 
 static bool prime_need_index_copy(AtomDeepCopySession *session,
     const PrimeNeedHeapIndexNode *source, const Arena *fallback,
-    unsigned level, const PrimeNeedHeapIndexNode **out) {
+    unsigned level,uint64_t prefix,const PrimeNeedHeapIndexNode **out) {
     if (!source) { *out = NULL; return true; }
     const Arena *owner = NULL;
     Arena *image_owner = NULL;
@@ -2436,7 +2853,11 @@ static bool prime_need_index_copy(AtomDeepCopySession *session,
         !atom_deep_copy_session_owner_of_span(session, source, sizeof(*source),
             fallback, &owner, &image_owner) || owner == image_owner ||
         source->child_count != prime_need_popcount16(source->child_mask) ||
-        (level == PRIME_NEED_HEAP_INDEX_LEVELS && source->child_count))
+        source->depth<level || source->depth>PRIME_NEED_HEAP_INDEX_LEVELS ||
+        !prime_need_heap_index_prefix_equal(source->key,prefix,level) ||
+        (source->depth==PRIME_NEED_HEAP_INDEX_LEVELS
+            ? source->child_count || !source->value
+            : source->child_count<2u || source->value))
         return false;
     size_t bytes = sizeof(*source) +
         (size_t)source->child_count * sizeof(*source->children);
@@ -2458,12 +2879,18 @@ static bool prime_need_index_copy(AtomDeepCopySession *session,
     image = prime_need_heap_index_node_alloc(image_owner, source->child_count);
     if (!image) return false;
     image->value = value;
+    image->key=source->key;image->depth=source->depth;
     image->child_mask = source->child_mask;
-    for (size_t i = 0u; i < source->child_count; i++) {
-        if (!source->children[i] || !prime_need_index_copy(session,
-                source->children[i], owner, level + 1u, &image->children[i]))
-            return false;
+    size_t ordinal=0u;
+    for(unsigned digit=0u;digit<16u;digit++)if(source->child_mask&(UINT16_C(1)<<digit)) {
+        unsigned shift=(PRIME_NEED_HEAP_INDEX_LEVELS-source->depth-1u)*PRIME_NEED_HEAP_INDEX_BITS_PER_LEVEL;
+        uint64_t child_prefix=(source->key&~(UINT64_C(0xf)<<shift))|((uint64_t)digit<<shift);
+        if(!source->children[ordinal] || !prime_need_index_copy(session,
+                source->children[ordinal],owner,source->depth+1u,child_prefix,
+                &image->children[ordinal]))return false;
+        ordinal++;
     }
+    if(!prime_need_heap_index_representative_valid(image))return false;
     if (!atom_deep_copy_session_object_record(session,
             &prime_need_index_copy_kind, source, image, bytes)) return false;
     *out = image;
@@ -2618,14 +3045,14 @@ bool prime_need_snapshot_copy_with_session(Arena *dst,
         PrimeNeedFrame *frame = atom_deep_copy_session_object_forwarded(session,
             &prime_need_frame_copy_kind, source, sizeof(*source));
         if (!frame || !prime_need_index_copy(session, source->heap_index,
-                source->owner, 0u, &frame->heap_index) ||
+                source->owner, 0u, 0u, &frame->heap_index) ||
             !prime_need_index_copy(session, source->lineage_index,
-                source->owner, 0u, &frame->lineage_index)) goto done;
+                source->owner, 0u, 0u, &frame->lineage_index)) goto done;
     }
     if (!prime_need_index_copy(session, snapshot->heap_index, snapshot->owner,
-            0u, &image.heap_index) ||
+            0u, 0u, &image.heap_index) ||
         !prime_need_index_copy(session, snapshot->lineage_index, snapshot->owner,
-            0u, &image.lineage_index)) goto done;
+            0u, 0u, &image.lineage_index)) goto done;
 #endif
     for (size_t i = count; i > 0u; i--) {
         const PrimeNeedFrame *source = path[i - 1u];
@@ -3037,12 +3464,20 @@ typedef struct {
     PrimeNeedReaderValue reader;
 } PrimeNeedReaderEntry;
 
+enum { PRIME_NEED_READER_PAGE_ENTRIES = 64u };
+typedef struct {
+    _Atomic size_t references;
+    size_t length;
+    PrimeNeedReaderEntry entries[PRIME_NEED_READER_PAGE_ENTRIES];
+} PrimeNeedReaderPage;
+
 struct PrimeNeedReaderContext {
     _Atomic size_t references;
     size_t length;
-    size_t capacity;
+    size_t page_count;
+    size_t page_capacity;
     PrimeNeedReaderLineage *lineage;
-    PrimeNeedReaderEntry entries[];
+    PrimeNeedReaderPage *pages[];
 };
 
 static void prime_need_reader_reference_retain(_Atomic size_t *references) {
@@ -3145,12 +3580,33 @@ void prime_need_reader_context_retain(PrimeNeedReaderContext *context) {
     if (context) prime_need_reader_reference_retain(&context->references);
 }
 
+static void prime_need_reader_page_retain(PrimeNeedReaderPage *page) {
+    if(page)prime_need_reader_reference_retain(&page->references);
+}
+
+static void prime_need_reader_page_release(PrimeNeedReaderPage *page) {
+    if(!page||!prime_need_reader_reference_release(&page->references))return;
+    for(size_t i=0u;i<page->length;i++) {
+        PrimeNeedReaderValue value=page->entries[i].reader;
+        if(value.value)value.operations->release(value.value);
+    }
+    free(page);
+}
+
+static const PrimeNeedReaderEntry *prime_need_reader_context_entry_at(
+        const PrimeNeedReaderContext *context,size_t index) {
+    if(!context||index>=context->length)return NULL;
+    size_t page=index/PRIME_NEED_READER_PAGE_ENTRIES;
+    size_t offset=index%PRIME_NEED_READER_PAGE_ENTRIES;
+    return page<context->page_count&&context->pages[page]&&
+        offset<context->pages[page]->length
+        ?&context->pages[page]->entries[offset]:NULL;
+}
+
 void prime_need_reader_context_release(PrimeNeedReaderContext *context) {
     if (!context || !prime_need_reader_reference_release(&context->references)) return;
-    for (size_t i=0u;i<context->length;i++) {
-        PrimeNeedReaderValue value=context->entries[i].reader;
-        if (value.value) value.operations->release(value.value);
-    }
+    for(size_t i=0u;i<context->page_count;i++)
+        prime_need_reader_page_release(context->pages[i]);
     prime_need_reader_lineage_release(context->lineage);
     free(context);
 }
@@ -3158,10 +3614,19 @@ void prime_need_reader_context_release(PrimeNeedReaderContext *context) {
 bool prime_need_reader_context_lookup(const PrimeNeedReaderContext *context,
     uint64_t key, PrimeNeedReaderValue *out) {
     if (!context || !key || !out) return false;
-    for (size_t i=0u;i<context->length;i++) {
-        if (context->entries[i].key>key) break;
-        if (context->entries[i].key==key && context->entries[i].reader.value) {
-            *out=context->entries[i].reader;
+    size_t low=0u,high=context->length;
+    while(low<high) {
+        size_t middle=low+(high-low)/2u;
+        const PrimeNeedReaderEntry *entry=
+            prime_need_reader_context_entry_at(context,middle);
+        if(!entry)return false;
+        if(entry->key<key)low=middle+1u;else high=middle;
+    }
+    if(low<context->length) {
+        const PrimeNeedReaderEntry *entry=
+            prime_need_reader_context_entry_at(context,low);
+        if(entry&&entry->key==key&&entry->reader.value) {
+            *out=entry->reader;
             return true;
         }
     }
@@ -3172,7 +3637,9 @@ CettaMatchCompletion prime_need_reader_context_visit(const PrimeNeedReaderContex
     CettaMatchCompletion (*visit)(uint64_t,const PrimeNeedReaderValue *,void *),void *state) {
     if (!visit) return CETTA_MATCH_INCOMPLETE;
     for (size_t i=0u;context && i<context->length;i++) {
-        const PrimeNeedReaderEntry *entry=&context->entries[i];
+        const PrimeNeedReaderEntry *entry=
+            prime_need_reader_context_entry_at(context,i);
+        if(!entry)return CETTA_MATCH_INCOMPLETE;
         if (!entry->reader.value) continue;
         CettaMatchCompletion result=visit(entry->key,&entry->reader,state);
         if (result!=CETTA_MATCH_MATCHED) return result;
@@ -3186,10 +3653,13 @@ static bool prime_need_reader_value_same(PrimeNeedReaderValue a, PrimeNeedReader
 
 static PrimeNeedReaderContext *prime_need_reader_context_new(size_t capacity,
     PrimeNeedReaderLineage *left, PrimeNeedReaderLineage *right) {
-    if (capacity>(SIZE_MAX-sizeof(PrimeNeedReaderContext))/sizeof(PrimeNeedReaderEntry)) return NULL;
-    PrimeNeedReaderContext *context=malloc(sizeof(*context)+capacity*sizeof(*context->entries));
+    size_t pages=capacity/PRIME_NEED_READER_PAGE_ENTRIES+
+        (capacity%PRIME_NEED_READER_PAGE_ENTRIES!=0u);
+    if(pages>(SIZE_MAX-sizeof(PrimeNeedReaderContext))/sizeof(*((PrimeNeedReaderContext *)0)->pages))
+        return NULL;
+    PrimeNeedReaderContext *context=calloc(1u,sizeof(*context)+pages*sizeof(*context->pages));
     if (!context) return NULL;
-    *context=(PrimeNeedReaderContext){.references=1u,.capacity=capacity};
+    *context=(PrimeNeedReaderContext){.references=1u,.page_capacity=pages};
     context->lineage=prime_need_reader_lineage_new(left,right);
     if (!context->lineage) {free(context);return NULL;}
     return context;
@@ -3197,9 +3667,47 @@ static PrimeNeedReaderContext *prime_need_reader_context_new(size_t capacity,
 
 static bool prime_need_reader_context_append(PrimeNeedReaderContext *context,
     PrimeNeedReaderEntry entry) {
-    if (entry.reader.value && !entry.reader.operations->retain(entry.reader.value)) return false;
-    context->entries[context->length++]=entry;
+    if(!context||context->length>=
+        context->page_capacity*PRIME_NEED_READER_PAGE_ENTRIES)return false;
+    size_t page_index=context->length/PRIME_NEED_READER_PAGE_ENTRIES;
+    if(page_index==context->page_count) {
+        PrimeNeedReaderPage *page=calloc(1u,sizeof(*page));
+        if(!page)return false;
+        atomic_init(&page->references,1u);
+        context->pages[context->page_count++]=page;
+    }
+    PrimeNeedReaderPage *page=context->pages[page_index];
+    if(!page||page->length>=PRIME_NEED_READER_PAGE_ENTRIES||
+        (entry.reader.value&&!entry.reader.operations->retain(entry.reader.value)))return false;
+    page->entries[page->length++]=entry;
+    context->length++;
     return true;
+}
+
+static bool prime_need_reader_context_shape_valid(
+        const PrimeNeedReaderContext *context) {
+    if(!context)return true;
+    size_t expected=context->length/PRIME_NEED_READER_PAGE_ENTRIES+
+        (context->length%PRIME_NEED_READER_PAGE_ENTRIES!=0u);
+    if(context->page_count!=expected||context->page_count>context->page_capacity||
+        context->page_capacity>(SIZE_MAX-sizeof(*context))/sizeof(*context->pages))
+        return false;
+    size_t remaining=context->length;
+    for(size_t i=0u;i<context->page_count;i++) {
+        size_t length=remaining<PRIME_NEED_READER_PAGE_ENTRIES
+            ?remaining:PRIME_NEED_READER_PAGE_ENTRIES;
+        if(!context->pages[i]||context->pages[i]->length!=length||
+            !atomic_load_explicit(&context->pages[i]->references,memory_order_relaxed))
+            return false;
+        remaining-=length;
+    }
+    return remaining==0u;
+}
+
+static size_t prime_need_reader_context_bytes(
+        const PrimeNeedReaderContext *context) {
+    return context&&prime_need_reader_context_shape_valid(context)
+        ?sizeof(*context)+context->page_capacity*sizeof(*context->pages):0u;
 }
 
 static void prime_need_reader_context_replace(PrimeNeedReaderContext **out,
@@ -3421,9 +3929,8 @@ PrimeNeedReaderContext *prime_need_reader_context_copy_lookup(
     const PrimeNeedReaderContext *source,const AtomDeepCopySession *session) {
     if (!atom_deep_copy_session_private_destination(session) ||
         prime_need_reader_preparation_failed(session) ||
-        !source || source->length>source->capacity ||
-        source->capacity>(SIZE_MAX-sizeof(*source))/sizeof(*source->entries)) return NULL;
-    size_t bytes=sizeof(*source)+source->capacity*sizeof(*source->entries);
+        !source || !prime_need_reader_context_shape_valid(source)) return NULL;
+    size_t bytes=prime_need_reader_context_bytes(source);
     return prime_need_reader_copy_image(session,&prime_need_reader_context_copy_kind,source,bytes);
 }
 
@@ -3433,29 +3940,35 @@ static CettaMatchCompletion prime_need_reader_context_copy_mapped(
     if (!out || !atom_deep_copy_session_private_destination(session) ||
         prime_need_reader_preparation_failed(session)) return CETTA_MATCH_INCOMPLETE;
     if (!source) return prime_need_reader_context_share(NULL,out);
-    if (source->length>source->capacity || !source->lineage ||
-        !atomic_load_explicit(&source->references,memory_order_relaxed) ||
-        source->capacity>(SIZE_MAX-sizeof(*source))/sizeof(*source->entries))
+    if (!prime_need_reader_context_shape_valid(source)||!source->lineage ||
+        !atomic_load_explicit(&source->references,memory_order_relaxed))
         return CETTA_MATCH_INCOMPLETE;
-    size_t bytes=sizeof(*source)+source->capacity*sizeof(*source->entries);
+    size_t bytes=prime_need_reader_context_bytes(source);
     PrimeNeedReaderContext *known=prime_need_reader_context_copy_lookup(source,session);
     if (known) return prime_need_reader_context_share(known,out);
     for (size_t i=0u;i<source->length;i++) {
+        const PrimeNeedReaderEntry *entry=prime_need_reader_context_entry_at(source,i);
         PrimeNeedReaderValue image;
-        if (!source->entries[i].key ||
-            (i && source->entries[i-1u].key>=source->entries[i].key) ||
-            !prime_need_reader_copy_value(session,source->entries[i].reader,&image))
+        const PrimeNeedReaderEntry *previous=i
+            ?prime_need_reader_context_entry_at(source,i-1u):NULL;
+        if (!entry||!entry->key ||
+            (previous&&previous->key>=entry->key) ||
+            !prime_need_reader_copy_value(session,entry->reader,&image))
             return CETTA_MATCH_INCOMPLETE;
     }
     PrimeNeedReaderLineage *lineage=prime_need_reader_lineage_copy(source->lineage,session);
     if (!lineage) return CETTA_MATCH_INCOMPLETE;
-    PrimeNeedReaderContext *image=malloc(bytes);
+    PrimeNeedReaderContext *image=calloc(1u,bytes);
     if (!image) return CETTA_MATCH_INCOMPLETE;
-    *image=(PrimeNeedReaderContext){.references=1u,.capacity=source->capacity,.lineage=lineage};
+    *image=(PrimeNeedReaderContext){.references=1u,
+        .page_capacity=source->page_capacity,.lineage=lineage};
     prime_need_reader_reference_retain(&lineage->references);
     bool ready=true;
     for (size_t i=0u;ready && i<source->length;i++) {
-        PrimeNeedReaderEntry entry=source->entries[i];
+        const PrimeNeedReaderEntry *source_entry=
+            prime_need_reader_context_entry_at(source,i);
+        if(!source_entry){ready=false;break;}
+        PrimeNeedReaderEntry entry=*source_entry;
         ready=prime_need_reader_copy_value(session,entry.reader,&entry.reader) &&
             prime_need_reader_context_append(image,entry);
     }
@@ -3487,15 +4000,19 @@ CettaMatchCompletion prime_need_reader_context_prepare_copy_with_session(
         prime_need_reader_preparation_failed(session) ||
         (source && (!prepare || !source->lineage ||
          !atomic_load_explicit(&source->references,memory_order_relaxed) ||
-         source->length>source->capacity ||
-         source->capacity>(SIZE_MAX-sizeof(*source))/sizeof(*source->entries))))
+         !prime_need_reader_context_shape_valid(source))))
         return prime_need_reader_preparation_refused(session);
     if (!source || prime_need_reader_context_copy_lookup(source,session))
         return prime_need_reader_context_copy_mapped(source,session,out);
     for (size_t i=0u;i<source->length;i++) {
-        PrimeNeedReaderEntry entry=source->entries[i];
+        const PrimeNeedReaderEntry *source_entry=
+            prime_need_reader_context_entry_at(source,i);
+        const PrimeNeedReaderEntry *previous=i
+            ?prime_need_reader_context_entry_at(source,i-1u):NULL;
+        if(!source_entry)return prime_need_reader_preparation_refused(session);
+        PrimeNeedReaderEntry entry=*source_entry;
         const PrimeNeedReaderValueOps *ops=entry.reader.operations;
-        if (!entry.key || (i && source->entries[i-1u].key>=entry.key) ||
+        if (!entry.key || (previous&&previous->key>=entry.key) ||
             (!entry.reader.value && ops) ||
             (entry.reader.value && (!ops || !ops->retain || !ops->release ||
              !ops->copy_kind || !ops->copy_size))) return prime_need_reader_preparation_refused(session);
@@ -3520,13 +4037,16 @@ CettaMatchCompletion prime_need_reader_context_prepare_copy_with_session(
     }
     CettaMatchCompletion result=CETTA_MATCH_INCOMPLETE;
     for (size_t i=0u;i<source->length;i++) {
-        PrimeNeedReaderValue value=source->entries[i].reader,image={0};
+        const PrimeNeedReaderEntry *entry=
+            prime_need_reader_context_entry_at(source,i);
+        if(!entry)goto failed;
+        PrimeNeedReaderValue value=entry->reader,image={0};
         if (prime_need_reader_copy_value(session,value,&image)) continue;
         const PrimeNeedReaderValueOps *ops=value.operations;
         if (atom_deep_copy_session_object_original(session,ops->copy_kind,value.value,ops->copy_size) ||
             !ops->retain(value.value)) goto failed;
-        PrimeNeedReaderPreparedPair *entry=&inventory->entries[inventory->length++];
-        *entry=(PrimeNeedReaderPreparedPair){.source=value};
+        PrimeNeedReaderPreparedPair *prepared=&inventory->entries[inventory->length++];
+        *prepared=(PrimeNeedReaderPreparedPair){.source=value};
         /* Failure outputs are unspecified and do not transfer a share. */
         result=prepare(state,&value,&image);
         if (result!=CETTA_MATCH_MATCHED) goto failed;
@@ -3539,7 +4059,7 @@ CettaMatchCompletion prime_need_reader_context_prepare_copy_with_session(
                 image.operations->release(image.value);
             goto failed;
         }
-        entry->image=image;
+        prepared->image=image;
     }
     result=prime_need_reader_context_copy_mapped(source,session,out);
     if (result==CETTA_MATCH_MATCHED) return result;
@@ -3552,22 +4072,75 @@ CettaMatchCompletion prime_need_reader_context_update(const PrimeNeedReaderConte
     uint64_t key, const PrimeNeedReaderValue *value, PrimeNeedReaderContext **out) {
     if (!key || !out || (value && (!value->value || !value->operations ||
             !value->operations->retain || !value->operations->release))) return CETTA_MATCH_INCOMPLETE;
-    size_t length=base?base->length:0u, position=0u;
-    while (position<length && base->entries[position].key<key) position++;
-    bool found=position<length && base->entries[position].key==key;
+    if(base&&!prime_need_reader_context_shape_valid(base))return CETTA_MATCH_INCOMPLETE;
+    size_t length=base?base->length:0u,low=0u,high=length;
+    while(low<high) {
+        size_t middle=low+(high-low)/2u;
+        const PrimeNeedReaderEntry *entry=prime_need_reader_context_entry_at(base,middle);
+        if(!entry)return CETTA_MATCH_INCOMPLETE;
+        if(entry->key<key)low=middle+1u;else high=middle;
+    }
+    size_t position=low;
+    const PrimeNeedReaderEntry *existing=
+        prime_need_reader_context_entry_at(base,position);
+    bool found=existing&&existing->key==key;
     PrimeNeedReaderValue selected=value?*value:(PrimeNeedReaderValue){0};
     if ((!found && !value) || (found && prime_need_reader_value_same(
-            base->entries[position].reader,selected))) return prime_need_reader_context_share(base,out);
+            existing->reader,selected))) return prime_need_reader_context_share(base,out);
     if (!found && length==SIZE_MAX) return CETTA_MATCH_INCOMPLETE;
     PrimeNeedReaderContext *next=prime_need_reader_context_new(length+!found,
         base?base->lineage:NULL,NULL);
     if (!next) return CETTA_MATCH_INCOMPLETE;
-    for (size_t i=0u;i<length+!found;i++) {
-        PrimeNeedReaderEntry entry;
-        if (i==position) entry=(PrimeNeedReaderEntry){.key=key,.reader=selected};
-        else entry=base->entries[i-(i>position && !found)];
-        if (!prime_need_reader_context_append(next,entry)) {
-            prime_need_reader_context_release(next);return CETTA_MATCH_INCOMPLETE;
+    /* Appends and replacements share every unaffected immutable page. */
+    if(found||position==length) {
+        size_t changed=position/PRIME_NEED_READER_PAGE_ENTRIES;
+        size_t required=length+!found;
+        size_t page_count=required/PRIME_NEED_READER_PAGE_ENTRIES+
+            (required%PRIME_NEED_READER_PAGE_ENTRIES!=0u);
+        bool ready=true;
+        for(size_t page_index=0u;ready&&page_index<page_count;page_index++) {
+            if(page_index!=changed) {
+                PrimeNeedReaderPage *page=base->pages[page_index];
+                prime_need_reader_page_retain(page);
+                next->pages[page_index]=page;
+                next->page_count=page_index+1u;
+                continue;
+            }
+            PrimeNeedReaderPage *page=calloc(1u,sizeof(*page));
+            if(!page){ready=false;break;}
+            atomic_init(&page->references,1u);
+            PrimeNeedReaderPage *old=base&&page_index<base->page_count
+                ?base->pages[page_index]:NULL;
+            size_t old_length=old?old->length:0u;
+            for(size_t offset=0u;ready&&offset<old_length;offset++) {
+                PrimeNeedReaderEntry entry=old->entries[offset];
+                if(found&&page_index*PRIME_NEED_READER_PAGE_ENTRIES+offset==position)
+                    entry.reader=selected;
+                if(entry.reader.value&&
+                    !entry.reader.operations->retain(entry.reader.value))ready=false;
+                else page->entries[page->length++]=entry;
+            }
+            if(ready&&!found) {
+                PrimeNeedReaderEntry entry={.key=key,.reader=selected};
+                if(entry.reader.value&&
+                    !entry.reader.operations->retain(entry.reader.value))ready=false;
+                else page->entries[page->length++]=entry;
+            }
+            if(!ready){prime_need_reader_page_release(page);break;}
+            next->pages[page_index]=page;
+            next->page_count=page_index+1u;
+        }
+        if(!ready) {prime_need_reader_context_release(next);return CETTA_MATCH_INCOMPLETE;}
+        next->length=required;next->page_count=page_count;
+    } else {
+        for (size_t i=0u;i<length+1u;i++) {
+            const PrimeNeedReaderEntry *source=i==position?NULL:
+                prime_need_reader_context_entry_at(base,i-(i>position));
+            PrimeNeedReaderEntry entry=source?*source:
+                (PrimeNeedReaderEntry){.key=key,.reader=selected};
+            if (!prime_need_reader_context_append(next,entry)) {
+                prime_need_reader_context_release(next);return CETTA_MATCH_INCOMPLETE;
+            }
         }
     }
     prime_need_reader_context_replace(out,next);
@@ -3578,39 +4151,68 @@ CettaMatchCompletion prime_need_reader_context_clear_if(const PrimeNeedReaderCon
         CettaMatchCompletion (*should_clear)(uint64_t,const PrimeNeedReaderValue *,void *,bool *),
         void *state,PrimeNeedReaderContext **out) {
     if (!should_clear || !out) return CETTA_MATCH_INCOMPLETE;
-    PrimeNeedReaderContext *next=NULL;
+    if(!base)return prime_need_reader_context_share(NULL,out);
+    if(!prime_need_reader_context_shape_valid(base))return CETTA_MATCH_INCOMPLETE;
+    uint64_t *clear=NULL;
+    bool changed=false;
     for (size_t i=0u;base && i<base->length;i++) {
-        PrimeNeedReaderEntry entry=base->entries[i];
-        bool clear=false;
-        if (entry.reader.value) {
-            CettaMatchCompletion result=should_clear(entry.key,&entry.reader,state,&clear);
+        const PrimeNeedReaderEntry *entry=prime_need_reader_context_entry_at(base,i);
+        if(!entry){free(clear);return CETTA_MATCH_INCOMPLETE;}
+        bool remove=false;
+        if (entry->reader.value) {
+            CettaMatchCompletion result=should_clear(entry->key,&entry->reader,state,&remove);
             if (result!=CETTA_MATCH_MATCHED) {
-                prime_need_reader_context_release(next);return result;
+                free(clear);return result;
             }
         }
-        if (clear && !next) {
-            next=prime_need_reader_context_new(base->length,base->lineage,NULL);
-            if (!next) return CETTA_MATCH_INCOMPLETE;
-            for (size_t prefix=0u;prefix<i;prefix++) {
-                if (!prime_need_reader_context_append(next,base->entries[prefix])) {
-                    prime_need_reader_context_release(next);return CETTA_MATCH_INCOMPLETE;
-                }
+        if(remove) {
+            if(!clear) {
+                clear=calloc(base->page_count,sizeof(*clear));
+                if(!clear)return CETTA_MATCH_INCOMPLETE;
             }
-        }
-        if (next) {
-            if (clear) entry.reader=(PrimeNeedReaderValue){0};
-            if (!prime_need_reader_context_append(next,entry)) {
-                prime_need_reader_context_release(next);return CETTA_MATCH_INCOMPLETE;
-            }
+            clear[i/PRIME_NEED_READER_PAGE_ENTRIES]|=
+                UINT64_C(1)<<(i%PRIME_NEED_READER_PAGE_ENTRIES);
+            changed=true;
         }
     }
-    if (!next) return prime_need_reader_context_share(base,out);
+    if(!changed){free(clear);return prime_need_reader_context_share(base,out);}
+    PrimeNeedReaderContext *next=prime_need_reader_context_new(base->length,base->lineage,NULL);
+    if(!next){free(clear);return CETTA_MATCH_INCOMPLETE;}
+    bool ready=true;
+    for(size_t page_index=0u;ready&&page_index<base->page_count;page_index++) {
+        PrimeNeedReaderPage *page=base->pages[page_index];
+        if(!clear[page_index]) {
+            prime_need_reader_page_retain(page);
+            next->pages[page_index]=page;
+            next->page_count=page_index+1u;
+            continue;
+        }
+        PrimeNeedReaderPage *copy=calloc(1u,sizeof(*copy));
+        if(!copy){ready=false;break;}
+        atomic_init(&copy->references,1u);
+        for(size_t offset=0u;ready&&offset<page->length;offset++) {
+            PrimeNeedReaderEntry entry=page->entries[offset];
+            if(clear[page_index]&(UINT64_C(1)<<offset))
+                entry.reader=(PrimeNeedReaderValue){0};
+            if(entry.reader.value&&!entry.reader.operations->retain(entry.reader.value))
+                ready=false;
+            else copy->entries[copy->length++]=entry;
+        }
+        if(!ready){prime_need_reader_page_release(copy);break;}
+        next->pages[page_index]=copy;next->page_count=page_index+1u;
+    }
+    free(clear);
+    if(!ready){prime_need_reader_context_release(next);return CETTA_MATCH_INCOMPLETE;}
+    next->length=base->length;
     prime_need_reader_context_replace(out,next);
     return CETTA_MATCH_MATCHED;
 }
 
 bool prime_need_reader_context_values_absent(const PrimeNeedReaderContext *context) {
-    for(size_t i=0u;context && i<context->length;i++) if(context->entries[i].reader.value) return false;
+    for(size_t i=0u;context && i<context->length;i++) {
+        const PrimeNeedReaderEntry *entry=prime_need_reader_context_entry_at(context,i);
+        if(!entry||entry->reader.value)return false;
+    }
     return true;
 }
 
@@ -3622,7 +4224,9 @@ static bool prime_need_reader_value_lives_in(const PrimeNeedReaderValue *value,c
 CettaMatchCompletion prime_need_reader_context_can_promote(const PrimeNeedReaderContext *context,
     const PrimeNeedSnapshot *world,const Arena *arena) {
     for(size_t i=0u;context && i<context->length;i++) {
-        const PrimeNeedReaderValue *value=&context->entries[i].reader;
+        const PrimeNeedReaderEntry *entry=prime_need_reader_context_entry_at(context,i);
+        if(!entry)return CETTA_MATCH_INCOMPLETE;
+        const PrimeNeedReaderValue *value=&entry->reader;
         if(!value->value) continue;
         if(prime_need_reader_value_lives_in(value,arena)) continue;
         if(!value->operations || !value->operations->settled) return CETTA_MATCH_REFUTED;
@@ -3676,7 +4280,9 @@ CettaMatchCompletion prime_need_reader_context_merge(const PrimeNeedReaderContex
     if (ancestor==CETTA_MATCH_INCOMPLETE) return ancestor;
     size_t a=0u,b=0u;
     while (a<left->length && b<right->length) {
-        const PrimeNeedReaderEntry *x=&left->entries[a],*y=&right->entries[b];
+        const PrimeNeedReaderEntry *x=prime_need_reader_context_entry_at(left,a),
+            *y=prime_need_reader_context_entry_at(right,b);
+        if(!x||!y)return CETTA_MATCH_INCOMPLETE;
         if (x->key<y->key) a++;
         else if (y->key<x->key) b++;
         else {if (!prime_need_reader_value_same(x->reader,y->reader)) return CETTA_MATCH_REFUTED;a++;b++;}
@@ -3688,11 +4294,16 @@ CettaMatchCompletion prime_need_reader_context_merge(const PrimeNeedReaderContex
     a=b=0u;
     while (a<left->length || b<right->length) {
         PrimeNeedReaderEntry entry;
-        if (b==right->length || (a<left->length && left->entries[a].key<right->entries[b].key))
-            entry=left->entries[a++];
-        else if (a==left->length || right->entries[b].key<left->entries[a].key)
-            entry=right->entries[b++];
-        else {entry=left->entries[a++];b++;}
+        const PrimeNeedReaderEntry *x=a<left->length
+            ?prime_need_reader_context_entry_at(left,a):NULL;
+        const PrimeNeedReaderEntry *y=b<right->length
+            ?prime_need_reader_context_entry_at(right,b):NULL;
+        if((a<left->length&&!x)||(b<right->length&&!y)) {
+            prime_need_reader_context_release(next);return CETTA_MATCH_INCOMPLETE;
+        }
+        if (!y || (x && x->key<y->key)) entry=*x,a++;
+        else if (!x || y->key<x->key) entry=*y,b++;
+        else {entry=*x;a++;b++;}
         if (!prime_need_reader_context_append(next,entry)) {
             prime_need_reader_context_release(next);return CETTA_MATCH_INCOMPLETE;
         }
@@ -3704,9 +4315,13 @@ CettaMatchCompletion prime_need_reader_context_merge(const PrimeNeedReaderContex
 static const PrimeNeedReaderEntry *prime_need_reader_entry(
         const PrimeNeedReaderContext *context,uint64_t key,size_t *position) {
     if (!context) return NULL;
-    while (*position<context->length && context->entries[*position].key<key) (*position)++;
-    return *position<context->length && context->entries[*position].key==key
-        ? &context->entries[*position] : NULL;
+    const PrimeNeedReaderEntry *entry=NULL;
+    while (*position<context->length) {
+        entry=prime_need_reader_context_entry_at(context,*position);
+        if(!entry||entry->key>=key)break;
+        (*position)++;
+    }
+    return entry&&entry->key==key?entry:NULL;
 }
 static bool prime_need_reader_entry_same(const PrimeNeedReaderEntry *a,
     const PrimeNeedReaderEntry *b) {
@@ -3734,8 +4349,10 @@ CettaMatchCompletion prime_need_reader_context_import(const PrimeNeedReaderConte
     bool changed=false;
     size_t entrance_position=0u,recipient_position=0u;
     for (size_t i=0u;i<production->length;i++) {
-        const PrimeNeedReaderEntry *p=&production->entries[i],
-            *e=prime_need_reader_entry(entrance,p->key,&entrance_position);
+        const PrimeNeedReaderEntry *p=prime_need_reader_context_entry_at(production,i);
+        if(!p)return CETTA_MATCH_INCOMPLETE;
+        const PrimeNeedReaderEntry *e=
+            prime_need_reader_entry(entrance,p->key,&entrance_position);
         if (prime_need_reader_entry_same(e,p)) continue;
         changed=true;
         const PrimeNeedReaderEntry *r=prime_need_reader_entry(recipient,p->key,&recipient_position);
@@ -3756,13 +4373,20 @@ CettaMatchCompletion prime_need_reader_context_import(const PrimeNeedReaderConte
     entrance_position=0u;
     while (a<length || b<production->length) {
         PrimeNeedReaderEntry entry;
-        if (b==production->length || (a<length && recipient->entries[a].key<production->entries[b].key))
-            entry=recipient->entries[a++];
+        const PrimeNeedReaderEntry *recipient_entry=a<length
+            ?prime_need_reader_context_entry_at(recipient,a):NULL;
+        const PrimeNeedReaderEntry *production_entry=b<production->length
+            ?prime_need_reader_context_entry_at(production,b):NULL;
+        if((a<length&&!recipient_entry)||(b<production->length&&!production_entry)) {
+            prime_need_reader_context_release(next);return CETTA_MATCH_INCOMPLETE;
+        }
+        if (!production_entry || (recipient_entry&&recipient_entry->key<production_entry->key))
+            entry=*recipient_entry,a++;
         else {
-            entry=production->entries[b++];
+            entry=*production_entry;b++;
             bool delta=!prime_need_reader_entry_same(&entry,prime_need_reader_entry(entrance,entry.key,&entrance_position));
-            if (a<length && recipient->entries[a].key==entry.key) {
-                if (!delta) entry=recipient->entries[a];
+            if (recipient_entry&&recipient_entry->key==entry.key) {
+                if (!delta) entry=*recipient_entry;
                 a++;
             } else if (!delta) continue;
         }
@@ -3784,21 +4408,27 @@ static void prime_need_reader_lineage_storage(const void *raw, CettaStorageCensu
 }
 
 void prime_need_reader_context_storage(const PrimeNeedReaderContext *context, CettaStorageCensus *census) {
-    if (!context || !cetta_storage_object(census,context,
-            sizeof(*context)+context->capacity*sizeof(*context->entries),CETTA_STORAGE_BLOCK)) return;
+    size_t bytes=prime_need_reader_context_bytes(context);
+    if (!bytes||!cetta_storage_object(census,context,bytes,CETTA_STORAGE_BLOCK)) return;
     if (context->lineage) cetta_storage_schedule(census,context->lineage,prime_need_reader_lineage_storage);
-    for (size_t i=0u;i<context->length;i++) {
-        PrimeNeedReaderValue value=context->entries[i].reader;
-        if (!value.value) continue;
-        if (!value.operations->storage) {cetta_storage_refuse(census,"ReaderContextStorage");return;}
-        value.operations->storage(value.value,census);
+    for(size_t page_index=0u;page_index<context->page_count;page_index++) {
+        PrimeNeedReaderPage *page=context->pages[page_index];
+        if(!page||!cetta_storage_object(census,page,sizeof(*page),CETTA_STORAGE_BLOCK))continue;
+        for(size_t i=0u;i<page->length;i++) {
+            PrimeNeedReaderValue value=page->entries[i].reader;
+            if (!value.value) continue;
+            if (!value.operations->storage) {cetta_storage_refuse(census,"ReaderContextStorage");return;}
+            value.operations->storage(value.value,census);
+        }
     }
 }
 
 bool prime_need_reader_context_payloads(const PrimeNeedReaderContext *context,
     AtomTreePredicate atoms, bool (*cells)(const StateCell *, void *), void *state) {
     for (size_t i=0u;context && i<context->length;i++) {
-        PrimeNeedReaderValue value=context->entries[i].reader;
+        const PrimeNeedReaderEntry *entry=prime_need_reader_context_entry_at(context,i);
+        if(!entry)return false;
+        PrimeNeedReaderValue value=entry->reader;
         if (value.value && (!value.operations->payloads ||
                 !value.operations->payloads(value.value,atoms,cells,state))) return false;
     }
@@ -7791,20 +8421,24 @@ static bool prime_need_compare_index_walk(const PrimeNeedHeapIndexNode *node,
     const CettaCheckpointCompare *read,bool right,size_t *leaves) {
     if(!node||depth>PRIME_NEED_HEAP_INDEX_LEVELS||
         !prime_need_compare_index_tick(read,"need.index_node",1u,right))return false;
-    if(node->child_count!=prime_need_popcount16(node->child_mask))return false;
-    if(depth==PRIME_NEED_HEAP_INDEX_LEVELS) {
+    if(node->child_count!=prime_need_popcount16(node->child_mask) ||
+       node->depth<depth || node->depth>PRIME_NEED_HEAP_INDEX_LEVELS ||
+       !prime_need_heap_index_prefix_equal(node->key,key,depth))return false;
+    if(node->depth==PRIME_NEED_HEAP_INDEX_LEVELS) {
         bool ok=true;
-        const PrimeNeedFrame *expected=prime_need_compare_path_key(top,key,lineage,read,right,&ok);
+        const PrimeNeedFrame *expected=prime_need_compare_path_key(top,node->key,lineage,read,right,&ok);
         if(!ok||node->child_mask||!expected||node->value!=expected||*leaves==SIZE_MAX)return false;
         (*leaves)++;return true;
     }
-    if(node->value||!node->child_count)return false;
+    if(node->value||node->child_count<2u)return false;
     size_t ordinal=0u;
     for(unsigned digit=0u;digit<16u;digit++)if(node->child_mask&(UINT16_C(1)<<digit)) {
-        if(!prime_need_compare_index_walk(node->children[ordinal++],top,depth+1u,
-            (key<<4u)|digit,lineage,read,right,leaves))return false;
+        unsigned shift=(PRIME_NEED_HEAP_INDEX_LEVELS-node->depth-1u)*PRIME_NEED_HEAP_INDEX_BITS_PER_LEVEL;
+        uint64_t child_prefix=(node->key&~(UINT64_C(0xf)<<shift))|((uint64_t)digit<<shift);
+        if(!prime_need_compare_index_walk(node->children[ordinal++],top,node->depth+1u,
+            child_prefix,lineage,read,right,leaves))return false;
     }
-    return ordinal==node->child_count;
+    return ordinal==node->child_count && prime_need_heap_index_representative_valid(node);
 }
 static bool prime_need_compare_index_valid(const PrimeNeedHeapIndexNode *root,
     const PrimeNeedFrame *top,bool lineage,const CettaCheckpointCompare *read,bool right,

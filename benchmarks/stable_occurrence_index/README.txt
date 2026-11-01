@@ -1,7 +1,7 @@
 Stable occurrence index realization tournament
 ==============================================
 
-This benchmark compares three physical realizations of one semantic object:
+This benchmark compares four physical realizations of one semantic object:
 an ordered family of uniquely identified occurrences, contracted by an
 occurrence mask and observed through one or more payload indexes.
 
@@ -53,6 +53,9 @@ Run with:
   benchmarks/stable_occurrence_index/run.sh
 
 An optional odd trial count from 1 through 31 may be supplied.
+Run the script from the repository root; it builds a standalone C benchmark,
+so it does not require a CeTTa binary. CC selects the C compiler. One trial is
+useful for a correctness smoke check; retain repeated trials for timing.
 
 Interpretation boundary
 -----------------------

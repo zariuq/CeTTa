@@ -4,6 +4,10 @@
 This checks source identity and selected default observations. It does not
 establish complete conformance. check_petta_stable_corpus.py records broader
 diagnostics; it is not a specification oracle either.
+
+A reference may be a checkout or a source snapshot. Both must have exactly
+the pinned executable source files and hashes. A checkout also needs the
+pinned Git revision; a snapshot does not inherit an enclosing repository.
 """
 import argparse
 import hashlib
@@ -20,17 +24,28 @@ def digest(path):
 
 
 def check_reference(reference, contract):
-    revision = subprocess.check_output(
-        ['git', '-C', str(reference), 'rev-parse', 'HEAD'], text=True).strip()
-    if revision != contract['reference_commit']:
-        raise ValueError('reference checkout is not the pinned corrected stable revision')
+    reference = reference.resolve()
+    repository = subprocess.run(
+        ['git', '-C', str(reference), 'rev-parse', '--show-toplevel'],
+        capture_output=True, text=True)
+    checkout = (repository.returncode == 0 and
+                Path(repository.stdout.strip()).resolve() == reference)
+    revision = None
+    if checkout:
+        revision = subprocess.check_output(
+            ['git', '-C', str(reference), 'rev-parse', 'HEAD'], text=True).strip()
+        if revision != contract['reference_commit']:
+            raise ValueError('reference checkout is not the pinned corrected stable revision')
+    actual = {}
     for relative, expected in contract['reference_files'].items():
-        if digest(reference / relative) != expected:
+        actual[relative] = digest(reference / relative)
+        if actual[relative] != expected:
             raise ValueError('reference source changed: ' + relative)
-    tracked = subprocess.check_output(
-        ['git', '-C', str(reference), 'ls-files'], text=True).splitlines()
-    members = {p for p in tracked if p.startswith(('src/', 'lib/', 'examples/', 'tests/'))
-               or p in ('run.sh', 'run.py', 'test.sh')}
+    members = {p.relative_to(reference).as_posix()
+               for name in ('src', 'lib', 'examples', 'tests')
+               for p in (reference / name).rglob('*') if p.is_file()}
+    members.update(name for name in ('run.sh', 'run.py', 'test.sh')
+                   if (reference / name).is_file())
     if members != set(contract['reference_files']):
         raise ValueError('reference source membership changed')
     examples = {Path(p).name for p in members
@@ -41,7 +56,16 @@ def check_reference(reference, contract):
                 and p.count('/') == 1}
     if examples != expected:
         raise ValueError('reference example membership changed')
-    return len(expected)
+    return {
+        'schema': 'cetta.petta-reference-identity.v1',
+        'reference_commit': contract['reference_commit'],
+        'source_kind': 'checkout' if checkout else 'snapshot',
+        'checkout_commit': revision,
+        'source_manifest_sha256': hashlib.sha256(
+            json.dumps(actual, sort_keys=True, separators=(',', ':')).encode()).hexdigest(),
+        'files': len(actual),
+        'examples': len(expected),
+    }
 
 
 def check_libraries(contract):
@@ -95,7 +119,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--reference', type=Path)
     parser.add_argument('--cetta', type=Path)
+    parser.add_argument('--identity-json', action='store_true',
+                        help='print the validated reference identity as JSON')
     args = parser.parse_args()
+    if args.identity_json and args.reference is None:
+        parser.error('--identity-json requires --reference')
     contract = json.loads((ROOT / 'langdef/petta/reference.json').read_text())
     if contract['schema'] != 'cetta-petta-reference-v2':
         raise ValueError('unknown reference schema')
@@ -114,12 +142,16 @@ def main():
         if 'contract_probe' in observation and not (ROOT / observation['contract_probe']).is_file():
             raise ValueError('missing contract probe: ' + observation['id'])
     check_libraries(contract)
+    identity = None
     if args.reference:
-        count = check_reference(args.reference.resolve(), contract)
-        if count != contract['example_count']:
+        identity = check_reference(args.reference.resolve(), contract)
+        if identity['examples'] != contract['example_count']:
             raise ValueError('reference example count changed')
     if args.cetta:
         check_default(args.cetta.resolve())
+    if args.identity_json:
+        print(json.dumps(identity, sort_keys=True))
+        return
     print('PASS: corrected stable PeTTa source, libraries and selected default observations are pinned')
 
 

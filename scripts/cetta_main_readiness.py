@@ -55,6 +55,35 @@ def consolidation_baseline(root: Path) -> dict[str, Any]:
     return load_frozen_baseline(root, Path(receipt), digest, CONSOLIDATION_BASELINE_COMMIT)
 
 
+def petta_oracle_identity(root: Path, reference: Path) -> dict[str, Any]:
+    result = subprocess.run(
+        [sys.executable, str(root / 'tools/check_petta_release_reference.py'),
+         '--reference', str(reference), '--identity-json'],
+        cwd=root, capture_output=True, text=True, check=False,
+    )
+    if result.returncode:
+        raise RuntimeError('pinned PeTTa oracle validation failed: ' + result.stderr.strip())
+    try:
+        identity = json.loads(result.stdout)
+        contract = json.loads((root / 'langdef/petta/reference.json').read_text())
+        expected_manifest = hashlib.sha256(json.dumps(
+            contract['reference_files'], sort_keys=True, separators=(',', ':')
+        ).encode()).hexdigest()
+        if (identity['schema'] != 'cetta.petta-reference-identity.v1' or
+                identity['reference_commit'] != contract['reference_commit'] or
+                identity['files'] != len(contract['reference_files']) or
+                identity['examples'] != contract['example_count'] or
+                identity['source_manifest_sha256'] != expected_manifest or
+                identity['source_kind'] not in ('checkout', 'snapshot') or
+                identity['checkout_commit'] != (
+                    contract['reference_commit']
+                    if identity['source_kind'] == 'checkout' else None)):
+            raise ValueError('reference identity differs from the pinned contract')
+    except (ValueError, KeyError, TypeError) as exc:
+        raise RuntimeError('invalid pinned PeTTa oracle identity') from exc
+    return identity
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run CeTTa runtime main-readiness gates with recorded evidence."
@@ -184,6 +213,9 @@ def artifact_identity(
     return {
         "schema": EVIDENCE_SCHEMA,
         "tier": tier,
+        "petta_oracle": petta_oracle_identity(
+            root, Path(os.environ['PETTA_ORACLE_ROOT']).expanduser().resolve()
+        ) if tier == 'exhaustive' else None,
         "consolidation_baseline": {
             key: value for key, value in consolidation_baseline(root).items()
             if key != "binary"
@@ -206,7 +238,8 @@ def artifact_identity(
 
 def source_identity(artifact: dict[str, Any]) -> dict[str, Any]:
     """Require the same semantic inputs throughout a tier's execution."""
-    return {**calibration_subject(artifact), "tier": artifact["tier"]}
+    return {**calibration_subject(artifact), "tier": artifact["tier"],
+            "petta_oracle": artifact.get("petta_oracle")}
 
 
 def ledger_record_path(root: Path, tier: str, key: str) -> Path:
@@ -635,7 +668,8 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 2
-    if args.tier == "exhaustive" and os.environ.get("BENCH_ALLOW_HEAVY") != "1":
+    if (args.tier == "exhaustive" and not args.dry_run and
+            os.environ.get("BENCH_ALLOW_HEAVY") != "1"):
         print(
             "FAIL: set BENCH_ALLOW_HEAVY=1 to authorize the complete heavy matrix",
             file=sys.stderr,
@@ -752,14 +786,10 @@ def main() -> int:
         "mettapedia_commit": capture(
             ["git", "-C", str(mettapedia_root), "rev-parse", "HEAD"], root
         ),
+        "petta_oracle": initial_artifact['petta_oracle'],
         "petta_oracle_commit": (
-            capture(
-                ["git", "-C", str(petta_oracle_root), "rev-parse", "HEAD"],
-                root,
-            )
-            if petta_oracle_root is not None
-            else None
-        ),
+            initial_artifact['petta_oracle']['reference_commit']
+            if initial_artifact['petta_oracle'] is not None else None),
         "performance_baseline": {
             key: value
             for key, value in performance_baseline.items()
@@ -826,9 +856,16 @@ def main() -> int:
         if source.is_file():
             (evidence / name).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, evidence / name)
-    final_artifact = artifact_identity(
-        root, mettapedia_root, args.tier, manifest, anchors
-    )
+    try:
+        final_artifact = artifact_identity(
+            root, mettapedia_root, args.tier, manifest, anchors
+        )
+    except (RuntimeError, ValueError, OSError) as exc:
+        summary['status'] = 'failed'
+        summary['failure'] = str(exc)
+        summary_path.write_text(json.dumps(summary, indent=2) + '\n')
+        print('FAIL: ' + str(exc), file=sys.stderr)
+        return 1
     if source_identity(final_artifact) != source_identity(initial_artifact):
         summary["status"] = "failed"
         summary["failure"] = (

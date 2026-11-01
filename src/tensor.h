@@ -127,6 +127,12 @@ CettaTensorStatus cetta_tensor_gather(const CettaTensor *tensor,
  * dimensions and scalar bits are unchanged, including zero-width rows. */
 CettaTensorStatus cetta_tensor_gather_rows(const CettaTensor *tensor,
     const CettaTensor *rows, CettaTensor **out);
+/* Pointwise selection from already evaluated tensors of identical shape.
+ * The condition must be Bool and branch dtypes must agree. Missing condition
+ * or selected-branch support stays missing; the unselected branch contributes
+ * nothing. Copies scalar bits without arithmetic or implicit broadcasting. */
+CettaTensorStatus cetta_tensor_where(const CettaTensor *condition,
+    const CettaTensor *when_true, const CettaTensor *when_false, CettaTensor **out);
 /* Inclusive sum along one axis, in increasing axis position. Each fiber
  * starts with its first present value; missing positions stay missing. The
  * accumulator has the input dtype, including per-step f32 rounding and
