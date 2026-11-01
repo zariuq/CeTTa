@@ -4815,6 +4815,15 @@ test-all: test-constraint-curriculum
 test-constraint-curriculum: $(VALUE_WORKER_BIN)
 	$(PYTHON) tests/support/check_constraint_curriculum.py $(VALUE_WORKER_BIN)
 
+.PHONY: test-db-concurrency bench-db-concurrency
+test-db-concurrency: $(VALUE_WORKER_BIN)
+	$(PYTHON) tests/support/bench_db_concurrency.py $(VALUE_WORKER_BIN) \
+		--facts 1024 --operations 5 --clients 1 2 \
+		--output runtime/db-concurrency-smoke.json
+bench-db-concurrency: $(VALUE_WORKER_BIN)
+	$(PYTHON) tests/support/bench_db_concurrency.py $(VALUE_WORKER_BIN) \
+		--output runtime/db-concurrency.json
+
 .PHONY: test-petta-bounded-removal
 test-all: test-petta-bounded-removal
 test-petta-bounded-removal: $(BIN)
