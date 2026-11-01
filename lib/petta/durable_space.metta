@@ -19,6 +19,33 @@
   (case (durable-space:metadata $collection)
     (((KnowledgeAddressV1 $key) (store:space-view $view $key)) ($error $error))))
 
+; Ordinary local Space edits over one captured database revision. The
+; workspace owns its data independently of the view handle; publishing it
+; requires that same view and collection, checked before extracting edits.
+(: durable-space:workspace (-> %Undefined% Atom %Undefined%))
+(= (durable-space:workspace $view $collection)
+  (case (durable-space:metadata $collection)
+    (((KnowledgeAddressV1 $key) (store:space-workspace $view $key)) ($error $error))))
+
+(: durable-space:commit-workspace (-> %Undefined% %Undefined% Atom Atom %Undefined% %Undefined%))
+(= (durable-space:commit-workspace $owner $view $collection $request $workspace)
+  (case (durable-space:metadata $collection)
+    (((KnowledgeAddressV1 $key)
+      (case (store:space-changes $workspace $view $key)
+        (((StoreSpaceChanges $added $removed)
+          (let* (($deletes (map-atom $removed $reference (SpaceDeleteV1 $reference)))
+                 ($inserts (durable-space:workspace-inserts $added 0))
+                 ($changes (list:append $deletes $inserts)))
+            (durable-space:commit $owner $view $collection $request $changes)))
+         ($error $error))))
+     ($error $error))))
+(: durable-space:workspace-inserts (-> Atom Number %Undefined%))
+(= (durable-space:workspace-inserts $rows $index)
+  (if (== $rows ()) ()
+    (let* (($row (car-atom $rows)) ($tail (cdr-atom $rows))
+           ($rest (durable-space:workspace-inserts $tail (+ $index 1))))
+      (cons-atom (SpaceInsertV1 $index $row) $rest))))
+
 (= (durable-space:cursor $view $collection $pattern $template)
   (case (durable-space:metadata $collection)
     (((KnowledgeAddressV1 $key) (store:space-query-open $view $key $pattern $template)) ($error $error))))

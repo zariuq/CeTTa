@@ -2261,6 +2261,11 @@ static bool space_occurrence_source_admit(Space *space, Atom *pattern,
     cursor->read = space_read_token(space);
     cursor->prefix_epoch = cursor->read.prefix_epoch;
     cursor->source_ops = ops;
+    if (space->lifetime.ops && !space_read_view_capture(space, &cursor->logical_reads)) {
+        cursor->source_failure = space_owner_is_current(space)
+            ? SPACE_OCCURRENCE_CURSOR_CAPACITY : SPACE_OCCURRENCE_CURSOR_INVALIDATED;
+        return true;
+    }
     SpaceOccurrenceCursorStep failure = SPACE_OCCURRENCE_CURSOR_CAPACITY;
     if (!backend->occurrence_open(space, pattern, &cursor->source_state, &failure) || !cursor->source_state) {
         if (cursor->source_state) ops->free(cursor->source_state);
@@ -2288,6 +2293,8 @@ static bool space_occurrence_cursor_admit(Space *s,
  * coordinates and pin them together, after the access path is ready. */
 static bool space_occurrence_cursor_capture(
         Space *space, SpaceOccurrenceCursor *cursor) {
+    if (space->lifetime.ops && !space_read_view_capture(space, &cursor->logical_reads))
+        return false;
     cursor->read = space_read_token(space);
     cursor->prefix_epoch = space->prefix_epoch;
     cursor->ceiling = space->native.len;
@@ -2419,6 +2426,10 @@ static bool space_occurrence_cursor_copy(
         dst->prefix_epoch = src->prefix_epoch;
         dst->source_ops = src->source_ops;
         dst->source_failure = src->source_failure;
+        if (src->logical_reads.root.space &&
+                !space_read_view_clone(&src->logical_reads, &dst->logical_reads)) {
+            space_occurrence_cursor_release(dst); return false;
+        }
         if (src->source_failure) {
             if (rewind) { space_occurrence_cursor_release(dst); return false; }
             return true;
@@ -2464,6 +2475,10 @@ static bool space_occurrence_cursor_copy(
     dst->heap_len = 0u;
     dst->occurrences = NULL;
     dst->pinned = false;
+    dst->logical_reads = (SpaceReadView){0};
+    if (src->logical_reads.root.space &&
+            !space_read_view_clone(&src->logical_reads, &dst->logical_reads))
+        goto failed;
     if (rewind) {
         dst->full_next = 0u;
         dst->flat_next = 0u;
@@ -2535,6 +2550,10 @@ bool space_occurrence_cursor_select(const SpaceOccurrenceCursor *captured,
     out->read = captured->read;
     out->prefix_epoch = captured->prefix_epoch;
     out->source_ops = captured->source_ops;
+    if (captured->logical_reads.root.space &&
+            !space_read_view_clone(&captured->logical_reads, &out->logical_reads)) {
+        space_occurrence_cursor_release(out); return false;
+    }
     SpaceOccurrenceCursorStep failure = SPACE_OCCURRENCE_CURSOR_CAPACITY;
     if (!captured->source_ops->select(captured->source_state, pattern, &out->source_state, &failure) || !out->source_state) {
         if (out->source_state) out->source_ops->free(out->source_state);
@@ -7157,6 +7176,7 @@ static uint64_t space_ledger_heap_in_use(void) {
 }
 
 void space_init_with_universe(Space *s, TermUniverse *universe) {
+    s->lifetime = (SpaceOwner){0};
     if (!s)
         return;
     atomic_init(&s->read_stamp,0u);
@@ -7573,6 +7593,29 @@ void space_init(Space *s) {
     space_init_with_universe(s, NULL);
 }
 
+bool space_owner_is_current(const Space *space) {
+    return space && space_instance_id(space) &&
+        (!space->lifetime.ops || (space->lifetime.owner &&
+            space->lifetime.ops->retain && space->lifetime.ops->release &&
+            (!space->lifetime.ops->current || space->lifetime.ops->current(space->lifetime.owner))));
+}
+
+bool space_retain_in_arena(const void *raw, Arena *arena) {
+    const Space *space = raw;
+    if (!space || !space->lifetime.ops) return true;
+    SpaceOwner hold = space->lifetime;
+    if (!hold.owner || !hold.ops->retain || !hold.ops->release) return false;
+    return arena_retain_owner_with_storage(arena, hold.owner,
+        hold.ops->retain, hold.ops->release, hold.ops->storage);
+}
+
+static void space_owner_retain(SpaceOwner owner) {
+    if (owner.ops) owner.ops->retain(owner.owner);
+}
+static void space_owner_release(SpaceOwner owner) {
+    if (owner.ops) owner.ops->release(owner.owner);
+}
+
 bool space_init_module_own_view(Space *s, Space *module) {
     CETTA_SCOPED_SHARED_TRANSITION(transition);
     if (!s || !module || s == module || module->module_own_view)
@@ -7720,6 +7763,8 @@ static void eq_bucket_storage_census(const EqBucket *b, CettaStorageCensus *c) {
 
 void space_storage_census(const Space *s, CettaStorageCensus *c) {
     if (!s || !cetta_storage_object(c, s, 0u, CETTA_STORAGE_VISITED)) return;
+    if (s->lifetime.ops && s->lifetime.ops->storage)
+        s->lifetime.ops->storage(s->lifetime.owner, c);
     cetta_storage_array(c, s->native.atom_ids, s->native.cap,
         cetta_atom_id_storage_width_bytes_from_bits(s->native.atom_id_width_bits), 0u);
     cetta_storage_array(c, s->native.id_present, s->native.id_present_bits / 8u, 1u, 0u);
@@ -7787,7 +7832,7 @@ void space_occurrence_cursor_storage_census(const SpaceOccurrenceCursor *cursor,
     cetta_storage_array(c,cursor->leaf_pos,cursor->node_len,sizeof(*cursor->leaf_pos),0u);
     cetta_storage_array(c,cursor->flat,cursor->flat_capacity,sizeof(*cursor->flat),0u);
     cetta_storage_array(c,cursor->heap,cursor->node_len,sizeof(*cursor->heap),0u);
-    if(cursor->logical_scan)space_read_view_storage_census(&cursor->logical_reads,c);
+    if(cursor->logical_reads.root.space)space_read_view_storage_census(&cursor->logical_reads,c);
     const SpacePinnedOccurrences *view=cursor->occurrences;
     if(view && cetta_storage_object(c,view,sizeof(*view),CETTA_STORAGE_BLOCK) && !view->space) {
         cetta_storage_array(c,view->atom_ids,view->len,
@@ -7868,6 +7913,9 @@ bool space_read_token_matches_live_space(SpaceReadToken token,
 
 void space_read_view_release(SpaceReadView *view) {
     if (!view) return;
+    for (size_t i = 0; i < view->base_count; ++i)
+        space_owner_release(view->base_watches[i].lifetime);
+    space_owner_release(view->root_watch.lifetime);
     free(view->bases);
     free(view->base_watches);
     *view = (SpaceReadView){0};
@@ -7877,7 +7925,7 @@ bool space_read_view_capture(const Space *space, SpaceReadView *out) {
     CETTA_SCOPED_SHARED_TRANSITION(transition);
     if (!out) return false;
     *out = (SpaceReadView){0};
-    if (!space) return false;
+    if (!space_owner_is_current(space)) return false;
     const Space *slow = space->overlay_base;
     const Space *fast = slow;
     while (fast && fast->overlay_base) {
@@ -7887,6 +7935,7 @@ bool space_read_view_capture(const Space *space, SpaceReadView *out) {
     }
     size_t count = 0u;
     for (const Space *base = space->overlay_base; base; base = base->overlay_base) {
+        if (!space_owner_is_current(base)) return false;
         if (count == SIZE_MAX / sizeof(*out->bases)) return false;
         count++;
     }
@@ -7898,11 +7947,13 @@ bool space_read_view_capture(const Space *space, SpaceReadView *out) {
     }
     out->root = space_read_token(space);
     out->root_watch=(SpaceReadWatch){&space->read_stamp,
-        atomic_load_explicit(&space->read_stamp,memory_order_acquire)};
+        atomic_load_explicit(&space->read_stamp,memory_order_acquire), space->lifetime};
+    space_owner_retain(out->root_watch.lifetime);
     for (const Space *base = space->overlay_base; base; base = base->overlay_base) {
         out->bases[out->base_count]=space_read_token(base);
         out->base_watches[out->base_count++]=(SpaceReadWatch){&base->read_stamp,
-            atomic_load_explicit(&base->read_stamp,memory_order_acquire)};
+            atomic_load_explicit(&base->read_stamp,memory_order_acquire), base->lifetime};
+        space_owner_retain(base->lifetime);
     }
     return true;
 }
@@ -7924,12 +7975,16 @@ bool space_read_view_clone(const SpaceReadView *source, SpaceReadView *out) {
     }
     out->root = source->root;
     out->root_watch=source->root_watch;
+    space_owner_retain(out->root_watch.lifetime);
     out->base_count = source->base_count;
+    for (size_t i = 0; i < out->base_count; ++i)
+        space_owner_retain(out->base_watches[i].lifetime);
     return true;
 }
 
 bool space_read_view_is_current(const SpaceReadView *view) {
     if (!view || !view->root.space || !view->root.instance_id ||
+        !space_owner_is_current(view->root.space) ||
         view->root.base_dependency_epoch==UINT64_MAX ||
         view->root_watch.stamp!=&view->root.space->read_stamp ||
         !space_read_stamp_valid(view->root_watch.expected) ||
@@ -11758,12 +11813,12 @@ void registry_read_view_leave(RegistryReadView *previous) {
 Space *resolve_space(Registry *r, Atom *ref) {
     /* Grounded space atom → direct pointer */
     if (ref->kind == ATOM_GROUNDED && ref->ground.gkind == GV_SPACE)
-        return (Space *)ref->ground.ptr;
+        return space_owner_is_current(ref->ground.ptr) ? (Space *)ref->ground.ptr : NULL;
     /* Symbol like &self → registry lookup */
     if (ref->kind == ATOM_SYMBOL || ref->kind == ATOM_EXPR) {
         Atom *val = registry_lookup_ref(r, ref);
         if (val && val->kind == ATOM_GROUNDED && val->ground.gkind == GV_SPACE)
-            return (Space *)val->ground.ptr;
+            return space_owner_is_current(val->ground.ptr) ? (Space *)val->ground.ptr : NULL;
     }
     return NULL;
 }
@@ -12049,6 +12104,22 @@ CettaMatchCompletion space_remove_compared(Space *s, Atom *atom,
 
 CettaMatchCompletion space_remove_checked(Space *s, Atom *atom) {
     return space_remove_kernel(s, atom, space_representation_equal, atom_alpha_eq_checked, true);
+}
+
+CettaMatchCompletion space_remove_all_compared(Space *s, Atom *pattern,
+        SpaceAtomComparison matches, CettaCount *removed) {
+    CETTA_SCOPED_SHARED_TRANSITION(publication);
+    if (removed) *removed = 0;
+    s = space_mutation_target(s);
+    if (!s || !pattern || !matches || s->match_backend.kind != SPACE_ENGINE_SOURCE)
+        return CETTA_MATCH_INCOMPLETE;
+    const SpaceSourceEditOps *edits = s->match_backend.ops->source_edits;
+    if (!edits || !edits->remove_all) return CETTA_MATCH_INCOMPLETE;
+    CettaCount count = 0;
+    CettaMatchCompletion result = edits->remove_all(s, pattern, matches, &count);
+    if (result == CETTA_MATCH_MATCHED && count) space_note_external_backend_mutation(s);
+    if (result != CETTA_MATCH_INCOMPLETE && removed) *removed = count;
+    return result;
 }
 
 bool space_remove(Space *s, Atom *atom) {

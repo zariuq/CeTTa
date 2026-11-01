@@ -54,6 +54,17 @@ static CettaMatchCompletion selects_rel(Atom *a, Atom *b) {
     return a && a->kind == ATOM_EXPR && a->expr.len && atom_is_symbol(a->expr.elems[0], "rel")
         ? CETTA_MATCH_MATCHED : CETTA_MATCH_REFUTED;
 }
+static CettaMatchCompletion selects_edge_a(Atom *a, Atom *b) {
+    (void)b;
+    return a && a->kind == ATOM_EXPR && a->expr.len == 3 &&
+        atom_is_symbol(a->expr.elems[0], "edge") && atom_is_symbol(a->expr.elems[1], "a")
+        ? CETTA_MATCH_MATCHED : CETTA_MATCH_REFUTED;
+}
+static CettaMatchCompletion incomplete_after_a(Atom *a, Atom *b) {
+    if (selects_edge_a(a, b) == CETTA_MATCH_MATCHED) return CETTA_MATCH_MATCHED;
+    return a && a->kind == ATOM_EXPR && a->expr.len == 3 && atom_is_symbol(a->expr.elems[0], "edge")
+        ? CETTA_MATCH_INCOMPLETE : CETTA_MATCH_REFUTED;
+}
 static unsigned paused_polls;
 static bool paused_clone(const void *source, bool rewind, void **out) {
     (void)source; (void)rewind; *out = malloc(1); return *out != NULL;
@@ -218,6 +229,20 @@ int main(int argc, char **argv) {
     assert(query(&generated, &answers, "(match &self (rel a a) true)", NULL) == 0);
     space_free(&generated); space_free(&oracle);
 
+    Space filtered; space_init(&filtered); Space *filter_base = malloc(sizeof(*filter_base)); assert(filter_base); space_init(filter_base);
+    assert(cetta_disk_space_capture(filter_base, view, bytes("facts/"), 5) == CETTA_STORE_OK);
+    assert(space_source_overlay_init_owned(&filtered, filter_base, 4096));
+    assert(space_admit_atom(&filtered, &data, parse(&data, "(edge a local)")));
+    CettaCount affected = 99; uint64_t filter_revision = filtered.revision;
+    assert(space_remove_all_compared(&filtered, parse(&data, "filter"), incomplete_after_a, &affected) == CETTA_MATCH_INCOMPLETE);
+    assert(!affected && filtered.revision == filter_revision && space_length64(&filtered) == 6);
+    assert(space_source_overlay_changes(&filtered, &answers, &added, &removed));
+    assert(added->expr.len == 1 && !removed->expr.len);
+    assert(space_remove_all_compared(&filtered, parse(&data, "filter"), selects_edge_a, &affected) == CETTA_MATCH_MATCHED);
+    assert(affected == 3 && space_length64(&filtered) == 3);
+    assert(space_source_overlay_changes(&filtered, &answers, &added, &removed));
+    assert(!added->expr.len && removed->expr.len == 2); space_free(&filtered);
+
     /* Existing local-overlay callers use the same adapter and retain no
      * borrowed source owner, index descriptor, or byte-policy default. */
     Space ordinary_base, ordinary_overlay; space_init(&ordinary_base);
@@ -254,6 +279,9 @@ int main(int argc, char **argv) {
     assert(space_source_overlay_init_owned(&pending, paused, 4096));
     assert(space_remove_checked(&pending, parse(&data, "(edge a b)")) == CETTA_MATCH_INCOMPLETE);
     assert(paused_polls == 1 && space_length64(&pending) == 1);
+    paused_polls = 0;
+    assert(space_remove_all_compared(&pending, parse(&data, "filter"), selects_edge_a, &affected) == CETTA_MATCH_INCOMPLETE);
+    assert(paused_polls == 1 && !affected && space_length64(&pending) == 1);
     assert(space_source_overlay_changes(&pending, &answers, &added, &removed));
     assert(!added->expr.len && !removed->expr.len); space_free(&pending);
     cetta_disk_store_view_close(view); cetta_disk_store_view_close(empty); cetta_disk_store_close(store);

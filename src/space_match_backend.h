@@ -73,6 +73,10 @@ typedef struct SpaceSourceEditOps {
     CettaMatchCompletion (*remove)(Space *space, Atom *atom,
         CettaMatchCompletion (*equal)(Atom *, Atom *),
         CettaMatchCompletion (*alpha_equal)(Atom *, Atom *), bool representation);
+    /* Atomic filtering under a stable, checked caller-supplied predicate.
+     * INCOMPLETE removes nothing; no positional coordinate is implied. */
+    CettaMatchCompletion (*remove_all)(Space *space, Atom *pattern,
+        CettaMatchCompletion (*matches)(Atom *, Atom *), CettaCount *removed);
 } SpaceSourceEditOps;
 
 /* A batch accelerator is never the mutation authority.  UNSUPPORTED asks the

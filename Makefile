@@ -4742,6 +4742,19 @@ test-all: test-source-overlay
 test-source-overlay: $(SOURCE_OVERLAY_TEST_BIN)
 	@$(PYTHON) tests/support/check_source_overlay.py ./$(SOURCE_OVERLAY_TEST_BIN)
 
+SPACE_OWNER_TEST_BIN = runtime/test_space_owner-$(BUILD_OBJ_TAG)
+$(SPACE_OWNER_TEST_BIN): tests/test_space_owner.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_space_owner.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
+.PHONY: test-space-owner
+test-all: test-space-owner
+test-space-owner: $(SPACE_OWNER_TEST_BIN)
+	$<
+
+.PHONY: test-space-workspace
+test-all: test-space-workspace
+test-space-workspace: $(BIN)
+	$(PYTHON) tests/support/check_space_workspace.py $(BIN)
+
 .PHONY: test-persistent-space-api
 test-all: test-persistent-space-api
 test-persistent-space-api: $(BIN)
