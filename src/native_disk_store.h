@@ -37,6 +37,17 @@ typedef struct {
 CettaDiskStoreLimits cetta_disk_store_limits(void);
 CettaDiskStoreStatus cetta_disk_store_open(const char *directory, bool create,
     const CettaDiskStoreLimits *limits, CettaDiskStore **out);
+/* Create/reopen the requested private leaf in an existing durable parent.
+ * Its parent entry is synchronized before store initialization can succeed.
+ * No ancestor directories are created; partial failure leaves the leaf for
+ * a later retry. Existing-store ownership/corruption rules are unchanged. */
+CettaDiskStoreStatus cetta_disk_store_open_created(const char *directory,
+    const CettaDiskStoreLimits *limits,CettaDiskStore **out);
+/* Physical commit-domain equality only: no freshness or write authority. */
+bool cetta_disk_store_view_same_domain(const CettaDiskStoreView *left,
+    const CettaDiskStoreView *right);
+bool cetta_disk_store_has_domain(const CettaDiskStore *store,
+    const CettaDiskStoreView *view);
 void cetta_disk_store_close(CettaDiskStore *store);
 /* The caller holds its exclusive owner use. A lost post-publication reply
  * resource must use the same write gate as an uncertain filesystem reply. */

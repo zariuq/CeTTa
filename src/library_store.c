@@ -22,6 +22,25 @@ static const char *query_kind="disk-space-query";
 static const char *batch_kind="disk-store-batch";
 static const char *program_kind="program-watch";
 
+/* A scoped callback stages its same-domain changes in the supplied Space.
+ * Reentrant publication would escape its rollback boundary. Other callers
+ * and other stores retain their existing coordinated-publication semantics. */
+typedef struct EditDomain {
+    const CettaDiskStoreView *view;
+    struct EditDomain *previous;
+} EditDomain;
+static _Thread_local EditDomain *active_edit_domains;
+static bool edit_view_active(const CettaDiskStoreView *view) {
+    for (EditDomain *scope=active_edit_domains;scope;scope=scope->previous)
+        if (cetta_disk_store_view_same_domain(scope->view,view)) return true;
+    return false;
+}
+static bool edit_store_active(const CettaDiskStore *store) {
+    for (EditDomain *scope=active_edit_domains;scope;scope=scope->previous)
+        if (cetta_disk_store_has_domain(store,scope->view)) return true;
+    return false;
+}
+
 /* A stored Space is an ordinary Space with arena-owned lifetime. It uses the
  * process-owned fallback universe for its empty native sidecar, not the
  * creating interpreter context. The occurrence source owns its actual data. */
@@ -127,6 +146,10 @@ typedef struct {
     const CettaProfile *profile;
     CettaLanguageId language;
     uint64_t imports,admission,paths;
+    /* A completed scoped edit validated its borrowed reads before sealing
+     * this epoch. Publication checks it without retaining borrowed pointers. */
+    bool memory_sealed;
+    uint64_t memory_epoch;
 } ProgramWatch;
 static void free_program(void *p) {
     ProgramWatch *watch=p;petta_program_read_barrier_free(watch->barrier);free(watch);
@@ -153,6 +176,7 @@ static bool program_current(CettaLibraryContext *ctx,const ProgramWatch *watch) 
         watch->language==ctx->session.language_id && watch->imports==ctx->active_mask &&
         watch->admission==ctx->petta_admission_revision &&
         watch->paths==ctx->petta_library_paths.revision &&
+        (!watch->memory_sealed || watch->memory_epoch==space_global_mutation_epoch()) &&
         space_program_token_matches_live_space(watch->token,eval_current_root_space()) &&
         petta_program_read_barrier_current(watch->barrier,eval_current_root_space());
     return valid;
@@ -417,6 +441,99 @@ static Atom *space_view(CettaLibraryContext *ctx,Arena *a,Atom **args,uint32_t n
 done:
     cetta_native_handle_use_release(&use);return result;
 }
+
+typedef struct {
+    Space *workspace;
+    SpaceReadToken *items;
+    size_t count,capacity;
+    Arena pins;
+} EditReads;
+
+static bool edit_observe(void *raw,SpaceReadToken read) {
+    EditReads *reads=raw;
+    if (read.space==reads->workspace) return true;
+    for (size_t i=0;i<reads->count;i++)
+        if (reads->items[i].space==read.space)
+            return space_read_token_is_current(reads->items[i]);
+    if (reads->count==reads->capacity) {
+        size_t maximum=SIZE_MAX/sizeof(*reads->items);
+        if (reads->capacity==maximum) return false;
+        size_t capacity=reads->capacity ? reads->capacity>maximum/2 ? maximum : reads->capacity*2 : 8;
+        SpaceReadToken *items=realloc(reads->items,capacity*sizeof(*items));
+        if (!items) return false;
+        reads->items=items;reads->capacity=capacity;
+    }
+    if (!space_retain_in_arena(read.space,&reads->pins)) return false;
+    reads->items[reads->count++]=read;return true;
+}
+
+/* Execute one callable against an owned edit workspace. The caller's active
+ * evaluator owns borrowed ordinary Spaces throughout the callback. Owned
+ * source Spaces also get lifetime pins. No borrowed read token escapes:
+ * validate it here, then seal the global mutation epoch in the existing
+ * program watch. The final guarded commit checks that epoch and the durable
+ * revision in one physical publication interval. */
+static Atom *space_edit(CettaLibraryContext *ctx,Arena *a,Atom **args,uint32_t n) {
+    if (n!=4) return refused(a,"invalid-space-edit");
+    CettaNativeHandleUse use={0};
+    if (!acquire(ctx,program_kind,args[3],CETTA_NATIVE_HANDLE_USE_EXCLUSIVE,&use))
+        return refused(a,"closed-or-busy-program-watch");
+    ProgramWatch *watch=cetta_native_handle_use_resource(&use);
+    if (watch->memory_sealed || !program_current(ctx,watch)) {
+        cetta_native_handle_use_release(&use);return refused(a,"program-invalidated");
+    }
+    CettaNativeHandleUse view_use={0};
+    if (!acquire(ctx,view_kind,args[0],CETTA_NATIVE_HANDLE_USE_LIFETIME,&view_use)) {
+        cetta_native_handle_use_release(&use);return refused(a,"closed-view");
+    }
+    const CettaDiskStoreView *view=cetta_native_handle_use_resource(&view_use);
+    if (edit_view_active(view)) {
+        cetta_native_handle_use_release(&view_use);cetta_native_handle_use_release(&use);
+        return refused(a,"nested-space-edit");
+    }
+    Atom *opened=space_view(ctx,a,args,2,false,true);
+    if (!opened || opened->kind!=ATOM_EXPR || opened->expr.len!=4 ||
+            !atom_is_symbol(opened->expr.elems[0],"StoreSpace")) {
+        cetta_native_handle_use_release(&view_use);cetta_native_handle_use_release(&use);return opened;
+    }
+    Atom *value=opened->expr.elems[1];StoredSpace *owned=stored_space_arg(value);
+    if (!owned) { cetta_native_handle_use_release(&view_use);cetta_native_handle_use_release(&use);return refused(a,"invalid-workspace"); }
+    EditReads reads={.workspace=&owned->space};arena_init_detached(&reads.pins);
+    CettaEvalReadScope scope={.observe=edit_observe,.context=&reads};
+    Atom **values=NULL,*error=NULL;size_t count=0;
+    Atom *call=atom_expr2(a,args[2],value);
+    EditDomain domain={.view=view,.previous=active_edit_domains};active_edit_domains=&domain;
+    eval_read_scope_enter(&scope);
+    bool complete=call && eval_interaction_values(eval_current_root_space(),a,call,&values,&count,&error);
+    eval_read_scope_leave(&scope);
+    active_edit_domains=domain.previous;
+    CettaSharedTransitionGuard publication={0};cetta_shared_transition_guard_enter(&publication);
+    bool alive=stored_space_current(owned);
+    bool current=alive && !scope.incomplete && program_current(ctx,watch);
+    for (size_t i=0;current && i<reads.count;i++) current=space_read_token_is_current(reads.items[i]);
+    Atom *result=NULL,*added=NULL,*removed=NULL;
+    if (!complete) result=error ? atom_expr2(a,atom_symbol(a,"StoreSpaceFailed"),error) : refused(a,"edit-incomplete");
+    else if (!alive) result=refused(a,"edit-workspace-closed");
+    else if (!current) result=refused(a,"edit-read-invalidated");
+    else if (!count) result=atom_symbol(a,"StoreSpaceAborted");
+    else {
+        for (size_t i=0;i<count;i++) if (atom_is_error(values[i])) {
+            result=atom_expr2(a,atom_symbol(a,"StoreSpaceFailed"),values[i]);break;
+        }
+        if (!result && count<=UINT32_MAX && space_source_overlay_changes(&owned->space,a,&added,&removed)) {
+            Atom *answers=atom_expr(a,values,(CettaExprLen)count);
+            if (answers) result=atom_expr(a,(Atom *[]){atom_symbol(a,"StoreSpaceEdited"),answers,added,removed},4);
+        }
+    }
+    stored_space_close(owned);arena_free(&reads.pins);free(reads.items);free(values);
+    if (result && atom_head_symbol_id(result)==symbol_intern_cstr(g_symbols,"StoreSpaceEdited")) {
+        watch->memory_epoch=space_global_mutation_epoch();watch->memory_sealed=true;
+    }
+    cetta_shared_transition_guard_leave(&publication);
+    cetta_native_handle_use_release(&view_use);cetta_native_handle_use_release(&use);
+    return result ? result : refused(a,"capacity");
+}
+
 Atom *cetta_store_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **args,uint32_t n) {
     if (!ctx || !a || !head) return NULL;
     if (atom_is_symbol(head,"__cetta_lib_store_scalar_order")) {
@@ -485,6 +602,7 @@ Atom *cetta_store_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **a
     }
     if (atom_is_symbol(head,"__cetta_lib_store_space_view")) return space_view(ctx,a,args,n,false,false);
     if (atom_is_symbol(head,"__cetta_lib_store_space_workspace")) return space_view(ctx,a,args,n,false,true);
+    if (atom_is_symbol(head,"__cetta_lib_store_space_edit")) return space_edit(ctx,a,args,n);
     if (atom_is_symbol(head,"__cetta_lib_store_space_query_open")) return space_view(ctx,a,args,n,true,false);
     if (atom_is_symbol(head,"__cetta_lib_store_space_changes")) {
         CettaDiskBytes key;
@@ -582,9 +700,11 @@ Atom *cetta_store_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **a
     if (atom_is_symbol(head,"__cetta_lib_store_open")) {
         CettaDiskBytes path;
         if (n!=2 || !string(args[0],&path) || !path.size || memchr(path.data,0,path.size) ||
-            (!word(args[1],"create") && !word(args[1],"existing"))) return refused(a,"invalid-open");
+            (!word(args[1],"create") && !word(args[1],"existing") && !word(args[1],"create-directory"))) return refused(a,"invalid-open");
         CettaDiskStore *store=NULL;
-        CettaDiskStoreStatus status=cetta_disk_store_open((const char *)path.data,word(args[1],"create"),NULL,&store);
+        CettaDiskStoreStatus status=word(args[1],"create-directory")
+            ? cetta_disk_store_open_created((const char *)path.data,NULL,&store)
+            : cetta_disk_store_open((const char *)path.data,word(args[1],"create"),NULL,&store);
         if (status!=CETTA_STORE_OK) return status_value(a,status);
         Atom *handle=own(ctx,a,owner_kind,store,free_owner);
         return handle ? atom_expr2(a,atom_symbol(a,"StoreOpened"),handle) : refused(a,"capacity");
@@ -723,6 +843,9 @@ Atom *cetta_store_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **a
         if (n!=(scoped_call ? 5u : guarded_commit ? 4u : 3u)) return refused(a,"invalid-commit");
         CettaNativeHandleUse owner={0},view={0};
         if (!acquire(ctx,owner_kind,args[0],CETTA_NATIVE_HANDLE_USE_EXCLUSIVE,&owner)) return refused(a,"closed-or-busy");
+        if (edit_store_active(cetta_native_handle_use_resource(&owner))) {
+            cetta_native_handle_use_release(&owner);return refused(a,"write-during-space-edit");
+        }
         if (!acquire(ctx,view_kind,args[1],CETTA_NATIVE_HANDLE_USE_LIFETIME,&view)) {
             cetta_native_handle_use_release(&owner);return refused(a,"closed-view");
         }

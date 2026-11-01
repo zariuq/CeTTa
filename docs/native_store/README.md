@@ -7,6 +7,24 @@ Embedded programs and server clients use the same core and storage owner.
 The queue example is one application of these capabilities. The contracts and
 qualification scopes below describe the current implementation.
 
+## Database library
+
+The PeTTa `(library db)` interface exposes connections, ordinary captured
+Spaces and scoped transactions over this same owner. Start with the short
+[Space example](../../examples/kb/README.md#using-persistent-spaces).
+`store:open path "create-directory"` creates only the requested private leaf
+and synchronizes its parent entry before initialization. Its immediate parent
+must already be a private directory owned by the process; ancestors must exist
+durably.
+The existing `"create"` and `"existing"` modes retain their prior contracts.
+
+`store:space-edit` runs one callable against an owned workspace, checks complete
+Space/program reads, extracts its occurrence delta and closes it on every
+outcome. Successful watches seal a conservative mutation epoch. The existing
+MeTTa commit path publishes metadata, indexes, portable return values and the
+receipt together. Named state, I/O and other storage domains require their own
+external-effect contract; the Space watch does not make them transactional.
+
 ## Portable-value byte policy
 
 The execution owner selects `--value-bytes N` before the MeTTa program loads.

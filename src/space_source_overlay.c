@@ -434,7 +434,8 @@ bool space_source_overlay_changes(const Space *space, Arena *arena, Atom **addit
     CETTA_SCOPED_SHARED_TRANSITION(capture);
     if (additions) *additions = NULL;
     if (removals) *removals = NULL;
-    if (!space || space->match_backend.ops != &overlay_ops || !arena || !additions || !removals) return false;
+    if (!space || !space_owner_is_current(space) || space->match_backend.ops != &overlay_ops ||
+            !space->match_backend.source || !arena || !additions || !removals) return false;
     Overlay *o = space->match_backend.source;
     if (!space_read_token_is_current(o->read)) return false;
     Atom *lists[2];
