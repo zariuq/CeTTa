@@ -68,6 +68,7 @@ VALID_BUILDS = {
 
 VALID_LANES = {
     "test",
+    "test-petta-semantics",
     "test-prime",
     "test-prime-profile-megalodon-hotg",
     "test-backend-dedicated",

@@ -1,0 +1,29 @@
+-- Guard metadata before acquiring argument storage; an effect commits the route.
+Module Admission {
+  Theory Protocols() {
+    Empty Equations {
+      (admission_run) == (Protocol "cesta-protocol/1"
+        (Context AdmissionContext)
+        (Hooks
+          (Hook arity admission_arity guard (Requires) (Uses) (Proves exact_arity))
+          (Hook prepare admission_prepare prepare (Requires exact_arity) (Uses arguments) (Proves ready))
+          (Hook execute admission_execute effect (Requires ready) (Uses arguments) (Proves)))
+        (Resources (Resource arguments admission_acquire admission_release admission_transfer
+          (AcquireRequires exact_arity) (TransferRequires ready)))
+        (Entry (Facts) (Owns))
+        (Body
+          (Call arity
+            (Acquire arguments
+              (Call prepare
+                (Call execute
+                  (Release arguments (Return answered))
+                  (Release arguments (Return raised)))
+                (Release arguments (Return declined)))
+              (Return resource_failure))
+            (Return declined)))
+        (Checks (Fact exact_arity admission_has_exact_arity)
+                (Fact ready admission_is_ready)
+                (Own arguments admission_owns_arguments)));
+    }
+  }
+}

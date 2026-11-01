@@ -1,0 +1,208 @@
+Native C authoring, native-c/1
+============================
+
+An authoring document selects a compact presentation explicitly:
+
+  (cesta native-c/1 compact-c/2
+    (unit
+      (include <stdio.h>)
+      (include "local.h")
+      (define (TWICE x) "((x) + (x))")
+      (fn int main ()
+        (call printf "%d\n" (call TWICE 4))
+        (return 0))))
+
+cesta expand --cc gcc input.cesta -o output.c -- -Iinclude -DFEATURE=1
+emits ordinary C. Flags after -- supply the native admission context.
+cesta cc input.cesta
+builds it using the selected native compiler. The example in examples/native
+builds with make. Existing compact presentations and their sealed AST documents
+keep their own interfaces. native-c/1 is an authoring envelope over a selected
+presentation; it is not an exact presentation of a fully preprocessed C AST.
+
+Forms:
+
+  (include "header.h")          #include "header.h"
+  (include <header.h>)           #include <header.h>
+  (include HEADER_MACRO)         #include HEADER_MACRO
+  (define NAME "C spelling")    object-like macro, possibly empty
+  (define (NAME x y) "...")     function-like macro
+  (define (NAME x ...) "...")   variadic function-like macro
+  (undef NAME)                   #undef NAME
+  (comment "text")               block comment
+  (native "C source")            explicit opaque C fragment
+  (use-macros "file.module" Theory)  import a checked macro theory in unit
+
+Replacement spelling can be a symbol, such as 42, or a string containing the
+exact replacement bytes. No expansion of ordinary C macros happens in these
+forms. Strings used as replacement spelling do not add C quotation marks.
+For example (define WORD "\"hello\"") emits #define WORD "hello".
+Single-line operands cannot contain physical newlines; a native fragment can
+express a complete multiline directive. Comment contents cannot contain */.
+
+Conditional source:
+
+  (cpp-if "defined(FAST)"
+    (then (return 1))
+    (elif "defined(SLOW)" (return 2))
+    (else (return 3)))
+
+cpp-ifdef and cpp-ifndef take an identifier instead of a condition spelling.
+The then branch is required. elif branches are ordered and optional; else is
+optional and last. All branches are printed, and the native preprocessor
+selects the active one. Compact forms in each branch are expanded at their
+surrounding grammar sort; opaque native fragments are checked by the native
+compiler when active. These forms also work inside compact function bodies.
+
+Opaque expression fragments are parenthesized. Other opaque fragments supply
+their own C punctuation. An explicit fragment is not a claim that its contents
+have been parsed, bound, typed, or made hygienic by Cesta. The closed AST codec
+and closed printer refuse open fragments. The native compiler checks emitted
+C and reports its own constraints and extension diagnostics.
+
+Build boundary
+--------------
+
+Ordinary C-only commands delegate to the compiler, including response files.
+With cesta cc --read-warnings, each plain .c input also passes through Cesta's
+preprocessor, syntax reader, binding and type census. The command's compiler,
+headers, definitions and target macros supply that context. Reader limitations
+are warnings, including under -Werror; native compiler failures keep their
+original exit status. Cesta does not replace or rewrite the plain C. -E, -M
+and -MM keep their normal preprocessing behavior. The type census currently
+has x86 SysV LP64/ILP32 and x86 Windows LLP64 models; other targets report the
+missing model and continue the native compilation. This census does not admit
+an ownership plan or prove a plain-C function. cesta build --read-warnings
+enables the same census for a project's compiles.
+Native authoring uses the compiler's default language mode unless -std= is
+supplied. In a command containing native-c/1 sources, each source compiles on
+its own, as the native compiler driver would compile it: its generated C with
+the authored directory first for quoted includes, so sources in different
+directories keep independent include contexts. Linking follows, with every
+object and the remaining inputs in their original order. -E, -M and -MM ask
+that same compiler to preprocess each source. Cesta does not interpret the
+compiler's outputs.
+
+Compiled text is one language with its source. The generated C carries
+#line directives naming the .cesta file at statement-level boundaries (outside
+parentheses), placed whenever the line the compiler assumes would differ from
+the authored one; a closing brace stands at the line where its form closes. So
+__FILE__, __LINE__, assert and debug line tables name authored lines, and a
+debugger stops at file.cesta:LINE. The compiler's diagnostics are routed: each
+position in a .cesta unit is rewritten to the authored line and column of the
+form or atom that produced the token there, with the authored line and a caret
+shown beneath (the compiler's own excerpt is turned off; colour follows the
+terminal, NO_COLOR and -fdiagnostics-color). Cesta's own errors use the same
+form, file:line:column: error: message. Readable export (cesta export-c)
+carries no #line directives.
+
+Generated inputs are published atomically with content-dependent names in
+.cesta-generated beside the output (the -o file, else the -MF file, else the
+current directory where an object or program is written). A command writing
+no file (-E, -M, -fsyntax-only, expand or export to standard output) keeps
+them in the user's cache ($XDG_CACHE_HOME/cesta or ~/.cache/cesta), since
+nothing compiled from them records their path. CESTA_BUILD_DIR overrides. Native make dependencies are
+rewritten to name the original .cesta input. Headers and command-line macro
+definitions remain native compiler inputs. Generated C can also be exported
+and compiled with no Cesta installation. For typed macros the driver uses a
+private native preprocessing query to reserve names hidden in headers and
+macro definitions. This query does not replace authored includes or macro
+calls in the exported C. Expansion and compilation must use matching compiler
+flags and header environments.
+
+Project builds
+--------------
+
+  cesta build [-C DIR] [-f cesta.project] [--cc COMPILER] [-j N] [-v] [--checked-hints] [--export-c DIR] [TARGET...]
+
+builds the targets a project document declares (all of them by default):
+
+  (cesta project/1
+    (compiler gcc) (out "build/cesta")
+    (profile hosted (flags "-std=gnu11" "-O2" "-g") (link))
+    (profile kernel (flags "-ffreestanding" "-mcmodel=kernel" ...)
+                    (link "-nostdlib" "-static" "-T" "kernel/linker.ld"))
+    (target runtime (profile hosted) (kind archive) (sources "runtime/*.cesta"))
+    (target generated (kind generator)
+      (inputs "tools/generate.py" "data/input.txt")
+      (outputs "generated/value.h" "generated/value.c")
+      (command "python3" "tools/generate.py" "data/input.txt"))
+    (target app (profile hosted) (sources "src/*.cesta" "src/*.c" "src/*.S")
+                (include "include") (define "NAME=VALUE") (flags ...) (link ...)
+                (source "generated/value.c" (flags "-O3") (define "SPECIAL=1"))
+                (depends runtime generated) (link-inputs "extra.ld")
+                (kind executable) (output "build/app")))
+
+Paths are relative to the project directory. Each source compiles through
+cesta cc with its project path, so .cesta units report authored positions and
+C and assembly reach the compiler unchanged; objects, dependency files and a
+record of each command live under OUT/TARGET/obj/. A source recompiles when
+its object is missing, a prerequisite named in its dependency file is newer,
+or its command or nested compiler response input changed. Authored units and
+the explicit reader census also depend on the Cesta tool. Ordinary C/assembly
+cache their native command, so a Cesta-only update does not recompile them;
+a target relinks (or re-archives,
+for kind archive) when an object or declared input is newer, an input is
+missing, or its link command changed. The build graph recognizes other target
+outputs named by link arguments and builds their transitive prerequisites,
+including when only one target is requested or declarations are out of order.
+depends adds named target dependencies without adding linker arguments.
+Unknown targets, cycles and duplicate output paths are refused.
+
+source adds one path in source order and appends its flags, include and define
+operands after the target's common options. No option leaks to another source.
+A repeated source declaration with separate options is refused.
+
+kind generator executes an argument vector, with no implicit shell. Declare
+scripts and data as inputs, every required output in outputs, and prerequisite
+targets in depends. Literal generated sources infer their producer; generated
+headers and source globs need depends. Generators run in dependency order before
+their consumers; unrelated targets are not run when a target is selected.
+Missing outputs, newer inputs or changed commands rerun a generator. A failed
+or incomplete command cannot leave a successful freshness record. The readable
+export carries the commands, inputs and outputs into its GNU Make graph, with
+grouped rules for commands producing several outputs. Executable inputs retain
+their executable permissions. Declare all inputs: environment variables and
+undeclared tool dependencies are not tracked automatically. Compiler response
+files must exist when the project graph is read.
+
+Direct link file arguments, nested response files and named linker-script
+options are tracked, including archive targets named inside response files.
+Selected targets refuse unreadable command inputs and recursive response
+files. link-inputs adds files hidden by a custom linker option or tool;
+it is available in both targets and profiles. External
+library searches still belong to the compiler: declare a library's file as a
+link-input when changes to it must trigger a relink. -j N compiles N sources
+at a time. cesta build --export-c DIR writes readable C for building without
+Cesta: each .cesta source exported as C (no #line directives), other sources,
+active project headers identified by the selected compiler/profile, response
+files and declared link inputs copied, and a Makefile derived from the same
+dependency graph. The exported Makefile tracks headers, response files and
+linker inputs, rebuilds after recipe
+changes and builds the selected targets' prerequisite closure. Include "." is
+safe: export does not recursively copy the project or its output directories.
+Sources and outputs in an export stay within the project tree; absolute SDK
+inputs remain external dependencies. A new preprocessor configuration may
+require re-exporting headers selected only by that configuration.
+The generated recipe is GNUmakefile, which GNU Make selects automatically.
+A project's original Makefile can remain generator input data. An input or
+output named GNUmakefile is refused during export instead of overwriting the
+generated recipe.
+compile-inputs declares additional files read by compilation, such as collected
+PGO counts. They participate in prerequisite closure, object freshness and
+readable export even when a compiler's dependency files omit them.
+cesta build GRAMMAR.cf ...
+remains the grammar workbench's compile.
+
+Sorted extension interface
+--------------------------
+
+ce_view_expand_open supplies an extension dispatcher and a first-atom admission
+predicate to the existing sort-directed presentation engine. Every returned
+subtree must have the requested grammar sort. Ordinary presentation expansion
+uses no extension dispatcher. The native source emitter uses this interface
+for its source forms; typed macro expansion can use the same interface with
+its own checked rules and binding contracts.
+
+The existing proofs for closed presentations do not by themselves establish
+typing or hygiene for opaque C source or future macro expansion.

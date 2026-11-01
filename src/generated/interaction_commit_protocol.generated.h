@@ -8,6 +8,7 @@
 #if defined(ia_commit_run) || \
     defined(IaCommitRun) || \
     defined(ctx) || \
+    defined(cesta_remaining) || \
     defined(ia_commit_run_outcome) || \
     defined(ia_commit_run_declined) || \
     defined(ia_commit_run_answered) || \
@@ -58,8 +59,13 @@
 #define ia_commit_run_COUNT_DECLINE(ctx, reason) ((void)0)
 #endif
 #if ia_commit_run_CHECKED
+#ifndef ia_commit_run_CHECK_FAILURE
 #include <stdio.h>
 #include <stdlib.h>
+#define ia_commit_run_CHECK_FAILURE(ctx, kind, id, expected) \
+    (fprintf(stderr, "protocol ia_commit_run: %s %s must be %s\n", \
+             kind, id, (expected) ? "true" : "false"), abort())
+#endif
 #endif
 #include <stdint.h>
 
@@ -101,15 +107,15 @@ ia_commit_run(IaCommitRun *ctx)
     (void)ctx;
 #if ia_commit_run_CHECKED
     if (ia_commit_epoch_is_open(ctx)) {
-        fputs("protocol ia_commit_run: own epoch must be false\n", stderr);
-        abort();
+        ia_commit_run_CHECK_FAILURE(ctx, "own", "epoch", 0);
+        for (;;) {}
     }
 #endif
     if (!ia_commit_seen(ctx)) {
 #if ia_commit_run_CHECKED
         if (ia_commit_epoch_is_open(ctx)) {
-            fputs("protocol ia_commit_run: own epoch must be false\n", stderr);
-            abort();
+            ia_commit_run_CHECK_FAILURE(ctx, "own", "epoch", 0);
+            for (;;) {}
         }
 #endif
         ia_commit_run_COUNT_DECLINE(ctx, ia_commit_run_declined_after_ia_commit_seen_false);
@@ -117,15 +123,15 @@ ia_commit_run(IaCommitRun *ctx)
     }
 #if ia_commit_run_CHECKED
     if (!ia_commit_is_current(ctx)) {
-        fputs("protocol ia_commit_run: fact current must be true\n", stderr);
-        abort();
+        ia_commit_run_CHECK_FAILURE(ctx, "fact", "current", 1);
+        for (;;) {}
     }
 #endif
     if (!ia_commit_footprint(ctx)) {
 #if ia_commit_run_CHECKED
         if (ia_commit_epoch_is_open(ctx)) {
-            fputs("protocol ia_commit_run: own epoch must be false\n", stderr);
-            abort();
+            ia_commit_run_CHECK_FAILURE(ctx, "own", "epoch", 0);
+            for (;;) {}
         }
 #endif
         ia_commit_run_COUNT_DECLINE(ctx, ia_commit_run_declined_after_ia_commit_footprint_false);
@@ -133,15 +139,15 @@ ia_commit_run(IaCommitRun *ctx)
     }
 #if ia_commit_run_CHECKED
     if (!ia_commit_is_formed(ctx)) {
-        fputs("protocol ia_commit_run: fact formed must be true\n", stderr);
-        abort();
+        ia_commit_run_CHECK_FAILURE(ctx, "fact", "formed", 1);
+        for (;;) {}
     }
 #endif
     if (!ia_commit_linear(ctx)) {
 #if ia_commit_run_CHECKED
         if (ia_commit_epoch_is_open(ctx)) {
-            fputs("protocol ia_commit_run: own epoch must be false\n", stderr);
-            abort();
+            ia_commit_run_CHECK_FAILURE(ctx, "own", "epoch", 0);
+            for (;;) {}
         }
 #endif
         ia_commit_run_COUNT_DECLINE(ctx, ia_commit_run_declined_after_ia_commit_linear_false);
@@ -149,15 +155,15 @@ ia_commit_run(IaCommitRun *ctx)
     }
 #if ia_commit_run_CHECKED
     if (!ia_commit_is_linear(ctx)) {
-        fputs("protocol ia_commit_run: fact linear must be true\n", stderr);
-        abort();
+        ia_commit_run_CHECK_FAILURE(ctx, "fact", "linear", 1);
+        for (;;) {}
     }
 #endif
     if (!ia_commit_makes(ctx)) {
 #if ia_commit_run_CHECKED
         if (ia_commit_epoch_is_open(ctx)) {
-            fputs("protocol ia_commit_run: own epoch must be false\n", stderr);
-            abort();
+            ia_commit_run_CHECK_FAILURE(ctx, "own", "epoch", 0);
+            for (;;) {}
         }
 #endif
         ia_commit_run_COUNT_DECLINE(ctx, ia_commit_run_declined_after_ia_commit_makes_false);
@@ -165,204 +171,204 @@ ia_commit_run(IaCommitRun *ctx)
     }
 #if ia_commit_run_CHECKED
     if (!ia_commit_is_current(ctx)) {
-        fputs("protocol ia_commit_run: fact current must be true\n", stderr);
-        abort();
+        ia_commit_run_CHECK_FAILURE(ctx, "fact", "current", 1);
+        for (;;) {}
     }
 #endif
 #if ia_commit_run_CHECKED
     if (!ia_commit_is_formed(ctx)) {
-        fputs("protocol ia_commit_run: fact formed must be true\n", stderr);
-        abort();
+        ia_commit_run_CHECK_FAILURE(ctx, "fact", "formed", 1);
+        for (;;) {}
     }
 #endif
 #if ia_commit_run_CHECKED
     if (!ia_commit_is_linear(ctx)) {
-        fputs("protocol ia_commit_run: fact linear must be true\n", stderr);
-        abort();
+        ia_commit_run_CHECK_FAILURE(ctx, "fact", "linear", 1);
+        for (;;) {}
     }
 #endif
 #if ia_commit_run_CHECKED
     if (!ia_commit_is_permitted(ctx)) {
-        fputs("protocol ia_commit_run: fact permitted must be true\n", stderr);
-        abort();
+        ia_commit_run_CHECK_FAILURE(ctx, "fact", "permitted", 1);
+        for (;;) {}
     }
 #endif
 #if ia_commit_run_CHECKED
     if (ia_commit_epoch_is_open(ctx)) {
-        fputs("protocol ia_commit_run: own epoch must be false\n", stderr);
-        abort();
+        ia_commit_run_CHECK_FAILURE(ctx, "own", "epoch", 0);
+        for (;;) {}
     }
 #endif
     if (!ia_commit_epoch_open(ctx)) {
 #if ia_commit_run_CHECKED
         if (ia_commit_epoch_is_open(ctx)) {
-            fputs("protocol ia_commit_run: own epoch must be false\n", stderr);
-            abort();
+            ia_commit_run_CHECK_FAILURE(ctx, "own", "epoch", 0);
+            for (;;) {}
         }
 #endif
 #if ia_commit_run_CHECKED
         if (ia_commit_epoch_is_open(ctx)) {
-            fputs("protocol ia_commit_run: own epoch must be false\n", stderr);
-            abort();
+            ia_commit_run_CHECK_FAILURE(ctx, "own", "epoch", 0);
+            for (;;) {}
         }
 #endif
         return ia_commit_run_resource_failure;
     }
 #if ia_commit_run_CHECKED
     if (!ia_commit_epoch_is_open(ctx)) {
-        fputs("protocol ia_commit_run: own epoch must be true\n", stderr);
-        abort();
+        ia_commit_run_CHECK_FAILURE(ctx, "own", "epoch", 1);
+        for (;;) {}
     }
 #endif
 #if ia_commit_run_CHECKED
     if (!ia_commit_is_current(ctx)) {
-        fputs("protocol ia_commit_run: fact current must be true\n", stderr);
-        abort();
+        ia_commit_run_CHECK_FAILURE(ctx, "fact", "current", 1);
+        for (;;) {}
     }
 #endif
 #if ia_commit_run_CHECKED
     if (!ia_commit_is_formed(ctx)) {
-        fputs("protocol ia_commit_run: fact formed must be true\n", stderr);
-        abort();
+        ia_commit_run_CHECK_FAILURE(ctx, "fact", "formed", 1);
+        for (;;) {}
     }
 #endif
 #if ia_commit_run_CHECKED
     if (!ia_commit_is_linear(ctx)) {
-        fputs("protocol ia_commit_run: fact linear must be true\n", stderr);
-        abort();
+        ia_commit_run_CHECK_FAILURE(ctx, "fact", "linear", 1);
+        for (;;) {}
     }
 #endif
 #if ia_commit_run_CHECKED
     if (!ia_commit_is_permitted(ctx)) {
-        fputs("protocol ia_commit_run: fact permitted must be true\n", stderr);
-        abort();
+        ia_commit_run_CHECK_FAILURE(ctx, "fact", "permitted", 1);
+        for (;;) {}
     }
 #endif
 #if ia_commit_run_CHECKED
     if (!ia_commit_epoch_is_open(ctx)) {
-        fputs("protocol ia_commit_run: own epoch must be true\n", stderr);
-        abort();
+        ia_commit_run_CHECK_FAILURE(ctx, "own", "epoch", 1);
+        for (;;) {}
     }
 #endif
     if (!ia_commit_take(ctx)) {
 #if ia_commit_run_CHECKED
         if (!ia_commit_epoch_is_open(ctx)) {
-            fputs("protocol ia_commit_run: own epoch must be true\n", stderr);
-            abort();
+            ia_commit_run_CHECK_FAILURE(ctx, "own", "epoch", 1);
+            for (;;) {}
         }
 #endif
         ia_commit_epoch_abandon(ctx);
 #if ia_commit_run_CHECKED
         if (ia_commit_epoch_is_open(ctx)) {
-            fputs("protocol ia_commit_run: own epoch must be false\n", stderr);
-            abort();
+            ia_commit_run_CHECK_FAILURE(ctx, "own", "epoch", 0);
+            for (;;) {}
         }
 #endif
 #if ia_commit_run_CHECKED
         if (ia_commit_epoch_is_open(ctx)) {
-            fputs("protocol ia_commit_run: own epoch must be false\n", stderr);
-            abort();
+            ia_commit_run_CHECK_FAILURE(ctx, "own", "epoch", 0);
+            for (;;) {}
         }
 #endif
         return ia_commit_run_engine_failure;
     }
 #if ia_commit_run_CHECKED
     if (!ia_commit_was_taken(ctx)) {
-        fputs("protocol ia_commit_run: fact taken must be true\n", stderr);
-        abort();
+        ia_commit_run_CHECK_FAILURE(ctx, "fact", "taken", 1);
+        for (;;) {}
     }
 #endif
 #if ia_commit_run_CHECKED
     if (!ia_commit_epoch_is_open(ctx)) {
-        fputs("protocol ia_commit_run: own epoch must be true\n", stderr);
-        abort();
+        ia_commit_run_CHECK_FAILURE(ctx, "own", "epoch", 1);
+        for (;;) {}
     }
 #endif
     if (!ia_commit_make(ctx)) {
 #if ia_commit_run_CHECKED
         if (!ia_commit_epoch_is_open(ctx)) {
-            fputs("protocol ia_commit_run: own epoch must be true\n", stderr);
-            abort();
+            ia_commit_run_CHECK_FAILURE(ctx, "own", "epoch", 1);
+            for (;;) {}
         }
 #endif
         ia_commit_epoch_abandon(ctx);
 #if ia_commit_run_CHECKED
         if (ia_commit_epoch_is_open(ctx)) {
-            fputs("protocol ia_commit_run: own epoch must be false\n", stderr);
-            abort();
+            ia_commit_run_CHECK_FAILURE(ctx, "own", "epoch", 0);
+            for (;;) {}
         }
 #endif
 #if ia_commit_run_CHECKED
         if (ia_commit_epoch_is_open(ctx)) {
-            fputs("protocol ia_commit_run: own epoch must be false\n", stderr);
-            abort();
+            ia_commit_run_CHECK_FAILURE(ctx, "own", "epoch", 0);
+            for (;;) {}
         }
 #endif
         return ia_commit_run_engine_failure;
     }
 #if ia_commit_run_CHECKED
     if (!ia_commit_was_made(ctx)) {
-        fputs("protocol ia_commit_run: fact made must be true\n", stderr);
-        abort();
+        ia_commit_run_CHECK_FAILURE(ctx, "fact", "made", 1);
+        for (;;) {}
     }
 #endif
 #if ia_commit_run_CHECKED
     if (!ia_commit_epoch_is_open(ctx)) {
-        fputs("protocol ia_commit_run: own epoch must be true\n", stderr);
-        abort();
+        ia_commit_run_CHECK_FAILURE(ctx, "own", "epoch", 1);
+        for (;;) {}
     }
 #endif
     if (ia_commit_moved(ctx)) {
 #if ia_commit_run_CHECKED
         if (!ia_commit_epoch_is_open(ctx)) {
-            fputs("protocol ia_commit_run: own epoch must be true\n", stderr);
-            abort();
+            ia_commit_run_CHECK_FAILURE(ctx, "own", "epoch", 1);
+            for (;;) {}
         }
 #endif
 #if ia_commit_run_CHECKED
         if (!ia_commit_was_made(ctx)) {
-            fputs("protocol ia_commit_run: fact made must be true\n", stderr);
-            abort();
+            ia_commit_run_CHECK_FAILURE(ctx, "fact", "made", 1);
+            for (;;) {}
         }
 #endif
 #if ia_commit_run_CHECKED
         if (!ia_commit_has_moved(ctx)) {
-            fputs("protocol ia_commit_run: fact moved must be true\n", stderr);
-            abort();
+            ia_commit_run_CHECK_FAILURE(ctx, "fact", "moved", 1);
+            for (;;) {}
         }
 #endif
         ia_commit_epoch_publish(ctx);
 #if ia_commit_run_CHECKED
         if (ia_commit_epoch_is_open(ctx)) {
-            fputs("protocol ia_commit_run: own epoch must be false\n", stderr);
-            abort();
+            ia_commit_run_CHECK_FAILURE(ctx, "own", "epoch", 0);
+            for (;;) {}
         }
 #endif
 #if ia_commit_run_CHECKED
         if (ia_commit_epoch_is_open(ctx)) {
-            fputs("protocol ia_commit_run: own epoch must be false\n", stderr);
-            abort();
+            ia_commit_run_CHECK_FAILURE(ctx, "own", "epoch", 0);
+            for (;;) {}
         }
 #endif
         return ia_commit_run_answered;
     }
 #if ia_commit_run_CHECKED
     if (!ia_commit_epoch_is_open(ctx)) {
-        fputs("protocol ia_commit_run: own epoch must be true\n", stderr);
-        abort();
+        ia_commit_run_CHECK_FAILURE(ctx, "own", "epoch", 1);
+        for (;;) {}
     }
 #endif
     ia_commit_epoch_abandon(ctx);
 #if ia_commit_run_CHECKED
     if (ia_commit_epoch_is_open(ctx)) {
-        fputs("protocol ia_commit_run: own epoch must be false\n", stderr);
-        abort();
+        ia_commit_run_CHECK_FAILURE(ctx, "own", "epoch", 0);
+        for (;;) {}
     }
 #endif
 #if ia_commit_run_CHECKED
     if (ia_commit_epoch_is_open(ctx)) {
-        fputs("protocol ia_commit_run: own epoch must be false\n", stderr);
-        abort();
+        ia_commit_run_CHECK_FAILURE(ctx, "own", "epoch", 0);
+        for (;;) {}
     }
 #endif
     return ia_commit_run_engine_failure;

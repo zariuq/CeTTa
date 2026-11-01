@@ -1,0 +1,18 @@
+{
+  "format": "CettaPGOWorkloadsV1",
+  "training": [
+    {"language": "prime", "program": "tests/prime/need_value_denotation.metta", "repeat": 4},
+    {"language": "prime", "program": "tests/prime/need_equation_choice_sharing.metta", "repeat": 4},
+    {"language": "prime", "program": "tests/prime/need_quote_preservation.metta", "repeat": 4},
+    {"language": "prime", "program": "tests/prime/interaction/held_sequences.metta", "repeat": 4},
+    {"language": "prime", "program": "benchmarks/prime/bench_typed_search_capacity.metta", "repeat": 24},
+    {"language": "he", "program": "benchmarks/bench_matchjoin3_he.metta", "repeat": 2},
+    {"language": "he", "program": "benchmarks/bench_conjunction_he.metta", "repeat": 2}
+  ],
+  "held_out": [
+    {"language": "prime", "program": "benchmarks/prime/bench_typed_search.metta"},
+    {"language": "he", "program": "benchmarks/bench_conjunction12_he.metta"},
+    {"language": "he", "program": "benchmarks/bench_matchjoin8_he.metta"},
+    {"language": "he", "program": "benchmarks/bench_backchain_he.metta"}
+  ]
+}

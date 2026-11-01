@@ -15,6 +15,7 @@ compiled by the Makefile with its own definition and enters the link as an
 input, at the place the Makefile's link gives it: after every other object.
 """
 import argparse
+import re
 import shlex
 from pathlib import Path
 
@@ -87,27 +88,59 @@ def main():
     if special - set(sources):
         raise SystemExit("the crypto source declaration names a source outside SRC")
 
-    # project/1 assigns flags to targets. Partition contiguous source groups
-    # into those targets, keeping the Makefile's exact object order. Whole
-    # archives retain even units used only through exported native symbols.
-    groups = []
-    for source in sources:
-        profile = "crypto" if source in special else "runtime"
-        if not groups or groups[-1][0] != profile:
-            groups.append((profile, []))
-        groups[-1][1].append(source)
-    archives, targets = [], []
-    for index, (profile, group) in enumerate(groups[1:], 1):
-        name = f"cetta_sources_{index}"
-        archive = str(Path(args.out) / name / f"lib{name}.a")
-        archives.append(archive)
-        targets.append("\n".join([
-            f"  (target {name} (profile {profile}) (kind archive)",
-            form("sources", group, "    ") + ")",
-        ]))
+    source_objects = shlex.split(values.get('SOURCE_OBJECTS', ''))
+    if source_objects and len(source_objects) != len(sources):
+        raise SystemExit('SOURCE_OBJECTS must match the ordered non-baked runtime sources')
+    object_for = dict(zip(sources, source_objects))
+    compile_inputs = []
+    def flags_for(source):
+        flags = words(values, 'SECP256K1_CFLAGS' if source in special else 'CFLAGS')
+        obj = object_for.get(source)
+        if obj and values.get('CETTA_PGO'):
+            stem = str(Path(obj).with_suffix(''))
+            flags += ['-dumpbase', stem if '/' in stem else './' + stem]
+            counts = Path(obj).with_suffix('.gcda')
+            if values['CETTA_PGO'] == 'use' and counts.exists():
+                compile_inputs.append(str(counts))
+        if obj and values.get('CETTA_LTO') == '1':
+            flags += ['-frandom-seed=' + obj]
+        return flags
+    source_rows = [f'    (source {string(source)} ' + form('flags', flags_for(source), '').strip() + ')'
+                   for source in sources]
+
+    # Per-source flags preserve object order directly, including units used
+    # solely through an exported native symbol.
+    targets, dependencies = [], []
+    config = values.get('BUILD_CONFIG_HEADER', '')
+    if config:
+        definitions = []
+        for line in Path(config).read_text().splitlines():
+            match = re.fullmatch(r'#define ([A-Za-z_][A-Za-z_0-9]*) (.*)', line)
+            if match:
+                definitions += ['--define', f'{match[1]}={match[2]}']
+        command = ['python3', 'tools/cesta_build_config.py', '--output', config,
+                   '--version-file', 'VERSION', *definitions]
+        targets.append('\n'.join([
+            '  (target runtime_config (kind generator)',
+            form('inputs', ['tools/cesta_build_config.py', 'VERSION'], '    '),
+            form('outputs', [config], '    '), form('command', command, '    ') + ')']))
+        dependencies.append('runtime_config')
+    reader_header = values.get('OP_LANG_PREPARED_HEADER_V1', '')
+    if reader_header:
+        emitter = str(Path(args.out) / 'reader_emitter/reader_emitter')
+        reader_sources = ['tools/emit_operational_reader_v1.c', 'src/lib_parse_native_grammar.c',
+                          'src/gslt_dense_bitset_v1.c', 'native/cetta_standalone_alloc_v1.c', 'src/native_sha256.c']
+        targets += ['\n'.join([
+            '  (target reader_emitter', form('sources', reader_sources, '    '),
+            form('flags', ['-Isrc', '-I.', '-std=c11', '-O2', '-Wall', '-Werror',
+                           '-ffunction-sections', '-fdata-sections'], '    '),
+            '    (link "-Wl,--gc-sections"))']), '\n'.join([
+            '  (target operational_reader (kind generator)',
+            form('inputs', [emitter], '    '), form('outputs', [reader_header], '    '),
+            form('command', [emitter, reader_header], '    ') + ')'])]
+        dependencies.append('operational_reader')
     bridge = words(values, "BRIDGE_DEPS")
-    grouped = ["-Wl,--whole-archive", *archives, "-Wl,--no-whole-archive"] if archives else []
-    link = (words(values, "CFLAGS") + ["-Wl,--export-dynamic"] + grouped + baked + bridge
+    link = (words(values, "CFLAGS") + ["-Wl,--export-dynamic"] + baked + bridge
             + words(values, "LDFLAGS"))
     document = "\n".join([
         ";; The runtime executable, derived from the Makefile for one configuration.",
@@ -116,18 +149,16 @@ def main():
         f"  (compiler {string(compiler[0])})",
         f"  (out {string(args.out)})",
         "  (profile runtime",
-        form("flags", words(values, "CPPFLAGS") + words(values, "CFLAGS"), "    "),
-        "    (link))",
-        "  (profile crypto",
-        form("flags", words(values, "CPPFLAGS") + words(values, "SECP256K1_CFLAGS"), "    "),
+        form("flags", words(values, "CPPFLAGS"), "    "),
         "    (link))",
         *targets,
-        f"  (target {TARGET} (profile {groups[0][0]}) (kind executable)",
+        f"  (target {TARGET} (profile runtime) (kind executable)",
         f"    (output {string(args.executable)})",
-        form("sources", groups[0][1], "    "),
-        form("depends", [f"cetta_sources_{i}" for i in range(1, len(groups))], "    "),
+        *source_rows,
+        form("depends", dependencies, "    "),
+        form("compile-inputs", compile_inputs, "    "),
         form("link", link, "    "),
-        form("link-inputs", archives + baked + bridge, "    ") + "))",
+        form("link-inputs", baked + bridge, "    ") + "))",
         "",
     ])
     output = Path(args.output)
