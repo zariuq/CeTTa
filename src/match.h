@@ -652,6 +652,13 @@ bool      bindings_logical_atoms_closed_for_arena(
  * constraints. The callback does not change substitution authority. */
 bool      bindings_logical_atoms_satisfy(
               const Bindings *bindings, AtomTreePredicate predicate, void *context);
+/* Inspect every populated presentation key up to each active schema's
+ * physical extent, including keys beyond the current logical slot count.
+ * Recycled spare frames are conservatively unsupported: false is returned
+ * before visiting any key. Their dead backing slots are not logical roots.
+ * Callbacks retain all borrowed syntax owners and may not mutate bindings. */
+bool      bindings_retained_schema_atoms_satisfy(
+              const Bindings *bindings, AtomTreePredicate predicate, void *context);
 /* Complete current payload inspection, including Need, state and coefficient
  * carriers. Callbacks validate their own Atom graphs/external identities;
  * success does not grant substitution, lifetime or source-read authority. */
@@ -1089,6 +1096,23 @@ bool bindings_from_atom(Atom *atom, Bindings *out);
 void bindings_owners_retain(BindingsOwners *owners);
 void bindings_owners_release(BindingsOwners *owners);
 void bindings_inherit_owners(Bindings *destination, const Bindings *source);
+/* Read-only enumeration of bundled saved-value owners. Callers hold valid
+ * shares and exclude mutation/close throughout every callback. No provider
+ * method is invoked; unknown implementations refuse. Successful enumeration
+ * grants neither a persistent lifetime invariant nor invocation authority. */
+typedef struct {
+    bool (*span)(const void *, size_t, void *);
+    bool (*arena)(const Arena *, void *);
+    bool (*bindings)(const Bindings *, void *);
+    AtomTreePredicate atom;
+} BindingsOwnedSyntaxVisitor;
+
+bool bindings_owners_visit_values(const BindingsOwners *owners,
+    bool (*span)(const void *, size_t, void *),
+    bool (*provider)(const CettaBindingsValue *, void *), void *context);
+bool bindings_value_visit_owned_syntax(const CettaBindingsValue *value,
+    const BindingsOwnedSyntaxVisitor *visitor, void *context);
+
 void      binding_set_init(BindingSet *bs);
 void      binding_set_free(BindingSet *bs);
 bool      binding_set_push(BindingSet *bs, const Bindings *b);

@@ -4116,6 +4116,29 @@ bool bindings_logical_atoms_satisfy(
     return true;
 }
 
+bool bindings_retained_schema_atoms_satisfy(const Bindings *bindings,
+        AtomTreePredicate predicate, void *context) {
+    if (!bindings || !predicate)
+        return false;
+    const BindingsFrameIndex *index = bindings->frame_index;
+    if (!index)
+        return true;
+    if (index->len > index->cap || (index->len && !index->frames) || index->spare_len)
+        return false;
+    for (uint32_t i = 0u; i < index->len; i++) {
+        const BindingsFrameSchema *schema = index->frames[i].schema;
+        if (!schema || schema->len > schema->cap ||
+            (schema->cap && !schema->name_keys))
+            return false;
+        for (uint32_t slot = 0u; slot < schema->cap; slot++) {
+            const Atom *key = schema->name_keys[slot];
+            if (key && !predicate(key, context))
+                return false;
+        }
+    }
+    return true;
+}
+
 static bool bindings_atom_closed(const Atom *atom, void *context) {
     return atom_graph_is_closed_for_arena(context, atom);
 }

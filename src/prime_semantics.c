@@ -4438,6 +4438,7 @@ bool cetta_prime_typing_observe_checking_v1(
     Arena *arena, Space *space,
     const CettaPrimeTypingCheckingCandidateV1 *candidate,
     CettaPrimeTypingCheckingObservationV1 *observation_out) {
+    CETTA_SCOPED_SHARED_TRANSITION(judgment_operation);
     if (observation_out)
         *observation_out = (CettaPrimeTypingCheckingObservationV1){0};
     if (!arena || !space || !candidate || !candidate->term ||
@@ -4518,6 +4519,7 @@ bool cetta_prime_typing_observe_formation_v1(
     Arena *arena, Space *space,
     const CettaPrimeTypingFormationCandidateV1 *candidate,
     CettaPrimeTypingFormationObservationV1 *observation_out) {
+    CETTA_SCOPED_SHARED_TRANSITION(judgment_operation);
     if (observation_out)
         *observation_out = (CettaPrimeTypingFormationObservationV1){0};
     if (!arena || !space || !candidate || !candidate->type ||
@@ -4587,6 +4589,7 @@ bool cetta_prime_typing_observe_synthesis_v1(
     Arena *arena, Space *space,
     const CettaPrimeTypingSynthesisCandidateV1 *candidate,
     CettaPrimeTypingSynthesisObservationV1 *observation_out) {
+    CETTA_SCOPED_SHARED_TRANSITION(judgment_operation);
     if (observation_out)
         *observation_out = (CettaPrimeTypingSynthesisObservationV1){0};
     if (!arena || !space || !candidate || !candidate->term ||
@@ -4656,6 +4659,7 @@ bool cetta_prime_typing_observe_checking_bag_v1(
     Arena *arena, Space *space,
     const CettaPrimeTypingCheckingCandidateV1 *candidates, size_t count,
     CettaPrimeTypingCheckingBagV1 *bag_out) {
+    CETTA_SCOPED_SHARED_TRANSITION(judgment_operation);
     if (bag_out) *bag_out = (CettaPrimeTypingCheckingBagV1){0};
     if (!arena || !space || !bag_out ||
         (count != 0u && !candidates) ||
@@ -15570,6 +15574,7 @@ static Atom *prime_judge_accounted(
     Arena *a, Space *space, Atom *judgment, bool steps_limited,
     uint64_t steps, CettaPrimeTypingResourceObservationV1 *resources_out,
     Atom **canonical_term_out) {
+    CETTA_SCOPED_SHARED_TRANSITION(judgment_operation);
     eval_prime_judgment_enter();
     Atom *verdict = prime_judge_accounted_body(
         a, space, judgment, steps_limited, steps, resources_out,

@@ -811,6 +811,19 @@ struct CettaPreparedPureProgram {
 
 };
 
+/* Cuts retain immutable memo chunks. The running machine keeps its ordinary
+ * flat columns; only equal checkpoint bytes share storage. */
+#define PREPARED_PURE_CUT_MEMO_CHUNK 64u
+typedef struct {
+    size_t references, length;
+    Atom *keys[PREPARED_PURE_CUT_MEMO_CHUNK];
+    Atom *values[PREPARED_PURE_CUT_MEMO_CHUNK];
+    uint8_t states[PREPARED_PURE_CUT_MEMO_CHUNK];
+    uint8_t ready[PREPARED_PURE_CUT_MEMO_CHUNK];
+    PreparedPureDemandOrigin origins[PREPARED_PURE_CUT_MEMO_CHUNK];
+    PreparedPureDemandOrigin value_origins[PREPARED_PURE_CUT_MEMO_CHUNK];
+} PreparedPureMemoCutChunk;
+
 struct CettaPreparedServiceCut {
     CettaPreparedServiceCut *next;
     CettaPreparedPureClosedExecution *execution;
@@ -820,14 +833,12 @@ struct CettaPreparedServiceCut {
     PreparedPureFrame *frames;
     Atom **frame_atoms, **values, **slots, **entry_arguments;
     PreparedPureContext *contexts;
-    Atom **memo_keys, **memo_values;
-    uint8_t *memo_states;
-    uint8_t *value_ready,*slot_ready,*memo_ready,*entry_ready;
-    PreparedPureDemandOrigin *value_origins,*slot_origins,*memo_origins,*entry_origins;
-    PreparedPureDemandOrigin *memo_value_origins;
+    PreparedPureMemoCutChunk **memo_chunks;
+    size_t memo_chunk_count, memo_length;
+    uint8_t *value_ready,*slot_ready,*entry_ready;
+    PreparedPureDemandOrigin *value_origins,*slot_origins,*entry_origins;
     size_t frames_length, frame_atoms_length, values_length, slots_length;
     size_t contexts_length, entry_arguments_length;
-    size_t memo_keys_length, memo_values_length, memo_states_length;
 };
 
 struct CettaPreparedPureClosedExecution {
@@ -18595,16 +18606,87 @@ CettaPreparedPureOptionalResult cetta_prepared_pure_program_execute_closed_optio
  * including context_reads, can grow when a later runtime head is compiled;
  * they remain in the exclusive Program and are never rolled back by a cut.
  * The enclosing execution owns every cut's lifetime. */
+static void prepared_pure_cut_memo_drop(CettaPreparedServiceCut *cut) {
+    for (size_t i=0u;i<cut->memo_chunk_count;i++) {
+        PreparedPureMemoCutChunk *chunk=cut->memo_chunks[i];
+        if (!chunk) continue;
+        assert(chunk->references);
+        if (!--chunk->references) free(chunk);
+    }
+    free(cut->memo_chunks);
+    cut->memo_chunks=NULL;
+    cut->memo_chunk_count=cut->memo_length=0u;
+}
+
+static bool prepared_pure_cut_memo_capture(CettaPreparedServiceCut *cut,
+    const CettaPreparedPureClosedExecution *execution) {
+    const CettaPreparedPureProgram *p=execution->program;
+    size_t length=p->memo_len;
+    if (!execution->roles_active ||
+        length>execution->memo_ready_capacity ||
+        length>execution->memo_origins_capacity ||
+        length>execution->memo_value_origins_capacity)
+        return false;
+    size_t count=length/PREPARED_PURE_CUT_MEMO_CHUNK +
+        (length%PREPARED_PURE_CUT_MEMO_CHUNK!=0u);
+    if (count>SIZE_MAX/sizeof(*cut->memo_chunks)) return false;
+    cut->memo_chunks=count ? calloc(count,sizeof(*cut->memo_chunks)) : NULL;
+    if (count && !cut->memo_chunks) return false;
+    cut->memo_chunk_count=count;
+    cut->memo_length=length;
+    const CettaPreparedServiceCut *previous=execution->cuts;
+    for (size_t i=0u;i<count;i++) {
+        size_t base=i*PREPARED_PURE_CUT_MEMO_CHUNK;
+        size_t used=length-base;
+        if (used>PREPARED_PURE_CUT_MEMO_CHUNK) used=PREPARED_PURE_CUT_MEMO_CHUNK;
+        PreparedPureMemoCutChunk *chunk=previous && i<previous->memo_chunk_count
+            ? previous->memo_chunks[i] : NULL;
+        bool equal=chunk && chunk->length==used;
+#define SAME(field, source) \
+        (memcmp(chunk->field,(source)+base,used*sizeof(*chunk->field))==0)
+        equal=equal && SAME(keys,p->memo_keys) && SAME(values,p->memo_values) &&
+            SAME(states,p->memo_states) && SAME(ready,execution->memo_ready) &&
+            SAME(origins,execution->memo_origins) &&
+            SAME(value_origins,execution->memo_value_origins);
+#undef SAME
+        if (equal) {
+            if (chunk->references==SIZE_MAX) return false;
+            chunk->references++;
+        } else {
+            chunk=malloc(sizeof(*chunk));
+            if (!chunk) return false;
+            chunk->references=1u;chunk->length=used;
+#define COPY(field, source) \
+            memcpy(chunk->field,(source)+base,used*sizeof(*chunk->field))
+            COPY(keys,p->memo_keys);COPY(values,p->memo_values);
+            COPY(states,p->memo_states);COPY(ready,execution->memo_ready);
+            COPY(origins,execution->memo_origins);
+            COPY(value_origins,execution->memo_value_origins);
+#undef COPY
+        }
+        cut->memo_chunks[i]=chunk;
+    }
+    return true;
+}
+
+static const PreparedPureMemoCutChunk *prepared_pure_cut_memo_chunk(
+    const CettaPreparedServiceCut *cut,size_t index) {
+    assert(index<cut->memo_length);
+    return cut->memo_chunks[index/PREPARED_PURE_CUT_MEMO_CHUNK];
+}
+
+#define PREPARED_PURE_CUT_MEMO(cut,field,index) \
+    (prepared_pure_cut_memo_chunk((cut),(index))->field[(index)%PREPARED_PURE_CUT_MEMO_CHUNK])
+
 static void prepared_pure_service_cut_free(CettaPreparedServiceCut *cut) {
     if (!cut) return;
 #define DROP(field) free(cut->field)
     DROP(frames); DROP(frame_atoms); DROP(values); DROP(slots);
     DROP(contexts); DROP(entry_arguments);
-    DROP(memo_keys); DROP(memo_values); DROP(memo_states);
-    DROP(value_ready); DROP(slot_ready); DROP(memo_ready); DROP(entry_ready);
-    DROP(value_origins); DROP(slot_origins); DROP(memo_origins); DROP(entry_origins);
-    DROP(memo_value_origins);
+    DROP(value_ready); DROP(slot_ready); DROP(entry_ready);
+    DROP(value_origins); DROP(slot_origins); DROP(entry_origins);
 #undef DROP
+    prepared_pure_cut_memo_drop(cut);
     free(cut);
 }
 
@@ -18670,17 +18752,15 @@ CettaPreparedServiceCut *cetta_prepared_pure_closed_service_capture(
     CAPTURE(values,value_len); CAPTURE(slots,slot_len);
     CAPTURE(contexts,context_len);
     CAPTURE(entry_arguments,entry_argument_count);
-    CAPTURE(memo_keys,memo_len); CAPTURE(memo_values,memo_len);
-    CAPTURE(memo_states,memo_len);
 #undef CAPTURE
+    if (!prepared_pure_cut_memo_capture(cut,execution)) goto failed;
 #define CAPTURE_ROLE(field,length) do {     if (cut->length) {         cut->field=malloc(cut->length);         if (!cut->field) goto failed;         memcpy(cut->field,execution->field,cut->length);     } } while (0)
     CAPTURE_ROLE(value_ready,values_length); CAPTURE_ROLE(slot_ready,slots_length);
-    CAPTURE_ROLE(memo_ready,memo_keys_length); CAPTURE_ROLE(entry_ready,entry_arguments_length);
+    CAPTURE_ROLE(entry_ready,entry_arguments_length);
 #undef CAPTURE_ROLE
 #define CAPTURE_ORIGIN(field,length) do {     if (cut->length) {         if (cut->length>SIZE_MAX/sizeof(*cut->field)) goto failed;         cut->field=malloc(cut->length*sizeof(*cut->field));         if (!cut->field) goto failed;         memcpy(cut->field,execution->field,cut->length*sizeof(*cut->field));     } } while (0)
     CAPTURE_ORIGIN(value_origins,values_length); CAPTURE_ORIGIN(slot_origins,slots_length);
-    CAPTURE_ORIGIN(memo_origins,memo_keys_length); CAPTURE_ORIGIN(entry_origins,entry_arguments_length);
-    CAPTURE_ORIGIN(memo_value_origins,memo_keys_length);
+    CAPTURE_ORIGIN(entry_origins,entry_arguments_length);
 #undef CAPTURE_ORIGIN
     cut->next=execution->cuts; execution->cuts=cut;
     goto done;
@@ -18779,10 +18859,10 @@ bool cetta_prepared_pure_closed_service_export(
         if (!ok) goto done;
         if (frame->memo_index!=PREPARED_PURE_NO_MEMO) {
             requesting_memo=frame->memo_index;
-            ok=requesting_memo<cut->memo_keys_length &&
-                cut->memo_keys[requesting_memo]==source &&
-                prepared_pure_origin_equal(cut->memo_origins[requesting_memo],origin) &&
-                cut->memo_states[requesting_memo]==PREPARED_PURE_MEMO_EVALUATING;
+            ok=requesting_memo<cut->memo_length &&
+                PREPARED_PURE_CUT_MEMO(cut,keys,requesting_memo)==source &&
+                prepared_pure_origin_equal(PREPARED_PURE_CUT_MEMO(cut,origins,requesting_memo),origin) &&
+                PREPARED_PURE_CUT_MEMO(cut,states,requesting_memo)==PREPARED_PURE_MEMO_EVALUATING;
             if (!ok) goto done;
         }
     }
@@ -18795,25 +18875,25 @@ bool cetta_prepared_pure_closed_service_export(
         PreparedPureExportNode *node=&nodes[index];
         if (!node->initialized) {
             for (size_t followed=0u;!node->ready && !(application && index==root);followed++) {
-                size_t memo=cut->memo_keys_length;
-                for (size_t i=0u;i<cut->memo_keys_length;i++)
+                size_t memo=cut->memo_length;
+                for (size_t i=0u;i<cut->memo_length;i++)
                     /* Only this exact unentered application transfers its
                      * own pending demand. An ancestor or child already in
                      * flight cannot become a fresh native thunk. */
                     if (!(index==root && i==requesting_memo) &&
-                        cut->memo_keys[i]==node->value &&
-                        prepared_pure_origin_equal(cut->memo_origins[i],node->origin)) {
+                        PREPARED_PURE_CUT_MEMO(cut,keys,i)==node->value &&
+                        prepared_pure_origin_equal(PREPARED_PURE_CUT_MEMO(cut,origins,i),node->origin)) {
                         memo=i;break;
                     }
-                if (memo==cut->memo_keys_length) break;
-                if (cut->memo_states[memo]!=PREPARED_PURE_MEMO_VALUE ||
-                    !cut->memo_values[memo] || followed>=cut->memo_keys_length) {
+                if (memo==cut->memo_length) break;
+                if (PREPARED_PURE_CUT_MEMO(cut,states,memo)!=PREPARED_PURE_MEMO_VALUE ||
+                    !PREPARED_PURE_CUT_MEMO(cut,values,memo) || followed>=cut->memo_length) {
                     ok=false;break;
                 }
                 Atom *old=node->value;
                 PreparedPureDemandOrigin old_origin=node->origin;
-                node->value=cut->memo_values[memo];node->ready=cut->memo_ready[memo];
-                node->origin=cut->memo_value_origins[memo];
+                node->value=PREPARED_PURE_CUT_MEMO(cut,values,memo);node->ready=PREPARED_PURE_CUT_MEMO(cut,ready,memo);
+                node->origin=PREPARED_PURE_CUT_MEMO(cut,value_origins,memo);
                 if (old==node->value && prepared_pure_origin_equal(old_origin,node->origin))
                     break;
             }
@@ -18894,22 +18974,22 @@ bool cetta_prepared_pure_closed_service_restore(
     FIT(frames,frame_cap); FIT(frame_atoms,frame_atom_cap);
     FIT(values,value_cap); FIT(slots,slot_cap); FIT(contexts,context_cap);
     FIT(entry_arguments,entry_argument_count);
-    FIT(memo_keys,memo_key_cap); FIT(memo_values,memo_value_cap);
-    FIT(memo_states,memo_state_cap);
 #undef FIT
+    if (cut->memo_length>p->memo_key_cap || cut->memo_length>p->memo_value_cap ||
+        cut->memo_length>p->memo_state_cap) {ok=false;goto done;}
     if (!execution->roles_active || cut->values_length>execution->value_ready_capacity ||
-        cut->slots_length>execution->slot_ready_capacity || cut->memo_keys_length>execution->memo_ready_capacity ||
+        cut->slots_length>execution->slot_ready_capacity || cut->memo_length>execution->memo_ready_capacity ||
         cut->entry_arguments_length>execution->entry_ready_capacity) {ok=false;goto done;}
     if (cut->values_length>execution->value_origins_capacity ||
         cut->slots_length>execution->slot_origins_capacity ||
-        cut->memo_keys_length>execution->memo_origins_capacity ||
-        cut->memo_keys_length>execution->memo_value_origins_capacity ||
+        cut->memo_length>execution->memo_origins_capacity ||
+        cut->memo_length>execution->memo_value_origins_capacity ||
         cut->entry_arguments_length>execution->entry_origins_capacity) {ok=false;goto done;}
     /* Insertion grows at its declared load threshold, which can exceed one
      * half. Restoration needs an empty probe bucket, not a stricter load
      * policy than the table that captured this valid prefix. */
-    if (cut->memo_keys_length &&
-        (!p->memo_buckets || p->memo_bucket_cap<=cut->memo_keys_length)) {
+    if (cut->memo_length &&
+        (!p->memo_buckets || p->memo_bucket_cap<=cut->memo_length)) {
         ok=false;goto done;
     }
 #define RESTORE(field,length) do { \
@@ -18920,18 +19000,27 @@ bool cetta_prepared_pure_closed_service_restore(
     RESTORE(values,value_len); RESTORE(slots,slot_len);
     RESTORE(contexts,context_len);
     RESTORE(entry_arguments,entry_argument_count);
-    RESTORE(memo_keys,memo_len); RESTORE(memo_values,memo_len);
-    RESTORE(memo_states,memo_len);
 #undef RESTORE
 #define RESTORE_ROLE(field,length) if (cut->length) memcpy(execution->field,cut->field,cut->length)
     RESTORE_ROLE(value_ready,values_length); RESTORE_ROLE(slot_ready,slots_length);
-    RESTORE_ROLE(memo_ready,memo_keys_length); RESTORE_ROLE(entry_ready,entry_arguments_length);
+    RESTORE_ROLE(entry_ready,entry_arguments_length);
 #undef RESTORE_ROLE
 #define RESTORE_ORIGIN(field,length) if (cut->length) memcpy(execution->field,cut->field,cut->length*sizeof(*cut->field))
     RESTORE_ORIGIN(value_origins,values_length); RESTORE_ORIGIN(slot_origins,slots_length);
-    RESTORE_ORIGIN(memo_origins,memo_keys_length); RESTORE_ORIGIN(entry_origins,entry_arguments_length);
-    RESTORE_ORIGIN(memo_value_origins,memo_keys_length);
+    RESTORE_ORIGIN(entry_origins,entry_arguments_length);
 #undef RESTORE_ORIGIN
+    for (size_t chunk_index=0u;chunk_index<cut->memo_chunk_count;chunk_index++) {
+        const PreparedPureMemoCutChunk *chunk=cut->memo_chunks[chunk_index];
+        size_t base=chunk_index*PREPARED_PURE_CUT_MEMO_CHUNK;
+#define MEMO_RESTORE(target,field) \
+        memcpy((target)+base,chunk->field,chunk->length*sizeof(*chunk->field))
+        MEMO_RESTORE(p->memo_keys,keys);MEMO_RESTORE(p->memo_values,values);
+        MEMO_RESTORE(p->memo_states,states);MEMO_RESTORE(execution->memo_ready,ready);
+        MEMO_RESTORE(execution->memo_origins,origins);
+        MEMO_RESTORE(execution->memo_value_origins,value_origins);
+#undef MEMO_RESTORE
+    }
+    p->memo_len=cut->memo_length;
     if (p->memo_bucket_cap) {
         memset(p->memo_buckets,0,p->memo_bucket_cap*sizeof(*p->memo_buckets));
         for (uint32_t i=0u;i<p->memo_len;i++) {
@@ -19497,15 +19586,17 @@ void cetta_prepared_pure_program_storage_census(const CettaPreparedPureProgram *
 #define CUT_COUNT(field) cetta_storage_array(census,cut->field,cut->field##_length,sizeof(*cut->field),0u)
         CUT_COUNT(frames); CUT_COUNT(frame_atoms); CUT_COUNT(values); CUT_COUNT(slots);
         CUT_COUNT(contexts); CUT_COUNT(entry_arguments);
-        CUT_COUNT(memo_keys); CUT_COUNT(memo_values); CUT_COUNT(memo_states);
+        cetta_storage_array(census,cut->memo_chunks,cut->memo_chunk_count,
+            sizeof(*cut->memo_chunks),0u);
+        for (size_t chunk_index=0u;chunk_index<cut->memo_chunk_count;chunk_index++)
+            (void)cetta_storage_object(census,cut->memo_chunks[chunk_index],
+                sizeof(*cut->memo_chunks[chunk_index]),CETTA_STORAGE_BLOCK);
         cetta_storage_array(census,cut->value_ready,cut->values_length,1u,0u);
         cetta_storage_array(census,cut->slot_ready,cut->slots_length,1u,0u);
-        cetta_storage_array(census,cut->memo_ready,cut->memo_keys_length,1u,0u);
         cetta_storage_array(census,cut->entry_ready,cut->entry_arguments_length,1u,0u);
 #define CUT_ORIGIN_COUNT(field,length) cetta_storage_array(census,cut->field,cut->length,sizeof(*cut->field),0u)
         CUT_ORIGIN_COUNT(value_origins,values_length); CUT_ORIGIN_COUNT(slot_origins,slots_length);
-        CUT_ORIGIN_COUNT(memo_origins,memo_keys_length); CUT_ORIGIN_COUNT(entry_origins,entry_arguments_length);
-        CUT_ORIGIN_COUNT(memo_value_origins,memo_keys_length);
+        CUT_ORIGIN_COUNT(entry_origins,entry_arguments_length);
 #undef CUT_ORIGIN_COUNT
 #undef CUT_COUNT
     }

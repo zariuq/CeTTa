@@ -374,3 +374,71 @@ void bindings_owners_storage_census(const BindingsOwners *owners, CettaStorageCe
         else cetta_storage_refuse(census, "OpaqueCapturedBindings");
     }
 }
+
+static bool owned_syntax_span_array(const BindingsOwnedSyntaxVisitor *visitor,
+        const void *pointer, size_t count, size_t width, void *context) {
+    if (!count) return true;
+    return pointer && width && count <= SIZE_MAX / width &&
+        visitor->span(pointer, count * width, context);
+}
+
+bool bindings_owners_visit_values(const BindingsOwners *owners,
+        bool (*span)(const void *, size_t, void *),
+        bool (*provider)(const CettaBindingsValue *, void *), void *context) {
+    if (!span || !provider) return false;
+    if (!owners) return true;
+    if (!span(owners, sizeof(*owners), context) ||
+        !atomic_load_explicit(&owners->references, memory_order_acquire) ||
+        owners->count > (SIZE_MAX - sizeof(*owners)) / sizeof(*owners->values) ||
+        !span(owners, sizeof(*owners) + owners->count * sizeof(*owners->values), context))
+        return false;
+    for (size_t i = 0u; i < owners->count; i++)
+        if (!owners->values[i] || !provider(owners->values[i], context)) return false;
+    return true;
+}
+
+bool bindings_value_visit_owned_syntax(const CettaBindingsValue *value,
+        const BindingsOwnedSyntaxVisitor *visitor, void *context) {
+    if (!value || !visitor || !visitor->span || !visitor->arena ||
+        !visitor->bindings || !visitor->atom ||
+        !visitor->span(value, sizeof(*value), context)) return false;
+    bool captured = value->retain == captured_bindings_retain &&
+        value->release == captured_bindings_release &&
+        value->observe == captured_bindings_observe &&
+        value->equal == captured_bindings_equal &&
+        value->apply == captured_bindings_apply &&
+        value->storage == captured_bindings_storage;
+    bool renamed = value->retain == captured_renaming_retain &&
+        value->release == captured_renaming_release &&
+        value->observe == captured_renaming_observe &&
+        value->equal == captured_renaming_equal &&
+        value->apply == captured_renaming_apply && !value->storage;
+    if (!captured && !renamed) return false;
+    if (!owned_syntax_span_array(visitor, value->support, value->support_count,
+                                 sizeof(*value->support), context)) return false;
+    if (captured) {
+        const CapturedBindings *owner = (const CapturedBindings *)value;
+        return visitor->span(owner, sizeof(*owner), context) &&
+            atomic_load_explicit(&owner->references, memory_order_acquire) > 0u &&
+            visitor->arena(&owner->syntax, context) &&
+            visitor->bindings(&owner->bindings, context);
+    }
+    const CapturedRenaming *owner = (const CapturedRenaming *)value;
+    const CettaVarMap *map = &owner->mapping;
+    if (!visitor->span(owner, sizeof(*owner), context) || !owner->references ||
+        map->len > map->cap || map->len > SIZE_MAX / 2u ||
+        value->support_count != 2u * (size_t)map->len ||
+        map->index.used > map->index.cap ||
+        !owned_syntax_span_array(visitor, map->items, map->cap,
+                                 sizeof(*map->items), context) ||
+        !owned_syntax_span_array(visitor, map->index.slots, map->index.cap,
+                                 sizeof(*map->index.slots), context) ||
+        !owned_syntax_span_array(visitor, owner->variables, map->len,
+                                 sizeof(*owner->variables), context) ||
+        !visitor->arena(&owner->syntax, context)) return false;
+    for (uint32_t i = 0u; i < map->len; i++)
+        if (!owner->variables[i] || !map->items[i].mapped_var ||
+            !visitor->atom(owner->variables[i], context) ||
+            !visitor->atom(map->items[i].mapped_var, context)) return false;
+    return true;
+}

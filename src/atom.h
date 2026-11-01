@@ -997,6 +997,23 @@ bool arena_retains_owner(const Arena *a, const void *owner,
  * required; enumeration does not retain or synchronize the owner. */
 const void *arena_retained_owner_at(const Arena *arena,
     void (*release)(void *), size_t index);
+/* Inspect every actual retained-owner edge, in acquisition order. The exact
+ * stored release/storage identities are supplied without invoking them.
+ * Extent/index inconsistencies or a stopped predicate return false. The
+ * caller holds exclusive arena access and all existing lifetime shares;
+ * callbacks may inspect owners but must not mutate or release this arena.
+ * Empty inventories succeed. NULL arena/predicate arguments refuse. */
+bool arena_retained_owners_satisfy(const Arena *arena,
+    bool (*predicate)(const void *owner, void (*release)(void *),
+        CettaStorageVisitor storage, void *context), void *context);
+/* The complete finalizer chain also includes direct foreign/numeric payload
+ * holds which are not members of the deduplicated retained-owner ledger.
+ * This read-only walk supplies their exact pointer/release/storage records,
+ * newest first, with the same exclusive-access and stopped-predicate rules.
+ * Neither release nor storage callbacks are invoked. Cyclic chains refuse. */
+bool arena_finalizers_satisfy(const Arena *arena,
+    bool (*predicate)(const void *owner, void (*release)(void *),
+        CettaStorageVisitor storage, void *context), void *context);
 size_t arena_retained_owner_allocation_bytes(void);
 
 /* Allocation policy consults these aggregates at every machine transition.

@@ -192,6 +192,22 @@ const CettaOwnedExecution *cetta_shared_return_producer_execution(
     const CettaSharedReturnProducer *producer);
 const CettaOccurrenceLog *cetta_shared_return_producer_log(
     const CettaSharedReturnProducer *producer);
+/* Read-only admission for an already complete, attached producer with no
+ * pending return or retirement. Checks the exact supplied adapter identities
+ * and callback context, complete log, and live checkpoint roster/pin.
+ * Neither callback is invoked; mutable authority remains a separate check. */
+bool cetta_shared_return_producer_is_complete_for(
+    const CettaSharedReturnProducer *producer, CettaSharedReturnCapture capture,
+    CettaSharedReturnCompatible compatible, const void *context);
+/* Inspect every retained physical row in increasing occurrence order without
+ * stepping, delivering, trimming, or transferring its ownership. A false
+ * predicate stops inspection and changes no producer state. Callers serialize
+ * this walk and keep every owner live; callbacks cannot mutate the producer. */
+typedef bool (*CettaSharedReturnRowPredicate)(void *context, uint64_t position,
+    const CettaOccurrenceRow *row);
+bool cetta_shared_return_producer_rows_satisfy(
+    const CettaSharedReturnProducer *producer,
+    CettaSharedReturnRowPredicate predicate, void *context);
 
 /* Freeze an active consumer's position without advancing it. The checkpoint
  * retains the actual producer, including unfinished computation. Copies of
@@ -221,6 +237,13 @@ bool cetta_shared_return_checkpoint_retain(CettaSharedReturnCheckpoint *checkpoi
 void cetta_shared_return_checkpoint_release(CettaSharedReturnCheckpoint *checkpoint);
 bool cetta_shared_return_checkpoint_position(
     const CettaSharedReturnCheckpoint *checkpoint, uint64_t *out_position);
+/* Exact membership in a live producer's validated checkpoint roster. The
+ * candidate address is compared, never dereferenced. Callers need a held
+ * checkpoint to rely on its identity; an unheld stale address cannot certify
+ * an incarnation after allocator reuse. No callback or consumer is advanced. */
+bool cetta_shared_return_checkpoint_belongs_to(
+    const CettaSharedReturnCheckpoint *checkpoint,
+    const CettaSharedReturnProducer *producer);
 CettaSharedDelivery cetta_shared_return_checkpoint_peek(
     const CettaSharedReturnCheckpoint *checkpoint);
 /* Trim rows preceding every live checkpoint/consumer before advancing. Prefix

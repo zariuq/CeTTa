@@ -962,6 +962,13 @@ static bool eval_gc_evacuate_outcomes(
                 return false;
             outcome->atom = next;
         }
+        if (outcome->delayed) {
+            Atom *next = atom_deep_copy_session_copy(
+                session, outcome->delayed);
+            if (!next)
+                return false;
+            outcome->delayed = next;
+        }
         if (!bindings_promote_logical_atoms_with_session(
                 &outcome->env, session) ||
             !eval_gc_rehome_empty_prime_bindings(
