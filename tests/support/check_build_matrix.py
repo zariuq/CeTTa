@@ -45,6 +45,24 @@ def file_hash(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def project_compile(record, root=ROOT):
+    """Identify project code, independently of a dependency's warning policy."""
+    root = root.resolve()
+    cwd = Path(record["cwd"]).resolve()
+    if cwd != root:
+        return False
+    for argument in record["arguments"]:
+        if argument.startswith("-") or not argument.endswith(".c"):
+            continue
+        try:
+            relative = (cwd / argument).resolve().relative_to(root)
+        except ValueError:
+            continue
+        if relative.parts and relative.parts[0] != "vendor":
+            return True
+    return False
+
+
 def smoke_observation(language, output):
     lines = output.splitlines()
     if language == "petta":
@@ -105,12 +123,10 @@ def run_case(compiler, profile, arguments, directory, run_id):
         records = [json.loads(line) for line in invocations.read_text().splitlines()]
         compiled = [record for record in records if "-c" in record["arguments"] and
                     any(word.endswith(".c") for word in record["arguments"])]
-        # SQLite and the optional bridge's dependencies have separate warning
+        # Vendored and optional bridge dependencies have separate warning
         # policies. Record the working directory so a dependency's src/arena.c
         # cannot be mistaken for CeTTa's translation unit with the same name.
-        owned = [record["arguments"] for record in compiled if
-                 Path(record["cwd"]) == ROOT and
-                 "vendor/sqlite/sqlite3.c" not in record["arguments"]]
+        owned = [record["arguments"] for record in compiled if project_compile(record)]
         if not owned or any("-Werror" not in call for call in owned):
             result["error"] = "fresh warning-strict source compilation was not established"
             return result
