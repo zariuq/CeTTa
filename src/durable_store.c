@@ -347,6 +347,45 @@ CettaDurableStatus cetta_durable_snapshot(CettaDurableStore *s,const char *space
     CettaDurableStatus r=s->poisoned?DURABLE_POISONED:snapshot_locked(s,s->image,space,NULL,false,out);
     pthread_mutex_unlock(&s->mutex); return r;
 }
+/* Correct constant-materialization fallback over the native image. Queue
+ * partition/ordering indexes can refine this without changing CWP semantics. */
+CettaDurableStatus cetta_durable_next_in_partition(CettaDurableStore *s,
+        const char *space,const char *partition,const char *after,int64_t minimum,
+        CettaDurableSnapshot *out) {
+    if (!s || !out || !valid_name(space) || !valid_name(partition) || minimum < -1) return DURABLE_INVALID;
+    size_t length=strlen(partition);
+    if (length<2 || strchr(partition,'/')!=partition+length-1 ||
+        (after && (!valid_name(after) || strncmp(after,partition,length)))) return DURABLE_INVALID;
+    memset(out,0,sizeof(*out));pthread_mutex_lock(&s->mutex);
+    CettaDurableStatus status=s->poisoned?DURABLE_POISONED:DURABLE_OK;
+    memcpy(out->epoch,s->epoch,33);out->revision=s->revision;
+    int64_t revision=-1,position=-1;
+    if (status==DURABLE_OK && after) {
+        Atom *a=find_row(s->image->space,space,after,NULL);
+        if (!a) status=DURABLE_PRECONDITION;
+        else {CettaDurableRecord r=row(a);revision=r.revision;position=r.position;}
+    }
+    CettaDurableRecord best={0};bool found=false;
+    for (CettaIndex i=0;status==DURABLE_OK && i<space_length64(s->image->space);++i) {
+        CettaDurableRecord r=row(space_get_at64(s->image->space,i));
+        if (strcmp(r.space,space) || strncmp(r.key,partition,length) || r.revision<=minimum ||
+            r.revision<revision || (r.revision==revision && r.position<=position)) continue;
+        if (!found || compare_rows(&r,&best)<0) {best=r;found=true;}
+    }
+    if (status==DURABLE_OK && found) {
+        out->records=calloc(1,sizeof(*out->records));
+        if (!out->records) status=DURABLE_NOMEM;
+        else {
+            out->count=1;CettaDurableRecord *r=out->records;
+            *r=best;r->space=strdup(best.space);r->key=strdup(best.key);r->data=malloc(best.size?best.size:1);
+            if (!r->space || !r->key || !r->data) status=DURABLE_NOMEM;
+            else if (best.size) memcpy(r->data,best.data,best.size);
+        }
+    }
+    if (status!=DURABLE_OK) cetta_durable_snapshot_free(out);
+    pthread_mutex_unlock(&s->mutex);return status;
+}
+
 CettaDurableStatus cetta_durable_recover(CettaDurableStore *s,CettaDurableSnapshot *out) {
     if (!s || !out) return DURABLE_INVALID;
     memset(out,0,sizeof(*out)); pthread_mutex_lock(&s->mutex);
@@ -478,9 +517,10 @@ static CettaDurableStatus validate_observation(CettaDurableStore *s, const Cetta
     return DURABLE_OK;
 }
 
-struct CettaDurableWatch { CettaDurableObservation *observation; size_t bytes; };
+struct CettaDurableWatch { CettaDurableObservation *observation; size_t bytes;
+    bool revision_only; char epoch[33]; int64_t revision; size_t *counts; };
 void cetta_durable_watch_free(CettaDurableWatch *w) {
-    if (w) { cetta_durable_observation_free(w->observation); free(w); }
+    if (w) { cetta_durable_observation_free(w->observation); free(w->counts); free(w); }
 }
 size_t cetta_durable_watch_bytes(const CettaDurableWatch *w) { return w?w->bytes:0; }
 CettaDurableStatus cetta_durable_watch_new(const CettaDurableObservation *o,
@@ -489,19 +529,13 @@ CettaDurableStatus cetta_durable_watch_new(const CettaDurableObservation *o,
     *out=NULL;
     if (!o || !o->count) return DURABLE_INVALID;
     size_t used=sizeof(CettaDurableWatch)+sizeof(*o);
-    if (used>limit || o->count>(limit-used)/(sizeof(*o->scopes)+sizeof(*o->views))) return DURABLE_LIMIT;
-    used+=o->count*(sizeof(*o->scopes)+sizeof(*o->views));
+    size_t per_scope=sizeof(*o->scopes)+sizeof(*o->views)+sizeof(size_t);
+    if (used>limit || o->count>(limit-used)/per_scope) return DURABLE_LIMIT;
+    used+=o->count*per_scope;
     for (size_t i=0;i<o->count;++i) {
         size_t n=strlen(o->scopes[i].space)+strlen(o->scopes[i].key)+2;
         if (n>limit-used) return DURABLE_LIMIT;
         used+=n;
-        if (o->views[i].count>(limit-used)/sizeof(CettaDurableRecord)) return DURABLE_LIMIT;
-        used+=o->views[i].count*sizeof(CettaDurableRecord);
-        for (size_t j=0;j<o->views[i].count;++j) {
-            n=strlen(o->views[i].records[j].key)+1;
-            if (n>limit-used) return DURABLE_LIMIT;
-            used+=n;
-        }
     }
     CettaDurableWatch *w=calloc(1,sizeof(*w));
     if (!w) return DURABLE_NOMEM;
@@ -509,29 +543,50 @@ CettaDurableStatus cetta_durable_watch_new(const CettaDurableObservation *o,
     if (!w->observation) { cetta_durable_watch_free(w); return DURABLE_NOMEM; }
     CettaDurableObservation *copy=w->observation;
     copy->count=o->count; copy->scopes=calloc(o->count,sizeof(*copy->scopes)); copy->views=calloc(o->count,sizeof(*copy->views));
-    if (!copy->scopes || !copy->views) goto nomem;
+    w->counts=calloc(o->count,sizeof(*w->counts));
+    if (!copy->scopes || !copy->views || !w->counts) goto nomem;
     for (size_t i=0;i<o->count;++i) {
         copy->scopes[i]=(CettaDurableScope){o->scopes[i].kind,strdup(o->scopes[i].space),strdup(o->scopes[i].key)};
         if (!copy->scopes[i].space || !copy->scopes[i].key) goto nomem;
         CettaDurableSnapshot *v=&copy->views[i]; const CettaDurableSnapshot *src=&o->views[i];
         memcpy(v->epoch,src->epoch,sizeof(v->epoch)); v->revision=src->revision;
-        v->records=src->count?calloc(src->count,sizeof(*v->records)):NULL;
-        if (src->count && !v->records) goto nomem;
-        for (size_t j=0;j<src->count;++j) {
-            v->records[j].key=strdup(src->records[j].key); v->records[j].revision=src->records[j].revision;
-            ++v->count;
-            if (!v->records[j].key) goto nomem;
-        }
+        w->counts[i]=src->count;
     }
     *out=w; return DURABLE_OK;
 nomem:
     cetta_durable_watch_free(w); return DURABLE_NOMEM;
 }
-CettaDurableStatus cetta_durable_watch_current(CettaDurableStore *s, const CettaDurableWatch *w) {
+CettaDurableStatus cetta_durable_watch_revision_new(const CettaDurableObservation *o,
+        size_t limit,CettaDurableWatch **out) {
+    if (!out) return DURABLE_INVALID;
+    *out=NULL;
+    if (!o || !o->count) return DURABLE_INVALID;
+    if (limit<sizeof(CettaDurableWatch)) return DURABLE_LIMIT;
+    CettaDurableWatch *w=calloc(1,sizeof(*w));if (!w) return DURABLE_NOMEM;
+    w->revision_only=true;w->bytes=sizeof(*w);w->revision=o->views[0].revision;
+    memcpy(w->epoch,o->views[0].epoch,sizeof(w->epoch));*out=w;return DURABLE_OK;
+}
+CettaDurableStatus cetta_durable_watch_current(CettaDurableStore *s,const CettaDurableWatch *w) {
     if (!s || !w) return DURABLE_INVALID;
     pthread_mutex_lock(&s->mutex);
-    CettaDurableStatus r=s->poisoned?DURABLE_POISONED:validate_observation(s,w->observation);
-    pthread_mutex_unlock(&s->mutex); return r;
+    CettaDurableStatus result=s->poisoned?DURABLE_POISONED:DURABLE_OK;
+    if (result==DURABLE_OK && w->revision_only) {
+        if (strcmp(s->epoch,w->epoch) || s->revision!=w->revision) result=DURABLE_CONFLICT;
+    } else if (result==DURABLE_OK) {
+        for (size_t i=0;i<w->observation->count && result==DURABLE_OK;++i) {
+            const CettaDurableSnapshot *v=&w->observation->views[i];
+            const CettaDurableScope *scope=&w->observation->scopes[i];size_t count=0;
+            if (strcmp(s->epoch,v->epoch)) {result=DURABLE_CONFLICT;break;}
+            for (CettaIndex j=0;j<space_length64(s->image->space);++j) {
+                CettaDurableRecord r=row(space_get_at64(s->image->space,j));
+                if (!matches(&r,scope->space,scope)) continue;
+                ++count;
+                if (r.revision>v->revision) {result=DURABLE_CONFLICT;break;}
+            }
+            if (count!=w->counts[i]) result=DURABLE_CONFLICT;
+        }
+    }
+    pthread_mutex_unlock(&s->mutex);return result;
 }
 
 /* Build both the checkpoint bytes and its native projection before rename.

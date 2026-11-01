@@ -28664,6 +28664,7 @@ static PrimeHolGuest *prime_hol_guest(Arena *a, Atom **reason_out) {
     cetta_library_context_init_for_language_profile(
         &guest->context, CETTA_LANGUAGE_PRIME, cetta_profile_prime_default());
     guest->context_ready = true;
+    guest->context.value_byte_limit = cetta_library_value_byte_limit(host);
     term_universe_set_persistent_arena(&guest->context.term_universe,
                                        &guest->arena);
     memcpy(guest->context.root_dir, root, (size_t)root_len + 1u);
@@ -28894,6 +28895,7 @@ static PrimeHolGuest *prime_lf_guest(Arena *a, Atom **reason_out) {
     cetta_library_context_init_for_language_profile(
         &guest->context, CETTA_LANGUAGE_PRIME, cetta_profile_prime_default());
     guest->context_ready = true;
+    guest->context.value_byte_limit = cetta_library_value_byte_limit(host);
     term_universe_set_persistent_arena(&guest->context.term_universe,
                                        &guest->arena);
     memcpy(guest->context.root_dir, root, (size_t)root_len + 1u);
@@ -72371,16 +72373,8 @@ static bool petta_memo_native_control_try(
                 }
             }
             if (valid) {
-                CettaPettaMemoState *current =
-                    &library_context->petta_memo;
-                current->strategy = proposed.strategy;
-                current->unique_limit = proposed.unique_limit;
-                current->size_limit_bytes =
-                    proposed.size_limit_bytes;
-                current->float_precision =
-                    proposed.float_precision;
-                current->answer_limit = proposed.answer_limit;
-                current->aggregate = proposed.aggregate;
+                cetta_library_petta_memo_configure(
+                    library_context, &proposed);
                 result = petta_semantics_success_value(arena);
             }
         }

@@ -34,6 +34,16 @@ CettaDiskStoreStatus cetta_disk_query_open_point(const CettaDiskStoreView *view,
 CettaDiskStoreStatus cetta_disk_query_open_indexed(const CettaDiskStoreView *view,
     CettaDiskBytes prefix, uint64_t count, const CettaDiskSpaceIndex *indexes,
     size_t index_count, Atom *pattern, Atom *template, CettaDiskQuery **out);
+/* The allowance covers encoded patterns/templates, stored atoms and result
+ * packets. It survives checkpointing. next() may request a smaller page;
+ * TOO_LARGE retains that pending packet for a larger subsequent request. */
+CettaDiskStoreStatus cetta_disk_query_open_indexed_bounded(const CettaDiskStoreView *view,
+    CettaDiskBytes prefix, uint64_t count, const CettaDiskSpaceIndex *indexes,
+    size_t index_count, Atom *pattern, Atom *template, size_t maximum_bytes,
+    CettaDiskQuery **out);
+CettaDiskStoreStatus cetta_disk_query_open_point_bounded(const CettaDiskStoreView *view,
+    CettaDiskBytes key, Atom *pattern, Atom *template, size_t maximum_bytes,
+    CettaDiskQuery **out);
 bool cetta_disk_query_statistics(const CettaDiskQuery *query,CettaDiskSpaceStatistics *out);
 
 /* Bounded matcher transitions; each grants at most 32 matcher node actions.

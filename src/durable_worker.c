@@ -13,7 +13,9 @@
 #include <time.h>
 #include <unistd.h>
 
-enum { INITIAL_PEERS=16, TASKS=128 };
+enum { INITIAL_PEERS=16 };
+#define READY_SPACE "host.worker-ready"
+#define CONTROL_READY_SPACE "host.worker-control-ready"
 /* A ready index contains no observation body; enumerating pending work must
  * not copy every large observation on each fetch. CDV1 true is the marker. */
 static const unsigned char ready_marker[]={'C','D','V','1','Y'};
@@ -75,10 +77,6 @@ static void key(char *out, const char *worker, const char *id) {
 static const CettaDurableSnapshot *view(const CettaDurableObservation *o, size_t i) {
     return cetta_durable_observation_view(o,i);
 }
-static const CettaDurableRecord *find(const CettaDurableSnapshot *v, const char *name) {
-    for (size_t i=0;i<v->count;++i) if (!strcmp(v->records[i].key,name)) return &v->records[i];
-    return NULL;
-}
 static CettaDurableStatus encoded_text(const void *body, size_t size, unsigned char **data, size_t *n) {
     CettaDurableField f={.kind=DURABLE_FIELD_TEXT,.text={body,size}};
     return cetta_durable_fields_encode(&f,data,n);
@@ -93,20 +91,21 @@ static bool task_body(const CettaDurableRecord *r, const unsigned char **body, s
 }
 static CettaDurableStatus publish(CettaDurableStore *store, const char *worker,
         const char *id, const void *body, size_t size,
-        const CettaDurableRecord *intent, const char *epoch) {
+        const CettaDurableRecord *intent, const char *epoch, bool control) {
     if (!store || !component(worker) || !component(id) || !text_valid(body,size)) return DURABLE_INVALID;
-    char name[130], prefix[66]; key(name,worker,id); key(prefix,worker,"");
+    char name[130]; key(name,worker,id);
     CettaDurableScope q[]={{DURABLE_KEY,"host.worker-tasks",name},
-        {DURABLE_KEY,"host.worker-results",name},{DURABLE_PREFIX,"host.worker-ready",prefix},
-        {DURABLE_KEY,"host.outbox",intent?intent->key:""},
+        {DURABLE_KEY,"host.worker-results",name},{DURABLE_KEY,READY_SPACE,name},
+        {DURABLE_KEY,CONTROL_READY_SPACE,name},
+        {DURABLE_KEY,"host.outbox",intent?intent->key:name},
         {DURABLE_KEY,"host.worker-origins",name}};
     CettaDurableObservation *o=NULL;
-    CettaDurableStatus s=cetta_durable_observe(store,q,intent?5:3,&o); if (s!=DURABLE_OK) return s;
+    CettaDurableStatus s=cetta_durable_observe(store,q,intent?6:4,&o); if (s!=DURABLE_OK) return s;
     const CettaDurableSnapshot *v=view(o,0), *ready=view(o,2);
     const CettaDurableRecord *old=v->count?&v->records[0]:NULL;
     unsigned char *data=NULL, *origin=NULL; size_t n=0, on=0;
     if (intent) {
-        const CettaDurableSnapshot *seen=view(o,3);
+        const CettaDurableSnapshot *seen=view(o,4);
         const CettaDurableRecord *r=seen->count?&seen->records[0]:NULL;
         if (strcmp(seen->epoch,epoch) || !r || r->revision!=intent->revision ||
             r->position!=intent->position || r->size!=intent->size ||
@@ -120,17 +119,23 @@ static CettaDurableStatus publish(CettaDurableStore *store, const char *worker,
             {.kind=DURABLE_FIELD_INT,.integer=intent->position}};
         CettaDurableField value={.kind=DURABLE_FIELD_EXPR,.expression={f,6}};
         s=cetta_durable_fields_encode(&value,&origin,&on); if (s!=DURABLE_OK) goto done;
-        const CettaDurableSnapshot *prior=view(o,4);
+        const CettaDurableSnapshot *prior=view(o,5);
         if ((old && (!prior->count || prior->records[0].size!=on || memcmp(prior->records[0].data,origin,on))) ||
             (!old && prior->count)) { s=DURABLE_CONFLICT; goto done; }
     }
     s=encoded_text(body,size,&data,&n);
-    if (s==DURABLE_OK && old) s=old->size==n && !memcmp(old->data,data,n)?DURABLE_OK:DURABLE_CONFLICT;
-    else if (s==DURABLE_OK && (view(o,1)->count || find(ready,name))) s=DURABLE_CONFLICT;
-    else if (s==DURABLE_OK && ready->count>=TASKS) s=DURABLE_LIMIT;
+    if (s==DURABLE_OK && old) {
+        s=old->size==n && !memcmp(old->data,data,n)?DURABLE_OK:DURABLE_CONFLICT;
+        if (s==DURABLE_OK && control && ready->count && !view(o,3)->count) {
+            CettaDurableOp move[]={{DURABLE_REMOVE,READY_SPACE,name,NULL,0},
+                {DURABLE_INSERT,CONTROL_READY_SPACE,name,ready_marker,sizeof(ready_marker)}};int64_t rev;
+            s=cetta_durable_commit_observed(store,o,move,2,&rev);
+        }
+    }
+    else if (s==DURABLE_OK && (view(o,1)->count || ready->count || view(o,3)->count)) s=DURABLE_CONFLICT;
     else if (s==DURABLE_OK) {
         CettaDurableOp ops[]={{DURABLE_INSERT,"host.worker-tasks",name,data,n},
-            {DURABLE_INSERT,"host.worker-ready",name,ready_marker,sizeof(ready_marker)},
+            {DURABLE_INSERT,control?CONTROL_READY_SPACE:READY_SPACE,name,ready_marker,sizeof(ready_marker)},
             {DURABLE_INSERT,"host.worker-origins",name,origin,on}}; int64_t rev;
         s=cetta_durable_commit_observed(store,o,ops,intent?3:2,&rev);
     }
@@ -139,7 +144,7 @@ done:
 }
 CettaDurableStatus cetta_worker_publish(CettaDurableStore *store, const char *worker,
                                       const char *id, const void *body, size_t size) {
-    return publish(store,worker,id,body,size,NULL,NULL);
+    return publish(store,worker,id,body,size,NULL,NULL,false);
 }
 static bool form(const Atom *a, const char *head, size_t n) {
     return a && a->kind==ATOM_EXPR && a->expr.len==n && atom_is_symbol(a->expr.elems[0],head);
@@ -159,8 +164,8 @@ bool cetta_worker_validate(void *context, const Atom *p, const Atom *reply_value
     CettaDurableStatus s=cetta_durable_value_encode(reply_value,&bytes,&n); free(bytes);
     return s==DURABLE_OK && n<=CETTA_WORKER_BODY_MAX;
 }
-CettaDurableStatus cetta_worker_register(CettaDurableStore *store,
-        const char *outbox_key, const char *worker, char task_id[65]) {
+static CettaDurableStatus register_task(CettaDurableStore *store,
+        const char *outbox_key, const char *worker, char task_id[65], bool control) {
     if (!task_id) return DURABLE_INVALID;
     task_id[0]=0;
     if (!store || !component(worker) || !outbox_key || !*outbox_key || strnlen(outbox_key,256)>255)
@@ -180,10 +185,16 @@ CettaDurableStatus cetta_worker_register(CettaDurableStore *store,
     char id[65];
     snprintf(id,sizeof(id),"%.32s%016" PRIx64 "%016" PRIx64,v->epoch,(uint64_t)r->revision,(uint64_t)r->position);
     const char *body=string(p->expr.elems[4]->expr.elems[3]);
-    s=publish(store,worker,id,body,strlen(body),r,v->epoch);
+    s=publish(store,worker,id,body,strlen(body),r,v->epoch,control);
     if (s==DURABLE_OK) memcpy(task_id,id,sizeof(id));
 done:
     arena_free(&a); cetta_durable_observation_free(o); return s;
+}
+CettaDurableStatus cetta_worker_register(CettaDurableStore *s,const char *key,const char *worker,char id[65]) {
+    return register_task(s,key,worker,id,false);
+}
+CettaDurableStatus cetta_worker_register_control(CettaDurableStore *s,const char *key,const char *worker,char id[65]) {
+    return register_task(s,key,worker,id,true);
 }
 static CettaWorkerCode status_code(CettaDurableStatus s) {
     switch (s) {
@@ -202,43 +213,37 @@ static CettaDurableStatus reply(Peer *p, CettaWorkerCode code, const char *id,
     memcpy(b+6,id,n); if (size) memcpy(b+6+n,body,size);
     free(p->reply); p->reply=b; p->size=6+n+size; return DURABLE_OK;
 }
-static CettaDurableStatus next_task(CettaWorkerEndpoint *e, Peer *p, const char *after) {
-    CettaDurableScope q={DURABLE_PREFIX,"host.worker-ready",e->prefix};
-    CettaDurableObservation *o=NULL; CettaDurableStatus s=cetta_durable_observe(e->store,&q,1,&o);
-    const CettaDurableRecord *next=NULL;
-    if (s==DURABLE_OK) {
-        const CettaDurableSnapshot *tasks=view(o,0);
-        const CettaDurableRecord *cut=NULL;
-        if (after) {
-            char name[130]; key(name,e->worker,after); cut=find(tasks,name);
-            /* Answered meanwhile: the batch it began is stale. */
-            if (!cut) { cetta_durable_observation_free(o); return reply(p,WORKER_UNKNOWN,after,NULL,0); }
-        }
-        if (tasks->count>TASKS) s=DURABLE_LIMIT;
-        else for (size_t i=0;i<tasks->count;++i) {
-            const CettaDurableRecord *r=&tasks->records[i];
-            if (cut && (r->revision<cut->revision ||
-                (r->revision==cut->revision && r->position<=cut->position))) continue;
-            if (!next || r->revision<next->revision ||
-                (r->revision==next->revision && r->position<next->position)) next=r;
+static CettaDurableStatus next_task(CettaWorkerEndpoint *e, Peer *p, const char *after, bool controls_only) {
+    char name[130]; const char *space=CONTROL_READY_SPACE; bool cut_control=false;
+    CettaDurableSnapshot found={0}; CettaDurableObservation *cut=NULL,*selected=NULL;
+    CettaDurableStatus s=DURABLE_OK, sent=DURABLE_OK;
+    if (after) {
+        key(name,e->worker,after);
+        CettaDurableScope q[]={{DURABLE_KEY,CONTROL_READY_SPACE,name},{DURABLE_KEY,READY_SPACE,name}};
+        s=cetta_durable_observe(e->store,q,2,&cut);
+        if (s!=DURABLE_OK) goto finish;
+        cut_control=view(cut,0)->count!=0;
+        if ((!cut_control && !view(cut,1)->count) || (controls_only && !cut_control)) {
+            sent=reply(p,WORKER_UNKNOWN,after,NULL,0);goto finish;
         }
     }
-    CettaDurableObservation *selected=NULL;
-    CettaDurableStatus sent;
-    if (s==DURABLE_OK && next) {
-        const unsigned char *body; size_t size;
-        const char *id=next->key+strlen(e->prefix);
-        CettaDurableScope keys[]={{DURABLE_KEY,"host.worker-tasks",next->key},
-            {DURABLE_KEY,"host.worker-ready",next->key}};
+    if (!after || cut_control)
+        s=cetta_durable_next_in_partition(e->store,CONTROL_READY_SPACE,e->prefix,after?name:NULL,-1,&found);
+    if (s==DURABLE_OK && !found.count && !controls_only) {
+        cetta_durable_snapshot_free(&found);space=READY_SPACE;
+        s=cetta_durable_next_in_partition(e->store,READY_SPACE,e->prefix,after&&!cut_control?name:NULL,-1,&found);
+    }
+    if (s==DURABLE_PRECONDITION) {s=DURABLE_OK;sent=reply(p,WORKER_UNKNOWN,after?after:"",NULL,0);goto finish;}
+    if (s==DURABLE_OK && found.count) {
+        const CettaDurableRecord *next=found.records;
+        const unsigned char *body;size_t size;const char *id=next->key+strlen(e->prefix);
+        CettaDurableScope q[]={{DURABLE_KEY,"host.worker-tasks",next->key},{DURABLE_KEY,space,next->key}};
         if (!component(id)) s=DURABLE_CORRUPT;
-        else s=cetta_durable_observe(e->store,keys,2,&selected);
-        if (s==DURABLE_OK && !view(selected,1)->count) {
-            /* Completed between enumeration and this snapshot. The next
-             * fetch sees the new queue; no task has been consumed here. */
-            sent=reply(p,WORKER_IDLE,"",NULL,0);
-        } else {
+        else s=cetta_durable_observe(e->store,q,2,&selected);
+        if (s==DURABLE_OK && !view(selected,1)->count) sent=reply(p,WORKER_IDLE,"",NULL,0);
+        else {
             if (s==DURABLE_OK) {
-                const CettaDurableSnapshot *task=view(selected,0), *ready=view(selected,1);
+                const CettaDurableSnapshot *task=view(selected,0),*ready=view(selected,1);
                 if (!task->count || ready->records[0].size!=sizeof(ready_marker) ||
                     memcmp(ready->records[0].data,ready_marker,sizeof(ready_marker)) ||
                     !task_body(&task->records[0],&body,&size)) s=DURABLE_CORRUPT;
@@ -246,8 +251,9 @@ static CettaDurableStatus next_task(CettaWorkerEndpoint *e, Peer *p, const char 
             sent=s==DURABLE_OK?reply(p,WORKER_TASK,id,body,size):reply(p,WORKER_UNAVAILABLE,"",NULL,0);
         }
     } else sent=reply(p,s==DURABLE_OK?WORKER_IDLE:status_code(s),"",NULL,0);
-    cetta_durable_observation_free(selected);
-    cetta_durable_observation_free(o); return s==DURABLE_OK?sent:s;
+finish:
+    cetta_durable_observation_free(cut);cetta_durable_observation_free(selected);
+    cetta_durable_snapshot_free(&found);return s==DURABLE_OK?sent:s;
 }
 
 static uint64_t monotonic_ms(void);
@@ -255,27 +261,26 @@ static uint64_t monotonic_ms(void);
  * unanswered tasks do not trigger repeated wakes; only new work or a new
  * store epoch does. This is a notification, never a receive or receipt. */
 static CettaDurableStatus watch_task(CettaWorkerEndpoint *e, Peer *p, bool initial) {
-    CettaDurableScope scope = {DURABLE_PREFIX, "host.worker-ready", e->prefix};
-    CettaDurableObservation *o = NULL;
-    CettaDurableStatus s = cetta_durable_observe(e->store, &scope, 1, &o);
-    if (s != DURABLE_OK) return s;
-    const CettaDurableSnapshot *snapshot = view(o, 0);
-    if (!initial && !strcmp(p->after_epoch, snapshot->epoch) && p->after_revision > snapshot->revision) {
-        p->waiting = false;
-        cetta_durable_observation_free(o);
-        return reply(p, WORKER_INVALID, "", NULL, 0);
+    CettaDurableSnapshot snapshot={0},ordinary={0};
+    int64_t since=initial?INT64_MAX:p->after_revision;
+    CettaDurableStatus s=cetta_durable_next_in_partition(e->store,CONTROL_READY_SPACE,e->prefix,NULL,since,&snapshot);
+    if (s==DURABLE_OK) s=cetta_durable_next_in_partition(e->store,READY_SPACE,e->prefix,NULL,since,&ordinary);
+    if (s!=DURABLE_OK) {cetta_durable_snapshot_free(&snapshot);cetta_durable_snapshot_free(&ordinary);return s;}
+    if (!initial && !strcmp(p->after_epoch,snapshot.epoch) && p->after_revision>snapshot.revision) {
+        p->waiting=false;cetta_durable_snapshot_free(&snapshot);cetta_durable_snapshot_free(&ordinary);
+        return reply(p,WORKER_INVALID,"",NULL,0);
     }
-    bool changed = !initial && strcmp(p->after_epoch, snapshot->epoch);
-    if (!initial && !changed)
-        for (size_t i = 0; i < snapshot->count; ++i)
-            if (snapshot->records[i].revision > p->after_revision) { changed = true; break; }
+    bool changed=!initial && (strcmp(p->after_epoch,snapshot.epoch) || snapshot.count || ordinary.count);
+    /* Use the earlier read revision: a control arriving between reads must
+     * remain newer than the returned token and therefore wake the next wait. */
+
     char token[64];
-    snprintf(token, sizeof(token), "%s.%" PRId64, snapshot->epoch, snapshot->revision);
+    snprintf(token, sizeof(token), "%s.%" PRId64, snapshot.epoch, snapshot.revision);
     if (initial || changed || monotonic_ms() >= p->due) {
         p->waiting = false;
         s = reply(p, changed ? WORKER_PENDING : WORKER_IDLE, token, NULL, 0);
     }
-    cetta_durable_observation_free(o);
+    cetta_durable_snapshot_free(&snapshot);cetta_durable_snapshot_free(&ordinary);
     return s;
 }
 
@@ -334,11 +339,11 @@ static CettaDurableStatus result(CettaWorkerEndpoint *e, Peer *p, const char *id
     memcpy(input,"worker/",7); strcpy(input+7,name);
     CettaDurableScope q[]={{DURABLE_KEY,"host.worker-tasks",name},
         {DURABLE_KEY,"host.worker-results",name},{DURABLE_KEY,"host.inbox",input},
-        {DURABLE_KEY,"host.worker-ready",name}};
-    CettaDurableObservation *o=NULL; CettaDurableStatus s=cetta_durable_observe(e->store,q,4,&o);
+        {DURABLE_KEY,READY_SPACE,name},{DURABLE_KEY,CONTROL_READY_SPACE,name}};
+    CettaDurableObservation *o=NULL; CettaDurableStatus s=cetta_durable_observe(e->store,q,5,&o);
     CettaWorkerCode code=WORKER_UNAVAILABLE; unsigned char *data=NULL; size_t n=0;
     if (s==DURABLE_OK) {
-        const CettaDurableSnapshot *task=view(o,0), *old=view(o,1), *inbox=view(o,2), *ready=view(o,3);
+        const CettaDurableSnapshot *task=view(o,0), *old=view(o,1), *inbox=view(o,2), *ready=view(o,3)->count?view(o,3):view(o,4);
         if (receipt) code=old->count?WORKER_STORED:task->count?WORKER_PENDING:WORKER_UNKNOWN;
         else if (!task->count) code=WORKER_UNKNOWN;
         else {
@@ -357,11 +362,11 @@ static CettaDurableStatus result(CettaWorkerEndpoint *e, Peer *p, const char *id
                 const CettaDurableRecord *r=&old->records[0];
                 s=r->size==n && !memcmp(r->data,data,n)?DURABLE_OK:DURABLE_CONFLICT;
             } else if (s==DURABLE_OK) {
-                if (inbox->count || !ready->count || ready->records[0].size!=sizeof(ready_marker) ||
+                if (inbox->count || (view(o,3)->count && view(o,4)->count) || !ready->count || ready->records[0].size!=sizeof(ready_marker) ||
                     memcmp(ready->records[0].data,ready_marker,sizeof(ready_marker))) s=DURABLE_CORRUPT;
                 else {
                     CettaDurableOp ops[]={{DURABLE_INSERT,"host.worker-results",name,data,n},
-                        {DURABLE_INSERT,"host.inbox",input,data,n},{DURABLE_REMOVE,"host.worker-ready",name,NULL,0}}; int64_t rev;
+                        {DURABLE_INSERT,"host.inbox",input,data,n},{DURABLE_REMOVE,view(o,4)->count?CONTROL_READY_SPACE:READY_SPACE,name,NULL,0}}; int64_t rev;
                     s=cetta_durable_commit_observed(e->store,o,ops,3,&rev);
                 }
             }
@@ -378,11 +383,11 @@ static CettaDurableStatus submit(CettaWorkerEndpoint *e, Peer *p, const char *id
     memcpy(input,"submission/",11); strcpy(input+11,name);
     snprintf(prefix,sizeof(prefix),"submission/%s/",e->worker);
     CettaDurableScope q[]={{DURABLE_KEY,"host.worker-submissions",name},
-        {DURABLE_KEY,"host.inbox",input},{DURABLE_PREFIX,"host.inbox",prefix}};
-    CettaDurableObservation *o=NULL; CettaDurableStatus s=cetta_durable_observe(e->store,q,3,&o);
+        {DURABLE_KEY,"host.inbox",input}};
+    CettaDurableObservation *o=NULL; CettaDurableStatus s=cetta_durable_observe(e->store,q,2,&o);
     CettaWorkerCode code=WORKER_UNAVAILABLE; unsigned char *data=NULL; size_t n=0;
     if (s==DURABLE_OK) {
-        const CettaDurableSnapshot *old=view(o,0), *inbox=view(o,1), *pending=view(o,2);
+        const CettaDurableSnapshot *old=view(o,0), *inbox=view(o,1);
         CettaDurableField f[]={
             {.kind=DURABLE_FIELD_SYMBOL,.text={"host:worker-submission",22}},
             {.kind=DURABLE_FIELD_INT,.integer=1},
@@ -396,7 +401,6 @@ static CettaDurableStatus submit(CettaWorkerEndpoint *e, Peer *p, const char *id
             s=r->size==n && !memcmp(r->data,data,n)?DURABLE_OK:DURABLE_CONFLICT;
         } else if (s==DURABLE_OK) {
             if (inbox->count) s=DURABLE_CORRUPT;
-            else if (pending->count>=TASKS) s=DURABLE_LIMIT;
             else {
                 CettaDurableOp ops[]={{DURABLE_INSERT,"host.worker-submissions",name,data,n},
                     {DURABLE_INSERT,"host.inbox",input,data,n}}; int64_t rev;
@@ -417,9 +421,10 @@ static CettaDurableStatus request(CettaWorkerEndpoint *e, Peer *p, const unsigne
     char id[65]; size_t n=packet[5]; memcpy(id,packet+6,n); id[n]=0;
     const unsigned char *body=packet+6+n; size_t len=size-6-n;
     if (packet[4] == WORKER_WAIT) return start_watch(e, p, id, body, len);
-    if (packet[4]==WORKER_NEXT && !n && !len) return next_task(e,p,NULL);
+    if (packet[4]==WORKER_NEXT && !n && !len) return next_task(e,p,NULL,false);
+    if (packet[4]==WORKER_NEXT_CONTROL && !len && (!n || component(id))) return next_task(e,p,n?id:NULL,true);
     if (!n || memchr(id,0,n) || !component(id)) return reply(p,WORKER_INVALID,"",NULL,0);
-    if (packet[4]==WORKER_NEXT && !len) return next_task(e,p,id);
+    if (packet[4]==WORKER_NEXT && !len) return next_task(e,p,id,false);
     if (packet[4]==WORKER_SUBMIT && text_valid(body,len)) return submit(e,p,id,body,len);
     if (packet[4]==WORKER_RECEIPT && !len) return result(e,p,id,NULL,0,true);
     if (packet[4]==WORKER_RESULT && text_valid(body,len)) return result(e,p,id,body,len,false);

@@ -22,4 +22,10 @@ bool cetta_worker_validate(void *context, const Atom *payload, const Atom *reply
  * explicitly decide what to do with a stale draft against current state. */
 CettaDurableStatus cetta_worker_register(CettaDurableStore *store,
     const char *outbox_key, const char *authorized_worker, char task_id[65]);
+/* The trusted application classifies an authenticated control intent before
+ * calling this entry. Scheduling class grants no action authority. Legacy
+ * ready records for the same immutable intent are moved atomically; input,
+ * identity, origin and result receipts are preserved. */
+CettaDurableStatus cetta_worker_register_control(CettaDurableStore *store,
+    const char *outbox_key, const char *authorized_worker, char task_id[65]);
 #endif

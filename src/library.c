@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "library.h"
+#include "atom_wire.h"
 #include "expand_user.h"
 #include "errno_names.h"
 #include "effect_policy.h"
@@ -632,6 +633,10 @@ static const char *library_he_words(const CettaLibraryContext *ctx,
     return spec ? spec->he_words : NULL;
 }
 
+size_t cetta_library_value_byte_limit(const CettaLibraryContext *ctx) {
+    return ctx && ctx->value_byte_limit ? ctx->value_byte_limit : CETTA_ATOM_WIRE_BYTES;
+}
+
 void cetta_library_context_init(CettaLibraryContext *ctx) {
     cetta_library_context_init_for_language_profile(ctx, CETTA_LANGUAGE_HE, NULL);
 }
@@ -655,6 +660,7 @@ static void library_context_init_services(CettaLibraryContext *ctx,
     ctx->parser_cache = NULL;
     term_universe_init(&ctx->term_universe);
     ctx->active_mask = 0;
+    ctx->value_byte_limit = CETTA_ATOM_WIRE_BYTES;
     ctx->root_dir[0] = '\0';
     if (!getcwd(ctx->working_dir, sizeof(ctx->working_dir))) {
         ctx->working_dir[0] = '\0';
@@ -842,6 +848,7 @@ bool cetta_library_context_init_prime_snapshot_from(CettaLibraryContext *ctx,
     ctx->session=source->session;
     ctx->active_mask=source->active_mask;
     ctx->prime_relational_plan_enabled=source->prime_relational_plan_enabled;
+    ctx->value_byte_limit=cetta_library_value_byte_limit(source);
     memcpy(ctx->root_dir,source->root_dir,sizeof(ctx->root_dir));
     memcpy(ctx->working_dir,source->working_dir,sizeof(ctx->working_dir));
     memcpy(ctx->script_path,source->script_path,sizeof(ctx->script_path));
@@ -1586,6 +1593,30 @@ bool cetta_library_petta_memo_is_enabled(
         ctx->petta_memo.exact_arity_len, low);
     return exact < ctx->petta_memo.exact_arity_len &&
         ctx->petta_memo.exact_arities[exact].head == head;
+}
+
+void cetta_library_petta_memo_configure(
+    CettaLibraryContext *ctx, const CettaPettaMemoState *proposed) {
+    if (!ctx || !proposed)
+        return;
+    CettaPettaMemoState *current = &ctx->petta_memo;
+    bool changed = current->strategy != proposed->strategy ||
+        current->unique_limit != proposed->unique_limit ||
+        current->size_limit_bytes != proposed->size_limit_bytes ||
+        current->float_precision != proposed->float_precision ||
+        current->answer_limit != proposed->answer_limit ||
+        current->aggregate != proposed->aggregate;
+    if (!changed)
+        return;
+    current->strategy = proposed->strategy;
+    current->unique_limit = proposed->unique_limit;
+    current->size_limit_bytes = proposed->size_limit_bytes;
+    current->float_precision = proposed->float_precision;
+    current->answer_limit = proposed->answer_limit;
+    current->aggregate = proposed->aggregate;
+    /* A generation records even A -> B -> A. Comparing only current policy
+     * values could revive an already invalidated program observation. */
+    cetta_library_petta_admission_advance(ctx);
 }
 
 void cetta_library_petta_memo_clear_stats(
@@ -12504,7 +12535,7 @@ bool cetta_library_import(CettaLibraryContext *ctx, const char *name,
     if (import_bit == CETTA_LIBRARY_DURABLE && !ctx->durable_runtime)
         ctx->durable_runtime = cetta_durable_runtime_new();
     if (import_bit == CETTA_LIBRARY_IO && !ctx->io_runtime)
-        ctx->io_runtime = cetta_io_runtime_new();
+        ctx->io_runtime = cetta_io_runtime_new_with_value_limit(cetta_library_value_byte_limit(ctx));
     return true;
 }
 

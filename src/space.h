@@ -396,6 +396,8 @@ void space_exact_index_test_refuse(size_t allocations);
 
 void space_init_with_universe(Space *s, TermUniverse *universe);
 void space_init_overlay(Space *s, const Space *base);
+/* Immutable source-backed bases require the checked local constructor. It
+ * uses the source owner's captured overlay capability, where available. */
 /* A public local view retains its base's admitted matching profile. Attached
  * MORK execution remains a separate service; its local view uses native
  * storage. Failure releases the initialized view's storage. */
@@ -411,7 +413,8 @@ bool space_module_own_view_select(Space *view, Space *storage);
 void space_module_own_view_release(Space *view, Space *storage);
 static inline Space *space_mutation_target(Space *s) {
     s = s && s->module_own_view ? (Space *)s->overlay_base : s;
-    if (s && s->match_backend.kind == SPACE_ENGINE_SOURCE) {
+    if (s && s->match_backend.kind == SPACE_ENGINE_SOURCE &&
+        (!s->match_backend.ops || !s->match_backend.ops->source_edits)) {
         space_match_backend_set_error(SPACE_MATCH_BACKEND_ERROR_READ_ONLY);
         return NULL;
     }

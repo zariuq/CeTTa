@@ -33,7 +33,8 @@ def main():
                 worker.close()
         for kind, callback in [("equation", "program-test:value"), ("transitive", "program-test:outer"),
                                ("declaration", "program-test:typed"), ("future", "program-test:future"),
-                               ("data", "program-test:value"), ("import", "program-test:value")]:
+                               ("data", "program-test:value"), ("import", "program-test:value"),
+                               ("memo-policy", "program-test:value")]:
             path = root / kind; path.mkdir(mode=0o700)
             answer = call(E("Live", str(path), S(kind), S(callback)))
             assert answer[0] == S("ProgramLiveV1") and answer[4][2] == 1, answer
@@ -45,7 +46,7 @@ def main():
             if kind == "equation":
                 assert answer[1] == (E("Old", 1),) and answer[3] == E("New", 9), answer
             cases.append(kind)
-        for kind in ["unchanged", "code", "data", "retry", "closed"]:
+        for kind in ["unchanged", "code", "data", "retry", "closed", "memo-policy"]:
             path = root / f"commit-{kind}"; path.mkdir(mode=0o700)
             answer = call(E("Commit", str(path), S(kind)))
             assert answer[0] == S("ProgramCommitV1") and rows(answer[1]) == [S("allowed")], answer
@@ -53,7 +54,7 @@ def main():
             if kind in ["unchanged", "retry"]:
                 assert outcome[0] == S("KnowledgeCommittedV1") and answer[6] == answer[5] + 1, answer
             else:
-                reason = {"code": "program-invalidated", "data": "conflict", "closed": "closed-program-watch"}[kind]
+                reason = {"code": "program-invalidated", "data": "conflict", "closed": "closed-program-watch", "memo-policy": "program-invalidated"}[kind]
                 assert outcome == E("StoreRefused", S(reason)), answer
                 assert answer[6] == answer[5] + (kind == "data"), answer
             if kind == "retry":
@@ -65,7 +66,23 @@ def main():
         assert during[0] == S("KqFirstFailure") and during[1] == (), during
         assert during[2] == E("StoreRefused", S("program-invalidated")), during
         assert during[3][2] > 0 and during[3][3] > 0, during
-        for kind in ["data", "other-equation"]:
+        path = root / "during-policy"; path.mkdir(mode=0o700)
+        during = call(E("DuringPolicy", str(path)))
+        assert during[0] == S("KqFirstFailure") and during[1] == (), during
+        assert during[2] == E("StoreRefused", S("program-invalidated")), during
+        assert during[3][2] > 0 and during[3][3] > 0, during
+        policy_options = [E("strategy", S("lru")), E("unique-limit", 101), E("size-limit", 1),
+                          E("float", 2), E("answer-limit", 1), E("aggregate", S("count"))]
+        for option in policy_options:
+            answer = call(E("MemoPolicy", option, S("NoRestore")))
+            assert answer == E("ProgramMemoPolicyV1", *([E("StoreRefused", S("program-invalidated"))] * 3),
+                               S("StoreProgramCurrent")), answer
+        restored = call(E("MemoPolicy", E("aggregate", S("count")), E("aggregate", S("none"))))
+        assert restored == E("ProgramMemoPolicyV1", *([E("StoreRefused", S("program-invalidated"))] * 3), S("StoreProgramCurrent")), restored
+        same = call(E("MemoPolicy", E("aggregate", S("none")), S("NoRestore")))
+        assert same == E("ProgramMemoPolicyV1", *([S("StoreProgramCurrent")] * 4)), same
+        assert call(S("MemoStatistics")) == S("StoreProgramCurrent")
+        for kind in ["data", "other-equation", "memo-policy"]:
             path = root / f"graph-{kind}"; path.mkdir(mode=0o700)
             result = call(E("Graph", str(path), S(kind)))
             assert result[0] == S("ProgramGraphV1") and len(result[1]) == 1, result
@@ -158,6 +175,9 @@ def main():
         report = {"cases": cases, "closed_forged_stale_clone_controls": True,
                   "ordinary_live_declarations_preserved": True,
                   "mixed_code_pages_refused": True, "data_only_program_mutation_allowed": True,
+                  "memo_policy_changes_and_round_trip_invalidate_watches": True,
+                  "same_policy_and_statistics_leave_watches_current": True,
+                  "memo_policy_settings_checked": [option[0].name for option in policy_options],
                   "program_and_data_dependencies_checked_for_commit": True,
                   "receipt_precedes_stale_program_on_retry": True,
                   "during_callback_change_discards_row_and_keeps_work_counts": True,

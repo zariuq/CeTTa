@@ -34,18 +34,23 @@ class WorkerEvaluationError(RuntimeError):
 
 class Worker:
     def __init__(self, binary, module, entry, timeout=30, profile=False,
-                 *, language=None, num_threads=None, language_profile=None, import_mode=None):
+                 *, language=None, num_threads=None, language_profile=None, import_mode=None, maximum_bytes=MAX_BYTES):
         if language is not None and language not in ("petta", "prime"):
             raise ValueError("invalid worker language")
         if num_threads is not None and (type(num_threads) is not int or not 0 <= num_threads <= 1024):
             raise ValueError("invalid worker thread count")
         if import_mode is not None and import_mode not in ("upstream", "relative", "ancestor-walk"):
             raise ValueError("invalid worker import mode")
+        if type(maximum_bytes) is not int or not 4 <= maximum_bytes <= 0xffffffff:
+            raise ValueError("invalid frame byte allowance")
+        self.maximum_bytes = maximum_bytes
         self.timeout = timeout
         self.profile = profile
         self.last_metrics = None
         self.lock = threading.Lock()
         self.command = [str(binary)]
+        if maximum_bytes != MAX_BYTES:
+            self.command += ["--value-bytes", str(maximum_bytes)]
         if language is not None:
             self.command += ["--lang", language]
         if language_profile is not None:
@@ -97,7 +102,7 @@ class Worker:
                 self._start()
             started = time.perf_counter_ns() if self.profile else 0
             request_id = uuid.uuid4().hex
-            data = encode(E("work-profile" if self.profile else "work", request_id, value))
+            data = encode(E("work-profile" if self.profile else "work", request_id, value), maximum_bytes=self.maximum_bytes)
             packet = b"CSP1" + struct.pack(">I", len(data)) + data
             encoded_at = time.perf_counter_ns() if self.profile else 0
             deadline = time.monotonic() + self.timeout
@@ -129,11 +134,11 @@ class Worker:
                 transfer(packet)
                 header = transfer(size=8)
                 length = struct.unpack(">I", header[4:])[0]
-                if header[:4] != b"CSP1" or not 4 <= length <= MAX_BYTES:
+                if header[:4] != b"CSP1" or not 4 <= length <= self.maximum_bytes:
                     raise ValueError("invalid worker frame")
                 raw = transfer(size=length)
                 received_at = time.perf_counter_ns() if self.profile else 0
-                response = decode(raw)
+                response = decode(raw, maximum_bytes=self.maximum_bytes)
                 decoded_at = time.perf_counter_ns() if self.profile else 0
                 if not isinstance(response, tuple) or len(response) != (5 if self.profile else 4) or response[:2] != (S("reply"), request_id):
                     raise ValueError("uncorrelated worker reply")

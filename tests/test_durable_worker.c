@@ -240,12 +240,12 @@ int main(void) {
     rpc(fd,WORKER_RESULT,"crash","durable",WORKER_STORED,"crash","");
     assert(count("host.worker-results")==3); consume("crash");
     rpc(fd,WORKER_NEXT,"","",WORKER_IDLE,"","");
-    /* Pending bound is independent of retained result history. */
-    for (unsigned i=0;i<128;++i) {
+    /* Durable backlog is not capped by an in-memory processing window. */
+    for (unsigned i=0;i<1024;++i) {
         char id[32]; snprintf(id,sizeof(id),"task-%u",i);
         assert(cetta_worker_publish(store,"brain",id,"{}",2)==DURABLE_OK);
     }
-    assert(cetta_worker_publish(store,"brain","overflow","{}",2)==DURABLE_LIMIT);
+    assert(cetta_worker_publish(store,"brain","overflow","{}",2)==DURABLE_OK);
     rpc(fd,WORKER_NEXT,"","",WORKER_TASK,"task-0","{}");
     rpc(fd,WORKER_RESULT,"task-0","{}",WORKER_STORED,"task-0","");
     assert(cetta_worker_publish(store,"brain","overflow","{}",2)==DURABLE_OK);
@@ -312,11 +312,11 @@ int main(void) {
     send_request(fd,WORKER_SUBMIT,"empty","",0); expect(fd,WORKER_INVALID,"","");
     send_request(fd,WORKER_SUBMIT,"bad/key","{}",2); expect(fd,WORKER_INVALID,"","");
     assert(count("host.worker-submissions")==1);
-    for (unsigned i=0;i<128;++i) {
+    for (unsigned i=0;i<1024;++i) {
         char id[32]; snprintf(id,sizeof(id),"pending-%u",i);
         rpc(fd,WORKER_SUBMIT,id,"{}",WORKER_STORED,id,"");
     }
-    rpc(fd,WORKER_SUBMIT,"overflow","{}",WORKER_LIMIT,"overflow","");
+    rpc(fd,WORKER_SUBMIT,"overflow","{}",WORKER_STORED,"overflow","");
     consume_submission("pending-0");
     rpc(fd,WORKER_SUBMIT,"overflow","{}",WORKER_STORED,"overflow","");
     close(fd); stop();

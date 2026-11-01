@@ -5,8 +5,8 @@
 !(import! &self "durable_indexes.metta")
 !(import! &self (library list))
 
-; The CAV1 codec refuses packets beyond one MiB before any publication.
-(= (durable-space:wire-limit) 1048576)
+; The execution owner supplies the portable-value byte policy.
+(= (durable-space:wire-limit) (store:value-byte-limit))
 (: durable-space:create (-> %Undefined% %Undefined% Atom Atom %Undefined%))
 (: durable-space:capture (-> %Undefined% Atom %Undefined%))
 (: durable-space:cursor (-> %Undefined% Atom Atom Atom %Undefined%))
@@ -51,7 +51,7 @@
 (= (durable-space:probe $view $collection $pattern $template $transitions)
   (case (durable-space:cursor $view $collection $pattern $template)
     (((StoreQueryOpened $query $epoch $revision)
-      (let* (($answer (store:space-query-next $query 0 $transitions 1048576))
+      (let* (($answer (store:space-query-next $query 0 $transitions (durable-space:wire-limit)))
              ($_ (store:space-query-cancel $query)) ($_ (store:close $query)))
         (case $answer
           (((StoreQueryRow $sequence $value $identities) (SpaceProbeFoundV1 $value $identities))

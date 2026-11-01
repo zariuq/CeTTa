@@ -127,6 +127,86 @@ static CettaDiskStoreView *point_queries(CettaDiskStore *store,CettaDiskStoreVie
     return with_empty;
 }
 
+static CettaDiskStoreView *large_portable_values(CettaDiskStore *store,
+        CettaDiskStoreView *view,Arena *data) {
+    const size_t allowance=4u*CETTA_ATOM_WIRE_BYTES,length=2u*CETTA_ATOM_WIRE_BYTES;
+    char *payload=malloc(length);assert(payload);
+    for (size_t i=0;i<length;i++) payload[i]=(char)(i%251u);
+    Atom *text=atom_string_n(data,payload,length);free(payload);
+    Atom *fact=atom_expr3(data,atom_symbol(data,"payload"),atom_symbol(data,"same"),text);
+    unsigned char *encoded=NULL;size_t encoded_size=0;
+    assert(cetta_atom_wire_encode_bounded(fact,allowance,&encoded,&encoded_size)==ATOM_WIRE_OK);
+    CettaDiskOp insertions[4]={
+        {false,bytes("portable-large/a"),{encoded,encoded_size}},
+        {false,bytes("portable-large/b"),{encoded,encoded_size}}};
+    CettaDiskSpaceIndex index={3,0,bytes("portable-large-index")};
+    unsigned char *head=NULL;size_t head_size=0,index_sizes[2];unsigned char index_keys[2][128];
+    assert(cetta_atom_wire_encode(fact->expr.elems[0],&head,&head_size)==ATOM_WIRE_OK);
+    for (size_t i=0;i<2;i++) {
+        size_t prefix=index.prefix.size,offset=prefix;
+        assert(prefix+7u+head_size+1u+insertions[i].key.size<=sizeof(index_keys[i]));
+        memcpy(index_keys[i],index.prefix.data,prefix);
+        memcpy(index_keys[i]+offset,"/exact/",7);offset+=7;
+        memcpy(index_keys[i]+offset,head,head_size);offset+=head_size;
+        index_keys[i][offset++]='/';
+        memcpy(index_keys[i]+offset,insertions[i].key.data,insertions[i].key.size);offset+=insertions[i].key.size;
+        index_sizes[i]=offset;
+        insertions[i+2]=(CettaDiskOp){false,{index_keys[i],offset},{0}};
+    }
+    free(head);
+    CettaDiskStoreView *published=NULL;
+    assert(cetta_disk_store_commit(store,view,insertions,4,&published)==CETTA_STORE_OK);free(encoded);
+    Atom *spec=parse(data,"((payload $kind $body) (seen $kind $body))");
+    Atom *pattern=spec->expr.elems[0],*template=spec->expr.elems[1];
+    CettaDiskQuery *query=NULL;CettaDiskBytes packet;
+    /* Legacy policy cannot silently skip a value it cannot admit. */
+    assert(cetta_disk_query_open(published,bytes("portable-large/"),2,pattern,template,&query)==CETTA_STORE_OK);
+    assert(next(query,0,1,SIZE_MAX,&packet,NULL)==CETTA_DISK_QUERY_CAPACITY && !packet.data);
+    cetta_disk_query_close(query);
+    assert(cetta_disk_query_open_indexed_bounded(published,bytes("portable-large/"),2,
+        &index,1,pattern,template,allowance,&query)==CETTA_STORE_OK);
+    size_t required=0;
+    assert(next(query,0,1,CETTA_ATOM_WIRE_BYTES,&packet,&required)==CETTA_DISK_QUERY_TOO_LARGE);
+    assert(!packet.data && required>length && required<allowance);
+    assert(cetta_disk_query_checkpoint(query));
+    Atom *identities[2];Arena output;arena_init_detached(&output);
+    for (uint64_t sequence=0;sequence<2;sequence++) {
+        assert(next(query,sequence,1,allowance,&packet,NULL)==CETTA_DISK_QUERY_ROW);
+        Atom *record=NULL;
+        assert(cetta_atom_wire_decode_bounded(&output,packet.data,packet.size,allowance,&record)==ATOM_WIRE_OK);
+        Atom *value=record->expr.elems[1],*row_text=value->expr.elems[2];
+        assert(atom_string_len(row_text)==length && !memcmp(row_text->ground.sval,text->ground.sval,length));
+        assert(record->expr.elems[2]->expr.len==1);identities[sequence]=record->expr.elems[2]->expr.elems[0];
+        unsigned char *copy=malloc(packet.size);assert(copy);size_t size=packet.size;memcpy(copy,packet.data,size);
+        assert(cetta_disk_query_checkpoint(query));
+        assert(next(query,sequence,1,allowance,&packet,NULL)==CETTA_DISK_QUERY_ROW);
+        assert(packet.size==size && !memcmp(packet.data,copy,size));free(copy);
+    }
+    assert(!atom_eq(identities[0],identities[1]));
+    assert(next(query,2,1,allowance,&packet,NULL)==CETTA_DISK_QUERY_END);
+    CettaDiskSpaceStatistics statistics;
+    assert(cetta_disk_query_statistics(query,&statistics) && statistics.indexed_selections>0 && statistics.candidates==2);
+    cetta_disk_query_close(query);
+    arena_free(&output);
+
+    /* Large constant patterns use the same budget as stored values and rows. */
+    assert(cetta_disk_query_open_point(published,bytes("portable-large/a"),fact,atom_int(data,7),&query)==CETTA_STORE_LIMIT && !query);
+    assert(cetta_disk_query_open_point_bounded(published,bytes("portable-large/a"),fact,
+        atom_int(data,7),allowance,&query)==CETTA_STORE_OK);
+    CettaDiskOp removals[]={{true,bytes("portable-large/a"),{0}},
+        {true,{index_keys[0],index_sizes[0]},{0}}};CettaDiskStoreView *after=NULL;
+    assert(cetta_disk_store_commit(store,published,removals,2,&after)==CETTA_STORE_OK);
+    assert(next(query,0,1,allowance,&packet,NULL)==CETTA_DISK_QUERY_ROW);
+    arena_init_detached(&output);Atom *record=decode(&output,packet);
+    assert(record->expr.elems[1]->ground.ival==7);arena_free(&output);
+    assert(next(query,1,1,allowance,&packet,NULL)==CETTA_DISK_QUERY_END);cetta_disk_query_close(query);
+    assert(cetta_disk_query_open_point_bounded(after,bytes("portable-large/a"),pattern,
+        template,allowance,&query)==CETTA_STORE_ABSENT && !query);
+    cetta_disk_store_view_close(published);
+    puts("LARGE_PORTABLE_VALUES bytes=2097152 duplicate-occurrences=2 pending-replay/checkpoint/captured-delete=passed");
+    return after;
+}
+
 int main(int argc,char **argv) {
     assert(argc==2);SymbolTable symbols;symbol_table_init(&symbols);
     symbol_table_init_builtins(&symbols,&g_builtin_syms);g_symbols=&symbols;
@@ -268,6 +348,7 @@ int main(int argc,char **argv) {
     space_free(&unavailable);
 
     newer=point_queries(store,view,&data);cetta_disk_store_view_close(view);view=newer;
+    newer=large_portable_values(store,view,&data);cetta_disk_store_view_close(view);view=newer;
     cetta_disk_store_view_close(view);cetta_disk_store_close(store);
     arena_free(&data);symbol_table_free(&symbols);
     puts("PASS: captured query owners preserve replay, bindings and witnesses, release on end/cancel, and bound page-arena history");
