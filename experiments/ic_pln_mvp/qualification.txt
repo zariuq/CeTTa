@@ -1,0 +1,72 @@
+PLN frozen-profile tranche qualification -- 2026-10-30
+=====================================================
+
+Scope: reproduced real-source two-feature POC, retained replay capsule,
+explicit observation limits, extension notes and a Mettapedia technical paper.
+This is not a general production authored-call codec or universal optimization.
+
+Native run:
+  bash experiments/ic_pln_mvp/run.sh runtime/cetta-core.prime-need-heap-index.prime-eval-stack.json-gslt
+  exit 0
+  retained capsule: runtime/ic-pln-mvp/run.bk2sD4
+
+Input source unchanged: 2207 -> 2186 -> 2180 stored-source nodes.
+Encoded artifact bytes: 59537 -> 59092 -> 59059, excluding the external profile.
+Selected/available seed pairs: 4/965 then 1/746.
+Retained helpers: 1 then 2; occurrence counts 4 and 2.
+Improving incumbent proposals: 2 in the first search, 1 in the second.
+
+PASS: native reconstruction to the original after both stages.
+PASS: independent AWK counts and actual emitted archive byte lengths.
+PASS: 33 ordinary-call observations, including thresholds, choice and effects.
+PASS: nonnumeric transitive-similarity input gives matching status 2 and output.
+PASS: both paused/resumed searches produce identical artifacts.
+PASS: 17 cost controls and 4 exact authored-call definition/arity/type controls.
+PASS: existing controlled rule-head suite: 208 -> 165 -> 155 nodes,
+      18 admission/iteration controls, 13 execution comparisons, one fault case.
+PASS: malformed final archive refused.
+PASS: matching-profile checksum validation and fresh-process replay.
+PASS: altered profile metadata and archive copies refused before decoding.
+PASS: shellcheck experiments/ic_pln_mvp/*.sh; git diff --check.
+
+Known negative examples reproduced separately:
+  bash experiments/ic_pln_mvp/check_boundaries.sh runtime/cetta-core.prime-need-heap-index.prime-eval-stack.json-gslt
+  exit 0 means both LIMITS reproduced, not that arbitrary rewriting is sound.
+  Ambient Atom annotation: 75 -> 49 nodes, exact reconstruction, different syntax result.
+  Reflective observer: 91 -> 65 nodes, exact reconstruction, body size 4 -> 2.
+
+SHA-256 provenance
+------------------
+Input lib/petta/lib_pln.metta:
+  6b980321bbe9b49e5b12e2fcee0479ab1d5c7550c2104a67b0722a5b473da4ee
+Native binary:
+  083e279219055ab0d012b209414a89d32dab012439156e3f0e74ebd80d258396
+Experiment profile.patch:
+  5c1a96d31bf0cf479e6211bdf619810eeb1dedebae457ab5347e30e2ae132640
+  A context-only patch formatting cleanup after the run was applied to fresh
+  copies and cmp-checked to produce byte-identical qualified profile files.
+A0.sic:
+  992d458a3b2eb0b1366e7a214d655c724c849d7927e031ba1cd61cad74854871
+A1.sic:
+  ff3f5973f4946253d45048ecaec37b6f89373969ab1231b24622968c708f5dbb
+A2.sic:
+  160627281e93c1dc0798f9d9ff5182551b1ba12ccec38d86329c6c4310365d9c
+
+Source snapshot: CeTTa HEAD 45d3b058 plus the named experiment/runner changes.
+The capsule has complete profile/runtime and artifact checksum manifests.
+The returned working review is attributed in README.txt and the paper.
+
+Paper qualification
+-------------------
+Mettapedia papers/IncrementalCompression.tex builds to a five-page PDF with
+latexmk -pdf -interaction=nonstopmode -halt-on-error, with no LaTeX warnings.
+papers/CeTTa.tex links the result and rebuilds successfully; its broader document
+still emits typography/font warnings. No new C or Lean proof was needed here.
+
+Paused boundary
+---------------
+The isolated profile remains a reproducible experimental owner. Do not apply
+its patch to default libraries or distribute A2.sic as a self-describing stock
+LC2/LM1 archive. Future integration owns persistent call profiles, ambient
+declaration/name checks and optional plan-before-pack improvements. These are
+not newly added requirements for this retained tranche.

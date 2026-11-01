@@ -66,21 +66,19 @@ def main() -> None:
         )
         text = prefix + body + suffix
     else:
-        owner = (args.mutation.split("-", 1)[0]
-                 if "-" in args.mutation else "conversion")
-        # Replacing storage advances both epochs. Disabling just its storage
-        # check leaves the collection check enforcing that same boundary.
-        # Collection alone must also be tested, without replacing storage.
-        epochs = (("storage", "collection")
-                  if args.mutation.endswith("generation") else ("collection",))
-        for epoch in epochs:
-            text = replace_once(
-                text,
-                f"{owner}->universe_{epoch}_epoch !=\n"
-                f"            live_space->native.universe->{epoch}_epoch ||",
-                f"{owner}->universe_{epoch}_epoch == UINT64_MAX ||",
-                f"{owner} {epoch}-generation currentness",
-            )
+        record = (
+            "synthesis" if args.mutation.startswith("synthesis-")
+            else "checking" if args.mutation.startswith("checking-")
+            else "conversion"
+        )
+        epoch = "storage" if args.mutation.endswith("generation") else "collection"
+        text = replace_once(
+            text,
+            f"{record}->universe_{epoch}_epoch !=\n"
+            f"            live_space->native.universe->{epoch}_epoch ||",
+            f"{record}->universe_{epoch}_epoch == UINT64_MAX ||",
+            f"{record} {epoch} epoch currentness",
+        )
     args.destination.write_text(text, encoding="utf-8")
 
 

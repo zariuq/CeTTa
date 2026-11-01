@@ -68,7 +68,10 @@ CettaContinuationStatus eval_prime_owned_region_outcome(
         prime_native_registry_observation_free(owned);
         return CETTA_CONTINUATION_CAPACITY;
     }
-    prime_native_top_episode_attach(output,episode);
+    if(!prime_native_top_episode_attach(output,episode)) {
+        prime_native_registry_observation_free(owned);
+        return CETTA_CONTINUATION_CAPACITY;
+    }
     outcome->prime_observation=owned;
     top->owned.status=CETTA_CONTINUATION_READY;
     /* The original dispatcher initializes the child in this owned world,

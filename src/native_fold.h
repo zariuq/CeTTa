@@ -36,4 +36,15 @@ CettaNativeFoldRoute cetta_native_foldall(
     Space *space, Arena *arena, Atom *function, Atom *generator,
     Atom *initial, Atom **answer);
 
+/* Whether `function` is an admitted step that ignores its item and has a
+ * value for every number of steps from `initial`: a fold of it observes
+ * only how many answers its generator gives, which the caller may count
+ * by running the generator itself.  Decided before anything runs. */
+bool cetta_native_fold_counts_answers(Space *space, Arena *arena,
+                                      Atom *function, Atom *initial);
+/* That step taken `count` times from `initial` into *answer; false only
+ * when `function` is not such a step or allocation fails. */
+bool cetta_native_fold_repeat(Space *space, Arena *arena, Atom *function,
+                              Atom *initial, uint64_t count, Atom **answer);
+
 #endif /* CETTA_NATIVE_FOLD_H */

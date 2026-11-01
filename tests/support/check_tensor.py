@@ -25,6 +25,22 @@ def main():
         (f'(tensor:at {dense} (1 2))', '(tensor:present 6.0)'),
         (f'(tensor:at {sparse} (1 0))', '(tensor:present 0.0)'),
         (f'(tensor:at {sparse} (0 0))', 'tensor:absent'),
+        ('(tensor:inspect (tensor:where (tensor:from-values bool (2) (True False)) '
+         '(tensor:from-values i64 (2) (7 8)) (tensor:from-values i64 (2) (3 4))))',
+         '(TensorData i64 (2) ((0 7) (1 4)))'),
+        ('(tensor:inspect (tensor:where (tensor:from-coo bool (3) ((0 True) (1 False))) '
+         '(tensor:from-coo f64 (3) ((0 -0.0))) (tensor:from-coo f64 (3) ((0 7.0) (2 8.0)))))',
+         '(TensorData f64 (3) ((0 -0.0)))'),
+        ('(tensor:inspect (tensor:where (tensor:from-values bool (0) ()) '
+         '(tensor:from-values i64 (0) ()) (tensor:from-values i64 (0) ()) ))',
+         '(TensorData i64 (0) ())'),
+        ('(tensor:where (tensor:from-values bool (2) (True False)) '
+         '(tensor:from-values i64 (1 2) (7 8)) (tensor:from-values i64 (2) (3 4)))',
+         '(Tensor:Fault shape-mismatch)'),
+        ('(tensor:where (tensor:from-values bool () (True)) '
+         '(tensor:from-values i64 () (7)) (tensor:from-values f64 () (3.0)))',
+         '(Tensor:Fault unsupported-dtype)'),
+        ('(tensor:where Unknown Unknown Unknown)', '(tensor:where Unknown Unknown Unknown)'),
         (f'(tensor:at {sparse} (2 0))', '(Tensor:Fault index-out-of-bounds)'),
         (f'(tensor:convert {sparse} dense)', '(Tensor:Fault shape-mismatch)'),
         (f'(tensor:encode {sparse})', '(Tensor:Fault invalid-encoding)'),
