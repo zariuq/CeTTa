@@ -2112,6 +2112,108 @@ static void scoped_checkpoint_retire(void *raw) {
     cetta_shared_return_checkpoint_release(checkpoint);
 }
 
+static unsigned audit_compatible_calls;
+static bool audit_compatible(void *context) {
+    audit_compatible_calls++;
+    return ((Account *)context)->compatible;
+}
+
+typedef struct {
+    PrimeNeedArenaAudit *arena;
+    uint64_t next;
+    unsigned visits;
+} RowAudit;
+
+static bool audit_retained_row(void *context, uint64_t position,
+        const CettaOccurrenceRow *row) {
+    RowAudit *audit = context;
+    audit->visits++;
+    if (!row || row->release != release_capture || !row->owner)
+        return false;
+    const Captured *captured = row->owner;
+    const CettaOwnedReturn *returned = row->value;
+    return returned == &captured->returned && returned->environment == &captured->bindings &&
+        position == audit->next++ &&
+        prime_need_arena_audit_atom(audit->arena, returned->outcome.term) &&
+        (!returned->outcome.delayed ||
+         prime_need_arena_audit_atom(audit->arena, returned->outcome.delayed));
+}
+
+static void test_read_only_owner_audits(void) {
+    Account account = {.compatible = true}, other = {.compatible = true};
+    CettaOwnedExecution execution = new_execution(&account, 2u);
+    CettaOwnedExecution foreign_execution = new_execution(&other, 0u);
+    CettaSharedReturnProducer *producer = cetta_shared_return_producer_new(
+        &execution, 2u, 8u, capture, audit_compatible, &account);
+    CettaSharedReturnProducer *foreign = cetta_shared_return_producer_new(
+        &foreign_execution, 1u, 8u, capture, audit_compatible, &other);
+    assert(producer && foreign);
+    CettaSharedReturnCheckpoint *root = cetta_shared_return_checkpoint_new_scoped(producer, 0u);
+    CettaSharedReturnCheckpoint *foreign_root = cetta_shared_return_checkpoint_new_scoped(foreign, 0u);
+    assert(root && foreign_root && cetta_shared_return_checkpoint_belongs_to(root, producer));
+    assert(!cetta_shared_return_checkpoint_belongs_to(foreign_root, producer) &&
+           !cetta_shared_return_checkpoint_belongs_to(root, foreign));
+    uint64_t root_position = UINT64_MAX, foreign_position = UINT64_MAX;
+    assert(cetta_shared_return_checkpoint_position(root, &root_position) &&
+           cetta_shared_return_checkpoint_position(foreign_root, &foreign_position) &&
+           root_position == foreign_position);
+    assert(!cetta_shared_return_producer_is_complete_for(
+        producer, capture, audit_compatible, &account));
+    assert(cetta_shared_return_producer_advance(producer, 4u) == CETTA_SHARED_RETURN_COMPLETE);
+
+    Arena unrelated; arena_init_detached(&unrelated);
+    PrimeNeedArenaAudit *outside = prime_need_arena_audit_new(&unrelated);
+    RowAudit audit = {.arena = outside};
+    CettaOccurrenceLogInfo before = log_info(producer);
+    unsigned next_calls = account.next_calls, effects = account.effects;
+    unsigned captures = account.captures, compatibility = audit_compatible_calls;
+    assert(outside && cetta_shared_return_producer_is_complete_for(
+        producer, capture, audit_compatible, &account));
+    assert(!cetta_shared_return_producer_is_complete_for(producer, capture, compatible, &account) &&
+           !cetta_shared_return_producer_is_complete_for(producer, capture, audit_compatible, &other) &&
+           !cetta_shared_return_producer_is_complete_for(
+               producer, cetta_shared_return_capture_image, audit_compatible, &account));
+    account.compatible = false;
+    assert(cetta_shared_return_producer_is_complete_for(producer, capture, audit_compatible, &account) &&
+           cetta_shared_return_producer_rows_satisfy(producer, audit_retained_row, &audit) &&
+           audit.visits == 2u && audit.next == 2u);
+    assert(audit_compatible_calls == compatibility && account.next_calls == next_calls &&
+           account.effects == effects && account.captures == captures && !account.freed);
+
+    CettaOccurrenceRow first;
+    assert(cetta_occurrence_log_row(cetta_shared_return_producer_log(producer), 0u, &first));
+    PrimeNeedArenaAudit *hidden = prime_need_arena_audit_new(&((Captured *)first.owner)->arena);
+    RowAudit refusal = {.arena = hidden};
+    assert(hidden && !cetta_shared_return_producer_rows_satisfy(
+        producer, audit_retained_row, &refusal) && refusal.visits == 1u);
+    CettaOccurrenceLogInfo after = log_info(producer);
+    uint64_t position = UINT64_MAX;
+    assert(before.base == after.base && before.past_end == after.past_end && before.rows == after.rows &&
+           before.consumers == after.consumers && before.completed == after.completed &&
+           cetta_occurrence_log_position(cetta_shared_return_producer_log(producer), 0u, &position) &&
+           position == 0u && cetta_shared_return_checkpoint_position(root, &position) && position == 0u &&
+           account.next_calls == next_calls && account.effects == effects &&
+           audit_compatible_calls == compatibility);
+
+    CettaSharedReturnCheckpoint *released = cetta_shared_return_checkpoint_new_scoped(producer, 1u);
+    assert(released && cetta_shared_return_checkpoint_belongs_to(released, producer));
+    uintptr_t released_address = (uintptr_t)released;
+    cetta_shared_return_checkpoint_release(released); released = NULL;
+    assert(!cetta_shared_return_checkpoint_belongs_to(
+        (const CettaSharedReturnCheckpoint *)released_address, producer));
+    cetta_shared_return_producer_free(foreign); foreign = NULL;
+    assert(other.released == 1u &&
+           !cetta_shared_return_checkpoint_belongs_to(foreign_root, producer));
+    cetta_shared_return_checkpoint_release(foreign_root);
+    assert(!cetta_shared_return_checkpoint_belongs_to(NULL, producer) &&
+           !cetta_shared_return_producer_rows_satisfy(producer, NULL, NULL));
+    prime_need_arena_audit_free(hidden); prime_need_arena_audit_free(outside);
+    arena_free(&unrelated);
+    cetta_shared_return_checkpoint_release(root);
+    cetta_shared_return_producer_free(producer);
+    assert(account.released == 1u && account.freed == 2u);
+}
+
 static void test_scoped_reader_checkpoints(void) {
     Account account={.compatible=true};
     CettaOwnedExecution execution=new_execution(&account,2u);
@@ -2773,6 +2875,7 @@ int main(int argc, char **argv) {
         test_prime_native_return_boundary();
     } else if (!oem_native_fixture) {
         test_refusal_and_owned_graph();
+        test_read_only_owner_audits();
         test_copied_return_buffer();
         test_producer_copy();
         test_pending_producer_copy();
@@ -2795,6 +2898,7 @@ int main(int argc, char **argv) {
     }
     if (!prime_native)
         test_native_evaluator_boundary(oem_native_fixture);
+    cetta_foreign_global_shutdown();
     symbol_table_free(&symbols);
     var_intern_free(&variables);
     g_symbols = NULL;

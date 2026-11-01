@@ -2135,6 +2135,16 @@ static bool ia_commit_make(IaCommitRun *c) {
 static bool ia_commit_moved(IaCommitRun *c) {
     if (ia_commit_has_moved(c))
         return true;
+    /* The completed writes stay visible even when a backend omitted its
+     * publication. Retire stale observations through the existing opaque
+     * mutation path before reporting the original protocol failure. */
+    for (size_t k = 0; k < c->written_len; k++) {
+        IaWritten *written = &c->written[k];
+        bool changed = written->takes ||
+            space_length64(written->space) != written->length;
+        if (changed && space_revision(written->space) == written->revision)
+            space_note_external_backend_mutation(written->space);
+    }
     c->why = atom_symbol(c->a, "revision-unmoved");
     return false;
 }

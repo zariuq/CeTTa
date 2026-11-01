@@ -1,0 +1,17 @@
+; Ownership recognition follows the operation's actual policy defaults.
+; Complete empty searches return no answer, without a pending native run.
+(= (policy:effect $x) (let $printed (println! $x) $x))
+(= (policy:same 1) (result z))
+(= (policy:same 2) (result z))
+!(once (search-policy recursive-dependent-proof (order lex))
+   (superpose ((policy:effect z) (policy:effect a))))
+!(let $r (once (search-policy recursive-dependent-proof (order lex))
+           (policy:same $out))
+   (pair $r $out))
+!(once (search-policy recursive-dependent-proof (order shortlex))
+   (superpose ((long value) a (b))))
+!(once (search-policy recursive-dependent-proof (order lex)) (empty))
+!(select 0 (search-policy recursive-dependent-proof (order lex)) (println! never))
+!(select 2 (search-policy recursive-dependent-proof (order lex)) (superpose (c a b)))
+!(once (search-policy (control fifo)) (empty))
+!(once (search-policy atp-saturation) untouched)

@@ -18,8 +18,8 @@ Module InteractionCommit {
           (Hook linear ia_commit_linear guard (Requires formed) (Uses) (Proves linear))
           (Hook makes ia_commit_makes guard (Requires linear) (Uses) (Proves permitted))
           (Hook take ia_commit_take effect
-            (Requires current formed linear permitted) (Uses epoch) (Proves taken))
-          (Hook make ia_commit_make effect (Requires taken) (Uses epoch) (Proves made))
+            (Requires current formed linear permitted) (Uses epoch) (Proves taken) (Invalidates current formed))
+          (Hook make ia_commit_make effect (Requires taken) (Uses epoch) (Proves made) (Invalidates current formed))
           (Hook moved ia_commit_moved guard (Requires made) (Uses epoch) (Proves moved)))
         (Resources
           (Resource epoch ia_commit_epoch_open ia_commit_epoch_abandon ia_commit_epoch_publish

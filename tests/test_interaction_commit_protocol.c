@@ -4,7 +4,7 @@
  *   positive      a take and a make commit; the revision moves.
  *   unmoved       the commit's own writes leave a changed space at its opening
  *                 revision: (commit-failed revision-unmoved), and the writes
- *                 stay (the protocol reports, it does not undo).
+ *                 stay. The failure invalidates stale revisions before return.
  *   take-failed   a take that cannot be made ends the commit inside the epoch:
  *                 the commit is not reported as committed.
  *   make-failed   a make that cannot be stored ends the commit likewise.
@@ -67,6 +67,43 @@ static void restore_revisions(IaCommitRun *c) {
         c->written[k].space->revision = c->written[k].revision;
 }
 
+/* Only the second backend omits mutation publication. The first space's
+ * post-write tokens must survive the repair of the second space. */
+static struct {
+    Space *published;
+    Space *unpublished;
+    SpaceReadToken old_unpublished;
+    SpaceReadToken published_after_writes;
+    SpaceReadToken unpublished_after_reset;
+    SpaceProgramToken published_program_after_writes;
+    SpaceProgramToken unpublished_program_after_reset;
+} g_mixed_revision_fault;
+
+static void restore_one_revision(IaCommitRun *c) {
+    bool saw_published = false, reset_unpublished = false;
+    for (size_t k = 0; k < c->written_len; k++) {
+        IaWritten *written = &c->written[k];
+        if (written->space == g_mixed_revision_fault.published) {
+            CHECK(space_revision(written->space) != written->revision);
+            saw_published = true;
+        } else if (written->space == g_mixed_revision_fault.unpublished) {
+            CHECK(space_revision(written->space) != written->revision);
+            written->space->revision = written->revision;
+            reset_unpublished = true;
+        }
+    }
+    CHECK(saw_published && reset_unpublished && c->written_len == 2u);
+    CHECK(space_read_token_is_current(g_mixed_revision_fault.old_unpublished));
+    g_mixed_revision_fault.published_after_writes =
+        space_read_token(g_mixed_revision_fault.published);
+    g_mixed_revision_fault.unpublished_after_reset =
+        space_read_token(g_mixed_revision_fault.unpublished);
+    g_mixed_revision_fault.published_program_after_writes =
+        space_program_token(g_mixed_revision_fault.published);
+    g_mixed_revision_fault.unpublished_program_after_reset =
+        space_program_token(g_mixed_revision_fault.unpublished);
+}
+
 static Atom *call_value(bool (*op)(Arena *, Atom **, uint32_t, CettaCallOutcome *),
                         Arena *a, Atom **args, uint32_t nargs) {
     CettaCallOutcome out = {0};
@@ -112,6 +149,60 @@ static bool holds(Space *s, Atom *atom) {
         if (atom_eq(space_get_at64(s, i), atom))
             return true;
     return false;
+}
+
+static void mixed_revision_control(Arena *a) {
+    Space published, unpublished;
+    space_init(&published);
+    space_init(&unpublished);
+    space_add(&published, job(a, "a"));
+    space_add(&unpublished, job(a, "a"));
+    SpaceReadToken old_published = space_read_token(&published);
+    SpaceReadToken old_unpublished = space_read_token(&unpublished);
+    Atom **published_args = take_and_make(a, &published);
+    Atom **unpublished_args = take_and_make(a, &unpublished);
+    Atom *args[3];
+    for (size_t k = 0; k < 3u; k++) {
+        Atom *parts[2] = {published_args[k]->expr.elems[0],
+                          unpublished_args[k]->expr.elems[0]};
+        args[k] = atom_expr(a, parts, 2u);
+    }
+    g_mixed_revision_fault.published = &published;
+    g_mixed_revision_fault.unpublished = &unpublished;
+    g_mixed_revision_fault.old_unpublished = old_unpublished;
+    g_ia_commit_after_writes = restore_one_revision;
+    Atom *result = call_value(op_commit, a, args, 3u);
+    g_ia_commit_after_writes = NULL;
+
+    CHECK(commit_failed(result, "revision-unmoved"));
+    CHECK(!committed(result));
+    Atom *done = atom_expr2(a, atom_symbol(a, "done"), atom_symbol(a, "a"));
+    CHECK(space_length64(&published) == 1u && !holds(&published, job(a, "a")) &&
+          holds(&published, done));
+    CHECK(space_length64(&unpublished) == 1u && !holds(&unpublished, job(a, "a")) &&
+          holds(&unpublished, done));
+    CHECK(!space_read_token_is_current(old_published));
+    CHECK(!space_read_token_is_current(old_unpublished));
+    CHECK(space_read_token_is_current(g_mixed_revision_fault.published_after_writes));
+    CHECK(space_read_token_prefix_intact(g_mixed_revision_fault.published_after_writes));
+    CHECK(space_program_token_is_current(
+        g_mixed_revision_fault.published_program_after_writes));
+    CHECK(space_revision(&unpublished) == old_unpublished.revision + 1u);
+    CHECK(!space_read_token_is_current(g_mixed_revision_fault.unpublished_after_reset));
+    CHECK(!space_read_token_prefix_intact(g_mixed_revision_fault.unpublished_after_reset));
+    CHECK(!space_program_token_is_current(
+        g_mixed_revision_fault.unpublished_program_after_reset));
+
+    /* Validate the second space alone: the already changed first space must
+     * not mask failure to invalidate the second space's old evidence. */
+    Atom *stale_args[3] = {unpublished_args[0], atom_unit(a), atom_unit(a)};
+    Atom *stale = call_value(op_commit, a, stale_args, 3u);
+    CHECK(stale && ia_head(stale, "ia:refused", 2u) &&
+          ia_head(stale->expr.elems[1], "stale", 2u));
+    CHECK(space_length64(&unpublished) == 1u && holds(&unpublished, done));
+    space_free(&published);
+    space_free(&unpublished);
+    memset(&g_mixed_revision_fault, 0, sizeof(g_mixed_revision_fault));
 }
 
 static void allocation_controls(Arena *a) {
@@ -191,6 +282,7 @@ int main(void) {
     CHECK(ia_occs_conflict(&a, NULL, 0u, true) == NULL);
     CHECK(cetta_interaction_picks_linear(NULL, NULL, NULL, 0u, NULL));
     allocation_controls(&a);
+    mixed_revision_control(&a);
 
     /* positive */
     Space s;
@@ -207,11 +299,13 @@ int main(void) {
     space_init(&f);
     space_add(&f, job(&a, "a"));
     before = space_revision(&f);
+    SpaceReadToken fault_read = space_read_token(&f);
     g_ia_commit_after_writes = restore_revisions;
     Atom *faulted = call_value(op_commit, &a, take_and_make(&a, &f), 3u);
     g_ia_commit_after_writes = NULL;
     CHECK(commit_failed(faulted, "revision-unmoved"));
-    CHECK(space_revision(&f) == before && !holds(&f, job(&a, "a")));
+    CHECK(space_revision(&f) != before && !holds(&f, job(&a, "a")));
+    CHECK(!space_read_token_is_current(fault_read));
 
     /* take-failed: a group whose position and atom the space does not hold
      * reaches the take with every guard holding (nothing else to validate). */

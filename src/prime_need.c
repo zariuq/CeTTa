@@ -365,11 +365,36 @@ typedef struct {
     size_t used;
 } PrimeNeedPointerSet;
 
+typedef struct {
+    uintptr_t first, last;
+} PrimeNeedAuditSpan;
+
 struct PrimeNeedArenaAudit {
     const Arena *forbidden;
+    uint32_t forbidden_identity;
+    uint64_t forbidden_epoch;
     PrimeNeedPointerSet snapshot_frames;
     PrimeNeedPointerSet receipt_frames;
+    PrimeNeedPointerSet atoms;
+    PrimeNeedAuditSpan *spans;
+    size_t span_count;
+    const ArenaBlock *span_head, *span_spare;
+    uint32_t span_blocks, span_spare_blocks;
+    bool spans_ready;
+    bool failed;
 };
+
+static bool prime_need_arena_audit_enter(PrimeNeedArenaAudit *audit) {
+    if (!audit || audit->failed)
+        return false;
+    if (!audit->forbidden || !audit->forbidden_identity ||
+        audit->forbidden->identity != audit->forbidden_identity ||
+        audit->forbidden->reset_epoch != audit->forbidden_epoch) {
+        audit->failed = true;
+        return false;
+    }
+    return true;
+}
 
 static uint64_t prime_need_arena_id_bloom_mask(uint32_t identity) {
     if (identity == 0u)
@@ -582,10 +607,12 @@ PrimeNeedArenaAudit *prime_need_arena_audit_new(
     if (!audit)
         return NULL;
     audit->forbidden = forbidden;
+    audit->forbidden_identity = forbidden->identity;
+    audit->forbidden_epoch = forbidden->reset_epoch;
     return audit;
 }
 
-bool prime_need_arena_audit_snapshot(
+static bool prime_need_arena_audit_snapshot_impl(
     PrimeNeedArenaAudit *audit, const PrimeNeedSnapshot *snapshot) {
     if (!audit || !snapshot)
         return false;
@@ -650,7 +677,17 @@ bool prime_need_arena_audit_snapshot(
     return true;
 }
 
-bool prime_need_arena_audit_branch_state(
+bool prime_need_arena_audit_snapshot(
+        PrimeNeedArenaAudit *audit, const PrimeNeedSnapshot *snapshot) {
+    if (!prime_need_arena_audit_enter(audit))
+        return false;
+    bool valid = prime_need_arena_audit_snapshot_impl(audit, snapshot);
+    if (!valid)
+        audit->failed = true;
+    return valid;
+}
+
+static bool prime_need_arena_audit_branch_state_impl(
     PrimeNeedArenaAudit *audit, const PrimeNeedBranchState *receipt) {
     if (!audit || !receipt)
         return false;
@@ -766,11 +803,23 @@ bool prime_need_arena_audit_branch_state(
     return excludes;
 }
 
+bool prime_need_arena_audit_branch_state(
+        PrimeNeedArenaAudit *audit, const PrimeNeedBranchState *state) {
+    if (!prime_need_arena_audit_enter(audit))
+        return false;
+    bool valid = prime_need_arena_audit_branch_state_impl(audit, state);
+    if (!valid)
+        audit->failed = true;
+    return valid;
+}
+
 void prime_need_arena_audit_free(PrimeNeedArenaAudit *audit) {
     if (!audit)
         return;
     free(audit->snapshot_frames.slots);
     free(audit->receipt_frames.slots);
+    free(audit->atoms.slots);
+    free(audit->spans);
     free(audit);
 }
 
@@ -1655,6 +1704,238 @@ void prime_need_read_capture_storage(const PrimeNeedReadCapture *capture,CettaSt
     if(capture->length>capture->capacity) {cetta_storage_refuse(census,"NeedReadCaptureExtent");return;}
     prime_need_snapshot_storage_census(&capture->context,census);
     prime_need_snapshot_storage_census(&capture->entrance,census);
+}
+
+static bool prime_need_read_capture_extent_valid(const PrimeNeedReadCapture *capture) {
+    return capture && capture->length <= capture->capacity &&
+        capture->capacity <= SIZE_MAX / sizeof(*capture->reads) &&
+        (!!capture->reads == !!capture->capacity);
+}
+
+bool prime_need_read_capture_atoms_satisfy(const PrimeNeedReadCapture *capture,
+        AtomTreePredicate predicate, void *context) {
+    if (!predicate || !prime_need_read_capture_extent_valid(capture) ||
+        !prime_need_snapshot_atoms_satisfy(&capture->context, predicate, context) ||
+        !prime_need_snapshot_atoms_satisfy(&capture->entrance, predicate, context))
+        return false;
+    for (size_t i = 0u; i < capture->length; i++) {
+        const PrimeNeedReadDependency *read = &capture->reads[i];
+        if ((unsigned)read->kind > (unsigned)PRIME_NEED_READ_IMPORT ||
+            (read->origin && !predicate(read->origin, context)))
+            return false;
+    }
+    return true;
+}
+
+static int prime_need_audit_span_compare(const void *left, const void *right) {
+    const PrimeNeedAuditSpan *a = left, *b = right;
+    return (a->first > b->first) - (a->first < b->first);
+}
+
+static bool prime_need_arena_audit_prepare_spans(PrimeNeedArenaAudit *audit) {
+    const Arena *arena = audit->forbidden;
+    if (audit->spans_ready && audit->span_head == arena->head &&
+        audit->span_spare == arena->spare && audit->span_blocks == arena->block_count &&
+        audit->span_spare_blocks == arena->spare_block_count)
+        return true;
+    size_t count = 0u;
+    const ArenaBlock *lists[] = {arena->head, arena->spare};
+    for (unsigned list = 0u; list < 2u; list++) {
+        for (const ArenaBlock *block = lists[list]; block; block = block->next) {
+            if (count == SIZE_MAX / sizeof(PrimeNeedAuditSpan))
+                return false;
+            count++;
+        }
+    }
+    PrimeNeedAuditSpan *spans = count ? malloc(count * sizeof(*spans)) : NULL;
+    if (count && !spans)
+        return false;
+    size_t used = 0u;
+    for (unsigned list = 0u; list < 2u; list++) {
+        for (const ArenaBlock *block = lists[list]; block; block = block->next) {
+            if (!block->capacity)
+                continue;
+            uintptr_t first = (uintptr_t)block->data;
+            if (block->capacity - 1u > UINTPTR_MAX - first) {
+                free(spans);
+                return false;
+            }
+            spans[used++] = (PrimeNeedAuditSpan){first, first + block->capacity - 1u};
+        }
+    }
+    if (used > 1u)
+        qsort(spans, used, sizeof(*spans), prime_need_audit_span_compare);
+    for (size_t i = 1u; i < used; i++) {
+        if (spans[i - 1u].last >= spans[i].first) {
+            free(spans);
+            return false;
+        }
+    }
+    free(audit->spans);
+    audit->spans = spans;
+    audit->span_count = used;
+    audit->span_head = arena->head;
+    audit->span_spare = arena->spare;
+    audit->span_blocks = arena->block_count;
+    audit->span_spare_blocks = arena->spare_block_count;
+    audit->spans_ready = true;
+    return true;
+}
+
+static bool prime_need_arena_audit_span_excludes(PrimeNeedArenaAudit *audit,
+        const void *pointer, size_t bytes) {
+    if (!pointer || !bytes || !prime_need_arena_audit_prepare_spans(audit))
+        return false;
+    uintptr_t first = (uintptr_t)pointer;
+    if (bytes - 1u > UINTPTR_MAX - first)
+        return false;
+    uintptr_t last = first + bytes - 1u;
+    size_t low = 0u, high = audit->span_count;
+    while (low < high) {
+        size_t middle = low + (high - low) / 2u;
+        if (audit->spans[middle].first <= last)
+            low = middle + 1u;
+        else
+            high = middle;
+    }
+    return !low || audit->spans[low - 1u].last < first;
+}
+
+static bool prime_need_arena_audit_grounded(PrimeNeedArenaAudit *audit, const Atom *atom) {
+    switch (atom->ground.gkind) {
+    case GV_INT:
+        return (atom->structural_facts & ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID) == 0u;
+    case GV_FLOAT:
+    case GV_BOOL:
+    case GV_INTERNAL_TAG:
+        return true;
+    case GV_STRING: {
+        CettaExprLen bytes = (CettaExprLen)atom->ground.slen + 1u;
+        return atom_graph_has_owner_closure(atom) && cetta_expr_len_mul_fits_size(bytes, 1u) &&
+            prime_need_arena_audit_span_excludes(audit, atom->ground.sval,
+                (size_t)bytes);
+    }
+    case GV_PRIME_NEED_CAPABILITY:
+        return prime_need_arena_audit_span_excludes(audit,
+            atom->ground.prime_need_capability, sizeof(CettaPrimeNeedCapability));
+    default:
+        /* Opaque/native resource payloads need their own held-owner audit. */
+        return false;
+    }
+}
+
+bool prime_need_arena_audit_span(PrimeNeedArenaAudit *audit,
+        const void *pointer, size_t bytes) {
+    if (!prime_need_arena_audit_enter(audit))
+        return false;
+    bool valid = prime_need_arena_audit_span_excludes(audit, pointer, bytes);
+    if (!valid)
+        audit->failed = true;
+    return valid;
+}
+
+bool prime_need_arena_audit_atom(PrimeNeedArenaAudit *audit, const Atom *atom) {
+    if (!prime_need_arena_audit_enter(audit))
+        return false;
+    const Atom *local[32];
+    const Atom **work = local;
+    size_t length = 0u, capacity = sizeof(local) / sizeof(*local);
+    bool valid = atom != NULL;
+    if (valid)
+        work[length++] = atom;
+    while (valid && length) {
+        const Atom *node = work[--length];
+        if (!prime_need_arena_audit_span_excludes(audit, node, sizeof(*node)) ||
+            node->arena_id == audit->forbidden_identity) {
+            valid = false;
+            break;
+        }
+        bool inserted = false;
+        if (!prime_need_pointer_set_insert(&audit->atoms, node, &inserted)) {
+            valid = false;
+            break;
+        }
+        if (!inserted)
+            continue;
+        size_t additions = 0u;
+        if (node->kind == ATOM_EXPR) {
+            if (!cetta_expr_len_mul_fits_size(node->expr.len, sizeof(*node->expr.elems)) ||
+                (node->expr.len && !node->expr.elems) ||
+                (node->expr.elems && !prime_need_arena_audit_span_excludes(audit,
+                    node->expr.elems, node->expr.len
+                        ? (size_t)node->expr.len * sizeof(*node->expr.elems) : 1u))) {
+                valid = false;
+                break;
+            }
+            additions = (size_t)node->expr.len;
+        } else if (node->kind == ATOM_VAR) {
+            additions = node->name_key != NULL;
+        } else if (node->kind == ATOM_SYMBOL) {
+            valid = node->symbol_number != SYMBOL_ID_NONE;
+        } else if (node->kind == ATOM_GROUNDED) {
+            valid = prime_need_arena_audit_grounded(audit, node);
+        } else {
+            valid = false;
+        }
+        if (!valid || additions > SIZE_MAX - length) {
+            valid = false;
+            break;
+        }
+        size_t needed = length + additions;
+        if (needed > capacity) {
+            size_t next = capacity;
+            while (next < needed) {
+                if (next > SIZE_MAX / 2u) { next = needed; break; }
+                next *= 2u;
+            }
+            if (next > SIZE_MAX / sizeof(*work)) {
+                valid = false;
+                break;
+            }
+            const Atom **grown = work == local ? malloc(next * sizeof(*grown))
+                : realloc(work, next * sizeof(*grown));
+            if (!grown) {
+                valid = false;
+                break;
+            }
+            if (work == local)
+                memcpy(grown, local, length * sizeof(*grown));
+            work = grown;
+            capacity = next;
+        }
+        if (node->kind == ATOM_VAR && node->name_key)
+            work[length++] = node->name_key;
+        else if (node->kind == ATOM_EXPR) {
+            for (CettaExprIndex i = 0u; i < node->expr.len; i++)
+                work[length++] = node->expr.elems[i];
+        }
+    }
+    if (work != local)
+        free(work);
+    if (!valid)
+        audit->failed = true;
+    return valid;
+}
+
+static bool prime_need_read_capture_atom_excludes(const Atom *atom, void *context) {
+    return prime_need_arena_audit_atom(context, atom);
+}
+
+bool prime_need_arena_audit_read_capture(
+        PrimeNeedArenaAudit *audit, const PrimeNeedReadCapture *capture) {
+    if (!prime_need_arena_audit_enter(audit))
+        return false;
+    bool valid = audit->forbidden && prime_need_read_capture_extent_valid(capture) &&
+        prime_need_arena_audit_span(audit, capture, sizeof(*capture)) &&
+        (!capture->reads || prime_need_arena_audit_span(audit, capture->reads,
+            capture->capacity * sizeof(*capture->reads))) &&
+        prime_need_arena_audit_snapshot(audit, &capture->context) &&
+        prime_need_arena_audit_snapshot(audit, &capture->entrance) &&
+        prime_need_read_capture_atoms_satisfy(capture,
+            prime_need_read_capture_atom_excludes, audit);
+    if (!valid)
+        audit->failed = true;
+    return valid;
 }
 
 PrimeNeedReadCapture *prime_need_read_capture_copy(const PrimeNeedReadCapture *capture) {
@@ -4809,13 +5090,17 @@ bool prime_need_recording_erased(const PrimeNeedReceipt *receipt) {
 
 bool prime_need_recording_audit_receipt(PrimeNeedArenaAudit *audit,
     const PrimeNeedReceipt *receipt) {
-    if (!audit || !receipt) return false;
-    if (!prime_need_recording_readable(receipt))
-        return prime_need_recording_erased(receipt);
-    if (receipt->owner == audit->forbidden) return false;
-    PrimeNeedReceipt allocated = *receipt;
-    allocated.owner = receipt->top ? receipt->top->owner : &receipt->recording->arena;
-    return prime_need_arena_audit_branch_state(audit, &allocated);
+    if (!prime_need_arena_audit_enter(audit)) return false;
+    bool valid = false;
+    if (receipt && !prime_need_recording_readable(receipt)) {
+        valid = prime_need_recording_erased(receipt);
+    } else if (receipt && receipt->owner != audit->forbidden) {
+        PrimeNeedReceipt allocated = *receipt;
+        allocated.owner = receipt->top ? receipt->top->owner : &receipt->recording->arena;
+        valid = prime_need_arena_audit_branch_state(audit, &allocated);
+    }
+    if (!valid) audit->failed = true;
+    return valid;
 }
 
 bool prime_need_recording_excludes_arena(const PrimeNeedReceipt *receipt,

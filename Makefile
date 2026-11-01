@@ -787,10 +787,9 @@ endif
 ifeq ($(CETTA_PGO),generate)
 OPTIMIZE_CFLAGS += -fprofile-generate -fprofile-update=atomic
 else ifeq ($(CETTA_PGO),use)
-# GCC reports gaps in the counts (a callee the instrumented build inlined
-# away) as warnings without an option of their own; they stay warnings here.
-# The default build compiles the same sources with every warning an error.
-OPTIMIZE_CFLAGS += -fprofile-use -fprofile-partial-training -Wno-missing-profile -Wno-error
+# Correct inconsistent execution counts without demoting code diagnostics.
+# Untrained functions may lack profiles; structural mismatches remain errors.
+OPTIMIZE_CFLAGS += -fprofile-use -fprofile-partial-training -fprofile-correction -Wno-missing-profile
 else ifneq ($(CETTA_PGO),)
 $(error CETTA_PGO is generate or use)
 endif
@@ -2142,6 +2141,7 @@ ABT_BENCH_BIN = runtime/bench_abt-$(BUILD_OBJ_TAG)
 NAME_KEY_TEST_BIN = runtime/test_name_key-$(BUILD_OBJ_TAG)
 NAME_KEY_MUTATION_TEST_BIN = runtime/test_name_key_mutation-$(BUILD_OBJ_TAG)
 PRIME_NEED_TEST_BIN = runtime/test_prime_need-$(BUILD_OBJ_TAG)
+PRIME_NEED_AUDIT_TEST_BIN = runtime/test_prime_need_audit-$(BUILD_OBJ_TAG)
 PRIME_RECEIPT_GRAPH_ALLOC_TEST_BIN = runtime/test_prime_receipt_graph_alloc-$(BUILD_OBJ_TAG)
 PRIME_CONTEXT_MUTATION_TEST_BIN = runtime/test_prime_context_mutation-$(BUILD_OBJ_TAG)
 PRIME_NEED_UNIT_CPPFLAGS = -DCETTA_RUNTIME_STATS_NOOP=1
@@ -4429,6 +4429,15 @@ test-all: test-binding-frame-relocation
 test-binding-frame-relocation: $(BINDING_FRAME_RELOCATION_TEST_BIN)
 	@$(call cetta_exec,./$(BINDING_FRAME_RELOCATION_TEST_BIN))
 
+CAPTURED_OWNER_VISIT_TEST_BIN = runtime/test_captured_owner_visit-$(BUILD_OBJ_TAG)
+$(CAPTURED_OWNER_VISIT_TEST_BIN): tests/test_captured_owner_visit.c src/match.h $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) -DCETTA_RUNTIME_STATS_IMPL=1 $(CFLAGS) -o $@ tests/test_captured_owner_visit.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(LDFLAGS)
+.PHONY: test-captured-owner-visit
+test-all: test-captured-owner-visit
+test-captured-owner-visit: $(CAPTURED_OWNER_VISIT_TEST_BIN)
+	@$(call cetta_exec,./$(CAPTURED_OWNER_VISIT_TEST_BIN))
+
 $(MATCH_WORKLIST_FRAMES_TEST_BIN): tests/test_match_worklist_frames.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) -DCETTA_TEST_HOOKS=1 -DCETTA_RUNTIME_STATS_IMPL=1 $(CFLAGS) -o $@ tests/test_match_worklist_frames.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(LDFLAGS)
@@ -5299,6 +5308,15 @@ test-name-key: $(NAME_KEY_TEST_BIN) $(NAME_KEY_MUTATION_TEST_BIN)
 $(PRIME_NEED_TEST_BIN): tests/test_prime_need.c $(PRIME_NEED_UNIT_SRC) $(PRIME_NEED_UNIT_HEADERS) $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(PRIME_NEED_UNIT_CPPFLAGS) $(CFLAGS) -o $@ tests/test_prime_need.c $(PRIME_NEED_UNIT_SRC) $(LDFLAGS)
+
+$(PRIME_NEED_AUDIT_TEST_BIN): tests/test_prime_need_audit.c $(PRIME_NEED_UNIT_SRC) $(PRIME_NEED_UNIT_HEADERS) $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(PRIME_NEED_UNIT_CPPFLAGS) $(CFLAGS) -o $@ tests/test_prime_need_audit.c $(PRIME_NEED_UNIT_SRC) $(LDFLAGS)
+
+.PHONY: test-prime-need-audit
+test-all: test-prime-need-audit
+test-prime-need-audit: $(PRIME_NEED_AUDIT_TEST_BIN)
+	@$(call cetta_exec,./$(PRIME_NEED_AUDIT_TEST_BIN))
 
 $(PRIME_CONTEXT_MUTATION_TEST_BIN): tests/test_prime_need.c $(PRIME_NEED_UNIT_SRC) $(PRIME_NEED_UNIT_HEADERS) $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
@@ -24073,6 +24091,15 @@ runtime/test_prime_he_guest_boundary-$(BUILD_OBJ_TAG): tests/support/test_prime_
 		$(filter-out src/prime_semantics.$(BUILD_OBJ_TAG).o src/prime_semantics.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(LDFLAGS)
 
 test-prime-all: test-prime-he-guest-boundary
+
+test-prime-hosted-guest-registry: runtime/test_prime_hosted_guest_registry-$(BUILD_OBJ_TAG)
+	@"$<"
+
+runtime/test_prime_hosted_guest_registry-$(BUILD_OBJ_TAG): tests/test_prime_hosted_guest_registry.c src/eval.c $(BUILD_CONFIG_HEADER) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_prime_hosted_guest_registry.c \
+		$(filter-out src/eval.$(BUILD_OBJ_TAG).o src/eval.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(LDFLAGS)
+
+test-prime-all: test-prime-hosted-guest-registry
 
 test-prime-crossdialect: $(BIN)
 	@python3 scripts/check_prime_crossdialect.py "$(abspath $(BIN))"

@@ -2932,6 +2932,9 @@ static PettaPlanNode *petta_plan_build_in(
                   cetta_petta_head_names_extension(head)
                       ? PETTA_PLAN_STATIC_CALL
                       : PETTA_PLAN_DATA;
+            /* Generated controls can have no PeTTa-specific form tag. Their
+             * source owns operand demand and collection/branch boundaries;
+             * a callable name does not license strict relation arguments. */
             node->execution = constructor_slot_frame
                 ? PETTA_PLAN_EXEC_CONSTRUCTOR_SLOTS
                 : host_intrinsic
@@ -2939,7 +2942,9 @@ static PettaPlanNode *petta_plan_build_in(
                 : petta_semantics_grounded_type_pure(head)
                     ? PETTA_PLAN_EXEC_PURE_GROUNDED_SLOTS
                     : node->role == PETTA_PLAN_STATIC_CALL &&
-                              form == PETTA_FORM_NONE
+                              form == PETTA_FORM_NONE &&
+                              !cetta_control_operation_is_control_form(
+                                  node->computation.control)
                         ? PETTA_PLAN_EXEC_RELATION_SLOTS
                         : PETTA_PLAN_EXEC_GENERIC;
         } else {

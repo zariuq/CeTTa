@@ -149,6 +149,12 @@ PrimeNeedReadCapture *prime_need_read_capture_copy_with_session(
     Arena *destination, AtomDeepCopySession *session,
     const PrimeNeedReadCapture *capture);
 void prime_need_read_capture_storage(const PrimeNeedReadCapture *capture,CettaStorageCensus *census);
+/* Inspect all retained snapshot roots and dependency origins, including
+ * negative lookups and incomplete evidence. This does not read a source,
+ * complete evidence, or establish external resource authority. The caller
+ * holds the capture and all payload owners throughout the callback. */
+bool prime_need_read_capture_atoms_satisfy(const PrimeNeedReadCapture *capture,
+    AtomTreePredicate predicate, void *context);
 bool prime_need_read_capture_complete(const PrimeNeedReadCapture *capture);
 /* The enclosing packet uses these exact captured cuts, including storage
  * watermarks. A separately copied capture must travel with its mapped cuts. */
@@ -503,10 +509,31 @@ bool prime_need_snapshot_owner_excludes_arena(
  * transition. The predicate inspects the complete Atom graph when required. */
 bool prime_need_snapshot_atoms_satisfy(const PrimeNeedSnapshot *snapshot,
     AtomTreePredicate predicate, void *context);
+/* One memoized inspection of a forbidden arena while all owners stay held.
+ * Any refusal is sticky: dispose of that audit before inspecting a new set
+ * of roots. Failed visited entries can never certify a subsequent scan. */
 PrimeNeedArenaAudit *prime_need_arena_audit_new(
     const Arena *forbidden);
 bool prime_need_arena_audit_snapshot(
     PrimeNeedArenaAudit *audit, const PrimeNeedSnapshot *snapshot);
+/* Conservative Atom-carrier exclusion: actual header/vector spans, every
+ * expression child and variable name key, scalar/string backing and Need
+ * capability records. Composite closure flags do not hide borrowed vectors.
+ * Opaque/native resource leaves without a typed handler refuse; this grants
+ * no invocation authority. All owners stay held and quiescent throughout.
+ * NULL is not an Atom root; resetting the forbidden arena invalidates audit. */
+bool prime_need_arena_audit_atom(PrimeNeedArenaAudit *audit, const Atom *atom);
+/* Complete raw byte-span exclusion through the same epoch-bound range
+ * inventory. NULL pointers, zero extents and wrapping ranges refuse and
+ * poison the audit; callers explicitly skip absent optional fields. This
+ * inspects addresses only and does not authenticate an allocation owner. */
+bool prime_need_arena_audit_span(PrimeNeedArenaAudit *audit,
+    const void *pointer, size_t bytes);
+/* Inspect both captured snapshots, their retained allocations and every
+ * dependency origin. Even incomplete evidence must retain its payloads.
+ * This is a memory audit, not captured-read authentication or revalidation. */
+bool prime_need_arena_audit_read_capture(
+    PrimeNeedArenaAudit *audit, const PrimeNeedReadCapture *capture);
 
 bool prime_need_snapshot_allocate(Arena *owner,
                                   const PrimeNeedSnapshot *base,

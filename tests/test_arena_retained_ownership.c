@@ -150,8 +150,72 @@ static void ownership_controls(void) {
     assert(x.retains==x.releases+x.other_releases && y.retains==y.releases);
 }
 
+static unsigned unexpected_storage_calls;
+static void owner_storage(const void *owner,CettaStorageCensus *census) {
+    (void)owner;(void)census;unexpected_storage_calls++;
+}
+typedef struct {
+    const Owner *known;
+    unsigned visited;
+    unsigned stop_after;
+    bool accept_unknown;
+} OwnerWalk;
+static bool inspect_owner(const void *owner,void (*drop)(void *),
+        CettaStorageVisitor storage,void *raw) {
+    OwnerWalk *walk=raw;walk->visited++;
+    if(walk->stop_after && walk->visited>=walk->stop_after) return false;
+    if(owner==walk->known)
+        return drop==owner_release && storage==owner_storage;
+    return walk->accept_unknown;
+}
+typedef struct {CettaForeignHold hold;unsigned references;} DirectForeign;
+static void direct_retain(void *raw) {((DirectForeign *)raw)->references++;}
+static void direct_release(void *raw) {
+    DirectForeign *value=raw;assert(value->references);value->references--;
+}
+static const CettaForeignHold direct_hold={.retain=direct_retain,.release=direct_release};
+static bool inspect_direct(const void *owner,void (*drop)(void *),
+        CettaStorageVisitor storage,void *raw) {
+    return owner==raw && drop==direct_release && storage==NULL;
+}
+static void retained_owner_walk_controls(void) {
+    Arena arena;arena_init_detached(&arena);
+    Owner x={0},y={0};OwnerWalk walk={.known=&x};
+    assert(arena_retained_owners_satisfy(&arena,inspect_owner,&walk) && !walk.visited);
+    assert(!arena_retained_owners_satisfy(NULL,inspect_owner,&walk));
+    assert(!arena_retained_owners_satisfy(&arena,NULL,&walk));
+    ArenaMark empty=arena_mark(&arena);
+    assert(arena_retain_owner_with_storage(&arena,&x,owner_retain,owner_release,owner_storage));
+    assert(arena_retained_owners_satisfy(&arena,inspect_owner,&walk) && walk.visited==1u);
+    assert(x.holds==1u && x.retains==1u && !x.releases && !unexpected_storage_calls);
+    assert(arena_retain_owner_with_storage(&arena,&x,owner_retain,owner_release,owner_storage));
+    assert(arena_retain_owner(&arena,&y,owner_retain,other_release));
+    walk.visited=0u;
+    assert(!arena_retained_owners_satisfy(&arena,inspect_owner,&walk) && walk.visited==2u);
+    walk=(OwnerWalk){.known=&x,.accept_unknown=true};
+    assert(arena_retained_owners_satisfy(&arena,inspect_owner,&walk) && walk.visited==2u);
+    walk=(OwnerWalk){.known=&x,.accept_unknown=true,.stop_after=1u};
+    assert(!arena_retained_owners_satisfy(&arena,inspect_owner,&walk) && walk.visited==1u);
+    assert(x.holds==1u && y.holds==1u && !x.releases && !y.other_releases && !unexpected_storage_calls);
+    arena_reset(&arena,empty);walk=(OwnerWalk){.known=&x};
+    assert(arena_retained_owners_satisfy(&arena,inspect_owner,&walk) && !walk.visited);
+    assert(!x.holds && !y.holds && x.releases==1u && y.other_releases==1u);
+    DirectForeign foreign={.hold=direct_hold};
+    assert(atom_foreign(&arena,(CettaForeignValue *)&foreign));
+    assert(foreign.references==1u);
+    /* The deduplicated ledger is empty; the direct finalizer is still live. */
+    assert(arena_retained_owners_satisfy(&arena,inspect_owner,&walk) && !walk.visited);
+    assert(arena_finalizers_satisfy(&arena,inspect_direct,&foreign));
+    assert(!arena_finalizers_satisfy(&arena,inspect_owner,&walk));
+    assert(foreign.references==1u && !unexpected_storage_calls);
+    arena_free(&arena);
+    assert(!foreign.references);
+    puts("PASS: complete retained-owner walk preserves identity, holds and stopped predicates");
+}
+
 
 int main(void) {
+    retained_owner_walk_controls();
     ownership_controls();
     accounting_controls();
     randomized_ownership();

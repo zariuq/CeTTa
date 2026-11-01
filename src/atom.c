@@ -1433,6 +1433,52 @@ const void *arena_retained_owner_at(const Arena *arena,
     return NULL;
 }
 
+bool arena_retained_owners_satisfy(const Arena *arena,
+        bool (*predicate)(const void *,void (*)(void *),CettaStorageVisitor,void *),
+        void *context) {
+    if(!arena || !predicate) return false;
+    const ArenaRetainedOwnerSet *set=arena->retained_owners;
+    if(!set) return true;
+    if(set->len>set->cap || (set->cap && (!set->holds || !set->index)) ||
+        (set->slot_cap && (!set->slots || (set->slot_cap&(set->slot_cap-1u)) ||
+            set->slot_mask!=set->slot_cap-1u)) ||
+        (set->len && !set->slot_cap)) return false;
+    size_t indexed=0u;
+    for(uint32_t slot=0u;slot<set->slot_cap;slot++) {
+        uint32_t entry=set->slots[slot];
+        if(!entry) continue;
+        if(entry>set->len || set->index[entry-1u]!=slot) return false;
+        indexed++;
+    }
+    if(indexed!=set->len) return false;
+    for(uint32_t i=0u;i<set->len;i++) {
+        const ArenaFinalizer *held=set->holds[i];
+        if(!held || !held->ptr || !held->fn || set->index[i]>=set->slot_cap ||
+            set->slots[set->index[i]]!=i+1u) return false;
+    }
+    for(uint32_t i=0u;i<set->len;i++) {
+        const ArenaFinalizer *held=set->holds[i];
+        if(!predicate(held->ptr,held->fn,held->storage,context)) return false;
+    }
+    return true;
+}
+
+bool arena_finalizers_satisfy(const Arena *arena,
+        bool (*predicate)(const void *,void (*)(void *),CettaStorageVisitor,void *),
+        void *context) {
+    if(!arena || !predicate) return false;
+    const ArenaFinalizer *slow=arena->finalizers,*fast=arena->finalizers;
+    while(fast && fast->next) {
+        slow=slow->next;fast=fast->next->next;
+        if(slow==fast) return false;
+    }
+    for(const ArenaFinalizer *node=arena->finalizers;node;node=node->next)
+        if(!node->ptr || !node->fn) return false;
+    for(const ArenaFinalizer *node=arena->finalizers;node;node=node->next)
+        if(!predicate(node->ptr,node->fn,node->storage,context)) return false;
+    return true;
+}
+
 /* What one retained owner costs an arena that holds no other: its hold and
  * the smallest owner set.  A later hold of the same arena costs its hold and
  * a share of the set's growth, which is less, so this bounds every link. */

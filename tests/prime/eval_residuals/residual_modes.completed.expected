@@ -8,3 +8,5 @@
 [(pair (foo 7) (foo 7))]
 [120]
 [3]
+[(pair (foo 21) (foo 21))]
+[(pair (foo 22) (foo 22))]
