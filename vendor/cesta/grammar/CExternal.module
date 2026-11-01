@@ -1,0 +1,24 @@
+import "CLex.module" as lex
+import "CExpr.module" as expr
+import "CDecl.module" as decl
+import "CStmt.module" as stmt
+Module CExternalModule {
+  Theory CExternal(s: stmt.CStmt) {
+    s Exports { TranslationUnit; ExternalDeclaration; FunctionDefinition; }
+    Terms {
+      -- ISO 6.9: translation-unit and external-declaration.
+      TranslationUnit . TranslationUnit ::= [ExternalDeclaration];
+      terminator nonempty ExternalDeclaration "";
+      ExternalFunction . ExternalDeclaration ::= FunctionDefinition;
+      ExternalDeclaration . ExternalDeclaration ::= Declaration;
+      -- ISO 6.9.1: function-definition and declaration-list.
+      FunctionDefinition . FunctionDefinition ::= DeclarationSpecifiers BoundDeclarator [Declaration] Block;
+      terminator Declaration "";
+      entrypoints TranslationUnit;
+    }
+  }
+  Theory C11() {
+    CExternal(stmt.CStmt(decl.CDecl(expr.CExpr(lex.CLex()))))
+  }
+  theory C11()
+}

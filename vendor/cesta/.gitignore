@@ -1,0 +1,17 @@
+/build/
+/examples/build/
+/examples/native/hello
+/examples/native/*.d
+/examples/native/build/
+/examples/macros/square
+/examples/macros/*.d
+/examples/macros/build/
+/examples/narrowing/build/
+/examples/narrowing/narrow
+/examples/narrowing/exported
+/examples/narrowing/exported.c
+/examples/narrowing/*.d
+*.o
+__pycache__/
+*.pyc
+.cesta-generated/

@@ -1,4 +1,7 @@
 #include <assert.h>
+#include <pthread.h>
+#include <sched.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -8,6 +11,63 @@
 #include "tests/test_runtime_stats_stubs.h"
 
 enum { COPY_DEPTH = 100000 };
+
+typedef struct {
+    _Atomic bool *start;
+    Arena source;
+    Arena destination;
+    Atom *held;
+    Atom *value;
+} HeldProjectionThread;
+
+static void *project_held_on_worker(void *context) {
+    HeldProjectionThread *worker = context;
+    arena_init_detached(&worker->source);
+    arena_init_detached(&worker->destination);
+    while (!atomic_load_explicit(worker->start, memory_order_acquire))
+        sched_yield();
+    for (unsigned i = 0u; i < 256u; i++) {
+        worker->value = atom_int(&worker->source, (int64_t)i);
+        worker->held = atom_prime_held_wrap(&worker->source, worker->value);
+        assert(worker->held && atom_prime_held_made());
+        assert(atom_contains_prime_held(worker->held));
+        assert(!atom_contains_prime_held(worker->value));
+        assert(atom_prime_held_strip(&worker->destination, worker->held) ==
+               worker->value);
+    }
+    return NULL;
+}
+
+/* Each worker owns its arenas; only the monotone held-tag summary is shared.
+ * A joined worker's value must also project correctly on another thread. */
+static void check_parallel_held_projection(void) {
+    enum { WORKERS = 4 };
+    _Atomic bool start = false;
+    HeldProjectionThread workers[WORKERS] = {0};
+    pthread_t threads[WORKERS];
+    for (unsigned i = 0u; i < WORKERS; i++) {
+        workers[i].start = &start;
+        assert(pthread_create(&threads[i], NULL, project_held_on_worker,
+                              &workers[i]) == 0);
+    }
+    atomic_store_explicit(&start, true, memory_order_release);
+    for (unsigned i = 0u; i < WORKERS; i++)
+        assert(pthread_join(threads[i], NULL) == 0);
+    assert(atom_prime_held_made());
+    Arena destination;
+    arena_init_detached(&destination);
+    for (unsigned i = 0u; i < WORKERS; i++) {
+        assert(atom_contains_prime_held(workers[i].held));
+        assert(atom_prime_held_strip(&destination, workers[i].held) ==
+               workers[i].value);
+        assert(atom_prime_held_strip(&destination, workers[i].value) ==
+               workers[i].value);
+        arena_free(&workers[i].destination);
+        arena_free(&workers[i].source);
+    }
+    arena_free(&destination);
+    puts("PASS: held values project across worker-owned arenas and joined threads");
+}
 
 typedef struct { unsigned visits, refuse_at; } TestGraphProjection;
 
@@ -1026,6 +1086,7 @@ int main(void) {
     Atom *list;
     Atom *copy;
 
+    check_parallel_held_projection();
     symbol_table_init(&symbols);
     symbol_table_init_builtins(&symbols, &g_builtin_syms);
     g_symbols = &symbols;

@@ -5402,7 +5402,9 @@ Atom *atom_prime_held_payload(Atom *atom) {
     return atom_prime_held_is(atom) ? atom->expr.elems[1] : atom;
 }
 
-static bool g_atom_prime_held_made = false;
+/* A process-wide monotone hint, shared by worker-local arenas. The arenas'
+ * own handoff protocol still governs publication and lifetime of each atom. */
+static _Atomic bool g_atom_prime_held_made = false;
 
 Atom *atom_prime_held_wrap(Arena *a, Atom *atom) {
     if (!a || !atom || atom_prime_held_is(atom)) return atom;
@@ -5411,12 +5413,12 @@ Atom *atom_prime_held_wrap(Arena *a, Atom *atom) {
     if (atom_prime_need_capability_value(atom)) return atom;
     Atom *tag = atom_internal_tag(a, CETTA_INTERNAL_TAG_PRIME_HELD);
     if (tag)
-        g_atom_prime_held_made = true;
+        atomic_store_explicit(&g_atom_prime_held_made, true, memory_order_relaxed);
     return tag ? atom_expr2(a, tag, atom) : NULL;
 }
 
 bool atom_prime_held_made(void) {
-    return g_atom_prime_held_made;
+    return atomic_load_explicit(&g_atom_prime_held_made, memory_order_relaxed);
 }
 
 static bool atom_held_query_descends(void *context, Arena *arena, Atom *atom) {
@@ -5437,7 +5439,7 @@ static Atom *atom_held_query_build(void *context, Arena *arena, Atom *atom,
 }
 
 bool atom_contains_prime_held(const Atom *atom) {
-    if (!atom || !g_atom_prime_held_made ||
+    if (!atom || !atom_prime_held_made() ||
         !atom_structural_may_have_internal_tag(atom)) return false;
     Arena scratch;
     arena_init_detached(&scratch);
@@ -5578,7 +5580,7 @@ static Atom *atom_held_strip_build(void *context, Arena *arena, Atom *atom,
 }
 
 Atom *atom_prime_held_strip(Arena *arena, Atom *atom) {
-    return g_atom_prime_held_made
+    return atom_prime_held_made()
         ? atom_graph_image(NULL, arena, atom, atom_held_strip_descends,
                            atom_held_strip_build) : atom;
 }
