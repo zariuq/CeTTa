@@ -50,6 +50,41 @@ allowance is not a claim of constant physical memory or unlimited term depth.
 Old interpreters using the current coherent library set retain the historical
 policy through the guarded getter; the running agents' SDK is not upgraded.
 
+## Staging ordinary Space edits
+
+The existing native `space_init_overlay_local` now accepts captured disk
+Spaces through their owner's overlay capability. Its copy retains the exact
+captured root, candidate indexes, point bounds and byte policy independently
+of the original Space. The reusable `space_source_overlay_init_owned` seam
+creates that local atom Space over an owned, immutable occurrence source.
+Starting it decodes no
+base facts. Standard admission and removal stage changes; ordinary matching
+uses the captured base's candidate indexes plus the local additions. It does
+not create another matcher or persistence engine.
+
+Base occurrence identities remain unchanged. Added occurrences have explicitly
+local identities until the durable owner publishes them. Exact removal takes
+one occurrence; alpha-equivalent removal requires a unique candidate. Staged
+open atoms retain their in-process variable identities. An input or comparison
+refusal leaves the attempted edit unpublished. A paused external source refuses
+synchronous removal rather than making absence up or spinning indefinitely.
+
+Cursors retain the delta they captured, including through subsequent local
+edits. Closing the workspace discards its changes and releases its owned base
+after the final cursor closes. Positional mutation and executable catalogs are
+not admitted by this adapter. Read-only disk Spaces remain read-only.
+
+`space_source_overlay_changes` copies only the net additions and removed base
+identities. The existing MeTTa commit/index/receipt path must publish them with
+revision validation; local editing grants no durable publication authority.
+The ergonomic `db` library and scoped transaction integration remain work in
+progress. This native seam alone does not implement `db:open`, autocommit or
+transaction blocks.
+
+`make test-source-overlay` checks ordinary matching, candidate-index reuse,
+duplicate identities, open atoms, failed batches, captured cursor lifetimes,
+rollback and an independent native-Space update oracle.
+
 ## Measuring ordinary Space queries
 
 `tests/support/bench_ordinary_space.py` measures the current ordinary-Space
