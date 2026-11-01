@@ -2,7 +2,7 @@
 from pathlib import Path
 import unittest
 
-from check_build_matrix import project_compile
+from check_build_matrix import compiler_output, project_compile
 
 
 class ProjectCompilation(unittest.TestCase):
@@ -31,6 +31,27 @@ class ProjectCompilation(unittest.TestCase):
 
     def test_absolute_project_source_is_audited(self):
         self.assertTrue(project_compile(self.record(str(self.root / "src/atom.c")), self.root))
+
+    def test_actual_object_path_preserves_configuration_suffix(self):
+        record = self.record("src/atom.c")
+        record["arguments"][-1] = "src/atom.core.matrix.config-fingerprint.o"
+        self.assertEqual(compiler_output(record), self.root / record["arguments"][-1])
+
+    def test_absolute_and_joined_output_flags(self):
+        path = self.root / "src/actual.o"
+        self.assertEqual(compiler_output({"cwd": str(self.root), "arguments": ["-c", "src/atom.c", "-o" + str(path)]}), path)
+        self.assertIsNone(compiler_output({"cwd": str(self.root), "arguments": ["-c", "src/atom.c"]}))
+
+    def test_atomic_object_uses_the_published_dependency_target(self):
+        record = self.record("src/atom.c")
+        record["arguments"] += ["-MT", "src/atom.config-fingerprint.o"]
+        record["arguments"][3] = "src/.cetta-object.temporary"
+        self.assertEqual(compiler_output(record), self.root / "src/atom.config-fingerprint.o")
+
+    def test_nonatomic_output_is_not_replaced_by_an_unrelated_dependency(self):
+        record = self.record("src/atom.c")
+        record["arguments"] += ["-MT", "src/unrelated.o"]
+        self.assertEqual(compiler_output(record), self.root / "object.o")
 
 
 if __name__ == "__main__":

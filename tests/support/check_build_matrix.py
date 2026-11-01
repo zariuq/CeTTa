@@ -63,6 +63,28 @@ def project_compile(record, root=ROOT):
     return False
 
 
+def compiler_output(record):
+    """Use the issued object target, including atomic publication recipes."""
+    arguments = record["arguments"]
+    output = None
+    for position, argument in enumerate(arguments):
+        if argument == "-o" and position + 1 < len(arguments):
+            output = (Path(record["cwd"]) / arguments[position + 1]).resolve()
+            break
+        if argument.startswith("-o") and len(argument) > 2:
+            output = (Path(record["cwd"]) / argument[2:]).resolve()
+            break
+    # The normal object recipe compiles to a temporary -o, then renames it.
+    # Its dependency target records the final object name, including config.
+    if output and output.name.startswith(".cetta-object."):
+        for position, argument in enumerate(arguments[:-1]):
+            if argument == "-MT":
+                target = (Path(record["cwd"]) / arguments[position + 1]).resolve()
+                if target.suffix == ".o":
+                    return target
+    return output
+
+
 def smoke_observation(language, output):
     lines = output.splitlines()
     if language == "petta":
@@ -141,7 +163,12 @@ def run_case(compiler, profile, arguments, directory, run_id):
         stats = settings.get("ENABLE_RUNTIME_STATS") == "1"
         binary = ROOT / "runtime" / ("cetta-" + tag + ("-runtime-stats" if stats else ""))
         result["binary_sha256"] = file_hash(binary)
-        object_file = ROOT / "src" / ("atom." + tag + (".runtime-stats" if stats else "") + ".o")
+        atom_objects = [compiler_output(record) for record in compiled
+                        if "src/atom.c" in record["arguments"] and project_compile(record)]
+        object_file = next((path for path in atom_objects if path and path.parent == ROOT / "src"), None)
+        if object_file is None:
+            result["error"] = "the primary atom translation unit has no recorded object output"
+            return result
         if shutil.which("readelf"):
             comment = subprocess.run(["readelf", "--string-dump=.comment", str(object_file)],
                                      capture_output=True, text=True, timeout=30, check=True)
