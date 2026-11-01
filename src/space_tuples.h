@@ -21,10 +21,16 @@
  * it reads, and is kept in step from then on.  The relation is a set: a
  * space that holds a fact more than once keeps the other copies as rows.
  *
- * Ids are the universe's: the table neither interns nor reads terms, and a
- * caller that counts references holds each numbered id while it is numbered
- * (cetta_tuple_table_each_numbered lists them).  Ids are CettaDenseId, and
- * CETTA_DENSE_ANY leaves a column free.
+ * Ids are the universe's: the table neither interns nor reads terms.  Each
+ * number counts the columns of the tuples holding it; an add tells its
+ * caller the ids the table holds anew and a removal those it holds no more,
+ * so a caller that counts references holds exactly the ids the tuples hold
+ * (cetta_tuple_table_each_numbered lists them).  A number no tuple holds is
+ * dead and stays for its id to take again, until the dead outnumber twice
+ * the columns the tuples fill plus 64, when trimming renumbers the held ids
+ * in order (RelationNumberingCost).  Trimming also halves the tuples' room
+ * while three quarters of it stand empty (ShrinkingTableCost).  Ids are
+ * CettaDenseId, and CETTA_DENSE_ANY leaves a column free.
  */
 
 enum { CETTA_TUPLE_MAX_ARITY = 8 };
@@ -51,6 +57,10 @@ typedef struct {
     uint32_t *slots;
     uint8_t *slot_tags;
     uint32_t slot_mask;
+    /* For each number, the columns of the tuples holding it; the numbers no
+     * column holds. */
+    uint32_t *holds;
+    uint32_t dead;
     /* The tuples, arity numbers each, in no order. */
     uint32_t *tuples;
     uint32_t count, tuple_cap;
@@ -73,12 +83,20 @@ void cetta_tuple_table_free(CettaTupleTable *table);
 
 /* Add TUPLE: true when it was absent and is now held, false when it was
  * held already or memory ran out (*OOM set then, the tuple not held; ids
- * numbered on the way stay numbered). */
+ * numbered on the way stay, dead).  HELD, unless NULL, is told each id the
+ * table holds anew. */
 bool cetta_tuple_table_add(CettaTupleTable *table, const CettaDenseId *tuple,
-                           bool *oom);
-/* Remove TUPLE: true when it was held.  Its ids stay numbered. */
+                           bool *oom, CettaDenseIdVisit held, void *context);
+/* Remove TUPLE: true when it was held.  RELEASED, unless NULL, is told each
+ * id the table holds no more. */
 bool cetta_tuple_table_remove(CettaTupleTable *table,
-                              const CettaDenseId *tuple);
+                              const CettaDenseId *tuple,
+                              CettaDenseIdVisit released, void *context);
+/* After removals: halve the tuples' room while three quarters of it stand
+ * empty, and renumber the held ids once the dead numbers outnumber twice
+ * the columns the tuples fill plus 64.  False when memory ran out; the table
+ * holds its tuples still. */
+bool cetta_tuple_table_trim(CettaTupleTable *table);
 bool cetta_tuple_table_contains(const CettaTupleTable *table,
                                 const CettaDenseId *tuple);
 static inline uint64_t cetta_tuple_table_tuples(const CettaTupleTable *table) {
@@ -97,7 +115,7 @@ bool cetta_tuple_table_each(CettaTupleTable *table, const CettaDenseId *fixed,
 uint64_t cetta_tuple_table_count(CettaTupleTable *table,
                                  const CettaDenseId *fixed);
 
-/* Visit every numbered id once. */
+/* Visit every id the tuples hold, once. */
 void cetta_tuple_table_each_numbered(const CettaTupleTable *table,
                                      CettaDenseIdVisit visit, void *context);
 

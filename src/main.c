@@ -2638,13 +2638,17 @@ static bool cetta_main_cleanup(CettaMainCleanup *cleanup) {
     return ok;
 }
 
-/* A PeTTa document this large is read a slice of forms at a time: each
- * slice is parsed, run and dropped, with a collection between slices, so
- * one slice of parsed forms lives at a time.  A first pass over the slices
- * checks every form and predeclares the equations, so a fault in the
- * source is reported before anything runs.  CETTA_PETTA_SLICE_BYTES and
- * CETTA_PETTA_SLICE_FORMS set the bound and the slice. */
-enum { MAIN_PETTA_SLICE_FORMS = 1u << 18 };
+/* Large documents are parsed, run and collected in slices. A first pass
+ * checks the complete document and predeclares its equations before any
+ * effects run. Both source bytes and constructor count can demand slices:
+ * deep facts can make many temporary records from relatively few bytes.
+ * Slices are bounded by parsed nodes as well as forms, so extra nesting
+ * reduces their row count rather than increasing their temporary heap. */
+enum {
+    MAIN_PETTA_SLICE_FORMS = 1u << 18,
+    MAIN_PETTA_SLICE_TOKENS = 1u << 16,
+    MAIN_PETTA_DOCUMENT_CONSTRUCTORS = 1u << 19,
+};
 #define MAIN_PETTA_SLICE_BYTES (UINT64_C(32) << 20)
 
 static uint64_t main_petta_slice_setting(const char *name, uint64_t value) {
@@ -2696,12 +2700,33 @@ static bool main_petta_open_slices(CettaMainCleanup *cleanup,
         !petta_compiled_document_v1_open(&cleanup->petta_document, filename))
         return false;
     uint64_t len = cleanup->petta_document.len;
-    if (len < main_petta_slice_setting("CETTA_PETTA_SLICE_BYTES",
-                                       MAIN_PETTA_SLICE_BYTES) ||
-        len > UINT32_MAX) {
+    const char *slice_bytes = getenv("CETTA_PETTA_SLICE_BYTES");
+    bool sliced = len >= main_petta_slice_setting("CETTA_PETTA_SLICE_BYTES",
+                                                  MAIN_PETTA_SLICE_BYTES);
+    if (!sliced && (!slice_bytes || !*slice_bytes) &&
+        len >= (UINT64_C(1) << 20) && len <= UINT32_MAX) {
+        /* Raw delimiters are a conservative upper estimate: quoted or
+         * commented delimiters may request slicing but cannot hide a real
+         * constructor. The authoritative reader still validates every form. */
+        const uint8_t *next = cleanup->petta_document.bytes;
+        const uint8_t *end = next + len;
+        uint32_t constructors = 0u;
+        while (next < end) {
+            next = memchr(next, '(', (size_t)(end - next));
+            if (!next)
+                break;
+            if (++constructors >= MAIN_PETTA_DOCUMENT_CONSTRUCTORS) {
+                sliced = true;
+                break;
+            }
+            ++next;
+        }
+    }
+    if (!sliced || len > UINT32_MAX) {
         petta_compiled_document_v1_close(&cleanup->petta_document);
         return false;
     }
+    cleanup->petta_document.slice_tokens = MAIN_PETTA_SLICE_TOKENS;
     cleanup->petta_document_open = true;
     return true;
 }
