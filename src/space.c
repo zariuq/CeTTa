@@ -3836,8 +3836,7 @@ static void space_head_chains_append(SpaceHeadChains *rows, SymbolId head,
 }
 
 static void eq_index_init(EqIndex *idx) {
-    for (uint32_t i = 0; i < EQ_INDEX_BUCKETS; i++)
-        eq_bucket_init(&idx->buckets[i]);
+    idx->buckets = NULL;
     eq_bucket_init(&idx->wildcard);
     space_head_chains_init(&idx->head_rows);
     eq_head_set_init(&idx->directional_heads);
@@ -3846,8 +3845,12 @@ static void eq_index_init(EqIndex *idx) {
 }
 
 static void eq_index_free(EqIndex *idx) {
-    for (uint32_t i = 0; i < EQ_INDEX_BUCKETS; i++)
-        eq_bucket_free(&idx->buckets[i]);
+    if (idx->buckets) {
+        for (uint32_t i = 0; i < EQ_INDEX_BUCKETS; i++)
+            eq_bucket_free(&idx->buckets[i]);
+        free(idx->buckets);
+        idx->buckets = NULL;
+    }
     eq_bucket_free(&idx->wildcard);
     space_head_chains_free(&idx->head_rows);
     eq_head_set_free(&idx->directional_heads);
@@ -3873,12 +3876,23 @@ static void eq_index_note_directional_row(EqIndex *idx, const Space *s,
         idx->directional_wildcard = true;
 }
 
+/* HEAD's bucket, the buckets made with the index's first equation with a
+ * head. */
+static EqBucket *eq_index_head_bucket(EqIndex *idx, SymbolId head) {
+    if (!idx->buckets) {
+        idx->buckets = cetta_malloc(sizeof(*idx->buckets) * EQ_INDEX_BUCKETS);
+        for (uint32_t i = 0; i < EQ_INDEX_BUCKETS; i++)
+            eq_bucket_init(&idx->buckets[i]);
+    }
+    return &idx->buckets[symbol_hash(head)];
+}
+
 static void eq_index_add(EqIndex *idx, Atom *lhs, CettaIndex atom_idx,
                          AtomId equation_id) {
     SymbolId head = eq_head_symbol(lhs);
     if (head != SYMBOL_ID_NONE) {
         space_head_chains_append(&idx->head_rows, head, atom_idx, equation_id);
-        eq_bucket_add(&idx->buckets[symbol_hash(head)], lhs, atom_idx,
+        eq_bucket_add(eq_index_head_bucket(idx, head), lhs, atom_idx,
                       equation_id);
     } else {
         eq_bucket_add(&idx->wildcard, lhs, atom_idx, equation_id);
@@ -3890,7 +3904,7 @@ static void eq_index_add_id(EqIndex *idx, const Space *s, AtomId lhs_id,
     SymbolId head = eq_head_symbol_id(s, lhs_id);
     if (head != SYMBOL_ID_NONE) {
         space_head_chains_append(&idx->head_rows, head, atom_idx, equation_id);
-        eq_bucket_add_id(&idx->buckets[symbol_hash(head)], s, lhs_id, atom_idx,
+        eq_bucket_add_id(eq_index_head_bucket(idx, head), s, lhs_id, atom_idx,
                          equation_id);
     } else {
         eq_bucket_add_id(&idx->wildcard, s, lhs_id, atom_idx, equation_id);
@@ -4228,16 +4242,105 @@ static ExactIndexInexactHead *exact_index_inexact_head(
     }
 }
 
-/* Dense AtomId presence bitset -- doctrine-1 exact-membership at the store seam.
-   Interned AtomIds are sequential, so a grown bitset gives O(1) unclusterable
-   exact-contains, replacing the fixed-bucket structural walk on the hot path. */
+/* Presence keys -- exact membership at the store seam, in the form their
+   density allows (PresenceSetForm).  A table of the keys costs bytes a key;
+   a bitset over the ids costs a bit an id the universe has, smaller once the
+   keys are dense.  Interned AtomIds are sequential, so Fibonacci hashing
+   spreads them and a grown bitset answers in one test. */
+static uint32_t id_present_slot(AtomId id, uint32_t cap) {
+    uint64_t h = (uint64_t)id * UINT64_C(0x9E3779B97F4A7C15);
+    return (uint32_t)(h >> 32) & (cap - 1u);
+}
+
 static bool id_present_contains(const SpaceNativeStorage *ns, AtomId id) {
+    if (!ns->id_present) {
+        if (!ns->id_present_table_cap)
+            return false;
+        for (uint32_t at = id_present_slot(id, ns->id_present_table_cap);;
+             at = (at + 1u) & (ns->id_present_table_cap - 1u)) {
+            AtomId held = ns->id_present_table[at];
+            if (held == id)
+                return true;
+            if (held == CETTA_ATOM_ID_NONE)
+                return false;
+        }
+    }
     uint64_t bit = (uint64_t)id;
-    return ns->id_present && bit < ns->id_present_bits &&
+    return bit < ns->id_present_bits &&
            ((ns->id_present[bit >> 3] >> (bit & 7u)) & 1u);
 }
 
+static bool id_present_bits_set(SpaceNativeStorage *ns, AtomId id);
+
+static bool id_present_table_insert(AtomId *table, uint32_t cap, AtomId id) {
+    for (uint32_t at = id_present_slot(id, cap);; at = (at + 1u) & (cap - 1u)) {
+        if (table[at] == id)
+            return false;
+        if (table[at] == CETTA_ATOM_ID_NONE) {
+            table[at] = id;
+            return true;
+        }
+    }
+}
+
+/* The bitset over the table's ids, once it is smaller than the table. */
+static bool id_present_table_to_bits(SpaceNativeStorage *ns) {
+    AtomId *table = ns->id_present_table;
+    uint32_t cap = ns->id_present_table_cap;
+    ns->id_present_table = NULL;
+    ns->id_present_table_cap = 0u;
+    ns->id_present_table_used = 0u;
+    bool ok = true;
+    for (uint32_t at = 0u; ok && at < cap; at++) {
+        if (table[at] != CETTA_ATOM_ID_NONE)
+            ok = id_present_bits_set(ns, table[at]);
+    }
+    free(table);
+    return ok;
+}
+
 static bool id_present_set(SpaceNativeStorage *ns, AtomId id) {
+    if (ns->id_present)
+        return id_present_bits_set(ns, id);
+    if (id == CETTA_ATOM_ID_NONE)
+        return false;
+    /* Grown at half full; a table larger than the bitset over the ids it
+     * covers becomes the bitset. */
+    if ((uint64_t)(ns->id_present_table_used + 1u) * 2u >
+        ns->id_present_table_cap) {
+        uint32_t cap = ns->id_present_table_cap ? ns->id_present_table_cap * 2u
+                                                : 8u;
+        if (cap <= ns->id_present_table_cap)
+            return false;
+        AtomId *table = cetta_malloc((size_t)cap * sizeof(*table));
+        for (uint32_t at = 0u; at < cap; at++)
+            table[at] = CETTA_ATOM_ID_NONE;
+        for (uint32_t at = 0u; at < ns->id_present_table_cap; at++) {
+            if (ns->id_present_table[at] != CETTA_ATOM_ID_NONE)
+                (void)id_present_table_insert(table, cap,
+                                              ns->id_present_table[at]);
+        }
+        free(ns->id_present_table);
+        ns->id_present_table = table;
+        ns->id_present_table_cap = cap;
+    }
+    if (id_present_table_insert(ns->id_present_table,
+                                ns->id_present_table_cap, id))
+        ns->id_present_table_used++;
+    /* While the keys are a table, id_present_bits is the size the bitset
+     * over their ids would have. */
+    uint64_t bits = ns->id_present_bits ? ns->id_present_bits : 4096u;
+    while (bits <= (uint64_t)id && bits <= UINT64_MAX / 2u)
+        bits <<= 1;
+    ns->id_present_bits = bits;
+    if ((uint64_t)ns->id_present_table_cap * sizeof(AtomId) > bits / 8u) {
+        ns->id_present_bits = 0u;
+        return id_present_table_to_bits(ns);
+    }
+    return true;
+}
+
+static bool id_present_bits_set(SpaceNativeStorage *ns, AtomId id) {
     uint64_t bit = (uint64_t)id;
     if (bit >= ns->id_present_bits) {
         uint64_t new_bits = ns->id_present_bits ? ns->id_present_bits : 4096u;
@@ -4288,16 +4391,86 @@ static void id_present_keys_release(SpaceNativeStorage *ns) {
     ns->id_present_key_len = 0u;
 }
 
+/* A rebuild keeps the form and the room it had, emptied in place: it will
+ * likely reach the same density, and keeping the room keeps a space that
+ * rebuilds often from reallocating. */
 static void id_present_clear(SpaceNativeStorage *ns) {
-    if (ns->id_present)
+    if (ns->id_present) {
         memset(ns->id_present, 0, (size_t)(ns->id_present_bits >> 3));
+    } else {
+        for (uint32_t at = 0u; at < ns->id_present_table_cap; at++)
+            ns->id_present_table[at] = CETTA_ATOM_ID_NONE;
+        ns->id_present_table_used = 0u;
+        ns->id_present_bits = 0u;
+    }
     id_present_keys_release(ns);
+    ns->id_present_shared = false;
+}
+
+static void id_present_unset(SpaceNativeStorage *ns, AtomId id) {
+    if (ns->id_present) {
+        uint64_t bit = (uint64_t)id;
+        if (bit < ns->id_present_bits)
+            ns->id_present[bit >> 3] &= (uint8_t)~(1u << (bit & 7u));
+        return;
+    }
+    uint32_t cap = ns->id_present_table_cap;
+    if (!cap)
+        return;
+    uint32_t at = id_present_slot(id, cap);
+    while (ns->id_present_table[at] != id) {
+        if (ns->id_present_table[at] == CETTA_ATOM_ID_NONE)
+            return;
+        at = (at + 1u) & (cap - 1u);
+    }
+    /* Backward shift: each later key of the run moves into the hole when
+     * its home does not lie strictly after the hole. */
+    uint32_t hole = at;
+    for (uint32_t next = (hole + 1u) & (cap - 1u);
+         ns->id_present_table[next] != CETTA_ATOM_ID_NONE;
+         next = (next + 1u) & (cap - 1u)) {
+        uint32_t home = id_present_slot(ns->id_present_table[next], cap);
+        bool stays = hole <= next ? (hole < home && home <= next)
+                                  : (hole < home || home <= next);
+        if (!stays) {
+            ns->id_present_table[hole] = ns->id_present_table[next];
+            hole = next;
+        }
+    }
+    ns->id_present_table[hole] = CETTA_ATOM_ID_NONE;
+    ns->id_present_table_used--;
+}
+
+/* A removed row's held key stays listed; once the list passes twice the rows
+ * plus sixteen, the keys no row has are released and each kept key is listed
+ * once, a cost the added keys pay for (SetPresenceChurn.compaction_amortized). */
+static void id_present_keys_compact(SpaceNativeStorage *ns, CettaCount rows) {
+    if (ns->id_present_key_len <= 2u * rows + 16u)
+        return;
+    CettaIndex kept = 0u;
+    for (CettaIndex i = 0u; i < ns->id_present_key_len; i++) {
+        AtomId key = ns->id_present_keys[i];
+        if (id_present_contains(ns, key)) {
+            ns->id_present_keys[kept++] = key;
+            /* Cleared while kept, so a later listing of it is released. */
+            id_present_unset(ns, key);
+        } else {
+            term_universe_release(ns->universe, key);
+        }
+    }
+    for (CettaIndex i = 0u; i < kept; i++)
+        (void)id_present_set(ns, ns->id_present_keys[i]);
+    ns->id_present_key_len = kept;
 }
 
 static void id_present_free(SpaceNativeStorage *ns) {
     free(ns->id_present);
     ns->id_present = NULL;
     ns->id_present_bits = 0;
+    free(ns->id_present_table);
+    ns->id_present_table = NULL;
+    ns->id_present_table_cap = 0u;
+    ns->id_present_table_used = 0u;
     id_present_keys_release(ns);
     free(ns->id_present_keys);
     ns->id_present_keys = NULL;
@@ -4352,6 +4525,19 @@ static AtomId space_canonical_id_for_stored(Space *s, AtomId atom_id) {
         : CETTA_ATOM_ID_NONE;
     arena_reset(scratch, mark);
     return cid;
+}
+
+/* The presence key of the stored row STORED_ID: false for a pointer-backed
+ * runtime value, which has no lawful structural key and is left to the
+ * exact and alpha scans; CETTA_ATOM_ID_NONE when the key cannot be made. */
+static bool id_present_row_key(Space *s, AtomId stored_id, AtomId *key) {
+    if (!tu_hdr(s->native.universe, stored_id)) {
+        Atom *stored = term_universe_get_atom(s->native.universe, stored_id);
+        if (stored && !term_universe_atom_is_stable(stored))
+            return false;
+    }
+    *key = space_canonical_id_for_stored(s, stored_id);
+    return true;
 }
 
 /* Alpha-canonical AtomId of a QUERY atom (contains).  Find-only, so a query miss
@@ -4768,13 +4954,15 @@ static void space_term_universe_roots(const TermUniverse *universe,
         space_visit_stored_ids(st->projected_atom_ids,
                                st->projected_atom_id_width_bits, 0u,
                                st->projected_len, visit, visit_context);
-        for (size_t b = 0u; b < STREE_BUCKETS; b++)
+        for (size_t b = 0u; st->buckets && b < STREE_BUCKETS; b++)
             space_visit_flat_bucket_ids(&st->buckets[b], visit,
                                         visit_context);
         space_visit_flat_bucket_ids(&st->wildcard, visit, visit_context);
     }
     const EqIndex *eq = &space->native.eq_idx;
     for (size_t b = 0u; b <= EQ_INDEX_BUCKETS; b++) {
+        if (b < EQ_INDEX_BUCKETS && !eq->buckets)
+            continue;
         const EqBucket *bucket =
             b < EQ_INDEX_BUCKETS ? &eq->buckets[b] : &eq->wildcard;
         for (CettaIndex i = 0u; bucket->atom_ids && i < bucket->len; i++)
@@ -5457,7 +5645,7 @@ static SpaceDenseHead *space_dense_entry_new(Space *s, SymbolId head,
         dense->index_mask = size - 1u;
     }
     if (dense->len == dense->cap) {
-        uint32_t cap = dense->cap ? dense->cap * 2u : 8u;
+        uint32_t cap = dense->cap ? dense->cap * 2u : 1u;
         SpaceDenseHead *heads = realloc(dense->heads, cap * sizeof(*heads));
         if (!heads)
             return NULL;
@@ -6852,6 +7040,27 @@ bool space_remove_logical_positions(Space *s, const CettaIndex *positions,
             return false;
         }
     }
+    /* While no two synced rows share a key, a removed row's key leaves the
+     * presence bits with it, read before the row's id is released, and the
+     * synced prefix loses the rows it held; once two do, the bits are
+     * recomputed (SetPresenceChurn). */
+    bool presence_follows = !s->native.id_present_dirty &&
+        !s->native.id_present_shared;
+    CettaCount presence_removed = 0u;
+    for (CettaCount i = 0u; presence_follows && i < count &&
+             positions[i] < s->native.id_present_synced_len; i++) {
+        AtomId atom_id = space_atom_id_storage_load_at(
+            s->native.atom_ids, s->native.atom_id_width_bits, rows[i]);
+        AtomId key = CETTA_ATOM_ID_NONE;
+        if (id_present_row_key(s, atom_id, &key)) {
+            if (key == CETTA_ATOM_ID_NONE) {
+                presence_follows = false;
+                break;
+            }
+            id_present_unset(&s->native, key);
+        }
+        presence_removed++;
+    }
     SpaceMatchNativeState *native_state = &s->match_backend.native;
     for (CettaCount i = 0u; i < count; i++) {
         space_marks_mark(s, rows[i]);
@@ -6871,7 +7080,13 @@ bool space_remove_logical_positions(Space *s, const CettaIndex *positions,
     }
     free(rows);
     s->native.has_non_exact_atoms_dirty = true;
-    s->native.id_present_dirty = true;
+    if (presence_follows) {
+        s->native.id_present_synced_len -= presence_removed;
+        id_present_keys_compact(&s->native,
+                                space_length64(s) - space_dense_facts(s));
+    } else {
+        s->native.id_present_dirty = true;
+    }
     uint64_t followed_prefix = s->prefix_epoch;
     space_publish_mutation(s, SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY,
                            SPACE_MUTATION_PREFIX_REWRITTEN);
@@ -7169,6 +7384,8 @@ static SpaceDispatchRetention space_transport_dispatch_coordinates(
     const CettaIndex *coordinates = transport ? transport->source_to_target : NULL;
     if (retained.equations) {
         for (uint32_t i = 0u; i <= EQ_INDEX_BUCKETS; i++) {
+            if (i < EQ_INDEX_BUCKETS && !s->native.eq_idx.buckets)
+                continue;
             EqBucket *bucket = i == EQ_INDEX_BUCKETS
                 ? &s->native.eq_idx.wildcard : &s->native.eq_idx.buckets[i];
             if (!space_transport_dispatch_bucket(
@@ -7505,8 +7722,12 @@ static void space_native_storage_init_empty(Space *s, TermUniverse *universe) {
     exact_index_init(&s->native.exact_idx);
     s->native.id_present = NULL;
     s->native.id_present_bits = 0;
+    s->native.id_present_table = NULL;
+    s->native.id_present_table_cap = 0u;
+    s->native.id_present_table_used = 0u;
     s->native.id_present_synced_len = 0;
     s->native.id_present_dirty = false;
+    s->native.id_present_shared = false;
     s->native.id_present_keys = NULL;
     s->native.id_present_key_len = 0u;
     s->native.id_present_key_cap = 0u;
@@ -7616,6 +7837,7 @@ void space_init_with_universe(Space *s, TermUniverse *universe) {
     s->importer_count = 0u;
     s->importer_cap = 0u;
     s->module_dependency_epoch = 0u;
+    s->arena_hold = NULL;
     if (s->ledger_counted) {
         uint64_t heap_after = space_ledger_heap_in_use();
         cetta_runtime_stats_gauge_add(CETTA_RUNTIME_COUNTER_SPACE_LIVE,
@@ -8438,8 +8660,8 @@ static SpaceEquationCursorStep space_equation_cursor_member_next(
         return SPACE_EQUATION_CURSOR_END;
     }
 
-    EqBucket *exact =
-        &s->native.eq_idx.buckets[symbol_hash(cursor->head)];
+    EqBucket *exact = s->native.eq_idx.buckets
+        ? &s->native.eq_idx.buckets[symbol_hash(cursor->head)] : NULL;
     EqBucket *wildcard = &s->native.eq_idx.wildcard;
     CettaIndex exact_index = 0u;
     CettaIndex wildcard_index = 0u;
@@ -9450,16 +9672,11 @@ static bool id_present_sync(Space *s) {
     for (CettaIndex i = s->native.id_present_synced_len;
          i < logical_len; i++) {
         AtomId stored_id = space_get_atom_id_at64(s, i);
-        if (!tu_hdr(s->native.universe, stored_id)) {
-            Atom *stored =
-                term_universe_get_atom(s->native.universe, stored_id);
-            /* Pointer-backed runtime values do not have lawful structural
-               intern keys.  Leave them to the exact/alpha scan; stable queries
-               can still use the projection built from the remaining rows. */
-            if (stored && !term_universe_atom_is_stable(stored))
-                continue;
-        }
-        AtomId cid = space_canonical_id_for_stored(s, stored_id);
+        AtomId cid = CETTA_ATOM_ID_NONE;
+        if (!id_present_row_key(s, stored_id, &cid))
+            continue;
+        if (cid != CETTA_ATOM_ID_NONE && id_present_contains(&s->native, cid))
+            s->native.id_present_shared = true;
         if (cid == CETTA_ATOM_ID_NONE ||
             !id_present_set(&s->native, cid) ||
             (cid != stored_id && !id_present_key_hold(&s->native, cid))) {
@@ -11644,7 +11861,13 @@ static bool space_contract_occurrence_mask(
             s->native.start = 0u;
             if (!settling)
                 space_note_released(s, removed);
+            /* Settling drops rows the logical view had already left: the
+             * presence bits, keyed by the live rows' alpha keys over that
+             * view, still hold, stale only if they were. */
+            bool presence_dirty = s->native.id_present_dirty;
             space_mark_derived_state_dirty(s);
+            if (settling)
+                s->native.id_present_dirty = presence_dirty;
             s->native.eq_idx_dirty = !retained.equations;
             s->native.ty_idx_dirty = !retained.declarations;
             s->native.exact_idx_dirty =
@@ -14685,7 +14908,7 @@ query_equations_member(Space *s, Atom *query, Arena *a,
     int first_pass = imported ? 0 : -1;
     int end_pass = !imported ? 0 : own_only ? 1 : 2;
     for (int pass = first_pass; pass < end_pass && !sink->stop; pass++) {
-        if (head != SYMBOL_ID_NONE) {
+        if (head != SYMBOL_ID_NONE && s->native.eq_idx.buckets) {
             /* Query has a known head symbol — look up matching bucket */
             query_bucket(s, &s->native.eq_idx.buckets[symbol_hash(head)],
                          query, &visible, a, sink, pass);

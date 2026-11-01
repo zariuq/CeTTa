@@ -1635,6 +1635,10 @@ char *atom_to_string(Arena *a, Atom *atom);
    without one prints every space by address. */
 const char *space_module_display_name(const void *space)
     __attribute__((weak));
+/* An arena that makes an atom of a space holds the space, when the space lives
+   only while held (ArenaHeldResources), as it holds a foreign record.  Weak:
+   the evaluator supplies it, and a binary without one holds no space. */
+void space_atom_hold(Arena *a, void *space) __attribute__((weak));
 char *atom_to_parseable_string(Arena *a, Atom *atom);
 char *atom_to_parseable_string_petta(Arena *a, Atom *atom);
 /* The printed bytes exactly, with their length: where a lane writes a

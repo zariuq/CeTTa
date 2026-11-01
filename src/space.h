@@ -116,7 +116,9 @@ typedef struct {
 } EqHeadSet;
 
 typedef struct {
-    EqBucket buckets[EQ_INDEX_BUCKETS];
+    /* EQ_INDEX_BUCKETS buckets by head, made by the first equation with a
+     * head: a space holding none keeps none. */
+    EqBucket *buckets;
     EqBucket wildcard; /* equations with variable/structured LHS head */
     /* Each exact head's equations.  Bucket collisions in the pattern index
      * must not turn a head-scoped question into a scan of colliding rows. */
@@ -201,10 +203,19 @@ typedef struct {
     EqIndex eq_idx;      /* indexed equations for fast lookup */
     TypeAnnIndex ty_idx; /* indexed type annotations for fast lookup */
     ExactAtomIndex exact_idx; /* exact stable-atom membership index */
-    uint8_t *id_present;      /* dense AtomId presence bitset: O(1) exact-contains, unclusterable */
-    uint64_t id_present_bits; /* capacity in bits; 0 = unallocated */
+    /* The rows' presence keys, in the form their density allows
+     * (PresenceSetForm): a table of the keys (open addressing,
+     * CETTA_ATOM_ID_NONE empty) while it is smaller than a bitset over the
+     * ids it covers, then that bitset. */
+    uint8_t *id_present;      /* the bitset, or NULL while the keys are a table */
+    uint64_t id_present_bits; /* its capacity in bits */
+    AtomId *id_present_table;
+    uint32_t id_present_table_cap, id_present_table_used;
     CettaIndex id_present_synced_len; /* logical prefix already reflected in id_present (lazy catch-up) */
     bool id_present_dirty;    /* removal/bulk invalidated bits: clear + full resync on next membership query */
+    /* Two synced rows share a key: a removal then marks the bits stale
+     * rather than taking its row's key out, which the other row still has. */
+    bool id_present_shared;
     /* The bitset's keys that are no row's id, the alpha-canonical forms of
      * rows with variables: the bitset holds them, one reference a key set. */
     AtomId *id_present_keys;
@@ -252,8 +263,11 @@ typedef struct Space {
             ExactAtomIndex exact_idx;
             uint8_t *id_present;
             uint64_t id_present_bits;
+            AtomId *id_present_table;
+            uint32_t id_present_table_cap, id_present_table_used;
             CettaIndex id_present_synced_len;
             bool id_present_dirty;
+            bool id_present_shared;
             AtomId *id_present_keys;
             CettaIndex id_present_key_len, id_present_key_cap;
             struct SpaceDense *dense;
@@ -341,6 +355,9 @@ typedef struct Space {
     uint64_t module_dependency_epoch;
     /* Charged to the resource ledger's space gauges at initialization. */
     bool ledger_counted;
+    /* Set when the space lives only while an arena holds an atom of it: the
+       evaluator's record of those holds.  NULL for a space its owner frees. */
+    struct SpaceHold *arena_hold;
 } Space;
 
 void space_init_with_universe(Space *s, TermUniverse *universe);
