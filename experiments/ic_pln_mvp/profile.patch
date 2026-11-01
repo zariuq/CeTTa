@@ -1,0 +1,25 @@
+--- a/lib/petta/lib_source_context.metta
++++ b/lib/petta/lib_source_context.metta
+@@ -24,7 +24,10 @@
+-(= (source-context:operations)
++(= (source-context:primitive-operations)
+    (("+" 2) ("-" 2) ("*" 2) ("/" 2) ("%" 2) ("==" 2)
+     ("<" 2) (">" 2) ("<=" 2) (">=" 2) ("if" 3)
+     ("and" 2) ("or" 2) ("not" 1) ("get-metatype" 1) ("size-atom" 1)))
++; Frozen-source diagnostic declared-call profile.
++(= (source-context:operations)
++   (union-atom (source-context:primitive-operations) (("/safe" 2))))
+ (= (source-context:call $term)
+    (case $term
+      (((Syntax:Expr $children)
+--- a/lib/petta/lib_ic_context_library.metta
++++ b/lib/petta/lib_ic_context_library.metta
+@@ -19,7 +19,7 @@
+ (= (context-library:reserved? $name)
+    (or (binary-schema:member? $name
+          ("let" "let*" "case" "map-atom" "filter-atom" "foldl-atom" "quote" "|->" "true" "false"))
+-       (foldl-atom (source-context:operations) False $found $entry
++       (foldl-atom (source-context:primitive-operations) False $found $entry
+          (or $found (== $name (car-atom $entry))))))
+ (= (context-library:standard-form? $form)
+    (case $form

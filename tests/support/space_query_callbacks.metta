@@ -1,0 +1,18 @@
+; Pure functions deliberately declared beside a MeTTa application, not in the
+; transport or storage engine. Plans invoke them explicitly.
+(= (sq-test:identity $row) (quote $row))
+(= (sq-test:never-less $a $b) False)
+(= (sq-test:no-answer $row) (superpose ()))
+(= (sq-test:many-answers $row) (superpose (one two)))
+(= (sq-test:append $acc $row) (let $next (cons-atom $row $acc) (quote $next)))
+(= (sq-test:bind (pair 7 7)) RelTrue)
+(= (sq-test:positive (SpaceAnswerV1 (Metric $key $value) $references))
+  (if (> $value 0) RelTrue (if (== $value 0) RelUnknown RelFalse)))
+(= (sq-test:metric-key (SpaceAnswerV1 (Metric $key $value) $references)) (quote $key))
+(= (sq-test:metric-less (SpaceAnswerV1 (Metric $key $a) $ids) (SpaceAnswerV1 (Metric $other $b) $more)) (< $a $b))
+(= (sq-test:metric-value (SpaceAnswerV1 (Metric $key $value) $references)) (Value $value))
+(= (sq-test:stats (Stats $count $sum $minimum $maximum $average) (SpaceAnswerV1 (Metric $key $value) $references))
+  (let* (($n (+ $count 1)) ($total (+ $sum $value))
+         ($lo (case $minimum ((NoValue $value) ((Some $minimum-prior) (if (< $value $minimum-prior) $value $minimum-prior)))))
+         ($hi (case $maximum ((NoValue $value) ((Some $maximum-prior) (if (> $value $maximum-prior) $value $maximum-prior))))))
+    (Stats $n $total (Some $lo) (Some $hi) (Some (/ (* 1.0 $total) $n)))))

@@ -28,6 +28,11 @@
 #include <string.h>
 #include <unistd.h>
 
+/* A callback interruption returns to the query owner before Prolog selects
+ * another answer or a failure branch. The owner closes that yielded query. */
+#define PETTA_LIBPL_QUERY_FLAGS \
+    (PL_Q_NODEBUG | PL_Q_CATCH_EXCEPTION | PL_Q_EXT_STATUS | PL_Q_ALLOW_YIELD)
+
 typedef struct {
     SymbolId symbol;
     uint64_t symbol_table_instance;
@@ -752,6 +757,24 @@ static void petta_libpl_eval_state_free(PettaLibplEvalState *state) {
 }
 
 static foreign_t petta_libpl_raise(Atom *error);
+static uintptr_t petta_libpl_interrupted_marker;
+
+static foreign_t petta_libpl_interrupt(void) {
+    if (PL_can_yield())
+        PL_yield_address(&petta_libpl_interrupted_marker);
+    /* A nested external C query may not permit yielding. Its backend unwind
+     * still carries interruption; the evaluator retains the actual cause. */
+    term_t exception = PL_new_term_ref();
+#if PLVERSION >= 90313
+    return exception && PL_unify_term(exception,
+        PL_FUNCTOR_CHARS, "unwind", 1, PL_CHARS, "abort") &&
+        PL_raise_exception(exception);
+#else
+    return exception && PL_put_chars(exception, PL_ATOM | REP_UTF8,
+                                    (size_t)-1, "$aborted") &&
+        PL_raise_exception(exception);
+#endif
+}
 
 static foreign_t petta_libpl_standard_eval(
     term_t arguments, int supplied_arity,
@@ -761,10 +784,13 @@ static foreign_t petta_libpl_standard_eval(
      * be released before the arguments are examined. */
     if (phase == PL_PRUNED) {
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_PETTA_LIBPL_EVAL_PRUNED);
-        petta_libpl_eval_state_free(
-            PL_foreign_context_address(control));
+        void *state = PL_foreign_context_address(control);
+        if (state != &petta_libpl_interrupted_marker)
+            petta_libpl_eval_state_free(state);
         return true;
     }
+    if (phase == PL_RESUME)
+        return petta_libpl_interrupt();
     /* Without a retry no prune follows, so a redo that ends here releases
      * its state itself. */
     PettaLibplEvalState *state = phase == PL_REDO
@@ -777,6 +803,8 @@ static foreign_t petta_libpl_standard_eval(
     if (phase == PL_FIRST_CALL) {
         if (!g_petta_libpl_active_arena)
             return false;
+        if (eval_native_interrupted())
+            return petta_libpl_interrupt();
         PettaLibplVarMap variables = {0};
         PettaLibplBackVarMap unknown = {0};
         Atom *expression = petta_libpl_from_term(
@@ -787,9 +815,15 @@ static foreign_t petta_libpl_standard_eval(
         if (!expression)
             return false;
         state = petta_libpl_eval_state_new();
-        if (!eval_petta_from_lib_prolog(
+        CettaEvalCompletion completion = CETTA_EVAL_COMPLETE;
+        bool evaluated = eval_petta_from_lib_prolog(
                 g_petta_libpl_active_arena,
-                expression, &state->results)) {
+                expression, &state->results, &completion);
+        if (completion != CETTA_EVAL_COMPLETE) {
+            petta_libpl_eval_state_free(state);
+            return petta_libpl_interrupt();
+        }
+        if (!evaluated) {
             Atom *raised = state->results.len == 1u
                 ? state->results.items[0] : NULL;
             petta_libpl_eval_state_free(state);
@@ -848,10 +882,16 @@ static foreign_t petta_libpl_standard_swrite(
  * owns space mutation, type admission and program invalidation. */
 static foreign_t petta_libpl_standard_add_builtin_signatures(
     term_t arguments, int supplied_arity, control_t control) {
-    (void)control;
+    int phase = PL_foreign_control(control);
+    if (phase == PL_PRUNED)
+        return true;
+    if (phase == PL_RESUME)
+        return petta_libpl_interrupt();
     Arena *arena = g_petta_libpl_active_arena;
     if (!arguments || supplied_arity != 2 || !arena)
         return false;
+    if (eval_native_interrupted())
+        return petta_libpl_interrupt();
     PettaLibplVarMap variables = {0};
     PettaLibplBackVarMap unknown = {0};
     Atom *space = petta_libpl_from_term(
@@ -876,11 +916,15 @@ static foreign_t petta_libpl_standard_add_builtin_signatures(
         };
         Atom *call = atom_expr(arena, call_parts, 3u);
         ResultSet results = {0};
-        bool evaluated = call && eval_petta_from_lib_prolog(arena, call, &results);
+        CettaEvalCompletion completion = CETTA_EVAL_COMPLETE;
+        bool evaluated = call && eval_petta_from_lib_prolog(
+            arena, call, &results, &completion);
         Atom *raised = !evaluated && results.len == 1u ? results.items[0] : NULL;
         bool added = evaluated && results.len == 1u &&
             atom_eq(results.items[0], petta_semantics_success_value(arena));
         result_set_free(&results);
+        if (completion != CETTA_EVAL_COMPLETE)
+            return petta_libpl_interrupt();
         if (raised)
             return petta_libpl_raise(raised);
         if (!added)
@@ -903,6 +947,7 @@ static bool petta_libpl_install_standard_bridges(
             .function_arity = 1u,
             .implementation =
                 (pl_function_t)petta_libpl_standard_add_builtin_signatures,
+            .nondeterministic = true,
         },
         {
             .name = "==",
@@ -2052,8 +2097,7 @@ static bool petta_libpl_refresh_arities(
         PL_predicate("current_predicate", 1, NULL);
     qid_t query = PL_open_query(
         runtime->module,
-        PL_Q_NODEBUG | PL_Q_CATCH_EXCEPTION |
-            PL_Q_EXT_STATUS,
+        PETTA_LIBPL_QUERY_FLAGS,
         current_predicate, indicator);
     if (!query) {
         PL_discard_foreign_frame(frame);
@@ -2166,8 +2210,7 @@ static void petta_libpl_probe_arity_facts(
         PL_predicate("arity", 2, runtime->module_name);
     qid_t query = PL_open_query(
         runtime->module,
-        PL_Q_NODEBUG | PL_Q_CATCH_EXCEPTION |
-            PL_Q_EXT_STATUS,
+        PETTA_LIBPL_QUERY_FLAGS,
         arity_predicate, arguments);
     if (!query) {
         PL_discard_foreign_frame(frame);
@@ -4351,10 +4394,13 @@ static PettaLibplReleaseStatus petta_libpl_release_query(
      * the reference's catch sees); provenance lives in the returned
      * status, never in the payload. */
     if (cleanup_raised && !*cleanup_raised) {
+        fid_t frame = PL_open_foreign_frame();
         term_t exception = PL_exception(0);
-        if (exception)
+        if (frame && exception)
             *cleanup_raised =
                 petta_libpl_exception_value(arena, exception);
+        if (frame)
+            PL_discard_foreign_frame(frame);
     }
     PL_clear_exception();
     return PETTA_LIBPL_RELEASE_CLEANUP_ERROR;
@@ -4378,8 +4424,7 @@ static bool petta_libpl_run_query(
     }
     qid_t query = PL_open_query(
         runtime->module,
-        PL_Q_NODEBUG | PL_Q_CATCH_EXCEPTION |
-            PL_Q_EXT_STATUS,
+        PETTA_LIBPL_QUERY_FLAGS,
         predicate, arguments);
     if (!query)
         return false;
@@ -4405,6 +4450,10 @@ static bool petta_libpl_run_query(
             status == PL_S_YIELD_DEBUG ||
             (status != PL_S_TRUE &&
              status != PL_S_LAST)) {
+            /* A callback already recorded its interruption cause. Any other
+             * yield has no scheduler at this synchronous boundary. Neither
+             * case may reopen the call as ordinary failure. */
+            eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
             ok = false;
             break;
         }
@@ -4586,7 +4635,7 @@ static bool petta_libpl_cyclic_observer_current(
         PL_get_arg(2, pair, arguments + 1);
     predicate_t call = built ? PL_predicate("call", 1, "system") : 0;
     qid_t query = call ? PL_open_query(NULL,
-        PL_Q_NODEBUG | PL_Q_CATCH_EXCEPTION | PL_Q_EXT_STATUS,
+        PETTA_LIBPL_QUERY_FLAGS,
         call, arguments + 1) : 0;
     bool current = false;
     if (query) {
@@ -4911,8 +4960,7 @@ static bool petta_libpl_predicate_exists(
     qid_t query = current_predicate
         ? PL_open_query(
               runtime->module,
-              PL_Q_NODEBUG | PL_Q_CATCH_EXCEPTION |
-                  PL_Q_EXT_STATUS,
+              PETTA_LIBPL_QUERY_FLAGS,
               current_predicate, indicator)
         : 0;
     if (!query)
@@ -5332,9 +5380,7 @@ CettaLibPrologQueryStatus cetta_lib_prolog_query(
         query = call
             ? PL_open_query(
                   runtime->module,
-                  PL_Q_NODEBUG |
-                  PL_Q_CATCH_EXCEPTION |
-                      PL_Q_EXT_STATUS,
+                  PETTA_LIBPL_QUERY_FLAGS,
                   call, goal_term)
             : 0;
         ok = query != 0;
@@ -5352,6 +5398,8 @@ CettaLibPrologQueryStatus cetta_lib_prolog_query(
             status == PL_S_YIELD_DEBUG ||
             (status != PL_S_TRUE &&
              status != PL_S_LAST)) {
+            if (status != PL_S_EXCEPTION)
+                eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
             ok = false;
             break;
         }
@@ -5761,7 +5809,7 @@ static bool petta_libpl_numeric_call(
     if (built) {
         qid_t query = PL_open_query(
             runtime->module,
-            PL_Q_NODEBUG | PL_Q_CATCH_EXCEPTION | PL_Q_EXT_STATUS,
+            PETTA_LIBPL_QUERY_FLAGS,
             PL_predicate(comparison ? functor : "is", 2, "system"), call);
         if (query) {
             int status = PL_next_solution(query);
@@ -6321,7 +6369,7 @@ static bool petta_libpl_static_import_predicate(
                : PL_put_functor(forall_args+1,visitor_functor));
     predicate_t forall_predicate = PL_predicate("$cetta_static_rows",2,runtime->module_name);
     qid_t query = ok ? PL_open_query(runtime->module,
-        PL_Q_NODEBUG | PL_Q_CATCH_EXCEPTION | PL_Q_EXT_STATUS,forall_predicate,forall_args) : 0;
+        PETTA_LIBPL_QUERY_FLAGS,forall_predicate,forall_args) : 0;
     PettaLibplStaticSink *previous = g_petta_static_sink;
     g_petta_static_sink = &sink;
     if (query) {
@@ -6379,8 +6427,7 @@ bool petta_libpl_static_import(
                                    strlen(file));
     qid_t query = ok
         ? PL_open_query(runtime->module,
-                        PL_Q_NODEBUG | PL_Q_CATCH_EXCEPTION |
-                            PL_Q_EXT_STATUS,
+                        PETTA_LIBPL_QUERY_FLAGS,
                         import, arguments)
         : 0;
     ok = ok && query;

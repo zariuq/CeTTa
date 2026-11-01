@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "atom_wire.h"
+#include "ipc_client.h"
 #include "match.h"
 #include "mm2_lower.h"
 #include "native_sha256.h"
@@ -3656,27 +3657,7 @@ static bool client_write(Client *c) {
     return true;
 }
 static int listen_socket(const char *path, mode_t mode, gid_t group) {
-    struct sockaddr_un address={.sun_family=AF_UNIX};
-    size_t n=strlen(path);
-    if (path[0]!='/' || n>=sizeof(address.sun_path)) return -1;
-    memcpy(address.sun_path,path,n+1);
-    struct stat st;
-    if (!lstat(path,&st)) {
-        if (!S_ISSOCK(st.st_mode) || st.st_uid!=geteuid()) return -1;
-        int probe=socket(AF_UNIX,SOCK_STREAM|SOCK_CLOEXEC|SOCK_NONBLOCK,0);
-        if (probe<0) return -1;
-        int result=connect(probe,(struct sockaddr *)&address,sizeof(address));
-        int saved=errno; close(probe);
-        if (!result || (saved!=ECONNREFUSED && saved!=ENOENT)) return -1;
-        if (unlink(path)) return -1;
-    } else if (errno!=ENOENT) return -1;
-    int fd=socket(AF_UNIX,SOCK_STREAM|SOCK_CLOEXEC|SOCK_NONBLOCK,0);
-    if (fd<0) return -1;
-    if (bind(fd,(struct sockaddr *)&address,sizeof(address)) ||
-        (group != (gid_t)-1 && chown(path,(uid_t)-1,group)) || chmod(path,mode) || listen(fd,CLIENTS)) {
-        close(fd); return -1;
-    }
-    return fd;
+    return cetta_ipc_listen(path,mode,group,CLIENTS);
 }
 /* Identity is the kernel's record of the connecting process: never the
  * listener it arrived on, a name, or anything the peer sends. */

@@ -742,6 +742,17 @@ bool arena_owns_ptr(const Arena *a, const void *ptr) {
            arena_block_list_owns_ptr(a->spare, ptr);
 }
 
+bool arena_has_live_span(const Arena *arena, const void *source, size_t bytes) {
+    if (!arena || !source || !bytes) return false;
+    uintptr_t address = (uintptr_t)source;
+    for (const ArenaBlock *block = arena->head; block; block = block->next) {
+        uintptr_t start = (uintptr_t)block->data;
+        if (address >= start && address - start <= block->used &&
+            bytes <= block->used - (address - start)) return true;
+    }
+    return false;
+}
+
 bool arena_owns_atom(const Arena *a, const Atom *atom) {
     return a && atom && a->identity != 0u &&
            atom->arena_id == a->identity;
@@ -1307,9 +1318,10 @@ static bool arena_retained_owner_set_index_reserve(ArenaRetainedOwnerSet *set,
     }
     if (set->slot_cap >= wanted)
         return true;
-    free(set->slots);
-    set->slots = cetta_malloc((size_t)wanted * sizeof(*set->slots));
-    memset(set->slots, 0, (size_t)wanted * sizeof(*set->slots));
+    if(SIZE_MAX/(size_t)wanted<sizeof(*set->slots))return false;
+    uint32_t *slots=calloc(wanted,sizeof(*slots));
+    if(!slots)return false;
+    free(set->slots);set->slots=slots;
     set->slot_cap = wanted;
     set->slot_mask = wanted - 1u;
     /* Reinsert in acquisition order, which keeps every probe chain made of
@@ -1339,10 +1351,17 @@ static bool arena_retained_owner_set_records_reserve(ArenaRetainedOwnerSet *set,
         capacity *= 2u;
     }
     if (capacity != 0u &&
-        SIZE_MAX / (size_t)capacity < sizeof(*set->holds))
+        (SIZE_MAX / (size_t)capacity < sizeof(*set->holds)||
+         SIZE_MAX / (size_t)capacity < sizeof(*set->index)))
         return false;
-    set->holds = cetta_realloc(set->holds, (size_t)capacity * sizeof(*set->holds));
-    set->index = cetta_realloc(set->index, (size_t)capacity * sizeof(*set->index));
+    ArenaFinalizer **holds=malloc((size_t)capacity*sizeof(*holds));
+    uint32_t *index=malloc((size_t)capacity*sizeof(*index));
+    if(!holds||!index) {free(holds);free(index);return false;}
+    if(set->len) {
+        memcpy(holds,set->holds,(size_t)set->len*sizeof(*holds));
+        memcpy(index,set->index,(size_t)set->len*sizeof(*index));
+    }
+    free(set->holds);free(set->index);set->holds=holds;set->index=index;
     set->cap = capacity;
     return true;
 }
@@ -1374,7 +1393,8 @@ bool arena_retain_owner_with_storage(Arena *a, void *owner,
     if (!a || !owner || !retain || !release)
         return false;
     if (!a->retained_owners) {
-        a->retained_owners = cetta_malloc(sizeof(*a->retained_owners));
+        a->retained_owners = malloc(sizeof(*a->retained_owners));
+        if(!a->retained_owners)return false;
         *a->retained_owners = (ArenaRetainedOwnerSet){0};
         arena_account_persistent_bytes(
             a, arena_retained_owner_set_bytes(a->retained_owners));
@@ -1383,11 +1403,15 @@ bool arena_retain_owner_with_storage(Arena *a, void *owner,
     if (arena_retained_owner_set_find(set, owner, release))
         return true;
     size_t before = arena_retained_owner_set_bytes(set);
-    if (set->len >= ARENA_RETAINED_OWNER_SET_MAX_CAPACITY / 2u ||
-        !arena_retained_owner_set_records_reserve(set, set->len + 1u) ||
-        !arena_retained_owner_set_index_reserve(set, set->len + 1u))
-        return false;
-    ArenaFinalizer *held = cetta_malloc(sizeof(*held));
+    bool ready=set->len<ARENA_RETAINED_OWNER_SET_MAX_CAPACITY/2u&&
+        arena_retained_owner_set_records_reserve(set,set->len+1u)&&
+        arena_retained_owner_set_index_reserve(set,set->len+1u);
+    /* Capacity can survive a refused acquisition, just as it survives a
+     * reset. Charge it before any exit; live membership is still unchanged. */
+    arena_account_persistent_bytes(a,arena_retained_owner_set_bytes(set)-before);
+    if(!ready)return false;
+    ArenaFinalizer *held = malloc(sizeof(*held));
+    if(!held)return false;
     retain(owner);
     *held = (ArenaFinalizer){.fn = release, .ptr = owner, .next = a->finalizers,
                              .storage = storage};
@@ -1402,7 +1426,6 @@ bool arena_retain_owner_with_storage(Arena *a, void *owner,
     set->len = position + 1u;
     /* The set's capacity survives a partial reset; the hold itself is
      * released by the reset that pops it. */
-    arena_account_persistent_bytes(a, arena_retained_owner_set_bytes(set) - before);
     arena_account_external_bytes(a, sizeof(*held));
     return true;
 }
@@ -2257,6 +2280,12 @@ static uint32_t atom_hash_compute(Atom *atom) {
     return atom_hash_fold(atom, false, true);
 }
 
+void atom_hash_cache_adopt(Atom *atom, uint32_t hash) {
+    if (atom && hash != 0u && atom_is_hash_stable(atom) &&
+        atom_hash_cache_load(atom) == 0u)
+        atom_hash_cache_store(atom, hash);
+}
+
 uint32_t atom_hash(Atom *a) {
     if (!a)
         return 0;
@@ -2740,8 +2769,16 @@ static bool atom_intern_identical(Atom *a, Atom *b) {
         return false;
     for (CettaExprIndex i = 0u; i < a->expr.len; i++) {
         leaf = atom_intern_leaf_compare(a->expr.elems[i], b->expr.elems[i]);
-        if (leaf < 0)
+        if (leaf < 0) {
+            /* The table places atoms by their structural hash, so identical
+             * atoms hash alike: cached hashes that differ settle it before
+             * a comparison that would walk both terms. */
+            uint32_t ha = atom_hash_cache_load(a);
+            uint32_t hb = atom_hash_cache_load(b);
+            if (ha != 0u && hb != 0u && ha != hb)
+                return false;
             return atom_compare_driver(a, b, ATOM_COMPARE_INTERN, false);
+        }
         if (!leaf)
             return false;
     }
@@ -3089,8 +3126,14 @@ extern inline uint64_t var_base_id(VarId id);
 extern inline CettaFrameIdentity var_epoch_suffix(VarId id);
 extern inline VarId var_epoch_id(VarId id, CettaFrameIdentity epoch);
 
+struct VarInternChunk {
+    struct VarInternChunk *next;
+    VarInternEntry entries[VAR_INTERN_CHUNK_SIZE];
+};
+
 void var_intern_init(VarInternTable *t) {
     if (!t) return;
+    t->owned_chunks = NULL;
     /* Zeroed pages: each slot holds no chunk until one is made, and the
      * table occupies no page it has not used. */
     t->chunks = calloc(VAR_INTERN_CHUNK_COUNT, sizeof(*t->chunks));
@@ -3104,14 +3147,12 @@ void var_intern_init(VarInternTable *t) {
 
 void var_intern_free(VarInternTable *t) {
     if (!t) return;
-    if (t->chunks) {
-        for (uint32_t i = 0; i < VAR_INTERN_CHUNK_COUNT; i++) {
-            VarInternEntry *chunk =
-                atomic_load_explicit(&t->chunks[i], memory_order_relaxed);
-            free(chunk);
-        }
-        free(t->chunks);
+    while (t->owned_chunks) {
+        struct VarInternChunk *chunk = t->owned_chunks;
+        t->owned_chunks = chunk->next;
+        free(chunk);
     }
+    free(t->chunks);
     pthread_mutex_destroy(&t->write_mutex);
     t->chunks = NULL;
 }
@@ -3130,10 +3171,13 @@ static VarInternEntry *var_intern_ensure_chunk_locked(VarInternTable *t,
         atomic_load_explicit(&t->chunks[chunk_index], memory_order_relaxed);
     if (chunk) return chunk;
 
-    chunk = cetta_malloc(sizeof(*chunk) * VAR_INTERN_CHUNK_SIZE);
+    struct VarInternChunk *owner = cetta_malloc(sizeof(*owner));
+    chunk = owner->entries;
     for (uint32_t i = 0; i < VAR_INTERN_CHUNK_SIZE; i++) {
         atomic_init(&chunk[i], 0u);
     }
+    owner->next = t->owned_chunks;
+    t->owned_chunks = owner;
     atomic_store_explicit(&t->chunks[chunk_index], chunk, memory_order_release);
     return chunk;
 }
@@ -4257,6 +4301,16 @@ static Arena *arena_scalar_owner(Arena *a) {
     return &cache->owner;
 }
 
+void atom_init_symbol(Atom *target, SymbolId sym_id) {
+    *target = (Atom){
+        .kind = ATOM_SYMBOL,
+        .flags = atom_flags_for_symbol_id(sym_id),
+        .var_id = VAR_ID_NONE,
+        .symbol_number = sym_id,
+        .structural_facts = ATOM_STRUCTURAL_FACTS_VALID | ATOM_STRUCTURAL_SYMBOLIC,
+    };
+}
+
 Atom *atom_symbol_id(Arena *a, SymbolId sym_id) {
     /* A symbol's admission depends on its id alone, so the canonical atom a
      * hash-cons table already published for the id is the one interning
@@ -4271,14 +4325,9 @@ Atom *atom_symbol_id(Arena *a, SymbolId sym_id) {
         if (cached)
             return cached;
     }
-    Atom temp = {0};
-    temp.kind = ATOM_SYMBOL;
-    temp.flags = atom_flags_for_symbol_id(sym_id);
-    temp.var_id = VAR_ID_NONE;
-    temp.symbol_number = sym_id;
+    Atom temp;
+    atom_init_symbol(&temp, sym_id);
     temp.arena_id = a->identity;
-    temp.hash_cache = 0;
-    temp.structural_facts = ATOM_STRUCTURAL_FACTS_VALID | ATOM_STRUCTURAL_SYMBOLIC;
     Atom *shared = atom_maybe_hashcons(a, &temp);
     if (shared) return shared;
     /* A canonical symbol goes to the scalar owner only into an empty slot,
@@ -4312,15 +4361,7 @@ Atom *atom_symbol_canonical(SymbolId sym_id) {
     if (atom)
         return atom;
     Atom *made = cetta_malloc(sizeof(*made));
-    *made = (Atom){
-        .kind = ATOM_SYMBOL,
-        .flags = atom_flags_for_symbol_id(sym_id),
-        .var_id = VAR_ID_NONE,
-        .symbol_number = sym_id,
-        .arena_id = 0u,
-        .name_key = NULL,
-        .structural_facts = ATOM_STRUCTURAL_FACTS_VALID | ATOM_STRUCTURAL_SYMBOLIC,
-    };
+    atom_init_symbol(made, sym_id);
     if (atom_is_hash_stable(made))
         made->hash_cache = atom_hash_compute(made);
     atom = symbol_publish_canonical_atom(g_symbols, sym_id, made);
@@ -4371,12 +4412,8 @@ Atom *atom_symbol_data(Arena *a, const char *name) {
 }
 
 #if CETTA_MANAGED_SYMBOLS
-static Atom *atom_symbol_data_span_hashed(
+static Atom *atom_symbol_spelled_new(
         Arena *a, const char *bytes, uint32_t len, uint64_t hash) {
-    SymbolId known = symbol_lookup_span_hashed(
-        g_symbols, (const uint8_t *)bytes, len, hash);
-    if (known != SYMBOL_ID_NONE)
-        return atom_symbol_id(a, known);
     size_t size = sizeof(Atom) + sizeof(CettaSymbolSpelling) + (size_t)len + 1u;
     Atom *atom = arena_alloc(a, size);
     *atom = (Atom){.kind = ATOM_SYMBOL, .arena_id = a->identity,
@@ -4397,6 +4434,13 @@ static Atom *atom_symbol_data_span_hashed(
     atomic_fetch_add_explicit(&managed_symbol_allocated_bytes, (uint64_t)len + 1u, memory_order_relaxed);
     if (bytes[0] == '&') atom->flags |= ATOM_FLAG_HAS_REGISTRY_REFS;
     return atom;
+}
+static Atom *atom_symbol_data_span_hashed(
+        Arena *a, const char *bytes, uint32_t len, uint64_t hash) {
+    SymbolId known = symbol_lookup_span_hashed(
+        g_symbols, (const uint8_t *)bytes, len, hash);
+    return known != SYMBOL_ID_NONE ? atom_symbol_id(a, known)
+        : atom_symbol_spelled_new(a, bytes, len, hash);
 }
 #endif
 
@@ -6344,6 +6388,23 @@ bool atom_expr_borrowed_view_init(AtomExprBorrowedView *out,
     return true;
 }
 
+/* The origin is written first and the expression built at once after it:
+ * an expression this arena places right after the origin is the view, and
+ * names the entry; one placed elsewhere (a new block, an interned atom) does
+ * not, and the origin's bytes stay unused. */
+Atom *atom_expr_with_origin(Arena *a, Atom **elems, CettaExprLen len,
+                            const AtomStoredOrigin *origin) {
+    AtomStoredOrigin *slot = arena_alloc(a, sizeof(*slot));
+    Atom *view = atom_expr(a, elems, len);
+    if (view && slot && origin && (void *)(slot + 1) == (void *)view &&
+        view->kind == ATOM_EXPR && view->expr.len == len &&
+        view->arena_id == a->identity) {
+        *slot = *origin;
+        view->flags |= ATOM_FLAG_STORED_ORIGIN;
+    }
+    return view;
+}
+
 Atom *atom_expr(Arena *a, Atom **elems, CettaExprLen len) {
     if (!a->hashcons && a->older_identity == 0u && elems) {
         switch (len) {
@@ -6498,7 +6559,8 @@ Atom *atom_expr_suffix(Arena *a, Atom *expression, CettaExprLen offset) {
     if (departed_known &&
         !atom_summary_head_adjusts(expression->expr.elems[0]) &&
         (expression->structural_facts & ATOM_STRUCTURAL_FACTS_VALID) != 0u) {
-        uint32_t flags = expression->flags & ~ATOM_FLAG_HE_EVALUATED;
+        uint32_t flags = expression->flags &
+                         ~(ATOM_FLAG_HE_EVALUATED | ATOM_FLAG_STORED_ORIGIN);
         /* A new expression: an evaluated mark is not inherited. */
         uint32_t facts = expression->structural_facts &
                          ~(ATOM_STRUCTURAL_GENERATION_CLOSED |
@@ -6646,7 +6708,8 @@ Atom *atom_expr_view_rehome(Arena *a, const Atom *view, Atom **elems) {
         .kind = ATOM_EXPR,
         /* Relocated storage may contain renamed cells. Keep variable
          * support unknown and do not inherit a hash of the old identities. */
-        .flags = view->flags & ~ATOM_FLAG_ARENA_CLOSED,
+        .flags = view->flags &
+                 ~(ATOM_FLAG_ARENA_CLOSED | ATOM_FLAG_STORED_ORIGIN),
         .var_id = VAR_ID_NONE,
         .symbol_number = SYMBOL_ID_NONE,
         .arena_id = a->identity,
@@ -6745,7 +6808,8 @@ Atom *atom_expr_prepend(Arena *a, Atom *head, Atom *list) {
         /* The list's summary is its fold, since its head adjusts nothing;
          * the new head steps onto it and then adjusts it
          * (TailSummary.summary_prepend). */
-        uint32_t flags = list->flags & ~ATOM_FLAG_HE_EVALUATED;
+        uint32_t flags = list->flags &
+                         ~(ATOM_FLAG_HE_EVALUATED | ATOM_FLAG_STORED_ORIGIN);
         /* A new expression: an evaluated mark is not inherited. */
         flags |= head->flags & ATOM_SUMMARY_INHERITED;
         flags &= head->flags | ~ATOM_SUMMARY_REQUIRED;
@@ -7106,8 +7170,20 @@ static size_t atom_visit_slot(const Atom *atom, size_t cap) {
 }
 
 bool atom_visit_set_add(AtomVisitSet *set, const Atom *atom, bool *fault) {
+    if (set->len == SIZE_MAX || set->len + 1u > SIZE_MAX / 2u) {
+        *fault = true;
+        return false;
+    }
     if ((set->len + 1u) * 2u > set->cap) {
+        if (set->cap > SIZE_MAX / 2u) {
+            *fault = true;
+            return false;
+        }
         size_t cap = set->cap ? set->cap * 2u : 64u;
+        if (cap > SIZE_MAX / sizeof(*set->slots)) {
+            *fault = true;
+            return false;
+        }
         const Atom **slots = calloc(cap, sizeof(*slots));
         if (!slots) {
             *fault = true;
@@ -7144,15 +7220,6 @@ void atom_visit_set_free(AtomVisitSet *set) {
 static inline __attribute__((always_inline)) bool atom_walk_any(
     const Atom *root, AtomTreePredicate predicate, AtomTreePredicate barrier,
     void *context, bool unique, size_t allowance, bool *complete) {
-    enum { INLINE_CAPACITY = 64 };
-    const Atom *inline_stack[INLINE_CAPACITY];
-    const Atom **stack = inline_stack;
-    size_t capacity = INLINE_CAPACITY;
-    size_t length = 0u;
-    AtomVisitSet seen = {0};
-    bool fault = false;
-    bool found = false;
-
     if (complete)
         *complete = true;
     if (!root)
@@ -7162,18 +7229,50 @@ static inline __attribute__((always_inline)) bool atom_walk_any(
             *complete = false;
         return false;
     }
+    if (root->kind != ATOM_EXPR || !root->expr.len) {
+        if (barrier && barrier(root, context))
+            return false;
+        if (complete && !allowance) {
+            *complete = false;
+            return false;
+        }
+        return predicate(root, context);
+    }
+    enum { INLINE_CAPACITY = 64 };
+    const Atom *inline_stack[INLINE_CAPACITY];
+    const Atom **stack = inline_stack;
+    size_t capacity = INLINE_CAPACITY;
+    size_t length = 0u;
+    AtomVisitSet seen = {0};
+    bool fault = false;
+    bool found = false;
+    bool root_seen = false;
     stack[length++] = root;
     while (length > 0u && !found) {
         const Atom *node = stack[--length];
         if (!node)
             continue;
-        /* A subexpression met again was answered where it was first met;
-         * where the set cannot grow the walk goes on as a tree walk. */
+        /* The root uses one local bit instead of an allocated set entry.
+         * A back edge to it still denotes an already visited expression. */
+        if (unique && node == root) {
+            if (root_seen)
+                continue;
+            root_seen = true;
+        }
+        /* A subexpression met again was answered where it was first met. */
         if (unique && node != root && node->kind == ATOM_EXPR && node->expr.len &&
             !fault && !atom_visit_set_add(&seen, node, &fault) && !fault)
             continue;
-        if (complete && fault)
-            goto incomplete;
+        if (fault) {
+            if (complete)
+                goto incomplete;
+            /* Exact graph queries cannot fall back to a tree traversal:
+             * a non-root cycle would no longer have a termination guard. */
+            size_t next = seen.cap > SIZE_MAX / 2u ? SIZE_MAX
+                : seen.cap ? seen.cap * 2u : 64u;
+            cetta_oom(next > SIZE_MAX / sizeof(*seen.slots)
+                ? SIZE_MAX : next * sizeof(*seen.slots));
+        }
         if (barrier && barrier(node, context))
             continue;
         if (complete) {
@@ -8977,9 +9076,24 @@ static Atom *atom_deep_copy_mapped_leaf(Arena *dst, Atom *source,
           source->ground.gkind == GV_INTERNAL_TAG));
     Atom *copy;
     if (plain) {
-        copy = arena_alloc(dst, sizeof(*copy));
-        atom_header_copy(copy, source);
-        copy->arena_id = dst->identity;
+#if CETTA_MANAGED_SYMBOLS
+        if (source->kind == ATOM_SYMBOL && atom_symbol_is_spelled(source)) {
+            /* Relocation must preserve a private node's identity while owning
+             * its spelling after the source arena is retired. A header copy
+             * alone retains a dangling spelling pointer. */
+            copy = atom_symbol_spelled_new(dst, source->spelling->bytes,
+                source->spelling->len, source->spelling->hash);
+            const CettaSymbolSpelling *spelling = copy->spelling;
+            atom_header_copy(copy, source);
+            copy->spelling = spelling;
+            copy->arena_id = dst->identity;
+        } else
+#endif
+        {
+            copy = arena_alloc(dst, sizeof(*copy));
+            atom_header_copy(copy, source);
+            copy->arena_id = dst->identity;
+        }
     } else {
         /* A Prime context has a further independently owned syntax graph;
          * its existing opaque copy does not use this enclosing memo. */
@@ -9381,12 +9495,7 @@ Atom *atom_deep_copy_single(Arena *dst, Atom *src) {
     return atom_deep_copy(dst, src);
 }
 
-AtomDeepCopySession *atom_deep_copy_session_new(Arena *dst) {
-    if (!dst)
-        return NULL;
-    AtomDeepCopySession *session = cetta_malloc(sizeof(*session));
-    cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_METADATA_ALLOC_BYTES,
-        sizeof(*session));
+static void atom_deep_copy_session_init(AtomDeepCopySession *session, Arena *dst) {
     session->dst = dst;
     session->destination_scope = NULL;
     session->objects_by_source = NULL;
@@ -9402,6 +9511,15 @@ AtomDeepCopySession *atom_deep_copy_session_new(Arena *dst) {
     session->inventories = NULL;
     session->cursor = NULL;
     atom_deep_copy_memo_init(&session->memo);
+}
+
+AtomDeepCopySession *atom_deep_copy_session_new(Arena *dst) {
+    if (!dst)
+        return NULL;
+    AtomDeepCopySession *session = cetta_malloc(sizeof(*session));
+    cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_METADATA_ALLOC_BYTES,
+        sizeof(*session));
+    atom_deep_copy_session_init(session, dst);
     return session;
 }
 
@@ -9980,31 +10098,19 @@ bool atom_deep_copy_session_destination_for_owner(
     return false;
 }
 
-static bool atom_deep_copy_arena_has_span(const Arena *arena,
-    const void *source, size_t bytes) {
-    if (!arena || !source || !bytes) return false;
-    uintptr_t address = (uintptr_t)source;
-    for (const ArenaBlock *block = arena->head; block; block = block->next) {
-        uintptr_t start = (uintptr_t)block->data;
-        if (address >= start && address - start <= block->used &&
-            bytes <= block->used - (address - start)) return true;
-    }
-    return false;
-}
-
 bool atom_deep_copy_session_owner_of_span(const AtomDeepCopySession *session,
     const void *source, size_t bytes, const Arena *fallback,
     const Arena **source_owner, Arena **image_owner) {
     if (!session || !source_owner || !image_owner || !session->dst ||
         !atom_deep_copy_arena_map_current(session)) return false;
     if (!session->memo.arenas) {
-        if (!atom_deep_copy_arena_has_span(fallback, source, bytes)) return false;
+        if (!arena_has_live_span(fallback, source, bytes)) return false;
         *source_owner = fallback; *image_owner = session->dst;
         return true;
     }
     for (size_t i = 0u; i < session->memo.arena_count; i++) {
         AtomDeepCopyArenaPair pair = session->memo.arenas[i].pair;
-        if (atom_deep_copy_arena_has_span(pair.source, source, bytes)) {
+        if (arena_has_live_span(pair.source, source, bytes)) {
             *source_owner = pair.source; *image_owner = pair.destination;
             return true;
         }
@@ -10431,9 +10537,7 @@ bool atom_deep_copy_session_install_inventory(AtomDeepCopySession *session,
     return true;
 }
 
-void atom_deep_copy_session_free(AtomDeepCopySession *session) {
-    if (!session)
-        return;
+static void atom_deep_copy_session_dispose(AtomDeepCopySession *session) {
     assert(!session->destination_scope);
     if (session->cursor) {
         AtomDeepCopyCursor *cursor=session->cursor;
@@ -10461,9 +10565,35 @@ void atom_deep_copy_session_free(AtomDeepCopySession *session) {
         free(session->region.arenas[a].kept);
     free(session->region.arenas);
     atom_deep_copy_memo_free(&session->memo);
+}
+
+void atom_deep_copy_session_free(AtomDeepCopySession *session) {
+    if (!session)
+        return;
+    atom_deep_copy_session_dispose(session);
     cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_METADATA_FREE_BYTES,
         sizeof(*session));
     free(session);
+}
+
+bool atom_deep_copy_terms_mapped(Arena *dst, Atom *const *sources, Atom **images,
+    size_t count, AtomDeepCopyLeafMap map, void *context) {
+    if (!dst || !map || (count && (!sources || !images)) ||
+        count > SIZE_MAX / sizeof(*images))
+        return false;
+    if (!count)
+        return true;
+    AtomDeepCopySession session;
+    atom_deep_copy_session_init(&session, dst);
+    session.map = map;
+    session.map_context = context;
+    bool ok = true;
+    for (size_t i = 0u; ok && i < count; i++) {
+        images[i] = atom_deep_copy_session_copy(&session, sources[i]);
+        ok = images[i] != NULL;
+    }
+    atom_deep_copy_session_dispose(&session);
+    return ok;
 }
 
 void atom_deep_copy_session_storage_census(const AtomDeepCopySession *session,
@@ -10631,24 +10761,47 @@ typedef struct {
     int character;
 } AtomPrintAction;
 
+/* The pending parts of one print: the printer's own frame holds the
+ * first ATOM_PRINT_INLINE, the heap any beyond. */
+#define ATOM_PRINT_INLINE 32u
+
 typedef struct {
     AtomPrintAction *items;
     size_t length;
     size_t capacity;
+    AtomPrintAction inline_items[ATOM_PRINT_INLINE];
 } AtomPrintStack;
+
+static void atom_print_stack_init(AtomPrintStack *stack) {
+    stack->items = stack->inline_items;
+    stack->length = 0u;
+    stack->capacity = ATOM_PRINT_INLINE;
+}
+
+static void atom_print_stack_free(AtomPrintStack *stack) {
+    if (stack->items != stack->inline_items)
+        free(stack->items);
+}
 
 static void atom_print_stack_push(
     AtomPrintStack *stack, AtomPrintAction action) {
     if (stack->length == stack->capacity) {
-        size_t next_capacity =
-            stack->capacity ? stack->capacity * 2u : 64u;
+        size_t next_capacity = stack->capacity * 2u;
         if (next_capacity <= stack->capacity ||
             next_capacity > SIZE_MAX / sizeof(*stack->items)) {
             cetta_oom(SIZE_MAX);
         }
-        stack->items = cetta_realloc(
-            stack->items,
-            sizeof(*stack->items) * next_capacity);
+        if (stack->items == stack->inline_items) {
+            AtomPrintAction *items =
+                cetta_malloc(sizeof(*items) * next_capacity);
+            memcpy(items, stack->inline_items,
+                   sizeof(*items) * stack->length);
+            stack->items = items;
+        } else {
+            stack->items = cetta_realloc(
+                stack->items,
+                sizeof(*stack->items) * next_capacity);
+        }
         stack->capacity = next_capacity;
     }
     stack->items[stack->length++] = action;
@@ -10899,7 +11052,8 @@ static void atom_print_string_bytes(FILE *out, const char *text, size_t len,
 static void atom_print_mode(
     Atom *root, FILE *out, bool petta,
     PettaPrintVariables *variables) {
-    AtomPrintStack stack = {0};
+    AtomPrintStack stack;
+    atom_print_stack_init(&stack);
     atom_print_stack_push_atom(&stack, root);
 
     while (stack.length > 0u) {
@@ -11148,7 +11302,7 @@ static void atom_print_mode(
         break;
         }
     }
-    free(stack.items);
+    atom_print_stack_free(&stack);
 }
 
 bool atom_is_prime_own_list(const Atom *atom) {

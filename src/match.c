@@ -3141,9 +3141,22 @@ void bindings_reader_context_set(Bindings *bindings, PrimeNeedReaderContext *con
     prime_need_reader_context_release(old);
 }
 
+/* A fresh carrier has no old reader edge to release. Construct it directly
+ * from the source; replacement still uses the initialized-owner operation.
+ * Each writable Bindings retains its own carrier address. */
+static void bindings_prime_store(Bindings *dst, const PrimeOccurrence *source) {
+    if (dst->prime_ext) {
+        prime_occurrence_assign(dst->prime_ext, source);
+    } else {
+        PrimeOccurrence *image = cetta_malloc(sizeof(*image));
+        prime_occurrence_copy(image, source);
+        dst->prime_ext = image;
+    }
+}
+
 void bindings_prime_assign(Bindings *dst, const Bindings *src) {
     if (bindings_prime_present(src))
-        prime_occurrence_assign(bindings_prime_ext_materialize(dst),src->prime_ext);
+        bindings_prime_store(dst, src->prime_ext);
     else if (dst->prime_ext) prime_occurrence_clear(dst->prime_ext);
 }
 
@@ -3169,7 +3182,7 @@ void bindings_prime_set(Bindings *dst, const PrimeNeedSnapshot *need,
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
         if (receipt) value.receipt=*receipt;
 #endif
-        prime_occurrence_assign(bindings_prime_ext_materialize(dst),&value);
+        bindings_prime_store(dst, &value);
     } else if (dst->prime_ext) prime_occurrence_clear(dst->prime_ext);
 }
 
@@ -5117,11 +5130,13 @@ CettaMatchCompletion bindings_try_merge_live_checked(
         ? CETTA_MATCH_MATCHED : failure;
 }
 
-CettaMatchCompletion bindings_import_production_checked(Arena *owner,
+static CettaMatchCompletion bindings_import_production_kernel(Arena *owner,
     const PrimeNeedReadCapture *reads, uint64_t thunk_id,
     const Bindings *common, const Bindings *entrance,
     const Bindings *production, const Bindings *recipient,
-    PrimeNeedStateInitialValue initial_value, void *context, Bindings *out) {
+    PrimeNeedStateInitialValue initial_value, void *context, Bindings *out,
+    bool borrow_production,bool *borrowed) {
+    if(borrowed)*borrowed=false;
     if (!owner || !common || !entrance || !production || !recipient || !out ||
         !prime_need_read_capture_has_cuts(reads, bindings_need_view(common),
                                          bindings_need_view(entrance)))
@@ -5129,9 +5144,14 @@ CettaMatchCompletion bindings_import_production_checked(Arena *owner,
     PrimeNeedSnapshot need;
     PrimeNeedBranchState state;
     CettaWeightLedger weights;
-    CettaMatchCompletion result = prime_need_snapshot_import_production_checked(
-        owner, reads, bindings_need_view(production), thunk_id,
-        bindings_need_view(recipient), &need);
+    bool need_borrowed=false;
+    CettaMatchCompletion result=borrow_production
+        ?prime_need_snapshot_import_production_borrowed_checked(owner,reads,
+            bindings_need_view(production),thunk_id,
+            bindings_need_view(recipient),&need,&need_borrowed)
+        :prime_need_snapshot_import_production_checked(owner,reads,
+            bindings_need_view(production),thunk_id,
+            bindings_need_view(recipient),&need);
     if (result != CETTA_MATCH_MATCHED) return result;
     result = prime_need_branch_state_import_suffix(owner,
         bindings_branch_state_view(common), bindings_branch_state_view(entrance),
@@ -5186,6 +5206,7 @@ CettaMatchCompletion bindings_import_production_checked(Arena *owner,
             bindings_reader_context_set(&staged,readers);
             prime_need_reader_context_release(readers);
             bindings_replace(out, &staged);
+            if(borrowed)*borrowed=need_borrowed;
         } else {
             prime_need_reader_context_release(readers);
             bindings_free(&staged);
@@ -5193,6 +5214,26 @@ CettaMatchCompletion bindings_import_production_checked(Arena *owner,
     }
     else bindings_free(&staged);
     return result;
+}
+
+CettaMatchCompletion bindings_import_production_checked(Arena *owner,
+    const PrimeNeedReadCapture *reads,uint64_t thunk_id,
+    const Bindings *common,const Bindings *entrance,
+    const Bindings *production,const Bindings *recipient,
+    PrimeNeedStateInitialValue initial_value,void *context,Bindings *out) {
+    return bindings_import_production_kernel(owner,reads,thunk_id,common,entrance,
+        production,recipient,initial_value,context,out,false,NULL);
+}
+
+CettaMatchCompletion bindings_import_production_borrowed_checked(Arena *owner,
+    const PrimeNeedReadCapture *reads,uint64_t thunk_id,
+    const Bindings *common,const Bindings *entrance,
+    const Bindings *production,const Bindings *recipient,
+    PrimeNeedStateInitialValue initial_value,void *context,Bindings *out,
+    bool *borrowed) {
+    if(!borrowed)return CETTA_MATCH_INCOMPLETE;
+    return bindings_import_production_kernel(owner,reads,thunk_id,common,entrance,
+        production,recipient,initial_value,context,out,true,borrowed);
 }
 
 bool bindings_clone_merge(Bindings *dst, const Bindings *base,
@@ -7877,11 +7918,8 @@ void bindings_builder_rollback(BindingsBuilder *bb, uint32_t mark) {
         bb->current.cycle_state = entry->cycle_state;
         restored_derived_nonzero = entry->derived_nonzero;
         restored = true;
-        if (prime || bb->current.prime_ext) {
-            PrimeOccurrence *current=bindings_prime_ext_materialize(&bb->current);
-            if (prime) prime_occurrence_assign(current,prime);
-            else prime_occurrence_clear(current);
-        }
+        if (prime) bindings_prime_store(&bb->current, prime);
+        else if (bb->current.prime_ext) prime_occurrence_clear(bb->current.prime_ext);
         bindings_builder_drop_prime_trail(bb,entry->prime_state_mark);
     }
     bool frame_values_restored =
@@ -9070,8 +9108,12 @@ static bool bindings_captured_support_present(const Atom *atom, void *unused) {
 }
 
 bool bindings_value_has_captured_support(const Atom *value) {
-    return value && atom_has_identity_grounded(value) &&
-        atom_graph_any(value, bindings_captured_support_present, NULL);
+    if (!value || !atom_has_identity_grounded(value))
+        return false;
+    bool complete = false;
+    bool found = atom_graph_any_checked(value, bindings_captured_support_present,
+        NULL, NULL, SIZE_MAX, &complete);
+    return !complete || found;
 }
 
 bool bindings_collect_support(const Bindings *bindings,
@@ -13039,6 +13081,182 @@ bool match_types_builder(Atom *actual, Atom *expected, BindingsBuilder *bb,
 
 /* ── Bidirectional matching (match_atoms from HE spec metta.md:577-617) ── */
 
+enum { CETTA_OPEN_PATTERN_PLAN_DEPTH_LIMIT = 256u };
+
+typedef struct {
+    Arena *owner;
+    const BindingsFrameSchema *schema;
+    const VarId *variable_ids;
+    uint32_t variable_count;
+} OpenPatternCompiler;
+
+static bool open_pattern_plan_compile_node(
+        const OpenPatternCompiler *compiler, Atom *source,
+        Atom **ancestors, uint32_t depth,
+        CettaOpenPatternPlan *out) {
+    if (!compiler || !source || !ancestors || !out ||
+        depth > CETTA_OPEN_PATTERN_PLAN_DEPTH_LIMIT) {
+        return false;
+    }
+    for (uint32_t index = 0u; index < depth; index++) {
+        if (ancestors[index] == source)
+            return false;
+    }
+    uint32_t variable_count = compiler->variable_count;
+    const VarId *variable_ids = compiler->variable_ids;
+    *out = (CettaOpenPatternPlan){
+        .source = source,
+        .kind = source->kind,
+        .variable_ids = variable_count <= 64u
+            ? variable_ids : NULL,
+    };
+    if (source->kind == ATOM_VAR) {
+        if (variable_count > 64u)
+            return true;
+        uint32_t slot = 0u;
+        if (!bindings_frame_schema_find_slot(
+                compiler->schema, source->var_id, &slot)) {
+            return false;
+        }
+        out->variable_mask = UINT64_C(1) << slot;
+        return true;
+    }
+    if (source->kind != ATOM_EXPR)
+        return true;
+    if ((source->expr.len != 0u && !source->expr.elems) ||
+        source->expr.len > SIZE_MAX / sizeof(*out->children)) {
+        return false;
+    }
+    out->child_count = source->expr.len;
+    if (source->expr.len == 0u)
+        return true;
+    CettaOpenPatternPlan *children = arena_alloc(
+        compiler->owner,
+        sizeof(*children) * (size_t)source->expr.len);
+    if (!children)
+        return false;
+    out->children = children;
+    ancestors[depth] = source;
+    uint64_t seen_variables = 0u;
+    for (CettaExprIndex index = 0u;
+         index < source->expr.len; index++) {
+        if (!open_pattern_plan_compile_node(
+                compiler, source->expr.elems[index],
+                ancestors, depth + 1u, &children[index])) {
+            return false;
+        }
+        out->repeated_variable_mask |=
+            children[index].repeated_variable_mask |
+            (seen_variables & children[index].variable_mask);
+        seen_variables |= children[index].variable_mask;
+    }
+    out->variable_mask = seen_variables;
+    return true;
+}
+
+static bool open_pattern_plan_node_count(
+        const CettaOpenPatternPlan *plan, size_t *count_out) {
+    if (!plan || !count_out)
+        return false;
+    size_t count = 1u;
+    if (plan->kind == ATOM_EXPR) {
+        if ((plan->child_count != 0u && !plan->children) ||
+            (size_t)plan->child_count > SIZE_MAX - count) {
+            return false;
+        }
+        for (CettaExprIndex index = 0u;
+             index < plan->child_count; index++) {
+            size_t child_count = 0u;
+            if (!open_pattern_plan_node_count(
+                    &plan->children[index], &child_count) ||
+                child_count > SIZE_MAX - count) {
+                return false;
+            }
+            count += child_count;
+        }
+    }
+    *count_out = count;
+    return true;
+}
+
+static bool open_pattern_plan_linearize(
+        const CettaOpenPatternPlan *plan,
+        CettaOpenPatternInstruction *program,
+        size_t program_len, size_t *cursor) {
+    if (!plan || !program || !cursor || *cursor >= program_len)
+        return false;
+    size_t root = (*cursor)++;
+    program[root] = (CettaOpenPatternInstruction){
+        .source = plan->source,
+        .variable_mask = plan->variable_mask,
+    };
+    if (plan->kind == ATOM_EXPR) {
+        if (plan->child_count != 0u && !plan->children)
+            return false;
+        for (CettaExprIndex index = 0u;
+             index < plan->child_count; index++) {
+            if (!open_pattern_plan_linearize(
+                    &plan->children[index], program,
+                    program_len, cursor)) {
+                return false;
+            }
+        }
+    }
+    size_t span = *cursor - root;
+    if (span == 0u || span > UINT32_MAX)
+        return false;
+    program[root].subtree_span = (uint32_t)span;
+    return true;
+}
+
+bool cetta_open_pattern_plan_lower_linear(
+        Arena *owner, CettaOpenPatternPlan *root) {
+    if (!owner || !root)
+        return false;
+    size_t instruction_count = 0u;
+    if (!open_pattern_plan_node_count(
+            root, &instruction_count) ||
+        instruction_count == 0u ||
+        instruction_count > UINT32_MAX ||
+        instruction_count > SIZE_MAX /
+            sizeof(CettaOpenPatternInstruction)) {
+        return false;
+    }
+    CettaOpenPatternInstruction *instructions = arena_alloc(
+        owner,
+        instruction_count * sizeof(*instructions));
+    if (!instructions)
+        return false;
+    size_t cursor = 0u;
+    if (!open_pattern_plan_linearize(
+            root, instructions, instruction_count, &cursor) ||
+        cursor != instruction_count ||
+        instructions[0].source != root->source ||
+        instructions[0].variable_mask != root->variable_mask ||
+        instructions[0].subtree_span != instruction_count) {
+        return false;
+    }
+    root->linear_program = instructions;
+    root->linear_program_len = (uint32_t)instruction_count;
+    return true;
+}
+
+CettaOpenPatternPlan *cetta_open_pattern_plan_compile(
+        Arena *owner, Atom *source, const BindingsFrameSchema *schema) {
+    /* A list is matched through its logical elements and rest. */
+    if (!owner || !source || !schema || atom_structural_may_have_list(source))
+        return NULL;
+    CettaOpenPatternPlan *plan = arena_alloc(owner, sizeof(*plan));
+    if (!plan)
+        return NULL;
+    OpenPatternCompiler compiler = {.owner = owner, .schema = schema,
+        .variable_ids = bindings_frame_schema_source_ids(schema),
+        .variable_count = bindings_frame_schema_len(schema)};
+    Atom *ancestors[CETTA_OPEN_PATTERN_PLAN_DEPTH_LIMIT + 1u];
+    return open_pattern_plan_compile_node(&compiler, source, ancestors, 0u, plan)
+        ? plan : NULL;
+}
+
 static bool match_atoms_epoch_worklist(Atom *left, Atom *right,
                                        Bindings *bindings,
                                        BindingsBuilder *builder,
@@ -14662,6 +14880,7 @@ retry_pair:
              right_plan->kind != right->kind)) {
             goto fail;
         }
+        AtomKind right_shape = right_plan ? right_plan->kind : right->kind;
         if (left == right) {
             bool same_environment = match_shared_occurrence_same_environment(
                 left_original, right_original, left_epoch, right_epoch);
@@ -14786,7 +15005,7 @@ retry_pair:
                 left_frame = NULL;
                 goto retry_pair_with_budget;
             }
-            if (right->kind == ATOM_VAR) {
+            if (right_shape == ATOM_VAR) {
                 VarId right_id = right_original
                     ? var_epoch_id(right->var_id, right_epoch)
                     : right->var_id;
@@ -14889,7 +15108,7 @@ retry_pair:
             if (!added) goto fail;
             continue;
         }
-        if (right->kind == ATOM_VAR) {
+        if (right_shape == ATOM_VAR) {
             VarId right_id = right_original
                 ? var_epoch_id(right->var_id, right_epoch)
                 : right->var_id;
@@ -14936,7 +15155,7 @@ retry_pair:
             if (!added) goto fail;
             continue;
         }
-        if (left->kind == ATOM_SYMBOL && right->kind == ATOM_SYMBOL) {
+        if (left->kind == ATOM_SYMBOL && right_shape == ATOM_SYMBOL) {
             if (!atom_symbols_equal(left, right)) {
                 if (attempt_resolving_bound)
                     attempt_repeated_var = true;
@@ -14944,7 +15163,7 @@ retry_pair:
             }
             continue;
         }
-        if (left->kind == ATOM_GROUNDED && right->kind == ATOM_GROUNDED) {
+        if (left->kind == ATOM_GROUNDED && right_shape == ATOM_GROUNDED) {
             if (!atom_eq_with_resolved_spaces(left, right)) {
                 if (attempt_resolving_bound)
                     attempt_repeated_var = true;
@@ -14960,7 +15179,7 @@ retry_pair:
                 attempt_repeated_var = true;
             goto fail;
         }
-        if (left->kind == ATOM_EXPR && right->kind == ATOM_EXPR &&
+        if (left->kind == ATOM_EXPR && right_shape == ATOM_EXPR &&
             (match_expr_is_list(left) || match_expr_is_list(right))) {
             MatchListMeeting meet;
             MatchListOutcome list_outcome = match_list_meet(a, left, right, &meet);
@@ -15015,7 +15234,7 @@ retry_pair:
                 goto fail;
             continue;
         }
-        if (left->kind != ATOM_EXPR || right->kind != ATOM_EXPR ||
+        if (left->kind != ATOM_EXPR || right_shape != ATOM_EXPR ||
             atom_authored_len(left) != atom_authored_len(right) ||
             (right_plan &&
              (right_plan->child_count != right->expr.len ||
@@ -15052,7 +15271,7 @@ retry_pair:
         {
             CettaExprIndex nch = atom_authored_len(left);
             CettaExprIndex first = 0u;
-            if (right_plan && nch > 0u &&
+            if (right_frame_region && right_plan && nch > 0u &&
                 match_plan_fails_before_bind(left, right_plan, nch)) {
                 if (attempt_resolving_bound)
                     attempt_repeated_var = true;
@@ -16817,7 +17036,6 @@ bool bindings_eq(Bindings *a, Bindings *b) {
     return true;
 }
 
-
 void bindings_frame_schema_storage_census(const BindingsFrameSchema *schema,
         CettaStorageCensus *census) {
     if (!schema || !cetta_storage_array(census, schema, schema->cap,
@@ -17182,3 +17400,16 @@ bool bindings_checkpoint_compare(const Bindings *a,const Bindings *b,
 #undef BC_P
 #undef BC_I
 #undef BC_A
+
+/* The ordinary plan reader uses the same ordered walk and write policy.
+ * A private frame owns the separate early-refutation permission above. */
+bool match_atoms_epoch_builder_planned(
+        Atom *left, Atom *right, const CettaOpenPatternPlan *right_plan,
+        BindingsBuilder *builder, Arena *arena, CettaFrameIdentity epoch) {
+    if (!right_plan || right_plan->source != right)
+        return match_atoms_epoch_builder(left, right, builder, arena, epoch);
+    return match_atoms_epoch_views_worklist(
+        left, BINDING_VALUE_MATERIALIZED, CETTA_FRAME_IDENTITY_NONE, 0u,
+        right, NULL, builder, arena, epoch,
+        BINDING_VALUE_CONTEXTUAL, false, NULL, right_plan, NULL);
+}

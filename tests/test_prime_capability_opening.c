@@ -259,7 +259,7 @@ static void native_completion_ownership(Arena *arena) {
         &space, call, CETTA_GSLT_PURE_CALL_EAGER, atom_bool, atom_expr,
         cetta_prepared_pure_constructs_expression_always, NULL, NULL, NULL, NULL,
         &view, true, true, (CettaMatchDecisionSemanticIdentity){
-            .compiler_identity = cetta_match_decision_compiler_identity()});
+            .compiler_identity = cetta_match_decision_compiler_identity()}, NULL);
     assert(program);
     CettaPreparedPureAnswerCursorOptions options = {
         .limits = {.max_transitions = 4096u, .max_scratch_bytes = 1024u * 1024u,

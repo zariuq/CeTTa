@@ -1,0 +1,8 @@
+!(import! &self (library store))
+(: scalar-test:reference (-> Atom Atom %Undefined%))
+(= (scalar-test:reference $left $right)
+  (if (@< $left $right) -1 (if (@> $left $right) 1 0)))
+(= (scalar-test:run (Order $left $right)) (store:scalar-order $left $right))
+(= (scalar-test:run (Reference $left $right)) (scalar-test:reference $left $right))
+(= (scalar-test:run (Within $value $lower $upper)) (store:scalar-range $value $lower $upper))
+(= (scalar-test:run (Window $lower $upper)) (store:integer-window $lower $upper))

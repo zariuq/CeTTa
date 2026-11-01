@@ -145,6 +145,136 @@ static bool copy_equation_metadata(CopyRelation *r,const PrimeNeedEquationMetada
         return r->valid=false;
     return true;
 }
+/* Enumerate service ownership independently of the copier's identity table.
+ * In particular, one production and cursor may serve several physical readers. */
+static bool copy_service_owners(CopyRelation *r,const PrimeNativeControl *source,
+        const PrimeNativeControl *image) {
+    copy_identity(r,40,source,image);
+    for(size_t i=0u;r->valid&&i<r->count;i++) {
+        CopyIdentity item=r->keys[i];
+        if(item.kind==17u) {
+            const PrimeNeedCallLink *s=item.source,*d=item.image;
+            if(s->generation!=d->generation)return r->valid=false;
+            copy_identity(r,46,s->lease,d->lease);
+        } else if(item.kind==40u) {
+            const PrimeNativeControl *s=item.source,*d=item.image;
+            if(s->force_service_park_reservations!=d->force_service_park_reservations||
+                s->parked_count!=d->parked_count) return r->valid=false;
+            copy_identity(r,41,s->force_services,d->force_services);
+            copy_identity(r,41,s->force_service_focus,d->force_service_focus);
+            copy_identity(r,47,s->owned_top_episode?s->owned_top_episode->execution:NULL,
+                d->owned_top_episode?d->owned_top_episode->execution:NULL);
+            size_t queued=cetta_continuation_hub_length(&s->hub);
+            if(queued!=cetta_continuation_hub_length(&d->hub))return r->valid=false;
+            size_t count=queued+s->parked_count+(s->force_retry.continuation.payload?1u:0u);
+            for(size_t j=0u;j<count;j++) {
+                const CettaOwnedContinuation *a=j<queued?cetta_continuation_hub_at(&s->hub,j):
+                    j<queued+s->parked_count?&s->parked[j-queued]:&s->force_retry.continuation;
+                const CettaOwnedContinuation *b=j<queued?cetta_continuation_hub_at(&d->hub,j):
+                    j<queued+d->parked_count?&d->parked[j-queued]:&d->force_retry.continuation;
+                const PrimeNativeWork *x=a->payload,*y=b->payload;
+                if(!x||!y||x->service_resume!=y->service_resume||
+                    x->service_park_reserved!=y->service_park_reserved)return r->valid=false;
+                copy_identity(r,43,x,y);copy_identity(r,40,x->owner,y->owner);
+                copy_identity(r,41,x->force_service,y->force_service);
+                copy_identity(r,41,x->service_request,y->service_request);
+                copy_identity(r,15,x->parent,y->parent);copy_identity(r,15,x->frame,y->frame);
+            }
+        } else if(item.kind==41u) {
+            const PrimeNeedForceService *s=item.source,*d=item.image;
+            if(s->parked!=d->parked||s->cancelled!=d->cancelled||
+                s->waiting_source!=d->waiting_source||s->finished!=d->finished||
+                s->library!=d->library||s->registry!=d->registry||
+                s->context.self_policy!=d->context.self_policy||
+                s->context.identity_policy!=d->context.identity_policy||
+                s->context.symbol_scope!=d->context.symbol_scope||
+                !prime_need_call_symbol_context_equal(&s->context.symbol_source,&d->context.symbol_source))
+                return r->valid=false;
+            copy_identity(r,40,s->coordinator,d->coordinator);
+            copy_identity(r,40,s->requester_control,d->requester_control);
+            copy_identity(r,43,s->work,d->work);copy_identity(r,43,s->requester_work,d->requester_work);
+            copy_identity(r,15,s->frame,d->frame);copy_identity(r,15,s->cancel_root,d->cancel_root);
+            if(s->frame)copy_identity(r,41,s->frame->call_force_service,d->frame->call_force_service);
+            copy_identity(r,42,s->source,d->source);copy_identity(r,44,s->activation,d->activation);
+            copy_identity(r,41,s->previous,d->previous);copy_identity(r,41,s->next,d->next);
+            copy_identity(r,41,s->parent,d->parent);copy_identity(r,41,s->dependency,d->dependency);
+            copy_identity(r,41,s->wait_previous,d->wait_previous);copy_identity(r,41,s->wait_next,d->wait_next);
+            copy_identity(r,23,s->position,d->position);
+            uint64_t a=UINT64_MAX,b=UINT64_MAX;
+            if(!cetta_shared_return_checkpoint_position(s->position,&a)||
+                !cetta_shared_return_checkpoint_position(d->position,&b)||a!=b)return r->valid=false;
+            copy_bindings(r,&s->environment,&d->environment);
+        } else if(item.kind==42u) {
+            const PrimeNeedForceProduction *s=item.source,*d=item.image;
+            if(s->dispatches!=d->dispatches||s->call_refusals!=d->call_refusals||
+                s->world_effects!=d->world_effects||s->thunk!=d->thunk||
+                s->input_generation!=d->input_generation)return r->valid=false;
+            const PrimeNeedSessionPolicy *a=&s->session.policy,*b=&d->session.policy;
+            if(s->session.language_id!=d->session.language_id||s->session.speculative!=d->session.speculative||
+                a->module_policy.provider_flags!=b->module_policy.provider_flags||
+                a->module_policy.relative_module_policy!=b->module_policy.relative_module_policy||
+                a->module_policy.transactional_imports!=b->module_policy.transactional_imports||
+                a->options.type_check_auto!=b->options.type_check_auto||a->options.he_typing!=b->options.he_typing||
+                a->options.interpreter_mode!=b->options.interpreter_mode||
+                a->options.max_stack_depth!=b->options.max_stack_depth||a->options.fuel_limit!=b->options.fuel_limit||
+                a->options.entry_len!=b->options.entry_len)return r->valid=false;
+            if(a->options.entry_len&&(a->options.entries==b->options.entries||
+                !arena_has_live_span(&d->storage,b->options.entries,
+                    (size_t)b->options.entry_len*sizeof(*b->options.entries))))return r->valid=false;
+            for(uint32_t j=0u;j<a->options.entry_len;j++) {
+                const CettaEvalOptionEntry *x=&a->options.entries[j],*y=&b->options.entries[j];
+                if(x->kind!=y->kind||strncmp(x->key,y->key,sizeof(x->key))||
+                    strncmp(x->repr,y->repr,sizeof(x->repr))||
+                    (x->kind==CETTA_EVAL_OPTION_VALUE_INT&&x->int_value!=y->int_value))return r->valid=false;
+            }
+            copy_identity(r,47,s->execution,d->execution);
+            copy_identity(r,46,s->input_lease,d->input_lease);
+            copy_identity(r,40,s->agenda,d->agenda);
+            copy_identity(r,41,s->service_active,d->service_active);
+            copy_identity(r,41,s->service_waiters,d->service_waiters);
+        } else if(item.kind==46u) {
+            const EvalExecutionLease *s=item.source,*d=item.image;
+            if(s->generation!=d->generation)return r->valid=false;
+            copy_identity(r,47,s->context,d->context);
+        } else if(item.kind==47u) {
+            const EvalExecutionContext *s=item.source,*d=item.image;
+            if(s->root_space!=d->root_space||s->scoped!=d->scoped||
+                s->table_ready!=d->table_ready||s->answers_ready!=d->answers_ready||
+                s->variants_ready!=d->variants_ready||s->survivor_ready!=d->survivor_ready)
+                return r->valid=false;
+            copy_identity(r,46,s->lease,d->lease);
+        } else if(item.kind==44u) {
+            const PrimeEvalScopeNode *s=item.source,*d=item.image;
+            if(!d->references||s->root!=d->root||d->validation_cached||d->release_next||
+                s->owned.is_current!=d->owned.is_current||s->owned.completion!=d->owned.completion||
+                s->projection.pure_authority!=d->projection.pure_authority||
+                s->projection.scope_control_pure!=d->projection.scope_control_pure||
+                s->projection.scope_scoring!=d->projection.scope_scoring||
+                s->projection.scope_invocation_incomplete!=d->projection.scope_invocation_incomplete||
+                s->projection.ordinary_ordered!=d->projection.ordinary_ordered||
+                s->projection.retain_bind_calls!=d->projection.retain_bind_calls)return r->valid=false;
+            copy_identity(r,40,s->coordinator,d->coordinator);
+            copy_identity(r,44,s->resource,d->resource);copy_identity(r,44,s->invocation,d->invocation);
+            copy_identity(r,44,s->root_node,d->root_node);
+            copy_identity(r,45,s->owned.driver,d->owned.driver);
+            copy_identity(r,42,s->owned.owner,d->owned.owner);
+            copy_identity(r,45,s->projection.scope_failure_owner,d->projection.scope_failure_owner);
+            copy_identity(r,42,s->projection.call_permit_context,d->projection.call_permit_context);
+            copy_identity(r,42,s->projection.call_refusal_context,d->projection.call_refusal_context);
+            copy_identity(r,42,s->projection.own_data_context,d->projection.own_data_context);
+            copy_identity(r,42,s->projection.space_read_context,d->projection.space_read_context);
+            copy_identity(r,42,s->projection.context_read_context,d->projection.context_read_context);
+            if(s->root&&(d->captured_root_authority_parent||d->captured_root_call_permit_parent))
+                return r->valid=false;
+            if(s->owned.owner&&d->owned.driver!=&d->coordinator->driver&&
+                (!arena_retains_owner(&d->holds,d->owned.owner,prime_need_force_production_release)||
+                 arena_retains_owner(&d->holds,s->owned.owner,prime_need_force_production_release)))
+                return r->valid=false;
+        }
+    }
+    return r->valid;
+}
+
 static bool copy_relation(const PrimeNativeControl *s,const PrimeNativeControl *d,CopyRelation *r) {
     *r=(CopyRelation){.valid=true};
     if(s->selected_length!=d->selected_length||s->selected_delivered!=d->selected_delivered||
@@ -192,6 +322,15 @@ static bool copy_relation(const PrimeNativeControl *s,const PrimeNativeControl *
            sf->force_pending_observed!=df->force_pending_observed||sf->force_published!=df->force_published||
            sf->force_retry_pending!=df->force_retry_pending||
            sf->return_retry_pending!=df->return_retry_pending||
+           sf->call_force_attempt.ready!=df->call_force_attempt.ready||
+           sf->call_force_attempt.step!=df->call_force_attempt.step||
+           sf->call_force_attempt.completion!=df->call_force_attempt.completion||
+           sf->call_force_attempt.source_completion!=df->call_force_attempt.source_completion||
+           sf->call_force_attempt.refusal_reason!=df->call_force_attempt.refusal_reason||
+           sf->call_force_attempt.steps_spent!=df->call_force_attempt.steps_spent||
+           sf->call_force_attempt.refused!=df->call_force_attempt.refused||
+           sf->call_force_attempt.preparation_incomplete!=df->call_force_attempt.preparation_incomplete||
+           sf->call_force_attempt.interrupted!=df->call_force_attempt.interrupted||
            sf->normalization_value_ready!=df->normalization_value_ready||
            sf->normalization_return_value_ready!=df->normalization_return_value_ready||
            sf->normalization_result_form!=df->normalization_result_form)r->valid=false;
@@ -266,7 +405,9 @@ static bool copy_relation(const PrimeNativeControl *s,const PrimeNativeControl *
     if(queued!=cetta_continuation_hub_length(&d->hub)||s->parked_count!=d->parked_count)return false;
     bool retry=s->force_retry.continuation.payload!=NULL;
     if(retry!=(d->force_retry.continuation.payload!=NULL)||
-       s->force_retry.admitted!=d->force_retry.admitted)return false;
+       s->force_retry.admitted!=d->force_retry.admitted ||
+       s->force_retry.prepared!=d->force_retry.prepared ||
+       s->force_retry.call_refusal!=d->force_retry.call_refusal)return false;
     for(size_t i=0;i<queued+s->parked_count+(retry?1u:0u);i++){
         const CettaOwnedContinuation *a=i<queued?cetta_continuation_hub_at(&s->hub,i):
             i<queued+s->parked_count?&s->parked[i-queued]:&s->force_retry.continuation;
@@ -287,5 +428,5 @@ static bool copy_relation(const PrimeNativeControl *s,const PrimeNativeControl *
             if(x->task.seed_env_initialized)copy_bindings(r,&x->task.seed_env,&y->task.seed_env);
         }
     }
-    return r->valid;
+    return copy_service_owners(r,s,d);
 }

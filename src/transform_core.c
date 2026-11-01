@@ -289,8 +289,15 @@ static bool tf_locate(const TfPlanner *planner, Atom *c, TfKind *access,
 
 static bool tf_resolve(const TfPlanner *planner, TfConjunct *conjunct) {
     conjunct->space = NULL;
-    return planner->host->resolve_space(planner->host->context,
-                                        conjunct->space_ref, &conjunct->space);
+    if (!planner->host->resolve_space(planner->host->context,
+                                     conjunct->space_ref, &conjunct->space))
+        return false;
+    /* This synchronous realization has no retained remote-poll continuation.
+     * Decline before opening/advancing an occurrence source: the authored
+     * transform keeps its ordinary match suspension and error semantics. */
+    Space *space=conjunct->space;
+    return !space || (space->match_backend.kind!=SPACE_ENGINE_SOURCE &&
+        (!space->match_backend.ops || !space->match_backend.ops->occurrence_ops));
 }
 
 /* The library's walk, flattened: an `every` splices its inner conjuncts, and

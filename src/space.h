@@ -14,6 +14,7 @@
 #include "subst_tree.h"
 #include "term_universe.h"
 #include "space_dense.h"
+#include "space_tuples.h"
 
 /* ── Discrimination Trie (à la Vampire SubstitutionTree) ───────────────── */
 
@@ -212,11 +213,15 @@ typedef struct {
      * rows with variables: the bitset holds them, one reference a key set. */
     AtomId *id_present_keys;
     CettaIndex id_present_key_len, id_present_key_cap;
-    /* The heads whose ground facts the space keeps as bits (space.c, "Relations
-     * kept as bits"); NULL while it keeps none.  The pairs they hold, over
-     * every head, which every positional read past the rows asks. */
+    /* The heads whose ground facts the space keeps in relations (space.c,
+     * "Relations kept as bits or tables"); NULL while it keeps none.  The
+     * facts they hold, over every head, which every positional read past the
+     * rows asks.  The epoch moves whenever a head is made, takes its
+     * relation or gives it back: a reader that keeps a head's relation
+     * between uses checks it. */
     struct SpaceDense *dense;
-    CettaCount dense_pairs;
+    CettaCount dense_facts;
+    uint64_t dense_epoch;
     /* The head last found to keep rows, whose facts an add asks no more
      * than their header. */
     SymbolId dense_rows_head;
@@ -258,7 +263,8 @@ typedef struct Space {
             AtomId *id_present_keys;
             CettaIndex id_present_key_len, id_present_key_cap;
             struct SpaceDense *dense;
-            CettaCount dense_pairs;
+            CettaCount dense_facts;
+            uint64_t dense_epoch;
             SymbolId dense_rows_head;
             bool eq_idx_dirty;
             bool ty_idx_dirty;
@@ -557,57 +563,94 @@ void space_mark_derived_state_dirty(Space *s);
 void space_rows_hold(Space *s);
 void space_rows_release(Space *s);
 
-/* Relations kept as bits.  The facts a space keeps as bits count in its
- * length and answer its membership tests, adds and removals; a reader of
- * rows that does not read bits gives them back to the rows first:
- * space_dense_settle for every head, or for the head HEAD only
+/* Relations kept as bits or tables.  The facts a space keeps in relations
+ * count in its length and answer its membership tests, adds and removals; a
+ * reader of rows that does not read relations gives them back to the rows
+ * first: space_dense_settle for every head, or for the head HEAD only
  * (SYMBOL_ID_NONE: every head).  space_dense_settle_for_pattern settles the
  * head a pattern names, or every head when its head is not a symbol. */
 void space_dense_settle(Space *s, SymbolId head);
 void space_dense_settle_for_pattern(Space *s, const Atom *pattern);
+/* space_dense_settle_for_pattern for an expression of LEN elements headed by
+ * the symbol HEAD. */
+void space_dense_settle_for_head(Space *s, SymbolId head, CettaExprLen len);
 void space_dense_settle_for_patterns(Space *s, Atom *const *patterns,
                                      CettaExprLen count);
-/* The pairs held as bits, over every head. */
-static inline CettaCount space_dense_pairs(const Space *s) {
-    return s ? s->native.dense_pairs : 0u;
+/* The facts held in relations, over every head. */
+static inline CettaCount space_dense_facts(const Space *s) {
+    return s ? s->native.dense_facts : 0u;
 }
-/* Count the facts the bits hold that match (h a b), given as COLUMNS: each
- * a variable, distinct from the others, which takes anything, or a ground
- * atom.  A head that is a variable reads every relation kept as bits.
- * False when the bits cannot answer: in a concurrent-evaluation scope, or
- * for a column a number other than an integer, which may equal one by
- * value. */
+/* A value that moves whenever the space's relations change form: a head
+ * made (its entries may move), a relation taken or given back. */
+static inline uint64_t space_dense_epoch(const Space *s) {
+    return s ? s->native.dense_epoch : 0u;
+}
+/* Count the facts the relations hold that match (h c1 ... ck), given as
+ * the LEN COLUMNS: each a variable, distinct from the others, which takes
+ * anything, or a ground atom.  A head that is a variable reads every
+ * relation of k columns.  False when the relations cannot answer: in a
+ * concurrent-evaluation scope, for a column a number other than an
+ * integer, which may equal one by value, or for columns no relation has. */
 bool space_dense_count_columns(const Space *s, Atom *const *columns,
-                               CettaCount *count);
-/* The bits of HEAD, or NULL when the space keeps none for it (or a
- * concurrent-evaluation scope is open).  Facts of HEAD may also be rows:
- * a reader of bits asks the rows too, between space_dense_reading_bits_begin
- * and _end, which keep the guards from giving the bits back meanwhile. */
+                               CettaExprLen len, CettaCount *count);
+/* A head's relation as its readers see it: ARITY columns, held as BITS
+ * (two columns) or as a TABLE (the other unset). */
+typedef struct {
+    uint32_t arity;
+    AtomId head_id;
+    const CettaDenseRelation *bits;
+    CettaTupleTable *table;
+} SpaceDenseForm;
+/* The relation of HEAD in *FORM; false when the space keeps none for it
+ * (or a concurrent-evaluation scope is open).  Facts of HEAD may also be
+ * rows: a reader of a relation asks the rows too, between
+ * space_dense_reading_begin and _end, which keep the guards from giving
+ * the relation back meanwhile. */
+bool space_dense_form(const Space *s, SymbolId head, SpaceDenseForm *form);
+/* The relation's facts whose columns equal FIXED's (CETTA_DENSE_ANY free;
+ * FIXED NULL leaves every column free), visited or counted, and every fact
+ * held, counted.  A walk may build an index of the relation: it takes no
+ * fact and changes no answer. */
+bool space_dense_form_each(SpaceDenseForm form, const CettaDenseId *fixed,
+                           CettaTupleVisit visit, void *context);
+uint64_t space_dense_form_count(SpaceDenseForm form,
+                                const CettaDenseId *fixed);
+uint64_t space_dense_form_facts(SpaceDenseForm form);
+/* The bits of HEAD, or NULL when the space keeps no bits for it: the
+ * relations of two columns that are bits, as space_dense_form gives them. */
 const CettaDenseRelation *space_dense_relation(const Space *s,
                                                SymbolId head);
-/* Whether no row can match a fact of `head` beside its bits: the head keeps
- * bits, none of its facts is a row, and no row's head is open. */
+/* Whether no row can match a fact of `head` beside its relation: the head
+ * keeps a relation, none of its facts is a row, and no row's head is open. */
 bool space_dense_head_rows_absent(Space *s, SymbolId head);
-/* Whether a pattern names a head the space keeps as bits: the native
- * query's loops read bits; the planners that read rows would give them
- * back to the rows. */
+/* Whether a pattern names a head the space keeps a relation of its columns
+ * for: the native query's loops read relations; the planners that read
+ * rows would give them back to the rows. */
 bool space_dense_meets_patterns(const Space *s, Atom *const *patterns,
                                 size_t count);
-void space_dense_reading_bits_begin(void);
-void space_dense_reading_bits_end(void);
+/* Whether no fact a relation of the space keeps can match any of the
+ * patterns: each is an expression whose head is a symbol with no relation
+ * of its columns, so a reader of them may read the rows alone. */
+bool space_dense_patterns_miss(const Space *s, Atom *const *patterns,
+                               size_t count);
+void space_dense_reading_begin(void);
+void space_dense_reading_end(void);
 /* Before adding IDS: a head whose facts among them reach the threshold
- * for bits takes bits now, so that none of them is a row. */
+ * for a relation takes its relation now, so that none of them is a row. */
 void space_dense_prepare_adds(Space *s, const AtomId *ids, CettaCount count);
-/* Whether the space may keep the facts of HEAD as bits: it admits bits,
- * and HEAD has not given its bits back to rows. */
+/* Whether the space may keep the facts of HEAD in a relation: it admits
+ * relations, and HEAD has not given its relation back to rows. */
 bool space_dense_may_hold(const Space *s, SymbolId head);
-/* Add the facts (h a b): h by its symbol and id, each (a, b) by two ids in
- * PAIRS.  While the space keeps h as bits the facts need no records; the
- * others are rows.  A set adds no fact it holds. */
-bool space_add_dense_pairs(Space *s, SymbolId head, AtomId head_id,
-                           const AtomId *pairs, CettaCount count);
-/* Take the pair of the ground fact ATOM from the bits, by its parts (a fact
- * kept as bits may have no record of its own): the copies removed, 0 or 1. */
+/* Add the facts (h c1 ... ck), k = ARITY: h by its symbol and id, each
+ * fact by the k ids of its columns in TUPLES.  While the space keeps a
+ * relation of k columns for h the facts need no records; the others are
+ * rows.  A set adds no fact it holds. */
+bool space_add_dense_tuples(Space *s, SymbolId head, AtomId head_id,
+                            uint32_t arity, const AtomId *tuples,
+                            CettaCount count);
+/* Take the ground fact ATOM from its relation, by its parts (a fact a
+ * relation keeps may have no record of its own): the copies removed, 0 or
+ * 1. */
 CettaCount space_dense_remove_ground(Space *s, Atom *atom);
 void space_discard_native_logical_view(Space *s);
 /* Drop the full logical tuple projection while retaining revision-independent
@@ -652,10 +695,18 @@ static inline bool space_keeps_exact_index(const Space *s) {
     return s && (!s->strict || s->kind == SPACE_KIND_HASH);
 }
 bool space_is_set(const Space *s);
+/* Whether the set `s` keeps the row `atom`, which has variables, as its
+ * alpha key when it admits it: a record no naming of the variables
+ * changes. */
+bool space_keys_open_row(Space *s, Atom *atom);
 AtomId space_get_atom_id_at(const Space *s, uint32_t idx);
 CettaCount space_length64(const Space *s);
 AtomId space_get_atom_id_at64(const Space *s, CettaIndex idx);
 Atom *space_get_at64(const Space *s, CettaIndex idx);
+/* The row at IDX as a view built in DST (term_universe_view_atom) when the
+ * space keeps it as an id of its universe; otherwise its atom, as
+ * space_get_at64 reads it. */
+Atom *space_view_at64(const Space *s, CettaIndex idx, Arena *dst);
 Atom *space_get_at(const Space *s, uint32_t idx);
 bool space_row_may_be_rule(const Space *s, CettaIndex idx);
 bool space_view_row_may_be_rule(const Space *s, CettaIndex index);
@@ -973,6 +1024,14 @@ typedef struct {
     const SpaceSourceCursorOps *source_ops;
     void *source_state;
     SpaceOccurrenceCursorStep source_failure;
+    /* The facts the space's relation for the pattern kept when the cursor
+     * began, lent after the rows, at logical indexes from the ceiling on;
+     * shared by clones.  kept_turn: the rows are done, and kept_last is the
+     * fact lent last. */
+    struct SpaceKeptOccurrences *kept;
+    size_t kept_next;
+    size_t kept_last;
+    bool kept_turn;
 } SpaceOccurrenceCursor;
 
 void space_occurrence_cursor_init_empty(SpaceOccurrenceCursor *cursor);
@@ -1001,6 +1060,15 @@ bool space_occurrence_cursor_select(const SpaceOccurrenceCursor *captured,
  * index has view-local coordinates. No matching is performed. */
 SpaceOccurrenceCursorStep space_occurrence_cursor_next(
     SpaceOccurrenceCursor *cursor, CettaIndex *logical_index_out, Atom **atom_out);
+/* As space_occurrence_cursor_next, lending the row as its id in the
+ * cursor's universe (space_occurrence_cursor_universe): nothing is decoded.
+ * The id names a row the pin keeps until the cursor is released. */
+SpaceOccurrenceCursorStep space_occurrence_cursor_next_id(
+    SpaceOccurrenceCursor *cursor, CettaIndex *logical_index_out,
+    AtomId *id_out);
+/* The universe naming the rows a cursor lends by id. */
+TermUniverse *space_occurrence_cursor_universe(
+    const SpaceOccurrenceCursor *cursor);
 /* The atom at an index the cursor yielded, from the rows it captured. */
 Atom *space_occurrence_cursor_atom(const SpaceOccurrenceCursor *cursor,
                                    CettaIndex index);
@@ -1054,6 +1122,15 @@ bool space_atom_is_exact_indexable(Atom *atom);
  * space, or a stale index it may not rebuild here (inside a deferral window,
  * or while rows are marked). */
 bool space_exact_frontier_certified(Space *s, Atom *pattern);
+/* space_exact_frontier_certified for a ground expression of LEN elements
+ * headed by the symbol HEAD. */
+bool space_exact_frontier_certified_head(Space *s, SymbolId head,
+                                         CettaExprLen len);
+/* Whether no row holding a variable is under HEAD or without a symbol head,
+ * read from the exact index as space_exact_frontier_certified reads it,
+ * without settling the facts kept in relations, which are ground.  False when
+ * the index cannot answer, or the space has imports. */
+bool space_exact_head_certified(Space *s, SymbolId head);
 /* Remove every row equal to one of the ground atoms IDS, all of head HEAD,
  * in one pass through the exact index.  False, having removed nothing, when
  * the index cannot answer for them: no current index, a row under HEAD or
@@ -1064,6 +1141,11 @@ bool space_remove_exact_ids(Space *s, SymbolId head, const AtomId *ids,
 /* The rows holding a ground pattern, ascending, read from a current exact
  * index without settling marks: physical rows while rows are marked. */
 CettaIndex space_exact_index_rows64(Space *s, Atom *pattern, CettaIndex **out);
+/* space_exact_index_rows64 for the ground expression whose LEN elements are
+ * the ids IDS, headed by the symbol HEAD. */
+CettaIndex space_exact_index_rows_ids64(Space *s, SymbolId head,
+                                        const AtomId *ids, CettaExprLen len,
+                                        CettaIndex **out);
 void space_begin_secondary_index_deferral(Space *s);
 void space_end_secondary_index_deferral(Space *s);
 
@@ -1104,22 +1186,25 @@ typedef Atom *(*QueryEquationResultInstantiator)(
  * an equation occurrence already proved unable to match.  The equation store
  * retains authority for candidate order, multiplicity, freshening, and exact
  * matching. */
-/* A revision-qualified caller may reject an impossible equation or provide a
- * derived exact-match pair.  A true result with every atom output NULL selects
- * the authored left and right sides.  A complete derived plan also supplies a
- * closed result for the case where the authored head matches but the refined
- * pattern does not; this preserves the difference between an unknown call and
- * a recognized equation whose guard produces zero answers.  The optional
- * frame schema is the complete, sorted inventory of unqualified variable ids
- * owned by this equation activation.  It remains useful with the authored
- * atoms and is interpreted independently of a partial atom override.  The
- * callback never establishes a match, and syntax must outlive the synchronous visit.
- * A supplied frame schema is borrowed here and retained by each activation. */
+/* A revision-qualified caller may exclude an impossible equation or
+ * supply its program-owned head, body and structural matching plan. A partial
+ * syntax override retains only the independent complete frame schema. A
+ * caller that folds a body guard into the match must also supply the complete
+ * authored head, body and matching plan as its refinement fallback. Selection
+ * never establishes a match. All borrowed syntax and metadata must outlive
+ * the synchronous visit; activations retain their frame schema independently. */
+typedef struct {
+    Atom *match_pattern;
+    Atom *result_template;
+    Atom *refinement_fallback_pattern;
+    Atom *refinement_fallback_template;
+    const CettaOpenPatternPlan *refinement_fallback_plan;
+    BindingsFrameSchema *frame_schema;
+    const CettaOpenPatternPlan *match_plan;
+} QueryEquationPlan;
+
 typedef bool (*QueryEquationCandidatePlan)(
-    Atom *equation, void *ctx,
-    Atom **match_pattern, Atom **result_template,
-    Atom **refinement_failure_template, Atom **refinement_fallback_pattern,
-    BindingsFrameSchema **frame_schema);
+    Atom *equation, void *ctx, QueryEquationPlan *plan);
 
 void query_results_init(QueryResults *qr);
 bool query_results_push(QueryResults *qr, Atom *result, Bindings *b);
@@ -1346,6 +1431,7 @@ typedef struct {
 struct RegistryStates;
 
 typedef struct {
+    _Atomic uint64_t revision;
     RegistryEntry *entries;
     uint32_t len, cap;
     /* Bindings not beginning with `&`. HE reads both kinds as tokens;
@@ -1366,6 +1452,7 @@ typedef struct {
 
 void registry_init(Registry *r);
 void registry_free(Registry *r);
+uint64_t registry_revision(const Registry *r);
 void registry_bind_id(Registry *r, SymbolId key, Atom *value);
 bool registry_bind_id_checked(Registry *r, SymbolId key, Atom *value);
 Atom *registry_lookup_id(Registry *r, SymbolId key);
@@ -1490,6 +1577,9 @@ SpaceRemovalSearchStep space_removal_search_step(SpaceRemovalSearch *search,
  * existing ordered/swap-removal discipline. A stale token removes nothing. */
 CettaMatchCompletion space_remove_occurrence_checked(Space *space, SpaceReadToken read, CettaIndex index);
 bool space_contains_atom_id(const Space *s, AtomId atom_id);
+/* Whether a row of the space is the stored atom `atom_id`: by the exact
+ * index while it is current, one probe rather than a scan of the rows. */
+bool space_holds_atom_id_exact(Space *s, AtomId atom_id);
 bool space_remove_atom_id(Space *s, AtomId atom_id);
 bool space_remove_atom_ids_batch(Space *s, const AtomId *atom_ids,
                                  CettaCount atom_count,
@@ -1510,6 +1600,17 @@ bool space_remove_occurrence_mask_stable(
    For small spaces (< MATCH_TRIE_THRESHOLD), returns all indices.
    Caller must free(*out). Returns count. */
 CettaIndex space_match_candidates64(Space *s, Atom *pattern, CettaIndex **out);
+/* Candidates for a flat pattern given by ids of UNIVERSE, the space's own:
+ * COLUMNS[0] the head, a symbol, and each later column a value's id, or
+ * CETTA_ATOM_ID_NONE where the pattern holds a variable.  True when the
+ * native selector answers the pattern from its exact index or a prefix
+ * index, which it then reads by the ids: *OUT and *COUNT are what
+ * space_match_candidates64 answers for the pattern.  False when it would
+ * answer otherwise, having changed nothing that asking
+ * space_match_candidates64 would not. */
+bool space_match_candidates_ids64(Space *s, const TermUniverse *universe,
+                                  const AtomId *columns, CettaExprLen len,
+                                  CettaIndex **out, CettaIndex *count);
 /* Native candidate selection through borrowed expression coordinates. Reads
  * finish before return; only candidate coordinates escape. False leaves the
  * caller on its ordinary query route. Order and duplicate row occurrences

@@ -32,8 +32,9 @@
  * Frames are arena-owned and immutable.  Cloning a snapshot is O(1), an
  * update appends one semantic history frame, and promotion copies the path
  * and its atom payloads into a longer-lived arena.  An optional immutable
- * radix index path-copies a bounded route to each newest cell frame; it is a
- * derived lookup accelerator and never replaces the semantic history.
+ * radix index stores shared prefixes on compressed edges and path-copies
+ * only the branching route to each newest cell frame. Full-key leaves and
+ * prefix checks preserve exact lookup; the index never replaces history.
  *
  * Persisted graph keys name cells only together with their immutable origin.
  * Rehydrating the same (key, origin) pair preserves sharing.  Substitution may
@@ -181,6 +182,15 @@ bool prime_need_snapshot_import_production(Arena *owner,
 CettaMatchCompletion prime_need_snapshot_import_production_checked(Arena *owner,
     const PrimeNeedReadCapture *capture, const PrimeNeedSnapshot *production,
     uint64_t thunk_id, const PrimeNeedSnapshot *recipient, PrimeNeedSnapshot *out);
+/* The checked fast path may return PRODUCTION itself when RECIPIENT is its
+ * exact entrance frontier. BORROWED then reports that OUT still reaches the
+ * production's physical owner: the host must retain that owner before OUT is
+ * published. Refusal or a divergent recipient uses the self-contained graft
+ * and reports false. */
+CettaMatchCompletion prime_need_snapshot_import_production_borrowed_checked(
+    Arena *owner,const PrimeNeedReadCapture *capture,
+    const PrimeNeedSnapshot *production,uint64_t thunk_id,
+    const PrimeNeedSnapshot *recipient,PrimeNeedSnapshot *out,bool *borrowed);
 
 /* Borrowed immutable history, newest update first. The snapshot's arena
  * owners must remain alive while this cursor or its payload views are used.

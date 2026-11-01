@@ -7,6 +7,7 @@ import json
 import csv
 import hashlib
 import io
+import importlib.util
 import os
 import subprocess
 import sys
@@ -17,7 +18,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from bench_d4_progress import census_classification
-from cetta_main_readiness import readiness_commands
+from cetta_main_readiness import readiness_commands, petta_oracle_identity, source_identity
 from check_precise_vocabulary import WORD, pinned_reference_field
 from rhocalc_bench_provenance import benchmark_provenance
 from cetta_readiness_ladders import (
@@ -451,9 +452,93 @@ def check_scale_frontier_exit_contract() -> None:
         report_pass("frontier fixtures isolate their generated evidence")
 
 
+def check_petta_reference_identity() -> None:
+    spec = importlib.util.spec_from_file_location(
+        'petta_reference_check', ROOT / 'tools/check_petta_release_reference.py')
+    checker = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(checker)
+    with tempfile.TemporaryDirectory(prefix='readiness-petta-', dir=ROOT / 'runtime') as tmp:
+        root = Path(tmp)
+        contents = {'run.sh': '#!/bin/sh\n', 'src/eval.pl': 'eval(value).\n',
+                    'lib/init.metta': '(Library)\n', 'examples/probe.metta': '!(probe)\n',
+                    'tests/probe.metta': '!(probe)\n'}
+        for name, text in contents.items():
+            path = root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+        contract = {'reference_commit': 'e' * 40,
+                    'reference_files': {p: hashlib.sha256(s.encode()).hexdigest()
+                                        for p, s in contents.items()}}
+        identity = checker.check_reference(root, contract)
+        require(identity['source_kind'] == 'snapshot' and
+                identity['checkout_commit'] is None and
+                identity['reference_commit'] == contract['reference_commit'] and
+                identity['files'] == 5 and identity['examples'] == 1,
+                'reference snapshot inherited enclosing Git identity')
+        report_pass('reference snapshot identity excludes its enclosing repository')
+        with patch.object(checker.subprocess, 'run', return_value=
+                          subprocess.CompletedProcess([], 0, str(root), '')), \
+             patch.object(checker.subprocess, 'check_output', return_value='0' * 40):
+            try:
+                checker.check_reference(root, contract)
+            except ValueError:
+                report_pass('a checkout cannot use snapshot admission to hide a wrong commit')
+            else:
+                raise AssertionError('reference accepted an unpinned checkout')
+        for name, text in [('src/eval.pl', 'eval(wrong).\n'),
+                           ('lib/injected.metta', '(Injected)\n')]:
+            path = root / name
+            path.write_text(text)
+            try:
+                checker.check_reference(root, contract)
+            except ValueError:
+                report_pass('reference rejects altered or added source: ' + name)
+            else:
+                raise AssertionError('reference accepted altered or added source')
+            if name in contents:
+                path.write_text(contents[name])
+        # The additional source belongs to this temporary negative fixture.
+        # A successful checker process is still required at readiness entry.
+        with patch('cetta_main_readiness.subprocess.run', return_value=
+                   subprocess.CompletedProcess([], 1, '', 'wrong reference')):
+            try:
+                petta_oracle_identity(ROOT, root)
+            except RuntimeError:
+                report_pass('readiness rejects a failed oracle validation')
+            else:
+                raise AssertionError('readiness ignored oracle validation failure')
+        actual_contract = json.loads((ROOT / 'langdef/petta/reference.json').read_text())
+        qualified = dict(identity, reference_commit=actual_contract['reference_commit'],
+                         files=len(actual_contract['reference_files']),
+                         examples=actual_contract['example_count'],
+                         source_manifest_sha256=hashlib.sha256(json.dumps(
+                             actual_contract['reference_files'], sort_keys=True,
+                             separators=(',', ':')).encode()).hexdigest())
+        with patch('cetta_main_readiness.subprocess.run', return_value=
+                   subprocess.CompletedProcess([], 0, json.dumps(qualified), '')):
+            require(petta_oracle_identity(ROOT, root) == qualified,
+                    'readiness replaced the validated oracle identity')
+        bad = dict(qualified, reference_commit='0' * 40)
+        with patch('cetta_main_readiness.subprocess.run', return_value=
+                   subprocess.CompletedProcess([], 0, json.dumps(bad), '')):
+            try:
+                petta_oracle_identity(ROOT, root)
+            except RuntimeError:
+                report_pass('readiness rejects a mismatched oracle receipt')
+            else:
+                raise AssertionError('readiness accepted the wrong oracle commit')
+        with patch('cetta_main_readiness.calibration_subject', return_value={'source': 'fixed'}):
+            before = {'tier': 'exhaustive', 'petta_oracle': qualified}
+            after = dict(before, petta_oracle=dict(qualified, source_manifest_sha256='0' * 64))
+            require(source_identity(before) != source_identity(after),
+                    'oracle source drift disappeared from tier identity')
+        report_pass('tier source identity retains the validated oracle manifest')
+
+
 def main() -> int:
     global PASS_COUNT
     PASS_COUNT = 0
+    check_petta_reference_identity()
     manifest = load_property_manifest(MANIFEST)
     anchors = resolve_source_anchors(ROOT, manifest)
     require(anchors, "source anchors did not resolve")

@@ -321,14 +321,8 @@ bool cetta_instantiate_frame_terms_within(Arena *dst, Atom **terms,
     cetta_var_map_init(&inventory);
     FrameSyntaxImport instance = {&inventory, identity};
     RewriteMap map = {frame_instantiate_variable, &instance, true};
-    AtomDeepCopySession *session =
-        atom_deep_copy_session_new_mapped(dst, rewrite_map_leaf, &map);
-    bool ok = session != NULL;
-    for (size_t i = 0u; ok && i < count; i++) {
-        staged[i] = atom_deep_copy_session_copy(session, terms[i]);
-        ok = staged[i] != NULL;
-    }
-    atom_deep_copy_session_free(session);
+    bool ok = atom_deep_copy_terms_mapped(dst, terms, staged, count,
+        rewrite_map_leaf, &map);
     cetta_var_map_free(&inventory);
     if (ok) {
         memcpy(terms, staged, count * sizeof(*terms));

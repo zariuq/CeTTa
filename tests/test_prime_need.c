@@ -6,6 +6,7 @@
 
 #include "atom.h"
 #include "prime_need.h"
+#include "native_cost.h"
 #include "symbol.h"
 
 static unsigned checks = 0u;
@@ -3649,6 +3650,79 @@ static void check_reader_context_copy(void) {
     CHECK(reader_copy_live==0u,"all source and image probe owners retire after session cleanup");
 }
 
+static void check_compressed_heap_index(void) {
+    Arena source,destination;arena_init_detached(&source);arena_init_detached(&destination);
+    PrimeNeedSnapshot root={0},one={0},two={0};
+    const uint64_t first=PRIME_NEED_NAMED_CELL_BIT|UINT64_C(1);
+    const uint64_t second=PRIME_NEED_NAMED_CELL_BIT|UINT64_C(2);
+    bool ready=prime_need_snapshot_begin(&root) &&
+        prime_need_snapshot_allocate_named(&source,&root,atom_int(&source,1),first,&one) &&
+        prime_need_snapshot_allocate_named(&source,&one,atom_int(&source,2),second,&two);
+    CHECK(ready,"compressed index starts with distinct keys sharing fifteen digits");
+    PrimeNeedCellView view;
+    CettaNativeCostLedger cost;cetta_native_cost_init_compact(&cost);
+    CettaNativeCostScope scope;cetta_native_cost_scope_enter(&scope,&cost,1u);
+    bool found=ready && prime_need_snapshot_lookup(&one,first,&view);
+    cetta_native_cost_scope_leave(&scope);
+    bool indexed=false,required=false;
+#if CETTA_PRIME_NEED_HEAP_INDEX
+    indexed=one.heap_index!=NULL;
+    const char *setting=getenv("CETTA_PRIME_NEED_HEAP_INDEX");
+    required=!setting || strcmp(setting,"1")==0;
+#endif
+    CHECK(found && (!required || (indexed && cost.total.counts[CETTA_COST_HEAP_INDEX_VISIT]==1u)),
+        "one-key index charges exactly its one actual node");
+    cetta_native_cost_free(&cost);cetta_native_cost_init_compact(&cost);
+    cetta_native_cost_scope_enter(&scope,&cost,2u);
+    found=ready && prime_need_snapshot_lookup(&two,second,&view);
+    bool absent=!prime_need_snapshot_lookup(&two,first^UINT64_C(0x100),&view);
+    cetta_native_cost_scope_leave(&scope);
+    CHECK(found && absent && (!required || (indexed && cost.total.counts[CETTA_COST_HEAP_INDEX_VISIT]==3u)),
+        "two-key lookup charges branch and leaf; skipped-prefix mismatch charges only the branch");
+    cetta_native_cost_free(&cost);
+    PrimeNeedSnapshot current=two;
+    uint64_t keys[18]={first,second};
+    for(unsigned digit=0u;ready && digit<16u;digit++) {
+        keys[digit+2u]=PRIME_NEED_NAMED_CELL_BIT|UINT64_C(3)|
+            (UINT64_C(5)<<(4u*(15u-digit)));
+        PrimeNeedSnapshot next={0};
+        ready=prime_need_snapshot_allocate_named(&source,&current,
+            atom_int(&source,(int64_t)digit+3),keys[digit+2u],&next);
+        if(ready)current=next;
+        for(unsigned i=0u;ready && i<=digit+2u;i++)
+            ready=prime_need_snapshot_lookup(&current,keys[i],&view) &&
+                view.cache_state==PRIME_NEED_CACHE_EMPTY &&
+                atom_eq(view.origin,atom_int(&source,(int64_t)i+1));
+    }
+    CHECK(ready && !prime_need_snapshot_lookup(&current,PRIME_NEED_NAMED_CELL_BIT|UINT64_C(4),&view),
+        "splitting at every digit preserves all earlier keys and rejects an absent full key");
+    PrimeNeedSnapshot evaluating={0},completed={0};
+    bool changed=ready && prime_need_snapshot_start_evaluation(&source,&current,first,17u,&evaluating) &&
+        prime_need_snapshot_resolve_value(&source,&evaluating,first,17u,atom_int(&source,99),&completed);
+    CHECK(changed && prime_need_snapshot_lookup(&completed,first,&view) &&
+        atom_eq(view.cached,atom_int(&source,99)) &&
+        prime_need_snapshot_lookup(&current,first,&view) && view.cache_state==PRIME_NEED_CACHE_EMPTY,
+        "replacing a compressed leaf preserves its sibling snapshot");
+    bool retained=changed;
+    for(size_t i=1u;retained && i<sizeof(keys)/sizeof(*keys);i++)
+        retained=prime_need_snapshot_lookup(&completed,keys[i],&view) &&
+            view.cache_state==PRIME_NEED_CACHE_EMPTY &&
+            atom_eq(view.origin,atom_int(&source,(int64_t)i+1));
+    CHECK(retained,"path copying retains untouched branches with their exact values");
+    PrimeNeedSnapshot copied=completed;
+    bool transported=changed && prime_need_snapshot_promote(&destination,&copied) &&
+        history_transport_controls(&completed,&copied);
+    CHECK(transported,"compressed heap and lineage indexes survive checked history transport");
+    arena_free(&source);
+    bool independent=transported && prime_need_snapshot_lookup(&copied,first,&view) &&
+        atom_eq(view.cached,atom_int(&destination,99));
+    for(size_t i=1u;independent && i<sizeof(keys)/sizeof(*keys);i++)
+        independent=prime_need_snapshot_lookup(&copied,keys[i],&view) &&
+            atom_eq(view.origin,atom_int(&destination,(int64_t)i+1));
+    CHECK(independent,"copied compressed indexes own their frames after source reclamation");
+    arena_free(&destination);
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena arena;
@@ -3668,6 +3742,7 @@ int main(void) {
     arena_init(&promoted_arena);
 
     check_reader_context_copy();
+    check_compressed_heap_index();
     interleaved_history_controls(&arena, &promoted_arena, &branch_arena);
     check_production_view_import();
     check_state_production_import();

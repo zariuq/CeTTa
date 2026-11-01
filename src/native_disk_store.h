@@ -13,6 +13,7 @@
  */
 typedef struct CettaDiskStore CettaDiskStore;
 typedef struct CettaDiskStoreView CettaDiskStoreView;
+typedef struct CettaDiskStoreBatch CettaDiskStoreBatch;
 typedef enum {
     CETTA_STORE_OK, CETTA_STORE_ABSENT, CETTA_STORE_INVALID, CETTA_STORE_BUSY,
     CETTA_STORE_CONFLICT, CETTA_STORE_IO, CETTA_STORE_CORRUPT, CETTA_STORE_NOMEM,
@@ -41,6 +42,14 @@ void cetta_disk_store_close(CettaDiskStore *store);
  * resource must use the same write gate as an uncertain filesystem reply. */
 void cetta_disk_store_require_recovery(CettaDiskStore *store);
 CettaDiskStoreStatus cetta_disk_store_snapshot(CettaDiskStore *store, CettaDiskStoreView **out);
+/* Own another descriptor for exactly this captured root, without reopening
+ * the publisher or confirming a later revision. The source stays borrowed
+ * only during this call; either view may then be closed independently. */
+CettaDiskStoreStatus cetta_disk_store_view_clone(const CettaDiskStoreView *view,
+    CettaDiskStoreView **out);
+struct CettaStorageCensus;
+void cetta_disk_store_view_storage_census(const CettaDiskStoreView *view,
+    struct CettaStorageCensus *census);
 /* Check a live, non-poisoned publisher against a captured view's physical
  * domain and epoch, without publishing or requiring the latest revision.
  * This does not replace atomic read/write validation at a later commit. */
@@ -63,6 +72,31 @@ const unsigned char *cetta_disk_store_view_epoch(const CettaDiskStoreView *view)
 CettaDiskStoreStatus cetta_disk_store_commit(CettaDiskStore *store,
     const CettaDiskStoreView *expected, const CettaDiskOp *operations, size_t count,
     CettaDiskStoreView **committed);
+/* A volatile, disk-backed operation accumulator in this store's private
+ * directory. Its file is unlinked immediately; close/crash discards it.
+ * Staging changes no published data. Equal keys keep their last operation,
+ * including put/remove/empty-value distinctions. Heap storage is bounded by
+ * index traversal plus one input value, not by the operation count.
+ * maximum bounds the retained spool extent; a refused append may temporarily
+ * write one candidate beyond it before truncating its unpublished tail.
+ * A failed truncation poisons the batch. The caller serializes batch uses.
+ */
+CettaDiskStoreStatus cetta_disk_store_batch_open(CettaDiskStore *store,
+    const CettaDiskStoreView *view, uint64_t maximum, CettaDiskStoreBatch **out);
+CettaDiskStoreStatus cetta_disk_store_batch_add(CettaDiskStoreBatch *batch,
+    const CettaDiskOp *operations, size_t count);
+bool cetta_disk_store_batch_info(const CettaDiskStoreBatch *batch,
+    uint64_t *bytes, uint64_t *maximum, uint64_t *staged_operations);
+void cetta_disk_store_batch_storage_census(const void *batch,struct CettaStorageCensus *census);
+void cetta_disk_store_batch_close(CettaDiskStoreBatch *batch);
+/* Publish the normalized operation map through the ordinary whole-revision
+ * owner, synchronization and journal path. No user callback runs under lock.
+ * This borrows a quiescent batch; it grants no owner/write authority and does
+ * not supply an application retry receipt. UNKNOWN has the usual owner gate.
+ */
+CettaDiskStoreStatus cetta_disk_store_commit_batch(CettaDiskStore *store,
+    const CettaDiskStoreView *expected, const CettaDiskStoreBatch *batch,
+    CettaDiskStoreView **committed);
 /* Validate every declared positive/negative read and write scope against the
  * captured root, and cover every operation by a write scope. Point and
  * [lower,upper) comparisons stream exact keys/values; no lossy projection or
@@ -81,5 +115,20 @@ CettaDiskStoreStatus cetta_disk_store_recover(CettaDiskStore *store, CettaDiskSt
  */
 CettaDiskStoreStatus cetta_disk_store_compact(CettaDiskStore *store, CettaDiskStoreView **out);
 CettaDiskStoreStatus cetta_disk_store_collect(CettaDiskStore *store, uint64_t *removed);
+
+/* A self-contained copy of exactly one captured revision into an existing,
+ * empty private directory. Logical epoch/revision and bytes are preserved;
+ * physical generation/root/domain are independent. The shared compactor
+ * streams checked live records without retaining the corpus. No source
+ * writer lock is held. Destination initialization/publication is exclusively
+ * locked; a synced invalid manifest precedes data construction so an
+ * interrupted backup cannot be initialized as an empty store with create.
+ * OK follows segment+manifest+directory synchronization. UNKNOWN requires
+ * opening/recovering that destination, not overwriting or blindly retrying.
+ * The caller keeps view alive. It also owns the durable parent entry for the
+ * destination directory, as for open(). Existing contents are never replaced.
+ */
+CettaDiskStoreStatus cetta_disk_store_backup(const CettaDiskStoreView *view,
+    const char *destination);
 
 #endif
