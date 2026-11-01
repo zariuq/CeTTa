@@ -79,6 +79,12 @@ anchored triangles. Parallel `emit→parse` occurrences produce two distinct
 shortest paths and two distinct triangle paths. This keeps occurrence identity
 visible rather than silently converting the graph to a set.
 
+`space_recursive_curriculum.metta` shows the safe native-cache boundary for a
+recursive derived graph. It first projects a complete captured Space to a
+ground edge list, then memoizes recursion over that immutable value. Repeating
+the same projection yields cache hits; a changed projection is a different
+key. A Space/resource handle is explicitly refused as a cache argument.
+
 ## Durable application queue
 
 `space_job_queue.metta` implements controlled queue transitions using ordinary
