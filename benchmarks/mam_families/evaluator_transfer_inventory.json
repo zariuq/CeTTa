@@ -553,6 +553,10 @@
             "petta_eval_open_enter_callable_answers",
             "petta_eval_machine_answer_authority_for_symbols"
           ]
+        },
+        {
+          "file": "src/petta_search_machine.c",
+          "symbol": "petta_machine_host_admits_native_collection"
         }
       ],
       "admission": "Readiness, type authority, computation/data provenance and result demand are separate judgments. Prepared cursor construction retains a handle without entering work; first execution and resumption own optional host-authority admission. A lexical preparation precheck cannot replace that entry check.",
@@ -681,9 +685,9 @@
         "file": "benchmarks/mam_families/evaluator_transfer_callers.json",
         "family": "ready-call-and-result-contracts",
         "counts": {
-          "type": 66,
-          "call": 48,
-          "reference": 54
+          "type": 67,
+          "call": 50,
+          "reference": 56
         },
         "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
       },
@@ -1006,6 +1010,23 @@
         ],
         "negative_controls": "Entered incomplete packets must stop before a second effect; bare C entry retains each actual cause. Refused reservation enters nothing, successful recovery invokes once, stale tokens decline, changed token words cannot remain current. Finality controls preserve later fresh invocation and revoke reopened work.",
         "correspondence": "Native opcode classification, source-price assignment, tracker lifetime and C/GC ownership remain separately qualified; the Lean models do not verify the C implementation."
+      },
+      "native_collection_entry": {
+        "owner": "petta_machine_host_admits_native_collection",
+        "callers": [
+          "petta_machine_native_collect_admitted",
+          "petta_eval_machine_run"
+        ],
+        "contract": "Whole native collections enter only with an unlimited source purse and no host observer of their internal transitions. The machine additionally checks its pending delayed goals; the directive retains its root delay guard.",
+        "native_controls": [
+          "test-petta-activation-source-budget",
+          "test-native-query-stats"
+        ],
+        "models": [
+          "Mettapedia.Machines.SourceSchedulingBoundary",
+          "Mettapedia.Machines.InvocationEntrySchedule"
+        ],
+        "scope": "The finite source route remains ordinary; this is not a native source-debit proof."
       }
     },
     {
@@ -2228,8 +2249,8 @@
         "family": "foreign-observer-authority",
         "counts": {
           "member": 2,
-          "call": 15,
-          "reference": 15
+          "call": 16,
+          "reference": 16
         },
         "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
       },
@@ -2786,6 +2807,14 @@
         {
           "file": "src/space_match_backend.c",
           "symbol": "space_match_backend_accepts_space"
+        },
+        {
+          "file": "src/native_query.c",
+          "symbol": "cetta_native_query_run"
+        },
+        {
+          "file": "src/native_open_query.c",
+          "symbol": "cetta_native_open_query_run"
         }
       ],
       "admission": "Local candidate coordinates read through the candidate-view accessor; public bridge iteration and composed overlay coordinates may name different occurrences. Publication translates into the composed occurrence view. Scoped Rust query cursors require the current exact frontier. AUTO suffix reads reuse the existing native-shadow candidate service; explicitly forced and multi-factor Rust catalogs retain independent admission.",
@@ -2857,14 +2886,23 @@
         "file": "benchmarks/mam_families/evaluator_transfer_callers.json",
         "family": "backend-scoped-query-and-local-coordinate-reuse",
         "counts": {
-          "call": 14,
-          "reference": 14
+          "call": 20,
+          "reference": 20
         },
         "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
+      },
+      "compact_query_refusal": {
+        "contract": "A compact deep-fact reader declining before effects may return its relation to authoritative rows and use the existing row query worker. Other structured outcomes return directly; entered effects are never replayed.",
+        "gates": [
+          "test-native-query-stats",
+          "test-native-query-eager",
+          "test-native-open-mutations"
+        ],
+        "native_controls": "The 24x24 and 48x48 guarded layered searches retain native joins across the compact-relation threshold; the unrepaired merged executable fails the latter control."
       }
     }
   ],
-  "coverage": "All 29 named families have dispositions, source anchors, a typed native-use census across all 341 linked C translation units in both build configurations, and admission/validity/cost obligations. The 156 named anchors include the compiler report and publication boundary. Caller-by-caller semantic transfer completion, dynamic callback qualification and complete ordinary-route workload baselines remain open.",
+  "coverage": "All 29 named families have dispositions, source anchors, a typed native-use census across all 344 linked C translation units in both build configurations, and admission/validity/cost obligations. The 159 named anchors include the compiler report and publication boundary. Caller-by-caller semantic transfer completion, dynamic callback qualification and complete ordinary-route workload baselines remain open.",
   "review_reconciliation": [
     {
       "idea": "Shared call contract over existing engines",

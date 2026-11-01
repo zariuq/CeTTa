@@ -32,12 +32,62 @@ mutations = {
                   "            .space = loops->space,"),
     "open-row-removal": ("bool certified = !effects[effect].removal;",
                          "bool certified = true;"),
-    "guard-ignored": ("space_holds_atom_id_exact(query->guard_space, probe))",
-                      "space_holds_atom_id_exact(query->guard_space, CETTA_ATOM_ID_NONE))"),
+    # A guard's instance with no record taken for an absent row, though a
+    # relation holds facts with no record of each.
+    "guard-recordless": ("        bool by_columns = probe == CETTA_ATOM_ID_NONE &&\n            space_dense_facts(query->guard_space) != 0u &&\n            native_query_guard_columns(run, values, &held);\n        if (probe == CETTA_ATOM_ID_NONE && !by_columns &&\n            space_dense_facts(query->guard_space) != 0u) {",
+                         "        bool by_columns = probe == CETTA_ATOM_ID_NONE &&\n            space_dense_facts(query->guard_space) == UINT64_MAX &&\n            native_query_guard_columns(run, values, &held);\n        if (probe == CETTA_ATOM_ID_NONE && !by_columns &&\n            space_dense_facts(query->guard_space) == UINT64_MAX) {"),
+    # A guard's variables summed out of a join no effect reads them in.
+    "guard-summed": (": effect == effect_count + 2u ? run.guard",
+                     ": effect == effect_count + 2u ? NULL"),
+    # A filter read with its equality reversed.
+    "filter-polarity": ("            met = (left == right) == (op == CETTA_NATIVE_FILTER_ALIKE);",
+                        "            met = (left == right) != (op == CETTA_NATIVE_FILTER_ALIKE);"),
+    # An order of integers read the other way, and a value that is not an
+    # integer compared as one.
+    "order-flipped": ("                (op == CETTA_NATIVE_FILTER_LESS);",
+                      "                (op != CETTA_NATIVE_FILTER_LESS);"),
+    "order-unchecked": ("            if (tu_kind(run->universe, left) != ATOM_GROUNDED ||\n                tu_ground_kind(run->universe, left) != GV_INT ||\n                tu_kind(run->universe, right) != ATOM_GROUNDED ||\n                tu_ground_kind(run->universe, right) != GV_INT)\n                return false;",
+                        "            if (false)\n                return false;"),
+    # The filters skipped where a guard is read too.
+    "conjunction-filter-ignored": ("    for (size_t filter = 0u; filter < run->filter_count; filter++) {",
+                                   "    for (size_t filter = 0u; !run->guard && filter < run->filter_count; filter++) {"),
+    # A conjunction that must fail taken for one whose parts must.
+    "conjunction-polarity": ("        ((head == g_builtin_syms.op_and && holds) ||",
+                             "        ((head == g_builtin_syms.op_and) ||"),
+    # Under an insert, an instance an earlier solution made read as absent.
+    "insert-unkeyed": ("    *held = native_query_keys_contain(keys, key);",
+                       "    *held = false && native_query_keys_contain(keys, key);"),
+    # A join summed over a variable though an empty branch answers nothing.
+    "else-summed": ("        bool summed = (query->count_only || run.answer->ground) &&\n            !query->else_empty;",
+                    "        bool summed = (query->count_only || run.answer->ground);"),
+    # An empty branch counted as an answer.
+    "else-answers": ("        run->unanswered += weight;\n        return true;",
+                     "        run->unanswered += 0u;\n        return true;"),
+    # A nested column over a relation's table taken as matching anything.
+    "nested-kept-ignored": ("                matched = native_query_nested_match(loops, leg->nested[c],\n                                                    &node, column, fresh,",
+                            "                matched = true || native_query_nested_match(loops, leg->nested[c],\n                                                    &node, column, fresh,"),
+    # A relation whose holes hold variables read as a flat table.
+    "flat-spine-open": ("    if (!skeleton || head->open_holes != 0u || skeleton->count < 2u ||",
+                        "    if (!skeleton || skeleton->count < 2u ||"),
+    # A relation's removal published without detaching the readers pinned
+    # to the rows.
+    "relation-removal-attached": ("    uint64_t followed_prefix = s->prefix_epoch;\n    space_pinned_occurrences_detach(s);\n    space_publish_mutation(s, SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY,",
+                                  "    uint64_t followed_prefix = s->prefix_epoch;\n    space_publish_mutation(s, SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY,"),
+    # An equation that answers passed over as if it answered nothing.
+    "dead-equation-any": ("        if (meets == PETTA_NATIVE_HEAD_APART ||\n            petta_native_query_empty(root, occurrence.rhs))\n            continue;",
+                          "        if (meets == PETTA_NATIVE_HEAD_APART ||\n            petta_native_query_empty(root, occurrence.rhs) || meeting > 0u)\n            continue;"),
+    # A declared result held as data taken for one the call evaluates.
+    "types-held-ignored": ("        petta_type_call_compile(types[0], &plan) && !plan.hold_result &&",
+                           "        petta_type_call_compile(types[0], &plan) &&"),
+    # A checked argument taken for an unchecked one.
+    "types-checked-ignored": ("        (plan.raw_arguments | plan.translated_arguments) == arguments &&",
+                              "        arguments != 0u &&"),
+    "guard-ignored": ("space_holds_atom_id_exact(query->guard_space, probe);",
+                      "space_holds_atom_id_exact(query->guard_space, CETTA_ATOM_ID_NONE);"),
     "guard-unchecked": ("for (size_t effect = 0u; guard_space && effect < effect_count;",
                         "for (size_t effect = effect_count; guard_space && effect < effect_count;"),
-    "guard-uncertified": ("petta_native_query_guard_certified(guard_space, guard_pattern) &&",
-                          "(petta_native_query_guard_certified(guard_space, guard_pattern) || true) &&"),
+    "guard-uncertified": ("              petta_native_query_guard_certified(guard_space,\n                                                 guard_pattern))) &&",
+                          "              (petta_native_query_guard_certified(guard_space,\n                                                 guard_pattern) || true))) &&"),
     "directive-answers": ("    for (CettaExprIndex index = 0u; index < collection->expr.len; index++) {\n        outcome_set_add_prefixed(",
                           "    for (CettaExprIndex index = 1u; index < collection->expr.len; index++) {\n        outcome_set_add_prefixed("),
     "fold-count": ("initial, (uint64_t)count->ground.ival,",
@@ -46,8 +96,8 @@ mutations = {
                     "    *item = places[1]->var_id;\n    *accumulator = places[0]->var_id;"),
     "inline-arguments": ("    for (CettaExprIndex i = 1u; body && i < atom->expr.len; i++) {",
                          "    for (CettaExprIndex i = atom->expr.len; body && i < atom->expr.len; i++) {"),
-    "inline-typed": ("    if (space_has_dependencies(root) || petta_program_head_is_intrinsic(head) ||\n        space_head_declares_type(root, head) ||",
-                     "    if (space_has_dependencies(root) || petta_program_head_is_intrinsic(head) ||\n        (space_head_declares_type(root, head) && false) ||"),
+    "inline-typed": ("    if (space_has_dependencies(root) || petta_program_head_is_intrinsic(head) ||\n        !petta_native_query_types_transparent(root, arena, call, test) ||",
+                     "    if (space_has_dependencies(root) || petta_program_head_is_intrinsic(head) ||\n        (!petta_native_query_types_transparent(root, arena, call, test) && false) ||"),
     "inline-equations": ("        if (meets != PETTA_NATIVE_HEAD_MEETS || ++meeting > 1u)\n            return NULL;\n        only = occurrence;\n    }\n    Atom *lhs = only.lhs;",
                          "        if (meets != PETTA_NATIVE_HEAD_MEETS || ++meeting > 1u)\n            return NULL;\n        only = occurrence;\n        break;\n    }\n    Atom *lhs = only.lhs;"),
     "destructure-oem-count": ("                            oem_var_occurrences(compile->rhs, var, 0u) == 2u",
@@ -96,6 +146,20 @@ mutations = {
                        "    Atom *truth = oem_truth(cursor, negated ? !found : !found);"),
     "exists-machine": ("    return petta_machine_boolean(machine, view.negated ? found : !found,",
                        "    return petta_machine_boolean(machine, !found,"),
+    # A comparison read as one whether or not it is an operation of the
+    # session, in the open equation machine and in the native guard.
+    "exists-oem-operation": ("    if (!is_grounded_op(comparison) &&\n        !(compile->host && compile->host->library_function_current &&",
+                             "    if (false && !is_grounded_op(comparison) &&\n        !(compile->host && compile->host->library_function_current &&"),
+    "guard-operation": ("        if (!petta_native_comparison_is_operation(head) ||\n            petta_native_query_defined(root, head) ||",
+                        "        if ((!petta_native_comparison_is_operation(head) && false) ||\n            petta_native_query_defined(root, head) ||"),
+    # A saturation region run where a rule fires from one of its premises
+    # only, and rounds that leave out the views an add keeps.
+    "region-coverage-ignored": ("    if (top < 0 || !petta_region_covered(region)) {",
+                                "    if (top < 0 || (false && !petta_region_covered(region))) {"),
+    "region-views-dropped": ("        for (size_t v = 0u; v < add->view_count; v++)\n            chain[len++] = petta_region_expr(arena, add_atom, kb,\n                                             add->views[v], NULL);",
+                             "        (void)add->view_count;"),
+    "exists-machine-equal": ("    return petta_machine_boolean(machine, view.negated ? found : !found,",
+                             "    return petta_machine_boolean(machine, view.negated ? found : found,"),
     "exists-counted": ("        atom->ground.ival == 0;",
                        "        atom->ground.ival >= 0;"),
     "snapshot-stream-scope": ("    if (!facts.binding_local || facts.value_variables == 0u ||\n        petta_native_region_variable_count(value, seen, 0u) !=\n            (size_t)facts.value_variables - 1u)\n        return NULL;",
@@ -126,10 +190,8 @@ mutations = {
                         "        plan.raw_arguments == 0u &&\n        (plan.translated_arguments == arguments || true);"),
     "typed-observed": ("        petta_machine_var_occurrences(body, binder->var_id) != 0u ||\n        !petta_machine_native_collect_admitted(machine) ||",
                        "        !petta_machine_native_collect_admitted(machine) ||"),
-    "insert-filter": ("        if ((i == 0u || fresh[i] != fresh[i - 1u]) &&\n            !space_holds_atom_id_exact(made->target, fresh[i]))",
-                      "        if (true)"),
-    "guard-plain": ("        petta_native_query_defined(root, g_builtin_syms.if_text) ||\n        petta_native_query_defined(root, g_builtin_syms.op_eq) ||",
-                    "        (petta_native_query_defined(root, g_builtin_syms.if_text) && false) ||\n        (petta_native_query_defined(root, g_builtin_syms.op_eq) && false) ||"),
+    "guard-plain": ("            petta_native_query_defined(root, head) ||\n            petta_native_query_defined(root, g_builtin_syms.collapse) ||",
+                    "            (petta_native_query_defined(root, head) && false) ||\n            petta_native_query_defined(root, g_builtin_syms.collapse) ||"),
     "nested-constant": ("    case NATIVE_QUERY_NODE_CONSTANT:\n        return term == at->id;",
                         "    case NATIVE_QUERY_NODE_CONSTANT:\n        return true;"),
     "dense-summed": ("run->summed[w] |= row[w];",
@@ -142,6 +204,57 @@ mutations = {
                        "bits += row[w] != 0u;"),
     "dense-diagonal": ("base[key >> 6u] &= ~(UINT64_C(1) << (key & 63u));",
                        "(void)key;"),
+    # A conjunction counted from the rows' trie although relations keep
+    # facts its patterns meet, and a stored variable passed over.
+    "count-relations-ignored": ("        rows_only = rows_only &&\n            !space_dense_may_meet(space, patterns[index]);",
+                                "        (void)rows_only;"),
+    "count-variable-skipped": ("        if (fact && fact->kind == ATOM_VAR) {\n            admitted = false;\n            break;\n        }",
+                               "        if (false) {\n            admitted = false;\n            break;\n        }"),
+    # A relaxation storing a value whether or not it is less, and a key
+    # holding two values read as holding the last.
+    "relax-min-ignored": ("            if (target->present && !(sum < target->value))\n                continue;",
+                          "            if (false)\n                continue;"),
+    "relax-two-values-ignored": ("        if (!slot || slot->present) {\n            status = CETTA_NATIVE_QUERY_DECLINED;",
+                                 "        if (!slot) {\n            status = CETTA_NATIVE_QUERY_DECLINED;"),
+    # A guard reading a relation by columns taken as never holding.
+    "guard-columns-unheld": ("    *held = space_dense_kept_contains(entry, columns);\n    return true;",
+                             "    *held = false;\n    return true;"),
+    # A filtered match's test kept after a run of its branch changed the
+    # rules, its host's collection reading no filter, and a tuple binding
+    # the taken branch's variables alone, which the test read again needs.
+    "filtered-test-stale": ("        bool read = goal.answer_weight ==\n                space_equation_revision(machine->space) &&\n            goal.choice_index == space_declaration_revision(machine->space);",
+                            "        bool read = true;"),
+    "filtered-unfiltered": ("        .filters = conj.filters,\n        .filter_count = conj.filter_count,\n        .else_empty = true,\n    };",
+                            "        .filters = conj.filters,\n        .filter_count = 0u,\n        .else_empty = true,\n    };"),
+    "filtered-tuple-taken": ("    if (!petta_machine_scoped_variables(resolved, resolved_pattern,",
+                             "    if (!petta_machine_scoped_variables(resolved->expr.elems[taken], resolved_pattern,"),
+    # A scalar fold taking a tuple headed by a callable value for data,
+    # reading a strict order as loose, and wrapping a sum past 64 bits.
+    "scalar-head-unchecked": ("    if (!petta_scalar_symbol_inert(program->root, head))\n        return false;",
+                              "    if (false)\n        return false;"),
+    "scalar-order-loose": ("            value = a.i < b.i;",
+                           "            value = a.i <= b.i;"),
+    "scalar-sum-wrapped": ("            if (__builtin_add_overflow(a.i, b.i, &value))\n                return false;",
+                           "            value = (int64_t)((uint64_t)a.i + (uint64_t)b.i);"),
+    # A saturation region taking every rule with a static premise for one
+    # that cannot fire.
+    "dead-rule-any": ("            live[f] = kb[p] || !petta_region_premise_empty(region,\n                                                           premises[p]);",
+                      "            live[f] = kb[p] && !petta_region_premise_empty(region,\n                                                           premises[p]);"),
+    # A grouped count giving a solution every group's count, letting through
+    # an addition the count reads, and counting a group with no solution of
+    # the count as one.
+    "grouped-key-ignored": ("            found = table[slot].key ? table[slot].count : 0u;",
+                            "            found = (uint64_t)grouped->expr.len;"),
+    "grouped-reads-ignored": ("            (effects[i].target == counted_source &&\n             petta_native_query_reads(counted, effects[i].data)))",
+                              "            (effects[i].target == counted_source && !counted))"),
+    "grouped-absent-one": ("            found = table[slot].key ? table[slot].count : 0u;",
+                           "            found = table[slot].key ? table[slot].count : 1u;"),
+    # A list spread over a match keeping its first row alone, or its rows as
+    # a set.
+    "listed-rows-dropped": ("        if (ok)\n            space_add(bag, fact);",
+                            "        if (ok && i == 0u)\n            space_add(bag, fact);"),
+    "listed-bag-set": ("    bag->kind = SPACE_KIND_HASH;",
+                       "    bag->kind = SPACE_KIND_SET;"),
     "afresh-unchecked": ("static bool native_query_afresh_unmet(NativeQueryRun *run) {\n",
                          "static bool native_query_afresh_unmet(NativeQueryRun *run) {\n    return true;\n"),
     "afresh-ignored": ("                    native.afresh |= UINT64_C(1) << leg;",

@@ -1,0 +1,30 @@
+8
+7
+21
+12
+((a b d) (a c c) (b b c))
+12
+(c d)
+(a a b)
+3
+18
+true
+($V0)
+11
+11
+true
+true
+true
+true
+((a b) (b c) (c a))
+((1 b) (1 b))
+()
+true
+true
+((a (1 b)) (c (1 a)))
+3
+7
+((a b) (b c) (c a))
+true
+((1 q))
+4

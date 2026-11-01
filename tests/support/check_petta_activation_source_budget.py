@@ -36,6 +36,34 @@ def check_observer():
             raise AssertionError('source-prefix observer accepted a corrupted observation')
 
 
+def check_native_directive(binary, root):
+    source = root / 'tests/petta/source_budget_native_directive.metta'
+    checks = 0
+    for reference in (False, True):
+        env = {key: value for key, value in os.environ.items()
+               if not key.startswith('CETTA_') or key in {
+                   'CETTA_TERM_UNIVERSE_COLLECTION', 'CETTA_EVAL_GC',
+                   'CETTA_OEM_COLLECT_STRESS'}}
+        env.update(CETTA_OPEN_EQUATIONS_REFERENCE='1', CETTA_PREPARED_PURE_REFERENCE='1')
+        if reference:
+            env['CETTA_NATIVE_QUERY_REFERENCE'] = '1'
+        for fuel in (*range(21), -1):
+            result = subprocess.run(
+                [str(binary), '--lang', 'petta', '--fuel', str(fuel), str(source)],
+                cwd=root, env=env, capture_output=True, text=True, timeout=30)
+            actual = result.returncode, sorted(result.stdout.splitlines()), result.stderr
+            if fuel == 0:
+                wanted = 2, [], "error: invalid fuel '0'\n"
+            elif 0 < fuel < 9:
+                wanted = 1, [], 'error: observation incomplete: fuel-exhausted\n'
+            else:
+                wanted = 0, ['a', 'b'], ''
+            if actual != wanted:
+                raise AssertionError(('native directive', reference, fuel, actual, wanted))
+            checks += 1
+    return checks
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('cetta', type=Path)
@@ -69,6 +97,8 @@ def main():
                                   result.stdout, result.stderr))
         checks += 1
     print(f'PASS: {checks - 2} computed-pattern source observations and 2 CLI-zero rejections preserve effects and admission')
+    directives = check_native_directive(binary, root)
+    print(f'PASS: {directives} native directive budget observations preserve canonical completion')
 
 
 if __name__ == '__main__':

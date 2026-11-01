@@ -343,9 +343,10 @@ typedef struct {
      * synchronized; a data-only mutation leaves it current. */
     SpaceProgramToken synchronized_program;
     bool synchronized_snapshot;
-    /* Evidence for a single notified append to that snapshot. */
+    /* Evidence for a single notified append to that snapshot: its rule
+     * rows (space_rule_rows64), the appended rule the next. */
     uint64_t synchronized_prefix_epoch;
-    CettaCount synchronized_atom_count;
+    CettaCount synchronized_rule_rows;
     size_t synchronized_equation_len;
     uint64_t synchronized_catalog_generation;
     uint64_t catalog_generation;
@@ -417,11 +418,11 @@ typedef struct {
 } PettaCallabilityDomain;
 
 /* What the callability cache read of one space: its equation projection,
- * the prefix it scanned, and how many rows. */
+ * the prefix it scanned, and how many rule rows (space_rule_rows64). */
 typedef struct {
     SpaceEquationToken equations;
     SpaceReadToken read;
-    CettaCount scanned_len;
+    CettaCount scanned_rows;
 } PettaCallabilityScan;
 
 /* Four ways retain colliding inquiries without increasing entry capacity.
@@ -3465,7 +3466,7 @@ static PettaCallabilityScan petta_program_callability_scan_of(
     if (petta_program_space_is_live(space)) {
         scan.equations = space_equation_token(space->space);
         scan.read = space_read_token(space->space);
-        scan.scanned_len = space_length64(space->space);
+        scan.scanned_rows = space_rule_rows64(space->space);
     }
     return scan;
 }
@@ -3497,7 +3498,7 @@ static bool petta_program_extend_callability(PettaProgram *program) {
         if (scan->read.space != space->space ||
             !space_read_token_prefix_intact(scan->read) ||
             now.base_dependency_epoch != scan->read.base_dependency_epoch ||
-            space_length64(space->space) < scan->scanned_len) {
+            space_rule_rows64(space->space) < scan->scanned_rows) {
             return false;
         }
     }
@@ -3513,8 +3514,8 @@ static bool petta_program_extend_callability(PettaProgram *program) {
             continue;
         }
         if (!petta_program_scan_callability_rows(
-                program, space->space, scan->scanned_len,
-                space_length64(space->space),
+                program, space->space, scan->scanned_rows,
+                space_rule_rows64(space->space),
                 &program->callability_cache)) {
             program->callability_cache_valid = false;
             return false;
@@ -3550,7 +3551,7 @@ static bool petta_program_scan_callability(
             continue;
         if (!petta_program_scan_callability_rows(
                 program, space->space, 0u,
-                space_length64(space->space), callability)) {
+                space_rule_rows64(space->space), callability)) {
             return false;
         }
     }
@@ -3945,7 +3946,7 @@ PettaProgramRevisionView *petta_program_revision_view_capture(
         .synchronized_program = entry->synchronized_program,
         .synchronized_snapshot = entry->synchronized_snapshot,
         .synchronized_prefix_epoch = entry->synchronized_prefix_epoch,
-        .synchronized_atom_count = entry->synchronized_atom_count,
+        .synchronized_rule_rows = entry->synchronized_rule_rows,
         .synchronized_equation_len = entry->synchronized_equation_len,
         .synchronized_catalog_generation = entry->synchronized_catalog_generation,
         .head_index_dirty = true,
@@ -3984,8 +3985,8 @@ PettaProgramRevisionView *petta_program_revision_view_capture(
     }
 
     size_t equation_cap = 0u;
-    CettaCount source_len = space_length64(source);
-    for (CettaIndex index = 0u; index < source_len; index++) {
+    CettaCount source_rows = space_rule_rows64(source);
+    for (CettaIndex index = 0u; index < source_rows; index++) {
         Atom *atom = space_get_at64(source, index);
         if (!atom || !petta_rule_syntax_view(atom, view->admitted_rule_forms, NULL, NULL, NULL))
             continue;
@@ -4049,8 +4050,8 @@ bool petta_program_revision_view_bind(
         return true;
     }
     size_t equation_index = 0u;
-    CettaCount target_len = space_length64(target);
-    for (CettaIndex index = 0u; index < target_len; index++) {
+    CettaCount target_rows = space_rule_rows64(target);
+    for (CettaIndex index = 0u; index < target_rows; index++) {
         Atom *atom = space_get_at64(target, index);
         if (!atom || !petta_rule_syntax_view(atom, view->admitted_rule_forms, NULL, NULL, NULL))
             continue;
@@ -4984,20 +4985,20 @@ static bool petta_program_space_single_append(
         entry->synchronized_equation_len == SIZE_MAX ||
         entry->synchronized_equation_len != entry->equation_len ||
         entry->synchronized_revision == UINT64_MAX ||
-        entry->synchronized_atom_count == UINT64_MAX)
+        entry->synchronized_rule_rows == UINT64_MAX)
         return false;
     SpaceReadToken read = space_read_token(space);
     SpaceProgramToken current = space_program_token(space);
     SpaceProgramToken old = entry->synchronized_program;
     if (read.revision != entry->synchronized_revision + 1u ||
-        space_length64(space) != entry->synchronized_atom_count + 1u ||
+        space_rule_rows64(space) != entry->synchronized_rule_rows + 1u ||
         old.space != space || old.instance_id != current.instance_id ||
         old.base_dependency_epoch != 0u || current.base_dependency_epoch != 0u ||
         old.equation_revision == UINT64_MAX ||
         current.equation_revision != old.equation_revision + 1u ||
         current.declaration_revision != old.declaration_revision)
         return false;
-    Atom *last = space_get_at64(space, entry->synchronized_atom_count);
+    Atom *last = space_get_at64(space, entry->synchronized_rule_rows);
     if (!last || !atom_eq(last, atom))
         return false;
     *read_out = read;
@@ -5112,7 +5113,7 @@ bool petta_program_note_add(
         entry->synchronized_revision = append_read.revision;
         entry->synchronized_program = append_program;
         entry->synchronized_prefix_epoch = append_read.prefix_epoch;
-        entry->synchronized_atom_count++;
+        entry->synchronized_rule_rows++;
         entry->synchronized_equation_len = entry->equation_len;
         entry->synchronized_catalog_generation = entry->catalog_generation;
     }
@@ -5128,7 +5129,7 @@ static bool petta_program_space_sync_one_append(
         program->predeclared_callability.admits_any_head ||
         program->predeclared_callability.named_len != 0u)
         return false;
-    Atom *atom = space_get_at64(space, entry->synchronized_atom_count);
+    Atom *atom = space_get_at64(space, entry->synchronized_rule_rows);
     SpaceReadToken read = {0};
     SpaceProgramToken token = {0};
     if (!atom || !petta_program_space_single_append(entry, space, atom, &read, &token) ||
@@ -5400,7 +5401,7 @@ bool petta_program_synchronize_space(
                 current->synchronized_program, space)) {
             current->synchronized_revision = revision;
             current->synchronized_prefix_epoch = space->prefix_epoch;
-            current->synchronized_atom_count = space_length64(space);
+            current->synchronized_rule_rows = space_rule_rows64(space);
             return true;
         }
         if (petta_program_space_sync_one_append(program, current, space))
@@ -5410,6 +5411,7 @@ bool petta_program_synchronize_space(
     SpaceReadToken read = space_read_token(space);
     SpaceProgramToken program_token = space_program_token(space);
     CettaCount atom_count = space_length64(space);
+    CettaCount rule_rows = space_rule_rows64(space);
     CettaCount view_count = space_view_length64(space);
     PettaCallabilityDomain callability = {0};
     bool ok = true;
@@ -5526,7 +5528,7 @@ bool petta_program_synchronize_space(
     installed->synchronized_revision = read.revision;
     installed->synchronized_program = program_token;
     installed->synchronized_prefix_epoch = read.prefix_epoch;
-    installed->synchronized_atom_count = atom_count;
+    installed->synchronized_rule_rows = rule_rows;
     installed->synchronized_equation_len = installed->equation_len;
     installed->synchronized_catalog_generation = installed->catalog_generation;
     installed->synchronized_snapshot = true;

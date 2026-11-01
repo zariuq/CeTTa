@@ -1,0 +1,63 @@
+; Rules written as functions saturate a set space depth first: an add
+; function stores a fact once and calls a fire function, whose equations
+; join the fact with what the space holds and add the consequences.  Where
+; every rule fires from each of its premises, the region runs as rounds of
+; joins and reaches the same space; elsewhere the ordinary path answers.
+(sub a b)
+(sub b c)
+(sub c d)
+(isa a x)
+(isa b y)
+(lnk n1 n2)
+(lnk n2 n3)
+(lnk n3 n4)
+(lnk n4 n5)
+!(bind! &kb (new-space set))
+(= (add-isa $c $x)
+   (if (== (collapse (match &kb (isa $c $x) t)) ())
+       (let $_ (add-atom &kb (isa $c $x)) (fire-isa $c $x))
+       (empty)))
+(= (fire-isa $c $x) (match &self (sub $c $d) (add-isa $d $x)))
+; a transitive rule fired from both premises, the second through a view
+(= (add-lnk $s $o)
+   (if (== (collapse (match &kb (lnk $s $o) t)) ())
+       (let* (($_ (add-atom &kb (lnk $s $o))) ($_ (add-atom &kb (rlnk $o $s))))
+         (fire-lnk $s $o))
+       (empty)))
+(= (fire-lnk $s $o) (match &kb (lnk $o $z) (add-lnk $s $z)))
+(= (fire-lnk $o $z) (match &kb (rlnk $o $s) (add-lnk $s $z)))
+!(size-atom (collapse (match &self (isa $c $x) (add-isa $c $x))))
+!(size-atom (collapse (match &self (lnk $s $o) (add-lnk $s $o))))
+!(sort-atom (collapse (match &kb (isa $c $x) ($c $x))))
+!(sort-atom (collapse (match &kb (lnk $s $o) ($s $o))))
+!(size-atom (collapse (match &kb (rlnk $o $s) t)))
+; a rule fired from one of its premises only: which fact comes first decides
+; what the depth-first run derives, so the ordinary path answers
+(seed p 1)
+(seed q 1)
+!(bind! &kb2 (new-space set))
+(= (add-f $k $x)
+   (if (== (collapse (match &kb2 (f $k $x) t)) ())
+       (let $_ (add-atom &kb2 (f $k $x)) (fire-f $k $x))
+       (empty)))
+(= (fire-f p $x) (match &kb2 (f q $x) (add-f r $x)))
+!(size-atom (collapse (match &self (seed $k $x) (add-f $k $x))))
+!(sort-atom (collapse (match &kb2 (f $k $x) ($k $x))))
+; a fire whose joins answer a value: the region answers something, so the
+; ordinary path answers
+!(bind! &kb3 (new-space set))
+(= (add-g $c $x)
+   (if (== (collapse (match &kb3 (g $c $x) t)) ())
+       (let $_ (add-atom &kb3 (g $c $x)) (fire-g $c $x))
+       (empty)))
+(= (fire-g $c $x) (match &self (sub $c $d) $d))
+!(sort-atom (collapse (match &self (isa $c $x) (add-g $c $x))))
+; a bag: the ordinary path answers
+!(bind! &kb4 (new-space))
+(= (add-h $c $x)
+   (if (== (collapse (match &kb4 (h $c $x) t)) ())
+       (let $_ (add-atom &kb4 (h $c $x)) (fire-h $c $x))
+       (empty)))
+(= (fire-h $c $x) (match &self (sub $c $d) (add-h $d $x)))
+!(size-atom (collapse (match &self (isa $c $x) (add-h $c $x))))
+!(size-atom (collapse (match &kb4 (h $c $x) t)))

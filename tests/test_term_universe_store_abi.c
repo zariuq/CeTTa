@@ -318,14 +318,14 @@ static void test_store_format_migration_contract(void) {
     Atom *expr = atom_expr(&scratch, expr_items, 3);
     AtomId expr_id = term_universe_store_atom_id(&universe, NULL, expr);
     assert(expr_id != CETTA_ATOM_ID_NONE);
-    assert(universe.entries[expr_id].byte_len ==
+    assert(term_universe_record_bytes_of(&universe, expr_id) ==
            test_term_entry_align_up(sizeof(CettaTermHdr) + 3u * sizeof(uint32_t)));
 
     assert(term_universe_migrate_store_format(
         &universe, TERM_UNIVERSE_STORE_FORMAT_WIDE64_V1));
     assert(term_universe_store_format(&universe) ==
            TERM_UNIVERSE_STORE_FORMAT_WIDE64_V1);
-    assert(universe.entries[expr_id].byte_len ==
+    assert(term_universe_record_bytes_of(&universe, expr_id) ==
            test_term_entry_align_up(sizeof(CettaTermHdr) + 3u * sizeof(uint64_t)));
     Atom *wide_expr = term_universe_get_atom(&universe, expr_id);
     assert(wide_expr != NULL);
@@ -335,7 +335,7 @@ static void test_store_format_migration_contract(void) {
         &universe, TERM_UNIVERSE_STORE_FORMAT_COMPACT32_V1));
     assert(term_universe_store_format(&universe) ==
            TERM_UNIVERSE_STORE_FORMAT_COMPACT32_V1);
-    assert(universe.entries[expr_id].byte_len ==
+    assert(term_universe_record_bytes_of(&universe, expr_id) ==
            test_term_entry_align_up(sizeof(CettaTermHdr) + 3u * sizeof(uint32_t)));
     Atom *compact_expr = term_universe_get_atom(&universe, expr_id);
     assert(compact_expr != NULL);
@@ -1203,7 +1203,8 @@ static void test_exact_payload_coordinate_collision(void) {
     AtomId left = tu_intern_string_n(&universe, first, sizeof first);
     AtomId right = tu_intern_string_n(&universe, second, sizeof second);
     assert(left != CETTA_ATOM_ID_NONE && right != CETTA_ATOM_ID_NONE);
-    assert(universe.entries[left].coordinate == universe.entries[right].coordinate);
+    assert(term_universe_coordinate_of(&universe, left) ==
+           term_universe_coordinate_of(&universe, right));
     assert(left != right);
     assert(tu_string_len(&universe, left) == sizeof first);
     assert(tu_string_len(&universe, right) == sizeof second);
