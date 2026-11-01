@@ -1,0 +1,22 @@
+!(import! &self "space_job_queue.metta")
+!(import! &self (library system))
+!(import! &self (library str))
+(= (jobs-demo:argument $value)
+  (case (get-metatype $value) ((Symbol (str:symbol->string $value)) ($other $value))))
+(= (jobs-demo:run $path)
+  (let $initialized (jobs:initialize $path "example-agent")
+    (case $initialized
+      (((KnowledgeCommittedV1 $v $e $r) (jobs-demo:commands $path))
+       ((KnowledgeReplayedV1 $v) (jobs-demo:commands $path))
+       (GatewayReadyV1 (jobs-demo:commands $path))
+       ($failure $failure)))))
+; Synthetic time and payload. No external action is run, including on replay.
+(= (jobs-demo:commands $path)
+  (let* (($submitted (jobs:run (Apply $path "example-agent" "demo-submit"
+             (GatewaySubmitV1 "collect-evidence" "synthetic-request-v1" (ExamplePayloadV1) read 1000 0))))
+         ($claimed (jobs:run (Apply $path "example-agent" "demo-claim" (GatewayClaimV1 1))))
+         ($state (jobs:run (Inspect $path "collect-evidence"))))
+    (GatewayDemoV1 $submitted $claimed $state)))
+!(if (system:has-args)
+   (jobs-demo:run (jobs-demo:argument (system:arg 0)))
+   (GatewayUsage "Supply an existing private store directory."))

@@ -58,6 +58,7 @@ typedef struct CettaIoHeader {
 typedef struct CettaIoRequest {
     enum { IO_HTTP, IO_PROCESS, IO_TIMER, IO_CWP, IO_SPACE, IO_NOTICE, IO_FILE, IO_SIWC, IO_WS } provider;
     CettaSiwcOperation *siwc;
+    size_t value_byte_limit; /* Captured for an asynchronous CSP1 exchange. */
     /* A WebSocket operation on the connection that the ws:connect or
      * ws:accept request with ID ws_id opened, or on the listener that the
      * ws:listen request with that ID opened.  A received message is assigned
@@ -141,6 +142,7 @@ typedef struct CettaIoWsListener {
 } CettaIoWsListener;
 
 struct CettaIoRuntime {
+    size_t value_byte_limit;
     uint64_t next_id;
     CettaIoWs *ws;
     CettaIoWsListener *listeners;
@@ -1251,9 +1253,13 @@ static void io_pump(CettaIoRuntime *runtime, uint64_t selected_id) {
 }
 
 CettaIoRuntime *cetta_io_runtime_new(void) {
+    return cetta_io_runtime_new_with_value_limit(CETTA_ATOM_WIRE_BYTES);
+}
+CettaIoRuntime *cetta_io_runtime_new_with_value_limit(size_t maximum_bytes) {
     CettaIoRuntime *runtime = cetta_malloc(sizeof(*runtime));
     memset(runtime, 0, sizeof(*runtime));
     runtime->next_id = 1u;
+    runtime->value_byte_limit = maximum_bytes;
 #ifndef __EMSCRIPTEN__
     if (pipe2(runtime->wakeup, O_CLOEXEC | O_NONBLOCK)) { free(runtime); return NULL; }
     runtime->process_owner = cetta_proc_owner_new(runtime->wakeup[1]);
@@ -1324,7 +1330,7 @@ static Atom *io_capabilities(CettaIoRuntime *runtime, Arena *arena,
 }
 
 #ifndef __EMSCRIPTEN__
-static CettaIoRequest *io_parse_ipc(Atom *input, char *error, size_t error_size) {
+static CettaIoRequest *io_parse_ipc(Atom *input, size_t value_byte_limit, char *error, size_t error_size) {
     bool cwp = atom_is_symbol(input->expr.elems[0], "cwp:request");
     int64_t timeout, code = 0;
     if (input->expr.len != (cwp ? 6u : 4u) ||
@@ -1334,6 +1340,7 @@ static CettaIoRequest *io_parse_ipc(Atom *input, char *error, size_t error_size)
     CettaIoRequest *request = calloc(1, sizeof(*request));
     if (!request) return NULL;
     request->provider = cwp ? IO_CWP : IO_SPACE;
+    request->value_byte_limit = value_byte_limit;
     unsigned char *bytes = NULL; size_t size = 0;
     if (cwp) {
         const char *name = io_text_arg(input->expr.elems[3]), *body = io_text_arg(input->expr.elems[4]);
@@ -1356,10 +1363,10 @@ static CettaIoRequest *io_parse_ipc(Atom *input, char *error, size_t error_size)
         if (!request->space_request_id) goto failed;
         memcpy(request->space_request_id, id->ground.sval, id->ground.slen);
         request->space_request_id[id->ground.slen] = 0;
-        if (cetta_atom_wire_encode(value, &bytes, &size) != ATOM_WIRE_OK) goto failed;
+        if (cetta_atom_wire_encode_bounded(value, value_byte_limit, &bytes, &size) != ATOM_WIRE_OK) goto failed;
     }
     request->ipc = cetta_ipc_client_new(path, cwp ? CETTA_IPC_CWP : CETTA_IPC_CSP,
-        bytes, size, (uint64_t)timeout, cwp ? 6 + 255 + 65536 : CETTA_ATOM_WIRE_BYTES);
+        bytes, size, (uint64_t)timeout, cwp ? 6 + 255 + 65536 : value_byte_limit);
     free(bytes);
     if (request->ipc) return request;
     io_request_free(NULL, request);
@@ -1382,7 +1389,7 @@ static Atom *io_ipc_result(Arena *arena, CettaIoRequest *request) {
     if (!error) {
         size_t size; const unsigned char *bytes = cetta_ipc_client_reply(request->ipc, &size);
         Atom *reply = NULL;
-        if (cetta_atom_wire_decode(arena, bytes, size, &reply) == ATOM_WIRE_OK &&
+        if (cetta_atom_wire_decode_bounded(arena, bytes, size, request->value_byte_limit, &reply) == ATOM_WIRE_OK &&
             reply && reply->kind == ATOM_EXPR && reply->expr.len == 4 &&
             atom_is_symbol(reply->expr.elems[0], "reply") &&
             reply->expr.elems[1]->kind == ATOM_GROUNDED &&
@@ -1718,7 +1725,7 @@ static Atom *io_submit(CettaIoRuntime *runtime, Arena *arena,
     } else if (input && input->kind == ATOM_EXPR && input->expr.len &&
         (atom_is_symbol(input->expr.elems[0], "cwp:request") ||
          atom_is_symbol(input->expr.elems[0], "space:request"))) {
-        request = io_parse_ipc(input, error, sizeof(error));
+        request = io_parse_ipc(input, runtime->value_byte_limit, error, sizeof(error));
     } else if (input && input->kind == ATOM_EXPR && input->expr.len &&
         (atom_is_symbol(input->expr.elems[0], "ws:connect") || atom_is_symbol(input->expr.elems[0], "ws:receive") ||
          atom_is_symbol(input->expr.elems[0], "ws:send") || atom_is_symbol(input->expr.elems[0], "ws:close") ||

@@ -42,6 +42,14 @@ typedef struct { uint32_t arity, position; CettaDiskBytes prefix; } CettaDiskSpa
 CettaDiskStoreStatus cetta_disk_space_capture_indexed(Space *target,
     const CettaDiskStoreView *view, CettaDiskBytes prefix, uint64_t occurrence_count,
     const CettaDiskSpaceIndex *indexes, size_t index_count);
+/* Explicit portable-value byte policy, retained by the captured source and
+ * all its cursors/clones. Smaller allowances fail as capacity, never absence.
+ * The legacy capture functions retain their original default allowance. */
+CettaDiskStoreStatus cetta_disk_space_capture_indexed_bounded(Space *target,
+    const CettaDiskStoreView *view, CettaDiskBytes prefix, uint64_t occurrence_count,
+    const CettaDiskSpaceIndex *indexes, size_t index_count, size_t maximum_bytes);
+CettaDiskStoreStatus cetta_disk_space_capture_point_bounded(Space *target,
+    const CettaDiskStoreView *view, CettaDiskBytes key, size_t maximum_bytes);
 typedef struct {
     uint64_t scans, indexed_selections, candidates, decoded_bytes;
     bool overflow;

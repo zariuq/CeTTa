@@ -9,7 +9,7 @@
 #define CETTA_WORKER_PACKET_MAX (6u+CETTA_WORKER_ID_MAX+CETTA_WORKER_BODY_MAX)
 typedef enum {
     WORKER_NEXT=1, WORKER_RESULT=2, WORKER_RECEIPT=3, WORKER_SUBMIT=4,
-    WORKER_WAIT=5,
+    WORKER_WAIT=5, WORKER_NEXT_CONTROL=6,
     WORKER_IDLE=64, WORKER_TASK, WORKER_STORED, WORKER_PENDING, WORKER_UNKNOWN,
     WORKER_CONFLICT, WORKER_INVALID, WORKER_UNAVAILABLE, WORKER_LIMIT
 } CettaWorkerCode;
@@ -18,7 +18,8 @@ typedef struct CettaWorkerEndpoint CettaWorkerEndpoint;
 /* Native host mechanism, not a worker/evaluator capability. Immutable tasks
  * hold bounded UTF-8 observation data (typically JSON). Worker and ID are
  * 1..64 ASCII letters/digits/._-. Reusing an ID requires byte-identical data.
- * Up to 128 unanswered tasks per worker; admission fails closed at capacity.
+ * Unanswered tasks remain durable; there is no per-worker task-count ceiling.
+ * Storage admission follows the configured byte/page budget.
  * IDs must never be reused, even after any explicit retention/compaction.
  * The caller owns program/version/read-scope pairing inside that observation.
  * Publication does not consume input or accept an external effect. */
@@ -70,14 +71,17 @@ CettaDurableStatus cetta_worker_endpoint_wait_io(CettaWorkerEndpoint *endpoint,
  * Fetching does not consume a task: an unanswered task is returned after restart.
  * The result ledger survives inbox consumption and binds the task revision.
  *
- * NEXT with an ID returns the oldest pending task after that pending task, so
+ * NEXT prioritizes host-classified controls, then ordinary work, FIFO within
+ * each class. NEXT_CONTROL reads only the control class. Both use indexed
+ * reads of at most one ready row, not a snapshot of the entire backlog.
+ * NEXT with an ID returns the next pending task after that pending task, so
  * a client can read a batch before answering any of it. UNKNOWN means the ID
  * is not pending (answered meanwhile); start again from NEXT without an ID.
  * SUBMIT records an unsolicited observation under a client-chosen key: an
  * immutable host.worker-submissions record and its host.inbox occurrence
  * commit together. Resending identical bytes returns STORED again, even after
  * the service consumed it; different bytes under one key are a CONFLICT.
- * At most 128 submissions per worker await consumption. Like RESULT, STORED
+ * Submissions remain durable without a task-count ceiling. Like RESULT, STORED
  * means recorded input, not accepted actions. Keys must never be reused.
  */
 #endif

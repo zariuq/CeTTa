@@ -7,7 +7,8 @@
 (= (kb-server:configuration)
   (let* (($directory (system:getenv-or-default "CETTA_KB_DIRECTORY" ""))
          ($socket (system:getenv-or-default "CETTA_KB_SOCKET" ""))
-         ((StoreOpened $owner) (store:open $directory "create")))
+         ((StoreOpened $owner) (store:open $directory "create"))
+         ($frame (store:value-byte-limit)))
     (ValueServiceV1 $socket (KbConfigurationV1 $owner)
       ((ServiceRouteV1 Snapshot Read kb-server:snapshot)
        (ServiceRouteV1 Create Write kb-server:create)
@@ -23,7 +24,7 @@
        (ServiceRouteV1 Resolve Read kb-server:resolve)
        (ServiceRouteV1 Backup Write kb-server:backup)
        (ServiceRouteV1 Compact Write kb-server:compact))
-      (ServiceLimitsV1 16 64 262144 30000 67108864 1000000))))
+      (ServiceLimitsV1 16 64 $frame 30000 67108864 1000000))))
 
 (= (kb-server:snapshot (ServiceCallV1 (KbConfigurationV1 $owner) $peer $unused $arguments))
   (case (store:snapshot $owner)
@@ -50,7 +51,7 @@
      ($error $error))))
 
 (= (kb-server:next (ServiceCallV1 $configuration $peer $query (NextV1 $sequence)))
-  (let $answer (store:space-query-next $query $sequence 128 131072)
+  (let $answer (store:space-query-next $query $sequence 128 (store:value-byte-limit))
     (case (store:space-query-checkpoint $query)
       ((StoreQueryCheckpointed $answer) ($failure $failure)))))
 
@@ -65,13 +66,11 @@
 
 (= (kb-server:commit (ServiceCallV1 (KbConfigurationV1 $owner) $peer $view (CommitV1 $collection $request $changes)))
   (if (== (get-metatype $changes) Expression)
-    (if (<= (size-atom $changes) 128)
-      (durable-space:commit $owner $view $collection $request $changes)
-      (StoreRefused edit-count-limit))
+    (durable-space:commit $owner $view $collection $request $changes)
     (StoreRefused edit-list)))
 
 (= (kb-server:resolve (ServiceCallV1 (KbConfigurationV1 $owner) $peer $unused (ResolveV1 $request $command)))
-  (knowledge:resolve $owner $request $command 1048576))
+  (knowledge:resolve $owner $request $command (store:value-byte-limit)))
 
 (= (kb-server:reindex-open (ServiceCallV1 (KbConfigurationV1 $owner) $peer $view (ReindexOpenV1 $collection $request $maximum)))
   (if (and (durable-index:integer? $maximum) (and (>= $maximum 64) (<= $maximum 67108864)))

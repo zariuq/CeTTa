@@ -31,7 +31,8 @@ bool cetta_telegram_agent_valid(const CettaTelegramAgent *agent);
 CettaDurableStatus cetta_telegram_agent_decide(CettaDurableStore *store,
     const CettaTelegramAgent *agent, const char *input_key, CettaHostDecision **out);
 
-typedef enum { TELEGRAM_WAIT, TELEGRAM_SEND, TELEGRAM_WORKER, TELEGRAM_DONE, TELEGRAM_FOREIGN }
+typedef enum { TELEGRAM_WAIT, TELEGRAM_SEND, TELEGRAM_WORKER, TELEGRAM_DONE, TELEGRAM_FOREIGN,
+    TELEGRAM_CONTROL_WORKER }
     CettaTelegramAdmission;
 /* Fixed pure policy query, not a commit or dispatch. Observes the accepted
  * intent, actor, attempt and outcome together. An optional metadata watch

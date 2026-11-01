@@ -1,0 +1,11 @@
+!(import! &self "../../examples/kb/space_evidence_curriculum.metta")
+(= (danger) (add-atom &self (EvidenceUnexpectedEffectV1)))
+(= (evidence-test:run (EffectCount))
+  (size-atom (collapse (match &self (EvidenceUnexpectedEffectV1) Witness))))
+(= (evidence-test:run $command) (space-evidence:run $command))
+(= (evidence-test:effect-count (ServiceCallV1 $configuration $peer $unused $arguments))
+  (size-atom (collapse (match &self (EvidenceUnexpectedEffectV1) Witness))))
+(= (evidence-test:configuration)
+  (let (ValueServiceV1 $socket $data $routes $limits) (space-curriculum:configuration)
+    (ValueServiceV1 $socket $data
+      (list:append $routes ((ServiceRouteV1 EffectCount Read evidence-test:effect-count))) $limits)))

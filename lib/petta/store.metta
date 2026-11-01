@@ -35,6 +35,7 @@
 (: __cetta_lib_store_collect (-> Atom Atom))
 (: __cetta_lib_store_backup (-> Atom String Atom))
 (: __cetta_lib_store_close (-> Atom Atom))
+(: __cetta_lib_store_value_byte_limit (-> Atom Atom))
 (: __cetta_lib_store_encode (-> Atom Atom))
 (: __cetta_lib_store_decode (-> String Atom))
 (: __cetta_lib_store_key_i64 (-> Number Atom))
@@ -84,3 +85,5 @@
 (= (store:decode $bytes) (__cetta_lib_store_decode $bytes))
 (= (store:key-i64 $integer) (__cetta_lib_store_key_i64 $integer))
 (= (store:key->i64 $bytes) (__cetta_lib_store_key_to_i64 $bytes))
+(: store:value-byte-limit (-> Number))
+(= (store:value-byte-limit) (let $limit (__cetta_lib_store_value_byte_limit ()) (if (== (get-metatype $limit) Grounded) $limit 1048576)))

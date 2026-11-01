@@ -86,6 +86,16 @@ CettaDurableStatus cetta_durable_detach_runtime(CettaDurableStore *store, const 
 CettaDurableStatus cetta_durable_snapshot(CettaDurableStore *store,
     const char *space, CettaDurableSnapshot *out);
 void cetta_durable_snapshot_free(CettaDurableSnapshot *snapshot);
+/* Oldest-first read within a key partition such as "worker/".
+ * The partition is one component followed by '/'. Returns at most one row,
+ * never materializes the backlog. after_key, when non-NULL, must still exist
+ * in that partition; PRECONDITION means its removal invalidated pagination.
+ * An empty successful snapshot means end. The caller owns the snapshot.
+ * Backends may use a correct scan fallback. This read is not a transactional
+ * write-dependency observation. */
+CettaDurableStatus cetta_durable_next_in_partition(CettaDurableStore *store,
+    const char *space, const char *partition, const char *after_key, int64_t min_revision,
+    CettaDurableSnapshot *out);
 CettaDurableStatus cetta_durable_usage(CettaDurableStore *store, CettaDurableUsage *out);
 
 /* Read all declared scopes in one snapshot, without retaining a transaction.
@@ -110,12 +120,18 @@ CettaDurableStatus cetta_durable_observe_joined(CettaDurableStore *store,
 const CettaDurableSnapshot *cetta_durable_observation_view(
     const CettaDurableObservation *observation, size_t index);
 void cetta_durable_observation_free(CettaDurableObservation *observation);
-/* Metadata-only dependency watch: owns scope/key/revision copies, no values.
+/* Metadata-only dependency watch: owns scopes, cardinalities and the captured
+ * publication frontier; no record values or per-record keys are retained.
  * Not a commit capability. OK means unchanged, CONFLICT means re-observe.
  * Checking is a short read transaction; unrelated writes do not wake it.
  * max_bytes bounds retained allocation, including repeated/overlapping scopes. */
 CettaDurableStatus cetta_durable_watch_new(const CettaDurableObservation *observation,
     size_t max_bytes, CettaDurableWatch **out);
+/* Conservative constant-size wakeup: any publication after the captured view
+ * invalidates this notification. It never grants commit validation authority. */
+CettaDurableStatus cetta_durable_watch_revision_new(const CettaDurableObservation *observation,
+        size_t byte_limit, CettaDurableWatch **out);
+
 CettaDurableStatus cetta_durable_watch_current(CettaDurableStore *store,
     const CettaDurableWatch *watch);
 size_t cetta_durable_watch_bytes(const CettaDurableWatch *watch);

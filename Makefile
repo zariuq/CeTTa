@@ -928,7 +928,7 @@ SRC += src/tensor_dense_v1.c
 SRC += src/producer_dependencies.c src/producer_schedule.c
 SRC += src/fallible_alloc.c
 SRC += src/occurrence_log.c src/shared_return_producer.c src/owned_return_image.c
-SRC += src/native_disk_index.c src/native_disk_store.c src/native_disk_space.c src/native_disk_query.c src/library_store.c src/library_math.c
+SRC += src/native_disk_index.c src/native_disk_store.c src/native_disk_space.c src/space_source_overlay.c src/native_disk_query.c src/library_store.c src/library_math.c
 SRC += src/library_supervise.c $(DURABLE_SRC)
 # Shared opaque authority (lib_seal): runtime objects and the seal library.
 SRC += src/seal.c native/seal_module.c
@@ -4789,6 +4789,29 @@ test-all: test-graph-service-quantum
 test-graph-service-quantum: value-worker
 	$(PYTHON) tests/support/check_graph_service_quantum.py $(VALUE_WORKER_BIN)
 
+.PHONY: test-space-evidence
+test-all: test-space-evidence
+test-space-evidence: value-worker
+	$(PYTHON) tests/support/check_space_evidence.py $(VALUE_WORKER_BIN)
+
+.PHONY: test-computed-queries
+test-all: test-computed-queries
+test-computed-queries: value-worker $(BIN)
+	$(PYTHON) tests/support/check_computed_queries.py $(VALUE_WORKER_BIN) --cli $(BIN)
+
+.PHONY: test-large-space-values
+test-large-space-values: value-worker $(BIN)
+	$(PYTHON) tests/support/check_large_space_values.py $(VALUE_WORKER_BIN) --cli $(BIN)
+test-all: test-large-space-values
+
+.PHONY: test-indexed-i64-order test-space-job-queue
+test-all: test-indexed-i64-order test-space-job-queue
+test-indexed-i64-order: value-worker
+	$(PYTHON) tests/support/check_indexed_i64_order.py $(VALUE_WORKER_BIN)
+test-space-job-queue: value-worker
+	$(PYTHON) tests/support/check_job_queue.py $(VALUE_WORKER_BIN)
+	$(PYTHON) tests/support/check_job_queue_lifecycle.py $(VALUE_WORKER_BIN)
+
 NATIVE_DISK_SPACE_TEST_BIN = runtime/test_native_disk_space-$(BUILD_OBJ_TAG)
 $(NATIVE_DISK_SPACE_TEST_BIN): tests/test_native_disk_space.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p runtime
@@ -4797,6 +4820,15 @@ $(NATIVE_DISK_SPACE_TEST_BIN): tests/test_native_disk_space.c $(FALLBACK_EVAL_TE
 test-all: test-native-disk-space
 test-native-disk-space: $(NATIVE_DISK_SPACE_TEST_BIN)
 	@$(PYTHON) tests/support/check_native_disk_space_restart.py ./$(NATIVE_DISK_SPACE_TEST_BIN)
+
+SOURCE_OVERLAY_TEST_BIN = runtime/test_space_source_overlay-$(BUILD_OBJ_TAG)
+$(SOURCE_OVERLAY_TEST_BIN): tests/test_space_source_overlay.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_space_source_overlay.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
+.PHONY: test-source-overlay
+test-all: test-source-overlay
+test-source-overlay: $(SOURCE_OVERLAY_TEST_BIN)
+	@$(PYTHON) tests/support/check_source_overlay.py ./$(SOURCE_OVERLAY_TEST_BIN)
 
 .PHONY: test-persistent-space-api
 test-all: test-persistent-space-api
@@ -4829,8 +4861,8 @@ test-all: test-persistent-query-worker
 test-persistent-query-worker: value-worker
 	@$(PYTHON) tests/support/check_persistent_query_worker.py ./$(VALUE_WORKER_BIN)
 
-.PHONY: test-indexed-space-api test-worker-failure-feedback test-space-invariants test-native-service-state test-space-graph test-durable-reindex test-space-query test-space-curriculum test-program-query
-test-all: test-indexed-space-api test-worker-failure-feedback test-space-invariants test-native-service-state test-space-graph test-durable-reindex test-space-query test-space-curriculum test-program-query
+.PHONY: test-indexed-space-api test-worker-failure-feedback test-space-invariants test-native-service-state test-space-graph test-durable-reindex test-space-query test-space-curriculum test-program-query test-graph-read-commit
+test-all: test-indexed-space-api test-worker-failure-feedback test-space-invariants test-native-service-state test-space-graph test-durable-reindex test-space-query test-space-curriculum test-program-query test-graph-read-commit
 test-indexed-space-api: value-worker
 	$(PYTHON) tests/support/check_indexed_spaces.py $(VALUE_WORKER_BIN)
 test-worker-failure-feedback: value-worker
@@ -4847,6 +4879,8 @@ test-space-query: value-worker
 	$(PYTHON) tests/support/check_space_query.py $(VALUE_WORKER_BIN)
 test-program-query: value-worker
 	$(PYTHON) tests/support/check_program_query.py $(VALUE_WORKER_BIN)
+test-graph-read-commit: value-worker
+	$(PYTHON) tests/support/check_graph_read_commit.py $(VALUE_WORKER_BIN)
 test-space-curriculum: value-worker
 	$(PYTHON) tests/support/check_space_curriculum.py $(VALUE_WORKER_BIN)
 
@@ -49667,6 +49701,18 @@ runtime/test-durable-value-$(BUILD_OBJ_TAG): tests/test_durable_value.c src/dura
 test-durable-value: runtime/test-durable-value-$(BUILD_OBJ_TAG)
 	./runtime/test-durable-value-$(BUILD_OBJ_TAG)
 
+ATOM_WIRE_LIMITS_TEST_BIN = runtime/test-atom-wire-limits-$(BUILD_OBJ_TAG)
+ATOM_WIRE_LIMITS_TEST_SOURCES = tests/test_atom_wire_limits.c src/atom_wire.c src/tensor_dense_v1.c \
+	src/atom.c $(SYMBOL_STANDALONE_SRC) src/binding/frame_identity.c
+$(ATOM_WIRE_LIMITS_TEST_BIN): $(ATOM_WIRE_LIMITS_TEST_SOURCES) src/atom_wire.h src/atom.h src/symbol.h src/tensor_dense_v1.h \
+		tests/test_runtime_stats_stubs.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(ATOM_WIRE_LIMITS_TEST_SOURCES) $(LDFLAGS)
+.PHONY: test-atom-wire-limits
+test-atom-wire-limits: $(ATOM_WIRE_LIMITS_TEST_BIN)
+	$<
+test-all: test-atom-wire-limits
+
 DENSE_TENSOR_V1_TEST_BIN = runtime/test-tensor-$(BUILD_OBJ_TAG)
 TENSOR_TEST_SOURCES = tests/test_tensor.c src/tensor_dense_v1.c src/atom.c $(SYMBOL_STANDALONE_SRC) \
 	src/binding/frame_identity.c src/atom_wire.c src/durable_value.c
@@ -50116,6 +50162,15 @@ $(MATH_NATIVE_TEST_BIN): tests/support/test_math_native.c $(FALLBACK_EVAL_TEST_L
 test-math-native: $(MATH_NATIVE_TEST_BIN)
 	$<
 test-all: test-math-native test-math-parts
+VALUE_BYTE_POLICY_TEST_BIN = runtime/test-value-byte-policy-$(BUILD_OBJ_TAG)
+$(VALUE_BYTE_POLICY_TEST_BIN): tests/support/test_value_byte_policy.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(COMPILED_READER_RUNTIME_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+.PHONY: test-value-byte-policy
+test-value-byte-policy: $(VALUE_BYTE_POLICY_TEST_BIN) value-worker $(BIN)
+	$(VALUE_BYTE_POLICY_TEST_BIN)
+	$(PYTHON) tests/support/check_value_byte_policy.py $(VALUE_WORKER_BIN) --cli $(BIN)
+test-all: test-value-byte-policy
+
 STORE_AUTHORITY_TEST_BIN = runtime/test-store-authority-$(BUILD_OBJ_TAG)
 $(STORE_AUTHORITY_TEST_BIN): tests/support/test_store_authority.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(COMPILED_READER_RUNTIME_OBJ) $(BRIDGE_DEPS)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $^ $(LDFLAGS) -Wl,--wrap=cetta_native_handle_alloc,--wrap=eval_current_root_space,--wrap=cetta_disk_store_commit,--wrap=space_program_token_matches_live_space

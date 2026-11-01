@@ -1,5 +1,90 @@
 # Native byte stores
 
+The target is a metagraph KB/DB integrated with ordinary MeTTa Spaces.
+Persistence, captured views, atomic updates, indexes and cursors extend that
+Space abstraction; MeTTa libraries compose its relational and graph queries.
+Embedded programs and server clients use the same core and storage owner.
+The queue example is one application of these capabilities. The contracts and
+qualification scopes below describe the current implementation.
+
+## Portable-value byte policy
+
+The execution owner selects `--value-bytes N` before the MeTTa program loads.
+The default remains one MiB. The same policy reaches codec operations,
+captured disk Spaces, owning query cursors, MeTTa helpers, native synchronous
+and asynchronous clients, and worker/service framing. It grants no mutation
+rights. Private contexts and cursor clones retain the selected allowance.
+
+```sh
+./cetta --lang petta --value-bytes 8388608 project.metta
+python3 tests/support/check_large_space_values.py "$WORKER" --cli ./cetta
+```
+
+Use the worker produced by the configured build. The Python `Worker` and
+framed-client constructors accept `maximum_bytes`; codec `encode`, `decode`
+and `frame` accept the same keyword. A value-service configuration may choose
+a smaller transport frame within the execution allowance. Example query and
+graph services derive their byte limits from the host policy. Stateful query
+operators retain their explicit, separately requested state-byte budgets.
+
+`make test-large-space-values` qualifies 2 MiB values with an 8 MiB execution
+allowance: ordinary in-memory/captured matching, distinct occurrence IDs,
+exact/range indexes, graph neighbourhoods, retained query state, paging/replay,
+updates/deletes/reindexing, compaction and process restart. The native clients
+round-trip large requests and read database facts over an owned connection.
+The standalone CLI commits and reopens a large fact in separate processes.
+Smaller policies refuse explicitly without turning exhaustion into absence.
+The example services no longer impose an additional 128-edit transaction cap;
+request bytes, evaluator work and native transaction validation still apply.
+
+For an actual gateway SQLite transition comparison, supply `--reference-store`
+with its `execution_gateway/store.py`. This qualifies selected metadata
+transitions, not production dispatch, live accounting migration or hardware
+power-loss behaviour.
+
+The C `cetta_atom_wire_*_bounded` and bounded disk-Space/query entry points
+accept explicit byte allowances. Their original entry points retain the
+original default. CAV1 bytes, shape safeguards and wire length fields are
+unchanged. Request/reply envelopes count toward framing budgets; a byte
+allowance is not a claim of constant physical memory or unlimited term depth.
+Old interpreters using the current coherent library set retain the historical
+policy through the guarded getter; the running agents' SDK is not upgraded.
+
+## Staging ordinary Space edits
+
+The existing native `space_init_overlay_local` now accepts captured disk
+Spaces through their owner's overlay capability. Its copy retains the exact
+captured root, candidate indexes, point bounds and byte policy independently
+of the original Space. The reusable `space_source_overlay_init_owned` seam
+creates that local atom Space over an owned, immutable occurrence source.
+Starting it decodes no
+base facts. Standard admission and removal stage changes; ordinary matching
+uses the captured base's candidate indexes plus the local additions. It does
+not create another matcher or persistence engine.
+
+Base occurrence identities remain unchanged. Added occurrences have explicitly
+local identities until the durable owner publishes them. Exact removal takes
+one occurrence; alpha-equivalent removal requires a unique candidate. Staged
+open atoms retain their in-process variable identities. An input or comparison
+refusal leaves the attempted edit unpublished. A paused external source refuses
+synchronous removal rather than making absence up or spinning indefinitely.
+
+Cursors retain the delta they captured, including through subsequent local
+edits. Closing the workspace discards its changes and releases its owned base
+after the final cursor closes. Positional mutation and executable catalogs are
+not admitted by this adapter. Read-only disk Spaces remain read-only.
+
+`space_source_overlay_changes` copies only the net additions and removed base
+identities. The existing MeTTa commit/index/receipt path must publish them with
+revision validation; local editing grants no durable publication authority.
+The ergonomic `db` library and scoped transaction integration remain work in
+progress. This native seam alone does not implement `db:open`, autocommit or
+transaction blocks.
+
+`make test-source-overlay` checks ordinary matching, candidate-index reuse,
+duplicate identities, open atoms, failed batches, captured cursor lifetimes,
+rollback and an independent native-Space update oracle.
+
 ## Measuring ordinary Space queries
 
 `tests/support/bench_ordinary_space.py` measures the current ordinary-Space
@@ -287,6 +372,13 @@ conservative: even an unrelated equation edit may invalidate a query. Earlier
 pages remain provisional if the eventual result is incomplete or invalidated;
 no mixed-code row from the failing step is returned. Attempted work is counted.
 
+Native memo policy is part of that observation. Changing aggregation,
+floating-key precision, answer limits or retention settings advances the same
+admission generation. Even a policy change followed by restoring the original
+settings invalidates the old watch. Reapplying identical settings and reading
+or resetting hit/miss statistics leave it current. This conservatively includes
+retention-only changes; it does not change the standalone memoization contract.
+
 PeTTa's optional specializer can publish generated equations on a first call.
 While a program is observed, specialization publication for its captured
 root/base/module closure is deferred; existing canonical execution remains
@@ -334,7 +426,7 @@ The example service adds `RelOpenRead`, `RelReadPage`, `RelReadCommit` and
 `RelReadCancel`. Open has the same `(RelOpenV1 plan maximum-row-bytes)` argument.
 Pages use `(RelPageV1 count work-steps)`. Completion retains an opaque linear
 read context; only that completed phase accepts
-`(RelReadCommitV1 collection request-id command changes)` with at most 128 edits.
+`(RelReadCommitV1 collection request-id command changes)`, subject to the execution byte/work budgets.
 The commit route requires Write authority. A read context cannot grant it.
 Invoking a wrong phase consumes/releases that state; a host-level permission
 refusal leaves it available for cancellation. Disconnect/cancel releases all
@@ -465,6 +557,28 @@ Range answers are bags. Index and full-scan enumeration order may differ.
 Use KqOrder for ordered pagination, retaining its existing membership
 tie-breaker policy. Explain/inspect distinguish integer seeks plus other-scalar
 fallback from complete scans, and show the active scan/point statistics.
+
+For an explicitly indexed ordered Int64 projection, use:
+
+```metta
+(KqIndexedI64Range collection arity position lower upper pattern template)
+```
+
+This operation requires the declared range index and emits stored Int64
+projection values in ascending order, with stable occurrence-key ties. Other
+scalar kinds are outside its domain, including numerically equal floats. It
+does not traverse their fallback bucket. Bounds use the same exact integer
+window calculation; matching/templates still use the ordinary owning Space
+matcher. Missing indexes return `(KbRefused ordered-integer-index-required)`.
+`KqOrder` over a complete filtered scan provides the executable reference and
+remains available when a blocking sort is appropriate. Explain/inspect expose
+`IndexedI64AscendingV1`. This adds no storage format or publication owner.
+
+`test-indexed-i64-order` checks mixed kinds, randomized physical IDs, signed
+limits, fractional bounds, equal-value occurrence ties, embedded/service
+pages, captured publication/compaction, missing indexes and cancellation.
+An integer-empty collection with 512 other-scalar rows completes without
+decoding those rows. Ordinary `KqRange` retains its bag and scan contracts.
 Pages retain their captured root even when publication, compaction and
 collection occur before a later candidate is matched. Malformed or stale extra
 postings, missing referenced facts and wrong domains fail explicitly rather
@@ -538,8 +652,9 @@ Remaining release requirements are not covered merely by existing store unit
 tests or the older named-space service. The latter materializes query snapshots;
 the MeTTa-configured path below instead owns shared incremental cursors.
 Declared symbol/string candidate indexes now use the shared Space cursor, with
-small chain-join measurements described below. Scalar range indexes, broad
-workload qualification and large-KB scaling remain open. Live migration remains
+small chain-join measurements described below. Declared scalar ranges are also
+qualified below; broad application-workload qualification and large-KB scaling
+remain open. Live migration remains
 a separately authorized step.
 
 ACT may become a native immutable base/segment under the same durability owner.
@@ -965,6 +1080,66 @@ embedded, including after closing its original owner/view. Generated finite
 graph oracles and adversarial cases compare both paths with exhaustive results,
 including multiplicity, stable identities, ties, retractions and compaction.
 The full relational and claims/evidence curriculum remains separate work.
+
+### Completed graph reads and informed writes
+
+The same server exposes `GraphOpenRead`, `GraphReadPage`, `GraphReadCommit` and
+`GraphReadCancel`. Open accepts `GraphOpenV1` and independently retains the
+original data view and program watch. Page accepts `GraphPageV1`; More and
+Paused retain an unfinished phase. Only an actual Complete result yields the
+opaque completed phase accepted by:
+
+```metta
+(GraphReadCommitV1 collection request-id command changes)
+```
+
+The runtime owns the phase and connection-local token. Client-supplied phase
+syntax cannot manufacture one. An unfinished, failed or wrong-family phase
+cannot publish. Wrong-phase invocation releases its state; a host-level
+read-only refusal leaves the state available for cancellation. Completion
+does not grant Write authority. Cancel, failure and disconnect release both
+the traversal and its independent read context.
+
+For a new write, the shared `durable-query:commit-command` validates the
+original whole data revision and program observation. It never refreshes those
+dependencies to authorize a decision made on older answers. This conservative
+policy also rejects unrelated intervening publication. Historical receipt
+lookup precedes stale-observation checks, while changed commands refuse.
+After restart, resolve the durable receipt before reopening a query; process
+tokens are not persistent identities. Writes use existing frame, codec and
+retained-resource budgets, with no additional fixed graph edit-count ceiling.
+Malformed open/page/commit arguments return `(KbRefused graph-read-shape)`;
+malformed page/commit calls also release their consumed session. Cross-family
+calls cannot manufacture a completed phase. Legacy inspect keeps exactly one
+resource with a cursor refusal, so the owning client can still cancel it.
+
+A captured session pins its old publication until release. Compaction can
+publish a new root while that reader continues. Collection can unlink obsolete
+names; captured readers' open descriptors keep the old data alive. Connection idle expiry and explicit
+cancel/disconnect release these views. An active client can retain a snapshot
+across repeated publication; the resource-value byte budget does not establish
+a bound on the older storage it pins. Snapshot age and pinned-storage
+accounting remain operational work. The fixed-size cleanup tests below do not
+qualify bounded disk use under an indefinitely held reader and growing writes.
+
+```text
+captured:   a --> b --> c     shortest distance = 2
+published:  a ----------> c  a new direct edge
+
+old query completes on its original view: 2
+old query-informed write: conflict
+new query: 1
+```
+
+`test-graph-read-commit` checks that separating example, negative reachability,
+parallel edge occurrences changing all shortest ties, optional/anti/aggregate
+insertion phantoms, code edits during and after reads, phase and authority
+refusals, lost replies, restart, receipt collision, more than 128 small edits,
+and repeated cancellation/disconnect. A deliberately rebased data context
+incorrectly publishes a negative decision and is rejected by the same test.
+These finite examples qualify the shared conservative dependency policy;
+they do not enroll hidden callback/external reads or complete application
+transition qualification.
 
 ## Owners and snapshots
 

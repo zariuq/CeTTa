@@ -6326,7 +6326,8 @@ bool space_add_dense_tuples(Space *s, SymbolId head, AtomId head_id,
                             uint32_t arity, const AtomId *tuples,
                             CettaCount count) {
     Space *target = space_mutation_target(s);
-    if (!target || (count && !tuples) || !space_tracks_atom_ids(target) ||
+    if (!target || target->match_backend.kind == SPACE_ENGINE_SOURCE ||
+        (count && !tuples) || !space_tracks_atom_ids(target) ||
         !space_dense_fact_len(arity + 1u))
         return false;
     TermUniverse *universe = target->native.universe;
@@ -7289,6 +7290,32 @@ static void space_append_backend_primary_shadow_id(Space *s,
     space_note_atom_id_storage_peak(s);
 }
 
+static bool space_source_admit(Space *s, Atom *const *atoms, CettaCount count) {
+    CETTA_SCOPED_SHARED_TRANSITION(publication);
+    const SpaceSourceEditOps *edits = s && s->match_backend.ops
+        ? s->match_backend.ops->source_edits : NULL;
+    if (!edits || !edits->admit) {
+        space_match_backend_set_error(SPACE_MATCH_BACKEND_ERROR_READ_ONLY);
+        return false;
+    }
+    if (!edits->admit(s, atoms, count)) return false;
+    if (count) space_note_external_backend_mutation(s);
+    return true;
+}
+
+static bool space_source_admit_ids(Space *s, const AtomId *ids, CettaCount count) {
+    if ((!ids && count) || count > SIZE_MAX / sizeof(Atom *)) return false;
+    Atom **atoms = count ? malloc((size_t)count * sizeof(*atoms)) : NULL;
+    if (count && !atoms) return false;
+    bool valid = true;
+    for (CettaCount i = 0; i < count; ++i) {
+        atoms[i] = term_universe_get_atom(s->native.universe, ids[i]);
+        if (!atoms[i]) { valid = false; break; }
+    }
+    bool result = valid && space_source_admit(s, atoms, count);
+    free(atoms); return result;
+}
+
 static bool space_store_via_backend_primary(Space *s, AtomId atom_id,
                                             Atom *atom,
                                             bool *out_transition_failed) {
@@ -8012,6 +8039,14 @@ void space_init_overlay(Space *s, const Space *base) {
 
 bool space_init_overlay_local(Space *s, const Space *base) {
     CETTA_SCOPED_SHARED_TRANSITION(transition);
+    if (!s || s == base) return false;
+    if (base && base->match_backend.kind == SPACE_ENGINE_SOURCE) {
+        space_init_with_universe(s, base->native.universe);
+        s->kind = base->kind; space_set_strict(s, base->strict);
+        if (base->match_backend.ops && base->match_backend.ops->overlay_local &&
+                base->match_backend.ops->overlay_local(s, base)) return true;
+        space_free(s); return false;
+    }
     space_init_overlay(s, base);
     SpaceEngine backend = base && base->match_backend.kind != SPACE_ENGINE_MORK
         ? base->match_backend.kind : SPACE_ENGINE_NATIVE;
@@ -10470,6 +10505,9 @@ static void space_add_stored_id_as(Space *s, AtomId atom_id,
 
 void space_add_atom_id(Space *s, AtomId atom_id) {
     s = space_mutation_target(s);
+    if (s && s->match_backend.kind == SPACE_ENGINE_SOURCE) {
+        (void)space_source_admit_ids(s, &atom_id, 1); return;
+    }
     bool transition_failed = false;
     if (!s || !space_tracks_atom_ids(s) || atom_id == CETTA_ATOM_ID_NONE)
         return;
@@ -10546,6 +10584,9 @@ static bool space_set_add_ids_batch(Space *s, const AtomId *atom_ids,
 
 bool space_add_atom_ids_batch(Space *s, const AtomId *atom_ids,
                               CettaCount atom_count) {
+    Space *target = s && s->module_own_view ? (Space *)s->overlay_base : s;
+    if (target && target->match_backend.kind == SPACE_ENGINE_SOURCE)
+        return space_source_admit_ids(target, atom_ids, atom_count);
     if (s && s->kind == SPACE_KIND_SET)
         return space_set_add_ids_batch(s, atom_ids, atom_count);
     return space_add_atom_ids_batch_bag(s, atom_ids, atom_count);
@@ -10725,6 +10766,9 @@ void space_add(Space *s, Atom *atom) {
     s = space_mutation_target(s);
     if (!s)
         return;
+    if (s->match_backend.kind == SPACE_ENGINE_SOURCE) {
+        (void)space_source_admit(s, &atom, 1); return;
+    }
     SPACE_STORE_SCOPE();
     AtomId atom_id = CETTA_ATOM_ID_NONE;
     bool transition_failed = false;
@@ -10777,6 +10821,8 @@ static bool space_admit_atom_impl(Space *s, Arena *fallback,
     bool transition_failed = false;
     if (!s || !atom)
         return false;
+    if (s->match_backend.kind == SPACE_ENGINE_SOURCE)
+        return space_source_admit(s, &atom, 1);
     SPACE_STORE_SCOPE();
 
     if (space_store_atom_via_backend_primary(
@@ -10868,6 +10914,8 @@ bool space_admit_atoms_batch_from_source_arena(
         atom_count > SIZE_MAX / sizeof(AtomId)) {
         return false;
     }
+    if (s->match_backend.kind == SPACE_ENGINE_SOURCE)
+        return space_source_admit(s, atoms, atom_count);
     if (atom_count == 0u)
         return true;
 
@@ -12456,6 +12504,13 @@ static CettaMatchCompletion space_remove_kernel(Space *s, Atom *atom,
     s = space_mutation_target(s);
     if (!s)
         return CETTA_MATCH_INCOMPLETE;
+    if (s->match_backend.kind == SPACE_ENGINE_SOURCE) {
+        const SpaceSourceEditOps *edits = s->match_backend.ops->source_edits;
+        CettaMatchCompletion result = edits && edits->remove
+            ? edits->remove(s, atom, equal, alpha_equal, representation) : CETTA_MATCH_INCOMPLETE;
+        if (result == CETTA_MATCH_MATCHED) space_note_external_backend_mutation(s);
+        return result;
+    }
     if (representation && space_dense_remove_ground(s, atom) != 0u)
         return CETTA_MATCH_MATCHED;
     if (!representation) space_dense_settle(s, SYMBOL_ID_NONE);
@@ -12638,6 +12693,10 @@ static bool space_remove_atom_id_rows(Space *s, AtomId atom_id);
 
 bool space_remove_atom_id(Space *s, AtomId atom_id) {
     Space *target = space_mutation_target(s);
+    if (target && target->match_backend.kind == SPACE_ENGINE_SOURCE) {
+        Atom *atom = term_universe_get_atom(target->native.universe, atom_id);
+        return atom && space_remove_checked(target, atom) == CETTA_MATCH_MATCHED;
+    }
     if (target && atom_id != CETTA_ATOM_ID_NONE &&
         space_dense_route_remove(target, atom_id))
         return true;
@@ -12757,6 +12816,7 @@ bool space_remove_atom_ids_batch(Space *s, const AtomId *atom_ids,
 
     if (out_removed)
         *out_removed = 0;
+    if (s && s->match_backend.kind == SPACE_ENGINE_SOURCE) return false;
     if (!s || (!atom_ids && atom_count != 0))
         return false;
     if (atom_count == 0)
@@ -12805,6 +12865,7 @@ static bool space_contract_occurrence_mask(
         *out_removed = 0u;
     if (!s || (!remove_mask && mask_len != 0u))
         return false;
+    if (s->match_backend.kind == SPACE_ENGINE_SOURCE) return false;
 
     CettaCount logical_len = space_length64(s);
     /* Facts kept in relations follow the rows.  Settling marks covers the
@@ -13149,6 +13210,7 @@ Atom *space_peek(const Space *s) {
 }
 
 bool space_pop(Space *s, Atom **out) {
+    if (s && s->match_backend.kind == SPACE_ENGINE_SOURCE) return false;
     space_dense_settle(s, SYMBOL_ID_NONE);
     space_prepare_prefix_rewrite(s);
     CettaCount logical_len;
@@ -13261,6 +13323,7 @@ bool space_truncate(Space *s, uint32_t new_len) {
 }
 
 bool space_truncate64(Space *s, CettaCount new_len) {
+    if (s && s->match_backend.kind == SPACE_ENGINE_SOURCE) return false;
     space_dense_settle(s, SYMBOL_ID_NONE);
     space_prepare_prefix_rewrite(s);
     CettaCount logical_len;

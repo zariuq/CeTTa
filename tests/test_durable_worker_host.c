@@ -691,6 +691,21 @@ int main(int argc, char **argv) {
         d=resume(id,outbox); assert(cetta_host_accept(d,0,&committed)==DURABLE_OK && !committed.effects);
         cetta_host_decision_free(d);
     }
+    /* Old accepted tasks can be promoted after restart without a new identity.
+     * Controls must not scan or wait for an unconsumed conversation backlog. */
+    put("host.inbox","chat/1","(request \"priority observation\")"); accept_request(outbox);
+    assert(cetta_worker_register(store,outbox,"brain",id)==DURABLE_OK);
+    for (unsigned i=0;i<1024;++i) {
+        char ordinary[32];snprintf(ordinary,sizeof(ordinary),"ordinary-%u",i);
+        assert(cetta_worker_publish(store,"brain",ordinary,"{}",2)==DURABLE_OK);
+    }
+    assert(cetta_worker_register_control(store,outbox,"brain",again)==DURABLE_OK && !strcmp(again,id));
+    assert(count("host.worker-control-ready")==1 && count("host.worker-ready")==1024);
+    rpc(endpoint,fd,WORKER_NEXT_CONTROL,"","",WORKER_TASK,"priority observation");
+    rpc(endpoint,fd,WORKER_NEXT,"","",WORKER_TASK,"priority observation");
+    rpc(endpoint,fd,WORKER_RESULT,id,"[]",WORKER_STORED,"");
+    rpc(endpoint,fd,WORKER_NEXT_CONTROL,"","",WORKER_IDLE,"");
+    rpc(endpoint,fd,WORKER_NEXT,"","",WORKER_TASK,"{}");
     put("host.outbox","wrong-version","(host:intent 1 \"worker.request\" \"2\" (worker:request 1 \"brain\" \"x\") reply)");
     assert(cetta_worker_register(store,"wrong-version","brain",again)==DURABLE_VERSION && !*again);
     close(fd); cetta_worker_endpoint_free(endpoint); unlink(address.sun_path);

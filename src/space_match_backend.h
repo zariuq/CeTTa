@@ -20,8 +20,8 @@ typedef enum {
     SPACE_ENGINE_NATIVE_CANDIDATE_EXACT = 1,
     SPACE_ENGINE_PATHMAP = 2,
     SPACE_ENGINE_MORK = 3,
-    /* A read-only host-supplied occurrence source. Its operation table, rather than
-     * native shadow rows, owns the source's storage contract. */
+    /* A host-supplied occurrence source. Read-only unless its owner explicitly
+     * supplies local edit operations; native shadow rows never own its data. */
     SPACE_ENGINE_SOURCE = 4,
 } SpaceEngine;
 
@@ -64,6 +64,17 @@ typedef struct SpaceSourceCursorOps {
     void (*free)(void *source);
     CettaStorageVisitor storage;
 } SpaceSourceCursorOps;
+
+/* Optional, authoritative local edits for a source-backed atom Space. A failed
+ * admission publishes no part of the batch. Removal uses the Space layer's
+ * exact-then-unique-alpha comparisons, not a backend-specific matcher. Other
+ * mutation operations may refuse; this capability grants no durable commit. */
+typedef struct SpaceSourceEditOps {
+    bool (*admit)(Space *space, Atom *const *atoms, CettaCount count);
+    CettaMatchCompletion (*remove)(Space *space, Atom *atom,
+        CettaMatchCompletion (*equal)(Atom *, Atom *),
+        CettaMatchCompletion (*alpha_equal)(Atom *, Atom *), bool representation);
+} SpaceSourceEditOps;
 
 /* A batch accelerator is never the mutation authority.  UNSUPPORTED asks the
    Space layer to replay the same ordered occurrences through the singular
@@ -231,6 +242,12 @@ typedef struct {
 
 typedef struct SpaceMatchBackendOps {
     const char *name;
+    const SpaceSourceEditOps *source_edits;
+    /* Optional local workspace over the same captured source. target is an
+     * initialized empty native Space. Success owns its base independently of
+     * the caller's Space; failure leaves target unchanged. Never recapture a
+     * publisher or materialize a database to manufacture an overlay. */
+    bool (*overlay_local)(Space *target, const Space *base);
     /* NULL pattern opens a complete captured scan. A non-NULL pattern may
      * select a complete candidate superset; canonical matching is unchanged.
      * Failure after admission stays explicit, never an empty successful scan

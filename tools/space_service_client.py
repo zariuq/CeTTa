@@ -114,20 +114,29 @@ def E(head: str, *args) -> tuple:
     return (S(head), *args)
 
 
-def encode(value) -> bytes:
+def encode(value, *, maximum_bytes=MAX_BYTES) -> bytes:
+    if type(maximum_bytes) is not int or maximum_bytes < 0:
+        raise ValueError("invalid atom byte allowance")
+    if maximum_bytes < 4:
+        raise ValueError(f"atom byte limit: at least 4 bytes needed; allowance is {maximum_bytes}")
     output = bytearray(b"CAV1")
     variables = {}
     nodes = 0
 
     def append(data):
-        if len(output) + len(data) > MAX_BYTES:
-            raise ValueError("atom byte limit")
+        if len(output) + len(data) > maximum_bytes:
+            raise ValueError(f"atom byte limit: at least {len(output) + len(data)} bytes needed; allowance is {maximum_bytes}")
         output.extend(data)
 
     def text(tag, data):
         if isinstance(data, str):
             data = data.encode("utf-8")
-        append(tag + struct.pack("<I", len(data)) + data)
+        if len(data) > 0xffffffff:
+            raise ValueError("CAV1 field exceeds its 32-bit length encoding")
+        if len(output) + 5 + len(data) > maximum_bytes:
+            raise ValueError(f"atom byte limit: at least {len(output) + 5 + len(data)} bytes needed; allowance is {maximum_bytes}")
+        append(tag + struct.pack("<I", len(data)))
+        append(data)
 
     def visit(v, depth):
         nonlocal nodes
@@ -168,8 +177,10 @@ def encode(value) -> bytes:
     return bytes(output)
 
 
-def decode(data: bytes):
-    if len(data) > MAX_BYTES or data[:4] != b"CAV1":
+def decode(data: bytes, *, maximum_bytes=MAX_BYTES):
+    if type(maximum_bytes) is not int or maximum_bytes < 0:
+        raise ValueError("invalid atom byte allowance")
+    if len(data) > maximum_bytes or data[:4] != b"CAV1":
         raise ValueError("invalid CAV1 packet")
     pos, nodes, variables = 4, 0, 0
 
@@ -228,8 +239,10 @@ def decode(data: bytes):
     return result
 
 
-def frame(value) -> bytes:
-    packet = encode(value)
+def frame(value, *, maximum_bytes=MAX_BYTES) -> bytes:
+    packet = encode(value, maximum_bytes=maximum_bytes)
+    if len(packet) > 0xffffffff:
+        raise ValueError("CSP1 frame length")
     return b"CSP1" + struct.pack(">I", len(packet)) + packet
 
 
@@ -247,7 +260,10 @@ class Uncertain(RuntimeError):
 
 
 class Client:
-    def __init__(self, path: str, timeout: float = 10):
+    def __init__(self, path: str, timeout: float = 10, *, maximum_bytes=MAX_BYTES):
+        if type(maximum_bytes) is not int or not 4 <= maximum_bytes <= 0xffffffff:
+            raise ValueError("invalid frame byte allowance")
+        self.maximum_bytes = maximum_bytes
         self.path, self.timeout, self.connection = path, timeout, None
 
     def close(self):
@@ -277,7 +293,7 @@ class Client:
     def call(self, operation: str, *args, request_id: str | None = None):
         request_id = request_id or uuid.uuid4().hex
         request = E("request", request_id, S(operation), *args)
-        packet = frame(request)
+        packet = frame(request, maximum_bytes=self.maximum_bytes)
         started = False
         self.deadline = time.monotonic() + self.timeout
         try:
@@ -309,9 +325,9 @@ class Client:
             if header[:4] != b"CSP1":
                 raise ValueError("invalid reply framing")
             size = struct.unpack(">I", header[4:])[0]
-            if size < 4 or size > MAX_BYTES:
+            if size < 4 or size > self.maximum_bytes:
                 raise ValueError("reply byte limit")
-            response = decode(self._read(size))
+            response = decode(self._read(size), maximum_bytes=self.maximum_bytes)
             if not isinstance(response, tuple) or len(response) != 4 or response[:2] != (S("reply"), request_id):
                 raise ValueError("uncorrelated reply")
             if response[2] == S("error"):

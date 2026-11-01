@@ -163,6 +163,9 @@ typedef struct CettaLibraryContext {
     struct CettaAuthoredParserV1 *parser_cache;
     TermUniverse term_universe;
     CettaLibraryMask active_mask;
+    /* Trusted host policy, selected before program loading/evaluation and
+     * retained by private child contexts. It grants no storage authority. */
+    size_t value_byte_limit;
     char root_dir[4096];
     char working_dir[PATH_MAX];
     char script_path[PATH_MAX];
@@ -279,6 +282,7 @@ typedef struct CettaLibraryContext {
     struct CettaJsonLibraryRuntimeV1 *json_runtime;
 } CettaLibraryContext;
 
+size_t cetta_library_value_byte_limit(const CettaLibraryContext *ctx);
 void cetta_library_context_init(CettaLibraryContext *ctx);
 void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
                                                      CettaLanguageId language_id,
@@ -556,6 +560,10 @@ bool cetta_library_petta_memo_enable(
 bool cetta_library_petta_memo_is_enabled(
     CettaLibraryContext *ctx, SymbolId head,
     bool exact_arity, CettaExprLen arity);
+/* Apply an already validated policy. Actual changes advance the existing
+ * admission revision, so captured program observations cannot span them. */
+void cetta_library_petta_memo_configure(
+    CettaLibraryContext *ctx, const CettaPettaMemoState *proposed);
 void cetta_library_petta_memo_clear(CettaLibraryContext *ctx);
 void cetta_library_petta_memo_invalidate(
     CettaLibraryContext *ctx, SymbolId head);

@@ -19,7 +19,8 @@
    (case (knowledge:same $a $b) (((KnowledgeEqualV1 $same) $same) ($error $error))))
 (= (kb:integer? $value)
    (case (get-metatype $value)
-     ((Grounded (case (store:key-i64 $value) (((StoreKeyBytes $bytes) True) ($other False))))
+     ((Grounded (if (== (get-type $value) Number)
+       (case (store:key-i64 $value) (((StoreKeyBytes $bytes) True) ($other False))) False))
       ($other False))))
 
 (= (kb:fact $view $identity $bytes)

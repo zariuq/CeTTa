@@ -217,6 +217,10 @@ const EvalOutcome *cetta_host_outcome(const CettaHostDecision *decision);
  * only, so the decision and evaluation can be freed immediately afterward. */
 CettaDurableStatus cetta_host_watch(const CettaHostDecision *decision,
     size_t max_bytes, CettaDurableWatch **out);
+/* Conservative notification only; commit still validates every original read. */
+CettaDurableStatus cetta_host_watch_revision(const CettaHostDecision *decision,
+        size_t byte_limit, CettaDurableWatch **out);
+
 
 /* Accept only this ticket's stored evaluation. Incomplete/denied evaluation
  * is rejected. The host selects one alternative and records its index.

@@ -35,7 +35,7 @@
       (and (kbq:callback? $config)
         (if (or (== $kind map) (== $kind select)) True (kbq:state-budget? $maximum)))))))
 (= (kbq:state-budget? $maximum)
-  (and (kb:integer? $maximum) (and (> $maximum 0) (<= $maximum 1048576))))
+  (and (kb:integer? $maximum) (and (> $maximum 0) (<= $maximum (store:value-byte-limit)))))
 (= (kbq:bounded-state $value $maximum)
   (case (store:encode $value)
     (((StoreEncoded $body)

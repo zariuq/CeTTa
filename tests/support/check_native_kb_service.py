@@ -15,19 +15,21 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
-from space_service_client import E, S, Var, encode, decode
+from space_service_client import E, S, Var, encode, decode, MAX_BYTES
 from value_worker_client import Worker
 
 
 class Client:
-    def __init__(self, path):
+    def __init__(self, path, *, maximum_reply_bytes=MAX_BYTES, maximum_request_bytes=MAX_BYTES):
+        self.maximum_reply_bytes = maximum_reply_bytes
+        self.maximum_request_bytes = maximum_request_bytes
         self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.socket.settimeout(10)
         self.socket.connect(str(path))
 
     def send(self, body, identifier=None):
         identifier = identifier or uuid.uuid4().hex
-        data = encode(E("request", identifier, body))
+        data = encode(E("request", identifier, body), maximum_bytes=self.maximum_request_bytes)
         self.socket.sendall(b"CSP1" + struct.pack(">I", len(data)) + data)
         return identifier
 
@@ -43,9 +45,9 @@ class Client:
         header = self.read(8)
         assert header[:4] == b"CSP1", header
         size = struct.unpack(">I", header[4:])[0]
-        assert 4 <= size <= 262144, size
+        assert 4 <= size <= self.maximum_reply_bytes, size
         data = self.read(size)
-        value = decode(data)
+        value = decode(data, maximum_bytes=self.maximum_reply_bytes)
         assert value[:3] == (S("reply"), identifier, S("ok" if ok else "error")), value
         return value[3]
 
@@ -91,11 +93,13 @@ class Client:
 
 
 class Server:
-    def __init__(self, worker, directory, *, module=None, entry="kb-server:configuration"):
+    def __init__(self, worker, directory, *, module=None, entry="kb-server:configuration", maximum_bytes=1048576):
         self.directory = directory
         self.path = directory / "service.sock"
         self.command = [str(worker), "--serve", "--lang", "petta",
                         str(module or ROOT / "examples/native_kb_server.metta"), entry]
+        if maximum_bytes != 1048576:
+            self.command[1:1] = ["--value-bytes", str(maximum_bytes)]
         self.environment = dict(os.environ, CETTA_KB_DIRECTORY=str(directory / "store"), CETTA_KB_SOCKET=str(self.path))
         self.logs = []
         self.process = None
