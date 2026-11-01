@@ -13,7 +13,7 @@ struct CettaDiskQuery {
     bool live, packet_pending, has_packet, terminal;
     CettaDiskQueryStep completion;
     unsigned char *packet;
-    size_t packet_size;
+    size_t packet_size, maximum_bytes;
     uint64_t next_sequence, packet_sequence, revision;
     CettaDiskSpaceStatistics statistics;
 };
@@ -46,27 +46,28 @@ void cetta_disk_query_close(CettaDiskQuery *query) {
 
 static CettaDiskStoreStatus query_open(const CettaDiskStoreView *view,
         CettaDiskBytes prefix,uint64_t count,const CettaDiskSpaceIndex *indexes,
-        size_t index_count,Atom *pattern,Atom *template,bool point,CettaDiskQuery **out) {
+        size_t index_count,Atom *pattern,Atom *template,bool point,size_t maximum_bytes,CettaDiskQuery **out) {
     if (!out) return CETTA_STORE_INVALID;
     *out=NULL;
     if (!view || !pattern || !template) return CETTA_STORE_INVALID;
     CettaDiskQuery *query=calloc(1,sizeof(*query));
     if (!query) return CETTA_STORE_NOMEM;
+    query->maximum_bytes=maximum_bytes;
     arena_init_detached(&query->source_arena);
     arena_init_detached(&query->arenas[0]);arena_init_detached(&query->arenas[1]);
     term_universe_init(&query->universe);
     term_universe_set_persistent_arena(&query->universe,&query->source_arena);
     space_init_with_universe(&query->source,&query->universe);query->live=true;
-    CettaDiskStoreStatus status=point ? cetta_disk_space_capture_point(&query->source,view,prefix) :
-        cetta_disk_space_capture_indexed(&query->source,view,prefix,count,indexes,index_count);
+    CettaDiskStoreStatus status=point ? cetta_disk_space_capture_point_bounded(&query->source,view,prefix,maximum_bytes) :
+        cetta_disk_space_capture_indexed_bounded(&query->source,view,prefix,count,indexes,index_count,maximum_bytes);
     if (status!=CETTA_STORE_OK) goto failed;
     query->revision=cetta_disk_store_view_revision(view);
     Arena packet;arena_init_detached(&packet);
     Atom *spec=atom_expr3(&packet,atom_symbol(&packet,"DiskQuerySpecV1"),pattern,template);
     unsigned char *bytes=NULL;size_t length=0;
-    CettaAtomWireStatus wire=cetta_atom_wire_encode(spec,&bytes,&length);
+    CettaAtomWireStatus wire=cetta_atom_wire_encode_bounded(spec,maximum_bytes,&bytes,&length);
     Atom *owned=NULL;
-    if (wire==ATOM_WIRE_OK) wire=cetta_atom_wire_decode(&query->arenas[0],bytes,length,&owned);
+    if (wire==ATOM_WIRE_OK) wire=cetta_atom_wire_decode_bounded(&query->arenas[0],bytes,length,maximum_bytes,&owned);
     free(bytes);arena_free(&packet);
     if (wire!=ATOM_WIRE_OK) {
         status=wire==ATOM_WIRE_NOMEM ? CETTA_STORE_NOMEM
@@ -86,11 +87,20 @@ failed:
 CettaDiskStoreStatus cetta_disk_query_open_indexed(const CettaDiskStoreView *view,
         CettaDiskBytes prefix,uint64_t count,const CettaDiskSpaceIndex *indexes,
         size_t index_count,Atom *pattern,Atom *template,CettaDiskQuery **out) {
-    return query_open(view,prefix,count,indexes,index_count,pattern,template,false,out);
+    return cetta_disk_query_open_indexed_bounded(view,prefix,count,indexes,index_count,pattern,template,CETTA_ATOM_WIRE_BYTES,out);
+}
+CettaDiskStoreStatus cetta_disk_query_open_indexed_bounded(const CettaDiskStoreView *view,
+        CettaDiskBytes prefix,uint64_t count,const CettaDiskSpaceIndex *indexes,size_t index_count,
+        Atom *pattern,Atom *template,size_t maximum_bytes,CettaDiskQuery **out) {
+    return query_open(view,prefix,count,indexes,index_count,pattern,template,false,maximum_bytes,out);
 }
 CettaDiskStoreStatus cetta_disk_query_open_point(const CettaDiskStoreView *view,
         CettaDiskBytes key,Atom *pattern,Atom *template,CettaDiskQuery **out) {
-    return query_open(view,key,1,NULL,0,pattern,template,true,out);
+    return cetta_disk_query_open_point_bounded(view,key,pattern,template,CETTA_ATOM_WIRE_BYTES,out);
+}
+CettaDiskStoreStatus cetta_disk_query_open_point_bounded(const CettaDiskStoreView *view,
+        CettaDiskBytes key,Atom *pattern,Atom *template,size_t maximum_bytes,CettaDiskQuery **out) {
+    return query_open(view,key,1,NULL,0,pattern,template,true,maximum_bytes,out);
 }
 CettaDiskStoreStatus cetta_disk_query_open(const CettaDiskStoreView *view,
         CettaDiskBytes prefix,uint64_t count,Atom *pattern,Atom *template,CettaDiskQuery **out) {
@@ -121,7 +131,7 @@ static CettaDiskQueryStep prepare_row(CettaDiskQuery *query,Bindings *bindings) 
     Atom *occurrences=ready ? atom_expr(arena,ids.items,ids.count) : NULL;
     free(ids.items);
     Atom *record=occurrences ? atom_expr3(arena,atom_symbol(arena,"DiskQueryRowV1"),value,occurrences) : NULL;
-    CettaAtomWireStatus status=record ? cetta_atom_wire_encode(record,&query->packet,&query->packet_size)
+    CettaAtomWireStatus status=record ? cetta_atom_wire_encode_bounded(record,query->maximum_bytes,&query->packet,&query->packet_size)
                                     : ATOM_WIRE_NOMEM;
     if (status!=ATOM_WIRE_OK)
         return status==ATOM_WIRE_NOMEM || status==ATOM_WIRE_LIMIT

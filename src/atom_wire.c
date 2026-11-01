@@ -18,16 +18,17 @@ _Static_assert(sizeof(double) == 8 && DBL_MANT_DIG == 53 && DBL_MAX_EXP == 1024,
 
 typedef struct {
     unsigned char *bytes;
-    size_t size, capacity, nodes, vars;
+    size_t size, capacity, nodes, vars, maximum_bytes;
     VarId ids[CETTA_ATOM_WIRE_VARS];
 } Writer;
 
 static CettaAtomWireStatus append(Writer *w, const void *bytes, size_t n) {
-    if (n > CETTA_ATOM_WIRE_BYTES - w->size) return ATOM_WIRE_LIMIT;
+    if (n > w->maximum_bytes - w->size) return ATOM_WIRE_LIMIT;
     if (w->size + n > w->capacity) {
-        size_t cap = w->capacity ? w->capacity * 2 : 256;
+        size_t cap = w->capacity ?
+            (w->capacity > w->maximum_bytes / 2 ? w->maximum_bytes : w->capacity * 2) : 256;
         if (cap < w->size + n) cap = w->size + n;
-        if (cap > CETTA_ATOM_WIRE_BYTES) cap = CETTA_ATOM_WIRE_BYTES;
+        if (cap > w->maximum_bytes) cap = w->maximum_bytes;
         void *p = realloc(w->bytes, cap);
         if (!p) return ATOM_WIRE_NOMEM;
         w->bytes = p; w->capacity = cap;
@@ -83,13 +84,13 @@ static CettaAtomWireStatus encode(Writer *w, const Atom *a, unsigned depth) {
             unsigned char *encoded; size_t size;
             CettaDenseTensorV1Status result = cetta_dense_tensor_v1_encoded_size(a->ground.ptr, &size);
             if (result != CETTA_DENSE_TENSOR_V1_OK) return ATOM_WIRE_INVALID;
-            size_t room = CETTA_ATOM_WIRE_BYTES - w->size;
-            if (room < 5u || size > room - 5u) return ATOM_WIRE_LIMIT;
+            size_t room = w->maximum_bytes - w->size;
+            if (room < 5u || size > room - 5u || size > UINT32_MAX) return ATOM_WIRE_LIMIT;
             result = cetta_dense_tensor_v1_encode(a->ground.ptr, &encoded, &size);
             if (result != CETTA_DENSE_TENSOR_V1_OK)
                 return result == CETTA_DENSE_TENSOR_V1_NOMEM ? ATOM_WIRE_NOMEM : ATOM_WIRE_INVALID;
             tag = 'A';
-            CettaAtomWireStatus status = size > CETTA_ATOM_WIRE_BYTES ? ATOM_WIRE_LIMIT :
+            CettaAtomWireStatus status = size > w->maximum_bytes ? ATOM_WIRE_LIMIT :
                 append(w, &tag, 1u);
             if (status == ATOM_WIRE_OK) status = number(w, size, 4u);
             if (status == ATOM_WIRE_OK) status = append(w, encoded, size);
@@ -104,7 +105,7 @@ static CettaAtomWireStatus encode(Writer *w, const Atom *a, unsigned depth) {
     CettaAtomWireStatus status = append(w, &tag, 1);
     if (status != ATOM_WIRE_OK) return status;
     if (text) {
-        if (len > CETTA_ATOM_WIRE_BYTES) return ATOM_WIRE_LIMIT;
+        if (len > w->maximum_bytes || len > UINT32_MAX) return ATOM_WIRE_LIMIT;
         status = number(w, len, 4);
         return status == ATOM_WIRE_OK ? append(w, text, len) : status;
     }
@@ -119,10 +120,16 @@ static CettaAtomWireStatus encode(Writer *w, const Atom *a, unsigned depth) {
 }
 
 CettaAtomWireStatus cetta_atom_wire_encode(const Atom *a, unsigned char **bytes, size_t *n) {
+    return cetta_atom_wire_encode_bounded(a, CETTA_ATOM_WIRE_BYTES, bytes, n);
+}
+CettaAtomWireStatus cetta_atom_wire_encode_bounded(const Atom *a, size_t maximum_bytes,
+        unsigned char **bytes, size_t *n) {
+    if (bytes) *bytes = NULL;
+    if (n) *n = 0;
     if (!bytes || !n) return ATOM_WIRE_INVALID;
-    *bytes = NULL; *n = 0;
     Writer *w = calloc(1, sizeof(*w));
     if (!w) return ATOM_WIRE_NOMEM;
+    w->maximum_bytes = maximum_bytes;
     CettaAtomWireStatus status = append(w, "CAV1", 4);
     if (status == ATOM_WIRE_OK) status = encode(w, a, 0);
     if (status == ATOM_WIRE_OK) { *bytes = w->bytes; *n = w->size; }
@@ -223,9 +230,14 @@ static CettaAtomWireStatus decode(Reader *r, Arena *arena, unsigned depth, Atom 
 
 CettaAtomWireStatus cetta_atom_wire_decode(Arena *arena, const unsigned char *bytes,
         size_t n, Atom **out) {
-    if (!arena || !bytes || !out) return ATOM_WIRE_INVALID;
+    return cetta_atom_wire_decode_bounded(arena, bytes, n, CETTA_ATOM_WIRE_BYTES, out);
+}
+CettaAtomWireStatus cetta_atom_wire_decode_bounded(Arena *arena, const unsigned char *bytes,
+        size_t n, size_t maximum_bytes, Atom **out) {
+    if (!out) return ATOM_WIRE_INVALID;
     *out = NULL;
-    if (n > CETTA_ATOM_WIRE_BYTES) return ATOM_WIRE_LIMIT;
+    if (!arena || !bytes) return ATOM_WIRE_INVALID;
+    if (n > maximum_bytes) return ATOM_WIRE_LIMIT;
     if (n < 4 || memcmp(bytes, "CAV1", 4)) return ATOM_WIRE_CORRUPT;
     Reader *r = calloc(1, sizeof(*r));
     if (!r) return ATOM_WIRE_NOMEM;

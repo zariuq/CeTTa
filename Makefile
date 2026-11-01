@@ -49181,6 +49181,18 @@ runtime/test-durable-value-$(BUILD_OBJ_TAG): tests/test_durable_value.c src/dura
 test-durable-value: runtime/test-durable-value-$(BUILD_OBJ_TAG)
 	./runtime/test-durable-value-$(BUILD_OBJ_TAG)
 
+ATOM_WIRE_LIMITS_TEST_BIN = runtime/test-atom-wire-limits-$(BUILD_OBJ_TAG)
+ATOM_WIRE_LIMITS_TEST_SOURCES = tests/test_atom_wire_limits.c src/atom_wire.c src/tensor_dense_v1.c \
+	src/atom.c $(SYMBOL_STANDALONE_SRC) src/binding/frame_identity.c
+$(ATOM_WIRE_LIMITS_TEST_BIN): $(ATOM_WIRE_LIMITS_TEST_SOURCES) src/atom_wire.h src/atom.h src/symbol.h src/tensor_dense_v1.h \
+		tests/test_runtime_stats_stubs.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(ATOM_WIRE_LIMITS_TEST_SOURCES) $(LDFLAGS)
+.PHONY: test-atom-wire-limits
+test-atom-wire-limits: $(ATOM_WIRE_LIMITS_TEST_BIN)
+	$<
+test-all: test-atom-wire-limits
+
 DENSE_TENSOR_V1_TEST_BIN = runtime/test-tensor-$(BUILD_OBJ_TAG)
 TENSOR_TEST_SOURCES = tests/test_tensor.c src/tensor_dense_v1.c src/atom.c $(SYMBOL_STANDALONE_SRC) \
 	src/binding/frame_identity.c src/atom_wire.c src/durable_value.c
