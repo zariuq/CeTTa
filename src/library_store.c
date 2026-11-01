@@ -517,7 +517,8 @@ Atom *cetta_store_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **a
         cetta_native_handle_use_release(&use);return result;
     }
     if (atom_is_symbol(head,"__cetta_lib_store_value_byte_limit")) {
-        return n ? refused(a,"invalid-value-byte-limit") : unsigned_value(a,cetta_library_value_byte_limit(ctx));
+        bool unit=n==1 && args[0] && args[0]->kind==ATOM_EXPR && args[0]->expr.len==0;
+        return n && !unit ? refused(a,"invalid-value-byte-limit") : unsigned_value(a,cetta_library_value_byte_limit(ctx));
     }
     if (atom_is_symbol(head,"__cetta_lib_store_encode")) {
         if (n!=1) return refused(a,"invalid-encode");
