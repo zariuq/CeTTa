@@ -7905,7 +7905,11 @@ static PettaBlockEffect petta_block_expression_effect(
             CETTA_PETTA_TYPECHECK_CENSUS_EVENT_EXPRESSION_EFFECT_SUPERPOSE_NONDET);
         return PETTA_BLOCK_EFFECT_NONDET;
     }
-    else if ((strcmp(head, "add-atom") == 0 ||
+    else if (strcmp(head, "remove-atom") == 0 && expression->expr.len == 4u) {
+        /* The optional bound is evaluated and may fail its natural-number
+         * check. The pattern remains data, as in the two-argument form. */
+        intrinsic = PETTA_BLOCK_EFFECT_SEMIDET;
+    } else if ((strcmp(head, "add-atom") == 0 ||
               strcmp(head, "remove-atom") == 0) &&
              expression->expr.len == 3u) {
         Atom *value = expression->expr.elems[2];

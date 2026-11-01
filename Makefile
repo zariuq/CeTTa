@@ -4805,6 +4805,11 @@ test-all: test-space-workspace
 test-space-workspace: $(BIN)
 	$(PYTHON) tests/support/check_space_workspace.py $(BIN)
 
+.PHONY: test-petta-bounded-removal
+test-all: test-petta-bounded-removal
+test-petta-bounded-removal: $(BIN)
+	@set -e -o pipefail; $(CETTA_BIN_INVOKE) --lang petta tests/petta/remove_atom_bounded.metta | $(PYTHON) -c 'import sys; value=sys.stdin.read().splitlines(); assert value==["true", "BOUNDED_REMOVAL_OK"],value'
+
 .PHONY: test-persistent-space-api
 test-all: test-persistent-space-api
 test-persistent-space-api: $(BIN)

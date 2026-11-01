@@ -12108,15 +12108,25 @@ CettaMatchCompletion space_remove_checked(Space *s, Atom *atom) {
 
 CettaMatchCompletion space_remove_all_compared(Space *s, Atom *pattern,
         SpaceAtomComparison matches, CettaCount *removed) {
+    return space_remove_up_to_compared(s, pattern, matches, UINT64_MAX, removed);
+}
+
+CettaMatchCompletion space_remove_up_to_compared(Space *s, Atom *pattern,
+        SpaceAtomComparison matches, CettaCount maximum, CettaCount *removed) {
     CETTA_SCOPED_SHARED_TRANSITION(publication);
     if (removed) *removed = 0;
     s = space_mutation_target(s);
     if (!s || !pattern || !matches || s->match_backend.kind != SPACE_ENGINE_SOURCE)
         return CETTA_MATCH_INCOMPLETE;
     const SpaceSourceEditOps *edits = s->match_backend.ops->source_edits;
-    if (!edits || !edits->remove_all) return CETTA_MATCH_INCOMPLETE;
+    if (!edits) return CETTA_MATCH_INCOMPLETE;
+    if (!maximum) return CETTA_MATCH_REFUTED;
+    if (!edits->remove_up_to && (maximum != UINT64_MAX || !edits->remove_all))
+        return CETTA_MATCH_INCOMPLETE;
     CettaCount count = 0;
-    CettaMatchCompletion result = edits->remove_all(s, pattern, matches, &count);
+    CettaMatchCompletion result = edits->remove_up_to
+        ? edits->remove_up_to(s, pattern, matches, maximum, &count)
+        : edits->remove_all(s, pattern, matches, &count);
     if (result == CETTA_MATCH_MATCHED && count) space_note_external_backend_mutation(s);
     if (result != CETTA_MATCH_INCOMPLETE && removed) *removed = count;
     return result;

@@ -77,6 +77,9 @@ typedef struct SpaceSourceEditOps {
      * INCOMPLETE removes nothing; no positional coordinate is implied. */
     CettaMatchCompletion (*remove_all)(Space *space, Atom *pattern,
         CettaMatchCompletion (*matches)(Atom *, Atom *), CettaCount *removed);
+    CettaMatchCompletion (*remove_up_to)(Space *space, Atom *pattern,
+        CettaMatchCompletion (*matches)(Atom *, Atom *), CettaCount maximum,
+        CettaCount *removed);
 } SpaceSourceEditOps;
 
 /* A batch accelerator is never the mutation authority.  UNSUPPORTED asks the

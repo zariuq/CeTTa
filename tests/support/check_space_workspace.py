@@ -17,7 +17,8 @@ def run(binary, folder, mode):
     )
     result = subprocess.run([str(binary), "--lang", "petta", str(source)], capture_output=True, text=True)
     assert result.returncode == 0, result.stdout + result.stderr
-    marker = "WORKSPACE_WRITE_OK" if mode == "Write" else "WORKSPACE_REOPEN_OK"
+    marker = {"Write": "WORKSPACE_WRITE_OK", "Read": "WORKSPACE_REOPEN_OK",
+              "Remove": "WORKSPACE_REMOVE_OK", "ReadAfter": "WORKSPACE_REMOVE_REOPEN_OK"}[mode]
     assert marker in result.stdout, result.stdout + result.stderr
     assert "SHOULD_NOT_EXECUTE" not in result.stdout, result.stdout
 
@@ -52,6 +53,8 @@ if __name__ == "__main__":
                 assert samples[-1]["descriptors"] == samples[0]["descriptors"], samples
             finally:
                 worker.close()
+        run(binary, folder, "Remove")
+        run(binary, folder, "ReadAfter")
         if args.output:
             args.output.write_text(json.dumps({"checks": "workspace edits, replay, data-view validation, closure and reopen",
                                               "lifecycle_samples": samples}, indent=2) + "\n")

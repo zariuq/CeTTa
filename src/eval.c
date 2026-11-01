@@ -4964,7 +4964,7 @@ static Atom *petta_space_remove_request_pattern(Arena *arena, Atom *value) {
 static bool petta_space_remove_masked(
         Space *space, uint8_t *remove_mask, CettaCount logical_len,
         Atom **removed_atoms, CettaCount receipt_len, PettaProgram *program,
-        CettaCount *removed_out) {
+        CettaCount *removed_out, bool single_occurrences) {
     CettaCount removed = 0u;
     bool ok = space_remove_occurrence_mask_stable(
         space, remove_mask, logical_len, &removed);
@@ -4972,8 +4972,10 @@ static bool petta_space_remove_masked(
     for (CettaCount index = 0u; ok && index < removed; index++) {
         Atom *removed_atom = removed_atoms[index];
         petta_specializer_note_mutation(space, removed_atom);
-        if (program)
-            petta_program_note_remove_all(program, space, removed_atom);
+        if (program) {
+            if (single_occurrences) petta_program_note_remove_one(program, space, removed_atom);
+            else petta_program_note_remove_all(program, space, removed_atom);
+        }
     }
 
     free(removed_atoms);
@@ -5048,9 +5050,9 @@ static CettaMatchCompletion petta_source_remove_matches(Atom *candidate, Atom *p
     bindings_free(&empty); arena_free(&scratch); return result;
 }
 
-static bool petta_space_remove_pattern_all(
+static bool petta_space_remove_pattern_limit(
         Space *space, Atom *pattern, PettaProgram *program,
-        CettaCount *removed_out) {
+        CettaCount maximum, CettaCount *removed_out) {
     if (removed_out)
         *removed_out = 0u;
     if (!space || !pattern || pattern->kind == ATOM_VAR)
@@ -5062,28 +5064,34 @@ static bool petta_space_remove_pattern_all(
 
     if (space->match_backend.kind == SPACE_ENGINE_SOURCE) {
         CettaCount removed = 0;
-        CettaMatchCompletion result = space_remove_all_compared(
-            space, pattern, petta_source_remove_matches, &removed);
+        CettaMatchCompletion result = space_remove_up_to_compared(
+            space, pattern, petta_source_remove_matches, maximum, &removed);
         if (result == CETTA_MATCH_INCOMPLETE) return false;
         if (removed) {
             petta_specializer_note_mutation(space, pattern);
-            if (program) petta_program_note_remove_all(program, space, pattern);
+            /* A bounded source filter reports a count, not the selected
+             * syntax receipt. Its opaque publication already invalidates
+             * program projections; do not erase every matching equation. */
+            if (program && maximum == UINT64_MAX)
+                petta_program_note_remove_all(program, space, pattern);
         }
         if (removed_out) *removed_out = removed;
         return true;
     }
 
+    if (!maximum) return true;
+    if (maximum != UINT64_MAX) space_dense_settle(space, SYMBOL_ID_NONE);
     CettaCount logical_len = space_length64(space);
     if (logical_len == 0u)
         return true;
     /* A ground fact the space keeps as bits leaves them by its parts: it
      * may have no record of its own to look up.  Its row copies follow. */
-    CettaCount bits_removed = atom_has_vars(pattern)
+    CettaCount bits_removed = maximum != UINT64_MAX || atom_has_vars(pattern)
         ? 0u : space_dense_remove_ground(space, pattern);
     /* A ground pattern unifies with exactly the rows equal to it when no
      * row of its head holds a variable: the exact index removes those by
      * id, without reading any other row. */
-    if (pattern->kind == ATOM_EXPR && pattern->expr.len != 0u &&
+    if (maximum == UINT64_MAX && pattern->kind == ATOM_EXPR && pattern->expr.len != 0u &&
         !atom_has_vars(pattern) && space->native.universe &&
         pattern->expr.elems[0]->kind == ATOM_SYMBOL) {
         AtomId id = term_universe_lookup_atom_id(space->native.universe,
@@ -5145,14 +5153,15 @@ static bool petta_space_remove_pattern_all(
     CettaIndex *candidates = NULL;
     CettaCount candidate_len = indexed
         ? space_match_candidates64(space, pattern, &candidates) : logical_len;
+    CettaCount receipt_capacity = candidate_len < maximum ? candidate_len : maximum;
     /* The receipt: removed positions in ascending order and their atoms. */
     CettaIndex *removed_positions = cetta_malloc(
-        (size_t)(candidate_len ? candidate_len : 1u) *
+        (size_t)(receipt_capacity ? receipt_capacity : 1u) *
         sizeof(*removed_positions));
     Atom **removed_atoms = cetta_malloc(
-        (size_t)(candidate_len ? candidate_len : 1u) *
+        (size_t)(receipt_capacity ? receipt_capacity : 1u) *
         sizeof(*removed_atoms));
-    for (CettaIndex position = 0u; ok && position < candidate_len; position++) {
+    for (CettaIndex position = 0u; ok && position < candidate_len && receipt_len < maximum; position++) {
         CettaIndex index = indexed ? candidates[position] : position;
         if (index >= logical_len) {
             ok = false;
@@ -5211,9 +5220,10 @@ static bool petta_space_remove_pattern_all(
         space_remove_logical_positions(space, removed_positions, receipt_len)) {
         for (CettaCount index = 0u; index < receipt_len; index++) {
             petta_specializer_note_mutation(space, removed_atoms[index]);
-            if (program)
-                petta_program_note_remove_all(
-                    program, space, removed_atoms[index]);
+            if (program) {
+                if (maximum != UINT64_MAX) petta_program_note_remove_one(program, space, removed_atoms[index]);
+                else petta_program_note_remove_all(program, space, removed_atoms[index]);
+            }
         }
         free(removed_atoms);
         free(removed_positions);
@@ -5228,7 +5238,12 @@ static bool petta_space_remove_pattern_all(
     free(removed_positions);
     return petta_space_remove_masked(space, remove_mask, logical_len,
                                      removed_atoms, receipt_len, program,
-                                     removed_out);
+                                     removed_out, maximum != UINT64_MAX);
+}
+
+static bool petta_space_remove_pattern_all(Space *space, Atom *pattern,
+        PettaProgram *program, CettaCount *removed_out) {
+    return petta_space_remove_pattern_limit(space, pattern, program, UINT64_MAX, removed_out);
 }
 
 /* The rows of one length, all but the first `keep` of them, removed as
@@ -5272,7 +5287,7 @@ static bool petta_space_remove_rows_of_length(
     CettaCount removed = 0u;
     return petta_space_remove_masked(space, remove_mask, logical_len,
                                      removed_atoms, receipt_len, program,
-                                     &removed);
+                                     &removed, false);
 }
 
 /* ── Outcome set (unified result type: atom + bindings) ─────────────────── */
@@ -9416,8 +9431,8 @@ static Atom *petta_scope_lambda_code(Arena *arena, Atom *atom, uint32_t depth) {
     CettaExprLen nargs = atom->expr.len - 1u;
     if (symbol == g_builtin_syms.quote && nargs == 1u)
         return atom;
-    if ((symbol == g_builtin_syms.add_atom ||
-         symbol == g_builtin_syms.remove_atom) && nargs == 2u)
+    if (((symbol == g_builtin_syms.add_atom || symbol == g_builtin_syms.remove_atom) && nargs == 2u) ||
+        (symbol == g_builtin_syms.remove_atom && nargs == 3u))
         return petta_scope_lambda_children(arena, atom, 1u, UINT64_C(1) << 2,
                                            depth);
     if (symbol == g_builtin_syms.match && nargs == 3u)
@@ -10908,13 +10923,14 @@ EvalSpaceMutationEffect eval_apply_space_addition(
         target, arena, call, payload, suppress_duplicate);
 }
 
-static EvalSpaceMutationEffect eval_apply_space_removal(
-        Space *target, Arena *arena, Atom *call, Atom *payload) {
+static EvalSpaceMutationEffect eval_apply_space_removal_limit(
+        Space *target, Arena *arena, Atom *call, Atom *payload, CettaCount maximum) {
     CETTA_SCOPED_SHARED_TRANSITION(space_remove_publication);
     EvalSpaceMutationEffect effect = {
         .error = NULL,
         .emit_result = true,
     };
+    if (!maximum) return effect;
     /* A row static-import! loaded is static data. */
     Atom *static_refusal = petta_static_rows_refusal(
         arena, target, payload, "retractall");
@@ -10949,8 +10965,8 @@ static EvalSpaceMutationEffect eval_apply_space_removal(
         PettaProgram *program = g_library_context
             ? g_library_context->petta_program : NULL;
         CettaCount removed = 0u;
-        if (!petta_space_remove_pattern_all(
-                target, comparison, program, &removed)) {
+        if (!petta_space_remove_pattern_limit(
+                target, comparison, program, maximum, &removed)) {
             effect.error = atom_error(
                 arena, call,
                 atom_symbol(arena, "PeTTaSpacePatternRemovalFailed"));
@@ -10978,6 +10994,11 @@ static EvalSpaceMutationEffect eval_apply_space_removal(
         effect.emit_result = false;
     }
     return effect;
+}
+
+static EvalSpaceMutationEffect eval_apply_space_removal(Space *target,
+        Arena *arena, Atom *call, Atom *payload) {
+    return eval_apply_space_removal_limit(target, arena, call, payload, UINT64_MAX);
 }
 
 static void prime_native_trace_own_write(Space *target, const char *phase);
@@ -34852,9 +34873,64 @@ static bool eval_try_transform_fire(Space *s, Arena *a, Atom *atom, int fuel,
 /* Execute the shared space-mutation contract.  The relational machine invokes
  * it only after the call has reached a ready host boundary; ordinary and
  * native dispatch use the same physical effect authority. */
+static bool petta_removal_limit(Atom *value, CettaCount *maximum) {
+    if (!value || value->kind != ATOM_GROUNDED) return false;
+    if (value->ground.gkind == GV_INT) {
+        if (value->ground.ival < 0) return false;
+        *maximum = (CettaCount)value->ground.ival; return true;
+    }
+    if (value->ground.gkind != GV_BIGINT) return false;
+    const char *text = atom_bigint_cstr(value);
+    if (!text || !*text || *text == '-') return false;
+    CettaCount count = 0;
+    for (; *text; ++text) {
+        if (*text < '0' || *text > '9') return false;
+        unsigned digit = (unsigned)(*text - '0');
+        if (count > (UINT64_MAX - digit) / 10) { *maximum = UINT64_MAX; return true; }
+        count = count * 10 + digit;
+    }
+    *maximum = count; return true;
+}
+
+static bool eval_petta_bounded_removal(Space *root, Arena *arena, Atom *call,
+        int fuel, const Bindings *environment, OutcomeSet *outcomes) {
+    if (eval_current_language_id() != CETTA_LANGUAGE_PETTA || !g_registry ||
+            !call || call->kind != ATOM_EXPR || call->expr.len != 4u ||
+            !atom_is_symbol_id(call->expr.elems[0], g_builtin_syms.remove_atom)) return false;
+    OutcomeSet limits; outcome_set_init(&limits);
+    eval_for_caller(root, arena, NULL, call->expr.elems[3], fuel,
+                    environment, true, &limits);
+    for (CettaCount i = 0; i < limits.len && !eval_unwinding(); ++i) {
+        Atom *limit = outcome_atom_materialize(arena, &limits.items[i]); CettaCount maximum = 0;
+        if (atom_is_error(limit)) {
+            outcome_set_add(outcomes, limit, &limits.items[i].env);
+            continue;
+        }
+        /* This optional predicate requires an instantiated natural count.
+         * An invalid count fails without mutation; zero is a valid no-op. */
+        if (!petta_removal_limit(limit, &maximum)) continue;
+        const Bindings *resolved = &limits.items[i].env;
+        Atom *reference = bindings_apply_if_vars(
+            (Bindings *)resolved, arena, call->expr.elems[1]);
+        Space *target = resolve_single_space_arg_write(root, arena, reference, fuel);
+        if (!target) {
+            outcome_set_add(outcomes, space_arg_error(arena, call,
+                "remove-atom expects a writable space as the first argument"), &limits.items[i].env);
+            continue;
+        }
+        Atom *payload = prime_need_persist_space_data(arena, call->expr.elems[2], resolved);
+        if (!payload) { eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY); break; }
+        EvalSpaceMutationEffect effect = eval_apply_space_removal_limit(target, arena, call, payload, maximum);
+        if (effect.error) outcome_set_add(outcomes, effect.error, &limits.items[i].env);
+        else if (effect.emit_result) outcome_set_add(outcomes, petta_semantics_success_value(arena), &limits.items[i].env);
+    }
+    outcome_set_free(&limits); return true;
+}
+
 static bool eval_space_mutation_contract(
         Space *root, Arena *arena, Atom *call, int fuel,
         const Bindings *environment, OutcomeSet *outcomes) {
+    if (eval_petta_bounded_removal(root, arena, call, fuel, environment, outcomes)) return true;
     if (!call || call->kind != ATOM_EXPR || call->expr.len != 3u)
         return false;
     SymbolId head = prime_standard_native_head(atom_head_symbol_id(call));
