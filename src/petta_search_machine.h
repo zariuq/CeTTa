@@ -578,6 +578,15 @@ typedef struct {
     CettaNativeQueryStatus (*native_collect_distinct_snapshot)(
         void *context, Space *space, Arena *arena, Atom *query,
         bool count_only, Atom **value);
+    /* `(match S P (if TEST DATA (empty)))`, either branch empty, with its
+     * bindings applied: P one pattern, TEST comparisons of the solutions'
+     * values that the native path reads, and DATA an atom answering itself.
+     * DONE sets `*value` to the instances of DATA for the solutions TEST
+     * passes, read on the occurrences of S visible now; it reads no other
+     * space and makes no effect.  DECLINED has done nothing.  Optional. */
+    CettaNativeQueryStatus (*native_filter)(
+        void *context, Space *space, Arena *arena, Atom *query,
+        Atom **value);
     PettaSpecializeResult (*prepare_call)(
         void *context, Space *space, Arena *result_arena,
         Atom *call, Atom **prepared_call);
@@ -817,6 +826,11 @@ typedef struct {
         CettaExprLen supplied, PettaTypeCall **calls, uint32_t *count,
         bool *hold_body);
 } PettaMachineHost;
+
+/* Whole native collections share this admission at machine and directive
+ * entry. A finite source purse or an observer of internal transitions needs
+ * ordinary execution until that region supplies its source correspondence. */
+bool petta_machine_host_admits_native_collection(const PettaMachineHost *host);
 
 typedef enum {
     PETTA_MACHINE_STEP_ANSWER = 0,

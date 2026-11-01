@@ -17,6 +17,13 @@ static Atom *row4(Arena *arena, Atom *head, Atom *first, Atom *second, Atom *thi
     return atom_expr(arena, children, 4u);
 }
 
+static CettaGsltTermViewStatusV1 unbound_view_variable(
+        void *context, Atom *source, Atom **target) {
+    (void)context;
+    *target = source;
+    return CETTA_GSLT_TERM_VIEW_OK_V1;
+}
+
 static void add(Space *space, Atom *term) {
     AtomId id = term_universe_store_atom_id(space->native.universe, NULL, term);
     assert(id != CETTA_ATOM_ID_NONE);
@@ -436,6 +443,36 @@ static void test_shortest_column(TermUniverse *universe, Arena *arena) {
         add(&selective, row4(arena, keyed, atom_int(arena, index),
                              atom_int(arena, index % 400), tag));
     space_match_native_ensure_trie(&selective);
+    /* A pre-existing trie makes the space warm even when no cold scans
+     * preceded it. Both aggregate entrances must still select the suffix
+     * column, preserving occurrences instead of walking its broad tag. */
+    for (unsigned contextual = 0u; contextual < 2u; contextual++) {
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+        CettaRuntimeStats before, after;
+        cetta_runtime_stats_snapshot(&before);
+#endif
+        Atom *pattern = row4(arena, keyed, output, atom_int(arena, 7), tag);
+        uint64_t matches = 0u;
+        CettaIndex examined = 0u;
+        if (contextual) {
+            CettaGsltTermViewV1 view = {
+                .source = pattern, .resolve = unbound_view_variable,
+            };
+            assert(space_match_count_flat_linear_view64(
+                &selective, arena, &view,
+                CETTA_GSLT_TERM_VIEW_OPEN_BINDINGS_DEAD_V1,
+                &matches, &examined));
+        } else {
+            assert(space_match_count_flat_linear64(
+                &selective, arena, pattern, &matches, &examined));
+        }
+        assert(matches == 2u);
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+        cetta_runtime_stats_snapshot(&after);
+        assert(after.counters[CETTA_RUNTIME_COUNTER_MATCH_POSITION_INDEX_CANDIDATE] -
+               before.counters[CETTA_RUNTIME_COUNTER_MATCH_POSITION_INDEX_CANDIDATE] == 2u);
+#endif
+    }
     for (int64_t repeat = 0; repeat < 2; repeat++) {
         for (int64_t value = 0; value < 400; value++)
             compare_reference(&selective, arena,

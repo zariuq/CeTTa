@@ -1,0 +1,3 @@
+none
+7
+((hop 1 1) (hop 1 2) (hop 1 (: h Number)) (hop 2 1) (hop 2 2) (hop 2 (: h Number)))

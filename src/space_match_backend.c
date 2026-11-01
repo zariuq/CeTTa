@@ -1649,7 +1649,8 @@ static bool native_count_flat_expression_coordinates(
 static bool native_count_suffix_candidates(
     Space *space, Atom *pattern, CettaIndex **candidates, CettaIndex *count) {
     return !space_has_marks(space) &&
-        space->match_backend.native.cold_flat_scans >= NATIVE_COLD_FLAT_SCAN_LIMIT &&
+        (space->match_backend.native.match_trie ||
+         space->match_backend.native.cold_flat_scans >= NATIVE_COLD_FLAT_SCAN_LIMIT) &&
         !space_match_reads_rows(space, space->native.len) &&
         space_path_index_leads(pattern) && space_path_index_may_select(pattern) &&
         space_path_index_candidates(space, pattern, candidates, count);
@@ -11749,6 +11750,9 @@ static bool space_match_dense_pattern_count(const Space *s, Atom *pattern,
         pattern->expr.len > CETTA_TUPLE_MAX_ARITY + 1u)
         return false;
     Atom *const *columns = pattern->expr.elems;
+    /* A deep relation aligns the pattern itself (space_dense_count_columns). */
+    if (space_dense_deep_meets(s, &pattern, 1u))
+        return space_dense_count_columns(s, columns, pattern->expr.len, bits);
     for (CettaExprIndex c = 0u; c < pattern->expr.len; c++) {
         if (columns[c]->kind != ATOM_VAR) {
             if (atom_has_vars(columns[c]))
@@ -12462,16 +12466,21 @@ bool space_native_flat_conjunction_count(
         (space->match_backend.kind != SPACE_ENGINE_NATIVE &&
          space->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT))
         return false;
+    /* The trie holds the rows only: it counts a pattern no fact kept in
+     * a relation can meet; the occurrence cursors read relations too. */
+    bool rows_only = true;
     for (size_t index = 0u; index < pattern_count; index++) {
         if (!cetta_flat_join_pattern_ok(patterns[index]))
             return false;
+        rows_only = rows_only &&
+            !space_dense_may_meet(space, patterns[index]);
     }
 
     /* Two flat patterns: scan rows in declaration order and sum the
      * second pattern from the trie.  The occurrence cursor's node-merge
      * is quadratic when a wildcard splits one leaf per node. */
     space_match_native_ensure_trie(space);
-    if (pattern_count == 2u &&
+    if (pattern_count == 2u && rows_only &&
         space->match_backend.native.match_trie &&
         !space->match_backend.native.match_trie_dirty) {
         CettaFlatJoinBind binds[CETTA_FLAT_JOIN_MAX_BINDS];
@@ -12482,6 +12491,13 @@ bool space_native_flat_conjunction_count(
         CettaCount rows = space->native.len;
         for (CettaIndex row = 0u; counted && row < rows; row++) {
             Atom *fact = space_get_at64(space, row);
+            /* A stored variable meets every pattern: ordinary search owns
+             * it, as it owns a variable-bearing row of the pattern's
+             * shape. */
+            if (fact && fact->kind == ATOM_VAR) {
+                counted = false;
+                break;
+            }
             if (!fact || fact->kind != ATOM_EXPR ||
                 fact->expr.len != patterns[0]->expr.len)
                 continue;
@@ -12576,13 +12592,18 @@ bool space_native_flat_conjunction_count(
             continue;
         }
 
+        /* A stored variable meets every pattern, and a variable-bearing
+         * row of this shape can match.  Counting only ground rows would
+         * drop them, so ordinary search owns them. */
+        if (fact && fact->kind == ATOM_VAR) {
+            admitted = false;
+            break;
+        }
         if (!fact || fact->kind != ATOM_EXPR ||
             fact->expr.len != patterns[level]->expr.len) {
             continue;
         }
         if (atom_has_vars(fact)) {
-            /* A variable-bearing row of this shape can match.  Counting
-             * only ground rows would drop it, so ordinary search owns it. */
             admitted = false;
             break;
         }
@@ -12619,7 +12640,7 @@ bool space_native_flat_conjunction_count(
         }
         /* The last pattern only contributes a cardinality.  A trailing
          * wildcard run is a trie leaf sum, not another cursor per row. */
-        if (level + 2u == pattern_count &&
+        if (level + 2u == pattern_count && rows_only &&
             space->match_backend.native.match_trie &&
             !space->match_backend.native.match_trie_dirty) {
             VarId bind_ids[CETTA_FLAT_JOIN_MAX_BINDS];

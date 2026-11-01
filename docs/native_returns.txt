@@ -1270,6 +1270,21 @@ empty answer stream. Cancellation and current source authority remain separate
 checks. ContextualCBPV's budgeted-effect controls show why equal complete answers
 do not establish equal effects at a limited source prefix.
 
+Whole native collections additionally share
+petta_machine_host_admits_native_collection at machine and directive entry.
+It requires an unlimited transition budget and no host observer of internal
+steps. The machine retains its pending-delay check; directives retain their
+root delay check. source_budget_native_directive exercises the same query with
+finite and unlimited purses, with and without native collection, against
+independently expected completion boundaries.
+
+A compact deep-fact reader may decline a guarded or filtered collection
+before effects. Native query dispatch then returns that relation to its
+authoritative row representation and uses the existing row worker. Other
+outcomes return directly. This representation change preserves the logical
+space and does not replay entered work; layered-search controls exercise both
+sides of the compact-relation threshold.
+
 Consolidation qualification
 --------------------------
 
