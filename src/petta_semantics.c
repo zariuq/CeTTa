@@ -2427,7 +2427,7 @@ static const struct {
     {"reduce", PETTA_ARITY(1)},
     {"import!", PETTA_ARITY(2)},
     {"add-atom", PETTA_ARITY(2)},
-    {"remove-atom", PETTA_ARITY(2)},
+    {"remove-atom", PETTA_ARITY(2) | PETTA_ARITY(3)},
     {"get-atoms", PETTA_ARITY(1)},
     {"match", PETTA_ARITY(3)},
     {"is-var", PETTA_ARITY(1)},

@@ -238,8 +238,16 @@ int main(int argc, char **argv) {
     assert(!affected && filtered.revision == filter_revision && space_length64(&filtered) == 6);
     assert(space_source_overlay_changes(&filtered, &answers, &added, &removed));
     assert(added->expr.len == 1 && !removed->expr.len);
+    assert(space_remove_up_to_compared(&filtered, parse(&data, "filter"), incomplete_after_a, 0, &affected) == CETTA_MATCH_REFUTED);
+    assert(!affected && filtered.revision == filter_revision);
+    assert(space_remove_up_to_compared(&filtered, parse(&data, "filter"), incomplete_after_a, 1, &affected) == CETTA_MATCH_MATCHED);
+    assert(affected == 1 && space_length64(&filtered) == 5);
+    filter_revision = filtered.revision;
+    assert(space_remove_up_to_compared(&filtered, parse(&data, "filter"), incomplete_after_a, 2, &affected) == CETTA_MATCH_INCOMPLETE);
+    assert(!affected && filtered.revision == filter_revision && space_length64(&filtered) == 5);
     assert(space_remove_all_compared(&filtered, parse(&data, "filter"), selects_edge_a, &affected) == CETTA_MATCH_MATCHED);
-    assert(affected == 3 && space_length64(&filtered) == 3);
+    assert(affected == 2 && space_length64(&filtered) == 3);
+    assert(query(&filtered, &answers, "(match &self (edge a $x) $x)", NULL) == 0);
     assert(space_source_overlay_changes(&filtered, &answers, &added, &removed));
     assert(!added->expr.len && removed->expr.len == 2); space_free(&filtered);
 

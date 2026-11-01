@@ -120,6 +120,28 @@ transaction blocks.
 duplicate identities, open atoms, failed batches, captured cursor lifetimes,
 rollback and an independent native-Space update oracle.
 
+### Removing up to a number of matches
+
+In the PeTTa profile, `(remove-atom space pattern count)` removes at most
+`count` matching occurrences. It uses the same matcher as the two-argument
+form, which continues to remove all matches. `0` succeeds without a change;
+`1` removes at most one occurrence, even when several have equal payloads.
+The count is evaluated and must be a nonnegative integer. Invalid counts
+fail without removal. Positive arbitrary-precision integer bounds are accepted;
+a bound larger than the possible occurrence count acts as an unrestricted
+upper bound.
+
+The operation stages selected identities before publishing. An incomplete
+comparison or source read before reaching the bound publishes no removals.
+Once the bound is reached, later candidates need not be inspected. Standard
+memory Spaces and durable edit workspaces support this operation; captured
+durable Spaces remain read-only. To select a particular occurrence, use its
+explicit identity rather than relying on which equal match is selected.
+
+`test-petta-bounded-removal`, `test-source-overlay` and `test-space-workspace`
+cover duplicate data, compiled-rule multiplicity, evaluated counts and their
+bindings, invalid counts, zero, incomplete comparisons and durable workspaces.
+
 ## Measuring ordinary Space queries
 
 `tests/support/bench_ordinary_space.py` measures the current ordinary-Space

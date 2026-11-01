@@ -1497,6 +1497,8 @@ CettaMatchCompletion space_remove_compared(Space *s, Atom *atom,
  * Native positional stores retain their existing removal APIs. */
 CettaMatchCompletion space_remove_all_compared(Space *s, Atom *pattern,
     SpaceAtomComparison matches, CettaCount *removed);
+CettaMatchCompletion space_remove_up_to_compared(Space *s, Atom *pattern,
+    SpaceAtomComparison matches, CettaCount maximum, CettaCount *removed);
 CettaMatchCompletion space_contains_compared(Space *s, Atom *atom, SpaceAtomComparison equal);
 /* Resolve removal without changing the store. The caller retains the Space,
  * body and protection mask for the search lifetime. Each step performs at
