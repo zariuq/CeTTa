@@ -33,6 +33,8 @@
 
 const char *space_module_display_name(const void *space)
     CETTA_ATOM_OPTIONAL_IMPORT;
+bool space_retain_in_arena(const void *space, Arena *arena)
+    CETTA_ATOM_OPTIONAL_IMPORT;
 
 /* The rational-term module (term_graph.c).  A link unit without it builds
  * no graph, so no GV_TERM_GRAPH atom reaches its code. */
@@ -5055,6 +5057,8 @@ Atom *atom_rational_from_mpq(Arena *a, const mpq_t value) {
 #endif
 
 Atom *atom_space(Arena *a, void *space_ptr) {
+    if (space_retain_in_arena && !space_retain_in_arena(space_ptr, a))
+        return NULL;
     Atom *at = arena_alloc(a, sizeof(Atom));
     *at = atom_grounded_leaf(a, GV_SPACE);
     at->ground.ptr = space_ptr;

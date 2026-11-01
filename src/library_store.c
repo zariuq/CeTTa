@@ -2,6 +2,7 @@
 #include "library.h"
 #include "native_disk_store.h"
 #include "native_disk_space.h"
+#include "space_source_overlay.h"
 #include "native_disk_query.h"
 #include "native_handle.h"
 #include "atom_wire.h"
@@ -10,6 +11,7 @@
 #include "petta_specializer.h"
 #include "petta_semantics.h"
 #include <limits.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,6 +21,60 @@ static const char *reader_kind="disk-store-body",*scan_kind="disk-store-scan";
 static const char *query_kind="disk-space-query";
 static const char *batch_kind="disk-store-batch";
 static const char *program_kind="program-watch";
+
+/* A stored Space is an ordinary Space with arena-owned lifetime. It uses the
+ * process-owned fallback universe for its empty native sidecar, not the
+ * creating interpreter context. The occurrence source owns its actual data. */
+typedef struct {
+    Space space;
+    atomic_size_t references;
+    atomic_bool closed;
+    CettaDiskBuffer metadata;
+    unsigned char epoch[16];
+    uint64_t revision;
+} StoredSpace;
+static void stored_space_close(StoredSpace *owned) {
+    CETTA_SCOPED_SHARED_TRANSITION(publication);
+    if (!atomic_exchange(&owned->closed, true)) space_free(&owned->space);
+}
+static void stored_space_retain(void *raw) { atomic_fetch_add(&((StoredSpace *)raw)->references, 1); }
+static void stored_space_release(void *raw) {
+    StoredSpace *owned = raw;
+    if (atomic_fetch_sub(&owned->references, 1) == 1) {
+        stored_space_close(owned); cetta_disk_buffer_free(&owned->metadata); free(owned);
+    }
+}
+static bool stored_space_current(const void *raw) { return !atomic_load(&((const StoredSpace *)raw)->closed); }
+static void stored_space_storage(const void *raw, CettaStorageCensus *census) {
+    const StoredSpace *owned = raw;
+    if (cetta_storage_object(census, owned, sizeof(*owned), CETTA_STORAGE_BLOCK)) {
+        cetta_storage_array(census,owned->metadata.data,owned->metadata.size ? owned->metadata.size : 1,1,0);
+        space_storage_census(&owned->space, census);
+    }
+}
+static const SpaceOwnerOps stored_space_owner_ops = {
+    .retain = stored_space_retain, .release = stored_space_release,
+    .current = stored_space_current, .storage = stored_space_storage,
+};
+static StoredSpace *stored_space_new(const CettaDiskStoreView *view,CettaDiskBytes metadata) {
+    CETTA_SCOPED_SHARED_TRANSITION(creation);
+    StoredSpace *owned = calloc(1, sizeof(*owned)); if (!owned) return NULL;
+    owned->metadata.data=malloc(metadata.size ? metadata.size : 1);
+    if (!owned->metadata.data) { free(owned);return NULL; }
+    if (metadata.size) memcpy(owned->metadata.data,metadata.data,metadata.size);
+    owned->metadata.size=metadata.size;
+    memcpy(owned->epoch,cetta_disk_store_view_epoch(view),16);
+    owned->revision=cetta_disk_store_view_revision(view);
+    atomic_init(&owned->references, 1); atomic_init(&owned->closed, false);
+    space_init(&owned->space);
+    owned->space.lifetime = (SpaceOwner){owned, &stored_space_owner_ops};
+    return owned;
+}
+static StoredSpace *stored_space_arg(Atom *atom) {
+    if (!atom || atom->kind != ATOM_GROUNDED || atom->ground.gkind != GV_SPACE || !atom->ground.ptr) return NULL;
+    Space *space = atom->ground.ptr;
+    return space->lifetime.ops == &stored_space_owner_ops ? space->lifetime.owner : NULL;
+}
 /* A stored-data range uses portable scalars and the existing term order.
  * It does not instantiate variables or evaluate callable-looking symbols. */
 static bool scalar_value(const Atom *value) {
@@ -254,14 +310,14 @@ static bool acquire(CettaLibraryContext *ctx,const char *kind,Atom *handle,
                     CettaNativeHandleUseMode mode,CettaNativeHandleUse *use) {
     return cetta_native_handle_acquire_owned(ctx,kind,handle,mode,use);
 }
-static Atom *space_view(CettaLibraryContext *ctx,Arena *a,Atom **args,uint32_t n,bool streaming) {
+static Atom *space_view(CettaLibraryContext *ctx,Arena *a,Atom **args,uint32_t n,bool streaming,bool staging) {
     CettaDiskBytes key;
     if (n!=(streaming ? 4u : 2u) || !string(args[1],&key)) return refused(a,"invalid-space-view");
     /* Other dialects have different Space discovery/execution paths. Keep
      * their public admission explicit until those paths are qualified. */
     if (ctx->session.language_id!=CETTA_LANGUAGE_PETTA)
         return refused(a,"space-language");
-    /* Persistent source values need the ordinary evaluator's Space owner.
+    /* Source values require a qualified owning evaluator boundary.
      * An unqualified transactional payload must not acquire a live foreign
      * capability by receiving a raw Space pointer. */
     Arena *storage=eval_current_persistent_arena();
@@ -335,17 +391,27 @@ static Atom *space_view(CettaLibraryContext *ctx,Arena *a,Atom **args,uint32_t n
                 view_epoch_value(a,view),unsigned_value(a,cetta_disk_store_view_revision(view))},4) : refused(a,"capacity");
         }
     } else {
-        Space *space=arena_alloc(storage,sizeof(*space));
-        if (!space) { result=refused(a,"capacity");free(indexes);arena_free(&metadata);goto done; }
-        space_init_with_universe(space,&ctx->term_universe);
-        CettaDiskStoreStatus status=cetta_disk_space_capture_indexed_bounded(space,view,prefix,count,indexes,version3 || version4 ? index_count : 0,cetta_library_value_byte_limit(ctx));
-        if (status!=CETTA_STORE_OK) { space_free(space);result=status_value(a,status); }
-        else if (!eval_track_new_space(space)) { space_free(space);result=refused(a,"capacity"); }
-        else {
-            Atom *fields[]={atom_symbol(a,"StoreSpace"),atom_space(a,space),view_epoch_value(a,view),
-                            unsigned_value(a,cetta_disk_store_view_revision(view))};
-            result=atom_expr(a,fields,4);
+        StoredSpace *owned=stored_space_new(view,key);
+        if (!owned) { result=refused(a,"capacity");free(indexes);arena_free(&metadata);goto done; }
+        Space *base=staging ? malloc(sizeof(*base)) : &owned->space;
+        if (!base) { stored_space_release(owned);result=refused(a,"capacity");free(indexes);arena_free(&metadata);goto done; }
+        if (staging) {
+            CETTA_SCOPED_SHARED_TRANSITION(creation);
+            space_init(base);
         }
+        CettaDiskStoreStatus status=cetta_disk_space_capture_indexed_bounded(base,view,prefix,count,indexes,version3 || version4 ? index_count : 0,cetta_library_value_byte_limit(ctx));
+        if (status==CETTA_STORE_OK && staging &&
+                !space_source_overlay_init_owned(&owned->space,base,cetta_library_value_byte_limit(ctx))) status=CETTA_STORE_NOMEM;
+        if (status!=CETTA_STORE_OK) {
+            if (staging) { space_free(base);free(base); }
+            result=status_value(a,status);
+        } else {
+            Atom *value=atom_space(a,&owned->space);
+            Atom *fields[]={atom_symbol(a,"StoreSpace"),value,view_epoch_value(a,view),
+                unsigned_value(a,cetta_disk_store_view_revision(view))};
+            result=value ? atom_expr(a,fields,4) : refused(a,"capacity");
+        }
+        stored_space_release(owned);
     }
     free(indexes);arena_free(&metadata);
 done:
@@ -417,8 +483,26 @@ Atom *cetta_store_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **a
         *watch=captured;Atom *handle=own(ctx,a,program_kind,watch,free_program);
         return handle ? atom_expr2(a,atom_symbol(a,"StoreProgramWatch"),handle) : refused(a,"capacity");
     }
-    if (atom_is_symbol(head,"__cetta_lib_store_space_view")) return space_view(ctx,a,args,n,false);
-    if (atom_is_symbol(head,"__cetta_lib_store_space_query_open")) return space_view(ctx,a,args,n,true);
+    if (atom_is_symbol(head,"__cetta_lib_store_space_view")) return space_view(ctx,a,args,n,false,false);
+    if (atom_is_symbol(head,"__cetta_lib_store_space_workspace")) return space_view(ctx,a,args,n,false,true);
+    if (atom_is_symbol(head,"__cetta_lib_store_space_query_open")) return space_view(ctx,a,args,n,true,false);
+    if (atom_is_symbol(head,"__cetta_lib_store_space_changes")) {
+        CettaDiskBytes key;
+        if (n!=3 || !string(args[2],&key)) return refused(a,"invalid-space-changes");
+        StoredSpace *owned=stored_space_arg(args[0]);
+        if (!owned || !stored_space_current(owned)) return refused(a,"closed-space");
+        CettaNativeHandleUse use={0};
+        if (!acquire(ctx,view_kind,args[1],CETTA_NATIVE_HANDLE_USE_LIFETIME,&use)) return refused(a,"closed-view");
+        CettaDiskStoreView *view=cetta_native_handle_use_resource(&use);
+        bool same=owned->revision==cetta_disk_store_view_revision(view) &&
+            !memcmp(owned->epoch,cetta_disk_store_view_epoch(view),16) &&
+            key.size==owned->metadata.size && (!key.size || !memcmp(key.data,owned->metadata.data,key.size));
+        cetta_native_handle_use_release(&use);
+        if (!same) return refused(a,"workspace-view-mismatch");
+        Atom *added=NULL,*removed=NULL;
+        return space_source_overlay_changes(&owned->space,a,&added,&removed)
+            ? atom_expr3(a,atom_symbol(a,"StoreSpaceChanges"),added,removed) : refused(a,"not-workspace");
+    }
     if (atom_is_symbol(head,"__cetta_lib_store_space_point_query_open")) {
         CettaDiskBytes key;
         if (n!=4 || !string(args[1],&key)) return refused(a,"invalid-space-point-query");
@@ -536,6 +620,8 @@ Atom *cetta_store_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **a
     }
     if (atom_is_symbol(head,"__cetta_lib_store_close")) {
         if (n!=1) return refused(a,"invalid-close");
+        StoredSpace *space=stored_space_arg(args[0]);
+        if (space) { stored_space_close(space);return atom_symbol(a,"StoreClosed"); }
         const char *kinds[]={owner_kind,view_kind,reader_kind,scan_kind,query_kind,batch_kind,program_kind};
         for (size_t i=0;i<sizeof(kinds)/sizeof(*kinds);++i) {
             CettaNativeHandleUse use={0};uint64_t id=0;

@@ -3030,6 +3030,7 @@ static CettaEvaluatorOptions *active_eval_options(void) {
 }
 
 static Space *payload_resolve_space_read(Space *sp) {
+    if (sp && !space_owner_is_current(sp)) return NULL;
     Space *redirect;
     if (g_library_context && g_library_context->import_space_alias_len)
         sp = cetta_library_import_execution_space(g_library_context, sp);
@@ -5033,6 +5034,20 @@ static void petta_removal_receipt_sort(CettaIndex *positions, Atom **atoms,
     free(rows);
 }
 
+static CettaMatchCompletion petta_source_remove_matches(Atom *candidate, Atom *pattern) {
+    CETTA_FRAME_IDENTITY_SCOPE(scope);
+    CettaFrameIdentity epoch = CETTA_FRAME_IDENTITY_NONE;
+    if (!cetta_frame_identity_scope_try(&scope, &epoch)) return CETTA_MATCH_INCOMPLETE;
+    Arena scratch; arena_init_detached(&scratch);
+    Bindings empty; bindings_init(&empty); BindingsBuilder builder;
+    CettaMatchCompletion result = CETTA_MATCH_INCOMPLETE;
+    if (bindings_builder_init(&builder, &empty)) {
+        result = match_atoms_epoch_builder_checked(pattern, candidate, &builder, &scratch, epoch, UINT64_MAX);
+        bindings_builder_free(&builder);
+    }
+    bindings_free(&empty); arena_free(&scratch); return result;
+}
+
 static bool petta_space_remove_pattern_all(
         Space *space, Atom *pattern, PettaProgram *program,
         CettaCount *removed_out) {
@@ -5044,6 +5059,19 @@ static bool petta_space_remove_pattern_all(
     __attribute__((cleanup(cetta_shared_transition_guard_leave)))
     CettaSharedTransitionGuard shared_transition = {0};
     cetta_shared_transition_guard_enter(&shared_transition);
+
+    if (space->match_backend.kind == SPACE_ENGINE_SOURCE) {
+        CettaCount removed = 0;
+        CettaMatchCompletion result = space_remove_all_compared(
+            space, pattern, petta_source_remove_matches, &removed);
+        if (result == CETTA_MATCH_INCOMPLETE) return false;
+        if (removed) {
+            petta_specializer_note_mutation(space, pattern);
+            if (program) petta_program_note_remove_all(program, space, pattern);
+        }
+        if (removed_out) *removed_out = removed;
+        return true;
+    }
 
     CettaCount logical_len = space_length64(space);
     if (logical_len == 0u)
@@ -11029,7 +11057,8 @@ static Atom *dispatch_native_space_mutation(Space *s, Arena *a, Atom *head,
     Space *read_target = resolve_single_space_arg(s, a, space_ref, fuel);
     Space *storage_target = read_target && read_target->module_own_view
         ? (Space *)read_target->overlay_base : read_target;
-    if (storage_target && storage_target->match_backend.kind == SPACE_ENGINE_SOURCE)
+    if (storage_target && storage_target->match_backend.kind == SPACE_ENGINE_SOURCE &&
+        (!storage_target->match_backend.ops || !storage_target->match_backend.ops->source_edits))
         return atom_error(a, call, atom_symbol(a, "ReadOnlySpace"));
     Space *target = payload_resolve_space_write(read_target);
     if (!target)
@@ -34441,7 +34470,8 @@ bool eval_space_mutation_contract_kind(
     Space *read_target = resolve_single_space_arg(root, arena, space_ref, fuel);
     Space *storage_target = read_target && read_target->module_own_view
         ? (Space *)read_target->overlay_base : read_target;
-    if (storage_target && storage_target->match_backend.kind == SPACE_ENGINE_SOURCE) {
+    if (storage_target && storage_target->match_backend.kind == SPACE_ENGINE_SOURCE &&
+        (!storage_target->match_backend.ops || !storage_target->match_backend.ops->source_edits)) {
         outcome_set_add(outcomes,
             atom_error(arena, call, atom_symbol(arena, "ReadOnlySpace")), &empty);
         return true;

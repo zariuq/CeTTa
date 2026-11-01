@@ -52,6 +52,41 @@ policy through the guarded getter; the running agents' SDK is not upgraded.
 
 ## Staging ordinary Space edits
 
+Captured stored Spaces now retain their storage through ordinary arena copies,
+captured read views and cursors. They no longer rely on a session-long list of
+temporary Space headers. `store:close` also accepts these Space values and
+revokes their aliases; outstanding lifetime holds retain a safe header until
+release. PeTTa's ordinary per-operation invalid-argument behavior remains:
+`get-atoms` may raise while `match` may fail without an answer. Store operations
+report explicit closed-resource refusals.
+
+The advanced MeTTa bridge is executable:
+
+```metta
+(let (StoreSpace $work $epoch $revision)
+       (durable-space:workspace $view claims)
+  (let* (($_ (add-atom $work (supports evidence1 claim1)))
+         ($rows (collapse (match $work (supports $e $c) ($e $c))))
+         ($result (durable-space:commit-workspace $owner $view claims request1 $work))
+         ($_ (store:close $work)))
+    $result))
+```
+
+The workspace checks the original data-view epoch, revision and collection
+before extracting changes. The existing MeTTa commit logic maintains indexes,
+counts and receipts atomically. This explicit data-edit layer does not supply
+automatic request IDs, scoped transaction blocks or automatic dynamic-program
+dependency capture. Those remain the responsibility of the forthcoming `db`
+facade and existing qualified read/program-watch interfaces.
+
+PeTTa `remove-atom` retains its remove-all-matches semantics. Source-backed
+filtering uses the shared checked matcher and collects changes before one local
+publication; an incomplete predicate or unavailable source publishes no
+removal. Native exact/unique-alpha single-occurrence removal remains separate.
+`test-space-workspace` qualifies ordinary MeTTa edits, replay, closed aliases,
+view mismatch and fresh-process reopening. Its optional worker argument also
+records repeated-request memory and descriptor samples.
+
 The existing native `space_init_overlay_local` now accepts captured disk
 Spaces through their owner's overlay capability. Its copy retains the exact
 captured root, candidate indexes, point bounds and byte policy independently

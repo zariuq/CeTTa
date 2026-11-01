@@ -308,6 +308,52 @@ static CettaMatchCompletion source_remove(Space *space, Atom *atom,
     }
     return CETTA_MATCH_REFUTED;
 }
+static CettaMatchCompletion source_remove_all(Space *space, Atom *pattern,
+        CettaMatchCompletion (*matches)(Atom *, Atom *), CettaCount *removed) {
+    Overlay *o = space->match_backend.source;
+    SpaceReadToken read = space_read_token(space);
+    unsigned char *mask = o->added_count ? calloc(o->added_count, 1) : NULL;
+    if (o->added_count && !mask) return CETTA_MATCH_INCOMPLETE;
+    Packet **base = NULL; size_t count = 0, capacity = 0, locals = 0;
+    void *raw = NULL; SpaceOccurrenceCursorStep failure = SPACE_OCCURRENCE_CURSOR_CAPACITY;
+    if (!source_open(space, NULL, &raw, &failure)) { free(mask); return CETTA_MATCH_INCOMPLETE; }
+    Cursor *c = raw; CettaIndex index; SpaceOccurrenceCursorStep step;
+    while ((step = cursor_next(c, &index)) == SPACE_OCCURRENCE_CURSOR_ITEM ||
+            step == SPACE_OCCURRENCE_CURSOR_PROGRESS) {
+        if (step == SPACE_OCCURRENCE_CURSOR_PROGRESS) {
+            if (c->masked) continue;
+            step = SPACE_OCCURRENCE_CURSOR_INCOMPLETE; break;
+        }
+        CettaMatchCompletion comparison = matches(c->atom, pattern);
+        if (comparison == CETTA_MATCH_INCOMPLETE) { step = SPACE_OCCURRENCE_CURSOR_INCOMPLETE; break; }
+        if (comparison != CETTA_MATCH_MATCHED) continue;
+        if (c->local) {
+            if (!c->next_added || c->next_added > o->added_count) { step = SPACE_OCCURRENCE_CURSOR_INCOMPLETE; break; }
+            mask[c->next_added - 1] = 1; ++locals;
+        } else {
+            Packet *identity = packet_new(c->identity, o->maximum_bytes);
+            if (!identity || !packets_reserve(&base, &capacity, count + 1)) {
+                packet_free(identity); step = SPACE_OCCURRENCE_CURSOR_CAPACITY; break;
+            }
+            base[count++] = identity;
+        }
+    }
+    bool complete = step == SPACE_OCCURRENCE_CURSOR_END && space_read_token_is_current(read) &&
+        count <= SIZE_MAX / sizeof(Packet *) - o->removed_count && count <= UINT64_MAX - locals;
+    if (complete && !packets_reserve(&o->removed, &o->removed_capacity, o->removed_count + count)) complete = false;
+    if (!complete) { packets_free(base, count); free(mask); cursor_free(c); return CETTA_MATCH_INCOMPLETE; }
+    size_t kept = 0;
+    for (size_t i = 0; i < o->added_count; ++i) {
+        if (mask[i]) packet_free(o->added[i]);
+        else o->added[kept++] = o->added[i];
+    }
+    o->added_count = kept;
+    if (count) memcpy(o->removed + o->removed_count, base, count * sizeof(*base));
+    o->removed_count += count; *removed = count + locals;
+    free(base); free(mask); cursor_free(c);
+    return *removed ? CETTA_MATCH_MATCHED : CETTA_MATCH_REFUTED;
+}
+
 static void packet_storage(Packet *p, CettaStorageCensus *census) {
     if (cetta_storage_object(census, p, sizeof(*p), CETTA_STORAGE_BLOCK)) {
         cetta_storage_array(census, p->bytes, p->size, 1, 0);
@@ -344,7 +390,7 @@ static const SpaceSourceCursorOps cursor_ops = {
     .clone = cursor_clone, .select = cursor_select, .next = cursor_next,
     .atom = cursor_atom, .identity = cursor_identity, .free = cursor_free, .storage = cursor_storage,
 };
-static const SpaceSourceEditOps edits = {.admit = source_admit, .remove = source_remove};
+static const SpaceSourceEditOps edits = {.admit = source_admit, .remove = source_remove, .remove_all = source_remove_all};
 static const SpaceMatchBackendOps overlay_ops = {
     .name = "source-overlay", .source_edits = &edits, .occurrence_ops = &cursor_ops,
     .occurrence_open = source_open, .logical_len = source_count, .free = source_free, .storage = source_storage,
