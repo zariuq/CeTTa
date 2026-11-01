@@ -827,6 +827,11 @@ typedef struct {
         bool *hold_body);
 } PettaMachineHost;
 
+/* Whole native collections share this admission at machine and directive
+ * entry. A finite source purse or an observer of internal transitions needs
+ * ordinary execution until that region supplies its source correspondence. */
+bool petta_machine_host_admits_native_collection(const PettaMachineHost *host);
+
 typedef enum {
     PETTA_MACHINE_STEP_ANSWER = 0,
     PETTA_MACHINE_STEP_EXHAUSTED,
@@ -880,15 +885,15 @@ bool petta_machine_init_with_plan(
     const Bindings *base_environment,
     const PettaMachineHost *host);
 
-/* Start a retained continuation by delivering an already-entered packet to
- * destination before solving query. The base world includes its environment
- * and captures. Completed payloads stay data; expressions enter their
- * authored interpretation and frontiers retain their completion policy.
- * The original producer is never invoked. Failure leaves no machine. */
-bool petta_machine_init_with_return(
+/* Deliver an entered packet to one retained caller-DAG root. The graph's
+ * immutable syntax and plans stay live through the machine; its temporary
+ * arrays and binding vectors may be freed after successful initialization.
+ * Captures enter the authoritative branch before delayed goals can wake.
+ * Root zero delivers the packet directly. Failure leaves no machine. */
+bool petta_machine_init_with_caller_return(
     PettaMachine *machine, Space *space, Arena *answer_arena,
-    Atom *query, const PettaPlanNode *plan, Atom *destination, CettaCallOutcome packet,
-    const Bindings *base_environment, const PettaMachineHost *host);
+    const CettaPreparedPureCallerGraph *callers, const CettaOwnedReturn *returned,
+    const PettaMachineHost *host);
 
 PettaMachineStep petta_machine_next(
     PettaMachine *machine, Atom **answer, Bindings *environment);

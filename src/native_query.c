@@ -2418,6 +2418,71 @@ bool cetta_native_query_count(Space *space, Arena *scratch,
     return true;
 }
 
+/* A flat join can publish disjoint set additions in bounded chunks when
+ * no later row can require another reader. Kept flat columns already have
+ * exact scalar identities (space_dense_column); inspect the remaining
+ * physical candidates before entering. Other queries keep deferring. */
+static bool native_query_stream_exact(const CettaNativeQuery *query,
+                                      NativeQueryLoops *loops) {
+    if (!query->count_only || query->effect_count != 1u ||
+        !space_is_set(query->effects[0].target) ||
+        query->effects[0].removal || query->effects[0].refused_head_count ||
+        query->snapshot || query->filter_count || query->guard_space ||
+        query->inert_head_count || query->afresh || query->rows)
+        return false;
+    Space *target = space_mutation_target(query->effects[0].target);
+    for (size_t i = 0u; i < loops->leg_count; i++) {
+        const NativeQueryLeg *leg = &loops->legs[i];
+        if (leg->nested_any || leg->slot[0] != SIZE_MAX ||
+            tu_kind(loops->universe, leg->fixed[0]) != ATOM_SYMBOL ||
+            leg->space->overlay_base || space_has_dependencies(leg->space) ||
+            target == space_mutation_target(leg->space))
+            return false;
+        SpaceDenseForm form;
+        if (space_dense_form(leg->space,
+                tu_sym(loops->universe, leg->fixed[0]), &form) &&
+            (form.deep || (CettaExprLen)form.arity + 1u != leg->len))
+            return false;
+        CettaIndex *rows = NULL;
+        space_dense_reading_begin();
+        CettaIndex count = space_match_candidates64(leg->space, leg->pattern,
+                                                    &rows);
+        space_dense_reading_end();
+        bool exact = true;
+        for (CettaIndex row = 0u; exact && row < count; row++) {
+            AtomId id = space_get_atom_id_at64(leg->space, rows[row]);
+            const CettaTermHdr *hdr = tu_hdr(loops->universe, id);
+            if (!hdr || hdr->tag == ATOM_VAR) {
+                exact = false;
+                break;
+            }
+            if (hdr->tag != ATOM_EXPR ||
+                tu_arity(loops->universe, id) != leg->len)
+                continue;
+            AtomId head = tu_child_from_header(loops->universe, hdr, 0u);
+            if (tu_kind(loops->universe, head) == ATOM_SYMBOL &&
+                tu_sym(loops->universe, head) !=
+                    tu_sym(loops->universe, leg->fixed[0]))
+                continue;
+            if (tu_has_vars(loops->universe, id) ||
+                !tu_plain_expr(loops->universe, id, hdr)) {
+                exact = false;
+                break;
+            }
+            for (CettaExprIndex c = 0u; exact && c < leg->len; c++) {
+                AtomId part = tu_child_from_header(loops->universe, hdr, c);
+                AtomKind kind = tu_kind(loops->universe, part);
+                exact = (kind == ATOM_SYMBOL || kind == ATOM_GROUNDED) &&
+                    native_query_id_exact(loops->universe, part);
+            }
+        }
+        free(rows);
+        if (!exact)
+            return false;
+    }
+    return true;
+}
+
 CettaNativeQueryStatus cetta_native_query_run(
     const CettaNativeQuery *query, Arena *arena,
     CettaNativeQueryResult *result) {
@@ -2451,7 +2516,17 @@ CettaNativeQueryStatus cetta_native_query_run(
             cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_NATIVE_QUERY_ANSWER,
                                     result->answers);
         }
-        return open;
+        if (open != CETTA_NATIVE_QUERY_DECLINED)
+            return open;
+        /* The open reader owns its refusal before effects. The existing
+         * row loops also execute guarded and filtered queries; returning
+         * this relation to rows lets them retain that route when the
+         * compact reader does not implement the query's observation. */
+        Atom *pattern = query->patterns[i];
+        SymbolId head = pattern->kind == ATOM_EXPR && pattern->expr.len &&
+                pattern->expr.elems[0]->kind == ATOM_SYMBOL
+            ? pattern->expr.elems[0]->sym_id : SYMBOL_ID_NONE;
+        space_dense_settle(read, head);
     }
     bool effects = query->consumer == CETTA_NATIVE_QUERY_EFFECTS;
     if (query->guard_space &&
@@ -2591,7 +2666,8 @@ CettaNativeQueryStatus cetta_native_query_run(
         }
         /* A row met halfway may decline the whole query, which must then
          * have made no effect. */
-        deferred = effects;
+        deferred |= effects && (selective || !meets_kept ||
+            !native_query_stream_exact(query, loops));
     }
     size_t effect_count = effects ? query->effect_count : 0u;
     NativeQueryTemplate *templates =
@@ -2878,7 +2954,7 @@ CettaNativeQueryStatus cetta_native_query_run(
     }
     /* A query without effects can still be answered by the ordinary path. */
     if (!done)
-        return made_effects && !declined ? CETTA_NATIVE_QUERY_FAILED
+        return made_effects ? CETTA_NATIVE_QUERY_FAILED
                                          : CETTA_NATIVE_QUERY_DECLINED;
     result->answers = answers;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_NATIVE_QUERY_ADMISSION);

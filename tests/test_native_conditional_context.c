@@ -12,6 +12,8 @@
 
 static int64_t observed_callable_identity = INT64_MIN;
 static unsigned observed_callable_arity_reads;
+static bool observe_he_division_entries;
+static unsigned he_division_entries;
 bool __real_petta_semantics_lambda_arity(const Atom *, CettaExprLen *);
 bool __wrap_petta_semantics_lambda_arity(const Atom *callable, CettaExprLen *arity) {
     int64_t identity = 0;
@@ -267,6 +269,12 @@ static void prepared_fixture_result(Arena *arena, CettaCallOutcome *outcome) {
         atom_symbol(arena, "datum"))); break;
     case 7u: *outcome = cetta_call_completed_value(atom_symbol(arena, "Empty")); break;
     case 8u: *outcome = cetta_call_interrupted(); break;
+    case 62u: case 63u: {
+        Atom *payload = atom_deep_copy(arena, prepared_borrowed_value);
+        *outcome = prepared_mode == 62u ? cetta_call_raised(payload)
+            : cetta_call_completed_value(payload);
+        break;
+    }
     case 10u: *outcome = cetta_call_completed_value(NULL); break;
     case 12u: case 16u: {
         Atom *prototype = atom_expr2(arena, value, value);
@@ -439,6 +447,13 @@ bool __wrap_cetta_library_call_native_prepared_view(CettaLibraryContext *library
         return __real_cetta_library_call_native_prepared_view(library, space, arena,
             head, arguments, count, outcome);
     prepared_attempts++;
+    if (prepared_mode == 61u) {
+        if (body_stop_weak)
+            eval_mark_incomplete(body_stop_reason);
+        else
+            eval_mark_interrupted(body_stop_reason);
+        return false;
+    }
     if (prepared_mode == 60u) {
         prepared_calls++;
         if (prepared_calls == 1u) {
@@ -506,6 +521,8 @@ bool __real_grounded_call(Arena *arena, Atom *head, Atom **arguments,
                          uint32_t count, CettaCallOutcome *outcome);
 bool __wrap_grounded_call(Arena *arena, Atom *head, Atom **arguments,
                          uint32_t count, CettaCallOutcome *outcome) {
+    if (observe_he_division_entries && atom_is_symbol_id(head, g_builtin_syms.op_div))
+        he_division_entries++;
     if (source_activation_fixture && atom_is_symbol_id(head, g_builtin_syms.println_bang) &&
         count == 1u && atom_is_symbol(arguments[0], "source-pattern-entered")) {
         source_activation_effects++;
@@ -6534,6 +6551,46 @@ static unsigned oem_callee_owner_controls(void) {
         arena_free(&answers);
     }
     cetta_open_equation_program_release(program);
+    const char *held_equations[] = {
+        "(: owner-policy-length (-> Atom %Undefined%))",
+        "(= (owner-policy-length $xs) (case $xs ((LNil 0) ((LCons $x $rest) (+ 1 (owner-policy-length $rest))))))",
+        "(= (owner-policy-bridge $xs) (owner-policy-length $xs))",
+    };
+    for (size_t index = 0u; index < 3u; index++) {
+        Atom *equation = fixture_atom(&source, held_equations[index]);
+        const PettaPlanNode *plan = petta_program_plan_dynamic_add(
+            library->petta_program, equation);
+        assert(plan);
+        CettaCount position = space_length64(&space);
+        space_add(&space, equation);
+        assert(petta_program_note_add(library->petta_program, &space,
+            space_get_at64(&space, position), plan));
+    }
+    SymbolId held_head = symbol_intern_cstr(g_symbols, "owner-policy-length");
+    assert(!cetta_prepared_pure_call_policy_supported(&space, held_head, 1u));
+    program = cetta_open_equation_program_compile(library->petta_program, &space,
+        symbol_intern_cstr(g_symbols, "owner-policy-bridge"), 1u, &host, &reason);
+    assert(program);
+    Arena answers;
+    arena_init(&answers);
+    Atom *held_arguments[] = {
+        fixture_atom(&source, "(LCons 1 (LCons 2 LNil))"),
+    };
+    unsigned attempts = probe.attempts;
+    CettaOpenEquationCursor *cursor = cetta_open_equation_cursor_open(program,
+        &answers, held_arguments, 1u, NULL, NULL, 0u, &runtime);
+    assert(cursor);
+    CettaCallOutcome returned = cetta_call_failure();
+    assert(cetta_open_equation_cursor_next(cursor, NULL, &returned, NULL) ==
+        CETTA_OPEN_EQUATION_ANSWER);
+    assert(returned.kind == CETTA_CALL_VALUE &&
+        atom_eq(returned.term, atom_int(&answers, 2)) && probe.attempts == attempts);
+    assert(cetta_open_equation_cursor_next(cursor, NULL, &returned, NULL) ==
+        CETTA_OPEN_EQUATION_EXHAUSTED);
+    checks += 4u;
+    cetta_open_equation_cursor_close(cursor);
+    arena_free(&answers);
+    cetta_open_equation_program_release(program);
     prepared_pure_program_cache_free(&probe.owner.prepared_pure_cache);
     space_free(&space);
     arena_free(&source);
@@ -9007,8 +9064,265 @@ static unsigned prime_prepared_data_controls(void) {
     return checks + 5u;
 }
 
+static unsigned caller_entry_translations;
+
+static const PettaPlanNode *caller_entry_forbid_translation(
+        void *context, Space *space, Atom *term,
+        const Arena *const *owners, size_t count) {
+    (void)context; (void)space; (void)term; (void)owners; (void)count;
+    caller_entry_translations++;
+    return NULL;
+}
+
+/* Retained plans, completed data and shared lexical ports cross entry without
+ * translating the saved caller against today's declarations. */
+static unsigned caller_graph_entry_controls(void) {
+    CettaLibraryContext *library = calloc(1u, sizeof(*library));
+    assert(library);
+    cetta_library_context_init_for_language_profile(library, CETTA_LANGUAGE_PETTA, NULL);
+    eval_set_library_context(library);
+    Arena source;
+    arena_init_detached(&source);
+    Space space;
+    space_init(&space);
+    unsigned checks = 0u;
+    for (unsigned depth = 0u; depth < 3u; depth++)
+    for (unsigned datum = 0u; datum < 4u; datum++)
+    for (unsigned tag = 0u; tag < 3u; tag++) {
+        Arena output;
+        arena_init_detached(&output);
+        PettaEvalMachineContext context = {.fuel = -1, .library_context = library,
+            .semantic_authority_epoch = 1u, .prepared_pure_cache = {.root_space = &space}};
+        PettaMachineHost host = petta_eval_machine_host(&context, -1, false, false,
+            false, true, false, petta_eval_machine_match_semantics(library, false));
+        CettaPreparedPureCaller nodes[2] = {0};
+        const Arena *owners[] = {&output};
+        Atom *captured = fixture_atom(&output, "(function (return (readln!)))");
+        Atom *expected = fixture_atom(&output, datum == 0u ? "(readln!)"
+            : datum == 1u ? "(function (return (readln!)))"
+            : datum == 2u ? "(Shared $u $u $v)" : "(Error payload datum)");
+        Atom *packet_value = expected;
+        for (unsigned index = 0u; index < depth; index++) {
+            CettaPreparedPureCaller *node = &nodes[index];
+            bindings_init(&node->captures);
+            node->input = atom_var_with_id(&output, "__graph_input", fresh_var_id());
+            Atom *port = atom_var_with_id(&output, "__graph_capture", fresh_var_id());
+            assert(bindings_add_var(&node->captures, port, captured));
+            Atom *head = atom_symbol(&output, index ? "graph-inner" : "graph-outer");
+            node->term = atom_expr(&output, (Atom *[]){head, node->input, port}, 3u);
+            node->parent = index;
+            node->plan = host.translate_source(host.context, &space, node->term, owners, 1u);
+            assert(node->plan);
+        }
+        if (depth > 1u)
+            expected = atom_expr(&output, (Atom *[]){atom_symbol(&output, "graph-inner"), expected, captured}, 3u);
+        if (depth)
+            expected = atom_expr(&output, (Atom *[]){atom_symbol(&output, "graph-outer"), expected, captured}, 3u);
+        size_t root = depth;
+        CettaPreparedPureCallerGraph graph = {.nodes = nodes, .length = depth,
+            .roots = &root, .root_count = 1u};
+        CettaOwnedReturn returned = {.outcome = tag == 0u
+            ? cetta_call_completed_value(packet_value) : tag == 1u
+            ? cetta_call_raised(packet_value) : cetta_call_failure()};
+        host.translate_source = caller_entry_forbid_translation;
+        caller_entry_translations = 0u;
+        PettaMachine machine;
+        assert(petta_machine_init_with_caller_return(&machine, &space, &output,
+            &graph, &returned, &host));
+        assert(!caller_entry_translations);
+        for (unsigned index = 0u; index < depth; index++)
+            bindings_free(&nodes[index].captures);
+        Atom *answer = NULL;
+        Bindings environment;
+        PettaMachineStep step = petta_machine_next(&machine, &answer, &environment);
+        assert(!caller_entry_translations);
+        if (tag == 2u) {
+            assert(step == PETTA_MACHINE_STEP_EXHAUSTED);
+        } else {
+            if (step != PETTA_MACHINE_STEP_ANSWER)
+                fprintf(stderr, "caller graph depth=%u datum=%u tag=%u step=%u\n",
+                    depth, datum, tag, step);
+            assert(step == PETTA_MACHINE_STEP_ANSWER);
+            Atom *observed = bindings_apply_if_vars(&environment, &output, answer);
+            assert(atom_alpha_eq(observed, tag ? packet_value : expected));
+            assert(petta_machine_last_answer_raised(&machine) == (tag == 1u));
+        }
+        bindings_free(&environment);
+        petta_machine_destroy(&machine);
+        prepared_pure_program_cache_free(&context.prepared_pure_cache);
+        arena_free(&output);
+        checks++;
+    }
+    space_free(&space);
+    arena_free(&source);
+    eval_set_library_context(NULL);
+    cetta_library_context_free(library);
+    free(library);
+    return checks;
+}
+
 /* Actual native packets enter the ordinary relational continuation without
  * native replay. Conditional goals stay attached until binding or publication. */
+static unsigned tagged_raise_route_controls(void) {
+    CettaLibraryContext *library = calloc(1u, sizeof(*library));
+    assert(library);
+    cetta_library_context_init_for_language_profile(library, CETTA_LANGUAGE_PETTA, NULL);
+    eval_set_library_context(library);
+    Arena source;
+    arena_init_detached(&source);
+    Space space;
+    space_init(&space);
+    refusal_add_equation(&space, &source,
+        "(= (tagged-direct $x) (__cetta_lib_json_parse_v1 $x))");
+    refusal_add_equation(&space, &source,
+        "(= (tagged-bind $x) (let $v (tagged-direct $x) (Pair $v $v)))");
+    refusal_add_equation(&space, &source, "(= (tagged-alt $x) (tagged-direct $x))");
+    refusal_add_equation(&space, &source, "(= (tagged-alt $x) 9)");
+    const char *queries[] = {"(tagged-direct 1)", "(catch (tagged-direct 1))",
+        "(let $v (catch (tagged-direct 1)) (Pair $v $v))",
+        "(catch (collapse (tagged-alt 1)))",
+        "(let $head tagged-direct ($head 1))", "(catch (tagged-bind 1))",
+        "(superpose ((catch (tagged-direct 1)) 17))", "(catch (tagged-alt 1))"};
+    const char *payloads[] = {"fault", "(readln!)", "(Shared $u $u $v)", "(Error payload datum)"};
+    prepared_head = symbol_intern_cstr(g_symbols, "__cetta_lib_json_parse_v1");
+    prepared_fixture = true;
+    unsigned checks = 0u;
+    for (unsigned route = 0u; route < 3u; route++)
+    for (unsigned payload = 0u; payload < 4u; payload++)
+    for (unsigned raised = 0u; raised < 2u; raised++)
+    for (unsigned query = 0u; query < 8u; query++) {
+        Arena output;
+        arena_init_detached(&output);
+        prepared_borrowed_value = fixture_atom(&source, payloads[payload]);
+        prepared_mode = raised ? 62u : 63u;
+        prepared_calls = prepared_attempts = prepared_effects = 0u;
+        PettaEvalMachineContext context = {.fuel = -1, .library_context = library,
+            .semantic_authority_epoch = 1u, .prepared_pure_cache = {.root_space = &space}};
+        PettaMachineHost host = petta_eval_machine_host(&context, -1, false, false,
+            false, true, false, petta_eval_machine_match_semantics(library, false));
+        if (route != 1u) {
+            host.execute_prepared_pure_call = NULL;
+            host.open_answer_cursor = NULL;
+        }
+        if (!route)
+            host.open_relation_cursor = NULL;
+        PettaMachine machine;
+        assert(petta_machine_init(&machine, &space, &output,
+            fixture_atom(&output, queries[query]), NULL, &host));
+        unsigned count = 0u;
+        unsigned payload_count = 0u, sibling_count = 0u;
+        for (;;) {
+            Atom *answer = NULL;
+            Bindings environment;
+            PettaMachineStep step = petta_machine_next(&machine, &answer, &environment);
+            if (step == PETTA_MACHINE_STEP_ANSWER) {
+                assert(!(raised && query == 4u));
+                Atom *value = bindings_apply_if_vars(&environment, &output, answer);
+                Atom *expected = atom_deep_copy(&output, prepared_borrowed_value);
+                if (query == 2u || (query == 5u && !raised))
+                    expected = atom_expr(&output, (Atom *[]){atom_symbol(&output, "Pair"), expected, expected}, 3u);
+                bool equal = atom_alpha_eq(value, expected);
+                if (query == 3u && !raised)
+                    equal = value && value->kind == ATOM_EXPR && value->expr.len == 2u &&
+                        ((atom_alpha_eq(value->expr.elems[0], expected) && atom_eq(value->expr.elems[1], atom_int(&output, 9))) ||
+                         (atom_alpha_eq(value->expr.elems[1], expected) && atom_eq(value->expr.elems[0], atom_int(&output, 9))));
+                if (query == 6u || (query == 7u && !raised)) {
+                    if (atom_eq(value, atom_int(&output, query == 6u ? 17 : 9))) {
+                        equal = true;
+                        sibling_count++;
+                    } else if (equal)
+                        payload_count++;
+                }
+                if (!equal) {
+                    fprintf(stderr, "tagged route=%u payload=%u raised=%u query=%u observed=", route, payload, raised, query);
+                    atom_print(value, stderr); fputs(" expected=", stderr); atom_print(expected, stderr); fputc('\n', stderr);
+                }
+                assert(equal);
+                assert(petta_machine_last_answer_raised(&machine) == (raised && !query));
+                assert(++count <= (query == 6u || (query == 7u && !raised) ? 2u : 1u));
+            }
+            bindings_free(&environment);
+            if (step != PETTA_MACHINE_STEP_ANSWER) {
+                assert(step == PETTA_MACHINE_STEP_EXHAUSTED);
+                break;
+            }
+        }
+        assert(count == (query == 6u || (query == 7u && !raised) ? 2u : raised && query == 4u ? 0u : 1u));
+        assert((query != 6u && !(query == 7u && !raised)) || (payload_count == 1u && sibling_count == 1u));
+        assert(prepared_calls == 1u && !prepared_effects);
+        petta_machine_destroy(&machine);
+        prepared_pure_program_cache_free(&context.prepared_pure_cache);
+        arena_free(&output);
+        checks++;
+    }
+    prepared_fixture = false;
+    prepared_borrowed_value = NULL;
+    space_free(&space);
+    arena_free(&source);
+    eval_set_library_context(NULL);
+    cetta_library_context_free(library);
+    free(library);
+    return checks;
+}
+
+/* Completion consumes the producer's actual result. Pure primitive folding
+ * may avoid entry; repeating its native entry to rediscover an error may not. */
+static unsigned he_completed_error_controls(void) {
+    CettaLibraryContext *previous = g_library_context;
+    CettaLibraryContext *library = calloc(1u, sizeof(*library));
+    assert(library);
+    cetta_library_context_init_for_language_profile(library, CETTA_LANGUAGE_HE, NULL);
+    eval_set_library_context(library);
+    Registry *previous_registry = g_registry;
+    Space *previous_root = g_eval_root_space;
+    const struct { const char *query, *expected; unsigned entries; } cases[] = {
+        {"(completed-error 1)", "(Error (/ 1 0) DivisionByZero)", 1u},
+        {"(collapse (superpose (7 (/ 1 0))))", "(7)", 1u},
+        {"(collapse (superpose ((/ 1 0) 7)))", "(7)", 1u},
+        {"(let $xs (collapse (superpose (7 (/ 1 0)))) (size-atom $xs))", "1", 1u},
+        {"(let $xs (collapse (superpose ((/ 1 0) (/ 2 0)))) (size-atom $xs))", "2", 2u},
+        {"(let $xs (collapse (superpose (7 7 (/ 1 0)))) (size-atom $xs))", "2", 1u},
+        {"(collapse (superpose ((/ 1 0) (/ 2 0))))",
+         "((Error (/ 1 0) DivisionByZero) (Error (/ 2 0) DivisionByZero))", 2u},
+    };
+    unsigned checks = 0u;
+    for (unsigned item = 0u; item < sizeof(cases) / sizeof(*cases); item++) {
+        Arena arena;
+        arena_init_detached(&arena);
+        Space space;
+        space_init(&space);
+        Registry registry;
+        registry_init(&registry);
+        registry_bind_id(&registry, g_builtin_syms.self, atom_space(&arena, &space));
+        g_registry = &registry;
+        g_eval_root_space = &space;
+        space_add(&space, fixture_atom(&arena, "(= (completed-error $x) (/ $x 0))"));
+        EvalOutcome observed;
+        eval_outcome_init(&observed);
+        he_division_entries = 0u;
+        observe_he_division_entries = true;
+        metta_eval_outcome(&space, &arena, NULL, fixture_atom(&arena, cases[item].query), -1, &observed);
+        observe_he_division_entries = false;
+        if (he_division_entries > cases[item].entries)
+            fprintf(stderr, "HE completion item=%u entered %u times, at most %u permitted\n",
+                item, he_division_entries, cases[item].entries);
+        assert(he_division_entries <= cases[item].entries);
+        assert(observed.completion == CETTA_EVAL_COMPLETE && observed.results.len == 1u);
+        assert(atom_eq(observed.results.items[0], fixture_atom(&arena, cases[item].expected)));
+        eval_outcome_free(&observed);
+        g_registry = previous_registry;
+        g_eval_root_space = previous_root;
+        registry_free(&registry);
+        space_free(&space);
+        arena_free(&arena);
+        checks++;
+    }
+    eval_set_library_context(previous);
+    cetta_library_context_free(library);
+    free(library);
+    return checks;
+}
+
 static unsigned conditional_native_continuation_controls(void) {
     CettaLibraryContext *library = calloc(1u, sizeof(*library));
     assert(library);
@@ -9340,9 +9654,16 @@ static unsigned conditional_native_continuation_controls(void) {
         const Arena *owners[] = {&execution};
         const PettaPlanNode *plan = host.translate_source(host.context, &space, query, owners, 1u);
         assert(plan);
+        CettaPreparedPureCaller caller = {.input = hole, .term = query, .plan = plan};
+        bindings_init(&caller.captures);
+        size_t root = 1u;
+        CettaPreparedPureCallerGraph graph = {.nodes = &caller, .length = 1u,
+            .roots = &root, .root_count = 1u};
+        CettaOwnedReturn packet = {.outcome = cetta_call_completed_value(atom_int(&execution, 5))};
         PettaMachine machine;
-        assert(petta_machine_init_with_return(&machine, &space, &execution, query, plan,
-            hole, cetta_call_completed_value(atom_int(&execution, 5)), NULL, &host));
+        assert(petta_machine_init_with_caller_return(&machine, &space, &execution,
+            &graph, &packet, &host));
+        bindings_free(&caller.captures);
         if (!known) {
             Atom *equation = fixture_atom(&source, declaration);
             const PettaPlanNode *added = petta_program_plan_dynamic_add(library->petta_program, equation);
@@ -11990,6 +12311,72 @@ static unsigned completed_body_entry_controls(void) {
     return checks;
 }
 
+static unsigned terminal_native_disposition_controls(void) {
+    CettaLibraryContext *library = calloc(1u, sizeof(*library));
+    assert(library);
+    cetta_library_context_init_for_language_profile(library, CETTA_LANGUAGE_PETTA, NULL);
+    eval_set_library_context(library);
+    Arena source, owner;
+    arena_init(&source); arena_init(&owner);
+    Space space; space_init(&space);
+    PettaEvalMachineContext context = {.library_context = library, .fuel = -1,
+        .semantic_authority_epoch = 1u};
+    Atom *lambda = petta_capture_lambda(&source, fixture_atom(&source,
+        "(|-> ($x) (__cetta_lib_json_parse_v1 $x))"), NULL);
+    PettaPreparedCallable *plan = petta_eval_open_prepare_pure_callable(
+        &context, &space, &owner, lambda, 1u);
+    assert(plan && !plan->body_authority);
+    prepared_fixture = true;
+    prepared_head = symbol_intern_cstr(g_symbols, "__cetta_lib_json_parse_v1");
+    Atom *arguments[] = {atom_int(&source, 1)};
+    CettaEvalCompletion reasons[] = {CETTA_EVAL_INCOMPLETE_FUEL,
+        CETTA_EVAL_INCOMPLETE_CANCELLED, CETTA_EVAL_INCOMPLETE_STACK,
+        CETTA_EVAL_INCOMPLETE_CAPACITY, CETTA_EVAL_INCOMPLETE_INVALIDATED,
+        CETTA_EVAL_INCOMPLETE_HOST_FAILURE};
+    unsigned checks = 0u;
+    for (unsigned parent = 0u; parent < 4u; parent++)
+    for (unsigned weak = 0u; weak < 2u; weak++)
+    for (unsigned reason = 0u; reason < sizeof(reasons)/sizeof(*reasons); reason++) {
+        CettaEvalEpisode old = {0};
+        if (parent >= 2u)
+            old.completion = CETTA_EVAL_INCOMPLETE_HOST_FAILURE;
+        if (parent == 3u)
+            old.interrupted = true;
+        g_eval_completion_tracker = parent ? &old : NULL;
+        prepared_mode = 61u; prepared_calls = prepared_attempts = 0u;
+        body_stop_reason = reasons[reason]; body_stop_weak = weak != 0u;
+        CettaCallOutcome returned = {0};
+        assert(petta_eval_open_execute_pure_callable(&context, plan,
+            &owner, arguments, 1u, &returned));
+        assert(returned.kind == CETTA_CALL_INTERRUPTED && !returned.term);
+        assert(prepared_calls == 0u && prepared_attempts == (parent == 3u ? 0u : 1u));
+        assert(g_eval_completion_tracker == (parent ? &old : NULL));
+        if (parent)
+            assert(old.completion == (parent >= 2u
+                ? CETTA_EVAL_INCOMPLETE_HOST_FAILURE : reasons[reason]));
+        checks++;
+    }
+    /* A separate request may enter after the unentered failure, even while
+     * an older weak parent diagnostic remains recorded. */
+    CettaEvalEpisode prior = {.completion = CETTA_EVAL_INCOMPLETE_HOST_FAILURE};
+    g_eval_completion_tracker = &prior;
+    prepared_mode = 0u; prepared_calls = prepared_attempts = 0u;
+    CettaCallOutcome returned = {0};
+    assert(petta_eval_open_execute_pure_callable(&context, plan,
+        &owner, arguments, 1u, &returned));
+    assert(returned.kind == CETTA_CALL_VALUE &&
+        returned.result_form == CETTA_CALL_RESULT_COMPLETED_VALUE && prepared_calls == 1u);
+    assert(prior.completion == CETTA_EVAL_INCOMPLETE_HOST_FAILURE &&
+        g_eval_completion_tracker == &prior);
+    checks++;
+    g_eval_completion_tracker = NULL;
+    prepared_fixture = false;
+    petta_eval_open_release_pure_callable(&context, plan);
+    space_free(&space); arena_free(&owner); arena_free(&source);
+    eval_set_library_context(NULL); cetta_library_context_free(library); free(library);
+    return checks;
+}
+
 static unsigned completed_body_scope_controls(void) {
     CettaLibraryContext *library = calloc(1u, sizeof(*library)); assert(library);
     cetta_library_context_init_for_language_profile(library, CETTA_LANGUAGE_PETTA, NULL);
@@ -12065,13 +12452,15 @@ int main(int argc, char **argv) {
     g_symbols = &symbols;
     g_var_intern = &variables;
     if (argc == 2 && strcmp(argv[1], "--completed-body-scope") == 0) {
-        printf("PASS: %u completed-body scope controls, %u entry controls\n",
-            completed_body_scope_controls(), completed_body_entry_controls());
+        printf("PASS: %u completed-body scope controls, %u entry controls, %u terminal disposition controls\n",
+            completed_body_scope_controls(), completed_body_entry_controls(),
+            terminal_native_disposition_controls());
         var_intern_free(&variables); symbol_table_free(&symbols); return 0;
     }
     if (argc == 1) {
-        printf("PASS: %u completed-body scope controls, %u entry controls\n",
-            completed_body_scope_controls(), completed_body_entry_controls());
+        printf("PASS: %u completed-body scope controls, %u entry controls, %u terminal disposition controls\n",
+            completed_body_scope_controls(), completed_body_entry_controls(),
+            terminal_native_disposition_controls());
     }
     bool native_episode_only = argc == 2 && strcmp(argv[1], "--native-completion-episode") == 0;
     bool residual_completion_only = argc == 2 && strcmp(argv[1], "--residual-completion") == 0;
@@ -12103,6 +12492,19 @@ int main(int argc, char **argv) {
     bool metered_invocation_only = argc == 2 && strcmp(argv[1], "--metered-invocation") == 0;
     assert(argc == 1 || native_episode_only || residual_completion_only || native_alias_only || callback_source_only || metered_invocation_only || ordered_only || ledger_only || caller_only || he_prepared_only || authority_only || source_role_only || lexical_source_only || compiler_refusal_only || refusal_only || availability_only || episode_only || prime_data_only || fold_only || callee_only || lexical_only || body_only || collection_failure_only || bound_completion_only || resumption_only || conditional_only || stale_tail_only || caller_dag_only || he_completion_only);
     unsigned checks = prepared_worker_availability();
+    if (conditional_only || caller_dag_only || ledger_only || argc == 1) {
+        unsigned graph_checks = caller_graph_entry_controls();
+        printf("PASS: %u retained caller graph entries preserve plans, values and tagged control\n", graph_checks);
+        checks += graph_checks;
+        unsigned raise_checks = tagged_raise_route_controls();
+        printf("PASS: %u tagged native raises preserve data, handlers, alternatives and scopes\n", raise_checks);
+        checks += raise_checks;
+    }
+    if (conditional_only || he_completion_only || ledger_only || argc == 1) {
+        unsigned completed_errors = he_completed_error_controls();
+        printf("PASS: %u HE completed-error controls normalize once without native re-entry\n", completed_errors);
+        checks += completed_errors;
+    }
     if (native_episode_only || ledger_only || argc == 1)
         checks += native_completion_episode_controls();
     if (residual_completion_only || ledger_only || argc == 1)
