@@ -1494,10 +1494,20 @@ static bool native_cold_flat_candidates(
     }
     CettaIndex *indices = NULL;
     CettaIndex length = 0u, capacity = 0u;
+    const TermUniverse *universe = space->native.universe;
     for (CettaIndex position = 0u; position < space->native.len; position++) {
         AtomId id = space_get_atom_id_at64(space, position);
-        const CettaTermHdr *header = tu_hdr(space->native.universe, id);
-        bool candidate = !header || (header->aux32 & CETTA_TERM_HDR_HAS_VARS);
+        const CettaTermHdr *header = tu_hdr(universe, id);
+        /* A row holding variables is read as a ground row is, a stored
+         * variable or private carrier in a column standing for anything;
+         * a variable row, a row without a stored header, or one whose head
+         * is a carrier spelling another shape is offered unread. */
+        bool open = !header || (header->aux32 & CETTA_TERM_HDR_HAS_VARS);
+        bool candidate = !header || header->tag == ATOM_VAR ||
+            (open && header->tag == ATOM_EXPR &&
+             (header->aux32 & CETTA_TERM_HDR_DATA_MASK) != 0u &&
+             tu_internal_tag(universe,
+                             tu_child_from_header(universe, header, 0u)) != 0);
         if (!candidate && header->tag == ATOM_EXPR &&
             (header->aux32 & CETTA_TERM_HDR_DATA_MASK) == pattern->expr.len) {
             candidate = true;
@@ -1505,12 +1515,18 @@ static bool native_cold_flat_candidates(
                 Atom *item = pattern->expr.elems[column];
                 if (item->kind == ATOM_VAR)
                     continue;
-                AtomId child = tu_child_from_header(space->native.universe, header, column);
+                AtomId child = tu_child_from_header(universe, header, column);
+                if (open && child != CETTA_ATOM_ID_NONE) {
+                    const CettaTermHdr *part = tu_hdr(universe, child);
+                    if (!part || part->tag == ATOM_VAR ||
+                        tu_internal_tag(universe, child) != 0)
+                        continue;
+                }
                 if (child == CETTA_ATOM_ID_NONE ||
                     (item->kind == ATOM_SYMBOL && column < NATIVE_COLD_ID_COLUMNS
                          ? child != symbol_ids[column]
-                         : !native_stored_coordinate_matches(space->native.universe,
-                                                              child, item))) {
+                         : !native_stored_coordinate_matches(universe, child,
+                                                              item))) {
                     candidate = false;
                     break;
                 }
@@ -11406,7 +11422,8 @@ void space_match_backend_note_swap_remove(Space *s, CettaIndex removed_row,
     bool moved = moved_from != removed_row;
     space_path_indexes_note_swap_remove(s, removed_row, removed_id,
                                         moved_from, moved_id);
-    space_head_index_retire(s);
+    space_head_index_note_swap_remove(s, removed_row, removed_id, moved_from,
+                                      moved_id);
     if (st->match_trie && !st->match_trie_dirty) {
         bool kept = st->match_trie_pins == 0u &&
             disc_remove_id(st->match_trie, universe, removed_id, removed_row) &&

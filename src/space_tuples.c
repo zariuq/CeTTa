@@ -69,9 +69,22 @@ static bool number_reserve(CettaTupleTable *table, uint32_t need) {
 /* The number of ID, numbered now when it is new; UINT32_MAX when memory
  * runs out. */
 static uint32_t number_of(CettaTupleTable *table, CettaDenseId id) {
-    uint32_t number = number_find(table, id);
-    if (number != UINT32_MAX)
-        return number;
+    /* Successive tuples often share the most recently numbered column. */
+    if (table->len != 0u && table->ids[table->len - 1u] == id)
+        return table->len - 1u;
+    uint64_t h = tuple_mix(id);
+    uint8_t tag = hash_tag(h);
+    bool had_slots = table->slots != NULL;
+    uint32_t mask = table->slot_mask;
+    uint32_t pos = (uint32_t)h & mask;
+    if (had_slots) {
+        while (table->slots[pos]) {
+            uint32_t number = table->slots[pos] - 1u;
+            if (table->slot_tags[pos] == tag && table->ids[number] == id)
+                return number;
+            pos = (pos + 1u) & mask;
+        }
+    }
     if (table->len >= UINT32_MAX - 1u ||
         !number_reserve(table, table->len + 1u))
         return UINT32_MAX;
@@ -81,16 +94,25 @@ static uint32_t number_of(CettaTupleTable *table, CettaDenseId id) {
         if (!ids)
             return UINT32_MAX;
         table->ids = ids;
+        uint32_t *holds = realloc(table->holds, (size_t)cap * sizeof(*holds));
+        if (!holds)
+            return UINT32_MAX;
+        table->holds = holds;
         table->cap = cap;
     }
-    number = table->len++;
+    uint32_t number = table->len++;
     table->ids[number] = id;
-    uint64_t h = tuple_mix(id);
-    uint32_t pos = (uint32_t)h & table->slot_mask;
-    while (table->slots[pos])
-        pos = (pos + 1u) & table->slot_mask;
+    /* Dead until a tuple holds it. */
+    table->holds[number] = 0u;
+    table->dead++;
+    /* The missing key's vacancy survives reserve unless the table grew. */
+    if (!had_slots || table->slot_mask != mask) {
+        pos = (uint32_t)h & table->slot_mask;
+        while (table->slots[pos])
+            pos = (pos + 1u) & table->slot_mask;
+    }
     table->slots[pos] = number + 1u;
-    table->slot_tags[pos] = hash_tag(h);
+    table->slot_tags[pos] = tag;
     return number;
 }
 
@@ -139,7 +161,39 @@ static uint32_t hash_find(const CettaTupleTable *table, const uint32_t *numbers,
     }
 }
 
-/* Room in the tuple hash for NEED tuples at three quarters' load. */
+/* Put the tuple at POS in a hash of MASK + 1 slots. */
+static void hash_place(const CettaTupleTable *table, uint32_t *hash,
+                       uint8_t *tags, uint32_t mask, uint32_t pos) {
+    uint64_t h = tuple_hash(tuple_at(table, pos), table->arity);
+    uint32_t s = (uint32_t)h & mask;
+    while (hash[s])
+        s = (s + 1u) & mask;
+    hash[s] = pos + 1u;
+    tags[s] = hash_tag(h);
+}
+
+/* Lay the tuples out in a hash of CAP slots: false, the hash as it was,
+ * when memory runs out. */
+static bool hash_lay(CettaTupleTable *table, uint32_t cap) {
+    uint32_t *hash = calloc(cap, sizeof(*hash));
+    uint8_t *tags = malloc(cap);
+    if (!hash || !tags) {
+        free(hash);
+        free(tags);
+        return false;
+    }
+    for (uint32_t pos = 0u; pos < table->count; pos++)
+        hash_place(table, hash, tags, cap - 1u, pos);
+    free(table->hash);
+    free(table->hash_tags);
+    table->hash = hash;
+    table->hash_tags = tags;
+    table->hash_mask = cap - 1u;
+    return true;
+}
+
+/* Room in the tuple hash for NEED tuples at three quarters' load: within
+ * twice the tuples' room, which a halving keeps. */
 static bool hash_reserve(CettaTupleTable *table, uint32_t need) {
     uint32_t cap = table->hash ? table->hash_mask + 1u : 64u;
     while ((uint64_t)need * 4u > (uint64_t)cap * 3u) {
@@ -149,27 +203,7 @@ static bool hash_reserve(CettaTupleTable *table, uint32_t need) {
     }
     if (table->hash && cap == table->hash_mask + 1u)
         return true;
-    uint32_t *hash = calloc(cap, sizeof(*hash));
-    uint8_t *tags = malloc(cap);
-    if (!hash || !tags) {
-        free(hash);
-        free(tags);
-        return false;
-    }
-    for (uint32_t pos = 0u; pos < table->count; pos++) {
-        uint64_t h = tuple_hash(tuple_at(table, pos), table->arity);
-        uint32_t s = (uint32_t)h & (cap - 1u);
-        while (hash[s])
-            s = (s + 1u) & (cap - 1u);
-        hash[s] = pos + 1u;
-        tags[s] = hash_tag(h);
-    }
-    free(table->hash);
-    free(table->hash_tags);
-    table->hash = hash;
-    table->hash_tags = tags;
-    table->hash_mask = cap - 1u;
-    return true;
+    return hash_lay(table, cap);
 }
 
 /* Empty SLOT, shifting the entries after it back while their homes allow,
@@ -321,6 +355,7 @@ void cetta_tuple_table_free(CettaTupleTable *table) {
     if (!table)
         return;
     free(table->ids);
+    free(table->holds);
     free(table->slots);
     free(table->slot_tags);
     free(table->tuples);
@@ -333,8 +368,28 @@ void cetta_tuple_table_free(CettaTupleTable *table) {
     table->arity = arity;
 }
 
+/* A tuple holds NUMBER once more: told HELD when it was dead. */
+static void number_hold(CettaTupleTable *table, uint32_t number,
+                        CettaDenseIdVisit held, void *context) {
+    if (table->holds[number]++ != 0u)
+        return;
+    table->dead--;
+    if (held)
+        held(context, table->ids[number]);
+}
+
+/* A tuple holds NUMBER once less: told RELEASED when none does. */
+static void number_unhold(CettaTupleTable *table, uint32_t number,
+                          CettaDenseIdVisit released, void *context) {
+    if (--table->holds[number] != 0u)
+        return;
+    table->dead++;
+    if (released)
+        released(context, table->ids[number]);
+}
+
 bool cetta_tuple_table_add(CettaTupleTable *table, const CettaDenseId *tuple,
-                           bool *oom) {
+                           bool *oom, CettaDenseIdVisit held, void *context) {
     if (oom)
         *oom = false;
     if (!table || !tuple)
@@ -378,6 +433,8 @@ bool cetta_tuple_table_add(CettaTupleTable *table, const CettaDenseId *tuple,
             side_link(&table->side[c], numbers[c], pos);
     table->hash[slot] = pos + 1u;
     table->hash_tags[slot] = hash_tag(h);
+    for (uint32_t c = 0u; c < table->arity; c++)
+        number_hold(table, numbers[c], held, context);
     return true;
 out_of_memory:
     if (oom)
@@ -386,7 +443,8 @@ out_of_memory:
 }
 
 bool cetta_tuple_table_remove(CettaTupleTable *table,
-                              const CettaDenseId *tuple) {
+                              const CettaDenseId *tuple,
+                              CettaDenseIdVisit released, void *context) {
     if (!table || !tuple || table->count == 0u)
         return false;
     uint32_t numbers[CETTA_TUPLE_MAX_ARITY];
@@ -419,6 +477,137 @@ bool cetta_tuple_table_remove(CettaTupleTable *table,
                 (size_t)table->arity * sizeof(*moved));
     }
     table->count--;
+    for (uint32_t c = 0u; c < table->arity; c++)
+        number_unhold(table, numbers[c], released, context);
+    return true;
+}
+
+/* Shrink an array of CAP u32 to FEWER, keeping it when realloc declines. */
+static void shrink_u32(uint32_t **array, uint32_t fewer) {
+    uint32_t *shrunk = realloc(*array, (size_t)fewer * sizeof(*shrunk));
+    if (shrunk)
+        *array = shrunk;
+}
+
+/* Halve the tuples' room, with the tuple hash, kept within twice it, and
+ * the sides' tuple chains (ShrinkingTableCost).  False, the room as it was,
+ * when memory runs out. */
+static bool tuples_halve(CettaTupleTable *table) {
+    uint32_t cap = table->tuple_cap / 2u;
+    if (table->hash && table->hash_mask + 1u > 2u * cap &&
+        !hash_lay(table, (table->hash_mask + 1u) / 2u))
+        return false;
+    uint32_t *tuples = realloc(table->tuples,
+                               (size_t)cap * table->arity * sizeof(*tuples));
+    if (!tuples)
+        return false;
+    table->tuples = tuples;
+    table->tuple_cap = cap;
+    for (uint32_t c = 0u; c < table->arity; c++) {
+        CettaTupleSide *side = &table->side[c];
+        if (side->tuple_cap <= cap)
+            continue;
+        shrink_u32(&side->next, cap);
+        shrink_u32(&side->prev, cap);
+        side->tuple_cap = cap;
+    }
+    return true;
+}
+
+/* Number the held ids anew, in order, dropping the dead, with room for
+ * twice as many; the tuples take their new numbers in place, and the hash
+ * and kept sides are laid out again (RelationNumberingCost).  Every
+ * allocation comes first: on failure the table stands as it was. */
+static bool tuples_renumber(CettaTupleTable *table) {
+    uint32_t live = table->len - table->dead;
+    uint64_t want = (uint64_t)live * 2u < 64u ? 64u : (uint64_t)live * 2u;
+    uint64_t size = 64u;
+    while (want * 4u > size * 3u)
+        size *= 2u;
+    if (want > UINT32_MAX || size > (UINT64_C(1) << 31))
+        return false;
+    uint32_t cap = (uint32_t)want;
+    uint32_t *map = malloc(((size_t)table->len + 1u) * sizeof(*map));
+    CettaDenseId *ids = malloc((size_t)cap * sizeof(*ids));
+    uint32_t *holds = malloc((size_t)cap * sizeof(*holds));
+    uint32_t *slots = calloc((size_t)size, sizeof(*slots));
+    uint8_t *tags = malloc((size_t)size);
+    if (!map || !ids || !holds || !slots || !tags) {
+        free(map);
+        free(ids);
+        free(holds);
+        free(slots);
+        free(tags);
+        return false;
+    }
+    uint32_t next = 0u;
+    for (uint32_t n = 0u; n < table->len; n++) {
+        if (!table->holds[n]) {
+            map[n] = UINT32_MAX;
+            continue;
+        }
+        ids[next] = table->ids[n];
+        holds[next] = table->holds[n];
+        map[n] = next++;
+    }
+    for (size_t i = 0u; i < (size_t)table->count * table->arity; i++)
+        table->tuples[i] = map[table->tuples[i]];
+    uint32_t mask = (uint32_t)size - 1u;
+    for (uint32_t n = 0u; n < next; n++) {
+        uint64_t h = tuple_mix(ids[n]);
+        uint32_t pos = (uint32_t)h & mask;
+        while (slots[pos])
+            pos = (pos + 1u) & mask;
+        slots[pos] = n + 1u;
+        tags[pos] = hash_tag(h);
+    }
+    free(map);
+    free(table->ids);
+    free(table->holds);
+    free(table->slots);
+    free(table->slot_tags);
+    table->ids = ids;
+    table->holds = holds;
+    table->slots = slots;
+    table->slot_tags = tags;
+    table->slot_mask = mask;
+    table->len = next;
+    table->cap = cap;
+    table->dead = 0u;
+    if (table->hash) {
+        memset(table->hash, 0, ((size_t)table->hash_mask + 1u) *
+                                   sizeof(*table->hash));
+        for (uint32_t pos = 0u; pos < table->count; pos++)
+            hash_place(table, table->hash, table->hash_tags, table->hash_mask,
+                       pos);
+    }
+    for (uint32_t c = 0u; c < table->arity; c++) {
+        CettaTupleSide *side = &table->side[c];
+        if (!table->side_kept[c])
+            continue;
+        if (side->number_cap > cap) {
+            shrink_u32(&side->first, cap);
+            shrink_u32(&side->len, cap);
+            side->number_cap = cap;
+        }
+        memset(side->first, 0, (size_t)side->number_cap * sizeof(*side->first));
+        memset(side->len, 0, (size_t)side->number_cap * sizeof(*side->len));
+        for (uint32_t pos = 0u; pos < table->count; pos++)
+            side_link(side, tuple_at(table, pos)[c], pos);
+    }
+    return true;
+}
+
+bool cetta_tuple_table_trim(CettaTupleTable *table) {
+    if (!table)
+        return true;
+    while (table->tuple_cap >= 128u &&
+           4u * (uint64_t)table->count < table->tuple_cap)
+        if (!tuples_halve(table))
+            return false;
+    if ((uint64_t)table->dead >
+        2u * (uint64_t)table->count * table->arity + 64u)
+        return tuples_renumber(table);
     return true;
 }
 
@@ -550,13 +739,15 @@ void cetta_tuple_table_each_numbered(const CettaTupleTable *table,
     if (!table || !visit)
         return;
     for (uint32_t n = 0u; n < table->len; n++)
-        visit(context, table->ids[n]);
+        if (table->holds[n])
+            visit(context, table->ids[n]);
 }
 
 uint64_t cetta_tuple_table_bytes(const CettaTupleTable *table) {
     if (!table)
         return 0u;
-    uint64_t bytes = (uint64_t)table->cap * sizeof(*table->ids) +
+    uint64_t bytes =
+        (uint64_t)table->cap * (sizeof(*table->ids) + sizeof(*table->holds)) +
         (table->slots ? (uint64_t)(table->slot_mask + 1u) *
                             (sizeof(uint32_t) + 1u) : 0u) +
         (uint64_t)table->tuple_cap * table->arity * sizeof(uint32_t) +

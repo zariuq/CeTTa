@@ -2521,7 +2521,12 @@ CettaNativeQueryStatus cetta_native_query_run(
         /* The open reader owns its refusal before effects. The existing
          * row loops also execute guarded and filtered queries; returning
          * this relation to rows lets them retain that route when the
-         * compact reader does not implement the query's observation. */
+         * compact reader does not implement the query's guard or filter.
+         * Any other refusal stays the query's, which the ordinary path
+         * answers: the relation keeps its form, which one declined query
+         * over a few of its facts must not cost. */
+        if (!query->guard_space && query->filter_count == 0u)
+            return open;
         Atom *pattern = query->patterns[i];
         SymbolId head = pattern->kind == ATOM_EXPR && pattern->expr.len &&
                 pattern->expr.elems[0]->kind == ATOM_SYMBOL

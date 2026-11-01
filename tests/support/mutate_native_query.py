@@ -69,6 +69,12 @@ mutations = {
     # A relation whose holes hold variables read as a flat table.
     "flat-spine-open": ("    if (!skeleton || head->open_holes != 0u || skeleton->count < 2u ||",
                         "    if (!skeleton || skeleton->count < 2u ||"),
+    # A lazy match's read-ahead passing over a row whose stored symbol equals
+    # the pattern's, and over an expression of the pattern's length.
+    "read-ahead-symbol": ("    return hdr->tag != ATOM_SYMBOL || symbol == hdr->sym_or_head;\n",
+                          "    return hdr->tag != ATOM_SYMBOL || symbol != hdr->sym_or_head;\n"),
+    "read-ahead-arity": ("    if (expected != arity)\n        return false;\n",
+                         "    if (expected == arity)\n        return false;\n"),
     # A relation's removal published without detaching the readers pinned
     # to the rows.
     "relation-removal-attached": ("    uint64_t followed_prefix = s->prefix_epoch;\n    space_pinned_occurrences_detach(s);\n    space_publish_mutation(s, SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY,",

@@ -777,6 +777,74 @@ static void test_registries_keep_their_holders(void) {
            "indexed and scanned\n", checks);
 }
 
+/* The hook is the same ownership boundary used by the evaluator. The
+ * standalone collector test supplies counted resources instead of Spaces. */
+typedef struct { size_t holds; } TestResource;
+
+static void test_resource_retain(void *owner) {
+    ((TestResource *)owner)->holds++;
+}
+
+static void test_resource_release(void *owner) {
+    TestResource *resource = owner;
+    assert(resource->holds > 0u);
+    resource->holds--;
+}
+
+void space_atom_hold(Arena *arena, void *owner) {
+    assert(arena_retain_owner(arena, owner, test_resource_retain,
+                              test_resource_release));
+}
+
+static void test_fallback_image_owners(bool wide) {
+    Arena persistent, source, reader;
+    arena_init_detached(&persistent);
+    arena_init_detached(&source);
+    arena_init_detached(&reader);
+    TermUniverse universe;
+    assert(term_universe_init_with_store_format(&universe,
+        wide ? TERM_UNIVERSE_STORE_FORMAT_WIDE64_V1
+             : TERM_UNIVERSE_STORE_FORMAT_COMPACT32_V1));
+    term_universe_set_persistent_arena(&universe, &persistent);
+    term_universe_set_collection_mode(&universe, TERM_UNIVERSE_COLLECTION_RECLAIM);
+    TestResource borrowed = {0}, legacy = {0};
+    AtomId id = term_universe_store_atom_id(&universe, &source,
+                                            atom_space(&source, &borrowed));
+    assert(id != CETTA_ATOM_ID_NONE && universe.fallback_bytes > 0u);
+    assert(borrowed.holds == 2u);
+    Atom *view = term_universe_view_atom(&universe, &reader, id);
+    assert(view && view->ground.ptr == &borrowed);
+    assert(view == term_universe_scoped_atom(&universe, &reader, id));
+    assert(view == term_universe_peek_atom(&universe, id));
+    assert(term_universe_lookup_atom_id(&universe, view) == id);
+    assert(borrowed.holds == 2u); /* The reader holds the image, not its leaf. */
+    arena_free(&source);
+    assert(borrowed.holds == 1u);
+    TermUniverseCollectionReport report;
+    assert(term_universe_collect(&universe, &report));
+    assert(report.reclaimed == 1u && universe.fallback_bytes == 0u);
+    assert(view->ground.ptr == &borrowed && borrowed.holds == 1u);
+    arena_free(&reader);
+    assert(borrowed.holds == 0u);
+
+    arena_init_detached(&source);
+    id = term_universe_store_atom_id(&universe, &source,
+                                     atom_space(&source, &legacy));
+    Atom *strong = term_universe_get_atom(&universe, id);
+    assert(strong && strong->ground.ptr == &legacy);
+    assert(term_universe_lookup_atom_id(&universe, strong) == id);
+    arena_free(&source);
+    assert(term_universe_collect(&universe, &report));
+    assert(universe.fallback_bytes == 0u);
+    assert(strong->ground.ptr == &legacy && legacy.holds == 1u);
+    term_universe_free(&universe);
+    assert(legacy.holds == 1u);
+    arena_free(&persistent);
+    assert(legacy.holds == 0u);
+    printf("PASS: opaque image owners preserve scoped and persistent readers (%s)\n",
+           wide ? "wide" : "compact");
+}
+
 int main(void) {
     SymbolTable symbols;
     VarInternTable var_intern;
@@ -785,6 +853,8 @@ int main(void) {
     g_var_intern = &var_intern;
     test_collection_matches_reachability(false);
     test_collection_matches_reachability(true);
+    test_fallback_image_owners(false);
+    test_fallback_image_owners(true);
     test_integer_pages_release_reclaimed_values();
     test_integer_pages_go_with_their_values();
     test_inhibited_safe_point_collects_nothing();

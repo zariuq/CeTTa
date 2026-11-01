@@ -1299,7 +1299,27 @@ bool arena_retain_owner(Arena *a, void *owner,
     return true;
 }
 
+bool arena_retain_owner_sized(Arena *a, void *owner,
+                              void (*retain)(void *), void (*release)(void *),
+                              size_t bytes) {
+    uint32_t before = a && a->retained_owners ? a->retained_owners->len : 0u;
+    if (!arena_retain_owner(a, owner, retain, release))
+        return false;
+    if (a->retained_owners->len > before)
+        arena_account_external_bytes(a, bytes);
+    return true;
+}
+
 /* Called after every hold has been popped from the finalizer chain. */
+void arena_visit_retained_owners(const Arena *a, ArenaOwnerVisit visit,
+                                  void *context) {
+    const ArenaRetainedOwnerSet *set = a ? a->retained_owners : NULL;
+    if (!set || !visit)
+        return;
+    for (uint32_t i = 0u; i < set->len; i++)
+        visit(context, set->holds[i]->ptr, set->holds[i]->fn);
+}
+
 static void arena_release_retained_owner_set(Arena *a) {
     ArenaRetainedOwnerSet *set = a->retained_owners;
     if (!set)

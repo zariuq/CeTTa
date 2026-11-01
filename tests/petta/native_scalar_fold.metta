@@ -40,3 +40,13 @@
 !(collapse (foldl-atom (1 2) 0 $a $x (either $a $x)))
 (= (shrink ($p $q) $x) ($p))
 !(collapse (foldl-atom (1 2) (0 0) $acc $x (shrink $acc $x)))
+; A comparison read as a value, not as a test: the ordinary fold answers
+; true or false, a field holds them, true differs from 1, and a sum over one
+; is a type error.  Read as a test it agrees.
+!(foldl-atom (2) 0 $a $x (< $a $x))
+!(foldl-atom (2) 0 $a $x (== $a $x))
+!(foldl-atom (2) 0 $a $x (if (< $a $x) 7 9))
+(= (bool-field ($tag $old) $x) ($tag (< 0 $x)))
+!(foldl-atom (2) (tag 0) $a $x (bool-field $a $x))
+!(catch (foldl-atom (2) 0 $a $x (+ (== $a $x) 1)))
+!(foldl-atom (2) 0 $a $x (== (< $a $x) 1))

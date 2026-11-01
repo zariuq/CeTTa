@@ -1980,6 +1980,7 @@ MORK_QUERY_ADMISSION_FALLBACK_TEST_BIN = runtime/test_mork_query_admission_fallb
 SPACE_TERM_UNIVERSE_MEMBERSHIP_TEST_BIN = runtime/test_space_term_universe_membership-$(BUILD_OBJ_TAG)
 TERM_UNIVERSE_COLLECTION_TEST_BIN = runtime/test_term_universe_collection-$(BUILD_OBJ_TAG)
 SPACE_DENSE_TEST_BIN = runtime/test_space_dense-$(BUILD_OBJ_TAG)
+SPACE_DENSE_LEAVES_TEST_BIN = runtime/test_space_dense_leaves-$(BUILD_OBJ_TAG)
 SPACE_TUPLES_TEST_BIN = runtime/test_space_tuples-$(BUILD_OBJ_TAG)
 SPACE_SKELETON_TEST_BIN = runtime/test_space_skeleton-$(BUILD_OBJ_TAG)
 TERM_MOLECULE_TEST_BIN = runtime/test_term_molecule-$(BUILD_OBJ_TAG)
@@ -6258,6 +6259,14 @@ $(SPACE_DENSE_TEST_BIN): tests/test_space_dense.c src/space_dense.c src/space_de
 	@mkdir -p runtime
 	$(CC) $(CFLAGS) -Isrc -o $@ tests/test_space_dense.c src/space_dense.c
 
+# The leaves of a relation's rows, from inside: kept as the store says
+# through adds, removals and renumbering over numbers spread across chunks,
+# and a far number costs a row a leaf, not bits up to it.
+$(SPACE_DENSE_LEAVES_TEST_BIN): tests/test_space_dense_leaves.c src/space_dense.c \
+		src/space_dense.h
+	@mkdir -p runtime
+	$(CC) $(CFLAGS) -Isrc -o $@ tests/test_space_dense_leaves.c
+
 # A relation kept as a table of tuples agrees with a list of its tuples under
 # random adds, removals, membership tests, counts and walks.
 $(SPACE_TUPLES_TEST_BIN): tests/test_space_tuples.c src/space_tuples.c \
@@ -6289,13 +6298,15 @@ SPACE_DENSE_PROGRAMS = dense_relations dense_relations_derived term_keyed_column
 	dense_relations_columns dense_relations_equations dense_relations_deep \
 	dense_relations_deep_promoted dense_relations_deep_heads \
 	dense_relations_flat_deep dense_relations_read_while_removed \
-	dense_relations_runtime_rules
+	dense_relations_runtime_rules relation_take_over remove_atom_variables dense_relations_far
 
 .PHONY: test-space-dense
-test-space-dense: $(SPACE_DENSE_TEST_BIN) $(SPACE_TUPLES_TEST_BIN) \
+test-space-dense: $(SPACE_DENSE_TEST_BIN) $(SPACE_DENSE_LEAVES_TEST_BIN) \
+		$(SPACE_TUPLES_TEST_BIN) \
 		$(SPACE_SKELETON_TEST_BIN) $(TERM_MOLECULE_TEST_BIN) $(BIN) \
 		$(foreach t,$(SPACE_DENSE_PROGRAMS),tests/petta/$(t).metta tests/petta/$(t).expected)
 	@$(call cetta_exec,./$(SPACE_DENSE_TEST_BIN))
+	@$(call cetta_exec,./$(SPACE_DENSE_LEAVES_TEST_BIN))
 	@$(call cetta_exec,./$(SPACE_TUPLES_TEST_BIN))
 	@$(call cetta_exec,./$(SPACE_SKELETON_TEST_BIN))
 	@$(call cetta_exec,./$(TERM_MOLECULE_TEST_BIN))
@@ -6426,6 +6437,30 @@ $(TERM_UNIVERSE_BACKEND_ADD_ABI_TEST_BIN): tests/test_term_universe_backend_add_
 
 test-term-universe-backend-add-abi: $(TERM_UNIVERSE_BACKEND_ADD_ABI_TEST_BIN)
 	@$(call cetta_exec,./$(TERM_UNIVERSE_BACKEND_ADD_ABI_TEST_BIN))
+
+SPACE_PATH_DIRECTORY_TEST_OBJ = runtime/bootstrap/test_space_path_directory.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+SPACE_PATH_DIRECTORY_TEST_BIN = runtime/test_space_path_directory-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+$(SPACE_PATH_DIRECTORY_TEST_OBJ): tests/test_space_path_directory.c src/space_path_index.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+
+$(SPACE_PATH_DIRECTORY_TEST_BIN): $(SPACE_PATH_DIRECTORY_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+.PHONY: test-space-path-directory
+test-space-path-directory: $(SPACE_PATH_DIRECTORY_TEST_BIN)
+	@$(call cetta_exec,./$(SPACE_PATH_DIRECTORY_TEST_BIN))
+
+.PHONY: test-space-path-directory-scaling-stats
+test-space-path-directory-scaling-stats: $(BIN) tests/support/check_index_directory_scaling.py
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_index_directory_scaling.py ./$(BIN)
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-space-path-directory-scaling-stats
+endif
+
+test-space-index-scaling-stats: test-space-path-directory test-space-path-directory-scaling-stats
+
 
 $(LET_BRANCH_ARENA_RESET_NO_ESCAPE_TEST_BIN): private CPPFLAGS += -DCETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS=1 -DCETTA_RUNTIME_STATS_IMPL=1
 $(LET_BRANCH_ARENA_RESET_NO_ESCAPE_TEST_BIN): tests/test_let_branch_arena_reset_no_escape.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_DEPS) src/native_sha256.c src/search_machine.c $(SPACE_STANDALONE_DEPS) $(SHARED_TRANSITION_STANDALONE_SRC) $(PARSER_STANDALONE_SRC) $(BUILD_CONFIG_HEADER)
@@ -25074,7 +25109,7 @@ test-petta-compiled-reader-v1: test-petta-compiled-reader-direct-generated-v1 $(
 	@result=$$(./$(PETTA_COMPILED_READER_TEST_BIN) 2>&1); \
 	printf '%s\n' "$$result"; \
 	if [ "$$(printf '%s\n' "$$result" | \
-		grep -Fxc '(PeTTaCompiledReaderV1Summary 33 33 0 source-pass 1 two-stage 1)')" -ne 1 ]; then \
+		grep -Fxc '(PeTTaCompiledReaderV1Summary 34 34 0 source-pass 1 two-stage 1)')" -ne 1 ]; then \
 		echo "FAIL: compiled PeTTa reader exact integration summary absent or duplicated"; \
 		exit 1; \
 	fi; \
@@ -28968,6 +29003,19 @@ else
 		test-space-read-scaling-stats
 endif
 
+.PHONY: test-engine-loop-reclaim-stats
+test-petta-semantics: test-engine-loop-reclaim-stats
+# A loop run inside one statement keeps what it reaches, not what it made:
+# the outer machine's arenas peak alike over N and 8 N iterations of a loop
+# whose host goals the open equation machine exports to them.
+test-engine-loop-reclaim-stats: $(BIN) tests/support/check_engine_loop_reclaim.py
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_engine_loop_reclaim.py ./$(BIN)
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		test-engine-loop-reclaim-stats
+endif
+
 .PHONY: test-space-index-scaling-stats
 test-petta-semantics: test-space-index-scaling-stats
 # Reads of deep ground terms, and of rows derived in batches, take work that
@@ -28976,18 +29024,21 @@ test-petta-semantics: test-space-index-scaling-stats
 # before or after it; two such terms whose hashes differ compare unequal at
 # once; a batch of derived rows reaches every index the space keeps; a
 # lookup binding several columns reads the one that selects most;
-# lookups binding a prefix read that prefix's index, building no trie; and
-# the rows matches read are read where they are stored, not decoded.
+# lookups binding a prefix read that prefix's index, building no trie; a
+# head's prefix lookups cost the head's rows, not the space's; and the rows
+# matches read are read where they are stored, not decoded.
 test-space-index-scaling-stats: $(BIN) tests/support/check_term_keyed_scaling.py \
 		tests/support/check_batch_index_scaling.py \
 		tests/support/check_column_choice_scaling.py \
 		tests/support/check_prefix_index_scaling.py \
+		tests/support/check_prefix_heads_scaling.py \
 		tests/support/check_decoded_views_scaling.py
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_term_keyed_scaling.py ./$(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_batch_index_scaling.py ./$(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_column_choice_scaling.py ./$(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_prefix_index_scaling.py ./$(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_prefix_heads_scaling.py ./$(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_decoded_views_scaling.py ./$(BIN)
 else
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
@@ -29210,6 +29261,10 @@ else
 		test-native-query-stats
 endif
 
+# The mutants test-native-query-mutations builds; set it to one to check that
+# one alone.
+NATIVE_QUERY_MUTANTS ?= copies collected-copies instance-slot atom-slot flush disjoint level-key loop-bound loop-release rows-fixed dense-summed dense-link dense-repeat dense-popcount dense-diagonal nested-repeat nested-constant leg-space open-row-removal guard-ignored guard-unchecked guard-uncertified directive-answers fold-count fold-places inline-arguments inline-typed inline-equations guard-plain destructure-oem-count case-default arith-op snapshot-occurrence scope-let scope-legs scope-template scope-binding scope-value scope-own typed-hold typed-arguments typed-observed dispatch-unique exists-negated exists-machine exists-machine-equal region-coverage-ignored region-views-dropped count-relations-ignored count-variable-skipped relax-min-ignored relax-two-values-ignored guard-columns-unheld exists-oem-operation guard-operation exists-counted fold-each guard-case-set exists-case-branch exists-oem-case snapshot-stream-scope admit-unresolved head-inert let-head bag-summed distinct-ignored distinct-count unique-extended inline-arity afresh-unchecked afresh-ignored guard-recordless guard-summed insert-unkeyed else-summed else-answers filter-polarity conjunction-filter-ignored conjunction-polarity order-flipped order-unchecked nested-kept-ignored flat-spine-open relation-removal-attached dead-equation-any types-held-ignored types-checked-ignored filtered-test-stale filtered-unfiltered filtered-tuple-taken scalar-head-unchecked scalar-order-loose scalar-sum-wrapped dead-rule-any grouped-key-ignored grouped-reads-ignored grouped-absent-one listed-rows-dropped listed-bag-set read-ahead-symbol read-ahead-arity
+
 .PHONY: test-native-query-mutations
 # The law above rejects each defect a mutant of the native path carries:
 # dropped copies in a bag or a collection, the wrong variable in an
@@ -29281,14 +29336,14 @@ test-native-query-mutations: $(BIN) tests/support/check_native_query.py \
 	@set -eu; \
 	mutation_dir=runtime/bootstrap/native-query-mutations-$(BUILD_OBJ_TAG); \
 	mkdir -p "$$mutation_dir"; \
-	for kind in copies collected-copies instance-slot atom-slot flush disjoint level-key loop-bound loop-release rows-fixed dense-summed dense-link dense-repeat dense-popcount dense-diagonal nested-repeat nested-constant leg-space open-row-removal guard-ignored guard-unchecked guard-uncertified directive-answers fold-count fold-places inline-arguments inline-typed inline-equations guard-plain destructure-oem-count case-default arith-op snapshot-occurrence scope-let scope-legs scope-template scope-binding scope-value scope-own typed-hold typed-arguments typed-observed dispatch-unique exists-negated exists-machine exists-machine-equal region-coverage-ignored region-views-dropped count-relations-ignored count-variable-skipped relax-min-ignored relax-two-values-ignored guard-columns-unheld exists-oem-operation guard-operation exists-counted fold-each guard-case-set exists-case-branch exists-oem-case snapshot-stream-scope admit-unresolved head-inert let-head bag-summed distinct-ignored distinct-count unique-extended inline-arity afresh-unchecked afresh-ignored guard-recordless guard-summed insert-unkeyed else-summed else-answers filter-polarity conjunction-filter-ignored conjunction-polarity order-flipped order-unchecked nested-kept-ignored flat-spine-open relation-removal-attached dead-equation-any types-held-ignored types-checked-ignored filtered-test-stale filtered-unfiltered filtered-tuple-taken scalar-head-unchecked scalar-order-loose scalar-sum-wrapped dead-rule-any grouped-key-ignored grouped-reads-ignored grouped-absent-one listed-rows-dropped listed-bag-set; do \
+	for kind in $(NATIVE_QUERY_MUTANTS); do \
 		case "$$kind" in \
 			level-key) module=relational_cursor;; \
 			dense-*) module=dense_relation;; \
 			open-row-removal|guard-unchecked|guard-uncertified|guard-plain|directive-answers|inline-*|case-default|arith-op|scope-let|scope-legs|dispatch-unique|guard-case-set|snapshot-stream-scope|let-head|afresh-ignored|dead-equation-any|types-held-ignored|types-checked-ignored|guard-operation|conjunction-polarity|region-coverage-ignored|region-views-dropped|relax-min-ignored|relax-two-values-ignored|filtered-unfiltered|scalar-*|dead-rule-any|grouped-*|listed-*) module=eval;; \
 			fold-count|snapshot-occurrence|scope-binding|scope-value|typed-*|exists-machine|exists-machine-equal|fold-each|exists-case-branch|unique-extended|filtered-test-stale|filtered-tuple-taken) module=petta_search_machine;; \
 			fold-places) module=native_fold;; \
-			destructure-oem-count|exists-negated|exists-oem-case|exists-oem-operation|admit-unresolved) module=open_equation_machine;; \
+			destructure-oem-count|exists-negated|exists-oem-case|exists-oem-operation|admit-unresolved|read-ahead-*) module=open_equation_machine;; \
 			scope-own|scope-template) module=petta_program;; \
 			exists-counted) module=petta_semantics;; \
 			flat-spine-open|relation-removal-attached|guard-columns-unheld) module=space;; \
@@ -29305,9 +29360,9 @@ test-native-query-mutations: $(BIN) tests/support/check_native_query.py \
 			"$$mutation_dir/$$kind.o" $(filter-out FORCE,$(BRIDGE_DEPS)) $(LDFLAGS); \
 		if $(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_native_query.py \
 				"$$mutation_dir/$$kind" --programs 200 > "$$mutation_dir/$$kind.log" 2>&1 && \
-			( for stem in native_guard_kept_facts native_guard_reads native_filter dense_relations_flat_deep dense_relations_read_while_removed native_guard_spellings native_comparison_redefined native_guard_conjunctions native_order_filters saturation_region native_count_relations relaxation_region native_filtered_match native_scalar_fold saturation_dead_rules native_grouped_counts native_listed_match; do \
+			( for stem in native_guard_kept_facts native_guard_reads native_filter dense_relations_flat_deep dense_relations_read_while_removed native_guard_spellings native_comparison_redefined native_guard_conjunctions native_order_filters saturation_region native_count_relations relaxation_region native_filtered_match native_scalar_fold saturation_dead_rules native_grouped_counts native_listed_match read_ahead_kept; do \
 				for route in "" CETTA_SPACE_DENSE=eager; do \
-					[ "$$(env $$route "$$mutation_dir/$$kind" --profile extended \
+					[ "$$(env $$route timeout 120 "$$mutation_dir/$$kind" --profile extended \
 						--lang petta tests/petta/$$stem.metta 2>&1)" = \
 						"$$(cat tests/petta/$$stem.expected)" ] || exit 1; \
 				done; \
@@ -29320,7 +29375,7 @@ test-native-query-mutations: $(BIN) tests/support/check_native_query.py \
 			exit 1; \
 		fi; \
 	done; \
-	echo "PASS: the native query law, or the guard fixtures, reject all ninety-nine mutants"
+	echo "PASS: the native query law, or the guard fixtures, reject all hundred and one mutants"
 
 .PHONY: test-oem-stored-rows-mutations
 # The stored-row law rejects each defect a mutant of the open equation
@@ -29503,8 +29558,11 @@ test-space-holds: $(BIN) tests/petta/new_space_holds.metta \
 	@set -eu; \
 	for perturb in "" 165; do \
 		for profile in "" "--profile extended"; do \
-			actual=$$(MALLOC_PERTURB_=$$perturb $(CETTA_BIN_INVOKE) $$profile --lang petta \
-				tests/petta/new_space_holds.metta 2>&1) || true; \
+			if ! actual=$$(MALLOC_PERTURB_=$$perturb $(CETTA_BIN_INVOKE) $$profile --lang petta \
+				tests/petta/new_space_holds.metta 2>&1); then \
+				echo "FAIL: held-space execution ($$profile, perturb $$perturb)"; \
+				printf '%s\n' "$$actual"; exit 1; \
+			fi; \
 			if [ "$$actual" != "$$(cat tests/petta/new_space_holds.expected)" ]; then \
 				echo "FAIL: held spaces ($$profile, perturb $$perturb)"; \
 				diff <(cat tests/petta/new_space_holds.expected) \
@@ -29516,6 +29574,18 @@ test-space-holds: $(BIN) tests/petta/new_space_holds.metta \
 	echo "PASS: spaces kept by a row, a name or a state cell outlive their requests"
 
 test-all: test-space-holds
+
+.PHONY: test-space-reclamation
+test-space-reclamation: $(BIN) tests/support/check_escaped_space_reclamation.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_escaped_space_reclamation.py ./$(BIN)
+
+test-all: test-space-reclamation
+
+.PHONY: test-space-cycles
+test-space-cycles: $(BIN) tests/support/check_space_cycle_reclamation.py
+	@$(call cetta_exec,python3 tests/support/check_space_cycle_reclamation.py $(abspath $(BIN)))
+
+test-all: test-space-cycles
 
 .PHONY: test-set-presence-churn
 # A set keeps its rows through removals and adds, with freed memory poisoned,
@@ -29560,6 +29630,61 @@ test-presence-set-form: $(BIN) tests/petta/presence_table_churn.metta \
 
 test-all: test-presence-set-form
 
+.PHONY: test-space-dense-far-rows
+# Rows given one far number each grow by a leaf, not by bits up to it: with
+# the far pairs the peak exceeds the same run without them by at most 1 KiB
+# a row.
+test-space-dense-far-rows: $(BIN) tests/support/check_dense_far_rows.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_dense_far_rows.py ./$(BIN)
+
+test-all: test-space-dense-far-rows
+
+.PHONY: test-relation-shrink
+# Relations emptied down to a few facts answer as before and take facts
+# again, in every form and mode, with freed memory poisoned; and an emptied
+# relation gives its storage back.
+test-relation-shrink: $(BIN) tests/petta/relation_shrink.metta \
+		tests/petta/relation_shrink.expected tests/support/check_relation_shrink.py
+	@set -eu; actual=$$(mktemp); trap 'rm -f "$$actual"' EXIT; \
+	for mode in off on eager; do \
+		for perturb in "" 165; do \
+			CETTA_SPACE_DENSE=$$mode MALLOC_PERTURB_=$$perturb $(CETTA_BIN_INVOKE) \
+				--profile extended --lang petta tests/petta/relation_shrink.metta \
+				> "$$actual" 2>&1 || true; \
+			if ! python3 tests/support/compare_answers.py --lang petta \
+				--program tests/petta/relation_shrink.metta \
+				--expected tests/petta/relation_shrink.expected --actual "$$actual" \
+				--cetta $(CETTA_BIN_INVOKE) --profile extended --lang petta; then \
+				echo "FAIL: relation shrink, relations $$mode (perturb $$perturb)"; \
+				exit 1; \
+			fi; \
+		done; \
+	done
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_relation_shrink.py ./$(BIN)
+
+test-all: test-relation-shrink
+
+.PHONY: test-trie-window-scaling
+# Lookups keyed past the match trie's window (wide rows keyed in their last
+# column, facts keyed below its levels) read their own rows, not every row.
+test-trie-window-scaling: $(BIN) tests/support/check_trie_window_scaling.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_trie_window_scaling.py ./$(BIN)
+test-all: test-trie-window-scaling
+.PHONY: test-deep-facts-load
+# Loading deep facts costs what their relation holds, not a record a level:
+# a document is read in slices, so the records a relation leaves behind are
+# collected as the load goes.
+test-deep-facts-load: $(BIN) tests/support/check_deep_facts_load.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_deep_facts_load.py ./$(BIN)
+test-all: test-deep-facts-load
+.PHONY: test-relation-release
+# A relation holds exactly the ids its facts hold: once the facts are gone,
+# the universe reclaims the ids only they held.
+test-relation-release: $(BIN) tests/support/check_relation_release.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_relation_release.py ./$(BIN)
+
+test-all: test-relation-release
+
 .PHONY: test-integer-flood
 # Integers crafted to share one home in the integer table load about as fast
 # as random ones: the table places its pages under a key nobody can predict.
@@ -29570,7 +29695,8 @@ test-all: test-integer-flood
 
 .PHONY: test-symbol-flood
 # Spellings crafted to share one home in the symbol table intern about as
-# fast as random ones: the table hashes spellings under a key of its own.
+# fast as random ones: the table places a spelling by its hash mixed with a
+# key of its own.
 test-symbol-flood: $(BIN) tests/support/check_symbol_flood.py
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_symbol_flood.py ./$(BIN)
 

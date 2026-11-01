@@ -1242,4 +1242,7 @@
   ; Pairs of subterms a structural comparison visits.
   (1120 ATOM_COMPARE_PAIR "atom-compare-pair")
   ; Legs of a native query that read the pairs of a relation kept as bits.
-  (1121 NATIVE_QUERY_BITS_LEG "native-query-bits-leg")))
+  (1121 NATIVE_QUERY_BITS_LEG "native-query-bits-leg")
+  ; Index descriptions compared while finding the requested path index.
+  (1122 MATCH_POSITION_INDEX_DIRECTORY_PROBE "match-position-index-directory-probe")
+  (1123 MATCH_POSITION_INDEX_DIRECTORY_PROBE_PEAK "match-position-index-directory-probe-peak")))

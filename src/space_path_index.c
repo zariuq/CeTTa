@@ -18,10 +18,13 @@ typedef struct {
 } PathPosting;
 
 struct CettaSpacePathIndex {
-    CettaSpacePathIndex *next;
+    CettaSpacePathIndex *next, *previous;
+    CettaSpacePathIndex *directory_left, *directory_right;
+    CettaSpacePathIndex *directory_parent;
+    uint32_t directory_height;
+    struct CettaSpacePathDirectory *directory;
+    CettaSpacePathIndex *budget_older, *budget_newer;
     TermUniverse *universe;
-    uint64_t universe_instance, universe_epoch;
-    uint64_t prefix_epoch;
     CettaExprIndex *path;
     size_t path_len;
     CettaSpacePathKeyKind kind;
@@ -38,7 +41,7 @@ struct CettaSpacePathIndex {
      * slot until the table grows, which clears this. */
     SymbolId probed_head;
     PathPosting *probed_slot;
-    CettaCount source_len, keyed_len, uncertain_len;
+    CettaCount keyed_len, uncertain_len;
     /* The flat-pattern shape that last demanded this index (0: none): a
      * query of that shape selects this index's coordinate again. */
     uint64_t shape;
@@ -46,7 +49,474 @@ struct CettaSpacePathIndex {
      * row of another head is a miss; a row whose head is open stays a
      * candidate. */
     SymbolId head;
+    /* The length of the rows it holds, 0 for any: an index built from a
+     * head's rows (head_index_rows) holds those of its query's length, and
+     * a row of another length is a miss. */
+    CettaExprLen length;
 };
+
+typedef struct CettaSpacePathDirectory {
+    CettaSpacePathIndex *root;
+    size_t len, headed;
+    TermUniverse *universe;
+    uint64_t universe_instance, universe_epoch, prefix_epoch;
+    CettaCount source_len;
+    size_t bytes, budget;
+    CettaSpacePathIndex *oldest, *newest;
+} CettaSpacePathDirectory;
+
+enum { PATH_CACHE_FLOOR = 64u * 1024u };
+
+static size_t path_scaled_budget(CettaCount rows, size_t unit, size_t floor) {
+    return rows > (SIZE_MAX - floor) / unit ? SIZE_MAX : floor + (size_t)rows * unit;
+}
+
+/* Initial tables need at most 8/3 slots per distinct key across keyed and
+ * uncertain-head tables; position arrays need at most two words per row.
+ * The extra row allowance and floor cover descriptions and small tables.
+ * This is one shared retained-storage pool, not one allowance per index. */
+static size_t path_cache_budget(CettaCount rows) {
+    size_t unit = (8u * sizeof(PathPosting) + 2u) / 3u +
+                  2u * sizeof(CettaIndex) + 16u;
+    return path_scaled_budget(rows, unit, PATH_CACHE_FLOOR);
+}
+
+static void path_shapes_clear(Space *space);
+static void path_index_unlink(Space *space, CettaSpacePathIndex *index);
+static void path_index_free(CettaSpacePathIndex *index);
+static void path_budget_trim_slow(Space *space);
+
+static inline __attribute__((always_inline)) void path_budget_trim(Space *space) {
+    CettaSpacePathDirectory *directory = space->match_backend.native.path_directory;
+    if (directory && directory->bytes > directory->budget &&
+        space->match_backend.native.path_query_depth == 0u)
+        path_budget_trim_slow(space);
+}
+
+static void path_budget_query_leave(Space **space) {
+    if (!*space)
+        return;
+    if ((*space)->match_backend.native.path_query_depth == 0u)
+        abort();
+    (*space)->match_backend.native.path_query_depth--;
+    path_budget_trim(*space);
+}
+
+static void path_budget_touch(CettaSpacePathIndex *index) {
+    CettaSpacePathDirectory *directory = index->directory;
+    if (!directory || directory->newest == index)
+        return;
+    if (index->budget_older)
+        index->budget_older->budget_newer = index->budget_newer;
+    else
+        directory->oldest = index->budget_newer;
+    if (index->budget_newer)
+        index->budget_newer->budget_older = index->budget_older;
+    index->budget_older = directory->newest;
+    index->budget_newer = NULL;
+    if (directory->newest)
+        directory->newest->budget_newer = index;
+    directory->newest = index;
+    if (!directory->oldest)
+        directory->oldest = index;
+}
+
+/* One shared stamp covers the whole coherent directory. An unaffected
+ * head needs neither a payload write nor a repeated copy of this stamp. */
+static bool path_directory_current(const Space *space, CettaCount source_len) {
+    const CettaSpacePathDirectory *directory = space->match_backend.native.path_directory;
+    if (!directory)
+        return space->match_backend.native.path_indexes == NULL;
+    const TermUniverse *universe = space->native.universe;
+    return universe && directory->universe == universe &&
+        directory->universe_instance == universe->instance_id &&
+        directory->universe_epoch == universe->storage_epoch &&
+        directory->prefix_epoch == space->prefix_epoch &&
+        directory->source_len == source_len;
+}
+
+typedef struct {
+    SymbolId head;
+    CettaExprLen length;
+    CettaSpacePathKeyKind kind;
+    size_t depth;
+    const CettaExprIndex *path;
+} PathIndexKey;
+
+static PathIndexKey path_index_key(const CettaSpacePathIndex *index) {
+    return (PathIndexKey){index->head, index->length, index->kind,
+                           index->path_len, index->path};
+}
+
+/* Full canonical keys, ordered by head first. No truncated tag decides
+ * equality. The path comparison's work remains proportional to its width. */
+static int path_directory_compare(const PathIndexKey *key,
+                                   const CettaSpacePathIndex *index) {
+    if (key->head != index->head)
+        return key->head < index->head ? -1 : 1;
+    if (key->length != index->length)
+        return key->length < index->length ? -1 : 1;
+    if (key->kind != index->kind)
+        return key->kind < index->kind ? -1 : 1;
+    if (key->depth != index->path_len)
+        return key->depth < index->path_len ? -1 : 1;
+    for (size_t i = 0u; i < key->depth; i++) {
+        if (key->path[i] != index->path[i])
+            return key->path[i] < index->path[i] ? -1 : 1;
+    }
+    return 0;
+}
+
+static uint32_t path_directory_height(const CettaSpacePathIndex *index) {
+    return index ? index->directory_height : 0u;
+}
+
+static void path_directory_height_set(CettaSpacePathIndex *index) {
+    uint32_t left = path_directory_height(index->directory_left);
+    uint32_t right = path_directory_height(index->directory_right);
+    index->directory_height = (left > right ? left : right) + 1u;
+}
+
+static CettaSpacePathIndex *path_directory_rotate_left(CettaSpacePathIndex *root) {
+    CettaSpacePathIndex *top = root->directory_right;
+    root->directory_right = top->directory_left;
+    if (root->directory_right)
+        root->directory_right->directory_parent = root;
+    top->directory_parent = root->directory_parent;
+    top->directory_left = root;
+    root->directory_parent = top;
+    path_directory_height_set(root);
+    path_directory_height_set(top);
+    return top;
+}
+
+static CettaSpacePathIndex *path_directory_rotate_right(CettaSpacePathIndex *root) {
+    CettaSpacePathIndex *top = root->directory_left;
+    root->directory_left = top->directory_right;
+    if (root->directory_left)
+        root->directory_left->directory_parent = root;
+    top->directory_parent = root->directory_parent;
+    top->directory_right = root;
+    root->directory_parent = top;
+    path_directory_height_set(root);
+    path_directory_height_set(top);
+    return top;
+}
+
+static CettaSpacePathIndex *path_directory_balance(CettaSpacePathIndex *root) {
+    path_directory_height_set(root);
+    uint32_t left = path_directory_height(root->directory_left);
+    uint32_t right = path_directory_height(root->directory_right);
+    if (left > right + 1u) {
+        CettaSpacePathIndex *child = root->directory_left;
+        if (path_directory_height(child->directory_right) >
+            path_directory_height(child->directory_left))
+            root->directory_left = path_directory_rotate_left(child);
+        return path_directory_rotate_right(root);
+    }
+    if (right > left + 1u) {
+        CettaSpacePathIndex *child = root->directory_right;
+        if (path_directory_height(child->directory_left) >
+            path_directory_height(child->directory_right))
+            root->directory_right = path_directory_rotate_right(child);
+        return path_directory_rotate_left(root);
+    }
+    return root;
+}
+
+static CettaSpacePathIndex *path_directory_insert(CettaSpacePathIndex *root,
+                                                  CettaSpacePathIndex *index) {
+    if (!root) {
+        index->directory_height = 1u;
+        return index;
+    }
+    PathIndexKey key = path_index_key(index);
+    int order = path_directory_compare(&key, root);
+    if (order < 0) {
+        root->directory_left = path_directory_insert(root->directory_left, index);
+        root->directory_left->directory_parent = root;
+    } else if (order > 0) {
+        root->directory_right = path_directory_insert(root->directory_right, index);
+        root->directory_right->directory_parent = root;
+    } else
+        abort(); /* A description is installed once, after its absent lookup. */
+    return path_directory_balance(root);
+}
+
+static CettaSpacePathIndex *path_directory_take_first(CettaSpacePathIndex *root,
+                                                      CettaSpacePathIndex **first) {
+    if (!root->directory_left) {
+        *first = root;
+        if (root->directory_right)
+            root->directory_right->directory_parent = root->directory_parent;
+        return root->directory_right;
+    }
+    root->directory_left = path_directory_take_first(root->directory_left, first);
+    if (root->directory_left)
+        root->directory_left->directory_parent = root;
+    return path_directory_balance(root);
+}
+
+/* Transplant nodes rather than their descriptions: cached index pointers
+ * keep naming their original index through rotations and removal. */
+static CettaSpacePathIndex *path_directory_erase(CettaSpacePathIndex *root,
+                                                 CettaSpacePathIndex *index) {
+    if (!root)
+        abort();
+    PathIndexKey key = path_index_key(index);
+    int order = path_directory_compare(&key, root);
+    if (order < 0) {
+        root->directory_left = path_directory_erase(root->directory_left, index);
+        if (root->directory_left)
+            root->directory_left->directory_parent = root;
+    } else if (order > 0) {
+        root->directory_right = path_directory_erase(root->directory_right, index);
+        if (root->directory_right)
+            root->directory_right->directory_parent = root;
+    } else {
+        if (root != index)
+            abort();
+        if (!root->directory_left) {
+            if (root->directory_right)
+                root->directory_right->directory_parent = root->directory_parent;
+            return root->directory_right;
+        }
+        if (!root->directory_right) {
+            root->directory_left->directory_parent = root->directory_parent;
+            return root->directory_left;
+        }
+        CettaSpacePathIndex *first = NULL;
+        CettaSpacePathIndex *right = path_directory_take_first(root->directory_right, &first);
+        first->directory_left = root->directory_left;
+        first->directory_right = right;
+        first->directory_parent = root->directory_parent;
+        first->directory_left->directory_parent = first;
+        if (right)
+            right->directory_parent = first;
+        root = first;
+    }
+    return path_directory_balance(root);
+}
+
+static void path_directory_add(Space *space, CettaSpacePathIndex *index) {
+    CettaSpacePathDirectory *directory = space->match_backend.native.path_directory;
+    if (!directory) {
+        directory = cetta_malloc(sizeof(*directory));
+        *directory = (CettaSpacePathDirectory){
+            .universe = space->native.universe,
+            .universe_instance = space->native.universe->instance_id,
+            .universe_epoch = space->native.universe->storage_epoch,
+            .prefix_epoch = space->prefix_epoch,
+            .source_len = space->native.len,
+            .bytes = sizeof(*directory),
+            .budget = path_cache_budget(space->native.len),
+        };
+        space->match_backend.native.path_directory = directory;
+        cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MATCH_POSITION_INDEX_ALLOC_BYTES,
+                               sizeof(*directory));
+    }
+    directory->root = path_directory_insert(directory->root, index);
+    directory->root->directory_parent = NULL;
+    directory->len++;
+    directory->headed += index->head != SYMBOL_ID_NONE;
+    index->directory = directory;
+    if (index->bytes > SIZE_MAX - directory->bytes)
+        cetta_oom(SIZE_MAX);
+    directory->bytes += index->bytes;
+    index->budget_older = directory->newest;
+    if (directory->newest)
+        directory->newest->budget_newer = index;
+    else
+        directory->oldest = index;
+    directory->newest = index;
+}
+
+static void path_directory_clear(Space *space) {
+    CettaSpacePathDirectory *directory = space->match_backend.native.path_directory;
+    if (!directory)
+        return;
+    path_shapes_clear(space);
+    space->match_backend.native.path_directory = NULL;
+    cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MATCH_POSITION_INDEX_FREE_BYTES,
+                           sizeof(*directory));
+    free(directory);
+}
+
+static void path_directory_remove(Space *space, CettaSpacePathIndex *index) {
+    CettaSpacePathDirectory *directory = space->match_backend.native.path_directory;
+    if (!directory || directory->len == 0u)
+        abort();
+    directory->root = path_directory_erase(directory->root, index);
+    if (directory->root)
+        directory->root->directory_parent = NULL;
+    directory->headed -= index->head != SYMBOL_ID_NONE;
+    if (index->budget_older)
+        index->budget_older->budget_newer = index->budget_newer;
+    else
+        directory->oldest = index->budget_newer;
+    if (index->budget_newer)
+        index->budget_newer->budget_older = index->budget_older;
+    else
+        directory->newest = index->budget_older;
+    directory->bytes -= index->bytes;
+    index->directory = NULL;
+    if (--directory->len == 0u)
+        path_directory_clear(space);
+}
+
+static void path_index_unlink(Space *space, CettaSpacePathIndex *index) {
+    if (index->previous)
+        index->previous->next = index->next;
+    else
+        space->match_backend.native.path_indexes = index->next;
+    if (index->next)
+        index->next->previous = index->previous;
+    path_directory_remove(space, index);
+}
+
+static void path_budget_trim_slow(Space *space) {
+    for (;;) {
+        CettaSpacePathDirectory *directory = space->match_backend.native.path_directory;
+        if (!directory || directory->bytes <= directory->budget)
+            return;
+        CettaSpacePathIndex *oldest = directory->oldest;
+        if (!oldest)
+            abort();
+        path_index_unlink(space, oldest);
+        path_index_free(oldest);
+    }
+}
+
+static CettaSpacePathIndex *path_directory_first_head(
+        const CettaSpacePathDirectory *directory, SymbolId head) {
+    CettaSpacePathIndex *node = directory ? directory->root : NULL;
+    CettaSpacePathIndex *first = NULL;
+    while (node) {
+        if (node->head >= head) {
+            first = node;
+            node = node->directory_left;
+        } else {
+            node = node->directory_right;
+        }
+    }
+    return first;
+}
+
+static CettaSpacePathIndex *path_directory_next(CettaSpacePathIndex *node) {
+    if (node->directory_right) {
+        node = node->directory_right;
+        while (node->directory_left)
+            node = node->directory_left;
+        return node;
+    }
+    CettaSpacePathIndex *parent = node->directory_parent;
+    while (parent && parent->directory_right == node) {
+        node = parent;
+        parent = node->directory_parent;
+    }
+    return parent;
+}
+
+/* A private walk over at most three disjoint head ranges, or every index
+ * for an unknown row head. The tree stays fixed while payloads are updated. */
+typedef struct {
+    const CettaSpacePathDirectory *directory;
+    CettaSpacePathIndex *next;
+    SymbolId heads[3];
+    uint8_t count, phase;
+    bool all;
+} PathIndexWalk;
+
+static void path_walk_add_head(PathIndexWalk *walk, SymbolId head) {
+    for (uint8_t i = 0u; i < walk->count; i++)
+        if (walk->heads[i] == head)
+            return;
+    if (walk->count == 3u)
+        abort();
+    walk->heads[walk->count++] = head;
+}
+
+static inline __attribute__((always_inline)) PathIndexWalk path_head_walk(const Space *space, SymbolId head,
+                                    bool universal) {
+    PathIndexWalk walk = {.directory = space->match_backend.native.path_directory};
+    /* At this size a scan has a fixed four-description bound and avoids
+     * two range searches. Callers retain their existing head tests. */
+    if (!walk.directory || walk.directory->len <= 4u) {
+        walk.all = true;
+        walk.next = space->match_backend.native.path_indexes;
+        return walk;
+    }
+    path_walk_add_head(&walk, head);
+    if (universal)
+        path_walk_add_head(&walk, SYMBOL_ID_NONE);
+    return walk;
+}
+
+static inline __attribute__((always_inline)) CettaSpacePathIndex *path_walk_next(PathIndexWalk *walk) {
+    if (walk->all) {
+        CettaSpacePathIndex *node = walk->next;
+        if (node)
+            walk->next = node->next;
+        return node;
+    }
+    for (;;) {
+        CettaSpacePathIndex *node = walk->next;
+        if (node && node->head == walk->heads[walk->phase - 1u]) {
+            walk->next = path_directory_next(node);
+            return node;
+        }
+        if (walk->phase == walk->count)
+            return NULL;
+        walk->next = path_directory_first_head(walk->directory,
+                                                walk->heads[walk->phase++]);
+    }
+}
+
+typedef struct { bool unknown; SymbolId head; } PathRowHead;
+
+/* This is the head refutation in path_project. Opaque/open heads retain
+ * the broadcast path; stable non-expression records miss every named head. */
+static PathRowHead path_row_head(const TermUniverse *universe, AtomId id) {
+    const CettaTermHdr *header = tu_hdr(universe, id);
+    if (header) {
+        if (header->tag == ATOM_VAR)
+            return (PathRowHead){.unknown = true};
+        if (header->tag != ATOM_EXPR)
+            return (PathRowHead){.head = SYMBOL_ID_NONE};
+        if (header->sym_or_head != SYMBOL_ID_NONE)
+            return (PathRowHead){.head = header->sym_or_head};
+    } else {
+        const Atom *row = term_universe_peek_atom(universe, id);
+        if (row && row->kind == ATOM_EXPR && row->expr.len != 0u &&
+            row->expr.elems[0]->kind == ATOM_SYMBOL &&
+            row->expr.elems[0]->sym_id != SYMBOL_ID_NONE)
+            return (PathRowHead){.head = row->expr.elems[0]->sym_id};
+    }
+    return (PathRowHead){.unknown = true};
+}
+
+static inline __attribute__((always_inline)) PathIndexWalk path_mutation_walk(const Space *space, AtomId first,
+                                        bool has_second, AtomId second) {
+    const CettaSpacePathDirectory *directory = space->match_backend.native.path_directory;
+    if (directory && directory->len <= 4u)
+        return (PathIndexWalk){.directory = directory, .all = true,
+            .next = space->match_backend.native.path_indexes};
+    PathRowHead a = path_row_head(space->native.universe, first);
+    PathRowHead b = has_second ? path_row_head(space->native.universe, second)
+                              : (PathRowHead){.head = SYMBOL_ID_NONE};
+    PathIndexWalk walk = {.directory = space->match_backend.native.path_directory};
+    if (a.unknown || b.unknown) {
+        walk.all = true;
+        walk.next = space->match_backend.native.path_indexes;
+    } else {
+        if (a.head != SYMBOL_ID_NONE)
+            path_walk_add_head(&walk, a.head);
+        if (b.head != SYMBOL_ID_NONE)
+            path_walk_add_head(&walk, b.head);
+        path_walk_add_head(&walk, SYMBOL_ID_NONE);
+    }
+    return walk;
+}
 
 static uint64_t path_key_hash(uint64_t key) {
     key ^= key >> 30u;
@@ -60,8 +530,19 @@ static void path_charge(CettaSpacePathIndex *index, size_t added) {
     if (added > SIZE_MAX - index->bytes)
         cetta_oom(SIZE_MAX);
     index->bytes += added;
+    if (index->directory) {
+        if (added > SIZE_MAX - index->directory->bytes)
+            cetta_oom(SIZE_MAX);
+        index->directory->bytes += added;
+    }
     cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MATCH_POSITION_INDEX_ALLOC_BYTES,
                            added);
+}
+
+static void path_uncharge(CettaSpacePathIndex *index, size_t freed) {
+    index->bytes -= freed;
+    if (index->directory)
+        index->directory->bytes -= freed;
 }
 
 /* A slot holds a key once it was given one: a key whose rows were all
@@ -257,11 +738,14 @@ static PathProjection path_project(const CettaSpacePathIndex *index,
                 return row->tag == ATOM_VAR ? PATH_UNCERTAIN : PATH_MISS;
             head = row->sym_or_head;
         } else {
-            const Atom *decoded = term_universe_get_atom(universe, id);
+            const Atom *decoded = term_universe_peek_atom(universe, id);
             if (decoded && decoded->kind == ATOM_EXPR && decoded->expr.len > 0u &&
                 decoded->expr.elems[0]->kind == ATOM_SYMBOL)
                 head = decoded->expr.elems[0]->sym_id;
         }
+        if (row && index->length != 0u &&
+            tu_arity(universe, id) != index->length)
+            return PATH_MISS;
         if (head == SYMBOL_ID_NONE)
             return PATH_UNCERTAIN;
         if (head != index->head)
@@ -323,7 +807,7 @@ PathPosting *path_row_posting(CettaSpacePathIndex *index, AtomId id,
         SymbolId head = header && header->tag == ATOM_EXPR
             ? header->sym_or_head : SYMBOL_ID_NONE;
         if (!header) {
-            const Atom *row = term_universe_get_atom(index->universe, id);
+            const Atom *row = term_universe_peek_atom(index->universe, id);
             if (row && row->kind == ATOM_EXPR && row->expr.len > 0u &&
                 row->expr.elems[0]->kind == ATOM_SYMBOL)
                 head = row->expr.elems[0]->sym_id;
@@ -394,7 +878,7 @@ static bool posting_remove(CettaSpacePathIndex *index, PathPosting *posting,
         CettaIndex only = items[0];
         size_t freed = (size_t)posting_cap(posting) * sizeof(*items);
         free(items);
-        index->bytes -= freed;
+        path_uncharge(index, freed);
         cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MATCH_POSITION_INDEX_FREE_BYTES,
                                freed);
         posting->positions.single = only;
@@ -437,7 +921,6 @@ static void path_append_row(CettaSpacePathIndex *index, AtomId id,
         index->uncertain_len++;
     else if (projection == PATH_KEY)
         index->keyed_len++;
-    index->source_len++;
 }
 
 static bool path_query_key(const Atom *atom, CettaSpacePathKeyKind *kind,
@@ -508,46 +991,61 @@ static uint64_t path_flat_shape(const Atom *pattern) {
 }
 
 /* The Space's index of `kind` at `path` over the rows of `head`
- * (SYMBOL_ID_NONE: every row), if it keeps one. */
+ * (SYMBOL_ID_NONE: every row) of `length` elements (0: any), if it keeps
+ * one. */
 static inline __attribute__((always_inline)) CettaSpacePathIndex *path_index_find(
     Space *space, CettaSpacePathKeyKind kind, const CettaExprIndex *path,
-    size_t depth, SymbolId head) {
-    for (CettaSpacePathIndex *index = space->match_backend.native.path_indexes;
-         index; index = index->next) {
-        if (index->kind != kind || index->path_len != depth || index->head != head)
-            continue;
-        size_t position = 0u;
-        while (position < depth && index->path[position] == path[position])
-            position++;
-        if (position == depth)
+    size_t depth, SymbolId head, CettaExprLen length) {
+    const CettaSpacePathDirectory *directory = space->match_backend.native.path_directory;
+    CettaSpacePathIndex *index = directory ? directory->root : NULL;
+    PathIndexKey key = {head, length, kind, depth, path};
+    size_t probes = 0u;
+    while (index) {
+        probes++;
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_MATCH_POSITION_INDEX_DIRECTORY_PROBE);
+        int order = path_directory_compare(&key, index);
+        if (order == 0) {
+            path_budget_touch(index);
+            cetta_runtime_stats_update_max(CETTA_RUNTIME_COUNTER_MATCH_POSITION_INDEX_DIRECTORY_PROBE_PEAK, probes);
             return index;
+        }
+        index = order < 0 ? index->directory_left : index->directory_right;
     }
+    cetta_runtime_stats_update_max(CETTA_RUNTIME_COUNTER_MATCH_POSITION_INDEX_DIRECTORY_PROBE_PEAK, probes);
     return NULL;
 }
 
-/* A new index of `kind` at `path` over the rows of `head`, built from the
- * rows. */
+/* A new index of `kind` at `path` over the rows of `head` of `length`
+ * elements, built from ROWS (ROW_COUNT positions in row order, holding every
+ * row the index holds), or from every row when ROWS is NULL. */
 static __attribute__((noinline)) CettaSpacePathIndex *path_index_build(
     Space *space, CettaSpacePathKeyKind kind, const CettaExprIndex *path,
-    size_t depth, SymbolId head) {
+    size_t depth, SymbolId head, CettaExprLen length, const CettaIndex *rows,
+    CettaCount row_count) {
+    size_t description = path_scaled_budget(space->native.len, 16u, 32u * 1024u);
+    if (description < sizeof(CettaSpacePathIndex) ||
+        depth > (description - sizeof(CettaSpacePathIndex)) / sizeof(CettaExprIndex))
+        return NULL;
     CettaSpacePathIndex *index = cetta_malloc(sizeof(*index));
     *index = (CettaSpacePathIndex){
         .next = space->match_backend.native.path_indexes,
         .universe = space->native.universe,
-        .universe_instance = space->native.universe->instance_id,
-        .universe_epoch = space->native.universe->storage_epoch,
-        .prefix_epoch = space->prefix_epoch,
-        .path_len = depth, .kind = kind, .head = head,
+        .path_len = depth, .kind = kind, .head = head, .length = length,
     };
     index->path = cetta_malloc(depth * sizeof(*index->path));
     path_charge(index, sizeof(*index) + depth * sizeof(*index->path));
     memcpy(index->path, path, depth * sizeof(*index->path));
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_MATCH_POSITION_INDEX_BUILD);
-    for (CettaIndex position = 0u; position < space->native.len; position++) {
+    CettaCount count = rows ? row_count : space->native.len;
+    for (CettaCount next = 0u; next < count; next++) {
+        CettaIndex position = rows ? rows[next] : (CettaIndex)next;
         path_append_row(index, space_get_atom_id_at64(space, position), position);
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_MATCH_POSITION_INDEX_BUILD_ROW);
     }
+    if (index->next)
+        index->next->previous = index;
     space->match_backend.native.path_indexes = index;
+    path_directory_add(space, index);
     return index;
 }
 
@@ -557,19 +1055,171 @@ static __attribute__((noinline)) CettaSpacePathIndex *path_index_build(
 static inline CettaSpacePathIndex *path_index_for(Space *space, CettaSpacePathKeyKind kind,
                                                   const CettaExprIndex *path, size_t depth,
                                                   SymbolId head, bool build) {
-    CettaSpacePathIndex *index = path_index_find(space, kind, path, depth, head);
-    return index || !build ? index : path_index_build(space, kind, path, depth, head);
+    CettaSpacePathIndex *index = path_index_find(space, kind, path, depth, head, 0u);
+    return index || !build
+        ? index : path_index_build(space, kind, path, depth, head, 0u, NULL, 0u);
+}
+
+/* A head read from the head index costs at most this many rows a query:
+ * below it no index is built for the head. */
+#define PATH_HEAD_RENT_ROWS 32u
+
+static bool head_index_rows(Space *space, SymbolId head, CettaExprLen length,
+                            CettaIndex **out, CettaCount *count,
+                            uint64_t *rent);
+
+/* The indexes restricted to a head a space keeps at most: every add and
+ * every lookup visits a space's indexes. */
+#define PATH_HEAD_INDEXES 64u
+
+static bool path_head_indexes_full(const Space *space) {
+    const CettaSpacePathDirectory *directory = space->match_backend.native.path_directory;
+    return directory && directory->headed >= PATH_HEAD_INDEXES;
+}
+
+/* The index of `kind` at `path` over `head`'s rows of `length` elements,
+ * or, for a head of at most PATH_HEAD_RENT_ROWS such rows, *RENT set and
+ * those rows from the head index in *RENTED (NULL then returned).  The index
+ * is built from the head's rows there when `build` asks for it; from every
+ * row where the space keeps no head index.  A head of SYMBOL_ID_NONE is
+ * every row's, as path_index_for has it. */
+static CettaSpacePathIndex *path_head_index(Space *space,
+                                            CettaSpacePathKeyKind kind,
+                                            const CettaExprIndex *path,
+                                            size_t depth, SymbolId head,
+                                            CettaExprLen length, bool build,
+                                            bool *rent, CettaIndex **rented,
+                                            CettaCount *rented_count) {
+    *rent = false;
+    *rented = NULL;
+    *rented_count = 0u;
+    if (head == SYMBOL_ID_NONE)
+        return path_index_for(space, kind, path, depth, head, build);
+    CettaSpacePathIndex *index = path_index_find(
+        space, kind, path, depth, head, length);
+    if (index)
+        return index;
+    CettaIndex *rows = NULL;
+    CettaCount row_count = 0u;
+    uint64_t paid = 0u;
+    if (!head_index_rows(space, head, length, &rows, &row_count, &paid))
+        return path_index_for(space, kind, path, depth, head, build);
+    /* Rent until the rows offered have paid for the index once, and past
+     * the indexes a space keeps for heads. */
+    if (row_count <= PATH_HEAD_RENT_ROWS &&
+        (paid <= row_count || !build || path_head_indexes_full(space))) {
+        *rent = true;
+        *rented = rows;
+        *rented_count = row_count;
+        return NULL;
+    }
+    index = build ? path_index_build(space, kind, path, depth, head, length,
+                                     rows, row_count)
+                  : NULL;
+    free(rows);
+    return index;
+}
+
+/* Choose a wide query's scalar coordinate by its sampled offer, rather
+ * than by position. Sampling only selects an index; path_project and the
+ * authoritative unifier still decide which occurrences can be excluded.
+ * Existing indexes are reused, so sampling and head enumeration are paid
+ * once when a query needs a new access path. */
+static CettaSpacePathIndex *path_wide_index(
+    Space *space, Atom *pattern, uint64_t *key, bool *rent,
+    CettaIndex **rented, CettaCount *rented_count) {
+    SymbolId head = pattern->expr.elems[0]->kind == ATOM_SYMBOL
+        ? pattern->expr.elems[0]->sym_id : SYMBOL_ID_NONE;
+    CettaSpacePathIndex *best = NULL;
+    CettaCount best_offer = UINT64_MAX;
+    PathIndexWalk walk = path_head_walk(space, head, false);
+    for (CettaSpacePathIndex *index = path_walk_next(&walk);
+         index; index = path_walk_next(&walk)) {
+        if (index->head != head || index->length != pattern->expr.len ||
+            index->path_len != 1u ||
+            index->path[0] < CETTA_INDEX_CHILD_TOKEN_LIMIT ||
+            index->path[0] >= pattern->expr.len)
+            continue;
+        CettaSpacePathKeyKind kind;
+        uint64_t query_key;
+        if (!path_query_key(pattern->expr.elems[index->path[0]], &kind,
+                             &query_key) || kind != index->kind)
+            continue;
+        PathPosting *posting = index->key_cap ? path_key_slot(index, query_key) : NULL;
+        CettaCount offer = (posting ? posting->len : 0u) + index->uncertain_len;
+        if (!best || offer < best_offer) {
+            best = index;
+            best_offer = offer;
+            *key = query_key;
+        }
+    }
+    if (best)
+        return best;
+    CettaIndex *rows = NULL;
+    CettaCount row_count = 0u;
+    uint64_t rent_paid = 0u;
+    if (head == SYMBOL_ID_NONE ||
+        !head_index_rows(space, head, pattern->expr.len, &rows, &row_count,
+                         &rent_paid))
+        return NULL;
+    CettaExprIndex selected = 0u;
+    CettaSpacePathKeyKind selected_kind = CETTA_SPACE_PATH_SYMBOL_KEY;
+    unsigned samples = row_count < 16u ? (unsigned)row_count : 16u;
+    unsigned shortest = UINT32_MAX;
+    for (CettaExprIndex column = CETTA_INDEX_CHILD_TOKEN_LIMIT;
+         column < pattern->expr.len; column++) {
+        CettaSpacePathKeyKind kind;
+        uint64_t query_key;
+        if (!path_query_key(pattern->expr.elems[column], &kind, &query_key))
+            continue;
+        CettaSpacePathIndex probe = {
+            .universe = space->native.universe, .head = head,
+            .length = pattern->expr.len, .kind = kind,
+            .path = &column, .path_len = 1u,
+        };
+        unsigned offered = 0u;
+        for (unsigned sample = 0u; sample < samples; sample++) {
+            AtomId id = space_get_atom_id_at64(
+                space, rows[(row_count / samples) * sample]);
+            uint64_t stored_key = 0u;
+            PathProjection projection = path_project(&probe, id, &stored_key);
+            offered += projection == PATH_UNCERTAIN ||
+                (projection == PATH_KEY && stored_key == query_key);
+        }
+        if (offered < shortest) {
+            shortest = offered;
+            selected = column;
+            selected_kind = kind;
+            *key = query_key;
+        }
+    }
+    free(rows);
+    return selected
+        ? path_head_index(space, selected_kind, &selected, 1u, head,
+                          pattern->expr.len, true, rent, rented, rented_count)
+        : NULL;
 }
 
 /* Choose a rigid coordinate after a variable in the trie's structural order.
  * Prefix-selective patterns keep their existing access path. Explicit frames
  * make the coordinate search independent of the C call stack. */
 static CettaSpacePathIndex *path_demand(Space *space, Atom *pattern,
-                                      uint64_t *key) {
+                                      uint64_t *key, bool *rent,
+                                      CettaIndex **rented,
+                                      CettaCount *rented_count) {
+    *rent = false;
+    *rented = NULL;
+    *rented_count = 0u;
     if (!pattern || pattern->kind != ATOM_EXPR || !atom_has_vars(pattern) ||
         atom_structural_may_have_list_carrier(pattern) ||
         atom_structural_may_have_internal_tag(pattern))
         return NULL;
+    if (pattern->expr.len > CETTA_INDEX_CHILD_TOKEN_LIMIT) {
+        CettaSpacePathIndex *wide = path_wide_index(
+            space, pattern, key, rent, rented, rented_count);
+        if (wide || *rent)
+            return wide;
+    }
     PathQueryFrame local[16];
     PathQueryFrame *frames = local;
     size_t depth = 1u, capacity = 16u;
@@ -592,7 +1242,10 @@ static CettaSpacePathIndex *path_demand(Space *space, Atom *pattern,
         Atom *child = frame->term->expr.elems[frame->child];
         if (child && child->kind == ATOM_VAR)
             unbound = true;
-        if (unbound && path_query_key(child, &kind, key)) {
+        /* Past the trie's levels a bound value is keyed though no variable
+         * precedes it: the trie holds every row below there in one leaf. */
+        if ((unbound || depth > CETTA_INDEX_DEPTH_LIMIT) &&
+            path_query_key(child, &kind, key)) {
             if (frame->child != 0u) {
                 found = true;
                 break;
@@ -647,8 +1300,16 @@ static CettaSpacePathIndex *path_demand(Space *space, Atom *pattern,
     /* A pattern whose bound scalars all lead: its first one, over the rows
      * of the pattern's head alone, since the head already selects them. */
     SymbolId lead_head = SYMBOL_ID_NONE;
-    if (!found && !head_path) {
-        for (CettaExprIndex position = 1u; position < pattern->expr.len; position++) {
+    /* A pattern wider than the elements the trie reads is keyed by its first
+     * bound value past them, which the trie cannot select by; then by its
+     * first, as any other. */
+    CettaExprIndex lead_first =
+        pattern->expr.len > CETTA_INDEX_CHILD_TOKEN_LIMIT
+            ? CETTA_INDEX_CHILD_TOKEN_LIMIT : 1u;
+    for (unsigned round = 0u; !found && !head_path && round < 2u; round++) {
+        CettaExprIndex from = round == 0u ? lead_first : 1u;
+        CettaExprIndex to = round == 0u ? pattern->expr.len : lead_first;
+        for (CettaExprIndex position = from; position < to; position++) {
             bool keyed = path_query_key(pattern->expr.elems[position], &kind, key);
             if (!keyed && path_query_term_key(space->native.universe,
                                               pattern->expr.elems[position], key)) {
@@ -680,7 +1341,11 @@ static CettaSpacePathIndex *path_demand(Space *space, Atom *pattern,
         for (size_t position = 0u; position < depth; position++)
             path[position] = selected_head
                 ? head_path[position] : frames[position].child;
-        index = path_index_for(space, kind, path, depth, index_head, true);
+        index = index_head != SYMBOL_ID_NONE
+            ? path_head_index(space, kind, path, depth, index_head,
+                              pattern->expr.len, true, rent, rented,
+                              rented_count)
+            : path_index_for(space, kind, path, depth, index_head, true);
         free(path);
     }
     if (frames != local)
@@ -690,12 +1355,7 @@ static CettaSpacePathIndex *path_demand(Space *space, Atom *pattern,
 }
 
 static bool path_generation_current(const Space *space) {
-    const CettaSpacePathIndex *index = space->match_backend.native.path_indexes;
-    return !index || (index->universe == space->native.universe &&
-        index->universe_instance == space->native.universe->instance_id &&
-        index->universe_epoch == space->native.universe->storage_epoch &&
-        index->prefix_epoch == space->prefix_epoch &&
-        index->source_len == space->native.len);
+    return path_directory_current(space, space->native.len);
 }
 
 /* The candidates of a query that reads open rows: its key's posting merged
@@ -759,7 +1419,7 @@ static __attribute__((noinline)) CettaCount path_merge_open_rows(
             /* A row kept only in decoded form (one holding a space or another
              * identity-bearing value) refutes by its head the same way. */
             if (!header) {
-                const Atom *row = term_universe_get_atom(
+                const Atom *row = term_universe_peek_atom(
                     space->native.universe, row_id);
                 if (row && row->kind == ATOM_EXPR && row->expr.len > 0u &&
                     row->expr.elems[0]->kind == ATOM_SYMBOL &&
@@ -830,6 +1490,22 @@ struct CettaSpacePathShape {
     uint64_t last[];
 };
 
+static void path_shapes_clear(Space *space) {
+    CettaSpacePathDirectory *directory = space->match_backend.native.path_directory;
+    CettaSpacePathShape *shape = space->match_backend.native.path_shapes;
+    space->match_backend.native.path_shapes = NULL;
+    while (shape) {
+        CettaSpacePathShape *next = shape->next;
+        size_t bytes = sizeof(*shape) + (size_t)(shape->shape & 0xffu) * sizeof(shape->last[0]);
+        if (directory)
+            directory->bytes -= bytes;
+        cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MATCH_POSITION_INDEX_FREE_BYTES, bytes);
+        free(shape);
+        shape = next;
+    }
+}
+
+
 /* A flat shape's columns after its first variable: bit p for a symbol or an
  * integer at position p. */
 static uint32_t path_shape_columns(uint64_t shape) {
@@ -887,6 +1563,14 @@ static CettaSpacePathShape *path_shape_state(Space *space, uint64_t shape,
         state->last[position] = (columns >> position) & 1u
             ? path_column_key(pattern, (unsigned)position) : 0u;
     space->match_backend.native.path_shapes = state;
+    CettaSpacePathDirectory *directory = space->match_backend.native.path_directory;
+    if (!directory)
+        abort();
+    size_t bytes = sizeof(*state) + (size_t)pattern->expr.len * sizeof(state->last[0]);
+    if (bytes > SIZE_MAX - directory->bytes)
+        cetta_oom(SIZE_MAX);
+    directory->bytes += bytes;
+    cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MATCH_POSITION_INDEX_ALLOC_BYTES, bytes);
     return state;
 }
 
@@ -904,11 +1588,13 @@ static CettaSpacePathIndex *path_shortest_offer(Space *space, const Atom *patter
     CettaSpacePathIndex *best = NULL;
     CettaCount best_offer = 0u;
     uint32_t served = 0u;
-    for (CettaSpacePathIndex *index = space->match_backend.native.path_indexes;
-         index; index = index->next) {
+    PathIndexWalk walk = path_head_walk(space, head, true);
+    for (CettaSpacePathIndex *index = path_walk_next(&walk);
+         index; index = path_walk_next(&walk)) {
         if (index->path_len != 1u || index->path[0] >= 32u ||
             !((columns >> index->path[0]) & 1u) ||
-            (index->head != SYMBOL_ID_NONE && index->head != head))
+            (index->head != SYMBOL_ID_NONE && index->head != head) ||
+            (index->length != 0u && index->length != pattern->expr.len))
             continue;
         CettaSpacePathKeyKind kind;
         uint64_t key = 0u;
@@ -968,7 +1654,14 @@ static CettaSpacePathIndex *path_choose_column(Space *space, Atom *pattern,
     SymbolId head = pattern->expr.elems[0]->kind == ATOM_SYMBOL
         ? pattern->expr.elems[0]->sym_id : SYMBOL_ID_NONE;
     CettaExprIndex path[1] = {position};
-    CettaSpacePathIndex *bought = path_index_for(space, kind, path, 1u, head, true);
+    bool rent = false;
+    CettaIndex *rented = NULL;
+    CettaCount rented_count = 0u;
+    CettaSpacePathIndex *bought = path_head_index(space, kind, path, 1u, head,
+        pattern->expr.len, true, &rent, &rented, &rented_count);
+    free(rented);
+    if (!bought)
+        return index;
     PathPosting *posting, *headed;
     CettaCount headed_len;
     if (path_offer(bought, next_key, head, &posting, &headed, &headed_len) < offer) {
@@ -990,6 +1683,10 @@ bool space_path_index_candidates(Space *space, Atom *pattern,
          space->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) ||
         !space_path_index_may_select(pattern))
         return false;
+    Space *budget_space __attribute__((cleanup(path_budget_query_leave))) = space;
+    if (space->match_backend.native.path_query_depth == UINT32_MAX)
+        abort();
+    space->match_backend.native.path_query_depth++;
     if (!path_generation_current(space))
         space_path_indexes_retire(space);
     uint64_t key = 0u;
@@ -999,20 +1696,33 @@ bool space_path_index_candidates(Space *space, Atom *pattern,
         ? path_choose_column(space, pattern, shape, columns, &key, true) : NULL;
     SymbolId pattern_head = pattern->expr.elems[0]->kind == ATOM_SYMBOL
         ? pattern->expr.elems[0]->sym_id : SYMBOL_ID_NONE;
-    for (CettaSpacePathIndex *known = shape && !index
-             ? space->match_backend.native.path_indexes : NULL;
-         known; known = known->next) {
-        if (known->shape != shape || known->path_len != 1u ||
-            (known->head != SYMBOL_ID_NONE && known->head != pattern_head))
-            continue;
-        CettaSpacePathKeyKind kind;
-        if (path_query_key(pattern->expr.elems[known->path[0]], &kind, &key) &&
-            kind == known->kind)
-            index = known;
-        break;
+    if (shape && !index) {
+        PathIndexWalk walk = path_head_walk(space, pattern_head, true);
+        for (CettaSpacePathIndex *known = path_walk_next(&walk);
+             known; known = path_walk_next(&walk)) {
+            if (known->shape != shape || known->path_len != 1u ||
+                (known->head != SYMBOL_ID_NONE && known->head != pattern_head))
+                continue;
+            CettaSpacePathKeyKind kind;
+            if (path_query_key(pattern->expr.elems[known->path[0]], &kind, &key) &&
+                kind == known->kind)
+                index = known;
+            break;
+        }
     }
     if (!index) {
-        index = path_demand(space, pattern, &key);
+        bool rent = false;
+        CettaIndex *rented = NULL;
+        CettaCount rented_count = 0u;
+        index = path_demand(space, pattern, &key, &rent, &rented,
+                            &rented_count);
+        if (rent) {
+            *out = rented;
+            *count = rented_count;
+            cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MATCH_POSITION_INDEX_CANDIDATE,
+                                    rented_count);
+            return true;
+        }
         if (index && shape)
             index->shape = shape;
     }
@@ -1029,6 +1739,7 @@ bool space_path_index_candidates(Space *space, Atom *pattern,
 static bool path_candidates_head(Space *space, CettaSpacePathIndex *index,
                                  SymbolId query_head, uint64_t key, bool broad,
                                  CettaIndex **out, CettaIndex *count) {
+    path_budget_touch(index);
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_MATCH_POSITION_INDEX_LOOKUP);
     PathPosting *posting, *headed;
     CettaCount headed_len;
@@ -1086,8 +1797,27 @@ bool space_path_index_lead_candidates(Space *space, Atom *pattern, bool build,
         atom_structural_may_have_list_carrier(pattern) ||
         atom_structural_may_have_internal_tag(pattern))
         return false;
+    Space *budget_space __attribute__((cleanup(path_budget_query_leave))) = space;
+    if (space->match_backend.native.path_query_depth == UINT32_MAX)
+        abort();
+    space->match_backend.native.path_query_depth++;
     if (!path_generation_current(space))
         space_path_indexes_retire(space);
+    if (build && pattern->expr.len > CETTA_INDEX_CHILD_TOKEN_LIMIT) {
+        uint64_t key = 0u;
+        bool rent = false;
+        CettaIndex *rented = NULL;
+        CettaCount rented_count = 0u;
+        CettaSpacePathIndex *wide = path_wide_index(
+            space, pattern, &key, &rent, &rented, &rented_count);
+        if (rent) {
+            *out = rented;
+            *count = rented_count;
+            return true;
+        }
+        if (wide)
+            return path_candidates(space, wide, pattern, key, true, out, count);
+    }
     /* A flat pattern binding several columns reads the one whose posting is
      * shortest, as a lookup of its shape does. */
     uint64_t shape = path_flat_shape(pattern);
@@ -1111,8 +1841,19 @@ bool space_path_index_lead_candidates(Space *space, Atom *pattern, bool build,
         if (!keyed)
             continue;
         CettaExprIndex path[1] = {position};
-        CettaSpacePathIndex *index = path_index_for(
-            space, kind, path, 1u, pattern->expr.elems[0]->sym_id, build);
+        bool rent = false;
+        CettaIndex *rented = NULL;
+        CettaCount rented_count = 0u;
+        CettaSpacePathIndex *index = path_head_index(
+            space, kind, path, 1u, pattern->expr.elems[0]->sym_id,
+            pattern->expr.len, build, &rent, &rented, &rented_count);
+        if (rent) {
+            *out = rented;
+            *count = rented_count;
+            cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MATCH_POSITION_INDEX_CANDIDATE,
+                                    rented_count);
+            return true;
+        }
         return index && path_candidates(space, index, pattern, key, true, out, count);
     }
     return false;
@@ -1181,13 +1922,30 @@ bool space_path_index_prefix_candidates(Space *space, Atom *pattern, bool build,
     size_t bound = space_path_index_prefix_bound(pattern);
     if (bound == 0u)
         return false;
+    Space *budget_space __attribute__((cleanup(path_budget_query_leave))) = space;
+    if (space->match_backend.native.path_query_depth == UINT32_MAX)
+        abort();
+    space->match_backend.native.path_query_depth++;
     if (!path_generation_current(space))
         space_path_indexes_retire(space);
     CettaExprIndex path[PATH_PREFIX_COLUMNS];
     for (size_t column = 0u; column < bound; column++)
         path[column] = column + 1u;
-    CettaSpacePathIndex *index = path_index_for(space, CETTA_SPACE_PATH_PREFIX_KEY,
-        path, bound, pattern->expr.elems[0]->sym_id, build);
+    bool rent = false;
+    CettaIndex *rented = NULL;
+    CettaCount rented_count = 0u;
+    CettaSpacePathIndex *index = path_head_index(space,
+        CETTA_SPACE_PATH_PREFIX_KEY, path, bound,
+        pattern->expr.elems[0]->sym_id, pattern->expr.len, build, &rent,
+        &rented, &rented_count);
+    if (rent) {
+        *out = rented;
+        *count = rented_count;
+        cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MATCH_POSITION_INDEX_CANDIDATE,
+                                rented_count);
+        return true;
+    }
+    free(rented);
     /* Rows open in the prefix are read by every probe: a head whose rows
      * are mostly open is left to the trie, which descends them by shape. */
     if (!index || index->uncertain_len > index->keyed_len)
@@ -1227,13 +1985,29 @@ bool space_path_index_prefix_candidates_ids(Space *space, SymbolId head,
         if (columns[rest] != CETTA_ATOM_ID_NONE)
             return false;
     }
+    Space *budget_space __attribute__((cleanup(path_budget_query_leave))) = space;
+    if (space->match_backend.native.path_query_depth == UINT32_MAX)
+        abort();
+    space->match_backend.native.path_query_depth++;
     if (!path_generation_current(space))
         space_path_indexes_retire(space);
     CettaExprIndex path[PATH_PREFIX_COLUMNS];
     for (size_t column = 0u; column < bound; column++)
         path[column] = column + 1u;
-    CettaSpacePathIndex *index = path_index_for(space, CETTA_SPACE_PATH_PREFIX_KEY,
-        path, bound, head, true);
+    bool rent = false;
+    CettaIndex *rented = NULL;
+    CettaCount rented_count = 0u;
+    CettaSpacePathIndex *index = path_head_index(space,
+        CETTA_SPACE_PATH_PREFIX_KEY, path, bound, head, len, true, &rent,
+        &rented, &rented_count);
+    if (rent) {
+        *out = rented;
+        *count = rented_count;
+        cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MATCH_POSITION_INDEX_CANDIDATE,
+                                rented_count);
+        return true;
+    }
+    free(rented);
     if (!index || index->uncertain_len > index->keyed_len)
         return false;
     uint64_t key = PATH_PREFIX_SEED;
@@ -1248,6 +2022,10 @@ bool space_path_index_existing_candidates(Space *space, Atom *pattern,
     if (!space || !out || !count || !space_path_index_may_select(pattern) ||
         !path_generation_current(space))
         return false;
+    Space *budget_space __attribute__((cleanup(path_budget_query_leave))) = space;
+    if (space->match_backend.native.path_query_depth == UINT32_MAX)
+        abort();
+    space->match_backend.native.path_query_depth++;
     uint64_t shape = path_flat_shape(pattern);
     if (!shape)
         return false;
@@ -1260,23 +2038,28 @@ bool space_path_index_existing_candidates(Space *space, Atom *pattern,
         found = path_shortest_offer(space, pattern, columns, true, &key, &offer,
                                     &served);
     }
-    for (CettaSpacePathIndex *index = found ? NULL
-             : space->match_backend.native.path_indexes;
-         index; index = index->next) {
-        if (index->shape != shape || index->path_len != 1u ||
-            (index->head != SYMBOL_ID_NONE &&
-             (pattern->expr.elems[0]->kind != ATOM_SYMBOL ||
-              index->head != pattern->expr.elems[0]->sym_id)))
-            continue;
-        CettaSpacePathKeyKind kind;
-        if (!path_query_key(pattern->expr.elems[index->path[0]], &kind, &key) ||
-            kind != index->kind || index->uncertain_len != 0u)
-            return false;
-        found = index;
-        break;
+    SymbolId head = pattern->expr.elems[0]->kind == ATOM_SYMBOL
+        ? pattern->expr.elems[0]->sym_id : SYMBOL_ID_NONE;
+    if (!found) {
+        PathIndexWalk walk = path_head_walk(space, head, true);
+        for (CettaSpacePathIndex *index = path_walk_next(&walk);
+             index; index = path_walk_next(&walk)) {
+            if (index->shape != shape || index->path_len != 1u ||
+                (index->head != SYMBOL_ID_NONE &&
+                 (pattern->expr.elems[0]->kind != ATOM_SYMBOL ||
+                  index->head != pattern->expr.elems[0]->sym_id)))
+                continue;
+            CettaSpacePathKeyKind kind;
+            if (!path_query_key(pattern->expr.elems[index->path[0]], &kind, &key) ||
+                kind != index->kind || index->uncertain_len != 0u)
+                return false;
+            found = index;
+            break;
+        }
     }
     if (!found)
         return false;
+    path_budget_touch(found);
     PathPosting *posting = found->key_cap ? path_key_slot(found, key) : NULL;
     CettaCount known = posting ? posting->len : 0u;
     CettaIndex *positions = cetta_malloc(
@@ -1290,18 +2073,22 @@ bool space_path_index_existing_candidates(Space *space, Atom *pattern,
 }
 
 void space_path_indexes_note_add(Space *space, AtomId id, CettaIndex position) {
-    for (CettaSpacePathIndex *index = space->match_backend.native.path_indexes;
-         index; index = index->next) {
-        if (index->source_len != position || index->universe != space->native.universe ||
-            index->universe_instance != space->native.universe->instance_id ||
-            index->prefix_epoch != space->prefix_epoch ||
-            index->universe_epoch != space->native.universe->storage_epoch) {
-            space_path_indexes_retire(space);
-            return;
-        }
+    CettaSpacePathDirectory *directory = space->match_backend.native.path_directory;
+    if (!directory)
+        return;
+    if (!path_directory_current(space, position)) {
+        space_path_indexes_retire(space);
+        return;
+    }
+    PathIndexWalk walk = path_mutation_walk(space, id, false, CETTA_ATOM_ID_NONE);
+    for (CettaSpacePathIndex *index = path_walk_next(&walk);
+         index; index = path_walk_next(&walk)) {
         path_append_row(index, id, position);
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_MATCH_POSITION_INDEX_APPEND_ROW);
     }
+    directory->source_len = position + 1u;
+    directory->budget = path_cache_budget(directory->source_len);
+    path_budget_trim(space);
 }
 
 /* An unordered removal: the row at `removed_row` leaves and the last row,
@@ -1310,16 +2097,17 @@ void space_path_indexes_note_add(Space *space, AtomId id, CettaIndex position) {
 void space_path_indexes_note_swap_remove(Space *space, CettaIndex removed_row,
                                          AtomId removed_id, CettaIndex moved_from,
                                          AtomId moved_id) {
-    for (CettaSpacePathIndex *index = space->match_backend.native.path_indexes;
-         index; index = index->next) {
-        if (index->source_len != moved_from + 1u ||
-            index->universe != space->native.universe ||
-            index->universe_instance != space->native.universe->instance_id ||
-            index->prefix_epoch != space->prefix_epoch ||
-            index->universe_epoch != space->native.universe->storage_epoch) {
-            space_path_indexes_retire(space);
-            return;
-        }
+    CettaSpacePathDirectory *directory = space->match_backend.native.path_directory;
+    if (!directory)
+        return;
+    if (!path_directory_current(space, moved_from + 1u)) {
+        space_path_indexes_retire(space);
+        return;
+    }
+    PathIndexWalk walk = path_mutation_walk(space, removed_id,
+                                            moved_from != removed_row, moved_id);
+    for (CettaSpacePathIndex *index = path_walk_next(&walk);
+         index; index = path_walk_next(&walk)) {
         PathProjection removed_class;
         PathPosting *removed = path_row_posting(index, removed_id, false,
                                                 &removed_class);
@@ -1345,8 +2133,10 @@ void space_path_indexes_note_swap_remove(Space *space, CettaIndex removed_row,
                 posting_insert(index, moved, removed_row);
             }
         }
-        index->source_len--;
     }
+    directory->source_len = moved_from;
+    directory->budget = path_cache_budget(directory->source_len);
+    path_budget_trim(space);
 }
 
 /* A posting's surviving rows, renumbered in place; false when a row lies
@@ -1387,7 +2177,7 @@ static bool posting_transport(CettaSpacePathIndex *index, PathPosting *posting,
         CettaIndex only = write ? items[0] : 0u;
         size_t freed = (size_t)posting_cap(posting) * sizeof(*items);
         free(items);
-        index->bytes -= freed;
+        path_uncharge(index, freed);
         cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MATCH_POSITION_INDEX_FREE_BYTES,
                                freed);
         posting->positions.single = only;
@@ -1398,16 +2188,15 @@ static bool posting_transport(CettaSpacePathIndex *index, PathPosting *posting,
 
 void space_path_indexes_transport(Space *space, const CettaIndex *source_to_target,
                                   CettaCount source_len, CettaCount target_len) {
+    CettaSpacePathDirectory *directory = space->match_backend.native.path_directory;
+    if (!directory)
+        return;
+    if (!path_directory_current(space, source_len) || (source_len && !source_to_target)) {
+        space_path_indexes_retire(space);
+        return;
+    }
     for (CettaSpacePathIndex *index = space->match_backend.native.path_indexes;
          index; index = index->next) {
-        if (index->source_len != source_len || (source_len && !source_to_target) ||
-            index->universe != space->native.universe ||
-            index->universe_instance != space->native.universe->instance_id ||
-            index->prefix_epoch != space->prefix_epoch ||
-            index->universe_epoch != space->native.universe->storage_epoch) {
-            space_path_indexes_retire(space);
-            return;
-        }
         bool kept = true;
         CettaCount removed = 0u;
         for (size_t slot = 0u; kept && slot < index->key_cap; slot++)
@@ -1425,8 +2214,10 @@ void space_path_indexes_transport(Space *space, const CettaIndex *source_to_targ
             space_path_indexes_retire(space);
             return;
         }
-        index->source_len = target_len;
     }
+    directory->source_len = target_len;
+    directory->budget = path_cache_budget(directory->source_len);
+    path_budget_trim(space);
 }
 
 /* A row marked removed stays in the position indexes until the marks
@@ -1441,27 +2232,19 @@ void space_path_indexes_transport(Space *space, const CettaIndex *source_to_targ
 void space_path_indexes_note_mark(Space *space, CettaIndex row, AtomId id) {
     (void)row;
     (void)id;
-    for (CettaSpacePathIndex *index = space->match_backend.native.path_indexes;
-         index; index = index->next) {
-        if (index->source_len != space->native.len ||
-            index->universe != space->native.universe ||
-            index->prefix_epoch != space->prefix_epoch) {
-            space_path_indexes_retire(space);
-            return;
-        }
-    }
+    if (!path_directory_current(space, space->native.len))
+        space_path_indexes_retire(space);
 }
 
 void space_head_index_adopt_prefix_epoch(Space *space, uint64_t followed);
 
 void space_path_indexes_adopt_prefix_epoch(Space *space, uint64_t followed) {
-    for (CettaSpacePathIndex *index = space->match_backend.native.path_indexes;
-         index; index = index->next) {
-        if (index->prefix_epoch == followed &&
-            index->source_len == space->native.len)
-            index->prefix_epoch = space->prefix_epoch;
-    }
+    CettaSpacePathDirectory *directory = space->match_backend.native.path_directory;
+    if (directory && directory->prefix_epoch == followed &&
+        directory->source_len == space->native.len)
+        directory->prefix_epoch = space->prefix_epoch;
     space_head_index_adopt_prefix_epoch(space, followed);
+    path_budget_trim(space);
 }
 
 static void path_index_free(CettaSpacePathIndex *index) {
@@ -1480,51 +2263,47 @@ static void path_index_free(CettaSpacePathIndex *index) {
 }
 
 void space_path_indexes_retire_prefixes(Space *space) {
-    CettaSpacePathIndex **link = &space->match_backend.native.path_indexes;
-    while (*link) {
-        CettaSpacePathIndex *index = *link;
-        if (index->kind != CETTA_SPACE_PATH_PREFIX_KEY) {
-            link = &index->next;
-            continue;
+    CettaSpacePathIndex *index = space->match_backend.native.path_indexes;
+    while (index) {
+        CettaSpacePathIndex *next = index->next;
+        if (index->kind == CETTA_SPACE_PATH_PREFIX_KEY) {
+            path_index_unlink(space, index);
+            path_index_free(index);
         }
-        *link = index->next;
-        path_index_free(index);
+        index = next;
     }
 }
 
 void space_path_indexes_retire(Space *space) {
-    CettaSpacePathShape *shape = space->match_backend.native.path_shapes;
-    space->match_backend.native.path_shapes = NULL;
-    while (shape) {
-        CettaSpacePathShape *next = shape->next;
-        free(shape);
-        shape = next;
-    }
     CettaSpacePathIndex *index = space->match_backend.native.path_indexes;
     space->match_backend.native.path_indexes = NULL;
     while (index) {
         CettaSpacePathIndex *next = index->next;
+        index->directory = NULL;
         path_index_free(index);
         index = next;
     }
+    path_directory_clear(space);
 }
 
 bool space_path_indexes_info(const Space *space, CettaSpacePathIndexInfo *out) {
     if (!space || !out || !space->match_backend.native.path_indexes)
         return false;
     const CettaSpacePathIndex *first = space->match_backend.native.path_indexes;
+    const CettaSpacePathDirectory *directory = space->match_backend.native.path_directory;
+    if (!directory)
+        return false;
     *out = (CettaSpacePathIndexInfo){
-        .source_rows = first->source_len, .keyed_rows = first->keyed_len,
+        .source_rows = directory->source_len, .keyed_rows = first->keyed_len,
         .uncertain_rows = first->uncertain_len, .distinct_keys = first->key_len,
         .path_length = first->path_len, .key_kind = first->kind,
-        .universe_instance = first->universe_instance,
-        .universe_epoch = first->universe_epoch,
-        .prefix_epoch = first->prefix_epoch,
+        .universe_instance = directory->universe_instance,
+        .universe_epoch = directory->universe_epoch,
+        .prefix_epoch = directory->prefix_epoch,
     };
-    for (const CettaSpacePathIndex *index = first; index; index = index->next) {
-        out->index_count++;
-        out->retained_bytes += index->bytes;
-    }
+    out->index_count = directory->len;
+    out->retained_bytes = directory->bytes;
+    out->budget_bytes = directory->budget;
     return true;
 }
 
@@ -1536,6 +2315,9 @@ typedef struct {
     CettaCount len, cap;
     /* Leading rows known removed by mark. */
     CettaCount front;
+    /* The rows queries of this head were offered without an index of
+     * their own (path_head_index). */
+    uint64_t rent;
 } HeadPosting;
 
 struct CettaSpaceHeadIndex {
@@ -1824,6 +2606,157 @@ bool space_head_index_next(CettaSpaceHeadCursor *cursor, CettaIndex ceiling,
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_HEAD_INDEX_ROW);
         return true;
     }
+}
+
+/* The rows of HEAD over LENGTH elements, the rows of an open head over
+ * LENGTH and the rows every query reads, in row order: every row an index
+ * of HEAD's rows of LENGTH elements may hold.  From the space's head index,
+ * built once from the rows and kept on adds and swap removals; false where
+ * the space keeps none. */
+static bool head_index_rows(Space *space, SymbolId head, CettaExprLen length,
+                            CettaIndex **out, CettaCount *count,
+                            uint64_t *rent) {
+    *out = NULL;
+    *count = 0u;
+    *rent = 0u;
+    if (!space->native.universe || space->overlay_base ||
+        (space->kind != SPACE_KIND_ATOM && space->kind != SPACE_KIND_SET) ||
+        space->native.start != 0u || space->native.marked != 0u ||
+        head == SYMBOL_ID_NONE || length == 0u)
+        return false;
+    SpaceMatchNativeState *state = &space->match_backend.native;
+    if (state->head_index && !head_index_current(space, state->head_index))
+        space_head_index_retire(space);
+    if (!state->head_index)
+        state->head_index = head_index_build(space);
+    CettaSpaceHeadIndex *index = state->head_index;
+    if (!index)
+        return false;
+    uint32_t ids[3] = {
+        head_posting_find(index, head_key(head, length)),
+        head_posting_find(index, head_key(SYMBOL_ID_NONE, length)),
+        HEAD_EVERY,
+    };
+    CettaCount next[3] = {0u, 0u, 0u};
+    CettaCount total = 0u;
+    for (unsigned i = 0u; i < 3u; i++) {
+        if (ids[i] == HEAD_NONE)
+            continue;
+        next[i] = index->postings[ids[i]].front;
+        total += index->postings[ids[i]].len - next[i];
+    }
+    CettaIndex *rows = total
+        ? cetta_malloc((size_t)total * sizeof(*rows)) : NULL;
+    for (CettaCount k = 0u; k < total; k++) {
+        unsigned pick = 0u;
+        CettaIndex least = HEAD_ROW_END;
+        for (unsigned i = 0u; i < 3u; i++) {
+            CettaIndex row = head_posting_peek(index, ids[i], next[i]);
+            if (row < least) {
+                least = row;
+                pick = i;
+            }
+        }
+        rows[k] = least;
+        next[pick]++;
+    }
+    *out = rows;
+    *count = total;
+    if (ids[0] != HEAD_NONE) {
+        index->postings[ids[0]].rent += total;
+        *rent = index->postings[ids[0]].rent;
+    }
+    return true;
+}
+
+/* The posting holding a row of ID, NULL for a row no head-selected query
+ * meets; created when CREATE asks. */
+static HeadPosting *head_index_row_posting(CettaSpaceHeadIndex *index,
+                                           AtomId id, bool create,
+                                           bool *meets) {
+    uint64_t key = 0u;
+    *meets = true;
+    switch (head_row_kind(index->universe, id, &key)) {
+    case HEAD_ROW_NONE:
+        *meets = false;
+        return NULL;
+    case HEAD_ROW_EVERY:
+        return &index->postings[HEAD_EVERY];
+    case HEAD_ROW_KEYED:
+    case HEAD_ROW_OPEN:
+        break;
+    }
+    uint32_t found = create ? head_posting_get(index, key)
+                            : head_posting_find(index, key);
+    return found == HEAD_NONE ? NULL : &index->postings[found];
+}
+
+/* Take ROW out of POSTING, kept in row order; false where it is not there. */
+static bool head_posting_drop(HeadPosting *posting, CettaIndex row) {
+    CettaCount low = 0u, high = posting->len;
+    while (low < high) {
+        CettaCount middle = low + (high - low) / 2u;
+        if (posting->rows[middle] < row)
+            low = middle + 1u;
+        else
+            high = middle;
+    }
+    if (low == posting->len || posting->rows[low] != row)
+        return false;
+    memmove(posting->rows + low, posting->rows + low + 1u,
+            (size_t)(posting->len - low - 1u) * sizeof(*posting->rows));
+    posting->len--;
+    if (low < posting->front)
+        posting->front--;
+    return true;
+}
+
+/* Put ROW into POSTING in row order. */
+static void head_posting_insert(HeadPosting *posting, CettaIndex row) {
+    head_posting_append(posting, row);
+    CettaCount at = posting->len - 1u;
+    while (at > posting->front && posting->rows[at - 1u] > row) {
+        posting->rows[at] = posting->rows[at - 1u];
+        at--;
+    }
+    posting->rows[at] = row;
+}
+
+/* An unordered removal: the row at REMOVED_ROW leaves and the last row, at
+ * MOVED_FROM, takes its place.  Each posting stays in row order; an index
+ * that cannot find a row is retired. */
+void space_head_index_note_swap_remove(Space *space, CettaIndex removed_row,
+                                       AtomId removed_id, CettaIndex moved_from,
+                                       AtomId moved_id) {
+    CettaSpaceHeadIndex *index = space->match_backend.native.head_index;
+    if (!index)
+        return;
+    bool meets = false;
+    HeadPosting *removed = NULL;
+    if (index->source_len != moved_from + 1u ||
+        index->universe != space->native.universe ||
+        index->universe_instance != space->native.universe->instance_id ||
+        index->universe_epoch != space->native.universe->storage_epoch ||
+        index->prefix_epoch != space->prefix_epoch ||
+        space->match_backend.native.match_trie_pins != 0u)
+        goto retire;
+    removed = head_index_row_posting(index, removed_id, false, &meets);
+    if (meets && (!removed || !head_posting_drop(removed, removed_row)))
+        goto retire;
+    if (moved_from != removed_row) {
+        HeadPosting *moved = head_index_row_posting(index, moved_id, false,
+                                                    &meets);
+        if (meets) {
+            if (!moved || !head_posting_drop(moved, moved_from))
+                goto retire;
+            /* Creating no posting: the moved row's is there. */
+            head_posting_insert(moved, removed_row);
+        }
+    }
+    index->source_len--;
+    return;
+retire:
+    space_head_index_retire(space);
 }
 
 void space_head_index_note_add(Space *space, AtomId id, CettaIndex row) {
