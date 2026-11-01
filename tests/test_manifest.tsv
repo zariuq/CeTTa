@@ -629,6 +629,7 @@ tests/test_space_engine_backend.metta	he	metta	extended	pathmap	pathmap	test-pat
 tests/test_space_head_chains.metta	he	metta	extended	main	native	test	golden	-
 tests/test_space_join_meet.metta	he	metta	extended	main	native	test	golden	-
 tests/test_space_ops.metta	he	metta	extended	main	native	test	golden	-
+tests/test_space_presence_shared_key.metta	he	metta	extended	main	native	test	golden	-
 tests/test_space_profiles.metta	he	metta	extended	main	native	test	golden	-
 tests/test_space_rematch_epoch_hygiene_regression.metta	he	metta	extended	main	native	test	golden	-
 tests/test_space_type.metta	he	metta	extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
@@ -701,6 +702,7 @@ tests/test_variable_scoping.metta	he	metta	extended	main	native	test	golden	-
 tests/test_width_tuple_semantics_regression.metta	he	metta	extended	main	native	test	golden	-
 tests/test_with_space_snapshot.metta	he	metta	extended	main	native	test	golden	-
 tests/test_with_space_snapshot_equation_regression.metta	he	metta	extended	main	native	test	golden	-
+tests/test_with_space_snapshot_escape.metta	he	metta	extended	main	native	test	golden	-
 tests/test_with_space_snapshot_non_exact_query_regression.metta	he	metta	extended	main	native	test	golden	-
 tests/test_with_space_snapshot_passthrough.metta	he	metta	extended	main	native	test	golden	-
 tests/test_with_space_snapshot_queue_regression.metta	he	metta	extended	main	native	test	golden	-

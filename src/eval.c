@@ -1360,8 +1360,41 @@ typedef struct {
     CettaCount len, cap;
 } TempSpaceSet;
 
-static __thread TempSpaceSet g_temp_spaces = {0};
+/* A space made for one evaluation (`new-space`, a snapshot, an inventory)
+ * lives while an arena holds an atom of it, as a foreign record does
+ * (ArenaHeldResources): atom_space takes a hold in its arena, and the reset
+ * or free that drops the arena's atoms of the space releases it.  At a safe
+ * point (eval_release_temporary_spaces) a space no arena holds is freed; one
+ * an arena still holds, a row's copy in the persistent arena for instance,
+ * stays until its last hold goes, which queues it for a later safe point.
+ * The record outlives the space, so a hold released after an owner freed the
+ * space (a branch, the session's end) finds it gone. */
+typedef struct SpaceHold {
+    Space *space;               /* NULL once the space is freed */
+    PettaProgram *petta_program;
+    /* The set listing the space after a safe point found it held, and its
+       index there; NULL before that and once a branch adopts the space. */
+    TempSpaceSet *home;
+    CettaCount slot;
+    uint32_t holds;
+    bool queued;
+    /* An arena could not record its hold: kept until its owner frees it. */
+    bool pinned;
+    /* A snapshot or an inventory: `bind!` publishes a copy of it. */
+    bool published_as_copy;
+    struct SpaceHold *queue_next;
+} SpaceHold;
+
+static pthread_mutex_t g_space_hold_mutex = PTHREAD_MUTEX_INITIALIZER;
+static SpaceHold *g_space_hold_queue = NULL;
+/* Held spaces made since this thread's last safe point. */
+static __thread TempSpaceSet g_made_spaces = {0};
+/* Held spaces a safe point found held: each is examined again only when its
+   last hold goes. */
+static __thread TempSpaceSet g_listed_spaces = {0};
 static __thread TempSpaceSet g_new_space_track = {0};
+
+static void space_hold_detach(Space *space);
 static pthread_mutex_t g_new_space_drained_mutex = PTHREAD_MUTEX_INITIALIZER;
 static TempSpaceSet g_new_space_track_drained = {0};
 
@@ -14450,6 +14483,11 @@ static bool hyperpose_adopt_space_set(HyperposeThreadBranch *branch,
                 tracked.petta_program)) {
             return false;
         }
+        if (tracked.space->arena_hold) {
+            pthread_mutex_lock(&g_space_hold_mutex);
+            tracked.space->arena_hold->home = NULL;
+            pthread_mutex_unlock(&g_space_hold_mutex);
+        }
         /* Ownership moved to the branch.  Clearing the source entry makes a
            partial adoption safe: worker teardown only releases entries that
            were not transferred before the allocation failure. */
@@ -14465,7 +14503,8 @@ static bool hyperpose_adopt_space_set(HyperposeThreadBranch *branch,
 
 static bool hyperpose_adopt_tracked_spaces(
     HyperposeThreadBranch *branch) {
-    return hyperpose_adopt_space_set(branch, &g_temp_spaces) &&
+    return hyperpose_adopt_space_set(branch, &g_made_spaces) &&
+           hyperpose_adopt_space_set(branch, &g_listed_spaces) &&
            hyperpose_adopt_space_set(branch, &g_new_space_track);
 }
 
@@ -14947,6 +14986,7 @@ static void hyperpose_thread_branch_free(HyperposeThreadBranch *branch) {
     for (CettaCount i = 0; i < branch->owned_spaces.len; i++) {
         HyperposeOwnedSpace owned = branch->owned_spaces.items[i];
         if (owned.space) {
+            space_hold_detach(owned.space);
             if (owned.petta_program)
                 petta_program_forget_space(
                     owned.petta_program, owned.space);
@@ -20282,34 +20322,182 @@ static bool let_add_atoms_source_shape(Atom *pat, Atom *val_expr,
     return true;
 }
 
-static void temp_space_register(Space *space) {
-    if (g_temp_spaces.len >= g_temp_spaces.cap) {
-        CettaCount next_cap;
-        if (!eval_next_capacity(g_temp_spaces.cap, g_temp_spaces.len + 1u,
-                                sizeof(EvalTrackedSpace), &next_cap))
-            return;
-        g_temp_spaces.items = cetta_realloc(g_temp_spaces.items,
-                                            sizeof(EvalTrackedSpace) *
-                                                (size_t)next_cap);
-        g_temp_spaces.cap = next_cap;
-    }
-    g_temp_spaces.items[g_temp_spaces.len++] =
-        (EvalTrackedSpace){
-            .space = space,
-            .petta_program =
-                g_library_context
-                    ? g_library_context->petta_program
-                    : NULL,
-        };
+static void space_hold_retain(void *record) {
+    SpaceHold *hold = record;
+    pthread_mutex_lock(&g_space_hold_mutex);
+    hold->holds++;
+    pthread_mutex_unlock(&g_space_hold_mutex);
 }
 
-static bool temp_space_is_registered(Space *space) {
-    if (!space) return false;
-    for (CettaCount i = 0; i < g_temp_spaces.len; i++) {
-        if (g_temp_spaces.items[i].space == space)
-            return true;
+static void space_hold_release(void *record) {
+    SpaceHold *hold = record;
+    bool forget = false;
+    pthread_mutex_lock(&g_space_hold_mutex);
+    if (--hold->holds == 0u) {
+        if (!hold->space) {
+            forget = !hold->queued;
+        } else if (!hold->queued) {
+            hold->queued = true;
+            hold->queue_next = g_space_hold_queue;
+            g_space_hold_queue = hold;
+        }
     }
-    return false;
+    pthread_mutex_unlock(&g_space_hold_mutex);
+    if (forget)
+        free(hold);
+}
+
+void space_atom_hold(Arena *a, void *space) {
+    SpaceHold *hold = space ? ((Space *)space)->arena_hold : NULL;
+    if (!hold || arena_retain_owner(a, hold, space_hold_retain,
+                                    space_hold_release))
+        return;
+    pthread_mutex_lock(&g_space_hold_mutex);
+    hold->pinned = true;
+    pthread_mutex_unlock(&g_space_hold_mutex);
+}
+
+/* Remove HOLD's entry from its home set; the caller holds the lock. */
+static void space_hold_leave_home(SpaceHold *hold) {
+    TempSpaceSet *home = hold->home;
+    if (!home)
+        return;
+    CettaCount last = home->len - 1u;
+    if (hold->slot != last) {
+        EvalTrackedSpace moved = home->items[last];
+        home->items[hold->slot] = moved;
+        moved.space->arena_hold->slot = hold->slot;
+    }
+    home->len = last;
+    hold->home = NULL;
+}
+
+/* The space's owner frees it: its record stays for the holds still out. */
+static void space_hold_detach(Space *space) {
+    SpaceHold *hold = space ? space->arena_hold : NULL;
+    if (!hold)
+        return;
+    pthread_mutex_lock(&g_space_hold_mutex);
+    space_hold_leave_home(hold);
+    hold->space = NULL;
+    bool forget = hold->holds == 0u && !hold->queued;
+    pthread_mutex_unlock(&g_space_hold_mutex);
+    space->arena_hold = NULL;
+    if (forget)
+        free(hold);
+}
+
+static void eval_free_held_space(EvalTrackedSpace tracked) {
+    space_hold_detach(tracked.space);
+    if (tracked.petta_program)
+        petta_program_forget_space(tracked.petta_program, tracked.space);
+    space_free(tracked.space);
+    free(tracked.space);
+}
+
+static bool held_space_set_push(TempSpaceSet *set, EvalTrackedSpace tracked) {
+    if (set->len >= set->cap) {
+        CettaCount next_cap;
+        if (!eval_next_capacity(set->cap, set->len + 1u,
+                                sizeof(EvalTrackedSpace), &next_cap))
+            return false;
+        set->items = cetta_realloc(set->items, sizeof(EvalTrackedSpace) *
+                                                   (size_t)next_cap);
+        set->cap = next_cap;
+    }
+    set->items[set->len++] = tracked;
+    return true;
+}
+
+/* SPACE, malloc'd, lives while an arena holds an atom of it. */
+static void held_space_register(Space *space, bool published_as_copy) {
+    PettaProgram *program =
+        g_library_context ? g_library_context->petta_program : NULL;
+    SpaceHold *hold = cetta_malloc(sizeof(*hold));
+    *hold = (SpaceHold){.space = space, .petta_program = program,
+                        .published_as_copy = published_as_copy};
+    space->arena_hold = hold;
+    /* A space that cannot be listed is pinned: its owner, the session,
+       frees it. */
+    if (!held_space_set_push(&g_made_spaces, (EvalTrackedSpace){
+            .space = space, .petta_program = program}))
+        hold->pinned = true;
+}
+
+/* `bind!` publishes a copy of a snapshot or an inventory. */
+static bool space_published_as_copy(Space *space) {
+    return space && space->arena_hold && space->arena_hold->published_as_copy;
+}
+
+/* A safe point: free the spaces made since the last one that no arena holds,
+   list the held ones, and free the listed spaces whose last hold went. */
+static void eval_release_unheld_spaces(void) {
+    for (CettaCount i = 0; i < g_made_spaces.len; i++) {
+        EvalTrackedSpace tracked = g_made_spaces.items[i];
+        SpaceHold *hold = tracked.space->arena_hold;
+        pthread_mutex_lock(&g_space_hold_mutex);
+        bool unheld = hold->holds == 0u && !hold->pinned;
+        if (!unheld && held_space_set_push(&g_listed_spaces, tracked)) {
+            hold->home = &g_listed_spaces;
+            hold->slot = g_listed_spaces.len - 1u;
+        } else if (!unheld) {
+            hold->pinned = true;
+        }
+        pthread_mutex_unlock(&g_space_hold_mutex);
+        if (unheld)
+            eval_free_held_space(tracked);
+    }
+    free(g_made_spaces.items);
+    g_made_spaces.items = NULL;
+    g_made_spaces.len = 0;
+    g_made_spaces.cap = 0;
+
+    pthread_mutex_lock(&g_space_hold_mutex);
+    SpaceHold *queue = g_space_hold_queue;
+    g_space_hold_queue = NULL;
+    pthread_mutex_unlock(&g_space_hold_mutex);
+    while (queue) {
+        SpaceHold *hold = queue;
+        queue = hold->queue_next;
+        EvalTrackedSpace tracked = {0};
+        bool forget = false;
+        pthread_mutex_lock(&g_space_hold_mutex);
+        hold->queue_next = NULL;
+        if (!hold->space) {
+            hold->queued = false;
+            forget = hold->holds == 0u;
+        } else if (hold->home == &g_listed_spaces) {
+            hold->queued = false;
+            if (hold->holds == 0u && !hold->pinned)
+                tracked = hold->home->items[hold->slot];
+        } else if (hold->home) {
+            /* Listed by another thread: its own safe point frees it. */
+            hold->queue_next = g_space_hold_queue;
+            g_space_hold_queue = hold;
+        } else {
+            /* Not listed yet, or adopted by a branch, which frees it. */
+            hold->queued = false;
+        }
+        pthread_mutex_unlock(&g_space_hold_mutex);
+        if (forget)
+            free(hold);
+        if (tracked.space)
+            eval_free_held_space(tracked);
+    }
+}
+
+/* The thread's held spaces go with the thread or the session. */
+static void eval_free_held_space_set(TempSpaceSet *set) {
+    pthread_mutex_lock(&g_space_hold_mutex);
+    for (CettaCount i = 0; i < set->len; i++)
+        set->items[i].space->arena_hold->home = NULL;
+    pthread_mutex_unlock(&g_space_hold_mutex);
+    for (CettaCount i = 0; i < set->len; i++)
+        eval_free_held_space(set->items[i]);
+    free(set->items);
+    set->items = NULL;
+    set->len = 0;
+    set->cap = 0;
 }
 
 static Space *space_persistent_clone(Space *src, Arena *dst) {
@@ -20407,6 +20595,8 @@ static void eval_cleanup_owned_new_spaces_in_set(TempSpaceSet *set,
 }
 
 void eval_cleanup_owned_new_spaces_for_current_thread(void) {
+    eval_free_held_space_set(&g_made_spaces);
+    eval_free_held_space_set(&g_listed_spaces);
     for (CettaCount i = 0; i < g_new_space_track.len; i++) {
         EvalTrackedSpace tracked = g_new_space_track.items[i];
         Space *sp = tracked.space;
@@ -20457,6 +20647,8 @@ void eval_drain_owned_new_spaces_for_current_thread(void) {
 }
 
 void eval_cleanup_owned_new_spaces(Registry *registry, Space *root) {
+    eval_free_held_space_set(&g_made_spaces);
+    eval_free_held_space_set(&g_listed_spaces);
     eval_cleanup_owned_new_spaces_in_set(&g_new_space_track, registry, root);
     pthread_mutex_lock(&g_new_space_drained_mutex);
     eval_cleanup_owned_new_spaces_in_set(&g_new_space_track_drained,
@@ -20477,18 +20669,7 @@ void eval_release_temporary_spaces(void) {
         free(g_eval_execution);
         g_eval_execution = NULL;
     }
-    for (CettaCount i = 0; i < g_temp_spaces.len; i++) {
-        EvalTrackedSpace tracked = g_temp_spaces.items[i];
-        if (tracked.petta_program)
-            petta_program_forget_space(
-                tracked.petta_program, tracked.space);
-        space_free(tracked.space);
-        free(tracked.space);
-    }
-    free(g_temp_spaces.items);
-    g_temp_spaces.items = NULL;
-    g_temp_spaces.len = 0;
-    g_temp_spaces.cap = 0;
+    eval_release_unheld_spaces();
 }
 
 void eval_reset_form_gc_survivor(void) {
@@ -21707,7 +21888,7 @@ static Space *space_snapshot_clone(Space *src, Arena *a) {
     }
     /* Backend indexes are rebuilt lazily on first match against the snapshot;
        the clone only freezes the logical atom sequence. */
-    temp_space_register(clone);
+    held_space_register(clone, true);
     return clone;
 }
 
@@ -21830,7 +22011,7 @@ static Atom *runtime_stats_inventory_atom(Arena *a) {
     Space *inventory = cetta_malloc(sizeof(Space));
     CettaRuntimeStats stats;
     space_init_with_universe(inventory, eval_current_term_universe());
-    temp_space_register(inventory);
+    held_space_register(inventory, true);
     cetta_runtime_stats_snapshot(&stats);
     cetta_runtime_stats_populate_space(inventory, a, &stats);
     return atom_space(a, inventory);
@@ -31436,7 +31617,8 @@ static bool petta_named_state_apply(
                 outcome_set_add_existing(outcomes, &spaces.items[index]);
                 continue;
             }
-            registry_bind_id(g_registry, name->sym_id, value);
+            registry_bind_id(g_registry, name->sym_id,
+                             eval_store_atom(eval_storage_arena(a), value));
         }
         outcome_set_free(&spaces);
         return true;
@@ -57062,7 +57244,7 @@ static void bind_publish_value(Arena *a, Atom *atom, Atom *first,
         Atom *stored = NULL;
         if (eval_storage_is_persistent(dst) && val->kind == ATOM_GROUNDED &&
             val->ground.gkind == GV_SPACE &&
-            temp_space_is_registered((Space *)val->ground.ptr)) {
+            space_published_as_copy((Space *)val->ground.ptr)) {
             Space *clone = space_persistent_clone((Space *)val->ground.ptr, dst);
             if (!clone) {
                 outcome_set_add_prefixed(a, os, space_backend_or_symbol_error(
@@ -61206,9 +61388,7 @@ petta_lowered_to_shared_form:
             }
         }
         Arena *pa = eval_storage_arena(a);
-        Space *ns = g_eval_payload_transactional
-            ? cetta_malloc(sizeof(Space))
-            : arena_alloc(pa, sizeof(Space));
+        Space *ns = cetta_malloc(sizeof(Space));
         if (!ns) {
             outcome_set_add(os,
                 atom_error(a, atom, atom_symbol(a, "OutOfMemory")),
@@ -61219,10 +61399,8 @@ petta_lowered_to_shared_form:
         ns->kind = kind;
         space_set_strict(ns, strict);
         if (!space_match_backend_try_set(ns, backend_kind)) {
-            if (g_eval_payload_transactional) {
-                space_free(ns);
-                free(ns);
-            }
+            space_free(ns);
+            free(ns);
             outcome_set_add(os,
                 atom_error(a, atom, atom_symbol(a, "UnknownSpaceEngine")),
                 &_empty);
@@ -61238,10 +61416,13 @@ petta_lowered_to_shared_form:
                     &_empty);
                 return;
             }
-        } else {
-            eval_track_new_space(ns);
+            outcome_set_add(os, atom_space(pa, ns), &_empty);
+            return;
         }
-        outcome_set_add(os, atom_space(pa, ns), &_empty);
+        /* The space lives while an arena holds an atom of it: this answer's,
+           then any copy that keeps it. */
+        held_space_register(ns, false);
+        outcome_set_add(os, atom_space(a, ns), &_empty);
         return;
     }
 

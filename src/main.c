@@ -27,6 +27,9 @@
 #include "prime_compiled_reader.h"
 #include "space.h"
 #include "eval.h"
+#ifdef __GLIBC__
+#include <malloc.h>
+#endif
 #include "he_type_policy.h"
 #include "library.h"
 #include "native_handle.h"
@@ -2477,8 +2480,9 @@ static void cetta_main_cleanup_registry_spaces(
         if (val->kind == ATOM_GROUNDED && val->ground.gkind == GV_SPACE) {
             Space *sp = (Space *)val->ground.ptr;
             /* A module's space belongs to the library context, which
-               frees it with the other modules. */
-            if (sp != root_space &&
+               frees it with the other modules; a held space's record frees
+               it (eval_cleanup_owned_new_spaces). */
+            if (sp != root_space && !sp->arena_hold &&
                 !cetta_library_owns_space(libraries, sp)) {
                 bool already_freed = false;
                 for (uint32_t previous = 0; previous < ri; previous++) {
@@ -5042,4 +5046,16 @@ cleanup: {
 }
 }
 
-int main(int argc,char **argv) { return cetta_run_guard(argc,argv,cetta_main); }
+int main(int argc,char **argv) {
+#ifdef __GLIBC__
+    /* A fixed mapping threshold.  glibc raises its threshold after freeing a
+     * large mapped block, and the large blocks after that come from the heap
+     * and stay with it, so the resident memory depends on the order of
+     * allocations: the same live heap left 535 or 559 MB resident, and 487
+     * MB with the threshold fixed at 1 MB.  A threshold the user sets is
+     * kept. */
+    if (!getenv("MALLOC_MMAP_THRESHOLD_"))
+        (void)mallopt(M_MMAP_THRESHOLD, 1 << 20);
+#endif
+    return cetta_run_guard(argc,argv,cetta_main);
+}

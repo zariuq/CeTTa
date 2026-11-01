@@ -49,6 +49,10 @@ typedef struct {
     uint32_t slot_cap;
     uint32_t slot_used;
     uint64_t instance_id;
+    /* Mixed with a spelling's hash to place it, drawn when the table is
+     * made: spellings crafted to share their hash's low bits do not share a
+     * slot.  The hash itself, which others read, carries no key. */
+    uint64_t placement_key;
 
     SymbolEntry **entry_chunks;
     _Atomic uint32_t entry_len;
@@ -910,6 +914,12 @@ extern BuiltinSyms g_builtin_syms;
  * This distinguishes evaluator syntax from later interned constructor/data
  * heads without spelling the builtin set again in each consumer. */
 bool symbol_id_is_builtin(SymbolId id);
+
+/* The next key of the sequence every table that places untrusted content
+ * draws its placement key from: seeded once a process, by
+ * CETTA_PLACEMENT_KEY when it is set (reproducible runs), otherwise at
+ * random.  A key moves where entries sit, never what a table answers. */
+uint64_t cetta_placement_key_next(void);
 
 void symbol_table_init(SymbolTable *st);
 void symbol_table_free(SymbolTable *st);
