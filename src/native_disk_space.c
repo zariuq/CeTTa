@@ -1,4 +1,5 @@
 #include "native_disk_space.h"
+#include "space_source_overlay.h"
 #include "atom_wire.h"
 #include "storage_census.h"
 #include <stdatomic.h>
@@ -317,9 +318,10 @@ static const SpaceSourceCursorOps cursor_ops={
     .clone=cursor_clone,.select=cursor_select,.next=cursor_next,.atom=cursor_atom,
     .identity=cursor_identity,.free=cursor_free,.storage=cursor_storage,
 };
+static bool source_overlay_local(Space *target, const Space *base);
 static const SpaceMatchBackendOps source_ops={
     .name="native-disk-atoms",.occurrence_ops=&cursor_ops,.occurrence_open=source_open,
-    .logical_len=source_count,.free=source_free,.storage=source_storage,
+    .logical_len=source_count,.free=source_free,.storage=source_storage,.overlay_local=source_overlay_local,
 };
 bool cetta_disk_space_statistics(const Space *space,CettaDiskSpaceStatistics *out) {
     if (!space || !out || space->match_backend.ops!=&source_ops || !space->match_backend.source) return false;
@@ -387,4 +389,25 @@ CettaDiskStoreStatus cetta_disk_space_capture_point_bounded(Space *target,const 
     CettaDiskStoreStatus status=cetta_disk_space_capture_indexed_bounded(target,view,key,1,NULL,0,maximum_bytes);
     if (status==CETTA_STORE_OK) ((DiskSpace *)target->match_backend.source)->point=true;
     return status;
+}
+
+static bool source_overlay_local(Space *target, const Space *base) {
+    const DiskSpace *source = base->match_backend.source;
+    if (!source || source->index_count > SIZE_MAX / sizeof(CettaDiskSpaceIndex)) return false;
+    Space *copy = malloc(sizeof(*copy)); if (!copy) return false;
+    space_init_with_universe(copy, target->native.universe);
+    CettaDiskSpaceIndex *indexes = source->index_count
+        ? calloc(source->index_count, sizeof(*indexes)) : NULL;
+    if (source->index_count && !indexes) { space_free(copy); free(copy); return false; }
+    for (size_t i = 0; i < source->index_count; ++i)
+        indexes[i] = (CettaDiskSpaceIndex){source->indexes[i].arity, source->indexes[i].position,
+            borrowed(&source->indexes[i].prefix)};
+    CettaDiskStoreStatus status = cetta_disk_space_capture_indexed_bounded(copy, source->view,
+        borrowed(&source->prefix), source->count, indexes, source->index_count, source->maximum_bytes);
+    free(indexes);
+    if (status == CETTA_STORE_OK) {
+        ((DiskSpace *)copy->match_backend.source)->point = source->point;
+        if (space_source_overlay_init_owned(target, copy, source->maximum_bytes)) return true;
+    }
+    space_free(copy); free(copy); return false;
 }

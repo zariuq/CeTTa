@@ -878,7 +878,7 @@ SRC += src/tensor_dense_v1.c
 SRC += src/producer_dependencies.c src/producer_schedule.c
 SRC += src/fallible_alloc.c
 SRC += src/occurrence_log.c src/shared_return_producer.c src/owned_return_image.c
-SRC += src/native_disk_index.c src/native_disk_store.c src/native_disk_space.c src/native_disk_query.c src/library_store.c src/library_math.c
+SRC += src/native_disk_index.c src/native_disk_store.c src/native_disk_space.c src/space_source_overlay.c src/native_disk_query.c src/library_store.c src/library_math.c
 SRC += src/library_supervise.c $(DURABLE_SRC)
 # Shared opaque authority (lib_seal): runtime objects and the seal library.
 SRC += src/seal.c native/seal_module.c
@@ -4732,6 +4732,15 @@ $(NATIVE_DISK_SPACE_TEST_BIN): tests/test_native_disk_space.c $(FALLBACK_EVAL_TE
 test-all: test-native-disk-space
 test-native-disk-space: $(NATIVE_DISK_SPACE_TEST_BIN)
 	@$(PYTHON) tests/support/check_native_disk_space_restart.py ./$(NATIVE_DISK_SPACE_TEST_BIN)
+
+SOURCE_OVERLAY_TEST_BIN = runtime/test_space_source_overlay-$(BUILD_OBJ_TAG)
+$(SOURCE_OVERLAY_TEST_BIN): tests/test_space_source_overlay.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_space_source_overlay.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
+.PHONY: test-source-overlay
+test-all: test-source-overlay
+test-source-overlay: $(SOURCE_OVERLAY_TEST_BIN)
+	@$(PYTHON) tests/support/check_source_overlay.py ./$(SOURCE_OVERLAY_TEST_BIN)
 
 .PHONY: test-persistent-space-api
 test-all: test-persistent-space-api
