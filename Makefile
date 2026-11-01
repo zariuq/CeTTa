@@ -986,6 +986,8 @@ SHARED_RETURN_PRODUCER_TEST_OBJ = runtime/bootstrap/test_shared_return_producer.
 SHARED_RETURN_PRODUCER_TEST_BIN = runtime/test_shared_return_producer-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 NATIVE_CONDITIONAL_CONTEXT_TEST_OBJ = runtime/bootstrap/test_native_conditional_context.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 NATIVE_CONDITIONAL_CONTEXT_TEST_BIN = runtime/test_native_conditional_context-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+HE_PRODUCER_COMPLETION_TEST_OBJ = runtime/bootstrap/test_he_producer_completion.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+HE_PRODUCER_COMPLETION_TEST_BIN = runtime/test_he_producer_completion-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 CONDITIONAL_REGISTRATION_TEST_OBJ = runtime/bootstrap/test_conditional_registration.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 CONDITIONAL_REGISTRATION_TEST_BIN = runtime/test_conditional_registration-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 ANSWER_STORAGE_TEST_OBJ = runtime/bootstrap/test_answer_storage.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
@@ -5412,6 +5414,18 @@ $(NATIVE_CONDITIONAL_CONTEXT_TEST_OBJ): tests/test_native_conditional_context.c 
 $(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN): $(NATIVE_CONDITIONAL_CONTEXT_TEST_OBJ) $(filter-out src/eval.%,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS)
 	$(CC) $(CFLAGS) -o $@ $^ -Wl,--wrap=grounded_call,--wrap=cetta_library_call_native_prepared_view,--wrap=cetta_library_call_native,--wrap=cetta_invocation_materialize,--wrap=petta_semantics_lambda_arity,--wrap=match_atoms_epoch_builder_planned,--wrap=space_query_effect_for_head,--wrap=malloc,--wrap=calloc,--wrap=cetta_prepared_pure_program_compile_closed,--wrap=atom_graph_any_checked,--wrap=cetta_prepared_pure_program_execute_closed_expression_controlled $(LDFLAGS)
 
+$(HE_PRODUCER_COMPLETION_TEST_OBJ): tests/test_he_producer_completion.c src/petta_search_machine.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -Isrc -c $< -o $@
+
+$(HE_PRODUCER_COMPLETION_TEST_BIN): $(HE_PRODUCER_COMPLETION_TEST_OBJ) $(filter-out src/main.% src/petta_search_machine.%,$(OBJ)) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+.PHONY: test-he-producer-completion
+test-execution-semantic-ledger: test-he-producer-completion
+test-he-producer-completion: $(HE_PRODUCER_COMPLETION_TEST_BIN)
+	@$(call cetta_exec,./$(HE_PRODUCER_COMPLETION_TEST_BIN))
+
 .PHONY: test-native-conditional-context
 test-all: test-native-conditional-context
 test-native-conditional-context: $(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN)
@@ -6550,6 +6564,7 @@ DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d) \
 	$(PREPARED_PURE_ANSWER_TEST_OBJ:.o=.d) \
 	$(SHARED_RETURN_PRODUCER_TEST_OBJ:.o=.d) \
 	$(NATIVE_CONDITIONAL_CONTEXT_TEST_OBJ:.o=.d) \
+	$(HE_PRODUCER_COMPLETION_TEST_OBJ:.o=.d) \
 	$(ANSWER_STORAGE_TEST_OBJ:.o=.d) \
 	$(OWNED_RETURN_IMAGE_TEST_OBJ:.o=.d) \
 	$(FALLBACK_EVAL_TEST_OBJ:.o=.d) \
@@ -18885,6 +18900,7 @@ NORMAL_TEST_TARGETS := \
 	test-term-match-graph \
 	test-frame-support-inventory \
 	test-pattern-queries \
+	test-gparse-gslt-core \
 	test-atom-deep-copy-iterative \
 	test-frame-identity \
 	test-owned-return-image \
@@ -21236,7 +21252,6 @@ test-lib-parse-native-gparse: $(BIN)
 	fi
 
 .PHONY: test-gparse-gslt-core
-test-all: test-gparse-gslt-core
 test-gparse-gslt-core: $(BIN) tests/support/check_gparse_core_property.py tests/test_gparse_gslt_core.metta
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_gparse_core_property.py "$(CETTA_SCRIPT_BIN)"
 
@@ -48369,6 +48384,11 @@ endif
 test-execution-semantic-ledger test-petta-libpl: test-petta-libpl-callback-completion
 .PHONY: test-petta-libpl-callback-source
 test-execution-semantic-ledger test-petta-libpl: test-petta-libpl-callback-source
+.PHONY: test-petta-comparison-authority
+test-execution-semantic-ledger test-petta-libpl: test-petta-comparison-authority
+test-petta-comparison-authority: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_comparison_authority.py ./$(BIN) --library $(LIB_PROLOG_ENABLED)
+
 test-petta-libpl-callback-source: $(BIN)
 ifeq ($(LIB_PROLOG_ENABLED),1)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_libpl_callback_source.py ./$(BIN)

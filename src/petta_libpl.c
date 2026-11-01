@@ -277,6 +277,18 @@ static bool g_petta_libpl_main_released;
 static _Atomic uint64_t g_petta_libpl_runtime_counter = 1u;
 static _Thread_local Arena *g_petta_libpl_active_arena;
 static _Thread_local CettaLibPrologRuntime *g_petta_libpl_active_runtime;
+
+/* An opaque Prolog goal can rewrite its namespace between callbacks, or
+ * after its last callback. Retire observations on both sides of host work. */
+static CettaLibPrologRuntime *petta_libpl_callback_enter(void) {
+    CettaLibPrologRuntime *runtime = g_petta_libpl_active_runtime;
+    petta_libpl_advance_revision(runtime);
+    return runtime;
+}
+
+static void petta_libpl_callback_leave(CettaLibPrologRuntime **runtime) {
+    petta_libpl_advance_revision(*runtime);
+}
 static _Thread_local uint32_t g_petta_libpl_enter_depth;
 
 /*
@@ -775,6 +787,8 @@ static foreign_t petta_libpl_standard_eval(
             return false;
         if (eval_native_interrupted())
             return petta_libpl_interrupt();
+        __attribute__((cleanup(petta_libpl_callback_leave)))
+        CettaLibPrologRuntime *callback_runtime = petta_libpl_callback_enter();
         PettaLibplVarMap variables = {0};
         PettaLibplBackVarMap unknown = {0};
         Atom *expression = petta_libpl_from_term(
@@ -864,6 +878,8 @@ static foreign_t petta_libpl_standard_add_builtin_signatures(
         return false;
     if (eval_native_interrupted())
         return petta_libpl_interrupt();
+    __attribute__((cleanup(petta_libpl_callback_leave)))
+    CettaLibPrologRuntime *callback_runtime = petta_libpl_callback_enter();
     PettaLibplVarMap variables = {0};
     PettaLibplBackVarMap unknown = {0};
     Atom *space = petta_libpl_from_term(
@@ -4747,6 +4763,9 @@ static foreign_t petta_libpl_grounded_bridge(
 
     Atom *head = atom_symbol_id(
         g_petta_libpl_active_arena, head_id);
+    __attribute__((cleanup(petta_libpl_callback_leave)))
+    CettaLibPrologRuntime *callback_runtime = explicit_python_callback
+        ? petta_libpl_callback_enter() : NULL;
     CettaLibraryContext *library = eval_current_library_context();
     CettaCallOutcome outcome = cetta_call_failure();
     bool called = false;

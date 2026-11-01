@@ -407,9 +407,9 @@ typedef struct {
     /* Some two equations differ in their heads' first structural tests,
      * which a call can then decide between as it enters. */
     bool first_tests_differ;
-    /* Immutable source eligibility for prepared entry. The callee owns
-     * current admission and stable refusal; this program does not cache
-     * observations about a particular input or caller. */
+    /* Optional prepared-route eligibility. Unsupported call policies keep
+     * this region's equations. The callee still owns current execution
+     * admission and stable refusal; this hint certifies neither. */
     bool pure_entry_candidate;
     /* An exact source-recognized algebraic fold.  These constructor ids are
      * only an execution certificate for the relation whose complete source
@@ -6767,6 +6767,8 @@ static bool oem_compile_relation(CettaOpenEquationProgram *program,
                 !program->relations[relation_index].local &&
                     !program->relations[relation_index].body_is_data &&
                     arity <= OEM_PURE_RELATION_INLINE_ARGS &&
+                    cetta_prepared_pure_call_policy_supported(program->space,
+                                                              head, arity) &&
                     oem_steps_call_relation(program, first_step, head,
                                             arity);
     if (algebraic_drop) {

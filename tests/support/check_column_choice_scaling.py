@@ -12,6 +12,9 @@ of the relation, and the object column is built once the probes have read
 as many rows as its build.  The control (KV $k $v tag) inside (probe-k $v)
 binds a selective first column and a constant tag: it builds one index and
 reads the same rows per probe at both sizes.
+
+Query fusion and dense relations have separate gates. This control disables
+them so it exercises row-position indexes and measures their offered rows.
 """
 import os
 import random
@@ -58,9 +61,10 @@ def run(binary, work, n, shape):
     path = os.path.join(work, f"{shape}_{n}.metta")
     with open(path, "w") as f:
         f.write(text)
+    env = dict(os.environ, CETTA_NATIVE_QUERY_REFERENCE="1", CETTA_SPACE_DENSE="off")
     p = subprocess.run([binary, "--emit-runtime-stats", "--profile", "extended",
                         "--lang", "petta", path],
-                       cwd=ROOT, capture_output=True, text=True, timeout=600)
+                       cwd=ROOT, env=env, capture_output=True, text=True, timeout=600)
     printed = [l for l in p.stdout.splitlines() if not l.startswith("runtime-")]
     if p.returncode != 0 or printed[-1:] != [str(answers)]:
         print(f"FAIL: the {shape} probes over {n} facts answered {printed[-1:]}, "
@@ -87,6 +91,9 @@ def main():
                 results[shape, n] = measured
     for shape in ("object", "control"):
         small, large = results[shape, SIZES[0]][0], results[shape, SIZES[1]][0]
+        if small <= 0 or large <= 0:
+            print(f"FAIL: {shape} probes offered no position-index rows")
+            return 1
         if large > GROWTH * small + 1:
             print(f"FAIL: {shape} probes read {small:.1f} rows each over {SIZES[0]} "
                   f"facts and {large:.1f} over {SIZES[1]}")

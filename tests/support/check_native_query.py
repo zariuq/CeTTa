@@ -59,7 +59,10 @@ program runs twice, with CETTA_NATIVE_QUERY_REFERENCE=1 the second time, and
 every collection is printed sorted.  Atoms holding variables print with
 fresh names in an order that follows them. Collected results compare as bags
 under one consistent variable renaming, preserving sharing, literal strings
-and ordered fields inside each answer.
+and ordered fields inside each answer. Collections passed to value-sensitive
+case arms are sorted before use, and a value-sensitive once chooses from an
+explicitly ordered collection. A separate control allows either member of
+an unordered space while requiring its complete bag and ordered choices.
 With --stats, the binary is a runtime-stats build, and the native path must
 also have answered at least one collection per program on average, and
 joined by rows of bits in at least one program in five, rows it builds for
@@ -750,15 +753,15 @@ def program(rng):
                 lines.append("!(let $h (collapse (match &self (ww $v) (let $v (y 1) (k $v)))) (sort-atom $h))")
             elif form == 1:
                 c = scopes.choice(("$c", "$d"))
-                lines.append(f"!(let $h (collapse (match &self (zz {c}) (let $c (collapse (match &self (edge {n} $q) $q)) "
+                lines.append(f"!(let $h (collapse (match &self (zz {c}) (let $c (sort-atom (collapse (match &self (edge {n} $q) $q))) "
                              f"(if (== $c ()) (none {c}) (some {c}))))) (sort-atom $h))")
             elif form == 2:
                 o = scopes.choice(("$o", "$p"))
-                lines.append(f"!(let $h (collapse (match &self (zz {o}) (case (collapse (match &self (edge {n} $q) $q)) "
+                lines.append(f"!(let $h (collapse (match &self (zz {o}) (case (sort-atom (collapse (match &self (edge {n} $q) $q))) "
                              f"((() (e {o})) ($o (n $o)))))) (sort-atom $h))")
             elif form == 3:
                 o = scopes.choice(("$o", "$p"))
-                lines.append(f"!(let $h (collapse (match &self (zz {o}) (case (once (match &self (edge {n} $q) $q)) "
+                lines.append(f"!(let $h (collapse (match &self (zz {o}) (case (once (superpose (sort-atom (collapse (match &self (edge {n} $q) $q))))) "
                              f"((Empty (e {o})) ($o (n $o)))))) (sort-atom $h))")
             elif form == 4:
                 lines.append("!(let $h (collapse (match &self (edge $x $y) (if (let $k $y (== (collapse (match &self (edge $k $q) $q)) ())) "
@@ -1111,6 +1114,13 @@ FIXED = [
     "!(size-atom (collapse (match &self (edge $x $y) "
     "(put-if-absent &b (seen $x)))))\n"
     "!(let $h (collapse (match &b (seen $v) $v)) (sort-atom $h))\n",
+    # The unordered choice may differ between readers. Explicit lists,
+    # the full duplicate-preserving bag and the surrounding case stay exact.
+    "(choice 2)\n(choice 1)\n(choice 1)\n"
+    "!(sort-atom (collapse (match &self (choice $v) $v)))\n"
+    "!(once (match &self (choice $v) $v))\n"
+    "!(once (superpose (2 1)))\n"
+    "!(case (once (superpose (2 1))) ((1 wrong) ($_ right)))\n",
 ]
 
 
@@ -1129,7 +1139,7 @@ def main():
             path = os.path.join(work, f"fixed_{number}.metta")
             with open(path, "w") as f:
                 f.write(source)
-            ordered = (0,) if number == 1 else ()
+            ordered = (0,) if number == 1 else (0, 1, 2, 3) if number == 2 else ()
             native, _, _ = run(binary, path, False, args.stats, ordered_lines=ordered)
             reference, _, _ = run(binary, path, True, args.stats, ordered_lines=ordered)
             if number == 1:
@@ -1142,6 +1152,21 @@ def main():
                     print("native:", native)
                     print("reference:", reference)
                     return 1
+            if number == 2:
+                expected = tuple(
+                    (0, CollectionTrace(f"(1 1 2)\n{chosen}\n2\nright\n",
+                                        ordered_lines=(0, 1, 2, 3)))
+                    for chosen in (1, 2)
+                )
+                # Compare ordered fields exactly; only the unordered choice
+                # has two permitted observations.
+                if any(observation not in expected for observation in
+                       (native, reference)):
+                    print("FAIL: unordered choice or ordered data changed")
+                    print("native:", native)
+                    print("reference:", reference)
+                    return 1
+                continue
             if native != reference:
                 print(f"FAIL: fixed program {number} ends differently on the native path")
                 print(source)
