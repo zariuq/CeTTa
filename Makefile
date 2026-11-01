@@ -49651,8 +49651,9 @@ VALUE_BYTE_POLICY_TEST_BIN = runtime/test-value-byte-policy-$(BUILD_OBJ_TAG)
 $(VALUE_BYTE_POLICY_TEST_BIN): tests/support/test_value_byte_policy.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(COMPILED_READER_RUNTIME_OBJ) $(BRIDGE_DEPS)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 .PHONY: test-value-byte-policy
-test-value-byte-policy: $(VALUE_BYTE_POLICY_TEST_BIN)
-	$<
+test-value-byte-policy: $(VALUE_BYTE_POLICY_TEST_BIN) value-worker $(BIN)
+	$(VALUE_BYTE_POLICY_TEST_BIN)
+	$(PYTHON) tests/support/check_value_byte_policy.py $(VALUE_WORKER_BIN) --cli $(BIN)
 test-all: test-value-byte-policy
 
 STORE_AUTHORITY_TEST_BIN = runtime/test-store-authority-$(BUILD_OBJ_TAG)
