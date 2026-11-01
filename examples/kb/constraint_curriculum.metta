@@ -1,0 +1,67 @@
+; Atomic uniqueness and reference constraints over the same db/Space API.
+!(import! &self (library db))
+
+(= (constraint:present? $space $pattern)
+  (not (== (collapse (match $space $pattern True)) ())))
+
+(= (constraint:seed $space)
+  (let* (($_ (add-atom $space (entity a)))
+         ($_ (add-atom $space (entity b)))
+         ($_ (add-atom $space (entity c)))) ConstraintSeededV1))
+
+(= (constraint:add-edge $from $to $space)
+  (if (and (constraint:present? $space (entity $from))
+           (constraint:present? $space (entity $to)))
+    (if (constraint:present? $space (edge $from $to))
+      (Error constraint duplicate-edge)
+      (let $_ (add-atom $space (edge $from $to)) (ConstraintEdgeAddedV1 $from $to)))
+    (Error constraint missing-reference)))
+
+(= (constraint:remove-edge $from $to $space)
+  (if (constraint:present? $space (edge $from $to))
+    (let $_ (remove-atom $space (edge $from $to)) (ConstraintEdgeRemovedV1 $from $to))
+    (Error constraint missing-edge)))
+
+(= (constraint:remove-entity $id $space)
+  (if (or (constraint:present? $space (edge $id $other))
+          (constraint:present? $space (edge $other $id)))
+    (Error constraint referenced-entity)
+    (if (constraint:present? $space (entity $id))
+      (let $_ (remove-atom $space (entity $id)) (ConstraintEntityRemovedV1 $id))
+      (Error constraint missing-entity))))
+
+(= (constraint-curriculum:install $path)
+  (let* (($db (db:open $path))
+         ($_ (db:ensure $db constraints ((SpaceIndexV1 3 1) (SpaceIndexV1 3 2))))
+         ($seed (db:transaction-result $db constraints constraint-seed-v1 seed-v1
+           (|-> ($space) (constraint:seed $space))))
+         ($_ (db:close $db))) $seed))
+
+(= (constraint-curriculum:exercise $path)
+  (let* (($db (db:open $path))
+         ($added (db:transaction-result $db constraints constraint-edge-ab-v1 (edge a b)
+           (|-> ($space) (constraint:add-edge a b $space))))
+         ($duplicate (catch (db:transaction-result $db constraints constraint-duplicate-v1 (edge a b duplicate)
+           (|-> ($space) (constraint:add-edge a b $space)))))
+         ($missing (catch (db:transaction-result $db constraints constraint-missing-v1 (edge a absent)
+           (|-> ($space) (constraint:add-edge a absent $space)))))
+         ($referenced (catch (db:transaction-result $db constraints constraint-referenced-v1 (remove entity a)
+           (|-> ($space) (constraint:remove-entity a $space)))))
+         ($removed-edge (db:transaction-result $db constraints constraint-remove-edge-v1 (remove edge a b)
+           (|-> ($space) (constraint:remove-edge a b $space))))
+         ($removed-entity (db:transaction-result $db constraints constraint-remove-a-v1 (remove entity a)
+           (|-> ($space) (constraint:remove-entity a $space))))
+         ($view (db:snapshot $db constraints))
+         ($remaining (collapse (get-atoms $view)))
+         ($_ (db:close $view)) ($_ (db:close $db)))
+    (ConstraintCurriculumV1 $added $duplicate $missing $referenced
+      $removed-edge $removed-entity $remaining)))
+
+(= (constraint-curriculum:inspect $path)
+  (let* (($db (db:open $path)) ($view (db:snapshot $db constraints))
+         ($rows (collapse (get-atoms $view)))
+         ($_ (db:close $view)) ($_ (db:close $db))) $rows))
+
+(= (constraint-curriculum:run (Install $path)) (constraint-curriculum:install $path))
+(= (constraint-curriculum:run (Exercise $path)) (constraint-curriculum:exercise $path))
+(= (constraint-curriculum:run (Inspect $path)) (constraint-curriculum:inspect $path))

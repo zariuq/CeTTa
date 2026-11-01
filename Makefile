@@ -4810,6 +4810,11 @@ test-all: test-db
 test-db: $(BIN) $(VALUE_WORKER_BIN)
 	$(PYTHON) tests/support/check_db.py $(BIN) --worker $(VALUE_WORKER_BIN)
 
+.PHONY: test-constraint-curriculum
+test-all: test-constraint-curriculum
+test-constraint-curriculum: $(VALUE_WORKER_BIN)
+	$(PYTHON) tests/support/check_constraint_curriculum.py $(VALUE_WORKER_BIN)
+
 .PHONY: test-petta-bounded-removal
 test-all: test-petta-bounded-removal
 test-petta-bounded-removal: $(BIN)

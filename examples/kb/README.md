@@ -61,6 +61,24 @@ The default collection is `data`. Public `db` operations are currently qualified
 on PeTTa. They use the existing store owner, Space matcher and compositional
 query libraries. Remote connection construction is not exposed by this module.
 
+## Atomic constraints and graph lessons
+
+`constraint_curriculum.metta` implements reference and uniqueness checks as
+ordinary transaction-body queries over the editable Space. A missing endpoint,
+duplicate edge or removal of a referenced entity returns an `Error`; the whole
+transaction publishes nothing. Removing the edge and then its former endpoint
+commits atomically. A fresh process verifies the result and receipt replay.
+
+```sh
+make test-constraint-curriculum
+```
+
+`graph_curriculum.metta` uses the dependency collection for outgoing and
+incoming neighbourhoods, reachability, bounded paths, all shortest paths and
+anchored triangles. Parallel `emit→parse` occurrences produce two distinct
+shortest paths and two distinct triangle paths. This keeps occurrence identity
+visible rather than silently converting the graph to a set.
+
 ## Durable application queue
 
 `space_job_queue.metta` implements controlled queue transitions using ordinary
@@ -401,9 +419,11 @@ captured store:
 ```
 
 It reports three outgoing edge occurrences from `emit`, three incoming edge
-occurrences at `parse`, the distinct reachable programs `{check, parse, lex}`,
+occurrences at `parse`, the distinct reachable programs
+`{check, parse, lex, emit}` (the cycle reaches its start again),
 and both shortest paths to `lex`: `(dep4 dep1)` and `(dep6 dep1)`. The isolated
-program has no reachable endpoint. Repeating the command preserves these
+program has no reachable endpoint. `dep7` closes two directed triangles
+anchored at `emit`, one for each distinct `emit→parse` occurrence. Repeating the command preserves these
 results. These older commands do not exercise the ordinary-Space constraint
 or multi-client service adapters described above.
 

@@ -11,4 +11,5 @@
 (KbFact dep4 dependency (emit parse))
 (KbFact dep5 dependency (parse check))
 (KbFact dep6 dependency (emit parse))
+(KbFact dep7 dependency (lex emit))
 (KbFact location1 location (dep4 "emit.metta" 12))

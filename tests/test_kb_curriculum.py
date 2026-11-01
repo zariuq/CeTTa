@@ -61,11 +61,16 @@ class CurriculumTests(unittest.TestCase):
             self.assertEqual(answer[0], S("GraphCurriculum"), answer)
             self.assertTrue(all(part[0] == S("GraphRows") for part in answer[1:]), answer)
             self.assertEqual(len(answer[1][1]), 3)
-            self.assertEqual(set(answer[3][1]), {S("parse"), S("check"), S("lex")})
+            self.assertEqual(set(answer[3][1]), {S("parse"), S("check"), S("lex"), S("emit")})
             expected = [E("KgPath", (S("emit"), S("parse"), S("lex")),
                           (S(first), S("dep1")), 2) for first in ("dep4", "dep6")]
             self.assertEqual(sorted(map(encode, answer[4][1])), sorted(map(encode, expected)))
             self.assertEqual(answer[6][1], ())
+            # dep4 and dep6 are distinct emit→parse occurrences; each closes
+            # one directed triangle through dep1 and dep7.
+            self.assertEqual(len(answer[7][1]), 2)
+            self.assertTrue(all(row[0] == S("KgPath") and row[3] == 3
+                                for row in answer[7][1]), answer[7])
             self.assertEqual(encode(run()), encode(answer))
 
     @unittest.skipUnless(CLI, "CETTA_KB_CLI is required for the command-line boundary")
