@@ -259,13 +259,17 @@ static Atom *loan_identity(const void *raw,CettaIndex index) {
     return l->identity;
 }
 static size_t loan_limit(const void *raw) {return ((const Loan *)raw)->source->maximum;}
+static bool loan_pending_wait(const void *raw,SpaceSourceWait *out) {
+    const Loan *l=raw;*out=(SpaceSourceWait){0};
+    return l->source->ops->pending_wait && l->source->ops->pending_wait(l->scan,out);
+}
 static void loan_storage(const void *raw,CettaStorageCensus *census) {
     const Loan *l=raw;if(!l || !cetta_storage_object(census,l,sizeof(*l),CETTA_STORAGE_BLOCK))return;
     arena_storage_census(&l->ids,census);cetta_occurrence_source_storage(l->source,census);
     if(l->source->ops->storage)l->source->ops->storage(l->scan,census);
 }
 static const SpaceSourceCursorOps loan_ops={.clone=loan_clone,.select=loan_select,.next=loan_next,.atom=loan_atom,
-    .identity=loan_identity,.value_byte_limit=loan_limit,.free=loan_free,.storage=loan_storage};
+    .identity=loan_identity,.value_byte_limit=loan_limit,.pending_wait=loan_pending_wait,.free=loan_free,.storage=loan_storage};
 static uint64_t loan_count(const Space *space) {return ((const CettaOccurrenceSource *)space->match_backend.source)->count;}
 static void loan_source_free(Space *space) {cetta_occurrence_source_release(space->match_backend.source);space->match_backend.source=NULL;}
 static void loan_source_storage(const Space *space,CettaStorageCensus *census) {cetta_occurrence_source_storage(space->match_backend.source,census);}

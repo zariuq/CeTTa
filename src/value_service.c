@@ -235,12 +235,13 @@ static Atom *dispatch(Host *host,size_t index,Arena *arena,Atom *body,Resource *
         resource_close(host,r);return atom_symbol(arena,"ServiceClosedV1");
     }
     Atom *operation=NULL,*argument=NULL,*resource=atom_symbol(arena,"ServiceNoResourceV1");
-    Resource *consumed=NULL;
+    Resource *consumed=NULL,*used=NULL;
     if (tagged(body,"CallV1",3)) { operation=body->expr.elems[1];argument=body->expr.elems[2]; }
     else if (tagged(body,"UseV1",4) || tagged(body,"UseValueV1",4)) {
         Resource *r=resource_find(host,index,body->expr.elems[1]);if (!r) return failure(arena,false,"unknown-resource");
         if (r->value!=atom_is_symbol(body->expr.elems[0],"UseValueV1")) return failure(arena,false,"resource-mode");
         if (r->value) consumed=r;
+        used=r;
         operation=body->expr.elems[2];argument=body->expr.elems[3];resource=r->handle;
     } else return failure(arena,false,"request-shape");
     Route *route=route_find(host,operation);
@@ -254,6 +255,14 @@ static Atom *dispatch(Host *host,size_t index,Arena *arena,Atom *body,Resource *
      * exact request/reply cache handles wire retries before token lookup. */
     if (consumed) resource_close(host,consumed);
     if (!result) return failure(arena,true,host->evaluation_failure);
+    /* A terminal resource operation retires its host entry before census.
+     * Closing only the native handle inside a handler would leave a stale
+     * entry and misreport it as a resource-budget failure. */
+    if (tagged(result,"ServiceReleaseV1",2)) {
+        if (!used) return failure(arena,true,"resource-required");
+        result=result->expr.elems[1];
+        if (used->live) resource_close(host,used);
+    }
     if (tagged(result,"ServiceKeepV1",3)) return keep(host,index,arena,result,added);
     if (tagged(result,"ServiceKeepValueV1",3)) return keep_value(host,index,arena,result,added);
     if (!resources_fit(host)) {
@@ -267,7 +276,7 @@ static bool respond(Host *host,size_t index) {
     Resource *added=NULL;bool ran=false;
     if (cetta_atom_wire_decode_bounded(&arena,c->input.data,c->input.size,host->frame,&request)!=ATOM_WIRE_OK || !tagged(request,"request",3)) goto done;
     Atom *id=request->expr.elems[1];
-    if (!text(id) || !atom_string_len(id) || atom_string_len(id)>128) goto done;
+    if (!text(id) || !atom_string_len(id)) goto done;
     if (c->last_id && atom_string_equal(c->last_id,id)) {
         if (c->last_request.size==c->input.size && !memcmp(c->last_request.data,c->input.data,c->input.size)) { valid=queue(host,c,c->last_reply);goto done; }
         if (!encode(host,reply(&arena,id,false,failure(&arena,false,"request-id-collision")),&encoded)) goto done;

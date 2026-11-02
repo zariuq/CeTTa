@@ -951,7 +951,7 @@ SRC += src/petta_contract_core.c
 SRC += src/gslt_language_manifest_v1.c
 SRC += src/gslt_support_profile_v1.c
 SRC += src/library_io.c src/library_cwp.c src/library_proc_run.c src/library_sqlite.c src/proc_owner.c src/http_worker.c src/ws.c src/telegram_transport.c src/library_durable.c
-SRC += src/atom_wire.c src/library_space_service.c src/ipc_client.c src/ipc_session.c src/host_notice.c src/value_service.c
+SRC += src/atom_wire.c src/library_space_service.c src/ipc_client.c src/ipc_session.c src/value_rpc.c src/remote_db.c src/host_notice.c src/value_service.c
 SRC += $(SIWC_SRC)
 SRC += $(JSON_GSLT_RUNTIME_SRC)
 SRC += $(PETTA_TYPECHECK_CENSUS_SRC)
@@ -52756,3 +52756,23 @@ test-ipc-session: runtime/test-ipc-session
 .PHONY: test-native-db-server
 test-native-db-server: value-worker $(ACT_SPACE_TEST_BIN)
 	$(PYTHON) tests/support/check_native_db_server.py $(VALUE_WORKER_BIN) --act-fixture $(ACT_SPACE_TEST_BIN)
+
+VALUE_RPC_TEST_BIN = runtime/test_value_rpc-$(BUILD_OBJ_TAG)
+$(VALUE_RPC_TEST_BIN): tests/test_value_rpc.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_value_rpc.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
+.PHONY: test-value-rpc
+test-value-rpc: $(VALUE_RPC_TEST_BIN)
+	@./$(VALUE_RPC_TEST_BIN)
+
+REMOTE_DB_TEST_BIN = runtime/test_remote_db-$(BUILD_OBJ_TAG)
+$(REMOTE_DB_TEST_BIN): tests/test_remote_db.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_remote_db.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
+.PHONY: build-remote-db-test
+build-remote-db-test: $(REMOTE_DB_TEST_BIN)
+
+.PHONY: test-remote-db
+test-all: test-remote-db
+test-remote-db: $(BIN) value-worker $(REMOTE_DB_TEST_BIN) $(ACT_SPACE_TEST_BIN)
+	$(PYTHON) tests/support/check_remote_db.py $(BIN) $(VALUE_WORKER_BIN) --native-fixture $(REMOTE_DB_TEST_BIN) --act-fixture $(ACT_SPACE_TEST_BIN)

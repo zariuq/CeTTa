@@ -50,6 +50,19 @@ typedef enum {
  * decode arenas must be detached from process-wide interning. Patterns
  * supplied to open/select are call-scoped: encode bounds or own a copy;
  * retaining a caller's Atom pointer across nursery relocation is invalid. */
+/* A readiness continuation owns its context independently of the cursor.
+ * Synchronous observation boundaries may wait outside transition guards;
+ * incremental consumers keep returning PROGRESS to their scheduler. */
+typedef struct {
+    void *context;
+    void (*wait)(void *context);
+    void (*release)(void *context);
+    CettaStorageVisitor storage;
+} SpaceSourceWait;
+static inline void space_source_wait_clear(SpaceSourceWait *wait) {
+    if (wait->release) wait->release(wait->context);
+    *wait = (SpaceSourceWait){0};
+}
 typedef struct SpaceSourceCursorOps {
     bool (*clone)(const void *source, bool rewind, void **out);
     /* Reopen candidates against the same captured source, never its live
@@ -64,6 +77,7 @@ typedef struct SpaceSourceCursorOps {
     /* Optional selected portable-record policy, retained across captures.
      * A generic editable overlay needs this rather than inventing an allowance. */
     size_t (*value_byte_limit)(const void *source);
+    bool (*pending_wait)(const void *source, SpaceSourceWait *out);
     void (*free)(void *source);
     CettaStorageVisitor storage;
 } SpaceSourceCursorOps;

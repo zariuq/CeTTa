@@ -128,6 +128,8 @@ def main():
             server.start(); first, second = Client(server.path), Client(server.path)
             caps = first.route('DbCapabilities')
             assert caps[0] == S('DbCapabilitiesV1') and caps[3:5] == (S('directory'), S('ReadWrite')), caps
+            long_request = 'request-' + 'x' * 4096
+            assert first.call(E('StatsV1'), identifier=long_request)[0] == S('ServiceStatsV1')
             empty, context = capture(first)
             facts = (E('edge', S('a'), S('b')), E('edge', S('a'), S('b')),
                      E('rel', Var(0), Var(0)), E('blob', 'z'*300000),
@@ -142,6 +144,14 @@ def main():
             source, current = capture(first)
             foreign = (E('DbFreshV1', 'foreign-owner', caps[2], current[3], S('DbWholeV1')),)
             assert publish(first, source, 'foreign', (), dependencies=foreign) == E('DbRefusedV1', S('dependency-owner-or-scope'))
+            inert_path = root / 'must-stay-inert'
+            callable_owner = (E('DbFreshV1', E('fs:write', str(inert_path), 'not-data'),
+                                caps[2], current[3], S('DbWholeV1')),)
+            assert publish(first, source, 'callable-owner', (), dependencies=callable_owner) == E('DbRefusedV1', S('dependency-owner-or-scope'))
+            assert not inert_path.exists(), 'dependency data executed as a server call'
+            other_read = (E('DbFreshV1', caps[1], caps[2], current[3], E('DbCollectionV1', S('other'))),)
+            accepted = publish(first, source, 'other-collection-freshness', (), dependencies=other_read)
+            assert accepted[0] == S('KnowledgeCommittedV1'), accepted
             assert publish(first, source, 'wrong-scope', (), collection=S('other')) == E('DbRefusedV1', S('dependency-owner-or-scope'))
             scan = cursor(first, source)
             clone = first.route('DbCandidateClone', E('DbCandidateCloneV1', S('current')), scan)[1]

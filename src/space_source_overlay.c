@@ -266,11 +266,22 @@ static bool remove_selected(Overlay *o, Cursor *c) {
     if (!packets_reserve(&o->removed, &o->removed_capacity, o->removed_count + 1)) { packet_free(p); return false; }
     o->removed[o->removed_count++] = p; return true;
 }
+static bool cursor_wait_pending(Cursor *c, SpaceReadToken read) {
+    SpaceSourceWait wait = {0};
+    if (!c->owner->ops->pending_wait ||
+            !c->owner->ops->pending_wait(c->base, &wait)) return false;
+    unsigned parked = cetta_shared_transition_park();
+    if (wait.wait) wait.wait(wait.context);
+    space_source_wait_clear(&wait);
+    cetta_shared_transition_resume(parked);
+    return space_read_token_is_current(read);
+}
 static CettaMatchCompletion source_remove(Space *space, Atom *atom,
         CettaMatchCompletion (*equal)(Atom *, Atom *),
         CettaMatchCompletion (*alpha_equal)(Atom *, Atom *), bool representation) {
     CETTA_SCOPED_SHARED_TRANSITION(publication);
     Overlay *o = space->match_backend.source;
+    SpaceReadToken read = space_read_token(space);
     /* Retain the selected identity while establishing global alpha uniqueness. */
     for (unsigned pass = 0; pass < 2; ++pass) {
         SpaceOccurrenceCursorStep failure = SPACE_OCCURRENCE_CURSOR_CAPACITY;
@@ -283,8 +294,7 @@ static CettaMatchCompletion source_remove(Space *space, Atom *atom,
         while ((step = cursor_next(c, &index)) == SPACE_OCCURRENCE_CURSOR_ITEM ||
                 step == SPACE_OCCURRENCE_CURSOR_PROGRESS) {
             if (step == SPACE_OCCURRENCE_CURSOR_PROGRESS) {
-                /* A synchronous edit must not spin on an asynchronous source.
-                 * No selection is published until completeness is established. */
+                if (cursor_wait_pending(c, read)) continue;
                 step = SPACE_OCCURRENCE_CURSOR_INCOMPLETE; break;
             }
             CettaMatchCompletion comparison = (pass ? alpha_equal : equal)(c->atom, atom);
@@ -326,6 +336,7 @@ static CettaMatchCompletion source_remove_up_to(Space *space, Atom *pattern,
     while ((step = cursor_next(c, &index)) == SPACE_OCCURRENCE_CURSOR_ITEM ||
             step == SPACE_OCCURRENCE_CURSOR_PROGRESS) {
         if (step == SPACE_OCCURRENCE_CURSOR_PROGRESS) {
+            if (cursor_wait_pending(c, read)) continue;
             step = SPACE_OCCURRENCE_CURSOR_INCOMPLETE; break;
         }
         CettaMatchCompletion comparison = matches(c->atom, pattern);
@@ -397,9 +408,16 @@ static void source_free(Space *space) {
     overlay_release(space->match_backend.source); space->match_backend.source = NULL;
 }
 static size_t cursor_value_limit(const void *raw) { return ((const Cursor *)raw)->owner->maximum_bytes; }
+static bool cursor_pending_wait(const void *raw, SpaceSourceWait *out) {
+    const Cursor *c = raw;
+    *out = (SpaceSourceWait){0};
+    return !c->base_done && c->base && c->owner->ops->pending_wait &&
+        c->owner->ops->pending_wait(c->base, out);
+}
 static const SpaceSourceCursorOps cursor_ops = {
     .clone = cursor_clone, .select = cursor_select, .next = cursor_next,
-    .atom = cursor_atom, .identity = cursor_identity, .value_byte_limit = cursor_value_limit, .free = cursor_free, .storage = cursor_storage,
+    .atom = cursor_atom, .identity = cursor_identity, .value_byte_limit = cursor_value_limit,
+    .pending_wait = cursor_pending_wait, .free = cursor_free, .storage = cursor_storage,
 };
 static const SpaceSourceEditOps edits = {.admit = source_admit, .remove = source_remove,
     .remove_all = source_remove_all, .remove_up_to = source_remove_up_to};

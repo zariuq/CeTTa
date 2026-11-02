@@ -49,6 +49,7 @@ if __name__ == '__main__':
         results = [check_case(args.binary.resolve(), directory, case, expected) for case, expected in cases]
         results.append(check_case(args.binary.resolve(), directory, 'ActTransfer', 'DB_ACT_TRANSFER_OK'))
         results.append(check_case(args.binary.resolve(), directory, 'ActMaintenance', 'DB_ACT_MAINTENANCE_OK'))
+        results.append(check_case(args.binary.resolve(), directory, 'CooperativeCompaction', 'DB_COOPERATIVE_COMPACTION_OK'))
         results.append(check_case(args.binary.resolve(), directory, 'ActFile', 'DB_ACT_FILE_OK'))
         results.append(check_case(args.binary.resolve(), directory, 'ActExportJob', 'DB_ACT_EXPORT_JOB_OK'))
         results.append(check_case(args.binary.resolve(), directory, 'Candidates', 'DB_CANDIDATES_OK'))
