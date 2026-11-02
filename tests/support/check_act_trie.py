@@ -49,6 +49,10 @@ def main():
                         "src/act_trie.c", "-o", str(shared)], cwd=ROOT, check=True)
         lib = C.CDLL(str(shared))
         lib.cetta_act_build.argtypes = [C.POINTER(Item), C.c_size_t, C.POINTER(C.c_void_p), C.POINTER(C.c_size_t)]
+        lib.cetta_act_builder_open.argtypes = [C.c_int, C.c_int, C.c_int, C.c_size_t, C.POINTER(C.c_void_p)]
+        lib.cetta_act_builder_put.argtypes = [C.c_void_p, Bytes, C.c_uint64]
+        lib.cetta_act_builder_finish.argtypes = [C.c_void_p, C.POINTER(C.c_uint64)]
+        lib.cetta_act_builder_close.argtypes = [C.c_void_p]
         lib.cetta_act_open.argtypes = [C.c_char_p, C.POINTER(C.c_void_p)]
         lib.cetta_act_get.argtypes = [C.c_void_p, Bytes, C.POINTER(C.c_uint64)]
         lib.cetta_act_validate.argtypes = [C.c_void_p, C.POINTER(C.c_uint64)]
@@ -75,6 +79,26 @@ def main():
             expected = "".join(f"{key.hex()} {value}\n" for key, value in entries)
             result = subprocess.check_output([str(a.oracle.resolve()), "read", str(c_file)], text=True)
             assert result == expected, (number, "C writer/Rust reader")
+            streamed = work / f"stream-{number}.act"
+            scratch = [streamed, work / "frontier.tmp", work / "key.tmp"]
+            files = [path.open("w+b") for path in scratch]
+            builder = C.c_void_p()
+            try:
+                assert lib.cetta_act_builder_open(*(f.fileno() for f in files),
+                    256 * 1024, C.byref(builder)) == 0
+                for buf, (key, value) in zip(buffers, entries):
+                    assert lib.cetta_act_builder_put(builder,
+                        Bytes(C.cast(buf, C.c_void_p), len(key)), value) == 0
+                written = C.c_uint64()
+                assert lib.cetta_act_builder_finish(builder, C.byref(written)) == 0
+                assert written.value == os.fstat(files[0].fileno()).st_size
+            finally:
+                lib.cetta_act_builder_close(builder)
+                for f in files:
+                    f.close()
+            result = subprocess.check_output([str(a.oracle.resolve()), "read", str(streamed)], text=True)
+            assert result == expected, (number, "streaming C writer/Rust reader")
+
             source = work / "keys.txt"
             source.write_text(expected)
             rust_file = work / f"rust-{number}.act"
@@ -92,7 +116,7 @@ def main():
                     checked += 1
             finally:
                 lib.cetta_act_release(tree)
-        print(f"ACT differential: {len(cases)} images each way, {checked} key/value lookups")
+        print(f"ACT differential: {len(cases)} images through buffered/streaming C and Rust writers, {checked} key/value lookups")
 
 
 if __name__ == "__main__":

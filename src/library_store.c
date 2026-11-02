@@ -154,13 +154,13 @@ typedef struct {
 static void free_program(void *p) {
     ProgramWatch *watch=p;petta_program_read_barrier_free(watch->barrier);free(watch);
 }
-typedef struct { CettaDiskCursor *cursor; CettaDiskBuffer last; CettaDiskBlob blob; uint64_t position; bool done; } Scan;
+typedef struct { CettaDiskStoreCursor *cursor; CettaDiskBuffer last; CettaDiskStoreBlob blob; uint64_t position; bool done; } Scan;
 typedef struct { CettaDiskStoreScope *items; unsigned char **allocated; size_t count; } Scopes;
 
 static void free_owner(void *p) { cetta_disk_store_close(p); }
 static void free_view(void *p) { cetta_disk_store_view_close(p); }
 static void view_storage(const void *p,CettaStorageCensus *census) { cetta_disk_store_view_storage_census(p,census); }
-static void free_reader(void *p) { cetta_disk_blob_reader_close(p); }
+static void free_reader(void *p) { cetta_disk_store_blob_reader_close(p); }
 static void free_query(void *p) { cetta_disk_query_close(p); }
 static void query_storage(const void *p,CettaStorageCensus *census) { cetta_disk_query_storage_census(p,census); }
 static void free_batch(void *p) { cetta_disk_store_batch_close(p); }
@@ -182,12 +182,12 @@ static bool program_current(CettaLibraryContext *ctx,const ProgramWatch *watch) 
     return valid;
 }
 static void free_scan(void *p) {
-    Scan *scan=p; cetta_disk_cursor_close(scan->cursor); cetta_disk_buffer_free(&scan->last); free(scan);
+    Scan *scan=p; cetta_disk_store_cursor_close(scan->cursor); cetta_disk_buffer_free(&scan->last); free(scan);
 }
 static void scan_storage(const void *p,CettaStorageCensus *census) {
     const Scan *scan=p;
     if (!scan || !cetta_storage_object(census,scan,sizeof(*scan),CETTA_STORAGE_BLOCK)) return;
-    cetta_disk_cursor_storage_census(scan->cursor,census);
+    cetta_disk_store_cursor_storage_census(scan->cursor,census);
     cetta_storage_object(census,scan->last.data,scan->last.size ? scan->last.size : 1,CETTA_STORAGE_BLOCK);
 }
 static Atom *refused(Arena *a,const char *why) {
@@ -350,14 +350,14 @@ static Atom *space_view(CettaLibraryContext *ctx,Arena *a,Atom **args,uint32_t n
     CettaNativeHandleUse use={0};
     if (!acquire(ctx,view_kind,args[0],CETTA_NATIVE_HANDLE_USE_LIFETIME,&use)) return refused(a,"closed-view");
     CettaDiskStoreView *view=cetta_native_handle_use_resource(&use);
-    CettaDiskBlob blob;const CettaDiskRoot *root=cetta_disk_store_view_root(view);
-    CettaDiskStatus read=cetta_disk_lookup(root,key,&blob);
+    CettaDiskStoreBlob blob;const CettaDiskStoreView *root=view;
+    CettaDiskStatus read=cetta_disk_store_lookup(root,key,&blob);
     Atom *result=NULL;
     if (read!=CETTA_DISK_OK) { result=status_value(a,disk_status(read));goto done; }
     if (blob.size>cetta_library_value_byte_limit(ctx)) { result=refused(a,"space-metadata-limit");goto done; }
     unsigned char *body=malloc(blob.size ? (size_t)blob.size : 1);size_t got=0;
     if (!body) { result=refused(a,"capacity");goto done; }
-    read=cetta_disk_blob_read(root,blob,0,body,(size_t)blob.size,&got);
+    read=cetta_disk_store_blob_read(root,blob,0,body,(size_t)blob.size,&got);
     Arena metadata;arena_init_detached(&metadata);Atom *record=NULL;
     CettaAtomWireStatus decoded=read==CETTA_DISK_OK && got==blob.size
         ? cetta_atom_wire_decode_bounded(&metadata,body,got,cetta_library_value_byte_limit(ctx),&record) : ATOM_WIRE_CORRUPT;
@@ -368,7 +368,7 @@ static Atom *space_view(CettaLibraryContext *ctx,Arena *a,Atom **args,uint32_t n
     bool version4=record && record->kind==ATOM_EXPR && record->expr.len==4 && atom_is_symbol(record->expr.elems[0],"StoreSpaceV4");
     bool valid=decoded==ATOM_WIRE_OK && record && record->kind==ATOM_EXPR &&
         ((record->expr.len==3 && atom_is_symbol(record->expr.elems[0],"StoreSpaceV1")) || version2 || version3 || version4) && string(record->expr.elems[1],&prefix) &&
-        prefix.size && prefix.size<=root->key_limit && number(record->expr.elems[2],&count) &&
+        prefix.size && prefix.size<=cetta_disk_store_view_limits(root).key_bytes && number(record->expr.elems[2],&count) &&
         !(key.size>=prefix.size && !memcmp(key.data,prefix.data,prefix.size));
     CettaDiskSpaceIndex *indexes=NULL;size_t index_count=0;
     if (valid && (version2 || version3 || version4)) {
@@ -383,7 +383,7 @@ static Atom *space_view(CettaLibraryContext *ctx,Arena *a,Atom **args,uint32_t n
                 valid=(exact || range) &&
                     number(item->expr.elems[1],&arity) && arity && arity<=UINT32_MAX &&
                     number(item->expr.elems[2],&position) && position<arity && string(item->expr.elems[3],&index_prefix) &&
-                    index_prefix.size && index_prefix.size<=root->key_limit &&
+                    index_prefix.size && index_prefix.size<=cetta_disk_store_view_limits(root).key_bytes &&
                     !(index_prefix.size>=prefix.size && !memcmp(index_prefix.data,prefix.data,prefix.size)) &&
                     !(prefix.size>=index_prefix.size && !memcmp(prefix.data,index_prefix.data,index_prefix.size));
                 for (size_t j=0;valid && j<i;j++) {
@@ -886,8 +886,8 @@ Atom *cetta_store_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **a
             (reading && (!number(args[2],&budget) || budget>CETTA_STRING_BYTES_MAX))) return refused(a,"invalid-get");
         CettaNativeHandleUse use={0};
         if (!acquire(ctx,view_kind,args[0],CETTA_NATIVE_HANDLE_USE_LIFETIME,&use)) return refused(a,"closed-view");
-        const CettaDiskRoot *root=cetta_disk_store_view_root(cetta_native_handle_use_resource(&use));CettaDiskBlob blob;
-        CettaDiskStatus status=cetta_disk_lookup(root,key,&blob);Atom *result=NULL;
+        const CettaDiskStoreView *root=cetta_native_handle_use_resource(&use);CettaDiskStoreBlob blob;
+        CettaDiskStatus status=cetta_disk_store_lookup(root,key,&blob);Atom *result=NULL;
         if (status==CETTA_DISK_ABSENT) result=atom_symbol(a,"StoreAbsent");
         else if (status!=CETTA_DISK_OK) result=status_value(a,disk_status(status));
         else if (reading && blob.size>budget) result=atom_expr2(a,atom_symbol(a,"StoreTooLarge"),atom_int(a,(int64_t)blob.size));
@@ -895,12 +895,12 @@ Atom *cetta_store_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **a
             unsigned char *bytes=malloc(blob.size ? (size_t)blob.size : 1);size_t got=0;
             if (!bytes) result=refused(a,"capacity");
             else {
-                status=cetta_disk_blob_read(root,blob,0,bytes,(size_t)blob.size,&got);
+                status=cetta_disk_store_blob_read(root,blob,0,bytes,(size_t)blob.size,&got);
                 result=status==CETTA_DISK_OK ? atom_expr2(a,atom_symbol(a,"StoreValue"),atom_string_n(a,(const char *)bytes,got)) : status_value(a,disk_status(status));
                 free(bytes);
             }
         } else {
-            CettaDiskBlobReader *reader=NULL;status=cetta_disk_blob_reader_open(root,blob,&reader);
+            CettaDiskStoreBlobReader *reader=NULL;status=cetta_disk_store_blob_reader_open(root,blob,&reader);
             if (status!=CETTA_DISK_OK) result=status_value(a,disk_status(status));
             else {
                 Atom *handle=own(ctx,a,reader_kind,reader,free_reader);
@@ -914,14 +914,14 @@ Atom *cetta_store_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **a
         if (n!=3 || !number(args[1],&offset) || !number(args[2],&count) || count>CETTA_STRING_BYTES_MAX) return refused(a,"invalid-read");
         CettaNativeHandleUse use={0};
         if (!acquire(ctx,reader_kind,args[0],CETTA_NATIVE_HANDLE_USE_LIFETIME,&use)) return refused(a,"closed-reader");
-        CettaDiskBlobReader *reader=cetta_native_handle_use_resource(&use);
-        uint64_t size=cetta_disk_blob_reader_size(reader);
+        CettaDiskStoreBlobReader *reader=cetta_native_handle_use_resource(&use);
+        uint64_t size=cetta_disk_store_blob_reader_size(reader);
         if (offset>size) { cetta_native_handle_use_release(&use);return refused(a,"invalid-offset"); }
         if (count>size-offset) count=size-offset;
         unsigned char *bytes=malloc(count ? (size_t)count : 1);size_t got=0;Atom *result;
         if (!bytes) result=refused(a,"capacity");
         else {
-            CettaDiskStatus status=cetta_disk_blob_reader_read(reader,offset,bytes,(size_t)count,&got);
+            CettaDiskStatus status=cetta_disk_store_blob_reader_read(reader,offset,bytes,(size_t)count,&got);
             result=status==CETTA_DISK_OK ? atom_expr3(a,atom_symbol(a,"StoreBytes"),atom_string_n(a,(const char *)bytes,got),atom_int(a,(int64_t)(offset+got))) : status_value(a,disk_status(status));
             free(bytes);
         }
@@ -934,10 +934,10 @@ Atom *cetta_store_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **a
         CettaNativeHandleUse use={0};
         if (!acquire(ctx,view_kind,args[0],CETTA_NATIVE_HANDLE_USE_LIFETIME,&use)) return refused(a,"closed-view");
         Scan *scan=calloc(1,sizeof(*scan));Atom *result;
-        const CettaDiskRoot *root=cetta_disk_store_view_root(cetta_native_handle_use_resource(&use));
+        const CettaDiskStoreView *root=cetta_native_handle_use_resource(&use);
         CettaDiskStatus status=!scan ? CETTA_DISK_NOMEM : reverse_scan ?
-            cetta_disk_cursor_open_reverse_range(root,lo ? &lower : NULL,false,hi ? &upper : NULL,&scan->cursor) :
-            cetta_disk_cursor_open_range(root,lo ? &lower : NULL,false,hi ? &upper : NULL,&scan->cursor);
+            cetta_disk_store_cursor_open_reverse_range(root,lo ? &lower : NULL,false,hi ? &upper : NULL,&scan->cursor) :
+            cetta_disk_store_cursor_open_range(root,lo ? &lower : NULL,false,hi ? &upper : NULL,&scan->cursor);
         if (status!=CETTA_DISK_OK) { free(scan);result=status_value(a,disk_status(status)); }
         else {
             Atom *handle=own(ctx,a,scan_kind,scan,free_scan);
@@ -955,8 +955,8 @@ Atom *cetta_store_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **a
         else if (position!=scan->position) result=refused(a,"stale-position");
         else if (scan->done) result=atom_symbol(a,"StoreEnd");
         else {
-            CettaDiskBuffer key={0};CettaDiskBlob blob;
-            CettaDiskStatus status=cetta_disk_cursor_next(scan->cursor,&key,&blob);
+            CettaDiskBuffer key={0};CettaDiskStoreBlob blob;
+            CettaDiskStatus status=cetta_disk_store_cursor_next(scan->cursor,&key,&blob);
             if (status==CETTA_DISK_END) { scan->done=true;result=atom_symbol(a,"StoreEnd"); }
             else if (status!=CETTA_DISK_OK) result=status_value(a,disk_status(status));
             else { cetta_disk_buffer_free(&scan->last);scan->last=key;scan->blob=blob;++scan->position; }

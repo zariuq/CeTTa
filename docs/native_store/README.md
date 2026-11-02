@@ -55,6 +55,14 @@ validation is linear in the image; dumping currently constructs the encoded
 image and sorted entries in memory. This is not yet a bounded-memory bulk
 writer for billion-fact datasets.
 
+The native byte-trie kernel also provides a sorted-input file builder with
+bounded working heap, private frontier/key spools and reverse range cursors.
+The generic `CDBACT01` base codec streams packed byte values alongside that
+trie. `make test-act-stream test-native-act-base` checks these components;
+the [base format](ACT_BASE_FORMAT.txt) specifies their layout and ownership.
+The ordinary Space dumper still needs external sorting and identity/index
+organization before its complete export path has the same memory guarantee.
+
 The live durable store still publishes its existing CDS2 index and journal.
 ACT snapshots do not replace transaction receipts, recovery, or the owner.
 Attaching ACT as a compacted durable base with a mutable delta remains a

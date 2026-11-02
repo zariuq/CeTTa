@@ -73,6 +73,36 @@ const CettaDiskRoot *cetta_disk_store_view_root(const CettaDiskStoreView *view);
 uint64_t cetta_disk_store_view_revision(const CettaDiskStoreView *view);
 const unsigned char *cetta_disk_store_view_epoch(const CettaDiskStoreView *view);
 
+/* Logical reads through an owned captured view. Storage coordinates are
+ * private to that view; callers never infer an occurrence identity from them.
+ * Cursors/readers retain the captured backing independently of the opener. */
+typedef struct { uint64_t reference, size; unsigned storage; } CettaDiskStoreBlob;
+typedef struct CettaDiskStoreCursor CettaDiskStoreCursor;
+typedef struct CettaDiskStoreBlobReader CettaDiskStoreBlobReader;
+CettaDiskStoreLimits cetta_disk_store_view_limits(const CettaDiskStoreView *);
+CettaDiskStatus cetta_disk_store_lookup(const CettaDiskStoreView *,
+    CettaDiskBytes, CettaDiskStoreBlob *);
+CettaDiskStatus cetta_disk_store_blob_read(const CettaDiskStoreView *,
+    CettaDiskStoreBlob, uint64_t offset, void *, size_t capacity, size_t *written);
+CettaDiskStatus cetta_disk_store_blob_reader_open(const CettaDiskStoreView *,
+    CettaDiskStoreBlob, CettaDiskStoreBlobReader **);
+CettaDiskStatus cetta_disk_store_blob_reader_read(CettaDiskStoreBlobReader *,
+    uint64_t offset, void *, size_t capacity, size_t *written);
+uint64_t cetta_disk_store_blob_reader_size(const CettaDiskStoreBlobReader *);
+void cetta_disk_store_blob_reader_close(CettaDiskStoreBlobReader *);
+CettaDiskStatus cetta_disk_store_cursor_open_range(const CettaDiskStoreView *,
+    const CettaDiskBytes *lower, bool exclusive, const CettaDiskBytes *upper,
+    CettaDiskStoreCursor **);
+CettaDiskStatus cetta_disk_store_cursor_open_reverse_range(const CettaDiskStoreView *,
+    const CettaDiskBytes *lower, bool exclusive, const CettaDiskBytes *upper,
+    CettaDiskStoreCursor **);
+CettaDiskStatus cetta_disk_store_cursor_next(CettaDiskStoreCursor *,
+    CettaDiskBuffer *, CettaDiskStoreBlob *);
+const CettaDiskStoreView *cetta_disk_store_cursor_view(const CettaDiskStoreCursor *);
+void cetta_disk_store_cursor_storage_census(const CettaDiskStoreCursor *,
+    struct CettaStorageCensus *);
+void cetta_disk_store_cursor_close(CettaDiskStoreCursor *);
+
 /* Initial conservative validation: epoch, domain and revision must match.
  * A snapshot is a read view, not a one-use protocol capability. Higher layers
  * own observation handles and durable application receipts. Accepted no-ops
