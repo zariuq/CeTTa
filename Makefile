@@ -921,7 +921,7 @@ SRC += src/u64_index.c
 SRC += src/library_syntax.c
 SRC += src/str_stream.c
 SRC += src/relational_plan.c src/relational_cursor.c src/native_query.c src/dense_relation.c
-SRC += src/byte_run_sort.c src/space_source_snapshot.c src/act_trie.c src/act_space.c src/library_act.c src/native_act_base.c
+SRC += src/byte_run_sort.c src/space_source_snapshot.c src/source_owner.c src/act_trie.c src/act_space.c src/library_act.c src/native_act_base.c
 SRC += src/space_dense.c
 SRC += src/space_tuples.c
 SRC += src/space_skeleton.c
@@ -52752,3 +52752,7 @@ runtime/test-ipc-session: tests/test_ipc_session.c src/ipc_session.c src/ipc_ses
 	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -pthread -Isrc tests/test_ipc_session.c src/ipc_session.c src/ipc_client.c -Wl,--wrap=malloc,--wrap=calloc -o $@
 test-ipc-session: runtime/test-ipc-session
 	@./runtime/test-ipc-session
+
+.PHONY: test-native-db-server
+test-native-db-server: value-worker $(ACT_SPACE_TEST_BIN)
+	$(PYTHON) tests/support/check_native_db_server.py $(VALUE_WORKER_BIN) --act-fixture $(ACT_SPACE_TEST_BIN)
