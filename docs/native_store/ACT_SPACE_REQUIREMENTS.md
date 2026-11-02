@@ -1,8 +1,10 @@
 # Native ACT reader requirements for persistent MeTTa spaces
 
-Status: integration requirements and acceptance criteria, 2026-10-30.
-Inspected CeTTa baseline: `0bb0b45a`. This document does not claim that the
-native C reader or the public owning durable Space adapter is implemented.
+Status: integration requirements and acceptance criteria, updated 2026-11-02.
+The native C ACTree03 reader/writer and owning immutable Space adapter are
+implemented alongside a typed CACT0001 snapshot profile. See ACT_FORMAT.txt
+and the native-store README for their scope. Attaching ACT as a compacted
+base under the durable publication owner remains a further integration step.
 
 The deliverable is a reusable native C ACT reader which can back ordinary
 MeTTa Space operations over persistent, captured data. Graph and relational

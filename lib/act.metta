@@ -1,0 +1,21 @@
+; Native immutable ACT snapshots. Opening supplies an ordinary read-only Space.
+; Upstream ACTree03 has structural-set semantics. CACT0001 preserves typed atoms
+; and identified duplicate occurrences. Loading copies into the target domain.
+(: __cetta_lib_act_open (-> String Atom))
+(: __cetta_lib_act_close (-> Atom Atom))
+(: __cetta_lib_act_workspace (-> Atom Atom))
+(: __cetta_lib_act_dump (-> Atom String Atom))
+(: __cetta_lib_act_dump_mork (-> Atom String Atom))
+(: __cetta_lib_act_load (-> Atom String Atom))
+(: act:open (-> String %Undefined%))
+(= (act:open $path) (function (case (__cetta_lib_act_open $path) (($r (return $r))))))
+(: act:workspace (-> %Undefined% %Undefined%))
+(= (act:workspace $space) (function (case (__cetta_lib_act_workspace $space) (($r (return $r))))))
+(: act:close! (-> %Undefined% %Undefined%))
+(= (act:close! $space) (function (case (__cetta_lib_act_close $space) (($r (return $r))))))
+(: act:dump! (-> %Undefined% String %Undefined%))
+(= (act:dump! $space $path) (function (case (__cetta_lib_act_dump $space $path) (($r (return $r))))))
+(: act:dump-mork! (-> %Undefined% String %Undefined%))
+(= (act:dump-mork! $space $path) (function (case (__cetta_lib_act_dump_mork $space $path) (($r (return $r))))))
+(: act:load! (-> %Undefined% String %Undefined%))
+(= (act:load! $space $path) (function (case (__cetta_lib_act_load $space $path) (($r (return $r))))))

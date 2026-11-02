@@ -2,6 +2,7 @@
 ; transaction callback's argument are ordinary Spaces; there is no DB matcher.
 !(import! &self "kb_query.metta")
 !(import! &self (library system))
+!(import! &self (library act))
 
 (= (db:new-request)
   (case (system:uuid4-hex)
@@ -201,6 +202,23 @@
   (db:transaction $owner (|-> ($space) (remove-atom $space $pattern))))
 (= (db:remove $owner $pattern $maximum)
   (db:transaction $owner (|-> ($space) (remove-atom $space $pattern $maximum))))
+
+; Portable immutable snapshots retain saved occurrence identities. Importing
+; copies atoms into this database's identity domain in one transaction.
+(: db:export-act (-> %Undefined% String %Undefined%))
+(: db:export-act (-> %Undefined% Atom String %Undefined%))
+(= (db:export-act $owner $path) (db:export-act $owner data $path))
+(= (db:export-act $owner $collection $path)
+  (case (db:snapshot $owner $collection)
+    (((Error $where $why) (Error $where $why))
+     ($space
+      (let* (($result (catch (act:dump! $space $path)))
+             ($_ (db:close $space))) $result)))))
+(: db:import-act (-> %Undefined% String %Undefined%))
+(: db:import-act (-> %Undefined% Atom String %Undefined%))
+(= (db:import-act $owner $path) (db:import-act $owner data $path))
+(= (db:import-act $owner $collection $path)
+  (db:transaction $owner $collection (|-> ($space) (act:load! $space $path))))
 
 ; The simple query exposes template values and occurrence identities in a
 ; public row. Quote preserves callable-looking payloads as returned data.

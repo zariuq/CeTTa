@@ -1,4 +1,17 @@
 !(import! &self (library db))
+
+(= (db-fixture:run (ActTransfer $path))
+  (let* (($owner (db:open (str:concat $path "-act-source")))
+         ($_ (assertEqual (db:add $owner (edge a b)) True))
+         ($_ (assertEqual (db:add $owner (edge a b)) True))
+         ($_ (assertEqual (db:export-act $owner (str:concat $path ".cact")) True))
+         ($_ (db:close $owner))
+         ($restored (db:open (str:concat $path "-act-target")))
+         ($_ (assertEqual (db:import-act $restored (str:concat $path ".cact")) True))
+         ($view (db:snapshot $restored))
+         ($_ (assertEqual (collapse (match $view (edge a $to) $to)) (b b)))
+         ($_ (db:close $view))
+         ($_ (db:close $restored))) DB_ACT_TRANSFER_OK))
 !(import! &self (library lib_he))
 
 (= (db-fixture:run (Basic $path))

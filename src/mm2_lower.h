@@ -110,6 +110,9 @@ bool cetta_mm2_bridge_expr_packet_to_atom(Arena *a,
                                           size_t packet_len,
                                           Atom **out_atom,
                                           const char **out_error);
+/* Strict inline MORK expression bytes used by ACTree03 set files. */
+bool cetta_mm2_bridge_expr_bytes_to_atom(Arena *a, const uint8_t *bytes,
+    size_t length, Atom **out_atom, const char **out_error);
 
 /* Canonicalize only the presentation of variables in one MM2 atom. This is
    the encode/decode round trip used to make reference and physical observers
