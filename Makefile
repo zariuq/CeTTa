@@ -951,7 +951,7 @@ SRC += src/petta_contract_core.c
 SRC += src/gslt_language_manifest_v1.c
 SRC += src/gslt_support_profile_v1.c
 SRC += src/library_io.c src/library_cwp.c src/library_proc_run.c src/library_sqlite.c src/proc_owner.c src/http_worker.c src/ws.c src/telegram_transport.c src/library_durable.c
-SRC += src/atom_wire.c src/library_space_service.c src/ipc_client.c src/host_notice.c src/value_service.c
+SRC += src/atom_wire.c src/library_space_service.c src/ipc_client.c src/ipc_session.c src/host_notice.c src/value_service.c
 SRC += $(SIWC_SRC)
 SRC += $(JSON_GSLT_RUNTIME_SRC)
 SRC += $(PETTA_TYPECHECK_CENSUS_SRC)
@@ -52738,3 +52738,17 @@ $(ACT_EXPORT_FAULTS_BIN): tests/test_act_export_faults.c $(FALLBACK_EVAL_TEST_LI
 .PHONY: test-act-export-faults
 test-act-export-faults: $(ACT_EXPORT_FAULTS_BIN)
 	@./$(ACT_EXPORT_FAULTS_BIN)
+
+.PHONY: test-ipc-client-stream
+runtime/test-ipc-client-stream: tests/test_ipc_client_stream.c src/ipc_client.c src/ipc_client.h
+	@mkdir -p runtime
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Isrc tests/test_ipc_client_stream.c src/ipc_client.c -o $@
+test-ipc-client-stream: runtime/test-ipc-client-stream
+	@./runtime/test-ipc-client-stream
+
+.PHONY: test-ipc-session
+runtime/test-ipc-session: tests/test_ipc_session.c src/ipc_session.c src/ipc_session.h src/ipc_client.c src/ipc_client.h
+	@mkdir -p runtime
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -pthread -Isrc tests/test_ipc_session.c src/ipc_session.c src/ipc_client.c -Wl,--wrap=malloc,--wrap=calloc -o $@
+test-ipc-session: runtime/test-ipc-session
+	@./runtime/test-ipc-session
