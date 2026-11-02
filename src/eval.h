@@ -27,6 +27,10 @@ struct CettaPettaTokenSpaceClauseRegistry;
  */
 Atom *cetta_petta_open_callable(
     Arena *arena, Atom *callable, Atom *parameter);
+/* Open a consecutive callable prefix to free parameter variables, in
+ * outer-to-inner order. Argument values remain in the caller's bindings. */
+Atom *cetta_petta_open_callable_parameters(
+    Arena *arena, Atom *callable, Atom *const *parameters, CettaExprLen count);
 
 struct CettaPettaTokenSpaceClauseRegistry *
 cetta_petta_token_space_clause_registry_new(void);
@@ -396,6 +400,9 @@ CettaCount eval_outcome_value_count(const EvalOutcome *outcome);
 CettaCount eval_outcome_fault_count(const EvalOutcome *outcome);
 CettaEvalZeroStatus eval_outcome_zero_status(const EvalOutcome *outcome);
 const char *eval_completion_reason(CettaEvalCompletion completion);
+/* A native callback with incomplete work terminates its enclosing episode.
+ * The first cause remains authoritative through catches and later entries. */
+void eval_mark_interrupted(CettaEvalCompletion completion);
 uint64_t eval_current_c_stack_budget_bytes(void);
 typedef struct {
     uintptr_t anchor;
@@ -452,8 +459,10 @@ void eval_top_with_registry_outcome(
 void eval_top_speculative(CettaLibraryContext *context, Space *space,
     Arena *arena, Arena *persistent, Registry *registry, Atom *expression,
     int fuel_limit, EvalOutcome *outcome);
-/* Re-entrant callback used only by the optional PeTTa/libpl adapter. */
-bool eval_petta_from_lib_prolog(Arena *a, Atom *expr, ResultSet *results);
+/* Re-entrant callback used only by the optional PeTTa/libpl adapter. An
+ * incomplete callback exports no partial rows; completion is mandatory. */
+bool eval_petta_from_lib_prolog(Arena *a, Atom *expr, ResultSet *results,
+                              CettaEvalCompletion *completion);
 /* Reclaim completed top-level temporaries. During a callback into an active
  * evaluator this defers cleanup to that caller's completion boundary. */
 void eval_release_temporary_spaces(void);

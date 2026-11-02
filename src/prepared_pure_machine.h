@@ -134,6 +134,38 @@ bool cetta_prepared_pure_closed_own_execution(
     CettaOwnedExecution *driver, CettaPreparedPureClosedExecution *execution,
     const void *owner, uint64_t quantum);
 
+
+typedef enum {
+    CETTA_PREPARED_PURE_COMPILE_UNCERTIFIED,
+    CETTA_PREPARED_PURE_COMPILE_READY,
+    CETTA_PREPARED_PURE_COMPILE_INPUT_REFUSED,
+    CETTA_PREPARED_PURE_COMPILE_RESOURCE_REFUSED,
+    CETTA_PREPARED_PURE_COMPILE_INVALIDATED,
+    CETTA_PREPARED_PURE_COMPILE_STABLE_REFUSED,
+} CettaPreparedPureCompileStatus;
+
+enum {
+    CETTA_PREPARED_PURE_REFUSE_SCALAR = 1u,
+    CETTA_PREPARED_PURE_REFUSE_ANSWERS = 2u,
+};
+
+/* Preparation metadata, never an evaluation outcome. A failure can certify
+ * the other demand without certifying its own: a prior answer gate survives
+ * a later uncertified scalar failure. Unclassified failures remain retryable.
+ * The source is borrowed for the duration of its owner's preparation scope. */
+typedef struct {
+    SpaceProgramToken source;
+    CettaPreparedPureCompileStatus status;
+    uint8_t refusals;
+} CettaPreparedPureCompileReport;
+
+static inline bool cetta_prepared_pure_compile_refused(
+        const CettaPreparedPureCompileReport *report, Space *space, bool answers) {
+    return report &&
+        (report->refusals & (answers ? CETTA_PREPARED_PURE_REFUSE_ANSWERS
+                                   : CETTA_PREPARED_PURE_REFUSE_SCALAR)) != 0u &&
+        space_program_token_matches_live_space(report->source, space);
+}
 /* Whether the prepared machine can call `head` with `arity` arguments: the
  * dialect leaves the head untyped, or it is an HE head whose one signature
  * has that arity and value-class parameters and range (Number, String, Bool
@@ -337,14 +369,18 @@ typedef struct {
      * callees, and at runtime-created application boundaries. */
     bool (*head_admitted)(void *context, Space *space, SymbolId head);
     /* Execute a native whose head/arity was positively admitted by the
-     * generated intrinsic contract. False declines before native entry.
-     * True transfers the tagged result, including zero or raised control.
+     * generated intrinsic contract. False with complete invocation status
+     * declines before entry and transfers no packet. True with complete
+     * status transfers the tagged result, including zero or raised control.
+     * Completion reports this invocation's own cause, independently of any
+     * enclosing diagnostic; incomplete calls authorize no following work.
      * The native context is separate because a language's source-plan owner
      * and its library registry have distinct lifetimes and representations. */
     void *native_context;
     bool (*native_call)(
         void *context, Space *space, Arena *arena,
-        const CettaInvocation *invocation, CettaCallOutcome *outcome);
+        const CettaInvocation *invocation, CettaCallOutcome *outcome,
+        CettaEvalCompletion *completion);
 } CettaPreparedPureSourceView;
 
 CettaPreparedPureProgram *cetta_prepared_pure_program_compile(
@@ -372,11 +408,12 @@ bool cetta_prepared_pure_program_use_native_tail_returns(
 /* Compile a closed, deterministic, effect-free expression into the same
  * explicit-stack machine used by prepared folds.  Callable arguments are
  * retained as machine suspensions and forced according to call_mode. The
- * optional answer_frontend_refusal is false on success. True reports that
- * answer compilation would refuse under the same current source, callbacks,
- * call mode, ready arguments and equality semantics: either a shared terminal
- * dialect refusal before the first demand read, or an explicit single-result
- * gate reached before that read. Failure alone supplies no such evidence. */
+ * optional report separates this attempt's status from certified refusals.
+ * A generic ready entry can retain a terminal dialect refusal for this
+ * demand; crossing demands additionally requires a shared terminal refusal
+ * before demand inspection, or an explicit answer-excluding gate. Failure
+ * alone supplies no certificate. Remaining callback/authority inputs must
+ * stay fixed before any caller publishes a refusal. */
 CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed(
     Space *space, Atom *expression,
     CettaGsltPureCallMode call_mode,
@@ -391,7 +428,7 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed(
     bool entry_arguments_are_values,
     bool total_structural_equality,
     CettaMatchDecisionSemanticIdentity match_decision_semantics,
-    bool *answer_frontend_refusal);
+    CettaPreparedPureCompileReport *report);
 
 /* Prepare an eager value-argument call once for a receiver accepting either
  * an ordinary value or an optional result. Prefer the ordinary result ABI
@@ -472,7 +509,8 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed_answers(
     const CettaPreparedPureSourceView *source_view,
     bool entry_arguments_are_values,
     bool total_structural_equality,
-    CettaMatchDecisionSemanticIdentity match_decision_semantics);
+    CettaMatchDecisionSemanticIdentity match_decision_semantics,
+    CettaPreparedPureCompileReport *report);
 
 /* Every reachable authored head has disjoint WHNF alternatives. This is
  * classification only; it executes no call and grants no service authority. */
@@ -713,6 +751,16 @@ typedef struct {
  * reject only when no instantiation can meet the consumer. The callback
  * neither retains the shape nor changes logical bindings. */
 typedef bool (*CettaPreparedPureAnswerAdmissionFn)(void *context, const Atom *shape);
+/* Enter the same body worker without installing an enumeration root.
+ * RETURN is one final completed value; COMPLETE is established logical
+ * failure. PAUSED transfers the exact entered cursor. HANDOFF has entered
+ * no work and owns no cursor. Interruption carries its actual cause. */
+CettaOwnedExecutionStep cetta_prepared_pure_body_enter(
+    CettaPreparedPureProgram *program, Atom *const *arguments, uint32_t arity,
+    const CettaPreparedPureAnswerCursorOptions *options,
+    CettaPreparedPureAnswerCursor **remaining, CettaOwnedReturn *returned,
+    CettaEvalCompletion *completion);
+
 bool cetta_prepared_pure_answer_cursor_set_admission(
     CettaPreparedPureAnswerCursor *cursor, CettaPreparedPureAnswerAdmissionFn admit,
     void *context);
@@ -796,6 +844,13 @@ bool cetta_prepared_pure_answer_cursor_own_execution_bounded(
  * independent host-authority checks around the same stored computation. */
 CettaOwnedExecutionStep cetta_prepared_pure_answer_cursor_return(
     void *cursor, CettaOwnedReturn *returned, CettaEvalCompletion *completion);
+
+/* Read the retained equation frontier without interpreting or polling it.
+ * Untried equations, no-rule observations and handoff refuse completion.
+ * Established exhaustion needs no new execution authority. A withdrawn
+ * answer restores an unfinished equation and revokes that certificate. */
+bool cetta_prepared_pure_answer_cursor_frontier_is_complete(
+    const CettaPreparedPureAnswerCursor *cursor);
 
 /* Withdraw the answer just produced: restore the frontier to the state
  * before the step that produced it.  A consumer calls this when the answer
@@ -1057,8 +1112,10 @@ bool cetta_prepared_pure_program_execute_closed_expression_controlled(
  * suspended computation anywhere in value.  Producer consumers use this to
  * preserve eager element evaluation while allowing the collection tail to
  * remain suspended. */
+/* An incomplete inspection grants neither readiness nor permission to run
+ * the value as code. COMPLETE is required. */
 bool cetta_prepared_pure_program_value_is_fully_evaluated(
-    CettaPreparedPureProgram *program, Atom *value);
+    CettaPreparedPureProgram *program, Atom *value, bool *complete);
 
 /* A collected closed execution can return a result owned by the program's
  * invocation survivor arena.  The result remains valid until the next

@@ -922,6 +922,9 @@ SRC += src/library_syntax.c
 SRC += src/str_stream.c
 SRC += src/relational_plan.c src/relational_cursor.c src/native_query.c src/dense_relation.c
 SRC += src/space_dense.c
+SRC += src/space_tuples.c
+SRC += src/space_skeleton.c
+SRC += src/term_molecule.c src/native_open_query.c
 SRC += src/space_path_index.c
 SRC += src/producer_reads.c
 SRC += src/tensor_dense_v1.c
@@ -1158,6 +1161,10 @@ SHARED_RETURN_PRODUCER_TEST_OBJ = runtime/bootstrap/test_shared_return_producer.
 SHARED_RETURN_PRODUCER_TEST_BIN = runtime/test_shared_return_producer-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 NATIVE_CONDITIONAL_CONTEXT_TEST_OBJ = runtime/bootstrap/test_native_conditional_context.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 NATIVE_CONDITIONAL_CONTEXT_TEST_BIN = runtime/test_native_conditional_context-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+HE_PRODUCER_COMPLETION_TEST_OBJ = runtime/bootstrap/test_he_producer_completion.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+HE_PRODUCER_COMPLETION_TEST_BIN = runtime/test_he_producer_completion-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+CONDITIONAL_REGISTRATION_TEST_OBJ = runtime/bootstrap/test_conditional_registration.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+CONDITIONAL_REGISTRATION_TEST_BIN = runtime/test_conditional_registration-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 ANSWER_STORAGE_TEST_OBJ = runtime/bootstrap/test_answer_storage.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 ANSWER_STORAGE_TEST_BIN = runtime/test_answer_storage-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 OWNED_RETURN_IMAGE_TEST_OBJ = runtime/bootstrap/test_owned_return_image.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
@@ -2152,7 +2159,7 @@ REGISTRY_LOOKUP_BENCH_SRC = benchmarks/prime/bench_registry_lookup.c
 REGISTRY_LOOKUP_BENCH_OBJ = runtime/bootstrap/bench_registry_lookup.$(BUILD_OBJ_TAG).o
 REGISTRY_LOOKUP_BENCH_BIN = runtime/bench_registry_lookup-$(BUILD_OBJ_TAG)
 REGISTRY_LOOKUP_BENCH_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
-ABT_MUTATION_IDS = 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31
+ABT_MUTATION_IDS = 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34
 ABT_MUTATION_TEST_BINS = $(foreach id,$(ABT_MUTATION_IDS),runtime/test_abt_mutation-$(BUILD_OBJ_TAG)-$(id))
 GROUNDED_STANDALONE_SRC = src/grounded.c src/tensor_dense_v1.c src/petta_semantics.c src/term_graph.c src/abt.c src/atom_blob.c src/prime_regular_pattern.c src/prime_regular_kernel.c src/prime_level.c
 GROUNDED_STANDALONE_DEPS = $(GROUNDED_STANDALONE_SRC) src/tensor.h $(ABT_DEFAULT_SIGNATURES_BLOB)
@@ -2161,9 +2168,9 @@ PARSER_STANDALONE_SRC = src/parser.c src/name_key.c
 # standalone linker that includes match.c must include the snapshot algebra.
 MATCH_STANDALONE_SRC = src/native_cost.c src/weight_ledger.c src/match.c src/binding/closure.c src/binding/frame_schema.c src/binding/slot_store.c src/binding/activation_view.c src/prime_need.c
 SHARED_TRANSITION_STANDALONE_SRC = src/shared_transition.c
-SPACE_STANDALONE_SRC = src/space.c src/space_dense.c src/registered_symbols.c src/space_path_index.c src/binding/rule.c src/fixpoint.c
+SPACE_STANDALONE_SRC = src/space.c src/space_dense.c src/registered_symbols.c src/space_tuples.c src/space_skeleton.c src/space_path_index.c src/binding/rule.c src/fixpoint.c
 SPACE_STANDALONE_DEPS = $(SPACE_STANDALONE_SRC) $(wildcard src/*.h src/binding/*.h) Makefile
-RELATIONAL_STANDALONE_SRC = src/relational_plan.c src/relational_cursor.c
+RELATIONAL_STANDALONE_SRC = src/relational_plan.c src/relational_cursor.c src/native_query.c src/dense_relation.c src/native_open_query.c src/term_molecule.c
 SPACE_MATCH_BACKEND_STANDALONE_SRC = src/space_match_backend.c $(RELATIONAL_STANDALONE_SRC)
 MORK_BRIDGE_CONTEXTUAL_EXACT_ROWS_TEST_BIN = runtime/test_mork_bridge_contextual_exact_rows-$(BUILD_OBJ_TAG)
 MORK_CURSOR_BYTE_BUFFER_COUNT_ABI_TEST_BIN = runtime/test_mork_cursor_byte_buffer_count_abi-$(BUILD_OBJ_TAG)
@@ -2173,6 +2180,10 @@ MORK_QUERY_ADMISSION_FALLBACK_TEST_BIN = runtime/test_mork_query_admission_fallb
 SPACE_TERM_UNIVERSE_MEMBERSHIP_TEST_BIN = runtime/test_space_term_universe_membership-$(BUILD_OBJ_TAG)
 TERM_UNIVERSE_COLLECTION_TEST_BIN = runtime/test_term_universe_collection-$(BUILD_OBJ_TAG)
 SPACE_DENSE_TEST_BIN = runtime/test_space_dense-$(BUILD_OBJ_TAG)
+SPACE_DENSE_LEAVES_TEST_BIN = runtime/test_space_dense_leaves-$(BUILD_OBJ_TAG)
+SPACE_TUPLES_TEST_BIN = runtime/test_space_tuples-$(BUILD_OBJ_TAG)
+SPACE_SKELETON_TEST_BIN = runtime/test_space_skeleton-$(BUILD_OBJ_TAG)
+TERM_MOLECULE_TEST_BIN = runtime/test_term_molecule-$(BUILD_OBJ_TAG)
 TERM_UNIVERSE_STORE_ABI_TEST_BIN = runtime/test_term_universe_store_abi-$(BUILD_OBJ_TAG).runtime-stats
 TERM_UNIVERSE_STORE_ABI_REFERENCE_TEST_BIN = runtime/test_term_universe_store_abi-$(BUILD_OBJ_TAG).disc-int-linear-reference.runtime-stats
 TERM_UNIVERSE_BACKEND_ADD_ABI_TEST_BIN = runtime/test_term_universe_backend_add_abi-$(BUILD_OBJ_TAG).runtime-stats
@@ -3777,6 +3788,7 @@ PRIME_PRACTICAL_TESTS = \
 	tests/prime/practical/atp_indexed_example.metta \
 	tests/prime/practical/atp_resolution_replay.metta \
 	tests/prime/practical/first_order_resolution_input_unification.metta \
+	tests/prime/practical/first_order_resolution_input_demand.metta \
 	tests/prime/practical/atp_resolution_search.metta \
 	tests/prime/practical/atp_superposition_replay.metta \
 	tests/prime/practical/atp_agenda_example.metta \
@@ -4370,6 +4382,16 @@ test-arena-block-growth: $(ARENA_BLOCK_GROWTH_TEST_BIN)
 # each waiting goal once, in suspension order; queue a goal suspended on a
 # bound variable; roll back to any mark; rebase onto compacted checkpoints.
 DELAY_SERVICE_TEST_BIN = runtime/test_delay_service-$(BUILD_OBJ_TAG)
+DELAY_SERVICE_INDEX_TEST_BIN = runtime/test_delay_service_index-$(BUILD_OBJ_TAG)
+
+$(DELAY_SERVICE_INDEX_TEST_BIN): tests/test_delay_service_index.c src/delay_service.c src/delay_service.h src/atom.c src/binding/frame_identity.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) -DCETTA_TEST_HOOKS=1 -DCETTA_RUNTIME_STATS_NOOP=1 $(CFLAGS) -o $@ tests/test_delay_service_index.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/term_canon.c $(LDFLAGS)
+
+.PHONY: test-delay-service-index
+test-delay-service test-execution-semantic-ledger: test-delay-service-index
+test-delay-service-index: $(DELAY_SERVICE_INDEX_TEST_BIN)
+	@$(call cetta_exec,./$(DELAY_SERVICE_INDEX_TEST_BIN))
 
 $(DELAY_SERVICE_TEST_BIN): tests/test_delay_service.c src/delay_service.c src/delay_service.h src/atom.c src/binding/frame_identity.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
@@ -4807,7 +4829,7 @@ test-space-workspace: $(BIN)
 
 .PHONY: test-db
 test-all: test-db
-test-db: $(BIN) $(VALUE_WORKER_BIN)
+test-db: $(BIN) value-worker
 	$(PYTHON) tests/support/check_db.py $(BIN) --worker $(VALUE_WORKER_BIN)
 
 .PHONY: test-constraint-curriculum
@@ -4891,7 +4913,7 @@ test-space-curriculum: value-worker
 
 PATTERN_OCCURRENCE_DROP_BIN = runtime/test_pattern_occurrence_drop-$(BUILD_OBJ_TAG)
 $(PATTERN_OCCURRENCE_DROP_BIN): tests/test_pattern_query_cursor.c tests/test_pattern_occurrence_drop.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Wl,--wrap=space_occurrence_cursor_next -o $@ tests/test_pattern_query_cursor.c tests/test_pattern_occurrence_drop.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Wl,--wrap=space_occurrence_cursor_next -Wl,--wrap=space_occurrence_cursor_next_id -o $@ tests/test_pattern_query_cursor.c tests/test_pattern_occurrence_drop.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
 
 .PHONY: test-pattern-occurrence-mutation
 test-all: test-pattern-occurrence-mutation
@@ -5114,7 +5136,7 @@ test-atom-generations: $(ATOM_GENERATIONS_TEST_BIN)
 
 $(ATOM_INTERN_VARS_TEST_BIN): tests/test_atom_intern_vars.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(BUILD_CONFIG_HEADER) Makefile
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_atom_intern_vars.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(LDFLAGS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_atom_intern_vars.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(LDFLAGS) -Wl,--wrap=malloc,--wrap=calloc,--wrap=free
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MM -MP -MT $@ $(filter %.c,$^) > $@.d
 
 -include $(ATOM_INTERN_VARS_TEST_BIN).d
@@ -6417,6 +6439,7 @@ test-space-path-index: $(SPACE_PATH_INDEX_TEST_BIN)
 	@$(call cetta_exec,./$(SPACE_PATH_INDEX_TEST_BIN))
 
 test-correctness: test-space-path-index
+test-all: test-space-path-index
 
 $(OCCURRENCE_CURSOR_BENCH_OBJ): $(OCCURRENCE_CURSOR_BENCH_SRC) src/space.h src/space_match_backend.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime/bootstrap
@@ -6536,12 +6559,36 @@ test-shared-return-producer: $(SHARED_RETURN_PRODUCER_TEST_BIN)
 	@$(call cetta_exec,./$(SHARED_RETURN_PRODUCER_TEST_BIN))
 	@$(call cetta_exec,./$(SHARED_RETURN_PRODUCER_TEST_BIN)) --prime-native
 
+$(CONDITIONAL_REGISTRATION_TEST_OBJ): tests/test_conditional_registration.c src/petta_search_machine.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -Isrc -c $< -o $@
+
+$(CONDITIONAL_REGISTRATION_TEST_BIN): $(CONDITIONAL_REGISTRATION_TEST_OBJ) $(filter-out src/petta_search_machine.%,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ -Wl,--wrap=cetta_delay_service_new,--wrap=cetta_delay_suspend $(LDFLAGS)
+
+.PHONY: test-conditional-registration
+test-all test-execution-semantic-ledger: test-conditional-registration
+test-conditional-registration: $(CONDITIONAL_REGISTRATION_TEST_BIN)
+	@$(call cetta_exec,./$(CONDITIONAL_REGISTRATION_TEST_BIN))
+
 $(NATIVE_CONDITIONAL_CONTEXT_TEST_OBJ): tests/test_native_conditional_context.c src/eval.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -Isrc -c $< -o $@
 
 $(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN): $(NATIVE_CONDITIONAL_CONTEXT_TEST_OBJ) $(filter-out src/eval.%,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS)
-	$(CC) $(CFLAGS) -o $@ $^ -Wl,--wrap=grounded_call,--wrap=cetta_library_call_native_prepared_view,--wrap=cetta_library_call_native,--wrap=cetta_invocation_materialize,--wrap=space_query_effect_for_head,--wrap=malloc $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $^ -Wl,--wrap=grounded_call,--wrap=cetta_library_call_native_prepared_view,--wrap=cetta_library_call_native,--wrap=cetta_invocation_materialize,--wrap=petta_semantics_lambda_arity,--wrap=match_atoms_epoch_builder_planned,--wrap=space_query_effect_for_head,--wrap=malloc,--wrap=calloc,--wrap=cetta_prepared_pure_program_compile_closed,--wrap=atom_graph_any_checked,--wrap=cetta_prepared_pure_program_execute_closed_expression_controlled $(LDFLAGS)
+
+$(HE_PRODUCER_COMPLETION_TEST_OBJ): tests/test_he_producer_completion.c src/petta_search_machine.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -Isrc -c $< -o $@
+
+$(HE_PRODUCER_COMPLETION_TEST_BIN): $(HE_PRODUCER_COMPLETION_TEST_OBJ) $(filter-out src/main.% src/petta_search_machine.%,$(OBJ)) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+.PHONY: test-he-producer-completion
+test-execution-semantic-ledger: test-he-producer-completion
+test-he-producer-completion: $(HE_PRODUCER_COMPLETION_TEST_BIN)
+	@$(call cetta_exec,./$(HE_PRODUCER_COMPLETION_TEST_BIN))
 
 .PHONY: test-native-conditional-context
 test-all: test-native-conditional-context
@@ -6549,6 +6596,20 @@ test-native-conditional-context: $(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN)
 	@$(call cetta_exec,./$(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN))
 	@CETTA_PREPARED_PURE_REFERENCE=1 $(call cetta_exec,./$(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN)) --worker-availability
 	@CETTA_OEM_COLLECT_STRESS=1 $(call cetta_exec,./$(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN)) --borrowed-collection-failure
+
+PREPARED_QUERY_INVOCATION_TEST_OBJ = runtime/bootstrap/test_prepared_query_invocation.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+PREPARED_QUERY_INVOCATION_TEST_BIN = runtime/test_prepared_query_invocation-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+-include $(PREPARED_QUERY_INVOCATION_TEST_OBJ:.o=.d)
+$(PREPARED_QUERY_INVOCATION_TEST_OBJ): tests/test_prepared_query_invocation.c src/petta_search_machine.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+$(PREPARED_QUERY_INVOCATION_TEST_BIN): $(PREPARED_QUERY_INVOCATION_TEST_OBJ) $(filter-out src/petta_search_machine.%,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+.PHONY: test-prepared-query-invocation
+test-petta-search-machine test-execution-semantic-ledger: test-prepared-query-invocation
+test-prepared-query-invocation: $(PREPARED_QUERY_INVOCATION_TEST_BIN)
+	@$(call cetta_exec,./$(PREPARED_QUERY_INVOCATION_TEST_BIN))
 
 .PHONY: test-oem-native-returns
 test-all: test-oem-native-returns
@@ -7367,9 +7428,10 @@ TERM_UNIVERSE_COLLECTION_TYPED_PROGRAMS = collection_inferred_signatures
 TERM_UNIVERSE_COLLECTION_PROGRAMS = collection_set_space_variants \
 	collection_process_calculus
 
-# Terms made fresh every turn and dropped with it plateau: reclaiming, the
-# peak memory of four times the turns stays within 1 MiB, and with collection
-# off it grows past that.
+# Terms made fresh every turn and dropped with it plateau: once four times
+# the turns have warmed the universe's tables, reclaiming, the peak memory of
+# sixteen times the turns stays within 1 MiB of it, and with collection off
+# it grows past that.
 TERM_UNIVERSE_PLATEAU_TURNS ?= 10000
 test-term-universe-plateau: $(BIN) tests/petta/collection_plateau.metta \
 		tests/petta/collection_plateau.expected tests/support/check_plateau.py
@@ -7383,30 +7445,71 @@ $(SPACE_DENSE_TEST_BIN): tests/test_space_dense.c src/space_dense.c src/space_de
 	@mkdir -p runtime
 	$(CC) $(CFLAGS) -Isrc -o $@ tests/test_space_dense.c src/space_dense.c
 
+# The leaves of a relation's rows, from inside: kept as the store says
+# through adds, removals and renumbering over numbers spread across chunks,
+# and a far number costs a row a leaf, not bits up to it.
+$(SPACE_DENSE_LEAVES_TEST_BIN): tests/test_space_dense_leaves.c src/space_dense.c \
+		src/space_dense.h
+	@mkdir -p runtime
+	$(CC) $(CFLAGS) -Isrc -o $@ tests/test_space_dense_leaves.c
+
+# A relation kept as a table of tuples agrees with a list of its tuples under
+# random adds, removals, membership tests, counts and walks.
+$(SPACE_TUPLES_TEST_BIN): tests/test_space_tuples.c src/space_tuples.c \
+		src/space_tuples.h src/space_dense.h
+	@mkdir -p runtime
+	$(CC) $(CFLAGS) -Isrc -o $@ tests/test_space_tuples.c src/space_tuples.c
+
+# A skeleton cuts a fact into holes and builds it back, generalizes over
+# facts, keys open facts by parts and aligns patterns.
+SPACE_SKELETON_TEST_SRC = tests/test_space_skeleton.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/space_skeleton.c
+$(SPACE_SKELETON_TEST_BIN): private CPPFLAGS += -DCETTA_RUNTIME_STATS_IMPL=1
+$(SPACE_SKELETON_TEST_BIN): $(SPACE_SKELETON_TEST_SRC) $(wildcard src/*.h src/binding/*.h) $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(SPACE_SKELETON_TEST_SRC) $(LDFLAGS)
+
+# Molecules unify stored terms read under frames and make instances' keys
+# and holes, as unification and alpha keys over atoms do.
+TERM_MOLECULE_TEST_SRC = tests/test_term_molecule.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/space_skeleton.c src/term_molecule.c
+$(TERM_MOLECULE_TEST_BIN): private CPPFLAGS += -DCETTA_RUNTIME_STATS_IMPL=1
+$(TERM_MOLECULE_TEST_BIN): $(TERM_MOLECULE_TEST_SRC) $(wildcard src/*.h src/binding/*.h) $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(TERM_MOLECULE_TEST_SRC) $(LDFLAGS) -Wl,--wrap=realloc
+
 # Programs whose answers must not depend on whether a relation is kept as
-# bits: each runs with bits off and with bits from a head's first fact,
-# compared with its expected answers as bags, since bits read a relation in
-# an order of their own.
-SPACE_DENSE_PROGRAMS = dense_relations dense_relations_derived term_keyed_columns
+# bits or a table: each runs with relations off and with relations from a
+# head's first fact, compared with its expected answers as bags, since
+# relations read their facts in an order of their own.
+SPACE_DENSE_PROGRAMS = dense_relations dense_relations_derived term_keyed_columns \
+	dense_relations_columns dense_relations_equations dense_relations_deep \
+	dense_relations_deep_promoted dense_relations_deep_heads \
+	dense_relations_flat_deep dense_relations_read_while_removed \
+	dense_relations_runtime_rules relation_take_over remove_atom_variables dense_relations_far
 
 .PHONY: test-space-dense
-test-space-dense: $(SPACE_DENSE_TEST_BIN) $(BIN) \
+test-space-dense: $(SPACE_DENSE_TEST_BIN) $(SPACE_DENSE_LEAVES_TEST_BIN) \
+		$(SPACE_TUPLES_TEST_BIN) \
+		$(SPACE_SKELETON_TEST_BIN) $(TERM_MOLECULE_TEST_BIN) $(BIN) \
 		$(foreach t,$(SPACE_DENSE_PROGRAMS),tests/petta/$(t).metta tests/petta/$(t).expected)
 	@$(call cetta_exec,./$(SPACE_DENSE_TEST_BIN))
+	@$(call cetta_exec,./$(SPACE_DENSE_LEAVES_TEST_BIN))
+	@$(call cetta_exec,./$(SPACE_TUPLES_TEST_BIN))
+	@$(call cetta_exec,./$(SPACE_SKELETON_TEST_BIN))
+	@$(call cetta_exec,./$(TERM_MOLECULE_TEST_BIN))
 	@set -eu; actual=$$(mktemp); trap 'rm -f "$$actual"' EXIT; \
 	for t in $(SPACE_DENSE_PROGRAMS); do \
-		for mode in off eager; do \
+		for mode in off on eager; do \
 			CETTA_SPACE_DENSE=$$mode $(CETTA_BIN_INVOKE) --profile extended \
 				--lang petta tests/petta/$$t.metta > "$$actual" 2>&1; \
 			if ! python3 tests/support/compare_answers.py --lang petta \
 				--program tests/petta/$$t.metta \
 				--expected tests/petta/$$t.expected --actual "$$actual" \
 				--cetta $(CETTA_BIN_INVOKE) --profile extended --lang petta; then \
-				echo "FAIL: $$t, relations as bits $$mode"; exit 1; \
+				echo "FAIL: $$t, relations kept $$mode"; exit 1; \
 			fi; \
 		done; \
 	done; \
-	echo "PASS: relations kept as bits answer as rows do ($(SPACE_DENSE_PROGRAMS))"
+	echo "PASS: relations kept as bits or tables answer as rows do ($(SPACE_DENSE_PROGRAMS))"
 
 # A dense relation kept as bits grows by its bits: from one size to twice it,
 # its peak memory grows by at most a third of what it grows as rows.
@@ -7438,15 +7541,20 @@ test-space-profiles-scaling: $(BIN) tests/support/check_space_profiles_scaling.p
 		$(SPACE_PROFILES_SCALING_ITEMS)
 
 # A count asked once rents a scan and builds no index; counts that keep
-# coming buy their column's index.
+# coming buy their column's index: as rows, and as a table of tuples, whose
+# column index is small enough to measure only at a larger size.
 COUNT_FOOTPRINT_FACTS ?= 200000
+COUNT_FOOTPRINT_TABLE_FACTS ?= 600000
 .PHONY: test-count-footprint
 test-count-footprint: $(BIN) tests/support/check_count_footprint.py
+	@CETTA_SPACE_DENSE=off $(CETTA_SCRIPT_RUN_ENV) python3 \
+		tests/support/check_count_footprint.py $(COUNT_FOOTPRINT_FACTS)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_count_footprint.py \
-		$(COUNT_FOOTPRINT_FACTS)
+		$(COUNT_FOOTPRINT_TABLE_FACTS)
 
 # The counting checks must catch a hold, a release, a cascade or a reused
-# slot's candidacy gone missing.
+# slot's candidacy gone missing.  The mutants check in full at every
+# collection, so the recount itself has to catch each one.
 test-term-universe-collection-mutants: tests/support/mutate_term_universe_counts.py \
 		$(TERM_UNIVERSE_COLLECTION_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@set -eu; \
@@ -7460,7 +7568,8 @@ test-term-universe-collection-mutants: tests/support/mutate_term_universe_counts
 			-o "$$mutation_dir/$$kind" \
 			$(filter-out src/term_universe.c,$(TERM_UNIVERSE_COLLECTION_TEST_SRC)) \
 			"$$mutation_dir/term_universe_$$kind.c" $(LDFLAGS); \
-		if "$$mutation_dir/$$kind" > "$$mutation_dir/$$kind.log" 2>&1 || \
+		if CETTA_TERM_UNIVERSE_COLLECTION_CHECK_PACE=0 \
+		   "$$mutation_dir/$$kind" > "$$mutation_dir/$$kind.log" 2>&1 || \
 		   ! grep -q 'against the counts' "$$mutation_dir/$$kind.log"; then \
 			echo "FAIL: the counting checks accept the $$kind mutant"; \
 			exit 1; \
@@ -7514,6 +7623,30 @@ $(TERM_UNIVERSE_BACKEND_ADD_ABI_TEST_BIN): tests/test_term_universe_backend_add_
 
 test-term-universe-backend-add-abi: $(TERM_UNIVERSE_BACKEND_ADD_ABI_TEST_BIN)
 	@$(call cetta_exec,./$(TERM_UNIVERSE_BACKEND_ADD_ABI_TEST_BIN))
+
+SPACE_PATH_DIRECTORY_TEST_OBJ = runtime/bootstrap/test_space_path_directory.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+SPACE_PATH_DIRECTORY_TEST_BIN = runtime/test_space_path_directory-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+$(SPACE_PATH_DIRECTORY_TEST_OBJ): tests/test_space_path_directory.c src/space_path_index.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+
+$(SPACE_PATH_DIRECTORY_TEST_BIN): $(SPACE_PATH_DIRECTORY_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+.PHONY: test-space-path-directory
+test-space-path-directory: $(SPACE_PATH_DIRECTORY_TEST_BIN)
+	@$(call cetta_exec,./$(SPACE_PATH_DIRECTORY_TEST_BIN))
+
+.PHONY: test-space-path-directory-scaling-stats
+test-space-path-directory-scaling-stats: $(BIN) tests/support/check_index_directory_scaling.py
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_index_directory_scaling.py ./$(BIN)
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-space-path-directory-scaling-stats
+endif
+
+test-space-index-scaling-stats: test-space-path-directory test-space-path-directory-scaling-stats
+
 
 $(LET_BRANCH_ARENA_RESET_NO_ESCAPE_TEST_BIN): private CPPFLAGS += -DCETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS=1 -DCETTA_RUNTIME_STATS_IMPL=1
 $(LET_BRANCH_ARENA_RESET_NO_ESCAPE_TEST_BIN): tests/test_let_branch_arena_reset_no_escape.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_DEPS) src/native_sha256.c src/search_machine.c $(SPACE_STANDALONE_DEPS) $(SHARED_TRANSITION_STANDALONE_SRC) $(PARSER_STANDALONE_SRC) $(BUILD_CONFIG_HEADER)
@@ -7652,6 +7785,7 @@ DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d) \
 	$(PREPARED_PURE_ANSWER_TEST_OBJ:.o=.d) \
 	$(SHARED_RETURN_PRODUCER_TEST_OBJ:.o=.d) \
 	$(NATIVE_CONDITIONAL_CONTEXT_TEST_OBJ:.o=.d) \
+	$(HE_PRODUCER_COMPLETION_TEST_OBJ:.o=.d) \
 	$(ANSWER_STORAGE_TEST_OBJ:.o=.d) \
 	$(OWNED_RETURN_IMAGE_TEST_OBJ:.o=.d) \
 	$(FALLBACK_EVAL_TEST_OBJ:.o=.d) \
@@ -20106,6 +20240,7 @@ NORMAL_TEST_TARGETS := \
 	test-term-match-graph \
 	test-frame-support-inventory \
 	test-pattern-queries \
+	test-gparse-gslt-core \
 	test-atom-deep-copy-iterative \
 	test-frame-identity \
 	test-owned-return-image \
@@ -20789,6 +20924,8 @@ else
 	@echo "INFO: Cost-Rho observer transparency requires compile-time runtime stats; re-running with ENABLE_RUNTIME_STATS=1"
 	@$(MAKE) BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 RHOCOST_COMMIT_AUDIT=$(RHOCOST_COMMIT_AUDIT) $@
 endif
+
+test-all: test-rhocalc-cost-observer-transparency
 
 test-rhocalc-cost-commit-audit:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 RHOCOST_COMMIT_AUDIT=1 test-rhocalc-cost-commit-audit-body
@@ -22606,6 +22743,10 @@ test-lib-parse-native-gparse: $(BIN)
 		diff <(cat tests/test_gparse_native_backend_report.expected) <(echo "$$result") | head -20; \
 		exit 1; \
 	fi
+
+.PHONY: test-gparse-gslt-core
+test-gparse-gslt-core: $(BIN) tests/support/check_gparse_core_property.py tests/test_gparse_gslt_core.metta
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_gparse_core_property.py "$(CETTA_SCRIPT_BIN)"
 
 test-lib-parse-generalized-native-integration: $(BIN)
 	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he tests/test_gparse_native_generalized_integration.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
@@ -26839,7 +26980,7 @@ test-petta-compiled-reader-v1: test-petta-compiled-reader-direct-generated-v1 $(
 	@result=$$(./$(PETTA_COMPILED_READER_TEST_BIN) 2>&1); \
 	printf '%s\n' "$$result"; \
 	if [ "$$(printf '%s\n' "$$result" | \
-		grep -Fxc '(PeTTaCompiledReaderV1Summary 33 33 0 source-pass 1 two-stage 1)')" -ne 1 ]; then \
+		grep -Fxc '(PeTTaCompiledReaderV1Summary 34 34 0 source-pass 1 two-stage 1)')" -ne 1 ]; then \
 		echo "FAIL: compiled PeTTa reader exact integration summary absent or duplicated"; \
 		exit 1; \
 	fi; \
@@ -27725,7 +27866,8 @@ test-petta-memoization: $(BIN)
 	@echo "PASS: PeTTa opt-in memoization policy and effect boundaries"
 
 .PHONY: test-petta-match-existence-fusion
-test-petta-match-existence-fusion: $(BIN)
+test-petta-match-existence-fusion: $(BIN) tests/support/check_case_first_prefix.py
+	@python3 tests/support/check_case_first_prefix.py ./$(BIN)
 	@set -e; \
 	for engine in native $(if $(filter 1,$(ENABLE_PATHMAP_SPACE)),pathmap,); do \
 		positive_on=$$(mktemp runtime/petta-existence-$$engine-on.XXXXXX); \
@@ -30229,6 +30371,13 @@ test-petta-type-guard-versions-higher-order: $(BIN) tests/petta/type_guard_versi
 			exit 1; \
 		fi; \
 	done; \
+	verdicts=$$(CETTA_PETTA_VERSIONS_DEBUG=1 $(call cetta_exec,./$(BIN)) \
+		--lang petta tests/petta/type_guard_versions_higher_order.metta 2>&1 >/dev/null); \
+	if ! printf '%s\n' "$$verdicts" | grep -qF 'contract hop_Spec_[ctx-upd,ctx-stop]/4: version'; then \
+		echo "FAIL: a chainer whose function argument is called as a dispatch keeps its version"; \
+		printf '%s\n' "$$verdicts" | grep -F 'hop_Spec_' | head -5; \
+		exit 1; \
+	fi; \
 	echo "PASS: versions of higher-order and calling functions keep the protocol's answers"
 
 .PHONY: test-petta-type-guard-versions
@@ -30776,18 +30925,43 @@ else
 		test-space-read-scaling-stats
 endif
 
+.PHONY: test-engine-loop-reclaim-stats
+test-petta-semantics: test-engine-loop-reclaim-stats
+# A loop run inside one statement keeps what it reaches, not what it made:
+# the outer machine's arenas peak alike over N and 8 N iterations of a loop
+# whose host goals the open equation machine exports to them.
+test-engine-loop-reclaim-stats: $(BIN) tests/support/check_engine_loop_reclaim.py
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_engine_loop_reclaim.py ./$(BIN)
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		test-engine-loop-reclaim-stats
+endif
+
 .PHONY: test-space-index-scaling-stats
 test-petta-semantics: test-space-index-scaling-stats
 # Reads of deep ground terms, and of rows derived in batches, take work that
 # does not grow with the depth of the terms or with the rows already held: a
 # level spelled as a deep term selects its own rows, read with a variable
 # before or after it; two such terms whose hashes differ compare unequal at
-# once; and a batch of derived rows reaches every index the space keeps.
+# once; a batch of derived rows reaches every index the space keeps; a
+# lookup binding several columns reads the one that selects most;
+# lookups binding a prefix read that prefix's index, building no trie; a
+# head's prefix lookups cost the head's rows, not the space's; and the rows
+# matches read are read where they are stored, not decoded.
 test-space-index-scaling-stats: $(BIN) tests/support/check_term_keyed_scaling.py \
-		tests/support/check_batch_index_scaling.py
+		tests/support/check_batch_index_scaling.py \
+		tests/support/check_column_choice_scaling.py \
+		tests/support/check_prefix_index_scaling.py \
+		tests/support/check_prefix_heads_scaling.py \
+		tests/support/check_decoded_views_scaling.py
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_term_keyed_scaling.py ./$(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_batch_index_scaling.py ./$(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_column_choice_scaling.py ./$(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_prefix_index_scaling.py ./$(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_prefix_heads_scaling.py ./$(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_decoded_views_scaling.py ./$(BIN)
 else
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
 		test-space-index-scaling-stats
@@ -30830,12 +31004,70 @@ test-petta-semantics: test-native-query
 # on the ordinary one, and leaves the same spaces behind, over generated
 # programs: conjunctions sharing, repeating and fixing variables; data
 # templates; additions into and removals from set, bag and matched spaces,
-# alone and in let and let* sequences, at top level and through a function;
-# rows and effects the native path declines among them.
+# alone and in let and let* sequences whose bodies are data or effects, at
+# top level and through a function; patterns holding variables inside
+# terms; rows and effects the native path declines among them.  Fixtures:
+# let bodies that are effects, ground or not, and calls that are neither;
+# nested columns with fixed parts and repeated variables, and rows holding a
+# variable or a float inside a term; matches inside matches whose effects
+# meet a later read of theirs, and whose effects meet none.  The stored-row
+# law: a lazy match's rows, read from their records, answer as the same rows
+# decoded.  The id-probe law: a native join's legs read the same rows by the
+# ids of their columns as by their probes, in spaces past the row-by-row
+# threshold, with rows holding variables and rows marked by removals.
 test-native-query: $(BIN) tests/support/check_native_query.py \
+		tests/support/check_snapshot_regions.py \
+		tests/support/check_oem_stored_rows.py \
+		tests/support/check_native_id_probes.py \
 		tests/petta/native_open_rows_fresh_probe.metta \
-		tests/petta/native_open_rows_fresh_probe.expected
+		tests/petta/native_open_rows_fresh_probe.expected \
+		tests/petta/native_effect_bodies.metta \
+		tests/petta/native_effect_bodies.expected \
+		tests/petta/native_nested_columns.metta \
+		tests/petta/native_nested_columns.expected \
+		tests/petta/native_open_row_removal.metta \
+		tests/petta/native_open_row_removal.expected \
+		tests/petta/native_afresh_reads.metta \
+		tests/petta/native_afresh_reads.expected \
+		tests/petta/native_open_joins.metta \
+		tests/petta/native_open_joins.expected \
+		tests/petta/dense_relations_set_once.metta \
+		tests/petta/dense_relations_set_once.expected \
+		tests/petta/native_guard_kept_facts.metta \
+		tests/petta/native_guard_kept_facts.expected \
+		tests/petta/native_guard_reads.metta \
+		tests/petta/native_guard_reads.expected \
+		tests/petta/native_filter.metta \
+		tests/petta/native_filter.expected \
+		tests/petta/native_guard_spellings.metta \
+		tests/petta/native_guard_spellings.expected \
+		tests/petta/native_comparison_redefined.metta \
+		tests/petta/native_comparison_redefined.expected \
+		tests/petta/fixtures/native_comparison_redefined.pl \
+		tests/petta/native_guard_conjunctions.metta \
+		tests/petta/native_guard_conjunctions.expected \
+		tests/petta/native_order_filters.metta \
+		tests/petta/native_order_filters.expected \
+		tests/petta/saturation_region.metta \
+		tests/petta/saturation_region.expected \
+		tests/petta/native_count_relations.metta \
+		tests/petta/native_count_relations.expected \
+		tests/petta/relaxation_region.metta \
+		tests/petta/relaxation_region.expected \
+		tests/petta/native_filtered_match.metta \
+		tests/petta/native_filtered_match.expected \
+		tests/petta/native_scalar_fold.metta \
+		tests/petta/native_scalar_fold.expected \
+		tests/petta/saturation_dead_rules.metta \
+		tests/petta/saturation_dead_rules.expected \
+		tests/petta/native_grouped_counts.metta \
+		tests/petta/native_grouped_counts.expected \
+		tests/petta/native_listed_match.metta \
+		tests/petta/native_listed_match.expected
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_native_query.py ./$(BIN) --programs 200
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_snapshot_regions.py ./$(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_oem_stored_rows.py ./$(BIN) --programs 200
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_native_id_probes.py ./$(BIN) --programs 300
 	@answers=$$($(CETTA_BIN_INVOKE) --lang petta \
 		tests/petta/native_open_rows_fresh_probe.metta 2>&1); \
 	if [ "$$answers" != "$$(cat tests/petta/native_open_rows_fresh_probe.expected)" ]; then \
@@ -30845,6 +31077,78 @@ test-native-query: $(BIN) tests/support/check_native_query.py \
 		exit 1; \
 	fi; \
 	echo "PASS: rows holding variables meet a cell built at run time"
+	@for stem in native_effect_bodies native_nested_columns native_open_row_removal native_afresh_reads; do \
+		for route in "" CETTA_NATIVE_QUERY_REFERENCE=1; do \
+			answers=$$(env $$route $(CETTA_BIN_INVOKE) --profile extended \
+				--lang petta tests/petta/$$stem.metta 2>&1); \
+			if [ "$$answers" != "$$(cat tests/petta/$$stem.expected)" ]; then \
+				echo "FAIL: $$stem [$${route:-native}]"; \
+				diff tests/petta/$$stem.expected <(printf '%s\n' "$$answers"); \
+				exit 1; \
+			fi; \
+		done; \
+	done; \
+	echo "PASS: let bodies, nested columns, removals of rows holding variables and matches read afresh after effects answer alike on the native and ordinary paths"
+	@for stem in native_open_joins dense_relations_set_once native_guard_kept_facts native_guard_reads native_filter native_guard_spellings native_comparison_redefined native_guard_conjunctions native_order_filters saturation_region native_count_relations relaxation_region native_filtered_match native_scalar_fold saturation_dead_rules native_grouped_counts native_listed_match; do \
+		for route in "" CETTA_SPACE_DENSE=eager CETTA_NATIVE_QUERY_REFERENCE=1 \
+				"CETTA_SPACE_DENSE=eager CETTA_NATIVE_QUERY_REFERENCE=1"; do \
+			answers=$$(env $$route $(CETTA_BIN_INVOKE) --profile extended \
+				--lang petta tests/petta/$$stem.metta 2>&1); \
+			if [ "$$answers" != "$$(cat tests/petta/$$stem.expected)" ]; then \
+				echo "FAIL: $$stem [$${route:-native}]"; \
+				diff tests/petta/$$stem.expected <(printf '%s\n' "$$answers"); \
+				exit 1; \
+			fi; \
+		done; \
+	done; \
+	echo "PASS: joins over facts holding variables, read from relations of deep facts, sets holding each fact once, guards over facts a relation holds, guards in the spellings programs use, filters on values, matches running a branch for the solutions filters pass, folds over scalars, regions with rules that cannot fire, grouped counts and lists spread over matches answer as the ordinary path does"
+
+# Defects in the joins over facts holding variables, each caught by the open
+# joins fixture, read with relations from a head's first fact or as counted
+# toward them: bindings without the occurs check, an aligned pattern's
+# first hole left unread,
+# a kept fact's holes each under a frame of its own, additions admitted where
+# an instance may meet a read of their target, patterns stored apart from
+# the data, which numbers their variables apart, and a producer that reads a
+# space read ahead of the matches as a pure stream.
+.PHONY: test-native-open-mutations
+test-native-open-mutations: $(BIN) tests/support/mutate_native_open.py \
+		tests/petta/native_open_joins.metta tests/petta/native_open_joins.expected
+	@set -eu; \
+	mutation_dir=runtime/bootstrap/native-open-mutations-$(BUILD_OBJ_TAG); \
+	mkdir -p "$$mutation_dir"; \
+	for kind in occurs-unchecked frame-per-hole meets-unchecked store-apart stream-impure aligned-hole own-renumbered keyed-unchecked; do \
+		case "$$kind" in \
+			meets-unchecked|store-apart) module=native_open_query;; \
+			stream-impure) module=eval;; \
+			keyed-unchecked) module=space;; \
+			*) module=term_molecule;; \
+		esac; \
+		kept=$$(for other in term_molecule native_open_query eval space; do \
+			[ "$$other" = "$$module" ] || printf '%s ' "$$other"; done); \
+		python3 tests/support/mutate_native_open.py "src/$$module.c" "$$kind" "$$mutation_dir/$$kind.c"; \
+		$(CC) $(CPPFLAGS) $(CFLAGS) -c "$$mutation_dir/$$kind.c" -o "$$mutation_dir/$$kind.o"; \
+		$(CC) $(CFLAGS) -Wl,--export-dynamic -o "$$mutation_dir/$$kind" \
+			$(filter-out src/term_molecule.% src/native_open_query.% src/eval.% src/space.%,$(OBJ)) \
+			$$(for module in $$kept; do printf 'src/%s.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o ' "$$module"; done) \
+			"$$mutation_dir/$$kind.o" $(filter-out FORCE,$(BRIDGE_DEPS)) $(LDFLAGS); \
+		eager=$$(CETTA_SPACE_DENSE=eager "$$mutation_dir/$$kind" --profile extended \
+			--lang petta tests/petta/native_open_joins.metta 2>&1 || true); \
+		counted=$$("$$mutation_dir/$$kind" --profile extended \
+			--lang petta tests/petta/native_open_joins.metta 2>&1 || true); \
+		if [ "$$eager" = "$$(cat tests/petta/native_open_joins.expected)" ] && \
+			[ "$$counted" = "$$(cat tests/petta/native_open_joins.expected)" ]; then \
+			echo "FAIL: the open joins fixture accepts the $$kind mutant"; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: the open joins fixture rejects the occurs, frame, admission, store, stream, alignment, numbering and set-check mutants"
+
+# The native query law with relations from a head's first fact, where the
+# joins over facts holding variables read relations of deep facts.
+.PHONY: test-native-query-eager
+test-native-query-eager: $(BIN) tests/support/check_native_query.py
+	@CETTA_SPACE_DENSE=eager $(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_native_query.py ./$(BIN) --programs 200 --seed 20261031
 
 .PHONY: test-native-query-stats
 test-petta-semantics: test-native-query-stats
@@ -30856,21 +31160,32 @@ test-petta-semantics: test-native-query-stats
 # phase, rows holding constructor patterns meet ground cells one way, with
 # no unification attempt per cell, cyclic joins over a star, counted and
 # collected, do work that grows with the graph rather than with the pairs of
-# its rows, and a rule over a dense graph adding into a set makes each
-# instance once rather than once per path.
+# its rows, a rule over a dense graph adding into a set makes each
+# instance once rather than once per path, and an equation adding rows that
+# hold variables into a set adds them in place, leaving none to its host.
 test-native-query-stats: $(BIN) tests/support/check_native_query.py \
 		tests/support/check_native_query_scaling.py \
 		tests/support/check_relational_scaling.py \
-		tests/support/check_dense_relations.py
+		tests/support/check_dense_relations.py \
+		tests/support/check_native_rounds_scaling.py \
+		tests/support/check_open_admission_scaling.py \
+		tests/support/check_distinct_instances.py
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_native_query.py ./$(BIN) --programs 200 --stats
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_native_query_scaling.py ./$(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_native_rounds_scaling.py ./$(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_open_admission_scaling.py ./$(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_relational_scaling.py ./$(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_dense_relations.py ./$(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_distinct_instances.py ./$(BIN)
 else
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
 		test-native-query-stats
 endif
+
+# The mutants test-native-query-mutations builds; set it to one to check that
+# one alone.
+NATIVE_QUERY_MUTANTS ?= copies collected-copies instance-slot atom-slot flush disjoint level-key loop-bound loop-release rows-fixed dense-summed dense-link dense-repeat dense-popcount dense-diagonal nested-repeat nested-constant leg-space open-row-removal guard-ignored guard-unchecked guard-uncertified directive-answers fold-count fold-places inline-arguments inline-typed inline-equations guard-plain destructure-oem-count case-default arith-op snapshot-occurrence scope-let scope-legs scope-template scope-binding scope-value scope-own typed-hold typed-arguments typed-observed dispatch-unique exists-negated exists-machine exists-machine-equal region-coverage-ignored region-views-dropped count-relations-ignored count-variable-skipped relax-min-ignored relax-two-values-ignored guard-columns-unheld exists-oem-operation guard-operation exists-counted fold-each guard-case-set exists-case-branch exists-oem-case snapshot-stream-scope admit-unresolved head-inert let-head bag-summed distinct-ignored distinct-count unique-extended inline-arity afresh-unchecked afresh-ignored guard-recordless guard-summed insert-unkeyed else-summed else-answers filter-polarity conjunction-filter-ignored conjunction-polarity order-flipped order-unchecked nested-kept-ignored flat-spine-open relation-removal-attached dead-equation-any types-held-ignored types-checked-ignored filtered-test-stale filtered-unfiltered filtered-tuple-taken scalar-head-unchecked scalar-order-loose scalar-sum-wrapped dead-rule-any grouped-key-ignored grouped-reads-ignored grouped-absent-one listed-rows-dropped listed-bag-set read-ahead-symbol read-ahead-arity
 
 .PHONY: test-native-query-mutations
 # The law above rejects each defect a mutant of the native path carries:
@@ -30881,39 +31196,452 @@ endif
 # rows of bits: a summed variable's candidates intersected instead of
 # gathered, a pattern read in the wrong direction, a repeated row kept as
 # one, a count of words in place of bits, a variable repeated in a pattern
-# left unchecked.
+# left unchecked; in columns holding variables inside a term: a variable
+# met again that is not checked, a fixed part that is not compared; in
+# matches inside matches, a pattern that reads the outer pattern's space;
+# a removal taking a row holding a variable that a pattern reads; an
+# addition the region hands its host without applying its bindings; a
+# template's variable head taken for data whatever its value, in a
+# collection and in a let that spreads one; an addition into a bag summed
+# out of a join by rows of bits as an insert is; and a distinct spread that
+# answers an instance it met again, takes its count from the enumeration,
+# or runs natively when an equation extends unique-atom; and a call of a
+# function with another arity than its equation's taken for an application.
+# A relaxation region runs the read-while-removed fixture natively, so the
+# gate reads that fixture on the ordinary path too, where a relation is read
+# while its facts are removed.  A filtered match keeps its test after a run
+# changed the rules, collects without its filters, or binds the taken
+# branch's variables alone.  A scalar fold takes a tuple headed by a
+# callable value for data, reads a strict order as loose, or wraps a sum
+# past 64 bits.  A saturation region takes a rule reading a static premise
+# for one that cannot fire.  A grouped count gives a solution every group's
+# count, lets through an addition the count reads, or counts a group with
+# no solution as one.  A list spread over a match drops rows after the
+# first, or keeps its rows as a set.
 test-native-query-mutations: $(BIN) tests/support/check_native_query.py \
-		tests/support/mutate_native_query.py
+		tests/support/mutate_native_query.py \
+		tests/petta/native_guard_kept_facts.metta \
+		tests/petta/native_guard_kept_facts.expected \
+		tests/petta/native_guard_reads.metta \
+		tests/petta/native_guard_reads.expected \
+		tests/petta/native_filter.metta \
+		tests/petta/native_filter.expected \
+		tests/petta/dense_relations_flat_deep.metta \
+		tests/petta/dense_relations_flat_deep.expected \
+		tests/petta/dense_relations_read_while_removed.metta \
+		tests/petta/dense_relations_read_while_removed.expected \
+		tests/petta/native_guard_spellings.metta \
+		tests/petta/native_guard_spellings.expected \
+		tests/petta/native_comparison_redefined.metta \
+		tests/petta/native_comparison_redefined.expected \
+		tests/petta/fixtures/native_comparison_redefined.pl \
+		tests/petta/native_guard_conjunctions.metta \
+		tests/petta/native_guard_conjunctions.expected \
+		tests/petta/native_order_filters.metta \
+		tests/petta/native_order_filters.expected \
+		tests/petta/saturation_region.metta \
+		tests/petta/saturation_region.expected \
+		tests/petta/native_count_relations.metta \
+		tests/petta/native_count_relations.expected \
+		tests/petta/relaxation_region.metta \
+		tests/petta/relaxation_region.expected \
+		tests/petta/native_filtered_match.metta \
+		tests/petta/native_filtered_match.expected \
+		tests/petta/native_scalar_fold.metta \
+		tests/petta/native_scalar_fold.expected \
+		tests/petta/saturation_dead_rules.metta \
+		tests/petta/saturation_dead_rules.expected \
+		tests/petta/native_grouped_counts.metta \
+		tests/petta/native_grouped_counts.expected \
+		tests/petta/native_listed_match.metta \
+		tests/petta/native_listed_match.expected
 	@set -eu; \
 	mutation_dir=runtime/bootstrap/native-query-mutations-$(BUILD_OBJ_TAG); \
 	mkdir -p "$$mutation_dir"; \
-	for kind in copies collected-copies instance-slot atom-slot flush disjoint level-key loop-bound loop-release rows-fixed dense-summed dense-link dense-repeat dense-popcount dense-diagonal; do \
+	for kind in $(NATIVE_QUERY_MUTANTS); do \
 		case "$$kind" in \
-			level-key) module=relational_cursor; kept="native_query dense_relation";; \
-			dense-*) module=dense_relation; kept="native_query relational_cursor";; \
-			*) module=native_query; kept="relational_cursor dense_relation";; \
+			level-key) module=relational_cursor;; \
+			dense-*) module=dense_relation;; \
+			open-row-removal|guard-unchecked|guard-uncertified|guard-plain|directive-answers|inline-*|case-default|arith-op|scope-let|scope-legs|dispatch-unique|guard-case-set|snapshot-stream-scope|let-head|afresh-ignored|dead-equation-any|types-held-ignored|types-checked-ignored|guard-operation|conjunction-polarity|region-coverage-ignored|region-views-dropped|relax-min-ignored|relax-two-values-ignored|filtered-unfiltered|scalar-*|dead-rule-any|grouped-*|listed-*) module=eval;; \
+			fold-count|snapshot-occurrence|scope-binding|scope-value|typed-*|exists-machine|exists-machine-equal|fold-each|exists-case-branch|unique-extended|filtered-test-stale|filtered-tuple-taken) module=petta_search_machine;; \
+			fold-places) module=native_fold;; \
+			destructure-oem-count|exists-negated|exists-oem-case|exists-oem-operation|admit-unresolved|read-ahead-*) module=open_equation_machine;; \
+			scope-own|scope-template) module=petta_program;; \
+			exists-counted) module=petta_semantics;; \
+			flat-spine-open|relation-removal-attached|guard-columns-unheld) module=space;; \
+			count-relations-ignored|count-variable-skipped) module=space_match_backend;; \
+			*) module=native_query;; \
+		esac; \
+		kept=$$(for other in native_query relational_cursor dense_relation eval petta_search_machine native_fold open_equation_machine petta_program petta_semantics space space_match_backend; do \
+			[ "$$other" = "$$module" ] || printf '%s ' "$$other"; done); \
+		python3 tests/support/mutate_native_query.py "src/$$module.c" "$$kind" "$$mutation_dir/$$kind.c"; \
+		$(CC) $(CPPFLAGS) $(CFLAGS) -c "$$mutation_dir/$$kind.c" -o "$$mutation_dir/$$kind.o"; \
+		$(CC) $(CFLAGS) -Wl,--export-dynamic -o "$$mutation_dir/$$kind" \
+			$(filter-out src/native_query.% src/relational_cursor.% src/dense_relation.% src/eval.% src/petta_search_machine.% src/native_fold.% src/open_equation_machine.% src/petta_program.% src/petta_semantics.% src/space.% src/space_match_backend.%,$(OBJ)) \
+			$$(for module in $$kept; do printf 'src/%s.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o ' "$$module"; done) \
+			"$$mutation_dir/$$kind.o" $(filter-out FORCE,$(BRIDGE_DEPS)) $(LDFLAGS); \
+		if $(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_native_query.py \
+				"$$mutation_dir/$$kind" --programs 200 > "$$mutation_dir/$$kind.log" 2>&1 && \
+			( for stem in native_guard_kept_facts native_guard_reads native_filter dense_relations_flat_deep dense_relations_read_while_removed native_guard_spellings native_comparison_redefined native_guard_conjunctions native_order_filters saturation_region native_count_relations relaxation_region native_filtered_match native_scalar_fold saturation_dead_rules native_grouped_counts native_listed_match read_ahead_kept; do \
+				for route in "" CETTA_SPACE_DENSE=eager; do \
+					[ "$$(env $$route timeout 120 "$$mutation_dir/$$kind" --profile extended \
+						--lang petta tests/petta/$$stem.metta 2>&1)" = \
+						"$$(cat tests/petta/$$stem.expected)" ] || exit 1; \
+				done; \
+			done; \
+			[ "$$(CETTA_NATIVE_QUERY_REFERENCE=1 "$$mutation_dir/$$kind" \
+				--profile extended --lang petta \
+				tests/petta/dense_relations_read_while_removed.metta 2>&1)" = \
+				"$$(cat tests/petta/dense_relations_read_while_removed.expected)" ] || exit 1 ); then \
+			echo "FAIL: the native query law and the guard fixtures accept the $$kind mutant"; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: the native query law, or the guard fixtures, reject all hundred and one mutants"
+
+.PHONY: test-oem-stored-rows-mutations
+# The stored-row law rejects each defect a mutant of the open equation
+# machine's stored-row reader carries: a stored symbol taken for any
+# symbol, a stored integer taken for any integer, and a variable met again
+# in a row taken as unbound.
+test-oem-stored-rows-mutations: $(BIN) tests/support/check_oem_stored_rows.py \
+		tests/support/mutate_native_query.py
+	@set -eu; \
+	mutation_dir=runtime/bootstrap/oem-stored-mutations-$(BUILD_OBJ_TAG); \
+	mkdir -p "$$mutation_dir"; \
+	for kind in stored-symbol stored-int stored-repeat; do \
+		case "$$kind" in \
+			stored-*) module=open_equation_machine;; \
 		esac; \
 		python3 tests/support/mutate_native_query.py "src/$$module.c" "$$kind" "$$mutation_dir/$$kind.c"; \
 		$(CC) $(CPPFLAGS) $(CFLAGS) -c "$$mutation_dir/$$kind.c" -o "$$mutation_dir/$$kind.o"; \
 		$(CC) $(CFLAGS) -Wl,--export-dynamic -o "$$mutation_dir/$$kind" \
-			$(filter-out src/native_query.% src/relational_cursor.% src/dense_relation.%,$(OBJ)) \
-			$$(for module in $$kept; do printf 'src/%s.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o ' "$$module"; done) \
+			$(filter-out src/open_equation_machine.%,$(OBJ)) \
 			"$$mutation_dir/$$kind.o" $(filter-out FORCE,$(BRIDGE_DEPS)) $(LDFLAGS); \
-		if $(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_native_query.py \
-				"$$mutation_dir/$$kind" --programs 200 > "$$mutation_dir/$$kind.log" 2>&1; then \
-			echo "FAIL: the native query law accepts the $$kind mutant"; \
+		if $(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_oem_stored_rows.py \
+				"$$mutation_dir/$$kind" --programs 100 > "$$mutation_dir/$$kind.log" 2>&1; then \
+			echo "FAIL: the stored-row law accepts the $$kind mutant"; \
 			exit 1; \
 		fi; \
 	done; \
-	echo "PASS: the native query law rejects all fifteen mutants"
+	echo "PASS: the stored-row law rejects all three mutants"
+
+.PHONY: test-native-id-probes-mutations
+# The id-probe law rejects each defect a mutant of the id probes carries: a
+# prefix key mixing one column for every bound one, a ground leg answered
+# from the exact index without its head's certificate, an exact lookup
+# missing the last column, ids answered while rows are marked, and a cold
+# scan comparing each fixed symbol with the first column's.
+test-native-id-probes-mutations: $(BIN) tests/support/check_native_id_probes.py \
+		tests/support/mutate_native_query.py
+	@set -eu; \
+	mutation_dir=runtime/bootstrap/native-id-probes-mutations-$(BUILD_OBJ_TAG); \
+	mkdir -p "$$mutation_dir"; \
+	for kind in ids-prefix-key ids-frontier ids-exact-lookup ids-marked cold-symbol-id; do \
+		case "$$kind" in \
+			ids-prefix-key) module=space_path_index;; \
+			ids-exact-lookup) module=space;; \
+			*) module=space_match_backend;; \
+		esac; \
+		kept=$$(for other in space_path_index space space_match_backend; do \
+			[ "$$other" = "$$module" ] || printf '%s ' "$$other"; done); \
+		python3 tests/support/mutate_native_query.py "src/$$module.c" "$$kind" "$$mutation_dir/$$kind.c"; \
+		$(CC) $(CPPFLAGS) $(CFLAGS) -c "$$mutation_dir/$$kind.c" -o "$$mutation_dir/$$kind.o"; \
+		$(CC) $(CFLAGS) -Wl,--export-dynamic -o "$$mutation_dir/$$kind" \
+			$(filter-out src/space_path_index.% src/space.% src/space_match_backend.%,$(OBJ)) \
+			$$(for module in $$kept; do printf 'src/%s.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o ' "$$module"; done) \
+			"$$mutation_dir/$$kind.o" $(filter-out FORCE,$(BRIDGE_DEPS)) $(LDFLAGS); \
+		if $(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_native_id_probes.py \
+				"$$mutation_dir/$$kind" --programs 300 > "$$mutation_dir/$$kind.log" 2>&1; then \
+			echo "FAIL: the id-probe law accepts the $$kind mutant"; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: the id-probe law rejects all five mutants"
+
+.PHONY: test-term-universe-collection-floor
+# Collection pacing, through the machine's own safe points: below the
+# floor's entries nothing collects, whatever the rows released; record
+# bytes above their floor collect; reclaim-every and a floor of 0 collect a
+# small program, which answers alike under every pacing.  A build with
+# collection checks collects eagerly whatever the floors, by design.
+test-term-universe-collection-floor: $(BIN) tests/support/check_collection_floor.py
+ifeq ($(TERM_UNIVERSE_COLLECTION_CHECKS),1)
+	@echo "SKIP: a build with collection checks collects eagerly"
+else
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_collection_floor.py ./$(BIN)
+endif
+
+test-all: test-term-universe-collection-floor
+
+.PHONY: test-term-universe-many-holders
+# A space per item registers its holders in its universe in constant
+# expected time: 64,000 spaces cost at most sixteen times 8,000.
+test-term-universe-many-holders: $(BIN) tests/support/check_many_holders.py
+ifeq ($(TERM_UNIVERSE_COLLECTION_CHECKS),1)
+	@echo "SKIP: a build with collection checks collects eagerly"
+else
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_many_holders.py ./$(BIN)
+endif
+
+test-all: test-term-universe-many-holders
+
+.PHONY: test-space-index-removal-scaling
+# Removing rows under a column index costs each removal a constant: rows
+# marked removed stay in the index until the marks settle, and lookups
+# meanwhile drop them.  Eight times the rows cost at most sixteen times as
+# much.
+test-space-index-removal-scaling: $(BIN) tests/support/check_index_removal_scaling.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_index_removal_scaling.py ./$(BIN)
+
+test-all: test-space-index-removal-scaling
+
+.PHONY: test-space-bits-join-scaling
+# A binary relation kept as bits answers probes of either column by their
+# answers, and a join over it reads the smaller leg at each visit: reverse
+# lookups, and the triangles of a star, at N and 8N.
+test-space-bits-join-scaling: $(BIN) tests/support/check_bits_join_scaling.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_bits_join_scaling.py ./$(BIN)
+
+test-all: test-space-bits-join-scaling
+
+.PHONY: test-prepared-pure-refusal-backoff
+# A function whose program the prepared machine refuses for a reason that
+# certifies nothing is compiled again only after doubling pauses: 2,000
+# calls compile at most 16 times, and answer as before.
+test-prepared-pure-refusal-backoff: $(BIN) tests/petta/prepared_pure_refusal_backoff.metta \
+		tests/petta/prepared_pure_refusal_backoff.expected
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@set -eu; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --emit-runtime-stats --lang petta \
+		tests/petta/prepared_pure_refusal_backoff.metta 2>&1); \
+	answers=$$(printf '%s\n' "$$result" | grep -v '^runtime-counter '); \
+	if [ "$$answers" != "$$(cat tests/petta/prepared_pure_refusal_backoff.expected)" ]; then \
+		echo "FAIL: a refused program's calls answer differently"; exit 1; \
+	fi; \
+	attempts=$$(printf '%s\n' "$$result" | awk \
+		'$$1 == "runtime-counter" && $$2 == "prepared-pure-call-compile-attempt" { print $$3 }'); \
+	if [ "$${attempts:-0}" -gt 16 ]; then \
+		echo "FAIL: 2,000 calls of a refused program compiled $$attempts times"; exit 1; \
+	fi; \
+	echo "PASS: a refused program compiles $${attempts:-0} times over 2,000 calls"
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		test-prepared-pure-refusal-backoff
+endif
+
+test-all: test-prepared-pure-refusal-backoff
+
+.PHONY: test-term-universe-shared-views
+# A stored term sharing its subterms is read, matched and compared by its
+# distinct subterms: (pair x x) nested 40 times has 41 of them and 2^40
+# paths.
+test-term-universe-shared-views: $(BIN) tests/petta/term_universe_shared_views.metta \
+		tests/petta/term_universe_shared_views.expected
+	@set -eu; \
+	status=0; actual=$$(timeout 20 ./$(BIN) --lang petta \
+		tests/petta/term_universe_shared_views.metta 2>&1) || status=$$?; \
+	if [ "$$status" -ne 0 ] || \
+	   [ "$$actual" != "$$(cat tests/petta/term_universe_shared_views.expected)" ]; then \
+		echo "FAIL: a stored term's shared subterms (exit $$status)"; \
+		exit 1; \
+	fi; \
+	echo "PASS: a stored term sharing its subterms is read by its distinct subterms"
+
+test-all: test-term-universe-shared-views
+
+.PHONY: test-term-universe-deep-terms test-term-universe-deep-terms-scaling
+# A stored term 200,000 levels deep decodes without the C stack and interns
+# in linear time: stored, matched back, counted and compared.
+test-term-universe-deep-terms: $(BIN) tests/petta/term_universe_deep_terms.metta \
+		tests/petta/term_universe_deep_terms.expected
+	@set -eu; \
+	status=0; actual=$$(timeout 20 ./$(BIN) --lang petta \
+		tests/petta/term_universe_deep_terms.metta 2>&1) || status=$$?; \
+	if [ "$$status" -ne 0 ] || \
+	   [ "$$actual" != "$$(cat tests/petta/term_universe_deep_terms.expected)" ]; then \
+		echo "FAIL: a stored term 200,000 levels deep (exit $$status)"; \
+		exit 1; \
+	fi; \
+	echo "PASS: a stored term 200,000 levels deep is stored, matched back, counted and compared"
+
+# One stored term 800,000 levels deep costs at most twice eight terms of
+# 100,000 levels: a level costs the same at any depth.
+test-term-universe-deep-terms-scaling: $(BIN) tests/support/check_deep_terms_scaling.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_deep_terms_scaling.py ./$(BIN)
+
+test-all: test-term-universe-deep-terms test-term-universe-deep-terms-scaling
+
+.PHONY: test-space-holds
+# A space new-space makes lives while something holds it: a row, a name or a
+# state cell keeps it readable in later requests, with freed memory poisoned.
+test-space-holds: $(BIN) tests/petta/new_space_holds.metta \
+		tests/petta/new_space_holds.expected
+	@set -eu; \
+	for perturb in "" 165; do \
+		for profile in "" "--profile extended"; do \
+			if ! actual=$$(MALLOC_PERTURB_=$$perturb $(CETTA_BIN_INVOKE) $$profile --lang petta \
+				tests/petta/new_space_holds.metta 2>&1); then \
+				echo "FAIL: held-space execution ($$profile, perturb $$perturb)"; \
+				printf '%s\n' "$$actual"; exit 1; \
+			fi; \
+			if [ "$$actual" != "$$(cat tests/petta/new_space_holds.expected)" ]; then \
+				echo "FAIL: held spaces ($$profile, perturb $$perturb)"; \
+				diff <(cat tests/petta/new_space_holds.expected) \
+					<(printf '%s\n' "$$actual") | head -10; \
+				exit 1; \
+			fi; \
+		done; \
+	done; \
+	echo "PASS: spaces kept by a row, a name or a state cell outlive their requests"
+
+test-all: test-space-holds
+
+.PHONY: test-space-reclamation
+test-space-reclamation: $(BIN) tests/support/check_escaped_space_reclamation.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_escaped_space_reclamation.py ./$(BIN)
+
+test-all: test-space-reclamation
+
+.PHONY: test-space-cycles
+test-space-cycles: $(BIN) tests/support/check_space_cycle_reclamation.py
+	@$(call cetta_exec,python3 tests/support/check_space_cycle_reclamation.py $(abspath $(BIN)))
+
+test-all: test-space-cycles
+
+.PHONY: test-set-presence-churn
+# A set keeps its rows through removals and adds, with freed memory poisoned,
+# and churning it costs time linear in the churn: each removal takes its row's
+# key out of the presence bits instead of leaving them to be rebuilt.
+test-set-presence-churn: $(BIN) tests/petta/set_presence_churn.metta \
+		tests/petta/set_presence_churn.expected tests/support/check_set_churn_scaling.py
+	@set -eu; \
+	for perturb in "" 165; do \
+		actual=$$(MALLOC_PERTURB_=$$perturb $(CETTA_BIN_INVOKE) --profile extended --lang petta \
+			tests/petta/set_presence_churn.metta 2>&1) || true; \
+		if [ "$$actual" != "$$(cat tests/petta/set_presence_churn.expected)" ]; then \
+			echo "FAIL: set presence churn (perturb $$perturb)"; \
+			diff <(cat tests/petta/set_presence_churn.expected) \
+				<(printf '%s\n' "$$actual") | head -10; \
+			exit 1; \
+		fi; \
+	done
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_set_churn_scaling.py ./$(BIN)
+
+test-all: test-set-presence-churn
+
+.PHONY: test-presence-set-form
+# A set's presence keys take the form their density allows: kept as a table
+# through adds, removals that shift keys back, re-adds and duplicates, a set
+# answers as a set, with freed memory poisoned; small sets in a large universe
+# cost what they hold, not a bit an id.
+test-presence-set-form: $(BIN) tests/petta/presence_table_churn.metta \
+		tests/petta/presence_table_churn.expected tests/support/check_presence_set_memory.py
+	@set -eu; \
+	for perturb in "" 165; do \
+		actual=$$(MALLOC_PERTURB_=$$perturb $(CETTA_BIN_INVOKE) --profile extended --lang petta \
+			tests/petta/presence_table_churn.metta 2>&1) || true; \
+		if [ "$$actual" != "$$(cat tests/petta/presence_table_churn.expected)" ]; then \
+			echo "FAIL: presence table churn (perturb $$perturb)"; \
+			diff <(cat tests/petta/presence_table_churn.expected) \
+				<(printf '%s\n' "$$actual") | head -10; \
+			exit 1; \
+		fi; \
+	done
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_presence_set_memory.py ./$(BIN)
+
+test-all: test-presence-set-form
+
+.PHONY: test-space-dense-far-rows
+# Rows given one far number each grow by a leaf, not by bits up to it: with
+# the far pairs the peak exceeds the same run without them by at most 1 KiB
+# a row.
+test-space-dense-far-rows: $(BIN) tests/support/check_dense_far_rows.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_dense_far_rows.py ./$(BIN)
+
+test-all: test-space-dense-far-rows
+
+.PHONY: test-relation-shrink
+# Relations emptied down to a few facts answer as before and take facts
+# again, in every form and mode, with freed memory poisoned; and an emptied
+# relation gives its storage back.
+test-relation-shrink: $(BIN) tests/petta/relation_shrink.metta \
+		tests/petta/relation_shrink.expected tests/support/check_relation_shrink.py
+	@set -eu; actual=$$(mktemp); trap 'rm -f "$$actual"' EXIT; \
+	for mode in off on eager; do \
+		for perturb in "" 165; do \
+			CETTA_SPACE_DENSE=$$mode MALLOC_PERTURB_=$$perturb $(CETTA_BIN_INVOKE) \
+				--profile extended --lang petta tests/petta/relation_shrink.metta \
+				> "$$actual" 2>&1 || true; \
+			if ! python3 tests/support/compare_answers.py --lang petta \
+				--program tests/petta/relation_shrink.metta \
+				--expected tests/petta/relation_shrink.expected --actual "$$actual" \
+				--cetta $(CETTA_BIN_INVOKE) --profile extended --lang petta; then \
+				echo "FAIL: relation shrink, relations $$mode (perturb $$perturb)"; \
+				exit 1; \
+			fi; \
+		done; \
+	done
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_relation_shrink.py ./$(BIN)
+
+test-all: test-relation-shrink
+
+.PHONY: test-trie-window-scaling
+# Lookups keyed past the match trie's window (wide rows keyed in their last
+# column, facts keyed below its levels) read their own rows, not every row.
+test-trie-window-scaling: $(BIN) tests/support/check_trie_window_scaling.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_trie_window_scaling.py ./$(BIN)
+test-all: test-trie-window-scaling
+.PHONY: test-deep-facts-load
+# Loading deep facts costs what their relation holds, not a record a level:
+# a document is read in slices, so the records a relation leaves behind are
+# collected as the load goes.
+test-deep-facts-load: $(BIN) tests/support/check_deep_facts_load.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_deep_facts_load.py ./$(BIN)
+test-all: test-deep-facts-load
+.PHONY: test-relation-release
+# A relation holds exactly the ids its facts hold: once the facts are gone,
+# the universe reclaims the ids only they held.
+test-relation-release: $(BIN) tests/support/check_relation_release.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_relation_release.py ./$(BIN)
+
+test-all: test-relation-release
+
+.PHONY: test-integer-flood
+# Integers crafted to share one home in the integer table load about as fast
+# as random ones: the table places its pages under a key nobody can predict.
+test-integer-flood: $(BIN) tests/support/check_integer_flood.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_integer_flood.py ./$(BIN)
+
+test-all: test-integer-flood
+
+.PHONY: test-symbol-flood
+# Spellings crafted to share one home in the symbol table intern about as
+# fast as random ones: the table places a spelling by its hash mixed with a
+# key of its own.
+test-symbol-flood: $(BIN) tests/support/check_symbol_flood.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_symbol_flood.py ./$(BIN)
+
+test-all: test-symbol-flood
+
+.PHONY: test-space-remove-absent-scaling
+# Removing an atom a space does not hold costs the same in a space eight
+# times larger; a row holding a variable still unifies with a ground removal.
+test-space-remove-absent-scaling: $(BIN) tests/support/check_remove_absent_scaling.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_remove_absent_scaling.py ./$(BIN)
+
+test-all: test-space-remove-absent-scaling
 
 .PHONY: test-set-space-open-adds-stats
 test-petta-semantics: test-set-space-open-adds-stats
 # A set space holding an open atom takes its alpha-variants without
-# interning them: the term universe does not grow with the additions.
-test-set-space-open-adds-stats: $(BIN) tests/support/check_set_space_open_adds.py
+# interning them: the term universe does not grow with the additions; and a
+# set keeps its open rows as alpha keys, so subgoals that differ only in
+# their variables' names share their records.
+test-set-space-open-adds-stats: $(BIN) tests/support/check_set_space_open_adds.py 		tests/support/check_set_space_variant_keys.py
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_set_space_open_adds.py ./$(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_set_space_variant_keys.py ./$(BIN)
 else
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
 		test-set-space-open-adds-stats
@@ -34142,7 +34870,10 @@ test-he-evaluated-values: $(BIN) tests/he/evaluated_values.metta \
 		tests/he/evaluated_values_typed.compat.expected \
 		tests/he/evaluated_values_stuck.metta \
 		tests/he/evaluated_values_stuck.expected \
-		tests/he/evaluated_values_stuck.compat.expected
+		tests/he/evaluated_values_stuck.compat.expected \
+		tests/he/prepared_completed_values.metta \
+		tests/he/prepared_completed_values.expected \
+		tests/he/prepared_completed_values.compat.expected
 	@set -eu -o pipefail; \
 	for lane in $(HE_PROFILE_LANES); do \
 	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1" \
@@ -34154,7 +34885,7 @@ test-he-evaluated-values: $(BIN) tests/he/evaluated_values.metta \
 		env $$route $(CETTA_BIN_INVOKE) --lang $$lane \
 			tests/he/evaluated_values.metta \
 			| diff -u $$values_expected -; \
-		for program in evaluated_values_typed evaluated_values_stuck; do \
+		for program in evaluated_values_typed evaluated_values_stuck prepared_completed_values; do \
 		expected=tests/he/$$program.expected; \
 		case "$$lane" in *he-compat*) \
 			expected=tests/he/$$program.compat.expected;; esac; \
@@ -34201,6 +34932,22 @@ test-he-typed-calls-prepared: $(BIN) tests/he/typed_calls_prepared.metta \
 # a truth value, and HE raises a type error.
 .PHONY: test-prepared-pure-not
 test-all: test-prepared-pure-not
+# Folds whose step builds an expression with a variable head answer as the
+# ordinary path and SWI-PeTTa do, prepared or not: data where the head holds
+# a number or a symbol no equation defines, a call, with its effect made
+# once, where it holds a function.
+.PHONY: test-prepared-pure-variable-heads
+test-prepared-pure-variable-heads: $(BIN) tests/petta/prepared_variable_heads.metta \
+		tests/petta/prepared_variable_heads.expected
+	@set -eu -o pipefail; \
+	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1" \
+		"CETTA_PREPARED_PURE_REFERENCE=1 CETTA_OPEN_EQUATIONS_REFERENCE=1"; do \
+		env $$route $(CETTA_BIN_INVOKE) --profile extended --lang petta \
+			tests/petta/prepared_variable_heads.metta \
+			| diff -u tests/petta/prepared_variable_heads.expected -; \
+	done
+	@echo "PASS: prepared folds over variable heads answer as the ordinary path"
+
 test-prepared-pure-not: $(BIN) tests/petta/prepared_not.metta \
 		tests/petta/prepared_not.expected tests/he/prepared_not.metta \
 		tests/he/prepared_not.expected
@@ -35748,7 +36495,7 @@ else
 	@$(MAKE) -s ENABLE_RUNTIME_STATS=1 $@
 endif
 
-test-prepared-pure-call-machine: $(BIN) test-prepared-pure-answer-producer test-prepared-pure-answer-resource-fallback test-answer-producer-continuations test-answer-producer-continuation-transfer test-prepared-pure-undefined-type-operands test-prepared-pure-repeated-head-variables test-prepared-pure-dispatch-authority test-prepared-pure-numeric-realizations
+test-prepared-pure-call-machine: $(BIN) test-prepared-pure-variable-heads test-prepared-pure-answer-producer test-prepared-pure-answer-resource-fallback test-answer-producer-continuations test-answer-producer-continuation-transfer test-prepared-pure-undefined-type-operands test-prepared-pure-repeated-head-variables test-prepared-pure-dispatch-authority test-prepared-pure-numeric-realizations
 	@set -e; \
 	he_out=$$(mktemp runtime/prepared-pure-call-he.XXXXXX); \
 	he_no_gc_out=$$(mktemp runtime/prepared-pure-call-he-no-gc.XXXXXX); \
@@ -47138,6 +47885,14 @@ test-tensor-gather-rows: $(BIN) runtime/test_tensor_gather_rows_allocation-$(BUI
 	./runtime/test_tensor_gather_rows_allocation-$(BUILD_OBJ_TAG)
 	python3 tests/support/check_tensor_gather_rows.py --cetta ./$(BIN) --output runtime/tensor-gather-rows-qualification
 
+runtime/test_tensor_where_allocation-$(BUILD_OBJ_TAG): tests/support/test_tensor_where_allocation.c src/tensor.h $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/support/test_tensor_where_allocation.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS) -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc
+
+.PHONY: test-tensor-where
+test-tensor-where: $(BIN) runtime/test_tensor_where_allocation-$(BUILD_OBJ_TAG)
+	./runtime/test_tensor_where_allocation-$(BUILD_OBJ_TAG)
+	python3 tests/support/check_tensor_where.py --cetta ./$(BIN) --output runtime/tensor-where-qualification
+
 .PHONY: test-tensor
 test-tensor: $(BIN) runtime/test_tensor-$(BUILD_OBJ_TAG)
 	./runtime/test_tensor-$(BUILD_OBJ_TAG)
@@ -51143,6 +51898,30 @@ test-petta-search-machine: test-petta-plan-owner
 test-petta-plan-owner: $(PETTA_PLAN_OWNER_TEST_BIN)
 	@$(call cetta_exec,./$(PETTA_PLAN_OWNER_TEST_BIN))
 
+PETTA_PLAN_KEY_TEST_BIN = runtime/test_petta_plan_key-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+PETTA_PLAN_KEY_TEST_OBJS = $(filter-out src/petta_program.%,$(FALLBACK_EVAL_TEST_LINK_OBJ))
+$(PETTA_PLAN_KEY_TEST_BIN): tests/support/test_petta_plan_key.c src/petta_program.c src/petta_program.h $(PETTA_PLAN_KEY_TEST_OBJS) $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $< $(PETTA_PLAN_KEY_TEST_OBJS) $(BRIDGE_DEPS) -Wl,--wrap=malloc,--wrap=realloc $(LDFLAGS)
+
+.PHONY: test-petta-plan-key
+test-petta-search-machine test-execution-semantic-ledger: test-petta-plan-key
+test-petta-plan-key: $(PETTA_PLAN_KEY_TEST_BIN)
+	@$(call cetta_exec,./$(PETTA_PLAN_KEY_TEST_BIN))
+
+PETTA_LAMBDA_SPAN_BUDGET_TEST_OBJ = runtime/bootstrap/test_lambda_span_budget.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+PETTA_LAMBDA_SPAN_BUDGET_TEST_BIN = runtime/test_lambda_span_budget-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+-include $(PETTA_LAMBDA_SPAN_BUDGET_TEST_OBJ:.o=.d)
+$(PETTA_LAMBDA_SPAN_BUDGET_TEST_OBJ): tests/support/test_lambda_span_budget.c src/petta_program.h src/petta_search_machine.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+$(PETTA_LAMBDA_SPAN_BUDGET_TEST_BIN): $(PETTA_LAMBDA_SPAN_BUDGET_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+.PHONY: test-petta-lambda-span-budget
+test-petta-search-machine test-petta-semantics test-execution-semantic-ledger: test-petta-lambda-span-budget
+test-petta-lambda-span-budget: $(PETTA_LAMBDA_SPAN_BUDGET_TEST_BIN)
+	@$(call cetta_exec,./$(PETTA_LAMBDA_SPAN_BUDGET_TEST_BIN))
+
 # Native Megalodon tests (native/megalodon/test.mk).
 include native/megalodon/test.mk
 
@@ -51709,11 +52488,37 @@ test-tensor-program-parameters: $(BIN)
 test-ic-family-transfer: $(BIN)
 	python3 tests/support/check_ic_family_transfer.py --cetta ./$(BIN) --output runtime/ic-family-transfer-qualification
 
+.PHONY: test-ic-source-seeds test-ic-source-families
+test-ic-source-seeds: $(BIN)
+	python3 tests/support/check_ic_source_seeds.py --cetta ./$(BIN) --output runtime/ic-source-seeds-qualification
+
+test-ic-source-families: $(BIN)
+	python3 tests/support/test_ic_family_experiment.py
+	python3 tests/support/check_ic_family_experiment.py --cetta ./$(BIN) --output runtime/ic-source-families-qualification
+
+.PHONY: demo-ic-ilp
+demo-ic-ilp: $(BIN)
+	python3 tools/demo_ic_ilp.py --cetta ./$(BIN) --output runtime/ic-ilp-demo
+
+.PHONY: demo-ic-pln
+demo-ic-pln: $(BIN)
+	bash scripts/run_ic_pln_poc.sh ./$(BIN) runtime/ic-pln-poc
+
+.PHONY: demo-ic-pln-mvp
+demo-ic-pln-mvp: $(BIN)
+	bash experiments/ic_pln_mvp/run.sh ./$(BIN) runtime/ic-pln-mvp
+
 test-ic-library: $(BIN)
 	python3 tests/support/check_ic_library.py --cetta ./$(BIN) --output runtime/ic-library-qualification
 
 test-ic-constructor-trees: $(BIN)
 	python3 tests/support/check_ic_constructor_trees.py --cetta ./$(BIN) --output runtime/ic-constructor-trees-qualification
+
+.PHONY: test-ic-proof-adapter
+test-ic-proof-adapter:
+	python3 tests/support/test_ic_proof_archive.py
+
+test-incremental-compression: test-ic-proof-adapter
 
 test-ic-context-library: $(BIN)
 	python3 tests/support/check_ic_context_library.py --cetta ./$(BIN) --output runtime/ic-context-library-qualification
@@ -51746,7 +52551,33 @@ test-tensor-program-literals: $(BIN)
 test-ic-clustering: $(BIN)
 	python3 tests/support/check_ic_clustering.py --cetta ./$(BIN) --output runtime/ic-clustering-qualification
 
-test-incremental-compression: test-tensor-gather-rows test-tensor-program-literals test-ic-clustering
+test-incremental-compression: test-tensor-gather-rows test-tensor-where test-tensor-program-literals test-ic-clustering
+
+.PHONY: test-ic-piecewise
+test-ic-piecewise: $(BIN)
+	python3 tests/support/check_ic_piecewise.py --cetta ./$(BIN) --output runtime/ic-piecewise-qualification
+
+test-incremental-compression: test-ic-piecewise
+
+IC_THEORY_ROOT ?= $(abspath ../../ic-theory)
+IC_ORIGINAL_TOOLCHAIN ?=
+
+.PHONY: test-ic-interpreter-correspondence test-incremental-compression-joined
+test-ic-interpreter-correspondence:
+	@test -n "$(strip $(IC_ORIGINAL_TOOLCHAIN))" || { \
+		echo 'Set IC_ORIGINAL_TOOLCHAIN to the installed toolchain matching ic-theory/lean-toolchain' >&2; exit 2; \
+	}
+	@test -f "$(METTAPEDIA_LEAN_CHECKOUT)/lakefile.lean" || { \
+		echo 'Set METTAPEDIA_LEAN_ROOT to the Mettapedia Lean project' >&2; exit 2; \
+	}
+	python3 tests/support/test_ic_interpreter_bridge.py
+	python3 tests/support/check_ic_interpreter_bridge.py \
+		--ic-theory "$(IC_THEORY_ROOT)" \
+		--mettapedia "$(abspath $(METTAPEDIA_LEAN_CHECKOUT)/../..)" \
+		--original-toolchain "$(IC_ORIGINAL_TOOLCHAIN)" \
+		--output runtime/ic-original-interpreter-qualification
+
+test-incremental-compression-joined: test-incremental-compression test-ic-interpreter-correspondence
 
 test-ic-numeric-program: $(BIN)
 	python3 tests/support/check_ic_numeric_program.py --cetta ./$(BIN) --output runtime/ic-numeric-program-qualification
@@ -51760,12 +52591,70 @@ test-ic-continuations: $(BIN)
 test-tensor-inverse: $(BIN)
 	python3 tests/support/check_tensor_inverse.py --cetta ./$(BIN) --output runtime/tensor-inverse-qualification
 
-test-incremental-compression: test-ic-reference test-ic-templates test-ic-archive test-ic-search test-work-source-epochs test-compact-dag test-source-codec test-binary-value test-scoped-templates test-ic-scoped-archive test-scoped-grammar test-tensor-sequences test-ic-numeric test-ic-packed-observations test-ic-mil-skeletons test-ic-mil-pruning test-tensor-program-compose test-ic-mil-tensor test-ic-mil-source test-tensor-program-parameters test-ic-family-transfer test-ic-library test-ic-constructor-trees test-ic-context-library test-ic-library-transfer test-ic-library-stack test-ic-library-stack-transfer test-ic-guided-grammar test-ic-context-grammar test-tensor-lexical test-tensor-program test-ic-numeric-program test-ic-numeric-arrays test-ic-continuations test-tensor-inverse
+test-incremental-compression: test-ic-reference test-ic-templates test-ic-archive test-ic-search test-work-source-epochs test-compact-dag test-source-codec test-binary-value test-scoped-templates test-ic-scoped-archive test-scoped-grammar test-tensor-sequences test-ic-numeric test-ic-packed-observations test-ic-mil-skeletons test-ic-mil-pruning test-tensor-program-compose test-ic-mil-tensor test-ic-mil-source test-tensor-program-parameters test-ic-family-transfer test-ic-source-seeds test-ic-source-families test-ic-library test-ic-constructor-trees test-ic-context-library test-ic-library-transfer test-ic-library-stack test-ic-library-stack-transfer test-ic-guided-grammar test-ic-context-grammar test-tensor-lexical test-tensor-program test-ic-numeric-program test-ic-numeric-arrays test-ic-continuations test-tensor-inverse
 
 .PHONY: test-petta-corrected-stable
 test-petta-semantics: test-petta-corrected-stable
 test-petta-corrected-stable: $(BIN)
 	python3 tests/support/check_petta_corrected_stable.py $(BIN)
+
+.PHONY: test-petta-activation-source-budget
+test-petta-activation-source-budget: $(BIN)
+	python3 tests/support/check_petta_activation_source_budget.py ./$(BIN)
+
+test-execution-semantic-ledger: test-petta-activation-source-budget
+
+.PHONY: test-execution-semantic-ledger
+.PHONY: test-execution-theory
+EXECUTION_MODEL_RECEIPT ?= runtime/execution-models/theory-receipt.json
+test-execution-theory:
+	@test -n "$(METTAPEDIA_ROOT)" || { echo 'Set METTAPEDIA_ROOT to the Lean project root'; exit 1; }
+	@python3 tests/support/check_execution_lean_models.py --mettapedia "$(METTAPEDIA_ROOT)" \
+		--receipt "$(EXECUTION_MODEL_RECEIPT)"
+
+test-execution-semantic-ledger: $(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN) $(PETTA_SEARCH_MACHINE_TEST_BIN) test-prepared-pure-answer-producer test-execution-control-plans
+	@$(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN) --semantic-ledger
+	@$(PETTA_SEARCH_MACHINE_TEST_BIN) --semantic-ledger
+
+.PHONY: test-python-callback-completion
+test-execution-semantic-ledger: test-python-callback-completion
+test-python-callback-completion: $(BIN)
+ifeq ($(ENABLE_PYTHON),1)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_python_callback_completion.py ./$(BIN)
+else
+	@echo "SKIP: Python callback completion (Python support disabled)"
+endif
+
+.PHONY: test-petta-libpl-callback-completion
+test-execution-semantic-ledger test-petta-libpl: test-petta-libpl-callback-completion
+.PHONY: test-petta-libpl-callback-source
+test-execution-semantic-ledger test-petta-libpl: test-petta-libpl-callback-source
+.PHONY: test-petta-comparison-authority
+test-execution-semantic-ledger test-petta-libpl: test-petta-comparison-authority
+test-petta-comparison-authority: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_comparison_authority.py ./$(BIN) --library $(LIB_PROLOG_ENABLED)
+
+test-petta-libpl-callback-source: $(BIN)
+ifeq ($(LIB_PROLOG_ENABLED),1)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_libpl_callback_source.py ./$(BIN)
+else
+	@echo "SKIP: Prolog callback source entry (embedded Prolog disabled)"
+endif
+
+ifeq ($(LIB_PROLOG_ENABLED),1)
+PETTA_CALLBACK_PROBE = runtime/libpl_callback_probe-$(BUILD_OBJ_TAG).so
+$(PETTA_CALLBACK_PROBE): tests/support/libpl_callback_probe.c src/eval_completion.h \
+		src/stats.h src/generated/cetta_runtime_counters.generated.h
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Isrc -fPIC -shared \
+		$(LIB_PROLOG_CFLAGS) -o $@ $< $(LIB_PROLOG_LDFLAGS)
+
+test-petta-libpl-callback-completion: $(BIN) $(PETTA_CALLBACK_PROBE)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_libpl_callback_completion.py \
+		./$(BIN) $(PETTA_CALLBACK_PROBE) $(if $(filter 1,$(ENABLE_RUNTIME_STATS)),--stats,)
+else
+test-petta-libpl-callback-completion: $(BIN)
+	@echo "SKIP: Prolog callback completion (embedded Prolog disabled)"
+endif
 
 # A census rechecks C when its reader changes. Ordinary C objects depend on
 # their native inputs; source updates run fresh identity builds separately.

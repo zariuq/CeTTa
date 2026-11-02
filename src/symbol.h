@@ -80,6 +80,10 @@ typedef struct {
     uint32_t slot_cap;
     uint32_t slot_used;
     uint64_t instance_id;
+    /* Mixed with a spelling's hash to place it, drawn when the table is
+     * made: spellings crafted to share their hash's low bits do not share a
+     * slot.  The hash itself, which others read, carries no key. */
+    uint64_t placement_key;
 
     SymbolEntry **entry_chunks;
     _Atomic uint32_t entry_len;
@@ -509,6 +513,7 @@ static inline SymbolSpelling symbol_spelling(
     X(tensor_entries, "tensor:entries") \
     X(tensor_gather, "tensor:gather") \
     X(tensor_gather_rows, "tensor:gather-rows") \
+    X(tensor_where, "tensor:where") \
     X(tensor_scan_sum, "tensor:scan-sum") \
     X(tensor_concatenate, "tensor:concatenate") \
     X(tensor_permute, "tensor:permute") \
@@ -925,7 +930,7 @@ static inline SymbolSpelling symbol_spelling(
     X(syntax_read) X(syntax_restore) X(syntax_freeze) X(syntax_write) X(syntax_intrinsic_head) \
     X(tensor_from_values) X(tensor_from_json) X(tensor_from_coo) X(tensor_from_coordinates) X(tensor_inspect) \
     X(tensor_shape) X(tensor_dtype) X(tensor_layout) X(tensor_at) X(tensor_is_tensor) \
-    X(tensor_entries) X(tensor_gather) X(tensor_gather_rows) X(tensor_merge) \
+    X(tensor_entries) X(tensor_gather) X(tensor_gather_rows) X(tensor_where) X(tensor_merge) \
     X(tensor_scan_sum) X(tensor_concatenate) X(tensor_permute) \
     X(tensor_copy) X(tensor_convert) X(tensor_cast) X(tensor_promote) X(tensor_view) X(tensor_reshape) X(tensor_sum) \
     X(tensor_matvec) X(tensor_top_k) X(tensor_encode) X(tensor_decode) \
@@ -1218,6 +1223,12 @@ bool symbol_id_is_builtin(SymbolId id);
 /* Executable builtin membership; registered type constructors and names owned
  * by another dialect keep ordinary data/equation resolution in that dialect. */
 bool symbol_id_is_builtin_for(SymbolId id, CettaLanguageId language);
+
+/* The next key of the sequence every table that places untrusted content
+ * draws its placement key from: seeded once a process, by
+ * CETTA_PLACEMENT_KEY when it is set (reproducible runs), otherwise at
+ * random.  A key moves where entries sit, never what a table answers. */
+uint64_t cetta_placement_key_next(void);
 
 void symbol_table_init(SymbolTable *st);
 void symbol_table_free(SymbolTable *st);

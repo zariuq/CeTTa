@@ -4,6 +4,7 @@
 ; a purity declaration or a license for native callback specialization.
 !(import! &self (library lib_ic_library))
 !(import! &self (library lib_source_context))
+!(import! &self (library lib_source_rule_heads))
 
 ; Availability is not value readiness. Only ordinary unannotated entry ports
 ; are established values in this profile; source locals remain delayed.
@@ -49,6 +50,30 @@
 (= (context-library:document-sites $document)
    (case $document
      (((Syntax:Document $version $reader $forms) (context-library:sites $forms $forms 0)))))
+
+; Rule-head mode retains the authored head and all its equality constraints.
+; Captures bound by an untyped entered constructor pattern are values, as are
+; ordinary entry ports. Locals introduced later by let/case remain delayed.
+(= (context-library:rule-sites $all $forms $index $constructors)
+   (if (== $forms ()) ()
+     (let $later (context-library:rule-sites $all (cdr-atom $forms) (+ $index 1) $constructors)
+       (case (rule-heads:clause $constructors (car-atom $forms))
+         (((IC:Some (Ctx:Rule $head $body $bound $ports))
+           (if (or (source-library:annotated? $head $all) (source-library:mentions? "&self" $body)) $later
+             (let* (($operations (union-atom (source-context:operations) $constructors))
+                    ($walked (source-context:walk-with $operations $index (2) $bound $body))
+                    ($sites (filter-atom $walked $site
+                      (case $site
+                        (((Ctx:Site $form $path $available $term)
+                          (case (source-context:split? $term) (((Ctx:Call $name $args) True) ($other False)))))))))
+               (union-atom (context-library:entry-sites $ports $sites) $later))))
+          ($other $later))))))
+(= (context-library:rule-document-sites $document)
+   (case $document
+     (((Syntax:Document $version $reader $forms)
+       (context-library:rule-sites $forms $forms 0 (rule-heads:constructors $document))))))
+(= (context-library:decoding-sites $document)
+   (union-atom (context-library:document-sites $document) (context-library:rule-document-sites $document)))
 (= (context-library:term-bytes $term)
    (case (binary-schema:encode (source-codec:schema) (source-codec:term) $term)
      (((Binary:TreeBytes $bytes) $bytes))))
@@ -94,6 +119,14 @@
        (case (ic:prepare-trees Constructors (context-library:forest $sites 0))
          (((IC:ConstructorArchive $archive) (Library:DeferredPrepared $original $archive $sites))
           ($bad-projection (Library:Refused InvalidProjection))))) ($source-refusal $source-refusal))))
+(= (ic:prepare-library RuleHeads $document)
+   (case (context-library:source-sites $document)
+     (((Ctx:Source $original $ignored)
+       (let $sites (context-library:rule-document-sites $original)
+         (case (ic:prepare-trees Constructors (context-library:forest $sites 0))
+           (((IC:ConstructorArchive $archive) (Library:DeferredPrepared $original $archive $sites))
+            ($bad-projection (Library:Refused InvalidProjection))))))
+      ($source-refusal $source-refusal))))
 
 (= (context-library:leaf $origin $bound $bytes)
    (let $payload
@@ -266,7 +299,7 @@
                  (if (and (>= (size-atom $positions) 1)
                        (and (source-codec:valid? $original) (not (source-library:mentions? $name $original))))
                          (if (and (context-library:standard-document? $original)
-                                  (context-library:positions? (context-library:document-sites $original) $positions))
+                                  (context-library:positions? (context-library:decoding-sites $original) $positions))
                      (IC:Some $original) IC:None) IC:None))) ($ctx-fallback-42 IC:None))) IC:None))
         ($ctx-fallback-43 IC:None)))))
 

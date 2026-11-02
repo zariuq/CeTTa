@@ -410,6 +410,42 @@ static void cross_thread_transfer(void) {
     puts("PASS: explicit engine lease transfer, rollback and independent attributed snapshot");
 }
 
+static uintptr_t yield_marker;
+static unsigned yield_prunes;
+
+static foreign_t yield_control(term_t args, int arity, control_t control) {
+    (void)args;
+    (void)arity;
+    if (PL_foreign_control(control) == PL_PRUNED) {
+        yield_prunes++;
+        return true;
+    }
+    PL_yield_address(&yield_marker);
+}
+
+static void yielded_operation(void) {
+    require(PL_register_foreign_in_module("foreign_region_fixture", "yield_control", 1,
+        (pl_function_t)yield_control, PL_FA_VARARGS | PL_FA_NONDETERMINISTIC),
+        "install yielded operation");
+    CettaForeignRegion *region = cetta_foreign_region_open();
+    require(region && cetta_foreign_region_begin(region) == CETTA_FOREIGN_OK,
+            "begin yielded region");
+    term_t value = cetta_foreign_region_variable(region, 77);
+    require(value != 0, "yielded operation variable");
+    start(region, "yield_control", 1, value);
+    for (unsigned resume = 0; resume < 3; resume++)
+        require(cetta_foreign_region_next(region) == PL_S_YIELD,
+                "yield is not a solution or logical failure");
+    require(cetta_foreign_region_stats(region).answers == 0 &&
+            cetta_foreign_region_finish(region, true, NULL) == CETTA_FOREIGN_INVALID,
+            "an unsolved yielded operation cannot commit");
+    require(cetta_foreign_region_finish(region, false, NULL) == CETTA_FOREIGN_OK &&
+            yield_prunes == 1, "closing a yielded query prunes once");
+    require(cetta_foreign_region_free(region) == CETTA_FOREIGN_OK && yield_prunes == 1,
+            "region release does not prune a closed query again");
+    puts("PASS: yielded region preserves status and retires query ownership once");
+}
+
 int main(int argc, char **argv) {
     require(argc == 2, "fixture path required");
     char *initial[] = {"foreign-region-gate", "-q", "--nosignals", NULL};
@@ -420,6 +456,7 @@ int main(int argc, char **argv) {
     checkpoint_compaction();
     checkpoint_frontier();
     query_lifecycle();
+    yielded_operation();
     network(100);
     network(1100);
     network(4400);
