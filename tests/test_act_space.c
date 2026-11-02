@@ -6,6 +6,7 @@
 #include "petta_search_machine.h"
 #include "space_source_overlay.h"
 #include "space_source_snapshot.h"
+#include "source_owner.h"
 #include "storage_census.h"
 #include <assert.h>
 #include <stdio.h>
@@ -139,6 +140,56 @@ static CettaMatchCompletion edge_a(Atom *value, Atom *unused) {
              ? CETTA_MATCH_MATCHED
              : CETTA_MATCH_REFUTED;
 }
+static Atom *candidate_packet(CettaCandidateCursor *cursor,uint64_t sequence,bool identity,size_t length,Arena *arena) {
+  unsigned char *packet=malloc(length ? length : 1);assert(packet);
+  size_t at=0;
+  while(at<length) {
+    const unsigned char *bytes=NULL;size_t n=0;
+    assert(cetta_candidate_cursor_read(cursor,sequence,identity,at,257,&bytes,&n)==CETTA_CANDIDATE_OK && n && n<=257);
+    memcpy(packet+at,bytes,n);at+=n;
+  }
+  Atom *value=NULL;assert(cetta_atom_wire_decode_bounded(arena,packet,length,2u*1024u*1024u,&value)==ATOM_WIRE_OK);
+  free(packet);return value;
+}
+static void original_candidates(const char *path,TermUniverse *universe,Arena *data) {
+  Space space;space_init_with_universe(&space,universe);
+  assert(cetta_act_space_capture(&space,path,2u*1024u*1024u)==CETTA_ACT_OK);
+  uint64_t count=space_length64(&space);CettaOccurrenceSource *source=NULL;
+  assert(cetta_occurrence_source_open(&space,2u*1024u*1024u,&source)==CETTA_CANDIDATE_OK);
+  assert(cetta_occurrence_source_count(source)==count && cetta_occurrence_source_limit(source)==2u*1024u*1024u);
+  CettaCandidateCursor *all=NULL,*selected=NULL,*clone=NULL;
+  assert(cetta_candidate_cursor_open(source,NULL,&all)==CETTA_CANDIDATE_OK);
+  assert(cetta_candidate_cursor_open(source,parse(data,"(rel one $to)"),&selected)==CETTA_CANDIDATE_OK);
+  cetta_occurrence_source_release(source);space_free(&space);
+  CettaCandidateRow row;
+  assert(cetta_candidate_cursor_next(all,0,0,&row)==CETTA_CANDIDATE_PROGRESS && row.body_bytes==0);
+  assert(cetta_candidate_cursor_next(all,0,1,&row)==CETTA_CANDIDATE_ROW);
+  CettaCandidateRow replay;assert(cetta_candidate_cursor_next(all,0,1,&replay)==CETTA_CANDIDATE_ROW && replay.body_bytes==row.body_bytes);
+  assert(cetta_candidate_cursor_clone(all,false,&clone)==CETTA_CANDIDATE_OK);
+  cetta_candidate_cursor_close(all);
+  Arena packet;arena_init_detached(&packet);ArenaMark empty=arena_mark(&packet);
+  Atom *first=candidate_packet(clone,0,false,row.body_bytes,&packet);assert(first && first->kind==ATOM_EXPR && atom_is_symbol(first->expr.elems[0],"edge"));
+  for(uint64_t i=1;i<count;i++) assert(cetta_candidate_cursor_next(clone,i,1,&row)==CETTA_CANDIDATE_ROW);
+  assert(cetta_candidate_cursor_next(clone,count,1,&row)==CETTA_CANDIDATE_END);
+  CettaCandidateCursor *rewound=NULL;assert(cetta_candidate_cursor_clone(clone,true,&rewound)==CETTA_CANDIDATE_OK);
+  assert(cetta_candidate_cursor_next(rewound,0,1,&row)==CETTA_CANDIDATE_ROW);cetta_candidate_cursor_close(rewound);cetta_candidate_cursor_close(clone);
+  uint64_t seen=0;bool open_fact=false;CettaCandidateStatus status;
+  while((status=cetta_candidate_cursor_next(selected,seen,1,&row))==CETTA_CANDIDATE_ROW) {
+    arena_reset(&packet,empty);
+    Atom *body=candidate_packet(selected,seen,false,row.body_bytes,&packet);
+    Atom *identity=candidate_packet(selected,seen,true,row.identity_bytes,&packet);assert(identity && !atom_has_vars(identity));
+    if(body->kind==ATOM_EXPR && atom_is_symbol(body->expr.elems[0],"rel")) {
+      assert(body->expr.elems[1]->kind==ATOM_VAR && body->expr.elems[2]->kind==ATOM_VAR);
+      assert(var_id_eq(body->expr.elems[1]->var_id,body->expr.elems[2]->var_id));open_fact=true;
+    }
+    ++seen;
+  }
+  assert(status==CETTA_CANDIDATE_END && open_fact && seen>=2);
+  assert(cetta_candidate_cursor_cancel(selected)==CETTA_CANDIDATE_CANCELLED);
+  assert(cetta_candidate_cursor_next(selected,0,1,&row)==CETTA_CANDIDATE_CANCELLED);
+  assert(cetta_candidate_cursor_clone(selected,true,&clone)==CETTA_CANDIDATE_CANCELLED && !clone);
+  cetta_candidate_cursor_close(selected);arena_free(&packet);
+}
 typedef struct { Arena arena;Atom *row;CettaIndex next; } PositionalRows;
 static void positional_free(void *raw) {
   PositionalRows *p=raw;if (p) {arena_free(&p->arena);free(p);}
@@ -170,6 +221,17 @@ static void positional_snapshot(const char *path,TermUniverse *universe,Arena *d
   Space source,target;space_init_with_universe(&source,universe);space_init_with_universe(&target,universe);
   source.match_backend.kind=SPACE_ENGINE_SOURCE;source.match_backend.ops=&positional_source;
   source.match_backend.source=parse(data,"(positional duplicate)");
+  CettaOccurrenceSource *captured=NULL;CettaCandidateCursor *left=NULL,*right=NULL;
+  assert(cetta_occurrence_source_open(&source,CETTA_ATOM_WIRE_BYTES,&captured)==CETTA_CANDIDATE_OK);
+  assert(cetta_candidate_cursor_open(captured,NULL,&left)==CETTA_CANDIDATE_OK);
+  assert(cetta_candidate_cursor_open(captured,NULL,&right)==CETTA_CANDIDATE_OK);
+  cetta_occurrence_source_release(captured);CettaCandidateRow row;
+  assert(cetta_candidate_cursor_next(left,0,1,&row)==CETTA_CANDIDATE_ROW);
+  assert(cetta_candidate_cursor_next(right,0,1,&row)==CETTA_CANDIDATE_ROW);
+  Arena identities;arena_init_detached(&identities);
+  Atom *a=candidate_packet(left,0,true,row.identity_bytes,&identities),*b=candidate_packet(right,0,true,row.identity_bytes,&identities);
+  assert(atom_eq(a,b) && a->kind==ATOM_EXPR && atom_is_symbol(a->expr.elems[0],"SpaceOccurrenceIdV1"));
+  cetta_candidate_cursor_close(left);cetta_candidate_cursor_close(right);arena_free(&identities);
   size_t n=strlen(path)+17;char *copy=malloc(n);assert(copy);snprintf(copy,n,"%s.positional",path);
   assert(cetta_act_space_dump(&source,copy,false,CETTA_ATOM_WIRE_BYTES)==CETTA_ACT_OK);
   assert(cetta_act_space_capture(&target,copy,CETTA_ATOM_WIRE_BYTES)==CETTA_ACT_OK);
@@ -309,6 +371,7 @@ int main(int argc, char **argv) {
                                 CETTA_ATOM_WIRE_BYTES) == CETTA_ACT_OK);
     wide_snapshot(argv[2],&universe,&data);
     positional_snapshot(argv[2],&universe,&data);
+    original_candidates(argv[2],&universe,&data);
   } else {
     /* Reopening with a different symbol-table history must preserve bytes. */
     for (unsigned i = 0; i < 100; i++) {

@@ -1,0 +1,76 @@
+Native captured-source database service
+=======================================
+
+examples/native_db_server.metta is a trusted configuration/handler module for
+cetta-value-worker --serve --lang petta ... db-server:configuration.
+CETTA_DB_SOURCE selects a database directory or an ACT snapshot file;
+CETTA_DB_SOCKET selects its private Unix socket. Requests do not select server
+filesystem paths. The existing host enforces same-account admission,
+connection-owned resources and read-only attenuation.
+
+A CSP1 request contains (request rpc-id body). Replies retain that rpc-id.
+CallV1 selects a route; UseV1 selects a route with a connection-owned resource.
+DropV1 releases a resource. Resource names are opaque and invalid in another
+connection or service incarnation. Transport delivery is separate from durable
+publication: a lost publish reply must be resolved by durable request/operation
+identity before retrying. No callback runs in this server protocol.
+
+DbCapabilities returns (DbCapabilitiesV1 owner incarnation kind access limit).
+The directory owner is its logical database epoch. The incarnation names this
+running service. kind is directory or act; access is ReadWrite or ReadOnly.
+A file connection is read-only. limit selects portable-record encoding policy.
+
+DbCapture (DbCaptureV1 collection) returns a captured source resource and
+(DbCapturedV1 owner incarnation revision collection count limit kind).
+Directory captures retain a protected native view, the collection metadata
+key and an original-candidate prototype from that exact view. Snapshot
+ownership is evidence of a historical observation, not a freshness assertion
+or writer permission. The actor supplying the directory owner retains writer
+authority separately. ACT captures retain their validated immutable mapping.
+
+DbCandidates (DbCandidatesV1 pattern), or DbScan (), uses a source resource and
+returns a candidate cursor. Selection yields a complete candidate superset;
+it neither binds stored variables nor projects answers. Each row's body and
+occurrence identity are separate portable CAV1 packets. Packet variable scope
+is fact-local. Candidate metadata reports their lengths, so a fact larger than
+a transport page is read in chunks without truncation:
+
+  DbCandidateNext  (DbCandidateNextV1 sequence work)
+  DbCandidateRead  (DbCandidateReadV1 sequence body|identity offset bytes)
+  DbCandidateClone (DbCandidateCloneV1 current|rewind)
+  DbCandidateCancel ()
+
+A native row is (StoreCandidateRow sequence body-bytes identity-bytes).
+StoreCandidatePaused is progress; StoreCandidateEnd requires exhaustion.
+Cancellation, staleness, invalidation, capacity and incomplete results remain
+explicit. Repeating the last sequence replays the same immutable packets.
+Advancing invalidates that cursor's prior packet loan. Clones retain their
+own loan/reference, and closing a source or cursor parent does not invalidate
+its captured children. Chunk size is bounded by the frame policy, not a limit
+on database size or result count.
+
+DbPublish (DbPublishV1 collection request operation changes values dependencies)
+uses the original captured source resource. Source metadata must match the
+requested collection and owner. A protected informing view is recovered from
+the source; whole-revision validation occurs through the existing publication
+owner under its writer gate. Facts, indexes, result values and the durable
+receipt publish together. Stored values/changes stay inert data.
+
+DbFreshV1 owner incarnation revision scope requirements are accepted only for
+this service's owner/incarnation and the informing revision, with DbWholeV1
+or (DbCollectionV1 collection) scope. The native commit validates that revision
+at publication. Foreign freshness and unsupported scopes refuse explicitly.
+DbHistoricalV1 observations assert no freshness or publication permission.
+The initial service has no foreign participant coordination protocol.
+
+DbResolve (DbResolveV1 collection request operation) resolves the durable
+receipt. DbEnsure and DbInfo delegate existing database operations. These
+handlers do not complete the client-side db:connect/ordinary remote Space
+provider, artifact transfer, streaming persistent import or automatic
+maintenance. Those are separate remaining integration obligations.
+
+make test-native-db-server qualifies directory and standalone ACT sources,
+original facts/open variables/duplicates, chunked rows, retained clones,
+source scope/rights, stale publication, a reply deliberately dropped after
+server publication, receipt resolution and process restart. Python is an
+independent protocol test client, not the runtime storage implementation.

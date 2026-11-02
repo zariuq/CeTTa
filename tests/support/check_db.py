@@ -51,6 +51,8 @@ if __name__ == '__main__':
         results.append(check_case(args.binary.resolve(), directory, 'ActMaintenance', 'DB_ACT_MAINTENANCE_OK'))
         results.append(check_case(args.binary.resolve(), directory, 'ActFile', 'DB_ACT_FILE_OK'))
         results.append(check_case(args.binary.resolve(), directory, 'ActExportJob', 'DB_ACT_EXPORT_JOB_OK'))
+        results.append(check_case(args.binary.resolve(), directory, 'Candidates', 'DB_CANDIDATES_OK'))
+        results.append(check_case(args.binary.resolve(), directory, 'SourceOrigin', 'DB_SOURCE_ORIGIN_OK'))
         named = directory / 'named-script.metta'
         named.write_text('!(import! &self (library db))\n'
             + '!(import! &self (library system))\n'
