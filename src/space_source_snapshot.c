@@ -33,10 +33,14 @@ static void source_storage(const Space *space,CettaStorageCensus *census) {
         s->ops->storage(s->prototype,census);
 }
 static bool overlay_local(Space *target,const Space *base) {
+    const Snapshot *captured=base->match_backend.source;
+    if (!captured->ops->value_byte_limit) return false;
+    size_t maximum=captured->ops->value_byte_limit(captured->prototype);
+    if (!maximum) return false;
     Space *copy=malloc(sizeof(*copy));if (!copy) return false;
     space_init_with_universe(copy,target->native.universe);
     if (space_source_snapshot_init(copy,(Space *)base) &&
-            space_source_overlay_init_owned(target,copy,CETTA_ATOM_WIRE_BYTES)) return true;
+            space_source_overlay_init_owned(target,copy,maximum)) return true;
     space_free(copy);free(copy);return false;
 }
 /* Each instance copies this table to preserve the source's cursor ABI. */

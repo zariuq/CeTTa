@@ -319,9 +319,10 @@ static void source_storage(const Space *space,CettaStorageCensus *census) {
     cetta_storage_object(census,source->statistics,sizeof(Statistics),CETTA_STORAGE_BLOCK);
     index_storage(source->indexes,source->index_count,census);cetta_disk_store_view_storage_census(source->view,census);
 }
+static size_t cursor_value_limit(const void *raw) {return ((const DiskSpaceCursor *)raw)->maximum_bytes;}
 static const SpaceSourceCursorOps cursor_ops={
     .clone=cursor_clone,.select=cursor_select,.next=cursor_next,.atom=cursor_atom,
-    .identity=cursor_identity,.free=cursor_free,.storage=cursor_storage,
+    .identity=cursor_identity,.value_byte_limit=cursor_value_limit,.free=cursor_free,.storage=cursor_storage,
 };
 static bool source_overlay_local(Space *target, const Space *base);
 static const SpaceMatchBackendOps source_ops={

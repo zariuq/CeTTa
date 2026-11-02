@@ -471,11 +471,13 @@ static void source_storage(const Space *space, CettaStorageCensus *census) {
   retained_storage(space->match_backend.source, census);
 }
 static bool source_overlay(Space *target, const Space *base);
+static size_t cursor_value_limit(const void *raw) { return ((const Cursor *)raw)->source->maximum; }
 static const SpaceSourceCursorOps cursor_ops = {.clone = cursor_clone,
                                                 .select = cursor_select,
                                                 .next = cursor_next,
                                                 .atom = cursor_atom,
                                                 .identity = cursor_identity,
+                                                .value_byte_limit = cursor_value_limit,
                                                 .storage = cursor_storage,
                                                 .free = cursor_free};
 static const SpaceMatchBackendOps source_ops = {.name = "native-act",
@@ -890,7 +892,7 @@ static CettaActStatus export_capture_row(CettaActSpaceExport *j) {
     CettaAtomWireStatus w=cetta_atom_wire_encode_bounded(atom,j->maximum,&j->wire,&j->wire_size);
     if (w!=ATOM_WIRE_OK) return wire_status(w);
     Atom *id=j->cursor.source_ops ? space_occurrence_cursor_identity(&j->cursor,index,&j->scratch) : NULL;
-    if (!j->cursor.source_ops || (id && id->kind==ATOM_EXPR && id->expr.len &&
+    if (!j->cursor.source_ops || !j->cursor.source_ops->identity || (id && id->kind==ATOM_EXPR && id->expr.len &&
         atom_is_symbol(id->expr.elems[0],"LocalOccurrence"))) {
       if (j->count>INT64_MAX) return CETTA_ACT_LIMIT;
       id=atom_expr3(&j->scratch,atom_symbol(&j->scratch,"SpaceOccurrenceIdV1"),

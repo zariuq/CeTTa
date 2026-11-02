@@ -61,6 +61,9 @@ typedef struct SpaceSourceCursorOps {
     /* Stable, ground occurrence identity. NULL means this source really uses
      * the ordinary Space's positional coordinates, not a scan-local counter. */
     Atom *(*identity)(const void *source, CettaIndex index);
+    /* Optional selected portable-record policy, retained across captures.
+     * A generic editable overlay needs this rather than inventing an allowance. */
+    size_t (*value_byte_limit)(const void *source);
     void (*free)(void *source);
     CettaStorageVisitor storage;
 } SpaceSourceCursorOps;
