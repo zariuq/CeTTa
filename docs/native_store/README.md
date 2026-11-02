@@ -7,7 +7,82 @@ Embedded programs and server clients use the same core and storage owner.
 The queue example is one application of these capabilities. The contracts and
 qualification scopes below describe the current implementation.
 
-## Database library
+## ACT snapshots without Rust
+
+`(library act)` reads and writes PathMap/MORK `ACTree03` in native C and
+provides the `CACT0001` profile for typed MeTTa occurrence bags. No Rust bridge
+is needed for this library or for importing `.act`/`.cact` data. File magic
+selects the decoder. The distinct `mork:*` execution service retains its own
+backend requirements.
+
+```metta
+!(import! &self (library act))
+!(let* (($space (new-space))
+         ($_ (add-atom $space (edge alice bob)))
+         ($_ (add-atom $space (edge alice bob)))
+         ($_ (act:dump! $space "graph.cact"))
+         ($saved (act:open "graph.cact"))
+         ($answers (collapse (match $saved (edge alice $who) $who)))
+         ($_ (act:close! $saved))) $answers)
+; (bob bob)
+```
+
+HE and Prime use `!(import! &self act)`. `act:open` returns an ordinary
+read-only Space. `act:workspace` supplies an editable overlay on the captured
+base; additions and removals use the ordinary Space operations. It retains
+the base independently. `act:dump!` publishes a new immutable snapshot;
+`act:load!` copies atoms into an editable Space as one admission batch.
+`act:close!` closes a snapshot or workspace. Already captured cursors retain
+their own backing until closed.
+
+`act:dump-mork!` writes the upstream set profile, deduplicating equal encoded
+terms. Its compact expression codec cannot represent every CAV1 value.
+Unsupported exports refuse before changing the destination. Use `act:dump!`
+to retain typed values, duplicate occurrences and saved identities.
+
+The PeTTa DB interface adds `db:export-act owner path` and
+`db:import-act owner path`, with collection-name overloads. Export captures
+one committed view; import uses one existing durable transaction and allocates
+occurrences in the destination database's domain. Neither callback nor an
+uncertain external action is automatically retried.
+
+Snapshot publication synchronizes the new file, renames it and synchronizes
+its directory. A directory-sync failure after rename returns `uncertain`;
+the destination may already contain the new image. Opening validates the
+image before exposing a Space. Queries use cursors over the immutable mapping,
+with first-three-field scalar indexes and a complete scan fallback. Startup
+validation is linear in the image; dumping currently constructs the encoded
+image and sorted entries in memory. This is not yet a bounded-memory bulk
+writer for billion-fact datasets.
+
+The live durable store still publishes its existing CDS2 index and journal.
+ACT snapshots do not replace transaction receipts, recovery, or the owner.
+Attaching ACT as a compacted durable base with a mutable delta remains a
+separate storage integration step. See [the format contract](ACT_FORMAT.txt)
+and [the integration requirements](ACT_SPACE_REQUIREMENTS.md).
+
+`make test-act-trie test-act-space` checks native round trips, byte ranges,
+allocation and publication failures, cross-process reopen, typed/open facts,
+duplicate identities, indexed joins, overlays, retained readers and corruption
+refusal. The independent format check is:
+
+```sh
+python3 tests/support/check_act_trie.py --pathmap /path/to/PathMap
+```
+
+The Rust oracle is a test dependency only. It compares logical key/value
+contents in both directions; valid encoders need not choose identical layouts.
+
+One native fixture of 131,072 `(row String Int)` occurrences produced
+13,997,336 bytes (106.79 bytes per occurrence, including identities and
+indexes). A single local run measured 0.51 s to dump and 1.01 s to validate
+and open. Across 1,000 indexed point matches, mean query time was 9.44 us
+for ACT and 14.68 us for the ordinary in-memory Space through the same
+matcher. These are fixture measurements, not SQLite parity or a density claim
+for arbitrary graphs. `test_act_space ... bench FILE 131072` reproduces the
+workload using the configured native test executable.
+
+## Database connections
 
 The PeTTa `(library db)` interface exposes connections, ordinary captured
 Spaces and scoped transactions over this same owner. Start with the short

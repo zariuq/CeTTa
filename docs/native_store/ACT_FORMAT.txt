@@ -1,0 +1,140 @@
+Native ACT snapshot profiles
+===========================
+
+ACTree03
+--------
+
+The byte-trie format follows PathMap arena_compact.rs at
+cb4e1e4eecb75f0be9846b4b75c69d5e2d2f647b. Its MIT attribution is retained
+in LICENSES/PathMap-MIT.txt. This is a C implementation, not a Rust ABI shim.
+
+The first eight bytes are ASCII ACTree03, followed by the root's unsigned
+64-bit little-endian offset. Branch and compressed-line nodes reference
+earlier bytes by positive relative offsets. Branch labels are increasing
+unsigned bytes; 32 or more labels use a 256-bit byte mask. A node may hold an
+unsigned 64-bit value and children. Lines contain a nonempty byte string and
+at most one child. At least eight trailing bytes permit the upstream reader's
+varint lookahead. New C images include eight zero bytes. The reader captures
+the header root once and also accepts upstream images containing historical
+roots and appended data.
+
+Varints encode 0..247 as one byte. A first byte 248..255 says that the next
+1..8 bytes contain a little-endian integer. The C reader checks each read,
+offset, branch mask and label sequence; it does not perform an unaligned
+eight-byte read beyond the supplied span. Validation requires strictly
+increasing keys, including prefixes, and permits the empty key. Backward
+child references make traversal acyclic. Traversal and construction use
+explicit stacks rather than C recursion.
+
+The generic API preserves arbitrary byte keys and values, without deciding
+what a value means. The MORK Space profile interprets keys through CeTTa's
+compact MORK expression codec and ignores the values. Each distinct encoded
+key denotes one occurrence. A deterministic digest of that key identifies the
+occurrence. This profile has the upstream set and lexical-token semantics;
+it cannot encode all typed MeTTa values. The legacy .copies protocol is not
+silently recovered: a nonempty or unreadable sidecar refuses opening. Empty
+sidecars are accepted. A successful new self-contained dump removes a stale
+regular-file sidecar after publishing the image.
+
+CACT0001
+--------
+
+This profile wraps one ACTree03 trie in a typed occurrence snapshot.
+All header words and payload references are unsigned little-endian 64-bit
+integers. Ordinal suffixes in trie keys are big-endian for byte ordering.
+
+  offset  width  field
+       0      8  ASCII CACT0001
+       8      8  header size, exactly 64
+      16      8  trie offset, exactly 64
+      24      8  trie size
+      32      8  payload-section offset, exactly 64 + trie size
+      40      8  payload-section size
+      48      8  occurrence count
+      56      8  index-profile version, exactly 1
+
+The payload section immediately follows the trie. The file ends with a
+32-byte SHA-256 of every preceding byte, including the header. No section
+overlaps another; the payload length must end exactly before the digest.
+File magic selects the profile regardless of its extension. Unknown versions,
+invalid geometry and checksum failures refuse opening.
+
+Trie namespaces use these one-byte prefixes:
+
+  1  ordinal:be64                                -> occurrence-record offset
+  2  reserved; no unused full-payload index is emitted
+  3  arity:be64 + position:be64 + exact:u8
+       + optional CAV1(scalar) + ordinal:be64     -> occurrence-record offset
+  4  ordinal:be64                                -> occurrence-record offset
+  5  CAV1(identity)                               -> ordinal
+
+Namespace 1 is the complete occurrence sequence, numbered from zero in
+captured declaration order.
+Namespace 3 contains one posting for every present expression position below
+three. Exact=1 records a Symbol or String's CAV1 encoding; exact=0 records
+every other kind, including variables and numbers. Numeric equality may
+promote representations, so it is never filtered by an exact typed byte key.
+Namespace 4 contains whole-variable facts. Namespace 5 enforces unique ground
+portable identity packets. All required postings are checked against the
+occurrence sequence on open; a valid digest does not excuse a missing index.
+
+For a selected scalar expression position, queries merge its exact posting,
+its non-exact posting and whole-variable facts in ordinal order. Other
+queries scan namespace 1. These are candidate supersets: CeTTa's existing
+matcher establishes actual matches and shared-variable constraints. There
+is no ACT-specific unifier, evaluator or answer deduplication.
+
+A payload body is an ACT varint byte length followed by a complete CAV1 atom.
+Identical body packets share one offset. A general occurrence record contains
+a nonzero ACT varint identity length, its CAV1 identity packet, and an
+eight-byte body offset relative to the payload section.
+
+The native identity (SpaceOccurrenceIdV1 DOMAIN ORDINAL), where DOMAIN is
+exactly 32 lowercase hexadecimal digits and ORDINAL is a nonnegative Int,
+has a compact representation. An identity-length field of zero is followed by
+three ACT varints: domain-blob offset, ordinal, and body offset. The shared
+domain blob is a length-prefixed 16-byte domain. Decoding reconstructs the exact
+same MeTTa identity; other identity shapes retain their full CAV1 packets.
+No heap pointer or process identifier is used as a persistent domain.
+
+Packet offsets and byte allowances are checked before decoding. CAV1 preserves
+supported portable numeric and
+string representations, binary symbol bytes, and variable sharing within
+one fact. Separate fact decodes allocate fresh variable identities. It does
+not serialize live native handles, authority, file descriptors or continuations.
+The existing codec's structural safeguards and execution-selected byte policy
+apply; these are not additional limits on the number of stored facts.
+
+An opened snapshot retains saved occurrence identities. Dumping an ordinary
+positional Space assigns a fresh random domain and an ordinal to each row.
+An overlay preserves its base identities; process-local LocalOccurrence
+coordinates receive new persistent snapshot identities. Atom payloads remain
+data: no implicit rewriting of application reference syntax is performed.
+Loading copies payloads into the destination domain and does not import the
+source's mutation authority or alias its occurrence identities.
+
+Lifetime and publication
+------------------------
+
+Mappings are immutable captured files. Cursors own their traversal and retain
+the mapping independently of the opening Space; selection and cloning retain
+that same image. Rename/unlink of the path cannot retarget existing readers.
+An external writer must not truncate or overwrite an inode while readers use
+it. Native dumps publish by replacement, never in-place rewriting.
+
+Dumping builds the complete image before publication. Write, file-sync or
+rename failure leaves the old destination. A directory-sync failure after
+rename reports uncertain: the new image may already be visible. Sidecar
+cleanup failure after publication is also uncertain. No automatic retry is
+implied. This is snapshot publication, not a durable transaction manager.
+
+The existing CDS2 owner remains responsible for live atomic edits, dependency
+validation, receipts and recovery. This profile is ready for immutable Space
+snapshots and transactional import/export; replacing a compacted CDS2 base
+with ACT plus a mutable delta requires a further owner/index integration.
+
+Opening currently validates the whole image. Dumping retains encoded entries
+and image bytes in memory. Incremental read cursors avoid materializing the
+Space, but these startup/export costs must be measured separately from query
+costs. A streaming bulk writer remains necessary before claiming bounded-memory
+checkpoint construction for very large stores.
