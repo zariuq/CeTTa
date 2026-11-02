@@ -26,6 +26,23 @@ bool cetta_shared_transition_guard_held_by_current_thread(void) {
     return g_shared_transition_lock_depth != 0u;
 }
 
+unsigned cetta_shared_transition_park(void) {
+    unsigned depth = g_shared_transition_lock_depth;
+    if (depth) {
+        g_shared_transition_lock_depth = 0u;
+        if (pthread_mutex_unlock(&g_shared_transition_mutex) != 0) abort();
+    }
+    return depth;
+}
+
+void cetta_shared_transition_resume(unsigned depth) {
+    if (g_shared_transition_lock_depth != 0u) abort();
+    if (depth) {
+        if (pthread_mutex_lock(&g_shared_transition_mutex) != 0) abort();
+        g_shared_transition_lock_depth = depth;
+    }
+}
+
 void cetta_shared_transition_guard_acquire(
     CettaSharedTransitionGuard *guard) {
     if (!guard || !cetta_shared_transition_scope_active())

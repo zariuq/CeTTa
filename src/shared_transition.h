@@ -13,6 +13,11 @@
 void cetta_shared_transition_scope_enter(void);
 void cetta_shared_transition_scope_leave(void);
 bool cetta_shared_transition_guard_held_by_current_thread(void);
+/* An owned IO continuation may park physical guards while it waits. The
+ * caller must retain everything it uses and validate its observations after
+ * resuming. This does not release language locks or grant replay authority. */
+unsigned cetta_shared_transition_park(void);
+void cetta_shared_transition_resume(unsigned parked_depth);
 
 /* Depth of the concurrent-evaluation scope on the current thread.  Only
  * scope_enter/scope_leave write it; it is exported so that the inert test

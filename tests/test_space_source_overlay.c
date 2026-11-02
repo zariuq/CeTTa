@@ -3,6 +3,7 @@
 #include "atom_wire.h"
 #include "parser.h"
 #include "petta_search_machine.h"
+#include "shared_transition.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -82,6 +83,26 @@ static const SpaceSourceCursorOps paused_rows = {
 };
 static const SpaceMatchBackendOps paused_ops = {
     .name = "paused-fixture", .occurrence_ops = &paused_rows, .occurrence_open = paused_open, .logical_len = paused_length,
+};
+static Space *wait_workspace;
+static Arena *wait_arena;
+static Atom *wait_atom;
+static void invalidating_wait(void *context) {
+    assert(context == wait_workspace && !cetta_shared_transition_guard_held_by_current_thread());
+    assert(space_admit_atom(wait_workspace, wait_arena, wait_atom));
+}
+static bool invalidating_pending(const void *source, SpaceSourceWait *out) {
+    (void)source;
+    *out = (SpaceSourceWait){.context = wait_workspace, .wait = invalidating_wait};
+    return true;
+}
+static const SpaceSourceCursorOps waiting_rows = {
+    .clone = paused_clone, .next = paused_next, .atom = paused_atom, .identity = paused_atom,
+    .pending_wait = invalidating_pending, .free = free,
+};
+static const SpaceMatchBackendOps waiting_ops = {
+    .name = "invalidating-wait-fixture", .occurrence_ops = &waiting_rows,
+    .occurrence_open = paused_open, .logical_len = paused_length,
 };
 
 int main(int argc, char **argv) {
@@ -295,6 +316,25 @@ int main(int argc, char **argv) {
     assert(paused_polls == 1 && !affected && space_length64(&pending) == 1);
     assert(space_source_overlay_changes(&pending, &answers, &added, &removed));
     assert(!added->expr.len && !removed->expr.len); space_free(&pending);
+
+    /* IO drops physical guards, never the captured observation. If another
+     * edit occurs during the wait, keep that edit and publish no removals. */
+    space_init(&pending); paused = malloc(sizeof(*paused)); assert(paused); space_init(paused);
+    paused->match_backend.kind = SPACE_ENGINE_SOURCE; paused->match_backend.ops = &waiting_ops;
+    assert(space_source_overlay_init_owned(&pending, paused, 4096));
+    wait_workspace = &pending; wait_arena = &data; wait_atom = parse(&data, "(intervening edit)");
+    paused_polls = 0;
+    cetta_shared_transition_scope_enter();
+    CettaSharedTransitionGuard outer = {0}, inner = {0};
+    cetta_shared_transition_guard_enter(&outer); cetta_shared_transition_guard_enter(&inner);
+    assert(space_remove_up_to_compared(&pending, parse(&data, "filter"), selects_edge_a, 1, &affected)
+        == CETTA_MATCH_INCOMPLETE);
+    assert(cetta_shared_transition_guard_held_by_current_thread());
+    cetta_shared_transition_guard_leave(&inner); cetta_shared_transition_guard_leave(&outer);
+    cetta_shared_transition_scope_leave();
+    assert(paused_polls == 1 && !affected && space_length64(&pending) == 2);
+    assert(space_source_overlay_changes(&pending, &answers, &added, &removed));
+    assert(added->expr.len == 1 && removed->expr.len == 0); space_free(&pending);
     cetta_disk_store_view_close(view); cetta_disk_store_view_close(empty); cetta_disk_store_close(store);
     arena_free(&transient); arena_free(&answers); arena_free(&data); symbol_table_free(&symbols);
     puts("source overlay: ordinary queries, identities, atomic edits, snapshot cursors and rollback passed");

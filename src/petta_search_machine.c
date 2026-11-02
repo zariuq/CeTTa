@@ -1384,6 +1384,8 @@ typedef struct {
 
 struct PettaMachineImpl {
     uint64_t instance_id;
+    bool source_pending;
+    SpaceSourceWait source_wait;
     /* Dynamic manufacture context of the goal currently being dispatched.
      * Zero means that this evaluation activation has not minted a variable. */
     CettaFrameIdentity manufacture_epoch;
@@ -9367,6 +9369,8 @@ static void petta_machine_table_storage_census(const PettaTableShared *shared,
 static void petta_machine_storage_visit(const void *raw, CettaStorageCensus *census) {
     const PettaMachineImpl *machine = raw;
     if (!machine || !cetta_storage_object(census, machine, sizeof(*machine), CETTA_STORAGE_BLOCK)) return;
+    if (machine->source_wait.storage)
+        machine->source_wait.storage(machine->source_wait.context, census);
     if (machine->pull_frame) {
         cetta_storage_refuse(census, "ActiveMachinePull"); return;
     }
@@ -21335,6 +21339,17 @@ static bool petta_machine_advance_choice(
                 space_occurrence_cursor_next_id(
                     &choice->as.match.occurrences, &candidate_index, &stored);
             if (step == SPACE_OCCURRENCE_CURSOR_PROGRESS) {
+                PettaMachineImpl *source_wait_receiver = g_petta_table_read_scopes &&
+                    *g_petta_table_read_scopes->length
+                    ? (*g_petta_table_read_scopes->frames)[0].machine->impl : NULL;
+                if (source_wait_receiver) {
+                    source_wait_receiver->source_pending = true;
+                    SpaceOccurrenceCursor *cursor = &choice->as.match.occurrences;
+                    if (!source_wait_receiver->source_wait.context && cursor->source_ops &&
+                            cursor->source_ops->pending_wait)
+                        cursor->source_ops->pending_wait(cursor->source_state,
+                            &source_wait_receiver->source_wait);
+                }
                 *failure = PETTA_MACHINE_STEP_SUSPENDED;
                 return false;
             }
@@ -42372,6 +42387,17 @@ dispatch_body_resume_segment:
     }
 }
 
+bool petta_machine_await_source(PettaMachine *machine) {
+    PettaMachineImpl *impl = machine ? machine->impl : NULL;
+    if (!impl || !impl->source_pending) return false;
+    unsigned parked = cetta_shared_transition_park();
+    if (impl->source_wait.wait) impl->source_wait.wait(impl->source_wait.context);
+    space_source_wait_clear(&impl->source_wait);
+    cetta_shared_transition_resume(parked);
+    impl->source_pending = false;
+    return true;
+}
+
 PettaMachineStep petta_machine_next(
     PettaMachine *machine, Atom **answer, Bindings *environment) {
     if (answer)
@@ -42382,6 +42408,10 @@ PettaMachineStep petta_machine_next(
         return PETTA_MACHINE_STEP_CAPACITY;
     }
 
+    if (__builtin_expect(machine->impl->source_pending, false)) {
+        space_source_wait_clear(&machine->impl->source_wait);
+        machine->impl->source_pending = false;
+    }
     /* Initialize each frame when it enters the live prefix. Unused capacity
      * is never copied or read; child pushes construct their complete frame. */
     PettaPullFrame initial[8];
@@ -42480,6 +42510,7 @@ static PettaMachine **petta_choice_owned_child(PettaChoice *choice) {
 
 static void petta_machine_destroy_local(PettaMachineImpl *impl) {
     assert(impl->choice_len == 0u);
+    space_source_wait_clear(&impl->source_wait);
     free(impl->choices);
     free(impl->goals);
     free(impl->goal_trail);

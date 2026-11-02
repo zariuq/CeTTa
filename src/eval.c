@@ -80957,6 +80957,7 @@ static __attribute__((noinline)) bool petta_eval_machine_run(
                 break;
             }
             if (step == PETTA_MACHINE_STEP_SUSPENDED) {
+                if (petta_machine_await_source(&machine)) continue;
                 if (prime_machine || portable_machine) {
                     machine_declined = true;
                     if (prime_machine) {
@@ -81294,6 +81295,7 @@ static __attribute__((noinline)) bool petta_eval_machine_run(
                 break;
             }
             if (step == PETTA_MACHINE_STEP_SUSPENDED) {
+                if (petta_machine_await_source(&machine)) continue;
                 bool external_branch_ready = frontier_admitted &&
                     petta_machine_external_branch_ready(&machine);
                 if (frontier_admitted &&

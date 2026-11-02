@@ -1008,6 +1008,9 @@ typedef struct PettaMachineImpl PettaMachineImpl;
 typedef struct {
     PettaMachineImpl *impl;
 } PettaMachine;
+/* Resume an IO suspension without restarting the search. True identifies
+ * source progress, including finite sources with no external wait. */
+bool petta_machine_await_source(PettaMachine *machine);
 
 /* Relational-control adapter for the evaluator-neutral continuation seam.
  * Capture is observational and restore is same-machine, authority-pinned, and

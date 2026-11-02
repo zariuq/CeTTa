@@ -7,6 +7,49 @@ Embedded programs and server clients use the same core and storage owner.
 The queue example is one application of these capabilities. The contracts and
 qualification scopes below describe the current implementation.
 
+## Database Spaces, embedded or served
+
+PeTTa programs import `(library db)`. `db:open` opens an embedded database;
+`db:connect` connects to `examples/native_db_server.metta` over a Unix socket.
+Both return connections with the same snapshot and transaction operations:
+
+```metta
+!(import! &self (library db))
+!(db:connect claims "claims.sock")
+!(db:transaction claims
+   (|-> ($space) (add-atom $space (edge alice bob))))
+!(match (db:snapshot claims) (edge alice $who) $who)
+!(db:close claims)
+```
+
+A transaction callback receives an ordinary editable Space, sees its edits,
+and runs once in the caller. A remote commit sends inert edits and portable
+answers, validates the captured database revision, and records the receipt
+atomically. `db:transaction-result` accepts a retained request and operation
+identity; `db:resolve` resolves a lost reply before another attempt. The
+callback is never automatically replayed. Snapshot and query children retain
+their connection independently of the parent handle.
+
+Database sources enumerate stable occurrence keys. Their order is preserved
+by capture and compaction; it is not a commit-time ordering. Use an explicit
+query ordering when an application needs one.
+
+`db:query` and compositional matching plans use the ordinary client matcher.
+Related collection leaves, including later join legs, retain the same captured
+database revision. Remote ordered/range plans and bounded bulk import are
+still pending; unsupported plans refuse explicitly. Current ordinary remote
+transaction proposals must fit the selected portable request policy.
+
+`db:compact` also works remotely. `db:compact-open`, `db:compact-step`,
+`db:compact-info` and `db:compact-cancel` expose cooperative jobs for embedded
+and remote connections. An open job retains its owner after connection close;
+each step takes an explicit work quantum. Cancellation leaves the frozen cut
+recoverable by a later compaction. Completed jobs retain inspectable status
+until `db:close`; `db:compact` closes its job automatically. Automatic
+scheduling is still pending.
+See the [remote contract](REMOTE_SPACE_PROTOCOL.txt). `make test-remote-db`
+checks ordinary programs, retained readers, callback receipts and failures.
+
 ## ACT snapshots without Rust
 
 `(library act)` reads and writes PathMap/MORK `ACTree03` in native C and
