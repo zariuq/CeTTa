@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+struct CettaStorageCensus;
 
 /* Immutable, disk-backed byte keys and out-of-line byte values. Application
  * schemas, multiplicity, order keys, secondary indexes and receipts belong
@@ -76,6 +77,29 @@ CettaDiskStatus cetta_disk_blob_reader_read(CettaDiskBlobReader *reader,
     uint64_t offset, void *destination, size_t capacity, size_t *written);
 uint64_t cetta_disk_blob_reader_size(const CettaDiskBlobReader *reader);
 void cetta_disk_blob_reader_close(CettaDiskBlobReader *reader);
+void cetta_disk_blob_reader_storage(const CettaDiskBlobReader *,struct CettaStorageCensus *);
+/* Sequential verification for private construction. Earlier chunks are not
+ * authoritative until the final chunk verifies the stored checksum. */
+CettaDiskStatus cetta_disk_blob_stream_open(const CettaDiskRoot *,CettaDiskBlob,
+    CettaDiskBlobReader **);
+CettaDiskStatus cetta_disk_blob_stream_next(CettaDiskBlobReader *,void *,
+    size_t capacity,size_t *written);
+/* Stream an out-of-line value into an unpublished candidate. The reader is
+ * sequential and its source must remain immutable. Failure leaves root/end
+ * unchanged; any appended tail remains private. No synchronization occurs. */
+typedef CettaDiskStatus (*CettaDiskReadBytes)(void *,uint64_t offset,
+    void *,size_t capacity,size_t *written);
+CettaDiskStatus cetta_disk_blob_append_stream(CettaDiskRoot *,uint64_t size,
+    CettaDiskReadBytes,void *context,CettaDiskBlob *);
+/* Build a compact CSI tree from increasing keys, streaming each body. No
+ * historical copied paths are retained. The caller keeps the destination fd
+ * alive; finish returns a private root, with no publication or sync. */
+typedef struct CettaDiskSortedBuilder CettaDiskSortedBuilder;
+CettaDiskStatus cetta_disk_sorted_open(const CettaDiskRoot *,CettaDiskSortedBuilder **);
+CettaDiskStatus cetta_disk_sorted_put(CettaDiskSortedBuilder *,CettaDiskBytes,
+    uint64_t size,CettaDiskReadBytes,void *context);
+CettaDiskStatus cetta_disk_sorted_finish(CettaDiskSortedBuilder *,CettaDiskRoot *);
+void cetta_disk_sorted_close(CettaDiskSortedBuilder *);
 
 /* Captures root/end and owns a duplicate fd. Appends, deletion, compaction and
  * unlinking the old segment do not change this view. Increasing byte-key order,

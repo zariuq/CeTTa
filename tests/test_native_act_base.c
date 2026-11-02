@@ -96,7 +96,13 @@ int main(void) {
     assert(cetta_act_base_builder_finish(b,&info)==CETTA_ACT_CORRUPT);
     cetta_act_base_builder_close(b);cleanup(&f);
     f=files();b=builder(&f);
-    assert(cetta_act_base_builder_finish(b,&info)==CETTA_ACT_OK && !info.records);
+    unsigned steps=0;CettaActStatus status;
+    assert(cetta_act_base_builder_finish_step(b,0,&info)==CETTA_ACT_PROGRESS);
+    do {
+        status=cetta_act_base_builder_finish_step(b,1,&info);
+        assert(++steps<1000);
+    } while (status==CETTA_ACT_PROGRESS);
+    assert(status==CETTA_ACT_OK && !info.records && steps>1);
     cetta_act_base_builder_close(b);
     assert(cetta_act_base_open_fd(f.fd[0],&base)==CETTA_ACT_OK);
     cetta_act_base_release(base);cleanup(&f);
@@ -110,12 +116,29 @@ int main(void) {
         off+=amount;
     }
     assert(cetta_act_base_key(b,(CettaActBytes){(const unsigned char *)"large",5})==CETTA_ACT_OK);
-    assert(cetta_act_base_builder_finish(b,&info)==CETTA_ACT_OK);
+    steps=0;
+    do {
+        status=cetta_act_base_builder_finish_step(b,257,&info);
+        assert(++steps<10000);
+    } while (status==CETTA_ACT_PROGRESS);
+    assert(status==CETTA_ACT_OK && steps>100);
     cetta_act_base_builder_close(b);
     assert(cetta_act_base_open_fd(f.fd[0],&base)==CETTA_ACT_OK);
     assert(cetta_act_base_lookup(base,(CettaActBytes){(const unsigned char *)"large",5},&ref,&size)==CETTA_ACT_OK && size==large);
     CettaActBytes bytes;assert(cetta_act_base_value(base,ref,&bytes)==CETTA_ACT_OK && bytes.size==large);
     for (size_t i=0;i<large;i++) assert(bytes.data[i]==(unsigned char)i);
+    cetta_act_base_release(base);base=NULL;
+    CettaActBaseValidation *validation=NULL;
+    assert(cetta_act_base_validation_open(f.fd[0],&validation)==CETTA_ACT_OK);
+    assert(cetta_act_base_validation_step(validation,0,&base)==CETTA_ACT_PROGRESS && !base);
+    steps=0;
+    do {
+        status=cetta_act_base_validation_step(validation,257,&base);
+        assert(++steps<10000);
+    } while (status==CETTA_ACT_PROGRESS);
+    assert(status==CETTA_ACT_OK && base && steps>100);
+    cetta_act_base_validation_close(validation);
+    assert(cetta_act_base_lookup(base,(CettaActBytes){(const unsigned char *)"large",5},&ref,&size)==CETTA_ACT_OK && size==large);
     cetta_act_base_release(base);cleanup(&f);
     puts("native ACT base checks passed");
 }

@@ -55,7 +55,7 @@ The publication owner must validate the result and establish its durability
 before installing a root that references it. Construction failure poisons
 the builder and never authorizes exposing its incomplete output.
 
-This component supplies a base codec and captured readers. The live store's
-CDS2 publication path remains separate until the CDS3 base/delta owner is
-integrated and qualified. Ordinary Space export still needs bounded external
-organization for its occurrence, identity and candidate-index namespaces.
+The CDS3 publication owner uses this codec beneath its logical byte-map
+interface; ACT_STORE_FORMAT.txt specifies base/delta installation and recovery.
+Ordinary Space export still needs bounded external organization for its
+occurrence, identity and candidate-index namespaces.

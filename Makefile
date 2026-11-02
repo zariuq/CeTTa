@@ -50460,9 +50460,9 @@ runtime/test-native-disk-index: tests/test_native_disk_index.c src/native_disk_i
 test-native-disk-index: runtime/test-native-disk-index
 	$<
 .PHONY: test-native-disk-store
-runtime/test-native-disk-store: tests/test_native_disk_store.c src/native_disk_store.c src/native_disk_store.h src/native_disk_index.c src/native_disk_index.h src/native_journal.c src/native_journal.h src/native_sha256.c src/native_sha256.h
+runtime/test-native-disk-store: src/native_act_base.h src/act_trie.h tests/test_native_disk_store.c src/native_disk_store.c src/native_disk_store.h src/native_disk_index.c src/native_disk_index.h src/native_journal.c src/native_journal.h src/native_sha256.c src/native_sha256.h
 	@mkdir -p runtime
-	$(CC) -O2 -Wall -Wextra -Werror -std=c11 -Isrc tests/test_native_disk_store.c src/native_disk_store.c src/native_disk_index.c src/native_journal.c src/native_sha256.c -Wl,--wrap=write,--wrap=fsync,--wrap=renameat,--wrap=openat -o $@
+	$(CC) -O2 -Wall -Wextra -Werror -std=c11 -Isrc tests/test_native_disk_store.c src/native_disk_store.c src/native_disk_index.c src/native_journal.c src/native_sha256.c src/native_act_base.c src/act_trie.c -Wl,--wrap=write,--wrap=fsync,--wrap=renameat,--wrap=openat -o $@
 test-native-disk-store: runtime/test-native-disk-store
 	$<
 LIBRARY_IMPORT_CATALOG_TEST_BIN = runtime/test-library-import-catalog-$(BUILD_OBJ_TAG)
@@ -50472,9 +50472,9 @@ $(LIBRARY_IMPORT_CATALOG_TEST_BIN): tests/support/test_library_import_catalog.c 
 test-library-import-catalog: $(LIBRARY_IMPORT_CATALOG_TEST_BIN)
 	$<
 test-all: test-library-import-catalog test-store-library
-runtime/libnative-disk-store.so: src/native_disk_store.c src/native_disk_store.h src/native_disk_index.c src/native_disk_index.h src/native_journal.c src/native_journal.h src/native_sha256.c src/native_sha256.h
+runtime/libnative-disk-store.so: src/native_act_base.h src/act_trie.h src/native_disk_store.c src/native_disk_store.h src/native_disk_index.c src/native_disk_index.h src/native_journal.c src/native_journal.h src/native_sha256.c src/native_sha256.h
 	@mkdir -p runtime
-	$(CC) -O2 -Wall -Wextra -Werror -std=c11 -fPIC -shared -Isrc src/native_disk_store.c src/native_disk_index.c src/native_journal.c src/native_sha256.c -o $@
+	$(CC) -O2 -Wall -Wextra -Werror -std=c11 -fPIC -shared -Isrc src/native_disk_store.c src/native_disk_index.c src/native_journal.c src/native_sha256.c src/native_act_base.c src/act_trie.c -o $@
 runtime/libnative-disk-index.so: src/native_disk_index.c src/native_disk_index.h src/native_journal.c src/native_journal.h src/native_sha256.c src/native_sha256.h
 	@mkdir -p runtime
 	$(CC) -O2 -Wall -Wextra -Werror -std=c11 -fPIC -shared -Isrc src/native_disk_index.c src/native_journal.c src/native_sha256.c -o $@
@@ -52704,3 +52704,17 @@ test-act-stream: runtime/test-act-stream runtime/test-act-stream-faults
 	@./runtime/test-act-stream-faults
 test-native-act-base: runtime/test-native-act-base
 	@./runtime/test-native-act-base
+
+NATIVE_ACT_STORE_SRC = src/native_disk_store.c src/native_disk_index.c src/native_journal.c src/native_sha256.c src/native_act_base.c src/act_trie.c
+NATIVE_ACT_STORE_HEADERS = src/native_disk_store.h src/native_disk_index.h src/native_act_base.h src/act_trie.h
+.PHONY: test-native-act-store
+runtime/test-native-act-store: tests/test_native_act_store.c $(NATIVE_ACT_STORE_SRC) $(NATIVE_ACT_STORE_HEADERS)
+	@mkdir -p runtime
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Isrc tests/test_native_act_store.c $(NATIVE_ACT_STORE_SRC) -o $@
+runtime/test-native-act-store-faults: tests/test_native_act_store_faults.c $(NATIVE_ACT_STORE_SRC) $(NATIVE_ACT_STORE_HEADERS)
+	@mkdir -p runtime
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Isrc tests/test_native_act_store_faults.c $(NATIVE_ACT_STORE_SRC) \
+		-Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=pread,--wrap=pwrite,--wrap=write,--wrap=fsync,--wrap=renameat -o $@
+test-native-act-store: runtime/test-native-act-store runtime/test-native-act-store-faults
+	@./runtime/test-native-act-store
+	@./runtime/test-native-act-store-faults

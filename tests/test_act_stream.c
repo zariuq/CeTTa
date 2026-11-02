@@ -43,6 +43,21 @@ static void check(const CettaActItem *items, size_t count, size_t budget) {
   CettaActBytes key; uint64_t value;
   assert(cetta_act_cursor_next(c, &key, &value) == CETTA_ACT_END);
   cetta_act_cursor_close(c);
+  assert(cetta_act_cursor_open(t,NULL,NULL,&c)==CETTA_ACT_OK);
+  unsigned pauses=0;
+  for (size_t i=0;i<count;i++) {
+    CettaActStatus status;
+    do {
+      status=cetta_act_cursor_next_bounded(c,1,&key,&value);
+      if (status==CETTA_ACT_PROGRESS) ++pauses;
+    } while (status==CETTA_ACT_PROGRESS);
+    assert(status==CETTA_ACT_OK && value==items[i].value);
+  }
+  CettaActStatus status;
+  do {status=cetta_act_cursor_next_bounded(c,1,&key,&value);} while (status==CETTA_ACT_PROGRESS);
+  assert(status==CETTA_ACT_END);
+  if (count>3) assert(pauses);
+  cetta_act_cursor_close(c);
   assert(cetta_act_cursor_open_reverse(t,NULL,NULL,&c)==CETTA_ACT_OK);
   for (size_t i=count;i>0;i--) {
     assert(cetta_act_cursor_next(c,&key,&value)==CETTA_ACT_OK);

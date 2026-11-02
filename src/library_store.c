@@ -21,6 +21,21 @@ static const char *reader_kind="disk-store-body",*scan_kind="disk-store-scan";
 static const char *query_kind="disk-space-query";
 static const char *batch_kind="disk-store-batch";
 static const char *program_kind="program-watch";
+static const char *compaction_kind="disk-store-compaction";
+typedef struct {CettaDiskCompaction *job;CettaDiskStore *owner;} Compaction;
+static void free_compaction(void *raw) {
+    Compaction *c=raw;cetta_disk_store_compact_act_close(c->job);free(c);
+}
+static void compaction_storage(const void *raw,CettaStorageCensus *census) {
+    const Compaction *c=raw;
+    if (cetta_storage_object(census,c,sizeof(*c),CETTA_STORAGE_BLOCK)) cetta_disk_store_compact_act_storage(c->job,census);
+}
+static void owner_storage(const void *raw,CettaStorageCensus *census) {
+    cetta_disk_store_storage(raw,census);
+}
+static void reader_storage(const void *raw,CettaStorageCensus *census) {
+    cetta_disk_store_blob_reader_storage(raw,census);
+}
 
 /* A scoped callback stages its same-domain changes in the supplied Space.
  * Reentrant publication would escape its rollback boundary. Other callers
@@ -195,7 +210,7 @@ static Atom *refused(Arena *a,const char *why) {
 }
 static Atom *status_value(Arena *a,CettaDiskStoreStatus status) {
     static const char *names[]={"ok","absent","invalid","busy","conflict","io","corrupt",
-        "capacity","limit","unknown","version","recovery-required","ownership"};
+        "capacity","limit","unknown","version","recovery-required","ownership","progress"};
     if (status==CETTA_STORE_UNKNOWN) return atom_expr(a,(Atom *[]){atom_symbol(a,"StoreUncertain")},1);
     return refused(a,(unsigned)status<sizeof(names)/sizeof(*names) ? names[status] : "invalid");
 }
@@ -225,10 +240,11 @@ static bool number(Atom *value,uint64_t *out) {
 static Atom *own(CettaLibraryContext *ctx,Arena *a,const char *kind,void *p,CettaNativeHandleFreeFn release) {
     uint64_t id=0;
     if (!cetta_native_handle_alloc(ctx,kind,p,release,&id)) { release(p); return NULL; }
-    CettaStorageVisitor visitor=kind==view_kind ? view_storage
+    CettaStorageVisitor visitor=kind==owner_kind ? owner_storage : kind==view_kind ? view_storage
         : kind==batch_kind ? cetta_disk_store_batch_storage_census
         : kind==program_kind ? program_storage
-        : kind==scan_kind ? scan_storage : NULL;
+        : kind==scan_kind ? scan_storage
+        : kind==reader_kind ? reader_storage : kind==compaction_kind ? compaction_storage : NULL;
     if (visitor && !cetta_native_handle_set_storage(ctx,kind,id,visitor)) {
         cetta_native_handle_close(ctx,kind,id);return NULL;
     }
@@ -534,6 +550,15 @@ static Atom *space_edit(CettaLibraryContext *ctx,Arena *a,Atom **args,uint32_t n
     return result ? result : refused(a,"capacity");
 }
 
+static Atom *compaction_progress(Arena *a,const CettaDiskCompaction *job) {
+    CettaDiskCompactionInfo info;
+    if (!cetta_disk_store_compact_act_info(job,&info)) return refused(a,"compaction-info");
+    static const char *phases[]={"copy","assemble","validate","install","complete"};
+    Atom *fields[]={atom_symbol(a,"StoreCompactionInfo"),
+        atom_symbol(a,info.phase<5 ? phases[info.phase] : "invalid"),unsigned_value(a,info.source_revision),
+        unsigned_value(a,info.records),unsigned_value(a,info.bytes_read),unsigned_value(a,info.output_bytes)};
+    return atom_expr(a,fields,6);
+}
 Atom *cetta_store_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **args,uint32_t n) {
     if (!ctx || !a || !head) return NULL;
     if (atom_is_symbol(head,"__cetta_lib_store_scalar_order")) {
@@ -700,14 +725,67 @@ Atom *cetta_store_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **a
     if (atom_is_symbol(head,"__cetta_lib_store_open")) {
         CettaDiskBytes path;
         if (n!=2 || !string(args[0],&path) || !path.size || memchr(path.data,0,path.size) ||
-            (!word(args[1],"create") && !word(args[1],"existing") && !word(args[1],"create-directory"))) return refused(a,"invalid-open");
+            (!word(args[1],"create") && !word(args[1],"existing") && !word(args[1],"create-directory") && !word(args[1],"create-act-directory"))) return refused(a,"invalid-open");
         CettaDiskStore *store=NULL;
-        CettaDiskStoreStatus status=word(args[1],"create-directory")
-            ? cetta_disk_store_open_created((const char *)path.data,NULL,&store)
+        CettaDiskStoreStatus status=word(args[1],"create-act-directory")
+            ? cetta_disk_store_open_created_act((const char *)path.data,NULL,&store)
+            : word(args[1],"create-directory") ? cetta_disk_store_open_created((const char *)path.data,NULL,&store)
             : cetta_disk_store_open((const char *)path.data,word(args[1],"create"),NULL,&store);
         if (status!=CETTA_STORE_OK) return status_value(a,status);
         Atom *handle=own(ctx,a,owner_kind,store,free_owner);
         return handle ? atom_expr2(a,atom_symbol(a,"StoreOpened"),handle) : refused(a,"capacity");
+    }
+
+    if (atom_is_symbol(head,"__cetta_lib_store_storage_info")) {
+        CettaNativeHandleUse use={0};
+        if (n!=1 || !acquire(ctx,view_kind,args[0],CETTA_NATIVE_HANDLE_USE_LIFETIME,&use)) return refused(a,"closed-view");
+        CettaDiskStoreInfo info;const CettaDiskStoreView *view=cetta_native_handle_use_resource(&use);
+        bool ok=cetta_disk_store_view_info(view,&info);Atom *result;
+        if (!ok) result=refused(a,"storage-info");
+        else {
+            Atom *fields[]={atom_symbol(a,"StoreStorageInfo"),atom_int(a,info.format),view_epoch_value(a,view),
+                unsigned_value(a,info.revision),unsigned_value(a,info.base_bytes),unsigned_value(a,info.delta_bytes),
+                unsigned_value(a,info.frozen_bytes),atom_bool(a,info.has_base),atom_bool(a,info.has_frozen)};
+            result=atom_expr(a,fields,9);
+        }
+        cetta_native_handle_use_release(&use);return result;
+    }
+    if (atom_is_symbol(head,"__cetta_lib_store_compact_act_open")) {
+        uint64_t budget=0;CettaNativeHandleUse use={0};
+        if (n!=2 || !number(args[1],&budget) || budget>SIZE_MAX) return refused(a,"compaction-budget");
+        if (!acquire(ctx,owner_kind,args[0],CETTA_NATIVE_HANDLE_USE_EXCLUSIVE,&use)) return refused(a,"closed-or-busy");
+        CettaDiskStore *store=cetta_native_handle_use_resource(&use);Atom *result=NULL;
+        {
+            Compaction *c=calloc(1,sizeof(*c));
+            if (!c) result=refused(a,"capacity");
+            else {
+                c->owner=store;CettaDiskStoreStatus status=cetta_disk_store_compact_act_open(store,(size_t)budget,&c->job);
+                if (status!=CETTA_STORE_OK) {free(c);result=status_value(a,status);}
+                else {
+                    Atom *progress=compaction_progress(a,c->job);
+                    Atom *handle=own(ctx,a,compaction_kind,c,free_compaction);
+                    if (!handle) {cetta_disk_store_require_recovery(store);result=status_value(a,CETTA_STORE_UNKNOWN);}
+                    else result=atom_expr3(a,atom_symbol(a,"StoreCompactionOpened"),handle,progress);
+                }
+            }
+        }
+        cetta_native_handle_use_release(&use);return result;
+    }
+    if (atom_is_symbol(head,"__cetta_lib_store_compact_act_step") ||
+        atom_is_symbol(head,"__cetta_lib_store_compact_act_info")) {
+        bool step=atom_is_symbol(head,"__cetta_lib_store_compact_act_step");uint64_t work=0;
+        if (n!=(step ? 2u : 1u) || (step && !number(args[1],&work))) return refused(a,"compaction-work");
+        CettaNativeHandleUse use={0};
+        if (!acquire(ctx,compaction_kind,args[0],step ? CETTA_NATIVE_HANDLE_USE_EXCLUSIVE : CETTA_NATIVE_HANDLE_USE_LIFETIME,&use))
+            return refused(a,"closed-or-busy-compaction");
+        Compaction *c=cetta_native_handle_use_resource(&use);Atom *result;
+        if (!step) result=compaction_progress(a,c->job);
+        else {
+            CettaDiskStoreView *view=NULL;CettaDiskStoreStatus status=cetta_disk_store_compact_act_step(c->job,work,&view);
+            result=status==CETTA_STORE_PROGRESS ? atom_expr2(a,atom_symbol(a,"StoreCompactionMore"),compaction_progress(a,c->job))
+                : status==CETTA_STORE_OK ? view_value(ctx,a,view,true,c->owner) : status_value(a,status);
+        }
+        cetta_native_handle_use_release(&use);return result;
     }
     if (atom_is_symbol(head,"__cetta_lib_store_backup")) {
         CettaDiskBytes path;CettaNativeHandleUse use={0};
@@ -742,7 +820,7 @@ Atom *cetta_store_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **a
         if (n!=1) return refused(a,"invalid-close");
         StoredSpace *space=stored_space_arg(args[0]);
         if (space) { stored_space_close(space);return atom_symbol(a,"StoreClosed"); }
-        const char *kinds[]={owner_kind,view_kind,reader_kind,scan_kind,query_kind,batch_kind,program_kind};
+        const char *kinds[]={owner_kind,view_kind,reader_kind,scan_kind,query_kind,batch_kind,program_kind,compaction_kind};
         for (size_t i=0;i<sizeof(kinds)/sizeof(*kinds);++i) {
             CettaNativeHandleUse use={0};uint64_t id=0;
             if (!acquire(ctx,kinds[i],args[0],CETTA_NATIVE_HANDLE_USE_LIFETIME,&use)) continue;
@@ -756,6 +834,7 @@ Atom *cetta_store_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **a
     if (atom_is_symbol(head,"__cetta_lib_store_snapshot")) simple="snapshot";
     else if (atom_is_symbol(head,"__cetta_lib_store_recover")) simple="recover";
     else if (atom_is_symbol(head,"__cetta_lib_store_compact")) simple="compact";
+    else if (atom_is_symbol(head,"__cetta_lib_store_compact_act")) simple="compact-act";
     else if (atom_is_symbol(head,"__cetta_lib_store_collect")) simple="collect";
     if (simple) {
         CettaNativeHandleUse use={0};
@@ -763,9 +842,10 @@ Atom *cetta_store_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **a
         CettaDiskStore *store=cetta_native_handle_use_resource(&use);CettaDiskStoreView *view=NULL;uint64_t removed=0;
         CettaDiskStoreStatus status=!strcmp(simple,"snapshot") ? cetta_disk_store_snapshot(store,&view) :
             !strcmp(simple,"recover") ? cetta_disk_store_recover(store,&view) :
-            !strcmp(simple,"compact") ? cetta_disk_store_compact(store,&view) : cetta_disk_store_collect(store,&removed);
+            !strcmp(simple,"compact") ? cetta_disk_store_compact(store,&view) :
+            !strcmp(simple,"compact-act") ? cetta_disk_store_compact_act(store,&view) : cetta_disk_store_collect(store,&removed);
         Atom *answer=status!=CETTA_STORE_OK ? status_value(a,status) :
-            view ? view_value(ctx,a,view,!strcmp(simple,"compact"),store) :
+            view ? view_value(ctx,a,view,!strcmp(simple,"compact") || !strcmp(simple,"compact-act"),store) :
             atom_expr2(a,atom_symbol(a,"StoreCollected"),unsigned_value(a,removed));
         cetta_native_handle_use_release(&use);return answer;
     }

@@ -18,7 +18,7 @@ typedef enum {
     CETTA_STORE_OK, CETTA_STORE_ABSENT, CETTA_STORE_INVALID, CETTA_STORE_BUSY,
     CETTA_STORE_CONFLICT, CETTA_STORE_IO, CETTA_STORE_CORRUPT, CETTA_STORE_NOMEM,
     CETTA_STORE_LIMIT, CETTA_STORE_UNKNOWN, CETTA_STORE_VERSION,
-    CETTA_STORE_RECOVERY_REQUIRED, CETTA_STORE_OWNERSHIP
+    CETTA_STORE_RECOVERY_REQUIRED, CETTA_STORE_OWNERSHIP, CETTA_STORE_PROGRESS
 } CettaDiskStoreStatus;
 typedef struct { size_t key_bytes, value_bytes; } CettaDiskStoreLimits;
 typedef enum { CETTA_STORE_POINT, CETTA_STORE_RANGE } CettaDiskStoreScopeKind;
@@ -43,12 +43,17 @@ CettaDiskStoreStatus cetta_disk_store_open(const char *directory, bool create,
  * a later retry. Existing-store ownership/corruption rules are unchanged. */
 CettaDiskStoreStatus cetta_disk_store_open_created(const char *directory,
     const CettaDiskStoreLimits *limits,CettaDiskStore **out);
+/* Select CDS3 only when creating a new store. Existing CDS2 stores reopen
+ * unchanged; conversion is an explicit maintenance operation. */
+CettaDiskStoreStatus cetta_disk_store_open_created_act(const char *directory,
+    const CettaDiskStoreLimits *limits,CettaDiskStore **out);
 /* Physical commit-domain equality only: no freshness or write authority. */
 bool cetta_disk_store_view_same_domain(const CettaDiskStoreView *left,
     const CettaDiskStoreView *right);
 bool cetta_disk_store_has_domain(const CettaDiskStore *store,
     const CettaDiskStoreView *view);
 void cetta_disk_store_close(CettaDiskStore *store);
+void cetta_disk_store_storage(const CettaDiskStore *,struct CettaStorageCensus *);
 /* The caller holds its exclusive owner use. A lost post-publication reply
  * resource must use the same write gate as an uncertain filesystem reply. */
 void cetta_disk_store_require_recovery(CettaDiskStore *store);
@@ -72,6 +77,13 @@ void cetta_disk_store_view_close(CettaDiskStoreView *view);
 const CettaDiskRoot *cetta_disk_store_view_root(const CettaDiskStoreView *view);
 uint64_t cetta_disk_store_view_revision(const CettaDiskStoreView *view);
 const unsigned char *cetta_disk_store_view_epoch(const CettaDiskStoreView *view);
+unsigned cetta_disk_store_view_format(const CettaDiskStoreView *);
+typedef struct {
+    unsigned format;
+    uint64_t revision, base_bytes, delta_bytes, frozen_bytes;
+    bool has_base,has_frozen;
+} CettaDiskStoreInfo;
+bool cetta_disk_store_view_info(const CettaDiskStoreView *,CettaDiskStoreInfo *);
 
 /* Logical reads through an owned captured view. Storage coordinates are
  * private to that view; callers never infer an occurrence identity from them.
@@ -90,6 +102,11 @@ CettaDiskStatus cetta_disk_store_blob_reader_read(CettaDiskStoreBlobReader *,
     uint64_t offset, void *, size_t capacity, size_t *written);
 uint64_t cetta_disk_store_blob_reader_size(const CettaDiskStoreBlobReader *);
 void cetta_disk_store_blob_reader_close(CettaDiskStoreBlobReader *);
+void cetta_disk_store_blob_reader_storage(const CettaDiskStoreBlobReader *,struct CettaStorageCensus *);
+CettaDiskStatus cetta_disk_store_blob_stream_open(const CettaDiskStoreView *,
+    CettaDiskStoreBlob,CettaDiskStoreBlobReader **);
+CettaDiskStatus cetta_disk_store_blob_stream_next(CettaDiskStoreBlobReader *,
+    void *,size_t capacity,size_t *written);
 CettaDiskStatus cetta_disk_store_cursor_open_range(const CettaDiskStoreView *,
     const CettaDiskBytes *lower, bool exclusive, const CettaDiskBytes *upper,
     CettaDiskStoreCursor **);
@@ -155,6 +172,22 @@ CettaDiskStoreStatus cetta_disk_store_recover(CettaDiskStore *store, CettaDiskSt
  * generation and live builders; an old reader keeps an unlinked inode alive.
  */
 CettaDiskStoreStatus cetta_disk_store_compact(CettaDiskStore *store, CettaDiskStoreView **out);
+typedef struct CettaDiskCompaction CettaDiskCompaction;
+typedef struct {
+    unsigned phase;
+    uint64_t source_revision, records, bytes_read, output_bytes;
+} CettaDiskCompactionInfo;
+/* Explicit ACT conversion/compaction. A job owns its publisher and frozen
+ * cut. New commits use a new active delta while copying proceeds. Closing a
+ * job abandons private construction; the frozen cut remains recoverable. */
+CettaDiskStoreStatus cetta_disk_store_compact_act_open(CettaDiskStore *,
+    size_t memory_bytes,CettaDiskCompaction **);
+CettaDiskStoreStatus cetta_disk_store_compact_act_step(CettaDiskCompaction *,
+    uint64_t byte_work,CettaDiskStoreView **);
+bool cetta_disk_store_compact_act_info(const CettaDiskCompaction *,CettaDiskCompactionInfo *);
+void cetta_disk_store_compact_act_storage(const CettaDiskCompaction *,struct CettaStorageCensus *);
+void cetta_disk_store_compact_act_close(CettaDiskCompaction *);
+CettaDiskStoreStatus cetta_disk_store_compact_act(CettaDiskStore *,CettaDiskStoreView **);
 CettaDiskStoreStatus cetta_disk_store_collect(CettaDiskStore *store, uint64_t *removed);
 
 /* A self-contained copy of exactly one captured revision into an existing,

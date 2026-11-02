@@ -63,11 +63,14 @@ the [base format](ACT_BASE_FORMAT.txt) specifies their layout and ownership.
 The ordinary Space dumper still needs external sorting and identity/index
 organization before its complete export path has the same memory guarantee.
 
-The live durable store still publishes its existing CDS2 index and journal.
-ACT snapshots do not replace transaction receipts, recovery, or the owner.
-Attaching ACT as a compacted durable base with a mutable delta remains a
-separate storage integration step. See [the format contract](ACT_FORMAT.txt)
-and [the integration requirements](ACT_SPACE_REQUIREMENTS.md).
+New `(library db)` databases use the CDS3 publication owner with immutable
+ACT bases and CSI deltas. Existing CDS2 stores reopen unchanged; `db:compact`
+explicitly converts them. Compaction freezes a cut while new writes continue,
+then installs the base with the latest delta and logical revision. Captured
+readers retain their previous storage. Receipts and indexes remain ordinary
+records under the same owner. See the [store format](ACT_STORE_FORMAT.txt),
+[portable snapshot format](ACT_FORMAT.txt) and
+[integration requirements](ACT_SPACE_REQUIREMENTS.md).
 
 `make test-act-trie test-act-space` checks native round trips, byte ranges,
 allocation and publication failures, cross-process reopen, typed/open facts,
@@ -100,6 +103,11 @@ and synchronizes its parent entry before initialization. Its immediate parent
 must already be a private directory owned by the process; ancestors must exist
 durably.
 The existing `"create"` and `"existing"` modes retain their prior contracts.
+`"create-act-directory"` selects CDS3 only for a newly created store.
+`db:compact connection` builds and installs an ACT base; `db:info connection`
+reports the captured storage revision, base/delta bytes and frozen-cut state.
+Native service handlers can drive `store:compact-act-open/step/info` in work
+quanta; closing the job leaves a recoverable frozen cut.
 
 `store:space-edit` runs one callable against an owned workspace, checks complete
 Space/program reads, extracts its occurrence delta and closes it on every
