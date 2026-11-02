@@ -26881,6 +26881,15 @@ static Space *space_snapshot_clone(Space *src, Arena *a) {
     SpaceEngine snapshot_backend = SPACE_ENGINE_NATIVE_CANDIDATE_EXACT;
     Space *clone = NULL;
 
+    if (src && src->match_backend.kind == SPACE_ENGINE_SOURCE) {
+        clone = cetta_malloc(sizeof(Space));
+        space_init_with_universe(clone,src->native.universe);
+        if (!space_match_backend_snapshot_clone(clone,src) || !space_copy_module_view(clone,src)) {
+            space_free(clone);free(clone);return NULL;
+        }
+        clone->kind=src->kind;space_set_strict(clone,src->strict);
+        held_space_register(clone,true);return clone;
+    }
     if (!space_match_backend_materialize_attached(
             src, eval_storage_arena(a)))
         return NULL;

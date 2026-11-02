@@ -13,6 +13,7 @@
 #include "storage_census.h"
 #include "stats.h"
 #include "space_path_index.h"
+#include "space_source_snapshot.h"
 #include "generated/cetta_execution_contracts.generated.h"
 #include <inttypes.h>
 #include <ctype.h>
@@ -5316,6 +5317,8 @@ bool space_match_backend_bridge_space(Space *s,
 }
 
 bool space_match_backend_snapshot_clone(Space *dst, Space *src) {
+    if (src && src->match_backend.kind == SPACE_ENGINE_SOURCE)
+        return space_source_snapshot_init(dst,src);
     space_dense_settle(src, SYMBOL_ID_NONE);
     CettaMorkSpaceHandle *source_bridge = NULL;
     CettaMorkSpaceHandle *snapshot_bridge = NULL;

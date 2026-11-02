@@ -5,6 +5,9 @@
 #include "native_sha256.h"
 #include "space_source_overlay.h"
 #include "storage_census.h"
+#include "byte_run_sort.h"
+#include "space_source_snapshot.h"
+#include "shared_transition.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <stdatomic.h>
@@ -93,11 +96,6 @@ static bool add(Bytes *b, const void *p, size_t n) {
     memcpy(b->data + b->len, p, n);
   b->len += n;
   return true;
-}
-static bool var(Bytes *b, uint64_t n) {
-  unsigned char p[9];
-  size_t size = cetta_act_put_varint(p, n);
-  return add(b, p, size);
 }
 static CettaActBytes view(const Bytes *b) {
   return (CettaActBytes){b->data, b->len};
@@ -569,90 +567,120 @@ static CettaActStatus check_index(Source *s, uint64_t row, uint64_t record,
   }
   return CETTA_ACT_OK;
 }
-static CettaActStatus source_read(const char *path, size_t maximum,
-                                  Source **out) {
-  *out = NULL;
-  if (!path || !*path)
-    return CETTA_ACT_CORRUPT;
-  if (sidecar_exists(path))
-    return CETTA_ACT_CORRUPT;
-  Source *s = calloc(1, sizeof(*s));
-  if (!s)
-    return CETTA_ACT_NOMEM;
-  atomic_init(&s->refs, 1);
-  s->maximum = maximum;
-  CettaActStatus st = cetta_act_map(path, &s->mapping);
-  if (st != CETTA_ACT_OK) {
-    release(s);
-    return st;
-  }
-  CettaActBytes image = cetta_act_image(s->mapping);
-  if (!memcmp(image.data, "ACTree03", 8)) {
-    st = cetta_act_view(s->mapping, 0, image.size, &s->trie);
-  } else if (image.size >= HEADER + DIGEST &&
-             !memcmp(image.data, "CACT0001", 8)) {
-    if (le64(image.data + 8) != HEADER || le64(image.data + 56) != 1) {
-      st = CETTA_ACT_CORRUPT;
-      goto failed;
+typedef struct {
+  Source *source;
+  CettaActCursor *structure;
+  Cursor *rows;
+  CettaNativeSha256 sha;
+  size_t hash_at;
+  Bytes previous;
+  bool have_previous;
+  unsigned phase;
+} SourceValidation;
+static void validation_close(SourceValidation *v) {
+  if (!v) return;
+  cursor_free(v->rows);cetta_act_cursor_close(v->structure);
+  release(v->source);free(v->previous.data);free(v);
+}
+static void validation_storage(const SourceValidation *v,CettaStorageCensus *census) {
+  if (!v || !cetta_storage_object(census,v,sizeof(*v),CETTA_STORAGE_BLOCK)) return;
+  cetta_storage_array(census,v->previous.data,v->previous.cap,1,0);
+  cursor_storage(v->rows,census);cetta_act_cursor_storage(v->structure,census);
+  retained_storage(v->source,census);
+}
+static CettaActStatus validation_open(int fd,size_t maximum,SourceValidation **out) {
+  *out=NULL;
+  SourceValidation *v=calloc(1,sizeof(*v));if (!v) return CETTA_ACT_NOMEM;
+  v->source=calloc(1,sizeof(*v->source));if (!v->source) {free(v);return CETTA_ACT_NOMEM;}
+  Source *s=v->source;atomic_init(&s->refs,1);s->maximum=maximum;
+  CettaActStatus st=cetta_act_map_fd(fd,&s->mapping);
+  if (st!=CETTA_ACT_OK) goto failed;
+  CettaActBytes image=cetta_act_image(s->mapping);
+  if (!memcmp(image.data,"ACTree03",8)) {
+    st=cetta_act_view(s->mapping,0,image.size,&s->trie);v->phase=1;
+  } else if (image.size>=HEADER+DIGEST && !memcmp(image.data,"CACT0001",8)) {
+    uint64_t at=le64(image.data+16),len=le64(image.data+24),body=le64(image.data+32),blen=le64(image.data+40);
+    if (le64(image.data+8)!=HEADER || le64(image.data+56)!=1 || at!=HEADER ||
+        len>SIZE_MAX-at || body!=at+len || body>image.size-DIGEST || blen!=image.size-DIGEST-body) {
+      st=CETTA_ACT_CORRUPT;goto failed;
     }
-    uint64_t at = le64(image.data + 16), len = le64(image.data + 24),
-             body = le64(image.data + 32), blen = le64(image.data + 40);
-    if (at != HEADER || len > SIZE_MAX - at || body != at + len ||
-        body > image.size - DIGEST || blen != image.size - DIGEST - body) {
-      st = CETTA_ACT_CORRUPT;
-      goto failed;
-    }
-    CettaNativeSha256 sha;
-    unsigned char digest[32];
-    cetta_native_sha256_init(&sha);
-    cetta_native_sha256_update(&sha, image.data, image.size - DIGEST);
-    cetta_native_sha256_finish(&sha, digest);
-    if (memcmp(digest, image.data + image.size - DIGEST, DIGEST)) {
-      st = CETTA_ACT_CORRUPT;
-      goto failed;
-    }
-    s->cetta = true;
-    s->payload_at = (size_t)body;
-    s->payload_size = (size_t)blen;
-    s->count = le64(image.data + 48);
-    st = cetta_act_view(s->mapping, (size_t)at, (size_t)len, &s->trie);
-  } else
-    st = CETTA_ACT_CORRUPT;
-  if (st != CETTA_ACT_OK)
-    goto failed;
-  st = cetta_act_validate(s->trie, NULL);
-  if (st != CETTA_ACT_OK)
-    goto failed;
-  Cursor *c = NULL;
-  st = cursor_new(s, NULL, &c);
-  if (st != CETTA_ACT_OK)
-    goto failed;
-  CettaIndex index;
-  SpaceOccurrenceCursorStep step;
-  while ((step = cursor_next(c, &index)) == SPACE_OCCURRENCE_CURSOR_ITEM) {
-    if (s->cetta) {
-      unsigned char key[9] = {OCC};
-      setbe(key + 1, index);
-      uint64_t record;
-      st = cetta_act_get(s->trie, (CettaActBytes){key, 9}, &record);
-      if (st == CETTA_ACT_OK)
-        st = check_index(s, index, record, c->atom, c->identity);
-      if (st != CETTA_ACT_OK)
-        break;
-    }
-  }
-  if (st == CETTA_ACT_OK && step != SPACE_OCCURRENCE_CURSOR_END)
-    st = CETTA_ACT_CORRUPT;
-  if (!s->cetta)
-    s->count = c->seen;
-  cursor_free(c);
-  if (st != CETTA_ACT_OK)
-    goto failed;
-  *out = s;
-  return CETTA_ACT_OK;
+    s->cetta=true;s->payload_at=(size_t)body;s->payload_size=(size_t)blen;s->count=le64(image.data+48);
+    st=cetta_act_view(s->mapping,(size_t)at,(size_t)len,&s->trie);
+    cetta_native_sha256_init(&v->sha);
+  } else {st=CETTA_ACT_CORRUPT;goto failed;}
+  if (st!=CETTA_ACT_OK) goto failed;
+  st=cetta_act_cursor_open(s->trie,NULL,NULL,&v->structure);
+  if (st!=CETTA_ACT_OK) goto failed;
+  if (maximum>SIZE_MAX-32 || !cetta_act_cursor_key_limit(v->structure,maximum+32)) {st=CETTA_ACT_LIMIT;goto failed;}
+  *out=v;return CETTA_ACT_OK;
 failed:
-  release(s);
-  return st;
+  validation_close(v);return st;
+}
+static CettaActStatus validation_step(SourceValidation *v,uint64_t work) {
+  if (!v || !work) return CETTA_ACT_PROGRESS;
+  Source *s=v->source;
+  if (!v->phase) {
+    CettaActBytes image=cetta_act_image(s->mapping);size_t length=image.size-DIGEST;
+    size_t n=length-v->hash_at<65536 ? length-v->hash_at : 65536;if (n>work) n=(size_t)work;
+    cetta_native_sha256_update(&v->sha,image.data+v->hash_at,n);v->hash_at+=n;
+    if (v->hash_at==length) {
+      unsigned char digest[32];cetta_native_sha256_finish(&v->sha,digest);
+      if (memcmp(digest,image.data+length,32)) return CETTA_ACT_CORRUPT;
+      v->phase=1;
+    }
+    return CETTA_ACT_PROGRESS;
+  }
+  if (v->phase==1) {
+    CettaActBytes key;uint64_t value;
+    CettaActStatus st=cetta_act_cursor_next_bounded(v->structure,work,&key,&value);
+    if (st==CETTA_ACT_PROGRESS) return st;
+    if (st==CETTA_ACT_END) {
+      st=cursor_new(s,NULL,&v->rows);if (st!=CETTA_ACT_OK) return st;
+      v->phase=2;return CETTA_ACT_PROGRESS;
+    }
+    if (st!=CETTA_ACT_OK) return st;
+    size_t n=v->previous.len<key.size ? v->previous.len : key.size;
+    int order=n ? memcmp(v->previous.data,key.data,n) : 0;
+    if (!order) order=(v->previous.len>key.size)-(v->previous.len<key.size);
+    if (v->have_previous && order>=0) return CETTA_ACT_CORRUPT;
+    v->previous.len=0;
+    if (!add(&v->previous,key.data,key.size)) return CETTA_ACT_NOMEM;
+    v->have_previous=true;return CETTA_ACT_PROGRESS;
+  }
+  if (v->phase==2) {
+    CettaIndex index;SpaceOccurrenceCursorStep step=cursor_next(v->rows,&index);
+    if (step==SPACE_OCCURRENCE_CURSOR_PROGRESS) return CETTA_ACT_PROGRESS;
+    if (step==SPACE_OCCURRENCE_CURSOR_END) {
+      if (!s->cetta) s->count=v->rows->seen;
+      v->phase=3;return CETTA_ACT_OK;
+    }
+    if (step!=SPACE_OCCURRENCE_CURSOR_ITEM)
+      return step==SPACE_OCCURRENCE_CURSOR_CAPACITY ? CETTA_ACT_NOMEM : CETTA_ACT_CORRUPT;
+    if (s->cetta) {
+      unsigned char key[9]={OCC};setbe(key+1,index);uint64_t record;
+      CettaActStatus st=cetta_act_get(s->trie,(CettaActBytes){key,9},&record);
+      if (st!=CETTA_ACT_OK) return st;
+      st=check_index(s,index,record,v->rows->atom,v->rows->identity);
+      if (st!=CETTA_ACT_OK) return st;
+    }
+    return CETTA_ACT_PROGRESS;
+  }
+  return CETTA_ACT_OK;
+}
+static CettaActStatus source_read_descriptor(int fd,size_t maximum,Source **out) {
+  *out=NULL;SourceValidation *v=NULL;
+  CettaActStatus status=validation_open(fd,maximum,&v);
+  if (status!=CETTA_ACT_OK) return status;
+  do status=validation_step(v,65536);while (status==CETTA_ACT_PROGRESS);
+  if (status==CETTA_ACT_OK) {*out=v->source;retain(*out);}
+  validation_close(v);return status;
+}
+static CettaActStatus source_read(const char *path,size_t maximum,Source **out) {
+  *out=NULL;
+  if (!path || !*path || sidecar_exists(path)) return CETTA_ACT_CORRUPT;
+  int fd=open(path,O_RDONLY|O_CLOEXEC|O_NONBLOCK);
+  if (fd<0) return CETTA_ACT_IO;
+  CettaActStatus status=source_read_descriptor(fd,maximum,out);close(fd);return status;
 }
 CettaActStatus cetta_act_space_capture(Space *target, const char *path,
                                        size_t maximum) {
@@ -671,85 +699,6 @@ CettaActStatus cetta_act_space_capture(Space *target, const char *path,
   return CETTA_ACT_OK;
 }
 
-typedef struct {
-  CettaActItem *items;
-  size_t len, cap;
-} Items;
-static bool item(Items *v, CettaActBytes prefix, const unsigned char *suffix,
-                 size_t n, uint64_t value) {
-  if (n > SIZE_MAX - prefix.size ||
-      !grow((void **)&v->items, &v->cap, v->len + 1, sizeof(*v->items)))
-    return false;
-  unsigned char *p = malloc(prefix.size + n ? prefix.size + n : 1);
-  if (!p)
-    return false;
-  if (prefix.size)
-    memcpy(p, prefix.data, prefix.size);
-  if (n)
-    memcpy(p + prefix.size, suffix, n);
-  v->items[v->len++] = (CettaActItem){{p, prefix.size + n}, value};
-  return true;
-}
-static int item_compare(const void *a, const void *b) {
-  CettaActBytes x = ((const CettaActItem *)a)->key,
-                y = ((const CettaActItem *)b)->key;
-  size_t n = x.size < y.size ? x.size : y.size;
-  int c = n ? memcmp(x.data, y.data, n) : 0;
-  return c ? c : (x.size > y.size) - (x.size < y.size);
-}
-typedef struct {
-  unsigned char *wire;
-  size_t size, offset;
-  uint64_t hash;
-} Payload;
-static bool payload(Items *unused, Payload **table, size_t *capacity,
-                    size_t *used, Bytes *out, unsigned char *wire, size_t size,
-                    size_t *offset) {
-  (void)unused;
-  uint64_t hash = UINT64_C(1469598103934665603);
-  for (size_t i = 0; i < size; i++)
-    hash = (hash ^ wire[i]) * UINT64_C(1099511628211);
-  if (!*capacity || *used >= *capacity / 2) {
-    size_t cap = *capacity ? *capacity * 2 : 32;
-    if (cap < *capacity || cap > SIZE_MAX / sizeof(Payload)) {
-      free(wire);
-      return false;
-    }
-    Payload *next = calloc(cap, sizeof(*next));
-    if (!next) {
-      free(wire);
-      return false;
-    }
-    for (size_t i = 0; i < *capacity; i++)
-      if ((*table)[i].wire) {
-        size_t at = (*table)[i].hash & (cap - 1);
-        while (next[at].wire)
-          at = (at + 1) & (cap - 1);
-        next[at] = (*table)[i];
-      }
-    free(*table);
-    *table = next;
-    *capacity = cap;
-  }
-  size_t at = hash & (*capacity - 1);
-  while ((*table)[at].wire) {
-    Payload *p = &(*table)[at];
-    if (p->hash == hash && p->size == size && !memcmp(p->wire, wire, size)) {
-      *offset = p->offset;
-      free(wire);
-      return true;
-    }
-    at = (at + 1) & (*capacity - 1);
-  }
-  *offset = out->len;
-  if (!var(out, size) || !add(out, wire, size)) {
-    free(wire);
-    return false;
-  }
-  (*table)[at] = (Payload){wire, size, *offset, hash};
-  (*used)++;
-  return true;
-}
 static bool native_identity(const Atom *id, unsigned char domain[16],
                             uint64_t *ordinal) {
   if (!id || id->kind != ATOM_EXPR || id->expr.len != 3 ||
@@ -776,289 +725,460 @@ static bool native_identity(const Atom *id, unsigned char domain[16],
   *ordinal = (uint64_t)number->ground.ival;
   return true;
 }
-/* The old sidecar protocol is deliberately refused on reads. Remove a stale
- * sidecar only after publishing the new self-contained image: a concurrent
- * reader may refuse briefly, but cannot accept the old lossy image as new. */
-static CettaActStatus publish_snapshot(const char *path, CettaActBytes bytes) {
-  if (!path)
-    return CETTA_ACT_CORRUPT;
-  size_t n = strlen(path);
-  if (n > SIZE_MAX - 8)
-    return CETTA_ACT_LIMIT;
-  char *sidecar = malloc(n + 8), *directory = strdup(path);
-  if (!sidecar || !directory) {
-    free(sidecar);
-    free(directory);
-    return CETTA_ACT_NOMEM;
-  }
-  memcpy(sidecar, path, n);
-  memcpy(sidecar + n, ".copies", 8);
-  struct stat st;
-  bool stale = lstat(sidecar, &st) == 0;
-  CettaActStatus result = CETTA_ACT_IO;
-  if ((stale && !S_ISREG(st.st_mode)) || (!stale && errno != ENOENT))
-    goto done;
-  result = cetta_act_publish(path, bytes);
-  if (stale && (result == CETTA_ACT_OK || result == CETTA_ACT_UNCERTAIN)) {
-    if (unlink(sidecar)) {
-      result = CETTA_ACT_UNCERTAIN;
-      goto done;
-    }
-    char *slash = strrchr(directory, '/');
-    if (slash) {
-      if (slash == directory)
-        slash[1] = 0;
-      else
-        *slash = 0;
-    } else {
-      directory[0] = '.';
-      directory[1] = 0;
-    }
-    int fd = open(directory, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-    if (fd < 0 || fsync(fd))
-      result = CETTA_ACT_UNCERTAIN;
-    if (fd >= 0)
-      close(fd);
-  }
-done:
-  free(sidecar);
-  free(directory);
-  return result;
-}
-CettaActStatus cetta_act_space_dump(Space *space, const char *path, bool mork,
-                                    size_t maximum) {
-  if (!space)
-    return CETTA_ACT_CORRUPT;
+typedef struct {
+  CettaByteSpan identity;
+  uint64_t body,domain,native_ordinal,postings,compact;
+} ExportOccurrence;
+typedef struct { CettaByteSpan key; uint64_t ordinal,identity; } ExportPosting;
+enum { EXPORT_CAPTURE,EXPORT_BODY_SORT,EXPORT_BODY_NEXT,EXPORT_BODY_COMPARE,
+  EXPORT_BODY_COPY,EXPORT_MAP_ADD,EXPORT_MAP_SORT,EXPORT_OCCURRENCE,
+  EXPORT_ID_COPY,EXPORT_POSTINGS,EXPORT_KEY_SORT,EXPORT_KEY_NEXT,
+  EXPORT_KEY_COMPARE,EXPORT_KEY_BUILD,EXPORT_TRIE_FINISH,EXPORT_ASSEMBLE,
+  EXPORT_VALIDATE,EXPORT_PUBLISH,EXPORT_COMPLETE };
+struct CettaActSpaceExport {
+  Space captured;
+  bool has_capture,mork,failed,row_pending,body_added,domain_added,have_previous;
+  Arena retention,scratch;
+  ArenaMark empty;
   SpaceOccurrenceCursor cursor;
-  space_occurrence_cursor_init_empty(&cursor);
-  if (!space_occurrence_cursor_init_scan(space, &cursor))
-    return CETTA_ACT_NOMEM;
-  Arena scratch;
-  arena_init_detached(&scratch);
-  ArenaMark mark = arena_mark(&scratch);
-  Items items = {0};
-  Bytes bodies = {0};
-  Payload *table = NULL;
-  size_t cap = 0, used = 0;
-  uint64_t count = 0;
-  CettaActStatus status = CETTA_ACT_OK;
-  CettaIndex index;
-  Atom *atom;
-  SpaceOccurrenceCursorStep step;
-  /* A new domain is needed only for positional in-memory occurrences. */
+  CettaActPublication *publication;
+  CettaByteRunSort *bodies,*offsets,*keys;
+  CettaActBuilder *builder;
+  SourceValidation *validation;
+  int payload,occurrences,postings,trie;
+  size_t maximum,memory;
+  unsigned phase;
+  CettaActStatus failure;
+  uint64_t count,payload_end,occurrence_at,posting_at,posting_count,trie_size,copy_at,copy_end;
+  uint64_t unique_offset,body_offset,domain_offset,record_offset,postings_left;
+  uint64_t assembly_at,assembly_size;
+  unsigned assembly_part;
   char domain[33];
-  if (!mork) {
-    unsigned char nonce[16];
-    int random = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
-    if (random < 0) {
-      status = CETTA_ACT_IO;
-      goto done;
-    }
-    size_t at = 0;
-    while (at < sizeof(nonce)) {
-      ssize_t n = read(random, nonce + at, sizeof(nonce) - at);
-      if (n < 0 && errno == EINTR)
-        continue;
-      if (n <= 0) {
-        close(random);
-        status = CETTA_ACT_IO;
-        goto done;
-      }
-      at += (size_t)n;
-    }
-    close(random);
-    for (unsigned i = 0; i < 16; i++)
-      snprintf(domain + 2 * i, 3, "%02x", nonce[i]);
+  unsigned char native_domain[16],io[32768],header[HEADER];
+  unsigned char *wire,*identity_wire;
+  size_t wire_size,identity_size;
+  CettaByteSpan body_span,domain_span,previous;
+  CettaByteSortItem current;
+  ExportOccurrence occurrence;
+  ExportPosting posting;
+  CettaNativeSha256 sha;
+};
+static bool export_io(int fd,void *raw,size_t n,uint64_t at,bool write) {
+  if (at>INT64_MAX || n>(uint64_t)INT64_MAX-at) return false;
+  unsigned char *p=raw;
+  while (n) {
+    ssize_t done=write ? pwrite(fd,p,n,(off_t)at) : pread(fd,p,n,(off_t)at);
+    if (done<0 && errno==EINTR) continue;
+    if (done<=0) return false;
+    p+=done;n-=(size_t)done;at+=(uint64_t)done;
   }
-  while ((step = space_occurrence_cursor_next(&cursor, &index, &atom)) ==
-         SPACE_OCCURRENCE_CURSOR_ITEM) {
-    arena_reset(&scratch, mark);
-    unsigned char *wire = NULL;
-    size_t size = 0;
-    const char *why = NULL;
-    if (mork) {
-      if (!cetta_mm2_atom_to_bridge_expr_bytes(&scratch, atom, &wire, &size,
-                                               &why)) {
-        status = CETTA_ACT_LIMIT;
-        goto done;
-      }
-      bool ok = item(&items, (CettaActBytes){wire, size}, NULL, 0, 0);
-      free(wire);
-      if (!ok) {
-        status = CETTA_ACT_NOMEM;
-        goto done;
-      }
-    } else {
-      CettaAtomWireStatus w =
-          cetta_atom_wire_encode_bounded(atom, maximum, &wire, &size);
-      if (w != ATOM_WIRE_OK) {
-        status = wire_status(w);
-        goto done;
-      }
-      unsigned char ns = ID;
-      bool ok;
-      size_t body;
-      if (!payload(&items, &table, &cap, &used, &bodies, wire, size, &body)) {
-        status = CETTA_ACT_NOMEM;
-        goto done;
-      }
-      if (!cursor.source_ops && count > INT64_MAX) {
-        status = CETTA_ACT_LIMIT;
-        goto done;
-      }
-      Atom *id =
-          cursor.source_ops
-              ? space_occurrence_cursor_identity(&cursor, index, &scratch)
-              : atom_expr3(&scratch,
-                           atom_symbol(&scratch, "SpaceOccurrenceIdV1"),
-                           atom_string(&scratch, domain),
-                           atom_int(&scratch, (int64_t)count));
-      /* Overlay additions have process-local coordinates, not persistent
-       * identities. A checkpoint gives them a fresh persistent domain;
-       * identities inherited from the captured base remain unchanged. */
-      if (id && atom_head_symbol_id(id) != SYMBOL_ID_NONE &&
-          id->kind == ATOM_EXPR && id->expr.len &&
-          atom_is_symbol(id->expr.elems[0], "LocalOccurrence")) {
-        if (count > INT64_MAX) {
-          status = CETTA_ACT_LIMIT;
-          goto done;
-        }
-        id = atom_expr3(&scratch, atom_symbol(&scratch, "SpaceOccurrenceIdV1"),
-                        atom_string(&scratch, domain),
-                        atom_int(&scratch, (int64_t)count));
-      }
-      if (!id || atom_has_vars(id)) {
-        status = CETTA_ACT_CORRUPT;
-        goto done;
-      }
-      unsigned char *idwire = NULL;
-      size_t idsize;
-      w = cetta_atom_wire_encode_bounded(id, maximum, &idwire, &idsize);
-      if (w != ATOM_WIRE_OK) {
-        status = wire_status(w);
-        goto done;
-      }
-      unsigned char native_domain[16];
-      uint64_t native_ordinal = 0;
-      bool compact = native_identity(id, native_domain, &native_ordinal);
-      size_t domain_offset = 0;
-      if (compact) {
-        unsigned char *copy = malloc(16);
-        if (copy)
-          memcpy(copy, native_domain, 16);
-        if (!copy || !payload(&items, &table, &cap, &used, &bodies, copy, 16,
-                              &domain_offset)) {
-          free(idwire);
-          status = CETTA_ACT_NOMEM;
-          goto done;
-        }
-      }
-      size_t record = bodies.len;
-      unsigned char body_offset[8], ordinal[8], occurrence[9] = {OCC};
-      setle(body_offset, body);
-      setbe(ordinal, count);
-      setbe(occurrence + 1, count);
-      ok = compact ? var(&bodies, 0) && var(&bodies, domain_offset) &&
-                         var(&bodies, native_ordinal) && var(&bodies, body)
-                   : var(&bodies, idsize) && add(&bodies, idwire, idsize) &&
-                         add(&bodies, body_offset, 8);
-      ok = ok && item(&items, (CettaActBytes){occurrence, 9}, NULL, 0, record);
-      ns = ID;
-      Bytes idkey = {0};
-      ok = ok && add(&idkey, &ns, 1) && add(&idkey, idwire, idsize) &&
-           item(&items, view(&idkey), NULL, 0, count);
-      free(idkey.data);
-      free(idwire);
-      if (atom->kind == ATOM_VAR) {
-        ns = OPEN;
-        ok = ok && item(&items, (CettaActBytes){&ns, 1}, ordinal, 8, record);
-      } else if (atom->kind == ATOM_EXPR)
-        for (size_t p = 0; ok && p < atom->expr.len && p < 3; p++) {
-          Bytes key = {0};
-          ok = field_prefix(&key, atom->expr.len, p, atom->expr.elems[p],
-                            maximum) &&
-               item(&items, view(&key), ordinal, 8, record);
-          free(key.data);
-        }
-      if (!ok) {
-        status = CETTA_ACT_NOMEM;
-        goto done;
-      }
-    }
-    if (count == UINT64_MAX) {
-      status = CETTA_ACT_LIMIT;
-      goto done;
-    }
-    count++;
-  }
-  if (step != SPACE_OCCURRENCE_CURSOR_END) {
-    status = step == SPACE_OCCURRENCE_CURSOR_CAPACITY ? CETTA_ACT_NOMEM
-                                                      : CETTA_ACT_CORRUPT;
-    goto done;
-  }
-  qsort(items.items, items.len, sizeof(*items.items), item_compare);
-  size_t unique = 0;
-  for (size_t i = 0; i < items.len; i++) {
-    if (unique &&
-        item_compare(&items.items[unique - 1], &items.items[i]) == 0) {
-      if (!mork) {
-        status = CETTA_ACT_CORRUPT;
-        goto done;
-      }
-      free((void *)items.items[i].key.data);
-      items.items[i].key.data = NULL;
-      continue;
-    }
-    items.items[unique++] = items.items[i];
-    if (unique - 1 != i)
-      items.items[i].key.data = NULL;
-  }
-  items.len = unique;
-  unsigned char *trie = NULL;
-  size_t trie_size;
-  status = cetta_act_build(items.items, items.len, &trie, &trie_size);
-  if (status != CETTA_ACT_OK)
-    goto done;
-  if (mork) {
-    status = publish_snapshot(path, (CettaActBytes){trie, trie_size});
-    free(trie);
-  } else {
-    Bytes file = {0};
-    unsigned char header[HEADER] = {0};
-    memcpy(header, "CACT0001", 8);
-    setle(header + 8, HEADER);
-    setle(header + 16, HEADER);
-    setle(header + 24, trie_size);
-    setle(header + 32, HEADER + trie_size);
-    setle(header + 40, bodies.len);
-    setle(header + 48, count);
-    setle(header + 56, 1);
-    bool ok = add(&file, header, HEADER) && add(&file, trie, trie_size) &&
-              add(&file, bodies.data, bodies.len);
-    free(trie);
-    if (ok) {
-      CettaNativeSha256 sha;
-      unsigned char digest[32];
-      cetta_native_sha256_init(&sha);
-      cetta_native_sha256_update(&sha, file.data, file.len);
-      cetta_native_sha256_finish(&sha, digest);
-      ok = add(&file, digest, 32);
-    }
-    status = ok ? publish_snapshot(path, view(&file)) : CETTA_ACT_NOMEM;
-    free(file.data);
-  }
-done:
-  space_occurrence_cursor_release(&cursor);
-  arena_free(&scratch);
-  for (size_t i = 0; i < items.len; i++)
-    free((void *)items.items[i].key.data);
-  free(items.items);
-  free(bodies.data);
-  for (size_t i = 0; i < cap; i++)
-    free(table[i].wire);
-  free(table);
-  return status;
+  return true;
 }
+static CettaActStatus export_fail(CettaActSpaceExport *j,CettaActStatus s) {
+  j->failed=true;j->failure=s;return s;
+}
+static bool export_append(CettaActSpaceExport *j,const void *p,size_t n) {
+  if (!export_io(j->payload,(void *)p,n,j->payload_end,true)) return false;
+  j->payload_end+=n;return true;
+}
+static bool export_var(CettaActSpaceExport *j,uint64_t value) {
+  unsigned char bytes[9];size_t n=cetta_act_put_varint(bytes,value);
+  return export_append(j,bytes,n);
+}
+static CettaActStatus export_sorter(CettaActSpaceExport *j,size_t budget,CettaByteRunSort **out) {
+  int fds[3]={-1,-1,-1};CettaActStatus s=CETTA_ACT_OK;
+  for (size_t i=0;i<3 && s==CETTA_ACT_OK;i++) s=cetta_act_publication_scratch(j->publication,&fds[i]);
+  if (s==CETTA_ACT_OK) s=cetta_byte_sort_open(fds[0],fds[1],fds[2],budget,out);
+  for (size_t i=0;i<3;i++) if (fds[i]>=0) close(fds[i]);
+  return s;
+}
+void cetta_act_space_export_close(CettaActSpaceExport *j) {
+  if (!j) return;
+  {
+    CETTA_SCOPED_SHARED_TRANSITION(cleanup);
+    space_occurrence_cursor_release(&j->cursor);
+    if (j->has_capture) space_free(&j->captured);
+    arena_free(&j->retention);arena_free(&j->scratch);
+  }
+  cetta_byte_sort_close(j->bodies);cetta_byte_sort_close(j->offsets);cetta_byte_sort_close(j->keys);
+  validation_close(j->validation);cetta_act_builder_close(j->builder);
+  int fd[4]={j->payload,j->occurrences,j->postings,j->trie};
+  for (size_t i=0;i<4;i++) if (fd[i]>=0) close(fd[i]);
+  cetta_act_publication_close(j->publication);
+  free(j->wire);free(j->identity_wire);free(j);
+}
+CettaActStatus cetta_act_space_export_open(Space *space,const char *path,bool mork,
+    size_t maximum,size_t memory,CettaActSpaceExport **out) {
+  if (!out) return CETTA_ACT_CORRUPT;
+  *out=NULL;
+  if (!space || !maximum || memory/4<cetta_act_builder_minimum_memory()) return CETTA_ACT_LIMIT;
+  CettaActSpaceExport *j=calloc(1,sizeof(*j));if (!j) return CETTA_ACT_NOMEM;
+  j->payload=j->occurrences=j->postings=j->trie=-1;
+  j->maximum=maximum;j->memory=memory;j->mork=mork;
+  arena_init_detached(&j->retention);arena_init_detached(&j->scratch);j->empty=arena_mark(&j->scratch);
+  space_occurrence_cursor_init_empty(&j->cursor);
+  CettaActStatus s=CETTA_ACT_OK;
+  {
+    CETTA_SCOPED_SHARED_TRANSITION(capture);
+    if (!space_owner_is_current(space)) s=CETTA_ACT_CORRUPT;
+    else if (space->match_backend.kind==SPACE_ENGINE_SOURCE) {
+      space_init_with_universe(&j->captured,space->native.universe);j->has_capture=true;
+      if (!space_source_snapshot_init(&j->captured,space)) s=CETTA_ACT_NOMEM;
+      else space=&j->captured;
+    } else if (!atom_space(&j->retention,space)) s=CETTA_ACT_NOMEM;
+    if (s==CETTA_ACT_OK && !space_occurrence_cursor_init_scan(space,&j->cursor)) s=CETTA_ACT_NOMEM;
+  }
+  if (s==CETTA_ACT_OK) s=cetta_act_publication_open(path,&j->publication);
+  if (s==CETTA_ACT_OK) s=cetta_act_publication_sidecar(j->publication,false);
+  if (s==CETTA_ACT_OK) s=export_sorter(j,memory/4,&j->keys);
+  if (!mork && s==CETTA_ACT_OK) s=export_sorter(j,memory/4,&j->bodies);
+  if (!mork && s==CETTA_ACT_OK) s=export_sorter(j,memory/4,&j->offsets);
+  int *files[4]={&j->payload,&j->occurrences,&j->postings,&j->trie};
+  for (unsigned i=0;i<4 && s==CETTA_ACT_OK;i++) s=cetta_act_publication_scratch(j->publication,files[i]);
+  if (s==CETTA_ACT_OK) {
+    int frontier=-1,key=-1;
+    s=cetta_act_publication_scratch(j->publication,&frontier);
+    if (s==CETTA_ACT_OK) s=cetta_act_publication_scratch(j->publication,&key);
+    if (s==CETTA_ACT_OK) s=cetta_act_builder_open(mork ? cetta_act_publication_fd(j->publication) : j->trie,
+        frontier,key,memory/4,&j->builder);
+    if (frontier>=0) close(frontier);
+    if (key>=0) close(key);
+  }
+  if (s==CETTA_ACT_OK && !mork) {
+    unsigned char nonce[16];int random=open("/dev/urandom",O_RDONLY|O_CLOEXEC);
+    if (random<0) s=CETTA_ACT_IO;
+    else {
+      size_t n=0;
+      while (n<16) {
+        ssize_t got=read(random,nonce+n,16-n);
+        if (got<0 && errno==EINTR) continue;
+        if (got<=0) {s=CETTA_ACT_IO;break;}n+=(size_t)got;
+      }
+      close(random);
+      if (s==CETTA_ACT_OK) for (unsigned i=0;i<16;i++) snprintf(j->domain+2*i,3,"%02x",nonce[i]);
+    }
+  }
+  if (s!=CETTA_ACT_OK) {cetta_act_space_export_close(j);return s;}
+  *out=j;return CETTA_ACT_OK;
+}
+static CettaActStatus export_capture_row(CettaActSpaceExport *j) {
+  __attribute__((cleanup(cetta_shared_transition_guard_leave))) CettaSharedTransitionGuard capture={0};
+  CettaIndex index=0;Atom *atom=NULL;
+  arena_reset(&j->scratch,j->empty);
+  SpaceOccurrenceCursorStep step;
+  if (j->cursor.source_ops) {
+    /* The captured prototype and its row arena are private to this job.
+     * Source reads may perform I/O; they hold no evaluator transition guard. */
+    if (j->cursor.source_failure) return j->cursor.source_failure==SPACE_OCCURRENCE_CURSOR_CAPACITY ? CETTA_ACT_NOMEM : CETTA_ACT_CORRUPT;
+    step=j->cursor.source_ops->next(j->cursor.source_state,&index);
+    if (step==SPACE_OCCURRENCE_CURSOR_ITEM) atom=j->cursor.source_ops->atom(j->cursor.source_state,index);
+    if (step==SPACE_OCCURRENCE_CURSOR_ITEM && !atom) return CETTA_ACT_CORRUPT;
+  } else {
+    cetta_shared_transition_guard_enter(&capture);
+    step=space_occurrence_cursor_next(&j->cursor,&index,&atom);
+  }
+  if (step==SPACE_OCCURRENCE_CURSOR_PROGRESS) return CETTA_ACT_PROGRESS;
+  if (step==SPACE_OCCURRENCE_CURSOR_END) return CETTA_ACT_END;
+  if (step!=SPACE_OCCURRENCE_CURSOR_ITEM)
+    return step==SPACE_OCCURRENCE_CURSOR_CAPACITY ? CETTA_ACT_NOMEM : CETTA_ACT_CORRUPT;
+  if (j->count==UINT64_MAX) return CETTA_ACT_LIMIT;
+  if (j->mork) {
+    const char *why=NULL;
+    if (!cetta_mm2_atom_to_bridge_expr_bytes(&j->scratch,atom,&j->wire,&j->wire_size,&why)) return CETTA_ACT_LIMIT;
+    if (j->wire_size>j->maximum) return CETTA_ACT_LIMIT;
+  } else {
+    CettaAtomWireStatus w=cetta_atom_wire_encode_bounded(atom,j->maximum,&j->wire,&j->wire_size);
+    if (w!=ATOM_WIRE_OK) return wire_status(w);
+    Atom *id=j->cursor.source_ops ? space_occurrence_cursor_identity(&j->cursor,index,&j->scratch) : NULL;
+    if (!j->cursor.source_ops || (id && id->kind==ATOM_EXPR && id->expr.len &&
+        atom_is_symbol(id->expr.elems[0],"LocalOccurrence"))) {
+      if (j->count>INT64_MAX) return CETTA_ACT_LIMIT;
+      id=atom_expr3(&j->scratch,atom_symbol(&j->scratch,"SpaceOccurrenceIdV1"),
+          atom_string(&j->scratch,j->domain),atom_int(&j->scratch,(int64_t)j->count));
+    }
+    if (!id || atom_has_vars(id)) return CETTA_ACT_CORRUPT;
+    j->occurrence=(ExportOccurrence){0};
+    j->occurrence.compact=native_identity(id,j->native_domain,&j->occurrence.native_ordinal);
+    w=cetta_atom_wire_encode_bounded(id,j->maximum,&j->identity_wire,&j->identity_size);
+    if (w!=ATOM_WIRE_OK) return wire_status(w);
+  }
+  j->row_pending=true;return CETTA_ACT_OK;
+}
+static CettaActStatus export_posting_key(CettaActSpaceExport *j,CettaActBytes key,bool identity) {
+  CettaByteSpan span;CettaActStatus s=cetta_byte_sort_key(j->keys,key,&span);
+  if (s!=CETTA_ACT_OK) return s;
+  ExportPosting p={span,j->count,identity};
+  uint64_t at;
+  if (__builtin_mul_overflow(j->posting_at,(uint64_t)sizeof(p),&at) ||
+      !export_io(j->postings,&p,sizeof(p),at,true)) return CETTA_ACT_IO;
+  ++j->posting_at;++j->posting_count;++j->occurrence.postings;return CETTA_ACT_OK;
+}
+static CettaActStatus export_capture_postings(CettaActSpaceExport *j) {
+  unsigned char occurrence[9]={OCC},ordinal[8];setbe(occurrence+1,j->count);setbe(ordinal,j->count);
+  CettaActStatus s=export_posting_key(j,(CettaActBytes){occurrence,9},false);
+  Bytes key={0};unsigned char ns=ID;
+  if (s==CETTA_ACT_OK && (!add(&key,&ns,1) || !add(&key,j->identity_wire,j->identity_size))) s=CETTA_ACT_NOMEM;
+  if (s==CETTA_ACT_OK) {
+    CettaByteSortInfo info;cetta_byte_sort_info(j->keys,&info);
+    j->occurrence.identity=(CettaByteSpan){info.key_bytes+1,j->identity_size};
+    s=export_posting_key(j,view(&key),true);
+  }
+  free(key.data);
+  if (s!=CETTA_ACT_OK) return s;
+  arena_reset(&j->scratch,j->empty);Atom *atom=NULL;
+  CettaAtomWireStatus w=cetta_atom_wire_decode_bounded(&j->scratch,j->wire,j->wire_size,j->maximum,&atom);
+  if (w!=ATOM_WIRE_OK) return wire_status(w);
+  if (atom->kind==ATOM_VAR) {
+    unsigned char k[9]={OPEN};memcpy(k+1,ordinal,8);
+    s=export_posting_key(j,(CettaActBytes){k,9},false);
+  } else if (atom->kind==ATOM_EXPR) {
+    for (size_t p=0;p<atom->expr.len && p<3 && s==CETTA_ACT_OK;p++) {
+      key=(Bytes){0};
+      if (!field_prefix(&key,atom->expr.len,p,atom->expr.elems[p],j->maximum) || !add(&key,ordinal,8)) s=CETTA_ACT_NOMEM;
+      else s=export_posting_key(j,view(&key),false);
+      free(key.data);
+    }
+  }
+  return s;
+}
+static CettaActStatus export_sort_work(CettaByteRunSort *sorter,uint64_t work) {
+  CettaActStatus s=cetta_byte_sort_step(sorter,work);
+  return s==CETTA_ACT_OK ? CETTA_ACT_PROGRESS : s;
+}
+static CettaActStatus export_capture(CettaActSpaceExport *j,uint64_t work) {
+  CettaActStatus s=CETTA_ACT_OK;
+  if (!j->row_pending) {
+    s=export_capture_row(j);
+    if (s==CETTA_ACT_END) {
+      j->posting_at=0;
+      j->phase=j->mork ? EXPORT_KEY_SORT : EXPORT_BODY_SORT;
+      s=cetta_byte_sort_seal(j->mork ? j->keys : j->bodies);
+      return s==CETTA_ACT_OK ? CETTA_ACT_PROGRESS : s;
+    }
+    if (s!=CETTA_ACT_OK) return s;
+  }
+  CettaByteRunSort *sorter=j->mork ? j->keys : j->bodies;
+  if (!j->body_added) {
+    if (!j->body_span.size) s=cetta_byte_sort_key(sorter,(CettaActBytes){j->wire,j->wire_size},&j->body_span);
+    if (s==CETTA_ACT_OK) s=cetta_byte_sort_add(sorter,j->body_span,j->body_span.offset);
+    if (s==CETTA_ACT_PROGRESS) return export_sort_work(sorter,work);
+    if (s!=CETTA_ACT_OK) return s;
+    j->body_added=true;j->occurrence.body=j->body_span.offset;
+  }
+  if (!j->mork) {
+    if (j->occurrence.compact && !j->domain_added) {
+      if (!j->domain_span.size) s=cetta_byte_sort_key(j->bodies,(CettaActBytes){j->native_domain,16},&j->domain_span);
+      if (s==CETTA_ACT_OK) s=cetta_byte_sort_add(j->bodies,j->domain_span,j->domain_span.offset);
+      if (s==CETTA_ACT_PROGRESS) return export_sort_work(j->bodies,work);
+      if (s!=CETTA_ACT_OK) return s;
+      j->domain_added=true;j->occurrence.domain=j->domain_span.offset;
+    }
+    s=export_capture_postings(j);
+    if (s!=CETTA_ACT_OK) return s;
+    uint64_t at;
+    if (__builtin_mul_overflow(j->count,(uint64_t)sizeof(j->occurrence),&at) ||
+        !export_io(j->occurrences,&j->occurrence,sizeof(j->occurrence),at,true)) return CETTA_ACT_IO;
+  }
+  free(j->wire);j->wire=NULL;j->wire_size=0;free(j->identity_wire);j->identity_wire=NULL;j->identity_size=0;
+  j->body_span=j->domain_span=(CettaByteSpan){0};j->row_pending=j->body_added=j->domain_added=false;
+  ++j->count;return CETTA_ACT_PROGRESS;
+}
+static CettaActStatus export_mapping(CettaActSpaceExport *j,uint64_t reference,uint64_t *offset) {
+  CettaByteSortItem item;CettaActStatus s=cetta_byte_sort_next(j->offsets,&item);
+  if (s!=CETTA_ACT_OK) return s==CETTA_ACT_END ? CETTA_ACT_CORRUPT : s;
+  unsigned char key[8];size_t n=0;
+  s=cetta_byte_sort_read(j->offsets,item.key,0,key,8,&n);
+  if (s!=CETTA_ACT_OK) return s;
+  if (item.key.size!=8 || n!=8 || be64(key)!=reference) return CETTA_ACT_CORRUPT;
+  *offset=item.value;return CETTA_ACT_OK;
+}
+CettaActStatus cetta_act_space_export_step(CettaActSpaceExport *j,uint64_t work) {
+  if (!j) return CETTA_ACT_CORRUPT;
+  if (j->failed) return j->failure;
+  if (j->phase==EXPORT_COMPLETE) return CETTA_ACT_OK;
+  if (!work) return CETTA_ACT_PROGRESS;
+  CettaActStatus s=CETTA_ACT_OK;size_t n;int order;
+  switch (j->phase) {
+  case EXPORT_CAPTURE:s=export_capture(j,work);break;
+  case EXPORT_BODY_SORT:case EXPORT_MAP_SORT:case EXPORT_KEY_SORT: {
+    CettaByteRunSort *sorter=j->phase==EXPORT_BODY_SORT ? j->bodies : j->phase==EXPORT_MAP_SORT ? j->offsets : j->keys;
+    s=cetta_byte_sort_step(sorter,work);
+    if (s==CETTA_ACT_OK) {j->phase=j->phase==EXPORT_BODY_SORT ? EXPORT_BODY_NEXT : j->phase==EXPORT_MAP_SORT ? EXPORT_OCCURRENCE : EXPORT_KEY_NEXT;j->have_previous=false;}
+    break;
+  }
+  case EXPORT_BODY_NEXT:
+    s=cetta_byte_sort_next(j->bodies,&j->current);
+    if (s==CETTA_ACT_END) {s=cetta_byte_sort_seal(j->offsets);j->phase=EXPORT_MAP_SORT;}
+    else if (s==CETTA_ACT_OK) j->phase=EXPORT_BODY_COMPARE;
+    break;
+  case EXPORT_BODY_COMPARE:
+    if (j->have_previous) {
+      s=cetta_byte_sort_compare(j->bodies,j->previous,j->current.key,work,&order);
+      if (s!=CETTA_ACT_OK) break;
+    } else order=1;
+    if (!order) j->phase=EXPORT_MAP_ADD;
+    else {
+      j->unique_offset=j->payload_end;
+      if (!export_var(j,j->current.key.size)) {s=CETTA_ACT_IO;break;}
+      j->copy_at=0;j->copy_end=j->current.key.size;j->phase=EXPORT_BODY_COPY;
+    }
+    break;
+  case EXPORT_BODY_COPY:
+    n=j->copy_end-j->copy_at<sizeof(j->io) ? (size_t)(j->copy_end-j->copy_at) : sizeof(j->io);
+    if (n>work) n=(size_t)work;
+    s=cetta_byte_sort_read(j->bodies,j->current.key,j->copy_at,j->io,n,&n);
+    if (s==CETTA_ACT_OK && !export_append(j,j->io,n)) s=CETTA_ACT_IO;
+    if (s==CETTA_ACT_OK && (j->copy_at+=n)==j->copy_end) j->phase=EXPORT_MAP_ADD;
+    break;
+  case EXPORT_MAP_ADD: {
+    unsigned char key[8];setbe(key,j->current.value);
+    s=cetta_byte_sort_put(j->offsets,(CettaActBytes){key,8},j->unique_offset);
+    if (s==CETTA_ACT_PROGRESS) s=export_sort_work(j->offsets,work);
+    else if (s==CETTA_ACT_OK) {j->previous=j->current.key;j->have_previous=true;j->phase=EXPORT_BODY_NEXT;}
+    break;
+  }
+  case EXPORT_OCCURRENCE:
+    if (j->occurrence_at==j->count) {
+      CettaByteSortItem unused;
+      if (cetta_byte_sort_next(j->offsets,&unused)!=CETTA_ACT_END) {s=CETTA_ACT_CORRUPT;break;}
+      s=cetta_byte_sort_seal(j->keys);j->phase=EXPORT_KEY_SORT;break;
+    }
+    if (!export_io(j->occurrences,&j->occurrence,sizeof(j->occurrence),j->occurrence_at*sizeof(j->occurrence),false)) {s=CETTA_ACT_IO;break;}
+    s=export_mapping(j,j->occurrence.body,&j->body_offset);
+    if (s==CETTA_ACT_OK && j->occurrence.compact) s=export_mapping(j,j->occurrence.domain,&j->domain_offset);
+    if (s!=CETTA_ACT_OK) break;
+    j->record_offset=j->payload_end;j->postings_left=j->occurrence.postings;
+    if (j->occurrence.compact) {
+      if (!export_var(j,0) || !export_var(j,j->domain_offset) || !export_var(j,j->occurrence.native_ordinal) || !export_var(j,j->body_offset)) s=CETTA_ACT_IO;
+      else j->phase=EXPORT_POSTINGS;
+    } else {
+      if (!export_var(j,j->occurrence.identity.size)) {s=CETTA_ACT_IO;break;}
+      j->copy_at=0;j->copy_end=j->occurrence.identity.size;j->phase=EXPORT_ID_COPY;
+    }
+    break;
+  case EXPORT_ID_COPY:
+    n=j->copy_end-j->copy_at<sizeof(j->io) ? (size_t)(j->copy_end-j->copy_at) : sizeof(j->io);if (n>work) n=(size_t)work;
+    s=cetta_byte_sort_read(j->keys,j->occurrence.identity,j->copy_at,j->io,n,&n);
+    if (s==CETTA_ACT_OK && !export_append(j,j->io,n)) s=CETTA_ACT_IO;
+    if (s==CETTA_ACT_OK && (j->copy_at+=n)==j->copy_end) {
+      unsigned char offset[8];setle(offset,j->body_offset);
+      if (!export_append(j,offset,8)) s=CETTA_ACT_IO;else j->phase=EXPORT_POSTINGS;
+    }
+    break;
+  case EXPORT_POSTINGS:
+    if (!j->postings_left) {++j->occurrence_at;j->phase=EXPORT_OCCURRENCE;break;}
+    if (!export_io(j->postings,&j->posting,sizeof(j->posting),j->posting_at*sizeof(j->posting),false)) {s=CETTA_ACT_IO;break;}
+    if (j->posting.ordinal!=j->occurrence_at) {s=CETTA_ACT_CORRUPT;break;}
+    s=cetta_byte_sort_add(j->keys,j->posting.key,j->posting.identity ? j->occurrence_at : j->record_offset);
+    if (s==CETTA_ACT_PROGRESS) s=export_sort_work(j->keys,work);
+    else if (s==CETTA_ACT_OK) {++j->posting_at;--j->postings_left;}
+    break;
+  case EXPORT_KEY_NEXT:
+    s=cetta_byte_sort_next(j->keys,&j->current);
+    if (s==CETTA_ACT_END) {s=CETTA_ACT_OK;j->phase=EXPORT_TRIE_FINISH;}
+    else if (s==CETTA_ACT_OK) j->phase=EXPORT_KEY_COMPARE;
+    break;
+  case EXPORT_KEY_COMPARE:
+    if (j->have_previous) {
+      s=cetta_byte_sort_compare(j->keys,j->previous,j->current.key,work,&order);
+      if (s!=CETTA_ACT_OK) break;
+    } else order=1;
+    if (!order) {if (j->mork) j->phase=EXPORT_KEY_NEXT;else s=CETTA_ACT_CORRUPT;}
+    else j->phase=EXPORT_KEY_BUILD;
+    break;
+  case EXPORT_KEY_BUILD:
+    s=cetta_act_builder_put_fd(j->builder,cetta_byte_sort_key_fd(j->keys),j->current.key.offset,j->current.key.size,j->mork ? 0 : j->current.value);
+    if (s==CETTA_ACT_OK) {j->previous=j->current.key;j->have_previous=true;j->phase=EXPORT_KEY_NEXT;}
+    break;
+  case EXPORT_TRIE_FINISH:
+    s=cetta_act_builder_finish_step(j->builder,work,&j->trie_size);
+    if (s==CETTA_ACT_OK) {
+      if (j->mork) j->phase=EXPORT_VALIDATE;
+      else {
+        memcpy(j->header,"CACT0001",8);setle(j->header+8,HEADER);setle(j->header+16,HEADER);
+        setle(j->header+24,j->trie_size);setle(j->header+32,HEADER+j->trie_size);
+        setle(j->header+40,j->payload_end);setle(j->header+48,j->count);setle(j->header+56,1);
+        cetta_native_sha256_init(&j->sha);j->phase=EXPORT_ASSEMBLE;
+      }
+    }
+    break;
+  case EXPORT_ASSEMBLE: {
+    int fd=cetta_act_publication_fd(j->publication);
+    if (!j->assembly_part) {
+      if (!export_io(fd,j->header,HEADER,0,true)) {s=CETTA_ACT_IO;break;}
+      cetta_native_sha256_update(&j->sha,j->header,HEADER);j->assembly_part=1;j->assembly_at=0;j->assembly_size=HEADER;
+    } else if (j->assembly_part<3) {
+      uint64_t length=j->assembly_part==1 ? j->trie_size : j->payload_end;
+      n=length-j->assembly_at<sizeof(j->io) ? (size_t)(length-j->assembly_at) : sizeof(j->io);if (n>work) n=(size_t)work;
+      if (!export_io(j->assembly_part==1 ? j->trie : j->payload,j->io,n,j->assembly_at,false) ||
+          !export_io(fd,j->io,n,j->assembly_size,true)) {s=CETTA_ACT_IO;break;}
+      cetta_native_sha256_update(&j->sha,j->io,n);j->assembly_at+=n;j->assembly_size+=n;
+      if (j->assembly_at==length) {++j->assembly_part;j->assembly_at=0;}
+    } else {
+      unsigned char digest[32];cetta_native_sha256_finish(&j->sha,digest);
+      if (!export_io(fd,digest,32,j->assembly_size,true)) s=CETTA_ACT_IO;
+      else {j->assembly_size+=32;j->phase=EXPORT_VALIDATE;}
+    }
+    break;
+  }
+  case EXPORT_VALIDATE: {
+    if (!j->validation) {
+      s=validation_open(cetta_act_publication_fd(j->publication),j->maximum,&j->validation);
+      if (s!=CETTA_ACT_OK) break;
+    }
+    s=validation_step(j->validation,work);
+    if (s==CETTA_ACT_OK) j->phase=EXPORT_PUBLISH;
+    break;
+  }
+  case EXPORT_PUBLISH:
+    s=cetta_act_publication_commit(j->publication);
+    if (s==CETTA_ACT_OK || s==CETTA_ACT_UNCERTAIN) {
+      CettaActStatus cleanup=cetta_act_publication_sidecar(j->publication,true);
+      if (cleanup!=CETTA_ACT_OK) s=CETTA_ACT_UNCERTAIN;
+    }
+    if (s==CETTA_ACT_OK) {j->phase=EXPORT_COMPLETE;return CETTA_ACT_OK;}
+    break;
+  default:s=CETTA_ACT_CORRUPT;
+  }
+  if (s==CETTA_ACT_OK || s==CETTA_ACT_PROGRESS) return CETTA_ACT_PROGRESS;
+  return export_fail(j,s);
+}
+bool cetta_act_space_export_info(const CettaActSpaceExport *j,CettaActSpaceExportInfo *out) {
+  if (!j || !out) return false;
+  *out=(CettaActSpaceExportInfo){.occurrences=j->count,.payload_bytes=j->payload_end,
+    .trie_bytes=j->trie_size,.heap_bytes=sizeof(*j)+j->wire_size+j->identity_size,
+    .phase=j->phase,.complete=j->phase==EXPORT_COMPLETE};
+  CettaByteRunSort *sorters[3]={j->keys,j->bodies,j->offsets};
+  for (size_t i=0;i<3;i++) {
+    CettaByteSortInfo info;
+    if (cetta_byte_sort_info(sorters[i],&info)) {out->heap_bytes+=info.heap_bytes;out->temporary_bytes+=info.key_bytes+info.run_bytes;}
+  }
+  CettaActBuildInfo builder;
+  if (cetta_act_builder_info(j->builder,&builder)) {out->heap_bytes+=builder.heap_bytes;out->temporary_bytes+=builder.output_bytes+builder.scratch_bytes;}
+  out->temporary_bytes+=j->payload_end+j->count*sizeof(ExportOccurrence)+j->posting_count*sizeof(ExportPosting)+j->assembly_size;
+  CettaStorageCensus extra={0};arena_storage_census(&j->scratch,&extra);
+  validation_storage(j->validation,&extra);cetta_storage_finish(&extra);
+  bool valid=!extra.incomplete && !extra.overflow && extra.bytes<=SIZE_MAX-out->heap_bytes;
+  if (valid) out->heap_bytes+=extra.bytes;
+  cetta_storage_census_free(&extra);return valid;
+}
+void cetta_act_space_export_storage(const CettaActSpaceExport *j,CettaStorageCensus *census) {
+  if (!j || !cetta_storage_object(census,j,sizeof(*j),CETTA_STORAGE_BLOCK)) return;
+  arena_storage_census(&j->retention,census);arena_storage_census(&j->scratch,census);
+  if (j->has_capture) space_storage_census(&j->captured,census);
+  cetta_storage_array(census,j->wire,j->wire_size,1,0);cetta_storage_array(census,j->identity_wire,j->identity_size,1,0);
+  cetta_byte_sort_storage(j->keys,census);cetta_byte_sort_storage(j->bodies,census);cetta_byte_sort_storage(j->offsets,census);
+  cetta_act_builder_storage(j->builder,census);validation_storage(j->validation,census);
+}
+CettaActStatus cetta_act_space_dump(Space *space,const char *path,bool mork,size_t maximum) {
+  CettaActSpaceExport *job=NULL;
+  CettaActStatus status=cetta_act_space_export_open(space,path,mork,maximum,32u*1024u*1024u,&job);
+  if (status!=CETTA_ACT_OK) return status;
+  do status=cetta_act_space_export_step(job,65536);while (status==CETTA_ACT_PROGRESS);
+  cetta_act_space_export_close(job);return status;
+}
+
+/* Whole-Space construction uses external sorting and sequential offset joins. */
 CettaActStatus cetta_act_space_load(Space *target, Arena *fallback,
                                     const char *path, size_t maximum) {
   if (!target ||

@@ -34,6 +34,7 @@ def main():
             assert result.stdout.strip() == "ACT_SPACE_OK", result.stdout
             checks += 1
 
+        run("stream", work / "stream.cact")
         run("write")
         run("read")
         alias = work / "alias.cact"

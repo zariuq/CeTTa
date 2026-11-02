@@ -93,7 +93,9 @@
 (= (store:key->i64 $bytes) (__cetta_lib_store_key_to_i64 $bytes))
 (: store:value-byte-limit (-> Number))
 (= (store:value-byte-limit) (let $limit (__cetta_lib_store_value_byte_limit ()) (if (== (get-metatype $limit) Grounded) $limit 1048576)))
-
+(: __cetta_lib_store_space_query_source (-> Atom Atom Atom Atom))
+(: store:space-query-source (-> %Undefined% Atom Atom %Undefined%))
+(= (store:space-query-source $space $pattern $template) (__cetta_lib_store_space_query_source $space $pattern $template))
 (: __cetta_lib_store_compact_act (-> Atom Atom))
 (: __cetta_lib_store_storage_info (-> Atom Atom))
 (: __cetta_lib_store_compact_act_open (-> Atom Number Atom))

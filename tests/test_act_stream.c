@@ -16,9 +16,15 @@ static void check(const CettaActItem *items, size_t count, size_t budget) {
   }
   CettaActBuilder *b = NULL;
   assert(cetta_act_builder_open(files[0], files[1], files[2], budget, &b) == CETTA_ACT_OK);
+  char input_name[]="runtime/act-input-key-XXXXXX";int input=mkstemp(input_name);
+  assert(input>=0 && !unlink(input_name));uint64_t input_at=0;
   CettaActBuildInfo info;
   for (size_t i = 0; i < count; i++) {
-    assert(cetta_act_builder_put(b, items[i].key, items[i].value) == CETTA_ACT_OK);
+    size_t at=0;
+    while (at<items[i].key.size) {ssize_t done=write(input,items[i].key.data+at,items[i].key.size-at);assert(done>0);at+=(size_t)done;}
+    assert((i%2 ? cetta_act_builder_put(b,items[i].key,items[i].value)
+        : cetta_act_builder_put_fd(b,input,input_at,items[i].key.size,items[i].value))==CETTA_ACT_OK);
+    input_at+=items[i].key.size;
     assert(cetta_act_builder_info(b, &info));
     assert(info.records == i + 1 && info.heap_bytes <= budget && info.peak_heap_bytes <= budget);
   }
@@ -26,7 +32,7 @@ static void check(const CettaActItem *items, size_t count, size_t budget) {
   assert(cetta_act_builder_finish(b, &size) == CETTA_ACT_OK);
   assert(cetta_act_builder_finish(b, &repeated) == CETTA_ACT_OK && size == repeated);
   assert(cetta_act_builder_put(b, (CettaActBytes){NULL, 0}, 0) == CETTA_ACT_CORRUPT);
-  cetta_act_builder_close(b);
+  cetta_act_builder_close(b);close(input);
   struct stat st; assert(!fstat(files[0], &st) && (uint64_t)st.st_size == size);
   CettaActTree *t = NULL; uint64_t n = UINT64_MAX;
   assert(cetta_act_open(names[0], &t) == CETTA_ACT_OK);
@@ -125,6 +131,9 @@ int main(void) {
   CettaActBuilder *b = NULL;
   assert(cetta_act_builder_open(fd[0],fd[0],fd[2],budget,&b)==CETTA_ACT_CORRUPT && !b);
   assert(cetta_act_builder_open(fd[0],fd[1],fd[2],1,&b)==CETTA_ACT_LIMIT && !b);
+  int flags=fcntl(fd[0],F_GETFL);assert(flags>=0 && !fcntl(fd[0],F_SETFL,flags|O_APPEND));
+  assert(cetta_act_builder_open(fd[0],fd[1],fd[2],budget,&b)==CETTA_ACT_CORRUPT && !b);
+  assert(!fcntl(fd[0],F_SETFL,flags));
   assert(cetta_act_builder_open(fd[0],fd[1],fd[2],budget,&b)==CETTA_ACT_OK);
   assert(cetta_act_builder_put(b,words[1].key,1)==CETTA_ACT_OK);
   assert(cetta_act_builder_put(b,words[1].key,2)==CETTA_ACT_CORRUPT);
