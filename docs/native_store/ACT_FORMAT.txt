@@ -122,19 +122,52 @@ that same image. Rename/unlink of the path cannot retarget existing readers.
 An external writer must not truncate or overwrite an inode while readers use
 it. Native dumps publish by replacement, never in-place rewriting.
 
-Dumping builds the complete image before publication. Write, file-sync or
-rename failure leaves the old destination. A directory-sync failure after
-rename reports uncertain: the new image may already be visible. Sidecar
-cleanup failure after publication is also uncertain. No automatic retry is
-implied. This is snapshot publication, not a durable transaction manager.
+Dumping constructs a complete private image before publication. Publication
+opens the parent directory once, then creates, renames and removes its own
+names relative to that descriptor. File-write and pre-publication file-sync
+failures leave the destination unchanged. Once rename is attempted, a rename
+error or directory-sync failure reports uncertain: the old or new complete
+image may be present. Only a known successful rename permits retirement of an
+old multiplicity sidecar. A post-publication cleanup failure is also uncertain.
+No automatic retry is implied. This is snapshot publication; the CDS2/CDS3
+owner separately supplies live commits, freshness validation and receipts.
 
-The existing CDS2 owner remains responsible for live atomic edits, dependency
-validation, receipts and recovery. This profile is ready for immutable Space
-snapshots and transactional import/export; replacing a compacted CDS2 base
-with ACT plus a mutable delta requires a further owner/index integration.
+Construction and work
+---------------------
 
-Opening currently validates the whole image. Dumping retains encoded entries
-and image bytes in memory. Incremental read cursors avoid materializing the
-Space, but these startup/export costs must be measured separately from query
-costs. A streaming bulk writer remains necessary before claiming bounded-memory
-checkpoint construction for very large stores.
+The complete Space writer uses three disk-backed sorters: portable bodies,
+body-reference offsets, and trie postings. Fixed-size sorted runs and merge
+passes use a constant fan-in and a fixed set of scratch descriptors. Equal
+body packets are deduplicated by full byte comparison, not hash equality.
+Every occurrence still gets its own ordered record and identity posting.
+A sequential join resolves body offsets and a second sequential join resolves
+posting offsets. Neither a growing body dictionary nor a corpus-sized offset
+array is retained in heap. Large sorted keys pass from their file spans into
+the ACT builder without loading a second complete key. The trie frontier and
+previous large key can spill to private files. CACT0001 and ACTree03 byte
+formats are unchanged; dictionary offsets need not match an earlier writer.
+
+The default blocking dumper drives the same owning export job with a 32 MiB
+construction-buffer budget. act:export-open and act:export-mork-open accept a
+buffer budget; act:export-step advances it, act:export-info inspects it, and
+act:export-close cancels or releases it. A pending step is never exhaustion.
+Cancellation removes private output; it never installs an incomplete prefix.
+These are in-process continuations, not resumable-after-restart tokens.
+
+The buffer budget covers sorting vectors and the trie builder. Fixed control
+state and one codec-sized input/identity/decoded-row workspace are additional;
+the portable codec's selected per-record allowance bounds that workspace.
+Captured input ownership and mapped residency are measured separately.
+Each step performs a sorting/copy/traversal quantum or one bounded primitive,
+including row encoding/decoding, one key insertion, or durable publication.
+This is not a hard CPU-time or wall-time bound for those primitives. Private
+source reads and file construction do not hold the evaluator's shared
+transition guard; observation of a mutable ordinary Space uses short guards.
+
+Validation remains complete on public opening. Hashing and structural scans
+can resume, followed by checks of every occurrence and its required postings.
+Validated immutable mappings are retained by their captured readers. Startup,
+construction, query delivery and durable publication remain distinct costs.
+Ordinary act:load! still validates and stages all destination atoms before its
+one admission batch; bounded persistent import is a separate implementation
+obligation. This file does not claim that path is bounded by the export budget.

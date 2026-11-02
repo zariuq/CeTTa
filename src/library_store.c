@@ -628,6 +628,18 @@ Atom *cetta_store_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **a
     if (atom_is_symbol(head,"__cetta_lib_store_space_view")) return space_view(ctx,a,args,n,false,false);
     if (atom_is_symbol(head,"__cetta_lib_store_space_workspace")) return space_view(ctx,a,args,n,false,true);
     if (atom_is_symbol(head,"__cetta_lib_store_space_edit")) return space_edit(ctx,a,args,n);
+    if (atom_is_symbol(head,"__cetta_lib_store_space_query_source")) {
+        if (n!=3 || ctx->session.language_id!=CETTA_LANGUAGE_PETTA) return refused(a,"invalid-source-query");
+        CETTA_SCOPED_SHARED_TRANSITION(capture);
+        Space *source=resolve_space(eval_current_registry(),args[0]);CettaDiskQuery *query=NULL;
+        if (!source || source->match_backend.kind!=SPACE_ENGINE_SOURCE) return refused(a,"source-space-required");
+        if (!space_owner_is_current(source)) return refused(a,"closed-source");
+        CettaDiskStoreStatus status=cetta_space_query_open_source_bounded(source,args[1],args[2],cetta_library_value_byte_limit(ctx),&query);
+        if (status!=CETTA_STORE_OK) return status_value(a,status);
+        Atom *handle=own_query(ctx,a,query);
+        return handle ? atom_expr(a,(Atom *[]){atom_symbol(a,"StoreQueryOpened"),handle,
+            atom_symbol(a,"HistoricalSource"),unsigned_value(a,cetta_disk_query_revision(query))},4) : refused(a,"capacity");
+    }
     if (atom_is_symbol(head,"__cetta_lib_store_space_query_open")) return space_view(ctx,a,args,n,true,false);
     if (atom_is_symbol(head,"__cetta_lib_store_space_changes")) {
         CettaDiskBytes key;
@@ -679,7 +691,7 @@ Atom *cetta_store_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **a
             result=cetta_disk_query_statistics(query,&stats)
                 ? atom_expr(a,(Atom *[]){atom_symbol(a,"StoreQueryInfo"),unsigned_value(a,stats.scans),
                     unsigned_value(a,stats.indexed_selections),unsigned_value(a,stats.candidates),
-                    unsigned_value(a,stats.decoded_bytes),atom_bool(a,stats.overflow)},6) : refused(a,"query-statistics");
+                    unsigned_value(a,stats.decoded_bytes),atom_bool(a,stats.overflow)},6) : atom_symbol(a,"StoreQueryInfoUnavailable");
         } else if (query_checkpoint) result=cetta_disk_query_checkpoint(query)
             ? atom_symbol(a,"StoreQueryCheckpointed") : refused(a,"capacity");
         else {

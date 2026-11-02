@@ -5,6 +5,7 @@
 #include "parser.h"
 #include "petta_search_machine.h"
 #include "space_source_overlay.h"
+#include "space_source_snapshot.h"
 #include "storage_census.h"
 #include <assert.h>
 #include <stdio.h>
@@ -195,6 +196,41 @@ int main(int argc, char **argv) {
            "validate_open_s=%.3f\n",
            count, (unsigned long long)st.st_size, (double)st.st_size / count,
            dumped - began, opened - dumped);
+  } else if (!strcmp(argv[1], "stream")) {
+    size_t count=argc==4 ? (size_t)strtoull(argv[3],NULL,10) : 12000;
+    fill(&expected,&data);
+    for (size_t i=0;i<count;i++) {
+      char key[64];snprintf(key,sizeof(key),"shared-prefix-row-%016llx",(unsigned long long)(i%997));
+      assert(space_admit_atom(&expected,&data,atom_expr3(&data,atom_symbol(&data,"row"),
+          atom_string(&data,key),atom_int(&data,(int64_t)(i%127)))));
+    }
+    assert(cetta_act_space_dump(&expected,argv[2],false,CETTA_ATOM_WIRE_BYTES)==CETTA_ACT_OK);
+    assert(cetta_act_space_capture(&actual,argv[2],CETTA_ATOM_WIRE_BYTES)==CETTA_ACT_OK);
+    Space saved;space_init_with_universe(&saved,&universe);
+    assert(space_source_snapshot_init(&saved,&actual));
+    CettaActSpaceExport *job=NULL;
+    assert(cetta_act_space_export_open(&actual,argv[2],false,CETTA_ATOM_WIRE_BYTES,1024*1024,&job)==CETTA_ACT_OK);
+    space_free(&actual);actual_freed=true;
+    assert(cetta_act_space_export_step(job,0)==CETTA_ACT_PROGRESS);
+    size_t steps=0,peak=0;
+    do {
+      status=cetta_act_space_export_step(job,4096);
+      CettaActSpaceExportInfo info;assert(cetta_act_space_export_info(job,&info));
+      if (info.heap_bytes>peak) peak=info.heap_bytes;
+      assert(++steps<10000000);
+    } while(status==CETTA_ACT_PROGRESS);
+    assert(status==CETTA_ACT_OK && peak<2*1024*1024);
+    cetta_act_space_export_close(job);
+    space_init_with_universe(&actual,&universe);actual_freed=false;
+    assert(cetta_act_space_capture(&actual,argv[2],CETTA_ATOM_WIRE_BYTES)==CETTA_ACT_OK);
+    assert(equal_spaces(&saved,&actual,true)==count+17);
+    assert(equal_spaces(&expected,&actual,false)==count+17);
+    Space workspace;space_init_with_universe(&workspace,&universe);
+    assert(space_init_overlay_local(&workspace,&saved));
+    assert(space_admit_atom(&workspace,&data,parse(&data,"(snapshot local)")));
+    assert(space_length64(&saved)==count+17 && space_length64(&workspace)==count+18);
+    space_free(&workspace);space_free(&saved);
+    fprintf(stderr,"stream export: rows=%zu steps=%zu auxiliary_peak=%zu\n",count+17,steps,peak);
   } else if (!strcmp(argv[1], "reject")) {
     status = cetta_act_space_capture(&actual, argv[2], CETTA_ATOM_WIRE_BYTES);
     assert(status == CETTA_ACT_CORRUPT);

@@ -921,7 +921,7 @@ SRC += src/u64_index.c
 SRC += src/library_syntax.c
 SRC += src/str_stream.c
 SRC += src/relational_plan.c src/relational_cursor.c src/native_query.c src/dense_relation.c
-SRC += src/act_trie.c src/act_space.c src/library_act.c src/native_act_base.c
+SRC += src/byte_run_sort.c src/space_source_snapshot.c src/act_trie.c src/act_space.c src/library_act.c src/native_act_base.c
 SRC += src/space_dense.c
 SRC += src/space_tuples.c
 SRC += src/space_skeleton.c
@@ -52675,7 +52675,7 @@ runtime/test-act-trie: tests/test_act_trie.c src/act_trie.c src/act_trie.h
 runtime/test-act-faults: tests/test_act_faults.c src/act_trie.c src/act_trie.h
 	@mkdir -p runtime
 	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Isrc tests/test_act_faults.c src/act_trie.c \
-		-Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=write,--wrap=fsync,--wrap=rename -o $@
+		-Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=write,--wrap=fsync,--wrap=renameat -o $@
 test-act-trie: runtime/test-act-trie runtime/test-act-faults
 	@./runtime/test-act-trie
 	@./runtime/test-act-faults
@@ -52718,3 +52718,23 @@ runtime/test-native-act-store-faults: tests/test_native_act_store_faults.c $(NAT
 test-native-act-store: runtime/test-native-act-store runtime/test-native-act-store-faults
 	@./runtime/test-native-act-store
 	@./runtime/test-native-act-store-faults
+
+.PHONY: test-byte-run-sort
+runtime/test-byte-run-sort: tests/test_byte_run_sort.c src/byte_run_sort.c src/byte_run_sort.h
+	@mkdir -p runtime
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Isrc tests/test_byte_run_sort.c src/byte_run_sort.c -o $@
+test-byte-run-sort: runtime/test-byte-run-sort
+runtime/test-byte-run-sort-faults: tests/test_byte_run_sort_faults.c src/byte_run_sort.c src/byte_run_sort.h
+	@mkdir -p runtime
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Isrc tests/test_byte_run_sort_faults.c src/byte_run_sort.c -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=pread,--wrap=pwrite,--wrap=ftruncate -o $@
+test-byte-run-sort: runtime/test-byte-run-sort-faults
+	@./runtime/test-byte-run-sort
+	@./runtime/test-byte-run-sort-faults
+
+ACT_EXPORT_FAULTS_BIN = runtime/test_act_export_faults-$(BUILD_OBJ_TAG)
+$(ACT_EXPORT_FAULTS_BIN): tests/test_act_export_faults.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_act_export_faults.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS) -Wl,--wrap=pread,--wrap=pwrite,--wrap=fsync,--wrap=ftruncate,--wrap=renameat
+.PHONY: test-act-export-faults
+test-act-export-faults: $(ACT_EXPORT_FAULTS_BIN)
+	@./$(ACT_EXPORT_FAULTS_BIN)

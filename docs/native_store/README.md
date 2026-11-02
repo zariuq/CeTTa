@@ -51,17 +51,32 @@ its directory. A directory-sync failure after rename returns `uncertain`;
 the destination may already contain the new image. Opening validates the
 image before exposing a Space. Queries use cursors over the immutable mapping,
 with first-three-field scalar indexes and a complete scan fallback. Startup
-validation is linear in the image; dumping currently constructs the encoded
-image and sorted entries in memory. This is not yet a bounded-memory bulk
-writer for billion-fact datasets.
+validation is linear in the image. Whole-Space dumping uses external sorted
+runs, full-byte body deduplication and sequential offset joins, with a
+configurable construction-buffer budget. One codec-sized row workspace,
+retained input ownership and mapped residency are additional. Its primitives
+are bounded by the selected record policy rather than a hard wall-time limit.
+See the [snapshot format](ACT_FORMAT.txt) for these resource boundaries.
 
 The native byte-trie kernel also provides a sorted-input file builder with
 bounded working heap, private frontier/key spools and reverse range cursors.
 The generic `CDBACT01` base codec streams packed byte values alongside that
 trie. `make test-act-stream test-native-act-base` checks these components;
 the [base format](ACT_BASE_FORMAT.txt) specifies their layout and ownership.
-The ordinary Space dumper still needs external sorting and identity/index
-organization before its complete export path has the same memory guarantee.
+The same file builder receives sorted file spans from the complete Space
+exporter. `make test-byte-run-sort test-act-export-faults` checks multi-pass
+sorting, large keys and interrupted construction/publication. Public
+`act:export-open`, `act:export-step`, `act:export-info` and `act:export-close`
+expose owning, cancellable in-process jobs; `act:dump!` drives that same job.
+
+`db:open` also accepts an existing ACTree03 or CACT0001 file. That connection
+is read-only and has one default collection, `data`. Its `db:snapshot` returns
+an ordinary captured Space; `db:query` and compositional Space query plans use
+the existing matcher and cursor. Closing the connection does not invalidate
+captured snapshots or queries. A write refuses before invoking the callback.
+ACT providers report unavailable disk-access counters explicitly, rather than
+inventing CSI scan counts. Snapshot evidence carries no write authority or
+freshness promise about another owner.
 
 New `(library db)` databases use the CDS3 publication owner with immutable
 ACT bases and CSI deltas. Existing CDS2 stores reopen unchanged; `db:compact`
