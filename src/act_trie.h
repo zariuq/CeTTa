@@ -18,6 +18,7 @@ typedef enum {
   CETTA_ACT_UNCERTAIN,
   CETTA_ACT_UNSUPPORTED,
   CETTA_ACT_READ_ONLY,
+  CETTA_ACT_PROGRESS,
 } CettaActStatus;
 typedef struct CettaActTree CettaActTree;
 typedef struct CettaActCursor CettaActCursor;
@@ -61,6 +62,11 @@ CettaActStatus cetta_act_cursor_clone(const CettaActCursor *, bool rewind,
 /* Key bytes are borrowed until next/close; values are copied. */
 CettaActStatus cetta_act_cursor_next(CettaActCursor *, CettaActBytes *,
                                      uint64_t *);
+/* Node-work allowance; PROGRESS keeps the traversal live. The key allowance
+ * bounds a path before allocating it, independently of the corpus size. */
+CettaActStatus cetta_act_cursor_next_bounded(CettaActCursor *,uint64_t node_work,
+    CettaActBytes *,uint64_t *);
+bool cetta_act_cursor_key_limit(CettaActCursor *,size_t maximum_bytes);
 void cetta_act_cursor_close(CettaActCursor *);
 void cetta_act_storage(const CettaActTree *, struct CettaStorageCensus *);
 void cetta_act_cursor_storage(const CettaActCursor *,
@@ -77,14 +83,18 @@ CettaActStatus cetta_act_build(const CettaActItem *, size_t,
  * or spooled before put returns. A failed builder cannot be reused. */
 CettaActStatus cetta_act_builder_open(int output_fd, int frontier_fd,
     int key_fd, size_t memory_bytes, CettaActBuilder **);
+size_t cetta_act_builder_minimum_memory(void);
 CettaActStatus cetta_act_builder_put(CettaActBuilder *, CettaActBytes,
     uint64_t value);
 CettaActStatus cetta_act_builder_finish(CettaActBuilder *, uint64_t *size);
+CettaActStatus cetta_act_builder_finish_step(CettaActBuilder *, uint64_t work,
+    uint64_t *size);
 typedef struct {
     uint64_t records, output_bytes, scratch_bytes;
     size_t heap_bytes, peak_heap_bytes;
 } CettaActBuildInfo;
 bool cetta_act_builder_info(const CettaActBuilder *, CettaActBuildInfo *);
+void cetta_act_builder_storage(const CettaActBuilder *,struct CettaStorageCensus *);
 void cetta_act_builder_close(CettaActBuilder *);
 CettaActStatus cetta_act_publish(const char *path, CettaActBytes);
 const char *cetta_act_status_name(CettaActStatus);

@@ -1,0 +1,106 @@
+ACT-backed native store roots
+=============================
+
+CDS3 extends the native publication owner with one immutable CDBACT01 base,
+one active CSI delta and, during compaction, one frozen layer. Application
+keys and values are unchanged. Facts, indexes, metadata and receipts are
+therefore captured through the same logical view and publication domain.
+
+A delta has disjoint puts and removal maps. Both use the same CSI segment
+and captured end. A removal map's value must be empty and its frame checksum
+must verify before masking older data. An empty put is a present empty value.
+The newest layer mentioning a key determines its value or absence. Forward
+and reverse scans merge at most five ordered map streams. Duplicate puts and
+removals within one layer are corruption rather than a priority rule.
+
+CDS2 remains readable and writable. Its 76-byte metadata payload is unchanged.
+CDS3 uses a 196-byte payload in the existing checksummed CSL1 journal frame.
+Metadata integers remain unsigned big endian, independently of CDBACT01's
+little-endian envelope. Fields:
+
+    0   4   ASCII CDS3
+    4  16   logical epoch
+   20  16   active CSI generation
+   36   8   logical revision
+   44   8   active puts root
+   52   8   active captured end
+   60   8   key byte allowance
+   68   8   value byte allowance
+   76   8   active removals root
+   84  16   optional ACT base generation
+  100   8   base file byte length
+  108  32   base file digest
+  140  16   optional frozen CSI generation
+  156   8   frozen puts root
+  164   8   frozen removals root
+  172   8   frozen captured end
+  180   8   frozen logical cut revision
+  188   8   frozen kind: 0 absent, 1 legacy full map, 2 delta
+
+Absent optional generations have zero metadata. A legacy full frozen map
+has no ACT base and no removal map. Referenced generations, root/end bounds,
+item allowances and file identities are checked on opening. Unknown layouts
+refuse. Old runtimes cannot open CDS3; a captured CSI-compatible backup is the
+path for restoring with an older runtime.
+
+Opening an existing CDS2 store never upgrades it. The ACT creation mode only
+selects CDS3 for a new store. Explicit ACT compaction converts an existing
+CDS2 store. Format conversion can become visible at the initial rotation,
+before construction completes; interrupted conversion is a supported CDS3
+state and must be recovered by a CDS3-capable runtime.
+
+Online compaction
+-----------------
+
+One compact.lock lease serializes maintenance jobs. Under writer.lock, a job
+freezes the active layer and installs a fresh empty active delta. The logical
+epoch/revision and visible key/value map do not change. Creation of the new
+segment is synchronized before publishing the manifest that names it.
+
+The job copies the immutable base plus frozen layer outside writer.lock.
+Application commits continue in the new active delta. A cancelled or killed
+job leaves the frozen cut in the manifest; another job reuses that cut rather
+than adding another layer. Private working files are unlinked scratch fds.
+A candidate base holds its own builder lock against garbage collection.
+
+Value verification, trie finalization, envelope assembly, hashing and base
+validation are incremental. The work allowance covers bytes/node steps with
+one bounded key/descriptor operation at a boundary; it is not a wall-clock
+bound on operating-system I/O. A zero allowance preserves the continuation.
+Memory accounting distinguishes requested heap, mapped residency and pinned
+file extents. Base opening performs complete integrity/structure validation.
+
+After validation, the base file and its directory entry are synchronized.
+Installation rechecks the frozen lineage and epoch, then publishes that base
+with the current active delta and revision. A concurrent active write is never
+replaced by a previously captured active root. Installation does not increase
+the logical revision. The publisher retains the validated mapping for later
+captured views.
+
+Publication uncertainty write-poisons the initiating owner until recovery.
+A missing result allocation after publication is also uncertain. Cleanup never
+removes a base after an attempted installation; recovery and collection decide
+which generation is current. Collection confirms the visible root before
+retiring unreferenced names. Captured mappings and fds retain old storage after
+its name is retired.
+
+Backups traverse the effective logical map, not just the active delta. A
+streaming sorted CSI builder writes a compact CDS2 destination while preserving
+logical epoch/revision and every key/value, including receipts. The destination
+has an independent physical commit domain. Its invalid bootstrap manifest
+prevents an interrupted backup from being reopened as a new empty database.
+
+Interface and evidence
+----------------------
+
+The low-level store offers owning logical lookup/range/blob operations and
+resumable compaction jobs. The MeTTa store facade supplies compact-act-open,
+compact-act-step/info and storage-info. The db facade creates new ACT-enabled
+stores and provides compact/info with ordinary captured Spaces and transaction
+workspaces. Existing CDS2 connections remain compatible.
+
+make test-native-act-store covers a differential operation trace, layered
+reads and scoped conflicts, concurrent writes during copying/install,
+cancellation/reopen, initiating-handle closure, retained readers, CSI-compatible
+backup, five process-kill stages and allocation/read/write/sync/rename fault
+cutpoints. Process-kill tests do not establish physical power-loss guarantees.
