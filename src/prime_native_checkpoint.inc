@@ -1148,20 +1148,16 @@ static bool parent_copy_selector_capture(const EquationMatchDecisionCacheSlot *s
         return false;
     d->equation_projection=s->equation_projection;
     d->semantics=s->semantics;d->head=s->head;d->mode=s->mode;
-    d->guard_refinement_count=s->guard_refinement_count;
     d->plans=calloc(s->equation_count,sizeof(*d->plans));
     if (!d->plans) return false;
     d->equation_count=s->equation_count;
     for(size_t i=0u;i<s->equation_count;i++) {
         const HeEquationMatchPlan *p=&s->plans[i];
         HeEquationMatchPlan *q=&d->plans[i];
-        q->consumed_guard_count=p->consumed_guard_count;
 #define PC_SELECTOR_ATOM(f) do { q->f=p->f?atom_deep_copy_session_copy(atoms,p->f):NULL; if(p->f&&!q->f)return false; } while(0)
         PC_SELECTOR_ATOM(equation);
         PC_SELECTOR_ATOM(match_pattern);
         PC_SELECTOR_ATOM(result_template);
-        PC_SELECTOR_ATOM(refinement_fallback_pattern);
-        PC_SELECTOR_ATOM(refinement_failure_template);
 #undef PC_SELECTOR_ATOM
         if(p->frame_schema) {
             q->frame_schema=bindings_frame_schema_copy_with_session(p->frame_schema,atoms);

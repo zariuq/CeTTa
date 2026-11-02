@@ -8996,8 +8996,12 @@ static bool bindings_captured_support_present(const Atom *atom, void *unused) {
 }
 
 bool bindings_value_has_captured_support(const Atom *value) {
-    return value && atom_has_identity_grounded(value) &&
-        atom_graph_any(value, bindings_captured_support_present, NULL);
+    if (!value || !atom_has_identity_grounded(value))
+        return false;
+    bool complete = false;
+    bool found = atom_graph_any_checked(value, bindings_captured_support_present,
+        NULL, NULL, SIZE_MAX, &complete);
+    return !complete || found;
 }
 
 bool bindings_collect_support(const Bindings *bindings,
@@ -12965,6 +12969,182 @@ bool match_types_builder(Atom *actual, Atom *expected, BindingsBuilder *bb,
 
 /* ── Bidirectional matching (match_atoms from HE spec metta.md:577-617) ── */
 
+enum { CETTA_OPEN_PATTERN_PLAN_DEPTH_LIMIT = 256u };
+
+typedef struct {
+    Arena *owner;
+    const BindingsFrameSchema *schema;
+    const VarId *variable_ids;
+    uint32_t variable_count;
+} OpenPatternCompiler;
+
+static bool open_pattern_plan_compile_node(
+        const OpenPatternCompiler *compiler, Atom *source,
+        Atom **ancestors, uint32_t depth,
+        CettaOpenPatternPlan *out) {
+    if (!compiler || !source || !ancestors || !out ||
+        depth > CETTA_OPEN_PATTERN_PLAN_DEPTH_LIMIT) {
+        return false;
+    }
+    for (uint32_t index = 0u; index < depth; index++) {
+        if (ancestors[index] == source)
+            return false;
+    }
+    uint32_t variable_count = compiler->variable_count;
+    const VarId *variable_ids = compiler->variable_ids;
+    *out = (CettaOpenPatternPlan){
+        .source = source,
+        .kind = source->kind,
+        .variable_ids = variable_count <= 64u
+            ? variable_ids : NULL,
+    };
+    if (source->kind == ATOM_VAR) {
+        if (variable_count > 64u)
+            return true;
+        uint32_t slot = 0u;
+        if (!bindings_frame_schema_find_slot(
+                compiler->schema, source->var_id, &slot)) {
+            return false;
+        }
+        out->variable_mask = UINT64_C(1) << slot;
+        return true;
+    }
+    if (source->kind != ATOM_EXPR)
+        return true;
+    if ((source->expr.len != 0u && !source->expr.elems) ||
+        source->expr.len > SIZE_MAX / sizeof(*out->children)) {
+        return false;
+    }
+    out->child_count = source->expr.len;
+    if (source->expr.len == 0u)
+        return true;
+    CettaOpenPatternPlan *children = arena_alloc(
+        compiler->owner,
+        sizeof(*children) * (size_t)source->expr.len);
+    if (!children)
+        return false;
+    out->children = children;
+    ancestors[depth] = source;
+    uint64_t seen_variables = 0u;
+    for (CettaExprIndex index = 0u;
+         index < source->expr.len; index++) {
+        if (!open_pattern_plan_compile_node(
+                compiler, source->expr.elems[index],
+                ancestors, depth + 1u, &children[index])) {
+            return false;
+        }
+        out->repeated_variable_mask |=
+            children[index].repeated_variable_mask |
+            (seen_variables & children[index].variable_mask);
+        seen_variables |= children[index].variable_mask;
+    }
+    out->variable_mask = seen_variables;
+    return true;
+}
+
+static bool open_pattern_plan_node_count(
+        const CettaOpenPatternPlan *plan, size_t *count_out) {
+    if (!plan || !count_out)
+        return false;
+    size_t count = 1u;
+    if (plan->kind == ATOM_EXPR) {
+        if ((plan->child_count != 0u && !plan->children) ||
+            (size_t)plan->child_count > SIZE_MAX - count) {
+            return false;
+        }
+        for (CettaExprIndex index = 0u;
+             index < plan->child_count; index++) {
+            size_t child_count = 0u;
+            if (!open_pattern_plan_node_count(
+                    &plan->children[index], &child_count) ||
+                child_count > SIZE_MAX - count) {
+                return false;
+            }
+            count += child_count;
+        }
+    }
+    *count_out = count;
+    return true;
+}
+
+static bool open_pattern_plan_linearize(
+        const CettaOpenPatternPlan *plan,
+        CettaOpenPatternInstruction *program,
+        size_t program_len, size_t *cursor) {
+    if (!plan || !program || !cursor || *cursor >= program_len)
+        return false;
+    size_t root = (*cursor)++;
+    program[root] = (CettaOpenPatternInstruction){
+        .source = plan->source,
+        .variable_mask = plan->variable_mask,
+    };
+    if (plan->kind == ATOM_EXPR) {
+        if (plan->child_count != 0u && !plan->children)
+            return false;
+        for (CettaExprIndex index = 0u;
+             index < plan->child_count; index++) {
+            if (!open_pattern_plan_linearize(
+                    &plan->children[index], program,
+                    program_len, cursor)) {
+                return false;
+            }
+        }
+    }
+    size_t span = *cursor - root;
+    if (span == 0u || span > UINT32_MAX)
+        return false;
+    program[root].subtree_span = (uint32_t)span;
+    return true;
+}
+
+bool cetta_open_pattern_plan_lower_linear(
+        Arena *owner, CettaOpenPatternPlan *root) {
+    if (!owner || !root)
+        return false;
+    size_t instruction_count = 0u;
+    if (!open_pattern_plan_node_count(
+            root, &instruction_count) ||
+        instruction_count == 0u ||
+        instruction_count > UINT32_MAX ||
+        instruction_count > SIZE_MAX /
+            sizeof(CettaOpenPatternInstruction)) {
+        return false;
+    }
+    CettaOpenPatternInstruction *instructions = arena_alloc(
+        owner,
+        instruction_count * sizeof(*instructions));
+    if (!instructions)
+        return false;
+    size_t cursor = 0u;
+    if (!open_pattern_plan_linearize(
+            root, instructions, instruction_count, &cursor) ||
+        cursor != instruction_count ||
+        instructions[0].source != root->source ||
+        instructions[0].variable_mask != root->variable_mask ||
+        instructions[0].subtree_span != instruction_count) {
+        return false;
+    }
+    root->linear_program = instructions;
+    root->linear_program_len = (uint32_t)instruction_count;
+    return true;
+}
+
+CettaOpenPatternPlan *cetta_open_pattern_plan_compile(
+        Arena *owner, Atom *source, const BindingsFrameSchema *schema) {
+    /* A list is matched through its logical elements and rest. */
+    if (!owner || !source || !schema || atom_structural_may_have_list(source))
+        return NULL;
+    CettaOpenPatternPlan *plan = arena_alloc(owner, sizeof(*plan));
+    if (!plan)
+        return NULL;
+    OpenPatternCompiler compiler = {.owner = owner, .schema = schema,
+        .variable_ids = bindings_frame_schema_source_ids(schema),
+        .variable_count = bindings_frame_schema_len(schema)};
+    Atom *ancestors[CETTA_OPEN_PATTERN_PLAN_DEPTH_LIMIT + 1u];
+    return open_pattern_plan_compile_node(&compiler, source, ancestors, 0u, plan)
+        ? plan : NULL;
+}
+
 static bool match_atoms_epoch_worklist(Atom *left, Atom *right,
                                        Bindings *bindings,
                                        BindingsBuilder *builder,
@@ -14944,8 +15124,8 @@ retry_pair:
         if (left->kind != ATOM_EXPR || right->kind != ATOM_EXPR ||
             atom_authored_len(left) != atom_authored_len(right) ||
             (right_plan &&
-             (right_plan->child_count != right->expr.len ||
-              (right->expr.len != 0u && !right_plan->children)))) {
+             (atom_authored_len(right) != right->expr.len ||
+              (atom_authored_len(right) != 0u && !right_plan->children)))) {
             if (attempt_resolving_bound)
                 attempt_repeated_var = true;
             if (left->kind != ATOM_EXPR || right->kind != ATOM_EXPR ||
@@ -14978,7 +15158,7 @@ retry_pair:
         {
             CettaExprIndex nch = atom_authored_len(left);
             CettaExprIndex first = 0u;
-            if (right_plan && nch > 0u &&
+            if (right_frame_region && right_plan && nch > 0u &&
                 match_plan_fails_before_bind(left, right_plan, nch)) {
                 if (attempt_resolving_bound)
                     attempt_repeated_var = true;
@@ -16311,16 +16491,15 @@ static bool stored_grounded_equal(Atom *left,
     return false;
 }
 
-/* A decoded TermUniverse node belongs to its persistent arena.  Keep open
- * nodes as syntax plus activation context; only a universe without a
- * decodable persistent node needs the arena-local materialized fallback. */
+/* Record-backed nodes keep their persistent syntax; opaque images are held
+ * by the binding arena. Open nodes retain their activation context. */
 static bool term_universe_match_binding_value(
         const TermUniverse *universe, Arena *fallback,
         AtomId id, CettaFrameIdentity epoch, BindingValue *out) {
     if (!universe || id == CETTA_ATOM_ID_NONE || !out)
         return false;
     bool open = tu_has_vars(universe, id);
-    Atom *persistent = term_universe_get_atom(universe, id);
+    Atom *persistent = term_universe_scoped_atom(universe, fallback, id);
     if (persistent) {
         *out = open
             ? binding_value_from_persistent_context(persistent, epoch)
@@ -16347,7 +16526,7 @@ static bool match_atoms_atom_id_epoch_worklist(
      * cyclic environment uses the existing guarded contextual matcher so
      * only cycles reachable from this comparison can reject it. */
     if (bindings_has_loop(b)) {
-        Atom *right = term_universe_get_atom((TermUniverse *)candidate_universe, right_id);
+        Atom *right = term_universe_scoped_atom(candidate_universe, a, right_id);
         return right && match_decoded_atoms_worklist(
             left_value, binding_value_from_persistent_context(right, epoch),
             b, NULL, a, false);
@@ -16380,8 +16559,8 @@ retry_pair:
         left = left_value.skeleton;
         const CettaTermHdr *right_header = tu_hdr(candidate_universe, right_id);
         if (!right_header) {
-            Atom *right = term_universe_get_atom(
-                (TermUniverse *)candidate_universe, right_id);
+            Atom *right = term_universe_scoped_atom(
+                candidate_universe, a, right_id);
             if (!right || !match_atoms_epoch_views_worklist(
                     left, binding_value_kind(left_value),
                     binding_value_epoch(left_value), 0u, right, b, NULL, a, epoch,
@@ -16483,8 +16662,8 @@ retry_pair:
                       tu_child_from_header(candidate_universe, right_header, 0u)))))) {
                 /* Lists meet in the contextual matcher, which builds the
                  * rest a list pattern is bound to. */
-                Atom *right = term_universe_get_atom(
-                    (TermUniverse *)candidate_universe, right_id);
+                Atom *right = term_universe_scoped_atom(
+                    candidate_universe, a, right_id);
                 if (!right || !match_atoms_epoch_views_worklist(
                         left, binding_value_kind(left_value),
                         binding_value_epoch(left_value), 0u, right, b, NULL, a, epoch,
@@ -17108,3 +17287,14 @@ bool bindings_checkpoint_compare(const Bindings *a,const Bindings *b,
 #undef BC_P
 #undef BC_I
 #undef BC_A
+
+bool match_atoms_epoch_builder_planned(
+        Atom *left, Atom *right, const CettaOpenPatternPlan *right_plan,
+        BindingsBuilder *builder, Arena *arena, CettaFrameIdentity epoch) {
+    if (!right_plan || right_plan->source != right)
+        return match_atoms_epoch_builder(left, right, builder, arena, epoch);
+    return match_atoms_epoch_views_worklist(
+        left, BINDING_VALUE_MATERIALIZED, CETTA_FRAME_IDENTITY_NONE, 0u,
+        right, NULL, builder, arena, epoch,
+        BINDING_VALUE_CONTEXTUAL, false, NULL, right_plan, NULL);
+}

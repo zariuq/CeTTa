@@ -712,6 +712,17 @@ bool cetta_tensor_call(CettaLibraryContext *context,Space *space,Arena *a,Atom *
         *out = cetta_call_completed_value(publish(a, status, result));
         return true;
     }
+    if (op == g_builtin_syms.tensor_where) {
+        if (nargs != 3) return false;
+        CettaTensor *condition = cetta_tensor_from_atom(args[0]);
+        CettaTensor *when_true = cetta_tensor_from_atom(args[1]);
+        CettaTensor *when_false = cetta_tensor_from_atom(args[2]);
+        if (!condition || !when_true || !when_false) return false;
+        CettaTensor *result = NULL;
+        CettaTensorStatus status = cetta_tensor_where(condition, when_true, when_false, &result);
+        *out = cetta_call_completed_value(publish(a, status, result));
+        return true;
+    }
     if (op == g_builtin_syms.tensor_entries || op == g_builtin_syms.tensor_gather || op == g_builtin_syms.tensor_gather_rows ||
         op == g_builtin_syms.tensor_merge || op == g_builtin_syms.lib_tensor_try_zip_map) {
         bool map = op == g_builtin_syms.lib_tensor_try_zip_map;

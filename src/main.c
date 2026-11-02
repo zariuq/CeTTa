@@ -30,6 +30,9 @@
 #include "prime_arith_oracle.h"
 #include "space.h"
 #include "eval.h"
+#ifdef __GLIBC__
+#include <malloc.h>
+#endif
 #include "he_type_policy.h"
 #include "library.h"
 #include "native_handle.h"
@@ -2559,8 +2562,9 @@ static void cetta_main_cleanup_registry_spaces(
         if (val->kind == ATOM_GROUNDED && val->ground.gkind == GV_SPACE) {
             Space *sp = (Space *)val->ground.ptr;
             /* A module's space belongs to the library context, which
-               frees it with the other modules. */
-            if (sp != root_space &&
+               frees it with the other modules; a held space's record frees
+               it (eval_cleanup_owned_new_spaces). */
+            if (sp != root_space && !sp->arena_hold &&
                 !cetta_library_owns_space(libraries, sp)) {
                 bool already_freed = false;
                 for (uint32_t previous = 0; previous < ri; previous++) {
@@ -2644,6 +2648,13 @@ static bool cetta_main_cleanup(CettaMainCleanup *cleanup) {
     cetta_gslt_language_free(cleanup->gslt_language);
     cleanup->gslt_language = NULL;
 
+    /* The run is over and no collection follows: the rows the spaces
+     * release from here on are not counted, which would only list them as
+     * candidates of a universe about to be freed, at the run's peak. */
+    if (cleanup->libraries_initialized)
+        term_universe_set_collection_mode(&cleanup->libraries->term_universe,
+                                          TERM_UNIVERSE_COLLECTION_OFF);
+
     if (cleanup->registry_initialized) {
         if (cleanup->space_initialized) {
             cetta_main_cleanup_registry_spaces(
@@ -2719,13 +2730,17 @@ static bool cetta_main_cleanup(CettaMainCleanup *cleanup) {
     return ok;
 }
 
-/* A PeTTa document this large is read a slice of forms at a time: each
- * slice is parsed, run and dropped, with a collection between slices, so
- * one slice of parsed forms lives at a time.  A first pass over the slices
- * checks every form and predeclares the equations, so a fault in the
- * source is reported before anything runs.  CETTA_PETTA_SLICE_BYTES and
- * CETTA_PETTA_SLICE_FORMS set the bound and the slice. */
-enum { MAIN_PETTA_SLICE_FORMS = 1u << 18 };
+/* Large documents are parsed, run and collected in slices. A first pass
+ * checks the complete document and predeclares its equations before any
+ * effects run. Both source bytes and constructor count can demand slices:
+ * deep facts can make many temporary records from relatively few bytes.
+ * Slices are bounded by parsed nodes as well as forms, so extra nesting
+ * reduces their row count rather than increasing their temporary heap. */
+enum {
+    MAIN_PETTA_SLICE_FORMS = 1u << 18,
+    MAIN_PETTA_SLICE_TOKENS = 1u << 16,
+    MAIN_PETTA_DOCUMENT_CONSTRUCTORS = 1u << 19,
+};
 #define MAIN_PETTA_SLICE_BYTES (UINT64_C(32) << 20)
 
 static uint64_t main_petta_slice_setting(const char *name, uint64_t value) {
@@ -2777,21 +2792,45 @@ static bool main_petta_open_slices(CettaMainCleanup *cleanup,
         !petta_compiled_document_v1_open(&cleanup->petta_document, filename))
         return false;
     uint64_t len = cleanup->petta_document.len;
-    if (len < main_petta_slice_setting("CETTA_PETTA_SLICE_BYTES",
-                                       MAIN_PETTA_SLICE_BYTES) ||
-        len > UINT32_MAX) {
+    const char *slice_bytes = getenv("CETTA_PETTA_SLICE_BYTES");
+    bool sliced = len >= main_petta_slice_setting("CETTA_PETTA_SLICE_BYTES",
+                                                  MAIN_PETTA_SLICE_BYTES);
+    if (!sliced && (!slice_bytes || !*slice_bytes) &&
+        len >= (UINT64_C(1) << 20) && len <= UINT32_MAX) {
+        /* Raw delimiters are a conservative upper estimate: quoted or
+         * commented delimiters may request slicing but cannot hide a real
+         * constructor. The authoritative reader still validates every form. */
+        const uint8_t *next = cleanup->petta_document.bytes;
+        const uint8_t *end = next + len;
+        uint32_t constructors = 0u;
+        while (next < end) {
+            next = memchr(next, '(', (size_t)(end - next));
+            if (!next)
+                break;
+            if (++constructors >= MAIN_PETTA_DOCUMENT_CONSTRUCTORS) {
+                sliced = true;
+                break;
+            }
+            ++next;
+        }
+    }
+    if (!sliced || len > UINT32_MAX) {
         petta_compiled_document_v1_close(&cleanup->petta_document);
         return false;
     }
+    cleanup->petta_document.slice_tokens = MAIN_PETTA_SLICE_TOKENS;
     cleanup->petta_document_open = true;
     return true;
 }
 
 /* The next slice of the document, in place of the last: its count of
  * forms, 0 once the document is read through, -1 on a fault (reported).
- * The last slice is dropped and collected first. */
+ * The last slice is dropped and collected first.  CHECK reads it for the
+ * first pass, which builds only the forms the predeclaration reads
+ * (petta_compiled_document_v1_check_next). */
 static int main_petta_next_slice(CettaMainCleanup *cleanup,
-                                 TermUniverse *universe, AtomId **atom_ids) {
+                                 TermUniverse *universe, AtomId **atom_ids,
+                                 bool check) {
     free(*atom_ids);
     *atom_ids = NULL;
     cleanup->atom_ids = NULL;
@@ -2800,11 +2839,15 @@ static int main_petta_next_slice(CettaMainCleanup *cleanup,
     petta_compiled_document_v1_release_read(&cleanup->petta_document);
     (void)term_universe_collect_at_safe_point(universe, NULL);
     char error[512] = {0};
-    int n = petta_compiled_document_v1_next(
-        cleanup->petta_reader, &cleanup->petta_document,
-        (uint32_t)main_petta_slice_setting("CETTA_PETTA_SLICE_FORMS",
-                                           MAIN_PETTA_SLICE_FORMS),
-        universe, atom_ids, error, sizeof(error));
+    uint32_t forms = (uint32_t)main_petta_slice_setting(
+        "CETTA_PETTA_SLICE_FORMS", MAIN_PETTA_SLICE_FORMS);
+    int n = check
+        ? petta_compiled_document_v1_check_next(
+              cleanup->petta_reader, &cleanup->petta_document, forms,
+              universe, atom_ids, error, sizeof(error))
+        : petta_compiled_document_v1_next(
+              cleanup->petta_reader, &cleanup->petta_document, forms,
+              universe, atom_ids, error, sizeof(error));
     if (n < 0) {
         fprintf(stderr, "error: compiled PeTTa reader: %s\n",
                 error[0] ? error : "unreadable document");
@@ -2822,7 +2865,7 @@ static bool main_petta_check_slices(CettaMainCleanup *cleanup,
                                     Space *space, AtomId **atom_ids) {
     for (;;) {
         int n = main_petta_next_slice(cleanup, &libraries->term_universe,
-                                      atom_ids);
+                                      atom_ids, true);
         if (n < 0)
             return false;
         if (n == 0)
@@ -4586,7 +4629,7 @@ process_petta_document:
             goto cleanup;
         }
         n = main_petta_next_slice(&cleanup, &libraries.term_universe,
-                                  &atom_ids);
+                                  &atom_ids, false);
         if (n < 0) {
             rc = 1;
             goto cleanup;
@@ -5174,7 +5217,7 @@ petta_next_slice:
     /* A document read a slice at a time goes on with its next slice. */
     if (cleanup.petta_document_open && !stop_document_sequence && i >= n) {
         n = main_petta_next_slice(&cleanup, &libraries.term_universe,
-                                  &atom_ids);
+                                  &atom_ids, false);
         if (n < 0) {
             rc = 1;
             goto cleanup;
@@ -5282,4 +5325,16 @@ cleanup: {
 }
 }
 
-int main(int argc,char **argv) { return cetta_run_guard(argc,argv,cetta_main); }
+int main(int argc,char **argv) {
+#ifdef __GLIBC__
+    /* A fixed mapping threshold.  glibc raises its threshold after freeing a
+     * large mapped block, and the large blocks after that come from the heap
+     * and stay with it, so the resident memory depends on the order of
+     * allocations: the same live heap left 535 or 559 MB resident, and 487
+     * MB with the threshold fixed at 1 MB.  A threshold the user sets is
+     * kept. */
+    if (!getenv("MALLOC_MMAP_THRESHOLD_"))
+        (void)mallopt(M_MMAP_THRESHOLD, 1 << 20);
+#endif
+    return cetta_run_guard(argc,argv,cetta_main);
+}

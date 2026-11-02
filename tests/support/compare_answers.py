@@ -187,28 +187,64 @@ def collapse_equal(left, right):
     lhs.sort(key=lambda value: len(groups[alpha_tokens(value)]))
     rhs_tokens = [TOKEN.findall(value) for value in rhs]
 
-    def match(at, used, forward, backward):
+    # Each frame retains its next candidate and the mapping trail to undo.
+    # An explicit stack keeps large open collections off Python's call stack.
+    left_tokens = [TOKEN.findall(value) for value in lhs]
+    choices = [groups[alpha_tokens(value)] for value in lhs]
+    used = [False] * len(rhs)
+    forward, backward, trail, frames = {}, {}, [], []
+    at = 0
+    while True:
         if at == len(lhs):
             return True
-        tokens = TOKEN.findall(lhs[at])
-        for index in groups[alpha_tokens(lhs[at])]:
-            if index in used:
+        if len(frames) == at:
+            frames.append([0, len(trail), None])
+        frame = frames[at]
+        if frame[2] is not None:
+            used[frame[2]] = False
+            frame[2] = None
+        while len(trail) > frame[1]:
+            first, second = trail.pop()
+            del forward[first]
+            del backward[second]
+        selected = False
+        while frame[0] < len(choices[at]):
+            index = choices[at][frame[0]]
+            frame[0] += 1
+            if used[index]:
                 continue
-            new_forward, new_backward = dict(forward), dict(backward)
             valid = True
-            for a, b in zip(tokens, rhs_tokens[index]):
-                if a.startswith('$') and b.startswith('$'):
-                    if new_forward.setdefault(a, b) != b or new_backward.setdefault(b, a) != a:
+            for first, second in zip(left_tokens[at], rhs_tokens[index]):
+                if first.startswith('$') and second.startswith('$'):
+                    if first in forward:
+                        if forward[first] != second:
+                            valid = False
+                            break
+                    elif second in backward:
                         valid = False
                         break
-                elif a != b:
+                    else:
+                        forward[first] = second
+                        backward[second] = first
+                        trail.append((first, second))
+                elif first != second:
                     valid = False
                     break
-            if valid and match(at + 1, used | {index}, new_forward, new_backward):
-                return True
-        return False
-
-    return match(0, set(), {}, {})
+            if valid:
+                used[index] = True
+                frame[2] = index
+                at += 1
+                selected = True
+                break
+            while len(trail) > frame[1]:
+                first, second = trail.pop()
+                del forward[first]
+                del backward[second]
+        if not selected:
+            frames.pop()
+            if at == 0:
+                return False
+            at -= 1
 
 
 def representation_key(value):
@@ -234,6 +270,66 @@ def answers_equal(left, right, collapse=False, representation=False):
         else:
             return False
     return True
+
+
+class CollectionTrace:
+    """Observations in a generated collection cohort's print protocol.
+
+    Parenthesized results denote collected answer bags; scalar results keep
+    their position. Explicit seg-begin/seg-end blocks contain answer bags.
+    Callers designate ordered data probes by line number. Variable renaming
+    preserves sharing; strings and fields inside each element remain exact.
+    This protocol is supplied by the fixture, not inferred for arbitrary
+    program output.
+    """
+    __slots__ = ('output', 'events')
+
+    def __init__(self, output, *, ordered_lines=()):
+        self.output = output
+        self.events = []
+        ordered = set(ordered_lines)
+        segment = None
+        for index, line in enumerate(output.splitlines()):
+            if index in ordered:
+                if segment is not None:
+                    raise ValueError('ordered probe inside an answer block')
+                self.events.append(('ordered', line))
+            elif line == 'seg-begin':
+                if segment is not None:
+                    raise ValueError('nested answer block')
+                segment = []
+            elif line == 'seg-end':
+                if segment is None:
+                    raise ValueError('answer block has no beginning')
+                self.events.append(('answers', segment))
+                segment = None
+            elif segment is not None:
+                segment.append(line)
+            else:
+                self.events.append(('collection', line))
+        if segment is not None:
+            raise ValueError('unfinished answer block')
+
+    def __eq__(self, other):
+        if not isinstance(other, CollectionTrace):
+            return NotImplemented
+        if len(self.events) != len(other.events):
+            return False
+        for (kind, left), (other_kind, right) in zip(self.events, other.events):
+            if kind != other_kind:
+                return False
+            if kind == 'answers':
+                same = answers_equal(left, right)
+            elif kind == 'ordered':
+                same = alpha_tokens(left) == alpha_tokens(right)
+            else:
+                same = collapse_equal(left, right)
+            if not same:
+                return False
+        return True
+
+    def __repr__(self):
+        return repr(self.output)
 
 
 def observe_framed(stdout, kinds, marker=MARKER):

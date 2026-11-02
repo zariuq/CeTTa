@@ -21,7 +21,7 @@ from check_source_codec import encode_value, reference, text_arg
 
 
 OPS = {name: 2 for name in ("+", "-", "*", "/", "%", "==", "<", ">", "<=", ">=", "and", "or")}
-OPS.update({"if": 3, "not": 1, "get-metatype": 1})
+OPS.update({"if": 3, "not": 1, "get-metatype": 1, "size-atom": 1})
 SCALARS = {"I64", "F64", "BigInt", "Rational", "Bool", "String"}
 
 

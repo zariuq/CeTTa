@@ -108,6 +108,11 @@ typedef struct {
      * Until the region can transport those dependencies between host calls,
      * the complete relation stays in the canonical search machine. */
     bool (*retains_variable_identity)(void *context, SymbolId head);
+    /* Whether NAME at ARITY arguments is a function of PeTTa's library
+     * still as the library defines it, no Prolog the program ran having
+     * redefined it.  NULL: the session has no such library. */
+    bool (*library_function_current)(void *context, SymbolId name,
+                                     uint32_t arity);
     /* Whether a let binder that only counting operations read takes its
      * producer's count, as the search machine's let/count fusion does. */
     bool count_fusion;
@@ -359,13 +364,14 @@ typedef struct {
                            const CettaInvocation *invocation,
                            CettaCallOutcome *outcome);
     /* The search machine's own path for `(add-atom space payload)` with a
-     * ground payload, which it takes once the call's arguments are values:
+     * ground payload, or one holding variables where the set keeps the row
+     * as its alpha key, which it takes once the call's arguments are values:
      * the payload joins `target` and `result_out` is the host's result or
      * error, built in `arena`.  False where the machine would evaluate the
      * call otherwise (an override of the operation, a transaction, a
      * payload that changes the program), before any effect. True commits
      * entry; a missing result is a provider fault, never a refusal. */
-    bool (*admit_ground_atom)(void *context, Space *root, Space *target,
+    bool (*admit_atom)(void *context, Space *root, Space *target,
                               Arena *arena, Atom *call, Atom **result_out);
     /* The search machine's own path for PeTTa's named state over values:
      * `(get-state name)` reads the value the name holds, and
@@ -478,6 +484,9 @@ typedef struct {
     bool (*execute_pure_callable)(void *context, void *prepared, Arena *arena,
                                   Atom *const *arguments, uint32_t arity,
                                   CettaCallOutcome *outcome);
+    /* Immutable worker availability of this prepared artifact, not an
+     * input refusal or execution authority. NULL/false keeps scalar probing. */
+    bool (*callable_answers_only)(void *context, const void *prepared);
     /* A continuation-bearing worker of the same opaque callable plan. NULL
      * refuses before entry. Values borrow the caller through the first pull;
      * the cursor owns any residual before the caller resumes. */
@@ -513,6 +522,12 @@ typedef struct {
         void *context, Space *space, Arena *arena, Atom *query,
         const struct PettaPlanNode *plan, bool count_only,
         bool wrap_collection, Atom **value);
+    /* Optional direct entry of an answer body. A final return has no cursor;
+     * suspension transfers the already-entered cursor; refusal enters none. */
+    CettaOwnedExecutionStep (*enter_callable_answers)(void *context, void *prepared,
+        Arena *arena, Atom *const *arguments, uint32_t arity,
+        struct CettaPreparedPureAnswerCursor **remaining, CettaOwnedReturn *returned,
+        CettaEvalCompletion *completion);
 } CettaOpenEquationRuntime;
 
 /* Install the owning machine's pure guard service before the cursor runs.

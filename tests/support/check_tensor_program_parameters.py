@@ -18,7 +18,7 @@ from check_ic_numeric import archive as vector_archive, ctn
 from check_ic_numeric_arrays import archive
 from check_ic_search import check_controls
 from check_tensor_program import FAMILY, array, canonical, records, source_array
-from check_tensor_sequences import coordinates, normalized
+from check_tensor_sequences import coordinates, normalized, scan
 
 
 def projection(rows):
@@ -50,6 +50,17 @@ def evaluate(rows, inputs):
             return row[1]
         operation, parameters, children = row[1:]
         values = [visit(child) for child in children]
+        if operation in (15, 16, 17):
+            wanted = {15: 'F64Tensor', 16: 'BoolTensor', 17: 'I64Tensor'}[operation]
+            assert values[0][0] == 'BoolTensor' and values[1][0] == values[2][0] == wanted
+            assert values[0][1] == values[1][1] == values[2][1]
+            return array(values[0][1], {point: values[1 if flag else 2][2][point]
+                                      for point, flag in values[0][2].items()
+                                      if point in values[1 if flag else 2][2]}, values[1][0])
+        if operation == 6:
+            result = scan(values[0][1], values[0][2], parameters[0], 'f64')
+            assert all(math.isfinite(value) for value in result.values())
+            return array(values[0][1], result)
         if operation == 13:
             assert values[0][1] == ()
             return array(values[1][1], [values[0][2][()] for _ in coordinates(values[1][1])])

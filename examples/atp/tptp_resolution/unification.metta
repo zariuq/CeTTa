@@ -4,6 +4,8 @@
 ; call the evaluator's unify operation and has no ATP-specific native helper.
 ; Its finite binding list is internal algorithmic state; source and result
 ; terms remain values of the checked resolution-input language.
+; Prepare both outer objects before constructing a tuple to inspect them;
+; constructing that tuple does not itself request its fields' shapes.
 
 (= (tptp-resolution-example:unify:lookup () $variable) FOUnify.Unbound)
 
@@ -54,7 +56,10 @@
      (let $walked-right (tptp-resolution-example:unify:walk $bindings $right)
        (if (== $walked-left $walked-right)
            (FOUnify.OK $bindings)
-           (case ($walked-left $walked-right)
+           (case
+             (let $unify-ready-left $walked-left
+               (let $unify-ready-right $walked-right
+                 ($unify-ready-left $unify-ready-right)))
              ((((fo-resolution:term-variable $variable) $term)
                 (tptp-resolution-example:unify:bind $bindings $variable $term))
               (($term (fo-resolution:term-variable $variable))
@@ -75,7 +80,10 @@
               ($_ (FOUnify.Fail TermConstructorMismatch))))))))
 
 (= (tptp-resolution-example:unify:unify-terms $bindings $left $right)
-   (case ($left $right)
+   (case
+     (let $unify-ready-left $left
+       (let $unify-ready-right $right
+         ($unify-ready-left $unify-ready-right)))
      ((((fo-resolution:terms-nil) (fo-resolution:terms-nil))
         (FOUnify.OK $bindings))
       (((fo-resolution:terms-cons $left-first $left-rest)
@@ -89,7 +97,10 @@
       ($_ (FOUnify.Fail TermArityMismatch)))))
 
 (= (tptp-resolution-example:unify:unify-atom $bindings $left $right)
-   (case ($left $right)
+   (case
+     (let $unify-ready-left $left
+       (let $unify-ready-right $right
+         ($unify-ready-left $unify-ready-right)))
      ((((fo-resolution:atom-predicate
           $left-predicate $left-arguments)
         (fo-resolution:atom-predicate

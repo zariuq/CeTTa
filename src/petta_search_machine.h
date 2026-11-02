@@ -687,14 +687,15 @@ typedef struct {
         const Bindings *environment, OutcomeSet *outcomes,
         CettaCallOutcome *end);
     /*
-     * Ground `add-atom` after the space argument is a value and the payload
-     * has been substituted.  The host owns storage, typing, and program
+     * `add-atom` after the space argument is a value and the payload has
+     * been substituted: a ground payload, or one holding variables where
+     * the set keeps the row as its alpha key (space_keys_open_row).  The host owns storage, typing, and program
      * observation through the shared admit authority.  Returning false
      * declines to ordinary host evaluation.  On true, `*result` is the
      * language success value or an error atom. True commits entry; a
      * missing result is a host fault and cannot reopen ordinary evaluation.
      */
-    bool (*admit_ground_atom)(
+    bool (*admit_atom)(
         void *context, Space *space, Arena *arena,
         Atom *call, Atom **result);
     /*
@@ -708,14 +709,38 @@ typedef struct {
         void *context, Space *space, Arena *arena, Atom *query,
         const PettaPlanNode *plan, bool count_only, bool wrap_collection,
         Atom **value);
+    /* The same for a query whose source reads everything before it makes
+     * anything (a collection spread by superpose). */
+    CettaNativeQueryStatus (*native_collect_snapshot)(
+        void *context, Space *space, Arena *arena, Atom *query,
+        const PettaPlanNode *plan, bool count_only, bool wrap_collection,
+        Atom **value);
+    /* The same for `(match S P (let PAT T E))` answered once for each
+     * distinct instance of T (a collection's unique-atom spread). */
+    CettaNativeQueryStatus (*native_collect_distinct_snapshot)(
+        void *context, Space *space, Arena *arena, Atom *query,
+        bool count_only, Atom **value);
+    /* `(match S P (if TEST DATA (empty)))`, either branch empty, with its
+     * bindings applied: P one pattern, TEST comparisons of the solutions'
+     * values that the native path reads, and DATA an atom answering itself.
+     * DONE sets `*value` to the instances of DATA for the solutions TEST
+     * passes, read on the occurrences of S visible now; it reads no other
+     * space and makes no effect.  DECLINED has done nothing.  Optional. */
+    CettaNativeQueryStatus (*native_filter)(
+        void *context, Space *space, Arena *arena, Atom *query,
+        Atom **value);
     PettaSpecializeResult (*prepare_call)(
         void *context, Space *space, Arena *result_arena,
         Atom *call, Atom **prepared_call);
-    /* A closed revision-pinned pure call returns its completed value,
-     * logical failure or interruption. Only false declines the realization. */
+    /* A closed revision-pinned pure invocation borrows its ready operands
+     * synchronously. `source_call` is optional syntax already owned by the
+     * caller; admission must not require a reconstructed call expression.
+     * Returns a completed value, logical failure or interruption. Only false
+     * declines the realization, with the borrowed invocation untouched. */
     bool (*execute_prepared_pure_call)(
         void *context, Space *space, Arena *result_arena,
-        Atom *prepared_call, CettaCallOutcome *outcome);
+        const CettaInvocation *invocation, Atom *source_call,
+        CettaCallOutcome *outcome);
     /* A revision-keyed program fact: the relation has already declined
      * prepared compilation, so no closed call of it executes there.  Read
      * before a call is proved closed or materialized; false means only
@@ -743,12 +768,14 @@ typedef struct {
         void *context, Space *space, SymbolId head, CettaExprLen arity);
     /* For a language whose producers complete before their callers consume
      * them: the closed call's finite answers from the same producer its
-     * canonical evaluator uses, run to completion.  True with every answer
-     * in `outcomes`; false publishes nothing and leaves the call to equation
-     * search. */
+     * canonical evaluator uses, run to completion. True transfers completed
+     * data occurrences in `outcomes`. False with COMPLETE publishes nothing
+     * and leaves the invocation to equation search. An incomplete cause
+     * stops the caller without publishing the unconsumed frontier or retrying
+     * the producer. Completion metadata remains separate from answer shape. */
     bool (*collect_closed_answers)(
         void *context, Space *space, Arena *result_arena,
-        Atom *prepared_call, OutcomeSet *outcomes);
+        Atom *prepared_call, OutcomeSet *outcomes, CettaEvalCompletion *completion);
     /* Whether a ground term evaluates to itself in the host language: a
      * grounded value, a symbol nothing defines, or a term of constructors
      * with no error field. */
@@ -800,6 +827,11 @@ typedef struct {
     /* Whether the foreign engine defines the predicate name/arity now,
      * registering nothing.  NULL: it defines none. */
     bool (*foreign_predicate_defined)(
+        void *context, SymbolId name, CettaExprLen arity);
+    /* Whether NAME at ARITY arguments is a function of PeTTa's library
+     * still as the library defines it, no Prolog the program ran having
+     * redefined it.  NULL: the session has no such library. */
+    bool (*library_function_current)(
         void *context, SymbolId name, CettaExprLen arity);
     /* `end`: how a recognized call ended (call_outcome.h), FAILURE after
      * its answers or RAISED with its error. */
@@ -955,6 +987,11 @@ typedef struct {
         const Bindings *environment, Bindings *projected);
 } PettaMachineHost;
 
+/* Whole native collections share this admission at machine and directive
+ * entry. A finite source purse or an observer of internal transitions needs
+ * ordinary execution until that region supplies its source correspondence. */
+bool petta_machine_host_admits_native_collection(const PettaMachineHost *host);
+
 typedef enum {
     PETTA_MACHINE_STEP_ANSWER = 0,
     PETTA_MACHINE_STEP_EXHAUSTED,
@@ -1087,6 +1124,16 @@ bool petta_machine_init_with_return(
     PettaMachine *machine, Space *space, Arena *answer_arena,
     Atom *query, const PettaPlanNode *plan, Atom *destination, CettaCallOutcome packet,
     const Bindings *base_environment, const PettaMachineHost *host);
+
+/* Deliver an entered packet to one retained caller-DAG root. The graph's
+ * immutable syntax and plans stay live through the machine; its temporary
+ * arrays and binding vectors may be freed after successful initialization.
+ * Captures enter the authoritative branch before delayed goals can wake.
+ * Root zero delivers the packet directly. Failure leaves no machine. */
+bool petta_machine_init_with_caller_return(
+    PettaMachine *machine, Space *space, Arena *answer_arena,
+    const CettaPreparedPureCallerGraph *callers, const CettaOwnedReturn *returned,
+    const PettaMachineHost *host);
 
 PettaMachineStep petta_machine_next(
     PettaMachine *machine, Atom **answer, Bindings *environment);

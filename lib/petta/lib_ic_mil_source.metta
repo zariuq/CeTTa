@@ -257,15 +257,7 @@
 ; Query the visible source, including imports. A local atom enumeration does
 ; not contain imported equations and cannot establish this admission check.
 (= (mil-source:overridden-at? $reader $name $arity $bare)
-   (let* (($names (map-atom (source-scope:indices (+ $arity 1) 0) $index
-                    (Syntax:PlainName (str:concat "mil_query_" (str:number->string $index)))))
-          ($arguments (map-atom (source-scope:indices $arity 0) $index (Syntax:Variable $index)))
-          ($left (if $bare (source-library:symbol $name)
-                   (Syntax:Expr (cons-atom (source-library:symbol $name) $arguments))))
-          ($term (Syntax:Expr ((source-library:symbol "=") $left (Syntax:Variable $arity))))
-          ($document (Syntax:Document "ST1" $reader ((Syntax:Form $names $term))))
-          ($pattern (parse (syntax:write $document))))
-     (not (== (collapse (match (context-space) $pattern True)) ()))))
+   (source-context:declaration-at? $reader "=" $name $arity $bare))
 (= (mil-source:overridden? $reader $name $arity)
    (or (mil-source:overridden-at? $reader $name $arity False)
      (mil-source:overridden-at? $reader $name 0 True)))

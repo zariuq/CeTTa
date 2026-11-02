@@ -119,6 +119,26 @@ LANE_ORDER = {
 }
 
 NO_EXPECT_CLASSIFICATION = {
+    "tests/test_import_named_space_reuse_petta_seam_repro.metta": (
+        "diagnostic",
+        "cross-dialect witness for fresh imports, batch copying and repeated named imports",
+    ),
+    "tests/test_nested_import_named_space_visibility_petta_repro.metta": (
+        "diagnostic",
+        "cross-dialect witness for dependency-visible named-space queries",
+    ),
+    "tests/test_space_batch_copy_petta_seam_repro.metta": (
+        "diagnostic",
+        "cross-dialect witness for batch, per-atom and fold copying",
+    ),
+    "tests/test_gparse_gslt_core.metta": (
+        "property",
+        "20 authored assertions checked by test-gparse-gslt-core",
+    ),
+    "tests/test_lts_rho_cost_observer_transparency.metta": (
+        "property",
+        "state and counter observations checked by test-rhocalc-cost-observer-transparency",
+    ),
     "benchmarks/genomic_pln/bench_drug_hypothesis_petta_flat.metta": (
         "diagnostic",
         "heavy WM-PLN PeTTa flat-loader checkpoint count witness",

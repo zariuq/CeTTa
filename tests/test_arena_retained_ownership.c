@@ -150,10 +150,38 @@ static void ownership_controls(void) {
     assert(x.retains==x.releases+x.other_releases && y.retains==y.releases);
 }
 
+static void sized_owner_controls(void) {
+    Arena charged, control;
+    Owner x = {0}, y = {0};
+    arena_init_detached(&charged);
+    arena_init_detached(&control);
+    assert(!arena_retain_owner_sized(NULL, &x, owner_retain, owner_release, 4096));
+    assert(arena_retain_owner_sized(&charged, &x, owner_retain, owner_release, 4096));
+    assert(arena_retain_owner(&control, &x, owner_retain, owner_release));
+    assert(charged.external_bytes == control.external_bytes + 4096);
+    ArenaMark charged_mark = arena_mark(&charged);
+    ArenaMark control_mark = arena_mark(&control);
+    for (unsigned i = 0; i < 100; i++)
+        assert(arena_retain_owner_sized(&charged, &x, owner_retain, owner_release, 4096));
+    assert(charged.external_bytes == charged_mark.external_bytes);
+    assert(arena_retain_owner_sized(&charged, &y, owner_retain, owner_release, 8192));
+    assert(arena_retain_owner(&control, &y, owner_retain, owner_release));
+    assert(charged.external_bytes == control.external_bytes + 4096 + 8192);
+    arena_reset(&charged, charged_mark);
+    arena_reset(&control, control_mark);
+    assert(charged.external_bytes == control.external_bytes + 4096);
+    assert(x.holds == 2 && y.holds == 0);
+    arena_free(&charged);
+    arena_free(&control);
+    assert(x.holds == 0 && y.holds == 0);
+    puts("PASS: external owner bytes are charged once and reset with their hold");
+}
+
 
 int main(void) {
     ownership_controls();
     accounting_controls();
+    sized_owner_controls();
     randomized_ownership();
     return 0;
 }

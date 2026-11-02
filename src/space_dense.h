@@ -9,14 +9,22 @@
  * A binary relation kept as bits: the facts (h a b) of one head h whose
  * columns are atoms equal only to themselves, as a set of pairs (a, b).
  * One numbering covers the atoms of both columns; each numbered first
- * column has a row over the numbers of its second column: a sorted array
- * while that takes fewer bytes than bits up to its largest number, then
- * bits.  The relation is a set: a space that holds a pair more than once
- * keeps the other copies as rows.
+ * column has a row over the numbers of its second column, kept in leaves
+ * by chunks of 2^16 numbers: sorted arrays, and a chunk's numbers as bits
+ * while that takes fewer bytes, so a row takes bytes in proportion to its
+ * numbers however far apart they lie.  Rows by the second column are kept too once probes binding only
+ * the second column have paid for them by reading every row.  The relation
+ * is a set: a space that holds a pair more than once keeps the other copies
+ * as rows.
  *
- * Ids are the universe's: the store neither interns nor reads terms, and a
- * caller that counts references holds each numbered id while it is numbered
- * (cetta_dense_relation_each_numbered lists them).
+ * Ids are the universe's: the store neither interns nor reads terms.  Each
+ * number counts the columns of the pairs holding it; an add tells its caller
+ * the ids the relation holds anew and a removal those it holds no more, so a
+ * caller that counts references holds exactly the ids the pairs hold
+ * (cetta_dense_relation_each_numbered lists them).  A number no pair holds
+ * is dead: its rows go at once, and it stays for its id to take again until
+ * the dead outnumber twice the columns the pairs fill plus 64, when trimming
+ * renumbers the held ids in order (RelationNumberingCost).
  */
 
 typedef uint64_t CettaDenseId;
@@ -26,6 +34,22 @@ typedef uint64_t CettaDenseId;
 #define CETTA_DENSE_ANY UINT64_MAX
 #define CETTA_DENSE_ROW_BITS UINT32_C(0x80000000)
 
+/* Told an id. */
+typedef void (*CettaDenseIdVisit)(void *context, CettaDenseId id);
+
+/* One side of a relation: a row per number of one column, NULL while it
+ * pairs with nothing there, holding the other column's numbers paired with
+ * it.  row_len[n] is the form and size of a row of one leaf (a sorted
+ * array, or with CETTA_DENSE_ROW_BITS bits of the first chunk), or marks a
+ * list of leaves (space_dense.c). */
+typedef struct {
+    void **rows;
+    uint32_t *row_len;
+    uint32_t row_cap;
+    /* The bytes the rows take. */
+    uint64_t row_bytes;
+} CettaDenseSide;
+
 typedef struct {
     /* The numbering: number -> id, and an open-addressed table id -> number
      * plus one. */
@@ -33,27 +57,40 @@ typedef struct {
     uint32_t len, cap;
     uint32_t *slots;
     uint32_t slot_mask;
-    /* Rows, one per number used in the first column; NULL until that
-     * number first appears there.  row_len[n] is a sorted array's count of
-     * numbers, or with CETTA_DENSE_ROW_BITS a row of bits' count of words. */
-    void **rows;
-    uint32_t *row_len;
-    uint32_t row_cap;
-    /* Pairs held, and the bytes the rows take. */
+    /* For each number, the columns of the pairs holding it; the numbers no
+     * column holds. */
+    uint32_t *holds;
+    uint32_t dead;
+    /* Rows by the first column: the pairs themselves. */
+    CettaDenseSide first;
+    /* Rows by the second column, kept once probes binding only the second
+     * column have read as many rows as building it reads, and kept in step
+     * from then on; the rows those probes have read so far. */
+    CettaDenseSide second;
+    bool second_kept;
+    uint64_t second_rent;
+    /* Pairs held. */
     uint64_t pairs;
-    uint64_t row_bytes;
 } CettaDenseRelation;
 
 void cetta_dense_relation_init(CettaDenseRelation *rel);
 void cetta_dense_relation_free(CettaDenseRelation *rel);
 
 /* Add the pair (a, b): true when it was absent and is now held, false when
- * it was held already or memory ran out (*OOM set then). */
+ * it was held already or memory ran out (*OOM set then).  HELD, unless NULL,
+ * is told each id the relation holds anew. */
 bool cetta_dense_relation_add(CettaDenseRelation *rel, CettaDenseId a,
-                              CettaDenseId b, bool *oom);
-/* Remove the pair (a, b): true when it was held. */
+                              CettaDenseId b, bool *oom,
+                              CettaDenseIdVisit held, void *context);
+/* Remove the pair (a, b): true when it was held.  RELEASED, unless NULL, is
+ * told each id the relation holds no more. */
 bool cetta_dense_relation_remove(CettaDenseRelation *rel, CettaDenseId a,
-                                 CettaDenseId b);
+                                 CettaDenseId b, CettaDenseIdVisit released,
+                                 void *context);
+/* After removals: renumber the held ids once the dead numbers outnumber
+ * twice the columns the pairs fill plus 64.  False when memory ran out; the
+ * relation stands as it was. */
+bool cetta_dense_relation_trim(CettaDenseRelation *rel);
 bool cetta_dense_relation_contains(const CettaDenseRelation *rel,
                                    CettaDenseId a, CettaDenseId b);
 static inline uint64_t cetta_dense_relation_pairs(
@@ -77,8 +114,7 @@ uint64_t cetta_dense_relation_count(const CettaDenseRelation *rel,
                                     CettaDenseId a_fixed,
                                     CettaDenseId b_fixed);
 
-/* Visit every numbered id once. */
-typedef void (*CettaDenseIdVisit)(void *context, CettaDenseId id);
+/* Visit every id the pairs hold, once. */
 void cetta_dense_relation_each_numbered(const CettaDenseRelation *rel,
                                         CettaDenseIdVisit visit,
                                         void *context);

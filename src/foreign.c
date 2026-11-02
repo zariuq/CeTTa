@@ -127,6 +127,11 @@ static PyObject *g_bridge_resolve = NULL;
 static uint64_t g_bridge_module_counter = 0;
 static Space *g_python_callback_space = NULL;
 
+static void python_space_hold_release(void **hold) {
+    if (space_lifetime_unpin)
+        space_lifetime_unpin(*hold);
+}
+
 PyMODINIT_FUNC PyInit_cetta_bridge(void);
 
 static const char *PYTHON_BOOTSTRAP =
@@ -845,56 +850,52 @@ static PyObject *bridge_run(PyObject *self, PyObject *args) {
     arena_init(&parse_arena);
     size_t pos = 0;
     for (;;) {
+        if (parser_rest_is_delimiters(text, &pos))
+            break;
         Atom *top = parse_sexpr(&parse_arena, text, &pos);
-        if (!top) break;
+        if (!top) {
+            PyErr_SetString(PyExc_RuntimeError, "MeTTa source could not be parsed");
+            arena_free(&parse_arena);
+            Py_DECREF(outer);
+            return NULL;
+        }
         if (atom_is_symbol_id(top, g_builtin_syms.bang)) {
             continue;
         }
 
         Arena eval_arena;
         arena_init(&eval_arena);
-        ResultSet rs;
-        result_set_init(&rs);
-        eval_top_with_registry(g_python_callback_space, &eval_arena,
-                               eval_current_persistent_arena(),
-                               eval_current_registry(), top, &rs);
-
-        PyObject *inner = PyList_New(0);
-        if (!inner) {
-            result_set_free(&rs);
-            arena_free(&eval_arena);
-            arena_free(&parse_arena);
-            Py_DECREF(outer);
-            return NULL;
+        EvalOutcome outcome;
+        eval_outcome_init(&outcome);
+        eval_top_with_registry_outcome(
+            g_python_callback_space, &eval_arena,
+            eval_current_persistent_arena(), eval_current_registry(), top,
+            &outcome, NULL, NULL);
+        bool ok = false;
+        if (outcome.completion != CETTA_EVAL_COMPLETE) {
+            eval_mark_interrupted(outcome.completion);
+            PyErr_Format(PyExc_RuntimeError, "MeTTa evaluation incomplete: %s",
+                         eval_completion_reason(outcome.completion));
+        } else if (outcome.petta_raise_known && outcome.petta_raised_error) {
+            Atom *raised = outcome.results.len
+                ? outcome.results.items[outcome.results.len - 1u] : NULL;
+            char *detail = raised ? atom_to_string(&eval_arena, raised) : NULL;
+            PyErr_SetString(PyExc_RuntimeError,
+                            detail ? detail : "MeTTa evaluation raised an error");
+        } else {
+            PythonDocumentRows rows = {outer, &eval_arena};
+            ok = bridge_observe_document_row(&rows, &outcome.results);
+            if (!ok && !PyErr_Occurred())
+                PyErr_SetString(PyExc_RuntimeError, "MeTTa result could not be published");
         }
-
-        for (CettaCount i = 0; i < rs.len; i++) {
-            char *text_atom = atom_to_string(&eval_arena, rs.items[i]);
-            PyObject *py_atom = PyObject_CallFunction(g_bridge_cetta_atom_class, "s", text_atom);
-            if (!py_atom || PyList_Append(inner, py_atom) != 0) {
-                Py_XDECREF(py_atom);
-                Py_DECREF(inner);
-                result_set_free(&rs);
-                arena_free(&eval_arena);
-                arena_free(&parse_arena);
-                Py_DECREF(outer);
-                return NULL;
-            }
-            Py_DECREF(py_atom);
-        }
-
-        if (PyList_Append(outer, inner) != 0) {
-            Py_DECREF(inner);
-            result_set_free(&rs);
-            arena_free(&eval_arena);
-            arena_free(&parse_arena);
-            Py_DECREF(outer);
-            return NULL;
-        }
-        Py_DECREF(inner);
-        result_set_free(&rs);
+        eval_outcome_free(&outcome);
         eval_release_temporary_spaces();
         arena_free(&eval_arena);
+        if (!ok) {
+            arena_free(&parse_arena);
+            Py_DECREF(outer);
+            return NULL;
+        }
     }
 
     arena_free(&parse_arena);
@@ -1633,6 +1634,8 @@ static bool python_call_object(CettaForeignRuntime *rt, Space *space, Arena *a,
         PyTuple_SET_ITEM(tuple, (Py_ssize_t)i, item);
     }
 
+    __attribute__((cleanup(python_space_hold_release))) void *space_hold =
+        space_lifetime_pin ? space_lifetime_pin(space) : NULL;
     Space *saved_space = g_python_callback_space;
     g_python_callback_space = space;
     PyObject *result = PyObject_CallObject(callable, tuple);
@@ -1842,6 +1845,8 @@ bool cetta_foreign_load_module(CettaForeignRuntime *rt,
     }
 
     bool ok = true;
+    __attribute__((cleanup(python_space_hold_release))) void *space_hold =
+        space_lifetime_pin ? space_lifetime_pin(target_space) : NULL;
     Space *saved_space = g_python_callback_space;
     g_python_callback_space = target_space;
 

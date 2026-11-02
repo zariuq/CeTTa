@@ -634,7 +634,12 @@ static bool relational_plan_prepare_with(
              (plan->info.query_class == CETTA_RELATIONAL_CYCLIC_QUERY ||
               plan->info.covering_factor != SIZE_MAX));
     }
-    CettaCount rows = space_length64(space);
+    /* Past the rows are the facts relations keep, read by position only by
+     * giving the relations back to the rows: patterns none of which may meet
+     * such a fact read the rows alone. */
+    CettaCount rows = space_dense_patterns_miss(space, resolved, pattern_count)
+        ? space_length64(space) - space_dense_facts(space)
+        : space_length64(space);
     for (size_t i = 0u; ready && i < pattern_count; i++) {
         RelationalFactor *factor = &plan->factors[i];
         Atom *pattern = resolved[i];

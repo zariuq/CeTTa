@@ -1404,11 +1404,11 @@ static inline __attribute__((always_inline)) bool prime_native_parallel_task_ker
     HashConsTable *hashcons = g_hashcons;
     CettaEvalEpisode *tracker = g_eval_completion_tracker;
     VariantBank *variants = g_owned_outcome_variant_bank;
-    TempSpaceSet temporary = g_temp_spaces, created = g_new_space_track;
+    TempSpaceSet temporary = g_made_spaces, created = g_new_space_track;
     const PettaProgramRevisionProjection *projection = g_petta_program_revision_projection;
     Arena *persistent = g_eval_fallback_universe.persistent_arena;
     if (!resource_execution) {
-        g_temp_spaces = parallel->temporary_spaces;
+        g_made_spaces = parallel->temporary_spaces;
         g_new_space_track = parallel->created_spaces;
         parallel->temporary_spaces = (TempSpaceSet){0};
         parallel->created_spaces = (TempSpaceSet){0};
@@ -1493,9 +1493,9 @@ static inline __attribute__((always_inline)) bool prime_native_parallel_task_ker
     if (!resource_execution) {
         if (!hyperpose_adopt_tracked_spaces(&parallel->world))
             child->driver.capacity_blocked = true;
-        parallel->temporary_spaces = g_temp_spaces;
+        parallel->temporary_spaces = g_made_spaces;
         parallel->created_spaces = g_new_space_track;
-        g_temp_spaces = temporary;
+        g_made_spaces = temporary;
         g_new_space_track = created;
     }
     g_owned_outcome_variant_bank = variants;

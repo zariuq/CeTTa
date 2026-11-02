@@ -817,6 +817,8 @@ static CettaDelaySyncStatus petta_solver_sync(void *state, uint32_t mark,
          cetta_foreign_region_start(client->region, client->runtime->module,
              PL_predicate("call", 1, client->runtime->module_name), goal) == CETTA_FOREIGN_OK;
     int result = ok ? cetta_foreign_region_next(client->region) : -1;
+    if (result == PL_S_YIELD || result == PL_S_YIELD_DEBUG)
+        eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
     if (ok)
         client->synchronizations++;
     bool solved = result == PL_S_TRUE || result == PL_S_LAST;
@@ -1025,6 +1027,8 @@ static bool petta_solver_try_call(CettaLibPrologRuntime *runtime, Arena *arena,
     ok = ok && events && cetta_foreign_region_start(client->region, runtime->module,
         PL_predicate("call", 1, runtime->module_name), goal) == CETTA_FOREIGN_OK;
     int result = ok ? cetta_foreign_region_next(client->region) : -1;
+    if (result == PL_S_YIELD || result == PL_S_YIELD_DEBUG)
+        eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
     bool solved = result == PL_S_TRUE || result == PL_S_LAST;
     bool emitted = solved && petta_solver_emit(client, arena, result_term, events,
                                               &variables, outcomes);
