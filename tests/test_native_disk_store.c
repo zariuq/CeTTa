@@ -722,6 +722,47 @@ static void create_directory(const char *root) {
     check(cetta_disk_store_open_created("",NULL,&store)==CETTA_STORE_INVALID && !store);
     empty_directory(failed);empty_directory(path);
 }
+
+static void logical_readers(const char *root) {
+    char path[512];snprintf(path,sizeof(path),"%s/logical",root);check(!mkdir(path,0700));
+    CettaDiskStore *store=open_store(path);CettaDiskStoreView *view=snapshot(store),*updated=NULL;
+    CettaDiskOp operations[]={ {.key=text("a"),.value=text("value")},
+        {.key=text("b"),.value=text("")}, {.key=text("c"),.value=text("last")} };
+    check(cetta_disk_store_commit(store,view,operations,3,&updated)==CETTA_STORE_OK);
+    cetta_disk_store_view_close(view);view=updated;
+    CettaDiskStoreBlob blob;check(cetta_disk_store_lookup(view,text("a"),&blob)==CETTA_DISK_OK && blob.size==5);
+    CettaDiskStoreBlobReader *reader=NULL;
+    check(cetta_disk_store_blob_reader_open(view,blob,&reader)==CETTA_DISK_OK);
+    CettaDiskStoreCursor *forward=NULL,*reverse=NULL;CettaDiskBytes lo=text("a"),hi=text("c");
+    check(cetta_disk_store_cursor_open_range(view,&lo,false,&hi,&forward)==CETTA_DISK_OK);
+    check(cetta_disk_store_cursor_open_reverse_range(view,&lo,true,NULL,&reverse)==CETTA_DISK_OK);
+    cetta_disk_store_view_close(view);
+    CettaDiskStoreView *compacted=NULL;
+    check(cetta_disk_store_compact(store,&compacted)==CETTA_STORE_OK);
+    cetta_disk_store_view_close(compacted);uint64_t removed;
+    check(cetta_disk_store_collect(store,&removed)==CETTA_STORE_OK && removed==1);
+    cetta_disk_store_close(store);
+    unsigned char data[8];size_t got=99;
+    check(cetta_disk_store_blob_reader_size(reader)==5);
+    check(cetta_disk_store_blob_reader_read(reader,1,data,3,&got)==CETTA_DISK_OK && got==3 && !memcmp(data,"alu",3));
+    cetta_disk_store_blob_reader_close(reader);
+    for (unsigned i=0;i<2;i++) {
+        CettaDiskBuffer key={0};
+        check(cetta_disk_store_cursor_next(forward,&key,&blob)==CETTA_DISK_OK && key.size==1 && key.data[0]=='a'+i);
+        got=99;
+        check(cetta_disk_store_blob_read(cetta_disk_store_cursor_view(forward),blob,0,data,sizeof(data),&got)==CETTA_DISK_OK);
+        check(got==(i ? 0u : 5u));cetta_disk_buffer_free(&key);
+    }
+    CettaDiskBuffer key={0};
+    check(cetta_disk_store_cursor_next(forward,&key,&blob)==CETTA_DISK_END && !key.data);
+    for (unsigned i=0;i<2;i++) {
+        check(cetta_disk_store_cursor_next(reverse,&key,&blob)==CETTA_DISK_OK && key.size==1 && key.data[0]=='c'-i);
+        cetta_disk_buffer_free(&key);
+    }
+    check(cetta_disk_store_cursor_next(reverse,&key,&blob)==CETTA_DISK_END);
+    cetta_disk_store_cursor_close(forward);cetta_disk_store_cursor_close(reverse);
+    empty_directory(path);
+}
 int main(void) {
     char root[]="runtime/disk-store-test.XXXXXX"; check(mkdtemp(root));
     create_directory(root);
@@ -740,6 +781,7 @@ int main(void) {
     ownership(paths[15]);old_manifest_version(paths[16]);wrong_segment_header(paths[17]);
     view_domains(paths[18],paths[19]);
     backup_cases(paths[20]);
+    logical_readers(root);
     operation_batches(root);
     batch_crash_cases(root);
     for (size_t i=0;i<CASES;++i) empty_directory(paths[i]);

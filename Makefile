@@ -921,7 +921,7 @@ SRC += src/u64_index.c
 SRC += src/library_syntax.c
 SRC += src/str_stream.c
 SRC += src/relational_plan.c src/relational_cursor.c src/native_query.c src/dense_relation.c
-SRC += src/act_trie.c src/act_space.c src/library_act.c
+SRC += src/act_trie.c src/act_space.c src/library_act.c src/native_act_base.c
 SRC += src/space_dense.c
 SRC += src/space_tuples.c
 SRC += src/space_skeleton.c
@@ -52687,3 +52687,20 @@ $(ACT_SPACE_TEST_BIN): tests/test_act_space.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(B
 .PHONY: test-act-space
 test-act-space: $(ACT_SPACE_TEST_BIN) $(BIN)
 	@python3 tests/support/check_act_space.py ./$(ACT_SPACE_TEST_BIN) ./$(BIN)
+
+.PHONY: test-act-stream test-native-act-base
+runtime/test-act-stream: tests/test_act_stream.c src/act_trie.c src/act_trie.h
+	@mkdir -p runtime
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Isrc tests/test_act_stream.c src/act_trie.c -o $@
+runtime/test-native-act-base: tests/test_native_act_base.c src/native_act_base.c src/native_act_base.h src/act_trie.c src/act_trie.h src/native_sha256.c
+	@mkdir -p runtime
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Isrc tests/test_native_act_base.c src/native_act_base.c src/act_trie.c src/native_sha256.c -o $@
+runtime/test-act-stream-faults: tests/test_act_stream_faults.c src/native_act_base.c src/native_act_base.h src/act_trie.c src/act_trie.h src/native_sha256.c
+	@mkdir -p runtime
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Isrc tests/test_act_stream_faults.c src/native_act_base.c src/act_trie.c src/native_sha256.c \
+		-Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=pread,--wrap=pwrite,--wrap=ftruncate -o $@
+test-act-stream: runtime/test-act-stream runtime/test-act-stream-faults
+	@./runtime/test-act-stream
+	@./runtime/test-act-stream-faults
+test-native-act-base: runtime/test-native-act-base
+	@./runtime/test-native-act-base

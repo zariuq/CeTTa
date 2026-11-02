@@ -354,6 +354,92 @@ void cetta_disk_store_view_storage_census(const CettaDiskStoreView *view,
 const CettaDiskRoot *cetta_disk_store_view_root(const CettaDiskStoreView *view) { return view ? &view->root : NULL; }
 uint64_t cetta_disk_store_view_revision(const CettaDiskStoreView *view) { return view ? view->meta.revision : 0; }
 const unsigned char *cetta_disk_store_view_epoch(const CettaDiskStoreView *view) { return view ? view->meta.epoch : NULL; }
+
+struct CettaDiskStoreCursor {
+    CettaDiskStoreView *view;
+    CettaDiskCursor *disk;
+};
+struct CettaDiskStoreBlobReader { CettaDiskBlobReader *disk; };
+CettaDiskStoreLimits cetta_disk_store_view_limits(const CettaDiskStoreView *view) {
+    return view ? view->meta.limits : (CettaDiskStoreLimits){0};
+}
+CettaDiskStatus cetta_disk_store_lookup(const CettaDiskStoreView *view,
+        CettaDiskBytes key,CettaDiskStoreBlob *out) {
+    if (!view || !out) return CETTA_DISK_INVALID;
+    *out=(CettaDiskStoreBlob){0};CettaDiskBlob blob;
+    CettaDiskStatus s=cetta_disk_lookup(&view->root,key,&blob);
+    if (s==CETTA_DISK_OK) *out=(CettaDiskStoreBlob){blob.reference,blob.size,0};
+    return s;
+}
+CettaDiskStatus cetta_disk_store_blob_read(const CettaDiskStoreView *view,
+        CettaDiskStoreBlob blob,uint64_t offset,void *data,size_t size,size_t *written) {
+    if (!view || blob.storage) { if (written) *written=0;return CETTA_DISK_INVALID; }
+    return cetta_disk_blob_read(&view->root,(CettaDiskBlob){blob.reference,blob.size},
+        offset,data,size,written);
+}
+CettaDiskStatus cetta_disk_store_blob_reader_open(const CettaDiskStoreView *view,
+        CettaDiskStoreBlob blob,CettaDiskStoreBlobReader **out) {
+    if (!out) return CETTA_DISK_INVALID;
+    *out=NULL;if (!view || blob.storage) return CETTA_DISK_INVALID;
+    CettaDiskStoreBlobReader *r=calloc(1,sizeof(*r));if (!r) return CETTA_DISK_NOMEM;
+    CettaDiskStatus s=cetta_disk_blob_reader_open(&view->root,
+        (CettaDiskBlob){blob.reference,blob.size},&r->disk);
+    if (s!=CETTA_DISK_OK) free(r);else *out=r;
+    return s;
+}
+CettaDiskStatus cetta_disk_store_blob_reader_read(CettaDiskStoreBlobReader *r,
+        uint64_t offset,void *data,size_t size,size_t *written) {
+    return cetta_disk_blob_reader_read(r ? r->disk : NULL,offset,data,size,written);
+}
+uint64_t cetta_disk_store_blob_reader_size(const CettaDiskStoreBlobReader *r) {
+    return r ? cetta_disk_blob_reader_size(r->disk) : 0;
+}
+void cetta_disk_store_blob_reader_close(CettaDiskStoreBlobReader *r) {
+    if (r) { cetta_disk_blob_reader_close(r->disk);free(r); }
+}
+static CettaDiskStatus store_cursor_open(const CettaDiskStoreView *view,
+        const CettaDiskBytes *lower,bool exclusive,const CettaDiskBytes *upper,
+        bool reverse,CettaDiskStoreCursor **out) {
+    if (!out) return CETTA_DISK_INVALID;
+    *out=NULL;if (!view) return CETTA_DISK_INVALID;
+    CettaDiskStoreCursor *c=calloc(1,sizeof(*c));if (!c) return CETTA_DISK_NOMEM;
+    CettaDiskStoreStatus v=cetta_disk_store_view_clone(view,&c->view);
+    CettaDiskStatus s=v==CETTA_STORE_OK ? CETTA_DISK_OK :
+        v==CETTA_STORE_NOMEM ? CETTA_DISK_NOMEM : CETTA_DISK_IO;
+    if (s==CETTA_DISK_OK) s=reverse ?
+        cetta_disk_cursor_open_reverse_range(&view->root,lower,exclusive,upper,&c->disk) :
+        cetta_disk_cursor_open_range(&view->root,lower,exclusive,upper,&c->disk);
+    if (s!=CETTA_DISK_OK) cetta_disk_store_cursor_close(c);else *out=c;
+    return s;
+}
+CettaDiskStatus cetta_disk_store_cursor_open_range(const CettaDiskStoreView *view,
+        const CettaDiskBytes *lo,bool exclusive,const CettaDiskBytes *hi,CettaDiskStoreCursor **out) {
+    return store_cursor_open(view,lo,exclusive,hi,false,out);
+}
+CettaDiskStatus cetta_disk_store_cursor_open_reverse_range(const CettaDiskStoreView *view,
+        const CettaDiskBytes *lo,bool exclusive,const CettaDiskBytes *hi,CettaDiskStoreCursor **out) {
+    return store_cursor_open(view,lo,exclusive,hi,true,out);
+}
+CettaDiskStatus cetta_disk_store_cursor_next(CettaDiskStoreCursor *c,
+        CettaDiskBuffer *key,CettaDiskStoreBlob *out) {
+    if (!c || !key || !out) return CETTA_DISK_INVALID;
+    *out=(CettaDiskStoreBlob){0};CettaDiskBlob blob;
+    CettaDiskStatus s=cetta_disk_cursor_next(c->disk,key,&blob);
+    if (s==CETTA_DISK_OK) *out=(CettaDiskStoreBlob){blob.reference,blob.size,0};
+    return s;
+}
+const CettaDiskStoreView *cetta_disk_store_cursor_view(const CettaDiskStoreCursor *c) {
+    return c ? c->view : NULL;
+}
+void cetta_disk_store_cursor_storage_census(const CettaDiskStoreCursor *c,CettaStorageCensus *census) {
+    if (!c || !cetta_storage_object(census,c,sizeof(*c),CETTA_STORAGE_BLOCK)) return;
+    cetta_disk_store_view_storage_census(c->view,census);
+    cetta_disk_cursor_storage_census(c->disk,census);
+}
+void cetta_disk_store_cursor_close(CettaDiskStoreCursor *c) {
+    if (c) { cetta_disk_cursor_close(c->disk);cetta_disk_store_view_close(c->view);free(c); }
+}
+
 static bool equal_meta(const Meta *left,const Meta *right) {
     return !memcmp(left->epoch,right->epoch,16) && !memcmp(left->segment,right->segment,16) &&
         left->revision==right->revision && left->root==right->root && left->end==right->end &&
