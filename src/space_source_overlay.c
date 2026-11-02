@@ -396,9 +396,10 @@ static void cursor_storage(const void *raw, CettaStorageCensus *census) {
 static void source_free(Space *space) {
     overlay_release(space->match_backend.source); space->match_backend.source = NULL;
 }
+static size_t cursor_value_limit(const void *raw) { return ((const Cursor *)raw)->owner->maximum_bytes; }
 static const SpaceSourceCursorOps cursor_ops = {
     .clone = cursor_clone, .select = cursor_select, .next = cursor_next,
-    .atom = cursor_atom, .identity = cursor_identity, .free = cursor_free, .storage = cursor_storage,
+    .atom = cursor_atom, .identity = cursor_identity, .value_byte_limit = cursor_value_limit, .free = cursor_free, .storage = cursor_storage,
 };
 static const SpaceSourceEditOps edits = {.admit = source_admit, .remove = source_remove,
     .remove_all = source_remove_all, .remove_up_to = source_remove_up_to};
