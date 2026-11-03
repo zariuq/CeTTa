@@ -278,3 +278,7 @@
 (: __cetta_lib_store_commit_batch_guarded (-> Atom Atom Atom Atom Atom))
 (: store:commit-batch-guarded (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (store:commit-batch-guarded $owner $view $watch $batch) (function (case (__cetta_lib_store_commit_batch_guarded $owner $view $watch $batch) (($r (return $r))))))
+
+(: __cetta_lib_store_remote_start_from (-> Atom Atom Atom Atom))
+(: store:remote-start-from (-> %Undefined% Atom Atom %Undefined%))
+(= (store:remote-start-from $resource $operation $arguments) (function (case (__cetta_lib_store_remote_start_from $resource $operation $arguments) (($r (return $r))))))

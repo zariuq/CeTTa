@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "library_act.h"
 #include "act_space.h"
+#include "act_artifact.h"
 #include "eval.h"
 #include "shared_transition.h"
 #include "storage_census.h"
@@ -46,6 +47,15 @@ static const SpaceOwnerOps owner_ops = {.retain = retain,
                                         .release = release,
                                         .current = current,
                                         .storage = owner_storage};
+Atom *cetta_act_validation_owned_space(Arena *a,CettaActSpaceValidation *v) {
+  Owned *s=calloc(1,sizeof(*s));if (!s) return NULL;
+  atomic_init(&s->references,1);atomic_init(&s->closed,false);
+  arena_init_detached(&s->retention);space_init(&s->space);
+  CettaActStatus status=cetta_act_space_validation_capture(v,&s->space);
+  s->space.lifetime=(SpaceOwner){s,&owner_ops};
+  Atom *out=status==CETTA_ACT_OK ? atom_space(a,&s->space) : NULL;
+  release(s);return out;
+}
 static Atom *error(Arena *arena, Atom *head, CettaActStatus s) {
   return atom_expr3(arena, atom_symbol(arena, "Error"), head,
                     atom_symbol(arena, cetta_act_status_name(s)));
@@ -124,6 +134,7 @@ static Atom *export_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom *
 }
 Atom *cetta_act_dispatch(CettaLibraryContext *ctx, Arena *a, Atom *head,
                          Atom **args, uint32_t n) {
+  Atom *artifact=cetta_act_artifact_dispatch(ctx,a,head,args,n);if (artifact) return artifact;
   Atom *exported=export_dispatch(ctx,a,head,args,n);if (exported) return exported;
   bool open = atom_is_symbol(head, "__cetta_lib_act_open");
   bool snapshot = atom_is_symbol(head,"__cetta_lib_act_snapshot");

@@ -281,7 +281,30 @@ int main(int argc, char **argv) {
   space_init_with_universe(&actual, &universe);
   bool actual_freed = false;
   CettaActStatus status;
-  if (!strcmp(argv[1], "generate")) {
+  if (!strcmp(argv[1], "verify-generated")) {
+    assert(argc==4 || argc==5);
+    uint64_t count=strtoull(argv[3],NULL,10),seen=0;
+    size_t width=argc==5 ? (size_t)strtoull(argv[4],NULL,10) : 512;
+    assert(count<=SIZE_MAX && count<=INT64_MAX);
+    unsigned char *present=calloc((size_t)(count/8)+1,1);assert(present);
+    assert(cetta_act_space_capture(&actual,argv[2],CETTA_ATOM_WIRE_BYTES)==CETTA_ACT_OK);
+    SpaceOccurrenceCursor cursor;assert(space_occurrence_cursor_init_scan(&actual,&cursor));
+    CettaIndex index;Atom *row;SpaceOccurrenceCursorStep step;
+    while ((step=space_occurrence_cursor_next(&cursor,&index,&row))!=SPACE_OCCURRENCE_CURSOR_END) {
+      if (step==SPACE_OCCURRENCE_CURSOR_PROGRESS) continue;
+      assert(step==SPACE_OCCURRENCE_CURSOR_ITEM && row->kind==ATOM_EXPR && row->expr.len==3);
+      assert(atom_is_symbol(row->expr.elems[0],"row"));
+      Atom *number=row->expr.elems[1],*body=row->expr.elems[2];
+      assert(number->kind==ATOM_GROUNDED && number->ground.gkind==GV_INT && number->ground.ival>=0);
+      uint64_t ordinal=(uint64_t)number->ground.ival;assert(ordinal<count);
+      unsigned char bit=(unsigned char)(1u<<(ordinal%8));assert(!(present[ordinal/8]&bit));present[ordinal/8]|=bit;
+      assert(body->kind==ATOM_GROUNDED && body->ground.gkind==GV_STRING && atom_string_len(body)==width);
+      for(size_t i=0;i<width;i++) assert(body->ground.sval[i]=='g');
+      ++seen;
+    }
+    assert(seen==count);space_occurrence_cursor_release(&cursor);free(present);
+    printf("ACT_VERIFIED_GENERATED rows=%llu\n",(unsigned long long)seen);
+  } else if (!strcmp(argv[1], "generate")) {
     assert(argc==4 || argc==5);
     uint64_t count=strtoull(argv[3],NULL,10);
     size_t width=argc==5 ? (size_t)strtoull(argv[4],NULL,10) : 512;

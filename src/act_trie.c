@@ -1110,7 +1110,7 @@ struct CettaActPublication {
   int directory,output;
   char *name;
   char temporary[48];
-  bool renamed,committed,attempted;
+  bool renamed,committed,attempted,private_output;
 };
 static bool publication_sync(int fd) {
   int status;do {status=fsync(fd);} while (status<0 && errno==EINTR);return status==0;
@@ -1163,6 +1163,16 @@ CettaActStatus cetta_act_publication_open(const char *path,CettaActPublication *
   *out=p;return CETTA_ACT_OK;
 }
 int cetta_act_publication_fd(const CettaActPublication *p) {return p ? p->output : -1;}
+CettaActStatus cetta_act_publication_open_private(int directory,CettaActPublication **out) {
+  if (!out || directory<0) return CETTA_ACT_CORRUPT;
+  *out=NULL;CettaActPublication *p=calloc(1,sizeof(*p));
+  if (!p) return CETTA_ACT_NOMEM;
+  p->directory=fcntl(directory,F_DUPFD_CLOEXEC,0);p->output=-1;p->private_output=true;
+  if (p->directory<0) {cetta_act_publication_close(p);return CETTA_ACT_IO;}
+  CettaActStatus s=cetta_act_publication_scratch(p,&p->output);
+  if (s!=CETTA_ACT_OK) {cetta_act_publication_close(p);return s;}
+  *out=p;return CETTA_ACT_OK;
+}
 CettaActStatus cetta_act_publication_scratch(const CettaActPublication *p,int *out) {
   if (!p || !out) return CETTA_ACT_CORRUPT;
   *out=-1;
@@ -1183,6 +1193,7 @@ CettaActStatus cetta_act_publication_commit(CettaActPublication *p) {
   if (p->committed) return CETTA_ACT_OK;
   if (p->attempted) return CETTA_ACT_UNCERTAIN;
   if (!publication_sync(p->output)) return CETTA_ACT_IO;
+  if (p->private_output) {p->committed=true;return CETTA_ACT_OK;}
   p->attempted=true;
   if (renameat(p->directory,p->temporary,p->directory,p->name)) return CETTA_ACT_UNCERTAIN;
   p->renamed=true;
@@ -1191,6 +1202,7 @@ CettaActStatus cetta_act_publication_commit(CettaActPublication *p) {
 }
 CettaActStatus cetta_act_publication_sidecar(CettaActPublication *p,bool retire) {
   if (!p) return CETTA_ACT_CORRUPT;
+  if (p->private_output) return CETTA_ACT_OK;
   size_t n=strlen(p->name);
   if (n>SIZE_MAX-8) return CETTA_ACT_LIMIT;
   char *name=malloc(n+8);if (!name) return CETTA_ACT_NOMEM;

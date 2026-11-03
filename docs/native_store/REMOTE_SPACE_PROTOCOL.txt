@@ -83,6 +83,50 @@ remaining resources. Returning a closed handle as a live entry would turn
 ordinary cancellation into an accounting failure. The client's owning
 remote-resource handle keeps the session alive independently of db:close.
 
+Private transfer artifacts
+---------------------------
+DbTransferInfo returns (DbTransferV1 chunk-bytes default-builder-bytes).
+The native client selects the smaller local/remote chunk allowance before
+transferring. Transfer support is discovered explicitly; an older service
+that lacks it refuses the operation rather than silently using another path.
+
+DbExportOpen captures a collection into a native, connection-owned artifact.
+DbUploadOpen admits an expected file length and full SHA-256. The artifact's
+private descriptor and all construction scratch files are unlinked. The
+trusted configuration selects a private socket directory; requests contain
+no server filesystem paths. DbArtifactWrite accepts the next offset, or an
+exact replay of already retained bytes. Changed replays, holes and writes
+after sealing refuse. DbArtifactStep advances bounded construction, hashing
+and full ACT validation. DbArtifactInfo reports phase, received/total bytes,
+computed digest, temporary construction bytes and construction heap bytes.
+DbArtifactRead returns bounded immutable chunks only after confirmed ready.
+DbArtifactCancel and connection close release the private files.
+
+DbImportOpen uses a validated artifact and captures a destination view. It
+reuses the ordinary MeTTa append schema and native disk-backed batch, not a
+second native encoding of database facts. The spool retains its input and
+independent destination capability; closing the artifact does not invalidate
+an admitted job. Facts, indexes, occurrence mappings and the receipt remain
+invisible until DbImportFinish validates the captured revision and program
+observations and publishes one image. Stale views and partial inputs refuse.
+The request fingerprint includes the actual validated profile and digest.
+
+Import continuations use ServiceKeepValueV1 / UseValueV1. Metadata explicitly
+marks DbLinearV1, distinct from reusable native resources. Each successful
+step consumes its predecessor token and returns one successor; the accepted
+reply itself owns the successor token before the old reply is released.
+Native client uses are exclusive. Pre-handler refusals preserve the token;
+post-handler failures or uncertain delivery never imply that it is reusable.
+DbImportCancel closes staged resources. A lost final publication reply is
+resolved with DbResolve before any new admission; a saved receipt replays its
+original result, including after restart.
+
+The local destination is also staged and fully validated before atomic file
+publication. Rename/directory-sync uncertainty keeps the ordinary ACT
+publication semantics. Temporary-disk and mapped residency are separate from
+the construction heap measure; an image can be larger than either buffer or
+transport frame.
+
 Qualification boundaries
 -------------------------
 The focused checks include ordinary matching and paging, duplicates, open
