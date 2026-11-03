@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "petta_libpl.h"
+#include <errno.h>
 #include "petta_builtin_registry.h"
 
 #include "eval.h"
@@ -5066,9 +5067,12 @@ static bool petta_libpl_retract_predicate(
 
 CettaLibPrologRuntime *cetta_lib_prolog_runtime_new(void) {
     CettaLibPrologRuntime *runtime =
-        cetta_malloc(sizeof(*runtime));
+        malloc(sizeof(*runtime));
+    if (!runtime) return NULL;
     memset(runtime, 0, sizeof(*runtime));
-    arena_init_detached(&runtime->callable_codes);
+    if (!arena_try_init_detached(&runtime->callable_codes)) {
+        int error = errno; free(runtime); errno = error; return NULL;
+    }
     uint64_t instance_id = atomic_fetch_add_explicit(
         &g_petta_libpl_runtime_counter, 1u,
         memory_order_relaxed);

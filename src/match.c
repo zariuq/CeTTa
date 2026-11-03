@@ -662,6 +662,29 @@ static __thread size_t g_binding_entry_retained_bytes = 0;
 static __thread size_t g_binding_constraint_active_bytes = 0;
 static __thread size_t g_binding_constraint_pool_bytes = 0;
 static __thread size_t g_binding_constraint_retained_bytes = 0;
+static pthread_key_t g_binding_cache_key;
+static pthread_once_t g_binding_cache_once = PTHREAD_ONCE_INIT;
+static int g_binding_cache_key_error;
+static _Thread_local bool g_binding_cache_registered;
+
+static void bindings_cache_thread_exit(void *unused) {
+    (void)unused;
+    bindings_thread_cache_free();
+}
+
+static void bindings_cache_key_init(void) {
+    g_binding_cache_key_error = pthread_key_create(
+        &g_binding_cache_key, bindings_cache_thread_exit);
+}
+
+static bool bindings_cache_register(void) {
+    if (g_binding_cache_registered) return true;
+    if (pthread_once(&g_binding_cache_once, bindings_cache_key_init) ||
+        g_binding_cache_key_error ||
+        pthread_setspecific(g_binding_cache_key, &g_binding_cache_registered))
+        return false;
+    return g_binding_cache_registered = true;
+}
 
 static void bindings_pool_free_all(BindingPoolBlock **pools) {
     for (uint32_t i = 0; i < BINDINGS_POOL_CLASS_COUNT; i++) {
@@ -676,6 +699,10 @@ static void bindings_pool_free_all(BindingPoolBlock **pools) {
 }
 
 void bindings_thread_cache_free(void) {
+    if (g_binding_cache_registered) {
+        (void)pthread_setspecific(g_binding_cache_key, NULL);
+        g_binding_cache_registered = false;
+    }
     bindings_pool_free_all(g_binding_entry_pools);
     bindings_pool_free_all(g_binding_constraint_pools);
     free(g_bindings_single_reach_path);
@@ -945,7 +972,7 @@ static void bindings_entries_release(Binding *entries, uint32_t cap) {
     if (previous != 1u)
         return;
     bytes = sizeof(Binding) * cap;
-    int klass = bindings_pool_class(cap);
+    int klass = bindings_cache_register() ? bindings_pool_class(cap) : -1;
     if (klass < 0) {
         if (g_binding_entry_active_bytes >= bytes)
             g_binding_entry_active_bytes -= bytes;
@@ -1009,7 +1036,7 @@ static void bindings_constraints_release(BindingConstraint *constraints, uint32_
     if (previous != 1u)
         return;
     bytes = sizeof(BindingConstraint) * cap;
-    int klass = bindings_pool_class(cap);
+    int klass = bindings_cache_register() ? bindings_pool_class(cap) : -1;
     if (klass < 0) {
         if (g_binding_constraint_active_bytes >= bytes)
             g_binding_constraint_active_bytes -= bytes;
@@ -2511,6 +2538,7 @@ static BindingsReachability bindings_value_reaches_var(
     Bindings *bindings, BindingValue value, VarId target);
 
 static bool bindings_single_reach_path_reserve(size_t needed) {
+    if (!bindings_cache_register()) return false;
     if (needed <= g_bindings_single_reach_path_cap)
         return true;
     size_t capacity = g_bindings_single_reach_path_cap

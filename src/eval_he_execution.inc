@@ -2026,6 +2026,7 @@ typedef struct {
  * evaluation's context, and the source's head. */
 static bool he_shared_execution_candidate(Space *space, Atom *source,
                                           Atom *type, int fuel) {
+    if (he_retained_execution_active()) return false;
     if (eval_current_language_id() != CETTA_LANGUAGE_HE)
         return false;
     /* A completed scalar is interpreted by HE's value/cast boundary. Only

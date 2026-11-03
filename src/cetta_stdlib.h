@@ -8,6 +8,8 @@
    Atoms are allocated in the provided arena. */
 void stdlib_load(Space *s, Arena *a);
 void stdlib_load_petta_shared_subset(Space *s, Arena *a);
+bool stdlib_try_load(Space *s, Arena *a);
+bool stdlib_try_load_petta_shared_subset(Space *s, Arena *a);
 
 /* Serialize parsed atoms from a .metta file to a C header on stdout.
    Used by --compile-stdlib flag. Returns 0 on success, -1 on error. */

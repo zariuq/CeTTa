@@ -4,14 +4,53 @@
 #include "symbol.h"
 
 #include <limits.h>
+#include <errno.h>
 #include <stdatomic.h>
 #include <pthread.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
-static uint64_t g_runtime_counters[CETTA_RUNTIME_COUNTER_COUNT];
-static bool g_runtime_stats_enabled = false;
-static pthread_mutex_t g_runtime_stats_mutex = PTHREAD_MUTEX_INITIALIZER;
+struct CettaRuntimeStatsOwner {
+    uint64_t counters[CETTA_RUNTIME_COUNTER_COUNT];
+    bool enabled;
+    pthread_mutex_t mutex;
+};
+static CettaRuntimeStatsOwner g_default_stats_owner = {
+    .mutex = PTHREAD_MUTEX_INITIALIZER,
+};
+static _Thread_local CettaRuntimeStatsOwner *g_stats_owner;
+
+CettaRuntimeStatsOwner *cetta_runtime_stats_owner_new(void) {
+    CettaRuntimeStatsOwner *owner = calloc(1, sizeof(*owner));
+    if (!owner) return NULL;
+    int error = pthread_mutex_init(&owner->mutex, NULL);
+    if (error) {
+        free(owner);
+        errno = error;
+        return NULL;
+    }
+    return owner;
+}
+void cetta_runtime_stats_owner_free(CettaRuntimeStatsOwner *owner) {
+    if (!owner) return;
+    pthread_mutex_destroy(&owner->mutex);
+    free(owner);
+}
+CettaRuntimeStatsOwner *cetta_runtime_stats_owner_current(void) {
+    return g_stats_owner;
+}
+CettaRuntimeStatsOwner *cetta_runtime_stats_owner_exchange(CettaRuntimeStatsOwner *owner) {
+    CettaRuntimeStatsOwner *previous = g_stats_owner;
+    g_stats_owner = owner;
+    return previous;
+}
+static CettaRuntimeStatsOwner *runtime_stats_owner(void) {
+    return g_stats_owner ? g_stats_owner : &g_default_stats_owner;
+}
+#define g_runtime_counters (runtime_stats_owner()->counters)
+#define g_runtime_stats_enabled (runtime_stats_owner()->enabled)
+#define g_runtime_stats_mutex (runtime_stats_owner()->mutex)
 static _Thread_local CettaSurvivorAllocationRole
     g_survivor_allocation_role = CETTA_SURVIVOR_ALLOC_ROLE_OTHER;
 
