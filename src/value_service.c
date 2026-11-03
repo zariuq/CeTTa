@@ -34,6 +34,11 @@ typedef struct {
     uint64_t idle,next_resource;int fuel;char boot[33];
     Connection *clients;Resource *resources;
     const char *evaluation_failure;
+    Arena maintenance[2];unsigned maintenance_arena;
+    Atom *maintenance_state,*maintenance_initial,*maintenance_status;
+    const char *maintenance_entry,*maintenance_failure;
+    uint64_t maintenance_work,maintenance_steps;
+    bool maintenance_dirty,maintenance_more,maintenance_cancelled;
 } Host;
 static volatile sig_atomic_t stopping;
 static void stop(int signal_number) { (void)signal_number;stopping=1; }
@@ -154,6 +159,10 @@ static const char *state_failure(Host *host,Atom *value,bool fresh) {
 }
 static bool resources_fit(Host *host) {
     CettaStorageCensus census={0};bool ready=true;
+    if (host->maintenance_state) {
+        ready=!state_failure(host,host->maintenance_state,false);
+        if (ready) arena_storage_census(&host->maintenance[host->maintenance_arena],&census);
+    }
     for (size_t i=0;ready && i<host->resource_count;i++) if (host->resources[i].live) {
         Resource *r=&host->resources[i];CettaNativeHandleUse use={0};
         if (r->value) {
@@ -167,6 +176,56 @@ static bool resources_fit(Host *host) {
     }
     cetta_storage_finish(&census);ready=ready && !census.incomplete && !census.overflow && !census.invalidated && census.bytes<=host->owned_limit;
     cetta_storage_census_free(&census);return ready;
+}
+static Atom *maintenance_info(Host *host,Arena *a) {
+    const char *phase=!host->maintenance_entry ? "unconfigured" : host->maintenance_cancelled ? "cancelled" : host->maintenance_failure ? "failed"
+        : host->maintenance_more || host->maintenance_dirty ? "scheduled" : "idle";
+    return atom_expr(a,(Atom *[]){atom_symbol(a,"ServiceMaintenanceInfoV1"),atom_symbol(a,phase),
+        atom_int(a,host->maintenance_steps>INT64_MAX ? INT64_MAX : (int64_t)host->maintenance_steps),
+        host->maintenance_status ? atom_deep_copy(a,host->maintenance_status)
+            : host->maintenance_failure ? atom_symbol(a,host->maintenance_failure) : atom_symbol(a,"NoMaintenanceStatusV1")},4);
+}
+static void maintenance_step(Host *host) {
+    if (!host->maintenance_entry || (!host->maintenance_dirty && !host->maintenance_more)) return;
+    host->maintenance_dirty=false;
+    unsigned selected=host->maintenance_arena^1u;
+    Arena *next=&host->maintenance[selected];arena_free(next);arena_init_detached(next);
+    Arena invocation;arena_init_detached(&invocation);
+    Atom *state=host->maintenance_state ? host->maintenance_state : host->maintenance_initial;
+    Atom *input=atom_expr(&invocation,(Atom *[]){atom_symbol(&invocation,"ServiceMaintenanceCallV1"),host->data,state,
+        atom_int(&invocation,(int64_t)host->maintenance_work)},4);
+    Atom *result=evaluate(host,&invocation,host->maintenance_entry,input);
+    const char *failure=result ? NULL : host->evaluation_failure;
+    bool more=tagged(result,"ServiceMaintenanceMoreV1",3);
+    bool stopped=tagged(result,"ServiceMaintenanceStoppedV1",3);
+    if (result && !more && !stopped && !tagged(result,"ServiceMaintenanceIdleV1",3)) failure="maintenance-result";
+    if (!failure) failure=state_failure(host,result->expr.elems[1],false);
+    if (!failure) {
+        Buffer encoded={0};
+        if (!encode(host,result->expr.elems[2],&encoded)) failure="maintenance-status";
+        clear(&encoded);
+    }
+    Atom *successor=NULL,*status=NULL;
+    if (!failure) {
+        successor=atom_deep_copy(next,result->expr.elems[1]);status=atom_deep_copy(next,result->expr.elems[2]);
+        if (!successor || !status) failure="maintenance-capacity";
+    }
+    if (host->maintenance_steps<UINT64_MAX) ++host->maintenance_steps;
+    /* Keep the new holders before retiring the predecessor. Maintenance is
+     * outside request acknowledgement and never revises its saved reply. */
+    if (!failure) {
+        arena_free(&host->maintenance[host->maintenance_arena]);host->maintenance_arena=selected;
+        host->maintenance_state=successor;host->maintenance_status=status;
+        host->maintenance_more=more;host->maintenance_failure=stopped ? "maintenance-refused" : NULL;
+        if (!resources_fit(host)) failure="maintenance-budget";
+    }
+    if (failure) {
+        arena_free(&host->maintenance[host->maintenance_arena]);arena_init_detached(&host->maintenance[host->maintenance_arena]);
+        host->maintenance_state=host->maintenance_status=NULL;host->maintenance_more=false;host->maintenance_failure=failure;
+        fprintf(stderr,"value service: maintenance stopped: %s\n",failure);
+    }
+    if (failure) {arena_free(next);arena_init_detached(next);}
+    arena_free(&invocation);
 }
 static void connection_close(Host *host,size_t index) {
     Connection *c=&host->clients[index];
@@ -234,6 +293,19 @@ static Atom *dispatch(Host *host,size_t index,Arena *arena,Atom *body,Resource *
         Resource *r=resource_find(host,index,body->expr.elems[1]);if (!r) return failure(arena,false,"unknown-resource");
         resource_close(host,r);return atom_symbol(arena,"ServiceClosedV1");
     }
+    if (tagged(body,"CallV1",3) && atom_is_symbol(body->expr.elems[1],"ServiceMaintenanceInfo")) return maintenance_info(host,arena);
+    if (tagged(body,"CallV1",3) && (atom_is_symbol(body->expr.elems[1],"ServiceMaintenanceCancel") ||
+            atom_is_symbol(body->expr.elems[1],"ServiceMaintenanceResume"))) {
+        if (c->readonly) return failure(arena,false,"read-only");
+        if (!host->maintenance_entry) return failure(arena,false,"maintenance-unconfigured");
+        if (atom_is_symbol(body->expr.elems[1],"ServiceMaintenanceCancel")) {
+            arena_free(&host->maintenance[0]);arena_init_detached(&host->maintenance[0]);
+            arena_free(&host->maintenance[1]);arena_init_detached(&host->maintenance[1]);
+            host->maintenance_state=host->maintenance_status=NULL;host->maintenance_failure=NULL;
+            host->maintenance_more=host->maintenance_dirty=false;host->maintenance_cancelled=true;
+        } else {host->maintenance_dirty=true;host->maintenance_cancelled=false;}
+        return maintenance_info(host,arena);
+    }
     Atom *operation=NULL,*argument=NULL,*resource=atom_symbol(arena,"ServiceNoResourceV1");
     Resource *consumed=NULL,*used=NULL;
     if (tagged(body,"CallV1",3)) { operation=body->expr.elems[1];argument=body->expr.elems[2]; }
@@ -249,7 +321,9 @@ static Atom *dispatch(Host *host,size_t index,Arena *arena,Atom *body,Resource *
     if (c->readonly && route->write) return failure(arena,false,"read-only");
     Atom *peer=atom_expr3(arena,atom_symbol(arena,"ServicePeerV1"),atom_int(arena,c->uid),atom_symbol(arena,c->readonly ? "ReadOnly" : "ReadWrite"));
     Atom *input=atom_expr(arena,(Atom *[]){atom_symbol(arena,"ServiceCallV1"),host->data,peer,resource,argument},5);
-    *ran=true;Atom *result=evaluate(host,arena,route->entry,input);
+    *ran=true;
+    if (route->write && host->maintenance_entry) {host->maintenance_dirty=true;host->maintenance_cancelled=false;}
+    Atom *result=evaluate(host,arena,route->entry,input);
     /* UseValue moves a linear continuation. Success transfers its owned
      * leaves through the copied result; failure retires it explicitly. The
      * exact request/reply cache handles wire retries before token lookup. */
@@ -328,18 +402,29 @@ static bool write_client(Connection *c) {
 }
 static bool configure(Host *host,const char *entry) {
     Atom *config=evaluate(host,&host->configuration,entry,NULL);
-    if (!tagged(config,"ValueServiceV1",5)) return false;
+    bool maintenance=tagged(config,"ValueServiceV2",6);
+    if (!maintenance && !tagged(config,"ValueServiceV1",5)) return false;
     host->path=text(config->expr.elems[1]);host->data=config->expr.elems[2];Atom *routes=config->expr.elems[3],*limits=config->expr.elems[4];
     if (!host->path || host->path[0]!='/' || !routes || routes->kind!=ATOM_EXPR || !routes->expr.len || !tagged(limits,"ServiceLimitsV1",7)) return false;
     uint64_t values[6];for (size_t i=0;i<6;i++) if (!natural(limits->expr.elems[i+1],&values[i])) return false;
     if (!values[0] || values[0]>1024 || !values[1] || values[1]>4096 || values[2]<1024 || values[2]>UINT32_MAX || values[2]>cetta_library_value_byte_limit(host->context) ||
         !values[3] || values[3]>3600000 || !values[4] || values[4]>SIZE_MAX || !values[5] || values[5]>INT32_MAX) return false;
     host->client_count=(size_t)values[0];host->resource_count=(size_t)values[1];host->frame=(size_t)values[2];host->idle=values[3];host->owned_limit=(size_t)values[4];host->fuel=(int)values[5];
+    if (maintenance) {
+        Atom *hook=config->expr.elems[5];uint64_t work;
+        if (!tagged(hook,"ServiceMaintenanceV1",4) || hook->expr.elems[1]->kind!=ATOM_SYMBOL ||
+            !natural(hook->expr.elems[3],&work) || !work || work>INT64_MAX) return false;
+        host->maintenance_entry=atom_symbol_bytes(hook->expr.elems[1]);host->maintenance_initial=hook->expr.elems[2];
+        if (memchr(host->maintenance_entry,0,atom_symbol_length(hook->expr.elems[1])) || state_failure(host,host->maintenance_initial,false)) return false;
+        host->maintenance_work=work;host->maintenance_dirty=true;
+    }
     host->route_count=routes->expr.len;host->routes=calloc(host->route_count,sizeof(*host->routes));
     if (!host->routes) return false;
     for (size_t i=0;i<host->route_count;i++) {
         Atom *r=routes->expr.elems[i];
         if (!tagged(r,"ServiceRouteV1",4) || r->expr.elems[1]->kind!=ATOM_SYMBOL || r->expr.elems[3]->kind!=ATOM_SYMBOL ||
+            atom_is_symbol(r->expr.elems[1],"ServiceMaintenanceInfo") || atom_is_symbol(r->expr.elems[1],"ServiceMaintenanceCancel") ||
+            atom_is_symbol(r->expr.elems[1],"ServiceMaintenanceResume") ||
             !(atom_is_symbol(r->expr.elems[2],"Read") || atom_is_symbol(r->expr.elems[2],"Write"))) return false;
         for (size_t j=0;j<i;j++) if (atom_eq(r->expr.elems[1],host->routes[j].operation)) return false;
         host->routes[i]=(Route){r->expr.elems[1],atom_symbol_bytes(r->expr.elems[3]),atom_is_symbol(r->expr.elems[2],"Write")};
@@ -360,7 +445,7 @@ static bool private_parent(const char *path) {
 }
 int cetta_value_service_run(CettaLibraryContext *context,Space *program,Registry *registry,Arena *permanent,const char *configuration) {
     Host host={.context=context,.program=program,.registry=registry,.permanent=permanent,.fuel=1000000,.next_resource=1};
-    arena_init_detached(&host.configuration);int listener=-1,lock=-1,rc=1;struct stat bound={0};
+    arena_init_detached(&host.configuration);arena_init_detached(&host.maintenance[0]);arena_init_detached(&host.maintenance[1]);int listener=-1,lock=-1,rc=1;struct stat bound={0};
     struct sigaction prior_term,prior_int;bool signals=false;
     if (!configure(&host,configuration)) { fputs("value service: invalid configuration\n",stderr);goto done; }
     if (!private_parent(host.path)) { fputs("value service: socket requires a private owned directory\n",stderr);goto done; }
@@ -377,7 +462,7 @@ int cetta_value_service_run(CettaLibraryContext *context,Space *program,Registry
     struct sigaction action={.sa_handler=stop};sigemptyset(&action.sa_mask);stopping=0;
     sigaction(SIGTERM,&action,&prior_term);sigaction(SIGINT,&action,&prior_int);signals=true;
     while (!stopping) {
-        fds[0]=(struct pollfd){listener,POLLIN,0};uint64_t now=now_ms(),due=now+1000;
+        fds[0]=(struct pollfd){listener,POLLIN,0};uint64_t now=now_ms(),due=now+(host.maintenance_dirty || host.maintenance_more ? 0u : 1000u);
         for (size_t i=0;i<host.client_count;i++) {
             Connection *c=&host.clients[i];
             if (c->fd>=0 && now>=c->deadline) connection_close(&host,i);
@@ -399,6 +484,7 @@ int cetta_value_service_run(CettaLibraryContext *context,Space *program,Registry
                 ((events&POLLIN) && !c->output.data && !read_client(&host,i)) ||
                 ((events&POLLOUT) && c->output.data && !write_client(c))) connection_close(&host,i);
         }
+        maintenance_step(&host);
     }
     free(fds);if (rc!=2) rc=0;
 done:
@@ -407,5 +493,5 @@ done:
     if (listener>=0) { close(listener);struct stat current;if (!lstat(host.path,&current) && current.st_dev==bound.st_dev && current.st_ino==bound.st_ino) unlink(host.path); }
     if (lock>=0) close(lock);
     if (signals) { sigaction(SIGTERM,&prior_term,NULL);sigaction(SIGINT,&prior_int,NULL); }
-    arena_free(&host.configuration);return rc;
+    arena_free(&host.maintenance[0]);arena_free(&host.maintenance[1]);arena_free(&host.configuration);return rc;
 }

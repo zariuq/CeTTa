@@ -462,6 +462,24 @@
         (records $records) (bytes-read $read) (output-bytes $output))))
      ($failure (db:error db:compact $failure)))))
 
+; Automatic maintenance belongs to a service event loop. Embedded callers
+; retain the explicit cooperative job interface and its status operations.
+(= (db:maintenance-info $resource)
+  (db:maintenance-action $resource ServiceMaintenanceInfo))
+(= (db:maintenance-cancel $resource)
+  (db:maintenance-action $resource ServiceMaintenanceCancel))
+(= (db:maintenance-resume $resource)
+  (db:maintenance-action $resource ServiceMaintenanceResume))
+(= (db:maintenance-action $resource $operation)
+  (case (db:resource $resource)
+    (((db:remote $remote)
+      (case (store:remote-call $remote $operation ())
+        (((ServiceMaintenanceInfoV1 $phase $steps $status)
+          (quote (db:maintenance (phase $phase) (steps $steps) (status $status))))
+         ($failure (db:error db:maintenance (db:remote-value db:maintenance $failure))))))
+     ($embedded (if (== $operation ServiceMaintenanceInfo)
+                  (quote (db:maintenance (mode explicit))) (Error db:maintenance service-loop-required))))))
+
 ; Persistent bulk admission keeps only one portable row in the evaluator;
 ; facts, postings, origin mappings, metadata and receipt stage in one spool.
 (= (db:import-act-result $resource $collection $request $operation $path)

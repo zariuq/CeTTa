@@ -45,8 +45,26 @@ transaction proposals must fit the selected portable request policy.
 and remote connections. An open job retains its owner after connection close;
 each step takes an explicit work quantum. Cancellation leaves the frozen cut
 recoverable by a later compaction. Completed jobs retain inspectable status
-until `db:close`; `db:compact` closes its job automatically. Automatic
-scheduling is still pending.
+until `db:close`; `db:compact` closes its job automatically.
+
+The native DB server schedules automatic maintenance after writes when active
+delta bytes reach `max(8 MiB, base bytes / 4)`. A retained job advances between
+socket events with a selected work quantum, keeping the writer gate free
+during construction. Once idle, it performs no repeated MeTTa evaluation.
+Startup can resume an interrupted frozen cut; opening CDS2 never converts it.
+Cancelling a small manual compaction does not immediately restart that cut.
+`db:maintenance-info`, `db:maintenance-cancel` and `db:maintenance-resume`
+inspect and control the service-owned job. Cancellation releases construction
+and retains recoverable data; another write or explicit resume may schedule
+work again. A maintenance failure is observable separately from acknowledged
+database writes and does not rewrite their receipts.
+
+`CETTA_DB_MAINTENANCE_MEMORY` selects builder memory (default 32 MiB), and
+`CETTA_DB_MAINTENANCE_WORK` selects one step's work allowance (default 65536).
+These are construction policies, not database-size limits. Embedded callers
+use the explicit cooperative job API. `make test-db-maintenance` checks
+writer coexistence, retained readers, idle behaviour, cancellation, restart,
+legacy format preservation and failure isolation.
 See the [remote contract](REMOTE_SPACE_PROTOCOL.txt). `make test-remote-db`
 checks ordinary programs, retained readers, callback receipts and failures.
 

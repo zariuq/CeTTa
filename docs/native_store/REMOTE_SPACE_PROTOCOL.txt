@@ -83,6 +83,37 @@ remaining resources. Returning a closed handle as a live entry would turn
 ordinary cancellation into an accounting failure. The client's owning
 remote-resource handle keeps the session alive independently of db:close.
 
+Automatic maintenance
+-----------------------
+The native value host accepts its existing ValueServiceV1 configuration and
+an optional ValueServiceV2 with one ServiceMaintenanceV1 entry, initial state
+and work allowance. The trusted callback receives ServiceMaintenanceCallV1
+with configuration, retained state and work. More, Idle and Stopped results
+retain a successor state and portable status. Only that live continuation is
+copied into alternating owned arenas; predecessor and evaluation workspace
+are retired after the successor owns its leaves.
+
+Write dispatch schedules one maintenance check even if its handler later
+reports uncertainty. An active job gets one bounded step between socket event
+sweeps. Idle service polling does not invoke the MeTTa callback. Maintenance
+failure has its own status and cannot alter an already queued/cached user
+reply. Allocation, malformed callback and accounting failures stop the job
+and release its construction state. A subsequent write can retry.
+
+ServiceMaintenanceInfo, ServiceMaintenanceCancel and ServiceMaintenanceResume
+are reserved native host CallV1 operations. Cancellation and resumption
+require the existing write right. Cancellation releases construction and
+stops its work clock; another write or explicit resume can schedule work.
+The db facade exposes maintenance-info, maintenance-cancel and
+maintenance-resume. Embedded connections keep explicit cooperative jobs.
+
+The DB configuration checks the CDS3 active delta against
+max(8 MiB, base bytes / 4), using 32 MiB builder memory by default. A startup
+check also resumes a frozen cut. Later checks preserve explicit cancellation
+of a small manual job rather than immediately reacquiring its cut. CDS2
+remains unchanged until explicit ACT compaction. Builder memory and work
+quanta are independently configurable; neither limits corpus size.
+
 Private transfer artifacts
 ---------------------------
 DbTransferInfo returns (DbTransferV1 chunk-bytes default-builder-bytes).

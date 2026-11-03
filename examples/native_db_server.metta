@@ -10,8 +10,10 @@
          ($incarnation (system:uuid4-hex))
          ($artifacts (act:artifact-root $socket))
          ($data (db-server:configuration-data $owner $incarnation $artifacts))
-         ($frame (store:value-byte-limit)))
-    (ValueServiceV1 $socket $data
+         ($frame (store:value-byte-limit))
+         ($memory (str:string->number (system:getenv-or-default "CETTA_DB_MAINTENANCE_MEMORY" "33554432")))
+         ($work (str:string->number (system:getenv-or-default "CETTA_DB_MAINTENANCE_WORK" "65536"))))
+    (ValueServiceV2 $socket $data
       ((ServiceRouteV1 DbCapabilities Read db-server:capabilities)
        (ServiceRouteV1 DbCapture Read db-server:capture)
        (ServiceRouteV1 DbCaptureRelated Read db-server:related)
@@ -42,7 +44,8 @@
        (ServiceRouteV1 DbImportNext Write db-server:import-next)
        (ServiceRouteV1 DbImportFinish Write db-server:import-finish)
        (ServiceRouteV1 DbImportCancel Write db-server:import-cancel))
-      (ServiceLimitsV1 64 1024 $frame 30000 268435456 1000000))))
+      (ServiceLimitsV1 64 1024 $frame 30000 268435456 1000000)
+      (ServiceMaintenanceV1 db-server:maintenance (DbMaintenanceIdleV1 $memory True) $work))))
 (= (db-server:configuration-data $owner $incarnation $artifacts)
   (case $owner
     (((db:readonly $space) (DbConfigurationV1 $owner (ActOwnerV1 $incarnation) $incarnation act $artifacts))
@@ -268,3 +271,46 @@
 (= (db-server:import-cancel (ServiceCallV1 $configuration $peer
      (DbImportStateV1 $state $command) $unused))
   (let $_ (durable-space:append-close $state) DbImportCancelledV1))
+
+; Maintenance has its own retained state and work clock. A failed attempt
+; leaves user receipts intact and can be retried after another write.
+(= (db-server:maintenance
+     (ServiceMaintenanceCallV1 (DbConfigurationV1 $owner $_ $_ $kind $artifacts)
+       (DbMaintenanceIdleV1 $memory $resume) $work))
+  (if (== $kind directory)
+    (db-server:maintenance-check $owner $memory $resume)
+    (ServiceMaintenanceIdleV1 (DbMaintenanceIdleV1 $memory False) DbMaintenanceReadOnlyV1)))
+(= (db-server:maintenance-check $owner $memory $resume)
+  (case (store:snapshot $owner)
+    (((StoreSnapshot $view $_ $_)
+      (let* (($info (store:storage-info $view)) ($_ (store:close $view)))
+        (db-server:maintenance-storage $owner $memory $resume $info)))
+     ($failure (db-server:maintenance-failed $memory $failure)))))
+(= (db-server:maintenance-storage $owner $memory $resume $info)
+  (case $info
+    (((StoreStorageInfo $format $epoch $revision $base $delta $frozen $has-base $has-frozen)
+      (if (and (== $format 3) (or (and $has-frozen $resume) (>= $delta (max 8388608 (/ $base 4)))))
+        (db-server:maintenance-open $owner $memory)
+        (ServiceMaintenanceIdleV1 (DbMaintenanceIdleV1 $memory False) $info)))
+     ($failure (db-server:maintenance-failed $memory $failure)))))
+(= (db-server:maintenance-open $owner $memory)
+  (case (store:compact-act-open $owner $memory)
+    (((StoreCompactionOpened $job $info)
+      (ServiceMaintenanceMoreV1 (DbMaintenanceActiveV1 $memory $job) $info))
+     ((StoreRefused busy)
+      (ServiceMaintenanceIdleV1 (DbMaintenanceIdleV1 $memory False) (DbMaintenanceDeferredV1 busy)))
+     ($failure (db-server:maintenance-failed $memory $failure)))))
+(= (db-server:maintenance
+     (ServiceMaintenanceCallV1 (DbConfigurationV1 $owner $_ $_ $kind $artifacts)
+       (DbMaintenanceActiveV1 $memory $job) $work))
+  (case (store:compact-act-step $job $work)
+    (((StoreCompactionMore $info)
+      (ServiceMaintenanceMoreV1 (DbMaintenanceActiveV1 $memory $job) $info))
+     ((StoreSnapshot $view $_ $_)
+      (let* (($_ (store:close $view)) ($info (store:compact-act-info $job))
+             ($_ (store:close $job)) ($_ (store:collect $owner)))
+        (ServiceMaintenanceMoreV1 (DbMaintenanceIdleV1 $memory False) $info)))
+     ($failure
+      (let $_ (store:close $job) (db-server:maintenance-failed $memory $failure))))))
+(= (db-server:maintenance-failed $memory $failure)
+  (ServiceMaintenanceStoppedV1 (DbMaintenanceIdleV1 $memory True) (DbMaintenanceFailedV1 $failure)))
