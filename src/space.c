@@ -2875,6 +2875,37 @@ void space_occurrence_cursor_release(SpaceOccurrenceCursor *cursor) {
     space_occurrence_cursor_init_empty(cursor);
 }
 
+bool space_head_snapshot_init(Space *space, SpaceHeadSnapshot *snapshot) {
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
+    if(!snapshot)return false;
+    memset(snapshot,0,sizeof(*snapshot));
+    Arena scratch;arena_init(&scratch);
+    Atom *all=atom_var(&scratch,"source-view-row");
+    bool ok=all&&space_occurrence_cursor_init(space,all,&snapshot->rows);
+    if(ok)snapshot->heads=space_head_index_prepare(space);
+    if(!snapshot->heads)ok=false;
+    if(!ok)space_occurrence_cursor_release(&snapshot->rows);
+    arena_free(&scratch);return ok;
+}
+
+bool space_head_snapshot_select(const SpaceHeadSnapshot *snapshot,
+    const SymbolId *heads, size_t count, SpaceOccurrenceCursor *cursor) {
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
+    if(!snapshot||!snapshot->heads||!cursor)return false;
+    CettaIndex *rows=NULL;CettaCount length=0u;
+    if(!space_head_index_select_heads(snapshot->heads,heads,count,
+        snapshot->rows.ceiling,&rows,&length))return false;
+    if(!space_occurrence_cursor_clone(&snapshot->rows,cursor)){free(rows);return false;}
+    free(cursor->flat);cursor->flat=rows;cursor->flat_len=length;cursor->flat_next=0u;
+    cursor->full_scan=false;cursor->flat_mode=true;cursor->head_mode=false;
+    cursor->has_last=false;return true;
+}
+
+void space_head_snapshot_release(SpaceHeadSnapshot *snapshot) {
+    if(!snapshot)return;
+    space_occurrence_cursor_release(&snapshot->rows);snapshot->heads=NULL;
+}
+
 void disc_lookup_expression_coordinates(
         DiscNode *root, Atom *const *coordinates,
         CettaExprLen coordinate_count, CettaIndex **out,

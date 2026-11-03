@@ -1,0 +1,12 @@
+!(import! &self (library lib_he))
+(= (lib-he-evalc:add $space $definitions)
+   (if (== $definitions ()) ()
+     (let ($first $rest) (decons-atom $definitions)
+       (let $_ (add-atom $space $first)
+         (lib-he-evalc:add $space $rest)))))
+!(test (evalc (+ 1 2) &self) 3)
+!(test
+   (let* (($space (new-space))
+          ($_ (lib-he-evalc:add $space (parse "((= (private-value) 9))"))))
+     (evalc (private-value) $space))
+   9)

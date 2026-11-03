@@ -10754,6 +10754,7 @@ static PettaEquationSlotMatch petta_machine_equation_slot_match(
     CettaFrameIdentity query_epoch, uint32_t query_first_entry,
     const PettaSpaceQueryView *query_fields,
     bool query_closed,
+    bool rhs_binds_variables,
     Atom **result_out, bool *result_fully_resolved_out,
     bool *result_is_activation_out,
     bool *activation_requires_region_hole_out,
@@ -11077,10 +11078,15 @@ static PettaEquationSlotMatch petta_machine_equation_slot_match(
              * before ordinary scheduling. */
             const PettaRegionHoleProgram *region_hole =
                 rhs_plan ? rhs_plan->region_hole_program : NULL;
+            /* A local outer region does not certify the private variables
+             * introduced later in its selected body across unknown callees.
+             * Those equations retain ordinary source materialization until
+             * the complete relation supplies the stronger admission. */
             bool region_hole_only = !relation_admitted && region_hole &&
                 region_hole->root_plan == rhs_plan &&
                 region_hole->stable_source == rhs &&
                 ((region_hole->kind == PETTA_REGION_HOLE_BOOLEAN_BRANCH &&
+                  !rhs_binds_variables &&
                   petta_machine_match_region_hole_execution_admitted(machine)) ||
                  (region_hole->kind == PETTA_REGION_HOLE_BINDING_SEQUENCE &&
                   petta_machine_binding_region_hole_execution_admitted(
@@ -18487,6 +18493,7 @@ static bool petta_machine_advance_choice(
                             : choice->as.equation.query_first_entry,
                         direct_field_match ? choice_fields : NULL,
                         choice->as.equation.query_closed,
+                        candidate.rhs_binds_variables,
                         &slot_result,
                         &slot_result_fully_resolved,
                         &slot_result_is_activation,

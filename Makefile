@@ -759,7 +759,7 @@ endif
 ifeq ($(ENABLE_PETTA_TYPECHECK_CENSUS),1)
 PETTA_TYPECHECK_CENSUS_SRC = src/petta_typecheck_census.c
 endif
-SRC = src/symbol.c src/scalar_trie.c src/atom.c src/term_graph.c src/delay_service.c src/string_ops.c src/str_natives.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/binding/rule.c src/binding/closure.c src/binding/frame_schema.c src/binding/slot_store.c src/binding/activation_view.c src/match_decision.c src/select/code_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/search_control_advice.c src/petta_program.c src/petta_type_fact_provider_v1.c src/petta_builtin_registry.c src/petta_typecheck_v3_decision_v1.c src/petta_typecheck_v3.c src/generated/petta_typecheck_v3_core_v1.generated.c src/generated/petta_typecheck_v3_core_provider_catalog_v1.generated.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/fixpoint.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/petta_numeric.c src/petta_runtime.c src/prepared_pure_machine.c src/owned_execution.c src/answer_storage.c src/fold_algebra.c src/native_fold.c src/exec_saturation.c src/transform_core.c src/open_equation_machine.c src/eval.c src/grounded.c src/he_macro_expansion.c src/he_typing.c src/he_typing_authority.c src/generated/he_typing_consistency_core_source_binding_v1.generated.c src/generated/he_profiled_type_inference_core_source_binding_v1.generated.c src/inference_checker.c src/nik_direct_authority.c src/nik_hosted_calculus.c src/nik_licensed_implementation_selection.c src/nik_runtime.c src/prime_semantics.c src/generated/prime_typing_closed_formation_source_binding_v1.generated.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/library_pattern.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_dense_bitset_v1.c src/gslt_compiled_runtime.c src/gslt_indexed_instruction_decoder_v1.c src/gslt_indexed_value_table_v1.c src/gslt_split_indexed_table_v1.c src/gslt_literal_hole_program_v1.c src/gslt_u32_index_v1.c src/gslt_u32_slice_arena_v1.c src/gslt_epoch_slots_v1.c src/gslt_ground_dense_term_v1.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
+SRC = src/symbol.c src/scalar_trie.c src/atom.c src/term_graph.c src/delay_service.c src/string_ops.c src/str_natives.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c src/raw_source_region.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/binding/rule.c src/binding/closure.c src/binding/frame_schema.c src/binding/slot_store.c src/binding/activation_view.c src/match_decision.c src/select/code_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/search_control_advice.c src/petta_program.c src/petta_type_fact_provider_v1.c src/petta_builtin_registry.c src/petta_typecheck_v3_decision_v1.c src/petta_typecheck_v3.c src/generated/petta_typecheck_v3_core_v1.generated.c src/generated/petta_typecheck_v3_core_provider_catalog_v1.generated.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/fixpoint.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/petta_numeric.c src/petta_runtime.c src/prepared_pure_machine.c src/owned_execution.c src/answer_storage.c src/fold_algebra.c src/native_fold.c src/exec_saturation.c src/transform_core.c src/open_equation_machine.c src/eval.c src/grounded.c src/he_macro_expansion.c src/he_typing.c src/he_typing_authority.c src/generated/he_typing_consistency_core_source_binding_v1.generated.c src/generated/he_profiled_type_inference_core_source_binding_v1.generated.c src/inference_checker.c src/nik_direct_authority.c src/nik_hosted_calculus.c src/nik_licensed_implementation_selection.c src/nik_runtime.c src/prime_semantics.c src/generated/prime_typing_closed_formation_source_binding_v1.generated.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/library_pattern.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_dense_bitset_v1.c src/gslt_compiled_runtime.c src/gslt_indexed_instruction_decoder_v1.c src/gslt_indexed_value_table_v1.c src/gslt_split_indexed_table_v1.c src/gslt_literal_hole_program_v1.c src/gslt_u32_index_v1.c src/gslt_u32_slice_arena_v1.c src/gslt_epoch_slots_v1.c src/gslt_ground_dense_term_v1.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
 SRC += src/shared_transition.c src/run_report.c src/run_cli.c src/error_presentation.c src/run_guard.c
 SRC += src/library_proc.c
 SRC += src/library_fs.c
@@ -876,7 +876,7 @@ LANGDEF_COMPILED_CURSOR_RUNTIME_SRC = \
 	experiments/gslt2parse_foundation/native/parser_atom_projection_action_v1.c \
 	experiments/gslt2parse_foundation/native/semantic_mask_nfa_v1.c
 SRC += experiments/gslt2parse_foundation/native/parser_pack_abi_stream_v1.c \
-	$(LANGDEF_COMPILED_CURSOR_RUNTIME_SRC) native/langdef_module.c \
+	$(LANGDEF_COMPILED_CURSOR_RUNTIME_SRC) native/langdef_module.c native/source_compiler_module_v1.c native/source_parser_plan_v1.c native/source_input_view_v1.c \
 	native/parser_baked_v1.c \
 	native/operational_language_def_v1.c \
 	native/language_def_core_v1.c \
@@ -886,7 +886,7 @@ SRC += experiments/gslt2parse_foundation/native/parser_pack_abi_stream_v1.c \
 	native/parser_token_runtime_v1.c \
 	native/parser_token_ast_v1.c \
 	native/lbnf_document_v1.c \
-	native/module_value_v1.c native/module_theory_v1.c native/module_language_v1.c native/module_fields_v1.c native/module_portable_v1.c \
+	native/module_value_v1.c native/module_theory_v1.c native/module_language_v1.c native/module_fields_v1.c native/module_portable_v1.c native/module_package_v1.c native/source_region_module_v1.c \
 	native/regular_token_compiler_v1.c native/regular_pattern_v1.c native/regex_compiler_v1.c native/regex_selection_v1.c native/regex_trie_v1.c native/regex_extended_v1.c native/regex_source_v1.c native/regex_class_source_v1.c native/regex_text_v1.c src/library_re.c \
 	native/unicode_class_v1.c native/unicode_class_equality_v1.c langdef/unicode/generated/unicode_ucd16_v1.generated.c \
 	$(LDPP_COMPILER_EMBEDDED_C_V1) \
@@ -2432,7 +2432,9 @@ GSLT2PARSE_HE_LIST_EXTENSION_SCALAR_SOURCE = experiments/gslt2parse_foundation/p
 GSLT2PARSE_HE_LIST_EXTENSION_PROJECTION_SOURCE = experiments/gslt2parse_foundation/presentations/shared/cetta_he_list_projection_extension_v1.metta
 GSLT2PARSE_HE_EXTENDED_DIRECT_GENERATED_C = src/generated/he_extended_reader_direct_v1.generated.c
 GSLT2PARSE_HE_EXTENDED_DIRECT_GENERATED_H = src/generated/he_extended_reader_direct_v1.generated.h
+GSLT2PARSE_RAW_SOURCE_PROFILE = experiments/gslt2parse_foundation/presentations/shared/raw_source_region_profile_v1.metta
 GSLT2PARSE_HE_EXTENDED_ARGS = \
+	--raw-source-profile "$(GSLT2PARSE_RAW_SOURCE_PROFILE)" \
 	--extension-syntax "$(GSLT2PARSE_HE_LIST_EXTENSION_SOURCE)" \
 	--extension-syntax "$(GSLT2PARSE_HE_BYTE_ESCAPE_EXTENSION_SOURCE)" \
 	--extension-classes "$(GSLT2PARSE_HE_LIST_EXTENSION_SCALAR_SOURCE)" \
@@ -2452,6 +2454,7 @@ GSLT2PARSE_PETTA_LIST_EXTENSION_PROJECTION_SOURCE = experiments/gslt2parse_found
 GSLT2PARSE_PETTA_EXTENDED_DIRECT_GENERATED_C = src/generated/petta_extended_reader_direct_v1.generated.c
 GSLT2PARSE_PETTA_EXTENDED_DIRECT_GENERATED_H = src/generated/petta_extended_reader_direct_v1.generated.h
 GSLT2PARSE_PETTA_LIST_EXTENSION_ARGS = \
+	--raw-source-profile "$(GSLT2PARSE_RAW_SOURCE_PROFILE)" \
 	--extension-form-syntax "$(GSLT2PARSE_PETTA_LIST_EXTENSION_SOURCE)" \
 	--extension-form-classes "$(GSLT2PARSE_PETTA_LIST_EXTENSION_SCALAR_SOURCE)" \
 	--extension-projection "$(GSLT2PARSE_PETTA_LIST_EXTENSION_PROJECTION_SOURCE)"
@@ -45197,7 +45200,7 @@ LIBRARY_SPELLING_TOOL_V1 = tools/library_spelling.py
 # The libraries that run on real PeTTa; the remaining native libraries run
 # on the CeTTa host's PeTTa lane, over natives real PeTTa does not have.
 LIBRARY_PETTA_PORTABLE_SOURCES_V1 = langdef lib_bnf lib_lbnf lib_module lib_tptp json str
-LIBRARY_PETTA_SPELLING_SOURCES_V1 = $(LIBRARY_PETTA_PORTABLE_SOURCES_V1) list system fs io re postings postings_descriptors tensor tensor_descriptors embedding holkernel mm0kernel
+LIBRARY_PETTA_SPELLING_SOURCES_V1 = $(LIBRARY_PETTA_PORTABLE_SOURCES_V1) lang list system fs io re postings postings_descriptors tensor tensor_descriptors embedding holkernel mm0kernel
 LIBRARY_PRIME_SPELLING_SOURCES_V1 = json re holkernel mm0kernel
 .PHONY: test-library-spellings-v1 test-list-prefix-search test-tensor-support
 test-list-prefix-search: $(BIN)
@@ -48291,6 +48294,25 @@ test-execution-semantic-ledger: $(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN) $(PETTA_S
 	@$(PETTA_SEARCH_MACHINE_TEST_BIN) --semantic-ledger
 
 .PHONY: test-python-callback-completion
+RAW_SOURCE_REGION_TEST = runtime/test_raw_source_region
+RAW_SOURCE_REGION_LIBRARY = runtime/test_raw_source_region.so
+
+$(RAW_SOURCE_REGION_TEST): src/raw_source_region.c src/raw_source_region.h src/utf8.h tests/test_raw_source_region.c
+	@mkdir -p runtime
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -pedantic -I. \
+		src/raw_source_region.c tests/test_raw_source_region.c -o $@
+
+$(RAW_SOURCE_REGION_LIBRARY): src/raw_source_region.c src/raw_source_region.h src/utf8.h
+	@mkdir -p runtime
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -pedantic -fPIC -shared \
+		src/raw_source_region.c -o $@
+
+.PHONY: test-raw-source-region
+test-execution-semantic-ledger: test-raw-source-region
+test-raw-source-region: $(RAW_SOURCE_REGION_TEST) $(RAW_SOURCE_REGION_LIBRARY)
+	@$(RAW_SOURCE_REGION_TEST)
+	@python3 tests/support/check_raw_source_region.py ./$(RAW_SOURCE_REGION_LIBRARY)
+
 test-execution-semantic-ledger: test-python-callback-completion
 test-python-callback-completion: $(BIN)
 ifeq ($(ENABLE_PYTHON),1)
@@ -48329,3 +48351,44 @@ else
 test-petta-libpl-callback-completion: $(BIN)
 	@echo "SKIP: Prolog callback completion (embedded Prolog disabled)"
 endif
+
+# In-process source preparation is a build artifact. Ordinary lang calls
+# load it directly and never launch a compiler or another interpreter.
+.PHONY: build-lang-datalog test-lang-library
+build-lang-datalog:
+	@set -eu; lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
+	if test -z "$$lean_root"; then lean_root="$(abspath ../../Mettapedia/lean/mettapedia)"; fi; \
+	test -f "$$lean_root/lakefile.lean" || \
+		{ echo 'Set METTAPEDIA_LEAN_ROOT to the MeTTapedia Lean project' >&2; exit 2; }; \
+	python3 tools/build_datalog_source_compiler.py --lean-root "$$lean_root" \
+		--output runtime/lang/datalog-compiler.so --package-output langdef/lang/Datalog.module
+
+test-lang-library: $(BIN)
+	@test -f runtime/lang/datalog-compiler.so || \
+		{ echo 'Run make build-lang-datalog first' >&2; exit 2; }
+	@set -eu; work="$$(mktemp -d runtime/lang-tests.XXXXXX)"; \
+	python3 tests/support/check_lang_library.py ./$(BIN) "$$work/public"; \
+	python3 tests/support/check_lang_boundaries.py ./$(BIN) "$$work/boundaries"; \
+	python3 tests/support/check_source_input_view.py ./$(BIN) "$$work/input-views"; \
+	python3 tests/support/check_lang_source_verification.py ./$(BIN) "$$work/source-verification"; \
+	python3 tests/support/check_lang_repl.py ./$(BIN) "$$work/repl"; \
+	python3 tests/support/check_raw_source_cli.py ./$(BIN) "$$work/raw"
+
+runtime/source_compiler_fixture_v1.so: tests/support/source_compiler_fixture_v1.c native/source_compiler_provider_v1.h
+	@mkdir -p runtime
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -fPIC -shared -I. $< -o $@
+
+.PHONY: test-source-compiler-v1 test-lib-he-evalc-spaces
+test-source-compiler-v1: $(BIN) runtime/source_compiler_fixture_v1.so
+	@set -eu; work="$$(mktemp -d runtime/source-compiler-tests.XXXXXX)"; \
+	python3 tests/support/check_source_compiler_v1.py ./$(BIN) runtime/source_compiler_fixture_v1.so "$$work/provider"
+test-lib-he-evalc-spaces: $(BIN)
+	@./$(BIN) --lang petta --profile extended --run-contract tests/petta/lib_he_evalc_spaces.metta
+
+test-execution-semantic-ledger: test-source-compiler-v1 test-lib-he-evalc-spaces
+
+.PHONY: test-lang-repl
+test-lang-repl: $(BIN)
+	@set -eu; work="$$(mktemp -d runtime/lang-repl-tests.XXXXXX)"; \
+	python3 tests/support/check_lang_repl.py ./$(BIN) "$$work/pty"
+test-execution-semantic-ledger: test-lang-repl
