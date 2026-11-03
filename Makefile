@@ -5394,6 +5394,34 @@ test-all: test-space-file
 test-space-file: $(SPACE_FILE_TEST_BIN)
 	@$(SPACE_FILE_TEST_BIN)
 
+# ACTree03, the byte-trie format of PathMap and MORK, read and written
+# natively: lookups, ordered cursors (whole, prefix, range), validation,
+# deterministic building and crash-safe publication (allocation, write,
+# sync and rename failures injected; a failed publication leaves no staged
+# file; a published image has an ordinary file's mode).
+ACT_TRIE_TEST_BIN = runtime/test-act-trie
+ACT_FAULTS_TEST_BIN = runtime/test-act-faults
+$(ACT_TRIE_TEST_BIN): tests/test_act_trie.c src/act_trie.c src/act_trie.h src/storage_census.h
+	@mkdir -p runtime
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Isrc tests/test_act_trie.c src/act_trie.c -o $@
+$(ACT_FAULTS_TEST_BIN): tests/test_act_faults.c src/act_trie.c src/act_trie.h src/storage_census.h
+	@mkdir -p runtime
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Isrc tests/test_act_faults.c src/act_trie.c \
+		-Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=write,--wrap=fsync,--wrap=rename -o $@
+
+.PHONY: test-act-trie
+test-all: test-act-trie
+test-act-trie: $(ACT_TRIE_TEST_BIN) $(ACT_FAULTS_TEST_BIN)
+	@./$(ACT_TRIE_TEST_BIN)
+	@./$(ACT_FAULTS_TEST_BIN)
+
+# The same format against the PathMap crate itself (Rust nightly): images
+# the C writer makes read back through PathMap, images PathMap makes read
+# back through the C lookups and cursors.
+.PHONY: test-act-trie-pathmap
+test-act-trie-pathmap:
+	@python3 tests/support/check_act_trie.py --pathmap $(PATHMAP_REPO_DIR)
+
 $(SHARED_OCCURRENCE_LOG_TEST_BIN): tests/test_shared_occurrence_log.c src/occurrence_log.c src/occurrence_log.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc tests/test_shared_occurrence_log.c src/occurrence_log.c -Wl,--wrap=malloc,--wrap=calloc -o $@ $(LDFLAGS)
