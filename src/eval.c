@@ -5164,9 +5164,11 @@ static bool petta_space_remove_pattern_limit(
         ? 0u : space_dense_remove_ground(space, pattern);
     /* A ground pattern unifies with exactly the rows equal to it when no
      * row of its head holds a variable: the exact index removes those by
-     * id, without reading any other row. */
+     * id, without reading any other row. A pointer-backed value can have no
+     * portable term key even when a captured copy still matches a row. */
     if (maximum == UINT64_MAX && pattern->kind == ATOM_EXPR && pattern->expr.len != 0u &&
         !atom_has_vars(pattern) && space->native.universe &&
+        term_universe_atom_is_stable(pattern) &&
         pattern->expr.elems[0]->kind == ATOM_SYMBOL) {
         AtomId id = term_universe_lookup_atom_id(space->native.universe,
                                                  pattern);

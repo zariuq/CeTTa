@@ -1,0 +1,17 @@
+; An owned handle's printed identity is not a pointer-free term key.
+; Removal must also find records reconstructed by a match, as process owners do.
+!(import! &self (library lib_he))
+!(import! &self (library fs))
+!(let* (($space (new-space))
+        ($reader (fs:open-read "/dev/null"))
+        ($_ (add-atom $space (Owned first $reader)))
+        ($_ (add-atom $space (Owned first $reader)))
+        ($_ (add-atom $space (Owned second $reader)))
+        ($_ (assertEqual (size-atom (collapse (get-atoms $space))) 3))
+        ($_ (remove-atom $space (Owned first $reader)))
+        ($_ (assertEqual (collapse (match $space (Owned first $h) $h)) ()))
+        ($_ (assertEqual (collapse (match $space (Owned $key $h) $key)) (second)))
+        ($record (match $space (Owned second $h) (Owned second $h)))
+        ($_ (remove-atom $space $record))
+        ($_ (assertEqual (collapse (get-atoms $space)) ())))
+    (fs:close $reader))
