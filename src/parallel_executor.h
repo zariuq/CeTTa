@@ -25,6 +25,9 @@ typedef struct {
     bool failed;
 } CettaParallelReadyQueue;
 
+#include "runtime_names.h"
+#include "stats.h"
+
 typedef struct CettaParallelWorker CettaParallelWorker;
 typedef struct CettaParallelExecutor CettaParallelExecutor;
 
@@ -51,6 +54,8 @@ struct CettaParallelWorker {
 };
 
 struct CettaParallelExecutor {
+    CettaNameContext names;
+    CettaRuntimeStatsOwner *stats;
     CettaParallelExecutorConfig config;
     CettaParallelReadyQueue queue;
     pthread_mutex_t error_mutex;

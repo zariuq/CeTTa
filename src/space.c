@@ -11,13 +11,13 @@
 #include "search_machine.h"
 #include "rule_binding.h"
 #include "stats.h"
-#if defined(__GLIBC__)
-#include <malloc.h>
-#endif
+#include "allocator_info.h"
 #include "eval.h"
 #include "exact_integer.h"
 #include <assert.h>
+#include <errno.h>
 #include <inttypes.h>
+#include <pthread.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -4785,15 +4785,33 @@ static void space_term_universe_roots(const TermUniverse *universe,
                                visit_context);
 }
 
-static void space_attach_to_universe(Space *s, TermUniverse *universe) {
+static void space_detach_from_universe(Space *s);
+
+static bool space_attach_to_universe_try(Space *s, TermUniverse *universe, bool empty_unpublished) {
     if (!s || !universe)
-        return;
-    (void)term_universe_add_store_format_observer(
-        universe, space_term_universe_store_format_observer, s);
-    (void)term_universe_add_counted_root_provider(
-        universe, space_term_universe_counted_roots, s);
-    (void)term_universe_add_root_provider(
-        universe, space_term_universe_roots, s);
+        return true;
+    TermUniverseCollectionMode mode = universe->collection_mode;
+    if (term_universe_add_store_format_observer(
+            universe, space_term_universe_store_format_observer, s) &&
+        term_universe_add_counted_root_provider(
+            universe, space_term_universe_counted_roots, s) &&
+        term_universe_add_root_provider(
+            universe, space_term_universe_roots, s)) return true;
+    int error = errno;
+    space_detach_from_universe(s);
+    /* Canceling an empty unpublished holder leaves the preceding root set
+     * complete. A holder with existing payload must retain collection's
+     * refusal until its caller resolves the missing root. */
+    if (empty_unpublished) universe->collection_mode = mode;
+    errno = error;
+    return false;
+}
+
+static void space_attach_to_universe(Space *s, TermUniverse *universe) {
+    if (!space_attach_to_universe_try(s, universe, false)) {
+        perror("fatal: space root registration");
+        abort();
+    }
 }
 
 static void space_detach_from_universe(Space *s) {
@@ -5207,12 +5225,14 @@ static void space_dense_touch(Space *s) {
 /* CETTA_SPACE_DENSE_TRACE=1 prints each head that takes a relation and each
  * that gives one back. */
 static bool space_dense_trace(void) {
-    static int trace = -1;
-    if (trace < 0) {
+    static _Atomic int trace = -1;
+    int value = atomic_load_explicit(&trace, memory_order_relaxed);
+    if (value < 0) {
         const char *flag = getenv("CETTA_SPACE_DENSE_TRACE");
-        trace = flag && *flag && strcmp(flag, "0") != 0;
+        value = flag && *flag && strcmp(flag, "0") != 0;
+        atomic_store_explicit(&trace, value, memory_order_relaxed);
     }
-    return trace != 0;
+    return value != 0;
 }
 
 /* CETTA_SPACE_DENSE: off (or 0) keeps every fact a row; eager gives a head
@@ -5221,16 +5241,18 @@ static bool space_dense_trace(void) {
 enum { SPACE_DENSE_MODE_OFF, SPACE_DENSE_MODE_ON, SPACE_DENSE_MODE_EAGER };
 
 static int space_dense_mode(void) {
-    static int mode = -1;
-    if (mode < 0) {
+    static _Atomic int mode = -1;
+    int value = atomic_load_explicit(&mode, memory_order_relaxed);
+    if (value < 0) {
         const char *flag = getenv("CETTA_SPACE_DENSE");
-        mode = !flag ? SPACE_DENSE_MODE_ON
+        value = !flag ? SPACE_DENSE_MODE_ON
              : strcmp(flag, "off") == 0 || strcmp(flag, "0") == 0
                  ? SPACE_DENSE_MODE_OFF
              : strcmp(flag, "eager") == 0 ? SPACE_DENSE_MODE_EAGER
              : SPACE_DENSE_MODE_ON;
+        atomic_store_explicit(&mode, value, memory_order_relaxed);
     }
-    return mode;
+    return value;
 }
 
 static bool space_dense_off(void) {
@@ -7582,18 +7604,18 @@ static void space_reset_moved_from(Space *s) {
  * account of what initializing a space allocates; zero where the library
  * does not report it. */
 static uint64_t space_ledger_heap_in_use(void) {
-#if CETTA_BUILD_WITH_RUNTIME_STATS && defined(__GLIBC__)
+#if CETTA_BUILD_WITH_RUNTIME_STATS
     if (cetta_runtime_stats_is_enabled())
-        return (uint64_t)mallinfo2().uordblks;
+        return (uint64_t)cetta_allocator_info().in_use;
 #endif
     return 0u;
 }
 
-void space_init_with_universe(Space *s, TermUniverse *universe) {
-    if (!s)
-        return;
-    s->ledger_counted = cetta_runtime_stats_is_enabled();
-    uint64_t heap_before = s->ledger_counted ? space_ledger_heap_in_use() : 0u;
+bool space_try_init_with_universe(Space *s, TermUniverse *universe) {
+    if (!s) { errno = EINVAL; return false; }
+    bool ledger_counted = cetta_runtime_stats_is_enabled();
+    s->ledger_counted = false;
+    uint64_t heap_before = ledger_counted ? space_ledger_heap_in_use() : 0u;
     s->kind = SPACE_KIND_ATOM;
     s->strict = false;
     s->dense_from_first = false;
@@ -7605,7 +7627,6 @@ void space_init_with_universe(Space *s, TermUniverse *universe) {
     s->declares_subtypes = false;
     s->prefix_epoch = space_fresh_prefix_epoch();
     space_match_backend_init(s);
-    space_attach_to_universe(s, s->native.universe);
     s->payload_owner_epoch = 0;
     s->payload_export_owner_epoch = 0;
     s->imported_len = 0;
@@ -7616,6 +7637,8 @@ void space_init_with_universe(Space *s, TermUniverse *universe) {
     s->importer_count = 0u;
     s->importer_cap = 0u;
     s->module_dependency_epoch = 0u;
+    if (!space_attach_to_universe_try(s, s->native.universe, true)) return false;
+    s->ledger_counted = ledger_counted;
     if (s->ledger_counted) {
         uint64_t heap_after = space_ledger_heap_in_use();
         cetta_runtime_stats_gauge_add(CETTA_RUNTIME_COUNTER_SPACE_LIVE,
@@ -7627,6 +7650,14 @@ void space_init_with_universe(Space *s, TermUniverse *universe) {
         if (heap_after > heap_before)
             cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_SPACE_INIT_HEAP_BYTES,
                                     heap_after - heap_before);
+    }
+    return true;
+}
+
+void space_init_with_universe(Space *s, TermUniverse *universe) {
+    if (s && !space_try_init_with_universe(s, universe)) {
+        perror("fatal: space initialization");
+        abort();
     }
 }
 
@@ -8559,8 +8590,35 @@ typedef struct {
 } SpaceEffectCache;
 
 static _Thread_local SpaceEffectCache g_space_effect_cache;
+static pthread_key_t g_space_effect_cache_key;
+static pthread_once_t g_space_effect_cache_once = PTHREAD_ONCE_INIT;
+static int g_space_effect_cache_key_error;
+static _Thread_local bool g_space_effect_cache_registered;
+
+static void space_effect_cache_thread_exit(void *unused) {
+    (void)unused;
+    space_execution_analysis_cache_free_for_current_thread();
+}
+
+static void space_effect_cache_key_init(void) {
+    g_space_effect_cache_key_error = pthread_key_create(
+        &g_space_effect_cache_key, space_effect_cache_thread_exit);
+}
+
+static bool space_effect_cache_register(void) {
+    if (g_space_effect_cache_registered) return true;
+    if (pthread_once(&g_space_effect_cache_once, space_effect_cache_key_init) ||
+        g_space_effect_cache_key_error ||
+        pthread_setspecific(g_space_effect_cache_key, &g_space_effect_cache))
+        return false;
+    return g_space_effect_cache_registered = true;
+}
 
 void space_execution_analysis_cache_free_for_current_thread(void) {
+    if (g_space_effect_cache_registered) {
+        (void)pthread_setspecific(g_space_effect_cache_key, NULL);
+        g_space_effect_cache_registered = false;
+    }
     for (size_t index = 0u;
          index < SPACE_EFFECT_CACHE_SHARDS; index++) {
         free(g_space_effect_cache.shards[index].entries);
@@ -8646,6 +8704,7 @@ static uint64_t space_effect_cache_hash(SymbolId head) {
 
 static bool space_effect_cache_rehash(
     SpaceEffectCacheShard *shard, size_t requested_cap) {
+    if (!space_effect_cache_register()) return false;
     SpaceEffectCacheEntry *old_entries = shard->entries;
     size_t old_cap = shard->cap;
     size_t next = 128u;
@@ -10712,8 +10771,8 @@ static bool project_query_visible_bindings(Arena *a,
 
 /* ── Space Registry ─────────────────────────────────────────────────────── */
 
-void registry_init(Registry *r) {
-    if (!r) return;
+bool registry_try_init(Registry *r) {
+    if (!r) { errno = EINVAL; return false; }
     r->states = NULL;
     r->entries = r->inline_entries;
     r->len = 0;
@@ -10725,6 +10784,14 @@ void registry_init(Registry *r) {
     r->index_cap = (uint32_t)(sizeof(r->inline_index_slots) /
                               sizeof(r->inline_index_slots[0]));
     memset(r->inline_index_slots, 0, sizeof(r->inline_index_slots));
+    return r->name_keys != NULL;
+}
+
+void registry_init(Registry *r) {
+    if (r && !registry_try_init(r)) {
+        perror("fatal: registry initialization");
+        abort();
+    }
 }
 
 static void registry_states_free(struct RegistryStates *states);

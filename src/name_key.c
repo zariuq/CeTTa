@@ -1,5 +1,6 @@
 #include "name_key.h"
 
+#include <errno.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -128,25 +129,30 @@ static size_t name_key_bucket_count(size_t requested) {
 NameKeyTable *name_key_table_new_with_hash_mask(size_t bucket_count,
                                                 uint32_t hash_mask) {
     size_t count = name_key_bucket_count(bucket_count);
-    if (count == 0u) return NULL;
-    NameKeyTable *table = cetta_malloc(sizeof(*table));
-    memset(table, 0, sizeof(*table));
-    arena_init(&table->arena);
-    table->buckets = cetta_malloc(sizeof(*table->buckets) * count);
-    memset(table->buckets, 0, sizeof(*table->buckets) * count);
+    if (count == 0u) { errno = EOVERFLOW; return NULL; }
+    NameKeyTable *table = calloc(1u, sizeof(*table));
+    if (!table) return NULL;
+    bool arena_ready = arena_try_init(&table->arena);
+    if (!arena_ready) goto failed;
+    table->buckets = calloc(count, sizeof(*table->buckets));
+    if (!table->buckets) goto failed;
     table->bucket_count = count;
     table->by_id_cap = 16u;
-    table->by_id = cetta_malloc(sizeof(*table->by_id) * table->by_id_cap);
-    memset(table->by_id, 0, sizeof(*table->by_id) * table->by_id_cap);
+    table->by_id = calloc(table->by_id_cap, sizeof(*table->by_id));
+    if (!table->by_id) goto failed;
     table->hash_mask = hash_mask;
-    if (pthread_mutex_init(&table->mutex, NULL) != 0) {
-        arena_free(&table->arena);
-        free(table->by_id);
-        free(table->buckets);
-        free(table);
-        return NULL;
-    }
+    int error = pthread_mutex_init(&table->mutex, NULL);
+    if (error) { errno = error; goto failed; }
     return table;
+failed: {
+    int error = errno;
+    if (arena_ready) arena_free(&table->arena);
+    free(table->by_id);
+    free(table->buckets);
+    free(table);
+    errno = error;
+    return NULL;
+}
 }
 
 NameKeyTable *name_key_table_new(size_t bucket_count) {

@@ -80,6 +80,7 @@ typedef struct {
     EvalWorkState state;
     EvalWorkRoute route;
     CettaLanguageId language;
+    CettaLibraryResourceContext *resource_context;
     Space *space;
     /* The space's revision when the work was made: the read view its
      * footprint names. */
@@ -91,11 +92,14 @@ typedef struct {
      * and resets it. */
     Arena answers;
     Atom *source;
+    const PettaPlanNode *source_plan;
+    Atom *export_variables;
     PettaEvalMachineContext *context;
     PettaMachineHost host;
     /* The language's portable relational contract (HE). */
     bool portable;
     PettaMachine machine;
+    HeRetainedExecution *canonical;
     bool machine_ready;
     HeSharedExecutionPlan he_plan;
     EvalWorkStrategy strategy;
@@ -117,6 +121,10 @@ typedef struct {
     uint64_t pauses;
     /* What ended a failed work, and whether its machine declined it. */
     Atom *failure;
+    CettaEvalCompletion failure_completion;
+    bool raised_failure;
+    bool (*deliver_packet)(void *context, Arena *arena, const CettaOwnedReturn *returned);
+    void *delivery_context;
     bool declined;
     bool busy;
     /* Peeking advances the producer once but holds its next answer here.
@@ -132,6 +140,20 @@ typedef struct {
     const char *observer;
     const char *observer_law;
 } EvalWork;
+
+typedef struct {
+    CettaLibraryContext *library;
+    CettaLibraryResourceScope scope;
+} EvalWorkResourceGuard;
+static void eval_work_resource_enter(EvalWork *work, EvalWorkResourceGuard *guard) {
+    *guard = (EvalWorkResourceGuard){.library = g_library_context};
+    if (work && guard->library)
+        cetta_library_resource_enter(guard->library, work->resource_context, &guard->scope);
+}
+static void eval_work_resource_leave(EvalWorkResourceGuard *guard) {
+    if (guard->library)
+        cetta_library_resource_leave(guard->library, &guard->scope);
+}
 
 static const char eval_work_kind[] = "work";
 
@@ -160,6 +182,8 @@ static void eval_work_release_count(EvalWork *work) {
 }
 
 static void eval_work_release(EvalWork *work) {
+    he_retained_free(work->canonical);
+    work->canonical = NULL;
     eval_work_release_count(work);
     eval_work_release_machine(work);
     free(work->transfers);
@@ -171,12 +195,17 @@ static void eval_work_release(EvalWork *work) {
     arena_free(&work->pending_storage);
     arena_free(&work->answers);
     arena_free(&work->storage);
+    cetta_library_resource_release(work->resource_context);
+    work->resource_context = NULL;
 }
 
 static void eval_work_free(void *resource) {
     EvalWork *work = resource;
     if (!work)
         return;
+    __attribute__((cleanup(eval_work_resource_leave)))
+        EvalWorkResourceGuard resources = {0};
+    eval_work_resource_enter(work, &resources);
     eval_work_release(work);
     free(work);
 }
@@ -273,10 +302,20 @@ static bool eval_work_start_general_reopened(EvalWork *work, Arena *scratch,
             return false;
     } else {
         PettaRelationSafety safety = PETTA_RELATION_SAFETY_UNSAFE;
-        if (!petta_eval_machine_admits_root(
+        const PettaPlanNode *previous_plan = g_petta_source_plan;
+        const Atom *previous_source = g_petta_source_plan_atom;
+        g_petta_source_plan = work->source_plan;
+        g_petta_source_plan_atom = work->source_plan ? source : NULL;
+        /* A host query supplies the complete authored computation plan.
+         * It requests interpretation, rather than source optimization
+         * selected by the ordinary evaluator's root-shape heuristics. */
+        bool admitted = work->source_plan || petta_eval_machine_admits_root(
                 space, scratch, source,
                 atom_symbol_id(scratch, g_builtin_syms.undefined_type),
-                work->fuel, NULL, &safety))
+                work->fuel, NULL, &safety);
+        g_petta_source_plan = previous_plan;
+        g_petta_source_plan_atom = previous_source;
+        if (!admitted)
             return false;
     }
     CettaSelectionAutomaton automaton;
@@ -337,14 +376,13 @@ static bool eval_work_start_general_reopened(EvalWork *work, Arena *scratch,
         source_output_constraints, false, eval_work_match_semantics(work));
     work->host.match_decisions = petta_eval_session_decisions(
         g_library_context, space);
-    work->host.export_variables = NULL;
+    work->host.export_variables = work->export_variables;
     /* A work is metered: every transition counts against its take. */
     work->host.permit_transition =
         petta_eval_machine_permit_controller_transition;
     work->host.unlimited_transition_budget = false;
-    bool initialized = petta_machine_init(&work->machine, space,
-                                          &work->answers, source, NULL,
-                                          &work->host);
+    bool initialized = petta_machine_init_with_plan(&work->machine, space,
+        &work->answers, source, work->source_plan, NULL, &work->host);
     g_he_shared_execution = enclosing_shared;
     g_he_shared_execution_effect_free = enclosing_effect_free;
     g_he_shared_execution_rereads = enclosing_rereads;
@@ -385,6 +423,7 @@ static void eval_work_complete_now(EvalWork *work, Space *space, Arena *a) {
     eval_outcome_init(&observation);
     metta_eval_outcome(space, a, NULL, work->source, work->fuel, &observation);
     work->completed_stop = observation.completion;
+    work->raised_failure = observation.petta_raised_error;
     work->completed = observation.results.len
         ? calloc(observation.results.len, sizeof(*work->completed)) : NULL;
     if (observation.results.len && !work->completed) {
@@ -417,8 +456,22 @@ static bool eval_work_deliver(EvalWork *work, Arena *a, Atom *answer,
     Atom *value = environment->len
         ? bindings_apply(environment, a, answer) : answer;
     value = value ? atom_deep_copy(a, value) : NULL;
+    bool packet_ok = true;
+    if (value && work->deliver_packet) {
+        Atom *delayed = NULL;
+        packet_ok = petta_machine_answer_delayed(&work->machine, answer,
+            environment, a, &delayed);
+        CettaOwnedReturn returned = {
+            .outcome = petta_machine_last_answer_raised(&work->machine)
+                ? cetta_call_raised(value)
+                : delayed ? cetta_call_suspended(value, delayed)
+                          : cetta_call_completed_value(value),
+            .environment = environment,
+        };
+        packet_ok = packet_ok && work->deliver_packet(work->delivery_context, a, &returned);
+    }
     bindings_free(environment);
-    if (!value) {
+    if (!value || !packet_ok) {
         work->state = EVAL_WORK_FAILED;
         work->failure = atom_symbol(&work->storage, "WorkCapacity");
         return false;
@@ -434,6 +487,7 @@ static bool eval_work_deliver(EvalWork *work, Arena *a, Atom *answer,
     }
     /* A raised error ends the run it is raised in. */
     if (petta_machine_last_answer_raised(&work->machine)) {
+        work->raised_failure = true;
         work->state = EVAL_WORK_FAILED;
         work->failure = atom_deep_copy(&work->storage, value);
         return false;
@@ -444,6 +498,11 @@ static bool eval_work_deliver(EvalWork *work, Arena *a, Atom *answer,
 static void eval_work_fail(EvalWork *work, PettaMachineStep step) {
     work->state = EVAL_WORK_FAILED;
     work->declined = step == PETTA_MACHINE_STEP_DECLINED;
+    work->failure_completion = step == PETTA_MACHINE_STEP_INVALIDATED
+        ? CETTA_EVAL_INCOMPLETE_INVALIDATED
+        : step == PETTA_MACHINE_STEP_STACK ? CETTA_EVAL_INCOMPLETE_STACK
+        : step == PETTA_MACHINE_STEP_CAPACITY ? CETTA_EVAL_INCOMPLETE_CAPACITY
+        : CETTA_EVAL_INCOMPLETE_HOST_FAILURE;
     work->failure = atom_symbol(&work->storage,
         step == PETTA_MACHINE_STEP_DECLINED ? "WorkDeclined"
         : step == PETTA_MACHINE_STEP_INVALIDATED ? "WorkInvalidated"
@@ -1039,7 +1098,8 @@ static Atom *eval_work_record(Arena *a, const EvalWork *work) {
 }
 
 /* (work-new results): a handle on the computation, routed now. */
-static Atom *eval_work_new(Space *space, Arena *a, Atom *source, int fuel) {
+static Atom *eval_work_new_with_plan(Space *space, Arena *a, Atom *source, int fuel,
+                                     const PettaPlanNode *plan, Atom *exports) {
     if (!g_library_context)
         return NULL;
     EvalWork *work = calloc(1u, sizeof(*work));
@@ -1049,10 +1109,14 @@ static Atom *eval_work_new(Space *space, Arena *a, Atom *source, int fuel) {
     arena_init(&work->answers);
     arena_init(&work->pending_storage);
     work->pending_mark = arena_mark(&work->pending_storage);
+    work->resource_context = cetta_library_resource_capture(g_library_context);
+    if (!work->resource_context) { eval_work_free(work); return NULL; }
     work->language = eval_current_language_id();
     work->space = space;
     work->space_revision = space_revision(space);
     work->fuel = fuel;
+    work->source_plan = plan;
+    work->export_variables = exports;
     work->source = atom_deep_copy(&work->storage, source);
     if (!work->source ||
         !cetta_native_handle_alloc(g_library_context, eval_work_kind, work,
@@ -1067,6 +1131,10 @@ static Atom *eval_work_new(Space *space, Arena *a, Atom *source, int fuel) {
     }
     (void)eval_work_start_general(work, a, EVAL_WORK_DEPTH_FIRST);
     return handle;
+}
+
+static Atom *eval_work_new(Space *space, Arena *a, Atom *source, int fuel) {
+    return eval_work_new_with_plan(space, a, source, fuel, NULL, NULL);
 }
 
 static Atom *eval_work_route_refused(Arena *a, Atom *call, const char *law) {
@@ -1295,8 +1363,11 @@ static void eval_work_call(Space *s, Arena *a, Atom *atom, SymbolId head,
         work->epoch++;
     }
     if (head == g_builtin_syms.work_route) {
-        outcome_set_add(os, eval_work_route(a, atom, work,
-            eval_work_argument(s, a, expr_arg(atom, 1), fuel)), &empty);
+        Atom *strategy = eval_work_argument(s, a, expr_arg(atom, 1), fuel);
+        __attribute__((cleanup(eval_work_resource_leave)))
+            EvalWorkResourceGuard resources = {0};
+        eval_work_resource_enter(work, &resources);
+        outcome_set_add(os, eval_work_route(a, atom, work, strategy), &empty);
         return;
     }
     int64_t count = 0;
@@ -1307,6 +1378,9 @@ static void eval_work_call(Space *s, Arena *a, Atom *atom, SymbolId head,
         return;
     }
     Atom *answer = NULL;
+    __attribute__((cleanup(eval_work_resource_leave)))
+        EvalWorkResourceGuard resources = {0};
+    eval_work_resource_enter(work, &resources);
     if (head == g_builtin_syms.work_take || head == g_builtin_syms.work_count ||
         head == g_builtin_syms.work_exists) {
         work->busy = true;

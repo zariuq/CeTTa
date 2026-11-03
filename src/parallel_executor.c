@@ -26,6 +26,11 @@
 #define PARALLEL_WORKER_ARENA_RESERVE (4u * ARENA_BLOCK_SIZE)
 #define PERSISTENT_WORKER_STACK_BYTES (16u * 1024u * 1024u)
 
+typedef struct { CettaRuntimeStatsOwner *previous; } ParallelStatsScope;
+static void parallel_stats_restore(ParallelStatsScope *scope) {
+    cetta_runtime_stats_owner_exchange(scope->previous);
+}
+
 typedef struct CettaPersistentPoolWorker CettaPersistentPoolWorker;
 
 typedef enum {
@@ -183,6 +188,8 @@ bool cetta_parallel_executor_init(CettaParallelExecutor *executor,
         return false;
     }
     memset(executor, 0, sizeof(*executor));
+    executor->names = cetta_name_context_current();
+    executor->stats = cetta_runtime_stats_owner_current();
     executor->config = *config;
     executor->thread_count = config->thread_count;
     parallel_ready_queue_init(&executor->queue);
@@ -208,6 +215,8 @@ bool cetta_parallel_executor_init(CettaParallelExecutor *executor,
 
 void cetta_parallel_executor_free(CettaParallelExecutor *executor) {
     if (!executor) return;
+    __attribute__((cleanup(parallel_stats_restore))) ParallelStatsScope stats = {
+        cetta_runtime_stats_owner_exchange(executor->stats)};
     if (executor->workers) {
         for (uint32_t i = 0; i < executor->thread_count; i++) {
             arena_free(&executor->workers[i].arena);
@@ -262,6 +271,9 @@ bool cetta_parallel_executor_failed(const CettaParallelExecutor *executor) {
 
 static void parallel_worker_run_episode(CettaParallelWorker *worker) {
     CettaParallelExecutor *executor = worker->executor;
+    CettaNameContext previous_names = cetta_name_context_current();
+    cetta_name_context_install(&executor->names);
+    CettaRuntimeStatsOwner *previous_stats = cetta_runtime_stats_owner_exchange(executor->stats);
 
     g_parallel_worker_depth++;
     if (executor->config.worker_enter) {
@@ -285,6 +297,8 @@ static void parallel_worker_run_episode(CettaParallelWorker *worker) {
         executor->config.worker_leave(worker, executor->config.user);
     }
     g_parallel_worker_depth--;
+    cetta_runtime_stats_owner_exchange(previous_stats);
+    cetta_name_context_install(&previous_names);
 }
 
 static void *parallel_one_shot_worker_main(void *arg) {
@@ -554,6 +568,8 @@ bool cetta_parallel_executor_run(CettaParallelExecutor *executor) {
         executor->thread_count == 0u || executor->run_started) {
         return false;
     }
+    __attribute__((cleanup(parallel_stats_restore))) ParallelStatsScope stats = {
+        cetta_runtime_stats_owner_exchange(executor->stats)};
     executor->run_started = true;
     parallel_ready_queue_close_if_idle(&executor->queue);
 
