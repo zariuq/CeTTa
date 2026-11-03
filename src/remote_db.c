@@ -30,6 +30,8 @@ struct Resource {
     atomic_size_t references;
     CettaRemoteDb *db;
     char *token;
+    CettaValueRpc *token_reply;
+    bool linear,ended;
     Resource *next;
 };
 struct CettaRemoteCapture {
@@ -43,7 +45,7 @@ struct CettaRemoteCapture {
 static bool tagged(const Atom *a,const char *head,size_t n) {return a && a->kind==ATOM_EXPR && a->expr.len==n && atom_is_symbol(a->expr.elems[0],head);}
 static bool natural(const Atom *a,uint64_t *n) {if(!a || a->kind!=ATOM_GROUNDED || a->ground.gkind!=GV_INT || a->ground.ival<0)return false;*n=(uint64_t)a->ground.ival;return true;}
 static const char *text(const Atom *a) {return a && a->kind==ATOM_GROUNDED && a->ground.gkind==GV_STRING && !memchr(a->ground.sval,0,atom_string_len(a)) ? a->ground.sval : NULL;}
-static void resource_free(Resource *r){if(r){free(r->token);free(r);}}
+static void resource_free(Resource *r){if(r){if(!r->token_reply)free(r->token);cetta_value_rpc_release(r->token_reply);free(r);}}
 void cetta_remote_db_retain(CettaRemoteDb *d){if(d)atomic_fetch_add(&d->references,1);}
 void cetta_remote_db_release(CettaRemoteDb *d) {
     if(!d || atomic_fetch_sub(&d->references,1)!=1)return;
@@ -62,7 +64,9 @@ static Resource *resource_new(CettaRemoteDb *d,Atom *token) {
 static void resource_retain(Resource *r){if(r)atomic_fetch_add(&r->references,1);}
 static void resource_release(Resource *r) {
     if(!r || atomic_fetch_sub(&r->references,1)!=1)return;
-    CettaRemoteDb *d=r->db;pthread_mutex_lock(&d->gate);
+    CettaRemoteDb *d=r->db;
+    if(r->ended){resource_free(r);cetta_remote_db_release(d);return;}
+    pthread_mutex_lock(&d->gate);
     if(d->retired_last)d->retired_last->next=r;else d->retired=r;
     d->retired_last=r;pthread_mutex_unlock(&d->gate);cetta_remote_db_release(d);
 }
@@ -102,13 +106,16 @@ static CettaValueRpcStatus cleanup(CettaRemoteDb *d) {
     }
     pthread_mutex_unlock(&d->gate);return status;
 }
-static CettaValueRpcStatus request(CettaRemoteDb *d,const char *token,const char *operation,Atom *argument,CettaValueRpc **out) {
+static CettaValueRpcStatus request_mode(CettaRemoteDb *d,const char *token,bool linear,const char *operation,Atom *argument,CettaValueRpc **out) {
     CETTA_SCOPED_SHARED_TRANSITION(encode);
     CettaValueRpcStatus status=cleanup(d);if(status!=CETTA_RPC_OK)return status;
     Arena a;arena_init_detached(&a);
-    Atom *body=token ? atom_expr(&a,(Atom *[]){atom_symbol(&a,"UseV1"),atom_string(&a,token),atom_symbol(&a,operation),argument},4)
+    Atom *body=token ? atom_expr(&a,(Atom *[]){atom_symbol(&a,linear ? "UseValueV1" : "UseV1"),atom_string(&a,token),atom_symbol(&a,operation),argument},4)
         : atom_expr3(&a,atom_symbol(&a,"CallV1"),atom_symbol(&a,operation),argument);
     status=cetta_value_rpc_new(d->channel,body,out);arena_free(&a);return status;
+}
+static CettaValueRpcStatus request(CettaRemoteDb *d,const char *token,const char *operation,Atom *argument,CettaValueRpc **out) {
+    return request_mode(d,token,false,operation,argument,out);
 }
 static CettaValueRpcStatus call(CettaRemoteDb *d,const char *token,const char *operation,Atom *argument,Arena *arena,Atom **out) {
     *out=NULL;CettaValueRpc *rpc=NULL;CettaValueRpcStatus status=request(d,token,operation,argument,&rpc);
@@ -160,21 +167,54 @@ CettaValueRpcStatus cetta_remote_db_call(CettaRemoteDb *d,const char *operation,
     if(!d || !operation || !arguments || !arena || !out)return CETTA_RPC_INVALID;
     return call(d,NULL,operation,arguments,arena,out);
 }
-CettaValueRpcStatus cetta_remote_db_start(CettaRemoteDb *d,const char *operation,Atom *arguments,
+static CettaValueRpcStatus start(CettaRemoteDb *d,const char *token,const char *operation,Atom *arguments,
         Arena *arena,CettaRemoteResource **out,Atom **metadata) {
     if(!out || !metadata)return CETTA_RPC_INVALID;
     *out=NULL;*metadata=NULL;Atom *answer=NULL;
-    CettaValueRpcStatus status=cetta_remote_db_call(d,operation,arguments,arena,&answer);
+    CettaValueRpcStatus status=call(d,token,operation,arguments,arena,&answer);
     CETTA_SCOPED_SHARED_TRANSITION(adopt);
     if(status!=CETTA_RPC_OK){*metadata=answer;return status;}
     if(!tagged(answer,"ServiceResourceV1",3)){*metadata=answer;return CETTA_RPC_INVALID;}
     *out=resource_new(d,answer->expr.elems[1]);
     if(!*out)return CETTA_RPC_CAPACITY;
-    *metadata=answer->expr.elems[2];return CETTA_RPC_OK;
+    *metadata=answer->expr.elems[2];
+    if(tagged(*metadata,"DbLinearV1",2)){(*out)->linear=true;*metadata=(*metadata)->expr.elems[1];}
+    return CETTA_RPC_OK;
+}
+CettaValueRpcStatus cetta_remote_db_start(CettaRemoteDb *d,const char *operation,Atom *arguments,
+        Arena *arena,CettaRemoteResource **out,Atom **metadata) {
+    return start(d,NULL,operation,arguments,arena,out,metadata);
+}
+CettaValueRpcStatus cetta_remote_resource_start(CettaRemoteResource *r,const char *operation,Atom *arguments,
+        Arena *arena,CettaRemoteResource **out,Atom **metadata) {
+    return r && !r->linear && !r->ended ? start(r->db,r->token,operation,arguments,arena,out,metadata) : CETTA_RPC_INVALID;
 }
 CettaValueRpcStatus cetta_remote_resource_call(CettaRemoteResource *r,const char *operation,
         Atom *arguments,Arena *arena,Atom **out) {
-    return r ? call(r->db,r->token,operation,arguments,arena,out) : CETTA_RPC_INVALID;
+    if(!r || r->ended)return CETTA_RPC_INVALID;
+    if(!r->linear)return call(r->db,r->token,operation,arguments,arena,out);
+    *out=NULL;CettaValueRpc *rpc=NULL;
+    CettaValueRpcStatus status=request_mode(r->db,r->token,true,operation,arguments,&rpc);
+    if(status!=CETTA_RPC_PENDING)return status;
+    status=cetta_value_rpc_await(rpc);
+    CETTA_SCOPED_SHARED_TRANSITION(adopt);
+    Atom *answer=cetta_value_rpc_result(rpc);
+    if(status==CETTA_RPC_OK && tagged(answer,"ServiceResourceV1",3)) {
+        const char *token=text(answer->expr.elems[1]);Atom *metadata=answer->expr.elems[2];
+        if(!token || !*token || !tagged(metadata,"DbLinearV1",2)){r->ended=true;status=CETTA_RPC_INVALID;}
+        else {
+            /* Keep the accepted reply as the successor token's owner before
+             * releasing its predecessor. Adoption needs no new allocation. */
+            CettaValueRpc *old=r->token_reply;
+            if(!old)free(r->token);
+            r->token_reply=rpc;cetta_value_rpc_retain(rpc);r->token=(char *)token;
+            cetta_value_rpc_release(old);answer=metadata->expr.elems[1];
+        }
+    } else if(status!=CETTA_RPC_REMOTE_ERROR || !tagged(answer,"ServiceRefusedV1",2)) r->ended=true;
+    if(status==CETTA_RPC_OK || status==CETTA_RPC_REMOTE_ERROR) {
+        *out=atom_deep_copy(arena,answer);if(!*out)status=CETTA_RPC_CAPACITY;
+    }
+    cetta_value_rpc_release(rpc);return status;
 }
 CettaRemoteDb *cetta_remote_resource_db(const CettaRemoteResource *r){return r ? r->db : NULL;}
 void cetta_remote_resource_release(CettaRemoteResource *r){resource_release(r);}
@@ -455,7 +495,10 @@ static bool source_overlay(Space *target,const Space *base) {
     space_free(copy);free(copy);return false;
 }
 static void resource_storage(const Resource *r,CettaStorageCensus *census) {
-    if(r && cetta_storage_object(census,r,sizeof(*r),CETTA_STORAGE_BLOCK))cetta_storage_array(census,r->token,strlen(r->token)+1,1,0);
+    if(r && cetta_storage_object(census,r,sizeof(*r),CETTA_STORAGE_BLOCK)) {
+        if(r->token_reply)cetta_value_rpc_storage(r->token_reply,census);
+        else if(r->token)cetta_storage_array(census,r->token,strlen(r->token)+1,1,0);
+    }
 }
 void cetta_remote_resource_storage(const void *raw,CettaStorageCensus *census) {
     const Resource *r=raw;if(!r)return;

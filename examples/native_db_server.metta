@@ -8,7 +8,8 @@
          ($socket (system:getenv-or-default "CETTA_DB_SOCKET" ""))
          ($owner (db:open $path))
          ($incarnation (system:uuid4-hex))
-         ($data (db-server:configuration-data $owner $incarnation))
+         ($artifacts (act:artifact-root $socket))
+         ($data (db-server:configuration-data $owner $incarnation $artifacts))
          ($frame (store:value-byte-limit)))
     (ValueServiceV1 $socket $data
       ((ServiceRouteV1 DbCapabilities Read db-server:capabilities)
@@ -28,22 +29,34 @@
        (ServiceRouteV1 DbCompactOpen Write db-server:compact-open)
        (ServiceRouteV1 DbCompactStep Write db-server:compact-step)
        (ServiceRouteV1 DbCompactInfo Read db-server:compact-info)
-       (ServiceRouteV1 DbCompactCancel Write db-server:compact-cancel))
+       (ServiceRouteV1 DbCompactCancel Write db-server:compact-cancel)
+       (ServiceRouteV1 DbTransferInfo Read db-server:transfer-info)
+       (ServiceRouteV1 DbExportOpen Read db-server:export-open)
+       (ServiceRouteV1 DbUploadOpen Write db-server:upload-open)
+       (ServiceRouteV1 DbArtifactWrite Write db-server:artifact-write)
+       (ServiceRouteV1 DbArtifactStep Read db-server:artifact-step)
+       (ServiceRouteV1 DbArtifactInfo Read db-server:artifact-info)
+       (ServiceRouteV1 DbArtifactRead Read db-server:artifact-read)
+       (ServiceRouteV1 DbArtifactCancel Read db-server:artifact-cancel)
+       (ServiceRouteV1 DbImportOpen Write db-server:import-open)
+       (ServiceRouteV1 DbImportNext Write db-server:import-next)
+       (ServiceRouteV1 DbImportFinish Write db-server:import-finish)
+       (ServiceRouteV1 DbImportCancel Write db-server:import-cancel))
       (ServiceLimitsV1 64 1024 $frame 30000 268435456 1000000))))
-(= (db-server:configuration-data $owner $incarnation)
+(= (db-server:configuration-data $owner $incarnation $artifacts)
   (case $owner
-    (((db:readonly $space) (DbConfigurationV1 $owner (ActOwnerV1 $incarnation) $incarnation act))
+    (((db:readonly $space) (DbConfigurationV1 $owner (ActOwnerV1 $incarnation) $incarnation act $artifacts))
      ((Error $where $why) (Error $where $why))
      ($directory
       (let* (((StoreSnapshot $view $epoch $_) (store:snapshot $owner))
              ($_ (store:close $view)))
-        (DbConfigurationV1 $owner $epoch $incarnation directory))))))
-(= (db-server:capabilities (ServiceCallV1 (DbConfigurationV1 $owner $identity $incarnation $kind) (ServicePeerV1 $uid $rights) $unused $arguments))
+        (DbConfigurationV1 $owner $epoch $incarnation directory $artifacts))))))
+(= (db-server:capabilities (ServiceCallV1 (DbConfigurationV1 $owner $identity $incarnation $kind $artifacts) (ServicePeerV1 $uid $rights) $unused $arguments))
   (let* (($access (if (and (== $kind directory) (== $rights ReadWrite)) ReadWrite ReadOnly))
          ($limit (store:value-byte-limit)))
     (DbCapabilitiesV1 $identity $incarnation $kind $access $limit)))
 
-(= (db-server:capture (ServiceCallV1 (DbConfigurationV1 $owner $identity $incarnation directory) $peer $unused (DbCaptureV1 $collection)))
+(= (db-server:capture (ServiceCallV1 (DbConfigurationV1 $owner $identity $incarnation directory $artifacts) $peer $unused (DbCaptureV1 $collection)))
   (case (store:snapshot $owner)
     (((StoreSnapshot $view $epoch $revision)
       (let* (((KnowledgeAddressV1 $key) (durable-space:metadata $collection))
@@ -51,7 +64,7 @@
              ($_ (store:close $view)))
         (db-server:captured $captured $identity $incarnation $revision $collection directory)))
      ($failure $failure))))
-(= (db-server:capture (ServiceCallV1 (DbConfigurationV1 $owner $identity $incarnation act) $peer $unused (DbCaptureV1 $collection)))
+(= (db-server:capture (ServiceCallV1 (DbConfigurationV1 $owner $identity $incarnation act $artifacts) $peer $unused (DbCaptureV1 $collection)))
   (if (== $collection data)
     (let* (($space (db:snapshot $owner))
            ($captured (store:source-open $space))
@@ -63,7 +76,7 @@
     (((StoreSourceOpened $source $count $limit)
       (ServiceKeepV1 $source (DbCapturedV1 $owner $incarnation $revision $collection $count $limit $kind)))
      ($failure $failure))))
-(= (db-server:related (ServiceCallV1 (DbConfigurationV1 $owner $identity $incarnation directory) $peer $source (DbCaptureV1 $collection)))
+(= (db-server:related (ServiceCallV1 (DbConfigurationV1 $owner $identity $incarnation directory $artifacts) $peer $source (DbCaptureV1 $collection)))
   (case (store:source-view $source)
     (((StoreSnapshot $view $epoch $revision)
       (let* (((KnowledgeAddressV1 $key) (durable-space:metadata $collection))
@@ -71,7 +84,7 @@
              ($_ (store:close $view)))
         (db-server:captured $captured $identity $incarnation $revision $collection directory)))
      ($failure $failure))))
-(= (db-server:related (ServiceCallV1 (DbConfigurationV1 $owner $identity $incarnation act) $peer $source (DbCaptureV1 $collection)))
+(= (db-server:related (ServiceCallV1 (DbConfigurationV1 $owner $identity $incarnation act $artifacts) $peer $source (DbCaptureV1 $collection)))
   (if (== $collection data)
     (let* (($space (store:source-space $source))
            ($captured (store:source-open $space))
@@ -116,7 +129,7 @@
 (= (db-server:scope? $scope)
   (case $scope
     ((DbWholeV1 True) ((DbCollectionV1 $observed-collection) True) ($unknown False))))
-(= (db-server:publish (ServiceCallV1 (DbConfigurationV1 $owner $identity $incarnation $kind) $peer $source
+(= (db-server:publish (ServiceCallV1 (DbConfigurationV1 $owner $identity $incarnation $kind $artifacts) $peer $source
     (DbPublishV1 $collection $request $operation $changes $values $requirements)))
   (if (== $kind directory)
     (case (store:source-context $source)
@@ -138,13 +151,13 @@
                  ($_ (store:close $watch)) ($_ (store:close $view))) $result))
          ($failure (let $_ (store:close $view) $failure)))))
      ($failure $failure))))
-(= (db-server:resolve (ServiceCallV1 (DbConfigurationV1 $owner $identity $incarnation $kind) $peer $unused
+(= (db-server:resolve (ServiceCallV1 (DbConfigurationV1 $owner $identity $incarnation $kind $artifacts) $peer $unused
     (DbResolveV1 $collection $request $operation)))
   (if (== $kind directory) (db-server:result (catch (db:resolve $owner $collection $request $operation))) (DbRefusedV1 receipt-domain-required)))
-(= (db-server:ensure (ServiceCallV1 (DbConfigurationV1 $owner $identity $incarnation $kind) $peer $unused
+(= (db-server:ensure (ServiceCallV1 (DbConfigurationV1 $owner $identity $incarnation $kind $artifacts) $peer $unused
     (DbEnsureV1 $collection $indexes)))
   (if (== $kind directory) (db-server:result (catch (db:ensure $owner $collection $indexes))) (DbRefusedV1 read-only)))
-(= (db-server:info (ServiceCallV1 (DbConfigurationV1 $owner $identity $incarnation $kind) $peer $unused $arguments))
+(= (db-server:info (ServiceCallV1 (DbConfigurationV1 $owner $identity $incarnation $kind $artifacts) $peer $unused $arguments))
   (db:info $owner))
 
 ; A position is immutable for this route. Retained readers and pending client
@@ -164,13 +177,13 @@
 (= (db-server:result $result)
   (case $result (((Error $where $reason) (DbErrorV1 $reason)) ($value $value))))
 
-(= (db-server:compact-open (ServiceCallV1 (DbConfigurationV1 $owner $_ $_ $kind) $peer $unused (DbCompactOpenV1 $memory)))
+(= (db-server:compact-open (ServiceCallV1 (DbConfigurationV1 $owner $_ $_ $kind $artifacts) $peer $unused (DbCompactOpenV1 $memory)))
   (if (== $kind directory)
     (case (store:compact-act-open $owner $memory)
       (((StoreCompactionOpened $job $info) (ServiceKeepV1 $job $info))
        ($failure $failure)))
     (DbRefusedV1 read-only)))
-(= (db-server:compact-step (ServiceCallV1 (DbConfigurationV1 $owner $_ $_ $kind) $peer $job (DbCompactStepV1 $work)))
+(= (db-server:compact-step (ServiceCallV1 (DbConfigurationV1 $owner $_ $_ $kind $artifacts) $peer $job (DbCompactStepV1 $work)))
   (case (store:compact-act-step $job $work)
     (((StoreSnapshot $view $_ $_)
       (let* (($_ (store:close $view)) ($info (store:compact-act-info $job))
@@ -181,3 +194,77 @@
   (store:compact-act-info $job))
 (= (db-server:compact-cancel (ServiceCallV1 $configuration $peer $job $unused))
   (ServiceReleaseV1 DbCompactionCancelledV1))
+
+; Artifacts are private native file resources. No request selects a server path.
+(= (db-server:transfer-info $call)
+  (let $chunk (act:artifact-chunk-size) (DbTransferV1 $chunk 33554432)))
+(= (db-server:artifact-kept $artifact)
+  (case $artifact
+    (((Error $where $why) (DbErrorV1 $why))
+     ($handle (ServiceKeepV1 $handle (act:artifact-info $handle))))))
+(= (db-server:export-open (ServiceCallV1
+     (DbConfigurationV1 $owner $_ $_ $_ $artifacts) $peer $unused (DbExportOpenV1 $collection $memory)))
+  (case (db:snapshot $owner $collection)
+    (((Error $where $why) (DbErrorV1 $why))
+     ($space
+      (let* (($artifact (act:artifact-export $artifacts $space $memory))
+             ($_ (db:close $space))) (db-server:artifact-kept $artifact))))))
+(= (db-server:upload-open (ServiceCallV1
+     (DbConfigurationV1 $_ $_ $_ $_ $artifacts) $peer $unused (DbUploadOpenV1 $size $digest)))
+  (db-server:artifact-kept (act:artifact-upload $artifacts $size $digest)))
+(= (db-server:artifact-write (ServiceCallV1 $configuration $peer $artifact (DbArtifactWriteV1 $offset $bytes)))
+  (db-server:result (act:artifact-write $artifact $offset $bytes)))
+(= (db-server:artifact-step (ServiceCallV1 $configuration $peer $artifact (DbArtifactStepV1 $work)))
+  (db-server:result (act:artifact-step $artifact $work)))
+(= (db-server:artifact-info (ServiceCallV1 $configuration $peer $artifact $unused))
+  (db-server:result (act:artifact-info $artifact)))
+(= (db-server:artifact-read (ServiceCallV1 $configuration $peer $artifact (DbArtifactReadV1 $offset $maximum)))
+  (db-server:result (act:artifact-read $artifact $offset $maximum)))
+(= (db-server:artifact-cancel (ServiceCallV1 $configuration $peer $artifact $unused))
+  (ServiceReleaseV1 DbArtifactCancelledV1))
+
+; The host moves each append continuation exactly once. Its native spool owns
+; the input and destination view; closing the upload cannot invalidate it.
+(= (db-server:import-open (ServiceCallV1
+     (DbConfigurationV1 $owner $_ $_ $kind $artifacts) $peer $artifact
+     (DbImportOpenV1 $collection $request $operation)))
+  (if (== $kind directory)
+   (case (act:artifact-space $artifact)
+    (((Error $where $why) (DbErrorV1 $why))
+     ($source
+      (let* (($result (db-server:import-source $owner $collection $request $operation $source))
+             ($_ (act:close! $source))) $result))))
+   (DbRefusedV1 read-only)))
+(= (db-server:import-source $owner $collection $request $operation $source)
+  (case (act:info $source)
+    (((ActSnapshotInfo $profile $count $bytes $digest $maximum)
+      (let $command (DbTransactionV1 $collection (DbImportV1 $operation $profile $digest))
+        (case (store:snapshot $owner)
+          (((StoreSnapshot $view $_ $_)
+            (let* (($opened (durable-space:append-open $owner $view $collection $request $command $source 9223372036854775807))
+                   ($_ (store:close $view)))
+              (case $opened
+                (((SpaceAppendOpenedV1 $state) (db-server:import-kept $state $command False))
+                 ($prior (DbImportPriorV1 $prior))))))
+           ($failure $failure)))))
+     ($failure $failure))))
+(= (db-server:import-kept $state $command $ready)
+  (ServiceKeepValueV1 (DbImportStateV1 $state $command)
+    (DbLinearV1 (DbImportProgressV1 $ready $command (durable-space:append-info $state)))))
+(= (db-server:import-next (ServiceCallV1 $configuration $peer
+     (DbImportStateV1 $state $command) (DbImportNextV1 $work)))
+  (if (and (== (get-type $work) Number) (>= $work 0))
+    (db-server:import-advance $state $command $work)
+    (let $_ (durable-space:append-close $state) (DbErrorV1 import-work))))
+(= (db-server:import-advance $state $command $work)
+  (if (== $work 0) (db-server:import-kept $state $command False)
+    (case (durable-space:append-next $state)
+      (((SpaceAppendMoreV1 $next) (db-server:import-advance $next $command (- $work 1)))
+       ((SpaceAppendReadyV1 $next) (db-server:import-kept $next $command True))
+       ($failure $failure)))))
+(= (db-server:import-finish (ServiceCallV1 $configuration $peer
+     (DbImportStateV1 $state $command) $unused))
+  (durable-space:append-finish $state))
+(= (db-server:import-cancel (ServiceCallV1 $configuration $peer
+     (DbImportStateV1 $state $command) $unused))
+  (let $_ (durable-space:append-close $state) DbImportCancelledV1))

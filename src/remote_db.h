@@ -18,6 +18,8 @@ CettaValueRpcStatus cetta_remote_db_start(CettaRemoteDb *,const char *operation,
     Atom *arguments,Arena *,CettaRemoteResource **,Atom **metadata);
 CettaValueRpcStatus cetta_remote_resource_call(CettaRemoteResource *,const char *operation,
     Atom *arguments,Arena *,Atom **result);
+CettaValueRpcStatus cetta_remote_resource_start(CettaRemoteResource *,const char *operation,
+    Atom *arguments,Arena *,CettaRemoteResource **,Atom **metadata);
 CettaRemoteDb *cetta_remote_resource_db(const CettaRemoteResource *);
 void cetta_remote_resource_release(CettaRemoteResource *);
 void cetta_remote_resource_storage(const void *,CettaStorageCensus *);

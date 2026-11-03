@@ -104,6 +104,9 @@ void cetta_act_builder_close(CettaActBuilder *);
 CettaActStatus cetta_act_publish(const char *path, CettaActBytes);
 typedef struct CettaActPublication CettaActPublication;
 CettaActStatus cetta_act_publication_open(const char *path,CettaActPublication **);
+/* Private output and scratch files are descriptor-relative and unlinked.
+ * Commit synchronizes the output without creating a public pathname. */
+CettaActStatus cetta_act_publication_open_private(int directory_fd,CettaActPublication **);
 int cetta_act_publication_fd(const CettaActPublication *);
 CettaActStatus cetta_act_publication_scratch(const CettaActPublication *,int *fd);
 CettaActStatus cetta_act_publication_commit(CettaActPublication *);

@@ -36,8 +36,8 @@ query ordering when an application needs one.
 
 `db:query` and compositional matching plans use the ordinary client matcher.
 Related collection leaves, including later join legs, retain the same captured
-database revision. Remote ordered/range plans and bounded remote bulk import are
-still pending; unsupported plans refuse explicitly. Current ordinary remote
+database revision. Remote ordered/range plans are still pending; unsupported
+plans refuse explicitly. Current ordinary remote
 transaction proposals must fit the selected portable request policy.
 
 `db:compact` also works remotely. `db:compact-open`, `db:compact-step`,
@@ -85,7 +85,7 @@ to retain typed values, duplicate occurrences and saved identities.
 
 The PeTTa DB interface adds `db:export-act owner path` and
 `db:import-act owner path`, with collection-name overloads. Export captures
-one committed view. Embedded import stages one portable row at a time into
+one committed view. Import stages one portable row at a time into
 the existing disk-backed batch, including declared index postings and an
 origin map. One guarded publication installs metadata, facts, mappings and
 the durable receipt. It allocates destination occurrences and keeps its own
@@ -99,8 +99,26 @@ changing that artifact under the same request refuses as a collision.
 `act:info` supplies the captured file's profile, row count, byte length,
 SHA-256 and selected record policy. `durable-space:append-open`, `append-next`,
 `append-info`, `append-finish` and `append-close` expose staged admission to
-trusted MeTTa handlers. Remote artifact transfer remains unfinished; the
-remote convenience path currently retains its prior workspace behavior.
+trusted MeTTa handlers.
+
+Remote import uploads bounded chunks to an unlinked server artifact, checks
+the whole-file digest and fully validates the ACT structure before staging
+database changes. Export builds a private artifact from one captured view;
+the caller downloads chunks into a private local publication file, validates
+it, then publishes its own destination. No client argument selects a server
+filesystem destination. Interrupted transfer and cancelled staging publish
+no database rows. A lost final admission reply remains uncertain and resolves
+through the same durable receipt API; the callback is never replayed.
+
+The server creates artifact files relative to an owning descriptor for its
+configured private socket directory. Files are unlinked immediately, so
+connection cleanup or process exit releases working data without leaving
+named upload/export artifacts. `DbTransferInfo` discovers the transfer
+version and selected chunk allowance. Low-level artifact build, validation,
+read, cancellation and admission routes are cooperative; the public
+`db:export-act` and `db:import-act` convenience calls drive those steps to
+completion. `make test-db-artifacts` checks both the independent protocol
+client and ordinary MeTTa calls, including lost replies and restart.
 
 Snapshot publication synchronizes the new file, renames it and synchronizes
 its directory. A directory-sync failure after rename returns `uncertain`;

@@ -405,9 +405,10 @@ static Atom *remote_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom *
     bool context=atom_is_symbol(head,"__cetta_lib_store_remote_context");
     bool call=atom_is_symbol(head,"__cetta_lib_store_remote_call");
     bool start=atom_is_symbol(head,"__cetta_lib_store_remote_start");
+    bool start_from=atom_is_symbol(head,"__cetta_lib_store_remote_start_from");
     bool use_resource=atom_is_symbol(head,"__cetta_lib_store_remote_use");
-    if(!adopt && !capture && !context && !call && !publish && !related && !observation && !start && !use_resource)return NULL;
-    if(n!=(context || observation ? 1u : call || publish || start || use_resource ? 3u : 2u))return refused(a,"remote-arguments");
+    if(!adopt && !capture && !context && !call && !publish && !related && !observation && !start && !start_from && !use_resource)return NULL;
+    if(n!=(context || observation ? 1u : call || publish || start || start_from || use_resource ? 3u : 2u))return refused(a,"remote-arguments");
     CETTA_SCOPED_SHARED_TRANSITION(guard);
     if(related || observation) {
         Space *base=resolve_space(eval_current_registry(),args[0]);CettaRemoteCapture *origin=cetta_remote_capture_from_space(base);
@@ -462,8 +463,8 @@ static Atom *remote_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom *
         cetta_value_rpc_release(rpc);cetta_native_handle_use_release(&watch_use);cetta_remote_capture_release(source);return result;
     }
     CettaNativeHandleUse use={0};
-    if(!acquire(ctx,use_resource ? remote_resource_kind : remote_kind,args[0],CETTA_NATIVE_HANDLE_USE_LIFETIME,&use))return refused(a,"closed-remote-db");
-    CettaRemoteResource *resource=use_resource ? cetta_native_handle_use_resource(&use) : NULL;
+    if(!acquire(ctx,use_resource || start_from ? remote_resource_kind : remote_kind,args[0],use_resource || start_from ? CETTA_NATIVE_HANDLE_USE_EXCLUSIVE : CETTA_NATIVE_HANDLE_USE_LIFETIME,&use))return refused(a,"closed-remote-db");
+    CettaRemoteResource *resource=use_resource || start_from ? cetta_native_handle_use_resource(&use) : NULL;
     CettaRemoteDb *db=resource ? cetta_remote_resource_db(resource) : cetta_native_handle_use_resource(&use);Atom *result=NULL;
     if(context)result=cetta_remote_db_context(db,a);
     else {
@@ -472,7 +473,7 @@ static Atom *remote_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom *
         const char *operation=!capture && args[1]->kind==ATOM_SYMBOL ? atom_symbol_bytes(args[1]) : NULL;
         char *name=operation && !memchr(operation,0,atom_symbol_length(args[1])) ? strdup(operation) : NULL;
         if(!capture && !name)result=refused(a,"remote-operation");
-        else if(!capture && remote_edit_active(db) && (!strcmp(name,"DbPublish") || !strcmp(name,"DbEnsure") || !strcmp(name,"DbCompactOpen")))result=refused(a,"write-during-space-edit");
+        else if(!capture && remote_edit_active(db) && (!strcmp(name,"DbPublish") || !strcmp(name,"DbEnsure") || !strcmp(name,"DbCompactOpen") || !strcmp(name,"DbImportOpen") || !strcmp(name,"DbImportFinish")))result=refused(a,"write-during-space-edit");
         else {
             cetta_shared_transition_guard_leave(&guard);
             if(capture) {
@@ -488,9 +489,10 @@ static Atom *remote_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom *
                     }
                     cetta_remote_capture_release(source);
                 }
-            } else if(start) {
+            } else if(start || start_from) {
                 CettaRemoteResource *opened=NULL;Atom *metadata=NULL;
-                CettaValueRpcStatus status=cetta_remote_db_start(db,name,argument,&owned,&opened,&metadata);
+                CettaValueRpcStatus status=start_from ? cetta_remote_resource_start(resource,name,argument,&owned,&opened,&metadata)
+                    : cetta_remote_db_start(db,name,argument,&owned,&opened,&metadata);
                 cetta_shared_transition_guard_enter(&guard);
                 if(status!=CETTA_RPC_OK)result=metadata ? atom_deep_copy(a,metadata) : remote_status(a,status);
                 else {

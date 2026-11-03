@@ -23,6 +23,16 @@ typedef struct CettaActSpaceExport CettaActSpaceExport;
  * no destination is installed until validation and durable publication. */
 CettaActStatus cetta_act_space_export_open(Space *,const char *path,bool mork,
     size_t maximum_bytes,size_t memory_bytes,CettaActSpaceExport **);
+CettaActStatus cetta_act_space_export_open_private(Space *,int directory_fd,bool mork,
+    size_t maximum_bytes,size_t memory_bytes,CettaActSpaceExport **);
+/* Borrowed immutable descriptor, available only after successful completion. */
+int cetta_act_space_export_descriptor(const CettaActSpaceExport *);
+typedef struct SourceValidation CettaActSpaceValidation;
+CettaActStatus cetta_act_space_validation_open(int fd,size_t maximum_bytes,CettaActSpaceValidation **);
+CettaActStatus cetta_act_space_validation_step(CettaActSpaceValidation *,uint64_t work);
+CettaActStatus cetta_act_space_validation_capture(CettaActSpaceValidation *,Space *initialized_empty_target);
+void cetta_act_space_validation_storage(const CettaActSpaceValidation *,struct CettaStorageCensus *);
+void cetta_act_space_validation_close(CettaActSpaceValidation *);
 CettaActStatus cetta_act_space_export_step(CettaActSpaceExport *,uint64_t work);
 typedef struct {
     /* Logical temporary bytes include pending file buffers; filesystem block

@@ -69,9 +69,10 @@ def publish(client, source, request, changes, operation=S('operation'), values=(
 
 class DropReplyProxy:
     """Acknowledge observation of a full upstream reply, then drop it."""
-    def __init__(self, path, upstream):
+    def __init__(self, path, upstream, drop_operation=None):
         self.path = path
         self.upstream = upstream
+        self.drop_operation = drop_operation
         self.drop = threading.Event()
         self.observed = threading.Event()
         self.error = None
@@ -103,7 +104,10 @@ class DropReplyProxy:
                     request = self.frame(client)
                     if request is None: break
                     server.sendall(request); reply = self.frame(server); assert reply
-                    if self.drop.is_set():
+                    body = decode(request[8:])[2]
+                    operation = body[1] if body[0] == S('CallV1') and len(body) == 3 else (
+                        body[2] if body[0] in [S('UseV1'), S('UseValueV1')] and len(body) == 4 else None)
+                    if self.drop.is_set() or operation == self.drop_operation:
                         self.observed.set(); break
                     client.sendall(reply)
         except Exception as error:

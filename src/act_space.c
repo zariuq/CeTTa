@@ -583,7 +583,7 @@ static CettaActStatus check_index(Source *s, uint64_t row, uint64_t record,
   }
   return CETTA_ACT_OK;
 }
-typedef struct {
+typedef struct SourceValidation {
   Source *source;
   CettaActCursor *structure;
   Cursor *rows;
@@ -690,6 +690,21 @@ static CettaActStatus source_read_descriptor(int fd,size_t maximum,Source **out)
   do status=validation_step(v,65536);while (status==CETTA_ACT_PROGRESS);
   if (status==CETTA_ACT_OK) {*out=v->source;retain(*out);}
   validation_close(v);return status;
+}
+CettaActStatus cetta_act_space_validation_open(int fd,size_t maximum,CettaActSpaceValidation **out) {
+  return validation_open(fd,maximum,out);
+}
+CettaActStatus cetta_act_space_validation_step(CettaActSpaceValidation *v,uint64_t work) {
+  return validation_step(v,work);
+}
+void cetta_act_space_validation_close(CettaActSpaceValidation *v) {validation_close(v);}
+void cetta_act_space_validation_storage(const CettaActSpaceValidation *v,CettaStorageCensus *c) {validation_storage(v,c);}
+CettaActStatus cetta_act_space_validation_capture(CettaActSpaceValidation *v,Space *target) {
+  if (!v || v->phase!=3 || !target || space_length64(target) ||
+      target->match_backend.kind!=SPACE_ENGINE_NATIVE || target->overlay_base || space_has_dependencies(target))
+    return CETTA_ACT_CORRUPT;
+  retain(v->source);target->match_backend=(SpaceMatchBackend){.kind=SPACE_ENGINE_SOURCE,.ops=&source_ops,.source=v->source};
+  space_read_view_invalidate(target);return CETTA_ACT_OK;
 }
 static CettaActStatus source_read(const char *path,size_t maximum,Source **out) {
   *out=NULL;
@@ -823,7 +838,7 @@ void cetta_act_space_export_close(CettaActSpaceExport *j) {
   cetta_act_publication_close(j->publication);
   free(j->wire);free(j->identity_wire);free(j);
 }
-CettaActStatus cetta_act_space_export_open(Space *space,const char *path,bool mork,
+static CettaActStatus export_open(Space *space,const char *path,int directory,bool mork,
     size_t maximum,size_t memory,CettaActSpaceExport **out) {
   if (!out) return CETTA_ACT_CORRUPT;
   *out=NULL;
@@ -844,7 +859,8 @@ CettaActStatus cetta_act_space_export_open(Space *space,const char *path,bool mo
     } else if (!atom_space(&j->retention,space)) s=CETTA_ACT_NOMEM;
     if (s==CETTA_ACT_OK && !space_occurrence_cursor_init_scan(space,&j->cursor)) s=CETTA_ACT_NOMEM;
   }
-  if (s==CETTA_ACT_OK) s=cetta_act_publication_open(path,&j->publication);
+  if (s==CETTA_ACT_OK) s=path ? cetta_act_publication_open(path,&j->publication)
+    : cetta_act_publication_open_private(directory,&j->publication);
   if (s==CETTA_ACT_OK) s=cetta_act_publication_sidecar(j->publication,false);
   if (s==CETTA_ACT_OK) s=export_sorter(j,memory/4,&j->keys);
   if (!mork && s==CETTA_ACT_OK) s=export_sorter(j,memory/4,&j->bodies);
@@ -876,6 +892,18 @@ CettaActStatus cetta_act_space_export_open(Space *space,const char *path,bool mo
   }
   if (s!=CETTA_ACT_OK) {cetta_act_space_export_close(j);return s;}
   *out=j;return CETTA_ACT_OK;
+}
+CettaActStatus cetta_act_space_export_open(Space *space,const char *path,bool mork,
+    size_t maximum,size_t memory,CettaActSpaceExport **out) {
+  if (!path) return CETTA_ACT_CORRUPT;
+  return export_open(space,path,-1,mork,maximum,memory,out);
+}
+CettaActStatus cetta_act_space_export_open_private(Space *space,int directory,bool mork,
+    size_t maximum,size_t memory,CettaActSpaceExport **out) {
+  return export_open(space,NULL,directory,mork,maximum,memory,out);
+}
+int cetta_act_space_export_descriptor(const CettaActSpaceExport *j) {
+  return j && !j->failed && j->phase==EXPORT_COMPLETE ? cetta_act_publication_fd(j->publication) : -1;
 }
 static CettaActStatus export_capture_row(CettaActSpaceExport *j) {
   __attribute__((cleanup(cetta_shared_transition_guard_leave))) CettaSharedTransitionGuard capture={0};
