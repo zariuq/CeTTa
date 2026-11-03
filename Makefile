@@ -52786,3 +52786,8 @@ test-space-append: $(BIN) $(ACT_SPACE_TEST_BIN)
 test-all: test-db-artifacts
 test-db-artifacts: $(BIN) value-worker $(ACT_SPACE_TEST_BIN)
 	$(PYTHON) tests/support/check_db_artifacts.py $(BIN) $(VALUE_WORKER_BIN) $(ACT_SPACE_TEST_BIN)
+
+.PHONY: test-db-maintenance
+test-all: test-db-maintenance
+test-db-maintenance: $(BIN) value-worker $(ACT_SPACE_TEST_BIN)
+	$(PYTHON) tests/support/check_db_maintenance.py $(BIN) $(VALUE_WORKER_BIN) $(ACT_SPACE_TEST_BIN)
