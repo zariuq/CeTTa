@@ -75,10 +75,17 @@ int parse_metta_bytes_prefix_ids(
     const uint8_t *bytes, size_t length, TermUniverse *universe, AtomId **out_ids,
     int *complete_count, char *error_buf, size_t error_buf_size);
 
-/* Install one process-wide immutable document reader for the active session. */
+/* Install the document reader for the calling thread's active session. */
 bool parser_set_document_ids_backend(
     const ParserDocumentIdsBackend *backend);
 void parser_clear_document_ids_backend(void *context);
+typedef struct {
+    ParserDocumentIdsBackend backend;
+    bool active;
+} ParserDocumentBackendScope;
+void parser_document_backend_enter(ParserDocumentBackendScope *,
+                                    const ParserDocumentIdsBackend *);
+void parser_document_backend_leave(ParserDocumentBackendScope *);
 /* One term read by the session's document reader, when that reader reads
  * terms: a dialect's parse then reads as its source does.  *handled is false
  * when the session has no such reader; NULL with *handled true is text that

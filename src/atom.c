@@ -550,12 +550,21 @@ static ArenaBlock *arena_stock_take(void) {
 /* A new block, from the thread's stock when it is full-size.  Out of line,
  * so the claim path of small arenas stays as short as before. */
 static __attribute__((noinline)) ArenaBlock *arena_block_alloc(
-    size_t capacity, bool recycle) {
+    size_t capacity, bool recycle, bool fallible) {
     ArenaBlock *block = recycle && capacity == ARENA_BLOCK_SIZE
         ? arena_stock_take() : NULL;
     if (block)
         return block;
-    block = cetta_malloc(sizeof(ArenaBlock) - ARENA_BLOCK_SIZE + capacity);
+    size_t bytes;
+    if (__builtin_add_overflow(sizeof(ArenaBlock) - ARENA_BLOCK_SIZE, capacity, &bytes)) {
+        if (fallible) { errno = EOVERFLOW; return NULL; }
+        cetta_oom(capacity);
+    }
+    block = malloc(bytes);
+    if (!block) {
+        if (fallible) return NULL;
+        cetta_oom(bytes);
+    }
     block->capacity = capacity;
     block->used = 0;
     block->next = NULL;
@@ -597,7 +606,7 @@ static __attribute__((cold, noinline)) void arena_used_after_free(void) {
     abort();
 }
 
-static ArenaBlock *arena_claim_block(Arena *a, size_t min_capacity) {
+static ArenaBlock *arena_claim_block(Arena *a, size_t min_capacity, bool fallible) {
     if (__builtin_expect(a->identity == ARENA_ID_DEAD, 0))
         arena_used_after_free();
     ArenaBlock *block = arena_take_spare_block(a, min_capacity);
@@ -612,7 +621,8 @@ static ArenaBlock *arena_claim_block(Arena *a, size_t min_capacity) {
             ? a->reserved_bytes : ARENA_BLOCK_SIZE;
     if (min_capacity > capacity)
         capacity = min_capacity;
-    block = arena_block_alloc(capacity, a->recycle_blocks);
+    block = arena_block_alloc(capacity, a->recycle_blocks, fallible);
+    if (!block) return NULL;
     a->reserved_bytes += block->capacity;
     a->block_count++;
     arena_ledger_charge((CettaArenaLedgerTag)a->ledger_tag, 0,
@@ -1085,20 +1095,22 @@ static void arena_symbol_cache_free(Arena *a) {
 
 /* Name an arena for a new incarnation: its identity, and a reset epoch
  * above every epoch an earlier incarnation of that name used. */
-static void arena_take_name(Arena *a) {
+static bool arena_take_name(Arena *a) {
     uint32_t name = 0u;
     uint64_t generation = 0u;
+    errno = 0;
     if (!cetta_name_acquire(&g_arena_names, &g_arena_name_local,
                             arena_names_once, &name, &generation)) {
-        fputs("fatal: resource exhausted: every arena identity names a live "
-              "arena\n", stderr);
-        abort();
+        if (!errno) errno = EOVERFLOW;
+        return false;
     }
     a->identity = name;
     a->reset_epoch = generation;
+    return true;
 }
 
-void arena_init(Arena *a) {
+bool arena_try_init(Arena *a) {
+    if (!a) { errno = EINVAL; return false; }
     a->head = NULL;
     a->spare = NULL;
     a->hashcons = g_hashcons;
@@ -1111,7 +1123,8 @@ void arena_init(Arena *a) {
     a->block_count = 0;
     a->spare_block_count = 0;
     a->runtime_kind = CETTA_ARENA_RUNTIME_KIND_OTHER;
-    arena_take_name(a);
+    a->identity = ARENA_ID_DEAD;
+    a->reset_epoch = 0u;
     a->older_identity = 0u;
     a->block_capacity = 0u;
     a->finalizers = NULL;
@@ -1121,12 +1134,29 @@ void arena_init(Arena *a) {
     a->own_symbols = false;
     a->recycle_blocks = false;
     a->block_growth = false;
+    a->ledger_tag_named = false;
+    a->ledger_tag = CETTA_ARENA_LEDGER_NONE;
+    if (!arena_take_name(a)) return false;
     arena_ledger_open(a);
+    return true;
+}
+
+void arena_init(Arena *a) {
+    if (!arena_try_init(a)) {
+        perror("fatal: arena initialization");
+        abort();
+    }
 }
 
 void arena_init_detached(Arena *a) {
     arena_init(a);
     a->hashcons = NULL;
+}
+
+bool arena_try_init_detached(Arena *a) {
+    if (!arena_try_init(a)) return false;
+    a->hashcons = NULL;
+    return true;
 }
 
 void arena_set_block_capacity(Arena *a, size_t capacity) {
@@ -1637,7 +1667,7 @@ void arena_reserve(Arena *a, size_t size) {
     if (available >= size)
         return;
 
-    ArenaBlock *b = arena_claim_block(a, size);
+    ArenaBlock *b = arena_claim_block(a, size, false);
     b->next = a->head;
     a->head = b;
 }
@@ -2703,7 +2733,7 @@ Atom *hashcons_get(HashConsTable *hc, Atom *atom) {
 
 /* ── Variables / cached literal lookups ────────────────────────────────── */
 
-VarInternTable *g_var_intern = NULL;
+_Thread_local VarInternTable *g_var_intern = NULL;
 
 #define VAR_INTERN_CHUNK_BITS 14u
 #define VAR_INTERN_CHUNK_SIZE (1u << VAR_INTERN_CHUNK_BITS)
@@ -2851,16 +2881,26 @@ struct VarInternChunk {
     VarInternEntry entries[VAR_INTERN_CHUNK_SIZE];
 };
 
-void var_intern_init(VarInternTable *t) {
-    if (!t) return;
+bool var_intern_try_init(VarInternTable *t) {
+    if (!t) { errno = EINVAL; return false; }
     t->owned_chunks = NULL;
     /* Zeroed pages: each slot holds no chunk until one is made, and the
      * table occupies no page it has not used. */
     t->chunks = calloc(VAR_INTERN_CHUNK_COUNT, sizeof(*t->chunks));
-    if (!t->chunks)
-        cetta_oom(sizeof(*t->chunks) * VAR_INTERN_CHUNK_COUNT);
-    if (pthread_mutex_init(&t->write_mutex, NULL) != 0) {
-        fprintf(stderr, "fatal: failed to initialize variable intern mutex\n");
+    if (!t->chunks) return false;
+    int error = pthread_mutex_init(&t->write_mutex, NULL);
+    if (error) {
+        free(t->chunks);
+        t->chunks = NULL;
+        errno = error;
+        return false;
+    }
+    return true;
+}
+
+void var_intern_init(VarInternTable *t) {
+    if (t && !var_intern_try_init(t)) {
+        perror("fatal: variable intern initialization");
         abort();
     }
 }
@@ -3044,9 +3084,23 @@ static __attribute__((noinline)) SymbolId symbol_cached_literal_slow(
 /* A new head block for an allocation that does not fit.  Out of line, so
  * the bump path of arena_alloc stays short whatever claiming involves. */
 static __attribute__((noinline)) void arena_grow(Arena *a, size_t size) {
-    ArenaBlock *b = arena_claim_block(a, size);
+    ArenaBlock *b = arena_claim_block(a, size, false);
     b->next = a->head;
     a->head = b;
+}
+
+bool arena_try_reserve(Arena *a, size_t size) {
+    if (!a || !a->identity || a->identity == ARENA_ID_DEAD) {
+        errno = EINVAL; return false;
+    }
+    if (size > SIZE_MAX - 7u) { errno = EOVERFLOW; return false; }
+    size = (size + 7u) & ~(size_t)7u;
+    if (!size || (a->head && size <= a->head->capacity - a->head->used)) return true;
+    ArenaBlock *block = arena_claim_block(a, size, true);
+    if (!block) return false;
+    block->next = a->head;
+    a->head = block;
+    return true;
 }
 
 void *arena_alloc(Arena *a, size_t size) {
@@ -4101,6 +4155,10 @@ Atom *atom_unit_canonical(void) {
 
 Atom *atom_symbol(Arena *a, const char *name) {
     return atom_symbol_id(a, symbol_intern_cstr(g_symbols, name));
+}
+
+SymbolId atom_symbol_literal_id(const char *name) {
+    return symbol_cached_literal(name);
 }
 
 Atom *atom_symbol_literal(Arena *a, const char *name) {

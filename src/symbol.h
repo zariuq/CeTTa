@@ -903,8 +903,8 @@ typedef struct {
 #undef CETTA_BUILTIN_SYMBOL_FIELD
 } BuiltinSyms;
 
-extern SymbolTable *g_symbols;
-extern BuiltinSyms g_builtin_syms;
+extern _Thread_local SymbolTable *g_symbols;
+extern _Thread_local BuiltinSyms g_builtin_syms;
 
 /* Builtin syntax symbols occupy the table's initial contiguous interval.
  * This distinguishes evaluator syntax from later interned constructor/data
@@ -912,12 +912,21 @@ extern BuiltinSyms g_builtin_syms;
 bool symbol_id_is_builtin(SymbolId id);
 
 void symbol_table_init(SymbolTable *st);
+/* Failed initialization releases acquired storage. No free is needed on
+ * failure; a successful table requires symbol_table_free. errno retains
+ * the allocation, mutex or identity-capacity cause. */
+bool symbol_table_try_init(SymbolTable *st);
 void symbol_table_free(SymbolTable *st);
 void symbol_table_init_builtins(SymbolTable *st, BuiltinSyms *builtins);
+/* On failure, builtins is zero and the table retains its interned prefix. */
+bool symbol_table_try_init_builtins(SymbolTable *st, BuiltinSyms *builtins);
 
 SymbolId symbol_intern_bytes(SymbolTable *st, const uint8_t *bytes, uint32_t len);
 SymbolId symbol_intern_span_hashed(SymbolTable *st, const uint8_t *bytes,
                                    uint32_t len, uint64_t hash);
+/* Return NONE with errno describing allocation/identity refusal. */
+SymbolId symbol_try_intern_span_hashed(SymbolTable *st, const uint8_t *, uint32_t, uint64_t);
+SymbolId symbol_try_intern_cstr(SymbolTable *st, const char *text);
 SymbolId symbol_intern_cstr(SymbolTable *st, const char *text);
 /* The symbol already interned for text, or SYMBOL_ID_NONE.  Never interns. */
 SymbolId symbol_lookup_cstr(SymbolTable *st, const char *text);

@@ -5,6 +5,37 @@
 #include <stdlib.h>
 #include <string.h>
 
+CettaTextReadStatus cetta_text_read_file(const char *path, uint8_t **output,
+        size_t *length, int *system_error) {
+    if (!path || !output || !length || !system_error) return CETTA_TEXT_READ_IO;
+    *output = NULL; *length = 0u; *system_error = 0;
+    FILE *file = fopen(path, "rb");
+    if (!file) { *system_error = errno; return CETTA_TEXT_READ_IO; }
+    uint8_t *bytes = NULL;
+    size_t used = 0u, capacity = 0u;
+    CettaTextReadStatus status = CETTA_TEXT_READ_OK;
+    for (;;) {
+        if (capacity - used <= 1u) {
+            size_t next = capacity ? (capacity <= SIZE_MAX / 2u ? capacity * 2u : SIZE_MAX) : 65536u;
+            if (next <= capacity) { status = CETTA_TEXT_READ_OVERFLOW; break; }
+            void *grown = realloc(bytes, next);
+            if (!grown) { status = CETTA_TEXT_READ_MEMORY; break; }
+            bytes = grown; capacity = next;
+        }
+        size_t count = fread(bytes + used, 1u, capacity - used - 1u, file);
+        used += count;
+        if (ferror(file)) { *system_error = errno ? errno : EIO; status = CETTA_TEXT_READ_IO; break; }
+        if (feof(file)) break;
+    }
+    if (fclose(file) && status == CETTA_TEXT_READ_OK) {
+        *system_error = errno ? errno : EIO; status = CETTA_TEXT_READ_IO;
+    }
+    if (status != CETTA_TEXT_READ_OK) { free(bytes); return status; }
+    bytes[used] = 0u;
+    *output = bytes; *length = used;
+    return CETTA_TEXT_READ_OK;
+}
+
 static void text_source_set_error(char *errbuf, size_t errbuf_sz,
                                   const char *message) {
     if (!errbuf || errbuf_sz == 0) return;
