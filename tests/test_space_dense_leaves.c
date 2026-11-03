@@ -64,22 +64,42 @@ static uint32_t check_leaf(const void *items, uint32_t len, uint32_t lo,
     return count;
 }
 
+static uint32_t check_directory_tree(const CettaDenseSide *side,
+                                     const CettaDenseRowNode *node,
+                                     uint64_t low, uint64_t high) {
+    if (!node)
+        return 0u;
+    assert(node->number >= side->row_cap && node->number >= low &&
+           node->number < high && node->items && node->length);
+    uint32_t left = check_directory_tree(side, node->left, low, node->number);
+    uint32_t right = check_directory_tree(side, node->right,
+                                         (uint64_t)node->number + 1u, high);
+    uint32_t lh = dense_tree_height(node->left), rh = dense_tree_height(node->right);
+    assert(lh <= rh + 1u && rh <= lh + 1u);
+    assert(node->height == (lh > rh ? lh : rh) + 1u);
+    assert(node->subtree_count == left + right + 1u);
+    return left + right + 1u;
+}
+
 static void check_side(const CettaDenseRelation *rel,
                        const CettaDenseSide *side) {
     uint64_t bytes = 0u;
-    for (uint32_t n = 0u; n < side->row_cap; n++) {
-        if (!side->rows[n]) {
-            assert(side->row_len[n] == 0u);
-            continue;
-        }
+    DenseSideIterator iterator;
+    dense_side_iterator_init(&iterator, side);
+    DenseRowRef row;
+    uint32_t n, count = 0u, previous = 0u;
+    while (dense_side_next(&iterator, &n, &row)) {
+        assert(!count || previous < n);
+        previous = n;
+        count++;
         assert(n < rel->len && rel->holds[n]);
         bytes += dense_row_bytes(side, n);
         if (!dense_row_listed(side, n)) {
-            (void)check_leaf(side->rows[n], side->row_len[n], 0u,
-                             dense_len_bits(side->row_len[n]) ? 1u : 0u, true);
+            (void)check_leaf(*row.items, *row.length, 0u,
+                             dense_len_bits(*row.length) ? 1u : 0u, true);
             continue;
         }
-        const DenseLeaves *list = side->rows[n];
+        const DenseLeaves *list = *row.items;
         assert(list->len >= 1u && list->len <= list->cap);
         assert(!(list->len == 1u && (!dense_len_bits(list->leaf[0].len) ||
                                      list->leaf[0].lo == 0u)));
@@ -93,6 +113,29 @@ static void check_side(const CettaDenseRelation *rel,
         }
         assert(total == list->count);
     }
+    assert(count == side->row_count);
+    (void)check_directory_tree(side, side->overflow, 0u, UINT64_C(1) << 32);
+    if (side->row_bins) {
+        uint32_t bins[DENSE_DIRECTORY_BINS] = {0};
+        dense_side_iterator_init(&iterator, side);
+        while (dense_side_next(&iterator, &n, NULL))
+            bins[dense_directory_bin(n)]++;
+        assert(memcmp(bins, side->row_bins, sizeof(bins)) == 0);
+    }
+    uint64_t best = (uint64_t)count * sizeof(CettaDenseRowNode);
+    for (uint32_t cut = 64u;; cut *= 2u) {
+        uint32_t outside = 0u;
+        dense_side_iterator_init(&iterator, side);
+        while (dense_side_next(&iterator, &n, NULL))
+            outside += n >= cut;
+        uint64_t candidate = 12u * (uint64_t)cut + 40u * (uint64_t)outside;
+        if (candidate < best)
+            best = candidate;
+        if (cut == (UINT32_C(1) << 31))
+            break;
+    }
+    if (!side->directory_maintenance_failed)
+        assert(dense_side_control_bytes(side) <= 3u * best);
     assert(bytes == side->row_bytes);
 }
 
@@ -195,6 +238,13 @@ static void spread(uint32_t rows, uint32_t ids, unsigned steps) {
                    in_column + 1u);
         }
     }
+    check_store(&rel);
+    uint64_t column_zero = 1u;
+    for (uint32_t r = 0u; r < rows; r++)
+        column_zero += model[(size_t)r * ids];
+    for (uint64_t probe = 0u; probe <= rel.pairs && !rel.second_kept; probe++)
+        assert(cetta_dense_relation_count(&rel, CETTA_DENSE_ANY, 0u) == column_zero);
+    assert(rel.second_kept);
     check_store(&rel);
     bool second = rel.second_kept;
     /* Without the spine and most pairs most numbers die: renumbering
@@ -317,12 +367,12 @@ static void far_toggle(uint32_t dense, unsigned rounds) {
         assert(cetta_dense_relation_remove(&rel, row, far, NULL, NULL));
         if (i == 6u) {
             before = rows_bytes(&rel);
-            len = rel.first.row_len[number];
+            len = *dense_side_row_ref(&rel.first, number).length;
             assert(dense_row_bytes(&rel.first, number) <=
                    16u * (uint64_t)dense);
         } else if (i > 6u) {
             assert(rows_bytes(&rel) == before);
-            assert(rel.first.row_len[number] == len);
+            assert(*dense_side_row_ref(&rel.first, number).length == len);
         }
     }
     check_store(&rel);

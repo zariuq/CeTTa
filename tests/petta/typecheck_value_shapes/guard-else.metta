@@ -1,0 +1,6 @@
+!(import! &self (library lib_roman))
+(: count-leaf (-[det]-> Number Atom Number))
+(= (count-leaf $n $_leaf) (+ $n 1))
+(: wrong-branch (-[det]-> Atom Number))
+(= (wrong-branch $value)
+   (if (is-expr $value) 0 (fold-nested count-leaf 0 $value)))
