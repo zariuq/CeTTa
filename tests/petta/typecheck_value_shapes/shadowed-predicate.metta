@@ -1,0 +1,8 @@
+!(import! &self (library lib_roman))
+(: count-leaf (-[det]-> Number Atom Number))
+(= (count-leaf $n $_leaf) (+ $n 1))
+(: is-expr (-[det]-> Atom Bool))
+(= (is-expr $value) True)
+(: shadowed-count (-[det]-> Atom Number))
+(= (shadowed-count $value)
+   (if (is-expr $value) (fold-nested count-leaf 0 $value) 0))

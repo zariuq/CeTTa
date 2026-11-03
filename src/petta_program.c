@@ -454,6 +454,8 @@ typedef struct {
 static void petta_program_signature_roots(const TermUniverse *universe,
                                           TermUniverseRootVisit visit,
                                           void *visit_context, void *ctx);
+static void petta_program_release_unused_signature_universe(
+    PettaProgram *program, TermUniverse *universe);
 
 struct PettaProgram {
     unsigned admitted_rule_forms;
@@ -5830,6 +5832,7 @@ void petta_program_forget_space(
             &program->analysis->spaces[index];
         if (entry->space != space)
             continue;
+        TermUniverse *signature_universe = entry->signature_universe;
         petta_program_space_clear_type_index(entry);
         free(entry->inferred_signatures);
         free(entry->type_annotations);
@@ -5838,6 +5841,8 @@ void petta_program_forget_space(
             sizeof(*entry) *
                 (program->analysis->space_len - index - 1u));
         program->analysis->space_len--;
+        petta_program_release_unused_signature_universe(
+            program, signature_universe);
         break;
     }
 }
@@ -6702,6 +6707,32 @@ static void petta_program_signature_roots(const TermUniverse *universe,
              signature < entry->inferred_signature_len; signature++)
             visit(visit_context,
                   entry->inferred_signatures[signature].signature_id);
+    }
+}
+
+/* The registration borrows the universe. Its final analysis Space releases
+ * that borrow before the Space's storage owner may destroy the universe. */
+static void petta_program_release_unused_signature_universe(
+    PettaProgram *program, TermUniverse *universe) {
+    if (!program || !universe)
+        return;
+    for (size_t i = 0u; program->analysis &&
+         i < program->analysis->space_len; i++) {
+        if (program->analysis->spaces[i].signature_universe == universe)
+            return;
+    }
+    for (size_t i = 0u; i < program->signature_universe_len; i++) {
+        if (program->signature_universes[i] != universe)
+            continue;
+        term_universe_remove_root_provider(universe,
+                                           petta_program_signature_roots,
+                                           program);
+        memmove(&program->signature_universes[i],
+                &program->signature_universes[i + 1u],
+                (program->signature_universe_len - i - 1u) *
+                    sizeof(*program->signature_universes));
+        program->signature_universe_len--;
+        return;
     }
 }
 
