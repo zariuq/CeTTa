@@ -87,6 +87,9 @@ typedef struct {
     bool has_base,has_frozen;
 } CettaDiskStoreInfo;
 bool cetta_disk_store_view_info(const CettaDiskStoreView *,CettaDiskStoreInfo *);
+/* Same-host physical commit-domain coordinates, independent of a snapshot's
+ * logical epoch/revision. These readable coordinates grant no authority. */
+bool cetta_disk_store_view_domain(const CettaDiskStoreView *,uintmax_t *device,uintmax_t *inode);
 
 /* Logical reads through an owned captured view. Storage coordinates are
  * private to that view; callers never infer an occurrence identity from them.

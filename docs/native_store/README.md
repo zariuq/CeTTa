@@ -36,9 +36,27 @@ query ordering when an application needs one.
 
 `db:query` and compositional matching plans use the ordinary client matcher.
 Related collection leaves, including later join legs, retain the same captured
-database revision. Remote ordered/range plans are still pending; unsupported
-plans refuse explicitly. Current ordinary remote
-transaction proposals must fit the selected portable request policy.
+database revision. `KqRange` applies the existing stored-scalar range contract
+to embedded, remote and standalone ACT sources. The server transfers original
+candidate facts and saved identities; the client performs ordinary matching
+and projection. `KqIndexedI64Range` requires a declared V4 range index and
+returns Int64 fields in signed-value order with stable occurrence-key ties.
+General ranges retain the other-scalar or complete-scan fallback. Standalone
+ACT files have no declared database range index and refuse the indexed-only
+operation. Ordinary remote transaction proposals must fit the selected
+portable request policy; bulk transfer uses private chunked artifacts.
+
+Connections verify `DbProtocolV1` version 1 and original-fact, immutable-position,
+physical-domain and retained-session capabilities before admitting a remote
+database. Directory owner identity separates the logical epoch from the native physical commit
+domain, including independent backup copies. Unknown versions
+or missing required capabilities refuse explicitly. Capability discovery
+describes implementation support; an individual collection must still declare
+the index required by an indexed-only query.
+The DB service keeps quiet sessions open while enforcing partial-request and
+blocked-reply deadlines. Retained children outlive a logical parent close.
+`examples/db_server_client.metta` is an executable named-connection example;
+`CETTA_DB_SOCKET` selects its server.
 
 `db:compact` also works remotely. `db:compact-open`, `db:compact-step`,
 `db:compact-info` and `db:compact-cancel` expose cooperative jobs for embedded
@@ -67,6 +85,8 @@ writer coexistence, retained readers, idle behaviour, cancellation, restart,
 legacy format preservation and failure isolation.
 See the [remote contract](REMOTE_SPACE_PROTOCOL.txt). `make test-remote-db`
 checks ordinary programs, retained readers, callback receipts and failures.
+The [ACT server acceptance map](ACT_SERVER_ACCEPTANCE.txt) states the combined
+scope, resource accounting and reproducible separating controls.
 
 ## ACT snapshots without Rust
 

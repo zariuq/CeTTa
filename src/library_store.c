@@ -15,6 +15,7 @@
 #include "petta_specializer.h"
 #include "petta_semantics.h"
 #include <limits.h>
+#include <inttypes.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -406,10 +407,31 @@ static Atom *remote_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom *
     bool call=atom_is_symbol(head,"__cetta_lib_store_remote_call");
     bool start=atom_is_symbol(head,"__cetta_lib_store_remote_start");
     bool start_from=atom_is_symbol(head,"__cetta_lib_store_remote_start_from");
+    bool start_capture=atom_is_symbol(head,"__cetta_lib_store_remote_source_start");
     bool use_resource=atom_is_symbol(head,"__cetta_lib_store_remote_use");
-    if(!adopt && !capture && !context && !call && !publish && !related && !observation && !start && !start_from && !use_resource)return NULL;
-    if(n!=(context || observation ? 1u : call || publish || start || start_from || use_resource ? 3u : 2u))return refused(a,"remote-arguments");
+    if(!adopt && !capture && !context && !call && !publish && !related && !observation && !start && !start_from && !start_capture && !use_resource)return NULL;
+    if(n!=(context || observation ? 1u : call || publish || start || start_from || start_capture || use_resource ? 3u : 2u))return refused(a,"remote-arguments");
     CETTA_SCOPED_SHARED_TRANSITION(guard);
+    if(start_capture) {
+        Space *base=resolve_space(eval_current_registry(),args[0]);CettaRemoteCapture *source=cetta_remote_capture_from_space(base);
+        if(!source)return refused(a,"remote-capture-required");
+        const char *operation=args[1]->kind==ATOM_SYMBOL ? atom_symbol_bytes(args[1]) : NULL;
+        char *name=operation && !memchr(operation,0,atom_symbol_length(args[1])) ? strdup(operation) : NULL;
+        if(!name){cetta_remote_capture_release(source);return refused(a,"remote-operation");}
+        if(remote_edit_active(cetta_remote_capture_db(source)) && (!strcmp(name,"DbPublish") || !strcmp(name,"DbEnsure") ||
+            !strcmp(name,"DbCompactOpen") || !strcmp(name,"DbImportOpen") || !strcmp(name,"DbImportFinish"))) {
+            free(name);cetta_remote_capture_release(source);return refused(a,"write-during-space-edit");
+        }
+        Arena owned;arena_init_detached(&owned);Atom *argument=atom_deep_copy(&owned,args[2]);
+        if(!argument){arena_free(&owned);free(name);cetta_remote_capture_release(source);return refused(a,"capacity");}
+        CettaRemoteResource *opened=NULL;Atom *metadata=NULL;cetta_shared_transition_guard_leave(&guard);
+        CettaValueRpcStatus status=cetta_remote_capture_start(source,name,argument,&owned,&opened,&metadata);
+        cetta_shared_transition_guard_enter(&guard);Atom *result;
+        if(status!=CETTA_RPC_OK)result=metadata ? atom_deep_copy(a,metadata) : remote_status(a,status);
+        else {Atom *handle=own(ctx,a,remote_resource_kind,opened,free_remote_resource);
+            result=handle ? atom_expr3(a,atom_symbol(a,"StoreRemoteResource"),handle,atom_deep_copy(a,metadata)) : refused(a,"capacity");}
+        arena_free(&owned);free(name);cetta_remote_capture_release(source);return result;
+    }
     if(related || observation) {
         Space *base=resolve_space(eval_current_registry(),args[0]);CettaRemoteCapture *origin=cetta_remote_capture_from_space(base);
         if(!origin)return refused(a,"remote-capture-required");
@@ -512,6 +534,16 @@ static Atom *remote_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom *
     cetta_native_handle_use_release(&use);return result;
 }
 static Atom *source_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **args,uint32_t n) {
+    if(atom_is_symbol(head,"__cetta_lib_store_source_single")) {
+        if(n!=2)return refused(a,"source-single-arguments");
+        CETTA_SCOPED_SHARED_TRANSITION(guard);
+        SourceLease *lease=calloc(1,sizeof(*lease));if(!lease)return refused(a,"capacity");
+        CettaCandidateStatus status=cetta_occurrence_source_single(args[0],args[1],cetta_library_value_byte_limit(ctx),&lease->source);
+        if(status!=CETTA_CANDIDATE_OK){free_source(lease);return candidate_status(a,status);}
+        Atom *handle=own(ctx,a,source_kind,lease,free_source);
+        return handle ? atom_expr(a,(Atom *[]){atom_symbol(a,"StoreSourceOpened"),handle,atom_int(a,1),
+            unsigned_value(a,cetta_occurrence_source_limit(lease->source))},4) : refused(a,"capacity");
+    }
     bool open=atom_is_symbol(head,"__cetta_lib_store_source_open");
     bool from_view=atom_is_symbol(head,"__cetta_lib_store_source_open_view");
     bool view=atom_is_symbol(head,"__cetta_lib_store_source_view");
@@ -889,6 +921,15 @@ static Atom *compaction_progress(Arena *a,const CettaDiskCompaction *job) {
 }
 Atom *cetta_store_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **args,uint32_t n) {
     if (!ctx || !a || !head) return NULL;
+    if (atom_is_symbol(head,"__cetta_lib_store_view_domain")) {
+        CettaNativeHandleUse use={0};uintmax_t device,inode;
+        if (n!=1 || !acquire(ctx,view_kind,args[0],CETTA_NATIVE_HANDLE_USE_LIFETIME,&use)) return refused(a,"closed-view");
+        bool ready=cetta_disk_store_view_domain(cetta_native_handle_use_resource(&use),&device,&inode);
+        char name[4*sizeof(uintmax_t)+3];
+        if (ready) snprintf(name,sizeof(name),"%jx:%jx",device,inode);
+        cetta_native_handle_use_release(&use);
+        return ready ? atom_expr2(a,atom_symbol(a,"StoreDomainV1"),atom_string(a,name)) : refused(a,"view-domain");
+    }
     if(atom_is_symbol(head,"__cetta_lib_store_source_edit"))return source_edit(ctx,a,args,n);
     Atom *source_result=source_dispatch(ctx,a,head,args,n);if (source_result) return source_result;
     Atom *remote_result=remote_dispatch(ctx,a,head,args,n);if(remote_result)return remote_result;

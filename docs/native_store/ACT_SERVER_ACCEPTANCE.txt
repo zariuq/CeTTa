@@ -1,0 +1,113 @@
+ACT-backed database and Space server
+====================================
+
+Scope
+-----
+Native C storage and Unix-socket service, ordinary MeTTa matching and editable
+transaction workspaces, portable ACTree03/CACT0001 snapshots, and the PeTTa db
+facade. Python protocol scripts are independent test clients. Python embedding,
+live application migration and stronger variable-fidelity profiles are separate.
+
+The ordinary interface is db:open/db:connect, db:snapshot, db:transaction,
+db:query/db:page, explicit-result receipts and maintenance/transfer operations.
+See examples/db_quickstart.metta and examples/db_server_client.metta. The latter
+uses CETTA_DB_SOCKET and the native_db_server.metta trusted configuration.
+
+Storage and publication
+-----------------------
+CDS3 combines an immutable CDBACT01 byte-key/value base with CSI puts/removes
+layers. Empty values remain distinct from tombstones. Facts, metadata, indexes,
+origin mappings and receipts retain their ordinary database keys and values.
+Opening CDS2 leaves it unchanged; explicit ACT compaction converts it.
+
+Compaction freezes one cut, builds outside the writer gate and installs that
+base alongside the latest active delta. Its logical epoch/revision is preserved;
+captured readers retain their original backing. Interrupted jobs reuse the
+frozen cut. Collection and CSI-compatible backup retain the existing owner and
+durability rules. Public ACT opening keeps full integrity/structural validation.
+
+Remote ownership and observations
+---------------------------------
+Owner identity separates logical epoch from the native physical commit domain.
+Activation fences current observations; neither readable coordinates nor a
+historical snapshot grants publication authority. The callback executes once
+in its client. Local observations are validated before an immutable proposal;
+publication validates the informing database revision under the writer gate.
+Unsupported foreign freshness requirements refuse.
+
+Original facts and saved identities travel in separate portable packets.
+Ordinary matching and projection stay in the client. General stored-scalar
+ranges retain fallback scanning; indexed Int64 ranges require declared metadata
+and preserve signed-value/occurrence-key order. Historical ACT files support
+general ranges and refuse the indexed-only operation. A selected original fact
+becomes an owned one-occurrence source for the same matcher, without a guessed
+filtered Space cardinality or any new publication capability.
+
+Native sessions serialize exchanges and verify exact request identities.
+Children retain the session after a logical parent close. The DB configuration
+disables whole-session inactivity expiry while keeping partial-frame and
+blocked-reply deadlines. Progress/failure/cancellation/disconnection are not
+confirmed exhaustion. Lost publication acknowledgement is uncertain and resolves
+through a durable receipt before another attempt; callbacks are not rerun.
+
+Transfer and resources
+-----------------------
+Private server artifacts use descriptor-relative, immediately unlinked files.
+Client paths select only the client's filesystem. Upload/download uses selected
+chunks, complete digests and full validation. Import stages the existing MeTTa
+schema in a disk-backed batch, then publishes once. Export retains one captured
+view and uses external sorted runs/offset joins and the shared ACT builder.
+
+Builder memory defaults to 32 MiB and is configurable. That is workspace policy,
+not a total-process RSS limit: retained inputs, one selected codec record and
+mapped residency are distinct. Streaming bounds depend on selected record/key
+policies as well as workspace. Corpus size is not a transport-frame limit.
+Sampling tools separately report anonymous/file-backed memory, anonymous work,
+retired database inodes, named publication files and named database footprint.
+Sampled peaks are observations at the sampling interval, not formal OS maxima.
+
+Automatic maintenance schedules at max(8 MiB, base bytes / 4) of active physical
+delta. Bounded steps run between service events. Idle polling invokes no MeTTa
+callback. Failures remain separate from acknowledged writes; cancellation,
+resumption and restart retain recoverable data. A cancelled small manual job is
+not immediately restarted by ordinary scheduling.
+
+Separating controls
+--------------------
+make test-db test-space-workspace test-source-overlay
+  Standard Space edits, multiplicity/count removal, program/read invalidation,
+  callback-once receipts, nested publication scope and cleanup.
+
+make test-remote-db test-native-db-server test-remote-ranges
+  Original candidates, pending clones, parent close, numeric representations,
+  exact order/identity across compaction, raw repeated variables, standalone ACT,
+  stale/absent reads, interrupted replies, independent copied commit domains,
+  compatible protocol/capabilities and refusal of incompatible connections.
+
+make test-db-artifacts test-space-append test-db-maintenance
+  Bounded native import/export, private chunks, malformed/hash-inconsistent
+  artifacts, cancelled/incomplete staging, collisions, lost final replies and
+  restart, actual upload/base I/O faults, quiet retained sessions, bounded partial
+  frames, maintenance failure isolation and frozen-cut reuse.
+
+make test-act-space test-act-stream test-native-act-base test-native-act-store
+make test-byte-run-sort test-act-export-faults test-space-transfer
+  Codec/profile agreement, streaming/reverse construction, corruption and
+  publication cutpoints, external-run boundaries and existing rollback backup.
+
+make test-space-query test-scalar-ranges test-scalar-range-curriculum
+make test-native-kb-service test-library-import-catalog
+  Independent query observations, declared-index fallbacks, curriculum/service
+  parity, native service lifetime/recovery and public library registration.
+
+check_db_artifacts.py --scale-rows and check_space_append.py --scale-rows drive
+geometric generated cohorts in independent processes. Complete generated-payload
+verification checks every ordinal once and every payload byte. Transfer retains
+saved identities; database import creates destination occurrences and an origin
+map, so source sequence is not an insertion-time order promise for database keys.
+
+The private Lean models cover layered lookup/compaction, revision and reader
+preservation, owner/dependency separation, staged admission, cursor completion,
+original-candidate selection and independent physical domains. They include
+counterexamples and native controls. These are abstract proofs with explicit
+implementation obligations; they do not certify or refine the C executable.

@@ -50,6 +50,33 @@ def private_file_bytes(pid):
     return total
 
 
+def backing_files(pid):
+    """Sample backing categories, including O_TMPFILE and retired DB inodes."""
+    result = dict(anonymous_work=0, retired_database=0, named_publication=0)
+    seen = set()
+    try:
+        for path in (Path('/proc')/str(pid)/'fd').iterdir():
+            try:
+                metadata = path.stat()
+                if not stat.S_ISREG(metadata.st_mode):
+                    continue
+                identity = (metadata.st_dev, metadata.st_ino)
+                if identity in seen:
+                    continue
+                seen.add(identity)
+                name = str(path.readlink()).removesuffix(' (deleted)')
+                if metadata.st_nlink == 0:
+                    category = 'retired_database' if name.endswith(('.cseg', '.cbase', '.csi')) else 'anonymous_work'
+                    result[category] += metadata.st_size
+                elif Path(name).name.startswith('.act-publish-'):
+                    result['named_publication'] += metadata.st_size
+            except (FileNotFoundError, PermissionError):
+                pass
+    except (FileNotFoundError, PermissionError):
+        return None
+    return result
+
+
 def scaling(args, root, rows):
     root.mkdir(mode=0o700)
     image = root/'input.cact'
@@ -57,6 +84,8 @@ def scaling(args, root, rows):
     server = server_for(args.worker.resolve(), root, root/'store')
     peaks = {'client': {}, 'server': {}}
     temporary, unavailable = 0, 0
+    backing_peaks = dict(anonymous_work=0, retired_database=0, named_publication=0)
+    database_peak = 0
     client = None
     try:
         server.start()
@@ -79,6 +108,14 @@ def scaling(args, root, rows):
                     temporary = max(temporary, client_disk+server_disk)
                 else:
                     unavailable += 1
+                client_backing, server_backing = backing_files(client.pid), backing_files(server.process.pid)
+                if client_backing is not None and server_backing is not None:
+                    for category in backing_peaks:
+                        backing_peaks[category] = max(backing_peaks[category], client_backing[category]+server_backing[category])
+                try:
+                    database_peak = max(database_peak, sum(path.stat().st_size for path in (root/'store').iterdir() if path.is_file()))
+                except FileNotFoundError:
+                    pass
                 if time.monotonic()-began > 600:
                     client.kill()
                     client.wait()
@@ -97,7 +134,8 @@ def scaling(args, root, rows):
         assert 'ACT_VERIFIED_GENERATED rows='+str(rows) in verified.stdout, verified.stdout
         return dict(rows=rows, input_bytes=image.stat().st_size, output_bytes=output.stat().st_size,
                     seconds=time.monotonic()-began, peak_kib=peaks, sampled_private_file_bytes=temporary,
-                    private_file_unavailable_samples=unavailable)
+                    private_file_unavailable_samples=unavailable, sampled_backing_peaks=backing_peaks,
+                    sampled_named_database_bytes=database_peak)
     finally:
         if client is not None and client.poll() is None:
             client.kill()

@@ -4,6 +4,7 @@ import argparse
 import json
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -59,6 +60,59 @@ def finish(client, timeout=60):
     raise AssertionError(('maintenance did not complete', value))
 
 
+def io_failure(args, root):
+    if not sys.platform.startswith('linux') or args.valgrind_log_dir:
+        return []
+    directory = root/'io-failure'
+    directory.mkdir(mode=0o700)
+    library = directory/'fault.so'
+    subprocess.run(['cc', '-shared', '-fPIC', str(ROOT/'tests/support/artifact_io_fault.c'), '-ldl', '-o', str(library)], check=True)
+    arm, marker = directory/'armed', directory/'injected'
+    server = server_for(args.worker.resolve(), directory, directory/'store')
+    server.environment.update(LD_PRELOAD=str(library), CETTA_ARTIFACT_FAULT_DIRECTORY=str(directory),
+                              CETTA_ARTIFACT_FAULT_KIND='base', CETTA_ARTIFACT_FAULT_AT='1',
+                              CETTA_ARTIFACT_FAULT_ARM=str(arm), CETTA_ARTIFACT_FAULT_MARKER=str(marker))
+    client = None
+    try:
+        server.start()
+        client = Client(server.path)
+        arm.touch()
+        published = 0
+        for number in range(32):
+            view, _ = capture(client)
+            answer = publish(client, view, S('grow-'+str(number)),
+                             [E('SpaceInsertV1', 0, E('blob', number, 'z'*524288))])
+            client.drop(view)
+            assert answer[0] == S('KnowledgeCommittedV1'), answer
+            published += 1
+            if marker.exists() or info(client)['compacting'] is True:
+                break
+        deadline = time.monotonic()+30
+        while not marker.exists() or status(client)[1] != S('failed'):
+            assert time.monotonic() < deadline, 'base fault did not stop the quiescent maintenance job'
+            time.sleep(.005)
+        assert marker.exists(), 'base pwrite fault was not exercised'
+        failed = status(client)
+        assert failed[1] == S('failed'), failed
+        held, metadata = capture(client)
+        assert metadata[5] == published, metadata
+        before = info(client)
+        assert before['compacting'] is True, before
+        assert client.route('ServiceMaintenanceResume')[1] == S('scheduled')
+        finish(client)
+        after = info(client)
+        assert after['revision'] == before['revision'], (before, after)
+        current, metadata = capture(client)
+        assert metadata[5] == published
+        client.drop(current)
+        client.drop(held)
+        return ['active_compaction_io_failure_preserves_ack_and_reuses_frozen_cut']
+    finally:
+        if client:
+            client.close()
+        server.stop()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('binary', type=Path)
@@ -73,7 +127,7 @@ def main():
     checks, latencies = [], []
     with tempfile.TemporaryDirectory(prefix='db-maintenance-', dir=ROOT/'runtime') as temporary:
         root = Path(temporary)
-        for mode in ['normal', 'malformed']:
+        for mode in ['normal', 'malformed', 'retained']:
             directory = root/('generic-'+mode)
             directory.mkdir(mode=0o700)
             generic = instrument(Server(args.worker.resolve(), directory, module=ROOT/'tests/support/value_service_maintenance_fixture.metta',
@@ -87,7 +141,7 @@ def main():
                 while status(client)[1] == S('scheduled'):
                     assert time.monotonic() < deadline
                 before = status(client)
-                assert before[1] == S('idle' if mode == 'normal' else 'failed'), before
+                assert before[1] == S('failed' if mode == 'malformed' else 'idle'), before
                 assert client.route('Echo', E('PayloadV1', 'preserved')) == E('PayloadV1', 'preserved')
                 after = status(client)
                 assert after[2] == before[2]+1, (before, after)
@@ -98,6 +152,13 @@ def main():
                     assert client.route(operation, ok=False) == E('ServiceRefusedV1', S('read-only'))
                 assert status(client) == after
                 checks.append('generic_'+mode+'_hook_and_acknowledgement')
+                if mode == 'retained':
+                    time.sleep(.35)
+                    assert status(client) == after
+                    client.socket.sendall(b'C')
+                    time.sleep(.35)
+                    assert client.socket.recv(1) == b'', 'partial frame did not expire'
+                    checks.append('retained_idle_session_with_bounded_partial_frame')
             finally:
                 if client:
                     client.close()
@@ -146,6 +207,7 @@ def main():
             if client:
                 client.close()
             server.stop()
+        checks.extend(io_failure(args, root))
         interrupted = root/'interrupted'
         seed(args, interrupted, image)
         server = instrument(server_for(args.worker.resolve(), interrupted, interrupted/'store'), args)

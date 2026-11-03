@@ -140,18 +140,45 @@ CettaValueRpcStatus cetta_remote_db_open(CettaIpcSession *session,size_t maximum
         if(!tagged(caps,"DbCapabilitiesV1",6) || atom_has_vars(caps) || !natural(caps->expr.elems[5],&server_limit) || !server_limit || server_limit>SIZE_MAX ||
             !(atom_is_symbol(caps->expr.elems[3],"directory") || atom_is_symbol(caps->expr.elems[3],"act")) ||
             !(atom_is_symbol(caps->expr.elems[4],"ReadWrite") || atom_is_symbol(caps->expr.elems[4],"ReadOnly"))) status=CETTA_RPC_INVALID;
+        else if(atom_is_symbol(caps->expr.elems[3],"directory") &&
+            (!tagged(caps->expr.elems[1],"DbOwnerV1",3) || !text(caps->expr.elems[1]->expr.elems[1]) ||
+             !text(caps->expr.elems[1]->expr.elems[2]) || !*text(caps->expr.elems[1]->expr.elems[2])))status=CETTA_RPC_INVALID;
         else {
             d->owner=caps->expr.elems[1];d->incarnation=caps->expr.elems[2];d->kind=caps->expr.elems[3];
             d->maximum=server_limit<maximum ? (size_t)server_limit : maximum;d->writable=atom_is_symbol(caps->expr.elems[4],"ReadWrite") && atom_is_symbol(d->kind,"directory");
+        }
+    }
+    if(status==CETTA_RPC_OK) {
+        Atom *protocol=NULL;status=call(d,NULL,"DbProtocolInfo",unit,&d->metadata,&protocol);
+        CETTA_SCOPED_SHARED_TRANSITION(negotiation);
+        uint64_t version=0;bool originals=false,positions=false,domains=false,retained=false;
+        if(status==CETTA_RPC_OK) {
+            if(!tagged(protocol,"DbProtocolV1",3) || !natural(protocol->expr.elems[1],&version) || version!=1 ||
+                protocol->expr.elems[2]->kind!=ATOM_EXPR || atom_has_vars(protocol))status=CETTA_RPC_INVALID;
+            else {
+                Atom *features=protocol->expr.elems[2];
+                for(size_t i=0;i<features->expr.len;i++) {
+                    Atom *feature=features->expr.elems[i];
+                    if(feature->kind!=ATOM_SYMBOL){status=CETTA_RPC_INVALID;break;}
+                    originals|=atom_is_symbol(feature,"OriginalFactsV1");positions|=atom_is_symbol(feature,"ImmutablePositionsV1");
+                    domains|=atom_is_symbol(feature,"PhysicalDomainsV1");
+                    retained|=atom_is_symbol(feature,"RetainedSessionsV1");
+                }
+                if(!originals || !positions || !domains || !retained)status=CETTA_RPC_INVALID;
+            }
         }
     }
     if(status!=CETTA_RPC_OK){cetta_remote_db_release(d);return status;}*out=d;return status;
 }
 bool cetta_remote_db_writable(const CettaRemoteDb *d){return d && d->writable;}
 bool cetta_remote_db_same_domain(const CettaRemoteDb *a,const CettaRemoteDb *b) {
-    /* Incarnation validates observations, not the durable commit domain.
-     * Two service activations for one owner must share the callback barrier. */
-    return a && b && atom_eq(a->owner,b->owner) && atom_eq(a->kind,b->kind);
+    /* Epoch/incarnation validate observations. The physical directory is the
+     * commit domain, including across activations or logical epoch changes. */
+    if(!a || !b || !atom_eq(a->kind,b->kind))return false;
+    if(atom_is_symbol(a->kind,"directory"))
+        return tagged(a->owner,"DbOwnerV1",3) && tagged(b->owner,"DbOwnerV1",3) &&
+            atom_eq(a->owner->expr.elems[2],b->owner->expr.elems[2]);
+    return atom_eq(a->owner,b->owner);
 }
 CettaRemoteDb *cetta_remote_capture_db(const CettaRemoteCapture *s){return s ? s->resource->db : NULL;}
 CettaValueRpcStatus cetta_remote_capture_prepare_publish(CettaRemoteCapture *s,Atom *proposal,CettaValueRpc **out) {
@@ -188,6 +215,10 @@ CettaValueRpcStatus cetta_remote_db_start(CettaRemoteDb *d,const char *operation
 CettaValueRpcStatus cetta_remote_resource_start(CettaRemoteResource *r,const char *operation,Atom *arguments,
         Arena *arena,CettaRemoteResource **out,Atom **metadata) {
     return r && !r->linear && !r->ended ? start(r->db,r->token,operation,arguments,arena,out,metadata) : CETTA_RPC_INVALID;
+}
+CettaValueRpcStatus cetta_remote_capture_start(CettaRemoteCapture *s,const char *operation,Atom *arguments,
+        Arena *arena,CettaRemoteResource **out,Atom **metadata) {
+    return s ? start(s->resource->db,s->resource->token,operation,arguments,arena,out,metadata) : CETTA_RPC_INVALID;
 }
 CettaValueRpcStatus cetta_remote_resource_call(CettaRemoteResource *r,const char *operation,
         Atom *arguments,Arena *arena,Atom **out) {

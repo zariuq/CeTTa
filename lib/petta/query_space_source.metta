@@ -111,6 +111,10 @@
   (case $state
     (((KqSpaceStateV1 $query $sequence $maximum $keys $bytes) (store:space-query-info $query))
      ((KqRangeStateV1 $config $pending $source $point) (range-i:inspect $config $source $point))
+     ((KqRemoteRangeStateV1 $job $program $maximum $sequence $limit $chunk $point)
+      (KqRemoteRangeAccessV1 $sequence $maximum $limit $chunk))
+     ((KqPlainRangeStateV1 $cursor $sequence $arity $position $lower $upper $program $maximum $point)
+      (KqHistoricalRangeAccessV1 $arity $position $lower $upper $sequence $maximum))
      ((KqRowsState $rows) KqNoActiveScanV1)
      ((KqPipeStateV1 $kind $active $config $data $maximum)
       (KqPipelineAccessV1 $kind $maximum (kbq:space-access $active)))

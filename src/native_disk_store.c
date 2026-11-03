@@ -434,6 +434,10 @@ bool cetta_disk_store_view_same_domain(const CettaDiskStoreView *left,
         const CettaDiskStoreView *right) {
     return left && right && left->device==right->device && left->inode==right->inode;
 }
+bool cetta_disk_store_view_domain(const CettaDiskStoreView *view,uintmax_t *device,uintmax_t *inode) {
+    if (!view || !device || !inode) return false;
+    *device=(uintmax_t)view->device;*inode=(uintmax_t)view->inode;return true;
+}
 bool cetta_disk_store_has_domain(const CettaDiskStore *store,const CettaDiskStoreView *view) {
     return store && view && store->device==view->device && store->inode==view->inode;
 }
