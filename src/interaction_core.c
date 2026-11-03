@@ -353,6 +353,7 @@ static FILE *g_trace;
 static bool g_trace_checked;
 static uint64_t g_trace_next_id;
 static uint64_t g_trace_edge;
+static bool g_trace_incomplete;
 static Arena g_trace_store;
 
 typedef struct {
@@ -460,8 +461,9 @@ static uint64_t g_trace_mismatch;
 static void ia_trace_finish(void) {
     if (!g_trace)
         return;
-    fprintf(g_trace, "(leaf %llu (outcome () (kernel-mismatch %llu)) (store (",
-            (unsigned long long)g_trace_edge, (unsigned long long)g_trace_mismatch);
+    fprintf(g_trace, "(leaf %llu (outcome %s (kernel-mismatch %llu)) (store (",
+            (unsigned long long)g_trace_edge, g_trace_incomplete ? "engine-failure" : "()",
+            (unsigned long long)g_trace_mismatch);
     bool first = true;
     for (size_t i = 0; i < g_region_len; i++) {
         IaRegion *r = g_regions[i];
@@ -471,7 +473,8 @@ static void ia_trace_finish(void) {
         }
     }
     fputs(")))\n", g_trace);
-    fprintf(g_trace, "(tree-end (run 1) complete %llu)\n", (unsigned long long)g_trace_edge);
+    fprintf(g_trace, "(tree-end (run 1) %s %llu)\n",
+        g_trace_incomplete ? "incomplete" : "complete", (unsigned long long)g_trace_edge);
     fclose(g_trace);
     g_trace = NULL;
     if (g_trace_mismatch)
@@ -1805,6 +1808,15 @@ typedef struct {
     uint64_t revision;
     CettaCount length;
     bool takes; /* occurrences leave it: its contents change */
+    Space *prepared;
+    Atom *publication;
+    SpaceNativeBagPublication transfer;
+    SpaceNativeBagAppend *append;
+    size_t retirement_releases;
+    bool inhibits_collection;
+    uint64_t *trace_ids;
+    Atom **trace_atoms;
+    size_t trace_len;
 } IaWritten;
 
 /* One commit, as the protocol's hooks see it. */
@@ -1819,12 +1831,27 @@ typedef struct IaCommitRun {
     IaWritten *written;
     size_t written_len;
     bool epoch_open, taken, made_done;
+    bool prepare_publication;
+    Atom *effect_prefix; /* newest-first history, all nodes prepared before writes */
+    Atom **effect_prefixes;
+    Atom *prepared_answer, **prepared_failures;
+    Atom *publication_failure, *revision_failure;
+    Arena *reply_arena;
+    Atom **prepared_terminal_replies;
+    char *trace_bytes;
+    size_t trace_size;
+    uint64_t trace_start_edge;
+    bool trace_prepared;
     IaList taken_regions, made_regions;
 } IaCommitRun;
 
 /* A test can replay, after the writes, a space layer that does not move a
  * revision; a run never sets it. */
 static void (*g_ia_commit_after_writes)(IaCommitRun *c);
+static bool (*g_ia_commit_before_prepared_publish)(IaCommitRun *c, size_t index);
+static bool ia_commit_prepare_trace(IaCommitRun *c);
+static void ia_commit_publish_trace(IaCommitRun *c, bool complete);
+static void ia_trace_sync_commit(Atom *seen, Atom *fp, Atom *makes);
 
 /* Every region read is still at the revision it was read at. */
 static Atom *ia_commit_seen_reason(IaCommitRun *c) {
@@ -2049,7 +2076,172 @@ static void ia_commit_written_note(IaCommitRun *c, Space *space, bool takes) {
             return;
         }
     c->written[c->written_len++] = (IaWritten){
-        space, space_revision(space), space_length64(space), takes};
+        .space = space, .revision = space_revision(space),
+        .length = space_length64(space), .takes = takes};
+}
+
+/* The prepared profile uses the existing Space snapshot and contents-transfer
+ * operations. It is a serialized correctness reference for plain native bags;
+ * preparation may copy the whole touched space. Other engines keep their own
+ * admission contract and are not silently treated as native bags. */
+static bool ia_commit_prepare_publication(IaCommitRun *c) {
+    Arena *a = c->a;
+    c->effect_prefixes = calloc(c->written_len + 1u, sizeof(*c->effect_prefixes));
+    if (!c->effect_prefixes) {
+        c->why = atom_symbol(a, "no-memory");
+        return false;
+    }
+    c->effect_prefixes[0] = atom_unit(a);
+    for (size_t i = 0; i < c->written_len; i++) {
+        IaWritten *w = &c->written[i];
+        Space *s = w->space;
+        if (s->kind != SPACE_KIND_ATOM || s->overlay_base || s->module_own_view ||
+            s->dep_count || s->imported_len ||
+            (s->match_backend.kind != SPACE_ENGINE_NATIVE &&
+             s->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT)) {
+            c->why = atom_symbol(a, "prepared-publication-unsupported");
+            return false;
+        }
+        IaList takes = {0}, makes = {0};
+        Atom *loc = NULL;
+        for (CettaExprIndex j = 0; j < c->fp->expr.len; j++) {
+            Atom *entry = c->fp->expr.elems[j];
+            if (ia_head(entry, "take", 5u) && ia_space_of(entry->expr.elems[1]) == s) {
+                loc = entry->expr.elems[1];
+                if (!ia_push(&takes, entry)) goto no_memory;
+            }
+        }
+        for (CettaExprIndex j = 0; j < c->makes->expr.len; j++) {
+            if (c->made[j].space != s) continue;
+            Atom *mk = c->makes->expr.elems[j];
+            loc = c->made[j].atom;
+            if (!ia_push(&makes, mk)) goto no_memory;
+        }
+        if (!takes.len && !ia_trace_on() && space_native_bag_append_admitted(s)) {
+            Atom **values = makes.len ? malloc(makes.len * sizeof(*values)) : NULL;
+            if (makes.len && !values) goto no_memory;
+            for (size_t j = 0; j < makes.len; j++) values[j] = ia_strip(a, makes.items[j]->expr.elems[1]);
+            w->append = space_native_bag_append_prepare(s, eval_current_persistent_arena(), values, makes.len);
+            free(values);
+            if (!w->append) { c->why = atom_symbol(a, "prepare-make-failed"); goto failed; }
+            w->retirement_releases = makes.len;
+        } else {
+            const CettaIndex *excluded = NULL;
+            size_t excluded_count = 0u;
+            for (size_t g = 0; g < c->group_len; g++) {
+                IaSpaceTakes *st = &c->groups[g];
+                if (st->space != s) continue;
+                excluded = st->takes;
+                excluded_count = st->take_len;
+                break;
+            }
+            w->prepared = space_native_bag_publication_clone(s, excluded, excluded_count);
+            if (!w->prepared) goto no_memory;
+            Atom **values = makes.len ? malloc(makes.len * sizeof(*values)) : NULL;
+            if (makes.len && !values) goto no_memory;
+            for (size_t j = 0; j < makes.len; j++) values[j] = ia_strip(a, makes.items[j]->expr.elems[1]);
+            SpaceNativeBagAppend *outputs = space_native_bag_append_prepare(w->prepared,
+                eval_current_persistent_arena(), values, makes.len);
+            free(values);
+            bool appended = outputs && space_native_bag_append_reserve(outputs) &&
+                space_native_bag_append_publish(outputs);
+            space_native_bag_append_free(outputs);
+            if (!appended) { c->why = atom_symbol(a, "prepare-make-failed"); goto failed; }
+            w->prepared->payload_owner_epoch = s->payload_owner_epoch;
+            w->prepared->payload_export_owner_epoch = s->payload_export_owner_epoch;
+            if (!space_native_bag_publication_prepare(s, w->prepared, &w->transfer)) {
+                c->why = atom_symbol(a, "prepared-publication-unsupported");
+                goto failed;
+            }
+        }
+        Atom *items[] = {atom_symbol(a, "ia:publication"), loc,
+            atom_int(a, (int64_t)w->revision), ia_list_atom(a, &takes),
+            ia_list_atom(a, &makes)};
+        w->publication = atom_expr(a, items, 5u);
+        c->effect_prefixes[i + 1u] = atom_expr3(a, atom_symbol(a, "ia:effect"),
+            w->publication, c->effect_prefixes[i]);
+        free(takes.items);
+        free(makes.items);
+        continue;
+no_memory:
+        c->why = atom_symbol(a, "no-memory");
+failed:
+        free(takes.items);
+        free(makes.items);
+        return false;
+    }
+    /* Other regions may widen the common universe while interning outputs.
+     * Reserve every destination only after all those outputs exist. */
+    for (size_t i = 0; i < c->written_len; i++)
+        if (c->written[i].append && !space_native_bag_append_reserve(c->written[i].append)) {
+            c->why = atom_symbol(a, "prepare-append-failed");
+            return false;
+        }
+    c->effect_prefix = c->effect_prefixes[0];
+    for (size_t g = 0; g < c->group_len; g++)
+        (void)ia_push(&c->taken_regions, c->groups[g].loc.atom);
+    for (CettaExprIndex i = 0; i < c->makes->expr.len; i++) {
+        bool duplicate = false;
+        for (CettaExprIndex j = 0; j < i; j++) duplicate |= c->made[j].space == c->made[i].space;
+        if (!duplicate) (void)ia_push(&c->made_regions, c->made[i].atom);
+    }
+    c->prepared_answer = atom_expr3(a, atom_symbol(a, "ia:committed"),
+        ia_list_atom(a, &c->taken_regions), ia_list_atom(a, &c->made_regions));
+    c->publication_failure = atom_symbol(a, "publication-failed");
+    c->revision_failure = atom_symbol(a, "revision-unmoved");
+    c->prepared_failures = calloc(2u * (c->written_len + 1u), sizeof(*c->prepared_failures));
+    if (!c->prepared_failures) { c->why = atom_symbol(a, "no-memory"); return false; }
+    if (c->reply_arena) {
+        c->prepared_terminal_replies = calloc(2u * (c->written_len + 1u), sizeof(*c->prepared_terminal_replies));
+        if (!c->prepared_terminal_replies) { c->why = atom_symbol(a, "no-memory"); return false; }
+    }
+    for (size_t i = 0; i <= c->written_len; i++)
+        for (size_t reason = 0; reason < 2u; reason++) {
+            c->prepared_failures[2u * i + reason] = ia_refusal(a,
+                atom_expr3(a, atom_symbol(a, "commit-failed"),
+                    reason ? c->revision_failure : c->publication_failure,
+                    atom_expr2(a, atom_symbol(a, "ia:effects"), c->effect_prefixes[i])));
+            if (c->reply_arena) {
+                Arena *out = c->reply_arena;
+                Atom *why = atom_deep_copy(out, c->prepared_failures[2u * i + reason]->expr.elems[1]);
+                c->prepared_terminal_replies[2u * i + reason] = atom_expr2(out,
+                    atom_symbol(out, "ia:done"), atom_error(out, atom_symbol(out, "transform"),
+                        atom_expr2(out, atom_symbol(out, "refused"), why)));
+            }
+        }
+    return true;
+}
+
+static bool ia_commit_prepare_retirement(IaCommitRun *c) {
+    /* One side of each transfer is retired; failed append plans release
+     * their output holds. All reply/trace preparation has already finished. */
+    for (size_t i = 0; i < c->written_len; i++) {
+        IaWritten *w = &c->written[i];
+        if (!w->prepared) continue;
+        size_t original, replacement;
+        if (!space_native_bag_retirement_releases(w->space, &original) ||
+            !space_native_bag_retirement_releases(w->prepared, &replacement)) goto failed;
+        w->retirement_releases = original > replacement ? original : replacement;
+    }
+    for (size_t i = 0; i < c->written_len; i++) {
+        TermUniverse *universe = c->written[i].space->native.universe;
+        bool earlier = false;
+        for (size_t j = 0; j < i; j++)
+            earlier |= c->written[j].space->native.universe == universe;
+        if (earlier) continue;
+        size_t releases = 0u;
+        for (size_t j = i; j < c->written_len; j++) {
+            if (c->written[j].space->native.universe != universe) continue;
+            size_t additional = c->written[j].retirement_releases;
+            if (additional > SIZE_MAX - releases) goto failed;
+            releases += additional;
+        }
+        if (!term_universe_prepare_releases(universe, releases)) goto failed;
+    }
+    return true;
+failed:
+    c->why = atom_symbol(c->a, "prepare-retirement-failed");
+    return false;
 }
 
 /* Reserve mutation bookkeeping before the first write. Backend atom
@@ -2071,11 +2263,39 @@ static bool ia_commit_epoch_open(IaCommitRun *c) {
         ia_commit_written_note(c, c->groups[g].space, true);
     for (CettaExprIndex i = 0; i < c->makes->expr.len; i++)
         ia_commit_written_note(c, c->made[i].space, false);
+    if (c->prepare_publication) {
+        for (size_t i = 0; i < c->written_len; i++) {
+            TermUniverse *universe = c->written[i].space->native.universe;
+            bool earlier = false;
+            for (size_t j = 0; j < i; j++)
+                earlier |= c->written[j].space->native.universe == universe;
+            if (earlier) continue;
+            term_universe_collection_inhibit_enter(universe);
+            c->written[i].inhibits_collection = true;
+        }
+    }
+    if (c->prepare_publication && !ia_commit_prepare_publication(c))
+        return false;
+    if (c->prepare_publication && ia_trace_on() && !ia_commit_prepare_trace(c))
+        return false;
+    if (c->prepare_publication && !ia_commit_prepare_retirement(c))
+        return false;
     c->epoch_open = true;
     return true;
 }
 
 static void ia_commit_epoch_close(IaCommitRun *c) {
+    for (size_t i = 0; i < c->written_len; i++) {
+        free(c->written[i].trace_ids);
+        free(c->written[i].trace_atoms);
+        space_native_bag_append_free(c->written[i].append);
+        space_native_bag_publication_dispose(c->written[i].prepared);
+    }
+    for (size_t i = 0; i < c->written_len; i++)
+        if (c->written[i].inhibits_collection)
+            term_universe_collection_inhibit_leave(c->written[i].space->native.universe);
+    free(c->effect_prefixes);
+    c->effect_prefixes = NULL;
     free(c->written);
     c->written = NULL;
     c->written_len = 0u;
@@ -2092,9 +2312,40 @@ static void ia_commit_epoch_publish(IaCommitRun *c) {
 
 /* The writes: the takes leave by position, then the makes arrive. */
 static bool ia_commit_take(IaCommitRun *c) {
-    if (ia_trace_on())
+    if (!c->prepare_publication && ia_trace_on())
         ia_trace_commit(c->a, c->seen, c->fp, c->makes, c->rows, c->made,
                         &c->made_ids);
+    if (c->prepare_publication) {
+        /* All fallible snapshot edits are complete. A transfer publishes one
+         * whole destination. The enclosing transition guard covers the full
+         * vector; a terminal fault exposes exactly its transferred prefix. */
+        for (size_t i = 0; i < c->written_len; i++) {
+            if (g_ia_commit_before_prepared_publish &&
+                !g_ia_commit_before_prepared_publish(c, i)) {
+                c->why = c->publication_failure;
+                ia_commit_publish_trace(c, false);
+                return false;
+            }
+            IaWritten *w = &c->written[i];
+            if (!(w->append ? space_native_bag_append_publish(w->append)
+                            : space_native_bag_publication_publish(&w->transfer))) {
+                c->why = c->publication_failure;
+                ia_commit_publish_trace(c, false);
+                return false;
+            }
+            c->effect_prefix = c->effect_prefixes[i + 1u];
+            if (c->trace_prepared) {
+                IaRegion *region = ia_region_of(w->space, false);
+                uint64_t *old_ids = region->ids;
+                Atom **old_atoms = region->atoms;
+                region->ids = w->trace_ids; region->atoms = w->trace_atoms;
+                region->len = region->cap = w->trace_len;
+                w->trace_ids = old_ids; w->trace_atoms = old_atoms;
+            }
+        }
+        c->taken = true;
+        return true;
+    }
     bool removed = true;
     for (size_t g = 0; g < c->group_len && removed; g++) {
         IaSpaceTakes *st = &c->groups[g];
@@ -2111,20 +2362,25 @@ static bool ia_commit_take(IaCommitRun *c) {
 }
 
 static bool ia_commit_make(IaCommitRun *c) {
+    if (c->prepare_publication) {
+        if (g_ia_commit_after_writes) g_ia_commit_after_writes(c);
+        c->made_done = true;
+        return true;
+    }
     Arena *persistent = eval_current_persistent_arena();
     for (CettaExprIndex i = 0; i < c->makes->expr.len; i++) {
-        Atom *atom = ia_strip(c->a, c->makes->expr.elems[i]->expr.elems[1]);
-        if (!space_admit_atom(c->made[i].space, persistent, atom)) {
+        if (!c->prepare_publication && !space_admit_atom(c->made[i].space, persistent,
+                ia_strip(c->a, c->makes->expr.elems[i]->expr.elems[1]))) {
             c->why = atom_symbol(c->a, "make-failed");
             return false;
         }
         bool dup = false;
         for (CettaExprIndex k = 0; k < i && !dup; k++)
             dup = c->made[k].region == c->made[i].region;
-        if (!dup)
+        if (!dup && !c->prepare_publication)
             (void)ia_push(&c->made_regions, c->made[i].atom);
     }
-    if (ia_trace_on())
+    if (!c->prepare_publication && ia_trace_on())
         ia_trace_after(c->makes, c->made, c->made_ids);
     if (g_ia_commit_after_writes)
         g_ia_commit_after_writes(c);
@@ -2145,7 +2401,7 @@ static bool ia_commit_moved(IaCommitRun *c) {
         if (changed && space_revision(written->space) == written->revision)
             space_note_external_backend_mutation(written->space);
     }
-    c->why = atom_symbol(c->a, "revision-unmoved");
+    c->why = c->prepare_publication ? c->revision_failure : atom_symbol(c->a, "revision-unmoved");
     return false;
 }
 
@@ -2159,13 +2415,17 @@ static void ia_commit_run_free(IaCommitRun *c) {
     free(c->groups);
     free(c->made);
     free(c->made_ids);
-    free(c->written);
+    free(c->prepared_failures);
+    free(c->prepared_terminal_replies);
+    free(c->trace_bytes);
+    ia_commit_epoch_close(c);
     free(c->taken_regions.items);
     free(c->made_regions.items);
 }
 
-static bool op_commit(Arena *a, Atom **args, uint32_t nargs,
-                      CettaCallOutcome *out) {
+static bool op_commit_profile(Arena *a, Atom **args, uint32_t nargs,
+                              CettaCallOutcome *out, bool prepared,
+                              Arena *reply_arena, Atom **terminal_reply) {
     if (nargs != 3u && nargs != 4u)
         return false;
     Atom *rows = nargs == 4u ? ia_strip(a, args[3]) : NULL;
@@ -2178,11 +2438,13 @@ static bool op_commit(Arena *a, Atom **args, uint32_t nargs,
     __attribute__((cleanup(cetta_shared_transition_guard_leave)))
     CettaSharedTransitionGuard shared_transition = {0};
     cetta_shared_transition_guard_enter(&shared_transition);
-    IaCommitRun c = {.a = a, .seen = seen, .fp = fp, .makes = makes, .rows = rows};
+    IaCommitRun c = {.a = a, .seen = seen, .fp = fp, .makes = makes, .rows = rows,
+                    .prepare_publication = prepared, .reply_arena = reply_arena};
     Atom *result;
     switch (ia_commit_run(&c)) {
     case ia_commit_run_answered:
-        result = atom_expr3(a, atom_symbol(a, "ia:committed"),
+        if (prepared) ia_commit_publish_trace(&c, true);
+        result = prepared ? c.prepared_answer : atom_expr3(a, atom_symbol(a, "ia:committed"),
                             ia_list_atom(a, &c.taken_regions),
                             ia_list_atom(a, &c.made_regions));
         break;
@@ -2190,15 +2452,35 @@ static bool op_commit(Arena *a, Atom **args, uint32_t nargs,
         result = ia_refusal(a, c.why ? c.why : atom_symbol(a, "declined"));
         break;
     case ia_commit_run_resource_failure:
-        result = ia_refusal(a, atom_symbol(a, "no-memory"));
+        result = ia_refusal(a, prepared
+            ? atom_expr2(a, atom_symbol(a, "prepare-failed"),
+                c.why ? c.why : atom_symbol(a, "no-memory"))
+            : c.why ? c.why : atom_symbol(a, "no-memory"));
         break;
     default:
-        result = ia_refusal(a, atom_expr2(a, atom_symbol(a, "commit-failed"),
-                                          c.why ? c.why : atom_symbol(a, "engine")));
+        if (prepared) {
+            ia_commit_publish_trace(&c, false);
+            size_t count = 0u;
+            for (Atom *event = c.effect_prefix; ia_head(event, "ia:effect", 3u);
+                 event = event->expr.elems[2]) count++;
+            size_t index = 2u * count + (atom_is_symbol(c.why, "revision-unmoved") ? 1u : 0u);
+            result = c.prepared_failures[index];
+            if (terminal_reply && c.prepared_terminal_replies)
+                *terminal_reply = c.prepared_terminal_replies[index];
+        } else result = ia_refusal(a, atom_expr2(a, atom_symbol(a, "commit-failed"),
+                c.why ? c.why : atom_symbol(a, "engine")));
         break;
     }
     ia_commit_run_free(&c);
     return ia_value(out, result);
+}
+
+static bool op_commit(Arena *a, Atom **args, uint32_t nargs, CettaCallOutcome *out) {
+    return op_commit_profile(a, args, nargs, out, false, NULL, NULL);
+}
+
+static bool op_commit_prepared(Arena *a, Atom **args, uint32_t nargs, CettaCallOutcome *out) {
+    return op_commit_profile(a, args, nargs, out, true, NULL, NULL);
 }
 
 /* (amalgamate ROWS) for `every`: ROWS are footprints, each linear with the
@@ -2330,8 +2612,7 @@ static void ia_trace_kernel_row(Atom *fp, Atom *rows) {
     free(rt);
 }
 
-static void ia_trace_commit(Arena *a, Atom *seen, Atom *fp, Atom *makes,
-                            Atom *rows, IaLoc *made, uint64_t **made_ids) {
+static void ia_trace_sync_commit(Atom *seen, Atom *fp, Atom *makes) {
     for (CettaExprIndex i = 0; i < seen->expr.len; i++) {
         Atom *e = seen->expr.elems[i];
         if (e->kind == ATOM_EXPR && e->expr.len == 2u)
@@ -2350,6 +2631,11 @@ static void ia_trace_commit(Arena *a, Atom *seen, Atom *fp, Atom *makes,
     }
     for (CettaExprIndex i = 0; i < makes->expr.len; i++)
         ia_trace_sync_loc(makes->expr.elems[i]->expr.elems[0]);
+}
+
+static void ia_trace_commit(Arena *a, Atom *seen, Atom *fp, Atom *makes,
+                            Atom *rows, IaLoc *made, uint64_t **made_ids) {
+    ia_trace_sync_commit(seen, fp, makes);
     IaVarMap vm = {0};
     ia_trace_edge_begin();
     for (int pass = 0; pass < 2; pass++) {
@@ -2491,6 +2777,86 @@ static void ia_trace_after(Atom *makes, IaLoc *made, uint64_t *made_ids) {
         free(ids);
         free(atoms);
     }
+}
+
+static bool ia_commit_prepare_trace(IaCommitRun *c) {
+    ia_trace_sync_commit(c->seen, c->fp, c->makes);
+    FILE *destination = g_trace;
+    FILE *buffer = tmpfile();
+    if (!buffer) { c->why = atom_symbol(c->a, "no-memory"); return false; }
+    c->trace_start_edge = g_trace_edge;
+    if (g_trace_taken_len) g_trace_incomplete = true;
+    g_trace_taken_len = 0u;
+    g_trace = buffer;
+    ia_trace_commit(c->a, c->seen, c->fp, c->makes, c->rows, c->made, &c->made_ids);
+    bool ok = !ferror(buffer);
+    long size = ftell(buffer);
+    if (size < 0 || (uintmax_t)size > SIZE_MAX) ok = false;
+    c->trace_size = ok ? (size_t)size : 0u;
+    c->trace_bytes = ok && size ? malloc((size_t)size) : NULL;
+    if (size && !c->trace_bytes) ok = false;
+    rewind(buffer);
+    if (ok && c->trace_size && fread(c->trace_bytes, 1u, c->trace_size, buffer) != c->trace_size)
+        ok = false;
+    if (fclose(buffer) != 0) ok = false;
+    g_trace = destination;
+    g_trace_edge = c->trace_start_edge;
+    g_trace_taken_len = 0u;
+    if (!ok || (c->makes->expr.len && !c->made_ids)) {
+        c->why = atom_symbol(c->a, "trace-preparation-failed");
+        return false;
+    }
+    for (size_t i = 0; i < c->written_len; i++) {
+        IaWritten *w = &c->written[i];
+        IaRegion *region = ia_region_of(w->space, false);
+        size_t length = (size_t)space_length64(w->prepared);
+        w->trace_ids = length ? calloc(length, sizeof(*w->trace_ids)) : NULL;
+        w->trace_atoms = length ? calloc(length, sizeof(*w->trace_atoms)) : NULL;
+        if (!region || (length && (!w->trace_ids || !w->trace_atoms))) goto no_memory;
+        size_t used = 0u;
+        for (size_t j = 0; j < region->len; j++) {
+            bool taken = false;
+            for (size_t g = 0; g < c->group_len; g++)
+                if (c->groups[g].space == w->space)
+                    for (size_t t = 0; t < c->groups[g].take_len; t++)
+                        taken |= c->groups[g].takes[t] == j;
+            if (taken) continue;
+            if (used == length) goto mismatch;
+            w->trace_ids[used] = region->ids[j];
+            w->trace_atoms[used++] = region->atoms[j];
+        }
+        for (CettaExprIndex j = 0; j < c->makes->expr.len; j++) {
+            if (c->made[j].space != w->space) continue;
+            if (used == length) goto mismatch;
+            w->trace_ids[used] = c->made_ids[j];
+            w->trace_atoms[used++] = atom_deep_copy(&g_trace_store,
+                ia_strip(c->a, c->makes->expr.elems[j]->expr.elems[1]));
+        }
+        if (used != length) goto mismatch;
+        w->trace_len = length;
+    }
+    c->trace_prepared = true;
+    return true;
+no_memory:
+    c->why = atom_symbol(c->a, "no-memory");
+    return false;
+mismatch:
+    c->why = atom_symbol(c->a, "trace-preparation-mismatch");
+    return false;
+}
+
+static void ia_commit_publish_trace(IaCommitRun *c, bool complete) {
+    if (!c->trace_prepared) return;
+    if (!complete) {
+        /* A partial native publication is not a successful calculus edge.
+         * Its actual reached shadow and returned effect history remain, but
+         * this trace cannot certify a completed run. */
+        g_trace_incomplete = true;
+        return;
+    }
+    if (fwrite(c->trace_bytes, 1u, c->trace_size, g_trace) != c->trace_size || fflush(g_trace))
+        g_trace_incomplete = true;
+    g_trace_edge = c->trace_start_edge + 1u;
 }
 
 static bool op_amalgamate(Arena *a, Atom **args, uint32_t nargs,
@@ -3181,6 +3547,8 @@ typedef struct {
     CettaInteractionLane lane;
     bool instances_only; /* answer the rows' instances; the caller routes them */
     bool raw_values;     /* the caller protected its code positions */
+    bool prepare_publication; /* explicit native-bag reference profile */
+    Atom *terminal_reply; /* prebuilt in the current caller's output arena */
     const CettaInteractionHost *host; /* during cetta_interaction_fire only */
     bool full;     /* enumerate every row (after a first-row attempt failed) */
     bool replay_safe; /* source matching alone can be repeated; computed requests cannot */
@@ -3193,9 +3561,19 @@ typedef struct {
 
 static const char g_machine_kind = 'm';
 
+static bool ia_machine_prefix_current(IaMachine *m) {
+    if (!m->prepare_publication || !m->in_attempt || m->refused) return !m->refused;
+    IaCommitRun prefix = {.a = &m->arena, .seen = ia_list_atom(&m->arena, &m->seen)};
+    Atom *why = ia_commit_seen_reason(&prefix);
+    if (why) m->refused = atom_expr2(&m->arena,
+        atom_symbol(&m->arena, "stale-prefix"), why);
+    return !why;
+}
+
 static bool ia_machine_observe_read(void *context, SpaceReadToken read) {
     IaMachine *m = context;
-    if (!read.space || !read.instance_id || m->refused)
+    CETTA_SCOPED_SHARED_TRANSITION(read_transition);
+    if (!read.space || !read.instance_id || !ia_machine_prefix_current(m))
         return false;
     for (size_t i = 0; i < m->seen.len; i++) {
         SpaceReadToken old;
@@ -3647,7 +4025,8 @@ static void ia_commit_failure(IaMachine *m, Atom *result) {
         return;
     }
     Atom *why = result->expr.elems[1];
-    if (atom_is_symbol(why, "no-memory") || ia_head(why, "commit-failed", 2u))
+    if (atom_is_symbol(why, "no-memory") || ia_head_any(why, "commit-failed") ||
+        ia_head_any(why, "prepare-failed"))
         m->refused = why;
 }
 
@@ -3659,6 +4038,7 @@ static Atom *ia_commit_first(IaMachine *m, Arena *out) {
         return NULL;
     }
     Arena *a = &m->arena;
+    m->terminal_reply = NULL;
     Atom *seen = ia_list_atom(a, &m->seen);
     for (size_t i = 0; i < m->cands.len; i++) {
         Atom *cand = m->cands.items[i];
@@ -3666,11 +4046,18 @@ static Atom *ia_commit_first(IaMachine *m, Arena *out) {
         IaList makes = {0}, cont = {0};
         if (m->instances_only) {
             Atom *prepared = atom_deep_copy(out, tpls);
+            Atom *ready = m->prepare_publication ? atom_expr2(out, atom_symbol(out, "ia:done"),
+                atom_expr2(out, atom_symbol(out, "ia:fired"), prepared)) : NULL;
             Atom *cargs[4] = {seen, fp, atom_unit(a),
                               cand->expr.len == 4u ? cand->expr.elems[3] : atom_unit(a)};
-            Atom *done = ia_call_term(op_commit, a, cargs, 4u);
-            if (ia_head(done, "ia:committed", 3u))
+            CettaCallOutcome reported = {0};
+            Atom *done = m->prepare_publication
+                ? (op_commit_profile(a, cargs, 4u, &reported, true, out, &m->terminal_reply) ? reported.term : NULL)
+                : ia_call_term(op_commit, a, cargs, 4u);
+            if (ia_head(done, "ia:committed", 3u)) {
+                m->terminal_reply = ready;
                 return prepared;
+            }
             ia_commit_failure(m, done);
             if (m->refused)
                 return NULL;
@@ -3696,13 +4083,20 @@ static Atom *ia_commit_first(IaMachine *m, Arena *out) {
             return NULL;
         }
         Atom *prepared = atom_deep_copy(out, ia_continuation(a, &cont, &makes, m->dest));
+        Atom *ready = m->prepare_publication ? atom_expr2(out, atom_symbol(out, "ia:done"),
+            atom_expr2(out, atom_symbol(out, "ia:fired"), prepared)) : NULL;
         Atom *cargs[4] = {seen, fp, ia_list_atom(a, &makes),
                           cand->expr.len == 4u ? cand->expr.elems[3] : atom_unit(a)};
-        Atom *done = ia_call_term(op_commit, a, cargs, 4u);
+        CettaCallOutcome reported = {0};
+        Atom *done = m->prepare_publication
+            ? (op_commit_profile(a, cargs, 4u, &reported, true, out, &m->terminal_reply) ? reported.term : NULL)
+            : ia_call_term(op_commit, a, cargs, 4u);
         free(makes.items);
         free(cont.items);
-        if (ia_head(done, "ia:committed", 3u))
+        if (ia_head(done, "ia:committed", 3u)) {
+            m->terminal_reply = ready;
             return prepared;
+        }
         ia_commit_failure(m, done);
         if (m->refused)
             return NULL;
@@ -3752,6 +4146,7 @@ static Atom *ia_machine_run_inner(IaMachine *m, Arena *out) {
     g_ia_raw = m->raw_values;
     g_ia_host = m->host;
     for (;;) {
+        if (m->terminal_reply && m->refused) return m->terminal_reply;
         if (m->cancelled || eval_native_interrupted()) {
             ia_machine_cancel(m);
             return NULL;
@@ -3819,7 +4214,8 @@ static Atom *ia_machine_run_inner(IaMachine *m, Arena *out) {
                     g_stat_fires++;
                     if (m->mode == IA_MODE_AGENDA)
                         ia_parked_update(m->ticket, NULL, !m->always);
-                    return ia_done(out, atom_expr2(out, atom_symbol(out, "ia:fired"), fired));
+                    return m->terminal_reply ? m->terminal_reply :
+                        ia_done(out, atom_expr2(out, atom_symbol(out, "ia:fired"), fired));
                 }
                 /* none of these is enabled: they are spent */
                 free(m->cands.items);
@@ -3832,6 +4228,10 @@ static Atom *ia_machine_run_inner(IaMachine *m, Arena *out) {
             if (!ia_push(&m->all_seen, m->seen.items[i]))
                 m->refused = atom_symbol(a, "no-memory");
         if (m->refused) {
+            if (m->terminal_reply) {
+                m->in_attempt = false;
+                return m->terminal_reply;
+            }
             Atom *why = atom_deep_copy(out, m->refused);
             m->in_attempt = false;
             if (m->mode == IA_MODE_AGENDA) {
@@ -3865,13 +4265,17 @@ static Atom *ia_machine_run_inner(IaMachine *m, Arena *out) {
             g_stat_fires++;
             if (m->mode == IA_MODE_AGENDA)
                 ia_parked_update(m->ticket, NULL, !m->always);
-            return ia_done(out, atom_expr2(out, atom_symbol(out, "ia:fired"), fired));
+            return m->terminal_reply ? m->terminal_reply :
+                ia_done(out, atom_expr2(out, atom_symbol(out, "ia:fired"), fired));
         }
     }
 }
 
 static Atom *ia_machine_run(IaMachine *m, Arena *out) {
+    CETTA_SCOPED_SHARED_TRANSITION(walk_transition);
+    (void)ia_machine_prefix_current(m);
     Atom *result = ia_machine_run_inner(m, out);
+    m->terminal_reply = NULL;
     if (!result)
         ia_machine_cancel(m);
     if (!m->waiting)
@@ -3882,6 +4286,7 @@ static Atom *ia_machine_run(IaMachine *m, Arena *out) {
 /* Resume after a `let`: each value matched against its pattern continues
  * the walk. */
 static Atom *ia_machine_resume(IaMachine *m, Atom *values, Arena *out) {
+    CETTA_SCOPED_SHARED_TRANSITION(resume_transition);
     if (!m->waiting)
         return ia_done(out, atom_symbol(out, "ia:none"));
     Arena *a = &m->arena;
@@ -3889,6 +4294,7 @@ static Atom *ia_machine_resume(IaMachine *m, Atom *values, Arena *out) {
     g_ia_raw = m->raw_values;
     g_ia_host = m->host;
     m->waiting = false;
+    (void)ia_machine_prefix_current(m);
     IaJob job = m->let_job;
     values = ia_strip(a, values);
     if (!values || values->kind != ATOM_EXPR)
@@ -4120,6 +4526,20 @@ static bool op_fire(Arena *a, Atom **args, uint32_t nargs, CettaCallOutcome *out
     return ia_answer(out, ia_machine_start(IA_MODE_NOW, firing, a));
 }
 
+static bool op_fire_prepared(Arena *a, Atom **args, uint32_t nargs, CettaCallOutcome *out) {
+    if (nargs != 3u && nargs != 4u) return false;
+    Atom *items[5] = {atom_symbol(a, "transform"), ia_strip(a, args[0]),
+        ia_unhold(args[1]), ia_unhold(args[2]), nargs == 4u ? ia_strip(a, args[3]) : NULL};
+    IaMachine *m = ia_machine_new(IA_MODE_NOW);
+    if (!m) return false;
+    m->prepare_publication = true;
+    m->firing = atom_deep_copy(&m->arena, atom_expr(a, items, nargs + 1u));
+    ia_set_alts(m, m->firing);
+    Atom *result = ia_machine_run(m, a);
+    ia_machine_release(m);
+    return ia_answer(out, result);
+}
+
 /* (now X): a firing description X, now. */
 static bool op_now(Arena *a, Atom **args, uint32_t nargs, CettaCallOutcome *out) {
     if (nargs != 1u)
@@ -4193,6 +4613,10 @@ static bool op_resume(Arena *a, Atom **args, uint32_t nargs, CettaCallOutcome *o
     if (!m || m->cancelled || m->computing || !m->waiting || token->request != m->request)
         return ia_answer(out, ia_done(a, atom_error(a, atom_symbol(a, "transform"),
             atom_expr2(a, atom_symbol(a, "refused"), atom_symbol(a, "stale-resumption")))));
+    if (m->prepare_publication)
+        return ia_answer(out, ia_done(a, atom_error(a, atom_symbol(a, "transform"),
+            atom_expr2(a, atom_symbol(a, "refused"),
+                atom_symbol(a, "computed-resumption-required")))));
     return ia_answer(out, ia_machine_resume(m, args[1], a));
 }
 
@@ -4207,6 +4631,21 @@ static bool op_compute(Space *space, Arena *a, Atom **args, uint32_t nargs,
     if (!m || m->cancelled || m->computing || !m->waiting || token->request != m->request)
         return ia_answer(out, ia_done(a, atom_error(a, atom_symbol(a, "transform"),
             atom_expr2(a, atom_symbol(a, "refused"), atom_symbol(a, "stale-resumption")))));
+    {
+        CETTA_SCOPED_SHARED_TRANSITION(prefix_transition);
+        if (!ia_machine_prefix_current(m)) {
+            /* Reject the retained work itself, before evaluating its next
+             * expression. A new stamp cannot authenticate this old prefix. */
+            m->waiting = false;
+            Atom *failure = atom_error(a, atom_symbol(a, "transform"),
+                atom_expr2(a, atom_symbol(a, "refused"),
+                    atom_deep_copy(a, m->refused)));
+            ia_machine_retire(m);
+            return ia_answer(out, ia_done(a, failure));
+        }
+    }
+    /* Source code runs outside the prefix-validation transition. Its owned
+     * inputs remain; new reads and resumption validate the original prefix. */
     CettaEvalReadScope scope = {.observe = ia_machine_observe_read, .context = m};
     Atom **values = NULL, *error = NULL;
     size_t len = 0u;
@@ -4604,6 +5043,7 @@ bool cetta_interaction_core_call(Space *space, Arena *a, const char *op,
     if (strcmp(op, "bind") == 0) return op_bind(a, args, nargs, out);
     if (strcmp(op, "split") == 0) return op_split(a, args, nargs, out);
     if (strcmp(op, "commit") == 0) return op_commit(a, args, nargs, out);
+    if (strcmp(op, "commit-prepared") == 0) return op_commit_prepared(a, args, nargs, out);
     if (strcmp(op, "amalgamate") == 0) return op_amalgamate(a, args, nargs, out);
     if (strcmp(op, "formed") == 0) return op_formed(a, args, nargs, out);
     if (strcmp(op, "agenda-park") == 0) return op_agenda_park(a, args, nargs, out);
@@ -4621,6 +5061,7 @@ bool cetta_interaction_core_call(Space *space, Arena *a, const char *op,
     if (strcmp(op, "changed") == 0) return op_changed(a, args, nargs, out);
     if (strcmp(op, "is-handle") == 0) return op_is_handle(a, args, nargs, out);
     if (strcmp(op, "fire") == 0) return op_fire(a, args, nargs, out);
+    if (strcmp(op, "fire-prepared") == 0) return op_fire_prepared(a, args, nargs, out);
     if (strcmp(op, "fire-lane") == 0) return op_fire_lane(a, args, nargs, out);
     if (strcmp(op, "now") == 0) return op_now(a, args, nargs, out);
     if (strcmp(op, "now-choose") == 0) return op_now_choose(a, args, nargs, out);

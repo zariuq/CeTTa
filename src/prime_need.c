@@ -2006,19 +2006,30 @@ static bool prime_need_read_capture_extent_valid(const PrimeNeedReadCapture *cap
         (!!capture->reads == !!capture->capacity);
 }
 
+typedef struct {
+    AtomTreePredicate predicate;
+    void *context;
+} PrimeNeedReadAtomPredicate;
+
+static CettaMatchCompletion prime_need_read_dependency_atoms_satisfy(
+        const PrimeNeedReadDependency *read, void *raw) {
+    PrimeNeedReadAtomPredicate *check = raw;
+    return (unsigned)read->kind <= (unsigned)PRIME_NEED_READ_IMPORT &&
+        (!read->origin || check->predicate(read->origin, check->context))
+        ? CETTA_MATCH_MATCHED : CETTA_MATCH_REFUTED;
+}
+
 bool prime_need_read_capture_atoms_satisfy(const PrimeNeedReadCapture *capture,
         AtomTreePredicate predicate, void *context) {
     if (!predicate || !prime_need_read_capture_extent_valid(capture) ||
         !prime_need_snapshot_atoms_satisfy(&capture->context, predicate, context) ||
         !prime_need_snapshot_atoms_satisfy(&capture->entrance, predicate, context))
         return false;
-    for (size_t i = 0u; i < capture->length; i++) {
-        const PrimeNeedReadDependency *read = &capture->reads[i];
-        if ((unsigned)read->kind > (unsigned)PRIME_NEED_READ_IMPORT ||
-            (read->origin && !predicate(read->origin, context)))
-            return false;
-    }
-    return true;
+    /* Frozen captures share their immutable dependency DAG. Its origins
+     * remain lifetime roots even when the mutable append buffer is empty. */
+    PrimeNeedReadAtomPredicate check = {predicate, context};
+    return prime_need_read_capture_visit(capture,
+        prime_need_read_dependency_atoms_satisfy, &check) == CETTA_MATCH_MATCHED;
 }
 
 static int prime_need_audit_span_compare(const void *left, const void *right) {

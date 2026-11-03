@@ -51911,7 +51911,7 @@ test-prime-interaction-commit-protocol: tests/test_interaction_commit_protocol.c
 	@for checked in 0 1; do \
 		$(CC) $(filter-out -Dia_commit_run_CHECKED=%,$(CPPFLAGS)) -Dia_commit_run_CHECKED=$$checked $(CFLAGS) \
 			-o $(INTERACTION_COMMIT_PROTOCOL_TEST_BIN)-$$checked tests/test_interaction_commit_protocol.c \
-			$(filter-out src/interaction_core.$(BUILD_OBJ_TAG).o src/interaction_core.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS) $(LDFLAGS) && \
+			$(filter-out src/interaction_core.$(BUILD_OBJ_TAG).o src/interaction_core.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS) $(LDFLAGS) -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc && \
 		$(call cetta_exec,./$(INTERACTION_COMMIT_PROTOCOL_TEST_BIN)-$$checked) || exit 1; \
 	done
 

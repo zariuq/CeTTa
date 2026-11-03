@@ -857,6 +857,43 @@ bool space_read_token_prefix_intact(SpaceReadToken token);
  * pointer retained by a stale token. */
 bool space_read_token_matches_live_space(SpaceReadToken token,
                                          const Space *live_space);
+
+/* Both Spaces remain owned and exclusively accessed through publication.
+ * Preparation detaches retained readers before any public write. Publication
+ * exchanges storage without allocation, destruction or callbacks; the private
+ * replacement then owns the old storage for retirement. This profile requires
+ * same-universe native data bags without module links. */
+typedef struct {
+    SpaceReadToken destination, replacement;
+    bool prepared;
+} SpaceNativeBagPublication;
+/* A private storage image, without logical authority subscribers. Its fresh
+ * header must never escape the preparing operation or be used for checking
+ * judgments. Dispose it with the paired function, before its universe dies. */
+Space *space_native_bag_publication_clone(Space *source,
+    const CettaIndex *excluded_positions, size_t excluded_count);
+void space_native_bag_publication_dispose(Space *image);
+bool space_native_bag_publication_prepare(Space *destination, Space *replacement,
+    SpaceNativeBagPublication *out);
+bool space_native_bag_publication_publish(SpaceNativeBagPublication *publication);
+/* Upper bound on counted releases when this admitted bag is retired. It
+ * reads row and relation headers, without decoding or scanning the rows. */
+bool space_native_bag_retirement_releases(const Space *space, size_t *count);
+
+/* Prepared append into the same native data-bag profile. Output IDs have
+ * an independent counted root until publication transfers their holds to
+ * the destination. Reserve runs after every output has been interned; it
+ * allocates growth before any region in a compound commit is published.
+ * Publication validates both the logical token and the reserved physical
+ * layout: representation-only compaction does not advance that token.
+ * Cached indexes are invalidated, so subsequent query work is separate. */
+typedef struct SpaceNativeBagAppend SpaceNativeBagAppend;
+bool space_native_bag_append_admitted(const Space *destination);
+SpaceNativeBagAppend *space_native_bag_append_prepare(Space *destination,
+    Arena *fallback, Atom *const *atoms, size_t count);
+bool space_native_bag_append_reserve(SpaceNativeBagAppend *append);
+bool space_native_bag_append_publish(SpaceNativeBagAppend *append);
+void space_native_bag_append_free(SpaceNativeBagAppend *append);
 SpaceEquationToken space_equation_token(const Space *s);
 SpaceProgramToken space_program_token(const Space *s);
 static inline bool space_program_token_eq(SpaceProgramToken left,

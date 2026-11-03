@@ -1627,7 +1627,7 @@ static HeadRowKind head_row_kind(const TermUniverse *universe, AtomId id,
         return HEAD_ROW_EVERY;
     if (header->tag != ATOM_EXPR)
         return HEAD_ROW_NONE;
-    CettaExprLen arity = tu_arity(universe, id);
+    CettaExprLen arity = tu_authored_arity(universe, id);
     if (arity == 0u)
         return HEAD_ROW_NONE;
     /* Private list, callable and compound carriers spell a logical shape
@@ -1758,6 +1758,27 @@ static bool head_index_current(const Space *space,
         index->source_len == space->native.len;
 }
 
+static bool head_index_extend(Space *space, CettaSpaceHeadIndex *index) {
+    if (space->native.marked || space->match_backend.native.match_trie_pins ||
+        index->universe != space->native.universe ||
+        index->universe_instance != space->native.universe->instance_id ||
+        index->universe_epoch != space->native.universe->storage_epoch ||
+        index->prefix_epoch != space->prefix_epoch ||
+        index->source_len > space->native.len)
+        return false;
+    size_t width = cetta_atom_id_storage_width_bytes_from_bits(space->native.atom_id_width_bits);
+    if (!width || !space->native.atom_ids) return false;
+    /* Only the authenticated physical suffix is missing. Publishing the new
+     * ceiling last prevents a partially extended index from being current. */
+    for (CettaIndex row = index->source_len; row < space->native.len; row++) {
+        AtomId id = cetta_atom_id_storage_load_bits(space->native.atom_ids + (size_t)row * width,
+            space->native.atom_id_width_bits);
+        head_index_add_row(index, id, row);
+    }
+    index->source_len = space->native.len;
+    return true;
+}
+
 static CettaSpaceHeadIndex *head_index_build(Space *space) {
     size_t width = cetta_atom_id_storage_width_bytes_from_bits(
         space->native.atom_id_width_bits);
@@ -1803,7 +1824,8 @@ bool space_head_index_open(Space *space, const Atom *pattern,
         !space_head_index_admits(pattern))
         return false;
     SpaceMatchNativeState *state = &space->match_backend.native;
-    if (state->head_index && !head_index_current(space, state->head_index))
+    if (state->head_index && !head_index_current(space, state->head_index) &&
+        !head_index_extend(space, state->head_index))
         space_head_index_retire(space);
     if (!state->head_index)
         state->head_index = head_index_build(space);
@@ -1815,6 +1837,9 @@ bool space_head_index_open(Space *space, const Atom *pattern,
     cursor->keyed = head_posting_find(
         index, head_key(atom_symbol_current_id(pattern->expr.elems[0]), length));
     cursor->open = head_posting_find(index, head_key(SYMBOL_ID_NONE, length));
+    /* A data symbol need not be registered. Its keyed probe then is the
+     * same open-head posting, which must still be enumerated only once. */
+    if (cursor->keyed == cursor->open) cursor->keyed = HEAD_NONE;
     cursor->keyed_next = cursor->keyed != HEAD_NONE
         ? index->postings[cursor->keyed].front : 0u;
     cursor->open_next = cursor->open != HEAD_NONE

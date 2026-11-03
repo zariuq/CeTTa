@@ -1,0 +1,67 @@
+Prepared HOL request service (experimental)
+
+Import hol_service in Prime. One call to
+
+    (hol:serve-prepared REQUESTS THEORIES RESULTS)
+
+uses the existing interaction matcher and native HOL checker. The input
+occurrences are:
+
+    (HolRequest ID THEORY NODES ROOT)
+    (HolTheory THEORY HOLLightBase ENVIRONMENT)
+
+ENVIRONMENT is an authentic owned value from (hol:checkpoint KERNEL).
+hol:check-dag-at checks that immutable declaration history without restoring
+the session. Terms from a different history cannot enter through a sealed
+term handle. A successful interaction consumes the request and publishes:
+
+    (HolChecked ID THEORY ENVIRONMENT PROOF)
+    (HolReply ID HYPOTHESES CONCLUSION)
+
+PROOF is an owned native theorem, including its assumptions. Hypotheses are
+not silently discharged. The caller supplies receive/peek rights on the
+inputs and send rights on both destinations; client handles should carry
+only the facets they need. An ID alone grants no publication permission.
+
+    (hol:checked-sequent THEORIES RESULTS ID THEORY)
+
+reads the evidence and current theory in the same interaction. It validates
+the authentic theorem against both its recorded checkpoint and the current
+checkpoint, then returns its actual hypotheses and conclusion. A HolChecked
+tag, a printed sequent or an ordinary value claiming to be a checkpoint
+provides no evidence. A theory change can make an older proof unavailable;
+compatible proofs remain readable after a declaration extension.
+
+The prepared profile supports same-universe native data bags without module
+links or materialized dense relations. It constructs complete private
+replacement states and prepares retained readers before publication.
+Append-only destinations can reserve just their new rows and amortized
+storage growth. Private images carry storage ownership without duplicating
+logical authority sidecars. Collection is inhibited through cleanup, whose
+counted-release capacity is reserved before publication. Consumptive edits
+can still copy a whole touched bag. Index rebuilding after an append is
+separate work; these interfaces alone establish no performance bound.
+
+Every retained request validates its original observations before the next
+computation. A current stamp cannot rebase an old prefix. Raw supplied-answer
+resumption is refused in this profile; the stored expression is computed.
+Unrelated spaces do not invalidate an otherwise unchanged prefix.
+
+Failure during preparation changes no publication destination. Computed
+source expressions may have their own earlier effects; this guarantee does
+not erase them. A terminal publication failure includes (ia:effects HISTORY),
+where HISTORY is a newest-first chain (ia:effect PUBLICATION PREVIOUS), ending
+in (). Each publication retains its original location/revision, exact taken
+occurrences and output plan. It is not a rollback receipt or a retry permit.
+Failed publication traces are incomplete and cannot certify a completed run.
+
+Compound visibility requires exclusive access, or participation by all
+observers/writers in the shared-transition synchronization domain. Individual
+reads outside that contract do not constitute one coherent observation.
+
+The executable control is tests/prime/interaction/native_hol_workflow.metta.
+The ordered-source control is tests/prime/interaction/ordered_mailbox.metta;
+its order lives in one queue-state occurrence, not in bag enumeration.
+The Lean correspondence packages prove their stated source and resource
+profiles. An end-to-end theorem for the complete Prime frontend and this C
+service, arbitrary actor routing, and general native progress remain open.

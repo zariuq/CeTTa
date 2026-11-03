@@ -8154,12 +8154,12 @@ static void space_release_contents(Space *s) {
     s->payload_export_owner_epoch = 0;
 }
 
-void space_free(Space *s) {
+static void space_free_instance(Space *s, bool notify_subscriber) {
     if (!s)
         return;
     CETTA_SCOPED_SHARED_TRANSITION(transition);
     atomic_store_explicit(&s->read_stamp,0u,memory_order_release);
-    if (g_space_instance_retired_hook && s->instance_id)
+    if (notify_subscriber && g_space_instance_retired_hook && s->instance_id)
         g_space_instance_retired_hook(s->instance_id);
     if (s->ledger_counted) {
         s->ledger_counted = false;
@@ -8171,6 +8171,10 @@ void space_free(Space *s) {
             -(int64_t)sizeof(Space));
     }
     space_release_contents(s);
+}
+
+void space_free(Space *s) {
+    space_free_instance(s, true);
 }
 
 void space_set_instance_retired_hook(SpaceInstanceRetiredHook hook) {
@@ -11115,6 +11119,285 @@ static void space_replace_contents_classified(
 void space_replace_contents(Space *dst, Space *src) {
     space_replace_contents_classified(
         dst, src, SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE);
+}
+
+static bool space_native_data_bag(const Space *s) {
+    return s && s->kind == SPACE_KIND_ATOM && !s->overlay_base &&
+        !s->module_own_view && !s->dep_count && !s->importer_count &&
+        !s->imported_len && space_dense_facts(s) == 0u &&
+        space_match_backend_has_native_occurrences(s) &&
+        (s->match_backend.kind == SPACE_ENGINE_NATIVE ||
+         s->match_backend.kind == SPACE_ENGINE_NATIVE_CANDIDATE_EXACT);
+}
+
+bool space_native_bag_retirement_releases(const Space *s, size_t *count) {
+    if (!count || !space_native_data_bag(s) || s->native.marked > s->native.len)
+        return false;
+    CettaIndex rows = s->native.len - s->native.marked;
+    if (rows > SIZE_MAX || s->native.id_present_key_len > SIZE_MAX - (size_t)rows)
+        return false;
+    size_t releases = (size_t)rows + (size_t)s->native.id_present_key_len;
+    if (s->native.dense) {
+        for (uint32_t i = 0; i < s->native.dense->len; i++) {
+            const SpaceDenseHead *head = &s->native.dense->heads[i];
+            if (head->state != SPACE_DENSE_KEPT) continue;
+            size_t additional = (size_t)space_dense_kept_numbered(head) + 1u;
+            if (additional > SIZE_MAX - releases) return false;
+            releases += additional;
+        }
+    }
+    *count = releases;
+    return true;
+}
+
+static bool space_native_bag_data_rows(Space *s) {
+    for (CettaIndex i = 0; i < space_length64(s); i++) {
+        AtomId id = space_get_atom_id_at64(s, i);
+        if (id == CETTA_ATOM_ID_NONE || space_atom_equation_projection(s, id, NULL) !=
+                SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY)
+            return false;
+    }
+    return true;
+}
+
+static int space_native_bag_position_compare(const void *left, const void *right) {
+    CettaIndex a = *(const CettaIndex *)left, b = *(const CettaIndex *)right;
+    return a < b ? -1 : a > b;
+}
+
+Space *space_native_bag_publication_clone(Space *source,
+        const CettaIndex *excluded_positions, size_t excluded_count) {
+    if (!space_native_data_bag(source) || (excluded_count && !excluded_positions) ||
+        excluded_count > SIZE_MAX / sizeof(CettaIndex)) return NULL;
+    CettaIndex length = space_length64(source);
+    CettaIndex *excluded = excluded_count ? malloc(excluded_count * sizeof(*excluded)) : NULL;
+    if (excluded_count && !excluded) return NULL;
+    if (excluded_count) {
+        memcpy(excluded, excluded_positions, excluded_count * sizeof(*excluded));
+        qsort(excluded, excluded_count, sizeof(*excluded), space_native_bag_position_compare);
+        for (size_t i = 0; i < excluded_count; i++) {
+            if (excluded[i] >= length || (i && excluded[i] == excluded[i - 1u])) {
+                free(excluded);
+                return NULL;
+            }
+        }
+    }
+    Space *image = malloc(sizeof(*image));
+    if (!image) { free(excluded); return NULL; }
+    space_init_with_universe(image, source->native.universe);
+    space_set_strict(image, source->strict);
+    bool copied = space_match_backend_try_set(image, source->match_backend.kind);
+    size_t next = 0u;
+    for (CettaIndex i = 0; copied && i < length; i++) {
+        if (next < excluded_count && i == excluded[next]) { next++; continue; }
+        AtomId id = space_get_atom_id_at64(source, i);
+        copied = id != CETTA_ATOM_ID_NONE && space_atom_equation_projection(source, id, NULL) ==
+            SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY;
+        if (copied) copied = space_add_atom_ids_batch_rows(image, &id, 1u);
+    }
+    free(excluded);
+    if (!copied) {
+        space_native_bag_publication_dispose(image);
+        return NULL;
+    }
+    image->payload_owner_epoch = source->payload_owner_epoch;
+    image->payload_export_owner_epoch = source->payload_export_owner_epoch;
+    return image;
+}
+
+void space_native_bag_publication_dispose(Space *image) {
+    if (!image) return;
+    /* This identity was private storage, never a published logical instance.
+     * It acquired no authority sidecar and must not notify its subscribers. */
+    space_free_instance(image, false);
+    free(image);
+}
+
+bool space_native_bag_publication_prepare(Space *destination, Space *replacement,
+        SpaceNativeBagPublication *out) {
+    if (!out) return false;
+    *out = (SpaceNativeBagPublication){0};
+    if (destination == replacement || !space_native_data_bag(destination) ||
+        !space_native_data_bag(replacement) ||
+        destination->native.universe != replacement->native.universe ||
+        destination->strict != replacement->strict ||
+        destination->payload_owner_epoch != replacement->payload_owner_epoch ||
+        destination->payload_export_owner_epoch != replacement->payload_export_owner_epoch ||
+        !space_native_bag_data_rows(destination) || !space_native_bag_data_rows(replacement))
+        return false;
+    space_pinned_occurrences_detach(destination);
+    space_pinned_occurrences_detach(replacement);
+    *out = (SpaceNativeBagPublication){.destination = space_read_token(destination),
+        .replacement = space_read_token(replacement), .prepared = true};
+    return true;
+}
+
+bool space_native_bag_publication_publish(SpaceNativeBagPublication *publication) {
+    if (!publication || !publication->prepared) return false;
+    Space *destination = (Space *)publication->destination.space;
+    Space *replacement = (Space *)publication->replacement.space;
+    if (!space_read_token_matches_live_space(publication->destination, destination) ||
+        !space_read_token_matches_live_space(publication->replacement, replacement) ||
+        !space_native_data_bag(destination) || !space_native_data_bag(replacement) ||
+        destination->native.universe != replacement->native.universe ||
+        destination->strict != replacement->strict ||
+        destination->payload_owner_epoch != replacement->payload_owner_epoch ||
+        destination->payload_export_owner_epoch != replacement->payload_export_owner_epoch ||
+        destination->match_backend.native.pinned || replacement->match_backend.native.pinned)
+        return false;
+    SpaceNativeStorage old_storage = destination->native;
+    SpaceMatchBackend old_backend = destination->match_backend;
+    destination->native = replacement->native;
+    destination->match_backend = replacement->match_backend;
+    replacement->native = old_storage;
+    replacement->match_backend = old_backend;
+    publication->prepared = false;
+    /* Root and format registrations stay on their original live headers.
+     * These are data-only stores, with no declaration-transfer callbacks. */
+    space_publish_mutation(destination, SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY,
+        SPACE_MUTATION_PREFIX_REWRITTEN);
+    space_publish_mutation(replacement, SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY,
+        SPACE_MUTATION_PREFIX_REWRITTEN);
+    return true;
+}
+
+struct SpaceNativeBagAppend {
+    Space *destination;
+    SpaceReadToken read;
+    TermUniverse *universe;
+    AtomId *ids;
+    size_t count, held;
+    uint8_t *growth, *retired;
+    CettaIndex capacity;
+    const uint8_t *source_ids;
+    CettaIndex source_len, source_capacity, source_marked, source_mark_rows;
+    uint8_t width;
+    bool registered, reserved, published;
+};
+
+bool space_native_bag_append_admitted(const Space *destination) {
+    /* These monotone projections start empty. No equation, declaration or
+     * opaque mutation has ever been admitted when both remain zero. This
+     * avoids rescanning every retained row to certify the data profile. */
+    return space_native_data_bag(destination) && !destination->native.start &&
+        !destination->equation_revision && !destination->declaration_revision &&
+        !destination->match_backend.native.pinned;
+}
+
+static void space_native_bag_append_roots(const TermUniverse *universe,
+        TermUniverseRootVisit visit, void *context, void *raw) {
+    const SpaceNativeBagAppend *append = raw;
+    if (!append || append->universe != universe) return;
+    for (size_t i = 0; i < append->held; i++) visit(context, append->ids[i]);
+}
+
+void space_native_bag_append_free(SpaceNativeBagAppend *append) {
+    if (!append) return;
+    if (append->registered) term_universe_remove_root_provider(append->universe,
+        space_native_bag_append_roots, append);
+    for (size_t i = 0; i < append->held; i++)
+        term_universe_release(append->universe, append->ids[i]);
+    free(append->ids); free(append->growth); free(append->retired); free(append);
+}
+
+SpaceNativeBagAppend *space_native_bag_append_prepare(Space *destination,
+        Arena *fallback, Atom *const *atoms, size_t count) {
+    if (!space_native_bag_append_admitted(destination) || (count && !atoms) ||
+        count > SIZE_MAX / sizeof(AtomId)) return NULL;
+    SPACE_STORE_SCOPE();
+    SpaceNativeBagAppend *append = calloc(1u, sizeof(*append));
+    if (!append) return NULL;
+    append->destination = destination;
+    append->read = space_read_token(destination);
+    append->universe = destination->native.universe;
+    append->count = count;
+    append->ids = count ? malloc(count * sizeof(*append->ids)) : NULL;
+    if (count && !append->ids) goto failed;
+    append->registered = term_universe_add_counted_root_provider(append->universe,
+        space_native_bag_append_roots, append);
+    if (!append->registered) goto failed;
+    for (size_t i = 0; i < count; i++) {
+        AtomId id = atoms[i] ? term_universe_store_atom_id(append->universe, fallback, atoms[i])
+                            : CETTA_ATOM_ID_NONE;
+        if (id == CETTA_ATOM_ID_NONE || space_atom_equation_projection(destination, id, atoms[i]) !=
+                SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY) goto failed;
+        term_universe_hold(append->universe, id);
+        append->ids[append->held++] = id;
+    }
+    return append;
+failed:
+    space_native_bag_append_free(append);
+    return NULL;
+}
+
+bool space_native_bag_append_reserve(SpaceNativeBagAppend *append) {
+    if (!append || append->reserved || append->published) return false;
+    Space *s = append->destination;
+    if (!space_read_token_matches_live_space(append->read, s) ||
+        !space_native_bag_append_admitted(s) || append->count > UINT64_MAX - s->native.len)
+        return false;
+    size_t width = space_atom_id_width_bytes_bits(s->native.atom_id_width_bits);
+    CettaIndex need = s->native.len + append->count;
+    if (!width || width > sizeof(AtomId) || need > SIZE_MAX / width) return false;
+    uint8_t encoded[sizeof(AtomId)];
+    for (size_t i = 0; i < append->count; i++)
+        if (!space_atom_id_storage_store_at(encoded, s->native.atom_id_width_bits, 0u, append->ids[i]))
+            return false;
+    append->width = s->native.atom_id_width_bits;
+    append->capacity = s->native.cap;
+    if (need > s->native.cap) {
+        CettaIndex capacity = s->native.cap ? s->native.cap : 64u;
+        while (capacity < need) {
+            if (capacity > UINT64_MAX / 2u) return false;
+            capacity *= 2u;
+        }
+        if (capacity > SIZE_MAX / width) return false;
+        append->growth = malloc((size_t)capacity * width);
+        if (!append->growth) return false;
+        if (s->native.len) memcpy(append->growth, s->native.atom_ids, (size_t)s->native.len * width);
+        append->capacity = capacity;
+    }
+    append->source_ids = s->native.atom_ids;
+    append->source_len = s->native.len;
+    append->source_capacity = s->native.cap;
+    append->source_marked = s->native.marked;
+    append->source_mark_rows = s->native.mark_rows;
+    append->reserved = true;
+    return true;
+}
+
+bool space_native_bag_append_publish(SpaceNativeBagAppend *append) {
+    if (!append || !append->reserved || append->published) return false;
+    Space *s = append->destination;
+    if (!space_read_token_matches_live_space(append->read, s) ||
+        !space_native_bag_append_admitted(s) || append->width != s->native.atom_id_width_bits ||
+        append->source_ids != s->native.atom_ids || append->source_len != s->native.len ||
+        append->source_capacity != s->native.cap || append->source_marked != s->native.marked ||
+        append->source_mark_rows != s->native.mark_rows)
+        return false;
+    if (append->growth) {
+        append->retired = s->native.atom_ids;
+        s->native.atom_ids = append->growth; append->growth = NULL;
+        s->native.cap = append->capacity;
+    }
+    CettaIndex start = s->native.len;
+    for (size_t i = 0; i < append->count; i++) {
+        (void)space_atom_id_storage_store_at(s->native.atom_ids, append->width, start + i, append->ids[i]);
+        space_dense_note_row(s, append->ids[i]);
+    }
+    s->native.len += append->count;
+    append->held = 0u; /* destination rows now own the already acquired holds */
+    append->published = true;
+    s->native.eq_idx_dirty = true;
+    s->native.ty_idx_dirty = true;
+    s->native.exact_idx_dirty = true;
+    s->native.has_non_exact_atoms_dirty = true;
+    s->match_backend.native.match_trie_dirty = true;
+    s->match_backend.native.stree_dirty = true;
+    space_note_atom_id_storage_peak(s);
+    if (append->count) space_publish_mutation(s, SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY,
+        SPACE_MUTATION_PREFIX_APPEND_ONLY);
+    return true;
 }
 
 /* ── Query Results ──────────────────────────────────────────────────────── */

@@ -572,7 +572,44 @@ static void resident_cohort_gc_case(void) {
     puts("ResidentCohort complete 2 foreign/released-checkpoint-refusal 1 owner/borrow-refusal 1 replay-alias 1 retired-refusal 1");
 }
 
+static void call_input_aliases(void) {
+    PrimeNeedCallInputCell cells[] = {
+        {.thunk=3u,.update=8u,.cache=PRIME_NEED_CACHE_VALUE,.role=PRIME_NEED_VALUE_READY},
+        {.thunk=4u,.update=9u,.cache=PRIME_NEED_CACHE_EMPTY,.role=PRIME_NEED_VALUE_DEMAND_RESULT},
+        {.thunk=3u,.update=8u,.cache=PRIME_NEED_CACHE_VALUE,.role=PRIME_NEED_VALUE_READY},
+    };
+    PrimeNeedCallInputCell *owned=malloc(sizeof(cells));
+    assert(owned); memcpy(owned,cells,sizeof(cells));
+    PrimeNeedCallInputs inputs={.cells=owned,.cell_count=3u};
+    assert(prime_need_call_input_cells_index(&inputs));
+    assert(inputs.cell_count==2u);
+    assert(prime_need_call_input_cell(&inputs,3u)==&inputs.cells[0]);
+    assert(prime_need_call_input_cell(&inputs,4u)==&inputs.cells[1]);
+    free(inputs.cells);
+    free(inputs.cell_index);
+    owned=malloc(64u*sizeof(*owned)); assert(owned);
+    for(size_t i=0;i<64u;i++) owned[i]=(PrimeNeedCallInputCell){
+        .thunk=i%11u+1u,.update=(i%11u+1u)*17u,
+        .cache=PRIME_NEED_CACHE_VALUE,.role=PRIME_NEED_VALUE_READY};
+    inputs=(PrimeNeedCallInputs){.cells=owned,.cell_count=64u};
+    assert(prime_need_call_input_cells_index(&inputs) && inputs.cell_count==11u);
+    for(uint64_t i=1u;i<=11u;i++)
+        assert(prime_need_call_input_cell(&inputs,i)->update==i*17u);
+    free(inputs.cells); free(inputs.cell_index);
+    for(unsigned difference=0u;difference<3u;difference++) {
+        PrimeNeedCallInputCell conflict[]={cells[0],cells[0]};
+        if(difference==0u)conflict[1].update++;
+        if(difference==1u)conflict[1].cache=PRIME_NEED_CACHE_EMPTY;
+        if(difference==2u)conflict[1].role=PRIME_NEED_VALUE_DEMAND_RESULT;
+        inputs=(PrimeNeedCallInputs){.cells=conflict,.cell_count=2u};
+        assert(!prime_need_call_input_cells_index(&inputs));
+        assert(!inputs.cell_index && inputs.cell_count==2u);
+    }
+    puts("CallInputAliases identical shared dependencies canonicalize; conflicting observations refuse");
+}
+
 int main(void) {
+    call_input_aliases();
     SymbolTable symbols;
     VarInternTable variables;
     CettaLibraryContext context = {0};

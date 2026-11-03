@@ -511,6 +511,10 @@ static inline void term_universe_collection_note_released(
 }
 
 /* A counted holder takes or drops one reference to ID. */
+/* Reserve bookkeeping for at most COUNT reference releases before an
+ * allocation-free mutation interval. The universe remains exclusively
+ * accessed, with collection inhibited, until those releases finish. */
+bool term_universe_prepare_releases(TermUniverse *universe, size_t count);
 void term_universe_hold_counted(TermUniverse *universe, AtomId id);
 void term_universe_release_counted(TermUniverse *universe, AtomId id);
 #if CETTA_BUILD_WITH_TERM_UNIVERSE_COLLECTION_CHECKS || \

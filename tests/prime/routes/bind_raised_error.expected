@@ -1,0 +1,7 @@
+[(Error (car-atom ()) "car-atom expects a non-empty expression as an argument")]
+[%Undefined%]
+[(Error (car-atom ()) "car-atom expects a non-empty expression as an argument")]
+[()]
+[ErrorType]
+[()]
+[6]
