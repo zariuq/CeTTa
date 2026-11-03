@@ -682,6 +682,18 @@ typedef struct {
      * is kept separate from block occupancy so mark/reset can account for
      * allocation pressure without corrupting the block allocator's math. */
     size_t external_bytes;
+    /* Weighted managed-resource roots held by this arena, included in
+     * external_bytes. Metadata and ordinary foreign allocations do not
+     * acquire this classification implicitly. This is not a transitive
+     * census of the resources' mutable payloads. */
+    size_t retained_resource_bytes;
+    /* Owner-thread acquisition generation for managed State/image roots.
+     * It changes only for a new lease, remains monotone across mark/reset,
+     * and saturates rather than wrapping. Pair with identity/reset_epoch. */
+    uint64_t state_root_acquisition_generation;
+    /* Non-owning classification of this storage's physical lifetime owner.
+     * NULL names independent storage. The tag itself acquires no lease. */
+    void *resource_scope;
     size_t reserved_bytes;
     size_t spare_bytes;
     uint32_t block_count;
@@ -739,6 +751,7 @@ typedef struct {
     size_t used;
     size_t live_bytes;
     size_t external_bytes;
+    size_t retained_resource_bytes;
     size_t symbol_cache_bytes;
     /* Portion of external_bytes held by ownership indexes, whose capacity
      * survives rollback even when the indexed holds are released. */
@@ -779,6 +792,10 @@ void  arena_init(Arena *a);
  * cross-thread owners: an ordinary arena_init deliberately inherits the
  * current evaluator's table for branch-local sharing. */
 void  arena_init_detached(Arena *a);
+/* Explicit context for transient descriptor operations. Initializers do not
+ * inherit it: an arena's lifetime owner must be assigned by its owner. */
+void *arena_current_resource_scope(void);
+void *arena_set_resource_scope(void *scope);
 /* An arena that holds little takes blocks of `capacity` bytes rather than
  * ARENA_BLOCK_SIZE; an allocation larger than that still gets a block of its
  * own size. */
@@ -812,6 +829,12 @@ void  arena_set_own_symbols(Arena *a, bool enabled);
 /* Keep a contextual identity alive until this arena's corresponding reset.
  * Ambient/external identifiers have no recyclable owner to retain. */
 bool arena_retain_frame_identity(Arena *a, CettaFrameIdentity identity);
+/* Preserve only an Arena's name for an immutable-image discovery key. The
+ * caller keeps source alive during this call; the certificate retains no
+ * source blocks, finalizers or native resources. Its name becomes reusable
+ * only after both source and keeper's corresponding segment retire. */
+bool arena_retain_identity_certificate(Arena *keeper, const Arena *source,
+                                        uint32_t *identity_out);
 #ifdef CETTA_TEST_HOOKS
 /* Ownership observations for the arena frame-identity lifetime tests. */
 uint32_t arena_frame_identity_count_test(const Arena *a);
@@ -834,12 +857,53 @@ bool arena_retain_owner(Arena *a, void *owner,
 bool arena_retain_owner_sized(Arena *a, void *owner,
                               void (*retain)(void *), void (*release)(void *),
                               size_t bytes);
+/* Retain a typed managed resource. On the first acquisition, charge BYTES
+ * to external storage and RESOURCE_BYTES to its managed-resource subset.
+ * Aliases keep the original charge until the corresponding hold resets. */
+bool arena_retain_resource_sized(Arena *a, void *owner,
+                                 void (*retain)(void *), void (*release)(void *),
+                                 size_t bytes, size_t resource_bytes);
+bool arena_retain_state_resource_sized(Arena *a, void *owner,
+                                 void (*retain)(void *), void (*release)(void *),
+                                 size_t bytes, size_t resource_bytes);
 /* Enumerate each currently retained (owner, release) pair once. The visitor
  * borrows the pair and must not reset or mutate this arena. */
 typedef void (*ArenaOwnerVisit)(void *context, void *owner,
                                 void (*release)(void *));
+/* Callback-certified immutable bytes or a name-only certificate. Unknown
+ * owner pointers are never inspected and may contain managed references. */
+bool arena_owner_is_atomic_storage(void *owner, void (*release)(void *));
 void arena_visit_retained_owners(const Arena *a, ArenaOwnerVisit visit,
                                   void *context);
+/* A non-owning cursor into acquisition order. Appends and owner-index growth
+ * preserve its position; every reset/free invalidates it, even a reset that
+ * leaves the retained-owner prefix unchanged. Moves preserve the Arena's
+ * identity/epoch. The caller keeps the Arena alive and excludes concurrent
+ * Arena mutation during each operation; a cursor adds no synchronization. */
+typedef struct {
+    uint32_t identity;
+    uint32_t position;
+    uint64_t reset_epoch;
+    bool initialized;
+} ArenaOwnerCursor;
+typedef struct {
+    void *owner;
+    void (*release)(void *);
+} ArenaOwnerView;
+typedef enum {
+    ARENA_OWNER_CURSOR_ITEM,
+    ARENA_OWNER_CURSOR_END,
+    ARENA_OWNER_CURSOR_INVALIDATED,
+} ArenaOwnerCursorStep;
+/* Begin explicitly starts at zero. Peek copies one borrowed owner pair and
+ * changes VIEW only on ITEM. Neither operation allocates or scans a prefix.
+ * Accept advances one position after the caller has registered that owner's
+ * required work; refusal leaves the cursor unchanged. A borrowed view must
+ * not outlive its Arena segment, and callbacks must recheck after reset. */
+bool arena_owner_cursor_begin(const Arena *a, ArenaOwnerCursor *cursor);
+ArenaOwnerCursorStep arena_owner_cursor_peek(const Arena *a,
+    const ArenaOwnerCursor *cursor, ArenaOwnerView *view);
+bool arena_owner_cursor_accept(const Arena *a, ArenaOwnerCursor *cursor);
 
 /* Allocation policy consults these aggregates at every machine transition.
  * Keep the overflow behavior visible to the compiler while atom.c retains
@@ -1476,6 +1540,10 @@ Atom *atom_expr_shared(Arena *a, Atom **elems, CettaExprLen len);
 /* `expression` marked as a value HE's evaluation answered: itself when it
  * carries the mark or is not an expression, otherwise a copy that does. */
 Atom *atom_he_evaluated_copy(Arena *a, Atom *expression);
+/* Every unmarked expression node of `value` marked, down to the nodes
+ * already marked, which are kept as they are: what HE's evaluation of a
+ * value that answers itself at every node leaves. */
+Atom *atom_he_evaluated_deep_copy(Arena *a, Atom *value);
 /* Deep copies made between enter and leave drop HE's evaluated marks: a
  * space stores syntax, never a value's evaluation state. */
 void atom_deep_copy_strip_he_marks_enter(void);
@@ -1651,6 +1719,11 @@ const char *space_module_display_name(const void *space)
    only while held (ArenaHeldResources), as it holds a foreign record.  Weak:
    the evaluator supplies it, and a binary without one holds no space. */
 void space_atom_hold(Arena *a, void *space) __attribute__((weak));
+/* Retain a native descriptor's external storage owner before publishing its
+ * wrapper. The evaluator supplies the owner registry; standalone atom users
+ * may omit it. False refuses wrapper construction without publication. */
+bool eval_resource_descriptor_hold(Arena *arena, GroundedKind kind,
+                                    void *descriptor) __attribute__((weak));
 char *atom_to_parseable_string(Arena *a, Atom *atom);
 char *atom_to_parseable_string_petta(Arena *a, Atom *atom);
 /* The printed bytes exactly, with their length: where a lane writes a

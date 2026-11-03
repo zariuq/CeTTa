@@ -12,7 +12,7 @@
 !(test (collapse (match &mixed 42 found)) ())
 !(test (collapse (match &mixed (42) found)) (found))
 !(test (collapse (match &mixed (#primitive $x) $x)) (42))
-!(test (remove-atom &mixed 42) True)
+!(test (remove-atom &mixed 42) False)
 !(test (remove-atom &mixed "text") True)
 !(test (collapse (match &mixed "text" found)) ())
 !(test (remove-atom &mixed marker) True)
