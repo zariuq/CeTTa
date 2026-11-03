@@ -112,7 +112,7 @@ static uint32_t symbol_slot(const SymbolTable *st, uint64_t hash) {
     x = (x ^ (x >> 30)) * UINT64_C(0xbf58476d1ce4e5b9);
     x = (x ^ (x >> 27)) * UINT64_C(0x94d049bb133111eb);
     x ^= x >> 31;
-    return (uint32_t)(x % st->slot_cap);
+    return (uint32_t)x & (st->slot_cap - 1u);
 }
 
 static SymbolEntry *symbol_table_entry_chunk(const SymbolTable *st, SymbolId id) {
@@ -163,6 +163,12 @@ static bool symbol_entry_matches(const SymbolEntry *entry, const uint8_t *bytes,
 }
 
 static void symbol_table_resize(SymbolTable *st, uint32_t new_cap) {
+    /* Initialization uses a power of two, and growth doubles it. Keep the
+     * mask's invariant explicit, including rejection of capacity wraparound. */
+    if (new_cap == 0u || (new_cap & (new_cap - 1u)) != 0u) {
+        fputs("fatal: exhausted symbol table slot capacity\n", stderr);
+        abort();
+    }
     SymbolSlot *old_slots = st->slots;
     uint32_t entry_len = atomic_load_explicit(&st->entry_len, memory_order_relaxed);
 
@@ -176,7 +182,7 @@ static void symbol_table_resize(SymbolTable *st, uint32_t new_cap) {
         if (!entry || !entry->bytes) continue;
         uint32_t slot = symbol_slot(st, entry->hash);
         while (st->slots[slot].id != SYMBOL_ID_NONE) {
-            slot = (slot + 1) % st->slot_cap;
+            slot = (slot + 1u) & (st->slot_cap - 1u);
         }
         st->slots[slot].hash = entry->hash;
         st->slots[slot].len = entry->len;
@@ -265,8 +271,8 @@ static SymbolId symbol_intern_span_hashed_unlocked(SymbolTable *st,
     uint32_t entry_len;
 
     if (!st || !bytes || len == 0) return SYMBOL_ID_NONE;
-    if ((st->slot_used + 1) * SYMBOL_TABLE_MAX_LOAD_DEN >
-        st->slot_cap * SYMBOL_TABLE_MAX_LOAD_NUM) {
+    if (((uint64_t)st->slot_used + 1u) * SYMBOL_TABLE_MAX_LOAD_DEN >
+        (uint64_t)st->slot_cap * SYMBOL_TABLE_MAX_LOAD_NUM) {
         symbol_table_resize(st, st->slot_cap ? st->slot_cap * 2 : SYMBOL_TABLE_MIN_SLOTS);
     }
 
@@ -318,7 +324,7 @@ static SymbolId symbol_intern_span_hashed_unlocked(SymbolTable *st,
             if (symbol_entry_matches(sym, bytes, len, hash))
                 return entry->id;
         }
-        slot = (slot + 1) % st->slot_cap;
+        slot = (slot + 1u) & (st->slot_cap - 1u);
     }
 }
 
@@ -423,7 +429,7 @@ SymbolId symbol_lookup_cstr(SymbolTable *st, const char *text) {
                 found = entry->id;
                 break;
             }
-            slot = (slot + 1) % st->slot_cap;
+            slot = (slot + 1u) & (st->slot_cap - 1u);
         }
     }
     pthread_mutex_unlock(&st->write_mutex);

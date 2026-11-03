@@ -251,6 +251,8 @@ bool eval_payload_transactional(void);
 uint64_t eval_set_payload_owner_epoch(uint64_t epoch);
 uint64_t eval_payload_owner_epoch(void);
 uint64_t eval_next_payload_owner_epoch(void);
+/* Successful begins nest; end releases only the current scratch inventory
+ * and restores the parent's maps. A failed begin leaves its parent intact. */
 bool eval_payload_redirects_begin(Arena *owner);
 void eval_payload_redirects_end(void);
 bool eval_payload_note_space_redirect(Space *orig, Space *redirect);
