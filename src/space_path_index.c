@@ -30,6 +30,10 @@ struct CettaSpacePathIndex {
     CettaSpacePathKeyKind kind;
     PathPosting *keys;
     size_t key_cap, key_len, bytes;
+    /* The index's own placement key, mixed into every key before it is
+     * placed: an integer field's key is the value itself, which a program
+     * chooses, and the placement hash is public and invertible. */
+    uint64_t placement;
     /* Rows whose keyed field is open. Those with a head symbol are kept by
      * that head, so a query reads only its own head's; the rest (open or
      * compound heads, rows without a stored header) are read by every query
@@ -595,8 +599,9 @@ static void posting_append(CettaSpacePathIndex *index, PathPosting *posting,
 }
 
 static inline __attribute__((always_inline))
-PathPosting *path_table_slot(PathPosting *table, size_t cap, uint64_t key) {
-    size_t slot = (size_t)path_key_hash(key) & (cap - 1u);
+PathPosting *path_table_slot(PathPosting *table, size_t cap, uint64_t key,
+                             uint64_t placement) {
+    size_t slot = (size_t)path_key_hash(key ^ placement) & (cap - 1u);
     while (posting_occupied(&table[slot]) && table[slot].key != key) {
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_MATCH_POSITION_INDEX_KEY_PROBE);
         slot = (slot + 1u) & (cap - 1u);
@@ -614,7 +619,7 @@ static int path_position_cmp(const void *left, const void *right) {
 }
 
 static PathPosting *path_key_slot(CettaSpacePathIndex *index, uint64_t key) {
-    return path_table_slot(index->keys, index->key_cap, key);
+    return path_table_slot(index->keys, index->key_cap, key, index->placement);
 }
 
 static void path_grow_table(CettaSpacePathIndex *index, PathPosting **table,
@@ -630,7 +635,8 @@ static void path_grow_table(CettaSpacePathIndex *index, PathPosting **table,
     size_t kept = 0u;
     for (size_t slot = 0u; slot < old_cap; slot++) {
         if (old[slot].len != 0u) {
-            *path_table_slot(grown, next, old[slot].key) = old[slot];
+            *path_table_slot(grown, next, old[slot].key, index->placement) =
+                old[slot];
             kept++;
         }
     }
@@ -824,7 +830,7 @@ PathPosting *path_row_posting(CettaSpacePathIndex *index, AtomId id,
         if (index->uncertain_head_cap == 0u)
             return NULL;
         PathPosting *posting = path_table_slot(index->uncertain_heads,
-            index->uncertain_head_cap, head);
+            index->uncertain_head_cap, head, index->placement);
         if (!posting_occupied(posting)) {
             if (!create)
                 return NULL;
@@ -1031,6 +1037,7 @@ static __attribute__((noinline)) CettaSpacePathIndex *path_index_build(
         .next = space->match_backend.native.path_indexes,
         .universe = space->native.universe,
         .path_len = depth, .kind = kind, .head = head, .length = length,
+        .placement = cetta_placement_key_next(),
     };
     index->path = cetta_malloc(depth * sizeof(*index->path));
     path_charge(index, sizeof(*index) + depth * sizeof(*index->path));
@@ -1226,6 +1233,7 @@ static CettaSpacePathIndex *path_demand(Space *space, Atom *pattern,
     frames[0] = (PathQueryFrame){.term = pattern};
     bool unbound = false;
     CettaSpacePathKeyKind kind = CETTA_SPACE_PATH_SYMBOL_KEY;
+    CettaExprIndex local_head_path[16];
     CettaExprIndex *head_path = NULL;
     size_t head_depth = 0u;
     CettaSpacePathKeyKind head_kind = CETTA_SPACE_PATH_SYMBOL_KEY;
@@ -1256,7 +1264,8 @@ static CettaSpacePathIndex *path_demand(Space *space, Atom *pattern,
                 head_depth = depth;
                 head_kind = kind;
                 head_key = *key;
-                head_path = cetta_malloc(depth * sizeof(*head_path));
+                head_path = depth <= 16u ? local_head_path
+                    : cetta_malloc(depth * sizeof(*head_path));
                 for (size_t position = 0u; position < depth; position++)
                     head_path[position] = frames[position].child;
             }
@@ -1300,16 +1309,28 @@ static CettaSpacePathIndex *path_demand(Space *space, Atom *pattern,
     /* A pattern whose bound scalars all lead: its first one, over the rows
      * of the pattern's head alone, since the head already selects them. */
     SymbolId lead_head = SYMBOL_ID_NONE;
-    /* A pattern wider than the elements the trie reads is keyed by its first
-     * bound value past them, which the trie cannot select by; then by its
-     * first, as any other. */
+    /* A pattern wider than the elements the trie reads is keyed by a bound
+     * value past them, which the trie cannot select by: the last before its
+     * first variable there, nearest the values that tell such rows apart;
+     * then by its first bound value, as any other. */
     CettaExprIndex lead_first =
         pattern->expr.len > CETTA_INDEX_CHILD_TOKEN_LIMIT
             ? CETTA_INDEX_CHILD_TOKEN_LIMIT : 1u;
+    CettaExprIndex lead_last = pattern->expr.len;
+    for (CettaExprIndex position = lead_first;
+         lead_first > 1u && position < pattern->expr.len; position++) {
+        if (pattern->expr.elems[position]->kind == ATOM_VAR) {
+            lead_last = position;
+            break;
+        }
+    }
     for (unsigned round = 0u; !found && !head_path && round < 2u; round++) {
         CettaExprIndex from = round == 0u ? lead_first : 1u;
-        CettaExprIndex to = round == 0u ? pattern->expr.len : lead_first;
-        for (CettaExprIndex position = from; position < to; position++) {
+        CettaExprIndex to = round == 0u ? lead_last : lead_first;
+        for (CettaExprIndex step = from; step < to; step++) {
+            /* Past the window, from the last bound value back. */
+            CettaExprIndex position = round == 0u && lead_first > 1u
+                ? (CettaExprIndex)(to - 1u - (step - from)) : step;
             bool keyed = path_query_key(pattern->expr.elems[position], &kind, key);
             if (!keyed && path_query_term_key(space->native.universe,
                                               pattern->expr.elems[position], key)) {
@@ -1337,7 +1358,11 @@ static CettaSpacePathIndex *path_demand(Space *space, Atom *pattern,
     CettaSpacePathIndex *index = NULL;
     if (found) {
         index_head = lead_head;
-        CettaExprIndex *path = cetta_malloc(depth * sizeof(*path));
+        /* Lookups borrow this path only for the call; a new index copies
+         * its description. Deep paths keep the dynamically sized buffer. */
+        CettaExprIndex local_path[16];
+        CettaExprIndex *path = depth <= 16u ? local_path
+            : cetta_malloc(depth * sizeof(*path));
         for (size_t position = 0u; position < depth; position++)
             path[position] = selected_head
                 ? head_path[position] : frames[position].child;
@@ -1346,11 +1371,13 @@ static CettaSpacePathIndex *path_demand(Space *space, Atom *pattern,
                               pattern->expr.len, true, rent, rented,
                               rented_count)
             : path_index_for(space, kind, path, depth, index_head, true);
-        free(path);
+        if (path != local_path)
+            free(path);
     }
     if (frames != local)
         free(frames);
-    free(head_path);
+    if (head_path != local_head_path)
+        free(head_path);
     return index;
 }
 
@@ -1447,7 +1474,7 @@ CettaCount path_offer(CettaSpacePathIndex *index, uint64_t key,
         if (index->uncertain_head_cap) {
             if (index->probed_head != query_head) {
                 index->probed_slot = path_table_slot(index->uncertain_heads,
-                    index->uncertain_head_cap, query_head);
+                    index->uncertain_head_cap, query_head, index->placement);
                 index->probed_head = query_head;
             }
             headed = index->probed_slot;
@@ -2357,12 +2384,13 @@ static HeadRowKind head_row_kind(const TermUniverse *universe, AtomId id,
         return HEAD_ROW_EVERY;
     if (header->tag != ATOM_EXPR)
         return HEAD_ROW_NONE;
-    CettaExprLen arity = tu_arity(universe, id);
+    CettaExprLen arity = (CettaExprLen)(header->aux32 & CETTA_TERM_HDR_DATA_MASK);
     if (arity == 0u)
         return HEAD_ROW_NONE;
     /* Private list, callable and compound carriers spell a logical shape
      * other than their encoding. */
-    if (tu_internal_tag(universe, tu_child(universe, id, 0u)) != 0 ||
+    if ((header->sym_or_head == SYMBOL_ID_NONE &&
+         tu_internal_tag(universe, tu_child_from_header(universe, header, 0u)) != 0) ||
         arity > UINT32_MAX)
         return HEAD_ROW_EVERY;
     *key = head_key(header->sym_or_head, arity);

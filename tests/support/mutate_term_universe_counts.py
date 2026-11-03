@@ -29,7 +29,7 @@ SOMETIMES_CASCADE = """        if ((index & 7u) != 3u)
                                           term_universe_release_child,
                                           universe);
 """
-REUSED_BIRTH = """    if (index < universe->collection_len_after)
+REUSED_BIRTH = """    if (index < universe->collection_len_after || universe->counted_sweep_active)
         term_universe_zero_push(universe, index);
 """
 MUTANTS = {
