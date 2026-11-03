@@ -53,6 +53,9 @@ bool cetta_disk_store_view_same_domain(const CettaDiskStoreView *left,
 bool cetta_disk_store_has_domain(const CettaDiskStore *store,
     const CettaDiskStoreView *view);
 void cetta_disk_store_close(CettaDiskStore *store);
+/* Duplicate a live publication capability into an independent owner handle.
+ * It shares the directory identity, not mutable cache/confirmation state. */
+CettaDiskStoreStatus cetta_disk_store_clone_owner(const CettaDiskStore *,CettaDiskStore **);
 void cetta_disk_store_storage(const CettaDiskStore *,struct CettaStorageCensus *);
 /* The caller holds its exclusive owner use. A lost post-publication reply
  * resource must use the same write gate as an uncertain filesystem reply. */

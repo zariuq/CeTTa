@@ -38,3 +38,6 @@
 (= (act:export-info $job) (__cetta_lib_act_export_info $job))
 (: act:export-close (-> %Undefined% %Undefined%))
 (= (act:export-close $job) (__cetta_lib_act_export_close $job))
+(: __cetta_lib_act_info (-> Atom Atom))
+(: act:info (-> %Undefined% %Undefined%))
+(= (act:info $space) (__cetta_lib_act_info $space))

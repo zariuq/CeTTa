@@ -36,7 +36,7 @@ query ordering when an application needs one.
 
 `db:query` and compositional matching plans use the ordinary client matcher.
 Related collection leaves, including later join legs, retain the same captured
-database revision. Remote ordered/range plans and bounded bulk import are
+database revision. Remote ordered/range plans and bounded remote bulk import are
 still pending; unsupported plans refuse explicitly. Current ordinary remote
 transaction proposals must fit the selected portable request policy.
 
@@ -85,9 +85,22 @@ to retain typed values, duplicate occurrences and saved identities.
 
 The PeTTa DB interface adds `db:export-act owner path` and
 `db:import-act owner path`, with collection-name overloads. Export captures
-one committed view; import uses one existing durable transaction and allocates
-occurrences in the destination database's domain. Neither callback nor an
-uncertain external action is automatically retried.
+one committed view. Embedded import stages one portable row at a time into
+the existing disk-backed batch, including declared index postings and an
+origin map. One guarded publication installs metadata, facts, mappings and
+the durable receipt. It allocates destination occurrences and keeps its own
+publication handle across yields. Stale revisions, changed programs,
+incomplete input and failed staging publish nothing.
+
+`db:import-act-result owner collection request operation path` retains an
+explicit request. Its operation fingerprint includes the validated source
+profile and content digest. A repeated request returns the saved result;
+changing that artifact under the same request refuses as a collision.
+`act:info` supplies the captured file's profile, row count, byte length,
+SHA-256 and selected record policy. `durable-space:append-open`, `append-next`,
+`append-info`, `append-finish` and `append-close` expose staged admission to
+trusted MeTTa handlers. Remote artifact transfer remains unfinished; the
+remote convenience path currently retains its prior workspace behavior.
 
 Snapshot publication synchronizes the new file, renames it and synchronizes
 its directory. A directory-sync failure after rename returns `uncertain`;

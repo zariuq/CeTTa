@@ -488,6 +488,20 @@ static const SpaceMatchBackendOps source_ops = {.name = "native-act",
                                                 .storage = source_storage,
                                                 .overlay_local =
                                                     source_overlay};
+CettaActStatus cetta_act_space_info(const Space *space,CettaActSpaceInfo *out) {
+  if (!out) return CETTA_ACT_CORRUPT;
+  CettaSharedTransitionGuard guard={0};cetta_shared_transition_guard_enter(&guard);
+  if (!space || !space_owner_is_current(space) || space->match_backend.ops!=&source_ops) {
+    cetta_shared_transition_guard_leave(&guard);return CETTA_ACT_UNSUPPORTED;
+  }
+  Source *source=space->match_backend.source;retain(source);
+  CettaActBytes image=cetta_act_image(source->mapping);
+  *out=(CettaActSpaceInfo){.occurrences=source->count,.bytes=image.size,
+    .maximum_bytes=source->maximum,.typed=source->cetta};
+  cetta_shared_transition_guard_leave(&guard);
+  cetta_native_sha256_hex(image.data,image.size,out->digest);
+  release(source);return CETTA_ACT_OK;
+}
 static bool source_overlay(Space *target, const Space *base) {
   Space *copy = malloc(sizeof(*copy));
   if (!copy)
