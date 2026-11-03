@@ -254,8 +254,10 @@ static void drain(unsigned fill, unsigned keep) {
         assert(cetta_dense_relation_add(&rel, a, b, &oom, on_held, &held));
         model_add(&m, a, b);
     }
-    for (int probe = 0; probe < 8 && !rel.second_kept; probe++)
-        (void)cetta_dense_relation_count(&rel, CETTA_DENSE_ANY, m.items[0].b);
+    uint64_t expected_column = model_count(&m, CETTA_DENSE_ANY, m.items[0].b);
+    for (uint64_t probe = 0u; probe <= rel.pairs && !rel.second_kept; probe++)
+        assert(cetta_dense_relation_count(&rel, CETTA_DENSE_ANY, m.items[0].b) ==
+               expected_column);
     assert(rel.second_kept);
     uint64_t full = cetta_dense_relation_bytes(&rel);
     while (m.len > keep) {
@@ -326,7 +328,43 @@ static void churn(unsigned rounds) {
     free(held.state);
 }
 
+typedef struct {
+    CettaDenseRelation *rel;
+    CettaDenseId seen[8];
+    uint32_t count;
+} MutatingVisit;
+
+static void visit_and_mutate(void *opaque, CettaDenseId id) {
+    MutatingVisit *visit = opaque;
+    assert(visit->count < 8u);
+    visit->seen[visit->count++] = id;
+    if (visit->count == 1u) {
+        assert(cetta_dense_relation_remove(visit->rel, 2u, 3u, NULL, NULL));
+        bool oom = false;
+        assert(cetta_dense_relation_add(visit->rel, 6u, 7u, &oom, NULL, NULL) && !oom);
+    }
+}
+
+static void numbered_visitor_mutation(void) {
+    CettaDenseRelation rel;
+    cetta_dense_relation_init(&rel);
+    for (uint32_t n = 0u; n < 6u; n += 2u) {
+        bool oom = false;
+        assert(cetta_dense_relation_add(&rel, n, n + 1u, &oom, NULL, NULL) && !oom);
+    }
+    assert(rel.dead == 0u);
+    MutatingVisit visit = {.rel = &rel};
+    cetta_dense_relation_each_numbered(&rel, visit_and_mutate, &visit);
+    const CettaDenseId expected[] = {0u, 1u, 4u, 5u, 6u, 7u};
+    assert(visit.count == sizeof(expected) / sizeof(*expected) &&
+           memcmp(visit.seen, expected, sizeof(expected)) == 0);
+    assert(rel.pairs == 3u && rel.dead == 2u);
+    cetta_dense_relation_free(&rel);
+    puts("PASS: numbered visitation rechecks liveness after callbacks, skipping removed IDs and visiting appended IDs");
+}
+
 int main(void) {
+    numbered_visitor_mutation();
     run(16u, 16u, 1u, 20000u);
     run(200u, 200u, 1u, 50000u);
     run(300u, 300u, 1000003u, 50000u);

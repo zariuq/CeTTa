@@ -37,17 +37,23 @@ typedef uint64_t CettaDenseId;
 /* Told an id. */
 typedef void (*CettaDenseIdVisit)(void *context, CettaDenseId id);
 
-/* One side of a relation: a row per number of one column, NULL while it
- * pairs with nothing there, holding the other column's numbers paired with
- * it.  row_len[n] is the form and size of a row of one leaf (a sorted
- * array, or with CETTA_DENSE_ROW_BITS bits of the first chunk), or marks a
- * list of leaves (space_dense.c). */
+/* One side of a relation. Numbers below row_cap have direct descriptor
+ * slots; larger numbers use an ordered AVL directory of nonempty rows.
+ * Both forms use the relation's shared numbering. A descriptor's length
+ * selects an inline leaf or a list of leaves (space_dense.c). */
 typedef struct {
     void **rows;
     uint32_t *row_len;
     uint32_t row_cap;
     /* The bytes the rows take. */
     uint64_t row_bytes;
+    struct CettaDenseRowNode *overflow;
+    uint32_t *row_bins;
+    uint32_t row_count, directory_events;
+    uint64_t directory_base;
+    /* Failed maintenance retains the complete old directory and its bytes;
+     * the successful-maintenance space bound is not claimed in that state. */
+    bool directory_maintenance_failed;
 } CettaDenseSide;
 
 typedef struct {

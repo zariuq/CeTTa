@@ -1,0 +1,7 @@
+!(import! &self (library lib_roman))
+(: count-leaf (-[det]-> Number Atom Number))
+(= (count-leaf $n $_leaf) (+ $n 1))
+(: list-count (-[det]-> (List Atom) Number))
+(= (list-count $value) (fold-nested count-leaf 0 $value))
+!(list-count (quote (a (b c))))
+!(list-count ())
