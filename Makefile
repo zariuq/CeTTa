@@ -52791,3 +52791,8 @@ test-db-artifacts: $(BIN) value-worker $(ACT_SPACE_TEST_BIN)
 test-all: test-db-maintenance
 test-db-maintenance: $(BIN) value-worker $(ACT_SPACE_TEST_BIN)
 	$(PYTHON) tests/support/check_db_maintenance.py $(BIN) $(VALUE_WORKER_BIN) $(ACT_SPACE_TEST_BIN)
+
+.PHONY: test-remote-ranges
+test-all: test-remote-ranges
+test-remote-ranges: $(BIN) value-worker
+	$(PYTHON) tests/support/check_remote_ranges.py $(BIN) $(VALUE_WORKER_BIN)

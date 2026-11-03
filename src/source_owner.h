@@ -16,6 +16,10 @@ typedef enum {
  * stored facts. Source/cursor children remain valid after parent release. */
 CettaCandidateStatus cetta_occurrence_source_open(Space *,size_t maximum_bytes,
     CettaOccurrenceSource **);
+/* One original portable fact and its saved ground identity. This historical
+ * source grants no publication capability and uses the ordinary matcher. */
+CettaCandidateStatus cetta_occurrence_source_single(Atom *fact,Atom *identity,
+    size_t maximum_bytes,CettaOccurrenceSource **);
 void cetta_occurrence_source_retain(CettaOccurrenceSource *);
 void cetta_occurrence_source_release(CettaOccurrenceSource *);
 uint64_t cetta_occurrence_source_count(const CettaOccurrenceSource *);

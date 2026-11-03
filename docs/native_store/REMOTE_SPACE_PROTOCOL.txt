@@ -14,6 +14,27 @@ and, for directory sources, the original publication view and collection
 scope. DbCaptureRelated opens another collection from exactly that informing
 view. A historical source is not freshness evidence or write authority.
 
+DbProtocolInfo returns DbProtocolV1 with version 1 and symbolic feature names.
+The native client requires OriginalFactsV1, ImmutablePositionsV1,
+PhysicalDomainsV1 and RetainedSessionsV1 before admitting the connection;
+unsupported versions or missing required features
+refuse. Further flags describe linear continuations, private artifacts,
+stored-scalar ranges, maintenance and fact-local variables. These flags do
+not grant an index, freshness or authority over another collection.
+Directory owner identity is DbOwnerV1(logical epoch, physical domain). The
+physical component uses the native store's same-host device/inode domain,
+so independent backup copies do not become one commit domain merely because
+they retain an epoch. Two activations of the same directory still share the
+nested-publication barrier. Incarnation separately fences current observations;
+these readable coordinates never grant publication authority.
+
+ServiceLimitsV2 separates a partial-request/blocked-reply deadline from the
+optional whole-session idle allowance. The DB configuration disables the
+latter: a paused connection or retained child is not revoked merely for being
+quiet. Partial frames and blocked replies keep a deadline. Generic V1 service
+configurations retain their selected idle policy; timeout arithmetic saturates
+at the platform clock range rather than imposing a separate one-hour ceiling.
+
 DbCandidates and DbScan open raw native candidate cursors. Each row retains
 its original atom and ground occurrence identity in separate CAV1 packets.
 DbCandidateRead reads bounded chunks of those packets. The client applies
@@ -82,6 +103,33 @@ host closes the selected resource and removes its entry before accounting
 remaining resources. Returning a closed handle as a live entry would turn
 ordinary cancellation into an accounting failure. The client's owning
 remote-resource handle keeps the session alive independently of db:close.
+
+Stored-scalar ranges
+----------------------
+DbRangeOpen is scoped to a protected captured source. It receives dimensions,
+bounds and an indexed-order flag, never the client's pattern or projection.
+The existing MeTTa range planner validates metadata and postings and checks
+stored scalar values. Declared integer ranges retain signed-value order and
+stable occurrence-key ties. General ranges retain other-scalar or complete
+original-candidate scanning. ACT files use the latter and refuse indexed-only
+plans because they contain no declared database range index.
+
+DbRangeNext moves a linear continuation. A selected row is retained as separate
+original-fact and identity packets, read by bounded DbRangeRead operations.
+Each read moves the same continuation while retaining that immutable row.
+The client decodes the packets separately and opens an owned one-fact source
+with that saved identity. Its existing matcher performs binding/projection;
+no server-instantiated substitute becomes the stored candidate. The source
+has exactly one known occurrence and carries no publication capability.
+Filtered range cardinality is never substituted for the captured Space count.
+
+Completion requires confirmed cursor exhaustion. Failure, cancellation and
+disconnect remain terminal failures rather than empty completion. Closing
+the original connection owner does not revoke a live query child. Late
+publications and compaction do not recapture that child's informing view.
+DbRangeCancel or resource/connection close releases the continuation, cached
+row and protected view. General order/map/fold composition remains in the
+existing client query pipeline.
 
 Automatic maintenance
 -----------------------
@@ -168,15 +216,18 @@ lost publication replies, restart resolution, stale absent reads, interrupted
 reads, cross-collection join consistency, read-only ACT sources, concurrent
 writes during compaction, retained readers and cancellation/resumption.
 
-Remote ordered/range plans, bounded persistent bulk import, private transfer
-artifacts and automatic maintenance scheduling remain separate unfinished
-parts of the database/server implementation. Abstract Lean cursor and owner
-laws are specifications with native controls, not a proof of the C program.
+The combined controls also cover raw stored-scalar candidates, indexed order
+and identity across ACT compaction, typed/open facts, standalone ACT range
+fallback, chunked private transfer, bounded persistent admission, maintenance
+failure/restart, retained sessions and independent backup commit domains.
+Abstract Lean cursor, layer and owner laws are specifications with native
+controls, not a proof of the C program. Live application migration and Python
+embedding remain separate work.
 
 Commit identity and activation
 ------------------------------
-The callback's nested-publication barrier uses durable owner identity. Two
-service activations serving that owner share the barrier, even though their
-incarnations differ. Freshness still checks incarnation, and independent
-owners retain independent publication behavior. A backup preserves identity;
-use logical import into a newly created database for a distinct owner.
+The callback's nested-publication barrier uses the native physical directory
+domain. Two activations serving that directory share the barrier even when
+their incarnations differ. Freshness separately checks logical epoch,
+incarnation and revision. A backup preserves logical history and receipts;
+an independent directory copy has its own physical publication domain.

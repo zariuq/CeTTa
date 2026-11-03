@@ -43,6 +43,60 @@ static CettaCandidateStatus wire_failure(CettaAtomWireStatus status) {
         : status==ATOM_WIRE_LIMIT ? CETTA_CANDIDATE_LIMIT
         : status==ATOM_WIRE_UNSUPPORTED ? CETTA_CANDIDATE_UNSUPPORTED : CETTA_CANDIDATE_INCOMPLETE;
 }
+typedef struct {
+    atomic_size_t references;Arena arena;Atom *fact,*identity;size_t maximum;
+} SingleRow;
+typedef struct {SingleRow *row;bool offered,current;} SingleCursor;
+static void single_free(void *raw) {
+    SingleCursor *c=raw;if(!c)return;SingleRow *r=c->row;
+    if(atomic_fetch_sub(&r->references,1)==1){arena_free(&r->arena);free(r);}free(c);
+}
+static bool single_clone(const void *raw,bool rewind,void **out) {
+    const SingleCursor *p=raw;*out=NULL;SingleCursor *c=malloc(sizeof(*c));if(!c)return false;
+    *c=*p;if(rewind)c->offered=c->current=false;
+    atomic_fetch_add(&c->row->references,1);*out=c;return true;
+}
+static bool single_select(const void *raw,Atom *pattern,void **out,SpaceOccurrenceCursorStep *reason) {
+    (void)pattern;bool ready=single_clone(raw,true,out);
+    if(!ready)*reason=SPACE_OCCURRENCE_CURSOR_CAPACITY;
+    return ready;
+}
+static SpaceOccurrenceCursorStep single_next(void *raw,CettaIndex *index) {
+    SingleCursor *c=raw;c->current=false;
+    if(c->offered)return SPACE_OCCURRENCE_CURSOR_END;
+    c->offered=c->current=true;*index=0;return SPACE_OCCURRENCE_CURSOR_ITEM;
+}
+static Atom *single_atom(const void *raw,CettaIndex index) {
+    const SingleCursor *c=raw;return c->current && !index ? c->row->fact : NULL;
+}
+static Atom *single_identity(const void *raw,CettaIndex index) {
+    const SingleCursor *c=raw;return c->current && !index ? c->row->identity : NULL;
+}
+static size_t single_limit(const void *raw){return ((const SingleCursor *)raw)->row->maximum;}
+static void single_storage(const void *raw,CettaStorageCensus *census) {
+    const SingleCursor *c=raw;if(!c || !cetta_storage_object(census,c,sizeof(*c),CETTA_STORAGE_BLOCK))return;
+    if(cetta_storage_object(census,c->row,sizeof(*c->row),CETTA_STORAGE_BLOCK))arena_storage_census(&c->row->arena,census);
+}
+static const SpaceSourceCursorOps single_ops={.clone=single_clone,.select=single_select,.next=single_next,
+    .atom=single_atom,.identity=single_identity,.value_byte_limit=single_limit,.free=single_free,.storage=single_storage};
+CettaCandidateStatus cetta_occurrence_source_single(Atom *fact,Atom *identity,size_t maximum,CettaOccurrenceSource **out) {
+    if(!out)return CETTA_CANDIDATE_INVALID;
+    *out=NULL;if(!fact || !identity || atom_has_vars(identity) || !maximum)return CETTA_CANDIDATE_INVALID;
+    CettaOccurrenceSource *s=calloc(1,sizeof(*s));SingleRow *r=calloc(1,sizeof(*r));SingleCursor *c=calloc(1,sizeof(*c));
+    if(!s || !r || !c){free(s);free(r);free(c);return CETTA_CANDIDATE_CAPACITY;}
+    atomic_init(&s->references,1);atomic_init(&r->references,1);arena_init_detached(&r->arena);
+    r->maximum=s->maximum=maximum;s->count=1;s->ops=&single_ops;s->prototype=c;c->row=r;
+    Atom *input[2]={fact,identity};Atom **owned[2]={&r->fact,&r->identity};
+    CettaAtomWireStatus status=ATOM_WIRE_OK;
+    for(unsigned i=0;i<2 && status==ATOM_WIRE_OK;i++) {
+        unsigned char *bytes=NULL;size_t length=0;
+        status=cetta_atom_wire_encode_bounded(input[i],maximum,&bytes,&length);
+        if(status==ATOM_WIRE_OK)status=cetta_atom_wire_decode_bounded(&r->arena,bytes,length,maximum,owned[i]);
+        free(bytes);
+    }
+    if(status!=ATOM_WIRE_OK){cetta_occurrence_source_release(s);return wire_failure(status);}
+    *out=s;return CETTA_CANDIDATE_OK;
+}
 static void packet_release(Packet *p) {
     if (p && atomic_fetch_sub(&p->references,1)==1) {free(p->body);free(p->identity);free(p);}
 }
