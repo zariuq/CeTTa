@@ -403,7 +403,7 @@ static void test_shortest_column(TermUniverse *universe, Arena *arena) {
      * object; the relation column would offer over two hundred. */
     Atom *query = row4(arena, head, output, selected, atom_int(arena, 7));
     CettaIndex *positions = NULL, count = 0u;
-    assert(space_path_index_candidates(&space, query, &positions, &count));
+    assert(space_path_index_candidates(&space, query, &positions, &count, NULL));
     assert(count == 9u);
     free(positions);
     /* A variable head reads only indexes over every row. */

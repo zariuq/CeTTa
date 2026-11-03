@@ -1,0 +1,20 @@
+import Naturals from "RewriteBundles"
+import DuplicatePaths from "RewriteBundles"
+
+Module OrderedRealizations {
+  Theory Ordered(n: Naturals) {
+    DuplicatePaths(n) Terms {
+      NatTri . Nat ::= "tri" "(" Nat "," Nat "," Nat ")";
+    } Rewrites {
+      Nonlinear: (NatAdd value value) ~> (NatS value);
+      RetainedLoop: (NatS value) ~> (NatS value);
+      Triple: (NatTri first second third) ~> (NatAdd first (NatAdd second third));
+    }
+  }
+  Theory Wildcards(n: Naturals) {
+    n Rewrites {
+      RootCapture: value ~> (NatS value);
+    }
+  }
+  theory Ordered
+}

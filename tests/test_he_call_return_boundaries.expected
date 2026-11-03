@@ -1,0 +1,26 @@
+9
+9
+9
+9
+[(freeze 7)]
+[(println! 9)]
+[(B Tail)]
+[Value]
+[(unify X X (value-of) Fail)]
+[((Pair Value Value) (Pair Value Value))]
+[(Pair Value Value)]
+[(Seen NotReducible)]
+[(Seen Empty)]
+[(Value Value)]
+[(Value Value)]
+[Yes]
+[Yes]
+[No]
+[7]
+[()]
+[()]
+[()]
+[()]
+[7]
+[(pair $a $b)]
+[(Error (unify $a A B) IncorrectNumberOfArguments)]

@@ -199,6 +199,10 @@ int main(void) {
     CHECK(!prime_need_arena_audit_read_capture(audit, capture),
           "a hidden dependency-origin name key prevents collection");
     PrimeNeedReadCapture *frozen = prime_need_read_capture_copy(capture);
+    visit = (Visit){.wanted = named};
+    CHECK(frozen && prime_need_read_capture_atoms_satisfy(frozen, count_atom, &visit) &&
+          visit.visits == 1u,
+          "frozen support exposes its actual retained negative-lookup origin");
     PrimeNeedArenaAudit *frozen_audit = prime_need_arena_audit_new(&forbidden);
     CHECK(frozen && frozen_audit && !prime_need_arena_audit_read_capture(frozen_audit, frozen),
           "freezing support does not erase its dependency payload obligation");

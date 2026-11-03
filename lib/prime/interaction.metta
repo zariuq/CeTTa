@@ -163,6 +163,29 @@
 (= (transform $r $sources $template $dest)
    (let $i (__cetta_lib_interaction_fire $r $sources $template $dest) (ia:finish (ia:run $i))))
 
+; Experimental prepared-publication profile for plain native bags. Source
+; matching, computed guards, rights and continuations use the same engine.
+; Private replacement states are completed before any destination is changed.
+(scope:binder (transform-prepared value source body))
+(scope:binder (transform-prepared value source body value))
+(scope:source transform-prepared (, source ...))
+(scope:source transform-prepared (read value pattern))
+(scope:source transform-prepared (take value pattern))
+(scope:source transform-prepared (read pattern))
+(scope:source transform-prepared (take pattern))
+(scope:source transform-prepared (let pattern value))
+(scope:source transform-prepared (absent source))
+(scope:source transform-prepared (absent value pattern))
+(scope:source transform-prepared (every source))
+(scope:source transform-prepared (unique source))
+(scope:source transform-prepared (all source pattern))
+(: transform-prepared (-> %Undefined% Atom Atom %Undefined%))
+(: transform-prepared (-> %Undefined% Atom Atom %Undefined% %Undefined%))
+(= (transform-prepared $r $sources $template)
+   (let $i (__cetta_lib_interaction_fire-prepared $r $sources $template) (ia:finish (ia:run $i))))
+(= (transform-prepared $r $sources $template $dest)
+   (let $i (__cetta_lib_interaction_fire-prepared $r $sources $template $dest) (ia:finish (ia:run $i))))
+
 ;; ---- firing at once, later or always --------------------------------------------
 
 (: await (-> Atom %Undefined%))

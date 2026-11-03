@@ -1,0 +1,573 @@
+{
+  "goal": "Test the Prime candidate as a compositional foundation",
+  "candidate": "concurrent constraint multiset rewriting",
+  "selected_as_default_foundation": false,
+  "defaults_changed": false,
+  "source_profiles": {
+    "call_time_choice": {
+      "source_owner": "Mettapedia.Machines.BranchLocalNeed.CallTimeChoiceSource",
+      "source_judgment": "Mettapedia.Machines.BranchLocalNeed.CallTimeChoice.SourceObserves",
+      "source_execution": "Mettapedia.Machines.BranchLocalNeed.CallTimeChoice.Derives",
+      "target_owner": "Mettapedia.Machines.BranchLocalNeed.CallTimeChoiceOrdered",
+      "target_execution": "Mettapedia.Machines.SharedContinuation.step",
+      "preservation": "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.SourceCompositionalAdequacy.preservation",
+      "no_invention": "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.SourceCompositionalAdequacy.no_invention",
+      "observation": "Ordered outcome occurrences and per-branch effect histories, with cell identities related by ObservationRel",
+      "limits": [
+        "First-order equation heads rather than arbitrary higher-order application",
+        "de Bruijn argument binding rather than named two-way crossings",
+        "A fixed program during each run",
+        "No external transactional world effects in this source profile"
+      ]
+    },
+    "named_scope": {
+      "source_owner": "Mettapedia.GSLT.LanguageDef.TemplateScope",
+      "source_execution": "Mettapedia.GSLT.LanguageDef.TemplateScope.runDir over progM/elabMFormAt",
+      "target_execution": "Mettapedia.GSLT.LanguageDef.TemplateScope.runDir over progLF/elabLFFormAt of explicit scope translation",
+      "exact_comparison": "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.SourceLexicalAdequacy.execution_iff",
+      "observation": "The whole optional ordered result list, each term and final ground store, at the same fuel/path/input store",
+      "limits": [
+        "Ground-store matcher cannot represent an arbitrary alias between distinct unbound names",
+        "Both matching directions remain explicit parameters",
+        "Not composed with the call-time-choice heap machine"
+      ]
+    },
+    "finite_scoped_search": {
+      "source_owner": "Mettapedia.Machines.ScopedCommit",
+      "source_execution": "Mettapedia.Machines.ScopedCommit.eval and selectFrom",
+      "target_owner": "Mettapedia.GSLT.LanguageDef.NativeControlBoundedCursor",
+      "target_execution": "Mettapedia.Machines.Cursor.advance with the actual bounded cursor client",
+      "exact_comparison": "Mettapedia.Machines.ScopedCommitCursor.execution_iff",
+      "observation": "Selected ordered occurrences, world at the pause, and actual live source continuation; an exhausted cursor decodes to stopAnswers",
+      "limits": [
+        "Finite source plans with total primitive actions",
+        "One pull may perform unbounded internal source work relative to the poll counter",
+        "Native disposal/cancellation and C lifetime correctness are not asserted"
+      ]
+    },
+    "recorded_scoped_need": {
+      "source_owner": "Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Computation.ScopedNeedNaturalSemantics",
+      "target_execution": "Mettapedia.Machines.BranchLocalNeed.NeedExecution.runFrontier and Mettapedia.Machines.SharedContinuation.step",
+      "exact_comparison": "Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.ScopedNeedRecordedExecution.eval_iff_recorded_completion",
+      "prefix_no_invention": "Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.ScopedNeedRecordedExecution.shared_prefix_no_invention",
+      "observation": "Exact completed branch world and outcome; ordered whole-frontier comparison requires reference completion.",
+      "limits": [
+        "The smaller ScopedNeed profile is not the first-class PolarizedNeed syntax.",
+        "Depth-first execution can retain and starve a later terminating alternative.",
+        "Named crossings, open stores and irreversible effects are not joined by this theorem."
+      ]
+    },
+    "first_class_source_inventory": {
+      "closest_existing_owner": "Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Computation.PolarizedNeedSyntax",
+      "source_judgment": "Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.PolarizedNeedNaturalSemantics.Eval",
+      "whole_source_integration_proved": false,
+      "ground_alias_separator": "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.OpenAliasBoundary.no_template_ground_store_represents_open_equality",
+      "limits": [
+        "A ground binding store cannot preserve the full family of future assignments satisfying an unresolved equality X=Y."
+      ]
+    },
+    "polarized_logical_tells": {
+      "source_owner": "Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Computation.PolarizedNeedNaturalSemantics",
+      "source_execution": "Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.PolarizedNeedNaturalSemantics.Eval",
+      "target_owner": "Mettapedia.Languages.ProcessCalculi.ConstraintMultisetRewriting.NeedConstraintEffects",
+      "exact_comparison": "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.PolarizedConstraintExecution.source_iff_checked_execution",
+      "ordered_occurrences": "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.PolarizedConstraintExecution.ordered_occurrences_exact",
+      "observation": "Identical completed outcome and full branch world, with a joint solution of chronological logical tells; ordered finite terminal-state occurrences equal the original list filtered by final consistency.",
+      "checker": "Existing total first-order unifier in the explicit FirstOrderProfile; generic comparison requires a sound and complete checker.",
+      "limits": [
+        "Existing emitted labels carry explicit logical identities; source-bound equation expressions and fresh logical-binder elaboration remain open.",
+        "No prefix-sensitive asks or irreversible host effects are interpreted by this logical-tell profile.",
+        "This is not a compiler into physical CMR firings or a default native formation/conversion policy.",
+        "An incomplete or paused solver cannot be interpreted as inconsistent."
+      ]
+    }
+  },
+  "twelve_source_clauses": [
+    {
+      "id": "01-evaluation-positions",
+      "paper_contract": "Evaluation positions; call-by-need function arguments and eager lexical sequencing",
+      "profile_status": "proved for the independent argument profiles and core sequencing",
+      "whole_source_status": "partial",
+      "execution_judgments": [
+        "Mettapedia.Machines.BranchLocalNeed.CallTimeChoice.Derives",
+        "Mettapedia.Machines.BranchLocalNeed.CallTimeChoice.SourceObserves"
+      ],
+      "theorems": [
+        "Mettapedia.Machines.BranchLocalNeed.CallTimeChoice.Composition.seq_iff",
+        "Mettapedia.Machines.BranchLocalNeed.CallTimeChoice.Composition.call_single_iff",
+        "Mettapedia.Machines.BranchLocalNeed.CallTimeChoice.prim_normal_every_binding",
+        "Mettapedia.Machines.BranchLocalNeed.CallTimeChoice.activate_whnf_every_binding",
+        "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.SourceCompositionalAdequacy.preservation",
+        "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.SourceCompositionalAdequacy.no_invention"
+      ],
+      "controls": [
+        "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.SourceCompositionalAdequacy.Controls.source_application_shares_one_argument_occurrence",
+        "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.SourceCompositionalAdequacy.Controls.target_executes_the_compiled_source",
+        "Mettapedia.Machines.BranchLocalNeed.CallTimeChoice.Composition.Controls.eager_binding_runs_before_the_body"
+      ],
+      "gap": "No single compiled surface grammar yet joins first-order equation application, typed Atom/Proc positions, arbitrary higher-order calls and named scope elaboration."
+    },
+    {
+      "id": "02-binding",
+      "paper_contract": "Fresh lexical binding, explicit crossings and captured environments",
+      "profile_status": "proved separately for de Bruijn sequencing and named scope translation",
+      "whole_source_status": "partial",
+      "execution_judgments": [
+        "Mettapedia.Machines.BranchLocalNeed.CallTimeChoice.Derives.seq",
+        "Mettapedia.GSLT.LanguageDef.TemplateScope.runDir"
+      ],
+      "theorems": [
+        "Mettapedia.Machines.BranchLocalNeed.CallTimeChoice.Composition.seq_return_iff",
+        "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.SourceLexicalAdequacy.execution_exact",
+        "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.SourceLexicalAdequacy.execution_iff",
+        "Mettapedia.GSLT.LanguageDef.TemplateScope.let_frame_LF_introduced"
+      ],
+      "controls": [
+        "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.SourceLexicalAdequacy.Controls.lexical_shadow_has_two_distinct_cells",
+        "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.SourceLexicalAdequacy.Controls.explicit_crossing_exposes_the_conflict",
+        "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.SourceLexicalAdequacy.Controls.lambda_parameter_and_store_name_are_distinct",
+        "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.SourceLexicalAdequacy.Controls.translated_refinement_keeps_the_conflict"
+      ],
+      "gap": "Named scopes and both-sided ground refinement are not yet integrated with call-time choice or the contextual CMR equation store."
+    },
+    {
+      "id": "03-quotation",
+      "paper_contract": "Quote captures code without running it; explicit activation uses its captured environment",
+      "profile_status": "proved for the heap-code source profile",
+      "whole_source_status": "partial",
+      "execution_judgments": [
+        "Mettapedia.Machines.BranchLocalNeed.CallTimeChoice.Derives.quote",
+        "Mettapedia.Machines.BranchLocalNeed.CallTimeChoice.Derives.runCode"
+      ],
+      "theorems": [
+        "Mettapedia.Machines.BranchLocalNeed.CallTimeChoice.Composition.quote_iff",
+        "Mettapedia.Machines.BranchLocalNeed.CallTimeChoice.Composition.run_code_iff",
+        "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.SourceCompositionalAdequacy.preservation",
+        "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.SourceCompositionalAdequacy.no_invention"
+      ],
+      "controls": [
+        "Mettapedia.Machines.BranchLocalNeed.CallTimeChoice.Composition.Controls.quotation_keeps_effects_inert",
+        "Mettapedia.Machines.BranchLocalNeed.CallTimeChoice.Composition.Controls.explicit_activation_releases_effects",
+        "Mettapedia.Machines.BranchLocalNeed.CallTimeChoice.Composition.Controls.stored_code_is_a_stronger_observer"
+      ],
+      "gap": "An extensional replacement underneath stored code needs a store/logical relation. Active-context equality intentionally does not claim it."
+    },
+    {
+      "id": "04-held-data",
+      "paper_contract": "Held data positions do not execute payload syntax",
+      "profile_status": "proved at the existing explicit Atom/Proc boundary and code-value semantics",
+      "whole_source_status": "partial",
+      "execution_judgments": [
+        "Mettapedia.Machines.BranchLocalNeed.CallTimeChoice.Derives",
+        "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.AtomProcArgument.pass"
+      ],
+      "theorems": [
+        "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.AtomProcArgument.atom_iff",
+        "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.AtomProcArgument.observe_atom_exact",
+        "Mettapedia.Machines.BranchLocalNeed.CallTimeChoice.Composition.quote_iff"
+      ],
+      "controls": [
+        "Mettapedia.Machines.BranchLocalNeed.CallTimeChoice.Composition.Controls.quotation_keeps_effects_inert",
+        "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.AtomProcArgument.Controls.data_observation_preserves_code"
+      ],
+      "gap": "A source declaration/type-position compiler selecting each argument mode is not provided here."
+    },
+    {
+      "id": "05-shared-choice",
+      "paper_contract": "Two names for one pending computation share its branch-local choice and effects",
+      "profile_status": "proved in the existing need machine and preserved by the candidate adapter",
+      "whole_source_status": "partial",
+      "execution_judgments": [
+        "Mettapedia.Machines.BranchLocalNeed.CallTimeChoice.Derives.need",
+        "Mettapedia.Machines.BranchLocalNeed.CallTimeChoice.Derives.forcePending",
+        "Mettapedia.Machines.BranchLocalNeed.CallTimeChoice.Derives.forceDone"
+      ],
+      "theorems": [
+        "Mettapedia.Machines.BranchLocalNeed.CallTimeChoice.Composition.need_iff",
+        "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.SourceCompositionalAdequacy.preservation",
+        "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.SourceCompositionalAdequacy.no_invention"
+      ],
+      "controls": [
+        "Mettapedia.Machines.BranchLocalNeed.CallTimeChoice.Composition.Controls.shared_choices_are_correlated",
+        "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.SourceCompositionalAdequacy.Controls.target_executes_the_compiled_source"
+      ],
+      "gap": "No assertion about the runtime's dynamic-redefinition residual switches or opaque-owner C implementation."
+    },
+    {
+      "id": "06-independent-choice",
+      "paper_contract": "Independent computation occurrences and explicit resampling remain independent",
+      "profile_status": "proved for independent branches and the explicit name profile",
+      "whole_source_status": "partial",
+      "execution_judgments": [
+        "Mettapedia.Machines.BranchLocalNeed.CallTimeChoice.Derives.choose",
+        "Mettapedia.Machines.BranchLocalNeed.CallTimeChoice.Derives.delay",
+        "Mettapedia.Machines.BranchLocalNeed.CallTimeChoice.Derives.forceThunk"
+      ],
+      "theorems": [
+        "Mettapedia.Machines.BranchLocalNeed.CallTimeChoice.Composition.choose_iff",
+        "Mettapedia.Machines.BranchLocalNeed.CallTimeChoice.Composition.delay_iff",
+        "Mettapedia.Machines.BranchLocalNeed.CallTimeChoice.Composition.Equivalent.choose"
+      ],
+      "controls": [
+        "Mettapedia.Machines.BranchLocalNeed.CallTimeChoice.Composition.Controls.independent_demands_are_not_shared",
+        "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.SourceCompositionalAdequacy.Controls.resampling_is_a_different_profile"
+      ],
+      "gap": "Default argument policy is not changed; source identity/capture integration remains separate."
+    },
+    {
+      "id": "07-ignored-divergence",
+      "paper_contract": "An unused lazy argument need not terminate",
+      "profile_status": "proved, including true nonderivability under eager evaluation",
+      "whole_source_status": "partial",
+      "execution_judgments": [
+        "Mettapedia.Machines.BranchLocalNeed.CallTimeChoice.SourceObserves",
+        "Mettapedia.Machines.BranchLocalNeed.CallTimeChoice.SharedFinished"
+      ],
+      "theorems": [
+        "Mettapedia.Machines.BranchLocalNeed.CallTimeChoice.Witnesses.konstLoop_value_diverges",
+        "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.SourceCompositionalAdequacy.completion_iff"
+      ],
+      "controls": [
+        "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.SourceCompositionalAdequacy.Controls.eager_divergence_has_no_invented_completion",
+        "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.SourceCompositionalAdequacy.Controls.ignored_divergence_is_realized"
+      ],
+      "gap": "The theorem covers the admitted first-order source profile, not every surface builtin."
+    },
+    {
+      "id": "08-answer-order",
+      "paper_contract": "Retain source answer order and occurrence multiplicity",
+      "profile_status": "proved for complete shared-return observations and bounded finite source selection",
+      "whole_source_status": "partial",
+      "execution_judgments": [
+        "Mettapedia.Machines.BranchLocalNeed.CallTimeChoice.Derives",
+        "Mettapedia.Machines.ScopedCommit.selectFrom",
+        "Mettapedia.Machines.Cursor.advance"
+      ],
+      "theorems": [
+        "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.SourceCompositionalAdequacy.preservation",
+        "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.SourceCompositionalAdequacy.no_invention",
+        "Mettapedia.Machines.ScopedCommitCursor.execution_selection",
+        "Mettapedia.Machines.ScopedCommit.selectFrom_prefix"
+      ],
+      "controls": [
+        "Mettapedia.Machines.BranchLocalNeed.CallTimeChoice.Composition.Controls.alternatives_retain_order_and_multiplicity",
+        "Mettapedia.Machines.ScopedCommitCursor.Controls.two_answers_keep_their_effect_order"
+      ],
+      "gap": "A bag-only CMR assembly or an arbitrary scheduler change is not licensed by these ordered theorems."
+    },
+    {
+      "id": "09-two-effects",
+      "paper_contract": "Branch-local state and irreversible external world changes have different backtracking behavior",
+      "profile_status": "proved separately in call-time-choice stores and finite scoped search; cursor bridge preserves the latter",
+      "whole_source_status": "partial",
+      "execution_judgments": [
+        "Mettapedia.Machines.BranchLocalNeed.CallTimeChoice.Derives",
+        "Mettapedia.Machines.ScopedCommit.eval",
+        "Mettapedia.Machines.Cursor.advance"
+      ],
+      "theorems": [
+        "Mettapedia.Machines.BranchLocalNeed.CallTimeChoice.Composition.emit_iff",
+        "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.SourceCompositionalAdequacy.contextual_preservation",
+        "Mettapedia.Machines.ScopedCommitCursor.execution_selection",
+        "Mettapedia.Machines.ScopedCommitCursor.execution_then_resume"
+      ],
+      "controls": [
+        "Mettapedia.Machines.BranchLocalNeed.CallTimeChoice.Composition.Controls.nested_effect_order",
+        "Mettapedia.Machines.ScopedCommitCursor.Controls.local_failure_does_not_undo_world_effects",
+        "Mettapedia.Machines.ScopedCommitCursor.Controls.restart_is_not_resume"
+      ],
+      "gap": "No integrated shared-need plus external transactional-world source semantics or C atomic-publication refinement is claimed."
+    },
+    {
+      "id": "10-step-pause-resume",
+      "paper_contract": "Finite pauses retain exact residual work; administration cannot diverge silently",
+      "profile_status": "proved for shared-return machine prefixes and actual bounded cursor quota composition",
+      "whole_source_status": "partial",
+      "execution_judgments": [
+        "Mettapedia.Machines.SharedContinuation.step",
+        "Mettapedia.Machines.ScopedCommit.selectFrom",
+        "Mettapedia.Machines.Cursor.advance"
+      ],
+      "theorems": [
+        "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.SourceCompositionalAdequacy.pause_reflection",
+        "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.SourceCompositionalAdequacy.pause_realization",
+        "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.SourceCompositionalAdequacy.preparation_completion_iff",
+        "Mettapedia.Machines.ScopedCommit.selectFrom_add",
+        "Mettapedia.Machines.ScopedCommitCursor.execution_add",
+        "Mettapedia.Machines.ScopedCommitCursor.execution_then_resume"
+      ],
+      "controls": [
+        "Mettapedia.Machines.ScopedCommitCursor.Controls.resume_runs_only_the_remaining_effect",
+        "Mettapedia.Machines.ScopedCommitCursor.Controls.restart_is_not_resume"
+      ],
+      "gap": "Cursor polls do not bound the internal execution of a finite ScopedCommit source action. Full surface step metering remains separate."
+    },
+    {
+      "id": "11-stale-dependencies",
+      "paper_contract": "Resumption/reuse checks dependencies and never substitutes a stale conclusion",
+      "profile_status": "proved here only for conservative whole-world currency on read-only finite searches; dependency-certified pure reuse has an existing separate owner",
+      "whole_source_status": "partial",
+      "execution_judgments": [
+        "Mettapedia.Machines.ScopedCommit.resumeIfCurrent",
+        "Mettapedia.Machines.ReadCertifiedQueryReuse.Supported.reuse"
+      ],
+      "theorems": [
+        "Mettapedia.Machines.ScopedCommitCursor.currency_checked_resumption",
+        "Mettapedia.Machines.ReadCertifiedQueryReuse.Supported.reuse_exact"
+      ],
+      "controls": [
+        "Mettapedia.Machines.ScopedCommitCursor.Controls.changed_world_is_refused"
+      ],
+      "gap": "No dependency-sensitive live shared-producer resumption theorem combines program revisions, absent/count reads, own writes and named bindings."
+    },
+    {
+      "id": "12-once-select",
+      "paper_contract": "Once discards one search residual; select retains it and stops work/effects after its quota",
+      "profile_status": "proved for finite scoped search through the existing independent bounded cursor",
+      "whole_source_status": "partial",
+      "execution_judgments": [
+        "Mettapedia.Machines.ScopedCommit.once",
+        "Mettapedia.Machines.ScopedCommit.selectFrom",
+        "Mettapedia.Machines.Cursor.advance"
+      ],
+      "theorems": [
+        "Mettapedia.Machines.ScopedCommitCursor.once_observation",
+        "Mettapedia.Machines.ScopedCommitCursor.execution_iff",
+        "Mettapedia.Machines.ScopedCommitCursor.execution_add",
+        "Mettapedia.Machines.ScopedCommitCursor.execution_then_resume"
+      ],
+      "controls": [
+        "Mettapedia.Machines.ScopedCommitCursor.Controls.zero_demand_runs_no_effect",
+        "Mettapedia.Machines.ScopedCommitCursor.Controls.one_answer_stops_before_the_second_effect",
+        "Mettapedia.Machines.ScopedCommitCursor.Controls.once_keeps_the_first_world_and_discards_later_search",
+        "Mettapedia.Machines.ScopedCommitCursor.Controls.resume_runs_only_the_remaining_effect"
+      ],
+      "gap": "The cursor preserves the residual; concrete disposal/cancellation after once is not proved. General recursive effects and source result packaging remain outside this profile."
+    }
+  ],
+  "theorem_contract_native_map": [
+    {
+      "boundary": "source context compilation",
+      "theorems": [
+        "Mettapedia.Machines.BranchLocalNeed.CallTimeChoice.ContextCompilation.Source.compile_plug",
+        "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.SourceContextCompilation.preservation",
+        "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.SourceContextCompilation.no_invention"
+      ],
+      "contract": "Independent source and target contexts, with the hole variable map accounting for case binders and prior arguments; includes quote/activation compilation without assuming semantic replacement of stored code.",
+      "native_tests": [
+        "tests/prime/need_equation_choice_sharing.metta",
+        "tests/prime/need_quote_preservation.metta"
+      ],
+      "native_correspondence_proved": false
+    },
+    {
+      "boundary": "scoped rho communication",
+      "theorems": [
+        "Mettapedia.Languages.ProcessCalculi.ConstraintMultisetRewriting.ContextualCommunicationAdequacy.source_step_iff_firing",
+        "Mettapedia.Languages.ProcessCalculi.ConstraintMultisetRewriting.ContextualCommunicationAdequacy.selected_firing_no_invention"
+      ],
+      "contract": "Declared parallel communication and reflection profiles, one shared post-store model; name equality and process reduction remain distinct.",
+      "native_tests": [],
+      "native_correspondence_proved": false
+    },
+    {
+      "boundary": "original guarded cuts",
+      "theorems": [
+        "Mettapedia.Languages.ProcessCalculi.ConstraintMultisetRewriting.ContextualProcessCatalogue.cut_process_acceptance_exact"
+      ],
+      "contract": "Compute each original cut from event deltas; changing checking enumeration is separate from reordering actual execution.",
+      "native_tests": [
+        "tests/prime/interaction/computed_dependencies.metta",
+        "tests/prime/interaction/negative_queries.metta"
+      ],
+      "native_correspondence_proved": false
+    },
+    {
+      "boundary": "guarded schema installation",
+      "theorems": [
+        "Mettapedia.Languages.ProcessCalculi.ConstraintMultisetRewriting.ContextualUniformPromotion.Registry.checked_lookup_has_the_original_authorized_execution"
+      ],
+      "contract": "A typed registry binds names to actual bodies; retain primitive prerequisites, guards and situated send rights. Provenance is not installation authority.",
+      "native_tests": [],
+      "native_correspondence_proved": false
+    },
+    {
+      "boundary": "ordered receive",
+      "theorems": [
+        "Mettapedia.Languages.ProcessCalculi.ConstraintMultisetRewriting.OrderedMailboxOccurrence.source_iff_firing",
+        "Mettapedia.Languages.ProcessCalculi.ConstraintMultisetRewriting.OrderedMailboxOccurrence.Fires.no_invention"
+      ],
+      "contract": "One closed ordered queue-state occurrence, a separately implemented saved-prefix scan, exact old queue identity and a consistent frame.",
+      "native_tests": [
+        "tests/prime/interaction/ordered_mailbox.metta"
+      ],
+      "native_correspondence_proved": false
+    },
+    {
+      "boundary": "publication",
+      "theorems": [
+        "Mettapedia.Languages.ProcessCalculi.ConstraintMultisetRewriting.ResourcePublication.valid_publication_result",
+        "Mettapedia.Languages.ProcessCalculi.ConstraintMultisetRewriting.ResourcePublicationFailure.actual_world_is_published_prefix",
+        "Mettapedia.Languages.ProcessCalculi.ConstraintMultisetRewriting.ResourcePublicationFailure.completed_transfer_is_selected_successor"
+      ],
+      "contract": "Complete region images include exactly the retained frame; append-only plans retain physical prefix identity. Reservation checks physical layout as well as logical token. Images own storage but acquire no logical authority sidecars. Counted retirement capacity is prepared per universe under collection inhibition. Each transfer is whole or unchanged; validation stays current across the full publication interval.",
+      "native_hooks": [
+        "space_native_bag_publication_clone",
+        "space_native_bag_publication_prepare",
+        "space_native_bag_publication_publish",
+        "space_native_bag_append_prepare",
+        "space_native_bag_append_reserve",
+        "space_native_bag_append_publish",
+        "term_universe_prepare_releases",
+        "ia_commit_prepare_publication",
+        "ia_commit_take",
+        "ia_commit_moved"
+      ],
+      "native_tests": [
+        "tests/test_interaction_commit_protocol.c"
+      ],
+      "native_correspondence_proved": false
+    },
+    {
+      "boundary": "immutable HOL request workflow",
+      "theorems": [],
+      "contract": "An owned immutable checkpoint selects the actual checking history. Current theory occurrence, source observations and facets are validated before publishing an owned proof and reply. The checked-sequent consumer validates the authentic theorem under both recorded and current histories, with explicit ID/theory argument crossings. Hypotheses are retained.",
+      "native_hooks": [
+        "check_dag",
+        "cetta_hol_dispatch",
+        "ia_machine_prefix_current",
+        "op_compute",
+        "op_commit_profile"
+      ],
+      "native_tests": [
+        "tests/hol_light/test_bridge.c",
+        "tests/prime/interaction/native_hol_workflow.metta",
+        "tests/test_interaction_queries.c",
+        "tests/prime/interaction/query_argument_crossing.metta"
+      ],
+      "native_correspondence_proved": false
+    },
+    {
+      "boundary": "ownership and lifecycle",
+      "theorems": [
+        "Mettapedia.Languages.ProcessCalculi.ConstraintMultisetRewriting.ResourceObservations.preserves_runs"
+      ],
+      "contract": "Declared observation retention is separate from C lifetime. Unknown owners, pending readers, cancellation and captured prefixes require their actual ownership contracts.",
+      "native_tests": [
+        "tests/test_prime_tail_gc_ownership.c",
+        "tests/test_arena_retained_ownership.c",
+        "tests/test_prime_need_audit.c",
+        "tests/test_shared_return_producer.c",
+        "tests/test_interaction_queries.c"
+      ],
+      "native_correspondence_proved": false
+    },
+    {
+      "boundary": "actual scoped producer commutation",
+      "theorems": [
+        "Mettapedia.Languages.ProcessCalculi.ConstraintMultisetRewriting.ContextualExecutionCommutation.actual_adjacent_producers_preserve_formation",
+        "Mettapedia.Languages.ProcessCalculi.ConstraintMultisetRewriting.ContextualExecutionCommutation.actual_captures_preserved_without_unused_scope_bound",
+        "Mettapedia.Languages.ProcessCalculi.ConstraintMultisetRewriting.ContextualExecutionCommutation.EndpointCoverageRenaming.term_formation_iff"
+      ],
+      "contract": "Construct both actual paths, with an explicit nonidentity fresh-name exchange fixing original captures. Preserve all rows, equations, templates, occupied scopes and retained-root multiplicity. Empty incoming equations and no take/read/tell/guard ports are explicit restrictions.",
+      "native_tests": [],
+      "native_correspondence_proved": false
+    },
+    {
+      "boundary": "explicit binding permissions and joint observations",
+      "theorems": [
+        "Mettapedia.Languages.ProcessCalculi.ConstraintMultisetRewriting.ContextualBindingPermissions.Permitted.joint_possible_iff",
+        "Mettapedia.Languages.ProcessCalculi.ConstraintMultisetRewriting.ContextualBindingPermissionFirings.firing_preserves_joint_possibilities",
+        "Mettapedia.Languages.ProcessCalculi.ConstraintMultisetRewriting.ContextualBindingPermissionFirings.prepared_input_ask_iff"
+      ],
+      "contract": "Explicit grants are separated from the transitive old equation component of protected observations. One model preserves the whole joint caller vector. Guard support includes live-row variables and captured schema names. Sufficient permission checks do not claim complete acceptance or literal equality of solver representations.",
+      "native_tests": [],
+      "native_correspondence_proved": false
+    },
+    {
+      "boundary": "recorded completion and scheduler limits",
+      "theorems": [
+        "Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.ScopedNeedRecordedExecution.eval_iff_recorded_completion",
+        "Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.ScopedNeedRecordedExecution.shared_prefix_no_invention",
+        "Mettapedia.Machines.BranchLocalNeed.OrderedPathsControls.earlier_divergence_prevents_all_later_answers"
+      ],
+      "contract": "Every recorded completed branch has an independent natural derivation; a terminating branch alone does not establish termination or fair exploration of all siblings.",
+      "native_tests": [
+        "tests/prime/need_equation_choice_sharing.metta"
+      ],
+      "native_correspondence_proved": false
+    },
+    {
+      "boundary": "first-class computations with persistent logical tells",
+      "theorems": [
+        "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.PolarizedConstraintExecution.source_iff_checked_execution",
+        "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.PolarizedConstraintExecution.ordered_occurrences_exact",
+        "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.PolarizedConstraintExecution.FirstOrderProfile.check_exact"
+      ],
+      "contract": "Use actual polarized Need successors, rejecting an inconsistent store before scheduling its continuation. The proof derives all intermediate consistency from the final joint model. Retain captured thunks, shared producer identity, branch worlds and surviving ordered duplicates.",
+      "native_tests": [],
+      "native_correspondence_proved": false
+    },
+    {
+      "boundary": "actual selected take/read commutation",
+      "theorems": [
+        "Mettapedia.Languages.ProcessCalculi.ConstraintMultisetRewriting.ContextualSelectedExecution.actual_independent_selected_firings_commute",
+        "Mettapedia.Languages.ProcessCalculi.ConstraintMultisetRewriting.ContextualSelectedExecution.EndpointPermutation.joint_models_iff",
+        "Mettapedia.Languages.ProcessCalculi.ConstraintMultisetRewriting.ContextualSelectedExecution.actual_original_captures_fixed"
+      ],
+      "contract": "Construct both actual contextual firing paths under the original occurrence independence condition. Repeated reads may share a row; takes consume real occurrences. Unequal port counts use explicit scope maps. The complete joint equation list is preserved by permutation. Selected template views are rigid and incoming equations rigid-reflexive; nontrivial unification, tells and guards remain outside this theorem.",
+      "native_tests": [
+        "tests/prime/interaction/identity.metta",
+        "tests/prime/interaction/pattern_scope.metta"
+      ],
+      "native_correspondence_proved": false
+    },
+    {
+      "boundary": "per-use logical instantiation through actual execution",
+      "theorems": [
+        "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.PolarizedScopedInstantiation.checked_step_map",
+        "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.PolarizedScopedInstantiation.checked_replay_map",
+        "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.PolarizedScopedInstantiation.checked_replay_reflects",
+        "Mettapedia.Languages.MeTTa.PrimeCandidates.Native.PolarizedScopedInstantiation.executed_family_consistent_iff"
+      ],
+      "contract": "Explicit activation maps fresh private logical labels and fixes intentional captures throughout code, captured values, closures, heaps, cached outcomes and effects. Replay preserves successor indices and has no invention from the mapped image. Joint actual histories require per-use solutions agreeing on shared captures. Fresh scopes are supplied; automatic allocation, dynamic equation expressions and named crossing compilation remain open.",
+      "native_tests": [],
+      "native_correspondence_proved": false
+    },
+    {
+      "boundary": "native headed candidate retrieval after append",
+      "theorems": [],
+      "contract": "Reuse a stored prefix only with equal universe identity, storage epoch and prefix epoch, no marked storage or outstanding pins during catch-up, and a valid source length. Index the suffix before advancing the ceiling. Preserve keyed, open-head and whole-row-variable postings, authored arity, occurrence order and duplicate positions. Repeated-variable queries still use canonical matching. Initial construction, other query shapes and whole-workflow cost correspondence remain explicit obligations.",
+      "native_hooks": [
+        "head_row_kind",
+        "head_index_extend",
+        "space_head_index_open",
+        "space_head_index_next",
+        "native_head_candidates",
+        "native_candidates"
+      ],
+      "native_tests": [
+        "tests/test_interaction_commit_protocol.c",
+        "tests/test_space_path_index.c",
+        "tests/test_shared_space_concurrent_index.c"
+      ],
+      "native_correspondence_proved": false
+    }
+  ],
+  "executable_service": "lib/prime/hol_service.metta",
+  "experimental_native_profile": "transform-prepared",
+  "regression_gate": "tests/support/check_prime_compositional.py",
+  "unclosed_obligations": [
+    "One complete source semantics joining named crossings, shared demand, higher-order application, external effects and revision-sensitive resumption.",
+    "Actual reordered heterogeneous contextual executions with nontrivial unification, tells, original guard cuts and general solver-helper-frame transport; rigid selected-input swaps are proved.",
+    "Source-to-native C correspondence for the joined service, including complete dependencies, binding authority and ownership.",
+    "Reactive source/notification join, general cancellation/reclamation and stated fairness assumptions.",
+    "Locality and cost of a publisher beyond the serialized whole-touched-bag reference."
+  ],
+  "excluded": [
+    "Flower implementation changes",
+    "MM-to-MM0 corpus conversion"
+  ],
+  "assessment": "Qualified component comparisons and executable native experiments support continued testing; they do not establish whole-Prime compositional adequacy.",
+  "executable_consumer": "hol:checked-sequent THEORIES RESULTS ID THEORY"
+}

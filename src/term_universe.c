@@ -7695,6 +7695,24 @@ static void term_universe_counting_trap(const TermUniverse *universe,
 }
 #endif
 
+bool term_universe_prepare_releases(TermUniverse *universe, size_t count) {
+    if (!universe || !universe->counting || !count) return true;
+    size_t limit = SIZE_MAX / sizeof(*universe->zero);
+    if (universe->zero_len > limit || count > limit - universe->zero_len) return false;
+    size_t need = universe->zero_len + count;
+    if (need <= universe->zero_cap) return true;
+    size_t capacity = universe->zero_cap ? universe->zero_cap : 1024u;
+    while (capacity < need) {
+        if (capacity > limit / 2u) { capacity = need; break; }
+        capacity *= 2u;
+    }
+    size_t *reserved = realloc(universe->zero, capacity * sizeof(*reserved));
+    if (!reserved) return false;
+    universe->zero = reserved;
+    universe->zero_cap = capacity;
+    return true;
+}
+
 /* Make the entry at physical INDEX a candidate, once. */
 static void term_universe_zero_push(TermUniverse *universe, size_t index) {
     uint64_t bit = (uint64_t)1u << (index & 63u);

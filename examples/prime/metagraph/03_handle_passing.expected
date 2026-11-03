@@ -1,0 +1,7 @@
+[()]
+[(exchange (p ((p-received (capital france) paris))) (q ((q-answered (capital france)))) (c (board ()) (open-location ((Error transform (not-formed (location-variable $r))))) (own ()) (on-board ())))]
+[(shared-variable (p-variable-is Variable) (q-row ((france paris))))]
+[(eavesdrop (c ((c-took (capital peru) lima))) (p (())) (q ((q-answered (capital peru)))))]
+[(q-installed-first (c ()) (p ((p-received (capital peru) lima))) (q ((q-answered (capital peru)))))]
+[(private-inbox (p ((p-received (capital peru) lima))) (c ()))]
+[(many-inboxes (p1 ((p-received (capital france) paris))) (p2 ((p-received (capital peru) lima))) (q ((p2 (capital peru)) (p1 (capital france)))))]

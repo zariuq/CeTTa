@@ -1443,7 +1443,14 @@ static void test_native_evaluator_boundary(bool oem) {
                 assert(outcome.results.len == 1u);
                 assert(atom_eq(outcome.results.items[0], atom_int(&arena, 9)));
             } else if (mode == 7u) {
-                assert(outcome.completion == CETTA_EVAL_INCOMPLETE_CAPACITY);
+                /* The delay installer validates packet shape before any
+                 * allocation or withdrawal. Malformed host metadata is a
+                 * host failure; capacity names an actual resource refusal. */
+                if (outcome.completion != CETTA_EVAL_INCOMPLETE_HOST_FAILURE)
+                    fprintf(stderr, "malformed suspension dialect=%u mode=%u completion=%u rows=%llu\n",
+                            dialect, mode, (unsigned)outcome.completion,
+                            (unsigned long long)outcome.results.len);
+                assert(outcome.completion == CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
             } else {
                 if (outcome.completion != CETTA_EVAL_COMPLETE)
                     fprintf(stderr, "native boundary dialect=%u mode=%u completion=%u rows=%llu\n",

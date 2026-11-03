@@ -1,0 +1,40 @@
+-- HE's declarations of the separating programme read in the curried HOL contract, as an
+-- extension of Mario Carneiro's HOL in MM0: an HE base type is a type constant, a declaration
+-- an axiom typing a term constant, and an HE arrow the curried function type.  HE's type
+-- variables are the axioms' variables of sort `type`.
+--
+--   (: sA SA) (: sB SB) (: one1 Number) (: + (-> Number Number Number))
+--   (: sk (-> SA (-> SB SC))) (: sg (-> SA SB SC)) (: sapply (-> (-> $a $b) $a $b))
+
+term heSA: type;
+term heSB: type;
+term heSC: type;
+term heNumber: type;
+term he_sA: term;
+term he_sB: term;
+term he_one: term;
+term he_plus: term;
+term he_sk: term;
+term he_sg: term;
+term he_sapply: term;
+axiom he_sA_ty (G: wff): $ G |- he_sA: heSA $;
+axiom he_sB_ty (G: wff): $ G |- he_sB: heSB $;
+axiom he_one_ty (G: wff): $ G |- he_one: heNumber $;
+axiom he_plus_ty (G: wff): $ G |- he_plus: heNumber -> heNumber -> heNumber $;
+axiom he_sk_ty (G: wff): $ G |- he_sk: heSA -> heSB -> heSC $;
+axiom he_sg_ty (G: wff): $ G |- he_sg: heSA -> heSB -> heSC $;
+axiom he_sapply_ty (G: wff) (a b: type): $ G |- he_sapply: (a -> b) -> a -> b $;
+
+-- Judgments HE also makes.
+-- ((sk sA) sB) : SC
+theorem he_s05 (G: wff): $ G |- he_sk @ he_sA @ he_sB: heSC $;
+-- (sg sA sB) : SC
+theorem he_sg_saturated (G: wff): $ G |- he_sg @ he_sA @ he_sB: heSC $;
+
+-- Judgments HE refuses, which the curried reading proves.
+-- (+ 1): a partial application.
+theorem he_s01 (G: wff): $ G |- he_plus @ he_one: heNumber -> heNumber $;
+-- (sg sA): a partial application.
+theorem he_s02 (G: wff): $ G |- he_sg @ he_sA: heSB -> heSC $;
+-- (sapply sg sA): the scheme variable $b stands for the curried arrow (-> SB SC).
+theorem he_s07 (G: wff): $ G |- he_sapply @ he_sg @ he_sA: heSB -> heSC $;

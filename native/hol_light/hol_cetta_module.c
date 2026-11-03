@@ -46,6 +46,7 @@ typedef struct {
 } MemoEntry;
 typedef struct {
     Session *session;
+    HolRef environment; /* the immutable history selected for this call */
     struct CettaLibraryContext *host;
     Arena *arena;
     HolStatus status;
@@ -271,9 +272,9 @@ static bool read_finish(Call *c, ReadFrame *f, HolRef *out) {
     switch (f->op) {
     case R_QUOTE: *out = args[0]; return true;
     case R_TYVAR: status = hol_mk_vartype(k, f->name, out); break;
-    case R_TYPE: status = hol_mk_type(k, c->session->env, f->name, args, f->count, out); break;
+    case R_TYPE: status = hol_mk_type(k, c->environment, f->name, args, f->count, out); break;
     case R_VAR: status = hol_mk_var(k, f->name, args[0], out); break;
-    case R_CONST: status = hol_mk_const_at(k, c->session->env, f->name, args[0], out); break;
+    case R_CONST: status = hol_mk_const_at(k, c->environment, f->name, args[0], out); break;
     case R_COMB: status = hol_mk_comb(k, args[0], args[1], out); break;
     case R_ABS: status = hol_mk_abs(k, args[0], args[1], out); break;
     default: return fail(c, HOL_MALFORMED, "term constructor");
@@ -299,6 +300,11 @@ static bool read_value(Call *c, Atom *x, bool type, HolRef *out) {
                 Held *h = handle_arg(c->host, x, type ? KIND_TYPE : KIND_TERM);
                 if (h) {
                     if (h->session != c->session) { fail(c, HOL_FOREIGN, "other HOL session"); break; }
+                    bool admitted = false;
+                    if (!check(c, hol_env_admits(c->session->kernel, c->environment,
+                                                h->ref, &admitted)) ||
+                        !(admitted || fail(c, HOL_REFUSED, "value outside checking environment")))
+                        break;
                     if (!check(c, hol_ref_dup(c->session->kernel, h->ref, &value))) break;
                 } else {
                     if (x->kind != ATOM_EXPR || x->expr.len < 2) {
@@ -767,7 +773,13 @@ static Atom *check_dag(Call *c, Atom *rows, Atom *root_arg) {
         ++index.count;
     }
     if (!index.count || !dag_slot(&index, root)->ref) fail(c, HOL_REFUSED, "proof root not checked");
-    else result = publish(c, KIND_THM, dag_slot(&index, root)->ref);
+    else {
+        HolRef theorem = dag_slot(&index, root)->ref;
+        bool admitted = false;
+        if (check(c, hol_env_admits(c->session->kernel, c->environment, theorem, &admitted)) &&
+            (admitted || fail(c, HOL_REFUSED, "proof outside checking environment")))
+            result = publish(c, KIND_THM, theorem);
+    }
 done:
     free(index.entries);
     return result;
@@ -989,7 +1001,7 @@ Atom *cetta_hol_dispatch(struct CettaLibraryContext *host, Space *space, Arena *
     }
     Session *session = n ? handle_arg(host, args[0], KIND_SESSION) : NULL;
     Held *h = NULL; const char *kind = NULL;
-    const char *kinds[] = {KIND_THM, KIND_TERM, KIND_TYPE};
+    const char *kinds[] = {KIND_THM, KIND_TERM, KIND_TYPE, KIND_ENV};
     for (size_t i = 0; !session && i < sizeof kinds / sizeof kinds[0]; ++i) {
         h = n ? handle_arg(host, args[0], kinds[i]) : NULL;
         if (h) { session = h->session; kind = kinds[i]; }
@@ -997,7 +1009,8 @@ Atom *cetta_hol_dispatch(struct CettaLibraryContext *host, Space *space, Arena *
     if (!session) return error_atom(arena, HOL_MALFORMED, "expected a live HOL session or value");
     if (interrupted(NULL)) return error_atom(arena, HOL_INTERRUPTED, "interrupted");
     pthread_mutex_lock(&session->gate);
-    Call c = {.session = session, .host = host, .arena = arena, .remaining = session->budget};
+    Call c = {.session = session, .environment = session->env,
+              .host = host, .arena = arena, .remaining = session->budget};
     HolOwner owner = hol_owner_new(session->kernel);
     if (!owner) {
         Atom *error = error_atom(arena, hol_last_status(session->kernel), hol_reason_name(hol_last_reason(session->kernel)));
@@ -1006,7 +1019,21 @@ Atom *cetta_hol_dispatch(struct CettaLibraryContext *host, Space *space, Arena *
     }
     HolOwner previous = hol_owner_set_current(session->kernel, owner);
     Atom *result = NULL;
-    if (!h) result = session_call(&c, op, args, n);
+    if (h && !strcmp(kind, KIND_ENV)) {
+        /* Checking a checkpoint never restores or temporarily replaces the
+         * session's current world. Its owner retains this exact history. */
+        c.environment = h->ref;
+        if (!strcmp(op, "check-dag-at") && n == 3)
+            result = check_dag(&c, args[1], args[2]);
+        else if (!strcmp(op, "admits-at") && n == 2) {
+            Held *theorem = held(&c, args[1], KIND_THM);
+            bool admitted = false;
+            if (theorem && check(&c, hol_env_admits(session->kernel, h->ref,
+                                                   theorem->ref, &admitted)))
+                result = atom_bool(arena, admitted);
+        } else fail(&c, HOL_MALFORMED, "environment operation or arity");
+    }
+    else if (!h) result = session_call(&c, op, args, n);
     else if (!strcmp(kind, KIND_THM)) result = theorem_call(&c, op, h, args, n);
     else if (n == 1 && ((!strcmp(kind, KIND_TERM) && !strcmp(op, "term-data")) ||
                         (!strcmp(kind, KIND_TYPE) && !strcmp(op, "type-data"))))

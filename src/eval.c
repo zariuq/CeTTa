@@ -82909,6 +82909,7 @@ static size_t prime_need_call_thunk_hash(uint64_t key) {
 static bool prime_need_call_input_cells_index(PrimeNeedCallInputs *inputs) {
     if(!inputs||inputs->cell_index||inputs->cell_index_capacity)return false;
     if(!inputs->cell_count)return true;
+    if(!inputs->cells)return false;
     size_t capacity=16u;
     while(capacity/2u<inputs->cell_count) {
         if(capacity>SIZE_MAX/2u)return false;
@@ -82923,9 +82924,34 @@ static bool prime_need_call_input_cells_index(PrimeNeedCallInputs *inputs) {
         size_t slot=prime_need_call_thunk_hash(thunk)&mask;
         while(index[slot]&&inputs->cells[index[slot]-1u].thunk!=thunk)
             slot=(slot+1u)&mask;
-        if(index[slot]) {free(index);return false;}
+        if(index[slot]) {
+            const PrimeNeedCallInputCell *first=&inputs->cells[index[slot]-1u];
+            const PrimeNeedCallInputCell *next=&inputs->cells[i];
+            if(first->update!=next->update || first->cache!=next->cache ||
+                first->role!=next->role) {free(index);return false;}
+            continue;
+        }
         index[slot]=i+1u;
     }
+    /* Separate syntax/provenance paths can observe one shared cell. Keep
+     * scanning those paths, but canonicalize the dependency domain itself.
+     * Validation above finishes before this private vector is compacted. */
+    size_t kept=0u;
+    for(size_t i=0u;i<inputs->cell_count;i++) {
+        uint64_t thunk=inputs->cells[i].thunk;
+        size_t slot=prime_need_call_thunk_hash(thunk)&mask;
+        while(inputs->cells[index[slot]-1u].thunk!=thunk)
+            slot=(slot+1u)&mask;
+        if(index[slot]!=i+1u)continue;
+        inputs->cells[kept]=inputs->cells[i];
+        index[slot]=++kept;
+    }
+    if(kept!=inputs->cell_count) {
+        PrimeNeedCallInputCell *cells=realloc(inputs->cells,kept*sizeof(*cells));
+        if(!cells) {free(index);return false;}
+        inputs->cells=cells;
+    }
+    inputs->cell_count=kept;
     inputs->cell_index=index;inputs->cell_index_capacity=capacity;
     return true;
 }
