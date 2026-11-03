@@ -759,7 +759,7 @@ static void he_canonical_resume_result(HeCanonicalFrame *frame) {
             if (preview->kind == ATOM_EXPR && preview->expr.len &&
                 (!frame->type || eval_atom_type_demand(a, candidate,
                     frame->type) == HE_TYPE_INTERPRET))
-                he_mark_answers_of(a, candidate, &frame->work, 0u);
+                he_mark_normal_answers_of(a, candidate, &frame->work, 0u);
             he_canonical_publish(frame, &frame->work, false);
             he_canonical_pop();
             return;
@@ -820,14 +820,16 @@ static void he_canonical_resume_bind(HeCanonicalFrame *frame) {
     bool kept = atom_is_legacy_empty_or_error(frame->atom) ||
         demand == HE_TYPE_KEEP || frame->atom->kind == ATOM_VAR ||
         (!frame->typed && atom_eval_is_immediate_value(frame->atom, frame->fuel));
-    if (kept ||
-        (atom_is_symbol_id(type, g_builtin_syms.undefined_type) &&
-         eval_has_normal_constructor_value(frame->space, a, frame->atom, frame->fuel)) ||
+    bool normal = !kept &&
+        atom_is_symbol_id(type, g_builtin_syms.undefined_type) &&
+        eval_has_normal_constructor_value(frame->space, a, frame->atom, frame->fuel);
+    if (kept || normal ||
         (demand == HE_TYPE_INTERPRET &&
          he_value_certified(frame->space, frame->fuel, frame->atom,
              frame->typed ? type : NULL))) {
         outcome_set_add(frame->target,
-            kept ? frame->atom : he_answer_as_value(a, frame->atom),
+            kept ? frame->atom : normal ? he_normal_value(a, frame->atom)
+                : he_answer_as_value(a, frame->atom),
             &frame->env);
         he_canonical_pop();
     } else if (demand == HE_TYPE_CAST) {
@@ -893,13 +895,15 @@ static void he_canonical_resume_evaluate(HeCanonicalFrame *frame) {
     }
     bool kept = atom_is_legacy_empty_or_error(frame->atom) ||
         demand == HE_TYPE_KEEP || frame->atom->kind == ATOM_VAR;
-    if (kept ||
-        (atom_is_symbol_id(type, g_builtin_syms.undefined_type) &&
-         eval_has_normal_constructor_value(frame->space, a, frame->atom, frame->fuel)) ||
+    bool normal = !kept &&
+        atom_is_symbol_id(type, g_builtin_syms.undefined_type) &&
+        eval_has_normal_constructor_value(frame->space, a, frame->atom, frame->fuel);
+    if (kept || normal ||
         (demand == HE_TYPE_INTERPRET &&
          he_value_certified(frame->space, frame->fuel, frame->atom, type))) {
         outcome_set_add(frame->target,
-            kept ? frame->atom : he_answer_as_value(a, frame->atom), &empty);
+            kept ? frame->atom : normal ? he_normal_value(a, frame->atom)
+                : he_answer_as_value(a, frame->atom), &empty);
         he_canonical_pop();
     } else if (demand == HE_TYPE_CAST) {
         ResultSet cast;
@@ -1041,8 +1045,13 @@ static void he_canonical_resume_state(HeCanonicalFrame *frame) {
     }
     if (atom_head_symbol_id(frame->atom) == g_builtin_syms.get_state) {
         StateCell *cell = payload_resolve_state_read(state_ref->ground.ptr);
-        outcome_set_add_prefixed(a, frame->target, payload_rebind_resources(a, cell->value),
-            &reference->env, &frame->env, frame->preserve_bindings);
+        __attribute__((cleanup(state_target_guard_leave)))
+        StateTargetGuard read_target = {0};
+        state_target_guard_enter(&read_target, cell);
+        Atom *value = eval_state_read_value(a, cell);
+        if (value)
+            outcome_set_add_prefixed(a, frame->target, value,
+                &reference->env, &frame->env, frame->preserve_bindings);
         frame->index++;
         return;
     }
@@ -1466,9 +1475,14 @@ static void he_canonical_dispatch_call(HeCanonicalFrame *frame, Outcome *call) {
                     atom_symbol(a, "IncorrectNumberOfArguments")), env);
             } else {
                 CaptureClosure *closure = head->ground.ptr;
-                he_canonical_push(HE_CANONICAL_CAPTURE,
-                    closure->space_ptr, a, source, NULL, frame->fuel,
-                    env, frame->preserve_bindings, sink);
+                Space *context = closure ? eval_capture_context_space(
+                    a, closure->space_ptr, true) : NULL;
+                if (context)
+                    he_canonical_push(HE_CANONICAL_CAPTURE,
+                        context, a, source, NULL, frame->fuel,
+                        env, frame->preserve_bindings, sink);
+                else
+                    eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
             }
             return;
         }
@@ -1527,6 +1541,13 @@ static void he_canonical_dispatch_call(HeCanonicalFrame *frame, Outcome *call) {
             }
         }
         he_stuck_call_outcome(a, call);
+        if (call->kind == CETTA_OUTCOME_INLINE && call->atom &&
+            !variant_instance_present(&call->variant)) {
+            Atom *value = he_compat_stuck_value(a, call->atom, frame->atom);
+            if (call->materialized_atom == call->atom)
+                call->materialized_atom = value;
+            call->atom = value;
+        }
         outcome_set_add_existing(sink, call);
         outcome_set_free(&pending);
         return;
@@ -1537,7 +1558,8 @@ static void he_canonical_dispatch_call(HeCanonicalFrame *frame, Outcome *call) {
     CettaCount reducing = 0u;
     for (CettaCount i = 0u; i < pending.len; i++) {
         if (he_not_reducible(outcome_preview_atom(&pending.items[i])))
-            outcome_set_add(sink, he_stuck_call_value(a, source),
+            outcome_set_add(sink, he_compat_stuck_value(a,
+                he_stuck_call_value(a, source), frame->atom),
                 &pending.items[i].env);
         else
             reducing++;
@@ -2038,15 +2060,16 @@ static void he_canonical_resume_space(HeCanonicalFrame *frame) {
     if (frame->phase == 2u) {
         if (frame->live[0]) {
             Space *previous = resolve_registry_space_payload(g_registry, frame->live[0]);
-            Space *folded = space_algebra_fresh_result(a);
+            bool is_meet = atom_is_symbol_id(
+                frame->atom->expr.elems[0], g_builtin_syms.comma);
+            Space *folded = is_meet ? space_algebra_fresh_result(a)
+                : space_algebra_union_result(a, previous, space);
             if (!folded) {
                 eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
                 return;
             }
-            if (atom_is_symbol_id(frame->atom->expr.elems[0], g_builtin_syms.comma))
+            if (is_meet)
                 space_algebra_add_meet(folded, previous, space);
-            else
-                space_algebra_add_union(folded, previous, space);
             space = folded;
         }
         frame->live[0] = atom_space(a, space);

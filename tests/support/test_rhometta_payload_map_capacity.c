@@ -8,6 +8,18 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
+
+void *__real_cetta_fallible_malloc(size_t size);
+static bool refuse_scope_allocation;
+
+void *__wrap_cetta_fallible_malloc(size_t size) {
+    if (refuse_scope_allocation) {
+        refuse_scope_allocation = false;
+        return NULL;
+    }
+    return __real_cetta_fallible_malloc(size);
+}
 
 static bool has_flag(const Atom *atom, uint32_t flag) {
     return atom && (atom->flags & flag) != 0;
@@ -56,9 +68,12 @@ static int test_atom_hashflags_soundness(void) {
     if (atom_hash_cache_load(stable_expr_a) == 0u)
         return fail("stable expression hash was not cached");
 
-    Atom *space = atom_space(&arena, (void *)(uintptr_t)0x10u);
-    Atom *state = atom_state(&arena, (StateCell *)(uintptr_t)0x20u);
-    Atom *capture = atom_capture(&arena, (CaptureClosure *)(uintptr_t)0x30u);
+    Space context = {0};
+    StateCell cell = {0};
+    CaptureClosure closure = {.space_ptr = &context};
+    Atom *space = atom_space(&arena, &context);
+    Atom *state = atom_state(&arena, &cell);
+    Atom *capture = atom_capture(&arena, &closure);
     /* A foreign record begins with its hold; one without retain and
      * release functions is not held by the arena. */
     static CettaForeignHold unheld_foreign = {0};
@@ -138,7 +153,8 @@ static int test_registry_growth(void) {
 }
 
 static int test_eval_redirect_growth(void) {
-    eval_payload_redirects_begin(NULL);
+    if (!eval_payload_redirects_begin(NULL))
+        return fail("payload redirect scope could not begin");
     for (uintptr_t i = 1; i <= 80; i++) {
         if (!eval_payload_note_space_redirect(
                 (Space *)(i << 4), (Space *)((i + 1000u) << 4)))
@@ -171,12 +187,85 @@ static int test_eval_redirect_growth(void) {
     return 0;
 }
 
+/* A nested payload owns its own cleanup inventory. Closing it must restore
+ * both inline and spilled parent maps and leave parent resources alive. */
+static int test_nested_payload_scopes(void) {
+    TermUniverse universe;
+    term_universe_init(&universe);
+    const size_t baseline = universe.root_provider_len;
+    const uintptr_t sizes[] = {3u, 80u};
+    for (size_t trial = 0u; trial < 2u; trial++) {
+        Space *parent = malloc(sizeof(*parent));
+        Space *child = malloc(sizeof(*child));
+        StateCell *parent_cell = calloc(1u, sizeof(*parent_cell));
+        StateCell *child_cell = calloc(1u, sizeof(*child_cell));
+        if (!parent || !child || !parent_cell || !child_cell)
+            return fail("payload scope fixture allocation failed");
+        space_init_with_universe(parent, &universe);
+        space_init_with_universe(child, &universe);
+        const size_t both = universe.root_provider_len;
+        if (!eval_payload_redirects_begin(NULL) ||
+            !eval_payload_track_scratch_space(parent) ||
+            !eval_payload_track_scratch_space(parent) ||
+            !eval_payload_track_scratch_state(parent_cell) ||
+            !eval_payload_track_scratch_state(parent_cell))
+            return fail("parent payload resources could not be tracked");
+        for (uintptr_t i = 1u; i <= sizes[trial]; i++) {
+            if (!eval_payload_note_space_redirect((Space *)(i << 4), parent) ||
+                !eval_payload_note_state_redirect((StateCell *)(i << 4), parent_cell))
+                return fail("parent payload map insertion failed");
+        }
+        refuse_scope_allocation = true;
+        if (eval_payload_redirects_begin(NULL) || refuse_scope_allocation ||
+            eval_payload_space_redirect_count() != sizes[trial] ||
+            eval_payload_state_redirect_count() != sizes[trial] ||
+            universe.root_provider_len != both)
+            return fail("failed payload begin changed its parent's ownership");
+        if (!eval_payload_redirects_begin(NULL) ||
+            eval_payload_space_redirect_count() != 0u ||
+            eval_payload_state_redirect_count() != 0u ||
+            !eval_payload_track_scratch_space(child) ||
+            !eval_payload_track_scratch_state(child_cell) ||
+            !eval_payload_note_space_redirect((Space *)16u, child) ||
+            !eval_payload_note_state_redirect((StateCell *)16u, child_cell))
+            return fail("nested payload did not start with independent maps");
+        eval_payload_redirects_end();
+        if (eval_payload_space_redirect_count() != sizes[trial] ||
+            eval_payload_state_redirect_count() != sizes[trial])
+            return fail("nested payload teardown discarded parent maps");
+        if (universe.root_provider_len != both - 2u)
+            return fail("nested payload teardown retired the parent's Space");
+        for (CettaCount i = 0u; i < sizes[trial]; i++) {
+            Space *original = NULL, *redirect = NULL;
+            StateCell *original_cell = NULL, *redirect_cell = NULL;
+            if (!eval_payload_space_redirect_at(i, &original, &redirect) ||
+                original != (Space *)(((uintptr_t)i + 1u) << 4) || redirect != parent ||
+                !eval_payload_state_redirect_at(i, &original_cell, &redirect_cell) ||
+                original_cell != (StateCell *)(((uintptr_t)i + 1u) << 4) ||
+                redirect_cell != parent_cell)
+                return fail("nested payload changed a parent redirect");
+        }
+        parent_cell->payload_owner_epoch = 17u;
+        if (space_length64(parent) != 0u)
+            return fail("parent payload Space changed during child teardown");
+        eval_payload_redirects_end();
+        if (universe.root_provider_len != baseline ||
+            eval_payload_space_redirect_count() != 0u ||
+            eval_payload_state_redirect_count() != 0u)
+            return fail("outer payload teardown retained its resources");
+    }
+    term_universe_free(&universe);
+    return 0;
+}
+
 int main(void) {
     if (test_atom_hashflags_soundness() != 0)
         return 1;
     if (test_registry_growth() != 0)
         return 1;
     if (test_eval_redirect_growth() != 0)
+        return 1;
+    if (test_nested_payload_scopes() != 0)
         return 1;
     if (!rhocalc_payload_map_capacity_selftest())
         return fail("rhocalc payload maps did not grow past inline storage");
