@@ -30,8 +30,13 @@
 #include "native/operational_language_def_v1.h"
 #include "native/structural_tree_relabel_v1.h"
 #include "native/syntax_gslt_v1.h"
+#include "native/source_compiler_module_v1.h"
+#include "native/source_parser_plan_v1.h"
 #include "native/lbnf_document_v1.h"
 #include "native/module_value_v1.h"
+#include "native/module_package_v1.h"
+#include "native/source_region_module_v1.h"
+#include "native/source_input_view_v1.h"
 #include "native/module_value_internal_v1.h"
 #include "native/module_fields_v1.h"
 #include "native_handle.h"
@@ -7809,6 +7814,43 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
                                     Atom *head, Atom **args,
                                     uint32_t nargs) {
     char error[512] = {0};
+#ifndef CETTA_LANGDEF_ARTIFACT_ONLY
+    Atom *inputView=cetta_source_input_view_dispatch_v1(ctx,arena,head,args,nargs);
+    if(inputView)return inputView;
+    Atom *regions=cetta_source_region_dispatch_v1(ctx,arena,head,args,nargs);
+    if(regions)return regions;
+    if(atom_is_symbol(head,"__cetta_lib_module_run_source_v1")&&nargs==2u&&
+        args[0]&&args[0]->kind==ATOM_GROUNDED&&args[0]->ground.gkind==GV_SPACE&&
+        args[1]&&args[1]->kind==ATOM_GROUNDED&&args[1]->ground.gkind==GV_STRING) {
+        Atom *values=NULL,*detail=NULL;
+        if(!cetta_library_run_source_bytes(ctx,args[0]->ground.ptr,(const uint8_t *)args[1]->ground.sval,
+            atom_string_len(args[1]),arena,&values,&detail))return atom_error(arena,head,detail);
+        return values;
+    }
+    if (atom_is_symbol(head, "__cetta_lib_module_install_definitions_v1")) {
+        if (nargs != 2u || !args[0] || args[0]->kind != ATOM_GROUNDED ||
+            args[0]->ground.gkind != GV_SPACE || !args[1] ||
+            args[1]->kind != ATOM_GROUNDED || args[1]->ground.gkind != GV_STRING)
+            return atom_error(arena, head, atom_string(arena, "expected Space and definition source"));
+        Atom *detail = NULL;
+        if (!cetta_library_install_definitions(ctx, args[0]->ground.ptr,
+                args[1]->ground.sval, atom_string_len(args[1]), arena, &detail))
+            return atom_error(arena, head, detail ? detail : atom_string(arena, "invalid definition source"));
+        return atom_bool(arena, true);
+    }
+    Atom *compiled = cetta_source_compiler_dispatch_v1(ctx, arena, head, args, nargs);
+    if (compiled) return compiled;
+    Atom *sourceParsed = cetta_source_parser_plan_dispatch_v1(ctx, arena, head, args, nargs);
+    if (sourceParsed) return sourceParsed;
+    if (atom_is_symbol(head, "__cetta_lib_module_close_package_v1") && nargs == 1u)
+        return cetta_module_package_close_v1(arena,args[0]);
+    if (atom_is_symbol(head, "__cetta_lib_module_package_export_v1") && nargs == 2u)
+        return cetta_module_package_export_v1(arena,args[0],args[1]);
+    if (atom_is_symbol(head, "__cetta_lib_module_portable_export_v1") && nargs == 2u)
+        return cetta_module_portable_export_v1(arena, args[0], args[1]);
+    if (atom_is_symbol(head, "__cetta_lib_module_portable_field_v1") && nargs == 2u)
+        return cetta_module_portable_field_v1(arena, args[0], args[1]);
+#endif
 
 
     if (atom_is_symbol(head, "__cetta_lib_tptp_syntaxbnf_digest_v1")) {

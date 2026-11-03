@@ -1816,6 +1816,7 @@ static void print_usage(FILE *out) {
     fputs("usage: cetta [--lang <name>] [--syntax <metta|mrho|rho|holr>] <file>\n", out);
     fputs("       note: without --lang, cetta runs corrected stable petta\n", out);
     fputs("       cetta -e '<expr>' [-e '<expr>' ...]  # inline expressions (multiple -e concatenate)\n", out);
+    fputs("       cetta --repl [--lang petta --profile extended] # multiline source; :cancel / :quit\n", out);
     fputs("       cetta --translate --lang A [--syntax S] --lang B [--syntax T] <file>\n", out);
     fputs("       cetta [--lang he[@0.2.10] --profile <he|he-compat|extended|he-prime>] <file.metta>\n", out);
     fputs("       note: HE is CeTTa's fork of Hyperon Experimental 0.2.10; he-compat keeps Rust's behavior where he differs\n", out);
@@ -2442,6 +2443,8 @@ typedef struct {
     bool parser_universal_names_old;
     bool parser_list_syntax_set;
     bool parser_list_syntax_old;
+    ParserRawSourceScanner parser_raw_source_old;
+    bool parser_raw_source_set;
     bool parser_namespace_sugar_set;
     bool parser_namespace_sugar_old;
     void *document_reader_context;
@@ -2518,6 +2521,10 @@ static bool cetta_main_cleanup(CettaMainCleanup *cleanup) {
     if (cleanup->parser_list_syntax_set) {
         parser_set_list_syntax_enabled(cleanup->parser_list_syntax_old);
         cleanup->parser_list_syntax_set = false;
+    }
+    if (cleanup->parser_raw_source_set) {
+        parser_set_raw_source_scanner(cleanup->parser_raw_source_old);
+        cleanup->parser_raw_source_set = false;
     }
     if (cleanup->parser_namespace_sugar_set) {
         parser_set_namespace_sugar_enabled(cleanup->parser_namespace_sugar_old);
@@ -3110,6 +3117,7 @@ static int cetta_main(int argc, char **argv) {
     int petta_file_arg_cursor = -1;
     int petta_file_arg_end = -1;
     bool compile_mode = false;
+    bool repl_mode = false;
     bool compile_stdlib_mode = false;
     const char *run_report_path = NULL;
     bool run_contract = false;
@@ -3170,6 +3178,10 @@ static int cetta_main(int argc, char **argv) {
         }
         if (strcmp(argv[i], "--list-profiles") == 0) {
             list_profiles = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--repl") == 0) {
+            repl_mode = true;
             continue;
         }
         if (strcmp(argv[i], "--translate") == 0 || strcmp(argv[i], "-t") == 0) {
@@ -3486,6 +3498,16 @@ static int cetta_main(int argc, char **argv) {
 
     if (inline_buf)
         inline_text = inline_buf;
+
+    if (repl_mode) {
+        if (filename || inline_text || translate_mode || compile_mode || compile_stdlib_mode) {
+            fputs("error: --repl requires an interactive document session without another source\n",stderr);
+            free(inline_buf);return 2;
+        }
+        if (!source_endpoint.profile_name) source_endpoint.profile_name="extended";
+        inline_text="!(import! &self lang)\n!(lang:repl)\n";
+        g_no_results=true;
+    }
 
     if (translate_mode && !target_endpoint.lang_name) {
         target_endpoint = source_endpoint;
@@ -3966,6 +3988,9 @@ static int cetta_main(int argc, char **argv) {
     cleanup.parser_list_syntax_old =
         parser_set_list_syntax_enabled(list_syntax);
     cleanup.parser_list_syntax_set = true;
+    cleanup.parser_raw_source_old = parser_set_raw_source_scanner(
+        cetta_language_reads_raw_source(lang->id, profile) ? cetta_raw_source_scan : NULL);
+    cleanup.parser_raw_source_set = true;
     cleanup.parser_namespace_sugar_old =
         parser_set_namespace_sugar_enabled(lang->id != CETTA_LANGUAGE_HE);
     cleanup.parser_namespace_sugar_set = true;

@@ -931,6 +931,18 @@ Atom *space_occurrence_cursor_atom(const SpaceOccurrenceCursor *cursor,
                                    CettaIndex index);
 void space_occurrence_cursor_release(SpaceOccurrenceCursor *cursor);
 
+/* A captured occurrence view may select its declared heads later. The
+ * shared index is pinned with the rows; appends, deletions and rewrites do
+ * not turn the later selection into a query of the live Space. */
+typedef struct {
+    SpaceOccurrenceCursor rows;
+    CettaSpaceHeadIndex *heads;
+} SpaceHeadSnapshot;
+bool space_head_snapshot_init(Space *space, SpaceHeadSnapshot *snapshot);
+bool space_head_snapshot_select(const SpaceHeadSnapshot *snapshot,
+    const SymbolId *heads, size_t count, SpaceOccurrenceCursor *cursor);
+void space_head_snapshot_release(SpaceHeadSnapshot *snapshot);
+
 bool space_contains_exact(Space *s, Atom *atom);
 /* Exact membership for `(head argument...)`, presented as a borrowed term
  * view.  `out_applicable` is false when the active backend cannot answer from

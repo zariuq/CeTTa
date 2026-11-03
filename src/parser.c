@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 #include "parser.h"
 #include "utf8.h"
+#include "raw_source_region.h"
 #include "name_key.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -36,6 +37,7 @@
 static __thread bool g_rational_literals_enabled = true;
 static __thread bool g_universal_name_syntax_enabled = false;
 static __thread bool g_list_syntax_enabled = false;
+static __thread ParserRawSourceScanner g_raw_source_scanner = NULL;
 static __thread bool g_namespace_sugar_enabled = true;
 static __thread ParserBareDollarMode g_bare_dollar_mode =
     CETTA_BARE_DOLLAR_DEFAULT_MODE;
@@ -128,6 +130,16 @@ bool parser_set_list_syntax_enabled(bool enabled) {
 
 bool parser_list_syntax_enabled(void) {
     return g_list_syntax_enabled;
+}
+
+ParserRawSourceScanner parser_set_raw_source_scanner(ParserRawSourceScanner scanner) {
+    ParserRawSourceScanner old = g_raw_source_scanner;
+    g_raw_source_scanner = scanner;
+    return old;
+}
+
+bool parser_raw_source_regions_enabled(void) {
+    return g_raw_source_scanner != NULL;
 }
 
 ParserBareDollarMode parser_set_bare_dollar_mode(
@@ -362,10 +374,20 @@ static size_t parser_decode_string_body(const char *text, size_t start,
 
 bool parser_text_well_formed_n(const char *text, size_t text_len) {
     int depth = 0;
+    bool token_boundary = true;
+    size_t bounded_length = text_len == PARSER_TEXT_NUL_TERMINATED ? strlen(text) : text_len;
     for (size_t i = 0; parser_more(text, text_len, i); i++) {
+        if (g_raw_source_scanner && token_boundary && text[i] == 'r') {
+            CettaRawSourceRegion region;
+            CettaRawSourceStatus status = g_raw_source_scanner(
+                (const uint8_t *)text, bounded_length, i, &region);
+            if (status == CETTA_RAW_COMPLETE) { i = region.end - 1u; token_boundary = true; continue; }
+            if (status != CETTA_RAW_NOT_PRESENT) return false;
+        }
         if (text[i] == ';') {
             while (parser_more(text, text_len, i) && text[i] != '\n') i++;
             if (!parser_more(text, text_len, i)) break;
+            token_boundary = true;
             continue;
         }
         if (text[i] == '"') {
@@ -375,18 +397,21 @@ bool parser_text_well_formed_n(const char *text, size_t text_len) {
                 i++;
             }
             if (!parser_more(text, text_len, i)) return false;
+            token_boundary = true;
             continue;
         }
         if (text[i] == '(') {
             depth++;
             if (depth > CETTA_PARSE_DEPTH_LIMIT)
                 return false;
+            token_boundary = true;
             continue;
         }
         if (text[i] == ')') {
             depth--;
             if (depth < 0) return false;
         }
+        token_boundary = isspace((unsigned char)text[i]) || text[i] == '[' || text[i] == ']' || text[i] == ')';
     }
     return depth == 0;
 }
@@ -1174,7 +1199,7 @@ typedef struct {
 struct ParserReadBackend {
     bool ids;
     ParserReadValue (*word)(ParserReadContext *, char *, size_t);
-    ParserReadValue (*string)(ParserReadContext *, char *, size_t);
+    ParserReadValue (*string)(ParserReadContext *, const char *, size_t);
     ParserReadValue (*container)(ParserReadContext *, const ParserReadFrame *, ParserReadValue);
     ParserReadValue (*prefix)(ParserReadContext *, ParserReadKind, Atom *);
 };
@@ -1246,7 +1271,7 @@ static ParserReadValue parser_read_id_word(ParserReadContext *ctx, char *word, s
     return (ParserReadValue){.id = result};
 }
 
-static ParserReadValue parser_read_id_string(ParserReadContext *ctx, char *bytes, size_t length) {
+static ParserReadValue parser_read_id_string(ParserReadContext *ctx, const char *bytes, size_t length) {
     return (ParserReadValue){.id = tu_intern_string_n(ctx->universe, bytes, length)};
 }
 
@@ -1390,6 +1415,21 @@ read_trimmed_node:
                 goto fail;
             (*pos)++;
             goto read_container;
+        }
+        if (g_raw_source_scanner && token == 'r') {
+            size_t bounded_length = text_len == PARSER_TEXT_NUL_TERMINATED ? strlen(text) : text_len;
+            CettaRawSourceRegion region;
+            CettaRawSourceStatus status = g_raw_source_scanner(
+                (const uint8_t *)text, bounded_length, *pos, &region);
+            if (status != CETTA_RAW_NOT_PRESENT) {
+                if (status != CETTA_RAW_COMPLETE) goto fail;
+                size_t length = region.body_end - region.body_start;
+                const char *body = text + region.body_start;
+                result = backend->ids ? backend->string(&context, body, length)
+                    : (ParserReadValue){.atom = atom_string_n(arena, body, length)};
+                *pos = region.end;
+                goto delivered;
+            }
         }
         if (token == '"') {
             (*pos)++;

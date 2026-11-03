@@ -142,6 +142,7 @@ enum {
     CETTA_LIBRARY_RE = 1u << 15,
     CETTA_LIBRARY_POSTINGS = 1u << 16,
     CETTA_LIBRARY_TENSOR = 1u << 17,
+    CETTA_LIBRARY_LANG = 1u << 18,
 #if CETTA_BUILD_WITH_JSON_GSLT
     CETTA_LIBRARY_JSON = 1u << 12
 #endif
@@ -161,6 +162,7 @@ static const CettaLibrarySpec CETTA_LIBRARIES[] = {
     {"re", CETTA_LIBRARY_RE, NULL},
     {"postings", CETTA_LIBRARY_POSTINGS, NULL},
     {"tensor", CETTA_LIBRARY_TENSOR, NULL},
+    {"lang", CETTA_LIBRARY_LANG, NULL},
     {"lts", CETTA_LIBRARY_LTS, NULL},
     {"mork", CETTA_LIBRARY_MORK, NULL},
     {"rho", CETTA_LIBRARY_RHO, NULL},
@@ -8848,6 +8850,59 @@ static Atom *module_reason_with_detail(CettaLibraryContext *ctx, Arena *a,
         atom_string(a, cetta_library_display_path(ctx, path, display, sizeof(display))),
         detail
     }, 3);
+}
+
+bool cetta_library_run_source_bytes(CettaLibraryContext *ctx,Space *space,
+    const uint8_t *bytes,size_t length,Arena *a,Atom **results,Atom **error_out) {
+    if(!ctx||!space||!space->native.universe||!bytes||!a||!results||!error_out)return false;
+    *results=NULL;*error_out=NULL;
+    AtomId *ids=NULL;int count=0;char diagnostic[512]={0};
+    int parsed=parse_metta_bytes_prefix_ids(bytes,length,space->native.universe,&ids,&count,diagnostic,sizeof(diagnostic));
+    if(parsed<0) {
+        free(ids);*error_out=atom_string(a,diagnostic[0]?diagnostic:"invalid complete submission");return false;
+    }
+    ResultSet observed;result_set_init(&observed);
+    CettaPettaDocumentFailure failure=CETTA_PETTA_DOCUMENT_OK;Atom *detail=NULL;
+    bool ok=cetta_library_petta_execute_document_ids(ctx,space,a,eval_current_persistent_arena(),
+        eval_current_registry(),ids,count,&observed,NULL,NULL,NULL,&failure,&detail);
+    free(ids);
+    if(ok)*results=atom_expr(a,observed.items,observed.len);
+    else *error_out=detail?detail:atom_string(a,"submission execution failed");
+    result_set_free(&observed);return ok;
+}
+
+bool cetta_library_install_definitions(CettaLibraryContext *ctx, Space *space,
+    const char *text, size_t length, Arena *arena, Atom **error_out) {
+    if (error_out) *error_out = NULL;
+    if (!ctx || !space || !space->native.universe || !text || !arena ||
+        !error_out || strlen(text) != length) return false;
+    AtomId *ids = NULL;
+    char diagnostic[512] = {0};
+    int count = parse_metta_text_ids_diagnostic(text, space->native.universe,
+        &ids, diagnostic, sizeof(diagnostic));
+    if (count < 0) {
+        *error_out = atom_string(arena, diagnostic[0] ? diagnostic : "invalid definition source");
+        free(ids); return false;
+    }
+    /* Validate the entire block before handing it to the ordinary loader.
+     * No directive, import, or arbitrary top-level datum is executable here. */
+    for (int i = 0; i < count; ++i) {
+        Atom *form = term_universe_get_atom(space->native.universe, ids[i]);
+        if (!form || form->kind != ATOM_EXPR || form->expr.len != 3u ||
+            !(atom_is_symbol(form->expr.elems[0], "=") ||
+              atom_is_symbol(form->expr.elems[0], ":"))) {
+            *error_out = atom_string(arena, "expected only equation and type declarations");
+            free(ids); return false;
+        }
+    }
+    CettaPettaDocumentFailure failure = CETTA_PETTA_DOCUMENT_OK;
+    Atom *detail = NULL;
+    bool ok = cetta_library_petta_execute_document_ids(ctx, space, arena,
+        eval_current_persistent_arena(), eval_current_registry(), ids, count,
+        NULL, NULL, NULL, NULL, &failure, &detail);
+    free(ids);
+    if (!ok) *error_out = detail ? detail : atom_string(arena, "definition installation failed");
+    return ok;
 }
 
 bool cetta_library_petta_process_text(
