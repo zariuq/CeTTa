@@ -736,6 +736,23 @@ bool cetta_open_equation_cursor_can_prune_depth(
 
 bool cetta_open_equation_cursor_bound_cut(
     const CettaOpenEquationCursor *cursor);
+/* The cursor has changed a space or a named state itself. */
+bool cetta_open_equation_cursor_effected(
+    const CettaOpenEquationCursor *cursor);
+/* The cursor has entered an equation (for a query body, one past the
+ * body's own entry). */
+bool cetta_open_equation_cursor_activated(
+    const CettaOpenEquationCursor *cursor);
+/* The cursor runs a query's body (debug output names its host goals so). */
+void cetta_open_equation_cursor_set_query_body(
+    CettaOpenEquationCursor *cursor);
+/* Report only the answers of derivations whose deepest activation is at
+ * least `floor` (0: every answer).  Under a depth bound B with floor B'+1, a
+ * run reports exactly the derivations a run under bound B' did not, so the
+ * rounds of iterative deepening report each derivation once.  Set before
+ * the cursor's first step. */
+void cetta_open_equation_cursor_set_depth_floor(
+    CettaOpenEquationCursor *cursor, uint32_t floor);
 /* Allow the cursor `budget` activations in all (0: no budget).  A cursor
  * that stopped with a BUDGET handoff continues where it stopped. */
 void cetta_open_equation_cursor_set_budget(CettaOpenEquationCursor *cursor,

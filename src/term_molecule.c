@@ -44,10 +44,26 @@ static bool mol_reserve(void **items, uint32_t *cap, uint32_t need,
 uint32_t cetta_mol_frame(CettaMolStore *store) {
     /* Without room the frame counts as bound throughout: its cells are
      * then always checked. */
+    uint32_t old_cap = store->frame_cap;
     if (store->frames < UINT32_MAX - 1u &&
         mol_reserve((void **)&store->frame_bound, &store->frame_cap,
-                    store->frames + 1u, sizeof(*store->frame_bound)))
+                    store->frames + 1u, sizeof(*store->frame_bound))) {
+        if (store->frame_cap > old_cap) {
+            memset(store->frame_bound + old_cap, 0,
+                   (size_t)(store->frame_cap - old_cap) * sizeof(*store->frame_bound));
+            /* A refused earlier growth may have issued frames whose
+             * bindings could not be counted. Admit them with their actual
+             * counts, before allowing the free-frame occurs shortcut. */
+            for (uint32_t cell = 0u; cell < store->cell_len; cell++) {
+                uint32_t frame = store->cell_frames[cell];
+                if (frame >= old_cap && frame < store->frame_cap &&
+                    (store->cells[cell].id != CETTA_ATOM_ID_NONE ||
+                     store->cells[cell].at != cell))
+                    store->frame_bound[frame]++;
+            }
+        }
         store->frame_bound[store->frames] = 0u;
+    }
     return store->frames++;
 }
 
@@ -168,26 +184,36 @@ void cetta_mol_undo(CettaMolStore *store, CettaMolMark mark) {
 /* X with its bound cells followed: an unbound bare cell, or a term that
  * is no variable.  False without room or for a variable read under no
  * frame. */
-static bool mol_deref(CettaMolStore *store, CettaMol *x) {
+static inline bool mol_deref_header(CettaMolStore *store, CettaMol *x,
+                                     const CettaTermHdr **header) {
     for (;;) {
         if (x->id == CETTA_ATOM_ID_NONE) {
             CettaMol value = store->cells[x->at];
-            if (value.id == CETTA_ATOM_ID_NONE && value.at == x->at)
+            if (value.id == CETTA_ATOM_ID_NONE && value.at == x->at) {
+                *header = NULL;
                 return true;
+            }
             *x = value;
             continue;
         }
         const CettaTermHdr *hdr = tu_hdr(store->universe, x->id);
         if (!hdr)
             return false;
-        if (hdr->tag != ATOM_VAR)
+        if (hdr->tag != ATOM_VAR) {
+            *header = hdr;
             return true;
+        }
         uint32_t cell = 0u;
         if (x->at == CETTA_MOL_GROUND ||
             !mol_var_cell(store, x->at, x->id, &cell))
             return false;
         *x = (CettaMol){CETTA_ATOM_ID_NONE, cell};
     }
+}
+
+static bool mol_deref(CettaMolStore *store, CettaMol *x) {
+    const CettaTermHdr *header;
+    return mol_deref_header(store, x, &header);
 }
 
 static inline uint32_t mol_exact_slot(AtomId id, uint32_t cap) {
@@ -293,14 +319,14 @@ static CettaMolResult mol_occurs(CettaMolStore *store, uint32_t cell,
         return CETTA_MOL_DECLINE;
     while (len > base) {
         CettaMol y = store->stack[--len];
-        if (!mol_deref(store, &y))
+        const CettaTermHdr *hdr;
+        if (!mol_deref_header(store, &y, &hdr))
             return CETTA_MOL_DECLINE;
         if (y.id == CETTA_ATOM_ID_NONE) {
             if (y.at == cell)
                 return CETTA_MOL_OK;
             continue;
         }
-        const CettaTermHdr *hdr = tu_hdr(store->universe, y.id);
         if ((hdr->aux32 & CETTA_TERM_HDR_HAS_VARS) == 0u)
             continue;
         if (hdr->tag != ATOM_EXPR || !tu_plain_expr(store->universe, y.id, hdr))
@@ -308,7 +334,8 @@ static CettaMolResult mol_occurs(CettaMolStore *store, uint32_t cell,
         uint32_t arity = hdr->aux32 & CETTA_TERM_HDR_DATA_MASK;
         for (uint32_t c = 0u; c < arity; c++) {
             if (!mol_push(store, &len,
-                          (CettaMol){tu_child(store->universe, y.id, c), y.at}))
+                          (CettaMol){tu_child_from_header(store->universe, hdr,
+                                                         c), y.at}))
                 return CETTA_MOL_DECLINE;
         }
     }
@@ -321,11 +348,11 @@ CettaMolResult cetta_mol_touch(CettaMolStore *store, CettaMol x) {
         return CETTA_MOL_DECLINE;
     while (len > 0u) {
         CettaMol y = store->stack[--len];
-        if (!mol_deref(store, &y))
+        const CettaTermHdr *hdr;
+        if (!mol_deref_header(store, &y, &hdr))
             return CETTA_MOL_DECLINE;
         if (y.id == CETTA_ATOM_ID_NONE)
             continue;
-        const CettaTermHdr *hdr = tu_hdr(store->universe, y.id);
         if ((hdr->aux32 & CETTA_TERM_HDR_HAS_VARS) == 0u)
             continue;
         if (hdr->tag != ATOM_EXPR || !tu_plain_expr(store->universe, y.id, hdr))
@@ -333,7 +360,8 @@ CettaMolResult cetta_mol_touch(CettaMolStore *store, CettaMol x) {
         uint32_t arity = hdr->aux32 & CETTA_TERM_HDR_DATA_MASK;
         for (uint32_t c = 0u; c < arity; c++) {
             if (!mol_push(store, &len,
-                          (CettaMol){tu_child(store->universe, y.id, c), y.at}))
+                          (CettaMol){tu_child_from_header(store->universe, hdr,
+                                                         c), y.at}))
                 return CETTA_MOL_DECLINE;
         }
     }
@@ -356,86 +384,69 @@ static CettaMolResult mol_bind_checked(CettaMolStore *store, uint32_t cell,
     return mol_bind(store, cell, x) ? CETTA_MOL_OK : CETTA_MOL_DECLINE;
 }
 
+/* The first pair and queued pairs use the same transition. Dereferencing
+ * supplies the headers consumed here; no universe mutation occurs while a
+ * pair's children are read. Bind/occurs/rollback retain their existing law. */
+static inline CettaMolResult mol_unify_pair(CettaMolStore *store,
+        CettaMol x, CettaMol y, uint32_t *len) {
+    const CettaTermHdr *hx, *hy;
+    if (!mol_deref_header(store, &x, &hx) || !mol_deref_header(store, &y, &hy))
+        return CETTA_MOL_DECLINE;
+    if (x.id == CETTA_ATOM_ID_NONE && y.id == CETTA_ATOM_ID_NONE) {
+        if (x.at != y.at && !(x.at > y.at ? mol_bind(store, x.at, y)
+                                         : mol_bind(store, y.at, x)))
+            return CETTA_MOL_DECLINE;
+        return CETTA_MOL_OK;
+    }
+    if (x.id == CETTA_ATOM_ID_NONE || y.id == CETTA_ATOM_ID_NONE)
+        return x.id == CETTA_ATOM_ID_NONE
+            ? mol_bind_checked(store, x.at, y, *len)
+            : mol_bind_checked(store, y.at, x, *len);
+    bool open_x = (hx->aux32 & CETTA_TERM_HDR_HAS_VARS) != 0u;
+    bool open_y = (hy->aux32 & CETTA_TERM_HDR_HAS_VARS) != 0u;
+    if (!open_x && !open_y) {
+        if (!mol_exact(store, x.id, 0u) || !mol_exact(store, y.id, 0u))
+            return CETTA_MOL_DECLINE;
+        return x.id == y.id ? CETTA_MOL_OK : CETTA_MOL_FAIL;
+    }
+    if (x.id == y.id && x.at == y.at)
+        return CETTA_MOL_OK;
+    if (hx->tag != ATOM_EXPR || hy->tag != ATOM_EXPR) {
+        AtomId leaf = hx->tag != ATOM_EXPR ? x.id : y.id;
+        return mol_exact(store, leaf, 0u) ? CETTA_MOL_FAIL : CETTA_MOL_DECLINE;
+    }
+    if (!tu_plain_expr(store->universe, x.id, hx) ||
+        !tu_plain_expr(store->universe, y.id, hy))
+        return CETTA_MOL_DECLINE;
+    uint32_t arity = hx->aux32 & CETTA_TERM_HDR_DATA_MASK;
+    if (arity != (hy->aux32 & CETTA_TERM_HDR_DATA_MASK))
+        return CETTA_MOL_FAIL;
+    for (uint32_t c = arity; c-- > 0u;) {
+        CettaMol left = {tu_child_from_header(store->universe, hx, c), x.at};
+        CettaMol right = {tu_child_from_header(store->universe, hy, c), y.at};
+        if (!mol_push(store, len, left) || !mol_push(store, len, right))
+            return CETTA_MOL_DECLINE;
+    }
+    return CETTA_MOL_OK;
+}
+
 /* Unify the pairs on the stack above BASE. */
 static CettaMolResult mol_unify_pending(CettaMolStore *store, uint32_t base,
                                         uint32_t len) {
     while (len > base) {
         CettaMol y = store->stack[--len];
         CettaMol x = store->stack[--len];
-        if (!mol_deref(store, &x) || !mol_deref(store, &y))
-            return CETTA_MOL_DECLINE;
-        if (x.id == CETTA_ATOM_ID_NONE && y.id == CETTA_ATOM_ID_NONE) {
-            /* The younger cell takes the older. */
-            if (x.at != y.at &&
-                !(x.at > y.at ? mol_bind(store, x.at, y)
-                              : mol_bind(store, y.at, x)))
-                return CETTA_MOL_DECLINE;
-            continue;
-        }
-        if (x.id == CETTA_ATOM_ID_NONE || y.id == CETTA_ATOM_ID_NONE) {
-            CettaMolResult bound = x.id == CETTA_ATOM_ID_NONE
-                ? mol_bind_checked(store, x.at, y, len)
-                : mol_bind_checked(store, y.at, x, len);
-            if (bound != CETTA_MOL_OK)
-                return bound;
-            continue;
-        }
-        const CettaTermHdr *hx = tu_hdr(store->universe, x.id);
-        const CettaTermHdr *hy = tu_hdr(store->universe, y.id);
-        bool open_x = (hx->aux32 & CETTA_TERM_HDR_HAS_VARS) != 0u;
-        bool open_y = (hy->aux32 & CETTA_TERM_HDR_HAS_VARS) != 0u;
-        if (!open_x && !open_y) {
-            /* Ground terms are equal by id where their equality is their
-             * identity. */
-            if (!mol_exact(store, x.id, 0u) || !mol_exact(store, y.id, 0u))
-                return CETTA_MOL_DECLINE;
-            if (x.id != y.id)
-                return CETTA_MOL_FAIL;
-            continue;
-        }
-        if (x.id == y.id && x.at == y.at)
-            continue;
-        /* An open term is an expression: an atom it meets differs. */
-        if (hx->tag != ATOM_EXPR || hy->tag != ATOM_EXPR) {
-            AtomId leaf = hx->tag != ATOM_EXPR ? x.id : y.id;
-            return mol_exact(store, leaf, 0u) ? CETTA_MOL_FAIL
-                                               : CETTA_MOL_DECLINE;
-        }
-        if (!tu_plain_expr(store->universe, x.id, hx) ||
-            !tu_plain_expr(store->universe, y.id, hy))
-            return CETTA_MOL_DECLINE;
-        uint32_t arity = hx->aux32 & CETTA_TERM_HDR_DATA_MASK;
-        if (arity != (hy->aux32 & CETTA_TERM_HDR_DATA_MASK))
-            return CETTA_MOL_FAIL;
-        for (uint32_t c = arity; c-- > 0u;) {
-            CettaMol left = {tu_child(store->universe, x.id, c), x.at};
-            CettaMol right = {tu_child(store->universe, y.id, c), y.at};
-            if (!mol_push(store, &len, left) || !mol_push(store, &len, right))
-                return CETTA_MOL_DECLINE;
-        }
+        CettaMolResult result = mol_unify_pair(store, x, y, &len);
+        if (result != CETTA_MOL_OK)
+            return result;
     }
     return CETTA_MOL_OK;
 }
 
 CettaMolResult cetta_mol_unify(CettaMolStore *store, CettaMol a, CettaMol b) {
-    /* A free cell on either side is bound at once. */
-    if (!mol_deref(store, &a) || !mol_deref(store, &b))
-        return CETTA_MOL_DECLINE;
-    if (a.id == CETTA_ATOM_ID_NONE && b.id == CETTA_ATOM_ID_NONE) {
-        if (a.at == b.at)
-            return CETTA_MOL_OK;
-        return (a.at > b.at ? mol_bind(store, a.at, b)
-                            : mol_bind(store, b.at, a))
-            ? CETTA_MOL_OK : CETTA_MOL_DECLINE;
-    }
-    if (a.id == CETTA_ATOM_ID_NONE)
-        return mol_bind_checked(store, a.at, b, 0u);
-    if (b.id == CETTA_ATOM_ID_NONE)
-        return mol_bind_checked(store, b.at, a, 0u);
     uint32_t len = 0u;
-    if (!mol_push(store, &len, a) || !mol_push(store, &len, b))
-        return CETTA_MOL_DECLINE;
-    return mol_unify_pending(store, 0u, len);
+    CettaMolResult result = mol_unify_pair(store, a, b, &len);
+    return result == CETTA_MOL_OK ? mol_unify_pending(store, 0u, len) : result;
 }
 
 CettaMolResult cetta_mol_unify_kept(CettaMolStore *store, CettaMol pattern,
@@ -459,7 +470,8 @@ CettaMolResult cetta_mol_unify_kept(CettaMolStore *store, CettaMol pattern,
                 return unified;
             continue;
         }
-        if (!mol_deref(store, &part))
+        const CettaTermHdr *hdr;
+        if (!mol_deref_header(store, &part, &hdr))
             return CETTA_MOL_DECLINE;
         if (part.id == CETTA_ATOM_ID_NONE) {
             /* A variable meets the spine: it takes the subtree's record. */
@@ -473,7 +485,6 @@ CettaMolResult cetta_mol_unify_kept(CettaMolStore *store, CettaMol pattern,
                 return unified;
             continue;
         }
-        const CettaTermHdr *hdr = tu_hdr(store->universe, part.id);
         if (hdr->tag != ATOM_EXPR) {
             return mol_exact(store, part.id, 0u) ? CETTA_MOL_FAIL
                                                   : CETTA_MOL_DECLINE;
@@ -495,7 +506,8 @@ CettaMolResult cetta_mol_unify_kept(CettaMolStore *store, CettaMol pattern,
             return CETTA_MOL_DECLINE;
         for (uint32_t c = node->len; c-- > 1u;)
             parts[pending++] =
-                (CettaMol){tu_child(store->universe, part.id, c), part.at};
+                (CettaMol){tu_child_from_header(store->universe, hdr, c),
+                           part.at};
     }
     return pending == 0u && h == skeleton->holes ? CETTA_MOL_OK
                                                  : CETTA_MOL_DECLINE;
@@ -516,9 +528,10 @@ CettaMolResult cetta_mol_align(CettaMolStore *store, CettaMol pattern,
             aligned->parts[h++] = part;
             continue;
         }
-        if (!mol_deref(store, &part) || part.id == CETTA_ATOM_ID_NONE)
+        const CettaTermHdr *hdr;
+        if (!mol_deref_header(store, &part, &hdr) ||
+            part.id == CETTA_ATOM_ID_NONE)
             return CETTA_MOL_DECLINE;
-        const CettaTermHdr *hdr = tu_hdr(store->universe, part.id);
         if (hdr->tag != ATOM_EXPR)
             return mol_exact(store, part.id, 0u) ? CETTA_MOL_FAIL
                                                   : CETTA_MOL_DECLINE;
@@ -537,11 +550,27 @@ CettaMolResult cetta_mol_align(CettaMolStore *store, CettaMol pattern,
             return CETTA_MOL_DECLINE;
         for (uint32_t c = node->len; c-- > 1u;)
             parts[pending++] =
-                (CettaMol){tu_child(store->universe, part.id, c), part.at};
+                (CettaMol){tu_child_from_header(store->universe, hdr, c),
+                           part.at};
     }
     if (pending != 0u || h != skeleton->holes)
         return CETTA_MOL_DECLINE;
     aligned->holes = h;
+    return CETTA_MOL_OK;
+}
+
+CettaMolResult cetta_mol_aligned_stable_cells(CettaMolStore *store,
+                                             CettaMolAligned *aligned,
+                                             CettaMolMark lifetime) {
+    if (lifetime.cells > store->cell_len || store->trail_len != lifetime.trail)
+        return CETTA_MOL_DECLINE;
+    for (uint32_t h = 0u; h < aligned->holes; h++) {
+        CettaMol part = aligned->parts[h];
+        if (!mol_deref(store, &part))
+            return CETTA_MOL_DECLINE;
+        if (part.id == CETTA_ATOM_ID_NONE && part.at < lifetime.cells)
+            aligned->parts[h] = part;
+    }
     return CETTA_MOL_OK;
 }
 
@@ -629,7 +658,8 @@ static CettaMolResult mol_own_key(CettaMolStore *store, CettaMol x,
 static CettaMolResult mol_key_at(CettaMolStore *store, CettaMol x,
                                  CettaMolNumbering *numbering, uint32_t depth,
                                  AtomId *key_out) {
-    if (depth > MOL_KEY_DEPTH || !mol_deref(store, &x))
+    const CettaTermHdr *hdr;
+    if (depth > MOL_KEY_DEPTH || !mol_deref_header(store, &x, &hdr))
         return CETTA_MOL_DECLINE;
     if (x.id == CETTA_ATOM_ID_NONE) {
         uint32_t ordinal = 0u;
@@ -648,7 +678,6 @@ static CettaMolResult mol_key_at(CettaMolStore *store, CettaMol x,
         return *key_out != CETTA_ATOM_ID_NONE ? CETTA_MOL_OK
                                               : CETTA_MOL_DECLINE;
     }
-    const CettaTermHdr *hdr = tu_hdr(store->universe, x.id);
     if ((hdr->aux32 & CETTA_TERM_HDR_HAS_VARS) == 0u) {
         *key_out = x.id;
         return CETTA_MOL_OK;
@@ -717,11 +746,11 @@ CettaMolResult cetta_mol_key_holes(CettaMolStore *store, CettaMol x,
                 return made;
             continue;
         }
-        if (!mol_deref(store, &part))
+        const CettaTermHdr *hdr;
+        if (!mol_deref_header(store, &part, &hdr))
             return CETTA_MOL_DECLINE;
         if (part.id == CETTA_ATOM_ID_NONE)
             return CETTA_MOL_FAIL;
-        const CettaTermHdr *hdr = tu_hdr(store->universe, part.id);
         if (hdr->tag != ATOM_EXPR ||
             (hdr->aux32 & CETTA_TERM_HDR_DATA_MASK) != node->len)
             return CETTA_MOL_FAIL;
@@ -737,7 +766,8 @@ CettaMolResult cetta_mol_key_holes(CettaMolStore *store, CettaMol x,
             return CETTA_MOL_DECLINE;
         for (uint32_t c = node->len; c-- > 1u;)
             parts[pending++] =
-                (CettaMol){tu_child(store->universe, part.id, c), part.at};
+                (CettaMol){tu_child_from_header(store->universe, hdr, c),
+                           part.at};
     }
     return pending == 0u && h == skeleton->holes ? CETTA_MOL_OK
                                                  : CETTA_MOL_DECLINE;

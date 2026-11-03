@@ -10,14 +10,569 @@ void cetta_dense_relation_init(CettaDenseRelation *rel) {
 
 static void dense_row_release(void *items, uint32_t len);
 
-static void dense_side_free(CettaDenseSide *side) {
-    for (uint32_t i = 0u; i < side->row_cap; i++) {
-        if (side->rows[i])
-            dense_row_release(side->rows[i], side->row_len[i]);
+/* Sparse descriptors keep complete canonical numbers. Rotations and erasure
+ * transplant nodes; a borrowed descriptor keeps naming its original row. */
+typedef struct CettaDenseRowNode {
+    void *items;
+    struct CettaDenseRowNode *left, *right;
+    uint32_t length, number, subtree_count, height;
+} CettaDenseRowNode;
+
+_Static_assert(sizeof(CettaDenseRowNode) == 40u,
+               "adaptive directory cost assumes forty-byte descriptors");
+
+enum { DENSE_DIRECTORY_BINS = 32u, DENSE_DIRECTORY_MIN_PREFIX = 64u };
+
+static uint32_t dense_tree_height(const CettaDenseRowNode *node) {
+    return node ? node->height : 0u;
+}
+
+static uint32_t dense_tree_count(const CettaDenseRowNode *node) {
+    return node ? node->subtree_count : 0u;
+}
+
+static uint32_t dense_tree_count_below(const CettaDenseRowNode *node,
+                                        uint32_t cut) {
+    uint32_t count = 0u;
+    while (node) {
+        if (node->number < cut) {
+            count += dense_tree_count(node->left) + 1u;
+            node = node->right;
+        } else {
+            node = node->left;
+        }
+    }
+    return count;
+}
+
+static void dense_tree_update(CettaDenseRowNode *node) {
+    uint32_t left = dense_tree_height(node->left);
+    uint32_t right = dense_tree_height(node->right);
+    node->height = (left > right ? left : right) + 1u;
+    node->subtree_count = dense_tree_count(node->left) +
+                          dense_tree_count(node->right) + 1u;
+}
+
+static CettaDenseRowNode *dense_tree_left(CettaDenseRowNode *root) {
+    CettaDenseRowNode *top = root->right;
+    root->right = top->left;
+    top->left = root;
+    dense_tree_update(root);
+    dense_tree_update(top);
+    return top;
+}
+
+static CettaDenseRowNode *dense_tree_right(CettaDenseRowNode *root) {
+    CettaDenseRowNode *top = root->left;
+    root->left = top->right;
+    top->right = root;
+    dense_tree_update(root);
+    dense_tree_update(top);
+    return top;
+}
+
+static CettaDenseRowNode *dense_tree_balance(CettaDenseRowNode *root) {
+    dense_tree_update(root);
+    uint32_t left = dense_tree_height(root->left);
+    uint32_t right = dense_tree_height(root->right);
+    if (left > right + 1u) {
+        if (dense_tree_height(root->left->right) >
+            dense_tree_height(root->left->left))
+            root->left = dense_tree_left(root->left);
+        return dense_tree_right(root);
+    }
+    if (right > left + 1u) {
+        if (dense_tree_height(root->right->left) >
+            dense_tree_height(root->right->right))
+            root->right = dense_tree_right(root->right);
+        return dense_tree_left(root);
+    }
+    return root;
+}
+
+static CettaDenseRowNode *dense_tree_find(CettaDenseRowNode *root,
+                                          uint32_t number) {
+    while (root && root->number != number)
+        root = number < root->number ? root->left : root->right;
+    return root;
+}
+
+static CettaDenseRowNode *dense_tree_insert(CettaDenseRowNode *root,
+                                            CettaDenseRowNode *node) {
+    if (!root)
+        return node;
+    if (node->number < root->number)
+        root->left = dense_tree_insert(root->left, node);
+    else
+        root->right = dense_tree_insert(root->right, node);
+    return dense_tree_balance(root);
+}
+
+static CettaDenseRowNode *dense_tree_take_first(CettaDenseRowNode *root,
+                                                CettaDenseRowNode **first) {
+    if (!root->left) {
+        *first = root;
+        return root->right;
+    }
+    root->left = dense_tree_take_first(root->left, first);
+    return dense_tree_balance(root);
+}
+
+static CettaDenseRowNode *dense_tree_erase(CettaDenseRowNode *root,
+                                           uint32_t number,
+                                           CettaDenseRowNode **removed) {
+    if (!root)
+        return NULL;
+    if (number < root->number)
+        root->left = dense_tree_erase(root->left, number, removed);
+    else if (number > root->number)
+        root->right = dense_tree_erase(root->right, number, removed);
+    else {
+        *removed = root;
+        if (!root->left)
+            return root->right;
+        if (!root->right)
+            return root->left;
+        CettaDenseRowNode *next;
+        CettaDenseRowNode *right = dense_tree_take_first(root->right, &next);
+        next->left = root->left;
+        next->right = right;
+        root = next;
+    }
+    return dense_tree_balance(root);
+}
+
+/* Join ordered disjoint trees around PIVOT, even with unequal heights. */
+static CettaDenseRowNode *dense_tree_join(CettaDenseRowNode *left,
+                                          CettaDenseRowNode *pivot,
+                                          CettaDenseRowNode *right) {
+    if (dense_tree_height(left) > dense_tree_height(right) + 1u) {
+        left->right = dense_tree_join(left->right, pivot, right);
+        return dense_tree_balance(left);
+    }
+    if (dense_tree_height(right) > dense_tree_height(left) + 1u) {
+        right->left = dense_tree_join(left, pivot, right->left);
+        return dense_tree_balance(right);
+    }
+    pivot->left = left;
+    pivot->right = right;
+    dense_tree_update(pivot);
+    return pivot;
+}
+
+static CettaDenseRowNode *dense_tree_concat(CettaDenseRowNode *left,
+                                            CettaDenseRowNode *right) {
+    if (!left)
+        return right;
+    if (!right)
+        return left;
+    CettaDenseRowNode *pivot;
+    right = dense_tree_take_first(right, &pivot);
+    return dense_tree_join(left, pivot, right);
+}
+
+static void dense_tree_split(CettaDenseRowNode *root, uint32_t cut,
+                               CettaDenseRowNode **below,
+                               CettaDenseRowNode **above) {
+    if (!root) {
+        *below = *above = NULL;
+    } else if (root->number < cut) {
+        CettaDenseRowNode *middle;
+        dense_tree_split(root->right, cut, &middle, above);
+        *below = dense_tree_join(root->left, root, middle);
+    } else {
+        CettaDenseRowNode *middle;
+        dense_tree_split(root->left, cut, below, &middle);
+        *above = dense_tree_join(middle, root, root->right);
+    }
+}
+
+/* Headers alone: leaf ownership moves between directory forms unchanged. */
+static void dense_tree_free(CettaDenseRowNode *root) {
+    if (!root)
+        return;
+    dense_tree_free(root->left);
+    dense_tree_free(root->right);
+    free(root);
+}
+
+static void dense_tree_free_chain(CettaDenseRowNode *node) {
+    while (node) {
+        CettaDenseRowNode *next = node->right;
+        free(node);
+        node = next;
+    }
+}
+
+static CettaDenseRowNode *dense_tree_from_chain(CettaDenseRowNode **next,
+                                                uint32_t count) {
+    if (!count)
+        return NULL;
+    CettaDenseRowNode *left = dense_tree_from_chain(next, count / 2u);
+    CettaDenseRowNode *root = *next;
+    *next = root->right;
+    root->left = left;
+    root->right = dense_tree_from_chain(next, count - count / 2u - 1u);
+    dense_tree_update(root);
+    return root;
+}
+
+/* A row edit borrows descriptor slots for one operation. Adaptive changes
+ * occur only after that operation has finished using every such reference. */
+typedef struct {
+    void **items;
+    uint32_t *length;
+} DenseRowRef;
+
+static inline DenseRowRef dense_side_row_ref(const CettaDenseSide *side,
+                                             uint32_t number) {
+    if (number < side->row_cap)
+        return (DenseRowRef){&side->rows[number], &side->row_len[number]};
+    CettaDenseRowNode *node = dense_tree_find(side->overflow, number);
+    return node ? (DenseRowRef){&node->items, &node->length}
+                : (DenseRowRef){0};
+}
+
+/* Readers resolve the descriptor once and borrow its immutable leaf data
+ * for this operation. Edits keep the separate descriptor-slot interface. */
+typedef struct {
+    void *items;
+    uint32_t length;
+} DenseRowView;
+
+static inline DenseRowView dense_side_row_view(const CettaDenseSide *side,
+                                               uint32_t number) {
+    if (__builtin_expect(number < side->row_cap, 1))
+        return (DenseRowView){side->rows[number], side->row_len[number]};
+    CettaDenseRowNode *node = dense_tree_find(side->overflow, number);
+    return node ? (DenseRowView){node->items, node->length} : (DenseRowView){0};
+}
+
+static inline uint64_t dense_side_scan_span(const CettaDenseSide *side) {
+    return (uint64_t)side->row_cap + dense_tree_count(side->overflow);
+}
+
+static inline bool dense_side_has_row(const CettaDenseSide *side,
+                                       uint32_t number) {
+    DenseRowRef row = dense_side_row_ref(side, number);
+    return row.items && *row.items;
+}
+
+typedef struct {
+    const CettaDenseSide *side;
+    uint32_t next, end;
+    CettaDenseRowNode *pending;
+    CettaDenseRowNode *stack[64];
+    uint32_t depth;
+} DenseSideIterator;
+
+static void dense_side_iterator_init(DenseSideIterator *iterator,
+                                       const CettaDenseSide *side) {
+    iterator->side = side;
+    iterator->next = 0u;
+    iterator->end = UINT32_MAX;
+    iterator->pending = side->overflow;
+    iterator->depth = 0u;
+    /* The traversal writes each stack slot before its first pop. */
+}
+
+static void dense_side_iterator_below_init(DenseSideIterator *iterator,
+                                             const CettaDenseSide *side,
+                                             uint32_t limit) {
+    dense_side_iterator_init(iterator, side);
+    iterator->end = limit;
+}
+
+/* Nonempty rows in canonical order; the key bound is independent of cost. */
+static inline bool dense_side_next(DenseSideIterator *iterator, uint32_t *number,
+                                    DenseRowRef *row) {
+    while (iterator->next < iterator->side->row_cap &&
+           iterator->next < iterator->end) {
+        uint32_t current = iterator->next++;
+        if (!iterator->side->rows[current])
+            continue;
+        if (number)
+            *number = current;
+        if (row)
+            *row = (DenseRowRef){&iterator->side->rows[current],
+                                 &iterator->side->row_len[current]};
+        return true;
+    }
+    while (iterator->pending || iterator->depth) {
+        while (iterator->pending) {
+            if (iterator->depth == 64u)
+                abort();
+            iterator->stack[iterator->depth++] = iterator->pending;
+            iterator->pending = iterator->pending->left;
+        }
+        CettaDenseRowNode *node = iterator->stack[--iterator->depth];
+        iterator->pending = node->right;
+        if (node->number >= iterator->end)
+            return false;
+        if (!node->items)
+            continue;
+        if (number)
+            *number = node->number;
+        if (row)
+            *row = (DenseRowRef){&node->items, &node->length};
+        return true;
+    }
+    return false;
+}
+
+static bool dense_rows_reserve(CettaDenseSide *side, uint32_t number) {
+    if (number < side->row_cap || dense_tree_find(side->overflow, number))
+        return true;
+    CettaDenseRowNode *node = calloc(1u, sizeof(*node));
+    if (!node)
+        return false;
+    node->number = number;
+    node->height = node->subtree_count = 1u;
+    side->overflow = dense_tree_insert(side->overflow, node);
+    return true;
+}
+
+static void dense_side_forget_empty(CettaDenseSide *side, uint32_t number) {
+    if (number < side->row_cap)
+        return;
+    CettaDenseRowNode *node = dense_tree_find(side->overflow, number);
+    if (node && !node->items) {
+        side->overflow = dense_tree_erase(side->overflow, number, &node);
+        free(node);
+    }
+}
+
+static void dense_side_free_directory(CettaDenseSide *side) {
+    free(side->rows);
+    free(side->row_len);
+    free(side->row_bins);
+    dense_tree_free(side->overflow);
+    memset(side, 0, sizeof(*side));
+}
+
+static uint64_t dense_side_control_bytes(const CettaDenseSide *side) {
+    return (uint64_t)side->row_cap *
+               (sizeof(*side->rows) + sizeof(*side->row_len)) +
+           (uint64_t)dense_tree_count(side->overflow) * sizeof(CettaDenseRowNode);
+}
+
+static uint64_t dense_side_directory_bytes(const CettaDenseSide *side) {
+    return dense_side_control_bytes(side) +
+           (side->row_bins ? DENSE_DIRECTORY_BINS * sizeof(*side->row_bins) : 0u);
+}
+
+static uint32_t dense_directory_bin(uint32_t number) {
+    return number < DENSE_DIRECTORY_MIN_PREFIX ? 0u
+        : 26u - (uint32_t)__builtin_clz(number);
+}
+
+static void dense_side_born(CettaDenseSide *side, uint32_t number) {
+    side->row_count++;
+    side->directory_events++;
+    if (side->row_bins)
+        side->row_bins[dense_directory_bin(number)]++;
+}
+
+static void dense_side_died(CettaDenseSide *side, uint32_t number) {
+    if (side->row_bins)
+        side->row_bins[dense_directory_bin(number)]--;
+    side->row_count--;
+    side->directory_events++;
+    if (number < side->row_cap) {
+        side->rows[number] = NULL;
+        side->row_len[number] = 0u;
+    } else {
+        CettaDenseRowNode *node = NULL;
+        side->overflow = dense_tree_erase(side->overflow, number, &node);
+        free(node);
+    }
+    if (!side->row_count)
+        dense_side_free_directory(side);
+}
+
+/* Move only descriptors. All allocations precede the no-fail tree commit. */
+static bool dense_side_change_cut(CettaDenseSide *side, uint32_t cut) {
+    if (cut == side->row_cap)
+        return true;
+    void **rows = cut ? calloc(cut, sizeof(*rows)) : NULL;
+    uint32_t *lengths = cut ? calloc(cut, sizeof(*lengths)) : NULL;
+    if (cut && (!rows || !lengths)) {
+        free(rows);
+        free(lengths);
+        return false;
+    }
+    if (cut > side->row_cap) {
+        if (side->row_cap) {
+            memcpy(rows, side->rows, side->row_cap * sizeof(*rows));
+            memcpy(lengths, side->row_len, side->row_cap * sizeof(*lengths));
+        }
+        DenseSideIterator iterator;
+        dense_side_iterator_below_init(&iterator, side, cut);
+        iterator.next = side->row_cap;
+        uint32_t number;
+        DenseRowRef row;
+        while (dense_side_next(&iterator, &number, &row)) {
+            if (number < side->row_cap)
+                continue;
+            rows[number] = *row.items;
+            lengths[number] = *row.length;
+        }
+        CettaDenseRowNode *moved, *remaining;
+        dense_tree_split(side->overflow, cut, &moved, &remaining);
+        side->overflow = remaining;
+        dense_tree_free(moved);
+    } else {
+        CettaDenseRowNode *chain = NULL, **tail = &chain;
+        uint32_t count = 0u;
+        for (uint32_t number = cut; number < side->row_cap; number++) {
+            if (!side->rows[number])
+                continue;
+            CettaDenseRowNode *node = malloc(sizeof(*node));
+            if (!node) {
+                dense_tree_free_chain(chain);
+                free(rows);
+                free(lengths);
+                return false;
+            }
+            *node = (CettaDenseRowNode){.items = side->rows[number],
+                .length = side->row_len[number], .number = number,
+                .height = 1u, .subtree_count = 1u};
+            *tail = node;
+            tail = &node->right;
+            count++;
+        }
+        if (cut) {
+            memcpy(rows, side->rows, cut * sizeof(*rows));
+            memcpy(lengths, side->row_len, cut * sizeof(*lengths));
+        }
+        CettaDenseRowNode *next = chain;
+        CettaDenseRowNode *moved = dense_tree_from_chain(&next, count);
+        side->overflow = dense_tree_concat(moved, side->overflow);
     }
     free(side->rows);
     free(side->row_len);
-    memset(side, 0, sizeof(*side));
+    side->rows = rows;
+    side->row_len = lengths;
+    side->row_cap = cut;
+    return true;
+}
+
+static void dense_directory_best(const uint32_t *bins, uint32_t count,
+                                  uint32_t *best_cut, uint64_t *best_cost) {
+    *best_cut = 0u;
+    *best_cost = (uint64_t)count * sizeof(CettaDenseRowNode);
+    uint32_t inside = 0u, bin = 0u;
+    for (uint32_t cut = DENSE_DIRECTORY_MIN_PREFIX;; cut *= 2u, bin++) {
+        inside += bins[bin];
+        uint64_t cost = (uint64_t)cut * (sizeof(void *) + sizeof(uint32_t)) +
+                        (uint64_t)(count - inside) * sizeof(CettaDenseRowNode);
+        if (cost <= *best_cost) {
+            *best_cost = cost;
+            *best_cut = cut;
+        }
+        if (cut == (UINT32_C(1) << 31))
+            break;
+    }
+}
+
+/* Each row event changes every candidate's cost by at most forty bytes.
+ * Decisions keep current<=2*best; at most best/160 events between them keep
+ * current<=3*every candidate (AdaptiveRowDirectoryCost.scheduled_bound).
+ * A failed allocation leaves the complete old representation charged. */
+static __attribute__((noinline)) bool dense_side_maintain_due(CettaDenseSide *side) {
+    if (!side->row_count)
+        return true;
+    if (side->row_count < 20u && side->row_cap == 0u) {
+        side->directory_base = (uint64_t)side->row_count * sizeof(CettaDenseRowNode);
+        side->directory_events = 0u;
+        side->directory_maintenance_failed = false;
+        return true;
+    }
+    if (!side->row_bins) {
+        uint32_t *bins = calloc(DENSE_DIRECTORY_BINS, sizeof(*bins));
+        if (!bins)
+            goto failed;
+        DenseSideIterator iterator;
+        dense_side_iterator_init(&iterator, side);
+        uint32_t number;
+        while (dense_side_next(&iterator, &number, NULL))
+            bins[dense_directory_bin(number)]++;
+        side->row_bins = bins;
+    } else if (!side->directory_maintenance_failed &&
+               side->directory_events <= side->directory_base / 160u) {
+        return true;
+    }
+    uint32_t cut;
+    uint64_t best;
+    dense_directory_best(side->row_bins, side->row_count, &cut, &best);
+    if (dense_side_control_bytes(side) > 2u * best) {
+        if (!dense_side_change_cut(side, cut))
+            goto failed;
+    } else if (side->overflow && side->row_cap < (UINT32_C(1) << 31)) {
+        /* The due event budget also pays for a geometric prefix growth.
+         * Admit it by exact bytes, without pulling distant rows into it. */
+        uint32_t growth = side->row_cap ? side->row_cap * 2u
+            : DENSE_DIRECTORY_MIN_PREFIX;
+        uint32_t absorbed = dense_tree_count_below(side->overflow, growth);
+        uint64_t cost = (uint64_t)growth *
+                           (sizeof(*side->rows) + sizeof(*side->row_len)) +
+                       (uint64_t)(dense_tree_count(side->overflow) - absorbed) *
+                           sizeof(CettaDenseRowNode);
+        if (absorbed && cost <= 2u * best &&
+            !dense_side_change_cut(side, growth))
+            goto failed;
+    }
+    side->directory_base = best;
+    side->directory_events = 0u;
+    side->directory_maintenance_failed = false;
+    return true;
+failed:
+    side->directory_maintenance_failed = true;
+    return false;
+}
+/* Keep an ordinary row event out of the iterator-sized slow frame. The
+ * multiplication is exact: directory_events is only thirty-two bits. */
+static inline __attribute__((always_inline)) bool dense_side_maintain(
+    CettaDenseSide *side) {
+    if (side->row_bins && !side->directory_maintenance_failed &&
+        (uint64_t)side->directory_events * 160u <= side->directory_base)
+        return true;
+    return dense_side_maintain_due(side);
+}
+
+/* A complete private side has no published iterator to invalidate. Choose
+ * its exact minimum before exposing it, rather than carrying construction
+ * hysteresis into later point reads. Failure remains the caller's draft. */
+static bool dense_side_minimize_private(CettaDenseSide *side) {
+    if (!dense_side_maintain(side))
+        return false;
+    uint32_t cut = 0u;
+    uint64_t best = (uint64_t)side->row_count * sizeof(CettaDenseRowNode);
+    if (side->row_bins)
+        dense_directory_best(side->row_bins, side->row_count, &cut, &best);
+    if (!dense_side_change_cut(side, cut)) {
+        side->directory_maintenance_failed = true;
+        return false;
+    }
+    side->directory_base = best;
+    side->directory_events = 0u;
+    return true;
+}
+
+static void dense_side_free(CettaDenseSide *side) {
+    if (!side->overflow) {
+        for (uint32_t n = 0u; n < side->row_cap; n++)
+            if (side->rows[n])
+                dense_row_release(side->rows[n], side->row_len[n]);
+        dense_side_free_directory(side);
+        return;
+    }
+    DenseSideIterator iterator;
+    dense_side_iterator_init(&iterator, side);
+    DenseRowRef row;
+    while (dense_side_next(&iterator, NULL, &row))
+        dense_row_release(*row.items, *row.length);
+    dense_side_free_directory(side);
 }
 
 void cetta_dense_relation_free(CettaDenseRelation *rel) {
@@ -72,36 +627,54 @@ static bool dense_slots_grow(CettaDenseRelation *rel) {
 
 /* The number of ID, numbering it when it is new; UINT32_MAX without room. */
 static uint32_t dense_number_or_add(CettaDenseRelation *rel, CettaDenseId id) {
-    uint32_t number = cetta_dense_relation_number(rel, id);
-    if (number != UINT32_MAX)
-        return number;
-    if ((!rel->slots || (uint64_t)(rel->len + 1u) * 4u >
-                            (uint64_t)(rel->slot_mask + 1u) * 3u) &&
-        !dense_slots_grow(rel))
-        return UINT32_MAX;
+    /* Keep the absent key's empty bucket unless growing replaces the table. */
+    uint32_t place = 0u;
+    if (rel->slots) {
+        place = dense_hash(id) & rel->slot_mask;
+        while (rel->slots[place]) {
+            uint32_t number = rel->slots[place] - 1u;
+            if (rel->ids[number] == id)
+                return number;
+            place = (place + 1u) & rel->slot_mask;
+        }
+    }
+    if (!rel->slots || (uint64_t)(rel->len + 1u) * 4u >
+                          (uint64_t)(rel->slot_mask + 1u) * 3u) {
+        if (!dense_slots_grow(rel))
+            return UINT32_MAX;
+        place = dense_hash(id) & rel->slot_mask;
+        while (rel->slots[place])
+            place = (place + 1u) & rel->slot_mask;
+    }
     if (rel->len == rel->cap) {
         uint32_t cap = rel->cap ? rel->cap * 2u : 64u;
         if (cap <= rel->cap)
             return UINT32_MAX;
-        CettaDenseId *ids = realloc(rel->ids, cap * sizeof(*ids));
-        if (!ids)
+        /* Publish both capacities together; a failed second allocation
+         * must not leave a larger ID allocation hidden by the old cap. */
+        CettaDenseId *ids = malloc(cap * sizeof(*ids));
+        uint32_t *holds = malloc(cap * sizeof(*holds));
+        if (!ids || !holds) {
+            free(ids);
+            free(holds);
             return UINT32_MAX;
+        }
+        if (rel->len) {
+            memcpy(ids, rel->ids, rel->len * sizeof(*ids));
+            memcpy(holds, rel->holds, rel->len * sizeof(*holds));
+        }
+        free(rel->ids);
+        free(rel->holds);
         rel->ids = ids;
-        uint32_t *holds = realloc(rel->holds, cap * sizeof(*holds));
-        if (!holds)
-            return UINT32_MAX;
         rel->holds = holds;
         rel->cap = cap;
     }
-    number = rel->len++;
+    uint32_t number = rel->len++;
     rel->ids[number] = id;
     /* Dead until a pair holds it. */
     rel->holds[number] = 0u;
     rel->dead++;
-    uint32_t i = dense_hash(id) & rel->slot_mask;
-    while (rel->slots[i] != 0u)
-        i = (i + 1u) & rel->slot_mask;
-    rel->slots[i] = number + 1u;
+    rel->slots[place] = number + 1u;
     return number;
 }
 
@@ -197,7 +770,8 @@ static inline uint32_t dense_chunk_base(uint32_t k) {
 }
 
 static inline bool dense_row_listed(const CettaDenseSide *side, uint32_t n) {
-    return (side->row_len[n] & DENSE_ROW_LEAVES) != 0u;
+    DenseRowRef descriptor = dense_side_row_ref(side, n);
+    return (*descriptor.length & DENSE_ROW_LEAVES) != 0u;
 }
 
 /* The byte rule: whether COUNT numbers of a chunk, the largest LARGEST past
@@ -240,32 +814,6 @@ static uint32_t dense_array_lower(const uint32_t *items, uint32_t from,
             to = middle;
     }
     return from;
-}
-
-/* Room for a row at N. */
-static bool dense_rows_reserve(CettaDenseSide *side, uint32_t n) {
-    if (n < side->row_cap)
-        return true;
-    uint32_t cap = side->row_cap ? side->row_cap : 64u;
-    while (cap <= n) {
-        if (cap > UINT32_MAX / 2u)
-            return false;
-        cap *= 2u;
-    }
-    void **rows = realloc(side->rows, cap * sizeof(*rows));
-    if (!rows)
-        return false;
-    side->rows = rows;
-    uint32_t *len = realloc(side->row_len, cap * sizeof(*len));
-    if (!len)
-        return false;
-    side->row_len = len;
-    memset(side->rows + side->row_cap, 0,
-           (cap - side->row_cap) * sizeof(*side->rows));
-    memset(side->row_len + side->row_cap, 0,
-           (cap - side->row_cap) * sizeof(*side->row_len));
-    side->row_cap = cap;
-    return true;
 }
 
 /* ── Leaves ── */
@@ -494,9 +1042,10 @@ static DenseLeaf *dense_leaves_new(const uint32_t *numbers, uint32_t count,
 /* ── Rows ── */
 
 static uint64_t dense_row_bytes(const CettaDenseSide *side, uint32_t n) {
+    DenseRowRef descriptor = dense_side_row_ref(side, n);
     if (!dense_row_listed(side, n))
-        return dense_len_bytes(side->row_len[n]);
-    const DenseLeaves *list = side->rows[n];
+        return dense_len_bytes(*descriptor.length);
+    const DenseLeaves *list = *descriptor.items;
     uint64_t bytes = dense_list_bytes(list->cap);
     for (uint32_t i = 0u; i < list->len; i++)
         bytes += dense_len_bytes(list->leaf[i].len);
@@ -512,51 +1061,64 @@ static void dense_row_release(void *items, uint32_t len) {
     free(items);
 }
 
-static uint64_t dense_row_count(const CettaDenseSide *side, uint32_t n) {
-    if (n >= side->row_cap || !side->rows[n])
+static inline __attribute__((always_inline)) uint64_t dense_row_count(
+    const CettaDenseSide *side, uint32_t n) {
+    DenseRowView descriptor = dense_side_row_view(side, n);
+    if (!descriptor.items)
         return 0u;
-    if (dense_row_listed(side, n))
-        return ((const DenseLeaves *)side->rows[n])->count;
-    return dense_len_count(side->row_len[n]);
+    if (descriptor.length & DENSE_ROW_LEAVES)
+        return ((const DenseLeaves *)descriptor.items)->count;
+    return dense_len_count(descriptor.length);
 }
 
 /* Row N's numbers in order into OUT, room for its count. */
 static void dense_row_numbers(const CettaDenseSide *side, uint32_t n,
                               uint32_t *out) {
+    DenseRowRef descriptor = dense_side_row_ref(side, n);
     if (!dense_row_listed(side, n)) {
-        (void)dense_leaf_numbers(side->rows[n], side->row_len[n], 0u, out);
+        (void)dense_leaf_numbers(*descriptor.items, *descriptor.length, 0u, out);
         return;
     }
-    const DenseLeaves *list = side->rows[n];
+    const DenseLeaves *list = *descriptor.items;
     for (uint32_t i = 0u; i < list->len; i++)
         out += dense_leaf_numbers(list->leaf[i].items, list->leaf[i].len,
                                   dense_chunk_base(list->leaf[i].lo), out);
 }
 
-/* Row N, empty, takes the leaves LEAVES[0, count) of NUMBERS numbers: in
+/* Row N takes the prepared leaves LEAVES[0, count) of NUMBERS numbers: in
  * place when one can stand there (an array, or bits of chunk 0), else in a
  * list.  False without memory, the leaves still the caller's. */
 static bool dense_row_install(CettaDenseSide *side, uint32_t n,
                               const DenseLeaf *leaves, uint32_t count,
                               uint64_t numbers) {
+    bool existed = dense_side_has_row(side, n);
+    if (!dense_rows_reserve(side, n))
+        return false;
+    DenseRowRef descriptor = dense_side_row_ref(side, n);
     if (count == 1u &&
         (!dense_len_bits(leaves[0].len) || leaves[0].lo == 0u)) {
-        side->rows[n] = leaves[0].items;
-        side->row_len[n] = leaves[0].len;
+        *descriptor.items = leaves[0].items;
+        *descriptor.length = leaves[0].len;
         side->row_bytes += dense_len_bytes(leaves[0].len);
+        if (!existed)
+            dense_side_born(side, n);
         return true;
     }
     DenseLeaves *list = malloc(dense_list_bytes(count));
-    if (!list)
+    if (!list) {
+        dense_side_forget_empty(side, n);
         return false;
+    }
     list->count = numbers;
     list->len = list->cap = count;
     memcpy(list->leaf, leaves, count * sizeof(*leaves));
-    side->rows[n] = list;
-    side->row_len[n] = DENSE_ROW_LEAVES;
+    *descriptor.items = list;
+    *descriptor.length = DENSE_ROW_LEAVES;
     side->row_bytes += dense_list_bytes(count);
     for (uint32_t i = 0u; i < count; i++)
         side->row_bytes += dense_len_bytes(leaves[i].len);
+    if (!existed)
+        dense_side_born(side, n);
     return true;
 }
 
@@ -579,6 +1141,7 @@ static bool dense_row_build(CettaDenseSide *side, uint32_t n,
 /* Row N made anew from its numbers, with M put among them unless it is
  * DENSE_NONE.  False without memory, the row as it was. */
 static bool dense_row_rebuild(CettaDenseSide *side, uint32_t n, uint32_t m) {
+    DenseRowRef descriptor = dense_side_row_ref(side, n);
     uint32_t count = (uint32_t)dense_row_count(side, n);
     uint32_t *numbers = malloc(((size_t)count + 1u) * sizeof(*numbers));
     if (!numbers)
@@ -591,18 +1154,13 @@ static bool dense_row_rebuild(CettaDenseSide *side, uint32_t n, uint32_t m) {
         numbers[place] = m;
         count++;
     }
-    void *old = side->rows[n];
-    uint32_t old_len = side->row_len[n];
+    void *old = *descriptor.items;
+    uint32_t old_len = *descriptor.length;
     uint64_t old_bytes = dense_row_bytes(side, n);
-    side->rows[n] = NULL;
-    side->row_len[n] = 0u;
     bool ok = dense_row_build(side, n, numbers, count);
     free(numbers);
-    if (!ok) {
-        side->rows[n] = old;
-        side->row_len[n] = old_len;
+    if (!ok)
         return false;
-    }
     side->row_bytes -= old_bytes;
     dense_row_release(old, old_len);
     return true;
@@ -610,12 +1168,12 @@ static bool dense_row_rebuild(CettaDenseSide *side, uint32_t n, uint32_t m) {
 
 /* Free row N, holding nothing or held by a number that died. */
 static void dense_row_free(CettaDenseSide *side, uint32_t n) {
-    if (n >= side->row_cap || !side->rows[n])
+    if (!dense_side_has_row(side, n))
         return;
+    DenseRowRef descriptor = dense_side_row_ref(side, n);
     side->row_bytes -= dense_row_bytes(side, n);
-    dense_row_release(side->rows[n], side->row_len[n]);
-    side->rows[n] = NULL;
-    side->row_len[n] = 0u;
+    dense_row_release(*descriptor.items, *descriptor.length);
+    dense_side_died(side, n);
 }
 
 /* ── Lists ── */
@@ -639,7 +1197,8 @@ static uint32_t dense_list_find(const DenseLeaves *list, uint32_t k) {
 static bool dense_list_splice(CettaDenseSide *side, uint32_t n, uint32_t i,
                               uint32_t drop, const DenseLeaf *with,
                               uint32_t count) {
-    DenseLeaves *list = side->rows[n];
+    DenseRowRef descriptor = dense_side_row_ref(side, n);
+    DenseLeaves *list = *descriptor.items;
     uint32_t len = list->len - drop + count;
     if (len > list->cap) {
         uint32_t cap = list->cap * 2u;
@@ -650,7 +1209,7 @@ static bool dense_list_splice(CettaDenseSide *side, uint32_t n, uint32_t i,
             return false;
         side->row_bytes += dense_list_bytes(cap) - dense_list_bytes(grown->cap);
         grown->cap = cap;
-        side->rows[n] = list = grown;
+        *descriptor.items = list = grown;
     }
     memmove(&list->leaf[i + count], &list->leaf[i + drop],
             (list->len - i - drop) * sizeof(*list->leaf));
@@ -663,7 +1222,7 @@ static bool dense_list_splice(CettaDenseSide *side, uint32_t n, uint32_t i,
             side->row_bytes -= dense_list_bytes(fewer->cap) -
                                dense_list_bytes(fewer->cap / 2u);
             fewer->cap /= 2u;
-            side->rows[n] = fewer;
+            *descriptor.items = fewer;
         }
     }
     return true;
@@ -674,7 +1233,8 @@ static bool dense_list_splice(CettaDenseSide *side, uint32_t n, uint32_t i,
  * memory, the row as it was. */
 static bool dense_leaf_rebuild(CettaDenseSide *side, uint32_t n, uint32_t i,
                                uint32_t m) {
-    DenseLeaves *list = side->rows[n];
+    DenseRowRef descriptor = dense_side_row_ref(side, n);
+    DenseLeaves *list = *descriptor.items;
     DenseLeaf old = list->leaf[i];
     uint32_t count = dense_len_count(old.len);
     uint32_t *numbers = malloc(((size_t)count + 1u) * sizeof(*numbers));
@@ -711,7 +1271,8 @@ static bool dense_leaf_rebuild(CettaDenseSide *side, uint32_t n, uint32_t i,
 /* Leaf I of row N's list, an array, merged with its neighbouring array of
  * fewer numbers when together they hold at most DENSE_LEAF_MERGE. */
 static void dense_list_merge(CettaDenseSide *side, uint32_t n, uint32_t i) {
-    DenseLeaves *list = side->rows[n];
+    DenseRowRef descriptor = dense_side_row_ref(side, n);
+    DenseLeaves *list = *descriptor.items;
     uint32_t count = dense_len_count(list->leaf[i].len);
     uint32_t with = DENSE_NONE, fewest = DENSE_NONE;
     for (uint32_t j = i ? i - 1u : i + 1u; j <= i + 1u && j < list->len;
@@ -746,19 +1307,21 @@ static void dense_list_merge(CettaDenseSide *side, uint32_t n, uint32_t i) {
 
 /* Row N's list, left with one leaf that can stand in place, moves there. */
 static void dense_list_settle(CettaDenseSide *side, uint32_t n) {
-    DenseLeaves *list = side->rows[n];
+    DenseRowRef descriptor = dense_side_row_ref(side, n);
+    DenseLeaves *list = *descriptor.items;
     if (list->len != 1u ||
         (dense_len_bits(list->leaf[0].len) && list->leaf[0].lo != 0u))
         return;
-    side->rows[n] = list->leaf[0].items;
-    side->row_len[n] = list->leaf[0].len;
+    *descriptor.items = list->leaf[0].items;
+    *descriptor.length = list->leaf[0].len;
     side->row_bytes -= dense_list_bytes(list->cap);
     free(list);
 }
 
 /* Put M in row N's list: as dense_row_put. */
 static int dense_list_put(CettaDenseSide *side, uint32_t n, uint32_t m) {
-    DenseLeaves *list = side->rows[n];
+    DenseRowRef descriptor = dense_side_row_ref(side, n);
+    DenseLeaves *list = *descriptor.items;
     uint32_t k = dense_chunk(m);
     uint32_t i = dense_list_find(list, k);
     if (i == list->len || list->leaf[i].lo > k) {
@@ -781,7 +1344,7 @@ static int dense_list_put(CettaDenseSide *side, uint32_t n, uint32_t m) {
                 return -1;
             }
             side->row_bytes += 2u * sizeof(*one);
-            ((DenseLeaves *)side->rows[n])->count++;
+            ((DenseLeaves *)*descriptor.items)->count++;
             return 1;
         }
     }
@@ -810,7 +1373,7 @@ static int dense_list_put(CettaDenseSide *side, uint32_t n, uint32_t m) {
         }
     }
     if (put == 1)
-        ((DenseLeaves *)side->rows[n])->count++;
+        ((DenseLeaves *)*descriptor.items)->count++;
     if (rebuilt && put == 1)
         dense_list_settle(side, n);
     return put;
@@ -823,7 +1386,8 @@ static int dense_list_put(CettaDenseSide *side, uint32_t n, uint32_t m) {
  * Each step only as memory allows: the row holds the same numbers
  * either way. */
 static bool dense_list_take(CettaDenseSide *side, uint32_t n, uint32_t m) {
-    DenseLeaves *list = side->rows[n];
+    DenseRowRef descriptor = dense_side_row_ref(side, n);
+    DenseLeaves *list = *descriptor.items;
     uint32_t k = dense_chunk(m);
     uint32_t i = dense_list_find(list, k);
     if (i == list->len || list->leaf[i].lo > k)
@@ -856,7 +1420,7 @@ static bool dense_list_take(CettaDenseSide *side, uint32_t n, uint32_t m) {
     } else if (dense_len_bits(leaf->len)) {
         if (dense_bits_sparse(leaf->len) &&
             dense_leaf_rebuild(side, n, i, DENSE_NONE) &&
-            !dense_len_bits(((DenseLeaves *)side->rows[n])->leaf[i].len))
+            !dense_len_bits(((DenseLeaves *)*descriptor.items)->leaf[i].len))
             dense_list_merge(side, n, i);
     } else if (count < DENSE_LEAF_MAX / 4u) {
         dense_list_merge(side, n, i);
@@ -868,13 +1432,14 @@ static bool dense_list_take(CettaDenseSide *side, uint32_t n, uint32_t m) {
 /* ── A row's operations ── */
 
 static bool dense_row_has(const CettaDenseSide *side, uint32_t n, uint32_t m) {
-    if (n >= side->row_cap || !side->rows[n])
+    DenseRowView descriptor = dense_side_row_view(side, n);
+    if (!descriptor.items)
         return false;
-    if (!dense_row_listed(side, n))
-        return (!dense_len_bits(side->row_len[n]) ||
+    if (!(descriptor.length & DENSE_ROW_LEAVES))
+        return (!dense_len_bits(descriptor.length) ||
                 dense_chunk(m) == 0u) &&
-               dense_leaf_has(side->rows[n], side->row_len[n], 0u, m);
-    const DenseLeaves *list = side->rows[n];
+               dense_leaf_has(descriptor.items, descriptor.length, 0u, m);
+    const DenseLeaves *list = descriptor.items;
     uint32_t k = dense_chunk(m), i = dense_list_find(list, k);
     return i < list->len && list->leaf[i].lo <= k &&
            dense_leaf_has(list->leaf[i].items, list->leaf[i].len,
@@ -883,30 +1448,34 @@ static bool dense_row_has(const CettaDenseSide *side, uint32_t n, uint32_t m) {
 
 /* Put M in row N: 1 when it is new, 0 when the row held it, -1 without
  * room (the row as it was). */
-static int dense_row_put(CettaDenseSide *side, uint32_t n, uint32_t m) {
+static __attribute__((noinline)) int dense_row_put_slow(CettaDenseSide *side, uint32_t n, uint32_t m) {
     if (!dense_rows_reserve(side, n))
         return -1;
-    if (!side->rows[n]) {
+    DenseRowRef descriptor = dense_side_row_ref(side, n);
+    if (!*descriptor.items) {
         uint32_t *items = malloc(2u * sizeof(*items));
-        if (!items)
+        if (!items) {
+            dense_side_forget_empty(side, n);
             return -1;
+        }
         items[0] = m;
-        side->rows[n] = items;
-        side->row_len[n] = dense_array_len(1u, 2u);
+        *descriptor.items = items;
+        *descriptor.length = dense_array_len(1u, 2u);
         side->row_bytes += 2u * sizeof(*items);
+        dense_side_born(side, n);
         return 1;
     }
-    if (dense_row_listed(side, n))
+    if (*descriptor.length & DENSE_ROW_LEAVES)
         return dense_list_put(side, n, m);
-    uint32_t len = side->row_len[n];
+    uint32_t len = *descriptor.length;
     if (dense_len_bits(len)) {
         if (m / 64u < dense_len_words(len)) {
-            uint64_t *words = side->rows[n];
+            uint64_t *words = *descriptor.items;
             uint64_t bit = UINT64_C(1) << (m & 63u);
             if (words[m / 64u] & bit)
                 return 0;
             words[m / 64u] |= bit;
-            side->row_len[n] = dense_bits_len(dense_len_words(len),
+            *descriptor.length = dense_bits_len(dense_len_words(len),
                                               dense_len_count(len) + 1u);
             return 1;
         }
@@ -923,57 +1492,73 @@ static int dense_row_put(CettaDenseSide *side, uint32_t n, uint32_t m) {
             one[0] = m;
             list->count = dense_len_count(len) + 1u;
             list->len = list->cap = 2u;
-            list->leaf[0] = (DenseLeaf){0u, 1u, len, side->rows[n]};
+            list->leaf[0] = (DenseLeaf){0u, 1u, len, *descriptor.items};
             list->leaf[1] = (DenseLeaf){dense_chunk(m), dense_chunk(m) + 1u,
                                         dense_array_len(1u, 2u), one};
-            side->rows[n] = list;
-            side->row_len[n] = DENSE_ROW_LEAVES;
+            *descriptor.items = list;
+            *descriptor.length = DENSE_ROW_LEAVES;
             side->row_bytes += dense_list_bytes(2u) + 2u * sizeof(*one);
             return 1;
         }
-        int put = dense_bits_put(&side->rows[n], &side->row_len[n], 0u, m,
+        int put = dense_bits_put(descriptor.items, descriptor.length, 0u, m,
                                  &side->row_bytes);
         if (put != 2)
             return put;
         return dense_row_rebuild(side, n, m) ? 1 : -1;
     }
     uint32_t count = dense_len_count(len);
-    uint32_t place = dense_array_lower(side->rows[n], 0u, count, m);
-    if (place < count && ((const uint32_t *)side->rows[n])[place] == m)
+    uint32_t place = dense_array_lower(*descriptor.items, 0u, count, m);
+    if (place < count && ((const uint32_t *)*descriptor.items)[place] == m)
         return 0;
     if (count == DENSE_LEAF_MAX ||
-        dense_array_chunk_dense(side->rows[n], count, place, m))
+        dense_array_chunk_dense(*descriptor.items, count, place, m))
         return dense_row_rebuild(side, n, m) ? 1 : -1;
-    return dense_array_insert(&side->rows[n], &side->row_len[n], place, m,
+    return dense_array_insert(descriptor.items, descriptor.length, place, m,
                               &side->row_bytes) ? 1 : -1;
+}
+static inline __attribute__((always_inline)) int dense_row_put(
+    CettaDenseSide *side, uint32_t n, uint32_t m) {
+    if (__builtin_expect(n < side->row_cap && !side->rows[n], 1)) {
+        uint32_t *items = malloc(2u * sizeof(*items));
+        if (!items)
+            return -1;
+        items[0] = m;
+        side->rows[n] = items;
+        side->row_len[n] = dense_array_len(1u, 2u);
+        side->row_bytes += 2u * sizeof(*items);
+        dense_side_born(side, n);
+        return 1;
+    }
+    return dense_row_put_slow(side, n, m);
 }
 
 /* Take M from row N: whether the row held it.  As in a list, bits grown
  * sparse are made anew, and an emptied row is freed. */
 static bool dense_row_take(CettaDenseSide *side, uint32_t n, uint32_t m) {
-    if (n >= side->row_cap || !side->rows[n])
+    if (!dense_side_has_row(side, n))
         return false;
+    DenseRowRef descriptor = dense_side_row_ref(side, n);
     if (dense_row_listed(side, n))
         return dense_list_take(side, n, m);
-    uint32_t len = side->row_len[n];
+    uint32_t len = *descriptor.length;
     if (dense_len_bits(len)) {
         if (dense_chunk(m) != 0u ||
-            !dense_bits_take(side->rows[n], &side->row_len[n], 0u, m))
+            !dense_bits_take(*descriptor.items, descriptor.length, 0u, m))
             return false;
-        if (dense_len_count(side->row_len[n]) == 0u)
+        if (dense_len_count(*descriptor.length) == 0u)
             dense_row_free(side, n);
-        else if (dense_bits_sparse(side->row_len[n]))
+        else if (dense_bits_sparse(*descriptor.length))
             (void)dense_row_rebuild(side, n, DENSE_NONE);
         return true;
     }
     uint32_t count = dense_len_count(len);
-    uint32_t place = dense_array_lower(side->rows[n], 0u, count, m);
-    if (place == count || ((const uint32_t *)side->rows[n])[place] != m)
+    uint32_t place = dense_array_lower(*descriptor.items, 0u, count, m);
+    if (place == count || ((const uint32_t *)*descriptor.items)[place] != m)
         return false;
     if (count == 1u)
         dense_row_free(side, n);
     else
-        dense_array_remove(&side->rows[n], &side->row_len[n], place,
+        dense_array_remove(descriptor.items, descriptor.length, place,
                            &side->row_bytes);
     return true;
 }
@@ -1016,12 +1601,13 @@ static bool dense_each_in_row(const CettaDenseRelation *rel,
                               const CettaDenseSide *side, uint32_t n,
                               bool second, CettaDensePairVisit visit,
                               void *context) {
-    if (n >= side->row_cap || !side->rows[n])
+    DenseRowView descriptor = dense_side_row_view(side, n);
+    if (!descriptor.items)
         return true;
-    if (!dense_row_listed(side, n))
-        return dense_each_in_leaf(rel, side->rows[n], side->row_len[n], 0u, n,
+    if (!(descriptor.length & DENSE_ROW_LEAVES))
+        return dense_each_in_leaf(rel, descriptor.items, descriptor.length, 0u, n,
                                   second, visit, context);
-    const DenseLeaves *list = side->rows[n];
+    const DenseLeaves *list = descriptor.items;
     for (uint32_t i = 0u; i < list->len; i++) {
         if (!dense_each_in_leaf(rel, list->leaf[i].items, list->leaf[i].len,
                                 dense_chunk_base(list->leaf[i].lo), n, second,
@@ -1049,7 +1635,10 @@ static void dense_second_drop(CettaDenseRelation *rel) {
 static void dense_second_build(CettaDenseRelation *rel) {
     uint32_t *numbers = NULL;
     uint64_t room = 0u;
-    for (uint32_t na = 0u; na < rel->first.row_cap; na++) {
+    DenseSideIterator iterator;
+    dense_side_iterator_init(&iterator, &rel->first);
+    uint32_t na;
+    while (dense_side_next(&iterator, &na, NULL)) {
         uint64_t count = dense_row_count(&rel->first, na);
         if (count == 0u)
             continue;
@@ -1062,10 +1651,13 @@ static void dense_second_build(CettaDenseRelation *rel) {
         }
         dense_row_numbers(&rel->first, na, numbers);
         for (uint64_t i = 0u; i < count; i++) {
-            if (dense_row_put(&rel->second, numbers[i], na) < 0)
+            if (dense_row_put(&rel->second, numbers[i], na) < 0 ||
+                !dense_side_maintain(&rel->second))
                 goto drop;
         }
     }
+    if (!dense_side_minimize_private(&rel->second))
+        goto drop;
     free(numbers);
     rel->second_kept = true;
     return;
@@ -1078,8 +1670,12 @@ drop:
  * its rent, and the second side built once the rents reach its price. */
 static void dense_second_rent(const CettaDenseRelation *rel) {
     CettaDenseRelation *kept = (CettaDenseRelation *)rel;
-    kept->second_rent += rel->first.row_cap;
-    if (kept->second_rent >= rel->pairs + rel->first.row_cap)
+    uint64_t scanned = dense_side_scan_span(&rel->first);
+    kept->second_rent = scanned > UINT64_MAX - kept->second_rent
+        ? UINT64_MAX : kept->second_rent + scanned;
+    uint64_t price = scanned > UINT64_MAX - rel->pairs
+        ? UINT64_MAX : rel->pairs + scanned;
+    if (kept->second_rent >= price)
         dense_second_build(kept);
 }
 
@@ -1131,6 +1727,9 @@ bool cetta_dense_relation_add(CettaDenseRelation *rel, CettaDenseId a,
     rel->pairs++;
     dense_hold(rel, na, held, context);
     dense_hold(rel, nb, held, context);
+    (void)dense_side_maintain(&rel->first);
+    if (rel->second_kept && !dense_side_maintain(&rel->second))
+        dense_second_drop(rel);
     return true;
 }
 
@@ -1156,6 +1755,9 @@ bool cetta_dense_relation_remove(CettaDenseRelation *rel, CettaDenseId a,
     rel->pairs--;
     dense_unhold(rel, na, released, context);
     dense_unhold(rel, nb, released, context);
+    (void)dense_side_maintain(&rel->first);
+    if (rel->second_kept && !dense_side_maintain(&rel->second))
+        dense_second_drop(rel);
     return true;
 }
 
@@ -1165,9 +1767,34 @@ bool cetta_dense_relation_remove(CettaDenseRelation *rel, CettaDenseId a,
 static bool dense_side_renumbered(const CettaDenseSide *side,
                                   const uint32_t *map, uint32_t numbered,
                                   CettaDenseSide *fresh) {
+    uint32_t bins[DENSE_DIRECTORY_BINS] = {0};
+    uint32_t rows = 0u, cut;
+    uint64_t best;
+    DenseSideIterator census;
+    dense_side_iterator_below_init(&census, side, numbered);
+    uint32_t number;
+    while (dense_side_next(&census, &number, NULL)) {
+        if (map[number] == UINT32_MAX)
+            return false;
+        bins[dense_directory_bin(map[number])]++;
+        rows++;
+    }
+    dense_directory_best(bins, rows, &cut, &best);
+    if (!dense_side_change_cut(fresh, cut))
+        return false;
+    if (rows >= 20u) {
+        fresh->row_bins = calloc(DENSE_DIRECTORY_BINS, sizeof(*fresh->row_bins));
+        if (!fresh->row_bins) {
+            dense_side_free(fresh);
+            return false;
+        }
+    }
     uint32_t *numbers = NULL;
     uint64_t room = 0u;
-    for (uint32_t n = 0u; n < side->row_cap && n < numbered; n++) {
+    DenseSideIterator iterator;
+    dense_side_iterator_below_init(&iterator, side, numbered);
+    uint32_t n;
+    while (dense_side_next(&iterator, &n, NULL)) {
         uint64_t count = dense_row_count(side, n);
         if (count == 0u)
             continue;
@@ -1185,13 +1812,12 @@ static bool dense_side_renumbered(const CettaDenseSide *side,
             goto fail;
     }
     free(numbers);
+    fresh->directory_base = best;
+    fresh->directory_events = 0u;
     return true;
 fail:
     free(numbers);
-    for (uint32_t n = 0u; n < fresh->row_cap; n++) {
-        if (fresh->rows[n])
-            dense_row_release(fresh->rows[n], fresh->row_len[n]);
-    }
+    dense_side_free(fresh);
     return false;
 }
 
@@ -1212,22 +1838,11 @@ static bool dense_renumber(CettaDenseRelation *rel) {
     CettaDenseId *ids = malloc((size_t)cap * sizeof(*ids));
     uint32_t *holds = malloc((size_t)cap * sizeof(*holds));
     uint32_t *slots = calloc((size_t)size, sizeof(*slots));
-    void **first_rows = calloc(cap, sizeof(*first_rows));
-    uint32_t *first_len = calloc(cap, sizeof(*first_len));
-    void **second_rows = rel->second_kept ? calloc(cap, sizeof(*second_rows))
-                                          : NULL;
-    uint32_t *second_len = rel->second_kept ? calloc(cap, sizeof(*second_len))
-                                            : NULL;
-    if (!map || !ids || !holds || !slots || !first_rows || !first_len ||
-        (rel->second_kept && (!second_rows || !second_len))) {
+    if (!map || !ids || !holds || !slots) {
         free(map);
         free(ids);
         free(holds);
         free(slots);
-        free(first_rows);
-        free(first_len);
-        free(second_rows);
-        free(second_len);
         return false;
     }
     uint32_t next = 0u;
@@ -1240,19 +1855,13 @@ static bool dense_renumber(CettaDenseRelation *rel) {
         holds[next] = rel->holds[n];
         map[n] = next++;
     }
-    CettaDenseSide first = {.rows = first_rows, .row_len = first_len,
-                            .row_cap = cap};
-    CettaDenseSide second = {.rows = second_rows, .row_len = second_len,
-                             .row_cap = cap};
+    CettaDenseSide first = {0}, second = {0};
     if (!dense_side_renumbered(&rel->first, map, rel->len, &first)) {
         free(map);
         free(ids);
         free(holds);
         free(slots);
-        free(first_rows);
-        free(first_len);
-        free(second_rows);
-        free(second_len);
+        dense_side_free(&first);
         return false;
     }
     bool second_made = rel->second_kept &&
@@ -1264,8 +1873,7 @@ static bool dense_renumber(CettaDenseRelation *rel) {
         rel->second = second;
     } else {
         dense_second_drop(rel);
-        free(second_rows);
-        free(second_len);
+        dense_side_free(&second);
     }
     uint32_t mask = (uint32_t)size - 1u;
     for (uint32_t n = 0u; n < next; n++) {
@@ -1309,7 +1917,10 @@ bool cetta_dense_relation_each(const CettaDenseRelation *rel,
         return dense_each_in_row(rel, &rel->first, na, false, visit, context);
     }
     if (b_fixed == CETTA_DENSE_ANY) {
-        for (uint32_t na = 0u; na < rel->first.row_cap; na++) {
+        DenseSideIterator iterator;
+        dense_side_iterator_init(&iterator, &rel->first);
+        uint32_t na;
+        while (dense_side_next(&iterator, &na, NULL)) {
             if (!dense_each_in_row(rel, &rel->first, na, false, visit, context))
                 return false;
         }
@@ -1320,13 +1931,29 @@ bool cetta_dense_relation_each(const CettaDenseRelation *rel,
         return true;
     if (rel->second_kept)
         return dense_each_in_row(rel, &rel->second, nb, true, visit, context);
-    for (uint32_t na = 0u; na < rel->first.row_cap; na++) {
+    DenseSideIterator iterator;
+    dense_side_iterator_init(&iterator, &rel->first);
+    uint32_t na;
+    while (dense_side_next(&iterator, &na, NULL)) {
         if (dense_row_has(&rel->first, na, nb) &&
             !visit(context, rel->ids[na], b_fixed))
             return false;
     }
     dense_second_rent(rel);
     return true;
+}
+
+/* Keep the traversal stack out of direct first/inverse point counts. */
+static __attribute__((noinline)) uint64_t dense_count_second_unkept(
+    const CettaDenseRelation *rel, uint32_t nb) {
+    uint64_t count = 0u;
+    DenseSideIterator iterator;
+    dense_side_iterator_init(&iterator, &rel->first);
+    uint32_t na;
+    while (dense_side_next(&iterator, &na, NULL))
+        count += dense_row_has(&rel->first, na, nb);
+    dense_second_rent(rel);
+    return count;
 }
 
 uint64_t cetta_dense_relation_count(const CettaDenseRelation *rel,
@@ -1347,11 +1974,7 @@ uint64_t cetta_dense_relation_count(const CettaDenseRelation *rel,
         return 0u;
     if (rel->second_kept)
         return dense_row_count(&rel->second, nb);
-    uint64_t count = 0u;
-    for (uint32_t na = 0u; na < rel->first.row_cap; na++)
-        count += dense_row_has(&rel->first, na, nb);
-    dense_second_rent(rel);
-    return count;
+    return dense_count_second_unkept(rel, nb);
 }
 
 void cetta_dense_relation_each_numbered(const CettaDenseRelation *rel,
@@ -1359,15 +1982,14 @@ void cetta_dense_relation_each_numbered(const CettaDenseRelation *rel,
                                         void *context) {
     if (!rel || !visit)
         return;
+    /* A callback may change liveness, so recheck the all-live case per ID. */
     for (uint32_t n = 0u; n < rel->len; n++)
-        if (rel->holds[n])
+        if (!rel->dead || rel->holds[n])
             visit(context, rel->ids[n]);
 }
 
 static uint64_t dense_side_bytes(const CettaDenseSide *side) {
-    return (uint64_t)side->row_cap * (sizeof(*side->rows) +
-                                      sizeof(*side->row_len)) +
-           side->row_bytes;
+    return dense_side_directory_bytes(side) + side->row_bytes;
 }
 
 uint64_t cetta_dense_relation_bytes(const CettaDenseRelation *rel) {
