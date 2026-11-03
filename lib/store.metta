@@ -268,3 +268,13 @@
 (: __cetta_lib_store_remote_use (-> Atom Atom Atom Atom))
 (: store:remote-use (-> %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (store:remote-use $resource $operation $arguments) (function (case (__cetta_lib_store_remote_use $resource $operation $arguments) (($r (return $r))))))
+
+(: __cetta_lib_store_owner_clone (-> Atom Atom))
+(: store:owner-clone (-> %Undefined% %Undefined%))
+(= (store:owner-clone $owner) (function (case (__cetta_lib_store_owner_clone $owner) (($r (return $r))))))
+(: __cetta_lib_store_candidate_packet (-> Atom Number Atom Atom))
+(: store:candidate-packet (-> %Undefined% Number Atom %Undefined%))
+(= (store:candidate-packet $cursor $sequence $part) (function (case (__cetta_lib_store_candidate_packet $cursor $sequence $part) (($r (return $r))))))
+(: __cetta_lib_store_commit_batch_guarded (-> Atom Atom Atom Atom Atom))
+(: store:commit-batch-guarded (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
+(= (store:commit-batch-guarded $owner $view $watch $batch) (function (case (__cetta_lib_store_commit_batch_guarded $owner $view $watch $batch) (($r (return $r))))))

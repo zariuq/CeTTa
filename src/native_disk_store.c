@@ -440,6 +440,15 @@ bool cetta_disk_store_has_domain(const CettaDiskStore *store,const CettaDiskStor
 void cetta_disk_store_close(CettaDiskStore *store) {
     if (store && atomic_fetch_sub(&store->references,1)==1) {cetta_act_base_release(store->base);close(store->directory);free(store);}
 }
+CettaDiskStoreStatus cetta_disk_store_clone_owner(const CettaDiskStore *origin,CettaDiskStore **out) {
+    if (!out) return CETTA_STORE_INVALID;
+    *out=NULL;if (!origin) return CETTA_STORE_INVALID;
+    CettaDiskStore *copy=calloc(1,sizeof(*copy));if (!copy) return CETTA_STORE_NOMEM;
+    copy->directory=fcntl(origin->directory,F_DUPFD_CLOEXEC,0);
+    if (copy->directory<0) {free(copy);return CETTA_STORE_IO;}
+    atomic_init(&copy->references,1);copy->device=origin->device;copy->inode=origin->inode;
+    *out=copy;return CETTA_STORE_OK;
+}
 void cetta_disk_store_require_recovery(CettaDiskStore *store) {
     if (store) store->uncertain=true;
 }

@@ -5,6 +5,7 @@
 !(import! &self (library act))
 !(import! &self (library fs))
 !(import! &self (library space_service))
+!(import! &self "space_append.metta")
 
 (= (db:new-request)
   (case (system:uuid4-hex)
@@ -224,8 +225,20 @@
 (: db:import-act (-> %Undefined% String %Undefined%))
 (: db:import-act (-> %Undefined% Atom String %Undefined%))
 (= (db:import-act $owner $path) (db:import-act $owner data $path))
-(= (db:import-act $owner $collection $path)
-  (db:transaction $owner $collection (|-> ($space) (act:load! $space $path))))
+(= (db:import-act $resource $collection $path)
+  (let $owner (db:resource $resource)
+    (case $owner
+      (((db:readonly $space) (Error db:import read-only))
+       ((db:remote $remote)
+        (db:transaction $owner $collection (|-> ($space) (act:load! $space $path))))
+       ($embedded
+        (case (db:new-request)
+          (((Error $where $why) (Error $where $why))
+           ($request
+            (case (db:import-act-result $owner $collection $request automatic $path)
+              (((db:committed $_ $values) (superpose $values))
+               ((db:replayed $_ $values) (superpose $values))
+               ($failure $failure)))))))))))
 
 ; The simple query exposes template values and occurrence identities in a
 ; public row. Quote preserves callable-looking payloads as returned data.
@@ -445,3 +458,35 @@
       (quote (db:job-info (phase $phase) (source-revision $revision)
         (records $records) (bytes-read $read) (output-bytes $output))))
      ($failure (db:error db:compact $failure)))))
+
+; Persistent bulk admission keeps only one portable row in the evaluator;
+; facts, postings, origin mappings, metadata and receipt stage in one spool.
+(= (db:import-act-result $resource $collection $request $operation $path)
+  (let $owner (db:resource $resource)
+    (case $owner
+      (((db:readonly $space) (Error db:import read-only))
+       ((db:remote $remote) (Error db:import server-artifact-required))
+       ($embedded
+        (case (act:open $path)
+          (((Error $where $why) (Error $where $why))
+           ($source
+            (let* (($result (db:import-source $owner $collection $request $operation $source))
+                   ($_ (act:close! $source))) $result)))))))))
+(= (db:import-source $owner $collection $request $operation $source)
+  (case (act:info $source)
+    (((ActSnapshotInfo $profile $count $bytes $digest $maximum)
+      (let $command (DbTransactionV1 $collection (DbImportV1 $operation $profile $digest))
+        (case (store:snapshot $owner)
+          (((StoreSnapshot $view $_ $_)
+            (let* (($opened (durable-space:append-open $owner $view $collection $request $command $source 9223372036854775807))
+                   ($_ (store:close $view)))
+              (case $opened
+                (((SpaceAppendOpenedV1 $state) (db:import-drive $state $request $command))
+                 ($prior (db:outcome $request $command $prior))))))
+           ($failure (db:error db:import $failure))))))
+     ($failure (db:error db:import $failure)))))
+(= (db:import-drive $state $request $command)
+  (case (durable-space:append-next $state)
+    (((SpaceAppendMoreV1 $next) (db:import-drive $next $request $command))
+     ((SpaceAppendReadyV1 $ready) (db:outcome $request $command (durable-space:append-finish $ready)))
+     ($failure (db:error db:import $failure)))))

@@ -265,7 +265,7 @@ static void wide_snapshot(const char *path,TermUniverse *universe,Arena *data) {
   space_free(&second);
 }
 int main(int argc, char **argv) {
-  assert(argc == 3 || argc == 4);
+  assert(argc >= 3 && argc <= 5);
   SymbolTable symbols;
   symbol_table_init(&symbols);
   symbol_table_init_builtins(&symbols, &g_builtin_syms);
@@ -281,7 +281,18 @@ int main(int argc, char **argv) {
   space_init_with_universe(&actual, &universe);
   bool actual_freed = false;
   CettaActStatus status;
-  if (!strcmp(argv[1], "bench")) {
+  if (!strcmp(argv[1], "generate")) {
+    assert(argc==4 || argc==5);
+    uint64_t count=strtoull(argv[3],NULL,10);
+    size_t width=argc==5 ? (size_t)strtoull(argv[4],NULL,10) : 512;
+    assert(count<=INT64_MAX && width<CETTA_ATOM_WIRE_BYTES/2);
+    char *payload=malloc(width ? width : 1);assert(payload);memset(payload,'g',width);
+    Atom *body=atom_string_n(&data,payload,width),*head=atom_symbol(&data,"row");free(payload);
+    for(uint64_t i=0;i<count;i++)assert(space_admit_atom(&expected,&data,
+      atom_expr3(&data,head,atom_int(&data,(int64_t)i),body)));
+    assert(cetta_act_space_dump(&expected,argv[2],false,CETTA_ATOM_WIRE_BYTES)==CETTA_ACT_OK);
+    printf("ACT_GENERATED rows=%llu\n",(unsigned long long)count);
+  } else if (!strcmp(argv[1], "bench")) {
     size_t count = argc == 4 ? (size_t)strtoull(argv[3], NULL, 10) : 65536;
     assert(count && count <= INT64_MAX);
     Atom *head = atom_symbol(&data, "row");

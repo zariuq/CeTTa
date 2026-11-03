@@ -521,9 +521,10 @@ static Atom *source_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom *
     bool clone=atom_is_symbol(head,"__cetta_lib_store_candidate_clone");
     bool next=atom_is_symbol(head,"__cetta_lib_store_candidate_next");
     bool read=atom_is_symbol(head,"__cetta_lib_store_candidate_read");
+    bool packet=atom_is_symbol(head,"__cetta_lib_store_candidate_packet");
     bool cancel=atom_is_symbol(head,"__cetta_lib_store_candidate_cancel");
-    if (!open && !from_view && !view && !context && !as_space && !info && !scan && !select && !clone && !next && !read && !cancel) return NULL;
-    if (n!=(open || view || context || as_space || info || scan || cancel ? 1u : from_view || select || clone ? 2u : next ? 3u : 5u)) return refused(a,"candidate-arguments");
+    if (!open && !from_view && !view && !context && !as_space && !info && !scan && !select && !clone && !next && !read && !cancel && !packet) return NULL;
+    if (n!=(open || view || context || as_space || info || scan || cancel ? 1u : from_view || select || clone ? 2u : next || packet ? 3u : 5u)) return refused(a,"candidate-arguments");
     if (open || from_view) {
         CettaNativeHandleUse origin={0};Atom *temporary=NULL;
         if (from_view) {
@@ -611,6 +612,24 @@ static Atom *source_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom *
             CettaCandidateRow row;CettaCandidateStatus status=cetta_candidate_cursor_next(raw,sequence,work,&row);
             result=status==CETTA_CANDIDATE_ROW ? atom_expr(a,(Atom *[]){atom_symbol(a,"StoreCandidateRow"),
                 unsigned_value(a,row.sequence),unsigned_value(a,row.body_bytes),unsigned_value(a,row.identity_bytes)},4) : candidate_status(a,status);
+        }
+    } else if (packet) {
+        uint64_t sequence;bool identity=atom_is_symbol(args[2],"identity");
+        if (!number(args[1],&sequence) || (!identity && !atom_is_symbol(args[2],"body"))) result=refused(a,"candidate-packet");
+        else {
+            CettaCandidateRow row;CettaCandidateStatus status=cetta_candidate_cursor_next(raw,sequence,0,&row);
+            if (status!=CETTA_CANDIDATE_ROW) result=candidate_status(a,status);
+            else {
+                uint64_t expected=identity ? row.identity_bytes : row.body_bytes;
+                const unsigned char *bytes=NULL;size_t size=0;
+                if (expected>cetta_library_value_byte_limit(ctx)) result=candidate_status(a,CETTA_CANDIDATE_LIMIT);
+                else {
+                    status=cetta_candidate_cursor_read(raw,sequence,identity,0,(size_t)expected,&bytes,&size);
+                    result=status==CETTA_CANDIDATE_OK && size==expected ? atom_expr(a,(Atom *[]){atom_symbol(a,"StoreCandidatePacket"),
+                        unsigned_value(a,sequence),atom_symbol(a,identity ? "identity" : "body"),atom_string_n(a,(const char *)bytes,size)},4)
+                        : candidate_status(a,status==CETTA_CANDIDATE_OK ? CETTA_CANDIDATE_INCOMPLETE : status);
+                }
+            }
         }
     } else {
         uint64_t sequence,offset,maximum;bool identity=atom_is_symbol(args[2],"identity");
@@ -1044,6 +1063,15 @@ Atom *cetta_store_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **a
         int64_t value=ordered<sign ? INT64_MIN+(int64_t)ordered : (int64_t)(ordered-sign);
         return atom_expr2(a,atom_symbol(a,"StoreKeyInteger"),atom_int(a,value));
     }
+    if (atom_is_symbol(head,"__cetta_lib_store_owner_clone")) {
+        CettaNativeHandleUse use={0};
+        if (n!=1 || !acquire(ctx,owner_kind,args[0],CETTA_NATIVE_HANDLE_USE_EXCLUSIVE,&use)) return refused(a,"closed-or-busy-owner");
+        CettaDiskStore *copy=NULL;CettaDiskStoreStatus status=cetta_disk_store_clone_owner(cetta_native_handle_use_resource(&use),&copy);
+        cetta_native_handle_use_release(&use);
+        if (status!=CETTA_STORE_OK) return status_value(a,status);
+        Atom *handle=own(ctx,a,owner_kind,copy,free_owner);
+        return handle ? atom_expr2(a,atom_symbol(a,"StoreOpened"),handle) : refused(a,"capacity");
+    }
     if (atom_is_symbol(head,"__cetta_lib_store_open")) {
         CettaDiskBytes path;
         if (n!=2 || !string(args[0],&path) || !path.size || memchr(path.data,0,path.size) ||
@@ -1239,8 +1267,9 @@ Atom *cetta_store_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **a
         cetta_native_handle_use_release(&use);return answer;
     }
     bool commit_call=atom_is_symbol(head,"__cetta_lib_store_commit"),scoped_call=atom_is_symbol(head,"__cetta_lib_store_commit_scoped");
-    bool batch_commit=atom_is_symbol(head,"__cetta_lib_store_commit_batch");
-    bool guarded_commit=atom_is_symbol(head,"__cetta_lib_store_commit_guarded");
+    bool guarded_batch=atom_is_symbol(head,"__cetta_lib_store_commit_batch_guarded");
+    bool batch_commit=guarded_batch || atom_is_symbol(head,"__cetta_lib_store_commit_batch");
+    bool guarded_commit=guarded_batch || atom_is_symbol(head,"__cetta_lib_store_commit_guarded");
     if (commit_call || scoped_call || batch_commit || guarded_commit) {
         if (n!=(scoped_call ? 5u : guarded_commit ? 4u : 3u)) return refused(a,"invalid-commit");
         CettaNativeHandleUse owner={0},view={0};
@@ -1257,7 +1286,7 @@ Atom *cetta_store_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **a
             cetta_native_handle_use_release(&view);cetta_native_handle_use_release(&owner);
             return refused(a,"closed-program-watch");
         }
-        if (batch_commit && !acquire(ctx,batch_kind,args[2],CETTA_NATIVE_HANDLE_USE_EXCLUSIVE,&batch)) {
+        if (batch_commit && !acquire(ctx,batch_kind,args[guarded_batch ? 3 : 2],CETTA_NATIVE_HANDLE_USE_EXCLUSIVE,&batch)) {
             cetta_native_handle_use_release(&view);cetta_native_handle_use_release(&owner);
             return refused(a,"closed-or-busy-batch");
         }

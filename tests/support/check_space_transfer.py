@@ -174,12 +174,18 @@ def main():
                 ("decode", E("SpaceExportRowV1", 0, rows[0][2], b"invalid")),
                 ("variable-sequence", E("SpaceExportRowV1", Var(0), rows[0][2], rows[0][3])),
                 ("variable-epoch", E("SpaceExportRowV1", 0, E("StoreOccurrenceV1", Var(0), rows[0][2][2]), rows[0][3])),
-                ("oversized", E("SpaceExportRowV1", 0, rows[0][2], encode("x" * 140000))),
             ]
             for name, badrow in cases:
                 state = opened(b, S("bad-" + name), name, header, footer)
                 result = use(b, state[1], "ImportRow", badrow)
                 assert result[0] != S("ServiceResourceV1"), (name, result)
+            # A record above the old 128 KiB ceiling remains ordinary data
+            # when it fits the selected wire policy. Incomplete staging still
+            # cannot publish the collection or its origin map.
+            state = opened(b, S("large-frame"), "large-frame", header, footer)
+            state = use(b, state[1], "ImportRow", E("SpaceExportRowV1", 0, rows[0][2], encode("x" * 140000)))
+            assert state[0] == S("ServiceResourceV1"), state
+            assert use(b, state[1], "ImportFinish", footer) == E("SpaceRefusedV1", S("import-incomplete-or-digest"))
             state = opened(b, S("premature"), "premature", header, footer)
             assert use(b, state[1], "ImportFinish", footer) == E("SpaceRefusedV1", S("import-incomplete-or-digest"))
             state = opened(b, S("limit"), "limit", header, footer, 64)

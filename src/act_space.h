@@ -7,6 +7,15 @@
  * The initialized empty target becomes an ordinary source-backed Space. */
 CettaActStatus cetta_act_space_capture(Space *, const char *path,
                                        size_t maximum_bytes);
+typedef struct {
+    uint64_t occurrences, bytes;
+    size_t maximum_bytes;
+    bool typed;
+    char digest[65];
+} CettaActSpaceInfo;
+/* Content identity of an owned, fully validated immutable file source.
+ * Hashing retains its backing and performs no whole-image heap copy. */
+CettaActStatus cetta_act_space_info(const Space *, CettaActSpaceInfo *);
 CettaActStatus cetta_act_space_dump(Space *, const char *path, bool mork,
                                     size_t maximum_bytes);
 typedef struct CettaActSpaceExport CettaActSpaceExport;

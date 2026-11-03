@@ -132,10 +132,11 @@ Atom *cetta_act_dispatch(CettaLibraryContext *ctx, Arena *a, Atom *head,
   bool dump = atom_is_symbol(head, "__cetta_lib_act_dump");
   bool mork = atom_is_symbol(head, "__cetta_lib_act_dump_mork");
   bool load = atom_is_symbol(head, "__cetta_lib_act_load");
-  if (!open && !snapshot && !workspace && !close && !dump && !mork && !load)
+  bool info = atom_is_symbol(head, "__cetta_lib_act_info");
+  if (!open && !snapshot && !workspace && !close && !dump && !mork && !load && !info)
     return NULL;
   CETTA_SCOPED_SHARED_TRANSITION(transition);
-  if (!ctx || !a || n != (open || snapshot || workspace || close ? 1u : 2u))
+  if (!ctx || !a || n != (open || snapshot || workspace || close || info ? 1u : 2u))
     return error(a, head, CETTA_ACT_CORRUPT);
   size_t maximum = cetta_library_value_byte_limit(ctx);
   if (open || snapshot || workspace) {
@@ -168,6 +169,19 @@ Atom *cetta_act_dispatch(CettaLibraryContext *ctx, Arena *a, Atom *head,
   Space *space = resolve_space(eval_current_registry(), args[0]);
   if (!space || !space_owner_is_current(space))
     return error(a, head, CETTA_ACT_CORRUPT);
+  if (info) {
+    CettaActSpaceInfo details;
+    cetta_shared_transition_guard_leave(&transition);
+    CettaActStatus status=cetta_act_space_info(space,&details);
+    cetta_shared_transition_guard_enter(&transition);
+    if (status!=CETTA_ACT_OK) return error(a,head,status);
+    if (details.occurrences>INT64_MAX || details.bytes>INT64_MAX || details.maximum_bytes>INT64_MAX)
+      return error(a,head,CETTA_ACT_LIMIT);
+    return atom_expr(a,(Atom *[]){atom_symbol(a,"ActSnapshotInfo"),
+      atom_symbol(a,details.typed ? "CACT0001" : "ACTree03"),
+      atom_int(a,(int64_t)details.occurrences),atom_int(a,(int64_t)details.bytes),
+      atom_string(a,details.digest),atom_int(a,(int64_t)details.maximum_bytes)},6);
+  }
   if (close) {
     if (space->lifetime.ops != &owner_ops)
       return error(a, head, CETTA_ACT_CORRUPT);

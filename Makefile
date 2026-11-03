@@ -52776,3 +52776,8 @@ build-remote-db-test: $(REMOTE_DB_TEST_BIN)
 test-all: test-remote-db
 test-remote-db: $(BIN) value-worker $(REMOTE_DB_TEST_BIN) $(ACT_SPACE_TEST_BIN)
 	$(PYTHON) tests/support/check_remote_db.py $(BIN) $(VALUE_WORKER_BIN) --native-fixture $(REMOTE_DB_TEST_BIN) --act-fixture $(ACT_SPACE_TEST_BIN)
+
+.PHONY: test-space-append
+test-all: test-space-append
+test-space-append: $(BIN) $(ACT_SPACE_TEST_BIN)
+	$(PYTHON) tests/support/check_space_append.py $(BIN) $(ACT_SPACE_TEST_BIN)

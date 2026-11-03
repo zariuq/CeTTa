@@ -38,3 +38,7 @@
 (= (act:export-info $job) (function (case (__cetta_lib_act_export_info $job) (($r (return $r))))))
 (: act:export-close (-> %Undefined% %Undefined%))
 (= (act:export-close $job) (function (case (__cetta_lib_act_export_close $job) (($r (return $r))))))
+
+(: __cetta_lib_act_info (-> Atom Atom))
+(: act:info (-> %Undefined% %Undefined%))
+(= (act:info $space) (function (case (__cetta_lib_act_info $space) (($r (return $r))))))
