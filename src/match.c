@@ -518,6 +518,15 @@ static bool match_finite_ground_equal_try(
         atom_has_vars(left) || atom_has_vars(right) ||
         !match_shared_ground_reflexivity_enabled())
         return false;
+    /* Expressions of different lengths, neither holding a rational view,
+     * are unequal as atom_eq finds them: no walk can change that answer,
+     * so the audit that keeps the walk finite is not needed. */
+    if (left->expr.len != right->expr.len &&
+        !atom_structural_has_rational(left) &&
+        !atom_structural_has_rational(right)) {
+        *equal_out = false;
+        return true;
+    }
     if (!match_occurrence_is_finite_dag(left) ||
         (right != left && !match_occurrence_is_finite_dag(right)))
         return false;
@@ -4839,13 +4848,13 @@ typedef struct {
 
 /* A graph observation distinguishes a source node's lexical readings. The
  * same skeleton can occur in several rule frames, so a pointer alone is not
- * a substitution-cache key. This cache belongs to one immutable environment
- * observation and is never retained across a binding mutation. */
+ * a substitution-cache key: the key is the node and the whole scope it is
+ * read in. This cache belongs to one immutable environment observation and
+ * is never retained across a binding mutation. */
 typedef struct {
     Atom *source;
     Atom *image;
-    CettaFrameIdentity epoch;
-    BindingValueKind kind;
+    BindingsApplyScope scope;
 } BindingApplyGraphEntry;
 
 typedef struct {
@@ -4853,24 +4862,37 @@ typedef struct {
     size_t len, cap;
 } BindingApplyGraph;
 
-static size_t bindings_apply_graph_hash(Atom *source, CettaFrameIdentity epoch,
-                                        BindingValueKind kind) {
+static size_t bindings_apply_graph_hash(Atom *source,
+                                        BindingsApplyScope scope) {
     uint64_t hash = (uint64_t)(uintptr_t)source;
-    hash ^= epoch.word * UINT64_C(0x9e3779b97f4a7c15);
-    hash ^= (uint64_t)kind * UINT64_C(0xbf58476d1ce4e5b9);
+    hash ^= scope.epoch.word * UINT64_C(0x9e3779b97f4a7c15);
+    hash ^= (uint64_t)scope.kind * UINT64_C(0xbf58476d1ce4e5b9);
+    hash ^= ((uint64_t)scope.first_entry << 2 |
+             (uint64_t)scope.original_side << 1 |
+             (uint64_t)scope.resolve_outer) * UINT64_C(0x94d049bb133111eb);
+    hash ^= (uint64_t)(uintptr_t)scope.fast;
     hash ^= hash >> 30u;
     hash *= UINT64_C(0xbf58476d1ce4e5b9);
     return (size_t)(hash ^ (hash >> 27u));
 }
 
+static bool bindings_apply_scope_eq(BindingsApplyScope left,
+                                    BindingsApplyScope right) {
+    return left.fast == right.fast &&
+           cetta_frame_identity_eq(left.epoch, right.epoch) &&
+           left.first_entry == right.first_entry &&
+           left.kind == right.kind &&
+           left.original_side == right.original_side &&
+           left.resolve_outer == right.resolve_outer;
+}
+
 static BindingApplyGraphEntry *bindings_apply_graph_slot(
         BindingApplyGraph *graph, Atom *source, BindingsApplyScope scope) {
-    size_t slot = bindings_apply_graph_hash(source, scope.epoch, scope.kind) &
+    size_t slot = bindings_apply_graph_hash(source, scope) &
         (graph->cap - 1u);
     while (graph->entries[slot].source &&
            (graph->entries[slot].source != source ||
-            !cetta_frame_identity_eq(graph->entries[slot].epoch, scope.epoch) ||
-            graph->entries[slot].kind != scope.kind))
+            !bindings_apply_scope_eq(graph->entries[slot].scope, scope)))
         slot = (slot + 1u) & (graph->cap - 1u);
     return &graph->entries[slot];
 }
@@ -4882,7 +4904,7 @@ static BindingApplyGraphEntry *bindings_apply_graph_enter(
         BindingApplyGraphEntry *entry = bindings_apply_graph_slot(graph, source, scope);
         *created = !entry->source;
         if (*created) {
-            *entry = (BindingApplyGraphEntry){source, NULL, scope.epoch, scope.kind};
+            *entry = (BindingApplyGraphEntry){source, NULL, scope};
             ++graph->len;
         }
         return entry;
@@ -4896,8 +4918,8 @@ static BindingApplyGraphEntry *bindings_apply_graph_enter(
     for (size_t i = 0u; i < graph->cap; ++i) {
         BindingApplyGraphEntry entry = graph->entries[i];
         if (entry.source)
-            *bindings_apply_graph_slot(&grown, entry.source,
-                (BindingsApplyScope){.epoch = entry.epoch, .kind = entry.kind}) = entry;
+            *bindings_apply_graph_slot(&grown, entry.source, entry.scope) =
+                entry;
     }
     free(graph->entries);
     *graph = grown;
@@ -5484,13 +5506,13 @@ static inline Atom *bindings_apply_fold_impl(BindingsApplyFold *fold, Atom *atom
         .cap = BINDINGS_APPLY_INLINE_FRAMES,
     };
     /* A term that shares subterms is substituted once per path to each
-     * unless the fold keeps node images.  Ordinary substitution starts
-     * without them and keeps them from its BINDINGS_APPLY_GRAPH_AFTER-th
-     * expression on, where its images, like graph observation's, depend on
-     * the node and the scope alone: no hook, an acyclic environment. */
+     * unless the fold keeps node images.  Substitution, ordinary or by
+     * epoch, starts without them and keeps them from its
+     * BINDINGS_APPLY_GRAPH_AFTER-th expression on, where its images, like
+     * graph observation's, depend on the node and the scope alone: no hook,
+     * an acyclic environment. */
     BindingApplyGraph observed = {0};
-    bool may_observe = !graph && !epoch_fold && !fold->rewrite_var &&
-        !fold->track_cycles;
+    bool may_observe = !graph && !fold->rewrite_var && !fold->track_cycles;
     uint32_t expressions = 0u;
     Atom *result;
     for (;;) {
@@ -14337,16 +14359,15 @@ static bool stored_grounded_equal(Atom *left,
     return false;
 }
 
-/* A decoded TermUniverse node belongs to its persistent arena.  Keep open
- * nodes as syntax plus activation context; only a universe without a
- * decodable persistent node needs the arena-local materialized fallback. */
+/* Record-backed nodes keep their persistent syntax; opaque images are held
+ * by the binding arena. Open nodes retain their activation context. */
 static bool term_universe_match_binding_value(
         const TermUniverse *universe, Arena *fallback,
         AtomId id, CettaFrameIdentity epoch, BindingValue *out) {
     if (!universe || id == CETTA_ATOM_ID_NONE || !out)
         return false;
     bool open = tu_has_vars(universe, id);
-    Atom *persistent = term_universe_get_atom(universe, id);
+    Atom *persistent = term_universe_scoped_atom(universe, fallback, id);
     if (persistent) {
         *out = open
             ? binding_value_from_persistent_context(persistent, epoch)
@@ -14372,7 +14393,7 @@ static bool match_atoms_atom_id_epoch_worklist(
      * cyclic environment uses the existing guarded contextual matcher so
      * only cycles reachable from this comparison can reject it. */
     if (bindings_has_loop(b)) {
-        Atom *right = term_universe_get_atom((TermUniverse *)candidate_universe, right_id);
+        Atom *right = term_universe_scoped_atom(candidate_universe, a, right_id);
         return right && match_decoded_atoms_worklist(
             left_value, binding_value_from_persistent_context(right, epoch),
             b, NULL, a, false);
@@ -14404,8 +14425,8 @@ retry_pair:
         left = left_value.skeleton;
         const CettaTermHdr *right_header = tu_hdr(candidate_universe, right_id);
         if (!right_header) {
-            Atom *right = term_universe_get_atom(
-                (TermUniverse *)candidate_universe, right_id);
+            Atom *right = term_universe_scoped_atom(
+                candidate_universe, a, right_id);
             if (!right || !match_atoms_epoch_views_worklist(
                     left, binding_value_kind(left_value),
                     binding_value_epoch(left_value), 0u, right, b, NULL, a, epoch,
@@ -14507,8 +14528,8 @@ retry_pair:
                       tu_child_from_header(candidate_universe, right_header, 0u)))))) {
                 /* Lists meet in the contextual matcher, which builds the
                  * rest a list pattern is bound to. */
-                Atom *right = term_universe_get_atom(
-                    (TermUniverse *)candidate_universe, right_id);
+                Atom *right = term_universe_scoped_atom(
+                    candidate_universe, a, right_id);
                 if (!right || !match_atoms_epoch_views_worklist(
                         left, binding_value_kind(left_value),
                         binding_value_epoch(left_value), 0u, right, b, NULL, a, epoch,

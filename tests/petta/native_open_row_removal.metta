@@ -25,3 +25,14 @@
 !(collapse (match &self (seen $s) $s))
 !(collapse (match &self (edge $x $y) (pair $x $y)))
 !(twice 4)
+
+; Counted, a removal's answers are only numbered, so the native path may
+; make it: it still declines where the removal can take a row holding a
+; variable that a leg reads, as removing (q 7) takes (q $z).
+!(bind! &n (new-space))
+!(add-atom &n (p 1))
+!(add-atom &n (p 2))
+!(add-atom &n (q $z))
+!(add-atom &n (q 5))
+!(size-atom (collapse (match &n (p $x) (match &n (q 5) (remove-atom &n (q 7))))))
+!(collapse (match &n (q $v) $v))

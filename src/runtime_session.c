@@ -2,12 +2,18 @@
 
 bool cetta_runtime_session_init(CettaRuntimeSession *runtime, Arena *persistent,
     CettaLanguageId language, const CettaProfile *profile) {
+    return cetta_runtime_session_init_in_domain(runtime, persistent, language, profile, NULL);
+}
+
+bool cetta_runtime_session_init_in_domain(CettaRuntimeSession *runtime, Arena *persistent,
+    CettaLanguageId language, const CettaProfile *profile, struct CettaTermDomain *domain) {
     if (!runtime || !persistent || runtime->libraries_ready) return false;
     runtime->work_closed = false;
     runtime->libraries_ready = true;
     if (!cetta_library_context_try_init_for_language_profile(&runtime->libraries, language, profile))
         return false;
-    term_universe_set_persistent_arena(&runtime->libraries.term_universe, persistent);
+    if (domain && !cetta_library_context_set_term_domain(&runtime->libraries, domain)) return false;
+    term_universe_set_persistent_arena(cetta_library_context_universe(&runtime->libraries), persistent);
     runtime->resources = eval_resources_new();
     return runtime->resources != NULL;
 }
@@ -15,7 +21,7 @@ bool cetta_runtime_session_init(CettaRuntimeSession *runtime, Arena *persistent,
 bool cetta_runtime_session_open_root(CettaRuntimeSession *runtime, Arena *persistent) {
     if (!runtime || !persistent || !runtime->resources || !runtime->libraries_ready ||
         runtime->space_ready || runtime->work_closed) return false;
-    if (!space_try_init_with_universe(&runtime->space, &runtime->libraries.term_universe))
+    if (!space_try_init_with_universe(&runtime->space, cetta_library_context_universe(&runtime->libraries)))
         return false;
     runtime->space_ready = true;
     if (!registry_try_init(&runtime->registry)) return false;
@@ -44,7 +50,7 @@ static void release_registry_spaces(CettaRuntimeSession *runtime) {
         Atom *value = registry->entries[index].value;
         if (!value || value->kind != ATOM_GROUNDED || value->ground.gkind != GV_SPACE) continue;
         Space *space = value->ground.ptr;
-        if (space == &runtime->space || cetta_library_owns_space(&runtime->libraries, space)) continue;
+        if (space == &runtime->space || space->arena_hold || cetta_library_owns_space(&runtime->libraries, space)) continue;
         bool repeated = false;
         for (uint32_t prior = 0; prior < index; ++prior) {
             Atom *earlier = registry->entries[prior].value;
@@ -73,7 +79,8 @@ void cetta_runtime_session_dispose(CettaRuntimeSession *runtime) {
     bool own_resources = previous_resources == resources;
     bool own_collector = previous_collector == collector;
     cetta_runtime_session_stop(runtime);
-    if (library) term_universe_set_collection_mode(&library->term_universe, TERM_UNIVERSE_COLLECTION_OFF);
+    if (library && !cetta_library_context_term_domain(library))
+        term_universe_set_collection_mode(cetta_library_context_universe(library), TERM_UNIVERSE_COLLECTION_OFF);
     if (runtime->registry_ready) release_registry_spaces(runtime);
     eval_resources_free(resources, library ? library->petta_program : NULL,
         runtime->registry_ready ? &runtime->registry : NULL,

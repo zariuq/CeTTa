@@ -1972,11 +1972,20 @@ static unsigned prepared_native_consumers(void) {
             OutcomeSet result;
             outcome_set_init(&result);
             prepared_mode = prepared_calls = prepared_attempts = 0u;
-            assert(prepared_pure_closed_answers_try(&space, &arena,
-                fixture_atom(&arena, "(native-before-miss 1)"), -1, NULL, NULL,
-                false, &result) == CETTA_PREPARED_PURE_ANSWERS_COMPLETE);
+            Atom *call = fixture_atom(&arena, "(native-before-miss 1)");
+            CettaPreparedPureAnswersResult completed = prepared_pure_closed_answers_try(
+                &space, &arena, call, -1, NULL, NULL, false, &result);
+            if (completed == CETTA_PREPARED_PURE_ANSWERS_DECLINED) {
+                /* HE's return analysis may leave the structured unmatched
+                 * call to its canonical owner. Refusal must precede every
+                 * native entry; the fallback must still perform it once. */
+                assert(language && !prepared_calls && !prepared_attempts && !result.len);
+                eval_for_caller(&space, &arena, NULL, call, -1, NULL, false, &result);
+            } else
+                assert(completed == CETTA_PREPARED_PURE_ANSWERS_COMPLETE &&
+                    prepared_attempts == language);
             assert(tracker.completion == CETTA_EVAL_COMPLETE &&
-                prepared_calls == language && prepared_attempts == language &&
+                prepared_calls == language && prepared_attempts <= language &&
                 result.len == language);
             if (language)
                 assert(atom_eq(outcome_atom_materialize(&arena, &result.items[0]),

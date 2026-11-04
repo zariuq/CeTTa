@@ -1019,7 +1019,16 @@ static cetta_status_t evaluate(cetta_engine_t *engine, Atom *expression,
     if (invocation)
         eval_top_with_registry_invocation_outcome(&engine->session.space, &result->owner->arena,
             &engine->persistent, &engine->session.registry, invocation, &outcome);
-    else
+    else if (engine->session.libraries.session.language_id == CETTA_LANGUAGE_PETTA) {
+        const PettaPlanNode *plan = petta_program_plan_current_in(
+            engine->session.libraries.petta_program, &result->owner->arena, expression);
+        if (plan)
+            eval_top_with_registry_petta_plan_outcome(
+                &engine->session.space, &result->owner->arena, &engine->persistent,
+                &engine->session.registry, expression, plan, &outcome);
+        else
+            outcome.completion = CETTA_EVAL_INCOMPLETE_CAPACITY;
+    } else
         eval_top_with_registry_outcome(&engine->session.space, &result->owner->arena,
             &engine->persistent, &engine->session.registry, expression, &outcome, NULL, NULL);
     cetta_status_t status = append_outcome(result, &outcome);

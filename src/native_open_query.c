@@ -148,6 +148,9 @@ static bool native_open_leg(NativeOpenRun *run, size_t leg) {
                 aligned_spine = spine;
                 alignment = cetta_mol_align(&run->mol, pattern, spine,
                                             &aligned);
+                if (alignment == CETTA_MOL_OK)
+                    alignment = cetta_mol_aligned_stable_cells(
+                        &run->mol, &aligned, mark);
             }
             unified = alignment == CETTA_MOL_OK
                 ? cetta_mol_unify_aligned(&run->mol, &aligned, holes, frame)

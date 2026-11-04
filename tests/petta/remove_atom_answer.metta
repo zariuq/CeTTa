@@ -1,0 +1,28 @@
+; remove-atom answers true when it removed a row and false when none
+; matched, removing every row that does, as stable-fixed SWI-PeTTa
+; answers: from facts, from facts a head keeps as a relation, with a
+; variable in the removal, and for a definition.
+(r 1)
+(r 1)
+(r 2)
+!(remove-atom &self (r 3))
+!(remove-atom &self (r 1))
+!(collapse (match &self (r $x) $x))
+!(remove-atom &self (r 1))
+!(remove-atom &self (r $y))
+!(remove-atom &self (r $y))
+!(collapse (match &self (r $x) $x))
+(e 0 1)
+(e 1 2)
+(e 2 3)
+(e 3 4)
+!(remove-atom &self (e 9 9))
+!(remove-atom &self (e 2 3))
+!(remove-atom &self (e 2 3))
+!(collapse (match &self (e $a $b) ($a $b)))
+(= (sq $x) (* $x $x))
+!(sq 3)
+!(remove-atom &self (= (sq $x) (* $x $x)))
+!(sq 3)
+!(remove-atom &self (= (sq $x) (* $x $x)))
+!(remove-atom &other (r 1))

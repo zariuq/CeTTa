@@ -1510,10 +1510,20 @@ static bool native_cold_flat_candidates(
     }
     CettaIndex *indices = NULL;
     CettaIndex length = 0u, capacity = 0u;
+    const TermUniverse *universe = space->native.universe;
     for (CettaIndex position = 0u; position < space->native.len; position++) {
         AtomId id = space_get_atom_id_at64(space, position);
-        const CettaTermHdr *header = tu_hdr(space->native.universe, id);
-        bool candidate = !header || (header->aux32 & CETTA_TERM_HDR_HAS_VARS);
+        const CettaTermHdr *header = tu_hdr(universe, id);
+        /* A row holding variables is read as a ground row is, a stored
+         * variable or private carrier in a column standing for anything;
+         * a variable row, a row without a stored header, or one whose head
+         * is a carrier spelling another shape is offered unread. */
+        bool open = !header || (header->aux32 & CETTA_TERM_HDR_HAS_VARS);
+        bool candidate = !header || header->tag == ATOM_VAR ||
+            (open && header->tag == ATOM_EXPR &&
+             (header->aux32 & CETTA_TERM_HDR_DATA_MASK) != 0u &&
+             tu_internal_tag(universe,
+                             tu_child_from_header(universe, header, 0u)) != 0);
         if (!candidate && header->tag == ATOM_EXPR &&
             (header->aux32 & CETTA_TERM_HDR_DATA_MASK) == pattern->expr.len) {
             candidate = true;
@@ -1521,12 +1531,18 @@ static bool native_cold_flat_candidates(
                 Atom *item = pattern->expr.elems[column];
                 if (item->kind == ATOM_VAR)
                     continue;
-                AtomId child = tu_child_from_header(space->native.universe, header, column);
+                AtomId child = tu_child_from_header(universe, header, column);
+                if (open && child != CETTA_ATOM_ID_NONE) {
+                    const CettaTermHdr *part = tu_hdr(universe, child);
+                    if (!part || part->tag == ATOM_VAR ||
+                        tu_internal_tag(universe, child) != 0)
+                        continue;
+                }
                 if (child == CETTA_ATOM_ID_NONE ||
                     (item->kind == ATOM_SYMBOL && column < NATIVE_COLD_ID_COLUMNS
                          ? child != symbol_ids[column]
-                         : !native_stored_coordinate_matches(space->native.universe,
-                                                              child, item))) {
+                         : !native_stored_coordinate_matches(universe, child,
+                                                              item))) {
                     candidate = false;
                     break;
                 }
@@ -2642,12 +2658,14 @@ static void imported_projection_clear(ImportedBridgeState *st) {
 }
 
 static void imported_flat_state_clear(ImportedBridgeState *st) {
-    if (!st->flat_has_entries)
-        return;
-    for (uint32_t i = 0; i < STREE_BUCKETS; i++)
-        imported_bucket_free(&st->buckets[i]);
-    imported_bucket_free(&st->wildcard);
-    st->flat_has_entries = false;
+    if (st->flat_has_entries) {
+        for (uint32_t i = 0; st->buckets && i < STREE_BUCKETS; i++)
+            imported_bucket_free(&st->buckets[i]);
+        imported_bucket_free(&st->wildcard);
+        st->flat_has_entries = false;
+    }
+    free(st->buckets);
+    st->buckets = NULL;
 }
 
 static void imported_state_free(ImportedBridgeState *st) {
@@ -6211,6 +6229,7 @@ bool space_match_backend_visit_bindings_direct(
     Atom *query,
     CettaMorkBindingsVisitor visitor,
     void *ctx) {
+    if (!space_prepare_proof_read(s, query)) return false;
     space_dense_settle_for_pattern(s, query);
     CETTA_SCOPED_SHARED_TRANSITION(shared_read);
     ImportedBridgeState *st;
@@ -7755,16 +7774,27 @@ static void imported_bucket_add_entry(ImportedBridgeState *st,
     imported_bucket_push_builder(st, bucket, &b, atom_idx, atom_has_vars(atom));
 }
 
+/* HEAD's bucket, the buckets made with the state's first entry with a
+ * head. */
+static ImportedFlatBucket *imported_head_bucket(ImportedBridgeState *st,
+                                                SymbolId head) {
+    if (!st->buckets) {
+        st->buckets = cetta_malloc(sizeof(*st->buckets) * STREE_BUCKETS);
+        memset(st->buckets, 0, sizeof(*st->buckets) * STREE_BUCKETS);
+    }
+    return &st->buckets[stree_head_hash(head)];
+}
+
 static ImportedFlatBucket *imported_bucket_for_atom(ImportedBridgeState *st, Atom *atom) {
     SymbolId head = atom_head_sym(atom);
-    return head != SYMBOL_ID_NONE ? &st->buckets[stree_head_hash(head)] : &st->wildcard;
+    return head != SYMBOL_ID_NONE ? imported_head_bucket(st, head) : &st->wildcard;
 }
 
 static ImportedFlatBucket *imported_bucket_for_atom_id(ImportedBridgeState *st,
                                                        const TermUniverse *universe,
                                                        AtomId atom_id) {
     SymbolId head = tu_head_sym(universe, atom_id);
-    return head != SYMBOL_ID_NONE ? &st->buckets[stree_head_hash(head)] : &st->wildcard;
+    return head != SYMBOL_ID_NONE ? imported_head_bucket(st, head) : &st->wildcard;
 }
 
 static void imported_rebuild_flat(Space *s) {
@@ -8628,8 +8658,9 @@ imported_candidates_flat(Space *s, Atom *pattern, CettaIndex **out) {
     CettaIndex len = 0, cap = 0;
     SymbolId head = atom_head_sym(pattern);
     if (head != SYMBOL_ID_NONE) {
-        ImportedFlatBucket *bucket = &st->buckets[stree_head_hash(head)];
-        for (CettaIndex i = 0; i < bucket->len; i++) {
+        ImportedFlatBucket *bucket = st->buckets
+            ? &st->buckets[stree_head_hash(head)] : NULL;
+        for (CettaIndex i = 0; bucket && i < bucket->len; i++) {
             if (len >= cap) {
                 cap = cap ? cap * 2 : 8;
                 *out = cetta_realloc(*out, sizeof(CettaIndex) * cap);
@@ -8637,7 +8668,7 @@ imported_candidates_flat(Space *s, Atom *pattern, CettaIndex **out) {
             (*out)[len++] = bucket->entries[i].atom_idx;
         }
     } else {
-        for (uint32_t bi = 0; bi < STREE_BUCKETS; bi++) {
+        for (uint32_t bi = 0; st->buckets && bi < STREE_BUCKETS; bi++) {
             ImportedFlatBucket *bucket = &st->buckets[bi];
             for (CettaIndex i = 0; i < bucket->len; i++) {
                 if (len >= cap) {
@@ -8693,10 +8724,12 @@ static void imported_query_flat(Space *s, Arena *a, Atom *query, SubstMatchSet *
     imported_flatten_atom(&q, query);
     SymbolId head = atom_head_sym(query);
     if (head != SYMBOL_ID_NONE) {
-        imported_collect_bucket(&st->buckets[stree_head_hash(head)],
-                                q.items, q.len, s->native.universe, a, out);
+        if (st->buckets)
+            imported_collect_bucket(&st->buckets[stree_head_hash(head)],
+                                    q.items, q.len, s->native.universe, a,
+                                    out);
     } else {
-        for (uint32_t bi = 0; bi < STREE_BUCKETS; bi++)
+        for (uint32_t bi = 0; st->buckets && bi < STREE_BUCKETS; bi++)
             imported_collect_bucket(&st->buckets[bi], q.items, q.len,
                                     s->native.universe, a, out);
     }
@@ -10274,9 +10307,10 @@ static CettaIndex imported_pattern_estimate(Space *s, Atom *pattern) {
         return 0;
     SymbolId head = atom_head_sym(pattern);
     if (head != SYMBOL_ID_NONE)
-        return st->buckets[stree_head_hash(head)].len + st->wildcard.len;
+        return (st->buckets ? st->buckets[stree_head_hash(head)].len : 0u) +
+            st->wildcard.len;
     CettaIndex total = st->wildcard.len;
-    for (uint32_t bi = 0; bi < STREE_BUCKETS; bi++)
+    for (uint32_t bi = 0; st->buckets && bi < STREE_BUCKETS; bi++)
         total += st->buckets[bi].len;
     return total;
 }
@@ -11319,6 +11353,7 @@ bool space_match_backend_accepts_space(const Space *s, SpaceEngine kind) {
 }
 
 bool space_match_backend_try_set(Space *s, SpaceEngine kind) {
+    if (!space_prepare_proof_read(s, NULL)) return false;
     if (!space_match_backend_accepts_space(s, kind) ||
         space_match_backend_unavailable_reason(kind))
         return false;
@@ -11407,7 +11442,8 @@ void space_match_backend_note_swap_remove(Space *s, CettaIndex removed_row,
     bool moved = moved_from != removed_row;
     space_path_indexes_note_swap_remove(s, removed_row, removed_id,
                                         moved_from, moved_id);
-    space_head_index_retire(s);
+    space_head_index_note_swap_remove(s, removed_row, removed_id, moved_from,
+                                      moved_id);
     if (st->match_trie && !st->match_trie_dirty) {
         bool kept = st->match_trie_pins == 0u &&
             disc_remove_id(st->match_trie, universe, removed_id, removed_row) &&
@@ -11464,6 +11500,7 @@ space_match_backend_transport_stable_occurrence_coordinates(
 
 CettaIndex space_match_backend_candidates64(Space *s, Atom *pattern,
                                             CettaIndex **out) {
+    if (!space_prepare_proof_read(s, pattern)) { if (out) *out = NULL; return 0u; }
     space_dense_settle_for_pattern(s, pattern);
     CETTA_SCOPED_SHARED_TRANSITION(shared_read);
     if (!s->match_backend.ops || !s->match_backend.ops->candidates) {
@@ -11527,6 +11564,7 @@ bool space_match_backend_ground_exact_exists_frontier(
     Space *s, Atom *pattern, bool *out_found) {
     if (out_found)
         *out_found = false;
+    if (!space_prepare_proof_read(s, pattern)) return false;
     if (!s || !pattern || !out_found || s->overlay_base ||
         atom_has_vars(pattern) || !space_atom_is_exact_indexable(pattern) ||
         (s->match_backend.kind != SPACE_ENGINE_NATIVE &&
@@ -11563,6 +11601,7 @@ bool space_match_backend_ground_exact_exists_frontier(
 }
 
 void space_match_backend_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out) {
+    if (!space_prepare_proof_read(s, query)) { smset_init(out); return; }
     space_dense_settle_for_pattern(s, query);
     if (!s->match_backend.ops || !s->match_backend.ops->query) {
         smset_init(out);
@@ -11639,6 +11678,9 @@ void space_match_backend_print_inventory(FILE *out) {
 bool space_match_candidates_expression_coordinates64(
     Space *s, Atom **coordinates, CettaExprLen length,
     CettaIndex **out, CettaIndex *count) {
+    AtomExprBorrowedView proof_probe;
+    if (atom_expr_borrowed_view_init(&proof_probe, coordinates, length) &&
+        !space_prepare_proof_read(s, &proof_probe.root)) return false;
     if (s && coordinates && length != 0u) {
         AtomExprBorrowedView probe;
         if (atom_expr_borrowed_view_init(&probe, coordinates, length))
@@ -11702,6 +11744,8 @@ bool space_match_candidates_ids64(Space *s, const TermUniverse *universe,
             return false;
         numbers |= header->subtag == GV_INT;
     }
+    if (space_has_proof_image(s, head) &&
+        space_settle_proof_images(s) != SPACE_PROOF_IMAGE_READY) return false;
     space_dense_settle_for_head(s, head, len);
     CETTA_SCOPED_SHARED_TRANSITION(shared_read);
     if (!s->match_backend.ops ||
@@ -11823,6 +11867,7 @@ bool space_match_count_flat_linear64(
         space_dense_reading_end();
         return admitted && space_match_count_add_bits(count, bits);
     }
+    if (!space_prepare_proof_read(s, pattern)) return false;
     space_dense_settle_for_pattern(s, pattern);
     return space_match_count_flat_linear_rows64(
         s, scratch, pattern, count, examined);
@@ -11873,6 +11918,7 @@ bool space_match_count_flat_linear_view64(
         space_dense_reading_end();
         return admitted && space_match_count_add_bits(count, bits);
     }
+    if (!space_prepare_proof_read(s, view ? view->source : NULL)) return false;
     space_dense_settle_for_pattern(s, view ? view->source : NULL);
     return space_match_count_flat_linear_view_rows64(
         s, scratch, view, open_bindings, count, examined);
@@ -11932,6 +11978,7 @@ bool space_match_exists_flat_linear_view64(
         space_dense_reading_end();
         return admitted;
     }
+    if (!space_prepare_proof_read(s, view ? view->source : NULL)) return false;
     space_dense_settle_for_pattern(s, view ? view->source : NULL);
     return space_match_exists_flat_linear_view_rows64(
         s, scratch, view, open_bindings, exists, examined);
@@ -11990,6 +12037,8 @@ bool space_match_count_conjunction64(
     Space *s, Arena *scratch, Atom **patterns,
     CettaExprLen npatterns, const Bindings *seed,
     uint64_t *count) {
+    for (CettaExprIndex i = 0u; i < npatterns; i++)
+        if (!space_prepare_proof_read(s, patterns[i])) return false;
     space_dense_settle_for_patterns(s, patterns, npatterns);
     CETTA_SCOPED_SHARED_TRANSITION(shared_read);
     if (count)
@@ -12368,6 +12417,8 @@ bool space_match_backend_match_atom_seeded(Space *s, CettaIndex atom_idx,
 
 void space_query_conjunction(Space *s, Arena *a, Atom **patterns, CettaExprLen npatterns,
                              const Bindings *seed, BindingSet *out) {
+    for (CettaExprIndex i = 0u; i < npatterns; i++)
+        if (!space_prepare_proof_read(s, patterns[i])) { binding_set_init(out); return; }
     space_dense_settle_for_patterns(s, patterns, npatterns);
     CETTA_SCOPED_SHARED_TRANSITION(shared_read);
     space_linearize(s);
@@ -12817,6 +12868,8 @@ bool space_native_flat_pattern_each_int(
         !cetta_flat_join_pattern_ok(pattern) ||
         column >= (size_t)pattern->expr.len)
         return false;
+    /* A reader of rows: the pattern's relation gives its facts back first. */
+    space_dense_settle_for_pattern(space, pattern);
     CettaFlatJoinBind binds[CETTA_FLAT_JOIN_MAX_BINDS];
     CettaCount rows = space->native.len;
     for (CettaIndex row = 0u; row < rows; row++) {
@@ -12892,6 +12945,8 @@ bool space_native_pattern_each_int(
          space->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) ||
         pattern->kind != ATOM_EXPR)
         return false;
+    /* A reader of rows: the pattern's relation gives its facts back first. */
+    space_dense_settle_for_pattern(space, pattern);
     CettaFlatJoinBind binds[CETTA_FLAT_JOIN_MAX_BINDS];
     CettaCount rows = space->native.len;
     for (CettaIndex row = 0u; row < rows; row++) {
@@ -13068,6 +13123,8 @@ bool space_native_flat_chain_aggregate(
     bool with_column, size_t column_pattern, size_t column,
     __int128 *count_out, __int128 *sum_out) {
     space_settle_marks(space);
+    /* A reader of rows: the patterns' relations give their facts back first. */
+    space_dense_settle_for_patterns(space, patterns, (CettaExprLen)pattern_count);
     CETTA_SCOPED_SHARED_TRANSITION(shared_read);
     /* ChainAggregation extends the grouped-message law to arbitrary finite
      * paths. Machine overflow still declines to ordinary enumeration. */
@@ -13222,6 +13279,8 @@ bool space_native_flat_conjunction_int_moments(
     uint64_t *count_out, __int128 *sum_out,
     int64_t *product_out, bool *product_ok) {
     space_settle_marks(space);
+    /* A reader of rows: the patterns' relations give their facts back first. */
+    space_dense_settle_for_patterns(space, patterns, (CettaExprLen)pattern_count);
     if (count_out)
         *count_out = 0u;
     if (sum_out)

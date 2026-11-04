@@ -19,6 +19,8 @@ typedef struct {
  * and can always be disposed. The name domain must be selected by the host. */
 bool cetta_runtime_session_init(CettaRuntimeSession *, Arena *,
     CettaLanguageId, const CettaProfile *);
+bool cetta_runtime_session_init_in_domain(CettaRuntimeSession *, Arena *,
+    CettaLanguageId, const CettaProfile *, struct CettaTermDomain *);
 bool cetta_runtime_session_open_root(CettaRuntimeSession *, Arena *);
 void cetta_runtime_session_stop(CettaRuntimeSession *);
 /* Idempotent. Selects this session's execution resources during teardown,

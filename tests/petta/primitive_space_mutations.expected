@@ -3,7 +3,7 @@ is true, should true. ✅
 is (), should (). ✅ 
 is (found), should (found). ✅ 
 is (42), should (42). ✅ 
-is true, should true. ✅ 
+is false, should false. ✅ 
 is true, should true. ✅ 
 is (), should (). ✅ 
 is true, should true. ✅ 
