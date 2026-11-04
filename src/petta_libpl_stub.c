@@ -117,6 +117,14 @@ bool petta_libpl_predicate_defined(
     return false;
 }
 
+bool petta_libpl_standard_function_current(
+    CettaLibPrologRuntime *runtime, SymbolId name, size_t arity) {
+    (void)runtime;
+    (void)name;
+    (void)arity;
+    return false;
+}
+
 PeTTaNamedArity petta_libpl_named_arity_resolving(
     CettaLibPrologRuntime *runtime, SymbolId head,
     CettaExprLen supplied) {

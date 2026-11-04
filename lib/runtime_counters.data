@@ -1225,13 +1225,24 @@
   (1143 SPACE_HEAD_INDEX_BUILD_ROW "space-head-index-build-row")
   (1144 SPACE_HEAD_INDEX_CURSOR "space-head-index-cursor")
   (1145 SPACE_HEAD_INDEX_ROW "space-head-index-row")
+  ; Slots a table keyed by atoms passes before it meets its key or an empty
+  ; slot: unique-atom, and the answer tables of tabled and memoized calls.
   (1146 ATOM_TABLE_KEY_PROBE "atom-table-key-probe")
+  ; Matches whose whole answer bag the native query path computed, for an
+  ; observer that takes every answer, and the answers they gave.
   (1147 NATIVE_QUERY_ADMISSION "native-query-admission")
   (1148 NATIVE_QUERY_ANSWER "native-query-answer")
+  ; The candidate rows the native query path's index loops read.
   (1149 NATIVE_QUERY_LOOP_ROW "native-query-loop-row")
+  ; Conjunctions over dense binary relations joined by rows of bits, and the
+  ; machine words those rows gave.
   (1150 DENSE_RELATION_ADMISSION "dense-relation-admission")
   (1151 DENSE_RELATION_WORD "dense-relation-word")
+  ; The instances the native query path made for its effects.
   (1152 NATIVE_QUERY_EFFECT_INSTANCE "native-query-effect-instance")
+  ; Collections of the term universe: those run and those a region held
+  ; off, the roots listed, the entries found live and dead, the dead record
+  ; bytes, and the most entries one collection found dead.
   (1153 TERM_UNIVERSE_COLLECTION "term-universe-collection")
   (1154 TERM_UNIVERSE_COLLECTION_INHIBITED "term-universe-collection-inhibited")
   (1155 TERM_UNIVERSE_COLLECTION_ROOT "term-universe-collection-root")
@@ -1239,7 +1250,13 @@
   (1157 TERM_UNIVERSE_COLLECTION_DEAD "term-universe-collection-dead")
   (1158 TERM_UNIVERSE_COLLECTION_DEAD_BYTES "term-universe-collection-dead-bytes")
   (1159 TERM_UNIVERSE_COLLECTION_DEAD_PEAK "term-universe-collection-dead-peak")
+  ; Entries a reclaiming collection freed, and their record bytes.
   (1160 TERM_UNIVERSE_COLLECTION_RECLAIMED "term-universe-collection-reclaimed")
   (1161 TERM_UNIVERSE_COLLECTION_RECLAIMED_BYTES "term-universe-collection-reclaimed-bytes")
+  ; Pairs of subterms a structural comparison visits.
   (1162 ATOM_COMPARE_PAIR "atom-compare-pair")
-  (1163 NATIVE_QUERY_BITS_LEG "native-query-bits-leg")))
+  ; Legs of a native query that read the pairs of a relation kept as bits.
+  (1163 NATIVE_QUERY_BITS_LEG "native-query-bits-leg")
+  ; Index descriptions compared while finding the requested path index.
+  (1164 MATCH_POSITION_INDEX_DIRECTORY_PROBE "match-position-index-directory-probe")
+  (1165 MATCH_POSITION_INDEX_DIRECTORY_PROBE_PEAK "match-position-index-directory-probe-peak")))

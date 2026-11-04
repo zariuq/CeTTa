@@ -562,13 +562,13 @@ static bool contract_literal_type(ContractScan *scan, Atom *atom,
     case GV_BIGINT:
     case GV_RATIONAL:
     case GV_FLOAT:
-        *type = atom_symbol(scan->context->scratch, "Number");
+        *type = atom_symbol_literal(scan->context->scratch, "Number");
         return *type != NULL;
     case GV_STRING:
-        *type = atom_symbol(scan->context->scratch, "String");
+        *type = atom_symbol_literal(scan->context->scratch, "String");
         return *type != NULL;
     case GV_BOOL:
-        *type = atom_symbol(scan->context->scratch, "Bool");
+        *type = atom_symbol_literal(scan->context->scratch, "Bool");
         return *type != NULL;
     default:
         return true;
@@ -819,7 +819,8 @@ static bool contract_case(ContractScan *scan, Atom *expr,
 
 /* An operation PeTTa provides that changes nothing and gives a ground value
  * of the type named here, when the program defines no equation of its name:
- * comparisons and connectives answer Bool, arithmetic answers a Number. */
+ * comparisons and connectives answer Bool, arithmetic answers a Number.
+ * Returned type names are process-lifetime C literals. */
 static const char *contract_pure_operation(ContractScan *scan, SymbolId head,
                                            CettaExprLen nargs) {
     if (space_equations_may_match_known_head(scan->context->space, head))
@@ -906,7 +907,7 @@ static bool contract_call(ContractScan *scan, Atom *expr,
     if (operation) {
         *out = (ContractValue){
             .ground = true,
-            .type = atom_symbol(scan->context->scratch, operation),
+            .type = atom_symbol_literal(scan->context->scratch, operation),
         };
         return out->type != NULL;
     }
@@ -966,7 +967,7 @@ static bool contract_eval(ContractScan *scan, Atom *expr,
         *out = (ContractValue){.ground = true, .uninterpreted = true};
         bool truth = false;
         if (petta_semantics_truth_value(expr, &truth)) {
-            out->type = atom_symbol(scan->context->scratch, "Bool");
+            out->type = atom_symbol_literal(scan->context->scratch, "Bool");
             return out->type != NULL;
         }
         return contract_literal_type(scan, expr, &out->type);
@@ -981,7 +982,7 @@ static bool contract_eval(ContractScan *scan, Atom *expr,
         /* The truth values type themselves, declared or not. */
         bool truth = false;
         if (petta_semantics_truth_value(expr, &truth)) {
-            out->type = atom_symbol(scan->context->scratch, "Bool");
+            out->type = atom_symbol_literal(scan->context->scratch, "Bool");
             return out->type != NULL;
         }
         if (out->uninterpreted)

@@ -288,6 +288,12 @@ typedef struct {
     CettaStorageVisitor storage;
 } PettaMachineResourceLease;
 
+typedef enum {
+    PETTA_MACHINE_NATIVE_COLLECTION_COMPLETE = 0,
+    PETTA_MACHINE_NATIVE_COLLECTION_DEFERRED,
+    PETTA_MACHINE_NATIVE_COLLECTION_CAPACITY,
+} PettaMachineNativeCollectionResult;
+
 typedef struct {
     void *context;
     const PettaAnalysisService *analysis;
@@ -445,6 +451,18 @@ typedef struct {
      * distinct external contexts do not acquire transfer equivalence merely
      * by using equal callback pointers. */
     void *permit_operation_context;
+    /* A host may allocate into a private universe while executing against a
+     * shared root Space. Only an outermost, quiescent machine boundary may
+     * offer it; the host validates its current ownership and serializes the
+     * physical transition. A missing pair keeps the Space's ordinary offer. */
+    TermUniverse *allocation_universe;
+    void (*collect_allocation_universe)(void *context, TermUniverse *universe);
+    /* After committed full machine-root tracing, finish the owner's universe
+     * trace and State/image reclamation at a quiescent boundary. DEFERRED
+     * leaves pressure debt outstanding; only COMPLETE establishes survivors.
+     * A missing hook offers no native-image reclamation guarantee. */
+    PettaMachineNativeCollectionResult (*collect_native_images)(
+        void *context, TermUniverse *universe);
     /* True only when compiled, bounded pure instructions do not consume a
      * finite transition purse.  A metered host leaves this false so equation
      * selection retains the canonical transition boundary. */
@@ -456,6 +474,9 @@ typedef struct {
      * false; the machine then classifies only where another mode decides
      * something. */
     bool classify_may_override;
+    /* The host admits the extended bind!-Space surface and owns its inert
+     * authored name and constructor evaluation/publication boundary. */
+    bool named_space_binding;
     /* Direct grounded execution is a physical realization of a language
      * call.  The host therefore retains profile-owned admission for each
      * shared opcode; absence preserves the standalone machine's unrestricted
@@ -720,6 +741,15 @@ typedef struct {
     CettaNativeQueryStatus (*native_collect_distinct_snapshot)(
         void *context, Space *space, Arena *arena, Atom *query,
         bool count_only, Atom **value);
+    /* `(match S P (if TEST DATA (empty)))`, either branch empty, with its
+     * bindings applied: P one pattern, TEST comparisons of the solutions'
+     * values that the native path reads, and DATA an atom answering itself.
+     * DONE sets `*value` to the instances of DATA for the solutions TEST
+     * passes, read on the occurrences of S visible now; it reads no other
+     * space and makes no effect.  DECLINED has done nothing.  Optional. */
+    CettaNativeQueryStatus (*native_filter)(
+        void *context, Space *space, Arena *arena, Atom *query,
+        Atom **value);
     PettaSpecializeResult (*prepare_call)(
         void *context, Space *space, Arena *result_arena,
         Atom *call, Atom **prepared_call);
@@ -794,6 +824,17 @@ typedef struct {
         Atom *expected, Atom *const *query_vars, uint32_t query_var_count,
         bool evaluate_result, bool source_output_constraints, bool dispatch_recovers,
         bool count_only, uint64_t activation_budget, uint32_t depth_bound);
+    /* The answers of `body`, a compound form, compiled on the open tier as
+     * the body of an equation over `parameters` (the body's variables its
+     * caller bound), entered with `arguments` (their values); a query's
+     * body has none.  NULL when the tier does not take it. */
+    CettaOpenEquationCursor *(*open_body_cursor)(
+        void *context, Space *space, Arena *answer_arena,
+        Arena *stable_arena, Atom *body, Atom *const *parameters,
+        Atom *const *arguments, uint32_t arity,
+        Atom *expected, Atom *const *query_vars, uint32_t query_var_count,
+        bool source_output_constraints, bool dispatch_recovers,
+        bool count_only);
     /* A revision-keyed program fact: the relation has declined open
      * compilation.  False means only that no decline is known. */
     bool (*open_relation_declined)(
@@ -818,6 +859,11 @@ typedef struct {
     /* Whether the foreign engine defines the predicate name/arity now,
      * registering nothing.  NULL: it defines none. */
     bool (*foreign_predicate_defined)(
+        void *context, SymbolId name, CettaExprLen arity);
+    /* Whether NAME at ARITY arguments is a function of PeTTa's library
+     * still as the library defines it, no Prolog the program ran having
+     * redefined it.  NULL: the session has no such library. */
+    bool (*library_function_current)(
         void *context, SymbolId name, CettaExprLen arity);
     /* `end`: how a recognized call ended (call_outcome.h), FAILURE after
      * its answers or RAISED with its error. */
@@ -973,6 +1019,11 @@ typedef struct {
         const Bindings *environment, Bindings *projected);
 } PettaMachineHost;
 
+/* Whole native collections share this admission at machine and directive
+ * entry. A finite source purse or an observer of internal transitions needs
+ * ordinary execution until that region supplies its source correspondence. */
+bool petta_machine_host_admits_native_collection(const PettaMachineHost *host);
+
 typedef enum {
     PETTA_MACHINE_STEP_ANSWER = 0,
     PETTA_MACHINE_STEP_EXHAUSTED,
@@ -1067,6 +1118,14 @@ bool petta_machine_init(
 /* Its driver takes every answer of this machine before anything consumes
  * them, as a collection or a completed evaluation does. */
 void petta_machine_set_answers_collected_whole(PettaMachine *machine);
+/* Its observer reads at most `limit` of this machine's answers (0: all),
+ * as `select` does: a query that is one call may then take them from the
+ * portfolio of depth-first search and iterative deepening. */
+void petta_machine_set_answer_limit(PettaMachine *machine, size_t limit);
+/* Its answers are read as values alone (a query whose bindings no caller
+ * keeps): its body's variables are its own, and a compound body may run on
+ * the compiled open tier as a nullary equation's. */
+void petta_machine_set_answers_are_values(PettaMachine *machine);
 /* Change capture admission only at a suspended work boundary. Existing
  * producers still have to satisfy the provider capture contract. */
 void petta_machine_set_branch_capture(
@@ -1096,15 +1155,15 @@ bool petta_machine_supply_he_source(PettaMachine *machine,
 Atom *petta_machine_pending_owned_call(const PettaMachine *machine, Atom **type);
 bool petta_machine_supply_owned_call(PettaMachine *machine,
     Atom *value, const Bindings *environment);
-/* Start a retained continuation by delivering an already-entered packet to
- * destination before solving query. The base world includes its environment
- * and captures. Completed payloads stay data; expressions enter their
- * authored interpretation and frontiers retain their completion policy.
- * The original producer is never invoked. Failure leaves no machine. */
-bool petta_machine_init_with_return(
+/* Deliver an entered packet to one retained caller-DAG root. The graph's
+ * immutable syntax and plans stay live through the machine; its temporary
+ * arrays and binding vectors may be freed after successful initialization.
+ * Captures enter the authoritative branch before delayed goals can wake.
+ * Root zero delivers the packet directly. Failure leaves no machine. */
+bool petta_machine_init_with_caller_return(
     PettaMachine *machine, Space *space, Arena *answer_arena,
-    Atom *query, const PettaPlanNode *plan, Atom *destination, CettaCallOutcome packet,
-    const Bindings *base_environment, const PettaMachineHost *host);
+    const CettaPreparedPureCallerGraph *callers, const CettaOwnedReturn *returned,
+    const PettaMachineHost *host);
 
 PettaMachineStep petta_machine_next(
     PettaMachine *machine, Atom **answer, Bindings *environment);
@@ -1393,10 +1452,61 @@ typedef struct {
     uint64_t active_elapsed_ns;
     uint64_t time_to_first_answer_ns;
     uint64_t first_answer_transition;
+    uint64_t native_pressure_censuses;
+    uint64_t native_pressure_census_retries;
+    uint64_t native_pressure_major_requests;
+    uint64_t native_pressure_reclamations;
+    uint64_t native_pressure_reclamation_deferrals;
+    uint64_t native_pressure_unadapted_containers;
+    size_t maximum_owned_native_image_bytes;
 } PettaMachineStats;
 
 bool petta_machine_stats(
     const PettaMachine *machine, PettaMachineStats *stats);
+
+/* A read-only view of the State/Image accounting domain. Between full traces
+ * its bytes conservatively include newly discovered storage and publication
+ * work, including storage already retired by an overwrite. It excludes opaque
+ * host-container edges until their owner supplies a corresponding adapter. */
+typedef struct {
+    bool active;
+    bool reclamation_outstanding;
+    /* Last full owner-domain census plus conservatively accumulated direct
+     * discoveries, publication exposure and discovery metadata since then.
+     * It can include storage already freed by an immediate overwrite. */
+    size_t last_owned_bytes;
+    /* Cumulative conservative work/storage debt since accepted COMPLETE.
+     * Neither this nor last_owned_bytes is exact live RSS or a measured sum
+     * of rootless native garbage awaiting physical reclamation. */
+    size_t outstanding_bytes;
+    size_t accepted_survivor_threshold;
+    size_t next_offer_bytes;
+} PettaMachineNativePressure;
+bool petta_machine_native_pressure(const PettaMachine *machine,
+                                    PettaMachineNativePressure *pressure);
+
+typedef struct {
+    uint64_t owner_entries;
+    uint64_t node_versions;
+    uint64_t state_images;
+    uint64_t wrapper_images;
+    uint64_t batches;
+    size_t certificate_storage_bytes;
+} PettaMachineNativeDiscoveryStats;
+bool petta_machine_native_discovery_stats(const PettaMachine *machine,
+    PettaMachineNativeDiscoveryStats *stats);
+
+/* Imported closures that were not covered before publication leave a
+ * persistent cleanup obligation even if a later publication hides them.
+ * Only full tracing followed by completed, version-stable native cleanup
+ * advances accepted_epoch. Retry boundaries count existing source-progress
+ * collection opportunities, independently of allocations and byte charges. */
+typedef struct {
+    uint64_t current_epoch, accepted_epoch, offered_epoch;
+    uint32_t retry_boundaries, retry_window;
+} PettaMachineNativeObligation;
+bool petta_machine_native_obligation(const PettaMachine *machine,
+    PettaMachineNativeObligation *obligation);
 
 /* After an unsupported choice-heap collection, retry only after another
  * amortization window of nursery growth.  Saturation means no finite retry

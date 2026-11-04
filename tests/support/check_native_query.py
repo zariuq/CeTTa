@@ -55,11 +55,17 @@ answered, counted or collected, from templates that drop, repeat or fix
 variables, some taken apart; a spread reads a variable of the match
 outside its scope, and unique-atom is rarely extended by an equation.  A
 program the ordinary path cannot run fails.  Every
-program runs twice, with CETTA_NATIVE_QUERY_REFERENCE=1 the second time, and
-every collection is printed sorted.  Atoms holding variables print with
+program runs with its queries' bodies on the compiled tier and, with
+CETTA_OPEN_QUERY_BODIES=0, on the machine, whose native routes for a
+collection a query's body would otherwise bypass; each way it runs twice,
+with CETTA_NATIVE_QUERY_REFERENCE=1 the second time, and all four answer
+alike.  Every collection is printed sorted.  Atoms holding variables print with
 fresh names in an order that follows them. Collected results compare as bags
 under one consistent variable renaming, preserving sharing, literal strings
-and ordered fields inside each answer.
+and ordered fields inside each answer. Collections passed to value-sensitive
+case arms are sorted before use, and a value-sensitive once chooses from an
+explicitly ordered collection. A separate control allows either member of
+an unordered space while requiring its complete bag and ordered choices.
 With --stats, the binary is a runtime-stats build, and the native path must
 also have answered at least one collection per program on average, and
 joined by rows of bits in at least one program in five, rows it builds for
@@ -635,8 +641,11 @@ def program(rng):
                 region = ("(let $ps (collapse (match &q (q $x) (q $x))) "
                           "(size-atom (collapse (let $a (superpose $ps) (add-atom &q (q (s $a)))))))")
             elif form == 1:
+                # Which removal of a value answers false follows the order
+                # the space lists its rows in, which it does not promise:
+                # the answers compare sorted.
                 region = ("(let $ps (collapse (match &q (q $x) $x)) "
-                          "(collapse (let $a (superpose $ps) (remove-atom &q (q $a)))))")
+                          "(sort-atom (collapse (let $a (superpose $ps) (remove-atom &q (q $a))))))")
             elif form == 2:
                 region = ("(let $ps (collapse (match &self (edge $x $y) (pair $x $y))) "
                           "(size-atom (collapse (let (pair $u $v) (superpose $ps) (add-atom &q (q $u))))))")
@@ -644,8 +653,11 @@ def program(rng):
                 region = ("(let $ps (collapse (match &q (q $x) (w $x))) "
                           "(let $a (superpose $ps) (add-atom &q $a)))")
             elif form == 4:
+                # The lists are sorted: a space promises no order of a
+                # collection, and relations read their facts in an order of
+                # their own.
                 region = ("(let $ps (collapse (match &q (q $x) $x)) "
-                          "(collapse (let $a (superpose $ps) (pair $a $ps))))")
+                          "(sort-atom (collapse (let $a (superpose $ps) (pair $a (sort-atom $ps))))))")
             else:
                 region = ("(let $ps (collapse (match &self (edge $x $y) $y)) "
                           "(size-atom (collapse (let $a (superpose $ps) (add-atom &q (q $a))))))")
@@ -747,15 +759,15 @@ def program(rng):
                 lines.append("!(let $h (collapse (match &self (ww $v) (let $v (y 1) (k $v)))) (sort-atom $h))")
             elif form == 1:
                 c = scopes.choice(("$c", "$d"))
-                lines.append(f"!(let $h (collapse (match &self (zz {c}) (let $c (collapse (match &self (edge {n} $q) $q)) "
+                lines.append(f"!(let $h (collapse (match &self (zz {c}) (let $c (sort-atom (collapse (match &self (edge {n} $q) $q))) "
                              f"(if (== $c ()) (none {c}) (some {c}))))) (sort-atom $h))")
             elif form == 2:
                 o = scopes.choice(("$o", "$p"))
-                lines.append(f"!(let $h (collapse (match &self (zz {o}) (case (collapse (match &self (edge {n} $q) $q)) "
+                lines.append(f"!(let $h (collapse (match &self (zz {o}) (case (sort-atom (collapse (match &self (edge {n} $q) $q))) "
                              f"((() (e {o})) ($o (n $o)))))) (sort-atom $h))")
             elif form == 3:
                 o = scopes.choice(("$o", "$p"))
-                lines.append(f"!(let $h (collapse (match &self (zz {o}) (case (once (match &self (edge {n} $q) $q)) "
+                lines.append(f"!(let $h (collapse (match &self (zz {o}) (case (once (superpose (sort-atom (collapse (match &self (edge {n} $q) $q))))) "
                              f"((Empty (e {o})) ($o (n $o)))))) (sort-atom $h))")
             elif form == 4:
                 lines.append("!(let $h (collapse (match &self (edge $x $y) (if (let $k $y (== (collapse (match &self (edge $k $q) $q)) ())) "
@@ -1034,7 +1046,11 @@ def program(rng):
     # Equations a round adds: a function the template calls gains an
     # equation keyed by each row as the round runs, and PeTTa calls it in
     # each later row with the equations the earlier rows added; the native
-    # path, which reads the program once, declines a round adding one.
+    # path, which reads the program once, declines a round adding one.  The
+    # call reads the key its own row adds, and the body is the key's, so the
+    # rows sharing a key answer alike whatever order they come in, which is
+    # unobservable; a function no equation defined when the line was read
+    # keeps its calls as data.
     # Controls: an argument of two answers, which PeTTa evaluates once
     # before the call, to a function whose body reads its parameter twice or
     # not at all; and a call inside a join whose variables the body's own
@@ -1048,10 +1064,10 @@ def program(rng):
                                  "(lreach $b)"), live.randrange(1, 5)):
             lines.append(f"!(let $h (collapse (match &self (edge $a $b) {call})) (sort-atom $h))")
         for index in range(live.randrange(1, 4)):
-            effect = live.choice(("(add-atom &self (= (lf $b) (lextra $b)))",
-                                  "(add-atom &self (= (lf $a) (lagain $a)))",
-                                  "(add-atom &self (= (lg $b) $a))"))
-            call = live.choice(("(lf $a)", "(lf $b)", "(lg $a)", "(lf (ltwo))"))
+            effect, call = live.choice((
+                ("(add-atom &self (= (lf $b) (lextra $b)))", "(lf $b)"),
+                ("(add-atom &self (= (lf $a) (lagain $a)))", "(lf $a)"),
+                ("(add-atom &self (= (lg $b) (lback $b)))", "(lg $b)")))
             lines.append(f"!(let $h (collapse (match &self (edge $a $b) "
                          f"(let $u {effect} {call}))) (sort-atom $h))")
         lines.append("!(let $h (collapse (match &self (edge $a $b) (lf (ltwo)))) (sort-atom $h))")
@@ -1065,9 +1081,14 @@ def program(rng):
     return "\n".join(lines) + "\n"
 
 
-def run(binary, path, reference, stats, ordered_lines=()):
+# The two ways a query's body runs: on the compiled tier and on the machine.
+BODY_ROUTES = ("1", "0")
+
+
+def run(binary, path, reference, stats, ordered_lines=(), bodies="1"):
     env = dict(os.environ)
     env.pop("CETTA_NATIVE_QUERY_REFERENCE", None)
+    env["CETTA_OPEN_QUERY_BODIES"] = bodies
     if reference:
         env["CETTA_NATIVE_QUERY_REFERENCE"] = "1"
         env["CETTA_FOLD_ARITH_REFERENCE"] = "1"
@@ -1104,7 +1125,57 @@ FIXED = [
     "!(size-atom (collapse (match &self (edge $x $y) "
     "(put-if-absent &b (seen $x)))))\n"
     "!(let $h (collapse (match &b (seen $v) $v)) (sort-atom $h))\n",
+    # The unordered choice may differ between readers. Explicit lists,
+    # the full duplicate-preserving bag and the surrounding case stay exact.
+    "(choice 2)\n(choice 1)\n(choice 1)\n"
+    "!(sort-atom (collapse (match &self (choice $v) $v)))\n"
+    "!(once (match &self (choice $v) $v))\n"
+    "!(once (superpose (2 1)))\n"
+    "!(case (once (superpose (2 1))) ((1 wrong) ($_ right)))\n",
 ]
+
+
+def check_fixed(binary, path, source, number, ordered, stats, bodies):
+    """Whether the fixed program NUMBER answers as it must with its query
+    bodies on the route BODIES."""
+    native, _, _ = run(binary, path, False, stats, ordered_lines=ordered,
+                       bodies=bodies)
+    reference, _, _ = run(binary, path, True, stats, ordered_lines=ordered,
+                          bodies=bodies)
+    if number == 1:
+        expected = (
+            (0, CollectionTrace("true\n3\n(0 2)\n", ordered_lines=ordered)),
+            (0, CollectionTrace("(!= 1 0)\n3\n(0 0 2)\n", ordered_lines=ordered)),
+        )
+        if any(observation not in expected for observation in (native, reference)):
+            print("FAIL: the existence rewrite disagrees with primitive availability")
+            print("native:", native)
+            print("reference:", reference)
+            return False
+    if number == 2:
+        expected = tuple(
+            (0, CollectionTrace(f"(1 1 2)\n{chosen}\n2\nright\n",
+                                ordered_lines=(0, 1, 2, 3)))
+            for chosen in (1, 2)
+        )
+        # Compare ordered fields exactly; only the unordered choice
+        # has two permitted observations.
+        if any(observation not in expected for observation in
+               (native, reference)):
+            print("FAIL: unordered choice or ordered data changed")
+            print("native:", native)
+            print("reference:", reference)
+            return False
+        return True
+    if native != reference:
+        route = "tier" if bodies == "1" else "machine"
+        print(f"FAIL: fixed program {number} ends differently on the native "
+              f"path (query bodies on the {route})")
+        print(source)
+        print("native:", native)
+        print("reference:", reference)
+        return False
+    return True
 
 
 def main():
@@ -1122,45 +1193,48 @@ def main():
             path = os.path.join(work, f"fixed_{number}.metta")
             with open(path, "w") as f:
                 f.write(source)
-            ordered = (0,) if number == 1 else ()
-            native, _, _ = run(binary, path, False, args.stats, ordered_lines=ordered)
-            reference, _, _ = run(binary, path, True, args.stats, ordered_lines=ordered)
-            if number == 1:
-                expected = (
-                    (0, CollectionTrace("true\n3\n(0 2)\n", ordered_lines=ordered)),
-                    (0, CollectionTrace("(!= 1 0)\n3\n(0 0 2)\n", ordered_lines=ordered)),
-                )
-                if any(observation not in expected for observation in (native, reference)):
-                    print("FAIL: the existence rewrite disagrees with primitive availability")
-                    print("native:", native)
-                    print("reference:", reference)
+            ordered = (0,) if number == 1 else (0, 1, 2, 3) if number == 2 else ()
+            for bodies in BODY_ROUTES:
+                if not check_fixed(binary, path, source, number, ordered,
+                                   args.stats, bodies):
                     return 1
-            if native != reference:
-                print(f"FAIL: fixed program {number} ends differently on the native path")
-                print(source)
-                print("native:", native)
-                print("reference:", reference)
-                return 1
         for number in range(args.programs):
             source = program(rng)
             path = os.path.join(work, f"query_{number}.metta")
             with open(path, "w") as f:
                 f.write(source)
-            native, admissions, dense = run(binary, path, False, args.stats)
-            reference, declined, _ = run(binary, path, True, args.stats)
-            if reference[0] != 0:
-                print(f"FAIL: program {number} does not run on the ordinary path")
-                print(source)
-                print("reference:", reference)
-                return 1
-            if native != reference or declined:
-                print(f"FAIL: program {number} answers differently on the native path")
-                print(source)
-                print("native:", native)
-                print("reference:", reference)
-                return 1
-            admitted += admissions
-            dense_programs += dense > 0
+            observed = None
+            for bodies in BODY_ROUTES:
+                route = "tier" if bodies == "1" else "machine"
+                native, admissions, dense = run(binary, path, False,
+                                                args.stats, bodies=bodies)
+                reference, declined, _ = run(binary, path, True, args.stats,
+                                             bodies=bodies)
+                if reference[0] != 0:
+                    print(f"FAIL: program {number} does not run on the "
+                          f"ordinary path (query bodies on the {route})")
+                    print(source)
+                    print("reference:", reference)
+                    return 1
+                if native != reference or declined:
+                    print(f"FAIL: program {number} answers differently on the "
+                          f"native path (query bodies on the {route})")
+                    print(source)
+                    print("native:", native)
+                    print("reference:", reference)
+                    return 1
+                if observed is not None and native != observed:
+                    print(f"FAIL: program {number} answers differently with "
+                          f"its query bodies on the tier and on the machine")
+                    print(source)
+                    print("tier:", observed)
+                    print("machine:", native)
+                    return 1
+                observed = native
+                # The native routes the counts witness are the machine's.
+                if bodies == "0":
+                    admitted += admissions
+                    dense_programs += dense > 0
     if args.stats and admitted < args.programs:
         print(f"FAIL: the native path answered {admitted} collections in "
               f"{args.programs} programs")

@@ -35,6 +35,22 @@ typedef struct {
     uint64_t visits;
 } CettaDenseWork;
 
+/* Additional physical work, separate from the existing word counter. CSR
+ * construction is cumulative for this query; list/probe/setup work is for
+ * its latest run. Bytes include owned capacities, not only live elements. */
+typedef struct {
+    uint64_t list_items;
+    uint64_t membership_tests;
+    uint64_t index_items;
+    uint64_t index_words;
+    uint64_t index_comparisons;
+    uint64_t setup_words;
+    size_t retained_bytes;
+    size_t scratch_peak_bytes;
+} CettaDenseProbeWork;
+void cetta_dense_query_probe_work(const CettaDenseQuery *query,
+                                 CettaDenseProbeWork *out);
+
 /* Prepare the query over SPACE's rows when every pattern is a binary
  * relation and rows of bits suit the relations: there are enough rows for
  * the numbering, and the matrices stay within a bound set by the rows.

@@ -19,7 +19,7 @@
 (= (colors-of $k) (match &kb (kv $k color $v) $v))
 !(collapse (colors-of 5))
 (= (with-color $v) (match &kb (kv $k color $v) $k))
-!(collapse (with-color 9))
+!(sort-atom (collapse (with-color 9)))
 ; joins: two columns with two, then two with three
 (= (two-hop $x) (match &kb (edge $x $y) (match &kb (edge $y $z) $z)))
 !(collapse (two-hop 3))

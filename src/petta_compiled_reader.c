@@ -378,7 +378,7 @@ bool petta_compiled_reader_v1_prepare(
  * document's slices take. */
 static int petta_compiled_reader_v1_parse_from(
     PeTTaCompiledReaderV1 *reader, const uint8_t *input, size_t input_len,
-    size_t start, uint32_t max_forms, TermUniverse *universe,
+    size_t start, uint32_t max_forms, uint32_t max_tokens, TermUniverse *universe,
     AtomId **out_ids, GSLTDirectPeTTaReaderV1Receipt *direct_receipt,
     size_t *end_out, char *error_buf, size_t error_buf_size) {
     PeTTaProjectionContextV1 context = {0};
@@ -411,7 +411,7 @@ static int petta_compiled_reader_v1_parse_from(
     };
     memset(direct_receipt, 0, sizeof(*direct_receipt));
     result = gslt_direct_petta_reader_v1_parse_bytes_ids_from(
-        reader->plan, input, input_len, start, max_forms, &projection,
+        reader->plan, input, input_len, start, max_forms, max_tokens, &projection,
         out_ids, direct_receipt, end_out, error_buf, error_buf_size);
     cetta_var_index_free(&context.variable_index);
     free(context.variables);
@@ -428,7 +428,7 @@ int petta_compiled_reader_v1_parse_bytes_ids(
     if (receipt)
         memset(receipt, 0, sizeof(*receipt));
     int result = petta_compiled_reader_v1_parse_from(
-        reader, input, input_len, 0u, UINT32_MAX, universe, out_ids,
+        reader, input, input_len, 0u, UINT32_MAX, 0u, universe, out_ids,
         &direct_receipt, NULL, error_buf, error_buf_size);
     if (result < 0)
         return -1;
@@ -751,7 +751,8 @@ int petta_compiled_document_v1_check_next(PeTTaCompiledReaderV1 *reader,
     memset(&direct_receipt, 0, sizeof(direct_receipt));
     int result = gslt_direct_petta_reader_v1_parse_bytes_ids_from(
         reader->plan, document->bytes, document->len, document->pos,
-        max_forms, &projection, out_ids, &direct_receipt, &end, error_buf,
+        max_forms, document->slice_tokens, &projection, out_ids,
+        &direct_receipt, &end, error_buf,
         error_buf_size);
     cetta_var_index_free(&scan.built.variable_index);
     free(scan.built.variables);
@@ -776,6 +777,7 @@ int petta_compiled_document_v1_next(PeTTaCompiledReaderV1 *reader,
         return 0;
     int result = petta_compiled_reader_v1_parse_from(
         reader, document->bytes, document->len, document->pos, max_forms,
+        document->slice_tokens,
         universe, out_ids, &direct_receipt, &end, error_buf, error_buf_size);
     if (result >= 0)
         document->pos = end;
