@@ -2,6 +2,7 @@
 #include "parser.h"
 #include "utf8.h"
 #include "name_key.h"
+#include "petta_numeric.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -37,6 +38,15 @@ static __thread bool g_rational_literals_enabled = true;
 static __thread bool g_universal_name_syntax_enabled = false;
 static __thread bool g_list_syntax_enabled = false;
 static __thread bool g_namespace_sugar_enabled = true;
+static _Thread_local bool g_petta_scalar_policy;
+#pragma weak cetta_petta_number_parse_atom
+#pragma weak cetta_petta_number_parse_id
+
+bool parser_set_petta_scalar_policy(bool enabled) {
+    bool previous = g_petta_scalar_policy;
+    g_petta_scalar_policy = enabled;
+    return previous;
+}
 static __thread ParserBareDollarMode g_bare_dollar_mode =
     CETTA_BARE_DOLLAR_DEFAULT_MODE;
 static _Thread_local ParserDocumentIdsBackend g_document_ids_backend;
@@ -791,6 +801,17 @@ static inline ParserWordValue parser_word_exact(Arena *a, TermUniverse *universe
                                             : atom_bigint(a, tok)};
 }
 
+static inline ParserWordValue parser_word_symbol(Arena *a, TermUniverse *universe,
+        const char *token, bool namespace_sugar) {
+    const char *canonical = namespace_sugar ? parser_namespace_token(a, token) : token;
+    SymbolId spelling = symbol_try_intern_cstr(g_symbols, canonical);
+    if (spelling == SYMBOL_ID_NONE)
+        return universe ? (ParserWordValue){.id = CETTA_ATOM_ID_NONE}
+                        : (ParserWordValue){.atom = NULL};
+    return universe ? (ParserWordValue){.id = tu_intern_symbol(universe, spelling)}
+                    : (ParserWordValue){.atom = atom_symbol_id(a, spelling)};
+}
+
 /* The shared word-grounding decision path. Delimiters, strings, variable
  * identity and token bindings belong to the surrounding reader. Inline the
  * target dispatch so parser-only bootstrap tools retain arena construction
@@ -802,6 +823,24 @@ static inline ParserWordValue parser_ground_word(Arena *a, TermUniverse *univers
     if (!a || !tok || !*tok) {
         return universe ? (ParserWordValue){.id = CETTA_ATOM_ID_NONE}
                         : (ParserWordValue){.atom = NULL};
+    }
+    if (g_petta_scalar_policy) {
+        if (length == 4u && !memcmp(tok, "True", 4u))
+            return universe ? (ParserWordValue){.id = tu_intern_symbol(universe, symbol_intern_cstr(g_symbols, "true"))}
+                            : (ParserWordValue){.atom = atom_symbol(a, "true")};
+        if (length == 5u && !memcmp(tok, "False", 5u))
+            return universe ? (ParserWordValue){.id = tu_intern_symbol(universe, symbol_intern_cstr(g_symbols, "false"))}
+                            : (ParserWordValue){.atom = atom_symbol(a, "false")};
+        if (universe && cetta_petta_number_parse_id) {
+            AtomId number = cetta_petta_number_parse_id(universe, (const uint8_t *)tok,
+                length, CETTA_PETTA_NUMBER_SOURCE_TOKEN);
+            if (number != CETTA_ATOM_ID_NONE) return (ParserWordValue){.id = number};
+        } else if (!universe && cetta_petta_number_parse_atom) {
+            Atom *number = cetta_petta_number_parse_atom(a, (const uint8_t *)tok,
+                length, CETTA_PETTA_NUMBER_SOURCE_TOKEN);
+            if (number) return (ParserWordValue){.atom = number};
+        }
+        return parser_word_symbol(a, universe, tok, policy.namespace_sugar);
     }
     /* These spellings have distinct first bytes. The lexer supplies the
      * exact length, so bounded comparisons preserve exact-match semantics. */
@@ -852,14 +891,7 @@ static inline ParserWordValue parser_ground_word(Arena *a, TermUniverse *univers
             return parser_word_float(a, universe, fval);
     }
 
-    const char *canonical = policy.namespace_sugar
-        ? parser_namespace_token(a, tok) : tok;
-    SymbolId spelling = symbol_try_intern_cstr(g_symbols, canonical);
-    if (spelling == SYMBOL_ID_NONE)
-        return universe ? (ParserWordValue){.id = CETTA_ATOM_ID_NONE}
-                        : (ParserWordValue){.atom = NULL};
-    return universe ? (ParserWordValue){.id = tu_intern_symbol(universe, spelling)}
-                    : (ParserWordValue){.atom = atom_symbol_id(a, spelling)};
+    return parser_word_symbol(a, universe, tok, policy.namespace_sugar);
 }
 
 static AtomId parser_project_word_id(TermUniverse *universe, Arena *scratch,
@@ -928,6 +960,7 @@ static char *parser_host_projection_v1_cstr(
         return NULL;
     }
     text = arena_alloc(&projection->scratch, len + 1u);
+    if (!text) return NULL;
     if (len > 0u)
         memcpy(text, bytes, len);
     text[len] = '\0';
@@ -1449,6 +1482,7 @@ read_trimmed_node:
             if (!parser_more(text, text_len, *pos))
                 goto fail;
             char *buffer = arena_alloc(arena, *pos - start + 1u);
+            if (!buffer) goto fail;
             size_t length = parser_decode_string_body(text, start, *pos, buffer);
             (*pos)++;
             result = backend->ids ? backend->string(&context, buffer, length)
@@ -1462,6 +1496,7 @@ read_trimmed_node:
         if (!length)
             goto fail;
         char *word = arena_alloc(arena, length + 1u);
+        if (!word) goto fail;
         memcpy(word, text + start, length);
         word[length] = '\0';
         result = backend->ids ? backend->word(&context, word, length)
@@ -2077,7 +2112,9 @@ static int parse_metta_buffer(const char *text, size_t text_len, Arena *a,
         }
         if (count >= cap) {
             cap = cap ? cap * 2 : 64;
-            atoms = cetta_realloc(atoms, sizeof(Atom *) * (size_t)cap);
+            Atom **next = cetta_realloc(atoms, sizeof(Atom *) * (size_t)cap);
+            if (!next) { free(atoms); *out_atoms = NULL; return -1; }
+            atoms = next;
         }
         atoms[count++] = at;
     }
@@ -2124,7 +2161,9 @@ static int parse_metta_buffer_ids(const char *text, size_t text_len,
         }
         if (count >= cap) {
             cap = cap ? cap * 2 : 64;
-            ids = cetta_realloc(ids, sizeof(AtomId) * (size_t)cap);
+            AtomId *next = cetta_realloc(ids, sizeof(AtomId) * (size_t)cap);
+            if (!next) { free(ids); arena_free(&scratch); return -1; }
+            ids = next;
         }
         ids[count++] = id;
     }
@@ -2141,6 +2180,7 @@ static bool read_all_text(FILE *f, char **text_out, size_t *nread_out) {
         long fsize = ftell(f);
         if (fsize >= 0 && fseek(f, 0, SEEK_SET) == 0) {
             char *text = cetta_malloc((size_t)fsize + 1);
+            if (!text) return false;
             size_t nread = fread(text, 1, (size_t)fsize, f);
             text[nread] = '\0';
             *text_out = text;
@@ -2155,6 +2195,7 @@ static bool read_all_text(FILE *f, char **text_out, size_t *nread_out) {
     size_t cap = 4096;
     size_t nread = 0;
     char *text = cetta_malloc(cap + 1);
+    if (!text) return false;
     for (;;) {
         size_t remaining = cap - nread;
         size_t nr = fread(text + nread, 1, remaining, f);
@@ -2170,7 +2211,9 @@ static bool read_all_text(FILE *f, char **text_out, size_t *nread_out) {
         }
         if (nread == cap) {
             cap *= 2;
-            text = cetta_realloc(text, cap + 1);
+            char *next = cetta_realloc(text, cap + 1);
+            if (!next) { free(text); return false; }
+            text = next;
         }
     }
     text[nread] = '\0';

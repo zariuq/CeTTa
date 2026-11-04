@@ -480,8 +480,20 @@ static bool eval_work_deliver(EvalWork *work, Arena *a, Atom *answer,
         work->counted++;
     } else {
         if (*out_len == *out_cap) {
-            *out_cap = *out_cap ? *out_cap * 2u : 8u;
-            *out = cetta_realloc(*out, *out_cap * sizeof(**out));
+            size_t capacity = *out_cap ? *out_cap * 2u : 8u;
+            if (capacity < *out_cap || capacity > SIZE_MAX / sizeof(**out)) {
+                work->state = EVAL_WORK_FAILED;
+                work->failure_completion = CETTA_EVAL_INCOMPLETE_CAPACITY;
+                return false;
+            }
+            Atom **grown = cetta_realloc(*out, capacity * sizeof(**out));
+            if (!grown) {
+                work->state = EVAL_WORK_FAILED;
+                work->failure_completion = CETTA_EVAL_INCOMPLETE_CAPACITY;
+                return false;
+            }
+            *out = grown;
+            *out_cap = capacity;
         }
         (*out)[(*out_len)++] = value;
     }
@@ -1124,9 +1136,11 @@ static Atom *eval_work_new_with_plan(Space *space, Arena *a, Atom *source, int f
         eval_work_free(work);
         return NULL;
     }
+    /* Failed owner construction may retire the work before returning. */
+    uint64_t work_id = work->id;
     Atom *handle = eval_work_handle(a, work);
     if (!handle) {
-        cetta_native_handle_close(g_library_context, eval_work_kind, work->id);
+        cetta_native_handle_close(g_library_context, eval_work_kind, work_id);
         return NULL;
     }
     (void)eval_work_start_general(work, a, EVAL_WORK_DEPTH_FIRST);

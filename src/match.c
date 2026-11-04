@@ -330,8 +330,10 @@ static bool match_occurrence_identity_finite(const Atom *root) {
         g_match_dag_stack_cap = 32u;
         g_match_dag_stack = cetta_malloc(
             sizeof(*g_match_dag_stack) * g_match_dag_stack_cap);
-        if (!g_match_dag_stack)
+        if (!g_match_dag_stack) {
+            g_match_dag_stack_cap = 0u;
             return false;
+        }
     }
     sp = 0u;
     g_match_dag_stack[sp++] = (MatchDagFrame){root, 0u};
@@ -382,8 +384,10 @@ static bool match_occurrence_is_finite_dag_qualified(
         g_match_dag_stack_cap = 32u;
         g_match_dag_stack = cetta_malloc(
             sizeof(*g_match_dag_stack) * g_match_dag_stack_cap);
-        if (!g_match_dag_stack)
+        if (!g_match_dag_stack) {
+            g_match_dag_stack_cap = 0u;
             return false;
+        }
     }
     if (g_match_dag_hash_cap == 0u && !match_dag_hash_grow())
         return false;
@@ -951,10 +955,11 @@ static Binding *bindings_entries_alloc(uint32_t cap) {
             &block->references, 1u, memory_order_relaxed);
         return (Binding *)(block + 1);
     }
+    block = cetta_malloc(sizeof(*block) + bytes);
+    if (!block) return NULL;
     g_binding_entry_active_bytes += bytes;
     g_binding_entry_retained_bytes += bytes;
     bindings_note_entry_pool_metrics();
-    block = cetta_malloc(sizeof(*block) + bytes);
     block->next = NULL;
     block->capacity = cap;
     atomic_init(&block->references, 1u);
@@ -1015,10 +1020,11 @@ static BindingConstraint *bindings_constraints_alloc(uint32_t cap) {
             &block->references, 1u, memory_order_relaxed);
         return (BindingConstraint *)(block + 1);
     }
+    block = cetta_malloc(sizeof(*block) + bytes);
+    if (!block) return NULL;
     g_binding_constraint_active_bytes += bytes;
     g_binding_constraint_retained_bytes += bytes;
     bindings_note_constraint_pool_metrics();
-    block = cetta_malloc(sizeof(*block) + bytes);
     block->next = NULL;
     block->capacity = cap;
     atomic_init(&block->references, 1u);
@@ -1090,6 +1096,7 @@ static size_t bindings_var_id_hash(VarId id) {
 BindingsExclusiveFrame *bindings_exclusive_frame_new(void) {
     BindingsExclusiveFrame *frame =
         cetta_malloc(sizeof(BindingsExclusiveFrame));
+    if (!frame) return NULL;
     memset(frame, 0, sizeof(*frame));
     return frame;
 }
@@ -2400,6 +2407,7 @@ static bool bindings_flatten_unique(Bindings *b) {
     while (next_cap <= b->len)
         next_cap *= 2u;
     next = bindings_entries_alloc(next_cap);
+    if (!next) return false;
     if (b->shared_len > 0u)
         memcpy(next, b->shared_entries,
                sizeof(Binding) * b->shared_len);
@@ -2452,6 +2460,7 @@ static bool bindings_reserve_entries(Bindings *b, uint32_t needed) {
             CETTA_RUNTIME_COUNTER_BINDINGS_VERSION_ENTRY_DETACH);
     }
     next = bindings_entries_alloc(next_cap);
+    if (!next) return false;
     exclusive_have = b->len - b->shared_len;
     if (exclusive_have > 0u)
         memcpy(next, b->entries, sizeof(Binding) * exclusive_have);
@@ -2473,6 +2482,7 @@ static bool bindings_reserve_constraints(Bindings *b, uint32_t needed) {
             CETTA_RUNTIME_COUNTER_BINDINGS_VERSION_CONSTRAINT_DETACH);
     }
     BindingConstraint *next = bindings_constraints_alloc(next_cap);
+    if (!next) return false;
     if (b->eq_len > 0)
         memcpy(next, b->constraints, sizeof(BindingConstraint) * b->eq_len);
     bindings_constraints_release(b->constraints, b->eq_cap);
@@ -6252,7 +6262,9 @@ static bool binding_set_ensure_one(BindingSet *bs) {
         next = limit;
     if (next < need)
         return false;
-    bs->items = cetta_realloc(bs->items, sizeof(Bindings) * (size_t)next);
+    Bindings *items = cetta_realloc(bs->items, sizeof(Bindings) * (size_t)next);
+    if (!items) return false;
+    bs->items = items;
     bs->cap = next;
     return true;
 }
@@ -6308,9 +6320,11 @@ bool bindings_builder_trail_reserve(BindingsBuilder *bb, uint32_t needed) {
         SIZE_MAX / sizeof(BindingsBuilderTrailEntry)) {
         return false;
     }
-    bb->trail = cetta_realloc(bb->trail,
+    BindingsBuilderTrailEntry *trail = cetta_realloc(bb->trail,
                               sizeof(BindingsBuilderTrailEntry) *
                                   (size_t)next_cap);
+    if (!trail) return false;
+    bb->trail = trail;
     bb->trail_cap = next_cap;
     return true;
 }
@@ -6329,8 +6343,10 @@ static bool bindings_builder_frame_undo_reserve(
     }
     if ((size_t)next_cap > SIZE_MAX / sizeof(*bb->frame_undo))
         return false;
-    bb->frame_undo = cetta_realloc(
+    BindingsFrameUndoEntry *undo = cetta_realloc(
         bb->frame_undo, (size_t)next_cap * sizeof(*bb->frame_undo));
+    if (!undo) return false;
+    bb->frame_undo = undo;
     bb->frame_undo_cap = next_cap;
     return true;
 }
@@ -8021,8 +8037,10 @@ static bool bindings_support_push(BindingsSupportCollector *collector,
         size_t cap = collector->cap ? collector->cap * 2u : 16u;
         if (cap < collector->cap || cap > SIZE_MAX / sizeof(*collector->pending))
             return false;
-        collector->pending = cetta_realloc(
+        BindingValue *pending = cetta_realloc(
             collector->pending, cap * sizeof(*collector->pending));
+        if (!pending) return false;
+        collector->pending = pending;
         collector->cap = cap;
     }
     collector->pending[collector->len++] = value;
@@ -8149,6 +8167,7 @@ bool bindings_collect_support(const Bindings *bindings,
     if (!bindings_support_drain(&collector)) goto done;
     if (collector.ids.len) {
         *ids = cetta_malloc(sizeof(**ids) * collector.ids.len);
+        if (!*ids) { ok = false; goto done; }
         memcpy(*ids, collector.ids.items, sizeof(**ids) * collector.ids.len);
     }
     *count = collector.ids.len;
@@ -8187,6 +8206,7 @@ bool bindings_contextualize_unframed(
     uint32_t original_len = converted.len;
     Binding *pending = original_len
         ? cetta_malloc((size_t)original_len * sizeof(*pending)) : NULL;
+    if (original_len && !pending) { bindings_free(&converted); return false; }
     uint32_t pending_len = 0u;
     for (uint32_t index = 0u; index < original_len; index++) {
         Binding entry = *bindings_entry_at(&converted, index);
@@ -8212,6 +8232,9 @@ bool bindings_contextualize_unframed(
         ? cetta_malloc((size_t)inventory->len * sizeof(*slots)) : NULL;
     Atom **variables = inventory->len
         ? cetta_malloc((size_t)inventory->len * sizeof(*variables)) : NULL;
+    if (inventory->len && (!slots || !variables)) {
+        free(slots); free(variables); goto fail;
+    }
     for (uint32_t slot = 0u; slot < inventory->len; slot++) {
         slots[slot] = var_id_from_base((uint64_t)slot + 1u);
         variables[slot] = inventory->items[slot].mapped_var;
@@ -8266,6 +8289,7 @@ static bool bindings_prepare_var_batch(Bindings *bindings,
     if ((size_t)count > SIZE_MAX / (2u * sizeof(Atom *)))
         return false;
     Atom **roots = cetta_malloc((size_t)count * 2u * sizeof(*roots));
+    if (!roots) return false;
     for (uint32_t i = 0u; i < count; i++) {
         roots[2u * (size_t)i] = variables[i];
         roots[2u * (size_t)i + 1u] = values[i];

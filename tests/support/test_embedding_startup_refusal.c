@@ -40,7 +40,7 @@ static void answer_42(cetta_engine_t *engine) {
     cetta_embed_result_release(result);
 }
 int main(int argc, char **argv) {
-    assert(argc == 5);
+    assert(argc == 5 || argc == 6);
     const char *language = argv[1], *profile = strcmp(argv[2], "-") ? argv[2] : NULL;
     failure = (size_t)strtoull(argv[3], NULL, 10);
     persistent = !strcmp(argv[4], "persistent");
@@ -48,7 +48,8 @@ int main(int argc, char **argv) {
         language, profile, NULL};
     cetta_engine_t *engine = NULL;
     watching = true;
-    cetta_status_t status = cetta_embed_engine_new(&config, &engine);
+    uint64_t limit = argc == 6 ? strtoull(argv[5], NULL, 10) : UINT64_MAX;
+    cetta_status_t status = cetta_embed_engine_new_limited(&config, limit, &engine);
     watching = false;
     if (failure == SIZE_MAX) {
         assert(status == CETTA_OK && engine);

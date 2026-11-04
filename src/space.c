@@ -386,11 +386,13 @@ static DiscPool *disc_root_pool(DiscNode *root) {
 static void *disc_pool_alloc_alone(DiscPool *pool, size_t bytes) {
     if (pool->block_len == pool->block_cap) {
         size_t cap = pool->block_cap ? pool->block_cap * 2u : 16u;
-        pool->blocks = cetta_realloc(pool->blocks,
-                                     sizeof(*pool->blocks) * cap);
+        DiscBlock **blocks = cetta_realloc(pool->blocks, sizeof(*pool->blocks) * cap);
+        if (!blocks) return NULL;
+        pool->blocks = blocks;
         pool->block_cap = cap;
     }
     DiscBlock *block = cetta_malloc(sizeof(*block) + bytes);
+    if (!block) return NULL;
     block->index = pool->block_len;
     pool->blocks[pool->block_len++] = block;
     return block + 1;
@@ -402,6 +404,7 @@ static void *disc_pool_alloc(DiscPool *pool, size_t bytes) {
         DiscChunk *chunk = pool->chunks;
         if (!chunk || chunk->cap - chunk->used < bytes) {
             chunk = cetta_malloc(sizeof(*chunk) + DISC_POOL_CHUNK);
+            if (!chunk) return NULL;
             chunk->next = pool->chunks;
             chunk->used = 0u;
             chunk->cap = DISC_POOL_CHUNK;
@@ -455,6 +458,7 @@ static DiscNode *disc_pool_node(DiscPool *pool, bool inner) {
 #else
         node = disc_pool_alloc(pool, bytes);
 #endif
+    if (!node) return NULL;
     memset(node, 0, bytes);
     node->inner = inner;
     return node;
@@ -517,6 +521,7 @@ static DiscNode *disc_singleton_insert(
         abort();
     }
     DiscNode *child = disc_pool_node(pool, inner);
+    if (!child) return NULL;
     node->edge_kind = kind;
     node->edge.one.key = key;
     node->edge.one.child = child;
@@ -526,6 +531,7 @@ static DiscNode *disc_singleton_insert(
 /* A trie's root, with the pool that holds the trie. */
 DiscNode *disc_node_new(void) {
     DiscRoot *root = cetta_malloc(sizeof(*root));
+    if (!root) return NULL;
     memset(root, 0, sizeof(*root));
     root->node.inner = true;
     return &root->node;
@@ -665,6 +671,7 @@ CettaCount disc_transport_stable_coordinates(
 }
 
 static void disc_add_leaf(DiscPool *pool, DiscNode *n, CettaIndex idx) {
+    if (!n) return;
     if (n->leaf_capacity == 0u) {
         if (pool->coordinate_leaves_ready)
             disc_node_vector_push(&pool->coordinate_leaves, n);
@@ -681,16 +688,17 @@ static void disc_add_leaf(DiscPool *pool, DiscNode *n, CettaIndex idx) {
     }
     if (n->leaf_capacity == 1u) {
         CettaIndex first = n->leaf.one;
+        CettaIndex *many = disc_pool_alloc(pool, sizeof(CettaIndex) * 4u);
+        if (!many) return;
+        n->leaf.many = many;
         n->leaf_capacity = 2u;
-        n->leaf.many = disc_pool_alloc(
-            pool, sizeof(CettaIndex) * (size_t)disc_leaf_capacity(n));
         n->leaf.many[0] = first;
     } else if (n->leaf_count >= disc_leaf_capacity(n)) {
         size_t old_bytes = sizeof(CettaIndex) * (size_t)disc_leaf_capacity(n);
+        CettaIndex *many = disc_pool_grow(pool, n->leaf.many, old_bytes, old_bytes * 2u);
+        if (!many) return;
+        n->leaf.many = many;
         n->leaf_capacity++;
-        n->leaf.many = disc_pool_grow(
-            pool, n->leaf.many, old_bytes,
-            sizeof(CettaIndex) * (size_t)disc_leaf_capacity(n));
     }
     n->leaf.many[n->leaf_count++] = idx;
 }
@@ -699,16 +707,18 @@ static inline uint32_t disc_sym_hash(SymbolId key) {
     return (uint32_t)((uint64_t)key * 2654435761u);
 }
 
-static void disc_sym_ht_init(DiscPool *pool, DiscSymHashTable *ht,
+static bool disc_sym_ht_init(DiscPool *pool, DiscSymHashTable *ht,
                              uint32_t min_cap) {
     uint32_t cap = 32;
     while (cap < min_cap * 2)
         cap *= 2;
     ht->entries = disc_pool_alloc(pool, sizeof(DiscSymHashEntry) * cap);
+    if (!ht->entries) return false;
     ht->mask = cap - 1;
     ht->count = 0;
     for (uint32_t i = 0; i < cap; i++)
         ht->entries[i].key = SYMBOL_ID_NONE;
+    return true;
 }
 
 static DiscNode *disc_sym_ht_get(const DiscSymHashTable *ht, SymbolId key) {
@@ -722,14 +732,16 @@ static DiscNode *disc_sym_ht_get(const DiscSymHashTable *ht, SymbolId key) {
     }
 }
 
-static void disc_sym_ht_put(DiscPool *pool, DiscSymHashTable *ht,
+static bool disc_sym_ht_put(DiscPool *pool, DiscSymHashTable *ht,
                             SymbolId key, DiscNode *child) {
     if (ht->count * 10 > (ht->mask + 1) * 7) {
         uint32_t old_cap = ht->mask + 1;
         DiscSymHashEntry *old = ht->entries;
         uint32_t new_cap = old_cap * 2;
-        ht->entries = disc_pool_alloc(
+        DiscSymHashEntry *entries = disc_pool_alloc(
             pool, sizeof(DiscSymHashEntry) * new_cap);
+        if (!entries) return false;
+        ht->entries = entries;
         ht->mask = new_cap - 1;
         ht->count = 0;
         for (uint32_t i = 0; i < new_cap; i++)
@@ -746,6 +758,7 @@ static void disc_sym_ht_put(DiscPool *pool, DiscSymHashTable *ht,
     ht->entries[idx].key = key;
     ht->entries[idx].child = child;
     ht->count++;
+    return true;
 }
 
 static DiscBranchSet *disc_promote_singleton(DiscPool *pool,
@@ -754,12 +767,14 @@ static DiscBranchSet *disc_promote_singleton(DiscPool *pool,
     DiscEdgeKey key = node->edge.one.key;
     DiscNode *child = node->edge.one.child;
     DiscBranchSet *branches = disc_pool_alloc(pool, sizeof(*branches));
+    if (!branches) return NULL;
     memset(branches, 0, sizeof(*branches));
     switch (kind) {
     case DISC_EDGE_SYMBOL:
         branches->csym = 4u;
         branches->sym = disc_pool_alloc(
             pool, sizeof(*branches->sym) * branches->csym);
+        if (!branches->sym) return NULL;
         branches->sym[0] = (DiscSymBranch){
             .key = key.symbol,
             .child = child,
@@ -773,6 +788,7 @@ static DiscBranchSet *disc_promote_singleton(DiscPool *pool,
         branches->cexpr = 4u;
         branches->expr = disc_pool_alloc(
             pool, sizeof(*branches->expr) * branches->cexpr);
+        if (!branches->expr) return NULL;
         branches->expr[0] = (DiscExprBranch){
             .arity = key.arity,
             .child = child,
@@ -786,6 +802,7 @@ static DiscBranchSet *disc_promote_singleton(DiscPool *pool,
         scalars->cap = 4u;
         scalars->list = disc_pool_alloc(
             pool, sizeof(*scalars->list) * scalars->cap);
+        if (!scalars->list) return NULL;
         scalars->list[0] = (DiscIntBranch){
             .key = key.integer,
             .child = child,
@@ -805,7 +822,7 @@ static DiscBranchSet *disc_promote_singleton(DiscPool *pool,
 static void disc_sym_promote(DiscPool *pool, DiscBranchSet *branches) {
     DiscSymBranch *old_sym = branches->sym;
     uint32_t count = branches->nsym;
-    disc_sym_ht_init(pool, &branches->sym_ht, count + 16u);
+    if (!disc_sym_ht_init(pool, &branches->sym_ht, count + 16u)) return;
     for (uint32_t i = 0; i < count; i++)
         disc_sym_ht_put(
             pool, &branches->sym_ht, old_sym[i].key, old_sym[i].child);
@@ -829,11 +846,12 @@ static DiscNode *disc_get_sym(DiscPool *pool, DiscNode *n, SymbolId key,
     DiscBranchSet *branches = n->edge_kind == DISC_EDGE_MANY
         ? n->edge.many
         : disc_promote_singleton(pool, n);
+    if (!branches) return NULL;
     if (branches->sym_hashed) {
         DiscNode *existing = disc_sym_ht_get(&branches->sym_ht, key);
         if (existing) return existing;
         DiscNode *child = disc_pool_node(pool, inner);
-        disc_sym_ht_put(pool, &branches->sym_ht, key, child);
+        if (!child || !disc_sym_ht_put(pool, &branches->sym_ht, key, child)) return NULL;
         branches->nsym++;
         return child;
     }
@@ -841,12 +859,15 @@ static DiscNode *disc_get_sym(DiscPool *pool, DiscNode *n, SymbolId key,
         if (branches->sym[i].key == key) return branches->sym[i].child;
     if (branches->nsym >= branches->csym) {
         size_t old_bytes = sizeof(branches->sym[0]) * branches->csym;
-        branches->csym = branches->csym ? branches->csym * 2u : 4u;
-        branches->sym = disc_pool_grow(
+        uint32_t capacity = branches->csym ? branches->csym * 2u : 4u;
+        void *grown = disc_pool_grow(
             pool, branches->sym, old_bytes,
-            sizeof(branches->sym[0]) * branches->csym);
+            sizeof(branches->sym[0]) * capacity);
+        if (!grown) return NULL;
+        branches->sym = grown; branches->csym = capacity;
     }
     DiscNode *child = disc_pool_node(pool, inner);
+    if (!child) return NULL;
     branches->sym[branches->nsym].key = key;
     branches->sym[branches->nsym].child = child;
     branches->nsym++;
@@ -867,6 +888,7 @@ static DiscNode *disc_get_var(DiscPool *pool, DiscNode *n, bool inner) {
     DiscBranchSet *branches = n->edge_kind == DISC_EDGE_MANY
         ? n->edge.many
         : disc_promote_singleton(pool, n);
+    if (!branches) return NULL;
     if (!branches->var_child)
         branches->var_child = disc_pool_node(pool, inner);
     return branches->var_child;
@@ -885,17 +907,21 @@ static DiscNode *disc_get_expr(DiscPool *pool, DiscNode *n,
     DiscBranchSet *branches = n->edge_kind == DISC_EDGE_MANY
         ? n->edge.many
         : disc_promote_singleton(pool, n);
+    if (!branches) return NULL;
     for (uint32_t i = 0; i < branches->nexpr; i++)
         if (branches->expr[i].arity == arity)
             return branches->expr[i].child;
     if (branches->nexpr >= branches->cexpr) {
         size_t old_bytes = sizeof(branches->expr[0]) * branches->cexpr;
-        branches->cexpr = branches->cexpr ? branches->cexpr * 2u : 4u;
-        branches->expr = disc_pool_grow(
+        uint32_t capacity = branches->cexpr ? branches->cexpr * 2u : 4u;
+        void *grown = disc_pool_grow(
             pool, branches->expr, old_bytes,
-            sizeof(branches->expr[0]) * branches->cexpr);
+            sizeof(branches->expr[0]) * capacity);
+        if (!grown) return NULL;
+        branches->expr = grown; branches->cexpr = capacity;
     }
     DiscNode *child = disc_pool_node(pool, inner);
+    if (!child) return NULL;
     branches->expr[branches->nexpr].arity = arity;
     branches->expr[branches->nexpr].child = child;
     branches->nexpr++;
@@ -912,15 +938,17 @@ static inline uint32_t disc_int_hash(int64_t key) {
     return (uint32_t)(mixed ^ (mixed >> 32u));
 }
 
-static void disc_int_ht_init(DiscPool *pool, DiscIntHashTable *ht,
+static bool disc_int_ht_init(DiscPool *pool, DiscIntHashTable *ht,
                              uint32_t min_cap) {
     uint32_t cap = 32u;
     while (cap < min_cap * 2u)
         cap *= 2u;
     ht->entries = disc_pool_alloc(pool, sizeof(*ht->entries) * (size_t)cap);
+    if (!ht->entries) return false;
     memset(ht->entries, 0, sizeof(*ht->entries) * (size_t)cap);
     ht->mask = cap - 1u;
     ht->count = 0u;
+    return true;
 }
 
 static DiscNode *disc_int_ht_get(
@@ -936,14 +964,16 @@ static DiscNode *disc_int_ht_get(
     }
 }
 
-static void disc_int_ht_put(
+static bool disc_int_ht_put(
         DiscPool *pool, DiscIntHashTable *ht, int64_t key, DiscNode *child) {
     if (ht->count * 10u > (ht->mask + 1u) * 7u) {
         uint32_t old_cap = ht->mask + 1u;
         DiscIntBranch *old = ht->entries;
         uint32_t new_cap = old_cap * 2u;
-        ht->entries = disc_pool_alloc(
+        DiscIntBranch *entries = disc_pool_alloc(
             pool, sizeof(*ht->entries) * (size_t)new_cap);
+        if (!entries) return false;
+        ht->entries = entries;
         memset(ht->entries, 0,
                sizeof(*ht->entries) * (size_t)new_cap);
         ht->mask = new_cap - 1u;
@@ -962,12 +992,13 @@ static void disc_int_ht_put(
         .child = child,
     };
     ht->count++;
+    return true;
 }
 
 static void disc_scalar_promote(DiscPool *pool, DiscScalarBranches *scalars) {
     DiscIntBranch *old = scalars->list;
     uint32_t count = scalars->count;
-    disc_int_ht_init(pool, &scalars->ht, count + 16u);
+    if (!disc_int_ht_init(pool, &scalars->ht, count + 16u)) return;
     for (uint32_t i = 0u; i < count; i++)
         disc_int_ht_put(pool, &scalars->ht, old[i].key, old[i].child);
     disc_pool_release(pool, old, sizeof(*old) * (size_t)scalars->cap);
@@ -988,6 +1019,7 @@ static DiscNode *disc_get_scalar(DiscPool *pool, DiscNode *n,
     DiscBranchSet *branches = n->edge_kind == DISC_EDGE_MANY
         ? n->edge.many
         : disc_promote_singleton(pool, n);
+    if (!branches) return NULL;
     DiscScalarBranches *scalars = kind == DISC_EDGE_STRING
         ? &branches->strs : &branches->ints;
     if (scalars->hashed) {
@@ -995,7 +1027,7 @@ static DiscNode *disc_get_scalar(DiscPool *pool, DiscNode *n,
         if (existing)
             return existing;
         DiscNode *child = disc_pool_node(pool, inner);
-        disc_int_ht_put(pool, &scalars->ht, key, child);
+        if (!child || !disc_int_ht_put(pool, &scalars->ht, key, child)) return NULL;
         scalars->count++;
         return child;
     }
@@ -1004,12 +1036,15 @@ static DiscNode *disc_get_scalar(DiscPool *pool, DiscNode *n,
             return scalars->list[i].child;
     if (scalars->count >= scalars->cap) {
         size_t old_bytes = sizeof(scalars->list[0]) * scalars->cap;
-        scalars->cap = scalars->cap ? scalars->cap * 2u : 4u;
-        scalars->list = disc_pool_grow(
+        uint32_t capacity = scalars->cap ? scalars->cap * 2u : 4u;
+        void *grown = disc_pool_grow(
             pool, scalars->list, old_bytes,
-            sizeof(scalars->list[0]) * scalars->cap);
+            sizeof(scalars->list[0]) * capacity);
+        if (!grown) return NULL;
+        scalars->list = grown; scalars->cap = capacity;
     }
     DiscNode *child = disc_pool_node(pool, inner);
+    if (!child) return NULL;
     scalars->list[scalars->count].key = key;
     scalars->list[scalars->count].child = child;
     scalars->count++;
@@ -1046,6 +1081,7 @@ static int64_t disc_string_key_id(const TermUniverse *universe,
 static DiscNode *disc_insert_atom(DiscPool *pool, DiscNode *node, Atom *a,
                                   unsigned depth, CettaIndexExpansionBudget *budget,
                                   bool last) {
+    if (!node || !a) return NULL;
     /* The coordinate made here ends the whole term when it is the last of
      * a last subterm: then its node is a leaf. */
     bool inner = !last;
@@ -1148,6 +1184,7 @@ static bool disc_insert_atom_id(DiscPool *pool, DiscNode *node,
 }
 
 void disc_insert(DiscNode *root, Atom *lhs, CettaIndex eq_idx) {
+    if (!root) return;
     DiscPool *pool = disc_root_pool(root);
     CettaIndexExpansionBudget budget = cetta_index_expansion_budget();
     DiscNode *leaf = disc_insert_atom(pool, root, lhs, 0u, &budget, true);
@@ -1156,6 +1193,7 @@ void disc_insert(DiscNode *root, Atom *lhs, CettaIndex eq_idx) {
 
 bool disc_insert_id(DiscNode *root, const TermUniverse *universe,
                     AtomId atom_id, CettaIndex eq_idx) {
+    if (!root) return false;
     DiscPool *pool = disc_root_pool(root);
     DiscNode *leaf = NULL;
     CettaIndexExpansionBudget budget = cetta_index_expansion_budget();
@@ -1947,6 +1985,7 @@ static SpacePinnedOccurrences *space_pinned_occurrences_acquire(Space *s) {
     SpaceMatchNativeState *st = &s->match_backend.native;
     if (!st->pinned) {
         st->pinned = cetta_malloc(sizeof(*st->pinned));
+        if (!st->pinned) return NULL;
         *st->pinned = (SpacePinnedOccurrences){.space = s};
     }
     st->pinned->references++;
@@ -2217,6 +2256,7 @@ static bool space_occurrence_cursor_capture(
     cursor->prefix_epoch = space->prefix_epoch;
     cursor->ceiling = space->native.len;
     cursor->occurrences = space_pinned_occurrences_acquire(space);
+    if (!cursor->occurrences) return false;
     cursor->pinned = true;
     return space_read_token_prefix_intact(cursor->read);
 }
@@ -2421,6 +2461,7 @@ static bool space_occurrence_cursor_init_rows(Space *s, Atom *pattern,
         cursor->flat_mode = true;
         return space_occurrence_cursor_capture(s, cursor);
     }
+    if (cetta_native_memory_failed && cetta_native_memory_failed()) return false;
     /* A head over variables selects by its head alone: its rows, read in
      * order as they are needed, where the trie would merge every leaf below
      * the head before the first match. */
@@ -2429,6 +2470,7 @@ static bool space_occurrence_cursor_init_rows(Space *s, Atom *pattern,
         cursor->head_mode = true;
         return space_occurrence_cursor_capture(s, cursor);
     }
+    if (cetta_native_memory_failed && cetta_native_memory_failed()) return false;
     /* Rows removed by marks stay where they are and the cursor skips them.
      * The cold scan and a position index being built read rows by logical
      * position, so a marked Space takes the trie instead. */
@@ -3460,10 +3502,16 @@ static void eq_bucket_add(EqBucket *b, Atom *lhs, CettaIndex atom_idx,
     CettaIndex idx = b->len;
     SymbolId head = eq_head_symbol(lhs);
     if (b->len >= b->cap) {
-        b->cap = b->cap ? b->cap * 2 : 8;
-        b->atom_indices =
-            cetta_realloc(b->atom_indices, sizeof(CettaIndex) * b->cap);
-        b->atom_ids = cetta_realloc(b->atom_ids, sizeof(AtomId) * b->cap);
+        CettaIndex capacity = b->cap ? b->cap * 2u : 8u;
+        CettaIndex *indices = cetta_malloc(sizeof(*indices) * capacity);
+        AtomId *ids = cetta_malloc(sizeof(*ids) * capacity);
+        if (!indices || !ids) { free(indices); free(ids); return; }
+        if (b->len) {
+            memcpy(indices, b->atom_indices, sizeof(*indices) * b->len);
+            memcpy(ids, b->atom_ids, sizeof(*ids) * b->len);
+        }
+        free(b->atom_indices); free(b->atom_ids);
+        b->atom_indices = indices; b->atom_ids = ids; b->cap = capacity;
     }
     b->atom_indices[b->len] = atom_idx;
     b->atom_ids[b->len] = equation_id;
@@ -3471,7 +3519,9 @@ static void eq_bucket_add(EqBucket *b, Atom *lhs, CettaIndex atom_idx,
     eq_bucket_note_head(b, head);
     /* Add to discrimination trie */
     if (!b->trie) b->trie = disc_node_new();
+    if (!b->trie) return;
     disc_insert(b->trie, lhs, idx);
+    if (cetta_native_memory_failed && cetta_native_memory_failed()) return;
     stree_bucket_insert(&b->subst, lhs, idx);
     b->subst_safe = b->subst_safe && atom_is_eq_subst_safe(lhs);
 }
@@ -3490,10 +3540,16 @@ static void eq_bucket_add_id(EqBucket *b, const Space *s, AtomId lhs_id,
     }
     CettaIndex idx = b->len;
     if (b->len >= b->cap) {
-        b->cap = b->cap ? b->cap * 2 : 8;
-        b->atom_indices =
-            cetta_realloc(b->atom_indices, sizeof(CettaIndex) * b->cap);
-        b->atom_ids = cetta_realloc(b->atom_ids, sizeof(AtomId) * b->cap);
+        CettaIndex capacity = b->cap ? b->cap * 2u : 8u;
+        CettaIndex *indices = cetta_malloc(sizeof(*indices) * capacity);
+        AtomId *ids = cetta_malloc(sizeof(*ids) * capacity);
+        if (!indices || !ids) { free(indices); free(ids); return; }
+        if (b->len) {
+            memcpy(indices, b->atom_indices, sizeof(*indices) * b->len);
+            memcpy(ids, b->atom_ids, sizeof(*ids) * b->len);
+        }
+        free(b->atom_indices); free(b->atom_ids);
+        b->atom_indices = indices; b->atom_ids = ids; b->cap = capacity;
     }
     b->atom_indices[b->len] = atom_idx;
     b->atom_ids[b->len] = equation_id;
@@ -3501,6 +3557,7 @@ static void eq_bucket_add_id(EqBucket *b, const Space *s, AtomId lhs_id,
     eq_bucket_note_head(b, head);
     if (!b->trie)
         b->trie = disc_node_new();
+    if (!b->trie) return;
     if (!disc_insert_id(b->trie, s->native.universe, lhs_id, idx)) {
         Atom *lhs = term_universe_get_atom(s->native.universe, lhs_id);
         if (lhs)
@@ -3787,6 +3844,7 @@ static SpaceHeadChain *space_head_chain_insert(SpaceHeadChains *rows,
         }
         uint32_t cap = rows->chain_cap ? rows->chain_cap * 2u : 64u;
         SpaceHeadChain *chains = cetta_malloc(sizeof(*chains) * cap);
+        if (!chains) return NULL;
         memset(chains, 0, sizeof(*chains) * cap);
         for (uint32_t i = 0u; i < rows->chain_cap; i++) {
             if (rows->chains[i].head != SYMBOL_ID_NONE)
@@ -3816,17 +3874,25 @@ static void space_head_chains_append(SpaceHeadChains *rows, SymbolId head,
             abort();
         }
         CettaIndex cap = rows->cap ? rows->cap * 2u : 16u;
-        rows->atom_indices =
-            cetta_realloc(rows->atom_indices, sizeof(CettaIndex) * cap);
-        rows->atom_ids = cetta_realloc(rows->atom_ids, sizeof(AtomId) * cap);
-        rows->next = cetta_realloc(rows->next, sizeof(uint32_t) * cap);
+        CettaIndex *indices = cetta_malloc(sizeof(*indices) * cap);
+        AtomId *ids = cetta_malloc(sizeof(*ids) * cap);
+        uint32_t *next = cetta_malloc(sizeof(*next) * cap);
+        if (!indices || !ids || !next) { free(indices); free(ids); free(next); return; }
+        if (rows->len) {
+            memcpy(indices, rows->atom_indices, sizeof(*indices) * rows->len);
+            memcpy(ids, rows->atom_ids, sizeof(*ids) * rows->len);
+            memcpy(next, rows->next, sizeof(*next) * rows->len);
+        }
+        free(rows->atom_indices); free(rows->atom_ids); free(rows->next);
+        rows->atom_indices = indices; rows->atom_ids = ids; rows->next = next;
         rows->cap = cap;
     }
+    SpaceHeadChain *chain = space_head_chain_insert(rows, head);
+    if (!chain) return;
     uint32_t row = (uint32_t)rows->len++;
     rows->atom_indices[row] = atom_idx;
     rows->atom_ids[row] = atom_id;
     rows->next[row] = SPACE_HEAD_CHAIN_END;
-    SpaceHeadChain *chain = space_head_chain_insert(rows, head);
     if (chain->last == SPACE_HEAD_CHAIN_END)
         chain->first = row;
     else
@@ -3878,6 +3944,7 @@ static void eq_index_add(EqIndex *idx, Atom *lhs, CettaIndex atom_idx,
     SymbolId head = eq_head_symbol(lhs);
     if (head != SYMBOL_ID_NONE) {
         space_head_chains_append(&idx->head_rows, head, atom_idx, equation_id);
+        if (cetta_native_memory_failed && cetta_native_memory_failed()) return;
         eq_bucket_add(&idx->buckets[symbol_hash(head)], lhs, atom_idx,
                       equation_id);
     } else {
@@ -3890,6 +3957,7 @@ static void eq_index_add_id(EqIndex *idx, const Space *s, AtomId lhs_id,
     SymbolId head = eq_head_symbol_id(s, lhs_id);
     if (head != SYMBOL_ID_NONE) {
         space_head_chains_append(&idx->head_rows, head, atom_idx, equation_id);
+        if (cetta_native_memory_failed && cetta_native_memory_failed()) return;
         eq_bucket_add_id(&idx->buckets[symbol_hash(head)], s, lhs_id, atom_idx,
                          equation_id);
     } else {
@@ -5064,20 +5132,23 @@ static bool space_overlay_remove_local_raw_index(Space *s, CettaIndex raw_idx) {
     return true;
 }
 
-static void space_reserve_linear(Space *s, CettaIndex min_cap) {
+static bool space_reserve_linear(Space *s, CettaIndex min_cap) {
     size_t width = 0;
     if (s->native.cap >= min_cap)
-        return;
+        return true;
     if (!space_sync_atom_id_storage_width(s))
-        return;
+        return false;
     CettaIndex new_cap = s->native.cap ? s->native.cap : 64;
     while (new_cap < min_cap)
         new_cap *= 2;
     width = space_atom_id_width_bytes_bits(s->native.atom_id_width_bits);
-    s->native.atom_ids = cetta_realloc(
+    uint8_t *atom_ids = cetta_realloc(
         s->native.atom_ids, width * (size_t)new_cap);
+    if (!atom_ids) return false;
+    s->native.atom_ids = atom_ids;
     s->native.cap = new_cap;
     space_note_atom_id_storage_peak(s);
+    return true;
 }
 
 /* Rows a space removes release the references they held: the universe
@@ -6921,17 +6992,17 @@ void space_linearize(Space *s) {
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_QUEUE_COMPACT);
 }
 
-static void space_queue_reserve_tail(Space *s, CettaIndex extra) {
+static bool space_queue_reserve_tail(Space *s, CettaIndex extra) {
     CettaIndex tail = s->native.start + s->native.len;
     if (tail + extra <= s->native.cap)
-        return;
+        return true;
     if (s->native.start > 0) {
         space_linearize(s);
         tail = s->native.len;
         if (tail + extra <= s->native.cap)
-            return;
+            return true;
     }
-    space_reserve_linear(s, s->native.len + extra);
+    return space_reserve_linear(s, s->native.len + extra);
 }
 
 const char *space_kind_name(SpaceKind kind) {
@@ -7279,7 +7350,10 @@ static void space_append_backend_primary_shadow_id(Space *s,
     if (!st->native_shadow_synced)
         return;
     atom_idx = s->native.len;
-    space_reserve_linear(s, s->native.len + 1u);
+    if (!space_reserve_linear(s, s->native.len + 1u)) {
+        st->native_shadow_synced = false;
+        return;
+    }
     (void)space_atom_id_storage_store_at(
         s->native.atom_ids, s->native.atom_id_width_bits,
         atom_idx, atom_id);
@@ -9455,7 +9529,7 @@ static void eq_index_rebuild(Space *s) {
         if (space_equation_children_at_id(s, atom_id, &lhs, &rhs))
             eq_index_add(&s->native.eq_idx, lhs, i, atom_id);
     }
-    s->native.eq_idx_dirty = false;
+    s->native.eq_idx_dirty = cetta_native_memory_failed && cetta_native_memory_failed();
 }
 
 static void ty_ann_index_rebuild(Space *s) {
@@ -9478,7 +9552,7 @@ static void ty_ann_index_rebuild(Space *s) {
         if (subject)
             ty_ann_index_add(&s->native.ty_idx, subject, i, atom_id);
     }
-    s->native.ty_idx_dirty = false;
+    s->native.ty_idx_dirty = cetta_native_memory_failed && cetta_native_memory_failed();
 }
 
 /* Lazily bring the presence bitset up to date with membership.  id_present is a
@@ -9755,12 +9829,12 @@ static void space_add_stored_id_as(Space *s, AtomId atom_id,
     }
     CettaIndex idx = s->native.len;
     if (space_is_queue(s)) {
-        space_queue_reserve_tail(s, 1);
+        if (!space_queue_reserve_tail(s, 1)) return;
         (void)space_atom_id_storage_store_at(
             s->native.atom_ids, s->native.atom_id_width_bits,
             s->native.start + s->native.len, atom_id);
     } else {
-        space_reserve_linear(s, s->native.len + 1);
+        if (!space_reserve_linear(s, s->native.len + 1)) return;
         (void)space_atom_id_storage_store_at(
             s->native.atom_ids, s->native.atom_id_width_bits, s->native.len,
             atom_id);
@@ -9827,6 +9901,13 @@ static void space_add_stored_id_as(Space *s, AtomId atom_id,
         if (!s->native.has_non_exact_atoms_dirty &&
             !atom_id_is_exact_indexable(s, atom_id))
             s->native.has_non_exact_atoms = true;
+    }
+    if (cetta_native_memory_failed && cetta_native_memory_failed()) {
+        /* The primary occurrence is committed. Secondary observations must
+         * rebuild from it after a refused incremental index allocation. */
+        space_mark_indexes_dirty(s);
+        space_match_backend_note_remove(s);
+        return;
     }
     /* Match backend owns its own incremental indexing policy. */
     if (backend_needs_atom)
@@ -10011,7 +10092,7 @@ static bool space_add_atom_ids_batch_rows(Space *s, const AtomId *atom_ids,
         size_t width = space_atom_id_width_bytes_bits(s->native.atom_id_width_bits);
         if (!width || next_len > SIZE_MAX / width)
             return false;
-        space_reserve_linear(s, next_len);
+        if (!space_reserve_linear(s, next_len)) return false;
         CettaIndex start = s->native.len;
         for (CettaCount i = 0u; i < atom_count; i++) {
             if (!space_atom_id_storage_store_at(s->native.atom_ids,
@@ -10482,11 +10563,14 @@ static bool query_results_ensure_one(QueryResults *qr) {
                                      sizeof(QueryResult) * (size_t)need);
     if (qr->items == qr->inline_items) {
         QueryResult *heap = cetta_malloc(sizeof(QueryResult) * (size_t)next);
+        if (!heap) return false;
         if (qr->len > 0)
             memcpy(heap, qr->items, sizeof(QueryResult) * (size_t)qr->len);
         qr->items = heap;
     } else {
-        qr->items = cetta_realloc(qr->items, sizeof(QueryResult) * (size_t)next);
+        QueryResult *heap = cetta_realloc(qr->items, sizeof(QueryResult) * (size_t)next);
+        if (!heap) return false;
+        qr->items = heap;
     }
     qr->cap = next;
     return true;
@@ -10576,6 +10660,7 @@ static bool query_visible_var_set_reserve(QueryVisibleVarSet *set,
     QueryVisibleVar *next = set->items == set->inline_items
         ? cetta_malloc(sizeof(QueryVisibleVar) * (size_t)next_cap)
         : cetta_realloc(set->items, sizeof(QueryVisibleVar) * (size_t)next_cap);
+    if (!next) return false;
     if (set->items == set->inline_items && set->len > 0)
         memcpy(next, set->items, sizeof(QueryVisibleVar) * (size_t)set->len);
     set->items = next;
@@ -10904,11 +10989,13 @@ static bool registry_ensure_capacity(Registry *r, uint32_t min_needed) {
         return false;
     if (r->entries == r->inline_entries) {
         next = cetta_malloc(sizeof(RegistryEntry) * (size_t)next_cap);
+        if (!next) return false;
         if (r->len > 0)
             memcpy(next, r->entries, sizeof(RegistryEntry) * (size_t)r->len);
     } else {
         next = cetta_realloc(r->entries,
                              sizeof(RegistryEntry) * (size_t)next_cap);
+        if (!next) return false;
     }
     r->entries = next;
     r->cap = next_cap;
@@ -11638,6 +11725,7 @@ static bool space_contract_occurrence_mask(
 
         CettaIndex *source_to_target = cetta_malloc(
             sizeof(*source_to_target) * (size_t)logical_len);
+        if (!source_to_target) return false;
         CettaIndex target = 0u;
         for (CettaIndex source_index = 0u;
              source_index < logical_len; source_index++) {
@@ -11740,6 +11828,7 @@ static bool space_contract_occurrence_mask(
 
     SpaceReadToken source = space_read_token(s);
     Space *replacement = cetta_malloc(sizeof(*replacement));
+    if (!replacement) return false;
     space_init_with_universe(replacement, s->native.universe);
     replacement->kind = s->kind;
     space_set_strict(replacement, s->strict);
@@ -12993,6 +13082,7 @@ static uint32_t get_annotated_types(Space *s, Arena *a, Atom *atom,
     if (grounded_count != 0u) {
         /* A grounded operation's type is its own. */
         Atom **types = cetta_malloc(sizeof(*types) * grounded_count);
+        if (!types) goto allocation_failed;
         uint32_t count = 0u;
         for (uint32_t i = 0u; i < grounded_count; i++) {
             if (!type_inference_step(budget, 1) ||
@@ -13384,7 +13474,8 @@ static uint32_t get_atom_types_mode(Space *s, Arena *a, Atom *atom,
     bool entered = type_inference_memo_enter(s, a, budget);
     uint32_t count = get_atom_types_mode_inferred(
         s, a, atom, out_types, include_direct_annotations, budget);
-    if (keyed && type_inference_types_ground(*out_types, count) &&
+    if (keyed && !(cetta_native_memory_failed && cetta_native_memory_failed()) &&
+        type_inference_types_ground(*out_types, count) &&
         !type_inference_memo_find(atom, question)) {
         Atom **kept = type_inference_types_copy(*out_types, count);
         TypeInferenceMemoEntry *entry = (kept || !count)
@@ -13412,9 +13503,11 @@ static uint32_t get_atom_types_mode_inferred(Space *s, Arena *a, Atom *atom,
         return 0;
     }
     Atom *native_handle_type = get_native_handle_type(a, atom);
+    if (!native_handle_type) { *out_types = NULL; return 0u; }
 
     if (!atom_is_symbol_id(native_handle_type, g_builtin_syms.undefined_type)) {
         types = cetta_malloc(sizeof(Atom *));
+        if (!types) { *out_types = NULL; return 0u; }
         types[0] = native_handle_type;
         *out_types = types;
         return 1;
@@ -13428,6 +13521,7 @@ static uint32_t get_atom_types_mode_inferred(Space *s, Arena *a, Atom *atom,
         Atom *ty = get_grounded_type(a, atom);
         if (!atom_is_symbol_id(ty, g_builtin_syms.undefined_type)) {
             types = cetta_malloc(sizeof(Atom *));
+            if (!types || !ty) { free(types); *out_types = NULL; return 0u; }
             types[0] = ty;
             count = 1;
         }
@@ -13599,7 +13693,9 @@ static uint32_t get_atom_types_mode_inferred(Space *s, Arena *a, Atom *atom,
             return 0;
         }
         types = cetta_malloc(sizeof(Atom *));
+        if (!types) { *out_types = NULL; return 0u; }
         types[0] = atom_undefined_type(a);
+        if (!types[0]) { free(types); *out_types = NULL; return 0u; }
         count = 1;
     }
     *out_types = types;

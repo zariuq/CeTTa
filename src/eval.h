@@ -291,6 +291,7 @@ CettaEvalGc *eval_resources_collector(CettaEvalResources *);
 CettaEvalGc *eval_collector_exchange(CettaEvalGc *);
 struct PettaProgram;
 CettaEvalResources *eval_resources_new(void);
+void eval_resources_set_native_memory(CettaEvalResources *, CettaNativeMemory *);
 CettaEvalResources *eval_resources_exchange(CettaEvalResources *);
 /* The session retires registry-owned spaces separately. Their identities
  * remain in the registry until these tracked resources have been released. */
