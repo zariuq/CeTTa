@@ -2278,13 +2278,16 @@ static void he_bound_add_pattern(HeBoundVariables *bound, const Atom *pattern) {
     if (pattern->kind == ATOM_VAR) {
         if (bound->len == bound->cap) {
             size_t capacity = bound->cap ? bound->cap * 2u : 8u;
-            VarId *items = cetta_realloc(bound->items,
-                                        capacity * sizeof(*bound->items));
-            if (!items) return;
+            VarId *items = cetta_malloc(capacity * sizeof(*items));
+            uint64_t *versions = cetta_malloc(capacity * sizeof(*versions));
+            if (!items || !versions) { free(items); free(versions); return; }
+            if (bound->len) {
+                memcpy(items, bound->items, bound->len * sizeof(*items));
+                memcpy(versions, bound->versions, bound->len * sizeof(*versions));
+            }
+            free(bound->items);
+            free(bound->versions);
             bound->items = items;
-            uint64_t *versions = cetta_realloc(bound->versions,
-                                               capacity * sizeof(*bound->versions));
-            if (!versions) return;
             bound->versions = versions;
             bound->cap = capacity;
         }
