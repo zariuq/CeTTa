@@ -210,6 +210,7 @@ static const struct {
     {"//", "(-> Number Number Number)"},
     {"new-space", "(-> Atom SpaceType)"},
     {"new-space", "(-> Atom Atom SpaceType)"},
+    {"import-as!", "(-> Atom Atom Atom (->))"},
 };
 
 #define HE_GROUNDED_TYPE_SLOTS 256u
