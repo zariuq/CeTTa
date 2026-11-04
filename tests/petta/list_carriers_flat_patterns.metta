@@ -73,6 +73,6 @@
 
 !(import! &self (library list))
 !(let $spine (cons-atom (quote (+ 1 2)) (cons-atom kept ()))
-   (Converted (list:to-expression $spine)
-     (get-metatype (list:from-expression $spine))
-     (list:to-expression (list:from-expression $spine))))
+   (Converted (tuple:from $spine)
+     (get-metatype (list:from $spine))
+     (tuple:from (list:from $spine))))

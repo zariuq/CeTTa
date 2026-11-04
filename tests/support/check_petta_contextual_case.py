@@ -106,8 +106,11 @@ EXPECTED = {
                       '((Pair a $V0) (Pair b $V1) (Pair a $V2))\n'
                       '((Pair a $V0))\n'
                       '(shared shared)\n',
+             # HE shares the instantiated equation's $x between the two a
+             # answers, as Rust HE prints $x#41 twice; PeTTa's collapse
+             # copies each answer.
              'he': '[((Pair none $V0))]\n'
-                   '[((Pair a $V0) (Pair b $V1) (Pair a $V2))]\n'
+                   '[((Pair a $V0) (Pair b $V1) (Pair a $V0))]\n'
                    '[((once (Pair a $V0)) (once (Pair b $V1)) (once (Pair a $V0)))]\n'
                    '[(shared shared)]\n'},
  'prepare-effects': {'petta': 'key\n'
