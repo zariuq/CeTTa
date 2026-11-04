@@ -772,7 +772,7 @@ endif
 ifeq ($(ENABLE_PETTA_TYPECHECK_CENSUS),1)
 PETTA_TYPECHECK_CENSUS_SRC = src/petta_typecheck_census.c
 endif
-SRC = src/symbol.c src/scalar_trie.c src/atom.c src/state_cell.c src/term_graph.c src/delay_service.c src/string_ops.c src/str_natives.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c src/raw_source_region.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/binding/rule.c src/binding/closure.c src/binding/frame_schema.c src/binding/slot_store.c src/binding/activation_view.c src/match_decision.c src/select/code_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/search_control_advice.c src/petta_program.c src/petta_type_fact_provider_v1.c src/petta_builtin_registry.c src/petta_typecheck_v3_decision_v1.c src/petta_typecheck_v3.c src/generated/petta_typecheck_v3_core_v1.generated.c src/generated/petta_typecheck_v3_core_provider_catalog_v1.generated.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/fixpoint.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/term_domain.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/petta_numeric.c src/petta_runtime.c src/prepared_pure_machine.c src/owned_execution.c src/answer_storage.c src/fold_algebra.c src/native_fold.c src/exec_saturation.c src/transform_core.c src/open_equation_machine.c src/eval.c src/grounded.c src/he_macro_expansion.c src/he_typing.c src/he_typing_authority.c src/generated/he_typing_consistency_core_source_binding_v1.generated.c src/generated/he_profiled_type_inference_core_source_binding_v1.generated.c src/inference_checker.c src/nik_direct_authority.c src/nik_hosted_calculus.c src/nik_licensed_implementation_selection.c src/nik_runtime.c src/prime_semantics.c src/generated/prime_typing_closed_formation_source_binding_v1.generated.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/library_pattern.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_dense_bitset_v1.c src/gslt_compiled_runtime.c src/gslt_indexed_instruction_decoder_v1.c src/gslt_indexed_value_table_v1.c src/gslt_split_indexed_table_v1.c src/gslt_literal_hole_program_v1.c src/gslt_u32_index_v1.c src/gslt_u32_slice_arena_v1.c src/gslt_epoch_slots_v1.c src/gslt_ground_dense_term_v1.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/foreign_provider.c src/runtime_prelude.c src/runtime_session.c src/main.c
+SRC = src/symbol.c src/scalar_trie.c src/atom.c src/state_cell.c src/term_graph.c src/delay_service.c src/string_ops.c src/str_natives.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c src/raw_source_region.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/binding/rule.c src/binding/closure.c src/binding/frame_schema.c src/binding/slot_store.c src/binding/activation_view.c src/match_decision.c src/select/code_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/search_control_advice.c src/petta_program.c src/petta_type_fact_provider_v1.c src/petta_builtin_registry.c src/petta_typecheck_v3_decision_v1.c src/petta_typecheck_v3.c src/generated/petta_typecheck_v3_core_v1.generated.c src/generated/petta_typecheck_v3_core_provider_catalog_v1.generated.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/fixpoint.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/term_domain.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/petta_numeric.c src/petta_runtime.c src/prepared_pure_machine.c src/owned_execution.c src/answer_storage.c src/fold_algebra.c src/native_fold.c src/exec_saturation.c src/transform_core.c src/open_equation_machine.c src/eval.c src/grounded.c src/he_macro_expansion.c src/he_typing.c src/he_typing_authority.c src/generated/he_typing_consistency_core_source_binding_v1.generated.c src/generated/he_profiled_type_inference_core_source_binding_v1.generated.c src/inference_checker.c src/nik_direct_authority.c src/nik_hosted_calculus.c src/nik_licensed_implementation_selection.c src/nik_runtime.c src/prime_semantics.c src/generated/prime_typing_closed_formation_source_binding_v1.generated.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/library_pattern.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_dense_bitset_v1.c src/gslt_compiled_runtime.c src/gslt_indexed_instruction_decoder_v1.c src/gslt_indexed_value_table_v1.c src/gslt_split_indexed_table_v1.c src/gslt_literal_hole_program_v1.c src/gslt_u32_index_v1.c src/gslt_u32_slice_arena_v1.c src/gslt_epoch_slots_v1.c src/gslt_ground_dense_term_v1.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c src/foreign_provider.c src/runtime_prelude.c src/runtime_session.c
 SRC += src/shared_transition.c src/run_report.c src/run_cli.c src/error_presentation.c src/run_guard.c
 SRC += src/library_proc.c
 SRC += src/library_fs.c
@@ -48911,337 +48911,6 @@ test-petta-libpl-callback-completion: $(BIN)
 	@echo "SKIP: Prolog callback completion (embedded Prolog disabled)"
 endif
 
-# In-process source preparation is a build artifact. Ordinary lang calls
-# load it directly and never launch a compiler or another interpreter.
-.PHONY: build-lang-datalog test-lang-library
-build-lang-datalog:
-	@set -eu; lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
-	if test -z "$$lean_root"; then lean_root="$(abspath ../../Mettapedia/lean/mettapedia)"; fi; \
-	test -f "$$lean_root/lakefile.lean" || \
-		{ echo 'Set METTAPEDIA_LEAN_ROOT to the MeTTapedia Lean project' >&2; exit 2; }; \
-	python3 tools/build_datalog_source_compiler.py --lean-root "$$lean_root" \
-		--output runtime/lang/datalog-compiler.so --package-output langdef/lang/Datalog.module
-
-test-lang-library: $(BIN)
-	@test -f runtime/lang/datalog-compiler.so || \
-		{ echo 'Run make build-lang-datalog first' >&2; exit 2; }
-	@set -eu; work="$$(mktemp -d runtime/lang-tests.XXXXXX)"; \
-	python3 tests/support/check_lang_library.py ./$(BIN) "$$work/public"; \
-	python3 tests/support/check_lang_boundaries.py ./$(BIN) "$$work/boundaries"; \
-	python3 tests/support/check_source_input_view.py ./$(BIN) "$$work/input-views"; \
-	python3 tests/support/check_lang_source_verification.py ./$(BIN) "$$work/source-verification"; \
-	python3 tests/support/check_lang_repl.py ./$(BIN) "$$work/repl"; \
-	python3 tests/support/check_raw_source_cli.py ./$(BIN) "$$work/raw"
-
-runtime/source_compiler_fixture_v1.so: tests/support/source_compiler_fixture_v1.c native/source_compiler_provider_v1.h
-	@mkdir -p runtime
-	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -fPIC -shared -I. $< -o $@
-
-.PHONY: test-source-compiler-v1 test-lib-he-evalc-spaces
-test-source-compiler-v1: $(BIN) runtime/source_compiler_fixture_v1.so
-	@set -eu; work="$$(mktemp -d runtime/source-compiler-tests.XXXXXX)"; \
-	python3 tests/support/check_source_compiler_v1.py ./$(BIN) runtime/source_compiler_fixture_v1.so "$$work/provider"
-test-lib-he-evalc-spaces: $(BIN)
-	@./$(BIN) --lang petta --profile extended --run-contract tests/petta/lib_he_evalc_spaces.metta
-
-test-execution-semantic-ledger: test-source-compiler-v1 test-lib-he-evalc-spaces
-
-.PHONY: test-lang-repl
-test-lang-repl: $(BIN)
-	@set -eu; work="$$(mktemp -d runtime/lang-repl-tests.XXXXXX)"; \
-	python3 tests/support/check_lang_repl.py ./$(BIN) "$$work/pty"
-test-execution-semantic-ledger: test-lang-repl
-
-# Exercise the worker's private fetch with actual occurrence cursors. The
-# test translation unit includes its implementation, replacing the normal
-# worker object while keeping the rest of the runtime unchanged.
-OPEN_EQUATION_READ_AHEAD_TEST_OBJ = runtime/bootstrap/test_open_equation_read_ahead.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
-OPEN_EQUATION_READ_AHEAD_TEST_BIN = runtime/test_open_equation_read_ahead-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
-OPEN_EQUATION_READ_AHEAD_TEST_LINK_OBJ = $(filter-out src/open_equation_machine.$(BUILD_OBJ_TAG).o src/open_equation_machine.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ))
-
-$(OPEN_EQUATION_READ_AHEAD_TEST_OBJ): tests/test_open_equation_read_ahead.c src/open_equation_machine.c src/open_equation_machine.h src/space.h $(BUILD_CONFIG_HEADER)
-	@mkdir -p runtime/bootstrap
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
-
-$(OPEN_EQUATION_READ_AHEAD_TEST_BIN): $(OPEN_EQUATION_READ_AHEAD_TEST_OBJ) $(OPEN_EQUATION_READ_AHEAD_TEST_LINK_OBJ) $(BRIDGE_DEPS)
-	$(CC) $(CFLAGS) -o $@ $(OPEN_EQUATION_READ_AHEAD_TEST_OBJ) $(OPEN_EQUATION_READ_AHEAD_TEST_LINK_OBJ) $(LDFLAGS)
-
-.PHONY: test-open-equation-read-ahead test-open-equation-read-ahead-mutants
-test-open-equation-read-ahead: $(OPEN_EQUATION_READ_AHEAD_TEST_BIN)
-	@CETTA_SPACE_DENSE=eager $(call cetta_exec,./$(OPEN_EQUATION_READ_AHEAD_TEST_BIN))
-
-test-open-equation-read-ahead-mutants: $(OPEN_EQUATION_READ_AHEAD_TEST_BIN) $(BIN) tests/support/mutate_oem_read_ahead.py lib/proc.metta tests/support/check_native_mutation_rejected.metta
-	@set -eu; \
-	mutation_dir=runtime/bootstrap/oem-read-ahead-mutations-$(BUILD_OBJ_TAG); \
-	mkdir -p "$$mutation_dir"; \
-	for kind in unbounded scalar-owner he-mark; do \
-		python3 tests/support/mutate_oem_read_ahead.py src/open_equation_machine.c "$$mutation_dir/$$kind.c" "$$kind"; \
-		mutation_source="$(abspath runtime/bootstrap/oem-read-ahead-mutations-$(BUILD_OBJ_TAG))/$$kind.c"; \
-		$(CC) $(CPPFLAGS) $(CFLAGS) "-DCETTA_OEM_READ_AHEAD_SOURCE=\"$$mutation_source\"" \
-			-c tests/test_open_equation_read_ahead.c -o "$$mutation_dir/$$kind.o"; \
-		$(CC) $(CFLAGS) -o "$$mutation_dir/$$kind" "$$mutation_dir/$$kind.o" \
-			$(OPEN_EQUATION_READ_AHEAD_TEST_LINK_OBJ) $(LDFLAGS); \
-		if [ "$$kind" = unbounded ]; then assertion='oem_lazy_rows_fetch(&cursor, &lazy, pattern)'; \
-		elif [ "$$kind" = scalar-owner ]; then assertion='atom_native_handle_identifier_matches(moved_managed'; \
-		else assertion='atom_is_he_evaluated(marked_copy)'; fi; \
-		CETTA_SPACE_DENSE=eager $(NATIVE_MUTATION_GATE) \
-			$(OPEN_EQUATION_READ_AHEAD_TEST_BIN) "$$mutation_dir/$$kind" "$$assertion"; \
-	done
-
-test-all: test-open-equation-read-ahead test-open-equation-read-ahead-mutants
--include $(OPEN_EQUATION_READ_AHEAD_TEST_OBJ:.o=.d)
-
-OPEN_EQUATION_EXTERNAL_ROOT_TEST_OBJ = runtime/bootstrap/test_open_equation_external_roots.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
-OPEN_EQUATION_EXTERNAL_ROOT_TEST_BIN = runtime/test_open_equation_external_roots-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
-$(OPEN_EQUATION_EXTERNAL_ROOT_TEST_OBJ): tests/test_open_equation_external_roots.c src/open_equation_machine.c $(BUILD_CONFIG_HEADER)
-	@mkdir -p runtime/bootstrap
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
-$(OPEN_EQUATION_EXTERNAL_ROOT_TEST_BIN): $(OPEN_EQUATION_EXTERNAL_ROOT_TEST_OBJ) $(OPEN_EQUATION_READ_AHEAD_TEST_LINK_OBJ) $(BRIDGE_DEPS)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
-.PHONY: test-open-equation-external-roots
-test-open-equation-external-roots: $(OPEN_EQUATION_EXTERNAL_ROOT_TEST_BIN)
-	@$(call cetta_exec,./$(OPEN_EQUATION_EXTERNAL_ROOT_TEST_BIN))
-test-all: test-open-equation-external-roots
--include $(OPEN_EQUATION_EXTERNAL_ROOT_TEST_OBJ:.o=.d)
-
-TRANSACTION_STATE_VIEWS_TEST_OBJ = runtime/bootstrap/test_transaction_state_views.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
-TRANSACTION_STATE_VIEWS_EVAL_OBJ = runtime/bootstrap/eval_transaction_state_views.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
-TRANSACTION_STATE_VIEWS_TEST_BIN = runtime/test_transaction_state_views-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
-TRANSACTION_STATE_VIEWS_TEST_LINK_OBJ = $(filter-out src/eval.$(BUILD_OBJ_TAG).o src/eval.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ))
-
-$(TRANSACTION_STATE_VIEWS_TEST_OBJ): tests/test_transaction_state_views.c src/eval.h $(BUILD_CONFIG_HEADER)
-	@mkdir -p runtime/bootstrap
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
-
-$(TRANSACTION_STATE_VIEWS_EVAL_OBJ): src/eval.c tests/support/eval_transaction_state_adapter.inc $(BUILD_CONFIG_HEADER)
-	@mkdir -p runtime/bootstrap
-	$(CC) $(CPPFLAGS) -DCETTA_TEST_HOOKS=1 $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
-
-$(TRANSACTION_STATE_VIEWS_TEST_BIN): $(TRANSACTION_STATE_VIEWS_TEST_OBJ) $(TRANSACTION_STATE_VIEWS_EVAL_OBJ) $(TRANSACTION_STATE_VIEWS_TEST_LINK_OBJ) $(BRIDGE_DEPS)
-	$(CC) $(CFLAGS) -o $@ $(TRANSACTION_STATE_VIEWS_TEST_OBJ) $(TRANSACTION_STATE_VIEWS_EVAL_OBJ) $(TRANSACTION_STATE_VIEWS_TEST_LINK_OBJ) $(LDFLAGS)
-
-.PHONY: test-transaction-state-views
-test-transaction-state-views: $(TRANSACTION_STATE_VIEWS_TEST_BIN)
-	@$(call cetta_exec,./$(TRANSACTION_STATE_VIEWS_TEST_BIN))
-
-test-all: test-transaction-state-views
--include $(TRANSACTION_STATE_VIEWS_TEST_OBJ:.o=.d) $(TRANSACTION_STATE_VIEWS_EVAL_OBJ:.o=.d)
-
-SPACE_ADDITIVE_COPY_TEST_OBJ = runtime/bootstrap/test_space_additive_copy.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
-SPACE_ADDITIVE_COPY_TEST_BIN = runtime/test_space_additive_copy-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
-
-$(SPACE_ADDITIVE_COPY_TEST_OBJ): tests/test_space_additive_copy.c src/space.h $(BUILD_CONFIG_HEADER)
-	@mkdir -p runtime/bootstrap
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
-
-$(SPACE_ADDITIVE_COPY_TEST_BIN): $(SPACE_ADDITIVE_COPY_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
-	$(CC) $(CFLAGS) -Wl,--wrap=cetta_fallible_malloc -o $@ $(SPACE_ADDITIVE_COPY_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
-
-.PHONY: test-space-additive-copy
-test-space-additive-copy: $(SPACE_ADDITIVE_COPY_TEST_BIN)
-	@CETTA_SPACE_DENSE=eager $(call cetta_exec,./$(SPACE_ADDITIVE_COPY_TEST_BIN))
-
-test-all: test-space-additive-copy
--include $(SPACE_ADDITIVE_COPY_TEST_OBJ:.o=.d)
-
-.PHONY: test-worker-resource-publication
-test-worker-resource-publication: $(BIN) tests/support/check_worker_resource_publication.py tests/support/compare_answers.py
-	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_worker_resource_publication.py "$(CETTA_SCRIPT_BIN)"
-
-test-petta-search-machine test-all: test-worker-resource-publication
-
-SPACE_DENSE_DIRECTORY_TEST_BIN = runtime/test_space_dense_directory-$(BUILD_OBJ_TAG)
-$(SPACE_DENSE_DIRECTORY_TEST_BIN): tests/test_space_dense_directory.c src/space_dense.c src/space_dense.h
-	@mkdir -p runtime
-	$(CC) $(CFLAGS) -Isrc $< -o $@
-
-.PHONY: test-space-dense-directory
-test-space-dense-directory: $(SPACE_DENSE_DIRECTORY_TEST_BIN)
-	@$(call cetta_exec,./$(SPACE_DENSE_DIRECTORY_TEST_BIN))
-
-GSLT_U32_PROBE_GUARD_TEST_BIN = runtime/test_gslt_u32_probe_guard-$(BUILD_OBJ_TAG)
-$(GSLT_U32_PROBE_GUARD_TEST_BIN): tests/support/test_gslt_u32_probe_guard.c src/gslt_u32_index_v1.c src/gslt_u32_index_v1.h
-	@mkdir -p runtime
-	$(CC) $(CFLAGS) -Isrc $< -o $@
-
-.PHONY: test-gslt-u32-probe-guard
-test-gslt-u32-probe-guard: $(GSLT_U32_PROBE_GUARD_TEST_BIN)
-	@$(call cetta_exec,./$(GSLT_U32_PROBE_GUARD_TEST_BIN))
-
-.PHONY: test-u64-index
-test-u64-index: $(U64_INDEX_TEST_BIN)
-	@$(call cetta_exec,./$(U64_INDEX_TEST_BIN))
-
-test-all: test-space-dense-directory test-gslt-u32-probe-guard test-u64-index
-
-STATE_CELL_LIFETIME_TEST_OBJ = runtime/bootstrap/test_state_cell_lifetime.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
-STATE_CELL_LIFETIME_TEST_BIN = runtime/test_state_cell_lifetime-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
-STATE_CELL_LIFETIME_TEST_LINK_OBJ = $(filter-out src/state_cell.$(BUILD_OBJ_TAG).o src/state_cell.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ))
-$(STATE_CELL_LIFETIME_TEST_OBJ): tests/test_state_cell_lifetime.c src/state_cell.c src/state_cell.h $(BUILD_CONFIG_HEADER)
-	@mkdir -p runtime/bootstrap
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
-$(STATE_CELL_LIFETIME_TEST_BIN): $(STATE_CELL_LIFETIME_TEST_OBJ) $(STATE_CELL_LIFETIME_TEST_LINK_OBJ) $(BRIDGE_DEPS)
-	$(CC) $(CFLAGS) -o $@ $(STATE_CELL_LIFETIME_TEST_OBJ) $(STATE_CELL_LIFETIME_TEST_LINK_OBJ) $(LDFLAGS) -Wl,--wrap=cetta_fallible_calloc -Wl,--wrap=cetta_fallible_malloc -Wl,--wrap=free -Wl,--wrap=eval_resource_descriptor_hold -Wl,--wrap=state_cell_lease_into -Wl,--wrap=eval_resource_retirement_notify
-.PHONY: test-state-cell-lifetime
-test-state-cell-lifetime: $(STATE_CELL_LIFETIME_TEST_BIN)
-	@$(call cetta_exec,./$(STATE_CELL_LIFETIME_TEST_BIN))
-test-all: test-state-cell-lifetime
--include $(STATE_CELL_LIFETIME_TEST_OBJ:.o=.d)
-
-PETTA_RELEVANCE_CACHE_TEST_BIN = runtime/test_petta_relevance_cache-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
-$(PETTA_RELEVANCE_CACHE_TEST_BIN): tests/test_petta_relevance_cache.c src/petta_specializer.c src/petta_specializer.h $(SYMBOL_STANDALONE_SRC) $(BUILD_CONFIG_HEADER)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections -o $@ tests/test_petta_relevance_cache.c $(SYMBOL_STANDALONE_SRC) $(LDFLAGS) -Wl,--gc-sections
-.PHONY: test-petta-relevance-cache
-test-petta-relevance-cache: $(PETTA_RELEVANCE_CACHE_TEST_BIN)
-	@$(call cetta_exec,./$(PETTA_RELEVANCE_CACHE_TEST_BIN))
-test-all: test-petta-relevance-cache
-
-RHOMETTA_MANAGED_STATE_TEST_OBJ = runtime/bootstrap/test_rhometta_managed_state_lifetime.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
-RHOMETTA_MANAGED_STATE_CORE_OBJ = runtime/bootstrap/rhocalc_managed_state_lifetime.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
-RHOMETTA_MANAGED_STATE_TEST_BIN = runtime/test_rhometta_managed_state_lifetime-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
-RHOMETTA_MANAGED_STATE_TEST_LINK_OBJ = $(filter-out src/rhocalc_core.$(BUILD_OBJ_TAG).o src/rhocalc_core.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ))
-$(RHOMETTA_MANAGED_STATE_TEST_OBJ): tests/support/test_rhometta_managed_state_lifetime.c src/state_cell.h $(BUILD_CONFIG_HEADER)
-	@mkdir -p runtime/bootstrap
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
-$(RHOMETTA_MANAGED_STATE_CORE_OBJ): src/rhocalc_core.c src/state_cell.h $(BUILD_CONFIG_HEADER)
-	@mkdir -p runtime/bootstrap
-	$(CC) $(CPPFLAGS) -DCETTA_TEST_HOOKS=1 $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
-$(RHOMETTA_MANAGED_STATE_TEST_BIN): $(RHOMETTA_MANAGED_STATE_TEST_OBJ) $(RHOMETTA_MANAGED_STATE_CORE_OBJ) $(RHOMETTA_MANAGED_STATE_TEST_LINK_OBJ) $(BRIDGE_DEPS)
-	$(CC) $(CFLAGS) -o $@ $(RHOMETTA_MANAGED_STATE_TEST_OBJ) $(RHOMETTA_MANAGED_STATE_CORE_OBJ) $(RHOMETTA_MANAGED_STATE_TEST_LINK_OBJ) $(LDFLAGS) -Wl,--wrap=cetta_fallible_calloc
-.PHONY: test-rhometta-managed-state-lifetime
-test-rhometta-managed-state-lifetime: $(RHOMETTA_MANAGED_STATE_TEST_BIN)
-	@$(call cetta_exec,./$(RHOMETTA_MANAGED_STATE_TEST_BIN))
-test-all: test-rhometta-managed-state-lifetime
--include $(RHOMETTA_MANAGED_STATE_TEST_OBJ:.o=.d) $(RHOMETTA_MANAGED_STATE_CORE_OBJ:.o=.d)
-
-MANAGED_RESOURCE_CYCLES_TEST_OBJ = runtime/bootstrap/test_managed_resource_cycles.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
-MANAGED_RESOURCE_CYCLES_TEST_BIN = runtime/test_managed_resource_cycles-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
-$(MANAGED_RESOURCE_CYCLES_TEST_OBJ): tests/test_managed_resource_cycles.c src/state_cell.h $(BUILD_CONFIG_HEADER)
-	@mkdir -p runtime/bootstrap
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
-$(MANAGED_RESOURCE_CYCLES_TEST_BIN): $(MANAGED_RESOURCE_CYCLES_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
-	$(CC) $(CFLAGS) -o $@ $(MANAGED_RESOURCE_CYCLES_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
-.PHONY: test-managed-resource-cycles
-test-managed-resource-cycles: $(MANAGED_RESOURCE_CYCLES_TEST_BIN)
-	@$(call cetta_exec,./$(MANAGED_RESOURCE_CYCLES_TEST_BIN))
-test-all: test-managed-resource-cycles
--include $(MANAGED_RESOURCE_CYCLES_TEST_OBJ:.o=.d)
-
-PETTA_NATIVE_PRESSURE_TEST_OBJ = runtime/bootstrap/test_petta_native_pressure.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
-PETTA_NATIVE_PRESSURE_TEST_BIN = runtime/test_petta_native_pressure-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
-$(PETTA_NATIVE_PRESSURE_TEST_OBJ): tests/support/test_petta_native_pressure.c src/state_cell.h src/petta_search_machine.h $(BUILD_CONFIG_HEADER)
-	@mkdir -p runtime/bootstrap
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
-$(PETTA_NATIVE_PRESSURE_TEST_BIN): $(PETTA_NATIVE_PRESSURE_TEST_OBJ) $(PETTA_SEARCH_MACHINE_TEST_LINK_OBJ) $(BRIDGE_DEPS)
-	$(CC) $(CFLAGS) -o $@ $(PETTA_NATIVE_PRESSURE_TEST_OBJ) $(PETTA_SEARCH_MACHINE_TEST_LINK_OBJ) $(LDFLAGS) -Wl,--wrap=state_cell_pressure_observer_ensure -Wl,--wrap=arena_init_detached
-.PHONY: test-petta-native-pressure
-test-petta-native-pressure: $(PETTA_NATIVE_PRESSURE_TEST_BIN)
-	@$(call cetta_exec,./$(PETTA_NATIVE_PRESSURE_TEST_BIN))
-test-all: test-petta-native-pressure
--include $(PETTA_NATIVE_PRESSURE_TEST_OBJ:.o=.d)
-
-# Proof storage is exercised through ordinary native Space observers and
-# recoverable construction/commit refusal, with producers still disabled.
-SPACE_PROOF_IMAGE_TEST_BIN = runtime/test_space_proof_image-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
-$(SPACE_PROOF_IMAGE_TEST_BIN): tests/test_space_proof_image.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ $^ -Wl,--wrap=tu_expr_from_ids,--wrap=cetta_proof_row_materialize,--wrap=cetta_fallible_malloc,--wrap=cetta_fallible_calloc $(LDFLAGS)
-.PHONY: test-space-proof-image
-test-space-proof-image: $(SPACE_PROOF_IMAGE_TEST_BIN)
-	@$(call cetta_exec,./$(SPACE_PROOF_IMAGE_TEST_BIN))
-
-TERM_UNIVERSE_CALLBACK_COLLECTION_TEST_BIN = runtime/test_term_universe_callback_collection-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
-$(TERM_UNIVERSE_CALLBACK_COLLECTION_TEST_BIN): tests/test_term_universe_callback_collection.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ $^ $(LDFLAGS)
-.PHONY: test-term-universe-callback-collection
-test-term-universe-callback-collection: $(TERM_UNIVERSE_CALLBACK_COLLECTION_TEST_BIN)
-	@$(call cetta_exec,./$(TERM_UNIVERSE_CALLBACK_COLLECTION_TEST_BIN))
-
-TERM_UNIVERSE_CALLBACK_COLLECTION_FAULTS_TEST_BIN = runtime/test_term_universe_callback_collection_faults-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
-$(TERM_UNIVERSE_CALLBACK_COLLECTION_FAULTS_TEST_BIN): tests/test_term_universe_callback_collection_faults.c tests/test_term_universe_callback_collection.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ $< $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS) -Wl,--wrap=term_universe_add_root_provider,--wrap=realloc $(LDFLAGS)
-.PHONY: test-term-universe-callback-collection-faults
-test-term-universe-callback-collection-faults: $(TERM_UNIVERSE_CALLBACK_COLLECTION_FAULTS_TEST_BIN)
-	@$(call cetta_exec,./$(TERM_UNIVERSE_CALLBACK_COLLECTION_FAULTS_TEST_BIN))
-test-all: test-term-universe-callback-collection test-term-universe-callback-collection-faults
-
-TERM_DOMAIN_OWNER_TEST_BIN = runtime/test_term_domain_owner-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
-$(TERM_DOMAIN_OWNER_TEST_BIN): tests/test_term_domain_owner.c src/term_domain.h $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ $< $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS) -Wl,--wrap=term_universe_free,--wrap=symbol_table_free,--wrap=cetta_fallible_calloc $(LDFLAGS)
-.PHONY: test-term-domain-owner
-test-term-domain-owner: $(TERM_DOMAIN_OWNER_TEST_BIN)
-	@$(call cetta_exec,./$(TERM_DOMAIN_OWNER_TEST_BIN))
-
-LIBRARY_TERM_DOMAIN_OWNER_TEST_BIN = runtime/test_library_term_domain_owner-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
-$(LIBRARY_TERM_DOMAIN_OWNER_TEST_BIN): tests/test_library_term_domain_owner.c tests/test_term_domain_owner.c src/term_domain.h src/library.h $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ $< $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS) -Wl,--wrap=term_universe_free,--wrap=symbol_table_free,--wrap=cetta_fallible_calloc $(LDFLAGS)
-.PHONY: test-library-term-domain-owner
-test-library-term-domain-owner: $(LIBRARY_TERM_DOMAIN_OWNER_TEST_BIN)
-	@CETTA_TERM_UNIVERSE_COLLECTION=reclaim-every $(call cetta_exec,./$(LIBRARY_TERM_DOMAIN_OWNER_TEST_BIN))
-
-TERM_DOMAIN_MAIN_ENTRY_OBJ = runtime/bootstrap/test_term_domain_main_entry.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
-$(TERM_DOMAIN_MAIN_ENTRY_OBJ): src/main.c src/term_domain.h src/library.h $(BUILD_CONFIG_HEADER)
-	@mkdir -p runtime/bootstrap
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -Dmain=cetta_term_domain_cli_entry -c $< -o $@
-MAIN_TERM_DOMAIN_OWNER_TEST_BIN = runtime/test_main_term_domain_owner-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
-MAIN_TERM_DOMAIN_OWNER_LINK_OBJ = $(filter-out src/main.$(BUILD_OBJ_TAG).o src/main.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ))
-$(MAIN_TERM_DOMAIN_OWNER_TEST_BIN): tests/test_main_term_domain_owner.c tests/test_term_domain_owner.c src/term_domain.h src/library.h $(TERM_DOMAIN_MAIN_ENTRY_OBJ) $(MAIN_TERM_DOMAIN_OWNER_LINK_OBJ) $(BRIDGE_DEPS)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ $< $(TERM_DOMAIN_MAIN_ENTRY_OBJ) $(MAIN_TERM_DOMAIN_OWNER_LINK_OBJ) $(BRIDGE_DEPS) -Wl,--wrap=term_universe_free,--wrap=symbol_table_free,--wrap=cetta_fallible_calloc,--wrap=cetta_library_context_free $(LDFLAGS)
-.PHONY: test-main-term-domain-owner
-test-main-term-domain-owner: $(MAIN_TERM_DOMAIN_OWNER_TEST_BIN) $(BIN)
-	@CETTA_TERM_UNIVERSE_COLLECTION=reclaim-every $(call cetta_exec,./$(MAIN_TERM_DOMAIN_OWNER_TEST_BIN)) "$(abspath $(BIN))"
-test-all: test-term-domain-owner test-library-term-domain-owner test-main-term-domain-owner
--include $(TERM_DOMAIN_MAIN_ENTRY_OBJ:.o=.d)
-
-SPACE_PROOF_DISJOINT_APPEND_TEST_BIN = runtime/test_space_proof_disjoint_append-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
-$(SPACE_PROOF_DISJOINT_APPEND_TEST_BIN): tests/test_space_proof_disjoint_append.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ $^ -Wl,--wrap=tu_expr_from_ids,--wrap=cetta_proof_row_materialize,--wrap=cetta_fallible_malloc,--wrap=cetta_fallible_calloc,--wrap=cetta_u64_index_insert,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=term_universe_add_root_provider $(LDFLAGS)
-.PHONY: test-space-proof-disjoint-append
-test-space-proof-disjoint-append: $(SPACE_PROOF_DISJOINT_APPEND_TEST_BIN)
-	@$(call cetta_exec,./$(SPACE_PROOF_DISJOINT_APPEND_TEST_BIN))
-test-all: test-space-proof-disjoint-append
-
-# Incremental support storage and its ordinary Space observer bridge.
-PROOF_BATCHES_TEST_BIN = runtime/test_proof_batches-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
-$(PROOF_BATCHES_TEST_BIN): tests/test_proof_batches.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ $^ -Wl,--wrap=free,--wrap=cetta_fallible_calloc $(LDFLAGS)
-PROOF_BATCHES_IDENTITY_TEST_BIN = runtime/test_proof_batches_identity-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
-PROOF_BATCHES_IDENTITY_TEST_LINK_OBJ = $(filter-out src/proof_batches.$(BUILD_OBJ_TAG).o src/proof_batches.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ))
-$(PROOF_BATCHES_IDENTITY_TEST_BIN): tests/test_proof_batches_identity.c tests/test_proof_batches.c src/proof_batches.c $(PROOF_BATCHES_IDENTITY_TEST_LINK_OBJ) $(BRIDGE_DEPS)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ $< $(PROOF_BATCHES_IDENTITY_TEST_LINK_OBJ) $(BRIDGE_DEPS) -Wl,--wrap=free,--wrap=cetta_fallible_calloc $(LDFLAGS)
-SPACE_PROOF_BATCHES_TEST_BIN = runtime/test_space_proof_batches-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
-$(SPACE_PROOF_BATCHES_TEST_BIN): tests/test_space_proof_batches.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ $^ -Wl,--wrap=tu_expr_from_ids,--wrap=cetta_fallible_malloc,--wrap=cetta_fallible_calloc,--wrap=free $(LDFLAGS)
-.PHONY: test-proof-batches test-proof-batches-identity test-space-proof-batches
-test-proof-batches: $(PROOF_BATCHES_TEST_BIN)
-	@$(call cetta_exec,./$(PROOF_BATCHES_TEST_BIN))
-test-proof-batches-identity: $(PROOF_BATCHES_IDENTITY_TEST_BIN)
-	@$(call cetta_exec,./$(PROOF_BATCHES_IDENTITY_TEST_BIN))
-test-space-proof-batches: $(SPACE_PROOF_BATCHES_TEST_BIN)
-	@$(call cetta_exec,./$(SPACE_PROOF_BATCHES_TEST_BIN))
-test-all: test-proof-batches test-proof-batches-identity test-space-proof-batches
-
-PROOF_BATCHES_RANK_TEST_BIN = runtime/test_proof_batches_rank-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
-$(PROOF_BATCHES_RANK_TEST_BIN): tests/test_proof_batches_rank.c tests/test_proof_batches.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ $< $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS) -Wl,--wrap=free,--wrap=cetta_fallible_calloc $(LDFLAGS)
-.PHONY: test-proof-batches-rank
-test-proof-batches-rank: $(PROOF_BATCHES_RANK_TEST_BIN)
-	@$(call cetta_exec,./$(PROOF_BATCHES_RANK_TEST_BIN))
-test-all: test-proof-batches-rank
-
-TERM_DOMAIN_EXCLUSIVE_CLOSE_TEST_BIN = runtime/test_term_domain_exclusive_close-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
-$(TERM_DOMAIN_EXCLUSIVE_CLOSE_TEST_BIN): tests/test_term_domain_exclusive_close.c tests/test_term_domain_owner.c src/term_domain.h $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ $< $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS) -Wl,--wrap=term_universe_free,--wrap=symbol_table_free,--wrap=cetta_fallible_calloc $(LDFLAGS)
-.PHONY: test-term-domain-exclusive-close
-test-term-domain-exclusive-close: $(TERM_DOMAIN_EXCLUSIVE_CLOSE_TEST_BIN)
-	@$(call cetta_exec,./$(TERM_DOMAIN_EXCLUSIVE_CLOSE_TEST_BIN))
-
-TERM_DOMAIN_EXCLUSIVE_BATCHES_TEST_BIN = runtime/test_term_domain_exclusive_batches-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
-$(TERM_DOMAIN_EXCLUSIVE_BATCHES_TEST_BIN): tests/test_term_domain_exclusive_batches.c tests/test_term_domain_exclusive_close.c tests/test_term_domain_owner.c src/term_domain.h src/proof_batches.h $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ $< $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS) -Wl,--wrap=term_universe_free,--wrap=symbol_table_free,--wrap=cetta_fallible_calloc $(LDFLAGS)
-.PHONY: test-term-domain-exclusive-batches
-test-term-domain-exclusive-batches: $(TERM_DOMAIN_EXCLUSIVE_BATCHES_TEST_BIN)
-	@$(call cetta_exec,./$(TERM_DOMAIN_EXCLUSIVE_BATCHES_TEST_BIN))
-test-all: test-term-domain-exclusive-close test-term-domain-exclusive-batches
 # Embedding uses the same configured native objects as the command-line host.
 EMBED_TAG = $(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,)
 EMBED_OBJ = runtime/bootstrap/embedding.$(EMBED_TAG).o
@@ -49675,3 +49344,335 @@ test-sparse-interchange-mutants: $(SPARSE_INTERCHANGE_TEST)
 	python3 tests/support/check_embedding_context_mutants.py --cc='$(CC)' \
 		--cppflags='$(CPPFLAGS)' --cflags='$(CFLAGS)' --ldflags='$(LDFLAGS)' \
 		--only-prefix=sparse- --objects $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
+
+# In-process source preparation is a build artifact. Ordinary lang calls
+# load it directly and never launch a compiler or another interpreter.
+.PHONY: build-lang-datalog test-lang-library
+build-lang-datalog:
+	@set -eu; lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
+	if test -z "$$lean_root"; then lean_root="$(abspath ../../Mettapedia/lean/mettapedia)"; fi; \
+	test -f "$$lean_root/lakefile.lean" || \
+		{ echo 'Set METTAPEDIA_LEAN_ROOT to the MeTTapedia Lean project' >&2; exit 2; }; \
+	python3 tools/build_datalog_source_compiler.py --lean-root "$$lean_root" \
+		--output runtime/lang/datalog-compiler.so --package-output langdef/lang/Datalog.module
+
+test-lang-library: $(BIN)
+	@test -f runtime/lang/datalog-compiler.so || \
+		{ echo 'Run make build-lang-datalog first' >&2; exit 2; }
+	@set -eu; work="$$(mktemp -d runtime/lang-tests.XXXXXX)"; \
+	python3 tests/support/check_lang_library.py ./$(BIN) "$$work/public"; \
+	python3 tests/support/check_lang_boundaries.py ./$(BIN) "$$work/boundaries"; \
+	python3 tests/support/check_source_input_view.py ./$(BIN) "$$work/input-views"; \
+	python3 tests/support/check_lang_source_verification.py ./$(BIN) "$$work/source-verification"; \
+	python3 tests/support/check_lang_repl.py ./$(BIN) "$$work/repl"; \
+	python3 tests/support/check_raw_source_cli.py ./$(BIN) "$$work/raw"
+
+runtime/source_compiler_fixture_v1.so: tests/support/source_compiler_fixture_v1.c native/source_compiler_provider_v1.h
+	@mkdir -p runtime
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -fPIC -shared -I. $< -o $@
+
+.PHONY: test-source-compiler-v1 test-lib-he-evalc-spaces
+test-source-compiler-v1: $(BIN) runtime/source_compiler_fixture_v1.so
+	@set -eu; work="$$(mktemp -d runtime/source-compiler-tests.XXXXXX)"; \
+	python3 tests/support/check_source_compiler_v1.py ./$(BIN) runtime/source_compiler_fixture_v1.so "$$work/provider"
+test-lib-he-evalc-spaces: $(BIN)
+	@./$(BIN) --lang petta --profile extended --run-contract tests/petta/lib_he_evalc_spaces.metta
+
+test-execution-semantic-ledger: test-source-compiler-v1 test-lib-he-evalc-spaces
+
+.PHONY: test-lang-repl
+test-lang-repl: $(BIN)
+	@set -eu; work="$$(mktemp -d runtime/lang-repl-tests.XXXXXX)"; \
+	python3 tests/support/check_lang_repl.py ./$(BIN) "$$work/pty"
+test-execution-semantic-ledger: test-lang-repl
+
+# Exercise the worker's private fetch with actual occurrence cursors. The
+# test translation unit includes its implementation, replacing the normal
+# worker object while keeping the rest of the runtime unchanged.
+OPEN_EQUATION_READ_AHEAD_TEST_OBJ = runtime/bootstrap/test_open_equation_read_ahead.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+OPEN_EQUATION_READ_AHEAD_TEST_BIN = runtime/test_open_equation_read_ahead-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+OPEN_EQUATION_READ_AHEAD_TEST_LINK_OBJ = $(filter-out src/open_equation_machine.$(BUILD_OBJ_TAG).o src/open_equation_machine.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ))
+
+$(OPEN_EQUATION_READ_AHEAD_TEST_OBJ): tests/test_open_equation_read_ahead.c src/open_equation_machine.c src/open_equation_machine.h src/space.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime/bootstrap
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+
+$(OPEN_EQUATION_READ_AHEAD_TEST_BIN): $(OPEN_EQUATION_READ_AHEAD_TEST_OBJ) $(OPEN_EQUATION_READ_AHEAD_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $(OPEN_EQUATION_READ_AHEAD_TEST_OBJ) $(OPEN_EQUATION_READ_AHEAD_TEST_LINK_OBJ) $(LDFLAGS)
+
+.PHONY: test-open-equation-read-ahead test-open-equation-read-ahead-mutants
+test-open-equation-read-ahead: $(OPEN_EQUATION_READ_AHEAD_TEST_BIN)
+	@CETTA_SPACE_DENSE=eager $(call cetta_exec,./$(OPEN_EQUATION_READ_AHEAD_TEST_BIN))
+
+test-open-equation-read-ahead-mutants: $(OPEN_EQUATION_READ_AHEAD_TEST_BIN) $(BIN) tests/support/mutate_oem_read_ahead.py lib/proc.metta tests/support/check_native_mutation_rejected.metta
+	@set -eu; \
+	mutation_dir=runtime/bootstrap/oem-read-ahead-mutations-$(BUILD_OBJ_TAG); \
+	mkdir -p "$$mutation_dir"; \
+	for kind in unbounded scalar-owner he-mark; do \
+		python3 tests/support/mutate_oem_read_ahead.py src/open_equation_machine.c "$$mutation_dir/$$kind.c" "$$kind"; \
+		mutation_source="$(abspath runtime/bootstrap/oem-read-ahead-mutations-$(BUILD_OBJ_TAG))/$$kind.c"; \
+		$(CC) $(CPPFLAGS) $(CFLAGS) "-DCETTA_OEM_READ_AHEAD_SOURCE=\"$$mutation_source\"" \
+			-c tests/test_open_equation_read_ahead.c -o "$$mutation_dir/$$kind.o"; \
+		$(CC) $(CFLAGS) -o "$$mutation_dir/$$kind" "$$mutation_dir/$$kind.o" \
+			$(OPEN_EQUATION_READ_AHEAD_TEST_LINK_OBJ) $(LDFLAGS); \
+		if [ "$$kind" = unbounded ]; then assertion='oem_lazy_rows_fetch(&cursor, &lazy, pattern)'; \
+		elif [ "$$kind" = scalar-owner ]; then assertion='atom_native_handle_identifier_matches(moved_managed'; \
+		else assertion='atom_is_he_evaluated(marked_copy)'; fi; \
+		CETTA_SPACE_DENSE=eager $(NATIVE_MUTATION_GATE) \
+			$(OPEN_EQUATION_READ_AHEAD_TEST_BIN) "$$mutation_dir/$$kind" "$$assertion"; \
+	done
+
+test-all: test-open-equation-read-ahead test-open-equation-read-ahead-mutants
+-include $(OPEN_EQUATION_READ_AHEAD_TEST_OBJ:.o=.d)
+
+OPEN_EQUATION_EXTERNAL_ROOT_TEST_OBJ = runtime/bootstrap/test_open_equation_external_roots.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+OPEN_EQUATION_EXTERNAL_ROOT_TEST_BIN = runtime/test_open_equation_external_roots-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+$(OPEN_EQUATION_EXTERNAL_ROOT_TEST_OBJ): tests/test_open_equation_external_roots.c src/open_equation_machine.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime/bootstrap
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+$(OPEN_EQUATION_EXTERNAL_ROOT_TEST_BIN): $(OPEN_EQUATION_EXTERNAL_ROOT_TEST_OBJ) $(OPEN_EQUATION_READ_AHEAD_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+.PHONY: test-open-equation-external-roots
+test-open-equation-external-roots: $(OPEN_EQUATION_EXTERNAL_ROOT_TEST_BIN)
+	@$(call cetta_exec,./$(OPEN_EQUATION_EXTERNAL_ROOT_TEST_BIN))
+test-all: test-open-equation-external-roots
+-include $(OPEN_EQUATION_EXTERNAL_ROOT_TEST_OBJ:.o=.d)
+
+TRANSACTION_STATE_VIEWS_TEST_OBJ = runtime/bootstrap/test_transaction_state_views.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+TRANSACTION_STATE_VIEWS_EVAL_OBJ = runtime/bootstrap/eval_transaction_state_views.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+TRANSACTION_STATE_VIEWS_TEST_BIN = runtime/test_transaction_state_views-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+TRANSACTION_STATE_VIEWS_TEST_LINK_OBJ = $(filter-out src/eval.$(BUILD_OBJ_TAG).o src/eval.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ))
+
+$(TRANSACTION_STATE_VIEWS_TEST_OBJ): tests/test_transaction_state_views.c src/eval.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime/bootstrap
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+
+$(TRANSACTION_STATE_VIEWS_EVAL_OBJ): src/eval.c tests/support/eval_transaction_state_adapter.inc $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime/bootstrap
+	$(CC) $(CPPFLAGS) -DCETTA_TEST_HOOKS=1 $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+
+$(TRANSACTION_STATE_VIEWS_TEST_BIN): $(TRANSACTION_STATE_VIEWS_TEST_OBJ) $(TRANSACTION_STATE_VIEWS_EVAL_OBJ) $(TRANSACTION_STATE_VIEWS_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $(TRANSACTION_STATE_VIEWS_TEST_OBJ) $(TRANSACTION_STATE_VIEWS_EVAL_OBJ) $(TRANSACTION_STATE_VIEWS_TEST_LINK_OBJ) $(LDFLAGS)
+
+.PHONY: test-transaction-state-views
+test-transaction-state-views: $(TRANSACTION_STATE_VIEWS_TEST_BIN)
+	@$(call cetta_exec,./$(TRANSACTION_STATE_VIEWS_TEST_BIN))
+
+test-all: test-transaction-state-views
+-include $(TRANSACTION_STATE_VIEWS_TEST_OBJ:.o=.d) $(TRANSACTION_STATE_VIEWS_EVAL_OBJ:.o=.d)
+
+SPACE_ADDITIVE_COPY_TEST_OBJ = runtime/bootstrap/test_space_additive_copy.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+SPACE_ADDITIVE_COPY_TEST_BIN = runtime/test_space_additive_copy-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+
+$(SPACE_ADDITIVE_COPY_TEST_OBJ): tests/test_space_additive_copy.c src/space.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime/bootstrap
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+
+$(SPACE_ADDITIVE_COPY_TEST_BIN): $(SPACE_ADDITIVE_COPY_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -Wl,--wrap=cetta_fallible_malloc -o $@ $(SPACE_ADDITIVE_COPY_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
+
+.PHONY: test-space-additive-copy
+test-space-additive-copy: $(SPACE_ADDITIVE_COPY_TEST_BIN)
+	@CETTA_SPACE_DENSE=eager $(call cetta_exec,./$(SPACE_ADDITIVE_COPY_TEST_BIN))
+
+test-all: test-space-additive-copy
+-include $(SPACE_ADDITIVE_COPY_TEST_OBJ:.o=.d)
+
+.PHONY: test-worker-resource-publication
+test-worker-resource-publication: $(BIN) tests/support/check_worker_resource_publication.py tests/support/compare_answers.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_worker_resource_publication.py "$(CETTA_SCRIPT_BIN)"
+
+test-petta-search-machine test-all: test-worker-resource-publication
+
+SPACE_DENSE_DIRECTORY_TEST_BIN = runtime/test_space_dense_directory-$(BUILD_OBJ_TAG)
+$(SPACE_DENSE_DIRECTORY_TEST_BIN): tests/test_space_dense_directory.c src/space_dense.c src/space_dense.h
+	@mkdir -p runtime
+	$(CC) $(CFLAGS) -Isrc $< -o $@
+
+.PHONY: test-space-dense-directory
+test-space-dense-directory: $(SPACE_DENSE_DIRECTORY_TEST_BIN)
+	@$(call cetta_exec,./$(SPACE_DENSE_DIRECTORY_TEST_BIN))
+
+GSLT_U32_PROBE_GUARD_TEST_BIN = runtime/test_gslt_u32_probe_guard-$(BUILD_OBJ_TAG)
+$(GSLT_U32_PROBE_GUARD_TEST_BIN): tests/support/test_gslt_u32_probe_guard.c src/gslt_u32_index_v1.c src/gslt_u32_index_v1.h
+	@mkdir -p runtime
+	$(CC) $(CFLAGS) -Isrc $< -o $@
+
+.PHONY: test-gslt-u32-probe-guard
+test-gslt-u32-probe-guard: $(GSLT_U32_PROBE_GUARD_TEST_BIN)
+	@$(call cetta_exec,./$(GSLT_U32_PROBE_GUARD_TEST_BIN))
+
+.PHONY: test-u64-index
+test-u64-index: $(U64_INDEX_TEST_BIN)
+	@$(call cetta_exec,./$(U64_INDEX_TEST_BIN))
+
+test-all: test-space-dense-directory test-gslt-u32-probe-guard test-u64-index
+
+STATE_CELL_LIFETIME_TEST_OBJ = runtime/bootstrap/test_state_cell_lifetime.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+STATE_CELL_LIFETIME_TEST_BIN = runtime/test_state_cell_lifetime-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+STATE_CELL_LIFETIME_TEST_LINK_OBJ = $(filter-out src/state_cell.$(BUILD_OBJ_TAG).o src/state_cell.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ))
+$(STATE_CELL_LIFETIME_TEST_OBJ): tests/test_state_cell_lifetime.c src/state_cell.c src/state_cell.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime/bootstrap
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+$(STATE_CELL_LIFETIME_TEST_BIN): $(STATE_CELL_LIFETIME_TEST_OBJ) $(STATE_CELL_LIFETIME_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $(STATE_CELL_LIFETIME_TEST_OBJ) $(STATE_CELL_LIFETIME_TEST_LINK_OBJ) $(LDFLAGS) -Wl,--wrap=cetta_fallible_calloc -Wl,--wrap=cetta_fallible_malloc -Wl,--wrap=free -Wl,--wrap=eval_resource_descriptor_hold -Wl,--wrap=state_cell_lease_into -Wl,--wrap=eval_resource_retirement_notify
+.PHONY: test-state-cell-lifetime
+test-state-cell-lifetime: $(STATE_CELL_LIFETIME_TEST_BIN)
+	@$(call cetta_exec,./$(STATE_CELL_LIFETIME_TEST_BIN))
+test-all: test-state-cell-lifetime
+-include $(STATE_CELL_LIFETIME_TEST_OBJ:.o=.d)
+
+PETTA_RELEVANCE_CACHE_TEST_BIN = runtime/test_petta_relevance_cache-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+$(PETTA_RELEVANCE_CACHE_TEST_BIN): tests/test_petta_relevance_cache.c src/petta_specializer.c src/petta_specializer.h $(SYMBOL_STANDALONE_SRC) $(BUILD_CONFIG_HEADER)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections -o $@ tests/test_petta_relevance_cache.c $(SYMBOL_STANDALONE_SRC) $(LDFLAGS) -Wl,--gc-sections
+.PHONY: test-petta-relevance-cache
+test-petta-relevance-cache: $(PETTA_RELEVANCE_CACHE_TEST_BIN)
+	@$(call cetta_exec,./$(PETTA_RELEVANCE_CACHE_TEST_BIN))
+test-all: test-petta-relevance-cache
+
+RHOMETTA_MANAGED_STATE_TEST_OBJ = runtime/bootstrap/test_rhometta_managed_state_lifetime.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+RHOMETTA_MANAGED_STATE_CORE_OBJ = runtime/bootstrap/rhocalc_managed_state_lifetime.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+RHOMETTA_MANAGED_STATE_TEST_BIN = runtime/test_rhometta_managed_state_lifetime-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+RHOMETTA_MANAGED_STATE_TEST_LINK_OBJ = $(filter-out src/rhocalc_core.$(BUILD_OBJ_TAG).o src/rhocalc_core.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ))
+$(RHOMETTA_MANAGED_STATE_TEST_OBJ): tests/support/test_rhometta_managed_state_lifetime.c src/state_cell.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime/bootstrap
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+$(RHOMETTA_MANAGED_STATE_CORE_OBJ): src/rhocalc_core.c src/state_cell.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime/bootstrap
+	$(CC) $(CPPFLAGS) -DCETTA_TEST_HOOKS=1 $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+$(RHOMETTA_MANAGED_STATE_TEST_BIN): $(RHOMETTA_MANAGED_STATE_TEST_OBJ) $(RHOMETTA_MANAGED_STATE_CORE_OBJ) $(RHOMETTA_MANAGED_STATE_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $(RHOMETTA_MANAGED_STATE_TEST_OBJ) $(RHOMETTA_MANAGED_STATE_CORE_OBJ) $(RHOMETTA_MANAGED_STATE_TEST_LINK_OBJ) $(LDFLAGS) -Wl,--wrap=cetta_fallible_calloc
+.PHONY: test-rhometta-managed-state-lifetime
+test-rhometta-managed-state-lifetime: $(RHOMETTA_MANAGED_STATE_TEST_BIN)
+	@$(call cetta_exec,./$(RHOMETTA_MANAGED_STATE_TEST_BIN))
+test-all: test-rhometta-managed-state-lifetime
+-include $(RHOMETTA_MANAGED_STATE_TEST_OBJ:.o=.d) $(RHOMETTA_MANAGED_STATE_CORE_OBJ:.o=.d)
+
+MANAGED_RESOURCE_CYCLES_TEST_OBJ = runtime/bootstrap/test_managed_resource_cycles.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+MANAGED_RESOURCE_CYCLES_TEST_BIN = runtime/test_managed_resource_cycles-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+$(MANAGED_RESOURCE_CYCLES_TEST_OBJ): tests/test_managed_resource_cycles.c src/state_cell.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime/bootstrap
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+$(MANAGED_RESOURCE_CYCLES_TEST_BIN): $(MANAGED_RESOURCE_CYCLES_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $(MANAGED_RESOURCE_CYCLES_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
+.PHONY: test-managed-resource-cycles
+test-managed-resource-cycles: $(MANAGED_RESOURCE_CYCLES_TEST_BIN)
+	@$(call cetta_exec,./$(MANAGED_RESOURCE_CYCLES_TEST_BIN))
+test-all: test-managed-resource-cycles
+-include $(MANAGED_RESOURCE_CYCLES_TEST_OBJ:.o=.d)
+
+PETTA_NATIVE_PRESSURE_TEST_OBJ = runtime/bootstrap/test_petta_native_pressure.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+PETTA_NATIVE_PRESSURE_TEST_BIN = runtime/test_petta_native_pressure-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+$(PETTA_NATIVE_PRESSURE_TEST_OBJ): tests/support/test_petta_native_pressure.c src/state_cell.h src/petta_search_machine.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime/bootstrap
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+$(PETTA_NATIVE_PRESSURE_TEST_BIN): $(PETTA_NATIVE_PRESSURE_TEST_OBJ) $(PETTA_SEARCH_MACHINE_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $(PETTA_NATIVE_PRESSURE_TEST_OBJ) $(PETTA_SEARCH_MACHINE_TEST_LINK_OBJ) $(LDFLAGS) -Wl,--wrap=state_cell_pressure_observer_ensure -Wl,--wrap=arena_init_detached
+.PHONY: test-petta-native-pressure
+test-petta-native-pressure: $(PETTA_NATIVE_PRESSURE_TEST_BIN)
+	@$(call cetta_exec,./$(PETTA_NATIVE_PRESSURE_TEST_BIN))
+test-all: test-petta-native-pressure
+-include $(PETTA_NATIVE_PRESSURE_TEST_OBJ:.o=.d)
+
+# Proof storage is exercised through ordinary native Space observers and
+# recoverable construction/commit refusal, with producers still disabled.
+SPACE_PROOF_IMAGE_TEST_BIN = runtime/test_space_proof_image-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+$(SPACE_PROOF_IMAGE_TEST_BIN): tests/test_space_proof_image.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ $^ -Wl,--wrap=tu_expr_from_ids,--wrap=cetta_proof_row_materialize,--wrap=cetta_fallible_malloc,--wrap=cetta_fallible_calloc $(LDFLAGS)
+.PHONY: test-space-proof-image
+test-space-proof-image: $(SPACE_PROOF_IMAGE_TEST_BIN)
+	@$(call cetta_exec,./$(SPACE_PROOF_IMAGE_TEST_BIN))
+
+TERM_UNIVERSE_CALLBACK_COLLECTION_TEST_BIN = runtime/test_term_universe_callback_collection-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+$(TERM_UNIVERSE_CALLBACK_COLLECTION_TEST_BIN): tests/test_term_universe_callback_collection.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ $^ $(LDFLAGS)
+.PHONY: test-term-universe-callback-collection
+test-term-universe-callback-collection: $(TERM_UNIVERSE_CALLBACK_COLLECTION_TEST_BIN)
+	@$(call cetta_exec,./$(TERM_UNIVERSE_CALLBACK_COLLECTION_TEST_BIN))
+
+TERM_UNIVERSE_CALLBACK_COLLECTION_FAULTS_TEST_BIN = runtime/test_term_universe_callback_collection_faults-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+$(TERM_UNIVERSE_CALLBACK_COLLECTION_FAULTS_TEST_BIN): tests/test_term_universe_callback_collection_faults.c tests/test_term_universe_callback_collection.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ $< $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS) -Wl,--wrap=term_universe_add_root_provider,--wrap=realloc $(LDFLAGS)
+.PHONY: test-term-universe-callback-collection-faults
+test-term-universe-callback-collection-faults: $(TERM_UNIVERSE_CALLBACK_COLLECTION_FAULTS_TEST_BIN)
+	@$(call cetta_exec,./$(TERM_UNIVERSE_CALLBACK_COLLECTION_FAULTS_TEST_BIN))
+test-all: test-term-universe-callback-collection test-term-universe-callback-collection-faults
+
+TERM_DOMAIN_OWNER_TEST_BIN = runtime/test_term_domain_owner-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+$(TERM_DOMAIN_OWNER_TEST_BIN): tests/test_term_domain_owner.c src/term_domain.h $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ $< $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS) -Wl,--wrap=term_universe_free,--wrap=symbol_table_free,--wrap=cetta_fallible_calloc $(LDFLAGS)
+.PHONY: test-term-domain-owner
+test-term-domain-owner: $(TERM_DOMAIN_OWNER_TEST_BIN)
+	@$(call cetta_exec,./$(TERM_DOMAIN_OWNER_TEST_BIN))
+
+LIBRARY_TERM_DOMAIN_OWNER_TEST_BIN = runtime/test_library_term_domain_owner-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+$(LIBRARY_TERM_DOMAIN_OWNER_TEST_BIN): tests/test_library_term_domain_owner.c tests/test_term_domain_owner.c src/term_domain.h src/library.h $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ $< $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS) -Wl,--wrap=term_universe_free,--wrap=symbol_table_free,--wrap=cetta_fallible_calloc $(LDFLAGS)
+.PHONY: test-library-term-domain-owner
+test-library-term-domain-owner: $(LIBRARY_TERM_DOMAIN_OWNER_TEST_BIN)
+	@CETTA_TERM_UNIVERSE_COLLECTION=reclaim-every $(call cetta_exec,./$(LIBRARY_TERM_DOMAIN_OWNER_TEST_BIN))
+
+TERM_DOMAIN_MAIN_ENTRY_OBJ = runtime/bootstrap/test_term_domain_main_entry.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+$(TERM_DOMAIN_MAIN_ENTRY_OBJ): src/main.c src/term_domain.h src/library.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime/bootstrap
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -Dmain=cetta_term_domain_cli_entry -c $< -o $@
+MAIN_TERM_DOMAIN_OWNER_TEST_BIN = runtime/test_main_term_domain_owner-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+MAIN_TERM_DOMAIN_OWNER_LINK_OBJ = $(filter-out src/main.$(BUILD_OBJ_TAG).o src/main.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ))
+$(MAIN_TERM_DOMAIN_OWNER_TEST_BIN): tests/test_main_term_domain_owner.c tests/test_term_domain_owner.c src/term_domain.h src/library.h $(TERM_DOMAIN_MAIN_ENTRY_OBJ) $(MAIN_TERM_DOMAIN_OWNER_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ $< $(TERM_DOMAIN_MAIN_ENTRY_OBJ) $(MAIN_TERM_DOMAIN_OWNER_LINK_OBJ) $(BRIDGE_DEPS) -Wl,--wrap=term_universe_free,--wrap=symbol_table_free,--wrap=cetta_fallible_calloc,--wrap=cetta_library_context_free $(LDFLAGS)
+.PHONY: test-main-term-domain-owner
+test-main-term-domain-owner: $(MAIN_TERM_DOMAIN_OWNER_TEST_BIN) $(BIN)
+	@CETTA_TERM_UNIVERSE_COLLECTION=reclaim-every $(call cetta_exec,./$(MAIN_TERM_DOMAIN_OWNER_TEST_BIN)) "$(abspath $(BIN))"
+test-all: test-term-domain-owner test-library-term-domain-owner test-main-term-domain-owner
+-include $(TERM_DOMAIN_MAIN_ENTRY_OBJ:.o=.d)
+
+SPACE_PROOF_DISJOINT_APPEND_TEST_BIN = runtime/test_space_proof_disjoint_append-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+$(SPACE_PROOF_DISJOINT_APPEND_TEST_BIN): tests/test_space_proof_disjoint_append.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ $^ -Wl,--wrap=tu_expr_from_ids,--wrap=cetta_proof_row_materialize,--wrap=cetta_fallible_malloc,--wrap=cetta_fallible_calloc,--wrap=cetta_u64_index_insert,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=term_universe_add_root_provider $(LDFLAGS)
+.PHONY: test-space-proof-disjoint-append
+test-space-proof-disjoint-append: $(SPACE_PROOF_DISJOINT_APPEND_TEST_BIN)
+	@$(call cetta_exec,./$(SPACE_PROOF_DISJOINT_APPEND_TEST_BIN))
+test-all: test-space-proof-disjoint-append
+
+# Incremental support storage and its ordinary Space observer bridge.
+PROOF_BATCHES_TEST_BIN = runtime/test_proof_batches-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+$(PROOF_BATCHES_TEST_BIN): tests/test_proof_batches.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ $^ -Wl,--wrap=free,--wrap=cetta_fallible_calloc $(LDFLAGS)
+PROOF_BATCHES_IDENTITY_TEST_BIN = runtime/test_proof_batches_identity-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+PROOF_BATCHES_IDENTITY_TEST_LINK_OBJ = $(filter-out src/proof_batches.$(BUILD_OBJ_TAG).o src/proof_batches.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ))
+$(PROOF_BATCHES_IDENTITY_TEST_BIN): tests/test_proof_batches_identity.c tests/test_proof_batches.c src/proof_batches.c $(PROOF_BATCHES_IDENTITY_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ $< $(PROOF_BATCHES_IDENTITY_TEST_LINK_OBJ) $(BRIDGE_DEPS) -Wl,--wrap=free,--wrap=cetta_fallible_calloc $(LDFLAGS)
+SPACE_PROOF_BATCHES_TEST_BIN = runtime/test_space_proof_batches-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+$(SPACE_PROOF_BATCHES_TEST_BIN): tests/test_space_proof_batches.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ $^ -Wl,--wrap=tu_expr_from_ids,--wrap=cetta_fallible_malloc,--wrap=cetta_fallible_calloc,--wrap=free $(LDFLAGS)
+.PHONY: test-proof-batches test-proof-batches-identity test-space-proof-batches
+test-proof-batches: $(PROOF_BATCHES_TEST_BIN)
+	@$(call cetta_exec,./$(PROOF_BATCHES_TEST_BIN))
+test-proof-batches-identity: $(PROOF_BATCHES_IDENTITY_TEST_BIN)
+	@$(call cetta_exec,./$(PROOF_BATCHES_IDENTITY_TEST_BIN))
+test-space-proof-batches: $(SPACE_PROOF_BATCHES_TEST_BIN)
+	@$(call cetta_exec,./$(SPACE_PROOF_BATCHES_TEST_BIN))
+test-all: test-proof-batches test-proof-batches-identity test-space-proof-batches
+
+PROOF_BATCHES_RANK_TEST_BIN = runtime/test_proof_batches_rank-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+$(PROOF_BATCHES_RANK_TEST_BIN): tests/test_proof_batches_rank.c tests/test_proof_batches.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ $< $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS) -Wl,--wrap=free,--wrap=cetta_fallible_calloc $(LDFLAGS)
+.PHONY: test-proof-batches-rank
+test-proof-batches-rank: $(PROOF_BATCHES_RANK_TEST_BIN)
+	@$(call cetta_exec,./$(PROOF_BATCHES_RANK_TEST_BIN))
+test-all: test-proof-batches-rank
+
+TERM_DOMAIN_EXCLUSIVE_CLOSE_TEST_BIN = runtime/test_term_domain_exclusive_close-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+$(TERM_DOMAIN_EXCLUSIVE_CLOSE_TEST_BIN): tests/test_term_domain_exclusive_close.c tests/test_term_domain_owner.c src/term_domain.h $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ $< $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS) -Wl,--wrap=term_universe_free,--wrap=symbol_table_free,--wrap=cetta_fallible_calloc $(LDFLAGS)
+.PHONY: test-term-domain-exclusive-close
+test-term-domain-exclusive-close: $(TERM_DOMAIN_EXCLUSIVE_CLOSE_TEST_BIN)
+	@$(call cetta_exec,./$(TERM_DOMAIN_EXCLUSIVE_CLOSE_TEST_BIN))
+
+TERM_DOMAIN_EXCLUSIVE_BATCHES_TEST_BIN = runtime/test_term_domain_exclusive_batches-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+$(TERM_DOMAIN_EXCLUSIVE_BATCHES_TEST_BIN): tests/test_term_domain_exclusive_batches.c tests/test_term_domain_exclusive_close.c tests/test_term_domain_owner.c src/term_domain.h src/proof_batches.h $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ $< $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS) -Wl,--wrap=term_universe_free,--wrap=symbol_table_free,--wrap=cetta_fallible_calloc $(LDFLAGS)
+.PHONY: test-term-domain-exclusive-batches
+test-term-domain-exclusive-batches: $(TERM_DOMAIN_EXCLUSIVE_BATCHES_TEST_BIN)
+	@$(call cetta_exec,./$(TERM_DOMAIN_EXCLUSIVE_BATCHES_TEST_BIN))
+test-all: test-term-domain-exclusive-close test-term-domain-exclusive-batches

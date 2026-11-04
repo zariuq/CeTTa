@@ -14,6 +14,7 @@
 #include "petta_program.h"
 #include "petta_runtime.h"
 #include "petta_search_machine.h"
+#include "runtime_names.h"
 #include "search_control_advice.h"
 #include "stats.h"
 #include "petta_semantics.h"
@@ -1927,8 +1928,9 @@ static const PettaSemanticFormCase petta_semantic_form_cases[] = {
     {"chain", PETTA_FORM_CHAIN},
 };
 
-static void *test_semantic_form_thread(void *unused) {
-    (void)unused;
+static void *test_semantic_form_thread(void *context) {
+    CettaNameContext previous = cetta_name_context_current();
+    if (context) cetta_name_context_install(context);
     for (size_t index = 0u;
          index < sizeof(petta_semantic_form_cases) /
                      sizeof(petta_semantic_form_cases[0]); index++) {
@@ -1937,6 +1939,7 @@ static void *test_semantic_form_thread(void *unused) {
         assert(petta_semantics_form(symbol) ==
                petta_semantic_form_cases[index].form);
     }
+    if (context) cetta_name_context_install(&previous);
     return NULL;
 }
 
@@ -1950,11 +1953,12 @@ static void test_semantic_form_facts(void) {
         g_symbols, "process_metta_string-almost");
     assert(petta_semantics_form(lookalike) == PETTA_FORM_NONE);
 
+    CettaNameContext names = cetta_name_context_current();
     pthread_t readers[3];
     for (size_t index = 0u; index < 3u; index++)
         assert(pthread_create(
                    &readers[index], NULL,
-                   test_semantic_form_thread, NULL) == 0);
+                   test_semantic_form_thread, &names) == 0);
     for (size_t index = 0u; index < 3u; index++)
         assert(pthread_join(readers[index], NULL) == 0);
 

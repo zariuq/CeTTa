@@ -13996,14 +13996,6 @@ static bool petta_machine_extension_callable(
     return arity.exact;
 }
 
-/* A host that supplies an operation catalog owns admission of library
- * controls too. Bare machine hosts instead provide the control hooks directly. */
-static bool petta_machine_named_control_available(
-    PettaMachineImpl *machine, SymbolId head, CettaExprLen arity) {
-    return (!machine->host.native_named_arity && !machine->host.foreign_named_arity) ||
-        petta_machine_extension_named_arity(machine, head, arity).exact;
-}
-
 typedef struct {
     Atom *atom;
     const PettaSpecializerPatternNode *pattern;
@@ -36762,7 +36754,7 @@ static bool petta_machine_dispatch_solve(
     }
 
     if (head_id == g_builtin_syms.petta_transaction &&
-        nargs == 1u && petta_machine_named_control_available(machine, head_id, nargs)) {
+        nargs == 1u) {
         return petta_machine_start_transaction(
             machine, expression->expr.elems[1], expected,
             goal->barrier, petta_plan_child(plan, 1u),
@@ -36770,7 +36762,7 @@ static bool petta_machine_dispatch_solve(
     }
 
     if (head_id == g_builtin_syms.petta_with_mutex &&
-        nargs == 2u && petta_machine_named_control_available(machine, head_id, nargs)) {
+        nargs == 2u) {
         return petta_machine_start_mutex(
             machine, expression->expr.elems[1],
             expression->expr.elems[2], expected,

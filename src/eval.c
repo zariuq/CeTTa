@@ -1495,6 +1495,19 @@ typedef struct {
     CettaCount len, cap;
 } TempSpaceSet;
 
+struct CettaEvalResources {
+    TempSpaceSet made, listed;
+    TempSpaceSet created;
+    EvalGc collector;
+    CettaNativeMemory *memory;
+    uint64_t retirement_seen;
+};
+static __thread CettaEvalResources *g_eval_resources;
+static __thread TempSpaceSet g_new_space_track_fallback;
+#define g_new_space_track (*(g_eval_resources ? &g_eval_resources->created : &g_new_space_track_fallback))
+static __thread TempSpaceSet g_made_spaces_fallback, g_listed_spaces_fallback;
+#define g_made_spaces (*(g_eval_resources ? &g_eval_resources->made : &g_made_spaces_fallback))
+#define g_listed_spaces (*(g_eval_resources ? &g_eval_resources->listed : &g_listed_spaces_fallback))
 /* A space made for one evaluation (`new-space`, a snapshot, an inventory)
  * lives while an arena holds an atom of it, as a foreign record does
  * (ArenaHeldResources): atom_space takes a hold in its arena, and the reset
@@ -1535,21 +1548,14 @@ static _Atomic uint64_t g_space_release_epoch = 0u;
 void eval_resource_retirement_notify(void) {
     atomic_fetch_add_explicit(&g_space_release_epoch, 1u, memory_order_relaxed);
 }
-struct CettaEvalResources {
-    TempSpaceSet made;
-    TempSpaceSet listed;
-    TempSpaceSet created;
-    EvalGc collector;
-    CettaNativeMemory *memory;
-    uint64_t release_seen;
-};
-static __thread CettaEvalResources *g_eval_resources;
-static __thread CettaEvalResources g_eval_resources_fallback;
-#define CURRENT_RESOURCES (g_eval_resources ? g_eval_resources : &g_eval_resources_fallback)
-#define g_made_spaces (CURRENT_RESOURCES->made)
-#define g_listed_spaces (CURRENT_RESOURCES->listed)
-#define g_new_space_track (CURRENT_RESOURCES->created)
-#define g_space_release_seen (CURRENT_RESOURCES->release_seen)
+static _Thread_local uint64_t g_space_release_seen_fallback;
+#define g_space_release_seen (*(g_eval_resources ? &g_eval_resources->retirement_seen : &g_space_release_seen_fallback))
+/* Held spaces made since this thread's last safe point. */
+
+/* Held spaces a safe point found held: each is examined again only when its
+   last hold goes. */
+
+
 
 static void *space_hold_detach(Space *space);
 static pthread_mutex_t g_new_space_drained_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -15002,27 +15008,18 @@ bool eval_resource_descriptor_hold(Arena *arena, GroundedKind kind, void *descri
 
 static HyperposeStorageOwner *hyperpose_storage_owner_new(void) {
     HyperposeStorageOwner *owner = calloc(1u, sizeof(*owner));
-    if (!owner) return NULL;
+    if (!owner)
+        return NULL;
     atomic_init(&owner->references, 1u);
     hashcons_init_compact(&owner->hashcons);
-    if (!owner->hashcons.table) { free(owner); return NULL; }
-    if (!arena_try_init_detached(&owner->persistent_arena)) {
-        hashcons_free(&owner->hashcons); free(owner); return NULL;
-    }
-    if (!arena_try_init_detached(&owner->eval_arena)) {
-        arena_free(&owner->persistent_arena);
-        hashcons_free(&owner->hashcons); free(owner); return NULL;
-    }
-    if (!term_universe_init_with_store_format(&owner->term_universe,
-            TERM_UNIVERSE_STORE_FORMAT_COMPACT32_V1)) {
-        arena_free(&owner->eval_arena); arena_free(&owner->persistent_arena);
-        hashcons_free(&owner->hashcons); free(owner); return NULL;
-    }
+    arena_init(&owner->persistent_arena);
+    arena_init(&owner->eval_arena);
     owner->persistent_arena.resource_scope = owner;
     owner->eval_arena.resource_scope = owner;
-    owner->term_universe.resource_scope = owner;
     arena_set_hashcons(&owner->persistent_arena, &owner->hashcons);
     arena_set_hashcons(&owner->eval_arena, &owner->hashcons);
+    term_universe_init(&owner->term_universe);
+    owner->term_universe.resource_scope = owner;
     term_universe_set_persistent_arena(&owner->term_universe, &owner->persistent_arena);
     owner->owned_spaces.owner = owner;
     atomic_fetch_add_explicit(&g_hyperpose_storage_owners_live, 1u, memory_order_relaxed);
@@ -21691,9 +21688,9 @@ void eval_cleanup_owned_new_spaces(Registry *registry, Space *root) {
 void eval_resources_free(CettaEvalResources *resources, PettaProgram *program,
                          Registry *registry, Space *root) {
     if (!resources) return;
+    eval_cleanup_owned_new_spaces_in_set(&resources->created, registry, root);
     eval_free_held_space_set(&resources->made);
     eval_free_held_space_set(&resources->listed);
-    eval_cleanup_owned_new_spaces_in_set(&resources->created, registry, root);
     /* Worker teardown can finish on another thread. Drain only this
      * program's resources; other live engines keep their own entries. */
     pthread_mutex_lock(&g_new_space_drained_mutex);
