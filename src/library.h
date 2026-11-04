@@ -208,6 +208,7 @@ typedef struct CettaLibraryContext {
     Registry *module_token_scope;
     struct CettaHEModuleFailure *he_module_failures;
     CettaHEModuleRunScope *he_module_run_scope;
+    struct CettaImportFailureScope *import_failure_scope;
     struct CettaDocumentSourceScope *document_source_scope;
     CettaLibraryResourceScope *resource_scope;
     /* HE's top module space, named `top`. */
@@ -408,6 +409,14 @@ typedef struct {
     CettaEvalCompletion completion;
     Atom *detail;
 } CettaDocumentRunReport;
+/* Scoped host observation of import failure; language control is unchanged. */
+typedef struct CettaImportFailureScope {
+    struct CettaImportFailureScope *previous;
+    void *context;
+    void (*observe)(void *context, const char *specification, Atom *reason);
+} CettaImportFailureScope;
+void cetta_library_import_observe_begin(CettaLibraryContext *, CettaImportFailureScope *);
+void cetta_library_import_observe_end(CettaLibraryContext *, CettaImportFailureScope *);
 /* Shared document ingress with typed directive observations. Error values
  * remain values; the observer may stop at a raised or interrupted outcome.
  * A parse failure precedes execution of the document. */

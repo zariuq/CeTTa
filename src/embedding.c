@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #define _POSIX_C_SOURCE 200809L
 #define _XOPEN_SOURCE 700
 #include "cetta_embed.h"
@@ -18,6 +19,7 @@
 #include "stats.h"
 #include "tensor.h"
 #include "text_source.h"
+#include "host_services.h"
 
 #include <limits.h>
 #include <errno.h>
@@ -26,6 +28,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <dlfcn.h>
+#include <sys/stat.h>
 
 typedef struct EmbeddingCleanup EmbeddingCleanup;
 struct EmbeddingCleanup {
@@ -50,6 +54,10 @@ struct cetta_engine {
     CettaRuntimeStatsOwner *stats;
     PeTTaCompiledReaderV1 *petta_reader;
     HECompiledReaderV1 *he_reader;
+    cetta_host_hooks_t host;
+    CettaNativeMemory *memory;
+    cetta_diagnostic_t diagnostic;
+    char import_error[512];
 };
 
 typedef struct {
@@ -73,6 +81,8 @@ struct cetta_result {
     size_t group_count;
     cetta_status_t status;
     int system_error;
+    int exit_code;
+    cetta_diagnostic_t diagnostic;
 };
 
 struct cetta_query {
@@ -83,6 +93,7 @@ struct cetta_query {
     atomic_bool closed;
     EmbeddingOwner *owner;
     CettaEvalQuery *core;
+    Atom *matched_value_pattern;
     bool stepping;
 };
 
@@ -100,14 +111,75 @@ typedef struct {
     CettaEvalResources *resources;
     CettaEvalGc *collector;
     CettaRuntimeStatsOwner *stats;
-    bool rationals, universal, lists, namespaces;
+    bool rationals, universal, lists, namespaces, petta_scalars;
     CettaSurvivorAllocationScope allocation_role;
     ParserDocumentBackendScope reader;
     CettaEvalCancellationScope cancellation;
     cetta_engine_t *parent_cleanup;
     bool host_entry;
+    CettaHostScope host;
+    CettaNativeMemoryScope memory;
+    CettaImportFailureScope imports;
 } EmbeddingScope;
 static void engine_close_native_work(cetta_engine_t *engine);
+
+static void import_failure(void *context, const char *specification, Atom *reason) {
+    cetta_engine_t *engine = context;
+    const char *message = reason && reason->kind == ATOM_SYMBOL ? atom_name_cstr(reason) : "module loading failed";
+    snprintf(engine->import_error, sizeof(engine->import_error), "%s: %s",
+        specification ? specification : "module", message);
+}
+
+static void diagnostic_source(cetta_diagnostic_t *diagnostic, const char *text, size_t length, const char *origin) {
+    if (origin) snprintf(diagnostic->source, sizeof(diagnostic->source), "%s", origin);
+    diagnostic->line = 1u; diagnostic->column = 1u;
+    size_t position = 0u;
+    unsigned depth = 0u;
+    bool string = false, escaped = false, comment = false;
+    for (; position < length; position++) {
+        char ch = text[position];
+        if (comment) { if (ch == '\n') comment = false; }
+        else if (string) {
+            if (escaped) escaped = false;
+            else if (ch == '\\') escaped = true;
+            else if (ch == '"') string = false;
+        } else if (ch == ';') comment = true;
+        else if (ch == '"') string = true;
+        else if (ch == '(') depth++;
+        else if (ch == ')') { if (!depth) break; depth--; }
+        if (ch == '\n') { diagnostic->line++; diagnostic->column = 1u; }
+        else diagnostic->column++;
+    }
+    if (!diagnostic->message[0])
+        snprintf(diagnostic->message, sizeof(diagnostic->message), "%s",
+            string ? "unterminated string" : depth ? "unclosed expression" : "invalid source syntax");
+}
+
+static bool host_write(void *context, unsigned channel, const char *bytes, size_t length) {
+    cetta_engine_t *engine = context;
+    atomic_fetch_add_explicit(&engine->active_callbacks, 1u, memory_order_acq_rel);
+    cetta_status_t status = engine->host.write(engine->host.context, channel, bytes, length);
+    atomic_fetch_sub_explicit(&engine->active_callbacks, 1u, memory_order_acq_rel);
+    if (status != CETTA_OK)
+        cetta_host_fail(status == CETTA_OUT_OF_MEMORY ? CETTA_HOST_MEMORY : CETTA_HOST_IO);
+    return status == CETTA_OK;
+}
+static bool host_flush(void *context, unsigned channel) {
+    cetta_engine_t *engine = context;
+    atomic_fetch_add_explicit(&engine->active_callbacks, 1u, memory_order_acq_rel);
+    cetta_status_t status = engine->host.flush(engine->host.context, channel);
+    atomic_fetch_sub_explicit(&engine->active_callbacks, 1u, memory_order_acq_rel);
+    if (status != CETTA_OK)
+        cetta_host_fail(status == CETTA_OUT_OF_MEMORY ? CETTA_HOST_MEMORY : CETTA_HOST_IO);
+    return status == CETTA_OK;
+}
+static bool host_interrupt(void *context) {
+    cetta_engine_t *engine = context;
+    atomic_fetch_add_explicit(&engine->active_callbacks, 1u, memory_order_acq_rel);
+    bool interrupted = engine->host.interrupt(engine->host.context) != 0;
+    atomic_fetch_sub_explicit(&engine->active_callbacks, 1u, memory_order_acq_rel);
+    return interrupted;
+}
 
 /* Callback entry may begin while another thread is waiting for the engine.
  * A bounded mutex wait lets that waiter observe the callback and decline. */
@@ -191,11 +263,38 @@ static int reader_term(void *context, const uint8_t *bytes, size_t length,
         bytes, length, universe, id, error, capacity);
 }
 
+static int reader_bytes_prefix(void *context, const uint8_t *bytes, size_t length,
+        TermUniverse *universe, AtomId **ids, int *complete,
+        char *error, size_t capacity) {
+    cetta_engine_t *engine = context;
+    if (!engine->petta_reader)
+        return he_compiled_reader_v1_parse_bytes_prefix_ids(engine->he_reader,
+            bytes, length, universe, ids, complete, error, capacity);
+    return parse_metta_bytes_prefix_ids(bytes, length, universe,
+        ids, complete, error, capacity);
+}
+
+static int reader_file_prefix(void *context, const char *path,
+        TermUniverse *universe, AtomId **ids, int *complete,
+        char *error, size_t capacity) {
+    cetta_engine_t *engine = context;
+    if (!engine->petta_reader)
+        return he_compiled_reader_v1_parse_file_prefix_ids(engine->he_reader,
+            path, universe, ids, complete, error, capacity);
+    return parse_metta_file_prefix_ids(path, universe, ids, complete, error, capacity);
+}
+
 static void scope_enter(cetta_engine_t *engine, EmbeddingScope *scope) {
     scope->engine = engine;
     scope->parent_cleanup = g_embedding_deferred_cleanup;
     scope->host_entry = false;
+    cetta_native_memory_enter(&scope->memory, engine->memory);
     engine->active_entries++;
+    CettaHostServices host = {.context = engine,
+        .write = engine->host.write ? host_write : NULL,
+        .flush = engine->host.flush ? host_flush : NULL,
+        .poll = engine->host.interrupt ? host_interrupt : NULL};
+    cetta_host_scope_enter(&scope->host, &host);
     scope->names = cetta_name_context_current();
     scope->hashcons = g_hashcons;
     CettaNameContext names = cetta_name_domain_context(&engine->names);
@@ -208,14 +307,19 @@ static void scope_enter(cetta_engine_t *engine, EmbeddingScope *scope) {
     scope->collector = eval_collector_exchange(eval_resources_collector(engine->session.resources));
     eval_cancellation_enter(&scope->cancellation, &engine->closed);
     scope->libraries = eval_exchange_library_context(&engine->session.libraries);
+    scope->imports = (CettaImportFailureScope){.context = engine, .observe = import_failure};
+    cetta_library_import_observe_begin(&engine->session.libraries, &scope->imports);
     scope->rationals = parser_set_rational_literals_enabled(
         !cetta_language_uses_rust_he_compat_semantics(engine->language, engine->profile));
     scope->universal = parser_set_universal_name_syntax_enabled(false);
     scope->lists = parser_set_list_syntax_enabled(
         cetta_language_reads_lists(engine->language, engine->profile));
     scope->namespaces = parser_set_namespace_sugar_enabled(engine->language != CETTA_LANGUAGE_HE);
+    scope->petta_scalars = parser_set_petta_scalar_policy(engine->language == CETTA_LANGUAGE_PETTA);
     ParserDocumentIdsBackend reader = {.context = engine, .parse_text_ids = reader_text,
-        .parse_file_ids = reader_file, .parse_term_bytes_id = engine->petta_reader ? reader_term : NULL};
+        .parse_file_ids = reader_file, .parse_bytes_prefix_ids = reader_bytes_prefix,
+        .parse_file_prefix_ids = reader_file_prefix,
+        .parse_term_bytes_id = engine->petta_reader ? reader_term : NULL};
     parser_document_backend_enter(&scope->reader, &reader);
 }
 
@@ -226,10 +330,12 @@ static void scope_leave(EmbeddingScope *scope) {
         engine_close_native_work(engine);
     eval_cancellation_leave(&scope->cancellation);
     parser_document_backend_leave(&scope->reader);
+    parser_set_petta_scalar_policy(scope->petta_scalars);
     parser_set_namespace_sugar_enabled(scope->namespaces);
     parser_set_list_syntax_enabled(scope->lists);
     parser_set_universal_name_syntax_enabled(scope->universal);
     parser_set_rational_literals_enabled(scope->rationals);
+    cetta_library_import_observe_end(&engine->session.libraries, &scope->imports);
     eval_exchange_library_context(scope->libraries);
     eval_resources_exchange(scope->resources);
     eval_collector_exchange(scope->collector);
@@ -238,6 +344,8 @@ static void scope_leave(EmbeddingScope *scope) {
     cetta_name_context_install(&scope->names);
     cetta_survivor_allocation_scope_leave(scope->allocation_role);
     cetta_runtime_stats_owner_exchange(scope->stats);
+    cetta_host_scope_leave(&scope->host);
+    cetta_native_memory_leave(&scope->memory);
 }
 
 static cetta_status_t engine_enter(cetta_engine_t *engine, EmbeddingScope *scope) {
@@ -254,6 +362,12 @@ static cetta_status_t engine_enter(cetta_engine_t *engine, EmbeddingScope *scope
         cetta_embed_engine_release(engine);
         return CETTA_ENGINE_CLOSED;
     }
+    if (!engine->active_entries) {
+        cetta_eval_session_clear_process_exit(&engine->session.libraries.session);
+        cetta_native_memory_clear_failure(engine->memory);
+        engine->diagnostic = (cetta_diagnostic_t){.size = sizeof(cetta_diagnostic_t)};
+        engine->import_error[0] = '\0';
+    }
     scope_enter(engine, scope);
     scope->host_entry = true;
     g_embedding_deferred_cleanup = NULL;
@@ -267,6 +381,8 @@ static void engine_close_native_work(cetta_engine_t *engine) {
 }
 
 static void engine_leave(cetta_engine_t *engine, EmbeddingScope *scope) {
+    if (cetta_native_memory_abandoned(engine->memory))
+        atomic_store_explicit(&engine->closed, true, memory_order_release);
     scope_leave(scope);
     engine_unlock(engine);
     if (scope->host_entry) g_embedding_deferred_cleanup = scope->parent_cleanup;
@@ -275,7 +391,54 @@ static void engine_leave(cetta_engine_t *engine, EmbeddingScope *scope) {
 
 uint32_t cetta_embed_abi_version(void) { return CETTA_EMBED_ABI_VERSION; }
 
-cetta_status_t cetta_embed_engine_new(const cetta_engine_config_t *config, cetta_engine_t **output) {
+cetta_status_t cetta_embed_engine_set_host_hooks(cetta_engine_t *engine, const cetta_host_hooks_t *hooks) {
+    if (hooks && (hooks->size != sizeof(*hooks) || !!hooks->retain != !!hooks->release))
+        return CETTA_INVALID_ARGUMENT;
+    EmbeddingScope scope;
+    cetta_status_t status = engine_enter(engine, &scope);
+    if (status != CETTA_OK) return status;
+    if (engine->active_entries > 1u) status = CETTA_BUSY;
+    else {
+        cetta_host_hooks_t previous = engine->host;
+        if (hooks && hooks->retain) hooks->retain(hooks->context);
+        engine->host = hooks ? *hooks : (cetta_host_hooks_t){0};
+        if (previous.release) previous.release(previous.context);
+    }
+    engine_leave(engine, &scope);
+    return status;
+}
+
+static bool installed_resource_root(char *root, size_t capacity) {
+    Dl_info info;
+    char library[PATH_MAX];
+    if (!dladdr((void *)&cetta_embed_abi_version, &info) || !info.dli_fname ||
+        !realpath(info.dli_fname, library)) return false;
+    char *slash = strrchr(library, '/');
+    if (!slash) return false;
+    *slash = '\0';
+    const char *suffixes[] = {"../share/cetta", ".."};
+    for (size_t i = 0; i < sizeof(suffixes) / sizeof(*suffixes); ++i) {
+        char candidate[PATH_MAX], probe[PATH_MAX];
+        struct stat status;
+        int written = snprintf(candidate, sizeof(candidate), "%s/%s", library, suffixes[i]);
+        if (written < 0 || (size_t)written >= sizeof(candidate)) continue;
+        written = snprintf(probe, sizeof(probe), "%s/lib", candidate);
+        if (written < 0 || (size_t)written >= sizeof(probe) ||
+            stat(probe, &status) || !S_ISDIR(status.st_mode)) continue;
+        if (!realpath(candidate, probe) || strlen(probe) >= capacity) continue;
+        strcpy(root, probe);
+        return true;
+    }
+    return false;
+}
+
+static void engine_free_allocation(cetta_engine_t *engine) {
+    CettaNativeMemory *memory = engine->memory;
+    free(engine);
+    cetta_native_memory_release(memory);
+}
+
+static cetta_status_t engine_new_native(const cetta_engine_config_t *config, cetta_engine_t **output) {
     if (!output) return CETTA_INVALID_ARGUMENT;
     *output = NULL;
     if (config && (config->size != sizeof(*config) ||
@@ -292,6 +455,8 @@ cetta_status_t cetta_embed_engine_new(const cetta_engine_config_t *config, cetta
         return CETTA_INVALID_ARGUMENT;
     cetta_engine_t *engine = calloc(1, sizeof(*engine));
     if (!engine) return CETTA_OUT_OF_MEMORY;
+    engine->memory = cetta_native_memory_current();
+    cetta_native_memory_retain(engine->memory);
     pthread_mutexattr_t attr;
     int error = pthread_mutexattr_init(&attr);
     if (!error) {
@@ -299,7 +464,7 @@ cetta_status_t cetta_embed_engine_new(const cetta_engine_config_t *config, cetta
         if (!error) error = pthread_mutex_init(&engine->mutex, &attr);
         pthread_mutexattr_destroy(&attr);
     }
-    if (error) { free(engine); return CETTA_ENGINE_ERROR; }
+    if (error) { engine_free_allocation(engine); return CETTA_ENGINE_ERROR; }
     atomic_init(&engine->references, 1u);
     atomic_init(&engine->closed, false);
     atomic_init(&engine->active_callbacks, 0u);
@@ -310,7 +475,7 @@ cetta_status_t cetta_embed_engine_new(const cetta_engine_config_t *config, cetta
     if (!engine->stats) {
         cetta_status_t status = errno == ENOMEM ? CETTA_OUT_OF_MEMORY : CETTA_ENGINE_ERROR;
         pthread_mutex_destroy(&engine->mutex);
-        free(engine);
+        engine_free_allocation(engine);
         return status;
     }
     CettaRuntimeStatsOwner *previous_stats = cetta_runtime_stats_owner_exchange(engine->stats);
@@ -337,8 +502,14 @@ cetta_status_t cetta_embed_engine_new(const cetta_engine_config_t *config, cetta
     CettaNameContext names = cetta_name_domain_context(&engine->names);
     cetta_name_context_install(&names);
     bool started = cetta_runtime_session_init(&engine->session, &engine->persistent, language->id, profile);
+    if (started) eval_resources_set_native_memory(engine->session.resources, engine->memory);
     if (config && config->resource_root)
         strcpy(engine->session.libraries.root_dir, config->resource_root);
+    else {
+        char root[PATH_MAX];
+        if (installed_resource_root(root, sizeof(root)))
+            strcpy(engine->session.libraries.root_dir, root);
+    }
     bool rooted = started && cetta_runtime_session_open_root(&engine->session, &engine->persistent);
     int startup_error = rooted ? 0 : errno;
     EmbeddingScope scope;
@@ -368,8 +539,29 @@ early_failure:
     cetta_runtime_stats_owner_exchange(previous_stats);
     cetta_runtime_stats_owner_free(engine->stats);
     pthread_mutex_destroy(&engine->mutex);
-    free(engine);
+    engine_free_allocation(engine);
     return early_status;
+}
+
+cetta_status_t cetta_embed_engine_new_limited(const cetta_engine_config_t *config,
+        uint64_t memory_limit, cetta_engine_t **output) {
+    if (!output) return CETTA_INVALID_ARGUMENT;
+    *output = NULL;
+    CettaNativeMemory *memory = cetta_native_memory_new(memory_limit);
+    if (!memory) return CETTA_OUT_OF_MEMORY;
+    CettaNativeMemoryScope scope;
+    cetta_native_memory_enter(&scope, memory);
+    cetta_status_t status = engine_new_native(config, output);
+    if (cetta_native_memory_failed()) {
+        if (*output) { cetta_embed_engine_release(*output); *output = NULL; }
+        status = CETTA_OUT_OF_MEMORY;
+    }
+    cetta_native_memory_leave(&scope);
+    cetta_native_memory_release(memory);
+    return status;
+}
+cetta_status_t cetta_embed_engine_new(const cetta_engine_config_t *config, cetta_engine_t **output) {
+    return cetta_embed_engine_new_limited(config, UINT64_MAX, output);
 }
 
 static bool engine_retain_live(cetta_engine_t *engine) {
@@ -420,8 +612,9 @@ void cetta_embed_engine_release(cetta_engine_t *engine) {
     cetta_name_domain_free(&engine->names);
     cetta_runtime_stats_owner_exchange(previous_stats);
     cetta_runtime_stats_owner_free(engine->stats);
+    if (engine->host.release) engine->host.release(engine->host.context);
     pthread_mutex_destroy(&engine->mutex);
-    free(engine);
+    engine_free_allocation(engine);
 }
 
 static void owner_destroy_cleanup(EmbeddingCleanup *cleanup) {
@@ -467,7 +660,10 @@ static cetta_status_t owner_enter(const EmbeddingOwner *owner, EmbeddingScope *s
 
 static cetta_status_t atom_wrap(EmbeddingOwner *owner, Atom *value, cetta_atom_t **output) {
     if (!value) return CETTA_OUT_OF_MEMORY;
+    CettaNativeMemoryScope memory;
+    cetta_native_memory_enter(&memory, owner->engine->memory);
     cetta_atom_t *atom = malloc(sizeof(*atom));
+    cetta_native_memory_leave(&memory);
     if (!atom) return CETTA_OUT_OF_MEMORY;
     atomic_init(&atom->references, 1u);
     atomic_fetch_add_explicit(&owner->references, 1u, memory_order_relaxed);
@@ -498,7 +694,8 @@ static char *text_copy(const char *text, size_t length, cetta_status_t *status) 
 
 static int read_forms(cetta_engine_t *engine, const char *text, Arena *owner, Atom ***forms) {
     AtomId *ids = NULL;
-    int count = parse_metta_text_ids(text, &engine->session.libraries.term_universe, &ids);
+    int count = parse_metta_text_ids_diagnostic(text, &engine->session.libraries.term_universe, &ids,
+        engine->diagnostic.message, sizeof(engine->diagnostic.message));
     *forms = NULL;
     if (count <= 0) { free(ids); return count; }
     Atom **values = calloc((size_t)count, sizeof(*values));
@@ -517,14 +714,17 @@ static int read_forms(cetta_engine_t *engine, const char *text, Arena *owner, At
     return count;
 }
 
-cetta_status_t cetta_embed_parse(cetta_engine_t *engine, const char *text, size_t length, cetta_atom_t **output) {
+cetta_status_t cetta_embed_parse_diagnostic(cetta_engine_t *engine, const char *text, size_t length,
+        cetta_diagnostic_t *diagnostic, cetta_atom_t **output) {
+    if (diagnostic && diagnostic->size != sizeof(*diagnostic)) return CETTA_INVALID_ARGUMENT;
+    if (diagnostic) *diagnostic = (cetta_diagnostic_t){.size = sizeof(*diagnostic)};
     if (!output || !text) return CETTA_INVALID_ARGUMENT;
     *output = NULL;
-    cetta_status_t status;
-    char *copy = text_copy(text, length, &status);
-    if (!copy) return status;
     EmbeddingScope scope;
-    status = engine_enter(engine, &scope);
+    cetta_status_t status = engine_enter(engine, &scope);
+    if (status != CETTA_OK) return status;
+    char *copy = text_copy(text, length, &status);
+    if (!copy) { engine_leave(engine, &scope); return status; }
     if (status == CETTA_OK) {
         EmbeddingOwner *owner = owner_new(engine);
         Atom **forms = NULL;
@@ -534,6 +734,10 @@ cetta_status_t cetta_embed_parse(cetta_engine_t *engine, const char *text, size_
         if (!handled && count == 1) value = forms[0];
         status = !owner ? CETTA_OUT_OF_MEMORY : !value ? CETTA_PARSE_ERROR
             : atom_wrap(owner, value, output);
+        if (cetta_native_memory_failed()) status = CETTA_OUT_OF_MEMORY;
+        if (status == CETTA_PARSE_ERROR)
+            diagnostic_source(&engine->diagnostic, text, length, NULL);
+        if (diagnostic) *diagnostic = engine->diagnostic;
         free(forms);
         owner_release(owner);
         engine_leave(engine, &scope);
@@ -565,6 +769,9 @@ static cetta_status_t atom_scalar(cetta_engine_t *engine, const char *text, int6
 
 cetta_status_t cetta_embed_atom_symbol(cetta_engine_t *e, const char *s, cetta_atom_t **o) { return atom_scalar(e,s,0,0,0,o); }
 cetta_status_t cetta_embed_atom_string(cetta_engine_t *e, const char *s, cetta_atom_t **o) { return atom_scalar(e,s,0,1,0,o); }
+cetta_status_t cetta_embed_parse(cetta_engine_t *engine, const char *text, size_t length, cetta_atom_t **output) {
+    return cetta_embed_parse_diagnostic(engine, text, length, NULL, output);
+}
 cetta_status_t cetta_embed_atom_integer(cetta_engine_t *e, int64_t n, cetta_atom_t **o) { return atom_scalar(e,NULL,n,2,0,o); }
 cetta_status_t cetta_embed_atom_float(cetta_engine_t *e, double n, cetta_atom_t **o) { return atom_scalar(e,NULL,0,3,n,o); }
 cetta_status_t cetta_embed_atom_boolean(cetta_engine_t *e, int n, cetta_atom_t **o) { return atom_scalar(e,NULL,n,4,0,o); }
@@ -572,10 +779,14 @@ cetta_status_t cetta_embed_atom_variable(cetta_engine_t *e, const char *s, cetta
 static cetta_status_t atom_exact_decimal(cetta_engine_t *engine, const char *text, bool rational, cetta_atom_t **output) {
     if (!text || !output) return CETTA_INVALID_ARGUMENT;
     *output = NULL;
+    EmbeddingScope scope;
+    cetta_status_t status = engine_enter(engine, &scope);
+    if (status != CETTA_OK) return status;
     char *canonical = rational ? cetta_rational_canonicalize_owned(text) : cetta_bigint_canonicalize_owned(text);
-    if (!canonical) return CETTA_INVALID_ARGUMENT;
-    cetta_status_t status = atom_scalar(engine, canonical, 0, rational ? 7u : 6u, 0, output);
+    status = canonical ? atom_scalar(engine, canonical, 0, rational ? 7u : 6u, 0, output)
+        : cetta_native_memory_failed() ? CETTA_OUT_OF_MEMORY : CETTA_INVALID_ARGUMENT;
     free(canonical);
+    engine_leave(engine, &scope);
     return status;
 }
 cetta_status_t cetta_embed_atom_integer_decimal(cetta_engine_t *e, const char *s, cetta_atom_t **o) { return atom_exact_decimal(e,s,false,o); }
@@ -702,10 +913,11 @@ cetta_status_t cetta_embed_atom_format(const cetta_atom_t *atom, char *buffer, s
     if (status != CETTA_OK) return status;
     Arena temporary;
     arena_init_detached(&temporary);
-    const char *text = atom_to_string(&temporary, atom->value);
+    size_t length = 0u;
+    const char *text = atom_to_host_bytes(&temporary, atom->value, &length);
     status = text ? CETTA_OK : CETTA_OUT_OF_MEMORY;
     if (text) {
-        *required = strlen(text) + 1u;
+        *required = length + 1u;
         if (capacity >= *required) memcpy(buffer, text, *required);
     }
     arena_free(&temporary);
@@ -733,6 +945,15 @@ size_t cetta_embed_result_group_count(const cetta_result_t *r) { return r ? r->g
 size_t cetta_embed_result_group_size(const cetta_result_t *r, size_t i) { return r && i < r->group_count ? r->groups[i] : 0u; }
 cetta_status_t cetta_embed_result_status(const cetta_result_t *r) { return r ? r->status : CETTA_INVALID_ARGUMENT; }
 int cetta_embed_result_system_error(const cetta_result_t *r) { return r && r->status == CETTA_IO_ERROR ? r->system_error : 0; }
+int cetta_embed_result_exit_code(const cetta_result_t *r) { return r && r->status == CETTA_HALTED ? r->exit_code : 0; }
+cetta_status_t cetta_embed_result_diagnostic(const cetta_result_t *result, cetta_diagnostic_t *diagnostic) {
+    if (!result || !diagnostic || diagnostic->size != sizeof(*diagnostic)) return CETTA_INVALID_ARGUMENT;
+    *diagnostic = result->diagnostic;
+    diagnostic->size = sizeof(*diagnostic);
+    diagnostic->system_error = result->system_error;
+    diagnostic->exit_code = result->exit_code;
+    return CETTA_OK;
+}
 cetta_status_t cetta_embed_result_get(const cetta_result_t *r, size_t i, cetta_atom_t **output) {
     if (!output) return CETTA_INVALID_ARGUMENT;
     *output = NULL;
@@ -756,6 +977,18 @@ static cetta_status_t outcome_status(const EvalOutcome *outcome) {
 }
 static cetta_status_t append_outcome(cetta_result_t *result, const EvalOutcome *outcome) {
     cetta_status_t status = outcome_status(outcome);
+    if (cetta_native_memory_failed()) status = CETTA_OUT_OF_MEMORY;
+    switch (cetta_host_failure()) {
+    case CETTA_HOST_MEMORY: status = CETTA_OUT_OF_MEMORY; break;
+    case CETTA_HOST_IO: status = CETTA_IO_ERROR; break;
+    case CETTA_HOST_INTERRUPTED: status = CETTA_CANCELLED; break;
+    default: break;
+    }
+    CettaEvalSession *session = &result->owner->engine->session.libraries.session;
+    if (status == CETTA_OK && cetta_eval_session_process_exit_requested(session)) {
+        status = CETTA_HALTED;
+        result->exit_code = cetta_eval_session_process_exit_code(session);
+    }
     if (outcome->results.len > SIZE_MAX - result->count ||
         result->count + outcome->results.len > SIZE_MAX / sizeof(Atom *) ||
         result->group_count >= SIZE_MAX / sizeof(size_t)) {
@@ -776,6 +1009,7 @@ static cetta_status_t append_outcome(cetta_result_t *result, const EvalOutcome *
         result->count = count;
         result->groups[result->group_count++] = outcome->results.len;
     }
+    result->diagnostic = result->owner->engine->diagnostic;
     return result->status = status;
 }
 static cetta_status_t evaluate(cetta_engine_t *engine, Atom *expression,
@@ -864,6 +1098,8 @@ static cetta_status_t run_document_locked(cetta_engine_t *engine, const char *te
             : cetta_library_run_text(&engine->session.libraries, &engine->session.space,
                 &engine->session.registry, text, &result->owner->arena, &engine->persistent,
                 observe_document, result, &report);
+        if (report.detail && report.detail->kind == ATOM_SYMBOL)
+            snprintf(engine->diagnostic.message, sizeof(engine->diagnostic.message), "%s", atom_name_cstr(report.detail));
         status = result->status;
         if (!ok && status == CETTA_OK) {
             status = report.status == CETTA_DOCUMENT_PARSE_FAILED ? CETTA_PARSE_ERROR
@@ -882,7 +1118,9 @@ static cetta_status_t run_document_locked(cetta_engine_t *engine, const char *te
         }
     }
     engine->session.libraries.session.options.fuel_limit = previous_fuel;
-    if (result) result->status = status;
+    if (cetta_native_memory_failed()) status = CETTA_OUT_OF_MEMORY;
+    if (status == CETTA_PARSE_ERROR) diagnostic_source(&engine->diagnostic, text, strlen(text), origin);
+    if (result) { result->status = status; result->diagnostic = engine->diagnostic; }
     return status;
 }
 
@@ -890,12 +1128,11 @@ cetta_status_t cetta_embed_run(cetta_engine_t *engine, const char *text, size_t 
                         const cetta_eval_options_t *options, cetta_result_t **output) {
     if (!output || !text || !options_valid(options)) return CETTA_INVALID_ARGUMENT;
     *output = NULL;
-    cetta_status_t status;
-    char *copy = text_copy(text, length, &status);
-    if (!copy) return status;
     EmbeddingScope scope;
-    status = engine_enter(engine, &scope);
-    if (status != CETTA_OK) { free(copy); return status; }
+    cetta_status_t status = engine_enter(engine, &scope);
+    if (status != CETTA_OK) return status;
+    char *copy = text_copy(text, length, &status);
+    if (!copy) { engine_leave(engine, &scope); return status; }
     cetta_result_t *result = result_new(engine);
     status = run_document_locked(engine, copy, NULL, options, result);
     free(copy);
@@ -961,7 +1198,19 @@ cetta_status_t cetta_embed_import(cetta_engine_t *engine, const cetta_atom_t *ta
     }
     if (status == CETTA_OK) status = cetta_embed_atom_symbol(engine, "import!", &head);
     cetta_atom_t *arguments[] = {space, (cetta_atom_t *)spec};
+    EmbeddingScope import_scope;
+    bool entered = false;
+    if (status == CETTA_OK) {
+        status = engine_enter(engine, &import_scope);
+        entered = status == CETTA_OK;
+    }
     if (status == CETTA_OK) status = cetta_embed_call(engine, head, arguments, 2u, options, output);
+    if (status == CETTA_OK && *output && !(*output)->count && engine->import_error[0]) {
+        status = CETTA_IO_ERROR;
+        (*output)->status = status;
+        snprintf((*output)->diagnostic.message, sizeof((*output)->diagnostic.message), "%s", engine->import_error);
+    }
+    if (entered) engine_leave(engine, &import_scope);
     cetta_embed_atom_release(space); cetta_embed_atom_release(head);
     cetta_embed_space_release(root);
     return status;
@@ -986,8 +1235,11 @@ static cetta_status_t query_open_locked(cetta_engine_t *engine, Atom *source, At
             query->core = eval_query_open_exports(&engine->session.space, &engine->persistent,
                 &engine->session.registry, source, exports, options ? (int)options->semantic_fuel : -1);
     }
-    if (!query || !query->owner || !query->core) {
-        if (query) { owner_release(query->owner); free(query); }
+    if (!query || !query->owner || !query->core || cetta_native_memory_failed()) {
+        if (query) {
+            if (query->core) eval_query_close(query->core);
+            owner_release(query->owner); free(query);
+        }
         status = CETTA_OUT_OF_MEMORY;
     } else *output = query;
     return status;
@@ -1084,11 +1336,30 @@ cetta_status_t cetta_embed_query_step(cetta_query_t *query, uint64_t allowance,
             CettaEvalQueryAnswer packet;
             CettaEvalQueryStep step = eval_query_step(query->core, &result->owner->arena,
                 allowance, &outcome, &packet, &info->physical_steps);
-            status = append_outcome(result, &outcome);
+            if (query->matched_value_pattern && outcome.results.len) {
+                Bindings bindings;
+                if (!packet.bindings || !bindings_restore_captured_value(packet.bindings, &bindings))
+                    status = CETTA_ENGINE_ERROR;
+                else {
+                    /* Matching projected an inert unit. Substitute the stored
+                     * pattern here, after execution, and publish it as data. */
+                    for (CettaCount i = 0; i < outcome.results.len; ++i) {
+                        outcome.results.items[i] = bindings_apply(&bindings,
+                            &result->owner->arena, query->matched_value_pattern);
+                        if (!outcome.results.items[i]) status = CETTA_OUT_OF_MEMORY;
+                    }
+                    bindings_free(&bindings);
+                }
+            }
+            if (status == CETTA_OK) status = append_outcome(result, &outcome);
             info->state = step == CETTA_QUERY_ANSWER ? CETTA_QUERY_STATE_ANSWER
                 : step == CETTA_QUERY_EXHAUSTED ? CETTA_QUERY_STATE_COMPLETE
                 : step == CETTA_QUERY_STOPPED ? CETTA_QUERY_STATE_STOPPED : CETTA_QUERY_STATE_PAUSED;
             if (step == CETTA_QUERY_DRIVER_PENDING) status = CETTA_PREPARATION_REQUIRED;
+            if (status == CETTA_HALTED) {
+                info->state = CETTA_QUERY_STATE_STOPPED;
+                atomic_store_explicit(&query->closed, true, memory_order_release);
+            }
             info->source_steps = outcome.steps_spent;
             info->source_remaining = outcome.budget_remaining;
             info->source_limited = outcome.budget_limited;
@@ -1104,6 +1375,7 @@ cetta_status_t cetta_embed_query_step(cetta_query_t *query, uint64_t allowance,
             }
             if (packet.delayed && atom_wrap(result->owner, packet.delayed, &info->delayed) != CETTA_OK)
                 status = CETTA_OUT_OF_MEMORY;
+            if (cetta_native_memory_failed()) status = CETTA_OUT_OF_MEMORY;
             result->status = status;
             *output = result;
             eval_outcome_free(&outcome);
@@ -1233,11 +1505,19 @@ cetta_status_t cetta_embed_space_match(cetta_space_t *space, const cetta_atom_t 
     Atom *body = template_value ? template_value->value
         : engine->language == CETTA_LANGUAGE_PETTA
             ? atom_expr2(&scratch, atom_symbol_id(&scratch, g_builtin_syms.quote), pattern->value)
-            : atom_he_evaluated_copy(&scratch, pattern->value);
+            : atom_unit(&scratch);
     Atom *source = body ? atom_expr(&scratch, (Atom *[]){
         atom_symbol_id(&scratch, g_builtin_syms.match), space->value->value, pattern->value, body}, 4) : NULL;
     status = source && variables ? query_open_locked(engine, source, variables, options, output)
                                 : CETTA_OUT_OF_MEMORY;
+    if (status == CETTA_OK && !template_value && engine->language == CETTA_LANGUAGE_HE) {
+        (*output)->matched_value_pattern = atom_deep_copy(&(*output)->owner->arena, pattern->value);
+        if (!(*output)->matched_value_pattern) {
+            cetta_embed_query_release(*output);
+            *output = NULL;
+            status = CETTA_OUT_OF_MEMORY;
+        }
+    }
     arena_free(&scratch);
     engine_leave(engine, &scope);
     return status;
@@ -1251,6 +1531,6 @@ const char *cetta_embed_status_name(cetta_status_t status) {
     static const char *const names[] = {"ok", "invalid-argument", "out-of-memory",
         "engine-closed", "foreign-engine", "parse-error", "language-raised",
         "fuel-exhausted", "cancelled", "resource-error", "engine-error", "busy",
-        "query-closed", "invalidated", "preparation-required", "buffer-incompatible", "io-error"};
+        "query-closed", "invalidated", "preparation-required", "buffer-incompatible", "io-error", "halted"};
     return (unsigned)status < sizeof(names) / sizeof(*names) ? names[status] : "unknown-status";
 }

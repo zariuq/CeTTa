@@ -650,16 +650,19 @@ static void he_canonical_arguments_push(HeCanonicalFrame *parent,
     if (!frame)
         return;
     HeCanonicalRegisters *registers = cetta_malloc(sizeof(*registers));
+    if (!registers) { eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY); return; }
     memset(registers, 0, sizeof(*registers));
     registers->op = op;
     registers->len = len;
     if (len) {
         registers->source = cetta_malloc(sizeof(Atom *) * (size_t)len);
         registers->prefix = cetta_malloc(sizeof(Atom *) * (size_t)len);
+        if (!registers->source || !registers->prefix) goto allocation_failed;
         memset(registers->prefix, 0, sizeof(Atom *) * (size_t)len);
         memcpy(registers->source, source, sizeof(Atom *) * (size_t)len);
         if (typed) {
             registers->types = cetta_malloc(sizeof(Atom *) * (size_t)len);
+            if (!registers->types) goto allocation_failed;
             memcpy(registers->types, types, sizeof(Atom *) * (size_t)len);
         }
     }
@@ -671,6 +674,7 @@ static void he_canonical_arguments_push(HeCanonicalFrame *parent,
             registers->types, (size_t)len, registers->prefix,
             (size_t)len, target);
         frame->argument_state = cetta_malloc(sizeof(*frame->argument_state));
+        if (!frame->argument_state) { eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY); return; }
         interpret_function_args_frame_init(&frame->argument_state->argument, 0u,
             &frame->env);
         frame->argument_initialized = true;
@@ -679,10 +683,15 @@ static void he_canonical_arguments_push(HeCanonicalFrame *parent,
             NULL, 0u, registers->source, (size_t)len,
             registers->prefix, (size_t)len, &frame->env, target, NULL);
         frame->argument_state = cetta_malloc(sizeof(*frame->argument_state));
+        if (!frame->argument_state) { eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY); return; }
         interpret_tuple_frame_init(&frame->argument_state->tuple, 0u,
             &frame->env, NULL);
         frame->tuple_initialized = true;
     }
+    return;
+allocation_failed:
+    free(registers->source); free(registers->types); free(registers->prefix); free(registers);
+    eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
 }
 
 static void he_canonical_argument_next(HeCanonicalFrame *frame,
@@ -696,11 +705,13 @@ static void he_canonical_argument_next(HeCanonicalFrame *frame,
     child->registers = frame->registers;
     if (frame->kind == HE_CANONICAL_ARGUMENTS) {
         child->argument_state = cetta_malloc(sizeof(*child->argument_state));
+        if (!child->argument_state) { eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY); return; }
         interpret_function_args_frame_init(&child->argument_state->argument,
             index, &child->env);
         child->argument_initialized = true;
     } else {
         child->argument_state = cetta_malloc(sizeof(*child->argument_state));
+        if (!child->argument_state) { eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY); return; }
         interpret_tuple_frame_init(&child->argument_state->tuple, (uint32_t)index,
             &child->env, variant);
         child->tuple_initialized = true;
@@ -1815,10 +1826,19 @@ static void he_canonical_resume_dispatch(HeCanonicalFrame *frame) {
         }
         CettaExprLen nargs = frame->atom->expr.len - 1u;
         Atom **domains = nargs ? cetta_malloc(sizeof(Atom *) * (size_t)nargs) : NULL;
-        for (CettaExprIndex i = 0u; i < nargs; i++)
+        if (nargs && !domains) {
+            bindings_free(&applicable);
+            eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY); return;
+        }
+        for (CettaExprIndex i = 0u; i < nargs; i++) {
             domains[i] = function_domain_refine(
                 &frame->work.items[frame->path_index].env, a,
                 frame->live[0]->expr.elems[i + 1u]);
+            if (!domains[i]) {
+                free(domains); bindings_free(&applicable);
+                eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY); return;
+            }
+        }
         outcome_set_free(&frame->paths);
         outcome_set_init(&frame->paths);
         frame->index = 0u;
@@ -1940,15 +1960,21 @@ static void he_canonical_match_initialize(HeCanonicalFrame *frame) {
     CettaExprLen capacity = frame->sourced_match
         ? conjunction->expr.len - 1u : 16u;
     HeCanonicalRegisters *registers = cetta_malloc(sizeof(*registers));
+    if (!registers) { eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY); return; }
     memset(registers, 0, sizeof(*registers));
     registers->len = frame->sourced_match ? capacity : 1u;
     registers->source = cetta_malloc(sizeof(Atom *) * (size_t)capacity);
     registers->types = cetta_malloc(sizeof(Atom *) * (size_t)capacity);
     registers->prefix = cetta_malloc(sizeof(Atom *) * (size_t)capacity);
+    frame->match_spaces = cetta_malloc(sizeof(Space *) * (size_t)capacity);
+    if (!registers->source || !registers->types || !registers->prefix || !frame->match_spaces) {
+        free(registers->source); free(registers->types); free(registers->prefix); free(registers);
+        free(frame->match_spaces); frame->match_spaces = NULL;
+        eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY); return;
+    }
     memset(registers->source, 0, sizeof(Atom *) * (size_t)capacity);
     memset(registers->types, 0, sizeof(Atom *) * (size_t)capacity);
     memset(registers->prefix, 0, sizeof(Atom *) * (size_t)capacity);
-    frame->match_spaces = cetta_malloc(sizeof(Space *) * (size_t)capacity);
     memset(frame->match_spaces, 0, sizeof(Space *) * (size_t)capacity);
     frame->registers = registers;
     frame->owns_registers = true;

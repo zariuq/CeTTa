@@ -3,6 +3,15 @@ use std::ffi::{c_char, c_int, c_void};
 use std::ptr;
 
 #[repr(C)]
+struct EngineConfig {
+    size: usize,
+    abi_version: u32,
+    language: *const c_char,
+    profile: *const c_char,
+    resource_root: *const c_char,
+}
+
+#[repr(C)]
 struct QueryStep {
     size: usize,
     state: c_int,
@@ -95,7 +104,18 @@ fn main() {
     unsafe {
         assert_eq!(cetta_embed_abi_version(), 1);
         let mut engine = ptr::null_mut();
-        assert_eq!(cetta_embed_engine_new(ptr::null(), &mut engine), 0);
+        let resource_root = std::env::args().nth(1)
+            .map(|value| std::ffi::CString::new(value).unwrap());
+        let config = EngineConfig {
+            size: std::mem::size_of::<EngineConfig>(),
+            abi_version: 1,
+            language: b"petta\0".as_ptr().cast(),
+            profile: ptr::null(),
+            resource_root: resource_root.as_ref().map_or(ptr::null(), |value| value.as_ptr()),
+        };
+        let options = if resource_root.is_some() { (&config as *const EngineConfig).cast() }
+                      else { ptr::null() };
+        assert_eq!(cetta_embed_engine_new(options, &mut engine), 0);
         let source = b"(= (double $x) (* $x 2)) !(double 21)";
         let mut result = ptr::null_mut();
         assert_eq!(cetta_embed_run(engine, source.as_ptr().cast(), source.len(), ptr::null(), &mut result), 0);

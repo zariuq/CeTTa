@@ -5,6 +5,18 @@ LLVM_CLANG ?= clang
 .DEFAULT_GOAL := all
 .DELETE_ON_ERROR:
 
+ifeq ($(strip $(MAKECMDGOALS)),install-cabi)
+BUILD ?= core
+ENABLE_PIC ?= 1
+ENABLE_LIB_PROLOG ?= 0
+endif
+PREFIX ?= /usr/local
+CABI_LIBDIR ?= $(PREFIX)/lib
+CABI_INCLUDEDIR ?= $(PREFIX)/include
+CABI_DATADIR ?= $(PREFIX)/share/cetta
+NM ?= nm
+OBJCOPY ?= objcopy
+
 .PHONY: test-build-matrix
 test-build-matrix:
 	@python3 tests/support/check_build_matrix.py --compiler '$(CC)'
@@ -765,7 +777,7 @@ SRC += src/shared_transition.c src/run_report.c src/run_cli.c src/error_presenta
 SRC += src/library_proc.c
 SRC += src/library_fs.c
 SRC += src/petta_priority_heap.c
-SRC += src/library_postings.c src/tensor.c src/tensor_screening.c src/library_tensor.c src/library_group.c
+SRC += src/native_memory.c src/host_services.c src/library_postings.c src/tensor.c src/tensor_bounds.c src/tensor_screening.c src/library_tensor.c src/library_group.c
 SRC += src/binary_codec.c src/library_binary.c
 SRC += src/library_heap.c
 SRC += src/library_work.c
@@ -45327,10 +45339,29 @@ test-tensor-sequences: $(BIN)
 runtime/test_tensor_screening-$(BUILD_OBJ_TAG): tests/support/test_tensor_screening.c src/tensor_screening.h $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/support/test_tensor_screening.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
 
-.PHONY: test-tensor-screening
-runtime/test_tensor_screen_rounding-$(BUILD_OBJ_TAG): tests/support/test_tensor_screen_rounding.c src/tensor_screening.c src/tensor_screening.h src/tensor.c src/tensor.h src/atom.c src/atom.h src/binding/frame_identity.c $(SYMBOL_STANDALONE_SRC) $(BUILD_CONFIG_HEADER)
+TENSOR_BOUNDS_TEST_SRC = tests/support/test_tensor_bounds.c src/tensor_bounds.c src/tensor.c src/atom.c src/binding/frame_identity.c $(SYMBOL_STANDALONE_SRC)
+runtime/test_tensor_bounds-$(BUILD_OBJ_TAG): $(TENSOR_BOUNDS_TEST_SRC) src/tensor.h src/atom.h src/numeric_bounds.h $(BUILD_CONFIG_HEADER)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(TENSOR_BOUNDS_TEST_SRC) $(LDFLAGS) -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc
+
+.PHONY: test-tensor-bounds test-tensor-bounds-native
+test-tensor-bounds-native: runtime/test_tensor_bounds-$(BUILD_OBJ_TAG)
+	./runtime/test_tensor_bounds-$(BUILD_OBJ_TAG)
+
+test-tensor-bounds: $(BIN) test-tensor-bounds-native
+	python3 tests/support/check_tensor_bounds.py --cetta ./$(BIN)
+
+.PHONY: test-tensor-numpy
+test-tensor-numpy: $(BIN)
+	python3 tests/support/check_tensor_numpy.py --cetta ./$(BIN)
+
+ifeq ($(ENABLE_GMP),1)
+test-all: test-tensor-bounds
+endif
+
+runtime/test_tensor_screen_rounding-$(BUILD_OBJ_TAG): tests/support/test_tensor_screen_rounding.c src/tensor_screening.c src/tensor_screening.h src/numeric_bounds.h src/tensor.c src/tensor.h src/atom.c src/atom.h src/binding/frame_identity.c $(SYMBOL_STANDALONE_SRC) $(BUILD_CONFIG_HEADER)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/support/test_tensor_screen_rounding.c src/tensor.c src/atom.c src/binding/frame_identity.c $(SYMBOL_STANDALONE_SRC) $(LDFLAGS)
 
+.PHONY: test-tensor-screening
 test-tensor-screening: $(BIN) runtime/test_tensor_screening-$(BUILD_OBJ_TAG) runtime/test_tensor_screen_rounding-$(BUILD_OBJ_TAG)
 	./runtime/test_tensor_screening-$(BUILD_OBJ_TAG)
 	./runtime/test_tensor_screen_rounding-$(BUILD_OBJ_TAG)
@@ -48340,6 +48371,7 @@ endif
 EMBED_TAG = $(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,)
 EMBED_OBJ = runtime/bootstrap/embedding.$(EMBED_TAG).o
 EMBED_RUNTIME_OBJ = $(filter-out src/main.%,$(OBJ))
+EMBED_ALLOCATOR_OBJ = $(filter src/native_memory.%,$(EMBED_RUNTIME_OBJ))
 EMBED_LIB = runtime/libcetta-$(EMBED_TAG).so
 EMBED_STATIC_LIB = runtime/libcetta-$(EMBED_TAG).a
 EMBED_TEST = runtime/test_embedding-$(EMBED_TAG)
@@ -48348,20 +48380,47 @@ EMBED_TEST = runtime/test_embedding-$(EMBED_TAG)
 $(EMBED_OBJ): src/embedding.c include/cetta_embed.h src/runtime_names.h $(BUILD_CONFIG_HEADER)
 	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -Iinclude)
 
-$(EMBED_LIB): $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS) include/cetta_embed.map
+$(EMBED_LIB): $(EMBED_STATIC_LIB) $(BRIDGE_DEPS) include/cetta_embed.map
 	@set -eu; \
 	tmp_out=$$(mktemp "runtime/.cetta-library.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
-	$(CC) -shared -Wl,--version-script=include/cetta_embed.map -o "$$tmp_out" $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS) $(LDFLAGS); \
+	$(CC) -shared -Wl,-soname,libcetta.so.1 -Wl,--version-script=include/cetta_embed.map -o "$$tmp_out" -Wl,--whole-archive $(EMBED_STATIC_LIB) -Wl,--no-whole-archive $(BRIDGE_DEPS) $(LDFLAGS); \
 	mv "$$tmp_out" "$@"
 
-$(EMBED_STATIC_LIB): $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ)
-	@set -eu; \
-	tmp_out=$$(mktemp "runtime/.cetta-archive.XXXXXX"); \
-	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
-	rm -f "$$tmp_out"; \
-	$(AR) rcs "$$tmp_out" $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ); \
-	mv "$$tmp_out" "$@"
+$(EMBED_STATIC_LIB): $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) tools/build_embedding_static.py include/cetta_embed.h
+	python3 tools/build_embedding_static.py --cc '$(CC)' --ar '$(AR)' --nm '$(NM)' --objcopy '$(OBJCOPY)' \
+		--header include/cetta_embed.h --output '$@' --allocator '$(EMBED_ALLOCATOR_OBJ)' $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ)
+
+.PHONY: install-cabi
+install-cabi: embedding-native
+	python3 tools/install_embedding.py --shared '$(EMBED_LIB)' --static '$(EMBED_STATIC_LIB)' \
+		--prefix '$(PREFIX)' --libdir '$(CABI_LIBDIR)' --includedir '$(CABI_INCLUDEDIR)' \
+		--datadir '$(CABI_DATADIR)' $(if $(DESTDIR),--destdir '$(DESTDIR)') \
+		--private-libs='-ldl -lm -pthread $(GMP_LDFLAGS)'
+
+.PHONY: test-embedding-install
+test-embedding-install:
+	CC='$(CC)' python3 tests/support/check_embedding_install.py
+
+.PHONY: test-native-memory
+test-native-memory:
+	$(CC) $(CFLAGS) -Isrc tests/support/test_native_memory.c src/native_memory.c -o runtime/test_native_memory $(LDFLAGS)
+	./runtime/test_native_memory
+
+EMBED_MEMORY_REFUSAL_TEST = runtime/test_embedding_memory_refusal-$(EMBED_TAG)
+$(EMBED_MEMORY_REFUSAL_TEST): tests/support/test_embedding_memory_refusal.c $(EMBED_STATIC_LIB)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Iinclude -o '$@' $< $(EMBED_STATIC_LIB) $(LDFLAGS) -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc
+
+.PHONY: test-embedding-memory
+test-embedding-memory: $(EMBED_MEMORY_REFUSAL_TEST)
+	python3 tests/support/check_embedding_memory.py --consumer '$(EMBED_MEMORY_REFUSAL_TEST)' --output 'runtime/embedding-memory-$(EMBED_TAG)'
+
+EMBED_MEMORY_BUDGET_TEST = runtime/test_embedding_memory_budget-$(EMBED_TAG)
+$(EMBED_MEMORY_BUDGET_TEST): tests/support/test_embedding_memory_budget.c $(EMBED_STATIC_LIB)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Iinclude -o '$@' $< $(EMBED_STATIC_LIB) $(LDFLAGS)
+.PHONY: test-embedding-memory-budget
+test-embedding-memory-budget: $(EMBED_MEMORY_BUDGET_TEST)
+	./$(EMBED_MEMORY_BUDGET_TEST)
 
 $(EMBED_TEST): tests/test_embedding.c $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
 	@set -eu; \
@@ -48376,6 +48435,7 @@ embedding:
 .PHONY: embedding-native
 embedding-native: $(EMBED_LIB) $(EMBED_STATIC_LIB) runtime/cetta-proc-scope
 	ln -sfn $(notdir $(EMBED_LIB)) runtime/libcetta.so
+	ln -sfn $(notdir $(EMBED_LIB)) runtime/libcetta.so.1
 	ln -sfn $(notdir $(EMBED_STATIC_LIB)) runtime/libcetta.a
 runtime/cetta-proc-scope: $(BIN).proc-scope
 	cp $< $@
@@ -48435,11 +48495,11 @@ test-embedding-construction: $(EMBED_CONSTRUCTION_TEST)
 	./$(EMBED_CONSTRUCTION_TEST)
 
 EMBED_STARTUP_REFUSAL_TEST = runtime/test_embedding_startup_refusal-$(EMBED_TAG)
-$(EMBED_STARTUP_REFUSAL_TEST): tests/support/test_embedding_startup_refusal.c $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
+$(EMBED_STARTUP_REFUSAL_TEST): tests/support/test_embedding_startup_refusal.c $(EMBED_STATIC_LIB)
 	@set -eu; \
 	tmp_out=$$(mktemp "runtime/.cetta-startup-refusal.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Iinclude -o "$$tmp_out" $< $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS) $(LDFLAGS) \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Iinclude -o "$$tmp_out" $< $(EMBED_STATIC_LIB) $(LDFLAGS) \
 		-Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc; \
 	mv "$$tmp_out" "$@"
 .PHONY: test-embedding-startup-refusal
@@ -48562,9 +48622,9 @@ $(EMBED_SHARED_TEST): tests/test_embedding.c $(EMBED_LIB)
 	$(CC) $(CFLAGS) -Iinclude -o "$$tmp_out" $< -Lruntime -l:$(notdir $(EMBED_LIB)) -Wl,-rpath,'$$ORIGIN'; \
 	mv "$$tmp_out" "$@"
 .PHONY: test-embedding-shared-api test-embedding-rust-api
-test-embedding-shared-api: $(EMBED_SHARED_TEST)
+test-embedding-shared-api: embedding-native $(EMBED_SHARED_TEST)
 	./$(EMBED_SHARED_TEST)
-test-embedding-rust-api: $(EMBED_LIB)
+test-embedding-rust-api: embedding-native $(EMBED_LIB)
 	@set -eu; \
 	tmp_out=$$(mktemp "runtime/.cetta-rust-consumer.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
@@ -48580,7 +48640,7 @@ PYTHON_EXTENSION_INCLUDE_DIR = $(shell $(PYTHON_EXECUTABLE) -c 'import sysconfig
 PYTHON_EXTENSION_INCLUDES = -I'$(PYTHON_EXTENSION_INCLUDE_DIR)'
 PYTHON_EXTENSION_PATH_MAP = '-ffile-prefix-map=$(PYTHON_EXTENSION_INCLUDE_DIR)=Python/include' '-ffile-prefix-map=$(abspath .)=.'
 .PHONY: python-native
-python-native: $(EMBED_STATIC_LIB) runtime/cetta-proc-scope python/native.c python/callbacks.inc python/buffers.inc python/exports.map
+python-native: $(EMBED_STATIC_LIB) runtime/cetta-proc-scope python/native.c python/callbacks.inc python/host.inc python/buffers.inc python/exports.map
 	@mkdir -p '$(dir $(PYTHON_EXTENSION_OUTPUT))'
 	@set -eu; \
 	tmp_out=$$(mktemp '$(dir $(PYTHON_EXTENSION_OUTPUT)).cetta-extension.XXXXXX'); \

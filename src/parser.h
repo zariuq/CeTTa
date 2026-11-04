@@ -172,6 +172,8 @@ const char *parser_canonicalize_namespace_token(Arena *a, const char *tok);
  * The session option also controls legacy parsing and host name publication.
  * A compiled projection can select its policy without changing the session. */
 bool parser_set_namespace_sugar_enabled(bool enabled);
+/* Scoped source-token interpretation for native document/form readers. */
+bool parser_set_petta_scalar_policy(bool enabled);
 bool parser_namespace_sugar_enabled(void);
 void parser_host_projection_v1_set_namespace_sugar(
     ParserHostProjectionV1 *projection, bool enabled);
