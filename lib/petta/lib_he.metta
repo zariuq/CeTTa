@@ -56,9 +56,8 @@
 (= (for-each-in-atom $L $f)
    (map-atom $L $f))
 
-(: evalc (-> Atom %Undefined% %Undefined%))
-(= (evalc $expression &self)
-   (eval $expression))
+; evalc is native in CeTTa, including its held expression argument. An
+; equation restricted to &self would hide native calls to other spaces.
 
 ;Quoting
 (: unquote (-> Atom %Undefined%))
