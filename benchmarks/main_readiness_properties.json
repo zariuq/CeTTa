@@ -32,7 +32,7 @@
       "implementation_path": "native-space/term-universe",
       "source_anchors": [
         {"path": "src/space.c", "symbol": "static void space_add_stored_id(Space *s, AtomId atom_id, Atom *backend_atom) {", "expected_occurrences": 1},
-        {"path": "src/space.c", "symbol": "static void space_reserve_linear(", "expected_occurrences": 1},
+        {"path": "src/space.c", "symbol": "static bool space_reserve_linear(", "expected_occurrences": 1},
         {"path": "src/term_universe.c", "symbol": "AtomId term_universe_store_atom_id(", "expected_occurrences": 1},
         {"path": "src/term_universe.c", "symbol": "term_universe_compact32_auto_migration_threshold(", "expected_occurrences": 2}
       ],
@@ -48,7 +48,7 @@
       "id": "space.pathmap.storage",
       "implementation_path": "space-backend-primary/pathmap-adapter",
       "source_anchors": [
-        {"path": "src/space.c", "symbol": "static bool space_store_via_backend_primary(", "expected_occurrences": 1},
+        {"path": "src/space.c", "symbol": "static inline __attribute__((always_inline)) bool space_store_via_backend_primary(", "expected_occurrences": 1},
         {"path": "src/mork_space_bridge_runtime.c", "symbol": "CettaMorkSpaceHandle *cetta_mork_bridge_space_new_pathmap(", "expected_occurrences": 2}
       ],
       "routine_witnesses": ["space-ladder:pathmap", "make test-pathmap-backend-primary-destructive-abi"],

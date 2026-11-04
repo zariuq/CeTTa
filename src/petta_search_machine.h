@@ -367,7 +367,7 @@ typedef struct {
      * false; the machine then classifies only where another mode decides
      * something. */
     bool classify_may_override;
-    /* The host admits the extended bind!-Space surface and owns its inert
+    /* The host admits the extended bind!-Space operation and owns its inert
      * authored name and constructor evaluation/publication boundary. */
     bool named_space_binding;
     /* Direct grounded execution is a physical realization of a language
