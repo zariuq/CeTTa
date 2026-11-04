@@ -3874,7 +3874,7 @@ static Atom *oem_existence_case_if(OemCompile *compile, Atom *expr,
         return NULL;
     /* The if reads `==` and collapse, which the case does not: an
      * authored equation extending either would answer beside them. */
-    static const struct { SymbolId *head; uint32_t arity; } intrinsics[] = {
+    const struct { SymbolId *head; uint32_t arity; } intrinsics[] = {
         {&g_builtin_syms.case_text, 2u}, {&g_builtin_syms.if_text, 3u},
         {&g_builtin_syms.op_eq, 2u}, {&g_builtin_syms.collapse, 1u},
         {&g_builtin_syms.once, 1u}, {&g_builtin_syms.match, 3u},

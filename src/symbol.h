@@ -692,7 +692,10 @@ static inline SymbolSpelling symbol_spelling(
     X(work_record, "work-record") \
     X(work_route, "work-route") \
     X(work_count, "work-count") \
-    X(work_exists, "work-exists")
+    X(work_exists, "work-exists") \
+    X(op_neq, "!=") \
+    X(tensor_dot_bounds, "tensor:dot-bounds") \
+    X(tensor_matvec_bounds, "tensor:matvec-bounds")
 
 /* Libraries may publish native primitives under their public names. The
  * shared registry supplies dispatch and operand-observation capability;
@@ -715,7 +718,8 @@ static inline SymbolSpelling symbol_spelling(
     X(tensor_entries) X(tensor_gather) X(tensor_gather_rows) X(tensor_where) X(tensor_merge) \
     X(tensor_scan_sum) X(tensor_concatenate) X(tensor_permute) \
     X(tensor_copy) X(tensor_convert) X(tensor_cast) X(tensor_promote) X(tensor_view) X(tensor_reshape) X(tensor_sum) \
-    X(tensor_matvec) X(tensor_top_k) X(tensor_encode) X(tensor_decode) \
+    X(tensor_matvec) X(tensor_dot_bounds) X(tensor_matvec_bounds) \
+    X(tensor_top_k) X(tensor_encode) X(tensor_decode) \
     X(tensor_encode_bytes) X(tensor_decode_bytes) \
     X(tensor_builder) X(tensor_put) X(tensor_freeze) X(tensor_freeze_log) X(tensor_close) \
     X(tensor_all_finite) X(tensor_normalize) X(tensor_cosine_index) \
@@ -907,8 +911,8 @@ typedef struct {
 #undef CETTA_BUILTIN_SYMBOL_FIELD
 } BuiltinSyms;
 
-extern SymbolTable *g_symbols;
-extern BuiltinSyms g_builtin_syms;
+extern _Thread_local SymbolTable *g_symbols;
+extern _Thread_local BuiltinSyms g_builtin_syms;
 
 /* Builtin syntax symbols occupy the table's initial contiguous interval.
  * This distinguishes evaluator syntax from later interned constructor/data
@@ -922,12 +926,21 @@ bool symbol_id_is_builtin(SymbolId id);
 uint64_t cetta_placement_key_next(void);
 
 void symbol_table_init(SymbolTable *st);
+/* Failed initialization releases acquired storage. No free is needed on
+ * failure; a successful table requires symbol_table_free. errno retains
+ * the allocation, mutex or identity-capacity cause. */
+bool symbol_table_try_init(SymbolTable *st);
 void symbol_table_free(SymbolTable *st);
 void symbol_table_init_builtins(SymbolTable *st, BuiltinSyms *builtins);
+/* On failure, builtins is zero and the table retains its interned prefix. */
+bool symbol_table_try_init_builtins(SymbolTable *st, BuiltinSyms *builtins);
 
 SymbolId symbol_intern_bytes(SymbolTable *st, const uint8_t *bytes, uint32_t len);
 SymbolId symbol_intern_span_hashed(SymbolTable *st, const uint8_t *bytes,
                                    uint32_t len, uint64_t hash);
+/* Return NONE with errno describing allocation/identity refusal. */
+SymbolId symbol_try_intern_span_hashed(SymbolTable *st, const uint8_t *, uint32_t, uint64_t);
+SymbolId symbol_try_intern_cstr(SymbolTable *st, const char *text);
 SymbolId symbol_intern_cstr(SymbolTable *st, const char *text);
 /* The symbol already interned for text, or SYMBOL_ID_NONE.  Never interns. */
 SymbolId symbol_lookup_cstr(SymbolTable *st, const char *text);
@@ -963,4 +976,5 @@ typedef enum {
 
 CettaPettaArrowMode cetta_petta_arrow_mode(SymbolId id);
 
+#include "native_memory.h"
 #endif /* CETTA_SYMBOL_H */

@@ -366,6 +366,8 @@ typedef struct Space {
 } Space;
 
 void space_init_with_universe(Space *s, TermUniverse *universe);
+/* Failure leaves no registered observer/root or owned payload. */
+bool space_try_init_with_universe(Space *s, TermUniverse *universe);
 void space_init_overlay(Space *s, const Space *base);
 /* Borrow the module's own rows, excluding its imported prefix/dependencies.
  * Mutations reach the original storage. Free this view before its owner, or
@@ -1312,6 +1314,8 @@ typedef struct {
 } Registry;
 
 void registry_init(Registry *r);
+/* Failure releases its incomplete name-key owner. */
+bool registry_try_init(Registry *r);
 void registry_free(Registry *r);
 void registry_bind_id(Registry *r, SymbolId key, Atom *value);
 Atom *registry_lookup_id(Registry *r, SymbolId key);

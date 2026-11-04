@@ -1,0 +1,29 @@
+is ((RC:ExactAnswer (Rat 0 1)) (RC:ExactAnswer (Rat 0 1)) (RC:ExactAnswer (Rat 1 1)) (RC:ExactAnswer (Rat 0 1))), should ((RC:ExactAnswer (Rat 0 1)) (RC:ExactAnswer (Rat 0 1)) (RC:ExactAnswer (Rat 1 1)) (RC:ExactAnswer (Rat 0 1))). ✅ 
+is ((RC:ExactAnswer (Rat 0 1)) (RC:ExactAnswer (Rat 1 1))), should ((RC:ExactAnswer (Rat 0 1)) (RC:ExactAnswer (Rat 1 1))). ✅ 
+is ((RC:ExactAnswer (Rat 1 6)) true 0), should ((RC:ExactAnswer (Rat 1 6)) true 0). ✅ 
+is ((RC:ExactAnswer (Rat 1 4)) (RC:ExactAnswer (Rat 1 2))), should ((RC:ExactAnswer (Rat 1 4)) (RC:ExactAnswer (Rat 1 2))). ✅ 
+is (Activated (RC:ExactAnswer (Rat 1 5)) (RC:ExactAnswer (Rat 5 7)) true Retracted (RC:ExactAnswer (Rat 1 5))), should (Activated (RC:ExactAnswer (Rat 1 5)) (RC:ExactAnswer (Rat 5 7)) true Retracted (RC:ExactAnswer (Rat 1 5))). ✅ 
+is (Activated (RC:ExactAnswer (Rat 2 3)) Replayed (RC:ExactAnswer (Rat 2 3)) true Activated (RC:ExactAnswer (Rat 4 5)) RC:ImpossibleEvidence RC:ImpossibleEvidence Retracted (RC:ExactAnswer (Rat 1 1)) Retracted (RC:ExactAnswer (Rat 4 5))), should (Activated (RC:ExactAnswer (Rat 2 3)) Replayed (RC:ExactAnswer (Rat 2 3)) true Activated (RC:ExactAnswer (Rat 4 5)) RC:ImpossibleEvidence RC:ImpossibleEvidence Retracted (RC:ExactAnswer (Rat 1 1)) Retracted (RC:ExactAnswer (Rat 4 5))). ✅ 
+is (Activated (RC:ExactAnswer (Rat 1 2)) Activated true), should (Activated (RC:ExactAnswer (Rat 1 2)) Activated true). ✅ 
+is (true (Rat 1 10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000) 1), should (true (Rat 1 10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000) 1). ✅ 
+is (Activated 4 true Retracted 4 (RC:ExactAnswer (Rat 1 1))), should (Activated 4 true Retracted 4 (RC:ExactAnswer (Rat 1 1))). ✅ 
+is (true true true true true true true true true), should (true true true true true true true true true). ✅ 
+is (false true true true true), should (false true true true true). ✅ 
+is ((Rat 999999999999 1000000000000) (Rat 1 1000000000000) true Activated Activated (RC:ExactAnswer (Rat 1 1))), should ((Rat 999999999999 1000000000000) (Rat 1 1000000000000) true Activated Activated (RC:ExactAnswer (Rat 1 1))). ✅ 
+is (Activated Retracted true Activated (RC:ExactAnswer (Rat 1 1)) Activated true Activated (RC:ExactAnswer (Rat 9 10))), should (Activated Retracted true Activated (RC:ExactAnswer (Rat 1 1)) Activated true Activated (RC:ExactAnswer (Rat 9 10))). ✅ 
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
