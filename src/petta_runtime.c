@@ -116,10 +116,11 @@ struct CettaPettaRuntimeState *cetta_petta_runtime_state_new(void) {
     struct CettaPettaRuntimeState *state = calloc(1u, sizeof(*state));
     if (!state)
         return NULL;
-    state->random_mutex_ready =
-        pthread_mutex_init(&state->random_mutex, NULL) == 0;
+    int error = pthread_mutex_init(&state->random_mutex, NULL);
+    state->random_mutex_ready = error == 0;
     if (!state->random_mutex_ready) {
         free(state);
+        errno = error;
         return NULL;
     }
     state->random_state = petta_runtime_initial_seed(state);

@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "petta_libpl.h"
+#include <errno.h>
 #include "petta_builtin_registry.h"
 
 #include "eval.h"
@@ -302,7 +303,7 @@ static _Thread_local uint32_t g_petta_libpl_enter_depth;
  */
 #define PETTA_LIBPL_PLREF_TAG "PettaClauseRef"
 
-static void petta_libpl_register_reference_stdlib(
+static bool petta_libpl_register_reference_stdlib(
     CettaLibPrologRuntime *runtime);
 
 typedef struct {
@@ -1672,6 +1673,7 @@ static char *petta_libpl_copy_bytes(
     if (!bytes || length == SIZE_MAX)
         return NULL;
     char *copy = cetta_malloc(length + 1u);
+    if (!copy) return NULL;
     if (length)
         memcpy(copy, bytes, length);
     copy[length] = '\0';
@@ -1808,7 +1810,7 @@ static bool petta_libpl_prepare_locked(
         !petta_libpl_install_symbol_space_rules(runtime) ||
         !petta_libpl_install_reference_prelude(runtime))
         return false;
-    petta_libpl_register_reference_stdlib(runtime);
+    if (!petta_libpl_register_reference_stdlib(runtime)) return false;
     runtime->prepared = true;
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_LIB_PROLOG_PREPARE);
@@ -1934,12 +1936,11 @@ static PettaLibplImport *petta_libpl_register_import(
             next > SIZE_MAX / sizeof(*runtime->imports)) {
             return NULL;
         }
-        runtime->imports = runtime->imports
-            ? cetta_realloc(
-                  runtime->imports,
-                  sizeof(*runtime->imports) * next)
-            : cetta_malloc(
-                  sizeof(*runtime->imports) * next);
+        PettaLibplImport *imports = runtime->imports
+            ? cetta_realloc(runtime->imports, sizeof(*runtime->imports) * next)
+            : cetta_malloc(sizeof(*runtime->imports) * next);
+        if (!imports) return NULL;
+        runtime->imports = imports;
         memset(
             runtime->imports + runtime->import_cap, 0,
             sizeof(*runtime->imports) *
@@ -2208,7 +2209,7 @@ static void petta_libpl_probe_arity_facts(
  * as the reference translator excludes it.  Their arities are those the
  * reference's registration records (petta_libpl_reference_stdlib_arity).
  */
-static void petta_libpl_register_reference_stdlib(
+static bool petta_libpl_register_reference_stdlib(
     CettaLibPrologRuntime *runtime) {
     static const char *const reference_stdlib[] = {
         "superpose", "empty", "let", "let*", "+", "-", "*", "/", "%",
@@ -2244,7 +2245,7 @@ static void petta_libpl_register_reference_stdlib(
         "add-translator-rule!", "remove-translator-rule!",
     };
     if (!runtime || !g_symbols)
-        return;
+        return false;
     for (size_t index = 0u;
          index < sizeof(reference_stdlib) /
                      sizeof(reference_stdlib[0]);
@@ -2252,17 +2253,18 @@ static void petta_libpl_register_reference_stdlib(
         const char *name = reference_stdlib[index];
         SymbolId symbol = symbol_intern_bytes(
             g_symbols, (const uint8_t *)name, (uint32_t)strlen(name));
-        if (symbol == SYMBOL_ID_NONE ||
-            petta_semantics_form(symbol) != PETTA_FORM_NONE ||
+        if (symbol == SYMBOL_ID_NONE) return false;
+        if (petta_semantics_form(symbol) != PETTA_FORM_NONE ||
             is_grounded_op(symbol) ||
             symbol_id_is_builtin(symbol) ||
             petta_semantics_is_mm2_exec(symbol))
             continue;
         PettaLibplImport *entry =
             petta_libpl_register_import(runtime, symbol);
-        if (entry)
-            entry->reference_stdlib = true;
+        if (!entry) return false;
+        entry->reference_stdlib = true;
     }
+    return true;
 }
 
 /*
@@ -5066,9 +5068,12 @@ static bool petta_libpl_retract_predicate(
 
 CettaLibPrologRuntime *cetta_lib_prolog_runtime_new(void) {
     CettaLibPrologRuntime *runtime =
-        cetta_malloc(sizeof(*runtime));
+        malloc(sizeof(*runtime));
+    if (!runtime) return NULL;
     memset(runtime, 0, sizeof(*runtime));
-    arena_init_detached(&runtime->callable_codes);
+    if (!arena_try_init_detached(&runtime->callable_codes)) {
+        int error = errno; free(runtime); errno = error; return NULL;
+    }
     uint64_t instance_id = atomic_fetch_add_explicit(
         &g_petta_libpl_runtime_counter, 1u,
         memory_order_relaxed);
@@ -5094,7 +5099,12 @@ CettaLibPrologRuntime *cetta_lib_prolog_runtime_new(void) {
      * equation.  Engine preparation remains lazy and merely fills the
      * concrete arities of these already-admitted names.
      */
-    petta_libpl_register_reference_stdlib(runtime);
+    if (!petta_libpl_register_reference_stdlib(runtime)) {
+        int error = errno;
+        cetta_lib_prolog_runtime_free(runtime);
+        errno = error;
+        return NULL;
+    }
     return runtime;
 }
 

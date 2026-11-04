@@ -1,8 +1,18 @@
+!(MathUnimportedSmoke (math:exp 0.0) (math:ln 1.0))
+!(import! &self (library math))
 !(import! &self (library json))
 !(import! &self (library tensor))
 !(import! &self (library postings))
 !(import! &self (library embedding))
 !(import! &self (library list))
+
+!(MathSmoke (math:exp 0.0) (math:ln 1.0)
+   (math:exp 1.0) (math:ln 2.718281828459045))
+!(MathSymbolSmoke (get-metatype EXP))
+!(let* (($input (tensor:from-values f64 (2) (0.0 1.0)))
+         ($exponential (tensor:zip-map f64 ($input) math:exp ()))
+         ($logarithm (tensor:zip-map f64 ($exponential) math:ln ())))
+   (TensorMathSmoke (tensor:inspect $exponential) (tensor:inspect $logarithm)))
 
 !(KeyEncodingSmoke (list:factorize ("b" "a" "b")))
 

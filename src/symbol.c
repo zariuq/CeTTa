@@ -1,5 +1,6 @@
 #include "symbol.h"
 
+#include <errno.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,19 +12,25 @@
 #define SYMBOL_TABLE_MAX_LOAD_NUM 7u
 #define SYMBOL_TABLE_MAX_LOAD_DEN 10u
 
-SymbolTable *g_symbols = NULL;
-BuiltinSyms g_builtin_syms;
+_Thread_local SymbolTable *g_symbols = NULL;
+_Thread_local BuiltinSyms g_builtin_syms;
 static _Atomic uint64_t g_symbol_table_instance_counter = 1u;
 
-static void symbol_oom(size_t size) {
-    fprintf(stderr, "fatal: out of memory allocating %zu bytes\n", size);
-    abort();
+static uint64_t symbol_table_instance_new(void) {
+    uint64_t next = atomic_load_explicit(&g_symbol_table_instance_counter,
+                                         memory_order_relaxed);
+    while (next && next < UINT64_MAX) {
+        if (atomic_compare_exchange_weak_explicit(&g_symbol_table_instance_counter,
+                &next, next + 1u, memory_order_relaxed, memory_order_relaxed))
+            return next;
+    }
+    errno = EOVERFLOW;
+    return 0u;
 }
 
-static void *symbol_malloc(size_t size) {
-    void *ptr = malloc(size == 0 ? 1 : size);
-    if (!ptr) symbol_oom(size);
-    return ptr;
+static _Noreturn void symbol_fatal(const char *operation) {
+    fprintf(stderr, "fatal: %s: %s\n", operation, strerror(errno));
+    abort();
 }
 
 /* Spellings are packed into chunks of this many bytes; a longer one than an
@@ -38,14 +45,16 @@ struct SymbolSpellingChunk {
 static char *symbol_spelling_alloc(SymbolTable *st, size_t size) {
     if (size > SYMBOL_SPELLING_CHUNK_BYTES / 8u) {
         struct SymbolSpellingChunk *own =
-            symbol_malloc(sizeof(*own) + size);
+            malloc(sizeof(*own) + size);
+        if (!own) return NULL;
         own->next = st->spelling_chunks;
         st->spelling_chunks = own;
         return own->bytes;
     }
     if (st->spelling_left < size) {
         struct SymbolSpellingChunk *chunk =
-            symbol_malloc(sizeof(*chunk) + SYMBOL_SPELLING_CHUNK_BYTES);
+            malloc(sizeof(*chunk) + SYMBOL_SPELLING_CHUNK_BYTES);
+        if (!chunk) return NULL;
         chunk->next = st->spelling_chunks;
         st->spelling_chunks = chunk;
         st->spelling_free = chunk->bytes;
@@ -55,12 +64,6 @@ static char *symbol_spelling_alloc(SymbolTable *st, size_t size) {
     st->spelling_free += size;
     st->spelling_left -= size;
     return at;
-}
-
-static void *symbol_calloc(size_t count, size_t size) {
-    void *ptr = calloc(count == 0 ? 1 : count, size == 0 ? 1 : size);
-    if (!ptr) symbol_oom(count * size);
-    return ptr;
 }
 
 static _Atomic uint64_t g_placement_state;
@@ -107,12 +110,16 @@ static uint64_t symbol_hash_bytes(const uint8_t *bytes, uint32_t len) {
 }
 
 /* The home slot of HASH under the table's key. */
-static uint32_t symbol_slot(const SymbolTable *st, uint64_t hash) {
+static uint32_t symbol_slot_capacity(const SymbolTable *st, uint64_t hash, uint32_t capacity) {
     uint64_t x = hash ^ st->placement_key;
     x = (x ^ (x >> 30)) * UINT64_C(0xbf58476d1ce4e5b9);
     x = (x ^ (x >> 27)) * UINT64_C(0x94d049bb133111eb);
     x ^= x >> 31;
-    return (uint32_t)x & (st->slot_cap - 1u);
+    return (uint32_t)x & (capacity - 1u);
+}
+
+static uint32_t symbol_slot(const SymbolTable *st, uint64_t hash) {
+    return symbol_slot_capacity(st, hash, st->slot_cap);
 }
 
 static SymbolEntry *symbol_table_entry_chunk(const SymbolTable *st, SymbolId id) {
@@ -145,15 +152,16 @@ static void symbol_table_add_flags(SymbolTable *st, SymbolId id,
         entry->flags |= flags;
 }
 
-static void symbol_table_ensure_entry_chunk(SymbolTable *st, SymbolId id) {
+static bool symbol_table_ensure_entry_chunk(SymbolTable *st, SymbolId id) {
     uint32_t chunk_index = id >> SYMBOL_ENTRY_CHUNK_BITS;
     if (chunk_index >= SYMBOL_ENTRY_CHUNK_COUNT) {
-        fprintf(stderr, "fatal: symbol table exhausted symbol id space\n");
-        abort();
+        errno = EOVERFLOW;
+        return false;
     }
-    if (st->entry_chunks[chunk_index]) return;
+    if (st->entry_chunks[chunk_index]) return true;
     st->entry_chunks[chunk_index] =
-        symbol_calloc(SYMBOL_ENTRY_CHUNK_SIZE, sizeof(SymbolEntry));
+        calloc(SYMBOL_ENTRY_CHUNK_SIZE, sizeof(SymbolEntry));
+    return st->entry_chunks[chunk_index] != NULL;
 }
 
 static bool symbol_entry_matches(const SymbolEntry *entry, const uint8_t *bytes,
@@ -162,65 +170,64 @@ static bool symbol_entry_matches(const SymbolEntry *entry, const uint8_t *bytes,
            memcmp(entry->bytes, bytes, len) == 0;
 }
 
-static void symbol_table_resize(SymbolTable *st, uint32_t new_cap) {
-    /* Initialization uses a power of two, and growth doubles it. Keep the
-     * mask's invariant explicit, including rejection of capacity wraparound. */
-    if (new_cap == 0u || (new_cap & (new_cap - 1u)) != 0u) {
-        fputs("fatal: exhausted symbol table slot capacity\n", stderr);
-        abort();
-    }
+static bool symbol_table_resize(SymbolTable *st, uint32_t new_cap) {
     SymbolSlot *old_slots = st->slots;
     uint32_t entry_len = atomic_load_explicit(&st->entry_len, memory_order_relaxed);
 
-    st->slots = symbol_malloc(sizeof(SymbolSlot) * new_cap);
-    memset(st->slots, 0, sizeof(SymbolSlot) * new_cap);
-    st->slot_cap = new_cap;
-    st->slot_used = 0;
+    if (!new_cap || (new_cap & (new_cap - 1u))) { errno = EOVERFLOW; return false; }
+    SymbolSlot *slots = calloc(new_cap, sizeof(*slots));
+    if (!slots) return false;
+    uint32_t used = 0;
 
     for (uint32_t i = 1; i < entry_len; i++) {
         const SymbolEntry *entry = symbol_table_entry_ref(st, (SymbolId)i);
         if (!entry || !entry->bytes) continue;
-        uint32_t slot = symbol_slot(st, entry->hash);
-        while (st->slots[slot].id != SYMBOL_ID_NONE) {
-            slot = (slot + 1u) & (st->slot_cap - 1u);
+        uint32_t slot = symbol_slot_capacity(st, entry->hash, new_cap);
+        while (slots[slot].id != SYMBOL_ID_NONE) {
+            slot = (slot + 1u) & (new_cap - 1u);
         }
-        st->slots[slot].hash = entry->hash;
-        st->slots[slot].len = entry->len;
-        st->slots[slot].id = (SymbolId)i;
-        st->slot_used++;
+        slots[slot].hash = entry->hash;
+        slots[slot].len = entry->len;
+        slots[slot].id = (SymbolId)i;
+        used++;
     }
 
+    st->slots = slots;
+    st->slot_cap = new_cap;
+    st->slot_used = used;
     free(old_slots);
+    return true;
+}
+
+bool symbol_table_try_init(SymbolTable *st) {
+    if (!st) { errno = EINVAL; return false; }
+    memset(st, 0, sizeof(*st));
+    atomic_init(&st->entry_len, 0);
+    int error = pthread_mutex_init(&st->write_mutex, NULL);
+    if (error) { errno = error; return false; }
+    st->instance_id = symbol_table_instance_new();
+    if (st->instance_id == 0u) {
+        errno = EOVERFLOW;
+        goto failed;
+    }
+    st->placement_key = cetta_placement_key_next();
+    st->name_trie_count = 1u;
+    st->entry_chunks = calloc(SYMBOL_ENTRY_CHUNK_COUNT, sizeof(SymbolEntry *));
+    if (!st->entry_chunks || !symbol_table_ensure_entry_chunk(st, SYMBOL_ID_NONE))
+        goto failed;
+    atomic_store_explicit(&st->entry_len, 1, memory_order_relaxed);
+    if (!symbol_table_resize(st, SYMBOL_TABLE_MIN_SLOTS)) goto failed;
+    return true;
+failed:
+    error = errno;
+    symbol_table_free(st);
+    errno = error;
+    return false;
 }
 
 void symbol_table_init(SymbolTable *st) {
-    if (!st) return;
-    st->instance_id = atomic_fetch_add_explicit(
-        &g_symbol_table_instance_counter, 1u, memory_order_relaxed);
-    if (st->instance_id == 0u) {
-        fprintf(stderr, "fatal: symbol table instance id space exhausted\n");
-        abort();
-    }
-    st->slots = NULL;
-    st->slot_cap = 0;
-    st->slot_used = 0;
-    st->placement_key = cetta_placement_key_next();
-    st->name_trie = NULL;
-    st->name_trie_count = 1u;
-    st->name_trie_invalid = 0u;
-    st->spelling_chunks = NULL;
-    st->spelling_free = NULL;
-    st->spelling_left = 0u;
-    st->entry_chunks = symbol_calloc(SYMBOL_ENTRY_CHUNK_COUNT, sizeof(SymbolEntry *));
-    atomic_init(&st->entry_len, 0);
-    if (pthread_mutex_init(&st->write_mutex, NULL) != 0) {
-        fprintf(stderr, "fatal: failed to initialize symbol table mutex\n");
-        abort();
-    }
-
-    symbol_table_ensure_entry_chunk(st, SYMBOL_ID_NONE);
-    atomic_store_explicit(&st->entry_len, 1, memory_order_relaxed);
-    symbol_table_resize(st, SYMBOL_TABLE_MIN_SLOTS);
+    if (st && !symbol_table_try_init(st))
+        symbol_fatal("symbol table initialization");
 }
 
 void symbol_table_free(SymbolTable *st) {
@@ -273,7 +280,12 @@ static SymbolId symbol_intern_span_hashed_unlocked(SymbolTable *st,
     if (!st || !bytes || len == 0) return SYMBOL_ID_NONE;
     if (((uint64_t)st->slot_used + 1u) * SYMBOL_TABLE_MAX_LOAD_DEN >
         (uint64_t)st->slot_cap * SYMBOL_TABLE_MAX_LOAD_NUM) {
-        symbol_table_resize(st, st->slot_cap ? st->slot_cap * 2 : SYMBOL_TABLE_MIN_SLOTS);
+        if (st->slot_cap > UINT32_MAX / 2u) {
+            errno = EOVERFLOW;
+            return SYMBOL_ID_NONE;
+        }
+        if (!symbol_table_resize(st, st->slot_cap ? st->slot_cap * 2 : SYMBOL_TABLE_MIN_SLOTS))
+            return SYMBOL_ID_NONE;
     }
 
     entry_len = atomic_load_explicit(&st->entry_len, memory_order_relaxed);
@@ -284,15 +296,21 @@ static SymbolId symbol_intern_span_hashed_unlocked(SymbolTable *st,
             /* Existing IDs remain usable at capacity; a new ID cannot
              * wrap the exclusive published extent back to zero. */
             if (entry_len == UINT32_MAX) {
-                fprintf(stderr, "fatal: symbol table exhausted symbol id space\n");
-                abort();
+                errno = EOVERFLOW;
+                return SYMBOL_ID_NONE;
             }
+            SymbolId id = (SymbolId)entry_len;
+            uint32_t chunk = id >> SYMBOL_ENTRY_CHUNK_BITS;
+            bool new_chunk = st->entry_chunks[chunk] == NULL;
+            if (!symbol_table_ensure_entry_chunk(st, id)) return SYMBOL_ID_NONE;
             char *copy = symbol_spelling_alloc(st, (size_t)len + 1);
+            if (!copy) {
+                if (new_chunk) { free(st->entry_chunks[chunk]); st->entry_chunks[chunk] = NULL; }
+                return SYMBOL_ID_NONE;
+            }
             memcpy(copy, bytes, len);
             copy[len] = '\0';
 
-            SymbolId id = (SymbolId)entry_len;
-            symbol_table_ensure_entry_chunk(st, id);
             SymbolEntry *sym = symbol_table_entry_mut(st, id);
             sym->bytes = copy;
             sym->len = len;
@@ -328,13 +346,22 @@ static SymbolId symbol_intern_span_hashed_unlocked(SymbolTable *st,
     }
 }
 
-SymbolId symbol_intern_span_hashed(SymbolTable *st, const uint8_t *bytes,
+SymbolId symbol_try_intern_span_hashed(SymbolTable *st, const uint8_t *bytes,
                                    uint32_t len, uint64_t hash) {
     SymbolId id;
-    if (!st) return SYMBOL_ID_NONE;
+    if (!st || !bytes || !len) { errno = EINVAL; return SYMBOL_ID_NONE; }
     pthread_mutex_lock(&st->write_mutex);
     id = symbol_intern_span_hashed_unlocked(st, bytes, len, hash);
     pthread_mutex_unlock(&st->write_mutex);
+    return id;
+}
+
+SymbolId symbol_intern_span_hashed(SymbolTable *st, const uint8_t *bytes,
+                                   uint32_t len, uint64_t hash) {
+    if (!st || !bytes || !len) return SYMBOL_ID_NONE;
+    SymbolId id = symbol_try_intern_span_hashed(st, bytes, len, hash);
+    if (!id && !(cetta_native_memory_recover && cetta_native_memory_recover()))
+        symbol_fatal("symbol interning");
     return id;
 }
 
@@ -404,13 +431,20 @@ done:
 
 SymbolId symbol_intern_bytes(SymbolTable *st, const uint8_t *bytes, uint32_t len) {
     if (!st || !bytes || len == 0) return SYMBOL_ID_NONE;
-    return symbol_intern_span_hashed(st, bytes, len,
-                                     symbol_hash_bytes(bytes, len));
+    return symbol_intern_span_hashed(st, bytes, len, symbol_hash_bytes(bytes, len));
 }
 
 SymbolId symbol_intern_cstr(SymbolTable *st, const char *text) {
     if (!st || !text || !*text) return SYMBOL_ID_NONE;
     return symbol_intern_bytes(st, (const uint8_t *)text, (uint32_t)strlen(text));
+}
+
+SymbolId symbol_try_intern_cstr(SymbolTable *st, const char *text) {
+    if (!st || !text || !*text) { errno = EINVAL; return SYMBOL_ID_NONE; }
+    size_t length = strlen(text);
+    if (length > UINT32_MAX) { errno = EOVERFLOW; return SYMBOL_ID_NONE; }
+    return symbol_try_intern_span_hashed(st, (const uint8_t *)text, (uint32_t)length,
+        symbol_hash_bytes((const uint8_t *)text, (uint32_t)length));
 }
 
 SymbolId symbol_lookup_cstr(SymbolTable *st, const char *text) {
@@ -556,9 +590,17 @@ bool symbol_eq_cstr(const SymbolTable *st, SymbolId id, const char *text) {
     return entry && entry->len == len && memcmp(entry->bytes, text, len) == 0;
 }
 
-void symbol_table_init_builtins(SymbolTable *st, BuiltinSyms *builtins) {
-    if (!st || !builtins) return;
-#define CETTA_INIT_BUILTIN(field, text) builtins->field = symbol_intern_cstr(st, text);
+bool symbol_table_try_init_builtins(SymbolTable *st, BuiltinSyms *builtins) {
+    int error;
+    if (!st || !builtins) { errno = EINVAL; return false; }
+    memset(builtins, 0, sizeof(*builtins));
+    pthread_mutex_lock(&st->write_mutex);
+#define CETTA_INIT_BUILTIN(field, text) do { \
+    builtins->field = symbol_intern_span_hashed_unlocked(st, \
+        (const uint8_t *)(text), (uint32_t)(sizeof(text) - 1u), \
+        symbol_hash_bytes((const uint8_t *)(text), (uint32_t)(sizeof(text) - 1u))); \
+    if (!builtins->field) goto failed; \
+} while (0);
     CETTA_BUILTIN_SYMBOLS(CETTA_INIT_BUILTIN)
 #undef CETTA_INIT_BUILTIN
 
@@ -594,6 +636,19 @@ void symbol_table_init_builtins(SymbolTable *st, BuiltinSyms *builtins) {
 } while (0);
     CETTA_BUILTIN_SYMBOLS(CETTA_MARK_LIBRARY_GROUNDED)
 #undef CETTA_MARK_LIBRARY_GROUNDED
+    pthread_mutex_unlock(&st->write_mutex);
+    return true;
+failed:
+    error = errno;
+    memset(builtins, 0, sizeof(*builtins));
+    pthread_mutex_unlock(&st->write_mutex);
+    errno = error;
+    return false;
+}
+
+void symbol_table_init_builtins(SymbolTable *st, BuiltinSyms *builtins) {
+    if (st && builtins && !symbol_table_try_init_builtins(st, builtins))
+        symbol_fatal("builtin symbol initialization");
 }
 
 CettaPettaArrowMode cetta_petta_arrow_mode(SymbolId id) {
