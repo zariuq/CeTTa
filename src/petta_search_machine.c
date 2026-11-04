@@ -36556,27 +36556,35 @@ static bool petta_machine_dispatch_solve(
 
     if (control.operation == CETTA_CONTROL_ORDERED_CHOICE) {
         CettaExprIndex source_child = (CettaExprIndex)control.source + 1u;
-        Atom *items = petta_machine_apply_bindings(machine,
-            environment, &machine->heap, expression->expr.elems[source_child]);
-        /*
-         * The alternative list is a LOGICAL list: a bound closed open-cons
-         * chain (a chainer result set, for example) denotes the same
-         * alternatives as its flat spelling and must distribute the same
-         * way, not iterate the carrier's implementation fields.
-         */
-        items = petta_semantics_flatten_closed_open_cons(
-            &machine->heap, items);
-        /* A list's alternatives are its elements. */
-        items = items ? petta_machine_list_elements(machine, items) : NULL;
-        if (!items)
-            return false;
+        Atom *source = expression->expr.elems[source_child];
         /* PeTTa distributes an authored tuple, evaluating each element; a
          * variable's list is its runtime `superpose`, member/2 of the
          * value, whose elements are the alternatives as they stand. */
         const PettaPlanNode *items_plan = petta_plan_child(plan, source_child);
         bool values = items_plan
             ? items_plan->role == PETTA_PLAN_VALUE
-            : expression->expr.elems[source_child]->kind == ATOM_VAR;
+            : source->kind == ATOM_VAR;
+        /* An authored tuple's elements are solved as written, each in this
+         * environment, as any goal's children are: a variable among them is
+         * the value bound to it and is never evaluated again
+         * (ValueOccurrences.evalIn).  Only a list held as a value is read
+         * through the environment. */
+        Atom *items = values || source->kind != ATOM_EXPR
+            ? petta_machine_apply_bindings(machine, environment,
+                                           &machine->heap, source)
+            : source;
+        /*
+         * The alternative list is a LOGICAL list: a bound closed open-cons
+         * chain (a chainer result set, for example) denotes the same
+         * alternatives as its flat spelling and must distribute the same
+         * way, not iterate the carrier's implementation fields.
+         */
+        items = items ? petta_semantics_flatten_closed_open_cons(
+            &machine->heap, items) : NULL;
+        /* A list's alternatives are its elements. */
+        items = items ? petta_machine_list_elements(machine, items) : NULL;
+        if (!items)
+            return false;
         return petta_machine_start_superpose(
             machine, items, expected, goal->barrier, items_plan, values);
     }

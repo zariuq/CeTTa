@@ -43,7 +43,6 @@
               ($amount (foldl-atom $rows 0 $total $row
                          (let $value (index-atom $row 1) (+ $total $value)))))
          ($key $amount)))))
-; Explicit inductive lists and the representation isomorphism live in clist.
 
 ; Stable first-matching-key encoding. Codes retain every occurrence; keys
 ; follow first introduction, and firsts records each key's source position.
