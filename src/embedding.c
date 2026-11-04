@@ -1,6 +1,12 @@
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
+#ifndef _POSIX_C_SOURCE
 #define _POSIX_C_SOURCE 200809L
+#endif
+#ifndef _XOPEN_SOURCE
 #define _XOPEN_SOURCE 700
+#endif
 #include "cetta_embed.h"
 #include "runtime_names.h"
 #include "eval.h"
@@ -502,16 +508,18 @@ static cetta_status_t engine_new_native(const cetta_engine_config_t *config, cet
     CettaNameContext names = cetta_name_domain_context(&engine->names);
     cetta_name_context_install(&names);
     bool started = cetta_runtime_session_init(&engine->session, &engine->persistent, language->id, profile);
+    /* Resource-path discovery may change errno after a refused constructor. */
+    int startup_error = started ? 0 : errno;
     if (started) eval_resources_set_native_memory(engine->session.resources, engine->memory);
-    if (config && config->resource_root)
+    if (started && config && config->resource_root)
         strcpy(engine->session.libraries.root_dir, config->resource_root);
-    else {
+    else if (started) {
         char root[PATH_MAX];
         if (installed_resource_root(root, sizeof(root)))
             strcpy(engine->session.libraries.root_dir, root);
     }
     bool rooted = started && cetta_runtime_session_open_root(&engine->session, &engine->persistent);
-    int startup_error = rooted ? 0 : errno;
+    if (started && !rooted) startup_error = errno;
     EmbeddingScope scope;
     scope_enter(engine, &scope);
     char error_buffer[512];

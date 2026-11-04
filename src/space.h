@@ -242,6 +242,8 @@ typedef struct {
     bool has_non_exact_atoms;
     bool has_non_exact_atoms_dirty;
     bool has_graded_equations; /* derived alongside the ordinary equation index */
+    /* Cached representation presence; occupies existing flag padding. */
+    _Atomic bool has_proof_image;
     uint32_t secondary_index_deferral_depth;
     /* Rows removed and not yet contracted away (space_mark_rows): one bit
      * per row, their number, and a Fenwick tree of the live rows of each
@@ -300,6 +302,7 @@ typedef struct Space {
             bool has_non_exact_atoms;
             bool has_non_exact_atoms_dirty;
             bool has_graded_equations;
+            _Atomic bool has_proof_image;
             uint32_t secondary_index_deferral_depth;
             uint64_t *marks;
             CettaIndex *mark_tree;
@@ -571,6 +574,7 @@ void space_storage_census(const Space *s, CettaStorageCensus *census);
  * temporary-space ownership may omit these hooks. */
 void *space_lifetime_pin(Space *s) __attribute__((weak));
 void space_lifetime_unpin(void *hold) __attribute__((weak));
+bool space_lifetime_pin_keeps_storage(void *hold) __attribute__((weak));
 void space_lifetime_rebase(Space *s, const Space *base) __attribute__((weak));
 /* Drain released temporary-space owners at an evaluator-safe boundary.
  * False when an enclosing execution still requires deferred cleanup. */
@@ -677,6 +681,40 @@ typedef struct {
  * rows: a reader of a relation asks the rows too, between
  * space_dense_reading_begin and _end, which keep the guards from giving
  * the relation back meanwhile. */
+typedef struct CettaProofImage CettaProofImage;
+typedef struct CettaProofRowLayout CettaProofRowLayout;
+typedef enum {
+    SPACE_PROOF_IMAGE_DECLINED = 0,
+    SPACE_PROOF_IMAGE_READY,
+    SPACE_PROOF_IMAGE_CAPACITY,
+} SpaceProofImageStatus;
+/* Explicit data storage only: no source producer or execution permission.
+ * Success retains IMAGE independently and publishes one append mutation.
+ * The borrowed TU/symbol session must outlive the Space as for native rows. */
+SpaceProofImageStatus space_attach_proof_image(Space *, SymbolId head,
+    const CettaProofRowLayout *, CettaProofImage *);
+typedef struct CettaProofBatchStore CettaProofBatchStore;
+typedef struct CettaProofBatchTransaction CettaProofBatchTransaction;
+typedef struct CettaProofBatchView CettaProofBatchView;
+/* The full batch declarations are separate to keep ordinary Space clients
+ * independent of producer storage internals. */
+/* Failure keeps the old logical bag/image; READY preserves semantic revisions. */
+SpaceProofImageStatus space_settle_proof_images(Space *);
+/* The guarded bodies are cold on ordinary storage. False reports an
+ * expansion refusal through the existing backend error channel. */
+bool space_prepare_proof_read_slow(Space *s, const Atom *pattern);
+bool space_has_proof_image_slow(const Space *, SymbolId head);
+static inline bool space_prepare_proof_read(Space *s, const Atom *pattern) {
+    const Space *read = s;
+    while (read && !atomic_load_explicit(&read->native.has_proof_image, memory_order_acquire))
+        read = read->overlay_base;
+    return !read || space_prepare_proof_read_slow(s, pattern);
+}
+static inline bool space_has_proof_image(const Space *s, SymbolId head) {
+    return s && atomic_load_explicit(&s->native.has_proof_image, memory_order_acquire) &&
+        (head == SYMBOL_ID_NONE || space_has_proof_image_slow(s, head));
+}
+
 bool space_dense_form(const Space *s, SymbolId head, SpaceDenseForm *form);
 /* Whether the relation PATTERN's head keeps is flat (a relation of deep
  * facts whose spine is the head over holes is), with PATTERN's length: then
@@ -764,6 +802,20 @@ void space_note_external_backend_mutation(Space *s);
  * This is neither a row publication nor a grant of ownership or authority. */
 void space_read_view_invalidate(Space *s);
 Space *space_heap_clone_shallow(Space *src);
+typedef enum {
+    SPACE_ADDITIVE_COPY_UNSUPPORTED = 0,
+    SPACE_ADDITIVE_COPY_READY,
+    SPACE_ADDITIVE_COPY_FAILED,
+} SpaceAdditiveCopyResult;
+/* Make a fresh heap-owned bag from both inputs without giving their flat
+ * kept relations back to rows. READY returns the complete result in OUT;
+ * the caller owns it. UNSUPPORTED changes nothing and admits a generic
+ * atom-copy route. FAILED destroys its private partial result and must not
+ * be retried as if it were an unsupported representation. OUT is otherwise
+ * NULL. The native route requires plain same-universe storage outside a
+ * concurrent scope; ordered raw rows retain their relative order. */
+SpaceAdditiveCopyResult space_heap_additive_copy(
+    TermUniverse *destination_universe, Space *left, Space *right, Space **out);
 void space_replace_contents(Space *dst, Space *src);
 /* Notified after a space takes over the contents of a space with another
  * lifetime identity, so that records keyed by the source's identity follow
@@ -1206,6 +1258,18 @@ void space_occurrence_cursor_release(SpaceOccurrenceCursor *cursor);
 void space_occurrence_cursor_storage_census(const SpaceOccurrenceCursor *cursor,
                                            CettaStorageCensus *census);
 
+/* A captured occurrence view may select its declared heads later. The
+ * shared index is pinned with the rows; appends, deletions and rewrites do
+ * not turn the later selection into a query of the live Space. */
+typedef struct {
+    SpaceOccurrenceCursor rows;
+    CettaSpaceHeadIndex *heads;
+} SpaceHeadSnapshot;
+bool space_head_snapshot_init(Space *space, SpaceHeadSnapshot *snapshot);
+bool space_head_snapshot_select(const SpaceHeadSnapshot *snapshot,
+    const SymbolId *heads, size_t count, SpaceOccurrenceCursor *cursor);
+void space_head_snapshot_release(SpaceHeadSnapshot *snapshot);
+
 bool space_contains_exact(Space *s, Atom *atom);
 /* Exact membership for `(head argument...)`, presented as a borrowed term
  * view.  `out_applicable` is false when the active backend cannot answer from
@@ -1596,6 +1660,10 @@ void registry_binding_publication_commit(RegistryBindingPublication *publication
 void registry_binding_publication_free(RegistryBindingPublication *publication);
 void registry_binding_publication_storage(const RegistryBindingPublication *publication,
     CettaStorageCensus *census);
+/* registry_lookup_id trying the entry at `*hint` first, and leaving there
+ * the index it found.  A key has one entry and an entry keeps its index, so
+ * an entry still holding the key is its binding. */
+Atom *registry_lookup_id_hinted(Registry *r, SymbolId key, uint32_t *hint);
 void registry_bind(Registry *r, const char *name, Atom *value);
 Atom *registry_lookup(Registry *r, const char *name);
 bool registry_bind_name(Registry *r, Atom *name_key, Atom *value);

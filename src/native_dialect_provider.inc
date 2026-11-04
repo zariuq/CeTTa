@@ -168,8 +168,8 @@ static bool native_dialect_capture_resource(void *raw, const Atom *atom,
          atom->ground.gkind != GV_CAPTURE)) return false;
     PrimeNativeParallel *parallel = owner->storage_owner
         ? owner->storage_owner : owner->control->parallel_owner;
-    if (parallel && (arena_owns_ptr(&parallel->world.persistent_arena, atom->ground.ptr) ||
-            arena_owns_ptr(&parallel->world.eval_arena, atom->ground.ptr) ||
+    if (parallel && (arena_owns_ptr(&parallel->world.storage->persistent_arena, atom->ground.ptr) ||
+            arena_owns_ptr(&parallel->world.storage->eval_arena, atom->ground.ptr) ||
             (atom->ground.gkind == GV_SPACE &&
              hyperpose_branch_owns_space(&parallel->world, atom->ground.ptr)))) {
         *lease = (PettaMachineResourceLease){
@@ -1308,7 +1308,7 @@ static bool native_dialect_parallel_prepare(PrimeNativeControl *control,
     parallel->variants_ready = true;
     __attribute__((cleanup(prime_native_restore_hashcons)))
     HashConsTable *previous_hashcons = g_hashcons;
-    g_hashcons = &parallel->world.hashcons;
+    g_hashcons = &parallel->world.storage->hashcons;
     if (!hyperpose_prepare_thread_branch(&parallel->world, 0u, control->space,
             &control->registry_read.initial, source->source_expression, NULL,
             NULL, true, true, NULL, NULL)) {
@@ -1324,7 +1324,7 @@ static bool native_dialect_parallel_prepare(PrimeNativeControl *control,
     Registry *previous_registry = g_registry;
     g_registry = &parallel->world.registry;
     bool ready = child && prime_native_control_init(child, control->space,
-        &parallel->world.eval_arena, parallel->world.branch, source->context.fuel,
+        &parallel->world.storage->eval_arena, parallel->world.branch, source->context.fuel,
         true, (CettaObservationDemand){.completion=CETTA_OBSERVATION_COMPLETE_BAG},
         &policy, &control->base_environment, NULL, NULL);
     g_registry = previous_registry;

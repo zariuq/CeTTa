@@ -582,6 +582,15 @@ static bool match_finite_ground_equal_try(
         atom_has_vars(left) || atom_has_vars(right) ||
         !match_shared_ground_reflexivity_enabled())
         return false;
+    /* Expressions of different lengths, neither holding a rational view,
+     * are unequal as atom_eq finds them: no walk can change that answer,
+     * so the audit that keeps the walk finite is not needed. */
+    if (left->expr.len != right->expr.len &&
+        !atom_structural_has_rational(left) &&
+        !atom_structural_has_rational(right)) {
+        *equal_out = false;
+        return true;
+    }
     if (!match_occurrence_is_finite_dag(left) ||
         (right != left && !match_occurrence_is_finite_dag(right)))
         return false;
@@ -5481,17 +5490,17 @@ typedef struct {
 
 /* A graph observation distinguishes a source node's lexical readings. The
  * same skeleton can occur in several rule frames, so a pointer alone is not
- * a substitution-cache key. Quotation depth also determines how the language's
- * structure hooks read and form an image. Completed images retain that full
- * context; the active-source table uses only source and lexical scope, so a
- * malformed raw cycle cannot evade detection by adding quotation depth.
- * Both tables belong to one immutable environment observation and are never
- * retained across a binding mutation. */
+ * a substitution-cache key: the key is the node and the whole scope it is
+ * read in. Quotation depth also determines how the language's structure
+ * hooks read and form an image. Completed images retain that full context;
+ * the active-source table uses only source and lexical scope, so a malformed
+ * raw cycle cannot evade detection by adding quotation depth. Both tables
+ * belong to one immutable environment observation and are never retained
+ * across a binding mutation. */
 typedef struct {
     Atom *source;
     Atom *image;
-    CettaFrameIdentity epoch;
-    BindingValueKind kind;
+    BindingsApplyScope scope;
     uint32_t code_depth;
     bool active;
 } BindingApplyGraphEntry;
@@ -5502,29 +5511,42 @@ typedef struct BindingApplyGraph {
     struct BindingApplyGraph *active_path;
 } BindingApplyGraph;
 
-static size_t bindings_apply_graph_hash(Atom *source, CettaFrameIdentity epoch,
-                                        BindingValueKind kind,
+static size_t bindings_apply_graph_hash(Atom *source,
+                                        BindingsApplyScope scope,
                                         uint32_t code_depth) {
     uint64_t hash = (uint64_t)(uintptr_t)source;
-    hash ^= epoch.word * UINT64_C(0x9e3779b97f4a7c15);
-    hash ^= (uint64_t)kind * UINT64_C(0xbf58476d1ce4e5b9);
-    hash ^= (uint64_t)code_depth * UINT64_C(0x94d049bb133111eb);
+    hash ^= scope.epoch.word * UINT64_C(0x9e3779b97f4a7c15);
+    hash ^= (uint64_t)scope.kind * UINT64_C(0xbf58476d1ce4e5b9);
+    hash ^= ((uint64_t)scope.first_entry << 2 |
+             (uint64_t)scope.original_side << 1 |
+             (uint64_t)scope.resolve_outer) * UINT64_C(0x94d049bb133111eb);
+    hash ^= (uint64_t)(uintptr_t)scope.fast;
+    hash ^= (uint64_t)code_depth * UINT64_C(0xd6e8feb86659fd93);
     hash ^= hash >> 30u;
     hash *= UINT64_C(0xbf58476d1ce4e5b9);
     return (size_t)(hash ^ (hash >> 27u));
 }
 
+static bool bindings_apply_scope_eq(BindingsApplyScope left,
+                                    BindingsApplyScope right) {
+    return left.fast == right.fast &&
+           cetta_frame_identity_eq(left.epoch, right.epoch) &&
+           left.first_entry == right.first_entry &&
+           left.kind == right.kind &&
+           left.original_side == right.original_side &&
+           left.resolve_outer == right.resolve_outer;
+}
+
 static bool bindings_apply_graph_key_equal(const BindingApplyGraphEntry *entry,
         Atom *source, BindingsApplyScope scope, uint32_t code_depth) {
-    return entry->source == source && cetta_frame_identity_eq(entry->epoch, scope.epoch) &&
-        entry->kind == scope.kind && entry->code_depth == code_depth;
+    return entry->source == source && bindings_apply_scope_eq(entry->scope, scope) &&
+        entry->code_depth == code_depth;
 }
 
 static BindingApplyGraphEntry *bindings_apply_graph_slot(
         BindingApplyGraph *graph, Atom *source, BindingsApplyScope scope,
         uint32_t code_depth) {
-    size_t slot = bindings_apply_graph_hash(
-        source, scope.epoch, scope.kind, code_depth) &
+    size_t slot = bindings_apply_graph_hash(source, scope, code_depth) &
         (graph->cap - 1u);
     while (graph->entries[slot].source &&
            !bindings_apply_graph_key_equal(&graph->entries[slot], source, scope, code_depth))
@@ -5541,8 +5563,7 @@ static BindingApplyGraphEntry *bindings_apply_graph_enter(
         *created = !entry->source;
         if (*created) {
             *entry = (BindingApplyGraphEntry){.source = source,
-                .epoch = scope.epoch, .kind = scope.kind,
-                .code_depth = code_depth};
+                .scope = scope, .code_depth = code_depth};
             ++graph->len;
         }
         return entry;
@@ -5557,8 +5578,7 @@ static BindingApplyGraphEntry *bindings_apply_graph_enter(
     for (size_t i = 0u; i < graph->cap; ++i) {
         BindingApplyGraphEntry entry = graph->entries[i];
         if (entry.source)
-            *bindings_apply_graph_slot(&grown, entry.source,
-                (BindingsApplyScope){.epoch = entry.epoch, .kind = entry.kind},
+            *bindings_apply_graph_slot(&grown, entry.source, entry.scope,
                 entry.code_depth) = entry;
     }
     free(graph->entries);
@@ -6188,7 +6208,7 @@ static inline void bindings_apply_walk_init(BindingsApplyWalk *walk,
         .seen_len = seen_len, .hooks = g_bindings_structure_hooks, .graph = graph};
     walk->frames = (BindingsApplyFrames){.items = walk->inline_items,
         .cap = BINDINGS_APPLY_INLINE_FRAMES};
-    walk->may_observe = !walk->hooks && !graph && !epoch_fold &&
+    walk->may_observe = !walk->hooks && !graph &&
         !fold->rewrite_var && !fold->track_cycles;
 }
 
@@ -14221,7 +14241,7 @@ static BindingApplyGraphEntry *match_graph_check_entry(MatchGraphCheck *check,
             return NULL;
         }
         if (!check->graph.cap) { *valid = false; return NULL; }
-        check->probe = bindings_apply_graph_hash(atom, scope.epoch, scope.kind, 0u) &
+        check->probe = bindings_apply_graph_hash(atom, scope, 0u) &
             (check->graph.cap - 1u);
         check->memo_phase = MATCH_GRAPH_MEMO_LOOKUP;
     }
@@ -14243,7 +14263,7 @@ static BindingApplyGraphEntry *match_graph_check_entry(MatchGraphCheck *check,
         if (check->migrating.source) {
             BindingApplyGraphEntry *entry = &check->migrating;
             check->probe = bindings_apply_graph_hash(
-                entry->source, entry->epoch, entry->kind, entry->code_depth) &
+                entry->source, entry->scope, entry->code_depth) &
                 (check->growing.cap - 1u);
             check->memo_phase = MATCH_GRAPH_MEMO_MOVE;
         } else if (check->scanned == check->graph.cap) {
@@ -14277,8 +14297,7 @@ static BindingApplyGraphEntry *match_graph_check_entry(MatchGraphCheck *check,
         }
         if (!entry->source) {
             if (!entering) { *valid = false; return NULL; }
-            *entry = (BindingApplyGraphEntry){.source = atom, .epoch = scope.epoch,
-                .kind = scope.kind};
+            *entry = (BindingApplyGraphEntry){.source = atom, .scope = scope};
             ++check->graph.len;
         }
         check->memo_phase = MATCH_GRAPH_MEMO_IDLE;
@@ -15486,8 +15505,7 @@ static bool match_cursor_copy_graph(BindingApplyGraph *graph,
         entry.source = atom_deep_copy_session_copy(session, entry.source);
         if (!entry.source) { free(relocated.entries); return false; }
         *bindings_apply_graph_slot(&relocated, entry.source,
-            (BindingsApplyScope){.epoch = entry.epoch, .kind = entry.kind},
-            entry.code_depth) = entry;
+            entry.scope, entry.code_depth) = entry;
     }
     free(graph->entries);
     *graph = relocated;
@@ -15514,11 +15532,12 @@ static bool match_cursor_copy_reach(MatchGraphCheck *check,
         entry->source = atom_deep_copy_session_copy(session, entry->source);
         if (!entry->source) return false;
         check->probe = bindings_apply_graph_hash(entry->source,
-            entry->epoch, entry->kind, entry->code_depth) & (check->growing.cap - 1u);
+            entry->scope, entry->code_depth) & (check->growing.cap - 1u);
     } else if (check->memo_phase == MATCH_GRAPH_MEMO_LOOKUP) {
         BindingValue value = check->items[check->len - 1u].value;
         check->probe = bindings_apply_graph_hash(value.skeleton,
-            binding_value_epoch(value), binding_value_kind(value), 0u) & (check->graph.cap - 1u);
+            (BindingsApplyScope){.epoch = binding_value_epoch(value),
+                                 .kind = binding_value_kind(value)}, 0u) & (check->graph.cap - 1u);
     }
     return true;
 }
@@ -15623,7 +15642,9 @@ bool match_atoms_cursor_test_graph(const CettaMatchCursor *cursor,
 }
 
 size_t match_atoms_cursor_test_bucket(Atom *atom, size_t mask) {
-    return bindings_apply_graph_hash(atom, CETTA_FRAME_IDENTITY_NONE, BINDING_VALUE_MATERIALIZED, 0u) & mask;
+    return bindings_apply_graph_hash(atom,
+        (BindingsApplyScope){.epoch = CETTA_FRAME_IDENTITY_NONE,
+                             .kind = BINDING_VALUE_MATERIALIZED}, 0u) & mask;
 }
 #endif
 

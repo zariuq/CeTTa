@@ -845,12 +845,147 @@ static void test_fallback_image_owners(bool wide) {
            wide ? "wide" : "compact");
 }
 
+typedef struct {
+    TermUniverse *universe;
+    size_t holds, attempts;
+    bool recursive;
+} TestCollectionReentry;
+
+static void test_collection_reentry_attempt(TestCollectionReentry *probe) {
+    if (probe->recursive)
+        return; /* Bounds the deliberately broken collector's recursion. */
+    probe->recursive = true;
+    probe->attempts++;
+    TermUniverseCollectionReport nested;
+    memset(&nested, 0xa5, sizeof(nested));
+    bool admitted = term_universe_collect(probe->universe, &nested);
+    assert(!admitted);
+    assert(nested.entries == 0u && nested.roots == 0u &&
+           nested.live == 0u && nested.dead == 0u && nested.reclaimed == 0u);
+    probe->recursive = false;
+}
+
+static void test_collection_reentry_retain(void *context) {
+    ((TestCollectionReentry *)context)->holds++;
+}
+
+static void test_collection_reentry_release(void *context) {
+    TestCollectionReentry *probe = context;
+    assert(probe->holds);
+    if (--probe->holds == 0u)
+        test_collection_reentry_attempt(probe);
+}
+
+static void test_collection_guards_opaque_finalizer(bool wide) {
+    Arena persistent, source;
+    arena_init_detached(&persistent);
+    arena_init_detached(&source);
+    TermUniverse universe;
+    assert(term_universe_init_with_store_format(&universe,
+        wide ? TERM_UNIVERSE_STORE_FORMAT_WIDE64_V1
+             : TERM_UNIVERSE_STORE_FORMAT_COMPACT32_V1));
+    term_universe_set_persistent_arena(&universe, &persistent);
+    term_universe_set_collection_mode(&universe, TERM_UNIVERSE_COLLECTION_RECLAIM);
+    TestCollectionReentry probe = {.universe = &universe};
+    Atom *handle = atom_native_handle_identifier(&source, 73, &probe,
+        test_collection_reentry_retain, test_collection_reentry_release);
+    assert(handle && probe.holds == 1u);
+    AtomId id = term_universe_store_atom_id(&universe, &source, handle);
+    assert(id != CETTA_ATOM_ID_NONE && probe.holds == 2u &&
+           universe.fallback_bytes > 0u);
+    arena_free(&source);
+    assert(probe.holds == 1u && !probe.attempts);
+    TermUniverseCollectionReport report;
+    assert(term_universe_collect(&universe, &report));
+    assert(report.reclaimed == 1u && probe.attempts == 1u && !probe.holds &&
+           !universe.fallback_bytes && !universe.collection_inhibit);
+    /* A normal subsequent collection must still be admitted. */
+    (void)tu_intern_int(&universe, 9876);
+    assert(term_universe_collect(&universe, &report) && report.reclaimed == 1u);
+    assert(!universe.collection_inhibit);
+    term_universe_free(&universe);
+    arena_free(&persistent);
+}
+
+static void test_collection_reentry_provider(const TermUniverse *universe,
+        TermUniverseRootVisit visit, void *visit_context, void *context) {
+    (void)universe;
+    (void)visit;
+    (void)visit_context;
+    test_collection_reentry_attempt(context);
+}
+
+static TestCollectionReentry *test_collection_resource_probe;
+static void test_collection_reentry_resource_collector(TermUniverse *universe) {
+    assert(test_collection_resource_probe &&
+           test_collection_resource_probe->universe == universe);
+    test_collection_reentry_attempt(test_collection_resource_probe);
+    /* Models the resource graph's own nested inhibition scope. */
+    uint32_t before = __atomic_load_n(&universe->collection_inhibit, __ATOMIC_RELAXED);
+    assert(before > 0u);
+    term_universe_collection_inhibit_enter(universe);
+    assert(__atomic_load_n(&universe->collection_inhibit, __ATOMIC_RELAXED) == before + 1u);
+    term_universe_collection_inhibit_leave(universe);
+    assert(__atomic_load_n(&universe->collection_inhibit, __ATOMIC_RELAXED) == before);
+}
+
+static void test_collection_guards_root_provider(bool reclaiming) {
+    Arena persistent;
+    arena_init_detached(&persistent);
+    TermUniverse universe;
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    term_universe_set_collection_mode(&universe, reclaiming
+        ? TERM_UNIVERSE_COLLECTION_RECLAIM : TERM_UNIVERSE_COLLECTION_SHADOW);
+    TestCollectionReentry probe = {.universe = &universe};
+    assert(term_universe_add_root_provider(&universe, test_collection_reentry_provider, &probe));
+    (void)tu_intern_int(&universe, 9876);
+    TermUniverseCollectionReport report;
+    assert(term_universe_collect(&universe, &report) && probe.attempts > 0u &&
+           !universe.collection_inhibit);
+    term_universe_remove_root_provider(&universe, test_collection_reentry_provider, &probe);
+    assert(term_universe_collect(&universe, &report) && !universe.collection_inhibit);
+    term_universe_free(&universe);
+    arena_free(&persistent);
+}
+
+static void test_collection_guards_resource_collector(void) {
+    Arena persistent;
+    arena_init_detached(&persistent);
+    TermUniverse universe;
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    term_universe_set_collection_mode(&universe, TERM_UNIVERSE_COLLECTION_RECLAIM);
+    TestCollectionReentry probe = {.universe = &universe};
+    test_collection_resource_probe = &probe;
+    universe.resource_collector = test_collection_reentry_resource_collector;
+    (void)tu_intern_int(&universe, 9876);
+    TermUniverseCollectionReport report;
+    assert(term_universe_collect(&universe, &report) && probe.attempts == 1u &&
+           !universe.collection_inhibit);
+    universe.resource_collector = NULL;
+    test_collection_resource_probe = NULL;
+    assert(term_universe_collect(&universe, &report) && !universe.collection_inhibit);
+    term_universe_free(&universe);
+    arena_free(&persistent);
+}
+
+static void test_collection_reentrancy_controls(void) {
+    test_collection_guards_opaque_finalizer(false);
+    test_collection_guards_opaque_finalizer(true);
+    test_collection_guards_root_provider(false);
+    test_collection_guards_root_provider(true);
+    test_collection_guards_resource_collector();
+    puts("PASS: collection rejects recursion from opaque finalizers, root providers and resource collection; outer/nested inhibition remains balanced");
+}
+
 int main(void) {
     SymbolTable symbols;
     VarInternTable var_intern;
     init_test_symbols(&symbols);
     var_intern_init(&var_intern);
     g_var_intern = &var_intern;
+    test_collection_reentrancy_controls();
     test_collection_matches_reachability(false);
     test_collection_matches_reachability(true);
     test_fallback_image_owners(false);

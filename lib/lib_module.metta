@@ -1,5 +1,34 @@
 !(import! &self langdef)
 
+; Resolve file dependencies against captured bytes and retain their origins.
+; Export indirection is explicit: {dependency: URI, export: NAME}.
+(: __cetta_lib_module_close_package_v1 (-> Atom Atom))
+(: __cetta_lib_module_package_export_v1 (-> Atom Atom Atom))
+(: module:close-package (-> Atom Atom))
+(: module:package-export (-> Atom String Atom))
+(= (module:close-package $module)
+   (function (chain (eval (__cetta_lib_module_close_package_v1 $module))
+     $result (return $result))))
+(= (module:package-export $package $name)
+   (function (chain (eval (__cetta_lib_module_package_export_v1 $package $name))
+     $result (return $result))))
+
+; Compile a declaration block together, retaining forward and mutual calls.
+; This boundary accepts definitions only; it never executes source directives.
+(: __cetta_lib_module_install_definitions_v1 (-> Atom String Atom))
+(: module:install-definitions (-> %Undefined% %Undefined% Atom))
+(= (module:install-definitions $space $source)
+   (function (chain (eval (__cetta_lib_module_install_definitions_v1 $space $source))
+     $result (return $result))))
+
+; Explicit host-source execution for interactive clients. Guest-language
+; source enters its own parser and is never passed to this operation.
+(: __cetta_lib_module_run_source_v1 (-> Atom String Atom))
+(: module:run-source (-> %Undefined% %Undefined% Atom))
+(= (module:run-source $space $source)
+   (function (chain (eval (__cetta_lib_module_run_source_v1 $space $source))
+     $result (return $result))))
+
 (: module:assemble (-> Atom Atom Atom Atom Atom Atom Atom))
 (: __cetta_lib_module_assemble_v1 (-> Atom Atom Atom Atom Atom Atom Atom))
 (: module:inspect (-> Atom Atom))
@@ -123,3 +152,14 @@
 (= (module:language-syntax $language)
    (function
      (chain (eval (__cetta_lib_module_language_syntax_v1 $language)) $value (return $value))))
+; Read-only observations of portable module export data.
+(: __cetta_lib_module_portable_export_v1 (-> Atom Atom Atom))
+(: __cetta_lib_module_portable_field_v1 (-> Atom Atom Atom))
+(: module:portable-export (-> Atom String Atom))
+(: module:portable-field (-> Atom String Atom))
+(= (module:portable-export $module $name)
+   (function (chain (eval (__cetta_lib_module_portable_export_v1 $module $name))
+     $value (return $value))))
+(= (module:portable-field $record $name)
+   (function (chain (eval (__cetta_lib_module_portable_field_v1 $record $name))
+     $value (return $value))))

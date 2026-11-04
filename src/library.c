@@ -4,6 +4,7 @@
 #include "expand_user.h"
 #include "errno_names.h"
 #include "effect_policy.h"
+#include "term_domain.h"
 
 #include "eval.h"
 #include "mm2_lower.h"
@@ -204,13 +205,14 @@ enum {
 /* Native modules and the store reserve the lower 44 import bits. */
 #define CETTA_LIBRARY_CRYPTO (UINT64_C(1) << 44)
 #define CETTA_LIBRARY_TOML (UINT64_C(1) << 45)
+#define CETTA_LIBRARY_LANG (UINT64_C(1) << 46)
 
 #define CETTA_LIBRARY_STORE (UINT64_C(1) << 36)
 #define CETTA_LIBRARY_ACT (UINT64_C(1) << 37)
 
 _Static_assert((CETTA_NATIVE_IMPORT_GPARSE &
                 (((UINT64_C(1) << 25) - 1) | CETTA_LIBRARY_STORE | CETTA_LIBRARY_ACT |
-                 CETTA_LIBRARY_CRYPTO | CETTA_LIBRARY_TOML)) == 0,
+                 CETTA_LIBRARY_CRYPTO | CETTA_LIBRARY_TOML | CETTA_LIBRARY_LANG)) == 0,
                "native grammar import aliases the shared library catalog");
 _Static_assert((CETTA_LIBRARY_TOML & CETTA_LIBRARY_STORE) == 0,
                "TOML and native store imports must be independent");
@@ -235,6 +237,7 @@ static const CettaLibrarySpec CETTA_LIBRARIES[] = {
     {"tensor", CETTA_LIBRARY_TENSOR, NULL},
     {"crypto", CETTA_LIBRARY_CRYPTO, NULL},
     {"toml", CETTA_LIBRARY_TOML, NULL},
+    {"lang", CETTA_LIBRARY_LANG, NULL},
     {"lts", CETTA_LIBRARY_LTS, NULL},
     {"mork", CETTA_LIBRARY_MORK, NULL},
     {"rho", CETTA_LIBRARY_RHO, NULL},
@@ -603,6 +606,7 @@ static bool library_context_init_services(CettaLibraryContext *ctx,
     if (!mutex_error) mutex_error = error;
     ctx->parser_cache = NULL;
     term_universe_init(&ctx->term_universe);
+    ctx->owned_term_domain = NULL;
     if (mutex_error) { errno = mutex_error; return false; }
     ctx->active_mask = 0;
     ctx->value_byte_limit = CETTA_ATOM_WIRE_BYTES;
@@ -913,7 +917,8 @@ void cetta_library_context_free(CettaLibraryContext *ctx) {
     ctx->retired_module_len = ctx->retired_module_cap = 0u;
     free(ctx->petta_library_paths.items);
     memset(&ctx->petta_library_paths, 0, sizeof(ctx->petta_library_paths));
-    term_universe_free(&ctx->term_universe);
+    if (!ctx->owned_term_domain)
+        term_universe_free(&ctx->term_universe);
     /* The cache holds no reference of its own. Closing the last native
      * holder removes its entry before destroying the compilation. */
     ctx->parser_cache = NULL;
@@ -966,6 +971,34 @@ void cetta_library_context_free(CettaLibraryContext *ctx) {
     cetta_json_library_runtime_v1_free(ctx->json_runtime);
 #endif
     ctx->json_runtime = NULL;
+    if (eval_current_library_context() == ctx)
+        eval_set_library_context(NULL);
+    if (ctx->owned_term_domain) {
+        CettaTermDomain *domain = ctx->owned_term_domain;
+        ctx->owned_term_domain = NULL;
+        cetta_term_domain_release(domain);
+    }
+}
+
+TermUniverse *cetta_library_context_universe(CettaLibraryContext *ctx) {
+    return !ctx ? NULL : ctx->owned_term_domain
+        ? cetta_term_domain_universe(ctx->owned_term_domain) : &ctx->term_universe;
+}
+
+CettaTermDomain *cetta_library_context_term_domain(const CettaLibraryContext *ctx) {
+    return ctx ? ctx->owned_term_domain : NULL;
+}
+
+bool cetta_library_context_set_term_domain(CettaLibraryContext *ctx, CettaTermDomain *domain) {
+    if (!ctx || !domain || g_symbols != cetta_term_domain_symbols(domain)) return false;
+    if (ctx->owned_term_domain) return ctx->owned_term_domain == domain;
+    TermUniverse *legacy = &ctx->term_universe;
+    if (legacy->len || legacy->persistent_arena || legacy->root_provider_len ||
+        legacy->observer_len || legacy->resource_scope || legacy->collection_inhibit ||
+        !cetta_term_domain_retain(domain)) return false;
+    term_universe_free(legacy); /* Dispose empty registry/count allocations too. */
+    ctx->owned_term_domain = domain;
+    return true;
 }
 
 struct CettaNikRuntimeV1 *cetta_library_context_nik_runtime(
@@ -1983,11 +2016,12 @@ static TermUniverse *cetta_library_space_universe(CettaLibraryContext *ctx,
                                                   Arena *persistent_arena) {
     if (!ctx || !persistent_arena)
         return NULL;
-    if (!ctx->term_universe.persistent_arena)
-        term_universe_set_persistent_arena(&ctx->term_universe, persistent_arena);
-    if (ctx->term_universe.persistent_arena != persistent_arena)
+    TermUniverse *universe = cetta_library_context_universe(ctx);
+    if (!universe->persistent_arena)
+        term_universe_set_persistent_arena(universe, persistent_arena);
+    if (universe->persistent_arena != persistent_arena)
         return NULL;
-    return &ctx->term_universe;
+    return universe;
 }
 
 static bool cetta_path_strip_prefix(const char *path, const char *prefix,
@@ -9982,6 +10016,59 @@ static Atom *module_reason_with_detail(CettaLibraryContext *ctx, Arena *a,
         atom_string(a, cetta_library_display_path(ctx, path, display, sizeof(display))),
         detail
     }, 3);
+}
+
+bool cetta_library_run_source_bytes(CettaLibraryContext *ctx,Space *space,
+    const uint8_t *bytes,size_t length,Arena *a,Atom **results,Atom **error_out) {
+    if(!ctx||!space||!space->native.universe||!bytes||!a||!results||!error_out)return false;
+    *results=NULL;*error_out=NULL;
+    AtomId *ids=NULL;int count=0;char diagnostic[512]={0};
+    int parsed=parse_metta_bytes_prefix_ids(bytes,length,space->native.universe,&ids,&count,diagnostic,sizeof(diagnostic));
+    if(parsed<0) {
+        free(ids);*error_out=atom_string(a,diagnostic[0]?diagnostic:"invalid complete submission");return false;
+    }
+    ResultSet observed;result_set_init(&observed);
+    CettaPettaDocumentFailure failure=CETTA_PETTA_DOCUMENT_OK;Atom *detail=NULL;
+    bool ok=cetta_library_petta_execute_document_ids(ctx,space,a,eval_current_persistent_arena(),
+        eval_current_registry(),ids,count,&observed,NULL,NULL,NULL,NULL,&failure,&detail);
+    free(ids);
+    if(ok)*results=atom_expr(a,observed.items,observed.len);
+    else *error_out=detail?detail:atom_string(a,"submission execution failed");
+    result_set_free(&observed);return ok;
+}
+
+bool cetta_library_install_definitions(CettaLibraryContext *ctx, Space *space,
+    const char *text, size_t length, Arena *arena, Atom **error_out) {
+    if (error_out) *error_out = NULL;
+    if (!ctx || !space || !space->native.universe || !text || !arena ||
+        !error_out || strlen(text) != length) return false;
+    AtomId *ids = NULL;
+    char diagnostic[512] = {0};
+    int count = parse_metta_text_ids_diagnostic(text, space->native.universe,
+        &ids, diagnostic, sizeof(diagnostic));
+    if (count < 0) {
+        *error_out = atom_string(arena, diagnostic[0] ? diagnostic : "invalid definition source");
+        free(ids); return false;
+    }
+    /* Validate the entire block before handing it to the ordinary loader.
+     * No directive, import, or arbitrary top-level datum is executable here. */
+    for (int i = 0; i < count; ++i) {
+        Atom *form = term_universe_get_atom(space->native.universe, ids[i]);
+        if (!form || form->kind != ATOM_EXPR || form->expr.len != 3u ||
+            !(atom_is_symbol(form->expr.elems[0], "=") ||
+              atom_is_symbol(form->expr.elems[0], ":"))) {
+            *error_out = atom_string(arena, "expected only equation and type declarations");
+            free(ids); return false;
+        }
+    }
+    CettaPettaDocumentFailure failure = CETTA_PETTA_DOCUMENT_OK;
+    Atom *detail = NULL;
+    bool ok = cetta_library_petta_execute_document_ids(ctx, space, arena,
+        eval_current_persistent_arena(), eval_current_registry(), ids, count,
+        NULL, NULL, NULL, NULL, NULL, &failure, &detail);
+    free(ids);
+    if (!ok) *error_out = detail ? detail : atom_string(arena, "definition installation failed");
+    return ok;
 }
 
 bool cetta_library_petta_process_text(

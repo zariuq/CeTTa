@@ -222,17 +222,17 @@ static uint64_t symbol_hash_bytes(const uint8_t *bytes, uint32_t len) {
     return h ? h : 1ULL;
 }
 
-/* The home slot of HASH under the table's key, in a table of CAP slots. */
-static uint32_t symbol_slot_in(const SymbolTable *st, uint64_t hash, uint32_t cap) {
+/* The home slot of HASH under the table's key. */
+static uint32_t symbol_slot_capacity(const SymbolTable *st, uint64_t hash, uint32_t capacity) {
     uint64_t x = hash ^ st->placement_key;
     x = (x ^ (x >> 30)) * UINT64_C(0xbf58476d1ce4e5b9);
     x = (x ^ (x >> 27)) * UINT64_C(0x94d049bb133111eb);
     x ^= x >> 31;
-    return (uint32_t)(x % cap);
+    return (uint32_t)x & (capacity - 1u);
 }
 
 static uint32_t symbol_slot(const SymbolTable *st, uint64_t hash) {
-    return symbol_slot_in(st, hash, st->slot_cap);
+    return symbol_slot_capacity(st, hash, st->slot_cap);
 }
 
 static SymbolEntry *symbol_table_entry_chunk(const SymbolTable *st, SymbolId id) {
@@ -312,7 +312,7 @@ static bool symbol_table_resize(SymbolTable *st, uint32_t new_cap) {
     uint32_t old_cap = st->slot_cap;
     uint32_t entry_len = atomic_load_explicit(&st->entry_len, memory_order_relaxed);
 
-    if (!new_cap) { errno = EOVERFLOW; return false; }
+    if (!new_cap || (new_cap & (new_cap - 1u))) { errno = EOVERFLOW; return false; }
     SymbolSlot *slots = calloc(new_cap, sizeof(*slots));
     if (!slots) return false;
     /* Both arrays are reserved during rebuild; include that transient
@@ -323,9 +323,9 @@ static bool symbol_table_resize(SymbolTable *st, uint32_t new_cap) {
     for (uint32_t i = 1; i < entry_len; i++) {
         const SymbolEntry *entry = symbol_table_entry_ref(st, (SymbolId)i);
         if (!entry || !entry->bytes) continue;
-        uint32_t slot = symbol_slot_in(st, entry->hash, new_cap);
+        uint32_t slot = symbol_slot_capacity(st, entry->hash, new_cap);
         while (slots[slot].id != SYMBOL_ID_NONE) {
-            slot = (slot + 1) % new_cap;
+            slot = (slot + 1u) & (new_cap - 1u);
         }
         slots[slot].hash = entry->hash;
         slots[slot].len = entry->len;
@@ -524,7 +524,7 @@ static SymbolId symbol_intern_span_hashed_unlocked(SymbolTable *st,
                 return entry->id;
             }
         }
-        slot = (slot + 1) % st->slot_cap;
+        slot = (slot + 1u) & (st->slot_cap - 1u);
     }
 }
 
@@ -613,8 +613,7 @@ done:
 
 SymbolId symbol_intern_bytes(SymbolTable *st, const uint8_t *bytes, uint32_t len) {
     if (!st || !bytes || len == 0) return SYMBOL_ID_NONE;
-    return symbol_intern_span_hashed(st, bytes, len,
-                                     symbol_hash_bytes(bytes, len));
+    return symbol_intern_span_hashed(st, bytes, len, symbol_hash_bytes(bytes, len));
 }
 
 SymbolId symbol_intern_cstr(SymbolTable *st, const char *text) {
@@ -771,7 +770,7 @@ SymbolId symbol_lookup_span_hashed(SymbolTable *st, const uint8_t *bytes,
                 found = entry->id;
                 break;
             }
-            slot = (slot + 1) % st->slot_cap;
+            slot = (slot + 1u) & (st->slot_cap - 1u);
         }
     }
     pthread_mutex_unlock(&st->write_mutex);

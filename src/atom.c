@@ -1,6 +1,17 @@
 #define _GNU_SOURCE
 #include "atom.h"
 #include "tensor_dense_v1.h"
+#include "state_cell.h"
+#include "u64_index.h"
+#pragma weak state_cell_lease_into
+#pragma weak state_cell_is_managed
+#pragma weak state_cell_snapshot_into
+#pragma weak state_cell_snapshot_acquire
+#pragma weak state_cell_snapshot_release
+#pragma weak cetta_u64_index_init
+#pragma weak cetta_u64_index_free
+#pragma weak cetta_u64_index_find
+#pragma weak cetta_u64_index_insert
 #include "string_literal.h"
 #include "lang.h"
 #include "petta_numeric.h"
@@ -1105,9 +1116,17 @@ void cetta_provenance_assert_state_cell_not_transient(const StateCell *cell,
     if (!cell)
         return;
     provenance_check_ptr(NULL, site, (ProvenanceOwners){0}, "StateCell", cell);
-    provenance_check_atom(cell->value, cell->value, site, (ProvenanceOwners){0}, 0);
-    provenance_check_atom(cell->content_type, cell->content_type, site,
+    StateCellSnapshot snapshot = {0};
+    bool held = state_cell_snapshot_acquire && state_cell_snapshot_release &&
+        state_cell_snapshot_acquire((StateCell *)cell, &snapshot);
+    if (!held)
+        snapshot = (StateCellSnapshot){.value = cell->value,
+                                      .content_type = cell->content_type};
+    provenance_check_atom(snapshot.value, snapshot.value, site, (ProvenanceOwners){0}, 0);
+    provenance_check_atom(snapshot.content_type, snapshot.content_type, site,
                           (ProvenanceOwners){0}, 0);
+    if (held)
+        state_cell_snapshot_release(&snapshot);
 }
 #else
 static void provenance_unregister_arena(const Arena *arena) {
@@ -1214,6 +1233,18 @@ static bool arena_take_name(Arena *a) {
     return true;
 }
 
+static _Thread_local void *g_arena_resource_scope;
+
+void *arena_current_resource_scope(void) {
+    return g_arena_resource_scope;
+}
+
+void *arena_set_resource_scope(void *scope) {
+    void *previous = g_arena_resource_scope;
+    g_arena_resource_scope = scope;
+    return previous;
+}
+
 bool arena_try_init(Arena *a) {
     if (!a) { errno = EINVAL; return false; }
     a->head = NULL;
@@ -1225,6 +1256,9 @@ bool arena_try_init(Arena *a) {
     a->managed_symbol_count = 0u;
     a->managed_symbol_bytes = 0u;
     a->external_bytes = 0;
+    a->retained_resource_bytes = 0u;
+    a->state_root_acquisition_generation = 0u;
+    a->resource_scope = NULL;
     a->reserved_bytes = 0;
     a->spare_bytes = 0;
     a->block_count = 0;
@@ -1505,6 +1539,65 @@ bool arena_retain_owner_sized(Arena *a, void *owner,
     return true;
 }
 
+static void arena_identity_certificate_retain(void *token) {
+    cetta_name_retain(&g_arena_names, (uint32_t)(uintptr_t)token);
+}
+
+static void arena_identity_certificate_release(void *token) {
+    cetta_name_release(&g_arena_names, &g_arena_name_local, arena_names_once,
+        (uint32_t)(uintptr_t)token, 0u);
+}
+
+bool arena_owner_is_atomic_storage(void *owner, void (*release)(void *)) {
+    return owner && release && (release == atom_string_storage_release ||
+                                release == arena_identity_certificate_release);
+}
+
+bool arena_retain_identity_certificate(Arena *keeper, const Arena *source,
+                                        uint32_t *identity_out) {
+    if (identity_out)
+        *identity_out = 0u;
+    if (!keeper || !source || !identity_out || !keeper->identity ||
+        keeper->identity == ARENA_ID_DEAD || !source->identity ||
+        source->identity == ARENA_ID_DEAD)
+        return false;
+    uint32_t name = source->identity;
+    if (!arena_retain_owner(keeper, (void *)(uintptr_t)name,
+            arena_identity_certificate_retain, arena_identity_certificate_release))
+        return false;
+    *identity_out = name;
+    return true;
+}
+
+bool arena_retain_resource_sized(Arena *a, void *owner,
+                                 void (*retain)(void *), void (*release)(void *),
+                                 size_t bytes, size_t resource_bytes) {
+    if (resource_bytes == 0u)
+        return arena_retain_owner_sized(a, owner, retain, release, bytes);
+    if (resource_bytes > bytes)
+        return false;
+    uint32_t before = a && a->retained_owners ? a->retained_owners->len : 0u;
+    if (!arena_retain_owner_sized(a, owner, retain, release, bytes))
+        return false;
+    if (a->retained_owners->len > before)
+        a->retained_resource_bytes =
+            a->retained_resource_bytes > SIZE_MAX - resource_bytes
+                ? SIZE_MAX : a->retained_resource_bytes + resource_bytes;
+    return true;
+}
+
+bool arena_retain_state_resource_sized(Arena *a, void *owner,
+                                 void (*retain)(void *), void (*release)(void *),
+                                 size_t bytes, size_t resource_bytes) {
+    uint32_t before = a && a->retained_owners ? a->retained_owners->len : 0u;
+    if (!arena_retain_resource_sized(a, owner, retain, release, bytes, resource_bytes))
+        return false;
+    if (a->retained_owners->len > before &&
+        a->state_root_acquisition_generation != UINT64_MAX)
+        a->state_root_acquisition_generation++;
+    return true;
+}
+
 /* Called after every hold has been popped from the finalizer chain. */
 void arena_visit_retained_owners(const Arena *a, ArenaOwnerVisit visit,
                                   void *context) {
@@ -1513,6 +1606,46 @@ void arena_visit_retained_owners(const Arena *a, ArenaOwnerVisit visit,
         return;
     for (uint32_t i = 0u; i < set->len; i++)
         visit(context, set->holds[i]->ptr, set->holds[i]->fn);
+}
+
+static bool arena_owner_cursor_current(const Arena *a,
+                                        const ArenaOwnerCursor *cursor) {
+    return a && cursor && cursor->initialized && a->identity &&
+        a->identity != ARENA_ID_DEAD && cursor->identity == a->identity &&
+        cursor->reset_epoch == a->reset_epoch;
+}
+
+bool arena_owner_cursor_begin(const Arena *a, ArenaOwnerCursor *cursor) {
+    if (!a || !cursor || !a->identity || a->identity == ARENA_ID_DEAD)
+        return false;
+    *cursor = (ArenaOwnerCursor){.identity = a->identity,
+        .reset_epoch = a->reset_epoch, .initialized = true};
+    return true;
+}
+
+ArenaOwnerCursorStep arena_owner_cursor_peek(const Arena *a,
+    const ArenaOwnerCursor *cursor, ArenaOwnerView *view) {
+    if (!view || !arena_owner_cursor_current(a, cursor))
+        return ARENA_OWNER_CURSOR_INVALIDATED;
+    const ArenaRetainedOwnerSet *set = a->retained_owners;
+    uint32_t length = set ? set->len : 0u;
+    if (cursor->position > length)
+        return ARENA_OWNER_CURSOR_INVALIDATED;
+    if (cursor->position == length)
+        return ARENA_OWNER_CURSOR_END;
+    const ArenaFinalizer *held = set->holds[cursor->position];
+    *view = (ArenaOwnerView){.owner = held->ptr, .release = held->fn};
+    return ARENA_OWNER_CURSOR_ITEM;
+}
+
+bool arena_owner_cursor_accept(const Arena *a, ArenaOwnerCursor *cursor) {
+    if (!arena_owner_cursor_current(a, cursor))
+        return false;
+    const ArenaRetainedOwnerSet *set = a->retained_owners;
+    if (!set || cursor->position >= set->len)
+        return false;
+    cursor->position++;
+    return true;
 }
 
 static void arena_release_retained_owner_set(Arena *a) {
@@ -1861,6 +1994,8 @@ void arena_free(Arena *a) {
     a->spare = NULL;
     a->live_bytes = 0;
     a->external_bytes = 0;
+    a->retained_resource_bytes = 0u;
+    a->state_root_acquisition_generation = 0u;
     a->reserved_bytes = 0;
     a->spare_bytes = 0;
     a->block_count = 0;
@@ -1970,6 +2105,7 @@ ArenaMark arena_mark(const Arena *a) {
     mark.managed_symbol_bytes = a->managed_symbol_bytes;
     mark.external_bytes = a->external_bytes;
     mark.persistent_bytes = a->persistent_bytes;
+    mark.retained_resource_bytes = a->retained_resource_bytes;
     mark.reserved_bytes = a->reserved_bytes;
     mark.block_count = a->block_count;
     mark.finalizers = a->finalizers;
@@ -1985,6 +2121,7 @@ bool arena_at_mark(const Arena *a, ArenaMark mark) {
         (a->head ? a->head->used : 0u) == mark.used &&
         a->live_bytes == mark.live_bytes &&
         a->external_bytes == mark.external_bytes &&
+        a->retained_resource_bytes == mark.retained_resource_bytes &&
         a->finalizers == mark.finalizers &&
         (a->frame_identities ? a->frame_identities->len : 0u) ==
             mark.frame_identity_len;
@@ -2042,6 +2179,7 @@ void arena_reset(Arena *a, ArenaMark mark) {
     }
     a->live_bytes = mark.live_bytes;
     a->external_bytes = mark.external_bytes;
+    a->retained_resource_bytes = mark.retained_resource_bytes;
     arena_runtime_note_usage(a);
 }
 
@@ -4370,6 +4508,7 @@ static Arena *arena_scalar_owner(Arena *a) {
         return NULL;
     if (!cache->owner_ready) {
         arena_init(&cache->owner);
+        cache->owner.resource_scope = a->resource_scope;
         arena_set_hashcons(&cache->owner, NULL);
         arena_set_runtime_kind(&cache->owner, a->runtime_kind);
         cache->owner_ready = true;
@@ -5236,6 +5375,9 @@ Atom *atom_rational_from_mpq(Arena *a, const mpq_t value) {
 Atom *atom_space(Arena *a, void *space_ptr) {
     if (space_retain_in_arena && !space_retain_in_arena(space_ptr, a))
         return NULL;
+    if (space_ptr && eval_resource_descriptor_hold &&
+        !eval_resource_descriptor_hold(a, GV_SPACE, space_ptr))
+        return NULL;
     if (space_atom_hold)
         space_atom_hold(a, space_ptr);
     Atom *at = arena_alloc(a, sizeof(Atom));
@@ -5246,6 +5388,13 @@ Atom *atom_space(Arena *a, void *space_ptr) {
 }
 
 Atom *atom_state(Arena *a, StateCell *cell) {
+    StateCellLease lease = cell && state_cell_lease_into
+        ? state_cell_lease_into(a, cell) : STATE_CELL_UNMANAGED;
+    if (lease == STATE_CELL_CAPACITY)
+        return NULL;
+    if (lease == STATE_CELL_UNMANAGED && cell && eval_resource_descriptor_hold &&
+        !eval_resource_descriptor_hold(a, GV_STATE, cell))
+        return NULL;
     Atom *at = arena_alloc(a, sizeof(Atom));
     if (!at) return NULL;
     *at = atom_grounded_leaf(a, GV_STATE);
@@ -5254,6 +5403,11 @@ Atom *atom_state(Arena *a, StateCell *cell) {
 }
 
 Atom *atom_capture(Arena *a, CaptureClosure *closure) {
+    if (closure && eval_resource_descriptor_hold &&
+        !eval_resource_descriptor_hold(a, GV_CAPTURE, closure))
+        return NULL;
+    if (closure && space_atom_hold)
+        space_atom_hold(a, closure->space_ptr);
     Atom *at = arena_alloc(a, sizeof(Atom));
     if (!at) return NULL;
     *at = atom_grounded_leaf(a, GV_CAPTURE);
@@ -7151,6 +7305,144 @@ Atom *atom_he_evaluated_copy(Arena *a, Atom *expression) {
         a, expression->expr.elems, expression->expr.len);
 }
 
+/* A node the deep mark replaces: an unmarked expression with fields. */
+static bool atom_he_deep_mark_needed(const Atom *atom) {
+    return atom && atom->kind == ATOM_EXPR && atom->expr.len != 0u &&
+        (atom->flags & ATOM_FLAG_HE_EVALUATED) == 0u;
+}
+
+typedef struct {
+    Atom *source;
+    Atom **fields;
+    CettaExprIndex next;
+    bool changed;
+} AtomHeDeepFrame;
+
+typedef struct {
+    const Atom **keys;
+    Atom **values;
+    size_t cap, len;
+} AtomHeDeepMemo;
+
+static size_t atom_he_deep_slot(const AtomHeDeepMemo *memo, const Atom *key) {
+    size_t slot = ((uintptr_t)key >> 4) * UINT64_C(0x9E3779B97F4A7C15) &
+        (memo->cap - 1u);
+    while (memo->keys[slot] && memo->keys[slot] != key)
+        slot = (slot + 1u) & (memo->cap - 1u);
+    return slot;
+}
+
+static bool atom_he_deep_memo_put(AtomHeDeepMemo *memo, const Atom *key,
+                                  Atom *value) {
+    if ((memo->len + 1u) * 2u > memo->cap) {
+        size_t cap = memo->cap ? memo->cap * 2u : 64u;
+        const Atom **keys = calloc(cap, sizeof(*keys));
+        Atom **values = calloc(cap, sizeof(*values));
+        if (!keys || !values) {
+            free(keys);
+            free(values);
+            return false;
+        }
+        AtomHeDeepMemo grown = {keys, values, cap, 0u};
+        for (size_t i = 0u; i < memo->cap; i++) {
+            if (!memo->keys[i])
+                continue;
+            size_t slot = atom_he_deep_slot(&grown, memo->keys[i]);
+            grown.keys[slot] = memo->keys[i];
+            grown.values[slot] = memo->values[i];
+            grown.len++;
+        }
+        free(memo->keys);
+        free(memo->values);
+        *memo = grown;
+    }
+    size_t slot = atom_he_deep_slot(memo, key);
+    if (!memo->keys[slot])
+        memo->len++;
+    memo->keys[slot] = key;
+    memo->values[slot] = value;
+    return true;
+}
+
+static Atom *atom_he_deep_memo_get(const AtomHeDeepMemo *memo,
+                                   const Atom *key) {
+    if (!memo->cap)
+        return NULL;
+    size_t slot = atom_he_deep_slot(memo, key);
+    return memo->keys[slot] ? memo->values[slot] : NULL;
+}
+
+/* Post-order over the unmarked nodes, with an explicit stack (a value can be
+ * a long chain) and a memo (a value can share a subterm along many paths, and
+ * each shared node is marked once). */
+Atom *atom_he_evaluated_deep_copy(Arena *a, Atom *value) {
+    if (!a || !atom_he_deep_mark_needed(value))
+        return value;
+    AtomHeDeepFrame *stack = NULL;
+    size_t len = 0u, cap = 0u;
+    AtomHeDeepMemo memo = {0};
+    Atom *result = NULL;
+#define ATOM_HE_DEEP_PUSH(atom_) do { \
+    if (len == cap) { \
+        size_t next_cap = cap ? cap * 2u : 32u; \
+        AtomHeDeepFrame *grown = realloc(stack, next_cap * sizeof(*stack)); \
+        if (!grown) goto fail; \
+        stack = grown; \
+        cap = next_cap; \
+    } \
+    stack[len++] = (AtomHeDeepFrame){ .source = (atom_) }; \
+} while (0)
+    ATOM_HE_DEEP_PUSH(value);
+    while (len) {
+        AtomHeDeepFrame *top = &stack[len - 1u];
+        Atom *source = top->source;
+        if (top->next < source->expr.len) {
+            Atom *child = source->expr.elems[top->next];
+            Atom *replaced = child;
+            if (atom_he_deep_mark_needed(child)) {
+                replaced = atom_he_deep_memo_get(&memo, child);
+                if (!replaced) {
+                    ATOM_HE_DEEP_PUSH(child);
+                    continue;
+                }
+            }
+            if (replaced != child && !top->fields) {
+                top->fields = malloc((size_t)source->expr.len * sizeof(Atom *));
+                if (!top->fields)
+                    goto fail;
+                memcpy(top->fields, source->expr.elems,
+                       (size_t)source->expr.len * sizeof(Atom *));
+            }
+            if (top->fields)
+                top->fields[top->next] = replaced;
+            top->changed |= replaced != child;
+            top->next++;
+            continue;
+        }
+        Atom *built = atom_he_evaluated_build(
+            a, top->fields ? top->fields : source->expr.elems, source->expr.len);
+        free(top->fields);
+        len--;
+        if (!atom_he_deep_memo_put(&memo, source, built))
+            goto fail;
+        if (!len)
+            result = built;
+    }
+#undef ATOM_HE_DEEP_PUSH
+    free(stack);
+    free(memo.keys);
+    free(memo.values);
+    return result;
+fail:
+    for (size_t i = 0u; i < len; i++)
+        free(stack[i].fields);
+    free(stack);
+    free(memo.keys);
+    free(memo.values);
+    cetta_oom(0u);
+    return NULL;
+}
+
 Atom *atom_expr2(Arena *a, Atom *a1, Atom *a2) {
     Atom *elems[2] = {a1, a2};
     return atom_expr(a, elems, 2);
@@ -7917,6 +8209,29 @@ static inline __attribute__((always_inline)) void atom_compare_push(
  * stack.  A nested state value or context key gets the fresh equality-memo
  * scope that its former atom_eq call had.  Active state pairs remain visible
  * to reentrant grounded callbacks, but are unwound at this call's border. */
+static __attribute__((noinline)) Atom *atom_state_observation_value(
+        Arena **observations, StateCell *cell) {
+    if (!cell)
+        return NULL;
+    if (!state_cell_snapshot_into || !state_cell_is_managed ||
+        !state_cell_is_managed(cell))
+        return cell->value;
+    if (!*observations) {
+        *observations = cetta_malloc(sizeof(**observations));
+        arena_init_detached(*observations);
+    }
+    StateCellSnapshot snapshot = {0};
+    StateCellLease lease = state_cell_snapshot_into(*observations, cell, &snapshot);
+    if (lease != STATE_CELL_HELD)
+        abort();
+    return snapshot.value;
+}
+
+static __attribute__((noinline)) void atom_state_observations_free(Arena *observations) {
+    arena_free(observations);
+    free(observations);
+}
+
 static bool atom_compare_driver(Atom *left, Atom *right,
                                 AtomCompareMode mode, bool all_numbers) {
     AtomCompareStack work;
@@ -7928,6 +8243,7 @@ static bool atom_compare_driver(Atom *left, Atom *right,
     work.scope_len = 1u;
     work.scopes[0] = (AtomEqWalk){.all_numbers = all_numbers};
     uint32_t state_base = g_state_cell_pairs_len;
+    Arena *state_observations = NULL;
     atom_compare_push(&work, left, right, mode, 0u, false);
     while (work.len) {
         AtomCompareFrame *frame = &work.frames[work.len - 1u];
@@ -8143,9 +8459,13 @@ static bool atom_compare_driver(Atom *left, Atom *right,
             case GV_STATE: {
                 const StateCell *ca = a->ground.ptr;
                 const StateCell *cb = b->ground.ptr;
+                Atom *left_value = atom_state_observation_value(
+                    &state_observations, (StateCell *)ca);
+                Atom *right_value = ca == cb ? left_value : atom_state_observation_value(
+                    &state_observations, (StateCell *)cb);
                 if (ca == cb &&
                     (!ca || !atom_he_exact_semantics() ||
-                     !atom_structural_may_have_nan(ca->value)))
+                     !atom_structural_may_have_nan(left_value)))
                     goto completed;
                 if (!ca || !cb)
                     goto comparison_failed;
@@ -8177,7 +8497,7 @@ static bool atom_compare_driver(Atom *left, Atom *right,
                 g_state_cell_pairs[g_state_cell_pairs_len++] =
                     (StateCellPair){ca, cb};
                 frame->task = ATOM_COMPARE_STATE_END;
-                atom_compare_push(&work, ca->value, cb->value,
+                atom_compare_push(&work, left_value, right_value,
                     frame->mode == ATOM_COMPARE_RESOLVED_SPACES
                         ? frame->mode : ATOM_COMPARE_STRUCTURAL, 0u, true);
                 continue;
@@ -8199,6 +8519,8 @@ completed:
         free(work.frames);
     if (work.scopes != work.inline_scopes)
         free(work.scopes);
+    if (state_observations)
+        atom_state_observations_free(state_observations);
     return true;
 
 comparison_failed:
@@ -8207,6 +8529,8 @@ comparison_failed:
         free(work.frames);
     if (work.scopes != work.inline_scopes)
         free(work.scopes);
+    if (state_observations)
+        atom_state_observations_free(state_observations);
     return false;
 }
 
@@ -9095,12 +9419,6 @@ static Atom *atom_deep_copy_leaf(Arena *dst, Atom *src, bool share) {
     case ATOM_EXPR:
         break;
     }
-    /* A refused leaf construction must not become a successful placeholder
-     * copy: callers may publish the copied expression in a persistent space. */
-    if (!out && cetta_native_memory_failed && cetta_native_memory_failed())
-        return NULL;
-    if (!out)
-        out = atom_symbol(dst, "?");
     return out;
 }
 
@@ -10875,12 +11193,14 @@ static size_t petta_print_variable_ordinal(
 typedef enum {
     ATOM_PRINT_ACTION_ATOM = 0,
     ATOM_PRINT_ACTION_CHAR,
+    ATOM_PRINT_ACTION_STATE_END,
 } AtomPrintActionKind;
 
 typedef struct {
     AtomPrintActionKind kind;
     Atom *atom;
     int character;
+    uint32_t state_index;
 } AtomPrintAction;
 
 /* The pending parts of one print: the printer's own frame holds the
@@ -10893,6 +11213,74 @@ typedef struct {
     size_t capacity;
     AtomPrintAction inline_items[ATOM_PRINT_INLINE];
 } AtomPrintStack;
+
+typedef struct {
+    StateCell *cell;
+    Atom *value;
+    bool active;
+} AtomPrintStateEntry;
+
+typedef struct {
+    CettaU64Index index;
+    AtomPrintStateEntry *entries;
+    uint32_t length, capacity;
+    Arena *observations;
+    bool indexed;
+} AtomPrintStates;
+
+/* Grounded projections can reenter the printer. They belong to the same
+ * observation and active State path as the expression that requested them. */
+static _Thread_local AtomPrintStates *g_atom_print_states;
+
+static void atom_print_states_init(AtomPrintStates *states) {
+    *states = (AtomPrintStates){0};
+    states->indexed = cetta_u64_index_init && cetta_u64_index_free &&
+        cetta_u64_index_find && cetta_u64_index_insert;
+    if (states->indexed)
+        cetta_u64_index_init(&states->index);
+}
+
+static void atom_print_states_free(AtomPrintStates *states) {
+    if (states->indexed)
+        cetta_u64_index_free(&states->index);
+    free(states->entries);
+    if (states->observations)
+        atom_state_observations_free(states->observations);
+}
+
+static uint32_t atom_print_state_index(AtomPrintStates *states, StateCell *cell) {
+    uint32_t index = 0u;
+    if (states->indexed) {
+        if (cetta_u64_index_find(&states->index, (uintptr_t)cell, &index))
+            return index;
+    } else {
+        /* Minimal standalone Atom link units omit the State/index backend.
+         * The complete runtime always uses the bounded u64 index above. */
+        for (; index < states->length; index++)
+            if (states->entries[index].cell == cell)
+                return index;
+    }
+    if (states->length == UINT32_MAX)
+        cetta_oom(SIZE_MAX);
+    if (states->length == states->capacity) {
+        uint32_t next = states->capacity > UINT32_MAX / 2u ? UINT32_MAX
+            : states->capacity ? 2u * states->capacity : 16u;
+        if ((uint64_t)next * sizeof(*states->entries) > SIZE_MAX)
+            cetta_oom(SIZE_MAX);
+        states->entries = cetta_realloc(states->entries,
+            (size_t)next * sizeof(*states->entries));
+        states->capacity = next;
+    }
+    index = states->length++;
+    if (states->indexed && cetta_u64_index_insert(&states->index,
+            (uintptr_t)cell, index) != CETTA_GSLT_U32_INDEX_INSERTED_V1)
+        cetta_oom(SIZE_MAX);
+    Atom *value = atom_state_observation_value(&states->observations, cell);
+    if (!value)
+        abort();
+    states->entries[index] = (AtomPrintStateEntry){.cell = cell, .value = value};
+    return index;
+}
 
 static void atom_print_stack_init(AtomPrintStack *stack) {
     stack->items = stack->inline_items;
@@ -11176,12 +11564,20 @@ static void atom_print_mode(
     PettaPrintVariables *variables) {
     AtomPrintStack stack;
     atom_print_stack_init(&stack);
+    AtomPrintStates local_states;
+    AtomPrintStates *states = g_atom_print_states;
+    bool owns_states = false;
     atom_print_stack_push_atom(&stack, root);
 
     while (stack.length > 0u) {
         AtomPrintAction action = stack.items[--stack.length];
         if (action.kind == ATOM_PRINT_ACTION_CHAR) {
             fputc(action.character, out);
+            continue;
+        }
+        if (action.kind == ATOM_PRINT_ACTION_STATE_END) {
+            assert(states && action.state_index < states->length);
+            states->entries[action.state_index].active = false;
             continue;
         }
 
@@ -11264,9 +11660,23 @@ static void atom_print_mode(
         }
         case GV_STATE: {
             StateCell *cell = (StateCell *)a->ground.ptr;
+            if (!states) {
+                atom_print_states_init(&local_states);
+                states = &local_states;
+                g_atom_print_states = states;
+                owns_states = true;
+            }
+            uint32_t index = atom_print_state_index(states, cell);
+            if (states->entries[index].active) {
+                fputs("...", out);
+                break;
+            }
+            states->entries[index].active = true;
             fputs("(State ", out);
+            atom_print_stack_push(&stack, (AtomPrintAction){
+                .kind = ATOM_PRINT_ACTION_STATE_END, .state_index = index});
             atom_print_stack_push_char(&stack, ')');
-            atom_print_stack_push_atom(&stack, cell->value);
+            atom_print_stack_push_atom(&stack, states->entries[index].value);
             break;
         }
         case GV_CAPTURE:
@@ -11425,6 +11835,10 @@ static void atom_print_mode(
         }
     }
     atom_print_stack_free(&stack);
+    if (owns_states) {
+        g_atom_print_states = NULL;
+        atom_print_states_free(states);
+    }
 }
 
 bool atom_is_prime_own_list(const Atom *atom) {

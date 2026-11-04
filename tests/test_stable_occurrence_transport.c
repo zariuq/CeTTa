@@ -53,17 +53,44 @@ static void assert_atom_ids(const Space *space, const AtomId *expected,
         assert(space_get_atom_id_at64(space, i) == expected[i]);
 }
 
+static void assert_query_indices_and_integer_bindings(
+        Space *space, Arena *scratch, Atom *query,
+        const CettaIndex *expected, CettaIndex expected_len,
+        Atom *variable, const int64_t *values) {
+    SubstMatchSet matches;
+    space_match_backend_query(space, scratch, query, &matches);
+    CettaIndex completed = 0u;
+    for (CettaIndex i = 0u; i < matches.len; i++) {
+        /* A backend can return deferred candidate rows. Complete them by
+         * the public consumer contract before comparing answer occurrences. */
+        Bindings bindings;
+        bindings_init(&bindings);
+        if (!space_subst_match_with_seed(
+                space, query, &matches.items[i], NULL, scratch, &bindings)) {
+            bindings_free(&bindings);
+            continue;
+        }
+        assert(completed < expected_len);
+        assert(matches.items[i].atom_idx == expected[completed]);
+        assert(matches.items[i].atom_idx < space_length64(space));
+        if (variable) {
+            Atom *value = bindings_apply(&bindings, scratch, variable);
+            assert(value && value->kind == ATOM_GROUNDED &&
+                   value->ground.gkind == GV_INT &&
+                   value->ground.ival == values[completed]);
+        }
+        completed++;
+        bindings_free(&bindings);
+    }
+    assert(completed == expected_len);
+    smset_free(&matches);
+}
+
 static void assert_query_indices(Space *space, Arena *scratch, Atom *query,
                                  const CettaIndex *expected,
                                  CettaIndex expected_len) {
-    SubstMatchSet matches;
-    space_match_backend_query(space, scratch, query, &matches);
-    assert(matches.len == expected_len);
-    for (CettaIndex i = 0u; i < expected_len; i++) {
-        assert(matches.items[i].atom_idx == expected[i]);
-        assert(matches.items[i].atom_idx < space_length64(space));
-    }
-    smset_free(&matches);
+    assert_query_indices_and_integer_bindings(
+        space, scratch, query, expected, expected_len, NULL, NULL);
 }
 
 static void realize_both_indexes(Space *space, Arena *scratch, Atom *query) {
@@ -737,15 +764,22 @@ static void test_cold_candidate_cursor(TermUniverse *universe, Arena *scratch) {
     assert(cursor.flat_mode && cursor.node_len == 0u);
     assert(space.match_backend.native.match_trie == NULL);
     assert(space_occurrence_cursor_clone(&cursor, &clone));
-    /* The encoded selector is conservative for stored correlations. Its
-     * unrelated variable-bearing row is rejected by canonical matching. */
-    const CettaIndex candidates[] = {7u, 20u, 21u, 22u};
+    /* The encoded selector rejects the other rigid head, while preserving
+     * both duplicate occurrences and this head's correlated open row. */
+    const CettaIndex candidates[] = {7u, 20u, 21u};
     const CettaIndex matches[] = {7u, 20u, 21u};
-    assert_query_indices(&space, scratch, query, matches, 3u);
+    const int64_t values[] = {1007, 1007, 7};
+    assert_query_indices_and_integer_bindings(
+        &space, scratch, query, matches, 3u, query->expr.elems[2], values);
+    /* The repeated stored variable cannot be both 7 and 1007. Deferred
+     * candidates therefore need canonical completion, not a count waiver. */
+    const CettaIndex rigid_matches[] = {7u, 20u};
+    assert_query_indices(&space, scratch, edge_value(scratch, edge, 7),
+                          rigid_matches, 2u);
     assert(space_remove_atom_id(&space, rows[7]));
     AtomId appended[] = {rows[7], rows[7]};
     assert(space_add_atom_ids_batch(&space, appended, 2u));
-    for (size_t i = 0u; i < 4u; i++) {
+    for (size_t i = 0u; i < sizeof(candidates) / sizeof(*candidates); i++) {
         CettaIndex index = UINT64_MAX, cloned = UINT64_MAX;
         assert(space_occurrence_cursor_next(&cursor, &index, NULL) == SPACE_OCCURRENCE_CURSOR_ITEM);
         assert(space_occurrence_cursor_next(&clone, &cloned, NULL) == SPACE_OCCURRENCE_CURSOR_ITEM);
@@ -772,7 +806,10 @@ static void test_cold_candidate_cursor(TermUniverse *universe, Arena *scratch) {
            info.source_rows == space_length64(&space));
     assert(space_add_atom_ids_batch(&space, appended, 2u));
     const CettaIndex later_matches[] = {20u, 21u, 22u, 23u, 24u, 25u};
-    assert_query_indices(&space, scratch, query, later_matches, 6u);
+    const int64_t later_values[] = {1007, 7, 1007, 1007, 1007, 1007};
+    assert_query_indices_and_integer_bindings(
+        &space, scratch, query, later_matches, 6u,
+        query->expr.elems[2], later_values);
     space_free(&space);
 }
 

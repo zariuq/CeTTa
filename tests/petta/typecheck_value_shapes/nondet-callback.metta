@@ -1,0 +1,6 @@
+!(import! &self (library lib_roman))
+(: choose-leaf (-[nondet]-> Number Atom Number))
+(= (choose-leaf $n $_leaf) (superpose (1 2)))
+(: bad-count (-[det]-> Atom Number))
+(= (bad-count $value)
+   (if (is-expr $value) (fold-nested choose-leaf 0 $value) 0))
