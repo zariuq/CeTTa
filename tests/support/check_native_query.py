@@ -55,8 +55,11 @@ answered, counted or collected, from templates that drop, repeat or fix
 variables, some taken apart; a spread reads a variable of the match
 outside its scope, and unique-atom is rarely extended by an equation.  A
 program the ordinary path cannot run fails.  Every
-program runs twice, with CETTA_NATIVE_QUERY_REFERENCE=1 the second time, and
-every collection is printed sorted.  Atoms holding variables print with
+program runs with its queries' bodies on the compiled tier and, with
+CETTA_OPEN_QUERY_BODIES=0, on the machine, whose native routes for a
+collection a query's body would otherwise bypass; each way it runs twice,
+with CETTA_NATIVE_QUERY_REFERENCE=1 the second time, and all four answer
+alike.  Every collection is printed sorted.  Atoms holding variables print with
 fresh names in an order that follows them. Collected results compare as bags
 under one consistent variable renaming, preserving sharing, literal strings
 and ordered fields inside each answer. Collections passed to value-sensitive
@@ -638,8 +641,11 @@ def program(rng):
                 region = ("(let $ps (collapse (match &q (q $x) (q $x))) "
                           "(size-atom (collapse (let $a (superpose $ps) (add-atom &q (q (s $a)))))))")
             elif form == 1:
+                # Which removal of a value answers false follows the order
+                # the space lists its rows in, which it does not promise:
+                # the answers compare sorted.
                 region = ("(let $ps (collapse (match &q (q $x) $x)) "
-                          "(collapse (let $a (superpose $ps) (remove-atom &q (q $a)))))")
+                          "(sort-atom (collapse (let $a (superpose $ps) (remove-atom &q (q $a))))))")
             elif form == 2:
                 region = ("(let $ps (collapse (match &self (edge $x $y) (pair $x $y))) "
                           "(size-atom (collapse (let (pair $u $v) (superpose $ps) (add-atom &q (q $u))))))")
@@ -1075,9 +1081,14 @@ def program(rng):
     return "\n".join(lines) + "\n"
 
 
-def run(binary, path, reference, stats, ordered_lines=()):
+# The two ways a query's body runs: on the compiled tier and on the machine.
+BODY_ROUTES = ("1", "0")
+
+
+def run(binary, path, reference, stats, ordered_lines=(), bodies="1"):
     env = dict(os.environ)
     env.pop("CETTA_NATIVE_QUERY_REFERENCE", None)
+    env["CETTA_OPEN_QUERY_BODIES"] = bodies
     if reference:
         env["CETTA_NATIVE_QUERY_REFERENCE"] = "1"
         env["CETTA_FOLD_ARITH_REFERENCE"] = "1"
@@ -1124,6 +1135,49 @@ FIXED = [
 ]
 
 
+def check_fixed(binary, path, source, number, ordered, stats, bodies):
+    """Whether the fixed program NUMBER answers as it must with its query
+    bodies on the route BODIES."""
+    native, _, _ = run(binary, path, False, stats, ordered_lines=ordered,
+                       bodies=bodies)
+    reference, _, _ = run(binary, path, True, stats, ordered_lines=ordered,
+                          bodies=bodies)
+    if number == 1:
+        expected = (
+            (0, CollectionTrace("true\n3\n(0 2)\n", ordered_lines=ordered)),
+            (0, CollectionTrace("(!= 1 0)\n3\n(0 0 2)\n", ordered_lines=ordered)),
+        )
+        if any(observation not in expected for observation in (native, reference)):
+            print("FAIL: the existence rewrite disagrees with primitive availability")
+            print("native:", native)
+            print("reference:", reference)
+            return False
+    if number == 2:
+        expected = tuple(
+            (0, CollectionTrace(f"(1 1 2)\n{chosen}\n2\nright\n",
+                                ordered_lines=(0, 1, 2, 3)))
+            for chosen in (1, 2)
+        )
+        # Compare ordered fields exactly; only the unordered choice
+        # has two permitted observations.
+        if any(observation not in expected for observation in
+               (native, reference)):
+            print("FAIL: unordered choice or ordered data changed")
+            print("native:", native)
+            print("reference:", reference)
+            return False
+        return True
+    if native != reference:
+        route = "tier" if bodies == "1" else "machine"
+        print(f"FAIL: fixed program {number} ends differently on the native "
+              f"path (query bodies on the {route})")
+        print(source)
+        print("native:", native)
+        print("reference:", reference)
+        return False
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("binary")
@@ -1140,59 +1194,47 @@ def main():
             with open(path, "w") as f:
                 f.write(source)
             ordered = (0,) if number == 1 else (0, 1, 2, 3) if number == 2 else ()
-            native, _, _ = run(binary, path, False, args.stats, ordered_lines=ordered)
-            reference, _, _ = run(binary, path, True, args.stats, ordered_lines=ordered)
-            if number == 1:
-                expected = (
-                    (0, CollectionTrace("true\n3\n(0 2)\n", ordered_lines=ordered)),
-                    (0, CollectionTrace("(!= 1 0)\n3\n(0 0 2)\n", ordered_lines=ordered)),
-                )
-                if any(observation not in expected for observation in (native, reference)):
-                    print("FAIL: the existence rewrite disagrees with primitive availability")
-                    print("native:", native)
-                    print("reference:", reference)
+            for bodies in BODY_ROUTES:
+                if not check_fixed(binary, path, source, number, ordered,
+                                   args.stats, bodies):
                     return 1
-            if number == 2:
-                expected = tuple(
-                    (0, CollectionTrace(f"(1 1 2)\n{chosen}\n2\nright\n",
-                                        ordered_lines=(0, 1, 2, 3)))
-                    for chosen in (1, 2)
-                )
-                # Compare ordered fields exactly; only the unordered choice
-                # has two permitted observations.
-                if any(observation not in expected for observation in
-                       (native, reference)):
-                    print("FAIL: unordered choice or ordered data changed")
-                    print("native:", native)
-                    print("reference:", reference)
-                    return 1
-                continue
-            if native != reference:
-                print(f"FAIL: fixed program {number} ends differently on the native path")
-                print(source)
-                print("native:", native)
-                print("reference:", reference)
-                return 1
         for number in range(args.programs):
             source = program(rng)
             path = os.path.join(work, f"query_{number}.metta")
             with open(path, "w") as f:
                 f.write(source)
-            native, admissions, dense = run(binary, path, False, args.stats)
-            reference, declined, _ = run(binary, path, True, args.stats)
-            if reference[0] != 0:
-                print(f"FAIL: program {number} does not run on the ordinary path")
-                print(source)
-                print("reference:", reference)
-                return 1
-            if native != reference or declined:
-                print(f"FAIL: program {number} answers differently on the native path")
-                print(source)
-                print("native:", native)
-                print("reference:", reference)
-                return 1
-            admitted += admissions
-            dense_programs += dense > 0
+            observed = None
+            for bodies in BODY_ROUTES:
+                route = "tier" if bodies == "1" else "machine"
+                native, admissions, dense = run(binary, path, False,
+                                                args.stats, bodies=bodies)
+                reference, declined, _ = run(binary, path, True, args.stats,
+                                             bodies=bodies)
+                if reference[0] != 0:
+                    print(f"FAIL: program {number} does not run on the "
+                          f"ordinary path (query bodies on the {route})")
+                    print(source)
+                    print("reference:", reference)
+                    return 1
+                if native != reference or declined:
+                    print(f"FAIL: program {number} answers differently on the "
+                          f"native path (query bodies on the {route})")
+                    print(source)
+                    print("native:", native)
+                    print("reference:", reference)
+                    return 1
+                if observed is not None and native != observed:
+                    print(f"FAIL: program {number} answers differently with "
+                          f"its query bodies on the tier and on the machine")
+                    print(source)
+                    print("tier:", observed)
+                    print("machine:", native)
+                    return 1
+                observed = native
+                # The native routes the counts witness are the machine's.
+                if bodies == "0":
+                    admitted += admissions
+                    dense_programs += dense > 0
     if args.stats and admitted < args.programs:
         print(f"FAIL: the native path answered {admitted} collections in "
               f"{args.programs} programs")

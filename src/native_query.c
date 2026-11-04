@@ -2498,6 +2498,22 @@ CettaNativeQueryStatus cetta_native_query_run(
     TermUniverse *universe = query->source->native.universe;
     if (!universe)
         return CETTA_NATIVE_QUERY_DECLINED;
+    /* Proof storage falls back to ordinary owned rows before any consumer
+     * effect. A refused conversion is a real allocation/storage failure. */
+    for (size_t i = 0u; !query->rows && i < query->pattern_count; i++) {
+        Space *read = query->sources ? query->sources[i] : query->source;
+        if (!space_prepare_proof_read(read, query->patterns[i]))
+            return CETTA_NATIVE_QUERY_FAILED;
+    }
+    if (query->guard_space &&
+        !space_prepare_proof_read(query->guard_space, query->guard_pattern))
+        return CETTA_NATIVE_QUERY_FAILED;
+    for (size_t i = 0u; i < query->effect_count; i++) {
+        Space *target = query->effects ? query->effects[i].target : NULL;
+        if (space_has_proof_image(target, SYMBOL_ID_NONE) &&
+            space_settle_proof_images(target) != SPACE_PROOF_IMAGE_READY)
+            return CETTA_NATIVE_QUERY_FAILED;
+    }
     /* A leg over a relation of deep facts is read by the joins over facts
      * holding variables, before any row is read the loops' way, which would
      * give the relation back to the rows; but a relation whose facts are
@@ -2521,7 +2537,12 @@ CettaNativeQueryStatus cetta_native_query_run(
         /* The open reader owns its refusal before effects. The existing
          * row loops also execute guarded and filtered queries; returning
          * this relation to rows lets them retain that route when the
-         * compact reader does not implement the query's observation. */
+         * compact reader does not implement the query's guard or filter.
+         * Any other refusal stays the query's, which the ordinary path
+         * answers: the relation keeps its form, which one declined query
+         * over a few of its facts must not cost. */
+        if (!query->guard_space && query->filter_count == 0u)
+            return open;
         Atom *pattern = query->patterns[i];
         SymbolId head = pattern->kind == ATOM_EXPR && pattern->expr.len &&
                 pattern->expr.elems[0]->kind == ATOM_SYMBOL

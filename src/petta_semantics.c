@@ -2494,6 +2494,11 @@ typedef struct {
     uint64_t table_instance_id;
     size_t len;
     PeTTaRegisteredBuiltin entries[PETTA_REGISTERED_BUILTIN_COUNT];
+    /* The same by symbol id, below `by_id_len` (one past the largest
+     * builtin's id): a builtin's arities plus one, 0 for any other symbol.
+     * Every dispatch asks, so it is answered by one load. */
+    uint32_t *by_id;
+    SymbolId by_id_len;
 } PeTTaRegisteredBuiltins;
 
 static _Thread_local PeTTaRegisteredBuiltins g_petta_registered_builtins;
@@ -2527,8 +2532,27 @@ bool petta_semantics_registered_builtin_arities(SymbolId symbol,
         qsort(set->entries, len, sizeof(set->entries[0]),
               petta_registered_builtin_compare);
         set->len = len;
+        free(set->by_id);
+        set->by_id = NULL;
+        set->by_id_len = 0u;
+        SymbolId bound = len ? set->entries[len - 1u].id + 1u : 0u;
+        if (bound && bound <= (SymbolId)(1u << 20)) {
+            set->by_id = calloc((size_t)bound, sizeof(*set->by_id));
+            if (set->by_id) {
+                for (size_t index = 0u; index < len; index++)
+                    set->by_id[set->entries[index].id] =
+                        (uint32_t)set->entries[index].arities + 1u;
+                set->by_id_len = bound;
+            }
+        }
         set->table = g_symbols;
         set->table_instance_id = table_instance_id;
+    }
+    if (set->by_id) {
+        uint32_t known = symbol < set->by_id_len ? set->by_id[symbol] : 0u;
+        if (known && arities)
+            *arities = (uint16_t)(known - 1u);
+        return known != 0u;
     }
     size_t low = 0u;
     size_t high = set->len;

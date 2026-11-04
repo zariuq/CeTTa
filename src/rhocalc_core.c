@@ -74,9 +74,61 @@
 
 #include "abt.h"
 #include "eval.h"
+#include "fallible_alloc.h"
 #include "match.h"
 #include "parallel_executor.h"
 #include "stats.h"
+#include "state_cell.h"
+
+#pragma weak state_cell_identity_pin
+#pragma weak state_cell_identity_unpin
+#pragma weak state_cell_is_managed
+#pragma weak state_cell_snapshot_acquire
+#pragma weak state_cell_snapshot_release
+#pragma weak state_cell_snapshot_retain_into
+
+typedef struct {
+    StateCellSnapshot snapshot;
+    void *identity_pin;
+} RhoStateObservation;
+
+#ifdef CETTA_TEST_HOOKS
+static void (*rho_state_text_observed_test)(StateCell *);
+#endif
+
+static bool rho_state_observation_acquire(StateCell *cell,
+                                           RhoStateObservation *observation) {
+    *observation = (RhoStateObservation){0};
+    if (!cell)
+        return true;
+    if (!state_cell_identity_pin || !state_cell_identity_unpin ||
+        !state_cell_snapshot_acquire || !state_cell_snapshot_release)
+        return !state_cell_is_managed || !state_cell_is_managed(cell);
+    observation->identity_pin = state_cell_identity_pin(cell);
+    if (!observation->identity_pin)
+        return true;
+    if (!state_cell_snapshot_acquire(cell, &observation->snapshot)) {
+        state_cell_identity_unpin(observation->identity_pin);
+        *observation = (RhoStateObservation){0};
+        return false;
+    }
+    return true;
+}
+
+static void rho_state_observation_release(RhoStateObservation *observation) {
+    if (observation->identity_pin) {
+        state_cell_snapshot_release(&observation->snapshot);
+        state_cell_identity_unpin(observation->identity_pin);
+        *observation = (RhoStateObservation){0};
+    }
+}
+
+static StateCellSnapshot rho_state_observation_view(
+        StateCell *cell, const RhoStateObservation *observation) {
+    return observation->identity_pin ? observation->snapshot :
+        (StateCellSnapshot){.value = cell ? cell->value : NULL,
+            .content_type = cell ? cell->content_type : NULL};
+}
 
 #ifndef CETTA_RHOCOST_COMMIT_AUDIT
 #define CETTA_RHOCOST_COMMIT_AUDIT 0
@@ -1044,6 +1096,8 @@ static bool rho_atom_text_sink_appendf(
 static bool rho_atom_text_key_direct_emit(
     Atom *root, RhoAtomTextSink *sink) {
     RhoAtomTextStack stack = {0};
+    Arena observations;
+    bool observations_ready = false;
     bool ok = root != NULL && sink != NULL;
 
     if (ok && root->kind == ATOM_GROUNDED &&
@@ -1139,10 +1193,29 @@ static bool rho_atom_text_key_direct_emit(
                 break;
             case GV_STATE: {
                 StateCell *cell = (StateCell *)atom->ground.ptr;
-                ok = cell && cell->value &&
+                RhoStateObservation observation;
+                if (!rho_state_observation_acquire(cell, &observation)) {
+                    ok = false;
+                    break;
+                }
+                StateCellSnapshot view = rho_state_observation_view(cell, &observation);
+                if (observation.identity_pin) {
+                    if (!observations_ready) {
+                        arena_init_detached(&observations);
+                        observations_ready = true;
+                    }
+                    ok = state_cell_snapshot_retain_into &&
+                        state_cell_snapshot_retain_into(&observations, &observation.snapshot);
+                }
+                ok = ok && cell && view.value &&
                      rho_atom_text_sink_append(sink, "(State ") &&
                      rho_atom_text_stack_push_char(&stack, ')') &&
-                     rho_atom_text_stack_push_atom(&stack, cell->value);
+                     rho_atom_text_stack_push_atom(&stack, view.value);
+                rho_state_observation_release(&observation);
+#ifdef CETTA_TEST_HOOKS
+                if (ok && rho_state_text_observed_test)
+                    rho_state_text_observed_test(cell);
+#endif
                 break;
             }
             case GV_CAPTURE:
@@ -1216,6 +1289,8 @@ static bool rho_atom_text_key_direct_emit(
 
 done:
     free(stack.items);
+    if (observations_ready)
+        arena_free(&observations);
     return ok;
 }
 
@@ -2615,9 +2690,52 @@ typedef struct {
     StateCell **orig;
     StateCell **clone;
     int len, cap;
+    RhoStateObservation *observations;
+    int observation_cap;
     StateCell *inline_orig[16];
     StateCell *inline_clone[16];
 } RhoStateCloneMap;
+
+static bool rho_state_clone_observations_ensure(RhoStateCloneMap *map,
+                                                int capacity) {
+    if (map->observation_cap >= capacity)
+        return true;
+    if (capacity <= 0 || (size_t)capacity > SIZE_MAX / sizeof(*map->observations))
+        return false;
+    RhoStateObservation *next = cetta_fallible_calloc((size_t)capacity, sizeof(*next));
+    if (!next)
+        return false;
+    if (map->observations)
+        memcpy(next, map->observations, (size_t)map->len * sizeof(*next));
+    free(map->observations);
+    map->observations = next;
+    map->observation_cap = capacity;
+    return true;
+}
+
+static bool rho_state_clone_observe(RhoStateCloneMap *map, int index,
+                                     StateCell *cell) {
+    RhoStateObservation observation;
+    if (!rho_state_observation_acquire(cell, &observation))
+        return false;
+    if (!observation.identity_pin)
+        return true;
+    if (!rho_state_clone_observations_ensure(map, map->cap)) {
+        rho_state_observation_release(&observation);
+        return false;
+    }
+    map->observations[index] = observation;
+    return true;
+}
+
+static StateCellSnapshot rho_state_clone_view(const RhoStateCloneMap *map,
+                                              int index) {
+    if (map->observations && index < map->observation_cap &&
+        map->observations[index].identity_pin)
+        return map->observations[index].snapshot;
+    return (StateCellSnapshot){.value = map->orig[index]->value,
+        .content_type = map->orig[index]->content_type};
+}
 
 static bool rho_map_next_capacity(int current_cap, int min_needed,
                                   size_t elem_size, int *out_next) {
@@ -2695,6 +2813,8 @@ static bool rho_state_clone_map_ensure(RhoStateCloneMap *map, int min_needed) {
     if (!rho_map_next_capacity(map->cap, min_needed, sizeof(StateCell *),
                                &next_cap))
         return false;
+    if (map->observations && !rho_state_clone_observations_ensure(map, next_cap))
+        return false;
     if (map->orig == map->inline_orig) {
         StateCell **orig =
             cetta_malloc(sizeof(StateCell *) * (size_t)next_cap);
@@ -2719,6 +2839,13 @@ static bool rho_state_clone_map_ensure(RhoStateCloneMap *map, int min_needed) {
 static void rho_state_clone_map_free(RhoStateCloneMap *map) {
     if (!map)
         return;
+    if (map->observations) {
+        for (int i = 0; i < map->len; i++)
+            rho_state_observation_release(&map->observations[i]);
+        free(map->observations);
+        map->observations = NULL;
+        map->observation_cap = 0;
+    }
     if (map->orig && map->orig != map->inline_orig)
         free(map->orig);
     if (map->clone && map->clone != map->inline_clone)
@@ -2787,9 +2914,16 @@ static bool rho_state_clone_map_note(RhoStateCloneMap *map, StateCell *orig,
                                      bool *inserted) {
     if (inserted)
         *inserted = false;
-    if (!orig || rho_state_clone_for(map, orig))
+    if (!orig)
         return true;
+    /* Discovery precedes materialization, so a seen identity can still have
+     * a NULL clone. Testing the clone would revisit State cycles forever. */
+    for (int i = 0; i < map->len; i++)
+        if (map->orig[i] == orig)
+            return true;
     if (!rho_state_clone_map_ensure(map, map->len + 1))
+        return false;
+    if (!rho_state_clone_observe(map, map->len, orig))
         return false;
     map->orig[map->len] = orig;
     map->clone[map->len] = NULL;
@@ -2810,6 +2944,8 @@ static bool rho_state_clone_map_bind_pair(RhoStateCloneMap *map, StateCell *orig
         }
     }
     if (!rho_state_clone_map_ensure(map, map->len + 1))
+        return false;
+    if (!rho_state_clone_observe(map, map->len, orig))
         return false;
     map->orig[map->len] = orig;
     map->clone[map->len] = clone;
@@ -2884,9 +3020,10 @@ static bool rho_collect_state_ptrs_into_map(RhoStateCloneMap *map, Atom *atom) {
             if (!rho_state_clone_map_note(map, cell, &inserted))
                 return false;
             if (inserted && cell) {
-                if (!rho_collect_state_ptrs_into_map(map, cell->value))
+                StateCellSnapshot view = rho_state_clone_view(map, map->len - 1);
+                if (!rho_collect_state_ptrs_into_map(map, view.value))
                     return false;
-                if (!rho_collect_state_ptrs_into_map(map, cell->content_type))
+                if (!rho_collect_state_ptrs_into_map(map, view.content_type))
                     return false;
             }
         }
@@ -2924,15 +3061,16 @@ static bool rho_state_clone_map_materialize(RhoStateCloneMap *map,
         StateCell *clone = map->clone[i];
         if (!orig || !clone)
             continue;
-        if (orig->value) {
+        StateCellSnapshot view = rho_state_clone_view(map, i);
+        if (view.value) {
             clone->value =
-                rho_atom_rebind_resources(owner, orig->value, space_map, map);
+                rho_atom_rebind_resources(owner, view.value, space_map, map);
             if (!clone->value)
                 return false;
         }
-        if (orig->content_type) {
+        if (view.content_type) {
             clone->content_type = rho_atom_rebind_resources(
-                owner, orig->content_type, space_map, map);
+                owner, view.content_type, space_map, map);
             if (!clone->content_type)
                 return false;
         }
@@ -3020,6 +3158,8 @@ typedef struct {
 typedef struct {
     StateCell **orig;
     StateCell **stable;
+    void **identity_pins;
+    CettaCount pin_cap;
     uint64_t *export_owner_epoch;
     CettaCount len, cap;
 } RhoPromotedStateMap;
@@ -3132,6 +3272,26 @@ static bool rho_promoted_state_bind(RhoPromotedStateMap *map,
                           sizeof(uint64_t) * (size_t)next_cap);
         map->cap = next_cap;
     }
+    if ((!state_cell_identity_pin || !state_cell_identity_unpin) &&
+        state_cell_is_managed && state_cell_is_managed(orig))
+        return false;
+    void *pin = state_cell_identity_pin && state_cell_identity_unpin
+        ? state_cell_identity_pin(orig) : NULL;
+    if ((pin || map->identity_pins) && map->pin_cap < map->cap) {
+        void **pins = cetta_fallible_calloc((size_t)map->cap, sizeof(*pins));
+        if (!pins) {
+            if (pin)
+                state_cell_identity_unpin(pin);
+            return false;
+        }
+        if (map->identity_pins)
+            memcpy(pins, map->identity_pins, (size_t)map->len * sizeof(*pins));
+        free(map->identity_pins);
+        map->identity_pins = pins;
+        map->pin_cap = map->cap;
+    }
+    if (map->identity_pins)
+        map->identity_pins[map->len] = pin;
     map->orig[map->len] = orig;
     map->stable[map->len] = stable;
     map->export_owner_epoch[map->len] = export_owner_epoch;
@@ -3155,6 +3315,14 @@ static void rho_promoted_space_map_free(RhoPromotedSpaceMap *map) {
 static void rho_promoted_state_map_free(RhoPromotedStateMap *map) {
     if (!map)
         return;
+    if (map->identity_pins) {
+        for (CettaCount i = 0u; i < map->len; i++)
+            if (map->identity_pins[i])
+                state_cell_identity_unpin(map->identity_pins[i]);
+        free(map->identity_pins);
+        map->identity_pins = NULL;
+        map->pin_cap = 0u;
+    }
     free(map->orig);
     free(map->stable);
     free(map->export_owner_epoch);
@@ -3262,39 +3430,204 @@ static StateCell *rho_promote_payload_state(Arena *persistent,
     if (stable)
         return stable;
 
+    RhoStateObservation observation;
+    if (!rho_state_observation_acquire(visible, &observation))
+        return NULL;
+    StateCellSnapshot view = rho_state_observation_view(visible, &observation);
+
     stable = arena_alloc(persistent, sizeof(StateCell));
     if (!stable)
-        return NULL;
+        goto fail;
     stable->value = NULL;
     stable->content_type = NULL;
     stable->payload_owner_epoch = 0;
     stable->payload_export_owner_epoch = export_owner_epoch;
     if (!rho_promoted_state_bind(promoted_states, visible, stable,
                                  export_owner_epoch, alias_fault))
-        return NULL;
-    if (visible->value) {
+        goto fail;
+    if (view.value) {
         stable->value =
-            rho_promote_payload_atom(persistent, persistent, visible->value,
+            rho_promote_payload_atom(persistent, persistent, view.value,
                                      space_map, state_map,
                                      promoted_spaces, promoted_states,
                                      owner_epoch, export_owner_epoch,
                                      alias_fault);
         if (!stable->value)
-            return NULL;
+            goto fail;
     }
-    if (visible->content_type) {
+    if (view.content_type) {
         stable->content_type =
             rho_promote_payload_atom(persistent, persistent,
-                                     visible->content_type,
+                                     view.content_type,
                                      space_map, state_map,
                                      promoted_spaces, promoted_states,
                                      owner_epoch, export_owner_epoch,
                                      alias_fault);
         if (!stable->content_type)
-            return NULL;
+            goto fail;
     }
+    rho_state_observation_release(&observation);
     return stable;
+
+fail:
+    rho_state_observation_release(&observation);
+    return NULL;
 }
+
+#ifdef CETTA_TEST_HOOKS
+#pragma weak state_cell_image_prepare
+#pragma weak state_cell_managed_new
+#pragma weak state_cell_creator_release
+#pragma weak state_cell_publish_prepared
+#pragma weak state_cell_reclaim_bounded
+#pragma weak state_cell_reclamation_due
+#pragma weak state_cell_diagnostics
+
+static StateCell *rho_test_managed_state(Arena *source, Atom *value, int64_t type) {
+    StateCellImage *image = state_cell_image_prepare(value, atom_int(source, type), false);
+    assert(image);
+    StateCell *cell = state_cell_managed_new(image);
+    assert(cell);
+    return cell;
+}
+
+static void rho_test_state_drain(void) {
+    size_t passes = 0u;
+    while (state_cell_reclamation_due()) {
+        state_cell_reclaim_bounded(16u);
+        assert(++passes < 1000u);
+    }
+}
+
+static StateCellImage *rho_test_text_replacement;
+static void rho_test_replace_observed_state(StateCell *cell) {
+    StateCellImage *image = rho_test_text_replacement;
+    rho_test_text_replacement = NULL;
+    rho_state_text_observed_test = NULL;
+    assert(image && state_cell_publish_prepared(cell, image));
+}
+
+bool rhocalc_managed_state_observer_selftest(void (*refuse_allocation)(void)) {
+    if (!state_cell_image_prepare || !state_cell_managed_new ||
+        !state_cell_creator_release || !state_cell_publish_prepared ||
+        !state_cell_reclaim_bounded || !state_cell_reclamation_due ||
+        !state_cell_diagnostics || !refuse_allocation)
+        return false;
+    const StateCellDiagnostics baseline = state_cell_diagnostics();
+    Arena source, destination;
+    arena_init_detached(&source);
+    arena_init_detached(&destination);
+    assert(eval_payload_redirects_begin(&destination));
+    StateCell *a = rho_test_managed_state(&source, atom_int(&source, 17), 101);
+    StateCell *b = rho_test_managed_state(&source, atom_int(&source, 19), 102);
+    Atom *pair = atom_expr3(&source, atom_symbol(&source, "captured-pair"),
+        atom_state(&source, a), atom_state(&source, a));
+    StateCell *outer = rho_test_managed_state(&source, pair, 103);
+    Atom *root = atom_state(&source, outer);
+    RhoStateCloneMap states = {0};
+    RhoOverlayMap spaces = {0};
+    assert(rho_collect_state_ptrs_into_map(&states, root) && states.len == 2);
+    assert(!rho_state_clone_for(&states, b));
+    StateCellImage *replacement = state_cell_image_prepare(atom_state(&source, b),
+        atom_int(&source, 104), false);
+    assert(replacement && state_cell_publish_prepared(outer, replacement));
+    replacement = state_cell_image_prepare(atom_int(&source, 47),
+        atom_int(&source, 105), false);
+    assert(replacement && state_cell_publish_prepared(a, replacement));
+    arena_free(&source);
+    state_cell_creator_release(a);
+    state_cell_creator_release(b);
+    state_cell_creator_release(outer);
+    rho_test_state_drain();
+    /* The map is now the only native identity holder of the old topology. */
+    assert(state_cell_is_managed(outer) && state_cell_is_managed(a));
+    assert(rho_state_clone_map_materialize(&states, &destination, &spaces, 37u));
+    StateCell *outer_copy = rho_state_clone_for(&states, outer);
+    StateCell *a_copy = rho_state_clone_for(&states, a);
+    assert(outer_copy && a_copy && outer_copy->value->kind == ATOM_EXPR &&
+           outer_copy->value->expr.len == 3u &&
+           outer_copy->value->expr.elems[1]->ground.ptr == a_copy &&
+           outer_copy->value->expr.elems[2]->ground.ptr == a_copy &&
+           outer_copy->content_type->ground.ival == 103 &&
+           a_copy->value->ground.ival == 17 && a_copy->content_type->ground.ival == 101 &&
+           !rho_state_clone_for(&states, b));
+    rho_state_clone_map_free(&states);
+    rho_test_state_drain();
+    assert(!state_cell_is_managed(outer) && !state_cell_is_managed(a) &&
+           !state_cell_is_managed(b));
+    assert(a_copy->value->ground.ival == 17);
+    eval_payload_redirects_end();
+    arena_free(&destination);
+
+    arena_init_detached(&source);
+    arena_init_detached(&destination);
+    assert(eval_payload_redirects_begin(&destination));
+    StateCell *self = state_cell_managed_new(NULL);
+    assert(self);
+    Atom *self_ref = atom_state(&source, self);
+    replacement = state_cell_image_prepare(self_ref, atom_int(&source, 1), false);
+    assert(replacement && state_cell_publish_prepared(self, replacement));
+    assert(rho_collect_state_ptrs_into_map(&states, self_ref) && states.len == 1);
+    assert(rho_state_clone_map_materialize(&states, &destination, &spaces, 39u));
+    StateCell *self_copy = rho_state_clone_for(&states, self);
+    assert(self_copy && self_copy->value->ground.gkind == GV_STATE &&
+           self_copy->value->ground.ptr == self_copy);
+    replacement = state_cell_image_prepare(atom_int(&source, 23), atom_int(&source, 1), false);
+    assert(replacement && state_cell_publish_prepared(self, replacement));
+    rho_state_clone_map_free(&states);
+    arena_free(&source);
+    state_cell_creator_release(self);
+    rho_test_state_drain();
+    eval_payload_redirects_end();
+    arena_free(&destination);
+
+    arena_init_detached(&source);
+    arena_init_detached(&destination);
+    StateCell *promoted_source = rho_test_managed_state(&source,
+        atom_string(&source, "retained-promotion"), 107);
+    rho_test_text_replacement = state_cell_image_prepare(
+        atom_string(&source, "new-current"), atom_int(&source, 107), false);
+    assert(rho_test_text_replacement);
+    rho_state_text_observed_test = rho_test_replace_observed_state;
+    RhoStr rendered = {0};
+    assert(rho_atom_text_key_direct_into(atom_state(&source, promoted_source), &rendered));
+    assert(!rho_state_text_observed_test && !rho_test_text_replacement &&
+           strcmp(rendered.data, "(State \"retained-promotion\")") == 0);
+    free(rendered.data);
+    RhoPromotedSpaceMap promoted_spaces = {0};
+    RhoPromotedStateMap promoted_states = {0};
+    bool alias_fault = false;
+    StateCell *promoted = rho_promote_payload_state(&destination, promoted_source,
+        &spaces, &states, &promoted_spaces, &promoted_states, 41u, 1u, &alias_fault);
+    assert(promoted && promoted != promoted_source && !alias_fault);
+    arena_free(&source);
+    state_cell_creator_release(promoted_source);
+    rho_test_state_drain();
+    assert(state_cell_is_managed(promoted_source));
+    assert(strcmp(promoted->value->ground.sval, "new-current") == 0 &&
+           promoted->content_type->ground.ival == 107);
+    rho_promoted_state_map_free(&promoted_states);
+    rho_promoted_space_map_free(&promoted_spaces);
+    rho_test_state_drain();
+    assert(!state_cell_is_managed(promoted_source));
+    assert(strcmp(promoted->value->ground.sval, "new-current") == 0);
+    arena_free(&destination);
+
+    arena_init_detached(&source);
+    StateCell *failed = rho_test_managed_state(&source, atom_int(&source, 17), 109);
+    root = atom_state(&source, failed);
+    refuse_allocation();
+    assert(!rho_collect_state_ptrs_into_map(&states, root) && states.len == 0);
+    rho_state_clone_map_free(&states);
+    arena_free(&source);
+    state_cell_creator_release(failed);
+    rho_test_state_drain();
+    StateCellDiagnostics final = state_cell_diagnostics();
+    assert(final.nodes == baseline.nodes && final.images == baseline.images &&
+           final.image_bytes == baseline.image_bytes);
+    return true;
+}
+#endif
 
 static Atom *rho_promote_payload_atom(Arena *arena,
                                       Arena *persistent,
@@ -3392,6 +3725,7 @@ static bool rho_eval_payload_results(Arena *arena,
     uint64_t owner_epoch = 0;
     Atom *payload;
     bool alias_fault = false;
+    bool redirects_started = false;
 
     if (!arena || !eval_context || !eval_context->space || !payload_expr || !out) {
         return false;
@@ -3407,6 +3741,7 @@ static bool rho_eval_payload_results(Arena *arena,
     owner_epoch = eval_next_payload_owner_epoch();
     if (!eval_payload_redirects_begin(persistent))
         goto fail;
+    redirects_started = true;
 
     /* Overlay the self space, every registry-bound space, and every baked space
      * literal in the payload term. State cells are rebound separately below. */
@@ -3430,9 +3765,10 @@ static bool rho_eval_payload_results(Arena *arena,
     for (int i = 0; i < state_map.len; i++) {
         StateCell *cell = state_map.orig[i];
         if (cell) {
-            if (!rho_collect_space_ptrs_into_map(&map, cell->value))
+            StateCellSnapshot view = rho_state_clone_view(&state_map, i);
+            if (!rho_collect_space_ptrs_into_map(&map, view.value))
                 goto fail;
-            if (!rho_collect_space_ptrs_into_map(&map, cell->content_type))
+            if (!rho_collect_space_ptrs_into_map(&map, view.content_type))
                 goto fail;
         }
     }
@@ -3532,7 +3868,8 @@ fail:
     rho_overlay_map_free(&map);
     rho_state_clone_map_free(&state_map);
     registry_free(&local_registry);
-    eval_payload_redirects_end();
+    if (redirects_started)
+        eval_payload_redirects_end();
     return false;
 }
 
