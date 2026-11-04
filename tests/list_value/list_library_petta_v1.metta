@@ -25,8 +25,8 @@
 !(println! (list:unique-by list:atom-equal [a b a]))
 !(println! (list:take 2 [a b c]))
 !(println! (list:take 5 (a b)))
-!(println! (list:from-expression (a b)))
-!(println! (list:to-expression [a b]))
+!(println! (list:from (a b)))
+!(println! (tuple:from [a b]))
 !(println! (list:key-by list:len [[a] [b c]]))
 ; Elements are data: a call written inside a list is not run by the walk.
 !(println! (list:len [(+ 1 2) (undefined-function x)]))

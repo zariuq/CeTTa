@@ -3973,6 +3973,14 @@ BACKEND_DEDICATED_TESTS = \
 METTAPEDIA_CORPUS_TESTS = \
 	tests/test_lts_mi_syntax.metta
 
+# Corpus tests that read the metamath-test checkout beside this repository.
+# The default corpus runs them when that checkout is present and reports
+# them skipped otherwise.
+METAMATH_TEST_CHECKOUT ?= ../metamath/metamath-test
+METAMATH_TEST_CORPUS_TESTS = \
+	tests/test_gparse_native_forest_digest.metta \
+	tests/test_gparse_native_metamath_frontier.metta
+
 OPT_IN_FEATURE_TESTS = \
 	tests/test_io_json_bridge.metta \
 	tests/test_io_json_bridge_compat.metta \
@@ -20326,6 +20334,7 @@ NORMAL_TEST_TARGETS := \
 	test-language-versions \
 	test-prime-normal-fixtures \
 	test-prepared-bound-heads \
+	test-seal \
 	test-numerical-substrate-smoke \
 	test-application-panel
 
@@ -20628,6 +20637,12 @@ test-main-corpus-default: $(BIN)
 		fi; \
 		if printf '%s\n' $(METTAPEDIA_CORPUS_TESTS) | grep -Fxq "$$f"; then \
 			echo "SKIP: $$f (imports a Mettapedia checkout; covered by test-lean)"; \
+			skip=$$((skip + 1)); \
+			continue; \
+		fi; \
+		if printf '%s\n' $(METAMATH_TEST_CORPUS_TESTS) | grep -Fxq "$$f" && \
+		   [ ! -d "$(METAMATH_TEST_CHECKOUT)/tests" ]; then \
+			echo "SKIP: $$f (reads the metamath-test checkout beside this repository, which is absent)"; \
 			skip=$$((skip + 1)); \
 			continue; \
 		fi; \
@@ -23312,7 +23327,6 @@ test-runtime-stats-lane-body:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-chain-natural-linear
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-translation-linear
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-he-captured-frame-support
-	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-prepared-sequence-erasure-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-prepared-keyed-top-k-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-libpl-runtime-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-activation-effect-runtime-stats
@@ -36925,10 +36939,14 @@ bench-mam-linear-fibonacci: $(BIN)
 		bash scripts/bench_mam_linear_fibonacci.sh
 
 .PHONY: test-prepared-pure-call-machine-stats
-# Semantic controls retain exact answers and occurrence counts. Wider variable
-# identities change the number of nursery intervals; resource bounds are checked
-# by the retained fallback control.
-test-prepared-pure-call-machine-stats: $(BIN) test-prepared-pure-call-machine test-prepared-pure-answer-resource-fallback
+# Uncapped variable identities widened each Atom, so the same logical run
+# crosses eleven one-megabyte nursery intervals. The collection-count guard
+# keeps one interval of tolerance; byte and reclamation bounds remain strict.
+# The answer producer gives six answers: an answer whose head is bound at
+# run time takes the canonical route, as the head's value decides between
+# data and a call.  The empty deconstruction is refused before the producer
+# is entered and answers its error canonically, which the answer file checks.
+test-prepared-pure-call-machine-stats: $(BIN) test-prepared-pure-answer-resource-fallback
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 	@result=$$(CETTA_GC=1 CETTA_GC_BUDGET_MB=1 \
 		./$(BIN) --emit-runtime-stats --lang he \
@@ -36962,8 +36980,7 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 	   [ "$${reclaimed:-0}" -lt 1 ] || \
 	   [ "$${answer_admissions:-0}" -lt 3 ] || \
 	   [ "$${answer_commits:-0}" -lt 3 ] || \
-	   [ "$${answer_declines:-0}" -lt 1 ] || \
-	   [ "$${answer_count:-0}" -lt 1 ] || \
+	   [ "$${answer_count:-0}" -ne 6 ] || \
 	   [ "$${answer_tail_calls:-0}" -lt 1 ]; then \
 		echo "FAIL: pure-call mechanism witness admission=$$admissions commit=$$commits decline=$$declines collections=$$collections evacuated=$$evacuated reclaimed=$$reclaimed answer-admission=$$answer_admissions answer-commit=$$answer_commits answer-decline=$$answer_declines answers=$$answer_count answer-tail-calls=$$answer_tail_calls"; \
 		exit 1; \
@@ -37047,36 +37064,6 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 else
 	@echo "INFO: pure-call mechanism witness requires compile-time runtime stats; re-running with ENABLE_RUNTIME_STATS=1"
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-prepared-pure-call-machine-stats
-endif
-
-.PHONY: test-prepared-sequence-erasure-stats
-test-prepared-sequence-erasure-stats: $(BIN)
-ifeq ($(ENABLE_RUNTIME_STATS),1)
-	@expected=$$(cat tests/test_prepared_sequence_erasure_stats.expected); \
-	for lane in he prime; do \
-		result=$$($(CETTA_BIN_INVOKE) --emit-runtime-stats --lang $$lane \
-			tests/test_prepared_sequence_erasure_stats.metta 2>&1); \
-		actual=$$(printf '%s\n' "$$result" | grep '^\[' || true); \
-		stat() { \
-			printf '%s\n' "$$result" | awk -v key="$$1" \
-				'$$1 == "runtime-counter" && $$2 == key { print $$3; found=1 } END { if (!found) exit 1 }'; \
-		}; \
-		admissions=$$(stat prepared-sequence-erasure-admission) || exit 1; \
-		commits=$$(stat prepared-sequence-erasure-commit) || exit 1; \
-		declines=$$(stat prepared-sequence-erasure-decline) || exit 1; \
-		if [ "$$actual" != "$$expected" ] || \
-		   [ "$$admissions" -le 0 ] || [ "$$commits" -le 0 ] || \
-		   [ "$$commits" -gt "$$admissions" ] || \
-		   [ "$$declines" -le 0 ]; then \
-			echo "FAIL: $$lane represented-sequence erasure answers or receipts admission=$$admissions commit=$$commits decline=$$declines"; \
-			diff <(printf '%s\n' "$$expected") <(printf '%s\n' "$$actual") | head -20; \
-			exit 1; \
-		fi; \
-	done; \
-	echo "PASS: HE and Prime represented-sequence erasure commits licensed producers and declines unlisted producers"
-else
-	@echo "INFO: represented-sequence erasure receipts require compile-time runtime stats; re-running with ENABLE_RUNTIME_STATS=1"
-	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-prepared-sequence-erasure-stats
 endif
 
 .PHONY: test-prepared-keyed-top-k-stats

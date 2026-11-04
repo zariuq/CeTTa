@@ -348,6 +348,8 @@
   (value sequence-last)
   (value collect)
   (value match-branches)
+  (value dispatch)
+  (value first-success)
   ; These operations are selected by dialect elaboration of an occurrence,
   ; without giving its value or constructor head new source-call authority.
   (implicit-operation return-value)
@@ -410,10 +412,14 @@
   (source-head function 1 return-scope (operands 0 absent absent) (fold evaluate))
   (source-head superpose 1 ordered-choice (operands 0 absent absent) (fold none))
   (source-head collapse 1 collect (operands 0 absent absent) (fold none))
+  (source-head once 1 first-success (operands 0 absent absent) (fold none))
   (source-head case 2 match-branches (operands 0 1 absent) (fold none))
   (source-head empty 0 failure (operands absent absent absent) (fold none))
   (dialect-form petta cut 0 scoped-commit (operands absent absent absent) (fold none))
-  (dialect-form petta catch 1 handle (operands 0 absent absent) (fold none)))
+  (dialect-form petta catch 1 handle (operands 0 absent absent) (fold none))
+  ; Dispatch prepares a written application's operands and enters its head;
+  ; a held application already supplies values. Force interprets code instead.
+  (dialect-form petta reduce 1 dispatch (operands 0 absent absent) (fold none)))
 
 (gslt determinate-fold-continuation
   (sort Control)
@@ -476,27 +482,7 @@
        (join (effects $value)
              (effects (control-operand pattern-pairs $rest)))))
   (law empty-pattern-pairs-are-pure
-    (= (effects (control-operand pattern-pairs ())) pure))
-  (law represented-sequence-fold-equivalence
-    (implies
-      (= (sequence-representation $name)
-         ($materializer $empty $cons))
-      (= (bag-observe
-           (prepared-represented-fold
-             $name $items $initial $step))
-         (bag-observe
-           (ordinary-fold
-             ($materializer $items) $initial $step)))))
-  (law represented-sequence-preserves-occurrence-order
-    (implies
-      (= (sequence-representation $name)
-         ($materializer $empty $cons))
-      (= (occurrence-sequence
-           (prepared-represented-fold
-             $name $items $initial $step))
-         (occurrence-sequence
-           (ordinary-fold
-             ($materializer $items) $initial $step))))))
+    (= (effects (control-operand pattern-pairs ())) pure)))
 
 (gslt determinate-pure-call-continuation
   (sort CallMode)
@@ -903,6 +889,7 @@
   (query-head tensor:entries relational-query)
   (query-head tensor:gather relational-query)
   (query-head tensor:gather-rows relational-query)
+  (query-head tensor:where relational-query)
   (query-head tensor:merge relational-query)
   (query-head tensor:zip-map relational-query)
   (query-head __cetta_lib_tensor_try_zip_map relational-query)
@@ -1281,17 +1268,6 @@
     __cetta_lib_str 4 strict-all library-value-dispatch)
   (prepared-pure-intrinsic-head
     __cetta_lib_str_value 2 strict-all library-value-dispatch)
-  (sequence-representation clist clist:to-list ClistNil ClistCons)
-  (sequence-fold-consumer clist clist:foldl 5 0)
-  (sequence-fold-target clist list:foldl)
-  (sequence-erasure
-    clist clist:from-list identity unwrap 1 1)
-  (sequence-erasure
-    clist clist:append list:append recursive-all 2 2)
-  (sequence-erasure
-    clist clist:range list:range scalar-all 1 2)
-  (sequence-erasure
-    clist clist:repeat list:repeat scalar-all 2 2)
   (owned-local Bindings bindings_init bindings_free))
 
 (fixtures relational-admission

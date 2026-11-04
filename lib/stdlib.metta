@@ -79,7 +79,6 @@
 (: _minimal-retain-top-k-by-number (-> Expression Number Variable Atom %Undefined%))
 (: _minimal-foldl-atom (-> Expression Atom Variable Variable Atom SpaceType %Undefined%))
 (: _minimal-foldl-llist (-> Atom Atom Variable Variable Atom SpaceType %Undefined%))
-(: _minimal-foldl-sequence (-> Atom %Undefined% Atom Variable Variable Atom SpaceType %Undefined%))
 (: _minimal-space-contains-exact (-> Atom Atom Bool))
 (: _minimal-space-revision (-> SpaceType Number))
 (: _collapse-add-next-atom-from-collapse-bind-result (-> Expression Expression Atom))
