@@ -30328,7 +30328,7 @@ PETTA_SEMANTIC_EXACT_STREAM_STEMS = \
 	get_type_relation list_natives_several let_star_patterns \
 	lambda_pattern_parameters lambda_parameter_scope \
 	specialized_partial_values closure_values activation_cons_let \
-	partial_argument_values
+	partial_argument_values inequality_values
 PETTA_SEMANTIC_OCCURRENCE_BAG_STEMS = semantic_counter_equations \
 	search_machine_specializer_negative_mutation \
 	search_machine_partial_head_observation search_machine_query_field_composition
