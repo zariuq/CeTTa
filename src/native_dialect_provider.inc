@@ -183,7 +183,7 @@ static bool native_dialect_capture_resource(void *raw, const Atom *atom,
      * list. Native handle shutdown ends every image before session resources
      * and their persistent arena are destroyed. */
     const CettaLibraryContext *library = owner->context.library_context;
-    Arena *persistent = library ? library->term_universe.persistent_arena : NULL;
+    Arena *persistent = library ? (*cetta_library_context_universe((CettaLibraryContext *)(library))).persistent_arena : NULL;
     if ((persistent && arena_owns_ptr(persistent, atom->ground.ptr)) ||
         (atom->ground.gkind == GV_SPACE && atom->ground.ptr == owner->control->space)) {
         *lease = (PettaMachineResourceLease){.scope=library};

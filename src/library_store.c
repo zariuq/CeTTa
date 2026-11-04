@@ -691,7 +691,7 @@ static Atom *space_view(CettaLibraryContext *ctx,Arena *a,Atom **args,uint32_t n
      * An unqualified transactional payload must not acquire a live foreign
      * capability by receiving a raw Space pointer. */
     Arena *storage=eval_current_persistent_arena();
-    if (!streaming && (!storage || eval_payload_transactional() || ctx->term_universe.persistent_arena!=storage))
+    if (!streaming && (!storage || eval_payload_transactional() || (*cetta_library_context_universe((CettaLibraryContext *)(ctx))).persistent_arena!=storage))
         return refused(a,"space-owner-context");
     CettaNativeHandleUse use={0};
     if (!acquire(ctx,view_kind,args[0],CETTA_NATIVE_HANDLE_USE_LIFETIME,&use)) return refused(a,"closed-view");

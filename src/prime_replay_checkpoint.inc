@@ -43,7 +43,7 @@ static bool prime_replay_checkpoint_origin_check(const PrimeNativeControl *,
 
 static bool prime_replay_sources_add(PrimeReplaySources *sources,const Space *space) {
     if(!space)return true;
-    if(space->universe!=&sources->library->term_universe)return false;
+    if(space->universe!=cetta_library_context_universe((CettaLibraryContext *)(sources->library)))return false;
     for(size_t i=0u;i<sources->count;i++)if(sources->spaces[i]==space)return true;
     if(sources->count==sources->capacity) {
         if(sources->count==sources->limit)return false;
@@ -74,7 +74,7 @@ static bool prime_replay_sources_capture(PrimeReplaySources *sources,
      * outlive its native handles. Revision capture does not acquire those
      * lifetimes. Private library/universe/global domains refuse. */
     if(!g_library_context||!g_hashcons||!g_symbols)return false;
-    Arena *persistent=g_library_context->term_universe.persistent_arena;
+    Arena *persistent=(*cetta_library_context_universe((CettaLibraryContext *)(g_library_context))).persistent_arena;
     if(!persistent||persistent!=g_eval_fallback_universe.persistent_arena||
         persistent->hashcons!=g_hashcons)return false;
     sources->library=g_library_context;sources->persistent=persistent;
@@ -103,7 +103,7 @@ static bool prime_replay_source_owners_current(const PrimeReplaySources *sources
     if(sources->library!=g_library_context||sources->globals!=g_hashcons||
         sources->global_instance!=hashcons_instance_id(sources->globals)||
         sources->symbol_instance!=symbol_table_instance_id(g_symbols)||
-        sources->persistent!=g_library_context->term_universe.persistent_arena||
+        sources->persistent!=(*cetta_library_context_universe((CettaLibraryContext *)(g_library_context))).persistent_arena||
         sources->persistent->identity!=sources->persistent_identity||
         sources->persistent->reset_epoch!=sources->persistent_epoch||
         sources->persistent->hashcons!=sources->globals)return false;
@@ -115,7 +115,7 @@ static bool prime_replay_sources_current(const PrimeReplaySources *sources) {
     if(!prime_replay_source_owners_current(sources))return false;
     if(sources->external_target &&
         (sources->external_target->instance_id!=sources->target_instance ||
-         sources->external_target->universe!=&sources->library->term_universe))return false;
+         sources->external_target->universe!=cetta_library_context_universe((CettaLibraryContext *)(sources->library))))return false;
     for(size_t i=0u;i<sources->count;i++)
         if(!space_read_view_is_current(&sources->reads[i]) ||
             sources->spaces[i]==sources->external_target)return false;

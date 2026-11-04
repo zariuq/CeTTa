@@ -24,7 +24,7 @@ static void prime_native_region_context_select(PrimeNativeOwnedRegion *region,
     g_registry = &region->registry;
     g_eval_root_space = prime_native_region_program(region);
     g_hashcons = NULL;
-    eval_term_universe_scope_enter(&scope->universe, &region->library->term_universe);
+    eval_term_universe_scope_enter(&scope->universe, cetta_library_context_universe((CettaLibraryContext *)(region->library)));
     term_universe_set_persistent_arena(&g_eval_fallback_universe, &region->persistent);
 }
 
