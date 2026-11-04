@@ -2421,8 +2421,10 @@ static uint32_t head_posting_push(CettaSpaceHeadIndex *index, uint64_t key) {
         uint32_t next = index->posting_cap ? index->posting_cap * 2u : 8u;
         if (next <= index->posting_cap)
             cetta_oom(SIZE_MAX);
-        index->postings = cetta_realloc(index->postings,
+        HeadPosting *postings = cetta_realloc(index->postings,
                                         (size_t)next * sizeof(*index->postings));
+        if (!postings) return HEAD_NONE;
+        index->postings = postings;
         index->posting_cap = next;
     }
     uint32_t id = index->posting_len++;
@@ -2430,11 +2432,12 @@ static uint32_t head_posting_push(CettaSpaceHeadIndex *index, uint64_t key) {
     return id;
 }
 
-static void head_slots_grow(CettaSpaceHeadIndex *index) {
+static bool head_slots_grow(CettaSpaceHeadIndex *index) {
     size_t next = index->slot_cap ? index->slot_cap * 2u : 16u;
     if (next < index->slot_cap || next > SIZE_MAX / sizeof(*index->slots))
         cetta_oom(SIZE_MAX);
     uint32_t *slots = cetta_malloc(next * sizeof(*slots));
+    if (!slots) return false;
     memset(slots, 0, next * sizeof(*slots));
     for (size_t old = 0u; old < index->slot_cap; old++) {
         if (index->slots[old] == 0u)
@@ -2448,16 +2451,18 @@ static void head_slots_grow(CettaSpaceHeadIndex *index) {
     free(index->slots);
     index->slots = slots;
     index->slot_cap = next;
+    return true;
 }
 
 static uint32_t head_posting_get(CettaSpaceHeadIndex *index, uint64_t key) {
     uint32_t id = head_posting_find(index, key);
     if (id != HEAD_NONE)
         return id;
-    if (index->slot_cap == 0u ||
-        index->slot_len >= index->slot_cap - index->slot_cap / 4u)
-        head_slots_grow(index);
+    if ((index->slot_cap == 0u ||
+        index->slot_len >= index->slot_cap - index->slot_cap / 4u) &&
+        !head_slots_grow(index)) return HEAD_NONE;
     id = head_posting_push(index, key);
+    if (id == HEAD_NONE) return HEAD_NONE;
     size_t slot = (size_t)path_key_hash(key) & (index->slot_cap - 1u);
     while (index->slots[slot] != 0u)
         slot = (slot + 1u) & (index->slot_cap - 1u);
@@ -2466,35 +2471,37 @@ static uint32_t head_posting_get(CettaSpaceHeadIndex *index, uint64_t key) {
     return id;
 }
 
-static void head_posting_append(HeadPosting *posting, CettaIndex row) {
+static bool head_posting_append(HeadPosting *posting, CettaIndex row) {
     if (posting->len == posting->cap) {
         CettaCount next = posting->cap ? posting->cap * 2u : 4u;
         if (next <= posting->cap || next > SIZE_MAX / sizeof(CettaIndex))
             cetta_oom(SIZE_MAX);
-        posting->rows = cetta_realloc(posting->rows,
+        CettaIndex *rows = cetta_realloc(posting->rows,
                                       (size_t)next * sizeof(CettaIndex));
+        if (!rows) return false;
+        posting->rows = rows;
         posting->cap = next;
     }
     posting->rows[posting->len++] = row;
+    return true;
 }
 
-static void head_index_add_row(CettaSpaceHeadIndex *index, AtomId id,
+static bool head_index_add_row(CettaSpaceHeadIndex *index, AtomId id,
                                CettaIndex row) {
     uint64_t key = 0u;
     switch (head_row_kind(index->universe, id, &key)) {
     case HEAD_ROW_NONE:
-        break;
+        return true;
     case HEAD_ROW_EVERY:
-        head_posting_append(&index->postings[HEAD_EVERY], row);
-        break;
+        return head_posting_append(&index->postings[HEAD_EVERY], row);
     case HEAD_ROW_KEYED:
     case HEAD_ROW_OPEN: {
         /* Finding the posting may grow the postings. */
         uint32_t id = head_posting_get(index, key);
-        head_posting_append(&index->postings[id], row);
-        break;
+        return id != HEAD_NONE && head_posting_append(&index->postings[id], row);
     }
     }
+    return false;
 }
 
 bool space_head_index_admits(const Atom *pattern) {
@@ -2526,13 +2533,14 @@ static CettaSpaceHeadIndex *head_index_build(Space *space) {
     if (space->native.len != 0u && (width == 0u || !space->native.atom_ids))
         return NULL;
     CettaSpaceHeadIndex *index = cetta_malloc(sizeof(*index));
+    if (!index) return NULL;
     *index = (CettaSpaceHeadIndex){
         .universe = space->native.universe,
         .universe_instance = space->native.universe->instance_id,
         .universe_epoch = space->native.universe->storage_epoch,
         .prefix_epoch = space->prefix_epoch,
     };
-    (void)head_posting_push(index, 0u);
+    if (head_posting_push(index, 0u) == HEAD_NONE) goto fail;
     /* The rows as they stand.  A row removed by mark is left out: its
      * readers skip it by the marks, and its term a collection may since have
      * reclaimed, so it is not read. */
@@ -2544,13 +2552,16 @@ static CettaSpaceHeadIndex *head_index_build(Space *space) {
         AtomId id = cetta_atom_id_storage_load_bits(
             space->native.atom_ids + (size_t)row * width,
             space->native.atom_id_width_bits);
-        head_index_add_row(index, id, row);
+        if (!head_index_add_row(index, id, row)) goto fail;
     }
     index->source_len = space->native.len;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_HEAD_INDEX_BUILD);
     cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_SPACE_HEAD_INDEX_BUILD_ROW,
                             space->native.len);
     return index;
+fail:
+    space_head_index_free(index);
+    return NULL;
 }
 
 CettaSpaceHeadIndex *space_head_index_prepare(Space *space) {
@@ -2839,7 +2850,7 @@ void space_head_index_note_add(Space *space, AtomId id, CettaIndex row) {
         space_head_index_retire(space);
         return;
     }
-    head_index_add_row(index, id, row);
+    if (!head_index_add_row(index, id, row)) { space_head_index_retire(space); return; }
     index->source_len++;
 }
 

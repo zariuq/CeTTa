@@ -94,6 +94,8 @@ def observationRows : List (String × List String) := [
   ("equality", ["DTypeShapeSupportScalarBits"]),
   ("sum", ["StoredCoordinateOrder", "F64AccumulateFloats"]),
   ("matvec", ["StoredRowCoordinateOrder", "F64AccumulateFloats"]),
+  ("dotBounds", ["StoredCoordinateOrder", "NearestGradualSeparate", "StoredRealInputEnclosure", "TypedRefusal"]),
+  ("matvecBounds", ["StoredRowCoordinateOrder", "NearestGradualSeparate", "StoredRealInputEnclosure", "TypedRefusal"]),
   ("fixed4", ["FourLanesLeftAssociated", "ExplicitSelection"]),
   ("topk", ["FiniteEnabledDescending", "CoordinateAscendingTies"]),
   ("entries", ["CoordinateAscending", "PackedCoordinateValueVectors"]),

@@ -13,6 +13,15 @@
 
 #define CETTA_TEXT_SOURCE_BUFFER_SIZE 65536
 
+typedef enum {
+    CETTA_TEXT_READ_OK, CETTA_TEXT_READ_IO, CETTA_TEXT_READ_MEMORY,
+    CETTA_TEXT_READ_OVERFLOW
+} CettaTextReadStatus;
+/* Read owned bytes with an extra NUL terminator. Length still includes any
+ * embedded NUL; source consumers decide whether those bytes are legal. */
+CettaTextReadStatus cetta_text_read_file(const char *path, uint8_t **bytes,
+    size_t *length, int *system_error);
+
 typedef struct {
     char path[PATH_MAX];
     char dir[PATH_MAX];

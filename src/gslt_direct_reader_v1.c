@@ -261,7 +261,9 @@ static bool gslt_direct_reader_v1_bytes_reserve(
         }
         cap *= 2u;
     }
-    bytes->data = cetta_realloc(bytes->data, cap);
+    uint8_t *data = cetta_realloc(bytes->data, cap);
+    if (!data) return false;
+    bytes->data = data;
     bytes->cap = cap;
     return true;
 }
@@ -720,8 +722,9 @@ static AtomId gslt_direct_reader_v1_parse_expression(
             uint32_t next = cap ? cap * 2u : 16u;
             if (next < cap || SIZE_MAX / (size_t)next < sizeof(*children))
                 goto done;
-            children = cetta_realloc(
-                children, (size_t)next * sizeof(*children));
+            AtomId *grown = cetta_realloc(children, (size_t)next * sizeof(*children));
+            if (!grown) goto done;
+            children = grown;
             cap = next;
         }
         children[len++] = child;
@@ -815,7 +818,9 @@ static AtomId gslt_direct_reader_v1_parse_list(
             uint32_t next = cap ? cap * 2u : 8u;
             if (next < cap || SIZE_MAX / (size_t)next < sizeof(*elems))
                 goto done;
-            elems = cetta_realloc(elems, (size_t)next * sizeof(*elems));
+            AtomId *grown = cetta_realloc(elems, (size_t)next * sizeof(*elems));
+            if (!grown) goto done;
+            elems = grown;
             cap = next;
         }
         elems[len++] = element;
@@ -1531,7 +1536,9 @@ int gslt_direct_reader_v1_parse_bytes_ids_impl(
             uint32_t next = cap ? cap * 2u : 64u;
             if (next < cap || SIZE_MAX / (size_t)next < sizeof(*ids))
                 goto done;
-            ids = cetta_realloc(ids, (size_t)next * sizeof(*ids));
+            AtomId *grown = cetta_realloc(ids, (size_t)next * sizeof(*ids));
+            if (!grown) goto done;
+            ids = grown;
             cap = next;
         }
         ids[len++] = id;
@@ -1873,8 +1880,9 @@ static AtomId gslt_direct_prefix_parse_expression(
             uint32_t next = cap ? cap * 2u : 16u;
             if (next < cap || SIZE_MAX / (size_t)next < sizeof(*children))
                 goto done;
-            children = cetta_realloc(
-                children, (size_t)next * sizeof(*children));
+            AtomId *grown = cetta_realloc(children, (size_t)next * sizeof(*children));
+            if (!grown) goto done;
+            children = grown;
             cap = next;
         }
         children[len++] = child;
@@ -1948,7 +1956,9 @@ static AtomId gslt_direct_prefix_parse_list(
             uint32_t next = cap ? cap * 2u : 8u;
             if (next < cap)
                 goto failed;
-            elems = cetta_realloc(elems, (size_t)next * sizeof(*elems));
+            AtomId *grown = cetta_realloc(elems, (size_t)next * sizeof(*elems));
+            if (!grown) goto failed;
+            elems = grown;
             cap = next;
         }
         elems[len++] = element;
@@ -2342,7 +2352,9 @@ int gslt_direct_prefix_reader_v1_parse_bytes_ids(
             uint32_t next = cap ? cap * 2u : 64u;
             if (next < cap || SIZE_MAX / (size_t)next < sizeof(*ids))
                 goto done;
-            ids = cetta_realloc(ids, (size_t)next * sizeof(*ids));
+            AtomId *grown = cetta_realloc(ids, (size_t)next * sizeof(*ids));
+            if (!grown) goto done;
+            ids = grown;
             cap = next;
         }
         ids[len++] = id;
@@ -2937,8 +2949,9 @@ static AtomId gslt_direct_petta_parse_expression(
             uint32_t next = cap ? cap * 2u : 16u;
             if (next < cap)
                 goto failed;
-            children = cetta_realloc(
-                children, (size_t)next * sizeof(*children));
+            AtomId *grown = cetta_realloc(children, (size_t)next * sizeof(*children));
+            if (!grown) goto failed;
+            children = grown;
             cap = next;
         }
         children[len++] = child;
@@ -3022,7 +3035,9 @@ static AtomId gslt_direct_petta_parse_list(
             uint32_t next = cap ? cap * 2u : 8u;
             if (next < cap)
                 goto failed;
-            elems = cetta_realloc(elems, (size_t)next * sizeof(*elems));
+            AtomId *grown = cetta_realloc(elems, (size_t)next * sizeof(*elems));
+            if (!grown) goto failed;
+            elems = grown;
             cap = next;
         }
         elems[len++] = element;
@@ -3344,7 +3359,9 @@ int gslt_direct_petta_reader_v1_parse_bytes_ids_from(
                     goto done;
                 next *= 2u;
             }
-            ids = cetta_realloc(ids, (size_t)next * sizeof(*ids));
+            AtomId *grown = cetta_realloc(ids, (size_t)next * sizeof(*ids));
+            if (!grown) goto done;
+            ids = grown;
             cap = next;
         }
         for (uint32_t index = 0u; index < projected_len; index++) {
