@@ -205,6 +205,7 @@ static inline SymbolSpelling symbol_spelling(
     X(git_import_bang, "git-import!") \
     X(register_module_bang, "register-module!") \
     X(import_bang, "import!") \
+    X(import_as_bang, "import-as!") \
     X(include, "include") \
     X(module_parse_failed, "ModuleParseFailed") \
     X(mod_space_bang, "mod-space!") \

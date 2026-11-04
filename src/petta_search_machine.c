@@ -33078,6 +33078,7 @@ static bool petta_machine_effect_head(SymbolId head) {
     static const char *const names[] = {
         "println!", "print!", "trace!", "add-atom", "remove-atom",
         "add-reduct", "add-atoms", "remove-atoms", "bind!", "import!",
+        "import-as!",
         "test", "assertEqual", "assertEqualToResult", "assertAlphaEqual",
         "assert", "py-call", "py-atom", "py-dot", "call", "call-predicate",
         "assertzPredicate", "assertaPredicate", "retractPredicate",
