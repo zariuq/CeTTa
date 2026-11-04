@@ -6596,21 +6596,7 @@ test-space-file: $(SPACE_FILE_TEST_BIN)
 # deterministic building and crash-safe publication (allocation, write,
 # sync and rename failures injected; a failed publication leaves no staged
 # file; a published image has an ordinary file's mode).
-ACT_TRIE_TEST_BIN = runtime/test-act-trie
-ACT_FAULTS_TEST_BIN = runtime/test-act-faults
-$(ACT_TRIE_TEST_BIN): tests/test_act_trie.c src/act_trie.c src/act_trie.h src/storage_census.h
-	@mkdir -p runtime
-	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Isrc tests/test_act_trie.c src/act_trie.c -o $@
-$(ACT_FAULTS_TEST_BIN): tests/test_act_faults.c src/act_trie.c src/act_trie.h src/storage_census.h
-	@mkdir -p runtime
-	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Isrc tests/test_act_faults.c src/act_trie.c \
-		-Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=write,--wrap=fsync,--wrap=rename -o $@
-
-.PHONY: test-act-trie
 test-all: test-act-trie
-test-act-trie: $(ACT_TRIE_TEST_BIN) $(ACT_FAULTS_TEST_BIN)
-	@./$(ACT_TRIE_TEST_BIN)
-	@./$(ACT_FAULTS_TEST_BIN)
 
 # The same format against the PathMap crate itself (Rust nightly): images
 # the C writer makes read back through PathMap, images PathMap makes read
@@ -53041,11 +53027,11 @@ endif
 endif
 
 .PHONY: test-act-trie
-runtime/test-act-trie: tests/test_act_trie.c src/act_trie.c src/act_trie.h
+runtime/test-act-trie: tests/test_act_trie.c src/act_trie.c src/act_trie.h src/storage_census.h
 	@mkdir -p runtime
 	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Isrc tests/test_act_trie.c src/act_trie.c -o $@
 
-runtime/test-act-faults: tests/test_act_faults.c src/act_trie.c src/act_trie.h
+runtime/test-act-faults: tests/test_act_faults.c src/act_trie.c src/act_trie.h src/storage_census.h
 	@mkdir -p runtime
 	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Isrc tests/test_act_faults.c src/act_trie.c \
 		-Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=write,--wrap=fsync,--wrap=renameat -o $@
