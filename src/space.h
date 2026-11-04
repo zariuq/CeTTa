@@ -116,7 +116,9 @@ typedef struct {
 } EqHeadSet;
 
 typedef struct {
-    EqBucket buckets[EQ_INDEX_BUCKETS];
+    /* EQ_INDEX_BUCKETS buckets by head, made by the first equation with a
+     * head: a space holding none keeps none. */
+    EqBucket *buckets;
     EqBucket wildcard; /* equations with variable/structured LHS head */
     /* Each exact head's equations.  Bucket collisions in the pattern index
      * must not turn a head-scoped question into a scan of colliding rows. */
@@ -201,14 +203,24 @@ typedef struct {
     EqIndex eq_idx;      /* indexed equations for fast lookup */
     TypeAnnIndex ty_idx; /* indexed type annotations for fast lookup */
     ExactAtomIndex exact_idx; /* exact stable-atom membership index */
-    uint8_t *id_present;      /* dense AtomId presence bitset: O(1) exact-contains, unclusterable */
-    uint64_t id_present_bits; /* capacity in bits; 0 = unallocated */
+    /* The rows' presence keys, in the form their density allows
+     * (PresenceSetForm): a table of the keys (open addressing,
+     * CETTA_ATOM_ID_NONE empty) while it is smaller than a bitset over the
+     * ids it covers, then that bitset. */
+    uint8_t *id_present;      /* the bitset, or NULL while the keys are a table */
+    uint64_t id_present_bits; /* its capacity in bits */
+    AtomId *id_present_table;
+    uint32_t id_present_table_cap, id_present_table_used;
     CettaIndex id_present_synced_len; /* logical prefix already reflected in id_present (lazy catch-up) */
     bool id_present_dirty;    /* removal/bulk invalidated bits: clear + full resync on next membership query */
+    /* Two synced rows share a key: a removal then marks the bits stale
+     * rather than taking its row's key out, which the other row still has. */
+    bool id_present_shared;
     /* The bitset's keys that are no row's id, the alpha-canonical forms of
      * rows with variables: the bitset holds them, one reference a key set. */
     AtomId *id_present_keys;
     CettaIndex id_present_key_len, id_present_key_cap;
+    TermUniverseResourceOwner *resource_owner;
     /* The heads whose ground facts the space keeps in relations (space.c,
      * "Relations kept as bits or tables"); NULL while it keeps none.  The
      * facts they hold, over every head, which every positional read past the
@@ -226,6 +238,8 @@ typedef struct {
     bool exact_idx_dirty;
     bool has_non_exact_atoms;
     bool has_non_exact_atoms_dirty;
+    /* Cached representation presence; occupies existing flag padding. */
+    _Atomic bool has_proof_image;
     uint32_t secondary_index_deferral_depth;
     /* Rows removed and not yet contracted away (space_mark_rows): one bit
      * per row, their number, and a Fenwick tree of the live rows of each
@@ -252,10 +266,14 @@ typedef struct Space {
             ExactAtomIndex exact_idx;
             uint8_t *id_present;
             uint64_t id_present_bits;
+            AtomId *id_present_table;
+            uint32_t id_present_table_cap, id_present_table_used;
             CettaIndex id_present_synced_len;
             bool id_present_dirty;
+            bool id_present_shared;
             AtomId *id_present_keys;
             CettaIndex id_present_key_len, id_present_key_cap;
+            TermUniverseResourceOwner *resource_owner;
             struct SpaceDense *dense;
             CettaCount dense_facts;
             uint64_t dense_epoch;
@@ -265,6 +283,7 @@ typedef struct Space {
             bool exact_idx_dirty;
             bool has_non_exact_atoms;
             bool has_non_exact_atoms_dirty;
+            _Atomic bool has_proof_image;
             uint32_t secondary_index_deferral_depth;
             uint64_t *marks;
             CettaIndex *mark_tree;
@@ -341,6 +360,9 @@ typedef struct Space {
     uint64_t module_dependency_epoch;
     /* Charged to the resource ledger's space gauges at initialization. */
     bool ledger_counted;
+    /* Set when the space lives only while an arena holds an atom of it: the
+       evaluator's record of those holds.  NULL for a space its owner frees. */
+    struct SpaceHold *arena_hold;
 } Space;
 
 void space_init_with_universe(Space *s, TermUniverse *universe);
@@ -430,6 +452,19 @@ uint32_t space_session_grounded_symbol_types(SymbolId symbol,
                                              Atom *const **types)
     __attribute__((weak));
 void space_free(Space *s);
+/* Explicit holds for native descriptors that borrow a temporary Space
+ * without carrying an Atom. The token survives an explicit owner teardown;
+ * releasing it never dereferences the retired Space. Embeddings without
+ * temporary-space ownership may omit these hooks. */
+void *space_lifetime_pin(Space *s) __attribute__((weak));
+void space_lifetime_unpin(void *hold) __attribute__((weak));
+bool space_lifetime_pin_keeps_storage(void *hold) __attribute__((weak));
+void space_lifetime_rebase(Space *s, const Space *base) __attribute__((weak));
+/* Drain released temporary-space owners at an evaluator-safe boundary.
+ * False when an enclosing execution still requires deferred cleanup. */
+bool space_reclaim_unheld(void) __attribute__((weak));
+void space_reclaim_resource_cycles(TermUniverse *) __attribute__((weak));
+bool space_reclamation_due(void) __attribute__((weak));
 void space_execution_analysis_cache_free_for_current_thread(void);
 Atom *space_store_atom(Space *s, Arena *fallback, Atom *atom);
 void space_add(Space *s, Atom *atom);
@@ -510,6 +545,40 @@ typedef struct {
  * rows: a reader of a relation asks the rows too, between
  * space_dense_reading_begin and _end, which keep the guards from giving
  * the relation back meanwhile. */
+typedef struct CettaProofImage CettaProofImage;
+typedef struct CettaProofRowLayout CettaProofRowLayout;
+typedef enum {
+    SPACE_PROOF_IMAGE_DECLINED = 0,
+    SPACE_PROOF_IMAGE_READY,
+    SPACE_PROOF_IMAGE_CAPACITY,
+} SpaceProofImageStatus;
+/* Explicit data storage only: no source producer or execution permission.
+ * Success retains IMAGE independently and publishes one append mutation.
+ * The borrowed TU/symbol session must outlive the Space as for native rows. */
+SpaceProofImageStatus space_attach_proof_image(Space *, SymbolId head,
+    const CettaProofRowLayout *, CettaProofImage *);
+typedef struct CettaProofBatchStore CettaProofBatchStore;
+typedef struct CettaProofBatchTransaction CettaProofBatchTransaction;
+typedef struct CettaProofBatchView CettaProofBatchView;
+/* The full batch declarations are separate to keep ordinary Space clients
+ * independent of producer storage internals. */
+/* Failure keeps the old logical bag/image; READY preserves semantic revisions. */
+SpaceProofImageStatus space_settle_proof_images(Space *);
+/* The guarded bodies are cold on ordinary storage. False reports an
+ * expansion refusal through the existing backend error channel. */
+bool space_prepare_proof_read_slow(Space *s, const Atom *pattern);
+bool space_has_proof_image_slow(const Space *, SymbolId head);
+static inline bool space_prepare_proof_read(Space *s, const Atom *pattern) {
+    const Space *read = s;
+    while (read && !atomic_load_explicit(&read->native.has_proof_image, memory_order_acquire))
+        read = read->overlay_base;
+    return !read || space_prepare_proof_read_slow(s, pattern);
+}
+static inline bool space_has_proof_image(const Space *s, SymbolId head) {
+    return s && atomic_load_explicit(&s->native.has_proof_image, memory_order_acquire) &&
+        (head == SYMBOL_ID_NONE || space_has_proof_image_slow(s, head));
+}
+
 bool space_dense_form(const Space *s, SymbolId head, SpaceDenseForm *form);
 /* Whether the relation PATTERN's head keeps is flat (a relation of deep
  * facts whose spine is the head over holes is), with PATTERN's length: then
@@ -593,6 +662,20 @@ void space_discard_native_logical_view(Space *s);
 void space_discard_native_logical_view_preserving_dispatch(Space *s);
 void space_note_external_backend_mutation(Space *s);
 Space *space_heap_clone_shallow(Space *src);
+typedef enum {
+    SPACE_ADDITIVE_COPY_UNSUPPORTED = 0,
+    SPACE_ADDITIVE_COPY_READY,
+    SPACE_ADDITIVE_COPY_FAILED,
+} SpaceAdditiveCopyResult;
+/* Make a fresh heap-owned bag from both inputs without giving their flat
+ * kept relations back to rows. READY returns the complete result in OUT;
+ * the caller owns it. UNSUPPORTED changes nothing and admits a generic
+ * atom-copy route. FAILED destroys its private partial result and must not
+ * be retried as if it were an unsupported representation. OUT is otherwise
+ * NULL. The native route requires plain same-universe storage outside a
+ * concurrent scope; ordered raw rows retain their relative order. */
+SpaceAdditiveCopyResult space_heap_additive_copy(
+    TermUniverse *destination_universe, Space *left, Space *right, Space **out);
 void space_replace_contents(Space *dst, Space *src);
 const char *space_kind_name(SpaceKind kind);
 bool space_kind_from_name(const char *name, SpaceKind *out);
@@ -1232,6 +1315,10 @@ void registry_init(Registry *r);
 void registry_free(Registry *r);
 void registry_bind_id(Registry *r, SymbolId key, Atom *value);
 Atom *registry_lookup_id(Registry *r, SymbolId key);
+/* registry_lookup_id trying the entry at `*hint` first, and leaving there
+ * the index it found.  A key has one entry and an entry keeps its index, so
+ * an entry still holding the key is its binding. */
+Atom *registry_lookup_id_hinted(Registry *r, SymbolId key, uint32_t *hint);
 void registry_bind(Registry *r, const char *name, Atom *value);
 Atom *registry_lookup(Registry *r, const char *name);
 bool registry_bind_name(Registry *r, Atom *name_key, Atom *value);

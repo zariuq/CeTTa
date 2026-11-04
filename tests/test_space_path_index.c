@@ -578,6 +578,10 @@ static void test_cold_candidates(Arena *arena, TermUniverseStoreFormat format) {
     TermUniverse universe;
     assert(term_universe_init_with_store_format(&universe, format));
     term_universe_set_persistent_arena(&universe, &persistent);
+    /* A resource row remains opaque to the compact term codec, but its
+     * descriptor must be a real Space for resource-lifetime tracking. */
+    Space endpoint;
+    space_init_with_universe(&endpoint, &universe);
     SymbolId head = symbol_intern_cstr(g_symbols, "cold-record-row");
     SymbolId other = symbol_intern_cstr(g_symbols, "cold-record-other");
     Atom *correlated = atom_var(arena, "cold-correlated");
@@ -596,7 +600,7 @@ static void test_cold_candidates(Arena *arena, TermUniverseStoreFormat format) {
         row(arena, other, atom_int(arena, 2), atom_int(arena, 7)),
         atom_symbol_id(arena, head), atom_int(arena, 7),
         atom_expr(arena, short_children, 2u),
-        row(arena, head, atom_space(arena, &universe), atom_int(arena, 7)),
+        row(arena, head, atom_space(arena, &endpoint), atom_int(arena, 7)),
     };
     Atom *output = atom_var(arena, "cold-output");
     Atom *queries[] = {
@@ -636,6 +640,7 @@ static void test_cold_candidates(Arena *arena, TermUniverseStoreFormat format) {
         free(positions);
         space_free(&space);
     }
+    space_free(&endpoint);
     term_universe_free(&universe);
     arena_free(&persistent);
 }
