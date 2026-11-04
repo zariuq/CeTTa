@@ -1,4 +1,5 @@
 #include "foreign.h"
+#include "foreign_provider.h"
 #include "error_presentation.h"
 
 #include <stdio.h>
@@ -92,7 +93,8 @@ bool cetta_foreign_resolve_candidate(const char *candidate,
 }
 
 CettaForeignRuntime *cetta_foreign_runtime_new(void) {
-    CettaForeignRuntime *rt = cetta_malloc(sizeof(CettaForeignRuntime));
+    CettaForeignRuntime *rt = malloc(sizeof(CettaForeignRuntime));
+    if (!rt) return NULL;
     rt->unavailable = 1;
     return rt;
 }
@@ -157,8 +159,7 @@ bool cetta_foreign_load_module(CettaForeignRuntime *rt,
 }
 
 bool cetta_foreign_is_callable_atom(Atom *atom) {
-    (void)atom;
-    return false;
+    return cetta_foreign_provider_callable(atom);
 }
 
 bool cetta_foreign_call(CettaForeignRuntime *rt,

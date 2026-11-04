@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cetta"
+version = "0.1.0.dev0"
+description = "Native CeTTa engines for Python"
+requires-python = ">=3.11"
+classifiers = ["Programming Language :: Python :: 3", "Programming Language :: C", "Operating System :: POSIX :: Linux"]
+
+[project.optional-dependencies]
+numpy = ["numpy>=1.24"]
+notebooks = ["numpy>=1.24", "jupyterlab>=4", "nbclient>=0.8", "ipykernel>=6"]
+
+[tool.setuptools]
+package-dir = {"" = "python"}
+packages = ["cetta"]
+
+[tool.cibuildwheel]
+build = "cp{311,312,313,314,315}-{manylinux,musllinux}_{x86_64,aarch64}"
+test-command = "python -m unittest discover -s {project}/python/tests -v"
+test-extras = ["numpy"]
+
+[tool.cibuildwheel.linux]
+archs = ["native"]
+manylinux-x86_64-image = "manylinux_2_28"
+manylinux-aarch64-image = "manylinux_2_28"
+musllinux-x86_64-image = "musllinux_1_2"
+musllinux-aarch64-image = "musllinux_1_2"
+before-all = "sh {project}/tools/prepare_linux_wheel_image.sh"

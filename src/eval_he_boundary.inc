@@ -715,9 +715,9 @@ static void he_raw_collect(Space *s, Arena *a, Atom *atom, int fuel,
 }
 
 /* Raw instructions and delimiter resumptions use the same intrusive owned
- * stack as the need evaluator. Each frame completes its producer before
- * entering a consumer branch. Saved environments and pending occurrences are
- * registered for moving collection for the entire frame lifetime. */
+ * stack as the need evaluator. Operand frontiers close before their consumer
+ * branches; a function can forward each completed return from an open body.
+ * Saved environments and pending occurrences remain moving-GC roots. */
 typedef enum {
     HE_INSTRUCTION_RUN,
     HE_INSTRUCTION_RAW,
@@ -732,7 +732,7 @@ typedef enum {
     HE_INSTRUCTION_RAW_RETURNS,
 } HeInstructionPhase;
 
-typedef struct {
+typedef struct HeInstructionFrame {
     CettaOwnedFrameLink continuation;
     HeInstructionKind kind;
     HeInstructionPhase phase;
@@ -750,13 +750,18 @@ typedef struct {
     CettaControlOperationPlan control;
     EvalGcRootFrame lexical;
     EvalGcRootFrame pending;
+    struct HeInstructionFrame *target_owner;
 } HeInstructionFrame;
 
 static void he_instruction_push(CettaOwnedFrameStack *stack,
     HeInstructionKind kind, Space *space, Arena *arena, Atom *source,
     int fuel, const Bindings *prefix, OutcomeSet *target,
     const CettaControlOperationPlan *control, Atom *syntax) {
-    HeInstructionFrame *frame = cetta_malloc(sizeof(*frame));
+    HeInstructionFrame *frame = malloc(sizeof(*frame));
+    if (!frame) {
+        eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_CAPACITY);
+        return;
+    }
     memset(frame, 0, sizeof(*frame));
     frame->kind = kind;
     frame->space = space;
@@ -767,6 +772,8 @@ static void he_instruction_push(CettaOwnedFrameStack *stack,
         frame->control = *control;
     frame->fuel = fuel;
     frame->target = target;
+    HeInstructionFrame *parent = (HeInstructionFrame *)stack->top;
+    frame->target_owner = parent && target == parent->target ? parent->target_owner : parent;
     bindings_init(&frame->env);
     outcome_set_init(&frame->inner);
     if (prefix && !bindings_copy(&frame->env, prefix)) {
@@ -1091,6 +1098,55 @@ static bool he_orient_let_value(Arena *arena, Atom *value,
     return true;
 }
 
+static void he_instruction_publish_return(HeInstructionFrame *frame,
+        const Outcome *source, Atom *value) {
+    CettaCount before = frame->target->len;
+    outcome_set_add(frame->target, value, &source->env);
+    if (frame->target->len > before)
+        outcome_set_delay_last(frame->target, source->delayed);
+}
+
+/* Pure function-handler cases may finish before later body alternatives.
+ * Embedded instructions still enter through the instruction machine. */
+static bool he_instruction_complete_function_return(HeInstructionFrame *frame,
+        const Outcome *source, Atom *result) {
+    Atom *value;
+    if (atom_head_symbol_id(result) == g_builtin_syms.return_text && result->expr.len == 2u)
+        value = result->expr.elems[1];
+    else if (he_minimal_instruction(result))
+        return false;
+    else if (active_profile_uses_rust_he_compat_semantics())
+        value = atom_error(frame->arena, he_function_noreturn_witness(frame, result),
+                           atom_symbol(frame->arena, "NoReturn"));
+    else
+        value = atom_error(frame->arena, frame->syntax, atom_symbol(frame->arena, "NoReturn"));
+    he_instruction_publish_return(frame, source, value);
+    return true;
+}
+
+/* A function's completed return occurrence crosses its handler independently
+ * of later body alternatives. Other instruction/source frontiers keep their
+ * ordinary sequencing policy. */
+static void he_instruction_forward_returns(HeInstructionFrame *frame) {
+    while (frame && frame->phase == HE_INSTRUCTION_FUNCTION) {
+        CettaCount before = frame->target->len;
+        while (frame->index < frame->inner.len) {
+            Outcome *item = &frame->inner.items[frame->index];
+            Atom *result = outcome_atom_materialize(frame->arena, item);
+            if (!result || !he_instruction_complete_function_return(frame, item, result))
+                break;
+            frame->index++;
+            outcome_free_fields(item);
+        }
+        if (frame->index == frame->inner.len) {
+            outcome_set_clear(&frame->inner);
+            frame->index = 0u;
+        }
+        if (before == frame->target->len) break;
+        frame = frame->target_owner;
+    }
+}
+
 static void he_instruction_resume(CettaOwnedFrameStack *stack) {
     HeInstructionFrame *frame = (HeInstructionFrame *)stack->top;
     Space *s = frame->space;
@@ -1115,7 +1171,7 @@ static void he_instruction_resume(CettaOwnedFrameStack *stack) {
                         result, frame->fuel, &item->env, os, NULL, NULL);
                     return;
                 }
-                outcome_set_add(os, result, &item->env);
+                he_instruction_publish_return(frame, item, result);
             } else if (frame->phase == HE_INSTRUCTION_CHAIN) {
                 /* The result replaces the destination first; the template
                  * takes the result's environment when it runs. */
@@ -1125,10 +1181,7 @@ static void he_instruction_resume(CettaOwnedFrameStack *stack) {
                 he_instruction_push(stack, HE_INSTRUCTION_RUN, s, a,
                     body, child_fuel, &item->env, os, NULL, NULL);
                 return;
-            } else if (atom_head_symbol_id(result) == g_builtin_syms.return_text &&
-                       result->expr.len == 2u) {
-                outcome_set_add(os, result->expr.elems[1], &item->env);
-            } else if (he_minimal_instruction(result)) {
+            } else if (!he_instruction_complete_function_return(frame, item, result)) {
                 if (active_profile_uses_rust_he_compat_semantics()) {
                     he_instruction_push(stack, HE_INSTRUCTION_RUN, s, a,
                         result, child_fuel, &item->env, &frame->inner, NULL, NULL);
@@ -1138,13 +1191,6 @@ static void he_instruction_resume(CettaOwnedFrameStack *stack) {
                 he_instruction_push(stack, HE_INSTRUCTION_RUN, s, a,
                     body, child_fuel, &item->env, os, NULL, NULL);
                 return;
-            } else if (active_profile_uses_rust_he_compat_semantics()) {
-                outcome_set_add(os, atom_error(a,
-                    he_function_noreturn_witness(frame, result),
-                    atom_symbol(a, "NoReturn")), &item->env);
-            } else {
-                outcome_set_add(os, atom_error(a, frame->syntax,
-                    atom_symbol(a, "NoReturn")), &item->env);
             }
         }
         he_instruction_pop(stack);

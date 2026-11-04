@@ -437,6 +437,8 @@ void space_init_with_universe(Space *s, TermUniverse *universe);
  * header address valid. A stale owned Space never resolves as an empty one. */
 bool space_owner_is_current(const Space *space);
 bool space_retain_in_arena(const void *space, Arena *arena);
+/* Failure leaves no registered observer/root or owned payload. */
+bool space_try_init_with_universe(Space *s, TermUniverse *universe);
 void space_init_overlay(Space *s, const Space *base);
 /* Immutable source-backed bases require the checked local constructor. It
  * uses the source owner's captured overlay capability, where available. */
@@ -1567,6 +1569,8 @@ typedef struct {
 } Registry;
 
 void registry_init(Registry *r);
+/* Failure releases its incomplete name-key owner. */
+bool registry_try_init(Registry *r);
 void registry_free(Registry *r);
 void registry_bind_id(Registry *r, SymbolId key, Atom *value);
 bool registry_bind_id_checked(Registry *r, SymbolId key, Atom *value);

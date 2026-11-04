@@ -78,7 +78,7 @@ typedef struct EvalGcRootFrame {
     bool precise_suspension;
 } EvalGcRootFrame;
 
-typedef struct {
+typedef struct CettaEvalGc {
     Arena survivor;
     EvalGcRootFrame *roots;
     Arena *region_arena;
@@ -104,7 +104,11 @@ typedef struct {
     Arena *prime_episode_owner;
 } EvalGcEvacuationContext;
 
-static __thread EvalGc g_eval_gc;
+static __thread EvalGc g_eval_gc_fallback;
+static __thread EvalGc *g_eval_gc_current;
+/* Retained execution owns its collector at a stable address. TLS selects
+ * the active owner; it never stores a suspended owner's movable state. */
+#define g_eval_gc (*(g_eval_gc_current ? g_eval_gc_current : &g_eval_gc_fallback))
 
 static void eval_gc_init_survivor_arena(Arena *arena) {
     arena_init(arena);

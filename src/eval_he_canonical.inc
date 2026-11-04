@@ -18,6 +18,8 @@ typedef enum {
     HE_CANONICAL_SPACE,
     HE_CANONICAL_STATE,
     HE_CANONICAL_MATCH_DIAGNOSTIC,
+    HE_CANONICAL_RETURN_CONTEXT,
+    HE_CANONICAL_PROVIDER,
 } HeCanonicalKind;
 
 typedef struct {
@@ -50,6 +52,17 @@ typedef union {
     InterpretTupleFrame tuple;
 } HeCanonicalArgumentState;
 
+typedef struct {
+    CettaCount seen;
+    bool nonempty, success, finished;
+} HeCanonicalFrontier;
+
+typedef struct {
+    CettaEvaluatorOptions options;
+    uint32_t depth;
+    bool demand_present;
+    CettaObservationDemand demand;
+} HeCanonicalDynamic;
 typedef struct HeCanonicalFrame {
     CettaOwnedFrameLink link;
     HeCanonicalKind kind;
@@ -130,6 +143,13 @@ typedef struct HeCanonicalFrame {
     bool relay_redirected;
     bool relay_finished;
     bool env_settled_above;
+    struct HeCanonicalFrame *target_owner;
+    HeCanonicalFrontier child_frontier, paths_frontier;
+    bool active;
+    bool delivery_pending;
+    struct HeCanonicalFrame *delivery_owner;
+    HeCanonicalDynamic *saved_context;
+    CettaOwnedExecution *provider;
 } HeCanonicalFrame;
 
 typedef struct {
@@ -152,9 +172,15 @@ typedef struct {
     HeCanonicalFrame *resumed;
     bool resumed_popped;
     HeCanonicalFrame *stream_ready;
+    bool retained;
 } HeCanonicalDriver;
 
 static __thread HeCanonicalDriver *g_he_canonical_driver;
+
+static bool he_retained_execution_active(void) {
+    return g_he_canonical_driver && g_he_canonical_driver->retained &&
+        eval_current_language_id() == CETTA_LANGUAGE_HE;
+}
 
 #include "eval_he_value_index.inc"
 
@@ -179,7 +205,8 @@ static bool he_canonical_enabled(void) {
     /* The optional unbounded implementation switch cannot disable the
      * machine that enforces an active bounded observation's effect policy. */
     bool bounded = g_he_canonical_driver && g_he_canonical_driver->answer_limit;
-    return (enabled || bounded) && eval_current_language_id() == CETTA_LANGUAGE_HE;
+    return (enabled || bounded || he_retained_execution_active()) &&
+        eval_current_language_id() == CETTA_LANGUAGE_HE;
 }
 
 /* ── Bounded observation: lazy selection ─────────────────────────────────
@@ -309,7 +336,11 @@ static HeCanonicalFrame *he_canonical_push(HeCanonicalKind kind,
     if (frame)
         g_he_canonical_driver->free_frames = *(void **)frame;
     else
-        frame = cetta_malloc(sizeof(*frame));
+        frame = malloc(sizeof(*frame));
+    if (!frame) {
+        eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_CAPACITY);
+        return NULL;
+    }
     memset(frame, 0, sizeof(*frame));
     /* A frame joins its pusher's run when it delivers into that run's
      * buffer. Any other relay opens its own run, possibly on the same
@@ -320,6 +351,8 @@ static HeCanonicalFrame *he_canonical_push(HeCanonicalKind kind,
             (pusher->kind == HE_CANONICAL_DISPATCH && pusher->relay_redirected);
     }
     frame->kind = kind;
+    frame->active = true;
+    frame->target_owner = pusher && target == pusher->target ? pusher->target_owner : pusher;
     frame->space = s;
     frame->arena = a;
     frame->atom = atom;
@@ -382,6 +415,21 @@ static void he_canonical_stream_root(HeCanonicalDriver *driver);
 
 static inline __attribute__((always_inline)) void he_canonical_release(
     HeCanonicalFrame *frame) {
+    frame->active = false;
+    if (frame->saved_context) {
+        *active_eval_options() = frame->saved_context->options;
+        g_metta_eval_depth = frame->saved_context->depth;
+        g_eval_observation_demand_present = frame->saved_context->demand_present;
+        g_eval_observation_demand = frame->saved_context->demand;
+        free(frame->saved_context);
+        frame->saved_context = NULL;
+    }
+    if (frame->delivery_owner) frame->delivery_owner->delivery_pending = false;
+    if (frame->provider) {
+        cetta_owned_execution_cancel(frame->provider);
+        free(frame->provider);
+        frame->provider = NULL;
+    }
     /* A relay that leaves without publishing drops its children's results,
      * as the unpublished buffer did. */
     if (frame->relay_redirected && !frame->relay_finished)
@@ -543,9 +591,22 @@ static void he_canonical_retire_input_roots(HeCanonicalFrame *frame) {
     bindings_init(&frame->env);
 }
 
+static void he_canonical_frontier_publish(HeCanonicalFrame *frame,
+    OutcomeSet *source, bool invocation, bool normalize, bool complete);
+
 static void he_canonical_publish(HeCanonicalFrame *frame,
     OutcomeSet *source, bool invocation) {
+    if (he_retained_execution_active() && (source == &frame->child || source == &frame->paths)) {
+        he_canonical_frontier_publish(frame, source, invocation, false, true);
+        return;
+    }
     for (CettaCount i = 0u; i < source->len; i++)
+        he_canonical_publish_one(frame, &source->items[i], invocation);
+}
+
+static void he_canonical_publish_range(HeCanonicalFrame *frame,
+    OutcomeSet *source, CettaCount first, CettaCount last, bool invocation) {
+    for (CettaCount i = first; i < last; i++)
         he_canonical_publish_one(frame, &source->items[i], invocation);
 }
 
@@ -636,6 +697,64 @@ static void he_canonical_finish_visible(HeCanonicalFrame *frame,
     }
 }
 
+static void he_canonical_evaluate_publish_range(HeCanonicalFrame *frame,
+        CettaCount first, CettaCount last) {
+    Bindings empty;
+    bindings_init(&empty);
+    for (CettaCount i = first; i < last; ++i) {
+        Atom *answer = outcome_atom_materialize_traced(frame->arena,
+            &frame->child.items[i], CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_TOP_LEVEL);
+        if (answer && answer->kind == ATOM_EXPR && !atom_is_he_evaluated(answer) &&
+            !atom_is_legacy_empty_or_error(answer) && atom_eq(answer, frame->atom))
+            answer = atom_he_evaluated_copy(frame->arena, answer);
+        CettaCount before = frame->target->len;
+        outcome_set_add(frame->target, answer,
+            frame->preserve_bindings ? &frame->child.items[i].env : &empty);
+        if (frame->target->len > before)
+            outcome_set_delay_last(frame->target, frame->child.items[i].delayed);
+    }
+}
+
+/* Successes are stable under HE's visible-frontier normalization. Error and
+ * Empty candidates wait until the producer closes; neither can be retracted
+ * after a host has observed it. Input frontiers are not consumed here. */
+static void he_canonical_frontier_publish(HeCanonicalFrame *frame, OutcomeSet *source,
+        bool invocation, bool normalize, bool complete) {
+    HeCanonicalFrontier *frontier = source == &frame->child ? &frame->child_frontier
+        : source == &frame->paths ? &frame->paths_frontier : NULL;
+    assert(frontier && frontier->seen <= source->len);
+    assert(source != frame->target);
+    if (frontier->finished) return;
+    for (CettaCount i = frontier->seen; i < source->len; ++i) {
+        bool empty = normalize && outcome_atom_is_empty_result(frame->arena, &source->items[i]);
+        bool error = normalize && outcome_atom_is_error(frame->arena, &source->items[i]);
+        frontier->nonempty |= !empty;
+        frontier->success |= !empty && !error;
+        if (normalize && (empty || error)) continue;
+        if (frame->kind == HE_CANONICAL_EVALUATE)
+            he_canonical_evaluate_publish_range(frame, i, i + 1u);
+        else he_canonical_publish_range(frame, source, i, i + 1u, invocation);
+    }
+    frontier->seen = source->len;
+    if (complete && normalize && !frontier->success) {
+        for (CettaCount i = 0; i < source->len; ++i) {
+            if (frontier->nonempty && outcome_atom_is_empty_result(frame->arena, &source->items[i])) continue;
+            if (frame->kind == HE_CANONICAL_EVALUATE)
+                he_canonical_evaluate_publish_range(frame, i, i + 1u);
+            else he_canonical_publish_range(frame, source, i, i + 1u, invocation);
+        }
+    }
+    /* Only unresolved fallback candidates can still affect publication.
+     * The receiver owns the forwarded payloads; keep this buffer's capacity
+     * for later returns without retaining consumed contexts and roots. */
+    if (!normalize || frontier->success || complete) {
+        outcome_set_clear(source);
+        frontier->seen = 0u;
+    }
+    if (complete) frontier->finished = true;
+}
+
+
 /* A delivery publishes its owner's answers into the owner's target, so the
  * owner's requested type (live[2]) is observed beside the delivery's own,
  * refined, type. */
@@ -649,6 +768,9 @@ static bool he_frame_call_closed(const HeCanonicalFrame *frame) {
 }
 
 static bool he_relay_may_redirect(const HeCanonicalFrame *frame) {
+    /* A retained observer cannot publish provisional entries from a shared
+     * relay buffer. Each caller completes its own frontier first. */
+    if (he_retained_execution_active()) return false;
     /* A bounded run passes each frame's answers on from the frame's own
      * buffer as they arrive (see the notes on bounded observation). */
     if (!frame->preserve_bindings || g_he_canonical_driver->answer_limit)
@@ -747,6 +869,10 @@ static void he_delivery_classify(HeDelivery *d, CettaCount start,
 static void he_relay_finish(HeCanonicalFrame *frame, OutcomeSet *own,
     bool invocation, bool normalize) {
     if (!frame->relay_redirected) {
+        if (he_retained_execution_active()) {
+            he_canonical_frontier_publish(frame, own, invocation, normalize, true);
+            return;
+        }
         if (normalize)
             he_canonical_finish_visible(frame, false);
         else
@@ -929,16 +1055,19 @@ static void he_canonical_arguments_push(HeCanonicalFrame *parent,
     if (!frame)
         return;
     HeCanonicalRegisters *registers = cetta_malloc(sizeof(*registers));
+    if (!registers) { eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY); return; }
     memset(registers, 0, sizeof(*registers));
     registers->op = op;
     registers->len = len;
     if (len) {
         registers->source = cetta_malloc(sizeof(Atom *) * (size_t)len);
         registers->prefix = cetta_malloc(sizeof(Atom *) * (size_t)len);
+        if (!registers->source || !registers->prefix) goto allocation_failed;
         memset(registers->prefix, 0, sizeof(Atom *) * (size_t)len);
         memcpy(registers->source, source, sizeof(Atom *) * (size_t)len);
         if (typed) {
             registers->types = cetta_malloc(sizeof(Atom *) * (size_t)len);
+            if (!registers->types) goto allocation_failed;
             memcpy(registers->types, types, sizeof(Atom *) * (size_t)len);
         }
     }
@@ -950,6 +1079,7 @@ static void he_canonical_arguments_push(HeCanonicalFrame *parent,
             registers->types, (size_t)len, registers->prefix,
             (size_t)len, target);
         frame->argument_state = cetta_malloc(sizeof(*frame->argument_state));
+        if (!frame->argument_state) { eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY); return; }
         interpret_function_args_frame_init(&frame->argument_state->argument, 0u,
             &frame->env);
         frame->argument_initialized = true;
@@ -958,10 +1088,15 @@ static void he_canonical_arguments_push(HeCanonicalFrame *parent,
             NULL, 0u, registers->source, (size_t)len,
             registers->prefix, (size_t)len, &frame->env, target, NULL);
         frame->argument_state = cetta_malloc(sizeof(*frame->argument_state));
+        if (!frame->argument_state) { eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY); return; }
         interpret_tuple_frame_init(&frame->argument_state->tuple, 0u,
             &frame->env, NULL);
         frame->tuple_initialized = true;
     }
+    return;
+allocation_failed:
+    free(registers->source); free(registers->types); free(registers->prefix); free(registers);
+    eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
 }
 
 static void he_canonical_argument_next(HeCanonicalFrame *frame,
@@ -975,11 +1110,13 @@ static void he_canonical_argument_next(HeCanonicalFrame *frame,
     child->registers = frame->registers;
     if (frame->kind == HE_CANONICAL_ARGUMENTS) {
         child->argument_state = cetta_malloc(sizeof(*child->argument_state));
+        if (!child->argument_state) { eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY); return; }
         interpret_function_args_frame_init(&child->argument_state->argument,
             index, &child->env);
         child->argument_initialized = true;
     } else {
         child->argument_state = cetta_malloc(sizeof(*child->argument_state));
+        if (!child->argument_state) { eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY); return; }
         interpret_tuple_frame_init(&child->argument_state->tuple, (uint32_t)index,
             &child->env, variant);
         child->tuple_initialized = true;
@@ -1283,7 +1420,10 @@ static void he_canonical_resume_evaluate(HeCanonicalFrame *frame) {
     Bindings empty;
     bindings_init(&empty);
     if (frame->phase) {
-        he_canonical_finish_visible(frame, true);
+        if (he_retained_execution_active())
+            he_canonical_frontier_publish(frame, &frame->child, false, true, true);
+        else
+            he_canonical_finish_visible(frame, true);
         he_canonical_pop();
         return;
     }
@@ -1333,7 +1473,7 @@ static void he_canonical_resume_evaluate(HeCanonicalFrame *frame) {
         frame->phase = 1u;
         he_canonical_push(HE_CANONICAL_CALL, frame->space, a,
             frame->atom, type, frame->fuel > 0 ? frame->fuel - 1 : frame->fuel,
-            NULL, false, &frame->child);
+            NULL, frame->preserve_bindings, &frame->child);
     }
 }
 
@@ -1520,8 +1660,10 @@ static void he_canonical_control_body(HeCanonicalFrame *frame,
 }
 
 typedef struct {
-    HeCanonicalFrame *frame;
+    OutcomeSet *set;
+    CettaCount *position;
     CettaCount index;
+    bool discard_drained;
 } HeCanonicalConsumedSource;
 
 /* A control's source frontier is closed before its bodies run. Once index
@@ -1530,8 +1672,12 @@ typedef struct {
  * environment and original call intact, but retire the consumed source slot.
  * A symbolic if retains its source until both alternatives are scheduled. */
 static void he_canonical_consumed_source_release(HeCanonicalConsumedSource *source) {
-    if (source->frame->index > source->index)
-        outcome_free_fields(&source->frame->child.items[source->index]);
+    if (*source->position > source->index)
+        outcome_free_fields(&source->set->items[source->index]);
+    if (source->discard_drained && *source->position == source->set->len) {
+        outcome_set_clear(source->set);
+        *source->position = 0u;
+    }
 }
 
 /* An if call with its condition's value: the call a NotReducible branch, or a
@@ -1662,7 +1808,8 @@ static void he_canonical_resume_control_in(HeCanonicalFrame *frame,
     }
     Outcome *source = &frame->child.items[frame->index];
     __attribute__((cleanup(he_canonical_consumed_source_release)))
-    HeCanonicalConsumedSource consumed = {frame, frame->index};
+    HeCanonicalConsumedSource consumed = {.set = &frame->child,
+        .position = &frame->index, .index = frame->index};
     Atom *value = outcome_atom_materialize(a, source);
     if (head == g_builtin_syms.case_text && source_open &&
         atom_is_legacy_empty_sentinel(value)) {
@@ -2030,6 +2177,11 @@ static void he_canonical_dispatch_call(HeCanonicalFrame *frame, Outcome *call) {
     if (source->kind == ATOM_EXPR && source->expr.len) {
         Atom *head = source->expr.elems[0];
         CettaExprLen nargs = source->expr.len - 1u;
+        if (he_retained_execution_active() && cetta_foreign_provider_callable(head)) {
+            he_canonical_push(HE_CANONICAL_PROVIDER, frame->space, a, source,
+                return_type, frame->fuel, env, frame->preserve_bindings, sink);
+            return;
+        }
         Atom *tail = NULL, *tail_type = NULL;
         Bindings tail_env;
         bindings_init(&tail_env);
@@ -2329,10 +2481,19 @@ static void he_canonical_resume_dispatch(HeCanonicalFrame *frame) {
         }
         CettaExprLen nargs = frame->atom->expr.len - 1u;
         Atom **domains = nargs ? cetta_malloc(sizeof(Atom *) * (size_t)nargs) : NULL;
-        for (CettaExprIndex i = 0u; i < nargs; i++)
+        if (nargs && !domains) {
+            bindings_free(&applicable);
+            eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY); return;
+        }
+        for (CettaExprIndex i = 0u; i < nargs; i++) {
             domains[i] = function_domain_refine(
                 &frame->work.items[frame->path_index].env, a,
                 frame->live[0]->expr.elems[i + 1u]);
+            if (!domains[i]) {
+                free(domains); bindings_free(&applicable);
+                eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY); return;
+            }
+        }
         outcome_set_free(&frame->paths);
         outcome_set_init(&frame->paths);
         frame->index = 0u;
@@ -2458,15 +2619,21 @@ static void he_canonical_match_initialize(HeCanonicalFrame *frame) {
     CettaExprLen capacity = frame->sourced_match
         ? conjunction->expr.len - 1u : 16u;
     HeCanonicalRegisters *registers = cetta_malloc(sizeof(*registers));
+    if (!registers) { eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY); return; }
     memset(registers, 0, sizeof(*registers));
     registers->len = frame->sourced_match ? capacity : 1u;
     registers->source = cetta_malloc(sizeof(Atom *) * (size_t)capacity);
     registers->types = cetta_malloc(sizeof(Atom *) * (size_t)capacity);
     registers->prefix = cetta_malloc(sizeof(Atom *) * (size_t)capacity);
+    frame->match_spaces = cetta_malloc(sizeof(Space *) * (size_t)capacity);
+    if (!registers->source || !registers->types || !registers->prefix || !frame->match_spaces) {
+        free(registers->source); free(registers->types); free(registers->prefix); free(registers);
+        free(frame->match_spaces); frame->match_spaces = NULL;
+        eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY); return;
+    }
     memset(registers->source, 0, sizeof(Atom *) * (size_t)capacity);
     memset(registers->types, 0, sizeof(Atom *) * (size_t)capacity);
     memset(registers->prefix, 0, sizeof(Atom *) * (size_t)capacity);
-    frame->match_spaces = cetta_malloc(sizeof(Space *) * (size_t)capacity);
     memset(frame->match_spaces, 0, sizeof(Space *) * (size_t)capacity);
     frame->registers = registers;
     frame->owns_registers = true;
@@ -2873,6 +3040,79 @@ static Atom *he_canonical_enclosing_call(const HeCanonicalFrame *frame) {
     return NULL;
 }
 
+static HeCanonicalDynamic he_canonical_current_dynamic(void) {
+    return (HeCanonicalDynamic){.options = *active_eval_options_const(), .depth = g_metta_eval_depth,
+        .demand_present = g_eval_observation_demand_present, .demand = g_eval_observation_demand};
+}
+
+/* Reconstruct the destination caller's current enclosing dynamic extent.
+ * Committed option changes stay live; only scopes crossed by this return are
+ * unwound. The producer's scopes remain owned until its next activation. */
+static HeCanonicalDynamic he_canonical_return_dynamic(HeCanonicalFrame *destination) {
+    HeCanonicalDynamic context = he_canonical_current_dynamic();
+    for (CettaOwnedFrameLink *link = g_he_canonical_driver->stack.top;
+            link && link != &destination->link; link = link->next) {
+        HeCanonicalFrame *frame = (HeCanonicalFrame *)link;
+        if (frame->saved_context) context = *frame->saved_context;
+        if (frame->saved_options) context.options = *frame->saved_options;
+        if (frame->evaluation_depth.entered) { assert(context.depth); context.depth--; }
+        if (frame->observation.entered) {
+            context.demand_present = frame->observation.previous_present;
+            context.demand = frame->observation.previous;
+        }
+    }
+    return context;
+}
+
+static bool he_canonical_complete_instruction_return(HeCanonicalFrame *frame) {
+    if (frame->delivery_pending || frame->path_index >= frame->work.len ||
+        eval_unwinding() || eval_cancel_check()) return false;
+    __attribute__((cleanup(he_canonical_consumed_source_release)))
+    HeCanonicalConsumedSource consumed = {.set = &frame->work,
+        .position = &frame->path_index, .index = frame->path_index, .discard_drained = true};
+    Outcome *source = &frame->work.items[frame->path_index++];
+    Atom *value = outcome_atom_materialize(frame->arena, source);
+    HeInstructionCompletion completion = he_instruction_completion(
+        frame->arena, value, frame->type, frame->typed, false);
+    if (completion == HE_INSTRUCTION_OMIT) return true;
+    if (completion == HE_INSTRUCTION_REFUSAL) {
+        if (frame->typed) value = he_instruction_refusal_readback(frame->live[0], frame->atom, frame->control);
+        CettaCount before = frame->paths.len;
+        outcome_set_add(&frame->paths, value, &source->env);
+        if (frame->paths.len > before)
+            outcome_set_delay_last(&frame->paths, source->delayed);
+        return true;
+    }
+    HeCanonicalDynamic current = he_canonical_current_dynamic();
+    HeCanonicalDynamic caller = he_canonical_return_dynamic(frame);
+    HeCanonicalFrame *delivery = he_canonical_push(HE_CANONICAL_RETURN_CONTEXT,
+        frame->space, frame->arena, value, frame->type, frame->fuel, NULL, true, &frame->paths);
+    if (!delivery) return true;
+    delivery->target_owner = frame;
+    delivery->saved_context = malloc(sizeof(*delivery->saved_context));
+    if (!delivery->saved_context) {
+        eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_CAPACITY);
+        he_canonical_pop();
+        return true;
+    }
+    *delivery->saved_context = current;
+    delivery->delivery_owner = frame;
+    frame->delivery_pending = true;
+    *active_eval_options() = caller.options;
+    g_metta_eval_depth = caller.depth;
+    g_eval_observation_demand_present = caller.demand_present;
+    g_eval_observation_demand = caller.demand;
+    if (source->delayed) {
+        /* A conditional producer has already returned a value. Complete
+         * its expected type in the caller's context, preserving its goals. */
+        emit_completed_native_call(frame->space, frame->arena,
+            cetta_call_suspended(value, source->delayed), value, frame->type,
+            &source->env, &frame->paths);
+    } else he_canonical_push(HE_CANONICAL_CALLER, frame->space, frame->arena,
+        value, frame->type, frame->fuel, &source->env, frame->preserve_bindings, &frame->paths);
+    return true;
+}
+
 static void he_canonical_resume_instruction(HeCanonicalFrame *frame) {
     Arena *a = frame->arena;
     SymbolId head = atom_head_symbol_id(frame->atom);
@@ -2915,7 +3155,7 @@ static void he_canonical_resume_instruction(HeCanonicalFrame *frame) {
     }
     if (frame->phase == 1u) {
         if (frame->index >= frame->child.len) {
-            frame->phase = 3u;
+            frame->phase = he_retained_execution_active() ? 5u : 3u;
             frame->index = 0u;
         } else {
             Outcome *source = &frame->child.items[frame->index++];
@@ -2930,6 +3170,18 @@ static void he_canonical_resume_instruction(HeCanonicalFrame *frame) {
         return;
     }
     if (frame->phase == 2u) {
+        if (he_retained_execution_active()) {
+            if (he_canonical_complete_instruction_return(frame)) return;
+            if (frame->delivery_pending) return;
+            if (frame->instructions.top) {
+                HeInstructionFrame *instruction = (HeInstructionFrame *)frame->instructions.top;
+                HeInstructionFrame *owner = instruction->target_owner;
+                he_instruction_resume(&frame->instructions);
+                he_instruction_forward_returns(owner);
+                he_instruction_forward_returns((HeInstructionFrame *)frame->instructions.top);
+            } else frame->phase = source_chain ? 1u : 5u;
+            return;
+        }
         if (frame->instructions.top) {
             he_instruction_resume(&frame->instructions);
             return;
@@ -3064,6 +3316,66 @@ static void he_canonical_resume_match_diagnostic(HeCanonicalFrame *frame) {
     he_canonical_resume_match_kernel(frame, true);
 }
 
+
+static void he_canonical_resume_provider(HeCanonicalFrame *frame) {
+    CettaEvalCompletion completion = CETTA_EVAL_COMPLETE;
+    if (!frame->phase) {
+        frame->provider = malloc(sizeof(*frame->provider));
+        if (!frame->provider) {
+            eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_CAPACITY);
+            he_canonical_pop();
+            return;
+        }
+        *frame->provider = (CettaOwnedExecution){0};
+        CettaInvocation invocation = {.head = binding_value_from_atom(frame->atom->expr.elems[0]),
+            .supplied = {.atoms = frame->atom->expr.elems + 1u, .count = frame->atom->expr.len - 1u}};
+        if (!cetta_foreign_provider_open(&invocation, frame->provider, &completion) ||
+            completion != CETTA_EVAL_COMPLETE) {
+            eval_mark_interrupted(completion == CETTA_EVAL_COMPLETE ? CETTA_EVAL_INCOMPLETE_HOST_FAILURE : completion);
+            he_canonical_pop();
+            return;
+        }
+        frame->phase = 1u;
+    }
+    const CettaOwnedReturn *returned = NULL;
+    CettaOwnedExecutionStep step = cetta_owned_execution_loan(frame->provider, &returned);
+    if (step == CETTA_OWNED_EXECUTION_PAUSED) return;
+    if (step != CETTA_OWNED_EXECUTION_RETURN) {
+        completion = frame->provider->completion;
+        if (step != CETTA_OWNED_EXECUTION_COMPLETE && completion == CETTA_EVAL_COMPLETE)
+            completion = CETTA_EVAL_INCOMPLETE_HOST_FAILURE;
+        if (completion != CETTA_EVAL_COMPLETE) eval_mark_interrupted(completion);
+        he_canonical_pop();
+        return;
+    }
+    if (returned->environment || !cetta_call_outcome_shape_valid(returned->outcome)) {
+        eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+        he_canonical_pop();
+        return;
+    }
+    CettaCallOutcome outcome;
+    if (!cetta_foreign_provider_copy_return(frame->arena, returned->outcome, &outcome)) {
+        eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_CAPACITY);
+        he_canonical_pop();
+        return;
+    }
+    if (outcome.kind == CETTA_CALL_FAILURE) {
+        he_canonical_pop();
+        return;
+    }
+    if (outcome.kind == CETTA_CALL_RAISED) {
+        petta_eval_raise(outcome.term);
+        he_canonical_pop();
+        return;
+    }
+    Atom *expression = NULL;
+    bool handled = sequence_native_call(frame->space, frame->arena, outcome, true,
+        frame->type, &frame->env, frame->target, &expression);
+    if (!handled) eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+    if (outcome.kind == CETTA_CALL_RAISED || !handled || !cetta_owned_execution_accept(frame->provider))
+        he_canonical_pop();
+}
+
 static inline __attribute__((always_inline)) void he_canonical_resume(
     HeCanonicalFrame *frame) {
     switch (frame->kind) {
@@ -3093,10 +3405,17 @@ static inline __attribute__((always_inline)) void he_canonical_resume(
     case HE_CANONICAL_MATCH_DIAGNOSTIC: he_canonical_resume_match_diagnostic(frame); break;
     case HE_CANONICAL_SPACE: he_canonical_resume_space(frame); break;
     case HE_CANONICAL_STATE: he_canonical_resume_state(frame); break;
+    case HE_CANONICAL_RETURN_CONTEXT: he_canonical_pop(); break;
+    case HE_CANONICAL_PROVIDER: he_canonical_resume_provider(frame); break;
     case HE_CANONICAL_CAPTURE:
         if (!frame->phase) {
             CaptureClosure *closure = frame->atom->expr.elems[0]->ground.ptr;
-            frame->saved_options = cetta_malloc(sizeof(*frame->saved_options));
+            frame->saved_options = malloc(sizeof(*frame->saved_options));
+            if (!frame->saved_options) {
+                eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_CAPACITY);
+                he_canonical_pop();
+                return;
+            }
             *frame->saved_options = *active_eval_options_const();
             *active_eval_options() = closure->options;
             frame->phase = 1u;
@@ -3143,6 +3462,8 @@ static inline __attribute__((always_inline)) void he_canonical_resume(
 /* One canonical control operation, shared by synchronous and retained runs.
  * A native callback completes inside this operation; it is not a suspendible
  * C-local frame. No observation projection is applied here. */
+static void he_canonical_forward_callers(HeCanonicalFrame *frame);
+
 static CettaHeAdvance he_canonical_advance(HeCanonicalDriver *driver) {
     assert(driver && g_he_canonical_driver == driver);
     if (!driver->stack.top)
@@ -3179,8 +3500,14 @@ static CettaHeAdvance he_canonical_advance(HeCanonicalDriver *driver) {
                 arena_accounted_live_bytes(&g_eval_gc.survivor);
     }
     HeCanonicalFrame *top = (HeCanonicalFrame *)driver->stack.top;
+    HeCanonicalFrame *owner = top->target_owner;
     if (!driver->answer_limit) {
         he_canonical_resume(top);
+        /* A retained run passes each completed return on to its callers. */
+        if (driver->retained) {
+            he_canonical_forward_callers(top);
+            he_canonical_forward_callers(owner);
+        }
     } else {
         driver->resumed = top;
         driver->resumed_popped = false;
@@ -3595,6 +3922,61 @@ bool eval_he_owned_destroy(CettaHeExecution *owner) {
     arena_free(&owner->storage);
     free(owner);
     return true;
+}
+
+static bool he_canonical_forward_completed(HeCanonicalFrame *frame) {
+    if (!frame || !frame->active) return false;
+    OutcomeSet *source = NULL;
+    bool invocation = false, normalize = false, mark = false;
+    switch (frame->kind) {
+    case HE_CANONICAL_CALL:
+    case HE_CANONICAL_BIND:
+    case HE_CANONICAL_CALLER:
+    case HE_CANONICAL_EVALUATE:
+    case HE_CANONICAL_RESULT:
+    case HE_CANONICAL_CAPTURE:
+        if (frame->phase != 1u) return false;
+        source = &frame->child;
+        normalize = frame->kind == HE_CANONICAL_BIND || frame->kind == HE_CANONICAL_CALLER ||
+            frame->kind == HE_CANONICAL_EVALUATE;
+        mark = frame->kind == HE_CANONICAL_CALL || frame->kind == HE_CANONICAL_BIND;
+        break;
+    case HE_CANONICAL_DISPATCH:
+        if (frame->phase != 5u && frame->phase != 7u) return false;
+        source = &frame->paths; invocation = true;
+        break;
+    case HE_CANONICAL_MATCH:
+        if (frame->phase < 3u || frame->match_certifying) return false;
+        source = &frame->paths;
+        break;
+    case HE_CANONICAL_CONTROL:
+        source = &frame->paths; invocation = true;
+        break;
+    case HE_CANONICAL_INSTRUCTION:
+        if (frame->phase == 2u) {
+            he_instruction_forward_returns((HeInstructionFrame *)frame->instructions.top);
+            he_canonical_complete_instruction_return(frame);
+        } else if (frame->phase < 4u) return false;
+        source = &frame->paths;
+        break;
+    case HE_CANONICAL_PATTERN:
+        source = &frame->paths;
+        break;
+    default: return false;
+    }
+    CettaCount before = frame->target->len;
+    if (mark) he_mark_answers_of(frame->arena, frame->atom, source, frame->child_frontier.seen);
+    he_canonical_frontier_publish(frame, source, invocation, normalize, false);
+    return frame->target->len > before;
+}
+
+static void he_canonical_forward_callers(HeCanonicalFrame *frame) {
+    while (frame && he_canonical_forward_completed(frame)) frame = frame->target_owner;
+}
+
+static void he_canonical_dispose(HeCanonicalDriver *driver) {
+    while (driver->stack.top) he_canonical_pop();
+    he_canonical_free_frames(driver);
 }
 
 static void he_canonical_run(HeCanonicalKind kind, Space *s, Arena *a,

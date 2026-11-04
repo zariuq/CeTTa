@@ -256,7 +256,9 @@ static bool he_execution_push(HeExecutionAdmission *admission, Atom *term) {
         size_t capacity = admission->capacity ? admission->capacity * 2u : 64u;
         if (capacity < admission->capacity || capacity > SIZE_MAX / sizeof(Atom *))
             return false;
-        admission->terms = cetta_realloc(admission->terms, capacity * sizeof(Atom *));
+        Atom **terms = cetta_realloc(admission->terms, capacity * sizeof(Atom *));
+        if (!terms) return false;
+        admission->terms = terms;
         admission->capacity = capacity;
     }
     admission->terms[admission->length++] = term;
@@ -556,9 +558,12 @@ static bool he_head_single_answer_in(Space *space, SymbolId head,
     }
     if (single && body) {
         if (scope->len == scope->cap) {
-            scope->cap = scope->cap ? scope->cap * 2u : 8u;
-            scope->heads = cetta_realloc(scope->heads,
-                                         scope->cap * sizeof(*scope->heads));
+            size_t capacity = scope->cap ? scope->cap * 2u : 8u;
+            SymbolId *heads = cetta_realloc(scope->heads,
+                                            capacity * sizeof(*scope->heads));
+            if (!heads) return false;
+            scope->heads = heads;
+            scope->cap = capacity;
         }
         scope->heads[scope->len++] = head;
         single = he_term_single_answer_in(space, body, scope, depth + 1u);
@@ -1039,10 +1044,13 @@ static bool he_execution_source_admitted(HeExecutionAdmission *admission,
             }
             if (!seen && !decided) {
                 if (admission->head_count == admission->head_capacity) {
-                    admission->head_capacity = admission->head_capacity
+                    size_t capacity = admission->head_capacity
                         ? admission->head_capacity * 2u : 16u;
-                    admission->heads = cetta_realloc(admission->heads,
-                        admission->head_capacity * sizeof(SymbolId));
+                    SymbolId *heads = cetta_realloc(admission->heads,
+                        capacity * sizeof(SymbolId));
+                    if (!heads) return false;
+                    admission->heads = heads;
+                    admission->head_capacity = capacity;
                 }
                 admission->heads[admission->head_count++] = head;
                 SpaceEquationCursor cursor;
@@ -1345,9 +1353,12 @@ static void he_bound_add_pattern(HeBoundVariables *bound, const Atom *pattern) {
         return;
     if (pattern->kind == ATOM_VAR) {
         if (bound->len == bound->cap) {
-            bound->cap = bound->cap ? bound->cap * 2u : 8u;
-            bound->items = cetta_realloc(bound->items,
-                                         bound->cap * sizeof(*bound->items));
+            size_t capacity = bound->cap ? bound->cap * 2u : 8u;
+            VarId *items = cetta_realloc(bound->items,
+                                        capacity * sizeof(*bound->items));
+            if (!items) return;
+            bound->items = items;
+            bound->cap = capacity;
         }
         bound->items[bound->len++] = pattern->var_id;
         return;
@@ -2101,6 +2112,7 @@ typedef struct {
  * evaluation's context, and the source's head. */
 static inline __attribute__((always_inline)) bool he_shared_execution_candidate(
     Space *space, Atom *source, Atom *type, int fuel, bool observe_boundaries) {
+    if (he_retained_execution_active()) return false;
     if (eval_current_language_id() != CETTA_LANGUAGE_HE)
         return false;
     /* A completed scalar is interpreted by HE's value/cast boundary. Only

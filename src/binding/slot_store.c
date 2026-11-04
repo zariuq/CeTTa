@@ -147,6 +147,9 @@ bool bindings_frame_index_entry_detach(
     uint64_t *write_version = entry->cap > 0u
         ? cetta_malloc((size_t)entry->cap * sizeof(*write_version))
         : NULL;
+    if (!storage_references || (entry->cap && (!values || !write_version))) {
+        free(storage_references); free(values); free(write_version); return false;
+    }
     uint32_t copied = entry->slot_len < entry->cap ? entry->slot_len : entry->cap;
     if (copied > 0u) {
         memcpy(values, entry->values,
@@ -187,14 +190,17 @@ static bool bindings_frame_reserve_value_prefix(
     if ((size_t)cap > SIZE_MAX / sizeof(*frame->values) ||
         (size_t)cap > SIZE_MAX / sizeof(*frame->write_version))
         return false;
-    frame->values = cetta_realloc(frame->values,
-        (size_t)cap * sizeof(*frame->values));
-    frame->write_version = cetta_realloc(frame->write_version,
-        (size_t)cap * sizeof(*frame->write_version));
-    memset(frame->values + frame->cap, 0,
-        (size_t)(cap - frame->cap) * sizeof(*frame->values));
-    memset(frame->write_version + frame->cap, 0,
-        (size_t)(cap - frame->cap) * sizeof(*frame->write_version));
+    BindingValue *values = cetta_malloc((size_t)cap * sizeof(*values));
+    uint64_t *versions = cetta_malloc((size_t)cap * sizeof(*versions));
+    if (!values || !versions) { free(values); free(versions); return false; }
+    if (frame->cap) {
+        memcpy(values, frame->values, (size_t)frame->cap * sizeof(*values));
+        memcpy(versions, frame->write_version, (size_t)frame->cap * sizeof(*versions));
+    }
+    memset(values + frame->cap, 0, (size_t)(cap - frame->cap) * sizeof(*values));
+    memset(versions + frame->cap, 0, (size_t)(cap - frame->cap) * sizeof(*versions));
+    free(frame->values); free(frame->write_version);
+    frame->values = values; frame->write_version = versions;
     bindings_frame_storage_account(bindings_frame_storage_bytes(cap),
                                     bindings_frame_storage_bytes(frame->cap));
     frame->cap = cap;
@@ -239,9 +245,11 @@ static bool bindings_frame_table_reserve(
     uint32_t shift = 32u;
     for (uint32_t bits = next; bits > 1u; bits >>= 1u)
         shift--;
-    free(index->handle_table);
-    index->handle_table = cetta_malloc(
+    BindingsFrameIndexEntry **table = cetta_malloc(
         (size_t)next * sizeof(*index->handle_table));
+    if (!table) return false;
+    free(index->handle_table);
+    index->handle_table = table;
     index->handle_table_mask = next - 1u;
     index->handle_table_shift = shift;
     bindings_frame_table_relocate(index);
@@ -305,10 +313,12 @@ static bool bindings_frame_index_spare_reserve(
     }
     if ((size_t)cap > SIZE_MAX / sizeof(*index->spares))
         return false;
-    index->spares = index->spares
+    BindingsFrameIndexEntry *spares = index->spares
         ? cetta_realloc(index->spares,
               (size_t)cap * sizeof(*index->spares))
         : cetta_malloc((size_t)cap * sizeof(*index->spares));
+    if (!spares) return false;
+    index->spares = spares;
     index->spare_cap = cap;
     return true;
 }
@@ -374,11 +384,16 @@ static bool bindings_frame_index_initialize_entry(
     if (!storage.storage_references) {
         storage.storage_references =
             cetta_malloc(sizeof(*storage.storage_references));
+        if (!storage.storage_references) return false;
         atomic_init(storage.storage_references, 1u);
         storage.values = cetta_malloc(
             (size_t)initial * sizeof(*storage.values));
         storage.write_version = cetta_malloc(
             (size_t)initial * sizeof(*storage.write_version));
+        if (!storage.values || !storage.write_version) {
+            free(storage.values); free(storage.write_version); free(storage.storage_references);
+            return false;
+        }
         storage.cap = initial;
         bindings_frame_storage_account(
             bindings_frame_storage_bytes(initial), 0u);
@@ -395,6 +410,7 @@ static bool bindings_frame_index_initialize_entry(
             bindings_frame_schema_release(storage.schema);
             storage.schema = bindings_frame_schema_alloc(source_len);
         }
+        if (!storage.schema) { bindings_frame_index_entry_free(&storage); return false; }
         memcpy(storage.schema->source_ids, source_ids,
                (size_t)source_len * sizeof(*storage.schema->source_ids));
         /* A spare has storage capacity, not the new source's presentation.
@@ -426,6 +442,7 @@ static bool bindings_frame_index_initialize_entry(
 
 static BindingsFrameIndex *bindings_frame_index_alloc(void) {
     BindingsFrameIndex *index = cetta_malloc(sizeof(*index));
+    if (!index) return NULL;
     atomic_init(&index->references, 1u);
     index->schema_revision = 1u;
     index->write_clock = 0u;
@@ -526,6 +543,7 @@ static bool bindings_frame_index_contains_sources(
 static BindingsFrameIndex *bindings_frame_index_clone(
         const BindingsFrameIndex *source) {
     BindingsFrameIndex *copy = bindings_frame_index_alloc();
+    if (!copy) return NULL;
     if (!source)
         return copy;
     copy->schema_revision = source->schema_revision;
@@ -536,6 +554,7 @@ static BindingsFrameIndex *bindings_frame_index_clone(
     if (source->len > 0u) {
         copy->frames = cetta_malloc(
             (size_t)source->len * sizeof(*copy->frames));
+        if (!copy->frames) { bindings_frame_index_release(copy); return NULL; }
         memset(copy->frames, 0,
                (size_t)source->len * sizeof(*copy->frames));
         copy->cap = source->len;
@@ -546,8 +565,9 @@ static BindingsFrameIndex *bindings_frame_index_clone(
         bindings_frame_index_entry_retain(to);
         copy->len++;
     }
-    if (!bindings_frame_table_reserve(copy, copy->len))
-        abort();
+    if (!bindings_frame_table_reserve(copy, copy->len)) {
+        bindings_frame_index_release(copy); return NULL;
+    }
     return copy;
 }
 
@@ -556,7 +576,7 @@ bool bindings_frame_index_detach(Bindings *bindings) {
         return false;
     if (!bindings->frame_index) {
         bindings->frame_index = bindings_frame_index_alloc();
-        return true;
+        return bindings->frame_index != NULL;
     }
     uint32_t references = atomic_load_explicit(
         &bindings->frame_index->references, memory_order_acquire);
@@ -564,6 +584,7 @@ bool bindings_frame_index_detach(Bindings *bindings) {
         return true;
     BindingsFrameIndex *copy = bindings_frame_index_clone(
         bindings->frame_index);
+    if (!copy) return false;
     bindings_frame_index_release(bindings->frame_index);
     bindings->frame_index = copy;
     cetta_runtime_stats_inc(
@@ -1011,8 +1032,10 @@ bool bindings_frame_index_register_kind(
         if (capacity < index->cap ||
             (size_t)capacity > SIZE_MAX / sizeof(*index->frames))
             return false;
-        index->frames = cetta_realloc(index->frames,
+        BindingsFrameIndexEntry *frames = cetta_realloc(index->frames,
             (size_t)capacity * sizeof(*index->frames));
+        if (!frames) return false;
+        index->frames = frames;
         index->cap = capacity;
         bindings_frame_table_relocate(index);
     }
@@ -1226,7 +1249,7 @@ bool bindings_builder_register_frame_kind(
                 SIZE_MAX / sizeof(*builder->frame_registration_undo)) {
             return false;
         }
-        builder->frame_registration_undo =
+        BindingsFrameRegistrationUndoEntry *grown =
             builder->frame_registration_undo
                 ? cetta_realloc(
                       builder->frame_registration_undo,
@@ -1235,6 +1258,8 @@ bool bindings_builder_register_frame_kind(
                 : cetta_malloc(
                       (size_t)cap *
                           sizeof(*builder->frame_registration_undo));
+        if (!grown) return false;
+        builder->frame_registration_undo = grown;
         builder->frame_registration_undo_cap = cap;
     }
     uint32_t undo_start = builder->frame_registration_undo_len;
