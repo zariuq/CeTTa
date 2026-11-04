@@ -157,8 +157,8 @@ Atom *cetta_act_artifact_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,A
     if (!slash || !slash[1]) {free(parent);return error(a,head,CETTA_ACT_CORRUPT);}
     if (slash==parent) slash[1]=0;else *slash=0;
     cetta_shared_transition_guard_leave(&guard);
-    int fd=open(parent,O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW);struct stat st;free(parent);
-    bool valid=fd>=0 && !fstat(fd,&st) && st.st_uid==geteuid() && !(st.st_mode&0077);
+    int fd=open(parent,O_RDONLY|O_DIRECTORY|O_CLOEXEC);free(parent);
+    bool valid=fd>=0;
     cetta_shared_transition_guard_enter(&guard);
     if (!valid) {if (fd>=0) close(fd);return error(a,head,CETTA_ACT_IO);}
     Root *r=malloc(sizeof(*r));if (!r) {close(fd);return error(a,head,CETTA_ACT_NOMEM);}r->directory=fd;

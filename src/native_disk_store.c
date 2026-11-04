@@ -63,14 +63,14 @@ static bool synchronize(int fd) {
 static bool safe_file(int fd) {
     struct stat st;
     if (fstat(fd,&st)) return false;
-    if (!S_ISREG(st.st_mode) || st.st_uid!=geteuid() || (st.st_mode&077) || st.st_nlink!=1) {
+    if (!S_ISREG(st.st_mode) || st.st_nlink!=1) {
         errno=EPERM;return false;
     }
     return true;
 }
 static int file_open(int directory,const char *name,int flags) {
     int fd;
-    do { fd=openat(directory,name,flags|O_CLOEXEC|O_NOFOLLOW,0600); } while (fd<0 && errno==EINTR);
+    do { fd=openat(directory,name,flags|O_CLOEXEC|O_NOFOLLOW,0666); } while (fd<0 && errno==EINTR);
     if (fd>=0 && !safe_file(fd)) { int code=errno;close(fd);errno=code;return -1; }
     return fd;
 }
@@ -313,7 +313,6 @@ static CettaDiskStoreStatus store_open_directory(int directory,bool create,bool 
         const CettaDiskStoreLimits *limits,CettaDiskStore **out) {
     struct stat st;
     if (fstat(directory,&st)) { close(directory);return CETTA_STORE_IO; }
-    if (st.st_uid!=geteuid() || (st.st_mode&077)) { close(directory);return CETTA_STORE_OWNERSHIP; }
     CettaDiskStore *store=calloc(1,sizeof(*store));
     if (!store) { close(directory); return CETTA_STORE_NOMEM; }
     *store=(CettaDiskStore){.directory=directory,.device=st.st_dev,.inode=st.st_ino};
@@ -370,12 +369,8 @@ CettaDiskStoreStatus cetta_disk_store_open(const char *path,bool create,
     if (!out) return CETTA_STORE_INVALID;
     *out=NULL;
     if (!path || !*path) return CETTA_STORE_INVALID;
-    int directory=open(path,O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW);
-    if (directory<0) {
-        int code=errno;struct stat entry;
-        if (code==ENOTDIR && !lstat(path,&entry) && S_ISLNK(entry.st_mode)) return CETTA_STORE_OWNERSHIP;
-        errno=code;return code==ENOENT ? CETTA_STORE_ABSENT : open_error();
-    }
+    int directory=open(path,O_RDONLY|O_DIRECTORY|O_CLOEXEC);
+    if (directory<0) return errno==ENOENT ? CETTA_STORE_ABSENT : open_error();
     return store_open_directory(directory,create,false,limits,out);
 }
 
@@ -398,19 +393,12 @@ static CettaDiskStoreStatus open_created(const char *path,bool act,
     if (!*leaf) { free(copy);return CETTA_STORE_INVALID; }
     int parent_fd=open(parent,O_RDONLY|O_DIRECTORY|O_CLOEXEC);
     if (parent_fd<0) { CettaDiskStoreStatus status=open_error();free(copy);return status; }
-    struct stat parent_stat;
-    if (fstat(parent_fd,&parent_stat) || parent_stat.st_uid!=geteuid() ||
-            (parent_stat.st_mode&077)) {
-        close(parent_fd);free(copy);return CETTA_STORE_OWNERSHIP;
-    }
-    if (mkdirat(parent_fd,leaf,0700) && errno!=EEXIST) {
+    if (mkdirat(parent_fd,leaf,0777) && errno!=EEXIST) {
         CettaDiskStoreStatus status=open_error();close(parent_fd);free(copy);return status;
     }
-    int directory=openat(parent_fd,leaf,O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW);
+    int directory=openat(parent_fd,leaf,O_RDONLY|O_DIRECTORY|O_CLOEXEC);
     if (directory<0) {
-        CettaDiskStoreStatus status=open_error();struct stat entry;
-        if (!fstatat(parent_fd,leaf,&entry,AT_SYMLINK_NOFOLLOW) && S_ISLNK(entry.st_mode))
-            status=CETTA_STORE_OWNERSHIP;
+        CettaDiskStoreStatus status=open_error();
         close(parent_fd);free(copy);return status;
     }
     bool durable=synchronize(parent_fd);
@@ -934,7 +922,7 @@ CettaDiskStoreStatus cetta_disk_store_batch_open(CettaDiskStore *store,
     static const char digits[]="0123456789abcdef";char name[40];memcpy(name,".batch-",7);
     for (size_t i=0;i<16;i++) { name[7+i*2]=digits[generation[i]>>4];name[8+i*2]=digits[generation[i]&15]; }
     name[39]=0;
-    int fd=openat(store->directory,name,O_RDWR|O_CREAT|O_EXCL|O_CLOEXEC|O_NOFOLLOW,0600);
+    int fd=openat(store->directory,name,O_RDWR|O_CREAT|O_EXCL|O_CLOEXEC|O_NOFOLLOW,0666);
     if (fd<0) return open_error();
     if (unlinkat(store->directory,name,0) && errno!=ENOENT) { close(fd);return CETTA_STORE_IO; }
     status=disk_status(cetta_disk_segment_create(fd,generation));
@@ -1277,15 +1265,10 @@ CettaDiskStoreStatus cetta_disk_store_backup(const CettaDiskStoreView *view,cons
     if (!view || !path || !*path) return CETTA_STORE_INVALID;
     CettaDiskStoreStatus status=disk_status(cetta_disk_root_check(&view->root));
     if (status!=CETTA_STORE_OK) return status;
-    int directory=open(path,O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW);
-    if (directory<0) {
-        int code=errno;struct stat entry;
-        if (code==ENOTDIR && !lstat(path,&entry) && S_ISLNK(entry.st_mode)) return CETTA_STORE_OWNERSHIP;
-        errno=code;return code==ENOENT ? CETTA_STORE_ABSENT : open_error();
-    }
+    int directory=open(path,O_RDONLY|O_DIRECTORY|O_CLOEXEC);
+    if (directory<0) return errno==ENOENT ? CETTA_STORE_ABSENT : open_error();
     int lock=-1,manifest=-1,segment=-1;struct stat st;
     if (fstat(directory,&st)) { status=CETTA_STORE_IO;goto done; }
-    if (st.st_uid!=geteuid() || (st.st_mode&077)) { status=CETTA_STORE_OWNERSHIP;goto done; }
     if ((status=empty_directory(directory,false))!=CETTA_STORE_OK) goto done;
     /* Install the invalid manifest as the first destination change, before
      * even creating writer.lock. A process death in bootstrap must not leave

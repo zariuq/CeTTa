@@ -227,17 +227,24 @@ static void corrupt_manifest(const char *path) {
 static void ownership(const char *path) {
     CettaDiskStore *store=open_store(path);cetta_disk_store_close(store);store=NULL;
     int directory=open(path,O_RDONLY|O_DIRECTORY);check(directory>=0);
-    check(!fchmod(directory,0750));
-    check(cetta_disk_store_open(path,false,NULL,&store)==CETTA_STORE_OWNERSHIP && !store);
+    /* Access is the file system's decision: a group-shared store, a store
+     * reached through a symbolic link and group-readable files all open. */
+    check(!fchmod(directory,02770));
+    check(cetta_disk_store_open(path,false,NULL,&store)==CETTA_STORE_OK && store);
+    cetta_disk_store_close(store);store=NULL;
     check(!fchmod(directory,0700));
     check(!symlinkat(".",directory,"alias"));char alias[512];
     check(snprintf(alias,sizeof(alias),"%s/alias",path)>0);
-    check(cetta_disk_store_open(alias,false,NULL,&store)==CETTA_STORE_OWNERSHIP && !store);
+    check(cetta_disk_store_open(alias,false,NULL,&store)==CETTA_STORE_OK && store);
+    cetta_disk_store_close(store);store=NULL;
     check(!unlinkat(directory,"alias",0));
     int manifest=openat(directory,"root.csl",O_RDWR);check(manifest>=0);
-    check(!fchmod(manifest,0640));
-    check(cetta_disk_store_open(path,false,NULL,&store)==CETTA_STORE_OWNERSHIP && !store);
+    check(!fchmod(manifest,0664));
+    check(cetta_disk_store_open(path,false,NULL,&store)==CETTA_STORE_OK && store);
+    cetta_disk_store_close(store);store=NULL;
     check(!fchmod(manifest,0600));close(manifest);
+    /* The store's own files stay single regular files: an extra hard link or
+     * a symbolic link in place of the manifest would alias its storage. */
     check(!linkat(directory,"root.csl",directory,"linked",0));
     check(cetta_disk_store_open(path,false,NULL,&store)==CETTA_STORE_OWNERSHIP && !store);
     check(!unlinkat(directory,"linked",0));
@@ -519,9 +526,11 @@ static void backup_cases(const char *root) {
             cetta_disk_store_view_close(restored);cetta_disk_store_close(copy);
         }
     }
-    check(!chmod(destinations[11],0750));
-    check(cetta_disk_store_backup(view,destinations[11])==CETTA_STORE_OWNERSHIP);
-    check(!chmod(destinations[11],0700));
+    check(!chmod(destinations[11],02770));
+    check(cetta_disk_store_backup(view,destinations[11])==CETTA_STORE_OK);
+    check(cetta_disk_store_open(destinations[11],false,NULL,&copy)==CETTA_STORE_OK);
+    restored=snapshot(copy);expect(restored,"fact","captured");
+    cetta_disk_store_view_close(restored);cetta_disk_store_close(copy);copy=NULL;
     /* Kill in bootstrap, immediately after the first lock creation. Even
      * this early boundary must not leave an apparently new empty store. */
     int ready[2],resume[2];check(!pipe(ready) && !pipe(resume));pid_t child=fork();check(child>=0);
@@ -699,18 +708,22 @@ static void create_directory(const char *root) {
     snprintf(missing,sizeof(missing),"%s/absent/child",root);
     CettaDiskStore *store=NULL;
     check(cetta_disk_store_open_created(path,NULL,&store)==CETTA_STORE_OK);
-    struct stat st;check(!stat(path,&st) && !(st.st_mode&077));
+    /* A created store takes the parent's ordinary defaults (umask and
+     * default ACL), exactly like a directory made there with mode 0777. */
+    char plain[1024];check(snprintf(plain,sizeof(plain),"%s-plain",path)>0);
+    check(!mkdir(plain,0777));struct stat expected;check(!stat(plain,&expected));check(!rmdir(plain));
+    struct stat st;check(!stat(path,&st) && (st.st_mode&07777)==(expected.st_mode&07777));
     CettaDiskStoreView *view=snapshot(store);check(cetta_disk_store_view_revision(view)==0);
     cetta_disk_store_view_close(view);cetta_disk_store_close(store);store=NULL;
     check(cetta_disk_store_open_created(path,NULL,&store)==CETTA_STORE_OK);
     cetta_disk_store_close(store);store=NULL;
     check(!symlink("created",link));
-    check(cetta_disk_store_open_created(link,NULL,&store)==CETTA_STORE_OWNERSHIP && !store);
+    check(cetta_disk_store_open_created(link,NULL,&store)==CETTA_STORE_OK && store);
+    cetta_disk_store_close(store);store=NULL;
     check(!unlink(link));
-    check(!mkdir(public_path,0700));check(!chmod(public_path,0755));
-    check(cetta_disk_store_open_created(public_child,NULL,&store)==CETTA_STORE_OWNERSHIP && !store);
-    check(cetta_disk_store_open_created(public_path,NULL,&store)==CETTA_STORE_OWNERSHIP && !store);
-    check(!rmdir(public_path));
+    check(!mkdir(public_path,0700));check(!chmod(public_path,02775));
+    check(cetta_disk_store_open_created(public_child,NULL,&store)==CETTA_STORE_OK && store);
+    cetta_disk_store_close(store);store=NULL;
     sync_calls=0;sync_fail_at=1;
     check(cetta_disk_store_open_created(failed,NULL,&store)==CETTA_STORE_IO && !store);
     sync_fail_at=0;
@@ -721,6 +734,7 @@ static void create_directory(const char *root) {
     check(cetta_disk_store_open_created(missing,NULL,&store)!=CETTA_STORE_OK && !store);
     check(cetta_disk_store_open_created("",NULL,&store)==CETTA_STORE_INVALID && !store);
     empty_directory(failed);empty_directory(path);
+    empty_directory(public_child);check(!rmdir(public_path));
 }
 
 static void logical_readers(const char *root) {
