@@ -1,0 +1,1015 @@
+{
+ "car-top.arg.field": {
+  "rust": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "car-top.arg.index": {
+  "rust": "[92] [(Box 92)]",
+  "he": "[(Pair 1 2)] [(Box 92)]",
+  "he-compat": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "car-top.arg.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box 92)]"
+ },
+ "car-top.arg.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box 92)]"
+ },
+ "car-top.direct.field": {
+  "rust": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "car-top.direct.index": {
+  "rust": "[92] [(Box 92)]",
+  "he": "[(Pair 1 2)] [(Box 92)]",
+  "he-compat": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "car-top.direct.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box 92)]"
+ },
+ "car-top.direct.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box 92)]"
+ },
+ "car-top.recursive.field": {
+  "rust": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "car-top.recursive.index": {
+  "rust": "[92] [(Box 92)]",
+  "he": "[(Pair 1 2)] [(Box 92)]",
+  "he-compat": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "car-top.recursive.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box 92)]"
+ },
+ "car-top.recursive.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box 92)]"
+ },
+ "case.arg.field": {
+  "rust": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "case.arg.index": {
+  "rust": "[92] [(Box 92)]",
+  "he": "[(Pair 1 2)] [(Box 92)]",
+  "he-compat": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "case.arg.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box 92)]"
+ },
+ "case.arg.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box 92)]"
+ },
+ "case.direct.field": {
+  "rust": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "case.direct.index": {
+  "rust": "[92] [(Box 92)]",
+  "he": "[(Pair 1 2)] [(Box 92)]",
+  "he-compat": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "case.direct.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box 92)]"
+ },
+ "case.direct.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box 92)]"
+ },
+ "case.recursive.field": {
+  "rust": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "case.recursive.index": {
+  "rust": "[92] [(Box 92)]",
+  "he": "[(Pair 1 2)] [(Box 92)]",
+  "he-compat": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "case.recursive.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box 92)]"
+ },
+ "case.recursive.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box 92)]"
+ },
+ "cdr-car.arg.field": {
+  "rust": "[] [cdr-atom]",
+  "he": "[cdr-atom]"
+ },
+ "cdr-car.arg.index": {
+  "rust": "[(Error (index-atom cdr-atom 1) (BadArgType 1 Expression (-> Expression Expression)))]"
+ },
+ "cdr-car.arg.kept": {
+  "rust": "[(Keep cdr-atom)] [cdr-atom]"
+ },
+ "cdr-car.arg.top": {
+  "rust": "[cdr-atom] [cdr-atom]"
+ },
+ "cdr-car.direct.field": {
+  "rust": "[] [cdr-atom]",
+  "he": "[cdr-atom]"
+ },
+ "cdr-car.direct.index": {
+  "rust": "[(Error (index-atom cdr-atom 1) (BadArgType 1 Expression (-> Expression Expression)))]"
+ },
+ "cdr-car.direct.kept": {
+  "rust": "[(Keep cdr-atom)] [cdr-atom]"
+ },
+ "cdr-car.direct.top": {
+  "rust": "[cdr-atom] [cdr-atom]"
+ },
+ "cdr-car.recursive.field": {
+  "rust": "[] [cdr-atom]",
+  "he": "[cdr-atom]"
+ },
+ "cdr-car.recursive.index": {
+  "rust": "[(Error (index-atom cdr-atom 1) (BadArgType 1 Expression (-> Expression Expression)))]"
+ },
+ "cdr-car.recursive.kept": {
+  "rust": "[(Keep cdr-atom)] [cdr-atom]"
+ },
+ "cdr-car.recursive.top": {
+  "rust": "[cdr-atom] [cdr-atom]"
+ },
+ "cons-top.arg.field": {
+  "rust": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "cons-top.arg.index": {
+  "rust": "[92] [(Box 92)]",
+  "he": "[(Pair 1 2)] [(Box 92)]",
+  "he-compat": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "cons-top.arg.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box 92)]"
+ },
+ "cons-top.arg.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box 92)]"
+ },
+ "cons-top.direct.field": {
+  "rust": "[92] [(Box (Pair 1 2))]"
+ },
+ "cons-top.direct.index": {
+  "rust": "[92] [(Box (Pair 1 2))]"
+ },
+ "cons-top.direct.kept": {
+  "rust": "[(Keep (Box 92))] [(Box (Pair 1 2))]"
+ },
+ "cons-top.direct.top": {
+  "rust": "[(Box 92)] [(Box (Pair 1 2))]"
+ },
+ "cons-top.recursive.field": {
+  "rust": "[92] [(Box (Pair 1 2))]"
+ },
+ "cons-top.recursive.index": {
+  "rust": "[92] [(Box (Pair 1 2))]"
+ },
+ "cons-top.recursive.kept": {
+  "rust": "[(Keep (Box 92))] [(Box (Pair 1 2))]"
+ },
+ "cons-top.recursive.top": {
+  "rust": "[(Box 92)] [(Box (Pair 1 2))]"
+ },
+ "ctor.arg.field": {
+  "rust": "[1] [91]"
+ },
+ "ctor.arg.index": {
+  "rust": "[1] [91]"
+ },
+ "ctor.arg.kept": {
+  "rust": "[(Keep (Box 1))] [91]"
+ },
+ "ctor.arg.top": {
+  "rust": "[(Box 1)] [91]"
+ },
+ "ctor.direct.field": {
+  "rust": "[1] [91]"
+ },
+ "ctor.direct.index": {
+  "rust": "[1] [91]"
+ },
+ "ctor.direct.kept": {
+  "rust": "[(Keep (Box 1))] [91]"
+ },
+ "ctor.direct.top": {
+  "rust": "[(Box 1)] [91]"
+ },
+ "ctor.recursive.field": {
+  "rust": "[1] [91]"
+ },
+ "ctor.recursive.index": {
+  "rust": "[1] [91]"
+ },
+ "ctor.recursive.kept": {
+  "rust": "[(Keep (Box 1))] [91]"
+ },
+ "ctor.recursive.top": {
+  "rust": "[(Box 1)] [91]"
+ },
+ "if.arg.field": {
+  "rust": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "if.arg.index": {
+  "rust": "[92] [(Box 92)]",
+  "he": "[(Pair 1 2)] [(Box 92)]",
+  "he-compat": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "if.arg.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box 92)]"
+ },
+ "if.arg.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box 92)]"
+ },
+ "if.direct.field": {
+  "rust": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "if.direct.index": {
+  "rust": "[92] [(Box 92)]",
+  "he": "[(Pair 1 2)] [(Box 92)]",
+  "he-compat": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "if.direct.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box 92)]"
+ },
+ "if.direct.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box 92)]"
+ },
+ "if.recursive.field": {
+  "rust": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "if.recursive.index": {
+  "rust": "[92] [(Box 92)]",
+  "he": "[(Pair 1 2)] [(Box 92)]",
+  "he-compat": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "if.recursive.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box 92)]"
+ },
+ "if.recursive.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box 92)]"
+ },
+ "let-var.arg.field": {
+  "rust": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "let-var.arg.index": {
+  "rust": "[92] [(Box 92)]",
+  "he": "[(Pair 1 2)] [(Box 92)]",
+  "he-compat": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "let-var.arg.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box 92)]"
+ },
+ "let-var.arg.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box 92)]"
+ },
+ "let-var.direct.field": {
+  "rust": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "let-var.direct.index": {
+  "rust": "[92] [(Box 92)]",
+  "he": "[(Pair 1 2)] [(Box 92)]",
+  "he-compat": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "let-var.direct.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box 92)]"
+ },
+ "let-var.direct.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box 92)]"
+ },
+ "let-var.recursive.field": {
+  "rust": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "let-var.recursive.index": {
+  "rust": "[92] [(Box 92)]",
+  "he": "[(Pair 1 2)] [(Box 92)]",
+  "he-compat": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "let-var.recursive.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box 92)]"
+ },
+ "let-var.recursive.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box 92)]"
+ },
+ "let-wrap.arg.field": {
+  "rust": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "let-wrap.arg.index": {
+  "rust": "[92] [(Box 92)]",
+  "he": "[(Pair 1 2)] [(Box 92)]",
+  "he-compat": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "let-wrap.arg.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box 92)]"
+ },
+ "let-wrap.arg.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box 92)]"
+ },
+ "let-wrap.direct.field": {
+  "rust": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "let-wrap.direct.index": {
+  "rust": "[92] [(Box 92)]",
+  "he": "[(Pair 1 2)] [(Box 92)]",
+  "he-compat": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "let-wrap.direct.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box 92)]"
+ },
+ "let-wrap.direct.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box 92)]"
+ },
+ "let-wrap.recursive.field": {
+  "rust": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "let-wrap.recursive.index": {
+  "rust": "[92] [(Box 92)]",
+  "he": "[(Pair 1 2)] [(Box 92)]",
+  "he-compat": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "let-wrap.recursive.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box 92)]"
+ },
+ "let-wrap.recursive.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box 92)]"
+ },
+ "match-call-data.arg.field": {
+  "rust": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "match-call-data.arg.index": {
+  "rust": "[92] [(Box 92)]",
+  "he": "[(Pair 1 2)] [(Box 92)]",
+  "he-compat": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "match-call-data.arg.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box 92)]"
+ },
+ "match-call-data.arg.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box 92)]"
+ },
+ "match-call-data.direct.field": {
+  "rust": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "match-call-data.direct.index": {
+  "rust": "[92] [(Box 92)]",
+  "he": "[(Pair 1 2)] [(Box 92)]",
+  "he-compat": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "match-call-data.direct.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box 92)]"
+ },
+ "match-call-data.direct.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box 92)]"
+ },
+ "match-call-data.recursive.field": {
+  "rust": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "match-call-data.recursive.index": {
+  "rust": "[92] [(Box 92)]",
+  "he": "[(Pair 1 2)] [(Box 92)]",
+  "he-compat": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "match-call-data.recursive.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box 92)]"
+ },
+ "match-call-data.recursive.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box 92)]"
+ },
+ "match-data.arg.field": {
+  "rust": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "match-data.arg.index": {
+  "rust": "[92] [(Box 92)]",
+  "he": "[(Pair 1 2)] [(Box 92)]",
+  "he-compat": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "match-data.arg.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box 92)]"
+ },
+ "match-data.arg.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box 92)]"
+ },
+ "match-data.direct.field": {
+  "rust": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "match-data.direct.index": {
+  "rust": "[92] [(Box 92)]",
+  "he": "[(Pair 1 2)] [(Box 92)]",
+  "he-compat": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "match-data.direct.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box 92)]"
+ },
+ "match-data.direct.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box 92)]"
+ },
+ "match-data.recursive.field": {
+  "rust": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "match-data.recursive.index": {
+  "rust": "[92] [(Box 92)]",
+  "he": "[(Pair 1 2)] [(Box 92)]",
+  "he-compat": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "match-data.recursive.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box 92)]"
+ },
+ "match-data.recursive.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box 92)]"
+ },
+ "match-tmpl.arg.field": {
+  "rust": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "match-tmpl.arg.index": {
+  "rust": "[92] [(Box 92)]",
+  "he": "[(Pair 1 2)] [(Box 92)]",
+  "he-compat": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "match-tmpl.arg.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box 92)]"
+ },
+ "match-tmpl.arg.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box 92)]"
+ },
+ "match-tmpl.direct.field": {
+  "rust": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "match-tmpl.direct.index": {
+  "rust": "[92] [(Box 92)]",
+  "he": "[(Pair 1 2)] [(Box 92)]",
+  "he-compat": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "match-tmpl.direct.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box 92)]"
+ },
+ "match-tmpl.direct.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box 92)]"
+ },
+ "match-tmpl.recursive.field": {
+  "rust": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "match-tmpl.recursive.index": {
+  "rust": "[92] [(Box 92)]",
+  "he": "[(Pair 1 2)] [(Box 92)]",
+  "he-compat": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "match-tmpl.recursive.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box 92)]"
+ },
+ "match-tmpl.recursive.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box 92)]"
+ },
+ "nested.arg.field": {
+  "rust": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "nested.arg.index": {
+  "rust": "[92] [(Box 92)]",
+  "he": "[(Pair 1 2)] [(Box 92)]",
+  "he-compat": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "nested.arg.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box 92)]"
+ },
+ "nested.arg.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box 92)]"
+ },
+ "nested.direct.field": {
+  "rust": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "nested.direct.index": {
+  "rust": "[92] [(Box 92)]",
+  "he": "[(Pair 1 2)] [(Box 92)]",
+  "he-compat": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "nested.direct.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box 92)]"
+ },
+ "nested.direct.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box 92)]"
+ },
+ "nested.recursive.field": {
+  "rust": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "nested.recursive.index": {
+  "rust": "[92] [(Box 92)]",
+  "he": "[(Pair 1 2)] [(Box 92)]",
+  "he-compat": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "nested.recursive.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box 92)]"
+ },
+ "nested.recursive.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box 92)]"
+ },
+ "over-arith.arg.field": {
+  "rust": "[1] [91]"
+ },
+ "over-arith.arg.index": {
+  "rust": "[1] [91]"
+ },
+ "over-arith.arg.kept": {
+  "rust": "[(Keep (Box 1))] [91]"
+ },
+ "over-arith.arg.top": {
+  "rust": "[(Box 1)] [91]"
+ },
+ "over-arith.direct.field": {
+  "rust": "[1] [91]"
+ },
+ "over-arith.direct.index": {
+  "rust": "[1] [91]"
+ },
+ "over-arith.direct.kept": {
+  "rust": "[(Keep 91)] [91]",
+  "he": "[(Keep (Box 1))] [91]"
+ },
+ "over-arith.direct.top": {
+  "rust": "[91] [91]",
+  "he": "[(Box 1)] [91]"
+ },
+ "over-arith.recursive.field": {
+  "rust": "[1] [91]"
+ },
+ "over-arith.recursive.index": {
+  "rust": "[1] [91]"
+ },
+ "over-arith.recursive.kept": {
+  "rust": "[(Keep 91)] [91]",
+  "he": "[(Keep (Box 1))] [91]"
+ },
+ "over-arith.recursive.top": {
+  "rust": "[91] [91]",
+  "he": "[(Box 1)] [91]"
+ },
+ "over-call.arg.field": {
+  "rust": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "over-call.arg.index": {
+  "rust": "[92] [(Box 92)]",
+  "he": "[(Pair 1 2)] [(Box 92)]",
+  "he-compat": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "over-call.arg.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box 92)]"
+ },
+ "over-call.arg.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box 92)]"
+ },
+ "over-call.direct.field": {
+  "rust": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "over-call.direct.index": {
+  "rust": "[92] [(Box 92)]",
+  "he": "[(Pair 1 2)] [(Box 92)]",
+  "he-compat": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "over-call.direct.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box 92)]"
+ },
+ "over-call.direct.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box 92)]"
+ },
+ "over-call.recursive.field": {
+  "rust": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "over-call.recursive.index": {
+  "rust": "[92] [(Box 92)]",
+  "he": "[(Pair 1 2)] [(Box 92)]",
+  "he-compat": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "over-call.recursive.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box 92)]"
+ },
+ "over-call.recursive.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box 92)]"
+ },
+ "over-car.arg.field": {
+  "rust": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "over-car.arg.index": {
+  "rust": "[92] [(Box 92)]",
+  "he": "[(Pair 1 2)] [(Box 92)]",
+  "he-compat": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "over-car.arg.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box 92)]"
+ },
+ "over-car.arg.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box 92)]"
+ },
+ "over-car.direct.field": {
+  "rust": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "over-car.direct.index": {
+  "rust": "[92] [(Box 92)]",
+  "he": "[(Pair 1 2)] [(Box 92)]",
+  "he-compat": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "over-car.direct.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box 92)]"
+ },
+ "over-car.direct.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box 92)]"
+ },
+ "over-car.recursive.field": {
+  "rust": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "over-car.recursive.index": {
+  "rust": "[92] [(Box 92)]",
+  "he": "[(Pair 1 2)] [(Box 92)]",
+  "he-compat": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "over-car.recursive.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box 92)]"
+ },
+ "over-car.recursive.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box 92)]"
+ },
+ "over-collapse.arg.field": {
+  "rust": "[((Pair 1 2))] [(Box (92))]"
+ },
+ "over-collapse.arg.index": {
+  "rust": "[((Pair 1 2))] [(Box (92))]"
+ },
+ "over-collapse.arg.kept": {
+  "rust": "[(Keep (Box ((Pair 1 2))))] [(Box (92))]"
+ },
+ "over-collapse.arg.top": {
+  "rust": "[(Box ((Pair 1 2)))] [(Box (92))]"
+ },
+ "over-collapse.direct.field": {
+  "rust": "[((Pair 1 2))] [(Box (92))]"
+ },
+ "over-collapse.direct.index": {
+  "rust": "[((Pair 1 2))] [(Box (92))]"
+ },
+ "over-collapse.direct.kept": {
+  "rust": "[(Keep (Box ((Pair 1 2))))] [(Box (92))]"
+ },
+ "over-collapse.direct.top": {
+  "rust": "[(Box ((Pair 1 2)))] [(Box (92))]"
+ },
+ "over-collapse.recursive.field": {
+  "rust": "[((Pair 1 2))] [(Box (92))]"
+ },
+ "over-collapse.recursive.index": {
+  "rust": "[((Pair 1 2))] [(Box (92))]"
+ },
+ "over-collapse.recursive.kept": {
+  "rust": "[(Keep (Box ((Pair 1 2))))] [(Box (92))]"
+ },
+ "over-collapse.recursive.top": {
+  "rust": "[(Box ((Pair 1 2)))] [(Box (92))]"
+ },
+ "over-index.arg.field": {
+  "rust": "[(Pair 1 2)] [(Box 92)]",
+  "he": "[92] [(Box (Pair 1 2))]"
+ },
+ "over-index.arg.index": {
+  "rust": "[92] [(Box 92)]",
+  "he": "[92] [(Box (Pair 1 2))]",
+  "he-compat": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "over-index.arg.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box 92)]",
+  "he": "[(Keep (Box (Pair 1 2)))] [(Box (Pair 1 2))]"
+ },
+ "over-index.arg.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box 92)]",
+  "he": "[(Box (Pair 1 2))] [(Box (Pair 1 2))]"
+ },
+ "over-index.direct.field": {
+  "rust": "[92] [(Box (Pair 1 2))]"
+ },
+ "over-index.direct.index": {
+  "rust": "[92] [(Box (Pair 1 2))]"
+ },
+ "over-index.direct.kept": {
+  "rust": "[(Keep (Box 92))] [(Box (Pair 1 2))]",
+  "he": "[(Keep (Box (Pair 1 2)))] [(Box (Pair 1 2))]"
+ },
+ "over-index.direct.top": {
+  "rust": "[(Box 92)] [(Box (Pair 1 2))]",
+  "he": "[(Box (Pair 1 2))] [(Box (Pair 1 2))]"
+ },
+ "over-index.recursive.field": {
+  "rust": "[92] [(Box (Pair 1 2))]"
+ },
+ "over-index.recursive.index": {
+  "rust": "[92] [(Box (Pair 1 2))]"
+ },
+ "over-index.recursive.kept": {
+  "rust": "[(Keep (Box 92))] [(Box (Pair 1 2))]",
+  "he": "[(Keep (Box (Pair 1 2)))] [(Box (Pair 1 2))]"
+ },
+ "over-index.recursive.top": {
+  "rust": "[(Box 92)] [(Box (Pair 1 2))]",
+  "he": "[(Box (Pair 1 2))] [(Box (Pair 1 2))]"
+ },
+ "over-quote.arg.field": {
+  "rust": "[(quote (Pair 1 2))] [(Box (quote (Pair 1 2)))]"
+ },
+ "over-quote.arg.index": {
+  "rust": "[(quote (Pair 1 2))] [(Box (quote (Pair 1 2)))]"
+ },
+ "over-quote.arg.kept": {
+  "rust": "[(Keep (Box (quote (Pair 1 2))))] [(Box (quote (Pair 1 2)))]"
+ },
+ "over-quote.arg.top": {
+  "rust": "[(Box (quote (Pair 1 2)))] [(Box (quote (Pair 1 2)))]"
+ },
+ "over-quote.direct.field": {
+  "rust": "[(quote (Pair 1 2))] [(Box (quote (Pair 1 2)))]"
+ },
+ "over-quote.direct.index": {
+  "rust": "[(quote (Pair 1 2))] [(Box (quote (Pair 1 2)))]"
+ },
+ "over-quote.direct.kept": {
+  "rust": "[(Keep (Box (quote (Pair 1 2))))] [(Box (quote (Pair 1 2)))]"
+ },
+ "over-quote.direct.top": {
+  "rust": "[(Box (quote (Pair 1 2)))] [(Box (quote (Pair 1 2)))]"
+ },
+ "over-quote.recursive.field": {
+  "rust": "[(quote (Pair 1 2))] [(Box (quote (Pair 1 2)))]"
+ },
+ "over-quote.recursive.index": {
+  "rust": "[(quote (Pair 1 2))] [(Box (quote (Pair 1 2)))]"
+ },
+ "over-quote.recursive.kept": {
+  "rust": "[(Keep (Box (quote (Pair 1 2))))] [(Box (quote (Pair 1 2)))]"
+ },
+ "over-quote.recursive.top": {
+  "rust": "[(Box (quote (Pair 1 2)))] [(Box (quote (Pair 1 2)))]"
+ },
+ "over-raw.arg.field": {
+  "rust": "[(A B)] [(Box 93)]",
+  "he": "[93] [(Box (A B))]"
+ },
+ "over-raw.arg.index": {
+  "rust": "[93] [(Box 93)]",
+  "he": "[93] [(Box (A B))]",
+  "he-compat": "[(A B)] [(Box 93)]"
+ },
+ "over-raw.arg.kept": {
+  "rust": "[(Keep (Box (A B)))] [(Box 93)]",
+  "he": "[(Keep (Box (A B)))] [(Box (A B))]"
+ },
+ "over-raw.arg.top": {
+  "rust": "[(Box (A B))] [(Box 93)]",
+  "he": "[(Box (A B))] [(Box (A B))]"
+ },
+ "over-raw.direct.field": {
+  "rust": "[93] [(Box (A B))]"
+ },
+ "over-raw.direct.index": {
+  "rust": "[93] [(Box (A B))]"
+ },
+ "over-raw.direct.kept": {
+  "rust": "[(Keep (Box 93))] [(Box (A B))]",
+  "he": "[(Keep (Box (A B)))] [(Box (A B))]"
+ },
+ "over-raw.direct.top": {
+  "rust": "[(Box 93)] [(Box (A B))]",
+  "he": "[(Box (A B))] [(Box (A B))]"
+ },
+ "over-raw.recursive.field": {
+  "rust": "[93] [(Box (A B))]"
+ },
+ "over-raw.recursive.index": {
+  "rust": "[93] [(Box (A B))]"
+ },
+ "over-raw.recursive.kept": {
+  "rust": "[(Keep (Box 93))] [(Box (A B))]",
+  "he": "[(Keep (Box (A B)))] [(Box (A B))]"
+ },
+ "over-raw.recursive.top": {
+  "rust": "[(Box 93)] [(Box (A B))]",
+  "he": "[(Box (A B))] [(Box (A B))]"
+ },
+ "superpose.arg.field": {
+  "rust": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "superpose.arg.index": {
+  "rust": "[92] [(Box 92)]",
+  "he": "[(Pair 1 2)] [(Box 92)]",
+  "he-compat": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "superpose.arg.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box 92)]"
+ },
+ "superpose.arg.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box 92)]"
+ },
+ "superpose.direct.field": {
+  "rust": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "superpose.direct.index": {
+  "rust": "[92] [(Box 92)]",
+  "he": "[(Pair 1 2)] [(Box 92)]",
+  "he-compat": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "superpose.direct.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box 92)]"
+ },
+ "superpose.direct.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box 92)]"
+ },
+ "superpose.recursive.field": {
+  "rust": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "superpose.recursive.index": {
+  "rust": "[92] [(Box 92)]",
+  "he": "[(Pair 1 2)] [(Box 92)]",
+  "he-compat": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "superpose.recursive.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box 92)]"
+ },
+ "superpose.recursive.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box 92)]"
+ },
+ "template.case": {
+  "rust": "[(Box 1)]"
+ },
+ "template.chain": {
+  "rust": "[91]",
+  "he": "[(Box 1)]",
+  "he-compat": "[(Box 1)]"
+ },
+ "template.equation": {
+  "rust": "[(Box 1)]"
+ },
+ "template.if": {
+  "rust": "[(Box 1)]"
+ },
+ "template.let": {
+  "rust": "[91]",
+  "he": "[(Box 1)]",
+  "he-compat": "[(Box 1)]"
+ },
+ "template.let-pattern": {
+  "rust": "[91]",
+  "he": "[(Box 1)]",
+  "he-compat": "[(Box 1)]"
+ },
+ "template.match": {
+  "rust": "[91]"
+ },
+ "template.unify": {
+  "rust": "[91]",
+  "he": "[(Box 1)]",
+  "he-compat": "[(Box 1)]"
+ },
+ "typed-atom.arg.field": {
+  "rust": "[92] [(Box (Pair 1 2))]"
+ },
+ "typed-atom.arg.index": {
+  "rust": "[92] [(Box (Pair 1 2))]"
+ },
+ "typed-atom.arg.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box (Pair 1 2))]"
+ },
+ "typed-atom.arg.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box (Pair 1 2))]"
+ },
+ "typed-atom.direct.field": {
+  "rust": "[92] [(Box (Pair 1 2))]"
+ },
+ "typed-atom.direct.index": {
+  "rust": "[92] [(Box (Pair 1 2))]"
+ },
+ "typed-atom.direct.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box (Pair 1 2))]"
+ },
+ "typed-atom.direct.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box (Pair 1 2))]"
+ },
+ "typed-atom.recursive.field": {
+  "rust": "[92] [(Box (Pair 1 2))]"
+ },
+ "typed-atom.recursive.index": {
+  "rust": "[92] [(Box (Pair 1 2))]"
+ },
+ "typed-atom.recursive.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box (Pair 1 2))]"
+ },
+ "typed-atom.recursive.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box (Pair 1 2))]"
+ },
+ "typed-call.arg.field": {
+  "rust": "[(Pair 1 2)] [(Error 92 (BadType Pair Number))]"
+ },
+ "typed-call.arg.index": {
+  "rust": "[(Error 92 (BadType Pair Number))]",
+  "he": "[(Pair 1 2)] [(Error 92 (BadType Pair Number))]",
+  "he-compat": "[(Pair 1 2)] [(Error 92 (BadType Pair Number))]"
+ },
+ "typed-call.arg.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Error 92 (BadType Pair Number))]"
+ },
+ "typed-call.arg.top": {
+  "rust": "[(Box (Pair 1 2))] [(Error 92 (BadType Pair Number))]"
+ },
+ "typed-call.direct.field": {
+  "rust": "[(Pair 1 2)] [(Error 92 (BadType Pair Number))]"
+ },
+ "typed-call.direct.index": {
+  "rust": "[(Error 92 (BadType Pair Number))]",
+  "he": "[(Pair 1 2)] [(Error 92 (BadType Pair Number))]",
+  "he-compat": "[(Pair 1 2)] [(Error 92 (BadType Pair Number))]"
+ },
+ "typed-call.direct.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Error 92 (BadType Pair Number))]"
+ },
+ "typed-call.direct.top": {
+  "rust": "[(Box (Pair 1 2))] [(Error 92 (BadType Pair Number))]"
+ },
+ "typed-call.recursive.field": {
+  "rust": "[(Pair 1 2)] [(Error 92 (BadType Pair Number))]"
+ },
+ "typed-call.recursive.index": {
+  "rust": "[(Error 92 (BadType Pair Number))]",
+  "he": "[(Pair 1 2)] [(Error 92 (BadType Pair Number))]",
+  "he-compat": "[(Pair 1 2)] [(Error 92 (BadType Pair Number))]"
+ },
+ "typed-call.recursive.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Error 92 (BadType Pair Number))]"
+ },
+ "typed-call.recursive.top": {
+  "rust": "[(Box (Pair 1 2))] [(Error 92 (BadType Pair Number))]"
+ },
+ "typed-ev.arg.field": {
+  "rust": "[(Pair 1 2)] [(Error 92 (BadType Pair Number))]",
+  "he-compat": "[(Error 92 (BadType Pair Number))]"
+ },
+ "typed-ev.arg.index": {
+  "rust": "[(Error 92 (BadType Pair Number))]",
+  "he": "[(Pair 1 2)] [(Error 92 (BadType Pair Number))]"
+ },
+ "typed-ev.arg.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Error 92 (BadType Pair Number))]"
+ },
+ "typed-ev.arg.top": {
+  "rust": "[(Box (Pair 1 2))] [(Error 92 (BadType Pair Number))]"
+ },
+ "typed-ev.direct.field": {
+  "rust": "[(Pair 1 2)] [(Error 92 (BadType Pair Number))]",
+  "he-compat": "[(Error 92 (BadType Pair Number))]"
+ },
+ "typed-ev.direct.index": {
+  "rust": "[(Error 92 (BadType Pair Number))]",
+  "he": "[(Pair 1 2)] [(Error 92 (BadType Pair Number))]"
+ },
+ "typed-ev.direct.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Error 92 (BadType Pair Number))]"
+ },
+ "typed-ev.direct.top": {
+  "rust": "[(Box (Pair 1 2))] [(Error 92 (BadType Pair Number))]"
+ },
+ "typed-ev.recursive.field": {
+  "rust": "[(Pair 1 2)] [(Error 92 (BadType Pair Number))]",
+  "he-compat": "[(Error 92 (BadType Pair Number))]"
+ },
+ "typed-ev.recursive.index": {
+  "rust": "[(Error 92 (BadType Pair Number))]",
+  "he": "[(Pair 1 2)] [(Error 92 (BadType Pair Number))]"
+ },
+ "typed-ev.recursive.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Error 92 (BadType Pair Number))]"
+ },
+ "typed-ev.recursive.top": {
+  "rust": "[(Box (Pair 1 2))] [(Error 92 (BadType Pair Number))]"
+ },
+ "unique.arg.field": {
+  "rust": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "unique.arg.index": {
+  "rust": "[92] [(Box 92)]",
+  "he": "[(Pair 1 2)] [(Box 92)]",
+  "he-compat": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "unique.arg.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box 92)]"
+ },
+ "unique.arg.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box 92)]"
+ },
+ "unique.direct.field": {
+  "rust": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "unique.direct.index": {
+  "rust": "[92] [(Box 92)]",
+  "he": "[(Pair 1 2)] [(Box 92)]",
+  "he-compat": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "unique.direct.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box 92)]"
+ },
+ "unique.direct.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box 92)]"
+ },
+ "unique.recursive.field": {
+  "rust": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "unique.recursive.index": {
+  "rust": "[92] [(Box 92)]",
+  "he": "[(Pair 1 2)] [(Box 92)]",
+  "he-compat": "[(Pair 1 2)] [(Box 92)]"
+ },
+ "unique.recursive.kept": {
+  "rust": "[(Keep (Box (Pair 1 2)))] [(Box 92)]"
+ },
+ "unique.recursive.top": {
+  "rust": "[(Box (Pair 1 2))] [(Box 92)]"
+ }
+}

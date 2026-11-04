@@ -1129,6 +1129,8 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
   [CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_COLLECTION_RECLAIMED_BYTES] = "term-universe-collection-reclaimed-bytes",
   [CETTA_RUNTIME_COUNTER_ATOM_COMPARE_PAIR] = "atom-compare-pair",
   [CETTA_RUNTIME_COUNTER_NATIVE_QUERY_BITS_LEG] = "native-query-bits-leg",
+  [CETTA_RUNTIME_COUNTER_MATCH_POSITION_INDEX_DIRECTORY_PROBE] = "match-position-index-directory-probe",
+  [CETTA_RUNTIME_COUNTER_MATCH_POSITION_INDEX_DIRECTORY_PROBE_PEAK] = "match-position-index-directory-probe-peak",
 };
 
 #endif

@@ -72,6 +72,8 @@ typedef struct {
     size_t len;
     size_t pos;
     size_t released;
+    /* Parsed nodes per slice, tested between whole forms; 0: unlimited. */
+    uint32_t slice_tokens;
 } PeTTaCompiledDocumentV1;
 
 bool petta_compiled_document_v1_open(PeTTaCompiledDocumentV1 *document,

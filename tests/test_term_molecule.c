@@ -27,12 +27,20 @@ static TermUniverse g_universe;
  * refused. */
 void *__real_realloc(void *pointer, size_t bytes);
 static void *g_refused;
+static void *g_zero_grown;
+static size_t g_old_bytes;
 void *__wrap_realloc(void *pointer, size_t bytes) {
     if (g_refused && pointer == g_refused) {
         g_refused = NULL;
         return NULL;
     }
-    return __real_realloc(pointer, bytes);
+    void *grown = __real_realloc(pointer, bytes);
+    if (grown && g_zero_grown && pointer == g_zero_grown) {
+        assert(bytes >= g_old_bytes);
+        memset((char *)grown + g_old_bytes, 0, bytes - g_old_bytes);
+        g_zero_grown = NULL;
+    }
+    return grown;
 }
 
 static Atom *sym(const char *name) { return atom_symbol(&g_arena, name); }
@@ -159,6 +167,153 @@ static Atom *random_term(int depth, const char *const *names) {
     }
 }
 
+static void test_frame_growth_recovery(void) {
+    CettaMolStore m;
+    cetta_mol_store_init(&m, &g_universe);
+    for (uint32_t frame = 0u; frame < 16u; frame++)
+        assert(cetta_mol_frame(&m) == frame);
+    assert(m.frame_cap == 16u);
+    AtomId x = store(var("skipped-x")), y = store(var("skipped-y"));
+    AtomId z = store(var("skipped-z"));
+    AtomId gx = store(ex(2, sym("skipped-g"), var("skipped-x")));
+    CettaMolMark before = cetta_mol_mark(&m);
+    g_refused = m.frame_bound;
+    uint32_t skipped = cetta_mol_frame(&m);
+    assert(skipped == 16u && m.frame_cap == 16u && !g_refused);
+    assert(cetta_mol_unify(&m, (CettaMol){y, 0u}, (CettaMol){x, skipped}) == CETTA_MOL_OK);
+    assert(cetta_mol_unify(&m, (CettaMol){y, 0u}, (CettaMol){z, skipped}) == CETTA_MOL_OK);
+    /* A realloc may legally zero the newly extended tail. Previously that
+     * made the skipped frame appear free despite both existing bindings. */
+    g_zero_grown = m.frame_bound;
+    g_old_bytes = m.frame_cap * sizeof(*m.frame_bound);
+    assert(cetta_mol_frame(&m) == 17u && !g_zero_grown);
+    assert(cetta_mol_unify(&m, (CettaMol){y, 0u}, (CettaMol){gx, skipped}) == CETTA_MOL_FAIL);
+    assert(m.frame_bound[skipped] == 2u && m.frame_bound[17u] == 0u);
+    cetta_mol_undo(&m, before);
+    assert(m.cell_len == before.cells && m.trail_len == before.trail &&
+           m.var_len == before.vars && m.frames == before.frames &&
+           m.frame_bound[skipped] == 0u);
+    assert(cetta_mol_frame(&m) == skipped && m.frame_bound[skipped] == 0u);
+    cetta_mol_store_free(&m);
+}
+
+static void test_stable_alignment(void) {
+    AtomId a = store(sym("stable-a")), b = store(sym("stable-b"));
+    AtomId x = store(var("stable-x"));
+    AtomId pattern = store(ex(3, sym("stable"), var("stable-x"), var("stable-x")));
+    AtomId aa = store(ex(3, sym("stable"), sym("stable-a"), sym("stable-a")));
+    AtomId bb = store(ex(3, sym("stable"), sym("stable-b"), sym("stable-b")));
+    AtomId gx = store(ex(2, sym("stable-g"), var("stable-x")));
+    CettaSkeleton spine;
+    assert(cetta_skeleton_of(&g_universe, aa, &spine));
+    assert(cetta_skeleton_generalize(&spine, &g_universe, bb));
+    assert(spine.holes == 2u);
+    CettaMolStore m;
+    cetta_mol_store_init(&m, &g_universe);
+    uint32_t frame = cetta_mol_frame(&m);
+    assert(cetta_mol_touch(&m, (CettaMol){pattern, frame}) == CETTA_MOL_OK);
+    CettaMolMark lifetime = cetta_mol_mark(&m);
+    CettaMolAligned original;
+    assert(cetta_mol_align(&m, (CettaMol){pattern, frame}, &spine, &original) == CETTA_MOL_OK);
+    assert(original.parts[0].id == x && original.parts[1].id == x);
+    CettaMolAligned cached = original;
+    assert(cetta_mol_aligned_stable_cells(&m, &cached, lifetime) == CETTA_MOL_OK);
+    assert(cached.parts[0].id == CETTA_ATOM_ID_NONE &&
+           cached.parts[0].at < lifetime.cells &&
+           cached.parts[1].id == CETTA_ATOM_ID_NONE &&
+           cached.parts[0].at == cached.parts[1].at);
+    for (uint32_t row = 0u; row < 2u; row++) {
+        uint32_t fact_frame = cetta_mol_frame(&m);
+        AtomId value = row ? b : a;
+        AtomId holes[2] = {value, value};
+        assert(cetta_mol_unify_aligned(&m, &cached, holes, fact_frame) == CETTA_MOL_OK);
+        assert(mol_key(&m, pattern, frame) == (row ? bb : aa));
+        cetta_mol_undo(&m, lifetime);
+        assert(m.cell_len == lifetime.cells && m.var_len == lifetime.vars &&
+               m.trail_len == lifetime.trail && m.frames == lifetime.frames);
+        assert(m.cells[cached.parts[0].at].id == CETTA_ATOM_ID_NONE);
+    }
+    AtomId conflict[2] = {a, b};
+    assert(cetta_mol_unify_aligned(&m, &cached, conflict, cetta_mol_frame(&m)) == CETTA_MOL_FAIL);
+    cetta_mol_undo(&m, lifetime);
+    /* Fact variables retain their own frame, including an indirect occurs
+     * failure after the first cached hole was bound to g(fact-x). */
+    AtomId open[2] = {x, x};
+    assert(cetta_mol_unify_aligned(&m, &cached, open, cetta_mol_frame(&m)) == CETTA_MOL_OK);
+    cetta_mol_undo(&m, lifetime);
+    AtomId occurs[2] = {gx, x};
+    assert(cetta_mol_unify_aligned(&m, &cached, occurs, cetta_mol_frame(&m)) == CETTA_MOL_FAIL);
+    cetta_mol_undo(&m, lifetime);
+    /* A prior leg's alias is fixed throughout this inner row loop. */
+    uint32_t earlier_frame = cetta_mol_frame(&m);
+    assert(cetta_mol_unify(&m, (CettaMol){x, frame}, (CettaMol){x, earlier_frame}) == CETTA_MOL_OK);
+    CettaMolMark inner = cetta_mol_mark(&m);
+    assert(cetta_mol_align(&m, (CettaMol){pattern, earlier_frame}, &spine, &original) == CETTA_MOL_OK);
+    assert(cetta_mol_aligned_stable_cells(&m, &original, inner) == CETTA_MOL_OK);
+    assert(original.parts[0].id == CETTA_ATOM_ID_NONE && original.parts[0].at == cached.parts[0].at);
+    for (uint32_t row = 0u; row < 2u; row++) {
+        AtomId value = row ? b : a;
+        AtomId holes[2] = {value, value};
+        assert(cetta_mol_unify_aligned(&m, &original, holes, cetta_mol_frame(&m)) == CETTA_MOL_OK);
+        assert(mol_key(&m, pattern, earlier_frame) == (row ? bb : aa));
+        cetta_mol_undo(&m, inner);
+        assert(m.trail_len == inner.trail);
+    }
+    cetta_mol_store_free(&m);
+
+    /* Prefix cell indices alone do not certify aliases added after the
+     * mark: x -> y would disappear on undo while cached y survived. */
+    cetta_mol_store_init(&m, &g_universe);
+    frame = cetta_mol_frame(&m);
+    AtomId y = store(var("stable-y"));
+    assert(cetta_mol_touch(&m, (CettaMol){pattern, frame}) == CETTA_MOL_OK);
+    assert(cetta_mol_touch(&m, (CettaMol){y, frame}) == CETTA_MOL_OK);
+    lifetime = cetta_mol_mark(&m);
+    assert(cetta_mol_align(&m, (CettaMol){pattern, frame}, &spine, &original) == CETTA_MOL_OK);
+    assert(cetta_mol_unify(&m, (CettaMol){x, frame}, (CettaMol){y, frame}) == CETTA_MOL_OK);
+    assert(cetta_mol_aligned_stable_cells(&m, &original, lifetime) == CETTA_MOL_DECLINE);
+    assert(original.parts[0].id == x && original.parts[1].id == x);
+    cetta_mol_undo(&m, lifetime);
+    assert(cetta_mol_aligned_stable_cells(&m, &original, lifetime) == CETTA_MOL_OK);
+    AtomId isolated[2] = {a, a};
+    assert(cetta_mol_unify_aligned(&m, &original, isolated, cetta_mol_frame(&m)) == CETTA_MOL_OK);
+    assert(mol_key(&m, x, frame) == a && mol_key(&m, y, frame) != a);
+    cetta_mol_store_free(&m);
+
+    /* A cell created by normalization is younger than the row mark. Undo
+     * removes it; reusing its index for another value must not capture it. */
+    cetta_mol_store_init(&m, &g_universe);
+    frame = cetta_mol_frame(&m);
+    lifetime = cetta_mol_mark(&m);
+    assert(cetta_mol_align(&m, (CettaMol){pattern, frame}, &spine, &original) == CETTA_MOL_OK);
+    assert(cetta_mol_aligned_stable_cells(&m, &original, lifetime) == CETTA_MOL_OK);
+    assert(m.cell_len > lifetime.cells && original.parts[0].id == x && original.parts[1].id == x);
+    cetta_mol_undo(&m, lifetime);
+    CettaMol reused;
+    assert(cetta_mol_cell(&m, &reused) == CETTA_MOL_OK);
+    assert(cetta_mol_unify(&m, reused, (CettaMol){a, CETTA_MOL_GROUND}) == CETTA_MOL_OK);
+    AtomId reused_holes[2] = {b, b};
+    assert(cetta_mol_unify_aligned(&m, &original, reused_holes, cetta_mol_frame(&m)) == CETTA_MOL_OK);
+    assert(mol_key(&m, pattern, frame) == bb);
+    cetta_mol_store_free(&m);
+
+    /* Refused parallel-array growth declines without publishing a cached
+     * ephemeral cell or a capacity that only one of the arrays holds. */
+    cetta_mol_store_init(&m, &g_universe);
+    frame = cetta_mol_frame(&m);
+    for (uint32_t i = 0u; i < 16u; i++)
+        assert(cetta_mol_cell(&m, &reused) == CETTA_MOL_OK);
+    lifetime = cetta_mol_mark(&m);
+    assert(cetta_mol_align(&m, (CettaMol){pattern, frame}, &spine, &original) == CETTA_MOL_OK);
+    g_refused = m.cell_frames;
+    assert(cetta_mol_aligned_stable_cells(&m, &original, lifetime) == CETTA_MOL_DECLINE);
+    assert(!g_refused && m.cell_len == 16u && m.cell_cap == 16u && original.parts[0].id == x);
+    cetta_mol_undo(&m, lifetime);
+    assert(cetta_mol_aligned_stable_cells(&m, &original, lifetime) == CETTA_MOL_OK);
+    assert(original.parts[0].id == x && original.parts[1].id == x);
+    cetta_mol_store_free(&m);
+}
+
 int main(void) {
     SymbolTable symbols;
     VarInternTable var_intern;
@@ -173,6 +328,8 @@ int main(void) {
     arena_init(&persistent);
     term_universe_init(&g_universe);
     term_universe_set_persistent_arena(&g_universe, &persistent);
+    test_frame_growth_recovery();
+    test_stable_alignment();
     CettaMolStore m;
     cetta_mol_store_init(&m, &g_universe);
 

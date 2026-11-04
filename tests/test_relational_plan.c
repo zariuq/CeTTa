@@ -794,6 +794,221 @@ static void randomized(TermUniverse *universe, Arena *arena) {
     }
 }
 
+typedef struct {
+    TermUniverse *universe;
+    size_t count;
+    size_t expected;
+    bool seen[256];
+    bool projected;
+} DenseDiagonalVisit;
+
+static bool dense_diagonal_visit(void *context, const AtomId *values,
+                                  uint64_t weight) {
+    DenseDiagonalVisit *visit = context;
+    int64_t x = tu_int(visit->universe, values[0]);
+    int64_t z = tu_int(visit->universe, values[2]);
+    assert(x >= 0 && (size_t)x < visit->expected && x == z && weight == 1u);
+    if (!visit->projected)
+        assert(tu_int(visit->universe, values[1]) == x);
+    assert((size_t)x == visit->expected - 1u - visit->count);
+    assert(!visit->seen[x]);
+    visit->seen[x] = true;
+    visit->count++;
+    return true;
+}
+
+static void dense_diagonal_space(Space *space, Arena *arena, size_t n) {
+    for (size_t x = n; x; x--) {
+        for (size_t y = n; y; y--) {
+            Atom *row[] = {atom_symbol(arena, "hr"),
+                atom_int(arena, (int64_t)(x - 1u)), atom_int(arena, (int64_t)(y - 1u))};
+            space_add(space, atom_expr(arena, row, 3u));
+        }
+        const char *heads[] = {"hs", "ht"};
+        for (size_t h = 0u; h < 2u; h++) {
+            Atom *row[] = {atom_symbol(arena, heads[h]),
+                atom_int(arena, (int64_t)(x - 1u)), atom_int(arena, (int64_t)(x - 1u))};
+            space_add(space, atom_expr(arena, row, 3u));
+        }
+    }
+}
+
+/* One full relation beside singleton conditional rows: the sparse branch
+ * must account its probes and avoid a word-universe scan per (x,y). */
+static void dense_conditional_domains(TermUniverse *universe, Arena *arena) {
+    for (size_t n = 64u; n <= 256u; n *= 2u) {
+        Space space;
+        space_init_with_universe(&space, universe);
+        space.kind = SPACE_KIND_STACK;
+        dense_diagonal_space(&space, arena, n);
+        Atom *family = parse(arena, "(, (hr $x $y) (hs $y $z) (ht $x $z))");
+        CettaDenseQuery *query = NULL;
+        assert(cetta_dense_query_prepare(&space, arena, family->expr.elems + 1u, 3u, &query));
+        CettaDenseWork work = {0};
+        CettaDenseProbeWork probes;
+        bool cold_kept[] = {true, false, true};
+        DenseDiagonalVisit cold = {.universe = universe, .expected = n, .projected = true};
+        uint64_t cold_count = 99u;
+        assert(cetta_dense_query_run(query, cold_kept, dense_diagonal_visit, &cold, &cold_count, NULL));
+        assert(cold_count == n && cold.count == n);
+        cetta_dense_query_probe_work(query, &probes);
+        assert(probes.index_items == 0u && probes.index_words == 0u && probes.index_comparisons == 0u);
+        bool none[] = {false, false, false};
+        uint64_t count = 99u;
+        assert(cetta_dense_query_run(query, none, NULL, NULL, &count, &work));
+        assert(count == n);
+        cetta_dense_query_probe_work(query, &probes);
+        assert(probes.list_items > 0u && probes.membership_tests > 0u);
+        assert(work.words <= n * n / 8u);
+        assert(work.words + probes.list_items + probes.membership_tests <= 6u * n * n);
+        size_t budget = 64u * (n * n + 2u * n);
+        if (budget < (8u << 20))
+            budget = 8u << 20;
+        assert(probes.retained_bytes <= budget);
+        printf("dense-hybrid-work n=%zu answers=%llu words=%llu lists=%llu probes=%llu build-items=%llu build-words=%llu build-comparisons=%llu retained=%zu scratch=%zu\n",
+            n, (unsigned long long)count, (unsigned long long)work.words,
+            (unsigned long long)probes.list_items, (unsigned long long)probes.membership_tests,
+            (unsigned long long)probes.index_items, (unsigned long long)probes.index_words,
+            (unsigned long long)probes.index_comparisons, probes.retained_bytes, probes.scratch_peak_bytes);
+        DenseDiagonalVisit visit = {.universe = universe, .expected = n};
+        assert(cetta_dense_query_run(query, NULL, dense_diagonal_visit, &visit, &count, NULL));
+        assert(count == n && visit.count == n);
+        bool kept[] = {true, false, true};
+        visit = (DenseDiagonalVisit){.universe = universe, .expected = n, .projected = true};
+        assert(cetta_dense_query_run(query, kept, dense_diagonal_visit, &visit, &count, NULL));
+        assert(count == n && visit.count == n);
+        cetta_dense_query_free(query);
+        /* Both bound-neighbour domains now require reverse CSR indexes. */
+        family = parse(arena, "(, (hr $y $x) (hs $z $y) (ht $z $x))");
+        query = NULL;
+        assert(cetta_dense_query_prepare(&space, arena, family->expr.elems + 1u, 3u, &query));
+        visit = (DenseDiagonalVisit){.universe = universe, .expected = n};
+        assert(cetta_dense_query_run(query, NULL, dense_diagonal_visit, &visit, &count, NULL));
+        assert(count == n && visit.count == n);
+        cetta_dense_query_free(query);
+        /* A fixed neighbour produces a sparse static base. */
+        family = parse(arena, "(, (hr $x $y) (hs $y $z) (ht 0 $x) (hs $x $z))");
+        query = NULL;
+        assert(cetta_dense_query_prepare(&space, arena, family->expr.elems + 1u, 4u, &query));
+        visit = (DenseDiagonalVisit){.universe = universe, .expected = 1u};
+        assert(cetta_dense_query_run(query, NULL, dense_diagonal_visit, &visit, &count, NULL));
+        assert(count == 1u && visit.count == 1u);
+        cetta_dense_query_free(query);
+        space_free(&space);
+    }
+    puts("PASS: conditional sparse domains preserve complete bags, projected OR, reverse rows and fixed bases with quadratic measured work");
+}
+
+typedef struct {
+    TermUniverse *universe;
+    int64_t triples[1024][3];
+    size_t length, next;
+} DensePairVisit;
+static bool dense_pair_visit(void *context, const AtomId *values, uint64_t weight) {
+    DensePairVisit *expected = context;
+    assert(expected->next < expected->length && weight == 1u);
+    for (size_t c = 0u; c < 3u; c++)
+        assert(tu_int(expected->universe, values[c]) == expected->triples[expected->next][c]);
+    expected->next++;
+    return true;
+}
+
+/* Two-entry asymmetric rows exercise actual sparse sorting and reverse
+ * indexes. Exact callback order is the original dense key order. */
+static void dense_sparse_order(TermUniverse *universe, Arena *arena) {
+    const size_t n = 256u;
+    Space space;
+    space_init_with_universe(&space, universe);
+    space.kind = SPACE_KIND_STACK;
+    for (size_t x = n; x; x--) {
+        for (size_t y = n; y; y--) {
+            Atom *row[] = {atom_symbol(arena, "order-r"),
+                atom_int(arena, (int64_t)(x - 1u)), atom_int(arena, (int64_t)(y - 1u))};
+            space_add(&space, atom_expr(arena, row, 3u));
+        }
+    }
+    for (size_t x = 0u; x < n; x++) {
+        const char *heads[] = {"order-s", "order-t"};
+        for (size_t h = 0u; h < 2u; h++) {
+            for (size_t d = 0u; d < 2u; d++) {
+                Atom *row[] = {atom_symbol(arena, heads[h]), atom_int(arena, x),
+                    atom_int(arena, (int64_t)((x + d) % n))};
+                space_add(&space, atom_expr(arena, row, 3u));
+            }
+        }
+    }
+    for (size_t reverse = 0u; reverse < 2u; reverse++) {
+        Atom *family = parse(arena, reverse
+            ? "(, (order-r $x $y) (order-s $z $y) (order-t $z $x))"
+            : "(, (order-r $x $y) (order-s $y $z) (order-t $x $z))");
+        DensePairVisit expected = {.universe = universe};
+        for (size_t x = n; x; x--) {
+            for (size_t y = n; y; y--) {
+                for (size_t z = n; z; z--) {
+                    size_t a = reverse ? z - 1u : x - 1u;
+                    size_t b = reverse ? x - 1u : z - 1u;
+                    size_t c = reverse ? z - 1u : y - 1u;
+                    size_t d = reverse ? y - 1u : z - 1u;
+                    if ((b == a || b == (a + 1u) % n) &&
+                        (d == c || d == (c + 1u) % n)) {
+                        assert(expected.length < 1024u);
+                        expected.triples[expected.length][0] = (int64_t)(x - 1u);
+                        expected.triples[expected.length][1] = (int64_t)(y - 1u);
+                        expected.triples[expected.length++][2] = (int64_t)(z - 1u);
+                    }
+                }
+            }
+        }
+        assert(expected.length == 4u * n);
+        CettaDenseQuery *query = NULL;
+        assert(cetta_dense_query_prepare(&space, arena, family->expr.elems + 1u, 3u, &query));
+        uint64_t count = 99u;
+        assert(cetta_dense_query_run(query, NULL, dense_pair_visit, &expected, &count, NULL));
+        assert(count == expected.length && expected.next == expected.length);
+        CettaDenseProbeWork work;
+        cetta_dense_query_probe_work(query, &work);
+        assert(work.index_comparisons > 0u && work.list_items > 0u);
+        cetta_dense_query_free(query);
+    }
+    space_free(&space);
+    puts("PASS: asymmetric two-key sparse rows preserve every tuple and exact callback order in both index directions");
+}
+
+#ifdef CETTA_RELATIONAL_FAULT_CONTROLS
+static void dense_conditional_faults(TermUniverse *universe, Arena *arena) {
+    Space space;
+    space_init_with_universe(&space, universe);
+    space.kind = SPACE_KIND_STACK;
+    dense_diagonal_space(&space, arena, 8u);
+    Atom *family = parse(arena, "(, (hr $y $x) (hs $z $y) (ht $z $x))");
+    size_t refused = 0u, passed = 0u;
+    for (size_t budget = 0u; budget < 24u; budget++) {
+        CettaDenseQuery *query = NULL;
+        assert(cetta_dense_query_prepare(&space, arena, family->expr.elems + 1u, 3u, &query));
+        DenseDiagonalVisit visit = {.universe = universe, .expected = 8u};
+        uint64_t count = 99u;
+        allocation_budget = budget;
+        bool ok = cetta_dense_query_run(query, NULL, dense_diagonal_visit, &visit, &count, NULL);
+        allocation_budget = SIZE_MAX;
+        if (ok) {
+            assert(count == 8u && visit.count == 8u);
+            passed++;
+        } else {
+            assert(visit.count == 0u);
+            refused++;
+        }
+        /* A refused reverse index must not publish a half-built cache. */
+        visit = (DenseDiagonalVisit){.universe = universe, .expected = 8u};
+        assert(cetta_dense_query_run(query, NULL, dense_diagonal_visit, &visit, &count, NULL));
+        assert(count == 8u && visit.count == 8u);
+        cetta_dense_query_free(query);
+    }
+    assert(refused > 0u && passed > 0u);
+    space_free(&space);
+    puts("PASS: hybrid index allocation refusal is effect-free and the same query retries without a partial reverse cache");
+}
+#endif
+
 int main(void) {
     SymbolTable symbols;
     symbol_table_init(&symbols);
@@ -818,8 +1033,11 @@ int main(void) {
     overflow(&universe, &arena);
     stored_variables(&universe, &arena);
     dense_counts(&universe, &arena);
+    dense_conditional_domains(&universe, &arena);
+    dense_sparse_order(&universe, &arena);
 #ifdef CETTA_RELATIONAL_FAULT_CONTROLS
     allocation_faults(&universe, &arena);
+    dense_conditional_faults(&universe, &arena);
 #endif
     term_universe_free(&universe);
     arena_free(&arena);

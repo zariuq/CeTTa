@@ -2211,6 +2211,14 @@ bool prime_need_branch_state_merge_nonempty(
     return true;
 }
 
+/* A copied value does not retain the separate identity used by state events.
+ * Each arena that owns an event also borrows that descriptor's storage. */
+static bool prime_need_receipt_hold_state(
+    Arena *owner, const PrimeNeedReceiptEvent *event) {
+    return !event->state_cell || !eval_resource_descriptor_hold ||
+        eval_resource_descriptor_hold(owner, GV_STATE, event->state_cell);
+}
+
 static bool prime_need_receipt_append_with_lifetime(
     Arena *owner, const PrimeNeedReceipt *base,
     PrimeNeedReceiptEvent event, bool branch_local,
@@ -2227,6 +2235,8 @@ static bool prime_need_receipt_append_with_lifetime(
     uint64_t event_id = prime_need_fresh_nonzero(
         &g_prime_need_next_receipt_node);
     if (session_id == 0u || event_id == 0u)
+        return false;
+    if (!prime_need_receipt_hold_state(actual_owner, &event))
         return false;
     Atom *before = event.before
         ? atom_deep_copy(actual_owner, event.before) : NULL;
@@ -2786,6 +2796,8 @@ bool prime_need_branch_state_promote(
         copy->right = right;
         copy->owner = dst;
         if (source->has_event) {
+            if (!prime_need_receipt_hold_state(dst, &source->event))
+                goto fail;
             copy->event.before = source->event.before
                 ? atom_deep_copy(dst, source->event.before) : NULL;
             copy->event.after = source->event.after
@@ -2928,6 +2940,10 @@ bool prime_need_branch_state_promote_suffix_with_session(
         copy->right = right;
         copy->owner = dst;
         if (source->has_event) {
+            if (!prime_need_receipt_hold_state(dst, &source->event)) {
+                ok = false;
+                break;
+            }
             copy->event.before = source->event.before
                 ? atom_deep_copy_session_copy(
                       copy_session, source->event.before)

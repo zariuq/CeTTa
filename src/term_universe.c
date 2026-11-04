@@ -5,6 +5,7 @@
 #include "string_literal.h"
 
 #include <inttypes.h>
+#include <limits.h>
 #include <math.h>
 #include <pthread.h>
 #include <stdarg.h>
@@ -16,6 +17,51 @@
 #include <execinfo.h>
 #endif
 
+typedef struct TermUniverseCountedRoots {
+    TermUniverse *universe;
+    /* Distinct uncounted roots protected until this sweep ends. */
+    size_t *listed;
+    size_t listed_len, listed_cap;
+    uint64_t roots, invalid_roots;
+    bool failed;
+    struct TermUniverseCountedRoots *previous;
+} TermUniverseCountedRoots;
+static _Thread_local TermUniverseCountedRoots *g_term_universe_counted_roots;
+static void term_universe_counted_admit_provider(
+    TermUniverse *, TermUniverseRootProvider, void *);
+
+#if CETTA_BUILD_WITH_TERM_UNIVERSE_COLLECTION_CHECKS
+/* A checked trace is a current ownership oracle, not a snapshot that survives
+ * callbacks which change roots. Contexts stack for nested different TUs. */
+typedef struct TermUniverseCheckedTrace {
+    TermUniverse *universe;
+    uint64_t *live;
+    size_t words;
+    const size_t *protected_roots;
+    size_t protected_count;
+    bool dirty, tracing;
+    struct TermUniverseCheckedTrace *previous;
+} TermUniverseCheckedTrace;
+static _Thread_local TermUniverseCheckedTrace *g_term_universe_checked_trace;
+#ifdef CETTA_TU_CHECKED_TRACE_DIAGNOSTICS
+uint64_t cetta_test_checked_trace_refreshes;
+#endif
+static TermUniverseCheckedTrace *term_universe_checked_context(const TermUniverse *u) {
+    for (TermUniverseCheckedTrace *t = g_term_universe_checked_trace; t; t = t->previous)
+        if (t->universe == u) return t;
+    return NULL;
+}
+static void term_universe_checked_roots_changed(TermUniverse *u) {
+    TermUniverseCheckedTrace *t = term_universe_checked_context(u);
+    if (!t) return;
+    if (t->tracing) {
+        fputs("CeTTa: a checked root enumerator changes ownership while tracing\n", stderr);
+        abort();
+    }
+    t->dirty = true;
+}
+#endif
+
 #define CETTA_TERM_UNIVERSE_COPY_MEMO_INLINE_CAP 64u
 #define CETTA_TERM_UNIVERSE_SOURCE_MEMO_CAP (1u << 16)
 #define CETTA_TERM_VARIABLE_SUPPORT_BLOCK_SIZE 64u
@@ -24,6 +70,307 @@ typedef struct CettaTermVariableSupportBlock {
     _Atomic(CettaTermVariableSupport *)
         slots[CETTA_TERM_VARIABLE_SUPPORT_BLOCK_SIZE];
 } CettaTermVariableSupportBlock;
+
+typedef struct TermUniverseResourceEdge TermUniverseResourceEdge;
+static const TermEntry *term_universe_entry(const TermUniverse *, AtomId);
+static bool term_universe_atom_id_to_physical_index(
+    const TermUniverse *, AtomId, size_t *);
+
+struct TermUniverseResourceOwner {
+    void *context;
+    TermUniverseResourceEdge **buckets;
+    size_t capacity, length;
+};
+
+typedef struct TermUniverseFallbackImage {
+    _Atomic uint64_t references;
+    Arena syntax;
+    Atom *root;
+    /* The legacy unscoped getter promises persistent syntax. Only that
+     * getter pins the image for the persistent arena's lifetime. */
+    Atom *persistent;
+    size_t bytes;
+    AtomId id;
+    uint64_t owned_references;
+    TermUniverseResourceEdge *owners;
+} TermUniverseFallbackImage;
+
+struct TermUniverseResourceEdge {
+    TermUniverseResourceOwner *owner;
+    TermUniverseFallbackImage *image;
+    uint64_t references;
+    TermUniverseResourceEdge *bucket_next, *image_next;
+    TermUniverseResourceEdge **image_link;
+};
+
+static size_t term_universe_resource_bucket(
+        const TermUniverseResourceOwner *owner, const void *image) {
+    uint64_t key = (uint64_t)(uintptr_t)image;
+    key ^= key >> 30;
+    key *= UINT64_C(0xbf58476d1ce4e5b9);
+    key ^= key >> 27;
+    key *= UINT64_C(0x94d049bb133111eb);
+    key ^= key >> 31;
+    return (size_t)key & (owner->capacity - 1u);
+}
+
+static void term_universe_resource_edge_free(TermUniverseResourceEdge *edge) {
+    TermUniverseResourceOwner *owner = edge->owner;
+    size_t slot = term_universe_resource_bucket(owner, edge->image);
+    TermUniverseResourceEdge **link = &owner->buckets[slot];
+    while (*link != edge)
+        link = &(*link)->bucket_next;
+    *link = edge->bucket_next;
+    *edge->image_link = edge->image_next;
+    if (edge->image_next)
+        edge->image_next->image_link = edge->image_link;
+    edge->image->owned_references -= edge->references;
+    owner->length--;
+    free(edge);
+}
+
+typedef struct {
+    TermUniverseFallbackImage *image;
+    uint32_t next;
+} TermUniverseFallbackSlot;
+
+typedef struct TermUniverseFallbackSlots {
+    TermUniverseFallbackSlot *slots;
+    uint32_t len, cap, free;
+} TermUniverseFallbackSlots;
+
+static TermUniverseFallbackImage *term_universe_resource_image(
+        const TermUniverse *universe, AtomId id) {
+    if (!universe || !universe->fallbacks)
+        return NULL;
+    const TermEntry *entry = term_universe_entry(universe, id);
+    if (!entry || entry->record != CETTA_TERM_ENTRY_BLOB_NONE ||
+        !entry->coordinate || entry->coordinate > universe->fallbacks->len)
+        return NULL;
+    return universe->fallbacks->slots[entry->coordinate - 1u].image;
+}
+
+void term_universe_resource_hold(TermUniverse *universe, AtomId id,
+        TermUniverseResourceOwner **token, void *context) {
+    TermUniverseFallbackImage *image = term_universe_resource_image(universe, id);
+    if (!image || !image->syntax.retained_owners)
+        return;
+    if (!*token) {
+        *token = cetta_malloc(sizeof(**token));
+        **token = (TermUniverseResourceOwner){.context = context};
+    }
+    TermUniverseResourceOwner *owner = *token;
+    if (!owner->capacity || owner->length >= owner->capacity) {
+        size_t capacity = owner->capacity ? 2u * owner->capacity : 4u;
+        if (capacity < owner->capacity ||
+            capacity > SIZE_MAX / sizeof(*owner->buckets))
+            abort();
+        TermUniverseResourceEdge **buckets = calloc(capacity, sizeof(*buckets));
+        if (!buckets)
+            abort();
+        TermUniverseResourceOwner grown = {.capacity = capacity};
+        for (size_t i = 0u; i < owner->capacity; i++) {
+            TermUniverseResourceEdge *edge = owner->buckets[i];
+            while (edge) {
+                TermUniverseResourceEdge *next = edge->bucket_next;
+                size_t slot = term_universe_resource_bucket(&grown, edge->image);
+                edge->bucket_next = buckets[slot];
+                buckets[slot] = edge;
+                edge = next;
+            }
+        }
+        free(owner->buckets);
+        owner->buckets = buckets;
+        owner->capacity = capacity;
+    }
+    size_t slot = term_universe_resource_bucket(owner, image);
+    TermUniverseResourceEdge *edge = owner->buckets[slot];
+    while (edge && edge->image != image)
+        edge = edge->bucket_next;
+    if (!edge) {
+        edge = cetta_malloc(sizeof(*edge));
+        *edge = (TermUniverseResourceEdge){.owner = owner, .image = image,
+            .bucket_next = owner->buckets[slot], .image_next = image->owners,
+            .image_link = &image->owners};
+        if (image->owners)
+            image->owners->image_link = &edge->image_next;
+        image->owners = edge;
+        owner->buckets[slot] = edge;
+        owner->length++;
+    }
+    if (edge->references == UINT64_MAX || image->owned_references == UINT64_MAX)
+        abort();
+    edge->references++;
+    image->owned_references++;
+}
+
+void term_universe_resource_release(TermUniverse *universe, AtomId id,
+                                     TermUniverseResourceOwner *owner) {
+    if (!owner || !owner->length)
+        return;
+    TermUniverseFallbackImage *image = term_universe_resource_image(universe, id);
+    if (!image)
+        return;
+    size_t slot = term_universe_resource_bucket(owner, image);
+    for (TermUniverseResourceEdge *edge = owner->buckets[slot]; edge;
+         edge = edge->bucket_next) {
+        if (edge->image != image)
+            continue;
+        if (edge->references == 1u) {
+            term_universe_resource_edge_free(edge);
+        } else {
+            edge->references--;
+            image->owned_references--;
+        }
+        return;
+    }
+}
+
+void term_universe_resource_owner_move(TermUniverseResourceOwner *owner,
+                                       void *context) {
+    if (owner)
+        owner->context = context;
+}
+
+void term_universe_resource_owner_free(TermUniverseResourceOwner *owner) {
+    if (!owner)
+        return;
+    for (size_t i = 0u; i < owner->capacity; i++)
+        while (owner->buckets[i])
+            term_universe_resource_edge_free(owner->buckets[i]);
+    free(owner->buckets);
+    free(owner);
+}
+
+void term_universe_visit_resource_images(const TermUniverse *universe,
+        TermUniverseResourceImageVisit visit, void *context) {
+    const TermUniverseFallbackSlots *slots = universe ? universe->fallbacks : NULL;
+    if (!slots || !visit)
+        return;
+    for (uint32_t i = 0u; i < slots->len; i++) {
+        TermUniverseFallbackImage *image = slots->slots[i].image;
+        size_t index = 0u;
+        if (image && image->syntax.retained_owners &&
+            term_universe_atom_id_to_physical_index(universe, image->id, &index))
+            visit(context, image->id, image, &image->syntax,
+                atomic_load_explicit(&image->references, memory_order_acquire) - 1u,
+                image->owned_references,
+                universe->counting ? universe->counts[index] : UINT16_MAX);
+    }
+}
+
+void term_universe_visit_resource_image_owners(void *opaque,
+        TermUniverseResourceOwnerVisit visit, void *context) {
+    TermUniverseFallbackImage *image = opaque;
+    if (!image || !visit)
+        return;
+    for (TermUniverseResourceEdge *edge = image->owners; edge;
+         edge = edge->image_next)
+        visit(context, edge->owner->context);
+}
+
+static void term_universe_fallback_retain(void *owner) {
+    TermUniverseFallbackImage *image = owner;
+    uint64_t before = atomic_fetch_add_explicit(
+        &image->references, 1u, memory_order_relaxed);
+    if (before == 0u || before == UINT64_MAX)
+        abort();
+}
+
+static void term_universe_fallback_release(void *owner) {
+    TermUniverseFallbackImage *image = owner;
+    uint64_t before = atomic_fetch_sub_explicit(&image->references, 1u,
+                                               memory_order_acq_rel);
+    if (before == 0u)
+        abort();
+    if (before == 1u) {
+        while (image->owners)
+            term_universe_resource_edge_free(image->owners);
+        arena_free(&image->syntax);
+        free(image);
+    }
+}
+
+bool term_universe_resource_image_owner_view(void *owner,
+        void (*release)(void *), TermUniverseResourceImageView *out) {
+    if (out)
+        *out = (TermUniverseResourceImageView){0};
+    if (!owner || !out || release != term_universe_fallback_release)
+        return false;
+    TermUniverseFallbackImage *image = owner;
+    uint64_t references = atomic_load_explicit(&image->references, memory_order_acquire);
+    if (!references)
+        return false;
+    *out = (TermUniverseResourceImageView){.image = image,
+        .syntax = &image->syntax, .references = references,
+        .bytes = image->bytes >= image->syntax.retained_resource_bytes
+            ? image->bytes - image->syntax.retained_resource_bytes : SIZE_MAX};
+    return true;
+}
+
+static TermUniverseFallbackImage *term_universe_fallback_at(
+    const TermUniverse *universe, size_t index) {
+    const TermEntry *entry = &universe->entries[index];
+    uint32_t slot = entry->coordinate;
+    return entry->record == CETTA_TERM_ENTRY_BLOB_NONE && slot &&
+            universe->fallbacks && slot <= universe->fallbacks->len
+        ? universe->fallbacks->slots[slot - 1u].image : NULL;
+}
+
+static uint32_t term_universe_fallback_insert(
+    TermUniverse *universe, TermUniverseFallbackImage *image) {
+    if (!universe->fallbacks) {
+        universe->fallbacks = calloc(1u, sizeof(*universe->fallbacks));
+        if (!universe->fallbacks)
+            return 0u;
+    }
+    TermUniverseFallbackSlots *slots = universe->fallbacks;
+    uint32_t slot = slots->free;
+    if (slot) {
+        slots->free = slots->slots[slot - 1u].next;
+    } else {
+        if (slots->len == slots->cap) {
+            uint32_t cap = slots->cap ? slots->cap * 2u : 16u;
+            if (cap <= slots->cap ||
+                (uint64_t)cap * sizeof(*slots->slots) > SIZE_MAX)
+                return 0u;
+            TermUniverseFallbackSlot *grown = realloc(
+                slots->slots, (size_t)cap * sizeof(*grown));
+            if (!grown)
+                return 0u;
+            slots->slots = grown;
+            slots->cap = cap;
+        }
+        slot = ++slots->len;
+    }
+    slots->slots[slot - 1u] = (TermUniverseFallbackSlot){.image = image};
+    universe->fallback_bytes += image->bytes;
+    return slot;
+}
+
+static void term_universe_fallback_remove(TermUniverse *universe,
+                                           uint32_t slot) {
+    TermUniverseFallbackSlots *slots = universe->fallbacks;
+    TermUniverseFallbackSlot *entry = &slots->slots[slot - 1u];
+    TermUniverseFallbackImage *image = entry->image;
+    *entry = (TermUniverseFallbackSlot){.next = slots->free};
+    slots->free = slot;
+    universe->fallback_bytes -= image->bytes;
+    term_universe_fallback_release(image);
+}
+
+static void term_universe_fallback_clear(TermUniverse *universe) {
+    TermUniverseFallbackSlots *slots = universe->fallbacks;
+    if (slots) {
+        for (uint32_t i = 0u; i < slots->len; i++)
+            if (slots->slots[i].image)
+                term_universe_fallback_release(slots->slots[i].image);
+        free(slots->slots);
+        free(slots);
+    }
+    universe->fallbacks = NULL;
+    universe->fallback_bytes = 0u;
+}
 
 /* A page goes dense when an insertion finds DENSE_AT live values, and back
  * to sparse when a removal leaves fewer than SPARSE_BELOW. */
@@ -1068,7 +1415,8 @@ static void term_universe_set_collection_due(TermUniverse *universe,
                  term_universe_collection_settings_read);
     uint64_t floor = term_universe_collection_settings.floor;
     uint64_t byte_floor = term_universe_collection_settings.byte_floor;
-    uint64_t held = term_universe_held_record_bytes(universe);
+    uint64_t held = term_universe_held_record_bytes(universe) +
+                    universe->fallback_bytes;
     universe->collection_bytes_after = held;
     universe->collection_due_bytes = held > byte_floor ? held : byte_floor;
     if (universe->collection_eager) {
@@ -1118,6 +1466,7 @@ static TermUniverseCollectionMode term_universe_default_collection_mode(
 static void term_universe_clear_storage(TermUniverse *universe) {
     if (!universe)
         return;
+    term_universe_fallback_clear(universe);
     cetta_frame_identity_scope_clear(&universe->frame_identities);
     TermUniverseStoreFormat format = term_universe_store_format_supported(
                                          universe->store_format)
@@ -1162,6 +1511,8 @@ static void term_universe_clear_storage(TermUniverse *universe) {
     universe->integer_slots = NULL;
     universe->integer_mask = 0;
     universe->integer_used = 0;
+    universe->integer_key = cetta_placement_key_next();
+    universe->intern_key = cetta_placement_key_next();
     universe->ptr_slots = NULL;
     universe->ptr_mask = 0;
     universe->ptr_used = 0;
@@ -1211,6 +1562,10 @@ bool term_universe_init_with_store_format(TermUniverse *universe,
     universe->instance_id = term_universe_fresh_instance_id();
     universe->storage_epoch = 1u;
     universe->persistent_arena = NULL;
+    universe->resource_scope = NULL;
+    universe->fallbacks = NULL;
+    universe->fallback_bytes = 0u;
+    universe->resource_collector = NULL;
     universe->blob_pool = NULL;
     universe->blob_len = 0;
     universe->blob_cap = 0;
@@ -1227,6 +1582,8 @@ bool term_universe_init_with_store_format(TermUniverse *universe,
     universe->integer_slots = NULL;
     universe->integer_mask = 0;
     universe->integer_used = 0;
+    universe->integer_key = cetta_placement_key_next();
+    universe->intern_key = cetta_placement_key_next();
     universe->ptr_slots = NULL;
     universe->ptr_mask = 0;
     universe->ptr_used = 0;
@@ -1240,6 +1597,7 @@ bool term_universe_init_with_store_format(TermUniverse *universe,
     universe->root_provider_index = (TermUniverseRegistryIndex){0};
     universe->collection_mode =
         term_universe_default_collection_mode(&universe->collection_eager);
+    universe->counted_sweep_active = false;
     universe->collection_inhibit = 0u;
     universe->collection_epoch = 1u;
     universe->collection_len_after = 0u;
@@ -1777,6 +2135,13 @@ static bool term_universe_reserve_entries(TermUniverse *universe,
     return true;
 }
 
+#ifdef CETTA_TU_CHECKED_TRACE_DIAGNOSTICS
+/* Private fixture: prepare real spare entry capacity before a callback. */
+bool cetta_test_reserve_universe_entries(TermUniverse *u, size_t needed) {
+    return term_universe_reserve_entries(u, needed);
+}
+#endif
+
 static bool term_universe_blob_reserve(TermUniverse *universe,
                                        size_t needed) {
     if (!universe)
@@ -2242,8 +2607,12 @@ static inline uint32_t term_universe_intern_tag(uint32_t coordinate) {
 }
 
 static inline size_t term_universe_intern_index(
-    uint32_t tag, size_t probe, size_t mask) {
-    return ((size_t)tag + probe) & mask;
+    uint32_t tag, size_t probe, size_t mask, uint64_t key) {
+    uint64_t x = (uint64_t)tag ^ key;
+    x ^= x >> 30;
+    x *= UINT64_C(0xbf58476d1ce4e5b9);
+    x ^= x >> 27;
+    return ((size_t)x + probe) & mask;
 }
 
 /* A pair's width: a four-byte tag, then the id at the store format's width,
@@ -2715,6 +3084,74 @@ static size_t term_universe_integer_hash(uint64_t prefix) {
     return (size_t)x;
 }
 
+/* The slot a page's home is, under the table's key. */
+static size_t term_universe_integer_home(const TermUniverse *universe,
+                                         uint64_t prefix) {
+    return term_universe_integer_hash(prefix ^ universe->integer_key) &
+           universe->integer_mask;
+}
+
+/* How far a page may sit from its home: 8 log2(cap) slots, at least 64,
+ * about twice the farthest a random placement reaches at two-thirds load. */
+static size_t term_universe_integer_reach(size_t cap) {
+    /* ceil(log2(cap)), from the highest set bit of cap - 1. The probe
+     * bound is consulted on every lookup, not just when the table grows. */
+    size_t log2_cap = cap > 1u
+        ? sizeof(unsigned long long) * CHAR_BIT -
+            (size_t)__builtin_clzll((unsigned long long)(cap - 1u))
+        : 0u;
+    size_t reach = 8u * log2_cap;
+    return reach < 64u ? 64u : reach;
+}
+
+/* Place every page in a table of CAP slots under KEY.  A page that would
+ * sit out of reach takes the table to twice the slots while it is more than
+ * a quarter full, and to a fresh key otherwise, until every page is within
+ * reach (BoundedProbeTable.Within). */
+static bool term_universe_integer_rebuild(TermUniverse *universe, size_t cap,
+                                          uint64_t key) {
+    for (;;) {
+        if (cap > SIZE_MAX / sizeof(CettaIntegerInternSlot)) {
+            term_universe_set_error(universe,
+                                    TERM_UNIVERSE_ERROR_STORAGE_TOO_LARGE);
+            return false;
+        }
+        CettaIntegerInternSlot *slots = calloc(cap, sizeof(*slots));
+        if (!slots) {
+            term_universe_set_error(universe,
+                                    TERM_UNIVERSE_ERROR_ALLOCATION_FAILED);
+            return false;
+        }
+        size_t reach = term_universe_integer_reach(cap);
+        bool within = true;
+        for (size_t i = 0u; within && universe->integer_slots &&
+                            i <= universe->integer_mask; i++) {
+            CettaIntegerInternSlot entry = universe->integer_slots[i];
+            if (!entry.page)
+                continue;
+            size_t home = term_universe_integer_hash(entry.prefix ^ key) &
+                          (cap - 1u);
+            size_t pos = home;
+            while (slots[pos].page)
+                pos = (pos + 1u) & (cap - 1u);
+            within = ((pos - home) & (cap - 1u)) <= reach;
+            slots[pos] = entry;
+        }
+        if (within) {
+            free(universe->integer_slots);
+            universe->integer_slots = slots;
+            universe->integer_mask = cap - 1u;
+            universe->integer_key = key;
+            return true;
+        }
+        free(slots);
+        if (universe->integer_used > cap / 4u)
+            cap *= 2u;
+        else
+            key = cetta_placement_key_next();
+    }
+}
+
 static bool term_universe_integer_reserve(TermUniverse *universe,
                                            size_t additional) {
     if (additional > SIZE_MAX - universe->integer_used)
@@ -2728,26 +3165,8 @@ static bool term_universe_integer_reserve(TermUniverse *universe,
     }
     if (universe->integer_slots && cap == universe->integer_mask + 1u)
         return true;
-    if (cap > SIZE_MAX / sizeof(CettaIntegerInternSlot))
-        goto too_large;
-    CettaIntegerInternSlot *slots = calloc(cap, sizeof(*slots));
-    if (!slots) {
-        term_universe_set_error(universe, TERM_UNIVERSE_ERROR_ALLOCATION_FAILED);
-        return false;
-    }
-    for (size_t i = 0u; universe->integer_slots && i <= universe->integer_mask; i++) {
-        CettaIntegerInternSlot entry = universe->integer_slots[i];
-        if (!entry.page)
-            continue;
-        size_t pos = term_universe_integer_hash(entry.prefix) & (cap - 1u);
-        while (slots[pos].page)
-            pos = (pos + 1u) & (cap - 1u);
-        slots[pos] = entry;
-    }
-    free(universe->integer_slots);
-    universe->integer_slots = slots;
-    universe->integer_mask = cap - 1u;
-    return true;
+    return term_universe_integer_rebuild(universe, cap,
+                                         universe->integer_key);
 too_large:
     term_universe_set_error(universe, TERM_UNIVERSE_ERROR_STORAGE_TOO_LARGE);
     return false;
@@ -2761,18 +3180,26 @@ static CettaIntegerInternPage *term_universe_integer_page(
     if (!universe || !universe->integer_slots)
         return NULL;
     uint64_t prefix = (uint64_t)value >> TERM_UNIVERSE_INTEGER_PAGE_BITS;
-    size_t pos = term_universe_integer_hash(prefix) & universe->integer_mask;
-    for (;; pos = (pos + 1u) & universe->integer_mask) {
+    size_t pos = term_universe_integer_home(universe, prefix);
+    /* Every page sits within reach of its home: a page farther on is
+     * absent (BoundedProbeTable.lookup_iff). */
+    size_t reach = term_universe_integer_reach(universe->integer_mask + 1u);
+    for (size_t step = 0u;; step++, pos = (pos + 1u) & universe->integer_mask) {
         CettaIntegerInternSlot slot = universe->integer_slots[pos];
         if (probes)
             (*probes)++;
         if (!slot.page) {
             if (vacancy)
-                *vacancy = pos;
+                *vacancy = step <= reach ? pos : SIZE_MAX;
             return NULL;
         }
         if (slot.prefix == prefix)
             return slot.page;
+        if (step >= reach) {
+            if (vacancy)
+                *vacancy = SIZE_MAX;
+            return NULL;
+        }
     }
 }
 
@@ -2842,6 +3269,18 @@ static CettaIntegerInternPage *term_universe_integer_prepare(
         if (!term_universe_integer_reserve(universe, 1u))
             return NULL;
         (void)term_universe_integer_page(universe, value, &vacancy, NULL);
+        while (vacancy == SIZE_MAX) {
+            /* Out of reach: a larger table while it is more than a quarter
+             * full, a fresh key otherwise. */
+            size_t cap = universe->integer_mask + 1u;
+            bool grown = universe->integer_used > cap / 4u;
+            if (!term_universe_integer_rebuild(
+                    universe, grown ? cap * 2u : cap,
+                    grown ? universe->integer_key
+                          : cetta_placement_key_next()))
+                return NULL;
+            (void)term_universe_integer_page(universe, value, &vacancy, NULL);
+        }
         page = calloc(1u, sizeof(*page));
         if (!page)
             goto allocation_failed;
@@ -2904,7 +3343,7 @@ static AtomId term_universe_lookup_record_at_probing(
     size_t width = term_universe_intern_width(universe);
     for (size_t probe = 0; probe <= universe->intern_mask; probe++) {
         size_t idx = term_universe_intern_index(
-            tag, probe, universe->intern_mask);
+            tag, probe, universe->intern_mask, universe->intern_key);
         uint32_t have_tag = term_universe_intern_tag_at(
             universe->intern_slots, width, idx);
         if (have_tag == 0u) {
@@ -3013,7 +3452,7 @@ static AtomId term_universe_lookup_expr_id_from_ids_probing(
     size_t width = term_universe_intern_width(universe);
     for (size_t probe = 0u; probe <= universe->intern_mask; probe++) {
         size_t idx = term_universe_intern_index(
-            tag, probe, universe->intern_mask);
+            tag, probe, universe->intern_mask, universe->intern_key);
         uint32_t have_tag = term_universe_intern_tag_at(
             universe->intern_slots, width, idx);
         if (have_tag == 0u) {
@@ -3395,7 +3834,7 @@ int64_t tu_internal_tag(const TermUniverse *universe, AtomId id) {
                        (GroundedKind)hdr->subtag == GV_INTERNAL_TAG
                    ? (int64_t)term_universe_aux_data(hdr)
                    : 0;
-    Atom *atom = term_universe_get_atom(universe, id);
+    Atom *atom = term_universe_peek_atom(universe, id);
     return atom && atom->kind == ATOM_GROUNDED &&
                    atom->ground.gkind == GV_INTERNAL_TAG
                ? atom->ground.ival
@@ -3837,9 +4276,9 @@ bool tu_intern_ints(TermUniverse *universe, const int64_t *values,
         if (!term_universe_integer_reserve(universe, length))
             return false;
         for (size_t i = 0u; i < length; i++) {
-            size_t home = term_universe_integer_hash(
-                (uint64_t)values[first + i] >> TERM_UNIVERSE_INTEGER_PAGE_BITS) &
-                universe->integer_mask;
+            size_t home = term_universe_integer_home(
+                universe,
+                (uint64_t)values[first + i] >> TERM_UNIVERSE_INTEGER_PAGE_BITS);
             __builtin_prefetch(&universe->integer_slots[home], 1, 1);
         }
         for (size_t i = 0u; i < length; i++) {
@@ -4225,7 +4664,7 @@ bool tu_exprs_from_ids(TermUniverse *universe, const AtomId *child_ids,
             if (valid[i] && universe->intern_slots) {
                 size_t home = term_universe_intern_index(
                     term_universe_intern_tag(coordinates[i]), 0u,
-                    universe->intern_mask);
+                    universe->intern_mask, universe->intern_key);
                 __builtin_prefetch(universe->intern_slots +
                     home * term_universe_intern_width(universe), 1, 1);
             }
@@ -4879,7 +5318,7 @@ static void term_universe_sb_append_atom_text(TermUniverseStringBuilder *sb,
                                               AtomId id) {
     const CettaTermHdr *hdr = tu_hdr(universe, id);
     if (!hdr) {
-        Atom *atom = term_universe_get_atom(universe, id);
+        Atom *atom = term_universe_peek_atom(universe, id);
         Arena scratch;
         arena_init(&scratch);
         char *text = atom_to_parseable_string(&scratch, atom);
@@ -5117,7 +5556,7 @@ static size_t term_universe_copy_estimated_arena_bytes(
     if (!universe || id == CETTA_ATOM_ID_NONE)
         return 0;
     if (!hdr) {
-        Atom *stored = term_universe_get_atom(universe, id);
+        Atom *stored = term_universe_peek_atom(universe, id);
         if (stored && stored->kind == ATOM_EXPR &&
             cetta_expr_len_mul_fits_size(stored->expr.len, sizeof(Atom *))) {
             bytes += sizeof(Atom *) * (size_t)stored->expr.len;
@@ -5177,7 +5616,7 @@ static Atom *term_universe_copy_atom_impl(const TermUniverse *universe,
 
     const CettaTermHdr *hdr = tu_hdr(universe, id);
     if (!hdr) {
-        Atom *stored = term_universe_get_atom(universe, id);
+        Atom *stored = term_universe_peek_atom(universe, id);
         if (!stored)
             return NULL;
         out = rename_epoch_vars ? atom_freshen_epoch(dst, stored, epoch)
@@ -5325,7 +5764,7 @@ char *term_universe_atom_to_string(Arena *a, const TermUniverse *universe,
         !term_universe_entry(universe, id))
         return NULL;
     if (!hdr) {
-        Atom *atom = term_universe_get_atom(universe, id);
+        Atom *atom = term_universe_peek_atom(universe, id);
         return atom ? atom_to_string(a, atom) : NULL;
     }
     if (hdr->tag == ATOM_GROUNDED && (GroundedKind)hdr->subtag == GV_STRING) {
@@ -5349,7 +5788,7 @@ char *term_universe_atom_to_parseable_string(Arena *a,
         !term_universe_entry(universe, id))
         return NULL;
     if (!hdr) {
-        Atom *atom = term_universe_get_atom(universe, id);
+        Atom *atom = term_universe_peek_atom(universe, id);
         return atom ? atom_to_parseable_string(a, atom) : NULL;
     }
 
@@ -5405,7 +5844,7 @@ static bool term_universe_intern_reserve(TermUniverse *universe,
                 universe->intern_slots, width, i);
             for (size_t probe = 0; probe < size; probe++) {
                 size_t idx = term_universe_intern_index(
-                    tag, probe, next_mask);
+                    tag, probe, next_mask, universe->intern_key);
                 if (term_universe_intern_tag_at(next, width, idx) == 0u) {
                     term_universe_intern_store_pair(
                         next, width, idx, tag, id);
@@ -5507,7 +5946,7 @@ static AtomId term_universe_lookup_ptr_id_probing(
      * universe clearing its storage when that arena changes, or shared atoms
      * no arena owns.  An atom of any other arena is not in it. */
     const Arena *persistent = universe->persistent_arena;
-    if (src->arena_id != 0u &&
+    if (!universe->fallbacks && src->arena_id != 0u &&
         (!persistent ||
          (src->arena_id != persistent->identity &&
           src->arena_id != persistent->older_identity)))
@@ -5712,7 +6151,7 @@ static AtomId term_universe_lookup_stable_id_probing(
     size_t width = term_universe_intern_width(universe);
     for (size_t probe = 0; probe <= universe->intern_mask; probe++) {
         size_t idx = term_universe_intern_index(
-            tag, probe, universe->intern_mask);
+            tag, probe, universe->intern_mask, universe->intern_key);
         uint32_t have_tag = term_universe_intern_tag_at(
             universe->intern_slots, width, idx);
         if (have_tag == 0u)
@@ -5918,7 +6357,7 @@ static bool term_universe_insert_stable_id(TermUniverse *universe, AtomId id) {
         return false;
     for (size_t probe = 0; probe <= universe->intern_mask; probe++) {
         size_t idx = term_universe_intern_index(
-            tag, probe, universe->intern_mask);
+            tag, probe, universe->intern_mask, universe->intern_key);
         uint32_t have_tag = term_universe_intern_tag_at(
             universe->intern_slots, width, idx);
         if (have_tag == 0u) {
@@ -5945,6 +6384,58 @@ static Atom *term_universe_store_persistent_atom(TermUniverse *universe,
     if (term_universe_atom_is_stable(src))
         return atom_deep_copy_shared(dst, src);
     return atom_deep_copy(dst, src);
+}
+
+static TermUniverseFallbackImage *term_universe_fallback_new(
+        const TermUniverse *universe, Atom *src) {
+    TermUniverseFallbackImage *image = calloc(1u, sizeof(*image));
+    if (!image)
+        return NULL;
+    atomic_init(&image->references, 1u);
+    arena_init_detached(&image->syntax);
+    /* Classification follows the destination owner, including an explicit
+     * independent NULL domain, before constructors acquire native leases. */
+    image->syntax.resource_scope = universe ? universe->resource_scope : NULL;
+    arena_set_block_growth(&image->syntax, 256u);
+    image->root = term_universe_atom_contains_epoch_var(src)
+        ? term_universe_canonicalize_atom(&image->syntax, src)
+        : atom_deep_copy(&image->syntax, src);
+    if (!image->root) {
+        term_universe_fallback_release(image);
+        return NULL;
+    }
+    image->bytes = sizeof(*image) + image->syntax.reserved_bytes +
+                   image->syntax.external_bytes;
+    return image;
+}
+
+static bool term_universe_borrow_scope(const TermUniverse *universe, Arena *dst) {
+    extern bool eval_resource_scope_hold(Arena *, void *) __attribute__((weak));
+    return !universe || !dst || !universe->resource_scope ||
+        !eval_resource_scope_hold ||
+        eval_resource_scope_hold(dst, universe->resource_scope);
+}
+
+static bool term_universe_fallback_hold(TermUniverseFallbackImage *image,
+                                        Arena *dst, bool resource) {
+    if (image->syntax.state_root_acquisition_generation)
+        return arena_retain_state_resource_sized(dst, image,
+            term_universe_fallback_retain, term_universe_fallback_release,
+            image->bytes, image->bytes);
+    return resource
+        ? arena_retain_resource_sized(dst, image, term_universe_fallback_retain,
+            term_universe_fallback_release, image->bytes,
+            image->bytes)
+        : arena_retain_owner_sized(dst, image, term_universe_fallback_retain,
+            term_universe_fallback_release, image->bytes);
+}
+
+static Atom *term_universe_fallback_view(TermUniverseFallbackImage *image,
+                                         Arena *dst) {
+    if (dst->hashcons)
+        return atom_deep_copy(dst, image->root);
+    return term_universe_fallback_hold(image, dst, true)
+        ? image->root : NULL;
 }
 
 static void term_universe_track_ptr_id(TermUniverse *universe, AtomId id) {
@@ -5981,16 +6472,24 @@ static AtomId term_universe_store_prepared_atom_id(TermUniverse *universe,
         if (universe->free_slot_len == 0u &&
             !term_universe_reserve_entries(universe, universe->len + 1))
             return CETTA_ATOM_ID_NONE;
-        TermEntry entry = {.record = CETTA_TERM_ENTRY_BLOB_NONE};
-        Atom *decoded = term_universe_store_persistent_atom(universe, src);
-        if (!decoded)
+        TermUniverseFallbackImage *image = term_universe_fallback_new(universe, src);
+        if (!image)
             return CETTA_ATOM_ID_NONE;
+        TermEntry entry = {.record = CETTA_TERM_ENTRY_BLOB_NONE,
+            .coordinate = term_universe_fallback_insert(universe, image)};
+        if (!entry.coordinate) {
+            term_universe_fallback_release(image);
+            return CETTA_ATOM_ID_NONE;
+        }
         size_t physical_index = universe->len;
         bool reused = term_universe_take_free_slot(universe, &physical_index);
         AtomId id = term_universe_physical_index_to_atom_id(universe,
                                                             physical_index);
+        image->id = id;
         if (id == CETTA_ATOM_ID_NONE ||
-            !term_universe_set_decoded_at(universe, physical_index, decoded)) {
+            !term_universe_set_decoded_at(universe, physical_index,
+                                         image->root)) {
+            term_universe_fallback_remove(universe, entry.coordinate);
             if (reused)
                 term_universe_return_free_slot(universe, physical_index);
             return CETTA_ATOM_ID_NONE;
@@ -6535,6 +7034,14 @@ static Atom *term_universe_view_atom_at(const TermUniverse *universe,
                                         Arena *dst, AtomId id,
                                         uint32_t depth,
                                         TermUniverseViewMemo *memo) {
+    size_t physical = 0u;
+    if (universe->fallbacks &&
+        term_universe_atom_id_to_physical_index(universe, id, &physical)) {
+        TermUniverseFallbackImage *image = term_universe_fallback_at(
+            universe, physical);
+        if (image)
+            return term_universe_fallback_view(image, dst);
+    }
     Atom *decoded = term_universe_decoded_atom_at(universe, id);
     if (decoded)
         return decoded;
@@ -6617,6 +7124,16 @@ Atom *term_universe_view_atom(const TermUniverse *universe, Arena *dst,
                               AtomId id) {
     if (!universe || !dst || id == CETTA_ATOM_ID_NONE)
         return NULL;
+    if (!term_universe_borrow_scope(universe, dst))
+        return NULL;
+    size_t physical = 0u;
+    if (universe->fallbacks &&
+        term_universe_atom_id_to_physical_index(universe, id, &physical)) {
+        TermUniverseFallbackImage *image = term_universe_fallback_at(
+            universe, physical);
+        if (image)
+            return term_universe_fallback_view(image, dst);
+    }
     if (dst->hashcons)
         return term_universe_get_atom(universe, id);
     /* Rent or buy: a view costs about what a decode costs, and a decode
@@ -6751,6 +7268,16 @@ static Atom *term_universe_get_atom_at(TermUniverse *universe, AtomId id,
     size_t physical_index = 0;
     if (!term_universe_atom_id_to_physical_index(universe, id, &physical_index))
         return NULL;
+    if (universe->fallbacks) {
+        TermUniverseFallbackImage *image = term_universe_fallback_at(
+            universe, physical_index);
+        if (image) {
+            if (!image->persistent && universe->persistent_arena &&
+                term_universe_fallback_hold(image, universe->persistent_arena, false))
+                image->persistent = image->root;
+            return image->persistent;
+        }
+    }
     Atom *decoded = term_universe_decoded_at(universe, physical_index);
     if (decoded)
         return decoded;
@@ -6767,6 +7294,33 @@ static Atom *term_universe_get_atom_at(TermUniverse *universe, AtomId id,
 
 Atom *term_universe_get_atom(const TermUniverse *universe, AtomId id) {
     return term_universe_get_atom_at((TermUniverse *)universe, id, 0u);
+}
+
+Atom *term_universe_scoped_atom(const TermUniverse *universe, Arena *dst,
+                                AtomId id) {
+    if (!term_universe_borrow_scope(universe, dst))
+        return NULL;
+    size_t index = 0u;
+    if (universe && universe->fallbacks &&
+        term_universe_atom_id_to_physical_index(universe, id, &index)) {
+        TermUniverseFallbackImage *image = term_universe_fallback_at(
+            universe, index);
+        if (image)
+            return dst ? term_universe_fallback_view(image, dst) : NULL;
+    }
+    return term_universe_get_atom(universe, id);
+}
+
+Atom *term_universe_peek_atom(const TermUniverse *universe, AtomId id) {
+    size_t index = 0u;
+    if (universe && universe->fallbacks &&
+        term_universe_atom_id_to_physical_index(universe, id, &index)) {
+        TermUniverseFallbackImage *image = term_universe_fallback_at(
+            universe, index);
+        if (image)
+            return image->root;
+    }
+    return term_universe_get_atom(universe, id);
 }
 
 Atom *term_universe_store_atom(TermUniverse *universe, Arena *fallback,
@@ -6792,7 +7346,7 @@ Atom *term_universe_store_atom(TermUniverse *universe, Arena *fallback,
 
 static bool term_universe_add_provider(TermUniverse *universe,
                                        TermUniverseRootProvider fn, void *ctx,
-                                       bool counted) {
+                                       bool counted, void *resource_owner) {
     if (!universe || !fn)
         return false;
     uintptr_t key = (uintptr_t)fn;
@@ -6823,10 +7377,13 @@ static bool term_universe_add_provider(TermUniverse *universe,
         universe->root_providers = next;
         universe->root_provider_cap = next_cap;
     }
+#if CETTA_BUILD_WITH_TERM_UNIVERSE_COLLECTION_CHECKS
+    term_universe_checked_roots_changed(universe);
+#endif
     size_t slot = universe->root_provider_len++;
     universe->root_providers[slot] =
         (TermUniverseRootProviderEntry){.fn = fn, .ctx = ctx,
-                                        .counted = counted};
+            .counted = counted, .resource_owner = resource_owner};
     if (universe->root_provider_index.cells) {
         if (term_universe_registry_reserve(&universe->root_provider_index,
                                            universe->root_provider_len))
@@ -6841,18 +7398,27 @@ static bool term_universe_add_provider(TermUniverse *universe,
                 (uintptr_t)universe->root_providers[i].fn,
                 universe->root_providers[i].ctx, i);
     }
+    /* Finalizers can transfer counted Space rows to an uncounted captured
+     * reader. Admit its roots before the old owner drops its counts. */
+    if (!counted && universe->counted_sweep_active)
+        term_universe_counted_admit_provider(universe, fn, ctx);
     return true;
 }
 
 bool term_universe_add_root_provider(TermUniverse *universe,
                                      TermUniverseRootProvider fn, void *ctx) {
-    return term_universe_add_provider(universe, fn, ctx, false);
+    return term_universe_add_provider(universe, fn, ctx, false, NULL);
 }
 
 bool term_universe_add_counted_root_provider(TermUniverse *universe,
                                              TermUniverseRootProvider fn,
                                              void *ctx) {
-    return term_universe_add_provider(universe, fn, ctx, true);
+    return term_universe_add_provider(universe, fn, ctx, true, NULL);
+}
+
+bool term_universe_add_owned_root_provider(TermUniverse *universe,
+        TermUniverseRootProvider fn, void *ctx, bool counted, void *owner) {
+    return term_universe_add_provider(universe, fn, ctx, counted, owner);
 }
 
 void term_universe_remove_root_provider(TermUniverse *universe,
@@ -6877,6 +7443,9 @@ void term_universe_remove_root_provider(TermUniverse *universe,
         if (i == universe->root_provider_len)
             return;
     }
+#if CETTA_BUILD_WITH_TERM_UNIVERSE_COLLECTION_CHECKS
+    term_universe_checked_roots_changed(universe);
+#endif
     universe->root_provider_len--;
     if (i != universe->root_provider_len) {
         universe->root_providers[i] =
@@ -7042,7 +7611,8 @@ static void term_universe_intern_remove(TermUniverse *universe, uint32_t tag,
     size_t mask = universe->intern_mask;
     size_t hole = SIZE_MAX;
     for (size_t probe = 0u; probe <= mask; probe++) {
-        size_t idx = term_universe_intern_index(tag, probe, mask);
+        size_t idx = term_universe_intern_index(tag, probe, mask,
+                                                universe->intern_key);
         uint32_t have = term_universe_intern_tag_at(universe->intern_slots,
                                                     width, idx);
         if (have == 0u)
@@ -7060,7 +7630,8 @@ static void term_universe_intern_remove(TermUniverse *universe, uint32_t tag,
             universe->intern_slots, width, next);
         if (next_tag == 0u)
             break;
-        size_t home = term_universe_intern_index(next_tag, 0u, mask);
+        size_t home = term_universe_intern_index(next_tag, 0u, mask,
+                                                 universe->intern_key);
         bool stays = hole < next ? home > hole && home <= next
                                  : home > hole || home <= next;
         if (stays)
@@ -7127,10 +7698,10 @@ static size_t term_universe_integer_slot_of(const TermUniverse *universe,
     if (!universe->integer_slots)
         return SIZE_MAX;
     uint64_t prefix = (uint64_t)value >> TERM_UNIVERSE_INTEGER_PAGE_BITS;
-    for (size_t pos = term_universe_integer_hash(prefix) &
-                      universe->integer_mask;
-         universe->integer_slots[pos].page;
-         pos = (pos + 1u) & universe->integer_mask) {
+    size_t reach = term_universe_integer_reach(universe->integer_mask + 1u);
+    size_t pos = term_universe_integer_home(universe, prefix);
+    for (size_t step = 0u; step <= reach && universe->integer_slots[pos].page;
+         step++, pos = (pos + 1u) & universe->integer_mask) {
         if (universe->integer_slots[pos].prefix == prefix)
             return pos;
     }
@@ -7152,9 +7723,8 @@ static void term_universe_integer_release(TermUniverse *universe,
     size_t hole = slot;
     for (size_t next = (hole + 1u) & mask; universe->integer_slots[next].page;
          next = (next + 1u) & mask) {
-        size_t home =
-            term_universe_integer_hash(universe->integer_slots[next].prefix) &
-            mask;
+        size_t home = term_universe_integer_home(
+            universe, universe->integer_slots[next].prefix);
         if (((next - home) & mask) >= ((next - hole) & mask)) {
             universe->integer_slots[hole] = universe->integer_slots[next];
             hole = next;
@@ -7583,13 +8153,20 @@ void term_universe_hold_counted(TermUniverse *universe, AtomId id) {
     if (!term_universe_entry_live(universe, index))
         term_universe_counting_trap(universe, index, "a holder takes");
 #endif
+#if CETTA_BUILD_WITH_TERM_UNIVERSE_COLLECTION_CHECKS
+    term_universe_checked_roots_changed(universe);
+#endif
     term_universe_count_hold_at(universe, index);
 }
 
 void term_universe_release_counted(TermUniverse *universe, AtomId id) {
     size_t index = 0u;
-    if (term_universe_count_index(universe, id, &index))
+    if (term_universe_count_index(universe, id, &index)) {
+#if CETTA_BUILD_WITH_TERM_UNIVERSE_COLLECTION_CHECKS
+        term_universe_checked_roots_changed(universe);
+#endif
         term_universe_count_release_at(universe, index);
+    }
 }
 
 static void term_universe_hold_child(void *context, size_t parent,
@@ -7623,8 +8200,11 @@ static void term_universe_hold_listed(void *context, AtomId id) {
  * the entries made since the last collection, until something holds it. */
 static void term_universe_birth_candidate(TermUniverse *universe,
                                           size_t index) {
+#if CETTA_BUILD_WITH_TERM_UNIVERSE_COLLECTION_CHECKS
+    term_universe_checked_roots_changed(universe);
+#endif
     /* A reused slot lies below the entries made since the last collection. */
-    if (index < universe->collection_len_after)
+    if (index < universe->collection_len_after || universe->counted_sweep_active)
         term_universe_zero_push(universe, index);
 }
 
@@ -7726,9 +8306,37 @@ static void term_universe_counting_start(TermUniverse *universe) {
 }
 
 #if CETTA_BUILD_WITH_TERM_UNIVERSE_COLLECTION_CHECKS
-/* The live bits of a trace taken just before a counting collection frees
- * anything: freeing an entry it reached is unsound. */
-static _Thread_local const uint64_t *g_term_universe_traced_live = NULL;
+/* Refresh only after observed public ownership changes or record birth.
+ * Uncounted roots captured by the real sweep remain temporary roots through
+ * its end, even if their provider disappears during a resource callback. */
+static void term_universe_checked_refresh(TermUniverseCheckedTrace *trace) {
+    if (!trace->dirty) return;
+#ifdef CETTA_TU_CHECKED_TRACE_DIAGNOSTICS
+    cetta_test_checked_trace_refreshes++;
+#endif
+    TermUniverse *u = trace->universe;
+    size_t words = u->len / 64u + (u->len % 64u != 0u);
+    uint64_t *live = calloc(words ? words : 1u, sizeof(*live));
+    if (!live) { fputs("CeTTa: no room to refresh checked reachability\n", stderr); abort(); }
+    TermUniverseCollectionMark mark = {.universe = u, .live = live};
+    for (size_t i = 0u; i < trace->protected_count; i++) {
+        size_t index = trace->protected_roots[i];
+        if (index >= u->len || !term_universe_entry_live(u, index))
+            term_universe_counting_trap(u, index, "a captured root was retired");
+        live[index >> 6] |= (uint64_t)1u << (index & 63u);
+    }
+    /* Saturation deliberately keeps a record and its reachable children. */
+    for (size_t i = 0u; i < u->len; i++)
+        if (term_universe_entry_live(u, i) && u->counts[i] == UINT16_MAX)
+            live[i >> 6] |= (uint64_t)1u << (i & 63u);
+    trace->tracing = true;
+    if (!term_universe_collection_mark(u, &mark)) {
+        fputs("CeTTa: no room to trace current checked ownership\n", stderr); abort();
+    }
+    trace->tracing = false;
+    free(mark.pending); free(trace->live);
+    trace->live = live; trace->words = words; trace->dirty = false;
+}
 
 static void term_universe_collection_trap_set(TermUniverse *universe,
                                               size_t index) {
@@ -7861,10 +8469,14 @@ static void term_universe_return_free_slot(TermUniverse *universe,
 static void term_universe_free_entry(TermUniverse *universe, size_t index,
                                      TermUniverseCollectionReport *report) {
 #if CETTA_BUILD_WITH_TERM_UNIVERSE_COLLECTION_CHECKS
-    if (g_term_universe_traced_live &&
-        term_universe_collection_bit(g_term_universe_traced_live, index))
-        term_universe_counting_trap(universe, index,
-                                    "a counting collection frees reachable");
+    TermUniverseCheckedTrace *trace = term_universe_checked_context(universe);
+    if (trace) {
+        term_universe_checked_refresh(trace);
+        if ((index >> 6) >= trace->words ||
+            term_universe_collection_bit(trace->live, index))
+            term_universe_counting_trap(universe, index,
+                                        "a counting collection frees reachable");
+    }
 #endif
     TermEntry *entry = &universe->entries[index];
     AtomId id = term_universe_physical_index_to_atom_id(universe, index);
@@ -7891,6 +8503,11 @@ static void term_universe_free_entry(TermUniverse *universe, size_t index,
             universe, term_universe_entry_offset(entry), bytes);
     }
     term_universe_variable_support_forget(universe, index);
+    if (!term_universe_entry_has_blob(entry) && entry->coordinate) {
+        term_universe_fallback_remove(universe, entry->coordinate);
+        /* Resource finalizers may grow the entry vector. */
+        entry = &universe->entries[index];
+    }
     *entry = (TermEntry){.record = CETTA_TERM_ENTRY_BLOB_NONE};
     universe->live_entries--;
     report->reclaimed++;
@@ -7900,18 +8517,10 @@ static void term_universe_free_entry(TermUniverse *universe, size_t index,
     term_universe_give_free_slot(universe, index);
 }
 
-typedef struct {
-    TermUniverse *universe;
-    /* The distinct entries listed, whose root bits are set. */
-    size_t *listed;
-    size_t listed_len, listed_cap;
-    uint64_t roots;
-    uint64_t invalid_roots;
-    bool failed;
-} TermUniverseCountedRoots;
-
 static void term_universe_counted_visit_root(void *context, AtomId id) {
     TermUniverseCountedRoots *roots = context;
+    if (roots->failed)
+        return;
     TermUniverse *universe = roots->universe;
     size_t index = 0u;
     roots->roots++;
@@ -7941,6 +8550,32 @@ static void term_universe_counted_visit_root(void *context, AtomId id) {
     }
     universe->root_bits[index >> 6] |= bit;
     roots->listed[roots->listed_len++] = index;
+}
+
+static void term_universe_counted_admit_provider(
+        TermUniverse *universe, TermUniverseRootProvider fn, void *ctx) {
+    TermUniverseCountedRoots *roots = g_term_universe_counted_roots;
+    while (roots && roots->universe != universe)
+        roots = roots->previous;
+    if (!roots) abort();
+#if CETTA_BUILD_WITH_TERM_UNIVERSE_COLLECTION_CHECKS
+    TermUniverseCheckedTrace *trace = term_universe_checked_context(universe);
+    if (trace) trace->tracing = true;
+#endif
+    fn(universe, term_universe_counted_visit_root, roots, ctx);
+#if CETTA_BUILD_WITH_TERM_UNIVERSE_COLLECTION_CHECKS
+    if (trace) {
+        trace->tracing = false;
+        trace->protected_roots = roots->listed;
+        trace->protected_count = roots->listed_len;
+        trace->dirty = true;
+    }
+#endif
+    /* Registration succeeded even if temporary sweep protection ran out of
+     * memory. Keep the provider installed and stop further reclamation. */
+    if (roots->failed)
+        term_universe_set_error(universe,
+                                TERM_UNIVERSE_ERROR_ALLOCATION_FAILED);
 }
 
 #if CETTA_BUILD_WITH_TERM_UNIVERSE_COLLECTION_CHECKS
@@ -8015,8 +8650,17 @@ static void term_universe_counts_check(TermUniverse *universe) {
 }
 #endif
 
+static void term_universe_counted_sweep_leave(TermUniverseCountedRoots **roots) {
+    if (*roots) {
+        (*roots)->universe->counted_sweep_active = false;
+        g_term_universe_counted_roots = (*roots)->previous;
+    }
+}
+
 static bool term_universe_collect_counted(TermUniverse *universe,
                                           TermUniverseCollectionReport *report) {
+    __attribute__((cleanup(term_universe_counted_sweep_leave)))
+    TermUniverseCountedRoots *active_sweep = NULL;
     TermUniverseCountedRoots roots = {.universe = universe};
     uint64_t candidates = (uint64_t)universe->len -
                           universe->collection_len_after + universe->zero_len;
@@ -8029,7 +8673,10 @@ static bool term_universe_collect_counted(TermUniverse *universe,
                         provider.ctx);
     }
 #if CETTA_BUILD_WITH_TERM_UNIVERSE_COLLECTION_CHECKS
-    uint64_t *traced = NULL;
+    TermUniverseCheckedTrace checked = {.universe = universe,
+        .protected_roots = roots.listed, .protected_count = roots.listed_len,
+        .previous = g_term_universe_checked_trace};
+    bool checking = false;
     /* A full check, a recount and a trace, visits every entry made, live
      * or freed: it runs once the entries made and freed since the last
      * reach a share of the entries made, a sixteenth unless
@@ -8046,19 +8693,10 @@ static bool term_universe_collect_counted(TermUniverse *universe,
     if (!roots.failed && universe->collection_unchecked >= pace) {
         universe->collection_unchecked = 0u;
         term_universe_counts_check(universe);
-        size_t words = (universe->len + 63u) / 64u;
-        TermUniverseCollectionMark mark = {
-            .universe = universe,
-            .live = calloc(words ? words : 1u, sizeof(uint64_t)),
-        };
-        if (!mark.live || !term_universe_collection_mark(universe, &mark)) {
-            fputs("CeTTa: no room to trace the counting collection\n",
-                  stderr);
-            abort();
-        }
-        free(mark.pending);
-        traced = mark.live;
-        g_term_universe_traced_live = traced;
+        checking = true;
+        checked.dirty = true;
+        g_term_universe_checked_trace = &checked;
+        term_universe_checked_refresh(&checked);
     }
 #endif
     if (!roots.failed) {
@@ -8071,6 +8709,11 @@ static bool term_universe_collect_counted(TermUniverse *universe,
                 term_universe_entry_live(universe, index))
                 term_universe_zero_push(universe, index);
         }
+        if (universe->counted_sweep_active) abort();
+        roots.previous = g_term_universe_counted_roots;
+        g_term_universe_counted_roots = &roots;
+        universe->counted_sweep_active = true;
+        active_sweep = &roots;
         size_t keep = 0u;
         for (size_t i = 0u; i < universe->zero_len; i++) {
             size_t index = universe->zero[i];
@@ -8079,7 +8722,8 @@ static bool term_universe_collect_counted(TermUniverse *universe,
                 universe->zero_bits[index >> 6] &= ~bit;
                 continue;
             }
-            if ((universe->root_bits[index >> 6] & bit) != 0u) {
+            if (roots.failed ||
+                (universe->root_bits[index >> 6] & bit) != 0u) {
                 universe->zero[keep++] = index;
                 continue;
             }
@@ -8099,43 +8743,33 @@ static bool term_universe_collect_counted(TermUniverse *universe,
         report->dead = report->reclaimed;
         report->dead_record_bytes = report->reclaimed_record_bytes;
         report->live = universe->live_entries;
+        report->roots = roots.roots;
+        report->invalid_roots = roots.invalid_roots;
     }
     for (size_t i = 0u; i < roots.listed_len; i++) {
         size_t index = roots.listed[i];
         universe->root_bits[index >> 6] &= ~((uint64_t)1u << (index & 63u));
     }
-    free(roots.listed);
 #if CETTA_BUILD_WITH_TERM_UNIVERSE_COLLECTION_CHECKS
-    g_term_universe_traced_live = NULL;
-    if (traced) {
-        /* What may stay: what the trace reached, and what a saturated entry,
-         * never freed, holds.  One downward walk adds the latter. */
-        TermUniverseCollectionMark kept = {.universe = universe,
-                                           .live = traced};
-        for (size_t index = universe->len; index-- > 0u && !kept.failed;) {
-            if (!term_universe_entry_live(universe, index))
-                continue;
-            if (universe->counts[index] == UINT16_MAX)
-                traced[index >> 6] |= (uint64_t)1u << (index & 63u);
-            if (!term_universe_collection_bit(traced, index))
-                continue;
-            kept.cursor = index;
-            term_universe_record_children(
-                universe, index, term_universe_collection_reach, &kept);
-            while (kept.pending_len != 0u && !kept.failed)
-                term_universe_record_children(
-                    universe, kept.pending[--kept.pending_len],
-                    term_universe_collection_reach, &kept);
-        }
-        free(kept.pending);
-        for (size_t index = 0u; index < universe->len; index++) {
+    if (checking) {
+        term_universe_checked_refresh(&checked);
+        for (size_t index = 0u; !roots.failed && index < universe->len; index++) {
             if (term_universe_entry_live(universe, index) &&
-                !term_universe_collection_bit(traced, index))
+                !term_universe_collection_bit(checked.live, index))
                 term_universe_counting_trap(
                     universe, index, "a counting collection keeps unreachable");
         }
+        g_term_universe_checked_trace = checked.previous;
     }
-    free(traced);
+    free(checked.live);
+#endif
+    free(roots.listed);
+    /* An incomplete sweep may already have retired entries before a new
+     * provider exhausted protection storage. Invalidate their cached IDs. */
+    if (report->reclaimed != 0u)
+        universe->collection_epoch++;
+#if CETTA_BUILD_WITH_TERM_UNIVERSE_COLLECTION_CHECKS
+    universe->collection_unchecked += report->reclaimed;
 #endif
     if (roots.failed) {
         TU_COLLECTION_PROBE_LEAVE();
@@ -8148,16 +8782,10 @@ static bool term_universe_collect_counted(TermUniverse *universe,
         loose * 2u >= (uint64_t)universe->blob_len)
         term_universe_compact_records(universe);
     TU_COLLECTION_PROBE_LEAVE();
-    /* Caches keyed by the universe stay good while nothing was freed. */
-    if (report->reclaimed != 0u)
-        universe->collection_epoch++;
     universe->collection_len_after = universe->len;
     universe->collection_live_after = universe->live_entries;
     universe->collection_roots_after = roots.listed_len;
     universe->counting_collections++;
-#if CETTA_BUILD_WITH_TERM_UNIVERSE_COLLECTION_CHECKS
-    universe->collection_unchecked += report->reclaimed;
-#endif
     /* A collection that frees less than an eighth of its candidates waits
      * twice as long for the next, up to as many entries as live: the
      * candidates scanned in vain stay within a constant share of the entries
@@ -8177,18 +8805,27 @@ static bool term_universe_collect_counted(TermUniverse *universe,
     return true;
 }
 
+static void term_universe_collection_claim_leave(TermUniverse **universe) {
+    if (*universe)
+        __atomic_fetch_sub(&(*universe)->collection_inhibit, 1u, __ATOMIC_RELEASE);
+}
+
 bool term_universe_collect(TermUniverse *universe,
                            TermUniverseCollectionReport *out) {
     TermUniverseCollectionReport report = {0};
     if (out)
         *out = report;
-    if (!universe ||
-        __atomic_load_n(&universe->collection_inhibit, __ATOMIC_RELAXED) !=
-            0u) {
+    uint32_t expected_inhibit = 0u;
+    if (!universe || !__atomic_compare_exchange_n(&universe->collection_inhibit,
+            &expected_inhibit, 1u, false, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) {
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_COLLECTION_INHIBITED);
         return false;
     }
+    /* Finalizers can call back into evaluation while records are swept.
+     * Retain this admission claim until the entire collection has returned. */
+    __attribute__((cleanup(term_universe_collection_claim_leave)))
+    TermUniverse *collection_claim = universe;
     /* A reclaiming universe counts nothing until its first collection is
      * due, so a run that never collects pays nothing for counts; that
      * collection counts every reference there is, then frees by the counts. */
@@ -8198,6 +8835,8 @@ bool term_universe_collect(TermUniverse *universe,
         if (!universe->counting)
             return false;
     }
+    if (universe->counting && universe->resource_collector)
+        universe->resource_collector(universe);
     bool collected = universe->counting
         ? term_universe_collect_counted(universe, &report)
         : term_universe_collect_traced(universe, &report);

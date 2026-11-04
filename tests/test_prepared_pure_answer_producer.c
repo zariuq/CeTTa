@@ -2,6 +2,8 @@
 #include "parser.h"
 #include "petta_semantics.h"
 #include "prepared_pure_machine.h"
+#include "open_equation_machine.h"
+#include "petta_program.h"
 #include "symbol.h"
 
 #include <assert.h>
@@ -2150,6 +2152,57 @@ static bool cursor_authority_current(const void *context) {
     return probe->current;
 }
 
+static void test_lexical_native_identifier_return(void) {
+    for (unsigned managed = 0u; managed < 2u; managed++) {
+        const char *equations[] = {"(= (owned-source $x) $x)"};
+        Fixture fixture;
+        init(&fixture, equations, 1u, "(owned-source 0)");
+        Arena literals;
+        arena_init_detached(&literals);
+        OwnedBytes owner = {0};
+        if (managed) {
+            owner.bytes = malloc(16u);
+            assert(owner.bytes);
+        }
+        Atom *body = managed
+            ? atom_native_handle_identifier(&literals, 42, &owner,
+                owned_bytes_retain, owned_bytes_release)
+            : atom_int(&literals, 42);
+        Atom *parameter = parse(&literals, "$unused-owned-source");
+        PettaProgram *plans = petta_program_new();
+        const char *reason = NULL;
+        CettaOpenEquationProgram *program = cetta_open_equation_program_compile_body(
+            plans, &fixture.space, body, &parameter, 1u, NULL, &reason);
+        if (!program || !cetta_open_equation_program_admitted(program))
+            fprintf(stderr, "owned source declined: %s\n", reason ? reason : "unknown");
+        assert(program && cetta_open_equation_program_admitted(program));
+        arena_free(&literals);
+        Atom *argument = atom_int(&fixture.source, 0);
+        CettaOpenEquationRuntime runtime = {0};
+        CettaOpenEquationCursor *cursor = cetta_open_equation_cursor_open(
+            program, &fixture.scratch, &argument, 1u, NULL, NULL, 0u, &runtime);
+        assert(cursor);
+        CettaCallOutcome answer = {0};
+        Atom **values = NULL;
+        assert(cetta_open_equation_cursor_next(cursor, NULL, &answer, &values) ==
+            CETTA_OPEN_EQUATION_ANSWER);
+        assert(answer.kind == CETTA_CALL_VALUE && answer.term &&
+            answer.term->kind == ATOM_GROUNDED && answer.term->ground.gkind == GV_INT &&
+            answer.term->ground.ival == 42);
+        assert(atom_native_handle_identifier_matches(answer.term, &owner,
+            owned_bytes_retain, owned_bytes_release) == (managed != 0u));
+        cetta_open_equation_cursor_close(cursor);
+        cetta_open_equation_program_release(program);
+        petta_program_free(plans);
+        if (managed)
+            assert(owner.references > 0u && owner.releases == 0u);
+        destroy(&fixture);
+        if (managed)
+            assert(owner.references == 0u && owner.releases == 1u);
+    }
+    puts("PASS: lexical returns preserve managed identifier owners and plain integers");
+}
+
 static void test_callee_cursor_entry_admission(void) {
     const char *equations[] = {"(= (authority-entry $x) $x)"};
     Fixture fixture;
@@ -2212,6 +2265,205 @@ static void test_callee_cursor_entry_admission(void) {
     puts("PASS: prepared cursor entry owns authority admission before any execution");
 }
 
+static Space *make_temporary_space(Fixture *fixture, Arena *result_arena) {
+    ResultSet results;
+    result_set_init(&results);
+    eval_top(&fixture->space, result_arena,
+             parse(&fixture->source, "(new-space)"), &results);
+    assert(results.len == 1u && results.items[0]->kind == ATOM_GROUNDED &&
+           results.items[0]->ground.gkind == GV_SPACE);
+    Space *space = results.items[0]->ground.ptr;
+    assert(space && space->arena_hold && space->native.universe == &fixture->universe);
+    result_set_free(&results);
+    return space;
+}
+
+static void test_temporary_space_lifetime(void) {
+    const char *equations[] = {"(= (root) root)"};
+    Fixture fixture;
+    init(&fixture, equations, 1u, "(root)");
+    size_t providers = fixture.universe.root_provider_len;
+    for (unsigned prepared = 0u; prepared < 2u; prepared++) {
+        Arena result_arena;
+        arena_init_detached(&result_arena);
+        Space *space = make_temporary_space(&fixture, &result_arena);
+        uint64_t identity = space_instance_id(space);
+        void *pin = prepared ? NULL : space_lifetime_pin(space);
+        CettaPreparedPureAnswerCursor *cursor = NULL;
+        if (prepared) {
+            assert(space_admit_atom(space, &fixture.source,
+                                    parse(&fixture.source, "(= (f) ok)")));
+            CettaPreparedPureProgram *program =
+                cetta_prepared_pure_program_compile_closed_answers(
+                    space, parse(&fixture.source, "(f)"),
+                    CETTA_GSLT_PURE_CALL_EAGER, atom_bool, atom_expr,
+                    cetta_prepared_pure_constructs_expression_always,
+                    NULL, NULL, NULL, NULL, NULL, true, true,
+                    (CettaMatchDecisionSemanticIdentity){0}, NULL);
+            assert(program);
+            CettaPreparedPureAnswerCursorOptions options = {
+                .limits = fixture.limits,
+                .unmatched_call = CETTA_PREPARED_PURE_UNMATCHED_FAILS,
+            };
+            cursor = cetta_prepared_pure_answer_cursor_open(program, &options);
+            assert(cursor);
+            cetta_prepared_pure_program_free(program);
+        } else {
+            assert(pin);
+        }
+        arena_free(&result_arena);
+        assert(space_reclaim_unheld());
+        /* The actual collector registration witnesses the source's life:
+         * no Atom or caller arena now retains this Space. */
+        assert(fixture.universe.root_provider_len > providers);
+        assert(space_instance_id(space) == identity);
+        if (prepared) {
+            expect_answer(&fixture, cursor, "ok");
+            cetta_prepared_pure_answer_cursor_close(cursor);
+        } else {
+            space_lifetime_unpin(pin);
+        }
+        assert(space_reclamation_due());
+        assert(space_reclaim_unheld());
+        assert(fixture.universe.root_provider_len == providers);
+    }
+    {
+        Arena result_arena;
+        arena_init_detached(&result_arena);
+        Space *base = make_temporary_space(&fixture, &result_arena);
+        Space *view = make_temporary_space(&fixture, &result_arena);
+        void *pin = space_lifetime_pin(view);
+        assert(pin);
+        space_lifetime_rebase(view, base);
+        view->overlay_base = base;
+        arena_free(&result_arena);
+        assert(space_reclaim_unheld());
+        assert(fixture.universe.root_provider_len > providers);
+        size_t roots_with_base = fixture.universe.root_provider_len;
+        space_lifetime_rebase(view, NULL);
+        view->overlay_base = NULL;
+        assert(space_reclaim_unheld());
+        assert(fixture.universe.root_provider_len > providers);
+        assert(fixture.universe.root_provider_len < roots_with_base);
+        space_lifetime_unpin(pin);
+        assert(space_reclaim_unheld());
+        assert(fixture.universe.root_provider_len == providers);
+    }
+    {
+        Arena result_arena;
+        arena_init_detached(&result_arena);
+        Space *chain[3];
+        for (unsigned i = 0u; i < 3u; i++) {
+            chain[i] = make_temporary_space(&fixture, &result_arena);
+            if (i != 0u) {
+                space_lifetime_rebase(chain[i], chain[i - 1u]);
+                chain[i]->overlay_base = chain[i - 1u];
+            }
+        }
+        arena_free(&result_arena);
+        eval_release_temporary_spaces();
+        assert(fixture.universe.root_provider_len == providers);
+    }
+    destroy(&fixture);
+    puts("PASS: native pins and prepared cursors retain temporary spaces and release their roots");
+}
+
+static void resource_cycle_root(const TermUniverse *universe,
+        TermUniverseRootVisit visit, void *visit_context, void *context) {
+    (void)universe;
+    visit(visit_context, *(AtomId *)context);
+}
+
+static void test_temporary_space_cycles(void) {
+    const char *equations[] = {"(= (root) root)"};
+    Fixture fixture;
+    init(&fixture, equations, 1u, "(root)");
+    size_t providers = fixture.universe.root_provider_len;
+    for (unsigned mode = 0u; mode < 9u; mode++) {
+        Arena values, reader;
+        arena_init_detached(&values);
+        arena_init_detached(&reader);
+        Space *left = make_temporary_space(&fixture, &values);
+        Space *right = mode == 1u ? make_temporary_space(&fixture, &values) : left;
+        Atom *row = atom_expr(&values, (Atom *[]){
+            atom_symbol(&values, "edge"), atom_space(&values, right)}, 2u);
+        if (mode == 8u)
+            row = atom_expr(&values, (Atom *[]){atom_symbol(&values, "="),
+                parse(&values, "(f)"), atom_space(&values, left)}, 3u);
+        assert(space_admit_atom(left, &values, row));
+        if (mode == 8u)
+            assert(space_equations_may_match_known_head(left,
+                parse(&values, "f")->sym_id));
+        if (right != left) {
+            Atom *back = atom_expr(&values, (Atom *[]){
+                atom_symbol(&values, "back"), atom_space(&values, left)}, 2u);
+            assert(space_admit_atom(right, &values, back));
+        }
+        AtomId id = space_get_atom_id_at(left, 0u);
+        if (mode == 2u)
+            assert(space_admit_atom(left, &values, row));
+        Space *pin_space = left;
+        if (mode == 7u) {
+            pin_space = make_temporary_space(&fixture, &values);
+            space_replace_contents(pin_space, left);
+        }
+        void *pin = mode == 3u || mode == 7u ? space_lifetime_pin(pin_space) : NULL;
+        Atom *view = mode == 4u
+            ? term_universe_view_atom(&fixture.universe, &reader, id) : NULL;
+        if (mode == 4u)
+            assert(view && atom_eq(view, row));
+        if (mode == 5u)
+            assert(term_universe_add_root_provider(&fixture.universe,
+                resource_cycle_root, &id));
+        if (mode == 6u) {
+            assert(term_universe_add_counted_root_provider(&fixture.universe,
+                resource_cycle_root, &id));
+            term_universe_hold(&fixture.universe, id);
+        }
+        arena_free(&values);
+        assert(term_universe_collect(&fixture.universe, NULL));
+        if (mode >= 3u && mode <= 7u) {
+            assert(fixture.universe.root_provider_len > providers);
+            assert(space_length64(pin_space) == 1u);
+            assert(left->instance_id != 0u);
+            if (view)
+                assert(view->expr.elems[1]->ground.ptr == left);
+            if (pin)
+                space_lifetime_unpin(pin);
+            if (mode == 6u)
+                term_universe_release(&fixture.universe, id);
+            if (mode == 5u || mode == 6u)
+                term_universe_remove_root_provider(&fixture.universe,
+                    resource_cycle_root, &id);
+            arena_free(&reader);
+            assert(term_universe_collect(&fixture.universe, NULL));
+        } else {
+            arena_free(&reader);
+        }
+        if (fixture.universe.root_provider_len != providers)
+            fprintf(stderr, "cycle mode %u retains %zu providers, expected %zu\n",
+                mode, fixture.universe.root_provider_len, providers);
+        assert(fixture.universe.root_provider_len == providers);
+        assert(space_reclaim_unheld());
+    }
+    {
+        Arena values;
+        arena_init_detached(&values);
+        Space *left = make_temporary_space(&fixture, &values);
+        Space *right = make_temporary_space(&fixture, &values);
+        space_lifetime_rebase(left, right);
+        left->overlay_base = right;
+        space_lifetime_rebase(right, left);
+        right->overlay_base = left;
+        arena_free(&values);
+        assert(term_universe_collect(&fixture.universe, NULL));
+        assert(fixture.universe.root_provider_len == providers);
+        assert(space_reclaim_unheld());
+    }
+    destroy(&fixture);
+    puts("PASS: opaque self, mutual and base cycles retire; pins, image readers and provider roots survive");
+}
+
 int main(void) {
     SymbolTable symbols;
     VarInternTable variables;
@@ -2222,6 +2474,8 @@ int main(void) {
     var_intern_init(&variables);
     g_var_intern = &variables;
     eval_set_library_context(NULL);
+    test_temporary_space_lifetime();
+    test_temporary_space_cycles();
     test_completed_occurrences();
     test_intrinsic_boolean_representation();
     test_intrinsic_result_roles();
@@ -2273,6 +2527,7 @@ int main(void) {
     test_owned_final_survives_authority_change();
     test_owned_cursor_authority();
     test_owned_shared_payload();
+    test_lexical_native_identifier_return();
     symbol_table_free(&symbols);
     var_intern_free(&variables);
     g_symbols = NULL;

@@ -370,10 +370,11 @@ int gslt_direct_petta_reader_v1_parse_bytes_ids(
 /* The forms of INPUT from byte offset START, at most MAX_FORMS of them
  * (UINT32_MAX: every one), with *END_OUT set to where the next form would
  * start: INPUT_LEN once the input is read through.  The ids are those the
- * whole-input entry gives for the same forms. */
+ * whole-input entry gives for the same forms. MAX_TOKENS bounds the parsed
+ * nodes between forms (0: unlimited); an individual form remains whole. */
 int gslt_direct_petta_reader_v1_parse_bytes_ids_from(
     const GSLTDirectPeTTaReaderV1Plan *plan, const uint8_t *input,
-    size_t input_len, size_t start, uint32_t max_forms,
+    size_t input_len, size_t start, uint32_t max_forms, uint32_t max_tokens,
     const GSLTDirectPeTTaProjectionV1 *projection, AtomId **out_ids,
     GSLTDirectPeTTaReaderV1Receipt *receipt, size_t *end_out,
     char *error_buf, size_t error_buf_size);
