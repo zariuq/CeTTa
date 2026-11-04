@@ -562,14 +562,16 @@ static void subst_matchset_push(SubstMatchSet *out, CettaIndex atom_idx,
         if (out->items == out->inline_items) {
             SubstMatch *next =
                 cetta_malloc(sizeof(SubstMatch) * (size_t)next_cap);
+            if (!next) return;
             if (out->len > 0) {
                 memcpy(next, out->items,
                        sizeof(SubstMatch) * (size_t)out->len);
             }
             out->items = next;
         } else {
-            out->items =
-                cetta_realloc(out->items, sizeof(SubstMatch) * (size_t)next_cap);
+            SubstMatch *next = cetta_realloc(out->items, sizeof(SubstMatch) * (size_t)next_cap);
+            if (!next) return;
+            out->items = next;
         }
         out->cap = next_cap;
     }
@@ -651,6 +653,7 @@ static void subst_matchset_normalize(SubstMatchSet *out) {
     }
     SubstMatch *tmp =
         cetta_malloc(sizeof(SubstMatch) * (size_t)out->len);
+    if (!tmp) return;
     subst_matchset_sort(out->items, out->len, tmp);
     free(tmp);
     CettaIndex w = 1;
@@ -689,8 +692,14 @@ static void native_rebuild_match_trie(Space *s) {
         s->native.len);
     disc_node_free(st->match_trie);
     st->match_trie = disc_node_new();
-    for (CettaIndex i = 0; i < s->native.len; i++)
+    for (CettaIndex i = 0; st->match_trie && i < s->native.len; i++) {
         native_insert_match_trie_entry(s, i);
+        if (cetta_native_memory_failed && cetta_native_memory_failed()) break;
+    }
+    if (cetta_native_memory_failed && cetta_native_memory_failed()) {
+        disc_node_free(st->match_trie); st->match_trie = NULL;
+        st->match_trie_dirty = true; return;
+    }
     st->match_trie_dirty = false;
     st->match_trie_stale_occurrences = 0u;
 }
@@ -705,8 +714,14 @@ static void native_ensure_match_trie(Space *s) {
             CETTA_RUNTIME_COUNTER_NATIVE_PATTERN_INDEX_BUILD_ROW,
             s->native.len);
         st->match_trie = disc_node_new();
-        for (CettaIndex i = 0; i < s->native.len; i++)
+        for (CettaIndex i = 0; st->match_trie && i < s->native.len; i++) {
             native_insert_match_trie_entry(s, i);
+            if (cetta_native_memory_failed && cetta_native_memory_failed()) break;
+        }
+        if (cetta_native_memory_failed && cetta_native_memory_failed()) {
+            disc_node_free(st->match_trie); st->match_trie = NULL;
+            st->match_trie_dirty = true; return;
+        }
         st->match_trie_dirty = false;
         st->match_trie_stale_occurrences = 0u;
         /* The trie descends every bound prefix: indexes of prefixes kept
@@ -1423,6 +1438,7 @@ static bool native_pattern_is_flat_linear(Atom *pattern) {
     }
     VarId *seen = cetta_malloc(
         (size_t)pattern->expr.len * sizeof(*seen));
+    if (!seen) return false;
     size_t seen_len = 0u;
     bool admissible = true;
     for (CettaExprIndex index = 0u;
@@ -1524,7 +1540,9 @@ static bool native_cold_flat_candidates(
                 return false;
             }
             capacity = capacity ? capacity * 2u : 16u;
-            indices = cetta_realloc(indices, (size_t)capacity * sizeof(*indices));
+            CettaIndex *grown = cetta_realloc(indices, (size_t)capacity * sizeof(*indices));
+            if (!grown) { free(indices); return false; }
+            indices = grown;
         }
         indices[length++] = position;
     }
@@ -12132,6 +12150,7 @@ static void subst_matchset_own_first(SubstMatchSet *set, CettaIndex imported) {
     if (!own_after_imported)
         return;
     SubstMatch *sorted = cetta_malloc(sizeof(*sorted) * (size_t)set->len);
+    if (!sorted) return;
     CettaIndex write = 0u;
     for (int pass = 0; pass < 2; pass++) {
         for (CettaIndex i = 0u; i < set->len; i++) {

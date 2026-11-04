@@ -1,0 +1,4 @@
+CETTA_EMBED_1 {
+    global: cetta_embed_*;
+    local: *;
+};
