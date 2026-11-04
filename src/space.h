@@ -366,6 +366,8 @@ typedef struct Space {
 } Space;
 
 void space_init_with_universe(Space *s, TermUniverse *universe);
+/* Failure leaves no registered observer/root or owned payload. */
+bool space_try_init_with_universe(Space *s, TermUniverse *universe);
 void space_init_overlay(Space *s, const Space *base);
 /* Borrow the module's own rows, excluding its imported prefix/dependencies.
  * Mutations reach the original storage. Free this view before its owner, or
@@ -1014,6 +1016,18 @@ Atom *space_occurrence_cursor_atom(const SpaceOccurrenceCursor *cursor,
                                    CettaIndex index);
 void space_occurrence_cursor_release(SpaceOccurrenceCursor *cursor);
 
+/* A captured occurrence view may select its declared heads later. The
+ * shared index is pinned with the rows; appends, deletions and rewrites do
+ * not turn the later selection into a query of the live Space. */
+typedef struct {
+    SpaceOccurrenceCursor rows;
+    CettaSpaceHeadIndex *heads;
+} SpaceHeadSnapshot;
+bool space_head_snapshot_init(Space *space, SpaceHeadSnapshot *snapshot);
+bool space_head_snapshot_select(const SpaceHeadSnapshot *snapshot,
+    const SymbolId *heads, size_t count, SpaceOccurrenceCursor *cursor);
+void space_head_snapshot_release(SpaceHeadSnapshot *snapshot);
+
 bool space_contains_exact(Space *s, Atom *atom);
 /* Exact membership for `(head argument...)`, presented as a borrowed term
  * view.  `out_applicable` is false when the active backend cannot answer from
@@ -1300,6 +1314,8 @@ typedef struct {
 } Registry;
 
 void registry_init(Registry *r);
+/* Failure releases its incomplete name-key owner. */
+bool registry_try_init(Registry *r);
 void registry_free(Registry *r);
 void registry_bind_id(Registry *r, SymbolId key, Atom *value);
 Atom *registry_lookup_id(Registry *r, SymbolId key);
