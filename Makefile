@@ -30348,7 +30348,7 @@ PETTA_SEMANTIC_EXACT_STREAM_STEMS = \
 	collapse_copies_answers open_lists library_metta_suffix \
 	sort_values dynamic_head_values specialize_data_values \
 	specialize_space_arguments \
-	foldall_reduce partial_values bound_head_values \
+	foldall_reduce partial_values bound_head_values bound_head_lambda_bodies \
 	get_type_relation list_natives_several let_star_patterns \
 	lambda_pattern_parameters lambda_parameter_scope \
 	specialized_partial_values closure_values activation_cons_let \
