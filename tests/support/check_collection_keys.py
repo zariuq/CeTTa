@@ -41,7 +41,7 @@ def main():
         calls.append(f'!(== (list:factorize {text(values)}) {encode(values)})')
         calls.append(f'!(== (list:factorize {text(values)}) (list:factorize-reference {text(values)}))')
     calls += [
-        '!(== (list:factorize (list:from-expression ("b" "a" "b"))) '
+        '!(== (list:factorize (list:from ("b" "a" "b"))) '
         '(List:Factorization ("b" "a") (0 1 0) (0 1)))',
         '!(== (list:factorize ((K 1) (K 2) (K 1))) '
         '(List:Factorization ((K 1) (K 2)) (0 1 0) (0 1)))',

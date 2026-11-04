@@ -44,8 +44,18 @@
 !(assertEqual (list:merge-by list:number-ascending [1 3] [2 4]) [1 2 3 4])
 
 ; From and to expression; a sequence of the asked kind is returned as it is.
-!(assertEqual (list:from-expression (a b)) [a b])
-!(assertEqual (list:to-expression [a b]) (a b))
-!(assertEqual (list:from-expression [a b]) [a b])
-!(assertEqual (list:to-expression (a b)) (a b))
-!(assertEqual (== (list:from-expression ()) ()) False)
+!(assertEqual (list:from (a b)) [a b])
+!(assertEqual (tuple:from [a b]) (a b))
+!(assertEqual (list:from [a b]) [a b])
+!(assertEqual (tuple:from (a b)) (a b))
+!(assertEqual (== (list:from ()) ()) False)
+
+; The conversions answer data: the expression a list becomes is not
+; evaluated again, converting a computed expression converts its value,
+; and a list survives both conversions as written.
+(= (list-library:f a) 5)
+!(assertEqualToResult (tuple:from [(list-library:f a) (+ 1 2)])
+  (((list-library:f a) (+ 1 2))))
+!(assertEqual (list:from (map-atom ((list-library:f a) (+ 1 2)) $e $e)) [5 3])
+!(assertEqual (let $l [(list-library:f a) b] (list:from (tuple:from $l)))
+  [(list-library:f a) b])
