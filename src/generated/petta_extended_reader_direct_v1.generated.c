@@ -343,8 +343,8 @@ const GSLTDirectPeTTaReaderV1Plan petta_extended_reader_direct_v1_plan = {
     .form_syntax_digest = "47dac8e18ec75a597f78cf32082983564d1b957b4096a3b58a9e92b95f3b5055",
     .form_class_digest = "deba4443775a053347697a693fb73cd5a68cdcd468e2ab877d415fe5174d4166",
     .projection_digest = "f45d393532f9a60097d5a1d7959e8061476c920d0f9e53a62bcbde2778a4f356",
-    .compiler_digest = "19ab1fd335bc98e1c035fa725ba03867a014f5c98ee1dcec2056f97bab6cb8c3",
-    .composition_digest = "f9d1b0b867271d37432b9c5e2349e7b9afaad0a916225fdc6606849b2a317d07",
+    .compiler_digest = "b5c930a6942f9b7f4bc0e39248b81946a48db98362dbb2e596c2b30c40f5a6a2",
+    .composition_digest = "c48ce252c6eb80b62defdcd7bd7d4157855f2bfbe6c280813ec98486eb7fec85",
     .profile = "cetta-petta-v1",
     .splitter_blank = &petta_extended_reader_direct_v1_class_5_petta_splitter_blank_scalar,
     .splitter_string_plain = &petta_extended_reader_direct_v1_class_8_petta_splitter_string_plain_scalar,
@@ -374,6 +374,7 @@ const GSLTDirectPeTTaReaderV1Plan petta_extended_reader_direct_v1_plan = {
     .list_token_first = &petta_extended_reader_direct_v1_class_2_petta_list_token_first_scalar,
     .list_token = &petta_extended_reader_direct_v1_class_3_petta_list_token_scalar,
     .list_token_boundary = &petta_extended_reader_direct_v1_class_1_petta_list_token_boundary_scalar,
+    .raw_source_regions = true,
     .depth_limit = UINT32_C(4096),
 };
 

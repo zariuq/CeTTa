@@ -13,6 +13,7 @@ static bool ppglr_v1_parse_input(
     uint32_t fact_limit,
     uint32_t replay_depth,
     uint32_t result_limit,
+    bool replay,
     PPNativeV1Result *out,
     char *error_buf,
     size_t error_buf_size) {
@@ -119,7 +120,7 @@ static bool ppglr_v1_parse_input(
             break;
         }
     }
-    if (!ppnative_v1_finish(
+    if (replay && !ppnative_v1_finish(
             &result, pack, start_state, replay_depth, result_limit,
             error_buf, error_buf_size)) {
         goto done;
@@ -150,7 +151,7 @@ bool ppglr_v1_parse(const PPABIV1Pack *pack,
     size_t error_buf_size) {
     return ppglr_v1_parse_input(
         NULL, pack, start_state, input_bytes, input_byte_len, NULL,
-        fact_limit, replay_depth, result_limit,
+        fact_limit, replay_depth, result_limit, true,
         out, error_buf, error_buf_size);
 }
 
@@ -166,7 +167,7 @@ bool ppglr_v1_parse_scalar_view(
     size_t error_buf_size) {
     return ppglr_v1_parse_input(
         NULL, pack, start_state, NULL, 0u, view,
-        fact_limit, replay_depth, result_limit,
+        fact_limit, replay_depth, result_limit, true,
         out, error_buf, error_buf_size);
 }
 
@@ -182,7 +183,7 @@ bool ppglr_v1_prepared_parse(
     size_t error_buf_size) {
     return ppglr_v1_parse_input(
         prepared, NULL, NULL, input_bytes, input_byte_len, NULL,
-        fact_limit, replay_depth, result_limit,
+        fact_limit, replay_depth, result_limit, true,
         out, error_buf, error_buf_size);
 }
 
@@ -197,6 +198,13 @@ bool ppglr_v1_prepared_parse_scalar_view(
     size_t error_buf_size) {
     return ppglr_v1_parse_input(
         prepared, NULL, NULL, NULL, 0u, view,
-        fact_limit, replay_depth, result_limit,
+        fact_limit, replay_depth, result_limit, true,
         out, error_buf, error_buf_size);
+}
+
+bool ppglr_v1_recognize(const PPABIV1Pack *pack,const Atom *start,
+    const uint8_t *bytes,size_t length,uint32_t limit,PPNativeV1Result *out,
+    char *error,size_t error_size) {
+    return ppglr_v1_parse_input(NULL,pack,start,bytes,length,NULL,limit,1u,1u,false,
+        out,error,error_size);
 }

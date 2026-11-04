@@ -11823,6 +11823,7 @@ static PettaEquationSlotMatch petta_machine_equation_slot_match(
     CettaFrameIdentity query_epoch, uint32_t query_first_entry,
     const PettaSpaceQueryView *query_fields,
     bool query_closed,
+    bool rhs_binds_variables,
     Atom **result_out, bool *result_fully_resolved_out,
     bool *result_is_activation_out,
     bool *activation_requires_region_hole_out,
@@ -12146,10 +12147,15 @@ static PettaEquationSlotMatch petta_machine_equation_slot_match(
              * before ordinary scheduling. */
             const PettaRegionHoleProgram *region_hole =
                 rhs_plan ? rhs_plan->region_hole_program : NULL;
+            /* A local outer region does not certify the private variables
+             * introduced later in its selected body across unknown callees.
+             * Those equations retain ordinary source materialization until
+             * the complete relation supplies the stronger admission. */
             bool region_hole_only = !relation_admitted && region_hole &&
                 region_hole->root_plan == rhs_plan &&
                 region_hole->stable_source == rhs &&
                 ((region_hole->kind == PETTA_REGION_HOLE_BOOLEAN_BRANCH &&
+                  !rhs_binds_variables &&
                   petta_machine_match_region_hole_execution_admitted(machine)) ||
                  (region_hole->kind == PETTA_REGION_HOLE_BINDING_SEQUENCE &&
                   petta_machine_binding_region_hole_execution_admitted(
@@ -19559,6 +19565,7 @@ static bool petta_machine_advance_choice(
                             : choice->as.equation.query_first_entry,
                         direct_field_match ? choice_fields : NULL,
                         choice->as.equation.query_closed,
+                        candidate.rhs_binds_variables,
                         &slot_result,
                         &slot_result_fully_resolved,
                         &slot_result_is_activation,
@@ -36645,27 +36652,35 @@ static bool petta_machine_dispatch_solve(
 
     if (control.operation == CETTA_CONTROL_ORDERED_CHOICE) {
         CettaExprIndex source_child = (CettaExprIndex)control.source + 1u;
-        Atom *items = petta_machine_apply_bindings(machine,
-            environment, &machine->heap, expression->expr.elems[source_child]);
-        /*
-         * The alternative list is a LOGICAL list: a bound closed open-cons
-         * chain (a chainer result set, for example) denotes the same
-         * alternatives as its flat spelling and must distribute the same
-         * way, not iterate the carrier's implementation fields.
-         */
-        items = petta_semantics_flatten_closed_open_cons(
-            &machine->heap, items);
-        /* A list's alternatives are its elements. */
-        items = items ? petta_machine_list_elements(machine, items) : NULL;
-        if (!items)
-            return false;
+        Atom *source = expression->expr.elems[source_child];
         /* PeTTa distributes an authored tuple, evaluating each element; a
          * variable's list is its runtime `superpose`, member/2 of the
          * value, whose elements are the alternatives as they stand. */
         const PettaPlanNode *items_plan = petta_plan_child(plan, source_child);
         bool values = items_plan
             ? items_plan->role == PETTA_PLAN_VALUE
-            : expression->expr.elems[source_child]->kind == ATOM_VAR;
+            : source->kind == ATOM_VAR;
+        /* An authored tuple's elements are solved as written, each in this
+         * environment, as any goal's children are: a variable among them is
+         * the value bound to it and is never evaluated again
+         * (ValueOccurrences.evalIn).  Only a list held as a value is read
+         * through the environment. */
+        Atom *items = values || source->kind != ATOM_EXPR
+            ? petta_machine_apply_bindings(machine, environment,
+                                           &machine->heap, source)
+            : source;
+        /*
+         * The alternative list is a LOGICAL list: a bound closed open-cons
+         * chain (a chainer result set, for example) denotes the same
+         * alternatives as its flat spelling and must distribute the same
+         * way, not iterate the carrier's implementation fields.
+         */
+        items = items ? petta_semantics_flatten_closed_open_cons(
+            &machine->heap, items) : NULL;
+        /* A list's alternatives are its elements. */
+        items = items ? petta_machine_list_elements(machine, items) : NULL;
+        if (!items)
+            return false;
         return petta_machine_start_superpose(
             machine, items, expected, goal->barrier, items_plan, values);
     }
