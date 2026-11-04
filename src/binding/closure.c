@@ -39,12 +39,13 @@ void bindings_owners_release(BindingsOwners *owners) {
     free(owners);
 }
 
-static void bindings_retain_value_owner(Bindings *bindings, CettaBindingsValue *value) {
+static bool bindings_retain_value_owner(Bindings *bindings, CettaBindingsValue *value) {
     BindingsOwners *old = bindings->owners;
     size_t count = old ? old->count : 0u;
     for (size_t i = 0; i < count; i++)
-        if (old->values[i] == value) return;
+        if (old->values[i] == value) return true;
     BindingsOwners *next = cetta_malloc(sizeof(*next) + (count + 1u) * sizeof(value));
+    if (!next) return false;
     next->references = 1u;
     next->count = count + 1u;
     for (size_t i = 0; i < count; i++) {
@@ -55,6 +56,7 @@ static void bindings_retain_value_owner(Bindings *bindings, CettaBindingsValue *
     value->retain(value);
     bindings->owners = next;
     bindings_owners_release(old);
+    return true;
 }
 
 void bindings_inherit_owners(Bindings *destination, const Bindings *source) {
@@ -114,6 +116,7 @@ static Atom *captured_bindings_apply(Arena *arena,
 
 Atom *bindings_capture_value(Arena *arena, const Bindings *bindings) {
     CapturedBindings *captured = cetta_malloc(sizeof(*captured));
+    if (!captured) return NULL;
     *captured = (CapturedBindings){
         .value = {
             .retain = captured_bindings_retain,
@@ -154,7 +157,9 @@ bool bindings_restore_captured_value(const Atom *atom, Bindings *out) {
     const CapturedBindings *captured = atom->ground.ptr;
     if (captured->value.retain != captured_bindings_retain) return false;
     if (!bindings_clone(out, &captured->bindings)) return false;
-    bindings_retain_value_owner(out, (CettaBindingsValue *)&captured->value);
+    if (!bindings_retain_value_owner(out, (CettaBindingsValue *)&captured->value)) {
+        bindings_free(out); return false;
+    }
     return true;
 }
 

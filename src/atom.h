@@ -787,6 +787,8 @@ _Noreturn void cetta_oom(size_t size);
 void *cetta_malloc(size_t size);
 void *cetta_realloc(void *ptr, size_t size);
 void  arena_init(Arena *a);
+/* Failed initialization leaves a dead empty arena with no name or storage. */
+bool  arena_try_init(Arena *a);
 /* Initialize an arena whose allocation identity must not inherit the
  * calling thread's hash-cons table.  Use this for process-lifetime and
  * cross-thread owners: an ordinary arena_init deliberately inherits the
@@ -796,6 +798,10 @@ void  arena_init_detached(Arena *a);
  * inherit it: an arena's lifetime owner must be assigned by its owner. */
 void *arena_current_resource_scope(void);
 void *arena_set_resource_scope(void *scope);
+bool  arena_try_init_detached(Arena *a);
+/* Reserve room for the next size bytes without advancing the allocation
+ * cursor. Failure preserves existing allocations and ownership. */
+bool  arena_try_reserve(Arena *a, size_t size);
 /* An arena that holds little takes blocks of `capacity` bytes rather than
  * ARENA_BLOCK_SIZE; an allocation larger than that still gets a block of its
  * own size. */
@@ -1100,6 +1106,8 @@ typedef struct {
 } VarInternTable;
 
 void    var_intern_init(VarInternTable *t);
+/* Failure leaves no acquired storage; do not free an unsuccessful table. */
+bool    var_intern_try_init(VarInternTable *t);
 void    var_intern_free(VarInternTable *t);
 VarId   var_intern(VarInternTable *t, SymbolId spelling);
 bool    fresh_var_id_try(VarId *id_out);
@@ -1129,7 +1137,7 @@ inline VarId var_epoch_id(VarId id, CettaFrameIdentity epoch) {
 void fresh_var_id_test_reset(uint64_t next_base);
 #endif
 
-extern VarInternTable *g_var_intern;
+extern _Thread_local VarInternTable *g_var_intern;
 
 /* ── Constructors ───────────────────────────────────────────────────────── */
 
@@ -1137,6 +1145,8 @@ Atom *atom_symbol(Arena *a, const char *name);
 /* A symbol spelled by static, immutable storage. Uses the literal cache;
  * dynamic or mutable name buffers must use atom_symbol instead. */
 Atom *atom_symbol_literal(Arena *a, const char *name);
+/* The same literal cache, qualified by the active symbol-table instance. */
+SymbolId atom_symbol_literal_id(const char *name);
 Atom *atom_symbol_id(Arena *a, SymbolId sym_id);
 /* Initialize borrowed symbol metadata without allocation or an arena owner.
  * Storage must outlive its readers; escaping terms use an owning constructor. */
@@ -1735,6 +1745,8 @@ char *atom_to_parseable_bytes(Arena *a, Atom *atom, bool petta,
  * guarantee of reader round-trip; the source adapter checks that separately. */
 char *atom_to_source_bytes(Arena *a, Atom *atom, bool petta,
                           size_t *len_out);
+/* Host display retains quoted control bytes and binary64 precision. */
+char *atom_to_host_bytes(Arena *a, Atom *atom, size_t *len_out);
 
 /* Deep-copy an atom DAG into a different arena, preserving source pointer
    sharing within one copy episode. */
