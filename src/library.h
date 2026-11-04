@@ -3,6 +3,7 @@
 
 #include "atom.h"
 #include "call_outcome.h"
+#include "eval_completion.h"
 #include "foreign.h"
 #include "mork_space_bridge_runtime.h"
 #include "native_handle.h"
@@ -17,6 +18,7 @@
 #include <pthread.h>
 
 typedef struct ResultSet ResultSet;
+typedef struct EvalOutcome EvalOutcome;
 
 #define CETTA_MAX_CMDLINE_ARGS 256
 
@@ -140,8 +142,16 @@ struct CettaPettaRuntimeState;
 struct CettaIoRuntime;
 struct CettaJsonLibraryRuntimeV1;
 struct CettaAuthoredParserV1;
+struct CettaEvalMutexRegistry;
 
 struct CettaHEModuleFailure;
+struct CettaDocumentSourceScope;
+typedef struct CettaLibraryResourceContext CettaLibraryResourceContext;
+typedef struct CettaLibraryResourceScope {
+    struct CettaLibraryResourceScope *previous;
+    CettaLibraryResourceContext *context;
+    uint32_t import_depth;
+} CettaLibraryResourceScope;
 typedef struct CettaHEModuleRunScope {
     struct CettaLibraryContext *context;
     struct CettaHEModuleRunScope *previous;
@@ -150,6 +160,9 @@ typedef struct CettaHEModuleRunScope {
 
 typedef struct CettaLibraryContext {
     CettaEvalSession session;
+    pthread_mutex_t named_mutexes_init_lock;
+    bool named_mutexes_init_lock_ready;
+    struct CettaEvalMutexRegistry *named_mutexes;
     pthread_mutex_t nik_runtime_mutex;
     bool nik_runtime_mutex_ready;
     struct CettaNikRuntimeV1 *nik_runtime;
@@ -195,6 +208,9 @@ typedef struct CettaLibraryContext {
     Registry *module_token_scope;
     struct CettaHEModuleFailure *he_module_failures;
     CettaHEModuleRunScope *he_module_run_scope;
+    struct CettaImportFailureScope *import_failure_scope;
+    struct CettaDocumentSourceScope *document_source_scope;
+    CettaLibraryResourceScope *resource_scope;
     /* HE's top module space, named `top`. */
     const Space *top_module_space;
     Registry *top_module_registry;
@@ -262,6 +278,10 @@ void cetta_library_context_init(CettaLibraryContext *ctx);
 void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
                                                      CettaLanguageId language_id,
                                                      const CettaProfile *profile);
+/* Always establishes a disposable owner. On failure, context_free releases
+ * the completed initialization prefix; no work may enter the failed owner. */
+bool cetta_library_context_try_init_for_language_profile(CettaLibraryContext *,
+    CettaLanguageId, const CettaProfile *);
 void cetta_library_context_free(CettaLibraryContext *ctx);
 /* Compatibility initialization refusals are scoped to one runner request.
  * Default profiles retain their refusals across requests. */
@@ -375,6 +395,49 @@ void cetta_library_set_top_module_registry(CettaLibraryContext *ctx,
 bool cetta_library_module_context(CettaLibraryContext *ctx, uint64_t instance,
                                   Space **space_out, Registry **registry_out);
 typedef bool (*CettaDocumentResultObserver)(void *context, const ResultSet *results);
+typedef bool (*CettaDocumentOutcomeObserver)(void *context, const EvalOutcome *outcome);
+typedef enum {
+    CETTA_DOCUMENT_COMPLETE,
+    CETTA_DOCUMENT_PARSE_FAILED,
+    CETTA_DOCUMENT_REJECTED,
+    CETTA_DOCUMENT_RESOURCE_FAILURE,
+    CETTA_DOCUMENT_INTERRUPTED,
+    CETTA_DOCUMENT_OBSERVER_REFUSED,
+} CettaDocumentRunStatus;
+typedef struct {
+    CettaDocumentRunStatus status;
+    CettaEvalCompletion completion;
+    Atom *detail;
+} CettaDocumentRunReport;
+/* Scoped host observation of import failure; language control is unchanged. */
+typedef struct CettaImportFailureScope {
+    struct CettaImportFailureScope *previous;
+    void *context;
+    void (*observe)(void *context, const char *specification, Atom *reason);
+} CettaImportFailureScope;
+void cetta_library_import_observe_begin(CettaLibraryContext *, CettaImportFailureScope *);
+void cetta_library_import_observe_end(CettaLibraryContext *, CettaImportFailureScope *);
+/* Shared document ingress with typed directive observations. Error values
+ * remain values; the observer may stop at a raised or interrupted outcome.
+ * A parse failure precedes execution of the document. */
+bool cetta_library_run_text(CettaLibraryContext *ctx, Space *space,
+    Registry *registry, const char *text, Arena *arena, Arena *persistent,
+    CettaDocumentOutcomeObserver observer, void *observer_context,
+    CettaDocumentRunReport *report);
+/* A canonical file origin scopes relative imports and entry-directory
+ * metadata. Completed documents join the existing import inventory; failed
+ * attempts leave their already committed prefix and no completed-file entry. */
+bool cetta_library_run_text_at(CettaLibraryContext *ctx, Space *space,
+    Registry *registry, const char *text, const char *canonical_path,
+    Arena *arena, Arena *persistent, CettaDocumentOutcomeObserver observer,
+    void *observer_context, CettaDocumentRunReport *report);
+/* Immutable directory metadata retained by entered work. Activation hides
+ * the caller's import stack; imports opened after activation remain live. */
+CettaLibraryResourceContext *cetta_library_resource_capture(CettaLibraryContext *);
+void cetta_library_resource_release(CettaLibraryResourceContext *);
+void cetta_library_resource_enter(CettaLibraryContext *, CettaLibraryResourceContext *,
+    CettaLibraryResourceScope *);
+void cetta_library_resource_leave(CettaLibraryContext *, CettaLibraryResourceScope *);
 /* The existing document executor, with one observation per directive. */
 bool cetta_library_he_run_text(CettaLibraryContext *ctx, Space *space,
     Registry *registry, const char *text, Arena *arena, Arena *persistent,
