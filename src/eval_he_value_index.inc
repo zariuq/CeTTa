@@ -72,7 +72,9 @@ typedef struct {
  * the newest are the likeliest to be met again. */
 #define HE_VALUE_INDEX_MAX_CERTIFICATES ((size_t)1u << 18)
 
-static __thread HeValueIndex g_he_value_index;
+static __thread HeValueIndex g_he_value_index_fallback;
+static __thread HeValueIndex *g_he_value_index_current;
+#define g_he_value_index (*(g_he_value_index_current ? g_he_value_index_current : &g_he_value_index_fallback))
 
 static bool he_value_index_enabled(void) {
     static _Thread_local int enabled = -1;

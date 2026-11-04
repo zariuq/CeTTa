@@ -1,5 +1,6 @@
 #include "name_key.h"
 
+#include <errno.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -40,8 +41,11 @@ static bool name_key_stack_push(NameKeyVisit **items, size_t *len,
         if (*cap > SIZE_MAX / 2u ||
             *cap * 2u > SIZE_MAX / sizeof(**items))
             return false;
-        *cap *= 2u;
-        *items = cetta_realloc(*items, sizeof(**items) * *cap);
+        size_t capacity = *cap * 2u;
+        NameKeyVisit *next = cetta_realloc(*items, sizeof(**items) * capacity);
+        if (!next) return false;
+        *items = next;
+        *cap = capacity;
     }
     (*items)[(*len)++] = item;
     return true;
@@ -62,6 +66,7 @@ bool name_key_is_admissible(Atom *root) {
     size_t active_cap = 64u, active_len = 0u;
     NameKeyVisit *stack = cetta_malloc(sizeof(*stack) * stack_cap);
     Atom **active = cetta_malloc(sizeof(*active) * active_cap);
+    if (!stack || !active) { free(stack); free(active); return false; }
     bool ok = name_key_stack_push(
         &stack, &stack_len, &stack_cap, (NameKeyVisit){root, false});
 
@@ -92,8 +97,11 @@ bool name_key_is_admissible(Atom *root) {
                 ok = false;
                 break;
             }
-            active_cap *= 2u;
-            active = cetta_realloc(active, sizeof(*active) * active_cap);
+            size_t capacity = active_cap * 2u;
+            Atom **next = cetta_realloc(active, sizeof(*active) * capacity);
+            if (!next) { ok = false; break; }
+            active = next;
+            active_cap = capacity;
         }
         active[active_len++] = atom;
         if (!name_key_stack_push(
@@ -128,25 +136,30 @@ static size_t name_key_bucket_count(size_t requested) {
 NameKeyTable *name_key_table_new_with_hash_mask(size_t bucket_count,
                                                 uint32_t hash_mask) {
     size_t count = name_key_bucket_count(bucket_count);
-    if (count == 0u) return NULL;
-    NameKeyTable *table = cetta_malloc(sizeof(*table));
-    memset(table, 0, sizeof(*table));
-    arena_init(&table->arena);
-    table->buckets = cetta_malloc(sizeof(*table->buckets) * count);
-    memset(table->buckets, 0, sizeof(*table->buckets) * count);
+    if (count == 0u) { errno = EOVERFLOW; return NULL; }
+    NameKeyTable *table = calloc(1u, sizeof(*table));
+    if (!table) return NULL;
+    bool arena_ready = arena_try_init(&table->arena);
+    if (!arena_ready) goto failed;
+    table->buckets = calloc(count, sizeof(*table->buckets));
+    if (!table->buckets) goto failed;
     table->bucket_count = count;
     table->by_id_cap = 16u;
-    table->by_id = cetta_malloc(sizeof(*table->by_id) * table->by_id_cap);
-    memset(table->by_id, 0, sizeof(*table->by_id) * table->by_id_cap);
+    table->by_id = calloc(table->by_id_cap, sizeof(*table->by_id));
+    if (!table->by_id) goto failed;
     table->hash_mask = hash_mask;
-    if (pthread_mutex_init(&table->mutex, NULL) != 0) {
-        arena_free(&table->arena);
-        free(table->by_id);
-        free(table->buckets);
-        free(table);
-        return NULL;
-    }
+    int error = pthread_mutex_init(&table->mutex, NULL);
+    if (error) { errno = error; goto failed; }
     return table;
+failed: {
+    int error = errno;
+    if (arena_ready) arena_free(&table->arena);
+    free(table->by_id);
+    free(table->buckets);
+    free(table);
+    errno = error;
+    return NULL;
+}
 }
 
 NameKeyTable *name_key_table_new(size_t bucket_count) {
@@ -178,7 +191,9 @@ static bool name_key_by_id_grow(NameKeyTable *table, NameId id) {
             return false;
         cap *= 2u;
     }
-    table->by_id = cetta_realloc(table->by_id, sizeof(*table->by_id) * cap);
+    NameKeyEntry **next = cetta_realloc(table->by_id, sizeof(*table->by_id) * cap);
+    if (!next) return false;
+    table->by_id = next;
     memset(table->by_id + table->by_id_cap, 0,
            sizeof(*table->by_id) * (cap - table->by_id_cap));
     table->by_id_cap = cap;
@@ -190,6 +205,7 @@ static bool name_key_rehash_locked(NameKeyTable *table, size_t count) {
         count > SIZE_MAX / sizeof(*table->buckets))
         return count == table->bucket_count;
     NameKeyEntry **buckets = cetta_malloc(sizeof(*buckets) * count);
+    if (!buckets) return false;
     memset(buckets, 0, sizeof(*buckets) * count);
     for (size_t i = 0u; i < table->bucket_count; i++) {
         NameKeyEntry *entry = table->buckets[i];
@@ -249,6 +265,7 @@ NameId name_key_intern(NameKeyTable *table, Atom *key) {
         return NAME_ID_NONE;
     }
     NameKeyEntry *entry = cetta_malloc(sizeof(*entry));
+    if (!entry) { pthread_mutex_unlock(&table->mutex); return NAME_ID_NONE; }
     entry->digest = digest;
     entry->id = id;
     entry->key = owned;
