@@ -4,6 +4,7 @@
 #include "expand_user.h"
 #include "errno_names.h"
 #include "effect_policy.h"
+#include "term_domain.h"
 
 #include "eval.h"
 #include "mm2_lower.h"
@@ -659,6 +660,7 @@ static void library_context_init_services(CettaLibraryContext *ctx,
         pthread_mutex_init(&ctx->parser_cache_mutex, NULL) == 0;
     ctx->parser_cache = NULL;
     term_universe_init(&ctx->term_universe);
+    ctx->owned_term_domain = NULL;
     ctx->active_mask = 0;
     ctx->value_byte_limit = CETTA_ATOM_WIRE_BYTES;
     ctx->root_dir[0] = '\0';
@@ -964,7 +966,8 @@ void cetta_library_context_free(CettaLibraryContext *ctx) {
     ctx->retired_module_len = ctx->retired_module_cap = 0u;
     free(ctx->petta_library_paths.items);
     memset(&ctx->petta_library_paths, 0, sizeof(ctx->petta_library_paths));
-    term_universe_free(&ctx->term_universe);
+    if (!ctx->owned_term_domain)
+        term_universe_free(&ctx->term_universe);
     /* The cache holds no reference of its own. Closing the last native
      * holder removes its entry before destroying the compilation. */
     ctx->parser_cache = NULL;
@@ -1017,6 +1020,34 @@ void cetta_library_context_free(CettaLibraryContext *ctx) {
     cetta_json_library_runtime_v1_free(ctx->json_runtime);
 #endif
     ctx->json_runtime = NULL;
+    if (eval_current_library_context() == ctx)
+        eval_set_library_context(NULL);
+    if (ctx->owned_term_domain) {
+        CettaTermDomain *domain = ctx->owned_term_domain;
+        ctx->owned_term_domain = NULL;
+        cetta_term_domain_release(domain);
+    }
+}
+
+TermUniverse *cetta_library_context_universe(CettaLibraryContext *ctx) {
+    return !ctx ? NULL : ctx->owned_term_domain
+        ? cetta_term_domain_universe(ctx->owned_term_domain) : &ctx->term_universe;
+}
+
+CettaTermDomain *cetta_library_context_term_domain(const CettaLibraryContext *ctx) {
+    return ctx ? ctx->owned_term_domain : NULL;
+}
+
+bool cetta_library_context_set_term_domain(CettaLibraryContext *ctx, CettaTermDomain *domain) {
+    if (!ctx || !domain || g_symbols != cetta_term_domain_symbols(domain)) return false;
+    if (ctx->owned_term_domain) return ctx->owned_term_domain == domain;
+    TermUniverse *legacy = &ctx->term_universe;
+    if (legacy->len || legacy->persistent_arena || legacy->root_provider_len ||
+        legacy->observer_len || legacy->resource_scope || legacy->collection_inhibit ||
+        !cetta_term_domain_retain(domain)) return false;
+    term_universe_free(legacy); /* Dispose empty registry/count allocations too. */
+    ctx->owned_term_domain = domain;
+    return true;
 }
 
 struct CettaNikRuntimeV1 *cetta_library_context_nik_runtime(
@@ -1985,11 +2016,12 @@ static TermUniverse *cetta_library_space_universe(CettaLibraryContext *ctx,
                                                   Arena *persistent_arena) {
     if (!ctx || !persistent_arena)
         return NULL;
-    if (!ctx->term_universe.persistent_arena)
-        term_universe_set_persistent_arena(&ctx->term_universe, persistent_arena);
-    if (ctx->term_universe.persistent_arena != persistent_arena)
+    TermUniverse *universe = cetta_library_context_universe(ctx);
+    if (!universe->persistent_arena)
+        term_universe_set_persistent_arena(universe, persistent_arena);
+    if (universe->persistent_arena != persistent_arena)
         return NULL;
-    return &ctx->term_universe;
+    return universe;
 }
 
 static bool cetta_path_strip_prefix(const char *path, const char *prefix,

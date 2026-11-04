@@ -15,6 +15,7 @@
 #include "term_universe.h"
 #include "space_dense.h"
 #include "space_tuples.h"
+#include "space_skeleton.h"
 
 /* ── Discrimination Trie (à la Vampire SubstitutionTree) ───────────────── */
 
@@ -204,15 +205,25 @@ typedef struct {
     EqIndex eq_idx;      /* indexed equations for fast lookup */
     TypeAnnIndex ty_idx; /* indexed type annotations for fast lookup */
     ExactAtomIndex exact_idx; /* exact stable-atom membership index */
-    uint8_t *id_present;      /* dense AtomId presence bitset: O(1) exact-contains, unclusterable */
-    uint64_t id_present_bits; /* capacity in bits; 0 = unallocated */
+    /* The rows' presence keys, in the form their density allows
+     * (PresenceSetForm): a table of the keys (open addressing,
+     * CETTA_ATOM_ID_NONE empty) while it is smaller than a bitset over the
+     * ids it covers, then that bitset. */
+    uint8_t *id_present;      /* the bitset, or NULL while the keys are a table */
+    uint64_t id_present_bits; /* its capacity in bits */
+    AtomId *id_present_table;
+    uint32_t id_present_table_cap, id_present_table_used;
     CettaIndex id_present_synced_len; /* logical prefix already reflected in id_present (lazy catch-up) */
     bool id_present_dirty;    /* removal/bulk invalidated bits: clear + full resync on next membership query */
     bool id_present_incomplete; /* pointer-backed rows omitted from the canonical projection */
+    /* Two synced rows share a key: a removal then marks the bits stale
+     * rather than taking its row's key out, which the other row still has. */
+    bool id_present_shared;
     /* The bitset's keys that are no row's id, the alpha-canonical forms of
      * rows with variables: the bitset holds them, one reference a key set. */
     AtomId *id_present_keys;
     CettaIndex id_present_key_len, id_present_key_cap;
+    TermUniverseResourceOwner *resource_owner;
     /* The heads whose ground facts the space keeps in relations (space.c,
      * "Relations kept as bits or tables"); NULL while it keeps none.  The
      * facts they hold, over every head, which every positional read past the
@@ -231,6 +242,8 @@ typedef struct {
     bool has_non_exact_atoms;
     bool has_non_exact_atoms_dirty;
     bool has_graded_equations; /* derived alongside the ordinary equation index */
+    /* Cached representation presence; occupies existing flag padding. */
+    _Atomic bool has_proof_image;
     uint32_t secondary_index_deferral_depth;
     /* Rows removed and not yet contracted away (space_mark_rows): one bit
      * per row, their number, and a Fenwick tree of the live rows of each
@@ -257,11 +270,15 @@ typedef struct Space {
             ExactAtomIndex exact_idx;
             uint8_t *id_present;
             uint64_t id_present_bits;
+            AtomId *id_present_table;
+            uint32_t id_present_table_cap, id_present_table_used;
             CettaIndex id_present_synced_len;
             bool id_present_dirty;
             bool id_present_incomplete;
+            bool id_present_shared;
             AtomId *id_present_keys;
             CettaIndex id_present_key_len, id_present_key_cap;
+            TermUniverseResourceOwner *resource_owner;
             struct SpaceDense *dense;
             CettaCount dense_facts;
             uint64_t dense_epoch;
@@ -272,6 +289,7 @@ typedef struct Space {
             bool has_non_exact_atoms;
             bool has_non_exact_atoms_dirty;
             bool has_graded_equations;
+            _Atomic bool has_proof_image;
             uint32_t secondary_index_deferral_depth;
             uint64_t *marks;
             CettaIndex *mark_tree;
@@ -285,6 +303,9 @@ typedef struct Space {
      * reads its rows in turn; full: it keeps the general indexes too.  Both
      * answer every operation alike. */
     bool strict;
+    /* Heads take their relations from their first fact
+     * (space_dense_threshold), as under CETTA_SPACE_DENSE=eager. */
+    bool dense_from_first;
     /* A live projection of a module's own storage, not a writable overlay. */
     bool module_own_view;
     /* Process-local lifetime identity.  A revision identifies a state only
@@ -310,9 +331,11 @@ typedef struct Space {
     bool declares_subtypes;
     /* Process-wide unique prefix stamp, refreshed at initialization and when
        a publication may rewrite an already visible prefix.  Append-only
-       publications preserve it.  An overlay folds the stamps of its actual
-       base chain into projection currency, so unrelated Spaces cannot
-       invalidate its equation view. */
+       publications preserve it: the rows keep their positions and new rows
+       follow them, while the facts kept in relations, which follow the
+       rows, move as rows are appended (space_rule_rows64).  An overlay
+       folds the stamps of its actual base chain into projection currency,
+       so unrelated Spaces cannot invalidate its equation view. */
     uint64_t prefix_epoch;
     /* Space engine state is explicit so native, PathMap, and MORK lanes can
        share one runtime seam without confusing storage with execution. */
@@ -346,6 +369,9 @@ typedef struct Space {
     uint64_t module_dependency_epoch;
     /* Charged to the resource ledger's space gauges at initialization. */
     bool ledger_counted;
+    /* Set when the space lives only while an arena holds an atom of it: the
+       evaluator's record of those holds.  NULL for a space its owner frees. */
+    struct SpaceHold *arena_hold;
 } Space;
 
 /* NativeFlatWorldV1. Source headers, their TermUniverse generation and the
@@ -517,6 +543,19 @@ void space_free(Space *s);
 /* Owned index allocations; the Space object and borrowed TermUniverse have
  * independent owners and are not charged by this visitor. */
 void space_storage_census(const Space *s, CettaStorageCensus *census);
+/* Explicit holds for native descriptors that borrow a temporary Space
+ * without carrying an Atom. The token survives an explicit owner teardown;
+ * releasing it never dereferences the retired Space. Embeddings without
+ * temporary-space ownership may omit these hooks. */
+void *space_lifetime_pin(Space *s) __attribute__((weak));
+void space_lifetime_unpin(void *hold) __attribute__((weak));
+bool space_lifetime_pin_keeps_storage(void *hold) __attribute__((weak));
+void space_lifetime_rebase(Space *s, const Space *base) __attribute__((weak));
+/* Drain released temporary-space owners at an evaluator-safe boundary.
+ * False when an enclosing execution still requires deferred cleanup. */
+bool space_reclaim_unheld(void) __attribute__((weak));
+void space_reclaim_resource_cycles(TermUniverse *) __attribute__((weak));
+bool space_reclamation_due(void) __attribute__((weak));
 void space_execution_analysis_cache_free_for_current_thread(void);
 
 /* A selected image of the existing query-effect cache. Selection borrows
@@ -548,6 +587,11 @@ bool space_atom_id_requires_authored_order(const Space *s,
    as one publication; unsupported fragments retain singular semantics. */
 bool space_add_atom_ids_batch(Space *s, const AtomId *atom_ids,
                               CettaCount atom_count);
+/* As space_add_atom_ids_batch, for atoms each its own alpha key (ground,
+ * or with its variables numbered as an alpha key numbers them): a set finds
+ * the ones it holds by their ids. */
+bool space_add_alpha_keys_batch(Space *s, const AtomId *keys,
+                                CettaCount count);
 bool space_admit_atom(Space *s, Arena *fallback, Atom *atom);
 bool space_admit_atom_from_source_arena(
     Space *s, Arena *fallback, const Arena *source_arena, Atom *atom);
@@ -597,19 +641,61 @@ static inline uint64_t space_dense_epoch(const Space *s) {
 bool space_dense_count_columns(const Space *s, Atom *const *columns,
                                CettaExprLen len, CettaCount *count);
 /* A head's relation as its readers see it: ARITY columns, held as BITS
- * (two columns) or as a TABLE (the other unset). */
+ * (two columns) or as a TABLE (the other unset).  DEEP: a relation of deep
+ * facts whose spine is its head over holes, whose columns may hold
+ * expressions. */
 typedef struct {
     uint32_t arity;
     AtomId head_id;
     const CettaDenseRelation *bits;
     CettaTupleTable *table;
+    bool deep;
 } SpaceDenseForm;
 /* The relation of HEAD in *FORM; false when the space keeps none for it
  * (or a concurrent-evaluation scope is open).  Facts of HEAD may also be
  * rows: a reader of a relation asks the rows too, between
  * space_dense_reading_begin and _end, which keep the guards from giving
  * the relation back meanwhile. */
+typedef struct CettaProofImage CettaProofImage;
+typedef struct CettaProofRowLayout CettaProofRowLayout;
+typedef enum {
+    SPACE_PROOF_IMAGE_DECLINED = 0,
+    SPACE_PROOF_IMAGE_READY,
+    SPACE_PROOF_IMAGE_CAPACITY,
+} SpaceProofImageStatus;
+/* Explicit data storage only: no source producer or execution permission.
+ * Success retains IMAGE independently and publishes one append mutation.
+ * The borrowed TU/symbol session must outlive the Space as for native rows. */
+SpaceProofImageStatus space_attach_proof_image(Space *, SymbolId head,
+    const CettaProofRowLayout *, CettaProofImage *);
+typedef struct CettaProofBatchStore CettaProofBatchStore;
+typedef struct CettaProofBatchTransaction CettaProofBatchTransaction;
+typedef struct CettaProofBatchView CettaProofBatchView;
+/* The full batch declarations are separate to keep ordinary Space clients
+ * independent of producer storage internals. */
+/* Failure keeps the old logical bag/image; READY preserves semantic revisions. */
+SpaceProofImageStatus space_settle_proof_images(Space *);
+/* The guarded bodies are cold on ordinary storage. False reports an
+ * expansion refusal through the existing backend error channel. */
+bool space_prepare_proof_read_slow(Space *s, const Atom *pattern);
+bool space_has_proof_image_slow(const Space *, SymbolId head);
+static inline bool space_prepare_proof_read(Space *s, const Atom *pattern) {
+    const Space *read = s;
+    while (read && !atomic_load_explicit(&read->native.has_proof_image, memory_order_acquire))
+        read = read->overlay_base;
+    return !read || space_prepare_proof_read_slow(s, pattern);
+}
+static inline bool space_has_proof_image(const Space *s, SymbolId head) {
+    return s && atomic_load_explicit(&s->native.has_proof_image, memory_order_acquire) &&
+        (head == SYMBOL_ID_NONE || space_has_proof_image_slow(s, head));
+}
+
 bool space_dense_form(const Space *s, SymbolId head, SpaceDenseForm *form);
+/* Whether the relation PATTERN's head keeps is flat (a relation of deep
+ * facts whose spine is the head over holes is), with PATTERN's length: then
+ * each of PATTERN's elements reads one column of the relation's facts, an
+ * expression holding variables matching the column's terms. */
+bool space_dense_flat_reads(const Space *s, const Atom *pattern);
 /* The relation's facts whose columns equal FIXED's (CETTA_DENSE_ANY free;
  * FIXED NULL leaves every column free), visited or counted, and every fact
  * held, counted.  A walk may build an index of the relation: it takes no
@@ -626,9 +712,34 @@ const CettaDenseRelation *space_dense_relation(const Space *s,
 /* Whether no row can match a fact of `head` beside its relation: the head
  * keeps a relation, none of its facts is a row, and no row's head is open. */
 bool space_dense_head_rows_absent(Space *s, SymbolId head);
+/* Whether the space keeps a flat relation of ARITY columns for HEAD, and
+ * then in *HELD whether it holds the fact (HEAD c1 ... ck) of the ids
+ * COLUMNS, which needs no record of its own. */
+bool space_dense_holds_columns(const Space *s, SymbolId head,
+                               const AtomId *columns, uint32_t arity,
+                               bool *held);
+/* Whether a fact the space keeps in a relation may meet PATTERN: some are
+ * kept, and the pattern is no expression headed by a symbol, or its head
+ * keeps facts in a relation.  A reader of rows alone answers PATTERN only
+ * where this is false. */
+bool space_dense_may_meet(const Space *s, const Atom *pattern);
+/* The spine of the relation of deep facts S keeps for HEAD, copied into
+ * OUT; false when S keeps none. */
+bool space_dense_deep_spine(Space *s, SymbolId head, CettaSkeleton *out);
+/* Add to the set S the COUNT facts of HEAD whose holes under SPINE are
+ * HOLES (SPINE->holes ids each), as adding each fact's atom would: into
+ * HEAD's relation while it keeps that spine, unless the set holds the fact,
+ * and as a row otherwise.  False when a fact could not be added. */
+bool space_add_deep_holes(Space *s, SymbolId head, const CettaSkeleton *spine,
+                          const AtomId *holes, CettaCount count);
 /* Whether a pattern names a head the space keeps a relation of its columns
  * for: the native query's loops read relations; the planners that read
  * rows would give them back to the rows. */
+/* Whether one of PATTERNS may read the facts of a relation of deep facts
+ * (its head keeps facts as a skeleton and holes), which the joins over
+ * relations do not read. */
+bool space_dense_deep_meets(const Space *s, Atom *const *patterns,
+                            size_t count);
 bool space_dense_meets_patterns(const Space *s, Atom *const *patterns,
                                 size_t count);
 /* Whether no fact a relation of the space keeps can match any of the
@@ -666,6 +777,20 @@ void space_note_external_backend_mutation(Space *s);
  * This is neither a row publication nor a grant of ownership or authority. */
 void space_read_view_invalidate(Space *s);
 Space *space_heap_clone_shallow(Space *src);
+typedef enum {
+    SPACE_ADDITIVE_COPY_UNSUPPORTED = 0,
+    SPACE_ADDITIVE_COPY_READY,
+    SPACE_ADDITIVE_COPY_FAILED,
+} SpaceAdditiveCopyResult;
+/* Make a fresh heap-owned bag from both inputs without giving their flat
+ * kept relations back to rows. READY returns the complete result in OUT;
+ * the caller owns it. UNSUPPORTED changes nothing and admits a generic
+ * atom-copy route. FAILED destroys its private partial result and must not
+ * be retried as if it were an unsupported representation. OUT is otherwise
+ * NULL. The native route requires plain same-universe storage outside a
+ * concurrent scope; ordered raw rows retain their relative order. */
+SpaceAdditiveCopyResult space_heap_additive_copy(
+    TermUniverse *destination_universe, Space *left, Space *right, Space **out);
 void space_replace_contents(Space *dst, Space *src);
 /* Notified after a space takes over the contents of a space with another
  * lifetime identity, so that records keyed by the source's identity follow
@@ -711,6 +836,12 @@ Atom *space_get_at64(const Space *s, CettaIndex idx);
  * space_get_at64 reads it. */
 Atom *space_view_at64(const Space *s, CettaIndex idx, Arena *dst);
 Atom *space_get_at(const Space *s, uint32_t idx);
+/* The logical positions that may hold a rule or a declaration: the rows,
+ * which come before the facts kept in relations.  An append-only
+ * publication keeps them in place and adds after them, so a reader of the
+ * space's rules that reads on from where it stopped counts these, not the
+ * length, whose relation facts move as rows are appended. */
+CettaCount space_rule_rows64(const Space *s);
 bool space_row_may_be_rule(const Space *s, CettaIndex idx);
 bool space_view_row_may_be_rule(const Space *s, CettaIndex index);
 Atom *space_peek(const Space *s);
@@ -1106,6 +1237,21 @@ SpaceOccurrenceCursorStep space_occurrence_cursor_next(
 SpaceOccurrenceCursorStep space_occurrence_cursor_next_id(
     SpaceOccurrenceCursor *cursor, CettaIndex *logical_index_out,
     AtomId *id_out);
+/* As space_occurrence_cursor_next_id, but a fact the space keeps in a
+ * relation of deep facts comes without a record: as its index among the
+ * cursor's kept facts in *KEPT_OUT (SIZE_MAX for any other row, which comes
+ * as its id in *ID_OUT). */
+SpaceOccurrenceCursorStep space_occurrence_cursor_next_kept(
+    SpaceOccurrenceCursor *cursor, AtomId *id_out, size_t *kept_out);
+/* The spine and holes of the kept fact KEPT a cursor yielded: the holes
+ * stay valid while the cursor lives, the spine while its space does. */
+void space_occurrence_cursor_kept_fact(const SpaceOccurrenceCursor *cursor,
+                                       size_t kept,
+                                       const CettaSkeleton **skeleton_out,
+                                       const AtomId **holes_out);
+/* The record of the kept fact KEPT, made when it is first lent. */
+AtomId space_occurrence_cursor_lend_kept(SpaceOccurrenceCursor *cursor,
+                                         size_t kept);
 /* The universe naming the rows a cursor lends by id. */
 TermUniverse *space_occurrence_cursor_universe(
     const SpaceOccurrenceCursor *cursor);
@@ -1517,6 +1663,10 @@ void registry_binding_publication_commit(RegistryBindingPublication *publication
 void registry_binding_publication_free(RegistryBindingPublication *publication);
 void registry_binding_publication_storage(const RegistryBindingPublication *publication,
     CettaStorageCensus *census);
+/* registry_lookup_id trying the entry at `*hint` first, and leaving there
+ * the index it found.  A key has one entry and an entry keeps its index, so
+ * an entry still holding the key is its binding. */
+Atom *registry_lookup_id_hinted(Registry *r, SymbolId key, uint32_t *hint);
 void registry_bind(Registry *r, const char *name, Atom *value);
 Atom *registry_lookup(Registry *r, const char *name);
 bool registry_bind_name(Registry *r, Atom *name_key, Atom *value);

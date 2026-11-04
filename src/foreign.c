@@ -127,6 +127,11 @@ static PyObject *g_bridge_resolve = NULL;
 static uint64_t g_bridge_module_counter = 0;
 static Space *g_python_callback_space = NULL;
 
+static void python_space_hold_release(void **hold) {
+    if (space_lifetime_unpin)
+        space_lifetime_unpin(*hold);
+}
+
 PyMODINIT_FUNC PyInit_cetta_bridge(void);
 
 static const char *PYTHON_BOOTSTRAP =
@@ -1218,7 +1223,7 @@ static bool python_emit_single(CettaForeignRuntime *rt, Arena *a, PyObject *obj,
          * code, and "" and NUL could not be spelled. A string keeps every
          * byte, prints quoted and comes back as it went in.
          */
-        result_set_add(rs, atom_string_n(a, text, (uint32_t)length));
+        result_set_add(rs, atom_string_n(a, text, (size_t)length));
         return true;
     }
 
@@ -1629,6 +1634,8 @@ static bool python_call_object(CettaForeignRuntime *rt, Space *space, Arena *a,
         PyTuple_SET_ITEM(tuple, (Py_ssize_t)i, item);
     }
 
+    __attribute__((cleanup(python_space_hold_release))) void *space_hold =
+        space_lifetime_pin ? space_lifetime_pin(space) : NULL;
     Space *saved_space = g_python_callback_space;
     g_python_callback_space = space;
     PyObject *result = PyObject_CallObject(callable, tuple);
@@ -1838,6 +1845,8 @@ bool cetta_foreign_load_module(CettaForeignRuntime *rt,
     }
 
     bool ok = true;
+    __attribute__((cleanup(python_space_hold_release))) void *space_hold =
+        space_lifetime_pin ? space_lifetime_pin(target_space) : NULL;
     Space *saved_space = g_python_callback_space;
     g_python_callback_space = target_space;
 

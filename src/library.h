@@ -280,6 +280,8 @@ typedef struct CettaLibraryContext {
     struct CettaIoRuntime *io_runtime;
     struct CettaDurableRuntime *durable_runtime;
     struct CettaJsonLibraryRuntimeV1 *json_runtime;
+    /* Optional independent physical term/symbol owner; no Space is retained. */
+    struct CettaTermDomain *owned_term_domain;
 } CettaLibraryContext;
 
 size_t cetta_library_value_byte_limit(const CettaLibraryContext *ctx);
@@ -302,6 +304,11 @@ bool cetta_library_context_init_prime_snapshot_from(CettaLibraryContext *ctx,
 void cetta_library_context_prime_snapshot_storage(const CettaLibraryContext *ctx,
     CettaStorageCensus *census);
 void cetta_library_context_free(CettaLibraryContext *ctx);
+TermUniverse *cetta_library_context_universe(CettaLibraryContext *);
+struct CettaTermDomain *cetta_library_context_term_domain(const CettaLibraryContext *);
+/* Only a pristine context can adopt a matching active symbol domain.
+ * Other borrowed Spaces still require the caller to keep the domain live. */
+bool cetta_library_context_set_term_domain(CettaLibraryContext *, struct CettaTermDomain *);
 /* Track nested compatibility initialization attempts within a runner request.
  * Completed compatibility attempts do not cache refusals. Default profiles
  * retain their refusals across requests. */

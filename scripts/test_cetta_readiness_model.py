@@ -18,7 +18,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 from bench_d4_progress import census_classification
-from cetta_main_readiness import readiness_commands, petta_oracle_identity, source_identity
+from cetta_main_readiness import (
+    execution_theory_identity, readiness_commands, petta_oracle_identity, source_identity,
+    frozen_performance_baseline, prepare_performance_baseline,
+)
 from check_precise_vocabulary import WORD, pinned_reference_field
 from rhocalc_bench_provenance import benchmark_provenance
 from cetta_readiness_ladders import (
@@ -50,6 +53,74 @@ from cetta_readiness_model import (
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = ROOT / "benchmarks/main_readiness_properties.json"
 PASS_COUNT = 0
+
+
+def check_execution_theory_identity() -> None:
+    """Receipt validation controls; these fixture bytes are not proof evidence."""
+    module = "Mettapedia.Machines.ExecutionAudit"
+    with tempfile.TemporaryDirectory(prefix="readiness-theory-", dir=ROOT / "runtime") as tmp:
+        directory = Path(tmp)
+        source = directory / "Mettapedia/Machines/ExecutionAudit.lean"
+        obj = directory / ".lake/build/lib/lean/Mettapedia/Machines/ExecutionAudit.olean"
+        source.parent.mkdir(parents=True)
+        obj.parent.mkdir(parents=True)
+        source.write_bytes(b"source identity fixture\n")
+        obj.write_bytes(b"object identity fixture\n")
+        config = {"lean-toolchain": "fixture", "lakefile.lean": "fixture",
+                  "lake-manifest.json": "fixture"}
+        for name, contents in config.items():
+            (directory / name).write_text(contents)
+        digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+        receipt = directory / "receipt.json"
+        audit_log = receipt.with_suffix(".audit.log")
+        audit_log.write_bytes(b"audit observation identity fixture\n")
+        data = {
+            "schema": "cetta.execution-theory.v1", "status": "passed",
+            "audit": {"schema": "execution-foundations-v1", "ownedModules": 1,
+                      "localSourceModules": 1, "checkedBodies": 1, "theorems": 1,
+                      "allowedAxioms": ["propext", "Classical.choice", "Quot.sound"],
+                      "usedAxioms": ["propext"]},
+            "owned_modules": [module],
+            "modules": {module: {"source_sha256": digest(source), "object_sha256": digest(obj)}},
+            "configuration": {name: digest(directory / name) for name in config},
+            "audit_log_sha256": digest(audit_log),
+        }
+        receipt.write_text(json.dumps(data))
+        with patch.dict(os.environ, {"EXECUTION_MODEL_RECEIPT": str(receipt)}):
+            require(execution_theory_identity(ROOT, directory)["modules"] == data["modules"],
+                    "exact execution source/object receipt was rejected")
+            report_pass("execution theory receipt validates selected source and objects")
+            for path in [source, obj, directory / "lake-manifest.json", audit_log]:
+                original = path.read_bytes()
+                path.write_bytes(original + b"changed\n")
+                try:
+                    execution_theory_identity(ROOT, directory)
+                except RuntimeError:
+                    pass
+                else:
+                    raise AssertionError(f"stale execution theory receipt accepted: {path.name}")
+                path.write_bytes(original)
+                report_pass(f"execution theory receipt rejects altered {path.name}")
+            for name in ["nonstandard axiom", "missing owner", "failed audit", "escaping module"]:
+                mutant = json.loads(json.dumps(data))
+                if name == "nonstandard axiom":
+                    mutant["audit"]["usedAxioms"] = ["hiddenAssumption"]
+                elif name == "missing owner":
+                    mutant["owned_modules"] = []
+                    mutant["audit"]["ownedModules"] = 0
+                elif name == "failed audit":
+                    mutant["status"] = "failed"
+                else:
+                    mutant["modules"] = {"Mettapedia../outside": data["modules"][module]}
+                    mutant["owned_modules"] = ["Mettapedia../outside"]
+                receipt.write_text(json.dumps(mutant))
+                try:
+                    execution_theory_identity(ROOT, directory)
+                except RuntimeError:
+                    pass
+                else:
+                    raise AssertionError(f"invalid execution theory receipt accepted: {name}")
+                report_pass(f"execution theory receipt rejects {name}")
 
 
 def check_frozen_baseline() -> None:
@@ -104,6 +175,59 @@ def check_frozen_baseline() -> None:
             admitted = load_frozen_baseline(ROOT, receipt_path, digest, commit)
             require(admitted["binary_sha256"] == sha(binary.read_bytes()), "wrong frozen binary")
             report_pass("frozen cohort joins exact archive, Git blobs, build and library")
+            stats_binary = directory / "bin/cetta-stats"
+            stats_binary.write_bytes(b"frozen stats executable fixture")
+            stats_build = directory / "stats-build.json"
+            stats_build.write_text(json.dumps(dict(source_head=commit,
+                sha256=sha(stats_binary.read_bytes()), runtime_stats=1, build="fixture")))
+            stats_receipt = dict(receipt,
+                binary=dict(path="bin/cetta-stats", sha256=sha(stats_binary.read_bytes())),
+                build_receipt=dict(path="stats-build.json", sha256=sha(stats_build.read_bytes())))
+            (directory / "baseline.json").write_text(json.dumps(receipt))
+            stats_receipt_path = directory / "baseline-stats.json"
+            stats_receipt_path.write_text(json.dumps(stats_receipt))
+            with patch.dict(os.environ, {"CETTA_PERF_BASELINE_ROOT": str(directory)}), \
+                    patch("cetta_main_readiness.PERFORMANCE_BASELINE_COMMIT", commit):
+                with patch("cetta_main_readiness.subprocess.run",
+                           side_effect=AssertionError("frozen artifacts attempted a rebuild")):
+                    frozen = prepare_performance_baseline(ROOT, directory)
+                require(frozen["source_kind"] == "frozen" and
+                        frozen["stats_binary_sha256"] == sha(stats_binary.read_bytes()),
+                        "frozen performance pair lost its stats executable")
+                report_pass("historical frozen artifacts qualify without a checkout or rebuild")
+
+                def rejects_pair(label):
+                    try:
+                        frozen_performance_baseline(ROOT)
+                    except (ReadinessModelError, RuntimeError):
+                        report_pass(label)
+                    else:
+                        raise AssertionError(label + " was admitted")
+
+                stats_receipt_path.unlink()
+                rejects_pair("frozen performance pair rejects a missing stats receipt")
+                stats_receipt_path.write_text(json.dumps(stats_receipt))
+                stats_binary.write_bytes(b"altered stats executable fixture")
+                rejects_pair("frozen performance pair rejects an altered stats executable")
+                stats_binary.write_bytes(b"frozen stats executable fixture")
+                saved_stats_build = stats_build.read_bytes()
+                wrong_build = json.loads(saved_stats_build)
+                wrong_build["runtime_stats"] = 0
+                stats_build.write_text(json.dumps(wrong_build))
+                wrong_receipt = dict(stats_receipt,
+                    build_receipt=dict(path="stats-build.json", sha256=sha(stats_build.read_bytes())))
+                stats_receipt_path.write_text(json.dumps(wrong_receipt))
+                rejects_pair("frozen performance pair rejects an uninstrumented stats build")
+                stats_build.write_bytes(saved_stats_build)
+                stats_receipt_path.write_text(json.dumps(stats_receipt))
+                different_source = directory / "stats-source.json"
+                different_source.write_text(json.dumps(dict(head=commit,
+                    source_files=entries, dependencies={"changed": "dependency"})))
+                wrong_receipt = dict(stats_receipt, source_manifest=dict(
+                    path="stats-source.json", sha256=sha(different_source.read_bytes())))
+                stats_receipt_path.write_text(json.dumps(wrong_receipt))
+                rejects_pair("frozen performance pair rejects different build dependencies")
+                stats_receipt_path.write_text(json.dumps(stats_receipt))
             pinned = benchmark_provenance(str(binary), receipt=str(receipt_path),
                 receipt_sha256=digest, source_commit=commit)
             require(pinned["commit"] == commit and pinned["tree_state"] == "frozen",
@@ -817,6 +941,7 @@ def main() -> int:
         "property_manifest_sha256": "manifest-a",
         "source_anchors": [{"path": "source.c", "sha256": "source-a"}],
         "consolidation_baseline": {"commit": "c632", "binary_sha256": "binary-c"},
+        "performance_baseline": {"commit": "9050", "stats_binary_sha256": "stats-a"},
     }
     subject = calibration_subject(artifact)
     changed_incidentals = json.loads(json.dumps(artifact))
@@ -835,6 +960,11 @@ def main() -> int:
     require(calibration_subject(changed_baseline) != subject,
             "calibration reused evidence from another consolidation baseline")
     report_pass("calibration subject pins consolidation baseline")
+    changed_performance = json.loads(json.dumps(artifact))
+    changed_performance["performance_baseline"]["stats_binary_sha256"] = "stats-b"
+    require(calibration_subject(changed_performance) != subject,
+            "calibration reused evidence from another performance baseline")
+    report_pass("calibration subject pins the historical performance artifacts")
 
     subject_key = evidence_key(subject)
     records = [
@@ -1007,10 +1137,21 @@ def main() -> int:
             "readiness omits a settled PeTTa contract gate")
     for tier in ("routine", "exhaustive"):
         targets = [command[-1] for command in readiness_commands(tier)]
+        require("test-execution-theory" in targets,
+                "readiness must audit the maintained execution models")
         require(all(targets.index(target) < targets.index("test-correctness-all")
                     for target in settled_petta_targets),
                 "broad readiness starts before validating its PeTTa contract")
     report_pass("both tiers qualify corrected-stable PeTTa before the broad matrix")
+    for tier in ("routine", "exhaustive"):
+        targets = [command[-1] for command in readiness_commands(tier)]
+        require("test-execution-semantic-ledger" in targets,
+                "readiness must record the live execution contract gate")
+        require(targets.index("test-execution-semantic-ledger") <
+                targets.index("test-correctness-all"),
+                "execution contracts must precede the broad readiness matrix")
+    report_pass("both tiers record execution contracts inside frozen evidence")
+    check_execution_theory_identity()
     require("main-readiness-consolidation" in routine_targets & exhaustive_targets,
             "a readiness tier omits the original consolidation baseline")
     require("bench-evaluator-tax" in routine_targets & exhaustive_targets,

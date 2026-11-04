@@ -1,0 +1,16 @@
+; A bag may hold one key in two rows: after one goes, add-atom-nodup still
+; finds the other; after both go, it adds.
+!(bind! &b (new-space))
+!(add-atom &b (g 1))
+!(add-atom &b (g 1))
+!(add-atom-nodup &b (h 2))
+!(remove-atom &b (g 1))
+!(add-atom-nodup &b (g 1))
+!(remove-atom &b (g 1))
+!(add-atom-nodup &b (g 1))
+!(collapse (get-atoms &b))
+!(add-atom &b (p $x))
+!(add-atom-nodup &b (q 3))
+!(remove-atom &b (p $x))
+!(add-atom-nodup &b (p $y))
+!(collapse (get-atoms &b))

@@ -72,7 +72,7 @@ CASES = [
     ("caller-alias", "(= (same $x $x) ok)\n"
      "!(let $v (same $a 2) ($a $v))\n", "[(2 ok)]\n", True),
     ("caller-variable", "(= (fresh $x) (box $x $hole))\n!(fresh $caller)\n",
-     "[(box $caller $hole#0)]\n", True),
+     "[(box $caller $hole#0)]\n", False),
     ("bare-caller-variable", "(= (identity $x) $x)\n!(identity $caller)\n",
      "[$caller]\n", True),
     ("fresh-scalar-result", "(= (name) $named)\n!(name)\n"
@@ -110,7 +110,7 @@ CASES = [
     ("mutation-invalidates-selected-head", "(= (g $x) (+ $x 1))\n"
      "(= (f $g) ($g 1))\n(= (f $g) 42)\n!(collapse (f g))\n"
      "!(remove-atom &self (= (f $g) 42))\n!(collapse (f g))\n",
-     "[(2 42)]\n[()]\n[(2)]\n", True),
+     "[(2 42)]\n[()]\n[(2)]\n", False),
     ("occurs-check", "(= (same $x $x) yes)\n!(same $y (node $y))\n",
      "[(same $y (node $y))]\n", True),
     ("entered-empty", "(= (zero) (empty))\n!(zero)\n"
@@ -230,6 +230,375 @@ CASES = [
      "one\ntwo\n[()]\n[(State 2), (State 2)]\n[2]\n", False),
 ]
 
+
+# Source-certified native constructors execute at the host.
+# Negative constructor occurrences retain their canonical host. Inert
+# children may still select an independently admitted shared realization.
+CASES.extend([
+    (
+        'native-space-reread-completes-once',
+        '(= (constructor-target $x) (+ $x 1))\n'
+        '(= (constructor-codes) (let $drop (new-space) constructor-target))\n'
+        '(= (constructor-codes) 7)\n'
+        '(= (constructor-reread) (let $bag (reify (constructor-codes)) $bag))\n'
+        '!(constructor-reread)\n'
+        '!(+ 20 22)\n',
+        '[8]\n[42]\n',
+        True,
+    ),
+    (
+        'native-space-retained-alias',
+        '(= (fresh-space) (new-space))\n'
+        '(= (carry-space $n $s) (if (== $n 0) $s\n'
+        '  (let $drop (new-space) (carry-space (- $n 1) $s))))\n'
+        '(= (kept-space $n) (let $s (new-space) (carry-space $n $s)))\n'
+        '!(bind! &a (kept-space 32))\n'
+        '!(bind! &alias &a)\n'
+        '!(add-atom &alias first)\n'
+        '!(get-atoms &a)\n'
+        '!(bind! &b (fresh-space))\n'
+        '!(get-atoms &b)\n'
+        '!(add-atom &b second)\n'
+        '!(get-atoms &a)\n'
+        '!(get-atoms &b)\n'
+        '!(+ 20 22)\n',
+        '[()]\n'
+        '[()]\n'
+        '[()]\n'
+        '[first]\n'
+        '[()]\n'
+        '[()]\n'
+        '[first]\n'
+        '[second]\n'
+        '[42]\n',
+        True,
+    ),
+    (
+        'native-space-duplicates',
+        '(= (constructor-choice) (let $drop (new-space) left))\n'
+        '(= (constructor-choice) (let $drop (new-space) left))\n'
+        '(= (constructor-choice) (let $drop (new-space) right))\n'
+        '!(constructor-choice)\n'
+        '!(+ 20 22)\n',
+        '[left, left, right]\n'
+        '[42]\n',
+        True,
+    ),
+    (
+        'native-space-exact-effects',
+        '(= (constructor-effects $n)\n'
+        ' (if (== $n 0) done\n'
+        '  (let $drop (new-space)\n'
+        '   (let $write (add-atom &self (constructor-tick $n))\n'
+        '    (constructor-effects (- $n 1))))))\n'
+        '!(constructor-effects 3)\n'
+        '!(match &self (constructor-tick $n) $n)\n'
+        '!(+ 20 22)\n',
+        '[done]\n'
+        '[3, 2, 1]\n'
+        '[42]\n',
+        True,
+    ),
+    (
+        'native-space-error-prefix',
+        '(= (constructor-error)\n'
+        ' (let $drop (new-space)\n'
+        '  (let $write (add-atom &self (constructor-before-error 7))\n'
+        '   (+ 1 "S"))))\n'
+        '!(collapse (constructor-error))\n'
+        '!(match &self (constructor-before-error $n) $n)\n'
+        '!(+ 20 22)\n',
+        '[((Error (+ 1 "S") (BadArgType 2 Number String)))]\n'
+        '[7]\n'
+        '[42]\n',
+        True,
+    ),
+    (
+        'native-space-nr-barrier',
+        '(= (constructor-nr-leaf) NotReducible)\n'
+        '(= (constructor-nr $n)\n'
+        ' (if (== $n 0) (constructor-nr-leaf)\n'
+        '  (let $drop (new-space) (constructor-nr (- $n 1)))))\n'
+        '!(constructor-nr 3)\n'
+        '!(+ 20 22)\n',
+        '[(constructor-nr-leaf)]\n'
+        '[42]\n',
+        False,
+    ),
+    (
+        'native-space-type-barrier',
+        '(: constructor-typed (-> Number Number))\n'
+        '(= (constructor-typed $n)\n'
+        ' (if (== $n 0) True\n'
+        '  (let $drop (new-space) (constructor-typed (- $n 1)))))\n'
+        '!(constructor-typed 3)\n',
+        '[(Error True (BadType Number Bool))]\n',
+        False,
+    ),
+    (
+        'native-space-open-barrier',
+        '(= (constructor-open $n $value)\n'
+        ' (if (== $n 0) (Pair $value kept)\n'
+        '  (let $drop (new-space) (constructor-open (- $n 1) $value))))\n'
+        '!(constructor-open 3 $visible)\n'
+        '!(+ 20 22)\n',
+        '[(Pair $visible kept)]\n'
+        '[42]\n',
+        False,
+    ),
+    (
+        'native-space-arity-barrier',
+        '(= (constructor-arity)\n'
+        ' (let $drop (new-space set) done))\n'
+        '!(constructor-arity)\n'
+        '!(+ 20 22)\n',
+        '[(Error (new-space set) IncorrectNumberOfArguments)]\n',
+        False,
+    ),
+    (
+        'native-space-native-type-authority',
+        '(= (constructor-signature)\n'
+        ' (let $drop (new-space) done))\n'
+        '!(get-type new-space)\n'
+        '!(add-atom &self (: new-space (-> Number)))\n'
+        '!(get-type new-space)\n'
+        '!(match &self (: new-space $type) $type)\n'
+        '!(constructor-signature)\n'
+        '!(+ 20 22)\n',
+        '[(-> SpaceType)]\n'
+        '[()]\n'
+        '[(-> SpaceType)]\n'
+        '[(-> Number)]\n'
+        '[done]\n'
+        '[42]\n',
+        True,
+    ),
+    (
+        'native-space-definition-barrier',
+        '(= (constructor-definition)\n'
+        ' (let $drop (new-space) done))\n'
+        '!(add-atom &self (= (new-space) supplied))\n'
+        '!(constructor-definition)\n'
+        '!(+ 20 22)\n',
+        '[()]\n'
+        '[done]\n'
+        '[42]\n',
+        False,
+    ),
+    (
+        'native-state-stays-canonical',
+        '(= (constructor-state)\n'
+        ' (let $s (new-state 7) (get-state $s)))\n'
+        '!(constructor-state)\n'
+        '!(+ 20 22)\n',
+        '[7]\n'
+        '[42]\n',
+        False,
+    ),
+    (
+        'native-state-drop-loop',
+        '(= (drop-state $n) (if (== $n 0) done\n'
+        ' (let $drop (new-state $n) (drop-state (- $n 1)))))\n'
+        '!(drop-state 32)\n!(+ 20 22)\n',
+        '[done]\n[42]\n',
+        True,
+    ),
+    (
+        'native-state-retained-alias',
+        '(= (carry-state $n $s) (if (== $n 0) $s\n'
+        ' (let $drop (new-state $n) (carry-state (- $n 1) $s))))\n'
+        '(= (kept-state $n) (let $s (new-state 7) (carry-state $n $s)))\n'
+        '(= (fresh-state) (new-state 8))\n'
+        '!(bind! &a (kept-state 32))\n'
+        '!(bind! &alias &a)\n'
+        '!(change-state! &alias 9)\n'
+        '!(get-state &a)\n'
+        '!(bind! &b (fresh-state))\n'
+        '!(get-state &b)\n'
+        '!(get-state &a)\n',
+        '[()]\n[()]\n[(State 9)]\n[9]\n[()]\n[8]\n[9]\n',
+        True,
+    ),
+    (
+        'native-state-payload-stays-syntax',
+        '(= (state-syntax) (new-state (+ 1 2)))\n'
+        '(= (state-error-syntax) (new-state (+ 1 "S")))\n'
+        '(= (state-nested-syntax) (new-state (new-state 7)))\n'
+        '!(get-state (state-syntax))\n'
+        '!(let $drop (state-error-syntax) done)\n'
+        '!(get-state (state-nested-syntax))\n',
+        '[(+ 1 2)]\n[done]\n[(new-state 7)]\n',
+        True,
+    ),
+    (
+        'native-state-reread-completes-once',
+        '(= (state-target $x) (+ $x 1))\n'
+        '(= (state-codes) (let $drop (new-state 7) state-target))\n'
+        '(= (state-codes) 7)\n'
+        '(= (state-reread) (let $bag (reify (state-codes)) $bag))\n'
+        '!(state-reread)\n!(+ 20 22)\n',
+        '[8]\n[42]\n',
+        True,
+    ),
+    (
+        'native-state-duplicates',
+        '(= (state-choice) (let $drop (new-state 1) left))\n'
+        '(= (state-choice) (let $drop (new-state 2) left))\n'
+        '(= (state-choice) (let $drop (new-state 3) right))\n'
+        '!(state-choice)\n!(+ 20 22)\n',
+        '[left, left, right]\n[42]\n',
+        True,
+    ),
+    (
+        'native-state-error-prefix',
+        '(= (state-error) (let $drop (new-state 7)\n'
+        ' (let $write (add-atom &self (state-before-error 7)) (+ 1 "S"))))\n'
+        '!(collapse (state-error))\n'
+        '!(match &self (state-before-error $x) $x)\n'
+        '!(+ 20 22)\n',
+        '[((Error (+ 1 "S") (BadArgType 2 Number String)))]\n[7]\n[42]\n',
+        True,
+    ),
+    (
+        'native-state-nullary-barrier',
+        '(= (state-arity) (let $drop (new-state) done))\n'
+        '!(state-arity)\n!(+ 20 22)\n',
+        '[(Error (new-state) IncorrectNumberOfArguments)]\n',
+        False,
+    ),
+    (
+        'native-state-extra-argument-barrier',
+        '(= (state-arity) (let $drop (new-state 7 8) done))\n'
+        '!(state-arity)\n!(+ 20 22)\n',
+        '[(Error (new-state 7 8) IncorrectNumberOfArguments)]\n',
+        False,
+    ),
+    (
+        'native-state-type-barrier',
+        '(: state-typed (-> Number Number))\n'
+        '(= (state-typed $n) (if (== $n 0) True\n'
+        ' (let $drop (new-state $n) (state-typed (- $n 1)))))\n'
+        '!(state-typed 3)\n',
+        '[(Error True (BadType Number Bool))]\n',
+        False,
+    ),
+    (
+        'native-state-fresh-variable-barrier',
+        '(= (state-fresh) (new-state $hole))\n'
+        '!(get-state (state-fresh))\n!(+ 20 22)\n',
+        '[$hole]\n[42]\n',
+        False,
+    ),
+    (
+        'native-state-payload-resource-barrier',
+        '(= (state-payload-effect)\n'
+        ' (let $drop (new-state (add-atom &self (not-executed 7))) done))\n'
+        '!(state-payload-effect)\n'
+        '!(match &self (not-executed $x) $x)\n!(+ 20 22)\n',
+        '[done]\n[42]\n',
+        False,
+    ),
+    (
+        'native-state-definition-invalidation',
+        '(= (state-definition) (let $drop (new-state 7) done))\n'
+        '!(state-definition)\n'
+        '!(add-atom &self (= (new-state $value) supplied))\n'
+        '!(state-definition)\n!(+ 20 22)\n',
+        '[done]\n[()]\n[done]\n[42]\n',
+        True,
+    ),
+    (
+        'native-state-signature-invalidation',
+        '(= (state-signature) (let $drop (new-state 7) done))\n'
+        '!(state-signature)\n'
+        '!(add-atom &self (: new-state (-> Number Bool)))\n'
+        '!(state-signature)\n!(+ 20 22)\n',
+        '[done]\n[()]\n[done]\n[42]\n',
+        True,
+    ),
+])
+
+# Ready State writes retain their complete native demand and publication.
+CASES.extend([
+    ('native-state-write-overwrite-alias', '(= (overwrite-state $n $s) (if (== $n 0) $s (let $write (change-state! $s $n) (overwrite-state (- $n 1) $s))))\n(= (start-overwrite $n) (let $s (new-state 0) (overwrite-state $n $s)))\n!(bind! &a (start-overwrite 32))\n!(bind! &alias &a)\n!(get-state &a)\n!(change-state! &alias 9)\n!(get-state &a)\n', '[()]\n[()]\n[1]\n[(State 9)]\n[9]\n', True),
+    ('native-state-write-old-read', '(= (make-and-write) (let $s (new-state 0) (let $w (change-state! $s 7) $s)))\n!(let $s (make-and-write) (let $old (get-state $s) (let $w (change-state! $s 8) (Pair $old (get-state $s)))))\n', '[(Pair 7 8)]\n', True),
+    ('native-state-write-type-error', '(= (state-write-type) (let $s (new-state 7) (change-state! $s "S")))\n!(state-write-type)\n', '[(Error (change-state! (State 7) "S") (BadArgType 2 Number String))]\n', True),
+    ('native-state-write-reference-error', '(= (state-write-bad-ref $s) (change-state! $s 9))\n!(state-write-bad-ref 7)\n', '[(Error (change-state! 7 9) (BadArgType 1 (StateMonad $$__state#0) Number))]\n', True),
+    ('native-state-write-computed-value-barrier', '(= (state-write-computed) (let $s (new-state 0) (change-state! $s (+ 1 2))))\n!(get-state (state-write-computed))\n', '[3]\n', False),
+    ('native-state-write-computed-reference-barrier', '(= (state-write-ref) (change-state! (new-state 0) 7))\n!(get-state (state-write-ref))\n', '[7]\n', False),
+    ('native-state-write-error-prefix', '(= (state-write-error) (let $s (new-state 0) (let $w (change-state! $s 7) (let $effect (add-atom &self (write-prefix 7)) (+ 1 "S")))))\n!(collapse (state-write-error))\n!(match &self (write-prefix $x) $x)\n!(+ 20 22)\n', '[((Error (+ 1 "S") (BadArgType 2 Number String)))]\n[7]\n[42]\n', True),
+    ('native-state-write-nondeterminism-barrier', '(= (write-values) 1)\n(= (write-values) 2)\n(= (state-write-values) (let $s (new-state 0) (let $v (write-values) (change-state! $s $v))))\n!(state-write-values)\n', '[(State 2), (State 2)]\n', False),
+    ('native-state-write-arity-barrier', '(= (state-write-arity) (let $s (new-state 0) (change-state! $s)))\n!(state-write-arity)\n', '[(Error (change-state! (State 0)) IncorrectNumberOfArguments)]\n', False),
+    ('native-state-write-caller-old-image', '(= (write-existing $s $value) (change-state! $s $value))\n!(let $s (new-state "old-image") (let $old (get-state $s) (let $changed (write-existing $s "new-image") (Pair $old (get-state $s)))))\n', '[(Pair "old-image" "new-image")]\n', True),
+    ('native-state-readback-barrier', '(= (state-readback) (let $s (new-state (+ 1 2)) (let $value (get-state $s) $value)))\n!(state-readback)\n', '[3]\n', False),
+    ('native-state-write-definition-invalidation', '(= (write-definition) (let $s (new-state 0) (change-state! $s 7)))\n!(get-state (write-definition))\n!(add-atom &self (= (change-state! $s $v) supplied))\n!(get-state (write-definition))\n', '[7]\n[()]\n[7]\n', True),
+    ('native-state-write-native-type-authority', '(= (write-signature) (let $s (new-state 0) (change-state! $s 7)))\n!(get-state (write-signature))\n!(add-atom &self (: change-state! (-> Number Number Number)))\n!(get-state (write-signature))\n', '[7]\n[()]\n[7]\n', True),
+])
+
+# Each region requires only the native operations it actually uses.
+CASES.extend([
+    ('native-state-write-repeat-authority', '(= (repeat-state) (new-state 7))\n(= (repeat-write) (let $s (new-state 0) (change-state! $s 8)))\n!(let $s (repeat-state) (get-metatype $s))\n!(let $s (repeat-state) (get-metatype $s))\n!(get-state (repeat-state))\n!(get-state (repeat-state))\n!(let $s (repeat-write) (get-metatype $s))\n!(let $s (repeat-write) (get-metatype $s))\n!(get-state (repeat-write))\n!(get-state (repeat-write))\n', '[Grounded]\n[Grounded]\n[7]\n[7]\n[Grounded]\n[Grounded]\n[8]\n[8]\n', True),
+    ('native-state-unused-operation-override', '(= (only-new-state) (new-state 7))\n!(add-atom &self (= (change-state! $s $value) supplied))\n!(get-state (only-new-state))\n!(get-state (only-new-state))\n', '[()]\n[7]\n[7]\n', True),
+])
+
+# Completed constructor provenance survives later program mutation; raw results do not.
+CASES.extend([
+    ('completed-constructor-survives-new-rule', '(= (make) (Box 1))\n!(let $value (make) (let $write (add-atom &self (= (Box 1) 9)) $value))\n!(+ 20 22)\n', '[(Box 1)]\n[42]\n', False),
+    ('completed-constructor-after-child-reduction', '(= (make) (Box (+ 1 2)))\n!(let $value (make) (let $write (add-atom &self (= (Box 3) 9)) $value))\n', '[(Box 3)]\n', False),
+    ('completed-constructor-call-remains-computation', '(= (Box $n) (+ $n 1))\n(= (make) (Box 1))\n!(make)\n', '[2]\n', False),
+    ('raw-collection-return-still-computes', '(= (raw-group) (collapse (superpose (Box 1))))\n!(let $value (raw-group) (let $write (add-atom &self (= (Box 1) 9)) $value))\n', '[9]\n', True),
+    ('raw-state-return-stays-syntax', '(= (stored-code) (new-state (+ 1 2)))\n!(get-state (stored-code))\n', '[(+ 1 2)]\n', True),
+    ('mixed-completion-keeps-canonical-prefix', '(= (mixed $which) (let $write (add-atom &self (completed-prefix $which)) (case $which ((left (Box 1)) (right (collapse (superpose (Box 1))))))))\n!(let $value (mixed left) (let $write (add-atom &self (= (Box 1) 9)) $value))\n!(match &self (completed-prefix $which) $which)\n', '[(Box 1)]\n[left]\n', False),
+    ('case-completed-constructor-survives-rule', '(= (choose-box $which) (case $which ((left (Box 1)) (right (Box 2)))))\n!(let $value (choose-box left) (let $write (add-atom &self (= (Box 1) 9)) $value))\n', '[(Box 1)]\n', True),
+])
+
+# Declared result demand changes whether the RHS is code or Atom data.
+CASES.extend([
+    ('atom-range-constructor-stays-raw', '(: make (-> Atom))\n(= (make) (Box 1))\n!(let $value (make) (let $write (add-atom &self (= (Box 1) 9)) $value))\n', '[9]\n', False),
+    ('undefined-range-constructor-is-completed', '(: make (-> %Undefined%))\n(= (make) (Box 1))\n!(let $value (make) (let $write (add-atom &self (= (Box 1) 9)) $value))\n', '[(Box 1)]\n', False),
+])
+NATIVE_CONSTRUCTOR_BARRIERS = {
+    'native-space-arity-barrier',
+    'native-space-definition-barrier',
+    'native-space-nr-barrier',
+    'native-space-open-barrier',
+    'native-space-type-barrier',
+    'native-state-stays-canonical',
+    'native-state-nullary-barrier',
+    'native-state-extra-argument-barrier',
+    'native-state-type-barrier',
+    'native-state-fresh-variable-barrier',
+    'native-state-payload-resource-barrier',
+    'native-state-write-computed-value-barrier',
+    'native-state-write-computed-reference-barrier',
+    'native-state-write-nondeterminism-barrier',
+    'native-state-write-arity-barrier',
+    'native-state-readback-barrier',
+}
+
+# Complete host counts detect constructor/write contraction, duplication and
+# replay. The error-prefix fixture also includes one native add-atom call;
+# the syntax fixture includes an inert, unexecuted nested constructor.
+NATIVE_STATE_HOST_CALLS = {
+    'native-state-drop-loop': 32,
+    'native-state-retained-alias': 34,
+    'native-state-payload-stays-syntax': 3,
+    'native-state-reread-completes-once': 1,
+    'native-state-duplicates': 3,
+    'native-state-definition-invalidation': 1,
+    'native-state-signature-invalidation': 1,
+    'native-state-write-overwrite-alias': 33,
+    'native-state-write-old-read': 2,
+    'native-state-write-type-error': 2,
+    'native-state-write-reference-error': 1,
+    'native-state-write-error-prefix': 3,
+    'native-state-write-caller-old-image': 1,
+    'native-state-write-definition-invalidation': 2,
+    'native-state-write-native-type-authority': 4,
+    'native-state-write-repeat-authority': 12,
+    'native-state-unused-operation-override': 2,
+}
+
 for name, expected in (
         ("control_source_single_positive", "consumed-once\n[(Done 3)]\n"),
         ("control_source_branching_positive", "[(one one 7), (one one 7), (two two 8)]\n"),
@@ -238,6 +607,9 @@ for name, expected in (
                   expected, False))
 
 PROFILE_CASES = [
+    ("native-space-profile-contract", "(= (profile-space) "
+     "(let $drop (new-space) done))\n!(profile-space)\n!(+ 20 22)\n",
+     "[done]\n[42]\n"),
     ("original-call-fallback-after-input-retirement", "(: sentinel (-> Number Number))\n"
      "(= (sentinel $x) NotReducible)\n!(sentinel 8)\n"
      "!(let $value (sentinel 8) (Observed $value))\n",
@@ -426,6 +798,18 @@ def check_reflected_text(output, expected, protected):
         raise AssertionError(("reflected structure or aliases changed", output))
 
 
+# These paths may complete on the prepared tier before allocating the shared
+# machine. All worker selectors must retain the exact completed/raw answers.
+COMPLETED_RETURN_CONTROLS = {
+    'completed-constructor-survives-new-rule',
+    'completed-constructor-after-child-reduction',
+    'completed-constructor-call-remains-computation',
+    'raw-collection-return-still-computes',
+    'raw-state-return-stays-syntax',
+}
+HEAD_AUTHORITY_CASES.extend((name, source, expected)
+    for name, source, expected, _ in CASES if name in COMPLETED_RETURN_CONTROLS)
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("binary", type=Path)
@@ -461,10 +845,121 @@ def main():
                                           result.stdout, result.stderr))
                 if enabled != "0" and compiled and "PETTA_MACHINE_STATS" not in result.stderr:
                     raise AssertionError((name, "compiled route was not exercised"))
+                if (name in NATIVE_CONSTRUCTOR_BARRIERS and any(
+                        int(value) != 0 for value in re.findall(
+                            r"goal_host=([0-9]+)", result.stderr))):
+                    raise AssertionError((name, "native constructor barrier was bypassed",
+                                          result.stderr))
+                if (name.startswith("native-space-") and compiled and enabled != "0" and
+                        not any(int(value) > 0 for value in re.findall(
+                            r"goal_host=([0-9]+)", result.stderr))):
+                    raise AssertionError((name, "native constructor host was not exercised",
+                                          result.stderr))
+                if name in NATIVE_STATE_HOST_CALLS:
+                    calls = sum(map(int, re.findall(r"goal_host=([0-9]+)",
+                                                   result.stderr)))
+                    wanted = NATIVE_STATE_HOST_CALLS[name] if enabled != "0" else 0
+                    if calls != wanted:
+                        raise AssertionError((name, "native State host count", calls,
+                                              wanted, canonical, enabled, result.stderr))
+                if (name == "native-space-reread-completes-once" and enabled != "0" and
+                        sum(map(int, re.findall(r"goal_host=([0-9]+)",
+                                                result.stderr))) != 1):
+                    raise AssertionError((name, "constructor replayed across collected readback",
+                                          result.stderr))
                 if name == "pattern-callback-effect" and any(
                     int(value) != 0 for value in re.findall(
                         r"(?:goal_host|equation_match_attempts)=([0-9]+)", result.stderr)):
                     raise AssertionError((name, "pattern callback bypassed admission"))
+                observations += 1
+        # The shared tier itself must publish constructor provenance, even
+        # when both prepared tiers have been explicitly bypassed.
+        for name, source, expected, _ in CASES:
+            if name not in COMPLETED_RETURN_CONTROLS:
+                continue
+            path = Path(directory) / ("forced-shared-" + name + ".metta")
+            path.write_text(source)
+            for canonical in ("0", "1"):
+                env = dict(os.environ, CETTA_HE_SHARED_EXECUTION="1",
+                           CETTA_HE_CANONICAL_EXECUTION=canonical,
+                           CETTA_PREPARED_PURE_REFERENCE="1",
+                           CETTA_OPEN_EQUATIONS_REFERENCE="1",
+                           CETTA_PETTA_MACHINE_STATS="1")
+                result = subprocess.run([str(binary), "--lang", "he", str(path)],
+                                        cwd=root, env=env, capture_output=True,
+                                        text=True, timeout=30)
+                if (result.returncode or result.stdout != expected or
+                        "PETTA_MACHINE_STATS" not in result.stderr):
+                    raise AssertionError((name, "forced shared return provenance",
+                                          canonical, result.returncode,
+                                          result.stdout, result.stderr))
+                observations += 1
+        # A Work owns source admission across cache eviction and suspension.
+        # Its native State semantics must not depend on a TLS authority slot
+        # populated by creation still being warm at the next observation.
+        work_cases = (
+            ("work-native-state-cold-authority", """(: seed Atom)
+(= (fresh-work-state) (new-state seed))
+(= (pure-noop $n) (if (< $n 1) 42 (+ $n 1)))
+!(let $w (work-new (fresh-work-state))
+  (let $ignored (pure-noop 0)
+    (let (taken ($s) $status) (work-take $w 1)
+      (Pair (get-metatype $s) (get-state $s)))))
+""", "[(Pair Grounded seed)]\n", 1),
+            ("work-native-state-resume-no-replay", """(= (state-answers)
+  (let $s (new-state 0)
+    (let $write (change-state! $s 7) (superpose ($s $s)))))
+(= (pure-noop $n) (if (< $n 1) 42 (+ $n 1)))
+!(let $w (work-new (state-answers))
+  (let (taken ($first) $first-status) (work-take $w 1)
+    (let $old (get-state $first)
+      (let $external-write (change-state! $first 9)
+        (let $ignored (pure-noop 0)
+          (let (taken ($second) $second-status) (work-take $w 1)
+            (Pair (Pair (get-metatype $first) $old)
+                  (Pair (get-metatype $second) (get-state $second)))))))))
+""", "[(Pair (Pair Grounded 7) (Pair Grounded 9))]\n", 2),
+            ("work-native-state-budget-resume", """(= (finish-work-state $n $s)
+  (if (== $n 0) (change-state! $s 7)
+    (finish-work-state (- $n 1) $s)))
+(= (start-work-state) (let $s (new-state 0) (finish-work-state 64 $s)))
+(= (pure-noop $n) (if (< $n 1) 42 (+ $n 1)))
+!(let $w (work-new (start-work-state))
+  (let $budget (work-budget $w 32)
+    (let $paused (work-take $w 1)
+      (let $ignored (pure-noop 0)
+        (let $unbounded (work-budget $w 0)
+          (let (taken ($s) $status) (work-take $w 1)
+            (Pair $paused (Pair (get-metatype $s) (get-state $s)))))))))
+""", "[(Pair (taken () paused) (Pair Grounded 7))]\n", 2),
+        )
+        for name, source, expected, host_calls in work_cases:
+            path = Path(directory) / (name + ".metta")
+            path.write_text(source)
+            for canonical, shared in (("0", "0"), ("0", "1"),
+                                      ("1", "0"), ("1", "1")):
+                # A pending canonical Work deliberately has no transition
+                # budget. This pause oracle exercises the admitted machine.
+                if name == "work-native-state-budget-resume" and shared == "0":
+                    continue
+                env = dict(os.environ, CETTA_HE_SHARED_EXECUTION=shared,
+                           CETTA_HE_CANONICAL_EXECUTION=canonical,
+                           CETTA_PREPARED_PURE_REFERENCE="1",
+                           CETTA_OPEN_EQUATIONS_REFERENCE="1",
+                           CETTA_PETTA_MACHINE_STATS="1")
+                result = subprocess.run([str(binary), "--lang", "he",
+                                         "--profile", "extended", str(path)],
+                                        cwd=root, env=env, capture_output=True,
+                                        text=True, timeout=30)
+                calls = sum(map(int, re.findall(r"goal_host=([0-9]+)",
+                                               result.stderr)))
+                # Work does not publish its private machine counters. The
+                # external mutation distinguishes an actual retained suffix
+                # from replay: rebuilding or rewriting it would return 7.
+                if result.returncode or result.stdout != expected:
+                    raise AssertionError((name, "Work native authority/replay",
+                                          canonical, shared, result.returncode,
+                                          result.stdout, calls, result.stderr))
                 observations += 1
         # The raw minimal expansion has private names. Return it as completed
         # data beside its formatting, so neither consumer interprets the

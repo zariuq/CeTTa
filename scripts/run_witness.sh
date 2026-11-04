@@ -105,6 +105,12 @@ if [[ -n "${RHO_BENCH_BASELINE_BIN:-}" ]]; then
         rhocalc_threaded_standard|rhocalc_cost_threaded_heavy|rhocalc_threaded_adaptive|rhocalc_cost_threaded_adaptive)
             printf -v baseline_arg '%q' "$RHO_BENCH_BASELINE_BIN"
             run_command+=" --baseline-bin $baseline_arg"
+            if [[ -n "${RHO_BENCH_BASELINE_RECEIPT:-}" ]]; then
+                printf -v receipt_arg '%q' "$RHO_BENCH_BASELINE_RECEIPT"
+                printf -v digest_arg '%q' "${RHO_BENCH_BASELINE_RECEIPT_SHA256:-}"
+                printf -v commit_arg '%q' "${RHO_BENCH_BASELINE_SOURCE_COMMIT:-}"
+                run_command+=" --baseline-receipt $receipt_arg --baseline-receipt-sha256 $digest_arg --baseline-source-commit $commit_arg"
+            fi
             ;;
     esac
 fi

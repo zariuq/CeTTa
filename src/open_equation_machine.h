@@ -108,6 +108,11 @@ typedef struct {
      * Until the region can transport those dependencies between host calls,
      * the complete relation stays in the canonical search machine. */
     bool (*retains_variable_identity)(void *context, SymbolId head);
+    /* Whether NAME at ARITY arguments is a function of PeTTa's library
+     * still as the library defines it, no Prolog the program ran having
+     * redefined it.  NULL: the session has no such library. */
+    bool (*library_function_current)(void *context, SymbolId name,
+                                     uint32_t arity);
     /* Whether a let binder that only counting operations read takes its
      * producer's count, as the search machine's let/count fusion does. */
     bool count_fusion;
@@ -517,6 +522,12 @@ typedef struct {
         void *context, Space *space, Arena *arena, Atom *query,
         const struct PettaPlanNode *plan, bool count_only,
         bool wrap_collection, Atom **value);
+    /* Optional direct entry of an answer body. A final return has no cursor;
+     * suspension transfers the already-entered cursor; refusal enters none. */
+    CettaOwnedExecutionStep (*enter_callable_answers)(void *context, void *prepared,
+        Arena *arena, Atom *const *arguments, uint32_t arity,
+        struct CettaPreparedPureAnswerCursor **remaining, CettaOwnedReturn *returned,
+        CettaEvalCompletion *completion);
 } CettaOpenEquationRuntime;
 
 /* Install the owning machine's pure guard service before the cursor runs.
@@ -741,6 +752,23 @@ bool cetta_open_equation_cursor_can_prune_depth(
 
 bool cetta_open_equation_cursor_bound_cut(
     const CettaOpenEquationCursor *cursor);
+/* The cursor has changed a space or a named state itself. */
+bool cetta_open_equation_cursor_effected(
+    const CettaOpenEquationCursor *cursor);
+/* The cursor has entered an equation (for a query body, one past the
+ * body's own entry). */
+bool cetta_open_equation_cursor_activated(
+    const CettaOpenEquationCursor *cursor);
+/* The cursor runs a query's body (debug output names its host goals so). */
+void cetta_open_equation_cursor_set_query_body(
+    CettaOpenEquationCursor *cursor);
+/* Report only the answers of derivations whose deepest activation is at
+ * least `floor` (0: every answer).  Under a depth bound B with floor B'+1, a
+ * run reports exactly the derivations a run under bound B' did not, so the
+ * rounds of iterative deepening report each derivation once.  Set before
+ * the cursor's first step. */
+void cetta_open_equation_cursor_set_depth_floor(
+    CettaOpenEquationCursor *cursor, uint32_t floor);
 /* Allow the cursor `budget` activations in all (0: no budget).  A cursor
  * that stopped with a BUDGET handoff continues where it stopped. */
 void cetta_open_equation_cursor_set_budget(CettaOpenEquationCursor *cursor,

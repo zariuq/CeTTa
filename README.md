@@ -363,9 +363,17 @@ binding-history rollback.
 
 Readiness needs `METTAPEDIA_ROOT` pointing to the Lean project, and the frozen
 consolidation baseline's `CETTA_CONSOLIDATION_BASELINE_RECEIPT` and
-`CETTA_CONSOLIDATION_BASELINE_SHA256` (the receipt's digest). The exhaustive
+`CETTA_CONSOLIDATION_BASELINE_SHA256` (the receipt's digest). First run
+`make test-execution-theory` to build the maintained execution-model audit and
+record its selected source/object closure. Readiness checks that receipt before
+freezing, records the theory and live execution gates inside the campaign, and
+rejects reuse after a relevant model or object changes. The exhaustive
 tier also needs `PETTA_ORACLE_ROOT`, a pinned checkout or source snapshot;
-its source files and hashes are checked before testing. Validate the selected
+its source files and hashes are checked before testing. Historical performance
+gates retain `9050a2d`. Set `CETTA_PERF_BASELINE_ROOT` to a clean checkout or a
+frozen artifact directory containing `baseline.json` and `baseline-stats.json`.
+The latter validates both builds against their source archive and runtime
+library, so the original checkout can be removed. Validate the selected
 inputs and inspect the commands first with
 `python3 scripts/cetta_main_readiness.py --tier exhaustive --dry-run`.
 

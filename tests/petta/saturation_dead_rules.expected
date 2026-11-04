@@ -1,0 +1,8 @@
+0
+((Fac f1) (GStud s1) (GStud s2) (Pers s1) (Pers s2) (Stud s1) (Stud s2))
+0
+((Advd s1) (Fac f1) (GStud s1) (GStud s2) (Pers s1) (Pers s2) (Stud s1) (Stud s2))
+((adv s1 f1) (advOf f1 s1))
+true
+0
+((A x1) (D y1))

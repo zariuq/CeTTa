@@ -125,6 +125,8 @@ typedef struct {
     uint32_t match_trie_pins;
     SpacePinnedOccurrences *pinned;
     CettaSpacePathIndex *path_indexes;
+    struct CettaSpacePathDirectory *path_directory;
+    uint32_t path_query_depth;
     /* The flat shapes whose lookups choose among several columns, and the
      * rent each has paid toward its next column's index; retired with the
      * path indexes. */
@@ -399,6 +401,8 @@ typedef enum {
     SPACE_MATCH_BACKEND_ERROR_PACKET_TOO_LARGE = 2,
     SPACE_MATCH_BACKEND_ERROR_QUERY_UNAVAILABLE = 3,
     SPACE_MATCH_BACKEND_ERROR_READ_ONLY = 4,
+    SPACE_MATCH_BACKEND_ERROR_ALLOCATION_FAILED = 5,
+    SPACE_MATCH_BACKEND_ERROR_STORAGE_INVALIDATED = 6,
 } SpaceMatchBackendError;
 
 void space_match_backend_clear_error(void);

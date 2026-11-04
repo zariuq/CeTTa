@@ -375,11 +375,13 @@ typedef struct {
      * callees, and at runtime-created application boundaries. */
     bool (*head_admitted)(void *context, Space *space, SymbolId head);
     /* Execute a native whose head/arity was positively admitted by the
-     * generated intrinsic contract. False declines before native entry.
-     * True transfers the tagged result, including zero or raised control.
-     * Completion belongs to this invocation, independently of the receiver's
-     * episode. A false return with incomplete completion is a preparation
-     * refusal; it never licenses fallback or claims native entry.
+     * generated intrinsic contract. False with complete invocation status
+     * declines before entry and transfers no packet. True with complete
+     * status transfers the tagged result, including zero or raised control.
+     * Completion reports this invocation's own cause, independently of any
+     * enclosing diagnostic or the receiver's episode. A false return with
+     * incomplete completion is a preparation refusal; it never licenses
+     * fallback or claims native entry, and authorizes no following work.
      * The native context is separate because a language's source-plan owner
      * and its library registry have distinct lifetimes and representations. */
     void *native_context;
@@ -387,6 +389,11 @@ typedef struct {
         void *context, Space *space, Arena *arena,
         const CettaInvocation *invocation, CettaCallOutcome *outcome,
         CettaEvalCompletion *completion);
+    /* The language keeps the values an incomplete native earned (Prime): a
+     * streaming cursor hands them off with the native's own cause and claims
+     * no completed frontier. Otherwise an incomplete native interrupts the
+     * cursor and the caller's evaluation answers the call (HE, PeTTa). */
+    bool native_keeps_incomplete_values;
 } CettaPreparedPureSourceView;
 
 CettaPreparedPureProgram *cetta_prepared_pure_program_compile(
@@ -759,6 +766,16 @@ typedef struct {
  * reject only when no instantiation can meet the consumer. The callback
  * neither retains the shape nor changes logical bindings. */
 typedef bool (*CettaPreparedPureAnswerAdmissionFn)(void *context, const Atom *shape);
+/* Enter the same body worker without installing an enumeration root.
+ * RETURN is one final completed value; COMPLETE is established logical
+ * failure. PAUSED transfers the exact entered cursor. HANDOFF has entered
+ * no work and owns no cursor. Interruption carries its actual cause. */
+CettaOwnedExecutionStep cetta_prepared_pure_body_enter(
+    CettaPreparedPureProgram *program, Atom *const *arguments, uint32_t arity,
+    const CettaPreparedPureAnswerCursorOptions *options,
+    CettaPreparedPureAnswerCursor **remaining, CettaOwnedReturn *returned,
+    CettaEvalCompletion *completion);
+
 bool cetta_prepared_pure_answer_cursor_set_admission(
     CettaPreparedPureAnswerCursor *cursor, CettaPreparedPureAnswerAdmissionFn admit,
     void *context);
@@ -805,8 +822,10 @@ CettaPreparedPureCursorStep cetta_prepared_pure_answer_cursor_advance(
 /* Read-only completion evidence for the retained frontier. True means every
  * remaining call has matched and has no untried equation, so only reclamation
  * remains. This executes no body, continuation, guard or interrupt observer;
- * it does not release the borrowed answer. An unmatched call, lost authority
- * or a handoff cannot establish completion. */
+ * it does not release the borrowed answer. An unmatched call, a running
+ * program, a pending body root or a handoff cannot establish completion;
+ * established exhaustion needs no new execution authority. A withdrawn
+ * answer restores an unfinished equation and revokes that certificate. */
 bool cetta_prepared_pure_answer_cursor_frontier_is_complete(
     const CettaPreparedPureAnswerCursor *cursor);
 

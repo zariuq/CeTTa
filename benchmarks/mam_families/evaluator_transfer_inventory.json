@@ -539,6 +539,24 @@
         {
           "file": "src/petta_search_machine.c",
           "symbol": "petta_machine_collect_closed_answers"
+        },
+        {
+          "file": "src/prepared_pure_machine.c",
+          "symbols": [
+            "cetta_prepared_pure_body_enter",
+            "prepared_pure_answer_cursor_body_root"
+          ]
+        },
+        {
+          "file": "src/eval.c",
+          "symbols": [
+            "petta_eval_open_enter_callable_answers",
+            "petta_eval_machine_answer_authority_for_symbols"
+          ]
+        },
+        {
+          "file": "src/petta_search_machine.c",
+          "symbol": "petta_machine_host_admits_native_collection"
         }
       ],
       "admission": "Readiness, type authority, computation/data provenance and result demand are separate judgments. Prepared cursor construction retains a handle without entering work; first execution and resumption own optional host-authority admission. A lexical preparation precheck cannot replace that entry check.",
@@ -667,9 +685,9 @@
         "file": "benchmarks/mam_families/evaluator_transfer_callers.json",
         "family": "ready-call-and-result-contracts",
         "counts": {
-          "type": 66,
-          "call": 41,
-          "reference": 46
+          "type": 67,
+          "call": 50,
+          "reference": 56
         },
         "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
       },
@@ -969,6 +987,46 @@
           "tests/support/test_lambda_span_budget.c"
         ],
         "remaining": "Native scope-declaration correspondence, source charging and complete ordinary-plan migration remain separate obligations."
+      },
+      "completed_body_entry": {
+        "owner": "cetta_prepared_pure_body_enter",
+        "initializer": "prepared_pure_answer_cursor_open_entry",
+        "worker": "prepared_pure_run_code_worker",
+        "direct_return": "One completed value or established logical failure needs no remaining cursor. Completed values retain their data role.",
+        "suspension": "Promote original entry mark, arguments and actual code state into the existing cursor; preserve native packet, caller DAG and alternatives without replay.",
+        "completion": "Native callbacks carry their own typed completion independently of an enclosing tracker. Clean unlimited episodes may be reused; weak diagnostics and finite accounts remain isolated.",
+        "authority": "One shared answer-token comparison reads current revisions. Registry synchronization may be skipped only under the retained symbol-table identity. Completed work needs no further execution authority; live pending work still does.",
+        "specializations": "Bound result destinations retain pre-entry admission; small physical allowances use the existing retained cursor route.",
+        "models": [
+          "Mettapedia.Machines.ParameterizedBodyEntry.CompletedCursor",
+          "Mettapedia.Machines.BufferedResidualReturn.EpisodeReuse"
+        ],
+        "native_controls": [
+          "tests/test_native_conditional_context.c:completed_body_entry_controls",
+          "tests/test_native_conditional_context.c:completed_body_scope_controls",
+          "tests/test_native_conditional_context.c:prepared_native_gc_borrow_controls",
+          "tests/test_native_conditional_context.c:authority_observation_controls",
+          "tests/test_prepared_pure_answer_producer.c:test_owned_final_survives_authority_change"
+        ],
+        "negative_controls": "Entered incomplete packets must stop before a second effect; bare C entry retains each actual cause. Refused reservation enters nothing, successful recovery invokes once, stale tokens decline, changed token words cannot remain current. Finality controls preserve later fresh invocation and revoke reopened work.",
+        "correspondence": "Native opcode classification, source-price assignment, tracker lifetime and C/GC ownership remain separately qualified; the Lean models do not verify the C implementation."
+      },
+      "native_collection_entry": {
+        "owner": "petta_machine_host_admits_native_collection",
+        "callers": [
+          "petta_machine_native_collect_admitted",
+          "petta_eval_machine_run"
+        ],
+        "contract": "Whole native collections enter only with an unlimited source purse and no host observer of their internal transitions. The machine additionally checks its pending delayed goals; the directive retains its root delay guard.",
+        "native_controls": [
+          "test-petta-activation-source-budget",
+          "test-native-query-stats"
+        ],
+        "models": [
+          "Mettapedia.Machines.SourceSchedulingBoundary",
+          "Mettapedia.Machines.InvocationEntrySchedule"
+        ],
+        "scope": "The finite source route remains ordinary; this is not a native source-debit proof."
       }
     },
     {
@@ -1082,10 +1140,38 @@
         {
           "file": "src/eval_owned_execution.inc",
           "symbol": "eval_owned_residual_body"
+        },
+        {
+          "file": "src/prepared_pure_machine.c",
+          "symbol": "prepared_pure_invoke_native_source"
+        },
+        {
+          "file": "src/petta_search_machine.c",
+          "symbol": "petta_machine_init_with_caller_return"
+        },
+        {
+          "file": "src/petta_search_machine.c",
+          "symbol": "petta_machine_stage_caller_return"
+        },
+        {
+          "file": "src/prepared_pure_machine.c",
+          "symbol": "cetta_prepared_pure_answer_cursor_read_callers"
+        },
+        {
+          "file": "src/petta_search_machine.c",
+          "symbol": "petta_machine_raise_error"
+        },
+        {
+          "file": "src/petta_search_machine.c",
+          "symbol": "petta_completion_value_visible"
+        },
+        {
+          "file": "src/petta_search_machine.c",
+          "symbol": "petta_machine_completion_fallback"
         }
       ],
       "admission": "Value, failure, raised error, interruption and suspension remain distinct; acceptance and publication retain their owner.",
-      "remaining_transfer": "Owned residual, ordinary prepared-native and closed PeTTa search-machine continuations share tagged returns and pending ownership. Scalar consumers refuse native-required plans before entry with a result-demand-specific cache key. Python callback completion and row publication now use the shared outcome and conversion owners. Prolog callback interruption now preserves the first cause, private frontier release, terminal resume and query cleanup; finite direct-callback entry now uses canonical source scheduling; conditional-answer registration now has one validated owner and a unique watch index; retained solver-epoch export and general compiler/source correspondence remain separately qualified; remaining dialect elaboration and source-scheduling joins stay open. Prepared scalar and finite callers now preserve the callee verdict after entered results; finite completion is explicit, and completed non-Boolean conditions resume the existing selector without source replay.",
+      "remaining_transfer": "Owned residual, ordinary prepared-native and closed PeTTa search-machine continuations share tagged returns and pending ownership. Scalar consumers refuse native-required plans before entry with a result-demand-specific cache key. Python callback completion and row publication now use the shared outcome and conversion owners. Prolog callback interruption now preserves the first cause, private frontier release, terminal resume and query cleanup; finite direct-callback entry now uses canonical source scheduling; conditional-answer registration now has one validated owner and a unique watch index; retained solver-epoch export and general compiler/source correspondence remain separately qualified; remaining dialect elaboration and source-scheduling joins stay open. Prepared scalar and finite callers now preserve the callee verdict after entered results; finite completion is explicit, and completed non-Boolean conditions resume the existing selector without source replay. Deferred native completion now owns invocation through delivery and preserves its own terminal cause; aggregate execution-model foundations and source/object closure are audited inside readiness.",
       "measure": [
         "returns accepted",
         "pending returns",
@@ -1190,9 +1276,9 @@
         "file": "benchmarks/mam_families/evaluator_transfer_callers.json",
         "family": "outcome-and-owned-return",
         "counts": {
-          "type": 100,
-          "reference": 98,
-          "call": 89
+          "type": 111,
+          "reference": 142,
+          "call": 133
         },
         "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
       },
@@ -1225,7 +1311,21 @@
           "caller_source_model": "PreparedCallerProjection checks independent normalized syntax and role-plan projection against the register-node language, including lexical bindings, branches, operand order and current callee answers. Native pointer and source-debit correspondence remain separate obligations.",
           "caller_plans": "Lowering projects normalized caller plans into the source adapter owner before effects. The parent reads those saved plans without live head reclassification. Initial Space invalidation can transfer callers and untried leased alternatives only with complete saved plans and current host authority. Missing plans and revoked host authority retain the actual entered packet.",
           "ordinary_metered_segments": "Eligible ordinary body segments admit each retained source visit before stack removal and preserve the canonical collection/transition boundary. Active delay or table state retains the full scheduler; analysis and evidence observers retain existing boundaries. Canonical receipts, source prices 0/1/3, independent physical/source allowances, cancellation and snapshot refusal have controls.",
-          "source_word_admission_model": "SourceWordAdmission proves annotation erasure with direct bounded-word payment around a raw contextual operation, complete residual/ledger refinement, physical slices and split resumption. Inline annotations refuse and completed code-shaped values stay data. SourceStepSelection joins retained-goal receipt selection to this bounded kernel; remaining elaboration and collection/ABI qualification stay open."
+          "source_word_admission_model": "SourceWordAdmission proves annotation erasure with direct bounded-word payment around a raw contextual operation, complete residual/ledger refinement, physical slices and split resumption. Inline annotations refuse and completed code-shaped values stay data. SourceStepSelection joins retained-goal receipt selection to this bounded kernel; remaining elaboration and collection/ABI qualification stay open.",
+          "callback_disposition": {
+            "owner": "prepared_pure_invoke_native_source",
+            "order": "Own incomplete cause first; complete false transfers no packet; complete true preserves the exact packet. No packet tag supplies the handled flag.",
+            "consumers": [
+              "prepared_pure_native_invoke",
+              "prepared_pure_program_execute_internal"
+            ],
+            "controls": [
+              "tests/test_shared_return_producer.c:test_native_disposition",
+              "tests/test_native_conditional_context.c:terminal_native_disposition_controls"
+            ],
+            "model": "Mettapedia.Machines.BufferedResidualReturn.CallbackDisposition",
+            "boundary": "Callback entry truthfulness, unused C storage lifetime and native opcode classification retain separate ABI controls. No source debit is introduced."
+          }
         },
         "prolog_callback": {
           "entry": "eval_petta_from_lib_prolog; petta_libpl_standard_eval; petta_libpl_standard_add_builtin_signatures",
@@ -1322,13 +1422,14 @@
           "PETTA_CHOICE_SUPERPOSE",
           "he_raw_collect"
         ],
-        "implementation": "CettaCallReturnCursor carries the admitted selection stage. complete_native_expression_frontier buffers native computation before caller delivery, captures its lexical environment in a private owner, and preserves first incomplete cause independently of an enclosing tracker.",
+        "implementation": "CettaCallReturnCursor carries the admitted selection stage. complete_native_expression_frontier buffers native computation before caller delivery, captures its lexical environment in a private owner, and preserves first incomplete cause independently of an enclosing tracker. Deferred invocation and delivery share one owned episode; their actual incomplete cause gates terminal packets as well as private buffers, independently of an older parent diagnostic.",
         "control": "Entered interrupted native and host calls stop without branch fallback or re-entry. A ready completed frontier may publish a valid prefix; an uncompleted malformed packet publishes none.",
         "evidence": "Generated library-value-dispatch metadata qualifies legacy single values at both entry workers. Explicit computation roles are preserved.",
         "models": [
           "NativeCallReturn",
           "ExecutionControl.Selection",
-          "OwnedBind.NativeCompletion"
+          "OwnedBind.NativeCompletion",
+          "BufferedResidualReturn.NativeEntry"
         ],
         "remaining": "General C elaboration/refinement, semantic source-fuel joins, HE typed completion and Prime adapter migration remain open."
       },
@@ -1364,9 +1465,48 @@
           "theory": "Mettapedia/Machines/CallbackCompletion.lean",
           "controls": "test-python-callback-completion; independent expectations, source-prefix comparison, constructor refusal with weak-reference lifetime checks, nested entry, forced collection and sanitizer configurations",
           "remaining": "HE retains its separately observed document-runner policy. Prolog interruption and canonical callback entry have separate qualified controls; shared conditional-answer registration has its own native and algorithm controls."
+        },
+        {
+          "caller": "prepared_native_completion_next",
+          "owner": "prepared_native_completion_next",
+          "source": "src/eval_owned_execution.inc",
+          "route": "deferred invocation and entered native completion",
+          "disposition": "qualified_shared_completion",
+          "contract": "Invocation and delivery share one child episode. Own completion gates terminal and buffered publication; weak parent diagnostics settle separately; strong inherited interruption enters no new work; entered packets skip invocation.",
+          "control": "tests/test_native_conditional_context.c:native_completion_episode_controls (200 native cases)",
+          "algorithm_law": "Mettapedia.Machines.BufferedResidualReturn.NativeEntry.native_packet_driver_refines",
+          "negative_controls": [
+            "missing entry scope",
+            "copied parent diagnostic",
+            "interpretation after native failure",
+            "lost terminal cause",
+            "replayed entered packet"
+          ],
+          "native_obligations": "Provider implementation, admission, ABI, allocation and C lifetimes remain separately qualified."
         }
       ],
-      "inspection_handoff": "If inspection of an entered completed value cannot establish cursor-local variable ownership, OEM transfers the actual completed packet and caller through its existing host-return boundary, preserving sharing without replay."
+      "inspection_handoff": "If inspection of an entered completed value cannot establish cursor-local variable ownership, OEM transfers the actual completed packet and caller through its existing host-return boundary, preserving sharing without replay.",
+      "native_caller_graph_entry": {
+        "owner": "src/petta_search_machine.c:petta_machine_init_with_caller_return",
+        "contract": "Ordinary prepared-native continuation and parent splice consume retained caller roots, immutable positional plans and captured values through one ordered installer. Captures precede packet-triggered delayed goals. No cached input-hole alias or whole-chain re-elaboration.",
+        "controls": "tests/test_native_conditional_context.c:caller_graph_entry_controls; conditional_native_continuation_controls; frozen_source_caller_controls; branching_native_frontier_controls",
+        "theory": "Mettapedia.Machines.PreparedCallerStorage.run_split_exact; Mettapedia.Machines.PreparedCallerProjection.read_project",
+        "remaining": "Dialect-specific buffered residual completion retains its source adapter; no whole-runtime C verification follows from these algorithm laws."
+      },
+      "tagged_raise_join": {
+        "owner": "petta_machine_raise_error",
+        "decision": "The caller classifies control through a typed outcome, raised cursor/child event, explicit error producer, or dialect source/type observer. The unwind owner requires only a non-null payload and does not infer control from its shape.",
+        "native_controls": "caller_graph_entry_controls: 36 retained roots; tagged_raise_route_controls: 192 cases across ordinary/prepared/open-equation admission, value/raise tags, four payloads and eight scope/alternative observers.",
+        "theory": "Mettapedia.Machines.NativeCallReturn.read_refines; Mettapedia.Machines.ContextualCBPV handler semantics. Fault carriers are generic; native call-site classification and C lifetime remain separately qualified.",
+        "remaining": "Dialect-specific source error recognition retains its policy; no arbitrary source term becomes raised control."
+      },
+      "he_producer_completion": {
+        "owner": "The existing completion choices, materialized collection and counted collection share language-owned fallback classification. Buffered readout and final unbanked yield share one visibility decision.",
+        "retired": "Whole-query recursive Error scanning and source retry after a completed HE result.",
+        "controls": "he_completed_error_controls: seven authored normalizations with primitive entry bounds; caller_graph_entry_controls: 36 retained roots; tagged_raise_route_controls: 192 cases with protected and enclosing alternatives; test_he_completion.metta; test_he_shared_execution.py.",
+        "model": "Mettapedia.Machines.HEProducerCompletion; completed finite frontier refinement, generic classifier, streamed success plus retained fallback bank, final shortcut, exact split state and multiplicity. Pure/unmetered whole-frontier scope; source exhaustion, classification and C ownership stay native obligations.",
+        "classification": "Materialized and counted collections retain the same preferred/fallback role. HE root error values are fallbacks under its existing eager-completion policy; typed raised occurrences already carry control, and PeTTa Error-shaped values remain data."
+      }
     },
     {
       "id": "continuation-frame-stack",
@@ -2075,6 +2215,16 @@
         {
           "file": "src/petta_libpl.c",
           "symbol": "cyclic_observer_current"
+        },
+        {
+          "file": "src/petta_libpl.c",
+          "symbol": "petta_libpl_standard_function_current"
+        },
+        {
+          "file": "src/petta_libpl.c",
+          "symbols": [
+            "petta_libpl_callback_enter"
+          ]
         }
       ],
       "admission": "Exact builtin and wrapper provenance plus no carried effects justify the specific read-only failure rule.",
@@ -2099,10 +2249,26 @@
         "family": "foreign-observer-authority",
         "counts": {
           "member": 2,
-          "call": 9,
-          "reference": 9
+          "call": 16,
+          "reference": 16
         },
         "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
+      },
+      "comparison_meaning": {
+        "contract": "Existence observers require a grounded comparison or a current standard-library comparison. Unknown comparisons remain data. Prolog redefinition changes the comparison meaning and invalidates its compiled host read.",
+        "owner": "src/petta_libpl.c:petta_libpl_standard_function_current",
+        "consumers": [
+          "search-machine existence observer",
+          "OEM existence observer and recorded host reads"
+        ],
+        "cache": "The existing capability revision keys registered-bridge currency; engine startup is not required before any program Prolog has run.",
+        "controls": [
+          "tests/support/check_comparison_authority.py",
+          "tests/petta/native_comparison_redefined.metta"
+        ],
+        "theory": "AuthorityObservation and callee admission laws retain current observer authority as a separate premise. Foreign predicate identity and native host-read recording are qualified by C controls.",
+        "callback_boundary": "Opaque Prolog may change its namespace between eval callbacks or after its last callback. Actual source-evaluating and Python callbacks advance the existing namespace revision on entry and exit. Pure grounded projections do not require this boundary.",
+        "cleanup_scope": "petta_libpl_callback_leave is installed through the C cleanup attribute; these attribute references are outside the typed call/reference census. Between-callback and after-callback native controls qualify its invalidation, including both sides of an opaque goal."
       }
     },
     {
@@ -2641,6 +2807,14 @@
         {
           "file": "src/space_match_backend.c",
           "symbol": "space_match_backend_accepts_space"
+        },
+        {
+          "file": "src/native_query.c",
+          "symbol": "cetta_native_query_run"
+        },
+        {
+          "file": "src/native_open_query.c",
+          "symbol": "cetta_native_open_query_run"
         }
       ],
       "admission": "Local candidate coordinates read through the candidate-view accessor; public bridge iteration and composed overlay coordinates may name different occurrences. Publication translates into the composed occurrence view. Scoped Rust query cursors require the current exact frontier. AUTO suffix reads reuse the existing native-shadow candidate service; explicitly forced and multi-factor Rust catalogs retain independent admission.",
@@ -2712,14 +2886,23 @@
         "file": "benchmarks/mam_families/evaluator_transfer_callers.json",
         "family": "backend-scoped-query-and-local-coordinate-reuse",
         "counts": {
-          "call": 14,
-          "reference": 14
+          "call": 20,
+          "reference": 20
         },
         "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
+      },
+      "compact_query_refusal": {
+        "contract": "A compact deep-fact reader declining before effects may return its relation to authoritative rows and use the existing row query worker. Other structured outcomes return directly; entered effects are never replayed.",
+        "gates": [
+          "test-native-query-stats",
+          "test-native-query-eager",
+          "test-native-open-mutations"
+        ],
+        "native_controls": "The 24x24 and 48x48 guarded layered searches retain native joins across the compact-relation threshold; the unrepaired merged executable fails the latter control."
       }
     }
   ],
-  "coverage": "All 29 named families have dispositions, source anchors, a typed native-use census across all 341 linked C translation units in both build configurations, and admission/validity/cost obligations. The 143 named anchors include the compiler report and publication boundary. Caller-by-caller semantic transfer completion, dynamic callback qualification and complete ordinary-route workload baselines remain open.",
+  "coverage": "All 29 named families have dispositions, source anchors, a typed native-use census across all 344 linked C translation units in both build configurations, and admission/validity/cost obligations. The 159 named anchors include the compiler report and publication boundary. Caller-by-caller semantic transfer completion, dynamic callback qualification and complete ordinary-route workload baselines remain open.",
   "review_reconciliation": [
     {
       "idea": "Shared call contract over existing engines",

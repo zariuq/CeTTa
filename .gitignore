@@ -2,6 +2,8 @@
 /cetta
 /cetta-stage0
 *.proc-scope
+.cetta-object.*
+.cetta-deps.*
 /src/*.d
 /src/*.stage0.d
 /native/*.d
