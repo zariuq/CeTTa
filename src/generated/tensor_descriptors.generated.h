@@ -1,7 +1,7 @@
 /* Generated from the shared .module reader; do not edit. */
 #ifndef CETTA_TENSOR_DESCRIPTORS_GENERATED_H
 #define CETTA_TENSOR_DESCRIPTORS_GENERATED_H
-#define CETTA_TENSOR_DESCRIPTORS_SHA256 "85fa4d40f0b20bf633c6c7d54956d8fab3a4eccdabb4e39c96898f44371398df"
+#define CETTA_TENSOR_DESCRIPTORS_SHA256 "5418a9440f89239c9f76af9ddbfdd964f6d6ad677a50a66bed7c24ef959eb85b"
 #define CETTA_TENSOR_DTYPE_ROWS(X) \
     X(I64, 1, "i64", 8, Signed, 64) \
     X(F64, 2, "f64", 8, Floating, 53) \
@@ -31,6 +31,8 @@ typedef enum {
     X("equality", "DTypeShapeSupportScalarBits") \
     X("sum", "StoredCoordinateOrder|F64AccumulateFloats") \
     X("matvec", "StoredRowCoordinateOrder|F64AccumulateFloats") \
+    X("dotBounds", "StoredCoordinateOrder|NearestGradualSeparate|StoredRealInputEnclosure|TypedRefusal") \
+    X("matvecBounds", "StoredRowCoordinateOrder|NearestGradualSeparate|StoredRealInputEnclosure|TypedRefusal") \
     X("fixed4", "FourLanesLeftAssociated|ExplicitSelection") \
     X("topk", "FiniteEnabledDescending|CoordinateAscendingTies") \
     X("entries", "CoordinateAscending|PackedCoordinateValueVectors") \

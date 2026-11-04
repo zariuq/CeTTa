@@ -34,7 +34,7 @@ typedef enum {
     CETTA_TENSOR_OK, CETTA_TENSOR_DTYPE, CETTA_TENSOR_SHAPE, CETTA_TENSOR_COUNT,
     CETTA_TENSOR_OVERFLOW, CETTA_TENSOR_NOMEM, CETTA_TENSOR_INDEX_ERROR,
     CETTA_TENSOR_VALUE, CETTA_TENSOR_DUPLICATE, CETTA_TENSOR_ENCODING, CETTA_TENSOR_ZERO_NORM,
-    CETTA_TENSOR_INEXACT, CETTA_TENSOR_PROMOTION
+    CETTA_TENSOR_INEXACT, CETTA_TENSOR_PROMOTION, CETTA_TENSOR_UNCERTIFIED
 } CettaTensorStatus;
 typedef union { int64_t i64; uint64_t index; double f64; float f32; uint8_t u8; } CettaTensorScalar;
 
@@ -102,6 +102,15 @@ CettaTensorStatus cetta_tensor_sum(const CettaTensor *tensor, CettaTensorSchedul
     CettaTensorScalar *result);
 CettaTensorStatus cetta_tensor_matvec(const CettaTensor *matrix, const CettaTensor *vector,
     CettaTensorSchedule schedule, CettaTensor **out);
+typedef struct { double value, lower, upper; } CettaFloatBounds;
+/* Enclose the real result for exact stored finite f32/f64 inputs. The center
+ * uses separate sequential binary64 multiplication/addition. Matrix absence
+ * adds no operations; the right vector must be fully present. Uncertified
+ * returns no partial result. Ordinary matvec schedules remain unchanged.
+ * Each successful tensor output owns one reference; slots must be distinct. */
+CettaTensorStatus cetta_tensor_dot_bounds(const CettaTensor *, const CettaTensor *, CettaFloatBounds *);
+CettaTensorStatus cetta_tensor_matvec_bounds(const CettaTensor *, const CettaTensor *,
+    CettaTensor **value, CettaTensor **lower, CettaTensor **upper);
 /* Sequential scores for a fully present Index vector of requested rows.
  * Request order and duplicate occurrences survive; unsupported packed layouts
  * use ordinary matvec followed by gather without changing the observation. */
