@@ -41,6 +41,52 @@ static bool declares_envelope(Atom *record) {
 }
 
 static bool text(Atom *a) { return a && a->kind == ATOM_GROUNDED && a->ground.gkind == GV_STRING; }
+
+static Atom *observed_field(Arena *arena, Atom *record, Atom *name) {
+    if (!text(name) || strlen(name->ground.sval) != atom_string_len(name) ||
+        !record || record->kind != ATOM_EXPR || !record->expr.len ||
+        !atom_is_symbol(record->expr.elems[0], "Record"))
+        return atom_symbol(arena, "ModuleValueMalformedV1");
+    Atom *found = NULL;
+    for (CettaExprIndex i = 1; i < record->expr.len; ++i) {
+        Atom *row = record->expr.elems[i];
+        if (!module_form_v1(row, "Field", 2u) || !text(row->expr.elems[1]))
+            return atom_symbol(arena, "ModuleValueMalformedV1");
+        if (atom_eq(row->expr.elems[1], name)) {
+            if (found) return atom_symbol(arena, "ModuleValueMalformedV1");
+            found = row->expr.elems[2];
+        }
+    }
+    if (!found) return atom_symbol(arena, "ModuleValueAbsentV1");
+    Atom *fields[] = {atom_deep_copy(arena, found)};
+    return module_make_v1(arena, "ModuleValueFoundV1", fields, 1u);
+}
+
+Atom *cetta_module_portable_field_v1(Arena *arena, Atom *record, Atom *name) {
+    return observed_field(arena, record, name);
+}
+
+Atom *cetta_module_portable_export_v1(Arena *arena, Atom *module, Atom *name) {
+    if (!module_form_v1(module, "ModulePortableValueV1", 2u) || !text(name))
+        return atom_symbol(arena, "ModuleValueMalformedV1");
+    Atom *exports = field(module->expr.elems[2], "exports");
+    if (!exports || exports->kind != ATOM_EXPR || !exports->expr.len ||
+        !atom_is_symbol(exports->expr.elems[0], "List"))
+        return atom_symbol(arena, "ModuleValueMalformedV1");
+    Atom *found = NULL;
+    for (CettaExprIndex i = 1; i < exports->expr.len; ++i) {
+        Atom *entry = exports->expr.elems[i];
+        Atom *label = field(entry, "name"), *spec = field(entry, "spec");
+        if (!label || !spec) return atom_symbol(arena, "ModuleValueMalformedV1");
+        if (atom_eq(label, name)) {
+            if (found) return atom_symbol(arena, "ModuleValueMalformedV1");
+            found = spec;
+        }
+    }
+    if (!found) return atom_symbol(arena, "ModuleValueAbsentV1");
+    Atom *fields[] = {atom_deep_copy(arena, found)};
+    return module_make_v1(arena, "ModuleValueFoundV1", fields, 1u);
+}
 static bool sequence(Atom *a, const char *head) {
     return a && a->kind == ATOM_EXPR && a->expr.len && atom_is_symbol(a->expr.elems[0], head);
 }

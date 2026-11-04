@@ -365,9 +365,11 @@ static bool eval_work_start_general_reopened(EvalWork *work, Arena *scratch,
     /* The host takes HE's rules from the shared execution's flags, as the
      * HE driver sets them around its machine. */
     bool enclosing_shared = g_he_shared_execution;
+    bool enclosing_resources = g_he_shared_execution_native_resource_operations;
     bool enclosing_effect_free = g_he_shared_execution_effect_free;
     bool enclosing_rereads = g_he_shared_execution_rereads;
     g_he_shared_execution = he;
+    g_he_shared_execution_native_resource_operations = he && work->he_plan.native_resource_operations;
     if (he) {
         g_he_shared_execution_effect_free = !work->he_plan.effects;
         g_he_shared_execution_rereads = work->he_plan.rereads;
@@ -385,6 +387,7 @@ static bool eval_work_start_general_reopened(EvalWork *work, Arena *scratch,
     bool initialized = petta_machine_init_with_plan(&work->machine, space,
         &work->answers, source, work->source_plan, NULL, &work->host);
     g_he_shared_execution = enclosing_shared;
+    g_he_shared_execution_native_resource_operations = enclosing_resources;
     g_he_shared_execution_effect_free = enclosing_effect_free;
     g_he_shared_execution_rereads = enclosing_rereads;
     if (!initialized) {
@@ -471,6 +474,12 @@ static bool eval_work_deliver(EvalWork *work, Arena *a, Atom *answer,
         };
         packet_ok = packet_ok && work->deliver_packet(work->delivery_context, a, &returned);
     }
+    if (work->language == CETTA_LANGUAGE_HE &&
+        (work->he_plan.result_provenance & HE_RETURN_COLLECTED))
+        value = he_collected_value(a, value);
+    else if (work->language == CETTA_LANGUAGE_HE &&
+        (work->he_plan.result_provenance & HE_RETURN_COMPLETED))
+        value = he_completed_value(a, value);
     bindings_free(environment);
     if (!value || !packet_ok) {
         work->state = EVAL_WORK_FAILED;
@@ -693,13 +702,36 @@ static void eval_work_take_depth_first(EvalWork *work, Arena *a,
 /* The flags the dialect's own driver sets around its machine, saved for
  * the enclosing evaluation. */
 typedef struct {
-    bool shared, effect_free, rereads, active, raised;
+    bool shared, resources, effect_free, rereads, active, raised;
     uint32_t depth;
 } EvalWorkScope;
+
+/* Work admission survives longer than the thread-local authority cache.
+ * Revalidate only the native operations actually used by this residual,
+ * before its next step or branch capture. Never restart an entered producer. */
+static bool eval_work_rearm_native_authority(EvalWork *work) {
+    if (work->language != CETTA_LANGUAGE_HE || !work->he_plan.native_contracts)
+        return true;
+    Arena scratch;
+    arena_init_detached(&scratch);
+    bool current;
+    {
+        CETTA_SCOPED_SHARED_TRANSITION(work_native_readmission);
+        current = he_native_contracts_rearm(work->space, &scratch,
+                                            work->he_plan.native_contracts);
+    }
+    arena_free(&scratch);
+    if (!current) {
+        work->state = EVAL_WORK_FAILED;
+        work->failure = atom_symbol(&work->storage, "WorkInvalidated");
+    }
+    return current;
+}
 
 static EvalWorkScope eval_work_enter(EvalWork *work) {
     EvalWorkScope saved = {
         .shared = g_he_shared_execution,
+        .resources = g_he_shared_execution_native_resource_operations,
         .effect_free = g_he_shared_execution_effect_free,
         .rereads = g_he_shared_execution_rereads,
         .active = g_active_petta_search_machine,
@@ -709,6 +741,7 @@ static EvalWorkScope eval_work_enter(EvalWork *work) {
     bool he = work->language == CETTA_LANGUAGE_HE;
     g_petta_machine_host_depth = 0u;
     g_he_shared_execution = he;
+    g_he_shared_execution_native_resource_operations = he && work->he_plan.native_resource_operations;
     if (he) {
         g_he_shared_execution_effect_free = !work->he_plan.effects;
         g_he_shared_execution_rereads = work->he_plan.rereads;
@@ -723,6 +756,7 @@ static EvalWorkScope eval_work_enter(EvalWork *work) {
 
 static void eval_work_leave(const EvalWorkScope *saved) {
     g_he_shared_execution = saved->shared;
+    g_he_shared_execution_native_resource_operations = saved->resources;
     g_he_shared_execution_effect_free = saved->effect_free;
     g_he_shared_execution_rereads = saved->rereads;
     g_active_petta_search_machine = saved->active;
@@ -735,6 +769,8 @@ static void eval_work_leave(const EvalWorkScope *saved) {
 static void eval_work_take_general(EvalWork *work, Arena *a, uint64_t limit,
                                    Atom ***out, size_t *out_len,
                                    size_t *out_cap) {
+    if (!eval_work_rearm_native_authority(work))
+        return;
     EvalWorkScope saved = eval_work_enter(work);
     ArenaMark mark = arena_mark(&work->answers);
     if (work->hub_ready)
@@ -1169,6 +1205,8 @@ static Atom *eval_work_route_transfer(Arena *a, Atom *call, EvalWork *work,
     CettaSelectionAutomaton automaton;
     if (!eval_work_frontier_admitted(work, strategy, &automaton))
         return eval_work_route_refused(a, call, "owned-multishot");
+    if (!eval_work_rearm_native_authority(work))
+        return atom_error(a, call, work->failure);
     if (!cetta_continuation_hub_init(&work->hub, &automaton,
                                      CETTA_SELECTION_DUTY_RECURRENT_OLDEST,
                                      &work->context->control_plan))

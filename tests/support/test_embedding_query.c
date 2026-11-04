@@ -239,6 +239,8 @@ static void compare_ordinary(cetta_engine_t *engine) {
         cetta_result_t *ordinary = NULL;
         cetta_status_t expected = cetta_embed_eval(engine, expression, NULL, &ordinary);
         cetta_embed_atom_release(expression);
+        /* Independent executions may freshen variables in foreign error
+         * contexts. Compare answers up to renaming, preserving sharing. */
         bool *seen = calloc(ordinary->count ? ordinary->count : 1, sizeof(*seen));
         assert(seen);
         Query query = query_new(engine, sources[source], -1);
@@ -255,12 +257,25 @@ static void compare_ordinary(cetta_engine_t *engine) {
             for (size_t i = 0; i < result->count; ++i) {
                 size_t found = ordinary->count;
                 for (size_t j = 0; j < ordinary->count; ++j) {
-                    if (!seen[j] && atom_eq(result->values[i], ordinary->values[j])) {
+                    if (!seen[j] && atom_alpha_eq(result->values[i], ordinary->values[j])) {
                         found = j; break;
                     }
                 }
-                if (found == ordinary->count)
+                if (found == ordinary->count) {
                     fprintf(stderr, "unexpected query answer: %s\n", sources[source]);
+                    EmbeddingScope diagnostic_scope; scope_enter(engine, &diagnostic_scope);
+                    Arena diagnostics; arena_init_detached(&diagnostics);
+                    char *actual = atom_to_string(&diagnostics, result->values[i]);
+                    fprintf(stderr, "query value: %s; ordinary count: %zu\n", actual, ordinary->count);
+
+                    for (size_t j = 0; j < ordinary->count; ++j) {
+                        char *value = atom_to_string(&diagnostics, ordinary->values[j]);
+                        fprintf(stderr, "ordinary value: %s\n", value);
+
+                    }
+                    arena_free(&diagnostics);
+                    scope_leave(&diagnostic_scope);
+                }
                 assert(found < ordinary->count);
                 seen[found] = true; count++;
             }

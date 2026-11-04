@@ -123,6 +123,15 @@ typedef struct {
 CettaMolResult cetta_mol_align(CettaMolStore *store, CettaMol pattern,
                                const CettaSkeleton *skeleton,
                                CettaMolAligned *aligned);
+/* Cache an aligned hole's dereferenced bare cell only when it predates
+ * LIFETIME and no binding has been added since that mark. The caller keeps
+ * the prefix, its earlier bindings and the original parts' frames until
+ * the plan is discarded; each row may undo to LIFETIME. Other holes retain
+ * their original framed molecule. DECLINE leaves allocations for the
+ * caller's mark to undo, as unification does. */
+CettaMolResult cetta_mol_aligned_stable_cells(CettaMolStore *store,
+                                             CettaMolAligned *aligned,
+                                             CettaMolMark lifetime);
 /* Unify an aligned pattern with the kept fact whose holes are HOLES, read
  * under FRAME, as cetta_mol_unify_kept would. */
 CettaMolResult cetta_mol_unify_aligned(CettaMolStore *store,

@@ -1068,6 +1068,11 @@ typedef struct {
     size_t proper_list_stack_len;
     Atom *nonempty_values[64];
     size_t nonempty_value_len;
+    struct {
+        Atom *value;
+        const Bindings *environment;
+    } proper_list_values[64];
+    size_t proper_list_value_len;
     VarId *dynamic_pattern_vars;
     size_t dynamic_pattern_var_len;
     size_t dynamic_pattern_var_cap;
@@ -6501,6 +6506,13 @@ static bool petta_block_value_manifest_proper_list(
     Bindings *environment, bool require_nonempty) {
     if (!check || !value)
         return false;
+    if (!require_nonempty && value->kind == ATOM_VAR) {
+        for (size_t index = check->proper_list_value_len; index > 0u; index--) {
+            if (check->proper_list_values[index - 1u].environment == environment &&
+                atom_eq(check->proper_list_values[index - 1u].value, value))
+                return true;
+        }
+    }
     if (value->kind == ATOM_VAR && environment) {
         Atom *type = petta_block_observe_type_binding(check, environment, value);
         if (petta_block_head_is(type, "List"))
@@ -7158,6 +7170,59 @@ static PettaBlockEffect petta_block_closure_value_effect(
     return PETTA_BLOCK_EFFECT_UNKNOWN;
 }
 
+/* A value-certified proper list closes the selector domain without making
+ * Expression (a wildcard type) closed. Each coverage clause must accept
+ * every other argument independently; repeated variables would instead
+ * impose an equality constraint on this apparent empty/cons partition. */
+static uint32_t petta_block_lhs_variable_occurrences(
+    Atom *pattern, VarId variable, uint32_t depth) {
+    if (!pattern || depth > 128u)
+        return 2u;
+    if (pattern->kind == ATOM_VAR)
+        return var_id_eq(pattern->var_id, variable) ? 1u : 0u;
+    if (pattern->kind != ATOM_EXPR)
+        return 0u;
+    uint32_t count = 0u;
+    for (CettaExprIndex index = 0u; index < pattern->expr.len && count < 2u; index++)
+        count += petta_block_lhs_variable_occurrences(
+            pattern->expr.elems[index], variable, depth + 1u);
+    return count > 1u ? 2u : count;
+}
+
+static bool petta_block_position_covers_proper_list_values(
+    PettaBlockCheck *check, Atom *head, CettaExprLen arity,
+    CettaExprIndex position) {
+    size_t equation_len = 0u;
+    Atom *const *equations = petta_block_equations(check, head, arity, &equation_len);
+    bool empty = false, nonempty = false;
+    for (size_t index = 0u; index < equation_len; index++) {
+        Atom *lhs = equations[index]->expr.elems[1];
+        bool independent = true;
+        for (CettaExprIndex argument = 1u;
+             independent && argument < lhs->expr.len; argument++) {
+            if (argument == position + 1u)
+                continue;
+            Atom *pattern = lhs->expr.elems[argument];
+            independent = pattern->kind == ATOM_VAR &&
+                petta_block_lhs_variable_occurrences(lhs, pattern->var_id, 0u) == 1u;
+        }
+        if (!independent)
+            continue;
+        Atom *pattern = lhs->expr.elems[position + 1u];
+        if (pattern->kind == ATOM_EXPR && pattern->expr.len == 0u) {
+            empty = true;
+        } else if (petta_block_head_is(pattern, "cons") && pattern->expr.len == 3u) {
+            Atom *first = pattern->expr.elems[1];
+            Atom *rest = pattern->expr.elems[2];
+            nonempty = nonempty ||
+                (first->kind == ATOM_VAR && rest->kind == ATOM_VAR &&
+                 petta_block_lhs_variable_occurrences(lhs, first->var_id, 0u) == 1u &&
+                 petta_block_lhs_variable_occurrences(lhs, rest->var_id, 0u) == 1u);
+        }
+    }
+    return empty && nonempty;
+}
+
 static PettaBlockEffect petta_block_call_selection_effect(
     PettaBlockCheck *check, Atom *call, Atom *signature,
     Bindings *environment) {
@@ -7214,6 +7279,12 @@ static PettaBlockEffect petta_block_call_selection_effect(
             bool exhaustive = petta_block_position_proven_exhaustive(
                 check, call->expr.elems[0], arity,
                 index - 1u, required);
+            if (actual->kind == ATOM_VAR && petta_block_wildcard(required) &&
+                petta_block_value_is_proven_proper_list(check, actual, environment, 0u)) {
+                bound = true;
+                exhaustive = exhaustive || petta_block_position_covers_proper_list_values(
+                    check, call->expr.elems[0], arity, index - 1u);
+            }
             if (petta_block_head_is(actual, "if") &&
                 actual->expr.len == 4u &&
                 petta_block_head_is(required, "List") &&
@@ -8049,11 +8120,22 @@ static PettaBlockEffect petta_block_expression_effect(
                     &then_environment, condition->expr.elems[1],
                     expression_type);
         }
+        size_t saved_proper_list_len = check->proper_list_value_len;
+        if (then_cloned && petta_block_head_is(condition, "is-expr") &&
+            condition->expr.len == 2u && condition->expr.elems[1]->kind == ATOM_VAR &&
+            petta_block_equation_count(check, condition->expr.elems[0], 1u) == 0u &&
+            check->proper_list_value_len < sizeof(check->proper_list_values) /
+                sizeof(check->proper_list_values[0])) {
+            check->proper_list_values[check->proper_list_value_len].value = condition->expr.elems[1];
+            check->proper_list_values[check->proper_list_value_len].environment = &then_environment;
+            check->proper_list_value_len++;
+        }
         effect = petta_block_effect_join(
             effect, petta_block_expression_effect(
                         check, expression->expr.elems[2],
                         then_cloned ? &then_environment : environment,
                         depth + 1u));
+        check->proper_list_value_len = saved_proper_list_len;
         bindings_free(&then_environment);
         Atom *nonempty = petta_block_empty_list_comparison_value(
             expression->expr.elems[1]);

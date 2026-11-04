@@ -101,6 +101,8 @@ typedef struct {
     const GSLTDirectScalarClassV1 *list_variable_tail;
 
     uint32_t depth_limit;
+    /* Independently admitted counted-fence lexical service. */
+    bool raw_source_regions;
 } GSLTDirectReaderV1Plan;
 
 typedef struct {
@@ -334,6 +336,7 @@ typedef struct {
     const GSLTDirectScalarClassV1 *list_token;
     const GSLTDirectScalarClassV1 *list_token_boundary;
     uint32_t depth_limit;
+    bool raw_source_regions;
 } GSLTDirectPeTTaReaderV1Plan;
 
 typedef struct {

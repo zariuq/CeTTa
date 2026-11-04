@@ -223,7 +223,12 @@ int main(void) {
                 for (size_t site = 0; site < sites; ++site) {
                     begin(stage, site);
                     engine = (cetta_engine_t *)(uintptr_t)1;
-                    assert(cetta_embed_engine_new(&config, &engine) == CETTA_OUT_OF_MEMORY && !engine);
+                    cetta_status_t refused = cetta_embed_engine_new(&config, &engine);
+                    if (refused != CETTA_OUT_OF_MEMORY || engine)
+                        fprintf(stderr, "constructor refusal: %s/%s stage=%d site=%zu status=%d engine=%p\n",
+                            config.language, config.profile ? config.profile : "default",
+                            stage, site, (int)refused, (void *)engine);
+                    assert(refused == CETTA_OUT_OF_MEMORY && !engine);
                     clean();
                     restored(&outer, stats, types, resources);
                     answer_42(sibling);

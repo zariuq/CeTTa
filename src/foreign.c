@@ -1227,7 +1227,7 @@ static bool python_emit_single(CettaForeignRuntime *rt, Arena *a, PyObject *obj,
          * code, and "" and NUL could not be spelled. A string keeps every
          * byte, prints quoted and comes back as it went in.
          */
-        result_set_add(rs, atom_string_n(a, text, (uint32_t)length));
+        result_set_add(rs, atom_string_n(a, text, (size_t)length));
         return true;
     }
 

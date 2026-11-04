@@ -32,6 +32,12 @@ typedef struct {
 } DensePattern;
 
 typedef struct {
+    uint64_t *bits;
+    size_t *offsets;
+    uint32_t *keys;
+} DenseIndex;
+
+typedef struct {
     SymbolId head;
     /* Each row's keys, first then second. */
     uint32_t *pairs;
@@ -39,8 +45,10 @@ typedef struct {
     size_t pair_cap;
     /* A row of bits per first key, over the second keys, and the reverse,
      * made when a pattern reads it. */
-    uint64_t *forward;
-    uint64_t *backward;
+    /* Each direction also keeps sorted conditional rows. Their offsets
+     * give a row's population without scanning its bitset. */
+    DenseIndex forward;
+    DenseIndex backward;
     /* The keys in each column. */
     uint64_t *firsts;
     uint64_t *seconds;
@@ -66,6 +74,8 @@ struct CettaDenseQuery {
     size_t variable_count;
     /* A pattern fixes an atom no row holds: there is no solution. */
     bool empty;
+    size_t storage_budget;
+    CettaDenseProbeWork probe_work;
 };
 
 bool cetta_dense_query_enabled(void) {
@@ -303,20 +313,141 @@ static inline uint64_t dense_bits(uint64_t word) {
 #endif
 }
 
+static void dense_work_add(uint64_t *into, size_t amount) {
+    *into = UINT64_MAX - *into < amount ? UINT64_MAX : *into + amount;
+}
+
+static bool dense_size_add(size_t *total, size_t count, size_t width) {
+    size_t bytes;
+    return !__builtin_mul_overflow(count, width, &bytes) &&
+        !__builtin_add_overflow(*total, bytes, total);
+}
+
+/* Query capacities plus all optional backward indexes. Reserving their
+ * complete size before allocation makes later direction selection bounded. */
+static bool dense_storage_size(const CettaDenseQuery *query, bool reserve,
+                               size_t *bytes) {
+    size_t total = sizeof(*query), keys = query->key_count;
+    if (!dense_size_add(&total, query->key_cap, sizeof(*query->keys)) ||
+        !dense_size_add(&total, query->table_ids ? query->table_mask + 1u : 0u,
+                         sizeof(*query->table_ids) + sizeof(*query->table_keys)))
+        return false;
+    for (size_t i = 0u; i < query->relation_count; i++) {
+        const DenseRelation *r = &query->relations[i];
+        if (!dense_size_add(&total, r->pair_cap, 2u * sizeof(*r->pairs)) ||
+            !dense_size_add(&total, (reserve || r->firsts) ? query->words : 0u,
+                             sizeof(uint64_t)) ||
+            !dense_size_add(&total, (reserve || r->seconds) ? query->words : 0u,
+                             sizeof(uint64_t)))
+            return false;
+        for (size_t direction = 0u; direction < 2u; direction++) {
+            bool present = direction ? r->backward.bits != NULL : r->forward.bits != NULL;
+            const DenseIndex *index = direction ? &r->backward : &r->forward;
+            if ((reserve || present) &&
+                !dense_size_add(&total, keys, query->words * sizeof(uint64_t)))
+                return false;
+            if ((reserve || index->offsets) &&
+                (!dense_size_add(&total, keys + 1u, sizeof(size_t)) ||
+                 !dense_size_add(&total, r->rows, sizeof(uint32_t))))
+                return false;
+        }
+    }
+    *bytes = total;
+    return true;
+}
+
+static bool dense_key_less(CettaDenseQuery *query, uint32_t a, uint32_t b) {
+    dense_work_add(&query->probe_work.index_comparisons, 1u);
+    return a < b;
+}
+
+static void dense_sift(CettaDenseQuery *query, uint32_t *keys,
+                       size_t root, size_t count) {
+    while (root < count / 2u) {
+        size_t child = root * 2u + 1u;
+        if (child + 1u < count && dense_key_less(query, keys[child], keys[child + 1u]))
+            child++;
+        if (!dense_key_less(query, keys[root], keys[child]))
+            return;
+        uint32_t saved = keys[root]; keys[root] = keys[child]; keys[child] = saved;
+        root = child;
+    }
+}
+
+/* Scatter each pair once, then sort within its row. A dense row is cheaper
+ * to recover in bit order; a sparse row uses in-place heapsort. */
+static bool dense_build_lists(CettaDenseQuery *query, DenseRelation *relation,
+    const uint64_t *matrix, bool reverse, size_t **out_offsets,
+    uint32_t **out_keys) {
+    size_t count = query->key_count;
+    size_t *offsets = calloc(count + 1u, sizeof(*offsets));
+    uint32_t *keys = relation->rows
+        ? malloc(relation->rows * sizeof(*keys)) : NULL;
+    if (!offsets || (relation->rows && !keys)) {
+        free(offsets); free(keys);
+        return false;
+    }
+    for (size_t i = 0u; i < relation->rows; i++) {
+        offsets[relation->pairs[2u * i + (reverse ? 1u : 0u)] + 1u]++;
+        dense_work_add(&query->probe_work.index_items, 1u);
+    }
+    for (size_t i = 1u; i <= count; i++) {
+        offsets[i] += offsets[i - 1u];
+        dense_work_add(&query->probe_work.index_items, 1u);
+    }
+    for (size_t i = 0u; i < relation->rows; i++) {
+        size_t from = relation->pairs[2u * i + (reverse ? 1u : 0u)];
+        keys[offsets[from]++] = relation->pairs[2u * i + (reverse ? 0u : 1u)];
+        dense_work_add(&query->probe_work.index_items, 1u);
+    }
+    for (size_t i = count; i; i--) {
+        offsets[i] = offsets[i - 1u];
+        dense_work_add(&query->probe_work.index_items, 1u);
+    }
+    offsets[0] = 0u;
+    for (size_t row = 0u; row < count; row++) {
+        dense_work_add(&query->probe_work.index_items, 1u);
+        size_t n = offsets[row + 1u] - offsets[row];
+        if (n > query->words) {
+            size_t next = offsets[row];
+            for (size_t w = 0u; w < query->words; w++) {
+                uint64_t bits = matrix[row * query->words + w];
+                dense_work_add(&query->probe_work.index_words, 1u);
+                while (bits) {
+                    keys[next++] = (uint32_t)(w * 64u + (size_t)__builtin_ctzll(bits));
+                    bits &= bits - 1u;
+                    dense_work_add(&query->probe_work.index_items, 1u);
+                }
+            }
+        } else if (n > 1u) {
+            uint32_t *values = keys + offsets[row];
+            for (size_t i = n / 2u; i; i--)
+                dense_sift(query, values, i - 1u, n);
+            for (size_t i = n; i > 1u; i--) {
+                uint32_t saved = values[0]; values[0] = values[i - 1u]; values[i - 1u] = saved;
+                dense_sift(query, values, 0u, i - 1u);
+            }
+        }
+    }
+    *out_offsets = offsets;
+    *out_keys = keys;
+    return true;
+}
+
 /* The forward matrix and the column sets.  False on a repeated row: its
  * multiplicity would be lost. */
 static bool dense_build_forward(CettaDenseQuery *query,
                                 DenseRelation *relation) {
     size_t words = query->words;
-    relation->forward = dense_words(query->key_count * words);
+    relation->forward.bits = dense_words(query->key_count * words);
     relation->firsts = dense_words(words);
     relation->seconds = dense_words(words);
-    if (!relation->forward || !relation->firsts || !relation->seconds)
+    if (!relation->forward.bits || !relation->firsts || !relation->seconds)
         return false;
     for (size_t r = 0u; r < relation->rows; r++) {
         uint32_t first = relation->pairs[2u * r];
         uint32_t second = relation->pairs[2u * r + 1u];
-        uint64_t *row = relation->forward + (size_t)first * words;
+        uint64_t *row = relation->forward.bits + (size_t)first * words;
         if (dense_bit(row, second))
             return false;
         dense_set(row, second);
@@ -328,18 +459,27 @@ static bool dense_build_forward(CettaDenseQuery *query,
 
 static bool dense_build_backward(CettaDenseQuery *query,
                                  DenseRelation *relation) {
-    if (relation->backward)
+    if (relation->backward.bits)
         return true;
     size_t words = query->words;
-    relation->backward = dense_words(query->key_count * words);
-    if (!relation->backward)
+    relation->backward.bits = dense_words(query->key_count * words);
+    if (!relation->backward.bits)
         return false;
     for (size_t r = 0u; r < relation->rows; r++) {
-        dense_set(relation->backward +
+        dense_set(relation->backward.bits +
                       (size_t)relation->pairs[2u * r + 1u] * words,
                   relation->pairs[2u * r]);
     }
     return true;
+}
+
+static bool dense_conditional_index(CettaDenseQuery *query,
+                                     DenseRelation *relation, bool reverse) {
+    DenseIndex *index = reverse ? &relation->backward : &relation->forward;
+    if (index->offsets)
+        return true;
+    return dense_build_lists(query, relation, index->bits, reverse,
+                              &index->offsets, &index->keys);
 }
 
 static size_t dense_variable(CettaDenseQuery *query, VarId id) {
@@ -359,8 +499,12 @@ void cetta_dense_query_free(CettaDenseQuery *query) {
     for (size_t i = 0u; i < query->relation_count; i++) {
         DenseRelation *relation = &query->relations[i];
         free(relation->pairs);
-        free(relation->forward);
-        free(relation->backward);
+        free(relation->forward.bits);
+        free(relation->backward.bits);
+        free(relation->forward.offsets);
+        free(relation->forward.keys);
+        free(relation->backward.offsets);
+        free(relation->backward.keys);
         free(relation->firsts);
         free(relation->seconds);
     }
@@ -442,17 +586,22 @@ bool cetta_dense_query_prepare(Space *space, Arena *scratch,
     ready = ready && query->variable_count > 0u;
     size_t total_rows = 0u;
     for (size_t r = 0u; ready && r < query->relation_count; r++)
-        total_rows += query->relations[r].rows;
+        ready = !__builtin_add_overflow(total_rows, query->relations[r].rows,
+                                       &total_rows);
     query->words = (query->key_count + 63u) / 64u;
     if (ready) {
         /* Two matrices per relation at most, each a row per key. */
         size_t keys = query->key_count;
-        size_t budget = total_rows > DENSE_FLOOR_BYTES / DENSE_ROW_BYTES
-            ? total_rows * DENSE_ROW_BYTES : DENSE_FLOOR_BYTES;
+        size_t budget = DENSE_FLOOR_BYTES;
+        if (total_rows > DENSE_FLOOR_BYTES / DENSE_ROW_BYTES &&
+            __builtin_mul_overflow(total_rows, (size_t)DENSE_ROW_BYTES, &budget))
+            ready = false;
+        query->storage_budget = budget;
+        size_t retained = 0u;
         size_t matrix = keys * query->words * sizeof(uint64_t);
-        ready = keys > 0u &&
+        ready = ready && keys > 0u &&
             matrix / sizeof(uint64_t) / query->words == keys &&
-            matrix <= budget / 2u / query->relation_count &&
+            dense_storage_size(query, true, &retained) && retained <= budget &&
             total_rows >= keys * query->words / DENSE_WORDS_PER_KEY;
     }
     for (size_t r = 0u; ready && r < query->relation_count; r++)
@@ -477,7 +626,7 @@ VarId cetta_dense_query_variable_at(const CettaDenseQuery *query,
 /* ── Running ──────────────────────────────────────────────────────────── */
 
 typedef struct {
-    const uint64_t *matrix;
+    const DenseIndex *index;
     size_t from;
 } DenseLink;
 
@@ -492,6 +641,8 @@ typedef struct {
     size_t kept_levels;
     bool count_only;
     uint64_t *base;
+    uint32_t *base_keys[DENSE_VARIABLES];
+    size_t base_count[DENSE_VARIABLES];
     uint64_t *candidates;
     uint64_t *summed;
     DenseLink links[DENSE_VARIABLES][DENSE_PATTERNS];
@@ -555,9 +706,11 @@ static void dense_place(DenseRun *run, const bool *group, bool *placed) {
     }
 }
 
-static void dense_and(uint64_t *into, const uint64_t *row, size_t words) {
+static void dense_and(DenseRun *run, uint64_t *into,
+                       const uint64_t *row, size_t words) {
     for (size_t w = 0u; w < words; w++)
         into[w] &= row[w];
+    dense_work_add(&run->query->probe_work.setup_words, words);
 }
 
 /* Each level's base, the rows no bound variable selects, and its links;
@@ -570,6 +723,7 @@ static bool dense_levels(DenseRun *run, bool *empty) {
         size_t v = run->order[level];
         uint64_t *base = run->base + level * words;
         memset(base, 0xff, words * sizeof(*base));
+        dense_work_add(&query->probe_work.setup_words, words);
         run->link_count[level] = 0u;
         for (size_t i = 0u; i < query->pattern_count; i++) {
             const DensePattern *p = &query->patterns[i];
@@ -579,14 +733,14 @@ static bool dense_levels(DenseRun *run, bool *empty) {
             if (!first && !second)
                 continue;
             if (first)
-                dense_and(base, relation->firsts, words);
+                dense_and(run, base, relation->firsts, words);
             if (second)
-                dense_and(base, relation->seconds, words);
+                dense_and(run, base, relation->seconds, words);
             if (first && second) {
                 /* (h $v $v): keys related to themselves. */
                 for (size_t key = 0u; key < query->key_count; key++) {
                     if (dense_bit(base, key) &&
-                        !dense_bit(relation->forward + key * words, key))
+                        !dense_bit(relation->forward.bits + key * words, key))
                         base[key >> 6u] &= ~(UINT64_C(1) << (key & 63u));
                 }
                 continue;
@@ -597,10 +751,10 @@ static bool dense_levels(DenseRun *run, bool *empty) {
                 if (first) {
                     if (!dense_build_backward(query, relation))
                         return false;
-                    dense_and(base, relation->backward + other->index * words,
+                    dense_and(run, base, relation->backward.bits + other->index * words,
                               words);
                 } else {
-                    dense_and(base, relation->forward + other->index * words,
+                    dense_and(run, base, relation->forward.bits + other->index * words,
                               words);
                 }
                 continue;
@@ -609,8 +763,10 @@ static bool dense_levels(DenseRun *run, bool *empty) {
                 continue;
             if (first && !dense_build_backward(query, relation))
                 return false;
+            if (!run->projected && !dense_conditional_index(query, relation, first))
+                return false;
             run->links[level][run->link_count[level]++] = (DenseLink){
-                .matrix = first ? relation->backward : relation->forward,
+                .index = first ? &relation->backward : &relation->forward,
                 .from = run->level_of[other->index],
             };
         }
@@ -620,9 +776,85 @@ static bool dense_levels(DenseRun *run, bool *empty) {
         const DensePattern *p = &query->patterns[i];
         if (p->column[0].variable || p->column[1].variable)
             continue;
-        *empty = !dense_bit(query->relations[p->relation].forward +
+        *empty = !dense_bit(query->relations[p->relation].forward.bits +
                                 p->column[0].index * words,
                             p->column[1].index);
+    }
+    return true;
+}
+
+/* Static bases are inspected once, not once per prefix. Only a base
+ * small enough to beat a word scan needs its own list. */
+static bool dense_base_lists(DenseRun *run) {
+    if (run->projected)
+        return true;
+    CettaDenseQuery *query = run->query;
+    for (size_t level = 0u; level < run->levels; level++) {
+        size_t count = 0u;
+        const uint64_t *bits = run->base + level * query->words;
+        for (size_t w = 0u; w < query->words; w++)
+            count += dense_bits(bits[w]);
+        dense_work_add(&query->probe_work.setup_words, query->words);
+        run->base_count[level] = count;
+        if (!count || count > query->words)
+            continue;
+        uint32_t *keys = malloc(count * sizeof(*keys));
+        if (!keys)
+            return false;
+        run->base_keys[level] = keys;
+        dense_size_add(&query->probe_work.scratch_peak_bytes, count, sizeof(*keys));
+        size_t next = 0u;
+        for (size_t w = 0u; w < query->words; w++) {
+            uint64_t word = bits[w];
+            while (word) {
+                keys[next++] = (uint32_t)(w * 64u + (size_t)__builtin_ctzll(word));
+                word &= word - 1u;
+            }
+        }
+        dense_work_add(&query->probe_work.setup_words, query->words);
+    }
+    return true;
+}
+
+typedef struct {
+    const uint64_t *rows[DENSE_PATTERNS + 1u];
+    size_t row_count;
+    const uint32_t *keys;
+    size_t count;
+    bool sparse;
+} DenseCandidates;
+
+static DenseCandidates dense_conditional(DenseRun *run, size_t level) {
+    CettaDenseQuery *query = run->query;
+    DenseCandidates candidates = {0};
+    candidates.rows[candidates.row_count++] = run->base + level * query->words;
+    candidates.count = run->base_count[level];
+    candidates.keys = run->base_keys[level];
+    for (size_t l = 0u; l < run->link_count[level]; l++) {
+        const DenseLink *link = &run->links[level][l];
+        size_t row = run->bound[link->from];
+        candidates.rows[candidates.row_count++] = link->index->bits + row * query->words;
+        if (run->projected)
+            continue;
+        size_t begin = link->index->offsets[row], count = link->index->offsets[row + 1u] - begin;
+        if (count < candidates.count) {
+            candidates.count = count;
+            candidates.keys = count ? link->index->keys + begin : NULL;
+        }
+    }
+    /* Projected set-effect aggregation keeps its independently qualified
+     * bitset OR path. Its cost is not the complete-assignment sparse law. */
+    candidates.sparse = !run->projected && candidates.count <= query->words;
+    return candidates;
+}
+
+static bool dense_candidate_present(DenseRun *run,
+                                     const DenseCandidates *candidates,
+                                     uint32_t key) {
+    for (size_t i = 0u; i < candidates->row_count; i++) {
+        dense_work_add(&run->query->probe_work.membership_tests, 1u);
+        if (!dense_bit(candidates->rows[i], key))
+            return false;
     }
     return true;
 }
@@ -634,7 +866,7 @@ static uint64_t dense_candidates(DenseRun *run, size_t level, uint64_t *out) {
     size_t links = run->link_count[level];
     const uint64_t *rows[DENSE_PATTERNS];
     for (size_t l = 0u; l < links; l++) {
-        rows[l] = run->links[level][l].matrix +
+        rows[l] = run->links[level][l].index->bits +
             (size_t)run->bound[run->links[level][l].from] * words;
     }
     uint64_t any = 0u;
@@ -690,6 +922,32 @@ static bool dense_descend(DenseRun *run, size_t level) {
 static bool dense_bind(DenseRun *run, size_t level) {
     size_t words = run->query->words;
     uint64_t *row = run->candidates + level * words;
+    DenseCandidates candidates = dense_conditional(run, level);
+    if (candidates.sparse) {
+        size_t variable = run->order[level];
+        for (size_t i = 0u; i < candidates.count; i++) {
+            uint32_t key = candidates.keys[i];
+            dense_work_add(&run->query->probe_work.list_items, 1u);
+            if (!dense_candidate_present(run, &candidates, key))
+                continue;
+            run->values[variable] = run->query->keys[key];
+            if (level + 1u == run->levels) {
+                if (__builtin_add_overflow(run->count, UINT64_C(1), &run->count))
+                    return false;
+                if (!run->count_only) {
+                    run->work.visits++;
+                    if (!run->visit(run->context, run->values, 1u))
+                        return false;
+                }
+            } else {
+                run->bound[level] = key;
+                run->work.candidates++;
+                if (!dense_descend(run, level + 1u))
+                    return false;
+            }
+        }
+        return true;
+    }
     if (!dense_candidates(run, level, row))
         return true;
     if (level + 1u == run->levels) {
@@ -728,6 +986,10 @@ bool cetta_dense_query_run(CettaDenseQuery *query, const bool *kept,
     if (!run)
         return false;
     run->query = query;
+    query->probe_work.list_items = 0u;
+    query->probe_work.membership_tests = 0u;
+    query->probe_work.setup_words = 0u;
+    query->probe_work.scratch_peak_bytes = sizeof(*run);
     run->visit = visit;
     run->context = context;
     size_t variables = query->variable_count;
@@ -775,20 +1037,34 @@ bool cetta_dense_query_run(CettaDenseQuery *query, const bool *kept,
     run->base = dense_words(levels * words);
     run->candidates = dense_words(levels * words);
     run->summed = dense_words(words);
+    dense_size_add(&query->probe_work.scratch_peak_bytes,
+        (levels * 2u + 1u) * words, sizeof(uint64_t));
+    dense_work_add(&query->probe_work.setup_words, (levels * 2u + 1u) * words);
     bool empty = false;
     bool done = run->base && run->candidates && run->summed &&
         dense_levels(run, &empty);
     if (done && !empty)
-        done = dense_descend(run, 0u);
+        done = dense_base_lists(run) && dense_descend(run, 0u);
     *count_out = run->count;
     if (work) {
         work->words += run->work.words;
         work->candidates += run->work.candidates;
         work->visits += run->work.visits;
     }
+    for (size_t i = 0u; i < run->levels; i++)
+        free(run->base_keys[i]);
     free(run->base);
     free(run->candidates);
     free(run->summed);
     free(run);
     return done;
+}
+
+void cetta_dense_query_probe_work(const CettaDenseQuery *query,
+                                 CettaDenseProbeWork *out) {
+    if (!out)
+        return;
+    *out = query ? query->probe_work : (CettaDenseProbeWork){0};
+    if (query && !dense_storage_size(query, false, &out->retained_bytes))
+        out->retained_bytes = SIZE_MAX;
 }

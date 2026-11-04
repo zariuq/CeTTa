@@ -55,7 +55,9 @@ def cases(petta, modern):
     choice = 'left\nright\nleft\nright\n' if petta else '[left, right]\n[left, right]\n'
     live = ('later\ntrue\nlater\ntrue\n' + ('answer\ntrue\n(answer second)\n'
             if modern else 'later\ntrue\n(later)\n')) if petta else (
-            '[later]\n[()]\n[later]\n[()]\n[answer]\n[()]\n[(answer second)]\n')
+            # HE leaves car-atom's Expression argument unevaluated, so the
+            # later equations never reach it (hyperon-experimental agrees).
+            '[later]\n[()]\n[later]\n[()]\n[later]\n[()]\n[(later)]\n')
     entries += [('effects', EFFECTS, (0, effects, '')),
                 ('returned-choice', CHOICE, (0, choice, '')),
                 ('live-callability', LIVE, (0, live, ''))]

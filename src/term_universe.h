@@ -188,6 +188,18 @@ void term_universe_visit_resource_images(const TermUniverse *,
     TermUniverseResourceImageVisit, void *context);
 void term_universe_visit_resource_image_owners(void *image,
     TermUniverseResourceOwnerVisit, void *context);
+/* The owner callback certifies this image type before its pointer is read.
+ * The view is borrowed through the caller's live Arena lease. References
+ * include any universe record and all Arena leases; bytes exclude weights
+ * of outgoing native-resource edges. */
+typedef struct {
+    void *image;
+    const Arena *syntax;
+    uint64_t references;
+    size_t bytes;
+} TermUniverseResourceImageView;
+bool term_universe_resource_image_owner_view(void *owner,
+    void (*release)(void *), TermUniverseResourceImageView *out);
 
 /* A registry's index, kept once a registry holds many holders: open
  * addressing from a holder's (function, context) to its slot.  An empty
@@ -241,6 +253,9 @@ struct TermUniverse {
     uint64_t instance_id;
     uint64_t storage_epoch;
     Arena *persistent_arena;
+    /* Physical lifetime domain of this universe's owned opaque images.
+     * Independent universes use NULL; this classification holds no lease. */
+    void *resource_scope;
     uint8_t *blob_pool;
     size_t blob_len, blob_cap;
     struct TermEntry *entries;
@@ -265,6 +280,9 @@ struct TermUniverse {
     uint8_t *intern_slots;
     size_t intern_mask;
     size_t intern_used;
+    /* Mixed into every record's home, so crafted terms cannot share one
+       (term_universe_intern_index). */
+    uint64_t intern_key;
     /* Integer pages retain exact coordinates and physical record positions.
        Positions remain valid when the AtomId storage format changes. */
     struct CettaIntegerInternSlot *integer_slots;
@@ -288,6 +306,8 @@ struct TermUniverse {
     /* Collect at every safe point offered, and often inside statements: the
      * policy of a build with collection checks, and of tests. */
     bool collection_eager;
+    /* Candidates born inside a counted sweep must join its current queue. */
+    bool counted_sweep_active;
     /* Open regions of C code holding ids no provider lists.  A safe point
      * collects only when there are none. */
     uint32_t collection_inhibit;

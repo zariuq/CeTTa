@@ -19,10 +19,16 @@ typedef struct {
  * and can always be disposed. The name domain must be selected by the host. */
 bool cetta_runtime_session_init(CettaRuntimeSession *, Arena *,
     CettaLanguageId, const CettaProfile *);
+/* Retain a selected enclosing domain for this session. */
+bool cetta_runtime_session_init_in_domain(CettaRuntimeSession *, Arena *,
+    struct CettaTermDomain *, CettaLanguageId, const CettaProfile *);
 bool cetta_runtime_session_open_root(CettaRuntimeSession *, Arena *);
 void cetta_runtime_session_stop(CettaRuntimeSession *);
 /* Idempotent. Selects this session's execution resources during teardown,
  * preserving another active session's resources and library context. */
 void cetta_runtime_session_dispose(CettaRuntimeSession *);
+/* End work, resources, registry and libraries while leaving the root for
+ * an enclosing domain's close callback. That owner must free the root. */
+void cetta_runtime_session_dispose_before_root(CettaRuntimeSession *);
 
 #endif

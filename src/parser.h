@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include "term_universe.h"
+#include "raw_source_region.h"
 
 /* The current reader and renderer expression-depth allowance. A caller that
  * generates source syntax can report representation exhaustion before expansion. */
@@ -171,6 +172,10 @@ AtomId parse_sexpr_to_id(TermUniverse *universe, const char *text, size_t *pos);
    the reader's delimiter rules. */
 bool parser_text_well_formed(const char *text);
 bool parser_text_well_formed_n(const char *text, size_t text_len);
+typedef CettaRawSourceStatus (*ParserRawSourceScanner)(
+    const uint8_t *, size_t, size_t, CettaRawSourceRegion *);
+ParserRawSourceScanner parser_set_raw_source_scanner(ParserRawSourceScanner scanner);
+bool parser_raw_source_regions_enabled(void);
 
 /* Advance *pos past delimiters and return whether no non-delimiter text
    remains. */

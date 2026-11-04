@@ -1212,9 +1212,13 @@ def generate(
     extension_syntax: Sequence[Path] = (),
     extension_classes: Sequence[Path] = (),
     extension_projection: Sequence[Path] = (),
+    raw_source_profile: Path | None = None,
 ) -> None:
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", c_prefix):
         raise CompileError(f"invalid C prefix {c_prefix!r}")
+    from raw_source_profile_v1 import admit_raw_source_profile
+    raw_regions = admit_raw_source_profile(raw_source_profile)
+    raw_field = "    .raw_source_regions = true,\n" if raw_regions else ""
     syntax_paths = [syntax_path, *extension_syntax]
     classes_paths = [classes_path, *extension_classes]
     projection_paths = [projection_path, *extension_projection]
@@ -1226,7 +1230,7 @@ def generate(
     selection = classify_parser_fragment(syntax, classes, policy)
     plan = selection.plan
     digest = composition_digest(
-        (*syntax_paths, *classes_paths, *projection_paths),
+        (*syntax_paths, *classes_paths, *projection_paths, *([raw_source_profile] if raw_regions else [])),
         profile,
         selection.fragment,
     )
@@ -1368,6 +1372,7 @@ def generate(
         f"    .list_word_tail = {'&' + class_ids[lists.word_tail] if lists else 'NULL'},\n"
         f"    .list_boundary = {list_boundary},\n"
         f"    .list_variable_tail = {'&' + class_ids[lists.variable_tail] if lists else 'NULL'},\n"
+        f"{raw_field}"
         "    .depth_limit = UINT32_C(4096),\n"
         "};\n\n"
         f"const char *{c_prefix}_program_digest(void) {{\n"
@@ -1431,6 +1436,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         default=[])
     parser.add_argument("--extension-projection", type=Path, action="append",
                         default=[])
+    parser.add_argument("--raw-source-profile", type=Path)
     arguments = parser.parse_args(argv)
     try:
         generate(
@@ -1444,6 +1450,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             arguments.extension_syntax,
             arguments.extension_classes,
             arguments.extension_projection,
+            arguments.raw_source_profile,
         )
     except (CompileError, OSError, ValueError) as error:
         print(f"GSLTDirectReaderCompileError: {error}", file=sys.stderr)

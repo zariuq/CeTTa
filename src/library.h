@@ -291,6 +291,8 @@ typedef struct CettaLibraryContext {
     struct CettaIoRuntime *io_runtime;
     struct CettaDurableRuntime *durable_runtime;
     struct CettaJsonLibraryRuntimeV1 *json_runtime;
+    /* Optional independent physical term/symbol owner; no Space is retained. */
+    struct CettaTermDomain *owned_term_domain;
 } CettaLibraryContext;
 
 size_t cetta_library_value_byte_limit(const CettaLibraryContext *ctx);
@@ -317,6 +319,11 @@ void cetta_library_context_prime_snapshot_storage(const CettaLibraryContext *ctx
 bool cetta_library_context_try_init_for_language_profile(CettaLibraryContext *,
     CettaLanguageId, const CettaProfile *);
 void cetta_library_context_free(CettaLibraryContext *ctx);
+TermUniverse *cetta_library_context_universe(CettaLibraryContext *);
+struct CettaTermDomain *cetta_library_context_term_domain(const CettaLibraryContext *);
+/* Only a pristine context can adopt a matching active symbol domain.
+ * Other borrowed Spaces still require the caller to keep the domain live. */
+bool cetta_library_context_set_term_domain(CettaLibraryContext *, struct CettaTermDomain *);
 /* Track nested compatibility initialization attempts within a runner request.
  * Completed compatibility attempts do not cache refusals. Default profiles
  * retain their refusals across requests. */
@@ -430,6 +437,13 @@ void cetta_library_set_top_module_registry(CettaLibraryContext *ctx,
 bool cetta_library_module_context(CettaLibraryContext *ctx, uint64_t instance,
                                   Space **space_out, Registry **registry_out);
 typedef bool (*CettaDocumentResultObserver)(void *context, const ResultSet *results);
+/* Install a closed block of equation/type declarations using the document
+ * compiler's forward-call registration. Directives are rejected before any
+ * declaration is installed. */
+bool cetta_library_install_definitions(CettaLibraryContext *ctx, Space *space,
+    const char *text, size_t length, Arena *arena, Atom **error_out);
+bool cetta_library_run_source_bytes(CettaLibraryContext *,Space *,const uint8_t *,size_t,
+    Arena *,Atom **results,Atom **error_out);
 typedef bool (*CettaDocumentOutcomeObserver)(void *context, const EvalOutcome *outcome);
 typedef enum {
     CETTA_DOCUMENT_COMPLETE,
