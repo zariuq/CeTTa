@@ -1,0 +1,177 @@
+CeTTa language library — Datalog
+
+Run with the corrected PeTTa extended profile:
+
+    ./cetta --lang petta --profile extended program.metta
+
+The complete example is examples/lang_datalog_reachability.metta.
+
+    !(import! &self lang)
+    (Edge "a" "b")
+    (Edge "b" "c")
+    !(let $dl (lang:load Datalog)
+       (lang:run $dl &self r#"
+    .decl Edge(x:symbol, y:symbol)
+    .decl Reach(x:symbol, y:symbol)
+    .input Edge
+    .output Reach
+    Reach(X,Y) :- Edge(X,Y).
+    Reach(X,Z) :- Reach(X,Y), Edge(Y,Z).
+    "#))
+
+The run returns (LangCompleteV1 ((Reach "a" "b") (Reach "b" "c")
+(Reach "a" "c"))) and materializes those facts in &self. Output iteration
+order is unspecified. This profile observes fact sets.
+
+Interface
+
+    lang:load Datalog
+    lang:load "Language.module"
+    lang:def MODULE_VALUE
+    lang:module LANGUAGE
+    lang:eval LANGUAGE SOURCE
+    lang:eval LANGUAGE INPUT SOURCE
+    lang:eval LANGUAGE INPUT N SOURCE
+    lang:run LANGUAGE SOURCE
+    lang:run LANGUAGE OUTPUT SOURCE
+    lang:run LANGUAGE INPUT OUTPUT SOURCE
+    lang:run LANGUAGE INPUT OUTPUT N SOURCE
+    lang:resume PENDING BUDGET
+
+SOURCE is text or (SourceFile "program.dl"). Language loading performs no
+guest-program execution. Presets, files and in-memory definitions use the same
+module/1 package definition path. Language values own their compiled parser
+and source provider; their printed representation cannot reconstruct ownership.
+
+The source body always comes last. lang:eval returns LangCompleteV1 with the
+declared output fact sets without writing them to any Space. lang:run publishes
+the same fact sets to OUTPUT. An omitted Space defaults to &self. The single
+Space form also reads inputs from that Space. Supplying INPUT and OUTPUT
+separately keeps base inputs and published outputs in different Spaces.
+Both operations support the same retained pending results and lang:resume.
+
+A language package retains separate syntax/profile, parser-plan, operational
+core, compiler, execution and region exports. The source provider compares the
+resolved components to its authored binding, and the loader checks the actual
+parser owner against the declared plan. These checks bind components; they do
+not by themselves establish correctness of arbitrary native providers. The
+included D0 lowering reuses the existing typed prepared IR and MeTTa runner.
+Other providers require their own correspondence and qualification.
+
+Recognition retains its packed forest and actual parser-table identities.
+The package's verification operation independently checks whole-input coverage
+and the complete selected catalogue before lowering. Empty and ambiguous
+catalogues cross the same boundary; an unfinished check remains pending.
+The command-line and in-process readers share the evidence encoding.
+
+An assembled module/1 package is distinct from guest source and from source
+module authoring syntax. Source-only packages retain their obligations instead
+of gaining an execution interpretation. Unknown execution profiles likewise
+return LangRunUnadmittedV1 with the source. D0 execution is qualified here for
+PeTTa extended; loading its data does not establish a cross-dialect adapter.
+
+File dependencies use SHA-256 commitments to exact captured file bytes.
+Bare paths and file: references resolve relative to their declaring package.
+An export reference is the explicit record {dependency: URI, export: NAME}.
+Captured modules retain their origins; exports are neither implicitly merged
+nor shadowed. Missing dependencies, mismatched commitments and cycles do not
+produce executable language values. Other unresolved reference schemes remain
+obligations.
+
+Datalog and Spaces
+
+The current D0 profile is positive, range-restricted and function-free, with
+native String symbols and signed/unsigned 64-bit integral values and comparisons.
+Floating scalar profiles are not admitted by this execution realization.
+
+A declared symbol column is supplied as a native String: (Edge "a" "b").
+(Edge a b) is ill typed in this input profile. Nullary relations use an explicit
+application, such as (Ready). Input occurrences must be ground and have the
+declared arity and types. Unrelated relations are ignored.
+
+Each invocation freezes its input occurrence view, combines declared .input facts
+with source-written facts, and computes closure privately. Later input changes
+require a new run. Suspensions retain the captured view. Unsupported input
+fields are retained as relation-keyed diagnostics; host logic variables cannot
+become variables of a saved execution cursor.
+
+For admitted native Spaces, capture pins the occurrence view before source
+reading, then uses the shared head index to select declared inputs at every
+arity. Malformed input applications and bare input heads therefore still reach
+the decoder. Occurrence order and duplicates remain intact. A cold index may
+need construction over the Space; warm selection decodes only candidate rows.
+Other Space realizations use a copied captured view with the same reader.
+
+lang:run publishes only .output relations, one fact at a time, with insert-if-absent.
+Existing duplicate occurrences and unrelated atoms remain. Repeating a run adds
+no duplicate output facts. Removing an input does not retract old materialized
+outputs: this is one-shot materialization.
+
+A zero budget returns LangPendingV1. One work unit advances source preparation,
+a retained parser retry, one independent verification allowance, one fixed
+runner quantum, or one output publication.
+It is not a wall-clock or host-instruction allowance. Parser allowance exhaustion retains
+pending work and never becomes an empty answer. Native representation limits
+retain an explicit unrealized obligation. Pending aliases share the latest
+cursor; resuming an already completed cursor does not republish its outputs.
+The cursor owns its current data value. Execution retains the language by an
+owned handle rather than copying the grammar and core into each machine state.
+An effect refusal retains the uncommitted publication list. Multi-fact
+publication is not an atomic transaction.
+
+Source views and raw regions
+
+Extended HE and PeTTa readers recognize r#"BODY"#, r##"BODY"## and deeper
+matching fences. The first matching closer ends the region. The written opener
+determines its closer independently of a dynamic language value. Whitespace,
+UTF-8, NUL, CRLF, quotes and backslashes in BODY are preserved, with no dedenting,
+interpolation or implicit capture. Ordinary reader profiles retain their syntax.
+
+    lang:region-text LANGUAGE TEXT
+    lang:regions HOST_SOURCE
+    lang:region-profile LANGUAGE
+
+The printer uses at least the package's preferred fence depth and increases it
+until no closing sequence collides with the body. Discovery returns original
+zero-based byte offsets (start, body start, body end, end, depth), with distinct
+complete, incomplete and invalid region tags. Quoted host strings and comments
+are not searched for nested raw openers. The profile comes from the selected
+language; an editor resolves dynamic language expressions separately.
+
+A source view can be retained explicitly as (SourceTextV1 ORIGIN TEXT).
+SourceFile inputs acquire such a view automatically. Editor clients can put
+host origin, raw-region spans and profile metadata in ORIGIN. Guest forest
+spans remain measured in guest Unicode scalars; the preserved body and outer
+byte spans supply their host-source mapping. The region interface and fixtures
+are provided; a full editor extension is a separate consumer.
+
+REPL
+
+    ./cetta --repl
+
+Definitions persist between submissions. The reader buffers incomplete fences,
+strings and brackets and executes only complete submissions. Ctrl+C discards
+buffered source. At a fresh prompt, :cancel clears an empty submission and :quit
+exits. These spellings inside a buffered raw body remain literal guest text.
+Invalid completed source is diagnosed; subsequent submissions can continue.
+
+Build and verification
+
+    make BUILD=core
+    make build-lang-datalog METTAPEDIA_LEAN_ROOT=PATH_TO_METTAPEDIA_LEAN
+    make test-lang-library
+    make test-source-compiler-v1 test-lib-he-evalc-spaces test-lang-repl
+
+The provider is compiled once from the Lean preparation functions. Ordinary
+lang calls load native code in process; they do not launch Python, Lean or SWI.
+Datalog inference still runs through the shared emitted MeTTa reference route.
+Native join/saturation acceleration requires a separately justified lowering.
+
+The provider pins process-lifetime module code/constants. Its one-time Lean
+and scalar-codec initialization is annotated as a permanent allocation scope for LeakSanitizer;
+request allocations and owned parser/compiler/language resources remain checked.
+
+HE/PeTTa guest embedding is a subsequent package. Its contracts must separately
+state read/print normalization, preservation of one same-dialect execution and
+cross-dialect preservation under an explicit adapter. Running a program twice
+is not generally idempotent. No such working presets are supplied here.

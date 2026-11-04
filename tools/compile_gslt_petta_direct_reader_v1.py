@@ -710,9 +710,13 @@ def generate(
     projection_path: Path, profile: str, c_prefix: str,
     output_c: Path, output_h: Path,
     extension: tuple[Path, Path, Path] | None = None,
+    raw_source_profile: Path | None = None,
 ) -> None:
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", c_prefix):
         raise CompileError(f"invalid C prefix {c_prefix!r}")
+    from raw_source_profile_v1 import admit_raw_source_profile
+    raw_regions = admit_raw_source_profile(raw_source_profile)
+    raw_field = "    .raw_source_regions = true,\n" if raw_regions else ""
     form_syntax_paths = [form_syntax_path] + ([extension[0]] if extension else [])
     form_classes_paths = [form_classes_path] + ([extension[1]] if extension else [])
     projection_paths = [projection_path] + ([extension[2]] if extension else [])
@@ -731,6 +735,7 @@ def generate(
     paths = (
         splitter_syntax_path, splitter_classes_path,
         *form_syntax_paths, *form_classes_paths, *projection_paths,
+        *([raw_source_profile] if raw_regions else []),
     )
     digest = composition_digest(paths, profile, PETTA_DIRECT_FRAGMENT_V1)
     class_ids = {
@@ -806,6 +811,7 @@ def generate(
         f"    .list_token_first = {'&' + class_ids[plan.lists[3]] if plan.lists else 'NULL'},\n"
         f"    .list_token = {'&' + class_ids[plan.lists[4]] if plan.lists else 'NULL'},\n"
         f"    .list_token_boundary = {'&' + class_ids[plan.lists[5]] if plan.lists else 'NULL'},\n"
+        f"{raw_field}"
         "    .depth_limit = UINT32_C(4096),\n"
         "};\n\n"
         f"const char *{c_prefix}_program_digest(void) {{\n"
@@ -858,6 +864,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--extension-form-syntax", type=Path)
     parser.add_argument("--extension-form-classes", type=Path)
     parser.add_argument("--extension-projection", type=Path)
+    parser.add_argument("--raw-source-profile", type=Path)
     arguments = parser.parse_args(argv)
     extension_parts = (arguments.extension_form_syntax,
                        arguments.extension_form_classes,
@@ -873,6 +880,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             arguments.projection, arguments.profile, arguments.c_prefix,
             arguments.output_c, arguments.output_h,
             extension_parts if all(extension_parts) else None,
+            arguments.raw_source_profile,
         )
     except (CompileError, OSError, ValueError) as error:
         print(f"GSLTDirectPeTTaReaderCompileError: {error}", file=sys.stderr)

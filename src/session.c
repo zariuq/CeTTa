@@ -608,6 +608,13 @@ bool cetta_language_reads_lists(CettaLanguageId language_id,
            profile->enable_cetta_extensions;
 }
 
+bool cetta_language_reads_raw_source(CettaLanguageId language_id,
+                                     const CettaProfile *profile) {
+    return (language_id == CETTA_LANGUAGE_HE || language_id == CETTA_LANGUAGE_PETTA) &&
+           profile && cetta_profile_is_valid_for_language(language_id, profile) &&
+           profile->enable_cetta_extensions;
+}
+
 uint32_t cetta_module_provider_count(void) {
     return (uint32_t)(sizeof(CETTA_MODULE_PROVIDER_DESCRIPTORS) /
                       sizeof(CETTA_MODULE_PROVIDER_DESCRIPTORS[0]));

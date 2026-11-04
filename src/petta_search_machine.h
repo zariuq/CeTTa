@@ -168,6 +168,7 @@ typedef enum {
 } PettaTableMutationPolicy;
 
 PettaMachineTable *petta_machine_table_new(void);
+PettaMachineTable *petta_machine_table_new_with_mutation_policy(PettaTableMutationPolicy);
 void petta_machine_table_free(PettaMachineTable *table);
 
 /*

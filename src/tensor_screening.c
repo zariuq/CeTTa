@@ -1,4 +1,5 @@
 #include "tensor_screening.h"
+#include "numeric_bounds.h"
 
 #include <fenv.h>
 #include <float.h>
@@ -26,49 +27,6 @@ struct CettaTensorScreenReceipt {
     size_t k;
     bool certified;
 };
-
-static bool rounding_admitted(void) {
-#if FLT_EVAL_METHOD != 0 || defined(__FAST_MATH__)
-    return false;
-#else
-    if (fegetround() != FE_TONEAREST) return false;
-    /* Check gradual output and input in both precisions without assuming a
-     * particular instruction set. Volatile operands prevent constant folding. */
-    volatile double wide = DBL_MIN, half = .5, twice = 2.;
-    volatile double small = wide * half;
-    if (small * twice != DBL_MIN) return false;
-    volatile float narrow = FLT_MIN, half32 = .5f, twice32 = 2.f;
-    volatile float small32 = narrow * half32;
-    return small32 * twice32 == FLT_MIN;
-#endif
-}
-
-static bool current_rounding_admitted(void) {
-    fenv_t saved;
-    if (feholdexcept(&saved) != 0) return false;
-    bool admitted = rounding_admitted();
-    (void)fesetenv(&saved);
-    return admitted;
-}
-
-/* These operations bound nonnegative real quantities outward. They are not
- * another public rounding schedule for tensor reductions. */
-static double up(double value) {
-    if (!isfinite(value)) return value;
-    if (value == 0) return DBL_TRUE_MIN;
-    uint64_t bits; memcpy(&bits, &value, sizeof(bits));
-    if (value > 0) bits++; else bits--;
-    memcpy(&value, &bits, sizeof(value)); return value;
-}
-static double down(double value) {
-    if (!isfinite(value)) return value;
-    if (value == 0) return -DBL_TRUE_MIN;
-    uint64_t bits; memcpy(&bits, &value, sizeof(bits));
-    if (value > 0) bits--; else bits++;
-    memcpy(&value, &bits, sizeof(value)); return value;
-}
-static double add_up(double a, double b) { return up(a + b); }
-static double mul_up(double a, double b) { return up(a * b); }
 
 static bool descriptor_admitted(void) {
 #define OBSERVE(name, policy) \
@@ -146,7 +104,7 @@ void cetta_tensor_screen_index_release(void *raw) {
 }
 
 static void prepare_compact(CettaTensorScreenIndex *index) {
-    if (!index->rows || !index->columns || !descriptor_admitted() || !rounding_admitted() ||
+    if (!index->rows || !index->columns || !descriptor_admitted() || !cetta_numeric_rounding_admitted(true) ||
         cetta_tensor_dtype(index->source) != CETTA_TENSOR_F64 ||
         cetta_tensor_layout(index->source) != CETTA_TENSOR_DENSE ||
         !cetta_tensor_all_finite(index->source)) return;
@@ -167,8 +125,8 @@ static void prepare_compact(CettaTensorScreenIndex *index) {
             if (fabs(wide[i]) > FLT_MAX) goto decline;
             narrow[i] = (float)wide[i];
             if (!isfinite(narrow[i])) goto decline;
-            error = add_up(error, up(fabs(wide[i] - (double)narrow[i])));
-            absolute = add_up(absolute, add_up(fabs(wide[i]), fabs((double)narrow[i])));
+            error = cetta_numeric_add_up(error, cetta_numeric_up(fabs(wide[i] - (double)narrow[i])));
+            absolute = cetta_numeric_add_up(absolute, cetta_numeric_add_up(fabs(wide[i]), fabs((double)narrow[i])));
         }
         if (!isfinite(error) || !isfinite(absolute)) goto decline;
         difference[row] = error;
@@ -229,7 +187,7 @@ static bool screen_bounds(CettaTensorScreenReceipt *receipt) {
     CettaTensorScreenIndex *index = receipt->index;
     const char *reference = getenv("CETTA_TENSOR_SCREEN_REFERENCE");
     if ((reference && *reference && strcmp(reference, "0")) ||
-        !descriptor_admitted() || !index->compact || !rounding_admitted() ||
+        !descriptor_admitted() || !index->compact || !cetta_numeric_rounding_admitted(true) ||
         cetta_tensor_dtype(receipt->query) != CETTA_TENSOR_F64 ||
         cetta_tensor_layout(receipt->query) != CETTA_TENSOR_DENSE ||
         !cetta_tensor_all_finite(receipt->query) ||
@@ -250,19 +208,19 @@ static bool screen_bounds(CettaTensorScreenReceipt *receipt) {
         if (fabs(query[col]) > qmax) qmax = fabs(query[col]);
     if (cetta_tensor_matvec(index->compact, receipt->query, CETTA_TENSOR_SEQUENTIAL,
             &approximate) != CETTA_TENSOR_OK) goto done;
-    double coefficient = mul_up(4. * (double)index->columns, DBL_EPSILON / 2.);
-    double underflow = mul_up(8. * (double)index->columns, DBL_TRUE_MIN);
+    double coefficient = cetta_numeric_mul_up(4. * (double)index->columns, DBL_EPSILON / 2.);
+    double underflow = cetta_numeric_mul_up(8. * (double)index->columns, DBL_TRUE_MIN);
     for (size_t row = 0; row < index->rows; row++) {
         bool present; CettaTensorScalar scalar;
         if (cetta_tensor_get(approximate, row, &present, &scalar) != CETTA_TENSOR_OK || !present)
             goto done;
-        double absolute = mul_up(qmax, index->magnitude[row]);
-        double radius = add_up(add_up(mul_up(qmax, index->difference[row]),
-            mul_up(coefficient, absolute)), underflow);
+        double absolute = cetta_numeric_mul_up(qmax, index->magnitude[row]);
+        double radius = cetta_numeric_add_up(cetta_numeric_add_up(cetta_numeric_mul_up(qmax, index->difference[row]),
+            cetta_numeric_mul_up(coefficient, absolute)), underflow);
         if (!isfinite(absolute) || absolute > DBL_MAX / 8. ||
             !isfinite(scalar.f64) || !isfinite(radius)) goto done;
-        lower[row] = down(scalar.f64 - radius);
-        upper[row] = up(scalar.f64 + radius);
+        lower[row] = cetta_numeric_down(scalar.f64 - radius);
+        upper[row] = cetta_numeric_up(scalar.f64 + radius);
         if (!isfinite(lower[row]) || !isfinite(upper[row])) goto done;
     }
     if (cetta_tensor_new_take(CETTA_TENSOR_F64, &index->rows, 1, lower,
@@ -354,7 +312,7 @@ CettaTensorStatus cetta_tensor_screen_rerank(const CettaTensorScreenReceipt *rec
     CettaTensor *values = NULL, *local = NULL, *eligible = NULL;
     CettaTensor *candidates = receipt->candidates;
     CettaTensorStatus status = CETTA_TENSOR_OK;
-    bool admitted = receipt->certified && current_rounding_admitted();
+    bool admitted = receipt->certified && cetta_numeric_current_rounding_admitted(true);
     /* Exact eligibility is independent of numerical screening admission.
      * If admission changed, rebuild all eligible rows, not the old screen. */
     if (receipt->certified && !admitted && receipt->mask) {
