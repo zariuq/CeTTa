@@ -56502,6 +56502,13 @@ static bool prepared_pure_eager_entry_arguments_are_values(
         Atom *argument = call->expr.elems[index];
         if (!argument || atom_has_vars(argument))
             return false;
+        /* A source constructor in he-compat still needs evaluation to set
+         * the marks that later program mutations observe. Normal form alone
+         * does not establish that this argument was already evaluated. */
+        if (eval_current_language_id() == CETTA_LANGUAGE_HE &&
+            active_profile_uses_rust_he_compat_semantics() &&
+            argument->kind == ATOM_EXPR && !atom_is_he_evaluated(argument))
+            return false;
         /* HE's completed-value mark is interpretation provenance. An
          * unmarked expression can still be source in he-compat, even after
          * an argument evaluator returned it. */
