@@ -1,3 +1,7 @@
+PathMap's license (https://github.com/Adam-Vandervorst/PathMap).  It covers
+src/act_trie.c, CeTTa's reader and writer of ACTree03, the byte-trie format
+of PathMap's src/arena_compact.rs.  The rest of CeTTa is under LICENSE.
+
 MIT License
 
 Copyright (c) 2025 Adam Vandervorst
