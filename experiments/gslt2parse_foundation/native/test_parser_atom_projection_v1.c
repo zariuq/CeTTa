@@ -194,7 +194,7 @@ static bool basic_document_gate(PPAtomProjectionV1Plan *plan,
                          "\"a\nA\xce\xbb\""),
           "decoded string spelling changed");
     CHECK(atoms[2] && atoms[2]->kind == ATOM_VAR &&
-          atoms[2]->var_id != first_variable->var_id,
+          !var_id_eq(atoms[2]->var_id, first_variable->var_id),
           "variable identity leaked across top-level reader boundaries");
     (*passed) += 7u;
     return true;
@@ -698,10 +698,10 @@ static bool alpha_atom_equal(Atom *left, Atom *right, AlphaVarMap *variables) {
         if (!atom_symbols_equal(left, right))
             return false;
         for (index = 0u; index < variables->len; index++) {
-            if (variables->pairs[index].left == left->var_id ||
-                variables->pairs[index].right == right->var_id) {
-                return variables->pairs[index].left == left->var_id &&
-                    variables->pairs[index].right == right->var_id;
+            if (var_id_eq(variables->pairs[index].left, left->var_id) ||
+                var_id_eq(variables->pairs[index].right, right->var_id)) {
+                return var_id_eq(variables->pairs[index].left, left->var_id) &&
+                    var_id_eq(variables->pairs[index].right, right->var_id);
             }
         }
         if (variables->len ==
@@ -736,7 +736,7 @@ static bool alpha_document_equal(Atom **left,
     if (left_len != right_len)
         return false;
     for (index = 0u; index < left_len; index++) {
-        AlphaVarMap variables = {{{0u, 0u}}, 0u};
+        AlphaVarMap variables = {.len = 0u};
         if (!alpha_atom_equal(left[index], right[index], &variables))
             return false;
     }
@@ -845,8 +845,8 @@ static bool projection_event_equivalence_gate(
           atom_is_symbol(event_atoms[1]->expr.elems[3],
                          "\"a\nA\xce\xbb\"") &&
           event_atoms[2]->kind == ATOM_VAR &&
-          event_atoms[2]->var_id !=
-              event_atoms[1]->expr.elems[1]->var_id,
+          !var_id_eq(event_atoms[2]->var_id,
+                     event_atoms[1]->expr.elems[1]->var_id),
           "event projection changed the basic document semantics");
     *passed += 8u;
     return true;

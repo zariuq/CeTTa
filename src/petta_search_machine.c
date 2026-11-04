@@ -12700,7 +12700,9 @@ static bool petta_machine_unify_resolved_values(
                 machine, builder, growth_before, heap_before, false);
         }
         right_open_cons = petta_semantics_is_open_cons_value(right);
-        bool matched = petta_semantics_match_cons_constraint(
+        /* Two values: only real cells are cells; a spelled `cons` in
+         * either is data, as in SWI-PeTTa. */
+        bool matched = petta_semantics_match_lowered_head(
             &machine->heap,
             right_open_cons ? right : left,
             right_open_cons ? left : right,
@@ -15197,14 +15199,6 @@ static bool petta_machine_extension_callable(
      * occurrence; the reference calls engine predicates at their exact
      * arity alone. */
     return arity.exact;
-}
-
-/* A host that supplies an operation catalog owns admission of library
- * controls too. Bare machine hosts instead provide the control hooks directly. */
-static bool petta_machine_named_control_available(
-    PettaMachineImpl *machine, SymbolId head, CettaExprLen arity) {
-    return (!machine->host.native_named_arity && !machine->host.foreign_named_arity) ||
-        petta_machine_extension_named_arity(machine, head, arity).exact;
 }
 
 typedef struct {
@@ -38294,27 +38288,35 @@ static bool petta_machine_dispatch_solve(
 
     if (control.operation == CETTA_CONTROL_ORDERED_CHOICE) {
         CettaExprIndex source_child = (CettaExprIndex)control.source + 1u;
-        Atom *items = petta_machine_apply_bindings(machine,
-            environment, &machine->heap, expression->expr.elems[source_child]);
-        /*
-         * The alternative list is a LOGICAL list: a bound closed open-cons
-         * chain (a chainer result set, for example) denotes the same
-         * alternatives as its flat spelling and must distribute the same
-         * way, not iterate the carrier's implementation fields.
-         */
-        items = petta_semantics_flatten_closed_open_cons(
-            &machine->heap, items);
-        /* A list's alternatives are its elements. */
-        items = items ? petta_machine_list_elements(machine, items) : NULL;
-        if (!items)
-            return false;
+        Atom *source = expression->expr.elems[source_child];
         /* PeTTa distributes an authored tuple, evaluating each element; a
          * variable's list is its runtime `superpose`, member/2 of the
          * value, whose elements are the alternatives as they stand. */
         const PettaPlanNode *items_plan = petta_plan_child(plan, source_child);
         bool values = items_plan
             ? items_plan->role == PETTA_PLAN_VALUE
-            : expression->expr.elems[source_child]->kind == ATOM_VAR;
+            : source->kind == ATOM_VAR;
+        /* An authored tuple's elements are solved as written, each in this
+         * environment, as any goal's children are: a variable among them is
+         * the value bound to it and is never evaluated again
+         * (ValueOccurrences.evalIn).  Only a list held as a value is read
+         * through the environment. */
+        Atom *items = values || source->kind != ATOM_EXPR
+            ? petta_machine_apply_bindings(machine, environment,
+                                           &machine->heap, source)
+            : source;
+        /*
+         * The alternative list is a LOGICAL list: a bound closed open-cons
+         * chain (a chainer result set, for example) denotes the same
+         * alternatives as its flat spelling and must distribute the same
+         * way, not iterate the carrier's implementation fields.
+         */
+        items = items ? petta_semantics_flatten_closed_open_cons(
+            &machine->heap, items) : NULL;
+        /* A list's alternatives are its elements. */
+        items = items ? petta_machine_list_elements(machine, items) : NULL;
+        if (!items)
+            return false;
         return petta_machine_start_superpose(
             machine, items, expected, goal->barrier, items_plan, values);
     }
@@ -38388,7 +38390,7 @@ static bool petta_machine_dispatch_solve(
     }
 
     if (head_id == g_builtin_syms.petta_transaction &&
-        nargs == 1u && petta_machine_named_control_available(machine, head_id, nargs)) {
+        nargs == 1u) {
         return petta_machine_start_transaction(
             machine, expression->expr.elems[1], expected,
             goal->barrier, petta_plan_child(plan, 1u),
@@ -38396,7 +38398,7 @@ static bool petta_machine_dispatch_solve(
     }
 
     if (head_id == g_builtin_syms.petta_with_mutex &&
-        nargs == 2u && petta_machine_named_control_available(machine, head_id, nargs)) {
+        nargs == 2u) {
         return petta_machine_start_mutex(
             machine, expression->expr.elems[1],
             expression->expr.elems[2], expected,
@@ -41675,7 +41677,7 @@ static bool petta_machine_dispatch_goal(
         bool right_cons =
             petta_semantics_contains_cons_constraint(right_value);
         bool equal = left_cons || right_cons
-            ? petta_semantics_match_cons_constraint(
+            ? petta_semantics_match_lowered_head(
                   &machine->heap,
                   left_cons ? left_value : right_value,
                   left_cons ? right_value : left_value,

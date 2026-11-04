@@ -308,11 +308,12 @@ static bool symbol_entry_matches(const SymbolEntry *entry, const uint8_t *bytes,
 
 /* The table is unchanged when the new index cannot be allocated. */
 static bool symbol_table_resize(SymbolTable *st, uint32_t new_cap) {
+    if (!new_cap || (new_cap & (new_cap - 1u))) { errno = EOVERFLOW; return false; }
     SymbolSlot *old_slots = st->slots;
     uint32_t old_cap = st->slot_cap;
     uint32_t entry_len = atomic_load_explicit(&st->entry_len, memory_order_relaxed);
 
-    if (!new_cap || (new_cap & (new_cap - 1u))) { errno = EOVERFLOW; return false; }
+    if (!new_cap) { errno = EOVERFLOW; return false; }
     SymbolSlot *slots = calloc(new_cap, sizeof(*slots));
     if (!slots) return false;
     /* Both arrays are reserved during rebuild; include that transient
@@ -613,7 +614,8 @@ done:
 
 SymbolId symbol_intern_bytes(SymbolTable *st, const uint8_t *bytes, uint32_t len) {
     if (!st || !bytes || len == 0) return SYMBOL_ID_NONE;
-    return symbol_intern_span_hashed(st, bytes, len, symbol_hash_bytes(bytes, len));
+    return symbol_intern_span_hashed(st, bytes, len,
+                                     symbol_hash_bytes(bytes, len));
 }
 
 SymbolId symbol_intern_cstr(SymbolTable *st, const char *text) {

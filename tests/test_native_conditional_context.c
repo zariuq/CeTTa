@@ -1842,6 +1842,20 @@ static unsigned prepared_native_consumers(void) {
             Atom *call = fixture_atom(&arena, prepared_mode == 9u ? "(native-fault 1)" : "(native-box 1)");
             CettaPreparedPureAnswersResult result = prepared_pure_closed_answers_try(
                 &space, &arena, call, NULL, -1, NULL, NULL, false, &outcomes);
+            if (language) {
+                /* HE answers a native's value as it is, unmarked, and reads
+                 * it again where it lands in a constructor's field or a
+                 * numeric operand; the prepared route cannot keep it there
+                 * unevaluated, so the call keeps its canonical entry before
+                 * the native runs. */
+                assert(result == CETTA_PREPARED_PURE_ANSWERS_DECLINED &&
+                    prepared_calls == 0u && prepared_attempts == 0u &&
+                    outcomes.len == 0u && !petta_eval_take_raise());
+                outcome_set_free(&outcomes);
+                g_eval_completion_tracker = NULL;
+                checks++;
+                continue;
+            }
             if (result == CETTA_PREPARED_PURE_ANSWERS_DECLINED || prepared_calls != 1u)
                 fprintf(stderr, "prepared ordinary boundary: lang=%u mode=%u result=%u calls=%u attempts=%u count=%" PRIu64 " completion=%u\n",
                     language, prepared_mode, result, prepared_calls, prepared_attempts,
@@ -1863,12 +1877,13 @@ static unsigned prepared_native_consumers(void) {
                     assert(raised && outcomes.len == 0u);
                 else {
                     assert(outcomes.len == 1u);
-                    Atom *value = outcome_atom_materialize(&arena, &outcomes.items[0]);
+                    Atom *value = outcomes.len
+                        ? outcome_atom_materialize(&arena, &outcomes.items[0]) : NULL;
                     /* HE keeps this ill-typed scalar application unreduced;
                      * the frozen implementation is the independent oracle. */
-                    assert(prepared_mode == 9u
+                    assert(value && (prepared_mode == 9u
                         ? atom_eq(value, fixture_atom(&arena, "(+ 7 bad)"))
-                        : atom_is_error(value));
+                        : atom_is_error(value)));
                 }
             } else {
                 assert(!raised && tracker.completion == CETTA_EVAL_COMPLETE);
@@ -1883,7 +1898,9 @@ static unsigned prepared_native_consumers(void) {
                             outcome_atom_materialize(&arena, &outcomes.items[row])));
                 }
                 assert(outcomes.len == count);
-                for (unsigned i = 0u; i < count; i++) {
+                /* Read only the answers there are: a run whose count is
+                 * wrong reports that, and never reads past its answers. */
+                for (CettaCount i = 0u; i < outcomes.len; i++) {
                     Atom *value = outcome_atom_materialize(&arena, &outcomes.items[i]);
                     assert(value && value->kind == ATOM_EXPR && value->expr.len == 3u);
                     assert(atom_eq(value->expr.elems[1], value->expr.elems[2]));
@@ -1928,11 +1945,19 @@ static unsigned prepared_native_consumers(void) {
                 PREPARED_PURE_COMPILE_INQUIRY));
             OutcomeSet result;
             outcome_set_init(&result);
-            assert(prepared_pure_closed_answers_try(&space, &arena, call, NULL, -1,
-                &cache, NULL, false, &result) == CETTA_PREPARED_PURE_ANSWERS_COMPLETE);
-            assert(result.len == 1u && prepared_calls == 1u && prepared_attempts == 1u);
-            assert(atom_eq(outcome_atom_materialize(&arena, &result.items[0]),
-                fixture_atom(&arena, "(Box 7 7)")));
+            CettaPreparedPureAnswersResult answered = prepared_pure_closed_answers_try(
+                &space, &arena, call, NULL, -1, &cache, NULL, false, &result);
+            if (language) {
+                /* As above: HE reads the native's value again in the
+                 * constructor's fields. */
+                assert(answered == CETTA_PREPARED_PURE_ANSWERS_DECLINED &&
+                    result.len == 0u && prepared_calls == 0u && prepared_attempts == 0u);
+            } else {
+                assert(answered == CETTA_PREPARED_PURE_ANSWERS_COMPLETE);
+                assert(result.len == 1u && prepared_calls == 1u && prepared_attempts == 1u);
+                assert(atom_eq(outcome_atom_materialize(&arena, &result.items[0]),
+                    fixture_atom(&arena, "(Box 7 7)")));
+            }
             outcome_set_free(&result);
             prepared_pure_program_cache_free(&cache);
             checks++;
@@ -1949,10 +1974,20 @@ static unsigned prepared_native_consumers(void) {
                     &space, &arena, fixture_atom(&arena, body
                         ? "(native-bind-miss 1)" : "(native-tail-miss 1)"), NULL,
                     -1, NULL, NULL, false, &result);
+                if (language) {
+                    /* HE passes the native's value on to only-a as an
+                     * argument it evaluates again: the canonical entry. */
+                    assert(completed == CETTA_PREPARED_PURE_ANSWERS_DECLINED &&
+                        result.len == 0u && prepared_calls == 0u && prepared_attempts == 0u);
+                    outcome_set_free(&result);
+                    g_eval_completion_tracker = NULL;
+                    checks++;
+                    continue;
+                }
                 assert(completed == CETTA_PREPARED_PURE_ANSWERS_COMPLETE &&
                     tracker.completion == CETTA_EVAL_COMPLETE &&
                     prepared_calls == 1u && prepared_attempts == 1u && !petta_eval_take_raise());
-                unsigned count = language ? (frontier ? 3u : 1u) : 0u;
+                unsigned count = 0u;
                 assert(result.len == count);
                 for (unsigned k = 0u; k < count; k++) {
                     char expected[64];
@@ -1972,15 +2007,15 @@ static unsigned prepared_native_consumers(void) {
             OutcomeSet result;
             outcome_set_init(&result);
             prepared_mode = prepared_calls = prepared_attempts = 0u;
-            assert(prepared_pure_closed_answers_try(&space, &arena,
-                fixture_atom(&arena, "(native-before-miss 1)"), NULL, -1, NULL, NULL,
-                false, &result) == CETTA_PREPARED_PURE_ANSWERS_COMPLETE);
+            CettaPreparedPureAnswersResult before_miss = prepared_pure_closed_answers_try(
+                &space, &arena, fixture_atom(&arena, "(native-before-miss 1)"), NULL, -1,
+                NULL, NULL, false, &result);
+            /* PeTTa's miss answers nothing before the native; HE builds the
+             * native's value into a constructor, the canonical entry. */
+            assert(before_miss == (language ? CETTA_PREPARED_PURE_ANSWERS_DECLINED
+                                            : CETTA_PREPARED_PURE_ANSWERS_COMPLETE));
             assert(tracker.completion == CETTA_EVAL_COMPLETE &&
-                prepared_calls == language && prepared_attempts == language &&
-                result.len == language);
-            if (language)
-                assert(atom_eq(outcome_atom_materialize(&arena, &result.items[0]),
-                    fixture_atom(&arena, "(Box (only-a B) 7)")));
+                prepared_calls == 0u && prepared_attempts == 0u && result.len == 0u);
             outcome_set_free(&result);
             g_eval_completion_tracker = NULL;
             checks++;
@@ -5874,6 +5909,15 @@ static unsigned he_prepared_completion_controls(void) {
             if (demand == 1u && profile != 1u)
                 expected = atom_error(&arena, value, fixture_atom(&arena,
                     "(BadType Number CompletedBox)"));
+            /* A prepared call answers with the marks the canonical route
+             * gives its answer.  A value HE marked at every node passes
+             * through it as it is, in he and extended.  The prepared finish
+             * would mark a value marked only at its root (completed-held
+             * holds its field unevaluated) or not at all, where the
+             * canonical route keeps it as it is, and he-compat marks each
+             * answer by its own call's arguments: those calls keep their
+             * canonical entry. */
+            bool prepared = marked && value_index == 0u && profile != 1u;
             Bindings outer;
             bindings_init(&outer);
             Atom *shared = fixture_atom(&arena, "$completed-outer");
@@ -5886,11 +5930,11 @@ static unsigned he_prepared_completion_controls(void) {
                 outcome_set_init_with_owner(&outputs, &arena);
                 bool admitted = he_evaluated_call_answers_try(&space, &arena, call,
                     expected_type, -1, &outer, true, &outputs);
-                if (admitted != !!marked)
+                if (admitted != prepared)
                     fprintf(stderr, "HE prepared profile=%u value=%u marked=%u demand=%u multiple=%u admitted=%u provenance=%u\n",
                         profile, value_index, marked, demand, multiple, admitted, atom_is_he_evaluated(value));
-                assert(admitted == !!marked);
-                assert(outputs.len == (marked ? (multiple ? 2u : 1u) : 0u));
+                assert(admitted == prepared);
+                assert(outputs.len == (prepared ? (multiple ? 2u : 1u) : 0u));
                 for (CettaCount index = 0u; index < outputs.len; index++) {
                     assert(atom_eq(outcome_atom_materialize(&arena, &outputs.items[index]), expected));
                     assert(atom_eq(bindings_apply_if_vars(&outputs.items[index].env, &arena, shared),
@@ -5904,18 +5948,22 @@ static unsigned he_prepared_completion_controls(void) {
             CettaInvocation invocation = {.head = binding_value_from_atom(head),
                 .supplied = {.atoms = &value, .count = 1u}};
             CettaCallOutcome returned;
-            assert(prepared_pure_closed_invocation_try(&space, &arena, &invocation,
-                NULL, -1, true, true, NULL, PREPARED_PURE_PROGRAM_OPTIONAL_VALUE, &returned));
-            assert(returned.kind == CETTA_CALL_VALUE &&
-                returned.result_form == CETTA_CALL_RESULT_COMPLETED_VALUE && atom_eq(returned.term, value));
-            OutcomeSet scalar;
-            outcome_set_init_with_owner(&scalar, &arena);
-            he_complete_prepared_answer(&space, &arena, returned.term,
-                expected_type, &outer, &scalar);
-            assert(scalar.len == 1u &&
-                atom_eq(outcome_atom_materialize(&arena, &scalar.items[0]), expected));
+            bool invoked = prepared_pure_closed_invocation_try(&space, &arena,
+                &invocation, NULL, -1, true, true, NULL, PREPARED_PURE_PROGRAM_OPTIONAL_VALUE, &returned);
+            assert(invoked == prepared);
+            if (invoked) {
+                assert(returned.kind == CETTA_CALL_VALUE &&
+                    returned.result_form == CETTA_CALL_RESULT_COMPLETED_VALUE &&
+                    atom_eq(returned.term, value));
+                OutcomeSet scalar;
+                outcome_set_init_with_owner(&scalar, &arena);
+                he_complete_prepared_answer(&space, &arena, returned.term,
+                    expected_type, &outer, &scalar);
+                assert(scalar.len == 1u &&
+                    atom_eq(outcome_atom_materialize(&arena, &scalar.items[0]), expected));
+                outcome_set_free(&scalar);
+            }
             assert(!prepared_calls && !prepared_attempts && !prepared_effects);
-            outcome_set_free(&scalar);
             bindings_free(&outer);
             checks++;
         }

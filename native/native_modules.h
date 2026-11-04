@@ -26,6 +26,11 @@ typedef struct {
     bool (*call)(struct CettaLibraryContext *ctx, Space *space, Arena *a,
                  Atom *head, Atom **args, uint32_t nargs, CettaCallOutcome *out);
     const char *builtin_words; /* Explicitly imported evaluator controls. */
+    /* Its values are CeTTa's term language, whose sequences are
+     * (cons Head Tail) ... nil: in the PeTTa lane its arguments go out as
+     * terms and its answers come back as PeTTa values
+     * (petta_semantics_term_export, petta_semantics_term_import). */
+    bool term_language;
 } CettaNativeBuiltinModule;
 
 const CettaNativeBuiltinModule *cetta_native_module_lookup(const char *name);

@@ -3837,7 +3837,7 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
         /* PeTTa's car-atom and cdr-atom are total: a cell gives its head or
          * tail, and anything but a non-empty list gives ().  PeTTa's typed
          * line raises on car-atom of the empty sequence. */
-        if (petta && petta_semantics_is_cons_constraint(argument))
+        if (petta && petta_semantics_is_open_cons_value(argument))
             return argument->expr.elems[
                 head_id == g_builtin_syms.car_atom ? 1u : 2u];
         CettaSequenceProjectionPolicy policy = !petta ? CETTA_SEQUENCE_STRICT_VALUE

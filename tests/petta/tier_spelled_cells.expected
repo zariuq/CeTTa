@@ -1,4 +1,2 @@
-done
-(a b)
-a
+cons
 (pair (cons b nil) (pair a (pair cons z)))

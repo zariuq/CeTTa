@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Median-timed, result-checked benchmark for expression and inductive lists."""
+"""Median-timed, result-checked benchmark for the list library."""
 
 from __future__ import annotations
 
@@ -14,7 +14,6 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT / "runtime" / "list-lane-bench"
 KERNELS = ("build-sum", "reverse-sum", "append-sum", "map-sum")
-MODES = ("list", "clist")
 
 
 def expected_value(kernel: str, size: int) -> int:
@@ -71,37 +70,36 @@ def main() -> int:
         return 2
 
     WORK.mkdir(parents=True, exist_ok=True)
-    print("kind    lane   mode   kernel          n       trial   seconds")
+    print("kind    lane   kernel          n       trial   seconds")
     for size in args.sizes:
         for lane in ("he", "prime"):
             for kernel in KERNELS:
-                for mode in MODES:
-                    expected = expected_value(kernel, size)
-                    driver = WORK / f"{lane}_{mode}_{kernel}_{size}.metta"
-                    driver.write_text(
-                        "!(import! &self ../../benchmarks/list_lanes.metta)\n"
-                        f"!(bench:{mode}-{kernel} {size})\n"
-                    )
-                    try:
-                        for _ in range(args.warmups):
-                            run_once(cetta, lane, driver, expected)
-                        samples = [
-                            run_once(cetta, lane, driver, expected)
-                            for _ in range(args.repetitions)
-                        ]
-                    except (RuntimeError, subprocess.TimeoutExpired) as error:
-                        print(f"FAIL: {error}", file=sys.stderr)
-                        return 1
-                    for trial, sample in enumerate(samples, start=1):
-                        print(
-                            f"RAW     {lane:<6} {mode:<6} {kernel:<15} "
-                            f"{size:<7} {trial:<7} {sample:.6f}"
-                        )
+                expected = expected_value(kernel, size)
+                driver = WORK / f"{lane}_{kernel}_{size}.metta"
+                driver.write_text(
+                    "!(import! &self ../../benchmarks/list_lanes.metta)\n"
+                    f"!(bench:list-{kernel} {size})\n"
+                )
+                try:
+                    for _ in range(args.warmups):
+                        run_once(cetta, lane, driver, expected)
+                    samples = [
+                        run_once(cetta, lane, driver, expected)
+                        for _ in range(args.repetitions)
+                    ]
+                except (RuntimeError, subprocess.TimeoutExpired) as error:
+                    print(f"FAIL: {error}", file=sys.stderr)
+                    return 1
+                for trial, sample in enumerate(samples, start=1):
                     print(
-                        f"MEDIAN  {lane:<6} {mode:<6} {kernel:<15} "
-                        f"{size:<7} {'-':<7} "
-                        f"{statistics.median(samples):.6f}"
+                        f"RAW     {lane:<6} {kernel:<15} "
+                        f"{size:<7} {trial:<7} {sample:.6f}"
                     )
+                print(
+                    f"MEDIAN  {lane:<6} {kernel:<15} "
+                    f"{size:<7} {'-':<7} "
+                    f"{statistics.median(samples):.6f}"
+                )
     print("(ListLaneBenchmarkSummary CorrectnessChecked MedianTimed)")
     return 0
 

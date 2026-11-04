@@ -57,8 +57,53 @@ def main():
         lib.cetta_act_get.argtypes = [C.c_void_p, Bytes, C.POINTER(C.c_uint64)]
         lib.cetta_act_validate.argtypes = [C.c_void_p, C.POINTER(C.c_uint64)]
         lib.cetta_act_release.argtypes = [C.c_void_p]
+        lib.cetta_act_cursor_open.argtypes = [C.c_void_p, C.POINTER(Bytes), C.POINTER(Bytes), C.POINTER(C.c_void_p)]
+        lib.cetta_act_cursor_prefix.argtypes = [C.c_void_p, Bytes, C.POINTER(C.c_void_p)]
+        lib.cetta_act_cursor_next.argtypes = [C.c_void_p, C.POINTER(Bytes), C.POINTER(C.c_uint64)]
+        lib.cetta_act_cursor_close.argtypes = [C.c_void_p]
         libc = C.CDLL(None)
         libc.free.argtypes = [C.c_void_p]
+
+        def walk(cursor_status, cursor):
+            assert cursor_status == 0, cursor_status
+            found = []
+            try:
+                key, value = Bytes(), C.c_uint64()
+                while (status := lib.cetta_act_cursor_next(cursor, C.byref(key), C.byref(value))) == 0:
+                    found.append((C.string_at(key.data, key.size) if key.size else b"", value.value))
+                assert status == 1, ("cursor ended with", status)
+            finally:
+                lib.cetta_act_cursor_close(cursor)
+            return found
+
+        def bytes_of(raw):
+            buf = C.create_string_buffer(raw)
+            return buf, Bytes(C.cast(buf, C.c_void_p), len(raw))
+
+        def check_cursors(tree, entries, rng, label):
+            # The whole trie, in order: no key missing, none extra.
+            cursor = C.c_void_p()
+            got = walk(lib.cetta_act_cursor_open(tree, None, None, C.byref(cursor)), cursor)
+            assert got == entries, (label, "full walk")
+            probes = [b"", bytes([255]), bytes([255, 255])]
+            for key, _ in entries[:: max(1, len(entries) // 8)]:
+                probes += [key, key[: len(key) // 2], key + b"\0"]
+            probes += [rng.randbytes(rng.randrange(0, 4)) for _ in range(6)]
+            for prefix in probes:
+                keep, raw = bytes_of(prefix)
+                cursor = C.c_void_p()
+                got = walk(lib.cetta_act_cursor_prefix(tree, raw, C.byref(cursor)), cursor)
+                assert got == [e for e in entries if e[0].startswith(prefix)], (label, "prefix", prefix[:20].hex())
+            for _ in range(8):
+                a, b = sorted((rng.choice(probes), rng.choice(probes)))
+                keep_a, lo = bytes_of(a)
+                keep_b, hi = bytes_of(b)
+                cursor = C.c_void_p()
+                got = walk(lib.cetta_act_cursor_open(tree, C.byref(lo), C.byref(hi), C.byref(cursor)), cursor)
+                assert got == [e for e in entries if a <= e[0] < b], (label, "range", a[:20].hex(), b[:20].hex())
+            return 1
+
+        cursor_checks = 0
         rng = random.Random(3817)
         cases = [{}, {b"": 0}, {bytes([i]): (1 << 64) - 1 - i for i in range(256)},
                  {b"": 99, b"a": 1, b"ab": 2, b"abc": 3, b"abd": 4, b"abcd": 5},
@@ -76,6 +121,12 @@ def main():
             c_file = work / f"c-{number}.act"
             c_file.write_bytes(C.string_at(image, size.value))
             libc.free(image)
+            c_tree = C.c_void_p()
+            assert lib.cetta_act_open(str(c_file).encode(), C.byref(c_tree)) == 0
+            try:
+                cursor_checks += check_cursors(c_tree, entries, rng, ("C image", number))
+            finally:
+                lib.cetta_act_release(c_tree)
             expected = "".join(f"{key.hex()} {value}\n" for key, value in entries)
             result = subprocess.check_output([str(a.oracle.resolve()), "read", str(c_file)], text=True)
             assert result == expected, (number, "C writer/Rust reader")
@@ -114,9 +165,11 @@ def main():
                     assert status == 0, (number, key[:40].hex(), len(key), status)
                     assert got.value == value
                     checked += 1
+                cursor_checks += check_cursors(tree, entries, rng, ("Rust image", number))
             finally:
                 lib.cetta_act_release(tree)
-        print(f"ACT differential: {len(cases)} images through buffered/streaming C and Rust writers, {checked} key/value lookups")
+        print(f"ACT differential: {len(cases)} images through buffered/streaming C and Rust writers, {checked} key/value lookups, "
+              f"cursors (full, prefix, range) on {cursor_checks} images")
 
 
 if __name__ == "__main__":

@@ -11753,6 +11753,18 @@ static void atom_print_mode(
                 break;
             }
         }
+        if (a->expr.len == 3u &&
+            atom_is_internal_tag(a->expr.elems[0],
+                                 CETTA_INTERNAL_TAG_PETTA_OPEN_CONS)) {
+            /* A cell whose tail is no list prints as SWI-PeTTa prints [H|T]:
+             * (cons H T).  Read back, that text is data, an expression. */
+            fputs("(cons ", out);
+            atom_print_stack_push_char(&stack, ')');
+            atom_print_stack_push_atom(&stack, a->expr.elems[2]);
+            atom_print_stack_push_char(&stack, ' ');
+            atom_print_stack_push_atom(&stack, a->expr.elems[1]);
+            break;
+        }
         if (atom_is_petta_partial(a)) {
             fputs("(partial ", out);
             atom_print_stack_push_char(&stack, ')');

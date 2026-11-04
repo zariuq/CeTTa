@@ -1,27 +1,21 @@
 #include "runtime_session.h"
-#include "term_domain.h"
 
-static bool runtime_session_init(CettaRuntimeSession *runtime, Arena *persistent,
-    CettaTermDomain *domain, CettaLanguageId language, const CettaProfile *profile) {
+bool cetta_runtime_session_init(CettaRuntimeSession *runtime, Arena *persistent,
+    CettaLanguageId language, const CettaProfile *profile) {
+    return cetta_runtime_session_init_in_domain(runtime, persistent, language, profile, NULL);
+}
+
+bool cetta_runtime_session_init_in_domain(CettaRuntimeSession *runtime, Arena *persistent,
+    CettaLanguageId language, const CettaProfile *profile, struct CettaTermDomain *domain) {
     if (!runtime || !persistent || runtime->libraries_ready) return false;
     runtime->work_closed = false;
     runtime->libraries_ready = true;
     if (!cetta_library_context_try_init_for_language_profile(&runtime->libraries, language, profile))
         return false;
-    if (domain && !cetta_library_context_set_term_domain(&runtime->libraries, domain))
-        return false;
+    if (domain && !cetta_library_context_set_term_domain(&runtime->libraries, domain)) return false;
     term_universe_set_persistent_arena(cetta_library_context_universe(&runtime->libraries), persistent);
     runtime->resources = eval_resources_new();
     return runtime->resources != NULL;
-}
-
-bool cetta_runtime_session_init(CettaRuntimeSession *runtime, Arena *persistent,
-    CettaLanguageId language, const CettaProfile *profile) {
-    return runtime_session_init(runtime, persistent, NULL, language, profile);
-}
-bool cetta_runtime_session_init_in_domain(CettaRuntimeSession *runtime, Arena *persistent,
-    CettaTermDomain *domain, CettaLanguageId language, const CettaProfile *profile) {
-    return domain && runtime_session_init(runtime, persistent, domain, language, profile);
 }
 
 bool cetta_runtime_session_open_root(CettaRuntimeSession *runtime, Arena *persistent) {
@@ -77,7 +71,7 @@ static void release_registry_spaces(CettaRuntimeSession *runtime) {
     }
 }
 
-static void runtime_session_dispose(CettaRuntimeSession *runtime, bool defer_root) {
+void cetta_runtime_session_dispose(CettaRuntimeSession *runtime) {
     if (!runtime) return;
     CettaLibraryContext *library = runtime->libraries_ready ? &runtime->libraries : NULL;
     CettaLibraryContext *previous_library = eval_exchange_library_context(library);
@@ -102,16 +96,7 @@ static void runtime_session_dispose(CettaRuntimeSession *runtime, bool defer_roo
     runtime->registry_ready = false;
     if (library) cetta_library_context_free(library);
     runtime->libraries_ready = false;
-    if (!defer_root && runtime->space_ready) {
-        space_free(&runtime->space);
-        runtime->space_ready = false;
-    }
+    if (runtime->space_ready) space_free(&runtime->space);
+    runtime->space_ready = false;
     eval_exchange_library_context(own_library ? NULL : previous_library);
-}
-
-void cetta_runtime_session_dispose(CettaRuntimeSession *runtime) {
-    runtime_session_dispose(runtime, false);
-}
-void cetta_runtime_session_dispose_before_root(CettaRuntimeSession *runtime) {
-    runtime_session_dispose(runtime, true);
 }

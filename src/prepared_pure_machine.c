@@ -10951,7 +10951,10 @@ static bool prepared_pure_answer_value_node(
         return node->atom != NULL;
     if (node->kind == PREPARED_PURE_SLOT)
         return node->auxiliary < equation->body.local_count;
+    /* As in prepared_pure_value_tree: a build whose head is bound at run time
+     * is a call unless that head's value is data, so it is no answer value. */
     if (node->kind != PREPARED_PURE_BUILD ||
+        node->auxiliary == PREPARED_PURE_BUILD_DATA_HEAD ||
         node->first_child > program->child_len ||
         node->child_count > program->child_len - node->first_child)
         return false;
@@ -11114,7 +11117,8 @@ static void prepared_pure_classify_deterministic_heads(
 }
 
 /* A value tree evaluates to itself: literals and locals under constructors,
- * with no computation to order. */
+ * with no computation to order. A build whose head is bound at run time is
+ * not a constructor: it is a call unless that head's value is data. */
 static bool prepared_pure_value_tree(
     const CettaPreparedPureProgram *program, uint32_t node_index,
     uint32_t depth) {
@@ -11127,6 +11131,7 @@ static bool prepared_pure_value_tree(
     if (node->kind == PREPARED_PURE_SLOT)
         return true;
     if (node->kind != PREPARED_PURE_BUILD ||
+        node->auxiliary == PREPARED_PURE_BUILD_DATA_HEAD ||
         node->first_child > program->child_len ||
         node->child_count > program->child_len - node->first_child)
         return false;
@@ -13545,6 +13550,13 @@ static bool prepared_pure_project_answer_value(
             break;
         }
     }
+    /* A head bound at run time builds data only when its value is data, as
+     * in every other executor; otherwise the application is a call, which
+     * a projection does not make. */
+    if (ok && node->auxiliary == PREPARED_PURE_BUILD_DATA_HEAD &&
+        (node->child_count == 0u ||
+         !prepared_pure_data_head_value(children[0])))
+        ok = false;
     if (ok)
         *value_out = program->construct_value(
             arena, children, node->child_count);

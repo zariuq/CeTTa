@@ -56,27 +56,12 @@
 !(import! &self swi_differences_import)
 !(msort (collapse (app1 safe 1)))
 
-; 5. Data spelled with `cons` and `nil` meets an authored list pattern as the
-;    list it spells: `(cons $h $t)` in a head or a `case` takes
-;    `(cons a (cons b nil))` apart as a and (cons b nil).  SWI-PeTTa reads the
-;    value as the three-element list (cons a (cons b nil)): its head is `cons`
-;    and `nil` is no empty list, so the walks below answer nothing there, and
-;    the case answers cons.  The parser pack's forests are built this way and
-;    rely on CeTTa's reading.
-;    Recorded: Oruži, 2026-09-27 (the reading predates a09d40ae; the tier
-;    follows the machine).  The contract is Zar's to set (goal.md §5).
-(spelled-item (cons a (cons b nil)))
-(= (spelled) (match &self (spelled-item $l) $l))
-(= (walk nil) done)
-(= (walk (cons $h $t)) (walk $t))
-(= (heads nil) ())
-(= (heads (cons $h $t)) (cons-atom $h (heads $t)))
-; SWI-PeTTa: no answer.
-!(walk (spelled))
-; SWI-PeTTa: no answer.
-!(heads (spelled))
-; SWI-PeTTa: cons
-!(case (spelled) (((cons $h $t) $h) ($other none)))
+; 5. Retired 2026-11-04: data spelled `(cons h t)` is data in both engines.
+;    `cons` is a constructor: code builds and splits list cells, a stored
+;    `(cons a (cons b nil))` is a three-element expression whose head is
+;    `cons`, and `nil` is a symbol, not the empty list.  Decided by Zar
+;    (11/04: "do the swi one. It's a bit more homoiconic"); the answers are
+;    gated in tier_spelled_cells on both routes.
 
 ; 6. Retired 2026-09-29: the pinned reference compares numbers by exact
 ;    value too, so (== 3 3.0) is true and (!= 3 3.0) false in both engines.

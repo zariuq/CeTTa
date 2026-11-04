@@ -1,0 +1,38 @@
+Module CollectionTheories {
+  Theory Tuples() {
+    Types { Elem; Pair; }
+    Terms {
+      MkPair . first:Elem, second:Elem |- "(" first second ")" : Pair;
+    }
+  }
+  Theory Lists() {
+    Types { Elem; List; }
+    Terms {
+      LNil . |- "LNil" : List;
+      LCons . head:Elem, tail:List |- "(" "LCons" head tail ")" : List;
+    }
+  }
+  Theory Sequences() {
+    Types { Seq; }
+    Terms {
+      Empty . |- "empty" : Seq;
+      Append . x:Seq, y:Seq |- "(" x "++" y ")" : Seq;
+    }
+    Equations {
+      (Append (Append x y) z) == (Append x (Append y z));
+      (Append (Empty) x) == x;
+      (Append x (Empty)) == x;
+    }
+  }
+  Theory Bags(s: Sequences) {
+    s Equations {
+      (Append x y) == (Append y x);
+    }
+  }
+  Theory Sets(b: Bags) {
+    b Equations {
+      (Append x x) == x;
+    }
+  }
+  theory Sets(Bags(Sequences()))
+}

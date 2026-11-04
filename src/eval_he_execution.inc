@@ -1592,6 +1592,48 @@ static bool he_return_numeric_test(Space *space, SymbolId head) {
 static HeReturnProvenance he_return_body(HeReturnAnalysis *, const Atom *,
                                         HeReturnEnvironment *, uint32_t);
 
+/* A library native's call answers what the native answered.  HE evaluates a
+ * call's answer again under the operation's declared range, and only an Atom
+ * range returns it as it is.  The canonical route answers a native's
+ * completed value as it is under an Atom or a %Undefined% range (an
+ * undeclared native has the second), evaluates any other expression the
+ * native answers under its range, and checks a completed value against a
+ * range of another type.  A prepared route answers the completed value as it
+ * is too and hands any other answer to the host, so under those two ranges
+ * the answer is raw data or a scalar, which the prepared finish need not
+ * mark.  Each operand is a variable or a literal holding a value, so a
+ * parameter HE holds and one it evaluates receive the same atom; a native
+ * under any other range keeps its canonical entry. */
+static bool he_return_native_answers_as_is(
+    HeReturnAnalysis *analysis, const Atom *call,
+    const HeReturnProvenance *arguments, CettaExprLen arity) {
+    SymbolId head = atom_head_symbol_id(call);
+    if (head == SYMBOL_ID_NONE || !grounded_op_is_library_native(head))
+        return false;
+    for (CettaExprIndex i = 0u; i < arity; i++) {
+        if (call->expr.elems[i + 1u]->kind == ATOM_EXPR ||
+            (arguments[i] & ~(unsigned)HE_RETURN_VALUE))
+            return false;
+    }
+    Arena scratch;
+    arena_init(&scratch);
+    arena_set_hashcons(&scratch, NULL);
+    Atom **types = NULL;
+    uint32_t count = eval_get_atom_types_profiled_transient(
+        analysis->space, &scratch, call->expr.elems[0], &types);
+    bool as_is = count > 0u;
+    for (uint32_t i = 0u; as_is && i < count; i++) {
+        Atom *type = types[i];
+        Atom *range = is_function_type(type)
+            ? type->expr.elems[type->expr.len - 1u] : type;
+        as_is = atom_is_symbol_id(range, g_builtin_syms.atom) ||
+            atom_is_symbol_id(range, g_builtin_syms.undefined_type);
+    }
+    free(types);
+    arena_free(&scratch);
+    return as_is;
+}
+
 /* Check a finite-return invariant for a recursive call family. Recursive
  * uses assume one candidate, while every equation must preserve it. No
  * assumption authorizes a mixed raw/completed return. */
@@ -1830,6 +1872,8 @@ static HeReturnProvenance he_return_body(HeReturnAnalysis *analysis,
     }
     else if (head != SYMBOL_ID_NONE && eval_space_has_equations(analysis->space, head))
         result = he_return_call(analysis, head, arguments, arity, depth + 1u);
+    else if (he_return_native_answers_as_is(analysis, body, arguments, arity))
+        result = (HeReturnProvenance)(HE_RETURN_RAW | HE_RETURN_SCALAR);
     else if ((head != SYMBOL_ID_NONE && !symbol_id_is_builtin(head) && !is_grounded_op(head) &&
                !space_head_declares_type(analysis->space, head) &&
                !space_equations_may_match_unnamed_head(analysis->space)) ||
@@ -1851,9 +1895,56 @@ static HeReturnProvenance he_return_body(HeReturnAnalysis *analysis,
     return result;
 }
 
+/* Whether every expression node of `value` with fields carries HE's
+ * evaluated mark: a value HE marked at every node.  A value too large to
+ * walk here is not known to be one. */
+static bool he_return_marked_throughout(const Atom *value) {
+    const Atom *inline_stack[32];
+    const Atom **stack = inline_stack;
+    size_t len = 0u, cap = sizeof(inline_stack) / sizeof(inline_stack[0]);
+    size_t budget = 4096u;
+    bool marked = true;
+    stack[len++] = value;
+    while (len > 0u && marked) {
+        const Atom *current = stack[--len];
+        if (!current || current->kind != ATOM_EXPR || current->expr.len == 0u)
+            continue;
+        if (!atom_is_he_evaluated(current) || budget-- == 0u) {
+            marked = false;
+            break;
+        }
+        if (len + current->expr.len > cap) {
+            size_t next = cap;
+            while (next < len + current->expr.len)
+                next *= 2u;
+            const Atom **grown = cetta_fallible_malloc(sizeof(*grown) * next);
+            if (!grown) {
+                marked = false;
+                break;
+            }
+            memcpy(grown, stack, sizeof(*grown) * len);
+            if (stack != inline_stack)
+                free(stack);
+            stack = grown;
+            cap = next;
+        }
+        for (CettaExprIndex i = 0u; i < current->expr.len; i++)
+            stack[len++] = current->expr.elems[i];
+    }
+    if (stack != inline_stack)
+        free(stack);
+    return marked;
+}
+
 /* Shared by each HE prepared entrance. A ready invocation carries values;
  * a source call still interprets its operands. Neither mode may infer
- * completed provenance from a result's shape or from its inferred type. */
+ * completed provenance from a result's shape or from its inferred type.
+ * A ready value HE marked at every node is a value, and so is an unmarked
+ * constructor normal form, which HE's evaluation of the argument answers
+ * marked at every node; any other unmarked expression is raw.  One marked in
+ * part keeps fields HE has not evaluated, which the prepared finish would
+ * mark, so it keeps its canonical entry, as does a source operand that is
+ * marked, whose mark a compiled operand does not carry. */
 static bool he_prepared_completion_admit(Space *space, Arena *arena,
     const CettaInvocation *invocation, Atom *call, bool arguments_are_values,
     bool *completed) {
@@ -1878,9 +1969,13 @@ static bool he_prepared_completion_admit(Space *space, Arena *arena,
         bool valid = true;
         for (CettaExprIndex i = 0u; i < arity; i++) {
             Atom *value = call->expr.elems[i + 1u];
-            arguments[i] = atom_is_he_evaluated(value) ? HE_RETURN_UNKNOWN
-                : value->kind == ATOM_EXPR ? HE_RETURN_RAW
-                : he_return_body(&analysis, value, &env, 0u);
+            arguments[i] = atom_is_he_evaluated(value)
+                ? (he_return_marked_throughout(value)
+                       ? HE_RETURN_VALUE : HE_RETURN_UNKNOWN)
+                : value->kind != ATOM_EXPR
+                ? he_return_body(&analysis, value, &env, 0u)
+                : atom_is_constructor_normal_form(space, arena, value, -1)
+                ? HE_RETURN_VALUE : HE_RETURN_RAW;
             valid &= arguments[i] != HE_RETURN_UNKNOWN;
         }
         if (valid)
@@ -2258,13 +2353,16 @@ static void he_bound_add_pattern(HeBoundVariables *bound, const Atom *pattern) {
     if (pattern->kind == ATOM_VAR) {
         if (bound->len == bound->cap) {
             size_t capacity = bound->cap ? bound->cap * 2u : 8u;
-            VarId *items = cetta_realloc(bound->items,
-                                        capacity * sizeof(*bound->items));
-            if (!items) return;
+            VarId *items = cetta_malloc(capacity * sizeof(*items));
+            uint64_t *versions = cetta_malloc(capacity * sizeof(*versions));
+            if (!items || !versions) { free(items); free(versions); return; }
+            if (bound->len) {
+                memcpy(items, bound->items, bound->len * sizeof(*items));
+                memcpy(versions, bound->versions, bound->len * sizeof(*versions));
+            }
+            free(bound->items);
+            free(bound->versions);
             bound->items = items;
-            uint64_t *versions = cetta_realloc(bound->versions,
-                                               capacity * sizeof(*bound->versions));
-            if (!versions) return;
             bound->versions = versions;
             bound->cap = capacity;
         }

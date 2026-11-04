@@ -4331,9 +4331,11 @@ static void eq_index_note_directional_row(EqIndex *idx, const Space *s,
  * head. */
 static EqBucket *eq_index_head_bucket(EqIndex *idx, SymbolId head) {
     if (!idx->buckets) {
-        idx->buckets = cetta_malloc(sizeof(*idx->buckets) * EQ_INDEX_BUCKETS);
+        EqBucket *buckets = cetta_malloc(sizeof(*buckets) * EQ_INDEX_BUCKETS);
+        if (!buckets) return NULL;
         for (uint32_t i = 0; i < EQ_INDEX_BUCKETS; i++)
-            eq_bucket_init(&idx->buckets[i]);
+            eq_bucket_init(&buckets[i]);
+        idx->buckets = buckets;
     }
     return &idx->buckets[symbol_hash(head)];
 }
@@ -4344,8 +4346,9 @@ static void eq_index_add(EqIndex *idx, Atom *lhs, CettaIndex atom_idx,
     if (head != SYMBOL_ID_NONE) {
         space_head_chains_append(&idx->head_rows, head, atom_idx, equation_id);
         if (cetta_native_memory_failed && cetta_native_memory_failed()) return;
-        eq_bucket_add(eq_index_head_bucket(idx, head), lhs, atom_idx,
-                      equation_id);
+        EqBucket *bucket = eq_index_head_bucket(idx, head);
+        if (!bucket) return;
+        eq_bucket_add(bucket, lhs, atom_idx, equation_id);
     } else {
         eq_bucket_add(&idx->wildcard, lhs, atom_idx, equation_id);
     }
@@ -4357,8 +4360,9 @@ static void eq_index_add_id(EqIndex *idx, const Space *s, AtomId lhs_id,
     if (head != SYMBOL_ID_NONE) {
         space_head_chains_append(&idx->head_rows, head, atom_idx, equation_id);
         if (cetta_native_memory_failed && cetta_native_memory_failed()) return;
-        eq_bucket_add_id(eq_index_head_bucket(idx, head), s, lhs_id, atom_idx,
-                         equation_id);
+        EqBucket *bucket = eq_index_head_bucket(idx, head);
+        if (!bucket) return;
+        eq_bucket_add_id(bucket, s, lhs_id, atom_idx, equation_id);
     } else {
         eq_bucket_add_id(&idx->wildcard, s, lhs_id, atom_idx, equation_id);
     }
@@ -5674,7 +5678,6 @@ static bool space_attach_to_universe_try(Space *s, TermUniverse *universe, bool 
     }
     int error = errno;
     space_detach_from_universe(s);
-    /* An unpublished empty holder does not leave a missing root behind. */
     if (empty_unpublished) universe->collection_mode = mode;
     errno = error;
     return false;
@@ -9456,6 +9459,7 @@ bool space_try_init_with_universe(Space *s, TermUniverse *universe) {
     space_read_stamp_publish(s);
     if (!space_attach_to_universe_try(s, s->native.universe, true)) return false;
     s->ledger_counted = ledger_counted;
+    s->arena_hold = NULL;
     if (s->ledger_counted) {
         uint64_t heap_after = space_ledger_heap_in_use();
         cetta_runtime_stats_gauge_add(CETTA_RUNTIME_COUNTER_SPACE_LIVE,
