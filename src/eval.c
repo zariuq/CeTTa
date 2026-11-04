@@ -4216,9 +4216,6 @@ static bool grounded_dispatch_accepts_data_arg(Atom *head, uint32_t arg_index) {
     if (head->sym_id == g_builtin_syms.minimal_foldl_llist &&
         (arg_index == 0 || arg_index == 1 || arg_index == 4))
         return true;
-    if (head->sym_id == g_builtin_syms.minimal_foldl_sequence &&
-        (arg_index == 0u || arg_index == 1u || arg_index == 5u))
-        return true;
     if (head->sym_id == g_builtin_syms.minimal_space_contains_exact &&
         arg_index == 1)
         return true;
@@ -18862,178 +18859,6 @@ static PreparedFoldResult prepared_filter_single_result(
 }
 
 typedef struct {
-    SymbolId materializer;
-    SymbolId fallback_fold;
-    SymbolId empty;
-    SymbolId cons;
-} PreparedSequenceRepresentation;
-
-static bool prepared_sequence_representation_lookup(
-    Atom *key, PreparedSequenceRepresentation *representation_out) {
-    if (!key || key->kind != ATOM_SYMBOL || !representation_out ||
-        !g_symbols) {
-        return false;
-    }
-    const char *requested = atom_name_cstr(key);
-    bool found = false;
-    bool fold_found = false;
-#define MATCH_SEQUENCE_REPRESENTATION(                                  \
-    name, materializer_name, empty_name, cons_name) do {                \
-    if (!found && requested && strcmp(requested, (name)) == 0) {        \
-        representation_out->materializer =                              \
-            symbol_intern_cstr(g_symbols, (materializer_name));         \
-        representation_out->empty =                                    \
-            symbol_intern_cstr(g_symbols, (empty_name));                \
-        representation_out->cons =                                     \
-            symbol_intern_cstr(g_symbols, (cons_name));                 \
-        found = representation_out->materializer != SYMBOL_ID_NONE &&   \
-                representation_out->empty != SYMBOL_ID_NONE &&          \
-                representation_out->cons != SYMBOL_ID_NONE;             \
-    }                                                                   \
-} while (0);
-    CETTA_GSLT_SEQUENCE_REPRESENTATION_ROWS(
-        MATCH_SEQUENCE_REPRESENTATION)
-#undef MATCH_SEQUENCE_REPRESENTATION
-#define MATCH_SEQUENCE_FOLD_TARGET(name, target_name) do {              \
-    if (!fold_found && requested && strcmp(requested, (name)) == 0) {   \
-        representation_out->fallback_fold =                            \
-            symbol_intern_cstr(g_symbols, (target_name));               \
-        fold_found = representation_out->fallback_fold !=              \
-            SYMBOL_ID_NONE;                                             \
-    }                                                                   \
-} while (0);
-    CETTA_GSLT_SEQUENCE_FOLD_TARGET_ROWS(
-        MATCH_SEQUENCE_FOLD_TARGET)
-#undef MATCH_SEQUENCE_FOLD_TARGET
-    return found && fold_found;
-}
-
-/* Generated represented-sequence consumers keep their represented operand as
- * source syntax until the authored equation exposes the internal fold
- * handler.  Deferring the optional eager pure-call machine is semantics-safe
- * even when a user adds or replaces equations: the ordinary matcher remains
- * authoritative and the handler is reached only when the authored definition
- * actually calls it. */
-typedef struct {
-    const char *representation_name;
-    CettaExprIndex represented_operand;
-} PreparedSequenceFoldConsumer;
-
-static bool prepared_sequence_fold_consumer_lookup(
-    Atom *head, CettaExprLen arity,
-    PreparedSequenceFoldConsumer *consumer_out) {
-    if (!head || head->kind != ATOM_SYMBOL || !consumer_out)
-        return false;
-    const char *requested = atom_name_cstr(head);
-    bool found = false;
-#define MATCH_SEQUENCE_FOLD_CONSUMER(                                  \
-    representation_key_name, consumer_name, consumer_arity,            \
-    represented_operand_index) do {                                    \
-    if (!found && requested &&                                          \
-        strcmp(requested, (consumer_name)) == 0 &&                      \
-        arity == (consumer_arity)) {                                    \
-        consumer_out->representation_name = (representation_key_name);  \
-        consumer_out->represented_operand =                            \
-            (represented_operand_index);                                \
-        found = true;                                                    \
-    }                                                                   \
-} while (0);
-    CETTA_GSLT_SEQUENCE_FOLD_CONSUMER_ROWS(
-        MATCH_SEQUENCE_FOLD_CONSUMER)
-#undef MATCH_SEQUENCE_FOLD_CONSUMER
-    return found;
-}
-
-static bool prepared_sequence_fold_consumer_requires_authored_expansion(
-    Atom *head, CettaExprLen arity) {
-    PreparedSequenceFoldConsumer consumer;
-    return prepared_sequence_fold_consumer_lookup(
-        head, arity, &consumer);
-}
-
-static bool prepared_sequence_fold_consumer_equation_is_canonical(
-    Atom *equation, Atom *head, CettaExprLen arity,
-    const PreparedSequenceFoldConsumer *consumer) {
-    if (!equation || !head || !consumer || arity != 5u ||
-        consumer->represented_operand != 0u ||
-        equation->kind != ATOM_EXPR || equation->expr.len != 3u ||
-        !atom_is_symbol_id(
-            equation->expr.elems[0], g_builtin_syms.equals)) {
-        return false;
-    }
-
-    Atom *lhs = equation->expr.elems[1];
-    Atom *rhs = equation->expr.elems[2];
-    if (!lhs || lhs->kind != ATOM_EXPR ||
-        lhs->expr.len != arity + 1u ||
-        !atom_eq(lhs->expr.elems[0], head)) {
-        return false;
-    }
-    VarId operands[5];
-    for (CettaExprIndex i = 0u; i < arity; i++) {
-        Atom *operand = lhs->expr.elems[i + 1u];
-        if (!operand || operand->kind != ATOM_VAR)
-            return false;
-        operands[i] = operand->var_id;
-        for (CettaExprIndex prior = 0u; prior < i; prior++)
-            if (var_id_eq(operands[prior], operands[i]))
-                return false;
-    }
-
-    if (!rhs || rhs->kind != ATOM_EXPR || rhs->expr.len != 2u ||
-        !atom_is_symbol_id(rhs->expr.elems[0], g_builtin_syms.function)) {
-        return false;
-    }
-    Atom *chain = rhs->expr.elems[1];
-    if (!chain || chain->kind != ATOM_EXPR || chain->expr.len != 4u ||
-        !atom_is_symbol_id(chain->expr.elems[0], g_builtin_syms.chain)) {
-        return false;
-    }
-    Atom *context = chain->expr.elems[1];
-    Atom *space_binder = chain->expr.elems[2];
-    Atom *evaluation = chain->expr.elems[3];
-    if (!context || context->kind != ATOM_EXPR ||
-        context->expr.len != 1u ||
-        !atom_is_symbol_id(
-            context->expr.elems[0], g_builtin_syms.context_space) ||
-        !space_binder || space_binder->kind != ATOM_VAR ||
-        !evaluation || evaluation->kind != ATOM_EXPR ||
-        evaluation->expr.len != 2u ||
-        !atom_is_symbol_id(
-            evaluation->expr.elems[0], g_builtin_syms.eval)) {
-        return false;
-    }
-    for (CettaExprIndex i = 0u; i < arity; i++)
-        if (var_id_eq(space_binder->var_id, operands[i]))
-            return false;
-
-    Atom *handler = evaluation->expr.elems[1];
-    if (!handler || handler->kind != ATOM_EXPR ||
-        handler->expr.len != arity + 3u ||
-        !atom_is_symbol_id(
-            handler->expr.elems[0],
-            g_builtin_syms.minimal_foldl_sequence)) {
-        return false;
-    }
-    Atom *representation = handler->expr.elems[1];
-    if (!representation || representation->kind != ATOM_SYMBOL ||
-        strcmp(atom_name_cstr(representation),
-               consumer->representation_name) != 0) {
-        return false;
-    }
-    for (CettaExprIndex i = 0u; i < arity; i++) {
-        Atom *argument = handler->expr.elems[i + 2u];
-        if (!argument || argument->kind != ATOM_VAR ||
-            !var_id_eq(argument->var_id, operands[i])) {
-            return false;
-        }
-    }
-    Atom *handler_space = handler->expr.elems[arity + 2u];
-    return handler_space && handler_space->kind == ATOM_VAR &&
-           var_id_eq(handler_space->var_id, space_binder->var_id);
-}
-
-typedef struct {
     Atom *result;
     Bindings bindings;
     bool found;
@@ -19057,309 +18882,9 @@ static bool eval_capture_singleton_equation_expansion(
     return true;
 }
 
-static Atom *prepared_sequence_fold_find_canonical_equation(
-    Space *space, Atom *head, CettaExprLen arity,
-    const PreparedSequenceFoldConsumer *consumer) {
-    if (!space || !head || head->kind != ATOM_SYMBOL || !consumer)
-        return NULL;
-
-    SpaceEquationCursor cursor;
-    if (!space_equation_cursor_init(space, head->sym_id, &cursor))
-        return NULL;
-
-    Atom *canonical = NULL;
-    SpaceEquationOccurrenceId occurrence_id;
-    SpaceEquationCursorStep step;
-    while ((step = space_equation_cursor_next(
-                &cursor, &occurrence_id)) ==
-           SPACE_EQUATION_CURSOR_ITEM) {
-        SpaceEquationOccurrence occurrence;
-        if (!space_equation_occurrence_resolve(
-                occurrence_id, &occurrence)) {
-            return NULL;
-        }
-        if (canonical ||
-            !prepared_sequence_fold_consumer_equation_is_canonical(
-                occurrence.equation, head, arity, consumer)) {
-            return NULL;
-        }
-        canonical = occurrence.equation;
-    }
-    if (step == SPACE_EQUATION_CURSOR_INVALIDATED ||
-        !space_read_token_is_current(cursor.read)) {
-        return NULL;
-    }
-    return canonical;
-}
-
-/* Expand only the exact authored consumer equation, before HE's ordinary
- * tuple interpreter can force the represented operand.  The generated row
- * identifies the evaluation context; the revision-pinned cursor and
- * structural check make edits, extra equations, and wildcard rules decline to
- * the general evaluator while remaining valid through imported overlays. */
-static bool prepared_sequence_fold_expand_authored_consumer(
-    Space *space, Arena *arena, Atom *call,
-    const Bindings *current_env, Atom **result_out,
-    Bindings *bindings_out) {
-    if (result_out)
-        *result_out = NULL;
-    if (!space || !arena || !call || !current_env || !result_out ||
-        !bindings_out || call->kind != ATOM_EXPR ||
-        call->expr.len == 0u) {
-        return false;
-    }
-    if (gslt_match_chain_trace_active())
-        return false;
-    Atom *head = call->expr.elems[0];
-    CettaExprLen arity = call->expr.len - 1u;
-    PreparedSequenceFoldConsumer consumer;
-    if (!prepared_sequence_fold_consumer_lookup(
-            head, arity, &consumer)) {
-        return false;
-    }
-    Atom *equation = prepared_sequence_fold_find_canonical_equation(
-        space, head, arity, &consumer);
-    if (!equation)
-        return false;
-
-    Atom *bound_call = bindings_apply_if_vars(
-        current_env, arena, call);
-    if (!bound_call)
-        return false;
-    EvalSingletonEquationExpansion expansion = {0};
-    bindings_init(&expansion.bindings);
-    CettaCount emitted = query_equations_visit_singleton(
-        equation, bound_call, arena,
-        eval_capture_singleton_equation_expansion, &expansion);
-    if (emitted != 1u || !expansion.found || expansion.failed) {
-        bindings_free(&expansion.bindings);
-        return false;
-    }
-    *result_out = expansion.result;
-    bindings_move(bindings_out, &expansion.bindings);
-    return true;
-}
-
-static bool prepared_sequence_cell_view(
-    const PreparedSequenceRepresentation *representation,
-    Atom *cell, bool *at_end_out, Atom **item_out, Atom **tail_out) {
-    if (at_end_out)
-        *at_end_out = false;
-    if (item_out)
-        *item_out = NULL;
-    if (tail_out)
-        *tail_out = NULL;
-    if (!representation || !cell || !at_end_out || !item_out ||
-        !tail_out) {
-        return false;
-    }
-    if (atom_is_symbol_id(cell, representation->empty)) {
-        *at_end_out = true;
-        return true;
-    }
-    if (cell->kind != ATOM_EXPR || cell->expr.len != 3u ||
-        !atom_is_symbol_id(cell->expr.elems[0], representation->cons)) {
-        return false;
-    }
-    *item_out = cell->expr.elems[1];
-    *tail_out = cell->expr.elems[2];
-    return true;
-}
-
-typedef struct {
-    SymbolId target;
-    CettaGsltSequenceErasureMode mode;
-    CettaExprLen minimum_arity;
-    CettaExprLen maximum_arity;
-} PreparedSequenceErasureOperation;
-
-static bool prepared_sequence_erasure_operation_lookup(
-    Atom *representation_key, SymbolId source,
-    PreparedSequenceErasureOperation *operation_out) {
-    if (!representation_key || representation_key->kind != ATOM_SYMBOL ||
-        source == SYMBOL_ID_NONE || !operation_out || !g_symbols) {
-        return false;
-    }
-    const char *requested = atom_name_cstr(representation_key);
-    bool found = false;
-#define MATCH_SEQUENCE_ERASURE(                                        \
-    name, source_name, target_name, erasure_mode, minimum, maximum) do {\
-    SymbolId authored_source = symbol_intern_cstr(                       \
-        g_symbols, (source_name));                                       \
-    if (!found && requested && strcmp(requested, (name)) == 0 &&         \
-        source == authored_source) {                                     \
-        operation_out->target = (erasure_mode) ==                        \
-                CETTA_GSLT_SEQUENCE_ERASURE_UNWRAP                       \
-            ? SYMBOL_ID_NONE                                             \
-            : symbol_intern_cstr(g_symbols, (target_name));              \
-        operation_out->mode = (erasure_mode);                            \
-        operation_out->minimum_arity = (minimum);                        \
-        operation_out->maximum_arity = (maximum);                        \
-        found = (erasure_mode) == CETTA_GSLT_SEQUENCE_ERASURE_UNWRAP ||  \
-                operation_out->target != SYMBOL_ID_NONE;                 \
-    }                                                                    \
-} while (0);
-    CETTA_GSLT_SEQUENCE_ERASURE_ROWS(MATCH_SEQUENCE_ERASURE)
-#undef MATCH_SEQUENCE_ERASURE
-    return found;
-}
-
-typedef struct {
-    Atom *source;
-    PreparedSequenceErasureOperation operation;
-    Atom **elements;
-    CettaExprIndex next_argument;
-    bool initialized;
-} PreparedSequenceErasureFrame;
-
-static bool prepared_sequence_erasure_push(
-    PreparedSequenceErasureFrame **frames, size_t *length,
-    size_t *capacity, Atom *source) {
-    if (!frames || !length || !capacity || !source)
-        return false;
-    if (*length == *capacity) {
-        size_t next = *capacity ? *capacity * 2u : 16u;
-        if (next <= *capacity ||
-            next > SIZE_MAX / sizeof(**frames)) {
-            return false;
-        }
-        *frames = cetta_realloc(*frames, sizeof(**frames) * next);
-        *capacity = next;
-    }
-    (*frames)[(*length)++] = (PreparedSequenceErasureFrame){
-        .source = source,
-    };
-    return true;
-}
-
-/* Erase an authored sequence producer to the flat free-monoid
- * representation only through generated homomorphism rows.  The explicit
- * heap stack makes a deeply nested append tree independent of the C stack.
- * An unlisted producer, malformed arity, or incomplete recursive child
- * declines the whole transformation. */
-static bool prepared_sequence_erase_source(
-    Atom *representation_key, Arena *arena, Atom *source,
-    Atom **erased_out, bool *already_value_out) {
-    if (erased_out)
-        *erased_out = NULL;
-    if (already_value_out)
-        *already_value_out = false;
-    if (!representation_key || !arena || !source || !erased_out ||
-        !already_value_out)
-        return false;
-
-    PreparedSequenceErasureFrame *frames = NULL;
-    size_t length = 0u;
-    size_t capacity = 0u;
-    if (!prepared_sequence_erasure_push(
-            &frames, &length, &capacity, source)) {
-        free(frames);
-        return false;
-    }
-
-    Atom *completed = NULL;
-    bool ok = false;
-    bool root_is_value = false;
-    while (length > 0u) {
-        PreparedSequenceErasureFrame *frame = &frames[length - 1u];
-        if (!frame->initialized) {
-            if (!frame->source || frame->source->kind != ATOM_EXPR ||
-                frame->source->expr.len == 0u ||
-                frame->source->expr.elems[0]->kind != ATOM_SYMBOL ||
-                !prepared_sequence_erasure_operation_lookup(
-                    representation_key,
-                    frame->source->expr.elems[0]->sym_id,
-                    &frame->operation)) {
-                break;
-            }
-            if (length == 1u) {
-                root_is_value = frame->operation.mode ==
-                    CETTA_GSLT_SEQUENCE_ERASURE_UNWRAP;
-            }
-            CettaExprLen arity = frame->source->expr.len - 1u;
-            if (arity < frame->operation.minimum_arity ||
-                arity > frame->operation.maximum_arity) {
-                break;
-            }
-            if (frame->operation.mode ==
-                    CETTA_GSLT_SEQUENCE_ERASURE_UNWRAP) {
-                completed = frame->source->expr.elems[1u];
-                length--;
-                goto deliver_completed_erasure;
-            }
-
-            frame->elements = arena_alloc(
-                arena, sizeof(*frame->elements) *
-                    (size_t)frame->source->expr.len);
-            if (!frame->elements)
-                break;
-            frame->elements[0] = atom_symbol_id(
-                arena, frame->operation.target);
-            if (!frame->elements[0])
-                break;
-            if (frame->operation.mode ==
-                    CETTA_GSLT_SEQUENCE_ERASURE_SCALAR_ALL) {
-                if (arity > 0u) {
-                    memcpy(
-                        frame->elements + 1u,
-                        frame->source->expr.elems + 1u,
-                        sizeof(*frame->elements) * (size_t)arity);
-                }
-                completed = atom_expr(
-                    arena, frame->elements,
-                    frame->source->expr.len);
-                if (!completed)
-                    break;
-                length--;
-                goto deliver_completed_erasure;
-            }
-            if (frame->operation.mode !=
-                    CETTA_GSLT_SEQUENCE_ERASURE_RECURSIVE_ALL) {
-                break;
-            }
-            frame->initialized = true;
-            frame->next_argument = 0u;
-        }
-
-        if (frame->next_argument < frame->source->expr.len - 1u) {
-            Atom *child = frame->source->expr.elems[
-                frame->next_argument + 1u];
-            frame->next_argument++;
-            if (!prepared_sequence_erasure_push(
-                    &frames, &length, &capacity, child)) {
-                break;
-            }
-            continue;
-        }
-
-        completed = atom_expr(
-            arena, frame->elements, frame->source->expr.len);
-        if (!completed)
-            break;
-        length--;
-
-deliver_completed_erasure:
-        if (length == 0u) {
-            *erased_out = completed;
-            *already_value_out = root_is_value;
-            ok = true;
-            break;
-        }
-        PreparedSequenceErasureFrame *parent = &frames[length - 1u];
-        if (!parent->initialized || !parent->elements ||
-            parent->next_argument == 0u ||
-            parent->next_argument >= parent->source->expr.len) {
-            break;
-        }
-        parent->elements[parent->next_argument] = completed;
-    }
-    free(frames);
-    return ok;
-}
-
 /* Execute a replay-safe, single-result lexical fold with one precise moving
- * root: the current accumulator.  Items may be children of a flat expression
- * or cells of an authored sequence representation.  Step evaluation happens
+ * root: the current accumulator.  Items are the children of a flat
+ * expression.  Step evaluation happens
  * in a resettable nursery; the next accumulator is evacuated into the
  * alternate carry arena before the prior carry is reclaimed.  All other fold
  * semantics retain the ordinary evaluator/search-machine path. */
@@ -19408,14 +18933,13 @@ static PreparedFoldResult prepared_foldl_single_result(
     Space *s, Arena *result_arena, Atom *items, Atom *initial,
     Atom *accumulator_binder, Atom *item_binder, Atom *step_expression,
     const Bindings *outer_environment, int fuel,
-    const PreparedSequenceRepresentation *representation,
     Atom **result_out) {
     if (result_out)
         *result_out = NULL;
     if (!s || !result_arena || !items || !initial ||
         !accumulator_binder || !item_binder || !step_expression ||
         !result_out || fuel >= 0 ||
-        (!representation && items->kind != ATOM_EXPR) ||
+        items->kind != ATOM_EXPR ||
         accumulator_binder->kind != ATOM_VAR ||
         item_binder->kind != ATOM_VAR ||
         hyperpose_atom_has_thread_local_resource(initial) ||
@@ -19440,16 +18964,9 @@ static PreparedFoldResult prepared_foldl_single_result(
     if (eval_current_language_id() == CETTA_LANGUAGE_PRIME)
         closed_step = prime_need_source_argument(closed_step, NULL);
     if (!closed_step || !closed_initial || !closed_items ||
-        (!representation && closed_items->kind != ATOM_EXPR) ||
+        closed_items->kind != ATOM_EXPR ||
         hyperpose_atom_has_thread_local_resource(closed_initial)) {
         return PREPARED_FOLD_NOT_APPLICABLE;
-    }
-    bool sequence_trace = representation &&
-        prime_need_trace_enabled() != 0;
-    if (sequence_trace) {
-        fputs("[prepared-sequence] items=", stderr);
-        atom_print(closed_items, stderr);
-        fputc('\n', stderr);
     }
     PreparedFoldSafety safety = {
         .space = s,
@@ -19587,31 +19104,10 @@ static PreparedFoldResult prepared_foldl_single_result(
         }
     }
     CettaExprIndex index = 0u;
-    Atom *sequence_cursor = closed_items;
     while (outcome == PREPARED_FOLD_VALUE) {
-        Atom *item = NULL;
-        if (representation) {
-            bool at_end = false;
-            Atom *tail = NULL;
-            if (!prepared_sequence_cell_view(
-                    representation, sequence_cursor,
-                    &at_end, &item, &tail)) {
-                if (sequence_trace) {
-                    fputs("[prepared-sequence] malformed-cell=", stderr);
-                    atom_print(sequence_cursor, stderr);
-                    fputc('\n', stderr);
-                }
-                outcome = PREPARED_FOLD_NOT_APPLICABLE;
-                break;
-            }
-            if (at_end)
-                break;
-            sequence_cursor = tail;
-        } else {
-            if (index >= closed_items->expr.len)
-                break;
-            item = closed_items->expr.elems[index++];
-        }
+        if (index >= closed_items->expr.len)
+            break;
+        Atom *item = closed_items->expr.elems[index++];
         if (!space_read_token_is_current(safety.read)) {
             outcome = PREPARED_FOLD_NOT_APPLICABLE;
             break;
@@ -37441,17 +36937,6 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
         return true;
     }
 
-    /* Prime has already had first refusal above, preserving call-time choice.
-     * HE may now expose an exact generated non-strict consumer equation before
-     * its typed/tuple argument interpreter.  This is ordinary authored
-     * equation expansion, not a second implementation of the fold. */
-    if (eval_current_language_id() == CETTA_LANGUAGE_HE &&
-        prepared_sequence_fold_expand_authored_consumer(
-            s, a, atom, current_env, tail_next, tail_env)) {
-        *tail_type = etype;
-        return true;
-    }
-
     /* Native source services retain their established demand above. Only
      * argument, equation and return interpretation becomes a continuation;
      * its publication target is the owned caller, not this C-local buffer. */
@@ -39186,7 +38671,6 @@ static bool prepared_minimal_worker_call(
             expr_arg(atom, 0u), expr_arg(atom, 1u),
             expr_arg(atom, 2u), expr_arg(atom, 3u),
             expr_arg(atom, 4u), outer_environment, fuel,
-            NULL,
             &fold_value);
         if (folded == PREPARED_FOLD_VALUE) {
             *outcome = cetta_call_completed_value(fold_value);
@@ -39196,148 +38680,6 @@ static bool prepared_minimal_worker_call(
             *outcome = cetta_call_interrupted();
             return true;
         }
-    }
-
-    if (head_id == g_builtin_syms.minimal_foldl_sequence && nargs == 7u) {
-        PreparedSequenceRepresentation representation;
-        if (!prepared_sequence_representation_lookup(
-                expr_arg(atom, 0u), &representation)) {
-            return false;
-        }
-        Atom *space_atom = expr_arg(atom, 6u);
-        Space *fold_space =
-            space_atom && space_atom->kind == ATOM_GROUNDED &&
-                    space_atom->ground.gkind == GV_SPACE
-                ? payload_resolve_space_read((Space *)space_atom->ground.ptr)
-                : NULL;
-        Atom *fold_value = NULL;
-        Atom *sequence_items = expr_arg(atom, 1u);
-        bool projected_source = false;
-        bool erasure_attempted = false;
-        bool erasure_admitted = false;
-        Atom *sequence_source = prime_need_source_argument(
-            sequence_items, &projected_source);
-        PreparedFoldResult folded = PREPARED_FOLD_NOT_APPLICABLE;
-        if (!projected_source) {
-            folded = prepared_foldl_single_result(
-                fold_space, a,
-                sequence_items, expr_arg(atom, 2u),
-                expr_arg(atom, 3u), expr_arg(atom, 4u),
-                expr_arg(atom, 5u), outer_environment, fuel,
-                &representation, &fold_value);
-        }
-        if (folded == PREPARED_FOLD_NOT_APPLICABLE) {
-            erasure_attempted = true;
-            Arena producer_scratch;
-            arena_init(&producer_scratch);
-            arena_set_runtime_kind(
-                &producer_scratch, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
-            arena_set_hashcons(&producer_scratch, NULL);
-            Atom *erased_source = NULL;
-            bool erased_is_value = false;
-            bool erased = prepared_sequence_erase_source(
-                    expr_arg(atom, 0u), &producer_scratch,
-                    sequence_source, &erased_source,
-                    &erased_is_value);
-            if (erased) {
-                erasure_admitted = true;
-                cetta_runtime_stats_inc(
-                    CETTA_RUNTIME_COUNTER_PREPARED_SEQUENCE_ERASURE_ADMISSION);
-            }
-            CettaCallOutcome produced_return = {0};
-            bool produced_ready = erased && (erased_is_value
-                ? (produced_return = cetta_call_completed_value(erased_source), true)
-                : prepared_pure_closed_call_try(fold_space, &producer_scratch,
-                    erased_source, fuel, false, true, NULL, &produced_return));
-            if (produced_ready && produced_return.kind != CETTA_CALL_VALUE) {
-                *outcome = produced_return;
-                arena_free(&producer_scratch);
-                return true;
-            }
-            Atom *produced = produced_ready ? produced_return.term : NULL;
-            if (produced) {
-                folded = prepared_foldl_single_result(
-                    fold_space, a,
-                    produced, expr_arg(atom, 2u),
-                    expr_arg(atom, 3u), expr_arg(atom, 4u),
-                    expr_arg(atom, 5u), outer_environment, fuel,
-                    NULL, &fold_value);
-            }
-            arena_free(&producer_scratch);
-        }
-        if (folded == PREPARED_FOLD_VALUE) {
-            if (erasure_admitted) {
-                cetta_runtime_stats_inc(
-                    CETTA_RUNTIME_COUNTER_PREPARED_SEQUENCE_ERASURE_COMMIT);
-            }
-            *outcome = cetta_call_completed_value(fold_value);
-            return true;
-        }
-        if (folded == PREPARED_FOLD_INTERRUPTED) {
-            *outcome = cetta_call_interrupted();
-            return true;
-        }
-        if (erasure_attempted) {
-            cetta_runtime_stats_inc(
-                CETTA_RUNTIME_COUNTER_PREPARED_SEQUENCE_ERASURE_DECLINE);
-        }
-
-        Atom *sequence_value = atom_var_with_id(
-            a, "$__prepared_sequence_value", fresh_var_id());
-        Atom *evaluate_sequence = projected_source
-            ? expr_arg(atom, 1u)
-            : (eval_current_language_id() == CETTA_LANGUAGE_HE
-                ? atom_expr(a, (Atom *[]){
-                    atom_symbol_id(a, g_builtin_syms.metta),
-                    expr_arg(atom, 1u), atom_symbol(a, "%Undefined%"),
-                    atom_space(a, fold_space)}, 4u)
-                : atom_expr2(a, atom_symbol_id(a, g_builtin_syms.eval),
-                             expr_arg(atom, 1u)));
-        Atom *materialized_items = atom_expr2(
-            a, atom_symbol_id(a, representation.materializer),
-            sequence_value);
-        Atom *ordinary_fold = atom_expr(
-            a,
-            (Atom *[]){
-                atom_symbol_id(a, representation.fallback_fold),
-                materialized_items,
-                expr_arg(atom, 2u),
-                expr_arg(atom, 3u),
-                expr_arg(atom, 4u),
-                expr_arg(atom, 5u),
-            },
-            6u);
-        /* The fallback materializes a producer and invokes a higher-level
-         * fold.  Unlike the admitted worker, neither is a single raw step. */
-        Atom *evaluate_fold = eval_current_language_id() == CETTA_LANGUAGE_HE
-            ? atom_expr(a, (Atom *[]){
-                atom_symbol_id(a, g_builtin_syms.metta), ordinary_fold,
-                atom_symbol(a, "%Undefined%"), atom_space(a, fold_space)}, 4u)
-            : atom_expr2(a, atom_symbol_id(a, g_builtin_syms.eval), ordinary_fold);
-        Atom *folded_value = atom_var_with_id(
-            a, "$__prepared_sequence_folded", fresh_var_id());
-        Atom *return_folded = atom_expr2(
-            a, atom_symbol_id(a, g_builtin_syms.return_text), folded_value);
-        Atom *finish_fold = atom_expr(
-            a,
-            (Atom *[]){
-                atom_symbol_id(a, g_builtin_syms.chain),
-                evaluate_fold,
-                folded_value,
-                return_folded,
-            },
-            4u);
-        Atom *fallback = atom_expr(
-            a,
-            (Atom *[]){
-                atom_symbol_id(a, g_builtin_syms.chain),
-                evaluate_sequence,
-                sequence_value,
-                finish_fold,
-            },
-            4u);
-        *outcome = cetta_call_value(fallback);
-        return true;
     }
 
     return false;
@@ -52566,7 +51908,6 @@ static PettaMachineFoldResult petta_eval_machine_foldl_single_result(
         space, arena, items, initial,
         accumulator_binder, item_binder, step_expression,
         environment, eval_context ? eval_context->fuel : -1,
-        NULL,
         result_out);
     switch (result) {
     case PREPARED_FOLD_VALUE:
@@ -57415,10 +56756,14 @@ prepared_pure_closed_answers_try(
         plan.call_mode != CETTA_GSLT_PURE_CALL_EAGER) {
         return CETTA_PREPARED_PURE_ANSWERS_DECLINED;
     }
+    /* The call is read as the program runs it: its arguments as values
+     * where the plan keeps them as they are, as source it first evaluates
+     * otherwise. */
     bool he_completed_result = false;
     if (plan.language_id == CETTA_LANGUAGE_HE &&
-        !he_prepared_completion_admit(space, destination, &plan.invocation, call,
-            plan.cache_entry_arguments_are_values, &he_completed_result))
+        !he_prepared_completion_admit(space, destination, NULL, call,
+                                      plan.cache_entry_arguments_are_values,
+                                      &he_completed_result))
         return CETTA_PREPARED_PURE_ANSWERS_DECLINED;
     CettaCount he_result_start = outcomes->len;
     if (!plan.cache_entry_arguments_are_values) {
@@ -59429,7 +58774,11 @@ tail_call: ;
         return;
     atom = materialize_runtime_token(s, a, atom);
     uint64_t need_thunk_id = 0u;
-    if (prime_need_ref_is_active(atom, &need_thunk_id)) {
+    /* An Atom demand reads what it is given as data.  A suspended argument
+     * there is the argument as written, as it is inside any expression that
+     * demand keeps, and is not run. */
+    if (prime_need_ref_is_active(atom, &need_thunk_id) &&
+        !atom_is_symbol_id(etype, g_builtin_syms.atom)) {
 #if CETTA_PRIME_EVAL_STACK
         if (prime_eval_stack_schedule_force(
                 s, a, atom, need_thunk_id, fuel, os))
@@ -59690,9 +59039,7 @@ tail_call: ;
     bool he_expected_typed_head = he_expected &&
         head_id != SYMBOL_ID_NONE &&
         !space_head_call_untyped(s, head_id, nargs);
-    if (!he_expected_typed_head &&
-        !prepared_sequence_fold_consumer_requires_authored_expansion(
-            head, nargs)) {
+    if (!he_expected_typed_head) {
         if (prepared_pure_closed_call_try(
                 s, a, atom, fuel, false, false, program_cache, &prepared_return)) {
             if (prepared_return.kind == CETTA_CALL_FAILURE) {
