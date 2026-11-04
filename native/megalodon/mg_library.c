@@ -878,7 +878,10 @@ static bool import_param(Importer *im, const MgSx *x) {
     uint32_t h = intern(im, hash);
     const MgDecl *d = existing(im, h, MG_NS_TERM);
     if (d) {
-        if (d->type == type && !d->def) {
+        /* The same identity is the same object, whatever its spelling: a
+         * later document that declares a known definition by its hash, as
+         * Megalodon documents restate their predecessors, refers to it. */
+        if (d->type == type) {
             ++im->r->repeated;
             return true;
         }
