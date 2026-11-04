@@ -188,7 +188,6 @@ tests/test_change_state_first_arg_type_error.metta	he	metta	extended	main	native
 tests/test_change_state_partial_arity.metta	he	metta	extended	main	native	test	golden	-
 tests/test_checkpoint_disease_route_probe.metta	he	metta	extended	main	native	test-heavy	probe	heavy WM-PLN disease route probe
 tests/test_checkpoint_group_extract_cross_form_regression.metta	he	metta	extended	main	native	test-heavy	golden	heavy backend golden regression
-tests/test_clist_syntax.metta	he	metta	extended	main	native	test	golden	-
 tests/test_closed_stream_fastpath.metta	he	metta	extended	main	native	test-backend-dedicated	golden	dedicated backend or bridge golden regression
 tests/test_closed_stream_runtime_stats.metta	he	metta	extended	runtime-stats	native	test-backend-dedicated	golden	dedicated backend or bridge golden regression
 tests/test_collapse_add_next_atom_from_collapse_bind_result.metta	he	metta	extended	main	native	test	golden	-
