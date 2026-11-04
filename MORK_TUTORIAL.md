@@ -1,6 +1,21 @@
 # MORK Tutorial
 
-A practical guide to the `mork:` lane in CeTTa.
+This guide uses **HE syntax** and CeTTa's optional MORK bridge. PeTTa is the
+CLI default, so select HE explicitly for these examples.
+
+From the repository root, with the MORK and PathMap checkouts configured as
+[described in the README](README.md#bridge-builds-mork-and-pathmap):
+
+```bash
+make BUILD=mork
+./cetta --lang he --quiet examples/mork_mm2_showcase.metta
+```
+
+Save a complete MeTTa block as a `.metta` file and run it with
+`./cetta --lang he file.metta`. Blocks using `&ws` continue from the block
+that creates it. The MM2 example later in the guide selects `--lang mm2`.
+
+A practical guide to the `mork:` operations follows.
 
 This guide assumes you broadly know MeTTa or PeTTa syntax, but **not**
 necessarily MM2, MORK, or PathMap internals yet.
@@ -10,7 +25,7 @@ The short version:
 - load `lib/mork.metta`
 - create a `MorkSpace` with `mork:new-space`
 - use `mork:add-atom`, `mork:match`, `mork:get-atoms`, `mork:size`, `mork:clone`, and `mork:step!`
-- use `mork:` algebra as destination-mutating space operations, and use cursor operators when you want machine-close PathMap/MORK behavior
+- use `mork:` algebra as destination-mutating space operations, and use cursor operators when you want direct PathMap/MORK traversal
 - do **not** treat `MorkSpace` as an ordinary generic `Space`
 
 The stack, in one picture:
@@ -24,7 +39,7 @@ So if you are a MeTTa user, the important shift is:
 
 - ordinary CeTTa spaces can be native or PathMap-backed
 - `MorkSpace` gives you **direct access to MORK via MM2** — you write `exec` rules in the MM2 language, step them to fixpoint, and inspect the results
-- the `mork:` interface additionally exposes **explicit PathMap algebra** (`join`, `meet`, `subtract`, `prefix-restrict`) and **trie cursor** operations that ordinary spaces don't interface
+- the `mork:` interface additionally exposes **explicit PathMap algebra** (`join`, `meet`, `subtract`, `prefix-restrict`) and **trie cursor** operations that ordinary spaces do not expose
 
 Further reading:
 
@@ -32,16 +47,16 @@ Further reading:
 - [Data in MORK](https://github.com/trueagi-io/MORK/wiki/Data-in-MORK)
 - [MM2 Structuring Code](https://github.com/ClarkeRemy/MM2_Structuring_Code)
 
-**Build prerequisites:** The `mork:` interface requires specific branches of MORK and PathMap. See the "MORK Bridge Prerequisites" section in `README.md` for exact branch/commit requirements.
+**Build prerequisites:** The `mork:` interface requires specific branches of MORK and PathMap. See [Bridge builds](README.md#bridge-builds-mork-and-pathmap) for the expected checkouts and configuration commands.
 
 **Why use MorkSpace?**
 
-MorkSpace exposes capabilities that ordinary spaces don't interface:
+MorkSpace exposes capabilities that ordinary spaces do not expose:
 
 - **MM2 exec stepping** — write forward-chaining `exec` rules in the MM2 language, step them to fixpoint inside the space
 - **PathMap algebra** — `join`, `meet`, `subtract`, `prefix-restrict` operate directly on the trie
-- **Structural sharing** — `mork:clone` is cheap (Arc refcounting on trie nodes), so branch-and-explore costs nearly nothing
-- **ACT persistence** — dump a live space to a compiled binary format and reopen it instantly
+- **Structural sharing** — `mork:clone` shares trie nodes; metadata and later edits determine its additional work
+- **ACT persistence** — dump a live space to a compiled binary format and reopen it without reparsing the original text
 
 If you just need `add-atom` / `match` / `remove-atom`, ordinary spaces work fine. MorkSpace is for when you need MM2 rules, algebra, or persistence.
 
@@ -236,7 +251,7 @@ For raw `.mm2` files at the CLI, use:
 
 ## 5. ACT Dump, Load, And Open
 
-ACT (Atom-Compiled Trie) is MORK's binary persistence format. It serializes a live PathMap trie to disk so you can reload it without reparsing. Think of it as a compiled snapshot — fast to open, portable between sessions.
+ACT (Atom-Compiled Trie) is MORK's binary persistence format. It serializes a live PathMap trie to disk so you can reload it without reparsing. Think of it as a compiled snapshot — readable across sessions by compatible builds.
 
 Dump a live space to ACT:
 
@@ -692,7 +707,7 @@ Negative example:
 ### MM2 exec stepping
 
 ```bash
-./cetta --quiet examples/mork_mm2_showcase.metta
+./cetta --lang he --quiet examples/mork_mm2_showcase.metta
 ```
 
 Two edges, one exec rule, step to fixpoint:
@@ -712,7 +727,7 @@ The rule fired once, derived `(path a c)`, then a second step found nothing new.
 ### Algebra
 
 ```bash
-./cetta --quiet examples/mork_algebra_showcase.metta
+./cetta --lang he --quiet examples/mork_algebra_showcase.metta
 ```
 
 Two transit route networks — meet finds shared segments, subtract finds unique ones, join merges and derives reachability:
@@ -730,7 +745,7 @@ The later branch-and-explore section shows why `mork:clone` matters before mutat
 ### Integrated MM2 + MeTTa
 
 ```bash
-./cetta --quiet examples/mork_mm2_metta_showcase.metta
+./cetta --lang he --quiet examples/mork_mm2_metta_showcase.metta
 ```
 
 MM2 derives a fact, then ordinary MeTTa equations annotate it with semantic metadata:
@@ -756,7 +771,7 @@ MM2 derives a fact, then ordinary MeTTa equations annotate it with semantic meta
 ### Counterexample loom
 
 ```bash
-./cetta --quiet examples/counterexample_loom.metta
+./cetta --lang he --quiet examples/counterexample_loom.metta
 ```
 
 MeTTa searches over MM2 rule subsets; MORK saturates each candidate independently. See Section 13 for the full walkthrough.
@@ -775,7 +790,7 @@ No single bundle passes all scenarios — that's the answer.
 ### Substrate inspection (advanced)
 
 ```bash
-./cetta --quiet examples/mork_showcase.metta
+./cetta --lang he --quiet examples/mork_showcase.metta
 ```
 
 Exercises zippers, prefix-restrict, overlay, and product cursors on a two-edge space:
@@ -971,7 +986,7 @@ The final search uses `superpose` to nondeterministically check all candidates:
 - **Combinatorial search**: MeTTa's `superpose` drives the hypothesis space, MORK drives the deduction
 
 ```bash
-./cetta --quiet examples/counterexample_loom.metta
+./cetta --lang he --quiet examples/counterexample_loom.metta
 ```
 
 ## 14. Current Interface Boundary

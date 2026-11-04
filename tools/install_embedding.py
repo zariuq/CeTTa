@@ -35,10 +35,11 @@ def main():
     link.symlink_to('libcetta.so.1')
     shutil.copy2(args.static, staged(libdir / 'libcetta.a'))
     shutil.copy2(ROOT / 'include/cetta_embed.h', staged(includedir / 'cetta_embed.h'))
+    shutil.copy2(ROOT / 'LICENSE', staged(datadir / 'LICENSE'))
     companion = staged(datadir / 'runtime/cetta-proc-scope')
     companion.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(ROOT / 'runtime/cetta-proc-scope', companion)
-    for name in ('lib', 'langdef'):
+    for name in ('lib', 'langdef', 'LICENSES'):
         for source in (ROOT / name).rglob('*'):
             if not source.is_file() or source.suffix in ('.o', '.d', '.pyc') or '__pycache__' in source.parts:
                 continue

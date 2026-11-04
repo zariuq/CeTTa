@@ -12,6 +12,7 @@
 #include "parser_pack_glr_v1.h"
 #include "parser_pack_native_v1.h"
 #include "symbol.h"
+#include "runtime_names.h"
 
 #include <stdbool.h>
 #include <pthread.h>
@@ -207,10 +208,13 @@ typedef struct {
     CettaJsonKernelV1 kernel;
     bool passed;
     char error[512];
+    CettaNameContext names;
 } JsonConcurrentCase;
 
 static void *json_concurrent_parse(void *opaque) {
     JsonConcurrentCase *test = (JsonConcurrentCase *)opaque;
+    CettaNameContext previous = cetta_name_context_current();
+    cetta_name_context_install(&test->names);
     CettaJsonRuntimeV1Limits limits;
     Arena arena;
     uint32_t iteration;
@@ -232,6 +236,7 @@ static void *json_concurrent_parse(void *opaque) {
                 &limits, &value, &status,
                 test->error, sizeof(test->error))) {
             arena_free(&arena);
+            cetta_name_context_install(&previous);
             return NULL;
         }
         actual = render(value);
@@ -242,6 +247,7 @@ static void *json_concurrent_parse(void *opaque) {
                 test->error, sizeof(test->error),
                 "concurrent JSON result disagreement for %s", test->source);
             arena_free(&arena);
+            cetta_name_context_install(&previous);
             return NULL;
         }
         free(actual);
@@ -249,31 +255,33 @@ static void *json_concurrent_parse(void *opaque) {
     }
     test->passed = true;
     arena_free(&arena);
+    cetta_name_context_install(&previous);
     return NULL;
 }
 
 static void concurrent_runtime_gate(TestCounts *counts,
                                     const CettaJsonRuntimeV1 *runtime) {
+    CettaNameContext names = cetta_name_context_current();
     JsonConcurrentCase cases[] = {
         {runtime, "null", "JsonNullV1",
-         CETTA_JSON_KERNEL_V1_PACKED_GLL, false, {0}},
+         CETTA_JSON_KERNEL_V1_PACKED_GLL, false, {0}, names},
         {runtime, "[true,false]",
          "(JsonArrayV1 ((JsonBoolV1 True) (JsonBoolV1 False)))",
-         CETTA_JSON_KERNEL_V1_PACKED_GLR, false, {0}},
+         CETTA_JSON_KERNEL_V1_PACKED_GLR, false, {0}, names},
         {runtime, "{\"x\":1,\"x\":2}",
          "(JsonObjectV1 ((JsonMemberV1 0 (JsonStringV1 ((cp 120))) "
          "(JsonNumberV1 \"1\") (JsonSourceSpanV1 1 6)) "
          "(JsonMemberV1 1 (JsonStringV1 ((cp 120))) "
          "(JsonNumberV1 \"2\") (JsonSourceSpanV1 7 12))))",
-         CETTA_JSON_KERNEL_V1_PACKED_GLL_GLR_DUAL, false, {0}},
+         CETTA_JSON_KERNEL_V1_PACKED_GLL_GLR_DUAL, false, {0}, names},
         {runtime, "\"\xce\xbb\"", "(JsonStringV1 ((cp 955)))",
-         CETTA_JSON_KERNEL_V1_PACKED_GLL_GLR_DUAL, false, {0}},
+         CETTA_JSON_KERNEL_V1_PACKED_GLL_GLR_DUAL, false, {0}, names},
         {runtime, "{ }", "(JsonObjectV1 ())",
-         CETTA_JSON_KERNEL_V1_PACKED_GLL, false, {0}},
+         CETTA_JSON_KERNEL_V1_PACKED_GLL, false, {0}, names},
         {runtime, "[ ]", "(JsonArrayV1 ())",
-         CETTA_JSON_KERNEL_V1_PACKED_GLR, false, {0}},
+         CETTA_JSON_KERNEL_V1_PACKED_GLR, false, {0}, names},
         {runtime, "[{ },[ ]]", "(JsonArrayV1 ((JsonObjectV1 ()) (JsonArrayV1 ())))",
-         CETTA_JSON_KERNEL_V1_PACKED_GLL_GLR_DUAL, false, {0}},
+         CETTA_JSON_KERNEL_V1_PACKED_GLL_GLR_DUAL, false, {0}, names},
     };
     pthread_t threads[sizeof(cases) / sizeof(cases[0])];
     uint32_t created = 0u;
