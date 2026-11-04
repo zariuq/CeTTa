@@ -14,7 +14,7 @@ int main(void) {
         memcpy(&value, &state, sizeof(value));
         if (i < sizeof(edges) / sizeof(*edges)) value = edges[i];
         if (!isfinite(value)) continue;
-        double actual_up = up(value), actual_down = down(value);
+        double actual_up = cetta_numeric_up(value), actual_down = cetta_numeric_down(value);
         double reference_up = nextafter(value, INFINITY);
         double reference_down = nextafter(value, -INFINITY);
         assert(!memcmp(&actual_up, &reference_up, sizeof(double)));

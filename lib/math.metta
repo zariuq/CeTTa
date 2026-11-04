@@ -114,13 +114,13 @@
   (@return "Logarithm result as a Number when both arguments are in the real domain"))
 
 (@doc math:ln
-  (@desc "Natural logarithm in the math: namespace, implemented as log base EXP.")
+  (@desc "Natural logarithm in the math: namespace, implemented as log base e.")
   (@params (
     (@param "Input value")))
   (@return "Natural logarithm as a Number when the input is positive"))
 
 (@doc math:exp
-  (@desc "Exponential function in the math: namespace, implemented as EXP raised to the given power.")
+  (@desc "Exponential function in the math: namespace, implemented as e raised to the given power.")
   (@params (
     (@param "Exponent")))
   (@return "e raised to the given power"))

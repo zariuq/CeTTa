@@ -184,9 +184,11 @@ static AtomId petta_projection_variable_bytes(
                                 : 16u;
             if (next < context->variable_cap)
                 return CETTA_ATOM_ID_NONE;
-            context->variables = cetta_realloc(
+            PeTTaVariableEntryV1 *variables = cetta_realloc(
                 context->variables,
                 (size_t)next * sizeof(*context->variables));
+            if (!variables) return CETTA_ATOM_ID_NONE;
+            context->variables = variables;
             context->variable_cap = next;
         }
         context->variables[context->variable_len++] =

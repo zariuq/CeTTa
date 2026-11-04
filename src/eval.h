@@ -14,6 +14,22 @@ typedef struct CettaLibraryContext CettaLibraryContext;
 /* Cooperatively poll the active execution's interruption at a blocking
  * native boundary. A true result must release owned host work and unwind. */
 bool eval_native_interrupted(void);
+typedef struct CettaEvalCancellationPair {
+    _Atomic bool *owner;
+    _Atomic bool *query;
+    const struct CettaEvalCancellationPair *parent;
+} CettaEvalCancellationPair;
+typedef struct {
+    _Atomic bool *token;
+    bool observed;
+    const CettaEvalCancellationPair *previous_pair;
+    CettaEvalCancellationPair pair;
+} CettaEvalCancellationScope;
+void eval_cancellation_enter(CettaEvalCancellationScope *, _Atomic bool *);
+/* Compose a retained query's cancellation with its active engine owner.
+ * A nested independent engine still establishes its own root scope. */
+void eval_cancellation_enter_query(CettaEvalCancellationScope *, _Atomic bool *);
+void eval_cancellation_leave(CettaEvalCancellationScope *);
 /* Opaque revision of a live owned retained computation; NULL if not owned. */
 Atom *eval_current_work_epoch(Arena *arena, Atom *handle);
 struct CettaPettaTokenSpaceClauseRegistry;
@@ -580,6 +596,9 @@ bool eval_prime_install_standard_library(Space *space, Arena *arena);
 /* Select an existing invocation context without initializing its options.
  * The scoped caller restores the returned context before yielding. */
 CettaLibraryContext *eval_swap_library_context(CettaLibraryContext *next);
+/* Scoped host entry preserves the engine's own options. The returned
+ * context is reinstalled by the caller at the end of this execution. */
+CettaLibraryContext *eval_exchange_library_context(CettaLibraryContext *ctx);
 CettaLibraryContext *eval_current_library_context(void);
 /* The live application root of the current top evaluation. Observation only;
  * callers retain no lifetime/authority by saving this borrowed pointer. */
@@ -604,6 +623,10 @@ bool eval_prime_lf_guest_evaluate(Arena *a, Atom *request,
 bool eval_prime_hol_guest_evaluate(Arena *a, Atom *request,
                                    Atom **answer_out, Atom **reason_out);
 bool eval_prime_hol_guest_running(void);
+/* Called after retained computations have released any named lock. */
+void eval_named_mutex_registry_free(CettaLibraryContext *);
+bool eval_named_mutex_acquire(CettaLibraryContext *, Arena *, Atom *, void **);
+void eval_named_mutex_release(void *);
 
 /* Rhometta deferred payload mode: each payload evaluates against a
  * sibling-isolated transactional snapshot.  The flag marks that context; the
@@ -659,6 +682,17 @@ bool eval_payload_track_scratch_state(StateCell *cell);
  * the registry teardown pass). Return false before exposing an unowned
  * initialized shell; cleanup ownership does not publish its contents. */
 bool eval_track_new_space(Space *space);
+typedef struct CettaEvalResources CettaEvalResources;
+typedef struct CettaEvalGc CettaEvalGc;
+CettaEvalGc *eval_resources_collector(CettaEvalResources *);
+CettaEvalGc *eval_collector_exchange(CettaEvalGc *);
+struct PettaProgram;
+CettaEvalResources *eval_resources_new(void);
+void eval_resources_set_native_memory(CettaEvalResources *, CettaNativeMemory *);
+CettaEvalResources *eval_resources_exchange(CettaEvalResources *);
+/* The session retires registry-owned spaces separately. Their identities
+ * remain in the registry until these tracked resources have been released. */
+void eval_resources_free(CettaEvalResources *, struct PettaProgram *, Registry *, Space *);
 void eval_cleanup_owned_new_spaces_for_current_thread(void);
 void eval_drain_owned_new_spaces_for_current_thread(void);
 void eval_match_decision_cache_free_for_current_thread(void);

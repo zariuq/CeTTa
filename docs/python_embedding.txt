@@ -1,0 +1,442 @@
+CeTTa Python embedding (development package)
+
+The package provides PeTTa and HE calls, retained structured answers, spaces,
+query streams, host callbacks and NumPy interchange, including retained
+foreign-byte-order views and sparse COO/CSR/CSC data. PeTTa is the default.
+The tested Linux platforms and remaining platform limits are recorded below.
+
+Build requirements
+
+Use CPython 3.11–3.15 with development headers, a C11 compiler, GNU Make
+4.3 or newer and GMP development headers.
+The embedding core does not require SWI-Prolog, Rust or C++. Rust is used only
+by an optional ABI conformance test.
+
+From a checkout of the embedding branch:
+
+    python -m pip install .
+
+For development:
+
+    python -m pip install -e .
+
+Make owns native sources and generation; the Python build invokes it. Installed
+packages include their language libraries and locate them without relying on
+the working directory. Source installations compile for the local system.
+Portable manylinux and musllinux wheels require the separate container campaign.
+
+Import proc explicitly to use process operations. Its owned-process lifetime
+uses the packaged companion; no companion needs to be installed beside Python.
+
+Everyday use
+
+    from cetta import Engine
+
+    with Engine() as engine:
+        engine.run('(= (double $x) (* $x 2))')
+        answers = engine.call('double', 21)
+        print(answers.to_python())  # [42]
+
+Engine.run processes a document: ordinary forms are declarations, and ! forms
+are evaluated. Answers.groups preserves the separate result group of every
+directive, including a group with no answers. Engine.eval accepts a single
+expression or an Atom. Engine.call invokes a name or callable on values.
+An argument that looks like code remains data; use eval to execute source.
+Neither answers nor groups discard duplicates.
+
+Load a source file with engine.load(path); it accepts pathlib.Path, strings and
+byte paths, and returns the same directive groups as run. Relative imports
+resolve from the file according to the selected language's import policy,
+without changing the process working directory. A query opened while a file
+runs keeps that import context when resumed later.
+
+Use engine.import_(spec, target=None) for the language's import! operation:
+
+    from pathlib import Path
+
+    with Engine() as engine:
+        engine.import_("(library str)")
+        engine.import_(Path("definitions.metta"))
+
+A string spec is MeTTa syntax; a Path is a file name. Nonstandard library names
+follow the dialect: PeTTa uses "(library tensor)", while HE uses "tensor".
+The default target is the root space. PeTTa also accepts a Space target; HE
+uses its ordinary fresh-name module destinations, such as target="helpers".
+Access the latter through engine.space_from_atom(engine.eval("&helpers")[0]).
+Invalid destinations retain their language-defined result, including Error data.
+
+load explicitly executes a document. A later import_ of a successfully loaded
+file into the same logical target uses the existing import inventory. A failed
+load is not recorded as completed: its published answers and committed effects
+remain, and an explicit retry may execute that prefix again. Missing or unreadable
+files raise OSError with errno and filename; syntax, language control and fuel
+exhaustion retain their distinct EvaluationError statuses.
+
+Python strings become language strings. Use engine.symbol('name') or
+cetta.Symbol('name') for a symbol. Integers, booleans, floats and Fraction values
+have separate structured conversions; Python integers retain their exact value.
+Constructing an expression does not execute it.
+PeTTa predicates answer with the symbols true and false. Atom.as_bool() converts
+these explicitly; to_python() preserves them as Symbol values.
+
+    with Engine() as engine:
+        variable = engine.variable('x')
+        pair = engine.expression(variable, variable)
+
+Reusing a variable preserves its identity. Creating another variable with the
+same display name creates a distinct variable.
+
+Answers retain their storage independently of the engine's Python object.
+Closing an engine prevents new execution; retained answers remain readable.
+Atoms belong to an engine. Passing one to another engine reports an error.
+Independent engines can run concurrently; calls into one engine are serialized.
+
+An EvaluationError has a typed status string and an answers attribute containing
+the answers produced before interruption. A fuel argument limits semantic
+execution for each directive: -1 is unbounded, and 0 permits no computation.
+Query stepping uses a physical allowance separate from semantic fuel.
+
+Query streams
+
+    with Engine() as engine:
+        engine.run('(= (pick a) 11) (= (pick b) 22)')
+        with engine.query('(pick $x)') as query:
+            for answer in query:
+                print(answer.to_python(), answer.bindings['x'].to_python())
+
+Iteration advances the same retained computation and preserves duplicate
+answers. Query.batch(n) takes at most n answers; Query.all() collects the rest.
+Use the context manager or close() when stopping early. Answers and bindings
+already returned remain readable after query or engine closure.
+
+Query.step(allowance) optionally exposes one execution slice. Its result has
+state, answers, physical_steps, source_steps and source_remaining. A zero
+allowance advances no source work and can still observe cancellation. The
+fuel argument limits the query's cumulative source credit, independently of
+how execution is sliced. Query.cancel() interrupts only that query.
+
+Bindings accept a variable Atom as a key by scoped identity, or a display name
+when it selects exactly one variable. Bindings.constraints and Atom.delayed
+preserve equality and conditional-goal metadata separately from answer values.
+
+KeyboardInterrupt during ordinary iteration closes the query while preserving
+committed effects and leaving the engine usable. PeTTa is the default language.
+Use Engine(language="he") to select HE's ordinary interpretation policy.
+HE closes an operation's input frontier before entering its bodies, then
+publishes completed answers without running later bodies ahead of the consumer.
+Error and Empty candidates wait for completion when a later successful answer
+could suppress them. These are language rules, independent of execution slices.
+
+Spaces
+
+    with Engine() as engine:
+        facts = engine.new_space()
+        facts.add_atom(engine.parse('(temperature Prague 18)'))
+        facts.add_atom(engine.parse('(temperature Brno 20)'))
+        with facts.match('(temperature $city $degrees)') as query:
+            for answer in query:
+                print(answer.bindings['city'].to_python(),
+                      answer.bindings['degrees'].to_python())
+
+engine.space accesses the engine's root space. A new space is independent.
+Space.as_atom() passes a space to language functions; engine.space_from_atom()
+creates another handle to the same space. Facts retain duplicates.
+
+Space.match(pattern) returns each matching fact as data, even when its shape
+names a function. An explicit template, as in facts.match('(temperature $c $t)',
+'(+ $t 1)'), is evaluated by the language. Variables from the pattern remain
+available in answer.bindings even when the template does not mention them.
+When both arguments are source strings they share a lexical scope. Structured
+patterns and templates share variables by reusing the same variable Atom.
+
+Use Space.add_atom(engine.parse(source)) for source-shaped facts. Space.add_atom('text')
+stores a String. len(space) counts occurrences; get_atoms() or iter(space)
+streams the facts.
+Space.remove_atom(fact) reports whether any occurrence was removed, using the active
+language's semantics: PeTTa removes every matching occurrence and HE removes
+one. Queries and retained results keep their target space alive after its
+Python wrapper is released. Closing the engine prevents further space work.
+
+Nonstandard libraries are explicit:
+
+    with Engine() as engine:
+        engine.import_("(library str)")
+        engine.call('str:starts-with', 'hello', 'he')
+
+The Python package neither initializes a second Python interpreter nor replaces
+Hyperon or Janus modules in the hosting interpreter.
+
+Python callbacks
+
+    from cetta import Callback, Engine
+
+    with Engine() as engine:
+        engine.register_callback('host:twice', Callback(lambda x: x * 2, arity=1))
+        assert engine.call('host:twice', 21).to_python() == [42]
+        engine.register_callback('host:range',
+            Callback(lambda n: range(n), arity=1, generator=True))
+        with engine.query('(host:range 3)') as query:
+            assert query.to_python() == [0, 1, 2]
+
+A Callback descriptor declares arity and whether the host returns one value
+or an iterable of answers. Ordinary arguments use the same structured Python
+conversion as Atom.to_python(). Use unpack=False to receive Atom objects.
+Returned values remain data, including tuples shaped like executable code or
+Error values. Duplicate yields remain duplicate answers.
+
+Registration adds an ordinary named equation to the engine's root space. It
+does not modify the hosting Python interpreter's module namespace. Repeated
+registrations add equations, following the language's ordinary multiplicity.
+
+Queries close abandoned generators. Uncaught Python exceptions keep their
+identity and traceback; a collected stream attaches its published prefix as
+exception.answers. A Python StopIteration raised outside generator completion
+is kept as the cause of RuntimeError when iterating, so it cannot silently
+become a successful empty stream. Direct Engine.call preserves the exception.
+
+Callbacks can reenter their engine on the calling thread. Callback-originated
+cross-thread entry into that busy engine reports busy; independent engines can
+run concurrently. Callbacks run on the host thread advancing their invocation;
+explicit close can finalize a generator on the closing thread. Known calls
+inside hyperpose use its cooperative realization.
+Output writers and signal handling also enter the host callback boundary.
+Other threads can retry busy after that callback returns.
+
+Formatting, named-value inspection and equality also report busy if another
+thread tries to enter an engine held by a callback. Primitive immutable scalar
+inspection needs no engine entry. Closing a query or releasing a value can
+defer native cleanup to the owning engine; these releases do not wait on the
+callback. Retained owners keep that cleanup alive through the handoff.
+An error from deferred generator cleanup is reported through sys.unraisablehook
+with its original exception and traceback. It cannot replace an unrelated
+call's result or primary error. A synchronous explicit close still raises its
+own cleanup error normally.
+
+Python's collector sees engine/callback/generator cycles. Closing an engine
+cancels its active work, and retained ordinary answers remain readable. Each
+physical callback pull is one host operation; physical allowances count engine
+transitions rather than imposing a wall-clock limit on arbitrary Python code.
+Callback support in subinterpreters remains a later qualification target.
+
+NumPy and buffers
+
+Install the optional numerical dependency from the checkout:
+
+    python -m pip install '.[numpy]'
+
+    import numpy as np
+    from cetta import Engine
+
+    with Engine() as engine:
+        source = np.arange(6, dtype=np.float64)
+        tensor = engine.tensor(source)
+        view = tensor.to_numpy(copy=False)
+        source[0] = 100
+        assert view[0] == 0 and not view.flags.writeable
+        engine.import_("(library tensor)")
+        assert engine.call('tensor:sum', tensor).to_python() == [15.0]
+    assert view.tolist() == [0, 1, 2, 3, 4, 5]
+
+Engine.atom also accepts NumPy arrays; tensor arguments and results use the
+existing language tensor library. Its nonstandard operations require import.
+NumPy scalar objects convert to ordinary Python numbers or booleans before
+language construction. Atom.to_python returns a NumPy array for a dense tensor.
+
+The copy option accepts None, True or False. None automatically reuses retained
+immutable native buffers and exact immutable-byte backing. Other NumPy inputs
+are copied into stable storage, including arrays whose read-only flag can be
+reversed or whose writable aliases survive. A copied input currently packs
+logical values in row-major order while preserving dtype and byte order.
+Borrowed views preserve shape and strides, including negative and zero strides.
+
+copy=False forbids a data copy and reports BufferError when stable borrowing
+cannot be established. Read-only native results retain their backing storage
+after engine closure and refuse writable export. to_numpy(copy=True) returns
+an independent writable array. An ndarray's read-only flag alone is not an
+immutability certificate for its underlying allocation.
+
+Current dense dtypes are int64, uint64 (the tensor index dtype), uint8, float64,
+float32 and bool. Multi-byte dtypes may use native, little or big byte order.
+Views retain their original bytes and order; tensor operations interpret logical
+values through the common native tensor implementation. Newly computed tensors
+may use native-order storage. Unsupported dtypes report BufferError.
+Sparse tensors retain their support separately from numerical values.
+
+The Buffer object exposes Python's read-only buffer protocol without requiring
+NumPy. memoryview(atom.buffer) provides shape, strides and format, including
+the byte-order prefix. Use NumPy for scalar access to foreign-order buffers;
+CPython's memoryview scalar operations support native formats.
+NumPy is required only for array conversion. Native buffer handles are independent
+of engines and may enter more than one engine without transferring atom handles.
+
+Sparse arrays
+
+    with Engine() as engine:
+        tensor = engine.tensor_from_coo((2, 3), [0, 4], [0.0, 7.0])
+        sparse = tensor.to_sparse()
+        assert sparse.shape == (2, 3) and sparse.nnz == 2
+        assert sparse.coordinates.tolist() == [0, 4]
+        assert sparse.values.tolist() == [0.0, 7.0]
+        dense = sparse.to_numpy(fill=-1)
+        assert dense.tolist() == [[0, -1, -1], [-1, 7, -1]]
+
+tensor_from_coo takes a shape, flat row-major coordinates and a value vector.
+tensor_from_csr and tensor_from_csc take shape, indptr, indices and values.
+Value dtype is inferred from the NumPy input; dtype= selects it explicitly.
+Nonstandard language operations still require their ordinary library import.
+
+An absent coordinate differs from a stored zero, including a zero produced by
+duplicate summation. The duplicates option names the existing tensor policy:
+reject (default), first, last or sum. Normalization preserves occurrence order
+within a duplicate coordinate. copy=False refuses normalization that requires
+copying data; compatible immutable canonical components are retained directly.
+Native-order 64-bit integer index buffers can be shared. Other supported index
+widths or byte orders are converted when copying is allowed.
+
+Atom.to_sparse() and sparse Atom.to_python() return a SparseArray with bounded
+display, shape, layout, dtype, nnz, values, and the layout's coordinate or
+indptr/indices arrays. These NumPy views are read-only and remain live after
+engine closure. to_sparse(copy=True) makes independent writable component
+arrays. Passing either form to engine.tensor() or a callback uses the same
+stable-value rules as dense arrays. Exact retained round trips reuse their
+existing owners rather than building a chain of intermediate owners.
+
+There is no implicit sparse-to-dense conversion. Atom.to_numpy() requires a
+dense tensor; SparseArray.to_numpy(fill=...) explicitly chooses the value for
+absent cells and allocates a dense result. Huge logical sparse shapes therefore
+need storage only for their actual components until this explicit conversion.
+
+Native embedding
+
+    make embedding
+
+The public, versioned header is include/cetta_embed.h. Native artifacts are
+written under runtime/. Handles use explicit retain/release ownership. A result
+owns its answers; obtaining an answer adds an independent reference, which the
+caller releases. Formatting and inspection remain valid after engine closure.
+Engine-dependent operations report engine-closed.
+
+Development checks
+
+The CLI and embedding adapter share src/runtime_session.h for library state,
+the root space/registry and execution resources. Initialization is staged so
+the CLI can configure readers before opening its root. Session teardown closes
+native work before retiring its dependencies. Both ordinary hosts use the
+same name-domain lifecycle; readers and presentation remain host-owned.
+
+For Python changes, install the numerical extra and run the integration suite:
+
+    python -m pip install -e '.[numpy]'
+    python -m unittest discover -s python/tests -v
+
+For the standalone C ABI, run its consumer directly:
+
+    make BUILD=core ENABLE_LIB_PROLOG=0 ENABLE_PIC=1 test-embedding-api
+
+The optional Rust consumer checks the same ABI without a Python dependency:
+
+    make BUILD=core ENABLE_LIB_PROLOG=0 ENABLE_PIC=1 test-embedding-rust-api
+
+Focused ownership, callback, query, buffer and allocation-refusal targets are
+available in the Makefile for changes to those boundaries.
+
+The 2026-11-04 package checks pass all 128 integration tests per wheel on
+CPython 3.11, 3.12, 3.13, 3.14 and 3.15:
+
+    Platform                  Test environment       Wheels passed
+    x86_64, glibc 2.28         native                 5
+    x86_64, musl 1.2           native                 5
+    aarch64, glibc 2.28        QEMU user emulation    5
+    aarch64, musl 1.2          QEMU user emulation    5
+
+ARM64 module and companion binaries contain AArch64 machine code. Their test
+runs used QEMU on an x86_64 Linux host; physical ARM64 hardware has not been
+qualified. Emulation results are functional checks, not performance results.
+
+A relocated x86_64 wheel installation, source installation and editable
+installation each pass the integration suite outside the checkout. The normal
+Python notebook executes all 14 code cells and recovers from interruption in
+both PeTTa and HE. Native lifetime checks pass with ASan/UBSan, and native
+concurrency checks pass with TSAN on the x86_64 development host. Wider core
+release qualification is separate from this package checkpoint.
+
+Windows, macOS, free-threaded Python and subinterpreters are later targets.
+
+Host output, interruption and display
+
+Program output uses the current Python sys.stdout. contextlib.redirect_stdout
+and ordinary notebook output capture therefore work. Pass a file-like output
+to Engine(output=writer) to give an engine its own destination. Diagnostics use
+sys.stderr. Writers' exceptions keep their original Python tracebacks.
+PeTTa and HE retain their own printed-language conventions, including PeTTa's
+quotes around string values printed by println!.
+
+Whole-result run, eval, call and load poll Python signals cooperatively.
+KeyboardInterrupt stops active execution and permits a fresh invocation;
+completed effects remain committed. Python's signal handler is preserved.
+A failed PeTTa test raises EvaluationError with status "halted" and an
+exit_code. Earlier answers remain in error.answers. Later directives do not
+execute, and the next invocation can use the engine normally.
+
+Atom display quotes strings, escapes NUL and keeps binary64 round-trip
+precision. to_python returns the original string or numeric value.
+The package exposes its installed metadata version as cetta.__version__.
+
+Engine(memory_limit=bytes) limits the engine's CeTTa-owned native allocations,
+including retained answers. GMP allocations and host-owned input buffers are
+excluded. Independent engines have independent limits. Allocation refusal
+reports out-of-memory. If a committed mutation cannot acquire its authoritative
+executable metadata, that engine closes after unwinding; subsequent execution
+reports engine-closed. Retained answers remain readable. Other allocation
+failures leave the engine usable when its internal state remains consistent.
+
+Standalone C installation
+
+    make install-cabi PREFIX="$HOME/.local"
+    pkg-config --cflags --libs cetta
+
+DESTDIR stages the installation for packaging. The SDK includes the header,
+libcetta.so.1, libcetta.a, cetta.pc and language/runtime assets. The shared
+library finds resources relative to its installed location. A static consumer
+passes its installed share/cetta directory as config.resource_root.
+The C runtime does not require Python, SWI-Prolog, Rust or C++.
+
+Readiness investigation ledger
+
+GMP allocation refusal remains unresolved. Its default allocator terminates
+the process when malloc/realloc fails; allocator hooks cannot safely return
+NULL or recover with longjmp. See https://gmplib.org/manual/Custom-Allocation.
+The standalone probe tests/support/probe_gmp_allocation_failure.c reproduces
+the boundary when linked with static GMP and --wrap=malloc,--wrap=realloc:
+its normal run succeeds, and its "refuse" run terminates with SIGABRT.
+This is distinct from CeTTa-owned allocation handling and must not be counted
+as recovered by a native-core memory budget. Closing the investigation needs
+an arithmetic boundary with defined allocation-error returns, exact-number
+conformance and measurements of the resulting cost.
+
+The retained-query gates include test-embedding-query-canonical for HE held
+operands, test-embedding-query-streaming for pull prefixes, function returns,
+captured contexts and conditional packets, and test-embedding-he-callbacks
+for the shared foreign-provider protocol. test-embedding-he-retention checks consumed-output retirement,
+actual collections, retained answers and continuation-allocation refusals.
+The cold-start refusal gate covers C malloc/calloc/realloc requests in default
+and extended PeTTa and HE startup, with individual and persistent denial,
+both with and without a native memory limit: 29,320 refusal cases in total.
+Each refusal returns out-of-memory, and engine creation can then be retried
+in the same host. The component gates also cover cleanup, caller-context
+restoration, mutex errors and retained facts after canceled root registration.
+
+The 2026-11-04 ASan/UBSan runtime panel passes 11,014 individual and persistent
+allocation refusals across 17 operations in both languages: reading, evaluation,
+documents, parallel evaluation, spaces, evaluation queries, space matching,
+integer/rational/string/expression construction, formatting, callbacks,
+registration and buffers. Every selected refusal is reached. Cleanup runs
+while persistent denial remains active; retained answers remain readable.
+10,920 cases allow subsequent engine use. The other 94 close the engine after
+a committed definition cannot record its executable metadata. A separate
+engine remains usable in either case.
+
+These are finite native qualification panels, not a proof that every possible
+program recovers from allocation failure. GMP's allocation boundary remains
+the explicit unresolved investigation above. Wider shared-runtime release
+qualification belongs to core main readiness.

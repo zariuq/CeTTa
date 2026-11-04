@@ -25,6 +25,9 @@ typedef struct {
     bool failed;
 } CettaParallelReadyQueue;
 
+#include "runtime_names.h"
+#include "stats.h"
+
 typedef struct CettaParallelWorker CettaParallelWorker;
 typedef struct CettaParallelExecutor CettaParallelExecutor;
 
@@ -41,6 +44,7 @@ typedef struct {
     CettaParallelTaskFn task_fn;
     CettaParallelWorkerHookFn worker_enter;
     CettaParallelWorkerHookFn worker_leave;
+    bool (*interrupt)(void *user);
     const char *worker_failure_message;
 } CettaParallelExecutorConfig;
 
@@ -51,6 +55,9 @@ struct CettaParallelWorker {
 };
 
 struct CettaParallelExecutor {
+    struct CettaNativeMemory *memory;
+    CettaNameContext names;
+    CettaRuntimeStatsOwner *stats;
     CettaParallelExecutorConfig config;
     CettaParallelReadyQueue queue;
     pthread_mutex_t error_mutex;

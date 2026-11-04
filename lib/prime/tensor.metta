@@ -49,6 +49,8 @@
 (: tensor:sum (-> %Undefined% %Undefined%))
 (: tensor:matvec (-> %Undefined% %Undefined% %Undefined% %Undefined%))
 (: tensor:matvec (-> %Undefined% %Undefined% %Undefined%))
+(: tensor:dot-bounds (-> %Undefined% %Undefined% %Undefined%))
+(: tensor:matvec-bounds (-> %Undefined% %Undefined% %Undefined%))
 (: tensor:top-k (-> %Undefined% %Undefined% %Undefined% %Undefined%))
 (: tensor:top-k (-> %Undefined% %Undefined% %Undefined%))
 (: tensor:encode (-> %Undefined% %Undefined%))
