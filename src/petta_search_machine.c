@@ -11476,7 +11476,9 @@ static bool petta_machine_unify_resolved_values(
                 machine, builder, growth_before, heap_before, false);
         }
         right_open_cons = petta_semantics_is_open_cons_value(right);
-        bool matched = petta_semantics_match_cons_constraint(
+        /* Two values: only real cells are cells; a spelled `cons` in
+         * either is data, as in SWI-PeTTa. */
+        bool matched = petta_semantics_match_lowered_head(
             &machine->heap,
             right_open_cons ? right : left,
             right_open_cons ? left : right,
@@ -39859,7 +39861,7 @@ static bool petta_machine_dispatch_goal(
         bool right_cons =
             petta_semantics_contains_cons_constraint(right_value);
         bool equal = left_cons || right_cons
-            ? petta_semantics_match_cons_constraint(
+            ? petta_semantics_match_lowered_head(
                   &machine->heap,
                   left_cons ? left_value : right_value,
                   left_cons ? right_value : left_value,

@@ -5389,6 +5389,14 @@ $(SPACE_FILE_TEST_BIN): tests/test_space_file.c src/space_file.c src/space_file.
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc tests/test_space_file.c src/space_file.c -o $@ $(LDFLAGS)
 
+# A read answers alike whether a head's facts are rows or its relation:
+# every native reader shape, alone, at one fact below the relation threshold
+# and at it, under CETTA_SPACE_DENSE=off, the default and eager.
+.PHONY: test-dense-threshold-transfer
+test-all: test-dense-threshold-transfer
+test-dense-threshold-transfer: $(BIN)
+	@python3 tests/support/check_dense_threshold_transfer.py ./$(BIN)
+
 .PHONY: test-space-file
 test-all: test-space-file
 test-space-file: $(SPACE_FILE_TEST_BIN)
@@ -30485,10 +30493,9 @@ test-petta-tier-fold-dispatch: $(BIN)
 	echo "PASS: foldl runs as foldl/4 and dispatched errors fail their path alone, on the tier and in the machine"
 
 .PHONY: test-petta-tier-spelled-cells
-# Data spelled with `cons` and `nil`, as the parser pack's forests are: an
-# authored list pattern in a head or a `case` reads a value spelled
-# `(cons h t)` as the cell it spells, and foldl reads only lists, on the
-# tier as in the machine.
+# Data spelled with `cons` and `nil` is data, as in SWI-PeTTa: list patterns
+# in heads, `let` and `case` meet a stored `(cons h t)` as the expression it
+# is, and foldl reads only lists, on the tier as in the machine.
 test-petta-tier-spelled-cells: $(BIN)
 	@set -eu; \
 	for route in tier machine; do \
@@ -30502,7 +30509,28 @@ test-petta-tier-spelled-cells: $(BIN)
 			exit 1; \
 		fi; \
 	done; \
-	echo "PASS: spelled cons data reads as the machine reads it, on the tier and in the machine"
+	echo "PASS: spelled cons data is data, as in SWI-PeTTa, on the tier and in the machine"
+
+.PHONY: test-petta-term-language-sequences
+# The term-language natives write a sequence (cons Head Tail) ... nil: a
+# program builds one with cons and takes the natives' sequences apart with
+# cons patterns, as its own lists, while a sequence stored as data stays
+# data to it, on the tier and in the machine.
+test-petta-semantics: test-petta-term-language-sequences
+test-petta-term-language-sequences: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+			--lang petta tests/petta/term_language_sequences.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/term_language_sequences.expected)" ]; then \
+			echo "FAIL: term-language sequences on the $$route route"; \
+			diff <(cat tests/petta/term_language_sequences.expected) \
+				<(printf '%s\n' "$$actual") | head -20; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: programs build and take apart the natives' sequences with cons, and stored data stays data, on the tier and in the machine"
 
 .PHONY: test-petta-tier-repra
 # `repra` of a ground value in an equation the tier runs renders as the host

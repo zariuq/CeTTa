@@ -1,8 +1,9 @@
 #define _POSIX_C_SOURCE 200809L
-/* ACTree03 format derived from PathMap src/arena_compact.rs, revision
- * cb4e1e4eecb75f0be9846b4b75c69d5e2d2f647b.
- * Copyright (c) Adam Vandervorst. MIT license; see LICENSES/PathMap-MIT.txt.
- * This implementation uses checked byte reads and explicit traversal stacks. */
+/* ACTree03, the byte-trie format of PathMap's src/arena_compact.rs
+ * (revision cb4e1e4eecb75f0be9846b4b75c69d5e2d2f647b), read and written in
+ * C.  The format follows PathMap, Copyright (c) Adam Vandervorst, whose MIT
+ * license (LICENSES/PathMap-MIT.txt) covers this file.  This implementation
+ * uses checked byte reads and explicit traversal stacks. */
 #include "act_trie.h"
 #include "storage_census.h"
 #include <errno.h>

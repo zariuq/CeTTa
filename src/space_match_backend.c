@@ -12849,6 +12849,8 @@ bool space_native_flat_pattern_each_int(
         !cetta_flat_join_pattern_ok(pattern) ||
         column >= (size_t)pattern->expr.len)
         return false;
+    /* A reader of rows: the pattern's relation gives its facts back first. */
+    space_dense_settle_for_pattern(space, pattern);
     CettaFlatJoinBind binds[CETTA_FLAT_JOIN_MAX_BINDS];
     CettaCount rows = space->native.len;
     for (CettaIndex row = 0u; row < rows; row++) {
@@ -12924,6 +12926,8 @@ bool space_native_pattern_each_int(
          space->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) ||
         pattern->kind != ATOM_EXPR)
         return false;
+    /* A reader of rows: the pattern's relation gives its facts back first. */
+    space_dense_settle_for_pattern(space, pattern);
     CettaFlatJoinBind binds[CETTA_FLAT_JOIN_MAX_BINDS];
     CettaCount rows = space->native.len;
     for (CettaIndex row = 0u; row < rows; row++) {
@@ -13100,6 +13104,8 @@ bool space_native_flat_chain_aggregate(
     bool with_column, size_t column_pattern, size_t column,
     __int128 *count_out, __int128 *sum_out) {
     space_settle_marks(space);
+    /* A reader of rows: the patterns' relations give their facts back first. */
+    space_dense_settle_for_patterns(space, patterns, (CettaExprLen)pattern_count);
     CETTA_SCOPED_SHARED_TRANSITION(shared_read);
     /* ChainAggregation extends the grouped-message law to arbitrary finite
      * paths. Machine overflow still declines to ordinary enumeration. */
@@ -13254,6 +13260,8 @@ bool space_native_flat_conjunction_int_moments(
     uint64_t *count_out, __int128 *sum_out,
     int64_t *product_out, bool *product_ok) {
     space_settle_marks(space);
+    /* A reader of rows: the patterns' relations give their facts back first. */
+    space_dense_settle_for_patterns(space, patterns, (CettaExprLen)pattern_count);
     if (count_out)
         *count_out = 0u;
     if (sum_out)

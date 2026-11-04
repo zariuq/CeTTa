@@ -19652,15 +19652,6 @@ static Atom *petta_prepared_expand_partial_application(
     return cetta_invocation_materialize(arena, &invocation);
 }
 
-/* A list cell of the language: PeTTa's open cell or its `(cons H T)`
- * spelling; elsewhere the open cell only. */
-static bool prepared_collection_list_cell(
-    CettaLanguageId language_id, const Atom *atom) {
-    return language_id == CETTA_LANGUAGE_PETTA
-        ? petta_semantics_is_cons_constraint(atom)
-        : petta_semantics_is_open_cons_value(atom);
-}
-
 /* The continuation carried into the next round of a collection pull.  The
  * arenas a round resets, the scratch arena and the retiring carry, hold only
  * the round's own atoms; those are copied, and every other atom outlives the
@@ -19873,7 +19864,7 @@ static PreparedFoldResult prepared_collection_pull_single_result(
         /* A constructed spine is walked where it lies: each list cell gives
          * an item, and a tail that is a cell continues the walk.  Any other
          * tail is the continuation, executed in the next round. */
-        if (prepared_collection_list_cell(language_id, cell)) {
+        if (petta_semantics_is_open_cons_value(cell)) {
             Atom *continuation = NULL;
             bool consumed = true;
             for (;;) {
@@ -19888,7 +19879,7 @@ static PreparedFoldResult prepared_collection_pull_single_result(
                 cetta_runtime_stats_inc(
                     CETTA_RUNTIME_COUNTER_PREPARED_COLLECTION_PULL_ITEM);
                 Atom *tail = cell->expr.elems[2];
-                if (!prepared_collection_list_cell(language_id, tail)) {
+                if (!petta_semantics_is_open_cons_value(tail)) {
                     continuation = tail;
                     break;
                 }
@@ -51737,7 +51728,7 @@ static bool eval_get_metatype_intrinsic(
     if (registered)
         value = registered;
     if (eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
-        petta_semantics_is_cons_constraint(value) &&
+        petta_semantics_is_open_cons_value(value) &&
         !petta_semantics_is_closed_list(value))
         return true;
     *type = get_meta_type(arena, value);
@@ -56000,10 +55991,11 @@ petta_prepared_pure_pattern_view(
         !petta_semantics_is_cons_constraint(pattern)) {
         return CETTA_PREPARED_PURE_PATTERN_VIEW_NOT_APPLICABLE;
     }
-    if (!petta_semantics_is_cons_constraint(value)) {
+    if (!petta_semantics_is_open_cons_value(value)) {
         /* A nonempty ordinary expression is a PeTTa list, whose tail is not an
          * atom a prepared matcher can bind; only an empty or atomic value
-         * certainly fails to be a cons. */
+         * certainly fails to be a cons.  A value spelled `(cons h t)` is
+         * such an expression, data, as in SWI-PeTTa. */
         return value->kind == ATOM_EXPR && value->expr.len > 0u
             ? CETTA_PREPARED_PURE_PATTERN_VIEW_UNDECIDED
             : CETTA_PREPARED_PURE_PATTERN_VIEW_MISMATCH;
@@ -60618,7 +60610,7 @@ petta_lowered_to_shared_form:
          * flat list makes an open cell. */
         if (language_id == CETTA_LANGUAGE_PETTA &&
             (tl->kind != ATOM_EXPR ||
-             petta_semantics_is_cons_constraint(tl))) {
+             petta_semantics_is_open_cons_value(tl))) {
             Atom *cell = petta_semantics_open_cons_value(a, hd, tl);
             if (cell)
                 outcome_set_add(os, cell, &_empty);
@@ -60669,7 +60661,7 @@ petta_lowered_to_shared_form:
             if (atom_is_list(left)) {
                 lhs = left;
             } else if (rhs->kind != ATOM_EXPR ||
-                petta_semantics_is_cons_constraint(rhs)) {
+                petta_semantics_is_open_cons_value(rhs)) {
                 Atom *result = rhs;
                 for (CettaExprIndex i = left->expr.len; i > 0 && result; i--)
                     result = petta_semantics_open_cons_value(
@@ -60714,7 +60706,7 @@ petta_lowered_to_shared_form:
         /* PeTTa's decons-atom and decons map [H|T] to (H T); (), every
          * non-list and an unconstrained argument have no answer here. */
         if (language_id == CETTA_LANGUAGE_PETTA &&
-            petta_semantics_is_cons_constraint(e)) {
+            petta_semantics_is_open_cons_value(e)) {
             outcome_set_add(os,
                 atom_expr2(a, e->expr.elems[1], e->expr.elems[2]),
                 &_empty);
@@ -60765,7 +60757,7 @@ petta_lowered_to_shared_form:
             petta_eval_raise(petta_semantics_empty_head_error(a));
             return;
         }
-        Atom *result = petta_semantics_is_cons_constraint(e)
+        Atom *result = petta_semantics_is_open_cons_value(e)
             ? e->expr.elems[car ? 1 : 2]
             : cetta_sequence_projection_materialize(a, &view);
         outcome_set_add(os, result, &_empty);

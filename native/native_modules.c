@@ -4,8 +4,11 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "eval.h"
+#include "lang.h"
 #include "library.h"
 #include "library_supervise.h"
+#include "petta_semantics.h"
 #include "library_pattern.h"
 #include "library_binary.h"
 #include "library_heap.h"
@@ -1239,7 +1242,8 @@ static const CettaNativeBuiltinModule g_native_modules[] = {
     {"work", CETTA_NATIVE_IMPORT_WORK, NULL, "work:", cetta_work_module_call,
      "work-new work-take work-budget work-cancel work-record work-route work-count work-exists"},
     {"gparse", CETTA_NATIVE_IMPORT_GPARSE, gparse_dispatch, NULL, NULL, NULL},
-    {"langdef", CETTA_NATIVE_IMPORT_LANGDEF, NULL, NULL, langdef_module_call, NULL},
+    {"langdef", CETTA_NATIVE_IMPORT_LANGDEF, NULL, NULL, langdef_module_call, NULL,
+     true},
     {"pat", CETTA_NATIVE_IMPORT_PAT, NULL, "pat:", cetta_pattern_module_call, NULL},
     {"holkernel", CETTA_NATIVE_IMPORT_HOL, NULL, "__cetta_lib_hol_", hol_module_call, NULL},
     {"mm0kernel", CETTA_NATIVE_IMPORT_MM0, NULL, "__cetta_lib_mm0_", mm0_module_call, NULL},
@@ -1295,6 +1299,70 @@ const CettaNativeBuiltinModule *cetta_native_module_lookup(const char *name) {
     return NULL;
 }
 
+/* The PeTTa lane, where a term-language module's values cross between
+ * PeTTa values and terms. */
+static bool native_module_petta_lane(void) {
+    return eval_current_language_id &&
+           eval_current_language_id() == CETTA_LANGUAGE_PETTA;
+}
+
+/* The arguments as terms: only one holding a cell changes. */
+static Atom **native_module_term_arguments(Arena *a, Atom **args,
+                                           uint32_t nargs) {
+    Atom **terms = NULL;
+    for (uint32_t index = 0u; index < nargs; index++) {
+        Atom *term = args[index] &&
+                atom_structural_may_have_list_carrier(args[index])
+            ? petta_semantics_term_export(a, args[index]) : args[index];
+        if (!term)
+            return args;
+        if (term != args[index] && !terms) {
+            terms = arena_alloc(a, sizeof(Atom *) * nargs);
+            if (!terms)
+                return args;
+            memcpy(terms, args, sizeof(Atom *) * index);
+        }
+        if (terms)
+            terms[index] = term;
+    }
+    return terms ? terms : args;
+}
+
+static Atom *native_module_petta_value(Arena *a, Atom *term) {
+    Atom *value = petta_semantics_term_import(a, term);
+    return value ? value : term;
+}
+
+/* A frontier's term holds its answers, and each comes back on its own. */
+static void native_module_petta_outcome(Arena *a, CettaCallOutcome *out) {
+    if (out->kind != CETTA_CALL_VALUE || !out->term)
+        return;
+    if (!cetta_call_result_is_frontier(out->result_form)) {
+        out->term = native_module_petta_value(a, out->term);
+        return;
+    }
+    Atom *frontier = out->term;
+    if (frontier->kind != ATOM_EXPR)
+        return;
+    Atom **answers = NULL;
+    for (CettaExprIndex index = 0u; index < frontier->expr.len; index++) {
+        Atom *answer = native_module_petta_value(a, frontier->expr.elems[index]);
+        if (answer != frontier->expr.elems[index] && !answers) {
+            answers = arena_alloc(a, sizeof(Atom *) * frontier->expr.len);
+            if (!answers)
+                return;
+            memcpy(answers, frontier->expr.elems, sizeof(Atom *) * index);
+        }
+        if (answers)
+            answers[index] = answer;
+    }
+    if (answers) {
+        Atom *rebuilt = atom_expr(a, answers, frontier->expr.len);
+        if (rebuilt)
+            out->term = rebuilt;
+    }
+}
+
 bool cetta_native_module_call_active(struct CettaLibraryContext *ctx,
                                           Space *space, Arena *a,
                                           Atom *head, Atom **args, uint32_t nargs,
@@ -1310,11 +1378,19 @@ bool cetta_native_module_call_active(struct CettaLibraryContext *ctx,
         if ((active_mask & mod->import_bit) == 0 &&
             !native_module_loaded(ctx, mod))
             continue;
-        if (mod->call && mod->call(ctx, space, a, head, args, nargs, out))
+        bool petta_terms = mod->term_language && native_module_petta_lane();
+        Atom **module_args = petta_terms
+            ? native_module_term_arguments(a, args, nargs) : args;
+        if (mod->call && mod->call(ctx, space, a, head, module_args, nargs, out)) {
+            if (petta_terms)
+                native_module_petta_outcome(a, out);
             return true;
-        result = mod->dispatch ? mod->dispatch(ctx, space, a, head, args, nargs) : NULL;
+        }
+        result = mod->dispatch
+            ? mod->dispatch(ctx, space, a, head, module_args, nargs) : NULL;
         if (result) {
-            *out = cetta_call_value(result);
+            *out = cetta_call_value(
+                petta_terms ? native_module_petta_value(a, result) : result);
             return true;
         }
     }
