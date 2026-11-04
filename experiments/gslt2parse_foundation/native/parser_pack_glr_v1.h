@@ -3,6 +3,11 @@
 
 #include "parser_pack_native_v1.h"
 
+/* Build the complete recognition forest without replaying or choosing
+ * semantic results. Consumers can then apply an explicit selection policy. */
+bool ppglr_v1_recognize(const PPABIV1Pack *,const Atom *,const uint8_t *,size_t,
+    uint32_t,PPNativeV1Result *,char *,size_t);
+
 bool ppglr_v1_parse(const PPABIV1Pack *pack,
                     const Atom *start_state,
                     const uint8_t *input_bytes,

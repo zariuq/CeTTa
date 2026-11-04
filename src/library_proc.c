@@ -20,6 +20,12 @@
 
 extern char **environ;
 
+#if defined(__GLIBC__)
+#if __GLIBC_PREREQ(2, 34)
+#define CETTA_PROC_HAS_SPAWN_ACTIONS 1
+#endif
+#endif
+
 typedef struct {
     unsigned char *bytes;
     size_t kept, capacity;
@@ -219,7 +225,7 @@ static void *execute(void *resource) {
          owned_pipe(receipt, O_CLOEXEC | O_NONBLOCK))) {
         job->launch_error = errno; job->launch_stage = "scope-pipe"; goto finish;
     }
-#if defined(__GLIBC__) && !defined(CETTA_PROC_FORK_SPAWN)
+#if defined(CETTA_PROC_HAS_SPAWN_ACTIONS) && !defined(CETTA_PROC_FORK_SPAWN)
     posix_spawn_file_actions_t actions;
     posix_spawnattr_t attributes;
     int error = posix_spawn_file_actions_init(&actions);
@@ -255,8 +261,8 @@ static void *execute(void *resource) {
         close(receipt[1]); receipt[1] = -1;
     }
 #else
-    /* musl has no closefrom spawn action. Reuse the owned fork/exec child
-     * setup instead of enumerating a concurrently changing parent FD table. */
+    /* Reuse the owned fork/exec setup where spawn actions are unavailable,
+     * without enumerating a concurrently changing parent FD table. */
     if (owned_pipe(report, O_CLOEXEC | O_NONBLOCK)) {
         job->launch_error = errno; job->launch_stage = "pipe"; goto finish;
     }
@@ -430,8 +436,8 @@ static char *resolve_program(ProcJob *job) {
 }
 
 static bool prepare_scope(ProcJob *job) {
-    /* A companion is tied to the actual executable, never a search-path
-     * executable selected by the proposed command or its environment. */
+    /* Use the executable's companion or the runtime's installed resource,
+     * never a path selected by the proposed command or its environment. */
     size_t capacity = 256;
     char *companion = NULL;
     for (;;) {
@@ -453,6 +459,20 @@ static bool prepare_scope(ProcJob *job) {
             free(companion); errno = EOVERFLOW; return false;
         }
         capacity *= 2;
+    }
+    if (access(companion, F_OK) && errno == ENOENT) {
+        CettaLibraryContext *libraries = eval_current_library_context();
+        if (libraries && libraries->root_dir[0]) {
+            char *installed = join_path(libraries->root_dir, "runtime/cetta-proc-scope");
+            if (!installed) { free(companion); return false; }
+            char *absolute = realpath(installed, NULL);
+            int resource_error = errno;
+            free(installed);
+            if (absolute) { free(companion); companion = absolute; }
+            else if (resource_error != ENOENT) {
+                free(companion); errno = resource_error; return false;
+            }
+        }
     }
     size_t count = 0;
     while (job->argv[count]) count++;

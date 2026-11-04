@@ -1,7 +1,9 @@
 #define _GNU_SOURCE
 #include "parser.h"
 #include "utf8.h"
+#include "raw_source_region.h"
 #include "name_key.h"
+#include "petta_numeric.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -36,10 +38,20 @@
 static __thread bool g_rational_literals_enabled = true;
 static __thread bool g_universal_name_syntax_enabled = false;
 static __thread bool g_list_syntax_enabled = false;
+static __thread ParserRawSourceScanner g_raw_source_scanner = NULL;
 static __thread bool g_namespace_sugar_enabled = true;
+static _Thread_local bool g_petta_scalar_policy;
+#pragma weak cetta_petta_number_parse_atom
+#pragma weak cetta_petta_number_parse_id
+
+bool parser_set_petta_scalar_policy(bool enabled) {
+    bool previous = g_petta_scalar_policy;
+    g_petta_scalar_policy = enabled;
+    return previous;
+}
 static __thread ParserBareDollarMode g_bare_dollar_mode =
     CETTA_BARE_DOLLAR_DEFAULT_MODE;
-static ParserDocumentIdsBackend g_document_ids_backend;
+static _Thread_local ParserDocumentIdsBackend g_document_ids_backend;
 static __thread bool g_document_ids_backend_active = false;
 
 static const ParserSyntaxFormSpec g_syntax_forms[] = {
@@ -130,6 +142,16 @@ bool parser_list_syntax_enabled(void) {
     return g_list_syntax_enabled;
 }
 
+ParserRawSourceScanner parser_set_raw_source_scanner(ParserRawSourceScanner scanner) {
+    ParserRawSourceScanner old = g_raw_source_scanner;
+    g_raw_source_scanner = scanner;
+    return old;
+}
+
+bool parser_raw_source_regions_enabled(void) {
+    return g_raw_source_scanner != NULL;
+}
+
 ParserBareDollarMode parser_set_bare_dollar_mode(
     ParserBareDollarMode mode) {
     ParserBareDollarMode old = g_bare_dollar_mode;
@@ -154,6 +176,19 @@ bool parser_set_document_ids_backend(
 void parser_clear_document_ids_backend(void *context) {
     if (context && g_document_ids_backend.context == context)
         memset(&g_document_ids_backend, 0, sizeof(g_document_ids_backend));
+}
+
+void parser_document_backend_enter(ParserDocumentBackendScope *scope,
+                                    const ParserDocumentIdsBackend *backend) {
+    scope->backend = g_document_ids_backend;
+    scope->active = g_document_ids_backend_active;
+    g_document_ids_backend = backend ? *backend : (ParserDocumentIdsBackend){0};
+    g_document_ids_backend_active = false;
+}
+
+void parser_document_backend_leave(ParserDocumentBackendScope *scope) {
+    g_document_ids_backend = scope->backend;
+    g_document_ids_backend_active = scope->active;
 }
 
 Atom *parser_read_document_term_n(Arena *a, const char *text, size_t text_len,
@@ -362,10 +397,20 @@ static size_t parser_decode_string_body(const char *text, size_t start,
 
 bool parser_text_well_formed_n(const char *text, size_t text_len) {
     int depth = 0;
+    bool token_boundary = true;
+    size_t bounded_length = text_len == PARSER_TEXT_NUL_TERMINATED ? strlen(text) : text_len;
     for (size_t i = 0; parser_more(text, text_len, i); i++) {
+        if (g_raw_source_scanner && token_boundary && text[i] == 'r') {
+            CettaRawSourceRegion region;
+            CettaRawSourceStatus status = g_raw_source_scanner(
+                (const uint8_t *)text, bounded_length, i, &region);
+            if (status == CETTA_RAW_COMPLETE) { i = region.end - 1u; token_boundary = true; continue; }
+            if (status != CETTA_RAW_NOT_PRESENT) return false;
+        }
         if (text[i] == ';') {
             while (parser_more(text, text_len, i) && text[i] != '\n') i++;
             if (!parser_more(text, text_len, i)) break;
+            token_boundary = true;
             continue;
         }
         if (text[i] == '"') {
@@ -375,18 +420,21 @@ bool parser_text_well_formed_n(const char *text, size_t text_len) {
                 i++;
             }
             if (!parser_more(text, text_len, i)) return false;
+            token_boundary = true;
             continue;
         }
         if (text[i] == '(') {
             depth++;
             if (depth > CETTA_PARSE_DEPTH_LIMIT)
                 return false;
+            token_boundary = true;
             continue;
         }
         if (text[i] == ')') {
             depth--;
             if (depth < 0) return false;
         }
+        token_boundary = isspace((unsigned char)text[i]) || text[i] == '[' || text[i] == ']' || text[i] == ')';
     }
     return depth == 0;
 }
@@ -439,6 +487,7 @@ static void parser_var_scope_init(ParserVarScope *scope) {
 }
 
 static void parser_var_scope_free(ParserVarScope *scope) {
+    int error = errno;
     free(scope->spellings);
     free(scope->ids);
     name_key_table_delete(scope->name_keys);
@@ -453,6 +502,7 @@ static void parser_var_scope_free(ParserVarScope *scope) {
     scope->name_ids = NULL;
     scope->name_len = 0;
     scope->name_cap = 0;
+    errno = error;
 }
 
 static VarId parser_var_scope_id(ParserVarScope *scope, SymbolId spelling) {
@@ -461,11 +511,21 @@ static VarId parser_var_scope_id(ParserVarScope *scope, SymbolId spelling) {
             return scope->ids[i];
     }
     if (scope->len >= scope->cap) {
-        scope->cap = scope->cap ? scope->cap * 2 : 8;
-        scope->spellings = cetta_realloc(scope->spellings, sizeof(SymbolId) * scope->cap);
-        scope->ids = cetta_realloc(scope->ids, sizeof(VarId) * scope->cap);
+        uint32_t cap = scope->cap ? scope->cap * 2u : 8u;
+        if (cap < scope->cap || !cetta_expr_len_mul_fits_size(cap, sizeof(*scope->spellings)) ||
+            !cetta_expr_len_mul_fits_size(cap, sizeof(*scope->ids))) {
+            errno = EOVERFLOW; return VAR_ID_NONE;
+        }
+        SymbolId *spellings = realloc(scope->spellings, sizeof(*spellings) * (size_t)cap);
+        if (!spellings) return VAR_ID_NONE;
+        scope->spellings = spellings;
+        VarId *ids = realloc(scope->ids, sizeof(*ids) * (size_t)cap);
+        if (!ids) return VAR_ID_NONE;
+        scope->ids = ids;
+        scope->cap = cap;
     }
-    VarId id = fresh_var_id();
+    VarId id;
+    if (!fresh_var_id_try(&id)) { errno = EOVERFLOW; return VAR_ID_NONE; }
     scope->spellings[scope->len] = spelling;
     scope->ids[scope->len] = id;
     scope->len++;
@@ -479,9 +539,11 @@ static bool parser_bare_dollar_is_variable(void) {
 
 static VarId parser_bare_dollar_id(ParserVarScope *scope,
                                    SymbolId spelling) {
-    return g_bare_dollar_mode == PARSER_BARE_DOLLAR_SHARED_VARIABLE
-               ? parser_var_scope_id(scope, spelling)
-               : fresh_var_id();
+    if (g_bare_dollar_mode == PARSER_BARE_DOLLAR_SHARED_VARIABLE)
+        return parser_var_scope_id(scope, spelling);
+    VarId id;
+    if (!fresh_var_id_try(&id)) { errno = EOVERFLOW; return VAR_ID_NONE; }
+    return id;
 }
 
 static NameId parser_var_scope_name_key_id(ParserVarScope *scope,
@@ -505,13 +567,21 @@ static VarId parser_var_scope_name_id(ParserVarScope *scope, Atom *name_key) {
 #endif
     }
     if (scope->name_len >= scope->name_cap) {
-        scope->name_cap = scope->name_cap ? scope->name_cap * 2u : 8u;
-        scope->names = cetta_realloc(
-            scope->names, sizeof(*scope->names) * scope->name_cap);
-        scope->name_ids = cetta_realloc(
-            scope->name_ids, sizeof(*scope->name_ids) * scope->name_cap);
+        uint32_t cap = scope->name_cap ? scope->name_cap * 2u : 8u;
+        if (cap < scope->name_cap || !cetta_expr_len_mul_fits_size(cap, sizeof(*scope->names)) ||
+            !cetta_expr_len_mul_fits_size(cap, sizeof(*scope->name_ids))) {
+            errno = EOVERFLOW; return VAR_ID_NONE;
+        }
+        NameId *names = realloc(scope->names, sizeof(*names) * (size_t)cap);
+        if (!names) return VAR_ID_NONE;
+        scope->names = names;
+        VarId *ids = realloc(scope->name_ids, sizeof(*ids) * (size_t)cap);
+        if (!ids) return VAR_ID_NONE;
+        scope->name_ids = ids;
+        scope->name_cap = cap;
     }
-    VarId id = fresh_var_id();
+    VarId id;
+    if (!fresh_var_id_try(&id)) { errno = EOVERFLOW; return VAR_ID_NONE; }
     scope->names[scope->name_len] = name;
     scope->name_ids[scope->name_len] = id;
     scope->name_len++;
@@ -565,7 +635,7 @@ static Atom *parser_lower_syn_expression(Arena *a, Atom *expr,
     if (is_var) {
         if (arg->kind == ATOM_SYMBOL) {
             VarId id = parser_var_scope_id(scope, arg->sym_id);
-            return atom_var_with_spelling(a, arg->sym_id, id);
+            return var_id_is_none(id) ? NULL : atom_var_with_spelling(a, arg->sym_id, id);
         }
         Atom *key = NULL;
         if (parser_quote_payload(arg, &key)) {
@@ -662,6 +732,8 @@ static ParserSynLowerStatus parser_lower_syn_expression_id(
         if (tu_kind(universe, arg) == ATOM_SYMBOL) {
             SymbolId spelling = tu_sym(universe, arg);
             VarId id = parser_var_scope_id(scope, spelling);
+            if (var_id_is_none(id))
+                return PARSER_SYN_LOWER_INVALID;
             if (lowered_out)
                 *lowered_out = tu_intern_var(universe, spelling, id);
             return PARSER_SYN_LOWER_OK;
@@ -754,6 +826,17 @@ static inline ParserWordValue parser_word_exact(Arena *a, TermUniverse *universe
                                             : atom_bigint(a, tok)};
 }
 
+static inline ParserWordValue parser_word_symbol(Arena *a, TermUniverse *universe,
+        const char *token, bool namespace_sugar) {
+    const char *canonical = namespace_sugar ? parser_namespace_token(a, token) : token;
+    SymbolId spelling = symbol_try_intern_cstr(g_symbols, canonical);
+    if (spelling == SYMBOL_ID_NONE)
+        return universe ? (ParserWordValue){.id = CETTA_ATOM_ID_NONE}
+                        : (ParserWordValue){.atom = NULL};
+    return universe ? (ParserWordValue){.id = tu_intern_symbol(universe, spelling)}
+                    : (ParserWordValue){.atom = atom_symbol_id(a, spelling)};
+}
+
 /* The shared word-grounding decision path. Delimiters, strings, variable
  * identity and token bindings belong to the surrounding reader. Inline the
  * target dispatch so parser-only bootstrap tools retain arena construction
@@ -765,6 +848,24 @@ static inline ParserWordValue parser_ground_word(Arena *a, TermUniverse *univers
     if (!a || !tok || !*tok) {
         return universe ? (ParserWordValue){.id = CETTA_ATOM_ID_NONE}
                         : (ParserWordValue){.atom = NULL};
+    }
+    if (g_petta_scalar_policy) {
+        if (length == 4u && !memcmp(tok, "True", 4u))
+            return universe ? (ParserWordValue){.id = tu_intern_symbol(universe, symbol_intern_cstr(g_symbols, "true"))}
+                            : (ParserWordValue){.atom = atom_symbol(a, "true")};
+        if (length == 5u && !memcmp(tok, "False", 5u))
+            return universe ? (ParserWordValue){.id = tu_intern_symbol(universe, symbol_intern_cstr(g_symbols, "false"))}
+                            : (ParserWordValue){.atom = atom_symbol(a, "false")};
+        if (universe && cetta_petta_number_parse_id) {
+            AtomId number = cetta_petta_number_parse_id(universe, (const uint8_t *)tok,
+                length, CETTA_PETTA_NUMBER_SOURCE_TOKEN);
+            if (number != CETTA_ATOM_ID_NONE) return (ParserWordValue){.id = number};
+        } else if (!universe && cetta_petta_number_parse_atom) {
+            Atom *number = cetta_petta_number_parse_atom(a, (const uint8_t *)tok,
+                length, CETTA_PETTA_NUMBER_SOURCE_TOKEN);
+            if (number) return (ParserWordValue){.atom = number};
+        }
+        return parser_word_symbol(a, universe, tok, policy.namespace_sugar);
     }
     /* These spellings have distinct first bytes. The lexer supplies the
      * exact length, so bounded comparisons preserve exact-match semantics. */
@@ -815,11 +916,7 @@ static inline ParserWordValue parser_ground_word(Arena *a, TermUniverse *univers
             return parser_word_float(a, universe, fval);
     }
 
-    const char *canonical = policy.namespace_sugar
-        ? parser_namespace_token(a, tok) : tok;
-    SymbolId spelling = symbol_intern_cstr(g_symbols, canonical);
-    return universe ? (ParserWordValue){.id = tu_intern_symbol(universe, spelling)}
-                    : (ParserWordValue){.atom = atom_symbol_id(a, spelling)};
+    return parser_word_symbol(a, universe, tok, policy.namespace_sugar);
 }
 
 static AtomId parser_project_word_id(TermUniverse *universe, Arena *scratch,
@@ -888,6 +985,7 @@ static char *parser_host_projection_v1_cstr(
         return NULL;
     }
     text = arena_alloc(&projection->scratch, len + 1u);
+    if (!text) return NULL;
     if (len > 0u)
         memcpy(text, bytes, len);
     text[len] = '\0';
@@ -915,10 +1013,11 @@ AtomId parser_host_projection_v1_variable_bytes(
         return CETTA_ATOM_ID_NONE;
     canonical = projection->namespace_sugar
         ? parser_namespace_token(&projection->scratch, text) : text;
-    spelling = symbol_intern_cstr(g_symbols, canonical);
-    return tu_intern_var(
-        projection->universe, spelling,
-        parser_var_scope_id(&projection->scope, spelling));
+    spelling = symbol_try_intern_cstr(g_symbols, canonical);
+    if (spelling == SYMBOL_ID_NONE) return CETTA_ATOM_ID_NONE;
+    VarId id = parser_var_scope_id(&projection->scope, spelling);
+    return var_id_is_none(id) ? CETTA_ATOM_ID_NONE
+        : tu_intern_var(projection->universe, spelling, id);
 }
 
 AtomId parser_host_projection_v1_anonymous_variable(
@@ -929,7 +1028,9 @@ AtomId parser_host_projection_v1_anonymous_variable(
         return CETTA_ATOM_ID_NONE;
     }
     spelling = symbol_intern_cstr(g_symbols, "");
-    return tu_intern_var(projection->universe, spelling, fresh_var_id());
+    VarId id;
+    if (!fresh_var_id_try(&id)) { errno = EOVERFLOW; return CETTA_ATOM_ID_NONE; }
+    return tu_intern_var(projection->universe, spelling, id);
 }
 
 /* A string keeps its bytes exactly, embedded NUL included; words and
@@ -1122,14 +1223,15 @@ static inline __attribute__((always_inline)) Atom *parser_read_word_atom(
         if (len > 1) {
             const char *spelling_text =
                 parser_canonicalize_namespace_token(a, tok + 1);
-            SymbolId spelling = symbol_intern_cstr(g_symbols, spelling_text);
+            SymbolId spelling = symbol_try_intern_cstr(g_symbols, spelling_text);
+            if (spelling == SYMBOL_ID_NONE) return NULL;
             VarId id = parser_var_scope_id(scope, spelling);
-            return atom_var_with_spelling(a, spelling, id);
+            return var_id_is_none(id) ? NULL : atom_var_with_spelling(a, spelling, id);
         }
         if (parser_bare_dollar_is_variable()) {
             SymbolId spelling = symbol_intern_cstr(g_symbols, "");
             VarId id = parser_bare_dollar_id(scope, spelling);
-            return atom_var_with_spelling(a, spelling, id);
+            return var_id_is_none(id) ? NULL : atom_var_with_spelling(a, spelling, id);
         }
     }
 
@@ -1174,7 +1276,7 @@ typedef struct {
 struct ParserReadBackend {
     bool ids;
     ParserReadValue (*word)(ParserReadContext *, char *, size_t);
-    ParserReadValue (*string)(ParserReadContext *, char *, size_t);
+    ParserReadValue (*string)(ParserReadContext *, const char *, size_t);
     ParserReadValue (*container)(ParserReadContext *, const ParserReadFrame *, ParserReadValue);
     ParserReadValue (*prefix)(ParserReadContext *, ParserReadKind, Atom *);
 };
@@ -1235,10 +1337,13 @@ static ParserReadValue parser_read_id_word(ParserReadContext *ctx, char *word, s
     if (word[0] == '$' && (length > 1u || parser_bare_dollar_is_variable())) {
         const char *name = length > 1u
             ? parser_canonicalize_namespace_token(ctx->arena, word + 1u) : "";
-        SymbolId spelling = symbol_intern_cstr(g_symbols, name);
+        SymbolId spelling = length > 1u ? symbol_try_intern_cstr(g_symbols, name) : SYMBOL_ID_NONE;
+        if (length > 1u && spelling == SYMBOL_ID_NONE)
+            return (ParserReadValue){.id = CETTA_ATOM_ID_NONE};
         VarId id = length > 1u ? parser_var_scope_id(ctx->scope, spelling)
             : parser_bare_dollar_id(ctx->scope, spelling);
-        result = tu_intern_var(ctx->universe, spelling, id);
+        result = var_id_is_none(id) ? CETTA_ATOM_ID_NONE
+            : tu_intern_var(ctx->universe, spelling, id);
     } else {
         result = parser_project_word_id(ctx->universe, ctx->arena, word, length,
                                         g_namespace_sugar_enabled);
@@ -1246,7 +1351,7 @@ static ParserReadValue parser_read_id_word(ParserReadContext *ctx, char *word, s
     return (ParserReadValue){.id = result};
 }
 
-static ParserReadValue parser_read_id_string(ParserReadContext *ctx, char *bytes, size_t length) {
+static ParserReadValue parser_read_id_string(ParserReadContext *ctx, const char *bytes, size_t length) {
     return (ParserReadValue){.id = tu_intern_string_n(ctx->universe, bytes, length)};
 }
 
@@ -1391,6 +1496,21 @@ read_trimmed_node:
             (*pos)++;
             goto read_container;
         }
+        if (g_raw_source_scanner && token == 'r') {
+            size_t bounded_length = text_len == PARSER_TEXT_NUL_TERMINATED ? strlen(text) : text_len;
+            CettaRawSourceRegion region;
+            CettaRawSourceStatus status = g_raw_source_scanner(
+                (const uint8_t *)text, bounded_length, *pos, &region);
+            if (status != CETTA_RAW_NOT_PRESENT) {
+                if (status != CETTA_RAW_COMPLETE) goto fail;
+                size_t length = region.body_end - region.body_start;
+                const char *body = text + region.body_start;
+                result = backend->ids ? backend->string(&context, body, length)
+                    : (ParserReadValue){.atom = atom_string_n(arena, body, length)};
+                *pos = region.end;
+                goto delivered;
+            }
+        }
         if (token == '"') {
             (*pos)++;
             size_t start = *pos;
@@ -1402,6 +1522,7 @@ read_trimmed_node:
             if (!parser_more(text, text_len, *pos))
                 goto fail;
             char *buffer = arena_alloc(arena, *pos - start + 1u);
+            if (!buffer) goto fail;
             size_t length = parser_decode_string_body(text, start, *pos, buffer);
             (*pos)++;
             result = backend->ids ? backend->string(&context, buffer, length)
@@ -1415,6 +1536,7 @@ read_trimmed_node:
         if (!length)
             goto fail;
         char *word = arena_alloc(arena, length + 1u);
+        if (!word) goto fail;
         memcpy(word, text + start, length);
         word[length] = '\0';
         result = backend->ids ? backend->word(&context, word, length)
@@ -2030,7 +2152,9 @@ static int parse_metta_buffer(const char *text, size_t text_len, Arena *a,
         }
         if (count >= cap) {
             cap = cap ? cap * 2 : 64;
-            atoms = cetta_realloc(atoms, sizeof(Atom *) * (size_t)cap);
+            Atom **next = cetta_realloc(atoms, sizeof(Atom *) * (size_t)cap);
+            if (!next) { free(atoms); *out_atoms = NULL; return -1; }
+            atoms = next;
         }
         atoms[count++] = at;
     }
@@ -2077,7 +2201,9 @@ static int parse_metta_buffer_ids(const char *text, size_t text_len,
         }
         if (count >= cap) {
             cap = cap ? cap * 2 : 64;
-            ids = cetta_realloc(ids, sizeof(AtomId) * (size_t)cap);
+            AtomId *next = cetta_realloc(ids, sizeof(AtomId) * (size_t)cap);
+            if (!next) { free(ids); arena_free(&scratch); return -1; }
+            ids = next;
         }
         ids[count++] = id;
     }
@@ -2094,6 +2220,7 @@ static bool read_all_text(FILE *f, char **text_out, size_t *nread_out) {
         long fsize = ftell(f);
         if (fsize >= 0 && fseek(f, 0, SEEK_SET) == 0) {
             char *text = cetta_malloc((size_t)fsize + 1);
+            if (!text) return false;
             size_t nread = fread(text, 1, (size_t)fsize, f);
             text[nread] = '\0';
             *text_out = text;
@@ -2108,6 +2235,7 @@ static bool read_all_text(FILE *f, char **text_out, size_t *nread_out) {
     size_t cap = 4096;
     size_t nread = 0;
     char *text = cetta_malloc(cap + 1);
+    if (!text) return false;
     for (;;) {
         size_t remaining = cap - nread;
         size_t nr = fread(text + nread, 1, remaining, f);
@@ -2123,7 +2251,9 @@ static bool read_all_text(FILE *f, char **text_out, size_t *nread_out) {
         }
         if (nread == cap) {
             cap *= 2;
-            text = cetta_realloc(text, cap + 1);
+            char *next = cetta_realloc(text, cap + 1);
+            if (!next) { free(text); return false; }
+            text = next;
         }
     }
     text[nread] = '\0';

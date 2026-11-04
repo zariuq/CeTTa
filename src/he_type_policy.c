@@ -5,6 +5,7 @@
 #include "search_machine.h"
 
 #include <pthread.h>
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -222,8 +223,58 @@ typedef struct {
     Atom *types[HE_GROUNDED_TYPES_PER_NAME];
 } HeGroundedTypeSlot;
 
-static HeGroundedTypeSlot g_he_grounded_slots[HE_GROUNDED_TYPE_SLOTS];
-static Arena g_he_grounded_arena;
+#define HE_LIBRARY_DECLARATION_COUNT \
+    (sizeof HE_LIBRARY_DECLARATIONS / sizeof HE_LIBRARY_DECLARATIONS[0])
+
+struct CettaHeTypeTables {
+    HeGroundedTypeSlot slots[HE_GROUNDED_TYPE_SLOTS];
+    Arena arena;
+    Atom *declarations[HE_LIBRARY_DECLARATION_COUNT];
+    SymbolId undeclared[sizeof HE_LIBRARY_UNDECLARED_NAMES / sizeof HE_LIBRARY_UNDECLARED_NAMES[0]];
+    SymbolId module_space_no_deps;
+    uint64_t symbol_instance;
+    bool initialized, loaded;
+};
+static _Thread_local CettaHeTypeTables *g_he_active_tables;
+static _Thread_local CettaHeTypeTables *g_he_fallback_tables;
+static pthread_key_t g_he_fallback_key;
+static pthread_once_t g_he_fallback_once = PTHREAD_ONCE_INIT;
+_Thread_local SymbolId g_he_module_space_no_deps_symbol = SYMBOL_ID_NONE;
+
+CettaHeTypeTables *he_type_tables_new(void) {
+    return calloc(1, sizeof(CettaHeTypeTables));
+}
+void he_type_tables_free(CettaHeTypeTables *tables) {
+    if (!tables) return;
+    if (tables->initialized) arena_free(&tables->arena);
+    free(tables);
+}
+static void he_type_tables_thread_free(void *tables) {
+    he_type_tables_free(tables);
+}
+static void he_type_tables_thread_key(void) {
+    if (pthread_key_create(&g_he_fallback_key, he_type_tables_thread_free)) abort();
+}
+static CettaHeTypeTables *he_type_tables_current(void) {
+    if (g_he_active_tables) return g_he_active_tables;
+    if (!g_he_fallback_tables) {
+        pthread_once(&g_he_fallback_once, he_type_tables_thread_key);
+        g_he_fallback_tables = he_type_tables_new();
+        if (!g_he_fallback_tables || pthread_setspecific(g_he_fallback_key, g_he_fallback_tables)) abort();
+    }
+    return g_he_fallback_tables;
+}
+CettaHeTypeTables *he_type_tables_exchange(CettaHeTypeTables *tables) {
+    CettaHeTypeTables *previous = g_he_active_tables;
+    g_he_active_tables = tables;
+    CettaHeTypeTables *current = tables ? tables : g_he_fallback_tables;
+    g_he_module_space_no_deps_symbol = current ? current->module_space_no_deps : SYMBOL_ID_NONE;
+    return previous;
+}
+#define g_he_grounded_slots (he_type_tables_current()->slots)
+#define g_he_grounded_arena (he_type_tables_current()->arena)
+#define g_he_library_declarations (he_type_tables_current()->declarations)
+#define g_he_library_undeclared (he_type_tables_current()->undeclared)
 
 static HeGroundedTypeSlot *he_grounded_slot(SymbolId symbol, bool insert) {
     uint32_t start = ((uint32_t)symbol * 2654435761u) % HE_GROUNDED_TYPE_SLOTS;
@@ -238,11 +289,25 @@ static HeGroundedTypeSlot *he_grounded_slot(SymbolId symbol, bool insert) {
     return NULL;
 }
 
+/* These fixed catalog terms contain expressions, symbols and scoped variables.
+ * A byte bounds one node, one child edge and one padded token byte. Reserving
+ * their arena room leaves the ordinary parser's atom constructors unchanged. */
+static Atom *he_parse_catalog_atom(const char *text) {
+    size_t length = strlen(text);
+    size_t unit = sizeof(Atom) + sizeof(Atom *) + 16u;
+    if (length > SIZE_MAX / unit) { errno = EOVERFLOW; return NULL; }
+    if (!arena_try_reserve(&g_he_grounded_arena, length * unit)) return NULL;
+    size_t pos = 0u;
+    Atom *atom = parse_sexpr(&g_he_grounded_arena, text, &pos);
+    if (atom && pos != length) { errno = EINVAL; return NULL; }
+    return atom;
+}
+
 static bool he_grounded_add(const char *name, const char *text,
                             bool extension) {
-    SymbolId symbol = symbol_intern_cstr(g_symbols, name);
-    size_t pos = 0u;
-    Atom *type = parse_sexpr(&g_he_grounded_arena, text, &pos);
+    SymbolId symbol = symbol_try_intern_cstr(g_symbols, name);
+    if (symbol == SYMBOL_ID_NONE) return false;
+    Atom *type = he_parse_catalog_atom(text);
     HeGroundedTypeSlot *slot = he_grounded_slot(symbol, true);
     if (symbol == SYMBOL_ID_NONE || !type || !slot ||
         slot->count == HE_GROUNDED_TYPES_PER_NAME)
@@ -254,12 +319,6 @@ static bool he_grounded_add(const char *name, const char *text,
     return true;
 }
 
-#define HE_LIBRARY_DECLARATION_COUNT \
-    (sizeof HE_LIBRARY_DECLARATIONS / sizeof HE_LIBRARY_DECLARATIONS[0])
-
-static Atom *g_he_library_declarations[HE_LIBRARY_DECLARATION_COUNT];
-static SymbolId g_he_library_undeclared[
-    sizeof HE_LIBRARY_UNDECLARED_NAMES / sizeof HE_LIBRARY_UNDECLARED_NAMES[0]];
 
 size_t he_library_declaration_count(void) {
     return he_library_tables_init() ? HE_LIBRARY_DECLARATION_COUNT : 0u;
@@ -311,47 +370,62 @@ bool he_library_declares_arity(const Atom *subject, CettaExprLen arity) {
     return false;
 }
 
-SymbolId g_he_module_space_no_deps_symbol = SYMBOL_ID_NONE;
-static bool g_he_tables_loaded;
-static pthread_once_t g_he_tables_once = PTHREAD_ONCE_INIT;
 
-static void he_library_tables_build(void) {
-    arena_init(&g_he_grounded_arena);
+static bool he_library_tables_build(void) {
+    if (!arena_try_init_detached(&g_he_grounded_arena)) return false;
+    he_type_tables_current()->initialized = true;
     for (size_t i = 0u; i < HE_LIBRARY_DECLARATION_COUNT; i++) {
-        size_t pos = 0u;
-        Atom *declaration = parse_sexpr(
-            &g_he_grounded_arena, HE_LIBRARY_DECLARATIONS[i], &pos);
+        Atom *declaration = he_parse_catalog_atom(HE_LIBRARY_DECLARATIONS[i]);
         if (!declaration || declaration->kind != ATOM_EXPR ||
             declaration->expr.len != 3u)
-            return;
+            return false;
         g_he_library_declarations[i] = declaration;
     }
     for (size_t i = 0u; i < sizeof g_he_library_undeclared /
                             sizeof g_he_library_undeclared[0]; i++) {
         g_he_library_undeclared[i] =
-            symbol_intern_cstr(g_symbols, HE_LIBRARY_UNDECLARED_NAMES[i]);
+            symbol_try_intern_cstr(g_symbols, HE_LIBRARY_UNDECLARED_NAMES[i]);
         if (g_he_library_undeclared[i] == SYMBOL_ID_NONE)
-            return;
+            return false;
     }
     for (size_t i = 0u; i < sizeof HE_GROUNDED_TYPES / sizeof HE_GROUNDED_TYPES[0]; i++) {
         if (!he_grounded_add(HE_GROUNDED_TYPES[i].name,
                              HE_GROUNDED_TYPES[i].type, false))
-            return;
+            return false;
     }
     for (size_t i = 0u; i < sizeof HE_GROUNDED_EXTENSION_TYPES /
                             sizeof HE_GROUNDED_EXTENSION_TYPES[0]; i++) {
         if (!he_grounded_add(HE_GROUNDED_EXTENSION_TYPES[i].name,
                              HE_GROUNDED_EXTENSION_TYPES[i].type, true))
-            return;
+            return false;
     }
     g_he_module_space_no_deps_symbol =
         symbol_lookup_cstr(g_symbols, "module-space-no-deps");
-    g_he_tables_loaded = g_he_module_space_no_deps_symbol != SYMBOL_ID_NONE;
+    he_type_tables_current()->module_space_no_deps = g_he_module_space_no_deps_symbol;
+    he_type_tables_current()->loaded = g_he_module_space_no_deps_symbol != SYMBOL_ID_NONE;
+    return he_type_tables_current()->loaded;
 }
 
 bool he_library_tables_init(void) {
-    pthread_once(&g_he_tables_once, he_library_tables_build);
-    return g_he_tables_loaded;
+    CettaHeTypeTables *tables = he_type_tables_current();
+    uint64_t instance = symbol_table_instance_id(g_symbols);
+    if (tables->initialized && tables->symbol_instance != instance) {
+        arena_free(&tables->arena);
+        memset(tables, 0, sizeof(*tables));
+    }
+    if (!tables->initialized) {
+        tables->symbol_instance = instance;
+        if (!he_library_tables_build()) {
+            int error = errno;
+            if (tables->initialized) arena_free(&tables->arena);
+            memset(tables, 0, sizeof(*tables));
+            g_he_module_space_no_deps_symbol = SYMBOL_ID_NONE;
+            errno = error;
+            return false;
+        }
+    }
+    g_he_module_space_no_deps_symbol = tables->module_space_no_deps;
+    return tables->loaded;
 }
 
 uint32_t he_grounded_symbol_types(SymbolId symbol, bool extensions,
