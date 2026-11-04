@@ -4725,7 +4725,7 @@ petta_next_slice:
             for (int k = i; k < block_end && !refused; k++) {
                 refused = cetta_prime_reserved_definition_error(
                     &eval_arena,
-                    term_universe_get_atom(&runtime.libraries.term_universe,
+                    term_universe_get_atom(cetta_library_context_universe((CettaLibraryContext *)(&runtime.libraries)),
                                            atom_ids[k]));
                 if (refused) block_end = k;
             }
