@@ -7,6 +7,7 @@
 #include "term_universe.h"
 
 #include <math.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <stdatomic.h>
 #include <stdio.h>
@@ -2774,6 +2775,28 @@ typedef struct {
 } PeTTaRegisteredBuiltins;
 
 static _Thread_local PeTTaRegisteredBuiltins g_petta_registered_builtins;
+static pthread_key_t g_petta_registered_builtins_key;
+static pthread_once_t g_petta_registered_builtins_once = PTHREAD_ONCE_INIT;
+static int g_petta_registered_builtins_key_error;
+
+static void petta_registered_builtins_thread_exit(void *context) {
+    PeTTaRegisteredBuiltins *set = context;
+    free(set->by_id);
+    memset(set, 0, sizeof(*set));
+}
+
+static void petta_registered_builtins_key_init(void) {
+    g_petta_registered_builtins_key_error = pthread_key_create(
+        &g_petta_registered_builtins_key, petta_registered_builtins_thread_exit);
+}
+
+static bool petta_registered_builtins_register(void) {
+    return pthread_once(&g_petta_registered_builtins_once,
+                         petta_registered_builtins_key_init) == 0 &&
+        !g_petta_registered_builtins_key_error &&
+        pthread_setspecific(g_petta_registered_builtins_key,
+                             &g_petta_registered_builtins) == 0;
+}
 
 static int petta_registered_builtin_compare(const void *left,
                                             const void *right) {
@@ -2790,13 +2813,20 @@ bool petta_semantics_registered_builtin_arities(SymbolId symbol,
         set->table_instance_id != table_instance_id) {
         if (!g_symbols || symbol == SYMBOL_ID_NONE)
             return false;
+        set->table = NULL;
+        set->table_instance_id = 0u;
+        set->len = 0u;
+        free(set->by_id);
+        set->by_id = NULL;
+        set->by_id_len = 0u;
         size_t len = 0u;
         for (size_t index = 0u; index < PETTA_REGISTERED_BUILTIN_COUNT;
              index++) {
             SymbolId id = symbol_intern_cstr(
                 g_symbols, petta_registered_builtins[index].name);
-            if (id != SYMBOL_ID_NONE)
-                set->entries[len++] = (PeTTaRegisteredBuiltin){
+            if (id == SYMBOL_ID_NONE)
+                return false;
+            set->entries[len++] = (PeTTaRegisteredBuiltin){
                     .id = id,
                     .arities = petta_registered_builtins[index].arities,
                 };
@@ -2804,12 +2834,13 @@ bool petta_semantics_registered_builtin_arities(SymbolId symbol,
         qsort(set->entries, len, sizeof(set->entries[0]),
               petta_registered_builtin_compare);
         set->len = len;
-        free(set->by_id);
-        set->by_id = NULL;
-        set->by_id_len = 0u;
         SymbolId bound = len ? set->entries[len - 1u].id + 1u : 0u;
         if (bound && bound <= (SymbolId)(1u << 20)) {
             set->by_id = calloc((size_t)bound, sizeof(*set->by_id));
+            if (set->by_id && !petta_registered_builtins_register()) {
+                free(set->by_id);
+                set->by_id = NULL;
+            }
             if (set->by_id) {
                 for (size_t index = 0u; index < len; index++)
                     set->by_id[set->entries[index].id] =

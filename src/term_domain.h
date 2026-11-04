@@ -21,8 +21,7 @@ VarInternTable *cetta_term_domain_variables(CettaTermDomain *);
 HashConsTable *cetta_term_domain_hashcons(CettaTermDomain *);
 Arena *cetta_term_domain_persistent(CettaTermDomain *);
 
-/* Existing symbol/variable globals are process-wide. The caller excludes
- * concurrent session switching, just as existing interpreter entry requires.
+/* Symbol, variable and current hash-consing contexts are thread-local.
  * A zero-initialized scope owns a domain reference and restores its predecessor,
  * including builtin IDs. Independent domains can be nested. */
 typedef struct {

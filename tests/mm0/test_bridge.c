@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "mm0_cetta_module.h"
 #include "seal.h"
+#include "runtime_names.h"
 #include <pthread.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -53,9 +54,12 @@ typedef struct {
     Atom *theory, *lookup, *statement, *name;
     unsigned failed;
     CettaSealObject *brand;
+    CettaNameContext names;
 } Worker;
 static void *read_concurrently(void *arg) {
     Worker *w = arg;
+    CettaNameContext previous = cetta_name_context_current();
+    cetta_name_context_install(&w->names);
     w->brand = cetta_seal_brand_get(&cold_brand, NULL);
     for (unsigned i = 0; i < 128; ++i) {
         Arena local;
@@ -67,6 +71,7 @@ static void *read_concurrently(void *arg) {
         if (!cetta_seal_atom_object(thm) || !tag(data, "axiom")) ++w->failed;
         arena_free(&local);
     }
+    cetta_name_context_install(&previous);
     return NULL;
 }
 
@@ -134,7 +139,8 @@ int main(void) {
     Atom *statement = sym(&source, "__cetta_lib_mm0_statement");
     Atom *name = sym(&source, "axP");
     for (unsigned i = 0; i < 4; ++i) {
-        workers[i] = (Worker){theory, lookup, statement, name, 0, NULL};
+        workers[i] = (Worker){theory, lookup, statement, name, 0, NULL,
+                              cetta_name_context_current()};
         if (pthread_create(&threads[i], NULL, read_concurrently, &workers[i])) break;
         ++created;
     }
