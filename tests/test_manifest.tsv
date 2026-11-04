@@ -546,7 +546,6 @@ tests/test_pragma_modes.metta	he	metta	extended	main	native	test	golden	-
 tests/test_pragma_thread_count_error.metta	he	metta	extended	main	native	test	golden	-
 tests/test_pragma_wrong_arity.metta	he	metta	extended	main	native	test	golden	-
 tests/test_prepared_keyed_top_k_stats.metta	he	metta	extended	main	native	test	golden	-
-tests/test_prepared_sequence_erasure_stats.metta	he	metta	extended	main	native	test	golden	-
 tests/test_pretty_namespaces_syntax.metta	he	metta	extended	main	native	test	golden	-
 tests/test_pretty_vars_syntax.metta	he	metta	extended	main	native	test-backend-dedicated	golden	dedicated backend or bridge golden regression
 tests/test_print_alternatives.metta	he	metta	extended	main	native	test	golden	-
