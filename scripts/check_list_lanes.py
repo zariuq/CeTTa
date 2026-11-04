@@ -308,7 +308,7 @@ def check_mutations(cetta: Path) -> int:
             "reverse",
             list_source,
             "(= (list:reverse $xs)\n"
-            "   (let $items (list:to-expression $xs)\n"
+            "   (let $items (tuple:from $xs)\n"
             "     (list:like $xs (list:reverse-acc $items ()))))",
             "(= (list:reverse $xs)\n   $xs)",
             "!(assertEqual (list:reverse (a b c)) (c b a))\n",
