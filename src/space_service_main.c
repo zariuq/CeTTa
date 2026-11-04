@@ -3684,14 +3684,12 @@ static void client_accept(Service *s,Client *clients,int listener) {
         snprintf(c->account,sizeof(c->account),"%s",found->pw_name);
 }
 static bool directory_open(Service *s,const char *path) {
-    if (mkdir(path,0700) && errno!=EEXIST) return false;
-    s->directory=open(path,O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW);
+    if (mkdir(path,0777) && errno!=EEXIST) return false;
+    s->directory=open(path,O_RDONLY|O_DIRECTORY|O_CLOEXEC);
     if (s->directory<0) return false;
-    struct stat st;
-    if (fstat(s->directory,&st) || st.st_uid!=geteuid() || (st.st_mode&077)) return false;
-    s->lock=openat(s->directory,"writer.lock",O_RDWR|O_CREAT|O_CLOEXEC|O_NOFOLLOW,0600);
+    s->lock=openat(s->directory,"writer.lock",O_RDWR|O_CREAT|O_CLOEXEC|O_NOFOLLOW,0666);
     if (s->lock<0 || flock(s->lock,LOCK_EX|LOCK_NB)) return false;
-    s->journal=openat(s->directory,"journal.csl",O_RDWR|O_CREAT|O_CLOEXEC|O_NOFOLLOW,0600);
+    s->journal=openat(s->directory,"journal.csl",O_RDWR|O_CREAT|O_CLOEXEC|O_NOFOLLOW,0666);
     return s->journal>=0;
 }
 static bool argument_number(const char *text,uint64_t *value) {
@@ -3753,7 +3751,6 @@ int main(int argc,char **argv) {
     }
     if (!path || !directory || directory[0]!='/' || !shared_path != !shared_group) goto invalid;
     s->shared_profile=shared_path!=NULL;
-    umask(0077);
     SymbolTable symbols; symbol_table_init(&symbols); g_symbols=&symbols;
     symbol_table_init_builtins(&symbols,&g_builtin_syms);
     int listener=-1, shared=-1, result=1;

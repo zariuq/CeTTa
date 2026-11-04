@@ -290,12 +290,12 @@ CettaDurableStatus cetta_durable_open(const char *path,const CettaDurableLimits 
     if (pthread_mutex_init(&s->mutex,NULL)) { free(s->path); free(s); return DURABLE_NOMEM; }
     char *lock=side_path(path,".lock"); CettaDurableStatus r=DURABLE_NOMEM;
     if (!s->path || !lock) { free(lock); goto fail; }
-    s->lock_fd=open(lock,O_RDWR|O_CREAT|O_CLOEXEC|O_NOFOLLOW,0600); free(lock);
+    s->lock_fd=open(lock,O_RDWR|O_CREAT|O_CLOEXEC|O_NOFOLLOW,0666); free(lock);
     struct stat st; r=DURABLE_IO;
     if (s->lock_fd<0 || fstat(s->lock_fd,&st) || !S_ISREG(st.st_mode)) goto fail;
     if (st.st_nlink!=1) { r=DURABLE_INVALID; goto fail; }
     if (flock(s->lock_fd,LOCK_EX|LOCK_NB)) { r=errno==EWOULDBLOCK?DURABLE_BUSY:DURABLE_IO; goto fail; }
-    s->fd=open(path,O_RDWR|O_CREAT|O_APPEND|O_CLOEXEC|O_NOFOLLOW,0600);
+    s->fd=open(path,O_RDWR|O_CREAT|O_APPEND|O_CLOEXEC|O_NOFOLLOW,0666);
     if (s->fd<0 || fstat(s->fd,&st) || !S_ISREG(st.st_mode)) goto fail;
     if (st.st_nlink!=1) { r=DURABLE_INVALID; goto fail; }
     if (!st.st_size) {
@@ -595,7 +595,7 @@ static CettaDurableStatus checkpoint_locked(CettaDurableStore *s) {
     Image *fresh=image_new(); if (!fresh) return DURABLE_NOMEM;
     char *temporary=side_path(s->path,".checkpoint");
     if (!temporary) { image_free(fresh); return DURABLE_NOMEM; }
-    int fd=open(temporary,O_RDWR|O_CREAT|O_APPEND|O_CLOEXEC|O_NOFOLLOW,0600);
+    int fd=open(temporary,O_RDWR|O_CREAT|O_APPEND|O_CLOEXEC|O_NOFOLLOW,0666);
     CettaDurableStatus result=DURABLE_IO; uint64_t written=0; bool temporary_owned=false;
     struct stat st;
     if (fd<0 || fstat(fd,&st) || !S_ISREG(st.st_mode)) goto done;

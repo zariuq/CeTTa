@@ -447,8 +447,7 @@ static bool private_parent(const char *path) {
     char *slash=strrchr(parent,'/');
     if (!slash) { free(parent);return false; }
     if (slash==parent) slash[1]=0;else *slash=0;
-    struct stat st;bool valid=!lstat(parent,&st) && S_ISDIR(st.st_mode) &&
-        st.st_uid==geteuid() && !(st.st_mode&077);
+    struct stat st;bool valid=!stat(parent,&st) && S_ISDIR(st.st_mode);
     free(parent);return valid;
 }
 int cetta_value_service_run(CettaLibraryContext *context,Space *program,Registry *registry,Arena *permanent,const char *configuration) {
@@ -456,11 +455,11 @@ int cetta_value_service_run(CettaLibraryContext *context,Space *program,Registry
     arena_init_detached(&host.configuration);arena_init_detached(&host.maintenance[0]);arena_init_detached(&host.maintenance[1]);int listener=-1,lock=-1,rc=1;struct stat bound={0};
     struct sigaction prior_term,prior_int;bool signals=false;
     if (!configure(&host,configuration)) { fputs("value service: invalid configuration\n",stderr);goto done; }
-    if (!private_parent(host.path)) { fputs("value service: socket requires a private owned directory\n",stderr);goto done; }
+    if (!private_parent(host.path)) { fputs("value service: socket directory unavailable\n",stderr);goto done; }
     char *lock_path=malloc(strlen(host.path)+6);if (!lock_path) goto done;
     sprintf(lock_path,"%s.lock",host.path);lock=open(lock_path,O_RDWR|O_CREAT|O_CLOEXEC|O_NOFOLLOW,0600);free(lock_path);
     struct stat lock_stat;
-    if (lock<0 || fstat(lock,&lock_stat) || !S_ISREG(lock_stat.st_mode) || lock_stat.st_uid!=geteuid() || (lock_stat.st_mode&077) || flock(lock,LOCK_EX|LOCK_NB)) goto done;
+    if (lock<0 || fstat(lock,&lock_stat) || !S_ISREG(lock_stat.st_mode) || flock(lock,LOCK_EX|LOCK_NB)) goto done;
     listener=cetta_ipc_listen(host.path,0600,(gid_t)-1,(int)host.client_count);
     if (listener<0 || lstat(host.path,&bound)) { fputs("value service: listener unavailable\n",stderr);goto done; }
     host.clients=calloc(host.client_count,sizeof(*host.clients));

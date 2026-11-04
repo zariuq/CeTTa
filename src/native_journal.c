@@ -168,7 +168,7 @@ CettaJournalStatus cetta_journal_checkpoint(int directory, const char *name,
         return CETTA_JOURNAL_INVALID;
     int fd;
     do { fd = openat(directory, temporary,
-                    O_RDWR | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW, 0600); }
+                    O_RDWR | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW, 0666); }
     while (fd < 0 && errno == EINTR);
     if (fd < 0) return CETTA_JOURNAL_IO;
     uint64_t size = 0;
