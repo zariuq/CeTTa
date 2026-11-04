@@ -988,8 +988,11 @@ bool symbol_table_try_init_builtins(SymbolTable *st, BuiltinSyms *builtins) {
 #undef CETTA_INIT_BUILTIN
 
     /* Includes append-only extensions outside the legacy contiguous range. */
+/* != has a language-specific policy (is_grounded_op): with SWI, PeTTa's
+ * library owns it, including permitted redefinitions, so it is no builtin. */
 #define CETTA_MARK_BUILTIN(field, text) \
-    symbol_table_add_flags(st, builtins->field, CETTA_SYMBOL_FLAG_BUILTIN);
+    if (&builtins->field != &builtins->op_neq) \
+        symbol_table_add_flags(st, builtins->field, CETTA_SYMBOL_FLAG_BUILTIN);
     CETTA_BUILTIN_SYMBOLS(CETTA_MARK_BUILTIN)
 #undef CETTA_MARK_BUILTIN
 
