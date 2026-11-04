@@ -5,6 +5,10 @@
 #include "generated/tensor_descriptors.generated.h"
 
 typedef struct CettaTensor CettaTensor;
+typedef enum {
+    CETTA_TENSOR_BYTE_ORDER_NATIVE, CETTA_TENSOR_BYTE_ORDER_LITTLE,
+    CETTA_TENSOR_BYTE_ORDER_BIG
+} CettaTensorByteOrder;
 /* Codes 1--4 retain the CTN1 dense interchange meaning. */
 typedef enum {
 #define DTYPE(name, code, text, width, family, precision) CETTA_TENSOR_##name = code,
@@ -34,7 +38,7 @@ typedef enum {
     CETTA_TENSOR_OK, CETTA_TENSOR_DTYPE, CETTA_TENSOR_SHAPE, CETTA_TENSOR_COUNT,
     CETTA_TENSOR_OVERFLOW, CETTA_TENSOR_NOMEM, CETTA_TENSOR_INDEX_ERROR,
     CETTA_TENSOR_VALUE, CETTA_TENSOR_DUPLICATE, CETTA_TENSOR_ENCODING, CETTA_TENSOR_ZERO_NORM,
-    CETTA_TENSOR_INEXACT, CETTA_TENSOR_PROMOTION
+    CETTA_TENSOR_INEXACT, CETTA_TENSOR_PROMOTION, CETTA_TENSOR_NONCANONICAL, CETTA_TENSOR_UNCERTIFIED
 } CettaTensorStatus;
 typedef union { int64_t i64; uint64_t index; double f64; float f32; uint8_t u8; } CettaTensorScalar;
 
@@ -53,9 +57,51 @@ CettaTensorStatus cetta_tensor_new(CettaTensorDType dtype, const size_t *shape,
  * buffer. Ownership transfers only on success; no mutable alias may survive. */
 CettaTensorStatus cetta_tensor_new_take(CettaTensorDType dtype, const size_t *shape,
     size_t rank, void *data, size_t bytes, CettaTensor **out);
+typedef struct {
+    void *context;
+    void (*retain)(void *context);
+    void (*release)(void *context);
+} CettaTensorBufferOwner;
+/* The caller guarantees scalar storage in the declared order is immutable for the
+ * entire retained lifetime. Bounds and element alignment are checked before
+ * retain. A successful tensor retains the owner once; refused construction
+ * changes no owner reference. Strides and offset are measured in elements. */
+CettaTensorStatus cetta_tensor_borrow(CettaTensorDType dtype, CettaTensorByteOrder byte_order,
+    const void *allocation, size_t allocation_bytes,
+    const size_t *shape, const ptrdiff_t *strides, size_t rank, size_t offset,
+    const CettaTensorBufferOwner *owner, CettaTensor **out);
+typedef struct {
+    CettaTensorByteOrder byte_order;
+    const void *allocation;
+    size_t allocation_bytes;
+    size_t offset;
+    const ptrdiff_t *strides;
+} CettaTensorDenseSpan;
+/* Borrow immutable storage metadata while retaining the tensor. Sparse
+ * support never becomes dense implicitly. */
+bool cetta_tensor_dense_span(const CettaTensor *, CettaTensorDenseSpan *);
 CettaTensorStatus cetta_tensor_coo(CettaTensorDType dtype, const size_t *shape,
     size_t rank, const size_t *flat_coordinates, const void *values, size_t entries,
     CettaTensorDuplicates duplicates, CettaTensor **out);
+/* Physical value order is preserved while coordinates/duplicates are
+ * normalized by the same constructor used for native-order input. */
+CettaTensorStatus cetta_tensor_coo_ordered(CettaTensorDType, CettaTensorByteOrder,
+    const size_t *shape, size_t rank, const size_t *coordinates, const void *values,
+    size_t entries, CettaTensorDuplicates, CettaTensor **);
+typedef struct {
+    CettaTensorByteOrder byte_order;
+    const void *values;
+    const size_t *coordinates, *segments, *minor;
+    size_t entries, segment_count;
+} CettaTensorSparseSpan;
+bool cetta_tensor_sparse_span(const CettaTensor *, CettaTensorSparseSpan *);
+/* All arrays are immutable through the owner's final release. COO keys and
+ * compressed minor keys must be canonical; CSC's traversal permutation is
+ * owned metadata. Failed construction changes no owner reference. */
+CettaTensorStatus cetta_tensor_sparse_borrow(CettaTensorDType, CettaTensorByteOrder,
+    CettaTensorLayout, const size_t *shape, size_t rank, const size_t *coordinates,
+    const size_t *segments, const size_t *minor, const void *values, size_t entries,
+    const CettaTensorBufferOwner *, CettaTensor **);
 void cetta_tensor_retain(void *tensor);
 void cetta_tensor_release(void *tensor);
 Atom *cetta_tensor_atom(Arena *arena, CettaTensor *tensor);
@@ -67,6 +113,7 @@ size_t cetta_tensor_stored(const CettaTensor *tensor);
 size_t cetta_tensor_retained_bytes(const CettaTensor *tensor);
 CettaTensorDType cetta_tensor_dtype(const CettaTensor *tensor);
 CettaTensorLayout cetta_tensor_layout(const CettaTensor *tensor);
+bool cetta_tensor_native_order(const CettaTensor *tensor);
 CettaTensorStatus cetta_tensor_get(const CettaTensor *tensor, size_t flat,
     bool *present, CettaTensorScalar *value);
 /* Views are immutable element-strided dense views. Negative and zero strides
@@ -102,6 +149,15 @@ CettaTensorStatus cetta_tensor_sum(const CettaTensor *tensor, CettaTensorSchedul
     CettaTensorScalar *result);
 CettaTensorStatus cetta_tensor_matvec(const CettaTensor *matrix, const CettaTensor *vector,
     CettaTensorSchedule schedule, CettaTensor **out);
+typedef struct { double value, lower, upper; } CettaFloatBounds;
+/* Enclose the real result for exact stored finite f32/f64 inputs. The center
+ * uses separate sequential binary64 multiplication/addition. Matrix absence
+ * adds no operations; the right vector must be fully present. Uncertified
+ * returns no partial result. Ordinary matvec schedules remain unchanged.
+ * Each successful tensor output owns one reference; slots must be distinct. */
+CettaTensorStatus cetta_tensor_dot_bounds(const CettaTensor *, const CettaTensor *, CettaFloatBounds *);
+CettaTensorStatus cetta_tensor_matvec_bounds(const CettaTensor *, const CettaTensor *,
+    CettaTensor **value, CettaTensor **lower, CettaTensor **upper);
 /* Sequential scores for a fully present Index vector of requested rows.
  * Request order and duplicate occurrences survive; unsupported packed layouts
  * use ordinary matvec followed by gather without changing the observation. */
