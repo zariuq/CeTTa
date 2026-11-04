@@ -23,15 +23,24 @@ SOURCE = '''!(bind! &s (new-space))
 !(!= () (collapse (once (match &s (seen 3) t))))
 !(present 1)
 !(present 3)
+!(!= 2 2)
+!(!= 2 3)
+!(!= same same)
+!(!= "same" same)
+!(!= ($x $x) ($x $x))
+!(!= ($x $x) ($y $y))
+!(if (!= 2 3) yes no)
+!(if (!= 2 2) yes no)
+!(unknown-comparison 2 2)
 '''
 
 
-def run(binary, source, expected, changes, statistics=False):
+def run(binary, source, expected, changes, statistics=False, language='petta'):
     env = {k: v for k, v in os.environ.items() if not k.startswith('CETTA_')}
     env.update(CETTA_PETTA_SEARCH_MACHINE='1', **changes)
     if statistics:
         env['CETTA_PETTA_MACHINE_STATS'] = '1'
-    result = subprocess.run([str(binary), '--lang', 'petta', str(source)],
+    result = subprocess.run([str(binary), '--lang', language, str(source)],
                             cwd=ROOT, env=env, text=True,
                             capture_output=True, timeout=90)
     diagnostics = result.stderr
@@ -52,8 +61,9 @@ def main():
     args = parser.parse_args()
     binary = args.binary.resolve()
     library = args.library == '1'
-    expected = ('true\ntrue\nfalse\nyes\nno\n' if library else
-                'true\n(!= () (t))\n(!= () ())\nno\nno\n')
+    expected = ('true\ntrue\nfalse\nyes\nno\n'
+                'false\ntrue\nfalse\ntrue\nfalse\ntrue\nyes\nno\n'
+                '(unknown-comparison 2 2)\n')
     count = 0
     with tempfile.TemporaryDirectory(prefix='comparison-authority-',
                                      dir=ROOT / 'runtime') as temporary:
@@ -61,8 +71,13 @@ def main():
         source.write_text(SOURCE)
         for name, changes in ROUTES.items():
             folds = run(binary, source, expected, changes, name == 'machine')
-            if name == 'machine' and bool(folds) != library:
+            if name == 'machine' and not folds:
                 raise AssertionError(('comparison admission', library, folds))
+            count += 1
+        source.write_text('!(!= 2 2)\n!(unknown-comparison 2 2)\n')
+        for changes in ROUTES.values():
+            run(binary, source, '[(!= 2 2)]\n[(unknown-comparison 2 2)]\n',
+                changes, language='he')
             count += 1
     if library:
         source = ROOT / 'tests/petta/native_comparison_redefined.metta'

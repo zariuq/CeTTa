@@ -702,6 +702,17 @@ bool grounded_op_is_library_native(SymbolId head) {
 bool is_grounded_op(SymbolId id) {
     if (id == SYMBOL_ID_NONE)
         return false;
+    /* Standalone PeTTa implements its standard inequality in C. With SWI,
+     * its library owns the operation, including permitted redefinitions.
+     * Other dialects retain their own interpretation of this spelling. */
+    if (id == g_builtin_syms.op_neq) {
+#if CETTA_BUILD_WITH_LIB_PROLOG
+        return false;
+#else
+        return eval_current_language_id &&
+            eval_current_language_id() == CETTA_LANGUAGE_PETTA;
+#endif
+    }
     if (grounded_op_is_pattern(id))
         return eval_current_pattern_head && eval_current_pattern_head(id) != SYMBOL_ID_NONE;
     /* These appended opcodes have a language-specific policy. Keep
@@ -4136,6 +4147,10 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
     /* ── Equality of values (any atom type) ────────────────────────────── */
     if (head_id == g_builtin_syms.op_eq && nargs == 2) {
         return atom_value_eq(args[0], args[1]) ? atom_true(a) : atom_false(a);
+    }
+    if (head_id == g_builtin_syms.op_neq && nargs == 2 &&
+        is_grounded_op(head_id)) {
+        return atom_value_eq(args[0], args[1]) ? atom_false(a) : atom_true(a);
     }
 
     /* ── Boolean ops ───────────────────────────────────────────────────── */

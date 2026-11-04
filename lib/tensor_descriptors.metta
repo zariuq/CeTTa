@@ -22,6 +22,8 @@
 (= (tensor:observation-descriptor equality) (TensorPolicy equality (DTypeShapeSupportScalarBits)))
 (= (tensor:observation-descriptor sum) (TensorPolicy sum (StoredCoordinateOrder F64AccumulateFloats)))
 (= (tensor:observation-descriptor matvec) (TensorPolicy matvec (StoredRowCoordinateOrder F64AccumulateFloats)))
+(= (tensor:observation-descriptor dotBounds) (TensorPolicy dotBounds (StoredCoordinateOrder NearestGradualSeparate StoredRealInputEnclosure TypedRefusal)))
+(= (tensor:observation-descriptor matvecBounds) (TensorPolicy matvecBounds (StoredRowCoordinateOrder NearestGradualSeparate StoredRealInputEnclosure TypedRefusal)))
 (= (tensor:observation-descriptor fixed4) (TensorPolicy fixed4 (FourLanesLeftAssociated ExplicitSelection)))
 (= (tensor:observation-descriptor topk) (TensorPolicy topk (FiniteEnabledDescending CoordinateAscendingTies)))
 (= (tensor:observation-descriptor entries) (TensorPolicy entries (CoordinateAscending PackedCoordinateValueVectors)))

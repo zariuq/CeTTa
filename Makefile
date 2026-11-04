@@ -764,7 +764,7 @@ SRC += src/shared_transition.c src/run_report.c src/run_cli.c src/error_presenta
 SRC += src/library_proc.c
 SRC += src/library_fs.c
 SRC += src/petta_priority_heap.c
-SRC += src/library_postings.c src/tensor.c src/tensor_screening.c src/library_tensor.c src/library_group.c
+SRC += src/library_postings.c src/tensor.c src/tensor_bounds.c src/tensor_screening.c src/library_tensor.c src/library_group.c
 SRC += src/binary_codec.c src/library_binary.c
 SRC += src/library_heap.c
 SRC += src/library_work.c
@@ -45321,10 +45321,29 @@ test-tensor-sequences: $(BIN)
 runtime/test_tensor_screening-$(BUILD_OBJ_TAG): tests/support/test_tensor_screening.c src/tensor_screening.h $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/support/test_tensor_screening.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
 
-.PHONY: test-tensor-screening
-runtime/test_tensor_screen_rounding-$(BUILD_OBJ_TAG): tests/support/test_tensor_screen_rounding.c src/tensor_screening.c src/tensor_screening.h src/tensor.c src/tensor.h src/atom.c src/atom.h src/binding/frame_identity.c $(SYMBOL_STANDALONE_SRC) $(BUILD_CONFIG_HEADER)
+TENSOR_BOUNDS_TEST_SRC = tests/support/test_tensor_bounds.c src/tensor_bounds.c src/tensor.c src/atom.c src/binding/frame_identity.c $(SYMBOL_STANDALONE_SRC)
+runtime/test_tensor_bounds-$(BUILD_OBJ_TAG): $(TENSOR_BOUNDS_TEST_SRC) src/tensor.h src/atom.h src/numeric_bounds.h $(BUILD_CONFIG_HEADER)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(TENSOR_BOUNDS_TEST_SRC) $(LDFLAGS) -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc
+
+.PHONY: test-tensor-bounds test-tensor-bounds-native
+test-tensor-bounds-native: runtime/test_tensor_bounds-$(BUILD_OBJ_TAG)
+	./runtime/test_tensor_bounds-$(BUILD_OBJ_TAG)
+
+test-tensor-bounds: $(BIN) test-tensor-bounds-native
+	python3 tests/support/check_tensor_bounds.py --cetta ./$(BIN)
+
+.PHONY: test-tensor-numpy
+test-tensor-numpy: $(BIN)
+	python3 tests/support/check_tensor_numpy.py --cetta ./$(BIN)
+
+ifeq ($(ENABLE_GMP),1)
+test-all: test-tensor-bounds
+endif
+
+runtime/test_tensor_screen_rounding-$(BUILD_OBJ_TAG): tests/support/test_tensor_screen_rounding.c src/tensor_screening.c src/tensor_screening.h src/numeric_bounds.h src/tensor.c src/tensor.h src/atom.c src/atom.h src/binding/frame_identity.c $(SYMBOL_STANDALONE_SRC) $(BUILD_CONFIG_HEADER)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/support/test_tensor_screen_rounding.c src/tensor.c src/atom.c src/binding/frame_identity.c $(SYMBOL_STANDALONE_SRC) $(LDFLAGS)
 
+.PHONY: test-tensor-screening
 test-tensor-screening: $(BIN) runtime/test_tensor_screening-$(BUILD_OBJ_TAG) runtime/test_tensor_screen_rounding-$(BUILD_OBJ_TAG)
 	./runtime/test_tensor_screening-$(BUILD_OBJ_TAG)
 	./runtime/test_tensor_screen_rounding-$(BUILD_OBJ_TAG)
