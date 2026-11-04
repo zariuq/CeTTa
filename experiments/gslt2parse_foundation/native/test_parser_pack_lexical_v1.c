@@ -352,7 +352,7 @@ static void test_guard_relation_contract(TestCounts *counts,
     Atom *proof_nullable = atom_symbol(arena, "proof-nullable");
     Atom *proof_eof = atom_symbol(arena, "proof-eof");
     Atom *proof_mutated = atom_symbol(arena, "proof-mutated");
-    Atom *variable_proof = atom_var_with_id(arena, "x", 1u);
+    Atom *variable_proof = atom_var_with_id(arena, "x", var_id_from_base(1u));
     Atom *expiring_base_value;
     Atom *expiring_value;
     Atom *expiring_proof;

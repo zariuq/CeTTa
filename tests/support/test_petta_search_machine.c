@@ -14,6 +14,7 @@
 #include "petta_program.h"
 #include "petta_runtime.h"
 #include "petta_search_machine.h"
+#include "runtime_names.h"
 #include "search_control_advice.h"
 #include "shared_transition.h"
 #include "stats.h"
@@ -2011,8 +2012,9 @@ static const PettaSemanticFormCase petta_semantic_form_cases[] = {
     {"chain", PETTA_FORM_CHAIN},
 };
 
-static void *test_semantic_form_thread(void *unused) {
-    (void)unused;
+static void *test_semantic_form_thread(void *context) {
+    CettaNameContext previous = cetta_name_context_current();
+    if (context) cetta_name_context_install(context);
     for (size_t index = 0u;
          index < sizeof(petta_semantic_form_cases) /
                      sizeof(petta_semantic_form_cases[0]); index++) {
@@ -2021,6 +2023,7 @@ static void *test_semantic_form_thread(void *unused) {
         assert(petta_semantics_form(symbol) ==
                petta_semantic_form_cases[index].form);
     }
+    if (context) cetta_name_context_install(&previous);
     return NULL;
 }
 
@@ -2034,11 +2037,12 @@ static void test_semantic_form_facts(void) {
         g_symbols, "process_metta_string-almost");
     assert(petta_semantics_form(lookalike) == PETTA_FORM_NONE);
 
+    CettaNameContext names = cetta_name_context_current();
     pthread_t readers[3];
     for (size_t index = 0u; index < 3u; index++)
         assert(pthread_create(
                    &readers[index], NULL,
-                   test_semantic_form_thread, NULL) == 0);
+                   test_semantic_form_thread, &names) == 0);
     for (size_t index = 0u; index < 3u; index++)
         assert(pthread_join(readers[index], NULL) == 0);
 
@@ -2509,12 +2513,9 @@ static void test_deep_cons_semantics(Arena *arena) {
         arena, atom_symbol(arena, "cons-almost"), item, tail);
     assert(open_tail && open_cons && observable_open);
     assert(cons_lookalike);
-    assert(!petta_semantics_is_open_cons_value(observable_open));
-    assert(observable_open->kind == ATOM_EXPR);
-    assert(observable_open->expr.len == 3u);
-    assert(petta_semantics_form(
-               atom_head_symbol_id(observable_open)) ==
-           PETTA_FORM_CONS);
+    /* An open cell stays a cell when observed: a value, never the spelling
+     * (cons H T), which is data (SWI-PeTTa's [H|T] against [cons, H, T]). */
+    assert(petta_semantics_is_open_cons_value(observable_open));
     assert(atom_alpha_eq(observable_open->expr.elems[1], item));
     assert(observable_open->expr.elems[2]->kind == ATOM_VAR);
     assert(var_id_eq(observable_open->expr.elems[2]->var_id, open_tail->var_id));
@@ -2522,14 +2523,22 @@ static void test_deep_cons_semantics(Arena *arena) {
     PeTTaConsShapeFacts cons_facts;
     assert(petta_semantics_cons_shape_facts(&cons_facts));
     assert(petta_semantics_cons_shape_facts_current(&cons_facts));
+    /* A written (cons H T) is a list pattern, never a cell. */
+    Atom *spelled_cons = atom_expr3(
+        arena, atom_symbol_id(arena, cons_facts.cons), item, open_tail);
+    assert(spelled_cons);
     assert(petta_semantics_facts_is_open_cons_value(
         &cons_facts, open_cons));
-    assert(!petta_semantics_facts_is_open_cons_value(
+    assert(petta_semantics_facts_is_open_cons_value(
         &cons_facts, observable_open));
+    assert(!petta_semantics_facts_is_open_cons_value(
+        &cons_facts, spelled_cons));
     assert(petta_semantics_facts_is_cons_constraint(
         &cons_facts, open_cons));
     assert(petta_semantics_facts_is_cons_constraint(
         &cons_facts, observable_open));
+    assert(petta_semantics_facts_is_cons_constraint(
+        &cons_facts, spelled_cons));
     assert(!petta_semantics_facts_is_cons_constraint(
         &cons_facts, cons_lookalike));
     Atom *cons_head = atom_symbol_id(arena, cons_facts.cons);
@@ -2612,11 +2621,17 @@ static void test_logical_cons_binding_views(Arena *arena) {
     assert(!bindings_lookup_value_id(&builder.current, (x)->var_id).skeleton);
     bindings_builder_rollback(&builder, empty_mark);
 
+    /* A variable bound to the symbol cons is data: ($head view-a ()) is
+     * then the three-element list [cons, view-a, []], as in SWI-PeTTa, and
+     * meets (view-a) neither as a pattern nor as a value.  Only the written
+     * symbol makes a cell pattern, and a variable bound to the cell's own
+     * tag (below) stands for that tag. */
     Atom *aliased_head = atom_expr3(arena, head, a, nil);
     assert(bindings_builder_add_var_fresh(
         &builder, head, atom_symbol(arena, "cons")));
-    assert(petta_semantics_match_cons_constraint(
+    assert(!petta_semantics_match_cons_constraint(
         arena, aliased_head, flat, &builder));
+    assert(builder.current.len == 1u);
     assert(!petta_semantics_match_lowered_head(
         arena, aliased_head, flat, &builder));
     assert(builder.current.len == 1u);
@@ -2849,11 +2864,9 @@ static void test_answer_materialization_boundaries(
     assert(petta_machine_next(
                &machine, &answer, &environment) ==
            PETTA_MACHINE_STEP_ANSWER);
-    assert(answer && answer->kind == ATOM_EXPR);
-    assert(answer->expr.len == 3u);
-    assert(!petta_semantics_is_open_cons_value(answer));
-    assert(petta_semantics_form(atom_head_symbol_id(answer)) ==
-           PETTA_FORM_CONS);
+    /* An open list answers as the cell it is (SWI-PeTTa's [a|Tail]), which
+     * prints (cons a $tail); it is never respelled as that data. */
+    assert(answer && petta_semantics_is_open_cons_value(answer));
     assert(atom_is_symbol_id(
         answer->expr.elems[1],
         symbol_intern_cstr(g_symbols, "a")));

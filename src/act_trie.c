@@ -1,8 +1,9 @@
 #define _POSIX_C_SOURCE 200809L
-/* ACTree03 format derived from PathMap src/arena_compact.rs, revision
- * cb4e1e4eecb75f0be9846b4b75c69d5e2d2f647b.
- * Copyright (c) Adam Vandervorst. MIT license; see LICENSES/PathMap-MIT.txt.
- * This implementation uses checked byte reads and explicit traversal stacks. */
+/* ACTree03, the byte-trie format of PathMap's src/arena_compact.rs
+ * (revision cb4e1e4eecb75f0be9846b4b75c69d5e2d2f647b), read and written in
+ * C.  The format follows PathMap, Copyright (c) Adam Vandervorst, whose MIT
+ * license (LICENSES/PathMap-MIT.txt) covers this file.  This implementation
+ * uses checked byte reads and explicit traversal stacks. */
 #include "act_trie.h"
 #include "storage_census.h"
 #include <errno.h>
@@ -1155,7 +1156,10 @@ CettaActStatus cetta_act_publication_open(const char *path,CettaActPublication *
   for (;;) {
     p->temporary[0]=0;
     if (!temporary_name(p->temporary,".act-publish-")) {cetta_act_publication_close(p);return CETTA_ACT_IO;}
-    p->output=openat(p->directory,p->temporary,O_RDWR|O_CREAT|O_EXCL|O_CLOEXEC,0600);
+    /* Created as any file written there would be: 0666 under the umask and
+     * the directory's default ACL, so a published image is as readable as its
+     * neighbours.  Private outputs and scratch files stay 0600. */
+    p->output=openat(p->directory,p->temporary,O_RDWR|O_CREAT|O_EXCL|O_CLOEXEC,0666);
     if (p->output>=0) break;
     if (errno!=EEXIST) {p->temporary[0]=0;cetta_act_publication_close(p);return CETTA_ACT_IO;}
     p->temporary[0]=0;

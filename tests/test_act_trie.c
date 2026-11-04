@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 static CettaActBytes bytes(const void *p, size_t n) {
@@ -143,6 +145,18 @@ int main(int argc, char **argv) {
   assert(fd >= 0);
   close(fd);
   assert(cetta_act_publish(path, bytes(image, size)) == CETTA_ACT_OK);
+  {
+    /* A published image has the mode any file written there gets. */
+    char reference[64];
+    snprintf(reference, sizeof reference, "%s.mode", path);
+    int probe = open(reference, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0666);
+    assert(probe >= 0);
+    close(probe);
+    struct stat published, ordinary;
+    assert(stat(path, &published) == 0 && stat(reference, &ordinary) == 0);
+    assert((published.st_mode & 07777) == (ordinary.st_mode & 07777));
+    unlink(reference);
+  }
   CettaActTree *mapped;
   assert(cetta_act_open(path, &mapped) == CETTA_ACT_OK);
   assert(cetta_act_publish(path, bytes(image, size)) == CETTA_ACT_OK);

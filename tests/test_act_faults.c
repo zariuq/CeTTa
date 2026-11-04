@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <dirent.h>
 #include <unistd.h>
 
 static size_t allocation, fail_allocation, syncs, fail_sync;
@@ -46,6 +47,21 @@ int __wrap_renameat(int da,const char *a,int db,const char *b) {
     return -1;
   }
   return __real_renameat(da,a,db,b);
+}
+/* No staged image survives a failed publication: the image's directory holds
+ * nothing but the image. */
+static void no_staged_images(const char *path) {
+  char directory[128];
+  const char *slash = strrchr(path, '/');
+  assert(slash && (size_t)(slash - path) < sizeof directory);
+  memcpy(directory, path, (size_t)(slash - path));
+  directory[slash - path] = 0;
+  DIR *dir = opendir(directory);
+  assert(dir);
+  for (struct dirent *entry; (entry = readdir(dir));)
+    assert(!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..") ||
+           !strcmp(entry->d_name, slash + 1));
+  closedir(dir);
 }
 static uint64_t read_value(const char *path) {
   CettaActTree *tree = NULL;
@@ -88,27 +104,29 @@ int main(void) {
   assert(cetta_act_build(&item, 1, &old, &old_size) == CETTA_ACT_OK);
   item.value = 2;
   assert(cetta_act_build(&item, 1, &next, &next_size) == CETTA_ACT_OK);
-  char path[] = "runtime/act-publish-XXXXXX";
-  int fd = mkstemp(path);
-  assert(fd >= 0);
-  close(fd);
+  char staging[] = "runtime/act-publish-XXXXXX", path[64];
+  assert(mkdtemp(staging));
+  snprintf(path, sizeof path, "%s/image.act", staging);
   assert(cetta_act_publish(path, (CettaActBytes){old, old_size}) ==
          CETTA_ACT_OK);
   fail_write = true;
   assert(cetta_act_publish(path, (CettaActBytes){next, next_size}) ==
          CETTA_ACT_IO);
   fail_write = false;
+  no_staged_images(path);
   assert(read_value(path) == 1);
   syncs = 0;
   fail_sync = 1;
   assert(cetta_act_publish(path, (CettaActBytes){next, next_size}) ==
          CETTA_ACT_IO);
   fail_sync = 0;
+  no_staged_images(path);
   assert(read_value(path) == 1);
   fail_rename = true;
   assert(cetta_act_publish(path, (CettaActBytes){next, next_size}) ==
          CETTA_ACT_UNCERTAIN);
   fail_rename = false;
+  no_staged_images(path);
   assert(read_value(path) == 1);
   syncs = 0;
   fail_sync = 2;
@@ -116,7 +134,9 @@ int main(void) {
          CETTA_ACT_UNCERTAIN);
   fail_sync = 0;
   assert(read_value(path) == 2);
+  no_staged_images(path);
   unlink(path);
+  rmdir(staging);
   /* Names remain bound to the opened directory even if its pathname moves. */
   char directory[]="runtime/act-publication-directory-XXXXXX";assert(mkdtemp(directory));
   char moved[128],destination[160],installed[160],sidecar[176];

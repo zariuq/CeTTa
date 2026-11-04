@@ -19191,27 +19191,18 @@ bool eval_resource_descriptor_hold(Arena *arena, GroundedKind kind, void *descri
 
 static HyperposeStorageOwner *hyperpose_storage_owner_new(void) {
     HyperposeStorageOwner *owner = calloc(1u, sizeof(*owner));
-    if (!owner) return NULL;
+    if (!owner)
+        return NULL;
     atomic_init(&owner->references, 1u);
     hashcons_init_compact(&owner->hashcons);
-    if (!owner->hashcons.table) { free(owner); return NULL; }
-    if (!arena_try_init_detached(&owner->persistent_arena)) {
-        hashcons_free(&owner->hashcons); free(owner); return NULL;
-    }
-    if (!arena_try_init_detached(&owner->eval_arena)) {
-        arena_free(&owner->persistent_arena);
-        hashcons_free(&owner->hashcons); free(owner); return NULL;
-    }
-    if (!term_universe_init_with_store_format(&owner->term_universe,
-            TERM_UNIVERSE_STORE_FORMAT_COMPACT32_V1)) {
-        arena_free(&owner->eval_arena); arena_free(&owner->persistent_arena);
-        hashcons_free(&owner->hashcons); free(owner); return NULL;
-    }
+    arena_init(&owner->persistent_arena);
+    arena_init(&owner->eval_arena);
     owner->persistent_arena.resource_scope = owner;
     owner->eval_arena.resource_scope = owner;
-    owner->term_universe.resource_scope = owner;
     arena_set_hashcons(&owner->persistent_arena, &owner->hashcons);
     arena_set_hashcons(&owner->eval_arena, &owner->hashcons);
+    term_universe_init(&owner->term_universe);
+    owner->term_universe.resource_scope = owner;
     term_universe_set_persistent_arena(&owner->term_universe, &owner->persistent_arena);
     owner->owned_spaces.owner = owner;
     atomic_fetch_add_explicit(&g_hyperpose_storage_owners_live, 1u, memory_order_relaxed);
@@ -24428,15 +24419,6 @@ static Atom *petta_prepared_expand_partial_application(
     return cetta_invocation_materialize(arena, &invocation);
 }
 
-/* A list cell of the language: PeTTa's open cell or its `(cons H T)`
- * spelling; elsewhere the open cell only. */
-static bool prepared_collection_list_cell(
-    CettaLanguageId language_id, const Atom *atom) {
-    return language_id == CETTA_LANGUAGE_PETTA
-        ? petta_semantics_is_cons_constraint(atom)
-        : petta_semantics_is_open_cons_value(atom);
-}
-
 /* The continuation carried into the next round of a collection pull.  The
  * arenas a round resets, the scratch arena and the retiring carry, hold only
  * the round's own atoms; those are copied, and every other atom outlives the
@@ -24653,7 +24635,7 @@ static inline __attribute__((always_inline)) PreparedFoldResult prepared_collect
         /* A constructed spine is walked where it lies: each list cell gives
          * an item, and a tail that is a cell continues the walk.  Any other
          * tail is the continuation, executed in the next round. */
-        if (prepared_collection_list_cell(language_id, cell)) {
+        if (petta_semantics_is_open_cons_value(cell)) {
             Atom *continuation = NULL;
             bool consumed = true;
             for (;;) {
@@ -24668,7 +24650,7 @@ static inline __attribute__((always_inline)) PreparedFoldResult prepared_collect
                 cetta_runtime_stats_inc(
                     CETTA_RUNTIME_COUNTER_PREPARED_COLLECTION_PULL_ITEM);
                 Atom *tail = cell->expr.elems[2];
-                if (!prepared_collection_list_cell(language_id, tail)) {
+                if (!petta_semantics_is_open_cons_value(tail)) {
                     continuation = tail;
                     break;
                 }
@@ -26412,9 +26394,9 @@ void eval_cleanup_owned_new_spaces(Registry *registry, Space *root) {
 void eval_resources_free(CettaEvalResources *resources, PettaProgram *program,
                          Registry *registry, Space *root) {
     if (!resources) return;
+    eval_cleanup_owned_new_spaces_in_set(&resources->created, registry, root);
     eval_free_held_space_set(&resources->made);
     eval_free_held_space_set(&resources->listed);
-    eval_cleanup_owned_new_spaces_in_set(&resources->created, registry, root);
     /* Worker teardown can finish on another thread. Drain only this
      * program's resources; other live engines keep their own entries. */
     pthread_mutex_lock(&g_new_space_drained_mutex);
@@ -79349,7 +79331,7 @@ static bool eval_get_metatype_intrinsic(
     if (registered)
         value = registered;
     if (eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
-        petta_semantics_is_cons_constraint(value) &&
+        petta_semantics_is_open_cons_value(value) &&
         !petta_semantics_is_closed_list(value))
         return true;
     *type = get_meta_type(arena, value);
@@ -84255,10 +84237,11 @@ petta_prepared_pure_pattern_view(
         !petta_semantics_is_cons_constraint(pattern)) {
         return CETTA_PREPARED_PURE_PATTERN_VIEW_NOT_APPLICABLE;
     }
-    if (!petta_semantics_is_cons_constraint(value)) {
+    if (!petta_semantics_is_open_cons_value(value)) {
         /* A nonempty ordinary expression is a PeTTa list, whose tail is not an
          * atom a prepared matcher can bind; only an empty or atomic value
-         * certainly fails to be a cons. */
+         * certainly fails to be a cons.  A value spelled `(cons h t)` is
+         * such an expression, data, as in SWI-PeTTa. */
         return value->kind == ATOM_EXPR && value->expr.len > 0u
             ? CETTA_PREPARED_PURE_PATTERN_VIEW_UNDECIDED
             : CETTA_PREPARED_PURE_PATTERN_VIEW_MISMATCH;
@@ -90872,9 +90855,13 @@ prepared_pure_closed_answers_try(
         plan.call_mode != CETTA_GSLT_PURE_CALL_EAGER) {
         return CETTA_PREPARED_PURE_ANSWERS_DECLINED;
     }
+    /* The call is read as the program runs it: its arguments as values
+     * where the plan keeps them as they are, as source it first evaluates
+     * otherwise. */
     bool he_completed_result = false;
     if (plan.language_id == CETTA_LANGUAGE_HE &&
-        !he_prepared_completion_admit(space, destination, NULL, call, false,
+        !he_prepared_completion_admit(space, destination, NULL, call,
+                                      plan.cache_entry_arguments_are_values,
                                       &he_completed_result))
         return CETTA_PREPARED_PURE_ANSWERS_DECLINED;
     CettaCount he_result_start = outcomes->len;
@@ -95938,7 +95925,7 @@ static __attribute__((noinline)) MettaDispatchResult metta_sequence_dispatch(
          * flat list makes an open cell. */
         if (language_id == CETTA_LANGUAGE_PETTA &&
             (tl->kind != ATOM_EXPR ||
-             petta_semantics_is_cons_constraint(tl))) {
+             petta_semantics_is_open_cons_value(tl))) {
             Atom *cell = petta_semantics_open_cons_value(a, hd, tl);
             if (cell)
                 outcome_set_add(os, cell, empty);
@@ -96004,7 +95991,7 @@ static __attribute__((noinline)) MettaDispatchResult metta_sequence_dispatch(
             if (atom_is_list(left)) {
                 lhs = left;
             } else if (rhs->kind != ATOM_EXPR ||
-                petta_semantics_is_cons_constraint(rhs)) {
+                petta_semantics_is_open_cons_value(rhs)) {
                 Atom *result = rhs;
                 for (CettaExprIndex i = left->expr.len; i > 0 && result; i--)
                     result = petta_semantics_open_cons_value(
@@ -96060,7 +96047,7 @@ static __attribute__((noinline)) MettaDispatchResult metta_sequence_dispatch(
         /* PeTTa's decons-atom and decons map [H|T] to (H T); (), every
          * non-list and an unconstrained argument have no answer here. */
         if (language_id == CETTA_LANGUAGE_PETTA &&
-            petta_semantics_is_cons_constraint(e)) {
+            petta_semantics_is_open_cons_value(e)) {
             outcome_set_add(os,
                 atom_expr2(a, e->expr.elems[1], e->expr.elems[2]),
                 empty);
@@ -96122,7 +96109,7 @@ static __attribute__((noinline)) MettaDispatchResult metta_sequence_dispatch(
             petta_eval_raise(petta_semantics_empty_head_error(a));
             return METTA_DISPATCH_HANDLED;
         }
-        Atom *result = petta_semantics_is_cons_constraint(e)
+        Atom *result = petta_semantics_is_open_cons_value(e)
             ? e->expr.elems[car ? 1 : 2]
             : cetta_sequence_projection_materialize(a, &view);
         outcome_set_add(os, result, empty);
@@ -98844,7 +98831,11 @@ tail_call: ;
         }
     }
     uint64_t need_thunk_id = 0u;
-    if (prime_need_ref_is_active(atom, &need_thunk_id)) {
+    /* An Atom demand reads what it is given as data.  A suspended argument
+     * there is the argument as written, as it is inside any expression that
+     * demand keeps, and is not run. */
+    if (prime_need_ref_is_active(atom, &need_thunk_id) &&
+        !atom_is_symbol_id(etype, g_builtin_syms.atom)) {
         if (prime_eval_stack_schedule_force(
                 s, a, atom, need_thunk_id, fuel, os))
             return;

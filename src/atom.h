@@ -978,14 +978,14 @@ bool  arena_try_init(Arena *a);
  * cross-thread owners: an ordinary arena_init deliberately inherits the
  * current evaluator's table for branch-local sharing. */
 void  arena_init_detached(Arena *a);
-/* Explicit context for transient descriptor operations. Initializers do not
- * inherit it: an arena's lifetime owner must be assigned by its owner. */
-void *arena_current_resource_scope(void);
-void *arena_set_resource_scope(void *scope);
 bool  arena_try_init_detached(Arena *a);
 /* Reserve room for the next size bytes without advancing the allocation
  * cursor. Failure preserves existing allocations and ownership. */
 bool  arena_try_reserve(Arena *a, size_t size);
+/* Explicit context for transient descriptor operations. Initializers do not
+ * inherit it: an arena's lifetime owner must be assigned by its owner. */
+void *arena_current_resource_scope(void);
+void *arena_set_resource_scope(void *scope);
 /* An arena that holds little takes blocks of `capacity` bytes rather than
  * ARENA_BLOCK_SIZE; an allocation larger than that still gets a block of its
  * own size. */

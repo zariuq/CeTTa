@@ -31,9 +31,9 @@
 /* A template instantiates over an activation's slots.  A list template has
  * two children: it is the list whose first element is the first and whose
  * rest is the second, PeTTa's `cons`, built as a cons cell.  A pattern list
- * is the list pattern of a `let` or a `case`, which reads a value spelled
- * `(cons h t)` as the cell it spells, as the host's matcher reads a value
- * against an authored list pattern; a built list reads only cons cells. */
+ * is the list pattern of a `let` or a `case`.  Both read only cells: a value
+ * spelled `(cons h t)` is data, an expression whose first element is `cons`,
+ * as in SWI-PeTTa. */
 typedef enum {
     OEM_T_LITERAL = 0,
     OEM_T_SLOT,
@@ -66,11 +66,6 @@ typedef enum {
 
 typedef struct {
     uint8_t kind;
-    /* A LIST operation of an authored head reads a value spelled
-     * `(cons h t)` as the cell it spells, as the host's matcher reads a
-     * value against an authored list pattern.  foldl/4's clauses read only
-     * cons cells, as the host's foldl does. */
-    uint8_t spelled;
     uint32_t reg;
     uint32_t operand;
     uint32_t length;
@@ -1166,9 +1161,6 @@ typedef struct {
     /* The PeTTa program the equations come from, whose planner plans the
      * clauses the region adds (oem_fold_relation). */
     PettaProgram *petta;
-    /* The equation is authored: its list patterns read spelled cells
-     * (OemMatchOp). */
-    bool authored;
     /* The equation is a named relation's, whose `(cut)` commits its call
      * to it.  A local relation's is a control's body, where PeTTa's cut
      * acts on the enclosing equation or stays inside the control. */
@@ -1513,7 +1505,7 @@ static bool oem_compile_param(OemCompile *compile, Atom *param, uint32_t reg,
         uint32_t base = compile->register_count;
         compile->register_count += 2u;
         OemMatchOp op = {
-            .kind = OEM_M_LIST, .spelled = compile->authored, .reg = reg,
+            .kind = OEM_M_LIST, .reg = reg,
             .operand = base, .length = 2u,
         };
         return (OEM_PUSH(program, op, op, &index) ||
@@ -5225,7 +5217,7 @@ static bool oem_steps_call_relation(const CettaOpenEquationProgram *program,
 static bool oem_compile_equation(CettaOpenEquationProgram *program,
                                  PettaProgram *petta,
                                  const CettaOpenEquationHost *host,
-                                 bool authored, bool named, bool body_is_data, Atom *lhs,
+                                 bool named, bool body_is_data, Atom *lhs,
                                  Atom *rhs, const PettaPlanNode *rhs_plan,
                                  const OemLocalSource *typed,
                                  const char **reason) {
@@ -5235,7 +5227,7 @@ static bool oem_compile_equation(CettaOpenEquationProgram *program,
          (typed && !oem_record_read_names(program, typed->contract.signature))))
         program->read_heads_complete = false;
     OemCompile compile = {.program = program, .host = host, .petta = petta,
-                          .authored = authored, .named = named,
+                          .named = named,
                           .lhs = lhs, .rhs = rhs};
     OemEquation equation = {
         .first_op = program->op_len,
@@ -5360,7 +5352,6 @@ static bool oem_compile_local_relation(CettaOpenEquationProgram *program,
         OemLocalSource local = program->sources[source + index];
         ok = oem_compile_equation(
             program, petta, host,
-            program->relations[relation_index].fold_step == SYMBOL_ID_NONE,
             false, false, local.lhs, local.rhs, local.plan,
             local.typed ? &local : NULL, &reason);
     }
@@ -6786,7 +6777,7 @@ static bool oem_compile_relation(CettaOpenEquationProgram *program,
             ok = false;
             break;
         }
-        ok = oem_compile_equation(program, petta, host, true, true,
+        ok = oem_compile_equation(program, petta, host, true,
                                   program->relations[relation_index].body_is_data,
                                   lhs, equation->expr.elems[2], rhs_plan,
                                   NULL, reason);
@@ -6964,7 +6955,7 @@ static bool oem_compile_ready_entry(CettaOpenEquationProgram *program,
         ? petta_program_plan_current_in(petta, &program->atoms, call) : NULL;
     uint32_t first = program->equation_len;
     bool ok = plan && oem_compile_equation(program, petta, host,
-        false, false, false, call, call, plan, NULL, reason);
+        false, false, call, call, plan, NULL, reason);
     if (!ok)
         return false;
     program->relations[0].first_equation = first;
@@ -8597,8 +8588,7 @@ static OemUnify oem_unify_template(CettaOpenEquationCursor *cursor,
 
 /* A list template meets a value by its first element and its rest: a cons
  * cell's fields, or a flat list's first element and the suffix that shares
- * its storage.  A pattern list takes a value spelled `(cons h t)` as that
- * cell.  Out of line: most templates are built expressions. */
+ * its storage.  Out of line: most templates are built expressions. */
 static __attribute__((noinline)) OemUnify oem_unify_list_template(
     CettaOpenEquationCursor *cursor, const CettaOpenEquationProgram *program,
     Atom **locals, uint32_t template_index, Atom *term, uint32_t depth) {
@@ -8614,9 +8604,7 @@ static __attribute__((noinline)) OemUnify oem_unify_list_template(
     }
     Atom *first = NULL;
     Atom *rest = NULL;
-    if (oem_is_list_cell(term) ||
-        (item->kind == OEM_T_PATTERN_LIST &&
-         petta_semantics_is_cons_constraint(term))) {
+    if (oem_is_list_cell(term)) {
         first = term->expr.elems[1];
         rest = term->expr.elems[2];
     } else {
@@ -11531,8 +11519,7 @@ static OemGroundMatch oem_match_ground_template(
         if (item->kind == OEM_T_PATTERN_LIST) {
             Atom *first = NULL;
             Atom *rest = NULL;
-            if (oem_is_list_cell(term) ||
-                petta_semantics_is_cons_constraint(term)) {
+            if (oem_is_list_cell(term)) {
                 first = term->expr.elems[1];
                 rest = term->expr.elems[2];
             } else {
@@ -15082,16 +15069,12 @@ static bool oem_may_match(CettaOpenEquationCursor *cursor,
             continue;
         }
         if (op->kind == OEM_M_LIST) {
-            /* A nonempty list; its rest is left open, and so is the whole
-             * of a cell the operation reads as spelled. */
+            /* A nonempty list; its rest is left open. */
             Atom *const *elements = NULL;
             CettaExprLen length = 0u;
             if (!open && (!atom_sequence_view(term, &elements, &length) || length == 0u))
                 return false;
-            regs[op->operand] =
-                open || (op->spelled &&
-                         petta_semantics_is_cons_constraint(term))
-                    ? NULL : elements[0];
+            regs[op->operand] = open ? NULL : elements[0];
             regs[op->operand + 1u] = NULL;
             continue;
         }
@@ -15292,9 +15275,7 @@ static inline __attribute__((always_inline)) OemRun oem_activate(
                     return OEM_RUN_HANDOFF;
                 regs[op->operand] = first;
                 regs[op->operand + 1u] = rest;
-            } else if (oem_is_list_cell(term) ||
-                       (op->spelled &&
-                        petta_semantics_is_cons_constraint(term))) {
+            } else if (oem_is_list_cell(term)) {
                 regs[op->operand] = term->expr.elems[1];
                 regs[op->operand + 1u] = term->expr.elems[2];
             } else {

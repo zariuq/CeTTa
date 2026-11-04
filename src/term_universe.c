@@ -5,8 +5,8 @@
 #include "string_literal.h"
 
 #include <inttypes.h>
-#include <limits.h>
 #include <errno.h>
+#include <limits.h>
 #include <math.h>
 #include <pthread.h>
 #include <stdarg.h>

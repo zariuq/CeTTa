@@ -108,7 +108,7 @@ static bool variable_ordinal(HEStreamVariableVecV1 *variables,
     uint32_t index;
 
     for (index = 0u; index < variables->len; index++) {
-        if (variables->data[index].id == id) {
+        if (var_id_eq(variables->data[index].id, id)) {
             *out = variables->data[index].ordinal;
             return true;
         }
@@ -185,10 +185,10 @@ static bool variable_pair(HEStreamVariablePairVecV1 *pairs,
     uint32_t index;
 
     for (index = 0u; index < pairs->len; index++) {
-        if (pairs->data[index].left == left ||
-            pairs->data[index].right == right) {
-            return pairs->data[index].left == left &&
-                pairs->data[index].right == right;
+        if (var_id_eq(pairs->data[index].left, left) ||
+            var_id_eq(pairs->data[index].right, right)) {
+            return var_id_eq(pairs->data[index].left, left) &&
+                var_id_eq(pairs->data[index].right, right);
         }
     }
     if (pairs->len == pairs->cap) {
