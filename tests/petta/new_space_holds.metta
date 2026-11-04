@@ -1,0 +1,15 @@
+; A space new-space makes lives while something holds it: a row, a name or a
+; state cell keeps it readable in later requests, after many dropped ones.
+(= (made $tag) (let $s (new-space) (let $u (add-atom $s (item $tag)) $s)))
+!(let $s (made a) (add-atom &self (kept $s)))
+!(bind! &named (new-space))
+!(add-atom &named (item b))
+!(let $s (made c) (bind! &cell (new-state $s)))
+!(match &self (kept $s) (match $s (item $x) $x))
+!(match &named (item $x) $x)
+!(let $s (get-state &cell) (match $s (item $x) $x))
+(= (spaces $n) (if (== $n 0) done (let $s (made $n) (spaces (- $n 1)))))
+!(spaces 2000)
+!(match &self (kept $s) (match $s (item $x) $x))
+!(match &named (item $x) $x)
+!(let $s (get-state &cell) (match $s (item $x) $x))

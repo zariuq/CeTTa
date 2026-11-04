@@ -125,6 +125,55 @@ static void test_older_generation_owns_its_name(void) {
     arena_free(&first);
 }
 
+static void certificate_resource_release(void *context) {
+    (*(unsigned *)context)++;
+}
+
+static void certificate_resource_retain(void *context) {
+    (void)context;
+}
+
+static void test_image_identity_certificate(void) {
+    Arena image, keeper, other;
+    arena_init_detached(&image);
+    arena_init_detached(&keeper);
+    uint32_t name = image.identity, certificate = 0u;
+    unsigned releases = 0u;
+    check(arena_retain_owner(&image, &releases, certificate_resource_retain,
+          certificate_resource_release), "the image holds its native resource");
+    check(arena_retain_identity_certificate(&keeper, &image, &certificate) &&
+          certificate == name, "an immutable image acquires a name certificate");
+    size_t charged = arena_accounted_live_bytes(&keeper);
+    bool duplicates = true;
+    for (unsigned i = 0u; i < 10000u; i++)
+        duplicates = duplicates && arena_retain_identity_certificate(
+            &keeper, &image, &certificate) && certificate == name;
+    check(duplicates && arena_accounted_live_bytes(&keeper) == charged,
+          "repeated image discovery retains one certificate and one charge");
+    arena_free(&image);
+    check(releases == 1u,
+          "the certificate does not retain image finalizers or resources");
+    bool reused = false;
+    for (unsigned i = 0u; i < 300u; i++) {
+        arena_init_detached(&other);
+        reused = reused || other.identity == name;
+        arena_free(&other);
+    }
+    check(!reused, "a discovered image name cannot be reused while certified");
+    check(!arena_retain_identity_certificate(&keeper, &image, &certificate) &&
+          certificate == 0u, "a dead image cannot acquire a certificate");
+    arena_free(&keeper);
+    Arena first, second;
+    arena_init_detached(&first);
+    arena_init_detached(&second);
+    check(first.identity == name || second.identity == name,
+          "discovery retirement releases the image name for reuse");
+    check(!arena_retain_identity_certificate(&keeper, &first, &certificate) &&
+          certificate == 0u, "a dead keeper cannot retain an image name");
+    arena_free(&second);
+    arena_free(&first);
+}
+
 /* Allocating from a freed arena before arena_init opens it again is fatal. */
 static void allocate_from_freed_arena(void) {
     Arena a;
@@ -236,6 +285,7 @@ int main(void) {
     g_symbols = &symbols;
     test_churn_past_the_end();
     test_older_generation_owns_its_name();
+    test_image_identity_certificate();
     test_reuse_after_free();
     test_concurrent_churn();
     if (g_failures) {

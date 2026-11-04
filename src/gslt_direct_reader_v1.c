@@ -3251,13 +3251,13 @@ int gslt_direct_petta_reader_v1_parse_bytes_ids(
     AtomId **out_ids, GSLTDirectPeTTaReaderV1Receipt *receipt,
     char *error_buf, size_t error_buf_size) {
     return gslt_direct_petta_reader_v1_parse_bytes_ids_from(
-        plan, input, input_len, 0u, UINT32_MAX, projection, out_ids,
+        plan, input, input_len, 0u, UINT32_MAX, 0u, projection, out_ids,
         receipt, NULL, error_buf, error_buf_size);
 }
 
 int gslt_direct_petta_reader_v1_parse_bytes_ids_from(
     const GSLTDirectPeTTaReaderV1Plan *plan, const uint8_t *input,
-    size_t input_len, size_t start, uint32_t max_forms,
+    size_t input_len, size_t start, uint32_t max_forms, uint32_t max_tokens,
     const GSLTDirectPeTTaProjectionV1 *projection, AtomId **out_ids,
     GSLTDirectPeTTaReaderV1Receipt *receipt, size_t *end_out,
     char *error_buf, size_t error_buf_size) {
@@ -3293,7 +3293,7 @@ int gslt_direct_petta_reader_v1_parse_bytes_ids_from(
     document.input = input;
     document.input_len = input_len;
     document.pos = start;
-    while (forms < max_forms) {
+    while (forms < max_forms && (!max_tokens || tokens < max_tokens)) {
         GSLTDirectBytesV1 form = {0};
         const uint8_t *form_data = NULL;
         size_t form_len = 0u;
