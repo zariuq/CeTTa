@@ -57128,9 +57128,13 @@ prepared_pure_closed_answers_try(
         plan.call_mode != CETTA_GSLT_PURE_CALL_EAGER) {
         return CETTA_PREPARED_PURE_ANSWERS_DECLINED;
     }
+    /* The call is read as the program runs it: its arguments as values
+     * where the plan keeps them as they are, as source it first evaluates
+     * otherwise. */
     bool he_completed_result = false;
     if (plan.language_id == CETTA_LANGUAGE_HE &&
-        !he_prepared_completion_admit(space, destination, NULL, call, false,
+        !he_prepared_completion_admit(space, destination, NULL, call,
+                                      plan.cache_entry_arguments_are_values,
                                       &he_completed_result))
         return CETTA_PREPARED_PURE_ANSWERS_DECLINED;
     CettaCount he_result_start = outcomes->len;
@@ -59137,7 +59141,11 @@ tail_call: ;
         return;
     atom = materialize_runtime_token(s, a, atom);
     uint64_t need_thunk_id = 0u;
-    if (prime_need_ref_is_active(atom, &need_thunk_id)) {
+    /* An Atom demand reads what it is given as data.  A suspended argument
+     * there is the argument as written, as it is inside any expression that
+     * demand keeps, and is not run. */
+    if (prime_need_ref_is_active(atom, &need_thunk_id) &&
+        !atom_is_symbol_id(etype, g_builtin_syms.atom)) {
 #if CETTA_PRIME_EVAL_STACK
         if (prime_eval_stack_schedule_force(
                 s, a, atom, need_thunk_id, fuel, os))

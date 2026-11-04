@@ -1,8 +1,8 @@
 # List Benchmark Sources
 
 This prototype benchmark lane is inspired by several established benchmark families,
-but is intentionally adapted into small CeTTa-native kernels so we can compare
-fast lists against explicit clists under one runtime.
+but is intentionally adapted into small CeTTa-native kernels over the list
+library, timed in the HE and Prime lanes of one runtime.
 
 Source families:
 - Are We Fast Yet?: https://github.com/smarr/are-we-fast-yet

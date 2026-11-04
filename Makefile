@@ -1750,6 +1750,12 @@ OSLF_NATIVE_TYPE_VM_V1_TEST_BIN = runtime/test_oslf_native_type_vm_v1-$(BUILD_OB
 OSLF_NATIVE_TYPE_VM_V1_MATCH_OBJ = runtime/bootstrap/oslf_native_type_vm_match.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 OSLF_NATIVE_TYPE_VM_V1_VARIANT_OBJ = runtime/bootstrap/oslf_native_type_vm_variant_shape.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 OSLF_NATIVE_TYPE_VM_V1_PRIME_NEED_OBJ = runtime/bootstrap/oslf_native_type_vm_prime_need.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+# match.c's binding support, as MATCH_STANDALONE_SRC links it.
+OSLF_NATIVE_TYPE_VM_V1_BINDING_OBJ = \
+	src/binding/closure.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o \
+	src/binding/frame_schema.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o \
+	src/binding/slot_store.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o \
+	src/binding/activation_view.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 OSLF_NATIVE_TYPE_VM_V1_TEST_LINK_OBJ = \
 	src/symbol.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o src/scalar_trie.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o \
 	src/atom.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o src/binding/frame_identity.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o \
@@ -1764,6 +1770,7 @@ OSLF_NATIVE_TYPE_VM_V1_TEST_LINK_OBJ = \
 	$(GSLT_PEANO_ADD_SPECIALIZATION_V1_OBJ) \
 	$(OSLF_NATIVE_TYPE_VM_V1_OBJ) \
 	$(OSLF_NATIVE_TYPE_VM_V1_MATCH_OBJ) \
+	$(OSLF_NATIVE_TYPE_VM_V1_BINDING_OBJ) \
 	$(OSLF_NATIVE_TYPE_VM_V1_VARIANT_OBJ) \
 	$(OSLF_NATIVE_TYPE_VM_V1_PRIME_NEED_OBJ) \
 	$(RUNTIME_STATS_SECTIONED_OBJ)
@@ -1772,6 +1779,7 @@ OSLF_NATIVE_TYPE_VM_V1_LDFLAGS = \
 	$(if $(filter 1,$(ENABLE_SANITIZERS)),-fsanitize=$(SANITIZERS) -fno-sanitize-recover=all,)
 CERTIFICATE_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_LINK_OBJ = \
 	$(PARSER_PACK_CURSOR_GENERATED_V1_LINK_OBJ) \
+	$(OSLF_NATIVE_TYPE_VM_V1_BINDING_OBJ) \
 	$(OSLF_NATIVE_TYPE_PLAN_V1_OBJ) \
 	$(GSLT_GROUND_DENSE_TERM_V1_OBJ) \
 	$(GSLT_RIGID_COORDINATE_DISPATCH_V1_OBJ) \
@@ -3394,6 +3402,7 @@ PRIME_PRACTICAL_TESTS = \
 	tests/prime/practical/need_control_branch_discriminators.metta
 PRIME_NORMAL_TESTS = \
 	tests/prime/need_application.metta \
+	tests/prime/held_arguments.metta \
 	tests/prime/need_demand_modes.metta \
 	tests/prime/conformance/abt_let_scope.metta \
 	tests/prime/conformance/type_judgments.metta \
@@ -19008,6 +19017,7 @@ NORMAL_TEST_TARGETS := \
 	test-petta-transform \
 	test-language-versions \
 	test-prime-normal-fixtures \
+	test-prepared-bound-heads \
 	test-numerical-substrate-smoke \
 	test-application-panel
 
@@ -28424,7 +28434,8 @@ PETTA_SEMANTIC_EXACT_STREAM_STEMS = \
 	collapse_copies_answers open_lists library_metta_suffix \
 	sort_values dynamic_head_values specialize_data_values \
 	specialize_space_arguments \
-	foldall_reduce partial_values bound_head_values \
+	foldall_reduce partial_values bound_head_values bound_head_lambda_bodies \
+	superpose_value_items \
 	get_type_relation list_natives_several let_star_patterns \
 	lambda_pattern_parameters lambda_parameter_scope \
 	specialized_partial_values closure_values activation_cons_let \
@@ -29724,6 +29735,39 @@ test-he-value-marks: $(BIN) tests/support/check_he_value_marks.py \
 
 test-all: test-he-value-marks
 
+.PHONY: test-prepared-bound-heads test-prepared-bound-heads-oracle \
+	refresh-prepared-bound-heads
+# Every prepared machine decides an application whose head is decided at run
+# time as data or a call as the evaluator does, and keeps a held argument as
+# data: generated PeTTa, HE and Prime programs answer alike with the prepared
+# machines and the compiled tier on and off; PeTTa's answer as SWI-PeTTa
+# stable-fixed's recorded answers, except where the script records that CeTTa
+# decides otherwise; Prime's held arguments as the HE lane's.
+test-prepared-bound-heads: $(BIN) tests/support/check_prepared_bound_heads.py \
+		tests/support/prepared_bound_heads_expected.json
+	@$(CETTA_SCRIPT_RUN_ENV) PYTHONDONTWRITEBYTECODE=1 python3 \
+		tests/support/check_prepared_bound_heads.py ./$(BIN)
+
+# The same programs against a SWI-PeTTa checkout, live.
+test-prepared-bound-heads-oracle: $(BIN) tests/support/check_prepared_bound_heads.py
+	@if [[ -z "$(strip $(PETTA_ORACLE_ROOT))" ]]; then \
+		echo 'set PETTA_ORACLE_ROOT to the PeTTa oracle checkout'; \
+		exit 1; \
+	fi
+	@$(CETTA_SCRIPT_RUN_ENV) PYTHONDONTWRITEBYTECODE=1 python3 \
+		tests/support/check_prepared_bound_heads.py ./$(BIN) \
+		--oracle "$(PETTA_ORACLE_ROOT)"
+
+# Record SWI-PeTTa's answers to the PeTTa programs.
+refresh-prepared-bound-heads: $(BIN) tests/support/check_prepared_bound_heads.py
+	@if [[ -z "$(strip $(PETTA_ORACLE_ROOT))" ]]; then \
+		echo 'set PETTA_ORACLE_ROOT to the PeTTa oracle checkout'; \
+		exit 1; \
+	fi
+	@$(CETTA_SCRIPT_RUN_ENV) PYTHONDONTWRITEBYTECODE=1 python3 \
+		tests/support/check_prepared_bound_heads.py ./$(BIN) --lanes petta \
+		--record "$(PETTA_ORACLE_ROOT)"
+
 .PHONY: test-space-dense-far-rows
 # Rows given one far number each grow by a leaf, not by bits up to it: with
 # the far pairs the peak exceeds the same run without them by at most 1 KiB
@@ -30314,7 +30358,11 @@ endif
 .PHONY: test-exact-index-frontier-stats
 # The ground matches take the exact route on both routes: the frontier is
 # certified from the exact index and the candidates are the occurrences, so
-# the trie is read only while a row with variables shares the head.
+# the trie is read only while a row with variables shares the head.  The
+# program asks fourteen ground questions of heads whose rows are all ground:
+# eleven matches, answered from exact occurrences, and three existence
+# checks that miss membership and need only the certificate.  Removals find
+# their rows by atom id and certify nothing.
 test-exact-index-frontier-stats: $(BIN) tests/petta/exact_index_frontier.metta
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 	@set -eu; \
@@ -30327,7 +30375,7 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 		occurrences=$$(counter match-native-exact-occurrences); \
 		lookups=$$(counter match-native-trie-lookup); \
 		if [ -z "$$certified" ] || [ -z "$$occurrences" ] || [ -z "$$lookups" ] || \
-				[ "$$certified" -lt 150 ] || [ "$$occurrences" -lt 150 ] || [ "$$lookups" -gt 10 ]; then \
+				[ "$$certified" -lt 14 ] || [ "$$occurrences" -lt 11 ] || [ "$$lookups" -gt 10 ]; then \
 			echo "FAIL: exact route on the $$route route: certified $$certified, occurrences $$occurrences, trie lookups $$lookups"; \
 			exit 1; \
 		fi; \
@@ -43435,7 +43483,7 @@ $(PARSER_PACK_FOREST_ENCODING_V1_TEST_BIN): \
 	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections \
 		-o "$$tmp_out" tests/support/test_parser_pack_forest_encoding_v1.c \
 		$(filter-out experiments/gslt2parse_foundation/native/parser_pack_native_v1.c,$(LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES)) \
-		-Wl,--gc-sections -ldl -lm -pthread; \
+		-Wl,--gc-sections -ldl -lm -pthread $(GMP_LDFLAGS); \
 	mv "$$tmp_out" $@
 
 .PHONY: test-parser-pack-forest-encoding-v1-body
@@ -44047,7 +44095,7 @@ $(PLAIN_BNF_META_PARSER_V1_TEST_BIN): \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections \
 		-o "$$tmp_out" $(PLAIN_BNF_META_PARSER_V1_C_SOURCES) \
-		-Wl,--gc-sections -ldl -lm -pthread; \
+		-Wl,--gc-sections -ldl -lm -pthread $(GMP_LDFLAGS); \
 	mv "$$tmp_out" $@
 
 .PHONY: test-plain-bnf-meta-parser-v1-body
@@ -45706,6 +45754,17 @@ qualify-collection-keys-lean:
 
 test-all: test-collection-keys test-flatten-fold
 
+# The collection theories as a module: the equations Theories.module states
+# hold in Lean's free structures for lists, bags and sets, and each extension
+# (order, then multiplicity forgotten) is strict.  The contract beside the
+# module is written by hand, not generated.
+.PHONY: qualify-collection-theories-lean
+qualify-collection-theories-lean:
+	@set -eu; \
+	contract="$(abspath langdef/collections/Theories.lean)"; \
+	cd "$(METTAPEDIA_LEAN_CHECKOUT)"; \
+	lake env lean -DwarningAsError=true "$$contract"
+
 .PHONY: test-postings-descriptors qualify-postings-descriptors-lean
 test-postings-descriptors: $(BIN) tools/generate_postings_descriptors.py \
 		langdef/postings/Descriptors.module \
@@ -47345,6 +47404,8 @@ test-open-equations: test-petta-oem-member-stats \
 		test-petta-oem-algebraic-project-map-stats \
 		test-petta-oem-algebraic-contains-stats \
 		test-petta-oem-sealed-continuation-stats
+# The ground unique observations: the loop's 1000 and the one under a
+# let whose body is a superpose.
 test-petta-oem-member-stats: $(BIN) \
 		tests/petta/oem_string_members.metta \
 		tests/petta/oem_string_members.expected
@@ -47356,7 +47417,7 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 	test "$$answers" = "$$(cat tests/petta/oem_string_members.expected)"; \
 	members=$$(printf '%s\n' "$$report" | awk \
 		'$$1 == "runtime-counter" && $$2 == "open-equation-member" { print $$3 }'); \
-	test "$$members" = 1000; \
+	test "$$members" = 1001; \
 	echo 'PASS: ground unique is-member observations stay in the open-equation region; relational multiplicity stays exact'
 else
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
