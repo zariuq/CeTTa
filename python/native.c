@@ -107,18 +107,33 @@ static PyObject *status_error(PyObject *module, cetta_status_t status) {
     Py_DECREF(name);
     return NULL;
 }
+static PyObject *diagnostic_object(const cetta_diagnostic_t *diagnostic) {
+    return Py_BuildValue("{s:s,s:s,s:K,s:K,s:i,s:i}",
+        "message", diagnostic->message, "source", diagnostic->source,
+        "line", (unsigned long long)diagnostic->line,
+        "column", (unsigned long long)diagnostic->column,
+        "exit_code", diagnostic->exit_code, "system_error", diagnostic->system_error);
+}
 
+static cetta_status_t python_install_host_hooks(cetta_engine_t *, PyObject *);
 static PyObject *engine_new(PyObject *module, PyObject *args) {
     (void)module;
     const char *language, *profile, *root;
-    if (!PyArg_ParseTuple(args, "szz", &language, &profile, &root)) return NULL;
+    PyObject *owner;
+    unsigned long long memory_limit;
+    if (!PyArg_ParseTuple(args, "szzOK", &language, &profile, &root, &owner, &memory_limit)) return NULL;
     cetta_engine_config_t config = {sizeof(config), CETTA_EMBED_ABI_VERSION, language, profile, root};
     cetta_engine_t *engine = NULL;
     cetta_status_t status;
     Py_BEGIN_ALLOW_THREADS
-    status = cetta_embed_engine_new(&config, &engine);
+    status = cetta_embed_engine_new_limited(&config, memory_limit, &engine);
     Py_END_ALLOW_THREADS
     if (status != CETTA_OK) return status_error(module, status);
+    status = python_install_host_hooks(engine, owner);
+    if (status != CETTA_OK) {
+        release_engine(engine);
+        return PyErr_Occurred() ? NULL : status_error(module, status);
+    }
     PyObject *capsule = PyCapsule_New(engine, engine_capsule, engine_destroy);
     if (!capsule) release_engine(engine);
     return capsule;
@@ -143,10 +158,21 @@ static PyObject *parse(PyObject *module, PyObject *args) {
     if (!engine) return NULL;
     cetta_atom_t *atom = NULL;
     cetta_status_t status;
+    cetta_diagnostic_t diagnostic = {.size = sizeof(diagnostic)};
     Py_BEGIN_ALLOW_THREADS
-    status = cetta_embed_parse(engine, text, length, &atom);
+    status = cetta_embed_parse_diagnostic(engine, text, length, &diagnostic, &atom);
     Py_END_ALLOW_THREADS
-    return status == CETTA_OK ? atom_object(atom) : status_error(module, status);
+    if (status == CETTA_OK) return atom_object(atom);
+    NativeState *state = PyModule_GetState(module);
+    PyObject *error = PyObject_CallFunction(state->error, "s", diagnostic.message[0]
+        ? diagnostic.message : cetta_embed_status_name(status));
+    PyObject *details = diagnostic_object(&diagnostic);
+    PyObject *name = PyUnicode_FromString(cetta_embed_status_name(status));
+    if (error && details && name && !PyObject_SetAttrString(error, "status", name) &&
+        !PyObject_SetAttrString(error, "diagnostic", details))
+        PyErr_SetObject(state->error, error);
+    Py_XDECREF(error); Py_XDECREF(details); Py_XDECREF(name);
+    return NULL;
 }
 static PyObject *scalar(PyObject *module, PyObject *args) {
     (void)module;
@@ -350,8 +376,12 @@ static PyObject *result_object(PyObject *module, cetta_status_t status, cetta_re
         if (!size) goto failure;
         PyList_SET_ITEM(groups, i, size);
     }
+    cetta_diagnostic_t details = {.size = sizeof(details)};
+    if (cetta_embed_result_diagnostic(result, &details) != CETTA_OK) goto failure;
+    PyObject *diagnostic = diagnostic_object(&details);
+    if (!diagnostic) goto failure;
     release_result(result);
-    return Py_BuildValue("sNN", cetta_embed_status_name(status), answers, groups);
+    return Py_BuildValue("sNNN", cetta_embed_status_name(status), answers, groups, diagnostic);
 failure:
     Py_XDECREF(answers);
     Py_XDECREF(groups);
@@ -626,6 +656,7 @@ static PyObject *space_match(PyObject *module, PyObject *args) {
 }
 
 #include "callbacks.inc"
+#include "host.inc"
 #include "buffers.inc"
 
 static PyMethodDef methods[] = {

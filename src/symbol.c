@@ -310,7 +310,8 @@ SymbolId symbol_intern_span_hashed(SymbolTable *st, const uint8_t *bytes,
                                    uint32_t len, uint64_t hash) {
     if (!st || !bytes || !len) return SYMBOL_ID_NONE;
     SymbolId id = symbol_try_intern_span_hashed(st, bytes, len, hash);
-    if (!id) symbol_fatal("symbol interning");
+    if (!id && !(cetta_native_memory_recover && cetta_native_memory_recover()))
+        symbol_fatal("symbol interning");
     return id;
 }
 

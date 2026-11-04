@@ -3241,7 +3241,9 @@ static bool petta_machine_reserve(
     }
     if (next > SIZE_MAX / item_size)
         return false;
-    *items = cetta_realloc(*items, next * item_size);
+    void *grown = cetta_realloc(*items, next * item_size);
+    if (!grown) return false;
+    *items = grown;
     *capacity = next;
     return true;
 }
@@ -5398,6 +5400,7 @@ static void petta_choice_release(
     }
 }
 
+/* Takes ownership on both success and refusal. */
 static bool petta_choice_push_at_goal_trail_mark(
     PettaMachineImpl *machine, PettaChoice choice,
     size_t goal_trail_mark) {
@@ -15418,8 +15421,6 @@ static bool petta_machine_start_transaction(
         },
     };
     if (!petta_choice_push(machine, choice)) {
-        machine->host.transaction_rollback(
-            machine->host.context, handle);
         *failure = PETTA_MACHINE_STEP_CAPACITY;
         return false;
     }
@@ -15517,8 +15518,6 @@ static bool petta_machine_start_mutex(
         },
     };
     if (!petta_choice_push(machine, choice)) {
-        machine->host.mutex_release(
-            machine->host.context, handle);
         *failure = PETTA_MACHINE_STEP_CAPACITY;
         return false;
     }
@@ -15672,6 +15671,7 @@ static PeTTaNamedArity petta_machine_source_named_arity(
         PettaNamedAritySourceCache *cache = *machine->named_arity_source;
         if (!cache) {
             cache = cetta_malloc(sizeof(*cache));
+            if (!cache) return (PeTTaNamedArity){0};
             cache->current = false;
             *machine->named_arity_source = cache;
         }
@@ -22068,6 +22068,7 @@ static bool petta_machine_try_extension_call(
     }
 
     OutcomeSet *outcomes = cetta_malloc(sizeof(*outcomes));
+    if (!outcomes) { *failure = PETTA_MACHINE_STEP_CAPACITY; return false; }
     outcome_set_init_with_owner(outcomes, &machine->heap);
     bool handled = false;
     CettaCallOutcome end = cetta_call_failure();
@@ -23563,7 +23564,6 @@ static bool petta_machine_start_collapse(
         },
     };
     if (!petta_choice_push(machine, choice)) {
-        petta_machine_release_child(machine, &inner);
         *failure = PETTA_MACHINE_STEP_CAPACITY;
         return false;
     }
@@ -23625,7 +23625,6 @@ static bool petta_machine_start_count_collapse(
         },
     };
     if (!petta_choice_push(machine, choice)) {
-        petta_machine_release_child(machine, &inner);
         *failure = PETTA_MACHINE_STEP_CAPACITY;
         return false;
     }
@@ -23778,8 +23777,6 @@ static bool petta_machine_start_foldall(
         },
     };
     if (!petta_choice_push(machine, choice)) {
-        petta_machine_release_child(machine, &generator);
-        petta_fold_storage_free(storage);
         *failure = PETTA_MACHINE_STEP_CAPACITY;
         return false;
     }
@@ -24454,6 +24451,12 @@ static bool petta_machine_start_match_choice_policy(
                 space, index_pattern, &occurrences);
         }
     }
+    if (cetta_native_memory_failed && cetta_native_memory_failed()) {
+        free(snapshot);
+        binding_set_free(&binding_snapshot);
+        space_occurrence_cursor_release(&occurrences);
+        return false;
+    }
     if (!occurrence_cursor_mode &&
         !binding_snapshot_mode && !atom_snapshot_mode) {
         Atom *index_pattern = resolved_pattern;
@@ -24524,9 +24527,6 @@ static bool petta_machine_start_match_choice_policy(
         },
     };
     if (!petta_choice_push(machine, choice)) {
-        space_occurrence_cursor_release(&choice.as.match.occurrences);
-        free(choice.as.match.snapshot);
-        binding_set_free(&choice.as.match.binding_snapshot);
         return false;
     }
     PettaMachineStep failure = PETTA_MACHINE_STEP_EXHAUSTED;
@@ -27302,6 +27302,7 @@ static __attribute__((cold, noinline)) bool petta_machine_try_filtered_match(
         return false;
     }
     OutcomeSet *outcomes = cetta_malloc(sizeof(*outcomes));
+    if (!outcomes) { *failure = PETTA_MACHINE_STEP_CAPACITY; return false; }
     outcome_set_init_with_owner(outcomes, &machine->heap);
     Bindings empty;
     bindings_init(&empty);
@@ -37778,6 +37779,7 @@ static bool petta_machine_dispatch_goal(
             return false;
         }
         OutcomeSet *outcomes = cetta_malloc(sizeof(*outcomes));
+        if (!outcomes) { *failure = PETTA_MACHINE_STEP_CAPACITY; return false; }
         outcome_set_init_with_owner(outcomes, &machine->heap);
         CettaCallOutcome end = cetta_call_failure();
         bool applied = machine->host.named_state(
@@ -39680,6 +39682,10 @@ static bool petta_machine_dispatch_goal(
     }
 
     OutcomeSet *outcomes = cetta_malloc(sizeof(*outcomes));
+    if (!outcomes) {
+        bindings_free(&host_environment);
+        *failure = PETTA_MACHINE_STEP_CAPACITY; return false;
+    }
     outcome_set_init_with_owner(outcomes, &machine->heap);
     CettaCallOutcome end = cetta_call_failure();
     const CettaDelayView host_delay = petta_machine_delay_view(machine);
@@ -39932,6 +39938,7 @@ static bool petta_machine_init_internal(
     if (!source_root)
         return false;
     PettaMachineImpl *impl = cetta_malloc(sizeof(*impl));
+    if (!impl) return false;
     memset(impl, 0, sizeof(*impl));
     impl->instance_id = petta_machine_fresh_instance_id();
     impl->query_source_root = source_root;

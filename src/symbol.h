@@ -688,7 +688,10 @@ static inline SymbolSpelling symbol_spelling(
     X(work_record, "work-record") \
     X(work_route, "work-route") \
     X(work_count, "work-count") \
-    X(work_exists, "work-exists")
+    X(work_exists, "work-exists") \
+    X(op_neq, "!=") \
+    X(tensor_dot_bounds, "tensor:dot-bounds") \
+    X(tensor_matvec_bounds, "tensor:matvec-bounds")
 
 /* Libraries may publish native primitives under their public names. The
  * shared registry supplies dispatch and operand-observation capability;
@@ -711,7 +714,8 @@ static inline SymbolSpelling symbol_spelling(
     X(tensor_entries) X(tensor_gather) X(tensor_gather_rows) X(tensor_where) X(tensor_merge) \
     X(tensor_scan_sum) X(tensor_concatenate) X(tensor_permute) \
     X(tensor_copy) X(tensor_convert) X(tensor_cast) X(tensor_promote) X(tensor_view) X(tensor_reshape) X(tensor_sum) \
-    X(tensor_matvec) X(tensor_top_k) X(tensor_encode) X(tensor_decode) \
+    X(tensor_matvec) X(tensor_dot_bounds) X(tensor_matvec_bounds) \
+    X(tensor_top_k) X(tensor_encode) X(tensor_decode) \
     X(tensor_encode_bytes) X(tensor_decode_bytes) \
     X(tensor_builder) X(tensor_put) X(tensor_freeze) X(tensor_freeze_log) X(tensor_close) \
     X(tensor_all_finite) X(tensor_normalize) X(tensor_cosine_index) \
@@ -962,4 +966,5 @@ typedef enum {
 
 CettaPettaArrowMode cetta_petta_arrow_mode(SymbolId id);
 
+#include "native_memory.h"
 #endif /* CETTA_SYMBOL_H */

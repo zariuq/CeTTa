@@ -545,9 +545,11 @@ static bool petta_program_reserve(
     }
     if (next > SIZE_MAX / width)
         return false;
-    *items = *items
+    void *grown = *items
         ? cetta_realloc(*items, width * next)
         : cetta_malloc(width * next);
+    if (!grown) return false;
+    *items = grown;
     *capacity = next;
     return true;
 }

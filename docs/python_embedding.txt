@@ -199,6 +199,8 @@ cross-thread entry into that busy engine reports busy; independent engines can
 run concurrently. Callbacks run on the host thread advancing their invocation;
 explicit close can finalize a generator on the closing thread. Known calls
 inside hyperpose use its cooperative realization.
+Output writers and signal handling also enter the host callback boundary.
+Other threads can retry busy after that callback returns.
 
 Formatting, named-value inspection and equality also report busy if another
 thread tries to enter an engine held by a callback. Primitive immutable scalar
@@ -338,7 +340,7 @@ The optional Rust consumer checks the same ABI without a Python dependency:
 Focused ownership, callback, query, buffer and allocation-refusal targets are
 available in the Makefile for changes to those boundaries.
 
-The 2026-11-03 package checks pass all 104 integration tests per wheel on
+The 2026-11-04 package checks pass all 128 integration tests per wheel on
 CPython 3.11, 3.12, 3.13, 3.14 and 3.15:
 
     Platform                  Test environment       Wheels passed
@@ -354,22 +356,87 @@ qualified. Emulation results are functional checks, not performance results.
 A relocated x86_64 wheel installation, source installation and editable
 installation each pass the integration suite outside the checkout. The normal
 Python notebook executes all 14 code cells and recovers from interruption in
-both PeTTa and HE. Native/Python sanitizer checks have also run on the x86_64
-development host. Wider core release qualification is separate from this
-package checkpoint.
+both PeTTa and HE. Native lifetime checks pass with ASan/UBSan, and native
+concurrency checks pass with TSAN on the x86_64 development host. Wider core
+release qualification is separate from this package checkpoint.
 
 Windows, macOS, free-threaded Python and subinterpreters are later targets.
+
+Host output, interruption and display
+
+Program output uses the current Python sys.stdout. contextlib.redirect_stdout
+and ordinary notebook output capture therefore work. Pass a file-like output
+to Engine(output=writer) to give an engine its own destination. Diagnostics use
+sys.stderr. Writers' exceptions keep their original Python tracebacks.
+PeTTa and HE retain their own printed-language conventions, including PeTTa's
+quotes around string values printed by println!.
+
+Whole-result run, eval, call and load poll Python signals cooperatively.
+KeyboardInterrupt stops active execution and permits a fresh invocation;
+completed effects remain committed. Python's signal handler is preserved.
+A failed PeTTa test raises EvaluationError with status "halted" and an
+exit_code. Earlier answers remain in error.answers. Later directives do not
+execute, and the next invocation can use the engine normally.
+
+Atom display quotes strings, escapes NUL and keeps binary64 round-trip
+precision. to_python returns the original string or numeric value.
+The package exposes its installed metadata version as cetta.__version__.
+
+Engine(memory_limit=bytes) limits the engine's CeTTa-owned native allocations,
+including retained answers. GMP allocations and host-owned input buffers are
+excluded. Independent engines have independent limits. Allocation refusal
+reports out-of-memory. If a committed mutation cannot acquire its authoritative
+executable metadata, that engine closes after unwinding; subsequent execution
+reports engine-closed. Retained answers remain readable. Other allocation
+failures leave the engine usable when its internal state remains consistent.
+
+Standalone C installation
+
+    make install-cabi PREFIX="$HOME/.local"
+    pkg-config --cflags --libs cetta
+
+DESTDIR stages the installation for packaging. The SDK includes the header,
+libcetta.so.1, libcetta.a, cetta.pc and language/runtime assets. The shared
+library finds resources relative to its installed location. A static consumer
+passes its installed share/cetta directory as config.resource_root.
+The C runtime does not require Python, SWI-Prolog, Rust or C++.
+
+Readiness investigation ledger
+
+GMP allocation refusal remains unresolved. Its default allocator terminates
+the process when malloc/realloc fails; allocator hooks cannot safely return
+NULL or recover with longjmp. See https://gmplib.org/manual/Custom-Allocation.
+The standalone probe tests/support/probe_gmp_allocation_failure.c reproduces
+the boundary when linked with static GMP and --wrap=malloc,--wrap=realloc:
+its normal run succeeds, and its "refuse" run terminates with SIGABRT.
+This is distinct from CeTTa-owned allocation handling and must not be counted
+as recovered by a native-core memory budget. Closing the investigation needs
+an arithmetic boundary with defined allocation-error returns, exact-number
+conformance and measurements of the resulting cost.
 
 The retained-query gates include test-embedding-query-canonical for HE held
 operands, test-embedding-query-streaming for pull prefixes, function returns,
 captured contexts and conditional packets, and test-embedding-he-callbacks
 for the shared foreign-provider protocol. test-embedding-he-retention checks consumed-output retirement,
 actual collections, retained answers and continuation-allocation refusals.
-The cold-start refusal gate covers every C malloc/calloc/realloc request in
-default and extended PeTTa startup, with individual and persistent denial.
+The cold-start refusal gate covers C malloc/calloc/realloc requests in default
+and extended PeTTa and HE startup, with individual and persistent denial,
+both with and without a native memory limit: 29,320 refusal cases in total.
 Each refusal returns out-of-memory, and engine creation can then be retried
 in the same host. The component gates also cover cleanup, caller-context
 restoration, mutex errors and retained facts after canceled root registration.
-Broader shared-runtime allocation-failure hardening remains part of core
-main readiness. Some HE low-memory paths still terminate the host; those
-findings are separate from the completed Python interface and package checks.
+
+The 2026-11-04 ASan/UBSan runtime panel passes 11,014 individual and persistent
+allocation refusals across 17 operations in both languages: reading, evaluation,
+documents, parallel evaluation, spaces, evaluation queries, space matching,
+integer/rational/string/expression construction, formatting, callbacks,
+registration and buffers. Every selected refusal is reached. Cleanup runs
+while persistent denial remains active; retained answers remain readable.
+10,920 cases allow subsequent engine use. The other 94 close the engine after
+a committed definition cannot record its executable metadata. A separate
+engine remains usable in either case.
+
+These are finite native qualification panels, not a proof that every possible
+program recovers from allocation failure. GMP's allocation boundary remains
+the explicit unresolved investigation above. Wider shared-runtime release
+qualification belongs to core main readiness.

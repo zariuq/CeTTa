@@ -10,6 +10,11 @@ include tests/support/test_embedding_cache_refusal.c
 include tests/support/test_embedding_owner_refusal.c
 include tests/support/test_embedding_construction.c
 include tests/support/test_embedding_startup_refusal.c
+include tests/support/test_embedding_memory_refusal.c tests/support/check_embedding_memory.py
+include tests/support/test_embedding_memory_budget.c tests/support/test_native_memory.c
+include tests/support/check_embedding_install.py tests/support/probe_gmp_allocation_failure.c
+include tests/support/test_tensor_bounds.c tests/support/check_tensor_bounds.py tests/support/check_tensor_numpy.py
+include tests/tools/check_random_closure_reference.py
 include tests/support/test_stdlib_refusal.c
 include tests/support/test_he_tables_refusal.c
 include tests/support/check_embedding_startup_refusal.py

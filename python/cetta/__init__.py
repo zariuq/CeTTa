@@ -5,8 +5,15 @@ from fractions import Fraction
 from pathlib import Path
 from collections.abc import Mapping
 import weakref
+import json
 import sys
 import os
+import importlib.metadata as _metadata
+
+try:
+    __version__ = _metadata.version("cetta")
+except _metadata.PackageNotFoundError:
+    __version__ = "0+uninstalled"
 
 from . import _native
 
@@ -140,10 +147,13 @@ from ._arrays import SparseArray
 
 
 class EvaluationError(CettaError):
-    def __init__(self, status, answers):
-        super().__init__(f"CeTTa: {status}")
+    def __init__(self, status, answers, diagnostic=None):
+        message = (diagnostic or {}).get("message")
+        super().__init__(f"CeTTa: {status}" + (f": {message}" if message else ""))
         self.status = status
         self.answers = answers
+        self.diagnostic = diagnostic or {}
+        self.exit_code = self.diagnostic.get("exit_code", 0)
 
 
 class Answers(list):
@@ -213,6 +223,8 @@ class Atom:
             size = _native.text_length(self._handle)
             if size > 160:
                 return f"<{kind.name.lower()}: {size} bytes>"
+        if kind == AtomKind.STRING:
+            return json.dumps(self.to_python(), ensure_ascii=False)
         return str(self)
 
     def __eq__(self, other):
@@ -284,11 +296,20 @@ class Atom:
 
 
 class Engine:
-    def __init__(self, *, language="petta", profile=None, resource_root=None):
+    def __init__(self, *, language="petta", profile=None, resource_root=None, output=None, memory_limit=None):
         self._closed = True
         self._close_native = _native.close
         self._callbacks = []
         self._invocations = {}
+        if output is not None and not callable(getattr(output, "write", None)):
+            raise TypeError("output must provide write(str)")
+        self._output = output
+        if memory_limit is not None:
+            if type(memory_limit) is not int:
+                raise TypeError("memory_limit must be an integer number of bytes or None")
+            if not 0 <= memory_limit < 2**64:
+                raise ValueError("memory_limit must be an unsigned 64-bit byte count")
+        self._memory_limit = memory_limit
         if resource_root is None:
             bundled = Path(__file__).with_name("resources")
             if (bundled / "lib").is_dir():
@@ -297,7 +318,8 @@ class Engine:
                 checkout = Path(__file__).resolve().parents[2]
                 if (checkout / "lib").is_dir():
                     resource_root = str(checkout)
-        self._handle = _native.engine(language, profile, resource_root)
+        self._handle = _native.engine(language, profile, resource_root, self,
+                                     2**64 - 1 if memory_limit is None else memory_limit)
         self._closed = False
 
     def close(self):
@@ -414,13 +436,14 @@ class Engine:
             layout="csc", duplicates=duplicates, dtype=dtype, copy=copy))
 
     def expression(self, *children):
+        """Construct a value; use symbol() for symbol children, str for strings."""
         values = [self.atom(child) for child in children]
         return Atom(_native.expression(self._handle, [value._handle for value in values]))
 
-    def _answers(self, status, values, sizes):
+    def _answers(self, status, values, sizes, diagnostic=None):
         answers = Answers((Atom(value) for value in values), sizes)
         if status != "ok":
-            raise EvaluationError(status, answers)
+            raise EvaluationError(status, answers, diagnostic)
         return answers
 
     def _execute(self, value, document, fuel):
@@ -484,6 +507,7 @@ class Space:
         return _native.space_count(self._handle)
 
     def add_atom(self, value):
+        """Add a value. Python strings are string atoms; use Engine.parse for syntax."""
         return _native.space_mutate(self._handle, self._engine.atom(value)._handle, False)
 
     def remove_atom(self, value):
@@ -573,7 +597,7 @@ class Query:
         try:
             result, state, physical, source, remaining, bindings, delayed, conditional = _native.query_step(
                 self._handle, allowance)
-            status, values, groups = result
+            status, values, groups, diagnostic = result
             answers = Answers((Atom(value) for value in values), groups)
             if answers and bindings is not None:
                 fields = Atom(bindings).children
@@ -583,7 +607,7 @@ class Query:
                                                (tuple(pair.children) for pair in constraints))
                 answers[0]._delayed = Atom(delayed) if delayed is not None else None
             if status != "ok":
-                raise EvaluationError(status, answers)
+                raise EvaluationError(status, answers, diagnostic)
             name = ("answer", "paused", "complete", "stopped")[state]
             self._finished = name in ("complete", "stopped")
             return QueryStep(name, answers, physical, source, remaining)

@@ -168,7 +168,10 @@ cetta_status_t cetta_embed_buffer_from_atom(const cetta_atom_t *atom, cetta_buff
     *output = NULL;
     CettaTensor *tensor = cetta_tensor_from_atom(atom->value);
     if (!tensor) return CETTA_BUFFER_INCOMPATIBLE;
+    CettaNativeMemoryScope memory;
+    cetta_native_memory_enter(&memory, atom->owner->engine->memory);
     cetta_buffer_t *buffer = buffer_alloc(cetta_tensor_rank(tensor));
+    cetta_native_memory_leave(&memory);
     if (!buffer) return CETTA_OUT_OF_MEMORY;
     cetta_status_t status = buffer_fill(buffer, tensor);
     if (status == CETTA_OK) { cetta_tensor_retain(tensor); *output = buffer; }

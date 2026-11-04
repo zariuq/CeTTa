@@ -15,6 +15,7 @@
 
 #include "parallel_executor.h"
 #include "stats.h"
+#include "native_memory.h"
 
 #include <pthread.h>
 #include <limits.h>
@@ -22,6 +23,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #define PARALLEL_WORKER_ARENA_RESERVE (4u * ARENA_BLOCK_SIZE)
 #define PERSISTENT_WORKER_STACK_BYTES (16u * 1024u * 1024u)
@@ -94,6 +96,7 @@ static void parallel_ready_queue_free(CettaParallelReadyQueue *queue) {
 static bool parallel_ready_queue_push(CettaParallelReadyQueue *queue,
                                       void *task) {
     CettaParallelTaskNode *node = cetta_malloc(sizeof(CettaParallelTaskNode));
+    if (!node) return false;
     node->task = task;
     node->next = NULL;
 
@@ -188,6 +191,7 @@ bool cetta_parallel_executor_init(CettaParallelExecutor *executor,
         return false;
     }
     memset(executor, 0, sizeof(*executor));
+    executor->memory = cetta_native_memory_current ? cetta_native_memory_current() : NULL;
     executor->names = cetta_name_context_current();
     executor->stats = cetta_runtime_stats_owner_current();
     executor->config = *config;
@@ -199,13 +203,19 @@ bool cetta_parallel_executor_init(CettaParallelExecutor *executor,
     executor->threads =
         cetta_malloc(sizeof(pthread_t) * executor->thread_count);
     executor->workers =
-        cetta_malloc(sizeof(CettaParallelWorker) * executor->thread_count);
+        calloc(executor->thread_count, sizeof(CettaParallelWorker));
+    if (!executor->threads || !executor->workers) {
+        cetta_parallel_executor_free(executor); return false;
+    }
     for (uint32_t i = 0; i < executor->thread_count; i++) {
         executor->workers[i].executor = executor;
         executor->workers[i].index = i;
         arena_init(&executor->workers[i].arena);
         arena_reserve(&executor->workers[i].arena,
                       PARALLEL_WORKER_ARENA_RESERVE);
+        if (cetta_native_memory_failed && cetta_native_memory_failed()) {
+            cetta_parallel_executor_free(executor); return false;
+        }
         arena_set_hashcons(&executor->workers[i].arena, NULL);
         arena_set_runtime_kind(&executor->workers[i].arena,
                                CETTA_ARENA_RUNTIME_KIND_SCRATCH);
@@ -271,6 +281,8 @@ bool cetta_parallel_executor_failed(const CettaParallelExecutor *executor) {
 
 static void parallel_worker_run_episode(CettaParallelWorker *worker) {
     CettaParallelExecutor *executor = worker->executor;
+    CettaNativeMemoryScope memory = {0};
+    if (cetta_native_memory_enter) cetta_native_memory_enter(&memory, executor->memory);
     CettaNameContext previous_names = cetta_name_context_current();
     cetta_name_context_install(&executor->names);
     CettaRuntimeStatsOwner *previous_stats = cetta_runtime_stats_owner_exchange(executor->stats);
@@ -299,6 +311,32 @@ static void parallel_worker_run_episode(CettaParallelWorker *worker) {
     g_parallel_worker_depth--;
     cetta_runtime_stats_owner_exchange(previous_stats);
     cetta_name_context_install(&previous_names);
+    if (cetta_native_memory_leave) cetta_native_memory_leave(&memory);
+    pthread_mutex_lock(&executor->completion_mutex);
+    executor->completed_workers++;
+    pthread_cond_broadcast(&executor->completion_cond);
+    pthread_mutex_unlock(&executor->completion_mutex);
+}
+
+static void parallel_wait_for_workers(CettaParallelExecutor *executor, uint32_t count) {
+    pthread_mutex_lock(&executor->completion_mutex);
+    while (executor->completed_workers < count) {
+        if (!executor->config.interrupt) {
+            pthread_cond_wait(&executor->completion_cond, &executor->completion_mutex);
+            continue;
+        }
+        struct timespec deadline;
+        timespec_get(&deadline, TIME_UTC);
+        deadline.tv_nsec += 20000000L;
+        if (deadline.tv_nsec >= 1000000000L) { deadline.tv_nsec -= 1000000000L; deadline.tv_sec++; }
+        pthread_cond_timedwait(&executor->completion_cond, &executor->completion_mutex, &deadline);
+        /* Host callbacks run without executor locks. */
+        pthread_mutex_unlock(&executor->completion_mutex);
+        if (executor->config.interrupt(executor->config.user))
+            cetta_parallel_executor_cancel(executor);
+        pthread_mutex_lock(&executor->completion_mutex);
+    }
+    pthread_mutex_unlock(&executor->completion_mutex);
 }
 
 static void *parallel_one_shot_worker_main(void *arg) {
@@ -338,10 +376,6 @@ static void *persistent_worker_pool_main(void *raw_worker) {
             continue;
         parallel_worker_run_episode(
             &executor->workers[pool_worker->index]);
-        pthread_mutex_lock(&executor->completion_mutex);
-        executor->completed_workers++;
-        pthread_cond_broadcast(&executor->completion_cond);
-        pthread_mutex_unlock(&executor->completion_mutex);
     }
     return NULL;
 }
@@ -396,6 +430,7 @@ static bool persistent_worker_pool_ensure(
     while (pool->worker_count < requested) {
         CettaPersistentPoolWorker *worker =
             cetta_malloc(sizeof(*worker));
+        if (!worker) { ok = false; break; }
         worker->index = pool->worker_count;
         worker->observed_generation = pool->generation;
         if (pthread_create(&worker->thread, &attr,
@@ -456,12 +491,7 @@ static CettaPersistentPoolRunResult persistent_worker_pool_run(
             CETTA_RUNTIME_COUNTER_PARALLEL_PERSISTENT_EPISODE_REUSE);
     }
 
-    pthread_mutex_lock(&executor->completion_mutex);
-    while (executor->completed_workers < executor->thread_count) {
-        pthread_cond_wait(&executor->completion_cond,
-                          &executor->completion_mutex);
-    }
-    pthread_mutex_unlock(&executor->completion_mutex);
+    parallel_wait_for_workers(executor, executor->thread_count);
 
     pthread_mutex_lock(&pool->mutex);
     if (pool->active_executor == executor)
@@ -548,6 +578,7 @@ static bool parallel_executor_run_one_shot(
 
     if (!ok) parallel_ready_queue_fail(&executor->queue);
 
+    parallel_wait_for_workers(executor, started);
     for (uint32_t i = 0; i < started; i++) {
         if (pthread_join(executor->threads[i], NULL) != 0) {
             cetta_parallel_executor_fail(executor,

@@ -13,6 +13,46 @@ if HAS_NUMPY:
 
 @unittest.skipUnless(HAS_NUMPY, "NumPy is an optional extra")
 class NumPyTests(unittest.TestCase):
+    def test_matvec_against_numpy_with_strides_and_mixed_float_dtypes(self):
+        rng = np.random.default_rng(20261103)
+        raw = rng.standard_normal((6, 34))
+        query = rng.standard_normal(34)
+        for language in ("petta", "he"):
+            with Engine(language=language) as engine:
+                engine.import_("(library tensor)" if language == "petta" else "tensor")
+                for matrix_dtype in (np.float32, np.float64):
+                    for vector_dtype in (np.float32, np.float64):
+                        matrix = raw.astype(matrix_dtype)[::2, ::2]
+                        vector = query.astype(vector_dtype)[::2]
+                        foreign = ">" if np.little_endian else "<"
+                        operands = [
+                            (matrix, vector),
+                            (np.asfortranarray(matrix), vector),
+                            (matrix[::-1, ::-1], vector[::-1]),
+                            (np.broadcast_to(matrix[:1], matrix.shape),
+                             np.broadcast_to(vector[:1], vector.shape)),
+                            (matrix.astype(matrix.dtype.newbyteorder(foreign)),
+                             vector.astype(vector.dtype.newbyteorder(foreign))),
+                        ]
+                        for index, (m, v) in enumerate(operands):
+                            with self.subTest(language=language, matrix_dtype=matrix_dtype,
+                                              vector_dtype=vector_dtype, layout=index):
+                                answer = engine.call("tensor:matvec", engine.tensor(m), engine.tensor(v))[0]
+                                actual = answer.to_numpy()
+                                # CeTTa accumulates f32 operands in f64 as well.
+                                m64, v64 = m.astype(np.float64), v.astype(np.float64)
+                                expected = m64 @ v64
+                                magnitude = np.sum(np.abs(m64) * np.abs(v64), axis=1)
+                                tolerance = 8 * np.finfo(np.float64).eps * len(v) * magnitude
+                                self.assertEqual(actual.shape, expected.shape)
+                                self.assertEqual(actual.dtype, np.dtype(np.float64))
+                                self.assertTrue(np.all(np.abs(actual - expected) <= tolerance),
+                                                (actual, expected, tolerance))
+                for rows, columns in ((0, 3), (3, 0)):
+                    m, v = np.empty((rows, columns)), np.empty(columns)
+                    actual = engine.call("tensor:matvec", engine.tensor(m), engine.tensor(v))[0].to_numpy()
+                    np.testing.assert_array_equal(actual, m @ v)
+
     def test_native_dtype_shape_and_values(self):
         with Engine() as engine:
             for dtype in (np.int64, np.uint64, np.uint8, np.float64, np.float32, np.bool_):

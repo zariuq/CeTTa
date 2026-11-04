@@ -10,12 +10,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
     parser.add_argument("--language", default="petta")
+    parser.add_argument("--memory-limit", type=int)
     args = parser.parse_args()
     binary = str(args.binary.resolve())
     refused = 0
     for profile in ("-", "extended"):
         def run(site, mode):
             command = [binary, args.language, profile, str(site), mode]
+            if args.memory_limit is not None:
+                command.append(str(args.memory_limit))
             result = subprocess.run(command, capture_output=True, text=True, timeout=30)
             if result.returncode or result.stderr:
                 raise RuntimeError(f"startup refusal failed: {command}\n{result.stdout}\n{result.stderr}")

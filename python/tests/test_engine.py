@@ -163,6 +163,23 @@ class EngineTests(unittest.TestCase):
             self.assertEqual(caught.exception.status, "fuel-exhausted")
             self.assertEqual(engine.eval("(+ 1 2)").to_python(), [3])
 
+    def test_repr_distinguishes_strings_symbols_and_expressions(self):
+        for language in ("petta", "he"):
+            with self.subTest(language=language), Engine(language=language) as engine:
+                string = engine.atom("name")
+                symbol = engine.symbol("name")
+                self.assertNotEqual(string, symbol)
+                self.assertNotEqual(repr(string), repr(symbol))
+                self.assertIn('"name"', repr(string))
+                parsed = engine.parse("(edge a b)")
+                expression = engine.expression("edge", "a", "b")
+                literal = engine.atom("(edge a b)")
+                self.assertEqual(len({repr(parsed), repr(expression), repr(literal)}), 3)
+                self.assertEqual(literal.to_python(), "(edge a b)")
+                escaped = engine.atom('quote" newline\n backslash\\')
+                self.assertNotIn("\n", repr(escaped))
+                self.assertEqual(escaped.to_python(), 'quote" newline\n backslash\\')
+
     def test_displays_are_bounded_and_values_are_preserved(self):
         with Engine() as engine:
             text = "x" * 10000
@@ -229,16 +246,23 @@ def spin():
         spin_errors.append(error.status)
 def metadata():
     metadata_started.set()
-    try:
-        if operation == 'construct': engine.atom(42)
-        elif operation == 'format': str(value)
-        elif operation == 'inspect': assert value.to_python() == 'ready'
-        elif operation == 'equal': assert value == other
-        elif operation == 'release':
-            last = held.pop()
-            del last
-    except CettaError as error:
-        metadata_errors.append(error.status)
+    while True:
+        try:
+            if operation == 'construct': engine.atom(42)
+            elif operation == 'format': str(value)
+            elif operation == 'inspect': assert value.to_python() == 'ready'
+            elif operation == 'equal': assert value == other
+            elif operation == 'release':
+                last = held.pop()
+                del last
+            break
+        except CettaError as error:
+            # Signal polling briefly enters the host callback boundary.
+            if error.status == 'busy':
+                time.sleep(.001)
+                continue
+            metadata_errors.append(error.status)
+            break
 worker = threading.Thread(target=spin)
 worker.start()
 assert started.wait(2)

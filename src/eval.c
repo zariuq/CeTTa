@@ -8,6 +8,7 @@
 #include "term_universe.h"
 #include "var_index.h"
 #include "eval.h"
+#include "host_services.h"
 #include "abt.h"
 #include "match.h"
 #include "search_machine.h"
@@ -329,6 +330,7 @@ static EvalExecutionContext *eval_execution_context(void) {
 static void eval_execution_scope_enter(EvalExecutionScope *scope, Space *root) {
     scope->previous = g_eval_execution;
     scope->owner = cetta_malloc(sizeof(*scope->owner));
+    if (!scope->owner) return;
     *scope->owner = (EvalExecutionContext){.root_space = root, .scoped = true};
     g_eval_execution = scope->owner;
 }
@@ -1377,6 +1379,7 @@ struct CettaEvalResources {
     TempSpaceSet temporary;
     TempSpaceSet created;
     EvalGc collector;
+    CettaNativeMemory *memory;
 };
 static __thread CettaEvalResources *g_eval_resources;
 static __thread TempSpaceSet g_temp_spaces_fallback;
@@ -1388,6 +1391,12 @@ static TempSpaceSet g_new_space_track_drained = {0};
 
 CettaEvalResources *eval_resources_new(void) {
     return calloc(1, sizeof(CettaEvalResources));
+}
+void eval_resources_set_native_memory(CettaEvalResources *resources, CettaNativeMemory *memory) {
+    if (resources) resources->memory = memory;
+}
+CettaNativeMemory *eval_native_memory_owner(void) {
+    return g_eval_resources ? g_eval_resources->memory : NULL;
 }
 CettaEvalGc *eval_resources_collector(CettaEvalResources *resources) {
     return resources ? &resources->collector : NULL;
@@ -1770,8 +1779,9 @@ static bool eval_mark_hyperpose_thread_unsafe(void) {
 }
 
 static bool eval_cancel_check(void) {
-    bool requested = g_eval_cancel_requested &&
-        atomic_load_explicit(g_eval_cancel_requested, memory_order_acquire);
+    bool requested = (cetta_native_memory_failed && cetta_native_memory_failed()) ||
+        (cetta_host_poll && cetta_host_poll()) || (g_eval_cancel_requested &&
+        atomic_load_explicit(g_eval_cancel_requested, memory_order_acquire));
     /* Inner workers may install their own cooperative token. The owner and
      * query requests remain in force across that temporary substitution. */
     for (const CettaEvalCancellationPair *pair = g_eval_cancellation_pair;
@@ -2670,11 +2680,14 @@ static bool result_set_ensure_one(ResultSet *rs) {
     using_inline = rs->items == rs->inline_items;
     if (using_inline) {
         Atom **next = cetta_malloc(sizeof(Atom *) * (size_t)next_cap);
+        if (!next) return false;
         if (rs->len > 0)
             memcpy(next, rs->items, sizeof(Atom *) * (size_t)rs->len);
         rs->items = next;
     } else {
-        rs->items = cetta_realloc(rs->items, sizeof(Atom *) * (size_t)next_cap);
+        Atom **next = cetta_realloc(rs->items, sizeof(Atom *) * (size_t)next_cap);
+        if (!next) return false;
+        rs->items = next;
     }
     rs->cap = next_cap;
     return true;
@@ -2988,12 +3001,24 @@ static void eval_execution_publish_results(Arena *destination, ResultSet *result
             continue;
         if (!copy) {
             copy = atom_deep_copy_session_new(destination);
-            if (!copy)
+            if (!copy) {
+                if (cetta_native_memory_recover && cetta_native_memory_recover()) {
+                    results->len = i;
+                    eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
+                    break;
+                }
                 cetta_oom(sizeof(Atom));
+            }
         }
         Atom *published = atom_deep_copy_session_copy(copy, value);
-        if (!published)
+        if (!published) {
+            if (cetta_native_memory_recover && cetta_native_memory_recover()) {
+                results->len = i;
+                eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
+                break;
+            }
             cetta_oom(sizeof(Atom));
+        }
         results->items[i] = published;
     }
     atom_deep_copy_session_free(copy);
@@ -3470,11 +3495,14 @@ static bool outcome_set_ensure_one(OutcomeSet *os) {
     using_inline = os->items == os->inline_items;
     if (using_inline) {
         Outcome *next = cetta_malloc(sizeof(Outcome) * (size_t)next_cap);
+        if (!next) return false;
         if (os->len > 0)
             memcpy(next, os->items, sizeof(Outcome) * (size_t)os->len);
         os->items = next;
     } else {
-        os->items = cetta_realloc(os->items, sizeof(Outcome) * (size_t)next_cap);
+        Outcome *next = cetta_realloc(os->items, sizeof(Outcome) * (size_t)next_cap);
+        if (!next) return false;
+        os->items = next;
     }
     os->cap = next_cap;
     return true;
@@ -4129,6 +4157,10 @@ static HeTypeDemand eval_atom_type_demand(Arena *arena, Atom *atom,
     if (eval_current_language_id() == CETTA_LANGUAGE_HE)
         return he_type_source_demand(atom, expected);
     Atom *meta = get_meta_type(arena, atom);
+    if (!meta || !expected) {
+        eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
+        return HE_TYPE_KEEP;
+    }
     if (atom_is_symbol_id(expected, g_builtin_syms.atom) ||
         atom_eq(expected, meta) ||
         (atom_is_symbol_id(expected, g_builtin_syms.expression) &&
@@ -4847,24 +4879,23 @@ static void eval_note_test_verdict(bool passed) {
 static bool petta_emit_test_diagnostic(Atom *actual, Atom *expected,
                                        bool equal) {
     eval_note_test_verdict(equal);
-    if (fputs("is ", stdout) == EOF)
-        return false;
-    atom_print_petta(actual, stdout);
-    if (fputs(", should ", stdout) == EOF)
-        return false;
-    atom_print_petta(expected, stdout);
-    if (fprintf(stdout, ". %s \n", equal ? "✅" : "❌") < 0)
-        return false;
-    return fflush(stdout) == 0;
+    CettaHostOutput output;
+    if (!cetta_output_open(&output, 0u)) return false;
+    fputs("is ", output.stream);
+    atom_print_petta(actual, output.stream);
+    fputs(", should ", output.stream);
+    atom_print_petta(expected, output.stream);
+    fprintf(output.stream, ". %s \n", equal ? "✅" : "❌");
+    return cetta_output_close(&output);
 }
 
 static bool petta_emit_assertion_failure(Atom *failed_goal) {
-    if (fputs("Assertion failed: ", stdout) == EOF)
-        return false;
-    atom_print_petta(failed_goal, stdout);
-    if (fputc('\n', stdout) == EOF)
-        return false;
-    return fflush(stdout) == 0;
+    CettaHostOutput output;
+    if (!cetta_output_open(&output, 0u)) return false;
+    fputs("Assertion failed: ", output.stream);
+    atom_print_petta(failed_goal, output.stream);
+    fputc('\n', output.stream);
+    return cetta_output_close(&output);
 }
 
 static Atom *outcome_atom_materialize_traced(Arena *a, Outcome *out,
@@ -7898,6 +7929,11 @@ EvalSpaceMutationEffect eval_apply_space_addition_unchecked_static_from_source(
     if (program &&
         !petta_program_observe_addition(
             program, target, storage, payload, add_plan)) {
+        /* Storage has committed, but its authoritative executable metadata
+         * could not be recorded. A host engine must close after unwinding. */
+        if (cetta_native_memory_failed && cetta_native_memory_failed() &&
+            cetta_native_memory_abandon)
+            cetta_native_memory_abandon();
         effect.error = atom_error(
             arena, call, atom_symbol(arena, "PeTTaCompilePlanFailed"));
         return effect;
@@ -14470,6 +14506,14 @@ typedef struct {
     _Atomic int winner_index;
 } HyperposeThreadRun;
 
+static bool hyperpose_host_interrupt(void *context) {
+    HyperposeThreadRun *run = context;
+    bool interrupted = (cetta_host_poll_immediate && cetta_host_poll_immediate()) || eval_cancel_check();
+    if (interrupted)
+        atomic_store_explicit(&run->cancel_requested, true, memory_order_release);
+    return interrupted;
+}
+
 typedef enum {
     HYPERPOSE_THREAD_OBSERVE_OCCURRENCES = 0,
     HYPERPOSE_THREAD_OBSERVE_REIFIED_BAG,
@@ -14789,6 +14833,7 @@ static Atom *hyperpose_clone_atom_materialized(
         return NULL;
     case ATOM_EXPR: {
         Atom **elems = arena_alloc(owner, sizeof(Atom *) * src->expr.len);
+        if (src->expr.len && !elems) return NULL;
         for (CettaExprIndex i = 0; i < src->expr.len; i++) {
             elems[i] =
                 hyperpose_clone_atom_materialized(
@@ -14840,7 +14885,7 @@ static bool hyperpose_clone_registry(Registry *dst, Registry *src,
     if (!context || !context->owner)
         return false;
     Arena *owner = context->owner;
-    registry_init(dst);
+    if (!registry_try_init(dst)) return false;
     bool saw_self = false;
     if (src) {
         for (CettaCount i = 0; i < src->len; i++) {
@@ -14960,14 +15005,17 @@ static bool hyperpose_prepare_thread_branch(HyperposeThreadBranch *branch,
     branch->source_plan = source_plan;
     bindings_init(&branch->capture_env);
     hashcons_init_compact(&branch->hashcons);
+    if (!branch->hashcons.table) return false;
     arena_init(&branch->persistent_arena);
     arena_reserve(&branch->persistent_arena,
                   HYPERPOSE_THREAD_PERSISTENT_ARENA_RESERVE);
+    if (cetta_native_memory_failed && cetta_native_memory_failed()) return false;
     arena_set_hashcons(&branch->persistent_arena, &branch->hashcons);
     arena_set_runtime_kind(&branch->persistent_arena,
                            CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
     arena_init(&branch->eval_arena);
     arena_reserve(&branch->eval_arena, HYPERPOSE_THREAD_EVAL_ARENA_RESERVE);
+    if (cetta_native_memory_failed && cetta_native_memory_failed()) return false;
     arena_set_hashcons(&branch->eval_arena, &branch->hashcons);
     arena_set_runtime_kind(&branch->eval_arena,
                            CETTA_ARENA_RUNTIME_KIND_EVAL);
@@ -15490,6 +15538,7 @@ static void hyperpose_eval_branch_in_thread(HyperposeThreadRun *run,
     __attribute__((cleanup(eval_execution_scope_leave)))
     EvalExecutionScope execution = {0};
     eval_execution_scope_enter(&execution, branch->space);
+    if (!execution.owner) return;
 
     Registry *prev_registry = g_registry;
     Space *prev_root_space = g_eval_root_space;
@@ -16014,6 +16063,7 @@ static bool hyperpose_threaded_execute(
         .task_fn = hyperpose_thread_task,
         .worker_enter = hyperpose_worker_enter,
         .worker_leave = hyperpose_worker_leave,
+        .interrupt = hyperpose_host_interrupt,
         .worker_failure_message = "hyperpose threaded worker failed",
     };
     if (!cetta_parallel_executor_init(&run.parallel, &config)) {
@@ -22309,9 +22359,11 @@ static bool profiled_type_cache_copy_types_from_entry(Arena *a,
         return true;
     }
     Atom **types = cetta_malloc(sizeof(Atom *) * entry->count);
+    if (!types) return false;
     for (uint32_t i = 0; i < entry->count; i++) {
         Atom *fresh = cetta_instantiate_frame_syntax(a, entry->types[i]);
         types[i] = atom_deep_copy(a, fresh);
+        if (!types[i]) { free(types); return false; }
     }
     *out_types = types;
     *out_count = entry->count;
@@ -22336,6 +22388,7 @@ static bool profiled_type_cache_lookup_key(
 static void profiled_type_cache_store_key(
     Space *s, Atom *atom, const ProfiledTypeCacheKey *admitted_key,
     Atom **types, uint32_t count) {
+    if (cetta_native_memory_failed && cetta_native_memory_failed()) return;
     ProfiledTypeCacheKey current_key;
     if (!admitted_key ||
         !profiled_type_cache_make_key(s, atom, &current_key) ||
@@ -22352,17 +22405,15 @@ static void profiled_type_cache_store_key(
     ProfiledTypeListCacheEntry *entry =
         &g_profiled_type_cache[
             admitted_key->hash % PROFILED_TYPE_CACHE_CAP];
-    entry->occupied = true;
-    entry->key = *admitted_key;
-    entry->atom_key = atom_deep_copy(&g_profiled_type_cache_arena, atom);
-    entry->count = count;
-    entry->types = NULL;
-    if (count == 0)
-        return;
-    entry->types =
-        arena_alloc(&g_profiled_type_cache_arena, sizeof(Atom *) * count);
-    for (uint32_t i = 0; i < count; i++)
-        entry->types[i] = atom_deep_copy(&g_profiled_type_cache_arena, types[i]);
+    Atom *atom_key = atom_deep_copy(&g_profiled_type_cache_arena, atom);
+    Atom **copied = count ? arena_alloc(&g_profiled_type_cache_arena, sizeof(Atom *) * count) : NULL;
+    if (!atom_key || (count && !copied)) return;
+    for (uint32_t i = 0; i < count; i++) {
+        copied[i] = atom_deep_copy(&g_profiled_type_cache_arena, types[i]);
+        if (!copied[i]) return;
+    }
+    *entry = (ProfiledTypeListCacheEntry){.occupied = true, .key = *admitted_key,
+        .atom_key = atom_key, .count = count, .types = copied};
 }
 
 static bool profiled_type_formation_cache_lookup_key(
@@ -22384,6 +22435,7 @@ static bool profiled_type_formation_cache_lookup_key(
 static void profiled_type_formation_cache_store_key(
     Space *s, Atom *ty, const ProfiledTypeCacheKey *admitted_key,
     bool result) {
+    if (cetta_native_memory_failed && cetta_native_memory_failed()) return;
     ProfiledTypeCacheKey current_key;
     if (!admitted_key ||
         !profiled_type_cache_make_key(s, ty, &current_key) ||
@@ -22394,10 +22446,10 @@ static void profiled_type_formation_cache_store_key(
     ProfiledTypeFormationCacheEntry *entry =
         &g_profiled_type_formation_cache[
             admitted_key->hash % PROFILED_TYPE_FORMATION_CACHE_CAP];
-    entry->occupied = true;
-    entry->key = *admitted_key;
-    entry->atom_key = atom_deep_copy(&g_profiled_type_cache_arena, ty);
-    entry->result = result;
+    Atom *owned = atom_deep_copy(&g_profiled_type_cache_arena, ty);
+    if (!owned) return;
+    *entry = (ProfiledTypeFormationCacheEntry){.occupied = true,
+        .key = *admitted_key, .atom_key = owned, .result = result};
 }
 
 static Atom *normalize_type_expr_profiled(Arena *a, Atom *ty) {
@@ -24017,6 +24069,7 @@ static PreparedPureProgramCache *eval_execution_prepared_cache(void) {
         return NULL;
     if (!context->prepared) {
         context->prepared = cetta_malloc(sizeof(*context->prepared));
+        if (!context->prepared) return NULL;
         *context->prepared = (PreparedPureProgramCache){
             .root_space = context->root_space,
         };
@@ -27915,6 +27968,7 @@ void metta_eval(Space *s, Arena *a, Atom *type, Atom *atom, int fuel, ResultSet 
     }
 
     Atom *etype = type ? type : atom_undefined_type(a);
+    if (!etype) { eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY); return; }
 
     /* Resolve registry tokens (&name → bound value) */
     Atom *bound = registry_lookup_atom(atom);
@@ -28429,9 +28483,11 @@ static bool match_visible_var_set_reserve(MatchVisibleVarSet *set,
         next_cap *= 2;
     if (!cetta_expr_len_mul_fits_size(next_cap, sizeof(MatchVisibleVarRef)))
         return false;
-    set->items = set->items
+    MatchVisibleVarRef *items = set->items
         ? cetta_realloc(set->items, sizeof(MatchVisibleVarRef) * (size_t)next_cap)
         : cetta_malloc(sizeof(MatchVisibleVarRef) * (size_t)next_cap);
+    if (!items) return false;
+    set->items = items;
     set->cap = next_cap;
     return true;
 }
@@ -28485,9 +28541,11 @@ static bool match_visible_alias_set_reserve(MatchVisibleAliasSet *set,
         next_cap *= 2;
     if (!cetta_expr_len_mul_fits_size(next_cap, sizeof(MatchVisibleAliasRef)))
         return false;
-    set->items = set->items
+    MatchVisibleAliasRef *items = set->items
         ? cetta_realloc(set->items, sizeof(MatchVisibleAliasRef) * (size_t)next_cap)
         : cetta_malloc(sizeof(MatchVisibleAliasRef) * (size_t)next_cap);
+    if (!items) return false;
+    set->items = items;
     set->cap = next_cap;
     return true;
 }
@@ -42446,6 +42504,7 @@ static bool petta_eval_machine_transaction_begin(
 
     PettaEvalTransaction *transaction =
         cetta_malloc(sizeof(*transaction));
+    if (!transaction) return false;
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_PETTA_TRANSACTION_BEGIN);
     memset(transaction, 0, sizeof(*transaction));
@@ -42467,7 +42526,7 @@ static bool petta_eval_machine_transaction_begin(
     if (!transaction->persistent_arena)
         transaction->persistent_arena =
             eval_storage_arena(arena);
-    registry_init(&transaction->registry);
+    if (!registry_try_init(&transaction->registry)) goto fail;
 
     Space *working_root =
         petta_eval_transaction_clone_space(
@@ -57369,6 +57428,9 @@ static void metta_call_impl(
     if (!bindings_builder_init(&current_env_builder, initial_env))
         return;
     if (!etype) etype = atom_undefined_type(a);
+    if (!etype || !atom || (cetta_native_memory_failed && cetta_native_memory_failed())) {
+        eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY); return;
+    }
     __attribute__((cleanup(eval_gc_root_frame_leave)))
     EvalGcRootFrame eval_gc_root_frame = {0};
     eval_gc_root_frame_enter(
@@ -61816,7 +61878,11 @@ petta_lowered_to_shared_form:
             return;
         }
         Atom *error = NULL;
-        if (cetta_library_print_loaded_modules(g_library_context, stdout, a, &error)) {
+        CettaHostOutput output;
+        if (!cetta_output_open(&output, 0u)) return;
+        bool printed = cetta_library_print_loaded_modules(g_library_context, output.stream, a, &error);
+        if (!cetta_output_close(&output)) return;
+        if (printed) {
             outcome_set_add(os, atom_unit(a), &_empty);
         } else {
             outcome_set_add(os, atom_error(a, atom,
@@ -64414,6 +64480,7 @@ void eval_top(Space *s, Arena *a, Atom *expr, ResultSet *rs) {
     __attribute__((cleanup(eval_execution_scope_leave)))
     EvalExecutionScope execution = {0};
     eval_execution_scope_enter(&execution, s);
+    if (!execution.owner) return;
     CettaCount publication_start = rs->len;
     Registry *prev_registry = g_registry;
     Space *prev_root_space = g_eval_root_space;
@@ -64519,6 +64586,10 @@ static void eval_top_with_registry_core(
     __attribute__((cleanup(eval_execution_scope_leave)))
     EvalExecutionScope execution = {0};
     eval_execution_scope_enter(&execution, s);
+    if (!execution.owner) {
+        if (outcome) outcome->completion = CETTA_EVAL_INCOMPLETE_CAPACITY;
+        return;
+    }
     CettaCount publication_start = rs->len;
     Registry *prev_registry = g_registry;
     Space *prev_root_space = g_eval_root_space;

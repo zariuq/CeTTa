@@ -38,6 +38,11 @@ Module TensorDescriptors {
       "equality". |- "equality" : Descriptor;
       "sum". |- "sum" : Descriptor;
       "matvec". |- "matvec" : Descriptor;
+      "dotBounds". |- "dotBounds" : Descriptor;
+      "matvecBounds". |- "matvecBounds" : Descriptor;
+      "NearestGradualSeparate". |- "NearestGradualSeparate" : Descriptor;
+      "StoredRealInputEnclosure". |- "StoredRealInputEnclosure" : Descriptor;
+      "TypedRefusal". |- "TypedRefusal" : Descriptor;
       "fixed4". |- "fixed4" : Descriptor;
       "topk". |- "topk" : Descriptor;
       "entries". |- "entries" : Descriptor;
@@ -92,6 +97,8 @@ Module TensorDescriptors {
       (TensorObservation (equality)) == (Observe (DTypeShapeSupportScalarBits));
       (TensorObservation (sum)) == (Observe (StoredCoordinateOrder) (F64AccumulateFloats));
       (TensorObservation (matvec)) == (Observe (StoredRowCoordinateOrder) (F64AccumulateFloats));
+      (TensorObservation (dotBounds)) == (Observe (StoredCoordinateOrder) (NearestGradualSeparate) (StoredRealInputEnclosure) (TypedRefusal));
+      (TensorObservation (matvecBounds)) == (Observe (StoredRowCoordinateOrder) (NearestGradualSeparate) (StoredRealInputEnclosure) (TypedRefusal));
       (TensorObservation (fixed4)) == (Observe (FourLanesLeftAssociated) (ExplicitSelection));
       (TensorObservation (topk)) == (Observe (FiniteEnabledDescending) (CoordinateAscendingTies));
       (TensorObservation (entries)) == (Observe (CoordinateAscending) (PackedCoordinateValueVectors));

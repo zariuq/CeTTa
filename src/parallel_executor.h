@@ -44,6 +44,7 @@ typedef struct {
     CettaParallelTaskFn task_fn;
     CettaParallelWorkerHookFn worker_enter;
     CettaParallelWorkerHookFn worker_leave;
+    bool (*interrupt)(void *user);
     const char *worker_failure_message;
 } CettaParallelExecutorConfig;
 
@@ -54,6 +55,7 @@ struct CettaParallelWorker {
 };
 
 struct CettaParallelExecutor {
+    struct CettaNativeMemory *memory;
     CettaNameContext names;
     CettaRuntimeStatsOwner *stats;
     CettaParallelExecutorConfig config;

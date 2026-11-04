@@ -1656,6 +1656,8 @@ char *atom_to_parseable_bytes(Arena *a, Atom *atom, bool petta,
  * guarantee of reader round-trip; the source adapter checks that separately. */
 char *atom_to_source_bytes(Arena *a, Atom *atom, bool petta,
                           size_t *len_out);
+/* Host display retains quoted control bytes and binary64 precision. */
+char *atom_to_host_bytes(Arena *a, Atom *atom, size_t *len_out);
 
 /* Deep-copy an atom DAG into a different arena, preserving source pointer
    sharing within one copy episode. */

@@ -11125,7 +11125,7 @@ bool cetta_library_print_loaded_modules(CettaLibraryContext *ctx, FILE *out,
     return true;
 }
 
-bool cetta_library_import(CettaLibraryContext *ctx, const char *name,
+static bool library_import_native(CettaLibraryContext *ctx, const char *name,
                           Space *space, Arena *eval_arena,
                           Arena *persistent_arena, Registry *registry,
                           int fuel, Atom **error_out) {
@@ -11598,7 +11598,7 @@ static CettaLoadedModule *loaded_he_named_module(CettaLibraryContext *ctx,
     return NULL;
 }
 
-bool cetta_library_import_module(CettaLibraryContext *ctx, const char *spec,
+static bool library_import_module(CettaLibraryContext *ctx, const char *spec,
                                  Space *space, bool target_is_fresh,
                                  Arena *eval_arena,
                                  Arena *persistent_arena, Registry *registry,
@@ -11898,7 +11898,33 @@ static bool import_rooted_library_reference(
     return imported;
 }
 
-bool cetta_library_import_petta_reference_at(
+void cetta_library_import_observe_begin(CettaLibraryContext *context, CettaImportFailureScope *scope) {
+    scope->previous = context->import_failure_scope;
+    context->import_failure_scope = scope;
+}
+void cetta_library_import_observe_end(CettaLibraryContext *context, CettaImportFailureScope *scope) {
+    context->import_failure_scope = scope->previous;
+}
+static void observe_import_failure(CettaLibraryContext *context, const char *name, Atom *reason) {
+    CettaImportFailureScope *scope = context ? context->import_failure_scope : NULL;
+    if (scope && scope->observe) scope->observe(scope->context, name, reason);
+}
+bool cetta_library_import(CettaLibraryContext *context, const char *name,
+        Space *space, Arena *arena, Arena *persistent, Registry *registry,
+        int fuel, Atom **error) {
+    bool ok = library_import_native(context, name, space, arena, persistent, registry, fuel, error);
+    if (!ok) observe_import_failure(context, name, error ? *error : NULL);
+    return ok;
+}
+bool cetta_library_import_module(CettaLibraryContext *context, const char *name,
+        Space *space, bool fresh, Arena *arena, Arena *persistent, Registry *registry,
+        int fuel, Space **module, Atom **error) {
+    bool ok = library_import_module(context, name, space, fresh, arena, persistent, registry, fuel, module, error);
+    if (!ok) observe_import_failure(context, name, error ? *error : NULL);
+    return ok;
+}
+
+static bool library_import_petta_reference_at(
     CettaLibraryContext *ctx,
     const PeTTaLibraryReference *reference,
     uint32_t occurrence,
@@ -11925,6 +11951,16 @@ bool cetta_library_import_petta_reference_at(
         return false;
     }
     return false;
+}
+
+bool cetta_library_import_petta_reference_at(CettaLibraryContext *context,
+        const PeTTaLibraryReference *reference, uint32_t occurrence,
+        Space *space, bool fresh, Arena *arena, Arena *persistent,
+        Registry *registry, int fuel, Atom **error) {
+    bool ok = library_import_petta_reference_at(context, reference, occurrence,
+        space, fresh, arena, persistent, registry, fuel, error);
+    if (!ok) observe_import_failure(context, reference ? reference->member : NULL, error ? *error : NULL);
+    return ok;
 }
 
 /* The active libraries' native operations, as values; a foreign call

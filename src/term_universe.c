@@ -5263,6 +5263,7 @@ static Atom *term_universe_copy_atom_impl(const TermUniverse *universe,
             if (!cetta_expr_len_mul_fits_size(len, sizeof(Atom *)))
                 return NULL;
             elems = arena_alloc(dst, sizeof(Atom *) * (size_t)len);
+            if (!elems) return NULL;
         }
         for (CettaExprIndex i = 0; i < len; i++) {
             elems[i] = term_universe_copy_atom_impl(

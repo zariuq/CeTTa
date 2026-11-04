@@ -40,8 +40,31 @@ typedef enum {
     CETTA_INVALIDATED,
     CETTA_PREPARATION_REQUIRED,
     CETTA_BUFFER_INCOMPATIBLE,
-    CETTA_IO_ERROR
+    CETTA_IO_ERROR,
+    CETTA_HALTED
 } cetta_status_t;
+
+typedef struct {
+    size_t size;
+    char message[512];
+    char source[1024];
+    uint64_t line, column;
+    int system_error, exit_code;
+} cetta_diagnostic_t;
+
+typedef struct {
+    size_t size;
+    void *context;
+    void (*retain)(void *context);
+    void (*release)(void *context);
+    /* Channel 0 is program output; channel 1 is diagnostics. Bytes are borrowed. */
+    cetta_status_t (*write)(void *context, unsigned channel, const char *, size_t);
+    cetta_status_t (*flush)(void *context, unsigned channel);
+    int (*interrupt)(void *context);
+} cetta_host_hooks_t;
+/* Hooks run on the calling thread. A successful update retains context;
+ * replacement during callback reentry reports BUSY. NULL restores stdio. */
+cetta_status_t cetta_embed_engine_set_host_hooks(cetta_engine_t *, const cetta_host_hooks_t *);
 
 typedef enum { CETTA_BYTE_ORDER_NATIVE, CETTA_BYTE_ORDER_LITTLE, CETTA_BYTE_ORDER_BIG } cetta_byte_order_t;
 typedef struct {
@@ -207,12 +230,18 @@ cetta_status_t cetta_embed_space_match(cetta_space_t *, const cetta_atom_t *patt
 
 uint32_t cetta_embed_abi_version(void);
 cetta_status_t cetta_embed_engine_new(const cetta_engine_config_t *, cetta_engine_t **);
+/* Limit native-core allocation requests, including retained native results.
+ * UINT64_MAX is unlimited. GMP and host-owned input storage are excluded. */
+cetta_status_t cetta_embed_engine_new_limited(const cetta_engine_config_t *, uint64_t memory_limit,
+    cetta_engine_t **);
 void cetta_embed_engine_retain(cetta_engine_t *);
 void cetta_embed_engine_close(cetta_engine_t *);
 void cetta_embed_engine_release(cetta_engine_t *);
 
 /* Parse exactly one term. Source text is not evaluated by construction. */
 cetta_status_t cetta_embed_parse(cetta_engine_t *, const char *, size_t, cetta_atom_t **);
+cetta_status_t cetta_embed_parse_diagnostic(cetta_engine_t *, const char *, size_t,
+    cetta_diagnostic_t *, cetta_atom_t **);
 cetta_status_t cetta_embed_atom_symbol(cetta_engine_t *, const char *, cetta_atom_t **);
 cetta_status_t cetta_embed_atom_string(cetta_engine_t *, const char *, cetta_atom_t **);
 cetta_status_t cetta_embed_atom_string_n(cetta_engine_t *, const char *, size_t, cetta_atom_t **);
@@ -268,6 +297,9 @@ cetta_status_t cetta_embed_result_get(const cetta_result_t *, size_t, cetta_atom
 cetta_status_t cetta_embed_result_status(const cetta_result_t *);
 /* The captured errno for an IO_ERROR; zero for other outcomes. */
 int cetta_embed_result_system_error(const cetta_result_t *);
+/* The language-requested exit code for a halted invocation, otherwise zero. */
+int cetta_embed_result_exit_code(const cetta_result_t *);
+cetta_status_t cetta_embed_result_diagnostic(const cetta_result_t *, cetta_diagnostic_t *);
 const char *cetta_embed_status_name(cetta_status_t);
 
 #ifdef __cplusplus
