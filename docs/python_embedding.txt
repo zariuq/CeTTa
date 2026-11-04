@@ -5,16 +5,27 @@ query streams, host callbacks and NumPy interchange, including retained
 foreign-byte-order views and sparse COO/CSR/CSC data. PeTTa is the default.
 The tested Linux platforms and remaining platform limits are recorded below.
 
-Build requirements
+Install and start
 
 Use CPython 3.11–3.15 with development headers, a C11 compiler, GNU Make
 4.3 or newer and GMP development headers.
 The embedding core does not require SWI-Prolog, Rust or C++. Rust is used only
 by an optional ABI conformance test.
 
-From a checkout of the embedding branch:
+From the repository root, create an isolated Python environment:
 
+    python3 -m venv .venv
+    . .venv/bin/activate
     python -m pip install .
+
+For NumPy and the notebook interface:
+
+    python -m pip install '.[notebooks]'
+    python -m jupyter lab examples/python/getting_started.ipynb
+
+The notebook uses an ordinary Python kernel. Select the environment where
+cetta is installed. Its cells introduce PeTTa first and then HE, with checked
+examples for spaces, callbacks, streams and numerical data.
 
 For development:
 
@@ -357,9 +368,9 @@ runs used QEMU on an x86_64 Linux host; physical ARM64 hardware has not been
 qualified. Emulation results are functional checks, not performance results.
 
 A relocated x86_64 wheel installation, source installation and editable
-installation each pass the integration suite outside the checkout. The normal
-Python notebook executes all 14 code cells and recovers from interruption in
-both PeTTa and HE. Native lifetime checks pass with ASan/UBSan, and native
+installation each pass the integration suite outside the checkout. The current introductory
+Python notebook executes all 15 code cells, including the bounded-dot example,
+and recovers from interruption in both PeTTa and HE. Native lifetime checks pass with ASan/UBSan, and native
 concurrency checks pass with TSAN on the x86_64 development host. Wider core
 release qualification is separate from this package checkpoint.
 

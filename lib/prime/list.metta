@@ -23,7 +23,7 @@
 (: __cetta_lib_list_group_sums_blocks (-> Atom Atom))
 (= (list:group-sums-number-blocks $blocks)
    (function
-     (let $items (list:to-expression $blocks)
+     (let $items (tuple:from $blocks)
        (case (__cetta_lib_list_group_sums_blocks $items)
          (((List:GroupedSums $rows) (return $rows))
           ($other
@@ -32,7 +32,7 @@
               (return $fallback-rows)){$flat $fallback-rows}))){$rows $other}){$items}))
 (= (list:group-sums-number $entries)
    (function
-     (let $items (list:to-expression $entries)
+     (let $items (tuple:from $entries)
        (case (__cetta_lib_list_group_sums $items)
          (((List:GroupedSums $rows) (return $rows))
           ($other (let $fallback-rows (list:group-sums-number-reference $items)
@@ -46,7 +46,6 @@
               ($amount (foldl-atom $rows 0 $total $row
                          (let $value (index-atom $row 1) (+ $total $value)))))
          ($key $amount))))))
-; Explicit inductive lists and the representation isomorphism live in clist.
 
 ; Stable first-matching-key encoding. Codes retain every occurrence; keys
 ; follow first introduction, and firsts records each key's source position.
@@ -56,13 +55,13 @@
 (: __cetta_lib_list_factorize (-> Atom Atom))
 (= (list:factorize $xs)
    (function
-     (let $items (list:to-expression $xs)
+     (let $items (tuple:from $xs)
        (case (__cetta_lib_list_factorize $items)
          (((List:Factorization $keys $codes $firsts)
             (return (List:Factorization $keys $codes $firsts)))
           ($other (let $answer (list:factorize-reference $items) (return $answer)){$answer}))){$keys $codes $firsts $other}){$items}))
 (= (list:factorize-reference $xs)
-   (list-internal:factorize (list:to-expression $xs) 0 () () ()))
+   (list-internal:factorize (tuple:from $xs) 0 () () ()))
 (= (list-internal:key-position $key $keys $position)
    (if (== (size-atom $keys) 0) List:NewKey
      (if (== $key (car-atom $keys)) (List:KeyPosition $position)
@@ -81,11 +80,17 @@
               (cons-atom (size-atom $keys) $reversed)
               (union-atom $firsts (cons-atom $position ())))))){$code}){$key $tail}))
 
-; The list value of a sequence's elements, and the expression of them.
-(= (list:from-expression $xs)
+; The list value of an expression's elements, and the expression of a
+; list value's.  Each evaluates its argument once, as any call does, and
+; answers data: the natives hold the value they are given, and the
+; expression a list becomes is not evaluated again.  A list to keep as
+; written is written as a list literal.
+(: __cetta_lib_list_from_expression (-> Atom Atom))
+(: __cetta_lib_list_to_expression (-> Atom Atom))
+(= (list:from $xs)
    (__cetta_lib_list_from_expression $xs))
 
-(= (list:to-expression $xs)
+(= (tuple:from $xs)
    (__cetta_lib_list_to_expression $xs))
 
 (= (list:is-list $xs)
@@ -94,7 +99,7 @@
 ; The sequence of $items, of the kind of $xs.
 (= (list:like $xs $items)
    (if (list:is-list $xs)
-       (list:from-expression $items)
+       (list:from $items)
        $items))
 
 (= (list:is-empty $xs)
@@ -122,7 +127,7 @@
    (union-atom $lhs $rhs))
 
 (= (list:reverse $xs)
-   (let $items (list:to-expression $xs)
+   (let $items (tuple:from $xs)
      (list:like $xs (list:reverse-acc $items ()))))
 
 (= (list:reverse-acc $xs $acc)
@@ -139,7 +144,7 @@
    (== $left $right))
 
 (= (list:remove-all-by $same $item $xs)
-   (let $items (list:to-expression $xs)
+   (let $items (tuple:from $xs)
      (list:like $xs (list:remove-all-by-walk $same $item $items))))
 
 (= (list:remove-all-by-walk $same $item $xs)
@@ -163,7 +168,7 @@
    (unique-atom $xs))
 
 (= (list:unique-by $same $xs)
-   (let $items (list:to-expression $xs)
+   (let $items (tuple:from $xs)
      (list:like $xs (list:unique-by-walk $same $items))))
 
 (= (list:unique-by-walk $same $xs)
@@ -180,7 +185,7 @@
 ; beyond the sequence length returns the whole sequence; a non-positive
 ; request returns the empty prefix.
 (= (list:take $count $xs)
-   (let $items (list:to-expression $xs)
+   (let $items (tuple:from $xs)
      (list:like $xs (list:take-walk $count $items))))
 
 (= (list:take-walk $count $xs)
@@ -195,7 +200,7 @@
 
 ; The complementary suffix action; non-positive requests keep the sequence.
 (= (list:drop $count $xs)
-   (let $items (list:to-expression $xs)
+   (let $items (tuple:from $xs)
      (list:like $xs (list:drop-walk $count $items))))
 (= (list:drop-walk $count $xs)
    (if (<= $count 0) $xs
@@ -210,7 +215,7 @@
    (retain-top-k-keyed-atom $entries $count))
 
 (= (list:key-by $key-function $xs)
-   (let $items (list:to-expression $xs)
+   (let $items (tuple:from $xs)
      (list:like $xs
        (map-atom $items $item
          (new ($key $value) (metta
@@ -227,7 +232,7 @@
 ; combination operation rather than recovering them from a type class.  The
 ; ordinary left fold is authoritative, including choices and effects.
 (= (list:fold-map $project $combine $identity $xs)
-   (let $items (list:to-expression $xs)
+   (let $items (tuple:from $xs)
      (list:fold-map-walk $project $combine $identity $items)))
 
 (= (list:fold-map-walk $project $combine $accumulator $xs)
@@ -246,7 +251,7 @@
 ; unboxed Int/Float fragment; otherwise the authored fold-map below remains
 ; authoritative from the first occurrence.
 (= (list:sum-by $key-function $xs)
-   (let $items (list:to-expression $xs)
+   (let $items (tuple:from $xs)
      (list:sum-by-walk $key-function $items)))
 
 (= (list:sum-by-walk $key-function $xs)
@@ -259,7 +264,7 @@
 ; once per occurrence, select in the native keyed representation, and return
 ; the selected values in their original occurrence order.
 (= (list:retain-top-k-by-number $key-function $xs $count)
-   (let $items (list:to-expression $xs)
+   (let $items (tuple:from $xs)
      (list:like $xs
        (list:retain-top-k-by-number-walk $key-function $items $count))))
 
@@ -309,7 +314,7 @@
 ; argument is a binary predicate denoting "left precedes or ties right".
 ; Keeping ties on the left makes equal-key occurrences retain their order.
 (= (list:split-half $xs)
-   (let $items (list:to-expression $xs)
+   (let $items (tuple:from $xs)
      (let ($left $right) (list:split-half-walk $items $items ())
        (let $left-part (list:like $xs $left)
          (let $right-part (list:like $xs $right)
@@ -331,8 +336,8 @@
                      $slow-tail $fast-rest $next-left)){$next-left}){$fast-second $fast-rest}){$slow-head $slow-tail})){$fast-head $fast-tail}))
 
 (= (list:merge-by $precedes $left $right)
-   (let $left-items (list:to-expression $left)
-     (let $right-items (list:to-expression $right)
+   (let $left-items (tuple:from $left)
+     (let $right-items (tuple:from $right)
        (list:like $left
          (list:merge-by-walk $precedes $left-items $right-items)))))
 
@@ -356,7 +361,7 @@
                        (eval (cons-atom $right-head $rest))){$rest})){$take-left}){$right-head $right-tail}){$left-head $left-tail})))
 
 (= (list:sort-by $precedes $xs)
-   (let $items (list:to-expression $xs)
+   (let $items (tuple:from $xs)
      (list:like $xs (list:sort-by-walk $precedes $items))))
 
 (= (list:sort-by-walk $precedes $xs)
@@ -406,13 +411,13 @@
 ; parameter of its own, which the caller's body does not mention.
 (= (list:map $xs $var $body)
    (if (list:is-list $xs)
-       (let $items (list:to-expression $xs)
+       (let $items (tuple:from $xs)
          (let $mapped
               (function
                 (eval
                   (_minimal-map-atom $items $var
                     (metta $body %Undefined% (context-space)))))
-           (list:from-expression $mapped)){$mapped}){$items}
+           (list:from $mapped)){$mapped}){$items}
        (function
          (eval
            (_minimal-map-atom $xs $var
@@ -420,15 +425,15 @@
 
 (= (list:filter $xs $var $body)
    (if (list:is-list $xs)
-       (let $items (list:to-expression $xs)
+       (let $items (tuple:from $xs)
          (let $kept
               (filter-atom $items $var (metta $body %Undefined% (context-space))){$var}
-           (list:from-expression $kept)){$kept}){$items}
+           (list:from $kept)){$kept}){$items}
        (filter-atom $xs $var (metta $body %Undefined% (context-space))){$var}))
 
 (= (list:foldl $xs $init $acc $item $step)
    (if (list:is-list $xs)
-       (let $items (list:to-expression $xs)
+       (let $items (tuple:from $xs)
          (function
            (chain (context-space) $space
              (eval

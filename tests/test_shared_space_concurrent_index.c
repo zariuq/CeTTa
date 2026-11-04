@@ -15,6 +15,7 @@
 #include "space.h"
 #include "space_match_backend.h"
 #include "symbol.h"
+#include "runtime_names.h"
 
 enum {
     BASE_ROW_COUNT = 64,
@@ -32,6 +33,7 @@ typedef struct {
     Atom *stable_exact_pattern;
     pthread_barrier_t *start;
     bool ok;
+    CettaNameContext names;
 } ReaderTask;
 
 typedef struct {
@@ -39,6 +41,7 @@ typedef struct {
     AtomId optional_id;
     pthread_barrier_t *start;
     bool ok;
+    CettaNameContext names;
 } WriterTask;
 
 static void init_symbols(SymbolTable *symbols) {
@@ -169,6 +172,8 @@ static bool validate_occurrence_cursors(Space *space, Atom *pattern) {
 
 static void *reader_main(void *opaque) {
     ReaderTask *task = opaque;
+    CettaNameContext previous = cetta_name_context_current();
+    cetta_name_context_install(&task->names);
     Arena scratch;
     int barrier_result;
 
@@ -178,6 +183,7 @@ static void *reader_main(void *opaque) {
                barrier_result == PTHREAD_BARRIER_SERIAL_THREAD;
     if (!task->ok) {
         arena_free(&scratch);
+        cetta_name_context_install(&previous);
         return NULL;
     }
 
@@ -209,17 +215,22 @@ static void *reader_main(void *opaque) {
     cetta_shared_transition_scope_leave();
     arena_free(&scratch);
     bindings_thread_cache_free();
+    cetta_name_context_install(&previous);
     return NULL;
 }
 
 static void *writer_main(void *opaque) {
     WriterTask *task = opaque;
+    CettaNameContext previous = cetta_name_context_current();
+    cetta_name_context_install(&task->names);
     int barrier_result = pthread_barrier_wait(task->start);
 
     task->ok = barrier_result == 0 ||
                barrier_result == PTHREAD_BARRIER_SERIAL_THREAD;
-    if (!task->ok)
+    if (!task->ok) {
+        cetta_name_context_install(&previous);
         return NULL;
+    }
 
     cetta_shared_transition_scope_enter();
     for (uint32_t round = 0u; round < WRITER_ROUNDS && task->ok; round++) {
@@ -238,6 +249,7 @@ static void *writer_main(void *opaque) {
             sched_yield();
     }
     cetta_shared_transition_scope_leave();
+    cetta_name_context_install(&previous);
     return NULL;
 }
 
@@ -850,6 +862,7 @@ int main(void) {
             .query = query,
             .stable_exact_pattern = stable_exact_pattern,
             .start = &start,
+            .names = cetta_name_context_current(),
         };
         assert(pthread_create(&readers[i], NULL, reader_main,
                               &reader_tasks[i]) == 0);
@@ -858,6 +871,7 @@ int main(void) {
         .space = &concurrent_space,
         .optional_id = optional_id,
         .start = &start,
+        .names = cetta_name_context_current(),
     };
     assert(pthread_create(&writer, NULL, writer_main, &writer_task) == 0);
 
