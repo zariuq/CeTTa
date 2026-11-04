@@ -17,7 +17,7 @@ def main():
 !(foldl-atom ((1 2) () (2 3)) () $out $block (union-atom $out $block))
 !(foldl-atom () () $out $block (union-atom $out $block))
 !(let* (($left (cons-atom (quote (+ 1 2)) (cons-atom kept ())))
-        ($right (list:from-expression (kept last))) ($blocks ($left $right)))
+        ($right (list:from (kept last))) ($blocks ($left $right)))
    (foldl-atom $blocks () $out $block (union-atom $out $block)))
 ; A written reduction and a captured value of the same spelling differ.
 !(let $held (quote (+ 1 2)) (foldl-atom (a b) 0 $out $block $held))
@@ -26,7 +26,7 @@ def main():
 !(foldl-atom ((1) invalid (2)) () $out $block (union-atom $out $block))
 !(let $tail (cons-atom 1 $open)
    (collapse (foldl-atom ($tail) () $out $block (union-atom $out $block))))
-!(let $blocks (map-atom (list:to-expression (list:range 512)) $i ($i 7 $i))
+!(let $blocks (map-atom (tuple:from (list:range 512)) $i ($i 7 $i))
    (let $flat (foldl-atom $blocks () $out $block (union-atom $out $block))
      (Size (size-atom $flat) (index-atom $flat 0) (index-atom $flat 1535))))
 '''

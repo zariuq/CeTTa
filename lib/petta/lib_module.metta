@@ -3,6 +3,12 @@
 ; HE-only native wrappers spelled as PeTTa calls.
 
 !(import! &self (library langdef))
+(: module:close-package (-> Atom %Undefined%))
+(: module:package-export (-> Atom String %Undefined%))
+(= (module:close-package $module) (__cetta_lib_module_close_package_v1 $module))
+(= (module:package-export $package $name) (__cetta_lib_module_package_export_v1 $package $name))
+(= (module:install-definitions $space $source) (__cetta_lib_module_install_definitions_v1 $space $source))
+(= (module:run-source $space $source) (__cetta_lib_module_run_source_v1 $space $source))
 (: module:assemble (-> Atom Atom Atom Atom Atom Atom %Undefined%))
 (: module:inspect (-> Atom Atom))
 (: module:try-interpret (-> Atom Atom Atom %Undefined%))
@@ -37,3 +43,7 @@
 (= (module:language $presentation $name $start $policy) (__cetta_lib_module_language_v1 $presentation $name $start $policy))
 (= (module:language-core $language) (__cetta_lib_module_language_core_v1 $language))
 (= (module:language-syntax $language) (__cetta_lib_module_language_syntax_v1 $language))
+(: module:portable-export (-> Atom String %Undefined%))
+(: module:portable-field (-> Atom String %Undefined%))
+(= (module:portable-export $module $name) (__cetta_lib_module_portable_export_v1 $module $name))
+(= (module:portable-field $record $name) (__cetta_lib_module_portable_field_v1 $record $name))

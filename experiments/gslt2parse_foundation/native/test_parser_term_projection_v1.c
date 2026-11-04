@@ -112,7 +112,7 @@ static bool binder_scope_gate(
     body_use = output->expr.elems[3];
     CHECK(channel->kind == ATOM_VAR && binder->kind == ATOM_VAR,
           "binder/channel did not materialize as variables");
-    CHECK(channel != binder && channel->var_id != binder->var_id,
+    CHECK(channel != binder && !var_id_eq(channel->var_id, binder->var_id),
           "binder captured the channel before entering scope");
     CHECK(is_app(body_use, "use", 1u) &&
           body_use->expr.elems[1] == binder,
