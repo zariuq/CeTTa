@@ -21,6 +21,7 @@ typedef struct ResultSet ResultSet;
 typedef struct EvalOutcome EvalOutcome;
 
 #define CETTA_MAX_CMDLINE_ARGS 256
+#define CETTA_IMPORT_PREFIX_MAX 128
 
 typedef struct {
     char display_name[PATH_MAX];
@@ -188,6 +189,9 @@ typedef struct CettaLibraryContext {
     /* Set while an he-compat include that met a syntax fault keeps the
        statements it had already read. */
     bool include_fault_keeps_prefix;
+    /* The prefix of a pending import-as!.  The next module document read
+       takes it, so imports that document performs are not renamed. */
+    char import_as_prefix[CETTA_IMPORT_PREFIX_MAX];
     /* Further `top:` names under which loaded HE modules were imported. */
     char **he_module_aliases;
     uint32_t he_module_alias_len, he_module_alias_cap;

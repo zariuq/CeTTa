@@ -14521,6 +14521,7 @@ static bool hyperpose_internal_unsafe_head(SymbolId head_id, Atom *head) {
 static bool hyperpose_global_shared_head(SymbolId head_id) {
     if (head_id == g_builtin_syms.pragma_bang ||
         head_id == g_builtin_syms.import_bang ||
+        head_id == g_builtin_syms.import_as_bang ||
         head_id == g_builtin_syms.include ||
         head_id == g_builtin_syms.register_module_bang ||
         head_id == g_builtin_syms.git_module_bang ||
@@ -21785,6 +21786,25 @@ static const char *string_like_atom(Atom *atom) {
         return atom->ground.sval;
     }
     return NULL;
+}
+
+/* import-as!'s prefix names a namespace.  One trailing colon is the
+ * separator itself, so `mg` and `mg:` are the same prefix. */
+static bool import_as_prefix_spelling(Atom *atom, char *out, size_t size) {
+    const char *name = string_like_atom(atom);
+    size_t len = name ? strlen(name) : 0u;
+    if (len && name[len - 1u] == ':')
+        len--;
+    if (len == 0u || len >= size)
+        return false;
+    for (size_t i = 0u; i < len; i++) {
+        unsigned char c = (unsigned char)name[i];
+        if (c <= ' ' || c == '(' || c == ')' || c == '"')
+            return false;
+    }
+    memcpy(out, name, len);
+    out[len] = '\0';
+    return true;
 }
 
 static const char *ordered_space_empty_error_symbol(const Space *space) {
@@ -46635,7 +46655,8 @@ static PettaMachineHostMode petta_eval_machine_classify_host(
      * Neither coordinate is a computation.  The import evaluator performs
      * the later path/enabled-provider observations explicitly. */
     if (head->kind == ATOM_SYMBOL &&
-        head->sym_id == g_builtin_syms.import_bang) {
+        (head->sym_id == g_builtin_syms.import_bang ||
+         head->sym_id == g_builtin_syms.import_as_bang)) {
         return PETTA_MACHINE_HOST_READY_APPLICATION;
     }
     /* work-new retains its argument's computation unevaluated; the other
@@ -51933,7 +51954,8 @@ static bool petta_eval_machine_apply_ready_values(
         head->sym_id == g_builtin_syms.add_atom_nodup ||
         head->sym_id == g_builtin_syms.remove_atom ||
         head->sym_id == g_builtin_syms.get_atoms ||
-        head->sym_id == g_builtin_syms.import_bang)
+        head->sym_id == g_builtin_syms.import_bang ||
+        head->sym_id == g_builtin_syms.import_as_bang)
         return false;
     CettaExprLen arity = 0u;
     if (!cetta_invocation_arity(invocation, &arity) || arity > UINT32_MAX ||
@@ -63460,6 +63482,27 @@ petta_lowered_to_shared_form:
         return;
     }
 
+    /* import-as! DESTINATION PREFIX MODULE reads MODULE as import! does,
+     * with the module's own definitions under PREFIX. */
+    bool import_as = head_id == g_builtin_syms.import_as_bang &&
+        eval_current_builtin_allowed("import-as!");
+    char import_prefix[CETTA_IMPORT_PREFIX_MAX] = {0};
+    if (import_as && nargs != 3) {
+        outcome_set_add(os,
+            atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
+            &_empty);
+        return;
+    }
+    if (import_as &&
+        !import_as_prefix_spelling(expr_arg(atom, 1), import_prefix,
+                                   sizeof(import_prefix))) {
+        outcome_set_add(os,
+            atom_error(a, atom,
+                       atom_symbol(a, "import-as! expects a prefix name")),
+            &_empty);
+        return;
+    }
+
     if (head_id == g_builtin_syms.import_bang && nargs != 2) {
         outcome_set_add(os,
             atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
@@ -63467,12 +63510,14 @@ petta_lowered_to_shared_form:
         return;
     }
 
-    if (head_id == g_builtin_syms.import_bang &&
-        nargs == 2 && g_registry && g_library_context) {
+    if (((head_id == g_builtin_syms.import_bang && nargs == 2) || import_as) &&
+        g_registry && g_library_context) {
+        Atom *import_dest = expr_arg(atom, 0);
+        Atom *import_spec = expr_arg(atom, import_as ? 2 : 1);
         Atom *const *members = NULL;
         CettaExprLen member_count = 0u;
         if (language_id == CETTA_LANGUAGE_PETTA &&
-            petta_semantics_import_batch(expr_arg(atom, 1), &members, &member_count)) {
+            petta_semantics_import_batch(import_spec, &members, &member_count)) {
             /* Sequential imports use the ordinary sequencing owner. Each
              * retains the single-import loader's faults, idempotence and
              * source-relative resolution; prior effects survive later faults. */
@@ -63482,7 +63527,17 @@ petta_lowered_to_shared_form:
             }
             Atom **bindings = arena_alloc(a, sizeof(*bindings) * (member_count ? member_count : 1u));
             for (CettaExprIndex i = 0u; i < member_count; i++) {
-                Atom *call = atom_expr3(a, atom->expr.elems[0], expr_arg(atom, 0), members[i]);
+                Atom *call;
+                if (import_as) {
+                    Atom **elems = arena_alloc(a, sizeof(*elems) * 4u);
+                    elems[0] = atom->expr.elems[0];
+                    elems[1] = import_dest;
+                    elems[2] = expr_arg(atom, 1);
+                    elems[3] = members[i];
+                    call = atom_expr(a, elems, 4u);
+                } else {
+                    call = atom_expr3(a, atom->expr.elems[0], import_dest, members[i]);
+                }
                 Atom *ignored = atom_var_with_id(a, "__import", fresh_var_id());
                 bindings[i] = atom_expr2(a, ignored, call);
             }
@@ -63490,16 +63545,16 @@ petta_lowered_to_shared_form:
                 atom_expr(a, bindings, member_count), petta_semantics_success_value(a));
             TAIL_REENTER(sequence);
         }
-        const char *spec = string_like_atom(expr_arg(atom, 1));
+        const char *spec = string_like_atom(import_spec);
         PeTTaLibraryReference library_reference;
         bool has_library_reference =
             language_id == CETTA_LANGUAGE_PETTA &&
             petta_semantics_library_reference(
-                expr_arg(atom, 1), &library_reference);
+                import_spec, &library_reference);
         Atom *error = NULL;
         ImportDestination dest = {0};
         if (spec || has_library_reference) {
-            dest = resolve_import_destination(a, expr_arg(atom, 0), &error);
+            dest = resolve_import_destination(a, import_dest, &error);
         }
         if (!spec && !has_library_reference && !error) {
             error = atom_symbol(a, "import! expects a module name");
@@ -63527,11 +63582,16 @@ petta_lowered_to_shared_form:
                                 : "library reference refused");
                         break;
                     }
-                    if (!cetta_library_import_petta_reference_at(
+                    snprintf(g_library_context->import_as_prefix,
+                             sizeof(g_library_context->import_as_prefix),
+                             "%s", import_prefix);
+                    bool reference_imported = cetta_library_import_petta_reference_at(
                             g_library_context, &library_reference,
                             occurrence, dest.space, dest.is_fresh,
                             a, eval_storage_arena(a),
-                            g_registry, fuel, &error)) {
+                            g_registry, fuel, &error);
+                    g_library_context->import_as_prefix[0] = '\0';
+                    if (!reference_imported) {
                         /* SWI evaluates a rooted library relation
                          * nondeterministically, then catches failure of each
                          * import candidate.  One absent member is therefore
@@ -63563,11 +63623,15 @@ petta_lowered_to_shared_form:
                 }
             } else {
                 Space *module_space = NULL;
+                snprintf(g_library_context->import_as_prefix,
+                         sizeof(g_library_context->import_as_prefix),
+                         "%s", import_prefix);
                 imported = cetta_library_import_module(
                     g_library_context, spec,
                     dest.space, dest.is_fresh,
                     a, eval_storage_arena(a),
                     g_registry, fuel, &module_space, &error);
+                g_library_context->import_as_prefix[0] = '\0';
                 import_result_count = imported ? 1u : 0u;
                 /* HE: a fresh token denotes the module's own space. */
                 if (imported && dest.is_fresh && module_space &&
@@ -63636,7 +63700,7 @@ petta_lowered_to_shared_form:
                 /* Stable resolves an import before loading it, and reports
                  * a missing source through the ordinary exception channel. */
                 Atom *missing = petta_semantics_missing_import_error(
-                    a, expr_arg(atom, 1));
+                    a, import_spec);
                 if (missing)
                     petta_eval_raise(missing);
             } else if (language_id == CETTA_LANGUAGE_PETTA &&
@@ -65783,6 +65847,7 @@ static bool he_one_step_resource_service(SymbolId head) {
         head == g_builtin_syms.new_space ||
         head == g_builtin_syms.bind_bang ||
         head == g_builtin_syms.import_bang ||
+        head == g_builtin_syms.import_as_bang ||
         head == g_builtin_syms.git_import_bang;
 }
 
