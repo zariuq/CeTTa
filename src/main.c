@@ -2,6 +2,8 @@
 #include "binding/frame_identity.h"
 #include "binding/frame_identity_diag.h"
 #include "atom.h"
+#include "state_cell.h"
+#include "u64_index.h"
 #include "run_cli.h"
 #include "run_guard.h"
 #include "parser.h"
@@ -27,9 +29,13 @@
 #include "prime_compiled_reader.h"
 #include "space.h"
 #include "eval.h"
+#ifdef __GLIBC__
+#include <malloc.h>
+#endif
 #include "he_type_policy.h"
 #include "library.h"
 #include "text_source.h"
+#include "term_domain.h"
 #include "native_handle.h"
 #include "native/hol_light/hol_cli.h"
 #include "lang.h"
@@ -151,9 +157,20 @@ typedef struct {
 } CettaDisplayVarEntry;
 
 typedef struct {
+    StateCell *source;
+    StateCell *copy;
+    StateCellSnapshot snapshot;
+} CettaDisplayStateEntry;
+
+typedef struct {
     CettaDisplayVarEntry *entries;
     uint32_t len;
     uint32_t cap;
+    CettaDisplayStateEntry *states;
+    uint32_t state_len, state_cap;
+    CettaU64Index state_index;
+    Arena *state_observations;
+    bool state_index_live;
 } CettaDisplayVarMap;
 
 static CettaDisplayVarsMode g_display_vars_mode = CETTA_DISPLAY_VARS_AUTO;
@@ -466,6 +483,64 @@ static void display_var_map_free(CettaDisplayVarMap *map) {
     map->entries = NULL;
     map->len = 0;
     map->cap = 0;
+    free(map->states);
+    map->states = NULL;
+    map->state_len = map->state_cap = 0u;
+    if (map->state_index_live)
+        cetta_u64_index_free(&map->state_index);
+    map->state_index_live = false;
+    if (map->state_observations) {
+        arena_free(map->state_observations);
+        free(map->state_observations);
+        map->state_observations = NULL;
+    }
+}
+
+static bool display_state_observe(CettaDisplayVarMap *map, StateCell *cell,
+                                   uint32_t *index, bool *fresh) {
+    if (!map->state_index_live) {
+        cetta_u64_index_init(&map->state_index);
+        map->state_index_live = true;
+    }
+    if (cetta_u64_index_find(&map->state_index, (uintptr_t)cell, index)) {
+        *fresh = false;
+        return true;
+    }
+    if (map->state_len == UINT32_MAX)
+        return false;
+    if (map->state_len == map->state_cap) {
+        uint32_t next = map->state_cap > UINT32_MAX / 2u ? UINT32_MAX
+            : map->state_cap ? 2u * map->state_cap : 16u;
+        if ((size_t)next > SIZE_MAX / sizeof(*map->states))
+            return false;
+        CettaDisplayStateEntry *grown = realloc(map->states,
+                                                (size_t)next * sizeof(*grown));
+        if (!grown)
+            return false;
+        map->states = grown;
+        map->state_cap = next;
+    }
+    if (!map->state_observations) {
+        map->state_observations = malloc(sizeof(*map->state_observations));
+        if (!map->state_observations)
+            return false;
+        arena_init_detached(map->state_observations);
+    }
+    StateCellSnapshot snapshot = {0};
+    StateCellLease lease = state_cell_snapshot_into(map->state_observations, cell, &snapshot);
+    if (lease == STATE_CELL_CAPACITY)
+        return false;
+    if (lease == STATE_CELL_UNMANAGED)
+        snapshot = (StateCellSnapshot){.value = cell->value,
+                                      .content_type = cell->content_type};
+    *index = map->state_len;
+    if (cetta_u64_index_insert(&map->state_index, (uintptr_t)cell, *index) !=
+        CETTA_GSLT_U32_INDEX_INSERTED_V1)
+        return false;
+    map->states[map->state_len++] = (CettaDisplayStateEntry){
+        .source = cell, .snapshot = snapshot};
+    *fresh = true;
+    return true;
 }
 
 static bool display_var_map_push(CettaDisplayVarMap *map, VarId var_id,
@@ -505,8 +580,13 @@ static bool display_var_collect_atom(CettaDisplayVarMap *map, Atom *atom) {
         if (atom->ground.gkind == GV_STATE) {
             StateCell *cell = (StateCell *)atom->ground.ptr;
             if (!cell) return true;
-            if (!display_var_collect_atom(map, cell->value)) return false;
-            return display_var_collect_atom(map, cell->content_type);
+            uint32_t index;
+            bool fresh;
+            if (!display_state_observe(map, cell, &index, &fresh)) return false;
+            if (!fresh) return true;
+            StateCellSnapshot snapshot = map->states[index].snapshot;
+            if (!display_var_collect_atom(map, snapshot.value)) return false;
+            return display_var_collect_atom(map, snapshot.content_type);
         }
         return true;
     case ATOM_EXPR:
@@ -660,7 +740,7 @@ static const char *display_var_lookup(const CettaDisplayVarMap *map, VarId var_i
     return NULL;
 }
 
-static Atom *display_atom_copy(Arena *dst, Atom *src, const CettaDisplayVarMap *map,
+static Atom *display_atom_copy(Arena *dst, Atom *src, CettaDisplayVarMap *map,
                                bool pretty_namespaces) {
     if (!src) return NULL;
     switch (src->kind) {
@@ -725,14 +805,27 @@ static Atom *display_atom_copy(Arena *dst, Atom *src, const CettaDisplayVarMap *
                 dst, (CettaInternalTag)src->ground.ival);
         case GV_STATE: {
             StateCell *src_cell = (StateCell *)src->ground.ptr;
+            if (!src_cell)
+                return atom_state(dst, NULL);
+            uint32_t index;
+            bool fresh;
+            if (!display_state_observe(map, src_cell, &index, &fresh))
+                return NULL;
+            (void)fresh;
+            if (map->states[index].copy)
+                return atom_state(dst, map->states[index].copy);
+            StateCellSnapshot snapshot = map->states[index].snapshot;
             StateCell *dst_cell = arena_alloc(dst, sizeof(StateCell));
-            dst_cell->payload_owner_epoch = 0;
-            dst_cell->payload_export_owner_epoch = 0;
-            dst_cell->value = src_cell ?
-                display_atom_copy(dst, src_cell->value, map, pretty_namespaces) : NULL;
-            dst_cell->content_type =
-                src_cell ? display_atom_copy(dst, src_cell->content_type, map,
-                                             pretty_namespaces) : NULL;
+            *dst_cell = (StateCell){0};
+            map->states[index].copy = dst_cell;
+            dst_cell->value = display_atom_copy(dst, snapshot.value, map,
+                                                 pretty_namespaces);
+            if (snapshot.value && !dst_cell->value)
+                return NULL;
+            dst_cell->content_type = display_atom_copy(dst,
+                snapshot.content_type, map, pretty_namespaces);
+            if (snapshot.content_type && !dst_cell->content_type)
+                return NULL;
             return atom_state(dst, dst_cell);
         }
         }
@@ -742,11 +835,13 @@ static Atom *display_atom_copy(Arena *dst, Atom *src, const CettaDisplayVarMap *
         for (CettaExprIndex i = 0; i < src->expr.len; i++) {
             elems[i] = display_atom_copy(dst, src->expr.elems[i], map,
                                          pretty_namespaces);
+            if (!elems[i])
+                return NULL;
         }
         return atom_expr(dst, elems, src->expr.len);
     }
     }
-    return atom_symbol(dst, "?");
+    return NULL;
 }
 
 static bool display_vars_pretty_enabled_for(FILE *logical_dest) {
@@ -785,12 +880,20 @@ static bool write_pretty_results(FILE *out, ResultSet *rs, bool pretty_vars,
         }
     }
 
+    Atom **copies = arena_alloc(&pretty_arena, sizeof(*copies) * rs->len);
+    for (uint32_t i = 0; i < rs->len; i++) {
+        copies[i] = display_atom_copy(&pretty_arena, rs->items[i], &map,
+                                       pretty_namespaces);
+        if (!copies[i]) {
+            display_var_map_free(&map);
+            arena_free(&pretty_arena);
+            return false;
+        }
+    }
     fprintf(out, "[");
     for (uint32_t i = 0; i < rs->len; i++) {
-        Atom *pretty = display_atom_copy(&pretty_arena, rs->items[i], &map,
-                                         pretty_namespaces);
         if (i > 0) fprintf(out, ", ");
-        atom_print(pretty, out);
+        atom_print(copies[i], out);
     }
     fprintf(out, "]\n");
 
@@ -1567,9 +1670,9 @@ static int run_rhocalc_cli(const char *filename,
             &libraries, filename ? filename : "<expr>");
         cetta_library_context_set_cli_args(
             &libraries, argc, argv, script_arg_start);
-        term_universe_set_persistent_arena(&libraries.term_universe, &arena);
+        term_universe_set_persistent_arena(cetta_library_context_universe(&libraries), &arena);
         eval_set_library_context(&libraries);
-        space_init_with_universe(&space, &libraries.term_universe);
+        space_init_with_universe(&space, cetta_library_context_universe(&libraries));
         space_initialized = true;
         registry_init(&registry);
         registry_initialized = true;
@@ -2044,11 +2147,8 @@ typedef struct {
     bool arena_initialized;
     Arena *eval_arena;
     bool eval_arena_initialized;
-    CettaNameDomain *names;
-    CettaNameContext previous_names;
-    bool names_initialized;
-    HashConsTable *hashcons_table;
-    bool hashcons_initialized;
+    CettaTermDomain *term_domain;
+    CettaTermDomainScope *term_domain_scope;
     CettaRuntimeSession *runtime;
     bool execution_selected;
     CettaEvalResources *previous_eval_resources;
@@ -2082,6 +2182,18 @@ static void cetta_main_document_roots(const TermUniverse *universe,
     int first = cleanup->atom_first > 0 ? cleanup->atom_first : 0;
     for (int i = first; cleanup->atom_ids && i < cleanup->atom_count; i++)
         visit(visit_context, cleanup->atom_ids[i]);
+}
+
+static void cetta_main_cleanup_tail(void *context) {
+    CettaMainCleanup *cleanup = context;
+    free(cleanup->inline_buf);
+    cleanup->inline_buf = NULL;
+    if (cleanup->eval_arena_initialized) {
+        arena_free(cleanup->eval_arena);
+        cleanup->eval_arena_initialized = false;
+    }
+    while (state_cell_reclamation_due())
+        (void)state_cell_reclaim_bounded(4096u);
 }
 
 static bool cetta_main_cleanup(CettaMainCleanup *cleanup) {
@@ -2138,7 +2250,7 @@ static bool cetta_main_cleanup(CettaMainCleanup *cleanup) {
     cleanup->gslt_language = NULL;
 
     if (cleanup->runtime && cleanup->runtime->libraries_ready)
-        term_universe_remove_root_provider(&cleanup->runtime->libraries.term_universe,
+        term_universe_remove_root_provider(cetta_library_context_universe(&cleanup->runtime->libraries),
             cetta_main_document_roots, cleanup);
     else eval_cleanup_owned_new_spaces(NULL, NULL);
     cetta_runtime_session_dispose(cleanup->runtime);
@@ -2153,40 +2265,36 @@ static bool cetta_main_cleanup(CettaMainCleanup *cleanup) {
     eval_profiled_type_cache_free_for_current_thread();
     space_execution_analysis_cache_free_for_current_thread();
 
-    free(cleanup->inline_buf);
-    cleanup->inline_buf = NULL;
-
-    if (cleanup->eval_arena_initialized) {
-        arena_free(cleanup->eval_arena);
-        cleanup->eval_arena_initialized = false;
+    if (cleanup->term_domain && cleanup->term_domain_scope &&
+        cetta_term_domain_close_if_last(cleanup->term_domain_scope,
+            cleanup->term_domain, cetta_main_cleanup_tail, cleanup)) {
+        cleanup->term_domain_scope = NULL;
+        cleanup->term_domain = NULL;
+        return ok;
     }
-
-    if (cleanup->arena_initialized) {
-        arena_free(cleanup->arena);
-        cleanup->arena_initialized = false;
+    cetta_main_cleanup_tail(cleanup);
+    if (cleanup->term_domain_scope) {
+        cetta_term_domain_leave(cleanup->term_domain_scope);
+        cleanup->term_domain_scope = NULL;
     }
-
-    if (cleanup->names_initialized) {
-        cetta_name_context_install(&cleanup->previous_names);
-        cetta_name_domain_free(cleanup->names);
-        cleanup->names_initialized = false;
-    }
-
-    if (cleanup->hashcons_initialized) {
-        g_hashcons = NULL;
-        hashcons_free(cleanup->hashcons_table);
-        cleanup->hashcons_initialized = false;
+    if (cleanup->term_domain) {
+        cetta_term_domain_release(cleanup->term_domain);
+        cleanup->term_domain = NULL;
     }
     return ok;
 }
 
-/* A PeTTa document this large is read a slice of forms at a time: each
- * slice is parsed, run and dropped, with a collection between slices, so
- * one slice of parsed forms lives at a time.  A first pass over the slices
- * checks every form and predeclares the equations, so a fault in the
- * source is reported before anything runs.  CETTA_PETTA_SLICE_BYTES and
- * CETTA_PETTA_SLICE_FORMS set the bound and the slice. */
-enum { MAIN_PETTA_SLICE_FORMS = 1u << 18 };
+/* Large documents are parsed, run and collected in slices. A first pass
+ * checks the complete document and predeclares its equations before any
+ * effects run. Both source bytes and constructor count can demand slices:
+ * deep facts can make many temporary records from relatively few bytes.
+ * Slices are bounded by parsed nodes as well as forms, so extra nesting
+ * reduces their row count rather than increasing their temporary heap. */
+enum {
+    MAIN_PETTA_SLICE_FORMS = 1u << 18,
+    MAIN_PETTA_SLICE_TOKENS = 1u << 16,
+    MAIN_PETTA_DOCUMENT_CONSTRUCTORS = 1u << 19,
+};
 #define MAIN_PETTA_SLICE_BYTES (UINT64_C(32) << 20)
 
 static uint64_t main_petta_slice_setting(const char *name, uint64_t value) {
@@ -2209,18 +2317,18 @@ static bool main_petta_predeclare_forms(CettaLibraryContext *libraries,
     int index = 0;
     while (index < n) {
         int width = 0;
-        if (main_document_exec_at(&libraries->term_universe, ids, n, index,
+        if (main_document_exec_at(cetta_library_context_universe(libraries), ids, n, index,
                                   NULL, &width)) {
             index += width;
             continue;
         }
         if (!petta_program_form_id_may_affect_metadata(
-                &libraries->term_universe, ids[index])) {
+                cetta_library_context_universe(libraries), ids[index])) {
             index++;
             continue;
         }
         Atom *declaration =
-            term_universe_get_atom(&libraries->term_universe, ids[index]);
+            term_universe_get_atom(cetta_library_context_universe(libraries), ids[index]);
         if (petta_program_admits_equation(libraries->petta_program,
                                           declaration) &&
             !petta_program_predeclare_equation(libraries->petta_program,
@@ -2238,12 +2346,33 @@ static bool main_petta_open_slices(CettaMainCleanup *cleanup,
         !petta_compiled_document_v1_open(&cleanup->petta_document, filename))
         return false;
     uint64_t len = cleanup->petta_document.len;
-    if (len < main_petta_slice_setting("CETTA_PETTA_SLICE_BYTES",
-                                       MAIN_PETTA_SLICE_BYTES) ||
-        len > UINT32_MAX) {
+    const char *slice_bytes = getenv("CETTA_PETTA_SLICE_BYTES");
+    bool sliced = len >= main_petta_slice_setting("CETTA_PETTA_SLICE_BYTES",
+                                                  MAIN_PETTA_SLICE_BYTES);
+    if (!sliced && (!slice_bytes || !*slice_bytes) &&
+        len >= (UINT64_C(1) << 20) && len <= UINT32_MAX) {
+        /* Raw delimiters are a conservative upper estimate: quoted or
+         * commented delimiters may request slicing but cannot hide a real
+         * constructor. The authoritative reader still validates every form. */
+        const uint8_t *next = cleanup->petta_document.bytes;
+        const uint8_t *end = next + len;
+        uint32_t constructors = 0u;
+        while (next < end) {
+            next = memchr(next, '(', (size_t)(end - next));
+            if (!next)
+                break;
+            if (++constructors >= MAIN_PETTA_DOCUMENT_CONSTRUCTORS) {
+                sliced = true;
+                break;
+            }
+            ++next;
+        }
+    }
+    if (!sliced || len > UINT32_MAX) {
         petta_compiled_document_v1_close(&cleanup->petta_document);
         return false;
     }
+    cleanup->petta_document.slice_tokens = MAIN_PETTA_SLICE_TOKENS;
     cleanup->petta_document_open = true;
     return true;
 }
@@ -2289,7 +2418,7 @@ static bool main_petta_check_slices(CettaMainCleanup *cleanup,
                                     CettaLibraryContext *libraries,
                                     Space *space, AtomId **atom_ids) {
     for (;;) {
-        int n = main_petta_next_slice(cleanup, &libraries->term_universe,
+        int n = main_petta_next_slice(cleanup, cetta_library_context_universe(libraries),
                                       atom_ids, true);
         if (n < 0)
             return false;
@@ -3329,10 +3458,11 @@ static int cetta_main(int argc, char **argv) {
     }
 
     int rc = 0;
-    Arena arena;       /* persistent: parsed atoms, space content, type decls */
+    Arena *arena = NULL; /* persistent storage belongs to term_domain */
     Arena eval_arena;  /* ephemeral: intermediate eval results, reset per ! */
-    CettaNameDomain names;
-    HashConsTable hashcons_table;
+    HashConsTable *hashcons_table = NULL;
+    CettaTermDomain *term_domain = NULL;
+    CettaTermDomainScope term_domain_scope = {0};
     Atom **atoms = NULL;
     AtomId *atom_ids = NULL;
     CettaRuntimeSession runtime = {0};
@@ -3355,10 +3485,8 @@ static int cetta_main(int argc, char **argv) {
         eval_set_default_fuel(fuel_override);
 
     cleanup.inline_buf = inline_buf;
-    cleanup.arena = &arena;
+    cleanup.arena = arena;
     cleanup.eval_arena = &eval_arena;
-    cleanup.names = &names;
-    cleanup.hashcons_table = &hashcons_table;
     cleanup.document_reader_context = NULL;
     cleanup.document_reader_free = NULL;
     cleanup.gslt_language = NULL;
@@ -3366,30 +3494,26 @@ static int cetta_main(int argc, char **argv) {
     cleanup.gslt_abt_provider = NULL;
     cleanup.runtime = &runtime;
 
-    arena_init(&arena);
-    arena_set_runtime_kind(&arena, CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
-    cleanup.arena_initialized = true;
+    term_domain = cetta_term_domain_new_default(true);
+    if (!term_domain) { rc = 1; goto cleanup; }
+    cleanup.term_domain = term_domain;
+    cleanup.term_domain_scope = &term_domain_scope;
+    if (!cetta_term_domain_enter(term_domain, &term_domain_scope)) {
+        rc = 1; goto cleanup;
+    }
+    arena = cetta_term_domain_persistent(term_domain);
+    hashcons_table = cetta_term_domain_hashcons(term_domain);
+    cleanup.arena = arena;
     arena_init(&eval_arena);
     arena_set_runtime_kind(&eval_arena, CETTA_ARENA_RUNTIME_KIND_EVAL);
     cleanup.eval_arena_initialized = true;
 
-    cleanup.previous_names = cetta_name_context_current();
-    cetta_name_domain_init(&names);
-    cleanup.names_initialized = true;
-    CettaNameContext name_context = cetta_name_domain_context(&names);
-    cetta_name_context_install(&name_context);
-
-    /* Hash-consing for structural sharing (reduces memory for large derivations) */
-    hashcons_init(&hashcons_table);
-    cleanup.hashcons_initialized = true;
-    g_hashcons = &hashcons_table;
-    arena_set_hashcons(&arena, &hashcons_table);
-    arena_set_hashcons(&eval_arena, eval_hashcons ? &hashcons_table : NULL);
+    arena_set_hashcons(&eval_arena, eval_hashcons ? hashcons_table : NULL);
 
     if (lang_is_mm2) {
         n = inline_text
-            ? parse_metta_text(inline_text, &arena, &atoms)
-            : parse_metta_file(filename, &arena, &atoms);
+            ? parse_metta_text(inline_text, arena, &atoms)
+            : parse_metta_file(filename, arena, &atoms);
         cleanup.atoms = atoms;
         if (n < 0) {
             if (inline_text) {
@@ -3401,7 +3525,7 @@ static int cetta_main(int argc, char **argv) {
             goto cleanup;
         }
         if (!mm2_gslt_profile)
-            cetta_mm2_lower_atoms(&arena, atoms, n);
+            cetta_mm2_lower_atoms(arena, atoms, n);
     }
     if (emit_runtime_stats) {
         cetta_runtime_stats_reset();
@@ -3425,7 +3549,7 @@ static int cetta_main(int argc, char **argv) {
             }
         }
         int mm2_rc = run_mm2_program_via_gslt(
-            &arena, atoms, n, count_only, mm2_step_limit,
+            arena, atoms, n, count_only, mm2_step_limit,
             mm2_realization);
         if (emit_runtime_stats) {
             CettaRuntimeStats stats;
@@ -3437,7 +3561,7 @@ static int cetta_main(int argc, char **argv) {
     }
     if (lang_is_mm2 &&
         !cetta_mm2_atoms_have_top_level_eval(atoms, n)) {
-        int mm2_rc = run_mm2_program_via_mork(&arena, atoms, n, count_only,
+        int mm2_rc = run_mm2_program_via_mork(arena, atoms, n, count_only,
                                               mm2_step_limit);
         if (emit_runtime_stats) {
             CettaRuntimeStats stats;
@@ -3448,7 +3572,7 @@ static int cetta_main(int argc, char **argv) {
         goto cleanup;
     }
 
-    if (!cetta_runtime_session_init(&runtime, &arena, lang->id, profile)) {
+    if (!cetta_runtime_session_init_in_domain(&runtime, arena, lang->id, profile, term_domain)) {
         fprintf(stderr, "error: could not allocate execution resources\n");
         rc = 1;
         goto cleanup;
@@ -3457,7 +3581,7 @@ static int cetta_main(int argc, char **argv) {
     cleanup.previous_collector = eval_collector_exchange(eval_resources_collector(runtime.resources));
     cleanup.execution_selected = true;
     (void)term_universe_add_root_provider(
-        &runtime.libraries.term_universe, cetta_main_document_roots, &cleanup);
+        cetta_library_context_universe(&runtime.libraries), cetta_main_document_roots, &cleanup);
     cetta_library_context_set_exec_path(&runtime.libraries, argv[0]);
     cetta_library_context_set_script_path(&runtime.libraries, script_path);
     cetta_library_context_set_cli_args(&runtime.libraries, argc, argv, script_arg_start);
@@ -3644,7 +3768,7 @@ static int cetta_main(int argc, char **argv) {
         goto cleanup;
     }
 
-    if (!cetta_runtime_session_open_root(&runtime, &arena)) {
+    if (!cetta_runtime_session_open_root(&runtime, arena)) {
         fprintf(stderr, "error: could not initialize execution root\n");
         rc = 1;
         goto cleanup;
@@ -3671,10 +3795,10 @@ static int cetta_main(int argc, char **argv) {
         n = sliced ? 0
             : inline_text
             ? parse_metta_text_ids_diagnostic(
-                  inline_text, &runtime.libraries.term_universe, &atom_ids,
+                  inline_text, cetta_library_context_universe(&runtime.libraries), &atom_ids,
                   document_reader_error, sizeof(document_reader_error))
             : parse_metta_file_ids_diagnostic(
-                  filename, &runtime.libraries.term_universe, &atom_ids,
+                  filename, cetta_library_context_universe(&runtime.libraries), &atom_ids,
                   document_reader_error, sizeof(document_reader_error));
         if (n < 0 && lang->id == CETTA_LANGUAGE_HE) {
             /* HE reads one form at a time: the forms before a syntax fault
@@ -3689,12 +3813,12 @@ static int cetta_main(int argc, char **argv) {
                 free(atom_ids);
                 atom_ids = NULL;
                 (void)parse_metta_bytes_prefix_ids(
-                    bytes, source_len, &runtime.libraries.term_universe, &atom_ids,
+                    bytes, source_len, cetta_library_context_universe(&runtime.libraries), &atom_ids,
                     &complete, document_reader_error,
                     sizeof(document_reader_error));
                 if (complete > 0 &&
-                    tu_kind(&runtime.libraries.term_universe, atom_ids[complete - 1]) == ATOM_SYMBOL &&
-                    tu_sym(&runtime.libraries.term_universe, atom_ids[complete - 1]) == g_builtin_syms.bang)
+                    tu_kind(cetta_library_context_universe(&runtime.libraries), atom_ids[complete - 1]) == ATOM_SYMBOL &&
+                    tu_sym(cetta_library_context_universe(&runtime.libraries), atom_ids[complete - 1]) == g_builtin_syms.bang)
                     complete--;
                 n = complete;
                 he_source_fault = true;
@@ -3736,7 +3860,7 @@ static int cetta_main(int argc, char **argv) {
             ? cetta_malloc(sizeof(*forms) * (size_t)n) : NULL;
         for (int index = 0; index < n; index++)
             forms[index] = term_universe_get_atom(
-                &runtime.libraries.term_universe, atom_ids[index]);
+                cetta_library_context_universe(&runtime.libraries), atom_ids[index]);
         CettaGsltLanguageResult observed = {0};
         CettaGsltHornLimits limits = {
             .max_rule_attempts = 10000000u,
@@ -3841,7 +3965,7 @@ static int cetta_main(int argc, char **argv) {
         goto cleanup;
     }
 
-    if (!cetta_runtime_load_prelude(&runtime.space, &arena, lang->id, profile)) {
+    if (!cetta_runtime_load_prelude(&runtime.space, arena, lang->id, profile)) {
         fprintf(stderr, "error: could not initialize language prelude\n");
         rc = 1;
         goto cleanup;
@@ -3891,7 +4015,7 @@ static int cetta_main(int argc, char **argv) {
         uint64_t query_count = 0;
         for (int pos = 0; pos < n;) {
             int width = 0;
-            if (main_document_exec_at(&runtime.libraries.term_universe, atom_ids, n, pos, NULL, &width)) {
+            if (main_document_exec_at(cetta_library_context_universe(&runtime.libraries), atom_ids, n, pos, NULL, &width)) {
                 query_count++; pos += width;
             } else pos++;
         }
@@ -3901,7 +4025,7 @@ static int cetta_main(int argc, char **argv) {
             AtomId *future_ids = NULL;
             char error[512] = {0};
             int length = parse_metta_file_ids_diagnostic(argv[file_index],
-                &runtime.libraries.term_universe, &future_ids, error, sizeof(error));
+                cetta_library_context_universe(&runtime.libraries), &future_ids, error, sizeof(error));
             if (length < 0) {
                 free(future_ids);
                 fprintf(stderr, "error: contracted catalogue reader: %s\n", error);
@@ -3910,7 +4034,7 @@ static int cetta_main(int argc, char **argv) {
             query_count=0;
             for (int pos=0;pos<length;) {
                 int width=0;
-                if (main_document_exec_at(&runtime.libraries.term_universe,future_ids,length,pos,NULL,&width)) {
+                if (main_document_exec_at(cetta_library_context_universe(&runtime.libraries),future_ids,length,pos,NULL,&width)) {
                     query_count++; pos+=width;
                 } else pos++;
             }
@@ -3933,7 +4057,7 @@ process_petta_document:
             rc = 1;
             goto cleanup;
         }
-        n = main_petta_next_slice(&cleanup, &runtime.libraries.term_universe,
+        n = main_petta_next_slice(&cleanup, cetta_library_context_universe(&runtime.libraries),
                                   &atom_ids, false);
         if (n < 0) {
             rc = 1;
@@ -3965,14 +4089,14 @@ process_petta_document:
             while (pi < n) {
                 int exec_width = 0;
                 if (main_document_exec_at(
-                        &runtime.libraries.term_universe, atom_ids,
+                        cetta_library_context_universe(&runtime.libraries), atom_ids,
                         n, pi, NULL, &exec_width)) {
                     if (profile &&
                         cetta_profile_uses_petta_typing(profile)) {
                         MainPettaBlockLoadResult checked =
                             main_petta_check_forms(
                                 &runtime.libraries, &runtime.space, &runtime.registry,
-                                &runtime.libraries.term_universe, atom_ids + pi,
+                                cetta_library_context_universe(&runtime.libraries), atom_ids + pi,
                                 exec_width, petta_typecheck_policy, false);
                         if (checked != MAIN_PETTA_BLOCK_LOAD_OK) {
                             rc = checked ==
@@ -3987,14 +4111,14 @@ process_petta_document:
                 int block_end = pi + 1;
                 while (block_end < n &&
                        !main_document_exec_at(
-                           &runtime.libraries.term_universe, atom_ids,
+                           cetta_library_context_universe(&runtime.libraries), atom_ids,
                            n, block_end, NULL, NULL)) {
                     block_end++;
                 }
                 MainPettaBlockLoadResult loaded =
                     main_petta_load_declaration_block(
                         &runtime.libraries, &runtime.space, &runtime.registry,
-                        &runtime.libraries.term_universe, atom_ids + pi,
+                        cetta_library_context_universe(&runtime.libraries), atom_ids + pi,
                         block_end - pi,
                         cetta_profile_uses_petta_typing(profile),
                         petta_typecheck_policy);
@@ -4014,7 +4138,7 @@ process_petta_document:
             while (pi < n) {
                 int exec_width = 0;
                 if (main_document_exec_at(
-                        &runtime.libraries.term_universe, atom_ids,
+                        cetta_library_context_universe(&runtime.libraries), atom_ids,
                         n, pi, NULL, &exec_width)) {
                     pi += exec_width;
                     continue;
@@ -4022,7 +4146,7 @@ process_petta_document:
                 int block_end = pi + 1;
                 while (block_end < n &&
                        !main_document_exec_at(
-                           &runtime.libraries.term_universe, atom_ids,
+                           cetta_library_context_universe(&runtime.libraries), atom_ids,
                            n, block_end, NULL, NULL)) {
                     block_end++;
                 }
@@ -4053,7 +4177,7 @@ petta_next_slice:
                 Atom *expr = atoms[i + 1];
                 ResultSet rs;
                 result_set_init(&rs);
-                eval_top_with_registry(&runtime.space, &eval_arena, &arena, &runtime.registry, expr, &rs);
+                eval_top_with_registry(&runtime.space, &eval_arena, arena, &runtime.registry, expr, &rs);
                 if (cetta_eval_session_process_exit_requested(
                         &runtime.libraries.session)) {
                     rc = cetta_eval_session_process_exit_code(
@@ -4080,11 +4204,11 @@ petta_next_slice:
                 arena_free(&eval_arena);
                 cetta_foreign_drain_releases();
                 (void)term_universe_collect_at_safe_point(
-                    &runtime.libraries.term_universe, NULL);
+                    cetta_library_context_universe(&runtime.libraries), NULL);
                 arena_init(&eval_arena);
                 arena_set_runtime_kind(&eval_arena, CETTA_ARENA_RUNTIME_KIND_EVAL);
                 arena_set_hashcons(
-                    &eval_arena, eval_hashcons ? &hashcons_table : NULL);
+                    &eval_arena, eval_hashcons ? hashcons_table : NULL);
                 if (stop_after_error) break;
                 i += 2;
                 continue;
@@ -4101,14 +4225,14 @@ petta_next_slice:
         AtomId payload_id = CETTA_ATOM_ID_NONE;
         int exec_width = 0;
         if (main_document_exec_at(
-                &runtime.libraries.term_universe, atom_ids, n, i,
+                cetta_library_context_universe(&runtime.libraries), atom_ids, n, i,
                 &payload_id, &exec_width)) {
             if (!run_cli_query_begin(run_cli)) { rc=1; goto cleanup; }
             if (lang->id == CETTA_LANGUAGE_PETTA && profile &&
                 cetta_profile_uses_petta_typing(profile)) {
                 MainPettaBlockLoadResult checked = main_petta_check_forms(
                     &runtime.libraries, &runtime.space, &runtime.registry,
-                    &runtime.libraries.term_universe, atom_ids + i, exec_width,
+                    cetta_library_context_universe(&runtime.libraries), atom_ids + i, exec_width,
                     petta_typecheck_policy, false);
                 if (checked != MAIN_PETTA_BLOCK_LOAD_OK) {
                     rc = checked == MAIN_PETTA_BLOCK_LOAD_TYPE_REJECTED
@@ -4118,10 +4242,10 @@ petta_next_slice:
             }
             if (lang->id == CETTA_LANGUAGE_PETTA) {
                 cetta_petta_prepare_document_forms(
-                    &runtime.libraries.term_universe, atom_ids + i,
+                    cetta_library_context_universe(&runtime.libraries), atom_ids + i,
                     exec_width);
                 if (!main_document_exec_at(
-                        &runtime.libraries.term_universe, atom_ids, n, i,
+                        cetta_library_context_universe(&runtime.libraries), atom_ids, n, i,
                         &payload_id, &exec_width)) {
                     fprintf(
                         stderr,
@@ -4133,7 +4257,7 @@ petta_next_slice:
             const PettaPlanNode *source_plan = NULL;
             if (lang->id == CETTA_LANGUAGE_PETTA) {
                 Atom *source = term_universe_get_atom(
-                    &runtime.libraries.term_universe, payload_id);
+                    cetta_library_context_universe(&runtime.libraries), payload_id);
                 source_plan = source
                     ? petta_program_plan_current(
                           runtime.libraries.petta_program, source)
@@ -4149,8 +4273,8 @@ petta_next_slice:
             /* HE reads a form with the tokens bound before it. */
             Atom *expr = lang->id == CETTA_LANGUAGE_HE
                 ? eval_copy_read_registry_form(&runtime.registry,
-                      &runtime.libraries.term_universe, &arena, payload_id)
-                : term_universe_copy_atom(&runtime.libraries.term_universe, &arena,
+                      cetta_library_context_universe(&runtime.libraries), arena, payload_id)
+                : term_universe_copy_atom(cetta_library_context_universe(&runtime.libraries), arena,
                                            payload_id);
             runtime.libraries.session.test_verdict = run_cli ? run_cli_test_verdict : NULL;
             runtime.libraries.session.test_verdict_context = run_cli;
@@ -4171,7 +4295,7 @@ petta_next_slice:
                 trace.out = stderr;
                 trace.form = ++g_prime_need_trace_form;
                 eval_top_with_registry_outcome(
-                    &runtime.space, &eval_arena, &arena, &runtime.registry, expr,
+                    &runtime.space, &eval_arena, arena, &runtime.registry, expr,
                     &detailed, prime_need_trace_answer, &trace);
                 fprintf(stderr,
                         "(prime-need:completion %" PRIu64 " %s"
@@ -4196,11 +4320,11 @@ petta_next_slice:
                 results = &detailed.results;
                 if (lang->id == CETTA_LANGUAGE_PETTA) {
                     eval_top_with_registry_petta_plan_outcome(
-                        &runtime.space, &eval_arena, &arena, &runtime.registry,
+                        &runtime.space, &eval_arena, arena, &runtime.registry,
                         expr, source_plan, &detailed);
                 } else {
                     eval_top_with_registry_outcome(
-                        &runtime.space, &eval_arena, &arena, &runtime.registry, expr,
+                        &runtime.space, &eval_arena, arena, &runtime.registry, expr,
                         &detailed, NULL, NULL);
                 }
             } else {
@@ -4209,7 +4333,7 @@ petta_next_slice:
                  * producer cutoff to failure of the enclosing directive. */
                 result_set_init(&rs);
                 eval_top_with_registry(
-                    &runtime.space, &eval_arena, &arena, &runtime.registry,
+                    &runtime.space, &eval_arena, arena, &runtime.registry,
                     expr, &rs);
             }
             if (cetta_eval_session_process_exit_requested(
@@ -4360,11 +4484,11 @@ petta_next_slice:
             arena_free(&eval_arena);
             cetta_foreign_drain_releases();
             (void)term_universe_collect_at_safe_point(
-                &runtime.libraries.term_universe, NULL);
+                cetta_library_context_universe(&runtime.libraries), NULL);
             arena_init(&eval_arena);
             arena_set_runtime_kind(&eval_arena, CETTA_ARENA_RUNTIME_KIND_EVAL);
             arena_set_hashcons(
-                &eval_arena, eval_hashcons ? &hashcons_table : NULL);
+                &eval_arena, eval_hashcons ? hashcons_table : NULL);
             run_cli_query_end(run_cli, !petta_answer_without_text, true);
             if (stop_after_error) {
                 stop_document_sequence = true;
@@ -4378,14 +4502,14 @@ petta_next_slice:
             int block_end = i + 1;
             while (block_end < n &&
                    !main_document_exec_at(
-                       &runtime.libraries.term_universe, atom_ids,
+                       cetta_library_context_universe(&runtime.libraries), atom_ids,
                        n, block_end, NULL, NULL)) {
                 block_end++;
             }
             MainPettaBlockLoadResult loaded =
                 main_petta_load_declaration_block(
                     &runtime.libraries, &runtime.space, &runtime.registry,
-                    &runtime.libraries.term_universe, atom_ids + i,
+                    cetta_library_context_universe(&runtime.libraries), atom_ids + i,
                     block_end - i,
                     cetta_profile_uses_petta_typing(profile),
                     petta_typecheck_policy);
@@ -4405,7 +4529,7 @@ petta_next_slice:
         int block_end = i + 1;
         while (block_end < n &&
                !main_document_exec_at(
-                   &runtime.libraries.term_universe, atom_ids,
+                   cetta_library_context_universe(&runtime.libraries), atom_ids,
                    n, block_end, NULL, NULL)) {
             block_end++;
         }
@@ -4413,7 +4537,7 @@ petta_next_slice:
             /* HE reads a form with the tokens bound before it. */
             for (int form = i; form < block_end; form++)
                 atom_ids[form] = eval_read_registry_words_id(
-                    &runtime.registry, &runtime.libraries.term_universe, &eval_arena, &arena,
+                    &runtime.registry, cetta_library_context_universe(&runtime.libraries), &eval_arena, arena,
                     atom_ids[form]);
         }
         /* Prime and HE also read each declaration into the program their
@@ -4424,7 +4548,7 @@ petta_next_slice:
         bool loaded = planned
             ? main_load_planned_declaration_block(
                   runtime.libraries.petta_program, &runtime.space,
-                  &runtime.libraries.term_universe, atom_ids + i,
+                  cetta_library_context_universe(&runtime.libraries), atom_ids + i,
                   block_end - i)
             : space_add_atom_ids_batch(
                   &runtime.space, atom_ids + i,
@@ -4438,7 +4562,7 @@ petta_next_slice:
     }
     /* A document read a slice at a time goes on with its next slice. */
     if (cleanup.petta_document_open && !stop_document_sequence && i >= n) {
-        n = main_petta_next_slice(&cleanup, &runtime.libraries.term_universe,
+        n = main_petta_next_slice(&cleanup, cetta_library_context_universe(&runtime.libraries),
                                   &atom_ids, false);
         if (n < 0) {
             rc = 1;
@@ -4468,7 +4592,7 @@ petta_document_complete:
         cleanup.atom_first = 0;
         document_reader_error[0] = '\0';
         n = parse_metta_file_ids_diagnostic(
-            filename, &runtime.libraries.term_universe, &atom_ids,
+            filename, cetta_library_context_universe(&runtime.libraries), &atom_ids,
             document_reader_error, sizeof(document_reader_error));
         cleanup.atom_ids = atom_ids;
         cleanup.atom_count = n;
@@ -4486,7 +4610,7 @@ petta_document_complete:
     }
 
     if (compile_mode) {
-        compile_space_to_llvm(&runtime.space, &arena, stdout);
+        compile_space_to_llvm(&runtime.space, arena, stdout);
         rc = 0;
         goto cleanup;
     }
@@ -4545,4 +4669,16 @@ cleanup: {
 }
 }
 
-int main(int argc,char **argv) { return cetta_run_guard(argc,argv,cetta_main); }
+int main(int argc,char **argv) {
+#ifdef __GLIBC__
+    /* A fixed mapping threshold.  glibc raises its threshold after freeing a
+     * large mapped block, and the large blocks after that come from the heap
+     * and stay with it, so the resident memory depends on the order of
+     * allocations: the same live heap left 535 or 559 MB resident, and 487
+     * MB with the threshold fixed at 1 MB.  A threshold the user sets is
+     * kept. */
+    if (!getenv("MALLOC_MMAP_THRESHOLD_"))
+        (void)mallopt(M_MMAP_THRESHOLD, 1 << 20);
+#endif
+    return cetta_run_guard(argc,argv,cetta_main);
+}

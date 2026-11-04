@@ -5,6 +5,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <unistd.h>
 
 #define SYMBOL_TABLE_MIN_SLOTS 4096u
 #define SYMBOL_TABLE_MAX_LOAD_NUM 7u
@@ -64,6 +66,40 @@ static char *symbol_spelling_alloc(SymbolTable *st, size_t size) {
     return at;
 }
 
+static _Atomic uint64_t g_placement_state;
+static pthread_once_t g_placement_once = PTHREAD_ONCE_INIT;
+
+static void placement_seed(void) {
+    uint64_t seed = 0u;
+    const char *fixed = getenv("CETTA_PLACEMENT_KEY");
+    if (fixed && fixed[0]) {
+        seed = strtoull(fixed, NULL, 0);
+    } else {
+        FILE *random = fopen("/dev/urandom", "rb");
+        if (!random || fread(&seed, sizeof(seed), 1u, random) != 1u) {
+            struct timespec now;
+            clock_gettime(CLOCK_REALTIME, &now);
+            seed = (uint64_t)now.tv_nsec ^ ((uint64_t)now.tv_sec << 20) ^
+                   ((uint64_t)getpid() << 40);
+        }
+        if (random)
+            fclose(random);
+    }
+    atomic_store(&g_placement_state, seed);
+}
+
+uint64_t cetta_placement_key_next(void) {
+    pthread_once(&g_placement_once, placement_seed);
+    uint64_t x = atomic_fetch_add(&g_placement_state,
+                                  UINT64_C(0x9E3779B97F4A7C15)) +
+                 UINT64_C(0x9E3779B97F4A7C15);
+    x = (x ^ (x >> 30)) * UINT64_C(0xbf58476d1ce4e5b9);
+    x = (x ^ (x >> 27)) * UINT64_C(0x94d049bb133111eb);
+    return x ^ (x >> 31);
+}
+
+/* A spelling's content hash: FNV-1a, public and stable, read beyond the
+ * table (symbol_hash_value). */
 static uint64_t symbol_hash_bytes(const uint8_t *bytes, uint32_t len) {
     uint64_t h = 1469598103934665603ULL;
     for (uint32_t i = 0; i < len; i++) {
@@ -71,6 +107,19 @@ static uint64_t symbol_hash_bytes(const uint8_t *bytes, uint32_t len) {
         h *= 1099511628211ULL;
     }
     return h ? h : 1ULL;
+}
+
+/* The home slot of HASH under the table's key. */
+static uint32_t symbol_slot_capacity(const SymbolTable *st, uint64_t hash, uint32_t capacity) {
+    uint64_t x = hash ^ st->placement_key;
+    x = (x ^ (x >> 30)) * UINT64_C(0xbf58476d1ce4e5b9);
+    x = (x ^ (x >> 27)) * UINT64_C(0x94d049bb133111eb);
+    x ^= x >> 31;
+    return (uint32_t)x & (capacity - 1u);
+}
+
+static uint32_t symbol_slot(const SymbolTable *st, uint64_t hash) {
+    return symbol_slot_capacity(st, hash, st->slot_cap);
 }
 
 static SymbolEntry *symbol_table_entry_chunk(const SymbolTable *st, SymbolId id) {
@@ -122,6 +171,7 @@ static bool symbol_entry_matches(const SymbolEntry *entry, const uint8_t *bytes,
 }
 
 static bool symbol_table_resize(SymbolTable *st, uint32_t new_cap) {
+    if (!new_cap || (new_cap & (new_cap - 1u))) { errno = EOVERFLOW; return false; }
     SymbolSlot *old_slots = st->slots;
     uint32_t entry_len = atomic_load_explicit(&st->entry_len, memory_order_relaxed);
 
@@ -133,9 +183,9 @@ static bool symbol_table_resize(SymbolTable *st, uint32_t new_cap) {
     for (uint32_t i = 1; i < entry_len; i++) {
         const SymbolEntry *entry = symbol_table_entry_ref(st, (SymbolId)i);
         if (!entry || !entry->bytes) continue;
-        uint32_t slot = (uint32_t)(entry->hash % new_cap);
+        uint32_t slot = symbol_slot_capacity(st, entry->hash, new_cap);
         while (slots[slot].id != SYMBOL_ID_NONE) {
-            slot = (slot + 1) % new_cap;
+            slot = (slot + 1u) & (new_cap - 1u);
         }
         slots[slot].hash = entry->hash;
         slots[slot].len = entry->len;
@@ -161,6 +211,7 @@ bool symbol_table_try_init(SymbolTable *st) {
         errno = EOVERFLOW;
         goto failed;
     }
+    st->placement_key = cetta_placement_key_next();
     st->name_trie_count = 1u;
     st->entry_chunks = calloc(SYMBOL_ENTRY_CHUNK_COUNT, sizeof(SymbolEntry *));
     if (!st->entry_chunks || !symbol_table_ensure_entry_chunk(st, SYMBOL_ID_NONE))
@@ -239,7 +290,7 @@ static SymbolId symbol_intern_span_hashed_unlocked(SymbolTable *st,
     }
 
     entry_len = atomic_load_explicit(&st->entry_len, memory_order_relaxed);
-    uint32_t slot = (uint32_t)(hash % st->slot_cap);
+    uint32_t slot = symbol_slot(st, hash);
     while (true) {
         SymbolSlot *entry = &st->slots[slot];
         if (entry->id == SYMBOL_ID_NONE) {
@@ -292,7 +343,7 @@ static SymbolId symbol_intern_span_hashed_unlocked(SymbolTable *st,
             if (symbol_entry_matches(sym, bytes, len, hash))
                 return entry->id;
         }
-        slot = (slot + 1) % st->slot_cap;
+        slot = (slot + 1u) & (st->slot_cap - 1u);
     }
 }
 
@@ -381,7 +432,8 @@ done:
 
 SymbolId symbol_intern_bytes(SymbolTable *st, const uint8_t *bytes, uint32_t len) {
     if (!st || !bytes || len == 0) return SYMBOL_ID_NONE;
-    return symbol_intern_span_hashed(st, bytes, len, symbol_hash_bytes(bytes, len));
+    return symbol_intern_span_hashed(st, bytes, len,
+                                     symbol_hash_bytes(bytes, len));
 }
 
 SymbolId symbol_intern_cstr(SymbolTable *st, const char *text) {
@@ -404,7 +456,7 @@ SymbolId symbol_lookup_cstr(SymbolTable *st, const char *text) {
     SymbolId found = SYMBOL_ID_NONE;
     pthread_mutex_lock(&st->write_mutex);
     if (st->slot_cap) {
-        uint32_t slot = (uint32_t)(hash % st->slot_cap);
+        uint32_t slot = symbol_slot(st, hash);
         while (st->slots[slot].id != SYMBOL_ID_NONE) {
             const SymbolSlot *entry = &st->slots[slot];
             if (entry->hash == hash &&
@@ -413,7 +465,7 @@ SymbolId symbol_lookup_cstr(SymbolTable *st, const char *text) {
                 found = entry->id;
                 break;
             }
-            slot = (slot + 1) % st->slot_cap;
+            slot = (slot + 1u) & (st->slot_cap - 1u);
         }
     }
     pthread_mutex_unlock(&st->write_mutex);

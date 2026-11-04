@@ -178,6 +178,42 @@ int main(void) {
     free(ids);
     ids = NULL;
 
+    {
+        static const uint8_t source[] = "(a) (b (c d)) !(f 1) (z)";
+        AtomId *whole = NULL;
+        int whole_len = parse(reader, &universe, source, sizeof(source) - 1u,
+                               &whole, &receipt, error, sizeof(error));
+        const uint32_t allowances[] = {1u, 5u, 64u};
+        bool same = whole_len == 5;
+        for (size_t trial = 0u; same && trial < 3u; trial++) {
+            PeTTaCompiledDocumentV1 document = {
+                .fd = -1, .bytes = source, .len = sizeof(source) - 1u,
+                .slice_tokens = allowances[trial],
+            };
+            int copied = 0;
+            while (same && document.pos < document.len) {
+                size_t before = document.pos;
+                AtomId *slice = NULL;
+                int amount = petta_compiled_document_v1_next(
+                    reader, &document, UINT32_MAX, &universe, &slice,
+                    error, sizeof(error));
+                same = amount > 0 && document.pos > before &&
+                    copied + amount <= whole_len;
+                if (same && trial == 0u && copied == 0)
+                    same = amount == 1;
+                for (int i = 0; same && i < amount; i++)
+                    same = slice[i] == whole[copied + i];
+                if (amount > 0)
+                    copied += amount;
+                free(slice);
+            }
+            same = same && copied == whole_len;
+        }
+        expect(&counts, same,
+               "node-bounded slices preserve whole forms and runnable pairs");
+        free(whole);
+    }
+
     len = parse(reader, &universe, variable_document,
                 sizeof(variable_document) - 1u, &ids, &receipt,
                 error, sizeof(error));

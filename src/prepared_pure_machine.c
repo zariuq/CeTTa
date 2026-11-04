@@ -10181,6 +10181,7 @@ static bool prepared_pure_value_tree(
     if (node->kind == PREPARED_PURE_SLOT)
         return true;
     if (node->kind != PREPARED_PURE_BUILD ||
+        node->auxiliary == PREPARED_PURE_BUILD_DATA_HEAD ||
         node->first_child > program->child_len ||
         node->child_count > program->child_len - node->first_child)
         return false;
@@ -12491,6 +12492,7 @@ static bool prepared_pure_project_answer_value(
 
 struct CettaPreparedPureAnswerCursor {
     CettaPreparedPureProgram *program;
+    void *lifetime_hold;
     Arena *arena;
     Arena owned_arena;
     bool owns_arena;
@@ -12549,6 +12551,11 @@ struct CettaPreparedPureAnswerCursor {
     bool body_root_pending;
 };
 
+
+static void prepared_pure_space_hold_release(void **hold) {
+    if (space_lifetime_unpin)
+        space_lifetime_unpin(*hold);
+}
 
 static void prepared_pure_answer_cursor_body_root(CettaPreparedPureAnswerCursor *cursor) {
     if (!cursor->body_root_pending)
@@ -13016,6 +13023,8 @@ prepared_pure_answer_cursor_open_entry(
     if (!cursor->seen_heads)
         cursor->seen_heads = malloc(program->head_len * sizeof(*cursor->seen_heads));
     cursor->program = cetta_prepared_pure_program_retain(program);
+    cursor->lifetime_hold = space_lifetime_pin
+        ? space_lifetime_pin(program->space) : NULL;
     if ((program->head_len && (!cursor->head_seen || !cursor->seen_heads)) || !cursor->program) {
         cetta_prepared_pure_answer_cursor_close(cursor);
         return NULL;
@@ -15314,6 +15323,9 @@ void cetta_prepared_pure_answer_cursor_close(
     CettaPreparedPureAnswerCursor *cursor) {
     if (!cursor)
         return;
+    __attribute__((cleanup(prepared_pure_space_hold_release))) void *space_hold =
+        cursor->lifetime_hold;
+    cursor->lifetime_hold = NULL;
     for (size_t index = 0u; index < cursor->frame_len; index++)
         if (cursor->frames[index].head_index == PREPARED_PURE_NATIVE_FRAME)
             prepared_pure_native_release(cursor->frames[index].native);
@@ -16350,6 +16362,9 @@ CettaOwnedExecutionStep cetta_prepared_pure_body_enter(
         assert(!cursor->owns_arena && cursor->frame_len == 0u);
         bool cache = !program->body_cursor_spare &&
             cetta_prepared_pure_answer_cursor_storage(cursor).metadata_bytes <= 4096u;
+        __attribute__((cleanup(prepared_pure_space_hold_release))) void *space_hold =
+            cursor->lifetime_hold;
+        cursor->lifetime_hold = NULL;
         cursor->program = NULL;
         cursor->arena = NULL;
         cursor->argument_len = cursor->frame_len = 0u;

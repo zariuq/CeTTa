@@ -166,7 +166,40 @@ typedef struct {
      * for its rows), so a counting collection need not list it; only the
      * tracing check does. */
     bool counted;
+    /* Weak owner of the provider's ids. NULL denotes an external root. */
+    void *resource_owner;
 } TermUniverseRootProviderEntry;
+
+typedef struct TermUniverseResourceOwner TermUniverseResourceOwner;
+/* Sparse ownership of opaque stored values. Stable records contain no
+ * retained resource owners and take no entries in this ledger. These calls
+ * supplement, rather than replace, the universe's ordinary id counts. */
+void term_universe_resource_hold(TermUniverse *, AtomId,
+                                  TermUniverseResourceOwner **, void *owner);
+void term_universe_resource_release(TermUniverse *, AtomId,
+                                     TermUniverseResourceOwner *);
+void term_universe_resource_owner_move(TermUniverseResourceOwner *, void *);
+void term_universe_resource_owner_free(TermUniverseResourceOwner *);
+typedef void (*TermUniverseResourceImageVisit)(
+    void *context, AtomId id, void *image, const Arena *syntax,
+    uint64_t clients, uint64_t owned_references, uint16_t id_references);
+typedef void (*TermUniverseResourceOwnerVisit)(void *context, void *owner);
+void term_universe_visit_resource_images(const TermUniverse *,
+    TermUniverseResourceImageVisit, void *context);
+void term_universe_visit_resource_image_owners(void *image,
+    TermUniverseResourceOwnerVisit, void *context);
+/* The owner callback certifies this image type before its pointer is read.
+ * The view is borrowed through the caller's live Arena lease. References
+ * include any universe record and all Arena leases; bytes exclude weights
+ * of outgoing native-resource edges. */
+typedef struct {
+    void *image;
+    const Arena *syntax;
+    uint64_t references;
+    size_t bytes;
+} TermUniverseResourceImageView;
+bool term_universe_resource_image_owner_view(void *owner,
+    void (*release)(void *), TermUniverseResourceImageView *out);
 
 /* A registry's index, kept once a registry holds many holders: open
  * addressing from a holder's (function, context) to its slot.  An empty
@@ -220,6 +253,9 @@ struct TermUniverse {
     uint64_t instance_id;
     uint64_t storage_epoch;
     Arena *persistent_arena;
+    /* Physical lifetime domain of this universe's owned opaque images.
+     * Independent universes use NULL; this classification holds no lease. */
+    void *resource_scope;
     uint8_t *blob_pool;
     size_t blob_len, blob_cap;
     struct TermEntry *entries;
@@ -229,17 +265,29 @@ struct TermUniverse {
      * An entry without a record keeps its atom here alone. */
     Atom ***decoded_pages;
     size_t decoded_page_cap;
+    /* Lazily allocated ownership slots for entries without a record. A
+     * scoped reader can keep an image after its entry is reclaimed. */
+    struct TermUniverseFallbackSlots *fallbacks;
+    uint64_t fallback_bytes;
+    /* Called only at an exclusive universe collection boundary. */
+    void (*resource_collector)(TermUniverse *);
     _Atomic(struct CettaTermVariableSupportBlock *)
         *variable_support_blocks;
     size_t variable_support_block_cap;
     uint8_t *intern_slots;
     size_t intern_mask;
     size_t intern_used;
+    /* Mixed into every record's home, so crafted terms cannot share one
+       (term_universe_intern_index). */
+    uint64_t intern_key;
     /* Integer pages retain exact coordinates and physical record positions.
        Positions remain valid when the AtomId storage format changes. */
     struct CettaIntegerInternSlot *integer_slots;
     size_t integer_mask;
     size_t integer_used;
+    /* Mixed into every page's home, so crafted integers cannot share one
+       (term_universe_integer_home). */
+    uint64_t integer_key;
     uint8_t *ptr_slots;
     size_t ptr_mask;
     size_t ptr_used;
@@ -255,6 +303,8 @@ struct TermUniverse {
     /* Collect at every safe point offered, and often inside statements: the
      * policy of a build with collection checks, and of tests. */
     bool collection_eager;
+    /* Candidates born inside a counted sweep must join its current queue. */
+    bool counted_sweep_active;
     /* Open regions of C code holding ids no provider lists.  A safe point
      * collects only when there are none. */
     uint32_t collection_inhibit;
@@ -432,8 +482,8 @@ typedef struct TermEntry {
      * CETTA_TERM_ENTRY_ALIGN bytes; NONE for an entry without a record.
      * Its length is its header's (term_universe_record_bytes). */
     uint32_t record;
-    /* The record's coordinate in the intern table, kept so the table grows
-     * and the record is placed or removed without reading the record. */
+    /* The record's coordinate in the intern table; without a record, the
+     * index plus one of its owned fallback image (zero for a tombstone). */
     uint32_t coordinate;
 } TermEntry;
 
@@ -488,6 +538,9 @@ void term_universe_remove_store_format_observer(
     void *ctx);
 bool term_universe_add_root_provider(TermUniverse *universe,
                                      TermUniverseRootProvider fn, void *ctx);
+/* Register a weak resource owner for a provider that belongs to a container. */
+bool term_universe_add_owned_root_provider(TermUniverse *,
+    TermUniverseRootProvider, void *ctx, bool counted, void *resource_owner);
 /* Register a holder that counts what it holds through term_universe_hold
  * and term_universe_release; its listing serves the tracing check. */
 bool term_universe_add_counted_root_provider(TermUniverse *universe,
@@ -575,7 +628,8 @@ static inline uint64_t term_universe_held_record_bytes(
 static inline bool term_universe_collection_due(const TermUniverse *universe) {
     if (universe->collection_mode == TERM_UNIVERSE_COLLECTION_OFF)
         return false;
-    uint64_t held = term_universe_held_record_bytes(universe);
+    uint64_t held = term_universe_held_record_bytes(universe) +
+                    universe->fallback_bytes;
     if (held >= universe->collection_bytes_after &&
         held - universe->collection_bytes_after >= universe->collection_due_bytes)
         return true;
@@ -685,6 +739,14 @@ bool term_universe_variable_support(
 bool term_universe_atom_id_eq(const TermUniverse *universe, AtomId id,
                               Atom *src);
 Atom *term_universe_get_atom(const TermUniverse *universe, AtomId id);
+/* Like the getter for record-backed terms, but retaining an opaque image
+ * in DST rather than for the universe's whole lifetime. */
+Atom *term_universe_scoped_atom(const TermUniverse *universe, Arena *dst,
+                                AtomId id);
+/* A borrowed read, valid while the entry remains held. It does not promote
+ * an opaque image to the persistent arena. A reader keeping the atom past
+ * a mutation or safe point uses term_universe_view_atom instead. */
+Atom *term_universe_peek_atom(const TermUniverse *universe, AtomId id);
 /* The atom the entry ID names has decoded to, without decoding it: NULL
  * until the entry is first read as an atom, except for an entry without a
  * record, whose atom it always is. */

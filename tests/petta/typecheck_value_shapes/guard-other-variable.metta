@@ -1,0 +1,6 @@
+!(import! &self (library lib_roman))
+(: count-leaf (-[det]-> Number Atom Number))
+(= (count-leaf $n $_leaf) (+ $n 1))
+(: wrong-variable (-[det]-> Atom Atom Number))
+(= (wrong-variable $observed $value)
+   (if (is-expr $observed) (fold-nested count-leaf 0 $value) 0))

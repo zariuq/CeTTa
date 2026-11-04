@@ -204,6 +204,10 @@ enum {
     PETTA_CALLABLE_CACHE_SLOTS = 4096,
     PETTA_NAMED_ARITY_CACHE_SLOTS = 256,
     PETTA_RELATION_RELEVANCE_CACHE_SLOTS = 256,
+    PETTA_RELATION_RELEVANCE_CACHE_WAYS = 4,
+    PETTA_RELATION_RELEVANCE_CACHE_BANKS =
+        PETTA_RELATION_RELEVANCE_CACHE_SLOTS /
+        PETTA_RELATION_RELEVANCE_CACHE_WAYS,
     PETTA_QUERY_FOREST_CACHE_SLOTS = 1024,
     PETTA_QUERY_FOREST_ARITY_CAP = 8,
 };
@@ -256,6 +260,18 @@ typedef struct {
 static _Thread_local PettaRelationRelevanceCacheSlot
     g_petta_relation_relevance_cache[
         PETTA_RELATION_RELEVANCE_CACHE_SLOTS];
+/* Two recency bits per way. Unfilled ways start at zero; filling a bank
+ * gives its four live entries distinct ranks, from oldest (0) to newest (3). */
+static _Thread_local uint8_t g_petta_relation_relevance_recency[
+    PETTA_RELATION_RELEVANCE_CACHE_BANKS];
+
+_Static_assert(PETTA_RELATION_RELEVANCE_CACHE_WAYS == 4 &&
+               PETTA_RELATION_RELEVANCE_CACHE_SLOTS ==
+                   PETTA_RELATION_RELEVANCE_CACHE_BANKS *
+                   PETTA_RELATION_RELEVANCE_CACHE_WAYS &&
+               (PETTA_RELATION_RELEVANCE_CACHE_BANKS &
+                (PETTA_RELATION_RELEVANCE_CACHE_BANKS - 1u)) == 0u,
+               "bounded relevance banks require four ways and power-of-two banks");
 
 typedef struct {
     Space *space;
@@ -1109,7 +1125,28 @@ static size_t petta_relation_relevance_cache_index(
     mixed *= UINT64_C(0xbf58476d1ce4e5b9);
     mixed ^= mixed >> 27u;
     return (size_t)mixed &
-           (PETTA_RELATION_RELEVANCE_CACHE_SLOTS - 1u);
+           (PETTA_RELATION_RELEVANCE_CACHE_BANKS - 1u);
+}
+
+static void petta_relation_relevance_cache_touch(size_t bank, size_t way) {
+    unsigned ranks = g_petta_relation_relevance_recency[bank];
+    unsigned before = (ranks >> (2u * way)) & 3u;
+    unsigned after = 0u;
+    for (size_t index = 0u;
+         index < PETTA_RELATION_RELEVANCE_CACHE_WAYS; index++) {
+        unsigned rank = (ranks >> (2u * index)) & 3u;
+        rank = index == way ? 3u : rank > before ? rank - 1u : rank;
+        after |= rank << (2u * index);
+    }
+    g_petta_relation_relevance_recency[bank] = (uint8_t)after;
+}
+
+static bool petta_relation_relevance_cache_matches(
+    const PettaRelationRelevanceCacheSlot *slot, uint64_t generation,
+    SpaceProgramToken program, uint64_t symbol_instance, SymbolId source) {
+    return slot->generation == generation && slot->source == source &&
+           slot->symbol_table_instance == symbol_instance &&
+           space_program_token_eq(slot->program, program);
 }
 
 static bool petta_relation_relevance_cache_lookup(
@@ -1120,18 +1157,21 @@ static bool petta_relation_relevance_cache_lookup(
     if (!program.space || source == SYMBOL_ID_NONE || !relevance ||
         !g_symbols)
         return false;
-    PettaRelationRelevanceCacheSlot *slot =
+    size_t bank = petta_relation_relevance_cache_index(program, source);
+    PettaRelationRelevanceCacheSlot *slots =
         &g_petta_relation_relevance_cache[
-            petta_relation_relevance_cache_index(program, source)];
-    if (slot->generation != g_petta_admission_cache_generation ||
-        !space_program_token_eq(slot->program, program) ||
-        slot->symbol_table_instance !=
-            symbol_table_instance_id(g_symbols) ||
-        slot->source != source) {
-        return false;
+            bank * PETTA_RELATION_RELEVANCE_CACHE_WAYS];
+    uint64_t generation = g_petta_admission_cache_generation;
+    uint64_t symbol_instance = symbol_table_instance_id(g_symbols);
+    for (size_t way = 0u; way < PETTA_RELATION_RELEVANCE_CACHE_WAYS; way++) {
+        if (petta_relation_relevance_cache_matches(
+                &slots[way], generation, program, symbol_instance, source)) {
+            *relevance = slots[way].relevance;
+            petta_relation_relevance_cache_touch(bank, way);
+            return true;
+        }
     }
-    *relevance = slot->relevance;
-    return true;
+    return false;
 }
 
 static void petta_relation_relevance_cache_store(
@@ -1142,16 +1182,43 @@ static void petta_relation_relevance_cache_store(
          relevance != PETTA_RELATION_RELEVANCE_CERTAIN)) {
         return;
     }
-    PettaRelationRelevanceCacheSlot *slot =
+    size_t bank = petta_relation_relevance_cache_index(program, source);
+    PettaRelationRelevanceCacheSlot *slots =
         &g_petta_relation_relevance_cache[
-            petta_relation_relevance_cache_index(program, source)];
-    *slot = (PettaRelationRelevanceCacheSlot){
+            bank * PETTA_RELATION_RELEVANCE_CACHE_WAYS];
+    uint64_t generation = g_petta_admission_cache_generation;
+    uint64_t symbol_instance = symbol_table_instance_id(g_symbols);
+    size_t victim = 0u;
+    unsigned oldest = PETTA_RELATION_RELEVANCE_CACHE_WAYS;
+    unsigned ranks = g_petta_relation_relevance_recency[bank];
+    bool vacant = false;
+    for (size_t way = 0u; way < PETTA_RELATION_RELEVANCE_CACHE_WAYS; way++) {
+        if (petta_relation_relevance_cache_matches(
+                &slots[way], generation, program, symbol_instance, source)) {
+            victim = way;
+            break;
+        }
+        if (slots[way].generation != generation) {
+            if (!vacant) {
+                victim = way;
+                vacant = true;
+            }
+        } else if (!vacant) {
+            unsigned rank = (ranks >> (2u * way)) & 3u;
+            if (rank < oldest) {
+                victim = way;
+                oldest = rank;
+            }
+        }
+    }
+    slots[victim] = (PettaRelationRelevanceCacheSlot){
         .program = program,
-        .symbol_table_instance = symbol_table_instance_id(g_symbols),
+        .symbol_table_instance = symbol_instance,
         .source = source,
         .relevance = relevance,
-        .generation = g_petta_admission_cache_generation,
+        .generation = generation,
     };
+    petta_relation_relevance_cache_touch(bank, victim);
 }
 
 static void petta_relation_relevance_cache_clear(void) {
@@ -1161,6 +1228,8 @@ static void petta_relation_relevance_cache_clear(void) {
     if (g_petta_admission_cache_generation == UINT64_MAX) {
         memset(g_petta_relation_relevance_cache, 0,
                sizeof(g_petta_relation_relevance_cache));
+        memset(g_petta_relation_relevance_recency, 0,
+               sizeof(g_petta_relation_relevance_recency));
         memset(g_petta_query_forest_cache, 0,
                sizeof(g_petta_query_forest_cache));
         g_petta_admission_cache_generation = 1u;

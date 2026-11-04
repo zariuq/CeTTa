@@ -272,6 +272,8 @@ typedef struct CettaLibraryContext {
     CettaForeignRuntime *foreign_runtime;
     struct CettaIoRuntime *io_runtime;
     struct CettaJsonLibraryRuntimeV1 *json_runtime;
+    /* Optional independent physical term/symbol owner; no Space is retained. */
+    struct CettaTermDomain *owned_term_domain;
 } CettaLibraryContext;
 
 void cetta_library_context_init(CettaLibraryContext *ctx);
@@ -283,6 +285,11 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
 bool cetta_library_context_try_init_for_language_profile(CettaLibraryContext *,
     CettaLanguageId, const CettaProfile *);
 void cetta_library_context_free(CettaLibraryContext *ctx);
+TermUniverse *cetta_library_context_universe(CettaLibraryContext *);
+struct CettaTermDomain *cetta_library_context_term_domain(const CettaLibraryContext *);
+/* Only a pristine context can adopt a matching active symbol domain.
+ * Other borrowed Spaces still require the caller to keep the domain live. */
+bool cetta_library_context_set_term_domain(CettaLibraryContext *, struct CettaTermDomain *);
 /* Compatibility initialization refusals are scoped to one runner request.
  * Default profiles retain their refusals across requests. */
 void cetta_library_he_run_begin(CettaLibraryContext *ctx,

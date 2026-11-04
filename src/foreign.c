@@ -128,6 +128,11 @@ static PyObject *g_bridge_resolve = NULL;
 static uint64_t g_bridge_module_counter = 0;
 static Space *g_python_callback_space = NULL;
 
+static void python_space_hold_release(void **hold) {
+    if (space_lifetime_unpin)
+        space_lifetime_unpin(*hold);
+}
+
 PyMODINIT_FUNC PyInit_cetta_bridge(void);
 
 static const char *PYTHON_BOOTSTRAP =
@@ -1178,20 +1183,20 @@ static bool python_emit_single(CettaForeignRuntime *rt, Arena *a, PyObject *obj,
         return true;
     }
     if (PyUnicode_Check(obj)) {
-        const char *text = PyUnicode_AsUTF8(obj);
+        Py_ssize_t length = 0;
+        const char *text = PyUnicode_AsUTF8AndSize(obj, &length);
+        if (!text || length < 0 || (uint64_t)length > UINT32_MAX)
+            return false;
         /*
-         * SWI Janus maps a Python str returned by PeTTa's py-call to a
-         * Prolog atom.  Preserve that language boundary: repr and sread can
-         * still distinguish it from an authored MeTTa string.  HE keeps its
-         * established grounded-string conversion.
+         * Python text is MeTTa text in every language. SWI Janus maps a
+         * Python str to a Prolog atom by default, as the PIP interface
+         * standard asks of Prologs that may lack strings; in PeTTa an atom
+         * is a symbol, so that default turns data into a name: "true" would
+         * equal True, text that spells an expression would read back as
+         * code, and "" and NUL could not be spelled. A string keeps every
+         * byte, prints quoted and comes back as it went in.
          */
-        bool petta_text =
-            eval_current_language_id &&
-            eval_current_language_id() == CETTA_LANGUAGE_PETTA;
-        result_set_add(
-            rs, petta_text
-                ? atom_symbol(a, text ? text : "")
-                : atom_string(a, text ? text : ""));
+        result_set_add(rs, atom_string_n(a, text, (size_t)length));
         return true;
     }
 
@@ -1602,6 +1607,8 @@ static bool python_call_object(CettaForeignRuntime *rt, Space *space, Arena *a,
         PyTuple_SET_ITEM(tuple, (Py_ssize_t)i, item);
     }
 
+    __attribute__((cleanup(python_space_hold_release))) void *space_hold =
+        space_lifetime_pin ? space_lifetime_pin(space) : NULL;
     Space *saved_space = g_python_callback_space;
     g_python_callback_space = space;
     PyObject *result = PyObject_CallObject(callable, tuple);
@@ -1811,6 +1818,8 @@ bool cetta_foreign_load_module(CettaForeignRuntime *rt,
     }
 
     bool ok = true;
+    __attribute__((cleanup(python_space_hold_release))) void *space_hold =
+        space_lifetime_pin ? space_lifetime_pin(target_space) : NULL;
     Space *saved_space = g_python_callback_space;
     g_python_callback_space = target_space;
 

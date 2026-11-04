@@ -33,6 +33,31 @@
 #include "term_universe.h"
 #include "variant_shape.h"
 #include "answer_storage.h"
+#include "state_cell.h"
+#include "u64_index.h"
+
+#pragma weak state_cell_pressure_observer_new
+#pragma weak state_cell_pressure_observer_free
+#pragma weak state_cell_pressure_observer_epoch
+#pragma weak state_cell_pressure_observer_notice
+#pragma weak state_cell_pressure_observer_uncovered_epoch
+#pragma weak state_cell_pressure_observer_begin
+#pragma weak state_cell_pressure_observer_watch
+#pragma weak state_cell_pressure_observer_finish
+#pragma weak state_cell_pressure_observer_cancel
+#pragma weak state_cell_pressure_observer_bytes
+#pragma weak state_cell_pressure_observer_ensure
+#pragma weak state_cell_pressure_observer_next
+#pragma weak state_cell_pressure_observer_settle
+#pragma weak state_cell_image_snapshot_acquire
+#pragma weak state_cell_snapshot_release
+#pragma weak state_cell_image_bytes
+#pragma weak state_cell_image_syntax
+#pragma weak state_cell_image_visit_owners
+#pragma weak state_cell_classify_owner
+#pragma weak state_cell_is_managed
+#pragma weak state_cell_diagnostics
+#pragma weak term_universe_resource_image_owner_view
 
 #include <assert.h>
 #include <inttypes.h>
@@ -41,9 +66,13 @@
 #include "allocator_info.h"
 #include <errno.h>
 #include <stdatomic.h>
+#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+
+/* A nested host dispatch can still hold borrowed ids in its caller. */
+static _Thread_local uint32_t g_petta_machine_steps_open = 0u;
 
 #ifndef CETTA_PETTA_MATCH_DECISION_EQUATION_TOKEN_REUSE
 #define CETTA_PETTA_MATCH_DECISION_EQUATION_TOKEN_REUSE 1
@@ -61,6 +90,8 @@
 #define PETTA_MEMO_FREQUENCY_SKETCH_SIZE ((size_t)8192u)
 
 static _Atomic uint64_t g_petta_machine_instance_counter = 1u;
+
+extern bool eval_resource_scope_hold(Arena *, void *) __attribute__((weak));
 
 static const CettaVariantShapeOptions kPettaTableVariantOptions = {
     .slot_policy = CETTA_VARIANT_SLOT_ORDINAL_NAME,
@@ -1371,6 +1402,12 @@ typedef struct {
     bool requested;
 } PettaChildPullResult;
 
+typedef struct {
+    uint32_t identity;
+    uint64_t reset_epoch;
+    uint64_t acquisition_generation;
+} PettaNativeRootStamp;
+
 struct PettaMachineImpl {
     uint64_t instance_id;
     /* Dynamic manufacture context of the goal currently being dispatched.
@@ -1523,6 +1560,15 @@ struct PettaMachineImpl {
     bool discard_visible_bindings;
     /* Every answer is taken before anything consumes them. */
     bool answers_collected_whole;
+    /* A bounded collection (`select k`) takes at most this many of the
+     * machine's answers (0: all of them). */
+    size_t answer_limit;
+    /* The first goal has offered its body to the compiled open tier. */
+    bool root_body_tried;
+    /* Its answers are read as values alone, as a collection copies them or
+     * a query prints them: no binding of its body's variables is read
+     * after, so they are the body's own. */
+    bool answers_are_values;
     /* The parent takes the answers as values of its own evaluation, a
      * fold's items and states, not as publications: a private carrier,
      * such as an improper or open cons cell, stays as it is. */
@@ -1545,6 +1591,32 @@ struct PettaMachineImpl {
      * much new allocation. */
     size_t heap_promoted_last;
     size_t tenured_major_after;
+    /* Resource leases can retain a much larger native graph than their
+     * syntax. A complete trace establishes their independent live baseline.
+     * Unsupported choices defer another offer, without forgiving that debt. */
+    size_t tenured_resource_major_after;
+    size_t tenured_resource_offer_after;
+    StateCellPressureObserver *native_pressure_observer;
+    PettaNativeRootStamp native_root_stamps[4];
+    ArenaOwnerCursor native_root_cursors[4];
+    Arena native_discovery_arena;
+    CettaGsltU32IndexV1 native_discovery_names;
+    size_t native_accounted_cache_bytes, native_accounted_observer_bytes;
+    uint64_t native_discovery_epoch;
+    bool native_discovery_initialized, native_discovery_pending;
+    PettaMachineNativeDiscoveryStats native_discovery_stats;
+    StateCellPressureNotice native_pressure_notice;
+    size_t native_pressure_bytes;
+    size_t native_pressure_debt_bytes;
+    size_t native_pressure_major_after;
+    size_t native_pressure_offer_after;
+    size_t native_pressure_retry_heap_after;
+    size_t native_pressure_retry_exposure_after;
+    uint64_t native_pressure_retry_topology;
+    uint64_t native_pressure_uncovered_accepted, native_pressure_uncovered_offered;
+    uint32_t native_pressure_retry_boundaries, native_pressure_retry_window;
+    bool native_pressure_major_requested;
+    bool native_pressure_scope_deferred;
     uint64_t binding_growth_collect_after;
     /* Identity pressure: the handles in use before the next collection for
      * want of identities may run, whether the collection running now must
@@ -5404,6 +5476,12 @@ static void petta_choice_release(
 static bool petta_choice_push_at_goal_trail_mark(
     PettaMachineImpl *machine, PettaChoice choice,
     size_t goal_trail_mark) {
+    if (space_atom_hold) {
+        if (choice.kind == PETTA_CHOICE_MATCH)
+            space_atom_hold(&machine->heap, choice.as.match.space);
+        else if (choice.kind == PETTA_CHOICE_TRANSACTION)
+            space_atom_hold(&machine->heap, choice.as.transaction.previous_space);
+    }
     if (!choice.source_root)
         choice.source_root = machine->current_source_root;
     /*
@@ -6219,21 +6297,25 @@ typedef struct {
     size_t major_window;
 } PettaMachineCollectSizes;
 
+static PettaMachineCollectSizes g_petta_machine_collect_sizes;
+static pthread_once_t g_petta_machine_collect_sizes_once = PTHREAD_ONCE_INIT;
+
+static void petta_machine_collect_sizes_read(void) {
+    const char *stress = getenv("CETTA_PETTA_COLLECT_STRESS");
+    g_petta_machine_collect_sizes =
+        stress && stress[0] && strcmp(stress, "0") != 0
+        ? (PettaMachineCollectSizes){
+              .nursery_floor = 16u * 1024u,
+              .major_window = 64u * 1024u}
+        : (PettaMachineCollectSizes){
+              .nursery_floor = PETTA_MACHINE_NURSERY_FLOOR_BYTES,
+              .major_window = PETTA_MACHINE_HEAP_WINDOW_BYTES};
+}
+
 static const PettaMachineCollectSizes *petta_machine_collect_sizes(void) {
-    static _Thread_local PettaMachineCollectSizes sizes;
-    static _Thread_local bool ready;
-    if (!ready) {
-        const char *stress = getenv("CETTA_PETTA_COLLECT_STRESS");
-        sizes = stress && stress[0] && strcmp(stress, "0") != 0
-            ? (PettaMachineCollectSizes){
-                  .nursery_floor = 16u * 1024u,
-                  .major_window = 64u * 1024u}
-            : (PettaMachineCollectSizes){
-                  .nursery_floor = PETTA_MACHINE_NURSERY_FLOOR_BYTES,
-                  .major_window = PETTA_MACHINE_HEAP_WINDOW_BYTES};
-        ready = true;
-    }
-    return &sizes;
+    pthread_once(&g_petta_machine_collect_sizes_once,
+                  petta_machine_collect_sizes_read);
+    return &g_petta_machine_collect_sizes;
 }
 
 /*
@@ -6292,11 +6374,894 @@ size_t petta_machine_choice_collection_retry_threshold(
     return petta_size_add_saturating(nursery_live, retry_window);
 }
 
+/* Whether a collection that found `before_tenured_bytes` in the old
+ * generation sets the live-data baseline, as a major trace does.  A minor
+ * trace sees everything but those old bytes; when they are fewer than the
+ * nursery floor, a major collection now could reclaim at most them while
+ * recopying the whole fresh promotion, so the trace's measure stands.  Old
+ * bytes written directly (the compiled tier's stable exports) are what
+ * precede a first collection; requiring none made a few hundred of them
+ * double the first promotion's copying. */
+static bool petta_machine_sets_baseline(bool major,
+                                        size_t before_tenured_bytes) {
+    return major ||
+        before_tenured_bytes < petta_machine_collect_sizes()->nursery_floor;
+}
+
 static size_t petta_machine_next_major_threshold(
     size_t tenured_live) {
     size_t window = petta_machine_collect_sizes()->major_window;
     size_t growth = tenured_live > window ? tenured_live : window;
     return petta_size_add_saturating(tenured_live, growth);
+}
+
+static size_t petta_machine_next_resource_threshold(size_t survivors) {
+    size_t doubled = petta_size_add_saturating(survivors, survivors);
+    size_t floor = petta_machine_collect_sizes()->nursery_floor;
+    return doubled > floor ? doubled : floor;
+}
+
+enum { PETTA_NATIVE_ROOT_COUNT = 4u };
+
+static const Arena *petta_native_root_arena(const PettaMachineImpl *machine, unsigned index) {
+    switch (index) {
+    case 0u: return &machine->heap;
+    case 1u: return &machine->tenured;
+    case 2u: return &machine->plan_arena;
+    case 3u: return machine->continuation_term_pool
+        ? &machine->continuation_term_pool->owner : NULL;
+    default: return NULL;
+    }
+}
+
+static bool petta_native_has_root_leases(const PettaMachineImpl *machine) {
+    for (unsigned i = 0u; i < PETTA_NATIVE_ROOT_COUNT; i++) {
+        const Arena *arena = petta_native_root_arena(machine, i);
+        if (arena && arena->state_root_acquisition_generation)
+            return true;
+    }
+    return false;
+}
+
+/* Only Arena-name certificates persist between collections. They keep an
+ * immutable image's name from being reused, without retaining its storage.
+ * The qualified index bounds fast probes and uses balanced overflow. */
+static size_t petta_native_cache_bytes(const PettaMachineImpl *machine) {
+    return machine->native_discovery_initialized
+        ? petta_size_add_saturating(cetta_gslt_u32_index_bytes_v1(
+                &machine->native_discovery_names),
+            petta_size_add_saturating(machine->native_discovery_arena.reserved_bytes,
+                machine->native_discovery_arena.external_bytes)) : 0u;
+}
+
+static void petta_native_cache_clear(PettaMachineImpl *machine, bool reopen) {
+    if (machine->native_discovery_initialized)
+        arena_free(&machine->native_discovery_arena);
+    cetta_gslt_u32_index_free_v1(&machine->native_discovery_names);
+    cetta_gslt_u32_index_init_v1(&machine->native_discovery_names);
+    machine->native_discovery_initialized = false;
+    machine->native_accounted_cache_bytes = 0u;
+    if (reopen) {
+        arena_init_detached(&machine->native_discovery_arena);
+        arena_set_block_growth(&machine->native_discovery_arena, 256u);
+        machine->native_discovery_initialized = true;
+    }
+}
+
+static bool petta_native_remember_image(PettaMachineImpl *machine,
+        const Arena *syntax, bool *fresh) {
+    *fresh = false;
+    if (!syntax || !syntax->identity || syntax->identity >= UINT32_MAX - 1u)
+        return false;
+    uint32_t name = syntax->identity, unused;
+    if (cetta_gslt_u32_index_find_v1(&machine->native_discovery_names, name, &unused))
+        return true;
+    if (!machine->native_discovery_initialized)
+        petta_native_cache_clear(machine, true);
+    uint32_t held_name = 0u;
+    if (!arena_retain_identity_certificate(&machine->native_discovery_arena,
+            syntax, &held_name) || held_name != name)
+        return false;
+    CettaGsltU32IndexInsertResultV1 status = cetta_gslt_u32_index_insert_unique_v1(
+        &machine->native_discovery_names, name, 0u);
+    if (status == CETTA_GSLT_U32_INDEX_DUPLICATE_V1)
+        return true;
+    if (status != CETTA_GSLT_U32_INDEX_INSERTED_V1)
+        return false;
+    *fresh = true;
+    return true;
+}
+
+typedef struct {
+    PettaMachineImpl *machine;
+    StateCellPressureObserver *observer;
+    StateCell **nodes;
+    StateCellSnapshot *images;
+    TermUniverseResourceImageView *wrappers;
+    Atom **atoms;
+    size_t node_len, node_cap, node_at;
+    size_t image_len, image_cap, image_at;
+    size_t wrapper_len, wrapper_cap, wrapper_at;
+    size_t atom_len, atom_cap, atom_at;
+    CettaU64Index seen_nodes, seen_images, seen_wrappers, seen_atoms;
+    size_t bytes;
+    uint64_t unadapted;
+    bool failed, changed;
+} PettaNativeCensus;
+
+typedef enum {
+    PETTA_NATIVE_CENSUS_COMPLETE,
+    PETTA_NATIVE_CENSUS_CHANGED,
+    PETTA_NATIVE_CENSUS_UNADAPTED,
+    PETTA_NATIVE_CENSUS_CAPACITY,
+} PettaNativeCensusResult;
+
+static bool petta_native_reserve(void **items, size_t *capacity,
+                                  size_t needed, size_t width) {
+    if (needed <= *capacity)
+        return true;
+    size_t next = *capacity ? *capacity : 16u;
+    while (next < needed) {
+        if (next > SIZE_MAX / 2u)
+            return false;
+        next *= 2u;
+    }
+    if (next > SIZE_MAX / width)
+        return false;
+    void *grown = cetta_fallible_realloc(*items, next * width);
+    if (!grown)
+        return false;
+    *items = grown;
+    *capacity = next;
+    return true;
+}
+
+static bool petta_native_seen_id(CettaU64Index *seen, uint64_t key,
+                                  bool *fresh) {
+    uint32_t unused;
+    if (cetta_u64_index_find(seen, key, &unused)) {
+        *fresh = false;
+        return true;
+    }
+    *fresh = true;
+    return cetta_u64_index_insert(seen, key, 0u) ==
+        CETTA_GSLT_U32_INDEX_INSERTED_V1;
+}
+
+static bool petta_native_seen(CettaU64Index *seen, const void *pointer,
+                               bool *fresh) {
+    return petta_native_seen_id(seen, (uintptr_t)pointer, fresh);
+}
+
+static void petta_native_node(PettaNativeCensus *census, StateCell *cell) {
+    bool fresh;
+    if (census->failed || !cell)
+        return;
+    if (!state_cell_is_managed(cell)) {
+        census->unadapted++;
+        return;
+    }
+    if (!petta_native_seen(&census->seen_nodes, cell, &fresh)) {
+        census->failed = true;
+        return;
+    }
+    if (!fresh)
+        return;
+    if (!petta_native_reserve((void **)&census->nodes, &census->node_cap,
+            census->node_len + 1u, sizeof(*census->nodes))) {
+        census->failed = true;
+        return;
+    }
+    census->nodes[census->node_len++] = cell;
+}
+
+/* Consume one exact-image pin, including a redundant pin on a known image. */
+static void petta_native_image(PettaNativeCensus *census,
+                                StateCellSnapshot snapshot) {
+    if (!snapshot.image)
+        return;
+    bool fresh;
+    if (census->failed ||
+        !petta_native_seen(&census->seen_images, snapshot.image, &fresh)) {
+        census->failed = true;
+        state_cell_snapshot_release(&snapshot);
+        return;
+    }
+    if (!fresh) {
+        state_cell_snapshot_release(&snapshot);
+        return;
+    }
+    if (!petta_native_reserve((void **)&census->images, &census->image_cap,
+            census->image_len + 1u, sizeof(*census->images))) {
+        census->failed = true;
+        state_cell_snapshot_release(&snapshot);
+        return;
+    }
+    census->bytes = petta_size_add_saturating(census->bytes,
+        state_cell_image_bytes(snapshot.image));
+    census->images[census->image_len++] = snapshot;
+    bool remembered;
+    if (!petta_native_remember_image(census->machine,
+            state_cell_image_syntax(snapshot.image), &remembered))
+        census->failed = true;
+}
+
+static void petta_native_atom(PettaNativeCensus *census, Atom *atom) {
+    bool fresh;
+    if (census->failed || !atom)
+        return;
+    if (!petta_native_seen(&census->seen_atoms, atom, &fresh)) {
+        census->failed = true;
+        return;
+    }
+    if (!fresh)
+        return;
+    if (!petta_native_reserve((void **)&census->atoms, &census->atom_cap,
+            census->atom_len + 1u, sizeof(*census->atoms))) {
+        census->failed = true;
+        return;
+    }
+    census->atoms[census->atom_len++] = atom;
+}
+
+/* A wrapper view is borrowed through the enclosing machine Arena or a
+ * pinned immutable State image. Its owner callback is certified before the
+ * opaque address is read; no arbitrary owner pointer is dereferenced. */
+static void petta_native_wrapper(PettaNativeCensus *census,
+                                  TermUniverseResourceImageView wrapper) {
+    bool fresh;
+    if (census->failed)
+        return;
+    if (!petta_native_seen(&census->seen_wrappers, wrapper.image, &fresh)) {
+        census->failed = true;
+        return;
+    }
+    if (!fresh)
+        return;
+    if (!petta_native_reserve((void **)&census->wrappers, &census->wrapper_cap,
+            census->wrapper_len + 1u, sizeof(*census->wrappers))) {
+        census->failed = true;
+        return;
+    }
+    census->bytes = petta_size_add_saturating(census->bytes, wrapper.bytes);
+    census->wrappers[census->wrapper_len++] = wrapper;
+    bool remembered;
+    if (!petta_native_remember_image(census->machine, wrapper.syntax, &remembered))
+        census->failed = true;
+}
+
+static void petta_native_owner(void *context, void *owner,
+                                void (*release)(void *)) {
+    PettaNativeCensus *census = context;
+    StateCell *cell = NULL;
+    StateCellImage *image = NULL;
+    if (census->failed || arena_owner_is_atomic_storage(owner, release))
+        return;
+    bool classified = state_cell_classify_owner(owner, release, &cell, &image);
+    if (!classified) {
+        TermUniverseResourceImageView wrapper = {0};
+        if (term_universe_resource_image_owner_view &&
+                term_universe_resource_image_owner_view(owner, release, &wrapper))
+            petta_native_wrapper(census, wrapper);
+        else
+            census->unadapted++;
+    } else if (cell)
+        petta_native_node(census, cell);
+    else if (image) {
+        StateCellSnapshot snapshot = {0};
+        if (!state_cell_image_snapshot_acquire(image, &snapshot))
+            census->failed = true;
+        else
+            petta_native_image(census, snapshot);
+    }
+}
+
+static PettaNativeRootStamp petta_native_root_stamp(const Arena *arena) {
+    if (!arena)
+        return (PettaNativeRootStamp){0};
+    return (PettaNativeRootStamp){.identity = arena->identity,
+        .reset_epoch = arena->reset_epoch,
+        .acquisition_generation = arena->state_root_acquisition_generation};
+}
+
+static bool petta_native_root_stamp_equal(PettaNativeRootStamp left,
+                                          PettaNativeRootStamp right) {
+    return left.identity == right.identity &&
+        left.reset_epoch == right.reset_epoch &&
+        left.acquisition_generation == right.acquisition_generation &&
+        left.acquisition_generation != UINT64_MAX;
+}
+
+static bool petta_native_pressure_available(void) {
+    return state_cell_pressure_observer_new && state_cell_pressure_observer_free &&
+        state_cell_pressure_observer_epoch && state_cell_pressure_observer_notice &&
+        state_cell_pressure_observer_uncovered_epoch &&
+        state_cell_pressure_observer_begin &&
+        state_cell_pressure_observer_watch && state_cell_pressure_observer_finish &&
+        state_cell_pressure_observer_cancel && state_cell_pressure_observer_bytes &&
+        state_cell_pressure_observer_ensure && state_cell_pressure_observer_next &&
+        state_cell_pressure_observer_settle && state_cell_image_syntax &&
+        state_cell_image_snapshot_acquire && state_cell_snapshot_release &&
+        state_cell_image_bytes && state_cell_image_visit_owners &&
+        state_cell_classify_owner && state_cell_is_managed && state_cell_diagnostics;
+}
+
+/* Walk this machine's physical State/Image holds, including dead old-generation
+ * leases. Only committed full tracing may turn this pressure into survivors.
+ * Ordinary term children expose canonical stored State leaves; other opaque
+ * container domains require their own host edge adapter. */
+static PettaNativeCensusResult petta_machine_native_census(
+        PettaMachineImpl *machine, size_t *bytes, StateCellPressureNotice *notice) {
+    PettaNativeCensus census = {.machine = machine,
+        .observer = machine->native_pressure_observer};
+    /* A stable graph cannot contain more distinct managed nodes than were
+     * live at entry. This is only a finite race guard, never a byte charge. */
+    size_t node_limit = state_cell_diagnostics().nodes;
+    cetta_u64_index_init(&census.seen_nodes);
+    cetta_u64_index_init(&census.seen_images);
+    cetta_u64_index_init(&census.seen_wrappers);
+    cetta_u64_index_init(&census.seen_atoms);
+    state_cell_pressure_observer_begin(census.observer);
+    for (unsigned i = 0u; i < PETTA_NATIVE_ROOT_COUNT; i++)
+        arena_visit_retained_owners(petta_native_root_arena(machine, i),
+            petta_native_owner, &census);
+    while (!census.failed && !census.changed && (census.node_at < census.node_len ||
+            census.image_at < census.image_len || census.wrapper_at < census.wrapper_len ||
+            census.atom_at < census.atom_len)) {
+        if (census.node_at < census.node_len) {
+            if (census.node_at >= node_limit) {
+                census.changed = true;
+                break;
+            }
+            StateCellSnapshot snapshot = {0};
+            size_t control_bytes = 0u;
+            StateCell *cell = census.nodes[census.node_at++];
+            if (!state_cell_pressure_observer_watch(census.observer, cell,
+                    &snapshot, &control_bytes)) {
+                census.failed = true;
+                break;
+            }
+            census.bytes = petta_size_add_saturating(census.bytes, control_bytes);
+            petta_native_image(&census, snapshot);
+        } else if (census.image_at < census.image_len) {
+            StateCellSnapshot snapshot = census.images[census.image_at++];
+            state_cell_image_visit_owners(snapshot.image, petta_native_owner, &census);
+            petta_native_atom(&census, snapshot.value);
+            petta_native_atom(&census, snapshot.content_type);
+        } else if (census.wrapper_at < census.wrapper_len) {
+            TermUniverseResourceImageView wrapper = census.wrappers[census.wrapper_at++];
+            arena_visit_retained_owners(wrapper.syntax, petta_native_owner, &census);
+        } else {
+            Atom *atom = census.atoms[census.atom_at++];
+            if (atom->name_key)
+                petta_native_atom(&census, atom->name_key);
+            if (atom->kind == ATOM_EXPR) {
+                for (CettaExprIndex i = 0; i < atom->expr.len; i++)
+                    petta_native_atom(&census, atom->expr.elems[i]);
+            } else if (atom->kind == ATOM_GROUNDED) {
+                switch (atom->ground.gkind) {
+                case GV_STATE:
+                    petta_native_node(&census, atom->ground.ptr);
+                    break;
+                case GV_INT: case GV_FLOAT: case GV_BOOL: case GV_STRING:
+                case GV_BIGINT: case GV_RATIONAL:
+                    break;
+                case GV_INTERNAL_TAG:
+                    if (!cetta_internal_tag_is_term_stable(atom->ground.ival))
+                        census.unadapted++;
+                    break;
+                default:
+                    census.unadapted++;
+                    break;
+                }
+            } else if (atom->kind != ATOM_SYMBOL && atom->kind != ATOM_VAR)
+                census.unadapted++;
+        }
+    }
+    PettaNativeCensusResult result = census.failed ? PETTA_NATIVE_CENSUS_CAPACITY
+        : census.changed ? PETTA_NATIVE_CENSUS_CHANGED
+        : census.unadapted ? PETTA_NATIVE_CENSUS_UNADAPTED : PETTA_NATIVE_CENSUS_CAPACITY;
+    /* An opaque edge is not a complete owner-domain census. Keep execution
+     * and bounded cleanup retries, without accepting a survivor baseline or
+     * replacing the previously covered weak set with partial coverage. */
+    if (!census.failed && !census.changed && !census.unadapted) {
+        uint64_t epoch = UINT64_MAX;
+        bool valid = state_cell_pressure_observer_finish(census.observer, &epoch);
+        if (valid && epoch != UINT64_MAX &&
+                state_cell_pressure_observer_notice(census.observer, epoch, notice) &&
+                !notice->saturated) {
+            *bytes = petta_size_add_saturating(census.bytes,
+                petta_size_add_saturating(state_cell_pressure_observer_bytes(census.observer),
+                    petta_native_cache_bytes(machine)));
+            result = PETTA_NATIVE_CENSUS_COMPLETE;
+        } else
+            result = PETTA_NATIVE_CENSUS_CHANGED;
+    }
+    if (result != PETTA_NATIVE_CENSUS_COMPLETE)
+        state_cell_pressure_observer_cancel(census.observer);
+    /* Drop every temporary image pin before any reclamation offer. */
+    for (size_t i = 0; i < census.image_len; i++)
+        state_cell_snapshot_release(&census.images[i]);
+    cetta_u64_index_free(&census.seen_nodes);
+    cetta_u64_index_free(&census.seen_images);
+    cetta_u64_index_free(&census.seen_wrappers);
+    cetta_u64_index_free(&census.seen_atoms);
+    free(census.nodes);
+    free(census.images);
+    free(census.wrappers);
+    free(census.atoms);
+    machine->stats.native_pressure_censuses++;
+    machine->stats.native_pressure_unadapted_containers += census.unadapted;
+    if (result == PETTA_NATIVE_CENSUS_CHANGED || result == PETTA_NATIVE_CENSUS_UNADAPTED)
+        machine->stats.native_pressure_census_retries++;
+    return result;
+}
+
+static size_t petta_machine_native_window(const PettaMachineImpl *machine) {
+    size_t floor = petta_machine_collect_sizes()->nursery_floor;
+    return machine->native_pressure_bytes > floor
+        ? machine->native_pressure_bytes : floor;
+}
+
+/* A failed offer changes only its next opportunity, never the last accepted
+ * survivor threshold or outstanding debt. New topology cannot be forgiven by
+ * a byte allowance: a small edge can expose a pre-existing large image. */
+static void petta_machine_native_retry_later(PettaMachineImpl *machine) {
+    size_t window = petta_machine_native_window(machine);
+    machine->native_pressure_offer_after = petta_size_add_saturating(
+        machine->native_pressure_debt_bytes, window);
+    machine->native_pressure_retry_heap_after = petta_size_add_saturating(
+        petta_size_add_saturating(arena_accounted_live_bytes(&machine->heap),
+            arena_accounted_live_bytes(&machine->tenured)), window);
+    machine->native_pressure_retry_exposure_after = petta_size_add_saturating(
+        machine->native_pressure_notice.exposure_bytes, window);
+    machine->native_pressure_retry_topology =
+        machine->native_pressure_notice.topology_epoch;
+    /* Reclamation refusal is not evidence that the obligation vanished.
+     * Retry at source-progress boundaries even without another allocation,
+     * with a finite backoff instead of tracing on every idle host return. */
+    enum { FIRST_RETRY = 16u, MAX_RETRY = 1024u };
+    uint32_t previous = machine->native_pressure_retry_window;
+    machine->native_pressure_retry_window = !previous ? FIRST_RETRY
+        : previous < MAX_RETRY / 2u ? previous * 2u : MAX_RETRY;
+    machine->native_pressure_retry_boundaries = machine->native_pressure_retry_window;
+}
+
+static void petta_machine_native_record_census(PettaMachineImpl *machine,
+        size_t bytes, StateCellPressureNotice notice) {
+    for (unsigned i = 0u; i < PETTA_NATIVE_ROOT_COUNT; i++)
+        machine->native_root_stamps[i] = petta_native_root_stamp(petta_native_root_arena(machine, i));
+    size_t old_exposure = machine->native_pressure_notice.exposure_bytes;
+    size_t exposure = notice.exposure_bytes >= old_exposure
+        ? notice.exposure_bytes - old_exposure : SIZE_MAX;
+    machine->native_pressure_debt_bytes = petta_size_add_saturating(
+        machine->native_pressure_debt_bytes, exposure);
+    machine->native_pressure_notice = notice;
+    machine->native_pressure_bytes = bytes;
+    machine->native_discovery_epoch = notice.epoch;
+    machine->native_discovery_pending = false;
+    machine->native_accounted_cache_bytes = petta_native_cache_bytes(machine);
+    machine->native_accounted_observer_bytes =
+        state_cell_pressure_observer_bytes(machine->native_pressure_observer);
+    if (bytes > machine->native_pressure_debt_bytes)
+        machine->native_pressure_debt_bytes = bytes;
+    if (bytes > machine->stats.maximum_owned_native_image_bytes)
+        machine->stats.maximum_owned_native_image_bytes = bytes;
+    if (machine->native_pressure_debt_bytes >= machine->native_pressure_major_after &&
+            !machine->native_pressure_major_requested) {
+        machine->native_pressure_major_requested = true;
+        machine->stats.native_pressure_major_requests++;
+    }
+}
+
+static void petta_machine_native_request(PettaMachineImpl *machine, bool *due) {
+    if (!machine->native_pressure_major_requested) {
+        machine->native_pressure_major_requested = true;
+        machine->stats.native_pressure_major_requests++;
+    }
+    *due = true;
+}
+
+static bool petta_machine_native_boundary(const PettaMachineImpl *machine) {
+    return g_petta_machine_steps_open == 0u ||
+        (g_petta_machine_steps_open == 1u && machine->pull_frame &&
+         machine->pull_frame->machine && machine->pull_frame->machine->impl == machine);
+}
+
+static PettaMachineNativeCollectionResult petta_machine_native_reclaim(
+        PettaMachineImpl *machine, TermUniverse *universe) {
+    if (!petta_machine_native_boundary(machine)) {
+        machine->native_pressure_scope_deferred = true;
+        return PETTA_MACHINE_NATIVE_COLLECTION_DEFERRED;
+    }
+    machine->native_pressure_scope_deferred = false;
+    if (!machine->host.collect_native_images)
+        return PETTA_MACHINE_NATIVE_COLLECTION_DEFERRED;
+    return machine->host.collect_native_images(machine->host.context, universe);
+}
+
+/* New immutable storage and discovery metadata are charged conservatively
+ * until completed full tracing/reclamation. Immediate overwrites can retire
+ * storage earlier; that never forgives the interval's discovery work. */
+static void petta_native_charge(PettaMachineImpl *machine, size_t bytes) {
+    machine->native_pressure_bytes = petta_size_add_saturating(
+        machine->native_pressure_bytes, bytes);
+    machine->native_pressure_debt_bytes = petta_size_add_saturating(
+        machine->native_pressure_debt_bytes, bytes);
+    if (machine->native_pressure_bytes > machine->stats.maximum_owned_native_image_bytes)
+        machine->stats.maximum_owned_native_image_bytes = machine->native_pressure_bytes;
+    if (machine->native_pressure_debt_bytes >= machine->native_pressure_major_after) {
+        bool ignored;
+        petta_machine_native_request(machine, &ignored);
+    }
+}
+
+static void petta_native_account_notice(PettaMachineImpl *machine,
+                                         StateCellPressureNotice notice) {
+    size_t previous = machine->native_pressure_notice.exposure_bytes;
+    size_t exposure = notice.exposure_bytes >= previous
+        ? notice.exposure_bytes - previous : SIZE_MAX;
+    petta_native_charge(machine, exposure);
+    machine->native_pressure_notice = notice;
+}
+
+typedef struct {
+    PettaMachineImpl *machine;
+    StateCellImage **images;
+    TermUniverseResourceImageView *wrappers;
+    StateCellImage *inline_images[8];
+    TermUniverseResourceImageView inline_wrappers[8];
+    size_t image_len, image_at, image_cap;
+    size_t wrapper_len, wrapper_at, wrapper_cap;
+    bool failed;
+} PettaNativeDiscoveryWork;
+
+static bool petta_discovery_reserve(void **items, void *inline_items,
+        size_t *capacity, size_t used, size_t width) {
+    if (used < *capacity)
+        return true;
+    size_t next = *capacity ? *capacity * 2u : 8u;
+    if (next < *capacity || next > SIZE_MAX / width)
+        return false;
+    void *grown = *items == inline_items
+        ? cetta_fallible_malloc(next * width)
+        : cetta_fallible_realloc(*items, next * width);
+    if (!grown)
+        return false;
+    if (*items == inline_items)
+        memcpy(grown, inline_items, used * width);
+    *items = grown;
+    *capacity = next;
+    return true;
+}
+
+static void petta_discovery_image(PettaNativeDiscoveryWork *work, StateCellImage *image) {
+    if (!image || work->failed)
+        return;
+    bool fresh;
+    if (!petta_native_remember_image(work->machine, state_cell_image_syntax(image), &fresh)) {
+        work->failed = true;
+        return;
+    }
+    if (!fresh)
+        return;
+    if (!petta_discovery_reserve((void **)&work->images, work->inline_images,
+            &work->image_cap, work->image_len, sizeof(*work->images))) {
+        work->failed = true;
+        return;
+    }
+    work->images[work->image_len++] = image;
+    work->machine->native_discovery_stats.state_images++;
+    petta_native_charge(work->machine, state_cell_image_bytes(image));
+}
+
+static void petta_discovery_wrapper(PettaNativeDiscoveryWork *work,
+                                     TermUniverseResourceImageView wrapper) {
+    if (work->failed)
+        return;
+    bool fresh;
+    if (!petta_native_remember_image(work->machine, wrapper.syntax, &fresh)) {
+        work->failed = true;
+        return;
+    }
+    if (!fresh)
+        return;
+    if (!petta_discovery_reserve((void **)&work->wrappers, work->inline_wrappers,
+            &work->wrapper_cap, work->wrapper_len, sizeof(*work->wrappers))) {
+        work->failed = true;
+        return;
+    }
+    work->wrappers[work->wrapper_len++] = wrapper;
+    work->machine->native_discovery_stats.wrapper_images++;
+    petta_native_charge(work->machine, wrapper.bytes);
+}
+
+static void petta_discovery_owner(void *context, void *owner, void (*release)(void *)) {
+    PettaNativeDiscoveryWork *work = context;
+    if (work->failed)
+        return;
+    work->machine->native_discovery_stats.owner_entries++;
+    StateCell *cell = NULL;
+    StateCellImage *image = NULL;
+    if (state_cell_classify_owner(owner, release, &cell, &image)) {
+        if (cell) {
+            bool fresh;
+            if (!state_cell_pressure_observer_ensure(
+                    work->machine->native_pressure_observer, cell, &fresh))
+                work->failed = true;
+        } else if (image)
+            petta_discovery_image(work, image);
+    } else if (term_universe_resource_image_owner_view) {
+        TermUniverseResourceImageView wrapper = {0};
+        if (term_universe_resource_image_owner_view(owner, release, &wrapper))
+            petta_discovery_wrapper(work, wrapper);
+    }
+}
+
+static void petta_discovery_work_init(PettaNativeDiscoveryWork *work,
+                                      PettaMachineImpl *machine) {
+    *work = (PettaNativeDiscoveryWork){.machine = machine};
+    work->images = work->inline_images;
+    work->wrappers = work->inline_wrappers;
+    work->image_cap = work->wrapper_cap = 8u;
+}
+
+/* The enclosing machine Arena or captured State snapshot stays alive for
+ * this whole closure. Name certificates never substitute for those leases. */
+static bool petta_discovery_work_finish(PettaNativeDiscoveryWork *work) {
+    while (!work->failed && (work->image_at < work->image_len ||
+            work->wrapper_at < work->wrapper_len)) {
+        if (work->image_at < work->image_len)
+            state_cell_image_visit_owners(work->images[work->image_at++],
+                petta_discovery_owner, work);
+        else {
+            TermUniverseResourceImageView wrapper = work->wrappers[work->wrapper_at++];
+            arena_visit_retained_owners(wrapper.syntax, petta_discovery_owner, work);
+        }
+    }
+    bool ok = !work->failed;
+    if (work->images != work->inline_images)
+        free(work->images);
+    if (work->wrappers != work->inline_wrappers)
+        free(work->wrappers);
+    return ok;
+}
+
+static bool petta_discovery_roots(PettaMachineImpl *machine, const Arena *arena,
+                                  ArenaOwnerCursor *cursor) {
+    ArenaOwnerView view;
+    ArenaOwnerCursorStep step = arena_owner_cursor_peek(arena, cursor, &view);
+    if (step == ARENA_OWNER_CURSOR_INVALIDATED) {
+        if (!arena_owner_cursor_begin(arena, cursor))
+            return false;
+        step = arena_owner_cursor_peek(arena, cursor, &view);
+    }
+    PettaNativeDiscoveryWork work;
+    petta_discovery_work_init(&work, machine);
+    while (step == ARENA_OWNER_CURSOR_ITEM && !work.failed) {
+        petta_discovery_owner(&work, view.owner, view.release);
+        if (!work.failed && !arena_owner_cursor_accept(arena, cursor))
+            work.failed = true;
+        step = arena_owner_cursor_peek(arena, cursor, &view);
+    }
+    if (step == ARENA_OWNER_CURSOR_INVALIDATED)
+        work.failed = true;
+    return petta_discovery_work_finish(&work);
+}
+
+static bool petta_discovery_cursor_end(const Arena *arena, ArenaOwnerCursor *cursor) {
+    if (!arena_owner_cursor_begin(arena, cursor))
+        return false;
+    ArenaOwnerView view;
+    ArenaOwnerCursorStep step;
+    while ((step = arena_owner_cursor_peek(arena, cursor, &view)) == ARENA_OWNER_CURSOR_ITEM)
+        if (!arena_owner_cursor_accept(arena, cursor))
+            return false;
+    return step == ARENA_OWNER_CURSOR_END;
+}
+
+static bool petta_machine_native_poll(PettaMachineImpl *machine, bool *due) {
+    *due = false;
+    if (!machine->native_pressure_observer) {
+        if (!petta_native_has_root_leases(machine) || !petta_native_pressure_available())
+            return true;
+        machine->native_pressure_observer = state_cell_pressure_observer_new();
+        if (!machine->native_pressure_observer)
+            return false;
+        petta_native_cache_clear(machine, true);
+        machine->native_discovery_pending = true;
+    }
+    bool roots_changed = false;
+    for (unsigned i = 0u; i < PETTA_NATIVE_ROOT_COUNT; i++)
+        if (!petta_native_root_stamp_equal(petta_native_root_stamp(petta_native_root_arena(machine, i)),
+                machine->native_root_stamps[i]))
+            roots_changed = true;
+    uint64_t epoch = state_cell_pressure_observer_epoch(machine->native_pressure_observer);
+    if (epoch == UINT64_MAX)
+        return false;
+    if (roots_changed || machine->native_discovery_pending || epoch != machine->native_discovery_epoch) {
+        machine->native_discovery_stats.batches++;
+        if (roots_changed) {
+            for (unsigned i = 0u; i < PETTA_NATIVE_ROOT_COUNT; i++) {
+                const Arena *arena = petta_native_root_arena(machine, i);
+                if (arena && !petta_discovery_roots(machine, arena, &machine->native_root_cursors[i]))
+                    return false;
+                machine->native_root_stamps[i] = petta_native_root_stamp(arena);
+            }
+        }
+        CettaU64Index taken;
+        cetta_u64_index_init(&taken);
+        bool complete = true, ok = true;
+        /* A foreign writer can introduce a distinct new tail at every
+         * capture. Repeated-id detection alone does not bound that drain. */
+        enum { PETTA_NATIVE_CAPTURE_QUANTUM = 4096u };
+        size_t captures = 0u;
+        StateCellPressureDelta delta;
+        while (captures < PETTA_NATIVE_CAPTURE_QUANTUM &&
+                state_cell_pressure_observer_next(machine->native_pressure_observer, &delta)) {
+            captures++;
+            bool fresh;
+            if (!petta_native_seen_id(&taken, delta.watch_id, &fresh))
+                ok = false;
+            if (!ok || !fresh) {
+                (void)state_cell_pressure_observer_settle(machine->native_pressure_observer, &delta, false);
+                state_cell_snapshot_release(&delta.snapshot);
+                complete = false;
+                break;
+            }
+            machine->native_discovery_stats.node_versions++;
+            if (delta.fresh_node)
+                petta_native_charge(machine, delta.node_control_bytes);
+            PettaNativeDiscoveryWork work;
+            petta_discovery_work_init(&work, machine);
+            petta_discovery_image(&work, delta.snapshot.image);
+            ok = petta_discovery_work_finish(&work);
+            bool covered = state_cell_pressure_observer_settle(
+                machine->native_pressure_observer, &delta, ok);
+            /* All borrowed wrapper work finished before this exact pin dies. */
+            state_cell_snapshot_release(&delta.snapshot);
+            if (!ok)
+                break;
+            if (!covered)
+                complete = false;
+        }
+        if (captures == PETTA_NATIVE_CAPTURE_QUANTUM)
+            complete = false;
+        cetta_u64_index_free(&taken);
+        if (!ok)
+            return false;
+        size_t cache_bytes = petta_native_cache_bytes(machine);
+        size_t observer_bytes = state_cell_pressure_observer_bytes(machine->native_pressure_observer);
+        if (cache_bytes > machine->native_accounted_cache_bytes)
+            petta_native_charge(machine, cache_bytes - machine->native_accounted_cache_bytes);
+        if (observer_bytes > machine->native_accounted_observer_bytes)
+            petta_native_charge(machine, observer_bytes - machine->native_accounted_observer_bytes);
+        machine->native_accounted_cache_bytes = cache_bytes;
+        machine->native_accounted_observer_bytes = observer_bytes;
+        uint64_t after = state_cell_pressure_observer_epoch(machine->native_pressure_observer);
+        StateCellPressureNotice notice = {0};
+        bool coherent = after != UINT64_MAX && state_cell_pressure_observer_notice(
+            machine->native_pressure_observer, after, &notice);
+        if (after == UINT64_MAX || (coherent && notice.saturated))
+            return false;
+        if (coherent)
+            petta_native_account_notice(machine, notice);
+        /* Never acknowledge a publication between the last queue read and
+         * the notice read: that version may still be waiting in the queue. */
+        machine->native_discovery_pending = !complete || !coherent || after != epoch;
+        if (!machine->native_discovery_pending)
+            machine->native_discovery_epoch = epoch;
+    }
+    size_t heap_bytes = petta_size_add_saturating(
+        arena_accounted_live_bytes(&machine->heap), arena_accounted_live_bytes(&machine->tenured));
+    uint64_t uncovered = state_cell_pressure_observer_uncovered_epoch(
+        machine->native_pressure_observer);
+    if (uncovered == UINT64_MAX)
+        return false;
+    bool new_import = uncovered != machine->native_pressure_uncovered_accepted &&
+        uncovered != machine->native_pressure_uncovered_offered;
+    if (new_import) {
+        /* Coalescing can hide an entire transient child graph. Its actual
+         * bytes were never discovered, so demand cleanup without inventing
+         * a recursive byte estimate or acknowledging the publication. */
+        petta_machine_native_request(machine, due);
+        machine->native_pressure_uncovered_offered = uncovered;
+    }
+    if (machine->native_pressure_major_requested && machine->native_pressure_retry_boundaries)
+        machine->native_pressure_retry_boundaries--;
+    *due = machine->native_pressure_major_requested &&
+        (new_import || !machine->native_pressure_retry_boundaries ||
+         (machine->native_pressure_scope_deferred && petta_machine_native_boundary(machine)) ||
+         machine->native_pressure_debt_bytes >= machine->native_pressure_offer_after ||
+         heap_bytes >= machine->native_pressure_retry_heap_after);
+    return true;
+}
+
+/* Called only after the new whole machine root set is committed, and before
+ * executing another goal. The census first removes dead weak subscriptions;
+ * the post-reclamation version check prevents an unseen foreign publication
+ * from establishing a survivor baseline. Temporary image pins have already
+ * been released when the host attempts physical reclamation. */
+static bool petta_machine_native_traced(PettaMachineImpl *machine) {
+    if (!machine->native_pressure_observer)
+        return true;
+    petta_native_cache_clear(machine, true);
+    size_t bytes = 0u;
+    StateCellPressureNotice notice = {0};
+    PettaNativeCensusResult census = petta_machine_native_census(machine, &bytes, &notice);
+    if (census == PETTA_NATIVE_CENSUS_CAPACITY)
+        return false;
+    if (census != PETTA_NATIVE_CENSUS_COMPLETE) {
+        petta_native_cache_clear(machine, true);
+        memset(machine->native_root_cursors, 0, sizeof(machine->native_root_cursors));
+        memset(machine->native_root_stamps, 0, sizeof(machine->native_root_stamps));
+        machine->native_discovery_pending = true;
+        /* The root trace still committed. Reclamation may make progress,
+         * but a changing graph cannot establish an accepted baseline. */
+        TermUniverse *universe = machine->host.allocation_universe
+            ? machine->host.allocation_universe
+            : machine->space ? machine->space->native.universe : NULL;
+        if (petta_machine_native_reclaim(machine, universe) ==
+                PETTA_MACHINE_NATIVE_COLLECTION_CAPACITY)
+            return false;
+        machine->stats.native_pressure_reclamation_deferrals++;
+        petta_machine_native_retry_later(machine);
+        return true;
+    }
+    petta_machine_native_record_census(machine, bytes, notice);
+    for (unsigned i = 0u; i < PETTA_NATIVE_ROOT_COUNT; i++) {
+        const Arena *arena = petta_native_root_arena(machine, i);
+        if (arena && !petta_discovery_cursor_end(arena, &machine->native_root_cursors[i]))
+            return false;
+    }
+    TermUniverse *universe = machine->host.allocation_universe
+        ? machine->host.allocation_universe
+        : machine->space ? machine->space->native.universe : NULL;
+    uint64_t uncovered = state_cell_pressure_observer_uncovered_epoch(
+        machine->native_pressure_observer);
+    if (uncovered == UINT64_MAX)
+        return false;
+    PettaMachineNativeCollectionResult result =
+        petta_machine_native_reclaim(machine, universe);
+    if (result == PETTA_MACHINE_NATIVE_COLLECTION_CAPACITY)
+        return false;
+    StateCellPressureNotice confirmed = {0};
+    if (result != PETTA_MACHINE_NATIVE_COLLECTION_COMPLETE ||
+            state_cell_pressure_observer_uncovered_epoch(machine->native_pressure_observer) != uncovered ||
+            !state_cell_pressure_observer_notice(machine->native_pressure_observer,
+                notice.epoch, &confirmed) || confirmed.saturated) {
+        machine->stats.native_pressure_reclamation_deferrals++;
+        petta_machine_native_retry_later(machine);
+        return true;
+    }
+    machine->stats.native_pressure_reclamations++;
+    machine->native_pressure_debt_bytes = bytes;
+    machine->native_pressure_major_after = petta_machine_next_resource_threshold(bytes);
+    machine->native_pressure_offer_after = machine->native_pressure_major_after;
+    machine->native_pressure_retry_heap_after = SIZE_MAX;
+    machine->native_pressure_retry_exposure_after = SIZE_MAX;
+    machine->native_pressure_retry_topology = confirmed.topology_epoch;
+    machine->native_pressure_uncovered_accepted = uncovered;
+    machine->native_pressure_uncovered_offered = uncovered;
+    machine->native_pressure_retry_boundaries = 0u;
+    machine->native_pressure_retry_window = 0u;
+    machine->native_pressure_major_requested = false;
+    if (!petta_native_has_root_leases(machine)) {
+        /* A committed empty root trace plus completed reclamation restores
+         * the ordinary no-State fast path, including no registry polling. */
+        state_cell_pressure_observer_free(machine->native_pressure_observer);
+        machine->native_pressure_observer = NULL;
+        petta_native_cache_clear(machine, false);
+        machine->native_accounted_observer_bytes = 0u;
+        machine->native_pressure_notice = (StateCellPressureNotice){0};
+        machine->native_pressure_bytes = 0u;
+        machine->native_pressure_debt_bytes = 0u;
+        machine->native_pressure_uncovered_accepted = 0u;
+        machine->native_pressure_uncovered_offered = 0u;
+        machine->native_pressure_major_after = petta_machine_next_resource_threshold(0u);
+        machine->native_pressure_offer_after = machine->native_pressure_major_after;
+    }
+    return true;
 }
 
 /*
@@ -6468,7 +7433,7 @@ static bool petta_activation_roots_add_epoch_root(
          * structurally equivalent transient atom may carry different VarIds,
          * so it must retain the exact traversal fallback. */
         if (id != CETTA_ATOM_ID_NONE &&
-            term_universe_get_atom(universe, id) == atom &&
+            term_universe_peek_atom(universe, id) == atom &&
             !term_universe_variable_support(
                 universe, id, &variable_support)) {
             variable_support = NULL;
@@ -7275,6 +8240,12 @@ static bool petta_copy_supported_choice_atoms(
     const PettaMachineHost *host) {
     if (!session || !choice)
         return false;
+    if (space_atom_hold) {
+        if (choice->kind == PETTA_CHOICE_MATCH)
+            space_atom_hold(destination, choice->as.match.space);
+        else if (choice->kind == PETTA_CHOICE_TRANSACTION)
+            space_atom_hold(destination, choice->as.transaction.previous_space);
+    }
     if (!atom_deep_copy_session_retain_frame(
             session, choice->manufacture_epoch))
         return false;
@@ -7591,7 +8562,9 @@ static bool petta_machine_collect_choice_heap(
      * detaches open cursors from both generations; a prepared cursor's detach
      * copies everything it borrows). */
     bool major = before_tenured_bytes >= machine->tenured_major_after ||
-        machine->identity_major_requested;
+        machine->tenured.retained_resource_bytes >=
+            machine->tenured_resource_major_after ||
+        machine->identity_major_requested || machine->native_pressure_major_requested;
     Arena next_tenured;
     Arena *destination = &machine->tenured;
     ArenaMark destination_mark = {0};
@@ -7689,8 +8662,20 @@ static bool petta_machine_collect_choice_heap(
         arena_free(&machine->tenured);
         machine->tenured = next_tenured;
         arena_set_runtime_kind(&machine->tenured, CETTA_ARENA_RUNTIME_KIND_SURVIVOR);
+    }
+    /* With no older objects, the minor trace covered the whole managed
+     * heap. Its retained bytes establish the live-data baseline just as a
+     * major trace does; recopying that fresh promotion adds no information.
+     * Fewer old bytes than the nursery floor count as none
+     * (petta_machine_sets_baseline). */
+    if (petta_machine_sets_baseline(major, before_tenured_bytes)) {
         machine->tenured_major_after = petta_machine_next_major_threshold(
             arena_accounted_live_bytes(&machine->tenured));
+        machine->tenured_resource_major_after =
+            petta_machine_next_resource_threshold(
+                machine->tenured.retained_resource_bytes);
+        machine->tenured_resource_offer_after =
+            machine->tenured_resource_major_after;
     }
     petta_machine_link_generations(machine);
     machine->query = next_query;
@@ -7805,7 +8790,8 @@ static bool petta_machine_collect_choice_heap(
             &machine->stats.choice_nursery_evacuation_elapsed_ns,
             collection_finished_ns - collection_started_ns);
     }
-    return true;
+    return (major || before_tenured_bytes == 0u)
+        ? petta_machine_native_traced(machine) : true;
 }
 
 static bool petta_machine_owned_profile_supported(
@@ -8142,6 +9128,8 @@ static bool petta_owned_continuation_copy_atoms_with_session(
     AtomDeepCopySession *session) {
     if (!continuation || !destination || !session)
         return false;
+    if (space_atom_hold)
+        space_atom_hold(destination, (void *)continuation->authority.space_read.space);
     bool ok = true;
     continuation->readout.query = petta_copy_optional_atom(
         session, continuation->readout.query, &ok);
@@ -8851,6 +9839,8 @@ static CettaContinuationStatus petta_continuation_capture(
     ArenaMark term_mark = arena_mark(&owned->terms.pool->owner);
     size_t term_bytes_before = arena_accounted_live_bytes(
         &owned->terms.pool->owner);
+    if (space_atom_hold)
+        space_atom_hold(&owned->terms.pool->owner, source->space);
     owned->authority.source_machine_instance = source->instance_id;
     owned->authority.space_read = read;
     owned->authority.capture_authority = authority;
@@ -9179,9 +10169,21 @@ static CettaContinuationStatus petta_continuation_restore(
     destination->tenured_major_after =
         petta_machine_next_major_threshold(
             arena_accounted_live_bytes(&destination->tenured));
+    destination->tenured_resource_major_after =
+        petta_machine_next_resource_threshold(
+            destination->tenured.retained_resource_bytes);
+    destination->tenured_resource_offer_after =
+        destination->tenured_resource_major_after;
     destination->binding_growth_collect_after =
         saved->control.binding_growth_collect_after;
     destination->stats.owned_continuation_restores++;
+    /* A public restore may revive a capacity-terminal machine. No partially
+     * discovered immutable image can remain marked covered across that
+     * boundary. Actual restored pool/plan Arenas are pressure roots too. */
+    petta_native_cache_clear(destination, destination->native_pressure_observer != NULL);
+    memset(destination->native_root_cursors, 0, sizeof(destination->native_root_cursors));
+    memset(destination->native_root_stamps, 0, sizeof(destination->native_root_stamps));
+    destination->native_discovery_pending = true;
 
     petta_owned_continuation_impl_free(saved);
     *payload = NULL;
@@ -9803,7 +10805,9 @@ static bool petta_machine_collect_deterministic_heap(
     bool major =
         arena_accounted_live_bytes(&machine->tenured) >=
         machine->tenured_major_after ||
-        machine->identity_major_requested;
+        machine->tenured.retained_resource_bytes >=
+            machine->tenured_resource_major_after ||
+        machine->identity_major_requested || machine->native_pressure_major_requested;
     size_t before_nursery_bytes =
         arena_accounted_live_bytes(&machine->heap);
     size_t before_tenured_bytes =
@@ -10063,10 +11067,15 @@ static bool petta_machine_collect_deterministic_heap(
     machine->heap_promoted_last = promoted_bytes;
     machine->heap_collect_after =
         petta_machine_nursery_window(machine);
-    if (major) {
+    if (petta_machine_sets_baseline(major, before_tenured_bytes)) {
         machine->tenured_major_after =
             petta_machine_next_major_threshold(
                 arena_accounted_live_bytes(&machine->tenured));
+        machine->tenured_resource_major_after =
+            petta_machine_next_resource_threshold(
+                machine->tenured.retained_resource_bytes);
+        machine->tenured_resource_offer_after =
+            machine->tenured_resource_major_after;
     }
     machine->binding_growth_collect_after =
         petta_u64_add_saturating(
@@ -10089,7 +11098,8 @@ static bool petta_machine_collect_deterministic_heap(
             : &machine->stats
                    .deterministic_minor_heap_collection_elapsed_ns,
         collection_elapsed_ns);
-    return true;
+    return (major || before_tenured_bytes == 0u)
+        ? petta_machine_native_traced(machine) : true;
 }
 
 /* A dead structure keeps its frames' identities until a collection reaches
@@ -10168,6 +11178,9 @@ static bool petta_machine_maybe_collect(
     PettaMachineImpl *machine) {
     if (!machine)
         return false;
+    bool native_due = false;
+    if (!petta_machine_native_poll(machine, &native_due))
+        return false;
     if (petta_machine_identity_pressure(machine)) {
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_PETTA_IDENTITY_PRESSURE_COLLECTION);
@@ -10208,8 +11221,20 @@ static bool petta_machine_maybe_collect(
         return false;
     if (binding_count > machine->stats.maximum_binding_entries)
         machine->stats.maximum_binding_entries = binding_count;
+    /* An open equation machine's stable exports go to the tenured arena
+     * directly (oem_resolve_stable), past the nursery: tenured grown to its
+     * major threshold is due as a full nursery is, or a loop the machine
+     * runs inside one statement keeps every export until the statement
+     * ends. */
+    bool tenured_syntax_due = tenured_live >= machine->tenured_major_after;
+    size_t resource_after = machine->choice_len != 0u
+        ? machine->tenured_resource_offer_after
+        : machine->tenured_resource_major_after;
+    bool resource_due =
+        machine->tenured.retained_resource_bytes >= resource_after;
+    bool tenured_due = tenured_syntax_due || resource_due || native_due;
     if (machine->choice_len != 0u) {
-        if (nursery_live >= machine->heap_collect_after) {
+        if (nursery_live >= machine->heap_collect_after || tenured_due) {
             if (!petta_choice_heap_evacuation_supported(machine)) {
                 cetta_runtime_stats_inc(
                     CETTA_RUNTIME_COUNTER_PETTA_CHOICE_HEAP_COLLECTION_DECLINED);
@@ -10217,6 +11242,20 @@ static bool petta_machine_maybe_collect(
                     petta_machine_choice_collection_retry_threshold(
                         nursery_live,
                         petta_machine_nursery_window(machine));
+                if (tenured_syntax_due)
+                    machine->tenured_major_after =
+                        petta_machine_next_major_threshold(tenured_live);
+                if (native_due)
+                    petta_machine_native_retry_later(machine);
+                if (resource_due) {
+                    size_t allowance = petta_machine_choice_scan_window(machine);
+                    size_t floor = petta_machine_collect_sizes()->nursery_floor;
+                    if (allowance < floor)
+                        allowance = floor;
+                    machine->tenured_resource_offer_after =
+                        petta_size_add_saturating(
+                            machine->tenured.retained_resource_bytes, allowance);
+                }
             } else if (!petta_machine_collect_choice_heap(machine))
                 return false;
         }
@@ -10234,7 +11273,7 @@ static bool petta_machine_maybe_collect(
      * not collect on every branch.
      */
     if (nursery_live <
-            machine->heap_collect_after &&
+            machine->heap_collect_after && !tenured_due &&
         builder->growth_count <
             machine->binding_growth_collect_after) {
         return true;
@@ -10465,7 +11504,9 @@ static bool petta_machine_unify_resolved_values(
                 machine, builder, growth_before, heap_before, false);
         }
         right_open_cons = petta_semantics_is_open_cons_value(right);
-        bool matched = petta_semantics_match_cons_constraint(
+        /* Two values: only real cells are cells; a spelled `cons` in
+         * either is data, as in SWI-PeTTa. */
+        bool matched = petta_semantics_match_lowered_head(
             &machine->heap,
             right_open_cons ? right : left,
             right_open_cons ? left : right,
@@ -11989,6 +13030,17 @@ static bool petta_machine_schedule_named_state(
     const PettaPlanNode *value_plan = NULL;
     if (form == PETTA_FORM_BIND_STATE) {
         Atom *wrapper = expression->expr.elems[2];
+        /* The host owns the extended named-Space constructor form and its
+         * publication authority. Delegate the written operands together;
+         * evaluating the constructor here would run it again at the host. */
+        if (wrapper && wrapper->kind == ATOM_EXPR && wrapper->expr.len > 0u &&
+            atom_is_symbol_id(wrapper->expr.elems[0], g_builtin_syms.new_space) &&
+            machine->host.named_space_binding &&
+            petta_machine_host_can_evaluate(&machine->host)) {
+            return petta_goal_push(machine, &(PettaGoal){
+                .kind = PETTA_GOAL_HOST_READY, .barrier = barrier,
+                .first = expression, .second = expected, .plan = plan});
+        }
         if (!wrapper || wrapper->kind != ATOM_EXPR ||
             wrapper->expr.len != 2u ||
             !atom_is_symbol_id(
@@ -12936,14 +13988,6 @@ static bool petta_machine_extension_callable(
      * occurrence; the reference calls engine predicates at their exact
      * arity alone. */
     return arity.exact;
-}
-
-/* A host that supplies an operation catalog owns admission of library
- * controls too. Bare machine hosts instead provide the control hooks directly. */
-static bool petta_machine_named_control_available(
-    PettaMachineImpl *machine, SymbolId head, CettaExprLen arity) {
-    return (!machine->host.native_named_arity && !machine->host.foreign_named_arity) ||
-        petta_machine_extension_named_arity(machine, head, arity).exact;
 }
 
 typedef struct {
@@ -16710,6 +17754,14 @@ static void petta_machine_stats_accumulate(
         source->host_environment_entries_observed;
     target->host_environment_entries_forwarded +=
         source->host_environment_entries_forwarded;
+    target->native_pressure_censuses += source->native_pressure_censuses;
+    target->native_pressure_census_retries += source->native_pressure_census_retries;
+    target->native_pressure_major_requests += source->native_pressure_major_requests;
+    target->native_pressure_reclamations += source->native_pressure_reclamations;
+    target->native_pressure_reclamation_deferrals += source->native_pressure_reclamation_deferrals;
+    target->native_pressure_unadapted_containers += source->native_pressure_unadapted_containers;
+    if (source->maximum_owned_native_image_bytes > target->maximum_owned_native_image_bytes)
+        target->maximum_owned_native_image_bytes = source->maximum_owned_native_image_bytes;
     if (source->maximum_goal_depth > target->maximum_goal_depth)
         target->maximum_goal_depth = source->maximum_goal_depth;
     if (source->maximum_choice_depth > target->maximum_choice_depth)
@@ -20034,7 +21086,7 @@ static bool petta_machine_advance_choice(
                  * transitions of the shared universe. */
                 CETTA_SCOPED_SHARED_TRANSITION(read);
                 candidate = choice->as.match.pattern_query
-                    ? term_universe_get_atom(universe, stored)
+                    ? term_universe_scoped_atom(universe, &machine->heap, stored)
                     : term_universe_view_atom(universe, &machine->heap,
                                               stored);
             }
@@ -20729,6 +21781,8 @@ static bool petta_machine_start_open_answers(
     Atom *expected, bool evaluate_result, bool *taken_out);
 static bool petta_machine_first_witness_call(
     const PettaMachineImpl *machine);
+static size_t petta_machine_first_witnesses_call(
+    const PettaMachineImpl *machine, const Atom *expected);
 
 /* A value producer computes with a fresh private result. It can replace a
  * call only when the caller supplies no early result constraint. NULL asks
@@ -21423,7 +22477,8 @@ static bool petta_machine_start_space_query(
      * first-witness portfolio, closed or open, before any other route. */
     bool first_witness =
         open_candidate && evaluate_result && equation_len >= 1u &&
-        petta_machine_first_witness_call(machine) &&
+        (petta_machine_first_witness_call(machine) ||
+         petta_machine_first_witnesses_call(machine, expected) != 0u) &&
         !(machine->host.open_relation_declined &&
           machine->host.open_relation_declined(
               machine->host.context, machine->space, head,
@@ -23544,7 +24599,11 @@ static bool petta_machine_start_collapse(
     inner->impl->discard_visible_bindings =
         !machine->host.externalize_equation_choices &&
         !machine->host.analysis;
+    /* Collapse discards each answer's environment, as findall copies its
+     * answers: the body's bindings are never read after it. */
+    inner->impl->answers_are_values = !machine->host.analysis;
     inner->impl->answers_collected_whole = limit == 0u;
+    inner->impl->answer_limit = limit;
     /* The collection holds values, as findall's copies do: an improper or
      * open cons cell stays a cell for the list builtins that read it, and
      * the answer that prints the collection writes it as (cons H T). */
@@ -23611,6 +24670,8 @@ static bool petta_machine_start_count_collapse(
     }
     inner->impl->observation_algebra =
         CETTA_OBSERVATION_ALGEBRA_PREFERRED_FALLBACK_COUNT;
+    /* Its answers are counted, never read for their bindings. */
+    inner->impl->answers_are_values = !machine->host.analysis;
     PettaChoice choice = {
         .kind = PETTA_CHOICE_COUNT_COLLAPSE,
         .manufacture_epoch = machine->manufacture_epoch,
@@ -23758,6 +24819,8 @@ static bool petta_machine_start_foldall(
         return false;
     }
     generator->impl->answers_keep_carriers = true;
+    /* The fold copies each answer into its storage as a value. */
+    generator->impl->answers_are_values = !machine->host.analysis;
     /* Nothing of the fold lives in the heap above the choice: its children
      * answer into the fold's storage, so the heap rolls back as usual. */
     PettaChoice choice = {
@@ -31464,12 +32527,13 @@ static uint64_t petta_open_cursor_activations(
     return stats.activations;
 }
 
-/* Run `*cursor` for `quantum` more activations: open it with `bound` when
- * there is none, continue it otherwise. */
+/* Run `*cursor` for `quantum` more activations: open it with `bound` and
+ * `floor` when there is none, continue it otherwise. */
 static CettaOpenEquationStep petta_machine_witness_run(
     PettaMachineImpl *machine, PettaOpenAnswers *open, Atom *call,
     Atom *destination, CettaOpenEquationCursor **cursor, uint32_t bound,
-    uint64_t quantum, CettaCallOutcome *returned, Atom ***values_out) {
+    uint32_t floor, uint64_t quantum, CettaCallOutcome *returned,
+    Atom ***values_out) {
     if (!*cursor) {
         *cursor = machine->host.open_relation_cursor(
             machine->host.context, machine->space, &machine->heap,
@@ -31483,6 +32547,7 @@ static CettaOpenEquationStep petta_machine_witness_run(
             petta_machine_intrinsic_type_guard);
         cetta_open_equation_cursor_set_collection_raise_policy(*cursor,
             machine->host.raises_abort_collections);
+        cetta_open_equation_cursor_set_depth_floor(*cursor, floor);
     } else {
         cetta_open_equation_cursor_set_budget(
             *cursor, petta_open_cursor_activations(*cursor) + quantum);
@@ -31523,7 +32588,7 @@ static CettaOpenEquationStep petta_machine_first_witness_portfolio(
     for (uint32_t round = 0u; round < PETTA_WITNESS_ROUNDS; round++) {
         uint64_t quantum = (uint64_t)PETTA_WITNESS_FIRST_BUDGET << round;
         step = petta_machine_witness_run(
-            machine, open, call, destination, &depth_first, 0u, quantum,
+            machine, open, call, destination, &depth_first, 0u, 0u, quantum,
             returned, values_out);
         if (step == CETTA_OPEN_EQUATION_ANSWER ||
             step == CETTA_OPEN_EQUATION_EXHAUSTED ||
@@ -31548,7 +32613,7 @@ static CettaOpenEquationStep petta_machine_first_witness_portfolio(
             uint64_t before = deepening
                 ? petta_open_cursor_activations(deepening) : 0u;
             step = petta_machine_witness_run(
-                machine, open, call, destination, &deepening, bound, left,
+                machine, open, call, destination, &deepening, bound, 0u, left,
                 returned, values_out);
             if (step == CETTA_OPEN_EQUATION_ANSWER ||
                 step == CETTA_OPEN_EQUATION_FAULT ||
@@ -31576,6 +32641,172 @@ plain:
     return CETTA_OPEN_EQUATION_HANDOFF;
 }
 
+static bool petta_open_return_valid(CettaOpenEquationStep step,
+        CettaCallOutcome returned);
+
+/* The call is the whole body of a bounded collection of `k` answers
+ * (`select k`, k at least two): its answers are the machine's answers.
+ * Returns k, or 0 when it is not. */
+static size_t petta_machine_first_witnesses_call(
+    const PettaMachineImpl *machine, const Atom *expected) {
+    if (!machine->host.first_witness_portfolio ||
+        machine->answer_limit < 2u || machine->goal_len != 0u ||
+        !expected || expected->kind != ATOM_VAR ||
+        !machine->answer_variable ||
+        machine->answer_variable->kind != ATOM_VAR ||
+        !var_id_eq(expected->var_id, machine->answer_variable->var_id))
+        return 0u;
+    return machine->answer_limit;
+}
+
+/* One strategy of the k-witness portfolio: its cursor and the answers it
+ * has found, each kept as the tuple of the values of the call's variables. */
+typedef struct {
+    CettaOpenEquationCursor *cursor;
+    OutcomeSet *kept;
+} PettaWitnessStrategy;
+
+static bool petta_witness_keep(PettaMachineImpl *machine,
+                               const PettaOpenAnswers *open, Atom **values,
+                               OutcomeSet *kept) {
+    Atom **copies = arena_alloc(&machine->heap,
+                                sizeof(*copies) * open->var_count);
+    if (!copies)
+        return false;
+    for (uint32_t index = 0u; index < open->var_count; index++) {
+        copies[index] = atom_deep_copy(&machine->heap, values[index]);
+        if (!copies[index])
+            return false;
+    }
+    Atom *tuple = atom_expr(&machine->heap, copies, open->var_count);
+    if (!tuple)
+        return false;
+    CettaCount before = kept->len;
+    Bindings empty;
+    bindings_init(&empty);
+    outcome_set_add(kept, tuple, &empty);
+    bindings_free(&empty);
+    return kept->len == before + 1u;
+}
+
+/* Run a strategy for `quantum` more activations, keeping its answers until
+ * it has `limit` (then ANSWER).  Any other step that stops it is returned:
+ * an over-budget handoff, EXHAUSTED, or a step that ends the portfolio. */
+static CettaOpenEquationStep petta_witness_strategy_run(
+    PettaMachineImpl *machine, PettaOpenAnswers *open, Atom *call,
+    Atom *destination, PettaWitnessStrategy *strategy, uint32_t bound,
+    uint32_t floor, uint64_t quantum, size_t limit) {
+    CettaCallOutcome returned = cetta_call_failure();
+    Atom **values = NULL;
+    uint64_t start = strategy->cursor
+        ? petta_open_cursor_activations(strategy->cursor) : 0u;
+    CettaOpenEquationStep step = petta_machine_witness_run(
+        machine, open, call, destination, &strategy->cursor, bound, floor,
+        quantum, &returned, &values);
+    while (step == CETTA_OPEN_EQUATION_ANSWER) {
+        if (!petta_open_return_valid(step, returned) || !values ||
+            !petta_witness_keep(machine, open, values, strategy->kept))
+            return CETTA_OPEN_EQUATION_FAULT;
+        if ((size_t)strategy->kept->len >= limit)
+            return CETTA_OPEN_EQUATION_ANSWER;
+        cetta_open_equation_cursor_set_budget(strategy->cursor,
+                                              start + quantum);
+        step = cetta_open_equation_cursor_next(
+            strategy->cursor, open->vars, &returned, &values);
+    }
+    return step;
+}
+
+static void petta_witness_strategy_free(PettaWitnessStrategy *strategy) {
+    cetta_open_equation_cursor_close(strategy->cursor);
+    strategy->cursor = NULL;
+    if (strategy->kept) {
+        outcome_set_free(strategy->kept);
+        free(strategy->kept);
+        strategy->kept = NULL;
+    }
+}
+
+/*
+ * Up to `limit` answers of a call that is the whole body of a bounded
+ * collection, from the first witness's portfolio: depth-first search and
+ * iterative deepening on derivation depth, each continued for a quantum of
+ * activations that doubles each round.  A deepening run under bound B
+ * reports only derivations whose deepest activation is past the previous
+ * bound, so the runs together report each derivation once, and answers
+ * keep their multiplicity.  Each strategy keeps its own answers; the first
+ * that has `limit`, or whose search is complete (depth-first exhausted, or
+ * a deepening run that cut nothing), answers with all of them, in its own
+ * order.  A host step, a raise, a fault or another handoff ends the
+ * portfolio with nothing taken (the bounded runs performed no effect), as
+ * does a program whose depth cannot be pruned: the plain cursor then takes
+ * the call.  True when decided, with `*kept_out` the answers as tuples of
+ * the values of `open->vars`.
+ */
+static bool petta_machine_first_witnesses_portfolio(
+    PettaMachineImpl *machine, PettaOpenAnswers *open, Atom *call,
+    Atom *destination, size_t limit, OutcomeSet **kept_out) {
+    PettaWitnessStrategy depth_first = {0}, deepening = {0};
+    depth_first.kept = cetta_malloc(sizeof(*depth_first.kept));
+    deepening.kept = cetta_malloc(sizeof(*deepening.kept));
+    outcome_set_init_with_owner(depth_first.kept, &machine->heap);
+    outcome_set_init_with_owner(deepening.kept, &machine->heap);
+    PettaWitnessStrategy *winner = NULL;
+    uint32_t bound = 1u;
+    for (uint32_t round = 0u; round < PETTA_WITNESS_ROUNDS && !winner;
+         round++) {
+        uint64_t quantum = (uint64_t)PETTA_WITNESS_FIRST_BUDGET << round;
+        CettaOpenEquationStep step = petta_witness_strategy_run(
+            machine, open, call, destination, &depth_first, 0u, 0u,
+            quantum, limit);
+        if (step == CETTA_OPEN_EQUATION_ANSWER ||
+            step == CETTA_OPEN_EQUATION_EXHAUSTED) {
+            winner = &depth_first;
+            break;
+        }
+        if (!petta_open_cursor_over_budget(step, depth_first.cursor) ||
+            !cetta_open_equation_cursor_can_prune_depth(depth_first.cursor))
+            break;
+        uint64_t left = quantum;
+        while (left > 0u) {
+            uint64_t before = deepening.cursor
+                ? petta_open_cursor_activations(deepening.cursor) : 0u;
+            step = petta_witness_strategy_run(
+                machine, open, call, destination, &deepening, bound,
+                bound == 1u ? 0u : bound, left, limit);
+            if (step == CETTA_OPEN_EQUATION_ANSWER ||
+                (step == CETTA_OPEN_EQUATION_EXHAUSTED &&
+                 !cetta_open_equation_cursor_bound_cut(deepening.cursor))) {
+                winner = &deepening;
+                break;
+            }
+            if (petta_open_cursor_over_budget(step, deepening.cursor))
+                break;
+            if (step != CETTA_OPEN_EQUATION_EXHAUSTED) {
+                left = 0u;
+                round = PETTA_WITNESS_ROUNDS;
+                break;
+            }
+            uint64_t used =
+                petta_open_cursor_activations(deepening.cursor) - before;
+            left = used < left ? left - used : 0u;
+            cetta_open_equation_cursor_close(deepening.cursor);
+            deepening.cursor = NULL;
+            bound++;
+        }
+    }
+    if (!winner) {
+        petta_witness_strategy_free(&depth_first);
+        petta_witness_strategy_free(&deepening);
+        return false;
+    }
+    *kept_out = winner->kept;
+    winner->kept = NULL;
+    petta_witness_strategy_free(&depth_first);
+    petta_witness_strategy_free(&deepening);
+    return true;
+}
+
 /* Host and control events retain their own cursor state. Published answers
  * carry an already interpreted value; a producer violating that contract
  * cannot ask the consumer to guess a replacement role from payload syntax. */
@@ -31592,6 +32823,11 @@ static bool petta_open_return_valid(CettaOpenEquationStep step,
 }
 
 static PettaMachineStep petta_open_handoff_step(CettaOpenEquationHandoff reason);
+
+static bool petta_machine_start_open_term_answers(
+    PettaMachineImpl *machine, Atom *call, Atom *expected,
+    bool evaluate_result, bool body, Atom *const *parameters,
+    Atom *const *arguments, uint32_t arity, bool *taken_out);
 
 static __attribute__((noinline)) bool petta_machine_start_open_answers(
     PettaMachineImpl *machine, const PettaSpaceQueryView *query,
@@ -31613,6 +32849,21 @@ static __attribute__((noinline)) bool petta_machine_start_open_answers(
         !cetta_open_equation_term_supported(call) ||
         petta_machine_prepared_call_blocked(machine, call))
         return false;
+    return petta_machine_start_open_term_answers(
+        machine, call, expected, evaluate_result, false, NULL, NULL, 0u,
+        taken_out);
+}
+
+/*
+ * The answers of a call (or, with `body`, of a compound form compiled as the
+ * body of a nullary equation) from the compiled open tier: a choice over the
+ * cursor, the first answer published now.  A body reports its destination
+ * alone: its own variables are its activation's locals, as a query's are.
+ */
+static bool petta_machine_start_open_term_answers(
+    PettaMachineImpl *machine, Atom *call, Atom *expected,
+    bool evaluate_result, bool body, Atom *const *parameters,
+    Atom *const *arguments, uint32_t arity, bool *taken_out) {
     /* The consumer's expected value is the call's destination. */
     Atom *destination = expected && atom_has_vars(expected)
         ? petta_machine_apply_bindings(
@@ -31622,8 +32873,10 @@ static __attribute__((noinline)) bool petta_machine_start_open_answers(
     if (expected &&
         (!destination || !cetta_open_equation_term_supported(destination)))
         return false;
+    if (body && !destination)
+        return false;
     Atom *parts[2] = {call, destination};
-    Atom *support = destination
+    Atom *support = body ? destination : destination
         ? atom_expr(&machine->heap, parts, 2u) : call;
     PettaOpenAnswers *open = calloc(1u, sizeof(*open));
     if (!support || !open ||
@@ -31661,18 +32914,48 @@ static __attribute__((noinline)) bool petta_machine_start_open_answers(
     CettaOpenEquationStep step = CETTA_OPEN_EQUATION_HANDOFF;
     if (machine->host.answer_authority_token(
             machine->host.context, &choice.as.answers.authority)) {
-        if (evaluate_result && !count_only &&
+        if (!body && evaluate_result && !count_only &&
             petta_machine_first_witness_call(machine))
             step = petta_machine_first_witness_portfolio(
                 machine, open, call, destination, &returned, &values);
+        size_t witnesses = !body && evaluate_result && !count_only
+            ? petta_machine_first_witnesses_call(machine, expected) : 0u;
+        OutcomeSet *kept = NULL;
+        if (witnesses && petta_machine_first_witnesses_portfolio(
+                machine, open, call, destination, witnesses, &kept)) {
+            /* The kept answers bind the call's variables as a cursor's
+             * answers would, one outcome each. */
+            Atom *vars = atom_expr(&machine->heap, open->vars,
+                                   open->var_count);
+            uint32_t barrier = (uint32_t)machine->choice_len;
+            petta_answer_choice_release(&choice);
+            *taken_out = true;
+            if (!vars) {
+                outcome_set_free(kept);
+                free(kept);
+                machine->terminal = true;
+                machine->terminal_step = PETTA_MACHINE_STEP_CAPACITY;
+                return false;
+            }
+            return petta_machine_start_outcome_choice(machine, kept, vars,
+                                                      barrier);
+        }
         if (!open->cursor) {
-            open->cursor = machine->host.open_relation_cursor(
-                machine->host.context, machine->space, &machine->heap,
-                &machine->tenured, call, destination, open->vars,
-                open->var_count, evaluate_result,
-                machine->host.source_output_constraints,
-                machine->host.dispatch_recovers_branch_locally,
-                count_only, 0u, 0u);
+            open->cursor = body
+                ? machine->host.open_body_cursor(
+                      machine->host.context, machine->space, &machine->heap,
+                      &machine->tenured, call, parameters, arguments, arity,
+                      destination, open->vars, open->var_count,
+                      machine->host.source_output_constraints,
+                      machine->host.dispatch_recovers_branch_locally,
+                      count_only)
+                : machine->host.open_relation_cursor(
+                      machine->host.context, machine->space, &machine->heap,
+                      &machine->tenured, call, destination, open->vars,
+                      open->var_count, evaluate_result,
+                      machine->host.source_output_constraints,
+                      machine->host.dispatch_recovers_branch_locally,
+                      count_only, 0u, 0u);
             if (open->cursor) {
                 cetta_open_equation_cursor_set_type_guard(open->cursor, machine,
                     petta_machine_intrinsic_type_guard);
@@ -31697,6 +32980,14 @@ static __attribute__((noinline)) bool petta_machine_start_open_answers(
     /* A cut goes through an accepted host answer, which a first run has
      * none of; it is declined with the handoffs. */
     if (step == CETTA_OPEN_EQUATION_CUT)
+        step = CETTA_OPEN_EQUATION_HANDOFF;
+    /* A body whose first step is a host goal, before it entered an equation
+     * or changed anything, gains nothing from the tier: the machine runs it
+     * from the start (the pending goal has not run).  Past an equation, the
+     * host goal continues the tier's work. */
+    if (body && step == CETTA_OPEN_EQUATION_HOST &&
+        !cetta_open_equation_cursor_effected(open->cursor) &&
+        !cetta_open_equation_cursor_activated(open->cursor))
         step = CETTA_OPEN_EQUATION_HANDOFF;
     if (step == CETTA_OPEN_EQUATION_HANDOFF) {
         cetta_runtime_stats_inc(
@@ -31766,6 +33057,137 @@ static __attribute__((noinline)) bool petta_machine_start_open_answers(
         return false;
     cetta_open_equation_cursor_suspend(open->cursor);
     return true;
+}
+
+/* Heads whose evaluation is an effect the machine orders: output, space
+ * and binding changes, imports, assertions and foreign calls. */
+static bool petta_machine_effect_head(SymbolId head) {
+    static const char *const names[] = {
+        "println!", "print!", "trace!", "add-atom", "remove-atom",
+        "add-reduct", "add-atoms", "remove-atoms", "bind!", "import!",
+        "test", "assertEqual", "assertEqualToResult", "assertAlphaEqual",
+        "assert", "py-call", "py-atom", "py-dot", "call", "call-predicate",
+        "assertzPredicate", "assertaPredicate", "retractPredicate",
+    };
+    const char *name = symbol_bytes(g_symbols, head);
+    if (!name)
+        return false;
+    for (size_t index = 0u; index < sizeof(names) / sizeof(names[0]); index++)
+        if (strcmp(name, names[index]) == 0)
+            return true;
+    return false;
+}
+
+/* Whether a body stays with the machine: one that names named state (the
+ * compiled tier gives a state value's variables a cell per read, where a
+ * query's reads of one state share them) or an effect, whose order and
+ * whose running at all the machine's evaluation defines. */
+static bool petta_machine_body_stays_on_machine(const Atom *atom,
+                                                uint32_t depth) {
+    if (!atom || atom->kind != ATOM_EXPR || depth > 64u)
+        return depth > 64u;
+    if (atom->expr.len > 0u && atom->expr.elems[0]->kind == ATOM_SYMBOL) {
+        SymbolId head = atom->expr.elems[0]->sym_id;
+        PeTTaForm form = petta_semantics_form(head);
+        if (form == PETTA_FORM_GET_STATE || form == PETTA_FORM_CHANGE_STATE ||
+            form == PETTA_FORM_BIND_STATE || form == PETTA_FORM_NEW_STATE ||
+            petta_machine_effect_head(head))
+            return true;
+    }
+    for (CettaExprLen index = 0u; index < atom->expr.len; index++)
+        if (petta_machine_body_stays_on_machine(atom->expr.elems[index],
+                                                depth + 1u))
+            return true;
+    return false;
+}
+
+/* The control forms whose whole body a machine offers to the compiled tier
+ * at its first goal; any other head keeps its own route. */
+static bool petta_machine_root_body_form(PeTTaForm form) {
+    return form == PETTA_FORM_IF || form == PETTA_FORM_LET ||
+           form == PETTA_FORM_CHAIN || form == PETTA_FORM_VALUE_LET ||
+           form == PETTA_FORM_AND_THEN || form == PETTA_FORM_OR_ELSE;
+}
+
+/* A machine's whole body, a compound control form whose answers are the
+ * machine's own (its first goal, nothing after it, the answer variable its
+ * destination), runs on the compiled open tier as the body of a nullary
+ * equation, as PeTTa translates a query.  The tier declines what it does
+ * not compile, and the body then runs here as before. */
+static bool petta_machine_start_open_body_answers(
+    PettaMachineImpl *machine, const PettaGoal *goal, bool *taken_out) {
+    *taken_out = false;
+    Atom *body = goal->first;
+    Atom *expected = goal->second;
+    if (goal->kind != PETTA_GOAL_SOLVE || !machine->host.open_body_cursor ||
+        !machine->host.answer_authority_token ||
+        machine->host.admit_branch_capture ||
+        petta_machine_delay_holds(machine) || machine->goal_len != 0u ||
+        !machine->answers_are_values ||
+        /* A bounded observer (`select k`) keeps its witness search. */
+        machine->answer_limit != 0u ||
+        !body || body->kind != ATOM_EXPR || body->expr.len == 0u ||
+        body->expr.elems[0]->kind != ATOM_SYMBOL ||
+        !petta_machine_root_body_form(
+            petta_semantics_form(body->expr.elems[0]->sym_id)) ||
+        petta_machine_program_defines_head(
+            machine, body->expr.elems[0]->sym_id) ||
+        petta_machine_body_stays_on_machine(body, 0u) ||
+        !expected || expected->kind != ATOM_VAR ||
+        !machine->answer_variable ||
+        machine->answer_variable->kind != ATOM_VAR ||
+        !var_id_eq(expected->var_id, machine->answer_variable->var_id))
+        return false;
+    if (!cetta_open_equation_term_supported(body))
+        return false;
+    /* The body stays as written: what its caller computed must stay a
+     * value, never become code.  Its variables the environment binds are
+     * the body's parameters, their values its arguments, as a lambda's
+     * are; the rest are its own. */
+    /* A declined offer leaves nothing in either generation: what it built
+     * (the body's arguments, the cursor's cells and stable exports, the goal
+     * it would have left to the machine) lies above these marks, and
+     * nothing the machine keeps refers to it.  So the collector's schedule
+     * is the one the machine alone would have had. */
+    ArenaMark offered = arena_mark(&machine->heap);
+    ArenaMark offered_tenured = arena_mark(&machine->tenured);
+    PettaOpenAnswers body_vars = {0};
+    Atom **parameters = NULL;
+    Atom **arguments = NULL;
+    uint32_t arity = 0u;
+    bool ok = petta_open_answers_collect_vars(&body_vars, body);
+    if (ok && body_vars.var_count) {
+        parameters = arena_alloc(&machine->heap,
+                                 sizeof(*parameters) * body_vars.var_count);
+        arguments = arena_alloc(&machine->heap,
+                                sizeof(*arguments) * body_vars.var_count);
+        ok = parameters && arguments;
+    }
+    const Bindings *environment = search_context_bindings(&machine->search);
+    for (uint32_t index = 0u; ok && index < body_vars.var_count; index++) {
+        Atom *variable = body_vars.vars[index];
+        Atom *value = petta_machine_apply_bindings(
+            machine, environment, &machine->heap, variable);
+        if (!value) {
+            ok = false;
+            break;
+        }
+        if (value->kind == ATOM_VAR && var_id_eq(value->var_id,
+                                                 variable->var_id))
+            continue;
+        parameters[arity] = variable;
+        arguments[arity++] = value;
+    }
+    free(body_vars.vars);
+    bool answered = ok && arity <= 64u &&
+        petta_machine_start_open_term_answers(
+            machine, body, expected, true, true, parameters, arguments,
+            arity, taken_out);
+    if (!*taken_out) {
+        arena_reset(&machine->heap, offered);
+        arena_reset(&machine->tenured, offered_tenured);
+    }
+    return answered;
 }
 
 /* A once in a cursor committed through host goals whose choices remain:
@@ -34276,6 +35698,15 @@ static bool petta_machine_dispatch_solve(
     if (machine->host.empty_result_is_failure &&
         atom_is_empty(goal->first))
         return false;
+    /* The first goal offers a compound body to the compiled tier once. */
+    if (!machine->root_body_tried) {
+        machine->root_body_tried = true;
+        bool taken = false;
+        bool answered =
+            petta_machine_start_open_body_answers(machine, goal, &taken);
+        if (taken)
+            return answered;
+    }
     PettaGoal constrained_goal;
     PettaGoal written_call;
     const Bindings *environment =
@@ -35308,7 +36739,7 @@ static bool petta_machine_dispatch_solve(
     }
 
     if (head_id == g_builtin_syms.petta_transaction &&
-        nargs == 1u && petta_machine_named_control_available(machine, head_id, nargs)) {
+        nargs == 1u) {
         return petta_machine_start_transaction(
             machine, expression->expr.elems[1], expected,
             goal->barrier, petta_plan_child(plan, 1u),
@@ -35316,7 +36747,7 @@ static bool petta_machine_dispatch_solve(
     }
 
     if (head_id == g_builtin_syms.petta_with_mutex &&
-        nargs == 2u && petta_machine_named_control_available(machine, head_id, nargs)) {
+        nargs == 2u) {
         return petta_machine_start_mutex(
             machine, expression->expr.elems[1],
             expression->expr.elems[2], expected,
@@ -38520,7 +39951,7 @@ static bool petta_machine_dispatch_goal(
         bool right_cons =
             petta_semantics_contains_cons_constraint(right_value);
         bool equal = left_cons || right_cons
-            ? petta_semantics_match_cons_constraint(
+            ? petta_semantics_match_lowered_head(
                   &machine->heap,
                   left_cons ? left_value : right_value,
                   left_cons ? right_value : left_value,
@@ -39959,6 +41390,8 @@ static bool petta_machine_init_internal(
     impl->table_generator = table_generator;
     if (host)
         impl->host = *host;
+    if (!impl->host.collect_allocation_universe)
+        impl->host.allocation_universe = NULL;
     impl->observation_algebra =
         host && host->observation_contract
             ? host->observation_contract->algebra
@@ -39983,6 +41416,13 @@ static bool petta_machine_init_internal(
             &impl->activation_frames[index].frame);
     }
     arena_init(&impl->plan_arena);
+    /* The root Space may have escaped a worker whose allocation universe
+     * differs from this machine's. Retain its storage before the SpaceHold;
+     * that record alone does not own its original worker storage. */
+    bool root_space_kept = !eval_resource_descriptor_hold ||
+        eval_resource_descriptor_hold(&impl->plan_arena, GV_SPACE, space);
+    if (root_space_kept && space_atom_hold)
+        space_atom_hold(&impl->plan_arena, space);
     /* Most derived descriptors are small. Larger plans retain geometric
      * arena growth without keeping a full worker block for a few pointers. */
     arena_set_block_capacity(&impl->plan_arena, ARENA_BLOCK_SIZE / 16u);
@@ -39992,9 +41432,20 @@ static bool petta_machine_init_internal(
         petta_machine_collect_sizes()->nursery_floor;
     impl->tenured_major_after =
         petta_machine_collect_sizes()->major_window;
+    impl->tenured_resource_major_after =
+        petta_machine_next_resource_threshold(0u);
+    impl->tenured_resource_offer_after = impl->tenured_resource_major_after;
+    impl->native_pressure_major_after = petta_machine_next_resource_threshold(0u);
+    impl->native_pressure_offer_after = impl->native_pressure_major_after;
+    impl->native_pressure_retry_heap_after = SIZE_MAX;
+    impl->native_pressure_retry_exposure_after = SIZE_MAX;
     impl->binding_growth_collect_after =
         (uint64_t)petta_deterministic_binding_window(impl, 0u);
-    if (!search_context_init_bindings_only(
+    TermUniverse *allocation_universe = impl->host.allocation_universe;
+    bool allocation_kept = root_space_kept && (!allocation_universe ||
+        !allocation_universe->resource_scope || !eval_resource_scope_hold ||
+        eval_resource_scope_hold(&impl->plan_arena, allocation_universe->resource_scope));
+    if (!allocation_kept || !search_context_init_bindings_only(
             &impl->search, base_environment)) {
         arena_free(&impl->heap);
         arena_free(&impl->tenured);
@@ -40007,7 +41458,6 @@ static bool petta_machine_init_internal(
             bindings_activation_view_free(
                 &impl->activation_frames[index].frame);
         }
-        arena_free(&impl->plan_arena);
         free(impl->remainder_plans);
         free(impl->condition_plans);
         free(impl->completion_plans);
@@ -40020,6 +41470,7 @@ static bool petta_machine_init_internal(
             petta_table_shared_free(impl->table_shared);
         else if (impl->borrowed_root_table)
             petta_table_root_release(impl->table_shared);
+        arena_free(&impl->plan_arena);
         free(impl);
         return false;
     }
@@ -40229,8 +41680,6 @@ static inline __attribute__((always_inline)) bool petta_machine_permit_source_st
  * outermost machine (none open), or between the goals of that step (its
  * own).  There no dispatch is under way, the machines hold atoms, and every
  * holder of ids is a listed provider. */
-static _Thread_local uint32_t g_petta_machine_steps_open = 0u;
-
 static __attribute__((noinline)) void petta_machine_collect_offered(
         TermUniverse *universe) {
     if (!cetta_shared_transition_scope_active())
@@ -40242,11 +41691,22 @@ static __attribute__((noinline)) void petta_machine_collect_offered(
  * of the step loop and still requires a quiescent transition boundary. */
 static inline __attribute__((always_inline)) void petta_machine_offer_collection(
         PettaMachineImpl *impl, uint32_t steps_open) {
-    if (g_petta_machine_steps_open != steps_open || !impl->space)
+    if (!impl->space)
         return;
-    TermUniverse *universe = impl->space->native.universe;
-    if (universe && term_universe_collection_due(universe))
-        petta_machine_collect_offered(universe);
+    if (space_reclamation_due && space_reclamation_due() && space_reclaim_unheld) {
+        (void)space_reclaim_unheld();
+    }
+    if (g_petta_machine_steps_open != steps_open)
+        return;
+    bool private_offer = impl->host.allocation_universe != NULL;
+    TermUniverse *universe = private_offer
+        ? impl->host.allocation_universe : impl->space->native.universe;
+    if (universe && term_universe_collection_due(universe)) {
+        if (private_offer)
+            impl->host.collect_allocation_universe(impl->host.context, universe);
+        else
+            petta_machine_collect_offered(universe);
+    }
 }
 
 static PettaMachineStep petta_machine_next_local(
@@ -40596,6 +42056,9 @@ static void petta_machine_destroy_local(PettaMachineImpl *impl) {
             &impl->activation_frames[index].frame);
     }
     search_context_free(&impl->search);
+    if (impl->native_pressure_observer)
+        state_cell_pressure_observer_free(impl->native_pressure_observer);
+    petta_native_cache_clear(impl, false);
     arena_free(&impl->heap);
     arena_free(&impl->tenured);
     arena_free(&impl->equation_guard_scratch);
@@ -40605,7 +42068,6 @@ static void petta_machine_destroy_local(PettaMachineImpl *impl) {
         &impl->equation_template_c0_workspace);
     bindings_exclusive_frame_free(impl->equation_frame);
     cetta_delay_service_free(impl->delay);
-    arena_free(&impl->plan_arena);
     free(impl->caller_plans);
     free(impl->remainder_plans);
     free(impl->condition_plans);
@@ -40616,12 +42078,25 @@ static void petta_machine_destroy_local(PettaMachineImpl *impl) {
         petta_table_root_release(impl->table_shared);
     if (impl->leased_match_decisions)
         impl->match_decision_repository->root_leased = false;
+    /* The plan also leases any private allocation universe; release it after
+     * the final table and repository observer, including suspended machines. */
+    arena_free(&impl->plan_arena);
     free(impl);
 }
 
 void petta_machine_set_answers_collected_whole(PettaMachine *machine) {
     if (machine && machine->impl)
         machine->impl->answers_collected_whole = true;
+}
+
+void petta_machine_set_answer_limit(PettaMachine *machine, size_t limit) {
+    if (machine && machine->impl)
+        machine->impl->answer_limit = limit;
+}
+
+void petta_machine_set_answers_are_values(PettaMachine *machine) {
+    if (machine && machine->impl)
+        machine->impl->answers_are_values = true;
 }
 
 void petta_machine_destroy(PettaMachine *machine) {
@@ -40798,6 +42273,47 @@ size_t petta_machine_retained_bytes(const PettaMachine *machine) {
         return 0u;
     return arena_accounted_live_bytes(&machine->impl->heap) +
         arena_accounted_live_bytes(&machine->impl->tenured);
+}
+
+bool petta_machine_native_pressure(const PettaMachine *machine,
+                                    PettaMachineNativePressure *pressure) {
+    if (!machine || !machine->impl || !pressure)
+        return false;
+    const PettaMachineImpl *impl = machine->impl;
+    *pressure = (PettaMachineNativePressure){
+        .active = impl->native_pressure_observer != NULL,
+        .reclamation_outstanding = impl->native_pressure_major_requested,
+        .last_owned_bytes = impl->native_pressure_bytes,
+        .outstanding_bytes = impl->native_pressure_debt_bytes,
+        .accepted_survivor_threshold = impl->native_pressure_major_after,
+        .next_offer_bytes = impl->native_pressure_offer_after,
+    };
+    return true;
+}
+
+bool petta_machine_native_discovery_stats(const PettaMachine *machine,
+        PettaMachineNativeDiscoveryStats *stats) {
+    if (!machine || !machine->impl || !stats)
+        return false;
+    *stats = machine->impl->native_discovery_stats;
+    stats->certificate_storage_bytes = petta_native_cache_bytes(machine->impl);
+    return true;
+}
+
+bool petta_machine_native_obligation(const PettaMachine *machine,
+        PettaMachineNativeObligation *obligation) {
+    if (!machine || !machine->impl || !obligation)
+        return false;
+    const PettaMachineImpl *impl = machine->impl;
+    *obligation = (PettaMachineNativeObligation){
+        .current_epoch = impl->native_pressure_observer && state_cell_pressure_observer_uncovered_epoch
+            ? state_cell_pressure_observer_uncovered_epoch(impl->native_pressure_observer) : 0u,
+        .accepted_epoch = impl->native_pressure_uncovered_accepted,
+        .offered_epoch = impl->native_pressure_uncovered_offered,
+        .retry_boundaries = impl->native_pressure_retry_boundaries,
+        .retry_window = impl->native_pressure_retry_window,
+    };
+    return true;
 }
 
 bool petta_machine_stats(

@@ -572,12 +572,16 @@ static void test_bound_prefix(TermUniverse *universe, Arena *arena) {
 
 /* Compare the unindexed candidate stream with the complete matcher in both
  * record widths, including duplicate occurrences and undecodable records. */
-static void test_cold_candidates(Arena *arena, TermUniverseStoreFormat format) {
-    Arena persistent;
+static void test_cold_candidates(TermUniverseStoreFormat format) {
+    Arena persistent, syntax;
     arena_init(&persistent);
+    arena_init(&syntax);
+    Arena *arena = &syntax;
     TermUniverse universe;
     assert(term_universe_init_with_store_format(&universe, format));
     term_universe_set_persistent_arena(&universe, &persistent);
+    Space descriptor_space;
+    space_init_with_universe(&descriptor_space, &universe);
     SymbolId head = symbol_intern_cstr(g_symbols, "cold-record-row");
     SymbolId other = symbol_intern_cstr(g_symbols, "cold-record-other");
     Atom *correlated = atom_var(arena, "cold-correlated");
@@ -596,7 +600,7 @@ static void test_cold_candidates(Arena *arena, TermUniverseStoreFormat format) {
         row(arena, other, atom_int(arena, 2), atom_int(arena, 7)),
         atom_symbol_id(arena, head), atom_int(arena, 7),
         atom_expr(arena, short_children, 2u),
-        row(arena, head, atom_space(arena, &universe), atom_int(arena, 7)),
+        row(arena, head, atom_space(arena, &descriptor_space), atom_int(arena, 7)),
     };
     Atom *output = atom_var(arena, "cold-output");
     Atom *queries[] = {
@@ -636,6 +640,8 @@ static void test_cold_candidates(Arena *arena, TermUniverseStoreFormat format) {
         free(positions);
         space_free(&space);
     }
+    arena_free(&syntax);
+    space_free(&descriptor_space);
     term_universe_free(&universe);
     arena_free(&persistent);
 }
@@ -657,8 +663,8 @@ int main(void) {
     cetta_runtime_stats_enable();
     cetta_runtime_stats_reset();
 #endif
-    test_cold_candidates(&scratch, TERM_UNIVERSE_STORE_FORMAT_COMPACT32_V1);
-    test_cold_candidates(&scratch, TERM_UNIVERSE_STORE_FORMAT_WIDE64_V1);
+    test_cold_candidates(TERM_UNIVERSE_STORE_FORMAT_COMPACT32_V1);
+    test_cold_candidates(TERM_UNIVERSE_STORE_FORMAT_WIDE64_V1);
     test_flat_and_captured_readers(&universe, &scratch);
     test_uncertain_rows_keep_rigid_prefixes(&universe, &scratch);
     test_nested_prefix_admission(&universe, &scratch);

@@ -71,6 +71,8 @@ typedef struct {
     uint32_t match_trie_pins;
     SpacePinnedOccurrences *pinned;
     CettaSpacePathIndex *path_indexes;
+    struct CettaSpacePathDirectory *path_directory;
+    uint32_t path_query_depth;
     /* The flat shapes whose lookups choose among several columns, and the
      * rent each has paid toward its next column's index; retired with the
      * path indexes. */
@@ -146,7 +148,9 @@ typedef struct {
 } ImportedFlatBucket;
 
 typedef struct {
-    ImportedFlatBucket buckets[STREE_BUCKETS];
+    /* STREE_BUCKETS buckets by head, made by the first entry with a head:
+     * a space whose engine never fills them keeps none. */
+    ImportedFlatBucket *buckets;
     ImportedFlatBucket wildcard;
     /* Ownership of the fallback buckets, independent of bridge validity. */
     bool flat_has_entries;
@@ -318,6 +322,8 @@ typedef enum {
     SPACE_MATCH_BACKEND_ERROR_NONE = 0,
     SPACE_MATCH_BACKEND_ERROR_NATIVE_SPACE_TOO_LARGE = 1,
     SPACE_MATCH_BACKEND_ERROR_PACKET_TOO_LARGE = 2,
+    SPACE_MATCH_BACKEND_ERROR_ALLOCATION_FAILED = 3,
+    SPACE_MATCH_BACKEND_ERROR_STORAGE_INVALIDATED = 4,
 } SpaceMatchBackendError;
 
 void space_match_backend_clear_error(void);
