@@ -56,7 +56,7 @@ static const CettaStructuralClass tensor_class;
 
 const char *cetta_tensor_status_name(CettaTensorStatus s) {
     static const char *const names[] = {"ok", "unsupported-dtype", "shape-mismatch", "element-count-mismatch",
-        "integer-overflow", "allocation-failure", "index-out-of-bounds", "invalid-value", "duplicate-coordinate", "invalid-encoding", "zero-norm", "inexact-cast", "unsupported-promotion"};
+        "integer-overflow", "allocation-failure", "index-out-of-bounds", "invalid-value", "duplicate-coordinate", "invalid-encoding", "zero-norm", "inexact-cast", "unsupported-promotion", "uncertified"};
     return (unsigned)s < sizeof(names)/sizeof(*names) ? names[s] : "invalid-status";
 }
 const char *cetta_tensor_dtype_name(CettaTensorDType d) {
