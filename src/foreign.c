@@ -2,6 +2,7 @@
 #include <Python.h>
 
 #include "foreign.h"
+#include "foreign_provider.h"
 #include "error_presentation.h"
 #include "library.h"
 
@@ -33,6 +34,8 @@ typedef struct CettaForeignValue {
     struct CettaForeignValue *prev;
     struct CettaForeignValue *next;
 } CettaForeignValue;
+
+static CettaForeignValue *foreign_python_record(const Atom *);
 
 struct CettaForeignRuntime {
     CettaForeignValue *values;
@@ -668,7 +671,8 @@ static void cetta_foreign_runtime_init(CettaForeignRuntime *rt) {
 }
 
 CettaForeignRuntime *cetta_foreign_runtime_new(void) {
-    CettaForeignRuntime *rt = cetta_malloc(sizeof(CettaForeignRuntime));
+    CettaForeignRuntime *rt = malloc(sizeof(CettaForeignRuntime));
+    if (!rt) return NULL;
     cetta_foreign_runtime_init(rt);
     return rt;
 }
@@ -1262,7 +1266,7 @@ static PyObject *python_from_atom(Arena *a, Atom *atom, bool unwrap) {
         case GV_BINDINGS:
             return python_wrap_atom(atom, a);
         case GV_FOREIGN: {
-            CettaForeignValue *value = (CettaForeignValue *)atom->ground.ptr;
+            CettaForeignValue *value = foreign_python_record(atom);
             if (value && value->backend == CETTA_FOREIGN_BACKEND_PYTHON) {
                 Py_INCREF(value->obj);
                 return value->obj;
@@ -2053,11 +2057,16 @@ bool cetta_foreign_he_module_exports(CettaForeignHEModule *module, Arena *arena,
     return true;
 }
 
+static CettaForeignValue *foreign_python_record(const Atom *atom) {
+    if (!atom || atom->kind != ATOM_GROUNDED || atom->ground.gkind != GV_FOREIGN ||
+        !atom->ground.ptr) return NULL;
+    const CettaForeignHold *hold = atom->ground.ptr;
+    return hold->retain == foreign_record_retain ? atom->ground.ptr : NULL;
+}
+
 bool cetta_foreign_is_callable_atom(Atom *atom) {
-    return atom &&
-           atom->kind == ATOM_GROUNDED &&
-           atom->ground.gkind == GV_FOREIGN &&
-           ((CettaForeignValue *)atom->ground.ptr)->callable;
+    CettaForeignValue *value = foreign_python_record(atom);
+    return cetta_foreign_provider_callable(atom) || (value && value->callable);
 }
 
 bool cetta_foreign_call(CettaForeignRuntime *rt,
@@ -2068,7 +2077,7 @@ bool cetta_foreign_call(CettaForeignRuntime *rt,
                         uint32_t nargs,
                         ResultSet *rs,
                         Atom **error_out) {
-    if (!callable || callable->kind != ATOM_GROUNDED || callable->ground.gkind != GV_FOREIGN) {
+    if (!foreign_python_record(callable)) {
         if (error_out) *error_out = foreign_error_atom(a, "not a foreign callable");
         return false;
     }
@@ -2203,8 +2212,8 @@ bool cetta_foreign_dispatch_native_results(CettaForeignRuntime *rt,
         PyObject *base = NULL;
         Atom *error = NULL;
         if (args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_FOREIGN) {
-            CettaForeignValue *value = (CettaForeignValue *)args[0]->ground.ptr;
-            if (value->backend == CETTA_FOREIGN_BACKEND_PYTHON) {
+            CettaForeignValue *value = foreign_python_record(args[0]);
+            if (value && value->backend == CETTA_FOREIGN_BACKEND_PYTHON) {
                 base = value->obj;
                 Py_INCREF(base);
             }

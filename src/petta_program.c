@@ -1,4 +1,5 @@
 #include "petta_program.h"
+#include "foreign_provider.h"
 
 #include "eval.h"
 #include "grounded.h"
@@ -11,6 +12,7 @@
 #include "term_canon.h"
 
 #include <stdlib.h>
+#include <errno.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdint.h>
@@ -543,9 +545,11 @@ static bool petta_program_reserve(
     }
     if (next > SIZE_MAX / width)
         return false;
-    *items = *items
+    void *grown = *items
         ? cetta_realloc(*items, width * next)
         : cetta_malloc(width * next);
+    if (!grown) return false;
+    *items = grown;
     *capacity = next;
     return true;
 }
@@ -2760,7 +2764,8 @@ static PettaPlanNode *petta_plan_build_in(
              * retains the implicit run-time-dispatch handler. */
             node->dispatch_handler =
                 !petta_semantics_lambda_body(head_atom, NULL) &&
-                !petta_semantics_nullary_lambda_body(head_atom, NULL);
+                !petta_semantics_nullary_lambda_body(head_atom, NULL) &&
+                !cetta_foreign_provider_callable(head_atom);
         }
 
         if (node->computation.control.operation == CETTA_CONTROL_NONE) {
@@ -4314,21 +4319,28 @@ PettaProgram *petta_program_new_with_rules(unsigned admitted_forms) {
     if (!(admitted_forms & CETTA_RULE_SYNTAX_ORDINARY) ||
         (admitted_forms & ~(CETTA_RULE_SYNTAX_ORDINARY | CETTA_RULE_SYNTAX_DIRECTIONAL)))
         return NULL;
-    PettaProgram *program = cetta_malloc(sizeof(*program));
-    memset(program, 0, sizeof(*program));
+    PettaProgram *program = calloc(1u, sizeof(*program));
+    if (!program) return NULL;
     program->admitted_rule_forms = admitted_forms;
-    arena_init(&program->plans);
+    if (!arena_try_init(&program->plans)) goto failed_plans;
     arena_set_runtime_kind(
         &program->plans, CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
     arena_set_hashcons(&program->plans, NULL);
-    arena_init(&program->transient_scratch);
-    arena_init(&program->transient_plan_atoms);
+    if (!arena_try_init(&program->transient_scratch)) goto failed_scratch;
+    if (!arena_try_init(&program->transient_plan_atoms)) goto failed_atoms;
     /* Bounded source keys usually occupy a small fraction of a worker
      * block; grow the metadata pool only as actual retained keys require. */
     arena_set_block_capacity(&program->transient_plan_atoms, ARENA_BLOCK_SIZE / 16u);
     arena_set_block_growth(&program->transient_plan_atoms, true);
     arena_set_hashcons(&program->transient_scratch, NULL);
     return program;
+failed_atoms:
+    { int error = errno; arena_free(&program->transient_scratch); errno = error; }
+failed_scratch:
+    { int error = errno; arena_free(&program->plans); errno = error; }
+failed_plans:
+    { int error = errno; free(program); errno = error; }
+    return NULL;
 }
 
 bool petta_program_enable_callability_refresh(PettaProgram *program) {

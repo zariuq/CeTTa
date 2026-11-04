@@ -5,6 +5,7 @@
 #include "string_literal.h"
 
 #include <inttypes.h>
+#include <errno.h>
 #include <math.h>
 #include <pthread.h>
 #include <stdarg.h>
@@ -597,8 +598,13 @@ bool term_universe_add_store_format_observer(
     if (universe->observer_len == universe->observer_cap) {
         size_t next_cap =
             universe->observer_cap ? universe->observer_cap * 2u : 8u;
+        if (next_cap <= universe->observer_cap ||
+            next_cap > SIZE_MAX / sizeof(*universe->observers)) {
+            term_universe_set_error(universe, TERM_UNIVERSE_ERROR_ALLOCATION_FAILED);
+            errno = EOVERFLOW; return false;
+        }
         TermUniverseStoreFormatObserverEntry *next =
-            cetta_realloc(universe->observers, sizeof(*next) * next_cap);
+            realloc(universe->observers, sizeof(*next) * next_cap);
         if (!next) {
             term_universe_set_error(universe,
                                     TERM_UNIVERSE_ERROR_ALLOCATION_FAILED);
@@ -5257,6 +5263,7 @@ static Atom *term_universe_copy_atom_impl(const TermUniverse *universe,
             if (!cetta_expr_len_mul_fits_size(len, sizeof(Atom *)))
                 return NULL;
             elems = arena_alloc(dst, sizeof(Atom *) * (size_t)len);
+            if (!elems) return NULL;
         }
         for (CettaExprIndex i = 0; i < len; i++) {
             elems[i] = term_universe_copy_atom_impl(
@@ -6810,7 +6817,13 @@ static bool term_universe_add_provider(TermUniverse *universe,
     if (universe->root_provider_len == universe->root_provider_cap) {
         size_t next_cap = universe->root_provider_cap
             ? universe->root_provider_cap * 2u : 8u;
-        TermUniverseRootProviderEntry *next = cetta_realloc(
+        if (next_cap <= universe->root_provider_cap ||
+            next_cap > SIZE_MAX / sizeof(*universe->root_providers)) {
+            universe->collection_mode = TERM_UNIVERSE_COLLECTION_OFF;
+            term_universe_set_error(universe, TERM_UNIVERSE_ERROR_ALLOCATION_FAILED);
+            errno = EOVERFLOW; return false;
+        }
+        TermUniverseRootProviderEntry *next = realloc(
             universe->root_providers, sizeof(*next) * next_cap);
         if (!next) {
             /* A holder that cannot be listed could lose what it holds, so

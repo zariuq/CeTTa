@@ -387,6 +387,7 @@ static bool frame_identity_scope_reserve(CettaFrameIdentityScope *scope) {
             SIZE_MAX / (size_t)capacity < sizeof(*scope->identities))
             return false;
         CettaFrameIdentity *grown = cetta_malloc((size_t)capacity * sizeof(*grown));
+        if (!grown) return false;
         memcpy(grown, scope->identities, (size_t)scope->len * sizeof(*grown));
         if (scope->identities != scope->inline_identities)
             free(scope->identities);

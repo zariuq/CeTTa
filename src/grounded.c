@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "grounded.h"
+#include "host_services.h"
 #include "abt.h"
 #include "eval.h"
 #include "he_typing.h"
@@ -3502,17 +3503,21 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
     if (head_id == g_builtin_syms.println_bang) {
         if (nargs != 1)
             return grounded_incorrect_arity(a, head, args, nargs);
+        CettaHostOutput output;
+        if (!cetta_output_open(&output, 0u))
+            return grounded_raise(a, head, args, nargs, atom_symbol(a, "OutputFailed"));
         if (eval_current_language_id &&
             eval_current_language_id() == CETTA_LANGUAGE_PETTA) {
-            atom_print_petta(args[0], stdout);
+            atom_print_petta(args[0], output.stream);
         } else if (args[0]->kind == ATOM_GROUNDED &&
                    args[0]->ground.gkind == GV_STRING) {
-            fwrite(args[0]->ground.sval, 1u, args[0]->ground.slen, stdout);
+            fwrite(args[0]->ground.sval, 1u, args[0]->ground.slen, output.stream);
         } else {
-            atom_print(args[0], stdout);
+            atom_print(args[0], output.stream);
         }
-        fputc('\n', stdout);
-        fflush(stdout);
+        fputc('\n', output.stream);
+        if (!cetta_output_close(&output))
+            return grounded_raise(a, head, args, nargs, atom_symbol(a, "OutputFailed"));
         if (eval_current_language_id &&
             eval_current_language_id() == CETTA_LANGUAGE_PETTA) {
             return petta_semantics_boolean_value(a, true);
@@ -3547,7 +3552,7 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
     if (head_id == g_builtin_syms.flush_output_bang) {
         if (nargs != 0)
             return grounded_incorrect_arity(a, head, args, nargs);
-        if (fflush(stdout) != 0)
+        if (!cetta_output_flush(0u))
             return grounded_raise(
                 a, head, args, nargs,
                 atom_symbol(a, "FlushFailed"));
@@ -3564,13 +3569,17 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
         bool petta =
             eval_current_language_id &&
             eval_current_language_id() == CETTA_LANGUAGE_PETTA;
-        FILE *destination = petta ? stdout : stderr;
+        CettaHostOutput output;
+        if (!cetta_output_open(&output, petta ? 0u : 1u))
+            return grounded_raise(a, head, args, nargs, atom_symbol(a, "OutputFailed"));
+        FILE *destination = output.stream;
         if (petta)
             atom_print_petta(args[0], destination);
         else
             atom_print(args[0], destination);
         fputc('\n', destination);
-        fflush(destination);
+        if (!cetta_output_close(&output))
+            return grounded_raise(a, head, args, nargs, atom_symbol(a, "OutputFailed"));
         return args[1];
     }
 
@@ -3787,12 +3796,16 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
         if (args[1]->kind != ATOM_EXPR)
             return grounded_string_error(a, head, args, nargs, "Atom is not an ExpressionAtom");
         char *label = atom_to_string(a, args[0]);
-        printf("%" PRIu64 " %s:\n", (uint64_t)args[1]->expr.len, label);
+        CettaHostOutput output;
+        if (!cetta_output_open(&output, 0u))
+            return grounded_raise(a, head, args, nargs, atom_symbol(a, "OutputFailed"));
+        fprintf(output.stream, "%" PRIu64 " %s:\n", (uint64_t)args[1]->expr.len, label);
         for (CettaExprIndex i = 0; i < args[1]->expr.len; i++) {
             char *rendered = atom_to_string(a, args[1]->expr.elems[i]);
-            printf("    %s\n", rendered);
+            fprintf(output.stream, "    %s\n", rendered);
         }
-        fflush(stdout);
+        if (!cetta_output_close(&output))
+            return grounded_raise(a, head, args, nargs, atom_symbol(a, "OutputFailed"));
         return atom_unit(a);
     }
 
