@@ -15,7 +15,14 @@
 #include <malloc.h>
 #endif
 #include "eval.h"
+#include "state_cell.h"
+#pragma weak state_cell_snapshot_acquire
+#pragma weak state_cell_snapshot_release
 #include "exact_integer.h"
+#include "fallible_alloc.h"
+#include "proof_row.h"
+#include "proof_batches.h"
+#include "u64_index.h"
 #include <assert.h>
 #include <inttypes.h>
 #include <stdatomic.h>
@@ -24,6 +31,31 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+
+static __attribute__((noinline, cold)) bool space_proof_prepare_mutation_slow(Space *);
+/* Selected storage is not a module-own view: both constructors of such
+ * views reject another module-own view as their base. Keep this recheck
+ * after callbacks, which may have installed a new proof image. */
+static inline bool space_proof_prepare_storage(Space *s) {
+    return !s || !atomic_load_explicit(&s->native.has_proof_image, memory_order_acquire) ||
+        space_proof_prepare_mutation_slow(s);
+}
+static inline bool space_proof_prepare_mutation(Space *s) {
+    return space_proof_prepare_storage(space_mutation_target(s));
+}
+static inline bool space_proof_present(const Space *s) {
+    return s && atomic_load_explicit(&s->native.has_proof_image, memory_order_acquire);
+}
+static __attribute__((noinline, cold)) bool space_proof_non_exact(const Space *);
+
+#ifdef CETTA_TEST_PROOF_APPEND_WORK
+uint64_t cetta_test_proof_append_prefix_scanned;
+uint64_t cetta_test_proof_append_prefix_copied;
+uint64_t cetta_test_proof_append_capture_copied;
+#define SPACE_PROOF_APPEND_WORK(field, amount) (cetta_test_proof_append_##field += (amount))
+#else
+#define SPACE_PROOF_APPEND_WORK(field, amount) ((void)0)
+#endif
 
 static _Thread_local SpaceMatchBackendError g_space_match_backend_error =
     SPACE_MATCH_BACKEND_ERROR_NONE;
@@ -120,6 +152,10 @@ const char *space_match_backend_error_name(SpaceMatchBackendError code) {
         return "NativeSpaceTooLarge";
     case SPACE_MATCH_BACKEND_ERROR_PACKET_TOO_LARGE:
         return "PacketTooLarge";
+    case SPACE_MATCH_BACKEND_ERROR_ALLOCATION_FAILED:
+        return "SpaceAllocationFailed";
+    case SPACE_MATCH_BACKEND_ERROR_STORAGE_INVALIDATED:
+        return "SpaceStorageInvalidated";
     }
     return "UnknownSpaceMatchBackendError";
 }
@@ -178,6 +214,8 @@ static uint64_t space_match_backend_limit_for_error(SpaceMatchBackendError error
     case SPACE_MATCH_BACKEND_ERROR_PACKET_TOO_LARGE:
         return space_match_backend_packet_materialization_limit();
     case SPACE_MATCH_BACKEND_ERROR_NONE:
+    case SPACE_MATCH_BACKEND_ERROR_ALLOCATION_FAILED:
+    case SPACE_MATCH_BACKEND_ERROR_STORAGE_INVALIDATED:
         return UINT64_MAX;
     }
     return UINT64_MAX;
@@ -1804,6 +1842,7 @@ void disc_lookup(DiscNode *root, Atom *query, CettaIndex **out,
 struct SpacePinnedOccurrences {
     uint32_t references;
     Space *space;
+    void *lifetime_hold;
     uint8_t *atom_ids;
     uint8_t atom_id_width_bits;
     CettaCount len;
@@ -1947,7 +1986,10 @@ static SpacePinnedOccurrences *space_pinned_occurrences_acquire(Space *s) {
     SpaceMatchNativeState *st = &s->match_backend.native;
     if (!st->pinned) {
         st->pinned = cetta_malloc(sizeof(*st->pinned));
-        *st->pinned = (SpacePinnedOccurrences){.space = s};
+        *st->pinned = (SpacePinnedOccurrences){
+            .space = s,
+            .lifetime_hold = space_lifetime_pin ? space_lifetime_pin(s) : NULL,
+        };
     }
     st->pinned->references++;
     space_match_native_pin_trie(s);
@@ -2005,7 +2047,35 @@ static void space_pinned_occurrences_release(SpacePinnedOccurrences *view) {
         space_head_index_free(view->head_index);
         disc_node_free(view->match_trie);
     }
+    if (space_lifetime_unpin)
+        space_lifetime_unpin(view->lifetime_hold);
     free(view);
+}
+
+static void space_pinned_occurrences_finish_detach(Space *s,
+                                                    SpacePinnedOccurrences *view) {
+    SpaceMatchNativeState *st = &s->match_backend.native;
+    view->match_trie = st->match_trie;
+    view->head_index = space_head_index_take(s);
+    view->space = NULL;
+    st->match_trie = NULL;
+    st->match_trie_dirty = false;
+    st->match_trie_stale_occurrences = 0u;
+    st->match_trie_pins = 0u;
+    st->pinned = NULL;
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_SPACE_PINNED_OCCURRENCES_DETACH);
+    cetta_runtime_stats_add(
+        CETTA_RUNTIME_COUNTER_SPACE_PINNED_OCCURRENCES_DETACHED_ROW,
+        view->len);
+    /* The detached rows and indexes are owned by the view. They no longer
+     * borrow the Space; kept skeleton facts carry their own hold. */
+    if (!space_lifetime_pin_keeps_storage ||
+        !space_lifetime_pin_keeps_storage(view->lifetime_hold)) {
+        if (space_lifetime_unpin)
+            space_lifetime_unpin(view->lifetime_hold);
+        view->lifetime_hold = NULL;
+    }
 }
 
 void space_pinned_occurrences_detach(Space *s) {
@@ -2041,24 +2111,12 @@ void space_pinned_occurrences_detach(Space *s) {
         view->mark_rows = s->native.mark_rows;
         view->marked = s->native.marked;
     }
-    view->match_trie = st->match_trie;
-    view->head_index = space_head_index_take(s);
-    view->space = NULL;
     /* A detached view lives while a reader walks it, rarely across a
      * collection, so it lists its rows when one comes rather than counting
      * them when it detaches and again when it goes. */
     (void)term_universe_add_root_provider(
         view->universe, space_pinned_occurrences_roots, view);
-    st->match_trie = NULL;
-    st->match_trie_dirty = false;
-    st->match_trie_stale_occurrences = 0u;
-    st->match_trie_pins = 0u;
-    st->pinned = NULL;
-    cetta_runtime_stats_inc(
-        CETTA_RUNTIME_COUNTER_SPACE_PINNED_OCCURRENCES_DETACH);
-    cetta_runtime_stats_add(
-        CETTA_RUNTIME_COUNTER_SPACE_PINNED_OCCURRENCES_DETACHED_ROW,
-        view->len);
+    space_pinned_occurrences_finish_detach(s, view);
 }
 
 /* The rows a cursor reads: its Space's while the view is current, the
@@ -2232,14 +2290,18 @@ typedef struct SpaceKeptOccurrences {
     uint32_t references;
     uint32_t arity;
     TermUniverse *universe;
+    void *lifetime_hold;
     AtomId head_id;
-    size_t len, cap;
+    size_t len;
+    /* The facts' columns, ARITY each, and a record slot each, held in DATA
+     * below: one allocation sized to the facts. */
     AtomId *columns;
     AtomId *records;
     /* Deep facts: their spine, whose holes the columns fill, the head's
      * own, which stands while the space does; NULL for facts
      * (h c1 ... ck). */
     const CettaSkeleton *skeleton;
+    AtomId data[];
 } SpaceKeptOccurrences;
 
 static void space_kept_occurrences_roots(const TermUniverse *universe,
@@ -2265,27 +2327,87 @@ static void space_kept_occurrences_release(SpaceKeptOccurrences *kept) {
         return;
     term_universe_remove_root_provider(kept->universe,
                                        space_kept_occurrences_roots, kept);
-    free(kept->columns);
-    free(kept->records);
+    if (space_lifetime_unpin)
+        space_lifetime_unpin(kept->lifetime_hold);
     free(kept);
 }
 
-static bool space_kept_occurrences_push(void *context,
-                                        const CettaDenseId *tuple) {
-    SpaceKeptOccurrences *kept = context;
-    if (kept->len == kept->cap) {
-        size_t cap = kept->cap ? kept->cap * 2u : 16u;
-        AtomId *columns = realloc(kept->columns,
-                                  cap * kept->arity * sizeof(*columns));
+/* The facts a walk selects, gathered before the cursor's record of them is
+ * made to their size: on the stack while they are few. */
+enum { SPACE_KEPT_GATHER_SMALL = 128u };
+
+typedef struct {
+    uint32_t arity;
+    size_t len, cap;
+    AtomId *columns;
+    AtomId small[SPACE_KEPT_GATHER_SMALL];
+} SpaceKeptGather;
+
+static void space_kept_gather_init(SpaceKeptGather *gather, uint32_t arity) {
+    gather->arity = arity;
+    gather->len = 0u;
+    gather->cap = SPACE_KEPT_GATHER_SMALL / arity;
+    gather->columns = gather->small;
+}
+
+static void space_kept_gather_free(SpaceKeptGather *gather) {
+    if (gather->columns != gather->small)
+        free(gather->columns);
+}
+
+static bool space_kept_gather_push(void *context, const CettaDenseId *tuple) {
+    SpaceKeptGather *gather = context;
+    if (gather->len == gather->cap) {
+        size_t cap = gather->cap * 2u;
+        size_t bytes = cap * gather->arity * sizeof(AtomId);
+        AtomId *columns = gather->columns == gather->small
+            ? malloc(bytes) : realloc(gather->columns, bytes);
         if (!columns)
             return false;
-        kept->columns = columns;
-        kept->cap = cap;
+        if (gather->columns == gather->small)
+            memcpy(columns, gather->small,
+                   gather->len * gather->arity * sizeof(AtomId));
+        gather->columns = columns;
+        gather->cap = cap;
     }
-    for (uint32_t c = 0u; c < kept->arity; c++)
-        kept->columns[kept->len * kept->arity + c] = (AtomId)tuple[c];
-    kept->len++;
+    for (uint32_t c = 0u; c < gather->arity; c++)
+        gather->columns[gather->len * gather->arity + c] = (AtomId)tuple[c];
+    gather->len++;
     return true;
+}
+
+/* The cursor's record of the gathered facts, in one allocation of their
+ * size, listing its ids to the collector; NULL when memory runs out. */
+static SpaceKeptOccurrences *space_kept_occurrences_make(
+    const SpaceKeptGather *gather, Space *owner, AtomId head_id,
+    const CettaSkeleton *skeleton) {
+    TermUniverse *universe = owner->native.universe;
+    size_t cells = gather->len * gather->arity + gather->len;
+    SpaceKeptOccurrences *kept =
+        malloc(sizeof(*kept) + cells * sizeof(AtomId));
+    if (!kept)
+        return NULL;
+    *kept = (SpaceKeptOccurrences){
+        .references = 1u,
+        .arity = gather->arity,
+        .universe = universe,
+        .head_id = head_id,
+        .len = gather->len,
+        .skeleton = skeleton,
+    };
+    kept->columns = kept->data;
+    kept->records = kept->data + gather->len * gather->arity;
+    memcpy(kept->columns, gather->columns,
+           gather->len * gather->arity * sizeof(AtomId));
+    for (size_t i = 0u; i < gather->len; i++)
+        kept->records[i] = CETTA_ATOM_ID_NONE;
+    if (!term_universe_add_root_provider(universe,
+                                         space_kept_occurrences_roots, kept)) {
+        free(kept);
+        return NULL;
+    }
+    kept->lifetime_hold = space_lifetime_pin ? space_lifetime_pin(owner) : NULL;
+    return kept;
 }
 
 /* The facts of the space's relation that PATTERN selects, for an occurrence
@@ -2335,28 +2457,15 @@ static SpaceKeptOccurrences *space_dense_occurrences(Space *s,
         else
             fixed[c] = id;
     }
-    SpaceKeptOccurrences *kept = calloc(1u, sizeof(*kept));
-    if (!kept)
-        return NULL;
-    kept->references = 1u;
-    kept->arity = form.arity;
-    kept->universe = s->native.universe;
-    kept->head_id = form.head_id;
+    SpaceKeptGather gather;
+    space_kept_gather_init(&gather, form.arity);
     bool ok = none || space_dense_form_each(form, fixed,
-                                            space_kept_occurrences_push, kept);
-    if (ok && kept->len != 0u) {
-        kept->records = malloc(kept->len * sizeof(*kept->records));
-        ok = kept->records != NULL;
-        for (size_t i = 0u; ok && i < kept->len; i++)
-            kept->records[i] = CETTA_ATOM_ID_NONE;
-    }
-    if (!ok || !term_universe_add_root_provider(
-                   kept->universe, space_kept_occurrences_roots, kept)) {
-        free(kept->columns);
-        free(kept->records);
-        free(kept);
-        return NULL;
-    }
+                                            space_kept_gather_push, &gather);
+    SpaceKeptOccurrences *kept = ok
+        ? space_kept_occurrences_make(&gather, s,
+                                      form.head_id, NULL)
+        : NULL;
+    space_kept_gather_free(&gather);
     return kept;
 }
 
@@ -2386,6 +2495,7 @@ static bool space_occurrence_cursor_init_rows(Space *s, Atom *pattern,
  * it kept: the relation stays, and only the facts lent get records. */
 bool space_occurrence_cursor_init(Space *s, Atom *pattern,
                                   SpaceOccurrenceCursor *cursor) {
+    if (!space_prepare_proof_read(s, pattern)) return false;
     SpaceKeptOccurrences *kept = space_dense_occurrences(s, pattern);
     if (!kept)
         return space_occurrence_cursor_init_rows(s, pattern, cursor);
@@ -3607,7 +3717,7 @@ static bool atom_id_is_eq_subst_safe_within(const Space *s, AtomId atom_id,
         return false;
     const CettaTermHdr *hdr = tu_hdr(s->native.universe, atom_id);
     if (!hdr) {
-        Atom *atom = term_universe_get_atom(s->native.universe, atom_id);
+        Atom *atom = term_universe_peek_atom(s->native.universe, atom_id);
         return atom ? atom_is_eq_subst_safe(atom) : false;
     }
     if (tu_kind(s->native.universe, atom_id) == ATOM_EXPR &&
@@ -3867,8 +3977,7 @@ static void space_head_chains_append(SpaceHeadChains *rows, SymbolId head,
 }
 
 static void eq_index_init(EqIndex *idx) {
-    for (uint32_t i = 0; i < EQ_INDEX_BUCKETS; i++)
-        eq_bucket_init(&idx->buckets[i]);
+    idx->buckets = NULL;
     eq_bucket_init(&idx->wildcard);
     space_head_chains_init(&idx->head_rows);
     eq_head_set_init(&idx->directional_heads);
@@ -3877,8 +3986,12 @@ static void eq_index_init(EqIndex *idx) {
 }
 
 static void eq_index_free(EqIndex *idx) {
-    for (uint32_t i = 0; i < EQ_INDEX_BUCKETS; i++)
-        eq_bucket_free(&idx->buckets[i]);
+    if (idx->buckets) {
+        for (uint32_t i = 0; i < EQ_INDEX_BUCKETS; i++)
+            eq_bucket_free(&idx->buckets[i]);
+        free(idx->buckets);
+        idx->buckets = NULL;
+    }
     eq_bucket_free(&idx->wildcard);
     space_head_chains_free(&idx->head_rows);
     eq_head_set_free(&idx->directional_heads);
@@ -3893,7 +4006,7 @@ static void eq_index_note_directional_row(EqIndex *idx, const Space *s,
          tu_arity(universe, atom_id) != 3u ||
          tu_head_sym(universe, atom_id) != g_builtin_syms.equals_percent))
         return;
-    Atom *atom = term_universe_get_atom(s->native.universe, atom_id);
+    Atom *atom = term_universe_peek_atom(s->native.universe, atom_id);
     CettaRuleDescriptor rule;
     if (!cetta_rule_view(atom, CETTA_RULE_SYNTAX_DIRECTIONAL, &rule)) return;
     idx->directional_present = true;
@@ -3904,12 +4017,23 @@ static void eq_index_note_directional_row(EqIndex *idx, const Space *s,
         idx->directional_wildcard = true;
 }
 
+/* HEAD's bucket, the buckets made with the index's first equation with a
+ * head. */
+static EqBucket *eq_index_head_bucket(EqIndex *idx, SymbolId head) {
+    if (!idx->buckets) {
+        idx->buckets = cetta_malloc(sizeof(*idx->buckets) * EQ_INDEX_BUCKETS);
+        for (uint32_t i = 0; i < EQ_INDEX_BUCKETS; i++)
+            eq_bucket_init(&idx->buckets[i]);
+    }
+    return &idx->buckets[symbol_hash(head)];
+}
+
 static void eq_index_add(EqIndex *idx, Atom *lhs, CettaIndex atom_idx,
                          AtomId equation_id) {
     SymbolId head = eq_head_symbol(lhs);
     if (head != SYMBOL_ID_NONE) {
         space_head_chains_append(&idx->head_rows, head, atom_idx, equation_id);
-        eq_bucket_add(&idx->buckets[symbol_hash(head)], lhs, atom_idx,
+        eq_bucket_add(eq_index_head_bucket(idx, head), lhs, atom_idx,
                       equation_id);
     } else {
         eq_bucket_add(&idx->wildcard, lhs, atom_idx, equation_id);
@@ -3921,7 +4045,7 @@ static void eq_index_add_id(EqIndex *idx, const Space *s, AtomId lhs_id,
     SymbolId head = eq_head_symbol_id(s, lhs_id);
     if (head != SYMBOL_ID_NONE) {
         space_head_chains_append(&idx->head_rows, head, atom_idx, equation_id);
-        eq_bucket_add_id(&idx->buckets[symbol_hash(head)], s, lhs_id, atom_idx,
+        eq_bucket_add_id(eq_index_head_bucket(idx, head), s, lhs_id, atom_idx,
                          equation_id);
     } else {
         eq_bucket_add_id(&idx->wildcard, s, lhs_id, atom_idx, equation_id);
@@ -3955,7 +4079,7 @@ static SymbolId ty_ann_subject_head_id(const Space *s, AtomId subject_id) {
         return SYMBOL_ID_NONE;
     }
     return ty_ann_subject_head(
-        term_universe_get_atom(s->native.universe, subject_id));
+        term_universe_peek_atom(s->native.universe, subject_id));
 }
 
 static void ty_ann_index_init(TypeAnnIndex *idx) {
@@ -3993,7 +4117,7 @@ static void ty_ann_index_add_id(TypeAnnIndex *idx, const Space *s,
                 PETTA_VALUE_ORDINARY)
             idx->has_open_rows = true;
     } else {
-        Atom *subject = term_universe_get_atom(s->native.universe, subject_id);
+        Atom *subject = term_universe_peek_atom(s->native.universe, subject_id);
         if (!subject || atom_structural_has_rational(subject) ||
             (subject->kind == ATOM_EXPR &&
              atom_petta_value_representation(subject) != PETTA_VALUE_ORDINARY))
@@ -4021,7 +4145,7 @@ static void ty_ann_index_note_row(TypeAnnIndex *idx, const Space *s,
             idx->has_open_rows = true;
         return;
     }
-    Atom *row = term_universe_get_atom(universe, row_id);
+    Atom *row = term_universe_peek_atom(universe, row_id);
     if (!row || row->kind == ATOM_VAR || atom_structural_has_rational(row) ||
         (row->kind == ATOM_EXPR && row->expr.len != 0u &&
          (atom_head_symbol_id(row) == SYMBOL_ID_NONE ||
@@ -4259,16 +4383,105 @@ static ExactIndexInexactHead *exact_index_inexact_head(
     }
 }
 
-/* Dense AtomId presence bitset -- doctrine-1 exact-membership at the store seam.
-   Interned AtomIds are sequential, so a grown bitset gives O(1) unclusterable
-   exact-contains, replacing the fixed-bucket structural walk on the hot path. */
+/* Presence keys -- exact membership at the store seam, in the form their
+   density allows (PresenceSetForm).  A table of the keys costs bytes a key;
+   a bitset over the ids costs a bit an id the universe has, smaller once the
+   keys are dense.  Interned AtomIds are sequential, so Fibonacci hashing
+   spreads them and a grown bitset answers in one test. */
+static uint32_t id_present_slot(AtomId id, uint32_t cap) {
+    uint64_t h = (uint64_t)id * UINT64_C(0x9E3779B97F4A7C15);
+    return (uint32_t)(h >> 32) & (cap - 1u);
+}
+
 static bool id_present_contains(const SpaceNativeStorage *ns, AtomId id) {
+    if (!ns->id_present) {
+        if (!ns->id_present_table_cap)
+            return false;
+        for (uint32_t at = id_present_slot(id, ns->id_present_table_cap);;
+             at = (at + 1u) & (ns->id_present_table_cap - 1u)) {
+            AtomId held = ns->id_present_table[at];
+            if (held == id)
+                return true;
+            if (held == CETTA_ATOM_ID_NONE)
+                return false;
+        }
+    }
     uint64_t bit = (uint64_t)id;
-    return ns->id_present && bit < ns->id_present_bits &&
+    return bit < ns->id_present_bits &&
            ((ns->id_present[bit >> 3] >> (bit & 7u)) & 1u);
 }
 
+static bool id_present_bits_set(SpaceNativeStorage *ns, AtomId id);
+
+static bool id_present_table_insert(AtomId *table, uint32_t cap, AtomId id) {
+    for (uint32_t at = id_present_slot(id, cap);; at = (at + 1u) & (cap - 1u)) {
+        if (table[at] == id)
+            return false;
+        if (table[at] == CETTA_ATOM_ID_NONE) {
+            table[at] = id;
+            return true;
+        }
+    }
+}
+
+/* The bitset over the table's ids, once it is smaller than the table. */
+static bool id_present_table_to_bits(SpaceNativeStorage *ns) {
+    AtomId *table = ns->id_present_table;
+    uint32_t cap = ns->id_present_table_cap;
+    ns->id_present_table = NULL;
+    ns->id_present_table_cap = 0u;
+    ns->id_present_table_used = 0u;
+    bool ok = true;
+    for (uint32_t at = 0u; ok && at < cap; at++) {
+        if (table[at] != CETTA_ATOM_ID_NONE)
+            ok = id_present_bits_set(ns, table[at]);
+    }
+    free(table);
+    return ok;
+}
+
 static bool id_present_set(SpaceNativeStorage *ns, AtomId id) {
+    if (ns->id_present)
+        return id_present_bits_set(ns, id);
+    if (id == CETTA_ATOM_ID_NONE)
+        return false;
+    /* Grown at half full; a table larger than the bitset over the ids it
+     * covers becomes the bitset. */
+    if ((uint64_t)(ns->id_present_table_used + 1u) * 2u >
+        ns->id_present_table_cap) {
+        uint32_t cap = ns->id_present_table_cap ? ns->id_present_table_cap * 2u
+                                                : 8u;
+        if (cap <= ns->id_present_table_cap)
+            return false;
+        AtomId *table = cetta_malloc((size_t)cap * sizeof(*table));
+        for (uint32_t at = 0u; at < cap; at++)
+            table[at] = CETTA_ATOM_ID_NONE;
+        for (uint32_t at = 0u; at < ns->id_present_table_cap; at++) {
+            if (ns->id_present_table[at] != CETTA_ATOM_ID_NONE)
+                (void)id_present_table_insert(table, cap,
+                                              ns->id_present_table[at]);
+        }
+        free(ns->id_present_table);
+        ns->id_present_table = table;
+        ns->id_present_table_cap = cap;
+    }
+    if (id_present_table_insert(ns->id_present_table,
+                                ns->id_present_table_cap, id))
+        ns->id_present_table_used++;
+    /* While the keys are a table, id_present_bits is the size the bitset
+     * over their ids would have. */
+    uint64_t bits = ns->id_present_bits ? ns->id_present_bits : 4096u;
+    while (bits <= (uint64_t)id && bits <= UINT64_MAX / 2u)
+        bits <<= 1;
+    ns->id_present_bits = bits;
+    if ((uint64_t)ns->id_present_table_cap * sizeof(AtomId) > bits / 8u) {
+        ns->id_present_bits = 0u;
+        return id_present_table_to_bits(ns);
+    }
+    return true;
+}
+
+static bool id_present_bits_set(SpaceNativeStorage *ns, AtomId id) {
     uint64_t bit = (uint64_t)id;
     if (bit >= ns->id_present_bits) {
         uint64_t new_bits = ns->id_present_bits ? ns->id_present_bits : 4096u;
@@ -4294,6 +4507,23 @@ static bool id_present_set(SpaceNativeStorage *ns, AtomId id) {
     return true;
 }
 
+/* The native storage is the first member of Space. Its sparse owner token
+ * moves with the storage and is rebound to the destination after transfer. */
+static inline void space_resource_hold(SpaceNativeStorage *native, AtomId id) {
+    TermUniverse *universe = native->universe;
+    if (universe && universe->fallbacks &&
+        (id >= universe->len ||
+         universe->entries[id].record == CETTA_TERM_ENTRY_BLOB_NONE))
+        term_universe_resource_hold(universe, id,
+            &native->resource_owner, (Space *)native);
+}
+
+static inline void space_resource_release(SpaceNativeStorage *native, AtomId id) {
+    if (native->resource_owner)
+        term_universe_resource_release(native->universe, id,
+                                         native->resource_owner);
+}
+
 /* A key the bitset sets that is no row's id: the bitset holds it. */
 static bool id_present_key_hold(SpaceNativeStorage *ns, AtomId key) {
     if (ns->id_present_key_len == ns->id_present_key_cap) {
@@ -4309,26 +4539,100 @@ static bool id_present_key_hold(SpaceNativeStorage *ns, AtomId key) {
         ns->id_present_key_cap = cap;
     }
     ns->id_present_keys[ns->id_present_key_len++] = key;
+    space_resource_hold(ns, key);
     term_universe_hold(ns->universe, key);
     return true;
 }
 
 static void id_present_keys_release(SpaceNativeStorage *ns) {
-    for (CettaIndex i = 0u; i < ns->id_present_key_len; i++)
+    for (CettaIndex i = 0u; i < ns->id_present_key_len; i++) {
+        space_resource_release(ns, ns->id_present_keys[i]);
         term_universe_release(ns->universe, ns->id_present_keys[i]);
+    }
     ns->id_present_key_len = 0u;
 }
 
+/* A rebuild keeps the form and the room it had, emptied in place: it will
+ * likely reach the same density, and keeping the room keeps a space that
+ * rebuilds often from reallocating. */
 static void id_present_clear(SpaceNativeStorage *ns) {
-    if (ns->id_present)
+    if (ns->id_present) {
         memset(ns->id_present, 0, (size_t)(ns->id_present_bits >> 3));
+    } else {
+        for (uint32_t at = 0u; at < ns->id_present_table_cap; at++)
+            ns->id_present_table[at] = CETTA_ATOM_ID_NONE;
+        ns->id_present_table_used = 0u;
+        ns->id_present_bits = 0u;
+    }
     id_present_keys_release(ns);
+    ns->id_present_shared = false;
+}
+
+static void id_present_unset(SpaceNativeStorage *ns, AtomId id) {
+    if (ns->id_present) {
+        uint64_t bit = (uint64_t)id;
+        if (bit < ns->id_present_bits)
+            ns->id_present[bit >> 3] &= (uint8_t)~(1u << (bit & 7u));
+        return;
+    }
+    uint32_t cap = ns->id_present_table_cap;
+    if (!cap)
+        return;
+    uint32_t at = id_present_slot(id, cap);
+    while (ns->id_present_table[at] != id) {
+        if (ns->id_present_table[at] == CETTA_ATOM_ID_NONE)
+            return;
+        at = (at + 1u) & (cap - 1u);
+    }
+    /* Backward shift: each later key of the run moves into the hole when
+     * its home does not lie strictly after the hole. */
+    uint32_t hole = at;
+    for (uint32_t next = (hole + 1u) & (cap - 1u);
+         ns->id_present_table[next] != CETTA_ATOM_ID_NONE;
+         next = (next + 1u) & (cap - 1u)) {
+        uint32_t home = id_present_slot(ns->id_present_table[next], cap);
+        bool stays = hole <= next ? (hole < home && home <= next)
+                                  : (hole < home || home <= next);
+        if (!stays) {
+            ns->id_present_table[hole] = ns->id_present_table[next];
+            hole = next;
+        }
+    }
+    ns->id_present_table[hole] = CETTA_ATOM_ID_NONE;
+    ns->id_present_table_used--;
+}
+
+/* A removed row's held key stays listed; once the list passes twice the rows
+ * plus sixteen, the keys no row has are released and each kept key is listed
+ * once, a cost the added keys pay for (SetPresenceChurn.compaction_amortized). */
+static void id_present_keys_compact(SpaceNativeStorage *ns, CettaCount rows) {
+    if (ns->id_present_key_len <= 2u * rows + 16u)
+        return;
+    CettaIndex kept = 0u;
+    for (CettaIndex i = 0u; i < ns->id_present_key_len; i++) {
+        AtomId key = ns->id_present_keys[i];
+        if (id_present_contains(ns, key)) {
+            ns->id_present_keys[kept++] = key;
+            /* Cleared while kept, so a later listing of it is released. */
+            id_present_unset(ns, key);
+        } else {
+            space_resource_release(ns, key);
+            term_universe_release(ns->universe, key);
+        }
+    }
+    for (CettaIndex i = 0u; i < kept; i++)
+        (void)id_present_set(ns, ns->id_present_keys[i]);
+    ns->id_present_key_len = kept;
 }
 
 static void id_present_free(SpaceNativeStorage *ns) {
     free(ns->id_present);
     ns->id_present = NULL;
     ns->id_present_bits = 0;
+    free(ns->id_present_table);
+    ns->id_present_table = NULL;
+    ns->id_present_table_cap = 0u;
+    ns->id_present_table_used = 0u;
     id_present_keys_release(ns);
     free(ns->id_present_keys);
     ns->id_present_keys = NULL;
@@ -4369,7 +4673,7 @@ static AtomId space_canonical_id_for_stored(Space *s, AtomId atom_id) {
                      : CETTA_ATOM_ID_NONE;
     if (key != CETTA_ATOM_ID_NONE)
         return key;
-    Atom *atom = term_universe_get_atom(s->native.universe, atom_id);
+    Atom *atom = term_universe_peek_atom(s->native.universe, atom_id);
     if (!atom)
         return CETTA_ATOM_ID_NONE;
     if (!atom_has_vars(atom))
@@ -4383,6 +4687,19 @@ static AtomId space_canonical_id_for_stored(Space *s, AtomId atom_id) {
         : CETTA_ATOM_ID_NONE;
     arena_reset(scratch, mark);
     return cid;
+}
+
+/* The presence key of the stored row STORED_ID: false for a pointer-backed
+ * runtime value, which has no lawful structural key and is left to the
+ * exact and alpha scans; CETTA_ATOM_ID_NONE when the key cannot be made. */
+static bool id_present_row_key(Space *s, AtomId stored_id, AtomId *key) {
+    if (!tu_hdr(s->native.universe, stored_id)) {
+        Atom *stored = term_universe_peek_atom(s->native.universe, stored_id);
+        if (stored && !term_universe_atom_is_stable(stored))
+            return false;
+    }
+    *key = space_canonical_id_for_stored(s, stored_id);
+    return true;
 }
 
 /* Alpha-canonical AtomId of a QUERY atom (contains).  Find-only, so a query miss
@@ -4475,7 +4792,7 @@ static bool atom_id_is_exact_indexable(const Space *s, AtomId atom_id) {
         return false;
     const CettaTermHdr *hdr = tu_hdr(s->native.universe, atom_id);
     if (!hdr)
-        return atom_is_exact_indexable(term_universe_get_atom(s->native.universe, atom_id));
+        return atom_is_exact_indexable(term_universe_peek_atom(s->native.universe, atom_id));
     switch (tu_kind(s->native.universe, atom_id)) {
     case ATOM_SYMBOL:
         return true;
@@ -4799,13 +5116,15 @@ static void space_term_universe_roots(const TermUniverse *universe,
         space_visit_stored_ids(st->projected_atom_ids,
                                st->projected_atom_id_width_bits, 0u,
                                st->projected_len, visit, visit_context);
-        for (size_t b = 0u; b < STREE_BUCKETS; b++)
+        for (size_t b = 0u; st->buckets && b < STREE_BUCKETS; b++)
             space_visit_flat_bucket_ids(&st->buckets[b], visit,
                                         visit_context);
         space_visit_flat_bucket_ids(&st->wildcard, visit, visit_context);
     }
     const EqIndex *eq = &space->native.eq_idx;
     for (size_t b = 0u; b <= EQ_INDEX_BUCKETS; b++) {
+        if (b < EQ_INDEX_BUCKETS && !eq->buckets)
+            continue;
         const EqBucket *bucket =
             b < EQ_INDEX_BUCKETS ? &eq->buckets[b] : &eq->wildcard;
         for (CettaIndex i = 0u; bucket->atom_ids && i < bucket->len; i++)
@@ -4821,10 +5140,12 @@ static void space_attach_to_universe(Space *s, TermUniverse *universe) {
         return;
     (void)term_universe_add_store_format_observer(
         universe, space_term_universe_store_format_observer, s);
-    (void)term_universe_add_counted_root_provider(
-        universe, space_term_universe_counted_roots, s);
-    (void)term_universe_add_root_provider(
-        universe, space_term_universe_roots, s);
+    (void)term_universe_add_owned_root_provider(
+        universe, space_term_universe_counted_roots, s, true, s);
+    (void)term_universe_add_owned_root_provider(
+        universe, space_term_universe_roots, s, false, s);
+    if (space_reclaim_resource_cycles)
+        universe->resource_collector = space_reclaim_resource_cycles;
 }
 
 static void space_detach_from_universe(Space *s) {
@@ -5102,12 +5423,14 @@ static void space_note_released(Space *s, CettaCount rows) {
 
 /* A row appended holds its atom, one reference counted by the universe. */
 static inline void space_hold_row(Space *s, AtomId atom_id) {
+    space_resource_hold(&s->native, atom_id);
     term_universe_hold(s->native.universe, atom_id);
 }
 
 /* A row removed drops its reference. */
 static void space_release_row(Space *s, AtomId atom_id) {
     space_note_released(s, 1u);
+    space_resource_release(&s->native, atom_id);
     term_universe_release(s->native.universe, atom_id);
 }
 
@@ -5117,29 +5440,30 @@ static void space_release_rows(Space *s, CettaIndex from, CettaIndex to) {
     TermUniverse *universe = s->native.universe;
     if (from < to)
         space_note_released(s, to - from);
-    if (!universe || !universe->counting || !s->native.atom_ids)
+    if (!universe || !s->native.atom_ids ||
+        (!universe->counting && !s->native.resource_owner))
         return;
     for (CettaIndex row = from; row < to; row++) {
         if (s->native.marked != 0u && space_marks_row_marked(&s->native, row))
             continue;
-        term_universe_release_counted(
-            universe, space_atom_id_storage_load_at(
-                          s->native.atom_ids, s->native.atom_id_width_bits,
-                          s->native.start + row));
+        AtomId id = space_atom_id_storage_load_at(s->native.atom_ids,
+            s->native.atom_id_width_bits, s->native.start + row);
+        space_resource_release(&s->native, id);
+        term_universe_release(universe, id);
     }
 }
 
 void space_rows_hold(Space *s) {
     TermUniverse *universe = s ? s->native.universe : NULL;
-    if (!universe || !universe->counting || !s->native.atom_ids)
+    if (!universe || !s->native.atom_ids)
         return;
     for (CettaIndex row = 0u; row < s->native.len; row++) {
         if (s->native.marked != 0u && space_marks_row_marked(&s->native, row))
             continue;
-        term_universe_hold_counted(
-            universe, space_atom_id_storage_load_at(
-                          s->native.atom_ids, s->native.atom_id_width_bits,
-                          s->native.start + row));
+        AtomId id = space_atom_id_storage_load_at(s->native.atom_ids,
+            s->native.atom_id_width_bits, s->native.start + row);
+        space_resource_hold(&s->native, id);
+        term_universe_hold(universe, id);
     }
 }
 
@@ -5183,10 +5507,27 @@ enum {
  * weighed: its record, entry, intern slot, row and index entries. */
 #define SPACE_DENSE_ROW_BYTES 96u
 
+enum { SPACE_DENSE_ORDINARY = 0, SPACE_DENSE_PROOF };
+typedef struct {
+    CettaProofImage *image;
+    CettaProofBatchStore *batches;
+    CettaProofRowLayout layout;
+    uint64_t count;
+    bool non_exact;
+    /* A borrowed overlay freezes logical ordinals, including the suffix.
+     * Subsequent mutations use ordinary settlement before changing them. */
+    bool prefix_exposed;
+    /* The prefix presence projection has checked every pre-existing row;
+     * later admitted additions maintain that invariant incrementally. */
+    bool prefix_membership_ready;
+} SpaceProofPayload;
+
 typedef struct {
     SymbolId head;
     AtomId head_id;
     uint8_t state;
+    uint8_t representation;
+    SpaceProofPayload *proof;
     /* The columns of the facts the relation holds: the first counted
      * fact's. */
     uint8_t arity;
@@ -5210,6 +5551,7 @@ typedef struct {
 struct SpaceDense {
     SpaceDenseHead *heads;
     uint32_t len, cap;
+    uint32_t proof_heads;
     /* Head symbol -> position plus one, open-addressed. */
     uint32_t *index;
     uint32_t index_mask;
@@ -5220,7 +5562,21 @@ struct SpaceDense {
      * one stored without a record) has been in the space since its relations
      * began: such a row may stand for a fact of any head. */
     bool open_rows;
+    /* Rows counted toward heads that took relations since the last pass
+     * that moved rows into them: an estimate from above, as rows removed
+     * meanwhile stay counted (RelationTransferCost). */
+    CettaCount pending;
 };
+
+static __attribute__((noinline, cold)) bool space_proof_non_exact(const Space *s) {
+    CETTA_SCOPED_SHARED_TRANSITION(guard);
+    const struct SpaceDense *dense = s ? s->native.dense : NULL;
+    for (uint32_t i = 0u; dense && i < dense->len; i++)
+        if (dense->heads[i].state == SPACE_DENSE_KEPT &&
+            dense->heads[i].representation == SPACE_DENSE_PROOF &&
+            dense->heads[i].proof->non_exact) return true;
+    return false;
+}
 
 /* Readers of relations on this thread: the guards leave the relations alone
  * while one reads them and asks the rows for the rest. */
@@ -5277,14 +5633,15 @@ static uint64_t space_dense_threshold(const Space *s) {
 
 /* Whether the space may keep relations: a native multiset or set space of
  * its own rows only, outside a concurrent-evaluation scope. */
-static bool space_dense_admits(const Space *s) {
+static inline __attribute__((always_inline)) bool space_dense_admits(const Space *s) {
     return s && (s->kind == SPACE_KIND_ATOM || s->kind == SPACE_KIND_SET) &&
            !s->module_own_view && !space_has_overlay_base(s) &&
            s->imported_len == 0u && !space_has_dependencies(s) &&
            (s->match_backend.kind == SPACE_ENGINE_NATIVE ||
             s->match_backend.kind == SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) &&
            s->native.universe && space_tracks_atom_ids(s) &&
-           !cetta_shared_transition_scope_active() && !space_dense_off();
+           !cetta_shared_transition_scope_active() && !space_dense_off() &&
+           !space_proof_present(s);
 }
 
 /* A column a relation can hold: an atom equal only to itself, so its id is
@@ -5339,7 +5696,7 @@ static inline uint32_t space_dense_head_hash(SymbolId head) {
     return (uint32_t)(((uint64_t)head * UINT64_C(0x9E3779B97F4A7C15)) >> 32);
 }
 
-static SpaceDenseHead *space_dense_find(const struct SpaceDense *dense,
+static inline __attribute__((always_inline)) SpaceDenseHead *space_dense_find(const struct SpaceDense *dense,
                                         SymbolId head) {
     if (!dense || !dense->index)
         return NULL;
@@ -5356,36 +5713,46 @@ static SpaceDenseHead *space_dense_find(const struct SpaceDense *dense,
 /* ── A head's relation, whichever its form ── */
 
 static inline bool space_dense_bits(const SpaceDenseHead *head) {
+    /* PROOF uses its owned layout and has ordinary arity zero. */
     return head->arity == 2u && !head->skeleton;
 }
 
 /* The number of elements of the head's facts. */
 static inline uint32_t space_dense_head_len(const SpaceDenseHead *head) {
+    if (head->representation == SPACE_DENSE_PROOF)
+        return (uint32_t)head->proof->layout.arity[0];
     return head->skeleton ? cetta_skeleton_len(head->skeleton)
                           : head->arity + 1u;
 }
 
 static uint64_t space_dense_kept_facts(const SpaceDenseHead *head) {
+    if (head->representation == SPACE_DENSE_PROOF) return head->proof->count;
     return space_dense_bits(head) ? cetta_dense_relation_pairs(&head->bits)
                                   : cetta_tuple_table_tuples(&head->table);
 }
 
-/* The ids the relation numbers, in order of numbering. */
+/* The numbers the relation has made, its dead among them. */
 static uint32_t space_dense_kept_numbered(const SpaceDenseHead *head) {
     return space_dense_bits(head) ? head->bits.len : head->table.len;
 }
 
-static AtomId space_dense_kept_id(const SpaceDenseHead *head, uint32_t n) {
-    return (AtomId)(space_dense_bits(head) ? head->bits.ids[n]
-                                           : head->table.ids[n]);
-}
-
 static uint64_t space_dense_kept_bytes(const SpaceDenseHead *head) {
+    if (head->representation == SPACE_DENSE_PROOF)
+        return sizeof(*head->proof) + (head->proof->batches
+            ? cetta_proof_batch_store_retained_bytes(head->proof->batches)
+            : cetta_proof_image_retained_bytes(head->proof->image));
     return space_dense_bits(head) ? cetta_dense_relation_bytes(&head->bits)
                                   : cetta_tuple_table_bytes(&head->table);
 }
 
 static void space_dense_kept_free(SpaceDenseHead *head) {
+    if (head->proof) {
+        cetta_proof_image_release(head->proof->image);
+        cetta_proof_batch_store_release(head->proof->batches);
+        free(head->proof);
+        head->proof = NULL;
+    }
+    head->representation = SPACE_DENSE_ORDINARY;
     cetta_dense_relation_free(&head->bits);
     cetta_tuple_table_free(&head->table);
 }
@@ -5488,7 +5855,7 @@ static SpaceDenseHead *space_dense_entry_new(Space *s, SymbolId head,
         dense->index_mask = size - 1u;
     }
     if (dense->len == dense->cap) {
-        uint32_t cap = dense->cap ? dense->cap * 2u : 8u;
+        uint32_t cap = dense->cap ? dense->cap * 2u : 1u;
         SpaceDenseHead *heads = realloc(dense->heads, cap * sizeof(*heads));
         if (!heads)
             return NULL;
@@ -5504,6 +5871,470 @@ static SpaceDenseHead *space_dense_entry_new(Space *s, SymbolId head,
     dense->index[i] = ++dense->len;
     space_dense_touch(s);
     return entry;
+}
+
+/* ── Frozen proof images in ordinary native set Spaces ─────────────── */
+
+static __attribute__((noinline, cold)) void space_proof_expose_prefix(Space *s) {
+    CETTA_SCOPED_SHARED_TRANSITION(guard);
+    struct SpaceDense *dense = s ? s->native.dense : NULL;
+    for (uint32_t i = 0u; dense && i < dense->len; i++) {
+        SpaceDenseHead *head = &dense->heads[i];
+        if (head->state == SPACE_DENSE_KEPT && head->representation == SPACE_DENSE_PROOF)
+            head->proof->prefix_exposed = true;
+    }
+}
+
+__attribute__((noinline, cold)) bool space_has_proof_image_slow(const Space *s, SymbolId symbol) {
+    if (!space_proof_present(s)) return false;
+    CETTA_SCOPED_SHARED_TRANSITION(guard);
+    if (!space_proof_present(s)) return false;
+    if (symbol == SYMBOL_ID_NONE) return true;
+    const SpaceDenseHead *head = space_dense_find(s->native.dense, symbol);
+    return head && head->state == SPACE_DENSE_KEPT &&
+        head->representation == SPACE_DENSE_PROOF;
+}
+
+/* Inspect each distinct immutable ID once. Resource-bearing or structural
+ * variable leaves require the ordinary storage/ownership realization. */
+static SpaceProofImageStatus space_proof_pure_key(const TermUniverse *u,
+    AtomId id, CettaU64Index *known, unsigned depth) {
+    uint32_t ignored;
+    if (cetta_u64_index_find(known, id, &ignored)) return SPACE_PROOF_IMAGE_READY;
+    const CettaTermHdr *hdr = tu_hdr(u, id);
+    if (!hdr || depth > 512u) return SPACE_PROOF_IMAGE_DECLINED;
+    if (hdr->tag == ATOM_VAR) {
+        if (tu_var_name_key_id(u, id) != CETTA_ATOM_ID_NONE)
+            return SPACE_PROOF_IMAGE_DECLINED;
+    } else if (hdr->tag == ATOM_GROUNDED) {
+        if (hdr->subtag != GV_INT) return SPACE_PROOF_IMAGE_DECLINED;
+    } else if (hdr->tag == ATOM_EXPR) {
+        CettaExprLen length = tu_arity(u, id);
+        for (CettaExprIndex i = 0u; i < length; i++) {
+            SpaceProofImageStatus status = space_proof_pure_key(u, tu_child(u, id, i), known, depth + 1u);
+            if (status != SPACE_PROOF_IMAGE_READY) return status;
+        }
+    } else if (hdr->tag != ATOM_SYMBOL) return SPACE_PROOF_IMAGE_DECLINED;
+    return cetta_u64_index_insert(known, id, 1u) == CETTA_GSLT_U32_INDEX_INSERTED_V1
+        ? SPACE_PROOF_IMAGE_READY : SPACE_PROOF_IMAGE_CAPACITY;
+}
+
+static bool space_proof_key_layout(const TermUniverse *u,
+    const CettaProofRowLayout *layout, AtomId id, uint32_t labels) {
+    uint32_t slots = labels * 2u;
+    for (uint32_t i = 0u; i < layout->proof.length; i++) {
+        CettaExprLen full = layout->arity[i];
+        CettaExprIndex chosen = layout->proof.child[i];
+        bool last = i + 1u == layout->proof.length;
+        if (full < 2u || full > CETTA_PROOF_ROW_CHILD_LIMIT || !chosen || chosen >= full ||
+            full > CETTA_PROOF_ROW_CHILD_LIMIT - slots || tu_kind(u, id) != ATOM_EXPR ||
+            tu_arity(u, id) != full - (last ? 1u : 0u)) return false;
+        AtomId head = tu_child(u, id, 0u);
+        if (tu_kind(u, head) != ATOM_SYMBOL || tu_sym(u, head) != layout->head[i]) return false;
+        slots += (uint32_t)full;
+        if (!last) id = tu_child(u, id, chosen);
+    }
+    return true;
+}
+
+SpaceProofImageStatus space_attach_proof_image(Space *s, SymbolId symbol,
+    const CettaProofRowLayout *layout, CettaProofImage *image) {
+    CETTA_SCOPED_SHARED_TRANSITION(guard);
+    if (!s || !layout || !image || !space_is_set(s) || !space_dense_admits(s) ||
+        s->native.marked || !layout->proof.length || layout->proof.length > CETTA_PROOF_PATH_MAX ||
+        symbol == SYMBOL_ID_NONE || symbol != layout->head[0] ||
+        symbol == g_builtin_syms.equals || symbol == g_builtin_syms.equals_percent ||
+        symbol == g_builtin_syms.colon || symbol == g_builtin_syms.subtype ||
+        layout->universe_instance != s->native.universe->instance_id ||
+        layout->storage_epoch != s->native.universe->storage_epoch ||
+        !cetta_proof_image_matches_universe(image, s->native.universe))
+        return SPACE_PROOF_IMAGE_DECLINED;
+    struct SpaceDense *dense = s->native.dense;
+    const SpaceDenseHead *previous = space_dense_find(dense, symbol);
+    if (previous && (previous->state == SPACE_DENSE_ROWS || previous->skeleton || previous->proof))
+        return SPACE_PROOF_IMAGE_DECLINED;
+    for (uint32_t i = 0u; dense && i < dense->len; i++)
+        if (dense->heads[i].state == SPACE_DENSE_KEPT) return SPACE_PROOF_IMAGE_DECLINED;
+    /* Existing physical rows must be provably disjoint from this head. */
+    for (CettaIndex i = 0u; i < s->native.len; i++) {
+        AtomId id = space_atom_id_storage_load_at(s->native.atom_ids,
+            s->native.atom_id_width_bits, s->native.start + i);
+        const CettaTermHdr *h = tu_hdr(s->native.universe, id);
+        if (!h || h->tag == ATOM_VAR) return SPACE_PROOF_IMAGE_DECLINED;
+        if (h->tag == ATOM_EXPR) {
+            AtomId first = tu_child(s->native.universe, id, 0u);
+            if (tu_kind(s->native.universe, first) != ATOM_SYMBOL ||
+                tu_sym(s->native.universe, first) == symbol) return SPACE_PROOF_IMAGE_DECLINED;
+        } else if (h->tag != ATOM_SYMBOL &&
+                   !(h->tag == ATOM_GROUNDED && h->subtag == GV_INT)) return SPACE_PROOF_IMAGE_DECLINED;
+    }
+    CettaProofStats stats = cetta_proof_image_stats(image);
+    CettaCount before_count = space_length64(s);
+    if (!stats.states || !stats.support || stats.max_rank > CETTA_PROOF_ROW_LABEL_LIMIT ||
+        stats.support > UINT64_MAX - before_count ||
+        stats.support > SIZE_MAX / sizeof(AtomId) ||
+        before_count + stats.support > SIZE_MAX / sizeof(AtomId))
+        return SPACE_PROOF_IMAGE_DECLINED;
+    CettaU64Index pure; cetta_u64_index_init(&pure);
+    bool non_exact = false;
+    SpaceProofImageStatus status = SPACE_PROOF_IMAGE_READY;
+    AtomId head_id = CETTA_ATOM_ID_NONE;
+    for (uint32_t i = 0u; i < stats.states && status == SPACE_PROOF_IMAGE_READY; i++) {
+        CettaProofStateView state;
+        if (!cetta_proof_image_state(image, i, &state)) { status = SPACE_PROOF_IMAGE_DECLINED; break; }
+        status = space_proof_pure_key(s->native.universe, state.key, &pure, 0u);
+        if (status != SPACE_PROOF_IMAGE_READY || !state.support) continue;
+        if (!space_proof_key_layout(s->native.universe, layout, state.key, stats.max_rank)) {
+            status = SPACE_PROOF_IMAGE_DECLINED; break;
+        }
+        non_exact |= tu_has_vars(s->native.universe, state.key);
+        if (head_id == CETTA_ATOM_ID_NONE) head_id = tu_child(s->native.universe, state.key, 0u);
+    }
+    cetta_u64_index_free(&pure);
+    if (status != SPACE_PROOF_IMAGE_READY) return status;
+    SpaceProofPayload *payload = cetta_fallible_calloc(1u, sizeof(*payload));
+    if (!payload) return SPACE_PROOF_IMAGE_CAPACITY;
+    if (!cetta_proof_image_retain(image)) { free(payload); return SPACE_PROOF_IMAGE_CAPACITY; }
+    *payload = (SpaceProofPayload){.image = image, .layout = *layout,
+                                  .count = stats.support, .non_exact = non_exact};
+    SpaceDenseHead *head = space_dense_find(s->native.dense, symbol);
+    if (!head) head = space_dense_entry_new(s, symbol, head_id);
+    if (!head) { cetta_proof_image_release(image); free(payload); return SPACE_PROOF_IMAGE_CAPACITY; }
+    assert(head->state != SPACE_DENSE_KEPT);
+    space_dense_kept_free(head);
+    free(head->skeleton); head->skeleton = NULL;
+    head->head_id = head_id; head->proof = payload;
+    head->representation = SPACE_DENSE_PROOF; head->state = SPACE_DENSE_KEPT;
+    head->arity = 0u; /* ordinary tuple/bit storage is empty */
+    head->rows = 0u; head->open_holes = non_exact ? UINT32_MAX : 0u;
+    s->native.dense->proof_heads++;
+    atomic_store_explicit(&s->native.has_proof_image, true, memory_order_release);
+    s->native.dense_facts += stats.support;
+    s->native.dense->open_rows |= non_exact;
+    /* The complete state key is rooted by the image. HEAD_ID is only a
+     * borrow; no separate counted hold may outlive its storage epoch. */
+    s->native.has_non_exact_atoms |= non_exact;
+    s->native.has_non_exact_atoms_dirty = true;
+    space_dense_touch(s);
+    space_publish_mutation(s, SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY, SPACE_MUTATION_PREFIX_APPEND_ONLY);
+    return SPACE_PROOF_IMAGE_READY;
+}
+
+typedef struct {
+    AtomId *ids;
+    size_t len, capacity;
+} SpaceProofStaging;
+static void space_proof_staging_roots(const TermUniverse *u, TermUniverseRootVisit visit,
+    void *visitor, void *context) {
+    (void)u; const SpaceProofStaging *stage = context;
+    for (size_t i = 0u; i < stage->len; i++) visit(visitor, stage->ids[i]);
+}
+static bool space_proof_adopt_row(void *context, TermUniverse *u, AtomId id) {
+    (void)u; SpaceProofStaging *stage = context;
+    if (stage->len == stage->capacity) return false;
+    stage->ids[stage->len++] = id;
+    return true;
+}
+
+static bool space_proof_payload_current(const SpaceProofPayload *payload, const TermUniverse *u) {
+    return payload->batches ? cetta_proof_batch_store_matches_universe(payload->batches, u)
+                            : cetta_proof_image_matches_universe(payload->image, u);
+}
+
+/* Promotion keeps the original seed occurrence in the physical prefix. The
+ * batch seed supplies producer languages but is never counted a second time
+ * or appended by settlement. Thus existing captured row ordinals survive. */
+SpaceProofImageStatus space_promote_proof_seed(Space *s,
+    const CettaProofRowLayout *layout, AtomId root_key, AtomId seed,
+    CettaProofLimits limits, CettaProofBatchLifetime lifetime) {
+    CETTA_SCOPED_SHARED_TRANSITION(guard);
+    if (!s || !layout || !space_is_set(s) || !space_dense_admits(s) ||
+        s->native.marked || !layout->proof.length || layout->proof.length > CETTA_PROOF_PATH_MAX ||
+        layout->universe_instance != s->native.universe->instance_id ||
+        layout->storage_epoch != s->native.universe->storage_epoch)
+        return SPACE_PROOF_IMAGE_DECLINED;
+    SymbolId symbol = layout->head[0];
+    if (symbol == SYMBOL_ID_NONE || symbol == g_builtin_syms.equals ||
+        symbol == g_builtin_syms.equals_percent || symbol == g_builtin_syms.colon ||
+        symbol == g_builtin_syms.subtype) return SPACE_PROOF_IMAGE_DECLINED;
+    Space native; space_match_backend_init(&native);
+    if (s->match_backend.ops != native.match_backend.ops) return SPACE_PROOF_IMAGE_DECLINED;
+    const SpaceDenseHead *previous = space_dense_find(s->native.dense, symbol);
+    /* ROWS is a former ordinary-compaction refusal, not a data constraint.
+     * The complete physical seed/layout check below certifies this form. */
+    if (previous && previous->proof)
+        return SPACE_PROOF_IMAGE_DECLINED;
+    for (uint32_t i = 0u; s->native.dense && i < s->native.dense->len; i++)
+        if (s->native.dense->heads[i].state == SPACE_DENSE_KEPT)
+            return SPACE_PROOF_IMAGE_DECLINED;
+    TermUniverse *u = s->native.universe;
+    AtomId physical_seed = CETTA_ATOM_ID_NONE;
+    for (CettaIndex i = 0u; i < s->native.len; i++) {
+        AtomId id = space_atom_id_storage_load_at(s->native.atom_ids,
+            s->native.atom_id_width_bits, s->native.start + i);
+        const CettaTermHdr *h = tu_hdr(u, id);
+        if (!h || h->tag == ATOM_VAR) return SPACE_PROOF_IMAGE_DECLINED;
+        if (h->tag == ATOM_EXPR) {
+            AtomId first = tu_child(u, id, 0u);
+            if (tu_kind(u, first) != ATOM_SYMBOL) return SPACE_PROOF_IMAGE_DECLINED;
+            if (tu_sym(u, first) == symbol) {
+                if (physical_seed != CETTA_ATOM_ID_NONE) return SPACE_PROOF_IMAGE_DECLINED;
+                physical_seed = id;
+            }
+        } else if (h->tag != ATOM_SYMBOL &&
+            !(h->tag == ATOM_GROUNDED && h->subtag == GV_INT)) return SPACE_PROOF_IMAGE_DECLINED;
+    }
+    if (physical_seed == CETTA_ATOM_ID_NONE || u->collection_inhibit == UINT32_MAX)
+        return SPACE_PROOF_IMAGE_DECLINED;
+    CettaProofBatchStore *store = NULL;
+    CettaProofBatchStatus prepared = cetta_proof_batch_store_new(u, layout, root_key,
+        seed, limits, lifetime, &store);
+    if (prepared != CETTA_PROOF_BATCH_OK)
+        return prepared == CETTA_PROOF_BATCH_CAPACITY ? SPACE_PROOF_IMAGE_CAPACITY : SPACE_PROOF_IMAGE_DECLINED;
+    CettaProofBatchView *view = NULL; CettaProofBatchCursor *cursor = NULL;
+    AtomId staged_id = CETTA_ATOM_ID_NONE;
+    SpaceProofStaging stage = {.ids = &staged_id, .capacity = 1u};
+    SpaceProofImageStatus status = SPACE_PROOF_IMAGE_CAPACITY;
+    SpaceProofPayload *payload = NULL;
+    if (!term_universe_add_root_provider(u, space_proof_staging_roots, &stage)) goto cleanup_store;
+    if (cetta_proof_batch_capture(store, &view) != CETTA_PROOF_BATCH_OK ||
+        cetta_proof_batch_cursor_new(view, CETTA_PROOF_BATCH_ALL_STATES, &cursor) != CETTA_PROOF_BATCH_OK)
+        goto cleanup_stage;
+    CettaProofBudget budget = {1024u, 0u}; CettaProofBatchWord pending;
+    CettaProofBatchNext next = cetta_proof_batch_cursor_peek(cursor, &budget, &pending);
+    if (next != CETTA_PROOF_BATCH_ROW || !pending.has_ordinal || pending.ordinal != 0u) {
+        status = SPACE_PROOF_IMAGE_DECLINED; goto cleanup_stage;
+    }
+    CettaProofRowWork work;
+    CettaProofRowStatus made = cetta_proof_row_materialize(u, layout, &pending.word,
+        space_proof_adopt_row, &stage, &staged_id, &work);
+    if (made != CETTA_PROOF_ROW_READY) {
+        status = made == CETTA_PROOF_ROW_CAPACITY ? SPACE_PROOF_IMAGE_CAPACITY : SPACE_PROOF_IMAGE_DECLINED;
+        goto cleanup_stage;
+    }
+    term_universe_collection_inhibit_enter(u);
+    AtomId actual_key = term_universe_alpha_key_id(u, physical_seed);
+    AtomId expected_key = term_universe_alpha_key_id(u, staged_id);
+    term_universe_collection_inhibit_leave(u);
+    if (actual_key == CETTA_ATOM_ID_NONE || expected_key == CETTA_ATOM_ID_NONE) goto cleanup_stage;
+    if (actual_key != expected_key) { status = SPACE_PROOF_IMAGE_DECLINED; goto cleanup_stage; }
+    payload = cetta_fallible_calloc(1u, sizeof(*payload));
+    if (!payload) goto cleanup_stage;
+    SpaceDenseHead *head = space_dense_find(s->native.dense, symbol);
+    if (!head) head = space_dense_entry_new(s, symbol, tu_child(u, root_key, 0u));
+    if (!head) goto cleanup_stage;
+    assert(head->state != SPACE_DENSE_KEPT);
+    space_dense_kept_free(head); free(head->skeleton); head->skeleton = NULL;
+    *payload = (SpaceProofPayload){.batches = store, .layout = *layout,
+        .non_exact = tu_has_vars(u, root_key)};
+    head->head_id = tu_child(u, root_key, 0u); head->proof = payload;
+    head->representation = SPACE_DENSE_PROOF; head->state = SPACE_DENSE_KEPT;
+    head->arity = 0u; head->rows = 1u; /* retained physical seed */
+    head->open_holes = payload->non_exact ? UINT32_MAX : 0u;
+    s->native.dense->proof_heads++;
+    s->native.has_non_exact_atoms |= payload->non_exact;
+    s->native.has_non_exact_atoms_dirty = true;
+    atomic_store_explicit(&s->native.has_proof_image, true, memory_order_release);
+    space_dense_touch(s);
+    payload = NULL; store = NULL; status = SPACE_PROOF_IMAGE_READY;
+cleanup_stage:
+    free(payload); cetta_proof_batch_cursor_release(cursor); cetta_proof_batch_view_release(view);
+    term_universe_remove_root_provider(u, space_proof_staging_roots, &stage);
+cleanup_store:
+    cetta_proof_batch_store_release(store);
+    return status;
+}
+
+CettaProofBatchStore *space_proof_batch_store_borrow(Space *s, SymbolId symbol) {
+    const SpaceDenseHead *head = s && space_proof_present(s)
+        ? space_dense_find(s->native.dense, symbol) : NULL;
+    return head && head->state == SPACE_DENSE_KEPT && head->representation == SPACE_DENSE_PROOF &&
+        space_proof_payload_current(head->proof, s->native.universe) ? head->proof->batches : NULL;
+}
+
+CettaProofBatchStatus space_publish_proof_batch(Space *s, SymbolId symbol,
+    CettaProofBatchTransaction *transaction, CettaProofBatchResult *out) {
+    CETTA_SCOPED_SHARED_TRANSITION(guard);
+    CettaProofBatchStore *store = space_proof_batch_store_borrow(s, symbol);
+    if (!store || s != space_mutation_target(s) || !space_is_set(s) || s->native.marked ||
+        s->overlay_base || s->module_own_view || s->imported_len || space_has_dependencies(s) ||
+        cetta_shared_transition_scope_active() ||
+        !cetta_proof_batch_transaction_for_store(transaction, store)) return CETTA_PROOF_BATCH_DECLINED;
+    Space native; space_match_backend_init(&native);
+    if (s->match_backend.ops != native.match_backend.ops) return CETTA_PROOF_BATCH_DECLINED;
+    SpaceDenseHead *head = space_dense_find(s->native.dense, symbol);
+    if (head->proof->prefix_exposed) return CETTA_PROOF_BATCH_DECLINED;
+    CettaProofBatchResult result;
+    if (!cetta_proof_batch_transaction_result(transaction, &result)) return CETTA_PROOF_BATCH_DECLINED;
+    uint64_t before = space_length64(s);
+    if (result.appended_rows > UINT64_MAX - before ||
+        result.appended_rows > SIZE_MAX / sizeof(AtomId) ||
+        before + result.appended_rows > SIZE_MAX / sizeof(AtomId)) return CETTA_PROOF_BATCH_CAPACITY;
+    CettaProofBatchStatus status = cetta_proof_batch_commit(transaction);
+    if (status != CETTA_PROOF_BATCH_OK) return status;
+    if (result.appended_rows) {
+        head->proof->count += result.appended_rows;
+        s->native.dense_facts += result.appended_rows;
+        /* Later complete keys can introduce open variables. Conservatism
+         * costs a fallback but cannot hide answers behind ground metadata. */
+        head->proof->non_exact = true; head->open_holes = UINT32_MAX;
+        s->native.has_non_exact_atoms = true; s->native.has_non_exact_atoms_dirty = true;
+        s->native.dense->open_rows = true;
+        space_dense_touch(s); space_mark_indexes_dirty(s);
+        space_publish_mutation(s, SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY,
+            SPACE_MUTATION_PREFIX_APPEND_ONLY);
+    }
+    if (out) *out = result;
+    return CETTA_PROOF_BATCH_OK;
+}
+
+static SpaceProofImageStatus space_proof_settle_head(Space *s, SpaceDenseHead *head) {
+    SpaceProofPayload *payload = head->proof;
+    TermUniverse *u = s->native.universe;
+    if (!space_proof_payload_current(payload, u)) return SPACE_PROOF_IMAGE_DECLINED;
+    if (s->native.marked || payload->count > SIZE_MAX / sizeof(AtomId) ||
+        payload->count > UINT64_MAX - s->native.len) return SPACE_PROOF_IMAGE_CAPACITY;
+    SpaceProofStaging stage = {.capacity = (size_t)payload->count};
+    stage.ids = stage.capacity ? cetta_fallible_malloc(stage.capacity * sizeof(*stage.ids)) : NULL;
+    if (stage.capacity && !stage.ids) return SPACE_PROOF_IMAGE_CAPACITY;
+    if (!term_universe_add_root_provider(u, space_proof_staging_roots, &stage)) {
+        free(stage.ids); return SPACE_PROOF_IMAGE_CAPACITY;
+    }
+    CettaProofCursor *cursor = NULL;
+    CettaProofBatchCursor *batch_cursor = NULL;
+    CettaProofBatchView *batch_view = NULL;
+    SpaceProofImageStatus status = SPACE_PROOF_IMAGE_CAPACITY;
+    uint8_t *replacement = NULL;
+    if (payload->batches) {
+        if (cetta_proof_batch_capture(payload->batches, &batch_view) != CETTA_PROOF_BATCH_OK ||
+            cetta_proof_batch_cursor_new(batch_view, CETTA_PROOF_BATCH_ALL_STATES, &batch_cursor) != CETTA_PROOF_BATCH_OK)
+            goto finished;
+    } else {
+        CettaProofStatus opened = cetta_proof_cursor_new(payload->image, CETTA_PROOF_ALL_STATES, &cursor);
+        if (opened != CETTA_PROOF_OK) {
+            if (opened != CETTA_PROOF_CAPACITY) status = SPACE_PROOF_IMAGE_DECLINED;
+            goto finished;
+        }
+    }
+    for (;;) {
+        CettaProofBudget budget = {1024u, 0u}; CettaProofWord word;
+        if (batch_cursor) {
+            CettaProofBatchWord pending;
+            CettaProofBatchNext next = cetta_proof_batch_cursor_peek(batch_cursor, &budget, &pending);
+            if (next == CETTA_PROOF_BATCH_PAUSED) continue;
+            if (next == CETTA_PROOF_BATCH_END) break;
+            if (next != CETTA_PROOF_BATCH_ROW || !pending.has_ordinal) {
+                status = SPACE_PROOF_IMAGE_DECLINED; goto finished;
+            }
+            if (pending.ordinal == 0u) {
+                if (!cetta_proof_batch_cursor_commit(batch_cursor, pending.word.token)) {
+                    status = SPACE_PROOF_IMAGE_DECLINED; goto finished;
+                }
+                continue; /* the seed already owns its physical occurrence */
+            }
+            if (pending.ordinal != stage.len + 1u) { status = SPACE_PROOF_IMAGE_DECLINED; goto finished; }
+            word = pending.word;
+        } else {
+            CettaProofNext next = cetta_proof_cursor_peek(cursor, &budget, &word);
+            if (next == CETTA_PROOF_PAUSED) continue;
+            if (next == CETTA_PROOF_END) break;
+            if (next != CETTA_PROOF_ROW) { status = SPACE_PROOF_IMAGE_DECLINED; goto finished; }
+        }
+        AtomId row = CETTA_ATOM_ID_NONE; CettaProofRowWork work;
+        CettaProofRowStatus made = cetta_proof_row_materialize(u, &payload->layout, &word,
+            space_proof_adopt_row, &stage, &row, &work);
+        if (made != CETTA_PROOF_ROW_READY) {
+            status = made == CETTA_PROOF_ROW_CAPACITY ? SPACE_PROOF_IMAGE_CAPACITY : SPACE_PROOF_IMAGE_DECLINED;
+            goto finished;
+        }
+        if (!(batch_cursor ? cetta_proof_batch_cursor_commit(batch_cursor, word.token)
+                           : cetta_proof_cursor_commit(cursor, word.token))) {
+            status = SPACE_PROOF_IMAGE_DECLINED; goto finished;
+        }
+    }
+    if (stage.len != stage.capacity) { status = SPACE_PROOF_IMAGE_DECLINED; goto finished; }
+    CettaIndex next_len = s->native.len + payload->count;
+    uint32_t bits = space_atom_id_width_bits_for_universe(u);
+    size_t width = space_atom_id_width_bytes_bits(bits);
+    if (!width || next_len > SIZE_MAX / width || u->collection_inhibit == UINT32_MAX) goto finished;
+    replacement = cetta_fallible_malloc((size_t)next_len * width);
+    if (!replacement) goto finished;
+    for (CettaIndex i = 0u; i < s->native.len; i++) {
+        AtomId id = space_atom_id_storage_load_at(s->native.atom_ids,
+            s->native.atom_id_width_bits, s->native.start + i);
+        if (!space_atom_id_storage_store_at(replacement, (uint8_t)bits, i, id)) goto finished;
+    }
+    for (size_t i = 0u; i < stage.len; i++)
+        if (!space_atom_id_storage_store_at(replacement, (uint8_t)bits, s->native.len + i, stage.ids[i]))
+            goto finished;
+    /* No fallible operation follows the first logical representation write.
+     * Existing captures keep the same physical-row prefix and their ceiling. */
+    term_universe_collection_inhibit_enter(u);
+    for (size_t i = 0u; i < stage.len; i++) space_hold_row(s, stage.ids[i]);
+    uint8_t *old = s->native.atom_ids;
+    s->native.atom_ids = replacement; replacement = NULL;
+    s->native.atom_id_width_bits = (uint8_t)bits;
+    s->native.start = 0u; s->native.len = next_len; s->native.cap = next_len;
+    free(old);
+    s->native.dense_facts -= payload->count;
+    s->native.dense->proof_heads--;
+    atomic_store_explicit(&s->native.has_proof_image, s->native.dense->proof_heads != 0u, memory_order_release);
+    head->state = SPACE_DENSE_ROWS; head->rows = 0u;
+    space_dense_kept_free(head);
+    space_dense_touch(s);
+    space_mark_indexes_dirty(s);
+    space_match_backend_note_remove(s);
+    s->native.dense->open_rows = false;
+    for (CettaIndex i = 0u; i < s->native.len; i++)
+        s->native.dense->open_rows |= space_dense_row_head_open(u,
+            space_atom_id_storage_load_at(s->native.atom_ids, s->native.atom_id_width_bits, i));
+    space_note_atom_id_storage_peak(s);
+    term_universe_collection_inhibit_leave(u);
+    status = SPACE_PROOF_IMAGE_READY;
+finished:
+    free(replacement);
+    cetta_proof_cursor_free(cursor);
+    cetta_proof_batch_cursor_release(batch_cursor);
+    cetta_proof_batch_view_release(batch_view);
+    term_universe_remove_root_provider(u, space_proof_staging_roots, &stage);
+    free(stage.ids);
+    return status;
+}
+
+SpaceProofImageStatus space_settle_proof_images(Space *s) {
+    CETTA_SCOPED_SHARED_TRANSITION(guard);
+    if (!space_proof_present(s)) return SPACE_PROOF_IMAGE_READY;
+    struct SpaceDense *dense = s->native.dense;
+    for (uint32_t i = 0u; i < dense->len; i++) {
+        SpaceDenseHead *head = &dense->heads[i];
+        if (head->state != SPACE_DENSE_KEPT || head->representation != SPACE_DENSE_PROOF) continue;
+        SpaceProofImageStatus status = space_proof_settle_head(s, head);
+        if (status != SPACE_PROOF_IMAGE_READY) {
+            space_match_backend_set_error(status == SPACE_PROOF_IMAGE_CAPACITY
+                ? SPACE_MATCH_BACKEND_ERROR_ALLOCATION_FAILED : SPACE_MATCH_BACKEND_ERROR_STORAGE_INVALIDATED);
+            return status;
+        }
+    }
+    return SPACE_PROOF_IMAGE_READY;
+}
+static __attribute__((noinline, cold)) bool space_proof_prepare_mutation_slow(Space *s) {
+    if (s && s->module_own_view && s->overlay_base)
+        return space_proof_prepare_mutation((Space *)s->overlay_base);
+    if (!space_proof_present(s)) return true;
+    CETTA_SCOPED_SHARED_TRANSITION(guard);
+    return !space_proof_present(s) || space_settle_proof_images(s) == SPACE_PROOF_IMAGE_READY;
+}
+__attribute__((noinline, cold)) bool space_prepare_proof_read_slow(Space *s, const Atom *pattern) {
+    if (s && s->overlay_base &&
+        !space_prepare_proof_read((Space *)s->overlay_base, pattern)) return false;
+    if (!space_proof_present(s)) return true;
+    CETTA_SCOPED_SHARED_TRANSITION(guard);
+    if (!space_proof_present(s)) return true;
+    if (pattern && pattern->kind == ATOM_EXPR && pattern->expr.len &&
+        pattern->expr.elems[0]->kind == ATOM_SYMBOL &&
+        !space_has_proof_image(s, pattern->expr.elems[0]->sym_id)) return true;
+    if (pattern && (pattern->kind == ATOM_SYMBOL || pattern->kind == ATOM_GROUNDED)) return true;
+    return space_settle_proof_images(s) == SPACE_PROOF_IMAGE_READY;
 }
 
 /* The head's entry, made when it is new with relations of ARITY columns;
@@ -5547,6 +6378,7 @@ static void space_dense_release_id(void *context, CettaDenseId id) {
 }
 
 static void space_dense_kept_release(Space *s, const SpaceDenseHead *head) {
+    if (head->representation == SPACE_DENSE_PROOF) return;
     if (space_dense_bits(head))
         cetta_dense_relation_each_numbered(&head->bits, space_dense_release_id,
                                            s);
@@ -5555,32 +6387,51 @@ static void space_dense_kept_release(Space *s, const SpaceDenseHead *head) {
                                         s);
 }
 
-/* Hold the ids numbered from FROM on, as the relation's references. */
-static void space_dense_hold_numbered(Space *s, const SpaceDenseHead *head,
-                                      uint32_t from) {
-    for (uint32_t n = from; n < space_dense_kept_numbered(head); n++)
-        space_hold_row(s, space_dense_kept_id(head, n));
+/* Hold an id the relation's facts hold anew, as the relation's
+ * reference. */
+static void space_dense_hold_id(void *context, CettaDenseId id) {
+    space_hold_row((Space *)context, (AtomId)id);
 }
 
-/* The ids a space's relations hold: each head's own and its numbered
- * columns. */
+typedef struct {
+    TermUniverseRootVisit visit;
+    void *visit_context;
+} SpaceDenseListing;
+
+static void space_dense_list_id(void *context, CettaDenseId id) {
+    SpaceDenseListing *listing = context;
+    listing->visit(listing->visit_context, (AtomId)id);
+}
+
+/* The ids a space's relations hold: each head's own and the ids its facts
+ * hold. */
 static void space_dense_list(const Space *s, TermUniverseRootVisit visit,
                              void *visit_context) {
     const struct SpaceDense *dense = s->native.dense;
+    SpaceDenseListing listing = {visit, visit_context};
     for (uint32_t i = 0u; dense && i < dense->len; i++) {
         const SpaceDenseHead *head = &dense->heads[i];
         if (head->state != SPACE_DENSE_KEPT)
             continue;
+        /* The image owns all keys. Its provider checks its storage epoch;
+         * never list a stale borrowed head coordinate as a Space root. */
+        if (head->representation == SPACE_DENSE_PROOF) continue;
         visit(visit_context, head->head_id);
         for (uint32_t n = 0u; head->skeleton && n < head->skeleton->count; n++) {
             if (head->skeleton->nodes[n].len != 0u)
                 visit(visit_context, head->skeleton->nodes[n].head_id);
         }
-        for (uint32_t n = 0u; n < space_dense_kept_numbered(head); n++)
-            visit(visit_context, space_dense_kept_id(head, n));
+        if (space_dense_bits(head))
+            cetta_dense_relation_each_numbered(&head->bits,
+                                               space_dense_list_id, &listing);
+        else
+            cetta_tuple_table_each_numbered(&head->table,
+                                            space_dense_list_id, &listing);
     }
 }
 
+static bool space_add_stored_id_as(Space *s, AtomId atom_id,
+                                   Atom *backend_atom, bool set_checked);
 static void space_add_stored_id(Space *s, AtomId atom_id, Atom *backend_atom);
 
 typedef struct {
@@ -5634,6 +6485,10 @@ static SpaceDenseForm space_dense_head_form(SpaceDenseHead *head) {
 static void space_dense_settle_head(Space *s, SpaceDenseHead *head) {
     if (head->state == SPACE_DENSE_ROWS)
         return;
+    if (head->representation == SPACE_DENSE_PROOF) {
+        (void)space_settle_proof_images(s);
+        return;
+    }
     bool kept = head->state == SPACE_DENSE_KEPT;
     head->state = SPACE_DENSE_ROWS;
     if (!kept)
@@ -5668,8 +6523,12 @@ static void space_dense_settle_head(Space *s, SpaceDenseHead *head) {
 }
 
 void space_dense_settle(Space *s, SymbolId head) {
-    if (!s || s->native.dense_facts == 0u || g_space_dense_reading != 0u)
-        return;
+    if (!s || s->native.dense_facts == 0u) return;
+    /* Frozen proof images lend no tuple/skeleton array. An unrelated
+     * dense-reading scope therefore does not prevent this conversion. */
+    if (space_has_proof_image(s, head) &&
+        space_settle_proof_images(s) != SPACE_PROOF_IMAGE_READY) return;
+    if (g_space_dense_reading != 0u) return;
     struct SpaceDense *dense = s->native.dense;
     if (head != SYMBOL_ID_NONE) {
         SpaceDenseHead *entry = space_dense_find(dense, head);
@@ -5736,6 +6595,7 @@ bool space_dense_form(const Space *s, SymbolId head, SpaceDenseForm *form) {
     SpaceDenseHead *entry =
         s ? space_dense_find(s->native.dense, head) : NULL;
     if (!entry || entry->state != SPACE_DENSE_KEPT ||
+        entry->representation == SPACE_DENSE_PROOF ||
         (entry->skeleton && !space_dense_flat_spine(entry)) ||
         cetta_shared_transition_scope_active())
         return false;
@@ -5793,30 +6653,15 @@ static SpaceKeptOccurrences *space_dense_deep_occurrences(
     bool none = !cetta_skeleton_align(s->native.universe, head->skeleton,
                                       pattern, head->open_holes, fixed,
                                       &exact);
-    SpaceKeptOccurrences *kept = calloc(1u, sizeof(*kept));
-    if (!kept)
-        return NULL;
-    kept->references = 1u;
-    kept->arity = head->arity;
-    kept->universe = s->native.universe;
-    kept->head_id = head->head_id;
-    kept->skeleton = head->skeleton;
+    SpaceKeptGather gather;
+    space_kept_gather_init(&gather, head->arity);
     bool ok = none || cetta_tuple_table_each(&head->table, fixed,
-                                             space_kept_occurrences_push,
-                                             kept);
-    if (ok && kept->len != 0u) {
-        kept->records = malloc(kept->len * sizeof(*kept->records));
-        ok = kept->records != NULL;
-        for (size_t i = 0u; ok && i < kept->len; i++)
-            kept->records[i] = CETTA_ATOM_ID_NONE;
-    }
-    if (!ok || !term_universe_add_root_provider(
-                   kept->universe, space_kept_occurrences_roots, kept)) {
-        free(kept->columns);
-        free(kept->records);
-        free(kept);
-        return NULL;
-    }
+                                             space_kept_gather_push, &gather);
+    SpaceKeptOccurrences *kept = ok
+        ? space_kept_occurrences_make(&gather, s,
+                                      head->head_id, head->skeleton)
+        : NULL;
+    space_kept_gather_free(&gather);
     return kept;
 }
 
@@ -5857,6 +6702,10 @@ bool space_dense_patterns_miss(const Space *s, Atom *const *patterns,
             pattern->expr.elems[0]->kind != ATOM_SYMBOL)
             return false;
         SpaceDenseForm form;
+        if (space_has_proof_image(s, pattern->expr.elems[0]->sym_id)) {
+            const SpaceDenseHead *proof = space_dense_find(s->native.dense, pattern->expr.elems[0]->sym_id);
+            if ((CettaExprLen)space_dense_head_len(proof) == pattern->expr.len) return false;
+        }
         if ((space_dense_form(s, pattern->expr.elems[0]->sym_id, &form) &&
              (CettaExprLen)form.arity + 1u == pattern->expr.len) ||
             space_dense_deep_for(s, pattern))
@@ -5868,6 +6717,25 @@ bool space_dense_patterns_miss(const Space *s, Atom *const *patterns,
 bool space_dense_count_columns(const Space *s, Atom *const *columns,
                                CettaExprLen len, CettaCount *count) {
     *count = 0u;
+    if (!cetta_shared_transition_scope_active() && space_proof_present(s)) {
+        if (!columns || !len || columns[0]->kind != ATOM_SYMBOL) return false;
+        const SpaceDenseHead *proof = space_dense_find(s->native.dense, columns[0]->sym_id);
+        if (proof && proof->state == SPACE_DENSE_KEPT && proof->representation == SPACE_DENSE_PROOF) {
+            if (!space_proof_payload_current(proof->proof, s->native.universe)) {
+                space_match_backend_set_error(SPACE_MATCH_BACKEND_ERROR_STORAGE_INVALIDATED);
+                return false;
+            }
+            if ((CettaExprLen)space_dense_head_len(proof) != len) return true;
+            for (CettaExprIndex i = 1u; i < len; i++) {
+                const Atom *v = columns[i];
+                if (!v || v->kind != ATOM_VAR || v->name_key || var_id_is_none(v->var_id)) return false;
+                for (CettaExprIndex j = 1u; j < i; j++)
+                    if (var_id_eq(v->var_id, columns[j]->var_id)) return false;
+            }
+            *count = proof->proof->count;
+            return true;
+        }
+    }
     if (cetta_shared_transition_scope_active() || !space_dense_fact_len(len))
         return false;
     const struct SpaceDense *dense = s ? s->native.dense : NULL;
@@ -5944,15 +6812,126 @@ static uint64_t space_dense_row_bytes(const SpaceDenseHead *head) {
 }
 
 /* Whether the relation costs less than its facts would as rows. */
+/* Only ordinary tuple/bit insertion calls this policy. PROOF attachment
+ * and settlement never enter the tuple producer. */
 static bool space_dense_worth(const SpaceDenseHead *head) {
-    return space_dense_kept_bytes(head) <=
-           (space_dense_kept_facts(head) + 64u) * space_dense_row_bytes(head);
+    bool bits = space_dense_bits(head);
+    uint64_t bytes = bits ? cetta_dense_relation_bytes(&head->bits)
+                          : cetta_tuple_table_bytes(&head->table);
+    uint64_t facts = bits ? cetta_dense_relation_pairs(&head->bits)
+                          : cetta_tuple_table_tuples(&head->table);
+    return bytes <= (facts + 64u) * space_dense_row_bytes(head);
 }
 
 /* HEAD's facts go to its relation from now on, which holds its id.  Its
  * rows stay rows: moving them would shift the positions a reader walking
  * the rows holds, and the space is the same bag either way.  Its count of
  * rows stays, as the rows it keeps. */
+static bool space_dense_take_publishing(Space *s, SpaceDenseHead *head,
+                                        const AtomId *columns, bool publish);
+static bool space_marks_admit(const Space *s);
+
+/* A row a pass moves into its head's relation: its live position, its head
+ * and its columns, holes for a deep head. */
+typedef struct {
+    CettaIndex position;
+    uint32_t head;
+    AtomId columns[CETTA_TUPLE_MAX_ARITY];
+} SpaceDenseMove;
+
+/* Once the rows counted toward heads that took relations are at least half
+ * the live rows, move the rows the relations can take into them: one pass
+ * reads the rows, the relations take the ground facts they hold, and the
+ * rows taken are removed by marks, so each fact stays once.  The marks are
+ * settled at once: a cursor opening on a marked space takes the trie, which
+ * every later row then fills.  A pass reads at most twice its pending rows,
+ * moves at most them and settles at most twice them (RelationTransferCost).
+ * A multiset's second copy, an open fact, a fact whose relation gives back
+ * on the way and every row of a space that cannot remove by marks stay
+ * rows.  No dense read is open, as the caller is adding a fact. */
+static void space_dense_take_over_rows(Space *s) {
+    struct SpaceDense *dense = s->native.dense;
+    if (!dense || dense->pending == 0u || g_space_dense_reading != 0u ||
+        2u * dense->pending < space_length64(s) - space_dense_facts(s))
+        return;
+    dense->pending = 0u;
+    if (!space_marks_admit(s))
+        return;
+    TermUniverse *universe = s->native.universe;
+    SpaceDenseMove *moves = NULL;
+    size_t len = 0u, cap = 0u;
+    CettaIndex position = 0u;
+    for (CettaIndex row = 0u; row < s->native.len; row++) {
+        if (s->native.marked != 0u && space_marks_row_marked(&s->native, row))
+            continue;
+        CettaIndex here = position++;
+        AtomId atom_id = space_atom_id_storage_load_at(
+            s->native.atom_ids, s->native.atom_id_width_bits,
+            s->native.start + row);
+        const CettaTermHdr *hdr = tu_hdr(universe, atom_id);
+        if (!hdr || hdr->tag != ATOM_EXPR || hdr->sym_or_head == SYMBOL_ID_NONE)
+            continue;
+        SpaceDenseHead *head = space_dense_find(dense, hdr->sym_or_head);
+        if (!head || head->state != SPACE_DENSE_KEPT ||
+            tu_has_vars(universe, atom_id) ||
+            space_atom_equation_projection(s, atom_id, NULL) !=
+                SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY)
+            continue;
+        SpaceDenseMove move = {.position = here,
+                               .head = (uint32_t)(head - dense->heads)};
+        if (head->skeleton) {
+            if (!cetta_skeleton_cut(universe, head->skeleton, atom_id,
+                                    move.columns))
+                continue;
+        } else {
+            SymbolId h;
+            AtomId head_id;
+            uint32_t arity = 0u;
+            if (!space_dense_fact(s, atom_id, &h, &head_id, move.columns,
+                                  &arity) ||
+                arity != head->arity)
+                continue;
+        }
+        if (len == cap) {
+            size_t grown = cap ? cap * 2u : 256u;
+            SpaceDenseMove *more = realloc(moves, grown * sizeof(*moves));
+            if (!more) {
+                free(moves);
+                return;
+            }
+            moves = more;
+            cap = grown;
+        }
+        moves[len++] = move;
+    }
+    CettaIndex *taken = len ? malloc(len * sizeof(*taken)) : NULL;
+    if (!taken) {
+        free(moves);
+        return;
+    }
+    size_t taken_len = 0u;
+    for (size_t i = 0u; i < len; i++) {
+        SpaceDenseHead *head = &dense->heads[moves[i].head];
+        if (head->state != SPACE_DENSE_KEPT ||
+            !space_dense_take_publishing(s, head, moves[i].columns, false))
+            continue;
+        if (head->rows != 0u)
+            head->rows--;
+        taken[taken_len++] = moves[i].position;
+    }
+    free(moves);
+    if (taken_len != 0u) {
+        space_publish_mutation(s, SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY,
+                               SPACE_MUTATION_PREFIX_APPEND_ONLY);
+        (void)space_remove_logical_positions(s, taken, (CettaCount)taken_len);
+        space_settle_marks(s);
+        if (space_dense_trace())
+            fprintf(stderr, "space relations: %zu rows move into relations\n",
+                    taken_len);
+    }
+    free(taken);
+}
+
 static void space_dense_promote(Space *s, SpaceDenseHead *head) {
     if (space_dense_trace())
         fprintf(stderr, "space relations: %s takes %s of %u columns after %"
@@ -5962,6 +6941,8 @@ static void space_dense_promote(Space *s, SpaceDenseHead *head) {
     head->state = SPACE_DENSE_KEPT;
     space_hold_row(s, head->head_id);
     space_dense_touch(s);
+    s->native.dense->pending += head->rows;
+    space_dense_take_over_rows(s);
 }
 
 /* Promote a deep head: its spine is the common shape of the facts counted,
@@ -6061,14 +7042,14 @@ static bool space_dense_take_publishing(Space *s, SpaceDenseHead *head,
     bool added;
     if (space_dense_bits(head)) {
         added = cetta_dense_relation_add(&head->bits, columns[0], columns[1],
-                                         &oom);
+                                         &oom, space_dense_hold_id, s);
     } else {
         CettaDenseId tuple[CETTA_TUPLE_MAX_ARITY];
         for (uint32_t c = 0u; c < head->arity; c++)
             tuple[c] = columns[c];
-        added = cetta_tuple_table_add(&head->table, tuple, &oom);
+        added = cetta_tuple_table_add(&head->table, tuple, &oom,
+                                      space_dense_hold_id, s);
     }
-    space_dense_hold_numbered(s, head, numbered);
     if (oom) {
         space_dense_settle_head(s, head);
         return false;
@@ -6418,7 +7399,7 @@ bool space_add_dense_tuples(Space *s, SymbolId head, AtomId head_id,
         AtomId id = tu_expr_from_ids(universe, kids, arity + 1u);
         if (id == CETTA_ATOM_ID_NONE)
             return false;
-        space_add_stored_id(target, id, NULL);
+        if (!space_add_stored_id_as(target, id, NULL, false)) return false;
         entry = target->native.dense
             ? space_dense_find(target->native.dense, head) : NULL;
     }
@@ -6442,16 +7423,34 @@ static bool space_dense_kept_contains(const SpaceDenseHead *head,
     return cetta_tuple_table_contains(&head->table, tuple);
 }
 
-/* Take the fact of COLUMNS from HEAD's relation: true when it held it. */
-static bool space_dense_kept_remove(SpaceDenseHead *head,
+/* Take the fact of COLUMNS from HEAD's relation: true when it held it.  The
+ * ids its facts hold no more lose the space's references at once; then,
+ * unless a dense read is open, the relation trims its room and numbering. */
+static bool space_dense_kept_remove(Space *s, SpaceDenseHead *head,
                                     const AtomId *columns) {
-    if (space_dense_bits(head))
-        return cetta_dense_relation_remove(&head->bits, columns[0],
-                                           columns[1]);
-    CettaDenseId tuple[CETTA_TUPLE_MAX_ARITY];
-    for (uint32_t c = 0u; c < head->arity; c++)
-        tuple[c] = columns[c];
-    return cetta_tuple_table_remove(&head->table, tuple);
+    uint32_t numbered = space_dense_kept_numbered(head);
+    if (space_dense_bits(head)) {
+        if (!cetta_dense_relation_remove(&head->bits, columns[0], columns[1],
+                                         space_dense_release_id, s))
+            return false;
+        if (g_space_dense_reading == 0u)
+            (void)cetta_dense_relation_trim(&head->bits);
+    } else {
+        CettaDenseId tuple[CETTA_TUPLE_MAX_ARITY];
+        for (uint32_t c = 0u; c < head->arity; c++)
+            tuple[c] = columns[c];
+        if (!cetta_tuple_table_remove(&head->table, tuple,
+                                      space_dense_release_id, s))
+            return false;
+        if (g_space_dense_reading == 0u)
+            (void)cetta_tuple_table_trim(&head->table);
+    }
+    if (space_dense_trace() && space_dense_kept_numbered(head) < numbered)
+        fprintf(stderr, "space relations: %s renumbers its ids: %" PRIu64
+                " facts in %" PRIu64 " bytes\n",
+                symbol_bytes(g_symbols, head->head),
+                space_dense_kept_facts(head), space_dense_kept_bytes(head));
+    return true;
 }
 
 /* The deep relation the record ATOM_ID's head keeps, and the record's
@@ -6507,8 +7506,9 @@ static bool space_dense_holds(const Space *s, AtomId atom_id) {
 }
 
 /* The relation and columns of the ground fact (HEAD a1 ... an) given by its
- * arguments: a fact a relation holds may have no record of its own, but its
- * columns are numbered, so held.  False when no relation could hold it. */
+ * arguments: a fact a relation holds may have no record of its own, but the
+ * relation holds its columns' ids, so the universe has them.  False when no
+ * relation could hold it. */
 static bool space_dense_parts(const Space *s, SymbolId head,
                               Atom *const *arguments, CettaExprLen count,
                               SpaceDenseHead **head_out, AtomId *columns) {
@@ -6612,7 +7612,7 @@ CettaCount space_dense_remove_ground(Space *s, Atom *atom) {
     head = space_dense_deep_atom(s, atom, columns);
     if (!head && !space_dense_atom_parts(s, atom, &head, columns))
         return 0u;
-    if (!space_dense_kept_remove(head, columns))
+    if (!space_dense_kept_remove(s, head, columns))
         return 0u;
     s->native.dense_facts--;
     space_note_released(s, 1u);
@@ -6637,7 +7637,7 @@ static bool space_dense_route_remove(Space *s, AtomId atom_id) {
             head = NULL;
     }
     if (!head || head->state != SPACE_DENSE_KEPT ||
-        !space_dense_kept_remove(head, columns))
+        !space_dense_kept_remove(s, head, columns))
         return false;
     s->native.dense_facts--;
     space_note_released(s, 1u);
@@ -6655,6 +7655,7 @@ void space_dense_reading_end(void) {
 
 /* Free the relations with the space: their references go. */
 static void space_dense_free(Space *s) {
+    atomic_store_explicit(&s->native.has_proof_image, false, memory_order_release);
     struct SpaceDense *dense = s->native.dense;
     if (!dense)
         return;
@@ -6662,7 +7663,8 @@ static void space_dense_free(Space *s) {
         SpaceDenseHead *head = &dense->heads[i];
         if (head->state == SPACE_DENSE_KEPT) {
             space_dense_kept_release(s, head);
-            term_universe_release(s->native.universe, head->head_id);
+            if (head->representation != SPACE_DENSE_PROOF)
+                term_universe_release(s->native.universe, head->head_id);
             space_dense_spine_hold(s, head, false);
         }
         space_dense_kept_free(head);
@@ -6846,19 +7848,26 @@ void space_settle_marks_slow(Space *s) {
  * the caller then contracts at once.  Admitted are plain native spaces
  * whose removed rows are data, outside the equation and declaration
  * projections. */
+/* Whether the space removes rows by marking them: a plain native space of
+ * its own rows. */
+static bool space_marks_admit(const Space *s) {
+    return !space_has_overlay_base(s) && !s->module_own_view &&
+           (s->kind == SPACE_KIND_ATOM || s->kind == SPACE_KIND_SET) &&
+           s->imported_len == 0u && !space_has_dependencies(s) &&
+           stable_occurrence_transport_enabled() &&
+           (s->match_backend.kind == SPACE_ENGINE_NATIVE ||
+            s->match_backend.kind == SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) &&
+           s->native.atom_ids && s->native.start == 0u;
+}
+
 bool space_remove_logical_positions(Space *s, const CettaIndex *positions,
                                     CettaCount count) {
+    if (!space_proof_prepare_mutation(s)) return false;
     if (!s || (count && !positions))
         return false;
     if (count == 0u)
         return true;
-    if (space_has_overlay_base(s) || s->module_own_view ||
-        (s->kind != SPACE_KIND_ATOM && s->kind != SPACE_KIND_SET) ||
-        s->imported_len != 0u ||
-        space_has_dependencies(s) || !stable_occurrence_transport_enabled() ||
-        (s->match_backend.kind != SPACE_ENGINE_NATIVE &&
-         s->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) ||
-        !s->native.atom_ids || s->native.start != 0u)
+    if (!space_marks_admit(s))
         return false;
     /* A position past the rows names a fact kept in a relation: the
      * relations become rows, at the positions their facts had. */
@@ -6883,6 +7892,27 @@ bool space_remove_logical_positions(Space *s, const CettaIndex *positions,
             return false;
         }
     }
+    /* While no two synced rows share a key, a removed row's key leaves the
+     * presence bits with it, read before the row's id is released, and the
+     * synced prefix loses the rows it held; once two do, the bits are
+     * recomputed (SetPresenceChurn). */
+    bool presence_follows = !s->native.id_present_dirty &&
+        !s->native.id_present_shared;
+    CettaCount presence_removed = 0u;
+    for (CettaCount i = 0u; presence_follows && i < count &&
+             positions[i] < s->native.id_present_synced_len; i++) {
+        AtomId atom_id = space_atom_id_storage_load_at(
+            s->native.atom_ids, s->native.atom_id_width_bits, rows[i]);
+        AtomId key = CETTA_ATOM_ID_NONE;
+        if (id_present_row_key(s, atom_id, &key)) {
+            if (key == CETTA_ATOM_ID_NONE) {
+                presence_follows = false;
+                break;
+            }
+            id_present_unset(&s->native, key);
+        }
+        presence_removed++;
+    }
     SpaceMatchNativeState *native_state = &s->match_backend.native;
     for (CettaCount i = 0u; i < count; i++) {
         space_marks_mark(s, rows[i]);
@@ -6902,7 +7932,13 @@ bool space_remove_logical_positions(Space *s, const CettaIndex *positions,
     }
     free(rows);
     s->native.has_non_exact_atoms_dirty = true;
-    s->native.id_present_dirty = true;
+    if (presence_follows) {
+        s->native.id_present_synced_len -= presence_removed;
+        id_present_keys_compact(&s->native,
+                                space_length64(s) - space_dense_facts(s));
+    } else {
+        s->native.id_present_dirty = true;
+    }
     uint64_t followed_prefix = s->prefix_epoch;
     space_publish_mutation(s, SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY,
                            SPACE_MUTATION_PREFIX_REWRITTEN);
@@ -7086,7 +8122,7 @@ static bool space_atom_id_form_is(const Space *s, AtomId atom_id,
                    tu_head_sym(s->native.universe, atom_id) == head;
         }
         if (!atom)
-            atom = term_universe_get_atom(s->native.universe, atom_id);
+            atom = term_universe_peek_atom(s->native.universe, atom_id);
     }
     return space_atom_form_is(atom, head, arity);
 }
@@ -7110,7 +8146,7 @@ space_atom_equation_projection(const Space *s, AtomId atom_id, Atom *atom) {
             return SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY;
         }
         if (!atom)
-            atom = term_universe_get_atom(s->native.universe, atom_id);
+            atom = term_universe_peek_atom(s->native.universe, atom_id);
     }
     if (atom) {
         if (space_atom_form_is(atom, g_builtin_syms.equals, 3u) ||
@@ -7199,16 +8235,23 @@ static SpaceDispatchRetention space_transport_dispatch_coordinates(
     CettaCount target_len = transport ? transport->target_len : source_len - 1u;
     const CettaIndex *coordinates = transport ? transport->source_to_target : NULL;
     if (retained.equations) {
-        for (uint32_t i = 0u; i <= EQ_INDEX_BUCKETS; i++) {
-            EqBucket *bucket = i == EQ_INDEX_BUCKETS
-                ? &s->native.eq_idx.wildcard : &s->native.eq_idx.buckets[i];
-            if (!space_transport_dispatch_bucket(
-                    bucket->atom_indices, bucket->len, source_len, target_len,
-                    coordinates, erased)) {
-                retained.equations = false;
-                break;
+        if (s->native.eq_idx.buckets) {
+            for (uint32_t i = 0u; i < EQ_INDEX_BUCKETS; i++) {
+                EqBucket *bucket = &s->native.eq_idx.buckets[i];
+                if (!space_transport_dispatch_bucket(
+                        bucket->atom_indices, bucket->len, source_len, target_len,
+                        coordinates, erased)) {
+                    retained.equations = false;
+                    break;
+                }
             }
         }
+        if (retained.equations &&
+            !space_transport_dispatch_bucket(
+                s->native.eq_idx.wildcard.atom_indices,
+                s->native.eq_idx.wildcard.len, source_len, target_len,
+                coordinates, erased))
+            retained.equations = false;
         if (retained.equations &&
             !space_transport_dispatch_bucket(
                 s->native.eq_idx.head_rows.atom_indices,
@@ -7298,7 +8341,7 @@ static void space_append_backend_primary_shadow_id(Space *s,
     space_note_atom_id_storage_peak(s);
 }
 
-static bool space_store_via_backend_primary(Space *s, AtomId atom_id,
+static inline __attribute__((always_inline)) bool space_store_via_backend_primary(Space *s, AtomId atom_id,
                                             Atom *atom,
                                             bool *out_transition_failed) {
     bool keep_pathmap_exact_metadata;
@@ -7315,6 +8358,10 @@ static bool space_store_via_backend_primary(Space *s, AtomId atom_id,
             *out_transition_failed = true;
         return false;
     }
+    /* No primary store can consume exactness metadata without its slot.
+     * The PathMap order handoff above remains required on this route. */
+    if (!s->match_backend.ops || !s->match_backend.ops->store_atom_id_direct)
+        return false;
     keep_pathmap_exact_metadata =
         s->match_backend.kind == SPACE_ENGINE_PATHMAP &&
         !s->native.has_non_exact_atoms_dirty;
@@ -7336,7 +8383,7 @@ static bool space_store_via_backend_primary(Space *s, AtomId atom_id,
     return true;
 }
 
-static bool space_store_atom_via_backend_primary(
+static inline __attribute__((always_inline)) bool space_store_atom_via_backend_primary(
     Space *s, Atom *atom, bool *out_transition_failed) {
     bool keep_pathmap_exact_metadata;
     bool had_non_exact_atom;
@@ -7362,6 +8409,10 @@ static bool space_store_atom_via_backend_primary(
             *out_transition_failed = true;
         return false;
     }
+    /* No primary store can consume exactness metadata without its slot.
+     * The PathMap order handoff above remains required on this route. */
+    if (!s->match_backend.ops || !s->match_backend.ops->store_atom_direct)
+        return false;
     keep_pathmap_exact_metadata =
         s->match_backend.kind == SPACE_ENGINE_PATHMAP &&
         !s->native.has_non_exact_atoms_dirty;
@@ -7536,11 +8587,16 @@ static void space_native_storage_init_empty(Space *s, TermUniverse *universe) {
     exact_index_init(&s->native.exact_idx);
     s->native.id_present = NULL;
     s->native.id_present_bits = 0;
+    s->native.id_present_table = NULL;
+    s->native.id_present_table_cap = 0u;
+    s->native.id_present_table_used = 0u;
     s->native.id_present_synced_len = 0;
     s->native.id_present_dirty = false;
+    s->native.id_present_shared = false;
     s->native.id_present_keys = NULL;
     s->native.id_present_key_len = 0u;
     s->native.id_present_key_cap = 0u;
+    s->native.resource_owner = NULL;
     s->native.dense = NULL;
     s->native.dense_facts = 0u;
     s->native.dense_epoch = 0u;
@@ -7552,6 +8608,7 @@ static void space_native_storage_init_empty(Space *s, TermUniverse *universe) {
     s->native.exact_idx_dirty = true;
     s->native.has_non_exact_atoms = false;
     s->native.has_non_exact_atoms_dirty = false;
+    atomic_init(&s->native.has_proof_image, false);
     s->native.secondary_index_deferral_depth = 0;
     s->native.marks = NULL;
     s->native.mark_tree = NULL;
@@ -7566,15 +8623,32 @@ static void space_native_storage_init_empty(Space *s, TermUniverse *universe) {
     s->overlay_removed_base_cap = 0;
 }
 
+static void space_set_overlay_base(Space *space, const Space *base) {
+    if (space_lifetime_rebase)
+        space_lifetime_rebase(space, base);
+    space->overlay_base = base;
+}
+
 static void space_move_storage_and_backend(Space *dst, Space *src) {
     if (!dst || !src)
         return;
-    dst->native = src->native;
+    /* Physical storage transfer remains serialized by its caller. Copy the
+     * ordinary fields without accessing the independently published marker
+     * through a non-atomic aggregate write. */
+    const size_t marker = offsetof(SpaceNativeStorage, has_proof_image);
+    const size_t after_marker = marker + sizeof(dst->native.has_proof_image);
+    bool proof = atomic_load_explicit(&src->native.has_proof_image, memory_order_acquire);
+    memcpy(&dst->native, &src->native, marker);
+    memcpy((unsigned char *)&dst->native + after_marker,
+           (const unsigned char *)&src->native + after_marker,
+           sizeof(dst->native) - after_marker);
+    atomic_store_explicit(&dst->native.has_proof_image, proof, memory_order_release);
+    term_universe_resource_owner_move(dst->native.resource_owner, dst);
     dst->kind = src->kind;
     dst->strict = src->strict;
     dst->module_own_view = src->module_own_view;
     dst->match_backend = src->match_backend;
-    dst->overlay_base = src->overlay_base;
+    space_set_overlay_base(dst, src->overlay_base);
     dst->overlay_base_visible_len = src->overlay_base_visible_len;
     dst->overlay_removed_base_indices = src->overlay_removed_base_indices;
     dst->overlay_removed_base_len = src->overlay_removed_base_len;
@@ -7598,6 +8672,7 @@ static void space_reset_moved_from(Space *s) {
     s->declaration_revision = 0;
     s->declares_subtypes = false;
     s->prefix_epoch = space_fresh_prefix_epoch();
+    space_set_overlay_base(s, NULL);
     space_native_storage_init_empty(s, space_default_universe());
     space_match_backend_init(s);
     space_attach_to_universe(s, s->native.universe);
@@ -7647,6 +8722,7 @@ void space_init_with_universe(Space *s, TermUniverse *universe) {
     s->importer_count = 0u;
     s->importer_cap = 0u;
     s->module_dependency_epoch = 0u;
+    s->arena_hold = NULL;
     if (s->ledger_counted) {
         uint64_t heap_after = space_ledger_heap_in_use();
         cetta_runtime_stats_gauge_add(CETTA_RUNTIME_COUNTER_SPACE_LIVE,
@@ -7749,6 +8825,7 @@ static bool space_add_dependency_link(Space *importer, Space *dependency) {
 }
 
 bool space_add_dependency(Space *importer, Space *dependency) {
+    if (!space_proof_prepare_mutation(importer)) return false;
     /* A space that composes others keeps no relations. */
     space_dense_settle(importer, SYMBOL_ID_NONE);
     return importer && !importer->module_own_view &&
@@ -7872,8 +8949,8 @@ static void space_dependencies_unlink(Space *s) {
            detaches when the final owner ends. Never expose watches as
            query dependencies of a detached own-storage view. */
         if (selected)
-            importer->overlay_base = importer->dep_count
-                ? importer->deps[importer->dep_count - 1u] : NULL;
+            space_set_overlay_base(importer, importer->dep_count
+                ? importer->deps[importer->dep_count - 1u] : NULL);
         space_note_dependency_mutation(
             importer, SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE, true);
     }
@@ -7886,6 +8963,7 @@ static void space_dependencies_unlink(Space *s) {
 }
 
 bool space_mark_imported_prefix(Space *s) {
+    if (!space_proof_prepare_mutation(s)) return false;
     if (!s || space_has_overlay_base(s) || s->kind != SPACE_KIND_ATOM)
         return false;
     space_dense_settle(s, SYMBOL_ID_NONE);
@@ -7985,7 +9063,8 @@ void space_init_overlay(Space *s, const Space *base) {
         return;
     s->kind = base->kind;
     space_set_strict(s, base->strict);
-    s->overlay_base = base;
+    space_set_overlay_base(s, base);
+    if (space_proof_present(base)) space_proof_expose_prefix((Space *)base);
     s->overlay_base_visible_len = space_length64(base);
 }
 
@@ -8012,7 +9091,7 @@ bool space_module_own_view_select(Space *view, Space *storage) {
         !space_add_dependency_link(view, storage))
         return false;
     if (view->overlay_base != storage) {
-        view->overlay_base = storage;
+        space_set_overlay_base(view, storage);
         space_note_dependency_mutation(
             view, SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE, true);
         space_advance_global_mutation_epoch();
@@ -8027,8 +9106,8 @@ void space_module_own_view_release(Space *view, Space *storage) {
     space_handle_list_remove(view->deps, &view->dep_count, storage);
     space_handle_list_remove(storage->importers, &storage->importer_count, view);
     if (selected)
-        view->overlay_base = view->dep_count
-            ? view->deps[view->dep_count - 1u] : NULL;
+        space_set_overlay_base(view, view->dep_count
+            ? view->deps[view->dep_count - 1u] : NULL);
     space_note_dependency_mutation(
         view, SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE, true);
     space_advance_global_mutation_epoch();
@@ -8057,6 +9136,8 @@ void space_free(Space *s) {
     space_release_rows(s, 0u, s->native.len);
     space_dense_free(s);
     id_present_keys_release(&s->native);
+    term_universe_resource_owner_free(s->native.resource_owner);
+    s->native.resource_owner = NULL;
     space_marks_free(s);
     free(s->native.atom_ids);
     s->native.atom_ids = NULL;
@@ -8079,7 +9160,7 @@ void space_free(Space *s) {
     s->native.has_non_exact_atoms_dirty = false;
     s->native.secondary_index_deferral_depth = 0;
     free(s->overlay_removed_base_indices);
-    s->overlay_base = NULL;
+    space_set_overlay_base(s, NULL);
     s->overlay_base_visible_len = 0;
     s->overlay_removed_base_indices = NULL;
     s->overlay_removed_base_len = 0;
@@ -8469,8 +9550,8 @@ static SpaceEquationCursorStep space_equation_cursor_member_next(
         return SPACE_EQUATION_CURSOR_END;
     }
 
-    EqBucket *exact =
-        &s->native.eq_idx.buckets[symbol_hash(cursor->head)];
+    EqBucket *exact = s->native.eq_idx.buckets
+        ? &s->native.eq_idx.buckets[symbol_hash(cursor->head)] : NULL;
     EqBucket *wildcard = &s->native.eq_idx.wildcard;
     CettaIndex exact_index = 0u;
     CettaIndex wildcard_index = 0u;
@@ -9365,8 +10446,13 @@ static bool space_equation_children_at_id(const Space *s, AtomId atom_id,
     }
     if (tu_hdr(s->native.universe, atom_id))
         return false;
-    Atom *atom = term_universe_get_atom(s->native.universe, atom_id);
-    return atom ? is_equation_atom(atom, lhs_out, rhs_out) : false;
+    Atom *atom = term_universe_peek_atom(s->native.universe, atom_id);
+    if (!atom || !is_equation_atom(atom, lhs_out, rhs_out))
+        return false;
+    /* The caller may keep equation parts; non-equation inspection above
+     * needs no persistent image of a resource-bearing data row. */
+    atom = term_universe_get_atom(s->native.universe, atom_id);
+    return atom && is_equation_atom(atom, lhs_out, rhs_out);
 }
 
 static bool space_type_annotation_child_ids_at_id(const Space *s,
@@ -9389,6 +10475,20 @@ static bool space_type_annotation_child_ids_at_id(const Space *s,
     return true;
 }
 
+/* Equation indexes list their source ids as roots while their borrowed
+ * pattern pointers live. Inspecting a resource-bearing equation for this
+ * index must not create an unrelated persistent syntax owner. */
+static bool space_equation_index_children_at_id(const Space *s, AtomId id,
+                                                Atom **lhs, Atom **rhs) {
+    /* The caller already admitted stable equation child ids. Reject all
+     * remaining stable rows before decoding: ordinary data must not enter
+     * the persistent syntax cache merely to discover it is not an equation. */
+    if (tu_hdr(s->native.universe, id))
+        return false;
+    Atom *atom = term_universe_peek_atom(s->native.universe, id);
+    return atom && is_equation_atom(atom, lhs, rhs);
+}
+
 static Atom *space_type_annotation_subject_at_id(const Space *s,
                                                  AtomId atom_id) {
     if (!s || !s->native.universe || atom_id == CETTA_ATOM_ID_NONE)
@@ -9401,10 +10501,12 @@ static Atom *space_type_annotation_subject_at_id(const Space *s,
     }
     if (tu_hdr(s->native.universe, atom_id))
         return NULL;
-    Atom *atom = term_universe_get_atom(s->native.universe, atom_id);
+    Atom *atom = term_universe_peek_atom(s->native.universe, atom_id);
     if (atom && atom->kind == ATOM_EXPR && atom->expr.len == 3 &&
-        atom_is_symbol_id(atom->expr.elems[0], g_builtin_syms.colon))
-        return atom->expr.elems[1];
+        atom_is_symbol_id(atom->expr.elems[0], g_builtin_syms.colon)) {
+        atom = term_universe_get_atom(s->native.universe, atom_id);
+        return atom ? atom->expr.elems[1] : NULL;
+    }
     return NULL;
 }
 
@@ -9424,7 +10526,7 @@ static void eq_index_rebuild(Space *s) {
             continue;
         }
         Atom *lhs, *rhs;
-        if (space_equation_children_at_id(s, atom_id, &lhs, &rhs))
+        if (space_equation_index_children_at_id(s, atom_id, &lhs, &rhs))
             eq_index_add(&s->native.eq_idx, lhs, i, atom_id);
     }
     s->native.eq_idx_dirty = false;
@@ -9467,7 +10569,9 @@ static void ty_ann_index_rebuild(Space *s) {
    logical atom-id accessor, so no linearization is required.  Failure leaves
    the projection dirty and forces callers onto the exact/alpha scan; an
    incomplete accelerator must never create a false negative. */
-static bool id_present_sync(Space *s) {
+static inline __attribute__((always_inline)) bool
+id_present_sync_rows(Space *s, bool strict, bool *declined) {
+    if (declined) *declined = false;
     if (!s)
         return false;
     /* The bitset covers the rows; the facts kept as bits answer for
@@ -9480,17 +10584,19 @@ static bool id_present_sync(Space *s) {
     }
     for (CettaIndex i = s->native.id_present_synced_len;
          i < logical_len; i++) {
+        if (strict) SPACE_PROOF_APPEND_WORK(prefix_scanned, 1u);
         AtomId stored_id = space_get_atom_id_at64(s, i);
-        if (!tu_hdr(s->native.universe, stored_id)) {
-            Atom *stored =
-                term_universe_get_atom(s->native.universe, stored_id);
-            /* Pointer-backed runtime values do not have lawful structural
-               intern keys.  Leave them to the exact/alpha scan; stable queries
-               can still use the projection built from the remaining rows. */
-            if (stored && !term_universe_atom_is_stable(stored))
-                continue;
+        AtomId cid = CETTA_ATOM_ID_NONE;
+        if (!id_present_row_key(s, stored_id, &cid)) {
+            if (!strict) continue;
+            if (declined) *declined = true;
+            id_present_clear(&s->native);
+            s->native.id_present_synced_len = 0u;
+            s->native.id_present_dirty = true;
+            return false;
         }
-        AtomId cid = space_canonical_id_for_stored(s, stored_id);
+        if (cid != CETTA_ATOM_ID_NONE && id_present_contains(&s->native, cid))
+            s->native.id_present_shared = true;
         if (cid == CETTA_ATOM_ID_NONE ||
             !id_present_set(&s->native, cid) ||
             (cid != stored_id && !id_present_key_hold(&s->native, cid))) {
@@ -9503,6 +10609,11 @@ static bool id_present_sync(Space *s) {
     s->native.id_present_synced_len = logical_len;
     s->native.id_present_dirty = false;
     return true;
+}
+
+static bool id_present_sync(Space *s) {
+    if (space_has_proof_image(s, SYMBOL_ID_NONE)) return false;
+    return id_present_sync_rows(s, false, NULL);
 }
 
 static void exact_index_rebuild(Space *s) {
@@ -9524,7 +10635,7 @@ static void exact_index_rebuild(Space *s) {
 static void recompute_has_non_exact_atoms(Space *s) {
     space_settle_marks(s);
     if (!s) return;
-    s->native.has_non_exact_atoms = false;
+    s->native.has_non_exact_atoms = space_proof_present(s) && space_proof_non_exact(s);
     for (CettaIndex i = 0; i < s->native.len; i++) {
         AtomId atom_id = space_get_atom_id_at64(s, i);
         if (!atom_id_is_exact_indexable(s, atom_id)) {
@@ -9680,34 +10791,34 @@ static bool space_set_holds(Space *s, AtomId atom_id, Atom *atom) {
         }
     }
     if (!atom && space_tracks_atom_ids(s) && atom_id != CETTA_ATOM_ID_NONE)
-        atom = term_universe_get_atom(universe, atom_id);
+        atom = term_universe_peek_atom(universe, atom_id);
     return atom && space_contains_for_add_nodup(s, atom);
 }
 
-static void space_add_stored_id_as(Space *s, AtomId atom_id,
-                                   Atom *backend_atom, bool set_checked);
-
 static void space_add_stored_id(Space *s, AtomId atom_id, Atom *backend_atom) {
-    space_add_stored_id_as(s, atom_id, backend_atom, false);
+    /* Refusal has already recorded its backend error. Void public mutations
+     * preserve that channel; admission callers use the acceptance result. */
+    (void)space_add_stored_id_as(s, atom_id, backend_atom, false);
 }
 
 /* `set_checked`: the caller has just found, by the presence bitset, that
  * the set holds no copy of the atom and no alpha-variant, and `atom_id` is
  * the atom's own presence key (its alpha key). */
-static void space_add_stored_id_as(Space *s, AtomId atom_id,
+static bool space_add_stored_id_as(Space *s, AtomId atom_id,
                                    Atom *backend_atom, bool set_checked) {
+    if (!space_proof_prepare_storage(s)) return false;
     if (space_dense_route_add(s, atom_id, set_checked))
-        return;
+        return true;
     /* A set holds a fact once, as a row or in a relation, which may hold it
      * though it takes no fact now. */
     if (s->kind == SPACE_KIND_SET && space_dense_holds_id(s, atom_id))
-        return;
+        return true;
     space_dense_note_row(s, atom_id);
     /* A set adds an atom only when it holds no copy of it, nor an
      * alpha-variant. */
     if (s->kind == SPACE_KIND_SET && !set_checked &&
         space_set_holds(s, atom_id, backend_atom))
-        return;
+        return true;
     bool queue_gap = space_is_queue(s) && s->native.start != 0;
     bool backend_needs_atom =
         !queue_gap && space_match_backend_needs_atom_on_add(s, atom_id);
@@ -9722,7 +10833,13 @@ static void space_add_stored_id_as(Space *s, AtomId atom_id,
         if (stored_backend_atom) {
             backend_atom = stored_backend_atom;
         } else if (!backend_atom) {
-            return;
+            if (space_match_backend_last_error_code() == SPACE_MATCH_BACKEND_ERROR_NONE)
+                space_match_backend_set_error(
+                    tu_hdr(s->native.universe, atom_id) ||
+                    term_universe_decoded_atom_at(s->native.universe, atom_id)
+                        ? SPACE_MATCH_BACKEND_ERROR_ALLOCATION_FAILED
+                        : SPACE_MATCH_BACKEND_ERROR_STORAGE_INVALIDATED);
+            return false;
         }
     }
     CettaIndex idx = s->native.len;
@@ -9753,7 +10870,7 @@ static void space_add_stored_id_as(Space *s, AtomId atom_id,
     if (queue_gap) {
         space_mark_indexes_dirty(s);
         space_match_backend_note_remove(s);
-        return;
+        return true;
     }
     if (defer_secondary) {
         s->native.eq_idx_dirty = true;
@@ -9774,7 +10891,7 @@ static void space_add_stored_id_as(Space *s, AtomId atom_id,
                 eq_index_add_id(&s->native.eq_idx, s, lhs_id, idx, atom_id);
             } else {
                 Atom *lhs, *rhs;
-                if (space_equation_children_at_id(s, atom_id, &lhs, &rhs))
+                if (space_equation_index_children_at_id(s, atom_id, &lhs, &rhs))
                     eq_index_add(&s->native.eq_idx, lhs, idx, atom_id);
             }
         }
@@ -9806,19 +10923,25 @@ static void space_add_stored_id_as(Space *s, AtomId atom_id,
                                              "space.backend.note_add");
     space_match_backend_note_add(s, atom_id,
                                  backend_needs_atom ? backend_atom : NULL, idx);
+    return true;
+}
+
+static inline __attribute__((always_inline)) bool space_add_atom_id_accept(Space *s, AtomId atom_id) {
+    s = space_mutation_target(s);
+    if (!space_proof_prepare_storage(s)) return false;
+    bool transition_failed = false;
+    if (!s || !space_tracks_atom_ids(s) || atom_id == CETTA_ATOM_ID_NONE)
+        return false;
+    if (space_store_via_backend_primary(
+            s, atom_id, NULL, &transition_failed))
+        return true;
+    if (transition_failed)
+        return false;
+    return space_add_stored_id_as(s, atom_id, NULL, false);
 }
 
 void space_add_atom_id(Space *s, AtomId atom_id) {
-    s = space_mutation_target(s);
-    bool transition_failed = false;
-    if (!s || !space_tracks_atom_ids(s) || atom_id == CETTA_ATOM_ID_NONE)
-        return;
-    if (space_store_via_backend_primary(
-            s, atom_id, NULL, &transition_failed))
-        return;
-    if (transition_failed)
-        return;
-    space_add_stored_id(s, atom_id, NULL);
+    (void)space_add_atom_id_accept(s, atom_id);
 }
 
 /* Before a mutation that publishes a prefix rewrite: pinned readers keep
@@ -9901,13 +11024,204 @@ static bool space_set_add_ids_batch(Space *s, const AtomId *atom_ids,
 
 bool space_add_atom_ids_batch(Space *s, const AtomId *atom_ids,
                               CettaCount atom_count) {
+    if (!space_proof_prepare_storage(space_mutation_target(s))) return false;
     if (s && s->kind == SPACE_KIND_SET)
         return space_set_add_ids_batch(s, atom_ids, atom_count, false);
     return space_add_atom_ids_batch_bag(s, atom_ids, atom_count, false);
 }
 
+/* The proof facts are a virtual suffix after the physical rows. A disjoint
+ * row batch can stay compact, but it rewrites that logical prefix: captured
+ * ordinary readers detach, while an exposed overlay requires settlement. */
+typedef enum {
+    SPACE_PROOF_APPEND_DECLINED,
+    SPACE_PROOF_APPEND_DONE,
+    SPACE_PROOF_APPEND_FAILED,
+} SpaceProofAppendResult;
+
+static __attribute__((noinline, cold)) SpaceProofAppendResult
+space_proof_append_disjoint(Space *s, const AtomId *keys, CettaCount count) {
+    CETTA_SCOPED_SHARED_TRANSITION(guard);
+    if (!s || s != space_mutation_target(s) || !space_is_set(s) ||
+        !space_proof_present(s) || s->native.marked || s->native.start ||
+        s->overlay_base || s->module_own_view || s->imported_len ||
+        space_has_dependencies(s) || cetta_shared_transition_scope_active() ||
+        s->match_backend.kind != SPACE_ENGINE_NATIVE || !s->native.universe ||
+        (count && !keys)) return SPACE_PROOF_APPEND_DECLINED;
+    /* Exact native ownership only. A copied/custom operations table keeps its
+     * existing callback and refusal route, even when its kind says native. */
+    Space native;
+    space_match_backend_init(&native);
+    if (s->match_backend.ops != native.match_backend.ops)
+        return SPACE_PROOF_APPEND_DECLINED;
+    TermUniverse *u = s->native.universe;
+    for (uint32_t i = 0u; i < s->native.dense->len; i++) {
+        const SpaceDenseHead *head = &s->native.dense->heads[i];
+        if (head->state != SPACE_DENSE_KEPT || head->representation != SPACE_DENSE_PROOF)
+            continue;
+        if (!space_proof_payload_current(head->proof, u)) {
+            space_match_backend_set_error(SPACE_MATCH_BACKEND_ERROR_STORAGE_INVALIDATED);
+            return SPACE_PROOF_APPEND_FAILED;
+        }
+        if (head->proof->prefix_exposed) return SPACE_PROOF_APPEND_DECLINED;
+    }
+    /* Validate EVERY input before any Space representation or effect changes. */
+    for (CettaCount i = 0u; i < count; i++) {
+        const CettaTermHdr *h = tu_hdr(u, keys[i]);
+        if (!h || h->tag != ATOM_EXPR || tu_arity(u, keys[i]) == 0u)
+            return SPACE_PROOF_APPEND_DECLINED;
+        AtomId first = tu_child(u, keys[i], 0u);
+        if (tu_kind(u, first) != ATOM_SYMBOL ||
+            space_atom_equation_projection(s, keys[i], NULL) !=
+                SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY)
+            return SPACE_PROOF_APPEND_DECLINED;
+        const SpaceDenseHead *head = space_dense_find(s->native.dense, tu_sym(u, first));
+        if (head && head->state == SPACE_DENSE_KEPT && head->representation == SPACE_DENSE_PROOF)
+            return SPACE_PROOF_APPEND_DECLINED;
+    }
+    if (!count) return SPACE_PROOF_APPEND_DONE;
+    if (count > SIZE_MAX / sizeof(AtomId) || u->collection_inhibit == UINT32_MAX) {
+        space_match_backend_set_error(SPACE_MATCH_BACKEND_ERROR_ALLOCATION_FAILED);
+        return SPACE_PROOF_APPEND_FAILED;
+    }
+    term_universe_collection_inhibit_enter(u);
+    CettaU64Index pure, seen;
+    cetta_u64_index_init(&pure); cetta_u64_index_init(&seen);
+    AtomId *fresh = cetta_fallible_malloc((size_t)count * sizeof(*fresh));
+    uint8_t *replacement = NULL, *captured = NULL;
+    CettaCount fresh_len = 0u;
+    SpaceProofAppendResult result = SPACE_PROOF_APPEND_FAILED;
+    if (!fresh) goto finished;
+    /* Only new input terms are validated here. Existing row membership uses
+     * the native prefix accelerator, maintained over its unsynchronized suffix. */
+    for (CettaCount i = 0u; i < count; i++) {
+        SpaceProofImageStatus pure_key = space_proof_pure_key(u, keys[i], &pure, 0u);
+        if (pure_key != SPACE_PROOF_IMAGE_READY) {
+            if (pure_key == SPACE_PROOF_IMAGE_DECLINED) result = SPACE_PROOF_APPEND_DECLINED;
+            goto finished;
+        }
+    }
+    bool prefix_ready = true;
+    for (uint32_t i = 0u; i < s->native.dense->len; i++) {
+        const SpaceDenseHead *head = &s->native.dense->heads[i];
+        if (head->state == SPACE_DENSE_KEPT && head->representation == SPACE_DENSE_PROOF)
+            prefix_ready &= head->proof->prefix_membership_ready;
+    }
+    /* Ordinary presence may have skipped opaque rows. Establish the stronger
+     * prefix certificate once, then only synchronize real appended suffixes. */
+    if (!prefix_ready) s->native.id_present_dirty = true;
+    bool unsupported_key = false;
+    if (!id_present_sync_rows(s, true, &unsupported_key)) {
+        if (unsupported_key) result = SPACE_PROOF_APPEND_DECLINED;
+        goto finished;
+    }
+    for (uint32_t i = 0u; i < s->native.dense->len; i++) {
+        SpaceDenseHead *head = &s->native.dense->heads[i];
+        if (head->state == SPACE_DENSE_KEPT && head->representation == SPACE_DENSE_PROOF)
+            head->proof->prefix_membership_ready = true;
+    }
+    for (CettaCount i = 0u; i < count; i++) {
+        AtomId key = term_universe_alpha_key_id(u, keys[i]);
+        if (key == CETTA_ATOM_ID_NONE) goto finished;
+        if (id_present_contains(&s->native, key)) continue;
+        CettaGsltU32IndexInsertResultV1 inserted = cetta_u64_index_insert(&seen, key, 1u);
+        if (inserted == CETTA_GSLT_U32_INDEX_INSERTED_V1) fresh[fresh_len++] = key;
+        else if (inserted != CETTA_GSLT_U32_INDEX_DUPLICATE_V1) goto finished;
+    }
+    if (!fresh_len) { result = SPACE_PROOF_APPEND_DONE; goto finished; }
+    if (fresh_len > UINT64_MAX - space_length64(s)) goto finished;
+    CettaIndex next_len = s->native.len + fresh_len;
+    uint8_t bits = (uint8_t)space_atom_id_width_bits_for_universe(u);
+    size_t width = space_atom_id_width_bytes_bits(bits);
+    if (!width || next_len > SIZE_MAX / width) goto finished;
+    CettaIndex next_cap = s->native.cap;
+    if (next_cap < next_len || bits != s->native.atom_id_width_bits) {
+        if (!next_cap) next_cap = 64u;
+        while (next_cap < next_len) {
+            if (next_cap > UINT64_MAX / 2u) { next_cap = next_len; break; }
+            next_cap *= 2u;
+        }
+        if (next_cap > SIZE_MAX / width) goto finished;
+        replacement = cetta_fallible_malloc((size_t)next_cap * width);
+        if (!replacement) goto finished;
+        for (CettaIndex i = 0u; i < s->native.len; i++) {
+            AtomId id = space_atom_id_storage_load_at(s->native.atom_ids,
+                s->native.atom_id_width_bits, i);
+            if (!space_atom_id_storage_store_at(replacement, bits, i, id)) goto finished;
+            SPACE_PROOF_APPEND_WORK(prefix_copied, 1u);
+        }
+    }
+    /* A no-growth append writes no historical row. Validate every slot before
+     * capture detachment, so the final in-place stores cannot refuse. */
+    for (CettaCount i = 0u; i < fresh_len; i++) {
+        uint8_t slot[sizeof(AtomId)];
+        if (!space_atom_id_storage_store_at(slot, bits, 0u, fresh[i])) goto finished;
+        if (replacement &&
+            !space_atom_id_storage_store_at(replacement, bits, s->native.len + i, fresh[i]))
+            goto finished;
+    }
+    SpacePinnedOccurrences *view = s->match_backend.native.pinned;
+    if (view) {
+        size_t old_width = space_atom_id_width_bytes_bits(s->native.atom_id_width_bits);
+        if (!old_width || s->native.len > SIZE_MAX / old_width) goto finished;
+        size_t bytes = (size_t)s->native.len * old_width;
+        captured = bytes ? cetta_fallible_malloc(bytes) : NULL;
+        if (bytes && !captured) goto finished;
+        if (bytes) memcpy(captured, s->native.atom_ids, bytes);
+        SPACE_PROOF_APPEND_WORK(capture_copied, s->native.len);
+        /* The new provider must enumerate the real captured rows immediately
+         * if this operation itself runs inside a resource finalizer's sweep. */
+        view->atom_ids = captured; view->atom_id_width_bits = s->native.atom_id_width_bits;
+        view->len = s->native.len; view->universe = u;
+        if (!term_universe_add_root_provider(u, space_pinned_occurrences_roots, view)) {
+            view->atom_ids = NULL; view->len = 0u; view->universe = NULL;
+            goto finished;
+        }
+        captured = NULL;
+        space_pinned_occurrences_finish_detach(s, view);
+    }
+    /* All recoverable preparation is complete. Pure data holds, pointer
+     * exchange and native index retirement cannot refuse publication. */
+    for (CettaCount i = 0u; i < fresh_len; i++) space_hold_row(s, fresh[i]);
+    if (replacement) {
+        uint8_t *old = s->native.atom_ids;
+        s->native.atom_ids = replacement; replacement = NULL;
+        s->native.atom_id_width_bits = bits;
+        s->native.cap = next_cap;
+        free(old);
+    } else {
+        for (CettaCount i = 0u; i < fresh_len; i++)
+            (void)space_atom_id_storage_store_at(s->native.atom_ids, bits,
+                                                s->native.len + i, fresh[i]);
+    }
+    s->native.start = 0u; s->native.len = next_len;
+    /* Physical rows only append. Keep their presence projection and its old
+     * synchronized ceiling; the next call indexes only these new rows. The
+     * logical proof suffix still moves, so other derived coordinates retire. */
+    space_mark_secondary_indexes_dirty(s);
+    space_match_backend_note_remove(s);
+    space_note_atom_id_storage_peak(s);
+    space_publish_mutation(s, SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY,
+                           SPACE_MUTATION_PREFIX_REWRITTEN);
+    result = SPACE_PROOF_APPEND_DONE;
+finished:
+    free(captured); free(replacement); free(fresh);
+    cetta_u64_index_free(&seen); cetta_u64_index_free(&pure);
+    term_universe_collection_inhibit_leave(u);
+    if (result == SPACE_PROOF_APPEND_FAILED)
+        space_match_backend_set_error(SPACE_MATCH_BACKEND_ERROR_ALLOCATION_FAILED);
+    return result;
+}
+
 bool space_add_alpha_keys_batch(Space *s, const AtomId *keys,
                                 CettaCount count) {
+    Space *target = space_mutation_target(s);
+    if (space_proof_present(target)) {
+        SpaceProofAppendResult appended = space_proof_append_disjoint(s, keys, count);
+        if (appended != SPACE_PROOF_APPEND_DECLINED)
+            return appended == SPACE_PROOF_APPEND_DONE;
+        if (!space_proof_prepare_storage(target)) return false;
+    }
     if (s && s->kind == SPACE_KIND_SET)
         return space_set_add_ids_batch(s, keys, count, true);
     return space_add_atom_ids_batch_bag(s, keys, count, false);
@@ -10030,7 +11344,7 @@ static bool space_add_atom_ids_batch_rows(Space *s, const AtomId *atom_ids,
             if (!space_match_backend_require_logical_order(s, NULL))
                 return false;
             for (CettaCount i = 0; i < atom_count; i++)
-                space_add_stored_id(s, atom_ids[i], NULL);
+                if (!space_add_stored_id_as(s, atom_ids[i], NULL, false)) return false;
             return space_term_universe_last_error_code(s) ==
                    TERM_UNIVERSE_ERROR_NONE;
         }
@@ -10083,6 +11397,7 @@ static bool space_add_atom_ids_batch_rows(Space *s, const AtomId *atom_ids,
 }
 
 void space_add(Space *s, Atom *atom) {
+    if (!space_proof_prepare_storage(space_mutation_target(s))) return;
     s = space_mutation_target(s);
     if (!s)
         return;
@@ -10136,7 +11451,7 @@ static bool space_admit_atom_impl(Space *s, Arena *fallback,
                                   const Arena *source_arena, Atom *atom) {
     s = space_mutation_target(s);
     bool transition_failed = false;
-    if (!s || !atom)
+    if (!s || !atom || !space_proof_prepare_storage(s))
         return false;
     SPACE_STORE_SCOPE();
 
@@ -10185,8 +11500,7 @@ static bool space_admit_atom_impl(Space *s, Arena *fallback,
                 return true;
             if (transition_failed)
                 return false;
-            space_add_stored_id_as(s, atom_id, atom, set_checked);
-            return true;
+            return space_add_stored_id_as(s, atom_id, atom, set_checked);
         }
         if (space_term_universe_failed(s))
             return false;
@@ -10197,8 +11511,7 @@ static bool space_admit_atom_impl(Space *s, Arena *fallback,
             term_universe_lookup_atom_id(s->native.universe, stored);
         if (stored_id == CETTA_ATOM_ID_NONE)
             return false;
-        space_add_atom_id(s, stored_id);
-        return true;
+        return space_add_atom_id_accept(s, stored_id);
     }
 
     Atom *stored = space_store_atom(s, fallback, atom);
@@ -10270,7 +11583,178 @@ bool space_admit_atoms_batch_from_source_arena(
     return stored;
 }
 
+enum { SPACE_ADDITIVE_COPY_WINDOW = 512u };
+
+static bool space_additive_copy_supported(const Space *source,
+                                          const TermUniverse *universe) {
+    if (!source || !universe || source->native.universe != universe ||
+        source->module_own_view || source->overlay_base ||
+        source->imported_len != 0u || space_has_dependencies(source) ||
+        source->match_backend.kind != SPACE_ENGINE_NATIVE ||
+        !space_tracks_atom_ids(source))
+        return false;
+    const struct SpaceDense *dense = source->native.dense;
+    for (uint32_t i = 0u; dense && i < dense->len; i++) {
+        const SpaceDenseHead *head = &dense->heads[i];
+        if (head->state == SPACE_DENSE_KEPT &&
+            (head->skeleton || head->representation == SPACE_DENSE_PROOF))
+            return false;
+    }
+    return true;
+}
+
+typedef struct {
+    Space *destination;
+    SymbolId head;
+    AtomId head_id;
+    uint32_t arity;
+    AtomId *tuples;
+    CettaCount count;
+} SpaceAdditiveCopyTuples;
+
+static bool space_additive_copy_flush(SpaceAdditiveCopyTuples *copy) {
+    if (copy->count == 0u)
+        return true;
+    if (!space_add_dense_tuples(copy->destination, copy->head, copy->head_id,
+                                copy->arity, copy->tuples, copy->count))
+        return false;
+    copy->count = 0u;
+    return true;
+}
+
+static bool space_additive_copy_tuple(void *context,
+                                      const CettaDenseId *tuple) {
+    SpaceAdditiveCopyTuples *copy = context;
+    for (uint32_t column = 0u; column < copy->arity; column++)
+        copy->tuples[(size_t)copy->count * copy->arity + column] = tuple[column];
+    copy->count++;
+    return copy->count != SPACE_ADDITIVE_COPY_WINDOW ||
+           space_additive_copy_flush(copy);
+}
+
+static bool space_additive_copy_append(Space *destination, Space *source) {
+    AtomId rows[SPACE_ADDITIVE_COPY_WINDOW];
+    CettaCount count = 0u;
+    /* A destination append may migrate the universe's row width, including
+     * this source's storage. Read its current encoding for each new row. */
+    for (CettaIndex row = 0u; row < source->native.len; row++) {
+        if (space_marks_row_marked(&source->native, row))
+            continue;
+        AtomId id = space_atom_id_storage_load_at(
+            source->native.atom_ids, source->native.atom_id_width_bits,
+            source->native.start + row);
+        /* Opaque resources keep a decoded owned image instead of a record.
+         * The source holds that image until the destination takes its own
+         * row reference; lack of a syntax header is not an invalid ID. */
+        if (id == CETTA_ATOM_ID_NONE ||
+            (!tu_hdr(source->native.universe, id) &&
+             !term_universe_decoded_atom_at(source->native.universe, id)))
+            return false;
+        rows[count++] = id;
+        if (count == SPACE_ADDITIVE_COPY_WINDOW) {
+            if (!space_add_atom_ids_batch(destination, rows, count))
+                return false;
+            count = 0u;
+        }
+    }
+    if (count != 0u && !space_add_atom_ids_batch(destination, rows, count))
+        return false;
+
+    struct SpaceDense *dense = source->native.dense;
+    for (uint32_t i = 0u; dense && i < dense->len; i++) {
+        SpaceDenseHead *head = &dense->heads[i];
+        if (head->state != SPACE_DENSE_KEPT)
+            continue;
+        SpaceAdditiveCopyTuples copy = {
+            .destination = destination, .head = head->head,
+            .head_id = head->head_id, .arity = head->arity,
+        };
+        copy.tuples = cetta_fallible_malloc(
+            sizeof(*copy.tuples) * SPACE_ADDITIVE_COPY_WINDOW * copy.arity);
+        if (!copy.tuples)
+            return false;
+        bool copied = space_dense_form_each(space_dense_head_form(head), NULL,
+                                             space_additive_copy_tuple, &copy) &&
+                      space_additive_copy_flush(&copy);
+        free(copy.tuples);
+        if (!copied)
+            return false;
+    }
+    return true;
+}
+
+typedef struct {
+    uint64_t revision, prefix_epoch, dense_epoch;
+    CettaCount len, start, marked, dense_facts;
+    const struct SpaceDense *dense;
+} SpaceAdditiveCopySource;
+
+static SpaceAdditiveCopySource space_additive_copy_source(const Space *s) {
+    return (SpaceAdditiveCopySource){
+        .revision = s->revision, .prefix_epoch = s->prefix_epoch,
+        .dense_epoch = s->native.dense_epoch, .len = s->native.len,
+        .start = s->native.start, .marked = s->native.marked,
+        .dense_facts = s->native.dense_facts, .dense = s->native.dense,
+    };
+}
+
+static bool space_additive_copy_source_unchanged(
+        const Space *source, SpaceAdditiveCopySource before) {
+    SpaceAdditiveCopySource after = space_additive_copy_source(source);
+    return before.revision == after.revision &&
+           before.prefix_epoch == after.prefix_epoch &&
+           before.dense_epoch == after.dense_epoch && before.len == after.len &&
+           before.start == after.start && before.marked == after.marked &&
+           before.dense_facts == after.dense_facts && before.dense == after.dense;
+}
+
+SpaceAdditiveCopyResult space_heap_additive_copy(
+        TermUniverse *destination_universe, Space *left, Space *right,
+        Space **out) {
+    if (!out)
+        return SPACE_ADDITIVE_COPY_FAILED;
+    *out = NULL;
+    if (cetta_shared_transition_scope_active() ||
+        !space_additive_copy_supported(left, destination_universe) ||
+        !space_additive_copy_supported(right, destination_universe))
+        return SPACE_ADDITIVE_COPY_UNSUPPORTED;
+    CettaCount left_count = space_length64(left);
+    CettaCount right_count = space_length64(right);
+    if (right_count > UINT64_MAX - left_count)
+        return SPACE_ADDITIVE_COPY_FAILED;
+    SpaceAdditiveCopySource first = space_additive_copy_source(left);
+    SpaceAdditiveCopySource second = space_additive_copy_source(right);
+    void *left_hold = space_lifetime_pin ? space_lifetime_pin(left) : NULL;
+    void *right_hold = space_lifetime_pin ? space_lifetime_pin(right) : NULL;
+    Space *copy = cetta_fallible_malloc(sizeof(*copy));
+    bool copied = false;
+    if (copy) {
+        /* Initialization attaches the private destination's counted roots
+         * and row-format observer before any source IDs are retained. */
+        space_init_with_universe(copy, destination_universe);
+        copied = space_match_backend_try_set(copy, SPACE_ENGINE_NATIVE) &&
+                 space_additive_copy_append(copy, left) &&
+                 space_additive_copy_append(copy, right) &&
+                 space_length64(copy) == left_count + right_count &&
+                 space_additive_copy_source_unchanged(left, first) &&
+                 space_additive_copy_source_unchanged(right, second);
+        if (!copied) {
+            space_free(copy);
+            free(copy);
+        }
+    }
+    if (space_lifetime_unpin) {
+        space_lifetime_unpin(right_hold);
+        space_lifetime_unpin(left_hold);
+    }
+    if (!copied)
+        return SPACE_ADDITIVE_COPY_FAILED;
+    *out = copy;
+    return SPACE_ADDITIVE_COPY_READY;
+}
+
 Space *space_heap_clone_shallow(Space *src) {
+    if (!space_prepare_proof_read(src, NULL)) return NULL;
     Space *clone;
     CettaCount logical_len = 0;
     uint32_t narrow_len = 0;
@@ -10324,6 +11808,7 @@ Space *space_heap_clone_shallow(Space *src) {
 static void space_replace_contents_classified(
         Space *dst, Space *src,
         SpaceMutationEquationProjection equation_projection) {
+    if (!space_proof_prepare_mutation(dst) || !space_proof_prepare_mutation(src)) return;
     space_dense_settle(dst, SYMBOL_ID_NONE);
     space_dense_settle(src, SYMBOL_ID_NONE);
     space_settle_marks(dst);
@@ -10582,7 +12067,10 @@ static bool query_visible_var_set_contains(const QueryVisibleVarSet *set,
     return false;
 }
 
-static bool collect_query_visible_vars_rec(Atom *atom, QueryVisibleVarSet *set) {
+/* Collecting a query's variables is the same at every path to a shared
+ * subterm: each one is read once. */
+static bool collect_query_visible_vars_under(Atom *atom, QueryVisibleVarSet *set,
+                                             AtomVisitSet *seen, bool *fault) {
     if (!atom || !atom_has_vars(atom))
         return true;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_QUERY_VISIBLE_NODE_VISIT);
@@ -10590,11 +12078,23 @@ static bool collect_query_visible_vars_rec(Atom *atom, QueryVisibleVarSet *set) 
         return query_visible_var_set_add(set, atom);
     if (atom->kind != ATOM_EXPR)
         return true;
+    if (atom->expr.len > 1u && !atom_visit_set_add(seen, atom, fault) &&
+        !*fault)
+        return true;
     for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
-        if (!collect_query_visible_vars_rec(atom->expr.elems[i], set))
+        if (!collect_query_visible_vars_under(atom->expr.elems[i], set, seen,
+                                              fault))
             return false;
     }
     return true;
+}
+
+static bool collect_query_visible_vars_rec(Atom *atom, QueryVisibleVarSet *set) {
+    AtomVisitSet seen = {0};
+    bool fault = false;
+    bool ok = collect_query_visible_vars_under(atom, set, &seen, &fault);
+    atom_visit_set_free(&seen);
+    return ok;
 }
 
 static bool atom_refs_only_query_visible_vars(Atom *atom,
@@ -10898,6 +12398,18 @@ void registry_bind_id(Registry *r, SymbolId key, Atom *value) {
         r->word_len++;
 }
 
+Atom *registry_lookup_id_hinted(Registry *r, SymbolId key, uint32_t *hint) {
+    if (!r || key == SYMBOL_ID_NONE || !hint)
+        return registry_lookup_id(r, key);
+    uint32_t at = *hint;
+    if (at < r->len && r->entries[at].key == key &&
+        r->entries[at].name_id == NAME_ID_NONE)
+        return r->entries[at].value;
+    uint32_t index = registry_index_find(r, key, NAME_ID_NONE);
+    *hint = index;
+    return index == UINT32_MAX ? NULL : r->entries[index].value;
+}
+
 Atom *registry_lookup_id(Registry *r, SymbolId key) {
     if (!r || key == SYMBOL_ID_NONE) return NULL;
     uint32_t index = registry_index_find(r, key, NAME_ID_NONE);
@@ -11104,7 +12616,36 @@ Space *resolve_space(Registry *r, Atom *ref) {
     return NULL;
 }
 
+typedef struct {
+    Arena arena;
+    bool ready;
+} SpaceScopedReads;
+
+static void space_scoped_reads_close(SpaceScopedReads *reads) {
+    if (reads->ready)
+        arena_free(&reads->arena);
+}
+
+static Atom *space_scoped_read_at(SpaceScopedReads *reads, const Space *s,
+                                   CettaIndex index) {
+    const TermUniverse *universe = s->native.universe;
+    if (universe && universe->fallbacks) {
+        AtomId id = space_get_atom_id_at64(s, index);
+        if (id != CETTA_ATOM_ID_NONE && !tu_hdr(universe, id)) {
+            if (!reads->ready) {
+                arena_init_detached(&reads->arena);
+                arena_set_block_growth(&reads->arena, 256u);
+                reads->ready = true;
+            }
+            return term_universe_scoped_atom(universe, &reads->arena, id);
+        }
+    }
+    return space_get_at64(s, index);
+}
+
 bool space_remove(Space *s, Atom *atom) {
+    if (!space_proof_prepare_storage(space_mutation_target(s))) return false;
+    SpaceScopedReads reads __attribute__((cleanup(space_scoped_reads_close))) = {0};
     space_settle_marks(s);
     s = space_mutation_target(s);
     if (!s)
@@ -11210,7 +12751,7 @@ bool space_remove(Space *s, Atom *atom) {
     CettaIndex remove_idx = 0;
     CettaIndex own_begin = s->imported_len;
     for (CettaIndex i = own_begin; i < s->native.len; i++) {
-        Atom *candidate = space_get_at64(s, i);
+        Atom *candidate = space_scoped_read_at(&reads, s, i);
         if (!candidate)
             continue;
         if (atom_eq(candidate, atom)) {
@@ -11223,7 +12764,7 @@ bool space_remove(Space *s, Atom *atom) {
         CettaIndex alpha_idx = 0;
         CettaCount alpha_count = 0;
         for (CettaIndex i = own_begin; i < s->native.len; i++) {
-            Atom *candidate = space_get_at64(s, i);
+            Atom *candidate = space_scoped_read_at(&reads, s, i);
             if (!candidate)
                 continue;
             if (atom_alpha_eq(candidate, atom)) {
@@ -11288,6 +12829,7 @@ bool space_remove(Space *s, Atom *atom) {
 }
 
 bool space_contains_atom_id(const Space *s, AtomId atom_id) {
+    if (!space_proof_prepare_mutation((Space *)s)) return false;
     CettaCount logical_len = 0;
     if (!s || atom_id == CETTA_ATOM_ID_NONE)
         return false;
@@ -11302,6 +12844,7 @@ bool space_contains_atom_id(const Space *s, AtomId atom_id) {
 }
 
 bool space_holds_atom_id_exact(Space *s, AtomId atom_id) {
+    if (!space_proof_prepare_mutation(s)) return false;
     CETTA_SCOPED_SHARED_TRANSITION(holds);
     if (!s || atom_id == CETTA_ATOM_ID_NONE)
         return false;
@@ -11329,6 +12872,7 @@ bool space_holds_atom_id_exact(Space *s, AtomId atom_id) {
 static bool space_remove_atom_id_rows(Space *s, AtomId atom_id);
 
 bool space_remove_atom_id(Space *s, AtomId atom_id) {
+    if (!space_proof_prepare_storage(space_mutation_target(s))) return false;
     Space *target = space_mutation_target(s);
     if (target && atom_id != CETTA_ATOM_ID_NONE &&
         space_dense_route_remove(target, atom_id))
@@ -11441,6 +12985,7 @@ static bool space_remove_atom_id_rows(Space *s, AtomId atom_id) {
 bool space_remove_atom_ids_batch(Space *s, const AtomId *atom_ids,
                                  CettaCount atom_count,
                                  CettaCount *out_removed) {
+    if (!space_proof_prepare_mutation(s)) return false;
     space_prepare_prefix_rewrite(s);
     uint64_t removed = 0;
     SpaceBackendBatchResult batch_result;
@@ -11491,6 +13036,7 @@ bool space_remove_atom_ids_batch(Space *s, const AtomId *atom_ids,
 static bool space_contract_occurrence_mask(
         Space *s, const uint8_t *remove_mask, CettaCount mask_len,
         CettaCount *out_removed, bool settling) {
+    if (!settling && !space_proof_prepare_mutation(s)) return false;
     if (!settling)
         space_settle_marks(s);
     if (out_removed)
@@ -11675,7 +13221,13 @@ static bool space_contract_occurrence_mask(
             s->native.start = 0u;
             if (!settling)
                 space_note_released(s, removed);
+            /* Settling drops rows the logical view had already left: the
+             * presence bits, keyed by the live rows' alpha keys over that
+             * view, still hold, stale only if they were. */
+            bool presence_dirty = s->native.id_present_dirty;
             space_mark_derived_state_dirty(s);
+            if (settling)
+                s->native.id_present_dirty = presence_dirty;
             s->native.eq_idx_dirty = !retained.equations;
             s->native.ty_idx_dirty = !retained.declarations;
             s->native.exact_idx_dirty =
@@ -11841,6 +13393,7 @@ Atom *space_peek(const Space *s) {
 }
 
 bool space_pop(Space *s, Atom **out) {
+    if (!space_proof_prepare_mutation(s)) return false;
     space_dense_settle(s, SYMBOL_ID_NONE);
     space_prepare_prefix_rewrite(s);
     CettaCount logical_len;
@@ -11945,6 +13498,7 @@ bool space_truncate(Space *s, uint32_t new_len) {
 }
 
 bool space_truncate64(Space *s, CettaCount new_len) {
+    if (!space_proof_prepare_mutation(s)) return false;
     space_dense_settle(s, SYMBOL_ID_NONE);
     space_prepare_prefix_rewrite(s);
     CettaCount logical_len;
@@ -12034,6 +13588,7 @@ bool space_length_u32_checked(const Space *s, uint32_t *out_len) {
 }
 
 CettaIndex space_exact_match_indices64(Space *s, Atom *atom, CettaIndex **out) {
+    if (!space_prepare_proof_read(s, atom)) { if (out) *out = NULL; return 0u; }
     space_dense_settle_for_pattern(s, atom);
     /* Settling marks and building the index are physical transitions. */
     CETTA_SCOPED_SHARED_TRANSITION(exact_match_indices);
@@ -12120,6 +13675,7 @@ uint32_t space_exact_match_indices(Space *s, Atom *atom, uint32_t **out) {
 }
 
 bool space_contains_exact(Space *s, Atom *atom) {
+    if (!space_prepare_proof_read(s, atom)) return false;
     if (space_dense_holds_atom(s, atom))
         return true;
     bool native_membership_authoritative =
@@ -12275,6 +13831,8 @@ bool space_match_exists_ground_exact_expression_coordinates(
 }
 
 bool space_contains_canonical(Space *s, Atom *atom, bool *out_applicable) {
+    if (out_applicable) *out_applicable = false;
+    if (!space_prepare_proof_read(s, atom)) return false;
     bool native_membership_authoritative =
         s && (!space_engine_uses_pathmap(s->match_backend.kind) ||
               (s->match_backend.kind == SPACE_ENGINE_PATHMAP &&
@@ -12306,6 +13864,7 @@ bool space_contains_canonical(Space *s, Atom *atom, bool *out_applicable) {
 }
 
 bool space_contains_for_add_nodup(Space *s, Atom *atom) {
+    if (!space_prepare_proof_read(s, atom)) return false;
     if (!s || !atom)
         return false;
     bool found = false;
@@ -12359,8 +13918,9 @@ bool space_atom_is_exact_indexable(Atom *atom) {
 
 CettaIndex space_exact_index_rows64(Space *s, Atom *pattern,
                                     CettaIndex **out) {
-    space_dense_settle_for_pattern(s, pattern);
     *out = NULL;
+    if (!space_prepare_proof_read(s, pattern)) return 0u;
+    space_dense_settle_for_pattern(s, pattern);
     CETTA_SCOPED_SHARED_TRANSITION(exact_rows);
     if (!s || !pattern || !s->native.universe || s->native.exact_idx_dirty)
         return 0u;
@@ -12372,8 +13932,10 @@ CettaIndex space_exact_index_rows64(Space *s, Atom *pattern,
 CettaIndex space_exact_index_rows_ids64(Space *s, SymbolId head,
                                         const AtomId *ids, CettaExprLen len,
                                         CettaIndex **out) {
-    space_dense_settle_for_head(s, head, len);
     *out = NULL;
+    if (space_has_proof_image(s, head) &&
+        space_settle_proof_images(s) != SPACE_PROOF_IMAGE_READY) return 0u;
+    space_dense_settle_for_head(s, head, len);
     CETTA_SCOPED_SHARED_TRANSITION(exact_rows);
     if (!s || !ids || !s->native.universe || s->native.exact_idx_dirty)
         return 0u;
@@ -12390,6 +13952,7 @@ CettaIndex space_exact_index_rows_ids64(Space *s, SymbolId head,
  * settle marks a query leaves to their own schedule.  A strict space builds
  * none.  The caller holds the space's transition. */
 static bool exact_index_head_exact(Space *s, SymbolId head) {
+    if (space_has_proof_image(s, SYMBOL_ID_NONE)) return false;
     if (s->native.exact_idx_dirty) {
         if (!space_keeps_exact_index(s) ||
             s->native.secondary_index_deferral_depth > 0u ||
@@ -12658,10 +14221,18 @@ Atom *get_grounded_type(Arena *a, Atom *atom) {
                           atom_atom_type(a), atom_atom_type(a));
     case GV_STATE: {
         StateCell *cell = (StateCell *)atom->ground.ptr;
-        if (cell->content_type &&
-            !atom_is_symbol_id(cell->content_type, g_builtin_syms.undefined_type))
-            return atom_expr2(a, atom_symbol_literal(a, "StateMonad"), cell->content_type);
-        return atom_symbol_literal(a, "State");
+        StateCellSnapshot snapshot = {0};
+        bool held = state_cell_snapshot_acquire && state_cell_snapshot_release &&
+            state_cell_snapshot_acquire(cell, &snapshot);
+        Atom *content_type = held ? snapshot.content_type : cell->content_type;
+        Atom *result = content_type &&
+            !atom_is_symbol_id(content_type, g_builtin_syms.undefined_type)
+            ? atom_expr2(a, atom_symbol_literal(a, "StateMonad"),
+                held ? atom_deep_copy(a, content_type) : content_type)
+            : atom_symbol_literal(a, "State");
+        if (held)
+            state_cell_snapshot_release(&snapshot);
+        return result;
     }
     case GV_PRIME_NEED_CAPABILITY:
         return atom_symbol_literal(a, "PrimeNeedCapability");
@@ -14716,7 +16287,7 @@ query_equations_member(Space *s, Atom *query, Arena *a,
     int first_pass = imported ? 0 : -1;
     int end_pass = !imported ? 0 : own_only ? 1 : 2;
     for (int pass = first_pass; pass < end_pass && !sink->stop; pass++) {
-        if (head != SYMBOL_ID_NONE) {
+        if (head != SYMBOL_ID_NONE && s->native.eq_idx.buckets) {
             /* Query has a known head symbol — look up matching bucket */
             query_bucket(s, &s->native.eq_idx.buckets[symbol_hash(head)],
                          query, &visible, a, sink, pass);
