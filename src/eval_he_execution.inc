@@ -20,7 +20,7 @@ static bool he_raw_flow_rereads(const HeRawFlowFlags *flow) {
 
 /* The structural eager adapter qualifies source before allocating a search
  * episode. Its equation and return policies are independent of PeTTa's source
- * translation. Effectful and typed applications retain their ordinary owner. */
+ * translation. Admitted effects still execute at their native host owner. */
 typedef struct {
     Atom **terms;
     size_t length, capacity;
@@ -39,6 +39,8 @@ typedef struct {
     bool stream;
     /* Whether the closure admitted holds an effect. */
     bool effects;
+    bool native_resource_operations;
+    unsigned native_contracts;
     /* Whether it queries a space, and whether it unifies a pattern other
      * than a variable with a value that may be open: a stored row with
      * variables can give a stuck call whose fresh variable such a pattern
@@ -60,6 +62,49 @@ typedef struct {
     HeRawFlowFlags raw_flow;
 } HeExecutionAdmission;
 
+/* Program revisions cover Space contents. Library/profile capabilities and
+ * symbol-table instances are a separate authority boundary, including for
+ * negative decisions. Entries carry a non-reused generation; context switches
+ * never free a table that a reentrant caller might still borrow. */
+typedef struct {
+    const CettaLibraryContext *library;
+    const CettaProfile *profile;
+    uint64_t features;
+    uint64_t symbols;
+    bool valid;
+} HeExecutionAuthority;
+
+static _Thread_local HeExecutionAuthority g_he_execution_authority;
+
+static _Thread_local uint64_t g_he_execution_authority_epoch;
+static _Thread_local bool g_he_execution_authority_exhausted;
+
+static uint64_t he_execution_authority_generation(void) {
+    HeExecutionAuthority current = {
+        .library = g_library_context,
+        .profile = g_library_context ? g_library_context->session.profile : NULL,
+        .features = g_library_context ? g_library_context->active_mask : 0u,
+        .symbols = g_symbols ? symbol_table_instance_id(g_symbols) : 0u,
+        .valid = true,
+    };
+    const HeExecutionAuthority *previous = &g_he_execution_authority;
+    if (previous->valid && previous->library == current.library &&
+        previous->profile == current.profile &&
+        previous->features == current.features &&
+        previous->symbols == current.symbols)
+        return g_he_execution_authority_epoch;
+    if (!g_he_execution_authority_exhausted) {
+        if (g_he_execution_authority_epoch == UINT64_MAX) {
+            g_he_execution_authority_exhausted = true;
+            g_he_execution_authority_epoch = 0u;
+        } else {
+            g_he_execution_authority_epoch++;
+        }
+    }
+    g_he_execution_authority = current;
+    return g_he_execution_authority_epoch;
+}
+
 /* The admission of a head's equation closure, valid while the space's
  * program (its equations and declarations) is unchanged. */
 typedef struct {
@@ -70,6 +115,8 @@ typedef struct {
     /* An admitted closure that may hold an effect (the whole walk that
      * admitted it, conservatively). */
     bool effects;
+    bool native_resource_operations;
+    unsigned native_contracts;
     /* It queries a space, and it unifies a pattern other than a variable
      * with a value that may be open (see he_execution_source_admitted). */
     bool queries;
@@ -84,6 +131,7 @@ typedef struct {
     bool raise_unshaped;
     HeRawFlowFlags raw_flow;
     SpaceProgramToken token;
+    uint64_t authority;
 } HeClosureDecision;
 
 #define HE_CLOSURE_DECISIONS 256u
@@ -100,9 +148,10 @@ static HeClosureDecision *he_closure_decision_slot(SymbolId head,
 
 static const HeClosureDecision *he_closure_decision_find(Space *space,
     SymbolId head, bool open_root, bool stream) {
+    uint64_t authority = he_execution_authority_generation();
     HeClosureDecision *slot = he_closure_decision_slot(head, open_root, stream);
-    return slot->head == head && slot->open_root == open_root &&
-        slot->stream == stream &&
+    return authority && slot->authority == authority && slot->head == head &&
+        slot->open_root == open_root && slot->stream == stream &&
         slot->token.space == space && space_program_token_is_current(slot->token)
         ? slot : NULL;
 }
@@ -110,10 +159,13 @@ static const HeClosureDecision *he_closure_decision_find(Space *space,
 static void he_closure_decision_record(Space *space, SymbolId head,
     bool open_root, bool stream, bool admitted,
     const HeExecutionAdmission *admission) {
+    uint64_t authority = he_execution_authority_generation();
     HeClosureDecision *slot = he_closure_decision_slot(head, open_root, stream);
     *slot = (HeClosureDecision){.head = head, .open_root = open_root,
         .stream = stream, .admitted = admitted,
         .effects = admitted && admission->effects,
+        .native_resource_operations = admitted && admission->native_resource_operations,
+        .native_contracts = admitted ? admission->native_contracts : 0u,
         .queries = admitted && admission->queries,
         .structured_binder = admitted && admission->structured_binder,
         .fresh_variables = admitted && admission->fresh_variables,
@@ -121,7 +173,7 @@ static void he_closure_decision_record(Space *space, SymbolId head,
         .collected_fresh = admitted && admission->collected_fresh,
         .raise_unshaped = admitted && admission->raise_unshaped,
         .raw_flow = admitted ? admission->raw_flow : (HeRawFlowFlags){0},
-        .token = space_program_token(space)};
+        .token = space_program_token(space), .authority = authority};
 }
 
 static bool he_stream_head_total(Space *space, SymbolId head,
@@ -140,6 +192,269 @@ static bool he_execution_intrinsic(SymbolId head) {
 static bool he_execution_type_name(Atom *type, const char *name) {
     return type && type->kind == ATOM_SYMBOL &&
         strcmp(atom_name_cstr(type), name) == 0;
+}
+
+/* A native nullary constructor has its own source contract. Allocation is
+ * an effect even when its result is discarded; the shared machine must call
+ * the ordinary constructor exactly once and may never retry a pure run. */
+typedef struct {
+    SpaceProgramToken token;
+    const CettaLibraryContext *library;
+    const CettaProfile *profile;
+    uint64_t symbols;
+    uint64_t features;
+    bool kinds;
+    bool valid;
+    bool admitted;
+} HeNewSpaceContract;
+
+static _Thread_local HeNewSpaceContract g_he_new_space_contract;
+
+static bool he_native_new_space_shape(const Atom *source) {
+    return source && source->kind == ATOM_EXPR && source->expr.len == 1u &&
+        atom_is_symbol_id(source->expr.elems[0], g_builtin_syms.new_space);
+}
+
+static bool he_native_new_space_contract_current(Space *space) {
+    const HeNewSpaceContract *contract = &g_he_new_space_contract;
+    return space && g_library_context && contract->valid &&
+        contract->library == g_library_context &&
+        contract->profile == g_library_context->session.profile &&
+        contract->features == g_library_context->active_mask &&
+        contract->symbols == symbol_table_instance_id(g_symbols) &&
+        contract->kinds == active_builtin_allowed("new-space-kind") &&
+        space_program_token_eq(contract->token, space_program_token(space));
+}
+
+static bool he_shared_native_new_space_ready(Space *space,
+                                             const Atom *source) {
+    return he_native_new_space_shape(source) &&
+        he_native_new_space_contract_current(space) &&
+        g_he_new_space_contract.admitted;
+}
+
+static bool he_native_new_space_admitted(Space *space, Arena *arena,
+                                          const Atom *source) {
+    if (!he_native_new_space_shape(source) || !space || !arena ||
+        !g_library_context)
+        return false;
+    if (he_native_new_space_contract_current(space))
+        return g_he_new_space_contract.admitted;
+    HeNewSpaceContract contract = {
+        .token = space_program_token(space), .library = g_library_context,
+        .profile = g_library_context->session.profile,
+        .symbols = symbol_table_instance_id(g_symbols),
+        .features = g_library_context->active_mask,
+        .kinds = active_builtin_allowed("new-space-kind"), .valid = true,
+    };
+    bool admitted = active_builtin_allowed("new-space") &&
+        !eval_space_has_equations(space, g_builtin_syms.new_space);
+    Atom **types = NULL;
+    uint32_t count = admitted ? eval_get_atom_types_profiled(space, arena,
+        source->expr.elems[0], &types) : 0u;
+    unsigned mask = 0u;
+    for (uint32_t i = 0u; admitted && i < count; i++) {
+        Atom *type = types[i];
+        if (!is_function_type(type) || type->expr.len < 2u ||
+            type->expr.len > 4u ||
+            !he_execution_type_name(type->expr.elems[type->expr.len - 1u],
+                                     "SpaceType")) {
+            admitted = false;
+            break;
+        }
+        CettaExprLen arity = type->expr.len - 2u;
+        unsigned bit = 1u << arity;
+        admitted = (mask & bit) == 0u;
+        for (CettaExprIndex j = 1u; admitted && j <= arity; j++)
+            admitted = he_execution_type_name(type->expr.elems[j], "Atom");
+        mask |= bit;
+    }
+    free(types);
+    contract.admitted = admitted && mask == (contract.kinds ? 7u : 1u);
+    g_he_new_space_contract = contract;
+    return contract.admitted;
+}
+
+/* State construction stores its operand as syntax, after the native host's
+ * type observation. It must supersede PeTTa's data-wrapper form without
+ * evaluating the operand on the machine or making allocation retryable. */
+typedef struct {
+    SpaceProgramToken token;
+    const CettaLibraryContext *library;
+    const CettaProfile *profile;
+    uint64_t symbols;
+    uint64_t features;
+    bool valid;
+    bool admitted;
+} HeNewStateContract;
+
+static _Thread_local HeNewStateContract g_he_new_state_contract;
+
+static bool he_native_new_state_shape(const Atom *source) {
+    return source && source->kind == ATOM_EXPR && source->expr.len == 2u &&
+        atom_is_symbol_id(source->expr.elems[0], g_builtin_syms.new_state);
+}
+
+static bool he_native_new_state_contract_current(Space *space) {
+    const HeNewStateContract *contract = &g_he_new_state_contract;
+    return space && g_library_context && contract->valid &&
+        contract->library == g_library_context &&
+        contract->profile == g_library_context->session.profile &&
+        contract->features == g_library_context->active_mask &&
+        contract->symbols == symbol_table_instance_id(g_symbols) &&
+        space_program_token_eq(contract->token, space_program_token(space));
+}
+
+static bool he_shared_native_new_state_ready(Space *space,
+                                             const Atom *source) {
+    return he_native_new_state_shape(source) &&
+        he_native_new_state_contract_current(space) &&
+        g_he_new_state_contract.admitted;
+}
+
+static bool he_native_new_state_admitted(Space *space, Arena *arena,
+                                          const Atom *source) {
+    if (!he_native_new_state_shape(source) || !space || !arena ||
+        !g_library_context)
+        return false;
+    if (he_native_new_state_contract_current(space))
+        return g_he_new_state_contract.admitted;
+    HeNewStateContract contract = {
+        .token = space_program_token(space), .library = g_library_context,
+        .profile = g_library_context->session.profile,
+        .symbols = symbol_table_instance_id(g_symbols),
+        .features = g_library_context->active_mask, .valid = true,
+    };
+    bool admitted = active_builtin_allowed("new-state") &&
+        !eval_space_has_equations(space, g_builtin_syms.new_state);
+    Atom **types = NULL;
+    uint32_t count = admitted ? eval_get_atom_types_profiled(space, arena,
+        source->expr.elems[0], &types) : 0u;
+    admitted = admitted && count == 1u && is_function_type(types[0]) &&
+        types[0]->expr.len == 3u;
+    if (admitted) {
+        Atom *input = types[0]->expr.elems[1];
+        Atom *output = types[0]->expr.elems[2];
+        admitted = input->kind == ATOM_VAR && output->kind == ATOM_EXPR &&
+            output->expr.len == 2u &&
+            he_execution_type_name(output->expr.elems[0], "StateMonad") &&
+            output->expr.elems[1]->kind == ATOM_VAR &&
+            var_id_eq(input->var_id, output->expr.elems[1]->var_id);
+    }
+    free(types);
+    contract.admitted = admitted;
+    g_he_new_state_contract = contract;
+    return admitted;
+}
+
+/* A ready reference variable names one value at this source boundary. The
+ * native host still resolves/checks the reference before demanding the new
+ * value; no machine-side argument evaluation or named-state dispatch occurs. */
+static _Thread_local HeNewStateContract g_he_state_write_contract;
+static bool he_execution_atom_holds_resource(Atom *atom);
+
+static bool he_native_state_write_shape(const Atom *source) {
+    return source && source->kind == ATOM_EXPR && source->expr.len == 3u &&
+        atom_is_symbol_id(source->expr.elems[0],
+                           g_builtin_syms.change_state_bang);
+}
+
+static bool he_native_state_write_contract_current(Space *space) {
+    const HeNewStateContract *contract = &g_he_state_write_contract;
+    return space && g_library_context && contract->valid &&
+        contract->library == g_library_context &&
+        contract->profile == g_library_context->session.profile &&
+        contract->features == g_library_context->active_mask &&
+        contract->symbols == symbol_table_instance_id(g_symbols) &&
+        space_program_token_eq(contract->token, space_program_token(space));
+}
+
+static bool he_shared_native_state_write_ready(Space *space,
+                                               const Atom *source) {
+    /* Admission checks written operand roles. Here the machine has applied
+     * its bindings, so the reference may also be an invalid value whose
+     * native type error must be preserved by the same host boundary. */
+    return he_native_state_write_shape(source) &&
+        he_native_state_write_contract_current(space) &&
+        g_he_state_write_contract.admitted;
+}
+
+static bool he_native_state_write_admitted(Space *space, Arena *arena,
+                                            const Atom *source) {
+    if (!he_native_state_write_shape(source) || !space || !arena ||
+        !g_library_context || source->expr.elems[1]->kind != ATOM_VAR)
+        return false;
+    Atom *value = source->expr.elems[2];
+    /* Computed or structured operands retain the canonical region. A
+     * variable is handed to the native evaluator with its actual binding. */
+    if (value->kind == ATOM_EXPR || he_execution_atom_holds_resource(value) ||
+        (value->kind == ATOM_SYMBOL &&
+         (eval_space_has_equations(space, value->sym_id) ||
+          is_grounded_op(value->sym_id) ||
+          (symbol_id_is_builtin(value->sym_id) &&
+           !he_execution_type_name(value, "True") &&
+           !he_execution_type_name(value, "False")))))
+        return false;
+    if (he_native_state_write_contract_current(space))
+        return g_he_state_write_contract.admitted;
+    HeNewStateContract contract = {
+        .token = space_program_token(space), .library = g_library_context,
+        .profile = g_library_context->session.profile,
+        .symbols = symbol_table_instance_id(g_symbols),
+        .features = g_library_context->active_mask, .valid = true,
+    };
+    bool admitted = active_builtin_allowed("change-state!") &&
+        !eval_space_has_equations(space, g_builtin_syms.change_state_bang);
+    Atom **types = NULL;
+    uint32_t count = admitted ? eval_get_atom_types_profiled(space, arena,
+        source->expr.elems[0], &types) : 0u;
+    admitted = admitted && count == 1u && is_function_type(types[0]) &&
+        types[0]->expr.len == 4u;
+    if (admitted) {
+        Atom *input = types[0]->expr.elems[1];
+        Atom *value_type = types[0]->expr.elems[2];
+        Atom *output = types[0]->expr.elems[3];
+        admitted = value_type->kind == ATOM_VAR &&
+            input->kind == ATOM_EXPR && input->expr.len == 2u &&
+            he_execution_type_name(input->expr.elems[0], "StateMonad") &&
+            input->expr.elems[1]->kind == ATOM_VAR &&
+            var_id_eq(input->expr.elems[1]->var_id, value_type->var_id) &&
+            output->kind == ATOM_EXPR && output->expr.len == 2u &&
+            he_execution_type_name(output->expr.elems[0], "StateMonad") &&
+            output->expr.elems[1]->kind == ATOM_VAR &&
+            var_id_eq(output->expr.elems[1]->var_id, value_type->var_id);
+    }
+    free(types);
+    contract.admitted = admitted;
+    g_he_state_write_contract = contract;
+    return admitted;
+}
+
+/* A suspended work owns its source admission, but not a TLS cache entry.
+ * Reestablish only its used native authorities before another step. These
+ * are signature inquiries; none of these constructed calls is executed. */
+static bool he_native_contracts_rearm(Space *space, Arena *arena,
+                                      unsigned contracts) {
+    if (contracts & ~7u) return false;
+    if ((contracts & 1u) && !he_native_new_space_contract_current(space)) {
+        Atom *head = atom_symbol_id(arena, g_builtin_syms.new_space);
+        if (!head || !he_native_new_space_admitted(space, arena, atom_expr(arena, &head, 1u)))
+            return false;
+    }
+    if ((contracts & 2u) && !he_native_new_state_contract_current(space)) {
+        Atom *source = atom_expr2(arena, atom_symbol_id(arena, g_builtin_syms.new_state),
+                                  atom_int(arena, 0));
+        if (!source || !he_native_new_state_admitted(space, arena, source)) return false;
+    }
+    if ((contracts & 4u) && !he_native_state_write_contract_current(space)) {
+        Atom *source = atom_expr3(arena,
+            atom_symbol_id(arena, g_builtin_syms.change_state_bang),
+            atom_var(arena, "__he_native_rearm_reference"), atom_int(arena, 0));
+        if (!source || !he_native_state_write_admitted(space, arena, source)) return false;
+    }
+    return (!(contracts & 1u) || g_he_new_space_contract.admitted) &&
+        (!(contracts & 2u) || g_he_new_state_contract.admitted) &&
+        (!(contracts & 4u) || g_he_state_write_contract.admitted);
 }
 
 static bool he_execution_intrinsic_signatures(HeExecutionAdmission *admission,
@@ -454,6 +769,7 @@ typedef struct {
     SymbolId head;
     bool single;
     SpaceProgramToken token;
+    uint64_t authority;
 } HeSingleAnswerDecision;
 
 #define HE_SINGLE_ANSWER_DECISIONS 256u
@@ -461,13 +777,14 @@ typedef struct {
 static bool he_head_single_answer_in(Space *space, SymbolId head,
                                      HeSingleAnswerScope *scope,
                                      uint32_t depth) {
+    uint64_t authority = he_execution_authority_generation();
     HeSingleAnswerDecision *decisions = he_admission_cache(
         &g_he_admission_caches.single_answer_decisions,
         sizeof(HeSingleAnswerDecision) * HE_SINGLE_ANSWER_DECISIONS);
     HeSingleAnswerDecision *slot = &decisions[
         (uint32_t)((uint64_t)head * 2654435761u) % HE_SINGLE_ANSWER_DECISIONS];
-    if (slot->head == head && slot->token.space == space &&
-        space_program_token_is_current(slot->token))
+    if (authority && slot->authority == authority && slot->head == head &&
+        slot->token.space == space && space_program_token_is_current(slot->token))
         return slot->single;
     for (size_t index = 0u; index < scope->len; index++)
         if (scope->heads[index] == head)
@@ -518,7 +835,7 @@ static bool he_head_single_answer_in(Space *space, SymbolId head,
     }
     if (scope->len == 0u)
         *slot = (HeSingleAnswerDecision){.head = head, .single = single,
-            .token = space_program_token(space)};
+            .token = space_program_token(space), .authority = authority};
     return single;
 }
 
@@ -777,6 +1094,43 @@ static bool he_execution_source_admitted(HeExecutionAdmission *admission,
         return false;
     while (admission->length) {
         Atom *term = admission->terms[--admission->length];
+        if (!admission->stream && term && term->kind == ATOM_GROUNDED &&
+            term->ground.gkind == GV_STATE &&
+            state_cell_is_managed((StateCell *)term->ground.ptr)) {
+            /* A caller's managed handle is an inert value with an
+             * independent node lease. Its presence still excludes pure
+             * retry and every unqualified resource execution route. */
+            admission->effects = true;
+            admission->native_resource_operations = true;
+            continue;
+        }
+        if (!admission->stream && he_native_new_space_admitted(
+                admission->space, admission->arena, term)) {
+            admission->effects = true;
+            admission->native_resource_operations = true;
+            admission->native_contracts |= 1u;
+            continue;
+        }
+        if (!admission->stream && he_native_new_state_admitted(
+                admission->space, admission->arena, term)) {
+            /* This operand is not a child computation. The host stores its
+             * complete syntax and performs the original type observation;
+             * even a nested constructor or faulty arithmetic stays inert.
+             * Existing binding/fresh-variable checks still judge the region. */
+            if (he_execution_atom_holds_resource(term->expr.elems[1]))
+                return false;
+            admission->effects = true;
+            admission->native_resource_operations = true;
+            admission->native_contracts |= 2u;
+            continue;
+        }
+        if (!admission->stream && he_native_state_write_admitted(
+                admission->space, admission->arena, term)) {
+            admission->effects = true;
+            admission->native_resource_operations = true;
+            admission->native_contracts |= 4u;
+            continue;
+        }
         if (term && term->kind == ATOM_EXPR &&
             atom_head_symbol_id(term) == g_builtin_syms.match)
             admission->queries = true;
@@ -954,10 +1308,17 @@ static bool he_execution_source_admitted(HeExecutionAdmission *admission,
             const HeClosureDecision *decided = seen ? NULL :
                 he_closure_decision_find(admission->space, head,
                                          admission->open_root, admission->stream);
+            /* The closure cache and per-operation authority caches can be
+             * evicted independently. Rewalk only resource-bearing closures,
+             * refilling their actually used contracts before any effects. */
+            if (decided && decided->native_resource_operations)
+                decided = NULL;
             if (decided && !decided->admitted)
                 return false;
             if (decided) {
                 admission->effects |= decided->effects;
+                admission->native_resource_operations |= decided->native_resource_operations;
+                admission->native_contracts |= decided->native_contracts;
                 admission->queries |= decided->queries;
                 admission->structured_binder |= decided->structured_binder;
                 admission->fresh_variables |= decided->fresh_variables;
@@ -1026,6 +1387,457 @@ static bool he_execution_source_admitted(HeExecutionAdmission *admission,
 
 static bool he_stream_admitted(Space *space, Arena *arena, SymbolId head);
 
+/* What a computation returns, as HE marks it: completion is source
+ * provenance, not a property of a returned Atom's spelling.
+ *   SCALAR     a symbol or grounded value: nothing to mark;
+ *   COMPLETED  a value HE marks at every node (each node a call that came
+ *              back stuck, or a field such a call held): row data, a
+ *              constructor over values, a function's value;
+ *   COLLECTED  a tuple of values (scalars or COMPLETED), itself unmarked:
+ *              collapse and the tuple set operations, whose range is Atom;
+ *   RAW        an expression HE has not evaluated, kept as data;
+ *   VARIABLE   a value that still holds a variable.
+ * Scalars are neutral when joining expression-result paths.  RAW, COMPLETED
+ * and COLLECTED need different marks, so a join of two of them is unknown
+ * and retains the canonical entry before any effects. */
+typedef enum {
+    HE_RETURN_NONE = 0u,
+    HE_RETURN_SCALAR = 1u,
+    HE_RETURN_VARIABLE = 2u,
+    HE_RETURN_COMPLETED = 4u,
+    HE_RETURN_RAW = 8u,
+    HE_RETURN_UNKNOWN = 16u,
+    HE_RETURN_COLLECTED = 32u,
+} HeReturnProvenance;
+
+#define HE_RETURN_MARKINGS \
+    (HE_RETURN_COMPLETED | HE_RETURN_RAW | HE_RETURN_COLLECTED)
+/* A value: what a collected tuple's items and a row's parts are. */
+#define HE_RETURN_VALUE \
+    ((HeReturnProvenance)(HE_RETURN_SCALAR | HE_RETURN_COMPLETED))
+
+typedef struct {
+    VarId variable;
+    HeReturnProvenance value;
+} HeReturnVariable;
+
+typedef struct {
+    HeReturnVariable *items;
+    size_t length, capacity;
+} HeReturnEnvironment;
+
+typedef struct HeReturnAssumption {
+    struct HeReturnAssumption *parent;
+    SymbolId head;
+    CettaExprLen arity;
+    const HeReturnProvenance *arguments;
+    HeReturnProvenance expected;
+} HeReturnAssumption;
+
+typedef struct {
+    Space *space;
+    size_t steps;
+    HeReturnAssumption *assumptions;
+} HeReturnAnalysis;
+
+static HeReturnProvenance he_return_join(HeReturnProvenance left,
+                                         HeReturnProvenance right) {
+    unsigned joined = (unsigned)left | (unsigned)right;
+    unsigned markings = joined & HE_RETURN_MARKINGS;
+    return (joined & HE_RETURN_UNKNOWN) || (markings & (markings - 1u))
+        ? HE_RETURN_UNKNOWN : (HeReturnProvenance)joined;
+}
+
+static HeReturnProvenance he_return_variable(const HeReturnEnvironment *env,
+                                              VarId variable) {
+    for (size_t i = env->length; i; i--)
+        if (var_id_eq(env->items[i - 1u].variable, variable))
+            return env->items[i - 1u].value;
+    return HE_RETURN_VARIABLE;
+}
+
+static bool he_return_bind(HeReturnEnvironment *env, const Atom *pattern,
+                            HeReturnProvenance value) {
+    if (!pattern) return false;
+    if (pattern->kind == ATOM_VAR) {
+        for (size_t i = env->length; i; i--)
+            if (var_id_eq(env->items[i - 1u].variable, pattern->var_id))
+                value = he_return_join(value, env->items[i - 1u].value);
+        if (env->length == env->capacity) {
+            size_t capacity = env->capacity ? env->capacity * 2u : 16u;
+            if (capacity < env->capacity || capacity > SIZE_MAX / sizeof(*env->items))
+                return false;
+            void *grown = cetta_fallible_realloc(env->items,
+                                                capacity * sizeof(*env->items));
+            if (!grown) return false;
+            env->items = grown;
+            env->capacity = capacity;
+        }
+        env->items[env->length++] = (HeReturnVariable){pattern->var_id, value};
+    } else if (pattern->kind == ATOM_EXPR) {
+        /* A field of a value, or an item of a collected tuple, is a value. */
+        HeReturnProvenance part =
+            (value & (HE_RETURN_COMPLETED | HE_RETURN_COLLECTED)) &&
+            !(value & (HE_RETURN_RAW | HE_RETURN_VARIABLE | HE_RETURN_UNKNOWN))
+            ? HE_RETURN_VALUE : HE_RETURN_UNKNOWN;
+        for (CettaExprIndex i = 0u; i < pattern->expr.len; i++)
+            if (!he_return_bind(env, pattern->expr.elems[i], part))
+                return false;
+    }
+    return true;
+}
+
+/* Every variable of a match pattern names part of a row the match reads.
+ * The machines decline a row part HE would evaluate further (their
+ * value_reducible readers), so a part they bind is inert: evaluated, it is
+ * itself, a value. */
+static bool he_return_bind_row(HeReturnEnvironment *env, const Atom *pattern) {
+    if (!pattern)
+        return false;
+    if (pattern->kind == ATOM_VAR)
+        return he_return_bind(env, pattern, HE_RETURN_VALUE);
+    if (pattern->kind == ATOM_EXPR)
+        for (CettaExprIndex i = 0u; i < pattern->expr.len; i++)
+            if (!he_return_bind_row(env, pattern->expr.elems[i]))
+                return false;
+    return true;
+}
+
+/* numeric-eq is a test where the dialect defines it (he, not he-compat or
+ * PeTTa, which keep it data, as prepared calls and grounded dispatch do)
+ * and no equation of the program redefines it: its value is a truth value. */
+static bool he_return_numeric_test(Space *space, SymbolId head) {
+    return head == g_builtin_syms.numeric_eq &&
+        eval_current_language_id() == CETTA_LANGUAGE_HE &&
+        !active_profile_uses_rust_he_compat_semantics() &&
+        !eval_space_has_equations(space, head) &&
+        !space_head_declares_type(space, head);
+}
+
+static HeReturnProvenance he_return_body(HeReturnAnalysis *, const Atom *,
+                                        HeReturnEnvironment *, uint32_t);
+
+/* Check a finite-return invariant for a recursive call family. Recursive
+ * uses assume one candidate, while every equation must preserve it. No
+ * assumption authorizes a mixed raw/completed return. */
+static HeReturnProvenance he_return_call(HeReturnAnalysis *analysis, SymbolId head,
+    const HeReturnProvenance *arguments, CettaExprLen arity, uint32_t depth) {
+    /* A declared range can make an authored RHS data (not interpreted code).
+     * That caller-demand boundary retains its canonical source owner. */
+    if (space_head_declares_type(analysis->space, head))
+        return HE_RETURN_UNKNOWN;
+    for (HeReturnAssumption *at = analysis->assumptions; at; at = at->parent) {
+        if (at->head != head || at->arity != arity) continue;
+        bool same = true;
+        for (CettaExprIndex i = 0u; same && i < arity; i++)
+            same = at->arguments[i] == arguments[i];
+        if (same) return at->expected;
+    }
+    const HeReturnProvenance candidates[] = {
+        HE_RETURN_SCALAR, HE_RETURN_SCALAR | HE_RETURN_COMPLETED,
+        HE_RETURN_SCALAR | HE_RETURN_RAW, HE_RETURN_SCALAR | HE_RETURN_COLLECTED,
+        HE_RETURN_SCALAR | HE_RETURN_VARIABLE,
+        HE_RETURN_SCALAR | HE_RETURN_VARIABLE | HE_RETURN_COMPLETED,
+        HE_RETURN_SCALAR | HE_RETURN_VARIABLE | HE_RETURN_RAW,
+        HE_RETURN_SCALAR | HE_RETURN_VARIABLE | HE_RETURN_COLLECTED};
+    for (size_t trial = 0u; trial < sizeof(candidates) / sizeof(candidates[0]); trial++) {
+        HeReturnAssumption assumption = {analysis->assumptions, head, arity,
+                                         arguments, candidates[trial]};
+        analysis->assumptions = &assumption;
+        HeReturnProvenance result = HE_RETURN_NONE;
+        bool total = false;
+        SpaceEquationCursor cursor;
+        if (!space_rule_cursor_init(analysis->space, head,
+                                    eval_admitted_rule_forms(), &cursor)) {
+            analysis->assumptions = assumption.parent;
+            return HE_RETURN_UNKNOWN;
+        }
+        for (;;) {
+            SpaceEquationOccurrenceId id;
+            SpaceEquationCursorStep step = space_equation_cursor_next(&cursor, &id);
+            if (step == SPACE_EQUATION_CURSOR_END) break;
+            SpaceEquationOccurrence occurrence;
+            if (step != SPACE_EQUATION_CURSOR_ITEM ||
+                !space_rule_occurrence_resolve(id, eval_admitted_rule_forms(), &occurrence)) {
+                result = HE_RETURN_UNKNOWN;
+                break;
+            }
+            const Atom *lhs = occurrence.lhs;
+            if (!lhs || lhs->kind != ATOM_EXPR || lhs->expr.len != arity + 1u)
+                continue;
+            HeReturnEnvironment env = {0};
+            bool general = true, valid = true;
+            for (CettaExprIndex i = 0u; valid && i < arity; i++) {
+                const Atom *parameter = lhs->expr.elems[i + 1u];
+                general &= parameter->kind == ATOM_VAR;
+                for (CettaExprIndex j = 0u; general && j < i; j++)
+                    general = !var_id_eq(parameter->var_id,
+                                         lhs->expr.elems[j + 1u]->var_id);
+                valid = he_return_bind(&env, parameter, arguments[i]);
+            }
+            total |= general;
+            HeReturnProvenance branch = valid
+                ? he_return_body(analysis, occurrence.rhs, &env, depth + 1u)
+                : HE_RETURN_UNKNOWN;
+            free(env.items);
+            result = he_return_join(result, branch);
+            if (result == HE_RETURN_UNKNOWN) break;
+        }
+        analysis->assumptions = assumption.parent;
+        if (!total)
+            result = he_return_join(result, HE_RETURN_COMPLETED);
+        if (result != HE_RETURN_UNKNOWN &&
+            (((unsigned)result & ~(unsigned)candidates[trial]) == 0u))
+            return result;
+    }
+    return HE_RETURN_UNKNOWN;
+}
+
+static HeReturnProvenance he_return_body(HeReturnAnalysis *analysis,
+    const Atom *body, HeReturnEnvironment *env, uint32_t depth) {
+    if (!body || depth >= 256u || ++analysis->steps > 32768u)
+        return HE_RETURN_UNKNOWN;
+    /* The current compiled backends do not carry this input demand marker
+     * through every source/slot realization. Preserve its canonical entry. */
+    if (atom_is_he_evaluated(body)) return HE_RETURN_UNKNOWN;
+    if (body->kind == ATOM_SYMBOL && body->sym_id == g_builtin_syms.not_reducible)
+        return HE_RETURN_UNKNOWN;
+    if (body->kind == ATOM_VAR) {
+        /* A whole template evaluates its value again: a value answers
+         * itself, while raw data and a collected tuple are read as code. */
+        HeReturnProvenance bound = he_return_variable(env, body->var_id);
+        return (bound & (HE_RETURN_RAW | HE_RETURN_COLLECTED))
+            ? HE_RETURN_UNKNOWN : bound;
+    }
+    if (body->kind != ATOM_EXPR || !body->expr.len) {
+        if (body->kind == ATOM_SYMBOL && eval_space_has_equations(analysis->space, body->sym_id)) {
+            SpaceEquationCursor cursor;
+            if (!space_rule_cursor_init(analysis->space, body->sym_id,
+                                        eval_admitted_rule_forms(), &cursor))
+                return HE_RETURN_UNKNOWN;
+            for (;;) {
+                SpaceEquationOccurrenceId id;
+                SpaceEquationCursorStep step = space_equation_cursor_next(&cursor, &id);
+                if (step == SPACE_EQUATION_CURSOR_END) break;
+                SpaceEquationOccurrence occurrence;
+                if (step != SPACE_EQUATION_CURSOR_ITEM ||
+                    !space_rule_occurrence_resolve(id, eval_admitted_rule_forms(), &occurrence) ||
+                    !occurrence.lhs || occurrence.lhs->kind != ATOM_EXPR)
+                    return HE_RETURN_UNKNOWN;
+            }
+        }
+        return HE_RETURN_SCALAR;
+    }
+    SymbolId head = atom_head_symbol_id(body);
+    CettaExprLen length = body->expr.len;
+    if (head == g_builtin_syms.new_state || head == g_builtin_syms.new_space ||
+        head == g_builtin_syms.change_state_bang || head == g_builtin_syms.add_atom ||
+        head == g_builtin_syms.remove_atom)
+        return HE_RETURN_SCALAR;
+    if (head == g_builtin_syms.let && length == 4u) {
+        HeReturnProvenance value = he_return_body(analysis, body->expr.elems[2], env, depth + 1u);
+        if (value == HE_RETURN_NONE || value == HE_RETURN_UNKNOWN) return value;
+        size_t mark = env->length;
+        HeReturnProvenance result = he_return_bind(env, body->expr.elems[1], value)
+            ? he_return_body(analysis, body->expr.elems[3], env, depth + 1u)
+            : HE_RETURN_UNKNOWN;
+        env->length = mark;
+        return result;
+    }
+    if (head == g_builtin_syms.if_text && (length == 3u || length == 4u)) {
+        bool truth;
+        if (!petta_semantics_truth_value(body->expr.elems[1], &truth) &&
+            (!he_execution_condition_head(atom_head_symbol_id(body->expr.elems[1])) ||
+             expr_nargs(body->expr.elems[1]) != 2u))
+            return HE_RETURN_UNKNOWN;
+        HeReturnProvenance condition = he_return_body(analysis, body->expr.elems[1], env, depth + 1u);
+        if (condition & (HE_RETURN_UNKNOWN | HE_RETURN_RAW | HE_RETURN_VARIABLE))
+            return HE_RETURN_UNKNOWN;
+        HeReturnProvenance yes = he_return_body(analysis, body->expr.elems[2], env, depth + 1u);
+        HeReturnProvenance no = length == 4u
+            ? he_return_body(analysis, body->expr.elems[3], env, depth + 1u) : HE_RETURN_NONE;
+        return he_return_join(yes, no);
+    }
+    if (head == g_builtin_syms.superpose && length == 2u &&
+        body->expr.elems[1]->kind == ATOM_VAR) {
+        /* The items of a collected tuple, each evaluated again: a value. */
+        HeReturnProvenance items =
+            he_return_variable(env, body->expr.elems[1]->var_id);
+        return items == HE_RETURN_COLLECTED ? HE_RETURN_VALUE : HE_RETURN_UNKNOWN;
+    }
+    if (head == g_builtin_syms.superpose && length == 2u &&
+        body->expr.elems[1]->kind == ATOM_EXPR) {
+        const Atom *items = body->expr.elems[1];
+        HeReturnProvenance result = HE_RETURN_NONE;
+        for (CettaExprIndex i = 0u; i < items->expr.len; i++)
+            result = he_return_join(result,
+                he_return_body(analysis, items->expr.elems[i], env, depth + 1u));
+        return result;
+    }
+    if (eval_is_reify_head(head) && length == 2u) {
+        /* collapse answers the tuple of its argument's values, unmarked (its
+         * range is Atom), each item keeping the marks its evaluation set. */
+        HeReturnProvenance child = he_return_body(analysis, body->expr.elems[1], env, depth + 1u);
+        return (child & ~(unsigned)HE_RETURN_VALUE) ? HE_RETURN_UNKNOWN
+            : HE_RETURN_COLLECTED;
+    }
+    if (head == g_builtin_syms.case_text && length == 3u &&
+        body->expr.elems[2]->kind == ATOM_EXPR) {
+        HeReturnProvenance value = he_return_body(analysis, body->expr.elems[1], env, depth + 1u);
+        if (value == HE_RETURN_UNKNOWN) return value;
+        if (value == HE_RETURN_NONE) value = HE_RETURN_SCALAR;
+        const Atom *branches = body->expr.elems[2];
+        HeReturnProvenance result = HE_RETURN_NONE;
+        for (CettaExprIndex i = 0u; i < branches->expr.len; i++) {
+            const Atom *branch = branches->expr.elems[i];
+            if (branch->kind != ATOM_EXPR || branch->expr.len != 2u)
+                return HE_RETURN_UNKNOWN;
+            size_t mark = env->length;
+            HeReturnProvenance row = he_return_bind(env, branch->expr.elems[0], value)
+                ? he_return_body(analysis, branch->expr.elems[1], env, depth + 1u)
+                : HE_RETURN_UNKNOWN;
+            env->length = mark;
+            result = he_return_join(result, row);
+        }
+        return result;
+    }
+    if (head == g_builtin_syms.unique_atom || head == g_builtin_syms.union_atom ||
+        head == g_builtin_syms.intersection_atom || head == g_builtin_syms.subtraction_atom) {
+        /* Tuples in, a tuple of their items out; an operand that is not a
+         * collected tuple held by a variable is data this reading keeps
+         * unknown. */
+        for (CettaExprIndex i = 1u; i < length; i++) {
+            const Atom *operand = body->expr.elems[i];
+            if (operand->kind != ATOM_VAR ||
+                he_return_variable(env, operand->var_id) != HE_RETURN_COLLECTED)
+                return HE_RETURN_UNKNOWN;
+        }
+        return length > 1u ? HE_RETURN_COLLECTED : HE_RETURN_UNKNOWN;
+    }
+    if (head == g_builtin_syms.match && length == 4u) {
+        /* A match answers its template evaluated with the row's parts bound:
+         * the template's value. */
+        size_t mark = env->length;
+        HeReturnProvenance result = he_return_bind_row(env, body->expr.elems[2])
+            ? he_return_body(analysis, body->expr.elems[3], env, depth + 1u)
+            : HE_RETURN_UNKNOWN;
+        env->length = mark;
+        return result;
+    }
+    if (head == g_builtin_syms.match || head == g_builtin_syms.case_text ||
+        he_execution_collection(head) ||
+        he_library_stream_aggregate(analysis->space, body) != SYMBOL_ID_NONE)
+        return HE_RETURN_UNKNOWN;
+    if (head == g_builtin_syms.empty_form) return HE_RETURN_NONE;
+    bool primitive = ((he_execution_intrinsic(head) && head != g_builtin_syms.let &&
+        head != g_builtin_syms.if_text) ||
+        he_return_numeric_test(analysis->space, head)) && length == 3u;
+    CettaExprLen arity = length - 1u;
+    CettaGsltPreparedPureIntrinsicInstruction instruction;
+    /* JSON intrinsics and the value-form string interface return completed
+     * data on every handled arm. The legacy string interface can instead
+     * return an expression on refusal, so its provenance remains unknown.
+     * Authored equations below retain precedence over this native contract. */
+    bool completed_native = cetta_gslt_prepared_intrinsic_program(
+        head, arity, NULL, &instruction, &g_builtin_syms) &&
+        instruction == CETTA_GSLT_PREPARED_PURE_INTRINSIC_LIBRARY_VALUE_DISPATCH &&
+        head != g_builtin_syms.lib_str &&
+        !space_head_declares_type(analysis->space, head);
+    if (!cetta_expr_len_mul_fits_size(arity, sizeof(HeReturnProvenance)))
+        return HE_RETURN_UNKNOWN;
+    HeReturnProvenance local[8];
+    HeReturnProvenance *arguments = arity <= 8u ? local
+        : cetta_fallible_malloc((size_t)arity * sizeof(*arguments));
+    if (arity > 8u && !arguments) return HE_RETURN_UNKNOWN;
+    HeReturnProvenance result = HE_RETURN_NONE;
+    bool valid = true;
+    for (CettaExprIndex i = 0u; i < arity; i++) {
+        arguments[i] = he_return_body(analysis, body->expr.elems[i + 1u], env, depth + 1u);
+        valid &= arguments[i] != HE_RETURN_UNKNOWN && arguments[i] != HE_RETURN_NONE;
+    }
+    if (!valid) result = HE_RETURN_UNKNOWN;
+    else if (primitive) {
+        result = HE_RETURN_SCALAR;
+        for (CettaExprIndex i = 0u; i < arity; i++)
+            if (arguments[i] & (HE_RETURN_RAW | HE_RETURN_VARIABLE |
+                                HE_RETURN_COLLECTED))
+                result = HE_RETURN_UNKNOWN;
+    }
+    else if (head != SYMBOL_ID_NONE && eval_space_has_equations(analysis->space, head))
+        result = he_return_call(analysis, head, arguments, arity, depth + 1u);
+    else if (completed_native ||
+             (head != SYMBOL_ID_NONE && !symbol_id_is_builtin(head) && !is_grounded_op(head) &&
+               !space_head_declares_type(analysis->space, head) &&
+               !space_equations_may_match_unnamed_head(analysis->space)) ||
+             he_execution_scalar_head_inert(analysis->space, (Atom *)body)) {
+        /* A constructor over values is a value at every node; a raw or
+         * collected field is read again as code where HE evaluates the
+         * fields, so its marks are unknown. */
+        result = HE_RETURN_COMPLETED;
+        for (CettaExprIndex i = 0u; i < arity; i++) {
+            if (arguments[i] & (HE_RETURN_RAW | HE_RETURN_COLLECTED))
+                result = HE_RETURN_UNKNOWN;
+            else if (result != HE_RETURN_UNKNOWN &&
+                     (arguments[i] & HE_RETURN_VARIABLE))
+                result = (HeReturnProvenance)(result | HE_RETURN_VARIABLE);
+        }
+    }
+    else result = HE_RETURN_UNKNOWN;
+    if (arguments != local) free(arguments);
+    return result;
+}
+
+/* Shared by each HE prepared entrance. A ready invocation carries values;
+ * a source call still interprets its operands. Neither mode may infer
+ * completed provenance from a result's shape or from its inferred type. */
+static bool he_prepared_completion_admit(Space *space, Arena *arena,
+    const CettaInvocation *invocation, Atom *call, bool arguments_are_values,
+    bool *completed) {
+    *completed = false;
+    if (eval_current_language_id() != CETTA_LANGUAGE_HE) return true;
+    if (!space || space->overlay_base || space_has_dependencies(space))
+        return false;
+    if ((!call || arguments_are_values) && invocation)
+        call = cetta_invocation_materialize(arena, invocation);
+    if (!call) return false;
+    HeReturnAnalysis analysis = {.space = space};
+    HeReturnEnvironment env = {0};
+    HeReturnProvenance provenance = HE_RETURN_UNKNOWN;
+    if (arguments_are_values && call->kind == ATOM_EXPR && call->expr.len &&
+        call->expr.elems[0]->kind == ATOM_SYMBOL) {
+        CettaExprLen arity = call->expr.len - 1u;
+        HeReturnProvenance local[8];
+        if (!cetta_expr_len_mul_fits_size(arity, sizeof(*local))) return false;
+        HeReturnProvenance *arguments = arity <= 8u ? local
+            : cetta_fallible_malloc((size_t)arity * sizeof(*arguments));
+        if (arity > 8u && !arguments) return false;
+        bool valid = true;
+        for (CettaExprIndex i = 0u; i < arity; i++) {
+            Atom *value = call->expr.elems[i + 1u];
+            /* The invocation supplies values, including held expressions.
+             * Their spelling and existing completion marks do not turn
+             * them back into source. Scalar provenance is neutral under
+             * return joins and preserves the argument's existing marks. */
+            arguments[i] = atom_has_vars(value)
+                ? HE_RETURN_VARIABLE : HE_RETURN_SCALAR;
+            valid &= arguments[i] != HE_RETURN_UNKNOWN;
+        }
+        if (valid)
+            provenance = he_return_call(&analysis, call->expr.elems[0]->sym_id,
+                                        arguments, arity, 0u);
+        if (arguments != local) free(arguments);
+    } else
+        provenance = he_return_body(&analysis, call, &env, 0u);
+    free(env.items);
+    *completed = (provenance & HE_RETURN_COMPLETED) != 0u;
+    /* A prepared call reports completion alone; a collected tuple's items
+     * need their own marks, which its finish cannot give. */
+    return provenance != HE_RETURN_UNKNOWN &&
+        !(provenance & HE_RETURN_COLLECTED) &&
+        !(*completed && ((provenance & HE_RETURN_VARIABLE) ||
+                        active_profile_uses_rust_he_compat_semantics()));
+}
+
 /* HE answers an unmatched call with the call itself; a streamed relation
  * has no answer for it. A head some equation of which takes any arguments
  * of this arity (distinct variables) never leaves a call unmatched. */
@@ -1066,23 +1878,26 @@ typedef struct {
     SymbolId symbol;
     bool callable;
     SpaceProgramToken token;
+    uint64_t authority;
 } HeSymbolCallability;
 
 #define HE_SYMBOL_CALLABILITIES 1024u
 
 static bool he_symbol_callable(Space *space, SymbolId symbol) {
+    uint64_t authority = he_execution_authority_generation();
     HeSymbolCallability *entries = he_admission_cache(
         &g_he_admission_caches.symbol_callabilities,
         sizeof(HeSymbolCallability) * HE_SYMBOL_CALLABILITIES);
     HeSymbolCallability *slot = &entries[
         (uint32_t)((uint64_t)symbol * 2654435761u) % HE_SYMBOL_CALLABILITIES];
-    if (slot->symbol == symbol && slot->token.space == space &&
+    if (authority && slot->authority == authority &&
+        slot->symbol == symbol && slot->token.space == space &&
         space_program_token_is_current(slot->token))
         return slot->callable;
     bool callable = eval_space_has_equations(space, symbol) ||
         is_grounded_op(symbol) || symbol_id_is_builtin(symbol);
     *slot = (HeSymbolCallability){.symbol = symbol, .callable = callable,
-        .token = space_program_token(space)};
+        .token = space_program_token(space), .authority = authority};
     return callable;
 }
 
@@ -1130,6 +1945,7 @@ typedef struct {
     CettaExprLen arity;
     bool admitted;
     SpaceProgramToken token;
+    uint64_t authority;
 } HeStreamHeadDecision;
 
 #define HE_STREAM_HEAD_DECISIONS 256u
@@ -1138,20 +1954,23 @@ static bool he_stream_head_admitted(Space *space, Arena *arena,
                                     SymbolId head, CettaExprLen arity) {
     if (!space || head == SYMBOL_ID_NONE)
         return false;
+    uint64_t authority = he_execution_authority_generation();
     HeStreamHeadDecision *decisions = he_admission_cache(
         &g_he_admission_caches.stream_head_decisions,
         sizeof(HeStreamHeadDecision) * HE_STREAM_HEAD_DECISIONS);
     HeStreamHeadDecision *slot = &decisions[
         (uint32_t)(((uint64_t)head * 31u + arity) * 2654435761u) %
         HE_STREAM_HEAD_DECISIONS];
-    if (slot->head == head && slot->arity == arity &&
+    if (authority && slot->authority == authority &&
+        slot->head == head && slot->arity == arity &&
         slot->token.space == space && space_program_token_is_current(slot->token))
         return slot->admitted;
     bool admitted = eval_space_has_equations(space, head) &&
         he_stream_head_total(space, head, arity) &&
         he_stream_admitted(space, arena, head);
     *slot = (HeStreamHeadDecision){.head = head, .arity = arity,
-        .admitted = admitted, .token = space_program_token(space)};
+        .admitted = admitted, .token = space_program_token(space),
+        .authority = authority};
     return admitted;
 }
 
@@ -1222,7 +2041,8 @@ static bool he_compiled_admitted(Space *space, Arena *arena, SymbolId head,
     const HeClosureDecision *decided =
         he_closure_decision_find(space, head, false, false);
     if (decided)
-        return decided->admitted && !(raises && decided->raise_unshaped) &&
+        return decided->admitted && !decided->native_resource_operations &&
+            !(raises && decided->raise_unshaped) &&
             !decided->fresh_variables && !decided->match_bindings_escape &&
             !decided->collected_fresh &&
             !(decided->queries && decided->structured_binder);
@@ -1241,7 +2061,8 @@ static bool he_compiled_admitted(Space *space, Arena *arena, SymbolId head,
     free(admission.terms);
     free(admission.heads);
     atom_visit_set_free(&admission.queued);
-    return admitted && !(raises && admission.raise_unshaped) &&
+    return admitted && !admission.native_resource_operations &&
+        !(raises && admission.raise_unshaped) &&
         !admission.fresh_variables &&
         !admission.match_bindings_escape && !admission.collected_fresh &&
         !(admission.queries && admission.structured_binder);
@@ -1261,10 +2082,107 @@ static bool he_compiled_call_admitted(Space *space, Arena *arena, Atom *call,
     return true;
 }
 
+/* A scoped set of variables.  Each addition takes a fresh number
+ * (versions[i] for items[i]), so the set's state is its last entry's number,
+ * or 0 when empty: equal states hold the same variables, whatever was added
+ * and dropped before, which lets a walk over shared subterms remember what
+ * it found under a scope. */
 typedef struct {
     VarId *items;
+    uint64_t *versions;
     size_t len, cap;
 } HeBoundVariables;
+
+static _Thread_local uint64_t g_he_bound_version;
+
+static uint64_t he_bound_state(const HeBoundVariables *bound) {
+    return bound->len ? bound->versions[bound->len - 1u] : 0u;
+}
+
+static void he_bound_free(HeBoundVariables *bound) {
+    free(bound->items);
+    free(bound->versions);
+    *bound = (HeBoundVariables){0};
+}
+
+/* What a walk found at a subterm under a scope: the subterm, its depth and
+ * position, and the states of the scope's sets.  A shared subterm is walked
+ * once per scope it meets, not once per path to it. */
+typedef struct {
+    const Atom *term;
+    uint32_t position;
+    uint64_t first, second;
+    uintptr_t value;
+} HeWalkMemoSlot;
+
+typedef struct {
+    HeWalkMemoSlot *slots;
+    size_t cap, len;
+} HeWalkMemo;
+
+static size_t he_walk_memo_slot(const HeWalkMemo *memo, const Atom *term,
+                                uint32_t position, uint64_t first,
+                                uint64_t second) {
+    uint64_t key = (uint64_t)(uintptr_t)term * UINT64_C(0x9E3779B97F4A7C15);
+    key ^= ((uint64_t)position + first * UINT64_C(0xff51afd7ed558ccd) +
+            second * UINT64_C(0xc4ceb9fe1a85ec53)) * UINT64_C(0x94d049bb133111eb);
+    key ^= key >> 31u;
+    size_t slot = (size_t)key & (memo->cap - 1u);
+    while (memo->slots[slot].term &&
+           !(memo->slots[slot].term == term &&
+             memo->slots[slot].position == position &&
+             memo->slots[slot].first == first &&
+             memo->slots[slot].second == second))
+        slot = (slot + 1u) & (memo->cap - 1u);
+    return slot;
+}
+
+static bool he_walk_memo_find(const HeWalkMemo *memo, const Atom *term,
+                              uint32_t position, uint64_t first,
+                              uint64_t second, uintptr_t *value) {
+    if (!memo->cap)
+        return false;
+    const HeWalkMemoSlot *slot = &memo->slots[
+        he_walk_memo_slot(memo, term, position, first, second)];
+    if (!slot->term)
+        return false;
+    *value = slot->value;
+    return true;
+}
+
+/* False where the memo cannot grow: the walk then goes on unremembered. */
+static bool he_walk_memo_store(HeWalkMemo *memo, const Atom *term,
+                               uint32_t position, uint64_t first,
+                               uint64_t second, uintptr_t value) {
+    if ((memo->len + 1u) * 2u > memo->cap) {
+        size_t cap = memo->cap ? memo->cap * 2u : 64u;
+        HeWalkMemoSlot *slots = calloc(cap, sizeof(*slots));
+        if (!slots)
+            return false;
+        HeWalkMemo grown = {slots, cap, 0u};
+        for (size_t index = 0u; index < memo->cap; index++) {
+            const HeWalkMemoSlot *old = &memo->slots[index];
+            if (!old->term)
+                continue;
+            grown.slots[he_walk_memo_slot(&grown, old->term, old->position,
+                                          old->first, old->second)] = *old;
+            grown.len++;
+        }
+        free(memo->slots);
+        *memo = grown;
+    }
+    HeWalkMemoSlot *slot = &memo->slots[
+        he_walk_memo_slot(memo, term, position, first, second)];
+    if (!slot->term)
+        memo->len++;
+    *slot = (HeWalkMemoSlot){term, position, first, second, value};
+    return true;
+}
+
+static void he_walk_memo_free(HeWalkMemo *memo) {
+    free(memo->slots);
+    *memo = (HeWalkMemo){0};
+}
 
 static bool he_bound_contains(const HeBoundVariables *bound, VarId id) {
     for (size_t index = bound->len; index > 0u; index--)
@@ -1279,12 +2197,20 @@ static void he_bound_add_pattern(HeBoundVariables *bound, const Atom *pattern) {
     if (pattern->kind == ATOM_VAR) {
         if (bound->len == bound->cap) {
             size_t capacity = bound->cap ? bound->cap * 2u : 8u;
-            VarId *items = cetta_realloc(bound->items,
-                                        capacity * sizeof(*bound->items));
-            if (!items) return;
+            VarId *items = cetta_malloc(capacity * sizeof(*items));
+            uint64_t *versions = cetta_malloc(capacity * sizeof(*versions));
+            if (!items || !versions) { free(items); free(versions); return; }
+            if (bound->len) {
+                memcpy(items, bound->items, bound->len * sizeof(*items));
+                memcpy(versions, bound->versions, bound->len * sizeof(*versions));
+            }
+            free(bound->items);
+            free(bound->versions);
             bound->items = items;
+            bound->versions = versions;
             bound->cap = capacity;
         }
+        bound->versions[bound->len] = ++g_he_bound_version;
         bound->items[bound->len++] = pattern->var_id;
         return;
     }
@@ -1311,6 +2237,9 @@ typedef struct {
      * ground subterm reads no binder, so what walking it adds to `flags` is
      * the same wherever it occurs at that depth and position. */
     EvalNodeMemo walked;
+    /* The subterms with variables walked, with their depth, position and
+     * the binders' states: what walking one adds is the same again. */
+    HeWalkMemo open_walked;
 } HeRawFlow;
 
 enum { HE_RAW_VALUE = 1, HE_CALL_VALUE = 2 };
@@ -1433,6 +2362,16 @@ static void he_raw_flow_walk(HeRawFlow *flow, const Atom *term, bool tail,
         if (eval_node_memo_find(&flow->walked, term, position, &walked))
             return;
         eval_node_memo_store(&flow->walked, term, position, 1u);
+    } else if (term->expr.len > 1u) {
+        uint32_t position = depth * 2u + (tail ? 1u : 0u);
+        uint64_t raw = he_bound_state(&flow->raw);
+        uint64_t called = he_bound_state(&flow->called);
+        uintptr_t walked = 0u;
+        if (he_walk_memo_find(&flow->open_walked, term, position, raw, called,
+                              &walked))
+            return;
+        (void)he_walk_memo_store(&flow->open_walked, term, position, raw,
+                                 called, 1u);
     }
     SymbolId id = atom_head_symbol_id(term);
     CettaExprLen len = term->expr.len;
@@ -1547,9 +2486,10 @@ static void he_raw_flow_body(Space *space, const Atom *body, bool tail,
     HeRawFlow flow = {.space = space};
     he_raw_flow_walk(&flow, body, tail, 0u);
     he_raw_flow_merge(out, &flow.flags);
-    free(flow.raw.items);
-    free(flow.called.items);
+    he_bound_free(&flow.raw);
+    he_bound_free(&flow.called);
     eval_node_memo_free(&flow.walked);
+    he_walk_memo_free(&flow.open_walked);
 }
 
 /* Whether `term` has a variable not bound by an enclosing binder of `term`
@@ -1613,7 +2553,7 @@ static bool he_free_variable_under(HeBoundVariables *bound, const Atom *term) {
 static bool he_execution_has_free_variable(const Atom *root) {
     HeBoundVariables bound = {0};
     bool free_found = he_free_variable_under(&bound, root);
-    free(bound.items);
+    he_bound_free(&bound);
     return free_found;
 }
 
@@ -1667,11 +2607,34 @@ static bool he_pattern_variable_outside(const HeBoundVariables *bound,
 /* Walks `term` with the binders in scope, as he_free_variable_under does: a
  * match's pattern variables that no binder in scope binds yet are the
  * match's own, and one of them occurring in `rhs` past the match escapes. */
+static _Thread_local HeWalkMemo *g_he_escape_memo;
+
+static bool he_match_bindings_escape_walk(HeBoundVariables *bound,
+                                          const Atom *term, const Atom *rhs,
+                                          uint32_t depth);
+
+/* The answer at a subterm depends on it, its depth and the binders' state
+ * (`rhs` is fixed for one question): a shared subterm is asked once. */
 static bool he_match_bindings_escape_under(HeBoundVariables *bound,
                                            const Atom *term, const Atom *rhs,
                                            uint32_t depth) {
     if (!term || term->kind != ATOM_EXPR || !atom_has_vars(term))
         return false;
+    uint64_t state = he_bound_state(bound);
+    uintptr_t known = 0u;
+    if (g_he_escape_memo &&
+        he_walk_memo_find(g_he_escape_memo, term, depth, state, 0u, &known))
+        return known == 2u;
+    bool escape = he_match_bindings_escape_walk(bound, term, rhs, depth);
+    if (g_he_escape_memo)
+        (void)he_walk_memo_store(g_he_escape_memo, term, depth, state, 0u,
+                                 escape ? 2u : 1u);
+    return escape;
+}
+
+static bool he_match_bindings_escape_walk(HeBoundVariables *bound,
+                                          const Atom *term, const Atom *rhs,
+                                          uint32_t depth) {
     if (depth >= 256u)
         return true;
     SymbolId head = atom_head_symbol_id(term);
@@ -1744,8 +2707,13 @@ static bool he_match_bindings_escape_under(HeBoundVariables *bound,
 static bool he_match_bindings_escape(const Atom *lhs, const Atom *rhs) {
     HeBoundVariables bound = {0};
     he_bound_add_pattern(&bound, lhs);
+    HeWalkMemo memo = {0};
+    HeWalkMemo *enclosing = g_he_escape_memo;
+    g_he_escape_memo = &memo;
     bool escape = he_match_bindings_escape_under(&bound, rhs, rhs, 0u);
-    free(bound.items);
+    g_he_escape_memo = enclosing;
+    he_walk_memo_free(&memo);
+    he_bound_free(&bound);
     return escape;
 }
 
@@ -1758,7 +2726,7 @@ static bool he_equation_introduces_variables(const Atom *lhs,
     HeBoundVariables bound = {0};
     he_bound_add_pattern(&bound, lhs);
     bool introduced = he_free_variable_under(&bound, rhs);
-    free(bound.items);
+    he_bound_free(&bound);
     return introduced;
 }
 
@@ -1814,6 +2782,10 @@ typedef struct {
      * they are bound: a grounded or builtin operation, or a head with
      * equations. */
     HeBoundVariables stuck_reads;
+    /* Subterms walked, with the states of `bound` and of the two read sets
+     * (which only grow): walking one again under the same states changes
+     * nothing and answers the same. */
+    HeWalkMemo walked;
 } HeBindingOrder;
 
 static bool he_binding_order_walk(HeBindingOrder *order, const Atom *term);
@@ -1871,7 +2843,27 @@ static bool he_binding_order_pair(HeBindingOrder *order, const Atom *pattern,
            he_binding_order_bind(order, pattern);
 }
 
+static bool he_binding_order_walk_term(HeBindingOrder *order,
+                                       const Atom *term);
+
 static bool he_binding_order_walk(HeBindingOrder *order, const Atom *term) {
+    if (!term || term->kind != ATOM_EXPR || term->expr.len < 2u ||
+        !atom_has_vars(term))
+        return he_binding_order_walk_term(order, term);
+    uint64_t bound = he_bound_state(&order->bound);
+    uint64_t reads = ((uint64_t)order->unbound_reads.len << 32u) ^
+        (uint64_t)order->stuck_reads.len;
+    uintptr_t known = 0u;
+    if (he_walk_memo_find(&order->walked, term, 0u, bound, reads, &known))
+        return known == 1u;
+    bool ok = he_binding_order_walk_term(order, term);
+    (void)he_walk_memo_store(&order->walked, term, 0u, bound, reads,
+                             ok ? 1u : 2u);
+    return ok;
+}
+
+static bool he_binding_order_walk_term(HeBindingOrder *order,
+                                       const Atom *term) {
     if (!term || !atom_has_vars(term))
         return true;
     if (term->kind == ATOM_VAR) {
@@ -1977,9 +2969,10 @@ static bool he_binding_order_holds(Space *space, const Atom *head,
      * inside it. Free variables in data are the caller's to bind. The root's
      * own free variables are its caller's. */
     ok = ok && (!head || order.stuck_reads.len == 0u);
-    free(order.bound.items);
-    free(order.unbound_reads.items);
-    free(order.stuck_reads.items);
+    he_bound_free(&order.bound);
+    he_bound_free(&order.unbound_reads);
+    he_bound_free(&order.stuck_reads);
+    he_walk_memo_free(&order.walked);
     if (structured_out)
         *structured_out |= order.structured_binder;
     return ok;
@@ -2029,8 +3022,11 @@ static bool he_execution_plain_arguments(Atom *source) {
  * variables. */
 typedef struct {
     bool effects;
+    bool native_resource_operations;
+    unsigned native_contracts;
     bool rereads;
     bool open_root;
+    HeReturnProvenance result_provenance;
 } HeSharedExecutionPlan;
 
 /* The checks that need no read window: the language, the switches, the
@@ -2097,8 +3093,9 @@ static bool he_shared_execution_candidate(Space *space, Atom *source,
 /* The admission, inside the caller's read window: the source and the
  * closure it reaches keep HE's rules on the shared machine.  Records the
  * closure decisions as it walks. */
-static bool he_shared_execution_admit(Space *space, Arena *arena,
+static bool he_shared_execution_admit_environment(Space *space, Arena *arena,
                                       Atom *source, bool preserve_bindings,
+                                      const Bindings *environment,
                                       HeSharedExecutionPlan *plan) {
     SymbolId source_head = atom_head_symbol_id(source);
     /* A root is open when a caller can bind or observe one of its
@@ -2135,6 +3132,28 @@ static bool he_shared_execution_admit(Space *space, Arena *arena,
      * A set operation's literal is not collected, so it is not checked. */
     admitted = admitted && !run_flow.raw_literal &&
         !(admission.effects && he_raw_flow_rereads(&run_flow));
+    /* Native resource operations use the established effectful eager
+     * schedule only: no escaping bindings, source-query discovery, or
+     * non-tail producer whose completion could interleave an effect. */
+    admitted = admitted && (!admission.native_resource_operations ||
+        (!admission.open_root && !admission.queries &&
+         !admission.structured_binder && !admission.fresh_variables &&
+         !admission.match_bindings_escape && !admission.collected_fresh &&
+         !admission.raise_unshaped));
+    bool source_admitted = admitted;
+    HeReturnProvenance provenance = HE_RETURN_UNKNOWN;
+    if (admitted) {
+        Atom *resolved = environment
+            ? bindings_apply_if_vars(environment, arena, source) : source;
+        HeReturnAnalysis analysis = {.space = space};
+        HeReturnEnvironment scope = {0};
+        provenance = he_return_body(&analysis, resolved, &scope, 0u);
+        free(scope.items);
+        admitted = provenance != HE_RETURN_UNKNOWN &&
+            !((provenance & (HE_RETURN_COMPLETED | HE_RETURN_COLLECTED)) &&
+              ((provenance & HE_RETURN_VARIABLE) ||
+               active_profile_uses_rust_he_compat_semantics()));
+    }
     /* Every closure walked to the end is admitted; a refused call with plain
      * arguments refuses its head's closure. */
     if (admitted) {
@@ -2142,7 +3161,7 @@ static bool he_shared_execution_admit(Space *space, Arena *arena,
             he_closure_decision_record(space, admission.heads[index],
                                        admission.open_root, false, true,
                                        &admission);
-    } else if (source_head != SYMBOL_ID_NONE &&
+    } else if (!source_admitted && source_head != SYMBOL_ID_NONE &&
                !symbol_id_is_builtin(source_head) &&
                he_execution_plain_arguments(source) &&
                eval_space_has_equations(space, source_head)) {
@@ -2154,10 +3173,55 @@ static bool he_shared_execution_admit(Space *space, Arena *arena,
     atom_visit_set_free(&admission.queued);
     *plan = (HeSharedExecutionPlan){
         .effects = admission.effects,
+        .native_resource_operations = admission.native_resource_operations,
+        .native_contracts = admission.native_contracts,
         .rereads = he_raw_flow_rereads(&run_flow),
         .open_root = admission.open_root,
+        .result_provenance = provenance,
     };
     return admitted;
+}
+
+/* Work objects have already captured their source and enter with no base
+ * environment. Keep their established admission interface explicit. */
+static bool he_shared_execution_admit(Space *space, Arena *arena,
+    Atom *source, bool preserve_bindings, HeSharedExecutionPlan *plan) {
+    return he_shared_execution_admit_environment(space, arena, source,
+                                                preserve_bindings, NULL, plan);
+}
+
+/* Only source-certified results cross this boundary with marks: a
+ * completed value marked at every node, as HE's evaluation of each stuck
+ * call marks it, and a collected tuple whose items are such values. Raw
+ * producer returns keep their original carrier. */
+static void he_shared_complete_returns(Arena *arena, OutcomeSet *outcomes,
+    CettaCount start, HeReturnProvenance provenance) {
+    if (!(provenance & (HE_RETURN_COMPLETED | HE_RETURN_COLLECTED)) ||
+        eval_current_language_id() != CETTA_LANGUAGE_HE ||
+        active_profile_uses_rust_he_compat_semantics())
+        return;
+    for (CettaCount i = start; i < outcomes->len; i++) {
+        Outcome *item = &outcomes->items[i];
+        Atom *value = outcome_atom_materialize(arena, item);
+        if (!value) {
+            eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
+            return;
+        }
+        Atom *completed = (provenance & HE_RETURN_COLLECTED)
+            ? he_collected_value(arena, value)
+            : he_completed_value(arena, value);
+        if (!completed || completed == value) continue;
+        /* Preserve the complete logical/conditional carrier. The closed
+         * materialized term needs no private slots, but delayed data can. */
+        item->atom = completed;
+        item->materialized_atom = completed;
+    }
+}
+
+static void he_prepared_completion_finish(Arena *arena, OutcomeSet *outcomes,
+                                          CettaCount start, bool completed) {
+    if (completed)
+        he_shared_complete_returns(arena, outcomes, start, HE_RETURN_COMPLETED);
 }
 
 static bool he_shared_execution_try(Space *space, Arena *arena, Atom *source,
@@ -2171,14 +3235,16 @@ static bool he_shared_execution_try(Space *space, Arena *arena, Atom *source,
      * and compiled episodes have a separately qualified concurrent contract. */
     CETTA_SCOPED_SHARED_TRANSITION(he_execution_observation);
     HeSharedExecutionPlan plan;
-    if (!he_shared_execution_admit(space, arena, source, preserve_bindings,
-                                   &plan))
+    if (!he_shared_execution_admit_environment(space, arena, source, preserve_bindings,
+                                               environment, &plan))
         return false;
+    CettaCount result_start = outcomes->len;
     SymbolId source_head = atom_head_symbol_id(source);
     /* Retain the existing qualified closed realizations before allocating a
      * relational episode. A decline publishes nothing and leaves the source
      * for the general machine; open calls never enter this closed attempt. */
-    if (!plan.open_root && source && source->kind == ATOM_EXPR &&
+    if (!plan.open_root && !plan.native_resource_operations &&
+        source && source->kind == ATOM_EXPR &&
         source_head != SYMBOL_ID_NONE && !symbol_id_is_builtin(source_head)) {
         Bindings empty;
         bindings_init(&empty);
@@ -2190,6 +3256,7 @@ static bool he_shared_execution_try(Space *space, Arena *arena, Atom *source,
             if (returned.kind == CETTA_CALL_VALUE)
                 outcome_set_add_prefixed(arena, outcomes, returned.term, &empty,
                     outer, preserve_bindings);
+            he_shared_complete_returns(arena, outcomes, result_start, plan.result_provenance);
             return true;
         }
         if (eval_unwinding() || eval_cancel_check())
@@ -2197,8 +3264,10 @@ static bool he_shared_execution_try(Space *space, Arena *arena, Atom *source,
         CettaPreparedPureAnswersResult answers = prepared_pure_closed_answers_try(
             space, arena, source, fuel, cache, outer, preserve_bindings, outcomes);
         if (answers == CETTA_PREPARED_PURE_ANSWERS_COMPLETE ||
-            answers == CETTA_PREPARED_PURE_ANSWERS_STOPPED)
+            answers == CETTA_PREPARED_PURE_ANSWERS_STOPPED) {
+            he_shared_complete_returns(arena, outcomes, result_start, plan.result_provenance);
             return true;
+        }
     }
     if (!g_library_context->petta_program)
         g_library_context->petta_program = petta_program_new_with_rules(eval_admitted_rule_forms());
@@ -2206,7 +3275,9 @@ static bool he_shared_execution_try(Space *space, Arena *arena, Atom *source,
         !petta_program_synchronize_space(g_library_context->petta_program, space))
         return false;
     bool enclosing_active = g_active_petta_search_machine;
+    bool enclosing_resource_operations = g_he_shared_execution_native_resource_operations;
     g_he_shared_execution = true;
+    g_he_shared_execution_native_resource_operations = plan.native_resource_operations;
     g_he_shared_execution_effect_free = !plan.effects;
     g_he_shared_execution_rereads = plan.rereads;
     g_active_petta_search_machine = true;
@@ -2215,5 +3286,7 @@ static bool he_shared_execution_try(Space *space, Arena *arena, Atom *source,
         CETTA_SEARCH_CONTROLLER_INLINE_DEPTH_FIRST, false, false);
     g_active_petta_search_machine = enclosing_active;
     g_he_shared_execution = false;
+    g_he_shared_execution_native_resource_operations = enclosing_resource_operations;
+    he_shared_complete_returns(arena, outcomes, result_start, plan.result_provenance);
     return complete;
 }

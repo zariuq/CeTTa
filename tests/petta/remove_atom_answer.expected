@@ -1,0 +1,16 @@
+false
+true
+(2)
+false
+true
+false
+()
+false
+true
+false
+((0 1) (1 2) (3 4))
+9
+true
+(sq 3)
+false
+false

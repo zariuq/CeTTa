@@ -349,6 +349,9 @@ CPython 3.11, 3.12, 3.13, 3.14 and 3.15:
     aarch64, glibc 2.28        QEMU user emulation    5
     aarch64, musl 1.2          QEMU user emulation    5
 
+These wheel results qualify embedding checkpoint 963c4f19. Later core merges
+need their own package qualification before replacement wheels are published.
+
 ARM64 module and companion binaries contain AArch64 machine code. Their test
 runs used QEMU on an x86_64 Linux host; physical ARM64 hardware has not been
 qualified. Emulation results are functional checks, not performance results.

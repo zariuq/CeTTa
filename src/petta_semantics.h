@@ -289,6 +289,14 @@ bool petta_semantics_cons_tail_is_flat_list(const Atom *tail);
  * Head prepended, in amortized constant time; onto anything else, an open
  * tail included, it is a cell. */
 Atom *petta_semantics_cons_value(Arena *arena, Atom *head, Atom *tail);
+/* CeTTa's term-language natives write a sequence (cons Head Tail) ... nil
+ * with one constructor, and PeTTa has two values that print so.  Export
+ * spells the cells of a value as such terms (a complete list as its flat
+ * expression); import gives each (cons Head Tail) of a term back as the
+ * value PeTTa's cons builds from its parts.  Each shares what it leaves
+ * unchanged, and returns NULL only when allocation fails. */
+Atom *petta_semantics_term_export(Arena *arena, Atom *atom);
+Atom *petta_semantics_term_import(Arena *arena, Atom *atom);
 /* A list value or a list pattern with a rest as its chain of cells. */
 Atom *petta_semantics_flat_list_spine(
     Arena *arena, Atom *flat_list);

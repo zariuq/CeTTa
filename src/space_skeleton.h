@@ -13,7 +13,9 @@
  * (Mettapedia/Machines/ShapeStore.lean, dec_injective and reassemble_dec).
  */
 enum {
-    CETTA_SKELETON_NODES = 32u,
+    /* 128 nodes, 2 KB a head: a spine of up to about 120 levels keeps only
+     * its holes; past the nodes a fact's rest is one hole, a record. */
+    CETTA_SKELETON_NODES = 128u,
     CETTA_SKELETON_HOLES = CETTA_TUPLE_MAX_ARITY,
 };
 
