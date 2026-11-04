@@ -2,6 +2,7 @@
 #include "value_rpc.h"
 #include "atom_wire.h"
 #include "storage_census.h"
+#include "runtime_names.h"
 #include <assert.h>
 #include <errno.h>
 #include <poll.h>
@@ -21,8 +22,10 @@ static void io(int fd,void *data,size_t size,bool writing) {
         assert(n>0);p+=n;size-=(size_t)n;
     }
 }
+/* Names are thread-local: each peer thread borrows the test's engine names. */
+static CettaNameContext peer_names;
 static void *serve(void *raw) {
-    Peer *p=raw;
+    Peer *p=raw;cetta_name_context_install(&peer_names);
     for(unsigned i=0;i<p->messages;i++) {
         unsigned char header[8];io(p->fd,header,8,false);size_t size;
         assert(cetta_ipc_csp_size(header,1048576,&size));unsigned char *bytes=malloc(size);assert(bytes);io(p->fd,bytes,size,false);
@@ -84,6 +87,7 @@ static void cancel_unsent(void) {
 }
 int main(void) {
     SymbolTable symbols;symbol_table_init(&symbols);symbol_table_init_builtins(&symbols,&g_builtin_syms);g_symbols=&symbols;
+    peer_names=cetta_name_context_current();
     ordered();failures(true);failures(false);cancel_unsent();symbol_table_free(&symbols);g_symbols=NULL;
     puts("Value RPC: queued progress, inert retained replies, parent close, malformed/lost replies and unsent cancellation passed");
 }
