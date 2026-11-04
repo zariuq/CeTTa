@@ -13687,7 +13687,8 @@ static Atom *oem_state_var_cell(CettaOpenEquationCursor *cursor, VarId id);
  * row's copy, whose variables are fresh cells; a collected answer, copied out
  * of the collection's storage, whose variables are fresh cells; a host's
  * stable ground answer, borrowed, and every other host answer copied with its
- * variables mapped to the goal's cells, the call's, or fresh ones. */
+ * variables mapped to the goal's cells, the call's, or one cell per variable
+ * of the host's for the cursor's life. */
 typedef enum {
     OEM_IMPORT_CALL,
     OEM_IMPORT_ROW,
@@ -13811,9 +13812,12 @@ static Atom *oem_import_node(CettaOpenEquationCursor *cursor,
                 : UINT32_MAX;
             if (position != UINT32_MAX)
                 return cursor->query_cells[position];
-            Atom *read = cursor->state_var_len
-                ? oem_state_var_find(cursor, atom->var_id) : NULL;
-            return read ? read : oem_fresh_var(cursor, atom->var_id);
+            /* Any other variable is the host's own: every answer that
+             * holds it meets one cell, spelled as that variable, as every
+             * read of a stored value does.  Two answers carrying one
+             * retained term, such as a capsule's payload opened twice,
+             * therefore share its variables. */
+            return oem_state_var_cell(cursor, atom->var_id);
         }
         if (cursor->runtime.stable && !atom_has_vars(atom) &&
             atom->arena_id == cursor->runtime.stable->identity) {

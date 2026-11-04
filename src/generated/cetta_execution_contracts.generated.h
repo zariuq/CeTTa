@@ -2,7 +2,7 @@
 #define CETTA_EXECUTION_CONTRACTS_GENERATED_H
 
 /* Generated from lib/gslt_execution_contracts.metta.
- * Source SHA-256: 395913ea0c00593dd4ddc0a7e59a7b815b5eabed456262e08617a2634ae63ea8
+ * Source SHA-256: 5beb5f54bc6bce06fe1b7a7e801153073dce59ff5c40dbe94e6f93f23b19a3f6
  */
 
 #include <stdbool.h>
@@ -992,33 +992,6 @@ static inline bool cetta_gslt_fold_control_program(
     return cetta_control_operation_decode(head, arity, &plan, builtins) &&
         cetta_control_operation_lower_fold(plan, control_out);
 }
-
-/* Representation rows for sequence consumers.  The runtime resolves these
- * names in the active symbol table; library constructors therefore remain
- * authored data rather than evaluator vocabulary. */
-#define CETTA_GSLT_SEQUENCE_REPRESENTATION_ROWS(X)     X("clist", "clist:to-list", "ClistNil", "ClistCons")
-
-/* A represented operand remains source syntax until its sequence consumer
- * exposes the generated fold handler.  This prevents eager pure-call
- * compilation from materializing a representation that the handler can erase
- * by an observer-commuting homomorphism. */
-#define CETTA_GSLT_SEQUENCE_FOLD_CONSUMER_ROWS(X)     X("clist", "clist:foldl", 5u, 0u)
-
-typedef enum {
-    CETTA_GSLT_SEQUENCE_ERASURE_UNWRAP = 0,
-    CETTA_GSLT_SEQUENCE_ERASURE_RECURSIVE_ALL = 1,
-    CETTA_GSLT_SEQUENCE_ERASURE_SCALAR_ALL = 2,
-} CettaGsltSequenceErasureMode;
-
-/* Canonical fold target used only after a prepared sequence path declines. */
-#define CETTA_GSLT_SEQUENCE_FOLD_TARGET_ROWS(X)     X("clist", "list:foldl")
-
-/* Observer-commuting erasures from authored sequence producers to the flat
- * free-monoid representation consumed by the prepared fold. */
-#define CETTA_GSLT_SEQUENCE_ERASURE_ROWS(X)     X("clist", "clist:from-list", "identity", CETTA_GSLT_SEQUENCE_ERASURE_UNWRAP, 1u, 1u) \
-    X("clist", "clist:append", "list:append", CETTA_GSLT_SEQUENCE_ERASURE_RECURSIVE_ALL, 2u, 2u) \
-    X("clist", "clist:range", "list:range", CETTA_GSLT_SEQUENCE_ERASURE_SCALAR_ALL, 1u, 2u) \
-    X("clist", "clist:repeat", "list:repeat", CETTA_GSLT_SEQUENCE_ERASURE_SCALAR_ALL, 2u, 2u)
 
 /* ── Evaluator root frames: generated evacuation arms ─────────────────────
  * Frame kinds and their field traversal sequences come from the
