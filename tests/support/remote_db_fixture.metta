@@ -309,6 +309,33 @@
          ($_ (assertEqual (collapse (match $left (row k1 $n) $n)) ()))
          ($_ (db:close $left)) ($_ (db:close $db))) REMOTE_REMOVE_COST_OK))
 
+(= (remote-fixture:seed-keyed $space $n)
+  (if (== $n 0) done
+    (let* (($key (str:concat "k" (repr $n)))
+           ($_ (add-atom $space (row $key unobserved))))
+      (remote-fixture:seed-keyed $space (- $n 1)))))
+(= (remote-fixture:own-edits $space $n)
+  (if (== $n 0) done
+    (let* (($key (str:concat "k" (repr $n)))
+           ($_ (assertEqual (collapse (match $space (row $key $s) $s)) (unobserved)))
+           ($_ (remove-atom $space (row $key unobserved)))
+           ($_ (add-atom $space (row $key observed)))
+           ($_ (assertEqual (collapse (match $space (row $key $s) $s)) (observed)))
+           ($_ (remove-atom $space (row $key observed)))
+           ($_ (add-atom $space (row $key done))))
+      (remote-fixture:own-edits $space (- $n 1)))))
+(= (remote-fixture:run (OwnEditCost $socket $k))
+  (let* (($db (db:connect $socket))
+         ($_ (assertEqual (db:ensure $db rows ((SpaceIndexV1 3 1))) True))
+         ($_ (assertEqual (db:transaction $db rows (|-> ($space)
+                (let $_ (remote-fixture:seed-keyed $space $k)
+                  (remote-fixture:fill $space 200)))) done))
+         ($_ (assertEqual (db:transaction $db rows (|-> ($space)
+                (remote-fixture:own-edits $space $k))) done))
+         ($after (db:snapshot $db rows))
+         ($_ (assertEqual (collapse (match $after (row "k1" $s) $s)) (done)))
+         ($_ (db:close $after)) ($_ (db:close $db))) REMOTE_OWN_EDIT_COST_OK))
+
 ; A publication of 1500 inserts commits within one call's evaluation budget: the
 ; repeated-occurrence check of its edit list is made once, not per change.
 (= (remote-fixture:run (LargeTransaction $socket))

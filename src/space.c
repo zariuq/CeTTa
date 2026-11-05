@@ -9319,6 +9319,7 @@ static void space_native_storage_init_empty(Space *s, TermUniverse *universe) {
     s->native.id_present_table_used = 0u;
     s->native.id_present_synced_len = 0;
     s->native.id_present_dirty = false;
+    s->native.id_present_shared = false;
     s->native.id_present_incomplete = false;
     s->native.id_present_keys = NULL;
     s->native.id_present_key_len = 0u;
