@@ -193,3 +193,6 @@
 (: __cetta_lib_store_view_domain (-> Atom Atom))
 (: store:view-domain (-> %Undefined% %Undefined%))
 (= (store:view-domain $view) (__cetta_lib_store_view_domain $view))
+(: __cetta_lib_store_index_operations (-> Atom Atom Atom Atom Atom Atom))
+(: store:index-operations (-> %Undefined% Atom Atom Atom Atom %Undefined%))
+(= (store:index-operations $view $indexes $key $delta $operation) (__cetta_lib_store_index_operations $view $indexes $key $delta $operation))

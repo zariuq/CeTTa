@@ -919,8 +919,206 @@ static Atom *compaction_progress(Arena *a,const CettaDiskCompaction *job) {
         unsigned_value(a,info.records),unsigned_value(a,info.bytes_read),unsigned_value(a,info.output_bytes)};
     return atom_expr(a,fields,6);
 }
+static Atom *space_refused(Arena *a,const char *why) {
+    return atom_expr2(a,atom_symbol(a,"SpaceRefusedV1"),atom_symbol(a,why));
+}
+static Atom *codec_refused(Arena *a,CettaAtomWireStatus status) {
+    return atom_expr2(a,atom_symbol(a,"StoreCodecRefused"),atom_string(a,cetta_atom_wire_status_name(status)));
+}
+static Atom *posting_key_atom(Arena *a,CettaDiskBytes prefix,const char *tag,
+        const unsigned char *mid,size_t mid_len,CettaDiskBytes key) {
+    size_t tag_len=strlen(tag),slash=mid ? 1u : 0u;
+    if (prefix.size>CETTA_STRING_BYTES_MAX ||
+        tag_len>CETTA_STRING_BYTES_MAX-prefix.size ||
+        mid_len>CETTA_STRING_BYTES_MAX-prefix.size-tag_len ||
+        slash>CETTA_STRING_BYTES_MAX-prefix.size-tag_len-mid_len ||
+        key.size>CETTA_STRING_BYTES_MAX-prefix.size-tag_len-mid_len-slash)
+        return NULL;
+    size_t total=prefix.size+tag_len+mid_len+slash+key.size;
+    char *buf=malloc(total ? total : 1);
+    if (!buf) return NULL;
+    size_t pos=0;
+    if (prefix.size) { memcpy(buf+pos,prefix.data,prefix.size);pos+=prefix.size; }
+    if (tag_len) { memcpy(buf+pos,tag,tag_len);pos+=tag_len; }
+    if (mid_len) { memcpy(buf+pos,mid,mid_len);pos+=mid_len; }
+    if (slash) buf[pos++]='/';
+    if (key.size) { memcpy(buf+pos,key.data,key.size);pos+=key.size; }
+    Atom *str=atom_string_n(a,buf,total);
+    free(buf);
+    return str;
+}
+static bool index_postings_append(Arena *a,size_t limit,Atom *indexes,Atom *key_atom,
+        Atom *atom,bool is_remove,Atom ***items,size_t *count,size_t *cap,Atom **error) {
+    CettaDiskBytes key={0};
+    if (!string(key_atom,&key)) { *error=space_refused(a,"index-operation");return false; }
+    if (!indexes || indexes->kind!=ATOM_EXPR) { *error=space_refused(a,"index-list");return false; }
+    for (size_t i=0;i<indexes->expr.len;++i) {
+        Atom *index=indexes->expr.elems[i];
+        bool is_exact=index && index->kind==ATOM_EXPR && index->expr.len==4 &&
+                      atom_is_symbol(index->expr.elems[0],"StoreSpaceIndexV1");
+        bool is_range=index && index->kind==ATOM_EXPR && index->expr.len==4 &&
+                      atom_is_symbol(index->expr.elems[0],"StoreSpaceRangeIndexV1");
+        uint64_t arity=0,position=0;
+        CettaDiskBytes prefix={0};
+        if ((!is_exact && !is_range) ||
+            (index->expr.elems[1]->structural_facts & ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID) ||
+            (index->expr.elems[2]->structural_facts & ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID) ||
+            !number(index->expr.elems[1],&arity) || arity==0 || arity>UINT32_MAX ||
+            !number(index->expr.elems[2],&position) || position>=arity ||
+            !string(index->expr.elems[3],&prefix) || prefix.size==0) {
+            *error=space_refused(a,"index-format");
+            return false;
+        }
+        Atom *posting=NULL;
+        if (is_exact) {
+            if (atom->kind==ATOM_VAR) {
+                posting=posting_key_atom(a,prefix,"/any/",NULL,0,key);
+                if (!posting) { *error=refused(a,"capacity");return false; }
+            } else if (atom->kind==ATOM_EXPR && atom->expr.len==arity) {
+                Atom *field=atom->expr.elems[position];
+                bool exact=field->kind==ATOM_SYMBOL ||
+                           (field->kind==ATOM_GROUNDED && field->ground.gkind==GV_STRING);
+                if (exact) {
+                    unsigned char *wire=NULL;size_t wire_size=0;
+                    CettaAtomWireStatus st=cetta_atom_wire_encode_bounded(field,limit,&wire,&wire_size);
+                    if (st==ATOM_WIRE_OK) {
+                        posting=posting_key_atom(a,prefix,"/exact/",wire,wire_size,key);
+                        free(wire);
+                    } else if (st==ATOM_WIRE_NOMEM) {
+                        *error=refused(a,"capacity");
+                        return false;
+                    } else {
+                        posting=posting_key_atom(a,prefix,"/any/",NULL,0,key);
+                    }
+                } else {
+                    posting=posting_key_atom(a,prefix,"/any/",NULL,0,key);
+                }
+                if (!posting) { *error=refused(a,"capacity");return false; }
+            } else {
+                continue;
+            }
+        } else {
+            if (atom->kind==ATOM_EXPR && atom->expr.len==arity) {
+                Atom *field=atom->expr.elems[position];
+                if (!scalar_value(field)) continue;
+                unsigned char *wire=NULL;size_t wire_size=0;
+                CettaAtomWireStatus st=cetta_atom_wire_encode_bounded(field,limit,&wire,&wire_size);
+                if (st!=ATOM_WIRE_OK) {
+                    *error=codec_refused(a,st);
+                    return false;
+                }
+                bool is_i64=wire_size>=5 && wire[4]=='I';
+                free(wire);
+                if (is_i64) {
+                    if (field->kind!=ATOM_GROUNDED || field->ground.gkind!=GV_INT) {
+                        *error=refused(a,"invalid-integer");
+                        return false;
+                    }
+                    uint64_t val=(uint64_t)field->ground.ival ^ (UINT64_C(1)<<63);
+                    unsigned char ordered[8];
+                    for (size_t k=8;k>0;--k) { ordered[k-1]=(unsigned char)val;val>>=8; }
+                    posting=posting_key_atom(a,prefix,"/i64/",ordered,8,key);
+                } else {
+                    posting=posting_key_atom(a,prefix,"/other/",NULL,0,key);
+                }
+                if (!posting) { *error=refused(a,"capacity");return false; }
+            } else {
+                continue;
+            }
+        }
+        if (*count==*cap) {
+            size_t next_cap=*cap ? *cap*2 : (indexes->expr.len ? (size_t)indexes->expr.len*2 : 8);
+            if (next_cap<*count+1) next_cap=*count+1;
+            Atom **grown=realloc(*items,next_cap*sizeof(*grown));
+            if (!grown) { *error=refused(a,"capacity");return false; }
+            *items=grown;*cap=next_cap;
+        }
+        Atom *op=is_remove
+            ? atom_expr2(a,atom_symbol(a,"remove"),posting)
+            : atom_expr3(a,atom_symbol(a,"put"),posting,atom_string_n(a,"",0));
+        if (!op) { *error=refused(a,"capacity");return false; }
+        (*items)[(*count)++]=op;
+    }
+    return true;
+}
+static Atom *index_operations(CettaLibraryContext *ctx,Arena *a,Atom **args,uint32_t n) {
+    if (n!=5) return refused(a,"invalid-index-operations");
+    if (args[1] && args[1]->kind==ATOM_EXPR && args[1]->expr.len==0)
+        return atom_expr2(a,atom_symbol(a,"SpaceIndexOperationsV1"),atom_expr(a,NULL,0));
+    size_t limit=cetta_library_value_byte_limit(ctx);
+    bool is_insert=args[3] && args[3]->kind==ATOM_GROUNDED &&
+                   args[3]->ground.gkind==GV_INT && args[3]->ground.ival==1 &&
+                   !(args[3]->structural_facts & ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID);
+    Arena scratch;arena_init_detached(&scratch);
+    Atom **ops=NULL,*error=NULL;
+    size_t ops_count=0,ops_cap=0;
+    if (!is_insert) {
+        CettaDiskBytes key={0};
+        if (!string(args[2],&key)) { error=refused(a,"invalid-get");goto done; }
+        CettaNativeHandleUse use={0};
+        if (!acquire(ctx,view_kind,args[0],CETTA_NATIVE_HANDLE_USE_LIFETIME,&use)) {
+            error=refused(a,"closed-view");goto done;
+        }
+        const CettaDiskStoreView *root=cetta_native_handle_use_resource(&use);
+        CettaDiskStoreBlob blob;
+        CettaDiskStatus status=cetta_disk_store_lookup(root,key,&blob);
+        if (status==CETTA_DISK_ABSENT) {
+            cetta_native_handle_use_release(&use);
+            error=atom_symbol(a,"StoreAbsent");goto done;
+        }
+        if (status!=CETTA_DISK_OK) {
+            cetta_native_handle_use_release(&use);
+            error=status_value(a,disk_status(status));goto done;
+        }
+        if (blob.size>limit) {
+            cetta_native_handle_use_release(&use);
+            error=atom_expr2(a,atom_symbol(a,"StoreTooLarge"),atom_int(a,(int64_t)blob.size));
+            goto done;
+        }
+        unsigned char *bytes=malloc(blob.size ? (size_t)blob.size : 1);
+        size_t got=0;
+        if (!bytes) {
+            cetta_native_handle_use_release(&use);
+            error=refused(a,"capacity");goto done;
+        }
+        status=cetta_disk_store_blob_read(root,blob,0,bytes,(size_t)blob.size,&got);
+        cetta_native_handle_use_release(&use);
+        if (status!=CETTA_DISK_OK) {
+            free(bytes);
+            error=status_value(a,disk_status(status));goto done;
+        }
+        Atom *old_atom=NULL;
+        CettaAtomWireStatus decoded=cetta_atom_wire_decode_bounded(&scratch,bytes,got,limit,&old_atom);
+        free(bytes);
+        if (decoded!=ATOM_WIRE_OK) {
+            error=codec_refused(a,decoded);goto done;
+        }
+        if (!index_postings_append(a,limit,args[1],args[2],old_atom,true,&ops,&ops_count,&ops_cap,&error))
+            goto done;
+    }
+    Atom *op=args[4];
+    if (op && op->kind==ATOM_EXPR && op->expr.len==3 && atom_is_symbol(op->expr.elems[0],"put")) {
+        CettaDiskBytes body={0};
+        if (!string(op->expr.elems[2],&body)) { error=refused(a,"invalid-decode");goto done; }
+        Atom *new_atom=NULL;
+        CettaAtomWireStatus decoded=cetta_atom_wire_decode_bounded(&scratch,body.data,body.size,limit,&new_atom);
+        if (decoded!=ATOM_WIRE_OK) { error=codec_refused(a,decoded);goto done; }
+        if (!index_postings_append(a,limit,args[1],args[2],new_atom,false,&ops,&ops_count,&ops_cap,&error))
+            goto done;
+    } else if (!(op && op->kind==ATOM_EXPR && op->expr.len==2 && atom_is_symbol(op->expr.elems[0],"remove"))) {
+        error=space_refused(a,"index-operation");goto done;
+    }
+done:
+    arena_free(&scratch);
+    if (error) { free(ops);return error; }
+    if (ops_count>UINT32_MAX) { free(ops);return refused(a,"capacity"); }
+    Atom *list=atom_expr(a,ops,(CettaExprLen)ops_count);
+    free(ops);
+    return list ? atom_expr2(a,atom_symbol(a,"SpaceIndexOperationsV1"),list) : refused(a,"capacity");
+}
 Atom *cetta_store_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **args,uint32_t n) {
     if (!ctx || !a || !head) return NULL;
+    if (atom_is_symbol(head,"__cetta_lib_store_index_operations")) return index_operations(ctx,a,args,n);
     if (atom_is_symbol(head,"__cetta_lib_store_view_domain")) {
         CettaNativeHandleUse use={0};uintmax_t device,inode;
         if (n!=1 || !acquire(ctx,view_kind,args[0],CETTA_NATIVE_HANDLE_USE_LIFETIME,&use)) return refused(a,"closed-view");
