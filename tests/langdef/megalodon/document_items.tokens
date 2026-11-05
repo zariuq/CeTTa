@@ -1,0 +1,147 @@
+OPENCOM
+TITLE
+(STRING "every item")
+CLOSECOM
+OPENCOM
+AUTHOR
+(STRING "A")
+CLOSECOM
+OPENCOM
+SALT
+(STRING "a salt")
+CLOSECOM
+OPENCOM
+TREASURE
+(STRING "1JMr8Xw5V4Pzkw8XzQBpu9SEzQkwcK4ZD7")
+CLOSECOM
+OPENCOM
+(SPECCOMM "ShowProofTerms")
+CLOSECOM
+OPENCOM
+(SPECCOMM "HideProofTerms")
+CLOSECOM
+OPENCOM
+PARAM
+(NAM "Eps_i")
+(STRING "174b78e53fc239e8c2aab4ab5a996a27e3e5741e88070dad186e05fb13f275e5")
+CLOSECOM
+PARAM
+(NAM "Eps_i")
+COLON
+LPAREN
+(NAM "set")
+(NAM "->")
+(NAM "prop")
+RPAREN
+(NAM "->")
+(NAM "set")
+DOT
+AXIOM
+(NAM "ax1")
+COLON
+(NAM "forall")
+(NAM "P")
+COLON
+(NAM "set")
+(NAM "->")
+(NAM "prop")
+COMMA
+(NAM "forall")
+(NAM "x")
+COLON
+(NAM "set")
+COMMA
+(NAM "P")
+(NAM "x")
+(NAM "->")
+(NAM "P")
+LPAREN
+(NAM "Eps_i")
+(NAM "P")
+RPAREN
+DOT
+DEF
+(NAM "d1")
+COLON
+(NAM "set")
+(NAM "->")
+(NAM "set")
+DEQ
+(NAM "fun")
+(NAM "x")
+DARR
+(NAM "x")
+DOT
+DEF
+(NAM "d2")
+DEQ
+(NAM "fun")
+(NAM "x")
+COLON
+(NAM "set")
+DARR
+(NAM "x")
+DOT
+OPAQUE
+(NAM "d1")
+(NAM "d2")
+DOT
+TRANSPARENT
+(NAM "d2")
+DOT
+(THEOREM "Theorem")
+(NAM "th1")
+COLON
+(NAM "p")
+DOT
+ADMITTED
+DOT
+(THEOREM "Lemma")
+(NAM "le1")
+COLON
+(NAM "p")
+DOT
+ADMITTED
+DOT
+(THEOREM "Example")
+(NAM "ex1")
+COLON
+(NAM "p")
+DOT
+ADMITTED
+DOT
+(THEOREM "Fact")
+(NAM "fa1")
+COLON
+(NAM "p")
+DOT
+ADMITTED
+DOT
+(THEOREM "Remark")
+(NAM "re1")
+COLON
+(NAM "p")
+DOT
+ADMITTED
+DOT
+(THEOREM "Corollary")
+(NAM "co1")
+COLON
+(NAM "p")
+DOT
+ADMITTED
+DOT
+(THEOREM "Proposition")
+(NAM "pr1")
+COLON
+(NAM "p")
+DOT
+ADMITTED
+DOT
+(THEOREM "Property")
+(NAM "pp1")
+COLON
+(NAM "p")
+DOT
+ADMITTED
+DOT

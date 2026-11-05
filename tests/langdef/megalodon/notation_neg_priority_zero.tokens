@@ -1,0 +1,7 @@
+INFIX
+(NAM "+")
+(NUM False "0" None None)
+(NAM "left")
+DEQ
+(NAM "add")
+DOT

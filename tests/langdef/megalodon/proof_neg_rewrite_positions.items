@@ -1,0 +1,1 @@
+(Doc (ThmDecl "Theorem" "t" (BiL "forall" "," (List ((List "x") (Some (AscTp (NaL "set"))))) (ImplopL (ImplopL (NaL "x") (NaL "=")) (NaL "x")))))

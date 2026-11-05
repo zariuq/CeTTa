@@ -1,0 +1,37 @@
+(THEOREM "Theorem")
+(NAM "t5")
+COLON
+(NAM "p")
+DOT
+ABY
+DOT
+QED
+DOT
+(THEOREM "Theorem")
+(NAM "t6")
+COLON
+(NAM "q")
+DOT
+ABY
+(NAM "foo")
+(NAM "bar")
+(NAM "baz")
+DOT
+QED
+DOT
+(THEOREM "Theorem")
+(NAM "t7")
+COLON
+(NAM "r")
+DOT
+ADMIT
+DOT
+QED
+DOT
+(THEOREM "Theorem")
+(NAM "t8")
+COLON
+(NAM "s")
+DOT
+ADMITTED
+DOT

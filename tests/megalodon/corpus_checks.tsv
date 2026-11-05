@@ -1,0 +1,74 @@
+# How each Megalodon example is checked: Megalodon's options (theory and
+# signatures, paths relative to its examples directory), following its
+# examples README; each part of UpToOctonionsAlt after the signatures of
+# the parts before it.  Documents not listed are checked with no options.
+UpToOctonions/Nov2021ConjsAll.mg	-I UpToOctonions/Nov2021ConjPreamble.mgs
+UpToOctonionsAlt/Part10.mg	-I UpToOctonionsAlt/Part1.mgs -I UpToOctonionsAlt/Part2.mgs -I UpToOctonionsAlt/Part3.mgs -I UpToOctonionsAlt/Part4.mgs -I UpToOctonionsAlt/Part5.mgs -I UpToOctonionsAlt/Part6.mgs -I UpToOctonionsAlt/Part7.mgs -I UpToOctonionsAlt/Part8.mgs -I UpToOctonionsAlt/Part9.mgs
+UpToOctonionsAlt/Part10.mgs	-I UpToOctonionsAlt/Part1.mgs -I UpToOctonionsAlt/Part2.mgs -I UpToOctonionsAlt/Part3.mgs -I UpToOctonionsAlt/Part4.mgs -I UpToOctonionsAlt/Part5.mgs -I UpToOctonionsAlt/Part6.mgs -I UpToOctonionsAlt/Part7.mgs -I UpToOctonionsAlt/Part8.mgs -I UpToOctonionsAlt/Part9.mgs
+UpToOctonionsAlt/Part11.mg	-I UpToOctonionsAlt/Part1.mgs -I UpToOctonionsAlt/Part2.mgs -I UpToOctonionsAlt/Part3.mgs -I UpToOctonionsAlt/Part4.mgs -I UpToOctonionsAlt/Part5.mgs -I UpToOctonionsAlt/Part6.mgs -I UpToOctonionsAlt/Part7.mgs -I UpToOctonionsAlt/Part8.mgs -I UpToOctonionsAlt/Part9.mgs -I UpToOctonionsAlt/Part10.mgs
+UpToOctonionsAlt/Part11.mgs	-I UpToOctonionsAlt/Part1.mgs -I UpToOctonionsAlt/Part2.mgs -I UpToOctonionsAlt/Part3.mgs -I UpToOctonionsAlt/Part4.mgs -I UpToOctonionsAlt/Part5.mgs -I UpToOctonionsAlt/Part6.mgs -I UpToOctonionsAlt/Part7.mgs -I UpToOctonionsAlt/Part8.mgs -I UpToOctonionsAlt/Part9.mgs -I UpToOctonionsAlt/Part10.mgs
+UpToOctonionsAlt/Part12.mg	-I UpToOctonionsAlt/Part1.mgs -I UpToOctonionsAlt/Part2.mgs -I UpToOctonionsAlt/Part3.mgs -I UpToOctonionsAlt/Part4.mgs -I UpToOctonionsAlt/Part5.mgs -I UpToOctonionsAlt/Part6.mgs -I UpToOctonionsAlt/Part7.mgs -I UpToOctonionsAlt/Part8.mgs -I UpToOctonionsAlt/Part9.mgs -I UpToOctonionsAlt/Part10.mgs -I UpToOctonionsAlt/Part11.mgs
+UpToOctonionsAlt/Part12.mgs	-I UpToOctonionsAlt/Part1.mgs -I UpToOctonionsAlt/Part2.mgs -I UpToOctonionsAlt/Part3.mgs -I UpToOctonionsAlt/Part4.mgs -I UpToOctonionsAlt/Part5.mgs -I UpToOctonionsAlt/Part6.mgs -I UpToOctonionsAlt/Part7.mgs -I UpToOctonionsAlt/Part8.mgs -I UpToOctonionsAlt/Part9.mgs -I UpToOctonionsAlt/Part10.mgs -I UpToOctonionsAlt/Part11.mgs
+UpToOctonionsAlt/Part13.mg	-I UpToOctonionsAlt/Part1.mgs -I UpToOctonionsAlt/Part2.mgs -I UpToOctonionsAlt/Part3.mgs -I UpToOctonionsAlt/Part4.mgs -I UpToOctonionsAlt/Part5.mgs -I UpToOctonionsAlt/Part6.mgs -I UpToOctonionsAlt/Part7.mgs -I UpToOctonionsAlt/Part8.mgs -I UpToOctonionsAlt/Part9.mgs -I UpToOctonionsAlt/Part10.mgs -I UpToOctonionsAlt/Part11.mgs -I UpToOctonionsAlt/Part12.mgs
+UpToOctonionsAlt/Part13.mgs	-I UpToOctonionsAlt/Part1.mgs -I UpToOctonionsAlt/Part2.mgs -I UpToOctonionsAlt/Part3.mgs -I UpToOctonionsAlt/Part4.mgs -I UpToOctonionsAlt/Part5.mgs -I UpToOctonionsAlt/Part6.mgs -I UpToOctonionsAlt/Part7.mgs -I UpToOctonionsAlt/Part8.mgs -I UpToOctonionsAlt/Part9.mgs -I UpToOctonionsAlt/Part10.mgs -I UpToOctonionsAlt/Part11.mgs -I UpToOctonionsAlt/Part12.mgs
+UpToOctonionsAlt/Part14.mg	-I UpToOctonionsAlt/Part1.mgs -I UpToOctonionsAlt/Part2.mgs -I UpToOctonionsAlt/Part3.mgs -I UpToOctonionsAlt/Part4.mgs -I UpToOctonionsAlt/Part5.mgs -I UpToOctonionsAlt/Part6.mgs -I UpToOctonionsAlt/Part7.mgs -I UpToOctonionsAlt/Part8.mgs -I UpToOctonionsAlt/Part9.mgs -I UpToOctonionsAlt/Part10.mgs -I UpToOctonionsAlt/Part11.mgs -I UpToOctonionsAlt/Part12.mgs -I UpToOctonionsAlt/Part13.mgs
+UpToOctonionsAlt/Part14.mgs	-I UpToOctonionsAlt/Part1.mgs -I UpToOctonionsAlt/Part2.mgs -I UpToOctonionsAlt/Part3.mgs -I UpToOctonionsAlt/Part4.mgs -I UpToOctonionsAlt/Part5.mgs -I UpToOctonionsAlt/Part6.mgs -I UpToOctonionsAlt/Part7.mgs -I UpToOctonionsAlt/Part8.mgs -I UpToOctonionsAlt/Part9.mgs -I UpToOctonionsAlt/Part10.mgs -I UpToOctonionsAlt/Part11.mgs -I UpToOctonionsAlt/Part12.mgs -I UpToOctonionsAlt/Part13.mgs
+UpToOctonionsAlt/Part2.mg	-I UpToOctonionsAlt/Part1.mgs
+UpToOctonionsAlt/Part2.mgs	-I UpToOctonionsAlt/Part1.mgs
+UpToOctonionsAlt/Part3.mg	-I UpToOctonionsAlt/Part1.mgs -I UpToOctonionsAlt/Part2.mgs
+UpToOctonionsAlt/Part3.mgs	-I UpToOctonionsAlt/Part1.mgs -I UpToOctonionsAlt/Part2.mgs
+UpToOctonionsAlt/Part4.mg	-I UpToOctonionsAlt/Part1.mgs -I UpToOctonionsAlt/Part2.mgs -I UpToOctonionsAlt/Part3.mgs
+UpToOctonionsAlt/Part4.mgs	-I UpToOctonionsAlt/Part1.mgs -I UpToOctonionsAlt/Part2.mgs -I UpToOctonionsAlt/Part3.mgs
+UpToOctonionsAlt/Part5.mg	-I UpToOctonionsAlt/Part1.mgs -I UpToOctonionsAlt/Part2.mgs -I UpToOctonionsAlt/Part3.mgs -I UpToOctonionsAlt/Part4.mgs
+UpToOctonionsAlt/Part5.mgs	-I UpToOctonionsAlt/Part1.mgs -I UpToOctonionsAlt/Part2.mgs -I UpToOctonionsAlt/Part3.mgs -I UpToOctonionsAlt/Part4.mgs
+UpToOctonionsAlt/Part6.mg	-I UpToOctonionsAlt/Part1.mgs -I UpToOctonionsAlt/Part2.mgs -I UpToOctonionsAlt/Part3.mgs -I UpToOctonionsAlt/Part4.mgs -I UpToOctonionsAlt/Part5.mgs
+UpToOctonionsAlt/Part6.mgs	-I UpToOctonionsAlt/Part1.mgs -I UpToOctonionsAlt/Part2.mgs -I UpToOctonionsAlt/Part3.mgs -I UpToOctonionsAlt/Part4.mgs -I UpToOctonionsAlt/Part5.mgs
+UpToOctonionsAlt/Part7.mg	-I UpToOctonionsAlt/Part1.mgs -I UpToOctonionsAlt/Part2.mgs -I UpToOctonionsAlt/Part3.mgs -I UpToOctonionsAlt/Part4.mgs -I UpToOctonionsAlt/Part5.mgs -I UpToOctonionsAlt/Part6.mgs
+UpToOctonionsAlt/Part7.mgs	-I UpToOctonionsAlt/Part1.mgs -I UpToOctonionsAlt/Part2.mgs -I UpToOctonionsAlt/Part3.mgs -I UpToOctonionsAlt/Part4.mgs -I UpToOctonionsAlt/Part5.mgs -I UpToOctonionsAlt/Part6.mgs
+UpToOctonionsAlt/Part8.mg	-I UpToOctonionsAlt/Part1.mgs -I UpToOctonionsAlt/Part2.mgs -I UpToOctonionsAlt/Part3.mgs -I UpToOctonionsAlt/Part4.mgs -I UpToOctonionsAlt/Part5.mgs -I UpToOctonionsAlt/Part6.mgs -I UpToOctonionsAlt/Part7.mgs
+UpToOctonionsAlt/Part8.mgs	-I UpToOctonionsAlt/Part1.mgs -I UpToOctonionsAlt/Part2.mgs -I UpToOctonionsAlt/Part3.mgs -I UpToOctonionsAlt/Part4.mgs -I UpToOctonionsAlt/Part5.mgs -I UpToOctonionsAlt/Part6.mgs -I UpToOctonionsAlt/Part7.mgs
+UpToOctonionsAlt/Part9.mg	-I UpToOctonionsAlt/Part1.mgs -I UpToOctonionsAlt/Part2.mgs -I UpToOctonionsAlt/Part3.mgs -I UpToOctonionsAlt/Part4.mgs -I UpToOctonionsAlt/Part5.mgs -I UpToOctonionsAlt/Part6.mgs -I UpToOctonionsAlt/Part7.mgs -I UpToOctonionsAlt/Part8.mgs
+UpToOctonionsAlt/Part9.mgs	-I UpToOctonionsAlt/Part1.mgs -I UpToOctonionsAlt/Part2.mgs -I UpToOctonionsAlt/Part3.mgs -I UpToOctonionsAlt/Part4.mgs -I UpToOctonionsAlt/Part5.mgs -I UpToOctonionsAlt/Part6.mgs -I UpToOctonionsAlt/Part7.mgs -I UpToOctonionsAlt/Part8.mgs
+egal/Collatz.mg	-I egal/PfgEAug2022Preamble.mgs
+egal/Dieudonne_2_2.mg	-I egal/PfgEMay2021Preamble.mgs
+egal/Dieudonne_2_2_buggy.mg	-I egal/PfgEMay2021Preamble.mgs
+egal/Dieudonne_2_2_extra.mg	-I egal/PfgEMay2021Preamble.mgs
+egal/QuotientGroupConjs1.mg	-I egal/PfgEMay2021Preamble.mgs
+egal/Ramsey_3_3_5.mg	-I egal/PfgEMay2021Preamble.mgs
+egal/Ramsey_3_3_5_orig_toobigpfg.mg	-I egal/PfgEMay2021Preamble.mgs
+egal/Ramsey_3_3_6.mg	-I egal/PfgEMay2021Preamble.mgs
+hf/PfgPreambleSep2020.mgs	-hf
+hf/Random1_197_pos.mg	-hf -I hf/PfgPreambleSep2020.mgs
+hf/Random3_25_neg.mg	-hf -I hf/PfgPreambleSep2020.mgs
+hoas/CoreSimplicity1.mg	-hoas -I hoas/PfgHOASPreamble1.mgs
+hoas/CoreSimplicity1.mgs	-hoas -I hoas/PfgHOASPreamble1.mgs
+hoas/CoreSimplicity2.mg	-hoas -I hoas/PfgHOASPreamble1.mgs -I hoas/CoreSimplicity1.mgs
+hoas/CoreSimplicity2.mgs	-hoas -I hoas/PfgHOASPreamble1.mgs -I hoas/CoreSimplicity1.mgs
+hoas/CoreSimplicity3.mg	-hoas -I hoas/PfgHOASPreamble1.mgs -I hoas/CoreSimplicity1.mgs -I hoas/CoreSimplicity2.mgs
+hoas/Dedukti.mg	-hoas -I hoas/PfgHOASPreamble1.mgs
+hoas/DeduktiPreamble.mgs	-hoas
+hoas/PfgHOASPreamble1.mgs	-hoas
+hoas/PfgHOASULamPreamble.mgs	-hoas
+hoas/ULam1.mg	-hoas -I hoas/PfgHOASPreamble1.mgs
+hoas/ULam2.mg	-hoas -I hoas/PfgHOASULamPreamble.mgs
+hoas/connectives.mg	-hoas -I hoas/DeduktiPreamble.mgs -I hoas/sttfa.mgs
+hoas/connectives.mgs	-hoas -I hoas/DeduktiPreamble.mgs -I hoas/sttfa.mgs
+hoas/sttfa.mg	-hoas -I hoas/DeduktiPreamble.mgs
+hoas/sttfa.mgs	-hoas -I hoas/DeduktiPreamble.mgs
+hoas/sttfa2.mg	-hoas -I hoas/DeduktiPreamble.mgs -I hoas/sttfa.mgs
+mizar/MizExample1.mg	-mizar -I mizar/PfgMizarNov2020Preamble.mgs
+mizar/PfgMizarNov2020Preamble.mgs	-mizar
+pfgbounties/Nov2021ConjsWithBounties.mg	-I pfgbounties/Nov2021ConjPreamble.mgs
+pfgbounties/OEIS1000.mg	-I pfgbounties/PfgEAug2022Preamble.mgs
+pfgbounties/PfgPreambleSep2020.mgs	-hf
+pfgbounties/RamseyConjsWithBounties.mg	-I pfgbounties/PfgEAug2022Preamble.mgs
+pfgbounties/RandomlyGenerated.mg	-hf -I pfgbounties/PfgPreambleSep2020.mgs
+pfgbounties/RandomlyGeneratedAIMVariants.mg	-hf -I pfgbounties/PfgPreambleSep2020.mgs
+pfghfdocsApr2024/PUgya2vVtjHDFsUxgekQhk4THemh5PGfTgN.mg	-hf
+structs/PfgEgalStructs1.mg	-I structs/PfgEPreStructsPreamble.mgs
+structs/PfgEgalStructs2.mg	-I structs/PfgEPreStructsPreamble.mgs
+structs/PfgEgalStructs3.mg	-I structs/PfgEPreStructsPreamble.mgs
+structs/PfgEgalStructs4.mg	-I structs/PfgEPreStructsPreamble.mgs
+structs/PfgEgalStructs5.mg	-I structs/PfgEPreStructsPreamble.mgs
+structs/PfgEgalStructs6.mg	-I structs/PfgEPreStructsPreamble.mgs
+structs/PfgEgalStructsPreamble.mgs	-I structs/PfgEPreStructsPreamble.mgs

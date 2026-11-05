@@ -1,0 +1,99 @@
+NOTATION
+(NAM "Repl")
+(NAM "Repl")
+DOT
+NOTATION
+(NAM "ReplSep")
+(NAM "ReplSep")
+DOT
+NOTATION
+(NAM "Sep")
+(NAM "Sep")
+DOT
+NOTATION
+(NAM "SetEnum")
+(NAM "UPair")
+DOT
+NOTATION
+(NAM "SetEnum0")
+(NAM "Empty")
+DOT
+NOTATION
+(NAM "SetEnum1")
+(NAM "Sing")
+DOT
+NOTATION
+(NAM "SetEnum2")
+(NAM "UPair")
+DOT
+NOTATION
+(NAM "SetLam")
+(NAM "lam")
+DOT
+AXIOM
+(NAM "h1")
+COLON
+LCBRACE
+(NAM "F")
+(NAM "x")
+VBAR
+(NAM "x")
+MEM
+(NAM "X")
+RCBRACE
+DOT
+AXIOM
+(NAM "h2")
+COLON
+LCBRACE
+(NAM "F")
+(NAM "x")
+VBAR
+(NAM "x")
+MEM
+(NAM "X")
+COMMA
+(NAM "p")
+(NAM "x")
+RCBRACE
+DOT
+AXIOM
+(NAM "h3")
+COLON
+LCBRACE
+(NAM "x")
+MEM
+(NAM "X")
+VBAR
+(NAM "p")
+(NAM "x")
+RCBRACE
+DOT
+AXIOM
+(NAM "h4")
+COLON
+LCBRACE
+(NAM "a")
+COMMA
+(NAM "b")
+COMMA
+(NAM "c")
+RCBRACE
+DOT
+AXIOM
+(NAM "h5")
+COLON
+LCBRACE
+RCBRACE
+DOT
+AXIOM
+(NAM "h6")
+COLON
+(NAM "fun")
+(NAM "x")
+MEM
+(NAM "X")
+DARR
+(NAM "F")
+(NAM "x")
+DOT

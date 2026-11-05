@@ -1,0 +1,96 @@
+NOTATION
+(NAM "Repl")
+(NAM "Repl")
+DOT
+NOTATION
+(NAM "Nat")
+(NAM "Empty")
+(NAM "ordsucc")
+DOT
+NOTATION
+(NAM "SetEnum")
+(NAM "UPair")
+DOT
+NOTATION
+(NAM "SetEnum1")
+(NAM "Sing")
+DOT
+NOTATION
+(NAM "SetEnum2")
+(NAM "UPair")
+DOT
+NOTATION
+(NAM "Sep")
+(NAM "Sep")
+DOT
+NOTATION
+(NAM "ReplSep")
+(NAM "ReplSep")
+DOT
+NOTATION
+(NAM "IfThenElse")
+(NAM "If_i")
+DOT
+NOTATION
+(NAM "SetLam")
+(NAM "lam")
+DOT
+NOTATION
+(NAM "SetImplicitOp")
+(NAM "ap")
+DOT
+AXIOM
+(NAM "e1")
+COLON
+LCBRACE
+(NAM "F")
+(NAM "x")
+VBAR
+(NAM "x")
+MEM
+(NAM "X")
+RCBRACE
+DOT
+AXIOM
+(NAM "e2")
+COLON
+(NUM False "3" None None)
+DOT
+AXIOM
+(NAM "e3")
+COLON
+LCBRACE
+(NAM "x")
+MEM
+(NAM "X")
+VBAR
+(NAM "p")
+(NAM "x")
+RCBRACE
+DOT
+AXIOM
+(NAM "e4")
+COLON
+LCBRACE
+(NAM "a")
+COMMA
+(NAM "b")
+RCBRACE
+DOT
+AXIOM
+(NAM "e5")
+COLON
+LCBRACE
+(NAM "a")
+RCBRACE
+DOT
+AXIOM
+(NAM "e6")
+COLON
+IF
+(NAM "p")
+THEN
+(NAM "x")
+ELSE
+(NAM "y")
+DOT

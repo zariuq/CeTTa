@@ -1,0 +1,11 @@
+AXIOM
+(NAM "a")
+COLON
+LET
+(NAM "x")
+COLON
+(NAM "set")
+(NAM "z")
+IN
+(NAM "x")
+DOT

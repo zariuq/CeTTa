@@ -1,0 +1,9 @@
+(THEOREM "Theorem")
+(NAM "t")
+COLON
+(NAM "x")
+DOT
+(NAM "bogus")
+DOT
+QED
+DOT

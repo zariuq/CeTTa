@@ -1,0 +1,5 @@
+mg-check: admitted-chain.mg (theory egal, 0 signatures)
+theorem Missing line 1: admitted by the document
+theorem Dependent line 4: not checked: it cites theorems without proof: Missing
+summary: 2 theorems: 0 checked (0 verified), 1 admitted, 0 aby, 1 dependent, 0 unfinished, 0 out of budget; 0 document axioms (0 approved)
+verdict: not verified
