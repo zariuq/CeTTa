@@ -1146,6 +1146,20 @@ static bool import_param(Importer *im, const MgSx *x) {
     return admit_param(im, name, hash, (uint32_t)levels, type, line);
 }
 
+/* The body is the name h itself, at type variables only.  Upstream adds no
+ * delta rule for such a definition (megalodon.ml add_sigdelta): its identity
+ * is h's, so it is h's object under another spelling. */
+static bool body_is_name(const MgTm *m, uint32_t h) {
+    while (m->tag == MG_TM_TLAM)
+        m = m->f;
+    while (m->tag == MG_TM_TAP) {
+        if (!m->tp || m->tp->tag != MG_TP_VAR)
+            return false;
+        m = m->f;
+    }
+    return m->tag == MG_TM_NAME && m->n == h;
+}
+
 static bool admit_def(Importer *im, const char *name, const char *hash, uint32_t l,
                       MgTp *type, MgTm *body, uint64_t line) {
     if (!type || !body)
@@ -1167,7 +1181,7 @@ static bool admit_def(Importer *im, const char *name, const char *hash, uint32_t
     bool realizes = false;
     if (d) {
         /* The same identity is the same object, whatever its spelling. */
-        if (d->type == type && d->def) {
+        if (d->type == type && (d->def || body_is_name(normal, h))) {
             ++im->r->repeated;
             return true;
         }
