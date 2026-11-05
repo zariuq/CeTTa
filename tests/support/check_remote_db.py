@@ -35,6 +35,7 @@ class ProposalProxy:
         self.observed = False
         self.error = None
         self.scans = 0
+        self.steps = 0
         self.listener = socket.socket(socket.AF_UNIX)
         self.listener.bind(str(path))
         self.listener.listen(1)
@@ -59,6 +60,9 @@ class ProposalProxy:
                         self.scans += 1
                         self.observed = True
                         time.sleep(.2)
+                    if self.mode == 'count' and operation == S('DbCandidateStep'):
+                        self.steps += 1
+                        self.observed = True
                     if self.mode == 'read-disconnect' and operation == S('DbCandidates'):
                         self.observed = True
                         break
@@ -149,7 +153,9 @@ def main():
                              ('LocalReads', 'REMOTE_LOCAL_READS_OK'),
                              ('Collections', 'REMOTE_COLLECTIONS_OK'),
                              ('Maintenance', 'REMOTE_MAINTENANCE_OK'),
-                             ('Numbers', 'REMOTE_NUMBERS_OK')]:
+                             ('Numbers', 'REMOTE_NUMBERS_OK'),
+                             ('Removals', 'REMOTE_REMOVALS_OK'),
+                             ('LargeTransaction', 'REMOTE_LARGE_TRANSACTION_OK')]:
             directory = root / case
             directory.mkdir(mode=0o700)
             results.append(check(args.binary.resolve(), args.worker.resolve(), directory, case, marker))
@@ -201,6 +207,20 @@ def main():
                                           'REMOTE_RESOLVE_LOST_OK'))
             finally:
                 server.stop()
+        # Removing an indexed key reads its rows, not the collection's 401.
+        directory = root / 'remove-cost'
+        directory.mkdir(mode=0o700)
+        server = server_for(args.worker.resolve(), directory, directory / 'store')
+        try:
+            server.start()
+            proxy = ProposalProxy(directory / 'count.sock', server.path, 'count')
+            results.append(invoke(args.binary.resolve(), directory,
+                                  'RemoveCost ' + json.dumps(str(proxy.path)), 'REMOTE_REMOVE_COST_OK'))
+            proxy.join()
+            assert proxy.steps < 40, ('indexed removal read the collection', proxy.steps)
+            results.append(dict(case='RemoveCostSteps', steps=proxy.steps))
+        finally:
+            server.stop()
         for same_owner, case, marker in [(True, 'NestedActivation', 'REMOTE_ACTIVATION_BARRIER_OK'),
                                          (False, 'OtherOwner', 'REMOTE_OTHER_OWNER_OK')]:
             directory = root / case
