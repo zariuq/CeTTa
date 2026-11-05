@@ -1498,16 +1498,10 @@ Atom *petta_semantics_cons_value(Arena *arena, Atom *head, Atom *tail) {
  * neither the depth of a term nor the sharing in it bounds them, and they
  * rebuild only the nodes on a path to a change.
  */
-typedef struct {
+struct PeTTaTermBoundarySlot {
     const Atom *key;
     Atom *value;
-} PeTTaTermBoundarySlot;
-
-typedef struct {
-    PeTTaTermBoundarySlot *slots;
-    size_t cap;
-    size_t used;
-} PeTTaTermBoundaryMemo;
+};
 
 typedef struct {
     Atom *source;
@@ -1799,17 +1793,78 @@ static bool petta_materialize_opaque_value(const Atom *value) {
            atom_is_symbol_id(value->expr.elems[0], g_builtin_syms.quote);
 }
 
+typedef struct {
+    AtomDeepCopySession *opaque;
+    PeTTaTermBoundaryMemo spines;
+} PeTTaMaterializeContext;
+
+/* Prepare each improper spine once. Rebuilding every suffix before the
+ * graph copier visits it would allocate quadratically. Unchanged cells
+ * stay their own view; list-pattern prefixes get shared cell views. */
+Atom *petta_semantics_materialize_spine_view(Arena *arena, Atom *source,
+                                            PeTTaTermBoundaryMemo *memo) {
+    Atom *known = petta_term_boundary_memo_get(memo, source);
+    if (known)
+        return known;
+    PeTTaListItems spine = {0};
+    Atom *tail = source;
+    bool prepared = false;
+    while (petta_semantics_is_open_cons_value(tail) || atom_is_list_rest(tail)) {
+        known = petta_term_boundary_memo_get(memo, tail);
+        if (known) {
+            tail = known;
+            prepared = true;
+            break;
+        }
+        if (!petta_list_items_append(&spine, &tail, 1u))
+            goto failed;
+        tail = tail->expr.elems[petta_semantics_is_open_cons_value(tail)
+            ? 2u : tail->expr.len - 1u];
+    }
+    if (!tail)
+        goto failed;
+    if (!prepared && tail->kind == ATOM_EXPR &&
+        !petta_semantics_is_nonlist_carrier(tail)) {
+        free(spine.items);
+        return petta_semantics_materialize_logical_list(arena, source);
+    }
+    for (size_t index = spine.length; index > 0u; index--) {
+        Atom *node = spine.items[index - 1u];
+        CettaExprLen end = petta_semantics_is_open_cons_value(node)
+            ? 2u : node->expr.len - 1u;
+        for (CettaExprLen child = end; child > 1u; child--) {
+            tail = petta_semantics_is_open_cons_value(node) &&
+                   tail == node->expr.elems[2]
+                ? node : petta_semantics_open_cons_value(
+                    arena, node->expr.elems[child - 1u], tail);
+            if (!tail || (!petta_term_boundary_memo_get(memo, tail) &&
+                          !petta_term_boundary_memo_put(memo, tail, tail)))
+                goto failed;
+        }
+        known = petta_term_boundary_memo_get(memo, node);
+        if (known ? known != tail
+                  : !petta_term_boundary_memo_put(memo, node, tail))
+            goto failed;
+    }
+    free(spine.items);
+    return tail;
+failed:
+    free(spine.items);
+    return NULL;
+}
+
 static bool petta_materialize_node_view(Arena *arena, Atom *source,
         Atom **view, bool *complete, void *context) {
+    PeTTaMaterializeContext *materialize = context;
     *complete = false;
     *view = petta_semantics_is_open_cons_value(source)
-        ? petta_semantics_materialize_logical_list(arena, source) : source;
+        ? petta_semantics_materialize_spine_view(arena, source, &materialize->spines) : source;
     if (!*view)
         return false;
     if (petta_materialize_opaque_value(*view)) {
         /* Quoted syntax and closures have a different observation policy.
          * Copy their entire graph without normalizing the enclosed carriers. */
-        AtomDeepCopySession **opaque = context;
+        AtomDeepCopySession **opaque = &materialize->opaque;
         if (!*opaque)
             *opaque = atom_deep_copy_session_new(arena);
         *view = *opaque ? atom_deep_copy_session_copy(*opaque, *view) : NULL;
@@ -1827,10 +1882,11 @@ Atom *petta_semantics_materialize_value(Arena *arena, Atom *value) {
     size_t spare_before = arena->spare_bytes;
     /* Opaque syntax shares a copy context of its own: a previously normalized
      * image must never replace the same source inside a quote or closure. */
-    AtomDeepCopySession *opaque = NULL;
+    PeTTaMaterializeContext materialize = {0};
     Atom *out = atom_deep_copy_observed(arena, value,
-        petta_materialize_node_view, &opaque);
-    atom_deep_copy_session_free(opaque);
+        petta_materialize_node_view, &materialize);
+    atom_deep_copy_session_free(materialize.opaque);
+    free(materialize.spines.slots);
     if (!out) {
         arena_reset(arena, mark);
         arena_release_spare(arena, spare_before);

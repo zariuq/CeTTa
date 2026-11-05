@@ -144,6 +144,14 @@ class HandoffDeclarations(unittest.TestCase):
 
 
 class HeldBodySpelling(unittest.TestCase):
+    def test_explicit_space_interpretation_imports_reference_lib_he(self):
+        source = "(= (run $body $space) (metta $body %Undefined% $space))"
+        self.assertIn("!(import! &self lib_he)\n", spelling(source, "petta"))
+        self.assertNotIn("!(import! &self lib_he)\n", spelling(source, "prime"))
+        current = "(= (run $body) (metta $body %Undefined% &self))"
+        self.assertNotIn("!(import! &self lib_he)\n", spelling(current, "petta"))
+        self.assertNotIn("!(import! &self lib_he)\n", spelling('(= (label) "evalc")', "petta"))
+
     def test_current_space_interpretation(self):
         self.assertEqual(spell("(metta $body %Undefined% &self)"), "(eval $body)")
         self.assertEqual(spell("(metta $body %Undefined% (context-space))"),

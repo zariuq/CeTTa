@@ -1,0 +1,43 @@
+{
+ "opt-base": {
+  "cetta": "18091c10633b6be2fca3a4bfa14944e6a947315c0be44f1df83dde3633349bd2",
+  "mork": "88c740354eae0ce6a53bc2ebf91afc919ff5975d8b19d3da3de85c86dbdec84e"
+ },
+ "opt-base-leapfrog": {
+  "cetta": "18091c10633b6be2fca3a4bfa14944e6a947315c0be44f1df83dde3633349bd2",
+  "mork": "0e5082db27cba8dabf87b01e5d2d68ea6c5267e01959e2a3c67a010f5386be10"
+ },
+ "opt-scale": {
+  "cetta": "18091c10633b6be2fca3a4bfa14944e6a947315c0be44f1df83dde3633349bd2",
+  "mork": "0e5082db27cba8dabf87b01e5d2d68ea6c5267e01959e2a3c67a010f5386be10"
+ },
+ "mork-leapfrog": {
+  "mork": "0e5082db27cba8dabf87b01e5d2d68ea6c5267e01959e2a3c67a010f5386be10",
+  "cetta": "18091c10633b6be2fca3a4bfa14944e6a947315c0be44f1df83dde3633349bd2"
+ },
+ "he-app": {
+  "measurement": "wall includes launcher startup; peak RSS is the native job, before result readout"
+ },
+ "he-join": {
+  "measurement": "wall includes launcher startup; peak RSS is the native job, before result readout"
+ },
+ "he-path": {
+  "measurement": "wall includes launcher startup; peak RSS is the native job, before result readout"
+ },
+ "check-small-complete-sets": {
+  "cetta": "18091c10633b6be2fca3a4bfa14944e6a947315c0be44f1df83dde3633349bd2",
+  "mork": "88c740354eae0ce6a53bc2ebf91afc919ff5975d8b19d3da3de85c86dbdec84e"
+ },
+ "check-base-complete-sets": {
+  "cetta": "18091c10633b6be2fca3a4bfa14944e6a947315c0be44f1df83dde3633349bd2",
+  "mork": "88c740354eae0ce6a53bc2ebf91afc919ff5975d8b19d3da3de85c86dbdec84e"
+ },
+ "check-base-complete-sets-leapfrog": {
+  "cetta": "18091c10633b6be2fca3a4bfa14944e6a947315c0be44f1df83dde3633349bd2",
+  "mork": "0e5082db27cba8dabf87b01e5d2d68ea6c5267e01959e2a3c67a010f5386be10"
+ },
+ "mork-leapfrog-check": {
+  "mork": "0e5082db27cba8dabf87b01e5d2d68ea6c5267e01959e2a3c67a010f5386be10",
+  "cetta": "18091c10633b6be2fca3a4bfa14944e6a947315c0be44f1df83dde3633349bd2"
+ }
+}

@@ -6749,6 +6749,20 @@ static SpaceKeptOccurrences *space_dense_deep_occurrences(
     bool none = !cetta_skeleton_align(s->native.universe, head->skeleton,
                                       pattern, head->open_holes, fixed,
                                       &exact);
+    /* A hole holds a part whole, so a part the pattern leaves to
+     * unification there (an expression with variables, or any part where
+     * some fact holds a variable) selects no tuple by its id.  When no hole
+     * selects any, every read would walk the whole relation, which the
+     * rows' index answers by structure: the relation goes back to them. */
+    if (!none && !exact) {
+        bool selects = false;
+        for (uint32_t c = 0u; c < head->arity; c++)
+            selects = selects || fixed[c] != CETTA_DENSE_ANY;
+        if (!selects) {
+            space_dense_settle_head(s, head);
+            return NULL;
+        }
+    }
     SpaceKeptGather gather;
     space_kept_gather_init(&gather, head->arity);
     bool ok = none || cetta_tuple_table_each(&head->table, fixed,

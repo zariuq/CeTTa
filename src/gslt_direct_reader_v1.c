@@ -55,6 +55,28 @@ static void gslt_direct_reader_v1_error(char *buf, size_t size,
     va_end(arguments);
 }
 
+static void gslt_direct_reader_v1_error_position(
+    char *buf, size_t size, const GSLTDirectCursorV1 *cursor) {
+    if (!buf || !size || !cursor || (!cursor->input && cursor->input_len))
+        return;
+    char detail[512];
+    snprintf(detail, sizeof(detail), "%s", buf);
+    size_t position = cursor->pos, line = 1u, column = 1u;
+    const char *offset = strstr(detail, "at byte ");
+    if (offset) {
+        size_t explicit_position;
+        if (sscanf(offset, "at byte %zu", &explicit_position) == 1 &&
+            explicit_position <= cursor->input_len)
+            position = explicit_position;
+    }
+    for (size_t i = 0u; i < position && i < cursor->input_len; i++) {
+        if (cursor->input[i] == '\n') { line++; column = 1u; }
+        else if ((cursor->input[i] & 0xc0u) != 0x80u) column++;
+    }
+    gslt_direct_reader_v1_error(buf, size, "line %zu, column %zu: %s",
+        line, column, detail[0] ? detail : "source syntax rejected");
+}
+
 /* A lexical service returns original source spans; the surrounding reader
  * chooses whether it is part of its profile. No guest constructor runs. */
 static bool gslt_direct_raw_region(
@@ -1566,6 +1588,8 @@ done:
     if (result < 0 && projection->retain_prefix &&
         projection->retain_prefix(projection->retain_context, ids, len))
         ids = NULL;
+    if (result < 0)
+        gslt_direct_reader_v1_error_position(error_buf, error_buf_size, &state.cursor);
     free(ids);
     return result;
 }
@@ -2379,6 +2403,8 @@ done:
             error_buf, error_buf_size,
             "source is outside the compiled prefix S-expression LanguageDef");
     }
+    if (result < 0)
+        gslt_direct_reader_v1_error_position(error_buf, error_buf_size, &state.cursor);
     free(ids);
     return result;
 }
@@ -3396,6 +3422,8 @@ done:
             error_buf, error_buf_size,
             "source is outside the compiled PeTTa LanguageDef composition");
     }
+    if (result < 0)
+        gslt_direct_reader_v1_error_position(error_buf, error_buf_size, &document);
     free(ids);
     return result;
 }

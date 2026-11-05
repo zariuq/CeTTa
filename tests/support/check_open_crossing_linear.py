@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""A value that crosses the open tier's boundary is copied only in its new
-parts.  A tier loop threads a queue through a host goal at every step; at
-twice the length the crossings copy about twice as much, not four times."""
+"""A tier loop threads a queue through a host goal at every step. Arena
+bytes allocated by crossings grow linearly; an imported retained value
+may be borrowed without allocating new region bytes."""
 
 import subprocess
 import sys
@@ -22,6 +22,9 @@ def run(binary, length):
         parts = line.split()
         if len(parts) == 3 and parts[0] == "runtime-counter":
             counters[parts[1]] = int(parts[2])
+    missing = {"open-equation-host", *COUNTERS} - counters.keys()
+    if missing:
+        sys.exit(f"FAIL: missing crossing counters: {sorted(missing)}")
     return counters
 
 
@@ -35,12 +38,13 @@ def main():
     for name in COUNTERS:
         before = runs[small].get(name, 0)
         after = runs[large].get(name, 0)
-        if before <= 0:
+        if name == "open-equation-host-export-bytes" and before <= 0:
             sys.exit(f"FAIL: {name} is zero: the crossing was not exercised")
         if after > 3 * before:
             sys.exit(f"FAIL: {name} grows superlinearly: {before} at "
                      f"{small}, {after} at {large}")
-    print("PASS: crossing the open tier copies only what is new")
+    print("PASS: host crossings preserve answers with linear export allocation "
+          "and bounded import allocation, including borrowed values")
 
 
 if __name__ == "__main__":

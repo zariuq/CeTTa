@@ -158,3 +158,16 @@
 (= (visibility-raw $x) (Raw $x))
 ; SWI-PeTTa, both qualified pins: (Raw 3)
 !(let $f visibility-raw ($f (+ 1 2)))
+; A head held by a variable or a parameter, foldl's step included, also
+; meets the declaration's result check.  Stable-fixed SWI-PeTTa c3adb86
+; (2026-11-05) answers the unchecked result on these routes, while the
+; direct call (visibility-step 1 0) answers nothing in both engines.
+(: visibility-step (-> Number Number Number))
+(= (visibility-step $item $acc) rejected)
+(= (visibility-apply $f $a $b) ($f $a $b))
+; SWI-PeTTa stable-fixed c3adb86: (rejected)
+!(collapse (let $f visibility-step ($f 1 0)))
+; SWI-PeTTa stable-fixed c3adb86: (rejected)
+!(collapse (visibility-apply visibility-step 1 0))
+; SWI-PeTTa stable-fixed c3adb86: (rejected)
+!(collapse (foldl visibility-step (1) 0))
