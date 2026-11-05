@@ -508,6 +508,35 @@ static inline bool match_shared_ground_reflexivity_try(
     return true;
 }
 
+/* Structural equality of two ground atoms that opens at most *budget pairs
+ * of expressions and none whose atoms are shared: 1 equal, 0 unequal, -1 when
+ * the bound runs out or a rational view needs its own walk.  It agrees with
+ * atom_eq wherever it decides. */
+#define MATCH_GROUND_EQUAL_SHARED_BUDGET 256u
+
+static int match_ground_equal_shared(Atom *left, Atom *right,
+                                     uint32_t *budget) {
+    if (left == right && !atom_structural_may_have_nan(left))
+        return 1;
+    if (atom_structural_has_rational(left) ||
+        atom_structural_has_rational(right))
+        return -1;
+    if (left->kind != ATOM_EXPR || right->kind != ATOM_EXPR)
+        return atom_eq(left, right) ? 1 : 0;
+    if (left->expr.len != right->expr.len)
+        return 0;
+    if (*budget == 0u)
+        return -1;
+    (*budget)--;
+    for (CettaExprIndex index = 0u; index < left->expr.len; index++) {
+        int child = match_ground_equal_shared(
+            left->expr.elems[index], right->expr.elems[index], budget);
+        if (child != 1)
+            return child;
+    }
+    return 1;
+}
+
 /* Two finite ground expressions have no substitution effect.  Interned
  * closed DAGs already factor through identity/hash; eval-heap trees use
  * structural equality once acyclicity is certified. */
@@ -525,6 +554,16 @@ static bool match_finite_ground_equal_try(
         !atom_structural_has_rational(left) &&
         !atom_structural_has_rational(right)) {
         *equal_out = false;
+        return true;
+    }
+    /* Shared subterms are equal without a walk, so a value rebuilt around
+     * another's parts, as a returned result is around the rest of its
+     * input, is decided by the few pairs that differ.  The bound keeps this
+     * finite on any graph; past it, the audit below decides. */
+    uint32_t budget = MATCH_GROUND_EQUAL_SHARED_BUDGET;
+    int shared = match_ground_equal_shared(left, right, &budget);
+    if (shared >= 0) {
+        *equal_out = shared == 1;
         return true;
     }
     if (!match_occurrence_is_finite_dag(left) ||

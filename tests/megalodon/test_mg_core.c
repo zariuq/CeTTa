@@ -97,6 +97,177 @@ static void test_interning(void) {
     EXPECT(!mg_tp_plain_wf(TP("(Tp.var 0)"), 0) && mg_tp_plain_wf(TP("(Tp.var 0)"), 1), "type depth scope");
 }
 
+/* ── store marks ─────────────────────────────────────────────────────── */
+
+/* A term not interned before: (f (g_K x_K)) for a fresh K. */
+static MgTm *fresh_tm(uint32_t k) {
+    char w[256];
+    snprintf(w, sizeof w, "(Tm.app (Tm.named \"mark_f\") (Tm.app (Tm.named \"mark_g%u\") (Tm.named \"mark_x%u\")))",
+             k, k);
+    return TM(w);
+}
+
+static void test_store_marks(void) {
+    fresh_theory(MG_PROFILE_CUSTOM);
+    MgStore *s = &T->store;
+    MgTm *old = TM("(Tm.app (Tm.named \"p\") (Tm.db 0))");
+    uint32_t len = s->tms.len;
+    size_t bytes = s->bytes;
+    uint64_t nodes = s->nodes;
+
+    /* a release gives back the store as it was at the mark */
+    MgStoreMark m;
+    EXPECT(mg_store_mark(s, &m), "a mark opens");
+    MgTm *y = fresh_tm(1);
+    EXPECT(y && s->tms.len > len, "a node interned inside a mark");
+    mg_store_release(s, &m);
+    EXPECT(s->tms.len == len && s->bytes == bytes && s->nodes == nodes && s->marks == 0u,
+           "release: tables, memory and counts as at the mark");
+    EXPECT(TM("(Tm.app (Tm.named \"p\") (Tm.db 0))") == old, "release: a node from before the mark stays canonical");
+    MgTm *y1 = fresh_tm(1), *y2 = fresh_tm(1);
+    EXPECT(y1 && y1 == y2, "release: a released structure interns again as one node");
+
+    /* keep: the nodes stay */
+    len = s->tms.len;
+    EXPECT(mg_store_mark(s, &m), "a mark opens");
+    MgTm *k1 = fresh_tm(2);
+    mg_store_keep(s, &m);
+    EXPECT(s->marks == 0u && fresh_tm(2) == k1 && s->tms.len > len, "keep: the nodes stay canonical");
+
+    /* nesting: an inner keep inside an outer release, and the converse */
+    len = s->tms.len;
+    MgStoreMark outer, inner;
+    mg_store_mark(s, &outer);
+    MgTm *a1 = fresh_tm(3);
+    mg_store_mark(s, &inner);
+    MgTm *b1 = fresh_tm(4);
+    mg_store_keep(s, &inner);
+    mg_store_release(s, &outer);
+    EXPECT(a1 && b1 && s->tms.len == len, "an outer release takes what an inner mark kept");
+    mg_store_mark(s, &outer);
+    MgTm *a2 = fresh_tm(5);
+    uint32_t mid = s->tms.len;
+    mg_store_mark(s, &inner);
+    fresh_tm(6);
+    mg_store_release(s, &inner);
+    EXPECT(s->tms.len == mid && fresh_tm(5) == a2, "an inner release leaves the outer mark's nodes");
+    mg_store_keep(s, &outer);
+    EXPECT(s->marks == 0u && fresh_tm(5) == a2, "the outer keep keeps them");
+
+    /* caches: an old node's normal form, computed inside the mark as a node
+     * the release returns, is forgotten, and computed again after */
+    MgTm *redex = TM("(Tm.app (Tm.lam (Tp.base 0) (Tm.app (Tm.named \"mark_h\") (Tm.db 0))) (Tm.named \"mark_z\"))");
+    EXPECT(redex && !redex->nf, "a redex with no normal form cached");
+    MgBudget b;
+    mg_budget_init(&b, 0);
+    MgCheck c;
+    mg_check_init(&c, mg_theory_snapshot(T), &b, NULL);
+    mg_store_mark(s, &m);
+    MgTm *nf = mg_tm_nf(&c, redex);
+    EXPECT(nf && redex->nf == nf, "its normal form cached inside the mark");
+    mg_store_release(s, &m);
+    EXPECT(!redex->nf, "release: the cache on an old node is as it was at the mark");
+    MgTm *nf2 = mg_tm_nf(&c, redex);
+    EXPECT(nf2 && nf2 == TM("(Tm.app (Tm.named \"mark_h\") (Tm.named \"mark_z\"))"), "the normal form again, after");
+    /* and a cache written inside a mark that is kept stays */
+    MgTm *redex2 = TM("(Tm.app (Tm.lam (Tp.base 0) (Tm.db 0)) (Tm.named \"mark_w\"))");
+    mg_store_mark(s, &m);
+    MgTm *nf3 = mg_tm_nf(&c, redex2);
+    mg_store_keep(s, &m);
+    EXPECT(nf3 && redex2->nf == nf3, "keep: a cache written inside the mark stays");
+
+    /* small de Bruijn nodes are kept by index: one made inside a mark is
+     * forgotten with it */
+    uint32_t big = MG_DB_SMALL - 1u;
+    EXPECT(!s->db_small[big], "an index no node used");
+    mg_store_mark(s, &m);
+    MgTm *db = mg_tm_db(s, big);
+    EXPECT(db && s->db_small[big] == db, "its node made inside the mark");
+    mg_store_release(s, &m);
+    EXPECT(!s->db_small[big], "release: the index's node is forgotten");
+    EXPECT(mg_tm_db(s, big) == mg_tm_db(s, big), "and made again as one node");
+
+    /* a table that grows inside the mark is refilled with the nodes that
+     * stay */
+    len = s->tms.len;
+    uint32_t cap = s->tms.cap;
+    mg_store_mark(s, &m);
+    uint32_t made = 0;
+    for (uint32_t k = 100; s->tms.cap == cap && k < 200000u; ++k, ++made)
+        fresh_tm(k);
+    EXPECT(s->tms.cap > cap, "the term table grew inside the mark");
+    uint32_t epoch = s->memo_epoch;
+    mg_store_release(s, &m);
+    EXPECT(s->tms.len == len && s->memo_epoch == epoch + 1u, "release after growth: the nodes from before, a new memo epoch");
+    EXPECT(TM("(Tm.app (Tm.named \"p\") (Tm.db 0))") == old && fresh_tm(5) == a2 && fresh_tm(150) == fresh_tm(150),
+           "release after growth: old nodes canonical, released ones intern again as one");
+    (void)made;
+
+    /* a release that keeps a proof: the proof made since the mark, shared
+     * subproofs and all, is made again as the canonical nodes of the same
+     * structure; everything else made since the mark goes */
+    len = s->tms.len;
+    uint32_t pfs = s->pfs.len;
+    const char *pw = "(Pf.proofApp (Pf.termApp (Pf.known \"mark_k\") (Tm.app (Tm.named \"mark_kf\") (Tm.named \"mark_kx\")))"
+                     " (Pf.termApp (Pf.known \"mark_k\") (Tm.app (Tm.named \"mark_kf\") (Tm.named \"mark_kx\"))))";
+    MgSx *px = sx(pw);
+    mg_store_mark(s, &m);
+    MgPf *proof = mg_sx_wire_pf(s, px);
+    for (uint32_t k = 0; k < 50u; ++k)
+        fresh_tm(500000u + k);
+    EXPECT(proof && proof->p && proof->q && proof->p->p == proof->q->p, "a proof with a shared subproof, made inside a mark");
+    EXPECT(mg_store_release_keeping(s, &m, &proof) && s->marks == 0u, "the release keeping it happens");
+    EXPECT(proof && mg_sx_wire_pf(s, px) == proof, "the proof kept is the canonical node of its structure");
+    EXPECT(proof && proof->tag == MG_PF_PFAP && proof->p == proof->q, "its sharing kept");
+    if (s->tms.len != len + 3u || s->pfs.len != pfs + 3u)
+        printf("  terms +%u proofs +%u\n", s->tms.len - len, s->pfs.len - pfs);
+    /* three terms (two names, one application), three proofs (the known,
+     * the shared application, the outer application) */
+    EXPECT(s->tms.len == len + 3u && s->pfs.len == pfs + 3u, "nothing else made inside the mark stays");
+    MgTm *kept = TM("(Tm.app (Tm.named \"mark_kf\") (Tm.named \"mark_kx\"))");
+    EXPECT(kept && proof && proof->p->t == kept, "its terms canonical too");
+    /* a proof made only of nodes from before the mark stays as it is */
+    MgPf *before = mg_sx_wire_pf(s, px);
+    mg_store_mark(s, &m);
+    fresh_tm(600000u);
+    MgPf *same = before;
+    mg_store_release_keeping(s, &m, &same);
+    EXPECT(same == before && s->tms.len == len + 3u, "a proof from before the mark is untouched");
+
+#ifdef MG_TEST_HOOKS
+    /* allocation failing anywhere in a marked run: whatever it releases or
+     * keeps, the store stays canonical */
+    bool canonical = true;
+    MgSx *oldx = sx("(Tm.app (Tm.named \"p\") (Tm.db 0))");
+    for (uint64_t k = 0; k < 400u; ++k) {
+        /* the data parsed first: only the store runs out of memory */
+        MgSx *xs[64];
+        for (uint32_t i = 0; i < 64u; ++i) {
+            char w[256];
+            snprintf(w, sizeof w, "(Tm.app (Tm.named \"mark_f\") (Tm.app (Tm.named \"mark_g%u\") (Tm.db %u)))",
+                     (uint32_t)k, i);
+            xs[i] = sx(w);
+        }
+        mg_test_fail_allocation_after(k);
+        MgStoreMark f;
+        bool open = mg_store_mark(s, &f);
+        for (uint32_t i = 0; i < 64u; ++i)
+            mg_sx_wire_tm(s, xs[i]);
+        MgPf *kp = mg_sx_wire_pf(s, px);
+        if (open && (k & 1u))
+            mg_store_release_keeping(s, &f, &kp);
+        else if (open)
+            mg_store_release(s, &f);
+        mg_test_fail_allocation_after(UINT64_MAX);
+        canonical = canonical && (!kp || !(k & 1u) || mg_sx_wire_pf(s, px) == kp);
+        canonical = canonical && s->marks == 0u && mg_sx_wire_tm(s, oldx) == old &&
+                    mg_sx_wire_tm(s, xs[0]) == mg_sx_wire_tm(s, xs[0]) &&
+                    mg_sx_wire_tm(s, xs[63]) == mg_sx_wire_tm(s, xs[63]);
+    }
+    EXPECT(canonical, "allocation failing inside marks leaves the store canonical");
+#endif
+}
+
 /* ── MathdataKernel.lean calibration ──────────────────────────────────── */
 static void parameter(const char *name, const char *type) {
     mg_theory_associate_parameter(T, NM(name), TP(type));
@@ -512,6 +683,14 @@ static void test_identities(void) {
     mg_hash_hex(&h, hex);
     EXPECT(strcmp(hex, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855") == 0,
            "SHA-256 known answer (empty)");
+    /* two blocks and a partial third, through the processor's extensions
+     * where it has them */
+    mg_sha256("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq", 56, d);
+    memcpy(h.b, d, 32);
+    mg_hash_hex(&h, hex);
+    EXPECT(strcmp(hex, "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1") == 0,
+           "SHA-256 known answer (two blocks)");
+    EXPECT(mg_sha256_selftest(), "SHA-256 extensions equal the portable compression");
     static const struct { const char *name, *hash, *body; } vectors[] = {
         {"True", "5867641425602c707eaecd5be95229f6fd709c9b58d50af108dfe27cb49ac069",
          "(Tm.all (Tp.prop) (Tm.imp (Tm.db 0) (Tm.db 0)))"},
@@ -553,6 +732,7 @@ int main(void) {
     A = mg_sx_arena_new();
     test_identities();
     test_interning();
+    test_store_marks();
     test_mathdata_examples();
     test_rules();
     test_admission();

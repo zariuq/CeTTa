@@ -1,0 +1,32 @@
+INFIX
+(NAM "/\\")
+(NUM False "780" None None)
+(NAM "left")
+DEQ
+(NAM "and")
+DOT
+OPENCOM
+UNICODE
+(NAM "/\\")
+(STRING "2227")
+CLOSECOM
+OPENCOM
+UNICODE
+(NAM "Union")
+(STRING "22C3")
+CLOSECOM
+OPENCOM
+SUBSCRIPT
+(NAM "ap")
+CLOSECOM
+OPENCOM
+SUPERSCRIPT
+(NAM "exp")
+CLOSECOM
+AXIOM
+(NAM "d1")
+COLON
+(NAM "p")
+(NAM "/\\")
+(NAM "q")
+DOT

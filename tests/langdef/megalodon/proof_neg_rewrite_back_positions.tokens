@@ -1,0 +1,18 @@
+(THEOREM "Theorem")
+(NAM "t")
+COLON
+(NAM "forall")
+(NAM "x")
+COLON
+(NAM "set")
+COMMA
+(NAM "x")
+(NAM "=")
+(NAM "x")
+DOT
+(NAM "rewrite")
+(NAM "<-")
+(NAM "H")
+AT
+(NUM False "1" None None)
+COMMA

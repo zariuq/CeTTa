@@ -1,0 +1,12 @@
+(THEOREM "Theorem")
+(NAM "u2")
+COLON
+(NAM "p")
+DOT
+(NAM "rewrite")
+(NAM "H")
+AT
+(NUM False "0" None None)
+DOT
+QED
+DOT

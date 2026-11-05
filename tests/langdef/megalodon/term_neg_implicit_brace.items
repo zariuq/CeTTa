@@ -1,0 +1,2 @@
+(Doc (NotationDecl "SetImplicitOp" (List "ap")))
+(Doc (NotationDecl "SetEnum" (List "UPair")))

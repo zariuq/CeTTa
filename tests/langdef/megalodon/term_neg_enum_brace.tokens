@@ -1,0 +1,12 @@
+NOTATION
+(NAM "SetEnum")
+(NAM "UPair")
+DOT
+AXIOM
+(NAM "a")
+COLON
+LCBRACE
+(NAM "x")
+COMMA
+(NAM "y")
+DOT

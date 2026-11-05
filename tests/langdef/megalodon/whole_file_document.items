@@ -1,0 +1,3 @@
+(Doc (ThmDecl "Theorem" "w1" (BiL "exists" "," (List ((List "x") None)) (InfoL (InfNam "/\\") (InfoL (InfNam "=") (NaL "x") (NaL "x")) (InfoL (InfNam "=") (NaL "x") (NaL "x"))))))
+(PfTac (Aby (List)))
+(PfTac Qed)

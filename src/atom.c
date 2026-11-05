@@ -4383,6 +4383,16 @@ Atom *atom_unit_canonical(void) {
     return atom;
 }
 
+bool atom_process_canonical(const Atom *atom) {
+    if (!atom || atom->arena_id != 0u)
+        return false;
+    if (atom->kind == ATOM_SYMBOL)
+        return g_symbols &&
+            symbol_canonical_atom(g_symbols, atom->sym_id) == atom;
+    return atom == atomic_load_explicit(&g_atom_unit_canonical,
+                                        memory_order_acquire);
+}
+
 Atom *atom_symbol(Arena *a, const char *name) {
     return atom_symbol_id(a, symbol_intern_cstr(g_symbols, name));
 }

@@ -1,0 +1,8 @@
+AXIOM
+(NAM "j3")
+COLON
+LET
+(NAM "x")
+DEQ
+(NAM "y")
+DOT

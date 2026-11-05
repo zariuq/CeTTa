@@ -86,6 +86,8 @@ static MgTm *known_normal_form(MgCheck *c, const MgDecl *decl) {
         return d->nf_prop;
     MgTm *normal = mg_tm_normalize(c, d->prop);
     if (normal) {
+        mg_store_cache_write(ST(c), &d->nf_prop);
+        mg_store_cache_write(ST(c), &d->nf_rev);
         d->nf_prop = normal;
         d->nf_rev = c->env.rev;
     }

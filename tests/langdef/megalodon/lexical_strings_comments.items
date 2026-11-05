@@ -1,0 +1,5 @@
+(Doc (Title "strings and comments"))
+(Doc (Author "someone" (List "someone else")))
+(Doc (AxDecl "s1" (StringL "a string")))
+(Doc (AxDecl "s2" (QStringL "a question string")))
+(Doc (AxDecl "s3" (StringL "")))
