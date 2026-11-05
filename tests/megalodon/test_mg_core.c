@@ -726,6 +726,26 @@ static void test_identities(void) {
     MgHash id;
     EXPECT(mg_hash_identity(&c, TM("(Tm.all (Tp.prop) (Tm.imp (Tm.db 0) (Tm.db 1)))"), 0, true, &id) != MG_OK ||
            (mg_hash_hex(&id, hex), strcmp(hex, vectors[0].hash) != 0), "a different body, a different identity");
+
+    /* A parameter named by a content identity is realized by the body that
+     * identity names; its own name has that identity too, and as a body it
+     * would unfold to the parameter again. */
+    fresh_theory(MG_PROFILE_EGAL);
+    mg_theory_associate_parameter(T, NM(H_FALSE), TP("(Tp.prop)"));
+    EXPECT(admit(MG_ITEM_PARAMETER, H_FALSE, "(Tp.prop)", NULL, NULL) == MG_OK,
+           "content-named parameter admitted");
+    EXPECT(admit(MG_ITEM_DEFINITION, H_FALSE, "(Tp.prop)", "(Tm.named \"" H_FALSE "\")", NULL) ==
+               MG_REFUSED,
+           "a parameter is not realized by its own name");
+    EXPECT(admit(MG_ITEM_DEFINITION, H_FALSE, "(Tp.prop)", "(Tm.all (Tp.prop) (Tm.db 0))", NULL) ==
+               MG_OK,
+           "a parameter is realized by the body its name identifies");
+    MgCheck after;
+    mg_check_init(&after, mg_theory_snapshot(T), &b, NULL);
+    EXPECT(mg_env_lookup(&after, NM(H_FALSE), MG_NS_TERM) &&
+               mg_env_lookup(&after, NM(H_FALSE), MG_NS_TERM)->def ==
+                   TM("(Tm.all (Tp.prop) (Tm.db 0))"),
+           "the realization unfolds to its body");
 }
 
 int main(void) {
