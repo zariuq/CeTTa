@@ -981,15 +981,12 @@ static bool index_postings_append(Arena *a,size_t limit,Atom *indexes,Atom *key_
                 if (exact) {
                     unsigned char *wire=NULL;size_t wire_size=0;
                     CettaAtomWireStatus st=cetta_atom_wire_encode_bounded(field,limit,&wire,&wire_size);
-                    if (st==ATOM_WIRE_OK) {
-                        posting=posting_key_atom(a,prefix,"/exact/",wire,wire_size,key);
-                        free(wire);
-                    } else if (st==ATOM_WIRE_NOMEM) {
-                        *error=refused(a,"capacity");
+                    if (st!=ATOM_WIRE_OK) {
+                        *error=codec_refused(a,st);
                         return false;
-                    } else {
-                        posting=posting_key_atom(a,prefix,"/any/",NULL,0,key);
                     }
+                    posting=posting_key_atom(a,prefix,"/exact/",wire,wire_size,key);
+                    free(wire);
                 } else {
                     posting=posting_key_atom(a,prefix,"/any/",NULL,0,key);
                 }
