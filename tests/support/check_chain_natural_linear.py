@@ -15,7 +15,8 @@ SIZES = (1024, 2048, 4096)
 RULES = ("(= (ancestors $c) (match &self (parent $p $c) $p))\n"
          "(= (ancestors $c) (match &self (parent $p $c) (ancestors $p)))\n")
 NATURAL = "!(let $a (unique (ancestors p0x0)) (ancestor p0x0 $a))\n"
-QUADRATIC_SIZES = (256, 512)
+# Expose the quadratic term above the control's linear setup and query work.
+QUADRATIC_SIZES = (1024, 2048)
 QUADRATIC = ("(= (depths $n) (if (== $n 0) 0"
              " (let $s (collapse (ancestors $n))"
              " (+ (size-atom $s) (depths (- $n 1))))))\n"

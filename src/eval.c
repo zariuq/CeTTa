@@ -15098,8 +15098,10 @@ static void hyperpose_storage_owner_release(void *opaque) {
     pthread_mutex_unlock(&g_hyperpose_descriptor_mutex);
     for (CettaCount i = 0u; i < owner->owned_spaces.len; i++) {
         HyperposeOwnedSpace owned = owner->owned_spaces.items[i];
-        if (!owned.space)
+        if (!owned.space) {
+            petta_program_lifetime_release(owned.petta_program);
             continue;
+        }
         void *base_hold = space_hold_detach(owned.space);
         if (owned.petta_program)
             petta_program_forget_space(owned.petta_program, owned.space);
@@ -15108,6 +15110,7 @@ static void hyperpose_storage_owner_release(void *opaque) {
             !arena_owns_ptr(&owner->eval_arena, owned.space))
             free(owned.space);
         space_lifetime_unpin(base_hold);
+        petta_program_lifetime_release(owned.petta_program);
     }
     free(owner->owned_spaces.items);
     TempSpaceSet *sets[] = {&owner->made_spaces, &owner->listed_spaces,
@@ -15115,8 +15118,10 @@ static void hyperpose_storage_owner_release(void *opaque) {
     for (size_t set = 0u; set < sizeof(sets) / sizeof(sets[0]); set++) {
         for (CettaCount i = 0u; i < sets[set]->len; i++) {
             EvalTrackedSpace tracked = sets[set]->items[i];
-            if (!tracked.space)
+            if (!tracked.space) {
+                petta_program_lifetime_release(tracked.petta_program);
                 continue;
+            }
             void *base_hold = space_hold_detach(tracked.space);
             if (tracked.petta_program)
                 petta_program_forget_space(tracked.petta_program, tracked.space);
@@ -15125,6 +15130,7 @@ static void hyperpose_storage_owner_release(void *opaque) {
                 !arena_owns_ptr(&owner->eval_arena, tracked.space))
                 free(tracked.space);
             space_lifetime_unpin(base_hold);
+            petta_program_lifetime_release(tracked.petta_program);
         }
         free(sets[set]->items);
     }
@@ -15342,8 +15348,12 @@ static bool hyperpose_owned_spaces_push(HyperposeOwnedSpaces *spaces,
         spaces->items = next;
         spaces->cap = next_cap;
     }
-    if (!hyperpose_descriptor_note_owner(spaces->owner, GV_SPACE, space))
+    if (petta_program && !petta_program_lifetime_retain(petta_program))
         return false;
+    if (!hyperpose_descriptor_note_owner(spaces->owner, GV_SPACE, space)) {
+        petta_program_lifetime_release(petta_program);
+        return false;
+    }
     spaces->items[spaces->len++] = (HyperposeOwnedSpace){
         .space = space,
         .petta_program = petta_program,
@@ -15358,6 +15368,15 @@ static bool hyperpose_adopt_tracked_spaces(
     TempSpaceSet *sources[] = {&g_made_spaces, &g_listed_spaces, &g_new_space_track};
     TempSpaceSet *targets[] = {&branch->storage->made_spaces,
         &branch->storage->listed_spaces, &branch->storage->legacy_spaces};
+    size_t held_set = 0u;
+    CettaCount held_index = 0u;
+    for (; held_set < sizeof(sources) / sizeof(sources[0]); held_set++) {
+        for (held_index = 0u; held_index < sources[held_set]->len; held_index++) {
+            PettaProgram *program = sources[held_set]->items[held_index].petta_program;
+            if (program && !petta_program_lifetime_retain(program))
+                goto release_programs;
+        }
+    }
     pthread_mutex_lock(&g_space_hold_mutex);
     for (size_t set = 0u; set < sizeof(sources) / sizeof(sources[0]); set++) {
         assert(!targets[set]->items && targets[set]->len == 0u);
@@ -15371,6 +15390,13 @@ static bool hyperpose_adopt_tracked_spaces(
     }
     pthread_mutex_unlock(&g_space_hold_mutex);
     return true;
+release_programs:
+    for (size_t set = 0u; set <= held_set; set++) {
+        CettaCount limit = set == held_set ? held_index : sources[set]->len;
+        for (CettaCount i = 0u; i < limit; i++)
+            petta_program_lifetime_release(sources[set]->items[i].petta_program);
+    }
+    return false;
 }
 
 typedef struct {

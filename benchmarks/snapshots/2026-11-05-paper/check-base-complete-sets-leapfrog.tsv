@@ -1,0 +1,19 @@
+case	family	arguments	engine	trial	status	counts	reference_counts	complete_set_compared	observed_distinct_rows	wall	native_wall	cpu	user	system	rss_kib	execution_ms	steps	instructions	rc	timed_out
+transitive_50k	transitive	[2000, 50000]	mork	0	pass	[1064228, 16343]	[1064228, 16343]	True	1080571	0.9213282328564674	0.91	0.91	0.87	0.04	63528	760	2		0	False
+transitive_50k	transitive	[2000, 50000]	cetta	0	pass	[1064228, 16343]	[1064228, 16343]	True	1080571	6.602034603944048	6.6	6.54	5.47	1.07	313312				0	False
+clique5_200x3600	clique	[200, 3600, 5]	mork	0	pass	[79]	[79]	True	79	0.038701392943039536	0.03	0.03	0.03	0.0	6860	34	1		0	False
+clique5_200x3600	clique	[200, 3600, 5]	cetta	0	pass	[79]	[79]	True	79	0.00645438302308321	0.0	0.0	0.0	0.0	13564				0	False
+oddeven_300	odd_even_sort	[300]	mork	0	pass	[300]	[300]	True	300	0.22606874397024512	0.22	0.22	0.21	0.01	8552	212	601		0	False
+oddeven_300	odd_even_sort	[300]	cetta	0	pass	[300]	[300]	True	300	0.07604217994958162	0.07	0.06	0.06	0.0	18892				0	False
+bc_1000	backward_chain	[1000]	mork	0	pass	[1000]	[1000]	True	1000	6.96033627493307	6.95	6.81	6.8	0.01	12440	6945	32		0	False
+bc_1000	backward_chain	[1000]	cetta	0	pass	[1000]	[1000]	True	1000	0.03725973516702652	0.03	0.02	0.02	0.0	14652				0	False
+hexlife_20_80_20	hexlife	[20, 80, 20]	mork	0	pass	[55]	[55]	True	55	24.409219585126266	24.4	22.37	22.32	0.05	6572	23621	121		0	False
+hexlife_20_80_20	hexlife	[20, 80, 20]	cetta	0	pass	[55]	[55]	True	55	0.07320970389991999	0.06	0.05	0.05	0.0	15036				0	False
+ancestry_1k	ancestry	[1000, 40, 20]	mork	0	pass	[1996, 383094, 18282]	[1996, 383094, 18282]	True	403372	0.9741392668802291	0.96	0.8400000000000001	0.8	0.04	20432	792	108		0	False
+ancestry_1k	ancestry	[1000, 40, 20]	cetta	0	pass	[1996, 383094, 18282]	[1996, 383094, 18282]	True	403372	3.552168325986713	3.55	3.5100000000000002	3.1	0.41	124252				0	False
+reach_500	reach_paths	[500, 2]	mork	0	pass	[408, 4380, 409]	[408, 4380, 409]	True	5197	8.65799297299236	8.65	8.579999999999998	8.54	0.04	38332	8650	16		0	False
+reach_500	reach_paths	[500, 2]	cetta	0	pass	[408, 4380, 409]	[408, 4380, 409]	True	5197	0.062022740952670574	0.06	0.05	0.05	0.0	16840				0	False
+counter_300	counter_machine	[300]	mork	0	pass	[16218, 1]	[16218, 1]	True	16219	9.152685643872246	9.15	9.13	9.0	0.13	28644	8927	13516		0	False
+counter_300	counter_machine	[300]	cetta	0	pass	[16218, 1]	[16218, 1]	True	16219	2.501814356073737	2.49	2.47	2.37	0.1	26584				0	False
+pc_200	process_calculus	[1000, 200, 200]	mork	0	pass	[804]	[804]	True	804	6.026874846080318	6.02	6.0	5.98	0.02	11524	6017	2001		0	False
+pc_200	process_calculus	[1000, 200, 200]	cetta	0	pass	[804]	[804]	True	804	0.4109611730091274	0.4	0.39	0.39	0.0	15988				0	False

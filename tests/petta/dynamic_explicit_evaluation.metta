@@ -1,6 +1,8 @@
-; Translation keeps old data occurrences, but an explicit dispatch can call
-; a function installed later. eval reinterprets the entire term as code;
-; call and reduce retain the original interpretation of their arguments.
+; A body translated before a function is installed calls it once it is
+; installed: a plain occurrence, an argument and the operand of call, eval
+; or reduce all reach the later definition, and a replacement of it.  Quoted
+; code stays data: eval reinterprets a quoted term as code, while reduce and
+; call keep a quotation as written.
 (= (identity $x) $x)
 (= (old-data) (late 5))
 (= (old-id) (id (late 5)))

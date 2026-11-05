@@ -2349,6 +2349,57 @@ static void test_shared_value_observation(void) {
     puts("PASS: shared publication preserves graph size and distinct opaque observations");
 }
 
+static void test_improper_value_observation(void) {
+    enum { CELLS = 1024 };
+    Arena source, destination;
+    arena_init(&source);
+    arena_init(&destination);
+    Atom *item = atom_symbol(&source, "improper-observation-item");
+    Atom *end = atom_symbol(&source, "improper-observation-end");
+    Atom *head = petta_semantics_open_cons_value(&source, item, atom_unit(&source));
+    Atom *chain = end;
+    for (unsigned index = 0u; index < CELLS; index++)
+        chain = petta_semantics_open_cons_value(&source, head, chain);
+    Atom *quote = atom_expr2(&source,
+        atom_symbol_id(&source, g_builtin_syms.quote), chain);
+    Atom *prefix[] = {item, head};
+    Atom *rest = atom_list_with_rest(&source, prefix, 2u, end);
+    Atom *mixed = petta_semantics_open_cons_value(&source, item, rest);
+    Atom *variable = atom_var_with_id(&source, "improper-tail", fresh_var_id());
+    VarId tail_id = variable->var_id;
+    Atom *open = petta_semantics_open_cons_value(&source, item, variable);
+    Atom *roots[] = {atom_symbol(&source, "Observations"), chain, chain, quote, mixed, open};
+    Atom *out = petta_semantics_materialize_value(&destination,
+        atom_expr(&source, roots, 6u));
+    assert(out && out->expr.len == 6u);
+    assert(arena_accounted_live_bytes(&destination) < 1024u * 1024u);
+    arena_free(&source);
+    assert(out->expr.elems[1] == out->expr.elems[2]);
+    Atom *cursor = out->expr.elems[1];
+    Atom *observed_head = cursor->expr.elems[1];
+    for (unsigned index = 0u; index < CELLS; index++) {
+        assert(petta_semantics_is_open_cons_value(cursor));
+        assert(cursor->expr.elems[1] == observed_head);
+        assert(observed_head->kind == ATOM_EXPR && observed_head->expr.len == 1u);
+        assert(atom_is_symbol(observed_head->expr.elems[0], "improper-observation-item"));
+        cursor = cursor->expr.elems[2];
+    }
+    assert(atom_is_symbol(cursor, "improper-observation-end"));
+    Atom *quoted_head = out->expr.elems[3]->expr.elems[1]->expr.elems[1];
+    assert(petta_semantics_is_open_cons_value(quoted_head));
+    cursor = out->expr.elems[4];
+    for (unsigned index = 0u; index < 3u; index++) {
+        assert(petta_semantics_is_open_cons_value(cursor));
+        cursor = cursor->expr.elems[2];
+    }
+    assert(atom_is_symbol(cursor, "improper-observation-end"));
+    assert(petta_semantics_is_open_cons_value(out->expr.elems[5]));
+    Atom *tail = out->expr.elems[5]->expr.elems[2];
+    assert(tail->kind == ATOM_VAR && var_id_eq(tail->var_id, tail_id));
+    arena_free(&destination);
+    puts("PASS: improper list observation stays linear and preserves sharing, nested lists, opaque syntax and open tails");
+}
+
 static void test_deep_cons_semantics(Arena *arena) {
     enum { DEEP_FINITE_DEPTH = 4096 };
     Atom *box = atom_symbol(arena, "deep-cons-box");
@@ -15918,6 +15969,7 @@ int main(int argc, char **argv) {
         &universe, &persistent, &answers);
     test_deep_typecheck_source_rewrites(&universe);
     test_shared_value_observation();
+    test_improper_value_observation();
     test_deep_cons_semantics(&answers);
     test_logical_cons_binding_views(&answers);
     test_lowered_head_epoch_views(&answers);

@@ -32,8 +32,10 @@ Explicit language decisions take precedence over settled contracts, which take
 precedence over observations of a pinned implementation. A new test or a new
 reference commit does not by itself establish the intended semantics.
 
-langdef/petta/reference.json pins the SWI source at e1db30d, libraries and their
-adaptations. tests/petta/swi_differences.metta retains numbered historical
+The reference is stable-fixed SWI-PeTTa: https://github.com/godelclaw/PeTTa,
+branch stable-fixed. langdef/petta/reference.json records the snapshot whose
+example files, libraries and adaptations the suite was qualified against.
+tests/petta/swi_differences.metta retains numbered historical
 observations and intended native outcomes. Some entries are retired or open;
 being numbered does not make an observation an approved difference. Preserve
 DIFF-14's live declarations and DIFF-10's non-executable forward declarations.

@@ -53,8 +53,8 @@ def cases(petta, modern):
                if petta else '[payload, payload, payload]\n[(1 1 2)]\n'
                     '[(3 tail), (3 tail)]\n[(1 1 2 3 3)]\n')
     choice = 'left\nright\nleft\nright\n' if petta else '[left, right]\n[left, right]\n'
-    live = ('later\ntrue\nlater\ntrue\n' + ('answer\ntrue\n(answer second)\n'
-            if modern else 'later\ntrue\n(later)\n')) if petta else (
+    # A body translated before `later` is defined calls it once it is.
+    live = 'later\ntrue\nlater\ntrue\nanswer\ntrue\n(answer second)\n' if petta else (
             # HE leaves car-atom's Expression argument unevaluated, so the
             # later equations never reach it (hyperon-experimental agrees).
             '[later]\n[()]\n[later]\n[()]\n[later]\n[()]\n[(later)]\n')

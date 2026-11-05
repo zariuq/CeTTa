@@ -13438,6 +13438,7 @@ typedef struct {
     PettaAnswerMaterializeMemoSlot *slots;
     size_t capacity;
     size_t used;
+    PeTTaTermBoundaryMemo list_views;
 } PettaAnswerMaterializeMemo;
 
 static void petta_answer_materialize_memo_init(
@@ -13453,6 +13454,7 @@ static void petta_answer_materialize_memo_free(
         return;
     if (memo->slots != memo->inline_slots)
         free(memo->slots);
+    free(memo->list_views.slots);
     memset(memo, 0, sizeof(*memo));
 }
 
@@ -13566,10 +13568,10 @@ static bool petta_answer_materialize_frame_reserve(
 /*
  * Open-cons nodes are an internal relational carrier.  Remove them at the
  * answer boundary while leaving quoted syntax and suspended callables
- * opaque.  Closed spines become ordinary flat PeTTa lists; an unresolved
- * tail becomes authored `(cons Head Tail)` syntax, never the private carrier
- * tag.  The explicit frame stack makes finite authored depth a resource
- * question rather than silently changing the answer at a fixed limit.
+ * opaque. Closed spines become ordinary flat PeTTa lists; an unresolved
+ * tail keeps its cell representation. The explicit frame stack makes finite
+ * authored depth a resource question rather than changing the answer at a
+ * fixed limit.
  */
 static Atom *petta_machine_materialize_answer_in(
     PettaMachineImpl *machine, Atom *atom, PettaAnswerMaterializeMemo *memo) {
@@ -13613,8 +13615,8 @@ static Atom *petta_machine_materialize_answer_in(
         break; \
     } \
     if (petta_semantics_is_open_cons_value(petta_source__)) { \
-        petta_source__ = petta_semantics_materialize_logical_list( \
-            &machine->heap, petta_source__); \
+        petta_source__ = petta_semantics_materialize_spine_view( \
+            &machine->heap, petta_source__, &memo->list_views); \
         if (!petta_source__) \
             goto fail; \
     } \

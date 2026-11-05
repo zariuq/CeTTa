@@ -601,16 +601,14 @@ bool cetta_library_context_try_init_for_language_profile(CettaLibraryContext *ct
                           profile->id == CETTA_PROFILE_HE_EXTENDED))
                 ? CETTA_RULE_SYNTAX_DIRECTIONAL : 0u)) : NULL;
     if (needs_occurrence_program && !ctx->petta_program) return false;
-    const CettaLanguageVersion *program_version =
-        cetta_language_version_of(language_id, profile);
-    /* HE resolves a call's head when the call runs, and PeTTa's typed line
-     * does too: a plan compiled before a head had equations is rebuilt when
-     * the heads it read change.  PeTTa otherwise compiles an equation
-     * against the program as it stood when the equation was defined. */
+    /* A call's head is resolved against the program the call runs in: a plan
+     * compiled before a head had equations is rebuilt when the heads it read
+     * change.  HE resolves heads when calls run, and every PeTTa version uses
+     * an equation once it is present, one added by add-atom included, as
+     * stable-fixed SWI-PeTTa does (tests/petta/swi_differences, 10). */
     if (ctx->petta_program &&
         (language_id == CETTA_LANGUAGE_HE ||
-         (language_id == CETTA_LANGUAGE_PETTA &&
-          cetta_language_version_petta_typed_line(program_version))))
+         language_id == CETTA_LANGUAGE_PETTA))
         (void)petta_program_enable_callability_refresh(ctx->petta_program);
     if (ctx->petta_program && cetta_profile_uses_petta_typing(profile)) {
         (void)petta_program_enable_analysis(ctx->petta_program);

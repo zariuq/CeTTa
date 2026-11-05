@@ -122,7 +122,7 @@ def main():
             match=re.fullmatch(r'PreparedListEquality observations=(\d+) nested-cells, shared-records, mismatches, opaque-quotes and improper-tails\n'
                                r'PreparedScalarTree mode=(fused|reference) iterations=1000 allocated=(\d+)\n',run_native.stdout)
             assert match and not run_native.stderr,run_native
-            assert int(match[1])==20,run_native
+            assert int(match[1])==22,run_native
             results.append(int(match[3])); checks+=1+int(match[1])
         assert 0<results[0]<results[1],results
         print(f'PreparedScalarAllocation fused={results[0]} reference={results[1]}')

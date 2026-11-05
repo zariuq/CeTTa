@@ -1900,6 +1900,7 @@ done:
 static void print_usage(FILE *out) {
     fputs("usage: cetta [--lang <name>] [--syntax <metta|mrho|rho|holr>] <file>\n", out);
     fputs("       note: without --lang, cetta runs corrected stable petta\n", out);
+    fputs("       cetta [options] -- <file>           # filenames beginning with a dash\n", out);
     fputs("       cetta -e '<expr>' [-e '<expr>' ...]  # inline expressions (multiple -e concatenate)\n", out);
     fputs("       cetta --repl [--lang petta --profile extended] # multiline source; :cancel / :quit\n", out);
     fputs("       cetta --translate --lang A [--syntax S] --lang B [--syntax T] <file>\n", out);
@@ -3161,6 +3162,27 @@ static int cetta_main(int argc, char **argv) {
             script_path = "<expr>";
             script_arg_start = i + 1;
             continue;
+        }
+        if (strcmp(argv[i], "--") == 0) {
+            if (inline_buf) {
+                script_arg_start = i + 1;
+                break;
+            }
+            if (i + 1 >= argc) {
+                fputs("error: expected a source filename after --\n", stderr);
+                free(inline_buf);
+                return 2;
+            }
+            filename = argv[++i];
+            filename_arg_index = i;
+            script_path = filename;
+            script_arg_start = i + 1;
+            break;
+        }
+        if (argv[i][0] == '-' && argv[i][1] != '\0') {
+            fprintf(stderr, "error: unknown option '%s'; use --help for usage\n", argv[i]);
+            free(inline_buf);
+            return 2;
         }
         if (!filename) {
             filename = argv[i];

@@ -98,7 +98,12 @@ static Atom *variant_shape_rewrite_canonical_var(Arena *dst, Atom *src_var, void
         return NULL;
     if (canon->slot_to_src &&
         !cetta_var_map_add(canon->slot_to_src, slot->var_id, src_var)) {
-        return NULL;
+        Atom *previous = cetta_var_map_lookup(canon->slot_to_src, slot->var_id);
+        /* Separate headers may name one logical variable. Keep its first
+         * representative while rejecting a slot shared by different ids. */
+        if (!previous || previous->kind != ATOM_VAR ||
+            !var_id_eq(previous->var_id, src_var->var_id))
+            return NULL;
     }
     return slot;
 }
