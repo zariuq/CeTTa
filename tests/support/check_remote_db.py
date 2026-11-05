@@ -221,6 +221,26 @@ def main():
             results.append(dict(case='RemoveCostSteps', steps=proxy.steps))
         finally:
             server.stop()
+        # k remove+add pairs in one transaction: work per pair must not grow with k (k=20 vs k=200).
+        own_edit_steps = {}
+        for k in (20, 200):
+            directory = root / f'own-edit-cost-{k}'
+            directory.mkdir(mode=0o700)
+            server = server_for(args.worker.resolve(), directory, directory / 'store')
+            try:
+                server.start()
+                proxy = ProposalProxy(directory / 'count.sock', server.path, 'count')
+                results.append(invoke(args.binary.resolve(), directory,
+                                      f'OwnEditCost {json.dumps(str(proxy.path))} {k}',
+                                      'REMOTE_OWN_EDIT_COST_OK'))
+                proxy.join()
+                own_edit_steps[k] = proxy.steps
+                results.append(dict(case=f'OwnEditCostSteps_{k}', k=k, steps=proxy.steps,
+                                    steps_per_pair=proxy.steps / k))
+            finally:
+                server.stop()
+        assert own_edit_steps[200] / 200 <= own_edit_steps[20] / 20 + 0.5, (
+            'own-edit work per pair grew with k', own_edit_steps)
         for same_owner, case, marker in [(True, 'NestedActivation', 'REMOTE_ACTIVATION_BARRIER_OK'),
                                          (False, 'OtherOwner', 'REMOTE_OTHER_OWNER_OK')]:
             directory = root / case
