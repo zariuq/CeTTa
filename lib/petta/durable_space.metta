@@ -255,29 +255,36 @@
          ($error $error))))
      ($error $error))))
 
-(= (durable-space:seen? $key $keys)
-  (if (== $keys ()) False
-    (if (== $key (car-atom $keys)) True (durable-space:seen? $key (cdr-atom $keys)))))
+; An occurrence may be edited once per publication. Staging collects the keys
+; and asks whether they repeat only where it stops: at the end, before an edit
+; that fails, and at a change whose count or index operations fail (with that
+; change's key). The answer is the one a test of each key against the earlier
+; keys gives (MeTTapedia RepeatedOccurrence.once_eq_each), and the hash set
+; keeps a publication of n changes linear rather than n^2/2 comparisons.
+(= (durable-space:keys-repeat $keys) (not (== (size-atom (unique-atom $keys)) (size-atom $keys))))
+(= (durable-space:stop $keys $answer)
+  (if (durable-space:keys-repeat $keys) (SpaceRefusedV1 repeated-occurrence) $answer))
 (= (durable-space:stage $view $epoch $prefix $request $changes $seen $count $ops $created)
   (durable-space:stage-indexed $view $epoch $prefix $request $changes $seen $count $ops $created ()))
 (= (durable-space:stage-indexed $view $epoch $prefix $request $changes $seen $count $ops $created $indexes)
   (if (== (get-metatype $changes) Expression)
-    (if (== $changes ()) (SpacePreparedV1 $count (list:reverse $ops) (list:reverse $created))
+    (if (== $changes ())
+      (durable-space:stop $seen (SpacePreparedV1 $count (list:reverse $ops) (list:reverse $created)))
       (case (durable-space:edit $view $epoch $prefix $request (car-atom $changes))
         (((SpaceEditV1 $key $delta $operation $new)
-          (if (durable-space:seen? $key $seen) (SpaceRefusedV1 repeated-occurrence)
-            (if (< (+ $count $delta) 0) (SpaceRefusedV1 metadata-count)
+          (let $keys (cons-atom $key $seen)
+            (if (< (+ $count $delta) 0) (durable-space:stop $keys (SpaceRefusedV1 metadata-count))
               (case (durable-index:operations $view $indexes $key $delta $operation)
                 (((SpaceIndexOperationsV1 $postings)
                   (let $all (cons-atom $operation $postings)
                     (durable-space:stage-indexed $view $epoch $prefix $request (cdr-atom $changes)
-                      (cons-atom $key $seen) (+ $count $delta)
+                      $keys (+ $count $delta)
                       (list:append (list:reverse $all) $ops)
                       (case $new (((CreatedV1 $reference) (cons-atom $reference $created)) (NoCreatedV1 $created)))
                       $indexes)))
-                 ($error $error))))))
-         ($error $error))))
-    (SpaceRefusedV1 edit-list)))
+                 ($error (durable-space:stop $keys $error)))))))
+         ($error (durable-space:stop $seen $error)))))
+    (durable-space:stop $seen (SpaceRefusedV1 edit-list))))
 
 ; CHANGES is data, including quoted rules, callable expressions and open atoms.
 (= (durable-space:publish $owner $view $request $command $key $prefix $next $ops $created)

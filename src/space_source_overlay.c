@@ -331,7 +331,15 @@ static CettaMatchCompletion source_remove_up_to(Space *space, Atom *pattern,
     if (o->added_count && !mask) return CETTA_MATCH_INCOMPLETE;
     Packet **base = NULL; size_t count = 0, capacity = 0, locals = 0;
     void *raw = NULL; SpaceOccurrenceCursorStep failure = SPACE_OCCURRENCE_CURSOR_CAPACITY;
-    if (!source_open(space, NULL, &raw, &failure)) { free(mask); return CETTA_MATCH_INCOMPLETE; }
+    /* Removing every match may read only the base's selection for the
+     * pattern: it holds every row the pattern can match, so it removes the
+     * rows a full scan removes. A bounded removal keeps the scan, because a
+     * selection need not follow row order (an index yields its exact-value
+     * rows before the rows that hold a variable there) and would take other
+     * occurrences. */
+    if (!source_open(space, maximum == UINT64_MAX ? pattern : NULL, &raw, &failure)) {
+        free(mask); return CETTA_MATCH_INCOMPLETE;
+    }
     Cursor *c = raw; CettaIndex index; SpaceOccurrenceCursorStep step;
     while ((step = cursor_next(c, &index)) == SPACE_OCCURRENCE_CURSOR_ITEM ||
             step == SPACE_OCCURRENCE_CURSOR_PROGRESS) {
