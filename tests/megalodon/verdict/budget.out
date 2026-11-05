@@ -1,0 +1,5 @@
+mg-check: budget.mg (theory egal, 0 signatures)
+theorem Large line 4: not decided: checking it used up its work budget of 15 units
+theorem UsesLarge line 8: not checked: it cites theorems without proof: Large
+summary: 4 theorems: 2 checked (2 verified), 0 admitted, 0 aby, 1 dependent, 0 unfinished, 1 out of budget; 0 document axioms (0 approved)
+verdict: not verified

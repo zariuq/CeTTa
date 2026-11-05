@@ -1,0 +1,14 @@
+INFIX
+(NAM "+")
+(NUM False "300" None None)
+(NAM "left")
+DEQ
+(NAM "add")
+DOT
+INFIX
+(NAM "*")
+(NUM False "300" None None)
+(NAM "right")
+DEQ
+(NAM "mul")
+DOT

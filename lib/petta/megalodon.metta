@@ -2,6 +2,12 @@
 ; do not edit.  The PeTTa spelling of the library: the same program with the
 ; HE-only native wrappers spelled as PeTTa calls.
 
+(= (mg:gslt-tokens $path) (__cetta_lib_megalodon_gslt-tokens $path))
+(= (mg:gslt-items $signatures $path) (__cetta_lib_megalodon_gslt-items $signatures $path))
+(= (mg:try-gslt-tokens $path) (__cetta_lib_megalodon_try-gslt-tokens $path))
+(= (mg:check-document $signatures $path $options) (__cetta_lib_megalodon_check-document $signatures $path $options))
+(= (mg:try-check-document $signatures $path $options) (__cetta_lib_megalodon_try-check-document $signatures $path $options))
+(= (mg:try-gslt-items $signatures $path) (__cetta_lib_megalodon_try-gslt-items $signatures $path))
 (= (mg:new-theory $profile) (__cetta_lib_megalodon_new-theory $profile))
 (= (mg:new-labeled-theory $profile $label) (__cetta_lib_megalodon_new-labeled-theory $profile $label))
 (= (mg:profile $theory) (__cetta_lib_megalodon_profile $theory))

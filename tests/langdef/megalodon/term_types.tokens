@@ -1,0 +1,70 @@
+PARAM
+(NAM "f")
+COLON
+(NAM "set")
+(NAM "->")
+(NAM "set")
+(NAM "->")
+(NAM "set")
+DOT
+PARAM
+(NAM "g")
+COLON
+LPAREN
+(NAM "set")
+(NAM "->")
+(NAM "set")
+RPAREN
+(NAM "->")
+(NAM "set")
+DOT
+PARAM
+(NAM "h")
+COLON
+(NAM "set")
+(NAM "->")
+LPAREN
+(NAM "set")
+(NAM "->")
+(NAM "prop")
+RPAREN
+(NAM "->")
+(NAM "prop")
+DOT
+PARAM
+(NAM "k")
+COLON
+LPAREN
+(NAM "set")
+(NAM "->")
+(NAM "prop")
+RPAREN
+(NAM "->")
+LPAREN
+(NAM "prop")
+(NAM "->")
+(NAM "set")
+RPAREN
+(NAM "->")
+(NAM "set")
+DOT
+DEF
+(NAM "id")
+COLON
+(NAM "set")
+(NAM "->")
+(NAM "set")
+DEQ
+(NAM "fun")
+(NAM "x")
+DARR
+(NAM "x")
+DOT
+DEF
+(NAM "c")
+COLON
+(NAM "set")
+DEQ
+(NAM "id")
+(NAM "x")
+DOT

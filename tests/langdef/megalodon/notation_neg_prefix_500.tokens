@@ -1,0 +1,6 @@
+PREFIX
+(NAM "~")
+(NUM False "500" None None)
+DEQ
+(NAM "not")
+DOT

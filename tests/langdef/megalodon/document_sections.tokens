@@ -1,0 +1,58 @@
+SECTION
+(NAM "Outer")
+DOT
+VAR
+(NAM "A")
+COLON
+(NAM "SType")
+DOT
+VAR
+(NAM "x")
+(NAM "y")
+COLON
+(NAM "A")
+DOT
+HYP
+(NAM "H1")
+COLON
+(NAM "x")
+(NAM "=")
+(NAM "y")
+DOT
+LETDEC
+(NAM "z")
+COLON
+(NAM "A")
+DEQ
+(NAM "x")
+DOT
+SECTION
+(NAM "Inner")
+DOT
+VAR
+(NAM "P")
+COLON
+(NAM "A")
+(NAM "->")
+(NAM "prop")
+DOT
+HYP
+(NAM "H2")
+COLON
+(NAM "P")
+(NAM "x")
+DOT
+(THEOREM "Theorem")
+(NAM "in1")
+COLON
+(NAM "P")
+(NAM "z")
+DOT
+ADMITTED
+DOT
+END
+(NAM "Inner")
+DOT
+END
+(NAM "Outer")
+DOT

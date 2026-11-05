@@ -1,0 +1,7 @@
+INFIX
+(NAM "+")
+(NUM False "400" None None)
+(NAM "up")
+DEQ
+(NAM "add")
+DOT

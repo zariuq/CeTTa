@@ -1,0 +1,6 @@
+(Doc (BinderDecl False True "\\/_" (NaL "famunion") None))
+(Doc (BinderDecl True True "exists" (NaL "ex") (Some (NaL "and"))))
+(Doc (BinderDecl False False "lam_" (NaL "setlam") None))
+(Doc (AxDecl "c1" (BiL "\\/_" "," (List ((List "x") (Some (AscSet (NaL "X"))))) (ImplopL (NaL "F") (NaL "x")))))
+(Doc (AxDecl "c2" (BiL "exists" "," (List ((List "x" "y") (Some (AscSet (NaL "X"))))) (ImplopL (ImplopL (NaL "p") (NaL "x")) (NaL "y")))))
+(Doc (AxDecl "c3" (BiL "lam_" "=>" (List ((List "x") (Some (AscSet (NaL "X"))))) (ImplopL (NaL "f") (NaL "x")))))

@@ -1,0 +1,6 @@
+AXIOM
+(NAM "a")
+COLON
+BACKSLASH
+(NUM False "1" None None)
+DOT

@@ -748,7 +748,7 @@ JSON_GSLT_PROFILE_SOURCE_V1 = langdef/json/rfc8259_parser_profile_v1.metta
 JSON_GSLT_VALUE_TARGET_SOURCE_V1 = langdef/json/occurrence_preserving_value_v1.metta
 JSON_PREDICTIVE_OUTPUTS_V1 = $(JSON_GSLT_GENERATED_DIR_V1)/lexical_v1.generated.h $(JSON_GSLT_GENERATED_DIR_V1)/predictive_v1.generated.h $(JSON_GSLT_GENERATED_DIR_V1)/predictive_v1.generated.inc
 JSON_PREDICTIVE_ARTIFACTS_V1 = $(JSON_PREDICTIVE_OUTPUTS_V1) $(JSON_GSLT_GENERATED_DIR_V1)/predictive_v1.report.json
-JSON_DFA_EMITTER_V1 = runtime/emit-regular-span-dfa-v1
+REGULAR_SPAN_DFA_EMITTER_V1 = runtime/emit-regular-span-dfa-v1
 PARSER_PREDICTIVE_ANALYZER_V1 = runtime/analyze-parser-predictive-v1
 JSON_GSLT_RUNTIME_SRC =
 ifeq ($(ENABLE_JSON_GSLT),1)
@@ -805,9 +805,21 @@ MEGALODON_SRC = native/megalodon/mg_store.c native/megalodon/mg_ops.c \
 	native/megalodon/mg_theory.c native/megalodon/mg_session.c \
 	native/megalodon/mg_sexpr.c native/megalodon/mg_profiles.c \
 	native/megalodon/mg_hash.c native/megalodon/mg_library.c \
-	native/megalodon/mg_worker.c native/megalodon/mg_atom.c \
-	native/megalodon/mg_cetta_module.c
+	native/megalodon/mg_worker.c \
+	native/megalodon/mg_front.c native/megalodon/mg_pfg.c \
+	native/megalodon/mg_upstream.c native/megalodon/mg_elab.c \
+	native/megalodon/mg_proof.c native/megalodon/mg_type_megaauto.c \
+	native/megalodon/mg_aby.c native/megalodon/mg_run.c \
+	native/megalodon/mg_atom.c native/megalodon/mg_cetta_module.c
 SRC += $(MEGALODON_SRC)
+# Megalodon's syntax presentations (langdef/megalodon/) compiled to C at
+# build time (native/megalodon/test.mk generates the file) and the reader
+# around them: the documents the evaluator checks (mg_source.h) and the
+# Megalodon module's gslt operations.
+MEGALODON_GSLT_NATIVE_C = runtime/generated/megalodon/reader_v1.generated.c
+MEGALODON_GSLT_READER_SRC = $(MEGALODON_GSLT_NATIVE_C) native/gslt_native_runtime_v1.c \
+	native/megalodon/mg_gslt_reader.c
+SRC += $(MEGALODON_GSLT_READER_SRC)
 SRC += src/petta_type_policy.c src/petta_type_relation.c src/he_type_policy.c
 SRC += src/petta_contract_core.c
 SRC += src/gslt_language_manifest_v1.c
@@ -2251,6 +2263,7 @@ LANGDEF_METTA_EQUATION_COMPILER_V1_OBJ = runtime/bootstrap/langdef_metta_equatio
 LANGDEF_GSLT_COMPOSITION_V1_OBJ = runtime/bootstrap/langdef_gslt_composition_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 LANGDEF_GSLT_PETTA_DIRECT_V1_OBJ = runtime/bootstrap/langdef_gslt_petta_direct_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 LANGDEF_GSLT_RHOMETTA_DIRECT_V1_OBJ = runtime/bootstrap/langdef_gslt_rhometta_direct_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+LANGDEF_GSLT_NATIVE_DIRECT_V1_OBJ = runtime/bootstrap/langdef_gslt_native_direct_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 LANGDEF_ARTIFACT_V1_OBJ = runtime/bootstrap/langdef_artifact_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 LANGDEF_PARSER_V1_OBJ = runtime/bootstrap/langdef_parser_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 # Parser clients link both atom and term-ID paths independently of optimizer pruning.
@@ -8439,6 +8452,7 @@ $(LANGDEF_COMPILER_V1_OBJ): $(LANGDEF_COMPILER_V1_SRC) \
 		native/langdef_module.h \
 		native/langdef_metta_equation_compiler_v1.h \
 		native/gslt_petta_direct_v1.h \
+		native/gslt_direct_internal_v1.h \
 		native/gslt_rhometta_direct_v1.h \
 		$(PARSER_PACK_TRANSPARENT_INLINE_NATIVE_V1_HEADER) \
 		$(BUILD_CONFIG_HEADER)
@@ -8462,6 +8476,15 @@ $(LANGDEF_METTA_EQUATION_COMPILER_V1_OBJ): \
 $(LANGDEF_GSLT_PETTA_DIRECT_V1_OBJ): \
 		native/gslt_petta_direct_v1.c \
 		native/gslt_petta_direct_v1.h \
+		native/gslt_direct_internal_v1.h \
+		native/gslt_composition_v1.h \
+		$(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(LANGDEF_GSLT_NATIVE_DIRECT_V1_OBJ): \
+		native/gslt_native_direct_v1.c \
+		native/gslt_direct_internal_v1.h \
 		native/gslt_composition_v1.h \
 		$(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
@@ -8511,6 +8534,7 @@ $(LANGDEF_COMPILER_V1_BIN): $(LANGDEF_COMPILER_V1_OBJ) \
 		$(LANGDEF_METTA_EQUATION_COMPILER_V1_OBJ) \
 		$(LANGDEF_GSLT_COMPOSITION_V1_OBJ) \
 		$(LANGDEF_GSLT_PETTA_DIRECT_V1_OBJ) \
+		$(LANGDEF_GSLT_NATIVE_DIRECT_V1_OBJ) \
 		$(LANGDEF_GSLT_RHOMETTA_DIRECT_V1_OBJ) \
 		$(LANGDEF_COMPILER_V1_LINK_OBJ) $(BRIDGE_DEPS) \
 		$(RHO_ABSTRACT_SYNTAX_V1) $(RHO_RUNTIME_TERM_ABI_V1) \
@@ -21012,18 +21036,50 @@ test-gslt2parse-parser-pack-wide-scale-v1: \
 test-gslt2parse-regular-span-dfa-v1-native: \
 		$(REGULAR_SPAN_DFA_V1_TEST_BIN) \
 		$(REGULAR_SPAN_NFA_V1_TEST_BIN) \
-		$(REGULAR_SPAN_DFA_V1_STREAM_BIN)
+		$(REGULAR_SPAN_DFA_V1_STREAM_BIN) \
+		test-regular-span-dfa-emitter-v1
 	@$(REGULAR_SPAN_DFA_V1_TEST_BIN)
 	@$(REGULAR_SPAN_NFA_V1_TEST_BIN)
-	@if rg -ni 'metamath|megalodon|tptp|cetta[-_ ]?prime' \
+	@if rg -ni 'metamath|megalodon|tptp|json|cetta[-_ ]?prime' \
 		experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c \
 		experiments/gslt2parse_foundation/native/regular_span_dfa_v1.h \
 		experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c \
 		experiments/gslt2parse_foundation/native/regular_span_nfa_v1.h \
-		experiments/gslt2parse_foundation/native/regular_span_dfa_v1_stream.c; then \
+		experiments/gslt2parse_foundation/native/regular_span_dfa_v1_stream.c \
+		tools/emit_regular_span_dfa_v1.c; then \
 		echo 'guest-language name leaked into the generic regular-span DFA path'; \
 		exit 1; \
 	fi
+
+# The emitter's scanners: 45 tags over scalars and 4 over bytes, compiled
+# together and checked for longest match, rule priority, end-of-input
+# accepts and the interval search; then the inputs it must refuse.
+REGULAR_SPAN_DFA_EMITTER_TEST_DIR = runtime/regular-span-dfa-emitter
+.PHONY: test-regular-span-dfa-emitter-v1
+test-regular-span-dfa-emitter-v1: \
+		$(REGULAR_SPAN_DFA_EMITTER_V1) \
+		tests/regular_span_dfa_emitter/make_fixtures.py \
+		tests/regular_span_dfa_emitter/check_emitted.c
+	@set -eu; d=$(REGULAR_SPAN_DFA_EMITTER_TEST_DIR); emit=$(REGULAR_SPAN_DFA_EMITTER_V1); \
+	mkdir -p $$d; \
+	python3 tests/regular_span_dfa_emitter/make_fixtures.py $$d; \
+	$$emit $$d/keywords.nfa $$d/kw.h --prefix kw --tag-names "$$(cat $$d/keywords.names)"; \
+	$$emit $$d/bytes.nfa $$d/by.h --prefix by --alphabet bytes --tag-names "$$(cat $$d/bytes.names)"; \
+	$(CC) -O2 -std=c11 -Wall -Wextra -Werror -I$$d tests/regular_span_dfa_emitter/check_emitted.c -o $$d/check_emitted; \
+	$$d/check_emitted $$d/keywords.txt; \
+	refused() { code=$$1; text=$$2; shift 2; \
+		status=0; "$$@" 2>$$d/refusal.txt || status=$$?; \
+		if [ $$status -ne $$code ] || { [ -n "$$text" ] && ! grep -qF -- "$$text" $$d/refusal.txt; }; then \
+			echo "FAIL: wanted exit $$code ($$text), got $$status: $$*"; cat $$d/refusal.txt; exit 1; \
+		fi; }; \
+	refused 1 "a byte scanner's edge reaches 969" $$emit $$d/keywords.nfa $$d/refused.h --alphabet bytes; \
+	refused 1 "DFA emission failed" $$emit $$d/bad_tag.nfa $$d/refused.h; \
+	refused 1 "gives 2 nonempty names for 4 tags" $$emit $$d/bytes.nfa $$d/refused.h --tag-names a,b; \
+	refused 1 "are both named a_b" $$emit $$d/bytes.nfa $$d/refused.h --tag-names "a-b,a.b,c,d"; \
+	refused 2 "" $$emit $$d/bytes.nfa $$d/refused.h --prefix 9by; \
+	refused 2 "" $$emit $$d/bytes.nfa $$d/refused.h --alphabet words; \
+	test ! -e $$d/refused.h || { echo "FAIL: a refused emission left output"; exit 1; }; \
+	echo "regular-span DFA emitter: 6 refusals as wanted"
 
 test-gslt2parse-regular-span-dfa-v1-matrix: \
 		test-gslt2parse-regular-span-dfa-v1-native \
@@ -43164,7 +43220,7 @@ test-language-def-contextual-runner-v1: \
 
 # Offline predictive compilation and C-only deterministic source embedding.
 # Generated artifacts stay under runtime/generated and are never checked in.
-$(JSON_DFA_EMITTER_V1): tools/emit_regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.h src/lib_parse_native_grammar.c src/lib_parse_native_grammar.h
+$(REGULAR_SPAN_DFA_EMITTER_V1): tools/emit_regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.h src/lib_parse_native_grammar.c src/lib_parse_native_grammar.h
 	@mkdir -p $(dir $@)
 	$(CC) -O2 -std=c11 -Wall -Werror -ffunction-sections -fdata-sections -Isrc -Iexperiments/gslt2parse_foundation/native tools/emit_regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c src/lib_parse_native_grammar.c -Wl,--gc-sections -o $@
 
@@ -43172,8 +43228,8 @@ $(PARSER_PREDICTIVE_ANALYZER_V1): tools/analyze_parser_predictive_v1.c src/lib_p
 	@mkdir -p $(dir $@)
 	$(CC) -O2 -std=c11 -Wall -Werror -ffunction-sections -fdata-sections -Isrc tools/analyze_parser_predictive_v1.c src/lib_parse_native_grammar.c src/gslt_dense_bitset_v1.c src/atom.c -Wl,--gc-sections -o $@
 
-$(JSON_PREDICTIVE_ARTIFACTS_V1) &: tools/json_predictive_v1.py tools/parser_predictive_v1.py tools/parser_artifact_publication_v1.py tools/gslt2parse_schema_v1.py $(PARSER_PREDICTIVE_ANALYZER_V1) $(JSON_DFA_EMITTER_V1) $(JSON_GSLT_LANGUAGE_SOURCE_V1) $(JSON_GSLT_PROFILE_SOURCE_V1) $(JSON_GSLT_VALUE_TARGET_SOURCE_V1) native/json_elaboration_plan_v1.c
-	python3 tools/json_predictive_v1.py --syntax $(JSON_GSLT_LANGUAGE_SOURCE_V1) --profile $(JSON_GSLT_PROFILE_SOURCE_V1) --target $(JSON_GSLT_VALUE_TARGET_SOURCE_V1) --elaboration native/json_elaboration_plan_v1.c --dfa-compiler $(JSON_DFA_EMITTER_V1) --predictive-compiler $(PARSER_PREDICTIVE_ANALYZER_V1) --output $(JSON_GSLT_GENERATED_DIR_V1)
+$(JSON_PREDICTIVE_ARTIFACTS_V1) &: tools/json_predictive_v1.py tools/parser_predictive_v1.py tools/parser_artifact_publication_v1.py tools/gslt2parse_schema_v1.py $(PARSER_PREDICTIVE_ANALYZER_V1) $(REGULAR_SPAN_DFA_EMITTER_V1) $(JSON_GSLT_LANGUAGE_SOURCE_V1) $(JSON_GSLT_PROFILE_SOURCE_V1) $(JSON_GSLT_VALUE_TARGET_SOURCE_V1) native/json_elaboration_plan_v1.c
+	python3 tools/json_predictive_v1.py --syntax $(JSON_GSLT_LANGUAGE_SOURCE_V1) --profile $(JSON_GSLT_PROFILE_SOURCE_V1) --target $(JSON_GSLT_VALUE_TARGET_SOURCE_V1) --elaboration native/json_elaboration_plan_v1.c --dfa-compiler $(REGULAR_SPAN_DFA_EMITTER_V1) --predictive-compiler $(PARSER_PREDICTIVE_ANALYZER_V1) --output $(JSON_GSLT_GENERATED_DIR_V1)
 
 native/json_direct_v1.$(BUILD_OBJ_TAG).o native/json_direct_v1.$(BUILD_OBJ_TAG).stage0.o native/json_direct_v1.$(BUILD_OBJ_TAG).runtime-stats.o: $(JSON_PREDICTIVE_OUTPUTS_V1)
 
@@ -46573,7 +46629,7 @@ qualify-json-gslt-native-forest-exact-v1:
 .PHONY: test-json-gslt-c-only-closure-body
 test-json-gslt-c-only-closure-body: \
 		$(JSON_SOURCE_EMBED_TOOL_V1) \
-		$(JSON_DFA_EMITTER_V1) \
+		$(REGULAR_SPAN_DFA_EMITTER_V1) \
 		$(JSON_PREDICTIVE_ARTIFACTS_V1) \
 		$(JSON_GSLT_EMBEDDED_C_V1) \
 		$(LANGUAGE_DEF_PARSER_PACK_V1_TEST_BIN)
@@ -46584,7 +46640,7 @@ test-json-gslt-c-only-closure-body: \
 		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 ENABLE_RUNTIME_STATS=0 \
 		$(foreach artifact,$(JSON_PREDICTIVE_ARTIFACTS_V1),-o $(artifact)) \
 		$(JSON_SOURCE_EMBED_TOOL_V1) \
-		$(JSON_DFA_EMITTER_V1) \
+		$(REGULAR_SPAN_DFA_EMITTER_V1) \
 		$(JSON_GSLT_EMBEDDED_C_V1) \
 		$(LANGUAGE_DEF_PARSER_PACK_V1_TEST_BIN) > "$$dry"; \
 	if grep -E '(^|[[:space:]/])(python([0-9.]*)?|swipl)([[:space:]]|$$)' \
@@ -46593,7 +46649,7 @@ test-json-gslt-c-only-closure-body: \
 		cat "$$dry" >&2; exit 1; \
 	fi; \
 	if ldd $(JSON_SOURCE_EMBED_TOOL_V1) \
-		$(JSON_DFA_EMITTER_V1) \
+		$(REGULAR_SPAN_DFA_EMITTER_V1) \
 		$(LANGUAGE_DEF_PARSER_PACK_V1_TEST_BIN) 2>/dev/null | \
 		grep -E 'libpython|libswipl|libcurl|libgmp' >/dev/null; then \
 		echo "FAIL: JSON source/compiler closure links an unrelated provider" >&2; \

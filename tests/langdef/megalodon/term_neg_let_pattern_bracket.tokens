@@ -1,0 +1,13 @@
+AXIOM
+(NAM "a")
+COLON
+LET
+LBRACK
+(NAM "x")
+COMMA
+(NAM "y")
+DEQ
+(NAM "z")
+IN
+(NAM "x")
+DOT

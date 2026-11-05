@@ -1,0 +1,6 @@
+OPENCOM
+PARAM
+(NAM "x")
+(STRING "y")
+(NAM "z")
+CLOSECOM
