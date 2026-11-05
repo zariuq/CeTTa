@@ -390,6 +390,23 @@ MgStatus mg_item_check(MgCheck *c, const MgItem *item) {
                    : (mg_fail(c, MG_REFUSED,
                               "the parameter's name is not the identity of this body"),
                       MG_REFUSED);
+        if (realizing) {
+            /* Definitions stay acyclic: a body naming the parameter it would
+             * realize unfolds to that parameter again.  (Its identity is the
+             * name only when the body is the name itself, at its own type
+             * variables: then it is the same object, and nothing unfolds.) */
+            MgFootprint names;
+            mg_footprint_init(&names);
+            bool listed = mg_footprint_add_term(&names, item->body);
+            bool cyclic = listed && mg_footprint_has(&names, item->name, MG_NS_TERM);
+            mg_footprint_free(&names);
+            if (!listed)
+                return mg_fail(c, MG_NOMEM, "allocation"), MG_NOMEM;
+            if (cyclic)
+                return mg_fail(c, MG_REFUSED,
+                               "the body names the parameter it would realize"),
+                       MG_REFUSED;
+        }
         return MG_OK;
     }
     case MG_ITEM_KNOWN:

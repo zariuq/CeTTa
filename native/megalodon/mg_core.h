@@ -765,6 +765,7 @@ bool mg_theory_withdrawn_between(const MgTheory *t, uint64_t after,
 void mg_footprint_init(MgFootprint *f);
 void mg_footprint_free(MgFootprint *f);
 bool mg_footprint_add(MgFootprint *f, uint32_t name, MgNamespace ns);
+bool mg_footprint_has(const MgFootprint *f, uint32_t name, MgNamespace ns);
 bool mg_footprint_union(MgFootprint *dst, const MgFootprint *src);
 /* Agreement of every footprint name, closed under definition bodies and
  * known propositions of the source snapshot, between two snapshots. */

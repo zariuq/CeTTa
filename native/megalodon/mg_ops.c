@@ -1209,6 +1209,19 @@ bool mg_footprint_add(MgFootprint *f, uint32_t name, MgNamespace ns) {
     return true;
 }
 
+bool mg_footprint_has(const MgFootprint *f, uint32_t name, MgNamespace ns) {
+    uint64_t key = ((uint64_t)name << 1) | (uint64_t)ns;
+    uint32_t lo = 0, hi = f->len;
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2u;
+        if (f->items[mid] < key)
+            lo = mid + 1u;
+        else
+            hi = mid;
+    }
+    return lo < f->len && f->items[lo] == key;
+}
+
 bool mg_footprint_union(MgFootprint *dst, const MgFootprint *src) {
     for (uint32_t i = 0; src && i < src->len; ++i)
         if (!mg_footprint_add(dst, (uint32_t)(src->items[i] >> 1),
