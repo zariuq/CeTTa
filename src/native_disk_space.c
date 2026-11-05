@@ -126,27 +126,93 @@ static DiskSpaceCursor *cursor_allocate(CettaDiskBytes prefix,const Index *index
     if (!buffer_copy(&cursor->prefix,prefix) || !indexes_copy(&cursor->indexes,indexes,count)) { cursor_free(cursor);return NULL; }
     cursor->index_count=count;return cursor;
 }
-/* Prefer the last eligible declared projection. This is observable access
- * selection, not a cardinality optimizer. Unknown equality keeps a full scan. */
-static bool cursor_plan(DiskSpaceCursor *cursor,const CettaDiskStoreView *root,Atom *pattern) {
-    unsigned char *value=NULL;size_t size=0;const Index *chosen=NULL;
-    if (!cursor->point && pattern && pattern->kind==ATOM_EXPR) {
-        for (size_t i=0;i<cursor->index_count;i++) {
-            const Index *index=&cursor->indexes[i];
-            if (index->arity==pattern->expr.len && exact_value(pattern->expr.elems[index->position])) chosen=index;
+typedef struct {
+    const Index *index;
+    size_t value_size;
+    CettaDiskBuffer ranges[2];
+    CettaDiskStoreCursor *probes[2];
+    size_t active;
+} PlanCandidate;
+
+static void plan_candidates_free(PlanCandidate *items,size_t count) {
+    if (!items) return;
+    for (size_t i=0;i<count;i++) {
+        for (size_t s=0;s<2;s++) {
+            cetta_disk_store_cursor_close(items[i].probes[s]);
+            cetta_disk_buffer_free(&items[i].ranges[s]);
         }
     }
-    if (chosen) {
-        CettaAtomWireStatus status=cetta_atom_wire_encode_bounded(pattern->expr.elems[chosen->position],cursor->maximum_bytes,&value,&size);
-        if (status==ATOM_WIRE_NOMEM) return false;
-        if (status==ATOM_WIRE_OK) {
-            bool exact=bucket(borrowed(&chosen->prefix),"/exact/",value,size,cetta_disk_store_view_limits(root).key_bytes,&cursor->ranges[0]);
-            if (exact && bucket(borrowed(&chosen->prefix),"/any/",NULL,0,cetta_disk_store_view_limits(root).key_bytes,&cursor->ranges[1])) {
-                free(value);cursor->indexed=true;cursor->streams=2;cursor->arity=chosen->arity;cursor->position=chosen->position;cursor->value_size=size;return true;
+    free(items);
+}
+
+/* Prefer the eligible declared projection with the fewest total candidates
+ * (exact bucket plus any-stream), breaking ties toward the last eligible
+ * declared projection. Unknown equality keeps a full scan. */
+static bool cursor_plan(DiskSpaceCursor *cursor,const CettaDiskStoreView *root,Atom *pattern,
+        SpaceOccurrenceCursorStep *failure) {
+    if (!cursor->point && pattern && pattern->kind==ATOM_EXPR && cursor->index_count) {
+        PlanCandidate *items=calloc(cursor->index_count,sizeof(*items));
+        if (!items) return false;
+        size_t valid=0,key_limit=cetta_disk_store_view_limits(root).key_bytes;
+        for (size_t i=0;i<cursor->index_count;i++) {
+            const Index *index=&cursor->indexes[i];
+            if (index->arity!=pattern->expr.len || !exact_value(pattern->expr.elems[index->position])) continue;
+            unsigned char *value=NULL;size_t size=0;
+            CettaAtomWireStatus status=cetta_atom_wire_encode_bounded(
+                pattern->expr.elems[index->position],cursor->maximum_bytes,&value,&size);
+            if (status==ATOM_WIRE_NOMEM) { plan_candidates_free(items,valid);return false; }
+            if (status==ATOM_WIRE_OK) {
+                CettaDiskBuffer exact_range={0},any_range={0};
+                if (bucket(borrowed(&index->prefix),"/exact/",value,size,key_limit,&exact_range) &&
+                    bucket(borrowed(&index->prefix),"/any/",NULL,0,key_limit,&any_range)) {
+                    items[valid++]=(PlanCandidate){
+                        .index=index,.value_size=size,.ranges={exact_range,any_range}
+                    };
+                } else {
+                    cetta_disk_buffer_free(&exact_range);cetta_disk_buffer_free(&any_range);
+                }
             }
-            cetta_disk_buffer_free(&cursor->ranges[0]);cetta_disk_buffer_free(&cursor->ranges[1]);
+            free(value);
         }
-        free(value);
+        if (valid) {
+            size_t winner=valid-1;
+            if (valid>1) {
+                for (size_t j=0;j<valid;j++) {
+                    for (size_t s=0;s<2;s++) {
+                        if (!open_range(root,borrowed(&items[j].ranges[s]),NULL,&items[j].probes[s],failure)) {
+                            plan_candidates_free(items,valid);return false;
+                        }
+                    }
+                }
+                CettaDiskBuffer probe_key={0};bool decided=false;
+                while (!decided) {
+                    for (size_t j=valid;j-->0;) {
+                        CettaDiskStoreBlob blob;CettaDiskStatus status=CETTA_DISK_END;
+                        while (items[j].active<2) {
+                            status=cetta_disk_store_cursor_next(items[j].probes[items[j].active],&probe_key,&blob);
+                            if (status!=CETTA_DISK_END) break;
+                            items[j].active++;
+                        }
+                        if (status==CETTA_DISK_END) { winner=j;decided=true;break; }
+                        if (status!=CETTA_DISK_OK) {
+                            cetta_disk_buffer_free(&probe_key);plan_candidates_free(items,valid);
+                            if (failure)
+                                *failure=status==CETTA_DISK_NOMEM || status==CETTA_DISK_LIMIT
+                                    ? SPACE_OCCURRENCE_CURSOR_CAPACITY : SPACE_OCCURRENCE_CURSOR_INCOMPLETE;
+                            return false;
+                        }
+                    }
+                }
+                cetta_disk_buffer_free(&probe_key);
+            }
+            const Index *chosen=items[winner].index;
+            cursor->ranges[0]=items[winner].ranges[0];cursor->ranges[1]=items[winner].ranges[1];
+            items[winner].ranges[0]=(CettaDiskBuffer){0};items[winner].ranges[1]=(CettaDiskBuffer){0};
+            cursor->indexed=true;cursor->streams=2;cursor->arity=chosen->arity;
+            cursor->position=chosen->position;cursor->value_size=items[winner].value_size;
+            plan_candidates_free(items,valid);return true;
+        }
+        plan_candidates_free(items,valid);
     }
     cursor->streams=1;return buffer_copy(&cursor->ranges[0],borrowed(&cursor->prefix));
 }
@@ -155,7 +221,7 @@ static bool cursor_new(const CettaDiskStoreView *root,CettaDiskBytes prefix,cons
         bool point,void **out,SpaceOccurrenceCursorStep *failure) {
     *out=NULL;DiskSpaceCursor *cursor=cursor_allocate(prefix,indexes,count,epoch,expected,statistics,maximum_bytes);
     if (cursor) cursor->point=point;
-    if (!cursor || !cursor_plan(cursor,root,pattern)) { cursor_free(cursor);return false; }
+    if (!cursor || !cursor_plan(cursor,root,pattern,failure)) { cursor_free(cursor);return false; }
     for (size_t i=0;i<cursor->streams;i++)
         if (!open_range(root,borrowed(&cursor->ranges[i]),NULL,&cursor->disks[i],failure)) { cursor_free(cursor);return false; }
     *out=cursor;return true;

@@ -221,6 +221,22 @@ def main():
             results.append(dict(case='RemoveCostSteps', steps=proxy.steps))
         finally:
             server.stop()
+        # Ground remove with an earlier-declared narrow index and a later-declared
+        # wide index must select the narrow bucket rather than the 400-row bucket.
+        directory = root / 'ground-remove-cost'
+        directory.mkdir(mode=0o700)
+        server = server_for(args.worker.resolve(), directory, directory / 'store')
+        try:
+            server.start()
+            proxy = ProposalProxy(directory / 'count.sock', server.path, 'count')
+            results.append(invoke(args.binary.resolve(), directory,
+                                  'GroundRemoveCost ' + json.dumps(str(proxy.path)),
+                                  'REMOTE_GROUND_REMOVE_COST_OK'))
+            proxy.join()
+            assert proxy.steps < 40, ('ground removal selected wide later-declared index', proxy.steps)
+            results.append(dict(case='GroundRemoveCostSteps', steps=proxy.steps))
+        finally:
+            server.stop()
         # k remove+add pairs in one transaction: work per pair must not grow with k (k=20 vs k=200).
         own_edit_steps = {}
         for k in (20, 200):
