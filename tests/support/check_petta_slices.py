@@ -2,7 +2,7 @@
 """Check that a PeTTa document read a few forms at a time answers as one read
 whole, and that reading it in slices keeps the load's memory flat.
 
-usage: check_petta_slices.py FORMS PROGRAM...
+usage: check_petta_slices.py FORMS PROGRAM... [--answers-only]
 
 Each PROGRAM (with PROGRAM's .expected beside it) runs with its slices
 forced to 3 forms, and its answers must agree with the expected ones as
@@ -58,7 +58,11 @@ def document(path, facts):
 
 
 def main():
-    forms, programs = int(sys.argv[1]), sys.argv[2:]
+    arguments = sys.argv[1:]
+    answers_only = arguments[-1:] == ['--answers-only']
+    if answers_only:
+        arguments = arguments[:-1]
+    forms, programs = int(arguments[0]), arguments[1:]
     sliced = {'CETTA_PETTA_SLICE_BYTES': '1', 'CETTA_PETTA_SLICE_FORMS': '3'}
     for program in programs:
         run = cetta([program], sliced)
@@ -89,7 +93,20 @@ def main():
                           ('slices', {'CETTA_PETTA_SLICE_BYTES': '1',
                                       'CETTA_PETTA_SLICE_FORMS':
                                       str(max(1, forms // 4))})):
-            growth[mode] = peak_kib(large, env) - peak_kib(small, env)
+            if answers_only:
+                for path, count in ((small, forms), (large, 4 * forms)):
+                    run = cetta([path], env)
+                    if run.returncode != 0 or run.stdout.strip() != str(count):
+                        print(f'FAIL: {mode} document expected {count} facts: '
+                              f'{run.stdout}{run.stderr}')
+                        return 1
+            else:
+                growth[mode] = peak_kib(large, env) - peak_kib(small, env)
+    if answers_only:
+        print(f'PASS: sliced and whole documents preserve answers '
+              f'({len(programs)} programs and both generated sizes); '
+              'RSS is qualified separately on the native executable')
+        return 0
     if growth['whole'] < FLOOR_KIB:
         print(f"FAIL: read whole the peak grew only {growth['whole']} KiB: "
               f"the test measures nothing")

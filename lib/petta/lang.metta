@@ -2,6 +2,7 @@
 ; do not edit.  The PeTTa spelling of the library: the same program with the
 ; HE-only native wrappers spelled as PeTTa calls.
 
+!(import! &self lib_he)
 !(import! &self (library lib_module))
 !(import! &self (library langdef))
 !(import! &self (library system))

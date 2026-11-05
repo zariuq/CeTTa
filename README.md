@@ -97,7 +97,7 @@ CeTTa's HE forks; every HE profile) and `prime@0.0.1`. See
 
 Prime in this tree is very WIP. For active Prime exploration, use
 [`godelclaw/CeTTa`, branch `cetta-ours`](https://github.com/godelclaw/CeTTa/tree/cetta-ours),
-the version used by the Gödelclaw agents. It has its own development and
+which has its own development and
 qualification history; this tree's frozen Prime endpoint does not track it.
 
 `./cetta --list-languages` lists every language of the binary, including the
@@ -247,6 +247,15 @@ Nonstandard PeTTa libraries require an explicit import. For example,
 the string library. `!(import! &self (str json))` loads both libraries in
 order. Importing one library does not open unrelated names.
 
+Packaged PLN libraries use an explicit module specification in PeTTa:
+
+```metta
+!(import! &self (library lib_pln))
+```
+
+In HE, use `!(import! &self lib_pln)`. Follow the import form shown by the
+example for the selected dialect.
+
 | Library | Provides |
 |---|---|
 | `str` | qualified string operations |
@@ -286,9 +295,18 @@ kernel checks and what it leaves to the dialect.
 | Regular development | representative suite in the current build | `make test` |
 | Dialect/profile changes | admission, imports and dialect boundaries | `make test-profiles` |
 | Performance changes | focused benchmark correctness and cost checks | `make bench-light` |
-| Full correctness | before review or merge | `make test-correctness-all test-profiles` |
-| Routine readiness | correctness, sanitizers, capacity and performance regressions | `make main-readiness-routine` |
-| Main readiness | before merging to main or releasing | `make main-readiness-exhaustive` |
+| Candidate readiness | bounded PeTTa/HE/Python checks, reusing unchanged passing evidence | `make main-readiness` |
+| Full correctness | broad correctness and dialect audit | `make test-correctness-all test-profiles` |
+| Broad readiness | correctness, sanitizers, capacity and performance regressions | `make main-readiness-routine` |
+| Exhaustive qualification | frozen release milestones and major runtime changes | `make main-readiness-exhaustive` |
+
+`make main-readiness` has a 20-minute total budget, including incremental builds.
+It stops at the first failure and records passing checks individually. Repeating
+the command reuses those results when source, configuration and executable
+identities still match. A timeout reports **incomplete**, never a pass. It does
+not build wheels or start the exhaustive sanitizer and performance campaigns.
+The [readiness workflow](docs/main_readiness.txt) explains focused fixes,
+evidence reuse and the stronger release qualification boundary.
 
 `make test` runs the checked suite of the current build configuration; on the
 bridge builds it includes the bridge regressions. It does not switch `BUILD=`
@@ -324,7 +342,7 @@ For changes to conditional answers and delayed goals, run
 These checks cover whole-packet validation, wakeup multiplicity and shared
 binding-history rollback.
 
-Readiness needs `METTAPEDIA_ROOT` pointing to the Lean project, and the frozen
+The broad and exhaustive tiers need `METTAPEDIA_ROOT` pointing to the Lean project, and the frozen
 consolidation baseline's `CETTA_CONSOLIDATION_BASELINE_RECEIPT` and
 `CETTA_CONSOLIDATION_BASELINE_SHA256` (the receipt's digest). First run
 `make test-execution-theory` to build the maintained execution-model audit and
@@ -359,10 +377,38 @@ make doctor-bridge PATHMAP_REPO_DIR=/path/to/PathMap MORK_REPO_DIR=/path/to/MORK
 make BUILD=main    PATHMAP_REPO_DIR=/path/to/PathMap MORK_REPO_DIR=/path/to/MORK
 ```
 
-The expected upstreams are
-[Adam-Vandervorst/PathMap](https://github.com/Adam-Vandervorst/PathMap)
-`master` and [trueagi-io/MORK](https://github.com/trueagi-io/MORK) `main`. The
-bridge builds give `(new-space pathmap)` counted-key storage: keys are
+The bridge lockfile is qualified with these dependency revisions:
+
+| Dependency | Revision |
+|---|---|
+| [MORK](https://github.com/trueagi-io/MORK) | `ed57c6716d8c510296fb5fbb8be6fbfe2df241d7` |
+| [PathMap](https://github.com/Adam-Vandervorst/PathMap) | `ef0259152867ece8e85888acc49c238f264a0330` |
+
+For fresh sibling dependency checkouts:
+
+```bash
+git clone https://github.com/trueagi-io/MORK.git ../MORK
+git -C ../MORK checkout --detach ed57c6716d8c510296fb5fbb8be6fbfe2df241d7
+git clone https://github.com/Adam-Vandervorst/PathMap.git ../PathMap
+git -C ../PathMap checkout --detach ef0259152867ece8e85888acc49c238f264a0330
+make BUILD=mork
+```
+
+Use these revisions with the checked-in Cargo lockfile. A newer upstream head
+can require dependency updates and its own bridge qualification.
+
+The standalone MORK command-line tool, used by the comparison benchmarks,
+is built separately with nightly Rust:
+
+```bash
+(cd ../MORK && cargo +nightly build --release -p mork)
+```
+
+This lets Cargo refresh MORK's local lockfile when its path dependencies have
+changed. After resolution, adding `--locked` verifies that the resolved build
+needs no further lock update. CeTTa's bridge uses its own qualified lockfile.
+
+The bridge builds give `(new-space pathmap)` counted-key storage: keys are
 `atom_bytes || count_bytes`, which keeps multiset semantics under PathMap's
 structural matching (`specs/pathmap_counted_space_design.txt`). The first
 bridge build compiles the Rust crates and can take a few minutes. See
@@ -470,8 +516,9 @@ expected-observation policy. Add a small regression with an independent
 expected result, then run its affected Makefile target and the current build's
 regular suite. Use the broader lanes in the Tests table as the change requires.
 Preserve duplicate answers, variable sharing and declared ordering; an equal answer
-count alone is insufficient. Run the full readiness campaign on a frozen
-candidate before release.
+count alone is insufficient. Run the bounded candidate check once the fixes
+settle. Schedule the broader audits for the affected subsystems and frozen
+release milestones; a small follow-up fix does not restart every campaign.
 
 Generated code lives under `src/generated/` and `runtime/generated/`. Change
 its owning input or generator under `lib/`, `langdef/` or `tools/`, and let the

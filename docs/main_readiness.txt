@@ -1,0 +1,69 @@
+CeTTa readiness workflow
+=======================
+
+Use a bounded check for everyday candidate readiness:
+
+    make main-readiness
+
+The default 20-minute total includes builds. It runs the selected CLI build,
+the ordinary development suite, PeTTa corrected-stable observations, HE
+evaluated-value and guarded-equation checks, worker/session lifetime and CLI
+diagnostics controls, then builds the local Python extension and runs its tests.
+CLI builds use the current BUILD selection (python by default). Python tests
+exercise the standalone core extension separately. NumPy tests need the optional
+NumPy dependency; inspect reported skips before making numerical-support claims.
+
+Inspect the plan without building anything or requiring proof repositories:
+
+    make main-readiness-plan
+
+Set the budget or CLI build explicitly when needed:
+
+    make BUILD=core main-readiness MAIN_READINESS_MINUTES=15
+
+A timeout or source edit during testing reports INCOMPLETE and exits nonzero.
+Child processes are stopped, with a short cleanup grace period. Logs and the
+latest summary are in runtime/main-readiness/candidate/. Output shows each
+check's log location instead of streaming thousands of compiler lines.
+
+During a repair
+---------------
+
+Run the failing target and its discriminating regression controls, not the
+whole release campaign after every edit. For example:
+
+    python3 scripts/cetta_main_readiness.py --target test-worker-resource-publication
+
+Repeat --target for several related targets. This is labelled FOCUSED, even if
+every selected check passes; it does not qualify the whole candidate. Once the
+fixes settle, run make main-readiness once.
+
+Each passing check has its own saved receipt and verified log digest. A later
+failure does not discard earlier passing evidence. Unchanged receipts are
+reused automatically; --fresh explicitly reruns them. Runtime, library, test,
+build and adapter source changes invalidate the candidate evidence. Changes
+only to prose or Git commit history do not. Incremental builds are always
+invoked, and executable identities are checked before reusing test receipts.
+The cache is local to this checkout and does not certify another machine.
+
+Stronger qualification
+----------------------
+
+Candidate readiness means the bounded PeTTa/HE/Python checks passed in the
+recorded build. It does not assert every dialect, platform, resource-failure
+path, proof correspondence or performance contract has been qualified.
+
+Ownership and concurrency changes require the affected sanitizer and threading
+controls. Language changes require the affected contract/reference checks.
+Performance claims require their correctness controls and paired measurements.
+Packaging changes require installed-package checks; rebuild distribution wheels
+once from the final source when preparing those artifacts, not after every CLI
+fix. Preserve evidence and state exactly which source and platform it covers.
+
+The existing main-readiness-routine and main-readiness-exhaustive targets retain
+their broad qualification contracts and evidence formats. Despite its historical
+name, routine is a large campaign including full correctness and sanitizers.
+Use these for scheduled audits, major runtime changes and frozen release
+milestones. Keep failures actionable: repair the owning subsystem, run its
+focused controls, then repeat the relevant qualification boundary. The bounded
+candidate check never substitutes a green label for an unfinished broad audit.

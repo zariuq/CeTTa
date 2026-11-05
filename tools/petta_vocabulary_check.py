@@ -26,21 +26,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from library_spelling import Symbol, read_forms  # noqa: E402
-
-
-def read_vocabulary(path: Path) -> tuple[set, set]:
-    """Real PeTTa's functions and forms, and the heads lib_he defines."""
-    core, lib_he, section = set(), set(), None
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("["):
-            section = line
-            continue
-        (lib_he if section == "[lib_he]" else core).add(line)
-    return core, lib_he
+from library_spelling import Symbol, read_forms, read_vocabulary  # noqa: E402
 
 
 # CeTTa evaluator forms that real PeTTa's translator does not have: HE's

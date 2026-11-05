@@ -22,8 +22,8 @@
 ;   - Audit output with $covered (what we found) and $missing (what we lack)
 ;   - Difference between an entity with strong evidence and one with weak
 ;
-; Run:  cd /home/aimama/aihub/hyperon/CeTTa
-;       ./cetta examples/intensional_weighted_max_demo.metta
+; From the repository root:
+;   ./cetta --lang he examples/intensional_weighted_max_demo.metta
 ; ============================================================================
 
 !(import! &self ../lib/lib_wmpln)
@@ -123,3 +123,14 @@
 !(println! "    sightings (different stamps per property), no overlap")
 !(println! "    correction fires --- evidence accumulates monotonically.")
 !(println! "==========================================================")
+
+; Check the computed answers as well as the printed explanation.
+!(assertEqual
+   (let (stv $alice $ca) (alice-careful-stv)
+     (let (stv $bob $cb) (bob-careful-stv) (> $alice $bob)))
+   True)
+!(assertEqual
+   (let $covered (ResultCovered (alice-careful-audit)) (size-atom $covered))
+   4)
+!(assertEqual (ResultMissing (alice-careful-audit)) ())
+!(assertEqual (ResultMissing (bob-careful-audit)) (asks-for-clarification))
