@@ -225,3 +225,11 @@
 (= (loose-size (LooseBox $x)) 1)
 !(get-type (LooseBox "w"))
 !(collapse (loose-size (LooseBox "w")))
+
+; Python boolean interchange (qualified separately by test-python-objects,
+; since this fixture also runs without Python): true/false argument values
+; become Python bool, including in legacy py-call. Janus's default atom
+; conversion makes both truthy strings. Quoted strings remain strings.
+; Upstream repair candidate: encode boolean leaves as Janus boolean terms
+; before invocation, recursively in positional and keyword arguments.
+; Decided: boolean round-trip semantics, Zar's review handoff, 2026-11-06.

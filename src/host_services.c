@@ -8,6 +8,21 @@
 
 static _Thread_local CettaHostScope *current;
 
+void cetta_host_foreign_enter(CettaHostForeignScope *scope) {
+    *scope = (CettaHostForeignScope){0};
+    if (current && current->services.foreign) {
+        scope->context = current->services.context;
+        scope->notify = current->services.foreign;
+        scope->notify(scope->context, true);
+    }
+}
+void cetta_host_foreign_leave(CettaHostForeignScope *scope) {
+    if (scope->notify) {
+        scope->notify(scope->context, false);
+        scope->notify = NULL;
+    }
+}
+
 void cetta_host_scope_enter(CettaHostScope *scope, const CettaHostServices *services) {
     *scope = (CettaHostScope){.previous = current, .services = services ? *services : (CettaHostServices){0}};
     current = scope;

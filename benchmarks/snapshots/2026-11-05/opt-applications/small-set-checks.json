@@ -1,0 +1,460 @@
+[
+  {
+    "case": "transitive_small",
+    "family": "transitive",
+    "arguments": [
+      12,
+      35
+    ],
+    "engine": "mork",
+    "trial": 0,
+    "status": "pass",
+    "counts": [
+      57,
+      21
+    ],
+    "reference_counts": [
+      57,
+      21
+    ],
+    "complete_set_compared": true,
+    "observed_distinct_rows": 78,
+    "wall": 0.003383914940059185,
+    "rss_kib": 6560,
+    "rc": 0,
+    "timed_out": false,
+    "execution_ms": 0,
+    "steps": 2
+  },
+  {
+    "case": "transitive_small",
+    "family": "transitive",
+    "arguments": [
+      12,
+      35
+    ],
+    "engine": "cetta",
+    "trial": 0,
+    "status": "pass",
+    "counts": [
+      57,
+      21
+    ],
+    "reference_counts": [
+      57,
+      21
+    ],
+    "complete_set_compared": true,
+    "observed_distinct_rows": 78,
+    "wall": 0.005238639190793037,
+    "rss_kib": 14696,
+    "rc": 0,
+    "timed_out": false
+  },
+  {
+    "case": "clique_small",
+    "family": "clique",
+    "arguments": [
+      9,
+      24,
+      5
+    ],
+    "engine": "mork",
+    "trial": 0,
+    "status": "pass",
+    "counts": [
+      1
+    ],
+    "reference_counts": [
+      1
+    ],
+    "complete_set_compared": true,
+    "observed_distinct_rows": 1,
+    "wall": 0.004053652985021472,
+    "rss_kib": 6592,
+    "rc": 0,
+    "timed_out": false,
+    "execution_ms": 0,
+    "steps": 1
+  },
+  {
+    "case": "clique_small",
+    "family": "clique",
+    "arguments": [
+      9,
+      24,
+      5
+    ],
+    "engine": "cetta",
+    "trial": 0,
+    "status": "pass",
+    "counts": [
+      1
+    ],
+    "reference_counts": [
+      1
+    ],
+    "complete_set_compared": true,
+    "observed_distinct_rows": 1,
+    "wall": 0.005345959914848208,
+    "rss_kib": 14832,
+    "rc": 0,
+    "timed_out": false
+  },
+  {
+    "case": "oddeven_small",
+    "family": "odd_even_sort",
+    "arguments": [
+      8
+    ],
+    "engine": "mork",
+    "trial": 0,
+    "status": "pass",
+    "counts": [
+      8
+    ],
+    "reference_counts": [
+      8
+    ],
+    "complete_set_compared": true,
+    "observed_distinct_rows": 8,
+    "wall": 0.0030822709668427706,
+    "rss_kib": 6596,
+    "rc": 0,
+    "timed_out": false,
+    "execution_ms": 0,
+    "steps": 17
+  },
+  {
+    "case": "oddeven_small",
+    "family": "odd_even_sort",
+    "arguments": [
+      8
+    ],
+    "engine": "cetta",
+    "trial": 0,
+    "status": "pass",
+    "counts": [
+      8
+    ],
+    "reference_counts": [
+      8
+    ],
+    "complete_set_compared": true,
+    "observed_distinct_rows": 8,
+    "wall": 0.004045702982693911,
+    "rss_kib": 14440,
+    "rc": 0,
+    "timed_out": false
+  },
+  {
+    "case": "bc_small",
+    "family": "backward_chain",
+    "arguments": [
+      5
+    ],
+    "engine": "mork",
+    "trial": 0,
+    "status": "pass",
+    "counts": [
+      5
+    ],
+    "reference_counts": [
+      5
+    ],
+    "complete_set_compared": true,
+    "observed_distinct_rows": 5,
+    "wall": 0.00431131711229682,
+    "rss_kib": 6528,
+    "rc": 0,
+    "timed_out": false,
+    "execution_ms": 2,
+    "steps": 32
+  },
+  {
+    "case": "bc_small",
+    "family": "backward_chain",
+    "arguments": [
+      5
+    ],
+    "engine": "cetta",
+    "trial": 0,
+    "status": "pass",
+    "counts": [
+      5
+    ],
+    "reference_counts": [
+      5
+    ],
+    "complete_set_compared": true,
+    "observed_distinct_rows": 5,
+    "wall": 0.005780586041510105,
+    "rss_kib": 14316,
+    "rc": 0,
+    "timed_out": false
+  },
+  {
+    "case": "hexlife_small",
+    "family": "hexlife",
+    "arguments": [
+      6,
+      10,
+      3
+    ],
+    "engine": "mork",
+    "trial": 0,
+    "status": "pass",
+    "counts": [
+      5
+    ],
+    "reference_counts": [
+      5
+    ],
+    "complete_set_compared": true,
+    "observed_distinct_rows": 5,
+    "wall": 0.05741221597418189,
+    "rss_kib": 6656,
+    "rc": 0,
+    "timed_out": false,
+    "execution_ms": 54,
+    "steps": 19
+  },
+  {
+    "case": "hexlife_small",
+    "family": "hexlife",
+    "arguments": [
+      6,
+      10,
+      3
+    ],
+    "engine": "cetta",
+    "trial": 0,
+    "status": "pass",
+    "counts": [
+      5
+    ],
+    "reference_counts": [
+      5
+    ],
+    "complete_set_compared": true,
+    "observed_distinct_rows": 5,
+    "wall": 0.005767906084656715,
+    "rss_kib": 14656,
+    "rc": 0,
+    "timed_out": false
+  },
+  {
+    "case": "ancestry_small",
+    "family": "ancestry",
+    "arguments": [
+      20,
+      8,
+      4
+    ],
+    "engine": "mork",
+    "trial": 0,
+    "status": "pass",
+    "counts": [
+      36,
+      48,
+      27
+    ],
+    "reference_counts": [
+      36,
+      48,
+      27
+    ],
+    "complete_set_compared": true,
+    "observed_distinct_rows": 111,
+    "wall": 0.003977112006396055,
+    "rss_kib": 6604,
+    "rc": 0,
+    "timed_out": false,
+    "execution_ms": 0,
+    "steps": 9
+  },
+  {
+    "case": "ancestry_small",
+    "family": "ancestry",
+    "arguments": [
+      20,
+      8,
+      4
+    ],
+    "engine": "cetta",
+    "trial": 0,
+    "status": "pass",
+    "counts": [
+      36,
+      48,
+      27
+    ],
+    "reference_counts": [
+      36,
+      48,
+      27
+    ],
+    "complete_set_compared": true,
+    "observed_distinct_rows": 111,
+    "wall": 0.005147118121385574,
+    "rss_kib": 14944,
+    "rc": 0,
+    "timed_out": false
+  },
+  {
+    "case": "reach_small",
+    "family": "reach_paths",
+    "arguments": [
+      12,
+      2
+    ],
+    "engine": "mork",
+    "trial": 0,
+    "status": "pass",
+    "counts": [
+      10,
+      45,
+      10
+    ],
+    "reference_counts": [
+      10,
+      45,
+      10
+    ],
+    "complete_set_compared": true,
+    "observed_distinct_rows": 65,
+    "wall": 0.00465053110383451,
+    "rss_kib": 6724,
+    "rc": 0,
+    "timed_out": false,
+    "execution_ms": 2,
+    "steps": 7
+  },
+  {
+    "case": "reach_small",
+    "family": "reach_paths",
+    "arguments": [
+      12,
+      2
+    ],
+    "engine": "cetta",
+    "trial": 0,
+    "status": "pass",
+    "counts": [
+      10,
+      45,
+      10
+    ],
+    "reference_counts": [
+      10,
+      45,
+      10
+    ],
+    "complete_set_compared": true,
+    "observed_distinct_rows": 65,
+    "wall": 0.0061074302066117525,
+    "rss_kib": 15028,
+    "rc": 0,
+    "timed_out": false
+  },
+  {
+    "case": "counter_small",
+    "family": "counter_machine",
+    "arguments": [
+      3
+    ],
+    "engine": "mork",
+    "trial": 0,
+    "status": "pass",
+    "counts": [
+      180,
+      1
+    ],
+    "reference_counts": [
+      180,
+      1
+    ],
+    "complete_set_compared": true,
+    "observed_distinct_rows": 181,
+    "wall": 0.016240543918684125,
+    "rss_kib": 7028,
+    "rc": 0,
+    "timed_out": false,
+    "execution_ms": 13,
+    "steps": 151
+  },
+  {
+    "case": "counter_small",
+    "family": "counter_machine",
+    "arguments": [
+      3
+    ],
+    "engine": "cetta",
+    "trial": 0,
+    "status": "pass",
+    "counts": [
+      180,
+      1
+    ],
+    "reference_counts": [
+      180,
+      1
+    ],
+    "complete_set_compared": true,
+    "observed_distinct_rows": 181,
+    "wall": 0.008014616090804338,
+    "rss_kib": 15744,
+    "rc": 0,
+    "timed_out": false
+  },
+  {
+    "case": "pc_small",
+    "family": "process_calculus",
+    "arguments": [
+      30,
+      4,
+      4
+    ],
+    "engine": "mork",
+    "trial": 0,
+    "status": "pass",
+    "counts": [
+      20
+    ],
+    "reference_counts": [
+      20
+    ],
+    "complete_set_compared": true,
+    "observed_distinct_rows": 20,
+    "wall": 0.005636584013700485,
+    "rss_kib": 6480,
+    "rc": 0,
+    "timed_out": false,
+    "execution_ms": 1,
+    "steps": 61
+  },
+  {
+    "case": "pc_small",
+    "family": "process_calculus",
+    "arguments": [
+      30,
+      4,
+      4
+    ],
+    "engine": "cetta",
+    "trial": 0,
+    "status": "pass",
+    "counts": [
+      20
+    ],
+    "reference_counts": [
+      20
+    ],
+    "complete_set_compared": true,
+    "observed_distinct_rows": 20,
+    "wall": 0.0047692430671304464,
+    "rss_kib": 14932,
+    "rc": 0,
+    "timed_out": false
+  }
+]

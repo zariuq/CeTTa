@@ -2207,6 +2207,17 @@ bool eval_current_builtin_allowed(const char *name) {
              g_library_context->active_mask, name));
 }
 
+bool eval_current_python_object_head(SymbolId head) {
+    if (!g_library_context) return false;
+    const char *name = symbol_bytes(g_symbols, head);
+    if (name && name[0] == '&') {
+        Atom reference = {.kind = ATOM_SYMBOL, .sym_id = head};
+        return cetta_foreign_object_provider_callable(NULL, &reference);
+    }
+    return g_library_context && cetta_foreign_object_head(
+        g_library_context->foreign_runtime, name);
+}
+
 bool eval_current_pattern_module_enabled(void) {
     return cetta_pattern_module_enabled(g_library_context);
 }
@@ -15153,8 +15164,10 @@ static void hyperpose_storage_owner_release(void *opaque) {
     pthread_mutex_unlock(&g_hyperpose_descriptor_mutex);
     for (CettaCount i = 0u; i < owner->owned_spaces.len; i++) {
         HyperposeOwnedSpace owned = owner->owned_spaces.items[i];
-        if (!owned.space)
+        if (!owned.space) {
+            petta_program_lifetime_release(owned.petta_program);
             continue;
+        }
         void *base_hold = space_hold_detach(owned.space);
         if (owned.petta_program)
             petta_program_forget_space(owned.petta_program, owned.space);
@@ -15163,6 +15176,7 @@ static void hyperpose_storage_owner_release(void *opaque) {
             !arena_owns_ptr(&owner->eval_arena, owned.space))
             free(owned.space);
         space_lifetime_unpin(base_hold);
+        petta_program_lifetime_release(owned.petta_program);
     }
     free(owner->owned_spaces.items);
     TempSpaceSet *sets[] = {&owner->made_spaces, &owner->listed_spaces,
@@ -15170,8 +15184,10 @@ static void hyperpose_storage_owner_release(void *opaque) {
     for (size_t set = 0u; set < sizeof(sets) / sizeof(sets[0]); set++) {
         for (CettaCount i = 0u; i < sets[set]->len; i++) {
             EvalTrackedSpace tracked = sets[set]->items[i];
-            if (!tracked.space)
+            if (!tracked.space) {
+                petta_program_lifetime_release(tracked.petta_program);
                 continue;
+            }
             void *base_hold = space_hold_detach(tracked.space);
             if (tracked.petta_program)
                 petta_program_forget_space(tracked.petta_program, tracked.space);
@@ -15180,6 +15196,7 @@ static void hyperpose_storage_owner_release(void *opaque) {
                 !arena_owns_ptr(&owner->eval_arena, tracked.space))
                 free(tracked.space);
             space_lifetime_unpin(base_hold);
+            petta_program_lifetime_release(tracked.petta_program);
         }
         free(sets[set]->items);
     }
@@ -15397,8 +15414,12 @@ static bool hyperpose_owned_spaces_push(HyperposeOwnedSpaces *spaces,
         spaces->items = next;
         spaces->cap = next_cap;
     }
-    if (!hyperpose_descriptor_note_owner(spaces->owner, GV_SPACE, space))
+    if (petta_program && !petta_program_lifetime_retain(petta_program))
         return false;
+    if (!hyperpose_descriptor_note_owner(spaces->owner, GV_SPACE, space)) {
+        petta_program_lifetime_release(petta_program);
+        return false;
+    }
     spaces->items[spaces->len++] = (HyperposeOwnedSpace){
         .space = space,
         .petta_program = petta_program,
@@ -15413,6 +15434,15 @@ static bool hyperpose_adopt_tracked_spaces(
     TempSpaceSet *sources[] = {&g_made_spaces, &g_listed_spaces, &g_new_space_track};
     TempSpaceSet *targets[] = {&branch->storage->made_spaces,
         &branch->storage->listed_spaces, &branch->storage->legacy_spaces};
+    size_t held_set = 0u;
+    CettaCount held_index = 0u;
+    for (; held_set < sizeof(sources) / sizeof(sources[0]); held_set++) {
+        for (held_index = 0u; held_index < sources[held_set]->len; held_index++) {
+            PettaProgram *program = sources[held_set]->items[held_index].petta_program;
+            if (program && !petta_program_lifetime_retain(program))
+                goto release_programs;
+        }
+    }
     pthread_mutex_lock(&g_space_hold_mutex);
     for (size_t set = 0u; set < sizeof(sources) / sizeof(sources[0]); set++) {
         assert(!targets[set]->items && targets[set]->len == 0u);
@@ -15426,6 +15456,13 @@ static bool hyperpose_adopt_tracked_spaces(
     }
     pthread_mutex_unlock(&g_space_hold_mutex);
     return true;
+release_programs:
+    for (size_t set = 0u; set <= held_set; set++) {
+        CettaCount limit = set == held_set ? held_index : sources[set]->len;
+        for (CettaCount i = 0u; i < limit; i++)
+            petta_program_lifetime_release(sources[set]->items[i].petta_program);
+    }
+    return false;
 }
 
 typedef struct {
@@ -20106,6 +20143,11 @@ static Atom *resolve_registry_refs(Arena *a, Atom *atom) {
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_REGISTRY_RESOLVE_REWRITE);
     }
     return resolved;
+}
+
+Atom *eval_materialize_runtime_value(Space *space, Arena *arena, Atom *value) {
+    Atom *bound = registry_lookup_atom(value);
+    return materialize_runtime_token(space, arena, bound ? bound : value);
 }
 
 typedef struct {
@@ -31220,12 +31262,12 @@ static bool dispatch_foreign_outcomes(Space *s, Arena *a, Atom *head,
                                       Atom **tail_next, Atom **tail_type,
                                       Bindings *tail_env,
                                       OutcomeSet *os) {
-    if (cetta_foreign_provider_callable(head)) {
+    if (cetta_foreign_provider_callable_at(s, head)) {
         CettaInvocation invocation = {.head = binding_value_from_atom(head),
             .supplied = {.atoms = args, .count = nargs}};
         CettaOwnedExecution execution = {0};
         CettaEvalCompletion completion = CETTA_EVAL_COMPLETE;
-        (void)cetta_foreign_provider_open(&invocation, &execution, &completion);
+        (void)cetta_foreign_provider_open(s, &invocation, &execution, &completion);
         while (completion == CETTA_EVAL_COMPLETE && !eval_native_interrupted()) {
             const CettaOwnedReturn *returned = NULL;
             CettaOwnedExecutionStep step = cetta_owned_execution_loan(&execution, &returned);
@@ -31246,11 +31288,17 @@ static bool dispatch_foreign_outcomes(Space *s, Arena *a, Atom *head,
                 break;
             }
             if (outcome.kind == CETTA_CALL_FAILURE) break;
-            /* An explicit provider raise is control in every host dialect.
-             * Error-shaped completed values still use ordinary completion. */
+            /* Python failures follow HE's Error-value convention. The tagged
+             * exception remains available to scopes and the Python adapter. */
             if (outcome.kind == CETTA_CALL_RAISED) {
-                petta_eval_raise(outcome.term);
-                break;
+                Atom *error_value = eval_current_language_id() == CETTA_LANGUAGE_HE
+                    ? cetta_foreign_he_error_value(a, cetta_invocation_materialize(a, &invocation), outcome.term)
+                    : NULL;
+                if (error_value) outcome = cetta_call_completed_value(error_value);
+                else {
+                    petta_eval_raise(outcome.term);
+                    break;
+                }
             }
             Atom *expression = NULL;
             if (!sequence_native_call(s, a, outcome, true, result_type, prefix, os, &expression)) {
@@ -32267,6 +32315,25 @@ static bool petta_named_state_apply(
     Atom *name = bindings_apply_if_vars(
         base, a, call->expr.elems[1]);
     Atom *value_expr = form == PETTA_FORM_GET_STATE ? NULL : call->expr.elems[2];
+    if (form == PETTA_FORM_BIND_STATE) {
+        Atom *candidate = bindings_apply_if_vars(base, a, value_expr);
+        if (cetta_foreign_object_binding_candidate(s, candidate)) {
+            /* The explicitly imported object bridge can name any result value.
+             * PeTTa's ordinary state bindings retain their existing protocol. */
+            if (!name || name->kind != ATOM_SYMBOL) return true;
+            OutcomeSet values;
+            outcome_set_init(&values);
+            eval_for_caller(s, a, NULL, candidate, fuel, base, true, &values);
+            for (CettaCount i = 0; i < values.len; i++) {
+                Atom *value = outcome_atom_materialize(a, &values.items[i]);
+                if (!value) continue;
+                registry_bind_id(g_registry, name->sym_id, eval_store_atom(eval_storage_arena(a), value));
+                outcome_set_add(outcomes, petta_semantics_success_value(a), &values.items[i].env);
+            }
+            outcome_set_free(&values);
+            return true;
+        }
+    }
     /* Extended Space binding borrows the generic host's inert authored-name
      * policy. It does not evaluate a name expression as named state does. */
     if (form == PETTA_FORM_BIND_STATE && value_expr &&
@@ -46008,7 +46075,7 @@ static PettaMachineHostMode petta_eval_machine_classify_host(
         !petta_eval_machine_builtin_allowed(context, head->sym_id)) {
         return PETTA_MACHINE_HOST_NONE;
     }
-    if (cetta_foreign_provider_callable(head))
+    if (cetta_foreign_provider_callable_at(space, head))
         return PETTA_MACHINE_HOST_STRICT_APPLICATION;
     PeTTaForm form = head->kind == ATOM_SYMBOL
         ? petta_semantics_form(head->sym_id)
@@ -56038,6 +56105,13 @@ static bool prepared_pure_eager_entry_arguments_are_values(
         Atom *argument = call->expr.elems[index];
         if (!argument || atom_has_vars(argument))
             return false;
+        /* A source constructor in he-compat still needs evaluation to set
+         * the marks that later program mutations observe. Normal form alone
+         * does not establish that this argument was already evaluated. */
+        if (eval_current_language_id() == CETTA_LANGUAGE_HE &&
+            active_profile_uses_rust_he_compat_semantics() &&
+            argument->kind == ATOM_EXPR && !atom_is_he_evaluated(argument))
+            return false;
         /* HE's completed-value mark is interpretation provenance. An
          * unmarked expression can still be source in he-compat, even after
          * an argument evaluator returned it. */
@@ -58745,6 +58819,7 @@ static void bind_publish_value(Arena *a, Atom *atom, Atom *first,
 #include "eval_he_canonical.inc"
 #include "eval_he_retained.inc"
 #include "eval_work.inc"
+static Atom *eval_petta_host_value_leaf(Arena *, Atom *, void *);
 #include "eval_query.inc"
 
 /* The answer of an operation HE's library defines by an equation whose
@@ -63100,6 +63175,12 @@ petta_lowered_to_shared_form:
             TAIL_REENTER(sequence);
         }
         const char *spec = string_like_atom(expr_arg(atom, 1));
+        Atom *module_spec = expr_arg(atom, 1);
+        bool structured_library = language_id != CETTA_LANGUAGE_PETTA &&
+            module_spec->kind == ATOM_EXPR && module_spec->expr.len == 2u &&
+            atom_is_symbol(module_spec->expr.elems[0], "library");
+        if (structured_library)
+            spec = string_like_atom(module_spec->expr.elems[1]);
         PeTTaLibraryReference library_reference;
         bool has_library_reference =
             language_id == CETTA_LANGUAGE_PETTA &&
@@ -63170,6 +63251,10 @@ petta_lowered_to_shared_form:
                     if (occurrence == UINT32_MAX)
                         break;
                 }
+            } else if (structured_library) {
+                imported = cetta_library_import(g_library_context, spec, dest.space,
+                    a, eval_storage_arena(a), g_registry, fuel, &error);
+                import_result_count = imported ? 1u : 0u;
             } else {
                 Space *module_space = NULL;
                 imported = cetta_library_import_module(

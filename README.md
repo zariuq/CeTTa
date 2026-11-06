@@ -17,10 +17,63 @@ make
 ./cetta -e '!(+ 1 2)'             # one inline PeTTa query
 ```
 
-Each dialect has its own evaluation and typing rules. Start with PeTTa or HE;
-the [execution semantic ledger](docs/native_returns.txt) records the boundaries
+This pre-main branch is a development preview for experimentation and
+contributions. Each dialect has its own evaluation and typing rules.
+Start with PeTTa or HE. The [execution semantic ledger](docs/native_returns.txt)
+records the boundaries
 that integration tests protect. Checked algorithm laws and native qualification
 are separate from formal verification of the C implementation.
+
+## Python embedding (development)
+
+This branch includes a native Python package and a reusable C embedding API.
+Source installation needs CPython 3.11–3.15 with development headers and venv
+support, a C11 compiler, GNU Make 4.3 or newer and GMP development headers.
+From the repository root:
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install .
+```
+
+Use `python -m pip install '.[notebooks]'` for NumPy and Jupyter support.
+
+```python
+from cetta import Engine
+
+with Engine() as engine:              # PeTTa (default)
+    engine.run('(= (double $x) (* $x 2))')
+    assert engine.call('double', 21).to_python() == [42]
+
+with Engine(language="he") as he:     # Hyperon Experimental MeTTa
+    he.run('(= (inc $x) (+ $x 1))')
+    assert he.call('inc', 41).to_python() == [42]
+```
+
+Calls accept values; `eval` executes source. Use `load(path)` for source files
+and `import_(spec)` for MeTTa's `import!` operation. Answers retain their storage
+after the engine closes. PeTTa is the default embedding language; pass
+`language="he"` for Hyperon Experimental MeTTa. Query streams are closable and
+support optional stepping; spaces expose facts and scoped bindings.
+The embedding runtime does not require SWI-Prolog, Rust or C++. Explicit callback
+descriptors support Python functions and generators. Dense NumPy arrays,
+including foreign byte orders, use retained read-only views and explicit copy
+controls. Sparse COO/CSR/CSC component views preserve absent coordinates and
+stored zeros. Linux packages target CPython 3.11–3.15 on glibc and musl,
+for x86_64 and aarch64. The guide records the tested checkpoint and distinguishes
+native from emulated platform checks; physical ARM64 remains unverified.
+
+For C, C++ or Rust hosts, install the standalone C ABI SDK
+(`include/cetta_embed.h`, `libcetta.so.1`, `libcetta.a` and `cetta.pc`):
+
+```bash
+make install-cabi PREFIX="$HOME/.local"
+PKG_CONFIG_PATH="$HOME/.local/lib/pkgconfig" pkg-config --cflags --libs cetta
+```
+
+See the [embedding guide](docs/python_embedding.txt)
+and [introductory notebook](examples/python/getting_started.ipynb).
 
 ## Languages
 
@@ -44,7 +97,7 @@ CeTTa's HE forks; every HE profile) and `prime@0.0.1`. See
 
 Prime in this tree is very WIP. For active Prime exploration, use
 [`godelclaw/CeTTa`, branch `cetta-ours`](https://github.com/godelclaw/CeTTa/tree/cetta-ours),
-the version used by the Gödelclaw agents. It has its own development and
+which has its own development and
 qualification history; this tree's frozen Prime endpoint does not track it.
 
 `./cetta --list-languages` lists every language of the binary, including the
@@ -56,7 +109,7 @@ language's profiles.
 
 For the default build:
 
-- `gcc` or `clang`, `make` and `pkg-config`
+- `gcc` or `clang`, GNU Make 4.3 or newer and `pkg-config`
 - Python 3 development headers and a working `python3-config --embed`
 - GMP development headers for exact big integers; build with
   `make ENABLE_GMP=0` to leave them out
@@ -64,7 +117,7 @@ For the default build:
 On Debian or Ubuntu:
 
 ```bash
-sudo apt install build-essential pkg-config python3-dev libgmp-dev
+sudo apt install build-essential pkg-config python3-dev python3-venv libgmp-dev
 ```
 
 Optional:
@@ -163,14 +216,30 @@ A funded reaction in the rho-calculus:
 ./cetta --lang rhocalc --profile cost examples/rho/cost/vending_machine.rho
 ```
 
-`docs/chaining-tutorial.pdf` builds forward and backward chainers in PeTTa and
-HE and introduces the directional matching of the extended profiles
-(`make test-chaining-tutorial`); `docs/rhocalc.md` is the guided tour of the
-rho-calculus.
+## Tutorials and guides
+
+Run commands from the repository root. Each guide names its dialect and any
+required profile or optional build. Start with the Python notebook or chaining
+tutorial for PeTTa and HE.
+
+| Topic | Start here |
+|---|---|
+| Python getting-started notebook | [`examples/python/getting_started.ipynb`](examples/python/getting_started.ipynb) |
+| Python & C ABI embedding guide | [`docs/python_embedding.txt`](docs/python_embedding.txt) |
+| Forward & backward chaining (PeTTa and HE) | [`docs/chaining-tutorial.pdf`](docs/chaining-tutorial.pdf) and [`examples/chaining/tutorial/`](examples/chaining/tutorial/) (`make test-chaining-tutorial`) |
+| Rho-calculus and resource-accounted reactions | [`docs/rhocalc.md`](docs/rhocalc.md) and [`examples/rho/`](examples/rho/) (`make test-rho-examples`) |
+| MORK, MM2 and PathMap spaces | [`MORK_TUTORIAL.md`](MORK_TUTORIAL.md) (bridge build; HE examples) |
+| Packed dense/sparse tensors & certified bounds | [`docs/tensor_support_v1.txt`](docs/tensor_support_v1.txt) |
+| Random-closure & evidence-ledger diagnosis | [`examples/petta/service_dependency_diagnosis_showcase.metta`](examples/petta/service_dependency_diagnosis_showcase.metta) |
+| PeTTa compatibility and language contracts | [`docs/petta_compatibility.txt`](docs/petta_compatibility.txt) and [`docs/language_versions.txt`](docs/language_versions.txt) |
+
+[`SHOWCASE.md`](SHOWCASE.md) is a historical HE typing experiment, separate
+from these getting-started guides.
 
 ## Libraries
 
-Import a library with `!(import! &self <name>)`. Libraries may supply dialect
+Import a library with `!(import! &self <name>)`, or
+`!(import! &self (library <name>))` for a packaged module. Libraries may supply dialect
 overlays; use examples and contracts for the dialect you selected.
 
 Nonstandard PeTTa libraries require an explicit import. For example,
@@ -178,16 +247,28 @@ Nonstandard PeTTa libraries require an explicit import. For example,
 the string library. `!(import! &self (str json))` loads both libraries in
 order. Importing one library does not open unrelated names.
 
+Packaged PLN libraries use an explicit module specification in PeTTa:
+
+```metta
+!(import! &self (library lib_pln))
+```
+
+In HE, use `!(import! &self lib_pln)`. Follow the import form shown by the
+example for the selected dialect.
+
 | Library | Provides |
 |---|---|
 | `str` | qualified string operations |
 | `re` | regular expressions with a module-authored syntax: compiled and reusable patterns, ordered captures, look-around, Unicode classes, and scalar tries for literal search (`examples/regex_*.metta`) |
 | `fs`, `io` | owned files and directories, streaming text input and output (`docs/filesystem_observations_v1.txt`, `docs/text_preparation_v1.txt`) |
 | `json` | JSON reading and writing |
+| `math` | native numerical operations, including `math:exp`, `math:ln` and base-specific `math:log` (`lib/math.metta`) |
+| `(library tensor)` | packed dense and support-aware sparse (`coo`, `csr`, `csc`) tensors, NumPy/C buffer views, retrieval indices, and opt-in `tensor:dot-bounds` / `tensor:matvec-bounds` error enclosures ([contract](docs/tensor_support_v1.txt)) |
 | `holkernel` | the native HOL Light kernel (`docs/hol_light.txt`) |
 | `mm0kernel` | the native MM0 verifier for MM0 specifications and MMB proofs (`docs/mm0_native.txt`) |
 | `megalodon` | native Megalodon (Mathdata) proof checking |
 | `lib_pln`, `lib_wmpln` | Probabilistic Logic Networks |
+| `lib_random_closure`, `lib_evidence_ledger` | exact rational inference and numerical enclosures for declared probabilistic models; evidence identity and retraction ([PeTTa example](examples/petta/service_dependency_diagnosis_showcase.metta)) |
 | `mork` | HE's MORK helper interface (bridge builds) |
 | `(library lib_mm2)` | PeTTa's reference MORK operations over `&mork` (bridge builds) |
 
@@ -214,9 +295,18 @@ kernel checks and what it leaves to the dialect.
 | Regular development | representative suite in the current build | `make test` |
 | Dialect/profile changes | admission, imports and dialect boundaries | `make test-profiles` |
 | Performance changes | focused benchmark correctness and cost checks | `make bench-light` |
-| Full correctness | before review or merge | `make test-correctness-all test-profiles` |
-| Routine readiness | correctness, sanitizers, capacity and performance regressions | `make main-readiness-routine` |
-| Main readiness | before merging to main or releasing | `make main-readiness-exhaustive` |
+| Candidate readiness | bounded PeTTa/HE/Python checks, reusing unchanged passing evidence | `make main-readiness` |
+| Full correctness | broad correctness and dialect audit | `make test-correctness-all test-profiles` |
+| Broad readiness | correctness, sanitizers, capacity and performance regressions | `make main-readiness-routine` |
+| Exhaustive qualification | frozen release milestones and major runtime changes | `make main-readiness-exhaustive` |
+
+`make main-readiness` has a 20-minute total budget, including incremental builds.
+It stops at the first failure and records passing checks individually. Repeating
+the command reuses those results when source, configuration and executable
+identities still match. A timeout reports **incomplete**, never a pass. It does
+not build wheels or start the exhaustive sanitizer and performance campaigns.
+The [readiness workflow](docs/main_readiness.txt) explains focused fixes,
+evidence reuse and the stronger release qualification boundary.
 
 `make test` runs the checked suite of the current build configuration; on the
 bridge builds it includes the bridge regressions. It does not switch `BUILD=`
@@ -252,7 +342,7 @@ For changes to conditional answers and delayed goals, run
 These checks cover whole-packet validation, wakeup multiplicity and shared
 binding-history rollback.
 
-Readiness needs `METTAPEDIA_ROOT` pointing to the Lean project, and the frozen
+The broad and exhaustive tiers need `METTAPEDIA_ROOT` pointing to the Lean project, and the frozen
 consolidation baseline's `CETTA_CONSOLIDATION_BASELINE_RECEIPT` and
 `CETTA_CONSOLIDATION_BASELINE_SHA256` (the receipt's digest). First run
 `make test-execution-theory` to build the maintained execution-model audit and
@@ -287,13 +377,43 @@ make doctor-bridge PATHMAP_REPO_DIR=/path/to/PathMap MORK_REPO_DIR=/path/to/MORK
 make BUILD=main    PATHMAP_REPO_DIR=/path/to/PathMap MORK_REPO_DIR=/path/to/MORK
 ```
 
-The expected upstreams are
-[Adam-Vandervorst/PathMap](https://github.com/Adam-Vandervorst/PathMap)
-`master` and [trueagi-io/MORK](https://github.com/trueagi-io/MORK) `main`. The
-bridge builds give `(new-space pathmap)` counted-key storage: keys are
+The bridge lockfile is qualified with these dependency revisions:
+
+| Dependency | Revision |
+|---|---|
+| [MORK](https://github.com/trueagi-io/MORK) | `ed57c6716d8c510296fb5fbb8be6fbfe2df241d7` |
+| [PathMap](https://github.com/Adam-Vandervorst/PathMap) | `ef0259152867ece8e85888acc49c238f264a0330` |
+
+For fresh sibling dependency checkouts:
+
+```bash
+git clone https://github.com/trueagi-io/MORK.git ../MORK
+git -C ../MORK checkout --detach ed57c6716d8c510296fb5fbb8be6fbfe2df241d7
+git clone https://github.com/Adam-Vandervorst/PathMap.git ../PathMap
+git -C ../PathMap checkout --detach ef0259152867ece8e85888acc49c238f264a0330
+make BUILD=mork
+```
+
+Use these revisions with the checked-in Cargo lockfile. A newer upstream head
+can require dependency updates and its own bridge qualification.
+
+The standalone MORK command-line tool, used by the comparison benchmarks,
+is built separately with nightly Rust:
+
+```bash
+(cd ../MORK && cargo +nightly build --release -p mork)
+```
+
+This lets Cargo refresh MORK's local lockfile when its path dependencies have
+changed. After resolution, adding `--locked` verifies that the resolved build
+needs no further lock update. CeTTa's bridge uses its own qualified lockfile.
+
+The bridge builds give `(new-space pathmap)` counted-key storage: keys are
 `atom_bytes || count_bytes`, which keeps multiset semantics under PathMap's
 structural matching (`specs/pathmap_counted_space_design.txt`). The first
-bridge build compiles the Rust crates and can take a few minutes.
+bridge build compiles the Rust crates and can take a few minutes. See
+[`MORK_TUTORIAL.md`](MORK_TUTORIAL.md) for a step-by-step tutorial on
+`MorkSpace`, MM2 execution and PathMap spaces.
 
 ## Examples
 
@@ -396,8 +516,9 @@ expected-observation policy. Add a small regression with an independent
 expected result, then run its affected Makefile target and the current build's
 regular suite. Use the broader lanes in the Tests table as the change requires.
 Preserve duplicate answers, variable sharing and declared ordering; an equal answer
-count alone is insufficient. Run the full readiness campaign on a frozen
-candidate before release.
+count alone is insufficient. Run the bounded candidate check once the fixes
+settle. Schedule the broader audits for the affected subsystems and frozen
+release milestones; a small follow-up fix does not restart every campaign.
 
 Generated code lives under `src/generated/` and `runtime/generated/`. Change
 its owning input or generator under `lib/`, `langdef/` or `tools/`, and let the
