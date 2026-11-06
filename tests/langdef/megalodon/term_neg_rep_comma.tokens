@@ -1,0 +1,16 @@
+NOTATION
+(NAM "Repl")
+(NAM "Repl")
+DOT
+AXIOM
+(NAM "a")
+COLON
+LCBRACE
+(NAM "f")
+(NAM "x")
+VBAR
+(NAM "x")
+MEM
+(NAM "y")
+RPAREN
+DOT

@@ -1,0 +1,7 @@
+AXIOM
+(NAM "a")
+COLON
+(NAM "forall")
+(NAM "x")
+(NAM "y")
+DOT

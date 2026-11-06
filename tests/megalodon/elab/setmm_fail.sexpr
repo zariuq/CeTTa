@@ -1,0 +1,2 @@
+(PRIM 0 "wn" "d58762d200971dcc7f1850726d9f2328403127deeba124fc3ba2d2d9f7c3cb8c" (AR (PROP) (PROP)) 1)
+Failure at line 2 char 32: wi is a reserved built-in name for SetMM

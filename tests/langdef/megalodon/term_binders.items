@@ -1,0 +1,8 @@
+(Doc (PostInfixDecl "=" (NaL "eq") 502 InfixNone))
+(Doc (BinderDecl True True "exists" (NaL "ex") (Some (NaL "and"))))
+(Doc (AxDecl "g1" (BiL "forall" "," (List ((List "x" "y") (Some (AscTp (NaL "set"))))) (BiL "forall" "," (List ((List "P") (Some (AscTp (InfoL (InfNam "->") (NaL "set") (NaL "prop")))))) (InfoL (InfNam "->") (ImplopL (NaL "P") (NaL "x")) (ImplopL (NaL "P") (NaL "y")))))))
+(Doc (AxDecl "g2" (BiL "forall" "," (List ((List "x") (Some (AscSet (NaL "X"))))) (BiL "forall" "," (List ((List "y") (Some (AscSubeq (NaL "Y"))))) (InfoL (InfNam "=") (NaL "x") (NaL "y"))))))
+(Doc (AxDecl "g3" (InfoL (InfNam "=") (ParenL (BiL "fun" "=>" (List ((List "x" "y") None)) (NaL "x")) (List)) (ParenL (BiL "fun" "=>" (List ((List "x") (Some (AscTp (NaL "set")))) ((List "y") (Some (AscTp (NaL "set"))))) (NaL "x")) (List)))))
+(Doc (AxDecl "g4" (BiL "exists" "," (List ((List "f") (Some (AscTp (InfoL (InfNam "->") (NaL "set") (NaL "set")))))) (BiL "forall" "," (List ((List "x") None)) (InfoL (InfNam "=") (ImplopL (NaL "f") (NaL "x")) (NaL "x"))))))
+(Doc (AxDecl "g5" (BiL "forall" "," (List ((List "A" "B") (Some (AscTp (NaL "SType"))))) (BiL "forall" "," (List ((List "f") (Some (AscTp (InfoL (InfNam "->") (NaL "A") (NaL "B")))))) (InfoL (InfNam "=") (NaL "f") (NaL "f"))))))
+(Doc (AxDecl "g6" (BiL "fun" "=>" (List ((List "x") (Some (AscTp (NaL "set"))))) (BiL "fun" "=>" (List ((List "P") (Some (AscTp (InfoL (InfNam "->") (NaL "set") (NaL "prop")))))) (ImplopL (NaL "P") (NaL "x"))))))

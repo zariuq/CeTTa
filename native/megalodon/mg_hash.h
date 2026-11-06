@@ -30,6 +30,28 @@ typedef struct {
 
 void mg_sha256(const void *data, size_t len, uint8_t out[32]);
 
+/* hash.ml's combinators. */
+MgHash mg_hash_int32(uint32_t x);
+MgHash mg_hash_pair(const MgHash *x, const MgHash *y);
+MgHash mg_hash_tag(const MgHash *x, uint32_t tag);
+
+/* ser.ml's bit-packed output (seosb): `n` bits of `b`, least significant
+ * first.  Zero-initialize, write, then take the digest, which releases
+ * the buffer. */
+typedef struct {
+    uint8_t *buf;
+    size_t len, cap;
+    uint32_t partial;
+    int bits;
+    bool nomem;
+} MgBits;
+void mg_bits_put(MgBits *w, uint32_t b, int n);
+/* ser.ml seo_varintb; false above 65535 (upstream refuses those). */
+bool mg_bits_varintb(MgBits *w, uint32_t x);
+/* SHA-256 of the bits written, the final partial byte included; false
+ * when memory ran out.  The buffer is released either way. */
+bool mg_bits_digest(MgBits *w, MgHash *out);
+
 void mg_hash_hex(const MgHash *h, char out[65]);
 bool mg_hash_parse(const char *hex, size_t len, MgHash *out);
 
@@ -47,5 +69,9 @@ MgStatus mg_hash_identity(MgCheck *c, MgTm *term, uint32_t levels, bool lam,
 /* Whether `name` is the Megalodon identity of the definition body `body`
  * (a content-addressed name). */
 bool mg_hash_names_definition(MgCheck *c, uint32_t name, MgTp *type, MgTm *body);
+
+/* The SHA extensions' compression equals the portable one on random
+ * blocks (true where the processor has none). */
+bool mg_sha256_selftest(void);
 
 #endif /* CETTA_MEGALODON_HASH_H */

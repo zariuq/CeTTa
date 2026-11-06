@@ -1,0 +1,53 @@
+PREFIX
+(NAM "~")
+(NUM False "700" None None)
+DEQ
+(NAM "not")
+DOT
+POSTFIX
+(NAM "'")
+(NUM False "100" None None)
+DEQ
+(NAM "tag")
+DOT
+POSTFIX
+(NAM "''")
+(NUM False "100" None None)
+DEQ
+(NAM "ctag")
+DOT
+INFIX
+(NAM "+")
+(NUM False "400" None None)
+(NAM "left")
+DEQ
+(NAM "add")
+DOT
+AXIOM
+(NAM "b1")
+COLON
+(NAM "~")
+(NAM "p")
+DOT
+AXIOM
+(NAM "b2")
+COLON
+(NAM "x")
+(NAM "'")
+DOT
+AXIOM
+(NAM "b3")
+COLON
+(NAM "x")
+(NAM "'")
+(NAM "''")
+DOT
+AXIOM
+(NAM "b4")
+COLON
+(NAM "~")
+(NAM "x")
+(NAM "+")
+(NAM "y")
+(NAM "'")
+DOT

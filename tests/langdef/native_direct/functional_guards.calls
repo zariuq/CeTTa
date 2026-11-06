@@ -1,0 +1,9 @@
+Pick:10 A
+Pick:10 (P B)
+Pick:10 B
+Same:110 A A
+Same:110 A B
+Same:110 (P A) (P A)
+Same:110 (P A) (P B)
+Wrap:10 (P A)
+Wrap:10 A

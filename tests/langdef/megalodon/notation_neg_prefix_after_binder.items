@@ -1,0 +1,2 @@
+(Doc (BinderDecl False True "all" (NaL "univ") None))
+(Doc (PrefixDecl "all" (NaL "neg") 400))

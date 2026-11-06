@@ -1,0 +1,2 @@
+(Doc (PostInfixDecl "+" (NaL "add") 360 InfixNone))
+(Doc (PrefixDecl "~" (NaL "not") 700))

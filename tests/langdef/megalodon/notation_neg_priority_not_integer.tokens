@@ -1,0 +1,6 @@
+INFIX
+(NAM "+")
+(NAM "x")
+DEQ
+(NAM "add")
+DOT

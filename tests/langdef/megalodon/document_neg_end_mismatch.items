@@ -1,0 +1,3 @@
+(Doc (Section "A"))
+(Doc (Section "B"))
+(Doc (End "A"))

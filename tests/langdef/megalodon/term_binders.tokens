@@ -1,0 +1,136 @@
+INFIX
+(NAM "=")
+(NUM False "502" None None)
+DEQ
+(NAM "eq")
+DOT
+BINDERPLUS
+(NAM "exists")
+COMMA
+DEQ
+(NAM "ex")
+SEMICOLON
+(NAM "and")
+DOT
+AXIOM
+(NAM "g1")
+COLON
+(NAM "forall")
+(NAM "x")
+(NAM "y")
+COLON
+(NAM "set")
+COMMA
+(NAM "forall")
+(NAM "P")
+COLON
+(NAM "set")
+(NAM "->")
+(NAM "prop")
+COMMA
+(NAM "P")
+(NAM "x")
+(NAM "->")
+(NAM "P")
+(NAM "y")
+DOT
+AXIOM
+(NAM "g2")
+COLON
+(NAM "forall")
+(NAM "x")
+MEM
+(NAM "X")
+COMMA
+(NAM "forall")
+(NAM "y")
+SUBEQ
+(NAM "Y")
+COMMA
+(NAM "x")
+(NAM "=")
+(NAM "y")
+DOT
+AXIOM
+(NAM "g3")
+COLON
+LPAREN
+(NAM "fun")
+(NAM "x")
+(NAM "y")
+DARR
+(NAM "x")
+RPAREN
+(NAM "=")
+LPAREN
+(NAM "fun")
+LPAREN
+(NAM "x")
+COLON
+(NAM "set")
+RPAREN
+LPAREN
+(NAM "y")
+COLON
+(NAM "set")
+RPAREN
+DARR
+(NAM "x")
+RPAREN
+DOT
+AXIOM
+(NAM "g4")
+COLON
+(NAM "exists")
+(NAM "f")
+COLON
+(NAM "set")
+(NAM "->")
+(NAM "set")
+COMMA
+(NAM "forall")
+(NAM "x")
+COMMA
+(NAM "f")
+(NAM "x")
+(NAM "=")
+(NAM "x")
+DOT
+AXIOM
+(NAM "g5")
+COLON
+(NAM "forall")
+(NAM "A")
+(NAM "B")
+COLON
+(NAM "SType")
+COMMA
+(NAM "forall")
+(NAM "f")
+COLON
+(NAM "A")
+(NAM "->")
+(NAM "B")
+COMMA
+(NAM "f")
+(NAM "=")
+(NAM "f")
+DOT
+AXIOM
+(NAM "g6")
+COLON
+(NAM "fun")
+(NAM "x")
+COLON
+(NAM "set")
+DARR
+(NAM "fun")
+(NAM "P")
+COLON
+(NAM "set")
+(NAM "->")
+(NAM "prop")
+DARR
+(NAM "P")
+(NAM "x")
+DOT

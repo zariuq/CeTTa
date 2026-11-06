@@ -1,0 +1,24 @@
+Copy:10 nil
+Copy:10 (cons A (cons B (cons A nil)))
+Even:10 nil
+Even:10 (cons A (cons A nil))
+Even:10 (cons A (cons A (cons A nil)))
+Swap:100 nil
+Swap:100 (cons A nil)
+Swap:100 (cons A (cons B nil))
+Alt:10 (cons A (cons A (cons A nil)))
+Alt:10 (cons A (cons A (cons A (cons A nil))))
+Find:110 (cons A (cons B nil)) B
+Find:110 (cons A (cons A nil)) B
+Look:110 (cons A (cons B nil)) B
+Look:110 (cons A (cons A nil)) B
+HeadOf:10 (cons A (cons B (cons A nil)))
+HeadOf:10 (cons A nil)
+Copy:10 ""
+Copy:10 "abc"
+Even:10 "aa"
+Even:10 "aaa"
+Swap:100 "abc"
+Swap:100 "ab"
+Alt:10 "abcd"
+Alt:10 "abc"

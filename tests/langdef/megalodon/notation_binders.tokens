@@ -1,0 +1,55 @@
+BINDER
+(NAM "\\/_")
+COMMA
+DEQ
+(NAM "famunion")
+DOT
+BINDERPLUS
+(NAM "exists")
+COMMA
+DEQ
+(NAM "ex")
+SEMICOLON
+(NAM "and")
+DOT
+BINDER
+(NAM "lam_")
+DARR
+DEQ
+(NAM "setlam")
+DOT
+AXIOM
+(NAM "c1")
+COLON
+(NAM "\\/_")
+(NAM "x")
+MEM
+(NAM "X")
+COMMA
+(NAM "F")
+(NAM "x")
+DOT
+AXIOM
+(NAM "c2")
+COLON
+(NAM "exists")
+(NAM "x")
+(NAM "y")
+MEM
+(NAM "X")
+COMMA
+(NAM "p")
+(NAM "x")
+(NAM "y")
+DOT
+AXIOM
+(NAM "c3")
+COLON
+(NAM "lam_")
+(NAM "x")
+MEM
+(NAM "X")
+DARR
+(NAM "f")
+(NAM "x")
+DOT

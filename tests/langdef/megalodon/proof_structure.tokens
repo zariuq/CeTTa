@@ -1,0 +1,38 @@
+(THEOREM "Theorem")
+(NAM "t3")
+COLON
+(NAM "p")
+(NAM "/\\")
+(NAM "q")
+DOT
+APPLY
+(NAM "andI")
+DOT
+(NAM "-")
+EXACT
+(NAM "Hp")
+DOT
+(NAM "-")
+APPLY
+(NAM "foo")
+DOT
+(NAM "+")
+EXACT
+(NAM "Ha")
+DOT
+(NAM "+")
+EXACT
+(NAM "Hb")
+DOT
+(NAM "*")
+EXACT
+(NAM "Hc")
+DOT
+(NAM "*")
+LCBRACE
+EXACT
+(NAM "Hd")
+DOT
+RCBRACE
+QED
+DOT

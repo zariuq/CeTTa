@@ -1,0 +1,7 @@
+INFIX
+(NAM "foo")
+(NUM False "500" None None)
+(NAM "right")
+DEQ
+(NAM "f")
+DOT

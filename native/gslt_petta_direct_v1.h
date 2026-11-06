@@ -19,7 +19,10 @@
  * one answer. */
 typedef enum {
     CETTA_GSLT_DIRECT_TARGET_PETTA_V1 = 0,
-    CETTA_GSLT_DIRECT_TARGET_HE_V1 = 1
+    CETTA_GSLT_DIRECT_TARGET_HE_V1 = 1,
+    /* C for a closed entry residual whose modes are all functional
+     * (gslt_native_direct_v1.c), linked natively instead of evaluated. */
+    CETTA_GSLT_DIRECT_TARGET_C_V1 = 2
 } CettaGsltDirectTargetV1;
 
 /* Lower the relation-rule fragment of an ordered GSLT composition directly

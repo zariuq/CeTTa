@@ -1,6 +1,7 @@
 #include "gslt_petta_direct_v1.h"
 
 #include "gslt_composition_v1.h"
+#include "gslt_direct_internal_v1.h"
 
 #include <stdarg.h>
 #include <stdint.h>
@@ -21,29 +22,6 @@ static bool direct_target_is_he_v1(const DirectBufferV1 *program) {
     return program->target == CETTA_GSLT_DIRECT_TARGET_HE_V1;
 }
 
-typedef struct {
-    const char *name;
-    size_t arity;
-} DirectOperatorV1;
-
-typedef struct {
-    DirectOperatorV1 *items;
-    size_t len;
-    size_t cap;
-} DirectOperatorsV1;
-
-typedef struct {
-    const CettaGsltRewriteV1 *source;
-    size_t source_index;
-    Atom *head;
-    Atom *body;
-} DirectRuleV1;
-
-typedef struct {
-    DirectRuleV1 *items;
-    size_t len;
-    size_t cap;
-} DirectRulesV1;
 
 typedef struct {
     const char *relation;
@@ -79,22 +57,6 @@ typedef struct {
     size_t cap;
 } DirectVariablePairsV1;
 
-typedef struct {
-    const char *relation;
-    size_t arity;
-    uint8_t *input_ground;
-    uint8_t *success_ground;
-    uint8_t functional;
-    uint8_t input_heads_disjoint;
-    uint8_t selected;
-    uint8_t admitted;
-} DirectBindingModeV1;
-
-typedef struct {
-    DirectBindingModeV1 *items;
-    size_t len;
-    size_t cap;
-} DirectBindingModesV1;
 
 /* Compile-time completion types inferred from the ordered authored sources.
  * These describe one provider occurrence, not an entire mutable MeTTa space. */
@@ -4608,6 +4570,26 @@ static bool direct_compile_petta_v1(
             error, error_size))
         goto done;
 
+    if (target == CETTA_GSLT_DIRECT_TARGET_C_V1) {
+        if (!closed_entry_residual || admitted_language != NULL ||
+            native_type_packet != NULL) {
+            (void)direct_error_v1(
+                error, error_size,
+                "the C target compiles a closed entry residual only");
+            goto done;
+        }
+        if (!cetta_gslt_render_native_c_v1(
+                &rules, &binding_modes, &operators, entry_modes, entry_mode_count,
+                source_digest_out, &program.bytes, &program.len,
+                error, error_size))
+            goto done;
+        *program_out = program.bytes;
+        *program_len_out = program.len;
+        *rule_count_out = rules.len + target_equations.len;
+        program.bytes = NULL;
+        ok = true;
+        goto done;
+    }
     if (!direct_literal_v1(
             &program,
             direct_target_is_he_v1(&program)

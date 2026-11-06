@@ -1,0 +1,99 @@
+INFIX
+(NAM "->")
+(NUM False "800" None None)
+(NAM "right")
+DEQ
+(NAM "imp")
+DOT
+(THEOREM "Theorem")
+(NAM "t1")
+COLON
+(NAM "forall")
+(NAM "p")
+(NAM "q")
+COLON
+(NAM "prop")
+COMMA
+(NAM "p")
+(NAM "->")
+LPAREN
+(NAM "p")
+(NAM "->")
+(NAM "q")
+RPAREN
+(NAM "->")
+(NAM "q")
+DOT
+LET
+(NAM "p")
+(NAM "q")
+DOT
+ASSUME
+(NAM "Hp")
+COLON
+(NAM "p")
+DOT
+ASSUME
+(NAM "Hpq")
+DOT
+CLAIM
+(NAM "L")
+COLON
+(NAM "p")
+DOT
+LCBRACE
+EXACT
+(NAM "Hp")
+DOT
+RCBRACE
+PROVE
+(NAM "q")
+DOT
+APPLY
+(NAM "Hpq")
+DOT
+EXACT
+(NAM "L")
+DOT
+QED
+DOT
+(THEOREM "Theorem")
+(NAM "t2")
+COLON
+(NAM "forall")
+(NAM "x")
+COLON
+(NAM "set")
+COMMA
+(NAM "P")
+(NAM "x")
+DOT
+LET
+(NAM "x")
+COLON
+(NAM "set")
+DOT
+(NAM "set")
+(NAM "y")
+DEQ
+(NAM "f")
+(NAM "x")
+DOT
+(NAM "set")
+(NAM "z")
+COLON
+(NAM "set")
+DEQ
+(NAM "g")
+(NAM "y")
+DOT
+(NAM "witness")
+(NAM "y")
+DOT
+EXACT
+(NAM "H")
+(NAM "y")
+(NAM "z")
+DOT
+QED
+DOT
