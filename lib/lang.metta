@@ -28,6 +28,9 @@
      ((Datalog
         (let $root (system:runtime-root)
           (lang:load (str:concat $root "/langdef/lang/Datalog.module"))))
+      (CHR
+        (let $root (system:runtime-root)
+          (lang:load (str:concat $root "/langdef/lang/CHR.module"))))
       ($path
         (if (== (get-metatype $path) Grounded)
           (let $module (module:read-file ModulePortableV1 $path $path)
@@ -55,16 +58,21 @@
               (lang-internal:field $execution "language")
               (lang-internal:field $execution "observation"))
          ((("scoped-snapshot-closure-v1" "petta" "declared-output-fact-set")
-            (let* (($productions (lang-internal:field $plan-data "productions"))
-                   ($classes (lang-internal:field $plan-data "classes"))
-                   ($start (lang-internal:field $plan-data "start"))
-                   ($selection (lang-internal:field $plan-data "selection"))
-                   ($uri (lang-internal:field $compiler-data "resource"))
-                   ($resolved (fs:try-canonical-from-file $compiler-origin $uri)))
-              (lang-internal:define $package $source $core $productions $classes $start $selection
-                $compiler-data $execution $resolved)))
+            (lang-internal:define-plan $package $source $core $plan-data $compiler-origin $compiler-data $execution))
+          (("prepared-port-v1" "petta" $observation)
+            (lang-internal:define-plan $package $source $core $plan-data $compiler-origin $compiler-data $execution))
           ($other (LangDefinitionUnadmittedV1 $package (ExecutionProfile $other))))))
       ($other (LangDefinitionUnadmittedV1 $package (RequiredExports $other))))))
+
+(= (lang-internal:define-plan $package $source $core $plan-data $compiler-origin $compiler-data $execution)
+   (let* (($productions (lang-internal:field $plan-data "productions"))
+          ($classes (lang-internal:field $plan-data "classes"))
+          ($start (lang-internal:field $plan-data "start"))
+          ($selection (lang-internal:field $plan-data "selection"))
+          ($uri (lang-internal:field $compiler-data "resource"))
+          ($resolved (fs:try-canonical-from-file $compiler-origin $uri)))
+     (lang-internal:define $package $source $core $productions $classes $start $selection
+       $compiler-data $execution $resolved)))
 
 (= (lang-internal:define $module $source $core $productions $classes $start $selection $compiler-data $execution $resolved)
    (case $resolved
@@ -177,7 +185,7 @@
         ($other (LangArgumentErrorV1 OutputPolicy $other))))
      (LangArgumentErrorV1 SpaceInput $input)))
 (= (lang-internal:captured-invoke $components $input $sink $budget $source)
-   (let $rows (lang-internal:capture-inputs $input)
+   (let $rows (lang-internal:capture-for $components $input)
      (case $source
        (((SourceFile $path)
           (let $text (fs:read-text $path)
@@ -257,8 +265,8 @@
 (= (lang-internal:read-selected
      (LangInvocationV1 $owner (LangComponentsV1 $module $parser $compiler $compiler-data $execution))
      (SourceTextV1 $origin $text) $sink $rows $values $forest)
-   (case $values
-     (((SourceValuesV1 $packet)
+   (case (lang-internal:selected-request $execution $values)
+     (((SourceSelectedV1 $packet)
         (let* (($source (SourceTextV1 $origin $text))
                ($separator (lang-internal:field $compiler-data "namespaceSeparator"))
                ($operation (lang-internal:field $compiler-data "read"))
@@ -271,6 +279,36 @@
                  $source $sink $rows $forest $read))
              ($other (lang-internal:diagnostic $source $other))))))
       ($other (LangSourceReadV1 (SourceTextV1 $origin $text) (SelectedCatalogueV1 $other))))))
+
+; A package port reads the whole selected catalogue and applies its own
+; ambiguity policy; the snapshot profile reads exactly one selected packet.
+(= (lang-internal:selected-request $execution $values)
+   (case (lang-internal:field $execution "profile")
+     (("prepared-port-v1"
+        (if (== (get-metatype $values) Expression)
+          (if (== (car-atom $values) SourceValuesV1)
+            (if (> (size-atom $values) 1) (SourceSelectedV1 $values) $values)
+            $values)
+          $values))
+      ($profile
+        (case $values
+          (((SourceValuesV1 $packet) (SourceSelectedV1 $packet))
+           ($other $other)))))))
+
+; A package port captures occurrences: each selected occurrence keeps its
+; capture coordinate, so publication can remove exactly that occurrence.
+; A package that posts initial data in order receives the selected
+; occurrences in capture order, which is the Space's logical occurrence
+; order; CHR posts them first and then its source query, in source order.
+; A Space that promises no order still yields one deterministic capture.
+(= (lang-internal:capture-for
+     (LangInvocationV1 $owner (LangComponentsV1 $module $parser $compiler $compiler-data $execution)) $input)
+   (case (lang-internal:field $execution "profile")
+     (("prepared-port-v1"
+        (case (langdef:capture-occurrences $input)
+          (((SourceOccurrenceViewV1 $view) (SourceOccurrenceViewV1 $view))
+           ($other (LangSourceErrorV1 (InputCaptureV1 $other))))))
+      ($other (lang-internal:capture-inputs $input)))))
 
 ; A native pin captures the whole logical input view without decoding it.
 ; Unsupported Space realizations preserve the existing copied-snapshot path.
@@ -288,6 +326,11 @@
         (case (langdef:input-view-rows $view $names)
           (((Error $call $reason) (LangSourceErrorV1 (InputCaptureV1 $reason)))
            ($rows (lang-internal:input-rows (lang-internal:freeze-inputs $rows) (str:set $names))))))
+      ((SourceOccurrenceViewV1 $view)
+        (case (langdef:occurrence-select $view $names)
+          (((SourceOccurrencesV1 $records) (SourceInputFieldsV1 $records))
+           ((Error $call $reason) (LangSourceErrorV1 (InputCaptureV1 $reason)))
+           ($other (LangSourceErrorV1 (InputCaptureV1 $other))))))
       ($other (LangSourceErrorV1 (InputCaptureV1 $other))))))
 
 ; Freeze only the primitive row input port, before placing a snapshot in a
@@ -299,7 +342,9 @@
      ((() (SourceInputFieldsV1 ""))
       ((cons $head $tail)
         (if (or (langdef:host-value? "string" $head) (langdef:host-value? "number" $head))
-          (let $text (json:stringify $head)
+          (let $text (if (langdef:host-value? "string" $head)
+                        (str:concat "\"" (str:concat (str:escape metta $head) "\""))
+                        (str:number->string $head))
             (case (lang-internal:freeze-values $tail)
               (((SourceInputFieldsV1 $rest) (SourceInputFieldsV1 (str:concat " " (str:concat $text $rest))))
                ($other $other))))
@@ -369,15 +414,39 @@
              (case
                (lang-internal:reply $response)
                (((LangReplyV1 $prepared)
-                   (lang-internal:start
-                     $owner
-                     $source
-                     $sink
-                     $forest
-                     $wire
-                     $prepared))
+                   (case (lang-internal:json-field $prepared "status")
+                     (("unadmitted"
+                        (LangRunUnadmittedV1 $owner
+                          (SourceObligationV1 $source (lang-internal:json-field $prepared "reason"))))
+                      ($status
+                        (case (lang-internal:field $execution "profile")
+                          (("prepared-port-v1"
+                             (lang-internal:start-port $owner $source $sink $wire $prepared $rows))
+                           ($profile
+                             (lang-internal:start
+                               $owner
+                               $source
+                               $sink
+                               $forest
+                               $wire
+                               $prepared))))))))
                  ($other (lang-internal:diagnostic $source $other))))))
          ($other (lang-internal:diagnostic $source $other))))))
+
+; The package port: begin, one bounded unit of guest work, and outcome.
+; The capture travels with the run to the publication boundary.
+(= (lang-internal:start-port $language $source $sink $wire $prepared $capture)
+ (let* (($code (lang-internal:json-field $prepared "definitions"))
+        ($dictionary (lang-internal:json-field $prepared "dictionary"))
+        ($program (new-space)))
+   (case (module:install-definitions $program $code)
+     (((Error $call $reason) (LangRuntimeErrorV1 Install (Error $call $reason)))
+      ($installed
+        (if $installed
+          (case (collapse (evalc (lang:compiled:begin) $program))
+            ((($state) (LangStepV1 (LangPortExecutionV1 $language $source $program $wire $dictionary $state $sink $capture)))
+             ($other (LangRuntimeErrorV1 Begin $other))))
+          (LangRuntimeErrorV1 Install)))))))
 
 (= (lang-internal:start $language $source $sink $forest $wire $prepared)
  (let* (($code (lang-internal:json-field $prepared "definitions"))
@@ -418,6 +487,11 @@
              (((LangFailedV1 $retained-state $failure) $failure)
                ((LangDoneV1 $outputs) (LangCompleteV1 $outputs))
                ((LangPublicationV1 $output () $outputs)
+                 (let
+                   $_
+                   (lang-internal:set-cursor $cursor (LangDoneV1 $outputs))
+                   (LangCompleteV1 $outputs)))
+               ((LangAdditionsV1 $output $mode () $outputs)
                  (let
                    $_
                    (lang-internal:set-cursor $cursor (LangDoneV1 $outputs))
@@ -466,7 +540,106 @@
                ($other (LangRuntimeErrorV1 Step $other))))))
        ((LangPublicationV1 $output (cons $head $tail) $outputs)
          (lang-internal:publish-unit $output $head $tail $outputs))
+       ((LangPortExecutionV1 $language $source $program $wire $dictionary $machine $sink $capture)
+         (lang-internal:port-unit $language $source $program $wire $dictionary $machine $sink $capture))
+       ((LangTransformV1 $output $capture $mode $consume $additions $outputs)
+         (lang-internal:transform-unit $output $capture $mode $consume $additions $outputs))
+       ((LangAdditionsV1 $output $mode (cons $head $tail) $outputs)
+         (lang-internal:addition-unit $output $mode $head $tail $outputs))
        ($other (LangRuntimeErrorV1 State $other)))))
+
+; One port unit either advances a pending run once or observes its outcome.
+(= (lang-internal:port-unit $language $source $program $wire $dictionary $machine $sink $capture)
+   (case (collapse (evalc (lang:compiled:outcome $machine) $program))
+     (((LangPortPendingV1)
+        (case (collapse (evalc (lang:compiled:advance $machine) $program))
+          ((($next) (LangStepV1 (LangPortExecutionV1 $language $source $program $wire $dictionary $next $sink $capture)))
+           ($other (LangRuntimeErrorV1 Step $other)))))
+      (((LangPortDoneV1 $data))
+        (lang-internal:port-observe (lang-internal:components $language) $wire $dictionary $data $sink $capture))
+      ($other (LangRuntimeErrorV1 Outcome $other)))))
+
+; Observation decodes guest data; a failed or faulted run publishes nothing.
+(= (lang-internal:port-observe
+     (LangComponentsV1 $module $parser $compiler $compiler-data $execution) $wire $dictionary $data $sink $capture)
+   (let* (($separator (lang-internal:field $compiler-data "namespaceSeparator"))
+          ($operation (lang-internal:field $compiler-data "observe"))
+          ($request-data (LCons $wire (LCons $dictionary (LCons (repr $data) (LCons $separator LNil)))))
+          ($reply (lang-internal:reply (langdef:source-compiler-call $compiler $operation $request-data))))
+     (case $reply
+       (((LangReplyV1 $observed) (lang-internal:port-result $observed $sink $capture))
+        ($other $other)))))
+(= (lang-internal:port-result $observed $sink $capture)
+   (case (lang-internal:json-field $observed "status")
+     (("complete"
+        (case (lang-internal:host-atoms (lang-internal:json-array (lang-internal:json-field $observed "values")))
+          (((LangValuesV1 $values) (lang-internal:port-finish $sink $capture $observed $values))
+           ($other $other))))
+      ("failed" LangGuestFailureV1)
+      ("fault" (LangGuestFaultV1 (lang-internal:json-field $observed "reason")))
+      ($other (LangProtocolErrorV1 Status $other)))))
+(= (lang-internal:port-finish LangIsolatedV1 $capture $observed $values)
+   (LangStepV1 (LangDoneV1 $values)))
+(= (lang-internal:port-finish (LangPublishV1 $output) $capture $observed $values)
+   (let $publication (lang-internal:json-field $observed "publication")
+     (case ((lang-internal:json-field $publication "kind")
+            (lang-internal:json-field $publication "mode")
+            (lang-internal:host-atoms (lang-internal:json-array (lang-internal:json-field $publication "additions"))))
+       ((("transform" "multiset" (LangValuesV1 $additions))
+          (LangStepV1 (LangTransformV1 $output $capture LangMultisetV1
+            (lang-internal:json-array (lang-internal:json-field $publication "consume")) $additions $values)))
+        (("transform" "insert-absent" (LangValuesV1 $additions))
+          (LangStepV1 (LangTransformV1 $output $capture LangInsertAbsentV1
+            (lang-internal:json-array (lang-internal:json-field $publication "consume")) $additions $values)))
+        ($other (LangProtocolErrorV1 Publication $other))))))
+
+; The contraction is one unit: it removes exactly the consumed captured
+; occurrences from the unchanged captured Space, or refuses with no effect.
+; Another output Space leaves the input untouched and receives the store.
+(= (lang-internal:transform-unit $output $capture $mode $consume $additions $outputs)
+   (case $capture
+     (((SourceOccurrenceViewV1 $view)
+        (case (langdef:occurrence-contract $view $output $consume)
+          (((SourceOccurrencesContractedV1 $count) (LangStepV1 (LangAdditionsV1 $output $mode $additions $outputs)))
+           (SourceOccurrenceDistinctV1 (LangStepV1 (LangAdditionsV1 $output $mode $outputs $outputs)))
+           ((SourceOccurrenceRefusedV1 $reason) (LangPublicationRefusedV1 $reason))
+           ($other (LangPublicationRefusedV1 $other)))))
+      ($other (LangPublicationRefusedV1 (OccurrenceCaptureV1 $other))))))
+
+; Each addition is one unit. A multiset addition adds one more occurrence,
+; keeping equal occurrences already present; insert-absent adds a value only
+; when no equal occurrence is present.
+(= (lang-internal:addition-unit $destination LangMultisetV1 $head $tail $outputs)
+   (case (add-atom $destination $head)
+     (((Error $call $reason) (LangPublicationErrorV1 $destination $head $tail $outputs (Error $call $reason)))
+      ($added (LangStepV1 (LangAdditionsV1 $destination LangMultisetV1 $tail $outputs))))))
+(= (lang-internal:addition-unit $destination LangInsertAbsentV1 $head $tail $outputs)
+   (case (add-atom-nodup $destination $head)
+     ((() (LangStepV1 (LangAdditionsV1 $destination LangInsertAbsentV1 $tail $outputs)))
+      ($refusal (LangPublicationErrorV1 $destination $head $tail $outputs $refusal)))))
+
+; Structural host atoms keep symbol, integer, string and expression kinds.
+(= (lang-internal:host-atom $record)
+   (case $record
+     (((JsonObject ((JsonPair "symbol" $name)))
+        (if (langdef:host-value? "string" $name)
+          (LangValueV1 (str:string->symbol $name)) (LangProtocolErrorV1 Symbol $record)))
+      ((JsonObject ((JsonPair "integer" $digits))) (lang-internal:number "number" $digits))
+      ((JsonObject ((JsonPair "string" $text)))
+        (if (langdef:host-value? "string" $text) (LangValueV1 $text) (LangProtocolErrorV1 String $record)))
+      ((JsonObject ((JsonPair "expression" (JsonArray $items))))
+        (case (lang-internal:host-atoms $items)
+          (((LangValuesV1 $values) (LangValueV1 $values))
+           ($other $other))))
+      ($other (LangProtocolErrorV1 HostAtom $other)))))
+(= (lang-internal:host-atoms $items)
+   (case $items
+     ((() (LangValuesV1 ()))
+      ((cons $head $tail)
+        (case ((lang-internal:host-atom $head) (lang-internal:host-atoms $tail))
+          ((((LangValueV1 $value) (LangValuesV1 $rest)) (LangValuesV1 (cons-atom $value $rest)))
+           ($other (LangProtocolErrorV1 HostAtoms $other)))))
+      ($other (LangProtocolErrorV1 HostAtoms $other)))))
 (= (lang-internal:after-tick $language $source $forest $program $wire $dictionary $machine $sink)
    (case $machine
      (((SnapshotClosure $status $round $plan $standard $request $metadata $relation $static $facts $keys $history $runner)
