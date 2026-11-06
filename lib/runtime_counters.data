@@ -1259,4 +1259,9 @@
   ; The HE canonical machine's frame stack: the most frames it held at once,
   ; and the frames that left it before their last child ran (last call).
   (1127 HE_CANONICAL_FRAME_PEAK "he-canonical-frame-peak")
-  (1128 HE_CANONICAL_LAST_CALL "he-canonical-last-call")))
+  (1128 HE_CANONICAL_LAST_CALL "he-canonical-last-call")
+  ; PeTTa's ai profile: calls the prepared machine compiled to no answer
+  ; because their head's declared result cannot pass the formal they feed,
+  ; and recognized folds run without their cell test on a sealed sort.
+  (1129 PREPARED_PURE_REFUTED_CALL "prepared-pure-refuted-call")
+  (1130 PREPARED_PURE_SEALED_FOLD "prepared-pure-sealed-fold")))
