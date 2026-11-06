@@ -459,6 +459,12 @@ static bool eval_work_deliver(EvalWork *work, Arena *a, Atom *answer,
     Atom *value = environment->len
         ? bindings_apply(environment, a, answer) : answer;
     value = value ? atom_deep_copy(a, value) : NULL;
+    if (work->language == CETTA_LANGUAGE_HE &&
+        (work->he_plan.result_provenance & HE_RETURN_COLLECTED))
+        value = he_collected_value(a, value);
+    else if (work->language == CETTA_LANGUAGE_HE &&
+        (work->he_plan.result_provenance & HE_RETURN_COMPLETED))
+        value = he_completed_value(a, value);
     bool packet_ok = true;
     if (value && work->deliver_packet) {
         Atom *delayed = NULL;
@@ -473,12 +479,6 @@ static bool eval_work_deliver(EvalWork *work, Arena *a, Atom *answer,
         };
         packet_ok = packet_ok && work->deliver_packet(work->delivery_context, a, &returned);
     }
-    if (work->language == CETTA_LANGUAGE_HE &&
-        (work->he_plan.result_provenance & HE_RETURN_COLLECTED))
-        value = he_collected_value(a, value);
-    else if (work->language == CETTA_LANGUAGE_HE &&
-        (work->he_plan.result_provenance & HE_RETURN_COMPLETED))
-        value = he_completed_value(a, value);
     bindings_free(environment);
     if (!value || !packet_ok) {
         work->state = EVAL_WORK_FAILED;

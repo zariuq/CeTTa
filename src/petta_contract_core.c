@@ -153,9 +153,8 @@ static bool contract_arrow_source_arity(void *context, SymbolId subject,
     (void)subject;
     uint32_t *arity = context;
     CettaExprLen places = arrow->expr.len - 2u;
-    /* Several declarations of one name are several typed alternatives;
-     * counting duplicate rows too only keeps more calls on the general
-     * path. */
+    /* Several distinct declarations of one name are several typed
+     * alternatives; rows repeating one type are one. */
     bool source = declarations > 1u;
     for (CettaExprIndex index = 1u; !source && index <= places; index++)
         source = petta_type_demand(arrow->expr.elems[index]) == PETTA_TYPE_RAW;
@@ -334,6 +333,15 @@ typedef struct {
     bool closed_result;
     /* Only asking whether the equations do work a version may do. */
     bool purity_only;
+    /* The expression being read is in a tail position of its equation: its
+     * answers are the equation's answers as they stand. */
+    bool tail;
+    /* Some call to itself is read outside a tail position, so its answers
+     * are used, not only answered. */
+    bool nontail_self_call;
+    /* The first call to itself read outside a tail position in any of the
+     * relation's equations. */
+    Atom *relation_nontail_self_call;
     /* The first occurrence declined, for CETTA_PETTA_VERSIONS_DEBUG. */
     Atom *declined;
     ContractFact *facts;
@@ -396,29 +404,125 @@ static uint32_t contract_var_occurrences(const Atom *atom, VarId var) {
     return count;
 }
 
+/* Whether every variable of `atom` occurs in it once, within `scope`
+ * (the whole atom when `scope` is `atom`). */
+static bool contract_linear_in(const Atom *atom, const Atom *scope,
+                               uint32_t depth) {
+    if (!atom || depth > 256u)
+        return false;
+    if (atom->kind == ATOM_VAR)
+        return contract_var_occurrences(scope, atom->var_id) == 1u;
+    if (atom->kind != ATOM_EXPR)
+        return true;
+    for (CettaExprIndex i = 0u; i < atom->expr.len; i++) {
+        if (!contract_linear_in(atom->expr.elems[i], scope, depth + 1u))
+            return false;
+    }
+    return true;
+}
+
+/* Whether every variable of `atom` occurs in `scope`. */
+static bool contract_vars_within(const Atom *atom, const Atom *scope,
+                                 uint32_t depth) {
+    if (!atom || depth > 256u)
+        return false;
+    if (atom->kind == ATOM_VAR)
+        return contract_var_occurrences(scope, atom->var_id) != 0u;
+    if (atom->kind != ATOM_EXPR)
+        return true;
+    for (CettaExprIndex i = 0u; i < atom->expr.len; i++) {
+        if (!contract_vars_within(atom->expr.elems[i], scope, depth + 1u))
+            return false;
+    }
+    return true;
+}
+
+/* A type named by a symbol, as Nat, or by a type constructor applied, as
+ * (List Number): the head is a symbol other than the arrow. */
+static bool contract_named_type(const Atom *type) {
+    if (!type)
+        return false;
+    if (type->kind == ATOM_SYMBOL)
+        return true;
+    return type->kind == ATOM_EXPR && type->expr.len >= 2u &&
+        type->expr.elems[0]->kind == ATOM_SYMBOL &&
+        !atom_is_symbol_id(type->expr.elems[0], g_builtin_syms.arrow);
+}
+
+/* A type get-metatype answers.  The guard at it passes a value get-type
+ * has no answer for, so passing says nothing about a declaration: no
+ * pattern is inverted at it, and a value known only to pass it gives a
+ * construction no type.  The same guard on the same value still passes. */
+static bool contract_metatype_name(const Atom *type) {
+    return type && type->kind == ATOM_SYMBOL &&
+        (type->sym_id == g_builtin_syms.expression ||
+         type->sym_id == g_builtin_syms.symbol ||
+         type->sym_id == g_builtin_syms.grounded ||
+         type->sym_id == g_builtin_syms.variable);
+}
+
+/* Whether field `index` of constructor declaration `arrow` takes any
+ * value: a type variable the declaration names nowhere else, or a type
+ * get-type never checks a field at (%Undefined%, `_`).  Such a field gives
+ * its pattern no fact and asks nothing of a construction's part. */
+static bool contract_field_free(const Atom *arrow, CettaExprIndex index) {
+    const Atom *field = arrow->expr.elems[index];
+    if (field->kind == ATOM_SYMBOL)
+        return petta_type_demand(field) == PETTA_TYPE_TRANSLATE;
+    return field->kind == ATOM_VAR &&
+        contract_var_occurrences(arrow, field->var_id) == 1u;
+}
+
 /* The one declaration (-> B1 .. Bk C) of a constructor `head` at arity k,
- * with C closed and each field closed or a type variable the declaration
- * names nowhere else.  A field at such a variable may be any value: its
- * guard against a fresh variable succeeds exactly once whatever the value
- * later becomes.  A variable named twice couples its fields, so the
- * declaration gives no field a type. */
+ * where C is a named type, closed as Nat or parameterized as (List $a).
+ * Each field is a type variable the declaration names nowhere else, or a
+ * type whose variables C names, so that C met at a closed type fixes the
+ * field closed.  A field at such a free variable may be any value: its guard
+ * against a fresh variable succeeds exactly once whatever the value later
+ * becomes.  A variable that two fields name and C does not couples those
+ * fields, so the declaration gives no field a type. */
 static Atom *contract_constructor_arrow(ContractScan *scan, Atom *head,
                                         CettaExprLen arity) {
     Atom *type = contract_declared(scan, head);
     if (!type || type->kind != ATOM_EXPR || type->expr.len != arity + 2u ||
-        !atom_is_symbol_id(type->expr.elems[0], g_builtin_syms.arrow) ||
-        atom_has_vars(type->expr.elems[arity + 1u]))
+        !atom_is_symbol_id(type->expr.elems[0], g_builtin_syms.arrow))
+        return NULL;
+    Atom *result = type->expr.elems[arity + 1u];
+    if (!contract_named_type(result))
         return NULL;
     for (CettaExprIndex i = 1u; i <= arity; i++) {
-        Atom *field = type->expr.elems[i];
-        if (field->kind == ATOM_VAR) {
-            if (contract_var_occurrences(type, field->var_id) != 1u)
-                return NULL;
-        } else if (atom_has_vars(field)) {
+        if (!contract_field_free(type, i) &&
+            !contract_vars_within(type->expr.elems[i], result, 0u))
             return NULL;
-        }
     }
     return type;
+}
+
+/* The type of an application of constructor `head` whose fields have the
+ * types `parts[1..arity]`: the declaration's result, once each field that is
+ * not free meets its part's closed type, when that leaves the result
+ * closed.  Where a part's type is unknown the application has none. */
+static Atom *contract_constructed_type(ContractScan *scan, Atom *head,
+                                       CettaExprLen arity,
+                                       const ContractValue *parts) {
+    Atom *arrow = contract_constructor_arrow(scan, head, arity);
+    if (!arrow)
+        return NULL;
+    Arena *arena = scan->context->scratch;
+    Bindings sigma;
+    bindings_init(&sigma);
+    bool met = true;
+    for (CettaExprIndex i = 1u; met && i <= arity; i++) {
+        if (contract_field_free(arrow, i))
+            continue;
+        met = parts[i].type && !atom_has_vars(parts[i].type) &&
+            !contract_metatype_name(parts[i].type) &&
+            match_atoms(arrow->expr.elems[i], parts[i].type, &sigma, arena);
+    }
+    Atom *result = met
+        ? bindings_apply(&sigma, arena, arrow->expr.elems[arity + 1u]) : NULL;
+    bindings_free(&sigma);
+    return result && !atom_has_vars(result) ? result : NULL;
 }
 
 /* Variables of `pattern` take `fact`'s guarantees, merged with any they
@@ -447,9 +551,12 @@ static bool contract_mark(ContractScan *scan, Atom *pattern, bool ground,
 
 /* A ground argument accepted at closed type `type` and matched by `pattern`:
  * a variable has that type; an application of a constructor whose one
- * declaration (contract_constructor_arrow) ends in `type` gives its closed
- * fields their types, since a symbol requirement admits no tuple type, so the
- * argument was accepted through that declaration with its fields checked. */
+ * declaration (contract_constructor_arrow) ends in a type meeting `type`
+ * gives each field that is not free its type under that meeting, closed
+ * since the result names its variables.  A named requirement admits no
+ * tuple type: a tuple type's head is the constructor's own arrow, which no
+ * symbol meets.  So the argument was accepted through that declaration with
+ * its fields checked, each against the instance the requirement fixes. */
 static bool contract_invert(ContractScan *scan, Atom *pattern, Atom *type,
                             uint32_t depth) {
     if (!pattern || !type || depth > 256u)
@@ -463,20 +570,36 @@ static bool contract_invert(ContractScan *scan, Atom *pattern, Atom *type,
         return true;
     }
     if (pattern->kind != ATOM_EXPR || pattern->expr.len < 2u ||
-        type->kind != ATOM_SYMBOL ||
+        !contract_named_type(type) || contract_metatype_name(type) ||
         pattern->expr.elems[0]->kind != ATOM_SYMBOL)
         return true;
     Atom *arrow = contract_constructor_arrow(scan, pattern->expr.elems[0],
                                              pattern->expr.len - 1u);
-    if (!arrow || !atom_eq(arrow->expr.elems[arrow->expr.len - 1u], type))
+    if (!arrow)
         return true;
-    for (CettaExprIndex i = 1u; i < pattern->expr.len; i++) {
-        if (arrow->expr.elems[i]->kind != ATOM_VAR &&
-            !contract_invert(scan, pattern->expr.elems[i],
-                             arrow->expr.elems[i], depth + 1u))
-            return false;
+    /* A type's variables are a private formal's: they stand for the one
+     * closed instance its guard accepted, so matching treats them as
+     * constants, and a result naming a variable twice could relate two
+     * of them. */
+    Atom *declared = arrow->expr.elems[arrow->expr.len - 1u];
+    if (atom_has_vars(type) && !contract_linear_in(declared, declared, 0u))
+        return true;
+    Arena *arena = scan->context->scratch;
+    Bindings sigma;
+    bindings_init(&sigma);
+    bool ok = true;
+    if (simple_match(declared, type, &sigma, arena)) {
+        for (CettaExprIndex i = 1u; ok && i < pattern->expr.len; i++) {
+            if (contract_field_free(arrow, i))
+                continue;
+            Atom *field = bindings_apply(&sigma, arena, arrow->expr.elems[i]);
+            ok = field &&
+                contract_invert(scan, pattern->expr.elems[i], field,
+                                depth + 1u);
+        }
     }
-    return true;
+    bindings_free(&sigma);
+    return ok;
 }
 
 /* Every symbol of `pattern` is uninterpreted and so is every variable a
@@ -544,6 +667,13 @@ static bool contract_bind_any(ContractScan *scan, Atom *pattern,
                               ContractValue value) {
     if (value.uninterpreted && contract_bind(scan, pattern, value))
         return true;
+    /* Meeting a pattern that is not uninterpreted can bind an uninterpreted
+     * value's own variables to interpreted terms, as (Cons $k Nil) binds a
+     * head variable to a declared constructor: the value's claim breaks,
+     * whatever the pattern's own variables keep.  Only a ground value has
+     * no variables to bind. */
+    if (value.uninterpreted && !value.ground)
+        return false;
     return contract_pattern_keeps_claims(scan, pattern, 0u) &&
         contract_mark(scan, pattern, value.ground && !value.bottom, false, 0u);
 }
@@ -551,6 +681,21 @@ static bool contract_bind_any(ContractScan *scan, Atom *pattern,
 static bool contract_eval(ContractScan *scan, Atom *expr,
                           const PettaPlanNode *plan, uint32_t depth,
                           ContractValue *out);
+static bool contract_eval_parts(ContractScan *scan, Atom *expr,
+                                const PettaPlanNode *plan, uint32_t depth,
+                                Atom *head, ContractValue *out);
+
+/* contract_eval of an expression whose answers its context uses: a
+ * condition, a bound value, a key, an argument or a field. */
+static bool contract_eval_used(ContractScan *scan, Atom *expr,
+                               const PettaPlanNode *plan, uint32_t depth,
+                               ContractValue *out) {
+    bool tail = scan->tail;
+    scan->tail = false;
+    bool ok = contract_eval(scan, expr, plan, depth, out);
+    scan->tail = tail;
+    return ok;
+}
 
 static bool contract_literal_type(ContractScan *scan, Atom *atom,
                                   Atom **type) {
@@ -601,6 +746,20 @@ static void contract_facts_restore(ContractScan *scan,
     scan->fact_len = save->len;
 }
 
+/* Whether a value typed at `type` meets a call's guard at `formal`: the
+ * same closed type, or, for a private formal, which every call guards with
+ * fresh variables, any instance of it. */
+static bool contract_meets_formal(ContractScan *scan, Atom *type,
+                                  Atom *formal) {
+    if (!atom_has_vars(formal))
+        return atom_eq(type, formal);
+    Bindings sigma;
+    bindings_init(&sigma);
+    bool met = simple_match(formal, type, &sigma, scan->context->scratch);
+    bindings_free(&sigma);
+    return met;
+}
+
 /* A self-call meets the entry facts with its arguments' values; its value
  * is an instance of its polymorphic argument, whose bindings come from
  * uninterpreted sources, or a ground value of the closed result type (the
@@ -609,11 +768,16 @@ static bool contract_self_call(ContractScan *scan, Atom *expr,
                                const PettaPlanNode *plan, uint32_t depth,
                                ContractValue *out) {
     ContractValue polymorphic = {0};
+    if (!scan->tail) {
+        scan->nontail_self_call = true;
+        if (!scan->relation_nontail_self_call)
+            scan->relation_nontail_self_call = expr;
+    }
     for (uint32_t i = 0u; i < scan->arity; i++) {
         Atom *argument = expr->expr.elems[i + 1u];
         ContractValue value = {0};
-        if (!contract_eval(scan, argument, petta_plan_child(plan, i + 1u),
-                           depth + 1u, &value))
+        if (!contract_eval_used(scan, argument, petta_plan_child(plan, i + 1u),
+                                depth + 1u, &value))
             return false;
         if (value.bottom) {
             *out = (ContractValue){.bottom = true};
@@ -621,12 +785,16 @@ static bool contract_self_call(ContractScan *scan, Atom *expr,
         }
         switch (scan->version->facts[i]) {
         case PETTA_CONTRACT_ENTRY_GROUND:
+        case PETTA_CONTRACT_ENTRY_INSTANCE:
             if (!value.ground || !value.type ||
-                !atom_eq(value.type, scan->formals[i]))
+                !contract_meets_formal(scan, value.type, scan->formals[i])) {
+                if (!scan->declined)
+                    scan->declined = argument;
                 return false;
+            }
             break;
         case PETTA_CONTRACT_ENTRY_UNINTERPRETED:
-            if (!value.uninterpreted)
+            if (!value.ground || !value.uninterpreted)
                 return false;
             break;
         case PETTA_CONTRACT_ENTRY_UNINTERPRETED_SPACE: {
@@ -656,6 +824,7 @@ static bool contract_self_call(ContractScan *scan, Atom *expr,
         return true;
     }
     *out = (ContractValue){
+        .ground = scan->result_param < scan->arity && polymorphic.ground,
         .uninterpreted = scan->result_param < scan->arity &&
                          polymorphic.uninterpreted,
     };
@@ -710,8 +879,8 @@ static bool contract_bindings(ContractScan *scan, Atom *expr,
                               ContractValue *out) {
     if (cetta_control_operation_binding_layout(plan->computation.control, 1u)) {
         ContractValue value = {0};
-        if (!contract_eval(scan, expr->expr.elems[2],
-                           petta_plan_child(plan, 2u), depth + 1u, &value))
+        if (!contract_eval_used(scan, expr->expr.elems[2],
+                                petta_plan_child(plan, 2u), depth + 1u, &value))
             return false;
         if (value.bottom) {
             *out = value;
@@ -731,9 +900,9 @@ static bool contract_bindings(ContractScan *scan, Atom *expr,
         ContractValue value = {0};
         if (!pair || pair->kind != ATOM_EXPR || pair->expr.len != 2u ||
             !pair_plan ||
-            !contract_eval(scan, pair->expr.elems[1],
-                           petta_plan_child(pair_plan, 1u), depth + 1u,
-                           &value))
+            !contract_eval_used(scan, pair->expr.elems[1],
+                                petta_plan_child(pair_plan, 1u), depth + 1u,
+                                &value))
             return false;
         if (value.bottom) {
             *out = value;
@@ -753,8 +922,9 @@ static bool contract_if(ContractScan *scan, Atom *expr,
                         const PettaPlanNode *plan, uint32_t depth,
                         ContractValue *out) {
     ContractValue condition = {0};
-    if (!contract_eval(scan, expr->expr.elems[1], petta_plan_child(plan, 1u),
-                       depth + 1u, &condition))
+    if (!contract_eval_used(scan, expr->expr.elems[1],
+                            petta_plan_child(plan, 1u), depth + 1u,
+                            &condition))
         return false;
     ContractFactSave save = {0};
     if (!contract_facts_save(scan, &save))
@@ -791,8 +961,9 @@ static bool contract_case(ContractScan *scan, Atom *expr,
     const PettaPlanNode *branches_plan = petta_plan_child(plan, arms_child);
     ContractValue key = {0};
     if (!branches || branches->kind != ATOM_EXPR || !branches_plan ||
-        !contract_eval(scan, expr->expr.elems[key_child], petta_plan_child(plan, key_child),
-                       depth + 1u, &key))
+        !contract_eval_used(scan, expr->expr.elems[key_child],
+                            petta_plan_child(plan, key_child), depth + 1u,
+                            &key))
         return false;
     ContractFactSave save = {0};
     if (!contract_facts_save(scan, &save))
@@ -844,22 +1015,39 @@ static bool contract_function_version(ContractContext *context,
                                       SymbolId head, uint32_t arity,
                                       ContractCallee **out);
 
+/* TailBodies (tail_version_eq_protocol): a version that leaves its range to
+ * the entry's result check runs its calls to itself unchecked, which answers
+ * as the protocol only when every such call, in every equation, is in a tail
+ * position.  One equation's answer not shown of the range and another's
+ * call to itself whose answers it uses decline the version together. */
+static bool contract_range_left_to_entry_ok(ContractScan *scan) {
+    if (scan->version->range_proved || !scan->relation_nontail_self_call)
+        return true;
+    if (!scan->declined)
+        scan->declined = scan->relation_nontail_self_call;
+    return false;
+}
+
 /* Whether a call's argument values meet a callee version's entry facts, and
  * the spaces that version reads are then the caller's to check at entry. */
 static bool contract_meets_version(ContractScan *scan, ContractCallee *callee,
                                    Atom *expr, const ContractValue *values) {
     const PettaContractVersion *version = &callee->version;
+    /* Entering a version directly skips its result check. */
+    if (!version->range_proved)
+        return false;
     for (uint32_t i = 0u; i < version->arity; i++) {
         PettaTypeArgument formal =
             petta_type_call_argument(&callee->signature, i + 1u, false);
         switch (version->facts[i]) {
         case PETTA_CONTRACT_ENTRY_GROUND:
+        case PETTA_CONTRACT_ENTRY_INSTANCE:
             if (!values[i].ground || !values[i].type ||
                 !atom_eq(values[i].type, formal.formal))
                 return false;
             break;
         case PETTA_CONTRACT_ENTRY_UNINTERPRETED:
-            if (!values[i].uninterpreted)
+            if (!values[i].ground || !values[i].uninterpreted)
                 return false;
             break;
         case PETTA_CONTRACT_ENTRY_CONSTANT:
@@ -930,13 +1118,18 @@ static bool contract_call(ContractScan *scan, Atom *expr,
             *out = (ContractValue){.ground = true, .type = result};
             return true;
         }
-        /* The polymorphic pair: an instance of its argument. */
+        /* The polymorphic pair: its ground argument itself. */
+        bool ground = false;
         bool uninterpreted = false;
         for (uint32_t i = 0u; i < callee->version.arity; i++) {
-            if (callee->version.facts[i] == PETTA_CONTRACT_ENTRY_UNINTERPRETED)
+            if (callee->version.facts[i] ==
+                PETTA_CONTRACT_ENTRY_UNINTERPRETED) {
+                ground = values[i].ground;
                 uninterpreted = values[i].uninterpreted;
+            }
         }
-        *out = (ContractValue){.uninterpreted = uninterpreted};
+        *out = (ContractValue){.ground = ground,
+                               .uninterpreted = uninterpreted};
         return true;
     }
     Atom *result = callee->signature.result_type;
@@ -987,8 +1180,11 @@ static bool contract_eval(ContractScan *scan, Atom *expr,
         }
         if (out->uninterpreted)
             return true;
+        /* A closed declared type, a function's arrow included, is the one
+         * get-type answers; an open one, as Nil's (List $a), gives no fact. */
         out->type = contract_declared(scan, expr);
-        if (out->type && out->type->kind == ATOM_EXPR)
+        if (out->type && out->type->kind == ATOM_EXPR &&
+            atom_has_vars(out->type))
             out->type = NULL;
         return true;
     case ATOM_EXPR:
@@ -1021,20 +1217,38 @@ static bool contract_eval(ContractScan *scan, Atom *expr,
         if (call->kind != ATOM_EXPR || call->expr.len == 0u ||
             call_plan->role != PETTA_PLAN_STATIC_CALL ||
             !call_plan->dispatch_handler ||
-            call->expr.elems[0]->kind != ATOM_SYMBOL)
+            call->expr.elems[0]->kind != ATOM_SYMBOL) {
+            if (!scan->declined)
+                scan->declined = expr;
             return false;
+        }
         return contract_eval(scan, call, call_plan, depth + 1u, out);
     }
     if (cetta_control_operation_is_control_form(plan->computation.control))
         return false;
     bool static_call = head->kind == ATOM_SYMBOL &&
         plan->role == PETTA_PLAN_STATIC_CALL;
-    if (static_call && expr->expr.len == 4u &&
-        head->sym_id == g_builtin_syms.match)
-        return contract_match(scan, expr, plan, depth, out);
     if (static_call && head->sym_id == scan->head &&
         expr->expr.len == scan->arity + 1u)
         return contract_self_call(scan, expr, plan, depth, out);
+    /* Below here every part's answers are used by the whole. */
+    bool tail = scan->tail;
+    scan->tail = false;
+    bool ok = contract_eval_parts(scan, expr, plan, depth, head, out);
+    scan->tail = tail;
+    return ok;
+}
+
+/* contract_eval's reading of a match, a call of another function, or data:
+ * none of whose parts is in a tail position. */
+static bool contract_eval_parts(ContractScan *scan, Atom *expr,
+                                const PettaPlanNode *plan, uint32_t depth,
+                                Atom *head, ContractValue *out) {
+    bool static_call = head->kind == ATOM_SYMBOL &&
+        plan->role == PETTA_PLAN_STATIC_CALL;
+    if (static_call && expr->expr.len == 4u &&
+        head->sym_id == g_builtin_syms.match)
+        return contract_match(scan, expr, plan, depth, out);
     if (static_call && petta_semantics_form(head->sym_id) == PETTA_FORM_NONE)
         return contract_call(scan, expr, plan, depth, out);
     bool data = plan->role == PETTA_PLAN_DATA ||
@@ -1070,18 +1284,9 @@ static bool contract_eval(ContractScan *scan, Atom *expr,
         return false;
     }
     *out = value;
-    if (head->kind == ATOM_SYMBOL && !value.uninterpreted && keep_parts) {
-        Atom *arrow = contract_constructor_arrow(scan, head,
-                                                 expr->expr.len - 1u);
-        bool fields = arrow != NULL;
-        for (CettaExprIndex i = 1u; fields && i < expr->expr.len; i++) {
-            Atom *field = arrow->expr.elems[i];
-            fields = field->kind == ATOM_VAR ||
-                (parts[i].type && atom_eq(parts[i].type, field));
-        }
-        if (fields)
-            out->type = arrow->expr.elems[arrow->expr.len - 1u];
-    }
+    if (head->kind == ATOM_SYMBOL && !value.uninterpreted && keep_parts)
+        out->type = contract_constructed_type(scan, head, expr->expr.len - 1u,
+                                              parts);
     return true;
 }
 
@@ -1141,12 +1346,13 @@ static bool contract_equation(ContractScan *scan, Atom *lhs, Atom *rhs,
         Atom *pattern = lhs->expr.elems[i + 1u];
         switch (scan->version->facts[i]) {
         case PETTA_CONTRACT_ENTRY_GROUND:
+        case PETTA_CONTRACT_ENTRY_INSTANCE:
             if (!contract_mark(scan, pattern, true, false, 0u) ||
                 !contract_invert(scan, pattern, scan->formals[i], 0u))
                 return false;
             break;
         case PETTA_CONTRACT_ENTRY_UNINTERPRETED:
-            if (!contract_mark(scan, pattern, false, true, 0u))
+            if (!contract_mark(scan, pattern, true, true, 0u))
                 return false;
             break;
         case PETTA_CONTRACT_ENTRY_UNINTERPRETED_SPACE: {
@@ -1175,6 +1381,8 @@ static bool contract_equation(ContractScan *scan, Atom *lhs, Atom *rhs,
         }
     }
     ContractValue value = {0};
+    scan->tail = true;
+    scan->nontail_self_call = false;
     if (!contract_eval(scan, rhs, plan, 0u, &value))
         return false;
     if (scan->purity_only || !scan->signature.guard_result || value.bottom)
@@ -1184,6 +1392,13 @@ static bool contract_equation(ContractScan *scan, Atom *lhs, Atom *rhs,
               atom_eq(value.type, scan->result_formal)
         : value.uninterpreted &&
               contract_returns_argument(scan, lhs, rhs, plan);
+    /* An answer not shown of the closed range, from an equation whose calls
+     * to itself are all in tail positions: the version leaves the range to
+     * its entry's result check (PettaContractVersion.range_proved). */
+    if (!result && scan->closed_result && !scan->nontail_self_call) {
+        scan->version->range_proved = false;
+        return true;
+    }
     if (!result && !scan->declined)
         scan->declined = rhs;
     return result;
@@ -1257,6 +1472,13 @@ static bool contract_fixes_closed(Bindings *sigma, Arena *arena, Atom *formal,
             return false;
     }
     return true;
+}
+
+/* Whether formal `index`'s type variables each occur once in the
+ * signature: in it, and in no other formal, constant parameter or result. */
+static bool contract_private_formal(ContractScan *scan, uint32_t index) {
+    Atom *signature = scan->signature.signature;
+    return signature && contract_linear_in(scan->formals[index], signature, 0u);
 }
 
 static bool contract_entry_facts(ContractScan *scan,
@@ -1360,6 +1582,15 @@ static bool contract_entry_facts(ContractScan *scan,
                     ok = false;
                     break;
                 }
+            } else if (scan->closed_result && contract_named_type(formal) &&
+                       !contract_metatype_name(formal) &&
+                       contract_private_formal(scan, i)) {
+                /* A private formal: its variables occur once, here.  Every
+                 * call guards it with fresh variables, and under functional
+                 * declarations the guard passes once exactly when the value
+                 * is typed at some closed instance, which those variables
+                 * then stand for in the facts the formal gives. */
+                fact = PETTA_CONTRACT_ENTRY_GROUND;
             } else {
                 ok = false;
                 break;
@@ -1454,6 +1685,154 @@ static bool contract_equations(ContractContext *context, SymbolId head,
     return true;
 }
 
+/* The closed types an instance may give a signature's type variables: the
+ * value classes and the type names the signature itself names. */
+static uint32_t contract_instance_candidates(Arena *arena, Atom *type,
+                                             Atom **out, uint32_t cap,
+                                             uint32_t count, uint32_t depth) {
+    static const char *const classes[] = {"Number", "String", "Bool"};
+    if (depth == 0u) {
+        for (size_t i = 0u; i < sizeof(classes) / sizeof(classes[0]) &&
+             count < cap; i++) {
+            Atom *name = atom_symbol(arena, classes[i]);
+            if (name)
+                out[count++] = name;
+        }
+    }
+    if (!type || depth > 64u)
+        return count;
+    if (type->kind == ATOM_SYMBOL &&
+        !atom_is_symbol_id(type, g_builtin_syms.arrow) &&
+        !contract_metatype_name(type) &&
+        petta_type_demand(type) == PETTA_TYPE_TRANSLATE_AND_GUARD) {
+        for (uint32_t i = 0u; i < count; i++) {
+            if (atom_eq(out[i], type))
+                return count;
+        }
+        if (count < cap)
+            out[count++] = type;
+        return count;
+    }
+    if (type->kind == ATOM_EXPR) {
+        /* A type constructor's own name, as List in (List $a), is no type;
+         * neither is the arrow. */
+        for (CettaExprIndex i = 1u; i < type->expr.len; i++)
+            count = contract_instance_candidates(arena, type->expr.elems[i],
+                                                 out, cap, count, depth + 1u);
+    }
+    return count;
+}
+
+/* The signature's distinct type variables, at most `cap`; false when it
+ * has more. */
+static bool contract_signature_vars(Atom *type, Atom **out, uint32_t cap,
+                                    uint32_t *count, uint32_t depth) {
+    if (!type || depth > 64u)
+        return false;
+    if (type->kind == ATOM_VAR) {
+        for (uint32_t i = 0u; i < *count; i++) {
+            if (var_id_eq(out[i]->var_id, type->var_id))
+                return true;
+        }
+        if (*count >= cap)
+            return false;
+        out[(*count)++] = type;
+        return true;
+    }
+    if (type->kind == ATOM_EXPR) {
+        for (CettaExprIndex i = 0u; i < type->expr.len; i++) {
+            if (!contract_signature_vars(type->expr.elems[i], out, cap, count,
+                                         depth + 1u))
+                return false;
+        }
+    }
+    return true;
+}
+
+/* A version of a closed instance of a signature whose type variables the
+ * analysis cannot take as they are, as the one $a of
+ * (-> Number (List $a) (List $a)) a body building (Cons $n $acc) fixes at
+ * Number.  The instance's version answers as the signature's protocol on
+ * calls whose arguments are typed once at the instance's formals: each
+ * guard of the signature's protocol, fresh at every call, then takes the
+ * instance, once under functional declarations, as the instance's protocol
+ * does, and every call to itself the version makes keeps such arguments.
+ * Parameters whose formals the instance changes get INSTANCE facts, which a
+ * call meets at entry.  How the instance is found decides only whether a
+ * version exists; each one tried is analysed in full. */
+static bool contract_instance_version(ContractContext *context,
+                                      ContractCallee *callee,
+                                      const PettaTypeCall *signature,
+                                      const PettaEquationCandidate *candidates,
+                                      size_t count, ContractScan *scan) {
+    Arena *arena = context->scratch;
+    Atom *vars[2];
+    uint32_t var_count = 0u;
+    if (!signature->signature ||
+        !contract_signature_vars(signature->signature, vars, 2u, &var_count,
+                                 0u) ||
+        var_count == 0u)
+        return false;
+    Atom *choices[8];
+    uint32_t choice_count = contract_instance_candidates(
+        arena, signature->signature, choices, 8u, 0u, 0u);
+    uint32_t total = 1u;
+    for (uint32_t v = 0u; v < var_count; v++)
+        total *= choice_count;
+    for (uint32_t pick = 0u; pick < total; pick++) {
+        Bindings theta;
+        bindings_init(&theta);
+        bool ok = true;
+        uint32_t rest = pick;
+        for (uint32_t v = 0u; ok && v < var_count; v++) {
+            ok = bindings_add_var(&theta, vars[v], choices[rest % choice_count]);
+            rest /= choice_count;
+        }
+        Atom *closed = ok ? bindings_apply(&theta, arena, signature->signature)
+                          : NULL;
+        bindings_free(&theta);
+        PettaTypeCall instance = {0};
+        if (!closed || atom_has_vars(closed) ||
+            !petta_type_call_plan(closed, signature->arity, &instance) ||
+            instance.arity != signature->arity)
+            continue;
+        free(scan->facts);
+        *scan = (ContractScan){
+            .context = context, .head = callee->head, .arity = callee->arity,
+            .version = &callee->version, .signature = instance,
+        };
+        callee->version = (PettaContractVersion){
+            .arity = callee->arity, .range_proved = true,
+        };
+        bool versioned = contract_entry_facts(scan, candidates, count);
+        for (size_t e = 0u; versioned && e < count; e++) {
+            Atom *equation = candidates[e].equation;
+            versioned = contract_equation(scan, equation->expr.elems[1],
+                                          equation->expr.elems[2],
+                                          candidates[e].rhs_plan);
+        }
+        versioned = versioned && contract_range_left_to_entry_ok(scan);
+        if (!versioned)
+            continue;
+        for (uint32_t i = 0u; i < callee->arity; i++) {
+            Atom *formal =
+                petta_type_call_argument(signature, i + 1u, false).formal;
+            if (!formal || !atom_has_vars(formal))
+                continue;
+            PettaTypeArgument closed_formal =
+                petta_type_call_argument(&instance, i + 1u, false);
+            if (closed_formal.demand != PETTA_TYPE_TRANSLATE_AND_GUARD ||
+                callee->version.facts[i] != PETTA_CONTRACT_ENTRY_GROUND)
+                return false;
+            callee->version.facts[i] = PETTA_CONTRACT_ENTRY_INSTANCE;
+            callee->version.instances[i] = closed_formal.formal;
+        }
+        callee->signature = instance;
+        return true;
+    }
+    return false;
+}
+
 /* Analyse `head`/`arity`: a version when its signature and equations admit
  * one, otherwise whether its equations do only work a version may do. */
 static void contract_analyse(ContractContext *context, ContractCallee *callee) {
@@ -1476,7 +1855,9 @@ static void contract_analyse(ContractContext *context, ContractCallee *callee) {
         .context = context, .head = callee->head, .arity = callee->arity,
         .version = &callee->version,
     };
-    callee->version = (PettaContractVersion){.arity = callee->arity};
+    callee->version = (PettaContractVersion){
+        .arity = callee->arity, .range_proved = true,
+    };
     bool versioned = false;
     if (typed) {
         scan.signature = calls[0];
@@ -1487,6 +1868,16 @@ static void contract_analyse(ContractContext *context, ContractCallee *callee) {
             versioned = contract_equation(&scan, equation->expr.elems[1],
                                           equation->expr.elems[2],
                                           candidates[e].rhs_plan);
+        }
+        versioned = versioned && contract_range_left_to_entry_ok(&scan);
+        if (!versioned) {
+            /* The plain reading's refusal is the one to report when no
+             * instance helps either. */
+            Atom *declined = scan.declined;
+            versioned = contract_instance_version(context, callee, &calls[0],
+                                                  candidates, count, &scan);
+            if (!versioned && !scan.declined)
+                scan.declined = declined;
         }
     }
     bool pure = versioned;
@@ -1499,7 +1890,9 @@ static void contract_analyse(ContractContext *context, ContractCallee *callee) {
             .version = &callee->version, .purity_only = true,
             .result_param = callee->arity,
         };
-        callee->version = (PettaContractVersion){.arity = callee->arity};
+        callee->version = (PettaContractVersion){
+            .arity = callee->arity, .range_proved = true,
+        };
         if (call_count == 1u) {
             purity.signature = calls[0];
             callee->signature = calls[0];
@@ -1583,6 +1976,7 @@ bool petta_contract_version_discharges(const PettaContractVersion *version,
 
 bool petta_contract_trusted_version(PettaProgram *program, Space *space,
                                     SymbolId head, uint32_t arity,
+                                    Arena *keep,
                                     PettaContractVersion *version) {
     if (!contract_versions_enabled() ||
         !program || !space || !version || head == SYMBOL_ID_NONE ||
@@ -1598,8 +1992,16 @@ bool petta_contract_trusted_version(PettaProgram *program, Space *space,
     ContractCallee *callee = NULL;
     bool ok = contract_function_version(&context, head, arity, &callee) &&
         callee && callee->state == 1u;
-    if (ok)
+    if (ok) {
         *version = callee->version;
+        for (uint32_t i = 0u; ok && i < version->arity; i++) {
+            if (version->facts[i] != PETTA_CONTRACT_ENTRY_INSTANCE)
+                continue;
+            version->instances[i] = keep && version->instances[i]
+                ? atom_deep_copy(keep, version->instances[i]) : NULL;
+            ok = version->instances[i] != NULL;
+        }
+    }
     free(context.callees);
     contract_memo_free(&context.memo);
     arena_free(&scratch);

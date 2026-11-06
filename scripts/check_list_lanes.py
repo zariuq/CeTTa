@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cross-lane algebra, domain, and mutation gates for list and clist."""
+"""Cross-lane algebra, domain, and mutation gates for the list library."""
 
 from __future__ import annotations
 
@@ -95,13 +95,6 @@ DOMAIN_CASES = (
             "(BadArgType 1 Expression %Undefined%))]",
         },
     ),
-    (
-        "clist-from-non-expression",
-        "(clist:from-list not-an-expression)",
-        "[(Error (decons-atom not-an-expression) expected: "
-        "(decons-atom (: <expr> Expression)), found: "
-        "(decons-atom not-an-expression))]",
-    ),
 )
 
 
@@ -113,7 +106,7 @@ def check_domains(cetta: Path) -> int:
                 cetta,
                 lane,
                 "-e",
-                "!(import! &self clist)",
+                "!(import! &self list)",
                 "-e",
                 f"!{expression}",
             )
@@ -162,14 +155,7 @@ def generated_assertions() -> list[str]:
         total = sum(left)
         assertions.extend(
             (
-                f"!(assertEqual (clist:to-list (clist:from-list {left_form})) {left_form})",
-                "!(assertEqual "
-                f"(clist:from-list (clist:to-list (clist:from-list {left_form}))) "
-                f"(clist:from-list {left_form}))",
                 f"!(assertEqual (list:append {left_form} {right_form}) {appended})",
-                "!(assertEqual "
-                f"(clist:to-list (clist:append (clist:from-list {left_form}) "
-                f"(clist:from-list {right_form}))) {appended})",
                 f"!(assertEqual (list:reverse {left_form}) {reversed_left})",
                 f"!(assertEqual (list:sort-numbers {left_form}) {sorted_left})",
                 f"!(assertEqual (list:unique {left_form}) {unique_left})",
@@ -179,43 +165,23 @@ def generated_assertions() -> list[str]:
                 "!(assertEqual "
                 f"(list:remove-all {left[0] if left else 0} {left_form}) "
                 f"{removed_left})",
-                "!(assertEqual "
-                f"(clist:to-list (clist:reverse (clist:from-list {left_form}))) "
-                f"{reversed_left})",
                 f"!(assertEqual (list:map {left_form} $x (+ $x 3)) {mapped})",
-                "!(assertEqual "
-                f"(clist:to-list (clist:map (clist:from-list {left_form}) "
-                f"$x (+ $x 3))) {mapped})",
                 "!(assertEqual "
                 f"(list:filter {left_form} $x (> $x 8)) {filtered})",
                 "!(assertEqual "
-                f"(clist:to-list (clist:filter (clist:from-list {left_form}) "
-                f"$x (> $x 8))) {filtered})",
-                "!(assertEqual "
                 f"(list:foldl {left_form} 0 $acc $item (+ $acc $item)) {total})",
-                "!(assertEqual "
-                f"(clist:foldl (clist:from-list {left_form}) 0 "
-                f"$acc $item (+ $acc $item)) {total})",
             )
         )
 
     for start, stop in ((0, 0), (0, 1), (0, 9), (2, 11), (8, 3)):
         expected = render_sequence(list(range(start, stop)))
-        assertions.extend(
-            (
-                f"!(assertEqual (list:range {start} {stop}) {expected})",
-                "!(assertEqual "
-                f"(clist:to-list (clist:range {start} {stop})) {expected})",
-            )
+        assertions.append(
+            f"!(assertEqual (list:range {start} {stop}) {expected})"
         )
     for count, item in ((0, 7), (1, -2), (8, 5)):
         expected = render_sequence([item] * count)
-        assertions.extend(
-            (
-                f"!(assertEqual (list:repeat {count} {item}) {expected})",
-                "!(assertEqual "
-                f"(clist:to-list (clist:repeat {count} {item})) {expected})",
-            )
+        assertions.append(
+            f"!(assertEqual (list:repeat {count} {item}) {expected})"
         )
     return assertions
 
@@ -225,7 +191,7 @@ def check_generated_model(cetta: Path) -> int:
     assertions = generated_assertions()
     driver = RUNTIME / "generated_direct_model.metta"
     driver.write_text(
-        "!(import! &self clist)\n"
+        "!(import! &self list)\n"
         "(= (test:identity-key $x) $x)\n"
         + "\n".join(assertions)
         + "\n"
@@ -247,24 +213,13 @@ def check_scale(cetta: Path) -> int:
         "!(assertEqual (list:len (list:range 10000)) 10000)",
         "!(assertEqual (list:foldl (list:range 10000) 0 $a $x (+ $a $x)) 49995000)",
         # list:map/filter deliberately retain the established map-atom and
-        # filter-atom semantics; the deeper rungs below exercise the recursive
-        # clist presentation and its bridge to expression-backed sequences.
+        # filter-atom semantics.
         "!(assertEqual (list:at (list:map (list:range 100) $x (+ $x 1)) 99) 100)",
         "!(assertEqual (list:len (list:filter (list:range 50) $x (> $x 24))) 25)",
-        "!(assertEqual (clist:len (clist:range 200)) 200)",
-        "!(assertEqual (clist:first (clist:reverse (clist:range 200))) 199)",
-        "!(assertEqual (clist:to-list (clist:from-list (list:range 200))) (list:range 200))",
-        # A produced constructor value is invocation data, not syntax to
-        # recompile at every consumer step.  This composition crossed the
-        # native-stack boundary when the eager value proof was ignored.
-        "!(assertEqual "
-        "(clist:foldl "
-        "(clist:append (clist:range 600) (clist:range 600)) "
-        "0 $a $x (+ $a $x)) 359400)",
     )
     driver = RUNTIME / "scale_correctness.metta"
     driver.write_text(
-        "!(import! &self clist)\n" + "\n".join(assertions) + "\n"
+        "!(import! &self list)\n" + "\n".join(assertions) + "\n"
     )
     expected = "\n".join("[()]" for _ in range(len(assertions) + 1))
     outputs = {lane: run(cetta, lane, str(driver)) for lane in ("he", "prime")}
@@ -294,43 +249,8 @@ def check_mutations(cetta: Path) -> int:
     RUNTIME.mkdir(parents=True, exist_ok=True)
 
     list_source = (ROOT / "lib" / "list.metta").read_text()
-    clist_source = (ROOT / "lib" / "clist.metta").read_text()
 
     mutation_specs = (
-        (
-            "conversion-order",
-            clist_source,
-            "(= (clist:from-list $xs)\n"
-            "   (let ($head $tail) (decons-atom $xs)\n"
-            "     (let $rest (clist:from-list $tail)\n"
-            "       (clist:cons $head $rest))))",
-            "(= (clist:from-list $xs)\n"
-            "   (let ($head $tail) (decons-atom $xs)\n"
-            "     (let $rest (clist:from-list $tail)\n"
-            "       (clist:append $rest (clist:cons $head (clist:nil))))))",
-            "!(assertEqual (clist:to-list (clist:from-list (a b c))) (a b c))\n",
-        ),
-        (
-            "clist-length",
-            clist_source,
-            "(= (clist:len-acc (ClistCons $head $tail) $acc)\n"
-            "   (let $next (eval (+ $acc 1))\n"
-            "     (clist:len-acc $tail $next)))",
-            "(= (clist:len-acc (ClistCons $head $tail) $acc)\n"
-            "   (clist:len-acc $tail $acc))",
-            "!(assertEqual (clist:len (clist:from-list (a b c))) 3)\n",
-        ),
-        (
-            "clist-reverse-accumulator",
-            clist_source,
-            "(= (clist:reverse-acc (ClistCons $head $tail) $acc)\n"
-            "   (let $next (clist:cons $head $acc)\n"
-            "     (clist:reverse-acc $tail $next)))",
-            "(= (clist:reverse-acc (ClistCons $head $tail) $acc)\n"
-            "   (clist:reverse-acc $tail $acc))",
-            "!(assertEqual (clist:reverse (clist:from-list (a b c))) "
-            "(clist:from-list (c b a)))\n",
-        ),
         (
             "default-sort",
             list_source,
@@ -388,7 +308,7 @@ def check_mutations(cetta: Path) -> int:
             "reverse",
             list_source,
             "(= (list:reverse $xs)\n"
-            "   (let $items (list:to-expression $xs)\n"
+            "   (let $items (tuple:from $xs)\n"
             "     (list:like $xs (list:reverse-acc $items ()))))",
             "(= (list:reverse $xs)\n   $xs)",
             "!(assertEqual (list:reverse (a b c)) (c b a))\n",
@@ -476,7 +396,6 @@ def main() -> int:
     try:
         checks = 0
         checks += check_syntax(cetta, "test_list_syntax")
-        checks += check_syntax(cetta, "test_clist_syntax")
         checks += check_domains(cetta)
         checks += check_generated_model(cetta)
         checks += check_scale(cetta)

@@ -175,6 +175,12 @@ class Answers(list):
     def to_python(self):
         return [value.to_python() for value in self]
 
+    def one(self):
+        """Return the sole Atom, requiring exactly one answer (including duplicates)."""
+        if len(self) != 1:
+            raise ValueError(f"expected one answer, received {len(self)}")
+        return self[0]
+
     def __repr__(self):
         shown = ", ".join(repr(value) for value in self[:8])
         suffix = f", … ({len(self)} answers)" if len(self) > 8 else ""
@@ -256,6 +262,9 @@ class Atom:
         if kind == AtomKind.RATIONAL:
             return Fraction(value)
         if kind == AtomKind.RESOURCE:
+            found, value = _native.get_pyobject(self._handle)
+            if found:
+                return value
             buffer = _native.atom_buffer(self._handle)
             if buffer is not None:
                 from ._arrays import to_array
@@ -479,9 +488,29 @@ class Engine:
         return self._answers(*_native.call(self._handle, head._handle,
                                            [value._handle for value in values], fuel))
 
+    def library(self, name, namespace=None):
+        """Import a library and return a view of its qualified callable names."""
+        if not isinstance(name, str) or not name:
+            raise ValueError("a nonempty library name is required")
+        if namespace is not None and not isinstance(namespace, str):
+            raise TypeError("namespace must be a string or None")
+        spec = self.expression(self.symbol("library"), self.symbol(name))
+        self.import_(spec)
+        return Library(self, name if namespace is None else namespace)
+
+    def pyobject(self, value):
+        """Retain a Python object by identity, without inspecting its contents."""
+        return Atom(_native.pyobject(self._handle, value))
+
     def query(self, expression, *, fuel=-1):
         value = self.parse(expression) if isinstance(expression, str) else self.atom(expression)
         return Query(self, _native.query_open(self._handle, value._handle, fuel))
+
+    def query_call(self, name, *arguments, fuel=-1):
+        """Stream a structured call with already evaluated arguments."""
+        head = self.symbol(name) if isinstance(name, str) else self.atom(name)
+        value = self.expression(head, *arguments)
+        return Query(self, _native.query_open(self._handle, value._handle, fuel, True))
 
     @property
     def space(self):
@@ -492,6 +521,37 @@ class Engine:
 
     def space_from_atom(self, value):
         return Space(self, _native.space_from_atom(self._handle, self.atom(value)._handle))
+
+
+class Library:
+    """Engine-bound library view. Bracket lookup preserves exact MeTTa spelling."""
+
+    def __init__(self, engine, namespace):
+        self._engine = engine
+        self._namespace = namespace
+
+    def __getitem__(self, name):
+        if not isinstance(name, str) or not name:
+            raise ValueError("a nonempty function name is required")
+        head = f"{self._namespace}:{name}" if self._namespace else name
+        return LibraryFunction(self._engine, head)
+
+    def __getattr__(self, name):
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return self[name]
+
+
+class LibraryFunction:
+    def __init__(self, engine, name):
+        self._engine = engine
+        self._name = name
+
+    def __call__(self, *arguments, fuel=-1):
+        return self._engine.call(self._name, *arguments, fuel=fuel)
+
+    def query(self, *arguments, fuel=-1):
+        return self._engine.query_call(self._name, *arguments, fuel=fuel)
 
 
 class Space:

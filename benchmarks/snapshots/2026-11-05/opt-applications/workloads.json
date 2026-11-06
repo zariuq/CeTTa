@@ -1,0 +1,576 @@
+[
+  {
+    "case": "transitive_50k",
+    "family": "transitive",
+    "arguments": [
+      2000,
+      50000
+    ],
+    "heads": {
+      "trans": 2,
+      "dtrans": 3
+    },
+    "files": {
+      "mm2": {
+        "path": "transitive_50k.mm2",
+        "sha256": "d1573c871a21eeae1c12fdf30a0cdbf2b001b3b4394b69a707a6f18b7e5b7d9a"
+      },
+      "metta": {
+        "path": "transitive_50k.metta",
+        "sha256": "d56a72012db1cd8f1961708845b57e2bd7ad066aba327dd781873cf47a1c6c8a"
+      },
+      "swi.metta": {
+        "path": "transitive_50k.swi.metta",
+        "sha256": "65be66431402b4e7d178f20db7cccc3ff9c58de364e01f4db1737c028aaa3e1d"
+      }
+    },
+    "observer": "relation cardinalities",
+    "group": "base",
+    "edge_facts": 49727
+  },
+  {
+    "case": "clique5_200x3600",
+    "family": "clique",
+    "arguments": [
+      200,
+      3600,
+      5
+    ],
+    "heads": {
+      "5-clique": 5
+    },
+    "files": {
+      "mm2": {
+        "path": "clique5_200x3600.mm2",
+        "sha256": "e3226c42adcd90c4c9283e3e121222c9a1c766cf17ebada11abb06021b9ef3ac"
+      },
+      "metta": {
+        "path": "clique5_200x3600.metta",
+        "sha256": "2bc4510dd97ff04d92e596ac914634eab125c9286dfe7fa9c76537da3424c9b2"
+      },
+      "swi.metta": {
+        "path": "clique5_200x3600.swi.metta",
+        "sha256": "a426dfe2dfe0afc1bea49f3f6f33049058a1fd6137026c08e87fa30992db0eeb"
+      }
+    },
+    "observer": "relation cardinalities",
+    "group": "base",
+    "edge_facts": 3600
+  },
+  {
+    "case": "oddeven_300",
+    "family": "odd_even_sort",
+    "arguments": [
+      300
+    ],
+    "heads": {
+      "A": 2
+    },
+    "files": {
+      "mm2": {
+        "path": "oddeven_300.mm2",
+        "sha256": "7facf9c1cffd14652cd3e83c7b18da7d3e78e6de74cb6b1b1e6ec0232f8d8815"
+      },
+      "metta": {
+        "path": "oddeven_300.metta",
+        "sha256": "5eee64b7d9f9302c12239f1c13d1329e7fd1bd87bf20c391ef2791691413e112"
+      },
+      "swi.metta": {
+        "path": "oddeven_300.swi.metta",
+        "sha256": "5eee64b7d9f9302c12239f1c13d1329e7fd1bd87bf20c391ef2791691413e112"
+      }
+    },
+    "observer": "relation cardinalities",
+    "group": "base",
+    "edge_facts": 0
+  },
+  {
+    "case": "bc_1000",
+    "family": "backward_chain",
+    "arguments": [
+      1000
+    ],
+    "heads": {
+      "proof": 2
+    },
+    "files": {
+      "mm2": {
+        "path": "bc_1000.mm2",
+        "sha256": "0a0657eda9690c9642d7ae3afc931ed971fc10146b7a51ec876b512e1a5bb516"
+      },
+      "metta": {
+        "path": "bc_1000.metta",
+        "sha256": "b71a1b5ebe85be9b8d536a357bd60027856d35bde627bd70e3021e97525db2f1"
+      },
+      "swi.metta": {
+        "path": "bc_1000.swi.metta",
+        "sha256": "beb97257c0857763e51ae8e16d6dba7fc7c2d990e50490a43120700275b49f8c"
+      }
+    },
+    "observer": "relation cardinalities",
+    "group": "base",
+    "edge_facts": 0
+  },
+  {
+    "case": "hexlife_20_80_20",
+    "family": "hexlife",
+    "arguments": [
+      20,
+      80,
+      20
+    ],
+    "heads": {
+      "alive": 1
+    },
+    "files": {
+      "mm2": {
+        "path": "hexlife_20_80_20.mm2",
+        "sha256": "0ded1f89351e913a74356e012512e274bea380778255bcf6dd5a67fc68a922f0"
+      },
+      "metta": {
+        "path": "hexlife_20_80_20.metta",
+        "sha256": "a1495162da50d3429c25b3a777156750536b45eae0347818c38be9f976cda314"
+      },
+      "swi.metta": {
+        "path": "hexlife_20_80_20.swi.metta",
+        "sha256": "a1495162da50d3429c25b3a777156750536b45eae0347818c38be9f976cda314"
+      }
+    },
+    "observer": "relation cardinalities",
+    "group": "base",
+    "edge_facts": 0
+  },
+  {
+    "case": "ancestry_1k",
+    "family": "ancestry",
+    "arguments": [
+      1000,
+      40,
+      20
+    ],
+    "heads": {
+      "child": 2,
+      "generation": 3,
+      "ancestor": 2
+    },
+    "files": {
+      "mm2": {
+        "path": "ancestry_1k.mm2",
+        "sha256": "b30b7e9cd9b262767e715d10d2d7c9e265e7984f5ce80c295b440bf1591c62a9"
+      },
+      "metta": {
+        "path": "ancestry_1k.metta",
+        "sha256": "ab86643570838483a43ede23753ff5c2b27adb86d230bd8cc48244af9c6c98a2"
+      },
+      "swi.metta": {
+        "path": "ancestry_1k.swi.metta",
+        "sha256": "d764378f56454bc339504c891080948dddc8418db0efc98e5995a2a520308a03"
+      }
+    },
+    "observer": "relation cardinalities",
+    "group": "base",
+    "edge_facts": 0
+  },
+  {
+    "case": "reach_500",
+    "family": "reach_paths",
+    "arguments": [
+      500,
+      2
+    ],
+    "heads": {
+      "reachable": 3,
+      "step": 3,
+      "visited": 1
+    },
+    "files": {
+      "mm2": {
+        "path": "reach_500.mm2",
+        "sha256": "7682b433c160029c05c1841c30bb4472536b87fb1a28c5597c0dd36195d69f7f"
+      },
+      "metta": {
+        "path": "reach_500.metta",
+        "sha256": "3a9dde062720b633e911de07bffa9e8440255f41f79f72acff67dcb1eb427ea4"
+      },
+      "swi.metta": {
+        "path": "reach_500.swi.metta",
+        "sha256": "6632903d3f522806b8439ba76d097bc7fbc0c981d36dfeba9526b1a3d196801b"
+      }
+    },
+    "observer": "relation cardinalities",
+    "group": "base",
+    "edge_facts": 0
+  },
+  {
+    "case": "counter_300",
+    "family": "counter_machine",
+    "arguments": [
+      300
+    ],
+    "heads": {
+      "state": 2,
+      "HALTED": 1
+    },
+    "files": {
+      "mm2": {
+        "path": "counter_300.mm2",
+        "sha256": "53af57f0783e848835312e7e537e444cf1155ce4b1576eb1b0a4867a76374f76"
+      },
+      "metta": {
+        "path": "counter_300.metta",
+        "sha256": "f9681aa7b35993568f654570cc413c3dd2b64980a23660fe55d9fe7656b8f479"
+      },
+      "swi.metta": {
+        "path": "counter_300.swi.metta",
+        "sha256": "f9681aa7b35993568f654570cc413c3dd2b64980a23660fe55d9fe7656b8f479"
+      }
+    },
+    "observer": "relation cardinalities",
+    "group": "base",
+    "edge_facts": 0
+  },
+  {
+    "case": "pc_200",
+    "family": "process_calculus",
+    "arguments": [
+      1000,
+      200,
+      200
+    ],
+    "heads": {
+      "petri": 1
+    },
+    "files": {
+      "mm2": {
+        "path": "pc_200.mm2",
+        "sha256": "29b83a12618177c96e922351ff6368c3d335907cea721ebb0000c6e9206edf29"
+      },
+      "metta": {
+        "path": "pc_200.metta",
+        "sha256": "5adf986938c69e06d94051f8968b9691e28d12cbef41df5d6d3a586f88fd327d"
+      },
+      "swi.metta": {
+        "path": "pc_200.swi.metta",
+        "sha256": "860f61bce2d1f269ee07c06935966a9eea0b583d1faf5a8eef112b3e01a0709c"
+      }
+    },
+    "observer": "relation cardinalities",
+    "group": "base",
+    "edge_facts": 0
+  },
+  {
+    "case": "transitive_1m",
+    "family": "transitive",
+    "arguments": [
+      50000,
+      1000000
+    ],
+    "heads": {
+      "trans": 2,
+      "dtrans": 3
+    },
+    "files": {
+      "mm2": {
+        "path": "transitive_1m.mm2",
+        "sha256": "3711360fc5379cea447f9aac100994e4b301d6b60b1d648ea1f55ebfe1ebb032"
+      },
+      "metta": {
+        "path": "transitive_1m.metta",
+        "sha256": "cf6e82657068c9b1802d2616d728f6241939313317de2f5a02a0484b7b6fe28e"
+      },
+      "swi.metta": {
+        "path": "transitive_1m.swi.metta",
+        "sha256": "f8c34153bc0ef173668337d5ad1a74baa337104cf2a4dcfbb29504324a19e81f"
+      }
+    },
+    "observer": "relation cardinalities",
+    "group": "scale",
+    "edge_facts": 999790
+  },
+  {
+    "case": "oddeven_2000",
+    "family": "odd_even_sort",
+    "arguments": [
+      2000
+    ],
+    "heads": {
+      "A": 2
+    },
+    "files": {
+      "mm2": {
+        "path": "oddeven_2000.mm2",
+        "sha256": "6ad85d5bb0a31ebd28f20a7590bdcc0f4ff82ed2e00514a6943ccfd08de7dcae"
+      },
+      "metta": {
+        "path": "oddeven_2000.metta",
+        "sha256": "6065cac4cdadbb75b856fea7c64b9617f2244153951ce7f28e2b1da4c150b7fd"
+      },
+      "swi.metta": {
+        "path": "oddeven_2000.swi.metta",
+        "sha256": "6065cac4cdadbb75b856fea7c64b9617f2244153951ce7f28e2b1da4c150b7fd"
+      }
+    },
+    "observer": "relation cardinalities",
+    "group": "scale",
+    "edge_facts": 0
+  },
+  {
+    "case": "transitive_small",
+    "family": "transitive",
+    "arguments": [
+      12,
+      35
+    ],
+    "heads": {
+      "trans": 2,
+      "dtrans": 3
+    },
+    "files": {
+      "mm2": {
+        "path": "transitive_small.mm2",
+        "sha256": "df1d1dce3103b49709131fb11d1b8214077e2f73666db077776b7d7f1f5841a3"
+      },
+      "metta": {
+        "path": "transitive_small.metta",
+        "sha256": "4e8d82d319e4547beb6c669191d0f7b1f81709baf917227b77f0baf5ce770701"
+      },
+      "swi.metta": {
+        "path": "transitive_small.swi.metta",
+        "sha256": "65d740f3add05ae8fe37714edead7f983094df4f11f7e1c98c4ae14de033f930"
+      }
+    },
+    "observer": "complete projected set",
+    "group": "small",
+    "edge_facts": 30
+  },
+  {
+    "case": "clique_small",
+    "family": "clique",
+    "arguments": [
+      9,
+      24,
+      5
+    ],
+    "heads": {
+      "5-clique": 5
+    },
+    "files": {
+      "mm2": {
+        "path": "clique_small.mm2",
+        "sha256": "3eceb68af565e20f4c16eb78236f44dd838794c134b78684194d9c7725a34fed"
+      },
+      "metta": {
+        "path": "clique_small.metta",
+        "sha256": "dd9307b2f6d1f091db82ed92be3921a0b2dd6c3502552f54a8147592675c3d7c"
+      },
+      "swi.metta": {
+        "path": "clique_small.swi.metta",
+        "sha256": "892074296f75968d26b65c8c9a063a788b25b8e945718e0433be47cddb58afdc"
+      }
+    },
+    "observer": "complete projected set",
+    "group": "small",
+    "edge_facts": 24
+  },
+  {
+    "case": "oddeven_small",
+    "family": "odd_even_sort",
+    "arguments": [
+      8
+    ],
+    "heads": {
+      "A": 2
+    },
+    "files": {
+      "mm2": {
+        "path": "oddeven_small.mm2",
+        "sha256": "82c31f24d422fca70e5fe5ad72c7b331ea35057828620ca841d43ae9e3fe807a"
+      },
+      "metta": {
+        "path": "oddeven_small.metta",
+        "sha256": "9e9278b1e301fb8bd84e85b0ab821e45ed57d05d9fd96776e94afcb3574a3b6a"
+      },
+      "swi.metta": {
+        "path": "oddeven_small.swi.metta",
+        "sha256": "9e9278b1e301fb8bd84e85b0ab821e45ed57d05d9fd96776e94afcb3574a3b6a"
+      }
+    },
+    "observer": "complete projected set",
+    "group": "small",
+    "edge_facts": 0
+  },
+  {
+    "case": "bc_small",
+    "family": "backward_chain",
+    "arguments": [
+      5
+    ],
+    "heads": {
+      "proof": 2
+    },
+    "files": {
+      "mm2": {
+        "path": "bc_small.mm2",
+        "sha256": "728ec96af95eeabfc0cd0a03ff0fa185ee4321c565004c4fcbb1b3b6626d132e"
+      },
+      "metta": {
+        "path": "bc_small.metta",
+        "sha256": "2b67b823e78d397679d97762d7383aad0dfc8c08498949d7dada92550f559957"
+      },
+      "swi.metta": {
+        "path": "bc_small.swi.metta",
+        "sha256": "70cfc8db6c9f71b9aa8c6a170122df608c2fb0e0bba8e1d569ee29772789d22e"
+      }
+    },
+    "observer": "complete projected set",
+    "group": "small",
+    "edge_facts": 0
+  },
+  {
+    "case": "hexlife_small",
+    "family": "hexlife",
+    "arguments": [
+      6,
+      10,
+      3
+    ],
+    "heads": {
+      "alive": 1
+    },
+    "files": {
+      "mm2": {
+        "path": "hexlife_small.mm2",
+        "sha256": "65d2120a73d02f73eb0c299ecabc56eb9911034554278a796a298a2eabfab183"
+      },
+      "metta": {
+        "path": "hexlife_small.metta",
+        "sha256": "c58fe7bbc5b04445a8d2baaf596e6844d79d49bc3a754abafaceb8af5be07def"
+      },
+      "swi.metta": {
+        "path": "hexlife_small.swi.metta",
+        "sha256": "c58fe7bbc5b04445a8d2baaf596e6844d79d49bc3a754abafaceb8af5be07def"
+      }
+    },
+    "observer": "complete projected set",
+    "group": "small",
+    "edge_facts": 0
+  },
+  {
+    "case": "ancestry_small",
+    "family": "ancestry",
+    "arguments": [
+      20,
+      8,
+      4
+    ],
+    "heads": {
+      "child": 2,
+      "generation": 3,
+      "ancestor": 2
+    },
+    "files": {
+      "mm2": {
+        "path": "ancestry_small.mm2",
+        "sha256": "5fcfc373db2f8bb5ef5684b9bd82c7e2688574ad420226622508235b3e76bdb3"
+      },
+      "metta": {
+        "path": "ancestry_small.metta",
+        "sha256": "f66c26ba7de41de2baf6f4ce05e960a00c4d3b4941618e534c4ec2d47e9d8775"
+      },
+      "swi.metta": {
+        "path": "ancestry_small.swi.metta",
+        "sha256": "ea9ae55408c31a156e8ad0d190f3ee3e89eeb8af221d2f47dee7a12ebb748ea6"
+      }
+    },
+    "observer": "complete projected set",
+    "group": "small",
+    "edge_facts": 0
+  },
+  {
+    "case": "reach_small",
+    "family": "reach_paths",
+    "arguments": [
+      12,
+      2
+    ],
+    "heads": {
+      "reachable": 3,
+      "step": 3,
+      "visited": 1
+    },
+    "files": {
+      "mm2": {
+        "path": "reach_small.mm2",
+        "sha256": "bb8a9e323b8a351caf26619c8b2e56a77dc8e56ee28e93487209fff26f96936c"
+      },
+      "metta": {
+        "path": "reach_small.metta",
+        "sha256": "8ebdefbc93685e2c397cbdab9ee56d024a3c3c5db086121a02179824ffbbb411"
+      },
+      "swi.metta": {
+        "path": "reach_small.swi.metta",
+        "sha256": "988294656db946645065bbaff46976be46d8a6039309bbe42b9f22c416907124"
+      }
+    },
+    "observer": "complete projected set",
+    "group": "small",
+    "edge_facts": 0
+  },
+  {
+    "case": "counter_small",
+    "family": "counter_machine",
+    "arguments": [
+      3
+    ],
+    "heads": {
+      "state": 2,
+      "HALTED": 1
+    },
+    "files": {
+      "mm2": {
+        "path": "counter_small.mm2",
+        "sha256": "6cecdc59dc1a17c86e46483676af6dc44209d0c4c4d0db139b47a43eb7f14bbd"
+      },
+      "metta": {
+        "path": "counter_small.metta",
+        "sha256": "7132639c76fae3eb9a7dcb2dae473dc123e0b6dab556e579671c9b04c47f49b2"
+      },
+      "swi.metta": {
+        "path": "counter_small.swi.metta",
+        "sha256": "7132639c76fae3eb9a7dcb2dae473dc123e0b6dab556e579671c9b04c47f49b2"
+      }
+    },
+    "observer": "complete projected set",
+    "group": "small",
+    "edge_facts": 0
+  },
+  {
+    "case": "pc_small",
+    "family": "process_calculus",
+    "arguments": [
+      30,
+      4,
+      4
+    ],
+    "heads": {
+      "petri": 1
+    },
+    "files": {
+      "mm2": {
+        "path": "pc_small.mm2",
+        "sha256": "f888b2f0f2687aef3d12531ad8e99cb346e38051b81dbf28ce5df025214fede0"
+      },
+      "metta": {
+        "path": "pc_small.metta",
+        "sha256": "5aeda0e6a646df0984f5fc0b8996974ec2153f537ed3f2f05a8e2e9899b6959b"
+      },
+      "swi.metta": {
+        "path": "pc_small.swi.metta",
+        "sha256": "778b2a8a27f19799b2f0403872e5e6752c4799a6f61deb3ca663f8a06cceec8e"
+      }
+    },
+    "observer": "complete projected set",
+    "group": "small",
+    "edge_facts": 0
+  }
+]

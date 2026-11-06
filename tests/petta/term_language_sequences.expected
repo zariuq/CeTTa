@@ -1,0 +1,9 @@
+true
+§i
+167
+(cons (cp 105) nil)
+(head (cp 97))
+(case-head 97)
+round-trip
+xy
+((cp 120) (cons (cp 121) nil))

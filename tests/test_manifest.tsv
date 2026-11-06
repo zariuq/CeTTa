@@ -33,6 +33,7 @@ tests/he_c1_grounded_basic.metta	he	metta	extended	main	native	test	golden	-
 tests/he_c2_spaces_kb.metta	he	metta	extended	main	native	test	golden	-
 tests/he_c3_pln_stv.metta	he	metta	extended	main	native	test	golden	-
 tests/he_case_empty_scrutinee.metta	he	metta	extended	main	native	test	golden	-
+tests/he_case_empty_scrutinee_collapse.metta	he	metta	extended	main	native	test	golden	-
 tests/he_case_two_sided.metta	he	metta	extended	main	native	test	golden	-
 tests/he_d1_gadt.metta	he	metta	extended	main	native	test	golden	-
 tests/he_d2_higherfunc.metta	he	metta	extended	main	native	test	golden	-
@@ -188,7 +189,6 @@ tests/test_change_state_first_arg_type_error.metta	he	metta	extended	main	native
 tests/test_change_state_partial_arity.metta	he	metta	extended	main	native	test	golden	-
 tests/test_checkpoint_disease_route_probe.metta	he	metta	extended	main	native	test-heavy	probe	heavy WM-PLN disease route probe
 tests/test_checkpoint_group_extract_cross_form_regression.metta	he	metta	extended	main	native	test-heavy	golden	heavy backend golden regression
-tests/test_clist_syntax.metta	he	metta	extended	main	native	test	golden	-
 tests/test_closed_stream_fastpath.metta	he	metta	extended	main	native	test-backend-dedicated	golden	dedicated backend or bridge golden regression
 tests/test_closed_stream_runtime_stats.metta	he	metta	extended	runtime-stats	native	test-backend-dedicated	golden	dedicated backend or bridge golden regression
 tests/test_collapse_add_next_atom_from_collapse_bind_result.metta	he	metta	extended	main	native	test	golden	-
@@ -547,7 +547,6 @@ tests/test_pragma_modes.metta	he	metta	extended	main	native	test	golden	-
 tests/test_pragma_thread_count_error.metta	he	metta	extended	main	native	test	golden	-
 tests/test_pragma_wrong_arity.metta	he	metta	extended	main	native	test	golden	-
 tests/test_prepared_keyed_top_k_stats.metta	he	metta	extended	main	native	test	golden	-
-tests/test_prepared_sequence_erasure_stats.metta	he	metta	extended	main	native	test	golden	-
 tests/test_pretty_namespaces_syntax.metta	he	metta	extended	main	native	test	golden	-
 tests/test_pretty_vars_syntax.metta	he	metta	extended	main	native	test-backend-dedicated	golden	dedicated backend or bridge golden regression
 tests/test_print_alternatives.metta	he	metta	extended	main	native	test	golden	-

@@ -81,7 +81,7 @@ static uint32_t declared_type_count(Space *space, Arena *arena, Atom *subject) {
 }
 
 /* HE's grounded operation types follow the active session, not the process:
- * new-space's extended signature appears outside he-compat only, and no
+ * new-space's kind and kind/backend signatures appear outside he-compat, and no
  * grounded type exists outside HE. */
 static bool he_grounded_type_session_contract(Space *space, Arena *arena) {
     /* A library context is megabytes: the four live on the heap. */
@@ -108,7 +108,7 @@ static bool he_grounded_type_session_contract(Space *space, Arena *arena) {
     Atom *plus = atom_symbol_id(arena, g_builtin_syms.op_plus);
 
     eval_set_library_context(he_extended);
-    bool extended_ok = declared_type_count(space, arena, new_space) == 2u &&
+    bool extended_ok = declared_type_count(space, arena, new_space) == 3u &&
         declared_type_count(space, arena, plus) == 1u;
     eval_set_library_context(he_compat);
     bool compat_ok = declared_type_count(space, arena, new_space) == 1u &&
@@ -120,7 +120,7 @@ static bool he_grounded_type_session_contract(Space *space, Arena *arena) {
     bool prime_ok = declared_type_count(space, arena, plus) == 0u;
     eval_set_library_context(he_extended);
     bool extended_again_ok =
-        declared_type_count(space, arena, new_space) == 2u;
+        declared_type_count(space, arena, new_space) == 3u;
     eval_set_library_context(he_compat);
     bool compat_again_ok =
         declared_type_count(space, arena, new_space) == 1u;

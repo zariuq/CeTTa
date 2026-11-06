@@ -1,0 +1,23 @@
+3
+1
+0
+()
+()
+(1 2 0)
+9
+3
+2
+()
+(1)
+()
+(1)
+()
+(Cons 1 (Cons 2 (Cons 3 Nil)))
+(Cons 1 (Cons 2 (Cons 7 Nil)))
+()
+((Cons "a" Nil))
+((Cons "a" Nil))
+(Cons 1 (Cons 2 (Cons 3 Nil)))
+(Cons "a" (Cons "b" Nil))
+()
+Nil

@@ -35,6 +35,7 @@
 #include "he_type_policy.h"
 #include "library.h"
 #include "text_source.h"
+#include "term_domain.h"
 #include "native_handle.h"
 #include "native/hol_light/hol_cli.h"
 #include "lang.h"
@@ -42,7 +43,6 @@
 #include "cetta_stdlib.h"
 #include "runtime_prelude.h"
 #include "runtime_session.h"
-#include "term_domain.h"
 #include "runtime_names.h"
 #include "foreign.h"
 #include "mm2_lower.h"
@@ -1900,6 +1900,7 @@ done:
 static void print_usage(FILE *out) {
     fputs("usage: cetta [--lang <name>] [--syntax <metta|mrho|rho|holr>] <file>\n", out);
     fputs("       note: without --lang, cetta runs corrected stable petta\n", out);
+    fputs("       cetta [options] -- <file>           # filenames beginning with a dash\n", out);
     fputs("       cetta -e '<expr>' [-e '<expr>' ...]  # inline expressions (multiple -e concatenate)\n", out);
     fputs("       cetta --repl [--lang petta --profile extended] # multiline source; :cancel / :quit\n", out);
     fputs("       cetta --translate --lang A [--syntax S] --lang B [--syntax T] <file>\n", out);
@@ -2145,6 +2146,7 @@ typedef struct {
     int atom_first;
     FILE *output_spool;
     Arena *arena;
+    bool arena_initialized;
     Arena *eval_arena;
     bool eval_arena_initialized;
     CettaTermDomain *term_domain;
@@ -2188,18 +2190,12 @@ static void cetta_main_document_roots(const TermUniverse *universe,
 
 static void cetta_main_cleanup_tail(void *context) {
     CettaMainCleanup *cleanup = context;
-    if (cleanup->runtime && cleanup->runtime->space_ready) {
-        space_free(&cleanup->runtime->space);
-        cleanup->runtime->space_ready = false;
-    }
     free(cleanup->inline_buf);
     cleanup->inline_buf = NULL;
-
     if (cleanup->eval_arena_initialized) {
         arena_free(cleanup->eval_arena);
         cleanup->eval_arena_initialized = false;
     }
-
     while (state_cell_reclamation_due())
         (void)state_cell_reclaim_bounded(4096u);
 }
@@ -2265,7 +2261,7 @@ static bool cetta_main_cleanup(CettaMainCleanup *cleanup) {
         term_universe_remove_root_provider(cetta_library_context_universe(&cleanup->runtime->libraries),
             cetta_main_document_roots, cleanup);
     else eval_cleanup_owned_new_spaces(NULL, NULL);
-    cetta_runtime_session_dispose_before_root(cleanup->runtime);
+    cetta_runtime_session_dispose(cleanup->runtime);
     if (cleanup->execution_selected) {
         eval_resources_exchange(cleanup->previous_eval_resources);
         eval_collector_exchange(cleanup->previous_collector);
@@ -3167,6 +3163,27 @@ static int cetta_main(int argc, char **argv) {
             script_arg_start = i + 1;
             continue;
         }
+        if (strcmp(argv[i], "--") == 0) {
+            if (inline_buf) {
+                script_arg_start = i + 1;
+                break;
+            }
+            if (i + 1 >= argc) {
+                fputs("error: expected a source filename after --\n", stderr);
+                free(inline_buf);
+                return 2;
+            }
+            filename = argv[++i];
+            filename_arg_index = i;
+            script_path = filename;
+            script_arg_start = i + 1;
+            break;
+        }
+        if (argv[i][0] == '-' && argv[i][1] != '\0') {
+            fprintf(stderr, "error: unknown option '%s'; use --help for usage\n", argv[i]);
+            free(inline_buf);
+            return 2;
+        }
         if (!filename) {
             filename = argv[i];
             filename_arg_index = i;
@@ -3487,9 +3504,9 @@ static int cetta_main(int argc, char **argv) {
     int rc = 0;
     Arena *arena = NULL; /* persistent storage belongs to term_domain */
     Arena eval_arena;  /* ephemeral: intermediate eval results, reset per ! */
+    HashConsTable *hashcons_table = NULL;
     CettaTermDomain *term_domain = NULL;
     CettaTermDomainScope term_domain_scope = {0};
-    HashConsTable *hashcons_table = NULL;
     Atom **atoms = NULL;
     AtomId *atom_ids = NULL;
     CettaRuntimeSession runtime = {0};
@@ -3599,7 +3616,7 @@ static int cetta_main(int argc, char **argv) {
         goto cleanup;
     }
 
-    if (!cetta_runtime_session_init_in_domain(&runtime, arena, term_domain, lang->id, profile)) {
+    if (!cetta_runtime_session_init_in_domain(&runtime, arena, lang->id, profile, term_domain)) {
         fprintf(stderr, "error: could not allocate execution resources\n");
         rc = 1;
         goto cleanup;

@@ -11,7 +11,14 @@ typedef struct {
     bool (*write)(void *, unsigned channel, const char *, size_t);
     bool (*flush)(void *, unsigned channel);
     bool (*poll)(void *);
+    void (*foreign)(void *, bool entering);
 } CettaHostServices;
+typedef struct {
+    void *context;
+    void (*notify)(void *, bool);
+} CettaHostForeignScope;
+void cetta_host_foreign_enter(CettaHostForeignScope *);
+void cetta_host_foreign_leave(CettaHostForeignScope *);
 typedef struct CettaHostScope {
     struct CettaHostScope *previous;
     CettaHostServices services;
