@@ -1136,6 +1136,8 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
   [CETTA_RUNTIME_COUNTER_PREPARED_PURE_RECOGNIZED_FOLD] = "prepared-pure-recognized-fold",
   [CETTA_RUNTIME_COUNTER_HE_CANONICAL_FRAME_PEAK] = "he-canonical-frame-peak",
   [CETTA_RUNTIME_COUNTER_HE_CANONICAL_LAST_CALL] = "he-canonical-last-call",
+  [CETTA_RUNTIME_COUNTER_PREPARED_PURE_REFUTED_CALL] = "prepared-pure-refuted-call",
+  [CETTA_RUNTIME_COUNTER_PREPARED_PURE_SEALED_FOLD] = "prepared-pure-sealed-fold",
 };
 
 #endif

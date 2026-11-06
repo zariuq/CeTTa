@@ -21884,6 +21884,7 @@ test-runtime-stats-lane-body:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-he-frame-bytes-depth
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-he-completed-delivery-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-he-canonical-tail-memory
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-profile-ai-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-open-values-frame-walk-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-frame-identity-refusal-sweep
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-identity-repeat-stats
@@ -30418,6 +30419,101 @@ test-petta-1-1-c-call-contracts: $(BIN) tests/petta/petta_1_1_c_call_contracts.m
 		done; \
 	done; \
 	echo "PASS: petta@1.1.c call contracts raise the same error on every route, on the tier and in the machine"
+
+# PeTTa's ai profile (sealed sorts): a function's declaration types the
+# answers of its calls and never an unevaluated application of it.  The rows
+# of sealed_sorts give each profile's answers on every route.  The
+# refutation and fold programs answer as in the default profile on every
+# route; where the prepared machine compiles a call refuted by its declared
+# result, a call that would not terminate answers nothing at once.
+PETTA_PROFILE_AI_FIXTURES := $(wildcard tests/petta/profile_ai/*.metta) \
+	$(wildcard tests/petta/profile_ai/*.expected) tests/petta/profile_ai/counters.tsv
+PETTA_PROFILE_AI_SAME := refutation:refutation refutation_open:refutation \
+	folds_sealed:folds_sealed folds_open_constant:folds_open_constant \
+	folds_open_constructor:folds_open_constructor folds_open_row:folds_open_row \
+	folds_open_function_name:folds_open_function_name \
+	folds_open_peano:folds_open_peano
+
+.PHONY: test-petta-profile-ai
+test-petta-semantics: test-petta-profile-ai
+test-petta-profile-ai: $(BIN) $(PETTA_PROFILE_AI_FIXTURES)
+	@set -eu; \
+	dir=tests/petta/profile_ai; \
+	for route in tier machine protocol; do \
+		case $$route in \
+			tier) env=;; \
+			machine) env=CETTA_OPEN_EQUATIONS_REFERENCE=1;; \
+			protocol) env=CETTA_PETTA_VERSIONS_REFERENCE=1;; \
+		esac; \
+		for profile in default ai; do \
+			if [ $$profile = ai ]; then flags="--profile ai"; else flags=; fi; \
+			actual=$$(env $$env timeout 60 $(CETTA_BIN_INVOKE) --lang petta $$flags \
+				$$dir/sealed_sorts.metta 2>&1); \
+			if [ "$$actual" != "$$(cat $$dir/sealed_sorts.$$profile.expected)" ]; then \
+				echo "FAIL: sealed sorts rows, $$profile profile, $$route route"; \
+				diff <(cat $$dir/sealed_sorts.$$profile.expected) \
+					<(printf '%s\n' "$$actual") | head -20; \
+				exit 1; \
+			fi; \
+			for pair in $(PETTA_PROFILE_AI_SAME); do \
+				program=$${pair%%:*}; expected=$${pair#*:}; \
+				actual=$$(env $$env timeout 60 $(CETTA_BIN_INVOKE) --lang petta $$flags \
+					$$dir/$$program.metta 2>&1); \
+				if [ "$$actual" != "$$(cat $$dir/$$expected.expected)" ]; then \
+					echo "FAIL: $$program, $$profile profile, $$route route"; \
+					diff <(cat $$dir/$$expected.expected) \
+						<(printf '%s\n' "$$actual") | head -20; \
+					exit 1; \
+				fi; \
+			done; \
+		done; \
+	done; \
+	for env in "" CETTA_OPEN_EQUATIONS_REFERENCE=1; do \
+		set +e; \
+		actual=$$(env $$env timeout 20 $(CETTA_BIN_INVOKE) --lang petta --profile ai \
+			$$dir/refutation_spin.metta 2>&1); \
+		status=$$?; \
+		set -e; \
+		if [ $$status -ne 0 ] || [ -n "$$actual" ]; then \
+			echo "FAIL: refuted calls that would not terminate ($${env:-tier}): exit $$status"; \
+			printf '%s\n' "$$actual" | tail -5; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: PeTTa's ai profile answers its rows on every route; refuted calls and sealed folds answer as the default profile does"
+
+# The ai profile's fast paths run where their licences hold and nowhere
+# else: folds over sealed-closed sorts walk without the cell test, calls
+# refuted by their declared results are compiled not to run, and neither
+# happens in the default profile, outside the licences, or off the machine.
+.PHONY: test-petta-profile-ai-stats
+test-petta-profile-ai-stats: $(BIN) $(PETTA_PROFILE_AI_FIXTURES)
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@set -eu -o pipefail; \
+	dir=tests/petta/profile_ai; failures=0; \
+	while IFS=$$'\t' read -r program profile route counter relation value; do \
+		case "$$program" in ''|'#'*) continue;; esac; \
+		case $$route in \
+			tier) env=;; \
+			machine) env=CETTA_OPEN_EQUATIONS_REFERENCE=1;; \
+			pure-reference) env=CETTA_PREPARED_PURE_REFERENCE=1;; \
+		esac; \
+		if [ $$profile = ai ]; then flags="--profile ai"; else flags=; fi; \
+		count=$$(env $$env timeout 60 $(CETTA_BIN_INVOKE) --emit-runtime-stats \
+			--lang petta $$flags $$dir/$$program.metta 2>&1 >/dev/null | awk \
+			-v name="prepared-pure-$$counter" '$$2 == name { print $$3 }'); \
+		count=$${count:-0}; \
+		if { [ $$relation = eq ] && [ "$$count" -ne "$$value" ]; } || \
+		   { [ $$relation = ge ] && [ "$$count" -lt "$$value" ]; }; then \
+			echo "FAIL: $$program ($$profile, $$route): $$counter $$count, want $$relation $$value"; \
+			failures=$$((failures + 1)); \
+		fi; \
+	done < $$dir/counters.tsv; \
+	[ $$failures -eq 0 ]; \
+	echo 'PASS: sealed folds and refuted calls run in the ai profile where their licences hold, and nowhere else'
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
 
 .PHONY: test-petta-foldall-steps
 # foldall runs its generator and each application of its step as PeTTa

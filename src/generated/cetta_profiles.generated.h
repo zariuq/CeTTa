@@ -15,6 +15,7 @@ typedef enum {
     CETTA_PROFILE_PRIME_DEFAULT = 6,
     CETTA_PROFILE_PETTA_EXTENDED = 7,
     CETTA_PROFILE_PETTA_1_1_C = 15,
+    CETTA_PROFILE_PETTA_AI = 19,
     CETTA_PROFILE_PETTA_TYPECHECK_V2 = 8,
     CETTA_PROFILE_PETTA_TYPECHECK_V3 = 13,
     CETTA_PROFILE_RHOCALC_STRICT_CORE = 4,
@@ -66,7 +67,8 @@ typedef enum {
     cesta_table_apply_0(CETTA_PROFILE_HE_PRIME_VALUE, CETTA_PROFILE_HE_PRIME, CETTA_LANGUAGE_HE, "he-prime", "HE typing with explicit dependent binders, checked type-level computation, and typed inhabitation search.", 0, 1, 1, 0, CETTA_LANGUAGE_VERSION_HE_0_2_10) \
     cesta_table_apply_0(CETTA_PROFILE_PRIME_DEFAULT_VALUE, CETTA_PROFILE_PRIME_DEFAULT, CETTA_LANGUAGE_PRIME, "prime-default", "Frozen MeTTa-Prime 0.0.1 draft policy.", 0, 1, 1, 0, CETTA_LANGUAGE_VERSION_PRIME_0_0_1) \
     cesta_table_apply_0(CETTA_PROFILE_PETTA_EXTENDED_VALUE, CETTA_PROFILE_PETTA_EXTENDED, CETTA_LANGUAGE_PETTA, "extended", "Corrected stable PeTTa plus labeled shared CeTTa extensions.", 0, 1, 0, 0, CETTA_LANGUAGE_VERSION_PETTA_STABLE) \
-    cesta_table_apply_0(CETTA_PROFILE_PETTA_1_1_C_VALUE, CETTA_PROFILE_PETTA_1_1_C, CETTA_LANGUAGE_PETTA, "petta@1.1.c", "PeTTa's typed line with declarations as call contracts: a failed check raises on every route.", 0, 0, 0, 0, CETTA_LANGUAGE_VERSION_PETTA_1_1_C)
+    cesta_table_apply_0(CETTA_PROFILE_PETTA_1_1_C_VALUE, CETTA_PROFILE_PETTA_1_1_C, CETTA_LANGUAGE_PETTA, "petta@1.1.c", "PeTTa's typed line with declarations as call contracts: a failed check raises on every route.", 0, 0, 0, 0, CETTA_LANGUAGE_VERSION_PETTA_1_1_C) \
+    cesta_table_apply_0(CETTA_PROFILE_PETTA_AI_VALUE, CETTA_PROFILE_PETTA_AI, CETTA_LANGUAGE_PETTA, "ai", "Corrected stable PeTTa with sealed sorts: a function's declaration types its calls' answers, never an unevaluated application of it.", 0, 0, 0, 0, CETTA_LANGUAGE_VERSION_PETTA_STABLE)
 
 #define CETTA_PROFILE_TYPING_ROWS(cesta_table_apply_0) \
     cesta_table_apply_0(CETTA_PROFILE_PETTA_TYPECHECK_V2_VALUE, CETTA_PROFILE_PETTA_TYPECHECK_V2, CETTA_LANGUAGE_PETTA, "typecheck-v2", "PeTTa with native Roman-compatible residual type checking.", 0, 1, 0, 0, CETTA_LANGUAGE_VERSION_PETTA_1_1) \

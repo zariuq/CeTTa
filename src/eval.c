@@ -43098,6 +43098,17 @@ static bool petta_eval_open_function_registered(void *opaque,
     return petta_eval_function_registered(NULL, head);
 }
 
+bool eval_petta_sealed_sorts(void) {
+    return eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
+        cetta_profile_is_petta_ai(active_eval_session()->profile);
+}
+
+bool eval_petta_head_is_function(Space *space, SymbolId head) {
+    return head != SYMBOL_ID_NONE &&
+        (petta_semantics_registered_builtin(head) ||
+         petta_eval_function_registered(space, head));
+}
+
 static bool petta_eval_machine_builtin_allowed(
         void *opaque, SymbolId head) {
     PettaEvalMachineContext *context = opaque;

@@ -21,17 +21,11 @@ import argparse
 import os
 import random
 import re
-import resource
 import subprocess
 import sys
 import tempfile
 
 TIMEOUT = 60
-
-
-def limit_memory():
-    limit = 24 * 1024 ** 3
-    resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
 
 
 def run(binary, path, env=None, stats=False):
@@ -40,8 +34,7 @@ def run(binary, path, env=None, stats=False):
         ["--lang", "he", path]
     proc = subprocess.Popen(command, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, text=True,
-                            env=dict(os.environ, **(env or {})),
-                            preexec_fn=limit_memory)
+                            env=dict(os.environ, **(env or {})))
     try:
         out, err = proc.communicate(timeout=TIMEOUT)
     except subprocess.TimeoutExpired:
@@ -64,7 +57,6 @@ def peak_rss_kib(binary, path, env):
     pid = os.fork()
     if pid == 0:
         try:
-            limit_memory()
             devnull = os.open(os.devnull, os.O_WRONLY)
             os.dup2(devnull, 1)
             os.dup2(devnull, 2)

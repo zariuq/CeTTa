@@ -14666,6 +14666,144 @@ static uint32_t space_type_chain_distinct_declarations(
     return distinct;
 }
 
+/* Whether a type's head path has no variable: a symbol, the empty
+ * expression, or an expression whose first element's head path has none. */
+static bool space_type_head_rigid(const Atom *type) {
+    for (uint32_t depth = 0u; type && depth < 64u; depth++) {
+        if (type->kind == ATOM_VAR)
+            return false;
+        if (type->kind != ATOM_EXPR || type->expr.len == 0u)
+            return true;
+        type = type->expr.elems[0];
+    }
+    return false;
+}
+
+/* Whether a type offers no instance of the sort: not a variable, not the
+ * sort's own symbol, and, for a sort with a parameter, no expression headed
+ * by the sort's symbol or by a variable, which a tuple type could read as
+ * one (CertifiedSpines.AwayFromList, AwayFromNat). */
+static bool space_type_away_from_sort(const Atom *type, SymbolId sort,
+                                      bool parametric) {
+    if (!type || type->kind == ATOM_VAR)
+        return false;
+    if (type->kind == ATOM_SYMBOL)
+        return type->sym_id != sort;
+    if (!parametric || type->kind != ATOM_EXPR || type->expr.len == 0u)
+        return true;
+    const Atom *head = type->expr.elems[0];
+    if (head->kind == ATOM_VAR)
+        return false;
+    return head->kind != ATOM_SYMBOL || head->sym_id != sort;
+}
+
+/* (S $a) for the sort S: the sort applied to a type variable. */
+static bool space_type_sort_of_var(const Atom *type, SymbolId sort,
+                                   const Atom *var) {
+    return type && type->kind == ATOM_EXPR && type->expr.len == 2u &&
+        atom_is_symbol_id(type->expr.elems[0], sort) &&
+        type->expr.elems[1]->kind == ATOM_VAR &&
+        (!var || var_id_eq(type->expr.elems[1]->var_id, var->var_id));
+}
+
+/* The usual rows of a sealed sort's two constructors: Nil (List $a) and
+ * Cons (-> $a (List $a) (List $a)), or Z Nat and S (-> Nat Nat). */
+static bool space_type_sort_constructor_row(const Atom *type, SymbolId sort,
+                                            bool parametric, bool nil) {
+    if (nil)
+        return parametric ? space_type_sort_of_var(type, sort, NULL)
+                          : type && type->kind == ATOM_SYMBOL &&
+                                type->sym_id == sort;
+    if (!type || type->kind != ATOM_EXPR ||
+        !atom_is_symbol_id(type->expr.elems[0], g_builtin_syms.arrow))
+        return false;
+    if (!parametric)
+        return type->expr.len == 3u &&
+            atom_is_symbol_id(type->expr.elems[1], sort) &&
+            atom_is_symbol_id(type->expr.elems[2], sort);
+    const Atom *var = type->expr.len == 4u ? type->expr.elems[1] : NULL;
+    return var && var->kind == ATOM_VAR &&
+        space_type_sort_of_var(type->expr.elems[2], sort, var) &&
+        space_type_sort_of_var(type->expr.elems[3], sort, var);
+}
+
+bool space_type_sort_sealed_closed(
+    Space *s, SymbolId sort, bool parametric, SymbolId nil, SymbolId cons,
+    bool (*function)(void *context, SymbolId subject), void *context) {
+    CETTA_SCOPED_SHARED_TRANSITION(observation);
+    if (!space_type_annotations_have_only_symbol_subjects(s))
+        return false;
+    const SpaceHeadChains *rows = &s->native.ty_idx.rows;
+    if (rows->headless.count != 0u)
+        return false;
+    bool saw_nil = false, saw_cons = false;
+    for (uint32_t slot = 0u; slot < rows->chain_cap; slot++) {
+        const SpaceHeadChain *chain = &rows->chains[slot];
+        if (chain->head == SYMBOL_ID_NONE)
+            continue;
+        bool is_function = function && function(context, chain->head);
+        bool constructor = chain->head == nil || chain->head == cons;
+        if (constructor &&
+            (is_function ||
+             space_type_chain_distinct_declarations(s, rows, chain) != 1u))
+            return false;
+        for (uint32_t i = chain->first; i != SPACE_HEAD_CHAIN_END;
+             i = rows->next[i]) {
+            Atom *type = space_type_chain_declared(s, rows, chain, i);
+            if (!type)
+                continue;
+            if (constructor) {
+                if (!space_type_sort_constructor_row(type, sort, parametric,
+                                                     chain->head == nil))
+                    return false;
+                continue;
+            }
+            bool arrow = type->kind == ATOM_EXPR && type->expr.len >= 2u &&
+                atom_is_symbol_id(type->expr.elems[0], g_builtin_syms.arrow);
+            /* A function's range types its calls' answers only; its name
+             * is data typed by every row. */
+            const Atom *offered = arrow && !is_function
+                ? type->expr.elems[type->expr.len - 1u] : type;
+            if ((!arrow || !is_function) &&
+                !space_type_away_from_sort(offered, sort, parametric))
+                return false;
+        }
+        saw_nil = saw_nil || chain->head == nil;
+        saw_cons = saw_cons || chain->head == cons;
+    }
+    return saw_nil && saw_cons;
+}
+
+bool space_type_annotations_rigid(
+    Space *s, bool (*exempt)(void *context, SymbolId subject), void *context) {
+    CETTA_SCOPED_SHARED_TRANSITION(observation);
+    if (!space_type_annotations_have_only_symbol_subjects(s))
+        return false;
+    const SpaceHeadChains *rows = &s->native.ty_idx.rows;
+    if (rows->headless.count != 0u)
+        return false;
+    for (uint32_t slot = 0u; slot < rows->chain_cap; slot++) {
+        const SpaceHeadChain *chain = &rows->chains[slot];
+        if (chain->head == SYMBOL_ID_NONE)
+            continue;
+        bool exempt_ranges = exempt && exempt(context, chain->head);
+        for (uint32_t i = chain->first; i != SPACE_HEAD_CHAIN_END;
+             i = rows->next[i]) {
+            Atom *type = space_type_chain_declared(s, rows, chain, i);
+            if (!type)
+                continue;
+            if (!space_type_head_rigid(type))
+                return false;
+            if (!exempt_ranges && type->kind == ATOM_EXPR &&
+                type->expr.len >= 2u &&
+                atom_is_symbol_id(type->expr.elems[0], g_builtin_syms.arrow) &&
+                !space_type_head_rigid(type->expr.elems[type->expr.len - 1u]))
+                return false;
+        }
+    }
+    return true;
+}
+
 bool space_type_arrow_declarations_visit(
     Space *s,
     bool (*visit)(void *context, SymbolId subject, uint32_t declarations,

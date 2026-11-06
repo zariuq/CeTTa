@@ -1909,6 +1909,7 @@ static void print_usage(FILE *out) {
     fputs("       cetta --lang hol-light [--profile <standard|open|sealed>] <proof.holr>\n", out);
     fputs("       note: hol aliases hol-light; HOLR is a checked proof stream, not OCaml source\n", out);
     fputs("       cetta --lang petta <file.metta> # corrected stable PeTTa\n", out);
+    fputs("       cetta --lang petta --profile ai <file.metta> # sealed sorts: declarations type answers, not held calls\n", out);
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
     fputs("       cetta --lang petta@1.1 [--strict|--strict-det] <file.metta>\n", out);
     fputs("       cetta --lang petta --profile typecheck-v2 [--strict|--strict-det] <file.metta>\n", out);

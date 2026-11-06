@@ -17,6 +17,16 @@ Unversioned language names retain their existing defaults.
                  historical 1.0.6 endpoint is no longer registered. Imports
                  resolve from their source file, handle cycles, and expose
                  catchable loading failures independently of typed checking.
+  petta --profile ai
+                 Corrected stable PeTTa with sealed sorts. A function's
+                 declaration types the answers of its calls, as a contract
+                 its result guard checks or its version proves, and never
+                 an unevaluated application of it, which has its tuple type.
+                 A value typed once at a sort is that sort's data, so a fold
+                 over a sealed-closed sort may skip its cell test. A call
+                 whose declared result has another head path than a required
+                 type may be rejected without running it in the pure
+                 fragment. Every other rule is stable's.
   petta@1.1      Typed PeTTa; typecheck-v2 remains its default checker and
                  typecheck-v3 is selected explicitly when built in.
   petta@1.1.c    PeTTa's typed line with declarations as call contracts; the
