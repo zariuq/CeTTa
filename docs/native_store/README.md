@@ -30,9 +30,10 @@ identity; `db:resolve` resolves a lost reply before another attempt. The
 callback is never automatically replayed. Snapshot and query children retain
 their connection independently of the parent handle.
 
-Database sources enumerate stable occurrence keys. Their order is preserved
-by capture and compaction; it is not a commit-time ordering. Use an explicit
-query ordering when an application needs one.
+Unfiltered database scans enumerate stable occurrence keys in key order;
+capture and compaction preserve that order. It is not a commit-time ordering.
+Indexed candidate traversal follows the selected projection as described below.
+Use an explicit query ordering when an application needs a specified answer order.
 
 `db:query` and compositional matching plans use the ordinary client matcher.
 Related collection leaves, including later join legs, retain the same captured
@@ -1053,9 +1054,27 @@ Use `durable_space` to maintain this descriptor rather than editing it by hand.
 
 For example, an edge `(knows alice bob)` has arity three. Declarations
 `((SpaceIndexV1 3 0) (SpaceIndexV1 3 1) (SpaceIndexV1 3 2))` supply relation,
-outgoing and incoming candidate access. A probe uses the last declared eligible
-projection whose pattern field is a symbol or string. This is a deterministic
-selection rule, not a cardinality optimizer or an intersection of indexes.
+outgoing and incoming candidate access. A projection is eligible when its arity
+matches and its pattern field is a symbol or string with an encodable exact key.
+With multiple eligible projections, a probe selects the projection with the
+fewest candidate postings, counting its exact bucket and wildcard bucket together.
+Ties select the last declared eligible projection. Selection uses only the
+captured root; later writes cannot change an open cursor's plan or candidates.
+
+The planner advances temporary key cursors in lockstep until one projection is
+exhausted. For m eligible projections and a minimum candidate count c, selection
+uses O(m * (c + 1)) cursor steps plus range-opening work, without decoding fact
+payloads. A single eligible projection needs no cardinality probe. The reader
+uses one projection rather than intersecting indexes. Candidate statistics count
+subsequent fact candidates; they do not include these planning cursor steps.
+
+Within the selected projection, exact postings precede wildcard postings, and
+each range follows occurrence-key order. Selecting another projection may change
+answer traversal order between snapshots, including after unrelated additions.
+Complete matching still returns the same unordered answer bag with the same
+occurrence multiplicities. Unfiltered scans and explicitly ordered range queries
+retain their respective ordering contracts. Bounded removal retains its scan
+path so index selection does not change which occurrences it removes.
 
 An indexed collection stores `(StoreSpaceV3 prefix occurrence-count indexes)`;
 each index descriptor is `(StoreSpaceIndexV1 arity position index-prefix)`.
