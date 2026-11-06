@@ -1,0 +1,8 @@
+(Doc (PostInfixDecl "+" (NaL "add") 400 InfixLeft))
+(Doc (PostInfixDecl "*" (NaL "mul") 300 InfixRight))
+(Doc (PostInfixDecl "<=" (NaL "le") 600 InfixNone))
+(Doc (AxDecl "a1" (InfoL (InfNam "+") (InfoL (InfNam "+") (NaL "x") (NaL "y")) (NaL "z"))))
+(Doc (AxDecl "a2" (InfoL (InfNam "*") (NaL "x") (InfoL (InfNam "*") (NaL "y") (NaL "z")))))
+(Doc (AxDecl "a3" (InfoL (InfNam "+") (InfoL (InfNam "+") (NaL "x") (InfoL (InfNam "*") (NaL "y") (NaL "z"))) (NaL "w"))))
+(Doc (AxDecl "a4" (InfoL (InfNam "<=") (InfoL (InfNam "+") (NaL "x") (NaL "y")) (InfoL (InfNam "*") (NaL "z") (NaL "w")))))
+(Doc (AxDecl "a5" (InfoL (InfNam "*") (ParenL (InfoL (InfNam "+") (NaL "x") (NaL "y")) (List)) (NaL "z"))))

@@ -1,0 +1,7 @@
+AXIOM
+(NAM "j2")
+COLON
+(NAM "forall")
+(NAM "x")
+(NAM "y")
+DOT

@@ -1,0 +1,6 @@
+AXIOM
+(NAM "a")
+COLON
+LPAREN
+(NAM "x")
+DOT

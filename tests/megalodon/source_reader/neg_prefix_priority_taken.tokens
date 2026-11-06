@@ -1,0 +1,13 @@
+PREFIX
+(NAM "~")
+(NUM False "700" None None)
+DEQ
+(NAM "not")
+DOT
+INFIX
+(NAM "tilde")
+(NUM False "700" None None)
+(NAM "left")
+DEQ
+(NAM "and")
+DOT
