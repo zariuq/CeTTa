@@ -28,10 +28,12 @@ UNTYPED = """(= (dag $n $leaf) (if (== $n 0) $leaf (let $t (dag (- $n 1) $leaf) 
 """
 # What each route's work is counted by.  The untyped program runs whole in
 # a machine on both routes, so its work is what that machine allocates and,
-# with the prepared machine off, the unifications it tries.
+# with the prepared machine off, the unifications it tries.  With the
+# prepared machine on, the typed program runs whole in it too, each typed
+# node checked where it is built, so its work there is what it allocates.
 PROGRAMS = (
     ("typed", TYPED, "[Tree]\n[True]\n",
-     {"machine on": TYPED_WORK, "machine off": TYPED_WORK}),
+     {"machine on": ("eval-arena-alloc-bytes",), "machine off": TYPED_WORK}),
     ("untyped", UNTYPED, "[True]\n",
      {"machine on": ("eval-arena-alloc-bytes",),
       "machine off": ("eval-arena-alloc-bytes", "unification-attempt")}),

@@ -364,6 +364,15 @@ static void eval_gc_root_frame_enter_outcome_continuation(
         frame, CETTA_EVAL_GC_FRAME_OUTCOME_CONTINUATION);
 }
 
+/* A suspended continuation that now publishes into another set roots that
+ * set (or none, when the set's owner roots it) in place of its old one. */
+static void eval_gc_root_frame_update_outcome_parent(
+    EvalGcRootFrame *frame, OutcomeSet *parent_outcomes) {
+    assert(frame && frame->linked &&
+           frame->kind == CETTA_EVAL_GC_FRAME_OUTCOME_CONTINUATION);
+    frame->payload.outcome_continuation.parent_outcomes = parent_outcomes;
+}
+
 static void eval_gc_root_frame_enter_evaluation_retry(
     EvalGcRootFrame *frame, Atom **input) {
     if (!frame)

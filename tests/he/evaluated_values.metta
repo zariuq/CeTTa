@@ -44,3 +44,7 @@
 !(let $v (fr a) (let $s (new-state $v) (wrap (get-state $s))))
 !(let $v (fr a) (let $s (new-state $v) (let $w (get-state $s) (add-atom &self (kept $w)))))
 !(match &self (kept $x) (wrap $x))
+; Reification must complete inside a caller, including an empty bag.
+!(== (reify (superpose ())) ())
+!(== (reify (superpose (7))) ())
+!(reify (superpose (7 7)))

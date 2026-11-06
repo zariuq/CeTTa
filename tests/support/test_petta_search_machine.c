@@ -14,6 +14,7 @@
 #include "petta_program.h"
 #include "petta_runtime.h"
 #include "petta_search_machine.h"
+#include "runtime_names.h"
 #include "search_control_advice.h"
 #include "stats.h"
 #include "petta_semantics.h"
@@ -1147,20 +1148,29 @@ static void test_type_stack_exhaustion(void) {
     Space space;
     space_init(&space);
     space_add(&space, parse_one(&arena, "(: deep-type (-> Number Number))"));
+    /* Two rows: the walk of a ground tree declines, so its bound check takes
+     * the general path. */
+    space_add(&space, parse_one(&arena, "(: deep-alt (-> Number Number))"));
+    space_add(&space, parse_one(&arena, "(: deep-alt (-> String Number))"));
     Atom *head = atom_symbol(&arena, "deep-type");
+    Atom *alt = atom_symbol(&arena, "deep-alt");
     Atom *number = atom_symbol(&arena, "Number");
     Atom *subject = atom_int(&arena, 1);
-    for (size_t i = 0u; i < 50000u; i++)
+    Atom *alt_subject = atom_int(&arena, 1);
+    for (size_t i = 0u; i < 50000u; i++) {
         subject = atom_expr2(&arena, head, subject);
-    assert(subject);
-    /* This entry has no enclosing evaluator guard. Both fresh inference and
-     * bound checking must report their own resource failure, then recover. */
+        alt_subject = atom_expr2(&arena, alt, alt_subject);
+    }
+    assert(subject && alt_subject);
+    /* This entry has no enclosing evaluator guard. Where the walk declines,
+     * fresh inference and bound checking report their own resource failure,
+     * then recover. */
     for (unsigned int mode = 0u; mode < 2u; mode++) {
         Atom **types = NULL;
         uint32_t count = 0u;
         CettaEvalCompletion completion = CETTA_EVAL_COMPLETE;
         assert(!petta_type_intrinsic_answers(
-            &space, &arena, subject, mode ? number : NULL,
+            &space, &arena, alt_subject, mode ? number : NULL,
             &types, &count, &completion));
         assert(completion == CETTA_EVAL_INCOMPLETE_STACK);
         assert(types == NULL && count == 0u);
@@ -1171,10 +1181,25 @@ static void test_type_stack_exhaustion(void) {
         assert(count == 1u && atom_eq(types[0], number));
         free(types);
     }
+    /* A ground tree of one-row heads read at a closed type is walked with
+     * its own stack, whatever its depth: the bound check answers once, and
+     * so does fresh inference, which checks the outer node's argument so. */
+    for (unsigned int mode = 0u; mode < 2u; mode++) {
+        Atom **walked = NULL;
+        uint32_t walked_count = 0u;
+        CettaEvalCompletion walked_completion = CETTA_EVAL_INCOMPLETE_HOST_FAILURE;
+        assert(petta_type_intrinsic_answers(&space, &arena, subject,
+                                            mode ? number : NULL,
+                                            &walked, &walked_count,
+                                            &walked_completion));
+        assert(walked_completion == CETTA_EVAL_COMPLETE);
+        assert(walked_count == 1u && atom_eq(walked[0], number));
+        free(walked);
+    }
     petta_type_facts_free_for_current_thread();
     space_free(&space);
     arena_free(&arena);
-    puts("PASS: deep native type inference and checking report stack exhaustion and recover");
+    puts("PASS: deep native type inference and checking report stack exhaustion and recover; a walked tree checks at any depth");
 }
 
 static void test_type_call_arity(Arena *arena) {
@@ -1927,8 +1952,9 @@ static const PettaSemanticFormCase petta_semantic_form_cases[] = {
     {"chain", PETTA_FORM_CHAIN},
 };
 
-static void *test_semantic_form_thread(void *unused) {
-    (void)unused;
+static void *test_semantic_form_thread(void *context) {
+    CettaNameContext previous = cetta_name_context_current();
+    if (context) cetta_name_context_install(context);
     for (size_t index = 0u;
          index < sizeof(petta_semantic_form_cases) /
                      sizeof(petta_semantic_form_cases[0]); index++) {
@@ -1937,6 +1963,7 @@ static void *test_semantic_form_thread(void *unused) {
         assert(petta_semantics_form(symbol) ==
                petta_semantic_form_cases[index].form);
     }
+    if (context) cetta_name_context_install(&previous);
     return NULL;
 }
 
@@ -1950,11 +1977,12 @@ static void test_semantic_form_facts(void) {
         g_symbols, "process_metta_string-almost");
     assert(petta_semantics_form(lookalike) == PETTA_FORM_NONE);
 
+    CettaNameContext names = cetta_name_context_current();
     pthread_t readers[3];
     for (size_t index = 0u; index < 3u; index++)
         assert(pthread_create(
                    &readers[index], NULL,
-                   test_semantic_form_thread, NULL) == 0);
+                   test_semantic_form_thread, &names) == 0);
     for (size_t index = 0u; index < 3u; index++)
         assert(pthread_join(readers[index], NULL) == 0);
 
@@ -2345,6 +2373,57 @@ static void test_shared_value_observation(void) {
     puts("PASS: shared publication preserves graph size and distinct opaque observations");
 }
 
+static void test_improper_value_observation(void) {
+    enum { CELLS = 1024 };
+    Arena source, destination;
+    arena_init(&source);
+    arena_init(&destination);
+    Atom *item = atom_symbol(&source, "improper-observation-item");
+    Atom *end = atom_symbol(&source, "improper-observation-end");
+    Atom *head = petta_semantics_open_cons_value(&source, item, atom_unit(&source));
+    Atom *chain = end;
+    for (unsigned index = 0u; index < CELLS; index++)
+        chain = petta_semantics_open_cons_value(&source, head, chain);
+    Atom *quote = atom_expr2(&source,
+        atom_symbol_id(&source, g_builtin_syms.quote), chain);
+    Atom *prefix[] = {item, head};
+    Atom *rest = atom_list_with_rest(&source, prefix, 2u, end);
+    Atom *mixed = petta_semantics_open_cons_value(&source, item, rest);
+    Atom *variable = atom_var_with_id(&source, "improper-tail", fresh_var_id());
+    VarId tail_id = variable->var_id;
+    Atom *open = petta_semantics_open_cons_value(&source, item, variable);
+    Atom *roots[] = {atom_symbol(&source, "Observations"), chain, chain, quote, mixed, open};
+    Atom *out = petta_semantics_materialize_value(&destination,
+        atom_expr(&source, roots, 6u));
+    assert(out && out->expr.len == 6u);
+    assert(arena_accounted_live_bytes(&destination) < 1024u * 1024u);
+    arena_free(&source);
+    assert(out->expr.elems[1] == out->expr.elems[2]);
+    Atom *cursor = out->expr.elems[1];
+    Atom *observed_head = cursor->expr.elems[1];
+    for (unsigned index = 0u; index < CELLS; index++) {
+        assert(petta_semantics_is_open_cons_value(cursor));
+        assert(cursor->expr.elems[1] == observed_head);
+        assert(observed_head->kind == ATOM_EXPR && observed_head->expr.len == 1u);
+        assert(atom_is_symbol(observed_head->expr.elems[0], "improper-observation-item"));
+        cursor = cursor->expr.elems[2];
+    }
+    assert(atom_is_symbol(cursor, "improper-observation-end"));
+    Atom *quoted_head = out->expr.elems[3]->expr.elems[1]->expr.elems[1];
+    assert(petta_semantics_is_open_cons_value(quoted_head));
+    cursor = out->expr.elems[4];
+    for (unsigned index = 0u; index < 3u; index++) {
+        assert(petta_semantics_is_open_cons_value(cursor));
+        cursor = cursor->expr.elems[2];
+    }
+    assert(atom_is_symbol(cursor, "improper-observation-end"));
+    assert(petta_semantics_is_open_cons_value(out->expr.elems[5]));
+    Atom *tail = out->expr.elems[5]->expr.elems[2];
+    assert(tail->kind == ATOM_VAR && var_id_eq(tail->var_id, tail_id));
+    arena_free(&destination);
+    puts("PASS: improper list observation stays linear and preserves sharing, nested lists, opaque syntax and open tails");
+}
+
 static void test_deep_cons_semantics(Arena *arena) {
     enum { DEEP_FINITE_DEPTH = 4096 };
     Atom *box = atom_symbol(arena, "deep-cons-box");
@@ -2394,12 +2473,9 @@ static void test_deep_cons_semantics(Arena *arena) {
         arena, atom_symbol(arena, "cons-almost"), item, tail);
     assert(open_tail && open_cons && observable_open);
     assert(cons_lookalike);
-    assert(!petta_semantics_is_open_cons_value(observable_open));
-    assert(observable_open->kind == ATOM_EXPR);
-    assert(observable_open->expr.len == 3u);
-    assert(petta_semantics_form(
-               atom_head_symbol_id(observable_open)) ==
-           PETTA_FORM_CONS);
+    /* An open cell stays a cell when observed: a value, never the spelling
+     * (cons H T), which is data (SWI-PeTTa's [H|T] against [cons, H, T]). */
+    assert(petta_semantics_is_open_cons_value(observable_open));
     assert(atom_alpha_eq(observable_open->expr.elems[1], item));
     assert(observable_open->expr.elems[2]->kind == ATOM_VAR);
     assert(var_id_eq(observable_open->expr.elems[2]->var_id, open_tail->var_id));
@@ -2407,14 +2483,22 @@ static void test_deep_cons_semantics(Arena *arena) {
     PeTTaConsShapeFacts cons_facts;
     assert(petta_semantics_cons_shape_facts(&cons_facts));
     assert(petta_semantics_cons_shape_facts_current(&cons_facts));
+    /* A written (cons H T) is a list pattern, never a cell. */
+    Atom *spelled_cons = atom_expr3(
+        arena, atom_symbol_id(arena, cons_facts.cons), item, open_tail);
+    assert(spelled_cons);
     assert(petta_semantics_facts_is_open_cons_value(
         &cons_facts, open_cons));
-    assert(!petta_semantics_facts_is_open_cons_value(
+    assert(petta_semantics_facts_is_open_cons_value(
         &cons_facts, observable_open));
+    assert(!petta_semantics_facts_is_open_cons_value(
+        &cons_facts, spelled_cons));
     assert(petta_semantics_facts_is_cons_constraint(
         &cons_facts, open_cons));
     assert(petta_semantics_facts_is_cons_constraint(
         &cons_facts, observable_open));
+    assert(petta_semantics_facts_is_cons_constraint(
+        &cons_facts, spelled_cons));
     assert(!petta_semantics_facts_is_cons_constraint(
         &cons_facts, cons_lookalike));
     Atom *cons_head = atom_symbol_id(arena, cons_facts.cons);
@@ -2497,11 +2581,17 @@ static void test_logical_cons_binding_views(Arena *arena) {
     assert(!bindings_lookup_value_id(&builder.current, (x)->var_id).skeleton);
     bindings_builder_rollback(&builder, empty_mark);
 
+    /* A variable bound to the symbol cons is data: ($head view-a ()) is
+     * then the three-element list [cons, view-a, []], as in SWI-PeTTa, and
+     * meets (view-a) neither as a pattern nor as a value.  Only the written
+     * symbol makes a cell pattern, and a variable bound to the cell's own
+     * tag (below) stands for that tag. */
     Atom *aliased_head = atom_expr3(arena, head, a, nil);
     assert(bindings_builder_add_var_fresh(
         &builder, head, atom_symbol(arena, "cons")));
-    assert(petta_semantics_match_cons_constraint(
+    assert(!petta_semantics_match_cons_constraint(
         arena, aliased_head, flat, &builder));
+    assert(builder.current.len == 1u);
     assert(!petta_semantics_match_lowered_head(
         arena, aliased_head, flat, &builder));
     assert(builder.current.len == 1u);
@@ -2734,11 +2824,9 @@ static void test_answer_materialization_boundaries(
     assert(petta_machine_next(
                &machine, &answer, &environment) ==
            PETTA_MACHINE_STEP_ANSWER);
-    assert(answer && answer->kind == ATOM_EXPR);
-    assert(answer->expr.len == 3u);
-    assert(!petta_semantics_is_open_cons_value(answer));
-    assert(petta_semantics_form(atom_head_symbol_id(answer)) ==
-           PETTA_FORM_CONS);
+    /* An open list answers as the cell it is (SWI-PeTTa's [a|Tail]), which
+     * prints (cons a $tail); it is never respelled as that data. */
+    assert(answer && petta_semantics_is_open_cons_value(answer));
     assert(atom_is_symbol_id(
         answer->expr.elems[1],
         symbol_intern_cstr(g_symbols, "a")));
@@ -15905,6 +15993,7 @@ int main(int argc, char **argv) {
         &universe, &persistent, &answers);
     test_deep_typecheck_source_rewrites(&universe);
     test_shared_value_observation();
+    test_improper_value_observation();
     test_deep_cons_semantics(&answers);
     test_logical_cons_binding_views(&answers);
     test_lowered_head_epoch_views(&answers);

@@ -111,7 +111,7 @@
 ; gslt-lowered-equation-v1 source-rewrite=8 source-presentation=MM0SortEnvironmentV1 source-rule=mm0-sort-lookup-tail-v1 target=mode relation=MM0SortLookupV1 input=110 functional=semidet
 (= (gslt:fn:MM0SortLookupV1:110 $name (MM0SortEntriesConsV1 (MM0SortEntryV1 $other $modifiers $firstPosition) $rest))
    (let $_ (gslt:different (different $name $other))
-   (let (gslt:result:MM0SortLookupV1:110 $result) (eval (quote (gslt:fn:MM0SortLookupV1:110 $name $rest)))
+   (let (gslt:result:MM0SortLookupV1:110 $result) (gslt:fn:MM0SortLookupV1:110 $name $rest)
    (quote (gslt:result:MM0SortLookupV1:110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=9 source-presentation=MM0SortEnvironmentV1 source-rule=mm0-sort-entries-append-nil-v1 target=mode relation=MM0SortEntriesAppendV1 input=110 functional=semidet
@@ -120,28 +120,28 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=10 source-presentation=MM0SortEnvironmentV1 source-rule=mm0-sort-entries-append-cons-v1 target=mode relation=MM0SortEntriesAppendV1 input=110 functional=semidet
 (= (gslt:fn:MM0SortEntriesAppendV1:110 (MM0SortEntriesConsV1 $head $rest) $entry)
-   (let (gslt:result:MM0SortEntriesAppendV1:110 $after) (eval (quote (gslt:fn:MM0SortEntriesAppendV1:110 $rest $entry)))
+   (let (gslt:result:MM0SortEntriesAppendV1:110 $after) (gslt:fn:MM0SortEntriesAppendV1:110 $rest $entry)
    (quote (gslt:result:MM0SortEntriesAppendV1:110 (MM0SortEntriesConsV1 $head $after)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=19 source-presentation=MM0SortEnvironmentV1 source-rule=mm0-sort-environment-from-ast-v1 target=mode relation=MM0SortEnvironmentFromAstV1 input=1000 functional=semidet
 (= (gslt:fn:MM0SortEnvironmentFromAstV1:1000 (node mm0-file $statements))
-   (let (gslt:result:MM0SortFoldV1:111000 $outcome $environment $history) (eval (quote (gslt:fn:MM0SortFoldV1:111000 $statements NatZeroV1 MM0SortEntriesNilV1)))
+   (let (gslt:result:MM0SortFoldV1:111000 $outcome $environment $history) (gslt:fn:MM0SortFoldV1:111000 $statements NatZeroV1 MM0SortEntriesNilV1)
    (quote (gslt:result:MM0SortEnvironmentFromAstV1:1000 $outcome $environment $history))))
 
 ; gslt-lowered-equation-v1 source-rewrite=5 source-presentation=MM0SortEnvironmentV1 source-rule=mm0-sort-statement-v1 target=mode relation=MM0SortStatementV1 input=100 functional=semidet
 (= (gslt:fn:MM0SortStatementV1:100 (node mm0-sort-statement (pair $pure (pair $strict (pair $provable (pair $free $identifier))))))
-   (let (gslt:result:MM0OptionPresenceV1:10 $pureFlag) (eval (quote (gslt:fn:MM0OptionPresenceV1:10 $pure)))
-   (let (gslt:result:MM0OptionPresenceV1:10 $strictFlag) (eval (quote (gslt:fn:MM0OptionPresenceV1:10 $strict)))
-   (let (gslt:result:MM0OptionPresenceV1:10 $provableFlag) (eval (quote (gslt:fn:MM0OptionPresenceV1:10 $provable)))
-   (let (gslt:result:MM0OptionPresenceV1:10 $freeFlag) (eval (quote (gslt:fn:MM0OptionPresenceV1:10 $free)))
-   (let (gslt:result:MM0IdentifierScalarsV1:10 $name) (eval (quote (gslt:fn:MM0IdentifierScalarsV1:10 $identifier)))
+   (let (gslt:result:MM0OptionPresenceV1:10 $pureFlag) (gslt:fn:MM0OptionPresenceV1:10 $pure)
+   (let (gslt:result:MM0OptionPresenceV1:10 $strictFlag) (gslt:fn:MM0OptionPresenceV1:10 $strict)
+   (let (gslt:result:MM0OptionPresenceV1:10 $provableFlag) (gslt:fn:MM0OptionPresenceV1:10 $provable)
+   (let (gslt:result:MM0OptionPresenceV1:10 $freeFlag) (gslt:fn:MM0OptionPresenceV1:10 $free)
+   (let (gslt:result:MM0IdentifierScalarsV1:10 $name) (gslt:fn:MM0IdentifierScalarsV1:10 $identifier)
    (quote (gslt:result:MM0SortStatementV1:100 $name (MM0SortModifiersV1 $pureFlag $strictFlag $provableFlag $freeFlag)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=14 source-presentation=MM0SortEnvironmentV1 source-rule=mm0-sort-step-v1 target=mode relation=MM0SortStepV1 input=111000 functional=semidet
 (= (gslt:fn:MM0SortStepV1:111000 $position $statement $before)
-   (let (gslt:result:MM0SortStatementV1:100 $name $modifiers) (eval (quote (gslt:fn:MM0SortStatementV1:100 $statement)))
-   (let (gslt:result:MM0SortLookupV1:110 $lookup) (eval (quote (gslt:fn:MM0SortLookupV1:110 $name $before)))
-   (let (gslt:result:MM0SortApplyV1:11111000 $outcome $after $historyEntry) (eval (quote (gslt:fn:MM0SortApplyV1:11111000 $position $name $modifiers $lookup $before)))
+   (let (gslt:result:MM0SortStatementV1:100 $name $modifiers) (gslt:fn:MM0SortStatementV1:100 $statement)
+   (let (gslt:result:MM0SortLookupV1:110 $lookup) (gslt:fn:MM0SortLookupV1:110 $name $before)
+   (let (gslt:result:MM0SortApplyV1:11111000 $outcome $after $historyEntry) (gslt:fn:MM0SortApplyV1:11111000 $position $name $modifiers $lookup $before)
    (quote (gslt:result:MM0SortStepV1:111000 $outcome $after $historyEntry))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=15 source-presentation=MM0SortEnvironmentV1 source-rule=mm0-sort-fold-nil-v1 target=mode relation=MM0SortFoldV1 input=111000 functional=semidet
@@ -151,13 +151,13 @@
 ; gslt-lowered-equation-v1 source-rewrite=16 source-presentation=MM0SortEnvironmentV1 source-rule=mm0-sort-fold-cons-v1 target=mode relation=MM0SortFoldV1 input=111000 functional=semidet
 (= (gslt:fn:MM0SortFoldV1:111000 $__gslt_input_v1_0 $position $before)
    (let (cons $statement $rest) $__gslt_input_v1_0
-   (let (gslt:result:MM0SortStepV1:111000 $stepOutcome $next $historyEntry) (eval (quote (gslt:fn:MM0SortStepV1:111000 $position $statement $before)))
-   (let (gslt:result:MM0SortFoldAfterStepV1:11111000 $outcome $after $history) (eval (quote (gslt:fn:MM0SortFoldAfterStepV1:11111000 $rest (NatSuccV1 $position) $stepOutcome $next $historyEntry)))
+   (let (gslt:result:MM0SortStepV1:111000 $stepOutcome $next $historyEntry) (gslt:fn:MM0SortStepV1:111000 $position $statement $before)
+   (let (gslt:result:MM0SortFoldAfterStepV1:11111000 $outcome $after $history) (gslt:fn:MM0SortFoldAfterStepV1:11111000 $rest (NatSuccV1 $position) $stepOutcome $next $historyEntry)
    (quote (gslt:result:MM0SortFoldV1:111000 $outcome $after $history))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=11 source-presentation=MM0SortEnvironmentV1 source-rule=mm0-sort-apply-missing-v1 target=mode relation=MM0SortApplyV1 input=11111000 functional=semidet
 (= (gslt:fn:MM0SortApplyV1:11111000 $position $name $modifiers MM0SortMissingV1 $before)
-   (let (gslt:result:MM0SortEntriesAppendV1:110 $after) (eval (quote (gslt:fn:MM0SortEntriesAppendV1:110 $before (MM0SortEntryV1 $name $modifiers $position))))
+   (let (gslt:result:MM0SortEntriesAppendV1:110 $after) (gslt:fn:MM0SortEntriesAppendV1:110 $before (MM0SortEntryV1 $name $modifiers $position))
    (quote (gslt:result:MM0SortApplyV1:11111000 MM0AcceptedV1 $after (MM0DeclaredSortV1 $position $name $modifiers)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=12 source-presentation=MM0SortEnvironmentV1 source-rule=mm0-sort-apply-existing-equal-v1 target=mode relation=MM0SortApplyV1 input=11111000 functional=semidet
@@ -171,9 +171,13 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=17 source-presentation=MM0SortEnvironmentV1 source-rule=mm0-sort-fold-after-accepted-v1 target=mode relation=MM0SortFoldAfterStepV1 input=11111000 functional=semidet
 (= (gslt:fn:MM0SortFoldAfterStepV1:11111000 $rest $nextPosition MM0AcceptedV1 $next $historyEntry)
-   (let (gslt:result:MM0SortFoldV1:111000 $outcome $after $history) (eval (quote (gslt:fn:MM0SortFoldV1:111000 $rest $nextPosition $next)))
+   (let (gslt:result:MM0SortFoldV1:111000 $outcome $after $history) (gslt:fn:MM0SortFoldV1:111000 $rest $nextPosition $next)
    (quote (gslt:result:MM0SortFoldAfterStepV1:11111000 $outcome $after (MM0SortHistoryConsV1 $historyEntry $history)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=18 source-presentation=MM0SortEnvironmentV1 source-rule=mm0-sort-fold-after-refused-v1 target=mode relation=MM0SortFoldAfterStepV1 input=11111000 functional=semidet
 (= (gslt:fn:MM0SortFoldAfterStepV1:11111000 $rest $nextPosition (MM0RefusedSortRedeclarationV1 $position $name $oldModifiers $newModifiers) $state $historyEntry)
    (quote (gslt:result:MM0SortFoldAfterStepV1:11111000 (MM0RefusedSortRedeclarationV1 $position $name $oldModifiers $newModifiers) $state (MM0SortHistoryConsV1 $historyEntry MM0SortHistoryNilV1))))
+
+
+; gslt-lowered-entry-v1 gslt:entry:MM0SortEnvironmentFromAstV1:1000
+(= (gslt:entry:MM0SortEnvironmentFromAstV1:1000 $__gslt_input_v1_0) (gslt:fn:MM0SortEnvironmentFromAstV1:1000 $__gslt_input_v1_0))

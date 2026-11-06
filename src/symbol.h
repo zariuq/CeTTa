@@ -342,7 +342,6 @@ static inline SymbolSpelling symbol_spelling(
     X(minimal_sum_by, "_minimal-sum-by") \
     X(minimal_foldl_atom, "_minimal-foldl-atom") \
     X(minimal_foldl_llist, "_minimal-foldl-llist") \
-    X(minimal_foldl_sequence, "_minimal-foldl-sequence") \
     X(minimal_space_contains_exact, "_minimal-space-contains-exact") \
     X(minimal_space_revision, "_minimal-space-revision") \
     X(collapse_add_next, "_collapse-add-next-atom-from-collapse-bind-result") \
@@ -778,7 +777,6 @@ static inline SymbolSpelling symbol_spelling(
     X(minimal_sum_by) \
     X(minimal_foldl_atom) \
     X(minimal_foldl_llist) \
-    X(minimal_foldl_sequence) \
     X(minimal_space_contains_exact) \
     X(minimal_space_revision) \
     X(collapse_add_next) \

@@ -405,6 +405,11 @@ bool petta_program_enable_callability_refresh(PettaProgram *program);
  * revision views. The ordinary constructor admits only base equations. */
 PettaProgram *petta_program_new_with_rules(unsigned admitted_forms);
 bool petta_program_admits_equation(const PettaProgram *program, Atom *atom);
+/* Published resource cleanup can outlive the execution context. These
+ * references keep only the program identity alive after free closes its
+ * metadata. They do not authorize execution after closure. */
+bool petta_program_lifetime_retain(PettaProgram *program);
+void petta_program_lifetime_release(PettaProgram *program);
 void petta_program_free(PettaProgram *program);
 /* Signature facts are owned by the existing program and keyed by the live
  * SpaceProgramToken. Data-only changes preserve them; equation, declaration,

@@ -53,6 +53,30 @@ static inline bool cetta_prepared_pure_compile_refused(
  * or %Undefined%), which the machine checks where HE casts them. */
 bool cetta_prepared_pure_call_policy_supported(
     Space *space, SymbolId head, CettaExprLen arity);
+/* Whether `head` has such a value-class signature at `arity`; *checks_range
+ * says whether its range names a class (Number, String or Bool) a call's
+ * answer must have, rather than accepting every value. */
+/* Whether head/arity's one signature writes its range as the type variable
+ * of one bare parameter, *parameter, that no other position names, the
+ * prepared machine checking that argument's class as the answer's. */
+/* Whether `head` with `arity` arguments, a head without equations, is an HE
+ * constructor the machine builds with a typing check: one declared function
+ * type of that arity over parameters that are no metatype. */
+bool cetta_prepared_pure_he_checked_constructor(Space *space, SymbolId head,
+                                                CettaExprLen arity);
+/* The identity and current reset epoch of the arena holding `atom` where it
+ * is the running program's arena or its collector's survivor. */
+bool cetta_prepared_pure_stamp_arena_epoch(const Atom *atom, uint32_t *arena,
+                                           uint64_t *epoch);
+bool cetta_prepared_pure_parameter_range(Space *space, SymbolId head,
+                                         CettaExprLen arity,
+                                         CettaExprLen *parameter);
+/* *checks_range: a value-class range the answer is checked at;
+ * *structural_range: a closed range that is no value class, which HE
+ * checks where each activation returns. */
+bool cetta_prepared_pure_value_signature(
+    Space *space, SymbolId head, CettaExprLen arity, bool *checks_range,
+    bool *structural_range);
 /* Authored dialect restrictions are shared by source admission, lowering
  * and execution. Unscoped intrinsics retain their existing policy. */
 bool cetta_prepared_pure_intrinsic_scope_supported(SymbolId head, CettaExprLen arity);
@@ -224,6 +248,10 @@ typedef struct {
 } CettaPreparedPureSourceProjection;
 typedef const void *(*CettaPreparedPureProjectSourceFn)(
     void *context, const CettaPreparedPureSourceProjection *projection);
+/* Whether the tier admits spellings by their normal form (the admission
+ * normalizer's rules; CETTA_ADMISSION_NORMALIZE=0 turns it off). */
+bool cetta_prepared_pure_admission_normalize_enabled(void);
+
 typedef struct {
     void *context;
     const void *root;

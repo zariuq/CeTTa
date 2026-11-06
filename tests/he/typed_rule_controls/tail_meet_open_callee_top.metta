@@ -1,0 +1,14 @@
+; A tail call shows an open range only through its meet with the
+; activation's instance.
+(: List (-> Type Type))
+(: Nil (List $a))
+(: Cons (-> $a (List $a) (List $a)))
+(: SL (List String))
+(: NL (List Number))
+(: g2 (-> (List $u) (List $u)))
+(= (g2 $l) $l)
+(: f2 (-> (List $t) (List $t)))
+(= (f2 $l) (g2 NL))
+(: u2 (-> (List String) %Undefined%))
+(= (u2 $l) (f2 $l))
+!(f2 SL)

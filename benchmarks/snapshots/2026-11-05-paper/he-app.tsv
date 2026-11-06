@@ -1,0 +1,65 @@
+case	engine	trial	phase	status	wall	native_wall	user	system	rss_kib	instructions	cycles	rc	timed_out	answers	correct	contract	profile
+ancestor_chain_256_natural	he	0	run	pass	7.197371692862362	7.19	7.172901	0.021741	93824			0	False	256	True	occurrence-bag	extended
+ancestor_chain_256_natural	cetta-he	0	run	pass	0.00890238699503243	0.0	0.0047079999999999995	0.0009519999999999999	15660			0	False	256	True	occurrence-bag	extended
+ancestor_chain_256_natural	cetta-he	1	run	pass	0.006212491076439619	0.0	0.002101	0.002891	15188			0	False	256	True	occurrence-bag	extended
+ancestor_chain_256_natural	he	1	run	pass	6.903625775128603	6.9	6.88204	0.014995999999999999	98468			0	False	256	True	occurrence-bag	extended
+ancestor_chain_256_natural	he	2	run	pass	6.920506166992709	6.91	6.877552	0.033007999999999996	95840			0	False	256	True	occurrence-bag	extended
+ancestor_chain_256_natural	cetta-he	2	run	pass	0.006618165876716375	0.0	0.001916	0.00401	15308			0	False	256	True	occurrence-bag	extended
+ancestor_chain_256_levelwise	he	0	run	pass	56.40402974607423	56.4	55.953051	0.428108	2030996			0	False	256	True	occurrence-bag	extended
+ancestor_chain_256_levelwise	cetta-he	0	run	pass	0.02750352001748979	0.02	0.020798	0.0059559999999999995	19980			0	False	256	True	occurrence-bag	extended
+ancestor_chain_256_levelwise	cetta-he	1	run	pass	0.020835482981055975	0.01	0.015418999999999999	0.004905	20208			0	False	256	True	occurrence-bag	extended
+ancestor_chain_256_levelwise	he	1	run	pass	56.932095715077594	56.93	56.320773	0.534913	1993656			0	False	256	True	occurrence-bag	extended
+ancestor_chain_256_levelwise	he	2	run	pass	57.41091374005191	57.4	56.781522	0.532084	1991532			0	False	256	True	occurrence-bag	extended
+ancestor_chain_256_levelwise	cetta-he	2	run	pass	0.02302615181542933	0.02	0.018297	0.003947	20136			0	False	256	True	occurrence-bag	extended
+closure_ring_32_levelwise	he	0	run	pass	17.187196783022955	17.18	17.162643	0.011996999999999999	48984			0	False	1024	True	occurrence-bag	extended
+closure_ring_32_levelwise	cetta-he	0	run	pass	0.06623453693464398	0.06	0.056152999999999995	0.00924	22976			0	False	1024	True	occurrence-bag	extended
+closure_ring_32_levelwise	cetta-he	1	run	pass	0.06642888998612761	0.06	0.060618	0.004968	23352			0	False	1024	True	occurrence-bag	extended
+closure_ring_32_levelwise	he	1	run	pass	16.02431266196072	16.02	16.003345	0.0152	49212			0	False	1024	True	occurrence-bag	extended
+closure_ring_32_levelwise	he	2	run	pass	15.779969430994242	15.77	15.767098	0.010124	48348			0	False	1024	True	occurrence-bag	extended
+closure_ring_32_levelwise	cetta-he	2	run	pass	0.0655390580650419	0.06	0.060738	0.003992	23252			0	False	1024	True	occurrence-bag	extended
+counter_64_natural	he	0	run	pass	10.09335440583527	10.09	9.893473	0.198152	971096			0	False	5	True	occurrence-bag	extended
+counter_64_natural	cetta-he	0	run	pass	0.04355925088748336	0.04	0.03473	0.008036999999999999	31716			0	False	5	True	occurrence-bag	extended
+counter_64_natural	cetta-he	1	run	pass	0.04105554800480604	0.03	0.03336	0.006965	31728			0	False	5	True	occurrence-bag	extended
+counter_64_natural	he	1	run	pass	10.200230606133118	10.19	9.982785	0.21584599999999998	1017564			0	False	5	True	occurrence-bag	extended
+counter_64_natural	he	2	run	pass	10.044456435134634	10.04	9.86279	0.179177	982592			0	False	5	True	occurrence-bag	extended
+counter_64_natural	cetta-he	2	run	pass	0.05107730906456709	0.04	0.038264	0.011495	31760			0	False	5	True	occurrence-bag	extended
+sort_64_natural	he	0	run	pass	1.2013920659665018	1.19	1.1778	0.011824999999999999	29736			0	False	1	True	occurrence-bag	extended
+sort_64_natural	cetta-he	0	run	pass	0.007052273023873568	0.0	0.002815	0.002815	13772			0	False	1	True	occurrence-bag	extended
+sort_64_natural	cetta-he	1	run	pass	0.006988320965319872	0.0	0.004932	0.0009419999999999999	13636			0	False	1	True	occurrence-bag	extended
+sort_64_natural	he	1	run	pass	1.2772164288908243	1.27	1.2626789999999999	0.011500999999999999	29740			0	False	1	True	occurrence-bag	extended
+sort_64_natural	he	2	run	pass	1.2809357978403568	1.27	1.266019	0.009679	29732			0	False	1	True	occurrence-bag	extended
+sort_64_natural	cetta-he	2	run	pass	0.013650069013237953	0.0	0.0041719999999999995	0.0041719999999999995	13572			0	False	1	True	occurrence-bag	extended
+arithmetic_10000	he	0	run	pass	4.971949833910912	4.95	4.878286	0.024718999999999998	47992			0	False	10000	True	occurrence-bag	extended
+arithmetic_10000	cetta-he	0	run	pass	0.09863774315454066	0.09	0.078485	0.008825	29008			0	False	10000	True	occurrence-bag	extended
+arithmetic_10000	cetta-he	1	run	pass	0.09188442397862673	0.08	0.072119	0.015747	29072			0	False	10000	True	occurrence-bag	extended
+arithmetic_10000	he	1	run	pass	5.638265811139718	5.63	5.434797	0.018224999999999998	48092			0	False	10000	True	occurrence-bag	extended
+arithmetic_10000	he	2	run	pass	5.587518436834216	5.58	5.241916	0.022491999999999998	48036			0	False	10000	True	occurrence-bag	extended
+arithmetic_10000	cetta-he	2	run	pass	0.10410744301043451	0.09	0.0768	0.014407	29020			0	False	10000	True	occurrence-bag	extended
+tally_1000x8	he	0	run	pass	4.860288382042199	4.85	4.704111	0.016797	15196			0	False	32	True	occurrence-bag	extended
+tally_1000x8	cetta-he	0	run	pass	0.04219764284789562	0.03	0.031066	0.006174	14712			0	False	32	True	occurrence-bag	extended
+tally_1000x8	cetta-he	1	run	pass	0.03618089389055967	0.03	0.024515	0.008535	14968			0	False	32	True	occurrence-bag	extended
+tally_1000x8	he	1	run	pass	4.760665606940165	4.75	4.704779	0.008444	15056			0	False	32	True	occurrence-bag	extended
+tally_1000x8	he	2	run	pass	4.619134373031557	4.61	4.546355	0.013495	15156			0	False	32	True	occurrence-bag	extended
+tally_1000x8	cetta-he	2	run	pass	0.035829528933390975	0.03	0.027873	0.005855	14960			0	False	32	True	occurrence-bag	extended
+kb_load_10000	he		selection	not-applicable													
+kb_load_10000	cetta-he		selection	not-applicable													
+space_step_1000_2000	he		selection	not-applicable													
+space_step_1000_2000	cetta-he		selection	not-applicable													
+ancestor_chain_64_natural	he	0	run	pass	0.29716716310940683	0.29	0.28313099999999997	0.008339	20136			0	False	64	True	occurrence-bag	extended
+ancestor_chain_64_natural	cetta-he	0	run	pass	0.009905189974233508	0.0	0.005399999999999999	0.002457	15016			0	False	64	True	occurrence-bag	extended
+ancestor_chain_64_natural	cetta-he	1	run	pass	0.010485708015039563	0.0	0.006091	0.002288	15164			0	False	64	True	occurrence-bag	extended
+ancestor_chain_64_natural	he	1	run	pass	0.28311175806447864	0.27	0.269662	0.008704	19816			0	False	64	True	occurrence-bag	extended
+ancestor_chain_64_natural	he	2	run	pass	0.27343067107722163	0.26	0.256895	0.009061	19356			0	False	64	True	occurrence-bag	extended
+ancestor_chain_64_natural	cetta-he	2	run	pass	0.01345126610249281	0.0	0.007944	0.002793	15028			0	False	64	True	occurrence-bag	extended
+counter_4_natural	he	0	run	pass	0.12050589802674949	0.11	0.107624	0.008926	19672			0	False	5	True	occurrence-bag	extended
+counter_4_natural	cetta-he	0	run	pass	0.014740432845428586	0.01	0.007389	0.0048709999999999995	15792			0	False	5	True	occurrence-bag	extended
+counter_4_natural	cetta-he	1	run	pass	0.019363943953067064	0.01	0.009422999999999999	0.005939	15920			0	False	5	True	occurrence-bag	extended
+counter_4_natural	he	1	run	pass	0.12194198812358081	0.11	0.109952	0.007731	20800			0	False	5	True	occurrence-bag	extended
+counter_4_natural	he	2	run	pass	0.11644146498292685	0.11	0.10503599999999999	0.009082999999999999	20040			0	False	5	True	occurrence-bag	extended
+counter_4_natural	cetta-he	2	run	pass	0.02130694012157619	0.01	0.004405	0.011165	16024			0	False	5	True	occurrence-bag	extended
+sort_16_natural	he	0	run	pass	0.1558602110017091	0.14	0.138411	0.006163	13772			0	False	1	True	occurrence-bag	extended
+sort_16_natural	cetta-he	0	run	pass	0.011056925170123577	0.0	0.0034709999999999997	0.004683	13608			0	False	1	True	occurrence-bag	extended
+sort_16_natural	cetta-he	1	run	pass	0.012232880108058453	0.0	0.0049949999999999994	0.003287	13384			0	False	1	True	occurrence-bag	extended
+sort_16_natural	he	1	run	pass	0.16759264492429793	0.16	0.14295	0.010336999999999999	13688			0	False	1	True	occurrence-bag	extended
+sort_16_natural	he	2	run	pass	0.15903800213709474	0.15	0.142963	0.002858	13684			0	False	1	True	occurrence-bag	extended
+sort_16_natural	cetta-he	2	run	pass	0.010583440074697137	0.0	0.00389	0.004292	13332			0	False	1	True	occurrence-bag	extended

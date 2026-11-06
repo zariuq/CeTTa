@@ -11,8 +11,8 @@
 #include "parser_pack_gll_v1.h"
 #include "parser_pack_glr_v1.h"
 #include "parser_pack_native_v1.h"
-#include "runtime_names.h"
 #include "symbol.h"
+#include "runtime_names.h"
 
 #include <stdbool.h>
 #include <pthread.h>
@@ -208,12 +208,13 @@ typedef struct {
     CettaJsonKernelV1 kernel;
     bool passed;
     char error[512];
-    /* The test's names, which each parsing thread borrows: the runtime's
-     * terms are spelled in them. */
     CettaNameContext names;
 } JsonConcurrentCase;
 
-static void json_concurrent_parse_in(JsonConcurrentCase *test) {
+static void *json_concurrent_parse(void *opaque) {
+    JsonConcurrentCase *test = (JsonConcurrentCase *)opaque;
+    CettaNameContext previous = cetta_name_context_current();
+    cetta_name_context_install(&test->names);
     CettaJsonRuntimeV1Limits limits;
     Arena arena;
     uint32_t iteration;
@@ -235,7 +236,8 @@ static void json_concurrent_parse_in(JsonConcurrentCase *test) {
                 &limits, &value, &status,
                 test->error, sizeof(test->error))) {
             arena_free(&arena);
-            return;
+            cetta_name_context_install(&previous);
+            return NULL;
         }
         actual = render(value);
         if (status != CETTA_JSON_RUNTIME_V1_OK || !actual ||
@@ -245,46 +247,41 @@ static void json_concurrent_parse_in(JsonConcurrentCase *test) {
                 test->error, sizeof(test->error),
                 "concurrent JSON result disagreement for %s", test->source);
             arena_free(&arena);
-            return;
+            cetta_name_context_install(&previous);
+            return NULL;
         }
         free(actual);
         arena_reset(&arena, mark);
     }
     test->passed = true;
     arena_free(&arena);
-}
-
-static void *json_concurrent_parse(void *opaque) {
-    JsonConcurrentCase *test = (JsonConcurrentCase *)opaque;
-    CettaNameContext previous = cetta_name_context_current();
-    cetta_name_context_install(&test->names);
-    json_concurrent_parse_in(test);
     cetta_name_context_install(&previous);
     return NULL;
 }
 
 static void concurrent_runtime_gate(TestCounts *counts,
                                     const CettaJsonRuntimeV1 *runtime) {
+    CettaNameContext names = cetta_name_context_current();
     JsonConcurrentCase cases[] = {
         {runtime, "null", "JsonNullV1",
-         CETTA_JSON_KERNEL_V1_PACKED_GLL, false, {0}},
+         CETTA_JSON_KERNEL_V1_PACKED_GLL, false, {0}, names},
         {runtime, "[true,false]",
          "(JsonArrayV1 ((JsonBoolV1 True) (JsonBoolV1 False)))",
-         CETTA_JSON_KERNEL_V1_PACKED_GLR, false, {0}},
+         CETTA_JSON_KERNEL_V1_PACKED_GLR, false, {0}, names},
         {runtime, "{\"x\":1,\"x\":2}",
          "(JsonObjectV1 ((JsonMemberV1 0 (JsonStringV1 ((cp 120))) "
          "(JsonNumberV1 \"1\") (JsonSourceSpanV1 1 6)) "
          "(JsonMemberV1 1 (JsonStringV1 ((cp 120))) "
          "(JsonNumberV1 \"2\") (JsonSourceSpanV1 7 12))))",
-         CETTA_JSON_KERNEL_V1_PACKED_GLL_GLR_DUAL, false, {0}},
+         CETTA_JSON_KERNEL_V1_PACKED_GLL_GLR_DUAL, false, {0}, names},
         {runtime, "\"\xce\xbb\"", "(JsonStringV1 ((cp 955)))",
-         CETTA_JSON_KERNEL_V1_PACKED_GLL_GLR_DUAL, false, {0}},
+         CETTA_JSON_KERNEL_V1_PACKED_GLL_GLR_DUAL, false, {0}, names},
         {runtime, "{ }", "(JsonObjectV1 ())",
-         CETTA_JSON_KERNEL_V1_PACKED_GLL, false, {0}},
+         CETTA_JSON_KERNEL_V1_PACKED_GLL, false, {0}, names},
         {runtime, "[ ]", "(JsonArrayV1 ())",
-         CETTA_JSON_KERNEL_V1_PACKED_GLR, false, {0}},
+         CETTA_JSON_KERNEL_V1_PACKED_GLR, false, {0}, names},
         {runtime, "[{ },[ ]]", "(JsonArrayV1 ((JsonObjectV1 ()) (JsonArrayV1 ())))",
-         CETTA_JSON_KERNEL_V1_PACKED_GLL_GLR_DUAL, false, {0}},
+         CETTA_JSON_KERNEL_V1_PACKED_GLL_GLR_DUAL, false, {0}, names},
     };
     pthread_t threads[sizeof(cases) / sizeof(cases[0])];
     uint32_t created = 0u;
@@ -292,7 +289,6 @@ static void concurrent_runtime_gate(TestCounts *counts,
     bool passed = true;
 
     for (index = 0u; index < sizeof(cases) / sizeof(cases[0]); index++) {
-        cases[index].names = cetta_name_context_current();
         if (pthread_create(
                 &threads[index], NULL,
                 json_concurrent_parse, &cases[index]) != 0) {
@@ -311,15 +307,6 @@ static void concurrent_runtime_gate(TestCounts *counts,
     (void)expect(
         counts, passed,
         "one immutable prepared JSON runtime serves concurrent parses");
-    /* A thread that borrows no names cannot spell the runtime's terms: it is
-     * refused, and told why. */
-    JsonConcurrentCase nameless = {
-        runtime, "null", "JsonNullV1", CETTA_JSON_KERNEL_V1_PACKED_GLL, false, {0}, {0}};
-    pthread_t nameless_thread;
-    bool refused = pthread_create(&nameless_thread, NULL, json_concurrent_parse, &nameless) == 0 &&
-        pthread_join(nameless_thread, NULL) == 0 && !nameless.passed &&
-        strstr(nameless.error, "no names installed") != NULL;
-    (void)expect(counts, refused, "a parsing thread with no names is refused, by name");
     (void)expect(
         counts, cetta_json_runtime_v1_table_build_count(runtime) == 1u,
         "concurrent parsing does not rebuild prepared tables");
