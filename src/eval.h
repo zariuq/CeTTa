@@ -261,6 +261,7 @@ void eval_set_library_context(CettaLibraryContext *ctx);
  * context is reinstalled by the caller at the end of this execution. */
 CettaLibraryContext *eval_exchange_library_context(CettaLibraryContext *ctx);
 CettaLibraryContext *eval_current_library_context(void);
+Atom *eval_materialize_runtime_value(Space *, Arena *, Atom *);
 /* Called after retained computations have released any named lock. */
 void eval_named_mutex_registry_free(CettaLibraryContext *);
 bool eval_named_mutex_acquire(CettaLibraryContext *, Arena *, Atom *, void **);

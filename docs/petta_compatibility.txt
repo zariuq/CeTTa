@@ -28,6 +28,14 @@ installs its definitions there as well.
 Authority and reference
 -----------------------
 
+Python boolean interchange is an accepted semantic repair: both py: and
+legacy py-call map PeTTa true/false values to Python bool, including nested
+arguments and keywords. Janus's default atom-to-string rule would turn false
+into a truthy string. Quoted strings keep their string meaning. This difference
+is checked by test-python-objects. The corresponding SWI-PeTTa repair is to
+encode boolean argument leaves as Janus boolean terms before the call; it is
+an upstream repair candidate, not a change to that repository here.
+
 Explicit language decisions take precedence over settled contracts, which take
 precedence over observations of a pinned implementation. A new test or a new
 reference commit does not by itself establish the intended semantics.

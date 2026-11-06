@@ -703,6 +703,9 @@ bool grounded_op_is_library_native(SymbolId head) {
 bool is_grounded_op(SymbolId id) {
     if (id == SYMBOL_ID_NONE)
         return false;
+    extern bool eval_current_python_object_head(SymbolId) __attribute__((weak));
+    if (eval_current_python_object_head && eval_current_python_object_head(id))
+        return true;
     /* Standalone PeTTa implements its standard inequality in C. With SWI,
      * its library owns the operation, including permitted redefinitions.
      * Other dialects retain their own interpretation of this spelling. */

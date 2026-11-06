@@ -21893,6 +21893,7 @@ test-runtime-stats-lane-body:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-open-crossing-linear
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-he-frame-bytes-depth
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-he-completed-delivery-stats
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-he-canonical-tail-memory
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-open-values-frame-walk-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-frame-identity-refusal-sweep
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-identity-repeat-stats
@@ -33429,6 +33430,23 @@ test-he-completed-delivery: $(BIN) tests/he/completed_delivery.metta \
 			| diff -u tests/he/completed_delivery_open.expected -; \
 	done; \
 	echo 'PASS: shared values are evaluated once per node, and every route answers alike'
+
+# The canonical machine's last-call rule: a recursion whose levels end in a
+# tail call holds the same frames at every depth and flat memory, Python,
+# car-atom, typed and under kept bindings; levels with work after their child
+# keep their frames.  The answers gate runs named and generated programs with
+# the rule and without it (CETTA_HE_LAST_CALL=0); any difference fails.
+.PHONY: test-he-canonical-tail-memory test-he-canonical-tail-answers
+test-all: test-he-canonical-tail-memory test-he-canonical-tail-answers
+test-he-canonical-tail-memory: $(BIN) tests/support/check_he_last_call.py
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_he_last_call.py ./$(BIN) --memory
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
+
+test-he-canonical-tail-answers: $(BIN) tests/support/check_he_last_call.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_he_last_call.py ./$(BIN) --answers 1000 --seed 1
 
 .PHONY: test-he-completed-delivery-stats
 test-he-completed-delivery-stats: $(BIN)
@@ -48926,6 +48944,37 @@ else
 	@echo "SKIP: Python callback completion (Python support disabled)"
 endif
 
+.PHONY: test-python-objects test-python-package bench-python-interop-light
+test-all: test-python-objects
+test-python-objects: $(BIN) test-python-retention
+ifeq ($(ENABLE_PYTHON),1)
+	@$(CETTA_SCRIPT_RUN_ENV) $(PYTHON_EXECUTABLE) tests/support/check_python_objects.py ./$(BIN)
+else
+	@echo "SKIP: Python objects (Python support disabled)"
+endif
+
+.PHONY: test-python-retention
+test-python-retention: $(BIN)
+ifeq ($(ENABLE_PYTHON),1)
+	@$(CETTA_SCRIPT_RUN_ENV) $(PYTHON_EXECUTABLE) tests/support/check_python_retention.py ./$(BIN)
+bench-performance-light: test-python-retention
+else
+	@echo "SKIP: Python retention (Python support disabled)"
+endif
+
+test-python-package:
+	+$(MAKE) --no-print-directory BUILD=core ENABLE_LIB_PROLOG=0 ENABLE_PIC=1 python-native test-embedding-context
+	PYTHONPATH=python $(PYTHON_EXECUTABLE) -m unittest discover -s python/tests -v
+
+bench-python-interop-light:
+	+$(MAKE) --no-print-directory BUILD=core ENABLE_LIB_PROLOG=0 ENABLE_PIC=1 python-native
+	PYTHONPATH=python $(PYTHON_EXECUTABLE) benchmarks/python/interop.py --lang petta
+	PYTHONPATH=python $(PYTHON_EXECUTABLE) benchmarks/python/interop.py --lang he
+
+ifeq ($(ENABLE_PYTHON),1)
+bench-performance-light: bench-python-interop-light
+endif
+
 .PHONY: test-petta-libpl-callback-completion
 test-execution-semantic-ledger test-petta-libpl: test-petta-libpl-callback-completion
 .PHONY: test-petta-libpl-callback-source
@@ -49029,7 +49078,7 @@ embedding-native: $(EMBED_LIB) $(EMBED_STATIC_LIB) runtime/cetta-proc-scope
 	ln -sfn $(notdir $(EMBED_STATIC_LIB)) runtime/libcetta.a
 runtime/cetta-proc-scope: $(BIN).proc-scope
 	cp $< $@
-test-embedding-api: $(EMBED_TEST)
+test-embedding-api: $(EMBED_TEST) test-embedding-context
 	./$(EMBED_TEST)
 
 EMBED_CONTEXT_TEST = runtime/test_embedding_context-$(EMBED_TAG)
@@ -49229,14 +49278,26 @@ PYTHON_EXTENSION_OUTPUT ?= python/cetta/_native$(PYTHON_EXTENSION_SUFFIX)
 PYTHON_EXTENSION_INCLUDE_DIR = $(shell $(PYTHON_EXECUTABLE) -c 'import sysconfig; print(sysconfig.get_path("include"))')
 PYTHON_EXTENSION_INCLUDES = -I'$(PYTHON_EXTENSION_INCLUDE_DIR)'
 PYTHON_EXTENSION_PATH_MAP = '-ffile-prefix-map=$(PYTHON_EXTENSION_INCLUDE_DIR)=Python/include' '-ffile-prefix-map=$(abspath .)=.'
+PYTHON_HOST_OBJ = runtime/bootstrap/python-host-$(EMBED_TAG)$(PYTHON_EXTENSION_SUFFIX).o
+PYTHON_HOST_LIB = runtime/libcetta-python-host-$(EMBED_TAG)$(PYTHON_EXTENSION_SUFFIX).a
+PYTHON_HOST_RUNTIME_OBJ = $(filter-out src/foreign.% src/foreign_stub.%,$(EMBED_RUNTIME_OBJ))
+
+$(PYTHON_HOST_OBJ): src/foreign.c src/python_objects.inc src/python_streams.inc src/python_context.inc src/python_provider.inc src/python_ownership.inc src/foreign.h $(BUILD_CONFIG_HEADER) Makefile
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(PYTHON_EXTENSION_PATH_MAP) $(PYTHON_EXTENSION_INCLUDES) -c -o '$@' $<
+
+$(PYTHON_HOST_LIB): $(EMBED_OBJ) $(PYTHON_HOST_RUNTIME_OBJ) $(PYTHON_HOST_OBJ) tools/build_embedding_static.py include/cetta_embed.h src/embedding_python.h
+	python3 tools/build_embedding_static.py --cc '$(CC)' --ar '$(AR)' --nm '$(NM)' --objcopy '$(OBJCOPY)' \
+		--header include/cetta_embed.h --header src/embedding_python.h --output '$@' \
+		--allocator '$(EMBED_ALLOCATOR_OBJ)' $(EMBED_OBJ) $(PYTHON_HOST_RUNTIME_OBJ) $(PYTHON_HOST_OBJ)
+
 .PHONY: python-native
-python-native: $(EMBED_STATIC_LIB) runtime/cetta-proc-scope python/native.c python/callbacks.inc python/host.inc python/buffers.inc python/exports.map
+python-native: $(PYTHON_HOST_LIB) runtime/cetta-proc-scope python/native.c python/callbacks.inc python/host.inc python/handles.inc python/buffers.inc python/exports.map
 	@mkdir -p '$(dir $(PYTHON_EXTENSION_OUTPUT))'
 	@set -eu; \
 	tmp_out=$$(mktemp '$(dir $(PYTHON_EXTENSION_OUTPUT)).cetta-extension.XXXXXX'); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(PYTHON_EXTENSION_PATH_MAP) -Iinclude $(PYTHON_EXTENSION_INCLUDES) -shared \
-		-o "$$tmp_out" python/native.c $(EMBED_STATIC_LIB) \
+		-o "$$tmp_out" python/native.c $(PYTHON_HOST_LIB) \
 		-Wl,--version-script=python/exports.map -Wl,--exclude-libs,ALL $(LDFLAGS); \
 	mv "$$tmp_out" '$(PYTHON_EXTENSION_OUTPUT)'
 	@mkdir -p '$(dir $(PYTHON_EXTENSION_OUTPUT))resources/runtime'

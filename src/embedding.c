@@ -8,6 +8,8 @@
 #define _XOPEN_SOURCE 700
 #endif
 #include "cetta_embed.h"
+#include "embedding_python.h"
+#include "foreign.h"
 #include "runtime_names.h"
 #include "eval.h"
 #include "eval_invocation.h"
@@ -186,6 +188,11 @@ static bool host_interrupt(void *context) {
     atomic_fetch_sub_explicit(&engine->active_callbacks, 1u, memory_order_acq_rel);
     return interrupted;
 }
+static void host_foreign(void *context, bool entering) {
+    cetta_engine_t *engine = context;
+    if (entering) atomic_fetch_add_explicit(&engine->active_callbacks, 1u, memory_order_acq_rel);
+    else atomic_fetch_sub_explicit(&engine->active_callbacks, 1u, memory_order_acq_rel);
+}
 
 /* Callback entry may begin while another thread is waiting for the engine.
  * A bounded mutex wait lets that waiter observe the callback and decline. */
@@ -299,7 +306,8 @@ static void scope_enter(cetta_engine_t *engine, EmbeddingScope *scope) {
     CettaHostServices host = {.context = engine,
         .write = engine->host.write ? host_write : NULL,
         .flush = engine->host.flush ? host_flush : NULL,
-        .poll = engine->host.interrupt ? host_interrupt : NULL};
+        .poll = engine->host.interrupt ? host_interrupt : NULL,
+        .foreign = host_foreign};
     cetta_host_scope_enter(&scope->host, &host);
     scope->names = cetta_name_context_current();
     scope->hashcons = g_hashcons;
@@ -384,6 +392,7 @@ static cetta_status_t engine_enter(cetta_engine_t *engine, EmbeddingScope *scope
  * storage; resumable/background native work is cancelled exactly once. */
 static void engine_close_native_work(cetta_engine_t *engine) {
     cetta_runtime_session_stop(&engine->session);
+    cetta_foreign_drain_releases();
 }
 
 static void engine_leave(cetta_engine_t *engine, EmbeddingScope *scope) {
@@ -683,6 +692,55 @@ static cetta_status_t atom_wrap(EmbeddingOwner *owner, Atom *value, cetta_atom_t
 
 void cetta_embed_atom_retain(cetta_atom_t *atom) {
     if (atom) atomic_fetch_add_explicit(&atom->references, 1u, memory_order_relaxed);
+}
+
+cetta_status_t cetta_embedding_python_object(cetta_engine_t *engine, void *object,
+        cetta_atom_t **output) {
+    if (!object || !output) return CETTA_INVALID_ARGUMENT;
+    *output = NULL;
+    EmbeddingScope scope;
+    cetta_status_t status = engine_enter(engine, &scope);
+    if (status != CETTA_OK) return status;
+    cetta_foreign_drain_releases();
+    EmbeddingOwner *owner = owner_new(engine);
+    status = owner ? atom_wrap(owner, cetta_foreign_object_wrap(
+        engine->session.libraries.foreign_runtime, &owner->arena, object), output) : CETTA_OUT_OF_MEMORY;
+    if (owner) owner_release(owner);
+    engine_leave(engine, &scope);
+    return status;
+}
+
+void *cetta_embedding_python_borrow(const cetta_atom_t *atom) {
+    return atom ? cetta_foreign_python_value(atom->value) : NULL;
+}
+
+void *cetta_embedding_python_exception(const cetta_atom_t *atom, int raised) {
+    if (!atom || atom->value->kind != ATOM_EXPR || atom->value->expr.len != 3u) return NULL;
+    const cetta_engine_t *engine = atom->owner->engine;
+    if (!raised && engine->language != CETTA_LANGUAGE_HE) return NULL;
+    const Atom *head = atom->value->expr.elems[0];
+    /* Retained atoms keep their name domain alive. Inspect its immutable
+     * Error symbol before acquiring an execution scope for an actual error. */
+    if (!head || head->kind != ATOM_SYMBOL || head->sym_id != engine->names.builtins.error) return NULL;
+    EmbeddingScope scope;
+    if (owner_enter(atom->owner, &scope) != CETTA_OK) return NULL;
+    void *exception = raised ? cetta_foreign_python_exception(atom->value)
+                             : cetta_foreign_python_he_exception(atom->value);
+    engine_leave(atom->owner->engine, &scope);
+    return exception;
+}
+
+void *cetta_embedding_python_attach(cetta_engine_t *engine) {
+    return cetta_foreign_python_owner_new(engine->session.libraries.foreign_runtime);
+}
+void *cetta_embedding_python_atom_owner(const cetta_atom_t *atom) {
+    return cetta_foreign_python_owner(atom->owner->engine->session.libraries.foreign_runtime);
+}
+void *cetta_embedding_python_space_owner(const cetta_space_t *space) {
+    return cetta_embedding_python_atom_owner(space->value);
+}
+void *cetta_embedding_python_query_owner(const cetta_query_t *query) {
+    return cetta_foreign_python_owner(query->owner->engine->session.libraries.foreign_runtime);
 }
 
 void cetta_embed_atom_release(cetta_atom_t *atom) {
@@ -1237,7 +1295,7 @@ static void query_close_cleanup(EmbeddingCleanup *cleanup);
 static void query_destroy_cleanup(EmbeddingCleanup *cleanup);
 
 static cetta_status_t query_open_locked(cetta_engine_t *engine, Atom *source, Atom *exports,
-    const cetta_eval_options_t *options, cetta_query_t **output) {
+    const cetta_eval_options_t *options, bool values, cetta_query_t **output) {
     cetta_status_t status = CETTA_OK;
     cetta_query_t *query = calloc(1u, sizeof(*query));
     if (query) {
@@ -1249,8 +1307,11 @@ static cetta_status_t query_open_locked(cetta_engine_t *engine, Atom *source, At
         query->destroy_cleanup.run = query_destroy_cleanup;
         query->owner = owner_new(engine);
         if (query->owner)
-            query->core = eval_query_open_exports(&engine->session.space, &engine->persistent,
-                &engine->session.registry, source, exports, options ? (int)options->semantic_fuel : -1);
+            query->core = values
+                ? eval_query_open_values(&engine->session.space, &engine->persistent,
+                    &engine->session.registry, source, options ? (int)options->semantic_fuel : -1)
+                : eval_query_open_exports(&engine->session.space, &engine->persistent,
+                    &engine->session.registry, source, exports, options ? (int)options->semantic_fuel : -1);
     }
     if (!query || !query->owner || !query->core || cetta_native_memory_failed()) {
         if (query) {
@@ -1270,7 +1331,21 @@ cetta_status_t cetta_embed_query_open(cetta_engine_t *engine, const cetta_atom_t
     EmbeddingScope scope;
     cetta_status_t status = engine_enter(engine, &scope);
     if (status == CETTA_OK) {
-        status = query_open_locked(engine, source->value, NULL, options, output);
+        status = query_open_locked(engine, source->value, NULL, options, false, output);
+        engine_leave(engine, &scope);
+    }
+    return status;
+}
+
+cetta_status_t cetta_embedding_query_values(cetta_engine_t *engine, const cetta_atom_t *source,
+    const cetta_eval_options_t *options, cetta_query_t **output) {
+    if (!engine || !output || !source || !options_valid(options)) return CETTA_INVALID_ARGUMENT;
+    *output = NULL;
+    if (source->owner->engine != engine) return CETTA_FOREIGN_ENGINE;
+    EmbeddingScope scope;
+    cetta_status_t status = engine_enter(engine, &scope);
+    if (status == CETTA_OK) {
+        status = query_open_locked(engine, source->value, NULL, options, true, output);
         engine_leave(engine, &scope);
     }
     return status;
@@ -1525,7 +1600,7 @@ cetta_status_t cetta_embed_space_match(cetta_space_t *space, const cetta_atom_t 
             : atom_unit(&scratch);
     Atom *source = body ? atom_expr(&scratch, (Atom *[]){
         atom_symbol_id(&scratch, g_builtin_syms.match), space->value->value, pattern->value, body}, 4) : NULL;
-    status = source && variables ? query_open_locked(engine, source, variables, options, output)
+    status = source && variables ? query_open_locked(engine, source, variables, options, false, output)
                                 : CETTA_OUT_OF_MEMORY;
     if (status == CETTA_OK && !template_value && engine->language == CETTA_LANGUAGE_HE) {
         (*output)->matched_value_pattern = atom_deep_copy(&(*output)->owner->arena, pattern->value);
