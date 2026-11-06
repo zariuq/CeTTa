@@ -97,6 +97,36 @@ def check_index_operations_equivalence(worker, root):
     return checked + 1
 
 
+def check_tie_order(worker, root):
+    tie_path = root / "tie-store"
+    tie_path.mkdir(mode=0o700)
+    tie_specs = (E("SpaceIndexV1", 4, 1), E("SpaceIndexV1", 4, 2))
+    assert worker.call(E("Create", str(tie_path), tie_specs))[0] == S("KnowledgeCommittedV1")
+    def tie_call(cmd):
+        return worker.call(E("At", str(tie_path), cmd))
+    tie_changes = (
+        E("SpaceInsertV1", 0, E("row", S("k"), Var(0), S("left"))),
+        E("SpaceInsertV1", 1, E("row", Var(0), S("v"), S("right"))),
+    )
+    assert tie_call(E("Commit", "tie-seed", tie_changes))[0] == S("KnowledgeCommittedV1")
+    tag = Var(0)
+    pattern = E("row", S("k"), S("v"), tag)
+    actual = tie_call(E("Query", pattern, tag))
+    reference = tie_call(E("Reference", pattern, tag))
+    raw = tie_call(E("Raw", pattern, tag))
+    assert actual[0] == S("IndexedRows") and reference[0] == S("ReferenceRows") and raw[0] == S("ReferenceRows"), (actual, reference, raw)
+    actual_order = tuple(row[1] for row in actual[1])
+    raw_order = tuple(raw[1])
+    expected_bag = bag((S("left"), S("right")))
+    assert bag(actual_order) == expected_bag, actual_order
+    assert bag(raw_order) == expected_bag, raw_order
+    assert bag(reference[1]) == expected_bag, reference[1]
+    assert actual_order == (S("right"), S("left")), ("tie did not select last-declared projection", actual_order)
+    assert raw_order == (S("right"), S("left")), ("raw match tie did not select last-declared projection", raw_order)
+    assert actual[2][0] == S("StoreQueryInfo") and actual[2][2] == 1 and actual[2][3] == 2, actual[2]
+    return actual_order
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("worker", type=Path)
@@ -297,6 +327,7 @@ def main():
             assert refused == E("SpaceRefusedV1", S("index-upgrade-required")), refused
             assert call(E("Info")) == legacy_info
             equiv_checks = check_index_operations_equivalence(worker, root)
+            tie_order = [str(x) for x in check_tie_order(worker, root)]
             report = {"facts": len(values), "independent_pattern_comparisons": len(probes),
                       "comparisons": comparisons, "service_info": info[1:],
                       "atomic_update_delete_replay": True, "captured_index_survives_compaction": True,
@@ -304,6 +335,7 @@ def main():
                       "backup_restore_preserves_index_access": True,
                       "legacy_v2_scan_only": True, "legacy_v2_edits_refused": True,
                       "index_operations_equivalence_checks": equiv_checks,
+                      "tie_last_declared_order": tie_order,
                       "post_warmup_indexed_service_rounds": args.rounds, "lifetime_samples": samples}
             if args.output: args.output.write_text(json.dumps(report, indent=2) + "\n")
             print(json.dumps(report, indent=2))
