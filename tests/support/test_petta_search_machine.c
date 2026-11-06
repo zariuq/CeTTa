@@ -1148,20 +1148,29 @@ static void test_type_stack_exhaustion(void) {
     Space space;
     space_init(&space);
     space_add(&space, parse_one(&arena, "(: deep-type (-> Number Number))"));
+    /* Two rows: the walk of a ground tree declines, so its bound check takes
+     * the general path. */
+    space_add(&space, parse_one(&arena, "(: deep-alt (-> Number Number))"));
+    space_add(&space, parse_one(&arena, "(: deep-alt (-> String Number))"));
     Atom *head = atom_symbol(&arena, "deep-type");
+    Atom *alt = atom_symbol(&arena, "deep-alt");
     Atom *number = atom_symbol(&arena, "Number");
     Atom *subject = atom_int(&arena, 1);
-    for (size_t i = 0u; i < 50000u; i++)
+    Atom *alt_subject = atom_int(&arena, 1);
+    for (size_t i = 0u; i < 50000u; i++) {
         subject = atom_expr2(&arena, head, subject);
-    assert(subject);
-    /* This entry has no enclosing evaluator guard. Both fresh inference and
-     * bound checking must report their own resource failure, then recover. */
+        alt_subject = atom_expr2(&arena, alt, alt_subject);
+    }
+    assert(subject && alt_subject);
+    /* This entry has no enclosing evaluator guard. Where the walk declines,
+     * fresh inference and bound checking report their own resource failure,
+     * then recover. */
     for (unsigned int mode = 0u; mode < 2u; mode++) {
         Atom **types = NULL;
         uint32_t count = 0u;
         CettaEvalCompletion completion = CETTA_EVAL_COMPLETE;
         assert(!petta_type_intrinsic_answers(
-            &space, &arena, subject, mode ? number : NULL,
+            &space, &arena, alt_subject, mode ? number : NULL,
             &types, &count, &completion));
         assert(completion == CETTA_EVAL_INCOMPLETE_STACK);
         assert(types == NULL && count == 0u);
@@ -1172,10 +1181,25 @@ static void test_type_stack_exhaustion(void) {
         assert(count == 1u && atom_eq(types[0], number));
         free(types);
     }
+    /* A ground tree of one-row heads read at a closed type is walked with
+     * its own stack, whatever its depth: the bound check answers once, and
+     * so does fresh inference, which checks the outer node's argument so. */
+    for (unsigned int mode = 0u; mode < 2u; mode++) {
+        Atom **walked = NULL;
+        uint32_t walked_count = 0u;
+        CettaEvalCompletion walked_completion = CETTA_EVAL_INCOMPLETE_HOST_FAILURE;
+        assert(petta_type_intrinsic_answers(&space, &arena, subject,
+                                            mode ? number : NULL,
+                                            &walked, &walked_count,
+                                            &walked_completion));
+        assert(walked_completion == CETTA_EVAL_COMPLETE);
+        assert(walked_count == 1u && atom_eq(walked[0], number));
+        free(walked);
+    }
     petta_type_facts_free_for_current_thread();
     space_free(&space);
     arena_free(&arena);
-    puts("PASS: deep native type inference and checking report stack exhaustion and recover");
+    puts("PASS: deep native type inference and checking report stack exhaustion and recover; a walked tree checks at any depth");
 }
 
 static void test_type_call_arity(Arena *arena) {

@@ -1,0 +1,10 @@
+true
+true
+true
+true
+true
+true
+((OwnedPlus 2 1))
+((OwnedAnd true true))
+((OwnedMin 2 5))
+2
