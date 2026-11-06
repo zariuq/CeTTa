@@ -121,6 +121,7 @@ REGISTER_INSTRUCTION_ATOM_C: dict[str, tuple[str, str]] = {
 PREPARED_PURE_INTRINSIC_INSTRUCTIONS = {
     "grounded-dispatch",
     "boolean-dispatch",
+    "comparison-select",
     "deconstruct-nonempty-expression",
     "construct-expression-cons",
     "concatenate-expressions",

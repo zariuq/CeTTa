@@ -1,0 +1,3 @@
+[(Cons "b" Nil)]
+[(Cons 3 Nil)]
+[(tl (S Z) Nil)]

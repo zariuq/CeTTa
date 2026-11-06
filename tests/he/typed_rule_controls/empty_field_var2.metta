@@ -1,0 +1,10 @@
+; Control for a typed fast-path rule: answered as hyperon-experimental does.
+(: List (-> Type Type))
+(: Nil (List $a))
+(: Cons (-> $a (List $a) (List $a)))
+(: Wrapper Type)
+(: Box (-> Number Wrapper))
+(: f (-> (List Number) %Undefined%))
+(= (f $l) (u $l))
+(= (u (Box $x)) (Cons "s" (Cons 1 $x)))
+!(f $q)

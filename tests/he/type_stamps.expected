@@ -1,0 +1,7 @@
+[(7 8)]
+[(8)]
+[(List Number)]
+[(List Number)]
+[1275]
+[((Error (sumL (Cons "a" Nil)) (BadArgType 1 (List Number) (List String))))]
+[(6 6)]

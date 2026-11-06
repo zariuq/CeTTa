@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
-"""A tier loop threads a queue through a host goal at every step. Arena
-bytes allocated by crossings grow linearly; an imported retained value
-may be borrowed without allocating new region bytes."""
+"""A value that crosses the open tier's boundary is copied only in its new
+parts, or read in place where the host built it in the stable arena.  A tier
+loop threads a queue through a host goal at every step; at twice the length
+the crossings copy and borrow about twice as much, not four times."""
 
 import subprocess
 import sys
 
 LENGTHS = (1000, 2000)
-COUNTERS = ("open-equation-host-export-bytes", "open-equation-host-import-bytes")
+COUNTERS = ("open-equation-host-export-bytes", "open-equation-host-import-bytes",
+            "open-equation-host-import-borrowed")
+# An import is exercised where it copies bytes or borrows the host's parts.
+IMPORTED = ("open-equation-host-import-bytes", "open-equation-host-import-borrowed")
 
 
 def run(binary, length):
@@ -35,16 +39,17 @@ def main():
         if counters.get("open-equation-host", 0) != length:
             sys.exit(f"FAIL: expected one host call per queue step at {length}")
     small, large = LENGTHS
+    if runs[small].get(COUNTERS[0], 0) <= 0:
+        sys.exit(f"FAIL: {COUNTERS[0]} is zero: the crossing was not exercised")
+    if all(runs[small].get(name, 0) <= 0 for name in IMPORTED):
+        sys.exit("FAIL: no host answer was imported, by copy or by borrow")
     for name in COUNTERS:
         before = runs[small].get(name, 0)
         after = runs[large].get(name, 0)
-        if name == "open-equation-host-export-bytes" and before <= 0:
-            sys.exit(f"FAIL: {name} is zero: the crossing was not exercised")
         if after > 3 * before:
             sys.exit(f"FAIL: {name} grows superlinearly: {before} at "
                      f"{small}, {after} at {large}")
-    print("PASS: host crossings preserve answers with linear export allocation "
-          "and bounded import allocation, including borrowed values")
+    print("PASS: crossing the open tier copies only what is new")
 
 
 if __name__ == "__main__":
