@@ -7495,6 +7495,8 @@ typedef struct {
     uint32_t trail_mark;
     /* The store trail's length when the frame was pushed. */
     uint32_t store_mark;
+    /* The exported cells' count when the frame was pushed. */
+    uint32_t exported_mark;
     /* The depth of the activation the frame resumes: for a call, one
      * deeper than its caller. */
     uint32_t depth;
@@ -7575,6 +7577,16 @@ typedef struct {
     uint32_t cell;
     bool owns_identity;
 } OemStateVar;
+
+/* A cell a host goal took as an argument, under the variable it was
+ * exported as.  The host may keep that variable (a capsule's payload, a
+ * stored term) and answer it later, in another goal: it is then the same
+ * cell, as a read state variable is, not a fresh one.  Entries go as
+ * frames do, by the frame's mark, and with their cells at a collection. */
+typedef struct {
+    VarId id;
+    uint32_t cell;
+} OemExported;
 
 /* Whether a named space declares a `SpaceOf` schema. */
 typedef struct {
@@ -7842,6 +7854,10 @@ struct CettaOpenEquationCursor {
     OemStateVar *state_vars;
     uint32_t state_var_len;
     uint32_t state_var_cap;
+    /* The cells host goals took as arguments, oldest first (OemExported). */
+    OemExported *exported;
+    uint32_t exported_len;
+    uint32_t exported_cap;
     /* The last activation's head took the call's arguments: its parameter
      * operations all succeeded, whatever the destination then did. HE's
      * value of an unmatched call reads it (`unmatched_call_is_value`). */
@@ -8947,6 +8963,8 @@ static inline void oem_restore(CettaOpenEquationCursor *cursor,
                                const OemFrame *frame) {
     cursor->path_depth = frame->path_depth;
     oem_state_vars_forget(cursor, frame->cell_mark);
+    if (cursor->exported_len > frame->exported_mark)
+        cursor->exported_len = frame->exported_mark;
     /* A region grown since the mark is reset at once; one that seems
      * unchanged is checked in full, and left as it is when it is, so its
      * reset epoch, which keys the memos of its atoms, stays. */
@@ -9005,6 +9023,7 @@ static inline void oem_trial_begin(CettaOpenEquationCursor *cursor,
     trial->marks.cell_mark = cursor->cell_len;
     trial->marks.trail_mark = cursor->trail_len;
     trial->marks.store_mark = cursor->store_len;
+    trial->marks.exported_mark = cursor->exported_len;
     trial->marks.path_depth = cursor->path_depth;
     trial->oldest = oem_choice_cells(cursor);
     trial->outer = cursor->trial_cells;
@@ -9063,6 +9082,7 @@ static bool oem_push_frame(CettaOpenEquationCursor *cursor,
         .cell_mark = cursor->cell_len,
         .trail_mark = cursor->trail_len,
         .store_mark = cursor->store_len,
+        .exported_mark = cursor->exported_len,
         .depth = depth,
         .candidates = UINT64_MAX,
         .path_depth = cursor->path_depth,
@@ -9230,6 +9250,36 @@ static OemSource *oem_value_source(
     return NULL;
 }
 
+/* The variable cell `index` was exported as to a host goal, if it was. */
+static inline const OemExported *oem_exported_of_cell(
+    const CettaOpenEquationCursor *cursor, uint32_t index) {
+    for (uint32_t entry = cursor->exported_len; entry-- > 0u;)
+        if (cursor->exported[entry].cell == index)
+            return &cursor->exported[entry];
+    return NULL;
+}
+
+/* The cell exported as variable `id`, if any. */
+static inline Atom *oem_exported_find(const CettaOpenEquationCursor *cursor,
+                                      VarId id) {
+    for (uint32_t entry = cursor->exported_len; entry-- > 0u;)
+        if (var_id_eq(cursor->exported[entry].id, id))
+            return cursor->cell_names[cursor->exported[entry].cell];
+    return NULL;
+}
+
+/* Cell `cell` taken as an argument by a host goal, exported as `id`. */
+static bool oem_exported_note(CettaOpenEquationCursor *cursor, uint32_t cell,
+                              VarId id) {
+    if (oem_exported_of_cell(cursor, cell))
+        return true;
+    if (!oem_reserve((void **)&cursor->exported, &cursor->exported_cap,
+                     cursor->exported_len + 1u, sizeof(*cursor->exported)))
+        return false;
+    cursor->exported[cursor->exported_len++] = (OemExported){.id = id, .cell = cell};
+    return true;
+}
+
 /* The answer's variable for the unbound cell `index`: the caller's own
  * variable for a query cell, otherwise one per cell and answer, in
  * `arena`.  A collection's copy (`collect`) freshens query cells too, as
@@ -9245,6 +9295,14 @@ static Atom *oem_answer_cell(CettaOpenEquationCursor *cursor, uint32_t index,
             if (cursor->state_vars[entry].cell == index)
                 return atom_var_with_spelling(arena, cursor->program->spelling,
                                               cursor->state_vars[entry].id);
+    }
+    /* A cell a host goal took keeps the variable it went out as: the host
+     * may hold that variable, and answer it again later. */
+    if (__builtin_expect(cursor->exported_len != 0u, 0) && !collect) {
+        const OemExported *exported = oem_exported_of_cell(cursor, index);
+        if (exported)
+            return atom_var_with_spelling(arena, cursor->program->spelling,
+                                          exported->id);
     }
     if (!oem_reserve_zeroed((void **)&cursor->answer_fresh,
                             &cursor->answer_fresh_cap, index + 1u,
@@ -11361,8 +11419,10 @@ static __attribute__((noinline)) OemRun oem_host_with_continuation(
     uint32_t *cells = NULL;
     uint32_t count = 0u;
     uint32_t cap = 0u;
-    bool ok = oem_unbound_cells(cursor, goal, &cells, &count, &cap) &&
-        oem_unbound_cells(cursor, destination, &cells, &count, &cap);
+    bool ok = oem_unbound_cells(cursor, goal, &cells, &count, &cap);
+    /* the goal's own cells come first, then those only its destination has */
+    uint32_t goal_cells = count;
+    ok = ok && oem_unbound_cells(cursor, destination, &cells, &count, &cap);
     OemHostCells *kept = ok
         ? arena_alloc(&cursor->region,
                       sizeof(*kept) + sizeof(uint32_t) * (count ? count : 1u))
@@ -11375,6 +11435,10 @@ static __attribute__((noinline)) OemRun oem_host_with_continuation(
         cursor->host_vars[index] = oem_answer_cell(
             cursor, cells[index], cursor->answer_arena, false);
         ok = cursor->host_vars[index] != NULL;
+        /* an argument the host may keep: a later answer naming it is
+         * this cell (a destination is only filled) */
+        if (ok && index < goal_cells && cells[index] >= cursor->query_var_count)
+            ok = oem_exported_note(cursor, cells[index], cursor->host_vars[index]->var_id);
     }
     free(cells);
 #if CETTA_BUILD_WITH_RUNTIME_STATS
@@ -14087,10 +14151,14 @@ static Atom *oem_import_node(CettaOpenEquationCursor *cursor,
                 : UINT32_MAX;
             if (position != UINT32_MAX)
                 return cursor->query_cells[position];
+            /* A variable a host goal took as an argument and answers back
+             * is that argument's cell. */
+            Atom *retained = oem_state_var_find(cursor, atom->var_id);
+            if (!retained && cursor->exported_len)
+                retained = oem_exported_find(cursor, atom->var_id);
             /* A variable the goal made for this answer, as a memo replay
              * makes its own: one fresh cell in this answer, which no other
              * answer shares and which the cursor never hands back. */
-            Atom *retained = oem_state_var_find(cursor, atom->var_id);
             if (!retained &&
                 cetta_frame_identity_is_none(var_epoch_suffix(atom->var_id)) &&
                 atom->var_id.base >= import->fresh_floor)
@@ -17102,6 +17170,29 @@ static bool oem_collect_generation(CettaOpenEquationCursor *cursor,
     for (uint32_t index = 0u; index < cursor->state_var_len; index++)
         cursor->state_vars[index].cell = oem_collect_index(
             &collect, cursor->state_vars[index].cell);
+    /* An exported cell the collection drops has no term left naming it, so
+     * its entry goes with it.  Frames are pushed in order and their marks
+     * never decrease, so one pass recounts them as the entries go. */
+    {
+        uint32_t kept_exports = 0u, next_frame = 0u;
+        for (uint32_t index = 0u; index <= cursor->exported_len; index++) {
+            while (next_frame < cursor->frame_len &&
+                   cursor->frames[next_frame].exported_mark <= index) {
+                cursor->frames[next_frame].exported_mark = kept_exports;
+                next_frame++;
+            }
+            if (index == cursor->exported_len)
+                break;
+            uint32_t cell = cursor->exported[index].cell;
+            if (oem_collect_kept(&collect, cell))
+                cursor->exported[kept_exports++] = (OemExported){
+                    .id = cursor->exported[index].id,
+                    .cell = oem_collect_index(&collect, cell)};
+        }
+        for (; next_frame < cursor->frame_len; next_frame++)
+            cursor->frames[next_frame].exported_mark = kept_exports;
+        cursor->exported_len = kept_exports;
+    }
     cursor->destination = destination;
     oem_forget_answer_vars(cursor);
     free(collect.young);
@@ -19421,7 +19512,8 @@ bool cetta_open_equation_cursor_host_continuation_supported(
     const CettaOpenEquationCursor *cursor) {
     const OemFrame *frame = cursor && cursor->frame_len
         ? &cursor->frames[cursor->frame_len - 1u] : NULL;
-    if (!frame || !oem_frame_is_host(frame) || cursor->state_var_len)
+    if (!frame || !oem_frame_is_host(frame) || cursor->state_var_len ||
+        cursor->exported_len)
         return false;
     for (const OemCont *entry = frame->cont; entry; entry = entry->parent) {
         bool returns, yields;
@@ -20835,6 +20927,7 @@ void cetta_open_equation_cursor_close(CettaOpenEquationCursor *cursor) {
     while (cursor->state_var_len)
         oem_state_var_pop(cursor);
     free(cursor->state_vars);
+    free(cursor->exported);
     free(cursor->fresh_vars);
     cetta_var_index_free(&cursor->fresh_index);
     cetta_var_index_free(&cursor->query_index);

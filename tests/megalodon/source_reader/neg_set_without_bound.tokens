@@ -1,0 +1,9 @@
+AXIOM
+(NAM "a")
+COLON
+LCBRACE
+(NAM "x")
+VBAR
+(NAM "y")
+RCBRACE
+DOT

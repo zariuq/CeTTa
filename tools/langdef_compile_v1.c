@@ -4,6 +4,7 @@
 #include "native/langdef_module.h"
 #include "native/langdef_metta_equation_compiler_v1.h"
 #include "native/gslt_petta_direct_v1.h"
+#include "native/gslt_direct_internal_v1.h"
 #include "native/gslt_rhometta_direct_v1.h"
 #include "native/language_def_core_v1.h"
 #include "native/operational_language_def_v1.h"
@@ -2997,6 +2998,8 @@ static bool compile_petta_direct_command_v1(
             entry_modes[entry_mode_count++] = value;
         } else if (strcmp(option, "--target") == 0 && target_name == NULL) {
             target_name = value;
+        } else if (strcmp(option, "--c-prefix") == 0) {
+            cetta_gslt_native_set_prefix_v1(value);
         } else if (strcmp(option, "--out") == 0 && output == NULL) {
             output = value;
         } else {
@@ -3013,9 +3016,11 @@ static bool compile_petta_direct_command_v1(
     if (target_name != NULL) {
         if (strcmp(target_name, "he") == 0) {
             target = CETTA_GSLT_DIRECT_TARGET_HE_V1;
+        } else if (strcmp(target_name, "c") == 0) {
+            target = CETTA_GSLT_DIRECT_TARGET_C_V1;
         } else if (strcmp(target_name, "petta") != 0) {
             set_error(error, error_size,
-                      "petta-direct --target must be petta or he");
+                      "petta-direct --target must be petta, he or c");
             goto done;
         }
     }
@@ -6714,7 +6719,7 @@ static void usage(const char *program) {
             "  %s equations (--source FILE... | --composition FILE) "
             "--out FILE\n"
             "  %s petta-direct (--source FILE... | --composition FILE) "
-            "[--target petta|he] "
+            "[--target petta|he|c [--c-prefix NAME]] "
             "[--entry-mode RELATION:BITS... | "
             "--closed-entry-mode RELATION:BITS...] "
             "[--native-types FILE] "

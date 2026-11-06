@@ -1,0 +1,8 @@
+(Doc (AxDecl "n0" (NuL False "0" None None)))
+(Doc (AxDecl "n1" (NuL False "42" None None)))
+(Doc (AxDecl "n2" (NuL True "7" None None)))
+(Doc (AxDecl "n3" (NuL False "1" None (Some "3"))))
+(Doc (AxDecl "n4" (NuL False "2" (Some "5") None)))
+(Doc (AxDecl "n5" (NuL True "1" (Some "5") (Some "-"))))
+(Doc (AxDecl "n6" (NuL False "3" (Some "25") (Some "2"))))
+(Doc (AxDecl "n7" (NuL False "007" None None)))

@@ -3,15 +3,13 @@
 #endif
 #include "mg_hash.h"
 
+#include <pthread.h>
 #include <string.h>
 
 /* ── SHA-256 (FIPS 180-4) ─────────────────────────────────────────────── */
 
 typedef struct {
     uint32_t h[8];
-    uint64_t len;
-    uint8_t buf[64];
-    size_t n;
 } Sha256;
 
 static const uint32_t K[64] = {
@@ -55,55 +53,134 @@ static void sha_block(Sha256 *s, const uint8_t *p) {
     s->h[4] += e; s->h[5] += f; s->h[6] += g; s->h[7] += h;
 }
 
+/* The same compression with the SHA extensions (x86-64), when the
+ * processor has them: chosen once, at the first digest. */
+#if defined(__x86_64__) && defined(__GNUC__)
+#include <cpuid.h>
+#include <immintrin.h>
+#include <stdatomic.h>
+
+__attribute__((target("sha,sse4.1,ssse3"))) static void sha_block_ni(Sha256 *s, const uint8_t *p) {
+    const __m128i mask = _mm_set_epi64x(0x0c0d0e0f08090a0bLL, 0x0405060700010203LL);
+    __m128i tmp = _mm_loadu_si128((const __m128i *)&s->h[0]);
+    __m128i state1 = _mm_loadu_si128((const __m128i *)&s->h[4]);
+    tmp = _mm_shuffle_epi32(tmp, 0xB1);          /* CDAB */
+    state1 = _mm_shuffle_epi32(state1, 0x1B);    /* EFGH */
+    __m128i state0 = _mm_alignr_epi8(tmp, state1, 8); /* ABEF */
+    state1 = _mm_blend_epi16(state1, tmp, 0xF0); /* CDGH */
+    const __m128i abef = state0, cdgh = state1;
+    __m128i m[4];
+    for (int i = 0; i < 4; ++i)
+        m[i] = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i *)(p + 16 * i)), mask);
+    for (int i = 0; i < 16; ++i) {
+        __m128i msg = _mm_add_epi32(m[i & 3], _mm_loadu_si128((const __m128i *)&K[4 * i]));
+        state1 = _mm_sha256rnds2_epu32(state1, state0, msg);
+        msg = _mm_shuffle_epi32(msg, 0x0E);
+        state0 = _mm_sha256rnds2_epu32(state0, state1, msg);
+        if (i < 12) {
+            /* W[4i+16 .. 4i+19] from W[4i .. 4i+15] */
+            __m128i t = _mm_sha256msg1_epu32(m[i & 3], m[(i + 1) & 3]);
+            t = _mm_add_epi32(t, _mm_alignr_epi8(m[(i + 3) & 3], m[(i + 2) & 3], 4));
+            m[i & 3] = _mm_sha256msg2_epu32(t, m[(i + 3) & 3]);
+        }
+    }
+    state0 = _mm_add_epi32(state0, abef);
+    state1 = _mm_add_epi32(state1, cdgh);
+    tmp = _mm_shuffle_epi32(state0, 0x1B);       /* FEBA */
+    state1 = _mm_shuffle_epi32(state1, 0xB1);    /* DCHG */
+    state0 = _mm_blend_epi16(tmp, state1, 0xF0); /* DCBA */
+    state1 = _mm_alignr_epi8(state1, tmp, 8);    /* ABEF */
+    _mm_storeu_si128((__m128i *)&s->h[0], state0);
+    _mm_storeu_si128((__m128i *)&s->h[4], state1);
+}
+
+static bool sha_extensions(void) {
+    unsigned a, b, c, d;
+    if (!__get_cpuid(1, &a, &b, &c, &d) || !(c & bit_SSE4_1) || !(c & bit_SSSE3))
+        return false;
+    if (!__get_cpuid_count(7, 0, &a, &b, &c, &d))
+        return false;
+    return (b & bit_SHA) != 0;
+}
+
+static void sha_block_any(Sha256 *s, const uint8_t *p) {
+    /* 0 not known yet, 1 software, 2 extensions; every thread finds the
+     * same */
+    static atomic_int which;
+    int w = atomic_load_explicit(&which, memory_order_relaxed);
+    if (w == 0) {
+        w = sha_extensions() ? 2 : 1;
+        atomic_store_explicit(&which, w, memory_order_relaxed);
+    }
+    if (w == 2)
+        sha_block_ni(s, p);
+    else
+        sha_block(s, p);
+}
+#define SHA_BLOCK sha_block_any
+#else
+#define SHA_BLOCK sha_block
+#endif
+
+/* MG_SHA_SELFTEST: the extensions against the portable code. */
+bool mg_sha256_selftest(void) {
+#if defined(__x86_64__) && defined(__GNUC__)
+    if (!sha_extensions())
+        return true;
+    uint8_t block[64];
+    uint64_t x = 0x9e3779b97f4a7c15u;
+    for (int round = 0; round < 4096; ++round) {
+        for (int i = 0; i < 64; ++i) {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            block[i] = (uint8_t)x;
+        }
+        Sha256 a, b;
+        for (int i = 0; i < 8; ++i)
+            a.h[i] = b.h[i] = (uint32_t)(x >> (i * 4)) * 2654435761u + (uint32_t)round;
+        sha_block(&a, block);
+        sha_block_ni(&b, block);
+        if (memcmp(a.h, b.h, sizeof a.h) != 0)
+            return false;
+    }
+#endif
+    return true;
+}
+
 static void sha_init(Sha256 *s) {
     static const uint32_t init[8] = {0x6a09e667u, 0xbb67ae85u, 0x3c6ef372u, 0xa54ff53au,
                                      0x510e527fu, 0x9b05688cu, 0x1f83d9abu, 0x5be0cd19u};
     memcpy(s->h, init, sizeof init);
-    s->len = 0;
-    s->n = 0;
 }
 
-static void sha_update(Sha256 *s, const void *data, size_t n) {
-    const uint8_t *p = data;
-    s->len += n;
-    while (n) {
-        size_t k = 64u - s->n;
-        if (k > n)
-            k = n;
-        memcpy(s->buf + s->n, p, k);
-        s->n += k;
-        p += k;
-        n -= k;
-        if (s->n == 64u) {
-            sha_block(s, s->buf);
-            s->n = 0;
-        }
-    }
-}
-
-static void sha_final(Sha256 *s, uint8_t out[32]) {
-    uint64_t bits = s->len * 8u;
-    uint8_t one = 0x80u, zero = 0u;
-    sha_update(s, &one, 1);
-    while (s->n != 56u)
-        sha_update(s, &zero, 1);
-    uint8_t len[8];
-    for (int i = 0; i < 8; ++i)
-        len[i] = (uint8_t)(bits >> (56 - 8 * i));
-    sha_update(s, len, 8);
-    for (int i = 0; i < 8; ++i) {
-        out[4 * i] = (uint8_t)(s->h[i] >> 24);
-        out[4 * i + 1] = (uint8_t)(s->h[i] >> 16);
-        out[4 * i + 2] = (uint8_t)(s->h[i] >> 8);
-        out[4 * i + 3] = (uint8_t)s->h[i];
-    }
-}
-
+/* One-shot digest: whole blocks straight from the input, then the last
+ * one or two blocks with the padding and the bit length. */
 void mg_sha256(const void *data, size_t len, uint8_t out[32]) {
     Sha256 s;
     sha_init(&s);
-    sha_update(&s, data, len);
-    sha_final(&s, out);
+    const uint8_t *p = data;
+    size_t rest = len;
+    for (; rest >= 64u; p += 64, rest -= 64u)
+        SHA_BLOCK(&s, p);
+    uint8_t tail[128];
+    memset(tail, 0, sizeof tail);
+    if (rest)
+        memcpy(tail, p, rest);
+    tail[rest] = 0x80u;
+    size_t blocks = rest < 56u ? 1u : 2u;
+    uint64_t bits = (uint64_t)len * 8u;
+    for (int i = 0; i < 8; ++i)
+        tail[blocks * 64u - 1u - (size_t)i] = (uint8_t)(bits >> (8 * i));
+    SHA_BLOCK(&s, tail);
+    if (blocks == 2u)
+        SHA_BLOCK(&s, tail + 64);
+    for (int i = 0; i < 8; ++i) {
+        out[4 * i] = (uint8_t)(s.h[i] >> 24);
+        out[4 * i + 1] = (uint8_t)(s.h[i] >> 16);
+        out[4 * i + 2] = (uint8_t)(s.h[i] >> 8);
+        out[4 * i + 3] = (uint8_t)s.h[i];
+    }
 }
 
 /* ── hash.ml combinators ──────────────────────────────────────────────── */
@@ -115,7 +192,7 @@ static void be32(uint8_t out[4], uint32_t x) {
     out[3] = (uint8_t)x;
 }
 
-static MgHash hashint32(uint32_t x) {
+static MgHash sha_int32(uint32_t x) {
     uint8_t data[8] = {0, 0, 0, 1};
     be32(data + 4, x);
     MgHash h;
@@ -123,7 +200,7 @@ static MgHash hashint32(uint32_t x) {
     return h;
 }
 
-static MgHash hashpair(const MgHash *x, const MgHash *y) {
+static MgHash sha_pair(const MgHash *x, const MgHash *y) {
     uint8_t data[68] = {0, 0, 0, 7};
     memcpy(data + 4, x->b, 32);
     memcpy(data + 36, y->b, 32);
@@ -132,12 +209,199 @@ static MgHash hashpair(const MgHash *x, const MgHash *y) {
     return h;
 }
 
-static MgHash hashtag(const MgHash *x, uint32_t tag) {
+static MgHash sha_tag(const MgHash *x, uint32_t tag) {
     uint8_t data[40] = {0, 0, 0, 8};
     be32(data + 4, tag);
     memcpy(data + 8, x->b, 32);
     MgHash h;
     mg_sha256(data, sizeof data, h.b);
+    return h;
+}
+
+/* hash.ml keeps the results of hashint32, hashpair and hashtag in tables
+ * for the life of the process, so a subterm that many declarations share
+ * is hashed once.  These tables do the same for each thread, keyed by the
+ * exact inputs; a table that reaches its bound starts over, and a table
+ * that cannot grow is simply not consulted. */
+
+enum { MEMO_SMALL = 1024, MEMO_MAX_ENTRIES = 1u << 20 };
+
+typedef struct {
+    uint32_t *index;      /* entry number + 1; 0 is an empty slot */
+    uint8_t *entries;     /* key then result, `size` bytes each */
+    uint32_t cap;         /* index slots, a power of two */
+    uint32_t len, room;   /* entries used, entries allocated */
+} Memo;
+
+typedef struct {
+    Memo pair, tag;
+    MgHash small[MEMO_SMALL];
+    uint64_t small_have[MEMO_SMALL / 64];
+} Memos;
+
+static pthread_key_t g_memo_key;
+static pthread_once_t g_memo_once = PTHREAD_ONCE_INIT;
+static bool g_memo_key_ok;
+static _Thread_local Memos *t_memos;
+static _Thread_local bool t_memos_failed;
+
+static void memos_free(void *arg) {
+    Memos *m = arg;
+    if (!m)
+        return;
+    mg_sys_free(m->pair.index);
+    mg_sys_free(m->pair.entries);
+    mg_sys_free(m->tag.index);
+    mg_sys_free(m->tag.entries);
+    mg_sys_free(m);
+}
+
+static void memo_key_init(void) { g_memo_key_ok = pthread_key_create(&g_memo_key, memos_free) == 0; }
+
+static Memos *memos(void) {
+    if (t_memos || t_memos_failed)
+        return t_memos;
+    pthread_once(&g_memo_once, memo_key_init);
+    Memos *m = g_memo_key_ok ? mg_sys_alloc(sizeof *m) : NULL;
+    if (m) {
+        memset(m, 0, sizeof *m);
+        if (pthread_setspecific(g_memo_key, m) != 0) {
+            mg_sys_free(m);
+            m = NULL;
+        }
+    }
+    t_memos = m;
+    t_memos_failed = m == NULL;
+    return m;
+}
+
+static uint64_t memo_mix(uint64_t x) {
+    x ^= x >> 30;
+    x *= UINT64_C(0xbf58476d1ce4e5b9);
+    x ^= x >> 27;
+    x *= UINT64_C(0x94d049bb133111eb);
+    x ^= x >> 31;
+    return x;
+}
+
+/* The slot hash of a key: its first and last eight bytes, mixed. */
+static uint64_t memo_hash(const uint8_t *key, size_t klen) {
+    uint64_t a, b;
+    memcpy(&a, key, 8);
+    memcpy(&b, key + klen - 8u, 8);
+    return memo_mix(a ^ memo_mix(b + klen));
+}
+
+static const uint8_t *memo_find(const Memo *m, const uint8_t *key, size_t klen, size_t size,
+                                uint64_t h, uint32_t *slot) {
+    uint32_t i = (uint32_t)h & (m->cap - 1u);
+    for (uint32_t k; (k = m->index[i]) != 0u; i = (i + 1u) & (m->cap - 1u)) {
+        const uint8_t *e = m->entries + (size_t)(k - 1u) * size;
+        if (memcmp(e, key, klen) == 0)
+            return e + klen;
+    }
+    *slot = i;
+    return NULL;
+}
+
+static bool memo_rehash(Memo *m, uint32_t cap, size_t klen, size_t size) {
+    uint32_t *index = mg_sys_alloc(sizeof(uint32_t) * cap);
+    if (!index)
+        return false;
+    memset(index, 0, sizeof(uint32_t) * cap);
+    for (uint32_t k = 0; k < m->len; ++k) {
+        uint32_t i = (uint32_t)memo_hash(m->entries + (size_t)k * size, klen) & (cap - 1u);
+        while (index[i])
+            i = (i + 1u) & (cap - 1u);
+        index[i] = k + 1u;
+    }
+    mg_sys_free(m->index);
+    m->index = index;
+    m->cap = cap;
+    return true;
+}
+
+/* Room for one more entry; false when the table cannot take it. */
+static bool memo_reserve(Memo *m, size_t klen, size_t size) {
+    if (m->len >= MEMO_MAX_ENTRIES) {
+        m->len = 0;
+        memset(m->index, 0, sizeof(uint32_t) * m->cap);
+    }
+    if ((uint64_t)(m->len + 1u) * 2u > m->cap &&
+        !memo_rehash(m, m->cap ? m->cap * 2u : 1024u, klen, size))
+        return false;
+    if (m->len == m->room) {
+        uint32_t room = m->room ? m->room * 2u : 512u;
+        uint8_t *grown = mg_sys_realloc(m->entries, (size_t)room * size);
+        if (!grown)
+            return false;
+        m->entries = grown;
+        m->room = room;
+    }
+    return true;
+}
+
+static void memo_add(Memo *m, const uint8_t *key, size_t klen, size_t size, const MgHash *r) {
+    if (!memo_reserve(m, klen, size))
+        return;
+    uint32_t slot;
+    if (memo_find(m, key, klen, size, memo_hash(key, klen), &slot))
+        return;
+    uint8_t *e = m->entries + (size_t)m->len * size;
+    memcpy(e, key, klen);
+    memcpy(e + klen, r->b, 32);
+    m->index[slot] = ++m->len;
+}
+
+MgHash mg_hash_int32(uint32_t x) {
+    Memos *m = x < MEMO_SMALL ? memos() : NULL;
+    if (!m)
+        return sha_int32(x);
+    uint64_t bit = UINT64_C(1) << (x & 63u);
+    if (!(m->small_have[x >> 6] & bit)) {
+        m->small[x] = sha_int32(x);
+        m->small_have[x >> 6] |= bit;
+    }
+    return m->small[x];
+}
+
+MgHash mg_hash_pair(const MgHash *x, const MgHash *y) {
+    Memos *m = memos();
+    if (!m)
+        return sha_pair(x, y);
+    uint8_t key[64];
+    memcpy(key, x->b, 32);
+    memcpy(key + 32, y->b, 32);
+    uint32_t slot;
+    const uint8_t *r = m->pair.cap ? memo_find(&m->pair, key, 64u, 96u, memo_hash(key, 64u), &slot)
+                                   : NULL;
+    MgHash h;
+    if (r) {
+        memcpy(h.b, r, 32);
+        return h;
+    }
+    h = sha_pair(x, y);
+    memo_add(&m->pair, key, 64u, 96u, &h);
+    return h;
+}
+
+MgHash mg_hash_tag(const MgHash *x, uint32_t tag) {
+    Memos *m = memos();
+    if (!m)
+        return sha_tag(x, tag);
+    uint8_t key[36];
+    memcpy(key, x->b, 32);
+    memcpy(key + 32, &tag, 4);
+    uint32_t slot;
+    const uint8_t *r = m->tag.cap ? memo_find(&m->tag, key, 36u, 68u, memo_hash(key, 36u), &slot)
+                                  : NULL;
+    MgHash h;
+    if (r) {
+        memcpy(h.b, r, 32);
+        return h;
+    }
+    h = sha_tag(x, tag);
+    memo_add(&m->tag, key, 36u, 68u, &h);
     return h;
 }
 
@@ -171,15 +435,8 @@ bool mg_hash_parse(const char *hex, size_t len, MgHash *out) {
 
 /* ── hashtp: the serialization of mathdata.ml seo_tp ──────────────────── */
 
-typedef struct {
-    uint8_t *buf;
-    size_t len, cap;
-    uint32_t partial;
-    int bits;
-    bool nomem;
-} BitWriter;
 
-static void emit_byte(BitWriter *w, uint8_t byte) {
+static void emit_byte(MgBits *w, uint8_t byte) {
     if (w->nomem)
         return;
     if (w->len == w->cap) {
@@ -196,7 +453,7 @@ static void emit_byte(BitWriter *w, uint8_t byte) {
 }
 
 /* ser.ml seosb: `n` bits of `b`, least significant first. */
-static void put_bits(BitWriter *w, uint32_t b, int n) {
+void mg_bits_put(MgBits *w, uint32_t b, int n) {
     while (n > 0) {
         if (w->bits + n >= 8) {
             int take = 8 - w->bits;
@@ -213,27 +470,38 @@ static void put_bits(BitWriter *w, uint32_t b, int n) {
     }
 }
 
-static bool put_varintb(BitWriter *w, uint32_t x) {
+bool mg_bits_varintb(MgBits *w, uint32_t x) {
     if (x < 4u) {
-        put_bits(w, 0, 2);
-        put_bits(w, x, 2);
+        mg_bits_put(w, 0, 2);
+        mg_bits_put(w, x, 2);
     } else if (x < 20u) {
-        put_bits(w, 1, 2);
-        put_bits(w, x - 4u, 4);
+        mg_bits_put(w, 1, 2);
+        mg_bits_put(w, x - 4u, 4);
     } else if (x < 276u) {
-        put_bits(w, 2, 2);
-        put_bits(w, x - 20u, 8);
+        mg_bits_put(w, 2, 2);
+        mg_bits_put(w, x - 20u, 8);
     } else if (x < 65536u) {
-        put_bits(w, 3, 2);
-        put_bits(w, x, 16);
+        mg_bits_put(w, 3, 2);
+        mg_bits_put(w, x, 16);
     } else {
         return false; /* upstream: invalid base type / type variable */
     }
     return true;
 }
 
+bool mg_bits_digest(MgBits *w, MgHash *out) {
+    if (w->bits > 0)
+        emit_byte(w, (uint8_t)w->partial);
+    bool ok = !w->nomem;
+    if (ok)
+        mg_sha256(w->buf, w->len, out->b);
+    mg_sys_free(w->buf);
+    *w = (MgBits){0};
+    return ok;
+}
+
 bool mg_hash_tp(const MgTp *root, MgHash *out) {
-    BitWriter w = {0};
+    MgBits w = {0};
     const MgTp **stack = NULL;
     size_t len = 0, cap = 0;
     bool ok = true;
@@ -251,23 +519,23 @@ bool mg_hash_tp(const MgTp *root, MgHash *out) {
         const MgTp *t = stack[--len];
         switch (t->tag) {
         case MG_TP_ARR:
-            put_bits(&w, 0, 2);
+            mg_bits_put(&w, 0, 2);
             TPUSH(t->b);
             TPUSH(t->a);
             break;
         case MG_TP_PROP:
-            put_bits(&w, 1, 2);
+            mg_bits_put(&w, 1, 2);
             break;
         case MG_TP_BASE:
-            put_bits(&w, 2, 2);
-            ok = put_varintb(&w, t->n);
+            mg_bits_put(&w, 2, 2);
+            ok = mg_bits_varintb(&w, t->n);
             break;
         case MG_TP_VAR:
-            put_bits(&w, 3, 3);
-            ok = put_varintb(&w, t->n);
+            mg_bits_put(&w, 3, 3);
+            ok = mg_bits_varintb(&w, t->n);
             break;
         case MG_TP_ALL:
-            put_bits(&w, 7, 3);
+            mg_bits_put(&w, 7, 3);
             TPUSH(t->a);
             break;
         default:
@@ -276,15 +544,10 @@ bool mg_hash_tp(const MgTp *root, MgHash *out) {
         }
     }
 #undef TPUSH
-    if (ok && w.bits > 0)
-        emit_byte(&w, (uint8_t)w.partial);
-    ok = ok && !w.nomem;
-    if (ok) {
-        MgHash digest;
-        mg_sha256(w.buf, w.len, digest.b);
-        *out = hashtag(&digest, 64u);
-    }
-    mg_sys_free(w.buf);
+    MgHash digest;
+    ok = mg_bits_digest(&w, &digest) && ok;
+    if (ok)
+        *out = mg_hash_tag(&digest, 64u);
     mg_sys_free(stack);
     return ok;
 }
@@ -394,21 +657,21 @@ static bool hcombine(const MgStore *s, const void *node, int kind, const MgHash 
         const MgTm *m = node;
         switch (m->tag) {
         case MG_TM_NAME: return name_hash(s, m->n, out);
-        case MG_TM_PRIM: x = hashint32(m->n); *out = hashtag(&x, 96u); return true;
-        case MG_TM_DB: x = hashint32(m->n); *out = hashtag(&x, 97u); return true;
-        case MG_TM_AP: x = hashpair(k0, k1); *out = hashtag(&x, 98u); return true;
+        case MG_TM_PRIM: x = mg_hash_int32(m->n); *out = mg_hash_tag(&x, 96u); return true;
+        case MG_TM_DB: x = mg_hash_int32(m->n); *out = mg_hash_tag(&x, 97u); return true;
+        case MG_TM_AP: x = mg_hash_pair(k0, k1); *out = mg_hash_tag(&x, 98u); return true;
         case MG_TM_LAM:
             if (!mg_hash_tp(m->tp, &t)) return false;
-            x = hashpair(&t, k0); *out = hashtag(&x, 99u); return true;
-        case MG_TM_IMP: x = hashpair(k0, k1); *out = hashtag(&x, 100u); return true;
+            x = mg_hash_pair(&t, k0); *out = mg_hash_tag(&x, 99u); return true;
+        case MG_TM_IMP: x = mg_hash_pair(k0, k1); *out = mg_hash_tag(&x, 100u); return true;
         case MG_TM_ALL:
             if (!mg_hash_tp(m->tp, &t)) return false;
-            x = hashpair(&t, k0); *out = hashtag(&x, 101u); return true;
+            x = mg_hash_pair(&t, k0); *out = mg_hash_tag(&x, 101u); return true;
         case MG_TM_TAP:
             if (!mg_hash_tp(m->tp, &t)) return false;
-            x = hashpair(k0, &t); *out = hashtag(&x, 102u); return true;
-        case MG_TM_TLAM: *out = hashtag(k0, 103u); return true;
-        case MG_TM_TALL: *out = hashtag(k0, 104u); return true;
+            x = mg_hash_pair(k0, &t); *out = mg_hash_tag(&x, 102u); return true;
+        case MG_TM_TLAM: *out = mg_hash_tag(k0, 103u); return true;
+        case MG_TM_TALL: *out = mg_hash_tag(k0, 104u); return true;
         }
         return false;
     }
@@ -417,18 +680,18 @@ static bool hcombine(const MgStore *s, const void *node, int kind, const MgHash 
     case MG_PF_GPA: return name_hash(s, p->n, out);
     case MG_PF_KNOWN:
         if (!name_hash(s, p->n, &x)) return false;
-        *out = hashtag(&x, 128u); return true;
-    case MG_PF_HYP: x = hashint32(p->n); *out = hashtag(&x, 129u); return true;
-    case MG_PF_TMAP: x = hashpair(k0, k1); *out = hashtag(&x, 130u); return true;
-    case MG_PF_PFAP: x = hashpair(k0, k1); *out = hashtag(&x, 131u); return true;
-    case MG_PF_PLAM: x = hashpair(k0, k1); *out = hashtag(&x, 132u); return true;
+        *out = mg_hash_tag(&x, 128u); return true;
+    case MG_PF_HYP: x = mg_hash_int32(p->n); *out = mg_hash_tag(&x, 129u); return true;
+    case MG_PF_TMAP: x = mg_hash_pair(k0, k1); *out = mg_hash_tag(&x, 130u); return true;
+    case MG_PF_PFAP: x = mg_hash_pair(k0, k1); *out = mg_hash_tag(&x, 131u); return true;
+    case MG_PF_PLAM: x = mg_hash_pair(k0, k1); *out = mg_hash_tag(&x, 132u); return true;
     case MG_PF_TLAM:
         if (!mg_hash_tp(p->tp, &t)) return false;
-        x = hashpair(&t, k0); *out = hashtag(&x, 133u); return true;
+        x = mg_hash_pair(&t, k0); *out = mg_hash_tag(&x, 133u); return true;
     case MG_PF_TPAP:
         if (!mg_hash_tp(p->tp, &t)) return false;
-        x = hashpair(k0, &t); *out = hashtag(&x, 134u); return true;
-    case MG_PF_TPLAM: *out = hashtag(k0, 135u); return true;
+        x = mg_hash_pair(k0, &t); *out = mg_hash_tag(&x, 134u); return true;
+    case MG_PF_TPLAM: *out = mg_hash_tag(k0, 135u); return true;
     }
     return false;
 }

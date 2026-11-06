@@ -20,7 +20,8 @@
  *                           resumable sessions, statuses, publication
  *   CursorEnvironment.lean  footprints and revalidation
  *   NativePublication.lean  the commit transaction
- * docs/megalodon_native.md maps every operation to its rule and tests.
+ * docs/megalodon.txt describes the checker built on this kernel, its files
+ * and its tests.
  *
  * Representation invariant.  Every type, term, proof, list and context of a
  * theory is interned in that theory's store: structurally equal objects are
@@ -98,6 +99,9 @@ typedef struct MgBudget {
 } MgBudget;
 
 void mg_budget_init(MgBudget *budget, uint64_t work_limit);
+/* A fresh allowance of work_limit units (zero: unlimited), the interruption
+ * hook kept. */
+void mg_budget_restart(MgBudget *budget, uint64_t work_limit);
 /* Charge `units`; false (with budget->stop set) when the work must stop. */
 bool mg_budget_charge(MgBudget *budget, uint64_t units);
 bool mg_budget_poll(MgBudget *budget);
@@ -122,7 +126,6 @@ struct MgTp {
     uint32_t ftv;      /* 1 + greatest free type-variable index, 0 if none */
     uint64_t tvmask;   /* free type-variable indices below 64 */
     uint32_t height;
-    MgTp *next;        /* intern chain */
     MgTp *shift1;      /* Tp.shift 0 1 cache */
 };
 
@@ -153,15 +156,14 @@ struct MgTm {
     uint8_t tag;
     uint8_t facts;
     uint32_t n;        /* DB index, PRIM index, NAME id */
-    MgTm *f, *x;       /* AP f x; IMP f x; LAM/ALL/TLAM/TALL body = f; TAP f */
-    MgTp *tp;          /* LAM, ALL, TAP */
     uint32_t hash;
     uint32_t fv;       /* 1 + greatest free term index (Scoped d iff fv <= d) */
     uint32_t ftv;      /* 1 + greatest free type-variable index */
+    uint32_t height;
+    MgTm *f, *x;       /* AP f x; IMP f x; LAM/ALL/TLAM/TALL body = f; TAP f */
+    MgTp *tp;          /* LAM, ALL, TAP */
     uint64_t dbmask;   /* free term indices below 64 */
     uint64_t tvmask;   /* free type-variable indices below 64 */
-    uint32_t height;
-    MgTm *next;        /* intern chain */
     /* Environment-independent caches. */
     MgTm *nf;          /* beta-eta normal form */
     MgTm *shift1;      /* Tm.shift 0 1 */
@@ -193,7 +195,6 @@ struct MgPf {
     uint32_t hash;
     uint32_t height;
     uint64_t size;           /* tree size (saturating) */
-    MgPf *next;
 };
 
 /* Interned cons lists, sharing tails. */
@@ -203,7 +204,6 @@ struct MgTpList {
     MgTpList *tail;
     uint32_t len;
     uint32_t hash;
-    MgTpList *next;
     MgTpList *shift1;    /* map (Tp.shift 0 1) */
 };
 
@@ -215,7 +215,6 @@ struct MgTmList {
     uint32_t hash;
     uint32_t fv;         /* max fv over elements */
     bool protected_all;
-    MgTmList *next;
     MgTmList *shift1;    /* map (Tm.shift 0 1) */
 };
 
@@ -232,7 +231,6 @@ struct MgCtx {
      * formed_rev (true at later revisions until a withdrawal). */
     bool formed;
     uint64_t formed_rev;
-    MgCtx *next;
 };
 
 static inline uint32_t mg_tplist_len(const MgTpList *l) { return l ? l->len : 0u; }
@@ -251,11 +249,20 @@ static inline bool mg_judgment_eq(MgJudgment a, MgJudgment b) {
 
 typedef struct MgChunk MgChunk;
 
+/* An intern slot keeps its node's hash, so a probe passes over other
+ * nodes without reading them. */
 typedef struct {
-    void **slots;
+    void *node;
+    uint32_t hash;
+} MgInternSlot;
+
+typedef struct {
+    MgInternSlot *slots;
     uint32_t cap;        /* power of two */
     uint32_t len;
 } MgInternTable;
+
+enum { MG_DB_SMALL = 256 };  /* de Bruijn index nodes kept by index */
 
 typedef struct MgName MgName;
 typedef struct MgDecl MgDecl;
@@ -276,6 +283,7 @@ typedef struct {
     MgName **names;          /* by id; id 0 unused */
     uint32_t name_len, name_cap;
     MgInternTable name_index;
+    MgTm *db_small[MG_DB_SMALL];
     MgTp *tp_prop;
     MgCtx *ctx_empty;        /* <0, [], []> */
     /* Allocation or table-capacity failures so far.  A decoder that gets
@@ -286,7 +294,46 @@ typedef struct {
     uint64_t capacity_failures;
     /* substitution memo (instantiate at 0) */
     void *subst_memo;
+    uint32_t memo_epoch;     /* subst_memo entries of an earlier epoch are stale */
+    /* Marks (mg_store_mark): while one is open, every node interned and
+     * every cache written is logged, so that the store can return to it. */
+    uint32_t marks;
+    struct MgStoreLog *log;
 } MgStore;
+
+/* A point in a store's life.  The nodes interned after it, and the caches
+ * written since, can be released together (mg_store_release): the store is
+ * then as it was at the mark, and no cache refers to a released node.  A
+ * search that found nothing leaves its terms this way.  Marks nest; the
+ * innermost is closed first, by mg_store_keep or mg_store_release. */
+typedef struct {
+    MgChunk *chunk;          /* the newest chunk at the mark */
+    size_t used, bytes;
+    uint64_t nodes;
+    uint32_t interned, cached;   /* the logs' lengths at the mark */
+    uint32_t caps[6];            /* the node tables' capacities at the mark */
+    bool open;               /* the mark is kept: logging works */
+} MgStoreMark;
+
+bool mg_store_mark(MgStore *s, MgStoreMark *m);
+void mg_store_keep(MgStore *s, MgStoreMark *m);
+/* True when the store went back to the mark; without room for that, the
+ * nodes stay (the mark closes either way). */
+bool mg_store_release(MgStore *s, MgStoreMark *m);
+/* The release, keeping *PROOF: its nodes made since the mark are made
+ * again after it, as the canonical nodes of the same structure (*PROOF
+ * then points to them; NULL if there was no room to remake them). */
+bool mg_store_release_keeping(MgStore *s, MgStoreMark *m, MgPf **proof);
+
+/* The write barrier of every cache on a node or declaration: before an
+ * 8-byte field (a pointer or revision) changes inside a mark, its old value
+ * is logged, and a release restores it where the field outlives the
+ * release. */
+void mg_store_log_cache(MgStore *s, void *field);
+static inline void mg_store_cache_write(MgStore *s, void *field) {
+    if (s->marks)
+        mg_store_log_cache(s, field);
+}
 
 /* ── declarations and theories ────────────────────────────────────────── */
 
@@ -718,6 +765,7 @@ bool mg_theory_withdrawn_between(const MgTheory *t, uint64_t after,
 void mg_footprint_init(MgFootprint *f);
 void mg_footprint_free(MgFootprint *f);
 bool mg_footprint_add(MgFootprint *f, uint32_t name, MgNamespace ns);
+bool mg_footprint_has(const MgFootprint *f, uint32_t name, MgNamespace ns);
 bool mg_footprint_union(MgFootprint *dst, const MgFootprint *src);
 /* Agreement of every footprint name, closed under definition bodies and
  * known propositions of the source snapshot, between two snapshots. */

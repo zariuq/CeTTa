@@ -1,0 +1,4 @@
+mg-check: type-search-failed.mg (theory egal, 0 signatures)
+theorem TypedSearch line 1: unfinished at the end of the document
+summary: 1 theorems: 0 checked (0 verified), 0 admitted, 0 aby, 0 dependent, 1 unfinished, 0 out of budget; 0 document axioms (0 approved)
+verdict: failed: Failure at line 2 char 11: megaauto failed

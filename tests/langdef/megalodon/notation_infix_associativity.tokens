@@ -1,0 +1,71 @@
+INFIX
+(NAM "+")
+(NUM False "400" None None)
+(NAM "left")
+DEQ
+(NAM "add")
+DOT
+INFIX
+(NAM "*")
+(NUM False "300" None None)
+(NAM "right")
+DEQ
+(NAM "mul")
+DOT
+INFIX
+(NAM "<=")
+(NUM False "600" None None)
+DEQ
+(NAM "le")
+DOT
+AXIOM
+(NAM "a1")
+COLON
+(NAM "x")
+(NAM "+")
+(NAM "y")
+(NAM "+")
+(NAM "z")
+DOT
+AXIOM
+(NAM "a2")
+COLON
+(NAM "x")
+(NAM "*")
+(NAM "y")
+(NAM "*")
+(NAM "z")
+DOT
+AXIOM
+(NAM "a3")
+COLON
+(NAM "x")
+(NAM "+")
+(NAM "y")
+(NAM "*")
+(NAM "z")
+(NAM "+")
+(NAM "w")
+DOT
+AXIOM
+(NAM "a4")
+COLON
+(NAM "x")
+(NAM "+")
+(NAM "y")
+(NAM "<=")
+(NAM "z")
+(NAM "*")
+(NAM "w")
+DOT
+AXIOM
+(NAM "a5")
+COLON
+LPAREN
+(NAM "x")
+(NAM "+")
+(NAM "y")
+RPAREN
+(NAM "*")
+(NAM "z")
+DOT

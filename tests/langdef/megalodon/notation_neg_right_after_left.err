@@ -1,0 +1,1 @@
+oracle failure: * cannot be given priority 300 since a nonright infix operator or postfix operator has this priority already.

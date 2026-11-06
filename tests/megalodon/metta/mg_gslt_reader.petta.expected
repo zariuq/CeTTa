@@ -1,0 +1,5 @@
+true
+(Megalodon.tokens MgTkAxiomV1 (MgTkNamV1 (MgCpConsV1 (cp 97) MgCpNilV1)) MgTkColonV1 (MgTkNamV1 (MgCpConsV1 (cp 120) MgCpNilV1)))
+(Megalodon.items)
+(MegalodonSyntax "parse error 1:11-1:13: Unmatched (")
+(MegalodonSource "cannot read the file")
