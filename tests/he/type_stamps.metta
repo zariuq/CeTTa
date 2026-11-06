@@ -1,0 +1,23 @@
+; Typings kept by an atom's address answer as a fresh typing would: a
+; declaration added or removed between two typings of one value is seen, and
+; a value typed once is typed alike again.
+(: List (-> Type Type))
+(: Nil (List $x))
+(: Cons (-> $x (List $x) (List $x)))
+(: e A)
+(: gA (-> (List A) Number))
+(= (gA $l) 7)
+(: gB (-> (List B) Number))
+(= (gB $l) 8)
+!(let $v (Cons e (Cons e Nil)) (let $a (gA $v) (let $u (add-atom &self (: e B)) (let $w (remove-atom &self (: e A)) ($a (gB $v))))))
+!(let $v (Cons e (Cons e Nil)) (let $b (gB $v) (let $w (remove-atom &self (: e B)) (collapse (gB $v)))))
+!(get-type (Cons 1 (Cons 2 Nil)))
+(= (mk) (Cons 1 (Cons 2 Nil)))
+!(let $v (mk) (get-type $v))
+(: sumL (-> (List Number) Number))
+(= (sumL Nil) 0)
+(= (sumL (Cons $x $xs)) (+ $x (sumL $xs)))
+(= (build $n $acc) (if (== $n 0) $acc (build (- $n 1) (Cons $n $acc))))
+!(sumL (build 50 Nil))
+!(collapse (sumL (Cons "a" Nil)))
+!(let $v (build 3 Nil) (let $s (sumL $v) (let $u (add-atom &self (: q Number)) ($s (sumL $v)))))

@@ -23,8 +23,11 @@
 !(add-atom &hokb (link c d))
 
 ; A chainer over its function arguments, returning its query as unification
-; leaves it: the specializer gives it static calls, and its version enters
-; each callee's version.
+; leaves it: the specializer gives it static calls, which enter each
+; callee's version.  Its query is open, so the chainer keeps its own
+; protocol: an open polymorphic argument enters a version only ground, since
+; its variables can reach names that carry no claim (a head pattern, an
+; untyped call's answer, a callee's head pattern).
 (: hop (-> (-> $a $ct $ct) (-> $a $ct Bool) $ct $a $a))
 (= (hop $u $t $c (reach $x $y))
    (if ($t (reach $x $y) $c)

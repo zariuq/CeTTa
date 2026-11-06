@@ -1,0 +1,10 @@
+; Control for a typed fast-path rule: answered as hyperon-experimental does.
+(: List (-> Type Type))
+(: Nil (List $a))
+(: Cons (-> $a (List $a) (List $a)))
+(: h (-> (List String) Number))
+(= (h $l) 7)
+(: f (-> Bool (List String) %Undefined%))
+(= (f $b $l) (if $b (u 1 $l) (u "s" $l)))
+(= (u $x $l) (h (Cons $x $l)))
+!(f True Nil)

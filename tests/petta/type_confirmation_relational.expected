@@ -2,7 +2,7 @@ is (true), should (true). ✅
 is (true), should (true). ✅ 
 is (), should (). ✅ 
 is (A), should (A). ✅ 
-is (found found), should (found found). ✅ 
+is (found), should (found). ✅ 
 is (), should (). ✅ 
 is (), should (). ✅ 
 is 2, should 2. ✅ 

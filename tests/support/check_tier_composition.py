@@ -79,8 +79,13 @@ def documents():
                         "(: typed-f (-> Number %Undefined%))\n"
                         "(= (typed-f $x) (+ $x 1))\n",
                         "(collapse (typed-f 6))"),
-        "bound-check": ("(: 6 Foo)\n(: typed-f (-> Foo Foo))\n"
-                        "(= (typed-f $x) $x)\n", "(typed-f 6)"),
+        # A bound argument's declared type meets its formal.  A number's does
+        # not: get-type answers Number for it, as SWI-PeTTa does, so the call
+        # answers nothing and collapse witnesses that.
+        "bound-check": ("(: six Foo)\n(: typed-f (-> Foo Foo))\n"
+                        "(= (typed-f $x) $x)\n", "(typed-f six)"),
+        "bound-reject": ("(: 6 Foo)\n(: typed-f (-> Foo Foo))\n"
+                         "(= (typed-f $x) $x)\n", "(collapse (typed-f 6))"),
         "late-atom": ("(: marker Atom)\n(: typed-f (-> $t $t Atom))\n"
                       "(= (typed-f $x $y) (Pair $x $y))\n",
                       "(collapse (typed-f marker (+ 2 3)))"),
@@ -207,7 +212,9 @@ def main():
                     if not identity_contract and (not wrapped or erased):
                         raise AssertionError(
                             f"{name}: guarded contract lost its wrapper")
-            if args.petta_root and profile is None:
+            # tests/petta/swi_differences, 14: SWI-PeTTa's foldl skips its typed
+            # step's result check, which CeTTa keeps.
+            if args.petta_root and profile is None and name != "fold-adapter-result-guard":
                 swi = subprocess.run(["bash", "run.sh", "--silent", str(path)],
                                      cwd=args.petta_root, capture_output=True,
                                      text=True, timeout=30)

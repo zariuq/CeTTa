@@ -70,7 +70,7 @@ CASES = [{'name': 'one',
             '(= (invoke $f $x) ($f $x))\n'
             '!(invoke f 3)\n',
   'petta': 'committed\n',
-  'he': 'committed\n[(Error "wrong" (BadType Number String))]\n'},
+  'he': 'committed\n["wrong"]\n'},
  {'name': 'duplicate-effects',
   'source': '(: f (-> Number Number))\n'
             '(= (f $x) (let $u (add-atom &self (seen $x)) $x))\n'

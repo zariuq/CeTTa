@@ -795,6 +795,9 @@ incomplete:
             apply_bindings_free(&paths);
             return HE_TYPE_APPLICATION_INCOMPLETE;
         }
+        /* The result type as this path's argument typings instantiate it,
+         * which a rejection names, as HE does. */
+        Atom *instance = bindings_apply_if_vars(search_context_bindings(&trial), arena, result);
         bool saved;
         if (apply_refine(services, result, expected_result, search_context_builder(&trial), arena)) {
             accepted = true;
@@ -805,7 +808,7 @@ incomplete:
                                           search_context_bindings(&trial));
         } else {
             saved = he_type_errors_push(errors, atom_error(arena, expression,
-                        atom_expr3(arena, atom_symbol(arena, "BadType"), expected_result, result)));
+                        atom_expr3(arena, atom_symbol(arena, "BadType"), expected_result, instance)));
         }
         search_context_free(&trial);
         if (!saved) {

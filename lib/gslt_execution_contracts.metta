@@ -279,6 +279,10 @@
   ; A truth computation uses the caller's Boolean constructor. Grounded data
   ; projections preserve their carrier even when that carrier is Boolean.
   (instruction boolean-dispatch)
+  ; One of the two evaluated operands, selected by the exact numeric order of
+  ; what they stand for: PeTTa's min and max.  Operands that are not numbers
+  ; replay canonically.
+  (instruction comparison-select)
   (sort OperandDiscipline)
   (operand-discipline strict-all)
   (rule intrinsic-is-pure
@@ -1034,6 +1038,10 @@
     numeric-eq 2 strict-all grounded-dispatch)
   (prepared-pure-intrinsic-head
     / 2 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    min 2 strict-all comparison-select (dialects petta))
+  (prepared-pure-intrinsic-head
+    max 2 strict-all comparison-select (dialects petta))
   (prepared-pure-intrinsic-head
     and 2 strict-all boolean-dispatch)
   (prepared-pure-intrinsic-head

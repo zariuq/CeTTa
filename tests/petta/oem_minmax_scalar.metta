@@ -5,7 +5,7 @@
 
 !(min 2.5 1.5)
 !(max 2 4.5)
-; A tie returns the left operand, retaining its exact representation.
+; On a tie min answers its first operand and max its second.
 !(min 1 1.0)
 !(max 1.0 1)
 !(minmax-loop 1000 1.5)

@@ -13,7 +13,8 @@
 bool space_type_annotations_functional(Space *s);
 
 /* Visit each arrow declaration whose subject is a symbol, with the number of
- * declarations indexed under that symbol, until `visit` returns false.
+ * distinct types declared for that symbol (rows repeating one type count
+ * once, as a call answers once for them), until `visit` returns false.
  * Returns false, having visited nothing, when this view's index cannot
  * answer; the caller must then assume any declaration may exist. */
 bool space_type_arrow_declarations_visit(
