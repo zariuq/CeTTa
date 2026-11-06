@@ -1,0 +1,8 @@
+(Doc (AxDecl "x'" (NaL "x''")))
+(Doc (AxDecl "_a1" (NaL "a_1'b")))
+(Doc (AxDecl "atom" (NaL "letter")))
+(Doc (AxDecl "Theoremx" (NaL "Lemmas")))
+(Doc (AxDecl "ifp" (NaL "thenq")))
+(Doc (AxDecl "'+-'" (ImplopL (ImplopL (NaL "'") (NaL ":=:")) (NaL "'"))))
+(Doc (AxDecl "q" (ImplopL (NaL ":+:") (NaL "x"))))
+(Doc (AxDecl "r" (ImplopL (NaL ":/\\:") (NaL "x"))))

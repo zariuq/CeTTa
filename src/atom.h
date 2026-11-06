@@ -1590,6 +1590,12 @@ Atom *atom_empty(Arena *a);     /* Symbol "Empty" */
 Atom *atom_unit(Arena *a);      /* Expression () — empty expr */
 /* The empty expression's one atom for the process, owned by no arena. */
 Atom *atom_unit_canonical(void);
+/* Whether ATOM is one of the atoms no arena owns that live for the process:
+ * a symbol's canonical atom (atom_symbol_canonical) or the empty
+ * expression's (atom_unit_canonical).  Copies into an arena may hand these
+ * out instead of arena atoms, so a check that an atom lies in given arenas
+ * accepts them too. */
+bool atom_process_canonical(const Atom *atom);
 Atom *atom_true(Arena *a);      /* Symbol "True" */
 Atom *atom_false(Arena *a);     /* Symbol "False" */
 

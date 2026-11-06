@@ -1,0 +1,9 @@
+SECTION
+(NAM "A")
+DOT
+SECTION
+(NAM "B")
+DOT
+END
+(NAM "A")
+DOT

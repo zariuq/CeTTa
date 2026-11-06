@@ -1,0 +1,14 @@
+NOTATION
+(NAM "Sep")
+(NAM "Sep")
+DOT
+AXIOM
+(NAM "a")
+COLON
+LCBRACE
+(NAM "x")
+MEM
+(NAM "y")
+VBAR
+(NAM "z")
+DOT

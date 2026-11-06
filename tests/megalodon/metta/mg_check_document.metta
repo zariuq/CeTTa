@@ -1,0 +1,15 @@
+; Megalodon documents checked from MeTTa: the verdict, the counts and each
+; axiom and theorem with its verdict.
+!(import! &self megalodon)
+!(case (mg:check-document () "tests/megalodon/verdict/transitive.mg" ())
+   (((Megalodon.document $theory $authority $verdict $summary $entries)
+     ($verdict $summary $entries))))
+!(case (mg:check-document () "tests/megalodon/verdict/aby-search.mg" (prove-aby))
+   (((Megalodon.document $theory $authority $verdict $summary $entries)
+     ($verdict $entries))))
+!(case (mg:check-document () "tests/megalodon/verdict/budget.mg" ((theorem-work 15)))
+   (((Megalodon.document $theory $authority $verdict $summary $entries)
+     ($verdict $entries))))
+!(case (mg:check-document () "tests/megalodon/verdict/syntax-error.mg" ())
+   (((Megalodon.document $theory $authority $verdict $summary $entries)
+     $verdict)))

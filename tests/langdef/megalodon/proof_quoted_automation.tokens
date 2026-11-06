@@ -1,0 +1,42 @@
+(THEOREM "Theorem")
+(NAM "t9")
+COLON
+(NAM "forall")
+(NAM "p")
+COLON
+(NAM "prop")
+COMMA
+(NAM "p")
+(NAM "->")
+(NAM "p")
+DOT
+EXACT
+(NAM "fun")
+(NAM "p")
+(NAM "H")
+DARR
+(NAM "H")
+DOT
+QED
+DOT
+(THEOREM "Theorem")
+(NAM "t10")
+COLON
+(NAM "q")
+DOT
+EXACT
+(STRING "0a1b")
+DOT
+QED
+DOT
+(THEOREM "Theorem")
+(NAM "t11")
+COLON
+(NAM "r")
+DOT
+APPLY
+(NAM "foo")
+(STRING "")
+DOT
+QED
+DOT

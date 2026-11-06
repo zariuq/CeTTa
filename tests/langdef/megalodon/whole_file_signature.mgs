@@ -1,0 +1,5 @@
+(** A signature: notation the document reads with. *)
+Infix /\ 780 left := and.
+Infix = 502 := eq.
+Binder+ exists , := ex; and.
+Parameter In : set -> set -> prop.
