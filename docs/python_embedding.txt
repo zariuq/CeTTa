@@ -3,6 +3,9 @@ CeTTa Python embedding (development package)
 The package provides PeTTa and HE calls, retained structured answers, spaces,
 query streams, host callbacks and NumPy interchange, including retained
 foreign-byte-order views and sparse COO/CSR/CSC data. PeTTa is the default.
+The py library provides retained Python objects, direct calls, keywords and
+scoped streams in both dialects. See docs/python_objects.txt for that interface,
+Engine.library(), Answers.one(), and python -m cetta.
 The tested Linux platforms and remaining platform limits are recorded below.
 
 Install and start
@@ -69,8 +72,8 @@ Use engine.import_(spec, target=None) for the language's import! operation:
         engine.import_("(library str)")
         engine.import_(Path("definitions.metta"))
 
-A string spec is MeTTa syntax; a Path is a file name. Nonstandard library names
-follow the dialect: PeTTa uses "(library tensor)", while HE uses "tensor".
+A string spec is MeTTa syntax; a Path is a file name. Both dialects accept
+"(library tensor)"; HE also accepts its ordinary "tensor" spelling.
 The default target is the root space. PeTTa also accepts a Space target; HE
 uses its ordinary fresh-name module destinations, such as target="helpers".
 Access the latter through engine.space_from_atom(engine.eval("&helpers")[0]).

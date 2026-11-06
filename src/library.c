@@ -168,6 +168,7 @@ enum {
     CETTA_LIBRARY_POSTINGS = 1u << 16,
     CETTA_LIBRARY_TENSOR = 1u << 17,
     CETTA_LIBRARY_LANG = 1u << 18,
+    CETTA_LIBRARY_PY = 1u << 19,
 #if CETTA_BUILD_WITH_JSON_GSLT
     CETTA_LIBRARY_JSON = 1u << 12
 #endif
@@ -188,6 +189,7 @@ static const CettaLibrarySpec CETTA_LIBRARIES[] = {
     {"postings", CETTA_LIBRARY_POSTINGS, NULL},
     {"tensor", CETTA_LIBRARY_TENSOR, NULL},
     {"lang", CETTA_LIBRARY_LANG, NULL},
+    {"py", CETTA_LIBRARY_PY, NULL},
     {"lts", CETTA_LIBRARY_LTS, NULL},
     {"mork", CETTA_LIBRARY_MORK, NULL},
     {"rho", CETTA_LIBRARY_RHO, NULL},
@@ -11273,6 +11275,8 @@ static bool library_import_native(CettaLibraryContext *ctx, const char *name,
     }
     if (import_bit == CETTA_LIBRARY_IO && !ctx->io_runtime)
         ctx->io_runtime = cetta_io_runtime_new();
+    if (import_bit == CETTA_LIBRARY_PY)
+        cetta_foreign_enable_objects(ctx->foreign_runtime, registry);
     return true;
 }
 
