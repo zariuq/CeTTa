@@ -5,7 +5,8 @@
 !(add-atom &self
    (= (late-callable $left $right) (+ $left $right)))
 
-; The earlier equation keeps the data interpretation fixed when it was
-; translated.  A fresh request is translated against the newer definition.
+; An equation translated before a head had equations calls it once an
+; equation for it is present, one added by add-atom included, as
+; stable-fixed SWI-PeTTa does (swi_differences, 10).
 !(translated-before-install 1)
 !(late-callable 1 1)

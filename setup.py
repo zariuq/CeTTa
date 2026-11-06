@@ -35,4 +35,5 @@ class NativeBuild(build_ext):
 
 
 setup(ext_modules=[Extension("cetta._native", sources=["python/native.c"])],
+      license_files=["LICENSE", "LICENSES/*.txt"],
       cmdclass={"build_ext": NativeBuild, "build_py": PythonBuild})

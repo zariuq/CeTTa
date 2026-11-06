@@ -27,7 +27,7 @@ def main():
           (add-atoms $s $rows))))
    (collapse (get-atoms $s)))
 !(let* (($s (new-space)) ($held (quote (+ 1 2)))
-        ($items (list:to-expression (list:range 37)))
+        ($items (tuple:from (list:range 37)))
         ($stored (let $rows (map-atom $items $x $held) (add-atoms $s $rows))))
    (Held (size-atom (collapse (match $s (+ 1 2) kept)))))
 ; A compiled relation must retain the producer/consumer composition too.
@@ -56,7 +56,7 @@ def main():
 ; Captured tables are values even when their elements look executable.
 (= (ingress-table-entry $table $position) (index-atom $table (if (< $position 9) 0 1)))
 !(let* (($s (new-space)) ($table (quote ((+ 1 2) (+ 3 4))))
-        ($positions (list:to-expression (list:range 17)))
+        ($positions (tuple:from (list:range 17)))
         ($stored (let $rows (map-atom $positions $position
                    (ingress-table-entry $table $position)) (add-atoms $s $rows))))
    (CapturedTable (size-atom (collapse (match $s (+ 1 2) kept)))
@@ -94,7 +94,7 @@ def main():
 (= (ingress-intersection $s $items $right)
    (let $rows (map-atom $items $x (Common $x (intersection-atom ($x $x) $right)))
      (add-atoms $s $rows)))
-!(let* (($s (new-space)) ($items (list:to-expression (list:range 19)))
+!(let* (($s (new-space)) ($items (tuple:from (list:range 19)))
         ($stored (ingress-intersection $s $items (1 2 3))))
    (IntersectionSnapshot (collapse (get-atoms $s))))
 !(let* (($s (new-space)) ($items ((a a b c) (b b a) ()))

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check that a dense relation kept as bits grows by its bits, not by rows.
 
-usage: check_dense_scaling.py PROGRAM NODES
+usage: check_dense_scaling.py PROGRAM NODES [--answers-only]
 
 The program takes its number of nodes as its first argument and derives a
 dense relation over them.  It runs at NODES and at twice as many, with
@@ -29,6 +29,9 @@ def peak_kib(program, nodes, mode):
 
 def main():
     program, nodes = sys.argv[1], int(sys.argv[2])
+    answers_only = sys.argv[3:] == ['--answers-only']
+    if sys.argv[3:] and not answers_only:
+        sys.exit('expected optional --answers-only')
     growth = {}
     answers = {}
     for mode in ('on', 'off'):
@@ -50,6 +53,10 @@ def main():
                 return 1
             peaks.append(int(peak))
         growth[mode] = peaks[1] - peaks[0]
+    if answers_only:
+        print('PASS: dense and row representations answer alike at both sizes; '
+              'RSS is qualified separately on the native executable')
+        return 0
     if growth['off'] < FLOOR_KIB:
         print(f"FAIL: as rows the peak grew only {growth['off']} KiB: the test "
               f"measures nothing")
