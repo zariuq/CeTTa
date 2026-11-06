@@ -391,6 +391,26 @@ static Atom *contract_declared(ContractScan *scan, Atom *symbol) {
     return type;
 }
 
+/* The one type the effective type query answers for `symbol`, the query a
+ * typed call's guard reads: an intrinsic type outranks an authored row, so
+ * `true` is Bool whatever is declared for it.  None when that query answers
+ * no type, several, or incompletely, or answers only %Undefined%: an
+ * undeclared name. */
+static Atom *contract_effective_type(ContractScan *scan, Atom *symbol) {
+    Atom **types = NULL;
+    uint32_t count = 0u;
+    CettaEvalCompletion completion = CETTA_EVAL_INCOMPLETE_HOST_FAILURE;
+    bool answered = petta_type_intrinsic_answers(
+        scan->context->space, scan->context->scratch, symbol, NULL,
+        &types, &count, &completion);
+    Atom *type = answered && completion == CETTA_EVAL_COMPLETE && count == 1u
+        ? types[0] : NULL;
+    free(types);
+    if (type && atom_is_symbol_id(type, g_builtin_syms.undefined_type))
+        return NULL;
+    return type;
+}
+
 static uint32_t contract_var_occurrences(const Atom *atom, VarId var) {
     if (!atom)
         return 0u;
@@ -1193,9 +1213,9 @@ static bool contract_eval(ContractScan *scan, Atom *expr,
         }
         if (out->uninterpreted)
             return true;
-        /* A closed declared type, a function's arrow included, is the one
-         * get-type answers; an open one, as Nil's (List $a), gives no fact. */
-        out->type = contract_declared(scan, expr);
+        /* The one closed type get-type answers, a function's arrow
+         * included; an open one, as Nil's (List $a), gives no fact. */
+        out->type = contract_effective_type(scan, expr);
         if (out->type && out->type->kind == ATOM_EXPR &&
             atom_has_vars(out->type))
             out->type = NULL;
@@ -1522,8 +1542,10 @@ static bool contract_entry_facts(ContractScan *scan,
                 contract_self_constant(scan, equation->expr.elems[2], i,
                                        pattern->var_id, &name, 0u);
         }
+        /* The name's type is the one the guard reads, never a raw row. */
         Atom *declaration = ok && name != SYMBOL_ID_NONE
-            ? contract_declared(scan, atom_symbol_id(arena, name)) : NULL;
+            ? contract_effective_type(scan, atom_symbol_id(arena, name))
+            : NULL;
         PettaTypeCall source = {0};
         PettaTypeCall fresh = {0};
         ok = declaration &&

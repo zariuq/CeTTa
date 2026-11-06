@@ -27239,6 +27239,22 @@ test-petta-translation-time-callability: $(BIN)
 		"$$actual"
 	@echo "PASS: PeTTa source occurrences call equations installed after translation"
 
+.PHONY: test-petta-tabled-shared-and-runtime
+test-petta-tabled-shared-and-runtime: $(BIN)
+	@set -eu; \
+	for case in tabled_shared_variable_calls tabled_runtime_mutual_recursion; do \
+		actual=runtime/test-petta-$$case.out; \
+		./$(BIN) --lang petta tests/petta/$$case.metta >"$$actual" 2>&1; \
+		diff -u tests/petta/$$case.expected "$$actual"; \
+		stats=$$(CETTA_PETTA_MACHINE_STATS=1 ./$(BIN) --lang petta \
+			tests/petta/$$case.metta 2>&1 >/dev/null); \
+		if ! printf '%s\n' "$$stats" | grep -Eq 'table_hits=[1-9][0-9]*'; then \
+			echo "FAIL: $$case answered without reusing a table"; \
+			exit 1; \
+		fi; \
+	done
+	@echo "PASS: tabled calls with shared variables and run-time mutual recursion"
+
 .PHONY: test-petta-match-conjunction-cursor
 test-petta-match-conjunction-cursor: $(BIN)
 ifeq ($(ENABLE_RUNTIME_STATS),1)
@@ -27336,7 +27352,7 @@ test-petta-named-arity-source-cache: $(BIN)
 	done; \
 	echo "PASS: shared source-arity cache preserves mutation, partial calls and duplicates"
 
-test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-controller test-controller-diversity test-petta-machine-trace-config test-petta-type-langdef-source-binding-v1 test-petta-boundary-langdef-source-binding-v1 test-petta-capability-ledger test-petta-specializer-relevance-filter test-petta-mam-contender-mutations test-petta-extended-query-algebra test-petta-prepared-register-loop test-petta-specialized-pure-call test-petta-memoization test-petta-match-existence-fusion test-petta-fresh-frame-occurs-check test-petta-equation-slot-admission test-petta-equation-template-c0 test-petta-relational-equation-view test-petta-argv-native test-petta-activation-admission-cache test-petta-activation-scalar-if test-petta-match-region-hole test-petta-binding-region-hole test-petta-rule-frame-region test-petta-deterministic-region-scalability test-petta-body-resume-segment test-petta-match-decision-tree-repository test-petta-match-decision-shape-receipt test-petta-activation-anonymous-hole test-petta-activation-scalar-argument-segment test-petta-activation-pure-data-segment test-petta-match-decision-equality test-match-closed-expression-decision test-petta-translation-time-callability
+test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-controller test-controller-diversity test-petta-machine-trace-config test-petta-type-langdef-source-binding-v1 test-petta-boundary-langdef-source-binding-v1 test-petta-capability-ledger test-petta-specializer-relevance-filter test-petta-mam-contender-mutations test-petta-extended-query-algebra test-petta-prepared-register-loop test-petta-specialized-pure-call test-petta-memoization test-petta-match-existence-fusion test-petta-fresh-frame-occurs-check test-petta-equation-slot-admission test-petta-equation-template-c0 test-petta-relational-equation-view test-petta-argv-native test-petta-activation-admission-cache test-petta-activation-scalar-if test-petta-match-region-hole test-petta-binding-region-hole test-petta-rule-frame-region test-petta-deterministic-region-scalability test-petta-body-resume-segment test-petta-match-decision-tree-repository test-petta-match-decision-shape-receipt test-petta-activation-anonymous-hole test-petta-activation-scalar-argument-segment test-petta-activation-pure-data-segment test-petta-match-decision-equality test-match-closed-expression-decision test-petta-translation-time-callability test-petta-tabled-shared-and-runtime
 	@env -u CETTA_PETTA_EQUATION_BODY_ACTIVATION \
 		-u CETTA_PETTA_EQUATION_BODY_ACTIVATION_REFERENCE \
 		./$(PETTA_SEARCH_MACHINE_TEST_BIN)
@@ -28633,6 +28649,39 @@ test-petta-type-guard-versions-higher-order: $(BIN) tests/petta/type_guard_versi
 		fi; \
 	done; \
 	echo "PASS: versions of higher-order and calling functions keep the protocol's answers"
+
+# A function parameter passed the same name at every call is a constant of
+# the call's version only when the name's effective type, the one its guard
+# reads, meets the parameter; a truth value is Bool whatever row is written
+# for it.  Answers equal the protocol's on every route.
+.PHONY: test-petta-contract-constant-effective-type
+test-petta-search-machine: test-petta-contract-constant-effective-type
+test-petta-contract-constant-effective-type: $(BIN) tests/petta/contract_constant_effective_type.metta tests/petta/contract_constant_effective_type.expected
+	@set -e; \
+	fixture=tests/petta/contract_constant_effective_type.metta; \
+	expected=$$(cat tests/petta/contract_constant_effective_type.expected); \
+	for route in X CETTA_PETTA_VERSIONS_REFERENCE CETTA_PREPARED_PURE_REFERENCE \
+			CETTA_OPEN_EQUATIONS_REFERENCE; do \
+		actual=$$(env $$route=1 $(call cetta_exec,./$(BIN)) --lang petta $$fixture); \
+		if [ "$$actual" != "$$expected" ]; then \
+			echo "FAIL: constant parameters keep the protocol's answers ($$route)"; \
+			diff <(printf '%s\n' "$$expected") <(printf '%s\n' "$$actual") | head -20; \
+			exit 1; \
+		fi; \
+	done; \
+	verdicts=$$(CETTA_PETTA_VERSIONS_DEBUG=1 $(call cetta_exec,./$(BIN)) \
+		--lang petta $$fixture 2>&1 >/dev/null); \
+	if ! printf '%s\n' "$$verdicts" | \
+			grep -Eq 'contract cc-apply-outer/1: version .*discharged [1-9]'; then \
+		echo "FAIL: a declared function passed at every call is no longer a constant"; \
+		exit 1; \
+	fi; \
+	if ! printf '%s\n' "$$verdicts" | \
+			grep -qF 'cc-inner: parameter 0 is no constant function (named true)'; then \
+		echo "FAIL: a truth value's authored arrow made it a constant function"; \
+		exit 1; \
+	fi; \
+	echo "PASS: constant parameters are earned from the effective type"
 
 .PHONY: test-petta-type-guard-versions
 test-petta-search-machine: test-petta-type-guard-versions
