@@ -89,7 +89,7 @@ static cetta_status_t python_callback_next(void *pointer, cetta_callback_state_t
         PyObject *value = NULL;
         if (result && PyArg_ParseTuple(result, "iO", &kind, &value)) {
             if (value != Py_None) {
-                *output = PyCapsule_GetPointer(value, atom_capsule);
+                *output = python_handle_pointer(value, atom_capsule);
                 if (*output) cetta_embed_atom_retain(*output);
             }
             *result_state = (cetta_callback_state_t)kind;
@@ -129,7 +129,7 @@ static PyObject *register_callback(PyObject *module, PyObject *args) {
         PyErr_SetString(PyExc_NotImplementedError, "callbacks in subinterpreters are not yet supported");
         return NULL;
     }
-    cetta_engine_t *engine = PyCapsule_GetPointer(engine_object, engine_capsule);
+    cetta_engine_t *engine = python_handle_pointer(engine_object, engine_capsule);
     if (!engine) return NULL;
     PythonCallbackOwner *owner = python_callback_owner_new(registration);
     if (!owner) return NULL;

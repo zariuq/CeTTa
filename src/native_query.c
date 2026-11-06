@@ -2498,6 +2498,16 @@ CettaNativeQueryStatus cetta_native_query_run(
     TermUniverse *universe = query->source->native.universe;
     if (!universe)
         return CETTA_NATIVE_QUERY_DECLINED;
+    /* A source whose rows live only in a forced PathMap index is read
+     * there, not copied out for this engine. */
+    if (!query->rows) {
+        if (!query->sources &&
+            space_match_backend_index_forced_without_rows(query->source))
+            return CETTA_NATIVE_QUERY_DECLINED;
+        for (size_t i = 0u; query->sources && i < query->pattern_count; i++)
+            if (space_match_backend_index_forced_without_rows(query->sources[i]))
+                return CETTA_NATIVE_QUERY_DECLINED;
+    }
     /* Proof storage falls back to ordinary owned rows before any consumer
      * effect. A refused conversion is a real allocation/storage failure. */
     for (size_t i = 0u; !query->rows && i < query->pattern_count; i++) {

@@ -1,5 +1,10 @@
 include Makefile VERSION setup.py pyproject.toml
 include docs/python_embedding.txt tests/test_embedding.c tests/support/embedding_consumer.rs
+include docs/python_objects.txt
+include tests/support/python_interop_fixture.py tests/support/python_objects.metta tests/support/check_python_objects.py
+include tests/support/python_interop_exports.py
+include tests/support/python_retention_fixture.py tests/support/check_python_retention.py tests/support/check_list_building_linear.py
+include tests/support/check_he_last_call.py
 include tests/test_embedding_callbacks.c
 include tests/test_embedding_modules.c
 include tests/test_embedding_buffers.c
@@ -13,6 +18,7 @@ include tests/support/test_embedding_startup_refusal.c
 include tests/support/test_embedding_memory_refusal.c tests/support/check_embedding_memory.py
 include tests/support/test_embedding_memory_budget.c tests/support/test_native_memory.c
 include tests/support/check_embedding_install.py tests/support/probe_gmp_allocation_failure.c
+include tests/support/petta_reference_vocabulary_v1.txt
 include tests/support/test_tensor_bounds.c tests/support/check_tensor_bounds.py tests/support/check_tensor_numpy.py
 include tests/tools/check_random_closure_reference.py
 include tests/support/test_stdlib_refusal.c
@@ -29,7 +35,8 @@ include tests/support/check_python_buffer_order_mutants.py
 include tests/support/test_sparse_interchange.c
 include tests/support/check_embedding_query_mutants.py
 include tests/support/check_embedding_context_mutants.py
-recursive-include examples/python *.ipynb
+recursive-include examples/python *.ipynb *.py *.metta
+recursive-include benchmarks/python *.py
 recursive-include include *.h *.map
 recursive-include python *.py *.c *.inc *.map
 recursive-include src *.c *.h *.inc *.data *.mk *.def *.json

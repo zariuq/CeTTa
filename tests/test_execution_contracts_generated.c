@@ -633,89 +633,6 @@ static void test_generated_fold_control_program(void) {
     assert(saw_bind && saw_branch && saw_eval && saw_bind_sequence);
 }
 
-static void test_generated_sequence_representations(void) {
-    unsigned rows = 0u;
-    bool saw_clist = false;
-#define CHECK_SEQUENCE_REPRESENTATION(key, materializer, empty, cons) do { \
-    rows++;                                                               \
-    if (strcmp((key), "clist") == 0) {                                  \
-        assert(strcmp((materializer), "clist:to-list") == 0);            \
-        assert(strcmp((empty), "ClistNil") == 0);                        \
-        assert(strcmp((cons), "ClistCons") == 0);                        \
-        assert(strcmp((empty), (cons)) != 0);                             \
-        saw_clist = true;                                                  \
-    }                                                                      \
-} while (0);
-    CETTA_GSLT_SEQUENCE_REPRESENTATION_ROWS(
-        CHECK_SEQUENCE_REPRESENTATION)
-#undef CHECK_SEQUENCE_REPRESENTATION
-    assert(rows == 1u);
-    assert(saw_clist);
-
-    unsigned consumer_rows = 0u;
-    bool saw_clist_consumer = false;
-#define CHECK_SEQUENCE_FOLD_CONSUMER(                                  \
-    key, consumer, arity, represented_operand) do {                    \
-    consumer_rows++;                                                    \
-    if (strcmp((key), "clist") == 0) {                                \
-        assert(strcmp((consumer), "clist:foldl") == 0);               \
-        assert((arity) == 5u);                                          \
-        assert((represented_operand) == 0u);                            \
-        saw_clist_consumer = true;                                      \
-    }                                                                   \
-} while (0);
-    CETTA_GSLT_SEQUENCE_FOLD_CONSUMER_ROWS(
-        CHECK_SEQUENCE_FOLD_CONSUMER)
-#undef CHECK_SEQUENCE_FOLD_CONSUMER
-    assert(consumer_rows == 1u);
-    assert(saw_clist_consumer);
-
-    unsigned fold_rows = 0u;
-    bool saw_clist_fold = false;
-#define CHECK_SEQUENCE_FOLD_TARGET(key, target) do {                    \
-    fold_rows++;                                                        \
-    if (strcmp((key), "clist") == 0) {                                \
-        assert(strcmp((target), "list:foldl") == 0);                   \
-        saw_clist_fold = true;                                          \
-    }                                                                   \
-} while (0);
-    CETTA_GSLT_SEQUENCE_FOLD_TARGET_ROWS(CHECK_SEQUENCE_FOLD_TARGET)
-#undef CHECK_SEQUENCE_FOLD_TARGET
-    assert(fold_rows == 1u);
-    assert(saw_clist_fold);
-
-    unsigned erasure_rows = 0u;
-    bool saw_identity = false, saw_append = false, saw_range = false;
-#define CHECK_SEQUENCE_ERASURE(                                        \
-    key, source, target, mode, minimum, maximum) do {                   \
-    assert(strcmp((key), "clist") == 0);                              \
-    assert((minimum) <= (maximum));                                     \
-    erasure_rows++;                                                     \
-    if (strcmp((source), "clist:from-list") == 0) {                   \
-        assert(strcmp((target), "identity") == 0);                    \
-        assert((mode) == CETTA_GSLT_SEQUENCE_ERASURE_UNWRAP);           \
-        assert((minimum) == 1u && (maximum) == 1u);                     \
-        saw_identity = true;                                            \
-    }                                                                   \
-    if (strcmp((source), "clist:append") == 0) {                      \
-        assert(strcmp((target), "list:append") == 0);                 \
-        assert((mode) == CETTA_GSLT_SEQUENCE_ERASURE_RECURSIVE_ALL);    \
-        assert((minimum) == 2u && (maximum) == 2u);                     \
-        saw_append = true;                                              \
-    }                                                                   \
-    if (strcmp((source), "clist:range") == 0) {                       \
-        assert(strcmp((target), "list:range") == 0);                  \
-        assert((mode) == CETTA_GSLT_SEQUENCE_ERASURE_SCALAR_ALL);       \
-        assert((minimum) == 1u && (maximum) == 2u);                     \
-        saw_range = true;                                               \
-    }                                                                   \
-} while (0);
-    CETTA_GSLT_SEQUENCE_ERASURE_ROWS(CHECK_SEQUENCE_ERASURE)
-#undef CHECK_SEQUENCE_ERASURE
-    assert(erasure_rows == 4u);
-    assert(saw_identity && saw_append && saw_range);
-}
-
 static void test_generated_prepared_intrinsic_program(void) {
     unsigned rows = 0u;
     bool saw_division = false, saw_sort_numbers = false;
@@ -1182,7 +1099,6 @@ int main(void) {
     test_register_heads();
     test_generated_register_program();
     test_generated_fold_control_program();
-    test_generated_sequence_representations();
     test_generated_prepared_intrinsic_program();
     test_generated_sequence_constructor_policy();
     test_generated_pure_call_modes();

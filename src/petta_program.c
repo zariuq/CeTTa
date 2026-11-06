@@ -460,6 +460,8 @@ static void petta_program_release_unused_signature_universe(
     PettaProgram *program, TermUniverse *universe);
 
 struct PettaProgram {
+    _Atomic uint64_t lifetime_references;
+    _Atomic bool closed;
     unsigned admitted_rule_forms;
     bool refresh_callability;
     Arena plans;
@@ -4323,6 +4325,8 @@ PettaProgram *petta_program_new_with_rules(unsigned admitted_forms) {
         return NULL;
     PettaProgram *program = calloc(1u, sizeof(*program));
     if (!program) return NULL;
+    atomic_init(&program->lifetime_references, 1u);
+    atomic_init(&program->closed, false);
     program->admitted_rule_forms = admitted_forms;
     if (!arena_try_init(&program->plans)) goto failed_plans;
     arena_set_runtime_kind(
@@ -4413,9 +4417,7 @@ bool petta_program_analysis_enabled(const PettaProgram *program) {
     return program && program->analysis;
 }
 
-void petta_program_free(PettaProgram *program) {
-    if (!program)
-        return;
+static void petta_program_dispose_metadata(PettaProgram *program) {
     /* A universe freed first has dropped its listings already. */
     for (size_t index = 0u; index < program->signature_universe_len; index++)
         term_universe_remove_root_provider(program->signature_universes[index],
@@ -4447,7 +4449,56 @@ void petta_program_free(PettaProgram *program) {
     free(program->transient_values);
     free(program->transient_plans);
     arena_free(&program->transient_plan_atoms);
-    free(program);
+}
+
+bool petta_program_lifetime_retain(PettaProgram *program) {
+    if (!program || atomic_load_explicit(&program->closed, memory_order_acquire))
+        return false;
+    uint64_t value = atomic_load_explicit(&program->lifetime_references,
+                                          memory_order_relaxed);
+    while (value && value != UINT64_MAX) {
+        if (atomic_compare_exchange_weak_explicit(&program->lifetime_references,
+                &value, value + 1u, memory_order_relaxed, memory_order_relaxed)) {
+            if (!atomic_load_explicit(&program->closed, memory_order_acquire))
+                return true;
+            petta_program_lifetime_release(program);
+            return false;
+        }
+    }
+    return false;
+}
+
+void petta_program_lifetime_release(PettaProgram *program) {
+    if (!program)
+        return;
+    uint64_t before = atomic_fetch_sub_explicit(&program->lifetime_references,
+                                               1u, memory_order_acq_rel);
+    if (!before)
+        abort();
+    if (before == 1u) {
+        if (!atomic_load_explicit(&program->closed, memory_order_acquire))
+            abort();
+        free(program);
+    }
+}
+
+void petta_program_free(PettaProgram *program) {
+    if (!program)
+        return;
+    /* Retired worker cleanup uses this same transition guard. Close before
+     * disposing metadata so reentrant finalizers only release their leases. */
+    bool entered_scope = !cetta_shared_transition_scope_active();
+    if (entered_scope)
+        cetta_shared_transition_scope_enter();
+    CettaSharedTransitionGuard destruction = {0};
+    cetta_shared_transition_guard_enter(&destruction);
+    if (!atomic_exchange_explicit(&program->closed, true, memory_order_acq_rel)) {
+        petta_program_dispose_metadata(program);
+        petta_program_lifetime_release(program);
+    }
+    cetta_shared_transition_guard_leave(&destruction);
+    if (entered_scope)
+        cetta_shared_transition_scope_leave();
 }
 
 const PettaPlanNode *petta_program_plan_current(
@@ -5820,7 +5871,8 @@ petta_program_relational_execution_class(
 
 void petta_program_forget_space(
     PettaProgram *program, const Space *space) {
-    if (!program || !space)
+    if (!program || !space ||
+        atomic_load_explicit(&program->closed, memory_order_acquire))
         return;
     for (size_t index = 0u;
          index < program->space_len; index++) {

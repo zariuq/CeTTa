@@ -1,4 +1,5 @@
 #include "foreign_provider.h"
+#include "foreign.h"
 #include <stdatomic.h>
 #include <stdlib.h>
 
@@ -41,16 +42,21 @@ Atom *cetta_foreign_provider_atom(Arena *arena, const CettaForeignProviderSpec *
     provider_release(provider);
     return atom;
 }
-bool cetta_foreign_provider_callable(const Atom *atom) { return provider_of(atom) != NULL; }
+bool cetta_foreign_provider_callable(const Atom *atom) {
+    return cetta_foreign_provider_callable_at(NULL, atom);
+}
+bool cetta_foreign_provider_callable_at(Space *space, const Atom *atom) {
+    return provider_of(atom) != NULL || cetta_foreign_object_provider_callable(space, atom);
+}
 bool cetta_foreign_provider_thread_affine(const Atom *atom) {
     ForeignProvider *provider = provider_of(atom);
-    return provider && provider->spec.owner_thread;
+    return (provider && provider->spec.owner_thread) || cetta_foreign_object_provider_callable(NULL, atom);
 }
 
-bool cetta_foreign_provider_open(const CettaInvocation *invocation,
+bool cetta_foreign_provider_open(Space *space, const CettaInvocation *invocation,
         CettaOwnedExecution *execution, CettaEvalCompletion *completion) {
     ForeignProvider *provider = invocation ? provider_of(invocation->head.skeleton) : NULL;
-    if (!provider) return false;
+    if (!provider) return cetta_foreign_object_provider_open(space, invocation, execution, completion);
     *execution = (CettaOwnedExecution){0};
     *completion = CETTA_EVAL_COMPLETE;
     if (!provider->spec.open(provider->spec.context, invocation, execution, completion) ||

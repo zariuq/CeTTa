@@ -1,0 +1,450 @@
+{
+ "python": [
+  {
+   "engine": "python",
+   "oracle_revision": "5e73833790d43d066f72be1548be2ee0fcab192d",
+   "search_sha256": "49d5f7490d589dfc524b378da8d741e167b1b9cde48b8ca6973d4dd741a65879",
+   "corpus_sha256": "2faadf2eb53d9b746e93f8ca89921fbba89b51f66c4ffc7471c6dd2c6e2484d6",
+   "sample_goals": 0,
+   "load_ns": 2446447864,
+   "prepare_ns": 6107500,
+   "work_ns": 16284908045,
+   "whole_ns": 18737463409,
+   "whole_scope": "load_prepare_work",
+   "user_s": 18.402968,
+   "system_s": 0.140757,
+   "peak_rss_kib": 252532,
+   "result": [
+    "RecallSummary",
+    "966",
+    [
+     [
+      "RecallAt",
+      "8",
+      [
+       "Mean",
+       "0.46076416967993816"
+      ],
+      [
+       "Complete",
+       "209",
+       "0.2163561076604555"
+      ]
+     ],
+     [
+      "RecallAt",
+      "16",
+      [
+       "Mean",
+       "0.5947082721706457"
+      ],
+      [
+       "Complete",
+       "312",
+       "0.32298136645962733"
+      ]
+     ],
+     [
+      "RecallAt",
+      "32",
+      [
+       "Mean",
+       "0.7343500778566839"
+      ],
+      [
+       "Complete",
+       "463",
+       "0.47929606625258797"
+      ]
+     ],
+     [
+      "RecallAt",
+      "64",
+      [
+       "Mean",
+       "0.8549311331214542"
+      ],
+      [
+       "Complete",
+       "609",
+       "0.6304347826086957"
+      ]
+     ]
+    ]
+   ]
+  },
+  {
+   "engine": "python",
+   "oracle_revision": "5e73833790d43d066f72be1548be2ee0fcab192d",
+   "search_sha256": "49d5f7490d589dfc524b378da8d741e167b1b9cde48b8ca6973d4dd741a65879",
+   "corpus_sha256": "2faadf2eb53d9b746e93f8ca89921fbba89b51f66c4ffc7471c6dd2c6e2484d6",
+   "sample_goals": 0,
+   "load_ns": 2558915388,
+   "prepare_ns": 4060413,
+   "work_ns": 16062243778,
+   "whole_ns": 18625219579,
+   "whole_scope": "load_prepare_work",
+   "user_s": 18.402455,
+   "system_s": 0.130938,
+   "peak_rss_kib": 252592,
+   "result": [
+    "RecallSummary",
+    "966",
+    [
+     [
+      "RecallAt",
+      "8",
+      [
+       "Mean",
+       "0.46076416967993816"
+      ],
+      [
+       "Complete",
+       "209",
+       "0.2163561076604555"
+      ]
+     ],
+     [
+      "RecallAt",
+      "16",
+      [
+       "Mean",
+       "0.5947082721706457"
+      ],
+      [
+       "Complete",
+       "312",
+       "0.32298136645962733"
+      ]
+     ],
+     [
+      "RecallAt",
+      "32",
+      [
+       "Mean",
+       "0.7343500778566839"
+      ],
+      [
+       "Complete",
+       "463",
+       "0.47929606625258797"
+      ]
+     ],
+     [
+      "RecallAt",
+      "64",
+      [
+       "Mean",
+       "0.8549311331214542"
+      ],
+      [
+       "Complete",
+       "609",
+       "0.6304347826086957"
+      ]
+     ]
+    ]
+   ]
+  },
+  {
+   "engine": "python",
+   "oracle_revision": "5e73833790d43d066f72be1548be2ee0fcab192d",
+   "search_sha256": "49d5f7490d589dfc524b378da8d741e167b1b9cde48b8ca6973d4dd741a65879",
+   "corpus_sha256": "2faadf2eb53d9b746e93f8ca89921fbba89b51f66c4ffc7471c6dd2c6e2484d6",
+   "sample_goals": 0,
+   "load_ns": 2751917016,
+   "prepare_ns": 4570520,
+   "work_ns": 16377647179,
+   "whole_ns": 19134134715,
+   "whole_scope": "load_prepare_work",
+   "user_s": 18.656492,
+   "system_s": 0.128467,
+   "peak_rss_kib": 252600,
+   "result": [
+    "RecallSummary",
+    "966",
+    [
+     [
+      "RecallAt",
+      "8",
+      [
+       "Mean",
+       "0.46076416967993816"
+      ],
+      [
+       "Complete",
+       "209",
+       "0.2163561076604555"
+      ]
+     ],
+     [
+      "RecallAt",
+      "16",
+      [
+       "Mean",
+       "0.5947082721706457"
+      ],
+      [
+       "Complete",
+       "312",
+       "0.32298136645962733"
+      ]
+     ],
+     [
+      "RecallAt",
+      "32",
+      [
+       "Mean",
+       "0.7343500778566839"
+      ],
+      [
+       "Complete",
+       "463",
+       "0.47929606625258797"
+      ]
+     ],
+     [
+      "RecallAt",
+      "64",
+      [
+       "Mean",
+       "0.8549311331214542"
+      ],
+      [
+       "Complete",
+       "609",
+       "0.6304347826086957"
+      ]
+     ]
+    ]
+   ]
+  }
+ ],
+ "metta": [
+  {
+   "binary_sha256": "f11e8311279f25b67189f8d1ab04b98d466f770a07761ba740bbb80258fb50f7",
+   "corpus_sha256": "2faadf2eb53d9b746e93f8ca89921fbba89b51f66c4ffc7471c6dd2c6e2484d6",
+   "search_sha256": "52340c4243423d08547d182eeff75cba1373cd924861885a55269e86c1f5e636",
+   "atp_sha256": "29853cf51e64d3a3fb388e2b8e46244f81341baad920e9437d9d0e22d205e615",
+   "library_sha256": "31aac757918f8b1f98c4c43224e3dacdca05fe139a50981bc57086e92bd0d6cb",
+   "component": "recall",
+   "sample_goals": 0,
+   "load_ns": 2936651985,
+   "prepare_ns": 404452097,
+   "work_ns": 13197462088,
+   "whole_ns": 16632281318,
+   "whole_scope": "parent_process_start_to_exit",
+   "user_s": 16.052958,
+   "system_s": 0.244831,
+   "peak_rss_kib": 411256,
+   "result": [
+    "RecallSummary",
+    "966",
+    [
+     [
+      "RecallAt",
+      "8",
+      [
+       "Mean",
+       "0.46076416967993816"
+      ],
+      [
+       "Complete",
+       "209",
+       "0.2163561076604555"
+      ]
+     ],
+     [
+      "RecallAt",
+      "16",
+      [
+       "Mean",
+       "0.5947082721706457"
+      ],
+      [
+       "Complete",
+       "312",
+       "0.32298136645962733"
+      ]
+     ],
+     [
+      "RecallAt",
+      "32",
+      [
+       "Mean",
+       "0.7343500778566839"
+      ],
+      [
+       "Complete",
+       "463",
+       "0.47929606625258797"
+      ]
+     ],
+     [
+      "RecallAt",
+      "64",
+      [
+       "Mean",
+       "0.8549311331214542"
+      ],
+      [
+       "Complete",
+       "609",
+       "0.6304347826086957"
+      ]
+     ]
+    ]
+   ]
+  },
+  {
+   "binary_sha256": "f11e8311279f25b67189f8d1ab04b98d466f770a07761ba740bbb80258fb50f7",
+   "corpus_sha256": "2faadf2eb53d9b746e93f8ca89921fbba89b51f66c4ffc7471c6dd2c6e2484d6",
+   "search_sha256": "52340c4243423d08547d182eeff75cba1373cd924861885a55269e86c1f5e636",
+   "atp_sha256": "29853cf51e64d3a3fb388e2b8e46244f81341baad920e9437d9d0e22d205e615",
+   "library_sha256": "31aac757918f8b1f98c4c43224e3dacdca05fe139a50981bc57086e92bd0d6cb",
+   "component": "recall",
+   "sample_goals": 0,
+   "load_ns": 2834543977,
+   "prepare_ns": 391520399,
+   "work_ns": 14447026591,
+   "whole_ns": 17757762376,
+   "whole_scope": "parent_process_start_to_exit",
+   "user_s": 16.495851,
+   "system_s": 0.261934,
+   "peak_rss_kib": 411368,
+   "result": [
+    "RecallSummary",
+    "966",
+    [
+     [
+      "RecallAt",
+      "8",
+      [
+       "Mean",
+       "0.46076416967993816"
+      ],
+      [
+       "Complete",
+       "209",
+       "0.2163561076604555"
+      ]
+     ],
+     [
+      "RecallAt",
+      "16",
+      [
+       "Mean",
+       "0.5947082721706457"
+      ],
+      [
+       "Complete",
+       "312",
+       "0.32298136645962733"
+      ]
+     ],
+     [
+      "RecallAt",
+      "32",
+      [
+       "Mean",
+       "0.7343500778566839"
+      ],
+      [
+       "Complete",
+       "463",
+       "0.47929606625258797"
+      ]
+     ],
+     [
+      "RecallAt",
+      "64",
+      [
+       "Mean",
+       "0.8549311331214542"
+      ],
+      [
+       "Complete",
+       "609",
+       "0.6304347826086957"
+      ]
+     ]
+    ]
+   ]
+  },
+  {
+   "binary_sha256": "f11e8311279f25b67189f8d1ab04b98d466f770a07761ba740bbb80258fb50f7",
+   "corpus_sha256": "2faadf2eb53d9b746e93f8ca89921fbba89b51f66c4ffc7471c6dd2c6e2484d6",
+   "search_sha256": "52340c4243423d08547d182eeff75cba1373cd924861885a55269e86c1f5e636",
+   "atp_sha256": "29853cf51e64d3a3fb388e2b8e46244f81341baad920e9437d9d0e22d205e615",
+   "library_sha256": "31aac757918f8b1f98c4c43224e3dacdca05fe139a50981bc57086e92bd0d6cb",
+   "component": "recall",
+   "sample_goals": 0,
+   "load_ns": 2682446137,
+   "prepare_ns": 378747131,
+   "work_ns": 11812900279,
+   "whole_ns": 14964351210,
+   "whole_scope": "parent_process_start_to_exit",
+   "user_s": 14.455742,
+   "system_s": 0.234238,
+   "peak_rss_kib": 411632,
+   "result": [
+    "RecallSummary",
+    "966",
+    [
+     [
+      "RecallAt",
+      "8",
+      [
+       "Mean",
+       "0.46076416967993816"
+      ],
+      [
+       "Complete",
+       "209",
+       "0.2163561076604555"
+      ]
+     ],
+     [
+      "RecallAt",
+      "16",
+      [
+       "Mean",
+       "0.5947082721706457"
+      ],
+      [
+       "Complete",
+       "312",
+       "0.32298136645962733"
+      ]
+     ],
+     [
+      "RecallAt",
+      "32",
+      [
+       "Mean",
+       "0.7343500778566839"
+      ],
+      [
+       "Complete",
+       "463",
+       "0.47929606625258797"
+      ]
+     ],
+     [
+      "RecallAt",
+      "64",
+      [
+       "Mean",
+       "0.8549311331214542"
+      ],
+      [
+       "Complete",
+       "609",
+       "0.6304347826086957"
+      ]
+     ]
+    ]
+   ]
+  }
+ ]
+}

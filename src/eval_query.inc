@@ -73,8 +73,8 @@ Atom *eval_query_pattern_variables(Arena *arena, Atom *pattern) {
     return result;
 }
 
-CettaEvalQuery *eval_query_open_exports(Space *space, Arena *persistent, Registry *registry,
-                                Atom *source, Atom *variables, int fuel) {
+static CettaEvalQuery *eval_query_open_internal(Space *space, Arena *persistent, Registry *registry,
+                                Atom *source, Atom *variables, int fuel, bool values) {
     if (!g_library_context || !space || !source || fuel < -1)
         return NULL;
     CettaEvalQuery *query = calloc(1u, sizeof(*query));
@@ -99,6 +99,21 @@ CettaEvalQuery *eval_query_open_exports(Space *space, Arena *persistent, Registr
         eval_current_language_id() == CETTA_LANGUAGE_PETTA
         ? petta_program_plan_current_in(query->library->petta_program,
               &query->storage, owned) : NULL;
+    if (values) {
+        if (owned->kind != ATOM_EXPR || !owned->expr.len) { eval_query_close(query); return NULL; }
+        if (eval_current_language_id() == CETTA_LANGUAGE_PETTA) {
+            owned = atom_deep_copy_mapped(&query->storage, owned, eval_petta_host_value_leaf, NULL);
+            plan = owned ? cetta_value_invocation_plan(&query->storage, owned->expr.len,
+                PETTA_PLAN_DYNAMIC_CALL, false) : NULL;
+            if (!plan) { eval_query_close(query); return NULL; }
+        } else if (eval_current_language_id() == CETTA_LANGUAGE_HE) {
+            Atom **arguments = arena_alloc(&query->storage, sizeof(*arguments) * (size_t)owned->expr.len);
+            if (!arguments) { eval_query_close(query); return NULL; }
+            for (CettaExprIndex i = 0; i < owned->expr.len; i++)
+                arguments[i] = atom_he_evaluated_copy(&query->storage, owned->expr.elems[i]);
+            owned = atom_expr(&query->storage, arguments, owned->expr.len);
+        }
+    }
     query->literal = owned && (owned->kind != ATOM_EXPR ||
         owned->expr.len == 0u || atom_is_error(owned));
     EvalQueryScope scope;
@@ -126,6 +141,16 @@ CettaEvalQuery *eval_query_open_exports(Space *space, Arena *persistent, Registr
 CettaEvalQuery *eval_query_open(Space *space, Arena *persistent, Registry *registry,
                                 Atom *source, int fuel) {
     return eval_query_open_exports(space, persistent, registry, source, NULL, fuel);
+}
+
+CettaEvalQuery *eval_query_open_exports(Space *space, Arena *persistent, Registry *registry,
+        Atom *source, Atom *variables, int fuel) {
+    return eval_query_open_internal(space, persistent, registry, source, variables, fuel, false);
+}
+
+CettaEvalQuery *eval_query_open_values(Space *space, Arena *persistent, Registry *registry,
+        Atom *source, int fuel) {
+    return eval_query_open_internal(space, persistent, registry, source, NULL, fuel, true);
 }
 
 bool eval_query_has_retained_driver(const CettaEvalQuery *query) {

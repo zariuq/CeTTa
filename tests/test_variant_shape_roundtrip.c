@@ -33,6 +33,43 @@ static void init_test_symbols(SymbolTable *symbols) {
     g_var_intern = NULL;
 }
 
+static void check_variable_header_aliases(Arena *first, Arena *second,
+    Arena *out, VariantBank *bank, SymbolId pair,
+    const CettaVariantShapeOptions *options) {
+    Atom *x = atom_var_with_id(first, "x", var_id_from_base(501));
+    Atom *alias = atom_var_with_id(second, "alias", x->var_id);
+    assert(x != alias && atom_eq(x, alias));
+    Atom *shared = make_term3(first, pair, x, alias);
+    VariantShape shared_shape;
+    assert(variant_shape_from_atom(bank, shared, &shared_shape));
+    assert(shared_shape.slot_env.len == 1u);
+    Atom *roundtrip = variant_shape_materialize(out, &shared_shape);
+    assert(roundtrip && atom_eq(roundtrip, shared));
+
+    Atom *other = atom_var_with_id(second, "x", var_id_from_base(502));
+    assert(!atom_eq(x, other));
+    Atom *distinct = make_term3(first, pair, x, other);
+    VariantShape distinct_shape;
+    assert(variant_shape_from_atom(bank, distinct, &distinct_shape));
+    assert(distinct_shape.slot_env.len == 2u);
+    assert(!atom_eq(shared_shape.skeleton, distinct_shape.skeleton));
+
+    /* Conflicting preseeded maps must still fail: different variables
+     * cannot both occupy one canonical slot. */
+    CettaVarMap forward, reverse;
+    cetta_var_map_init(&forward);
+    cetta_var_map_init(&reverse);
+    Atom *slot = shared_shape.skeleton->expr.elems[1];
+    assert(cetta_var_map_add(&forward, x->var_id, slot));
+    assert(cetta_var_map_add(&forward, other->var_id, slot));
+    assert(!variant_shape_canonicalize_atom(out, distinct,
+        &forward, &reverse, options));
+    cetta_var_map_free(&reverse);
+    cetta_var_map_free(&forward);
+    variant_shape_free(&distinct_shape);
+    variant_shape_free(&shared_shape);
+}
+
 int main(void) {
     SymbolTable symbols;
     init_test_symbols(&symbols);
@@ -57,6 +94,8 @@ int main(void) {
 
     SymbolId pair_sym = symbol_intern_cstr(g_symbols, "pair");
     SymbolId wrap_sym = symbol_intern_cstr(g_symbols, "wrap");
+
+    check_variable_header_aliases(&src_a, &src_b, &out, &bank, pair_sym, &options);
 
     Atom *x = atom_var_with_id(&src_a, "x", var_id_from_base(101));
     Atom *pair_term = make_term3(&src_a, pair_sym, x, x);

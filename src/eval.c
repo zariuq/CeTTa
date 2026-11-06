@@ -2,6 +2,7 @@
 #include "library.h"
 #include "linux_stack_bounds.h"
 #include "petta_program.h"
+#include "petta_contract_core.h"
 #include "invocation_plan.h"
 #include "eval_invocation.h"
 #include "eval_query.h"
@@ -1495,6 +1496,19 @@ typedef struct {
     CettaCount len, cap;
 } TempSpaceSet;
 
+struct CettaEvalResources {
+    TempSpaceSet made, listed;
+    TempSpaceSet created;
+    EvalGc collector;
+    CettaNativeMemory *memory;
+    uint64_t retirement_seen;
+};
+static __thread CettaEvalResources *g_eval_resources;
+static __thread TempSpaceSet g_new_space_track_fallback;
+#define g_new_space_track (*(g_eval_resources ? &g_eval_resources->created : &g_new_space_track_fallback))
+static __thread TempSpaceSet g_made_spaces_fallback, g_listed_spaces_fallback;
+#define g_made_spaces (*(g_eval_resources ? &g_eval_resources->made : &g_made_spaces_fallback))
+#define g_listed_spaces (*(g_eval_resources ? &g_eval_resources->listed : &g_listed_spaces_fallback))
 /* A space made for one evaluation (`new-space`, a snapshot, an inventory)
  * lives while an arena holds an atom of it, as a foreign record does
  * (ArenaHeldResources): atom_space takes a hold in its arena, and the reset
@@ -1535,21 +1549,14 @@ static _Atomic uint64_t g_space_release_epoch = 0u;
 void eval_resource_retirement_notify(void) {
     atomic_fetch_add_explicit(&g_space_release_epoch, 1u, memory_order_relaxed);
 }
-struct CettaEvalResources {
-    TempSpaceSet made;
-    TempSpaceSet listed;
-    TempSpaceSet created;
-    EvalGc collector;
-    CettaNativeMemory *memory;
-    uint64_t release_seen;
-};
-static __thread CettaEvalResources *g_eval_resources;
-static __thread CettaEvalResources g_eval_resources_fallback;
-#define CURRENT_RESOURCES (g_eval_resources ? g_eval_resources : &g_eval_resources_fallback)
-#define g_made_spaces (CURRENT_RESOURCES->made)
-#define g_listed_spaces (CURRENT_RESOURCES->listed)
-#define g_new_space_track (CURRENT_RESOURCES->created)
-#define g_space_release_seen (CURRENT_RESOURCES->release_seen)
+static _Thread_local uint64_t g_space_release_seen_fallback;
+#define g_space_release_seen (*(g_eval_resources ? &g_eval_resources->retirement_seen : &g_space_release_seen_fallback))
+/* Held spaces made since this thread's last safe point. */
+
+/* Held spaces a safe point found held: each is examined again only when its
+   last hold goes. */
+
+
 
 static void *space_hold_detach(Space *space);
 static pthread_mutex_t g_new_space_drained_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -2198,6 +2205,17 @@ bool eval_current_builtin_allowed(const char *name) {
         (g_library_context && cetta_native_module_builtin_enabled &&
          cetta_native_module_builtin_enabled(g_library_context,
              g_library_context->active_mask, name));
+}
+
+bool eval_current_python_object_head(SymbolId head) {
+    if (!g_library_context) return false;
+    const char *name = symbol_bytes(g_symbols, head);
+    if (name && name[0] == '&') {
+        Atom reference = {.kind = ATOM_SYMBOL, .sym_id = head};
+        return cetta_foreign_object_provider_callable(NULL, &reference);
+    }
+    return g_library_context && cetta_foreign_object_head(
+        g_library_context->foreign_runtime, name);
 }
 
 bool eval_current_pattern_module_enabled(void) {
@@ -4210,9 +4228,6 @@ static bool grounded_dispatch_accepts_data_arg(Atom *head, uint32_t arg_index) {
     if (head->sym_id == g_builtin_syms.minimal_foldl_llist &&
         (arg_index == 0 || arg_index == 1 || arg_index == 4))
         return true;
-    if (head->sym_id == g_builtin_syms.minimal_foldl_sequence &&
-        (arg_index == 0u || arg_index == 1u || arg_index == 5u))
-        return true;
     if (head->sym_id == g_builtin_syms.minimal_space_contains_exact &&
         arg_index == 1)
         return true;
@@ -4395,21 +4410,54 @@ static bool prime_need_is_canonical_app(const Atom *atom);
  * forces an application far enough to reveal its outer constructor while its
  * fields remain suspended.  Full normal-form checks below additionally walk
  * those fields for eager/observation paths. */
+typedef enum {
+    EVAL_HEAD_NOT_CONSTRUCTOR = 0,
+    EVAL_HEAD_CONSTRUCTOR = 1,
+    /* An HE constructor with one declared function type over parameters
+     * that are no metatype: HE's evaluation of its application over values
+     * is the application where HE's typing finds it well typed. */
+    EVAL_HEAD_CHECKED_CONSTRUCTOR = 2,
+} EvalConstructorHead;
+
+/* Whether HE's typing finds the application `atom` well typed (the type
+ * stamp store reads it by its shape). */
+static bool eval_he_application_well_typed(Space *s, Arena *a, Atom *atom) {
+    int known = space_type_stamps_count(s, a, atom);
+    if (known >= 0)
+        return known > 0;
+    Atom **types = NULL;
+    uint32_t count = get_atom_types(s, a, atom, &types);
+    free(types);
+    return count > 0u;
+}
+
+static EvalConstructorHead atom_constructor_head_kind(Space *s, Arena *a,
+                                                      Atom *atom);
+
 static bool atom_has_constructor_head(Space *s, Arena *a, Atom *atom) {
+    EvalConstructorHead kind = atom_constructor_head_kind(s, a, atom);
+    return kind == EVAL_HEAD_CONSTRUCTOR ||
+        (kind == EVAL_HEAD_CHECKED_CONSTRUCTOR &&
+         eval_he_application_well_typed(s, a, atom));
+}
+
+static EvalConstructorHead atom_constructor_head_kind(Space *s, Arena *a,
+                                                      Atom *atom) {
     if (!atom || atom->kind != ATOM_EXPR || atom->expr.len == 0u)
-        return false;
+        return EVAL_HEAD_NOT_CONSTRUCTOR;
     /* Evaluator-owned Prime forms compute even when their symbols have no
      * equation or grounded-operation registration. */
     if (eval_current_language_id() == CETTA_LANGUAGE_PRIME &&
         (prime_need_is_explicit_control_form(atom) ||
          prime_need_is_canonical_app(atom)))
-        return false;
+        return EVAL_HEAD_NOT_CONSTRUCTOR;
     Atom *head = atom->expr.elems[0];
     if (!head || registry_lookup_atom(head))
-        return false;
+        return EVAL_HEAD_NOT_CONSTRUCTOR;
     if (head->kind == ATOM_GROUNDED)
         return head->ground.gkind != GV_CAPTURE &&
-               head->ground.gkind != GV_FOREIGN;
+               head->ground.gkind != GV_FOREIGN
+            ? EVAL_HEAD_CONSTRUCTOR : EVAL_HEAD_NOT_CONSTRUCTOR;
     /* LCons is interned for the native list consumers, not an evaluator
      * operation. Let it pass the same equation, callable and type checks as
      * any other constructor. Its fields must still pass the normal-form
@@ -4421,12 +4469,12 @@ static bool atom_has_constructor_head(Space *s, Arena *a, Atom *atom) {
         (g_library_context && g_library_context->foreign_runtime &&
          cetta_foreign_is_callable_atom(head)) ||
         eval_space_has_equations(s, head->sym_id))
-        return false;
+        return EVAL_HEAD_NOT_CONSTRUCTOR;
     /* Typecheck-v2 erasure heads are operations, not constructors: freezing
      * them as normal forms would return them inert before evaluation. */
     if (cetta_petta_data_op_applies(
             head->sym_id, atom->expr.len - 1u))
-        return false;
+        return EVAL_HEAD_NOT_CONSTRUCTOR;
     /* PeTTa resolves application heads against the live Prolog engine, so a
      * name the boundary knows at this arity is a call, not a constructor —
      * in nested positions exactly as at the root. */
@@ -4434,24 +4482,41 @@ static bool atom_has_constructor_head(Space *s, Arena *a, Atom *atom) {
         g_library_context &&
         petta_eval_extension_named_arity(
             head->sym_id, atom->expr.len - 1u).known)
-        return false;
+        return EVAL_HEAD_NOT_CONSTRUCTOR;
     /* So is each of PeTTa's own forms, as at the root
      * (petta_atom_requires_control_eval): its lowering, not this walk,
      * decides what an occurrence denotes.  `(cons 1 (2 3))` in an argument
      * is the list (1 2 3), not a three-field constructor. */
     if (eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
         petta_semantics_form(head->sym_id) != PETTA_FORM_NONE)
-        return false;
+        return EVAL_HEAD_NOT_CONSTRUCTOR;
     Atom **head_types = NULL;
     uint32_t ntypes = eval_get_atom_types_profiled(s, a, head, &head_types);
+    CettaExprLen arity = atom->expr.len - 1u;
+    if (eval_current_language_id() == CETTA_LANGUAGE_HE && ntypes == 1u &&
+        is_function_type(head_types[0]) &&
+        head_types[0]->expr.len == (CettaExprLen)(arity + 2u)) {
+        bool computed = true;
+        for (CettaExprLen i = 0u; computed && i < arity; i++) {
+            Atom *parameter = head_types[0]->expr.elems[i + 1u];
+            computed = !atom_is_symbol_id(parameter, g_builtin_syms.atom) &&
+                !atom_is_symbol_id(parameter, g_builtin_syms.expression) &&
+                !atom_is_symbol_id(parameter, g_builtin_syms.symbol) &&
+                !atom_is_symbol_id(parameter, g_builtin_syms.variable) &&
+                !atom_is_symbol_id(parameter, g_builtin_syms.grounded);
+        }
+        free(head_types);
+        return computed ? EVAL_HEAD_CHECKED_CONSTRUCTOR
+                        : EVAL_HEAD_NOT_CONSTRUCTOR;
+    }
     for (uint32_t ti = 0u; ti < ntypes; ti++) {
         if (is_function_type(head_types[ti])) {
             free(head_types);
-            return false;
+            return EVAL_HEAD_NOT_CONSTRUCTOR;
         }
     }
     free(head_types);
-    return true;
+    return EVAL_HEAD_CONSTRUCTOR;
 }
 
 /* What one walk learned of a node in a given position: a value shares
@@ -4549,7 +4614,7 @@ static void eval_node_memo_free(EvalNodeMemo *memo) {
 typedef struct {
     SymbolId head;
     CettaExprLen arity;
-    bool constructor;
+    EvalConstructorHead constructor;
 } EvalConstructorHeadMemo;
 
 static bool atom_is_constructor_normal_form(Space *s, Arena *a, Atom *atom,
@@ -4610,15 +4675,19 @@ static bool atom_is_constructor_normal_form(Space *s, Arena *a, Atom *atom,
                 break;
             }
         }
-        bool constructor = known < memo_len
+        EvalConstructorHead constructor = known < memo_len
             ? memo[known].constructor
-            : atom_has_constructor_head(s, a, cur);
+            : atom_constructor_head_kind(s, a, cur);
         if (known == memo_len && named &&
             memo_len < sizeof(memo) / sizeof(memo[0]))
             memo[memo_len++] = (EvalConstructorHeadMemo){
                 .head = head->sym_id, .arity = arity,
                 .constructor = constructor};
-        if (!constructor)
+        /* A checked constructor's node is a value where it is well typed,
+         * which each node decides for itself. */
+        if (constructor == EVAL_HEAD_NOT_CONSTRUCTOR ||
+            (constructor == EVAL_HEAD_CHECKED_CONSTRUCTOR &&
+             !eval_he_application_well_typed(s, a, cur)))
             goto done;
         for (CettaExprIndex i = 1; i < cur->expr.len; i++)
             PUSH_ATOM(cur->expr.elems[i]);
@@ -15002,27 +15071,18 @@ bool eval_resource_descriptor_hold(Arena *arena, GroundedKind kind, void *descri
 
 static HyperposeStorageOwner *hyperpose_storage_owner_new(void) {
     HyperposeStorageOwner *owner = calloc(1u, sizeof(*owner));
-    if (!owner) return NULL;
+    if (!owner)
+        return NULL;
     atomic_init(&owner->references, 1u);
     hashcons_init_compact(&owner->hashcons);
-    if (!owner->hashcons.table) { free(owner); return NULL; }
-    if (!arena_try_init_detached(&owner->persistent_arena)) {
-        hashcons_free(&owner->hashcons); free(owner); return NULL;
-    }
-    if (!arena_try_init_detached(&owner->eval_arena)) {
-        arena_free(&owner->persistent_arena);
-        hashcons_free(&owner->hashcons); free(owner); return NULL;
-    }
-    if (!term_universe_init_with_store_format(&owner->term_universe,
-            TERM_UNIVERSE_STORE_FORMAT_COMPACT32_V1)) {
-        arena_free(&owner->eval_arena); arena_free(&owner->persistent_arena);
-        hashcons_free(&owner->hashcons); free(owner); return NULL;
-    }
+    arena_init(&owner->persistent_arena);
+    arena_init(&owner->eval_arena);
     owner->persistent_arena.resource_scope = owner;
     owner->eval_arena.resource_scope = owner;
-    owner->term_universe.resource_scope = owner;
     arena_set_hashcons(&owner->persistent_arena, &owner->hashcons);
     arena_set_hashcons(&owner->eval_arena, &owner->hashcons);
+    term_universe_init(&owner->term_universe);
+    owner->term_universe.resource_scope = owner;
     term_universe_set_persistent_arena(&owner->term_universe, &owner->persistent_arena);
     owner->owned_spaces.owner = owner;
     atomic_fetch_add_explicit(&g_hyperpose_storage_owners_live, 1u, memory_order_relaxed);
@@ -15104,8 +15164,10 @@ static void hyperpose_storage_owner_release(void *opaque) {
     pthread_mutex_unlock(&g_hyperpose_descriptor_mutex);
     for (CettaCount i = 0u; i < owner->owned_spaces.len; i++) {
         HyperposeOwnedSpace owned = owner->owned_spaces.items[i];
-        if (!owned.space)
+        if (!owned.space) {
+            petta_program_lifetime_release(owned.petta_program);
             continue;
+        }
         void *base_hold = space_hold_detach(owned.space);
         if (owned.petta_program)
             petta_program_forget_space(owned.petta_program, owned.space);
@@ -15114,6 +15176,7 @@ static void hyperpose_storage_owner_release(void *opaque) {
             !arena_owns_ptr(&owner->eval_arena, owned.space))
             free(owned.space);
         space_lifetime_unpin(base_hold);
+        petta_program_lifetime_release(owned.petta_program);
     }
     free(owner->owned_spaces.items);
     TempSpaceSet *sets[] = {&owner->made_spaces, &owner->listed_spaces,
@@ -15121,8 +15184,10 @@ static void hyperpose_storage_owner_release(void *opaque) {
     for (size_t set = 0u; set < sizeof(sets) / sizeof(sets[0]); set++) {
         for (CettaCount i = 0u; i < sets[set]->len; i++) {
             EvalTrackedSpace tracked = sets[set]->items[i];
-            if (!tracked.space)
+            if (!tracked.space) {
+                petta_program_lifetime_release(tracked.petta_program);
                 continue;
+            }
             void *base_hold = space_hold_detach(tracked.space);
             if (tracked.petta_program)
                 petta_program_forget_space(tracked.petta_program, tracked.space);
@@ -15131,6 +15196,7 @@ static void hyperpose_storage_owner_release(void *opaque) {
                 !arena_owns_ptr(&owner->eval_arena, tracked.space))
                 free(tracked.space);
             space_lifetime_unpin(base_hold);
+            petta_program_lifetime_release(tracked.petta_program);
         }
         free(sets[set]->items);
     }
@@ -15348,8 +15414,12 @@ static bool hyperpose_owned_spaces_push(HyperposeOwnedSpaces *spaces,
         spaces->items = next;
         spaces->cap = next_cap;
     }
-    if (!hyperpose_descriptor_note_owner(spaces->owner, GV_SPACE, space))
+    if (petta_program && !petta_program_lifetime_retain(petta_program))
         return false;
+    if (!hyperpose_descriptor_note_owner(spaces->owner, GV_SPACE, space)) {
+        petta_program_lifetime_release(petta_program);
+        return false;
+    }
     spaces->items[spaces->len++] = (HyperposeOwnedSpace){
         .space = space,
         .petta_program = petta_program,
@@ -15364,6 +15434,15 @@ static bool hyperpose_adopt_tracked_spaces(
     TempSpaceSet *sources[] = {&g_made_spaces, &g_listed_spaces, &g_new_space_track};
     TempSpaceSet *targets[] = {&branch->storage->made_spaces,
         &branch->storage->listed_spaces, &branch->storage->legacy_spaces};
+    size_t held_set = 0u;
+    CettaCount held_index = 0u;
+    for (; held_set < sizeof(sources) / sizeof(sources[0]); held_set++) {
+        for (held_index = 0u; held_index < sources[held_set]->len; held_index++) {
+            PettaProgram *program = sources[held_set]->items[held_index].petta_program;
+            if (program && !petta_program_lifetime_retain(program))
+                goto release_programs;
+        }
+    }
     pthread_mutex_lock(&g_space_hold_mutex);
     for (size_t set = 0u; set < sizeof(sources) / sizeof(sources[0]); set++) {
         assert(!targets[set]->items && targets[set]->len == 0u);
@@ -15377,6 +15456,13 @@ static bool hyperpose_adopt_tracked_spaces(
     }
     pthread_mutex_unlock(&g_space_hold_mutex);
     return true;
+release_programs:
+    for (size_t set = 0u; set <= held_set; set++) {
+        CettaCount limit = set == held_set ? held_index : sources[set]->len;
+        for (CettaCount i = 0u; i < limit; i++)
+            petta_program_lifetime_release(sources[set]->items[i].petta_program);
+    }
+    return false;
 }
 
 typedef struct {
@@ -18865,178 +18951,6 @@ static PreparedFoldResult prepared_filter_single_result(
 }
 
 typedef struct {
-    SymbolId materializer;
-    SymbolId fallback_fold;
-    SymbolId empty;
-    SymbolId cons;
-} PreparedSequenceRepresentation;
-
-static bool prepared_sequence_representation_lookup(
-    Atom *key, PreparedSequenceRepresentation *representation_out) {
-    if (!key || key->kind != ATOM_SYMBOL || !representation_out ||
-        !g_symbols) {
-        return false;
-    }
-    const char *requested = atom_name_cstr(key);
-    bool found = false;
-    bool fold_found = false;
-#define MATCH_SEQUENCE_REPRESENTATION(                                  \
-    name, materializer_name, empty_name, cons_name) do {                \
-    if (!found && requested && strcmp(requested, (name)) == 0) {        \
-        representation_out->materializer =                              \
-            symbol_intern_cstr(g_symbols, (materializer_name));         \
-        representation_out->empty =                                    \
-            symbol_intern_cstr(g_symbols, (empty_name));                \
-        representation_out->cons =                                     \
-            symbol_intern_cstr(g_symbols, (cons_name));                 \
-        found = representation_out->materializer != SYMBOL_ID_NONE &&   \
-                representation_out->empty != SYMBOL_ID_NONE &&          \
-                representation_out->cons != SYMBOL_ID_NONE;             \
-    }                                                                   \
-} while (0);
-    CETTA_GSLT_SEQUENCE_REPRESENTATION_ROWS(
-        MATCH_SEQUENCE_REPRESENTATION)
-#undef MATCH_SEQUENCE_REPRESENTATION
-#define MATCH_SEQUENCE_FOLD_TARGET(name, target_name) do {              \
-    if (!fold_found && requested && strcmp(requested, (name)) == 0) {   \
-        representation_out->fallback_fold =                            \
-            symbol_intern_cstr(g_symbols, (target_name));               \
-        fold_found = representation_out->fallback_fold !=              \
-            SYMBOL_ID_NONE;                                             \
-    }                                                                   \
-} while (0);
-    CETTA_GSLT_SEQUENCE_FOLD_TARGET_ROWS(
-        MATCH_SEQUENCE_FOLD_TARGET)
-#undef MATCH_SEQUENCE_FOLD_TARGET
-    return found && fold_found;
-}
-
-/* Generated represented-sequence consumers keep their represented operand as
- * source syntax until the authored equation exposes the internal fold
- * handler.  Deferring the optional eager pure-call machine is semantics-safe
- * even when a user adds or replaces equations: the ordinary matcher remains
- * authoritative and the handler is reached only when the authored definition
- * actually calls it. */
-typedef struct {
-    const char *representation_name;
-    CettaExprIndex represented_operand;
-} PreparedSequenceFoldConsumer;
-
-static bool prepared_sequence_fold_consumer_lookup(
-    Atom *head, CettaExprLen arity,
-    PreparedSequenceFoldConsumer *consumer_out) {
-    if (!head || head->kind != ATOM_SYMBOL || !consumer_out)
-        return false;
-    const char *requested = atom_name_cstr(head);
-    bool found = false;
-#define MATCH_SEQUENCE_FOLD_CONSUMER(                                  \
-    representation_key_name, consumer_name, consumer_arity,            \
-    represented_operand_index) do {                                    \
-    if (!found && requested &&                                          \
-        strcmp(requested, (consumer_name)) == 0 &&                      \
-        arity == (consumer_arity)) {                                    \
-        consumer_out->representation_name = (representation_key_name);  \
-        consumer_out->represented_operand =                            \
-            (represented_operand_index);                                \
-        found = true;                                                    \
-    }                                                                   \
-} while (0);
-    CETTA_GSLT_SEQUENCE_FOLD_CONSUMER_ROWS(
-        MATCH_SEQUENCE_FOLD_CONSUMER)
-#undef MATCH_SEQUENCE_FOLD_CONSUMER
-    return found;
-}
-
-static bool prepared_sequence_fold_consumer_requires_authored_expansion(
-    Atom *head, CettaExprLen arity) {
-    PreparedSequenceFoldConsumer consumer;
-    return prepared_sequence_fold_consumer_lookup(
-        head, arity, &consumer);
-}
-
-static bool prepared_sequence_fold_consumer_equation_is_canonical(
-    Atom *equation, Atom *head, CettaExprLen arity,
-    const PreparedSequenceFoldConsumer *consumer) {
-    if (!equation || !head || !consumer || arity != 5u ||
-        consumer->represented_operand != 0u ||
-        equation->kind != ATOM_EXPR || equation->expr.len != 3u ||
-        !atom_is_symbol_id(
-            equation->expr.elems[0], g_builtin_syms.equals)) {
-        return false;
-    }
-
-    Atom *lhs = equation->expr.elems[1];
-    Atom *rhs = equation->expr.elems[2];
-    if (!lhs || lhs->kind != ATOM_EXPR ||
-        lhs->expr.len != arity + 1u ||
-        !atom_eq(lhs->expr.elems[0], head)) {
-        return false;
-    }
-    VarId operands[5];
-    for (CettaExprIndex i = 0u; i < arity; i++) {
-        Atom *operand = lhs->expr.elems[i + 1u];
-        if (!operand || operand->kind != ATOM_VAR)
-            return false;
-        operands[i] = operand->var_id;
-        for (CettaExprIndex prior = 0u; prior < i; prior++)
-            if (var_id_eq(operands[prior], operands[i]))
-                return false;
-    }
-
-    if (!rhs || rhs->kind != ATOM_EXPR || rhs->expr.len != 2u ||
-        !atom_is_symbol_id(rhs->expr.elems[0], g_builtin_syms.function)) {
-        return false;
-    }
-    Atom *chain = rhs->expr.elems[1];
-    if (!chain || chain->kind != ATOM_EXPR || chain->expr.len != 4u ||
-        !atom_is_symbol_id(chain->expr.elems[0], g_builtin_syms.chain)) {
-        return false;
-    }
-    Atom *context = chain->expr.elems[1];
-    Atom *space_binder = chain->expr.elems[2];
-    Atom *evaluation = chain->expr.elems[3];
-    if (!context || context->kind != ATOM_EXPR ||
-        context->expr.len != 1u ||
-        !atom_is_symbol_id(
-            context->expr.elems[0], g_builtin_syms.context_space) ||
-        !space_binder || space_binder->kind != ATOM_VAR ||
-        !evaluation || evaluation->kind != ATOM_EXPR ||
-        evaluation->expr.len != 2u ||
-        !atom_is_symbol_id(
-            evaluation->expr.elems[0], g_builtin_syms.eval)) {
-        return false;
-    }
-    for (CettaExprIndex i = 0u; i < arity; i++)
-        if (var_id_eq(space_binder->var_id, operands[i]))
-            return false;
-
-    Atom *handler = evaluation->expr.elems[1];
-    if (!handler || handler->kind != ATOM_EXPR ||
-        handler->expr.len != arity + 3u ||
-        !atom_is_symbol_id(
-            handler->expr.elems[0],
-            g_builtin_syms.minimal_foldl_sequence)) {
-        return false;
-    }
-    Atom *representation = handler->expr.elems[1];
-    if (!representation || representation->kind != ATOM_SYMBOL ||
-        strcmp(atom_name_cstr(representation),
-               consumer->representation_name) != 0) {
-        return false;
-    }
-    for (CettaExprIndex i = 0u; i < arity; i++) {
-        Atom *argument = handler->expr.elems[i + 2u];
-        if (!argument || argument->kind != ATOM_VAR ||
-            !var_id_eq(argument->var_id, operands[i])) {
-            return false;
-        }
-    }
-    Atom *handler_space = handler->expr.elems[arity + 2u];
-    return handler_space && handler_space->kind == ATOM_VAR &&
-           var_id_eq(handler_space->var_id, space_binder->var_id);
-}
-
-typedef struct {
     Atom *result;
     Bindings bindings;
     bool found;
@@ -19060,309 +18974,9 @@ static bool eval_capture_singleton_equation_expansion(
     return true;
 }
 
-static Atom *prepared_sequence_fold_find_canonical_equation(
-    Space *space, Atom *head, CettaExprLen arity,
-    const PreparedSequenceFoldConsumer *consumer) {
-    if (!space || !head || head->kind != ATOM_SYMBOL || !consumer)
-        return NULL;
-
-    SpaceEquationCursor cursor;
-    if (!space_equation_cursor_init(space, head->sym_id, &cursor))
-        return NULL;
-
-    Atom *canonical = NULL;
-    SpaceEquationOccurrenceId occurrence_id;
-    SpaceEquationCursorStep step;
-    while ((step = space_equation_cursor_next(
-                &cursor, &occurrence_id)) ==
-           SPACE_EQUATION_CURSOR_ITEM) {
-        SpaceEquationOccurrence occurrence;
-        if (!space_equation_occurrence_resolve(
-                occurrence_id, &occurrence)) {
-            return NULL;
-        }
-        if (canonical ||
-            !prepared_sequence_fold_consumer_equation_is_canonical(
-                occurrence.equation, head, arity, consumer)) {
-            return NULL;
-        }
-        canonical = occurrence.equation;
-    }
-    if (step == SPACE_EQUATION_CURSOR_INVALIDATED ||
-        !space_read_token_is_current(cursor.read)) {
-        return NULL;
-    }
-    return canonical;
-}
-
-/* Expand only the exact authored consumer equation, before HE's ordinary
- * tuple interpreter can force the represented operand.  The generated row
- * identifies the evaluation context; the revision-pinned cursor and
- * structural check make edits, extra equations, and wildcard rules decline to
- * the general evaluator while remaining valid through imported overlays. */
-static bool prepared_sequence_fold_expand_authored_consumer(
-    Space *space, Arena *arena, Atom *call,
-    const Bindings *current_env, Atom **result_out,
-    Bindings *bindings_out) {
-    if (result_out)
-        *result_out = NULL;
-    if (!space || !arena || !call || !current_env || !result_out ||
-        !bindings_out || call->kind != ATOM_EXPR ||
-        call->expr.len == 0u) {
-        return false;
-    }
-    if (gslt_match_chain_trace_active())
-        return false;
-    Atom *head = call->expr.elems[0];
-    CettaExprLen arity = call->expr.len - 1u;
-    PreparedSequenceFoldConsumer consumer;
-    if (!prepared_sequence_fold_consumer_lookup(
-            head, arity, &consumer)) {
-        return false;
-    }
-    Atom *equation = prepared_sequence_fold_find_canonical_equation(
-        space, head, arity, &consumer);
-    if (!equation)
-        return false;
-
-    Atom *bound_call = bindings_apply_if_vars(
-        current_env, arena, call);
-    if (!bound_call)
-        return false;
-    EvalSingletonEquationExpansion expansion = {0};
-    bindings_init(&expansion.bindings);
-    CettaCount emitted = query_equations_visit_singleton(
-        equation, bound_call, arena,
-        eval_capture_singleton_equation_expansion, &expansion);
-    if (emitted != 1u || !expansion.found || expansion.failed) {
-        bindings_free(&expansion.bindings);
-        return false;
-    }
-    *result_out = expansion.result;
-    bindings_move(bindings_out, &expansion.bindings);
-    return true;
-}
-
-static bool prepared_sequence_cell_view(
-    const PreparedSequenceRepresentation *representation,
-    Atom *cell, bool *at_end_out, Atom **item_out, Atom **tail_out) {
-    if (at_end_out)
-        *at_end_out = false;
-    if (item_out)
-        *item_out = NULL;
-    if (tail_out)
-        *tail_out = NULL;
-    if (!representation || !cell || !at_end_out || !item_out ||
-        !tail_out) {
-        return false;
-    }
-    if (atom_is_symbol_id(cell, representation->empty)) {
-        *at_end_out = true;
-        return true;
-    }
-    if (cell->kind != ATOM_EXPR || cell->expr.len != 3u ||
-        !atom_is_symbol_id(cell->expr.elems[0], representation->cons)) {
-        return false;
-    }
-    *item_out = cell->expr.elems[1];
-    *tail_out = cell->expr.elems[2];
-    return true;
-}
-
-typedef struct {
-    SymbolId target;
-    CettaGsltSequenceErasureMode mode;
-    CettaExprLen minimum_arity;
-    CettaExprLen maximum_arity;
-} PreparedSequenceErasureOperation;
-
-static bool prepared_sequence_erasure_operation_lookup(
-    Atom *representation_key, SymbolId source,
-    PreparedSequenceErasureOperation *operation_out) {
-    if (!representation_key || representation_key->kind != ATOM_SYMBOL ||
-        source == SYMBOL_ID_NONE || !operation_out || !g_symbols) {
-        return false;
-    }
-    const char *requested = atom_name_cstr(representation_key);
-    bool found = false;
-#define MATCH_SEQUENCE_ERASURE(                                        \
-    name, source_name, target_name, erasure_mode, minimum, maximum) do {\
-    SymbolId authored_source = symbol_intern_cstr(                       \
-        g_symbols, (source_name));                                       \
-    if (!found && requested && strcmp(requested, (name)) == 0 &&         \
-        source == authored_source) {                                     \
-        operation_out->target = (erasure_mode) ==                        \
-                CETTA_GSLT_SEQUENCE_ERASURE_UNWRAP                       \
-            ? SYMBOL_ID_NONE                                             \
-            : symbol_intern_cstr(g_symbols, (target_name));              \
-        operation_out->mode = (erasure_mode);                            \
-        operation_out->minimum_arity = (minimum);                        \
-        operation_out->maximum_arity = (maximum);                        \
-        found = (erasure_mode) == CETTA_GSLT_SEQUENCE_ERASURE_UNWRAP ||  \
-                operation_out->target != SYMBOL_ID_NONE;                 \
-    }                                                                    \
-} while (0);
-    CETTA_GSLT_SEQUENCE_ERASURE_ROWS(MATCH_SEQUENCE_ERASURE)
-#undef MATCH_SEQUENCE_ERASURE
-    return found;
-}
-
-typedef struct {
-    Atom *source;
-    PreparedSequenceErasureOperation operation;
-    Atom **elements;
-    CettaExprIndex next_argument;
-    bool initialized;
-} PreparedSequenceErasureFrame;
-
-static bool prepared_sequence_erasure_push(
-    PreparedSequenceErasureFrame **frames, size_t *length,
-    size_t *capacity, Atom *source) {
-    if (!frames || !length || !capacity || !source)
-        return false;
-    if (*length == *capacity) {
-        size_t next = *capacity ? *capacity * 2u : 16u;
-        if (next <= *capacity ||
-            next > SIZE_MAX / sizeof(**frames)) {
-            return false;
-        }
-        *frames = cetta_realloc(*frames, sizeof(**frames) * next);
-        *capacity = next;
-    }
-    (*frames)[(*length)++] = (PreparedSequenceErasureFrame){
-        .source = source,
-    };
-    return true;
-}
-
-/* Erase an authored sequence producer to the flat free-monoid
- * representation only through generated homomorphism rows.  The explicit
- * heap stack makes a deeply nested append tree independent of the C stack.
- * An unlisted producer, malformed arity, or incomplete recursive child
- * declines the whole transformation. */
-static bool prepared_sequence_erase_source(
-    Atom *representation_key, Arena *arena, Atom *source,
-    Atom **erased_out, bool *already_value_out) {
-    if (erased_out)
-        *erased_out = NULL;
-    if (already_value_out)
-        *already_value_out = false;
-    if (!representation_key || !arena || !source || !erased_out ||
-        !already_value_out)
-        return false;
-
-    PreparedSequenceErasureFrame *frames = NULL;
-    size_t length = 0u;
-    size_t capacity = 0u;
-    if (!prepared_sequence_erasure_push(
-            &frames, &length, &capacity, source)) {
-        free(frames);
-        return false;
-    }
-
-    Atom *completed = NULL;
-    bool ok = false;
-    bool root_is_value = false;
-    while (length > 0u) {
-        PreparedSequenceErasureFrame *frame = &frames[length - 1u];
-        if (!frame->initialized) {
-            if (!frame->source || frame->source->kind != ATOM_EXPR ||
-                frame->source->expr.len == 0u ||
-                frame->source->expr.elems[0]->kind != ATOM_SYMBOL ||
-                !prepared_sequence_erasure_operation_lookup(
-                    representation_key,
-                    frame->source->expr.elems[0]->sym_id,
-                    &frame->operation)) {
-                break;
-            }
-            if (length == 1u) {
-                root_is_value = frame->operation.mode ==
-                    CETTA_GSLT_SEQUENCE_ERASURE_UNWRAP;
-            }
-            CettaExprLen arity = frame->source->expr.len - 1u;
-            if (arity < frame->operation.minimum_arity ||
-                arity > frame->operation.maximum_arity) {
-                break;
-            }
-            if (frame->operation.mode ==
-                    CETTA_GSLT_SEQUENCE_ERASURE_UNWRAP) {
-                completed = frame->source->expr.elems[1u];
-                length--;
-                goto deliver_completed_erasure;
-            }
-
-            frame->elements = arena_alloc(
-                arena, sizeof(*frame->elements) *
-                    (size_t)frame->source->expr.len);
-            if (!frame->elements)
-                break;
-            frame->elements[0] = atom_symbol_id(
-                arena, frame->operation.target);
-            if (!frame->elements[0])
-                break;
-            if (frame->operation.mode ==
-                    CETTA_GSLT_SEQUENCE_ERASURE_SCALAR_ALL) {
-                if (arity > 0u) {
-                    memcpy(
-                        frame->elements + 1u,
-                        frame->source->expr.elems + 1u,
-                        sizeof(*frame->elements) * (size_t)arity);
-                }
-                completed = atom_expr(
-                    arena, frame->elements,
-                    frame->source->expr.len);
-                if (!completed)
-                    break;
-                length--;
-                goto deliver_completed_erasure;
-            }
-            if (frame->operation.mode !=
-                    CETTA_GSLT_SEQUENCE_ERASURE_RECURSIVE_ALL) {
-                break;
-            }
-            frame->initialized = true;
-            frame->next_argument = 0u;
-        }
-
-        if (frame->next_argument < frame->source->expr.len - 1u) {
-            Atom *child = frame->source->expr.elems[
-                frame->next_argument + 1u];
-            frame->next_argument++;
-            if (!prepared_sequence_erasure_push(
-                    &frames, &length, &capacity, child)) {
-                break;
-            }
-            continue;
-        }
-
-        completed = atom_expr(
-            arena, frame->elements, frame->source->expr.len);
-        if (!completed)
-            break;
-        length--;
-
-deliver_completed_erasure:
-        if (length == 0u) {
-            *erased_out = completed;
-            *already_value_out = root_is_value;
-            ok = true;
-            break;
-        }
-        PreparedSequenceErasureFrame *parent = &frames[length - 1u];
-        if (!parent->initialized || !parent->elements ||
-            parent->next_argument == 0u ||
-            parent->next_argument >= parent->source->expr.len) {
-            break;
-        }
-        parent->elements[parent->next_argument] = completed;
-    }
-    free(frames);
-    return ok;
-}
-
 /* Execute a replay-safe, single-result lexical fold with one precise moving
- * root: the current accumulator.  Items may be children of a flat expression
- * or cells of an authored sequence representation.  Step evaluation happens
+ * root: the current accumulator.  Items are the children of a flat
+ * expression.  Step evaluation happens
  * in a resettable nursery; the next accumulator is evacuated into the
  * alternate carry arena before the prior carry is reclaimed.  All other fold
  * semantics retain the ordinary evaluator/search-machine path. */
@@ -19411,14 +19025,13 @@ static PreparedFoldResult prepared_foldl_single_result(
     Space *s, Arena *result_arena, Atom *items, Atom *initial,
     Atom *accumulator_binder, Atom *item_binder, Atom *step_expression,
     const Bindings *outer_environment, int fuel,
-    const PreparedSequenceRepresentation *representation,
     Atom **result_out) {
     if (result_out)
         *result_out = NULL;
     if (!s || !result_arena || !items || !initial ||
         !accumulator_binder || !item_binder || !step_expression ||
         !result_out || fuel >= 0 ||
-        (!representation && items->kind != ATOM_EXPR) ||
+        items->kind != ATOM_EXPR ||
         accumulator_binder->kind != ATOM_VAR ||
         item_binder->kind != ATOM_VAR ||
         hyperpose_atom_has_thread_local_resource(initial) ||
@@ -19443,16 +19056,9 @@ static PreparedFoldResult prepared_foldl_single_result(
     if (eval_current_language_id() == CETTA_LANGUAGE_PRIME)
         closed_step = prime_need_source_argument(closed_step, NULL);
     if (!closed_step || !closed_initial || !closed_items ||
-        (!representation && closed_items->kind != ATOM_EXPR) ||
+        closed_items->kind != ATOM_EXPR ||
         hyperpose_atom_has_thread_local_resource(closed_initial)) {
         return PREPARED_FOLD_NOT_APPLICABLE;
-    }
-    bool sequence_trace = representation &&
-        prime_need_trace_enabled() != 0;
-    if (sequence_trace) {
-        fputs("[prepared-sequence] items=", stderr);
-        atom_print(closed_items, stderr);
-        fputc('\n', stderr);
     }
     PreparedFoldSafety safety = {
         .space = s,
@@ -19590,31 +19196,10 @@ static PreparedFoldResult prepared_foldl_single_result(
         }
     }
     CettaExprIndex index = 0u;
-    Atom *sequence_cursor = closed_items;
     while (outcome == PREPARED_FOLD_VALUE) {
-        Atom *item = NULL;
-        if (representation) {
-            bool at_end = false;
-            Atom *tail = NULL;
-            if (!prepared_sequence_cell_view(
-                    representation, sequence_cursor,
-                    &at_end, &item, &tail)) {
-                if (sequence_trace) {
-                    fputs("[prepared-sequence] malformed-cell=", stderr);
-                    atom_print(sequence_cursor, stderr);
-                    fputc('\n', stderr);
-                }
-                outcome = PREPARED_FOLD_NOT_APPLICABLE;
-                break;
-            }
-            if (at_end)
-                break;
-            sequence_cursor = tail;
-        } else {
-            if (index >= closed_items->expr.len)
-                break;
-            item = closed_items->expr.elems[index++];
-        }
+        if (index >= closed_items->expr.len)
+            break;
+        Atom *item = closed_items->expr.elems[index++];
         if (!space_read_token_is_current(safety.read)) {
             outcome = PREPARED_FOLD_NOT_APPLICABLE;
             break;
@@ -19802,15 +19387,6 @@ static Atom *petta_prepared_expand_partial_application(
                      .count = application->expr.len - 1u},
     };
     return cetta_invocation_materialize(arena, &invocation);
-}
-
-/* A list cell of the language: PeTTa's open cell or its `(cons H T)`
- * spelling; elsewhere the open cell only. */
-static bool prepared_collection_list_cell(
-    CettaLanguageId language_id, const Atom *atom) {
-    return language_id == CETTA_LANGUAGE_PETTA
-        ? petta_semantics_is_cons_constraint(atom)
-        : petta_semantics_is_open_cons_value(atom);
 }
 
 /* The continuation carried into the next round of a collection pull.  The
@@ -20025,7 +19601,7 @@ static PreparedFoldResult prepared_collection_pull_single_result(
         /* A constructed spine is walked where it lies: each list cell gives
          * an item, and a tail that is a cell continues the walk.  Any other
          * tail is the continuation, executed in the next round. */
-        if (prepared_collection_list_cell(language_id, cell)) {
+        if (petta_semantics_is_open_cons_value(cell)) {
             Atom *continuation = NULL;
             bool consumed = true;
             for (;;) {
@@ -20040,7 +19616,7 @@ static PreparedFoldResult prepared_collection_pull_single_result(
                 cetta_runtime_stats_inc(
                     CETTA_RUNTIME_COUNTER_PREPARED_COLLECTION_PULL_ITEM);
                 Atom *tail = cell->expr.elems[2];
-                if (!prepared_collection_list_cell(language_id, tail)) {
+                if (!petta_semantics_is_open_cons_value(tail)) {
                     continuation = tail;
                     break;
                 }
@@ -20567,6 +20143,11 @@ static Atom *resolve_registry_refs(Arena *a, Atom *atom) {
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_REGISTRY_RESOLVE_REWRITE);
     }
     return resolved;
+}
+
+Atom *eval_materialize_runtime_value(Space *space, Arena *arena, Atom *value) {
+    Atom *bound = registry_lookup_atom(value);
+    return materialize_runtime_token(space, arena, bound ? bound : value);
 }
 
 typedef struct {
@@ -21700,9 +21281,9 @@ void eval_cleanup_owned_new_spaces(Registry *registry, Space *root) {
 void eval_resources_free(CettaEvalResources *resources, PettaProgram *program,
                          Registry *registry, Space *root) {
     if (!resources) return;
+    eval_cleanup_owned_new_spaces_in_set(&resources->created, registry, root);
     eval_free_held_space_set(&resources->made);
     eval_free_held_space_set(&resources->listed);
-    eval_cleanup_owned_new_spaces_in_set(&resources->created, registry, root);
     /* Worker teardown can finish on another thread. Drain only this
      * program's resources; other live engines keep their own entries. */
     pthread_mutex_lock(&g_new_space_drained_mutex);
@@ -24198,6 +23779,9 @@ uint32_t eval_get_atom_types_profiled(Space *s, Arena *a, Atom *atom,
      * represented by a profiled cache entry. */
     if (g_profiled_type_budget || g_profiled_type_normalization_active)
         return eval_get_atom_types_profiled_uncached(s, a, atom, out_types);
+    /* An atom the type stamp store holds is read by its address. */
+    if (space_type_stamps_hold(s, atom))
+        return eval_get_atom_types_profiled_uncached(s, a, atom, out_types);
     ProfiledTypeCacheKey key;
     bool cacheable = profiled_type_cache_make_key(s, atom, &key);
     uint32_t cached_count = 0;
@@ -24214,7 +23798,9 @@ uint32_t eval_get_atom_types_profiled(Space *s, Arena *a, Atom *atom,
 
     uint32_t count = eval_get_atom_types_profiled_uncached(s, a, atom,
                                                            out_types);
-    if (cacheable)
+    /* Once the stamp store holds the atom, the cache keeps no copy of the
+     * whole value. */
+    if (cacheable && !space_type_stamps_hold(s, atom))
         profiled_type_cache_store_key(s, atom, &key, *out_types, count);
     return count;
 }
@@ -31676,12 +31262,12 @@ static bool dispatch_foreign_outcomes(Space *s, Arena *a, Atom *head,
                                       Atom **tail_next, Atom **tail_type,
                                       Bindings *tail_env,
                                       OutcomeSet *os) {
-    if (cetta_foreign_provider_callable(head)) {
+    if (cetta_foreign_provider_callable_at(s, head)) {
         CettaInvocation invocation = {.head = binding_value_from_atom(head),
             .supplied = {.atoms = args, .count = nargs}};
         CettaOwnedExecution execution = {0};
         CettaEvalCompletion completion = CETTA_EVAL_COMPLETE;
-        (void)cetta_foreign_provider_open(&invocation, &execution, &completion);
+        (void)cetta_foreign_provider_open(s, &invocation, &execution, &completion);
         while (completion == CETTA_EVAL_COMPLETE && !eval_native_interrupted()) {
             const CettaOwnedReturn *returned = NULL;
             CettaOwnedExecutionStep step = cetta_owned_execution_loan(&execution, &returned);
@@ -31702,11 +31288,17 @@ static bool dispatch_foreign_outcomes(Space *s, Arena *a, Atom *head,
                 break;
             }
             if (outcome.kind == CETTA_CALL_FAILURE) break;
-            /* An explicit provider raise is control in every host dialect.
-             * Error-shaped completed values still use ordinary completion. */
+            /* Python failures follow HE's Error-value convention. The tagged
+             * exception remains available to scopes and the Python adapter. */
             if (outcome.kind == CETTA_CALL_RAISED) {
-                petta_eval_raise(outcome.term);
-                break;
+                Atom *error_value = eval_current_language_id() == CETTA_LANGUAGE_HE
+                    ? cetta_foreign_he_error_value(a, cetta_invocation_materialize(a, &invocation), outcome.term)
+                    : NULL;
+                if (error_value) outcome = cetta_call_completed_value(error_value);
+                else {
+                    petta_eval_raise(outcome.term);
+                    break;
+                }
             }
             Atom *expression = NULL;
             if (!sequence_native_call(s, a, outcome, true, result_type, prefix, os, &expression)) {
@@ -32723,6 +32315,25 @@ static bool petta_named_state_apply(
     Atom *name = bindings_apply_if_vars(
         base, a, call->expr.elems[1]);
     Atom *value_expr = form == PETTA_FORM_GET_STATE ? NULL : call->expr.elems[2];
+    if (form == PETTA_FORM_BIND_STATE) {
+        Atom *candidate = bindings_apply_if_vars(base, a, value_expr);
+        if (cetta_foreign_object_binding_candidate(s, candidate)) {
+            /* The explicitly imported object bridge can name any result value.
+             * PeTTa's ordinary state bindings retain their existing protocol. */
+            if (!name || name->kind != ATOM_SYMBOL) return true;
+            OutcomeSet values;
+            outcome_set_init(&values);
+            eval_for_caller(s, a, NULL, candidate, fuel, base, true, &values);
+            for (CettaCount i = 0; i < values.len; i++) {
+                Atom *value = outcome_atom_materialize(a, &values.items[i]);
+                if (!value) continue;
+                registry_bind_id(g_registry, name->sym_id, eval_store_atom(eval_storage_arena(a), value));
+                outcome_set_add(outcomes, petta_semantics_success_value(a), &values.items[i].env);
+            }
+            outcome_set_free(&values);
+            return true;
+        }
+    }
     /* Extended Space binding borrows the generic host's inert authored-name
      * policy. It does not evaluate a name expression as named state does. */
     if (form == PETTA_FORM_BIND_STATE && value_expr &&
@@ -37283,6 +36894,17 @@ static bool prime_need_strict_argument_needs_eval(Space *s, Arena *a,
     return head->sym_id == g_builtin_syms.cons_atom;
 }
 
+/* How an untyped head's prepared answers meet the type the evaluator
+ * expects them at (eval_he_execution.inc, he_expected_cast). */
+typedef enum {
+    HE_CAST_NEUTRAL = 0u,
+    HE_CAST_AT_EXPECTED = 1u,
+    HE_CAST_NONE = 2u,
+    HE_CAST_DECLINE = 3u,
+} HeExpectedCast;
+static HeExpectedCast he_expected_cast(Space *space, Atom *call,
+                                       Atom *expected);
+
 static bool he_evaluated_call_answers_try(
     Space *space, Arena *arena, Atom *call, Atom *etype, int fuel,
     const Bindings *tuple_env, bool preserve_bindings, OutcomeSet *outcomes);
@@ -37450,17 +37072,6 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
             suspend_target)) {
         if (tail_replaces_env && *tail_next)
             *tail_replaces_env = true;
-        return true;
-    }
-
-    /* Prime has already had first refusal above, preserving call-time choice.
-     * HE may now expose an exact generated non-strict consumer equation before
-     * its typed/tuple argument interpreter.  This is ordinary authored
-     * equation expansion, not a second implementation of the fold. */
-    if (eval_current_language_id() == CETTA_LANGUAGE_HE &&
-        prepared_sequence_fold_expand_authored_consumer(
-            s, a, atom, current_env, tail_next, tail_env)) {
-        *tail_type = etype;
         return true;
     }
 
@@ -39198,7 +38809,6 @@ static bool prepared_minimal_worker_call(
             expr_arg(atom, 0u), expr_arg(atom, 1u),
             expr_arg(atom, 2u), expr_arg(atom, 3u),
             expr_arg(atom, 4u), outer_environment, fuel,
-            NULL,
             &fold_value);
         if (folded == PREPARED_FOLD_VALUE) {
             *outcome = cetta_call_completed_value(fold_value);
@@ -39208,148 +38818,6 @@ static bool prepared_minimal_worker_call(
             *outcome = cetta_call_interrupted();
             return true;
         }
-    }
-
-    if (head_id == g_builtin_syms.minimal_foldl_sequence && nargs == 7u) {
-        PreparedSequenceRepresentation representation;
-        if (!prepared_sequence_representation_lookup(
-                expr_arg(atom, 0u), &representation)) {
-            return false;
-        }
-        Atom *space_atom = expr_arg(atom, 6u);
-        Space *fold_space =
-            space_atom && space_atom->kind == ATOM_GROUNDED &&
-                    space_atom->ground.gkind == GV_SPACE
-                ? payload_resolve_space_read((Space *)space_atom->ground.ptr)
-                : NULL;
-        Atom *fold_value = NULL;
-        Atom *sequence_items = expr_arg(atom, 1u);
-        bool projected_source = false;
-        bool erasure_attempted = false;
-        bool erasure_admitted = false;
-        Atom *sequence_source = prime_need_source_argument(
-            sequence_items, &projected_source);
-        PreparedFoldResult folded = PREPARED_FOLD_NOT_APPLICABLE;
-        if (!projected_source) {
-            folded = prepared_foldl_single_result(
-                fold_space, a,
-                sequence_items, expr_arg(atom, 2u),
-                expr_arg(atom, 3u), expr_arg(atom, 4u),
-                expr_arg(atom, 5u), outer_environment, fuel,
-                &representation, &fold_value);
-        }
-        if (folded == PREPARED_FOLD_NOT_APPLICABLE) {
-            erasure_attempted = true;
-            Arena producer_scratch;
-            arena_init(&producer_scratch);
-            arena_set_runtime_kind(
-                &producer_scratch, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
-            arena_set_hashcons(&producer_scratch, NULL);
-            Atom *erased_source = NULL;
-            bool erased_is_value = false;
-            bool erased = prepared_sequence_erase_source(
-                    expr_arg(atom, 0u), &producer_scratch,
-                    sequence_source, &erased_source,
-                    &erased_is_value);
-            if (erased) {
-                erasure_admitted = true;
-                cetta_runtime_stats_inc(
-                    CETTA_RUNTIME_COUNTER_PREPARED_SEQUENCE_ERASURE_ADMISSION);
-            }
-            CettaCallOutcome produced_return = {0};
-            bool produced_ready = erased && (erased_is_value
-                ? (produced_return = cetta_call_completed_value(erased_source), true)
-                : prepared_pure_closed_call_try(fold_space, &producer_scratch,
-                    erased_source, fuel, false, true, NULL, &produced_return));
-            if (produced_ready && produced_return.kind != CETTA_CALL_VALUE) {
-                *outcome = produced_return;
-                arena_free(&producer_scratch);
-                return true;
-            }
-            Atom *produced = produced_ready ? produced_return.term : NULL;
-            if (produced) {
-                folded = prepared_foldl_single_result(
-                    fold_space, a,
-                    produced, expr_arg(atom, 2u),
-                    expr_arg(atom, 3u), expr_arg(atom, 4u),
-                    expr_arg(atom, 5u), outer_environment, fuel,
-                    NULL, &fold_value);
-            }
-            arena_free(&producer_scratch);
-        }
-        if (folded == PREPARED_FOLD_VALUE) {
-            if (erasure_admitted) {
-                cetta_runtime_stats_inc(
-                    CETTA_RUNTIME_COUNTER_PREPARED_SEQUENCE_ERASURE_COMMIT);
-            }
-            *outcome = cetta_call_completed_value(fold_value);
-            return true;
-        }
-        if (folded == PREPARED_FOLD_INTERRUPTED) {
-            *outcome = cetta_call_interrupted();
-            return true;
-        }
-        if (erasure_attempted) {
-            cetta_runtime_stats_inc(
-                CETTA_RUNTIME_COUNTER_PREPARED_SEQUENCE_ERASURE_DECLINE);
-        }
-
-        Atom *sequence_value = atom_var_with_id(
-            a, "$__prepared_sequence_value", fresh_var_id());
-        Atom *evaluate_sequence = projected_source
-            ? expr_arg(atom, 1u)
-            : (eval_current_language_id() == CETTA_LANGUAGE_HE
-                ? atom_expr(a, (Atom *[]){
-                    atom_symbol_id(a, g_builtin_syms.metta),
-                    expr_arg(atom, 1u), atom_symbol(a, "%Undefined%"),
-                    atom_space(a, fold_space)}, 4u)
-                : atom_expr2(a, atom_symbol_id(a, g_builtin_syms.eval),
-                             expr_arg(atom, 1u)));
-        Atom *materialized_items = atom_expr2(
-            a, atom_symbol_id(a, representation.materializer),
-            sequence_value);
-        Atom *ordinary_fold = atom_expr(
-            a,
-            (Atom *[]){
-                atom_symbol_id(a, representation.fallback_fold),
-                materialized_items,
-                expr_arg(atom, 2u),
-                expr_arg(atom, 3u),
-                expr_arg(atom, 4u),
-                expr_arg(atom, 5u),
-            },
-            6u);
-        /* The fallback materializes a producer and invokes a higher-level
-         * fold.  Unlike the admitted worker, neither is a single raw step. */
-        Atom *evaluate_fold = eval_current_language_id() == CETTA_LANGUAGE_HE
-            ? atom_expr(a, (Atom *[]){
-                atom_symbol_id(a, g_builtin_syms.metta), ordinary_fold,
-                atom_symbol(a, "%Undefined%"), atom_space(a, fold_space)}, 4u)
-            : atom_expr2(a, atom_symbol_id(a, g_builtin_syms.eval), ordinary_fold);
-        Atom *folded_value = atom_var_with_id(
-            a, "$__prepared_sequence_folded", fresh_var_id());
-        Atom *return_folded = atom_expr2(
-            a, atom_symbol_id(a, g_builtin_syms.return_text), folded_value);
-        Atom *finish_fold = atom_expr(
-            a,
-            (Atom *[]){
-                atom_symbol_id(a, g_builtin_syms.chain),
-                evaluate_fold,
-                folded_value,
-                return_folded,
-            },
-            4u);
-        Atom *fallback = atom_expr(
-            a,
-            (Atom *[]){
-                atom_symbol_id(a, g_builtin_syms.chain),
-                evaluate_sequence,
-                sequence_value,
-                finish_fold,
-            },
-            4u);
-        *outcome = cetta_call_value(fallback);
-        return true;
     }
 
     return false;
@@ -46221,10 +45689,33 @@ static bool petta_eval_machine_open_relation_declined(
     void *context, Space *space, SymbolId head, CettaExprLen arity,
     bool evaluate_result);
 
+/* The running HE shared execution has a typed call at the dispatch
+ * boundary: its calls are not handed to a prepared realization. */
+static _Thread_local bool g_he_shared_execution_typed_dispatch;
+static bool he_head_reaches_typed_dispatch(Space *space, SymbolId head,
+                                           CettaExprLen arity);
+static bool he_term_reaches_typed_dispatch(Space *space, const Atom *term);
+
+/* Whether a realization other than the shared machine's own dispatch must
+ * decline this call: a call of an HE run that can reach a typed call at the
+ * dispatch boundary. */
+static bool he_dispatch_keeps_call(Space *space, SymbolId head,
+                                   CettaExprLen arity) {
+    return g_he_shared_execution && g_he_shared_execution_typed_dispatch &&
+        he_head_reaches_typed_dispatch(space, head, arity);
+}
+
 static bool petta_eval_machine_execute_prepared_pure_call(
     void *context, Space *space, Arena *result_arena,
     const CettaInvocation *invocation, Atom *source_call,
     CettaCallOutcome *outcome) {
+    CettaExprLen dispatch_arity = 0u;
+    Atom *dispatch_head = invocation ? invocation->head.skeleton : NULL;
+    if (g_he_shared_execution && g_he_shared_execution_typed_dispatch &&
+        dispatch_head && dispatch_head->kind == ATOM_SYMBOL &&
+        cetta_invocation_arity(invocation, &dispatch_arity) &&
+        he_dispatch_keeps_call(space, dispatch_head->sym_id, dispatch_arity))
+        return false;
     return prepared_pure_closed_invocation_try(
         space, result_arena, invocation, source_call, -1, true, true,
         petta_eval_machine_prepared_pure_cache(context), outcome);
@@ -46444,6 +45935,57 @@ static PettaMachineBuiltinEquations petta_eval_machine_builtin_equations(
     return mode;
 }
 
+bool eval_petta_structural_version(Space *space, SymbolId head,
+                                   uint32_t arity, bool *range_proved,
+                                   Atom **instances, Arena *instance_arena) {
+    PettaProgram *program = g_library_context
+        ? g_library_context->petta_program : NULL;
+    if (!program || !space || eval_current_language_id() != CETTA_LANGUAGE_PETTA)
+        return false;
+    Arena keep;
+    arena_init(&keep);
+    PettaContractVersion version;
+    bool ok = petta_contract_trusted_version(program, space, head, arity,
+                                             &keep, &version) &&
+        version.arity == arity && version.space_count == 0u;
+    /* An INSTANCE fact gives its closed instance, where asked for. */
+    for (uint32_t i = 0u; ok && i < version.arity; i++) {
+        if (instances)
+            instances[i] = NULL;
+        if (version.facts[i] == PETTA_CONTRACT_ENTRY_INSTANCE && instances &&
+            instance_arena && version.instances[i])
+            ok = (instances[i] = atom_deep_copy(instance_arena,
+                                                version.instances[i])) != NULL;
+        else
+            ok = version.facts[i] == PETTA_CONTRACT_ENTRY_ANY ||
+                 version.facts[i] == PETTA_CONTRACT_ENTRY_GROUND;
+    }
+    if (ok && range_proved)
+        *range_proved = version.range_proved;
+    arena_free(&keep);
+    return ok;
+}
+
+bool eval_petta_value_typed_once(Space *space, Atom *value, Atom *type) {
+    if (!space || !value || !type)
+        return false;
+    Arena scratch;
+    arena_init(&scratch);
+    Atom **types = NULL;
+    uint32_t count = 0u;
+    CettaEvalCompletion completion = CETTA_EVAL_INCOMPLETE_HOST_FAILURE;
+    /* At a type with variables, the guard with fresh variables: typed
+     * once, at some closed instance. */
+    bool ok = eval_get_type_intrinsic_answers(space, &scratch, value, type, -1,
+                                              &types, &count, &completion) &&
+        completion == CETTA_EVAL_COMPLETE && count == 1u && types &&
+        (atom_has_vars(type) ? types[0] && !atom_has_vars(types[0])
+                             : atom_eq(types[0], type));
+    free(types);
+    arena_free(&scratch);
+    return ok;
+}
+
 bool eval_petta_classifier_extended(Space *space, SymbolId classifier) {
     CettaExprLen minimum = 0u;
     CettaExprLen maximum = 0u;
@@ -46501,6 +46043,15 @@ static bool he_shared_native_new_state_ready(Space *space,
 static bool he_shared_native_state_write_ready(Space *space,
                                                const Atom *source);
 
+static Atom *he_dispatch_signature(Space *space, SymbolId head,
+                                   CettaExprLen arity);
+static PettaMachineHostMode he_dispatch_host_mode(Space *space,
+                                                  Atom *expression,
+                                                  Atom *signature);
+static bool he_dispatch_apply_ready(Space *space, Arena *arena,
+    const CettaInvocation *invocation, Atom *signature, int fuel,
+    const Bindings *environment, OutcomeSet *outcomes, CettaCallOutcome *end);
+
 static PettaMachineHostMode petta_eval_machine_classify_host(
     void *context, Space *space, Atom *expression) {
     (void)context;
@@ -46513,7 +46064,7 @@ static PettaMachineHostMode petta_eval_machine_classify_host(
         !petta_eval_machine_builtin_allowed(context, head->sym_id)) {
         return PETTA_MACHINE_HOST_NONE;
     }
-    if (cetta_foreign_provider_callable(head))
+    if (cetta_foreign_provider_callable_at(space, head))
         return PETTA_MACHINE_HOST_STRICT_APPLICATION;
     PeTTaForm form = head->kind == ATOM_SYMBOL
         ? petta_semantics_form(head->sym_id)
@@ -46534,6 +46085,14 @@ static PettaMachineHostMode petta_eval_machine_classify_host(
     if (head->kind == ATOM_SYMBOL && petta_eval_transform_host_owned(
             context, space, head->sym_id, expression->expr.len - 1u))
         return PETTA_MACHINE_HOST_READY_UNCONSTRAINED_REGION;
+    /* An HE typed head the shared machine admits meets HE's protocol at
+     * the dispatch boundary (he_dispatch_host_mode). */
+    if (g_he_shared_execution && head->kind == ATOM_SYMBOL) {
+        Atom *signature = he_dispatch_signature(space, head->sym_id,
+                                                expression->expr.len - 1u);
+        if (signature)
+            return he_dispatch_host_mode(space, expression, signature);
+    }
     if (form == PETTA_FORM_TRACE && expression->expr.len != 3u)
         return PETTA_MACHINE_HOST_NONE;
     if (head->kind == ATOM_SYMBOL && petta_native_fallback_owned(
@@ -51906,6 +51465,14 @@ static bool petta_eval_machine_apply_ready_values(
     Atom *head = invocation->head.skeleton;
     if (!head || head->kind != ATOM_SYMBOL)
         return false;
+    if (g_he_shared_execution) {
+        CettaExprLen typed_arity = 0u;
+        Atom *signature = cetta_invocation_arity(invocation, &typed_arity)
+            ? he_dispatch_signature(space, head->sym_id, typed_arity) : NULL;
+        if (signature)
+            return he_dispatch_apply_ready(space, arena, invocation, signature,
+                eval_context->fuel, environment, outcomes, end);
+    }
     PeTTaForm form = petta_semantics_form(head->sym_id);
     if (eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
         (form == PETTA_FORM_IS_VAR || form == PETTA_FORM_IS_GROUND ||
@@ -52005,7 +51572,7 @@ static bool eval_get_metatype_intrinsic(
     if (registered)
         value = registered;
     if (eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
-        petta_semantics_is_cons_constraint(value) &&
+        petta_semantics_is_open_cons_value(value) &&
         !petta_semantics_is_closed_list(value))
         return true;
     *type = get_meta_type(arena, value);
@@ -52578,7 +52145,6 @@ static PettaMachineFoldResult petta_eval_machine_foldl_single_result(
         space, arena, items, initial,
         accumulator_binder, item_binder, step_expression,
         environment, eval_context ? eval_context->fuel : -1,
-        NULL,
         result_out);
     switch (result) {
     case PREPARED_FOLD_VALUE:
@@ -53872,6 +53438,8 @@ static PettaMachineHost petta_eval_machine_host(
         .literal_binding_patterns = g_he_shared_execution,
         .unmatched_call_is_value = g_he_shared_execution,
         .empty_result_is_failure = g_he_shared_execution,
+        .case_switches_on_empty = g_he_shared_execution,
+        .range_discharge = !g_he_shared_execution && !prime_machine,
         .retain_query_variable_identity = g_he_shared_execution,
         .eager_argument_faults = g_he_shared_execution,
         .raises_abort_collections = !prime_machine,
@@ -56279,10 +55847,11 @@ petta_prepared_pure_pattern_view(
         !petta_semantics_is_cons_constraint(pattern)) {
         return CETTA_PREPARED_PURE_PATTERN_VIEW_NOT_APPLICABLE;
     }
-    if (!petta_semantics_is_cons_constraint(value)) {
+    if (!petta_semantics_is_open_cons_value(value)) {
         /* A nonempty ordinary expression is a PeTTa list, whose tail is not an
          * atom a prepared matcher can bind; only an empty or atomic value
-         * certainly fails to be a cons. */
+         * certainly fails to be a cons.  A value spelled `(cons h t)` is
+         * such an expression, data, as in SWI-PeTTa. */
         return value->kind == ATOM_EXPR && value->expr.len > 0u
             ? CETTA_PREPARED_PURE_PATTERN_VIEW_UNDECIDED
             : CETTA_PREPARED_PURE_PATTERN_VIEW_MISMATCH;
@@ -56371,6 +55940,15 @@ petta_prepared_pure_expression_view(
     }
     if (control.operation == CETTA_CONTROL_FAILURE)
         return CETTA_PREPARED_PURE_EXPRESSION_ZERO;
+    /* `(superpose (x))` is x, its one alternative. */
+    if (head == g_builtin_syms.superpose && arity == 1u &&
+        expression->expr.elems[1]->kind == ATOM_EXPR &&
+        expression->expr.elems[1]->expr.len == 1u &&
+        cetta_prepared_pure_admission_normalize_enabled()) {
+        view->projected = expression->expr.elems[1]->expr.elems[0];
+        view->projection_mode = CETTA_PREPARED_PURE_PROJECT_SOURCE;
+        return CETTA_PREPARED_PURE_EXPRESSION_PROJECT;
+    }
     if (control.operation == CETTA_CONTROL_MATCH_BRANCHES) {
         if (!cetta_control_operation_match_branches_layout(control, arity) ||
             petta_case_arms_write_empty(expression->expr.elems[(CettaExprIndex)control.first + 1u]))
@@ -56380,9 +55958,12 @@ petta_prepared_pure_expression_view(
     /* The word owns the stage, including after operand normalization.
      * Other controls require the canonical continuation machine. */
     if (cetta_control_operation_is_control_form(control) && !force && !dispatch) {
+        /* PeTTa's `(if c t)` is `(if c t (empty))`: admitted as that. */
         bool supported =
             (control.operation == CETTA_CONTROL_SEQUENCE && arity == 3u) ||
             (control.operation == CETTA_CONTROL_BRANCH && arity == 3u) ||
+            (control.operation == CETTA_CONTROL_BRANCH && arity == 2u &&
+             cetta_prepared_pure_admission_normalize_enabled()) ||
             (control.operation == CETTA_CONTROL_SEQUENCE_MANY && arity == 2u) ||
             (control.operation == CETTA_CONTROL_RETURN_SCOPE && arity == 1u);
         return supported ? CETTA_PREPARED_PURE_EXPRESSION_DEFAULT
@@ -56512,6 +56093,13 @@ static bool prepared_pure_eager_entry_arguments_are_values(
          index < call->expr.len; index++) {
         Atom *argument = call->expr.elems[index];
         if (!argument || atom_has_vars(argument))
+            return false;
+        /* A source constructor in he-compat still needs evaluation to set
+         * the marks that later program mutations observe. Normal form alone
+         * does not establish that this argument was already evaluated. */
+        if (eval_current_language_id() == CETTA_LANGUAGE_HE &&
+            active_profile_uses_rust_he_compat_semantics() &&
+            argument->kind == ATOM_EXPR && !atom_is_he_evaluated(argument))
             return false;
         /* HE's completed-value mark is interpretation provenance. An
          * unmarked expression can still be source in he-compat, even after
@@ -57205,6 +56793,14 @@ static bool prepared_pure_closed_invocation_try(
     if (he_completed_result && outcome->kind == CETTA_CALL_VALUE &&
         !cetta_call_result_is_frontier(outcome->result_form))
         outcome->term = he_completed_value(destination, outcome->term);
+    /* The typings the machine's checked builds kept travel with the value. */
+    if (machine_result && outcome->kind == CETTA_CALL_VALUE && outcome->term) {
+        const Arena *sources[2] = {
+            machine_arena,
+            cetta_prepared_pure_program_closed_survivor_arena(program)};
+        space_type_stamps_transfer(space, machine_result, outcome->term,
+                                   sources, 2u);
+    }
     cetta_prepared_pure_program_release_closed_execution(program);
     cetta_prepared_pure_program_clear_closed_entry_call(program);
     if (machine_arena_is_local)
@@ -57419,9 +57015,13 @@ prepared_pure_closed_answers_try(
         plan.call_mode != CETTA_GSLT_PURE_CALL_EAGER) {
         return CETTA_PREPARED_PURE_ANSWERS_DECLINED;
     }
+    /* The call is read as the program runs it: its arguments as values
+     * where the plan keeps them as they are, as source it first evaluates
+     * otherwise. */
     bool he_completed_result = false;
     if (plan.language_id == CETTA_LANGUAGE_HE &&
-        !he_prepared_completion_admit(space, destination, NULL, call, false,
+        !he_prepared_completion_admit(space, destination, NULL, call,
+                                      plan.cache_entry_arguments_are_values,
                                       &he_completed_result))
         return CETTA_PREPARED_PURE_ANSWERS_DECLINED;
     CettaCount he_result_start = outcomes->len;
@@ -57716,7 +57316,12 @@ static bool he_evaluated_call_answers_try(
         call->expr.elems[0]->kind != ATOM_SYMBOL ||
         atom_has_vars(call))
         return false;
-    if (!etype || atom_is_symbol_id(etype, g_builtin_syms.undefined_type)) {
+    HeExpectedCast he_cast =
+        !etype || atom_is_symbol_id(etype, g_builtin_syms.undefined_type)
+        ? HE_CAST_NONE : he_expected_cast(space, call, etype);
+    if (he_cast == HE_CAST_DECLINE)
+        return false;
+    if (he_cast == HE_CAST_NONE) {
         CettaPreparedPureAnswersResult answers =
             prepared_pure_closed_answers_try(
                 space, arena, call, fuel, eval_execution_prepared_cache(),
@@ -57912,7 +57517,9 @@ static bool petta_eval_machine_collect_closed_answers(
     if (!eval_context || eval_context->transaction ||
         eval_current_language_id() != CETTA_LANGUAGE_HE ||
         !call || call->kind != ATOM_EXPR || call->expr.len < 2u ||
-        call->expr.elems[0]->kind != ATOM_SYMBOL)
+        call->expr.elems[0]->kind != ATOM_SYMBOL ||
+        he_dispatch_keeps_call(space, call->expr.elems[0]->sym_id,
+                               call->expr.len - 1u))
         return false;
     PreparedPureProgramCache *program_cache =
         petta_eval_machine_prepared_pure_cache(context);
@@ -58941,9 +58548,14 @@ static CettaOpenEquationCursor *petta_eval_machine_open_relation_cursor(
     bool dispatch_recovers, bool count_only, uint64_t activation_budget,
     uint32_t depth_bound) {
     PettaEvalMachineContext *eval_context = context;
+    /* The open tier's typed guards are PeTTa's, whose failed checks answer
+     * nothing where HE answers an error: a call that can reach a typed call
+     * at HE's dispatch boundary stays on the machine. */
     if (!petta_eval_open_relation_ready(eval_context) || !space || !call ||
         call->kind != ATOM_EXPR || call->expr.len == 0u ||
-        call->expr.elems[0]->kind != ATOM_SYMBOL)
+        call->expr.elems[0]->kind != ATOM_SYMBOL ||
+        he_dispatch_keeps_call(space, call->expr.elems[0]->sym_id,
+                               call->expr.len - 1u))
         return NULL;
     /* HE's relations run here under HE's rules (heads are patterns, and a
      * call no head takes is its own value) where the shared machine's own
@@ -59001,6 +58613,8 @@ static CettaOpenEquationCursor *petta_eval_machine_open_body_cursor(
         eval_context->diagnostic_transition_limit != 0u ||
         !petta_eval_open_relation_ready(eval_context) || !space || !body ||
         body->kind != ATOM_EXPR || eval_context->transaction ||
+        (g_he_shared_execution && g_he_shared_execution_typed_dispatch &&
+         he_term_reaches_typed_dispatch(space, body)) ||
         eval_current_language_id() != CETTA_LANGUAGE_PETTA ||
         petta_eval_typed_line() ||
         active_search_table_mode() != CETTA_TABLE_MODE_NONE ||
@@ -59034,7 +58648,8 @@ static bool petta_eval_machine_open_relation_declined(
     void *context, Space *space, SymbolId head, CettaExprLen arity,
     bool evaluate_result) {
     PettaEvalMachineContext *eval_context = context;
-    if (!petta_eval_open_relation_ready(eval_context))
+    if (!petta_eval_open_relation_ready(eval_context) ||
+        he_dispatch_keeps_call(space, head, arity))
         return true;
     bool cached = false;
     CettaOpenEquationProgram *program = petta_eval_open_program_acquire(
@@ -59193,6 +58808,7 @@ static void bind_publish_value(Arena *a, Atom *atom, Atom *first,
 #include "eval_he_canonical.inc"
 #include "eval_he_retained.inc"
 #include "eval_work.inc"
+static Atom *eval_petta_host_value_leaf(Arena *, Atom *, void *);
 #include "eval_query.inc"
 
 /* The answer of an operation HE's library defines by an equation whose
@@ -59433,7 +59049,11 @@ tail_call: ;
         return;
     atom = materialize_runtime_token(s, a, atom);
     uint64_t need_thunk_id = 0u;
-    if (prime_need_ref_is_active(atom, &need_thunk_id)) {
+    /* An Atom demand reads what it is given as data.  A suspended argument
+     * there is the argument as written, as it is inside any expression that
+     * demand keeps, and is not run. */
+    if (prime_need_ref_is_active(atom, &need_thunk_id) &&
+        !atom_is_symbol_id(etype, g_builtin_syms.atom)) {
 #if CETTA_PRIME_EVAL_STACK
         if (prime_eval_stack_schedule_force(
                 s, a, atom, need_thunk_id, fuel, os))
@@ -59694,9 +59314,30 @@ tail_call: ;
     bool he_expected_typed_head = he_expected &&
         head_id != SYMBOL_ID_NONE &&
         !space_head_call_untyped(s, head_id, nargs);
-    if (!he_expected_typed_head &&
-        !prepared_sequence_fold_consumer_requires_authored_expansion(
-            head, nargs)) {
+    /* A typed head with one closed range that meets the expected type: HE
+     * evaluates its body at that range, which the prepared machine checks,
+     * so nothing of the answer is cast.  Any other typed head's call meets
+     * the expected type in the canonical evaluator, whose errors name it. */
+    bool he_range_meets = false;
+    if (he_expected_typed_head) {
+        Atom *signature = he_dispatch_signature(s, head_id, nargs);
+        Atom *range = signature
+            ? signature->expr.elems[signature->expr.len - 1u] : NULL;
+        Bindings meet;
+        bindings_init(&meet);
+        he_range_meets = range &&
+            !atom_is_symbol_id(range, g_builtin_syms.undefined_type) &&
+            match_types(range, etype, &meet, a);
+        bindings_free(&meet);
+        he_expected_typed_head = !he_range_meets;
+    }
+    /* An untyped head's answers meet the expected type as HE's ranges
+     * decide (he_expected_cast): cast there, left as they are, or answered
+     * by the canonical evaluator. */
+    HeExpectedCast he_cast = he_range_meets ? HE_CAST_NEUTRAL
+        : he_expected && !he_expected_typed_head
+        ? he_expected_cast(s, atom, etype) : HE_CAST_NEUTRAL;
+    if (!he_expected_typed_head && he_cast != HE_CAST_DECLINE) {
         if (prepared_pure_closed_call_try(
                 s, a, atom, fuel, false, false, program_cache, &prepared_return)) {
             if (prepared_return.kind == CETTA_CALL_FAILURE) {
@@ -59711,7 +59352,7 @@ tail_call: ;
     if (!prepared_pure_result &&
         (eval_unwinding() || eval_cancel_check()))
         return;
-    if (prepared_pure_result && he_expected) {
+    if (prepared_pure_result && he_expected && he_cast != HE_CAST_NONE) {
         OutcomeSet cast;
         outcome_set_init(&cast);
         he_complete_prepared_answer(
@@ -59755,7 +59396,8 @@ tail_call: ;
         answer_program_cache = eval_execution_prepared_cache();
     CettaPreparedPureAnswersResult prepared_answers =
         CETTA_PREPARED_PURE_ANSWERS_DECLINED;
-    if (he_expected && !he_expected_typed_head) {
+    if (he_expected && !he_expected_typed_head &&
+        he_cast != HE_CAST_DECLINE && he_cast != HE_CAST_NONE) {
         OutcomeSet raw;
         outcome_set_init(&raw);
         prepared_answers = prepared_pure_closed_answers_try(
@@ -59771,7 +59413,8 @@ tail_call: ;
             outcome_set_free(&cast);
         }
         outcome_set_free(&raw);
-    } else if (!he_expected) {
+    } else if (!he_expected ||
+               (!he_expected_typed_head && he_cast == HE_CAST_NONE)) {
         prepared_answers = prepared_pure_closed_answers_try(
             s, a, atom, fuel, answer_program_cache,
             CURRENT_ENV, preserve_bindings, os);
@@ -60906,7 +60549,7 @@ petta_lowered_to_shared_form:
          * flat list makes an open cell. */
         if (language_id == CETTA_LANGUAGE_PETTA &&
             (tl->kind != ATOM_EXPR ||
-             petta_semantics_is_cons_constraint(tl))) {
+             petta_semantics_is_open_cons_value(tl))) {
             Atom *cell = petta_semantics_open_cons_value(a, hd, tl);
             if (cell)
                 outcome_set_add(os, cell, &_empty);
@@ -60957,7 +60600,7 @@ petta_lowered_to_shared_form:
             if (atom_is_list(left)) {
                 lhs = left;
             } else if (rhs->kind != ATOM_EXPR ||
-                petta_semantics_is_cons_constraint(rhs)) {
+                petta_semantics_is_open_cons_value(rhs)) {
                 Atom *result = rhs;
                 for (CettaExprIndex i = left->expr.len; i > 0 && result; i--)
                     result = petta_semantics_open_cons_value(
@@ -61002,7 +60645,7 @@ petta_lowered_to_shared_form:
         /* PeTTa's decons-atom and decons map [H|T] to (H T); (), every
          * non-list and an unconstrained argument have no answer here. */
         if (language_id == CETTA_LANGUAGE_PETTA &&
-            petta_semantics_is_cons_constraint(e)) {
+            petta_semantics_is_open_cons_value(e)) {
             outcome_set_add(os,
                 atom_expr2(a, e->expr.elems[1], e->expr.elems[2]),
                 &_empty);
@@ -61053,7 +60696,7 @@ petta_lowered_to_shared_form:
             petta_eval_raise(petta_semantics_empty_head_error(a));
             return;
         }
-        Atom *result = petta_semantics_is_cons_constraint(e)
+        Atom *result = petta_semantics_is_open_cons_value(e)
             ? e->expr.elems[car ? 1 : 2]
             : cetta_sequence_projection_materialize(a, &view);
         outcome_set_add(os, result, &_empty);
@@ -61447,27 +61090,35 @@ petta_lowered_to_shared_form:
             he_canonical_control_schedule(s, a, atom, etype, expr_arg(atom, 0),
                 fuel, CURRENT_ENV, preserve_bindings, eval_gc_query_closed, false, os))
             return;
-        ResultSet scrut;
-        result_set_init(&scrut);
-        metta_eval(s, a, NULL,expr_arg(atom, 0), fuel, &scrut);
+        /* The scrutinee's answers keep their bindings, which constrain each
+         * branch's pattern and body, one answer at a time. */
+        OutcomeSet scrut;
+        outcome_set_init(&scrut);
+        {
+            __attribute__((cleanup(eval_gc_outcome_suspension_end)))
+            EvalGcOutcomeSuspension source_suspension = {0};
+            eval_gc_outcome_suspension_begin(
+                &source_suspension, &eval_gc_root_frame, os, &scrut);
+            eval_for_caller(s, a, NULL, expr_arg(atom, 0), fuel, CURRENT_ENV, true, &scrut);
+        }
         Atom *branches = expr_arg(atom, 1);
         /* HE's case switches on Empty when its atom has no results, as its
          * definition does (`switch-minimal Empty $cases`): the first branch
          * whose pattern matches Empty is taken, a variable pattern
          * included. */
         if (scrut.len == 0 && language_id == CETTA_LANGUAGE_HE)
-            result_set_add(&scrut, atom_empty(a));
+            outcome_set_add(&scrut, atom_empty(a), CURRENT_ENV);
         /* Single-scrutinee deterministic fast path with TCO.
            This avoids linear C-stack growth for tail-recursive
            loops expressed as let -> case recursion. */
         if (scrut.len == 1 && branches->kind == ATOM_EXPR) {
-            Atom *sv = scrut.items[0];
+            Atom *sv = outcome_atom_materialize(a, &scrut.items[0]);
             for (CettaExprIndex i = 0; i < branches->expr.len; i++) {
                 Atom *branch = branches->expr.elems[i];
                 if (branch->kind == ATOM_EXPR && branch->expr.len == 2) {
                     BindingsBuilder b;
-                    if (!bindings_builder_init(&b, NULL)) {
-                        result_set_free(&scrut);
+                    if (!bindings_builder_init(&b, &scrut.items[0].env)) {
+                        outcome_set_free(&scrut);
                         return;
                     }
                     if (eval_case_match_builder(branch->expr.elems[0], sv, &b, a)) {
@@ -61477,27 +61128,27 @@ petta_lowered_to_shared_form:
                         if (preserve_bindings &&
                             !bindings_builder_merge_commit(&current_env_builder, bb)) {
                             bindings_builder_free(&b);
-                            result_set_free(&scrut);
+                            outcome_set_free(&scrut);
                             return;
                         }
                         bindings_builder_free(&b);
-                        result_set_free(&scrut);
+                        outcome_set_free(&scrut);
                         TAIL_REENTER(next_atom);
                     }
                     bindings_builder_free(&b);
                 }
             }
-            result_set_free(&scrut);
+            outcome_set_free(&scrut);
             return;
         }
         for (CettaCount si = 0; si < scrut.len; si++) {
-            Atom *sv = scrut.items[si];
+            Atom *sv = outcome_atom_materialize(a, &scrut.items[si]);
             if (branches->kind == ATOM_EXPR) {
                 for (CettaExprIndex i = 0; i < branches->expr.len; i++) {
                     Atom *branch = branches->expr.elems[i];
                     if (branch->kind == ATOM_EXPR && branch->expr.len == 2) {
                         BindingsBuilder b;
-                        if (!bindings_builder_init(&b, NULL))
+                        if (!bindings_builder_init(&b, &scrut.items[si].env))
                             continue;
                         if (eval_case_match_builder(branch->expr.elems[0], sv, &b, a)) {
                             const Bindings *bb = bindings_builder_bindings(&b);
@@ -61514,7 +61165,7 @@ petta_lowered_to_shared_form:
                 }
             }
         }
-        result_set_free(&scrut);
+        outcome_set_free(&scrut);
         return;
     }
 
@@ -61538,17 +61189,37 @@ petta_lowered_to_shared_form:
                 he_canonical_control_schedule(s, a, atom, etype, scrutinee,
                     fuel, CURRENT_ENV, preserve_bindings, eval_gc_query_closed, false, os))
                 return;
-            ResultSet scrut;
-            result_set_init(&scrut);
-            metta_eval(s, a, NULL, scrutinee, fuel, &scrut);
+            /* The scrutinee's answers keep their bindings, which constrain each
+             * branch's pattern and body, one answer at a time. */
+            OutcomeSet scrut;
+            outcome_set_init(&scrut);
+            {
+                __attribute__((cleanup(eval_gc_outcome_suspension_end)))
+                EvalGcOutcomeSuspension source_suspension = {0};
+                eval_gc_outcome_suspension_begin(
+                    &source_suspension, &eval_gc_root_frame, os, &scrut);
+                eval_for_caller(s, a, NULL, scrutinee, fuel, CURRENT_ENV, true, &scrut);
+            }
+            /* switch takes its scrutinee as an evaluated argument: an error
+             * there is the switch's answer, as an argument error is any call's. */
+            for (CettaCount si = 0; si < scrut.len; si++) {
+                Atom *sv = outcome_atom_materialize(a, &scrut.items[si]);
+                if (atom_is_error(sv))
+                    outcome_set_add(os, sv, preserve_bindings
+                        ? &scrut.items[si].env : &_empty);
+            }
             if (scrut.len == 1 && branches->kind == ATOM_EXPR) {
-                Atom *sv = scrut.items[0];
+                Atom *sv = outcome_atom_materialize(a, &scrut.items[0]);
+                if (atom_is_error(sv)) {
+                    outcome_set_free(&scrut);
+                    return;
+                }
                 for (CettaExprIndex i = 0; i < branches->expr.len; i++) {
                     Atom *branch = branches->expr.elems[i];
                     if (branch->kind == ATOM_EXPR && branch->expr.len == 2) {
                         BindingsBuilder b;
-                        if (!bindings_builder_init(&b, NULL)) {
-                            result_set_free(&scrut);
+                        if (!bindings_builder_init(&b, &scrut.items[0].env)) {
+                            outcome_set_free(&scrut);
                             return;
                         }
                         if (eval_case_match_builder(branch->expr.elems[0], sv, &b, a)) {
@@ -61558,27 +61229,29 @@ petta_lowered_to_shared_form:
                             if (preserve_bindings &&
                                 !bindings_builder_merge_commit(&current_env_builder, bb)) {
                                 bindings_builder_free(&b);
-                                result_set_free(&scrut);
+                                outcome_set_free(&scrut);
                                 return;
                             }
                             bindings_builder_free(&b);
-                            result_set_free(&scrut);
+                            outcome_set_free(&scrut);
                             TAIL_REENTER(next_atom);
                         }
                         bindings_builder_free(&b);
                     }
                 }
-                result_set_free(&scrut);
+                outcome_set_free(&scrut);
                 return;
             }
             for (CettaCount si = 0; si < scrut.len; si++) {
-                Atom *sv = scrut.items[si];
+                Atom *sv = outcome_atom_materialize(a, &scrut.items[si]);
+                if (atom_is_error(sv))
+                    continue;
                 if (branches->kind == ATOM_EXPR) {
                     for (CettaExprIndex i = 0; i < branches->expr.len; i++) {
                         Atom *branch = branches->expr.elems[i];
                         if (branch->kind == ATOM_EXPR && branch->expr.len == 2) {
                             BindingsBuilder b;
-                            if (!bindings_builder_init(&b, NULL))
+                            if (!bindings_builder_init(&b, &scrut.items[si].env))
                                 continue;
                             if (eval_case_match_builder(branch->expr.elems[0], sv, &b, a)) {
                                 const Bindings *bb = bindings_builder_bindings(&b);
@@ -61595,7 +61268,7 @@ petta_lowered_to_shared_form:
                     }
                 }
             }
-            result_set_free(&scrut);
+            outcome_set_free(&scrut);
             return;
         }
         if (branches->kind == ATOM_EXPR) {
@@ -63491,6 +63164,12 @@ petta_lowered_to_shared_form:
             TAIL_REENTER(sequence);
         }
         const char *spec = string_like_atom(expr_arg(atom, 1));
+        Atom *module_spec = expr_arg(atom, 1);
+        bool structured_library = language_id != CETTA_LANGUAGE_PETTA &&
+            module_spec->kind == ATOM_EXPR && module_spec->expr.len == 2u &&
+            atom_is_symbol(module_spec->expr.elems[0], "library");
+        if (structured_library)
+            spec = string_like_atom(module_spec->expr.elems[1]);
         PeTTaLibraryReference library_reference;
         bool has_library_reference =
             language_id == CETTA_LANGUAGE_PETTA &&
@@ -63561,6 +63240,10 @@ petta_lowered_to_shared_form:
                     if (occurrence == UINT32_MAX)
                         break;
                 }
+            } else if (structured_library) {
+                imported = cetta_library_import(g_library_context, spec, dest.space,
+                    a, eval_storage_arena(a), g_registry, fuel, &error);
+                import_result_count = imported ? 1u : 0u;
             } else {
                 Space *module_space = NULL;
                 imported = cetta_library_import_module(
@@ -64847,11 +64530,27 @@ petta_lowered_to_shared_form:
             he_canonical_control_schedule(s, a, atom, etype, expr_arg(atom, 0u),
                 fuel, CURRENT_ENV, preserve_bindings, eval_gc_query_closed, false, os))
             return;
-        ResultSet inner;
-        result_set_init(&inner);
-        metta_eval(s, a, NULL, expr_arg(atom, 0), fuel, &inner);
-        result_set_free(&inner);
-        outcome_set_add(os, atom_unit(a), &_empty);
+        /* HE's nop ignores its argument's value only: one unit for each
+         * answer, with that answer's bindings; an error stays the error;
+         * no answers give none. */
+        OutcomeSet inner;
+        outcome_set_init(&inner);
+        {
+            __attribute__((cleanup(eval_gc_outcome_suspension_end)))
+            EvalGcOutcomeSuspension source_suspension = {0};
+            eval_gc_outcome_suspension_begin(
+                &source_suspension, &eval_gc_root_frame, os, &inner);
+            eval_for_caller(s, a, NULL, expr_arg(atom, 0), fuel, CURRENT_ENV,
+                            true, &inner);
+        }
+        for (CettaCount i = 0u; i < inner.len; i++) {
+            Atom *value = outcome_atom_materialize(a, &inner.items[i]);
+            if (atom_is_legacy_empty_or_error(value) && !atom_is_error(value))
+                continue;
+            outcome_set_add(os, atom_is_error(value) ? value : atom_unit(a),
+                            preserve_bindings ? &inner.items[i].env : &_empty);
+        }
+        outcome_set_free(&inner);
         return;
     }
 

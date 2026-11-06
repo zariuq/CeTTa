@@ -1,5 +1,11 @@
 # CeTTa he-prime: typed search over dependent codomains (experimental vertical slice)
 
+Historical experiment: this page describes an earlier HE typing development
+snapshot. Start with the [main README](README.md) and its
+[tutorial index](README.md#tutorials-and-guides) for current PeTTa, HE and
+Python usage. Active Prime exploration lives on
+[`godelclaw/CeTTa`, branch `cetta-ours`](https://github.com/godelclaw/CeTTa/tree/cetta-ours).
+
 A CeTTa worktree with an experimental HE typing extension for the `he-prime` profile, built on
 the shared native HE inference engine: success-typing discipline, dependent-codomain elaboration
 with type-level computation, and proof search as type inhabitation. It runs Nil Geisweiller's dependent-typed PLN rules —
@@ -48,7 +54,8 @@ Regression gates (both wired into `make test-profiles`):
   block (products and arrows), top-not-exact, effect exclusion with a no-mutation check,
   fuel-starved closure honesty. These are the counterexamples a green positive suite misses.
 
-Full `make test` passes.
+The checks above describe this experiment. Current qualification is recorded
+separately; see the [README test lanes](README.md#tests).
 
 ## Layout
 - `src/he_typing.{c,h}` — consistency edges + composition algebra, checked normalization,
