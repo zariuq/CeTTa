@@ -273,6 +273,10 @@ bool cetta_profile_uses_petta_typing(const CettaProfile *profile);
  * type error, a position whose declared type is a variable is not checked,
  * and no run-time dispatch recovers a contract's error. */
 bool cetta_profile_is_petta_1_1_c(const CettaProfile *profile);
+/* Whether `profile` is PeTTa's ai profile, corrected stable PeTTa with sealed
+ * sorts: a function's declaration types the answers of its calls and never an
+ * unevaluated application of it, which has its tuple type. */
+bool cetta_profile_is_petta_ai(const CettaProfile *profile);
 /* Whether `version` is of PeTTa's typed line (1.1 and 1.1.c), whose
  * evaluation laws differ from release 1.0.6's. */
 bool cetta_language_version_petta_typed_line(

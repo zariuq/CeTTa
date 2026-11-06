@@ -473,6 +473,17 @@ static bool contract_field_free(const Atom *arrow, CettaExprIndex index) {
         contract_var_occurrences(arrow, field->var_id) == 1u;
 }
 
+/* PeTTa's ai profile (sealed sorts): a function's row types the answers of
+ * its calls and never data built with the function, so no construction is
+ * typed, and no pattern inverted, through it.  Without this a version could
+ * trust a range the profile's checked call refuses. */
+static bool contract_sealed_function(ContractScan *scan, const Atom *head) {
+    return head && head->kind == ATOM_SYMBOL &&
+        eval_petta_sealed_sorts && eval_petta_sealed_sorts() &&
+        eval_petta_head_is_function &&
+        eval_petta_head_is_function(scan->context->space, head->sym_id);
+}
+
 /* The one declaration (-> B1 .. Bk C) of a constructor `head` at arity k,
  * where C is a named type, closed as Nat or parameterized as (List $a).
  * Each field is a type variable the declaration names nowhere else, or a
@@ -483,6 +494,8 @@ static bool contract_field_free(const Atom *arrow, CettaExprIndex index) {
  * fields, so the declaration gives no field a type. */
 static Atom *contract_constructor_arrow(ContractScan *scan, Atom *head,
                                         CettaExprLen arity) {
+    if (contract_sealed_function(scan, head))
+        return NULL;
     Atom *type = contract_declared(scan, head);
     if (!type || type->kind != ATOM_EXPR || type->expr.len != arity + 2u ||
         !atom_is_symbol_id(type->expr.elems[0], g_builtin_syms.arrow))
