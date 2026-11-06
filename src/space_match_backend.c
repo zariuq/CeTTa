@@ -5349,6 +5349,12 @@ bool space_match_backend_snapshot_clone(Space *dst, Space *src) {
     return true;
 }
 
+bool space_match_backend_index_forced_without_rows(const Space *s) {
+    return s && s->match_backend.kind == SPACE_ENGINE_PATHMAP &&
+        pathmap_indexed_query_mode() == PATHMAP_QUERY_INDEX_MODE_FORCED &&
+        !s->match_backend.pathmap.bridge.native_shadow_synced;
+}
+
 bool space_match_backend_require_logical_order(Space *s,
                                                Arena *persistent_arena) {
     ImportedBridgeState *st;
@@ -8998,11 +9004,11 @@ static void pathmap_local_query(Space *s, Arena *a, Atom *query,
          * authored-order native view; no bridge row is published first. */
         uint64_t indexed_count = 0u;
         Atom *factor = query;
-        if (!st->native_shadow_synced &&
-            pathmap_indexed_single_factor_enabled() &&
+        if (pathmap_indexed_single_factor_enabled() &&
             !epoch_query &&
             !bridge_query &&
             pathmap_order_pinned_index_pattern_safe(query) &&
+            pathmap_local_ensure_bridge_live(s) && st->bridge_space &&
             pathmap_local_count_conjunction(
                 s, a, &factor, 1u, NULL, &indexed_count) &&
             indexed_count <= 1u) {

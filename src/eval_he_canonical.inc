@@ -1291,9 +1291,17 @@ static void he_canonical_resume_control(HeCanonicalFrame *frame) {
         bool atoms_only = observation || head == g_builtin_syms.case_text ||
             head == g_builtin_syms.switch_text || head == g_builtin_syms.assert_text ||
             head == g_builtin_syms.nop || head == g_builtin_syms.bind_bang;
+        /* Bindings made while evaluating the operand are kept only for a
+         * consumer that reads them: the binding controls; case and switch,
+         * whose patterns and branches see the scrutinee's bindings; and nop,
+         * an ordinary function of its argument that drops only its value.
+         * An observation, bind! and an assertion read the answers alone. */
+        bool keeps_bindings = !atoms_only || head == g_builtin_syms.case_text ||
+            head == g_builtin_syms.switch_text || head == g_builtin_syms.nop;
         he_canonical_push(atoms_only ? HE_CANONICAL_EVALUATE : HE_CANONICAL_BIND,
             frame->space, a,
-            frame->live[0], NULL, frame->fuel, NULL, true, &frame->child);
+            frame->live[0], NULL, frame->fuel, NULL, keeps_bindings,
+            &frame->child);
         return;
     }
     if (eval_is_reify_head(head)) {
@@ -1319,7 +1327,23 @@ static void he_canonical_resume_control(HeCanonicalFrame *frame) {
         he_canonical_pop();
         return;
     }
-    if (head == g_builtin_syms.nop || head == g_builtin_syms.collapse_bind) {
+    /* HE's nop is a function that ignores its argument's value: one unit
+     * for each answer of the argument, with that answer's bindings; an
+     * error stays the error; no answers give none. */
+    if (head == g_builtin_syms.nop) {
+        for (CettaCount i = 0u; i < frame->child.len; i++) {
+            Outcome *out = &frame->child.items[i];
+            Atom *value = outcome_atom_materialize(a, out);
+            if (atom_is_legacy_empty_sentinel(value))
+                continue;
+            outcome_set_add_prefixed(a, frame->target,
+                atom_is_error(value) ? value : atom_unit(a), &out->env,
+                &frame->env, frame->preserve_bindings);
+        }
+        he_canonical_pop();
+        return;
+    }
+    if (head == g_builtin_syms.collapse_bind) {
         Bindings empty;
         bindings_init(&empty);
         Atom *result = atom_unit(a);
@@ -1368,14 +1392,26 @@ static void he_canonical_resume_control(HeCanonicalFrame *frame) {
     }
     if (head == g_builtin_syms.case_text || head == g_builtin_syms.switch_text) {
         frame->index++;
+        /* switch takes its scrutinee as an evaluated argument
+         * (-> %Undefined% Expression %Undefined%): an error there is the
+         * switch's answer, as an argument error is any call's.  case reads
+         * its scrutinee's answers as data, errors included. */
+        if (head == g_builtin_syms.switch_text && atom_is_error(value)) {
+            outcome_set_add_prefixed(a, &frame->paths, value, &source->env,
+                &frame->env, frame->preserve_bindings);
+            return;
+        }
         Atom *branches = expr_arg(frame->atom, 1);
         for (CettaExprIndex i = 0u; branches->kind == ATOM_EXPR &&
                 i < branches->expr.len; i++) {
             Atom *branch = branches->expr.elems[i];
             if (branch->kind != ATOM_EXPR || branch->expr.len != 2u)
                 continue;
+            /* Each branch is tried under the scrutinee's bindings, which
+             * constrain its pattern as well as its body; a failed attempt
+             * leaves the next one's start as it was. */
             BindingsBuilder matched;
-            if (!bindings_builder_init(&matched, NULL))
+            if (!bindings_builder_init(&matched, &source->env))
                 return;
             bool match = eval_case_match_builder(branch->expr.elems[0], value, &matched, a);
             if (match) {
@@ -1383,9 +1419,12 @@ static void he_canonical_resume_control(HeCanonicalFrame *frame) {
                 Atom *body = bindings_apply_if_vars(env, a, branch->expr.elems[1]);
                 Bindings empty;
                 bindings_init(&empty);
+                /* case and switch are functions whose range is %Undefined%:
+                 * HE evaluates the chosen branch there, never at the type
+                 * the case itself is expected at. */
                 he_canonical_control_body(frame, body,
                     single && !frame->preserve_bindings ? &empty : env,
-                    single, single ? frame->type : NULL);
+                    single, NULL);
             }
             bindings_builder_free(&matched);
             if (match)
@@ -1503,10 +1542,11 @@ static void he_canonical_resume_control(HeCanonicalFrame *frame) {
                 ? !(pattern->kind == ATOM_VAR &&
                     !atom_contains_vars(expr_arg(frame->atom, frame->control.last)))
                 : !single || (frame->preserve_bindings && !frame->query_closed);
+            /* let's range is %Undefined%: HE evaluates its body there,
+             * never at the type the let itself is expected at. */
             he_canonical_control_body(frame, body, retained
                 ? bindings_builder_bindings(&matched) : &empty,
-                single && !frame->selected,
-                single && !frame->selected ? frame->type : NULL);
+                single && !frame->selected, NULL);
             bindings_free(&visible);
         }
     }
@@ -3073,6 +3113,92 @@ static bool he_canonical_bind_try(Space *s, Arena *a, Atom *type,
         return false;
     he_canonical_run(HE_CANONICAL_BIND, s, a, atom, type, fuel, env,
         true, typed, os);
+    return true;
+}
+
+/* HE's metta_call of a typed call whose arguments are already evaluated:
+ * its equations, and its result at `range`, without checking the
+ * arguments again (the dispatch frame's delivery of one argument tuple). */
+static void he_canonical_deliver_ready(Space *s, Arena *a, Atom *call,
+    Atom *range, int fuel, const Bindings *env, OutcomeSet *target) {
+    __attribute__((cleanup(eval_c_stack_guard_leave)))
+    EvalCStackGuard boundary = {0};
+    Bindings empty;
+    bindings_init(&empty);
+    if (!env)
+        env = &empty;
+    if (!eval_c_stack_guard_enter(fuel, &boundary)) {
+        outcome_set_add(target, atom_error(a, call, atom_symbol(a, "StackOverflow")),
+            env);
+        return;
+    }
+    EvalGcRegionGuard region = {0};
+    HeCanonicalDriver driver = {
+        .root_target = target,
+        .arena = a,
+        .gc_anchor = eval_gc_region_enter(&region, a),
+    };
+    HeCanonicalDriver *enclosing = g_he_canonical_driver;
+    g_he_canonical_driver = &driver;
+    if (!enclosing)
+        he_value_index_open(a);
+    Atom *demand = he_type_result_demand(a, range);
+    HeCanonicalFrame *frame = he_canonical_push(HE_CANONICAL_DISPATCH, s, a,
+        call, demand, fuel, env, true, target);
+    if (frame) {
+        frame->selected = true;
+        frame->typed = true;
+        frame->live[1] = demand;
+        outcome_set_add(&frame->child, call, env);
+        frame->phase = 6u;
+    }
+    while (driver.stack.top && !eval_unwinding() && !eval_cancel_check())
+        he_canonical_advance(&driver);
+    he_canonical_dispose(&driver);
+    g_he_canonical_driver = enclosing;
+    if (!enclosing)
+        he_value_index_close();
+    eval_gc_region_leave(&region);
+}
+
+/* A typed call the shared machine reached with its arguments evaluated (a
+ * STRICT_APPLICATION of he_dispatch_host_mode): the prepared machine runs it
+ * where it admits it, and the canonical dispatch delivery otherwise. */
+static bool he_dispatch_apply_ready(Space *space, Arena *arena,
+    const CettaInvocation *invocation, Atom *signature, int fuel,
+    const Bindings *environment, OutcomeSet *outcomes, CettaCallOutcome *end) {
+    Atom *call = cetta_invocation_materialize(arena, invocation);
+    if (!call || call->kind != ATOM_EXPR || !signature ||
+        signature->kind != ATOM_EXPR || signature->expr.len < 2u)
+        return false;
+    Bindings empty;
+    bindings_init(&empty);
+    const Bindings *outer = environment ? environment : &empty;
+    /* HE's interpret_args returns an argument that evaluated to an error as
+     * the call's answer (return_on_error), the first one in order. */
+    for (CettaExprIndex i = 1u; i < call->expr.len; i++) {
+        Atom *argument = bindings_apply_if_vars(outer, arena,
+                                                call->expr.elems[i]);
+        if (argument && atom_is_error(argument)) {
+            outcome_set_add(outcomes, argument, outer);
+            return true;
+        }
+    }
+    CettaCallOutcome returned;
+    if (prepared_pure_closed_call_try(space, arena, call, fuel, true, false,
+            eval_execution_prepared_cache(), &returned)) {
+        if (returned.kind == CETTA_CALL_VALUE && returned.term)
+            outcome_set_add(outcomes, returned.term, outer);
+        else if (returned.kind == CETTA_CALL_INTERRUPTED ||
+                 returned.kind == CETTA_CALL_RAISED)
+            *end = returned;
+        return true;
+    }
+    if (eval_unwinding() || eval_cancel_check())
+        return true;
+    he_canonical_deliver_ready(space, arena, call,
+        signature->expr.elems[signature->expr.len - 1u], fuel, outer,
+        outcomes);
     return true;
 }
 

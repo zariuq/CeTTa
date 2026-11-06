@@ -58,6 +58,9 @@ typedef struct {
     /* Whether some equation body lacks the shape under which the compiled
      * machine, raising HE's errors, keeps HE's order (he_body_raise_shaped). */
     bool raise_unshaped;
+    /* Whether a typed call runs at the host's dispatch boundary
+     * (he_dispatch_host_mode). */
+    bool typed_dispatch;
     /* How the bodies' collected values flow. */
     HeRawFlowFlags raw_flow;
 } HeExecutionAdmission;
@@ -129,6 +132,8 @@ typedef struct {
     bool collected_fresh;
     /* Some body lacks the shape he_body_raise_shaped describes. */
     bool raise_unshaped;
+    /* A typed call in the closure runs at the dispatch boundary. */
+    bool typed_dispatch;
     HeRawFlowFlags raw_flow;
     SpaceProgramToken token;
     uint64_t authority;
@@ -172,6 +177,7 @@ static void he_closure_decision_record(Space *space, SymbolId head,
         .match_bindings_escape = admitted && admission->match_bindings_escape,
         .collected_fresh = admitted && admission->collected_fresh,
         .raise_unshaped = admitted && admission->raise_unshaped,
+        .typed_dispatch = admitted && admission->typed_dispatch,
         .raw_flow = admitted ? admission->raw_flow : (HeRawFlowFlags){0},
         .token = space_program_token(space), .authority = authority};
 }
@@ -1078,14 +1084,337 @@ static SymbolId he_library_stream_aggregate(Space *space, const Atom *term) {
     return aggregate;
 }
 
+typedef struct {
+    const Space *space;
+    SpaceProgramToken program;
+    SymbolId head;
+    CettaExprLen arity;
+    Atom *signature;
+    Arena arena;
+    bool arena_ready;
+    bool ready;
+} HeDispatchMemo;
+
+static _Thread_local HeDispatchMemo g_he_dispatch_memo[8];
+
+/* An HE head whose typed calls the shared machine runs at HE's dispatch
+ * boundary: user equations and one declared function type of the call's
+ * arity, closed, with no metatype and no function among its formals and
+ * range.  Answers that type, kept per program, head and arity; NULL for any
+ * other head. */
+static Atom *he_dispatch_signature(Space *space, SymbolId head,
+                                   CettaExprLen arity) {
+    if (!space || head == SYMBOL_ID_NONE || is_grounded_op(head) ||
+        symbol_id_is_builtin(head) || arity == 0u ||
+        !space_head_declares_type(space, head) ||
+        !eval_space_has_equations(space, head))
+        return NULL;
+    size_t slot = ((size_t)head * 31u + arity) & 7u;
+    HeDispatchMemo *memo = &g_he_dispatch_memo[slot];
+    if (memo->ready && memo->space == space && memo->head == head &&
+        memo->arity == arity && space_program_token_is_current(memo->program))
+        return memo->signature;
+    /* The head's types are read here and only the closed signature is kept:
+     * the fresh variables a polymorphic type is read with stay in this
+     * arena, not in the shared table, which keeps what it holds. */
+    Arena scratch;
+    arena_init_detached(&scratch);
+    Atom **types = NULL;
+    uint32_t count = eval_get_atom_types_profiled(space, &scratch,
+        atom_symbol_id(&scratch, head), &types);
+    Atom *type = count == 1u ? types[0] : NULL;
+    bool ok = type && type->kind == ATOM_EXPR &&
+        type->expr.len == (size_t)arity + 2u && !atom_has_vars(type) &&
+        atom_is_symbol_id(type->expr.elems[0], g_builtin_syms.arrow);
+    for (CettaExprIndex i = 1u; ok && i < type->expr.len; i++) {
+        Atom *part = type->expr.elems[i];
+        ok = !atom_is_meta_type(part) && !(part->kind == ATOM_EXPR &&
+            part->expr.len && atom_is_symbol_id(part->expr.elems[0],
+                                                g_builtin_syms.arrow));
+    }
+    if (memo->arena_ready)
+        arena_free(&memo->arena);
+    arena_init(&memo->arena);
+    memo->arena_ready = true;
+    memo->signature = ok ? atom_deep_copy(&memo->arena, type) : NULL;
+    free(types);
+    arena_free(&scratch);
+    memo->space = space;
+    memo->program = space_program_token(space);
+    memo->head = head;
+    memo->arity = arity;
+    memo->ready = true;
+    return memo->signature;
+}
+
+/* How the shared machine meets a call of a head with `signature`, as HE's
+ * typed call proceeds: the call is checked by its argument expressions'
+ * types, then each argument is evaluated at its formal, then the call over
+ * those values is dispatched (interpreter.rs interpret_expression,
+ * interpret_args, metta_call).  Where every argument is closed, its
+ * expression's type fits its formal and its evaluation there is the
+ * machine's (no cast), the machine evaluates the arguments and hands the
+ * call over values to the host (STRICT_APPLICATION, he_dispatch_apply_ready);
+ * otherwise the host evaluates the whole call canonically. */
+static PettaMachineHostMode he_dispatch_host_mode(Space *space,
+                                                  Atom *expression,
+                                                  Atom *signature) {
+    if (!expression || expression->kind != ATOM_EXPR || !signature ||
+        expression->expr.len + 1u != signature->expr.len)
+        return PETTA_MACHINE_HOST_READY_APPLICATION;
+    Arena scratch;
+    arena_init(&scratch);
+    bool strict = true;
+    for (CettaExprIndex i = 1u; strict && i < expression->expr.len; i++) {
+        Atom *argument = expression->expr.elems[i];
+        Atom *formal = signature->expr.elems[i];
+        bool undefined = atom_is_symbol_id(formal,
+                                           g_builtin_syms.undefined_type);
+        /* A symbol argument with equations is a call HE does not make; a
+         * literal Empty or error argument HE packs into the call as it is,
+         * where the machine would drop it or answer it. */
+        if (atom_has_vars(argument) || atom_is_error(argument) ||
+            (argument->kind == ATOM_SYMBOL &&
+             argument->sym_id == g_builtin_syms.empty) ||
+            (argument->kind == ATOM_SYMBOL &&
+             eval_space_has_equations(space, argument->sym_id))) {
+            strict = false;
+            break;
+        }
+        if (undefined)
+            continue;
+        Atom **types = NULL;
+        uint32_t count = eval_get_atom_types_profiled(space, &scratch,
+                                                      argument, &types);
+        bool fits = false;
+        for (uint32_t t = 0u; !fits && t < count; t++) {
+            Bindings bindings;
+            bindings_init(&bindings);
+            fits = types[t] && match_types(types[t], formal, &bindings,
+                                           &scratch);
+            bindings_free(&bindings);
+        }
+        bool exact = count == 1u && types[0] && atom_eq(types[0], formal);
+        free(types);
+        strict = fits;
+        if (!strict || argument->kind != ATOM_EXPR)
+            continue;
+        SymbolId head = atom_head_symbol_id(argument);
+        if (head != SYMBOL_ID_NONE && !is_grounded_op(head) &&
+            !symbol_id_is_builtin(head) &&
+            space_head_call_untyped(space, head, argument->expr.len - 1u)) {
+            HeExpectedCast cast = he_expected_cast(space, argument, formal);
+            strict = cast == HE_CAST_NONE || cast == HE_CAST_NEUTRAL;
+        } else {
+            /* A typed operation's answers meet the formal unchanged where
+             * its one type is the formal itself. */
+            strict = head != SYMBOL_ID_NONE && exact;
+        }
+    }
+    arena_free(&scratch);
+    return strict ? PETTA_MACHINE_HOST_STRICT_APPLICATION
+                  : PETTA_MACHINE_HOST_READY_APPLICATION;
+}
+
+#define HE_TYPED_REACH_HEADS 256u
+
+typedef struct {
+    Space *space;
+    SymbolId *heads;
+    size_t len;
+    bool exhausted;
+} HeTypedReach;
+
+static bool he_typed_reach_head(HeTypedReach *reach, SymbolId head,
+                                CettaExprLen arity, uint32_t depth);
+
+/* Whether evaluating `term` can reach a typed call with a dispatch
+ * signature: one in the term, or in the equations of a head it calls. */
+static bool he_typed_reach_term(HeTypedReach *reach, const Atom *term,
+                                uint32_t depth) {
+    if (!term || term->kind != ATOM_EXPR || term->expr.len == 0u)
+        return false;
+    if (depth > 64u) {
+        reach->exhausted = true;
+        return true;
+    }
+    SymbolId head = atom_head_symbol_id(term);
+    if (head != SYMBOL_ID_NONE &&
+        he_typed_reach_head(reach, head, term->expr.len - 1u, depth + 1u))
+        return true;
+    for (CettaExprIndex i = 0u; i < term->expr.len; i++)
+        if (he_typed_reach_term(reach, term->expr.elems[i], depth + 1u))
+            return true;
+    return false;
+}
+
+static bool he_typed_reach_head(HeTypedReach *reach, SymbolId head,
+                                CettaExprLen arity, uint32_t depth) {
+    if (he_dispatch_signature(reach->space, head, arity))
+        return true;
+    if (!eval_space_has_equations(reach->space, head))
+        return false;
+    for (size_t i = 0u; i < reach->len; i++)
+        if (reach->heads[i] == head)
+            return false;
+    if (reach->len == HE_TYPED_REACH_HEADS) {
+        reach->exhausted = true;
+        return true;
+    }
+    reach->heads[reach->len++] = head;
+    SpaceEquationCursor cursor;
+    if (!space_rule_cursor_init(reach->space, head, eval_admitted_rule_forms(),
+                                &cursor)) {
+        reach->exhausted = true;
+        return true;
+    }
+    for (;;) {
+        SpaceEquationOccurrenceId id;
+        SpaceEquationCursorStep step = space_equation_cursor_next(&cursor, &id);
+        if (step == SPACE_EQUATION_CURSOR_END)
+            return false;
+        SpaceEquationOccurrence occurrence;
+        if (step != SPACE_EQUATION_CURSOR_ITEM ||
+            !space_rule_occurrence_resolve(id, eval_admitted_rule_forms(),
+                                           &occurrence)) {
+            reach->exhausted = true;
+            return true;
+        }
+        if (he_typed_reach_term(reach, occurrence.rhs, depth))
+            return true;
+    }
+}
+
+typedef struct {
+    const Space *space;
+    SpaceProgramToken program;
+    SymbolId head;
+    CettaExprLen arity;
+    bool ready;
+    bool reaches;
+} HeTypedReachMemo;
+
+static _Thread_local HeTypedReachMemo g_he_typed_reach_memo[64];
+
+/* Whether a call of `head` can reach a typed call at the dispatch boundary
+ * (he_dispatch_signature), through the equations it and its callees have;
+ * kept per program, head and arity.  A realization other than the shared
+ * machine's own dispatch (a prepared program, the open tier) declines such a
+ * call: its typed checks are not HE's. */
+static bool he_head_reaches_typed_dispatch(Space *space, SymbolId head,
+                                           CettaExprLen arity) {
+    if (!space || head == SYMBOL_ID_NONE)
+        return false;
+    HeTypedReachMemo *memo =
+        &g_he_typed_reach_memo[((size_t)head * 31u + arity) & 63u];
+    if (memo->ready && memo->space == space && memo->head == head &&
+        memo->arity == arity && space_program_token_is_current(memo->program))
+        return memo->reaches;
+    SymbolId heads[HE_TYPED_REACH_HEADS];
+    HeTypedReach reach = {.space = space, .heads = heads};
+    bool reaches = he_typed_reach_head(&reach, head, arity, 0u);
+    *memo = (HeTypedReachMemo){.space = space,
+        .program = space_program_token(space), .head = head, .arity = arity,
+        .ready = true, .reaches = reaches};
+    return reaches;
+}
+
+/* The same for a body term. */
+static bool he_term_reaches_typed_dispatch(Space *space, const Atom *term) {
+    SymbolId heads[HE_TYPED_REACH_HEADS];
+    HeTypedReach reach = {.space = space, .heads = heads};
+    return space && he_typed_reach_term(&reach, term, 0u);
+}
+
+/* Whether HE's check of `term` by its argument expressions' types passes
+ * for every argument that is a typed call with a dispatch signature: its
+ * range unifies with the operation's formal there (an Atom or %Undefined%
+ * formal takes it).  An operation with no one function type of the term's
+ * arity takes no such argument. */
+static bool he_dispatch_arguments_fit(Space *space, Atom *term) {
+    if (!term || term->kind != ATOM_EXPR || term->expr.len < 2u)
+        return true;
+    Arena scratch;
+    arena_init(&scratch);
+    Atom **types = NULL;
+    uint32_t count = 0u;
+    bool typed_operation = false;
+    bool fit = true;
+    for (CettaExprIndex i = 1u; fit && i < term->expr.len; i++) {
+        Atom *argument = term->expr.elems[i];
+        SymbolId argument_head = atom_head_symbol_id(argument);
+        Atom *signature = argument && argument->kind == ATOM_EXPR &&
+                argument_head != SYMBOL_ID_NONE
+            ? he_dispatch_signature(space, argument_head,
+                                    argument->expr.len - 1u) : NULL;
+        if (!signature)
+            continue;
+        if (!typed_operation) {
+            typed_operation = true;
+            count = eval_get_atom_types_profiled(space, &scratch,
+                                                 term->expr.elems[0], &types);
+        }
+        Atom *operation = NULL;
+        for (uint32_t t = 0u; t < count; t++) {
+            if (types[t] && types[t]->kind == ATOM_EXPR &&
+                types[t]->expr.len == term->expr.len + 1u &&
+                atom_is_symbol_id(types[t]->expr.elems[0],
+                                  g_builtin_syms.arrow)) {
+                fit = !operation;
+                operation = types[t];
+            }
+        }
+        if (!fit)
+            break;
+        if (!operation) {
+            /* An untyped operation takes %Undefined% arguments; any other
+             * type of the operation is no function of this arity. */
+            fit = count == 0u ||
+                (count == 1u && atom_is_symbol_id(types[0],
+                    g_builtin_syms.undefined_type));
+            continue;
+        }
+        Atom *formal = operation->expr.elems[i];
+        Atom *range = signature->expr.elems[signature->expr.len - 1u];
+        if (atom_is_symbol_id(formal, g_builtin_syms.atom) ||
+            atom_is_symbol_id(formal, g_builtin_syms.undefined_type))
+            continue;
+        Bindings bindings;
+        bindings_init(&bindings);
+        fit = match_types(range, formal, &bindings, &scratch);
+        bindings_free(&bindings);
+    }
+    free(types);
+    arena_free(&scratch);
+    return fit;
+}
+
 /* Current machine coverage, not a restriction on HE. A head rejected here
  * retains the canonical interpreter. Keep the root precheck and the full
- * admission walk on the same predicate, including the library exception. */
+ * admission walk on the same predicate, including the library exception.
+ * A typed head with a dispatch signature runs in the machine through the
+ * host's dispatch boundary. */
 static bool he_execution_head_requires_canonical(Space *space, SymbolId head,
-    bool intrinsic, bool collection, bool library_stream) {
+    CettaExprLen arity, bool intrinsic, bool collection, bool library_stream) {
     return !intrinsic && head != SYMBOL_ID_NONE && !collection &&
         !library_stream && (is_grounded_op(head) || symbol_id_is_builtin(head) ||
-                           space_head_declares_type(space, head));
+                           (space_head_declares_type(space, head) &&
+                            !he_dispatch_signature(space, head, arity)));
+}
+
+/* An equation's left side: its head is the one whose call reached it, judged
+ * there, so only its arguments are walked (their constants can become
+ * callable through a match binding); a left side with any other head is
+ * walked whole. */
+static bool he_execution_push_pattern(HeExecutionAdmission *admission,
+                                      Atom *lhs, SymbolId head) {
+    if (!lhs || lhs->kind != ATOM_EXPR || lhs->expr.len == 0u ||
+        !atom_is_symbol_id(lhs->expr.elems[0], head))
+        return he_execution_push(admission, lhs);
+    for (CettaExprIndex i = 1u; i < lhs->expr.len; i++)
+        if (!he_execution_push(admission, lhs->expr.elems[i]))
+            return false;
+    return true;
 }
 
 static bool he_execution_source_admitted(HeExecutionAdmission *admission,
@@ -1291,8 +1620,27 @@ static bool he_execution_source_admitted(HeExecutionAdmission *admission,
             ((head != g_builtin_syms.if_text && head != g_builtin_syms.empty_form) ||
              !he_execution_intrinsic_equations(admission->space, head)))
             return false;
+        CettaExprLen term_arity = term->kind == ATOM_EXPR && term->expr.len
+            ? term->expr.len - 1u : 0u;
         if (he_execution_head_requires_canonical(admission->space, head,
-                intrinsic, collection, library_stream))
+                term_arity, intrinsic, collection, library_stream))
+            return false;
+        /* A typed call runs in the machine only where its argument
+         * evaluation is the machine's own (he_dispatch_host_mode); any other
+         * keeps the whole source canonical. */
+        if (!intrinsic && expression) {
+            Atom *signature = he_dispatch_signature(admission->space, head,
+                                                    term_arity);
+            if (signature && he_dispatch_host_mode(admission->space, term,
+                    signature) != PETTA_MACHINE_HOST_STRICT_APPLICATION)
+                return false;
+            admission->typed_dispatch |= signature != NULL;
+        }
+        /* HE checks a call by its argument expressions' types before it
+         * evaluates them, and a type error names the call as written: a
+         * typed call whose range the enclosing operation's formal does not
+         * take keeps the source canonical. */
+        if (expression && !he_dispatch_arguments_fit(admission->space, term))
             return false;
         /* A streamed call of a relation must always meet an equation. */
         if (admission->stream && expression && !intrinsic &&
@@ -1326,6 +1674,7 @@ static bool he_execution_source_admitted(HeExecutionAdmission *admission,
                     decided->match_bindings_escape;
                 admission->collected_fresh |= decided->collected_fresh;
                 admission->raise_unshaped |= decided->raise_unshaped;
+                admission->typed_dispatch |= decided->typed_dispatch;
                 he_raw_flow_merge(&admission->raw_flow, &decided->raw_flow);
             }
             if (!seen && !decided) {
@@ -1355,7 +1704,8 @@ static bool he_execution_source_admitted(HeExecutionAdmission *admission,
                         !he_binding_order_holds(admission->space, occurrence.lhs,
                                                 occurrence.rhs,
                                                 &admission->structured_binder) ||
-                        !he_execution_push(admission, occurrence.lhs) ||
+                        !he_execution_push_pattern(admission, occurrence.lhs,
+                                                   head) ||
                         !he_execution_push(admission, occurrence.rhs))
                         return false;
                     bool introduces = he_equation_introduces_variables(
@@ -1438,6 +1788,9 @@ typedef struct {
     Space *space;
     size_t steps;
     HeReturnAssumption *assumptions;
+    /* The consumer declines a call no equation matches (the prepared
+     * machine), so its answers come from equations only. */
+    bool declines_unmatched;
 } HeReturnAnalysis;
 
 static HeReturnProvenance he_return_join(HeReturnProvenance left,
@@ -1565,9 +1918,32 @@ static bool he_return_native_answers_as_is(
 static HeReturnProvenance he_return_call(HeReturnAnalysis *analysis, SymbolId head,
     const HeReturnProvenance *arguments, CettaExprLen arity, uint32_t depth) {
     /* A declared range can make an authored RHS data (not interpreted code).
-     * That caller-demand boundary retains its canonical source owner. */
-    if (space_head_declares_type(analysis->space, head))
-        return HE_RETURN_UNKNOWN;
+     * That caller-demand boundary retains its canonical source owner, except
+     * for a value-class signature (Number, String, Bool, %Undefined%), whose
+     * RHS is code as an untyped head's.  HE evaluates its answer again at a
+     * class range: a value of that class answers itself, and any other
+     * answer is HE's type error, which takes no further evaluation.  So such
+     * a head's answers are scalars where its bodies' are. */
+    bool checks_range = false;
+    bool structural_range = false;
+    if (space_head_declares_type(analysis->space, head) &&
+        !cetta_prepared_pure_value_signature(analysis->space, head, arity,
+                                             &checks_range,
+                                             &structural_range)) {
+        /* A range written as one parameter's type variable: HE evaluates the
+         * answer again at that argument's type.  On a scalar argument, where
+         * no symbol is declared at a metatype's name, that type is a class,
+         * a symbol's declared type or %Undefined%, none of which leaves the
+         * answer as data, so the answers are scalars where the bodies' are,
+         * as at a class range. */
+        CettaExprLen parameter = 0u;
+        if (!cetta_prepared_pure_parameter_range(analysis->space, head, arity,
+                                                 &parameter) ||
+            parameter >= arity || arguments[parameter] != HE_RETURN_SCALAR ||
+            !space_scalar_types_name_no_metatype(analysis->space))
+            return HE_RETURN_UNKNOWN;
+        checks_range = true;
+    }
     for (HeReturnAssumption *at = analysis->assumptions; at; at = at->parent) {
         if (at->head != head || at->arity != arity) continue;
         bool same = true;
@@ -1626,8 +2002,19 @@ static HeReturnProvenance he_return_call(HeReturnAnalysis *analysis, SymbolId he
             if (result == HE_RETURN_UNKNOWN) break;
         }
         analysis->assumptions = assumption.parent;
-        if (!total)
+        /* A call no equation matches is HE's answer as written; where the
+         * consumer declines such a call instead, a head whose range is
+         * checked answers only what its equations answer. */
+        if (!total && !(checks_range && analysis->declines_unmatched))
             result = he_return_join(result, HE_RETURN_COMPLETED);
+        if (checks_range && result != HE_RETURN_SCALAR)
+            return HE_RETURN_UNKNOWN;
+        /* A structural range: HE evaluates the answer again there, which a
+         * value checked at the range answers as it is. */
+        if (structural_range &&
+            (result & (HE_RETURN_RAW | HE_RETURN_COLLECTED |
+                       HE_RETURN_VARIABLE | HE_RETURN_UNKNOWN)))
+            return HE_RETURN_UNKNOWN;
         if (result != HE_RETURN_UNKNOWN &&
             (((unsigned)result & ~(unsigned)candidates[trial]) == 0u))
             return result;
@@ -1800,7 +2187,9 @@ static HeReturnProvenance he_return_body(HeReturnAnalysis *analysis,
     else if (he_return_native_answers_as_is(analysis, body, arguments, arity))
         result = (HeReturnProvenance)(HE_RETURN_RAW | HE_RETURN_SCALAR);
     else if ((head != SYMBOL_ID_NONE && !symbol_id_is_builtin(head) && !is_grounded_op(head) &&
-               !space_head_declares_type(analysis->space, head) &&
+               (!space_head_declares_type(analysis->space, head) ||
+                cetta_prepared_pure_he_checked_constructor(analysis->space,
+                                                           head, arity)) &&
                !space_equations_may_match_unnamed_head(analysis->space)) ||
              he_execution_scalar_head_inert(analysis->space, (Atom *)body)) {
         /* A constructor over values is a value at every node; a raw or
@@ -1824,6 +2213,8 @@ static HeReturnProvenance he_return_body(HeReturnAnalysis *analysis,
  * evaluated mark: a value HE marked at every node.  A value too large to
  * walk here is not known to be one. */
 static bool he_return_marked_throughout(const Atom *value) {
+    if (atom_is_he_evaluated_throughout(value))
+        return true;
     const Atom *inline_stack[32];
     const Atom **stack = inline_stack;
     size_t len = 0u, cap = sizeof(inline_stack) / sizeof(inline_stack[0]);
@@ -1861,6 +2252,210 @@ static bool he_return_marked_throughout(const Atom *value) {
     return marked;
 }
 
+/* How HE treats a prepared answer the evaluator expects at a type E.  HE
+ * evaluates an untyped head's results again at E, and `if`'s branches too
+ * (its range variable takes E), so a value they carry is checked at E.  A
+ * head with a declared function type first matches its range R with E,
+ * then evaluates its own results at R, never at E: at %Undefined% or Atom
+ * nothing is checked, an Expression range is checked only by E itself, at
+ * R = E a value of R passes unchanged, and at any other R HE's type error
+ * names the call.  So the machine's
+ * answer is cast at E where every answer reaches it through untyped heads
+ * and `if` alone, is left as it is where every answer leaves a range that
+ * checks nothing, and is the canonical evaluator's otherwise. */
+typedef struct HeCastAssumption {
+    struct HeCastAssumption *parent;
+    SymbolId head;
+    CettaExprLen arity;
+} HeCastAssumption;
+
+typedef struct {
+    Space *space;
+    Arena *arena;
+    Atom *expected;
+    uint32_t steps;
+    HeCastAssumption *assumptions;
+} HeCastAnalysis;
+
+static HeExpectedCast he_cast_join(HeExpectedCast left, HeExpectedCast right) {
+    if (left == HE_CAST_NEUTRAL) return right;
+    if (right == HE_CAST_NEUTRAL) return left;
+    return left == right ? left : HE_CAST_DECLINE;
+}
+
+/* The range of the one function type of `arity` parameters that the
+ * operator `op` has, as the evaluator types it (a native's included): 1
+ * with *range set, 0 where it has no type, -1 otherwise. */
+static int he_cast_head_range(HeCastAnalysis *analysis, Atom *op,
+                              CettaExprLen arity, Atom **range) {
+    Atom **types = NULL;
+    uint32_t count = eval_get_atom_types_profiled(
+        analysis->space, analysis->arena, op, &types);
+    int found = 0;
+    bool declared = false;
+    for (uint32_t i = 0u; i < count && found >= 0; i++) {
+        Atom *type = types[i];
+        if (!type || atom_is_symbol_id(type, g_builtin_syms.undefined_type))
+            continue;
+        declared = true;
+        if (type->kind == ATOM_EXPR &&
+            type->expr.len == (CettaExprLen)(arity + 2u) &&
+            atom_is_symbol_id(type->expr.elems[0], g_builtin_syms.arrow)) {
+            if (found) { found = -1; break; }
+            *range = type->expr.elems[type->expr.len - 1u];
+            found = 1;
+        }
+    }
+    free(types);
+    return found != 0 ? found : (declared ? -1 : 0);
+}
+
+static HeExpectedCast he_cast_head(HeCastAnalysis *analysis, SymbolId head,
+                                   CettaExprLen arity, uint32_t depth);
+
+static HeExpectedCast he_cast_body(HeCastAnalysis *analysis, const Atom *body,
+                                   uint32_t depth) {
+    if (!body || depth >= 64u || ++analysis->steps > 4096u)
+        return HE_CAST_DECLINE;
+    if (body->kind != ATOM_EXPR || body->expr.len == 0u) {
+        /* Empty is no answer: nothing of it is cast. */
+        if (body->kind == ATOM_SYMBOL && body->sym_id == g_builtin_syms.empty)
+            return HE_CAST_NEUTRAL;
+        /* A symbol with equations is a call HE evaluates. */
+        if (body->kind == ATOM_SYMBOL &&
+            eval_space_has_equations(analysis->space, body->sym_id))
+            return HE_CAST_DECLINE;
+        return HE_CAST_AT_EXPECTED;
+    }
+    SymbolId head = atom_head_symbol_id(body);
+    if (head == SYMBOL_ID_NONE)
+        return HE_CAST_DECLINE;
+    CettaExprLen arity = body->expr.len - 1u;
+    if (head == g_builtin_syms.if_text && arity == 3u)
+        return he_cast_join(
+            he_cast_body(analysis, body->expr.elems[2], depth + 1u),
+            he_cast_body(analysis, body->expr.elems[3], depth + 1u));
+    Atom *range = NULL;
+    int declared = he_cast_head_range(analysis, body->expr.elems[0], arity,
+                                      &range);
+    if (declared < 0)
+        return HE_CAST_DECLINE;
+    if (declared > 0) {
+        if (atom_is_symbol_id(range, g_builtin_syms.undefined_type) ||
+            atom_is_symbol_id(range, g_builtin_syms.atom))
+            return HE_CAST_NONE;
+        /* HE matches an Expression range with E before it reads the range
+         * as %Undefined%: only at E = Expression is the answer left as it
+         * is, and any other E rejects the call. */
+        if (atom_is_symbol_id(range, g_builtin_syms.expression))
+            return atom_is_symbol_id(analysis->expected,
+                                     g_builtin_syms.expression)
+                ? HE_CAST_NONE : HE_CAST_DECLINE;
+        return !atom_has_vars(range) && analysis->expected &&
+                atom_eq(range, analysis->expected)
+            ? HE_CAST_NEUTRAL : HE_CAST_DECLINE;
+    }
+    if (eval_space_has_equations(analysis->space, head))
+        return he_cast_head(analysis, head, arity, depth + 1u);
+    /* An undeclared constructor: a value HE checks at E. */
+    return HE_CAST_AT_EXPECTED;
+}
+
+/* An untyped head's results at E: the join over its equations' bodies, a
+ * call to a head already being read taking the least mode. */
+static HeExpectedCast he_cast_head(HeCastAnalysis *analysis, SymbolId head,
+                                   CettaExprLen arity, uint32_t depth) {
+    for (HeCastAssumption *at = analysis->assumptions; at; at = at->parent)
+        if (at->head == head && at->arity == arity)
+            return HE_CAST_NEUTRAL;
+    HeCastAssumption assumption = {analysis->assumptions, head, arity};
+    analysis->assumptions = &assumption;
+    HeExpectedCast result = HE_CAST_NEUTRAL;
+    bool any = false;
+    SpaceEquationCursor cursor;
+    if (!space_rule_cursor_init(analysis->space, head,
+                                eval_admitted_rule_forms(), &cursor)) {
+        result = HE_CAST_DECLINE;
+    } else {
+        for (;;) {
+            SpaceEquationOccurrenceId id;
+            SpaceEquationCursorStep step =
+                space_equation_cursor_next(&cursor, &id);
+            if (step == SPACE_EQUATION_CURSOR_END) break;
+            SpaceEquationOccurrence occurrence;
+            if (step != SPACE_EQUATION_CURSOR_ITEM ||
+                !space_rule_occurrence_resolve(id, eval_admitted_rule_forms(),
+                                               &occurrence)) {
+                result = HE_CAST_DECLINE;
+                break;
+            }
+            const Atom *lhs = occurrence.lhs;
+            if (!lhs || lhs->kind != ATOM_EXPR ||
+                lhs->expr.len != (CettaExprLen)(arity + 1u))
+                continue;
+            any = true;
+            result = he_cast_join(result,
+                he_cast_body(analysis, occurrence.rhs, depth + 1u));
+            if (result == HE_CAST_DECLINE) break;
+        }
+    }
+    analysis->assumptions = assumption.parent;
+    return any ? result : HE_CAST_DECLINE;
+}
+
+typedef struct {
+    const Space *space;
+    SpaceProgramToken program;
+    SymbolId head;
+    CettaExprLen arity;
+    Atom *expected;
+    Arena expected_arena;
+    bool arena_ready;
+    bool ready;
+    HeExpectedCast mode;
+} HeCastMemo;
+
+static _Thread_local HeCastMemo g_he_cast_memo[8];
+
+/* How the answers of `call`, an untyped head's call the evaluator expects at
+ * `expected`, meet that type: the static reading above, kept per program,
+ * head and expected type. */
+static HeExpectedCast he_expected_cast(Space *space, Atom *call,
+                                       Atom *expected) {
+    if (!space || !call || call->kind != ATOM_EXPR || !call->expr.len ||
+        !expected || atom_has_vars(expected))
+        return HE_CAST_DECLINE;
+    SymbolId head = atom_head_symbol_id(call);
+    if (head == SYMBOL_ID_NONE)
+        return HE_CAST_DECLINE;
+    CettaExprLen arity = call->expr.len - 1u;
+    size_t slot = ((size_t)head * 31u + arity) & 7u;
+    HeCastMemo *memo = &g_he_cast_memo[slot];
+    if (memo->ready && memo->space == space && memo->head == head &&
+        memo->arity == arity && atom_eq(memo->expected, expected) &&
+        space_program_token_is_current(memo->program))
+        return memo->mode;
+    Arena scratch;
+    arena_init(&scratch);
+    HeCastAnalysis analysis = {.space = space, .arena = &scratch,
+                               .expected = expected};
+    HeExpectedCast mode = eval_space_has_equations(space, head)
+        ? he_cast_head(&analysis, head, arity, 0u) : HE_CAST_DECLINE;
+    arena_free(&scratch);
+    if (memo->arena_ready)
+        arena_free(&memo->expected_arena);
+    arena_init(&memo->expected_arena);
+    memo->arena_ready = true;
+    memo->expected = atom_deep_copy(&memo->expected_arena, expected);
+    memo->space = space;
+    memo->program = space_program_token(space);
+    memo->head = head;
+    memo->arity = arity;
+    memo->mode = mode;
+    memo->ready = memo->expected != NULL;
+    return mode;
+}
+
 /* Shared by each HE prepared entrance. A ready invocation carries values;
  * a source call still interprets its operands. Neither mode may infer
  * completed provenance from a result's shape or from its inferred type.
@@ -1880,7 +2475,7 @@ static bool he_prepared_completion_admit(Space *space, Arena *arena,
     if ((!call || arguments_are_values) && invocation)
         call = cetta_invocation_materialize(arena, invocation);
     if (!call) return false;
-    HeReturnAnalysis analysis = {.space = space};
+    HeReturnAnalysis analysis = {.space = space, .declines_unmatched = true};
     HeReturnEnvironment env = {0};
     HeReturnProvenance provenance = HE_RETURN_UNKNOWN;
     if (arguments_are_values && call->kind == ATOM_EXPR && call->expr.len &&
@@ -3107,6 +3702,10 @@ typedef struct {
     unsigned native_contracts;
     bool rereads;
     bool open_root;
+    /* A typed call runs at the dispatch boundary: every call then goes
+     * through the machine's own dispatch, never a prepared realization,
+     * whose typed checks are not HE's. */
+    bool typed_dispatch;
     HeReturnProvenance result_provenance;
 } HeSharedExecutionPlan;
 
@@ -3148,10 +3747,17 @@ static bool he_shared_execution_candidate(Space *space, Atom *source,
      * closure is visited. Do not first walk their argument/flow trees just
      * to rediscover that refusal. This is an uncached fallback selection;
      * the canonical call still observes the current declarations and body. */
+    CettaExprLen source_arity = source && source->kind == ATOM_EXPR &&
+            source->expr.len ? source->expr.len - 1u : 0u;
     if (source_head != g_builtin_syms.match &&
-        he_execution_head_requires_canonical(space, source_head, false,
-            he_execution_collection(source_head),
+        he_execution_head_requires_canonical(space, source_head, source_arity,
+            false, he_execution_collection(source_head),
             he_library_stream_aggregate(space, source) != SYMBOL_ID_NONE))
+        return false;
+    Atom *source_signature = he_dispatch_signature(space, source_head,
+                                                   source_arity);
+    if (source_signature && he_dispatch_host_mode(space, source,
+            source_signature) != PETTA_MACHINE_HOST_STRICT_APPLICATION)
         return false;
     /* Such a root gains on the machine only when something in it computes;
      * a match that only builds data is the canonical frame's single query. */
@@ -3258,6 +3864,7 @@ static bool he_shared_execution_admit_environment(Space *space, Arena *arena,
         .native_contracts = admission.native_contracts,
         .rereads = he_raw_flow_rereads(&run_flow),
         .open_root = admission.open_root,
+        .typed_dispatch = admission.typed_dispatch,
         .result_provenance = provenance,
     };
     return admitted;
@@ -3325,6 +3932,7 @@ static bool he_shared_execution_try(Space *space, Arena *arena, Atom *source,
      * relational episode. A decline publishes nothing and leaves the source
      * for the general machine; open calls never enter this closed attempt. */
     if (!plan.open_root && !plan.native_resource_operations &&
+        !plan.typed_dispatch &&
         source && source->kind == ATOM_EXPR &&
         source_head != SYMBOL_ID_NONE && !symbol_id_is_builtin(source_head)) {
         Bindings empty;
@@ -3361,11 +3969,14 @@ static bool he_shared_execution_try(Space *space, Arena *arena, Atom *source,
     g_he_shared_execution_native_resource_operations = plan.native_resource_operations;
     g_he_shared_execution_effect_free = !plan.effects;
     g_he_shared_execution_rereads = plan.rereads;
+    bool enclosing_typed_dispatch = g_he_shared_execution_typed_dispatch;
+    g_he_shared_execution_typed_dispatch = plan.typed_dispatch;
     g_active_petta_search_machine = true;
     bool complete = petta_eval_machine_run(space, arena, source, type, fuel,
         environment, preserve_bindings, outcomes, PETTA_RELATION_SAFETY_STATIC,
         CETTA_SEARCH_CONTROLLER_INLINE_DEPTH_FIRST, false, false);
     g_active_petta_search_machine = enclosing_active;
+    g_he_shared_execution_typed_dispatch = enclosing_typed_dispatch;
     g_he_shared_execution = false;
     g_he_shared_execution_native_resource_operations = enclosing_resource_operations;
     he_shared_complete_returns(arena, outcomes, result_start, plan.result_provenance);
