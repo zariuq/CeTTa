@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "parser.h"
+#include "string_literal.h"
 #include "utf8.h"
 #include "raw_source_region.h"
 #include "name_key.h"
@@ -327,69 +328,19 @@ const char *parser_canonicalize_namespace_token(Arena *a, const char *tok) {
     return g_namespace_sugar_enabled ? parser_namespace_token(a, tok) : tok;
 }
 
-static char decode_string_escape(char c) {
-    switch (c) {
-        case 'n': return '\n';
-        case 'r': return '\r';
-        case 't': return '\t';
-        case '"': return '"';
-        case '\\': return '\\';
-        default: return c;
-    }
-}
-
-static int parser_hex_digit(char c) {
-    if (c >= '0' && c <= '9') return c - '0';
-    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-    return -1;
-}
-
-/* The bytes a string literal's body denotes: \xhh is one byte, NUL
- * included, and \u{h...} is its scalar in UTF-8.  Every other escape keeps
- * its reading above.  The result is never longer than the body. */
+/* The shared body codec also serves str:unescape metta. Scanning the
+ * enclosing quotes remains the reader's job. */
 static size_t parser_decode_string_body(const char *text, size_t start,
                                         size_t end, char *buf) {
     size_t out = 0;
-    for (size_t i = start; i < end; i++) {
-        if (text[i] != '\\' || i + 1 >= end) {
-            buf[out++] = text[i];
-            continue;
-        }
-        char kind = text[i + 1];
-        if (kind == 'x' && i + 3 < end) {
-            int high = parser_hex_digit(text[i + 2]);
-            int low = parser_hex_digit(text[i + 3]);
-            if (high >= 0 && low >= 0) {
-                buf[out++] = (char)(uint8_t)((high << 4) | low);
-                i += 3;
-                continue;
-            }
-        }
-        if (kind == 'u' && i + 2 < end && text[i + 2] == '{') {
-            size_t j = i + 3;
-            uint32_t scalar = 0;
-            size_t digits = 0;
-            while (j < end && digits < 6) {
-                int digit = parser_hex_digit(text[j]);
-                if (digit < 0)
-                    break;
-                scalar = (scalar << 4) | (uint32_t)digit;
-                digits++;
-                j++;
-            }
-            if (digits > 0 && j < end && text[j] == '}' &&
-                cetta_utf8_scalar_valid(scalar)) {
-                uint8_t encoded[4];
-                size_t width = cetta_utf8_encode(scalar, encoded);
-                memcpy(buf + out, encoded, width);
-                out += width;
-                i = j;
-                continue;
-            }
-        }
-        buf[out++] = decode_string_escape(kind);
-        i++;
+    while (start < end) {
+        uint8_t decoded[4];
+        size_t written;
+        size_t consumed = cetta_string_literal_decode_unit(
+            (const uint8_t *)text + start, end - start, decoded, &written);
+        memcpy(buf + out, decoded, written);
+        out += written;
+        start += consumed;
     }
     buf[out] = '\0';
     return out;
