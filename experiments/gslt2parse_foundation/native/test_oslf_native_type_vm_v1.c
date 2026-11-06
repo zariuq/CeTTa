@@ -144,7 +144,9 @@ static Atom *quinary(
 }
 
 static bool exercise_positional_linear_builder_view(void) {
-    const uint32_t epoch = 91u;
+    /* A spelling the identity facility never issues still keys the
+     * frame table by its own number. */
+    const CettaFrameIdentity epoch = {91u};
     Arena arena;
     Bindings base;
     BindingsBuilder builder;
@@ -161,9 +163,9 @@ static bool exercise_positional_linear_builder_view(void) {
 
     arena_init(&arena);
     bindings_init(&base);
-    x = atom_var_with_id(&arena, "view-x", 81001u);
-    y = atom_var_with_id(&arena, "view-y", 81002u);
-    query_var = atom_var_with_id(&arena, "view-query", 81003u);
+    x = atom_var_with_id(&arena, "view-x", var_id_from_base(81001u));
+    y = atom_var_with_id(&arena, "view-y", var_id_from_base(81002u));
+    query_var = atom_var_with_id(&arena, "view-query", var_id_from_base(81003u));
     lhs = binary(&arena, "view-pair", x, y);
     ground_query = binary(
         &arena, "view-pair", atom_int(&arena, 1), atom_int(&arena, 2));

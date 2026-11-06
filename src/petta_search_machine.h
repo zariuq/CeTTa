@@ -270,6 +270,15 @@ typedef struct {
      * matched equation with no returns still completes with no returns. */
     bool unmatched_call_is_value;
     bool empty_result_is_failure;
+    /* HE's case: a key with no results is switched on Empty, so the first
+     * arm whose pattern matches Empty answers, a variable pattern included,
+     * and an Empty pattern matches an Empty value as data.  PeTTa's case
+     * takes only a written Empty arm, for a key with no results. */
+    bool case_switches_on_empty;
+    /* PeTTa's typed calls, whose failed checks only filter: a value that a
+     * callee's own range check, or a trusted version, typed at a closed
+     * type is not checked there again. */
+    bool range_discharge;
     bool retain_query_variable_identity;
     /* An eager tuple completes an argument before starting the next one.
      * A fault occurrence returns from this application, rather than becoming
@@ -367,7 +376,7 @@ typedef struct {
      * false; the machine then classifies only where another mode decides
      * something. */
     bool classify_may_override;
-    /* The host admits the extended bind!-Space surface and owns its inert
+    /* The host admits the extended bind!-Space operation and owns its inert
      * authored name and constructor evaluation/publication boundary. */
     bool named_space_binding;
     /* Direct grounded execution is a physical realization of a language

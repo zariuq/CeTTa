@@ -1,0 +1,968 @@
+[
+  {
+    "generator": "benchmarks/mam_families/app_panel.py",
+    "scale": "measure",
+    "case": "ancestor_chain_256_natural",
+    "family": "ancestor",
+    "instance": "ancestor_chain_256",
+    "role": "natural",
+    "params": {
+      "shape": "chain",
+      "width": 1,
+      "depth": 256,
+      "facts": 256,
+      "unrelated_facts": 0,
+      "layout": "parent_first",
+      "distinct_ancestors": 256,
+      "upward_walks": 256,
+      "projection_heads": [
+        "ancestor"
+      ]
+    },
+    "answers": 256,
+    "expected": "ancestor_chain_256_natural.expected",
+    "expected_sha256": "bbe30874b4053d69be3d0d3875ed2ad142204f0c577e4f9e25d93c87352b903c",
+    "contract": "occurrence-bag",
+    "dialects": {
+      "he": {
+        "source": "he/ancestor_chain_256_natural.metta",
+        "sha256": "ea1d613aeb9e7a33dbfb4be7b484054bd696bd07c0cea30afe4d6fdf41e9fd54",
+        "profile": "extended"
+      },
+      "petta": {
+        "source": "petta/ancestor_chain_256_natural.metta",
+        "sha256": "ea1d613aeb9e7a33dbfb4be7b484054bd696bd07c0cea30afe4d6fdf41e9fd54",
+        "profile": "extended"
+      },
+      "mork": {
+        "source": "mork/ancestor_chain_256.mm2",
+        "sha256": "4d456013e550567903f358f8b46d08f448dc3fa7290d606b29e210943be799db",
+        "steps": 264
+      }
+    },
+    "oracle": "graph search over the generated parent relation",
+    "semantics": {
+      "problem": "all ancestors of one person in a layered family graph",
+      "observer": "set of ancestors",
+      "order": "unobserved",
+      "multiplicity": "one result per distinct ancestor",
+      "read_window": "frozen input facts",
+      "mm2_plan": "MORK ancestor.mm2: a level-indexed rule reschedules itself and the set store merges shared ancestors; with parents stored first the program begins by writing the relation with the child in front",
+      "mm2_control": "exec agenda in location order until no exec remains",
+      "publication": "CeTTa and PeTTa result stream; native MORK final store projected on the result heads",
+      "layout": "facts (parent P C) as in MORK's example",
+      "comparison": "idiomatic solutions to the same problem",
+      "metta_plan": "recursive relation, every upward walk explored, answers made unique as a stream",
+      "metta_control": "one query evaluated to exhaustion"
+    }
+  },
+  {
+    "generator": "benchmarks/mam_families/app_panel.py",
+    "scale": "measure",
+    "case": "ancestor_chain_256_levelwise",
+    "family": "ancestor",
+    "instance": "ancestor_chain_256",
+    "role": "translation",
+    "params": {
+      "shape": "chain",
+      "width": 1,
+      "depth": 256,
+      "facts": 256,
+      "unrelated_facts": 0,
+      "layout": "parent_first",
+      "distinct_ancestors": 256,
+      "upward_walks": 256,
+      "projection_heads": [
+        "ancestor"
+      ]
+    },
+    "answers": 256,
+    "expected": "ancestor_chain_256_levelwise.expected",
+    "expected_sha256": "bbe30874b4053d69be3d0d3875ed2ad142204f0c577e4f9e25d93c87352b903c",
+    "contract": "occurrence-bag",
+    "dialects": {
+      "he": {
+        "source": "he/ancestor_chain_256_levelwise.metta",
+        "sha256": "74c359bd14dc51d928066d0d26efa328993b36dee8ca384238afc24084cc0c76",
+        "profile": "extended"
+      },
+      "petta": {
+        "source": "petta/ancestor_chain_256_levelwise.metta",
+        "sha256": "0ce4d85f12247cf2d2053865425e97fdae82da8fa56366874b3f597ef21c3429",
+        "profile": "extended"
+      },
+      "mork": {
+        "source": "mork/ancestor_chain_256.mm2",
+        "sha256": "4d456013e550567903f358f8b46d08f448dc3fa7290d606b29e210943be799db",
+        "steps": 264
+      }
+    },
+    "oracle": "graph search over the generated parent relation",
+    "semantics": {
+      "problem": "all ancestors of one person in a layered family graph",
+      "observer": "set of ancestors",
+      "order": "unobserved",
+      "multiplicity": "one result per distinct ancestor",
+      "read_window": "frozen input facts",
+      "mm2_plan": "MORK ancestor.mm2: a level-indexed rule reschedules itself and the set store merges shared ancestors; with parents stored first the program begins by writing the relation with the child in front",
+      "mm2_control": "exec agenda in location order until no exec remains",
+      "publication": "CeTTa and PeTTa result stream; native MORK final store projected on the result heads",
+      "layout": "facts (parent P C) as in MORK's example",
+      "comparison": "direct algorithm translation",
+      "metta_plan": "one generation at a time, each generation a set",
+      "metta_control": "one query evaluated to exhaustion"
+    }
+  },
+  {
+    "generator": "benchmarks/mam_families/app_panel.py",
+    "scale": "measure",
+    "case": "closure_ring_32_levelwise",
+    "family": "closure",
+    "instance": "closure_ring_32",
+    "role": "natural",
+    "params": {
+      "shape": "ring",
+      "nodes": 32,
+      "edges": 32,
+      "pairs": 1024,
+      "longest_shortest_path": 32,
+      "squaring_steps": 5,
+      "projection_heads": [
+        "path"
+      ]
+    },
+    "answers": 1024,
+    "expected": "closure_ring_32_levelwise.expected",
+    "expected_sha256": "1674bfb7dd632a9d8f80eb0301cd21ef8aac205514d1042709b65e710b0b93af",
+    "contract": "occurrence-bag",
+    "dialects": {
+      "he": {
+        "source": "he/closure_ring_32_levelwise.metta",
+        "sha256": "57eb1a0bd8d780c29c1d4108864675b3be6b2d785f96e0cc4c3a7e5e6b8b14c4",
+        "profile": "extended"
+      },
+      "petta": {
+        "source": "petta/closure_ring_32_levelwise.metta",
+        "sha256": "57eb1a0bd8d780c29c1d4108864675b3be6b2d785f96e0cc4c3a7e5e6b8b14c4",
+        "profile": "extended"
+      },
+      "mork": {
+        "source": "mork/closure_ring_32.mm2",
+        "sha256": "500dc802d9fc83177808c66fe29f89fb3db740ac022e3bd14e33d572fdd6f226",
+        "steps": 9
+      }
+    },
+    "oracle": "breadth-first search from every node of the generated graph",
+    "semantics": {
+      "problem": "every pair of nodes joined by a directed path, in a graph with cycles",
+      "observer": "set of pairs",
+      "order": "unobserved",
+      "multiplicity": "one result per distinct pair",
+      "read_window": "frozen input facts",
+      "mm2_plan": "MORK transitive.mm2: the path relation is joined with itself; each step doubles the covered length and the set store absorbs repeats",
+      "mm2_control": "one exec per squaring step, in location order",
+      "publication": "CeTTa and PeTTa result stream; native MORK final store projected on the result heads",
+      "comparison": "idiomatic solutions to the same problem",
+      "metta_plan": "search from every node, one level at a time, with the set of nodes already seen",
+      "metta_control": "one query evaluated to exhaustion"
+    }
+  },
+  {
+    "generator": "benchmarks/mam_families/app_panel.py",
+    "scale": "measure",
+    "case": "counter_64_natural",
+    "family": "counter_machine",
+    "instance": "counter_64",
+    "role": "natural",
+    "params": {
+      "register_value": 64,
+      "ticks": 578,
+      "instructions": 10,
+      "projection_heads": [
+        "register"
+      ]
+    },
+    "answers": 5,
+    "expected": "counter_64_natural.expected",
+    "expected_sha256": "23a2cc2eb4de3245f99944956872a647c087f9f5eeb9f070b84f5490219339c9",
+    "contract": "occurrence-bag",
+    "dialects": {
+      "he": {
+        "source": "he/counter_64_natural.metta",
+        "sha256": "e3f5b63c619ef323ba7a66b2d4b9da378fe75effbc52269cb65f2fa64a0eaf97",
+        "profile": "extended"
+      },
+      "petta": {
+        "source": "petta/counter_64_natural.metta",
+        "sha256": "e3f5b63c619ef323ba7a66b2d4b9da378fe75effbc52269cb65f2fa64a0eaf97",
+        "profile": "extended"
+      },
+      "mork": {
+        "source": "mork/counter_64.mm2",
+        "sha256": "fc488db3fb56ddd1b7efc6a4b137491ff9f51ac8f9aa551c8c4b02b2c6b32b1b",
+        "steps": 3484,
+        "expected": "counter_64.mork.expected",
+        "expected_sha256": "85607cf483dfb4f4aefd9b074a27cf31b607e40fe6f674508b542798a4646c9d"
+      }
+    },
+    "oracle": "direct simulation of the ten-instruction program",
+    "semantics": {
+      "problem": "run a counter machine that copies one register to another until it halts",
+      "observer": "contents of the five registers at halt",
+      "order": "unobserved",
+      "multiplicity": "one result per register",
+      "read_window": "frozen input facts",
+      "mm2_plan": "MORK counter_machine_5.mm2: a clock rule schedules the step rules of the next tick; every state is kept; numbers are unary numerals",
+      "mm2_control": "reflective exec agenda, five execs per tick, until the machine halts",
+      "publication": "CeTTa and PeTTa result stream; native MORK final store projected on the result heads",
+      "spelling": "MM2 reports unary numerals, MeTTa integers; one simulation writes both",
+      "comparison": "idiomatic solutions to the same problem",
+      "metta_plan": "interpreter as a recursive function over the state; integer registers; nothing is stored",
+      "metta_control": "one call, a tail call per tick"
+    }
+  },
+  {
+    "generator": "benchmarks/mam_families/app_panel.py",
+    "scale": "measure",
+    "case": "sort_64_natural",
+    "family": "sort",
+    "instance": "sort_64",
+    "role": "natural",
+    "params": {
+      "size": 64,
+      "order_table_rows": 2016,
+      "phases": 128,
+      "projection_heads": [
+        "A"
+      ]
+    },
+    "answers": 1,
+    "expected": "sort_64_natural.expected",
+    "expected_sha256": "82ffd1c10c293f7283e29bbc95ecffed62176ddfb5f8ea0e0901b47df26e490f",
+    "contract": "occurrence-bag",
+    "dialects": {
+      "he": {
+        "source": "he/sort_64_natural.metta",
+        "sha256": "9a261510fb2e530614277365695781dee1e94ad9025c16a5bb7771c3a5d1d1d7",
+        "profile": "extended"
+      },
+      "petta": {
+        "source": "petta/sort_64_natural.metta",
+        "sha256": "9a261510fb2e530614277365695781dee1e94ad9025c16a5bb7771c3a5d1d1d7",
+        "profile": "extended"
+      },
+      "mork": {
+        "source": "mork/sort_64.mm2",
+        "sha256": "5224d5bb0d65284c458fdcdb648abac005231a1bb18a1c9b7e3df4193b77bb9a",
+        "steps": 132,
+        "expected": "sort_64.mork.expected",
+        "expected_sha256": "844dc86fc73ba8a8b0ee5ff4c62c20405162865d745af1e9202f437886f26808"
+      }
+    },
+    "oracle": "Python sort of the generated permutation",
+    "semantics": {
+      "problem": "sort a permutation of distinct numbers",
+      "observer": "the sorted array",
+      "order": "unobserved",
+      "multiplicity": "one result per position, or one list",
+      "read_window": "frozen input facts",
+      "mm2_plan": "MORK odd_even_sort.mm2: a phase is one join over the pairs of its parity; each match removes two array facts and adds two; the order is a table",
+      "mm2_control": "two execs per position, in location order",
+      "publication": "CeTTa and PeTTa result stream; native MORK final store projected on the result heads",
+      "spelling": "array programs report one fact per position, the list program one list",
+      "comparison": "idiomatic solutions to the same problem",
+      "metta_plan": "merge sort over a list; nothing is stored",
+      "metta_control": "one call"
+    }
+  },
+  {
+    "generator": "benchmarks/mam_families/app_panel.py",
+    "scale": "measure",
+    "case": "arithmetic_10000",
+    "family": "arithmetic",
+    "instance": "arithmetic_10000",
+    "role": "natural",
+    "params": {
+      "records": 10000,
+      "projection_heads": [
+        "result"
+      ]
+    },
+    "answers": 10000,
+    "expected": "arithmetic_10000.expected",
+    "expected_sha256": "cfcf7e1dcc68c9489165f436632ab8f3db01b6d8b05d3f279f191170de240818",
+    "contract": "occurrence-bag",
+    "dialects": {
+      "he": {
+        "source": "he/arithmetic_10000.metta",
+        "sha256": "cc538dc6135b04d8b5799b32830c8e222256195d05cbb51cb617f770985d64e1",
+        "profile": "extended"
+      },
+      "petta": {
+        "source": "petta/arithmetic_10000.metta",
+        "sha256": "cc538dc6135b04d8b5799b32830c8e222256195d05cbb51cb617f770985d64e1",
+        "profile": "extended"
+      },
+      "mork": {
+        "source": "mork/arithmetic_10000.mm2",
+        "sha256": "9a58a2d06f95f18e304a2822d7ac383b3a222b6b37650362adcc78e7e372286b",
+        "steps": 3
+      }
+    },
+    "oracle": "Python integer arithmetic on the generated records",
+    "semantics": {
+      "problem": "compute (x*x + 7) mod 1000 for every record of a relation",
+      "observer": "one result per record",
+      "order": "unobserved",
+      "multiplicity": "one result per record",
+      "read_window": "frozen input facts",
+      "mm2_plan": "MORK grounding.mm2: one exec; a pure sink parses the number, computes and writes the result",
+      "mm2_control": "one exec",
+      "publication": "CeTTa and PeTTa result stream; native MORK final store projected on the result heads",
+      "comparison": "idiomatic solutions to the same problem",
+      "metta_plan": "one match over the relation with grounded arithmetic in the template",
+      "metta_control": "one query evaluated to exhaustion"
+    }
+  },
+  {
+    "generator": "benchmarks/mam_families/app_panel.py",
+    "scale": "measure",
+    "case": "tally_1000x8",
+    "family": "grouped_count",
+    "instance": "tally_1000x8",
+    "role": "natural",
+    "params": {
+      "examples": 1000,
+      "columns": 8,
+      "facts": 9000,
+      "groups": 32,
+      "projection_heads": [
+        "tally"
+      ]
+    },
+    "answers": 32,
+    "expected": "tally_1000x8.expected",
+    "expected_sha256": "ce95a87461dba01c2e143a7f3c25969c5a47b259f7ee303ff89c1acc78e54e72",
+    "contract": "occurrence-bag",
+    "dialects": {
+      "he": {
+        "source": "he/tally_1000x8.metta",
+        "sha256": "72849970a292cc078b1507faba29b3ae509a752c14027ea9d5e2405031559f2c",
+        "profile": "extended"
+      },
+      "petta": {
+        "source": "petta/tally_1000x8.metta",
+        "sha256": "c8dc69efa6e8fa30b80bcf587e088226bf6c0477114083d90c36d28f6d6f228e",
+        "profile": "extended"
+      },
+      "mork": {
+        "source": "mork/tally_1000x8.mm2",
+        "sha256": "6b706cb4a307ae59f433fec96c5f197745c0e24967fb299fad1ad156ea27c890",
+        "steps": 3
+      }
+    },
+    "oracle": "Python tally of the generated observations",
+    "semantics": {
+      "problem": "for every column, value and label, the number of examples that have the value in the column and carry the label",
+      "observer": "one count per non-empty group",
+      "order": "unobserved",
+      "multiplicity": "one result per group",
+      "read_window": "frozen input facts",
+      "mm2_plan": "the counting step of MORK decision_tree_learning.mm2: one join of observations with labels and a count sink grouped by its template",
+      "mm2_control": "one exec",
+      "publication": "CeTTa and PeTTa result stream; native MORK final store projected on the result heads",
+      "comparison": "idiomatic solutions to the same problem",
+      "metta_plan": "one count query per group: the join restricted to the group is collected and its size taken",
+      "metta_control": "one query evaluated to exhaustion"
+    }
+  },
+  {
+    "generator": "benchmarks/mam_families/app_panel.py",
+    "scale": "measure",
+    "case": "kb_load_10000",
+    "family": "knowledge_base",
+    "instance": "kb_load_10000",
+    "role": "natural",
+    "params": {
+      "typed_adds": 10000,
+      "levels": 8,
+      "projection_heads": [
+        ":"
+      ]
+    },
+    "answers": 10010,
+    "expected": "kb_load_10000.expected",
+    "expected_sha256": "d0d745ff395977454b7b6b9f2dbe51caf085c0dd1742f93f774254d0be37cdb7",
+    "contract": "occurrence-bag",
+    "dialects": {
+      "petta": {
+        "source": "petta/kb_load_10000.metta",
+        "sha256": "81ccd49e66c7d2b0b3268a0c95f207967d5686d260997d3354cbb068c8d01cfa",
+        "profile": "extended"
+      }
+    },
+    "oracle": "the reach_* spine is the only proof of depth 8",
+    "semantics": {
+      "problem": "load a typed knowledge base by adding its declarations one directive at a time, then prove a goal by backward chaining",
+      "observer": "each add's result and the proof",
+      "order": "unobserved",
+      "multiplicity": "one result per directive",
+      "read_window": "each directive adds one declaration to the knowledge base; the proof reads the base at the end",
+      "mm2_plan": "none",
+      "mm2_control": "none",
+      "publication": "CeTTa and PeTTa result stream; native MORK final store projected on the result heads",
+      "comparison": "idiomatic solution",
+      "metta_plan": "add-atom per declaration; backward chaining by match",
+      "metta_control": "one directive per declaration"
+    }
+  },
+  {
+    "generator": "benchmarks/mam_families/app_panel.py",
+    "scale": "measure",
+    "case": "space_step_1000_2000",
+    "family": "space_step",
+    "instance": "space_step_1000",
+    "role": "translation",
+    "params": {
+      "rows": 1000,
+      "steps": 2000,
+      "projection_heads": [
+        "slot"
+      ]
+    },
+    "answers": 2,
+    "expected": "space_step_1000_2000.expected",
+    "expected_sha256": "22005beda0e2177c7b540feb462ecab8b06c0f38aa736e076d0ba7753e557e95",
+    "contract": "occurrence-bag",
+    "dialects": {
+      "petta": {
+        "source": "petta/space_step_1000_2000.metta",
+        "sha256": "d95fc95449263bc9bfeb8d50bdb118c46fe748b401e277d9df7073a1e6c5f616",
+        "profile": "extended"
+      }
+    },
+    "oracle": "a counter advanced once per step",
+    "semantics": {
+      "problem": "advance a counter kept in a space of unrelated facts, each step reading it, removing it and adding its successor",
+      "observer": "the final counter",
+      "order": "unobserved",
+      "multiplicity": "one result",
+      "read_window": "a step reads the counter row, then replaces it",
+      "mm2_plan": "none",
+      "mm2_control": "none",
+      "publication": "CeTTa and PeTTa result stream; native MORK final store projected on the result heads",
+      "comparison": "direct algorithm translation",
+      "metta_plan": "match, remove-atom and add-atom on one row",
+      "metta_control": "one call, a tail call per step"
+    }
+  },
+  {
+    "generator": "benchmarks/mam_families/join_panel.py",
+    "scale": "measure",
+    "case": "triangle_dense_32_count",
+    "family": "join",
+    "role": "count",
+    "params": {
+      "factors": 3,
+      "rows": 3072,
+      "relation_sizes": [
+        1024,
+        1024,
+        1024
+      ],
+      "projection_heads": [
+        "join-count"
+      ]
+    },
+    "answers": 1,
+    "expected": "triangle_dense_32_count.expected",
+    "expected_sha256": "75e6194413ea413209e09c9c3031261a26563a5f3f6c6b54bfccd6c7af7f2712",
+    "contract": "occurrence-bag",
+    "dialects": {
+      "he": {
+        "source": "he/triangle_dense_32_count.metta",
+        "sha256": "a33bfe2a972f2c1cc25917ed4bf05487fe1c027c13681418ffb7fe65f8e9bc95",
+        "profile": "extended",
+        "expected": "he/triangle_dense_32_count.expected",
+        "expected_sha256": "de33640a0eb4eaa5ecd485dccb29eab8e5af8268c84edd0794b4c6a4acae7607"
+      },
+      "petta": {
+        "source": "petta/triangle_dense_32_count.metta",
+        "sha256": "434276e6316478f1264ab85f95494e77fceb50a5d9e72dace080caf1a9596b37",
+        "profile": "extended",
+        "expected": "petta/triangle_dense_32_count.expected",
+        "expected_sha256": "de33640a0eb4eaa5ecd485dccb29eab8e5af8268c84edd0794b4c6a4acae7607"
+      },
+      "mork": {
+        "source": "mork/triangle_dense_32_count.mm2",
+        "sha256": "9cce161b95b05fba7922ef91f96c5ba1cc31a3a520b89fb70e352a3a97461a4e"
+      }
+    },
+    "oracle": "independent source-ordered indexed binary row-occurrence enumeration",
+    "semantics": {
+      "problem": "finite ground relational conjunction",
+      "observer": "count",
+      "order": "unobserved",
+      "multiplicity": "one contribution per physical row tuple",
+      "read_window": "frozen input facts",
+      "control": "one query, pure constant or witness template",
+      "comparison": "idiomatic solutions to the same problem",
+      "presentation": "MeTTa scalar; MM2 tagged count",
+      "metta_plan": "collection cardinality",
+      "mm2_plan": "full-query count sink",
+      "mm2_factor_order": [
+        "r",
+        "s",
+        "t"
+      ],
+      "publication": "CeTTa result stream; native MORK final store with result-head projection",
+      "empty_count": "MM2's absent empty group is observed through an empty witness set",
+      "private_fields": "distinct occurrence IDs preserve duplicates across all stores"
+    }
+  },
+  {
+    "generator": "benchmarks/mam_families/join_panel.py",
+    "scale": "measure",
+    "case": "guarded_triangle_32_count",
+    "family": "join",
+    "role": "count",
+    "params": {
+      "factors": 4,
+      "rows": 4096,
+      "relation_sizes": [
+        1024,
+        1024,
+        1024,
+        1024
+      ],
+      "projection_heads": [
+        "join-count"
+      ]
+    },
+    "answers": 1,
+    "expected": "guarded_triangle_32_count.expected",
+    "expected_sha256": "bf481dc342dd982b348dd101a48b9f13e2f39f3b143bc532f01a5bbab99787ef",
+    "contract": "occurrence-bag",
+    "dialects": {
+      "he": {
+        "source": "he/guarded_triangle_32_count.metta",
+        "sha256": "68169f4f5f07e09a419f6bdc25fd9a1c98a74e639b6e9c3bddaae0a0850f2a96",
+        "profile": "extended",
+        "expected": "he/guarded_triangle_32_count.expected",
+        "expected_sha256": "4f71bb761ace37c88826cd8cc1c948e1cf5b5d0cd153dc651a6efdb3dfb9f2b1"
+      },
+      "petta": {
+        "source": "petta/guarded_triangle_32_count.metta",
+        "sha256": "267713cc7b1ebbc44add381283b581920889a5b20f37bdc75ec69f8a74e110c2",
+        "profile": "extended",
+        "expected": "petta/guarded_triangle_32_count.expected",
+        "expected_sha256": "4f71bb761ace37c88826cd8cc1c948e1cf5b5d0cd153dc651a6efdb3dfb9f2b1"
+      },
+      "mork": {
+        "source": "mork/guarded_triangle_32_count.mm2",
+        "sha256": "256c43716625d3e964edd6c579188bbbedf6c913f4e2da79901f59e797eec9c8"
+      }
+    },
+    "oracle": "independent source-ordered indexed binary row-occurrence enumeration",
+    "semantics": {
+      "problem": "finite ground relational conjunction",
+      "observer": "count",
+      "order": "unobserved",
+      "multiplicity": "one contribution per physical row tuple",
+      "read_window": "frozen input facts",
+      "control": "one query, pure constant or witness template",
+      "comparison": "idiomatic solutions to the same problem",
+      "presentation": "MeTTa scalar; MM2 tagged count",
+      "metta_plan": "collection cardinality",
+      "mm2_plan": "covering-factor-first count sink",
+      "mm2_factor_order": [
+        "u",
+        "r",
+        "s",
+        "t"
+      ],
+      "publication": "CeTTa result stream; native MORK final store with result-head projection",
+      "empty_count": "MM2's absent empty group is observed through an empty witness set",
+      "private_fields": "distinct occurrence IDs preserve duplicates across all stores"
+    }
+  },
+  {
+    "generator": "benchmarks/mam_families/join_panel.py",
+    "scale": "measure",
+    "case": "triangle_duplicates_witnesses",
+    "family": "join",
+    "role": "witnesses",
+    "params": {
+      "factors": 3,
+      "rows": 24,
+      "relation_sizes": [
+        8,
+        8,
+        8
+      ],
+      "projection_heads": [
+        "join-witness"
+      ]
+    },
+    "answers": 64,
+    "expected": "triangle_duplicates_witnesses.expected",
+    "expected_sha256": "8e5fdbc01a4483f3ee57137e5cff66bcc2ef4c60aeadbc9c48693c2ac006540a",
+    "contract": "occurrence-bag",
+    "dialects": {
+      "he": {
+        "source": "he/triangle_duplicates_witnesses.metta",
+        "sha256": "2cdeeca4958a9927bca0b885de673cb104980597803b3290463eec64e7925081",
+        "profile": "extended"
+      },
+      "petta": {
+        "source": "petta/triangle_duplicates_witnesses.metta",
+        "sha256": "2cdeeca4958a9927bca0b885de673cb104980597803b3290463eec64e7925081",
+        "profile": "extended"
+      },
+      "mork": {
+        "source": "mork/triangle_duplicates_witnesses.mm2",
+        "sha256": "d0f298316556c1156ee4a2d3019bc1c4342e1ce066422421ee454ca965c49af4"
+      }
+    },
+    "oracle": "independent source-ordered indexed binary row-occurrence enumeration",
+    "semantics": {
+      "problem": "finite ground relational conjunction",
+      "observer": "witnesses",
+      "order": "unobserved",
+      "multiplicity": "one contribution per physical row tuple",
+      "read_window": "frozen input facts",
+      "control": "one query, pure constant or witness template",
+      "comparison": "idiomatic solutions to the same problem",
+      "presentation": "row-identity tuples",
+      "metta_plan": "full witness join",
+      "mm2_plan": "full witness join",
+      "mm2_factor_order": [
+        "r",
+        "s",
+        "t"
+      ],
+      "publication": "CeTTa result stream; native MORK final store with result-head projection",
+      "empty_count": "MM2's absent empty group is observed through an empty witness set",
+      "private_fields": "distinct occurrence IDs preserve duplicates across all stores"
+    }
+  },
+  {
+    "generator": "benchmarks/mam_families/join_panel.py",
+    "scale": "measure",
+    "case": "triangle_empty_witnesses",
+    "family": "join",
+    "role": "witnesses",
+    "params": {
+      "factors": 3,
+      "rows": 2,
+      "relation_sizes": [
+        1,
+        1,
+        0
+      ],
+      "projection_heads": [
+        "join-witness"
+      ]
+    },
+    "answers": 0,
+    "expected": "triangle_empty_witnesses.expected",
+    "expected_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "contract": "occurrence-bag",
+    "dialects": {
+      "he": {
+        "source": "he/triangle_empty_witnesses.metta",
+        "sha256": "23a557382157532de24f3359508b526cd3077b89f9488b2e1afeb3e97e0408f0",
+        "profile": "extended"
+      },
+      "petta": {
+        "source": "petta/triangle_empty_witnesses.metta",
+        "sha256": "23a557382157532de24f3359508b526cd3077b89f9488b2e1afeb3e97e0408f0",
+        "profile": "extended"
+      },
+      "mork": {
+        "source": "mork/triangle_empty_witnesses.mm2",
+        "sha256": "93ac2b8ebbdec3b8b7eb7636a51ab487af0ffbc00c5895624c6c3543b361ea93"
+      }
+    },
+    "oracle": "independent source-ordered indexed binary row-occurrence enumeration",
+    "semantics": {
+      "problem": "finite ground relational conjunction",
+      "observer": "witnesses",
+      "order": "unobserved",
+      "multiplicity": "one contribution per physical row tuple",
+      "read_window": "frozen input facts",
+      "control": "one query, pure constant or witness template",
+      "comparison": "idiomatic solutions to the same problem",
+      "presentation": "row-identity tuples",
+      "metta_plan": "full witness join",
+      "mm2_plan": "full witness join",
+      "mm2_factor_order": [
+        "r",
+        "s",
+        "t"
+      ],
+      "publication": "CeTTa result stream; native MORK final store with result-head projection",
+      "empty_count": "MM2's absent empty group is observed through an empty witness set",
+      "private_fields": "distinct occurrence IDs preserve duplicates across all stores"
+    }
+  },
+  {
+    "generator": "benchmarks/mam_families/path_panel.py",
+    "scale": "measure",
+    "case": "path_product_12_count",
+    "family": "path",
+    "role": "count",
+    "params": {
+      "levels": 12,
+      "rows": 24,
+      "relation_sizes": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "projection_heads": [
+        "path-count"
+      ]
+    },
+    "answers": 1,
+    "expected": "path_product_12_count.expected",
+    "expected_sha256": "29940b0697ede70c21226211855283b46445c95018a3f3925d8dd1d50a81009f",
+    "contract": "occurrence-bag",
+    "dialects": {
+      "he": {
+        "source": "he/path_product_12_count.metta",
+        "sha256": "b6fe99bea617d515a37b474e742d5f051b95c2118507a2f14e8307de91aea154",
+        "profile": "extended",
+        "expected": "he/path_product_12_count.expected",
+        "expected_sha256": "25ac87b7309b7946b51c32e824793ff48b56b735efa16875cf33e4ba67523d91"
+      },
+      "petta": {
+        "source": "petta/path_product_12_count.metta",
+        "sha256": "781dbc517ec08438bc8d1bd69381c8906e3aea309a3e83a1f25d53a31ff2a174",
+        "profile": "extended",
+        "expected": "petta/path_product_12_count.expected",
+        "expected_sha256": "25ac87b7309b7946b51c32e824793ff48b56b735efa16875cf33e4ba67523d91"
+      },
+      "mork": {
+        "source": "mork/path_product_12_count.mm2",
+        "sha256": "914116f667da30deaae73efe1038ba670f1fda9354a8fa2d1b1e31a26e0d0e61"
+      }
+    },
+    "oracle": "independent product/isolated-key formula; smoke scale also enumerated",
+    "semantics": {
+      "problem": "full finite ground path join",
+      "observer": "occurrence count",
+      "presentation": "MeTTa scalar count; MM2 tagged count, both interpreted as the same integer",
+      "metta_plan": "numeric occurrence fold",
+      "comparison": "idiomatic solutions to the same problem",
+      "order": "unobserved",
+      "multiplicity": "one contribution per row-occurrence tuple",
+      "read_window": "frozen input facts",
+      "control": "one query, no recursive or effectful templates",
+      "publication": "CeTTa result stream; native MORK final store with result-head projection",
+      "empty_count": "MM2's missing empty group is not a scalar zero; empty joins use witness observation",
+      "mm2_plan": "native full-query count sink or witness join",
+      "admission": "finite ground rows with occurrence identities"
+    }
+  },
+  {
+    "generator": "benchmarks/mam_families/path_panel.py",
+    "scale": "measure",
+    "case": "path_product_12_separator_count",
+    "family": "path",
+    "role": "count",
+    "params": {
+      "levels": 12,
+      "rows": 24,
+      "relation_sizes": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "projection_heads": [
+        "path-count"
+      ]
+    },
+    "answers": 1,
+    "expected": "path_product_12_separator_count.expected",
+    "expected_sha256": "29940b0697ede70c21226211855283b46445c95018a3f3925d8dd1d50a81009f",
+    "contract": "occurrence-bag",
+    "dialects": {
+      "he": {
+        "source": "he/path_product_12_separator_count.metta",
+        "sha256": "b6fe99bea617d515a37b474e742d5f051b95c2118507a2f14e8307de91aea154",
+        "profile": "extended",
+        "expected": "he/path_product_12_separator_count.expected",
+        "expected_sha256": "25ac87b7309b7946b51c32e824793ff48b56b735efa16875cf33e4ba67523d91"
+      },
+      "petta": {
+        "source": "petta/path_product_12_separator_count.metta",
+        "sha256": "781dbc517ec08438bc8d1bd69381c8906e3aea309a3e83a1f25d53a31ff2a174",
+        "profile": "extended",
+        "expected": "petta/path_product_12_separator_count.expected",
+        "expected_sha256": "25ac87b7309b7946b51c32e824793ff48b56b735efa16875cf33e4ba67523d91"
+      },
+      "mork": {
+        "source": "mork/path_product_12_separator_count.mm2",
+        "sha256": "afa998302dd01e264aaf2960c226fac0052c51e1e2da0139ad9b4c6d0b111543",
+        "steps": 2
+      }
+    },
+    "oracle": "independent product formula; separator factorization",
+    "semantics": {
+      "problem": "full finite ground path join",
+      "observer": "occurrence count",
+      "presentation": "MeTTa scalar count; MM2 tagged count, both interpreted as the same integer",
+      "metta_plan": "numeric occurrence fold",
+      "comparison": "idiomatic solutions to the same problem",
+      "order": "unobserved",
+      "multiplicity": "one contribution per row-occurrence tuple",
+      "read_window": "frozen input facts",
+      "control": "one query, no recursive or effectful templates",
+      "publication": "CeTTa result stream; native MORK final store with result-head projection",
+      "empty_count": "MM2's missing empty group is not a scalar zero; empty joins use witness observation",
+      "mm2_plan": "separate relation counts and scalar product",
+      "admission": "fixed separator 0; nonempty relations; result below 2^63"
+    }
+  },
+  {
+    "generator": "benchmarks/mam_families/path_panel.py",
+    "scale": "measure",
+    "case": "path_correlated_6_witnesses",
+    "family": "path",
+    "role": "witnesses",
+    "params": {
+      "levels": 6,
+      "rows": 36,
+      "relation_sizes": [
+        6,
+        6,
+        6,
+        6,
+        6,
+        6
+      ],
+      "projection_heads": [
+        "path-witness"
+      ]
+    },
+    "answers": 104,
+    "expected": "path_correlated_6_witnesses.expected",
+    "expected_sha256": "cd7dad9340fc3f71a32f02545d01251b138c40540cc8fc305d9a65cc946dedc3",
+    "contract": "occurrence-bag",
+    "dialects": {
+      "he": {
+        "source": "he/path_correlated_6_witnesses.metta",
+        "sha256": "db0a0d387e76e27d4d71744b22504e51f7c2d96870bc1932f0c03f38eb52cc8d",
+        "profile": "extended"
+      },
+      "petta": {
+        "source": "petta/path_correlated_6_witnesses.metta",
+        "sha256": "db0a0d387e76e27d4d71744b22504e51f7c2d96870bc1932f0c03f38eb52cc8d",
+        "profile": "extended"
+      },
+      "mork": {
+        "source": "mork/path_correlated_6_witnesses.mm2",
+        "sha256": "832ac1c1afd840d37c4ce87000ae41dfeaaf830d3f72b2508b60bbd2c3880ea3"
+      }
+    },
+    "oracle": "independent nested row-occurrence enumeration",
+    "semantics": {
+      "problem": "full finite ground path join",
+      "observer": "row-identity witness bag",
+      "presentation": "row-identity tuples",
+      "metta_plan": "full witness join",
+      "comparison": "idiomatic solutions to the same problem",
+      "order": "unobserved",
+      "multiplicity": "one contribution per row-occurrence tuple",
+      "read_window": "frozen input facts",
+      "control": "one query, no recursive or effectful templates",
+      "publication": "CeTTa result stream; native MORK final store with result-head projection",
+      "empty_count": "MM2's missing empty group is not a scalar zero; empty joins use witness observation",
+      "mm2_plan": "native full-query count sink or witness join",
+      "admission": "finite ground rows with occurrence identities"
+    }
+  },
+  {
+    "generator": "benchmarks/mam_families/path_panel.py",
+    "scale": "measure",
+    "case": "path_isolated_8_512_count",
+    "family": "path",
+    "role": "count",
+    "params": {
+      "levels": 8,
+      "rows": 4096,
+      "relation_sizes": [
+        512,
+        512,
+        512,
+        512,
+        512,
+        512,
+        512,
+        512
+      ],
+      "projection_heads": [
+        "path-count"
+      ]
+    },
+    "answers": 1,
+    "expected": "path_isolated_8_512_count.expected",
+    "expected_sha256": "66b7a0ee4a6b5146541189fab7940153242907bb6ceb84f31afcc14cbbf8df57",
+    "contract": "occurrence-bag",
+    "dialects": {
+      "he": {
+        "source": "he/path_isolated_8_512_count.metta",
+        "sha256": "c6edfd12dcb31b0ad019ec3d90f9767d4748689cf75b050b91ee76139a0912bd",
+        "profile": "extended",
+        "expected": "he/path_isolated_8_512_count.expected",
+        "expected_sha256": "240269e94afb4bbc4c643851e366bf4f0d870ff0753d250b854f748cf3516285"
+      },
+      "petta": {
+        "source": "petta/path_isolated_8_512_count.metta",
+        "sha256": "4aee5af0f2c34b793bd7632eede49b1de5bf2f6097d3f36bbf8c412d9368e652",
+        "profile": "extended",
+        "expected": "petta/path_isolated_8_512_count.expected",
+        "expected_sha256": "240269e94afb4bbc4c643851e366bf4f0d870ff0753d250b854f748cf3516285"
+      },
+      "mork": {
+        "source": "mork/path_isolated_8_512_count.mm2",
+        "sha256": "717077f9fbdeaaf487a634149f77a23ead88a2888c09193cd2fc10583395c9f4"
+      }
+    },
+    "oracle": "independent product/isolated-key formula; smoke scale also enumerated",
+    "semantics": {
+      "problem": "full finite ground path join",
+      "observer": "occurrence count",
+      "presentation": "MeTTa scalar count; MM2 tagged count, both interpreted as the same integer",
+      "metta_plan": "numeric occurrence fold",
+      "comparison": "idiomatic solutions to the same problem",
+      "order": "unobserved",
+      "multiplicity": "one contribution per row-occurrence tuple",
+      "read_window": "frozen input facts",
+      "control": "one query, no recursive or effectful templates",
+      "publication": "CeTTa result stream; native MORK final store with result-head projection",
+      "empty_count": "MM2's missing empty group is not a scalar zero; empty joins use witness observation",
+      "mm2_plan": "native full-query count sink or witness join",
+      "admission": "finite ground rows with occurrence identities"
+    }
+  }
+]

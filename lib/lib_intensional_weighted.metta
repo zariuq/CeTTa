@@ -86,7 +86,7 @@
    (Intensional.MissingSnapshotFrom &intensional_meta))
 
 (= (Intensional.CollectPropertyPacketsInto $packetSpace $metaSpace $kb $entity $maxsteps ($P $w))
-   (let $audit (eval (PropertyBeliefAudit $kb $entity $P $maxsteps))
+   (let $audit (PropertyBeliefAudit $kb $entity $P $maxsteps)
         (if (== $audit ())
             (let $_missing
                  (add-atom $metaSpace (missing $P))
@@ -98,7 +98,7 @@
                        (let $belief (superpose $audit)
                             (case $belief
                                   ((($tv $stamp)
-                                    (let $weighted (eval (ReweighSTV $tv $w))
+                                    (let $weighted (ReweighSTV $tv $w)
                                          (add-atom $packetSpace
                                                    (packet $P $weighted $stamp))))))))))
                   True))))
@@ -108,13 +108,13 @@
      &intensional_packets &intensional_meta $kb $entity $maxsteps ($P $w)))
 
 (= (Intensional.LoadConceptPacketsInto $packetSpace $metaSpace $kb $entity $concept $maxsteps)
-   (let* (($props (eval (Intensional.SourceConceptProps $kb $concept)))
+   (let* (($props (Intensional.SourceConceptProps $kb $concept))
           ($_clearPackets (Intensional.ClearSpace $packetSpace))
           ($_clearMeta (Intensional.ClearSpace $metaSpace))
           ($_collect
             (foldl-atom $props True $acc $pair
-              (eval (Intensional.CollectPropertyPacketsInto
-                      $packetSpace $metaSpace $kb $entity $maxsteps $pair)))))
+              (Intensional.CollectPropertyPacketsInto
+                      $packetSpace $metaSpace $kb $entity $maxsteps $pair))))
          True))
 
 (= (Intensional.LoadConceptPackets $kb $entity $concept $maxsteps)
@@ -130,7 +130,7 @@
 
 (= (Intensional.ReducePackets $packets)
    (foldl-atom $packets ((stv 0.0 0.0) ()) $acc $item
-     (eval (Intensional.MergePacketStep $acc $item))))
+     (Intensional.MergePacketStep $acc $item)))
 
 (= (Intensional.ReducePacketsFrom $packetSpace)
    (Intensional.ReducePackets (Intensional.PacketSnapshotFrom $packetSpace)))
@@ -151,8 +151,8 @@
 
 (= (IntensionalMemberSTVInSpaces $packetSpace $metaSpace $kb $entity $concept $maxsteps)
    (let* (($_load (Intensional.LoadConceptPacketsInto $packetSpace $metaSpace $kb $entity $concept $maxsteps))
-          ($folded (eval (Intensional.ReducePacketsFrom $packetSpace))))
-         (eval (PacketTV $folded))))
+          ($folded (Intensional.ReducePacketsFrom $packetSpace)))
+         (PacketTV $folded)))
 
 (= (IntensionalMemberSTVInSpaces $packetSpace $metaSpace $kb $entity $concept)
    (IntensionalMemberSTVInSpaces $packetSpace $metaSpace $kb $entity $concept 0))
@@ -166,12 +166,12 @@
 
 (= (IntensionalMemberAuditInSpaces $packetSpace $metaSpace $kb $entity $concept $maxsteps)
    (let* (($_load (Intensional.LoadConceptPacketsInto $packetSpace $metaSpace $kb $entity $concept $maxsteps))
-          ($folded (eval (Intensional.ReducePacketsFrom $packetSpace))))
+          ($folded (Intensional.ReducePacketsFrom $packetSpace)))
          (intensional-result
-            (eval (PacketTV $folded))
-            (eval (PacketStamp $folded))
-            (covered (eval (Intensional.CoveredSnapshotFrom $metaSpace)))
-            (missing (eval (Intensional.MissingSnapshotFrom $metaSpace)))
+            (PacketTV $folded)
+            (PacketStamp $folded)
+            (covered (Intensional.CoveredSnapshotFrom $metaSpace))
+            (missing (Intensional.MissingSnapshotFrom $metaSpace))
             (blocked ()))))
 
 (= (IntensionalMemberAuditInSpaces $packetSpace $metaSpace $kb $entity $concept)

@@ -46,6 +46,10 @@ static void check_list_equality(Space *space, Arena *source, Arena *scratch,
     assert(program);
     Atom *result = NULL;
     assert(cetta_prepared_pure_program_execute_closed(program, scratch, 0u, &result));
+    if (!atom_eq(result, atom_bool(source, expected)))
+        fprintf(stderr, "list equality: left=%s right=%s expected=%d actual=%s\n",
+            atom_to_string(source, left), atom_to_string(source, right), expected,
+            atom_to_string(source, result));
     assert(atom_eq(result, atom_bool(source, expected)));
     cetta_prepared_pure_program_free(program);
     program = cetta_prepared_pure_program_compile_closed_answers(
@@ -152,9 +156,14 @@ int main(void) {
         atom_expr2(&source, quote, cell), atom_expr2(&source, quote, cell), true);
     Atom *improper = petta_semantics_open_cons_value(&source, a, b);
     Atom *authored = atom_expr3(&source, atom_symbol(&source, "cons"), a, b);
+    /* A cell value and the data spelling (cons h t) are distinct in PeTTa.
+     * The latter becomes a cell only when explicitly evaluated. */
     check_list_equality(&space, &source, &scratch,
-        atom_expr2(&source, wrap, improper), atom_expr2(&source, wrap, authored), true);
-    printf("PreparedListEquality observations=20 nested-cells, shared-records, mismatches, opaque-quotes and improper-tails\n");
+        atom_expr2(&source, wrap, improper), atom_expr2(&source, wrap, authored), false);
+    check_list_equality(&space, &source, &scratch,
+        atom_expr2(&source, wrap, improper),
+        atom_expr2(&source, wrap, petta_semantics_open_cons_value(&source, a, b)), true);
+    printf("PreparedListEquality observations=22 nested-cells, shared-records, mismatches, opaque-quotes and improper-tails\n");
     program = compile(&space,&source,"(equal-result 1.0)");
     assert(program && cetta_prepared_pure_program_execute_closed(program,&scratch,0u,&result));
     assert(atom_eq(result,atom_bool(&source,true)));

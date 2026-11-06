@@ -29,6 +29,13 @@ typedef struct {
    for the synchronous call: operations neither modify nor retain the vector.
    An escaping result must own any vector storage it needs. */
 Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs);
+/* PeTTa's min (`minimum`) or max of two numbers or arithmetic constants:
+ * the operand that is least (greatest) by the numeric order of what they
+ * stand for, -0.0 below 0 and 0.0, a NaN operand propagating; on a tie the
+ * first for min and the second for max.  False where an operand is not a
+ * number or constant (the caller's comparison then answers or raises). */
+bool petta_numeric_min_max(Arena *a, bool minimum, Atom *x, Atom *y,
+                           Atom **out);
 
 /* Immutable library-family classification, not activation or admission.
  * A library ABI operation may additionally have a core implementation. */

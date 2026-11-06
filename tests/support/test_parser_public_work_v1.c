@@ -8,6 +8,7 @@
 #include "parser_pack_abi_v1.h"
 #include "regular_span_dfa_v1.h"
 #include "symbol.h"
+#include "runtime_names.h"
 
 #include <assert.h>
 #include <pthread.h>
@@ -114,15 +115,22 @@ static void close_parser(CettaLibraryContext *ctx, Arena *arena, Atom *parser) {
     assert(value->expr.elems[1]->kind == ATOM_GROUNDED && value->expr.elems[1]->ground.gkind == GV_BOOL &&
         value->expr.elems[1]->ground.bval);
 }
-typedef struct { CettaLibraryContext *ctx; Atom *handle; } Worker;
+typedef struct {
+    CettaLibraryContext *ctx;
+    Atom *handle;
+    CettaNameContext names;
+} Worker;
 static void *parse_worker(void *input) {
     Worker *worker = input;
+    CettaNameContext previous = cetta_name_context_current();
+    cetta_name_context_install(&worker->names);
     for (unsigned i = 0u; i < 40u; ++i) {
         Arena arena;
         arena_init_detached(&arena);
         parse(worker->ctx, &arena, worker->handle, "a", 2u);
         arena_free(&arena);
     }
+    cetta_name_context_install(&previous);
     return NULL;
 }
 
@@ -156,7 +164,8 @@ int main(void) {
     no_work(); checks += 2u;
 
     Atom *independent = load(ctx, &survivor, "joined-parser");
-    Worker workers[2] = {{ctx, promoted}, {ctx, independent}};
+    CettaNameContext names = cetta_name_context_current();
+    Worker workers[2] = {{ctx, promoted, names}, {ctx, independent, names}};
     pthread_t threads[2];
     for (unsigned i = 0u; i < 2u; ++i) assert(!pthread_create(&threads[i], NULL, parse_worker, &workers[i]));
     for (unsigned i = 0u; i < 2u; ++i) assert(!pthread_join(threads[i], NULL));

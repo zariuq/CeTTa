@@ -5,10 +5,25 @@
 #include "call_outcome.h"
 #include "eval.h"
 #include "space.h"
+#include "owned_execution.h"
 #include <stdbool.h>
 #include <stdint.h>
 
 typedef struct CettaForeignRuntime CettaForeignRuntime;
+void cetta_foreign_enable_objects(CettaForeignRuntime *rt, Registry *);
+bool cetta_foreign_object_head(CettaForeignRuntime *rt, const char *name);
+/* Python-specific object access is private to the in-process adapter. */
+Atom *cetta_foreign_object_wrap(CettaForeignRuntime *rt, Arena *, void *object);
+void *cetta_foreign_object_borrow(const Atom *);
+void *cetta_foreign_python_value(const Atom *);
+void *cetta_foreign_python_owner_new(CettaForeignRuntime *);
+void *cetta_foreign_python_owner(CettaForeignRuntime *);
+void *cetta_foreign_python_exception(const Atom *);
+void *cetta_foreign_python_he_exception(const Atom *);
+Atom *cetta_foreign_he_error_value(Arena *, Atom *call, Atom *error);
+bool cetta_foreign_object_provider_callable(Space *, const Atom *);
+bool cetta_foreign_object_binding_candidate(Space *, const Atom *);
+bool cetta_foreign_object_provider_open(Space *, const CettaInvocation *, CettaOwnedExecution *, CettaEvalCompletion *);
 
 CettaForeignRuntime *cetta_foreign_runtime_new(void);
 void cetta_foreign_runtime_free(CettaForeignRuntime *rt);

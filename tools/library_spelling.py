@@ -99,6 +99,20 @@ HE_REALIZATIONS = "../langdef/he/generated/"
 PETTA_REALIZATIONS = "langdef/petta/generated/"
 DIALECTS = ("petta", "prime")
 
+
+def read_vocabulary(path: Path) -> tuple[set, set]:
+    """Real PeTTa's functions and forms, and the heads lib_he defines."""
+    core, lib_he, section = set(), set(), None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("["):
+            section = line
+            continue
+        (lib_he if section == "[lib_he]" else core).add(line)
+    return core, lib_he
+
 # ---------------------------------------------------------------- reader --
 
 
@@ -534,15 +548,10 @@ def spelling(source: str, dialect: str) -> str:
 
 
 def lib_he_names() -> set:
-    """The functions PeTTa's lib_he defines."""
-    source = Path(__file__).resolve().parent.parent / "lib" / "petta" / "lib_he.metta"
-    names = set()
-    for form in read_forms(source.read_text(encoding="utf-8")):
-        if (isinstance(form, list) and len(form) == 3 and form[0] == "="
-                and isinstance(form[1], list) and form[1]
-                and isinstance(form[1][0], Symbol)):
-            names.add(form[1][0])
-    return names
+    """Use the reference interface even when CeTTa implements a head natively."""
+    source = (Path(__file__).resolve().parent.parent /
+              "tests" / "support" / "petta_reference_vocabulary_v1.txt")
+    return read_vocabulary(source)[1]
 
 
 def main(argv: list[str]) -> int:

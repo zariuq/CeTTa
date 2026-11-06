@@ -1,8 +1,8 @@
 ; Interleaved program execution and exact-fact mutation must not rebuild the
 ; full native tuple projection on every mutation.  Equation and type dispatch
 ; descriptors are derived from stable occurrence ids; exact fact mutations do
-; not invalidate them.  The final strict count also proves that the default
-; indexed cursor remains reachable after the interleaved workload.
+; not invalidate them. The final count checks the workload's result; a
+; separate owned-space binding probe exercises the indexed cursor afterward.
 (= (load $n)
    (if (== $n 0)
        done
@@ -20,3 +20,7 @@
       (match &self (edge 500 $x) hit)))
   (1))
 ; expected: [done], [100], [()]
+
+!(bind! &indexed-control (new-space pathmap))
+!(add-atom &indexed-control (route-control reachable))
+!(collapse (match &indexed-control (route-control $x) $x))
