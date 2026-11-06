@@ -21,6 +21,7 @@
 #include "proof_row.h"
 #include "proof_batches.h"
 #include "u64_index.h"
+#include "generated/cetta_execution_contracts.generated.h"
 #include <assert.h>
 #include <errno.h>
 #include <inttypes.h>
@@ -4158,6 +4159,7 @@ static void ty_ann_index_init(TypeAnnIndex *idx) {
     space_head_chains_init(&idx->rows);
     idx->has_open_rows = false;
     idx->has_non_symbol_subjects = false;
+    idx->has_identity_rows = false;
 }
 static void ty_ann_index_free(TypeAnnIndex *idx) {
     space_head_chains_free(&idx->rows);
@@ -4199,29 +4201,87 @@ static void ty_ann_index_add_id(TypeAnnIndex *idx, const Space *s,
                              atom_idx, annotation_id);
 }
 
-static void ty_ann_index_note_row(TypeAnnIndex *idx, const Space *s,
-                                   AtomId row_id) {
-    if (idx->has_open_rows)
-        return;
+/* Whether the stored term `id` holds an identity-carrying value (the
+ * grounded kinds atom.c flags ATOM_FLAG_HAS_IDENTITY_GROUNDED: a state cell,
+ * a space, a capture, bindings, a foreign value, a seal), read by id
+ * through the term records and, for an entry without a record, from its
+ * atom's flags.  Past `budget` nodes the answer is yes. */
+static bool space_term_holds_identity(const TermUniverse *universe,
+                                      AtomId id, uint32_t *budget) {
+    if (!universe || id == CETTA_ATOM_ID_NONE || *budget == 0u)
+        return true;
+    (*budget)--;
+    const CettaTermHdr *hdr = tu_hdr(universe, id);
+    if (!hdr) {
+        const Atom *atom = term_universe_peek_atom(universe, id);
+        return !atom || (atom->flags & ATOM_FLAG_HAS_IDENTITY_GROUNDED) != 0u;
+    }
+    switch ((AtomKind)hdr->tag) {
+    case ATOM_GROUNDED: {
+        GroundedKind kind = (GroundedKind)hdr->subtag;
+        return cetta_gslt_identity_bearing_grounded_kind(kind) ||
+            kind == GV_SEAL;
+    }
+    case ATOM_EXPR: {
+        CettaExprLen arity =
+            (CettaExprLen)(hdr->aux32 & CETTA_TERM_HDR_DATA_MASK);
+        for (CettaExprIndex i = 0u; i < arity; i++) {
+            if (space_term_holds_identity(
+                    universe, tu_child_from_header(universe, hdr, i), budget))
+                return true;
+        }
+        return false;
+    }
+    default:
+        return false;
+    }
+}
+
+static void ty_ann_index_note_identity(TypeAnnIndex *idx, const Space *s,
+                                       AtomId row_id) {
     const TermUniverse *universe = s->native.universe;
+    if (idx->has_identity_rows || tu_kind(universe, row_id) != ATOM_EXPR ||
+        tu_arity(universe, row_id) != 3u)
+        return;
+    SymbolId head = tu_head_sym(universe, row_id);
+    if (head != g_builtin_syms.colon && head != g_builtin_syms.subtype)
+        return;
+    uint32_t budget = 1024u;
+    if (space_term_holds_identity(universe, row_id, &budget))
+        idx->has_identity_rows = true;
+}
+
+/* Whether a row's outer form is open: a variable, an expression headed by
+ * no symbol, or a PeTTa value that is not ordinary.  Such a row can match a
+ * declaration, a subtype or an equation query without being headed by ':',
+ * ':<' or '='. */
+static bool space_atom_outer_open(const Atom *row) {
+    return !row || row->kind == ATOM_VAR || atom_structural_has_rational(row) ||
+        (row->kind == ATOM_EXPR && row->expr.len != 0u &&
+         (atom_head_symbol_id(row) == SYMBOL_ID_NONE ||
+          atom_petta_value_representation(row) != PETTA_VALUE_ORDINARY));
+}
+
+static bool space_row_outer_open(const TermUniverse *universe, AtomId row_id) {
     const CettaTermHdr *header = tu_hdr(universe, row_id);
     if (header) {
         /* These structural tests share the already validated record header. */
         AtomKind kind = (AtomKind)header->tag;
-        if (kind == ATOM_VAR ||
+        return kind == ATOM_VAR ||
             (kind == ATOM_EXPR &&
              (header->aux32 & CETTA_TERM_HDR_DATA_MASK) != 0u &&
              (header->sym_or_head == SYMBOL_ID_NONE ||
               tu_petta_value_representation(universe, row_id) !=
-                  PETTA_VALUE_ORDINARY)))
-            idx->has_open_rows = true;
-        return;
+                  PETTA_VALUE_ORDINARY));
     }
-    Atom *row = term_universe_peek_atom(universe, row_id);
-    if (!row || row->kind == ATOM_VAR || atom_structural_has_rational(row) ||
-        (row->kind == ATOM_EXPR && row->expr.len != 0u &&
-         (atom_head_symbol_id(row) == SYMBOL_ID_NONE ||
-          atom_petta_value_representation(row) != PETTA_VALUE_ORDINARY)))
+    return space_atom_outer_open(term_universe_peek_atom(universe, row_id));
+}
+
+static void ty_ann_index_note_row(TypeAnnIndex *idx, const Space *s,
+                                   AtomId row_id) {
+    ty_ann_index_note_identity(idx, s, row_id);
+    if (!idx->has_open_rows &&
+        space_row_outer_open(s->native.universe, row_id))
         idx->has_open_rows = true;
 }
 
@@ -8253,7 +8313,11 @@ space_atom_equation_projection(const Space *s, AtomId atom_id, Atom *atom) {
                     return SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION |
                         SPACE_MUTATION_EQUATION_PROJECTION_SUBTYPE;
             }
-            return SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY;
+            /* An open row can match a declaration, a subtype or an equation
+             * query: it changes them all. */
+            return space_row_outer_open(s->native.universe, atom_id)
+                ? SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE
+                : SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY;
         }
         if (!atom)
             atom = term_universe_peek_atom(s->native.universe, atom_id);
@@ -8267,7 +8331,9 @@ space_atom_equation_projection(const Space *s, AtomId atom_id, Atom *atom) {
         if (space_atom_form_is(atom, g_builtin_syms.subtype, 3u))
             return SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION |
                 SPACE_MUTATION_EQUATION_PROJECTION_SUBTYPE;
-        return SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY;
+        return space_atom_outer_open(atom)
+            ? SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE
+            : SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY;
     }
     return SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE;
 }
@@ -8637,6 +8703,27 @@ static void ensure_ty_ann_index(Space *s) {
             return;
         ty_ann_index_rebuild(s);
     }
+}
+
+/* Whether a declaration `s` reads, its own, an overlay base's or a
+ * dependency's, holds an identity-carrying value; yes where the index
+ * cannot be brought up to date. */
+static bool space_declarations_hold_identity(const Space *s, uint32_t depth) {
+    if (!s || depth > 8u)
+        return true;
+    for (const Space *view = s; view; view = view->overlay_base) {
+        Space *space = (Space *)view;
+        ensure_ty_ann_index(space);
+        if (space->native.ty_idx_dirty || space->native.ty_idx.has_identity_rows)
+            return true;
+    }
+    uint32_t count = space_dependency_count(s);
+    for (uint32_t i = 0u; i < count; i++) {
+        if (space_declarations_hold_identity(space_dependency_at(s, i),
+                                             depth + 1u))
+            return true;
+    }
+    return false;
 }
 
 static void ensure_exact_index(Space *s) {
@@ -14481,6 +14568,50 @@ bool space_type_annotations_have_only_symbol_subjects(Space *s) {
 
 /* With symbol subjects only, each subject's rows form one chain, and a chain
  * longer than one row is a second declaration (a duplicated row included). */
+static uint32_t space_type_chain_distinct_declarations(
+    Space *s, const SpaceHeadChains *rows, const SpaceHeadChain *chain);
+
+static Atom *space_type_chain_declared(Space *s, const SpaceHeadChains *rows,
+                                       const SpaceHeadChain *chain,
+                                       uint32_t row);
+
+/* No annotation gives a symbol, a variable or a grounded value a metatype.
+ * Every subject is a symbol or an expression with a symbol head (no
+ * headless row: no variable or grounded subject), an expression subject
+ * types no scalar, and no symbol subject is declared at a metatype's name
+ * (Atom, Symbol, Variable, Expression, Grounded). */
+bool space_scalar_types_name_no_metatype(Space *s) {
+    CETTA_SCOPED_SHARED_TRANSITION(observation);
+    if (!s || space_has_overlay_base(s) || space_has_dependencies(s) ||
+        s->match_backend.kind != SPACE_ENGINE_NATIVE)
+        return false;
+    ensure_ty_ann_index(s);
+    if (s->native.ty_idx_dirty || s->native.ty_idx.has_open_rows)
+        return false;
+    const SpaceHeadChains *rows = &s->native.ty_idx.rows;
+    if (rows->headless.count != 0u)
+        return false;
+    for (uint32_t slot = 0u; slot < rows->chain_cap; slot++) {
+        const SpaceHeadChain *chain = &rows->chains[slot];
+        if (chain->head == SYMBOL_ID_NONE || chain->count == 0u)
+            continue;
+        for (uint32_t i = chain->first; i != SPACE_HEAD_CHAIN_END;
+             i = rows->next[i]) {
+            Atom *type = space_type_chain_declared(s, rows, chain, i);
+            if (type && type->kind == ATOM_SYMBOL &&
+                (type->sym_id == g_builtin_syms.atom ||
+                 type->sym_id == g_builtin_syms.symbol ||
+                 type->sym_id == g_builtin_syms.variable ||
+                 type->sym_id == g_builtin_syms.expression ||
+                 type->sym_id == g_builtin_syms.grounded))
+                return false;
+        }
+    }
+    return true;
+}
+
+/* Each symbol declares at most one type, rows that repeat one type being
+ * one declaration. */
 bool space_type_annotations_functional(Space *s) {
     CETTA_SCOPED_SHARED_TRANSITION(observation);
     if (!space_type_annotations_have_only_symbol_subjects(s))
@@ -14489,11 +14620,50 @@ bool space_type_annotations_functional(Space *s) {
     if (rows->headless.count != 0u)
         return false;
     for (uint32_t slot = 0u; slot < rows->chain_cap; slot++) {
-        if (rows->chains[slot].head != SYMBOL_ID_NONE &&
-            rows->chains[slot].count > 1u)
+        const SpaceHeadChain *chain = &rows->chains[slot];
+        if (chain->head != SYMBOL_ID_NONE && chain->count > 1u &&
+            space_type_chain_distinct_declarations(s, rows, chain) > 1u)
             return false;
     }
     return !space_equations_may_match_known_head(s, g_builtin_syms.get_type);
+}
+
+/* The type row `i` of `chain` declares for the chain's symbol, or NULL when
+ * the row is no (: symbol type) annotation of it. */
+static Atom *space_type_chain_declared(Space *s, const SpaceHeadChains *rows,
+                                       const SpaceHeadChain *chain,
+                                       uint32_t i) {
+    Atom *annotation = space_indexed_occurrence_atom(
+        s, rows->atom_indices, rows->atom_ids, i);
+    if (!annotation || annotation->kind != ATOM_EXPR ||
+        annotation->expr.len != 3u ||
+        !atom_is_symbol_id(annotation->expr.elems[0], g_builtin_syms.colon) ||
+        !atom_is_symbol_id(annotation->expr.elems[1], chain->head))
+        return NULL;
+    return annotation->expr.elems[2];
+}
+
+/* The distinct types, up to the names of their variables, that the rows of
+ * `chain` declare for its symbol.  Rows that repeat one type are one
+ * declaration: one typed alternative, and one get-type answer. */
+static uint32_t space_type_chain_distinct_declarations(
+    Space *s, const SpaceHeadChains *rows, const SpaceHeadChain *chain) {
+    uint32_t distinct = 0u;
+    for (uint32_t i = chain->first; i != SPACE_HEAD_CHAIN_END;
+         i = rows->next[i]) {
+        Atom *type = space_type_chain_declared(s, rows, chain, i);
+        if (!type)
+            continue;
+        bool repeated = false;
+        for (uint32_t j = chain->first; !repeated && j != i;
+             j = rows->next[j]) {
+            Atom *earlier = space_type_chain_declared(s, rows, chain, j);
+            repeated = earlier && atom_alpha_eq(earlier, type);
+        }
+        if (!repeated)
+            distinct++;
+    }
+    return distinct;
 }
 
 bool space_type_arrow_declarations_visit(
@@ -14514,21 +14684,15 @@ bool space_type_arrow_declarations_visit(
         const SpaceHeadChain *chain = &rows->chains[slot];
         if (chain->head == SYMBOL_ID_NONE || chain->count == 0u)
             continue;
+        uint32_t declarations = space_type_chain_distinct_declarations(
+            s, rows, chain);
         for (uint32_t i = chain->first; i != SPACE_HEAD_CHAIN_END;
              i = rows->next[i]) {
-            Atom *annotation = space_indexed_occurrence_atom(
-                s, rows->atom_indices, rows->atom_ids, i);
-            if (!annotation || annotation->kind != ATOM_EXPR ||
-                annotation->expr.len != 3u ||
-                !atom_is_symbol_id(annotation->expr.elems[0],
-                                   g_builtin_syms.colon) ||
-                !atom_is_symbol_id(annotation->expr.elems[1], chain->head))
-                continue;
-            Atom *type = annotation->expr.elems[2];
-            if (type->kind == ATOM_EXPR && type->expr.len > 0u &&
+            Atom *type = space_type_chain_declared(s, rows, chain, i);
+            if (type && type->kind == ATOM_EXPR && type->expr.len > 0u &&
                 atom_is_symbol_id(type->expr.elems[0],
                                   g_builtin_syms.arrow) &&
-                !visit(context, chain->head, chain->count, type))
+                !visit(context, chain->head, declarations, type))
                 return true;
         }
     }
@@ -14545,8 +14709,18 @@ typedef struct {
     bool stopped;
 } SpaceAnnotatedTypes;
 
+/* In PeTTa, rows that declare one type, up to the names of its variables,
+ * are one declaration: the lookup answers it once.  HE's lookup is a
+ * sequence that keeps every row, as hyperon-experimental's get-type does;
+ * its calls answer once for repeated rows all the same. */
 static void space_annotated_types_append(SpaceAnnotatedTypes *list,
                                          Atom *type) {
+    if (space_effect_language() == CETTA_LANGUAGE_PETTA) {
+        for (uint32_t i = 0u; i < list->count; i++) {
+            if (atom_alpha_eq(list->types[i], type))
+                return;
+        }
+    }
     if (list->count >= list->cap) {
         list->cap = list->cap ? list->cap * 2u : 4u;
         list->types = cetta_realloc(list->types,
@@ -15072,6 +15246,1216 @@ static uint32_t get_atom_types_mode_inferred(Space *s, Arena *a, Atom *atom,
                                              bool include_direct_annotations,
                                              CettaTypeInferenceBudget *budget);
 
+/* Typings kept across inferences.  An expression's types follow from its
+ * operator's declared rows, the declarations whose subject it is, and each
+ * child's kind and types; none of these changes while the program's
+ * declarations stand.  So a term-stable ground expression typed once keeps
+ * its ground answers, keyed by its address and checked against the identity
+ * and current reset epoch of its arena, which together name one incarnation
+ * of the address.  Answers are interned as states, and a node whose head no
+ * declaration has as an expression subject is typed by its shape: the state
+ * its head, arity and children's kinds and states give, once any node of
+ * that shape was typed.  A typing whose arena the evaluator cannot vouch for
+ * is not kept, and nothing is kept for a budgeted inference, whose answers
+ * depend on the budget left. */
+typedef struct {
+    uint32_t count;
+    Atom **types;
+    uint64_t hash;
+} TypeStampState;
+
+typedef struct {
+    const Atom *atom;
+    uint64_t epoch;
+    uint32_t arena;
+    uint32_t question;
+    uint32_t state;
+} TypeStampEntry;
+
+#define TYPE_STAMP_TRANSITION_ARITY 4u
+
+typedef struct {
+    uint64_t hash;
+    SymbolId head;
+    uint32_t question;
+    uint32_t arity;
+    uint32_t kinds;
+    uint32_t args[TYPE_STAMP_TRANSITION_ARITY];
+    uint32_t state;
+} TypeStampTransition;
+
+/* A symbol's own typing state as a child (0 not read yet, UINT32_MAX none
+ * that keys a shape) and whether shapes headed by it may be read. */
+typedef struct {
+    SymbolId symbol;
+    uint32_t state;
+    uint8_t shapes;
+    /* Whether a type row types an expression headed by the symbol
+     * (TYPE_STAMP_ROWS_*), for the bound scope. */
+    uint8_t expression_rows;
+} TypeStampSymbol;
+
+enum { TYPE_STAMP_ROWS_UNKNOWN = 0u, TYPE_STAMP_ROWS_NONE = 1u,
+       TYPE_STAMP_ROWS_SOME = 2u };
+
+/* The store's question for a node whose expression nodes no type row types
+ * (space_type_rows_free_below); state 1 where it holds. */
+enum { TYPE_STAMP_QUESTION_ROWS_FREE = 7u };
+
+enum { TYPE_STAMP_SHAPES_UNKNOWN = 0u, TYPE_STAMP_SHAPES_READ = 1u,
+       TYPE_STAMP_SHAPES_NOT = 2u };
+
+typedef struct {
+    TypeStampState *states;
+    uint32_t state_len, state_cap;
+    uint32_t *state_index;
+    size_t state_index_cap;
+    TypeStampEntry *slots;
+    size_t cap, len;
+    TypeStampTransition *transitions;
+    size_t transition_cap, transition_len;
+    TypeStampSymbol *symbols;
+    size_t symbol_cap, symbol_len;
+    Arena types;
+    bool types_ready;
+    /* Kept answers to type questions about states
+     * (type_stamps_query_find). */
+    struct TypeStampQuery *queries;
+    size_t query_cap, query_len;
+    /* By grounded kind up to GV_BIGINT: a literal's typing state where no
+     * type row names a literal (type_stamps_literal_state); 0 unread,
+     * TYPE_STAMP_NONE where the kind's typing is not kept. */
+    uint32_t literal_states[GV_BIGINT + 1];
+    const Space *space;
+    uint64_t instance_id;
+    uint64_t declaration_revision;
+    uint64_t base_dependency_epoch;
+    uint64_t scope;
+} TypeStampStore;
+
+static __thread TypeStampStore g_type_stamps;
+
+#define TYPE_STAMPS_MAX_ENTRIES ((size_t)1u << 20)
+#define TYPE_STAMPS_MAX_STATES ((uint32_t)1u << 16)
+#define TYPE_STAMP_NONE UINT32_MAX
+
+static bool type_stamps_enabled(void) {
+    static _Thread_local int enabled = -1;
+    if (enabled < 0) {
+        const char *setting = getenv("CETTA_TYPE_STAMPS");
+        enabled = !setting || strcmp(setting, "0") != 0;
+    }
+    return enabled != 0;
+}
+
+static void type_stamps_clear(void) {
+    TypeStampStore *store = &g_type_stamps;
+    for (uint32_t i = 0u; i < store->state_len; i++)
+        free(store->states[i].types);
+    free(store->states);
+    free(store->state_index);
+    free(store->slots);
+    free(store->transitions);
+    free(store->symbols);
+    free(store->queries);
+    store->queries = NULL;
+    store->query_cap = store->query_len = 0u;
+    if (store->types_ready)
+        arena_free(&store->types);
+    store->states = NULL;
+    store->state_len = store->state_cap = 0u;
+    store->state_index = NULL;
+    store->state_index_cap = 0u;
+    store->slots = NULL;
+    store->cap = store->len = 0u;
+    store->transitions = NULL;
+    store->transition_cap = store->transition_len = 0u;
+    store->symbols = NULL;
+    store->symbol_cap = store->symbol_len = 0u;
+    memset(store->literal_states, 0, sizeof(store->literal_states));
+    store->types_ready = false;
+}
+
+static uint64_t type_stamps_mix(uint64_t hash, uint64_t value) {
+    hash ^= value + UINT64_C(0x9e3779b97f4a7c15) + (hash << 6) + (hash >> 2);
+    return hash;
+}
+
+static bool type_stamps_bind_scope(Space *s);
+static bool type_stamps_head_types_expressions(Space *s, SymbolId head,
+                                               bool bound);
+
+/* Whether `atom`'s typings may be read from and kept in the store: an
+ * unbudgeted inference in the evaluator's scope, of a term-stable ground
+ * expression with a symbol head and no registry, identity-carrying,
+ * thread-local or rational parts, in an arena the evaluator vouches for.
+ * The store is first bound to `s`'s declarations and the scope. */
+static bool type_stamps_admit(Space *s, const Atom *atom,
+                              const CettaTypeInferenceBudget *budget,
+                              uint32_t *arena, uint64_t *epoch) {
+    if (budget || !s || !atom || atom->kind != ATOM_EXPR ||
+        atom->expr.len == 0u || !atom->expr.elems[0] ||
+        atom->expr.elems[0]->kind != ATOM_SYMBOL ||
+        !eval_type_stamp_scope || !eval_type_stamp_atom_epoch ||
+        !type_stamps_enabled())
+        return false;
+    if (!(atom->flags & ATOM_FLAG_TERM_STABLE) || atom_has_vars(atom) ||
+        atom_has_registry_refs(atom) ||
+        atom_structural_may_have_internal_tag(atom) ||
+        (atom->flags & (ATOM_FLAG_HAS_IDENTITY_GROUNDED |
+                        ATOM_FLAG_HAS_THREAD_LOCAL_RESOURCE)) ||
+        atom_structural_has_rational(atom))
+        return false;
+    if (!eval_type_stamp_atom_epoch(s, atom, arena, epoch))
+        return false;
+    /* A node a type row may type as an expression keeps no typing: HE
+     * reads the row before its application, and a kept typing vouches
+     * that no node below it is such a node. */
+    return type_stamps_bind_scope(s) &&
+        !type_stamps_head_types_expressions(
+            s, atom->expr.elems[0]->sym_id, true);
+}
+
+/* Whether every expression child of `atom` has a kept typing: what a
+ * typing kept for `atom` itself then vouches for. */
+static uint32_t type_stamps_node_state(const Atom *atom, uint32_t question,
+                                       uint32_t arena, uint64_t epoch);
+static bool type_stamps_children_kept(Space *s, const Atom *atom) {
+    for (CettaExprIndex i = 1u; i < atom->expr.len; i++) {
+        const Atom *child = atom->expr.elems[i];
+        if (!child || child->kind != ATOM_EXPR)
+            continue;
+        uint32_t arena = 0u;
+        uint64_t epoch = 0u;
+        if (!type_stamps_admit(s, child, NULL, &arena, &epoch) ||
+            !type_stamps_node_state(child, TYPE_INFERENCE_MEMO_TYPES_DECLARED,
+                                    arena, epoch))
+            return false;
+    }
+    return true;
+}
+
+/* Bind the store to `s`'s declarations and the evaluator's scope, clearing
+ * what another scope kept; false where the evaluator keeps no typings. */
+/* The space a prepared pure run keeps one typing scope for: the
+ * evaluator's scope is read once when the run enters. */
+static __thread const Space *g_type_stamps_run_space;
+static __thread bool g_type_stamps_run_bound;
+
+static bool type_stamps_bind_scope(Space *s) {
+    TypeStampStore *store = &g_type_stamps;
+    if (s && g_type_stamps_run_space == s && g_type_stamps_run_bound &&
+        store->space == s && !s->overlay_base &&
+        store->instance_id == s->instance_id &&
+        store->declaration_revision == s->declaration_revision &&
+        store->base_dependency_epoch == 0u)
+        return true;
+    uint64_t scope = 0u;
+    if (!s || !eval_type_stamp_scope || !eval_type_stamp_scope(&scope) ||
+        !type_stamps_enabled())
+        return false;
+    /* The bound scope, read from the space's live fields: a space without
+     * an overlay base has dependency epoch zero (space_program_token). */
+    if (store->space == s && store->scope == scope && !s->overlay_base &&
+        store->instance_id == s->instance_id &&
+        store->declaration_revision == s->declaration_revision &&
+        store->base_dependency_epoch == 0u)
+        return true;
+    /* A declaration holding a state cell is observed afresh by every
+     * inference: its typings are kept for no node. */
+    if (space_declarations_hold_identity(s, 0u)) {
+        if (store->len || store->state_len || store->symbol_len)
+            type_stamps_clear();
+        store->space = NULL;
+        return false;
+    }
+    SpaceProgramToken token = space_program_token(s);
+    if (store->space != s || store->instance_id != token.instance_id ||
+        store->declaration_revision != token.declaration_revision ||
+        store->base_dependency_epoch != token.base_dependency_epoch ||
+        store->scope != scope) {
+        if (store->len || store->state_len || store->symbol_len) {
+            type_stamps_clear();
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TYPE_STAMP_SCOPE_CLEAR);
+        }
+        store->space = s;
+        store->instance_id = token.instance_id;
+        store->declaration_revision = token.declaration_revision;
+        store->base_dependency_epoch = token.base_dependency_epoch;
+        store->scope = scope;
+    }
+    return true;
+}
+
+static bool type_stamps_types_ready(void) {
+    TypeStampStore *store = &g_type_stamps;
+    if (!store->types_ready) {
+        arena_init(&store->types);
+        arena_set_hashcons(&store->types, NULL);
+        arena_set_runtime_kind(&store->types,
+                               CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
+        store->types_ready = true;
+    }
+    return true;
+}
+
+/* The state id (index + 1) of a ground typing list, interned; 0 where the
+ * list has a variable or the store cannot grow. */
+static uint32_t type_stamps_intern(Atom *const *types, uint32_t count) {
+    uint64_t hash = type_stamps_mix(UINT64_C(0xcbf29ce484222325), count);
+    for (uint32_t i = 0u; i < count; i++) {
+        if (!types[i] || atom_has_vars(types[i]))
+            return 0u;
+        hash = type_stamps_mix(hash, atom_hash(types[i]));
+    }
+    TypeStampStore *store = &g_type_stamps;
+    if (store->state_index_cap) {
+        size_t mask = store->state_index_cap - 1u;
+        for (size_t slot = (size_t)hash & mask; store->state_index[slot];
+             slot = (slot + 1u) & mask) {
+            const TypeStampState *state =
+                &store->states[store->state_index[slot] - 1u];
+            if (state->hash != hash || state->count != count)
+                continue;
+            bool same = true;
+            for (uint32_t i = 0u; same && i < count; i++)
+                same = atom_eq(state->types[i], types[i]);
+            if (same)
+                return store->state_index[slot];
+        }
+    }
+    if (store->state_len >= TYPE_STAMPS_MAX_STATES)
+        return 0u;
+    if ((size_t)(store->state_len + 1u) * 2u > store->state_index_cap) {
+        size_t cap = store->state_index_cap ? store->state_index_cap * 2u : 64u;
+        uint32_t *index = calloc(cap, sizeof(*index));
+        if (!index)
+            return 0u;
+        for (uint32_t id = 1u; id <= store->state_len; id++) {
+            size_t slot = (size_t)store->states[id - 1u].hash & (cap - 1u);
+            while (index[slot])
+                slot = (slot + 1u) & (cap - 1u);
+            index[slot] = id;
+        }
+        free(store->state_index);
+        store->state_index = index;
+        store->state_index_cap = cap;
+    }
+    if (store->state_len == store->state_cap) {
+        uint32_t cap = store->state_cap ? store->state_cap * 2u : 32u;
+        TypeStampState *states =
+            realloc(store->states, sizeof(*states) * cap);
+        if (!states)
+            return 0u;
+        store->states = states;
+        store->state_cap = cap;
+    }
+    type_stamps_types_ready();
+    Atom **kept = NULL;
+    if (count) {
+        kept = malloc(sizeof(*kept) * count);
+        if (!kept)
+            return 0u;
+        for (uint32_t i = 0u; i < count; i++) {
+            kept[i] = atom_deep_copy(&store->types, types[i]);
+            if (!kept[i]) {
+                free(kept);
+                return 0u;
+            }
+        }
+    }
+    store->states[store->state_len] =
+        (TypeStampState){.count = count, .types = kept, .hash = hash};
+    uint32_t id = ++store->state_len;
+    size_t mask = store->state_index_cap - 1u;
+    size_t slot = (size_t)hash & mask;
+    while (store->state_index[slot])
+        slot = (slot + 1u) & mask;
+    store->state_index[slot] = id;
+    return id;
+}
+
+/* State `id`'s types, copied into `a`. */
+static bool type_stamps_materialize(Arena *a, uint32_t id, Atom ***out_types,
+                                    uint32_t *out_count) {
+    const TypeStampState *state = &g_type_stamps.states[id - 1u];
+    Atom **types = NULL;
+    if (state->count) {
+        types = malloc(sizeof(*types) * state->count);
+        if (!types)
+            return false;
+        for (uint32_t i = 0u; i < state->count; i++) {
+            types[i] = atom_deep_copy(a, state->types[i]);
+            if (!types[i]) {
+                free(types);
+                return false;
+            }
+        }
+    }
+    *out_types = types;
+    *out_count = state->count;
+    return true;
+}
+
+static size_t type_stamps_slot(const Atom *atom, uint32_t question,
+                               size_t cap) {
+    uintptr_t key = (uintptr_t)atom ^ (uintptr_t)question;
+    key ^= key >> 33u;
+    key *= (uintptr_t)UINT64_C(0xff51afd7ed558ccd);
+    key ^= key >> 29u;
+    return (size_t)key & (cap - 1u);
+}
+
+static TypeStampEntry *type_stamps_find(const Atom *atom, uint32_t question) {
+    TypeStampStore *store = &g_type_stamps;
+    if (!store->cap)
+        return NULL;
+    size_t slot = type_stamps_slot(atom, question, store->cap);
+    while (store->slots[slot].atom) {
+        TypeStampEntry *entry = &store->slots[slot];
+        if (entry->atom == atom && entry->question == question)
+            return entry;
+        slot = (slot + 1u) & (store->cap - 1u);
+    }
+    return NULL;
+}
+
+/* The state kept for this incarnation of `atom`, or 0. */
+static uint32_t type_stamps_node_state(const Atom *atom, uint32_t question,
+                                       uint32_t arena, uint64_t epoch) {
+    const TypeStampEntry *entry = type_stamps_find(atom, question);
+    return entry && entry->arena == arena && entry->epoch == epoch
+        ? entry->state : 0u;
+}
+
+static void type_stamps_record(const Atom *atom, uint32_t question,
+                               uint32_t arena, uint64_t epoch,
+                               uint32_t state) {
+    TypeStampStore *store = &g_type_stamps;
+    TypeStampEntry *entry = type_stamps_find(atom, question);
+    if (!entry) {
+        if ((store->len + 1u) * 2u > store->cap) {
+            size_t cap = store->cap ? store->cap * 2u : 256u;
+            TypeStampEntry *slots = calloc(cap, sizeof(*slots));
+            if (!slots)
+                return;
+            for (size_t i = 0u; i < store->cap; i++) {
+                if (!store->slots[i].atom)
+                    continue;
+                size_t slot = type_stamps_slot(store->slots[i].atom,
+                                               store->slots[i].question, cap);
+                while (slots[slot].atom)
+                    slot = (slot + 1u) & (cap - 1u);
+                slots[slot] = store->slots[i];
+            }
+            free(store->slots);
+            store->slots = slots;
+            store->cap = cap;
+        }
+        size_t slot = type_stamps_slot(atom, question, store->cap);
+        while (store->slots[slot].atom)
+            slot = (slot + 1u) & (store->cap - 1u);
+        entry = &store->slots[slot];
+        store->len++;
+    }
+    *entry = (TypeStampEntry){.atom = atom, .epoch = epoch, .arena = arena,
+                              .question = question, .state = state};
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TYPE_STAMP_RECORD);
+}
+
+static TypeStampSymbol *type_stamps_symbol(SymbolId symbol) {
+    TypeStampStore *store = &g_type_stamps;
+    if ((store->symbol_len + 1u) * 2u > store->symbol_cap) {
+        size_t cap = store->symbol_cap ? store->symbol_cap * 2u : 64u;
+        TypeStampSymbol *symbols = calloc(cap, sizeof(*symbols));
+        if (!symbols)
+            return NULL;
+        for (size_t i = 0u; i < store->symbol_cap; i++) {
+            if (store->symbols[i].symbol == SYMBOL_ID_NONE)
+                continue;
+            size_t slot = symbol_id_mix(store->symbols[i].symbol) & (cap - 1u);
+            while (symbols[slot].symbol != SYMBOL_ID_NONE)
+                slot = (slot + 1u) & (cap - 1u);
+            symbols[slot] = store->symbols[i];
+        }
+        free(store->symbols);
+        store->symbols = symbols;
+        store->symbol_cap = cap;
+    }
+    size_t mask = store->symbol_cap - 1u;
+    size_t slot = symbol_id_mix(symbol) & mask;
+    while (store->symbols[slot].symbol != SYMBOL_ID_NONE) {
+        if (store->symbols[slot].symbol == symbol)
+            return &store->symbols[slot];
+        slot = (slot + 1u) & mask;
+    }
+    store->symbols[slot] = (TypeStampSymbol){.symbol = symbol};
+    store->symbol_len++;
+    return &store->symbols[slot];
+}
+
+/* Whether a node headed by `head` may be typed by its shape: every type row
+ * filed under `head` is a declaration of the symbol itself, so no row has an
+ * expression with that head as its subject, and no row is headless. */
+/* Whether every type row whose subject `head` heads is a declaration of
+ * `head` itself: no expression subject headed by it, no open row, no
+ * headless row in the space. */
+bool space_type_rows_only_declare(Space *s, SymbolId head) {
+    if (!s || head == SYMBOL_ID_NONE)
+        return false;
+    ensure_ty_ann_index(s);
+    bool ok = !s->native.ty_idx_dirty && !s->native.ty_idx.has_open_rows &&
+        s->native.ty_idx.rows.headless.count == 0u;
+    const SpaceHeadChains *rows = &s->native.ty_idx.rows;
+    const SpaceHeadChain *chain = ok ? space_head_chains_find(rows, head) : NULL;
+    for (uint32_t i = chain ? chain->first : SPACE_HEAD_CHAIN_END;
+         ok && i != SPACE_HEAD_CHAIN_END; i = rows->next[i])
+        ok = space_type_chain_declared(s, rows, chain, i) != NULL;
+    return ok && chain != NULL;
+}
+
+bool space_type_rows_type_no_expression_of(Space *s, SymbolId head) {
+    if (!s || head == SYMBOL_ID_NONE)
+        return false;
+    ensure_ty_ann_index(s);
+    if (s->native.ty_idx_dirty || s->native.ty_idx.has_open_rows ||
+        s->native.ty_idx.rows.headless.count != 0u)
+        return false;
+    const SpaceHeadChains *rows = &s->native.ty_idx.rows;
+    const SpaceHeadChain *chain = space_head_chains_find(rows, head);
+    for (uint32_t i = chain ? chain->first : SPACE_HEAD_CHAIN_END;
+         i != SPACE_HEAD_CHAIN_END; i = rows->next[i])
+        if (!space_type_chain_declared(s, rows, chain, i))
+            return false;
+    return true;
+}
+
+/* Whether a type row of `s` may type an expression headed by `head`,
+ * kept per symbol while the store is bound to `s`'s declarations. */
+static bool type_stamps_head_types_expressions(Space *s, SymbolId head,
+                                               bool bound) {
+    if (!bound)
+        return !space_type_rows_type_no_expression_of(s, head);
+    TypeStampSymbol *known = type_stamps_symbol(head);
+    if (!known)
+        return !space_type_rows_type_no_expression_of(s, head);
+    if (known->expression_rows == TYPE_STAMP_ROWS_UNKNOWN) {
+        bool some = !space_type_rows_type_no_expression_of(s, head);
+        known = type_stamps_symbol(head);
+        if (!known)
+            return some;
+        known->expression_rows = some ? TYPE_STAMP_ROWS_SOME
+                                      : TYPE_STAMP_ROWS_NONE;
+    }
+    return known->expression_rows == TYPE_STAMP_ROWS_SOME;
+}
+
+bool space_type_rows_free_below(Space *s, Atom *atom) {
+    if (!atom || atom->kind != ATOM_EXPR)
+        return true;
+    if (!s)
+        return false;
+    bool bound = type_stamps_enabled() && type_stamps_bind_scope(s);
+    size_t cap = 64u, len = 0u, done_len = 0u, done_cap = 0u;
+    Atom **stack = malloc(cap * sizeof(*stack));
+    const Atom **done = NULL;
+    if (!stack)
+        return false;
+    stack[len++] = atom;
+    AtomVisitSet seen = {0};
+    bool free_below = true;
+    while (free_below && len > 0u) {
+        Atom *node = stack[--len];
+        bool fault = false;
+        if (!atom_visit_set_add(&seen, node, &fault)) {
+            free_below = !fault;
+            continue;
+        }
+        if (node->expr.len == 0u)
+            continue;
+        if (node->expr.elems[0]->kind != ATOM_SYMBOL) {
+            free_below = false;
+            break;
+        }
+        uint32_t arena = 0u;
+        uint64_t epoch = 0u;
+        bool admitted = bound &&
+            type_stamps_admit(s, node, NULL, &arena, &epoch);
+        if (admitted && type_stamps_node_state(
+                node, TYPE_STAMP_QUESTION_ROWS_FREE, arena, epoch))
+            continue;
+        if (type_stamps_head_types_expressions(
+                s, node->expr.elems[0]->sym_id, bound)) {
+            free_below = false;
+            break;
+        }
+        if (admitted) {
+            if (done_len == done_cap) {
+                size_t grown = done_cap ? done_cap * 2u : 64u;
+                const Atom **more = realloc(done, grown * sizeof(*done));
+                if (!more) {
+                    free_below = false;
+                    break;
+                }
+                done = more;
+                done_cap = grown;
+            }
+            done[done_len++] = node;
+        }
+        if (len + node->expr.len > cap) {
+            size_t grown = cap;
+            while (len + node->expr.len > grown)
+                grown *= 2u;
+            Atom **more = realloc(stack, grown * sizeof(*stack));
+            if (!more) {
+                free_below = false;
+                break;
+            }
+            stack = more;
+            cap = grown;
+        }
+        for (CettaExprIndex i = 1u; i < node->expr.len; i++)
+            if (node->expr.elems[i]->kind == ATOM_EXPR)
+                stack[len++] = node->expr.elems[i];
+    }
+    /* Every node walked is free below once the whole walk is. */
+    for (size_t i = 0u; free_below && i < done_len; i++) {
+        uint32_t arena = 0u;
+        uint64_t epoch = 0u;
+        if (type_stamps_admit(s, done[i], NULL, &arena, &epoch))
+            type_stamps_record(done[i], TYPE_STAMP_QUESTION_ROWS_FREE, arena,
+                               epoch, 1u);
+    }
+    atom_visit_set_free(&seen);
+    free(done);
+    free(stack);
+    return free_below;
+}
+
+static bool type_stamps_head_reads_shapes(Space *s, SymbolId head) {
+    /* A native handle's typing reads its kind's literal value. */
+    if (head == g_builtin_syms.native_handle)
+        return false;
+    TypeStampSymbol *known = type_stamps_symbol(head);
+    if (!known)
+        return false;
+    if (known->shapes != TYPE_STAMP_SHAPES_UNKNOWN)
+        return known->shapes == TYPE_STAMP_SHAPES_READ;
+    ensure_ty_ann_index(s);
+    bool ok = !s->native.ty_idx_dirty && !s->native.ty_idx.has_open_rows &&
+        s->native.ty_idx.rows.headless.count == 0u;
+    const SpaceHeadChains *rows = &s->native.ty_idx.rows;
+    const SpaceHeadChain *chain = ok ? space_head_chains_find(rows, head) : NULL;
+    for (uint32_t i = chain ? chain->first : SPACE_HEAD_CHAIN_END;
+         ok && i != SPACE_HEAD_CHAIN_END; i = rows->next[i])
+        ok = space_type_chain_declared(s, rows, chain, i) != NULL;
+    known = type_stamps_symbol(head);
+    if (known)
+        known->shapes = ok ? TYPE_STAMP_SHAPES_READ : TYPE_STAMP_SHAPES_NOT;
+    return ok;
+}
+
+static uint32_t get_atom_types_mode(Space *s, Arena *a, Atom *atom,
+                                    Atom ***out_types,
+                                    bool include_direct_annotations,
+                                    CettaTypeInferenceBudget *budget);
+
+/* Whether no type row of `s` or of a space it depends on can name a
+ * literal: every row is chained by its subject's head symbol (a symbol, or
+ * an expression headed by one), none headless (a variable or a grounded
+ * subject) and none open. */
+static bool type_stamps_rows_name_no_literal(Space *s, uint32_t depth) {
+    if (!s || depth > 32u || space_has_overlay_base(s) ||
+        s->match_backend.kind != SPACE_ENGINE_NATIVE)
+        return false;
+    ensure_ty_ann_index(s);
+    if (s->native.ty_idx_dirty || s->native.ty_idx.has_open_rows ||
+        s->native.ty_idx.rows.headless.count != 0u)
+        return false;
+    for (uint32_t d = 0u; d < space_dependency_count(s); d++)
+        if (!type_stamps_rows_name_no_literal(space_dependency_at(s, d),
+                                              depth + 1u))
+            return false;
+    return true;
+}
+
+/* A number's, a string's or a truth value's typing state: where no type row
+ * names a literal (type_stamps_rows_name_no_literal), its typing is its
+ * kind's, read once per scope; 0 where the store keeps none for it. */
+static uint32_t type_stamps_literal_state(Space *s, Arena *a, Atom *child) {
+    GroundedKind kind = child->ground.gkind;
+    if (kind != GV_INT && kind != GV_FLOAT && kind != GV_BOOL &&
+        kind != GV_STRING && kind != GV_BIGINT)
+        return 0u;
+    TypeStampStore *store = &g_type_stamps;
+    uint32_t *kept = &store->literal_states[kind];
+    if (*kept == 0u) {
+        uint32_t id = 0u;
+        if (type_stamps_rows_name_no_literal(s, 0u)) {
+            Atom **types = NULL;
+            uint32_t count = get_atom_types_mode(s, a, child, &types, true, NULL);
+            id = type_stamps_intern(types, count);
+            free(types);
+        }
+        *kept = id ? id : TYPE_STAMP_NONE;
+    }
+    return *kept == TYPE_STAMP_NONE ? 0u : *kept;
+}
+
+/* The kind and state that key a child in a shape: a kept node's state, a
+ * symbol's or grounded value's typing as the inference reads it (declared
+ * rows included); 0 where the child keys no shape. */
+static uint32_t type_stamps_child_state(Space *s, Arena *a, Atom *child) {
+    if (!child)
+        return 0u;
+    if (child->kind == ATOM_EXPR) {
+        uint32_t arena = 0u;
+        uint64_t epoch = 0u;
+        if (!type_stamps_admit(s, child, NULL, &arena, &epoch))
+            return 0u;
+        return type_stamps_node_state(child, TYPE_INFERENCE_MEMO_TYPES_DECLARED,
+                                      arena, epoch);
+    }
+    if (child->kind == ATOM_SYMBOL) {
+        TypeStampSymbol *known = type_stamps_symbol(child->sym_id);
+        if (!known)
+            return 0u;
+        if (known->state == 0u) {
+            Atom **types = NULL;
+            uint32_t count = get_atom_types_mode(s, a, child, &types, true, NULL);
+            uint32_t id = type_stamps_intern(types, count);
+            free(types);
+            known = type_stamps_symbol(child->sym_id);
+            if (!known)
+                return 0u;
+            known->state = id ? id : TYPE_STAMP_NONE;
+        }
+        return known->state == TYPE_STAMP_NONE ? 0u : known->state;
+    }
+    if (child->kind == ATOM_GROUNDED) {
+        uint32_t kept = type_stamps_literal_state(s, a, child);
+        if (kept)
+            return kept;
+        Atom **types = NULL;
+        uint32_t count = get_atom_types_mode(s, a, child, &types, true, NULL);
+        uint32_t id = type_stamps_intern(types, count);
+        free(types);
+        return id;
+    }
+    return 0u;
+}
+
+/* The shape key of `atom` under `question`: its head, arity, and each
+ * child's kind and key: a symbol itself, since a parent's typing may read
+ * the symbol and not only its typing (a tuple part's raw annotations, a
+ * native handle's kind), and the typing state of any other child; false
+ * where a child keys no shape. */
+static bool type_stamps_shape(Space *s, Arena *a, const Atom *atom,
+                              uint32_t question, TypeStampTransition *key) {
+    CettaExprLen arity = atom->expr.len - 1u;
+    if (arity > TYPE_STAMP_TRANSITION_ARITY)
+        return false;
+    SymbolId head = atom->expr.elems[0]->sym_id;
+    if (!type_stamps_head_reads_shapes(s, head))
+        return false;
+    *key = (TypeStampTransition){.head = head, .question = question,
+                                 .arity = (uint32_t)arity};
+    uint64_t hash = type_stamps_mix(type_stamps_mix(question, head), arity);
+    for (CettaExprLen i = 0u; i < arity; i++) {
+        Atom *child = atom->expr.elems[i + 1u];
+        uint32_t state = child && child->kind == ATOM_SYMBOL
+            ? (uint32_t)child->sym_id
+            : type_stamps_child_state(s, a, child);
+        if (!state)
+            return false;
+        key->kinds |= (uint32_t)(child->kind & 7u) << (3u * i);
+        key->args[i] = state;
+        hash = type_stamps_mix(type_stamps_mix(hash, child->kind), state);
+    }
+    key->hash = hash;
+    return true;
+}
+
+static bool type_stamps_transition_same(const TypeStampTransition *left,
+                                        const TypeStampTransition *right) {
+    if (left->hash != right->hash || left->head != right->head ||
+        left->question != right->question || left->arity != right->arity ||
+        left->kinds != right->kinds)
+        return false;
+    for (uint32_t i = 0u; i < left->arity; i++)
+        if (left->args[i] != right->args[i])
+            return false;
+    return true;
+}
+
+static uint32_t type_stamps_transition_find(const TypeStampTransition *key) {
+    TypeStampStore *store = &g_type_stamps;
+    if (!store->transition_cap)
+        return 0u;
+    size_t mask = store->transition_cap - 1u;
+    for (size_t slot = (size_t)key->hash & mask;
+         store->transitions[slot].state; slot = (slot + 1u) & mask)
+        if (type_stamps_transition_same(&store->transitions[slot], key))
+            return store->transitions[slot].state;
+    return 0u;
+}
+
+static void type_stamps_transition_record(const TypeStampTransition *key,
+                                          uint32_t state) {
+    TypeStampStore *store = &g_type_stamps;
+    if ((store->transition_len + 1u) * 2u > store->transition_cap) {
+        size_t cap = store->transition_cap ? store->transition_cap * 2u : 64u;
+        TypeStampTransition *table = calloc(cap, sizeof(*table));
+        if (!table)
+            return;
+        for (size_t i = 0u; i < store->transition_cap; i++) {
+            if (!store->transitions[i].state)
+                continue;
+            size_t slot = (size_t)store->transitions[i].hash & (cap - 1u);
+            while (table[slot].state)
+                slot = (slot + 1u) & (cap - 1u);
+            table[slot] = store->transitions[i];
+        }
+        free(store->transitions);
+        store->transitions = table;
+        store->transition_cap = cap;
+    }
+    size_t mask = store->transition_cap - 1u;
+    size_t slot = (size_t)key->hash & mask;
+    while (store->transitions[slot].state) {
+        if (type_stamps_transition_same(&store->transitions[slot], key))
+            return;
+        slot = (slot + 1u) & mask;
+    }
+    store->transitions[slot] = *key;
+    store->transitions[slot].state = state;
+    store->transition_len++;
+}
+
+/* The state of `atom`'s declared-question typing as the store holds it or
+ * reads it by its shape (kept for the node on a shape hit), or 0. */
+static uint32_t type_stamps_state_of(Space *s, Arena *a, Atom *atom) {
+    /* A symbol's typing is its declared rows, kept per symbol. */
+    if (atom && atom->kind == ATOM_SYMBOL)
+        return type_stamps_bind_scope(s)
+            ? type_stamps_child_state(s, a, atom) : 0u;
+    uint32_t arena = 0u;
+    uint64_t epoch = 0u;
+    if (!type_stamps_admit(s, atom, NULL, &arena, &epoch))
+        return 0u;
+    uint32_t question = TYPE_INFERENCE_MEMO_TYPES_DECLARED;
+    uint32_t state = type_stamps_node_state(atom, question, arena, epoch);
+    if (state)
+        return state;
+    TypeStampTransition shape;
+    if (!type_stamps_shape(s, a, atom, question, &shape))
+        return 0u;
+    state = type_stamps_transition_find(&shape);
+    if (state)
+        type_stamps_record(atom, question, arena, epoch, state);
+    return state;
+}
+
+int space_type_stamps_count(Space *s, Arena *a, Atom *atom) {
+    uint32_t state = type_stamps_state_of(s, a, atom);
+    if (!state)
+        return -1;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TYPE_STAMP_HIT);
+    return (int)g_type_stamps.states[state - 1u].count;
+}
+
+bool space_type_stamps_has_type(Space *s, Arena *a, Atom *atom,
+                                Atom *type) {
+    uint32_t state = type_stamps_state_of(s, a, atom);
+    if (!state || !type)
+        return false;
+    const TypeStampState *held = &g_type_stamps.states[state - 1u];
+    for (uint32_t i = 0u; i < held->count; i++) {
+        if (atom_eq(held->types[i], type)) {
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TYPE_STAMP_HIT);
+            return true;
+        }
+    }
+    return false;
+}
+
+const Space *space_type_stamps_run_enter(Space *s) {
+    const Space *outer = g_type_stamps_run_bound ? g_type_stamps_run_space
+                                                 : NULL;
+    g_type_stamps_run_space = s;
+    g_type_stamps_run_bound = s && type_stamps_bind_scope(s);
+    return outer;
+}
+
+void space_type_stamps_run_leave(const Space *outer) {
+    g_type_stamps_run_space = outer;
+    g_type_stamps_run_bound = outer != NULL;
+}
+
+int space_type_stamps_types(Space *s, Arena *a, Atom *atom,
+                            Atom *const **types) {
+    uint32_t state = type_stamps_state_of(s, a, atom);
+    if (!state || !types)
+        return -1;
+    const TypeStampState *held = &g_type_stamps.states[state - 1u];
+    *types = held->types;
+    return (int)held->count;
+}
+
+/* A kept answer: for UNIFY, whether state `state`'s typings unify with
+ * `formal`; for INSTANCE, `range` under the unifier of the state's one
+ * fitting typing with `formal` (NULL: none or several fit). */
+typedef struct TypeStampQuery {
+    uint64_t hash;
+    uint32_t state;
+    uint8_t kind;
+    uint8_t answer;
+    const Atom *formal;
+    const Atom *range;
+    Atom *instance;
+} TypeStampQuery;
+
+enum { TYPE_STAMP_QUERY_UNIFY = 1u, TYPE_STAMP_QUERY_INSTANCE = 2u };
+
+static uint64_t type_stamps_query_hash(uint8_t kind, uint32_t state,
+                                       const Atom *formal, const Atom *range) {
+    uint64_t hash = type_stamps_mix(type_stamps_mix(kind, state),
+                                    atom_hash((Atom *)formal));
+    return range ? type_stamps_mix(hash, atom_hash((Atom *)range)) : hash;
+}
+
+static TypeStampQuery *type_stamps_query_find(uint8_t kind, uint32_t state,
+                                              const Atom *formal,
+                                              const Atom *range,
+                                              uint64_t hash) {
+    TypeStampStore *store = &g_type_stamps;
+    if (!store->query_cap)
+        return NULL;
+    size_t mask = store->query_cap - 1u;
+    for (size_t slot = (size_t)hash & mask; store->queries[slot].kind;
+         slot = (slot + 1u) & mask) {
+        TypeStampQuery *query = &store->queries[slot];
+        if (query->hash == hash && query->kind == kind &&
+            query->state == state &&
+            atom_eq((Atom *)query->formal, (Atom *)formal) &&
+            (range ? query->range &&
+                         atom_eq((Atom *)query->range, (Atom *)range)
+                   : !query->range))
+            return query;
+    }
+    return NULL;
+}
+
+static void type_stamps_query_keep(uint8_t kind, uint32_t state,
+                                   const Atom *formal, const Atom *range,
+                                   uint64_t hash, uint8_t answer,
+                                   Atom *instance) {
+    TypeStampStore *store = &g_type_stamps;
+    if (store->query_len * 2u + 2u > store->query_cap) {
+        size_t cap = store->query_cap ? store->query_cap * 2u : 64u;
+        TypeStampQuery *grown = cetta_malloc(cap * sizeof(*grown));
+        if (!grown)
+            return;
+        memset(grown, 0, cap * sizeof(*grown));
+        for (size_t i = 0u; i < store->query_cap; i++) {
+            TypeStampQuery *old = &store->queries[i];
+            if (!old->kind)
+                continue;
+            size_t slot = (size_t)old->hash & (cap - 1u);
+            while (grown[slot].kind)
+                slot = (slot + 1u) & (cap - 1u);
+            grown[slot] = *old;
+        }
+        free(store->queries);
+        store->queries = grown;
+        store->query_cap = cap;
+    }
+    if (!type_stamps_types_ready())
+        return;
+    Atom *kept_formal = atom_deep_copy(&store->types, (Atom *)formal);
+    Atom *kept_range = range ? atom_deep_copy(&store->types, (Atom *)range)
+                             : NULL;
+    Atom *kept_instance = instance
+        ? atom_deep_copy(&store->types, instance) : NULL;
+    if (!kept_formal || (range && !kept_range) || (instance && !kept_instance))
+        return;
+    size_t mask = store->query_cap - 1u;
+    size_t slot = (size_t)hash & mask;
+    while (store->queries[slot].kind)
+        slot = (slot + 1u) & mask;
+    store->queries[slot] = (TypeStampQuery){.hash = hash, .state = state,
+        .kind = kind, .answer = answer, .formal = kept_formal,
+        .range = kept_range, .instance = kept_instance};
+    store->query_len++;
+}
+
+int space_type_stamps_unifies(Space *s, Arena *a, Atom *atom, Atom *type) {
+    uint32_t state = type_stamps_state_of(s, a, atom);
+    if (!state || !type)
+        return -1;
+    uint64_t hash = type_stamps_query_hash(TYPE_STAMP_QUERY_UNIFY, state,
+                                           type, NULL);
+    const TypeStampQuery *kept = type_stamps_query_find(
+        TYPE_STAMP_QUERY_UNIFY, state, type, NULL, hash);
+    if (kept)
+        return kept->answer;
+    const TypeStampState *held = &g_type_stamps.states[state - 1u];
+    int answer = 0;
+    for (uint32_t i = 0u; !answer && i < held->count; i++) {
+        Bindings bindings;
+        bindings_init(&bindings);
+        if (match_types(held->types[i], type, &bindings, a))
+            answer = 1;
+        bindings_free(&bindings);
+    }
+    type_stamps_query_keep(TYPE_STAMP_QUERY_UNIFY, state, type, NULL, hash,
+                           (uint8_t)answer, NULL);
+    return answer;
+}
+
+/* `range` under the unifier of `atom`'s one typing that unifies with
+ * `formal`: 1 with *instance set (owned by the store until it clears),
+ * 0 where none or several of its typings fit, -1 where the store holds
+ * none of its typings. */
+int space_type_stamps_instance(Space *s, Arena *a, Atom *atom, Atom *formal,
+                               Atom *range, Atom **instance) {
+    uint32_t state = type_stamps_state_of(s, a, atom);
+    if (!state || !formal || !range || !instance)
+        return -1;
+    uint64_t hash = type_stamps_query_hash(TYPE_STAMP_QUERY_INSTANCE, state,
+                                           formal, range);
+    const TypeStampQuery *kept = type_stamps_query_find(
+        TYPE_STAMP_QUERY_INSTANCE, state, formal, range, hash);
+    if (kept) {
+        *instance = kept->instance;
+        return kept->answer;
+    }
+    const TypeStampState *held = &g_type_stamps.states[state - 1u];
+    uint32_t fits = 0u;
+    Atom *found = NULL;
+    for (uint32_t i = 0u; fits < 2u && i < held->count; i++) {
+        Bindings bindings;
+        bindings_init(&bindings);
+        if (match_types(held->types[i], formal, &bindings, a) && ++fits == 1u)
+            found = bindings_apply_if_vars(&bindings, a, range);
+        bindings_free(&bindings);
+    }
+    uint8_t answer = fits == 1u && found ? 1u : 0u;
+    type_stamps_query_keep(TYPE_STAMP_QUERY_INSTANCE, state, formal, range,
+                           hash, answer, answer ? found : NULL);
+    kept = type_stamps_query_find(TYPE_STAMP_QUERY_INSTANCE, state, formal,
+                                  range, hash);
+    *instance = kept ? kept->instance : (answer ? found : NULL);
+    return answer;
+}
+
+/* Copy `from`'s kept typings onto `to`, a copy of `from` with the same
+ * shape: a node of `to` the store admits, and keeps no typing for, takes the
+ * state its source node holds under one of `sources`' current incarnations.
+ * The walk is iterative; a shape mismatch stops at that node. */
+void space_type_stamps_transfer(Space *s, const Atom *from, Atom *to,
+                                const Arena *const *sources,
+                                size_t source_count) {
+    /* Nothing kept, nothing to carry. */
+    if (!s || !from || !to || !sources || !type_stamps_enabled() ||
+        g_type_stamps.len == 0u)
+        return;
+    typedef struct { const Atom *from; Atom *to; } Pair;
+    Pair inline_pairs[64];
+    Pair *pairs = inline_pairs;
+    size_t len = 0u, cap = 64u;
+    pairs[len++] = (Pair){from, to};
+    static const uint32_t questions[] = {
+        TYPE_INFERENCE_MEMO_TYPES_DECLARED, TYPE_INFERENCE_MEMO_TYPES_INFERRED};
+    /* A value shares subterms: each node of the copy is read once, and a
+     * part the copy shares with its source holds its source's typings. */
+    AtomVisitSet seen = {0};
+    while (len) {
+        Pair pair = pairs[--len];
+        if (pair.from == pair.to || pair.from->kind != ATOM_EXPR ||
+            pair.to->kind != ATOM_EXPR ||
+            pair.from->expr.len != pair.to->expr.len)
+            continue;
+        bool fault = false;
+        if (!atom_visit_set_add(&seen, pair.to, &fault)) {
+            if (fault)
+                break;
+            continue;
+        }
+        uint32_t arena = 0u;
+        uint64_t epoch = 0u;
+        if (pair.from != pair.to &&
+            type_stamps_admit(s, pair.to, NULL, &arena, &epoch)) {
+            for (size_t q = 0u; q < sizeof(questions) / sizeof(*questions); q++) {
+                const TypeStampEntry *entry =
+                    type_stamps_find(pair.from, questions[q]);
+                if (!entry || !entry->state ||
+                    type_stamps_node_state(pair.to, questions[q], arena, epoch))
+                    continue;
+                bool current = false;
+                for (size_t k = 0u; !current && k < source_count; k++)
+                    current = sources[k] &&
+                        entry->arena == sources[k]->identity &&
+                        entry->epoch == sources[k]->reset_epoch;
+                if (current)
+                    type_stamps_record(pair.to, questions[q], arena, epoch,
+                                       entry->state);
+            }
+        }
+        for (CettaExprIndex i = 0u; i < pair.from->expr.len; i++) {
+            if (pair.from->expr.elems[i]->kind != ATOM_EXPR)
+                continue;
+            if (len == cap) {
+                size_t grown = cap * 2u;
+                Pair *more = pairs == inline_pairs
+                    ? cetta_malloc(grown * sizeof(*more))
+                    : cetta_realloc(pairs, grown * sizeof(*more));
+                if (!more)
+                    break;
+                if (pairs == inline_pairs)
+                    memcpy(more, inline_pairs, len * sizeof(*more));
+                pairs = more;
+                cap = grown;
+            }
+            pairs[len++] = (Pair){pair.from->expr.elems[i], pair.to->expr.elems[i]};
+        }
+    }
+    atom_visit_set_free(&seen);
+    if (pairs != inline_pairs)
+        free(pairs);
+}
+
+/* Keep `type` as the one typing of this incarnation of `atom`, a value whose
+ * typing the caller derived from its parts' (a checked build whose children's
+ * types decide it), where the store admits the atom. */
+void space_type_stamps_record_type(Space *s, Arena *a, Atom *atom,
+                                   Atom *type) {
+    (void)a;
+    uint32_t arena = 0u;
+    uint64_t epoch = 0u;
+    if (!type || !type_stamps_admit(s, atom, NULL, &arena, &epoch) ||
+        (!type_stamps_children_kept(s, atom) &&
+         !space_type_rows_free_below(s, atom)))
+        return;
+    Atom *types[1] = {type};
+    uint32_t state = type_stamps_intern(types, 1u);
+    if (state)
+        type_stamps_record(atom, TYPE_INFERENCE_MEMO_TYPES_DECLARED, arena,
+                           epoch, state);
+}
+
+/* Whether the store holds typings of this incarnation of `atom`. */
+bool space_type_stamps_hold(Space *s, const Atom *atom) {
+    uint32_t arena = 0u;
+    uint64_t epoch = 0u;
+    if (!type_stamps_admit(s, atom, NULL, &arena, &epoch))
+        return false;
+    return type_stamps_node_state(atom, TYPE_INFERENCE_MEMO_TYPES_INFERRED,
+                                  arena, epoch) ||
+        type_stamps_node_state(atom, TYPE_INFERENCE_MEMO_TYPES_DECLARED,
+                               arena, epoch);
+}
+
+static uint32_t get_atom_types_mode(Space *s, Arena *a, Atom *atom,
+                                    Atom ***out_types,
+                                    bool include_direct_annotations,
+                                    CettaTypeInferenceBudget *budget);
+
+/* Whether `node` is an expression the store admits and keeps no declared
+ * typing for yet. */
+static bool type_stamps_untyped_node(Space *s, const Atom *node) {
+    uint32_t arena = 0u;
+    uint64_t epoch = 0u;
+    return node && node->kind == ATOM_EXPR &&
+        type_stamps_admit(s, node, NULL, &arena, &epoch) &&
+        !type_stamps_node_state(node, TYPE_INFERENCE_MEMO_TYPES_DECLARED,
+                                arena, epoch);
+}
+
+/* Type each expression descendant of `atom` that the store admits and keeps
+ * no typing for yet, from the leaves up (get_atom_types_mode records each);
+ * false where none needed it.  A node whose shape the store has seen takes
+ * that state without inference. */
+static bool type_stamps_type_children(Space *s, Arena *a, Atom *atom) {
+    const Space *outer = space_type_stamps_run_enter(s);
+    size_t cap = atom->expr.len > 64u ? atom->expr.len : 64u;
+    size_t len = 0u, order_len = 0u, order_cap = 0u;
+    Atom **stack = malloc(cap * sizeof(*stack));
+    Atom **order = NULL;
+    AtomVisitSet seen = {0};
+    bool ok = stack != NULL;
+    for (CettaExprIndex i = 1u; ok && i < atom->expr.len; i++)
+        if (type_stamps_untyped_node(s, atom->expr.elems[i]))
+            stack[len++] = atom->expr.elems[i];
+    /* Untyped descendants, each parent before its children. */
+    while (ok && len > 0u) {
+        Atom *node = stack[--len];
+        bool fault = false;
+        if (!atom_visit_set_add(&seen, node, &fault)) {
+            ok = !fault;
+            continue;
+        }
+        if (order_len == order_cap) {
+            size_t grown = order_cap ? order_cap * 2u : 64u;
+            Atom **more = realloc(order, grown * sizeof(*order));
+            if (!more) {
+                ok = false;
+                break;
+            }
+            order = more;
+            order_cap = grown;
+        }
+        order[order_len++] = node;
+        if (node->expr.len == 0u ||
+            node->expr.elems[0]->kind != ATOM_SYMBOL ||
+            node->expr.len - 1u > TYPE_STAMP_TRANSITION_ARITY ||
+            !type_stamps_head_reads_shapes(s, node->expr.elems[0]->sym_id))
+            continue;
+        if (len + node->expr.len > cap) {
+            size_t grown = cap;
+            while (len + node->expr.len > grown)
+                grown *= 2u;
+            Atom **more = realloc(stack, grown * sizeof(*stack));
+            if (!more) {
+                ok = false;
+                break;
+            }
+            stack = more;
+            cap = grown;
+        }
+        for (CettaExprIndex i = 1u; i < node->expr.len; i++)
+            if (type_stamps_untyped_node(s, node->expr.elems[i]))
+                stack[len++] = node->expr.elems[i];
+    }
+    /* From the leaves up: every node's children are typed before it. */
+    for (size_t k = order_len; ok && k > 0u; k--) {
+        Atom *node = order[k - 1u];
+        uint32_t arena = 0u;
+        uint64_t epoch = 0u;
+        if (!type_stamps_admit(s, node, NULL, &arena, &epoch) ||
+            type_stamps_node_state(node, TYPE_INFERENCE_MEMO_TYPES_DECLARED,
+                                   arena, epoch))
+            continue;
+        TypeStampTransition shape;
+        uint32_t state = type_stamps_shape(
+                s, a, node, TYPE_INFERENCE_MEMO_TYPES_DECLARED, &shape)
+            ? type_stamps_transition_find(&shape) : 0u;
+        if (state) {
+            type_stamps_record(node, TYPE_INFERENCE_MEMO_TYPES_DECLARED,
+                               arena, epoch, state);
+            continue;
+        }
+        Atom **types = NULL;
+        (void)get_atom_types_mode(s, a, node, &types, true, NULL);
+        free(types);
+    }
+    atom_visit_set_free(&seen);
+    free(order);
+    free(stack);
+    space_type_stamps_run_leave(outer);
+    return order_len > 0u;
+}
+
 static uint32_t get_atom_types_mode(Space *s, Arena *a, Atom *atom,
                                     Atom ***out_types,
                                     bool include_direct_annotations,
@@ -15079,6 +16463,37 @@ static uint32_t get_atom_types_mode(Space *s, Arena *a, Atom *atom,
     TypeInferenceMemoQuestion question = include_direct_annotations
         ? TYPE_INFERENCE_MEMO_TYPES_DECLARED
         : TYPE_INFERENCE_MEMO_TYPES_INFERRED;
+    uint32_t stamp_arena = 0u;
+    uint64_t stamp_epoch = 0u;
+    bool stamped = type_stamps_admit(s, atom, budget, &stamp_arena,
+                                     &stamp_epoch);
+    TypeStampTransition shape;
+    bool shaped = false;
+    if (stamped) {
+        uint32_t state = type_stamps_node_state(atom, (uint32_t)question,
+                                                stamp_arena, stamp_epoch);
+        if (!state) {
+            shaped = type_stamps_shape(s, a, atom, (uint32_t)question, &shape);
+            /* A child no typing is kept for yet is typed first, bottom up,
+             * so it keeps its state: a node then reads its shape, and a
+             * spine of one shape is inferred at its first cells only. */
+            if (!shaped && atom->expr.len - 1u <= TYPE_STAMP_TRANSITION_ARITY &&
+                type_stamps_head_reads_shapes(s, atom->expr.elems[0]->sym_id) &&
+                type_stamps_type_children(s, a, atom))
+                shaped = type_stamps_shape(s, a, atom, (uint32_t)question,
+                                           &shape);
+            state = shaped ? type_stamps_transition_find(&shape) : 0u;
+            if (state)
+                type_stamps_record(atom, (uint32_t)question, stamp_arena,
+                                   stamp_epoch, state);
+        }
+        uint32_t stamped_count = 0u;
+        if (state && type_stamps_materialize(a, state, out_types,
+                                             &stamped_count)) {
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TYPE_STAMP_HIT);
+            return stamped_count;
+        }
+    }
     bool keyed = type_inference_memo_applies(s, a, atom, budget);
     if (keyed) {
         TypeInferenceMemoEntry *known = type_inference_memo_find(atom, question);
@@ -15104,6 +16519,17 @@ static uint32_t get_atom_types_mode(Space *s, Arena *a, Atom *atom,
             entry->types = kept;
         } else {
             free(kept);
+        }
+    }
+    if (stamped &&
+        !(cetta_native_memory_failed && cetta_native_memory_failed()) &&
+        (shaped || type_stamps_children_kept(s, atom))) {
+        uint32_t state = type_stamps_intern(*out_types, count);
+        if (state) {
+            type_stamps_record(atom, (uint32_t)question, stamp_arena,
+                               stamp_epoch, state);
+            if (shaped)
+                type_stamps_transition_record(&shape, state);
         }
     }
     if (entered)

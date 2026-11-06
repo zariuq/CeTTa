@@ -107,7 +107,7 @@ CASES = [
      'expected MorkSpace as first argument)]\n', False),
     ("nop-effects", "(= (producer) (let $u (println! first) 1))\n"
      "(= (producer) (let $u (println! second) 2))\n!(nop (producer))\n",
-     "first\nsecond\n[()]\n", False),
+     "first\nsecond\n[(), ()]\n", False),
     ("bind-completed-producer", "(= (producer) (let $u (println! first) 1))\n"
      "(= (producer) (let $u (println! second) 2))\n"
      "!(bind! &kept (producer))\n! &kept\n", "first\nsecond\n[()]\n[1]\n", False),

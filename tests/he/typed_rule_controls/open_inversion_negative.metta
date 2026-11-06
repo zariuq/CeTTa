@@ -1,0 +1,10 @@
+; A constructor whose recursive field is not typed at the open formal: no fold.
+(: List (-> Type Type))
+(: Nil (List $a))
+(: Cons (-> $a (List $a) (List $a)))
+(: Bad (-> $a (List Number) (List $a)))
+(: sum (-> (List $a) Number))
+(= (sum Nil) 0)
+(= (sum (Bad $x $xs)) (+ $x (sum $xs)))
+!(sum (Bad 1 Nil))
+!(sum (Bad 1 (Cons 2 Nil)))

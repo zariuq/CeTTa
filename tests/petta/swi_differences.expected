@@ -20,3 +20,13 @@ true
 ()
 ()
 ()
+((-> Number Number))
+-inf
+1
+true
+pi
+true
+2
+2
+LooseBoxT
+(1)
