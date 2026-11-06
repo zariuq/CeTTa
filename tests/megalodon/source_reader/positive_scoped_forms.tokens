@@ -1,0 +1,156 @@
+SECTION
+(NAM "S")
+DOT
+INFIX
+(NAM "pp")
+(NUM False "400" None None)
+(NAM "left")
+DEQ
+(NAM "add")
+DOT
+AXIOM
+(NAM "a")
+COLON
+(NAM "x")
+(NAM "pp")
+(NAM "y")
+(NAM "pp")
+(NAM "z")
+DOT
+END
+(NAM "S")
+DOT
+AXIOM
+(NAM "b")
+COLON
+(NAM "x")
+(NAM "pp")
+(NAM "y")
+DOT
+(THEOREM "Theorem")
+(NAM "t")
+COLON
+(NAM "forall")
+(NAM "x")
+MEM
+(NAM "X")
+COMMA
+LCBRACE
+(NAM "y")
+MEM
+(NAM "X")
+VBAR
+(NAM "y")
+(NAM "=")
+(NAM "x")
+RCBRACE
+(NAM "=")
+LCBRACE
+(NAM "x")
+RCBRACE
+DOT
+LET
+(NAM "x")
+DOT
+ASSUME
+(NAM "H")
+COLON
+(NAM "x")
+MEM
+(NAM "X")
+DOT
+ADMIT
+DOT
+(NAM "rewrite")
+(NAM "<-")
+(NAM "foo")
+AT
+(NUM False "1" None None)
+(NUM False "2" None None)
+DOT
+(NAM "cases")
+(NAM "H")
+COLON
+(NAM "a")
+COLON
+(NAM "A")
+COMMA
+(NAM "b")
+COLON
+(NAM "B")
+VBAR
+(NAM "c")
+COLON
+(NAM "C")
+DOT
+QED
+DOT
+INFIX
+(NAM "/\\")
+(NUM False "780" None None)
+(NAM "left")
+DEQ
+(NAM "and")
+DOT
+BINDERPLUS
+(NAM "exists")
+COMMA
+DEQ
+(NAM "ex")
+SEMICOLON
+(NAM "and")
+DOT
+AXIOM
+(NAM "c")
+COLON
+(NAM "exists")
+(NAM "x")
+(NAM "y")
+MEM
+(NAM "X")
+COMMA
+(NAM "x")
+SUBEQ
+(NAM "y")
+(NAM "/\\")
+IF
+(NAM "p")
+THEN
+(NAM "q")
+ELSE
+(NAM "r")
+DOT
+AXIOM
+(NAM "d")
+COLON
+LET
+LBRACK
+(NAM "u")
+COMMA
+(NAM "v")
+RBRACK
+DEQ
+(NAM "w")
+IN
+LBRACK
+(NAM "u")
+COMMA
+(NAM "v")
+RBRACK
+(NAM "=")
+LPAREN
+(NAM "u")
+COMMA
+(NAM "v")
+RPAREN
+DOT
+AXIOM
+(NAM "e")
+COLON
+BACKSLASH
+(NAM "x41")
+(STRING "str")
+(QUESTIONSTRING "q")
+(NUM True "1" (Some "5") (Some "-"))
+(NAM "_0")
+DOT

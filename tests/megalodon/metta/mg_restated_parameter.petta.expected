@@ -1,0 +1,5 @@
+true
+true
+(Megalodon.imported (primitives 6) (parameters 1) (definitions 6) (axioms 0) (theorems 2) (reproved 0) (repeated 0) (identities 14) (realized 0) (unproved 0) (depends-on-unproved 0) (unsupported 0) (revision 15))
+(Megalodon.imported (primitives 0) (parameters 0) (definitions 0) (axioms 0) (theorems 0) (reproved 0) (repeated 1) (identities 0) (realized 0) (unproved 0) (depends-on-unproved 0) (unsupported 0) (revision 15))
+(Error (__cetta_lib_megalodon_try-import (Sealed megalodon-authority) "tests/megalodon/fixtures/pfghotg_restated_eq_other_type.sexpr" (axioms all)) (MegalodonConflict "line 1: PARAM eq: hash already names another term"))

@@ -1,0 +1,7 @@
+(Doc (NotationDecl "IfThenElse" (List "If_i")))
+(Doc (PostInfixDecl "=" (NaL "eq") 502 InfixNone))
+(Doc (AxDecl "i1" (InfoL (InfNam "=") (ParenL (IfThenElseL (NaL "p") (NaL "x") (NaL "y")) (List)) (NaL "z"))))
+(Doc (AxDecl "i2" (LeL "x" None (NaL "y") (InfoL (InfNam "=") (NaL "x") (NaL "y")))))
+(Doc (AxDecl "i3" (LeL "x" (Some (AscTp (NaL "set"))) (NaL "y") (InfoL (InfNam "=") (NaL "x") (NaL "y")))))
+(Doc (AxDecl "i4" (LeML "u" (List "v") (NaL "w") (InfoL (InfNam "=") (NaL "u") (NaL "v")))))
+(Doc (AxDecl "i5" (InfoL (InfNam "=") (MTupleL (NaL "a") (List (NaL "b") (NaL "c"))) (ParenL (NaL "a") (List (NaL "b") (NaL "c"))))))

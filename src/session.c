@@ -53,6 +53,7 @@ static const CettaBuiltinPolicy CETTA_BUILTIN_POLICIES[] = {
     {"git-module!", CETTA_PROFILE_MASK_HE_PUBLIC | CETTA_PROFILE_MASK_PETTA_EXTENDED, "keep_he_public_builtin"},
     {"hyperpose", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_BASE_FORMS, "clean_primary_extension"},
     {"import!", CETTA_PROFILE_MASK_ALL, "keep_he_public_builtin"},
+    {"import-as!", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_BASE_FORMS, "clean_primary_extension"},
     {"include", CETTA_PROFILE_MASK_HE_PUBLIC | CETTA_PROFILE_MASK_PETTA_EXTENDED, "keep_he_public_builtin"},
     {"include-space-target", CETTA_PROFILE_MASK_HE_NON_COMPAT | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
     {"mod-space!", CETTA_PROFILE_MASK_HE_PUBLIC | CETTA_PROFILE_MASK_PETTA_EXTENDED, "keep_he_public_builtin"},
