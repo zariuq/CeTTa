@@ -266,6 +266,12 @@ static inline bool cetta_internal_tag_is_term_stable(int64_t tag) {
  * holds of every child; any other leaf, or a hand-built atom, leaves it
  * unset. */
 #define ATOM_STRUCTURAL_SYMBOLIC UINT32_C(0x00002000)
+/* HE's evaluated mark at every node: the expression carries the mark and
+ * every expression child with fields holds this fact.  Set where a marked
+ * node is built (atom_he_evaluated_build); a fact of the node alone, which
+ * no other expression inherits from a child or keeps from the expression
+ * it is derived from. */
+#define ATOM_STRUCTURAL_HE_EVALUATED_THROUGHOUT UINT32_C(0x00004000)
 /* Each fact has its own bit: for one-bit flags the sum equals the union
  * exactly when no two share one. */
 _Static_assert(ATOM_STRUCTURAL_FACTS_VALID + ATOM_STRUCTURAL_HAS_INTERNAL_TAG +
@@ -276,7 +282,8 @@ _Static_assert(ATOM_STRUCTURAL_FACTS_VALID + ATOM_STRUCTURAL_HAS_INTERNAL_TAG +
                        ATOM_STRUCTURAL_HAS_RATIONAL +
                        ATOM_STRUCTURAL_HAS_PETTA_NONLIST +
                        ATOM_STRUCTURAL_OWNER_CLOSED + ATOM_STRUCTURAL_STRING_STORAGE +
-                       ATOM_STRUCTURAL_HAS_HE_EVALUATED + ATOM_STRUCTURAL_SYMBOLIC ==
+                       ATOM_STRUCTURAL_HAS_HE_EVALUATED + ATOM_STRUCTURAL_SYMBOLIC +
+                       ATOM_STRUCTURAL_HE_EVALUATED_THROUGHOUT ==
                    (ATOM_STRUCTURAL_FACTS_VALID | ATOM_STRUCTURAL_HAS_INTERNAL_TAG |
                     ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID | ATOM_STRUCTURAL_HAS_NAN |
                     ATOM_STRUCTURAL_HAS_OPEN_LIST | ATOM_STRUCTURAL_HAS_LIST |
@@ -285,7 +292,8 @@ _Static_assert(ATOM_STRUCTURAL_FACTS_VALID + ATOM_STRUCTURAL_HAS_INTERNAL_TAG +
                     ATOM_STRUCTURAL_HAS_RATIONAL |
                     ATOM_STRUCTURAL_HAS_PETTA_NONLIST |
                     ATOM_STRUCTURAL_OWNER_CLOSED | ATOM_STRUCTURAL_STRING_STORAGE |
-                    ATOM_STRUCTURAL_HAS_HE_EVALUATED | ATOM_STRUCTURAL_SYMBOLIC),
+                    ATOM_STRUCTURAL_HAS_HE_EVALUATED | ATOM_STRUCTURAL_SYMBOLIC |
+                    ATOM_STRUCTURAL_HE_EVALUATED_THROUGHOUT),
                "structural fact bits overlap");
 
 /*
@@ -614,6 +622,18 @@ static inline bool atom_is_he_evaluated(const Atom *atom) {
            (atom->flags & ATOM_FLAG_HE_EVALUATED) != 0u;
 }
 
+/* Whether every expression node of `atom` with fields carries HE's
+ * evaluated mark, as the node's own fact says (false where it is not
+ * known). */
+static inline bool atom_is_he_evaluated_throughout(const Atom *atom) {
+    return atom_is_he_evaluated(atom) &&
+           (atom->structural_facts &
+            (ATOM_STRUCTURAL_FACTS_VALID |
+             ATOM_STRUCTURAL_HE_EVALUATED_THROUGHOUT)) ==
+               (ATOM_STRUCTURAL_FACTS_VALID |
+                ATOM_STRUCTURAL_HE_EVALUATED_THROUGHOUT);
+}
+
 /* Whether `atom` may hold an evaluated mark: its facts say so, or an
  * expression's facts are not known. */
 static inline bool atom_may_hold_he_mark(const Atom *atom) {
@@ -794,14 +814,14 @@ bool  arena_try_init(Arena *a);
  * cross-thread owners: an ordinary arena_init deliberately inherits the
  * current evaluator's table for branch-local sharing. */
 void  arena_init_detached(Arena *a);
-/* Explicit context for transient descriptor operations. Initializers do not
- * inherit it: an arena's lifetime owner must be assigned by its owner. */
-void *arena_current_resource_scope(void);
-void *arena_set_resource_scope(void *scope);
 bool  arena_try_init_detached(Arena *a);
 /* Reserve room for the next size bytes without advancing the allocation
  * cursor. Failure preserves existing allocations and ownership. */
 bool  arena_try_reserve(Arena *a, size_t size);
+/* Explicit context for transient descriptor operations. Initializers do not
+ * inherit it: an arena's lifetime owner must be assigned by its owner. */
+void *arena_current_resource_scope(void);
+void *arena_set_resource_scope(void *scope);
 /* An arena that holds little takes blocks of `capacity` bytes rather than
  * ARENA_BLOCK_SIZE; an allocation larger than that still gets a block of its
  * own size. */
@@ -1112,6 +1132,9 @@ void    var_intern_free(VarInternTable *t);
 VarId   var_intern(VarInternTable *t, SymbolId spelling);
 bool    fresh_var_id_try(VarId *id_out);
 VarId   fresh_var_id(void);
+/* A base no fresh variable this thread minted so far has, and no base it
+ * mints from now on is below: those minted later have bases >= it. */
+uint64_t fresh_var_base_watermark(void);
 
 /* A VarId's stable source identity and its activation epoch.  These
  * accessors are inline because matching and substitution consult the

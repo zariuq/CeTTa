@@ -1,0 +1,26 @@
+{
+  "two_hop_50k": {
+    "answer": [
+      1064228,
+      16343
+    ],
+    "elapsed_seconds": 0.046255955938249826
+  },
+  "two_hop_1m": {
+    "answer": [
+      19913332,
+      8935
+    ],
+    "elapsed_seconds": 4.286381758982316
+  },
+  "five_clique": {
+    "answer": 79,
+    "elapsed_seconds": 0.0073546781204640865
+  },
+  "counter_300": {
+    "answer": [
+      16218,
+      1
+    ]
+  }
+}

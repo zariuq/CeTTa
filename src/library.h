@@ -406,13 +406,6 @@ void cetta_library_set_top_module_registry(CettaLibraryContext *ctx,
 bool cetta_library_module_context(CettaLibraryContext *ctx, uint64_t instance,
                                   Space **space_out, Registry **registry_out);
 typedef bool (*CettaDocumentResultObserver)(void *context, const ResultSet *results);
-/* Install a closed block of equation/type declarations using the document
- * compiler's forward-call registration. Directives are rejected before any
- * declaration is installed. */
-bool cetta_library_install_definitions(CettaLibraryContext *ctx, Space *space,
-    const char *text, size_t length, Arena *arena, Atom **error_out);
-bool cetta_library_run_source_bytes(CettaLibraryContext *,Space *,const uint8_t *,size_t,
-    Arena *,Atom **results,Atom **error_out);
 typedef bool (*CettaDocumentOutcomeObserver)(void *context, const EvalOutcome *outcome);
 typedef enum {
     CETTA_DOCUMENT_COMPLETE,
@@ -456,6 +449,13 @@ void cetta_library_resource_release(CettaLibraryResourceContext *);
 void cetta_library_resource_enter(CettaLibraryContext *, CettaLibraryResourceContext *,
     CettaLibraryResourceScope *);
 void cetta_library_resource_leave(CettaLibraryContext *, CettaLibraryResourceScope *);
+/* Install a closed block of equation/type declarations using the document
+ * compiler's forward-call registration. Directives are rejected before any
+ * declaration is installed. */
+bool cetta_library_install_definitions(CettaLibraryContext *ctx, Space *space,
+    const char *text, size_t length, Arena *arena, Atom **error_out);
+bool cetta_library_run_source_bytes(CettaLibraryContext *,Space *,const uint8_t *,size_t,
+    Arena *,Atom **results,Atom **error_out);
 /* The existing document executor, with one observation per directive. */
 bool cetta_library_he_run_text(CettaLibraryContext *ctx, Space *space,
     Registry *registry, const char *text, Arena *arena, Arena *persistent,

@@ -1,6 +1,7 @@
 #include "library_re.h"
 #include "library.h"
 #include "eval.h"
+#include "petta_semantics.h"
 #include "string_ops.h"
 #include "native/langdef_module.h"
 #include "native/regex_compiler_v1.h"
@@ -802,11 +803,19 @@ bool cetta_re_call(CettaLibraryContext *ctx, Arena *a, Atom *head, Atom **args,
                    uint32_t nargs, CettaCallOutcome *out) {
     if (!atom_is_symbol(head, "__cetta_lib_re")) return false;
     if (eval_native_interrupted()) { *out = cetta_call_interrupted(); return true; }
+    bool petta_terms = ctx->session.language_id == CETTA_LANGUAGE_PETTA;
     Atom *value = NULL;
     if (nargs != 2 || !args[0] || args[0]->kind != ATOM_SYMBOL ||
         !args[1] || args[1]->kind != ATOM_EXPR) goto arguments;
     const char *operation = atom_name_cstr(args[0]);
-    Atom **operands = args[1]->expr.elems; CettaExprLen count = args[1]->expr.len;
+    /* Regex descriptions and retained parser evidence use the same term
+     * language as langdef. Cross that boundary consistently on both paths. */
+    Atom *tuple = args[1];
+    if (petta_terms && atom_structural_may_have_list_carrier(tuple)) {
+        Atom *term = petta_semantics_term_export(a, tuple);
+        if (term) tuple = term;
+    }
+    Atom **operands = tuple->expr.elems; CettaExprLen count = tuple->expr.len;
     char error[512] = {0};
     if ((!strcmp(operation, "group-span") && count == 2u) ||
         (!strcmp(operation, "group-text") && count == 3u)) {
@@ -993,5 +1002,9 @@ handle:
 arguments:
     value = failure(a, "re:invalid-argument", "expected a regex operation and inert operand tuple");
 completed:
+    if (petta_terms && value) {
+        Atom *converted = petta_semantics_term_import(a, value);
+        if (converted) value = converted;
+    }
     *out = cetta_call_completed_value(value); return true;
 }

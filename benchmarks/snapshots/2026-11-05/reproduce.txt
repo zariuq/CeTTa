@@ -1,0 +1,115 @@
+The primary original Opt suite and its scale ladder are documented in
+benchmarks/opt_suite/README.txt; its receipts are under opt-applications/.
+The following smaller generated workloads are secondary controls.
+
+Reproducing the 2026-11-05 runtime snapshot
+==========================================
+
+Run from the CeTTa checkout, using the identified executables and recorded
+PeTTa working-tree inputs. metadata.json records binary, driver, input and
+oracle identities. The MORK executable was rebuilt successfully from the recorded MORK and PathMap
+checkouts with nightly Rust and an updated local lock. mork-build.json records
+the build conditions; MORK.Cargo.lock preserves the resolved dependencies.
+
+Build the standalone MORK tool from its checkout:
+
+    cargo +nightly build --release -p mork
+    cargo +nightly build --release --locked -p mork
+
+The first command permits a necessary lock refresh; the second validates the
+resolved lock. Do not delete it. The original run used --offline because its
+dependencies were cached; fresh machines can download dependencies normally.
+
+Set SNAPSHOT_CPU to an eligible logical CPU. The original is in metadata.json.
+
+    SNAPSHOT_OUT=runtime/paper-benchmarks-20261105
+    python3 scripts/bench_petta_live_sample.py --petta-root ../PeTTa --cetta ./cetta \
+      --all-tracked --timeout 2 --record-timeouts --output "$SNAPSHOT_OUT/examples"
+
+This is one bounded screen, not a stable timing distribution. Fixture
+adaptations are listed in corpus-fixtures.json. Strict mode still rejects
+timeouts by default. Differences and caps never contribute speedup ratios.
+A matching observation may include a shared failure: inspect exit codes.
+
+Generate the independent application, join and path workloads:
+
+    python3 benchmarks/mam_families/app_panel.py "$SNAPSHOT_OUT/app-cases" --scale measure
+    python3 benchmarks/mam_families/join_panel.py "$SNAPSHOT_OUT/join-cases" --scale measure
+    python3 benchmarks/mam_families/path_panel.py "$SNAPSHOT_OUT/path-cases" --scale measure
+
+Run the fixed selection, alternating order, with three trials per cell:
+
+    RAYON_NUM_THREADS=1 python3 benchmarks/mam_families/run.py --paired \
+      "$SNAPSHOT_OUT/app-cases" "$SNAPSHOT_OUT/app-results" ./cetta \
+      ancestor_chain_256_natural ancestor_chain_256_levelwise closure_ring_32_levelwise counter_64_natural sort_64_natural arithmetic_10000 tally_1000x8 kb_load_10000 space_step_1000_2000 \
+      --engines cetta-petta,cetta-he,swi,mork --petta-root ../PeTTa \
+      --mork-bin ../MORK/target/release/mork --trials 3 --timeout 5 --cpu "$SNAPSHOT_CPU"
+
+    RAYON_NUM_THREADS=1 python3 benchmarks/mam_families/run.py --paired \
+      "$SNAPSHOT_OUT/join-cases" "$SNAPSHOT_OUT/join-results" ./cetta \
+      triangle_dense_32_count guarded_triangle_32_count triangle_duplicates_witnesses triangle_empty_witnesses \
+      --engines cetta-petta,cetta-he,swi,mork --petta-root ../PeTTa \
+      --mork-bin ../MORK/target/release/mork --trials 3 --timeout 5 --cpu "$SNAPSHOT_CPU"
+
+    RAYON_NUM_THREADS=1 python3 benchmarks/mam_families/run.py --paired \
+      "$SNAPSHOT_OUT/path-cases" "$SNAPSHOT_OUT/path-results" ./cetta \
+      path_product_12_count path_product_12_separator_count path_correlated_6_witnesses path_isolated_8_512_count \
+      --engines cetta-petta,cetta-he,swi,mork --petta-root ../PeTTa \
+      --mork-bin ../MORK/target/release/mork --trials 3 --timeout 5 --cpu "$SNAPSHOT_CPU"
+
+Every timed panel cell must pass its generated independent answer oracle.
+workloads.json records selected cases, parameters, expected-result digests,
+program forms and result contracts. Non-applicable dialects are explicit.
+paired-trials.tsv contains all individual timed runs; paired-summary.tsv gives
+median/min/max wall time and maximum observed peak RSS. Process startup is
+included. Shared-machine contention and three trials limit performance claims.
+
+The tracked generators and their helpers recreate the measured MM2 problems
+and their MeTTa counterparts. Additional native MM2 fixtures are tracked under
+tests/support/mork_mm2/ and examples/. The wider corpus manifest also points
+to external upstream and separately versioned fork files; it is not fully
+vendored, and its missing-source/fork-skip statuses remain explicit.
+
+Upstream HE versus CeTTa-HE (same source and expected answer bag):
+
+    RAYON_NUM_THREADS=1 python3 benchmarks/mam_families/run.py --paired \
+      "$SNAPSHOT_OUT/app-cases" "$SNAPSHOT_OUT/app-he-results" ./cetta \
+      ancestor_chain_256_natural ancestor_chain_256_levelwise closure_ring_32_levelwise counter_64_natural sort_64_natural arithmetic_10000 tally_1000x8 kb_load_10000 space_step_1000_2000 \
+      --engines he,cetta-he --he-bin ../hyperon-experimental/target/release/metta-repl \
+      --trials 3 --timeout 5 --cpu "$SNAPSHOT_CPU"
+
+    RAYON_NUM_THREADS=1 python3 benchmarks/mam_families/run.py --paired \
+      "$SNAPSHOT_OUT/join-cases" "$SNAPSHOT_OUT/join-he-results" ./cetta \
+      triangle_dense_32_count guarded_triangle_32_count triangle_duplicates_witnesses triangle_empty_witnesses \
+      --engines he,cetta-he --he-bin ../hyperon-experimental/target/release/metta-repl \
+      --trials 3 --timeout 5 --cpu "$SNAPSHOT_CPU"
+
+    RAYON_NUM_THREADS=1 python3 benchmarks/mam_families/run.py --paired \
+      "$SNAPSHOT_OUT/path-cases" "$SNAPSHOT_OUT/path-he-results" ./cetta \
+      path_product_12_count path_product_12_separator_count path_correlated_6_witnesses path_isolated_8_512_count \
+      --engines he,cetta-he --he-bin ../hyperon-experimental/target/release/metta-repl \
+      --trials 3 --timeout 5 --cpu "$SNAPSHOT_CPU"
+
+Additional shared-syntax and capacity controls:
+
+    RAYON_NUM_THREADS=1 python3 benchmarks/mam_families/run.py --paired \
+      "$SNAPSHOT_OUT/app-cases" "$SNAPSHOT_OUT/app-he-portable-results" ./cetta \
+      ancestor_chain_64_natural counter_4_natural sort_16_natural \
+      --engines he,cetta-he --he-bin ../hyperon-experimental/target/release/metta-repl \
+      --trials 3 --timeout 5 --cpu "$SNAPSHOT_CPU"
+
+    RAYON_NUM_THREADS=1 python3 benchmarks/mam_families/run.py --paired \
+      "$SNAPSHOT_OUT/join-cases" "$SNAPSHOT_OUT/join-he-portable-results" ./cetta \
+      triangle_dense_8_count guarded_triangle_8_count \
+      --engines he,cetta-he --he-bin ../hyperon-experimental/target/release/metta-repl \
+      --trials 3 --timeout 5 --cpu "$SNAPSHOT_CPU"
+
+    RAYON_NUM_THREADS=1 python3 benchmarks/mam_families/run.py --paired \
+      "$SNAPSHOT_OUT/path-cases" "$SNAPSHOT_OUT/path-he-portable-results" ./cetta \
+      path_product_8_cardinality_count path_product_12_cardinality_count path_product_4_witnesses \
+      --engines he,cetta-he --he-bin ../hyperon-experimental/target/release/metta-repl \
+      --trials 3 --timeout 5 --cpu "$SNAPSHOT_CPU"
+
+The HE records retain all attempted cells, including timeouts, expression-size
+failures and non-portable fold variants. Only answer-matched, completed cells
+enter the HE timing table. Do not count a failed/incomplete result as a speedup.
