@@ -464,17 +464,27 @@ Atom *petta_semantics_materialize_closed_logical_list(
     Arena *arena, Atom *list);
 /* Reify the complete logical-list carrier for observation.  Closed spines
  * become the kind they end in: PeTTa's flat expression carrier, or a list
- * value for cells ending in one; an unresolved or improper tail is retained
- * as authored `(cons Head Tail)` syntax.  The private carrier tag is never
- * observable in either case. */
+ * value for cells ending in one; an unresolved or improper tail remains
+ * a cell value, distinct from authored `(cons Head Tail)` data. */
 Atom *petta_semantics_materialize_logical_list(
     Arena *arena, Atom *list);
+
+/* One graph observation can encounter many shared spine suffixes. Its
+ * cached views borrow unchanged input nodes until the observation ends. */
+typedef struct PeTTaTermBoundarySlot PeTTaTermBoundarySlot;
+typedef struct {
+    PeTTaTermBoundarySlot *slots;
+    size_t cap;
+    size_t used;
+} PeTTaTermBoundaryMemo;
+Atom *petta_semantics_materialize_spine_view(
+    Arena *arena, Atom *source, PeTTaTermBoundaryMemo *memo);
 
 /* Constructor and observation policies used by generated machines.  An
  * evaluated `(cons Head Tail)` becomes the internal O(1) list carrier;
  * unrelated constructors remain ordinary expressions.  Observation copies
- * a carrier graph to an arena-owned PeTTa value, preserving an unresolved
- * tail as authored `cons` syntax. */
+ * a carrier graph to an arena-owned PeTTa value, preserving unresolved
+ * tails as cell values. */
 Atom *petta_semantics_construct_value(
     Arena *arena, Atom **elements, CettaExprLen length);
 /* Whether petta_semantics_construct_value builds an ordinary expression,

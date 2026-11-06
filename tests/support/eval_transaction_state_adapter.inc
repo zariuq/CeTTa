@@ -314,6 +314,7 @@ typedef struct {
     Space *kept;
     pthread_barrier_t barrier;
     size_t baseline;
+    CettaNameContext names;
 } CettaTestWorkerResourceLeases;
 
 static void cetta_test_resource_barrier(CettaTestWorkerResourceLeases *test) {
@@ -323,6 +324,8 @@ static void cetta_test_resource_barrier(CettaTestWorkerResourceLeases *test) {
 
 static void *cetta_test_resource_owner_thread(void *argument) {
     CettaTestWorkerResourceLeases *test = argument;
+    CettaNameContext previous = cetta_name_context_current();
+    cetta_name_context_install(&test->names);
     hyperpose_worker_enter(NULL, NULL);
     Arena source;
     arena_init_detached(&source);
@@ -374,11 +377,14 @@ static void *cetta_test_resource_owner_thread(void *argument) {
     }
     assert(test->root->native.universe->root_provider_len == test->baseline);
     hyperpose_worker_leave(NULL, NULL);
+    cetta_name_context_install(&previous);
     return NULL;
 }
 
 static void *cetta_test_resource_reader_thread(void *argument) {
     CettaTestWorkerResourceLeases *test = argument;
+    CettaNameContext previous = cetta_name_context_current();
+    cetta_name_context_install(&test->names);
     hyperpose_worker_enter(NULL, NULL);
     Arena lease;
     arena_init_detached(&lease);
@@ -407,13 +413,15 @@ static void *cetta_test_resource_reader_thread(void *argument) {
     cetta_test_resource_barrier(test);
     cetta_test_resource_barrier(test);
     hyperpose_worker_leave(NULL, NULL);
+    cetta_name_context_install(&previous);
     return NULL;
 }
 
 bool cetta_test_worker_resource_leases(Space *root, Arena *persistent) {
     assert(root && persistent);
     CettaTestWorkerResourceLeases test = {.root = root, .persistent = persistent,
-        .baseline = root->native.universe->root_provider_len};
+        .baseline = root->native.universe->root_provider_len,
+        .names = cetta_name_context_current()};
     test.fact[0] = atom_int(persistent, 17);
     test.fact[1] = atom_int(persistent, 19);
     test.fact[2] = test.fact[0];

@@ -236,7 +236,7 @@ static PyObject *buffer_atom(PyObject *module, PyObject *args) {
     if (!PyObject_TypeCheck(buffer, (PyTypeObject *)state->buffer_type)) {
         PyErr_SetString(PyExc_TypeError, "expected a CeTTa Buffer"); return NULL;
     }
-    cetta_engine_t *engine = PyCapsule_GetPointer(engine_object, engine_capsule);
+    cetta_engine_t *engine = python_handle_pointer(engine_object, engine_capsule);
     if (!engine) return NULL;
     cetta_atom_t *atom = NULL;
     cetta_status_t status;
@@ -246,7 +246,7 @@ static PyObject *buffer_atom(PyObject *module, PyObject *args) {
     return status == CETTA_OK ? atom_object(atom) : status_error(module, status);
 }
 static PyObject *atom_buffer(PyObject *module, PyObject *object) {
-    cetta_atom_t *atom = PyCapsule_GetPointer(object, atom_capsule);
+    cetta_atom_t *atom = python_handle_pointer(object, atom_capsule);
     if (!atom) return NULL;
     cetta_buffer_t *buffer = NULL;
     cetta_status_t status;
@@ -257,7 +257,7 @@ static PyObject *atom_buffer(PyObject *module, PyObject *object) {
     return status == CETTA_OK ? buffer_object(module, buffer) : status_error(module, status);
 }
 static PyObject *sparse_export(PyObject *module, PyObject *object) {
-    cetta_atom_t *atom = PyCapsule_GetPointer(object, atom_capsule);
+    cetta_atom_t *atom = python_handle_pointer(object, atom_capsule);
     if (!atom) return NULL;
     cetta_tensor_info_t info = {.size = sizeof(info)};
     cetta_sparse_components_t parts = {.size = sizeof(parts)};
@@ -303,7 +303,7 @@ static PyObject *tensor_from_sparse(PyObject *module, PyObject *args) {
     int layout, duplicates, copy;
     if (!PyArg_ParseTuple(args, "OOiOOOOii", &engine_object, &shape_object, &layout,
             &objects[0], &objects[1], &objects[2], &objects[3], &duplicates, &copy)) return NULL;
-    cetta_engine_t *engine = PyCapsule_GetPointer(engine_object, engine_capsule);
+    cetta_engine_t *engine = python_handle_pointer(engine_object, engine_capsule);
     if (!engine) return NULL;
     NativeState *state = PyModule_GetState(module);
     cetta_buffer_t *buffers[4] = {0};

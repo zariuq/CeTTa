@@ -1,10 +1,12 @@
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
 #include "cetta_embed.h"
+#include "embedding_python.h"
 #include <stdlib.h>
 #include <stdbool.h>
 #include <stdatomic.h>
 #include <errno.h>
+#include "handles.inc"
 
 typedef struct { PyObject *type, *value, *traceback; } SavedPythonError;
 static SavedPythonError save_python_error(void) {
@@ -51,19 +53,19 @@ static void release_result(cetta_result_t *result) {
 
 static void engine_destroy(PyObject *capsule) {
     SavedPythonError error = save_python_error();
-    cetta_engine_t *engine = PyCapsule_GetPointer(capsule, engine_capsule);
+    cetta_engine_t *engine = python_handle_pointer(capsule, engine_capsule);
     if (engine) release_engine(engine);
     finish_capsule_cleanup(capsule, error);
 }
 static void atom_destroy(PyObject *capsule) {
     SavedPythonError error = save_python_error();
-    cetta_atom_t *atom = PyCapsule_GetPointer(capsule, atom_capsule);
+    cetta_atom_t *atom = python_handle_pointer(capsule, atom_capsule);
     if (atom) release_atom(atom);
     finish_capsule_cleanup(capsule, error);
 }
 static void query_destroy(PyObject *capsule) {
     SavedPythonError error = save_python_error();
-    cetta_query_t *query = PyCapsule_GetPointer(capsule, query_capsule);
+    cetta_query_t *query = python_handle_pointer(capsule, query_capsule);
     if (query) {
         Py_BEGIN_ALLOW_THREADS
         cetta_embed_query_release(query);
@@ -73,7 +75,7 @@ static void query_destroy(PyObject *capsule) {
 }
 static void space_destroy(PyObject *capsule) {
     SavedPythonError error = save_python_error();
-    cetta_space_t *space = PyCapsule_GetPointer(capsule, space_capsule);
+    cetta_space_t *space = python_handle_pointer(capsule, space_capsule);
     if (space) {
         Py_BEGIN_ALLOW_THREADS
         cetta_embed_space_release(space);
@@ -87,13 +89,14 @@ static PyObject *space_object(cetta_space_t *space) {
         Py_BEGIN_ALLOW_THREADS
         cetta_embed_space_release(space);
         Py_END_ALLOW_THREADS
+        return NULL;
     }
-    return object;
+    return python_handle_new(object, cetta_embedding_python_space_owner(space));
 }
 static PyObject *atom_object(cetta_atom_t *atom) {
     PyObject *capsule = PyCapsule_New(atom, atom_capsule, atom_destroy);
-    if (!capsule) release_atom(atom);
-    return capsule;
+    if (!capsule) { release_atom(atom); return NULL; }
+    return python_handle_new(capsule, cetta_embedding_python_atom_owner(atom));
 }
 typedef struct { PyObject *error, *buffer_type; } NativeState;
 static PyObject *status_error(PyObject *module, cetta_status_t status) {
@@ -134,13 +137,17 @@ static PyObject *engine_new(PyObject *module, PyObject *args) {
         release_engine(engine);
         return PyErr_Occurred() ? NULL : status_error(module, status);
     }
+    PyObject *roots = cetta_embedding_python_attach(engine);
+    if (!roots) { release_engine(engine); return NULL; }
     PyObject *capsule = PyCapsule_New(engine, engine_capsule, engine_destroy);
     if (!capsule) release_engine(engine);
-    return capsule;
+    PyObject *handle = python_handle_new(capsule, roots);
+    Py_DECREF(roots);
+    return handle;
 }
 static PyObject *engine_close(PyObject *module, PyObject *object) {
     (void)module;
-    cetta_engine_t *engine = PyCapsule_GetPointer(object, engine_capsule);
+    cetta_engine_t *engine = python_handle_pointer(object, engine_capsule);
     if (!engine) return NULL;
     Py_BEGIN_ALLOW_THREADS
     cetta_embed_engine_close(engine);
@@ -154,7 +161,7 @@ static PyObject *parse(PyObject *module, PyObject *args) {
     const char *text;
     Py_ssize_t length;
     if (!PyArg_ParseTuple(args, "Os#", &object, &text, &length)) return NULL;
-    cetta_engine_t *engine = PyCapsule_GetPointer(object, engine_capsule);
+    cetta_engine_t *engine = python_handle_pointer(object, engine_capsule);
     if (!engine) return NULL;
     cetta_atom_t *atom = NULL;
     cetta_status_t status;
@@ -179,7 +186,7 @@ static PyObject *scalar(PyObject *module, PyObject *args) {
     PyObject *object, *value;
     int kind;
     if (!PyArg_ParseTuple(args, "OiO", &object, &kind, &value)) return NULL;
-    cetta_engine_t *engine = PyCapsule_GetPointer(object, engine_capsule);
+    cetta_engine_t *engine = python_handle_pointer(object, engine_capsule);
     if (!engine) return NULL;
     cetta_status_t status = CETTA_INVALID_ARGUMENT;
     cetta_atom_t *atom = NULL;
@@ -224,7 +231,7 @@ static PyObject *expression(PyObject *module, PyObject *args) {
     (void)module;
     PyObject *object, *sequence;
     if (!PyArg_ParseTuple(args, "OO", &object, &sequence)) return NULL;
-    cetta_engine_t *engine = PyCapsule_GetPointer(object, engine_capsule);
+    cetta_engine_t *engine = python_handle_pointer(object, engine_capsule);
     if (!engine) return NULL;
     PyObject *items = PySequence_Fast(sequence, "expression children must be iterable");
     if (!items) return NULL;
@@ -234,7 +241,7 @@ static PyObject *expression(PyObject *module, PyObject *args) {
     cetta_status_t status = CETTA_OK;
     cetta_atom_t *atom = NULL;
     for (Py_ssize_t i = 0; i < count; ++i) {
-        children[i] = PyCapsule_GetPointer(PySequence_Fast_GET_ITEM(items, i), atom_capsule);
+        children[i] = python_handle_pointer(PySequence_Fast_GET_ITEM(items, i), atom_capsule);
         if (!children[i]) { status = CETTA_INVALID_ARGUMENT; break; }
     }
     if (status == CETTA_OK) {
@@ -250,7 +257,7 @@ static PyObject *expression(PyObject *module, PyObject *args) {
 
 static PyObject *format_atom(PyObject *module, PyObject *object) {
     (void)module;
-    cetta_atom_t *atom = PyCapsule_GetPointer(object, atom_capsule);
+    cetta_atom_t *atom = python_handle_pointer(object, atom_capsule);
     if (!atom) return NULL;
     size_t length;
     cetta_status_t status;
@@ -269,7 +276,7 @@ static PyObject *format_atom(PyObject *module, PyObject *object) {
 }
 static PyObject *inspect_atom(PyObject *module, PyObject *object) {
     (void)module;
-    cetta_atom_t *atom = PyCapsule_GetPointer(object, atom_capsule);
+    cetta_atom_t *atom = python_handle_pointer(object, atom_capsule);
     if (!atom) return NULL;
     cetta_atom_kind_t kind = cetta_embed_atom_kind(atom);
     PyObject *value = NULL;
@@ -318,9 +325,9 @@ static PyObject *equal_atom(PyObject *module, PyObject *args) {
     (void)module;
     PyObject *left, *right;
     if (!PyArg_ParseTuple(args, "OO", &left, &right)) return NULL;
-    cetta_atom_t *a = PyCapsule_GetPointer(left, atom_capsule);
+    cetta_atom_t *a = python_handle_pointer(left, atom_capsule);
     if (!a) return NULL;
-    cetta_atom_t *b = PyCapsule_GetPointer(right, atom_capsule);
+    cetta_atom_t *b = python_handle_pointer(right, atom_capsule);
     if (!b) return NULL;
     int equal;
     cetta_status_t status;
@@ -331,16 +338,36 @@ static PyObject *equal_atom(PyObject *module, PyObject *args) {
 }
 static PyObject *kind_atom(PyObject *module, PyObject *object) {
     (void)module;
-    cetta_atom_t *atom = PyCapsule_GetPointer(object, atom_capsule);
+    cetta_atom_t *atom = python_handle_pointer(object, atom_capsule);
     return atom ? PyLong_FromLong(cetta_embed_atom_kind(atom)) : NULL;
+}
+
+static PyObject *python_object_new(PyObject *module, PyObject *args) {
+    PyObject *owner, *value;
+    if (!PyArg_ParseTuple(args, "OO", &owner, &value)) return NULL;
+    cetta_engine_t *engine = python_handle_pointer(owner, engine_capsule);
+    if (!engine) return NULL;
+    cetta_atom_t *atom = NULL;
+    cetta_status_t status = cetta_embedding_python_object(engine, value, &atom);
+    if (PyErr_Occurred()) { release_atom(atom); return NULL; }
+    return status == CETTA_OK ? atom_object(atom) : status_error(module, status);
+}
+
+static PyObject *python_object_get(PyObject *module, PyObject *object) {
+    (void)module;
+    cetta_atom_t *atom = python_handle_pointer(object, atom_capsule);
+    if (!atom) return NULL;
+    PyObject *value = cetta_embedding_python_borrow(atom);
+    return value ? Py_BuildValue("ON", Py_True, Py_NewRef(value))
+                 : Py_BuildValue("OO", Py_False, Py_None);
 }
 static PyObject *arity_atom(PyObject *module, PyObject *object) {
     (void)module;
-    cetta_atom_t *atom = PyCapsule_GetPointer(object, atom_capsule);
+    cetta_atom_t *atom = python_handle_pointer(object, atom_capsule);
     return atom ? PyLong_FromSize_t(cetta_embed_atom_arity(atom)) : NULL;
 }
 static PyObject *text_length_atom(PyObject *module, PyObject *object) {
-    cetta_atom_t *atom = PyCapsule_GetPointer(object, atom_capsule);
+    cetta_atom_t *atom = python_handle_pointer(object, atom_capsule);
     if (!atom) return NULL;
     size_t length;
     cetta_status_t status;
@@ -353,7 +380,7 @@ static PyObject *child_atom(PyObject *module, PyObject *args) {
     PyObject *object;
     Py_ssize_t index;
     if (!PyArg_ParseTuple(args, "On", &object, &index)) return NULL;
-    cetta_atom_t *atom = PyCapsule_GetPointer(object, atom_capsule), *child = NULL;
+    cetta_atom_t *atom = python_handle_pointer(object, atom_capsule), *child = NULL;
     if (!atom) return NULL;
     cetta_status_t status = index < 0 ? CETTA_INVALID_ARGUMENT : cetta_embed_atom_child(atom, index, &child);
     return status == CETTA_OK ? atom_object(child) : status_error(module, status);
@@ -367,6 +394,14 @@ static PyObject *result_object(PyObject *module, cetta_status_t status, cetta_re
     for (size_t i = 0; i < count; ++i) {
         cetta_atom_t *atom = NULL;
         cetta_status_t got = cetta_embed_result_get(result, i, &atom);
+        size_t last_group = group_count ? cetta_embed_result_group_size(result, group_count - 1u) : 0u;
+        PyObject *exception = got == CETTA_OK ? cetta_embedding_python_exception(atom,
+            status == CETTA_LANGUAGE_RAISED && i >= count - last_group) : NULL;
+        if (exception) {
+            PyErr_SetObject((PyObject *)Py_TYPE(exception), exception);
+            release_atom(atom);
+            goto failure;
+        }
         PyObject *value = got == CETTA_OK ? atom_object(atom) : status_error(module, got);
         if (!value) goto failure;
         PyList_SET_ITEM(answers, i, value);
@@ -395,7 +430,7 @@ static PyObject *execute(PyObject *module, PyObject *args) {
     int document;
     long long fuel;
     if (!PyArg_ParseTuple(args, "OOiL", &object, &input, &document, &fuel)) return NULL;
-    cetta_engine_t *engine = PyCapsule_GetPointer(object, engine_capsule);
+    cetta_engine_t *engine = python_handle_pointer(object, engine_capsule);
     if (!engine) return NULL;
     cetta_eval_options_t options = {sizeof(options), fuel};
     cetta_result_t *result = NULL;
@@ -408,7 +443,7 @@ static PyObject *execute(PyObject *module, PyObject *args) {
         status = cetta_embed_run(engine, text, length, &options, &result);
         Py_END_ALLOW_THREADS
     } else {
-        cetta_atom_t *atom = PyCapsule_GetPointer(input, atom_capsule);
+        cetta_atom_t *atom = python_handle_pointer(input, atom_capsule);
         if (!atom) return NULL;
         Py_BEGIN_ALLOW_THREADS
         status = cetta_embed_eval(engine, atom, &options, &result);
@@ -421,7 +456,7 @@ static PyObject *load_file(PyObject *module, PyObject *args) {
     PyObject *owner, *path;
     long long fuel;
     if (!PyArg_ParseTuple(args, "OOL", &owner, &path, &fuel)) return NULL;
-    cetta_engine_t *engine = PyCapsule_GetPointer(owner, engine_capsule);
+    cetta_engine_t *engine = python_handle_pointer(owner, engine_capsule);
     if (!engine) return NULL;
     PyObject *filename = PyOS_FSPath(path), *encoded = NULL;
     if (!filename) return NULL;
@@ -460,9 +495,9 @@ static PyObject *import_module(PyObject *module, PyObject *args) {
     PyObject *owner, *target, *spec_object;
     long long fuel;
     if (!PyArg_ParseTuple(args, "OOOL", &owner, &target, &spec_object, &fuel)) return NULL;
-    cetta_engine_t *engine = PyCapsule_GetPointer(owner, engine_capsule);
-    cetta_atom_t *spec = PyCapsule_GetPointer(spec_object, atom_capsule);
-    cetta_atom_t *space = target == Py_None ? NULL : PyCapsule_GetPointer(target, atom_capsule);
+    cetta_engine_t *engine = python_handle_pointer(owner, engine_capsule);
+    cetta_atom_t *spec = python_handle_pointer(spec_object, atom_capsule);
+    cetta_atom_t *space = target == Py_None ? NULL : python_handle_pointer(target, atom_capsule);
     if (!engine || !spec || (target != Py_None && !space)) return NULL;
     cetta_eval_options_t options = {sizeof(options), fuel};
     cetta_result_t *result = NULL;
@@ -477,9 +512,9 @@ static PyObject *call_values(PyObject *module, PyObject *args) {
     PyObject *object, *head_object, *sequence;
     long long fuel;
     if (!PyArg_ParseTuple(args, "OOOL", &object, &head_object, &sequence, &fuel)) return NULL;
-    cetta_engine_t *engine = PyCapsule_GetPointer(object, engine_capsule);
+    cetta_engine_t *engine = python_handle_pointer(object, engine_capsule);
     if (!engine) return NULL;
-    cetta_atom_t *head = PyCapsule_GetPointer(head_object, atom_capsule);
+    cetta_atom_t *head = python_handle_pointer(head_object, atom_capsule);
     if (!head) return NULL;
     PyObject *items = PySequence_Fast(sequence, "call arguments must be iterable");
     if (!items) return NULL;
@@ -488,7 +523,7 @@ static PyObject *call_values(PyObject *module, PyObject *args) {
     if (!arguments) { Py_DECREF(items); return PyErr_NoMemory(); }
     bool valid = true;
     for (Py_ssize_t i = 0; i < count; ++i) {
-        arguments[i] = PyCapsule_GetPointer(PySequence_Fast_GET_ITEM(items, i), atom_capsule);
+        arguments[i] = python_handle_pointer(PySequence_Fast_GET_ITEM(items, i), atom_capsule);
         if (!arguments[i]) { valid = false; break; }
     }
     cetta_result_t *result = NULL;
@@ -508,15 +543,17 @@ static PyObject *call_values(PyObject *module, PyObject *args) {
 static PyObject *query_open(PyObject *module, PyObject *args) {
     PyObject *engine_object, *source_object;
     long long fuel;
-    if (!PyArg_ParseTuple(args, "OOL", &engine_object, &source_object, &fuel)) return NULL;
-    cetta_engine_t *engine = PyCapsule_GetPointer(engine_object, engine_capsule);
-    cetta_atom_t *source = PyCapsule_GetPointer(source_object, atom_capsule);
+    int values = 0;
+    if (!PyArg_ParseTuple(args, "OOL|p", &engine_object, &source_object, &fuel, &values)) return NULL;
+    cetta_engine_t *engine = python_handle_pointer(engine_object, engine_capsule);
+    cetta_atom_t *source = python_handle_pointer(source_object, atom_capsule);
     if (!engine || !source) return NULL;
     cetta_query_t *query = NULL;
     cetta_eval_options_t options = {sizeof(options), fuel};
     cetta_status_t status;
     Py_BEGIN_ALLOW_THREADS
-    status = cetta_embed_query_open(engine, source, &options, &query);
+    status = values ? cetta_embedding_query_values(engine, source, &options, &query)
+                    : cetta_embed_query_open(engine, source, &options, &query);
     Py_END_ALLOW_THREADS
     if (status != CETTA_OK) return status_error(module, status);
     PyObject *capsule = PyCapsule_New(query, query_capsule, query_destroy);
@@ -524,19 +561,20 @@ static PyObject *query_open(PyObject *module, PyObject *args) {
         Py_BEGIN_ALLOW_THREADS
         cetta_embed_query_release(query);
         Py_END_ALLOW_THREADS
+        return NULL;
     }
-    return capsule;
+    return python_handle_new(capsule, cetta_embedding_python_query_owner(query));
 }
 static PyObject *query_cancel(PyObject *module, PyObject *object) {
     (void)module;
-    cetta_query_t *query = PyCapsule_GetPointer(object, query_capsule);
+    cetta_query_t *query = python_handle_pointer(object, query_capsule);
     if (!query) return NULL;
     cetta_embed_query_cancel(query);
     Py_RETURN_NONE;
 }
 static PyObject *query_close(PyObject *module, PyObject *object) {
     (void)module;
-    cetta_query_t *query = PyCapsule_GetPointer(object, query_capsule);
+    cetta_query_t *query = python_handle_pointer(object, query_capsule);
     if (!query) return NULL;
     Py_BEGIN_ALLOW_THREADS
     cetta_embed_query_close(query);
@@ -548,7 +586,7 @@ static PyObject *query_step(PyObject *module, PyObject *args) {
     PyObject *object;
     unsigned long long allowance;
     if (!PyArg_ParseTuple(args, "OK", &object, &allowance)) return NULL;
-    cetta_query_t *query = PyCapsule_GetPointer(object, query_capsule);
+    cetta_query_t *query = python_handle_pointer(object, query_capsule);
     if (!query) return NULL;
     cetta_query_step_t info = {.size = sizeof(info)};
     cetta_result_t *result = NULL;
@@ -579,7 +617,7 @@ static PyObject *space_new(PyObject *module, PyObject *args) {
     PyObject *object;
     int root;
     if (!PyArg_ParseTuple(args, "Op", &object, &root)) return NULL;
-    cetta_engine_t *engine = PyCapsule_GetPointer(object, engine_capsule);
+    cetta_engine_t *engine = python_handle_pointer(object, engine_capsule);
     if (!engine) return NULL;
     cetta_space_t *space = NULL;
     cetta_status_t status;
@@ -591,22 +629,22 @@ static PyObject *space_new(PyObject *module, PyObject *args) {
 static PyObject *space_from_atom(PyObject *module, PyObject *args) {
     PyObject *owner, *object;
     if (!PyArg_ParseTuple(args, "OO", &owner, &object)) return NULL;
-    cetta_engine_t *engine = PyCapsule_GetPointer(owner, engine_capsule);
-    cetta_atom_t *atom = PyCapsule_GetPointer(object, atom_capsule);
+    cetta_engine_t *engine = python_handle_pointer(owner, engine_capsule);
+    cetta_atom_t *atom = python_handle_pointer(object, atom_capsule);
     if (!engine || !atom) return NULL;
     cetta_space_t *space = NULL;
     cetta_status_t status = cetta_embed_space_from_atom(engine, atom, &space);
     return status == CETTA_OK ? space_object(space) : status_error(module, status);
 }
 static PyObject *space_as_atom(PyObject *module, PyObject *object) {
-    cetta_space_t *space = PyCapsule_GetPointer(object, space_capsule);
+    cetta_space_t *space = python_handle_pointer(object, space_capsule);
     if (!space) return NULL;
     cetta_atom_t *atom = NULL;
     cetta_status_t status = cetta_embed_space_atom(space, &atom);
     return status == CETTA_OK ? atom_object(atom) : status_error(module, status);
 }
 static PyObject *space_count(PyObject *module, PyObject *object) {
-    cetta_space_t *space = PyCapsule_GetPointer(object, space_capsule);
+    cetta_space_t *space = python_handle_pointer(object, space_capsule);
     if (!space) return NULL;
     uint64_t count = 0;
     cetta_status_t status;
@@ -619,8 +657,8 @@ static PyObject *space_mutate(PyObject *module, PyObject *args) {
     PyObject *object, *value;
     int remove, removed = 0;
     if (!PyArg_ParseTuple(args, "OOp", &object, &value, &remove)) return NULL;
-    cetta_space_t *space = PyCapsule_GetPointer(object, space_capsule);
-    cetta_atom_t *fact = PyCapsule_GetPointer(value, atom_capsule);
+    cetta_space_t *space = python_handle_pointer(object, space_capsule);
+    cetta_atom_t *fact = python_handle_pointer(value, atom_capsule);
     if (!space || !fact) return NULL;
     cetta_status_t status;
     Py_BEGIN_ALLOW_THREADS
@@ -634,10 +672,10 @@ static PyObject *space_match(PyObject *module, PyObject *args) {
     PyObject *object, *pattern_object, *template_object;
     long long fuel;
     if (!PyArg_ParseTuple(args, "OOOL", &object, &pattern_object, &template_object, &fuel)) return NULL;
-    cetta_space_t *space = PyCapsule_GetPointer(object, space_capsule);
-    cetta_atom_t *pattern = PyCapsule_GetPointer(pattern_object, atom_capsule);
+    cetta_space_t *space = python_handle_pointer(object, space_capsule);
+    cetta_atom_t *pattern = python_handle_pointer(pattern_object, atom_capsule);
     cetta_atom_t *template_value = template_object == Py_None ? NULL
-        : PyCapsule_GetPointer(template_object, atom_capsule);
+        : python_handle_pointer(template_object, atom_capsule);
     if (!space || !pattern || (template_object != Py_None && !template_value)) return NULL;
     cetta_eval_options_t options = {sizeof(options), fuel};
     cetta_query_t *query = NULL;
@@ -651,8 +689,9 @@ static PyObject *space_match(PyObject *module, PyObject *args) {
         Py_BEGIN_ALLOW_THREADS
         cetta_embed_query_release(query);
         Py_END_ALLOW_THREADS
+        return NULL;
     }
-    return capsule;
+    return python_handle_new(capsule, cetta_embedding_python_query_owner(query));
 }
 
 #include "callbacks.inc"
@@ -667,6 +706,8 @@ static PyMethodDef methods[] = {
     {"sparse_export", sparse_export, METH_O, NULL},
     {"tensor_from_sparse", tensor_from_sparse, METH_VARARGS, NULL},
     {"register_callback", register_callback, METH_VARARGS, NULL},
+    {"pyobject", python_object_new, METH_VARARGS, NULL},
+    {"get_pyobject", python_object_get, METH_O, NULL},
     {"space", space_new, METH_VARARGS, NULL},
     {"space_from_atom", space_from_atom, METH_VARARGS, NULL},
     {"space_atom", space_as_atom, METH_O, NULL},
@@ -712,6 +753,14 @@ static struct PyModuleDef module = {
     NULL, module_traverse, module_clear, NULL
 };
 PyMODINIT_FUNC PyInit__native(void) {
+    if (PyThreadState_GetInterpreter(PyThreadState_Get()) != PyInterpreterState_Main()) {
+        PyErr_SetString(PyExc_ImportError, "cetta currently supports the main CPython interpreter only");
+        return NULL;
+    }
+#ifdef Py_GIL_DISABLED
+    PyErr_SetString(PyExc_ImportError, "cetta currently requires a CPython build with the GIL");
+    return NULL;
+#endif
     PyObject *created = PyModule_Create(&module);
     if (!created) return NULL;
     NativeState *state = PyModule_GetState(created);

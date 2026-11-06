@@ -203,16 +203,15 @@ static void locks_are_separate(void) {
     assert(!pthread_join(second, NULL));
     assert(overlapped);
     atomic_store(&hook_mode, 0);
-    /* The service does not register a language operation in a build that
-     * lacks the library defining it. The unknown call stays data. */
-#if !CETTA_BUILD_WITH_LIB_PROLOG
-    cetta_result_t *unknown = run(left, "!(with_mutex shared-lock 42)");
+    /* Mutex execution is native PeTTa, including builds without Prolog.
+     * Host services still must not turn unrelated names into operations. */
+    assert(integer_result(run(left, "!(with_mutex shared-lock 42)")) == 42);
+    cetta_result_t *unknown = run(left, "!(embedding-unknown-lock shared-lock 42)");
     cetta_atom_t *answer = NULL;
     assert(cetta_embed_result_get(unknown, 0, &answer) == CETTA_OK);
     assert(cetta_embed_atom_kind(answer) == CETTA_ATOM_EXPRESSION);
     cetta_embed_atom_release(answer);
     cetta_embed_result_release(unknown);
-#endif
     cetta_embed_engine_release(left);
     cetta_embed_engine_release(right);
 }

@@ -2,6 +2,7 @@
 #include "native/json_direct_v1.h"
 #include "native/json_value_v1.h"
 #include "symbol.h"
+#include "runtime_names.h"
 #include "library_json.h"
 #include "lang.h"
 #include <dirent.h>
@@ -124,14 +125,23 @@ static bool consume(void *context, Atom *value,size_t line) {
     c->rows++; c->last=line; c->copy=atom_deep_copy(&c->kept,value); return c->copy!=NULL;
 }
 
+typedef struct {
+    unsigned errors;
+    CettaNameContext names;
+} ConcurrentWorker;
+
 static void *concurrent(void *context) {
-    unsigned *errors=context;
+    ConcurrentWorker *worker = context;
+    unsigned *errors = &worker->errors;
+    CettaNameContext previous = cetta_name_context_current();
+    cetta_name_context_install(&worker->names);
     const char *input="{\"x\":[1,true,\"\\u0000λ\"],\"x\":2}";
     for (unsigned i=0;i<100;i++) {
         Arena a; arena_init_detached(&a); Atom *value=NULL;
         if (!cetta_json_direct_v1_parse(&a,(const uint8_t *)input,strlen(input),true,true,32,&value,NULL,NULL,0)) (*errors)++;
         arena_free(&a);
     }
+    cetta_name_context_install(&previous);
     return NULL;
 }
 
@@ -559,9 +569,12 @@ static void unit(const CettaJsonRuntimeV1 *runtime) {
         free(encoded); fclose(stream);
     }
     arena_free(&c.kept);
-    pthread_t threads[4]; unsigned errors[4]={0};
-    for(unsigned i=0;i<4;i++) CHECK(!pthread_create(threads+i,NULL,concurrent,errors+i));
-    for(unsigned i=0;i<4;i++) { CHECK(!pthread_join(threads[i],NULL)); CHECK(errors[i]==0); }
+    pthread_t threads[4]; ConcurrentWorker workers[4];
+    for(unsigned i=0;i<4;i++) {
+        workers[i] = (ConcurrentWorker){0u, cetta_name_context_current()};
+        CHECK(!pthread_create(threads+i,NULL,concurrent,workers+i));
+    }
+    for(unsigned i=0;i<4;i++) { CHECK(!pthread_join(threads[i],NULL)); CHECK(workers[i].errors==0); }
     /* Deterministic short input mutations, including every truncation. */
     const char *sample="{\"λ\":[0,\"\\uD834\\uDD1E\",false],\"x\":null}";
     n=strlen(sample);
