@@ -1,0 +1,40 @@
+AXIOM
+(NAM "n0")
+COLON
+(NUM False "0" None None)
+DOT
+AXIOM
+(NAM "n1")
+COLON
+(NUM False "42" None None)
+DOT
+AXIOM
+(NAM "n2")
+COLON
+(NUM True "7" None None)
+DOT
+AXIOM
+(NAM "n3")
+COLON
+(NUM False "1" None (Some "3"))
+DOT
+AXIOM
+(NAM "n4")
+COLON
+(NUM False "2" (Some "5") None)
+DOT
+AXIOM
+(NAM "n5")
+COLON
+(NUM True "1" (Some "5") (Some "-"))
+DOT
+AXIOM
+(NAM "n6")
+COLON
+(NUM False "3" (Some "25") (Some "2"))
+DOT
+AXIOM
+(NAM "n7")
+COLON
+(NUM False "007" None None)
+DOT

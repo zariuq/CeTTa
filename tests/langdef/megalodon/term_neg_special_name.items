@@ -1,0 +1,1 @@
+(Doc (PostInfixDecl "+" (NaL "add") 300 InfixLeft))

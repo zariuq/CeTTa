@@ -1,0 +1,18 @@
+(THEOREM "Theorem")
+(NAM "w1")
+COLON
+(NAM "exists")
+(NAM "x")
+COMMA
+(NAM "x")
+(NAM "=")
+(NAM "x")
+(NAM "/\\")
+(NAM "x")
+(NAM "=")
+(NAM "x")
+DOT
+ABY
+DOT
+QED
+DOT

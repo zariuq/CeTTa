@@ -1,0 +1,6 @@
+(Doc (ParamDecl "f" (InfoL (InfNam "->") (NaL "set") (InfoL (InfNam "->") (NaL "set") (NaL "set")))))
+(Doc (ParamDecl "g" (InfoL (InfNam "->") (ParenL (InfoL (InfNam "->") (NaL "set") (NaL "set")) (List)) (NaL "set"))))
+(Doc (ParamDecl "h" (InfoL (InfNam "->") (NaL "set") (InfoL (InfNam "->") (ParenL (InfoL (InfNam "->") (NaL "set") (NaL "prop")) (List)) (NaL "prop")))))
+(Doc (ParamDecl "k" (InfoL (InfNam "->") (ParenL (InfoL (InfNam "->") (NaL "set") (NaL "prop")) (List)) (InfoL (InfNam "->") (ParenL (InfoL (InfNam "->") (NaL "prop") (NaL "set")) (List)) (NaL "set")))))
+(Doc (DefDecl "id" (Some (InfoL (InfNam "->") (NaL "set") (NaL "set"))) (BiL "fun" "=>" (List ((List "x") None)) (NaL "x"))))
+(Doc (DefDecl "c" (Some (NaL "set")) (ImplopL (NaL "id") (NaL "x"))))

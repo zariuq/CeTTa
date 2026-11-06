@@ -1,0 +1,20 @@
+INFIX
+(NAM "+")
+(NUM False "360" None None)
+DEQ
+(NAM "add")
+DOT
+PREFIX
+(NAM "~")
+(NUM False "700" None None)
+DEQ
+(NAM "not")
+DOT
+AXIOM
+(NAM "a")
+COLON
+(NAM "x")
+(NAM "+")
+(NAM "~")
+(NAM "y")
+DOT
