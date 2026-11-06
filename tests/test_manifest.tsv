@@ -33,6 +33,7 @@ tests/he_c1_grounded_basic.metta	he	metta	extended	main	native	test	golden	-
 tests/he_c2_spaces_kb.metta	he	metta	extended	main	native	test	golden	-
 tests/he_c3_pln_stv.metta	he	metta	extended	main	native	test	golden	-
 tests/he_case_empty_scrutinee.metta	he	metta	extended	main	native	test	golden	-
+tests/he_case_empty_scrutinee_collapse.metta	he	metta	extended	main	native	test	golden	-
 tests/he_case_two_sided.metta	he	metta	extended	main	native	test	golden	-
 tests/he_d1_gadt.metta	he	metta	extended	main	native	test	golden	-
 tests/he_d2_higherfunc.metta	he	metta	extended	main	native	test	golden	-

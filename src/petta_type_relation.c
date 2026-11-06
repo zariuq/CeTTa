@@ -327,12 +327,41 @@ static bool petta_type_list_push(PeTTaTypeList *list, Atom *type) {
     return true;
 }
 
-/* A number's, a string's or a truth value's type, which no declaration
- * overrides; NULL for every other atom. */
-static Atom *petta_type_of_literal(Arena *arena, const Atom *atom) {
-    if(atom_is_structural(atom)) {
-        const char *name=atom_structural_type_name(atom);
-        return name ? atom_symbol(arena,name) : NULL;
+/* The literal types' names, read once per symbol table. */
+typedef struct {
+    const SymbolTable *table;
+    uint64_t table_instance_id;
+    SymbolId number;
+    SymbolId string;
+    SymbolId boolean;
+} PettaLiteralTypeIds;
+
+static _Thread_local PettaLiteralTypeIds g_petta_literal_type_ids;
+
+/* The literal type names of the current symbol table. */
+static const PettaLiteralTypeIds *petta_literal_type_ids(void) {
+    PettaLiteralTypeIds *ids = &g_petta_literal_type_ids;
+    uint64_t instance = symbol_table_instance_id(g_symbols);
+    if (ids->table != g_symbols || ids->table_instance_id != instance)
+        *ids = (PettaLiteralTypeIds){
+            .table = g_symbols,
+            .table_instance_id = instance,
+            .number = symbol_intern_cstr(g_symbols, "Number"),
+            .string = symbol_intern_cstr(g_symbols, "String"),
+            .boolean = symbol_intern_cstr(g_symbols, "Bool"),
+        };
+    return ids;
+}
+
+/* The name of the type a number, a string or a truth value has, which no
+ * declaration overrides, under `ids`; SYMBOL_ID_NONE for every other atom. */
+static SymbolId petta_type_literal_id_in(const Atom *atom,
+                                         const PettaLiteralTypeIds *ids) {
+    if (atom->kind != ATOM_GROUNDED && atom->kind != ATOM_SYMBOL)
+        return SYMBOL_ID_NONE;
+    if (atom_is_structural(atom)) {
+        const char *name = atom_structural_type_name(atom);
+        return name ? symbol_intern_cstr(g_symbols, name) : SYMBOL_ID_NONE;
     }
     if (atom->kind == ATOM_GROUNDED) {
         switch (atom->ground.gkind) {
@@ -340,16 +369,31 @@ static Atom *petta_type_of_literal(Arena *arena, const Atom *atom) {
         case GV_BIGINT:
         case GV_RATIONAL:
         case GV_FLOAT:
-            return atom_symbol(arena, "Number");
+            return ids->number;
         case GV_STRING:
-            return atom_symbol(arena, "String");
+            return ids->string;
         default:
             break;
         }
     }
     bool truth = false;
-    return petta_semantics_truth_value(atom, &truth)
-        ? atom_symbol(arena, "Bool") : NULL;
+    return petta_semantics_truth_value(atom, &truth) ? ids->boolean
+                                                     : SYMBOL_ID_NONE;
+}
+
+/* The name of the type a number, a string or a truth value has, which no
+ * declaration overrides; SYMBOL_ID_NONE for every other atom. */
+static SymbolId petta_type_literal_id(const Atom *atom) {
+    if (atom->kind != ATOM_GROUNDED && atom->kind != ATOM_SYMBOL)
+        return SYMBOL_ID_NONE;
+    return petta_type_literal_id_in(atom, petta_literal_type_ids());
+}
+
+/* A number's, a string's or a truth value's type, which no declaration
+ * overrides; NULL for every other atom. */
+static Atom *petta_type_of_literal(Arena *arena, const Atom *atom) {
+    SymbolId type = petta_type_literal_id(atom);
+    return type != SYMBOL_ID_NONE ? atom_symbol_id(arena, type) : NULL;
 }
 
 /* The elements of X when is_list(X) holds: an expression or a list value,
@@ -867,10 +911,224 @@ static bool petta_type_append_matching(
     return true;
 }
 
+/* The one-way match of a declaration's PATTERN against a closed TARGET,
+ * its variables bound in MAP to subterms of the target. */
+enum { PETTA_TYPE_WALK_VARS = 8u, PETTA_TYPE_WALK_HEADS = 8u,
+       PETTA_TYPE_WALK_ARITY = 64u };
+typedef struct {
+    VarId var;
+    Atom *value;
+} PettaTypeWalkBinding;
+
+static bool petta_type_walk_match(Atom *pattern, Atom *target,
+                                  PettaTypeWalkBinding *map, uint32_t *len,
+                                  uint32_t depth) {
+    if (depth > 32u)
+        return false;
+    if (pattern->kind == ATOM_VAR) {
+        for (uint32_t i = 0u; i < *len; i++) {
+            if (var_id_eq(map[i].var, pattern->var_id))
+                return atom_eq(map[i].value, target);
+        }
+        if (*len == PETTA_TYPE_WALK_VARS)
+            return false;
+        map[*len].var = pattern->var_id;
+        map[(*len)++].value = target;
+        return true;
+    }
+    if (pattern->kind != ATOM_EXPR)
+        return atom_eq(pattern, target);
+    if (target->kind != ATOM_EXPR || target->expr.len != pattern->expr.len)
+        return false;
+    for (CettaExprIndex i = 0u; i < pattern->expr.len; i++) {
+        if (!petta_type_walk_match(pattern->expr.elems[i], target->expr.elems[i],
+                                   map, len, depth + 1u))
+            return false;
+    }
+    return true;
+}
+
+/* The one declaration of SUBJECT's head, read once a walk: NULL when the
+ * head has none or several. */
+typedef struct {
+    Atom *head;
+    Atom *declaration;
+} PettaTypeWalkHead;
+
+static Atom *petta_type_walk_declaration(Space *space, Arena *arena,
+                                         Atom *head, PettaTypeWalkHead *heads,
+                                         uint32_t *count) {
+    for (uint32_t i = 0u; i < *count; i++) {
+        if (heads[i].head == head || atom_eq(heads[i].head, head))
+            return heads[i].declaration;
+    }
+    Atom **declared = NULL;
+    uint32_t found = space_get_declared_types(space, arena, head, &declared);
+    Atom *declaration = found == 1u ? declared[0] : NULL;
+    free(declared);
+    if (*count < PETTA_TYPE_WALK_HEADS) {
+        heads[*count].head = head;
+        heads[(*count)++].declaration = declaration;
+    }
+    return declaration;
+}
+
+/* Whether the ground SUBJECT, a tree of applications and constants, has
+ * the closed type TARGET exactly once by the service's own rules, read
+ * without its general machinery.  Each node's head has one declaration;
+ * an application's range, matched one way against the node's type, fixes
+ * every parameter, which is a variable it binds, a closed type, or the
+ * range itself; a literal child has its class as its one type, since no
+ * value subject is annotated; a constant's one declaration matches its
+ * type.  Then each node, and so the subject, has the type once: the
+ * tuple candidate of an application, headed by an arrow, meets no type
+ * headed by a range's symbol.  False sends the query to the general path,
+ * which decides every other case, failures included. */
+static bool petta_type_walk_once(Space *space, Arena *arena, Atom *subject,
+                                 Atom *target) {
+    if (!subject || subject->kind != ATOM_EXPR || atom_has_vars(subject) ||
+        !target || atom_has_vars(target) || target->kind == ATOM_VAR ||
+        !space_type_annotations_have_only_symbol_subjects(space))
+        return false;
+    PettaTypeWalkHead heads[PETTA_TYPE_WALK_HEADS];
+    uint32_t head_count = 0u;
+    /* The last application's head, type and arity, and the formals its
+     * parameters had there. */
+    SymbolId kept_head = SYMBOL_ID_NONE;
+    const Atom *kept_type = NULL;
+    CettaExprLen kept_len = 0u;
+    Atom *kept_formals[PETTA_TYPE_WALK_ARITY];
+    size_t cap = 16u, len = 0u;
+    Atom **pending = malloc(cap * 2u * sizeof(*pending));
+    if (!pending)
+        return false;
+    pending[len++] = subject;
+    pending[len++] = target;
+    const PettaLiteralTypeIds *literal_ids = petta_literal_type_ids();
+    /* The last field of the node just walked, walked next. */
+    Atom *next_node = NULL;
+    Atom *next_type = NULL;
+    bool ok = true;
+    while (ok && (next_node || len > 0u)) {
+        Atom *type = next_type;
+        Atom *node = next_node;
+        if (node)
+            next_node = NULL;
+        else {
+            type = pending[--len];
+            node = pending[--len];
+        }
+        SymbolId literal = petta_type_literal_id_in(node, literal_ids);
+        if (literal != SYMBOL_ID_NONE) {
+            ok = type->kind == ATOM_SYMBOL && type->sym_id == literal;
+            continue;
+        }
+        if (node->kind == ATOM_SYMBOL) {
+            Atom *declaration = petta_type_walk_declaration(
+                space, arena, node, heads, &head_count);
+            PettaTypeWalkBinding map[PETTA_TYPE_WALK_VARS];
+            uint32_t bound = 0u;
+            ok = declaration && !(declaration->kind == ATOM_EXPR &&
+                    declaration->expr.len > 0u &&
+                    atom_is_symbol_id(declaration->expr.elems[0],
+                                      g_builtin_syms.arrow)) &&
+                petta_type_walk_match(declaration, type, map, &bound, 0u);
+            continue;
+        }
+        if (node->kind != ATOM_EXPR || node->expr.len < 2u ||
+            node->expr.elems[0]->kind != ATOM_SYMBOL) {
+            ok = false;
+            continue;
+        }
+        SymbolId head = node->expr.elems[0]->sym_id;
+        CettaExprLen arity = node->expr.len - 1u;
+        if (head != kept_head || type != kept_type || node->expr.len != kept_len) {
+            kept_head = SYMBOL_ID_NONE;
+            Atom *declaration = petta_type_walk_declaration(
+                space, arena, node->expr.elems[0], heads, &head_count);
+            if (arity > PETTA_TYPE_WALK_ARITY || !declaration ||
+                declaration->kind != ATOM_EXPR ||
+                declaration->expr.len != node->expr.len + 1u ||
+                !atom_is_symbol_id(declaration->expr.elems[0],
+                                   g_builtin_syms.arrow)) {
+                ok = false;
+                continue;
+            }
+            Atom *range = declaration->expr.elems[declaration->expr.len - 1u];
+            PettaTypeWalkBinding map[PETTA_TYPE_WALK_VARS];
+            uint32_t bound = 0u;
+            if (!petta_type_walk_match(range, type, map, &bound, 0u)) {
+                ok = false;
+                continue;
+            }
+            for (CettaExprIndex i = 1u; ok && i < node->expr.len; i++) {
+                Atom *parameter = declaration->expr.elems[i];
+                Atom *formal = NULL;
+                if (parameter->kind == ATOM_VAR) {
+                    for (uint32_t b = 0u; b < bound && !formal; b++) {
+                        if (var_id_eq(map[b].var, parameter->var_id))
+                            formal = map[b].value;
+                    }
+                } else if (!atom_has_vars(parameter)) {
+                    formal = parameter;
+                } else if (atom_eq(parameter, range)) {
+                    formal = type;
+                }
+                ok = formal != NULL;
+                kept_formals[i - 1u] = formal;
+            }
+            if (!ok)
+                continue;
+            kept_head = head;
+            kept_type = type;
+            kept_len = node->expr.len;
+        }
+        if (len + 2u * arity > cap * 2u) {
+            size_t grown_cap = cap;
+            while (len + 2u * arity > grown_cap * 2u)
+                grown_cap *= 2u;
+            Atom **grown = realloc(pending, grown_cap * 2u * sizeof(*pending));
+            if (!grown) {
+                ok = false;
+                continue;
+            }
+            pending = grown;
+            cap = grown_cap;
+        }
+        for (CettaExprIndex i = 1u; ok && i < node->expr.len; i++) {
+            Atom *field = node->expr.elems[i];
+            Atom *formal = kept_formals[i - 1u];
+            if (field->kind == ATOM_GROUNDED) {
+                SymbolId field_literal =
+                    petta_type_literal_id_in(field, literal_ids);
+                if (field_literal != SYMBOL_ID_NONE) {
+                    ok = formal->kind == ATOM_SYMBOL &&
+                        formal->sym_id == field_literal;
+                    continue;
+                }
+            }
+            if (i + 1u == node->expr.len) {
+                next_node = field;
+                next_type = formal;
+            } else {
+                pending[len++] = field;
+                pending[len++] = formal;
+            }
+        }
+    }
+    free(pending);
+    return ok;
+}
+
 static bool petta_type_answers_bound(
     Space *space, Arena *arena, Atom *subject, Atom *target, PeTTaTypeList *out) {
     if (!petta_type_stack_available())
         return false;
+    /* A ground tree of constructors read at a closed type: one walk instead
+     * of a query a node (petta_type_walk_once). */
+    if (target->kind != ATOM_VAR && petta_type_walk_once(space, arena, subject,
+                                                         target))
+        return petta_type_list_push(out, target);
     /* A fresh request receives a candidate before it is unified with that
      * request, including when the request occurs in the subject. */
     if (target->kind == ATOM_VAR)

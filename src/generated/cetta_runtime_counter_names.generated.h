@@ -1128,6 +1128,14 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
   [CETTA_RUNTIME_COUNTER_NATIVE_QUERY_BITS_LEG] = "native-query-bits-leg",
   [CETTA_RUNTIME_COUNTER_MATCH_POSITION_INDEX_DIRECTORY_PROBE] = "match-position-index-directory-probe",
   [CETTA_RUNTIME_COUNTER_MATCH_POSITION_INDEX_DIRECTORY_PROBE_PEAK] = "match-position-index-directory-probe-peak",
+  [CETTA_RUNTIME_COUNTER_PETTA_CONTRACT_VERSION_RANGE_MET] = "petta-contract-version-range-met",
+  [CETTA_RUNTIME_COUNTER_TYPE_STAMP_HIT] = "type-stamp-hit",
+  [CETTA_RUNTIME_COUNTER_TYPE_STAMP_RECORD] = "type-stamp-record",
+  [CETTA_RUNTIME_COUNTER_TYPE_STAMP_SCOPE_CLEAR] = "type-stamp-scope-clear",
+  [CETTA_RUNTIME_COUNTER_OPEN_EQUATION_HOST_IMPORT_BORROWED] = "open-equation-host-import-borrowed",
+  [CETTA_RUNTIME_COUNTER_PREPARED_PURE_RECOGNIZED_FOLD] = "prepared-pure-recognized-fold",
+  [CETTA_RUNTIME_COUNTER_HE_CANONICAL_FRAME_PEAK] = "he-canonical-frame-peak",
+  [CETTA_RUNTIME_COUNTER_HE_CANONICAL_LAST_CALL] = "he-canonical-last-call",
 };
 
 #endif

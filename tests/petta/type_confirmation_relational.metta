@@ -9,11 +9,13 @@
 !(test (collapse (let %Undefined% (get-type (quote (confirmation-shared (confirmation-pattern $x)))) wrong)) ())
 (: confirmation-request (-> Number A))
 !(test (collapse (let $x (get-type (quote (confirmation-request $x))) $x)) (A))
+; Rows that repeat one declaration are one declaration, so the repeated
+; %Undefined% row confirms once.
 (: confirmation-mixed A)
 (: confirmation-mixed %Undefined%)
 (: confirmation-mixed B)
 (: confirmation-mixed %Undefined%)
-!(test (collapse (let %Undefined% (get-type confirmation-mixed) found)) (found found))
+!(test (collapse (let %Undefined% (get-type confirmation-mixed) found)) (found))
 !(test (collapse (let Missing (get-type confirmation-mixed) wrong)) ())
 
 ; Both absence probes stop at the first witness and preserve classifier effects.

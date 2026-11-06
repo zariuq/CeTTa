@@ -140,6 +140,10 @@ typedef struct {
      * being syntactically headed by ':'. They prohibit negative exclusion. */
     bool has_open_rows;
     bool has_non_symbol_subjects;
+    /* A declaration row (: or :<) holds an identity-carrying value, such as
+     * a state cell, whose observation can change while the declaration
+     * revision stands still: typings computed through it are not kept. */
+    bool has_identity_rows;
 } TypeAnnIndex;
 
 /* One exact row: its AtomId and its position, in 32 bits each while every
@@ -1517,6 +1521,56 @@ uint32_t space_get_declared_types(
  * outer constructor; true retains ordinary relational search. */
 bool space_type_annotation_may_match_subject(Space *s, const Atom *subject);
 bool space_type_annotations_have_only_symbol_subjects(Space *s);
+/* Whether no annotation can give a symbol, a variable or a grounded value a
+ * metatype (Atom, Symbol, Variable, Expression, Grounded): no variable or
+ * grounded subject, and no symbol subject declared at a metatype's name. */
+bool space_scalar_types_name_no_metatype(Space *s);
+/* Whether the type stamp store holds typings of this incarnation of `atom`:
+ * an unbudgeted HE inference of a term-stable ground expression, in an arena
+ * the evaluator vouches for, whose answers were ground. */
+bool space_type_stamps_hold(Space *s, const Atom *atom);
+/* Without copying any type out: the number of `atom`'s typings (as
+ * get_atom_types answers them) where the store holds or reads them by shape,
+ * else -1; and whether one of them is exactly `type`. */
+int space_type_stamps_count(Space *s, Arena *a, Atom *atom);
+/* A prepared pure run's typing scope, read once where it enters: enter
+ * returns the enclosing run's space, which leave restores. */
+const Space *space_type_stamps_run_enter(Space *s);
+void space_type_stamps_run_leave(const Space *outer);
+bool space_type_stamps_has_type(Space *s, Arena *a, Atom *atom, Atom *type);
+/* Whether every type row whose subject `head` heads declares `head` itself
+ * (no expression subject headed by it, no open or headless row). */
+bool space_type_rows_only_declare(Space *s, SymbolId head);
+/* Whether no type row of `s` types an expression headed by `head` (none
+ * whose subject is such an expression, no open or headless row): its
+ * values' typings are their applications'. */
+bool space_type_rows_type_no_expression_of(Space *s, SymbolId head);
+/* Whether no expression node of `atom` has a head a type row of `s` types
+ * an expression by: HE reads such a row, wherever the node sits, before the
+ * node's own application.  Kept per node in the type stamp store. */
+bool space_type_rows_free_below(Space *s, Atom *atom);
+/* Keep `type` as the one typing of this incarnation of `atom`, where the
+ * store admits it (a value whose typing its parts decide). */
+void space_type_stamps_record_type(Space *s, Arena *a, Atom *atom,
+                                   Atom *type);
+/* 1 where one of `atom`'s held typings unifies with `type`, 0 where none
+ * does, -1 where the store holds none of them. */
+int space_type_stamps_unifies(Space *s, Arena *a, Atom *atom, Atom *type);
+/* `range` under the unifier of `atom`'s one typing that unifies with
+ * `formal`: 1 with *instance set, 0 where none or several fit, -1 where the
+ * store holds none of its typings.  Kept per typing state. */
+int space_type_stamps_instance(Space *s, Arena *a, Atom *atom, Atom *formal,
+                               Atom *range, Atom **instance);
+/* The typings the store holds for this incarnation of `atom`, borrowed
+ * until the store next records or clears, and their number; -1 where it
+ * holds none. */
+int space_type_stamps_types(Space *s, Arena *a, Atom *atom,
+                            Atom *const **types);
+/* Carry `from`'s kept typings onto `to`, a same-shaped copy, where they were
+ * kept under one of `sources`' current incarnations. */
+void space_type_stamps_transfer(Space *s, const Atom *from, Atom *to,
+                                const Arena *const *sources,
+                                size_t source_count);
 
 typedef struct {
     uint64_t indexed_lookups;
