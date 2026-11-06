@@ -1,0 +1,6 @@
+[((Error (f x) (BadArgType 1 C A)) (Error (f x) (BadArgType 1 C B)))]
+[(x)]
+[((Error (f y) (BadArgType 1 C A)))]
+[((Error (+ x 1) (BadArgType 1 Number A)) (Error (+ x 1) (BadArgType 1 Number B)))]
+[((Error (if x yes no) (BadArgType 1 Bool A)) (Error (if x yes no) (BadArgType 1 Bool B)))]
+[((Error (if (OtherBox 1 2) yes no) (BadArgType 1 Bool OtherRange)) (Error (if (OtherBox 1 2) yes no) (BadArgType 1 Bool BoxRange)))]

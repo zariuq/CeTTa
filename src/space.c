@@ -16170,9 +16170,10 @@ static void type_stamps_transition_record(const TypeStampTransition *key,
     store->transition_len++;
 }
 
-/* The state of `atom`'s declared-question typing as the store holds it or
+/* The state of `atom`'s typing for `question` as the store holds it or
  * reads it by its shape (kept for the node on a shape hit), or 0. */
-static uint32_t type_stamps_state_of(Space *s, Arena *a, Atom *atom) {
+static uint32_t type_stamps_state_for(Space *s, Arena *a, Atom *atom,
+                                      uint32_t question) {
     /* A symbol's typing is its declared rows, kept per symbol. */
     if (atom && atom->kind == ATOM_SYMBOL)
         return type_stamps_bind_scope(s)
@@ -16181,7 +16182,6 @@ static uint32_t type_stamps_state_of(Space *s, Arena *a, Atom *atom) {
     uint64_t epoch = 0u;
     if (!type_stamps_admit(s, atom, NULL, &arena, &epoch))
         return 0u;
-    uint32_t question = TYPE_INFERENCE_MEMO_TYPES_DECLARED;
     uint32_t state = type_stamps_node_state(atom, question, arena, epoch);
     if (state)
         return state;
@@ -16194,8 +16194,27 @@ static uint32_t type_stamps_state_of(Space *s, Arena *a, Atom *atom) {
     return state;
 }
 
+/* The declared question's state: get_atom_types's answers. */
+static uint32_t type_stamps_state_of(Space *s, Arena *a, Atom *atom) {
+    return type_stamps_state_for(s, a, atom,
+                                 TYPE_INFERENCE_MEMO_TYPES_DECLARED);
+}
+
 int space_type_stamps_count(Space *s, Arena *a, Atom *atom) {
     uint32_t state = type_stamps_state_of(s, a, atom);
+    if (!state)
+        return -1;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TYPE_STAMP_HIT);
+    return (int)g_type_stamps.states[state - 1u].count;
+}
+
+int space_type_stamps_structural_count(Space *s, Arena *a, Atom *atom) {
+    /* get_atom_types_structural's question: an expression's own top-level
+     * declarations do not count; any other subject keeps its rows. */
+    uint32_t question = atom && atom->kind == ATOM_EXPR
+        ? TYPE_INFERENCE_MEMO_TYPES_INFERRED
+        : TYPE_INFERENCE_MEMO_TYPES_DECLARED;
+    uint32_t state = type_stamps_state_for(s, a, atom, question);
     if (!state)
         return -1;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TYPE_STAMP_HIT);
@@ -16729,9 +16748,16 @@ static uint32_t get_atom_types_mode_inferred(Space *s, Arena *a, Atom *atom,
                     : 0;
         if (count && he_types_close_under_subtypes(s))
             count = he_close_type_array(s, a, &types, count, 0u, budget);
-        /* Also try to infer type from operator's function type */
+        /* The types the operator's function type gives, as HE gives them:
+         * in addition to the rows declared for the application itself, not
+         * only in their absence.  A row on an arrow-headed application keeps
+         * the arrow's own typing visible, so `(Box 1 2)` with a row
+         * `OtherRange` still has the type its constructor gives.  Where the
+         * fields do not fit, the rows remain and only an application with
+         * no rows is ill typed (empty). */
+        uint32_t annotated = count;
         bool tried_func_type = false;
-        if (count == 0 && atom->expr.len >= 1) {
+        if (atom->expr.len >= 1) {
             Atom *op = atom->expr.elems[0];
             Atom **op_types = NULL;
             uint32_t nop = get_annotated_types(
@@ -16834,6 +16860,15 @@ static uint32_t get_atom_types_mode_inferred(Space *s, Arena *a, Atom *atom,
                            then normalize arithmetic in type expressions */
                         Atom *concrete_ret = normalize_type_expr(
                             &scratch, bindings_apply_if_vars(&tb, &scratch, fresh_ret));
+                        /* A row that already says this type gives it. */
+                        bool declared = false;
+                        for (uint32_t di = 0u; !declared && di < annotated; di++)
+                            declared = atom_eq(types[di], concrete_ret);
+                        if (declared) {
+                            bindings_free(&tb);
+                            arena_reset(&scratch, scratch_mark);
+                            continue;
+                        }
                         if (!type_inference_can_add(budget, count)) {
                             bindings_free(&tb);
                             arena_reset(&scratch, scratch_mark);
