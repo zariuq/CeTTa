@@ -1657,7 +1657,7 @@ static void he_canonical_dispatch_call(HeCanonicalFrame *frame, Outcome *call) {
     if (source->kind == ATOM_EXPR && source->expr.len) {
         Atom *head = source->expr.elems[0];
         CettaExprLen nargs = source->expr.len - 1u;
-        if (he_retained_execution_active() && cetta_foreign_provider_callable(head)) {
+        if (he_retained_execution_active() && cetta_foreign_provider_callable_at(frame->space, head)) {
             he_canonical_push(HE_CANONICAL_PROVIDER, frame->space, a, source,
                 return_type, frame->fuel, env, frame->preserve_bindings, sink);
             return;
@@ -2666,7 +2666,7 @@ static void he_canonical_resume_provider(HeCanonicalFrame *frame) {
         *frame->provider = (CettaOwnedExecution){0};
         CettaInvocation invocation = {.head = binding_value_from_atom(frame->atom->expr.elems[0]),
             .supplied = {.atoms = frame->atom->expr.elems + 1u, .count = frame->atom->expr.len - 1u}};
-        if (!cetta_foreign_provider_open(&invocation, frame->provider, &completion) ||
+        if (!cetta_foreign_provider_open(frame->space, &invocation, frame->provider, &completion) ||
             completion != CETTA_EVAL_COMPLETE) {
             eval_mark_interrupted(completion == CETTA_EVAL_COMPLETE ? CETTA_EVAL_INCOMPLETE_HOST_FAILURE : completion);
             he_canonical_pop();
@@ -2701,9 +2701,13 @@ static void he_canonical_resume_provider(HeCanonicalFrame *frame) {
         return;
     }
     if (outcome.kind == CETTA_CALL_RAISED) {
-        petta_eval_raise(outcome.term);
-        he_canonical_pop();
-        return;
+        Atom *error_value = cetta_foreign_he_error_value(frame->arena, frame->atom, outcome.term);
+        if (error_value) outcome = cetta_call_completed_value(error_value);
+        else {
+            petta_eval_raise(outcome.term);
+            he_canonical_pop();
+            return;
+        }
     }
     Atom *expression = NULL;
     bool handled = sequence_native_call(frame->space, frame->arena, outcome, true,

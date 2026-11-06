@@ -1,0 +1,16 @@
+{
+  "command": "cargo +nightly build --release --offline -p mork",
+  "locked_validation": "cargo +nightly build --release --locked --offline -p mork",
+  "locked_validation_status": 0,
+  "mork_commit": "ed57c6716d8c510296fb5fbb8be6fbfe2df241d7",
+  "mork_tracked_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "pathmap_commit": "ef0259152867ece8e85888acc49c238f264a0330",
+  "pathmap_tracked_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "binary_sha256": "dccdda60370b398afa4774bc1e2a93dfef4d25bcf3d58369f14f843059ddebf7",
+  "cargo_lock_sha256": "2f4947183c295869a183fa0c75e48f59c0bc14629724bbd1acd0099b7c929d68",
+  "rustc": "rustc 1.101.0-nightly (1a2c4797e 2026-10-21)",
+  "cargo": "cargo 1.101.0-nightly (3960fa69b 2026-10-12)",
+  "rustflags": "",
+  "jobs": 1,
+  "build_seconds": 161
+}

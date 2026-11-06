@@ -7,6 +7,7 @@
 
 #include "symbol.h"
 
+#include <errno.h>
 #include <limits.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -231,8 +232,7 @@ static bool he_compiled_reader_v1_read_file(const char *filename,
     size_t cap = 0u;
     bool ok = false;
 
-    if (!filename || !bytes_out || !len_out)
-        return false;
+    if (!filename || !bytes_out || !len_out) { errno = EINVAL; return false; }
     *bytes_out = NULL;
     *len_out = 0u;
     file = fopen(filename, "rb");
@@ -243,11 +243,9 @@ static bool he_compiled_reader_v1_read_file(const char *filename,
         if (len == cap) {
             size_t next_cap = cap ? cap * 2u : 4096u;
             uint8_t *next;
-            if (next_cap < cap)
-                goto done;
+            if (next_cap < cap) { errno = EOVERFLOW; goto done; }
             next = realloc(bytes, next_cap);
-            if (!next)
-                goto done;
+            if (!next) { errno = ENOMEM; goto done; }
             bytes = next;
             cap = next_cap;
         }
@@ -255,8 +253,7 @@ static bool he_compiled_reader_v1_read_file(const char *filename,
         len += amount;
         if (amount > 0u)
             continue;
-        if (ferror(file))
-            goto done;
+        if (ferror(file)) { if (!errno) errno = EIO; goto done; }
         break;
     }
     *bytes_out = bytes;
@@ -264,11 +261,14 @@ static bool he_compiled_reader_v1_read_file(const char *filename,
     bytes = NULL;
     ok = true;
 
-done:
+done: {
+    int saved_error = errno;
     if (file)
         (void)fclose(file);
     free(bytes);
+    errno = saved_error;
     return ok;
+}
 }
 
 int he_compiled_reader_v1_parse_file_ids(
@@ -285,7 +285,7 @@ int he_compiled_reader_v1_parse_file_ids(
     *out_ids = NULL;
     if (!he_compiled_reader_v1_read_file(filename, &bytes, &len)) {
         he_compiled_reader_v1_set_error(error_buf, error_buf_size,
-                                        "cannot read HE source file");
+                                        "cannot read HE source file: %s", strerror(errno));
         return -1;
     }
     result = he_compiled_reader_v1_parse_bytes_ids(
@@ -368,7 +368,7 @@ int he_compiled_reader_v1_parse_file_prefix_ids(
         *complete_count = 0;
     if (!he_compiled_reader_v1_read_file(filename, &bytes, &len)) {
         he_compiled_reader_v1_set_error(error_buf, error_buf_size,
-                                        "cannot read HE source file");
+                                        "cannot read HE source file: %s", strerror(errno));
         return -1;
     }
     int result = he_compiled_reader_v1_parse_bytes_prefix_ids(

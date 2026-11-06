@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check that a count asked once builds no index.
 
-usage: check_count_footprint.py FACTS
+usage: check_count_footprint.py FACTS [--answers-only]
 
 A document of FACTS facts (rel i j k), and one of four times as many, is
 loaded and then counted three ways: not at all, once with its first column
@@ -52,6 +52,9 @@ def document(path, facts, tail):
 
 def main():
     facts = int(sys.argv[1])
+    answers_only = sys.argv[2:] == ['--answers-only']
+    if sys.argv[2:] and not answers_only:
+        sys.exit('expected optional --answers-only')
     growth = {}
     with tempfile.TemporaryDirectory() as directory:
         for observation, tail in TAILS.items():
@@ -67,6 +70,10 @@ def main():
                     return 1
                 peaks.append(peak)
             growth[observation] = peaks[1] - peaks[0]
+    if answers_only:
+        print('PASS: one-shot and repeated counts preserve answers at both '
+              'sizes; RSS is qualified separately on the native executable')
+        return 0
     bought = growth['repeated'] - growth['none']
     once = growth['once'] - growth['none']
     if bought < FLOOR_KIB:

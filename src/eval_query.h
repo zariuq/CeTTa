@@ -24,6 +24,8 @@ typedef enum {
  * its source, execution banks and cumulative source purse until close.
  * Each published answer is copied into the caller's independent arena. */
 CettaEvalQuery *eval_query_open(Space *, Arena *persistent, Registry *, Atom *, int fuel);
+/* Structured application: operands are already values, including expressions. */
+CettaEvalQuery *eval_query_open_values(Space *, Arena *, Registry *, Atom *call, int fuel);
 CettaEvalQuery *eval_query_open_exports(Space *, Arena *persistent, Registry *,
     Atom *source, Atom *variables, int fuel);
 Atom *eval_query_pattern_variables(Arena *, Atom *pattern);

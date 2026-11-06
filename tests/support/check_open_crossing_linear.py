@@ -26,6 +26,9 @@ def run(binary, length):
         parts = line.split()
         if len(parts) == 3 and parts[0] == "runtime-counter":
             counters[parts[1]] = int(parts[2])
+    missing = {"open-equation-host", *COUNTERS} - counters.keys()
+    if missing:
+        sys.exit(f"FAIL: missing crossing counters: {sorted(missing)}")
     return counters
 
 

@@ -10,6 +10,45 @@ from cetta import AtomKind, Callback, Engine, EvaluationError, Symbol, __version
 
 
 class ReadinessTests(unittest.TestCase):
+    def test_worker_publication_cleanup_and_answers_survive_engine_close(self):
+        for threads in (1, 2):
+            with self.subTest(threads=threads):
+                with Engine() as engine:
+                    answers = engine.run(f"""
+                        !(pragma! num-threads {threads})
+                        !(bind! &out (new-state (new-space)))
+                        !(let $o (get-state &out)
+                          (collapse (hyperpose
+                            ((let $s (new-space)
+                               (let $_ (add-atom $s (value 11)) (add-atom $o (kept 1 $s))))
+                             (let $s (new-space)
+                               (let $_ (add-atom $s (value 12)) (add-atom $o (kept 2 $s))))))))
+                        !(collapse (match (get-state &out) (kept $tag $s)
+                          ($tag (collapse (match $s (value $x) $x)))))
+                        !(+ 20 22)
+                    """)
+                self.assertEqual([atom.to_python() for atom in answers.groups[-1]], [42])
+                self.assertCountEqual(answers.groups[-2][0].to_python(),
+                                      [(1, (11,)), (2, (12,))])
+
+    def test_generated_libraries_import_the_reference_evalc_interface(self):
+        with Engine() as engine:
+            engine.import_("(library lib_tptp)")
+            answers = engine.eval("(tptp:evaluate &self ((+ 1 2) (+ 4 5)))")
+            self.assertEqual(answers.to_python(), [((3,), (9,))])
+        with Engine() as engine:
+            engine.import_("(library lang)")
+            self.assertEqual(engine.eval("(+ 20 22)").to_python(), [42])
+
+    def test_nested_memo_replay_preserves_shared_variable_identity(self):
+        root = Path(__file__).resolve().parents[2]
+        fixture = root / "tests/petta/search_machine_memo_nested_replay.metta"
+        expected = fixture.with_suffix(".disabled.expected").read_text().splitlines()[3:]
+        with Engine() as engine:
+            answers = list(engine.load(fixture))
+            self.assertEqual(len(answers), 5)
+            self.assertCountEqual([str(answer) for answer in answers[3:]], expected)
+
     def test_ported_petta_inequality_and_native_math(self):
         with Engine() as engine:
             self.assertEqual(engine.eval("(!= 2 2)").to_python(), [Symbol("false")])

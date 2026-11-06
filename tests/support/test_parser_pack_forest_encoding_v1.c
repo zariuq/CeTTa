@@ -6,6 +6,7 @@
 
 #include "parser_pack_native_v1.h"
 #include "symbol.h"
+#include "runtime_names.h"
 
 /* Exercise the private encoder against the independent Atom construction
  * route, including every allocation owned by the direct implementation. */
@@ -254,10 +255,13 @@ typedef struct {
     const CettaLpNativeUtf8Forest *forest;
     const char *expected;
     bool ok;
+    CettaNameContext names;
 } ConcurrentCase;
 
 static void *concurrent_encode(void *opaque) {
     ConcurrentCase *test = opaque;
+    CettaNameContext previous = cetta_name_context_current();
+    cetta_name_context_install(&test->names);
     PPNativeV1Result result;
     char error[512] = {0};
     ppnative_v1_result_init(&result);
@@ -273,6 +277,7 @@ static void *concurrent_encode(void *opaque) {
         }
     }
     arena_free(&result.arena);
+    cetta_name_context_install(&previous);
     return NULL;
 }
 
@@ -289,7 +294,8 @@ static void concurrent_controls(const PPABIV1Pack *pack,
         &result, pack, pack->states[0].identity, error, sizeof(error)),
         "concurrent baseline");
     for (uint32_t i = 0u; i < 4u; i++) {
-        cases[i] = (ConcurrentCase){pack, forest, result.forest_digest, false};
+        cases[i] = (ConcurrentCase){pack, forest, result.forest_digest, false,
+            cetta_name_context_current()};
         if (pthread_create(&threads[i], NULL, concurrent_encode, &cases[i])) break;
         created++;
     }

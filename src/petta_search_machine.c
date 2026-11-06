@@ -13,6 +13,7 @@
 #include "fallible_alloc.h"
 #include "grounded.h"
 #include "foreign_provider.h"
+#include "foreign.h"
 #include "library_pattern.h"
 #include "match.h"
 #include "binding/term_cursor.h"
@@ -13058,6 +13059,12 @@ static bool petta_machine_schedule_named_state(
     const PettaPlanNode *value_plan = NULL;
     if (form == PETTA_FORM_BIND_STATE) {
         Atom *wrapper = expression->expr.elems[2];
+        if (cetta_foreign_object_binding_candidate(machine->space, wrapper) &&
+            petta_machine_host_can_evaluate(&machine->host)) {
+            return petta_goal_push(machine, &(PettaGoal){
+                .kind = PETTA_GOAL_HOST_READY, .barrier = barrier,
+                .first = expression, .second = expected, .plan = plan});
+        }
         /* The host owns the extended named-Space constructor form and its
          * publication authority. Delegate the written operands together;
          * evaluating the constructor here would run it again at the host. */
@@ -13460,6 +13467,7 @@ typedef struct {
     PettaAnswerMaterializeMemoSlot *slots;
     size_t capacity;
     size_t used;
+    PeTTaTermBoundaryMemo list_views;
 } PettaAnswerMaterializeMemo;
 
 static void petta_answer_materialize_memo_init(
@@ -13475,6 +13483,7 @@ static void petta_answer_materialize_memo_free(
         return;
     if (memo->slots != memo->inline_slots)
         free(memo->slots);
+    free(memo->list_views.slots);
     memset(memo, 0, sizeof(*memo));
 }
 
@@ -13588,10 +13597,10 @@ static bool petta_answer_materialize_frame_reserve(
 /*
  * Open-cons nodes are an internal relational carrier.  Remove them at the
  * answer boundary while leaving quoted syntax and suspended callables
- * opaque.  Closed spines become ordinary flat PeTTa lists; an unresolved
- * tail becomes authored `(cons Head Tail)` syntax, never the private carrier
- * tag.  The explicit frame stack makes finite authored depth a resource
- * question rather than silently changing the answer at a fixed limit.
+ * opaque. Closed spines become ordinary flat PeTTa lists; an unresolved
+ * tail keeps its cell representation. The explicit frame stack makes finite
+ * authored depth a resource question rather than changing the answer at a
+ * fixed limit.
  */
 static Atom *petta_machine_materialize_answer_in(
     PettaMachineImpl *machine, Atom *atom, PettaAnswerMaterializeMemo *memo) {
@@ -13635,8 +13644,8 @@ static Atom *petta_machine_materialize_answer_in(
         break; \
     } \
     if (petta_semantics_is_open_cons_value(petta_source__)) { \
-        petta_source__ = petta_semantics_materialize_logical_list( \
-            &machine->heap, petta_source__); \
+        petta_source__ = petta_semantics_materialize_spine_view( \
+            &machine->heap, petta_source__, &memo->list_views); \
         if (!petta_source__) \
             goto fail; \
     } \
@@ -20134,6 +20143,7 @@ static bool petta_machine_advance_choice(
             return false;
         }
         CettaCallOutcome outcome = returned->outcome;
+        bool final = returned->final;
         if (!cetta_call_outcome_shape_valid(outcome) || returned->environment ||
             (outcome.kind != CETTA_CALL_RAISED &&
              (outcome.kind != CETTA_CALL_VALUE ||
@@ -20157,6 +20167,17 @@ static bool petta_machine_advance_choice(
         if (!petta_push_unify(machine, value, choice->as.provider.expected, choice->barrier)) {
             *failure = PETTA_MACHINE_STEP_CAPACITY;
             return false;
+        }
+        /* Delivery owns the copied value before acceptance can release host
+         * captures. A current final certificate leaves no alternative; the
+         * ordinary last-choice retirement preserves older search choices. */
+        if (final) {
+            if (!cetta_owned_execution_accept(execution)) {
+                *failure = PETTA_MACHINE_STEP_HOST_ERROR;
+                return false;
+            }
+            choice->as.provider.awaiting_accept = false;
+            petta_choice_retire_exhausted(machine);
         }
         return true;
     }
@@ -23414,7 +23435,7 @@ static bool petta_machine_start_foreign_provider(PettaMachineImpl *machine,
     CettaInvocation invocation = {.head = binding_value_from_atom(call->expr.elems[0]),
         .supplied = {.atoms = call->expr.elems + 1u, .count = call->expr.len - 1u}};
     CettaEvalCompletion completion = CETTA_EVAL_COMPLETE;
-    if (!cetta_foreign_provider_open(&invocation, execution, &completion) ||
+    if (!cetta_foreign_provider_open(machine->space, &invocation, execution, &completion) ||
         completion != CETTA_EVAL_COMPLETE) {
         (void)petta_machine_completion_failure(completion, failure);
         return false;
@@ -41372,6 +41393,11 @@ static bool petta_machine_dispatch_goal(
         return true;
     }
 
+    if (goal.kind == PETTA_GOAL_HOST_STRICT_READY && first &&
+        first->kind == ATOM_EXPR && first->expr.len &&
+        cetta_foreign_provider_callable_at(machine->space, first->expr.elems[0]))
+        return petta_machine_start_foreign_provider(machine, first, second, goal.barrier, failure);
+
     /*
      * Strict, deterministic grounded operators need no host OutcomeSet or
      * choice record once their arguments are ready.  Execute only the shared
@@ -41423,11 +41449,6 @@ static bool petta_machine_dispatch_goal(
         if (admitted)
             return true;
     }
-
-    if (goal.kind == PETTA_GOAL_HOST_STRICT_READY && first &&
-        first->kind == ATOM_EXPR && first->expr.len &&
-        cetta_foreign_provider_callable(first->expr.elems[0]))
-        return petta_machine_start_foreign_provider(machine, first, second, goal.barrier, failure);
 
     if (!petta_machine_host_can_evaluate(&machine->host)) {
         *failure = PETTA_MACHINE_STEP_HOST_ERROR;

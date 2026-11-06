@@ -6428,7 +6428,11 @@ SPACE_DENSE_SCALING_NODES ?= 2000
 test-space-dense-scaling: $(BIN) tests/petta/dense_relations_scaling.metta \
 		tests/support/check_dense_scaling.py
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_dense_scaling.py \
-		tests/petta/dense_relations_scaling.metta $(SPACE_DENSE_SCALING_NODES)
+		tests/petta/dense_relations_scaling.metta $(SPACE_DENSE_SCALING_NODES) \
+		$(if $(filter 1,$(ENABLE_SANITIZERS)),--answers-only)
+ifeq ($(ENABLE_SANITIZERS),1)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_SANITIZERS=0 test-space-dense-scaling
+endif
 
 # A PeTTa document read a few forms at a time answers as one read whole, an
 # import calling an equation defined after it among them; and reading a
@@ -6440,7 +6444,11 @@ PETTA_SLICES_FORMS ?= 200000
 test-petta-slices: $(BIN) tests/support/check_petta_slices.py \
 		$(foreach t,$(PETTA_SLICES_PROGRAMS),tests/petta/$(t).metta tests/petta/$(t).expected)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_petta_slices.py \
-		$(PETTA_SLICES_FORMS) $(foreach t,$(PETTA_SLICES_PROGRAMS),tests/petta/$(t).metta)
+		$(PETTA_SLICES_FORMS) $(foreach t,$(PETTA_SLICES_PROGRAMS),tests/petta/$(t).metta) \
+		$(if $(filter 1,$(ENABLE_SANITIZERS)),--answers-only)
+ifeq ($(ENABLE_SANITIZERS),1)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_SANITIZERS=0 test-petta-slices
+endif
 
 # A strict stack keeps no structure beyond its order: general matches grow
 # its peak memory by nothing, where a full stack builds its indexes.
@@ -6448,7 +6456,10 @@ SPACE_PROFILES_SCALING_ITEMS ?= 50000
 .PHONY: test-space-profiles-scaling
 test-space-profiles-scaling: $(BIN) tests/support/check_space_profiles_scaling.py
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_space_profiles_scaling.py \
-		$(SPACE_PROFILES_SCALING_ITEMS)
+		$(SPACE_PROFILES_SCALING_ITEMS) $(if $(filter 1,$(ENABLE_SANITIZERS)),--answers-only)
+ifeq ($(ENABLE_SANITIZERS),1)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_SANITIZERS=0 test-space-profiles-scaling
+endif
 
 # A count asked once rents a scan and builds no index; counts that keep
 # coming buy their column's index: as rows, and as a table of tuples, whose
@@ -6458,9 +6469,13 @@ COUNT_FOOTPRINT_TABLE_FACTS ?= 600000
 .PHONY: test-count-footprint
 test-count-footprint: $(BIN) tests/support/check_count_footprint.py
 	@CETTA_SPACE_DENSE=off $(CETTA_SCRIPT_RUN_ENV) python3 \
-		tests/support/check_count_footprint.py $(COUNT_FOOTPRINT_FACTS)
+		tests/support/check_count_footprint.py $(COUNT_FOOTPRINT_FACTS) \
+		$(if $(filter 1,$(ENABLE_SANITIZERS)),--answers-only)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_count_footprint.py \
-		$(COUNT_FOOTPRINT_TABLE_FACTS)
+		$(COUNT_FOOTPRINT_TABLE_FACTS) $(if $(filter 1,$(ENABLE_SANITIZERS)),--answers-only)
+ifeq ($(ENABLE_SANITIZERS),1)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_SANITIZERS=0 test-count-footprint
+endif
 
 # The counting checks must catch a hold, a release, a cascade or a reused
 # slot's candidacy gone missing.  The mutants check in full at every
@@ -22388,6 +22403,19 @@ main-readiness-consolidation: $(BIN)
 		--baseline-commit c632ecd1479fc766dcdf0efafd4cbc311213af6d \
 		--baseline-sha256 "$$(sha256sum "$(CETTA_CONSOLIDATION_BASELINE_BIN)" | cut -d' ' -f1)"
 
+MAIN_READINESS_MINUTES ?= 20
+MAIN_READINESS_JOBS ?= 2
+.PHONY: main-readiness main-readiness-check main-readiness-plan test-main-readiness-runner
+main-readiness main-readiness-check:
+	@python3 scripts/cetta_main_readiness.py --tier candidate --build "$(BUILD_CANON)" \
+		--minutes "$(MAIN_READINESS_MINUTES)" --jobs "$(MAIN_READINESS_JOBS)"
+
+main-readiness-plan:
+	@python3 scripts/cetta_main_readiness.py --tier candidate --build "$(BUILD_CANON)" --dry-run
+
+test-main-readiness-runner:
+	@python3 -m unittest discover -s scripts -p test_cetta_candidate_readiness.py
+
 main-readiness-routine:
 	@python3 scripts/cetta_main_readiness.py --tier routine
 
@@ -27209,7 +27237,7 @@ test-petta-translation-time-callability: $(BIN)
 	diff -u \
 		tests/petta/search_machine_translation_time_callability.expected \
 		"$$actual"
-	@echo "PASS: PeTTa source occurrences preserve translation-time callability"
+	@echo "PASS: PeTTa source occurrences call equations installed after translation"
 
 .PHONY: test-petta-match-conjunction-cursor
 test-petta-match-conjunction-cursor: $(BIN)
@@ -27935,7 +27963,7 @@ test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-c
 		tests/petta/search_machine_temporal_compile.metta 2>&1); \
 	expected=$$(cat tests/petta/search_machine_temporal_compile.expected); \
 	if [ "$$result" != "$$expected" ]; then \
-		echo "FAIL: PeTTa source-ordered occurrence compilation"; \
+		echo "FAIL: PeTTa occurrences follow equations installed and removed at run time"; \
 		diff <(printf '%s\n' "$$expected") \
 			<(printf '%s\n' "$$result") | head -40; \
 		exit 1; \
@@ -34902,7 +34930,7 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 		$(CETTA_BIN_INVOKE) --emit-runtime-stats --profile extended \
 		--lang he \
 		-e '!(bind! &ordered (new-space stack))' \
-		-e '!(space-set-backend! &ordered pathmap)' \
+		-e '!(case (space-set-backend! &ordered pathmap) (((Error $$call $$reason) $$reason)))' \
 		-e '!(add-atom &ordered (edge a b))' \
 		-e '!(add-atom &ordered (edge c d))' \
 		-e '!(collapse (match &ordered (edge $$x $$y) ($$x $$y)))' 2>&1); \
@@ -35874,7 +35902,10 @@ test-pathmap-program-shadow-sync-work: $(BIN)
 	petta_result=$$(CETTA_PATHMAP_QUERY_INDEX=1 $(CETTA_BIN_INVOKE) \
 		--emit-runtime-stats --profile extended --space-engine pathmap \
 		--lang petta tests/test_pathmap_program_shadow_sync_work.metta 2>&1); \
-	owned_result=$$(CETTA_PATHMAP_QUERY_INDEX=1 $(CETTA_BIN_INVOKE) \
+	owned_default_result=$$(CETTA_PATHMAP_QUERY_INDEX=1 CETTA_NATIVE_QUERY_REFERENCE=0 $(CETTA_BIN_INVOKE) \
+		--emit-runtime-stats --profile extended --space-engine pathmap \
+		--lang petta tests/petta/pathmap_owned_binding_snapshot.metta 2>&1); \
+	owned_result=$$(CETTA_PATHMAP_QUERY_INDEX=1 CETTA_NATIVE_QUERY_REFERENCE=1 $(CETTA_BIN_INVOKE) \
 		--emit-runtime-stats --profile extended --space-engine pathmap \
 		--lang petta tests/petta/pathmap_owned_binding_snapshot.metta 2>&1); \
 	expected=$$(cat tests/test_pathmap_program_shadow_sync_work.expected); \
@@ -35912,7 +35943,9 @@ test-pathmap-program-shadow-sync-work: $(BIN)
 		exit 1; \
 	fi; \
 	owned_actual=$$(printf '%s\n' "$$owned_result" | grep -v '^runtime-' || true); \
-	if [ "$$owned_actual" != "$$(cat tests/petta/pathmap_owned_binding_snapshot.expected)" ]; then \
+	owned_default_actual=$$(printf '%s\n' "$$owned_default_result" | grep -v '^runtime-' || true); \
+	if [ "$$owned_actual" != "$$(cat tests/petta/pathmap_owned_binding_snapshot.expected)" ] || \
+	   [ "$$owned_default_actual" != "$$owned_actual" ]; then \
 		echo "FAIL: PathMap PeTTa owned binding snapshot answers"; \
 		diff -u tests/petta/pathmap_owned_binding_snapshot.expected \
 			<(printf '%s\n' "$$owned_actual") | head -30; \
@@ -36699,7 +36732,21 @@ else
 	@$(MAKE) BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
 endif
 
-test-help-flags: $(BIN)
+.PHONY: test-cli-diagnostics
+test-cli-diagnostics: $(BIN) tests/support/check_cli_diagnostics.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_cli_diagnostics.py "$(CETTA_SCRIPT_BIN)"
+
+.PHONY: test-intensional-weighted-example
+test-all: test-intensional-weighted-example
+test-intensional-weighted-example: $(BIN) examples/intensional_weighted_max_demo.metta lib/lib_intensional_weighted.metta
+	@set -eu; for profile in he-compat extended; do \
+		$(CETTA_BIN_INVOKE) --lang he --profile "$$profile" --run-contract \
+			examples/intensional_weighted_max_demo.metta \
+			> "runtime/intensional-weighted.$(BUILD_OBJ_TAG).$$profile.log"; \
+	done
+	@echo 'PASS: weighted evidence example computes strengths, coverage and missing observations'
+
+test-help-flags: $(BIN) test-cli-diagnostics
 	@help_long=$$($(CETTA_BIN_INVOKE) --help 2>&1); \
 	help_short=$$($(CETTA_BIN_INVOKE) -h 2>&1); \
 	lang_list=$$($(CETTA_BIN_INVOKE) --list-languages 2>&1); \
@@ -46494,6 +46541,7 @@ test-tptp-official-dollar-words-v1-body: $(BIN) prepare-tptp-compact-morphism-v1
 # files under lib/petta and lib/prime are checked against it.  Prime needs
 # its own spelling only where the source hands values to natives.
 LIBRARY_SPELLING_TOOL_V1 = tools/library_spelling.py
+PETTA_REFERENCE_VOCABULARY_V1 = tests/support/petta_reference_vocabulary_v1.txt
 # The libraries that run on real PeTTa; the remaining native libraries run
 # on the CeTTa host's PeTTa lane, over natives real PeTTa does not have.
 LIBRARY_PETTA_PORTABLE_SOURCES_V1 = langdef lib_bnf lib_lbnf lib_module lib_tptp json str
@@ -46741,7 +46789,7 @@ qualify-tensor-support-lean:
 	lake env lean -DwarningAsError=true "$$client"; \
 	lake env lean -DwarningAsError=true "$$descriptors"
 
-test-library-spellings-v1: $(LIBRARY_SPELLING_TOOL_V1) \
+test-library-spellings-v1: $(LIBRARY_SPELLING_TOOL_V1) $(PETTA_REFERENCE_VOCABULARY_V1) \
 		tests/support/test_library_spelling_v1.py \
 		$(foreach lib,$(LIBRARY_PETTA_SPELLING_SOURCES_V1),lib/$(lib).metta lib/petta/$(lib).metta) \
 		$(foreach lib,$(LIBRARY_PRIME_SPELLING_SOURCES_V1),lib/$(lib).metta lib/prime/$(lib).metta)
@@ -46762,7 +46810,6 @@ test-library-spellings-v1: $(LIBRARY_SPELLING_TOOL_V1) \
 # regenerated from a PeTTa checkout), a head the spelling or its imports
 # define, a declared native, or data to both.  A spelling that relies on a
 # head only CeTTa evaluates is reported by name; the mutated copy checks it.
-PETTA_REFERENCE_VOCABULARY_V1 = tests/support/petta_reference_vocabulary_v1.txt
 PETTA_VOCABULARY_CHECK_V1 = tools/petta_vocabulary_check.py
 .PHONY: test-petta-vocabulary-v1
 test-petta-vocabulary-v1: $(PETTA_VOCABULARY_CHECK_V1) $(PETTA_REFERENCE_VOCABULARY_V1) \
@@ -49667,6 +49714,37 @@ else
 	@echo "SKIP: Python callback completion (Python support disabled)"
 endif
 
+.PHONY: test-python-objects test-python-package bench-python-interop-light
+test-all: test-python-objects
+test-python-objects: $(BIN) test-python-retention
+ifeq ($(ENABLE_PYTHON),1)
+	@$(CETTA_SCRIPT_RUN_ENV) $(PYTHON_EXECUTABLE) tests/support/check_python_objects.py ./$(BIN)
+else
+	@echo "SKIP: Python objects (Python support disabled)"
+endif
+
+.PHONY: test-python-retention
+test-python-retention: $(BIN)
+ifeq ($(ENABLE_PYTHON),1)
+	@$(CETTA_SCRIPT_RUN_ENV) $(PYTHON_EXECUTABLE) tests/support/check_python_retention.py ./$(BIN)
+bench-performance-light: test-python-retention
+else
+	@echo "SKIP: Python retention (Python support disabled)"
+endif
+
+test-python-package:
+	+$(MAKE) --no-print-directory BUILD=core ENABLE_LIB_PROLOG=0 ENABLE_PIC=1 python-native test-embedding-context
+	PYTHONPATH=python $(PYTHON_EXECUTABLE) -m unittest discover -s python/tests -v
+
+bench-python-interop-light:
+	+$(MAKE) --no-print-directory BUILD=core ENABLE_LIB_PROLOG=0 ENABLE_PIC=1 python-native
+	PYTHONPATH=python $(PYTHON_EXECUTABLE) benchmarks/python/interop.py --lang petta
+	PYTHONPATH=python $(PYTHON_EXECUTABLE) benchmarks/python/interop.py --lang he
+
+ifeq ($(ENABLE_PYTHON),1)
+bench-performance-light: bench-python-interop-light
+endif
+
 .PHONY: test-petta-libpl-callback-completion
 test-execution-semantic-ledger test-petta-libpl: test-petta-libpl-callback-completion
 .PHONY: test-petta-libpl-callback-source
@@ -49770,7 +49848,7 @@ embedding-native: $(EMBED_LIB) $(EMBED_STATIC_LIB) runtime/cetta-proc-scope
 	ln -sfn $(notdir $(EMBED_STATIC_LIB)) runtime/libcetta.a
 runtime/cetta-proc-scope: $(BIN).proc-scope
 	cp $< $@
-test-embedding-api: $(EMBED_TEST)
+test-embedding-api: $(EMBED_TEST) test-embedding-context
 	./$(EMBED_TEST)
 
 EMBED_CONTEXT_TEST = runtime/test_embedding_context-$(EMBED_TAG)
@@ -49970,14 +50048,26 @@ PYTHON_EXTENSION_OUTPUT ?= python/cetta/_native$(PYTHON_EXTENSION_SUFFIX)
 PYTHON_EXTENSION_INCLUDE_DIR = $(shell $(PYTHON_EXECUTABLE) -c 'import sysconfig; print(sysconfig.get_path("include"))')
 PYTHON_EXTENSION_INCLUDES = -I'$(PYTHON_EXTENSION_INCLUDE_DIR)'
 PYTHON_EXTENSION_PATH_MAP = '-ffile-prefix-map=$(PYTHON_EXTENSION_INCLUDE_DIR)=Python/include' '-ffile-prefix-map=$(abspath .)=.'
+PYTHON_HOST_OBJ = runtime/bootstrap/python-host-$(EMBED_TAG)$(PYTHON_EXTENSION_SUFFIX).o
+PYTHON_HOST_LIB = runtime/libcetta-python-host-$(EMBED_TAG)$(PYTHON_EXTENSION_SUFFIX).a
+PYTHON_HOST_RUNTIME_OBJ = $(filter-out src/foreign.% src/foreign_stub.%,$(EMBED_RUNTIME_OBJ))
+
+$(PYTHON_HOST_OBJ): src/foreign.c src/python_objects.inc src/python_streams.inc src/python_context.inc src/python_provider.inc src/python_ownership.inc src/foreign.h $(BUILD_CONFIG_HEADER) Makefile
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(PYTHON_EXTENSION_PATH_MAP) $(PYTHON_EXTENSION_INCLUDES) -c -o '$@' $<
+
+$(PYTHON_HOST_LIB): $(EMBED_OBJ) $(PYTHON_HOST_RUNTIME_OBJ) $(PYTHON_HOST_OBJ) tools/build_embedding_static.py include/cetta_embed.h src/embedding_python.h
+	python3 tools/build_embedding_static.py --cc '$(CC)' --ar '$(AR)' --nm '$(NM)' --objcopy '$(OBJCOPY)' \
+		--header include/cetta_embed.h --header src/embedding_python.h --output '$@' \
+		--allocator '$(EMBED_ALLOCATOR_OBJ)' $(EMBED_OBJ) $(PYTHON_HOST_RUNTIME_OBJ) $(PYTHON_HOST_OBJ)
+
 .PHONY: python-native
-python-native: $(EMBED_STATIC_LIB) runtime/cetta-proc-scope python/native.c python/callbacks.inc python/host.inc python/buffers.inc python/exports.map
+python-native: $(PYTHON_HOST_LIB) runtime/cetta-proc-scope python/native.c python/callbacks.inc python/host.inc python/handles.inc python/buffers.inc python/exports.map
 	@mkdir -p '$(dir $(PYTHON_EXTENSION_OUTPUT))'
 	@set -eu; \
 	tmp_out=$$(mktemp '$(dir $(PYTHON_EXTENSION_OUTPUT)).cetta-extension.XXXXXX'); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(PYTHON_EXTENSION_PATH_MAP) -Iinclude $(PYTHON_EXTENSION_INCLUDES) -shared \
-		-o "$$tmp_out" python/native.c $(EMBED_STATIC_LIB) \
+		-o "$$tmp_out" python/native.c $(PYTHON_HOST_LIB) \
 		-Wl,--version-script=python/exports.map -Wl,--exclude-libs,ALL $(LDFLAGS); \
 	mv "$$tmp_out" '$(PYTHON_EXTENSION_OUTPUT)'
 	@mkdir -p '$(dir $(PYTHON_EXTENSION_OUTPUT))resources/runtime'
