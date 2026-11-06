@@ -14,12 +14,13 @@ def main():
     parser.add_argument('--ar', default='ar')
     parser.add_argument('--nm', default='nm')
     parser.add_argument('--objcopy', default='objcopy')
-    parser.add_argument('--header', type=Path, required=True)
+    parser.add_argument('--header', type=Path, required=True, action='append')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--allocator', type=Path, required=True)
     parser.add_argument('objects', nargs='+')
     args = parser.parse_args()
-    public = set(re.findall(r'\b(cetta_embed_[a-zA-Z0-9_]+)\s*\(', args.header.read_text()))
+    public = {name for header in args.header for name in
+              re.findall(r'\b(cetta_embed(?:ding)?_[a-zA-Z0-9_]+)\s*\(', header.read_text())}
     with tempfile.TemporaryDirectory(prefix='.cetta-static-', dir=args.output.parent) as temporary:
         directory = Path(temporary)
         combined, archive = directory / 'runtime.o', directory / 'libcetta.a'

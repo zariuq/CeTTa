@@ -1242,4 +1242,8 @@
   (1118 NATIVE_QUERY_BITS_LEG "native-query-bits-leg")
   ; Index descriptions compared while finding the requested path index.
   (1119 MATCH_POSITION_INDEX_DIRECTORY_PROBE "match-position-index-directory-probe")
-  (1120 MATCH_POSITION_INDEX_DIRECTORY_PROBE_PEAK "match-position-index-directory-probe-peak")))
+  (1120 MATCH_POSITION_INDEX_DIRECTORY_PROBE_PEAK "match-position-index-directory-probe-peak")
+  ; The HE canonical machine's frame stack: the most frames it held at once,
+  ; and the frames that left it before their last child ran (last call).
+  (1121 HE_CANONICAL_FRAME_PEAK "he-canonical-frame-peak")
+  (1122 HE_CANONICAL_LAST_CALL "he-canonical-last-call")))
