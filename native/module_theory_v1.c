@@ -273,7 +273,7 @@ typedef struct { Atom *old_label, *new_label, *permutation; } ModuleRenameV1;
 /* Structural transport changes a declaration's view, never its origin. */
 static Atom *transport(ModuleAssemblyV1 *a, Atom *value, const ModuleRenameV1 *maps,
     size_t count, Atom *old_type, Atom *new_type) {
-    if (!module_spend_v1(&a->work) || a->work.depth >= 512u) { module_fail_v1(&a->work, "incomplete", "Replacement depth exhausted."); return NULL; }
+    if (!module_spend_v1(&a->work) || a->work.depth >= MODULE_STRUCTURAL_DEPTH_V1) { module_fail_v1(&a->work, "incomplete", "Replacement depth exhausted."); return NULL; }
     if (old_type && atom_eq(value, old_type)) return new_type;
     if (!value || value->kind != ATOM_EXPR) return value;
     ++a->work.depth; Atom *out = NULL;

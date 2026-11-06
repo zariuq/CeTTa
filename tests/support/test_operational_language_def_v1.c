@@ -245,10 +245,11 @@ static void malformed_and_resource_gates(TestCounts *counts) {
     error[0] = '\0';
     (void)expect(
         counts,
-        !parse_text(&language, control_source, 500000u, 1000000u,
-                    &status, error, sizeof(error)) &&
-            status == CETTA_OP_LANG_V1_SYNTAX_REJECTED,
-        "unclassified lexical scalar rejects through both parsers");
+        parse_text(&language, control_source, 500000u, 1000000u,
+                   &status, error, sizeof(error)) &&
+            bytes_equal(language.name_bytes, language.name_len,
+                        (const uint8_t *)"Bad\x01Name", 8u),
+        "literal control scalar is retained inside a string");
     error[0] = '\0';
     (void)expect(
         counts,
@@ -356,27 +357,21 @@ static void exact_physical_carrier_gate(TestCounts *counts) {
                    "1234567890123456789012345678901234567890") == 0,
         "symbols, byte strings, and unbounded naturals remain distinct");
 
-    error[0] = '\0';
-    (void)expect(
-        counts,
-        !parse_text(&language, bad_escape, 500000u, 1000000u,
-                    &status, error, sizeof(error)) &&
-            status == CETTA_OP_LANG_V1_SYNTAX_REJECTED,
-        "unknown string escape rejects");
-    error[0] = '\0';
-    (void)expect(
-        counts,
-        !parse_text(&language, bad_control_alias, 500000u, 1000000u,
-                    &status, error, sizeof(error)) &&
-            status == CETTA_OP_LANG_V1_SYNTAX_REJECTED,
-        "noncanonical control escape rejects");
-    error[0] = '\0';
-    (void)expect(
-        counts,
-        !parse_text(&language, bad_printable_hex, 500000u, 1000000u,
-                    &status, error, sizeof(error)) &&
-            status == CETTA_OP_LANG_V1_SYNTAX_REJECTED,
-        "noncanonical printable hex escape rejects");
+    const struct { const char *text; const char *value; } spellings[] = {
+        {bad_escape, "bad\\q"}, {bad_control_alias, "bad\r"},
+        {bad_printable_hex, "bad "},
+        {"(GSLTLanguageDefWireV1 \"\\u{3bb}\\u03bb\" LNil LNil LNil LNil)", "λλ"},
+        {"(GSLTLanguageDefWireV1 \"\\uD83D\\uDE00\" LNil LNil LNil LNil)", "😀"},
+        {"(GSLTLanguageDefWireV1 \"\\uD800\\x4\" LNil LNil LNil LNil)", "\\uD800\\x4"}
+    };
+    for (size_t i = 0; i < sizeof spellings / sizeof spellings[0]; ++i) {
+        error[0] = '\0';
+        bool ok = parse_text(&language, spellings[i].text, 500000u, 1000000u,
+                             &status, error, sizeof error);
+        (void)expect(counts, ok && language.name_len == strlen(spellings[i].value) &&
+            !memcmp(language.name_bytes, spellings[i].value, language.name_len),
+            "module input spelling has its exact literal value");
+    }
     error[0] = '\0';
     (void)expect(
         counts,

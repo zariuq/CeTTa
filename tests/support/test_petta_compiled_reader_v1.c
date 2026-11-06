@@ -3,6 +3,7 @@
 #include "generated/petta_reader_direct_v1.generated.h"
 #include "gslt_direct_reader_v1.h"
 #include "symbol.h"
+#include "parser.h"
 #include "term_universe.h"
 
 #include <ctype.h>
@@ -54,6 +55,50 @@ static int parse(
         reader, bytes, len, universe, ids, receipt, error, error_size);
 }
 
+static bool host_begin(void *p) { return parser_host_projection_v1_begin_form(p); }
+static AtomId host_word(void *p, const uint8_t *b, size_t n) { return parser_host_projection_v1_word_bytes(p, b, n); }
+static AtomId host_string(void *p, const uint8_t *b, size_t n) { return parser_host_projection_v1_string_bytes(p, b, n); }
+static AtomId host_variable(void *p, const uint8_t *b, size_t n, bool anonymous) {
+    return anonymous ? parser_host_projection_v1_anonymous_variable(p) : parser_host_projection_v1_variable_bytes(p, b, n);
+}
+static AtomId host_dollar(void *p) { return host_word(p, (const uint8_t *)"$", 1u); }
+static AtomId host_expression(void *p, const AtomId *items, size_t n) { return parser_host_projection_v1_expression(p, items, n); }
+static bool host_finish(void *p, bool runnable, AtomId value, AtomId out[2], uint32_t *n) {
+    (void)p;
+    if (runnable || value == CETTA_ATOM_ID_NONE) return false;
+    out[0] = value; *n = 1u; return true;
+}
+
+static void body_codec_respects_grammar(TestCounts *counts, TermUniverse *universe) {
+    GSLTDirectPeTTaReaderV1Plan plan = petta_reader_direct_v1_plan;
+    uint8_t ascii[256];
+    memcpy(ascii, plan.string_plain->ascii, sizeof ascii);
+    ascii['4'] = 0u;
+    const uint32_t excluded[] = {34u, 52u, 92u};
+    GSLTDirectScalarClassV1 plain = {ascii, excluded, 3u, true};
+    plan.string_plain = &plain;
+    char error[256];
+    expect(counts, gslt_direct_petta_reader_v1_plan_validate(&plan, error, sizeof error),
+           "a narrower authored string class is a valid reader plan");
+    const char *inputs[] = {"\"\\x41\"", "\"\\4\""};
+    for (size_t i = 0; i < 2u; ++i) {
+        ParserHostProjectionV1 *host = parser_host_projection_v1_new(universe);
+        GSLTDirectPeTTaProjectionV1 projection = {
+            .context = host, .begin_form = host_begin, .token_bytes = host_word,
+            .variable_bytes = host_variable, .string_bytes = host_string,
+            .dollar_symbol = host_dollar, .expression = host_expression, .finish_form = host_finish};
+        AtomId value = CETTA_ATOM_ID_NONE;
+        int result = gslt_direct_petta_reader_v1_parse_term_bytes_id(&plan,
+            (const uint8_t *)inputs[i], strlen(inputs[i]), &projection, &value, error, sizeof error);
+        expect(counts, i == 0u ? result < 0 :
+            (result == 0 && tu_string_len(universe, value) == 2u &&
+             !memcmp(tu_string_cstr(universe, value), "\\4", 2u)),
+            i == 0u ? "decoding does not bypass the declared lexical class" :
+                      "an escaped scalar remains admitted by the escape grammar");
+        parser_host_projection_v1_free(host);
+    }
+}
+
 int main(void) {
     static const uint8_t basic_document[] =
         "; c\n(= (f $x) $x)\n!(f 1)\n";
@@ -92,6 +137,7 @@ int main(void) {
     term_universe_init(&universe);
     term_universe_set_persistent_arena(&universe, &persistent);
 
+    body_codec_respects_grammar(&counts, &universe);
     reader = petta_compiled_reader_v1_new();
     expect(&counts,
            reader && petta_compiled_reader_v1_prepare(
@@ -136,11 +182,11 @@ int main(void) {
     {
         GSLTDirectPeTTaReaderV1Plan mutation =
             petta_reader_direct_v1_plan;
-        mutation.string_escape_identity_fallback = false;
+        mutation.string_body_metta = false;
         expect(&counts,
                !gslt_direct_petta_reader_v1_plan_validate(
                    &mutation, error, sizeof(error)),
-               "PeTTa plan rejects loss of identity escape semantics");
+               "PeTTa plan requires an explicit string interpretation");
     }
 
     len = parse(reader, &universe, basic_document,
@@ -289,10 +335,33 @@ int main(void) {
                       "a\n\t\r") == 0 &&
                strcmp(tu_string_cstr(
                           &universe, tu_child(&universe, ids[0], 1u)),
-                      "aq") == 0,
-           "PeTTa named and identity escapes follow the projection GSLT");
+                      "a\\q") == 0,
+           "PeTTa declared literal codec preserves unknown escapes");
     free(ids);
     ids = NULL;
+
+    const struct { const char *body; const char *value; size_t len; } literal_cases[] = {
+        {"\\x00", "\0", 1u}, {"\\u{3bb}", "λ", 2u},
+        {"\\u03bb", "λ", 2u}, {"\\uD83D\\uDE00", "😀", 4u},
+        {"\\uD800", "\\uD800", 6u}, {"\\u{zz}", "\\u{zz}", 6u},
+        {"\\x4", "\\x4", 3u}, {"\\b\\f", "\b\f", 2u}
+    };
+    for (size_t i = 0; i < sizeof literal_cases / sizeof literal_cases[0]; ++i) {
+        char source[96];
+        snprintf(source, sizeof source, "(\"%s\")", literal_cases[i].body);
+        len = parse(reader, &universe, (const uint8_t *)source, strlen(source),
+                    &ids, &receipt, error, sizeof error);
+        AtomId value = len == 1 && ids && tu_arity(&universe, ids[0]) == 1u
+            ? tu_child(&universe, ids[0], 0u) : CETTA_ATOM_ID_NONE;
+        expect(&counts, value != CETTA_ATOM_ID_NONE &&
+            receipt.input_byte_len == strlen(source) && receipt.shift_len == 2u * strlen(source) &&
+            tu_kind(&universe, value) == ATOM_GROUNDED &&
+            tu_ground_kind(&universe, value) == GV_STRING &&
+            tu_string_len(&universe, value) == literal_cases[i].len &&
+            !memcmp(tu_string_cstr(&universe, value), literal_cases[i].value, literal_cases[i].len),
+            "generated reader decodes canonical literals without losing unknown spellings");
+        free(ids); ids = NULL;
+    }
 
     /* ("a\qb\") leaves its string open: the splitter keeps an escaped
      * quote inside the string, as PeTTa's filereader does. */

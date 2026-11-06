@@ -119,6 +119,45 @@ owned handle rather than copying the grammar and core into each machine state.
 An effect refusal retains the uncommitted publication list. Multi-fact
 publication is not an atomic transaction.
 
+Ground CHR (C0)
+
+lang:load CHR selects ordinary CHR source and the refined ground machine
+written in MeTTa. It retains ordered rule occurrences, distinct constraint
+occurrences, propagation history and body-before-continuation execution.
+
+C0 values are integers, atom names and tuples. A host symbol or string can
+supply an atom name, including Unicode, empty names and embedded NUL. A
+string such as "12" is an atom name, not an integer. String and symbol heads
+can name a declared constraint; a declared zero-arity constraint can also
+be supplied as a bare symbol or string. Booleans, floats and open variables
+do not silently become these guest values.
+
+CHR source reads names as SWI-Prolog does. Unquoted atoms and variables may
+use Unicode: a name that starts with an uppercase or titlecase letter is a
+variable, and other letters, digits and marks continue names. Control and
+space-separator characters are not name characters. Double-quoted text reads
+as an atom, as under SWI's double_quotes=atom, so "abc" and abc are the same
+atom name. The directive :- set_prolog_flag(double_quotes, atom). is
+accepted; the other double_quotes modes produce strings or lists, which C0
+values do not include, so a source that selects one is refused, not
+reinterpreted.
+
+New results use the established canonical host representation: symbols,
+with strings for empty, NUL-bearing and uppercase truth names.
+Native MeTTa still distinguishes strings and symbols. The adapter identifies
+them only in the declared CHR observation; it does not change host equality.
+
+lang:eval returns the private final store. In the same input/output Space,
+lang:run removes precisely the consumed captured occurrences, keeps surviving
+occurrences in their original representation, and appends new occurrences.
+Duplicates remain distinct. With a separate destination, the input is kept
+and the final multiset is appended to that destination. Resuming continues
+one retained computation; a fresh invocation may fire propagation again.
+
+The compiler-pass example composes Datalog demand analysis with CHR constant
+folding. Datalog's strings pass directly into the CHR adapter. Its checks
+compare guest stores and also check that surviving host strings stay strings.
+
 Source views and raw regions
 
 Extended HE and PeTTa readers recognize r#"BODY"#, r##"BODY"## and deeper
@@ -158,8 +197,8 @@ Invalid completed source is diagnosed; subsequent submissions can continue.
 Build and verification
 
     make BUILD=core
-    make build-lang-datalog METTAPEDIA_LEAN_ROOT=PATH_TO_METTAPEDIA_LEAN
-    make test-lang-library
+    make build-lang-compilers METTAPEDIA_LEAN_ROOT=PATH_TO_METTAPEDIA_LEAN
+    make test-lang-library test-lang-chr
     make test-source-compiler-v1 test-lib-he-evalc-spaces test-lang-repl
 
 The provider is compiled once from the Lean preparation functions. Ordinary

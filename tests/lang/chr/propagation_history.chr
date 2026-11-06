@@ -1,0 +1,5 @@
+:- chr_constraint edge/2, reach/2.
+unique @ reach(X,Y) \ reach(X,Y) <=> true.
+start @ edge(X,Y) ==> reach(X,Y).
+extend @ reach(X,Y), edge(Y,Z) ==> reach(X,Z).
+?- edge(a,b), edge(b,c), edge(a,b), edge(c,a).

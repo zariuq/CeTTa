@@ -890,7 +890,7 @@ LANGDEF_COMPILED_CURSOR_RUNTIME_SRC = \
 	experiments/gslt2parse_foundation/native/parser_atom_projection_action_v1.c \
 	experiments/gslt2parse_foundation/native/semantic_mask_nfa_v1.c
 SRC += experiments/gslt2parse_foundation/native/parser_pack_abi_stream_v1.c \
-	$(LANGDEF_COMPILED_CURSOR_RUNTIME_SRC) native/langdef_module.c native/source_compiler_module_v1.c native/source_parser_plan_v1.c native/source_input_view_v1.c \
+	$(LANGDEF_COMPILED_CURSOR_RUNTIME_SRC) native/langdef_module.c native/source_compiler_module_v1.c native/source_parser_plan_v1.c native/source_input_view_v1.c native/source_occurrence_view_v1.c \
 	native/parser_baked_v1.c \
 	native/operational_language_def_v1.c \
 	native/language_def_core_v1.c \
@@ -25146,7 +25146,7 @@ test-petta-compiled-reader-v1: test-petta-compiled-reader-direct-generated-v1 $(
 	@result=$$(./$(PETTA_COMPILED_READER_TEST_BIN) 2>&1); \
 	printf '%s\n' "$$result"; \
 	if [ "$$(printf '%s\n' "$$result" | \
-		grep -Fxc '(PeTTaCompiledReaderV1Summary 34 34 0 source-pass 1 two-stage 1)')" -ne 1 ]; then \
+		grep -Fxc '(PeTTaCompiledReaderV1Summary 45 45 0 source-pass 1 two-stage 1)')" -ne 1 ]; then \
 		echo "FAIL: compiled PeTTa reader exact integration summary absent or duplicated"; \
 		exit 1; \
 	fi; \
@@ -48797,13 +48797,58 @@ endif
 # In-process source preparation is a build artifact. Ordinary lang calls
 # load it directly and never launch a compiler or another interpreter.
 .PHONY: build-lang-datalog test-lang-library
-build-lang-datalog:
+# Every provider shares one Lean runtime: Lean modules may initialize only
+# once per process, so the providers are built together.
+.PHONY: build-lang-compilers
+build-lang-compilers:
 	@set -eu; lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
 	if test -z "$$lean_root"; then lean_root="$(abspath ../../Mettapedia/lean/mettapedia)"; fi; \
 	test -f "$$lean_root/lakefile.lean" || \
 		{ echo 'Set METTAPEDIA_LEAN_ROOT to the MeTTapedia Lean project' >&2; exit 2; }; \
-	python3 tools/build_datalog_source_compiler.py --lean-root "$$lean_root" \
-		--output runtime/lang/datalog-compiler.so --package-output langdef/lang/Datalog.module
+	python3 tools/build_lean_source_compilers.py --lean-root "$$lean_root" --output-dir runtime/lang
+
+build-lang-datalog: build-lang-compilers
+
+.PHONY: test-lang-provider-coexistence
+test-lang-provider-coexistence: $(BIN)
+	@set -eu; lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
+	if test -z "$$lean_root"; then lean_root="$(abspath ../../Mettapedia/lean/mettapedia)"; fi; \
+	work="$$(mktemp -d runtime/lang-provider-coexistence.XXXXXX)"; \
+	python3 tests/support/check_lang_provider_coexistence.py ./$(BIN) "$$work/checks" --lean-root "$$lean_root"
+
+.PHONY: build-lang-chr test-lang-chr
+build-lang-chr: build-lang-compilers
+
+.PHONY: test-source-occurrence-view
+runtime/test_source_occurrence_view-$(BUILD_OBJ_TAG): tests/test_source_occurrence_view.c $(OBJ) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_source_occurrence_view.c $(filter-out src/main.%,$(OBJ)) \
+		-Wl,--wrap=cetta_shared_transition_guard_enter $(LDFLAGS)
+
+test-source-occurrence-view: runtime/test_source_occurrence_view-$(BUILD_OBJ_TAG)
+	@$(call cetta_exec,./runtime/test_source_occurrence_view-$(BUILD_OBJ_TAG))
+
+test-lang-chr: $(BIN) test-source-occurrence-view
+	@test -f runtime/lang/chr-compiler.so || \
+		{ echo 'Run make build-lang-chr first' >&2; exit 2; }
+	@set -eu; work="$$(mktemp -d runtime/lang-chr-tests.XXXXXX)"; \
+	python3 tests/support/check_lang_chr.py ./$(BIN) "$$work/chr"
+
+# SWI-Prolog library(chr) is the reference here only; lang calls run no
+# reference engine. The standard C0 sources live in MeTTapedia.
+.PHONY: test-lang-chr-reference
+test-lang-chr-reference: $(BIN)
+	@test -f runtime/lang/chr-compiler.so || \
+		{ echo 'Run make build-lang-chr first' >&2; exit 2; }
+	@set -eu; root="$(METTAPEDIA_ROOT)"; \
+	if test -z "$$root"; then root="$(abspath ../../Mettapedia)"; fi; \
+	reference="$$root/metta/gslt/tools/chr_source_reference.pl"; \
+	test -f "$$reference" || { echo 'Set METTAPEDIA_ROOT to the MeTTapedia checkout' >&2; exit 2; }; \
+	work="$$(mktemp -d runtime/lang-chr-reference.XXXXXX)"; \
+	python3 tests/support/check_lang_chr_reference.py ./$(BIN) "$$work/standard" \
+		--sources "$$root/metta/gslt/module/gold/CHR/examples/c0" --reference "$$reference"; \
+	python3 tests/support/check_lang_chr_reference.py ./$(BIN) "$$work/controls" \
+		--sources tests/lang/chr --reference "$$reference"
 
 test-lang-library: $(BIN)
 	@test -f runtime/lang/datalog-compiler.so || \
@@ -49558,3 +49603,9 @@ test-sparse-interchange-mutants: $(SPARSE_INTERCHANGE_TEST)
 	python3 tests/support/check_embedding_context_mutants.py --cc='$(CC)' \
 		--cppflags='$(CPPFLAGS)' --cflags='$(CFLAGS)' --ldflags='$(LDFLAGS)' \
 		--only-prefix=sparse- --objects $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
+
+.PHONY: test-petta-string-literal-profile
+test-petta-string-literal-profile: $(BIN)
+	@$(CETTA_BIN_INVOKE) --lang petta tests/petta/string_literal_profile.metta | diff -u tests/petta/string_literal_profile.expected -
+
+test-petta-corrected-stable: test-petta-string-literal-profile

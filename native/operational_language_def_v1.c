@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "src/string_literal.h"
 
 #ifndef CETTA_OP_LANG_PREPARE_HOST_V1
 #include "runtime/generated/cetta_term_reader_v1.generated.h"
@@ -528,11 +529,6 @@ static bool op_lang_scalar_is_symbol(uint32_t scalar) {
         scalar >= 128u;
 }
 
-static bool op_lang_scalar_is_lower_hex(uint32_t scalar) {
-    return (scalar >= (uint32_t)'0' && scalar <= (uint32_t)'9') ||
-        (scalar >= (uint32_t)'a' && scalar <= (uint32_t)'f');
-}
-
 static bool op_lang_string_token_right(
     const CettaLpNativeUtf8ScalarView *view,
     uint32_t left,
@@ -553,45 +549,12 @@ static bool op_lang_string_token_right(
             return true;
         }
         if (scalar == (uint32_t)'\\') {
-            uint32_t escaped;
+            /* Lexing identifies the body; the shared codec interprets it.
+             * Unknown escapes remain text instead of restricting the module
+             * language to the canonical printer's particular spelling. */
             if (++cursor >= view->scalar_len)
                 return false;
-            escaped = cetta_lp_native_utf8_scalar_view_scalar_at(view, cursor);
-            if (escaped == (uint32_t)'"' || escaped == (uint32_t)'\\' ||
-                escaped == (uint32_t)'n' || escaped == (uint32_t)'t') {
-                cursor++;
-                continue;
-            }
-            if (escaped == (uint32_t)'x' &&
-                cursor + 2u < view->scalar_len &&
-                op_lang_scalar_is_lower_hex(
-                    cetta_lp_native_utf8_scalar_view_scalar_at(
-                        view, cursor + 1u)) &&
-                op_lang_scalar_is_lower_hex(
-                    cetta_lp_native_utf8_scalar_view_scalar_at(
-                        view, cursor + 2u))) {
-                uint32_t high =
-                    cetta_lp_native_utf8_scalar_view_scalar_at(
-                        view, cursor + 1u);
-                uint32_t low =
-                    cetta_lp_native_utf8_scalar_view_scalar_at(
-                        view, cursor + 2u);
-                uint32_t value =
-                    (high <= (uint32_t)'9' ? high - (uint32_t)'0'
-                                           : high - (uint32_t)'a' + 10u) *
-                        16u +
-                    (low <= (uint32_t)'9' ? low - (uint32_t)'0'
-                                          : low - (uint32_t)'a' + 10u);
-                if ((value <= 31u && value != 9u && value != 10u) ||
-                    value == 127u) {
-                    cursor += 3u;
-                    continue;
-                }
-            }
-            return false;
         }
-        if (scalar < 32u || scalar == 127u)
-            return false;
         cursor++;
     }
     return false;
@@ -917,10 +880,7 @@ static bool op_lang_symbol_components(
                error_buf, error_buf_size);
 }
 
-static uint8_t op_lang_hex_value(uint8_t byte) {
-    return byte <= (uint8_t)'9' ? (uint8_t)(byte - (uint8_t)'0')
-                               : (uint8_t)(byte - (uint8_t)'a' + 10u);
-}
+
 
 static CettaOpLangV1SExpr *op_lang_project_word(
     const CettaLpNativeUtf8ForestNode *terminal,
@@ -991,33 +951,13 @@ static CettaOpLangV1SExpr *op_lang_project_string(
     cursor = (size_t)terminal->byte_left + 1u;
     end = (size_t)terminal->byte_right - 1u;
     while (cursor < end) {
-        uint8_t byte = bytes[cursor++];
-        if (byte != (uint8_t)'\\') {
-            decoded[decoded_len++] = byte;
-            continue;
-        }
-        if (cursor >= end) {
-            free(decoded);
-            op_lang_sexpr_free(node);
-            return NULL;
-        }
-        byte = bytes[cursor++];
-        if (byte == (uint8_t)'"' || byte == (uint8_t)'\\') {
-            decoded[decoded_len++] = byte;
-        } else if (byte == (uint8_t)'n') {
-            decoded[decoded_len++] = (uint8_t)'\n';
-        } else if (byte == (uint8_t)'t') {
-            decoded[decoded_len++] = (uint8_t)'\t';
-        } else if (byte == (uint8_t)'x' && cursor + 1u < end) {
-            decoded[decoded_len++] = (uint8_t)(
-                op_lang_hex_value(bytes[cursor]) * 16u +
-                op_lang_hex_value(bytes[cursor + 1u]));
-            cursor += 2u;
-        } else {
-            free(decoded);
-            op_lang_sexpr_free(node);
-            return NULL;
-        }
+        uint8_t unit[4];
+        size_t written;
+        size_t consumed = cetta_string_literal_decode_unit(
+            bytes + cursor, end - cursor, unit, &written);
+        memcpy(decoded + decoded_len, unit, written);
+        decoded_len += (uint32_t)written;
+        cursor += consumed;
     }
     node->as.string.bytes = decoded;
     node->as.string.len = decoded_len;

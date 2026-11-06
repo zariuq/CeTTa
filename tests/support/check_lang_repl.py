@@ -10,12 +10,17 @@ import subprocess
 import termios
 import time
 
+def interactive_signals():
+    # A background runner can inherit SIGINT ignored. This child models an
+    # interactive terminal, where Ctrl+C must reach the REPL's own handler.
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+
 
 def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('binary',type=Path);p.add_argument('work',type=Path);p.add_argument('--timeout',type=float,default=30)
     a=p.parse_args();a.work.mkdir(parents=True,exist_ok=False)
     master,slave=pty.openpty();settings=termios.tcgetattr(slave);settings[3]&=~termios.ECHO;termios.tcsetattr(slave,termios.TCSANOW,settings)
-    proc=subprocess.Popen([str(a.binary.resolve(strict=True)),'--repl'],stdin=slave,stdout=slave,stderr=subprocess.PIPE,start_new_session=True)
+    proc=subprocess.Popen([str(a.binary.resolve(strict=True)),'--repl'],stdin=slave,stdout=slave,stderr=subprocess.PIPE,start_new_session=True,preexec_fn=interactive_signals)
     os.close(slave);history=bytearray()
     def until(marker):
         chunk=bytearray();deadline=time.monotonic()+a.timeout
@@ -43,6 +48,7 @@ def main():
         (a.work/'transcript').write_bytes(history);(a.work/'stderr').write_bytes(error)
     finally:
         if proc.poll() is None:proc.terminate();proc.wait(timeout=a.timeout)
+        (a.work/'transcript').write_bytes(history)
         proc.stderr.close();os.close(master)
     print('(LangReplV1Summary definitions multiline cancel literal-command-text passed)')
 
