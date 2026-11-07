@@ -23,6 +23,7 @@ from test_petta_parser_authority_v1 import EXPECTED_REVISION
 from test_petta_parser_authority_v1 import file_digest
 from test_petta_parser_authority_v1 import revision
 from test_petta_parser_authority_v1 import run_case as run_form_authority
+from gslt2parse_oracles_v1 import ORACLES
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -183,14 +184,9 @@ def run_splitter_authority(
 
 
 def run_reference(
-    petta_root: Path, input_path: Path, max_depth: int = 4096
+    input_path: Path, max_depth: int = 4096
 ) -> dict[str, object]:
-    script = (
-        petta_root
-        / "experiments"
-        / "gslt2parse_foundation"
-        / "petta_document_splitter_gslt_reference_v1.pl"
-    )
+    script = ORACLES / "petta_document_splitter_gslt_reference_v1.pl"
     completed = subprocess.run(
         [
             "swipl",
@@ -455,7 +451,7 @@ def main() -> int:
     )
     pin_sources(petta_root, authority_oracle)
 
-    abi = export_stream(petta_root, ABI_CASES["petta-splitter"])
+    abi = export_stream(ABI_CASES["petta-splitter"])
     require_abi_seals(abi)
     records: list[dict[str, object]] = []
     accepted = 0
@@ -495,7 +491,7 @@ def main() -> int:
                 decision = "accepted"
                 accepted += 1
 
-            reference = run_reference(petta_root, input_path)
+            reference = run_reference(input_path)
             if (
                 reference.get("decode") != "valid-utf8"
                 or reference.get("outcome") != "completed"
@@ -593,7 +589,7 @@ def main() -> int:
 
         invalid = directory / "invalid-utf8.input"
         invalid.write_bytes(b"(\xff)")
-        invalid_reference = run_reference(petta_root, invalid)
+        invalid_reference = run_reference(invalid)
         if (
             invalid_reference.get("decode") != "invalid-utf8"
             or invalid_reference.get("decision") != "rejected"

@@ -1,0 +1,3 @@
+true
+(__cetta_lib_asp_ground "a :- not b.")
+(__cetta_lib_asp_clingo_models ((rule a () ())))

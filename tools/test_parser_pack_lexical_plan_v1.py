@@ -204,11 +204,10 @@ def main() -> int:
     if not petta_root.is_dir():
         raise GateFailure("PeTTa foundation checkout is absent")
 
-    abi = export_stream(petta_root, ABI_CASES["petta-splitter"])
+    abi = export_stream(ABI_CASES["petta-splitter"])
     compiler_digest = sha256(REGULAR_COMPILER.read_bytes()).hexdigest()
     lexical_terms, tags, compiler_agreements = compile_case_tags(
         chart_binary,
-        petta_root,
         dict(LEXICAL_CASE),
         abi_scalar(abi, "source-digest"),
     )

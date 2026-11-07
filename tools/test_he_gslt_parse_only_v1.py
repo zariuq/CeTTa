@@ -29,7 +29,7 @@ from test_he_reader_guarded_lexical_v1 import guard_action_compiler_digest
 from test_he_reader_guarded_lexical_v1 import PROFILE
 from test_he_reader_guarded_lexical_v1 import native_guard_action_answers
 from test_he_reader_guarded_lexical_v1 import native_guarded_answers
-from test_he_reader_guarded_lexical_v1 import petta_guarded_answers
+from test_he_reader_guarded_lexical_v1 import oracle_guarded_answers
 from test_parser_pack_abi_v1 import CASES as ABI_CASES
 from test_parser_pack_abi_v1 import export_stream
 from test_parser_pack_guard_plan_prime_v1 import REGULAR_COMPILER
@@ -242,11 +242,10 @@ def main() -> int:
     pin_authorities(he_root, petta_root)
     he_binary = build_he_helper(he_root)
 
-    abi = export_stream(petta_root, ABI_CASES["he"])
+    abi = export_stream(ABI_CASES["he"])
     source_digest = abi_scalar(abi, "source-digest")
     lexical_terms, _, lexical_agreements = compile_case_tags(
         chart_binary,
-        petta_root,
         dict(PROFILE.lexical_case),
         source_digest,
     )
@@ -255,7 +254,7 @@ def main() -> int:
         str(term) for term in guard_nfa_row(chart_binary, "he")["terms"]
     )
     guarded_terms = native_guarded_answers(chart_binary)
-    petta_source, petta_guarded = petta_guarded_answers(petta_root)
+    petta_source, petta_guarded = oracle_guarded_answers()
     if petta_source != source_digest or petta_guarded != guarded_terms:
         raise GateFailure("prepared HE parse-only compiler artifacts differ")
     regular_digest = sha256(REGULAR_COMPILER.read_bytes()).hexdigest()

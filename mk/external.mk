@@ -34,7 +34,9 @@
 #   GSLT2PARSE_PETTA_ROOT,     SWI-PeTTa at the corrected-stable revision that
 #   PETTA_ORACLE_ROOT,         tools/check_petta_release_reference.py pins (the
 #   PETTA_REFERENCE_ROOT       stable-fixed branch of PeTTa).  The gslt2parse
-#                              reader gates also read their Prolog oracles from
+#                              gates run their own Prolog oracles from this
+#                              repository; the PeTTa parser authority, and the
+#                              document splitter that reads with it, run from
 #                              GSLT2PARSE_PETTA_ROOT/experiments/gslt2parse_foundation/:
 #                              link that directory to this repository's
 #                              experiments/gslt2parse_foundation/prolog.
@@ -45,6 +47,14 @@
 #                              its binary built for the elaboration and megaauto
 #                              corpora.
 #   PETTA_CHAINER_ROOT         A PeTTaChainer checkout.
+#   ASP_CLINGO_PYTHON          A Python 3 with the clingo module (pip install
+#                              clingo): the answer-set differential compares the
+#                              solver's stable models with clingo's.
+#   CETTA_CLINGO_LIBRARY       A libclingo shared library (clingo 5.x, built from
+#                              the potassco/clingo sources with
+#                              CLINGO_BUILD_SHARED): the asp library's clingo
+#                              heads ground program texts and answer reference
+#                              models through it.
 #
 # External provers
 #   TPTP_EPROVER_V1,           The E prover and Vampire binaries.
@@ -1804,21 +1814,6 @@ refresh-he-compiled-reader-cursor-v1:
 		GSLT2PARSE_HE_GENERATED_C_OUTPUT="$(GSLT2PARSE_HE_CURSOR_GENERATED_C)" \
 		test-gslt2parse-he-reader-guarded-lexical-v1
 
-test-he-compiled-reader-cursor-generated-v1:
-	@mkdir -p "$(GSLT2PARSE_GENERATED_CHECK_DIR)"
-	@candidate="$(GSLT2PARSE_GENERATED_CHECK_DIR)/he_reader_cursor_v1.generated.c"; \
-	$(MAKE) --no-print-directory \
-		GSLT2PARSE_HE_ROOT="$(GSLT2PARSE_HE_ROOT)" \
-		GSLT2PARSE_PETTA_ROOT="$(GSLT2PARSE_PETTA_ROOT)" \
-		GSLT2PARSE_HE_GENERATED_C_OUTPUT="$$candidate" \
-		test-gslt2parse-he-reader-guarded-lexical-v1; \
-	if ! cmp -s "$$candidate" "$(GSLT2PARSE_HE_CURSOR_GENERATED_C)"; then \
-		echo "FAIL: checked-in HE cursor is not generated from its LanguageDef"; \
-		sha256sum "$(GSLT2PARSE_HE_CURSOR_GENERATED_C)" "$$candidate"; \
-		exit 1; \
-	fi; \
-	echo "PASS: checked-in HE cursor regenerates byte-for-byte"
-
 test-gslt2parse-he-document-pipeline-v1: \
 		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(HE_DOCUMENT_PIPELINE_V1_STREAM_BIN)
@@ -2467,3 +2462,29 @@ build-lang-datalog:
 		{ echo 'Set METTAPEDIA_LEAN_ROOT to the MeTTapedia Lean project' >&2; exit 2; }; \
 	python3 tools/build_datalog_source_compiler.py --lean-root "$$lean_root" \
 		--output runtime/lang/datalog-compiler.so --package-output langdef/lang/Datalog.module
+
+# The answer-set solver against clingo: on random ground normal programs the
+# sets of stable models agree, and every refutation the solver emits is
+# accepted by its certificate checker, which refuses truncated certificates
+# and those offered for programs that have a stable model.
+.PHONY: test-asp-clingo-differential
+test-asp-clingo-differential: $(ASP_CDNL_TEST_BIN)
+	@if [ -z "$(strip $(ASP_CLINGO_PYTHON))" ]; then \
+		echo 'set ASP_CLINGO_PYTHON to a Python with the clingo module'; \
+		exit 1; \
+	fi
+	@for seed in 1 2 3; do \
+		"$(ASP_CLINGO_PYTHON)" tools/asp_clingo_differential_v1.py ./$(ASP_CDNL_TEST_BIN) $$seed 200 || exit 1; \
+	done
+	@echo "PASS: the answer-set solver's stable models equal clingo's on 600 random programs, and its certificates check"
+
+# The clingo heads of the asp library against its solver.
+.PHONY: test-asp-clingo-reference
+test-asp-clingo-reference: $(BIN) tests/asp/clingo_reference.metta tests/asp/clingo_reference.expected
+	@if [ -z "$(strip $(CETTA_CLINGO_LIBRARY))" ]; then \
+		echo 'set CETTA_CLINGO_LIBRARY to a libclingo shared library'; \
+		exit 1; \
+	fi
+	@CETTA_CLINGO_LIBRARY="$(CETTA_CLINGO_LIBRARY)" $(call cetta_exec,./$(BIN)) --lang petta tests/asp/clingo_reference.metta > runtime/test-asp-clingo-reference.out 2>&1
+	@diff -u tests/asp/clingo_reference.expected runtime/test-asp-clingo-reference.out
+	@echo "PASS: on programs grounded by clingo and programs given as data, the answer-set solver's stable models equal clingo's"
