@@ -27,6 +27,9 @@
 #                                  Mettapedia.GSLT.LanguageDef.InferenceMeTTaRender \
 #                                  Mettapedia.GSLT.LanguageDef.InferencePresentationWire \
 #                                  Mettapedia.GSLT.LanguageDef.InferenceABTWireRefinement
+#   METTAPEDIA_ROOT            The MeTTapedia checkout itself, for gates that read
+#                              its sources or run its generators, such as
+#                              check-lang-package-regeneration.
 #   METAMATH_MMLEAN4_ROOT_V1,  mm-lean4, the Lean-verified Metamath checker, and
 #   METAMATH_MMLEAN4_BIN_V1    its built binary.
 #
@@ -52,9 +55,12 @@
 #                              solver's stable models with clingo's.
 #   CETTA_CLINGO_LIBRARY       A libclingo shared library (clingo 5.x, built from
 #                              the potassco/clingo sources with
-#                              CLINGO_BUILD_SHARED): the asp library's clingo
-#                              heads ground program texts and answer reference
-#                              models through it.
+#                              CLINGO_BUILD_SHARED): the clingo library grounds
+#                              program texts and answers reference models
+#                              through it.
+#   swipl                      SWI-Prolog with library(chr) on PATH, for
+#                              test-lang-chr-reference.
+#   SOUFFLE                    A Souffle executable, for test-lang-datalog-reference.
 #
 # External provers
 #   TPTP_EPROVER_V1,           The E prover and Vampire binaries.
@@ -2455,13 +2461,70 @@ test-execution-theory:
 	@python3 tests/support/check_execution_lean_models.py --mettapedia "$(METTAPEDIA_ROOT)" \
 		--receipt "$(EXECUTION_MODEL_RECEIPT)"
 
-build-lang-datalog:
+# Every provider shares one Lean runtime: Lean modules may initialize only
+# once per process, so the providers are built together.
+.PHONY: build-lang-compilers
+build-lang-compilers:
 	@set -eu; lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
 	if test -z "$$lean_root"; then lean_root="$(abspath ../../Mettapedia/lean/mettapedia)"; fi; \
 	test -f "$$lean_root/lakefile.lean" || \
 		{ echo 'Set METTAPEDIA_LEAN_ROOT to the MeTTapedia Lean project' >&2; exit 2; }; \
-	python3 tools/build_datalog_source_compiler.py --lean-root "$$lean_root" \
-		--output runtime/lang/datalog-compiler.so --package-output langdef/lang/Datalog.module
+	python3 tools/build_lean_source_compilers.py --lean-root "$$lean_root" --output-dir runtime/lang
+
+build-lang-datalog: build-lang-compilers
+
+.PHONY: test-lang-provider-coexistence
+test-lang-provider-coexistence: $(BIN)
+	@set -eu; lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
+	if test -z "$$lean_root"; then lean_root="$(abspath ../../Mettapedia/lean/mettapedia)"; fi; \
+	work="$$(mktemp -d runtime/lang-provider-coexistence.XXXXXX)"; \
+	python3 tests/support/check_lang_provider_coexistence.py ./$(BIN) "$$work/checks" --lean-root "$$lean_root"
+
+# Regenerate the language package files listed in langdef/lang/manifest.json
+# from a Mettapedia checkout and compare them with the shipped copies.
+.PHONY: check-lang-package-regeneration
+check-lang-package-regeneration:
+	@test -n "$(METTAPEDIA_ROOT)" || { echo 'Set METTAPEDIA_ROOT to the Mettapedia checkout' >&2; exit 2; }
+	@python3 tools/lang_package_manifest.py check --regenerate --mettapedia "$(METTAPEDIA_ROOT)"
+
+# SWI-Prolog library(chr) is the reference here only; lang calls run no
+# reference engine.
+.PHONY: test-lang-chr-reference
+test-lang-chr-reference: $(BIN)
+	@set -eu; command -v swipl >/dev/null || { echo 'test-lang-chr-reference needs swipl' >&2; exit 2; }; \
+	work="$$(mktemp -d runtime/lang-chr-reference.XXXXXX)"; \
+	python3 tests/support/check_lang_chr_reference.py ./$(BIN) "$$work/standard" \
+		--sources tests/lang/chr/standard --reference tests/support/chr_source_reference.pl; \
+	python3 tests/support/check_lang_chr_reference.py ./$(BIN) "$$work/controls" \
+		--sources tests/lang/chr --reference tests/support/chr_source_reference.pl; \
+	python3 tests/support/gen_chr_c0_programs.py "$$work/generated-sources" --count 60 --seed 1; \
+	python3 tests/support/check_lang_chr_reference.py ./$(BIN) "$$work/generated" \
+		--sources "$$work/generated-sources" --reference tests/support/chr_source_reference.pl
+
+# The lang library's checks through the Datalog package: its public surface,
+# its boundaries and source verification.  They need the Datalog compiler
+# built from Lean (make build-lang-datalog), and join test-lang-library when
+# that compiler runs as MeTTa, as the CHR compiler does.
+.PHONY: test-lang-library-datalog
+test-lang-library-datalog: $(BIN)
+	@test -f runtime/lang/datalog-compiler.so || \
+		{ echo 'Run make build-lang-datalog first' >&2; exit 2; }
+	@set -eu; work="$$(mktemp -d runtime/lang-tests.XXXXXX)"; export CETTA_CACHE_DIR="$$work/cache"; \
+	python3 tests/support/check_lang_library.py ./$(BIN) "$$work/public"; \
+	python3 tests/support/check_lang_boundaries.py ./$(BIN) "$$work/boundaries"; \
+	python3 tests/support/check_lang_source_verification.py ./$(BIN) "$$work/source-verification"; \
+	rm -rf "$$work/cache"
+
+# Soufflé is the reference here only; lang calls run no reference engine.
+SOUFFLE ?= souffle
+.PHONY: test-lang-datalog-reference
+test-lang-datalog-reference: $(BIN)
+	@test -f runtime/lang/datalog-compiler.so || \
+		{ echo 'Run make build-lang-datalog first' >&2; exit 2; }
+	@set -eu; command -v "$(SOUFFLE)" >/dev/null || { echo 'Set SOUFFLE to a souffle executable' >&2; exit 2; }; \
+	work="$$(mktemp -d runtime/lang-datalog-reference.XXXXXX)"; \
+	python3 tests/support/check_lang_datalog_reference.py ./$(BIN) "$$(command -v "$(SOUFFLE)")" \
+		tests/lang/datalog/souffle "$$work/souffle" --standard-corpus tests/lang/datalog/standard
 
 # The answer-set solver against clingo: on random ground normal programs the
 # sets of stable models agree, and every refutation the solver emits is
@@ -2471,7 +2534,7 @@ build-lang-datalog:
 test-asp-clingo-differential: $(ASP_CDNL_TEST_BIN)
 	@if [ -z "$(strip $(ASP_CLINGO_PYTHON))" ]; then \
 		echo 'set ASP_CLINGO_PYTHON to a Python with the clingo module'; \
-		exit 1; \
+		exit 2; \
 	fi
 	@for seed in 1 2 3; do \
 		"$(ASP_CLINGO_PYTHON)" tools/asp_clingo_differential_v1.py ./$(ASP_CDNL_TEST_BIN) $$seed 200 || exit 1; \
@@ -2480,11 +2543,119 @@ test-asp-clingo-differential: $(ASP_CDNL_TEST_BIN)
 
 # The clingo heads of the asp library against its solver.
 .PHONY: test-asp-clingo-reference
-test-asp-clingo-reference: $(BIN) tests/asp/clingo_reference.metta tests/asp/clingo_reference.expected
+test-asp-clingo-reference: $(BIN) tests/asp/clingo_reference.metta tests/asp/clingo_reference.expected \
+		tests/asp/clingo_as_asp.metta tests/asp/clingo_as_asp.expected
 	@if [ -z "$(strip $(CETTA_CLINGO_LIBRARY))" ]; then \
 		echo 'set CETTA_CLINGO_LIBRARY to a libclingo shared library'; \
-		exit 1; \
+		exit 2; \
 	fi
 	@CETTA_CLINGO_LIBRARY="$(CETTA_CLINGO_LIBRARY)" $(call cetta_exec,./$(BIN)) --lang petta tests/asp/clingo_reference.metta > runtime/test-asp-clingo-reference.out 2>&1
 	@diff -u tests/asp/clingo_reference.expected runtime/test-asp-clingo-reference.out
-	@echo "PASS: on programs grounded by clingo and programs given as data, the answer-set solver's stable models equal clingo's"
+	@CETTA_CLINGO_LIBRARY="$(CETTA_CLINGO_LIBRARY)" $(call cetta_exec,./$(BIN)) --lang petta tests/asp/clingo_as_asp.metta > runtime/test-clingo-as-asp.out 2>&1
+	@diff -u tests/asp/clingo_as_asp.expected runtime/test-clingo-as-asp.out
+	@echo "PASS: on programs grounded by clingo and programs given as data, the answer-set solver's stable models equal clingo's; imported as asp, the clingo library answers in the asp library's shapes"
+
+# ---------- Megalodon: corpora and benchmark against a Megalodon checkout ----------
+#
+# MEGALODON_ROOT names a Megalodon checkout with its examples and binary
+# (see its entry above).  The shipped Megalodon targets, test-megalodon and
+# its parts, use only fixtures checked in here.
+MEGALODON_ROOT ?=
+MEGALODON_ORACLE_DIR ?= $(MEGALODON_TEST_DIR)/oracle
+MEGALODON_BIN ?= $(MEGALODON_ROOT)/bin/megalodon
+MEGALODON_REFERENCE_DIR ?= $(MEGALODON_TEST_DIR)/sexprinfo-ref/examples
+
+# The source reader against oracles built from Megalodon's sources, on every
+# example, each read after its signature (source_reader_includes.tsv).
+.PHONY: test-megalodon-source-corpus
+test-megalodon-source-corpus: $(MG_SOURCE_DUMP)
+	@if [[ -z "$(strip $(MEGALODON_ROOT))" ]]; then \
+		echo 'set MEGALODON_ROOT to a Megalodon checkout with its examples'; exit 2; \
+	fi
+	@bash tools/build_megalodon_reference_oracle.sh "$(MEGALODON_ROOT)" $(MEGALODON_ORACLE_DIR)
+	@python3 tests/megalodon/compare_source_reader.py --dump $(MG_SOURCE_DUMP) \
+		--parse-oracle $(MEGALODON_ORACLE_DIR)/megalodon-reference-parse-oracle \
+		--includes tests/megalodon/source_reader_includes.tsv "$(MEGALODON_ROOT)/examples"
+
+# The presentations' own readings on every example, tokens and items, against
+# the oracles: the compiled reader (native), and with
+# MEGALODON_GSLT_CORPUS_ENGINES='native cetta' also CeTTa's PeTTa lane
+# running the same presentations, which takes much longer.
+MEGALODON_GSLT_CORPUS_ENGINES ?= native
+.PHONY: test-megalodon-gslt-corpus
+test-megalodon-gslt-corpus: $(MG_GSLT_NATIVE) $(BIN) $(MEGALODON_GSLT_PROGRAM)
+	@if [[ -z "$(strip $(MEGALODON_ROOT))" ]]; then \
+		echo 'set MEGALODON_ROOT to a Megalodon checkout with its examples'; exit 2; \
+	fi
+	@bash tools/build_megalodon_reference_oracle.sh "$(MEGALODON_ROOT)" $(MEGALODON_ORACLE_DIR)
+	@for engine in $(MEGALODON_GSLT_CORPUS_ENGINES); do \
+		for mode in tokens items; do \
+			out=$$(python3 tests/megalodon/compare_gslt_reader.py --engine $$engine --native $(MG_GSLT_NATIVE) \
+				--cetta "$(abspath $(BIN))" --program $(MEGALODON_GSLT_PROGRAM) --mode $$mode \
+				--token-oracle $(MEGALODON_ORACLE_DIR)/megalodon-reference-token-oracle \
+				--parse-oracle $(MEGALODON_ORACLE_DIR)/megalodon-reference-parse-oracle \
+				--includes tests/megalodon/source_reader_includes.tsv --root "$(MEGALODON_ROOT)/examples" \
+				--work $(MEGALODON_TEST_DIR)/gslt-corpus-$$engine-$$mode \
+				$$(find "$(MEGALODON_ROOT)/examples" \( -name '*.mg' -o -name '*.mgs' \) -type f | sort)) \
+				|| { printf '%s\n' "$$out"; exit 1; }; \
+			printf '%s %s: %s\n' "$$engine" "$$mode" "$$(printf '%s\n' "$$out" | tail -1)"; \
+		done; \
+	done
+
+# The kernel against the Megalodon binary on every example (as
+# tests/megalodon/corpus_checks.tsv checks it): every row compared, proofs
+# included; each declaration and proof is also admitted by the native kernel
+# (-kernel), which must accept them all.
+.PHONY: test-megalodon-elab-corpus
+test-megalodon-elab-corpus: $(MG_SEXPRINFO)
+	@if [[ -z "$(strip $(MEGALODON_ROOT))" ]]; then \
+		echo 'set MEGALODON_ROOT to a Megalodon checkout with its examples and binary'; exit 2; \
+	fi
+	@python3 tools/megalodon_upstream_tables.py "$(MEGALODON_ROOT)/src" \
+		native/megalodon/mg_upstream_tables.inc --check
+	@python3 tests/megalodon/compare_elab_rows.py reference --megalodon "$(MEGALODON_BIN)" \
+		--root "$(MEGALODON_ROOT)/examples" --reference $(MEGALODON_REFERENCE_DIR) > /dev/null
+	@python3 tests/megalodon/compare_elab_rows.py compare --tool $(MG_SEXPRINFO) --kernel \
+		--root "$(MEGALODON_ROOT)/examples" --reference $(MEGALODON_REFERENCE_DIR) \
+		--work $(MEGALODON_TEST_DIR)/elab-corpus
+
+# Megaauto's salt searches against the Megalodon binary
+# (tests/megalodon/compare_type_megaauto.py): searches from random salts, and
+# random salts used as they are, failures included.  They run over the typed
+# megaauto fixture's own signature, and over the August 2022 Egal preamble,
+# whose set functions are definitions that head normalization unfolds.
+MEGAAUTO_SEARCH_ROUNDS ?= 100
+.PHONY: test-megalodon-megaauto-corpus
+test-megalodon-megaauto-corpus: $(MG_SEXPRINFO)
+	@if [[ -z "$(strip $(MEGALODON_ROOT))" ]]; then \
+		echo 'set MEGALODON_ROOT to a Megalodon checkout with its examples and binary'; exit 2; \
+	fi
+	@for flag in '' --fixed; do \
+		python3 tests/megalodon/compare_type_megaauto.py --megalodon "$(MEGALODON_BIN)" \
+			--tool $(MG_SEXPRINFO) --template tests/megalodon/elab/tac_type_megaauto_ok.mg \
+			--rounds $(MEGAAUTO_SEARCH_ROUNDS) $$flag \
+			--work $(MEGALODON_TEST_DIR)/megaauto-searches/fixture || exit 1; \
+		python3 tests/megalodon/compare_type_megaauto.py --megalodon "$(MEGALODON_BIN)" \
+			--tool $(MG_SEXPRINFO) --template tests/megalodon/type_megaauto_goals.mg \
+			-I "$(MEGALODON_ROOT)/examples/egal/PfgEAug2022Preamble.mgs" \
+			--rounds $(MEGAAUTO_SEARCH_ROUNDS) $$flag \
+			--work $(MEGALODON_TEST_DIR)/megaauto-searches/preamble || exit 1; \
+	done
+
+# The benchmark (tests/megalodon/bench_elab.py): a Megalodon binary
+# (MEGALODON_BENCH_BIN, by default the checkout's) against the native tools on
+# every example document, one process at a time.  Checking: megalodon
+# against mg-check, whose kernel also rechecks every proof.  Rows: megalodon
+# -sexprinfo against mg-sexprinfo.  Then native aby on Megalodon's hammer
+# example: the aby steps proved by search, each proof kernel-checked.
+MEGALODON_BENCH_BIN ?= $(MEGALODON_BIN)
+.PHONY: bench-megalodon
+bench-megalodon: $(MG_CHECK) $(MG_SEXPRINFO)
+	@if [[ -z "$(strip $(MEGALODON_ROOT))" ]]; then \
+		echo 'set MEGALODON_ROOT to a Megalodon checkout with its examples and binary'; exit 2; \
+	fi
+	@python3 tests/megalodon/bench_elab.py --mode verdict --megalodon "$(MEGALODON_BENCH_BIN)" \
+		--tool $(MG_CHECK) --root "$(MEGALODON_ROOT)/examples"
+	@python3 tests/megalodon/bench_elab.py --mode rows --kernel --megalodon "$(MEGALODON_BENCH_BIN)" \
+		--tool $(MG_SEXPRINFO) --root "$(MEGALODON_ROOT)/examples"
+	@python3 tests/megalodon/bench_elab.py --mode aby --tool $(MG_CHECK) --root "$(MEGALODON_ROOT)/examples"

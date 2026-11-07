@@ -85,68 +85,25 @@ test-seal: $(BIN)
 # parse trees (native/megalodon/mg_gslt_reader.c).  The fixtures carry
 # Megalodon's own readings (tests/megalodon/source_reader: FILE.items, and
 # FILE.err, the refusal, empty when Megalodon reads the file to the end).
-# With MEGALODON_ROOT, a Megalodon checkout, the corpus target builds oracles
-# from Megalodon's sources and compares the reader with them on every
-# example, each read after its signature (source_reader_includes.tsv).
+# The corpus targets, which need a Megalodon checkout, are in mk/external.mk.
 MG_SOURCE_DUMP = $(MEGALODON_TEST_DIR)/mg-source-dump
-MEGALODON_ROOT ?=
-MEGALODON_ORACLE_DIR ?= $(MEGALODON_TEST_DIR)/oracle
 
 $(MG_SOURCE_DUMP): tests/megalodon/mg_source_dump.c $(MEGALODON_GSLT_READER_SRC) \
 		native/megalodon/mg_source.h native/megalodon/mg_gslt_reader.h | $(MEGALODON_TEST_DIR)
 	$(CC) $(MEGALODON_TEST_CFLAGS) -I. -Inative/megalodon $< $(MEGALODON_GSLT_READER_SRC) -o $@
 
-.PHONY: test-megalodon-source test-megalodon-source-corpus test-megalodon-gslt
+.PHONY: test-megalodon-source test-megalodon-gslt
 test-megalodon-source: $(MG_SOURCE_DUMP)
 	@bash tests/megalodon/run_source_reader_fixtures.sh $(MG_SOURCE_DUMP)
-
-test-megalodon-source-corpus: $(MG_SOURCE_DUMP)
-	@if [[ -z "$(strip $(MEGALODON_ROOT))" ]]; then \
-		echo 'set MEGALODON_ROOT to a Megalodon checkout with its examples'; exit 2; \
-	fi
-	@bash tools/build_megalodon_reference_oracle.sh "$(MEGALODON_ROOT)" $(MEGALODON_ORACLE_DIR)
-	@python3 tests/megalodon/compare_source_reader.py --dump $(MG_SOURCE_DUMP) \
-		--parse-oracle $(MEGALODON_ORACLE_DIR)/megalodon-reference-parse-oracle \
-		--includes tests/megalodon/source_reader_includes.tsv "$(MEGALODON_ROOT)/examples"
-
-# The presentations' own readings on every example, tokens and items, against
-# the oracles: the compiled reader (native), and with
-# MEGALODON_GSLT_CORPUS_ENGINES='native cetta' also CeTTa's PeTTa lane
-# running the same presentations, which takes much longer.
-MEGALODON_GSLT_CORPUS_ENGINES ?= native
-.PHONY: test-megalodon-gslt-corpus
-test-megalodon-gslt-corpus: $(MG_GSLT_NATIVE) $(BIN) $(MEGALODON_GSLT_PROGRAM)
-	@if [[ -z "$(strip $(MEGALODON_ROOT))" ]]; then \
-		echo 'set MEGALODON_ROOT to a Megalodon checkout with its examples'; exit 2; \
-	fi
-	@bash tools/build_megalodon_reference_oracle.sh "$(MEGALODON_ROOT)" $(MEGALODON_ORACLE_DIR)
-	@for engine in $(MEGALODON_GSLT_CORPUS_ENGINES); do \
-		for mode in tokens items; do \
-			out=$$(python3 tests/megalodon/compare_gslt_reader.py --engine $$engine --native $(MG_GSLT_NATIVE) \
-				--cetta "$(abspath $(BIN))" --program $(MEGALODON_GSLT_PROGRAM) --mode $$mode \
-				--token-oracle $(MEGALODON_ORACLE_DIR)/megalodon-reference-token-oracle \
-				--parse-oracle $(MEGALODON_ORACLE_DIR)/megalodon-reference-parse-oracle \
-				--includes tests/megalodon/source_reader_includes.tsv --root "$(MEGALODON_ROOT)/examples" \
-				--work $(MEGALODON_TEST_DIR)/gslt-corpus-$$engine-$$mode \
-				$$(find "$(MEGALODON_ROOT)/examples" \( -name '*.mg' -o -name '*.mgs' \) -type f | sort)) \
-				|| { printf '%s\n' "$$out"; exit 1; }; \
-			printf '%s %s: %s\n' "$$engine" "$$mode" "$$(printf '%s\n' "$$out" | tail -1)"; \
-		done; \
-	done
 
 # Document evaluation (native/megalodon/mg_elab.c, mg_proof.c): megalodon.ml's
 # items over interpret.ml's elaboration, with Megalodon's identities and
 # Proofgold ids, and its tactic engine with megaauto.  mg-sexprinfo prints
 # what `megalodon -sexprinfo` prints.  The fixtures
 # (tests/megalodon/elab) carry Megalodon's recorded output, failures
-# included.  With MEGALODON_ROOT, the corpus target runs the Megalodon binary
-# on every example (as tests/megalodon/corpus_checks.tsv checks it) and
-# compares every row, proofs included; each declaration and proof is also
-# admitted by the native kernel (-kernel), which must accept them all.
+# included.
 MG_SEXPRINFO = $(MEGALODON_TEST_DIR)/mg-sexprinfo
 MG_CHECK = $(MEGALODON_TEST_DIR)/mg-check
-MEGALODON_BIN ?= $(MEGALODON_ROOT)/bin/megalodon
-MEGALODON_REFERENCE_DIR ?= $(MEGALODON_TEST_DIR)/sexprinfo-ref/examples
 
 $(MG_SEXPRINFO): tests/megalodon/mg_sexprinfo.c $(MEGALODON_KERNEL_SRC) $(MEGALODON_HEADERS) \
 		native/megalodon/mg_upstream_tables.inc | $(MEGALODON_TEST_DIR)
@@ -158,7 +115,7 @@ $(MG_CHECK): tests/megalodon/mg_check.c $(MEGALODON_KERNEL_SRC) $(MEGALODON_HEAD
 		native/megalodon/mg_upstream_tables.inc | $(MEGALODON_TEST_DIR)
 	$(CC) $(MEGALODON_TEST_CFLAGS) -I. -Inative/megalodon $< $(MEGALODON_KERNEL_SRC) -o $@
 
-.PHONY: test-megalodon-elab test-megalodon-elab-corpus test-megalodon-verdict
+.PHONY: test-megalodon-elab test-megalodon-verdict
 test-megalodon-elab: $(MG_SEXPRINFO)
 	@bash tests/megalodon/run_elab_fixtures.sh $(MG_SEXPRINFO)
 
@@ -167,59 +124,6 @@ test-megalodon-elab: $(MG_SEXPRINFO)
 # verdict rules.
 test-megalodon-verdict: $(MG_CHECK)
 	@bash tests/megalodon/run_verdict_fixtures.sh $(MG_CHECK)
-
-test-megalodon-elab-corpus: $(MG_SEXPRINFO)
-	@if [[ -z "$(strip $(MEGALODON_ROOT))" ]]; then \
-		echo 'set MEGALODON_ROOT to a Megalodon checkout with its examples and binary'; exit 2; \
-	fi
-	@python3 tools/megalodon_upstream_tables.py "$(MEGALODON_ROOT)/src" \
-		native/megalodon/mg_upstream_tables.inc --check
-	@python3 tests/megalodon/compare_elab_rows.py reference --megalodon "$(MEGALODON_BIN)" \
-		--root "$(MEGALODON_ROOT)/examples" --reference $(MEGALODON_REFERENCE_DIR) > /dev/null
-	@python3 tests/megalodon/compare_elab_rows.py compare --tool $(MG_SEXPRINFO) --kernel \
-		--root "$(MEGALODON_ROOT)/examples" --reference $(MEGALODON_REFERENCE_DIR) \
-		--work $(MEGALODON_TEST_DIR)/elab-corpus
-
-# Megaauto's salt searches against the Megalodon binary
-# (tests/megalodon/compare_type_megaauto.py): searches from random salts, and
-# random salts used as they are, failures included.  They run over the typed
-# megaauto fixture's own signature, and over the August 2022 Egal preamble,
-# whose set functions are definitions that head normalization unfolds.
-MEGAAUTO_SEARCH_ROUNDS ?= 100
-.PHONY: test-megalodon-megaauto-corpus
-test-megalodon-megaauto-corpus: $(MG_SEXPRINFO)
-	@if [[ -z "$(strip $(MEGALODON_ROOT))" ]]; then \
-		echo 'set MEGALODON_ROOT to a Megalodon checkout with its examples and binary'; exit 2; \
-	fi
-	@for flag in '' --fixed; do \
-		python3 tests/megalodon/compare_type_megaauto.py --megalodon "$(MEGALODON_BIN)" \
-			--tool $(MG_SEXPRINFO) --template tests/megalodon/elab/tac_type_megaauto_ok.mg \
-			--rounds $(MEGAAUTO_SEARCH_ROUNDS) $$flag \
-			--work $(MEGALODON_TEST_DIR)/megaauto-searches/fixture || exit 1; \
-		python3 tests/megalodon/compare_type_megaauto.py --megalodon "$(MEGALODON_BIN)" \
-			--tool $(MG_SEXPRINFO) --template tests/megalodon/type_megaauto_goals.mg \
-			-I "$(MEGALODON_ROOT)/examples/egal/PfgEAug2022Preamble.mgs" \
-			--rounds $(MEGAAUTO_SEARCH_ROUNDS) $$flag \
-			--work $(MEGALODON_TEST_DIR)/megaauto-searches/preamble || exit 1; \
-	done
-
-# The benchmark (tests/megalodon/bench_elab.py): a Megalodon binary
-# (MEGALODON_BENCH_BIN, by default the checkout's) against the native tools on
-# every example document, one process at a time.  Checking: megalodon
-# against mg-check, whose kernel also rechecks every proof.  Rows: megalodon
-# -sexprinfo against mg-sexprinfo.  Then native aby on Megalodon's hammer
-# example: the aby steps proved by search, each proof kernel-checked.
-MEGALODON_BENCH_BIN ?= $(MEGALODON_BIN)
-.PHONY: bench-megalodon
-bench-megalodon: $(MG_CHECK) $(MG_SEXPRINFO)
-	@if [[ -z "$(strip $(MEGALODON_ROOT))" ]]; then \
-		echo 'set MEGALODON_ROOT to a Megalodon checkout with its examples and binary'; exit 2; \
-	fi
-	@python3 tests/megalodon/bench_elab.py --mode verdict --megalodon "$(MEGALODON_BENCH_BIN)" \
-		--tool $(MG_CHECK) --root "$(MEGALODON_ROOT)/examples"
-	@python3 tests/megalodon/bench_elab.py --mode rows --kernel --megalodon "$(MEGALODON_BENCH_BIN)" \
-		--tool $(MG_SEXPRINFO) --root "$(MEGALODON_ROOT)/examples"
-	@python3 tests/megalodon/bench_elab.py --mode aby --tool $(MG_CHECK) --root "$(MEGALODON_ROOT)/examples"
 
 # The same syntax as GSLT presentations (langdef/megalodon, generated by
 # tools/generate_megalodon_gslt_v1.py), compiled to one PeTTa program that

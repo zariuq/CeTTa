@@ -1,8 +1,13 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include "native/operational_language_def_v1.h"
 #include "lib_parse_native_grammar.h"
 
+#include <dirent.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 /* A normal source read must restore build-time decisions, not prepare the
  * fixed reader grammar. Link wrappers make a regression fail every parse. */
@@ -16,6 +21,21 @@ bool __wrap_cetta_lp_native_glr_prepare(CettaLpNativeGlrPrepared *out,
     const CettaLpNativeGrammar *grammar, SymbolId start, char *error, size_t size) {
     (void)out; (void)grammar; (void)start; (void)error; (void)size;
     ++preparation_calls; return false;
+}
+
+/* Counts document parses that actually run: a cache hit runs none. */
+static unsigned gll_parse_calls;
+bool __real_cetta_lp_native_gll_prepared_parse_utf8_lattice_forest_from_complete(
+    const CettaLpNativeGllPrepared *prepared, const CettaLpNativeUtf8Lattice *lattice,
+    uint32_t start_scalar, uint32_t descriptor_limit, CettaLpNativeUtf8Forest *out,
+    char *error_buf, size_t error_buf_size);
+bool __wrap_cetta_lp_native_gll_prepared_parse_utf8_lattice_forest_from_complete(
+    const CettaLpNativeGllPrepared *prepared, const CettaLpNativeUtf8Lattice *lattice,
+    uint32_t start_scalar, uint32_t descriptor_limit, CettaLpNativeUtf8Forest *out,
+    char *error_buf, size_t error_buf_size) {
+    ++gll_parse_calls;
+    return __real_cetta_lp_native_gll_prepared_parse_utf8_lattice_forest_from_complete(
+        prepared, lattice, start_scalar, descriptor_limit, out, error_buf, error_buf_size);
 }
 
 typedef struct {
@@ -245,10 +265,11 @@ static void malformed_and_resource_gates(TestCounts *counts) {
     error[0] = '\0';
     (void)expect(
         counts,
-        !parse_text(&language, control_source, 500000u, 1000000u,
-                    &status, error, sizeof(error)) &&
-            status == CETTA_OP_LANG_V1_SYNTAX_REJECTED,
-        "unclassified lexical scalar rejects through both parsers");
+        parse_text(&language, control_source, 500000u, 1000000u,
+                   &status, error, sizeof(error)) &&
+            bytes_equal(language.name_bytes, language.name_len,
+                        (const uint8_t *)"Bad\x01Name", 8u),
+        "literal control scalar is retained inside a string");
     error[0] = '\0';
     (void)expect(
         counts,
@@ -356,27 +377,21 @@ static void exact_physical_carrier_gate(TestCounts *counts) {
                    "1234567890123456789012345678901234567890") == 0,
         "symbols, byte strings, and unbounded naturals remain distinct");
 
-    error[0] = '\0';
-    (void)expect(
-        counts,
-        !parse_text(&language, bad_escape, 500000u, 1000000u,
-                    &status, error, sizeof(error)) &&
-            status == CETTA_OP_LANG_V1_SYNTAX_REJECTED,
-        "unknown string escape rejects");
-    error[0] = '\0';
-    (void)expect(
-        counts,
-        !parse_text(&language, bad_control_alias, 500000u, 1000000u,
-                    &status, error, sizeof(error)) &&
-            status == CETTA_OP_LANG_V1_SYNTAX_REJECTED,
-        "noncanonical control escape rejects");
-    error[0] = '\0';
-    (void)expect(
-        counts,
-        !parse_text(&language, bad_printable_hex, 500000u, 1000000u,
-                    &status, error, sizeof(error)) &&
-            status == CETTA_OP_LANG_V1_SYNTAX_REJECTED,
-        "noncanonical printable hex escape rejects");
+    const struct { const char *text; const char *value; } spellings[] = {
+        {bad_escape, "bad\\q"}, {bad_control_alias, "bad\r"},
+        {bad_printable_hex, "bad "},
+        {"(GSLTLanguageDefWireV1 \"\\u{3bb}\\u03bb\" LNil LNil LNil LNil)", "λλ"},
+        {"(GSLTLanguageDefWireV1 \"\\uD83D\\uDE00\" LNil LNil LNil LNil)", "😀"},
+        {"(GSLTLanguageDefWireV1 \"\\uD800\\x4\" LNil LNil LNil LNil)", "\\uD800\\x4"}
+    };
+    for (size_t i = 0; i < sizeof spellings / sizeof spellings[0]; ++i) {
+        error[0] = '\0';
+        bool ok = parse_text(&language, spellings[i].text, 500000u, 1000000u,
+                             &status, error, sizeof error);
+        (void)expect(counts, ok && language.name_len == strlen(spellings[i].value) &&
+            !memcmp(language.name_bytes, spellings[i].value, language.name_len),
+            "module input spelling has its exact literal value");
+    }
     error[0] = '\0';
     (void)expect(
         counts,
@@ -451,6 +466,152 @@ static void generic_document_gate(TestCounts *counts) {
     cetta_op_lang_v1_document_free(&document);
 }
 
+static unsigned cache_entries(const char *directory, char *first, size_t first_size) {
+    DIR *dir = opendir(directory);
+    struct dirent *entry;
+    unsigned count = 0u;
+
+    if (!dir)
+        return 0u;
+    while ((entry = readdir(dir)) != NULL) {
+        if (strncmp(entry->d_name, "op-lang-", 8u) != 0)
+            continue;
+        if (count == 0u && first)
+            snprintf(first, first_size, "%s/%s", directory, entry->d_name);
+        count++;
+    }
+    closedir(dir);
+    return count;
+}
+
+static bool receipts_equal(const CettaOpLangV1ParserReceipt *left,
+                           const CettaOpLangV1ParserReceipt *right) {
+    return left->node_len == right->node_len &&
+        left->choice_len == right->choice_len &&
+        left->work_item_len == right->work_item_len &&
+        left->graph_node_len == right->graph_node_len &&
+        left->stack_node_len == right->stack_node_len &&
+        left->source_pass_count == right->source_pass_count &&
+        left->decoded_byte_len == right->decoded_byte_len &&
+        left->source_decode_pass_count == right->source_decode_pass_count &&
+        left->lexical_projection_pass_count == right->lexical_projection_pass_count &&
+        left->derivation_fingerprint == right->derivation_fingerprint;
+}
+
+static bool documents_equal(const CettaOpLangV1Document *left,
+                            const CettaOpLangV1Document *right) {
+    return cetta_op_lang_v1_sexpr_equal(left->root, right->root) &&
+        receipts_equal(&left->gll, &right->gll) &&
+        receipts_equal(&left->glr, &right->glr) &&
+        memcmp(left->source_sha256, right->source_sha256, 65u) == 0 &&
+        memcmp(left->authority_sha256, right->authority_sha256, 65u) == 0;
+}
+
+/* A verified document is stored once and read back equal, spans and
+ * receipts included, without a parse. A damaged entry is ignored and
+ * replaced; other work limits keep their own entry; without
+ * CETTA_CACHE_DIR nothing is read or written. */
+static void document_cache_gate(TestCounts *counts) {
+    static const char source[] =
+        "(CacheProbeV1 \"text \\u{e9}\" 42 symbol "
+        "(Nested (LCons (ExactIntegerOperation exact-int:add) LNil)))";
+    const char *base = getenv("TMPDIR");
+    char directory[512];
+    char entry[1024] = {0};
+    CettaOpLangV1Document fresh, cached, repaired, other;
+    CettaOpLangV1Status status = CETTA_OP_LANG_V1_INTERNAL_FAILURE;
+    char error[512] = {0};
+    unsigned before;
+    bool parsed;
+
+    snprintf(directory, sizeof(directory), "%s/cetta-op-lang-cache-XXXXXX",
+             base && base[0] ? base : "/tmp");
+    if (!mkdtemp(directory)) {
+        (void)expect(counts, false, "document cache test directory");
+        return;
+    }
+    cetta_op_lang_v1_document_init(&fresh);
+    cetta_op_lang_v1_document_init(&cached);
+    cetta_op_lang_v1_document_init(&repaired);
+    cetta_op_lang_v1_document_init(&other);
+    setenv("CETTA_CACHE_DIR", directory, 1);
+
+    before = gll_parse_calls;
+    parsed = parse_document_text(&fresh, source, 500000u, 1000000u,
+                                 &status, error, sizeof(error));
+    (void)expect(counts, parsed && gll_parse_calls == before + 1u &&
+                     cache_entries(directory, entry, sizeof(entry)) == 1u,
+                 error[0] ? error : "a verified document is parsed once and stored");
+
+    before = gll_parse_calls;
+    parsed = parse_document_text(&cached, source, 500000u, 1000000u,
+                                 &status, error, sizeof(error));
+    (void)expect(counts, parsed && status == CETTA_OP_LANG_V1_OK &&
+                     gll_parse_calls == before && documents_equal(&fresh, &cached),
+                 "a stored document returns the same tree, spans and receipts without a parse");
+
+    {
+        FILE *file = fopen(entry, "r+b");
+        int byte;
+        if (file && fseek(file, 120L, SEEK_SET) == 0 && (byte = fgetc(file)) != EOF &&
+            fseek(file, 120L, SEEK_SET) == 0)
+            (void)fputc(byte ^ 0x5a, file);
+        if (file)
+            fclose(file);
+    }
+    before = gll_parse_calls;
+    parsed = parse_document_text(&repaired, source, 500000u, 1000000u,
+                                 &status, error, sizeof(error));
+    (void)expect(counts, parsed && gll_parse_calls == before + 1u &&
+                     documents_equal(&fresh, &repaired),
+                 "a damaged entry is ignored and the document parsed again");
+    cetta_op_lang_v1_document_free(&repaired);
+    cetta_op_lang_v1_document_init(&repaired);
+    before = gll_parse_calls;
+    parsed = parse_document_text(&repaired, source, 500000u, 1000000u,
+                                 &status, error, sizeof(error));
+    (void)expect(counts, parsed && gll_parse_calls == before &&
+                     documents_equal(&fresh, &repaired),
+                 "the damaged entry is replaced by a good one");
+
+    before = gll_parse_calls;
+    parsed = parse_document_text(&other, source, 500001u, 1000000u,
+                                 &status, error, sizeof(error));
+    (void)expect(counts, parsed && gll_parse_calls == before + 1u &&
+                     cache_entries(directory, NULL, 0u) == 2u,
+                 "other work limits read and store their own entry");
+
+    unsetenv("CETTA_CACHE_DIR");
+    cetta_op_lang_v1_document_free(&other);
+    cetta_op_lang_v1_document_init(&other);
+    before = gll_parse_calls;
+    parsed = parse_document_text(&other, source, 500002u, 1000000u,
+                                 &status, error, sizeof(error));
+    (void)expect(counts, parsed && gll_parse_calls == before + 1u &&
+                     cache_entries(directory, NULL, 0u) == 2u,
+                 "without CETTA_CACHE_DIR nothing is read or stored");
+
+    cetta_op_lang_v1_document_free(&fresh);
+    cetta_op_lang_v1_document_free(&cached);
+    cetta_op_lang_v1_document_free(&repaired);
+    cetta_op_lang_v1_document_free(&other);
+    {
+        DIR *dir = opendir(directory);
+        struct dirent *item;
+        char path[1024];
+        while (dir && (item = readdir(dir)) != NULL) {
+            if (strncmp(item->d_name, "op-lang-", 8u) != 0 &&
+                strncmp(item->d_name, ".op-lang-", 9u) != 0)
+                continue;
+            snprintf(path, sizeof(path), "%s/%s", directory, item->d_name);
+            (void)unlink(path);
+        }
+        if (dir)
+            closedir(dir);
+        (void)rmdir(directory);
+    }
+}
+
 int main(void) {
     TestCounts counts = {0};
 
@@ -460,6 +621,7 @@ int main(void) {
     unicode_and_disagreement_canary(&counts);
     exact_physical_carrier_gate(&counts);
     generic_document_gate(&counts);
+    document_cache_gate(&counts);
     (void)expect(&counts, preparation_calls == 0u,
         "fixed reader restores parser programs without grammar preparation");
     printf("operational LanguageDef native ingress: %u passed, %u failed\n",

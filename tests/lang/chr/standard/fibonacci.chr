@@ -1,0 +1,4 @@
+:- chr_constraint upto/1,fib/2.
+fib_duplicate @ fib(N,V) \ fib(N,V) <=> true.
+fib_next @ upto(Max), fib(N,A), fib(N1,B) ==> N1 =:= N+1, N1 < Max | N2 is N1+1, C is A+B, fib(N2,C).
+?- upto(6),fib(0,0),fib(1,1).

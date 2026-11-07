@@ -150,7 +150,7 @@ Atom *module_site_v1(ModuleWorkV1 *work, Atom *span, Atom *kind) {
 
 static Atom *category(ModuleWorkV1 *work, Atom *node);
 static Atom *path(ModuleWorkV1 *work, Atom *node) {
-    if (!module_spend_v1(work) || work->depth >= 512u) {
+    if (!module_spend_v1(work) || work->depth >= MODULE_STRUCTURAL_DEPTH_V1) {
         module_fail_v1(work, "incomplete", "Module path structural depth exhausted."); return NULL;
     }
     ++work->depth;
@@ -175,7 +175,7 @@ static Atom *path(ModuleWorkV1 *work, Atom *node) {
 }
 
 static Atom *category(ModuleWorkV1 *work, Atom *node) {
-    if (!module_spend_v1(work) || work->depth >= 512u) {
+    if (!module_spend_v1(work) || work->depth >= MODULE_STRUCTURAL_DEPTH_V1) {
         module_fail_v1(work, "incomplete", "Category structural depth exhausted."); return NULL;
     }
     ++work->depth;
@@ -208,7 +208,7 @@ static Atom *category(ModuleWorkV1 *work, Atom *node) {
 }
 
 Atom *module_category_name_v1(ModuleWorkV1 *work, Atom *type) {
-    if (!module_spend_v1(work) || work->depth >= 512u) {
+    if (!module_spend_v1(work) || work->depth >= MODULE_STRUCTURAL_DEPTH_V1) {
         module_fail_v1(work, "incomplete", "Category name depth exhausted."); return NULL;
     }
     if (module_form_v1(type, "TBase", 1u) && module_string_v1(type->expr.elems[1])) {
@@ -277,7 +277,7 @@ static Atom *label(ModuleWorkV1 *work, Atom *node) {
 }
 
 static Atom *item(ModuleWorkV1 *work, Atom *node) {
-    if (!module_spend_v1(work) || work->depth >= 512u) {
+    if (!module_spend_v1(work) || work->depth >= MODULE_STRUCTURAL_DEPTH_V1) {
         module_fail_v1(work, "incomplete", "Notation structural depth exhausted."); return NULL;
     }
     ++work->depth;
@@ -331,7 +331,7 @@ done:
 }
 
 static Atom *core_pattern(ModuleWorkV1 *w, Atom *node) {
-    if (!module_spend_v1(w) || w->depth >= 512u) return NULL;
+    if (!module_spend_v1(w) || w->depth >= MODULE_STRUCTURAL_DEPTH_V1) return NULL;
     Atom *args[2], *out = NULL;
     ++w->depth;
     if (ast_args(w, node, "CoreVariable", args, 1u)) {
@@ -424,7 +424,7 @@ static Atom *definition(ModuleWorkV1 *work, Atom *node) {
 }
 
 static Atom *pattern(ModuleWorkV1 *work, Atom *node) {
-    if (!module_spend_v1(work) || work->depth >= 512u) {
+    if (!module_spend_v1(work) || work->depth >= MODULE_STRUCTURAL_DEPTH_V1) {
         module_fail_v1(work, "incomplete", "Pattern structural depth exhausted."); return NULL;
     }
     ++work->depth;
@@ -556,7 +556,7 @@ done:
 }
 
 static Atom *builder(ModuleWorkV1 *work, Atom *node) {
-    if (!module_spend_v1(work) || work->depth >= 512u) {
+    if (!module_spend_v1(work) || work->depth >= MODULE_STRUCTURAL_DEPTH_V1) {
         module_fail_v1(work, "incomplete", "Theory builder structural depth exhausted."); return NULL;
     }
     ++work->depth;

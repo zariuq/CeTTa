@@ -4,14 +4,17 @@
 (gslt-presentation-v1 CeTTaPeTTaAtomProjectionV1
   (signature
     (operator sexpr-atom-profile 8)
+    (operator sexpr-string-body-codec 4)
     (operator sexpr-atom-rule 4)
     (operator sexpr-variable-rule 4)
-    (operator sexpr-wrapper-map 4)
-    (operator sexpr-codepoint-map 2)
-    (operator sexpr-projection-cons 2)
     (operator sexpr-document-rule 3))
   (equations)
   (rewrites
+    ; The grammar retains the body; this declared projection decodes complete
+    ; scalar/byte escapes and preserves unknown escape spellings.
+    (rule string-body-codec-cetta-petta
+      (head (sexpr-string-body-codec cetta-petta-v1 string escape metta-literal-v1))
+      (body))
     (rule sexpr-atom-profile-cetta-petta-v1
       (head
         (sexpr-atom-profile
@@ -40,19 +43,6 @@
       (head
         (sexpr-variable-rule
           cetta-petta-v1 variable raw underscore-fresh))
-      (body))
-
-    (rule sexpr-wrapper-map-cetta-petta-string-escape
-      (head
-        (sexpr-wrapper-map
-          cetta-petta-v1 escape identity
-          (sexpr-projection-cons
-            (sexpr-codepoint-map 110 10)
-            (sexpr-projection-cons
-              (sexpr-codepoint-map 116 9)
-              (sexpr-projection-cons
-                (sexpr-codepoint-map 114 13)
-                sexpr-projection-nil)))))
       (body))
 
     (rule sexpr-document-rule-cetta-petta-form

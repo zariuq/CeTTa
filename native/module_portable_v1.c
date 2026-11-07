@@ -93,7 +93,7 @@ static bool sequence(Atom *a, const char *head) {
 
 static bool visit(ModuleWorkV1 *w) {
     if (!module_spend_v1(w)) return false;
-    return w->depth < 512u || module_fail_v1(w, "incomplete", "Portable module structural depth exhausted.");
+    return w->depth < MODULE_STRUCTURAL_DEPTH_V1 || module_fail_v1(w, "incomplete", "Portable module structural depth exhausted.");
 }
 
 static Atom *named_symbol(ModuleWorkV1 *w, Atom *name) {
@@ -328,28 +328,23 @@ Atom *cetta_module_portable_v1_core(ModuleWorkV1 *w, Atom *module, Atom *name) {
 }
 
 static Atom *escape_string(ModuleWorkV1 *w, const uint8_t *s, size_t len) {
-    bool plain = true;
-    for (size_t i = 0; i < len; ++i)
-        if (s[i] < 32u || s[i] >= 127u || s[i] == '"' || s[i] == '\\') plain = false;
-    if (plain) return atom_string_n(w->arena, (const char *)s, len);
-    ModuleValuesV1 points = {0}; Atom *out = NULL;
+    /* Unicode strings have a direct spelling through the shared literal
+     * printer. Retain codepoint-list input support without forcing writers
+     * to expand every quote, control or non-ASCII character into data nodes. */
     for (size_t at = 0; at < len;) {
         uint32_t cp, width;
-        if (!module_spend_v1(w) || !cetta_utf8_decode_one(s, len, at, &cp, &width) ||
-            !module_push_v1(w, &points, atom_int(w->arena, cp))) goto done;
+        if (!module_spend_v1(w) || !cetta_utf8_decode_one(s, len, at, &cp, &width))
+            return NULL;
         at += width;
     }
-    Atom *args[] = {module_list_v1(w->arena, &points)};
-    out = module_make_v1(w->arena, "module:codepoints", args, 1u);
-done:
-    module_clear_v1(&points); return out;
+    return atom_string_n(w->arena, (const char *)s, len);
 }
 
 static bool safe_symbol(const char *s, size_t len) {
     if (strlen(s) != len) return false;
     if (!*s || *s == '$' || *s == '!' || *s == '+' || *s == '-' || (*s >= '0' && *s <= '9') ||
         !strcmp(s, "True") || !strcmp(s, "False") || !strcmp(s, "true") || !strcmp(s, "false")) return false;
-    for (; *s; ++s) if ((unsigned char)*s < 33u || (unsigned char)*s >= 127u || strchr("();\"\\", *s)) return false;
+    for (; *s; ++s) if ((unsigned char)*s < 33u || (unsigned char)*s == 127u || strchr("();\"\\", *s)) return false;
     return true;
 }
 

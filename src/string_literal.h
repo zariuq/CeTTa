@@ -19,8 +19,8 @@
  * printers) writes those bytes as they are, which those lanes' readers read
  * back, as upstream PeTTa does.  RAW_TEXT is RAW for text held as a C string,
  * which cannot hold NUL: NUL is written \x00, which no other byte is, since a
- * backslash is always escaped.  Tab and carriage return are written as they
- * are in every mode. */
+ * backslash is always escaped.  Tab and carriage return use named escapes in ESCAPED mode and are
+ * literal in the raw display modes. */
 typedef enum {
     CETTA_STRING_LITERAL_ESCAPED,
     CETTA_STRING_LITERAL_RAW,
@@ -29,6 +29,89 @@ typedef enum {
 
 typedef void (*CettaStringLiteralEmit)(void *context, const char *bytes,
                                        size_t len);
+
+static inline int cetta_string_literal_hex(uint8_t c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+/* Decode one unit of a MeTTa literal body. Unknown/incomplete escapes
+ * preserve the backslash and are consumed only one byte at a time. Numeric
+ * escapes consume nothing beyond a complete byte or valid Unicode scalar.
+ * JSON remains a separate format; its nonconflicting named escapes and
+ * UTF-16 scalar spellings are also useful MeTTa input spellings.
+ * The output is at most four bytes, never longer than the consumed input. */
+static inline size_t cetta_string_literal_decode_unit(
+    const uint8_t *text, size_t len, uint8_t output[4], size_t *written) {
+    *written = 0u;
+    if (!len) return 0u;
+    output[0] = text[0];
+    *written = 1u;
+    if (text[0] != '\\' || len < 2u) return 1u;
+    switch (text[1]) {
+    case 'n': output[0] = '\n'; return 2u;
+    case 'r': output[0] = '\r'; return 2u;
+    case 't': output[0] = '\t'; return 2u;
+    case 'b': output[0] = '\b'; return 2u;
+    case 'f': output[0] = '\f'; return 2u;
+    case '"': case '\\': case '/': case '\'':
+        output[0] = text[1]; return 2u;
+    default: break;
+    }
+    if (text[1] == 'x' && len >= 4u) {
+        int high = cetta_string_literal_hex(text[2]);
+        int low = cetta_string_literal_hex(text[3]);
+        if (high >= 0 && low >= 0) {
+            output[0] = (uint8_t)(16 * high + low);
+            return 4u;
+        }
+    }
+    if (text[1] == 'u') {
+        uint32_t scalar = 0u;
+        size_t end = 2u;
+        if (len > 2u && text[2] == '{') {
+            /* One or more digits; leading zeros are unlimited. A value
+             * beyond the Unicode range is no scalar escape. */
+            end = 3u;
+            while (end < len) {
+                int digit = cetta_string_literal_hex(text[end]);
+                if (digit < 0) break;
+                scalar = 16u * scalar + (uint32_t)digit;
+                if (scalar > 0x10ffffu) return 1u;
+                ++end;
+            }
+            if (end == 3u || end >= len || text[end] != '}') return 1u;
+            ++end;
+        } else {
+            if (len < 6u) return 1u;
+            for (; end < 6u; ++end) {
+                int digit = cetta_string_literal_hex(text[end]);
+                if (digit < 0) return 1u;
+                scalar = 16u * scalar + (uint32_t)digit;
+            }
+            if (scalar >= 0xd800u && scalar < 0xdc00u && len >= 12u &&
+                text[6] == '\\' && text[7] == 'u') {
+                uint32_t low = 0u;
+                for (size_t j = 8u; j < 12u; ++j) {
+                    int digit = cetta_string_literal_hex(text[j]);
+                    if (digit < 0) return 1u;
+                    low = 16u * low + (uint32_t)digit;
+                }
+                if (low >= 0xdc00u && low < 0xe000u) {
+                    scalar = 0x10000u + (scalar - 0xd800u) * 1024u + low - 0xdc00u;
+                    end = 12u;
+                }
+            }
+        }
+        if (cetta_utf8_scalar_valid(scalar)) {
+            *written = cetta_utf8_encode(scalar, output);
+            return end;
+        }
+    }
+    return 1u;
+}
 
 static inline void cetta_string_literal_escape(const char *text, size_t len,
                                                CettaStringLiteralBytes mode,
@@ -47,7 +130,11 @@ static inline void cetta_string_literal_escape(const char *text, size_t len,
         if (c == '\n') {
             if (!raw_newlines)
                 escape = "\\n";
-        } else if (c == '"')
+        } else if (!raw_bytes && c == '\t')
+            escape = "\\t";
+        else if (!raw_bytes && c == '\r')
+            escape = "\\r";
+        else if (c == '"')
             escape = "\\\"";
         else if (c == '\\')
             escape = "\\\\";
