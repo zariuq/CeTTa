@@ -13,6 +13,7 @@ import tempfile
 from gslt2parse_schema_v1 import parse_sexprs, render, Symbol
 from test_parser_pack_abi_v1 import CASES as ABI_CASES
 from test_parser_pack_abi_v1 import export_stream
+from gslt2parse_oracles_v1 import ORACLES
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -319,14 +320,9 @@ def native_query(
 
 
 def petta_answer_set(
-    petta_root: Path, label: str
+    label: str
 ) -> tuple[str, tuple[str, ...], str]:
-    oracle = (
-        petta_root
-        / "experiments"
-        / "gslt2parse_foundation"
-        / "semantic_mask_span_oracle_v1.pl"
-    )
+    oracle = ORACLES / "semantic_mask_span_oracle_v1.pl"
     completed = run_process(
         [
             "swipl",
@@ -525,7 +521,7 @@ def main() -> int:
 
     semantic_compilers = (*SEMANTIC_COMPILER_PREFIX, SEMANTIC_COMPILER)
     compiler_digest = sha256(SEMANTIC_COMPILER.read_bytes()).hexdigest()
-    abi = export_stream(petta_root, ABI_CASES["he"])
+    abi = export_stream(ABI_CASES["he"])
     source_digest = abi_field(abi, "source-digest")
     compiled_cases: dict[
         str, tuple[tuple[str, ...], tuple[str, ...]]
@@ -539,7 +535,7 @@ def main() -> int:
         )
         recognition = native_recognition(chart_binary, case)
         petta_source_digest, petta_terms, petta_digest = petta_answer_set(
-            petta_root, label
+            label
         )
         mask_terms = native_mask["terms"]
         recognition_terms = recognition["terms"]
@@ -577,7 +573,7 @@ def main() -> int:
         root_link_source_digest,
         petta_root_links,
         petta_root_link_digest,
-    ) = petta_answer_set(petta_root, "--root-links")
+    ) = petta_answer_set("--root-links")
     native_root_link_terms = native_root_links["terms"]
     assert isinstance(native_root_link_terms, tuple)
     if (

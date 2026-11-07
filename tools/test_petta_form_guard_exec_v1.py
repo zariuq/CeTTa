@@ -30,6 +30,7 @@ from test_petta_parser_authority_v1 import FORM_CASES
 from test_petta_parser_authority_v1 import file_digest
 from test_petta_parser_authority_v1 import revision
 from test_petta_parser_authority_v1 import run_case as run_authority_case
+from gslt2parse_oracles_v1 import ORACLES
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -76,14 +77,9 @@ def expected_decision(expected: tuple[tuple[str, ...], ...]) -> str:
 
 
 def run_petta_reference(
-    petta_root: Path, input_path: Path, max_depth: int = 4096
+    input_path: Path, max_depth: int = 4096
 ) -> dict[str, object]:
-    script = (
-        petta_root
-        / "experiments"
-        / "gslt2parse_foundation"
-        / "petta_form_gslt_reference_v1.pl"
-    )
+    script = ORACLES / "petta_form_gslt_reference_v1.pl"
     completed = subprocess.run(
         [
             "swipl",
@@ -250,12 +246,7 @@ def pin_authority(petta_root: Path) -> None:
         != EXPECTED_READER_DIGEST
     ):
         raise GateFailure("PeTTa document reader authority changed")
-    reference = (
-        petta_root
-        / "experiments"
-        / "gslt2parse_foundation"
-        / "petta_form_gslt_reference_v1.pl"
-    )
+    reference = ORACLES / "petta_form_gslt_reference_v1.pl"
     if file_digest(reference) != EXPECTED_ACTION_REFERENCE_DIGEST:
         raise GateFailure("PeTTa host action reference changed")
     reference_text = reference.read_text(encoding="utf-8")
@@ -286,7 +277,7 @@ def main() -> int:
         / "petta_parser_authority_v1.pl"
     )
     compiler_digest = sha256(REGULAR_COMPILER.read_bytes()).hexdigest()
-    abi = export_stream(petta_root, ABI_CASES["petta"])
+    abi = export_stream(ABI_CASES["petta"])
     evidence_row = guard_row(chart_binary)
     guard_nfa = guard_nfa_row(chart_binary, "petta")
     guard_terms = tuple(str(term) for term in guard_nfa["terms"])
@@ -324,7 +315,7 @@ def main() -> int:
             if authority != expected:
                 raise GateFailure(f"PeTTa authority changed for {label}")
             decision = expected_decision(expected)
-            reference = run_petta_reference(petta_root, input_path)
+            reference = run_petta_reference(input_path)
             if reference.get("decision") != decision:
                 raise GateFailure(
                     f"PeTTa authority and form LanguageDef differ for {label}"
@@ -411,7 +402,7 @@ def main() -> int:
                 authority_oracle, petta_root, "form", input_path
             )
             decision = expected_decision(authority)
-            reference = run_petta_reference(petta_root, input_path)
+            reference = run_petta_reference(input_path)
             native = run_native(
                 exec_binary,
                 abi_path,

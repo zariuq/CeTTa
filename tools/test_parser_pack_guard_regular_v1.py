@@ -12,6 +12,7 @@ import subprocess
 import tempfile
 
 from gslt2parse_schema_v1 import Symbol, parse_sexprs, render
+from gslt2parse_oracles_v1 import ORACLES
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -126,13 +127,8 @@ def run_native(
         ) from error
 
 
-def run_petta(petta_root: Path) -> dict:
-    script = (
-        petta_root
-        / "experiments"
-        / "gslt2parse_foundation"
-        / "test_parser_pack_guard_regular_v1.pl"
-    )
+def run_petta() -> dict:
+    script = ORACLES / "test_parser_pack_guard_regular_v1.pl"
     if not script.is_file():
         raise GateFailure(f"PeTTa guard regular oracle is absent: {script}")
     completed = subprocess.run(
@@ -387,7 +383,7 @@ def main() -> int:
         raise GateFailure(f"PeTTa root is absent: {petta_root}")
 
     rows = {label: native_row(binary, label) for label in SOURCES}
-    petta = run_petta(petta_root)
+    petta = run_petta()
     agreements, petta_replays, petta_negatives = compare_petta(rows, petta)
     native_replays = sum(
         replay_native_certificates(binary, label, row)

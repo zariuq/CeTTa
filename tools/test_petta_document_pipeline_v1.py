@@ -46,6 +46,7 @@ from test_petta_form_guard_exec_v1 import pin_authority as pin_form_authority
 from test_petta_form_guard_exec_v1 import run_petta_reference
 from test_petta_parser_authority_v1 import run_case as run_form_authority
 from test_regular_span_dfa_v1 import abi_scalar
+from gslt2parse_oracles_v1 import ORACLES
 
 
 EXPECTED_MATRIX_DIGEST = (
@@ -948,7 +949,6 @@ def run_native(
 
 
 def run_petta_native(
-    petta_root: Path,
     splitter_abi: Path,
     form_abi: Path,
     guard_nfa: Path,
@@ -956,12 +956,7 @@ def run_petta_native(
     input_path: Path,
     compiler_digest: str,
 ) -> dict[str, object]:
-    script = (
-        petta_root
-        / "experiments"
-        / "gslt2parse_foundation"
-        / "test_petta_document_native_v1.pl"
-    )
+    script = ORACLES / "test_petta_document_native_v1.pl"
     completed = subprocess.run(
         [
             "swipl",
@@ -1226,8 +1221,8 @@ def main() -> int:
     pin_sources(petta_root, splitter_oracle)
     pin_form_authority(petta_root)
 
-    splitter_stream = export_stream(petta_root, ABI_CASES["petta-splitter"])
-    form_stream = export_stream(petta_root, ABI_CASES["petta"])
+    splitter_stream = export_stream(ABI_CASES["petta-splitter"])
+    form_stream = export_stream(ABI_CASES["petta"])
     evidence_row = guard_row(chart_binary)
     guard_row_native = guard_nfa_row(chart_binary, "petta")
     guard_terms = tuple(str(term) for term in guard_row_native["terms"])
@@ -1235,7 +1230,6 @@ def main() -> int:
     guarded_compiler_digest = sha256(GUARDED_COMPILER.read_bytes()).hexdigest()
     lexical_terms, _, _ = compile_case_tags(
         chart_binary,
-        petta_root,
         SHADOW_LEXICAL_CASE,
         abi_scalar(form_stream, "source-digest"),
     )
@@ -1402,7 +1396,7 @@ def main() -> int:
                 accepted_documents += 1
                 expected_forms = case.forms
 
-            reference = run_splitter_reference(petta_root, input_path)
+            reference = run_splitter_reference(input_path)
             if reference.get("decision") != decision:
                 raise GateFailure(
                     f"splitter authority and LanguageDef differ for {case.label}"
@@ -1531,7 +1525,6 @@ def main() -> int:
                 }
             )
             petta_native = run_petta_native(
-                petta_root,
                 splitter_abi,
                 form_abi,
                 guard_nfa,
@@ -1629,7 +1622,7 @@ def main() -> int:
                 form_authority = run_form_authority(
                     form_oracle, petta_root, "form", raw_path
                 )
-                form_reference = run_petta_reference(petta_root, raw_path)
+                form_reference = run_petta_reference(raw_path)
                 expected_form_decision = authority_decision(form_authority)
                 if native_form.decision != expected_form_decision:
                     raise GateFailure(
@@ -1890,7 +1883,6 @@ def main() -> int:
         if wrong_compiler_api != wrong_compiler:
             raise GateFailure("wrong-compiler native API and CLI differ")
         wrong_compiler_petta = run_petta_native(
-            petta_root,
             splitter_abi,
             form_abi,
             guard_nfa,

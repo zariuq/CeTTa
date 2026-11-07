@@ -37,7 +37,6 @@ def corpus_argument(value: str) -> tuple[str, Path]:
 def run_probe(
     chart_binary: Path,
     dfa_binary: Path,
-    petta_root: Path,
     language: str,
     corpus: Path,
     work_limit: int,
@@ -51,7 +50,7 @@ def run_probe(
         or compiler.get("answers") != case["answers"]
     ):
         raise GateFailure(f"{language}: compiler answers changed before scale probe")
-    stream = export_stream(petta_root, ABI_CASES[language])
+    stream = export_stream(ABI_CASES[language])
     with tempfile.TemporaryDirectory(
         prefix=f"gslt2parse-regular-span-{language}-"
     ) as raw:
@@ -119,7 +118,6 @@ def main() -> int:
         print(run_probe(
             arguments.chart_binary.resolve(),
             arguments.dfa_binary.resolve(),
-            arguments.petta_root.resolve(),
             language,
             corpus,
             arguments.work_limit,

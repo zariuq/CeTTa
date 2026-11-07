@@ -36,6 +36,7 @@ from test_petta_form_guard_exec_v1 import run_petta_reference
 from test_petta_parser_authority_v1 import FORM_CASES
 from test_petta_parser_authority_v1 import run_case as run_authority_case
 from test_regular_span_dfa_v1 import abi_scalar
+from gslt2parse_oracles_v1 import ORACLES
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -205,13 +206,8 @@ def guarded_native(chart_binary: Path) -> tuple[str, ...]:
     return tuple(terms)
 
 
-def guarded_petta(petta_root: Path) -> tuple[str, tuple[str, ...]]:
-    oracle = (
-        petta_root
-        / "experiments"
-        / "gslt2parse_foundation"
-        / "guarded_span_oracle_v1.pl"
-    )
+def guarded_petta() -> tuple[str, tuple[str, ...]]:
+    oracle = ORACLES / "guarded_span_oracle_v1.pl"
     completed = subprocess.run(
         [
             "swipl",
@@ -580,16 +576,16 @@ def main() -> int:
         raise GateFailure("PeTTa foundation checkout is absent")
     pin_authority(petta_root)
 
-    abi = export_stream(petta_root, ABI_CASES["petta"])
+    abi = export_stream(ABI_CASES["petta"])
     source_digest = abi_scalar(abi, "source-digest")
     lexical_terms, _, lexical_agreements = compile_case_tags(
-        chart_binary, petta_root, dict(LEXICAL_CASE), source_digest
+        chart_binary, dict(LEXICAL_CASE), source_digest
     )
     evidence_row = guard_row(chart_binary)
     guard_nfa = guard_nfa_row(chart_binary, "petta")
     guard_terms = tuple(str(term) for term in guard_nfa["terms"])
     native_guarded_terms = guarded_native(chart_binary)
-    guarded_source_digest, petta_guarded_terms = guarded_petta(petta_root)
+    guarded_source_digest, petta_guarded_terms = guarded_petta()
     if (
         native_guarded_terms != petta_guarded_terms
         or guarded_source_digest != source_digest
@@ -668,7 +664,7 @@ def main() -> int:
             )
             if authority != expected:
                 raise GateFailure(f"PeTTa authority changed for {label}")
-            reference = run_petta_reference(petta_root, input_path)
+            reference = run_petta_reference(input_path)
             decision = expected_decision(expected)
             if reference.get("decision") != decision:
                 raise GateFailure(
@@ -898,7 +894,7 @@ def main() -> int:
                 growth_authority_agreements += 1
                 if token_count == TOKEN_COUNTS[-1]:
                     return
-                reference = run_petta_reference(petta_root, input_path)
+                reference = run_petta_reference(input_path)
                 if (
                     reference.get("decision") != "accepted"
                     or tuple(row["gll-result"])
@@ -941,7 +937,7 @@ def main() -> int:
                     raise GateFailure(
                         "PeTTa flat replay authority changed"
                     )
-                reference = run_petta_reference(petta_root, input_path)
+                reference = run_petta_reference(input_path)
                 if (
                     reference.get("decision") != "accepted"
                     or tuple(row["gll-result"])

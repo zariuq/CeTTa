@@ -2165,6 +2165,18 @@ static bool oem_fields_are_values(const Atom *expr, const PettaPlanNode *plan,
     return true;
 }
 
+/* PeTTa's msort or sort-atom of one value, or its sort of one value (SWI's
+ * sort/2, which also drops duplicates): the region sorts a value that holds
+ * no variable, and hands any other to the host. */
+static bool oem_sort_call(const Atom *expr) {
+    if (expr->kind != ATOM_EXPR || expr->expr.len != 2u ||
+        expr->expr.elems[0]->kind != ATOM_SYMBOL)
+        return false;
+    SymbolId head = expr->expr.elems[0]->sym_id;
+    return petta_semantics_form(head) == PETTA_FORM_MSORT ||
+           petta_semantics_is_sort(head);
+}
+
 /* A type-pure grounded operation the language offers that is no PeTTa form:
  * the region may apply it to its arguments' values. */
 static bool oem_pure_operation(const OemCompile *compile, SymbolId head) {
@@ -2365,9 +2377,7 @@ static uint32_t oem_host_fast_path(const OemCompile *compile, Atom *expr,
         *op_out = expr->expr.elems[0]->sym_id;
         return OEM_HOST_OBSERVE;
     }
-    if (expr->expr.elems[0]->kind == ATOM_SYMBOL && expr->expr.len == 2u &&
-        petta_semantics_form(expr->expr.elems[0]->sym_id) ==
-            PETTA_FORM_MSORT &&
+    if (oem_sort_call(expr) &&
         plan->role == PETTA_PLAN_STATIC_CALL &&
         oem_fields_are_values(expr, plan, 1u)) {
         *op_out = expr->expr.elems[0]->sym_id;
@@ -2658,9 +2668,7 @@ static bool oem_build_apply(OemCompile *compile, Atom *expr,
                     .recovers = plan->dispatch_handler};
     /* PeTTa's sort takes its argument's value once; applying the head to
      * that value keeps the host from evaluating it again. */
-    if (expr->expr.len == 2u && expr->expr.elems[0]->kind == ATOM_SYMBOL &&
-        petta_semantics_form(expr->expr.elems[0]->sym_id) ==
-            PETTA_FORM_MSORT) {
+    if (oem_sort_call(expr)) {
         node.host_fast = (uint8_t)OEM_HOST_SORT;
         node.op = expr->expr.elems[0]->sym_id;
     } else if (expr->expr.elems[0]->kind == ATOM_SYMBOL &&
@@ -3782,9 +3790,7 @@ static bool oem_build_value_native(OemCompile *compile, Atom *expr,
     }
     if (!undefined && (oem_apply_call(expr, plan) || value_native ||
         (symbol_head && plan->role == PETTA_PLAN_STATIC_CALL &&
-         ((expr->expr.len == 2u &&
-           petta_semantics_form(expr->expr.elems[0]->sym_id) ==
-               PETTA_FORM_MSORT) ||
+         (oem_sort_call(expr) ||
           (oem_pure_operation(compile, expr->expr.elems[0]->sym_id) &&
            !oem_fields_are_values(expr, plan, 1u) &&
            !petta_semantics_existence_view(
@@ -9487,9 +9493,19 @@ static inline __attribute__((always_inline)) Atom *oem_resolve_in(
                 forwarded = cursor->resolve_results[child]->arena_id !=
                     cursor->answer_arena->identity;
             }
-            result = atom_expr(forwarded ? ground : arena,
-                               &cursor->resolve_results[item->base],
-                               item->atom->expr.len);
+            /* An operand whose every child resolved to itself -- each cell
+             * in it unbound -- is its own resolution, as an operand that
+             * holds no cell is: it is shared, not rebuilt. */
+            bool unchanged = operand;
+            for (uint32_t child = 0u;
+                 unchanged && child < item->atom->expr.len; child++) {
+                unchanged = cursor->resolve_results[item->base + child] ==
+                    item->atom->expr.elems[child];
+            }
+            result = unchanged ? item->atom
+                : atom_expr(forwarded ? ground : arena,
+                            &cursor->resolve_results[item->base],
+                            item->atom->expr.len);
             if (result && forwarded)
                 item->atom->name_key = result;
             else if (result && ground && !item->atom->name_key &&
@@ -12898,6 +12914,57 @@ static __attribute__((noinline)) OemRun oem_sequence_projection_step(
     return unified == OEM_UNIFY_OK ? OEM_RUN_CALLED : OEM_RUN_FAILED;
 }
 
+/* PeTTa's decons-atom and decons of one list map [H|T] to (H T): a
+ * non-empty list is its first element and its rest; () and every non-list
+ * have no answer.  The list's first element and the suffix that shares its
+ * storage meet the two parts of an ordinary pattern directly, as a head
+ * operation meets a register's parts, so the pair is never built.  Any
+ * other destination meets the pair.  The list is resolved first, once:
+ * its parts then hold no bound cell, and every later read of them is a
+ * single step. */
+static OemRun oem_decons_step(
+        CettaOpenEquationCursor *cursor,
+        const CettaOpenEquationProgram *program, Atom **locals,
+        const OemStep *step, const OemTemplate *goal) {
+    Atom *list = oem_instantiate(cursor, program, locals,
+        program->template_children[goal->first + 1u]);
+    list = list ? oem_resolve_mode(cursor, list, true) : NULL;
+    if (!list)
+        return OEM_RUN_HANDOFF;
+    if (list->kind == ATOM_VAR ||
+        (petta_semantics_open_cons_built() &&
+         atom_structural_may_have_list_carrier(list)) ||
+        (list->kind == ATOM_EXPR && !oem_plain_list(list)))
+        return OEM_RUN_DECLINED;
+    if (list->kind != ATOM_EXPR || list->expr.len == 0u)
+        return OEM_RUN_FAILED;
+    Atom *rest = atom_expr_suffix(&cursor->region, list, 1u);
+    if (!rest)
+        return OEM_RUN_HANDOFF;
+    const OemTemplate *pattern = &program->templates[step->pattern];
+    OemUnify unified;
+    if (!step->store && pattern->kind == OEM_T_BUILD &&
+        pattern->count == 2u &&
+        pattern->representation == PETTA_VALUE_ORDINARY) {
+        unified = oem_unify_template(
+            cursor, program, locals,
+            program->template_children[pattern->first],
+            list->expr.elems[0], 1u);
+        if (unified == OEM_UNIFY_OK)
+            unified = oem_unify_template(
+                cursor, program, locals,
+                program->template_children[pattern->first + 1u], rest, 1u);
+    } else {
+        Atom *pair = atom_expr2(&cursor->region, list->expr.elems[0], rest);
+        if (!pair)
+            return OEM_RUN_HANDOFF;
+        unified = oem_meet(cursor, program, locals, step, pair);
+    }
+    if (unified == OEM_UNIFY_ERROR)
+        return OEM_RUN_HANDOFF;
+    return unified == OEM_UNIFY_OK ? OEM_RUN_CALLED : OEM_RUN_FAILED;
+}
+
 static __attribute__((noinline)) OemRun oem_list_step(
         CettaOpenEquationCursor *cursor,
         const CettaOpenEquationProgram *program, Atom **locals,
@@ -12906,6 +12973,9 @@ static __attribute__((noinline)) OemRun oem_list_step(
     uint32_t count = goal->count - 1u;
     if (goal->kind != OEM_T_BUILD || count == 0u || count > 2u)
         return OEM_RUN_DECLINED;
+    if (count == 1u && (step->op == g_builtin_syms.decons_atom ||
+                        step->op == g_builtin_syms.petta_decons))
+        return oem_decons_step(cursor, program, locals, step, goal);
     PeTTaForm form = petta_semantics_form(step->op);
     bool spine = form == PETTA_FORM_APPEND || form == PETTA_FORM_LENGTH ||
         step->op == g_builtin_syms.union_atom;
@@ -13501,9 +13571,12 @@ static __attribute__((noinline)) OemRun oem_fast_host_step(
         if (atom_has_vars(list))
             return OEM_RUN_DECLINED;
         bool type_error = false;
-        Atom *sorted = petta_semantics_sort_value(
-            &cursor->region, list, step->op == g_builtin_syms.sort_atom,
-            &type_error);
+        Atom *sorted = petta_semantics_is_sort(step->op)
+            ? petta_semantics_sort_unique_value(&cursor->region, list,
+                                                &type_error)
+            : petta_semantics_sort_value(
+                  &cursor->region, list,
+                  step->op == g_builtin_syms.sort_atom, &type_error);
         if (!sorted)
             return type_error ? OEM_RUN_DECLINED : OEM_RUN_HANDOFF;
         OemUnify unified = oem_meet(cursor, program, locals, step, sorted);
@@ -18016,9 +18089,12 @@ static __attribute__((noinline)) OemRun oem_pure_relation_value(
     uint32_t arity = relation->arity;
     Atom *arguments[OEM_PURE_RELATION_INLINE_ARGS];
     bool closed = arity <= OEM_PURE_RELATION_INLINE_ARGS;
+    /* The prepared machine takes closed operands only: an open one is
+     * declined before it is resolved, which would copy it to no purpose. */
+    for (uint32_t index = 0u; closed && index < arity; index++)
+        closed = args[index] && oem_value_ground(cursor, args[index], 0u);
     for (uint32_t index = 0u; closed && index < arity; index++) {
-        arguments[index] = args[index]
-            ? oem_resolve_operand(cursor, args[index]) : NULL;
+        arguments[index] = oem_resolve_operand(cursor, args[index]);
         closed = arguments[index] && !atom_has_vars(arguments[index]) &&
             !atom_has_registry_refs(arguments[index]);
     }
@@ -19578,8 +19654,10 @@ bool cetta_open_equation_cursor_host_continuation_supported(
     const CettaOpenEquationCursor *cursor) {
     const OemFrame *frame = cursor && cursor->frame_len
         ? &cursor->frames[cursor->frame_len - 1u] : NULL;
-    if (!frame || !oem_frame_is_host(frame) || cursor->state_var_len ||
-        cursor->exported_len)
+    /* A cell a host goal took needs no refusal here: the export names it
+     * by the variable it went out as (oem_answer_cell), which the host
+     * already holds, so the continuation meets the same variable. */
+    if (!frame || !oem_frame_is_host(frame) || cursor->state_var_len)
         return false;
     for (const OemCont *entry = frame->cont; entry; entry = entry->parent) {
         bool returns, yields;

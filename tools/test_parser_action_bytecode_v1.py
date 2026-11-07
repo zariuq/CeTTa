@@ -176,7 +176,7 @@ def main() -> int:
         raise GateFailure("required native action-bytecode binary is absent")
     digest = compiler_digest()
     action_terms = compile_actions(chart_binary)
-    abi_stream = export_stream(petta_root, ABI_CASES["he"])
+    abi_stream = export_stream(ABI_CASES["he"])
     receipt = run_native(
         stream_binary, abi_stream, action_terms, digest
     )

@@ -34,7 +34,7 @@ from test_he_reader_guarded_lexical_v1 import guard_action_compiler_digest
 from test_he_reader_guarded_lexical_v1 import PROFILE
 from test_he_reader_guarded_lexical_v1 import native_guard_action_answers
 from test_he_reader_guarded_lexical_v1 import native_guarded_answers
-from test_he_reader_guarded_lexical_v1 import petta_guarded_answers
+from test_he_reader_guarded_lexical_v1 import oracle_guarded_answers
 from test_parser_pack_abi_v1 import CASES as ABI_CASES
 from test_parser_pack_abi_v1 import export_stream
 from test_parser_pack_guard_plan_prime_v1 import REGULAR_COMPILER
@@ -377,14 +377,13 @@ def main() -> int:
         raise GateFailure("prepared HE pipeline binary dependency is absent")
     if not petta_root.is_dir() or not he_root.is_dir():
         raise GateFailure("HE or PeTTa authority checkout is absent")
-    pin_authorities(petta_root, he_root)
+    pin_authorities(he_root)
 
     he_oracle = build_oracle(he_root)
-    abi = export_stream(petta_root, ABI_CASES["he"])
+    abi = export_stream(ABI_CASES["he"])
     source_digest = abi_scalar(abi, "source-digest")
     lexical_terms, _, lexical_agreements = compile_case_tags(
         chart_binary,
-        petta_root,
         dict(PROFILE.lexical_case),
         source_digest,
     )
@@ -393,7 +392,7 @@ def main() -> int:
         str(term) for term in guard_nfa_row(chart_binary, "he")["terms"]
     )
     guarded_terms = native_guarded_answers(chart_binary)
-    petta_source_digest, petta_guarded_terms = petta_guarded_answers(petta_root)
+    petta_source_digest, petta_guarded_terms = oracle_guarded_answers()
     if (
         guarded_terms != petta_guarded_terms
         or petta_source_digest != source_digest
@@ -492,7 +491,7 @@ def main() -> int:
                 authority_agreements += 1
             else:
                 authority_disagreements += 1
-            reference = run_petta(petta_root, input_path)
+            reference = run_petta(input_path)
             decision = expected_decision(expected)
             if reference.get("decision") != decision:
                 raise GateFailure(

@@ -11,6 +11,7 @@ import tempfile
 
 from test_parser_pack_abi_v1 import CASES as ABI_CASES
 from test_parser_pack_abi_v1 import export_stream
+from gslt2parse_oracles_v1 import ORACLES
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -58,15 +59,9 @@ class GateFailure(RuntimeError):
 
 
 def oracle_rows(
-    petta_root: Path,
     environment: dict[str, str] | None = None,
 ) -> dict[tuple[str, str], dict[str, object]]:
-    oracle = (
-        petta_root
-        / "experiments"
-        / "gslt2parse_foundation"
-        / "parser_pack_gll_oracle_v1.pl"
-    )
+    oracle = ORACLES / "parser_pack_gll_oracle_v1.pl"
     completed = subprocess.run(
         ["swipl", "-q", "-f", str(oracle), "--", str(PRESENTATIONS)],
         cwd=oracle.parent,
@@ -203,17 +198,16 @@ def require_exact_row(
 
 def check_matrix(
     binary: Path,
-    petta_root: Path,
     glr_binary: Path | None = None,
 ) -> tuple[int, int, int, int]:
-    expected = oracle_rows(petta_root)
+    expected = oracle_rows()
     gll_exact = 0
     glr_exact = 0
     with tempfile.TemporaryDirectory(prefix="gslt2parse-parser-pack-native-") as raw:
         temp = Path(raw)
         abi_paths: dict[str, Path] = {}
         for language in STARTS:
-            stream = export_stream(petta_root, ABI_CASES[language])
+            stream = export_stream(ABI_CASES[language])
             abi_path = temp / f"{language}.abi"
             abi_path.write_bytes(stream)
             abi_paths[language] = abi_path
@@ -316,7 +310,7 @@ def check_matrix(
                         f"{field}"
                     )
 
-        prime_stream = export_stream(petta_root, ABI_CASES["prime"])
+        prime_stream = export_stream(ABI_CASES["prime"])
         prime_path = temp / "prime.abi"
         prime_input = temp / "prime-empty.utf8"
         prime_path.write_bytes(prime_stream)
@@ -371,7 +365,6 @@ def main() -> int:
 
     gll_exact, glr_exact, partial, invalid = check_matrix(
         arguments.binary.resolve(),
-        arguments.petta_root.resolve(),
         arguments.glr_binary.resolve() if arguments.glr_binary else None,
     )
     if arguments.glr_binary:
