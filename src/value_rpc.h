@@ -12,6 +12,9 @@ CettaValueChannel *cetta_value_channel_new(CettaIpcSession *,size_t maximum_byte
 void cetta_value_channel_retain(CettaValueChannel *);
 void cetta_value_channel_release(CettaValueChannel *);
 size_t cetta_value_channel_limit(const CettaValueChannel *);
+void cetta_value_channel_set_send_limit(CettaValueChannel *,bool enabled);
+bool cetta_value_channel_send_limit(const CettaValueChannel *);
+CettaValueRpcStatus cetta_value_channel_negotiate_limit(CettaValueChannel *);
 /* Requests/replies are portable data. Each submitted operation owns its exact
  * request identity and a fixed deadline. One channel can finish an earlier
  * framed exchange while its consumer still retains the decoded reply. */

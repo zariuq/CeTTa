@@ -358,3 +358,15 @@
          ($view (db:snapshot $db large))
          ($_ (assertEqual (size-atom (collapse (match $view (row filler $n) $n))) 1500))
          ($_ (db:close $view)) ($_ (db:close $db))) REMOTE_LARGE_TRANSACTION_OK))
+
+(= (remote-fixture:run (SmallClientReplyLimit $socket))
+  (let* (((db:remote $remote) (db:connect $socket))
+         ($read-reply (store:remote-call $remote DbResolve (DbResolveV1 data "seed" operation)))
+         ($_ (assertEqual $read-reply (ServiceRefusedV1 reply-limit)))
+         ((StoreRemoteResource $source $_) (store:remote-start $remote DbCapture (DbCaptureV1 data)))
+         ($write-reply (store:remote-use $source DbPublish
+           (DbPublishV1 data "seed" operation () () ())))
+         ($_ (assertEqual $write-reply (ServiceFailedV1 reply-limit)))
+         ($_ (store:close $source))
+         ($_ (db:close (db:remote $remote))))
+    REMOTE_SMALL_CLIENT_REPLY_LIMIT_OK))

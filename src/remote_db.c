@@ -168,6 +168,7 @@ CettaValueRpcStatus cetta_remote_db_open(CettaIpcSession *session,size_t maximum
             }
         }
     }
+    if(status==CETTA_RPC_OK)status=cetta_value_channel_negotiate_limit(d->channel);
     if(status!=CETTA_RPC_OK){cetta_remote_db_release(d);return status;}*out=d;return status;
 }
 bool cetta_remote_db_writable(const CettaRemoteDb *d){return d && d->writable;}

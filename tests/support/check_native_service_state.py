@@ -109,6 +109,41 @@ def main():
             token = open_state(client, payload)
             assert use(client, token, "BadReplyState", "x" * 150000, ok=False) == E("ServiceFailedV1", S("reply-limit"))
             assert use(client, token, "StepState", ok=False) == E("ServiceRefusedV1", S("unknown-resource"))
+            # Stateless Read over frame or client-declared capacity is refused (ran=False);
+            # Write over frame or client-declared capacity is failed (ran=True).
+            assert client.route("LargeRead", "x" * 150000, ok=False) == E("ServiceRefusedV1", S("reply-limit"))
+            assert client.route("LargeWrite", "x" * 150000, ok=False) == E("ServiceFailedV1", S("reply-limit"))
+            assert client.route("LargeRead", "x" * 600, ok=False, capacity=1024) == E("ServiceRefusedV1", S("reply-limit"))
+            assert client.route("LargeWrite", "x" * 600, ok=False, capacity=1024) == E("ServiceFailedV1", S("reply-limit"))
+            limit_client = Client(server.path)
+            try:
+                assert limit_client.call(E("RequestLimitV1", 1024)) == E("ServiceRequestLimitV1", 1024)
+                assert limit_client.route("LargeRead", "x" * 600, ok=False) == E("ServiceRefusedV1", S("reply-limit"))
+                assert limit_client.route("LargeWrite", "x" * 600, ok=False) == E("ServiceFailedV1", S("reply-limit"))
+            finally:
+                limit_client.close()
+            # 100 multi-index reads (cursor_plan with valid > 1) interleaved with large
+            # temporary allocations must leave server RSS flat within a tight bound.
+            assert client.route("Create", E("CreateIndexedV1", S("multi"), "create-multi",
+                (E("SpaceIndexV1", 4, 0), E("SpaceIndexV1", 4, 1), E("SpaceIndexV1", 4, 2))))[0] == S("KnowledgeCommittedV1")
+            view, _ = client.snapshot()
+            multi_items = tuple(
+                E("SpaceInsertV1", i - 1, E("item", S("tag"), f"k-{i}", "p" * 1200))
+                for i in range(1, 33)
+            )
+            assert client.route("Commit", E("CommitV1", S("multi"), "seed-multi", multi_items), view)[0] == S("KnowledgeCommittedV1")
+            client.drop(view)
+            for _ in range(5):
+                ans = client.route("MultiIndexedRead", E("MultiIndexedReadV1", S("multi"), 32))
+                assert ans[0] == S("MultiIndexedRowsV1") and ans[1] == 32
+            sample_before = server.sample(client, 0)
+            for _ in range(100):
+                ans = client.route("MultiIndexedRead", E("MultiIndexedReadV1", S("multi"), 32))
+                assert ans[0] == S("MultiIndexedRowsV1") and ans[1] == 32
+            sample_after = server.sample(client, 100)
+            assert sample_after["stats"][2] == sample_before["stats"][2], (sample_before, sample_after)
+            if "sanitize" not in args.worker.name:
+                assert sample_after["rss_kib"] - sample_before["rss_kib"] <= 4096, (sample_before, sample_after)
             await_resources(client, 0)
             readonly = Client(server.path)
             try:
