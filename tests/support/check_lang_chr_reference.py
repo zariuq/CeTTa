@@ -38,19 +38,28 @@ def prolog_term(text):
 
     def atom():
         nonlocal position
-        if text[position] == "'":
+        # Double-quoted text is an atom name, as under double_quotes=atom.
+        if text[position] in "'\"":
+            quote = text[position]
             out, position = [], position + 1
             while True:
                 c = text[position]
-                if c == "'" and position + 1 < len(text) and text[position + 1] == "'":
-                    out.append("'"); position += 2
-                elif c == "'":
+                if c == quote and position + 1 < len(text) and text[position + 1] == quote:
+                    out.append(quote); position += 2
+                elif c == quote:
                     position += 1; return ''.join(out)
                 elif c == '\\':
                     escapes = {'n': '\n', 't': '\t', '\\': '\\', "'": "'", 'r': '\r', 'a': '\a', 'b': '\b', 'f': '\f', 'v': '\v'}
                     out.append(escapes[text[position + 1]]); position += 2
                 else:
                     out.append(c); position += 1
+        # SWI writes Unicode names unquoted when they start with a letter
+        # that is not uppercase; they continue with letters, digits and _.
+        start = position
+        if position < len(text) and text[position].isalpha() and not text[position].isupper():
+            while position < len(text) and (text[position].isalnum() or text[position] == '_'):
+                position += 1
+            return text[start:position]
         match = re.compile(r'[a-z][A-Za-z0-9_]*|[#$&*+\-./:<=>?@^~\\]+|\[\]').match(text, position)
         if not match:
             raise ValueError('expected an atom at ' + text[position:position + 20])
@@ -151,10 +160,11 @@ def metta_constraint(form):
 
 
 def metta_text(name):
-    if symbol_name(name):
-        assert re.fullmatch(r'[a-z][A-Za-z0-9_]*', name), name
+    # Names of letters, digits and _ (Unicode included) are written as
+    # symbols, as C0's canonical output writes them; other names as strings.
+    if symbol_name(name) and not name[0].isdigit() and all(c.isalnum() or c == '_' for c in name):
         return name
-    return json.dumps(name)
+    return json.dumps(name, ensure_ascii=False)
 
 
 def metta_atom(value):

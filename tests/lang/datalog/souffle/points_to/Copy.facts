@@ -1,0 +1,6 @@
+alias	p
+p	alias
+z	x
+cycle1	out
+cycle2	cycle1
+cycle1	cycle2
