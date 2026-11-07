@@ -1,0 +1,9 @@
+:- use_module(library(chr)).
+:- set_prolog_flag(double_quotes, atom).
+:- chr_constraint name/1, seen/1.
+:- chr_option(optimize, off).
+
+same @ name(X) \ name(X) <=> true.
+mark @ name(X) ==> seen(X).
+
+?- name("abc"), name(abc), name("xyz").

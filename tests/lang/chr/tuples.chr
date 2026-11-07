@@ -1,0 +1,4 @@
+:- chr_constraint item/1, first/1, second/1, nested/2.
+unpack @ item(tuple(X,Y)) <=> first(X), second(Y).
+same_tail @ nested(tuple(A,tuple(B,C)), B) <=> item(tuple(A,C)).
+?- item(tuple(1,a)), item(tuple(tuple(),b)), nested(tuple(7,tuple(x,y)),x), nested(tuple(7,tuple(x,y)),z).

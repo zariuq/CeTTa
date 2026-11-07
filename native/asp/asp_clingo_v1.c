@@ -325,8 +325,9 @@ bool asp_clingo_symbol_function(AspClingoSymbol symbol, const char **name,
 
 bool asp_clingo_models(uint32_t atom_count, const AspClingoRule *rules,
                        size_t rule_count,
-                       bool (*model)(void *context, const uint32_t *atoms,
-                                     size_t len),
+                       AspClingoNext (*model)(void *context,
+                                              const uint32_t *atoms,
+                                              size_t len),
                        void *context, const char **error) {
     *error = NULL;
     if (!asp_clingo_available()) {
@@ -384,8 +385,11 @@ bool asp_clingo_models(uint32_t atom_count, const AspClingoRule *rules,
             if (holds)
                 true_atoms[len++] = a;
         }
-        if (ok)
-            ok = model(context, true_atoms, len);
+        if (!ok)
+            break;
+        AspClingoNext next = model(context, true_atoms, len);
+        if (!(ok = next != ASP_CLINGO_FAIL) || next == ASP_CLINGO_STOP)
+            break;
     }
     if (!ok && !*error)
         *error = asp_clingo_error();
@@ -401,9 +405,9 @@ bool asp_clingo_models(uint32_t atom_count, const AspClingoRule *rules,
 }
 
 bool asp_clingo_text_models(const char *text,
-                            bool (*model)(void *context,
-                                          const AspClingoSymbol *symbols,
-                                          size_t len),
+                            AspClingoNext (*model)(void *context,
+                                                   const AspClingoSymbol *symbols,
+                                                   size_t len),
                             void *context, const char **error) {
     *error = NULL;
     if (!asp_clingo_available()) {
@@ -439,8 +443,11 @@ bool asp_clingo_text_models(const char *text,
             symbols = grown;
             cap = len;
         }
-        ok = clingo.model_symbols(found, CLINGO_SHOW_SHOWN, symbols, len) &&
-            model(context, symbols, len);
+        if (!(ok = clingo.model_symbols(found, CLINGO_SHOW_SHOWN, symbols, len)))
+            break;
+        AspClingoNext next = model(context, symbols, len);
+        if (!(ok = next != ASP_CLINGO_FAIL) || next == ASP_CLINGO_STOP)
+            break;
     }
     if (!ok && !*error)
         *error = asp_clingo_error();

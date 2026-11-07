@@ -1,0 +1,4 @@
+:- chr_constraint path/2.
+path_duplicate @ path(X,Y) \ path(X,Y) <=> true.
+path_transitive @ path(X,Y),path(Y,Z) ==> path(X,Z).
+?- path(a,b),path(b,c),path(c,a).

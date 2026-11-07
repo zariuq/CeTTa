@@ -176,6 +176,24 @@ typedef struct {
      * atom an unfounded check finds is already false at a propagation
      * fixpoint, and the check is skipped. */
     bool tight;
+    /* ASP_SEARCH_FAST (see asp_cdnl_v1.h) */
+    bool fast;
+    /* where the completion's nogoods are: each rule's first, then the
+     * atoms' support nogoods from support_first on */
+    uint32_t *rule_first;
+    uint32_t support_first;
+    /* The fast search's decisions: each variable's activity and saved phase,
+     * a max-heap of the variables by activity (ties to the lower variable),
+     * and the restart schedule. */
+    double *activity;
+    double bump;
+    uint8_t *phase;
+    uint32_t *heap;
+    int32_t *heap_pos;     /* a variable's index in the heap, or -1 */
+    uint32_t heap_len;
+    uint64_t conflicts;
+    uint64_t restart_at;
+    uint32_t restarts;
 } Solver;
 
 static void *grow(void *p, uint32_t *cap, uint32_t need, size_t size, bool *oom) {
@@ -444,6 +462,8 @@ static bool completion(Solver *s) {
     IVec l = {0};
     for (uint32_t r = 0u; r < s->nrules && !s->oom; r++) {
         const AspRule *rule = &s->rules[r];
+        if (s->rule_first)
+            s->rule_first[r] = s->npool;
         int32_t head[2] = {t_body(s, r), f_atom(s, rule->head)};
         new_nogood(s, head, 2u);
         l.len = 0u;
@@ -478,6 +498,7 @@ static bool completion(Solver *s) {
         start[a] = start[a - 1u];
     if (!s->oom)
         start[0] = 0u;
+    s->support_first = s->npool;
     for (uint32_t a = 0u; a < s->natoms && !s->oom; a++) {
         l.len = 0u;
         iv_push(&l, LIT(a, 1));
@@ -520,10 +541,109 @@ static void push_lit(Solver *s, int32_t lit, int32_t reason) {
         s->oom = true;
 }
 
+/* ---- the fast search's decisions --------------------------------------- */
+
+static bool heap_before(const Solver *s, uint32_t a, uint32_t b) {
+    return s->activity[a] > s->activity[b] ||
+        (s->activity[a] == s->activity[b] && a < b);
+}
+
+static void heap_place(Solver *s, uint32_t i, uint32_t v) {
+    s->heap[i] = v;
+    s->heap_pos[v] = (int32_t)i;
+}
+
+static void heap_up(Solver *s, uint32_t i) {
+    uint32_t v = s->heap[i];
+    while (i > 0u) {
+        uint32_t parent = (i - 1u) / 2u;
+        if (!heap_before(s, v, s->heap[parent]))
+            break;
+        heap_place(s, i, s->heap[parent]);
+        i = parent;
+    }
+    heap_place(s, i, v);
+}
+
+static void heap_down(Solver *s, uint32_t i) {
+    uint32_t v = s->heap[i];
+    for (;;) {
+        uint32_t child = 2u * i + 1u;
+        if (child >= s->heap_len)
+            break;
+        if (child + 1u < s->heap_len && heap_before(s, s->heap[child + 1u], s->heap[child]))
+            child++;
+        if (!heap_before(s, s->heap[child], v))
+            break;
+        heap_place(s, i, s->heap[child]);
+        i = child;
+    }
+    heap_place(s, i, v);
+}
+
+static void heap_insert(Solver *s, uint32_t v) {
+    if (s->heap_pos[v] >= 0)
+        return;
+    heap_place(s, s->heap_len++, v);
+    heap_up(s, s->heap_len - 1u);
+}
+
+static uint32_t heap_pop(Solver *s) {
+    uint32_t v = s->heap[0];
+    s->heap_pos[v] = -1;
+    if (--s->heap_len > 0u) {
+        heap_place(s, 0u, s->heap[s->heap_len]);
+        heap_down(s, 0u);
+    }
+    return v;
+}
+
+/* VSIDS: a bumped variable gains the current increment, which grows after
+ * each conflict so that older bumps weigh less; all activities shrink
+ * together before they overflow. */
+static void bump_variable(Solver *s, uint32_t v) {
+    s->activity[v] += s->bump;
+    if (s->activity[v] > 1e100) {
+        for (uint32_t k = 0u; k < s->nvars; k++)
+            s->activity[k] *= 1e-100;
+        s->bump *= 1e-100;
+    }
+    if (s->heap_pos[v] >= 0)
+        heap_up(s, (uint32_t)s->heap_pos[v]);
+}
+
+/* Conflicts per unit of the Luby sequence (MiniSat's 100).  Learned nogoods
+ * are not deleted yet, so no unit wins everywhere: 4096 was faster on
+ * n-queens 20 and 24 and on the pigeonhole problems, and far slower on
+ * n-queens 40 (104 s against 18 s). */
+#define FAST_RESTART_UNIT 100u
+
+/* the Luby sequence: 1 1 2 1 1 2 4 1 1 2 1 1 2 4 8 ... */
+static uint64_t luby(uint32_t i) {
+    uint64_t size = 1u;
+    uint32_t seq = 0u;
+    while (size < (uint64_t)i + 1u) {
+        seq++;
+        size = 2u * size + 1u;
+    }
+    uint64_t x = i;
+    while (size - 1u != x) {
+        size = (size - 1u) / 2u;
+        seq--;
+        x %= size;
+    }
+    return (uint64_t)1u << seq;
+}
+
 static void truncate_trail(Solver *s, uint32_t n) {
     while (s->ntrail > n) {
         s->ntrail--;
-        s->val[LIT_VAR(s->trail[s->ntrail].lit)] = -1;
+        int32_t lit = s->trail[s->ntrail].lit;
+        s->val[LIT_VAR(lit)] = -1;
+        if (s->fast && (uint32_t)LIT_VAR(lit) < s->natoms) {
+            s->phase[LIT_VAR(lit)] = (uint8_t)LIT_SIGN(lit);
+            heap_insert(s, (uint32_t)LIT_VAR(lit));
+        }
     }
     s->level = 0u;
     for (uint32_t i = 0u; i < s->ntrail; i++)
@@ -699,12 +819,59 @@ static void add_watched(Solver *s, int32_t nogood, int32_t w1, int32_t w2) {
 
 typedef enum { PASS_OK, PASS_CONFLICT, PASS_FUEL } PassResult;
 
+/* The fast search's visit of the nogoods watching x, in place: a nogood
+ * whose watch moves leaves the list, the others stay in order, and at a
+ * conflict the unvisited ones stay too. */
+static PassResult process_list_fast(Solver *s, int32_t x, int32_t *conflict) {
+    IVec *list = &s->watches[x];
+    uint32_t n = list->len, i = 0u, kept = 0u;
+    PassResult result = PASS_OK;
+    for (; i < n; i++) {
+        int32_t wi = list->v[i];
+        Watched *w = &s->db[wi];
+        if (w->w1 != x && w->w2 != x)
+            continue;
+        int32_t other = w->w1 == x ? w->w2 : w->w1;
+        if (on_trail(s, LIT_COMPL(other))) {
+            list->v[kept++] = wi;
+            continue;
+        }
+        const Nogood *g = &s->pool[w->nogood];
+        int32_t r = -1;
+        for (uint32_t k = 0u; k < g->lits.len && r < 0; k++) {
+            int32_t m = g->lits.v[k];
+            if (m != x && m != other && !on_trail(s, m))
+                r = m;
+        }
+        if (r >= 0) {
+            *w = (Watched){w->nogood, other, r};
+            if (!iv_push(&s->watches[r], wi))
+                s->oom = true;
+            continue;
+        }
+        list->v[kept++] = wi;
+        if (on_trail(s, other)) {
+            *conflict = w->nogood;
+            result = PASS_CONFLICT;
+            i++;
+            break;
+        }
+        push_lit(s, LIT_COMPL(other), w->nogood);
+    }
+    while (i < n)
+        list->v[kept++] = list->v[i++];
+    list->len = kept;
+    return result;
+}
+
 /* processList: visit the nogoods watching x, the list's front first.  The
  * stored list is reversed, so the visit runs from its end; Lean's resulting
  * list (kept positions, newest kept first) is stored as the kept positions in
  * visit order, and at a conflict Lean's (current :: unvisited ++ kept) is
  * stored as kept, then the unvisited in stored order, then the current. */
 static PassResult process_list(Solver *s, int32_t x, int32_t *conflict) {
+    if (s->fast)
+        return process_list_fast(s, x, conflict);
     IVec todo = s->watches[x];
     s->watches[x] = (IVec){0};
     IVec kept = {0}; /* visit order */
@@ -764,20 +931,35 @@ static PassResult propagate_watched(Solver *s, uint32_t fuel, int32_t *conflict)
     return PASS_FUEL;
 }
 
-/* scanShort */
+static uint32_t lit_level(const Solver *s, int32_t m);
+
+/* scanShort.  A unit nogood whose literal is false at level 0 is satisfied
+ * for good, since level 0 is never undone; it is dropped from the list, the
+ * others keeping their order, so the scan answers as before. */
 static bool scan_short(Solver *s, int32_t *conflict) {
-    for (uint32_t k = 0u; k < s->shorts.len; k++) {
+    uint32_t kept = 0u;
+    bool ok = true;
+    uint32_t k = 0u;
+    for (; k < s->shorts.len; k++) {
         int32_t g = s->shorts.v[k];
         const IVec *lits = &s->pool[g].lits;
         if (lits->len == 0u || on_trail(s, lits->v[0])) {
             *conflict = g;
-            return false;
+            ok = false;
+            break;
         }
-        if (on_trail(s, LIT_COMPL(lits->v[0])))
+        if (on_trail(s, LIT_COMPL(lits->v[0]))) {
+            if (lit_level(s, LIT_COMPL(lits->v[0])) > 0u)
+                s->shorts.v[kept++] = g;
             continue;
+        }
         push_lit(s, LIT_COMPL(lits->v[0]), g);
+        s->shorts.v[kept++] = g;
     }
-    return true;
+    while (k < s->shorts.len)
+        s->shorts.v[kept++] = s->shorts.v[k++];
+    s->shorts.len = kept;
+    return ok;
 }
 
 /* ---- source pointers (SourcePointers.lean) ------------------------------- */
@@ -1008,6 +1190,80 @@ static void refutation_hints(const Solver *s, int32_t conflict, IVec *hints) {
     iv_push(hints, conflict);
 }
 
+/* The fast search's watches of a learned nogood: its asserting literal u,
+ * false once the backjump asserts its complement, and the other literal of
+ * the highest level, so that a nogood watched true is one watched false. */
+static bool asserting_watches(const Solver *s, const IVec *lits, int32_t u,
+                              int32_t *w1, int32_t *w2) {
+    int32_t best = -1;
+    uint32_t level = 0u;
+    for (uint32_t k = 0u; k < lits->len; k++) {
+        int32_t m = lits->v[k];
+        if (m == u)
+            continue;
+        uint32_t l = lit_level(s, m);
+        if (best < 0 || l > level) {
+            best = m;
+            level = l;
+        }
+    }
+    if (best < 0)
+        return false;
+    *w1 = u;
+    *w2 = best;
+    return true;
+}
+
+/* After a backjump the fast search propagates only the asserted literal:
+ * every level below was at a fixpoint before its next decision. */
+static void requeue_asserted(Solver *s, int32_t lit) {
+    s->pending.len = 0u;
+    if (!iv_push(&s->pending, lit))
+        s->oom = true;
+}
+
+/* The fast search's lemmas before it searches: an atom a whose only rule r
+ * has not a in its body is false.  One RUP step: a's support nogood
+ * {T a, F body r} makes the body true, and r's nogood {T body r, T a}
+ * conflicts. */
+static void self_defeating_lemmas(Solver *s) {
+    uint32_t *rules_of = calloc(s->natoms ? s->natoms : 1u, sizeof(*rules_of));
+    uint32_t *only = malloc(sizeof(*only) * (s->natoms ? s->natoms : 1u));
+    if (!rules_of || !only) {
+        free(rules_of);
+        free(only);
+        return;
+    }
+    for (uint32_t r = 0u; r < s->nrules; r++) {
+        uint32_t h = s->rule_head[r];
+        rules_of[h]++;
+        only[h] = r;
+    }
+    IVec hints = {0};
+    for (uint32_t a = 0u; a < s->natoms && !s->oom; a++) {
+        if (rules_of[a] != 1u)
+            continue;
+        uint32_t r = only[a];
+        const AspRule *rule = &s->rules[r];
+        for (uint32_t k = 0u; k < rule->neg_len; k++) {
+            if ((uint32_t)atom_lookup(s, rule->neg[k]) != a)
+                continue;
+            int32_t unit = LIT(a, 1);
+            hints.len = 0u;
+            iv_push(&hints, (int32_t)(s->support_first + a));
+            iv_push(&hints, (int32_t)(s->rule_first[r] + 2u + rule->pos_len + k));
+            emit_rup(s, &unit, 1u, &hints);
+            int32_t g = new_nogood(s, &unit, 1u);
+            if (g < 0 || !iv_push(&s->shorts, g))
+                s->oom = true;
+            break;
+        }
+    }
+    iv_free(&hints);
+    free(rules_of);
+    free(only);
+}
+
 /* DState.requeue: everything on the new trail becomes pending, newest first */
 static void requeue(Solver *s) {
     s->pending.len = 0u;
@@ -1078,6 +1334,12 @@ static IterResult resolve_conflict(Solver *s, int32_t conflict) {
         for (uint32_t k = reasons.len; k-- > 0u;)
             iv_push(&hints, reasons.v[k]);
         iv_push(&hints, conflict);
+        if (s->fast) {
+            for (uint32_t k = 0u; k < c.len; k++)
+                bump_variable(s, (uint32_t)LIT_VAR(c.v[k]));
+            s->bump /= 0.95;
+            s->conflicts++;
+        }
         int32_t learned = new_nogood(s, c.v, c.len);
         if (learned < 0) {
             result = ITER_STUCK;
@@ -1085,7 +1347,8 @@ static IterResult resolve_conflict(Solver *s, int32_t conflict) {
         }
         /* DState.learn */
         int32_t w1, w2;
-        if (two_watches(&s->pool[learned].lits, &w1, &w2))
+        if (s->fast ? asserting_watches(s, &s->pool[learned].lits, u, &w1, &w2)
+                    : two_watches(&s->pool[learned].lits, &w1, &w2))
             add_watched(s, learned, w1, w2);
         else if (!iv_push(&s->shorts, learned))
             s->oom = true;
@@ -1098,7 +1361,10 @@ static IterResult resolve_conflict(Solver *s, int32_t conflict) {
             trace_learned(s, learned, j);
         truncate_trail(s, keep);
         push_entry(s, LIT_COMPL(u), j, learned);
-        requeue(s);
+        if (s->fast)
+            requeue_asserted(s, LIT_COMPL(u));
+        else
+            requeue(s);
 learned_done:
         iv_free(&c);
         iv_free(&reasons);
@@ -1118,7 +1384,10 @@ learned_done:
     if (s->trace && reason >= 0)
         trace_learned(s, reason, s->level);
     push_entry(s, LIT_COMPL(decision), s->level, reason);
-    requeue(s);
+    if (s->fast)
+        requeue_asserted(s, LIT_COMPL(decision));
+    else
+        requeue(s);
     iv_free(&dl);
     iv_free(&hints);
     return reason < 0 ? ITER_STUCK : ITER_NEXT;
@@ -1132,6 +1401,21 @@ static IterResult iterate(Solver *s) {
         return ITER_STUCK;
     if (p == PROP_CONFLICT)
         return resolve_conflict(s, conflict);
+    if (s->fast) {
+        /* The fast search decides atoms only: once every atom has a value,
+         * the completion's nogoods give every body its value. */
+        while (s->heap_len > 0u) {
+            uint32_t v = heap_pop(s);
+            if (s->val[v] >= 0)
+                continue;
+            int32_t x = LIT(v, s->phase[v]);
+            push_entry(s, x, s->level + 1u, -1);
+            s->pending.len = 0u;
+            if (!iv_push(&s->pending, x))
+                s->oom = true;
+            return ITER_NEXT;
+        }
+    }
     for (uint32_t v = 0u; v < s->nvars; v++) {
         if (s->val[v] < 0) {
             int32_t x = LIT(v, 0);
@@ -1148,6 +1432,11 @@ static IterResult iterate(Solver *s) {
 /* ---- the driver (Driver.lean, Program.solve) -------------------------------- */
 
 static void solver_free(Solver *s) {
+    free(s->rule_first);
+    free(s->activity);
+    free(s->phase);
+    free(s->heap);
+    free(s->heap_pos);
     free(s->atom_ids);
     free(s->atom_key);
     free(s->atom_var);
@@ -1179,14 +1468,26 @@ static void solver_free(Solver *s) {
 }
 
 AspAnswer asp_cdnl_solve(const AspRule *rules, uint32_t rule_count) {
-    return asp_cdnl_solve_traced(rules, rule_count, NULL, NULL);
+    return asp_cdnl_solve_search(rules, rule_count, ASP_SEARCH_FAST, NULL, NULL);
 }
 
 AspAnswer asp_cdnl_solve_traced(const AspRule *rules, uint32_t rule_count,
                                 const AspTraceSink *trace, void *context) {
+    return asp_cdnl_solve_search(rules, rule_count, ASP_SEARCH_FAST, trace, context);
+}
+
+AspAnswer asp_cdnl_solve_search(const AspRule *rules, uint32_t rule_count,
+                                AspSearch search, const AspTraceSink *trace,
+                                void *context) {
     AspAnswer answer = {.kind = ASP_ANSWER_ERROR};
     Solver s = {.rules = rules, .nrules = rule_count,
-                .trace = trace, .trace_context = context};
+                .trace = trace, .trace_context = context,
+                .fast = search == ASP_SEARCH_FAST};
+    if (s.fast) {
+        s.rule_first = malloc(sizeof(*s.rule_first) * (rule_count ? rule_count : 1u));
+        if (!s.rule_first)
+            goto fail;
+    }
     if (!number_variables(&s) || !completion(&s))
         goto fail;
     s.tight = program_tight(&s);
@@ -1201,6 +1502,23 @@ AspAnswer asp_cdnl_solve_traced(const AspRule *rules, uint32_t rule_count,
     if (!s.watches || !s.trail || !s.val || !s.trail_pos)
         goto fail;
     memset(s.val, -1, s.nvars ? s.nvars : 1u);
+    if (s.fast) {
+        s.activity = calloc(s.nvars ? s.nvars : 1u, sizeof(*s.activity));
+        s.phase = calloc(s.nvars ? s.nvars : 1u, 1u);
+        s.heap = malloc(sizeof(*s.heap) * (s.nvars ? s.nvars : 1u));
+        s.heap_pos = malloc(sizeof(*s.heap_pos) * (s.nvars ? s.nvars : 1u));
+        if (!s.activity || !s.phase || !s.heap || !s.heap_pos)
+            goto fail;
+        s.bump = 1.0;
+        s.restart_at = FAST_RESTART_UNIT * luby(0u);
+        for (uint32_t v = 0u; v < s.nvars; v++)
+            s.heap_pos[v] = -1;
+        for (uint32_t v = 0u; v < s.natoms; v++) {
+            s.heap[v] = v;
+            s.heap_pos[v] = (int32_t)v;
+        }
+        s.heap_len = s.natoms;
+    }
     /* initState: the completion watched or scanned, named 1, 2, ... */
     for (uint32_t g = 0u; g < s.ncompletion && !s.oom; g++) {
         int32_t w1, w2;
@@ -1227,12 +1545,24 @@ AspAnswer asp_cdnl_solve_traced(const AspRule *rules, uint32_t rule_count,
     s.next_id = s.ncompletion + 1u;
     if (!name_tables(&s))
         goto fail;
+    if (s.fast)
+        self_defeating_lemmas(&s);
     for (;;) {
         if (s.oom)
             goto fail;
         IterResult r = iterate(&s);
-        if (r == ITER_NEXT)
+        if (r == ITER_NEXT) {
+            /* a restart: back to level 0, which stays at its fixpoint */
+            if (s.fast && s.conflicts >= s.restart_at) {
+                uint32_t keep = 0u;
+                while (keep < s.ntrail && s.trail[keep].level == 0u)
+                    keep++;
+                truncate_trail(&s, keep);
+                s.pending.len = 0u;
+                s.restart_at = s.conflicts + FAST_RESTART_UNIT * luby(++s.restarts);
+            }
             continue;
+        }
         if (r == ITER_SAT) {
             answer.kind = ASP_ANSWER_SAT;
             answer.model = malloc(sizeof(*answer.model) * (s.natoms ? s.natoms : 1u));
@@ -1252,6 +1582,12 @@ AspAnswer asp_cdnl_solve_traced(const AspRule *rules, uint32_t rule_count,
     answer.steps_len = s.nsteps;
     s.steps = NULL;
     solver_free(&s);
+    if (search == ASP_SEARCH_FAST &&
+        ((answer.kind == ASP_ANSWER_SAT &&
+          !asp_model_check(rules, rule_count, answer.model, answer.model_len)) ||
+         (answer.kind == ASP_ANSWER_UNSAT &&
+          !asp_certificate_check(rules, rule_count, answer.steps, answer.steps_len))))
+        answer.kind = ASP_ANSWER_REFUSED;
     return answer;
 fail:
     for (uint32_t i = 0u; i < s.nsteps; i++) {
@@ -1311,7 +1647,123 @@ void asp_answer_print(FILE *out, const AspAnswer *answer) {
     case ASP_ANSWER_ERROR:
         fputs("error\n", out);
         return;
+    case ASP_ANSWER_REFUSED:
+        fputs("refused\n", out);
+        return;
     }
+}
+
+/* ---- the stable-model check --------------------------------------------- */
+
+static int cmp_i32(const void *a, const void *b) {
+    int32_t x = *(const int32_t *)a, y = *(const int32_t *)b;
+    return (x > y) - (x < y);
+}
+
+/* the index of x among the sorted distinct ids, or -1 */
+static int32_t id_index(const int32_t *ids, uint32_t n, int32_t x) {
+    uint32_t lo = 0u, hi = n;
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2u;
+        if (ids[mid] < x)
+            lo = mid + 1u;
+        else
+            hi = mid;
+    }
+    return lo < n && ids[lo] == x ? (int32_t)lo : -1;
+}
+
+bool asp_model_check(const AspRule *rules, uint32_t rule_count,
+                     const int32_t *atoms, uint32_t len) {
+    size_t total = len;
+    for (uint32_t r = 0u; r < rule_count; r++)
+        total += 1u + rules[r].pos_len + rules[r].neg_len;
+    int32_t *ids = malloc(sizeof(*ids) * (total ? total : 1u));
+    if (!ids)
+        return false;
+    size_t m = 0u;
+    for (uint32_t i = 0u; i < len; i++)
+        ids[m++] = atoms[i];
+    for (uint32_t r = 0u; r < rule_count; r++) {
+        ids[m++] = rules[r].head;
+        for (uint32_t i = 0u; i < rules[r].pos_len; i++)
+            ids[m++] = rules[r].pos[i];
+        for (uint32_t i = 0u; i < rules[r].neg_len; i++)
+            ids[m++] = rules[r].neg[i];
+    }
+    qsort(ids, m, sizeof(*ids), cmp_i32);
+    uint32_t n = 0u;
+    for (size_t i = 0u; i < m; i++)
+        if (n == 0u || ids[n - 1u] != ids[i])
+            ids[n++] = ids[i];
+    uint8_t *in_model = calloc(n ? n : 1u, 1u);
+    uint8_t *derived = calloc(n ? n : 1u, 1u);
+    uint32_t *need = malloc(sizeof(*need) * (rule_count ? rule_count : 1u));
+    uint32_t *occ_start = calloc((size_t)n + 1u, sizeof(*occ_start));
+    size_t occ_total = 0u;
+    for (uint32_t r = 0u; r < rule_count; r++)
+        occ_total += rules[r].pos_len;
+    uint32_t *occ = malloc(sizeof(*occ) * (occ_total ? occ_total : 1u));
+    uint32_t *queue = malloc(sizeof(*queue) * (n ? n : 1u));
+    bool ok = in_model && derived && need && occ_start && occ && queue;
+    for (uint32_t i = 0u; ok && i < len; i++)
+        in_model[id_index(ids, n, atoms[i])] = 1u;
+    /* the reduct: a rule stays when the model leaves its negative atoms false */
+    uint32_t head = 0u, tail = 0u;
+    if (ok) {
+        for (uint32_t r = 0u; r < rule_count; r++) {
+            bool kept = true;
+            for (uint32_t i = 0u; i < rules[r].neg_len && kept; i++)
+                kept = !in_model[id_index(ids, n, rules[r].neg[i])];
+            need[r] = kept ? rules[r].pos_len : UINT32_MAX;
+            if (kept)
+                for (uint32_t i = 0u; i < rules[r].pos_len; i++)
+                    occ_start[id_index(ids, n, rules[r].pos[i]) + 1u]++;
+        }
+        for (uint32_t a = 0u; a < n; a++)
+            occ_start[a + 1u] += occ_start[a];
+        uint32_t *fill = calloc(n ? n : 1u, sizeof(*fill));
+        ok = fill != NULL;
+        for (uint32_t r = 0u; ok && r < rule_count; r++)
+            if (need[r] != UINT32_MAX)
+                for (uint32_t i = 0u; i < rules[r].pos_len; i++) {
+                    uint32_t a = (uint32_t)id_index(ids, n, rules[r].pos[i]);
+                    occ[occ_start[a] + fill[a]++] = r;
+                }
+        free(fill);
+        /* its least model, by counting each rule's underived positive atoms */
+        for (uint32_t r = 0u; ok && r < rule_count; r++)
+            if (need[r] == 0u) {
+                uint32_t h = (uint32_t)id_index(ids, n, rules[r].head);
+                if (!derived[h]) {
+                    derived[h] = 1u;
+                    queue[tail++] = h;
+                }
+            }
+        while (ok && head < tail) {
+            uint32_t a = queue[head++];
+            for (uint32_t k = occ_start[a]; k < occ_start[a + 1u]; k++) {
+                uint32_t r = occ[k];
+                if (--need[r] == 0u) {
+                    uint32_t h = (uint32_t)id_index(ids, n, rules[r].head);
+                    if (!derived[h]) {
+                        derived[h] = 1u;
+                        queue[tail++] = h;
+                    }
+                }
+            }
+        }
+        for (uint32_t a = 0u; ok && a < n; a++)
+            ok = derived[a] == in_model[a];
+    }
+    free(ids);
+    free(in_model);
+    free(derived);
+    free(need);
+    free(occ_start);
+    free(occ);
+    free(queue);
+    return ok;
 }
 
 /* ---- the certificate checker (Certificate.lean, Program.checkCert) -------- */
@@ -1464,6 +1916,11 @@ void asp_enumeration_free(AspEnumeration *e) {
  * label), and the blocked program is solved again; the last refutation
  * certifies that no further model exists. */
 AspEnumeration asp_cdnl_enumerate(const AspRule *rules, uint32_t rule_count) {
+    return asp_cdnl_enumerate_search(rules, rule_count, ASP_SEARCH_FAST);
+}
+
+AspEnumeration asp_cdnl_enumerate_search(const AspRule *rules, uint32_t rule_count,
+                                         AspSearch search) {
     AspEnumeration e = {.kind = ASP_ANSWER_ERROR};
     int32_t none = 0;
     bool any = false;
@@ -1526,7 +1983,7 @@ AspEnumeration asp_cdnl_enumerate(const AspRule *rules, uint32_t rule_count) {
             }
             b->neg_len = (uint32_t)(store + at - b->neg);
         }
-        AspAnswer a = asp_cdnl_solve(blocked, nb);
+        AspAnswer a = asp_cdnl_solve_search(blocked, nb, search, NULL, NULL);
         if (a.kind == ASP_ANSWER_SAT) {
             AspModel *ms = realloc(e.models, sizeof(*ms) * (e.models_len + 1u));
             if (!ms) { asp_answer_free(&a); ok = false; break; }

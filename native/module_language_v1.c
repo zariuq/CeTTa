@@ -281,7 +281,7 @@ unresolved:
 /* The constructor profile has no bound levels. Its name-directed action is
  * the depth-zero restriction of the core named-substitution elaboration. */
 static Atom *substitute_named(ModuleLanguageV1 *l, Atom *body, Atom *target, Atom *replacement) {
-    if (!module_spend_v1(&l->work) || l->work.depth >= 512u) {
+    if (!module_spend_v1(&l->work) || l->work.depth >= MODULE_STRUCTURAL_DEPTH_V1) {
         module_fail_v1(&l->work, "incomplete", "Named substitution depth exhausted."); return NULL;
     }
     if (module_form_v1(body, "FVar", 1u))
@@ -330,7 +330,7 @@ done:
 }
 
 static Atom *check_pattern(ModuleLanguageV1 *l, Atom *pattern, Atom *expected, ModuleValuesV1 *bindings, bool introduce) {
-    if (!module_spend_v1(&l->work) || l->work.depth >= 512u) {
+    if (!module_spend_v1(&l->work) || l->work.depth >= MODULE_STRUCTURAL_DEPTH_V1) {
         module_fail_v1(&l->work, "incomplete", "Law pattern depth exhausted."); return NULL;
     }
     if (module_form_v1(pattern, "ModuleNamedSubstitutionV1", 3u))
@@ -448,7 +448,7 @@ done:
  * Canonicalization adds exactly the formerly implicit None annotations. */
 static Atom *complete_row(ModuleWorkV1 *w, Atom *row) {
     if (!row || !module_spend_v1(w)) return NULL;
-    if (w->depth >= 512u) {
+    if (w->depth >= MODULE_STRUCTURAL_DEPTH_V1) {
         module_fail_v1(w, "incomplete", "Core spelling normalization reached its nesting budget.");
         return NULL;
     }

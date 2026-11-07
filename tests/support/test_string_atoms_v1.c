@@ -165,6 +165,43 @@ static void escaping(void) {
     cetta_byte_buffer_free(&out);
 }
 
+static void literal_readings(Arena *arena) {
+    const struct { const char *source; const char *value; } cases[] = {
+        {"\\q", "\\q"}, {"\\x4", "\\x4"}, {"\\u12", "\\u12"},
+        {"\\u{zz}", "\\u{zz}"}, {"\\u{110000}", "\\u{110000}"},
+        {"\\u{0001F600}", "😀"}, {"\\u{000000041}", "A"},
+        {"\\u{0000110000}", "\\u{0000110000}"}, {"\\u{}", "\\u{}"},
+        {"\\uD800", "\\uD800"}, {"\\uDC00", "\\uDC00"},
+        {"\\uD83D\\uDE00", "😀"}, {"\\u03bb", "λ"},
+        {"\\u{3bb}", "λ"}, {"\\x41\\n", "A\n"},
+        {"x\\d+", "x\\d+"}, {"\\b\\f", "\b\f"},
+        {"λé漢字", "λé漢字"}
+    };
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; ++i) {
+        CettaByteBuffer out;
+        cetta_byte_buffer_init(&out);
+        bool ok = cetta_string_unescape(CETTA_QUOTING_METTA, cases[i].source,
+            strlen(cases[i].source), &out, NULL);
+        expect(ok && out.len == strlen(cases[i].value) &&
+            !memcmp(out.bytes, cases[i].value, out.len), cases[i].source);
+        size_t n = strlen(cases[i].source);
+        char *literal = malloc(n + 3u);
+        literal[0] = '"'; memcpy(literal + 1, cases[i].source, n);
+        literal[n + 1] = '"'; literal[n + 2] = 0;
+        size_t pos = 0;
+        Atom *a = parse_sexpr(arena, literal, &pos);
+        expect(a && a->kind == ATOM_GROUNDED && a->ground.gkind == GV_STRING &&
+            atom_string_len(a) == out.len && !memcmp(a->ground.sval, out.bytes, out.len),
+            "bootstrap parser and explicit MeTTa codec agree");
+        free(literal); cetta_byte_buffer_free(&out);
+    }
+    CettaByteBuffer out;
+    cetta_byte_buffer_init(&out);
+    expect(cetta_string_unescape(CETTA_QUOTING_METTA, "\\", 1u, &out, NULL) &&
+        out.len == 1u && out.bytes[0] == '\\', "body decoder preserves a final backslash");
+    cetta_byte_buffer_free(&out);
+}
+
 static bool spelled(const char *text, size_t len, const CettaCharClass *initial,
                     const CettaCharClass *rest) {
     bool holds = false;
@@ -296,6 +333,7 @@ int main(void) {
     printing_and_reading(&arena);
     codepoints();
     escaping();
+    literal_readings(&arena);
     spelling();
     natives(&arena);
 

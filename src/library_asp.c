@@ -519,7 +519,8 @@ static Atom *asp_solve_value(Arena *a, const AspProgram *p, const char **error) 
         Atom *head = atom_symbol(a, "unsat");
         result = cert && head ? atom_expr2(a, head, cert) : NULL;
     } else {
-        *error = "the solver did not finish";
+        *error = answer.kind == ASP_ANSWER_REFUSED
+            ? "the solver's answer failed its check" : "the solver did not finish";
     }
     asp_answer_free(&answer);
     return result;
@@ -849,57 +850,74 @@ static Atom *asp_ground_value(Arena *a, Atom *text, const char **error) {
     return program;
 }
 
+/* clingo's models as they arrive: all of them, or the first `limit`. */
 typedef struct {
     Arena *arena;
     const AspAtomTable *atoms;
+    size_t limit;
     Atom **models;
     size_t len, cap;
 } AspClingoCollect;
 
+static AspClingoNext asp_clingo_kept(AspClingoCollect *c, Atom *model) {
+    if (!model)
+        return ASP_CLINGO_FAIL;
+    c->models[c->len++] = model;
+    return c->limit && c->len >= c->limit ? ASP_CLINGO_STOP : ASP_CLINGO_MORE;
+}
+
 /* One clingo model: the program's atoms it holds, in table order. */
-static bool asp_clingo_collect_model(void *context, const uint32_t *atoms,
-                                     size_t len) {
+static AspClingoNext asp_clingo_collect_model(void *context, const uint32_t *atoms,
+                                              size_t len) {
     AspClingoCollect *c = context;
     Atom **items = arena_alloc(c->arena, sizeof(*items) * (len + 1u));
     if (!items || !asp_grow((void **)&c->models, &c->cap, c->len + 1u,
                             sizeof(*c->models)))
-        return false;
+        return ASP_CLINGO_FAIL;
     for (size_t i = 0u; i < len; i++)
         items[i] = c->atoms->items[atoms[i] - 1u];
-    Atom *model = atom_expr(c->arena, items, (CettaExprLen)len);
-    if (!model)
-        return false;
-    c->models[c->len++] = model;
-    return true;
+    return asp_clingo_kept(c, atom_expr(c->arena, items, (CettaExprLen)len));
 }
 
 /* One clingo model of a program text: its shown symbols as terms. */
-static bool asp_clingo_collect_symbols(void *context,
-                                       const AspClingoSymbol *symbols,
-                                       size_t len) {
+static AspClingoNext asp_clingo_collect_symbols(void *context,
+                                                const AspClingoSymbol *symbols,
+                                                size_t len) {
     AspClingoCollect *c = context;
     Atom **items = arena_alloc(c->arena, sizeof(*items) * (len + 1u));
     if (!items || !asp_grow((void **)&c->models, &c->cap, c->len + 1u,
                             sizeof(*c->models)))
-        return false;
+        return ASP_CLINGO_FAIL;
     for (size_t i = 0u; i < len; i++)
         if (!(items[i] = asp_symbol_atom(c->arena, symbols[i], 0u)))
-            return false;
-    Atom *model = atom_expr(c->arena, items, (CettaExprLen)len);
-    if (!model)
-        return false;
-    c->models[c->len++] = model;
-    return true;
+            return ASP_CLINGO_FAIL;
+    return asp_clingo_kept(c, atom_expr(c->arena, items, (CettaExprLen)len));
+}
+
+/* The clingo library answers in the asp library's shapes, with clingo as
+ * the evidence where the asp library gives its certificate:
+ * (models ((A ...) ...) (reference clingo)) for every model, and
+ * (model (A ...)) or (unsat (reference clingo)) for one. */
+static Atom *asp_clingo_answer(Arena *a, const AspClingoCollect *c, bool solve) {
+    Atom *evidence = atom_expr2(a, atom_symbol(a, "reference"),
+                                atom_symbol(a, "clingo"));
+    if (!evidence)
+        return NULL;
+    if (solve)
+        return c->len ? atom_expr2(a, atom_symbol(a, "model"), c->models[0])
+                      : atom_expr2(a, atom_symbol(a, "unsat"), evidence);
+    Atom *list = atom_expr(a, c->models, (CettaExprLen)c->len);
+    return list ? atom_expr3(a, atom_symbol(a, "models"), list, evidence) : NULL;
 }
 
 /* clingo's stable models of a program text, by its shown atoms. */
-static Atom *asp_clingo_text_value(Arena *a, Atom *text, const char **error) {
-    AspClingoCollect collect = {.arena = a};
+static Atom *asp_clingo_text_value(Arena *a, Atom *text, bool solve,
+                                   const char **error) {
+    AspClingoCollect collect = {.arena = a, .limit = solve ? 1u : 0u};
     Atom *result = NULL;
     if (asp_clingo_text_models(text->ground.sval, asp_clingo_collect_symbols,
                                &collect, error)) {
-        Atom *list = atom_expr(a, collect.models, (CettaExprLen)collect.len);
-        result = list ? atom_expr2(a, atom_symbol(a, "clingo-models"), list) : NULL;
+        result = asp_clingo_answer(a, &collect, solve);
     } else if (!*error) {
         *error = "out of memory";
     }
@@ -910,7 +928,8 @@ static Atom *asp_clingo_text_value(Arena *a, Atom *text, const char **error) {
 /* clingo's stable models of program data: rules, choices and constraints
  * given to its solver as such, over the program's atoms in order of first
  * appearance. */
-static Atom *asp_clingo_models_value(Arena *a, Atom *value, const char **error) {
+static Atom *asp_clingo_models_value(Arena *a, Atom *value, bool solve,
+                                     const char **error) {
     if (!value || value->kind != ATOM_EXPR) {
         *error = "a program is an expression of rules";
         return NULL;
@@ -977,15 +996,16 @@ static Atom *asp_clingo_models_value(Arena *a, Atom *value, const char **error) 
             store[at++] = (uint32_t)id + 1u;
         }
     }
-    AspClingoCollect collect = {.arena = a, .atoms = &atoms};
+    AspClingoCollect collect = {.arena = a, .atoms = &atoms,
+                                .limit = solve ? 1u : 0u};
     if (!asp_clingo_models(atoms.len, rules, n, asp_clingo_collect_model,
                            &collect, error)) {
         if (!*error)
             *error = "out of memory";
+        free(collect.models);
         goto done;
     }
-    Atom *list = atom_expr(a, collect.models, (CettaExprLen)collect.len);
-    result = list ? atom_expr2(a, atom_symbol(a, "clingo-models"), list) : NULL;
+    result = asp_clingo_answer(a, &collect, solve);
     free(collect.models);
 done:
     free(rules);
@@ -1002,31 +1022,7 @@ bool cetta_asp_call(struct CettaLibraryContext *context, Arena *arena,
         return false;
     bool solve = head->sym_id == g_builtin_syms.lib_asp_solve;
     bool models = head->sym_id == g_builtin_syms.lib_asp_models;
-    bool ground = head->sym_id == g_builtin_syms.lib_asp_ground;
-    bool clingo_models = head->sym_id == g_builtin_syms.lib_asp_clingo_models;
     bool trace = head->sym_id == g_builtin_syms.lib_asp_trace;
-    /* Without clingo its two heads are not this library's to answer. */
-    if ((ground || clingo_models) && !asp_clingo_available())
-        return false;
-    if (ground || clingo_models) {
-        const char *error = NULL;
-        Atom *value = nargs != 1u ? NULL
-            : ground ? asp_ground_value(arena, args[0], &error)
-            : args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_STRING
-                ? asp_clingo_text_value(arena, args[0], &error)
-                : asp_clingo_models_value(arena, args[0], &error);
-        if (nargs != 1u)
-            error = ground ? "expected one program text" : "expected one program";
-        if (!value) {
-            Atom *call = atom_expr(arena, (Atom *[]){head, nargs ? args[0] : head},
-                                   nargs ? 2u : 1u);
-            value = atom_error(arena, call,
-                               atom_string(arena, error ? error : "out of memory"));
-        }
-        *out = (CettaCallOutcome){.kind = CETTA_CALL_VALUE, .term = value,
-                                  .result_form = CETTA_CALL_RESULT_EXPRESSION};
-        return value != NULL;
-    }
     if (!solve && !models && !trace)
         return false;
     const char *error = NULL;
@@ -1046,6 +1042,45 @@ bool cetta_asp_call(struct CettaLibraryContext *context, Arena *arena,
     if (!value) {
         Atom *call = atom_expr(arena, (Atom *[]){head, nargs ? args[0] : head}, nargs ? 2u : 1u);
         value = atom_error(arena, call, atom_string(arena, error ? error : "out of memory"));
+    }
+    *out = (CettaCallOutcome){.kind = CETTA_CALL_VALUE, .term = value,
+                              .result_form = CETTA_CALL_RESULT_EXPRESSION};
+    return value != NULL;
+}
+
+/* The clingo library: clingo's grounder, and its solver behind the asp
+ * library's answer shapes.  (clingo:ground TEXT) grounds a program text into
+ * the asp library's statements; (clingo:models P) and (clingo:solve P) answer
+ * as asp:models and asp:solve do, for program data or a program text, with
+ * (reference clingo) where the asp library gives its certificate.  Without
+ * clingo loadable its heads are not this library's to answer. */
+bool cetta_clingo_call(struct CettaLibraryContext *context, Arena *arena,
+                       Atom *head, Atom **args, uint32_t nargs,
+                       CettaCallOutcome *out) {
+    (void)context;
+    if (!head || head->kind != ATOM_SYMBOL)
+        return false;
+    bool ground = head->sym_id == g_builtin_syms.lib_clingo_ground;
+    bool models = head->sym_id == g_builtin_syms.lib_clingo_models;
+    bool solve = head->sym_id == g_builtin_syms.lib_clingo_solve;
+    if (!(ground || models || solve) || !asp_clingo_available())
+        return false;
+    const char *error = NULL;
+    Atom *value = NULL;
+    if (nargs != 1u) {
+        error = ground ? "expected one program text" : "expected one program";
+    } else if (ground) {
+        value = asp_ground_value(arena, args[0], &error);
+    } else if (args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_STRING) {
+        value = asp_clingo_text_value(arena, args[0], solve, &error);
+    } else {
+        value = asp_clingo_models_value(arena, args[0], solve, &error);
+    }
+    if (!value) {
+        Atom *call = atom_expr(arena, (Atom *[]){head, nargs ? args[0] : head},
+                               nargs ? 2u : 1u);
+        value = atom_error(arena, call,
+                           atom_string(arena, error ? error : "out of memory"));
     }
     *out = (CettaCallOutcome){.kind = CETTA_CALL_VALUE, .term = value,
                               .result_form = CETTA_CALL_RESULT_EXPRESSION};

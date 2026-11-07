@@ -1,0 +1,20 @@
+{
+  "description": "Files CeTTa ships but does not author: their Mettapedia source and SHA-256. Datalog.module is still written by tools/build_lean_source_compilers.py.",
+  "files": {
+    "CHR.module": {
+      "source": {
+        "kind": "lean-run",
+        "path": "metta/gslt/tools/emit_chr_package.lean",
+        "module": "Mettapedia.GSLT.LanguageDef.ModuleFormat.CHRRuntimeCompiler"
+      },
+      "sha256": "9c6e8f8c2503268476457c4571272a37b1945a182e2e824e23bcad40728fa90c"
+    },
+    "chr/machine.metta": {
+      "source": {
+        "kind": "copy",
+        "path": "metta/gslt/lib/gslt_chr_machine.metta"
+      },
+      "sha256": "c5a02c63beab22c6429b422d04145d9f68211dec01367577ec062477e2bfcca3"
+    }
+  }
+}
