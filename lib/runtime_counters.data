@@ -1264,4 +1264,14 @@
   ; because their head's declared result cannot pass the formal they feed,
   ; and recognized folds run without their cell test on a sealed sort.
   (1129 PREPARED_PURE_REFUTED_CALL "prepared-pure-refuted-call")
-  (1130 PREPARED_PURE_SEALED_FOLD "prepared-pure-sealed-fold")))
+  (1130 PREPARED_PURE_SEALED_FOLD "prepared-pure-sealed-fold")
+  ; PeTTa: a call the open-equation machine hands to the host because its
+  ; destination names a function that would become the head of a tail
+  ; let's pattern (OemEquation.head_destination_arities).
+  (1131 OPEN_EQUATION_HEAD_DESTINATION_HANDOFF "open-equation-head-destination-handoff")
+  ; A compiled == decided equality as observed (lists spelled by cons
+  ; cells) without materializing either operand.
+  (1132 PREPARED_PURE_OBSERVED_EQUALITY "prepared-pure-observed-equality")
+  ; PeTTa: equations the prepared answer cursor passed over because their
+  ; body begins by destructuring an argument decons-atom has no answer for.
+  (1133 PREPARED_PURE_ENTRY_GUARD_REFUTED "prepared-pure-entry-guard-refuted")))
