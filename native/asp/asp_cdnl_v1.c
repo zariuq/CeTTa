@@ -1774,11 +1774,110 @@ typedef struct {
     uint32_t len;
 } LiveClause;
 
-static const LiveClause *lookup_clause(const LiveClause *live, uint32_t n, uint32_t id) {
-    for (uint32_t i = n; i-- > 0u;)   /* the newest first, as Lean's live list */
-        if (live[i].id == id)
-            return &live[i];
+/* Live clauses by identifier.  A step whose identifier is live is refused,
+ * so identifiers are unique among live clauses and the one an identifier
+ * finds is the newest with it, as Lean's lookup over the live list. */
+typedef struct {
+    uint64_t *keys;   /* identifier + 1; 0 for an empty slot */
+    uint32_t *at;     /* its index in the live array */
+    uint32_t mask;
+} LiveIndex;
+
+static bool live_index_init(LiveIndex *x, uint32_t n) {
+    uint32_t size = 64u;
+    while (size < 2u * n + 2u)
+        size *= 2u;
+    x->mask = size - 1u;
+    x->keys = calloc(size, sizeof(*x->keys));
+    x->at = malloc(sizeof(*x->at) * size);
+    return x->keys && x->at;
+}
+
+static void live_index_free(LiveIndex *x) {
+    free(x->keys);
+    free(x->at);
+}
+
+static uint32_t live_slot(const LiveIndex *x, uint32_t id) {
+    return (uint32_t)(((uint64_t)id * 0x9E3779B97F4A7C15ull) >> 32) & x->mask;
+}
+
+static void live_index_put(LiveIndex *x, uint32_t id, uint32_t at) {
+    uint32_t i = live_slot(x, id);
+    while (x->keys[i] && x->keys[i] != (uint64_t)id + 1u)
+        i = (i + 1u) & x->mask;
+    x->keys[i] = (uint64_t)id + 1u;
+    x->at[i] = at;
+}
+
+static const LiveClause *lookup_clause(const LiveClause *live,
+                                       const LiveIndex *index, uint32_t id) {
+    for (uint32_t i = live_slot(index, id); index->keys[i];
+         i = (i + 1u) & index->mask)
+        if (index->keys[i] == (uint64_t)id + 1u)
+            return &live[index->at[i]];
     return NULL;
+}
+
+/* The literals a RUP check has assumed: a set by open addressing, emptied
+ * through the slots it filled.  Membership is the list membership of Lean's
+ * rupCheck. */
+typedef struct {
+    int32_t *keys;
+    uint8_t *used;
+    uint32_t *filled;
+    uint32_t nfilled, mask;
+} LitSet;
+
+/* Room for `n` literals at half load; an empty set keeps a larger table. */
+static bool litset_reserve(LitSet *x, uint32_t n) {
+    uint32_t size = 64u;
+    while (size < 2u * n + 2u)
+        size *= 2u;
+    if (x->keys && x->mask + 1u >= size)
+        return true;
+    free(x->keys);
+    free(x->used);
+    free(x->filled);
+    x->keys = malloc(sizeof(*x->keys) * size);
+    x->used = calloc(size, 1u);
+    x->filled = malloc(sizeof(*x->filled) * size);
+    x->mask = size - 1u;
+    x->nfilled = 0u;
+    return x->keys && x->used && x->filled;
+}
+
+static void litset_free(LitSet *x) {
+    free(x->keys);
+    free(x->used);
+    free(x->filled);
+}
+
+static uint32_t litset_slot(const LitSet *x, int32_t k) {
+    return (uint32_t)(((uint64_t)(uint32_t)k * 0x9E3779B97F4A7C15ull) >> 32) & x->mask;
+}
+
+static bool litset_has(const LitSet *x, int32_t k) {
+    for (uint32_t i = litset_slot(x, k); x->used[i]; i = (i + 1u) & x->mask)
+        if (x->keys[i] == k)
+            return true;
+    return false;
+}
+
+static void litset_add(LitSet *x, int32_t k) {
+    uint32_t i = litset_slot(x, k);
+    for (; x->used[i]; i = (i + 1u) & x->mask)
+        if (x->keys[i] == k)
+            return;
+    x->used[i] = 1u;
+    x->keys[i] = k;
+    x->filled[x->nfilled++] = i;
+}
+
+static void litset_clear(LitSet *x) {
+    for (uint32_t i = 0u; i < x->nfilled; i++)
+        x->used[x->filled[i]] = 0u;
+    x->nfilled = 0u;
 }
 
 static bool lits_contains(const int32_t *xs, uint32_t n, int32_t x) {
@@ -1790,23 +1889,26 @@ static bool lits_contains(const int32_t *xs, uint32_t n, int32_t x) {
 
 /* PropositionalLRATActions.rupCheck: assume the clause's complements, then each
  * hint in order must be unit (its open literal is assumed) or conflicting. */
-static bool rup_check(const LiveClause *live, uint32_t nlive, const AspStep *st) {
+static bool rup_check(const LiveClause *live, const LiveIndex *index,
+                      LitSet *assigned, const AspStep *st) {
     /* every hint must name a live clause (Lean's hints.mapM lookupClause) */
     for (uint32_t h = 0u; h < st->hints_len; h++)
-        if (!lookup_clause(live, nlive, st->hints[h]))
+        if (!lookup_clause(live, index, st->hints[h]))
             return false;
-    IVec assigned = {0};
+    /* at most every clause literal and one unit per hint are assumed */
+    if (!litset_reserve(assigned, st->clause_len + st->hints_len + 1u))
+        return false;
     bool ok = false;
     for (uint32_t i = 0u; i < st->clause_len; i++)
-        iv_push(&assigned, -st->clause[i]);
+        litset_add(assigned, -st->clause[i]);
     for (uint32_t h = 0u; h < st->hints_len; h++) {
-        const LiveClause *c = lookup_clause(live, nlive, st->hints[h]);
+        const LiveClause *c = lookup_clause(live, index, st->hints[h]);
         if (!c)
             break;
         uint32_t open = 0u;
         int32_t unit = 0;
         for (uint32_t k = 0u; k < c->len; k++)
-            if (!iv_contains(&assigned, -c->lits[k])) {
+            if (!litset_has(assigned, -c->lits[k])) {
                 open++;
                 unit = c->lits[k];
             }
@@ -1814,10 +1916,11 @@ static bool rup_check(const LiveClause *live, uint32_t nlive, const AspStep *st)
             ok = true;
             break;
         }
-        if (open > 1u || !iv_push(&assigned, unit))
+        if (open > 1u)
             break;
+        litset_add(assigned, unit);
     }
-    iv_free(&assigned);
+    litset_clear(assigned);
     return ok;
 }
 
@@ -1859,26 +1962,32 @@ bool asp_certificate_check(const AspRule *rules, uint32_t rule_count,
     Solver s = {.rules = rules, .nrules = rule_count};
     LiveClause *live = NULL;
     uint32_t nlive = 0u;
+    LiveIndex index = {0};
+    LitSet assigned = {0};
     bool accepted = false;
     if (!number_variables(&s) || !completion(&s))
         goto done;
     live = malloc(sizeof(*live) * (s.ncompletion + steps_len + 1u));
-    if (!live)
+    if (!live || !live_index_init(&index, s.ncompletion + steps_len + 1u))
         goto done;
     for (uint32_t g = 0u; g < s.ncompletion; g++) {     /* Program.inputs */
-        LiveClause *c = &live[nlive++];
+        LiveClause *c = &live[nlive];
         c->id = g + 1u;
+        c->lits = NULL;
         if (!lrat_clause(s.pool[g].lits.v, s.pool[g].lits.len, &c->lits, &c->len))
             goto done;
+        live_index_put(&index, c->id, nlive++);
     }
     for (uint32_t i = 0u; i < steps_len; i++) {          /* Program.certStep */
         const AspStep *st = &steps[i];
-        if (lookup_clause(live, nlive, st->id))
+        if (lookup_clause(live, &index, st->id))
             goto done;
-        bool ok = st->kind == ASP_STEP_RUP ? rup_check(live, nlive, st)
-                                           : loop_step_ok(&s, st);
+        bool ok = st->kind == ASP_STEP_RUP
+            ? rup_check(live, &index, &assigned, st)
+            : loop_step_ok(&s, st);
         if (!ok)
             goto done;
+        live_index_put(&index, st->id, nlive);
         LiveClause *c = &live[nlive++];
         c->id = st->id;
         c->len = st->clause_len;
@@ -1894,6 +2003,8 @@ done:
     for (uint32_t i = 0u; i < nlive; i++)
         free(live[i].lits);
     free(live);
+    live_index_free(&index);
+    litset_free(&assigned);
     solver_free(&s);
     return accepted;
 }

@@ -18400,6 +18400,7 @@ NORMAL_TEST_TARGETS := \
 	test-prepared-pure-answer-producer \
 	test-petta-native-value-boundaries \
 	test-petta-oem-single-sequence \
+	test-petta-oem-collection-after-restore \
 	test-petta-callability-refresh \
 	test-petta-add-atoms-batch-v1 \
 	test-petta-tier-composition \
@@ -34564,6 +34565,30 @@ test-petta-oem-single-sequence: $(BIN)
 		fi; \
 	done; \
 	echo "PASS: one-child sequences preserve values, choices, effects, failure, payloads and equation cuts"
+
+.PHONY: test-petta-oem-collection-after-restore
+test-all: test-petta-oem-collection-after-restore
+test-petta-semantics: test-petta-oem-collection-after-restore
+# A backtrack below promoted activations whose slots were stored without a
+# trail entry leaves those slots dead; the next minor collection must not
+# trace them.  The search answers alike on the tier and the reference, with
+# and without frequent collections.
+test-petta-oem-collection-after-restore: $(BIN)
+	@set -eu; \
+	for reference in 0 1; do \
+	for stress in 0 1; do \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference \
+			CETTA_OEM_COLLECT_STRESS=$$stress CETTA_PETTA_COLLECT_STRESS=$$stress \
+			$(CETTA_BIN_INVOKE) --lang petta \
+			tests/petta/open_equation_collection_after_restore.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/open_equation_collection_after_restore.expected)" ]; then \
+			echo "FAIL: collection after a restore (reference $$reference, stress $$stress)"; \
+			diff -u tests/petta/open_equation_collection_after_restore.expected <(printf '%s\n' "$$actual"); \
+			exit 1; \
+		fi; \
+	done; \
+	done; \
+	echo "PASS: a minor collection after a backtrack traces no slot the backtrack left dead"
 
 .PHONY: test-petta-late-foreign-continuation
 test-all: test-petta-late-foreign-continuation
