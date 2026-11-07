@@ -929,12 +929,12 @@
   "rust": "[(Box (Pair 1 2))] [(Error 92 (BadType Pair Number))]"
  },
  "typed-ev.arg.field": {
-  "rust": "[(Pair 1 2)] [(Error 92 (BadType Pair Number))]",
-  "he-compat": "[(Error 92 (BadType Pair Number))]"
+  "rust": "[(Pair 1 2)] [(Error 92 (BadType Pair Number))]"
  },
  "typed-ev.arg.index": {
   "rust": "[(Error 92 (BadType Pair Number))]",
-  "he": "[(Pair 1 2)] [(Error 92 (BadType Pair Number))]"
+  "he": "[(Pair 1 2)] [(Error 92 (BadType Pair Number))]",
+  "he-compat": "[(Pair 1 2)] [(Error 92 (BadType Pair Number))]"
  },
  "typed-ev.arg.kept": {
   "rust": "[(Keep (Box (Pair 1 2)))] [(Error 92 (BadType Pair Number))]"

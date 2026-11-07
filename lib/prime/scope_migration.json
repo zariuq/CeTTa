@@ -78,8 +78,8 @@
     {
       "source": "gslt_execution_contracts.metta",
       "output": "gslt_execution_contracts.metta",
-      "source_sha256": "84aafb07d9c87c75009c0159e128c8a778eba19e08e9dda814bd774689672827",
-      "output_sha256": "7853313b17939b6f7a2c78dee2b2b9aa3bc0a3ae0ec7a0cc79aaa80368edfbfc",
+      "source_sha256": "ad6e631de793cb758d50f017708589a902690bb6d7c02aac25229e254b7953e6",
+      "output_sha256": "1a01e3edd61c56c3b29e690fae0a7f5beb02abb40f5fe9ad9cbfe8d74d876a79",
       "edits": 4,
       "code_diagnostics": 0
     },
@@ -198,8 +198,8 @@
     {
       "source": "lib_intensional_weighted.metta",
       "output": "lib_intensional_weighted.metta",
-      "source_sha256": "a2878d6bcc5c518e3bc6b9deb9a097ce924d76cddc74031377cb09bf0c7f99b2",
-      "output_sha256": "88ae74255c43322f7401a1b245eca536ffa33543d00ed81513b6ba7f5200e5d8",
+      "source_sha256": "74cc4f04aeccfc3fc95d4163aa811f1e70134f8e0b05150154837a4783b336c5",
+      "output_sha256": "353d145fd50a194462e1354e72079b4d7a4593fca4b36d427026cf5c2f811ae7",
       "edits": 11,
       "code_diagnostics": 0
     },
@@ -516,8 +516,8 @@
     {
       "source": "stdlib.metta",
       "output": "stdlib.metta",
-      "source_sha256": "59407ca18b91589c03d13c97e283cf97809c230e88b16ade17ce5a21141fb0d8",
-      "output_sha256": "a272d41786e0f6a5ba6aa3000e93d30b0f87936ee91031250d9782e41b89759b",
+      "source_sha256": "296e961379d2a98262f60c8e6d0627470ac40e9ea1ed9902fc8c87d316f82198",
+      "output_sha256": "9211eb0064d81df26ce07a34f2dfe0cdd747afd3106cea05956416f88125c2d5",
       "edits": 63,
       "code_diagnostics": 2
     },
@@ -710,7 +710,7 @@
     {
       "source": "store.metta",
       "generator": "library_spelling.py",
-      "output_sha256": "3b0ad01c4eab360ffdc71351b0a74682d08e72c91423405161ee7e62be3dbe25"
+      "output_sha256": "9c7a13fc0175e443ee571374adf9ccd0e0dec11cf5d45d419338ff39aa6e6096"
     },
     {
       "source": "syntax.metta",

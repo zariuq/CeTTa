@@ -1232,20 +1232,29 @@ static void test_type_stack_exhaustion(void) {
     Space space;
     space_init(&space);
     space_add(&space, parse_one(&arena, "(: deep-type (-> Number Number))"));
+    /* Two rows: the walk of a ground tree declines, so its bound check takes
+     * the general path. */
+    space_add(&space, parse_one(&arena, "(: deep-alt (-> Number Number))"));
+    space_add(&space, parse_one(&arena, "(: deep-alt (-> String Number))"));
     Atom *head = atom_symbol(&arena, "deep-type");
+    Atom *alt = atom_symbol(&arena, "deep-alt");
     Atom *number = atom_symbol(&arena, "Number");
     Atom *subject = atom_int(&arena, 1);
-    for (size_t i = 0u; i < 50000u; i++)
+    Atom *alt_subject = atom_int(&arena, 1);
+    for (size_t i = 0u; i < 50000u; i++) {
         subject = atom_expr2(&arena, head, subject);
-    assert(subject);
-    /* This entry has no enclosing evaluator guard. Both fresh inference and
-     * bound checking must report their own resource failure, then recover. */
+        alt_subject = atom_expr2(&arena, alt, alt_subject);
+    }
+    assert(subject && alt_subject);
+    /* This entry has no enclosing evaluator guard. Where the walk declines,
+     * fresh inference and bound checking report their own resource failure,
+     * then recover. */
     for (unsigned int mode = 0u; mode < 2u; mode++) {
         Atom **types = NULL;
         uint32_t count = 0u;
         CettaEvalCompletion completion = CETTA_EVAL_COMPLETE;
         assert(!petta_type_intrinsic_answers(
-            &space, &arena, subject, mode ? number : NULL,
+            &space, &arena, alt_subject, mode ? number : NULL,
             &types, &count, &completion));
         assert(completion == CETTA_EVAL_INCOMPLETE_STACK);
         assert(types == NULL && count == 0u);
@@ -1256,10 +1265,25 @@ static void test_type_stack_exhaustion(void) {
         assert(count == 1u && atom_eq(types[0], number));
         free(types);
     }
+    /* A ground tree of one-row heads read at a closed type is walked with
+     * its own stack, whatever its depth: the bound check answers once, and
+     * so does fresh inference, which checks the outer node's argument so. */
+    for (unsigned int mode = 0u; mode < 2u; mode++) {
+        Atom **walked = NULL;
+        uint32_t walked_count = 0u;
+        CettaEvalCompletion walked_completion = CETTA_EVAL_INCOMPLETE_HOST_FAILURE;
+        assert(petta_type_intrinsic_answers(&space, &arena, subject,
+                                            mode ? number : NULL,
+                                            &walked, &walked_count,
+                                            &walked_completion));
+        assert(walked_completion == CETTA_EVAL_COMPLETE);
+        assert(walked_count == 1u && atom_eq(walked[0], number));
+        free(walked);
+    }
     petta_type_facts_free_for_current_thread();
     space_free(&space);
     arena_free(&arena);
-    puts("PASS: deep native type inference and checking report stack exhaustion and recover");
+    puts("PASS: deep native type inference and checking report stack exhaustion and recover; a walked tree checks at any depth");
 }
 
 static void test_type_call_arity(Arena *arena) {
@@ -2462,6 +2486,57 @@ static void test_shared_value_observation(void) {
     assert(arena_accounted_live_bytes(&destination) < 64u * 1024u);
     arena_free(&destination);
     puts("PASS: shared publication preserves graph size and distinct opaque observations");
+}
+
+static void test_improper_value_observation(void) {
+    enum { CELLS = 1024 };
+    Arena source, destination;
+    arena_init(&source);
+    arena_init(&destination);
+    Atom *item = atom_symbol(&source, "improper-observation-item");
+    Atom *end = atom_symbol(&source, "improper-observation-end");
+    Atom *head = petta_semantics_open_cons_value(&source, item, atom_unit(&source));
+    Atom *chain = end;
+    for (unsigned index = 0u; index < CELLS; index++)
+        chain = petta_semantics_open_cons_value(&source, head, chain);
+    Atom *quote = atom_expr2(&source,
+        atom_symbol_id(&source, g_builtin_syms.quote), chain);
+    Atom *prefix[] = {item, head};
+    Atom *rest = atom_list_with_rest(&source, prefix, 2u, end);
+    Atom *mixed = petta_semantics_open_cons_value(&source, item, rest);
+    Atom *variable = atom_var_with_id(&source, "improper-tail", fresh_var_id());
+    VarId tail_id = variable->var_id;
+    Atom *open = petta_semantics_open_cons_value(&source, item, variable);
+    Atom *roots[] = {atom_symbol(&source, "Observations"), chain, chain, quote, mixed, open};
+    Atom *out = petta_semantics_materialize_value(&destination,
+        atom_expr(&source, roots, 6u));
+    assert(out && out->expr.len == 6u);
+    assert(arena_accounted_live_bytes(&destination) < 1024u * 1024u);
+    arena_free(&source);
+    assert(out->expr.elems[1] == out->expr.elems[2]);
+    Atom *cursor = out->expr.elems[1];
+    Atom *observed_head = cursor->expr.elems[1];
+    for (unsigned index = 0u; index < CELLS; index++) {
+        assert(petta_semantics_is_open_cons_value(cursor));
+        assert(cursor->expr.elems[1] == observed_head);
+        assert(observed_head->kind == ATOM_EXPR && observed_head->expr.len == 1u);
+        assert(atom_is_symbol(observed_head->expr.elems[0], "improper-observation-item"));
+        cursor = cursor->expr.elems[2];
+    }
+    assert(atom_is_symbol(cursor, "improper-observation-end"));
+    Atom *quoted_head = out->expr.elems[3]->expr.elems[1]->expr.elems[1];
+    assert(petta_semantics_is_open_cons_value(quoted_head));
+    cursor = out->expr.elems[4];
+    for (unsigned index = 0u; index < 3u; index++) {
+        assert(petta_semantics_is_open_cons_value(cursor));
+        cursor = cursor->expr.elems[2];
+    }
+    assert(atom_is_symbol(cursor, "improper-observation-end"));
+    assert(petta_semantics_is_open_cons_value(out->expr.elems[5]));
+    Atom *tail = out->expr.elems[5]->expr.elems[2];
+    assert(tail->kind == ATOM_VAR && var_id_eq(tail->var_id, tail_id));
+    arena_free(&destination);
+    puts("PASS: improper list observation stays linear and preserves sharing, nested lists, opaque syntax and open tails");
 }
 
 static void test_deep_cons_semantics(Arena *arena) {
@@ -5157,12 +5232,14 @@ typedef struct {
     SymbolId *heads;
     const PettaRelationSafety *expected;
     unsigned head_count;
+    CettaNameContext names;
     pthread_barrier_t barrier;
     bool reader_ok, writer_ok;
 } SafetyCatalogConcurrent;
 
 static void *test_safety_catalog_reader(void *raw) {
     SafetyCatalogConcurrent *test = raw;
+    cetta_name_context_install(&test->names);
     cetta_shared_transition_scope_enter();
     pthread_barrier_wait(&test->barrier);
     test->reader_ok = true;
@@ -5191,6 +5268,7 @@ static void *test_safety_catalog_reader(void *raw) {
 
 static void *test_safety_catalog_writer(void *raw) {
     SafetyCatalogConcurrent *test = raw;
+    cetta_name_context_install(&test->names);
     cetta_shared_transition_scope_enter();
     pthread_barrier_wait(&test->barrier);
     test->writer_ok = true;
@@ -5275,7 +5353,8 @@ static void test_program_safety_cache_scope(
     }
     cetta_shared_transition_scope_leave();
     SafetyCatalogConcurrent concurrent = {.program=program, .spaces=spaces,
-        .heads=heads, .expected=expected, .head_count=HEADS};
+        .heads=heads, .expected=expected, .head_count=HEADS,
+        .names=cetta_name_context_current()};
     assert(pthread_barrier_init(&concurrent.barrier, NULL, 2u) == 0);
     pthread_t reader, writer;
     assert(pthread_create(&reader, NULL, test_safety_catalog_reader, &concurrent) == 0);
@@ -17462,8 +17541,10 @@ int main(int argc, char **argv) {
     bool admission_only = argc == 2 && strcmp(argv[1], "--callee-admission") == 0;
     bool catalog_only = argc == 2 && strcmp(argv[1], "--catalog-append") == 0;
     bool segments_only = argc == 2 && strcmp(argv[1], "--source-segments") == 0;
-    if (argc != 1 && !worker_only && !resume_only && !arity_only && !native_only && !source_only && !admission_only && !catalog_only && !segments_only && !safety_only && !revision_only && !transient_only) {
-        fputs("usage: test_petta_search_machine [--worker-ownership|--resume-contract|--arity-contract|--native-return|--source-accounting|--callee-admission|--catalog-append|--source-segments]\n", stderr);
+    bool collection_only = argc == 2 && strcmp(argv[1], "--collection-offers") == 0;
+    bool ledger_only = argc == 2 && strcmp(argv[1], "--semantic-ledger") == 0;
+    if (argc != 1 && !ledger_only && !worker_only && !resume_only && !arity_only && !native_only && !source_only && !admission_only && !catalog_only && !segments_only && !collection_only && !safety_only && !revision_only && !transient_only) {
+        fputs("usage: test_petta_search_machine [--worker-ownership|--resume-contract|--arity-contract|--transient-plans|--native-return|--safety-catalog|--revision-views|--source-accounting|--callee-admission|--catalog-append|--source-segments|--collection-offers|--semantic-ledger]\n", stderr);
         return 2;
     }
     Arena persistent;
@@ -17487,6 +17568,16 @@ int main(int argc, char **argv) {
     g_symbols = &symbols;
     g_var_intern = &variables;
     test_native_argument_observation();
+    if (collection_only || argc == 1) {
+        test_interleaved_collection_offers();
+        test_tiny_collection_policy_offers();
+    }
+    if (collection_only)
+        goto release_owners;
+    if (ledger_only) {
+        test_program_analysis_sidecar_interop(&universe, &persistent, &answers);
+        goto release_owners;
+    }
     if (revision_only) {
         test_program_revision_view_transport(&universe, &persistent);
         test_program_private_catalog_scope(&universe, &persistent);
@@ -17503,18 +17594,11 @@ int main(int argc, char **argv) {
         test_program_case_safety_projection(&universe, &persistent);
         test_program_safety_foreign_callability(&universe, &persistent);
         test_program_safety_cache_scope(&universe, &persistent);
+        goto release_owners;
+    }
     if (segments_only) {
         test_unmetered_delayed_segments(&universe, &persistent, &answers);
         test_metered_body_segments(&universe, &persistent, &answers, true);
-        goto release_owners;
-    }
-    if (catalog_only) {
-        test_notified_catalog_append(&universe, &persistent);
-        test_unnotified_catalog_append(&universe, &persistent);
-        goto release_owners;
-    }
-    if (admission_only) {
-        test_callee_admission_scope(&universe, &persistent);
         goto release_owners;
     }
     if (catalog_only) {
@@ -17679,6 +17763,7 @@ int main(int argc, char **argv) {
         &universe, &persistent, &answers);
     test_deep_typecheck_source_rewrites(&universe);
     test_shared_value_observation();
+    test_improper_value_observation();
     test_deep_cons_semantics(&answers);
     test_logical_cons_binding_views(&answers);
     test_lowered_head_epoch_views(&answers);

@@ -1,0 +1,52 @@
+{
+  "before": {
+    "case": "counter_small",
+    "family": "counter_machine",
+    "arguments": [
+      3
+    ],
+    "engine": "cetta",
+    "trial": 0,
+    "status": "different-observation",
+    "counts": [
+      180,
+      1
+    ],
+    "reference_counts": [
+      180,
+      1
+    ],
+    "complete_set_compared": true,
+    "observed_distinct_rows": 181,
+    "wall": 0.006430094828829169,
+    "rss_kib": 15364,
+    "rc": 0,
+    "timed_out": false
+  },
+  "after": {
+    "case": "counter_small",
+    "family": "counter_machine",
+    "arguments": [
+      3
+    ],
+    "engine": "cetta",
+    "trial": 0,
+    "status": "pass",
+    "counts": [
+      180,
+      1
+    ],
+    "reference_counts": [
+      180,
+      1
+    ],
+    "complete_set_compared": true,
+    "observed_distinct_rows": 181,
+    "wall": 0.008014616090804338,
+    "rss_kib": 15744,
+    "rc": 0,
+    "timed_out": false
+  },
+  "diagnosis": "The authored MeTTa program stored (peano $ic) as data inside IC; let-binding the computed numeral before add-atom restores the intended states. Old counter timings are withdrawn.",
+  "differing_ic_rows_before": 30
+}

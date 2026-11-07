@@ -154,6 +154,7 @@ static void he_minimal_run(Space *s, Arena *a, Atom *atom, int fuel,
 
 typedef struct {
     Arena *arena;
+    Atom *query;
     const Bindings *prefix;
     OutcomeSet *outcomes;
 } HeRawQuery;
@@ -177,8 +178,12 @@ static bool he_compat_host_read_raw(Space *s, Arena *a, Atom *invocation,
     if (head == g_builtin_syms.get_state) {
         if (argument->kind == ATOM_GROUNDED && argument->ground.gkind == GV_STATE) {
             StateCell *cell = eval_resolve_state_read(argument->ground.ptr);
-            outcome_set_add_prefixed(a, raw, payload_rebind_resources(a, cell->value),
-                env, outer, true);
+            __attribute__((cleanup(state_target_guard_leave)))
+            StateTargetGuard read_target = {0};
+            state_target_guard_enter(&read_target, cell);
+            Atom *value = eval_state_read_value(a, cell);
+            if (value)
+                outcome_set_add_prefixed(a, raw, value, env, outer, true);
         } else {
             outcome_set_add_prefixed(a, raw,
                 space_arg_error(a, invocation,
@@ -243,14 +248,18 @@ static bool he_query_representative_collect(Arena *arena, const Bindings *bindin
                                             const VarId *eligible_ids,
                                             uint32_t eligible_count,
                                             HeQueryRepresentative **out,
-                                            uint32_t *count_out) {
+                                            uint32_t *count_out,
+                                            bool *any_active_out) {
     BindingsIterator iterator = {.bindings = bindings};
     Binding binding;
     HeQueryRepresentative *reps = NULL;
     uint32_t count = 0u;
     uint32_t cap = 0u;
+    bool any_active = false;
     *out = NULL;
     *count_out = 0u;
+    if (any_active_out)
+        *any_active_out = false;
     while (bindings_iterator_next(&iterator, &binding)) {
         uint32_t slot = count;
         Atom *value = binding_value_materialize(arena, binding.value);
@@ -287,23 +296,104 @@ static bool he_query_representative_collect(Arena *arena, const Bindings *bindin
     for (uint32_t i = 0u; i < count; i++) {
         if (var_id_is_none(reps[i].terminal_id) || !reps[i].eligible)
             continue;
+        if (eligible_ids &&
+            he_var_id_listed(eligible_ids, eligible_count, reps[i].terminal_id))
+            reps[i].ambiguous = true;
         for (uint32_t j = 0u; j < count; j++) {
             if (i != j && reps[j].eligible &&
                 var_id_eq(reps[j].terminal_id, reps[i].terminal_id))
                 reps[i].ambiguous = true;
         }
+        if (!reps[i].ambiguous &&
+            !var_id_eq(reps[i].query_id, reps[i].terminal_id))
+            any_active = true;
     }
     *out = reps;
     *count_out = count;
+    if (any_active_out)
+        *any_active_out = any_active;
     return true;
 fail:
     free(reps);
     return false;
 }
 
+typedef struct {
+    const Atom *source;
+    Atom *image;
+} HeRewriteMemoEntry;
+
+typedef struct {
+    HeRewriteMemoEntry *slots;
+    size_t cap;
+    size_t len;
+    bool fault;
+} HeRewriteMemo;
+
+static size_t he_rewrite_memo_slot(const Atom *atom, size_t cap) {
+    uintptr_t word = (uintptr_t)atom >> 4u;
+    return (size_t)((word * UINT64_C(0x9e3779b97f4a7c15)) & (cap - 1u));
+}
+
+static bool he_rewrite_memo_find(const HeRewriteMemo *memo, const Atom *source,
+                                 Atom **image_out) {
+    if (!memo || !memo->cap || memo->fault)
+        return false;
+    size_t slot = he_rewrite_memo_slot(source, memo->cap);
+    while (memo->slots[slot].source) {
+        if (memo->slots[slot].source == source) {
+            *image_out = memo->slots[slot].image;
+            return true;
+        }
+        slot = (slot + 1u) & (memo->cap - 1u);
+    }
+    return false;
+}
+
+static void he_rewrite_memo_store(HeRewriteMemo *memo, const Atom *source,
+                                  Atom *image) {
+    if (!memo || memo->fault)
+        return;
+    if ((memo->len + 1u) * 2u > memo->cap) {
+        size_t cap = memo->cap ? memo->cap * 2u : 32u;
+        HeRewriteMemoEntry *slots = calloc(cap, sizeof(*slots));
+        if (!slots) {
+            memo->fault = true;
+            return;
+        }
+        for (size_t i = 0u; i < memo->cap; i++) {
+            if (!memo->slots[i].source)
+                continue;
+            size_t slot = he_rewrite_memo_slot(memo->slots[i].source, cap);
+            while (slots[slot].source)
+                slot = (slot + 1u) & (cap - 1u);
+            slots[slot] = memo->slots[i];
+        }
+        free(memo->slots);
+        memo->slots = slots;
+        memo->cap = cap;
+    }
+    size_t slot = he_rewrite_memo_slot(source, memo->cap);
+    while (memo->slots[slot].source) {
+        if (memo->slots[slot].source == source) {
+            memo->slots[slot].image = image;
+            return;
+        }
+        slot = (slot + 1u) & (memo->cap - 1u);
+    }
+    memo->slots[slot] = (HeRewriteMemoEntry){.source = source, .image = image};
+    memo->len++;
+}
+
+static void he_rewrite_memo_free(HeRewriteMemo *memo) {
+    free(memo->slots);
+    *memo = (HeRewriteMemo){0};
+}
+
 static Atom *he_rewrite_query_representative(Arena *arena, Atom *atom,
                                              const HeQueryRepresentative *reps,
-                                             uint32_t count) {
+                                             uint32_t count,
+                                             HeRewriteMemo *memo) {
     if (!atom || count == 0u || !atom_has_vars(atom))
         return atom;
     if (atom->kind == ATOM_VAR) {
@@ -324,10 +414,13 @@ static Atom *he_rewrite_query_representative(Arena *arena, Atom *atom,
     }
     if (atom->kind != ATOM_EXPR)
         return atom;
+    Atom *cached = NULL;
+    if (he_rewrite_memo_find(memo, atom, &cached))
+        return cached;
     Atom **rewritten = NULL;
     for (CettaExprIndex i = 0u; i < atom->expr.len; i++) {
         Atom *next = he_rewrite_query_representative(
-            arena, atom->expr.elems[i], reps, count);
+            arena, atom->expr.elems[i], reps, count, memo);
         if (!next)
             return NULL;
         if (!rewritten && next != atom->expr.elems[i]) {
@@ -340,7 +433,10 @@ static Atom *he_rewrite_query_representative(Arena *arena, Atom *atom,
         if (rewritten)
             rewritten[i] = next;
     }
-    return rewritten ? atom_expr(arena, rewritten, atom->expr.len) : atom;
+    Atom *result = rewritten ? atom_expr(arena, rewritten, atom->expr.len) : atom;
+    if (result)
+        he_rewrite_memo_store(memo, atom, result);
+    return result;
 }
 
 /* One query variable resolved to a terminal is the name to publish.
@@ -361,7 +457,9 @@ static bool he_orient_query_representative_among(
     const VarId *eligible_ids, uint32_t eligible_count) {
     HeQueryRepresentative *reps = NULL;
     Atom **values = NULL;
+    HeRewriteMemo memo = {0};
     uint32_t count = 0u;
+    bool any_active = false;
     Atom *shown;
     bool changed = false;
     if (changed_out)
@@ -370,9 +468,14 @@ static bool he_orient_query_representative_among(
         !arena || !atom || !*atom || !env || !bindings_has_bound_values(env))
         return true;
     if (!he_query_representative_collect(arena, env, eligible_ids,
-                                         eligible_count, &reps, &count))
+                                         eligible_count, &reps, &count,
+                                         &any_active))
         return false;
-    shown = he_rewrite_query_representative(arena, *atom, reps, count);
+    if (!any_active) {
+        free(reps);
+        return true;
+    }
+    shown = he_rewrite_query_representative(arena, *atom, reps, count, &memo);
     if (!shown)
         goto fail;
     changed = shown != *atom;
@@ -382,7 +485,7 @@ static bool he_orient_query_representative_among(
             goto fail;
         for (uint32_t i = 0u; i < count; i++) {
             values[i] = he_rewrite_query_representative(
-                arena, reps[i].value, reps, count);
+                arena, reps[i].value, reps, count, &memo);
             if (!values[i])
                 goto fail;
             if (values[i] != reps[i].value)
@@ -390,6 +493,7 @@ static bool he_orient_query_representative_among(
         }
     }
     if (!changed) {
+        he_rewrite_memo_free(&memo);
         free(values);
         free(reps);
         return true;
@@ -413,9 +517,9 @@ static bool he_orient_query_representative_among(
                 Atom *rhs = binding_value_materialize(
                     arena, env->constraints[i].rhs);
                 lhs = lhs ? he_rewrite_query_representative(
-                    arena, lhs, reps, count) : NULL;
+                    arena, lhs, reps, count, &memo) : NULL;
                 rhs = rhs ? he_rewrite_query_representative(
-                    arena, rhs, reps, count) : NULL;
+                    arena, rhs, reps, count, &memo) : NULL;
                 ok = lhs && rhs && bindings_add_constraint(&published, lhs, rhs);
             }
         }
@@ -428,10 +532,12 @@ static bool he_orient_query_representative_among(
         if (changed_out)
             *changed_out = true;
     }
+    he_rewrite_memo_free(&memo);
     free(values);
     free(reps);
     return true;
 fail:
+    he_rewrite_memo_free(&memo);
     free(values);
     free(reps);
     return false;
@@ -477,11 +583,11 @@ static bool he_return_retain_invocation(Arena *arena, Atom *invocation,
         !atom_has_vars(invocation) || !bindings_has_bound_values(env))
         return true;
     HeVarIdList list = {0};
-    (void)atom_tree_any(invocation, he_var_id_list_visit, &list);
+    (void)atom_graph_any(invocation, he_var_id_list_visit, &list);
     if (!list.failed && caller_env && bindings_has_bound_values(caller_env)) {
         Atom *held = bindings_apply_if_vars(caller_env, arena, invocation);
         if (held && held != invocation)
-            (void)atom_tree_any(held, he_var_id_list_visit, &list);
+            (void)atom_graph_any(held, he_var_id_list_visit, &list);
     }
     bool ok = !list.failed &&
         (list.count == 0u ||
@@ -516,7 +622,6 @@ static bool he_raw_query_result(Atom *result, const Bindings *bindings,
     HeRawQuery *query = context;
     Atom *shown = result;
     Bindings published;
-    bool changed = false;
     if (!active_profile_uses_rust_he_compat_semantics() ||
         !bindings || !bindings_has_bound_values(bindings)) {
         outcome_set_add_prefixed(query->arena, query->outcomes, result,
@@ -525,15 +630,16 @@ static bool he_raw_query_result(Atom *result, const Bindings *bindings,
     }
     bindings_init(&published);
     if (!bindings_copy(&published, bindings) ||
-        !he_orient_query_representative(query->arena, &shown, &published,
-                                        &changed)) {
+        !(query->query
+            ? he_return_retain_invocation(query->arena, query->query, NULL,
+                                          &shown, &published)
+            : he_orient_query_representative(query->arena, &shown, &published,
+                                             NULL))) {
         bindings_free(&published);
         eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
         return false;
     }
-    outcome_set_add_prefixed(query->arena, query->outcomes,
-                             changed ? shown : result,
-                             changed ? &published : bindings,
+    outcome_set_add_prefixed(query->arena, query->outcomes, shown, &published,
                              query->prefix, true);
     bindings_free(&published);
     return !eval_unwinding();
@@ -702,7 +808,7 @@ static void he_raw_collect(Space *s, Arena *a, Atom *atom, int fuel,
         }
     }
     if (!invoked) {
-        HeRawQuery query = {a, &env, &raw};
+        HeRawQuery query = {a, atom, &env, &raw};
         query_equations_visit(s, atom, a, he_raw_query_result, &query);
         if (raw.len == 0u) {
             outcome_set_add(&raw,
@@ -800,22 +906,6 @@ static void he_instruction_pop(CettaOwnedFrameStack *stack) {
     free(frame);
 }
 
-/* Minimal function_ret: a caller frame's atom is the witness. A bare
- * function finishes on the body atom. The type-directed $result frontier
- * is not minted here. */
-static Atom *he_function_noreturn_witness(HeInstructionFrame *frame,
-                                         Atom *finished) {
-    if (frame->function_caller && frame->function_caller != frame->atom)
-        return frame->function_caller;
-    if (frame->continuation.next) {
-        HeInstructionFrame *caller =
-            (HeInstructionFrame *)frame->continuation.next;
-        if (caller->atom && caller->atom != frame->atom)
-            return caller->atom;
-    }
-    return finished;
-}
-
 /* One variable in the matched substitution. `left_order` is its first
  * appearance in the unify left operand, or UINT32_MAX when it does not
  * occur there. Class fields are meaningful on the union-find root. */
@@ -880,7 +970,8 @@ static bool he_orient_node(HeOrientVar **vars, uint32_t *count, uint32_t *cap,
 }
 
 static void he_orient_note_left(HeOrientVar *vars, uint32_t count,
-                                Atom *atom, uint32_t *order) {
+                                Atom *atom, uint32_t *order,
+                                AtomVisitSet *seen, bool *fault) {
     if (!atom)
         return;
     if (atom->kind == ATOM_VAR) {
@@ -895,8 +986,11 @@ static void he_orient_note_left(HeOrientVar *vars, uint32_t count,
     }
     if (atom->kind != ATOM_EXPR)
         return;
+    if (atom->expr.len && seen && fault && !*fault &&
+        !atom_visit_set_add(seen, atom, fault) && !*fault)
+        return;
     for (CettaExprIndex i = 0; i < atom->expr.len; i++)
-        he_orient_note_left(vars, count, atom->expr.elems[i], order);
+        he_orient_note_left(vars, count, atom->expr.elems[i], order, seen, fault);
 }
 
 /* Publish each open variable class under the earliest variable of the unify
@@ -983,7 +1077,10 @@ static bool he_orient_unify_left(Arena *arena, Atom *left, Bindings *matched) {
         goto fail;
     {
         uint32_t order = 0u;
-        he_orient_note_left(vars, var_count, left, &order);
+        AtomVisitSet seen = {0};
+        bool fault = false;
+        he_orient_note_left(vars, var_count, left, &order, &seen, &fault);
+        atom_visit_set_free(&seen);
     }
     for (uint32_t i = 0; i < var_count; i++)
         (void)he_orient_find(vars, i);
@@ -1116,8 +1213,10 @@ static bool he_instruction_complete_function_return(HeInstructionFrame *frame,
     else if (he_minimal_instruction(result))
         return false;
     else if (active_profile_uses_rust_he_compat_semantics())
-        value = atom_error(frame->arena, he_function_noreturn_witness(frame, result),
-                           atom_symbol(frame->arena, "NoReturn"));
+        value = frame->function_caller && frame->function_caller != frame->atom
+            ? atom_error(frame->arena, frame->function_caller,
+                         atom_symbol(frame->arena, "NoReturn"))
+            : atom_var_with_id(frame->arena, "result", (VarId){1u, {17u}});
     else
         value = atom_error(frame->arena, frame->syntax, atom_symbol(frame->arena, "NoReturn"));
     he_instruction_publish_return(frame, source, value);
@@ -1128,6 +1227,8 @@ static bool he_instruction_complete_function_return(HeInstructionFrame *frame,
  * of later body alternatives. Other instruction/source frontiers keep their
  * ordinary sequencing policy. */
 static void he_instruction_forward_returns(HeInstructionFrame *frame) {
+    while (frame && frame->phase == HE_INSTRUCTION_DONE)
+        frame = frame->target_owner;
     while (frame && frame->phase == HE_INSTRUCTION_FUNCTION) {
         CettaCount before = frame->target->len;
         while (frame->index < frame->inner.len) {
@@ -1558,7 +1659,9 @@ static void he_eval_invocation_delimiter(Space *s, Arena *a, Atom *atom,
     /* The equation emitter has already applied the match. A chained rule
      * variable is still the name inside this function until the query
      * variable is put back, which is what the canonical raw result does. */
-    if (!he_orient_query_representative(a, &atom, &env, NULL)) {
+    if (!(invocation
+            ? he_return_retain_invocation(a, invocation, NULL, &atom, &env)
+            : he_orient_query_representative(a, &atom, &env, NULL))) {
         eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
         return;
     }

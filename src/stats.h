@@ -8,6 +8,9 @@
 typedef struct Space Space;
 
 #include "generated/cetta_runtime_counters.generated.h"
+#ifndef CETTA_RUNTIME_COUNTER_STATISTICS_RECORDED
+#define CETTA_RUNTIME_COUNTER_STATISTICS_RECORDED CETTA_RUNTIME_COUNTER_RUNTIME_STATISTICS_RECORDED
+#endif
 
 typedef struct {
     uint64_t counters[CETTA_RUNTIME_COUNTER_COUNT];

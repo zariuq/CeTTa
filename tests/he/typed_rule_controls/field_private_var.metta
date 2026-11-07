@@ -1,0 +1,11 @@
+; Control for a typed fast-path rule: answered as hyperon-experimental does.
+(: List (-> Type Type))
+(: Nil (List $a))
+(: Cons (-> $a (List $a) (List $a)))
+(: Box Type)
+(: MkBox (-> (List $a) Box))
+(: g (-> (List String) Number))
+(= (g Nil) 0)
+(= (g (Cons $h $t)) 1)
+(= (h (MkBox $x)) (g $x))
+!(h (MkBox (Cons 1 Nil)))

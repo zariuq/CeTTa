@@ -1528,15 +1528,25 @@ size_t arena_retained_owner_allocation_bytes(void) {
             (sizeof(ArenaFinalizer *) + 2u * sizeof(uint32_t));
 }
 
+bool arena_retain_owner_sized_with_storage(Arena *a, void *owner,
+                              void (*retain)(void *), void (*release)(void *),
+                              size_t bytes, CettaStorageVisitor storage) {
+    uint32_t before = a && a->retained_owners ? a->retained_owners->len : 0u;
+    if (!arena_retain_owner_with_storage(a, owner, retain, release, storage))
+        return false;
+    if (a->retained_owners->len > before) {
+        if (storage)
+            a->finalizers->accounted_payload_bytes = bytes;
+        arena_account_external_bytes(a, bytes);
+    }
+    return true;
+}
+
 bool arena_retain_owner_sized(Arena *a, void *owner,
                               void (*retain)(void *), void (*release)(void *),
                               size_t bytes) {
-    uint32_t before = a && a->retained_owners ? a->retained_owners->len : 0u;
-    if (!arena_retain_owner(a, owner, retain, release))
-        return false;
-    if (a->retained_owners->len > before)
-        arena_account_external_bytes(a, bytes);
-    return true;
+    return arena_retain_owner_sized_with_storage(a, owner, retain, release,
+                                                 bytes, NULL);
 }
 
 static void arena_identity_certificate_retain(void *token) {
@@ -1546,6 +1556,12 @@ static void arena_identity_certificate_retain(void *token) {
 static void arena_identity_certificate_release(void *token) {
     cetta_name_release(&g_arena_names, &g_arena_name_local, arena_names_once,
         (uint32_t)(uintptr_t)token, 0u);
+}
+
+static void arena_identity_certificate_storage(const void *token,
+                                               CettaStorageCensus *census) {
+    (void)token;
+    (void)census;
 }
 
 bool arena_owner_is_atomic_storage(void *owner, void (*release)(void *)) {
@@ -1562,22 +1578,26 @@ bool arena_retain_identity_certificate(Arena *keeper, const Arena *source,
         source->identity == ARENA_ID_DEAD)
         return false;
     uint32_t name = source->identity;
-    if (!arena_retain_owner(keeper, (void *)(uintptr_t)name,
-            arena_identity_certificate_retain, arena_identity_certificate_release))
+    if (!arena_retain_owner_with_storage(keeper, (void *)(uintptr_t)name,
+            arena_identity_certificate_retain, arena_identity_certificate_release,
+            arena_identity_certificate_storage))
         return false;
     *identity_out = name;
     return true;
 }
 
-bool arena_retain_resource_sized(Arena *a, void *owner,
+bool arena_retain_resource_sized_with_storage(Arena *a, void *owner,
                                  void (*retain)(void *), void (*release)(void *),
-                                 size_t bytes, size_t resource_bytes) {
+                                 size_t bytes, size_t resource_bytes,
+                                 CettaStorageVisitor storage) {
     if (resource_bytes == 0u)
-        return arena_retain_owner_sized(a, owner, retain, release, bytes);
+        return arena_retain_owner_sized_with_storage(a, owner, retain, release,
+                                                     bytes, storage);
     if (resource_bytes > bytes)
         return false;
     uint32_t before = a && a->retained_owners ? a->retained_owners->len : 0u;
-    if (!arena_retain_owner_sized(a, owner, retain, release, bytes))
+    if (!arena_retain_owner_sized_with_storage(a, owner, retain, release,
+                                               bytes, storage))
         return false;
     if (a->retained_owners->len > before)
         a->retained_resource_bytes =
@@ -1586,16 +1606,32 @@ bool arena_retain_resource_sized(Arena *a, void *owner,
     return true;
 }
 
-bool arena_retain_state_resource_sized(Arena *a, void *owner,
+bool arena_retain_resource_sized(Arena *a, void *owner,
                                  void (*retain)(void *), void (*release)(void *),
                                  size_t bytes, size_t resource_bytes) {
+    return arena_retain_resource_sized_with_storage(a, owner, retain, release,
+                                                    bytes, resource_bytes, NULL);
+}
+
+bool arena_retain_state_resource_sized_with_storage(Arena *a, void *owner,
+                                 void (*retain)(void *), void (*release)(void *),
+                                 size_t bytes, size_t resource_bytes,
+                                 CettaStorageVisitor storage) {
     uint32_t before = a && a->retained_owners ? a->retained_owners->len : 0u;
-    if (!arena_retain_resource_sized(a, owner, retain, release, bytes, resource_bytes))
+    if (!arena_retain_resource_sized_with_storage(a, owner, retain, release,
+                                                  bytes, resource_bytes, storage))
         return false;
     if (a->retained_owners->len > before &&
         a->state_root_acquisition_generation != UINT64_MAX)
         a->state_root_acquisition_generation++;
     return true;
+}
+
+bool arena_retain_state_resource_sized(Arena *a, void *owner,
+                                 void (*retain)(void *), void (*release)(void *),
+                                 size_t bytes, size_t resource_bytes) {
+    return arena_retain_state_resource_sized_with_storage(
+        a, owner, retain, release, bytes, resource_bytes, NULL);
 }
 
 /* Called after every hold has been popped from the finalizer chain. */
@@ -3221,6 +3257,14 @@ static bool fresh_var_base_try(uint64_t *base_out) {
     }
 }
 
+uint64_t fresh_var_base_watermark(void) {
+    /* A block taken later starts at the counter's value then, which is past
+     * the end of every block taken before, this thread's current one too. */
+    return g_var_base_block_cache.remaining > 0u
+        ? g_var_base_block_cache.next
+        : atomic_load_explicit(&g_var_base_counter, memory_order_relaxed);
+}
+
 bool fresh_var_id_try(VarId *id_out) {
     uint64_t base;
 
@@ -4428,7 +4472,8 @@ static inline __attribute__((always_inline)) uint32_t atom_summary_finish(
                                       ATOM_STRUCTURAL_OWNER_CLOSED |
                                       ATOM_STRUCTURAL_FRONT_SLACK |
                                       ATOM_STRUCTURAL_STRING_STORAGE |
-                                      ATOM_STRUCTURAL_SYMBOLIC))
+                                      ATOM_STRUCTURAL_SYMBOLIC |
+                                      ATOM_STRUCTURAL_HE_EVALUATED_THROUGHOUT))
         : 0u;
     bool generation_closed = summary->generation_closed;
     if (summary->missing) {
@@ -6823,7 +6868,9 @@ Atom *atom_expr_suffix(Arena *a, Atom *expression, CettaExprLen offset) {
     const uint32_t facts_any = ~(ATOM_STRUCTURAL_FACTS_VALID |
                                  ATOM_STRUCTURAL_GENERATION_CLOSED |
                                  ATOM_STRUCTURAL_OWNER_CLOSED |
-                                 ATOM_STRUCTURAL_FRONT_SLACK | facts_all);
+                                 ATOM_STRUCTURAL_FRONT_SLACK |
+                                 ATOM_STRUCTURAL_HE_EVALUATED_THROUGHOUT |
+                                 facts_all);
     const uint32_t owner_evidence = ATOM_STRUCTURAL_FACTS_VALID |
                                     ATOM_STRUCTURAL_OWNER_CLOSED;
     if (departed_known &&
@@ -6835,7 +6882,8 @@ Atom *atom_expr_suffix(Arena *a, Atom *expression, CettaExprLen offset) {
         uint32_t facts = expression->structural_facts &
                          ~(ATOM_STRUCTURAL_GENERATION_CLOSED |
                            ATOM_STRUCTURAL_OWNER_CLOSED |
-                           ATOM_STRUCTURAL_FRONT_SLACK);
+                           ATOM_STRUCTURAL_FRONT_SLACK |
+                           ATOM_STRUCTURAL_HE_EVALUATED_THROUGHOUT);
         uint32_t find_any = departed_any & flags & ATOM_SUMMARY_INHERITED;
         uint32_t find_facts = departed_facts & facts & facts_any;
         uint32_t find_all = departed_lacks & ~flags & ATOM_SUMMARY_REQUIRED;
@@ -6986,7 +7034,8 @@ Atom *atom_expr_view_rehome(Arena *a, const Atom *view, Atom **elems) {
         .hash_cache = 0u,
         .structural_facts = view->structural_facts &
             ~(ATOM_STRUCTURAL_GENERATION_CLOSED | ATOM_STRUCTURAL_OWNER_CLOSED |
-              ATOM_STRUCTURAL_FRONT_SLACK),
+              ATOM_STRUCTURAL_FRONT_SLACK |
+              ATOM_STRUCTURAL_HE_EVALUATED_THROUGHOUT),
         .expr = {
             .elems = elems,
             .len = view->expr.len,
@@ -7094,12 +7143,14 @@ Atom *atom_expr_prepend(Arena *a, Atom *head, Atom *list) {
         uint32_t facts =
             (list->structural_facts & ~(ATOM_STRUCTURAL_GENERATION_CLOSED |
                                         ATOM_STRUCTURAL_OWNER_CLOSED |
-                                        ATOM_STRUCTURAL_FRONT_SLACK)) |
+                                        ATOM_STRUCTURAL_FRONT_SLACK |
+                                        ATOM_STRUCTURAL_HE_EVALUATED_THROUGHOUT)) |
             (head->structural_facts & ~(ATOM_STRUCTURAL_FACTS_VALID |
                                         ATOM_STRUCTURAL_GENERATION_CLOSED |
                                         ATOM_STRUCTURAL_OWNER_CLOSED |
                                         ATOM_STRUCTURAL_FRONT_SLACK |
-                                        ATOM_STRUCTURAL_STRING_STORAGE));
+                                        ATOM_STRUCTURAL_STRING_STORAGE |
+                                        ATOM_STRUCTURAL_HE_EVALUATED_THROUGHOUT));
         if ((list->structural_facts & head->structural_facts &
              ATOM_STRUCTURAL_SYMBOLIC) == 0u)
             facts &= ~ATOM_STRUCTURAL_SYMBOLIC;
@@ -7279,8 +7330,16 @@ static Atom *atom_he_evaluated_build(Arena *a, Atom **elems,
     uint32_t flags = atom_flags_from_children(
         a->identity, a->older_identity, elems, len, &structural_facts);
     VarId var_id = atom_single_variable_id_of(flags, elems, len);
-    if (structural_facts & ATOM_STRUCTURAL_FACTS_VALID)
+    if (structural_facts & ATOM_STRUCTURAL_FACTS_VALID) {
         structural_facts |= ATOM_STRUCTURAL_HAS_HE_EVALUATED;
+        bool throughout = true;
+        for (CettaExprLen i = 0u; throughout && i < len; i++)
+            throughout = !elems[i] || elems[i]->kind != ATOM_EXPR ||
+                elems[i]->expr.len == 0u ||
+                atom_is_he_evaluated_throughout(elems[i]);
+        if (throughout)
+            structural_facts |= ATOM_STRUCTURAL_HE_EVALUATED_THROUGHOUT;
+    }
     return atom_expr_build(a, elems, len, flags | ATOM_FLAG_HE_EVALUATED,
                            structural_facts, var_id);
 }
@@ -8459,13 +8518,13 @@ static bool atom_compare_driver(Atom *left, Atom *right,
             case GV_STATE: {
                 const StateCell *ca = a->ground.ptr;
                 const StateCell *cb = b->ground.ptr;
+                if (ca == cb && (!ca || !atom_he_exact_semantics()))
+                    goto completed;
                 Atom *left_value = atom_state_observation_value(
                     &state_observations, (StateCell *)ca);
                 Atom *right_value = ca == cb ? left_value : atom_state_observation_value(
                     &state_observations, (StateCell *)cb);
-                if (ca == cb &&
-                    (!ca || !atom_he_exact_semantics() ||
-                     !atom_structural_may_have_nan(left_value)))
+                if (ca == cb && !atom_structural_may_have_nan(left_value))
                     goto completed;
                 if (!ca || !cb)
                     goto comparison_failed;

@@ -206,10 +206,10 @@ HE_NATIVE_OBSERVERS = [
 
 # Held arguments: a body returns a parameter declared Atom, wraps it, binds
 # it, or returns it under another range.  (f a) reduces, so a held (f a)
-# that is evaluated answers 5.  Under an Atom range the body comes back as
-# written in both reference dialects, so those rows answer as the HE lane;
-# under the others Prime evaluates the body without demanding the fields of
-# a constructor, which HE evaluates, and only the routes are compared.
+# that is evaluated answers 5.  Where the body is already a value in Prime,
+# both reference dialects return the held syntax and answer as the HE lane;
+# where Prime evaluates the body or preserves held syntax across a non-Atom
+# range, only the Prime routes are compared.
 PRIME_PRELUDE = """\
 (= (f a) 5)
 (= (bh-idu $y) $y)
@@ -398,7 +398,7 @@ def he_native_cases():
 def prime_cases():
     for (shape, signature, body), (argument_name, argument) in itertools.product(
             PRIME_SIGNATURES, PRIME_ARGUMENTS):
-        if not signature.endswith(' Atom)'):
+        if not signature.endswith(' Atom)') or shape in ('bound', 'if', 'identity'):
             shape = f'{shape}.routes'
         two = shape in ('second', 'first')
         params = '$x $y' if two else '$x'

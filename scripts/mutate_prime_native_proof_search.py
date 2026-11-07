@@ -22,11 +22,11 @@ def main() -> None:
     text = args.source.read_text(encoding="utf-8")
 
     if args.mutation == "result-executed":
-        start = text.index("static void main_add_he_prime_typing_op_decls(")
-        end = text.index("static void main_add_prime_semantic_op_decls(", start)
+        start = text.index("static bool grounded_builds_value_head(")
+        end = text.index("bool grounded_op_is_sequence_constructor(", start)
         body = replace_once(text[start:end],
-                            "elems[n + 1] = atom_atom_type(arena);",
-                            "elems[n + 1] = atom_undefined_type(arena);")
+                            "(he_typing_is_op_id && he_typing_is_op_id(id));",
+                            "false;")
     elif args.mutation == "solved-slot-disabled":
         start = text.index("static bool chain_schedule_next_premise(")
         end = text.index("static bool chain_finish_continuation(", start)

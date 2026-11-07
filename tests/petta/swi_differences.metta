@@ -158,3 +158,78 @@
 (= (visibility-raw $x) (Raw $x))
 ; SWI-PeTTa, both qualified pins: (Raw 3)
 !(let $f visibility-raw ($f (+ 1 2)))
+; A head held by a variable or a parameter, foldl's step included, also
+; meets the declaration's result check.  Stable-fixed SWI-PeTTa c3adb86
+; (2026-11-05) answers the unchecked result on these routes, while the
+; direct call (visibility-step 1 0) answers nothing in both engines.
+(: visibility-step (-> Number Number Number))
+(= (visibility-step $item $acc) rejected)
+(= (visibility-apply $f $a $b) ($f $a $b))
+; SWI-PeTTa stable-fixed c3adb86: (rejected)
+!(collapse (let $f visibility-step ($f 1 0)))
+; SWI-PeTTa stable-fixed c3adb86: (rejected)
+!(collapse (visibility-apply visibility-step 1 0))
+; SWI-PeTTa stable-fixed c3adb86: (rejected)
+!(collapse (foldl visibility-step (1) 0))
+
+; 15. Rows that repeat one declaration are one declaration.  A call answers
+;     once for them in both implementations; SWI's get-type lists every row,
+;     CeTTa's lists the declaration once, so the version a typed relation
+;     keeps does not depend on a repeated row.
+;     Decided: Zar, 2026-11-05 ("duplicated declarations should probably be
+;     idempotent. Different declarations are another matter").
+(: repeated-row (-> Number Number))
+(: repeated-row (-> Number Number))
+; SWI-PeTTa: ((-> Number Number) (-> Number Number))
+!(collapse (get-type repeated-row))
+
+; 16. The atom -inf is the constant minus infinity, the dual of inf: the
+;     identity of max, as inf is of min.  SWI-PeTTa's reader leaves it an
+;     atom its arithmetic evaluator rejects ('-inf'/0 is not a function), an
+;     accident no program relies on.
+;     Decided: Zar, 2026-11-06 ("we should not treat stupid conformance to
+;     every silly edge case almost no one writes programs over").
+; SWI-PeTTa: an evaluation error for each
+!(min -inf 1)
+!(max -inf 1)
+!(< -inf 1)
+
+; 17. min and max select one of their operands by the numeric order of what
+;     they stand for: a constant stays itself, integers and floats compare
+;     exactly, -0.0 is below 0 and 0.0, a NaN operand propagates, and on a tie
+;     min answers its first operand and max its second, so (min a b) and
+;     (max a b) are a stable sort of a and b.  SWI-PeTTa computes them as
+;     arithmetic (R is min(A,B)): a constant becomes its float, and a tie of
+;     an integer and a float is the float for both.
+;     Decided: Zar, 2026-11-06 ("(== pi (min pi 4)) --> false ... We must
+;     dynamically maintain our living petta specs and divergence graph").
+; SWI-PeTTa: 3.141592653589793, false, 2.0, 2.0
+!(min pi 4)
+!(== pi (min pi 4))
+!(min 2 2.0)
+!(max 2.0 2)
+
+; 18. A constructor field declared _ is unchecked by get-type, as one
+;     declared %Undefined% is, and as an argument declared _ is unguarded in
+;     a typed call: _ reads the same to the call protocol and to the type
+;     relation.  SWI-PeTTa's get-type reads it there as the type named _, so
+;     only a value declared _ fills the field, and (LooseBox "w") is typed by
+;     its tuple alone.  The reference's own comment on that check reads "As in
+;     typed calls, an argument declared %Undefined% is not checked", and its
+;     typed calls leave _ unguarded as they leave %Undefined%; the check tests
+;     %Undefined% alone.  Decided by the coherence rule (Zar, 2026-11-06).
+; SWI-PeTTa: ((-> _ LooseBoxT) String), ()
+(: LooseBoxT Type)
+(: LooseBox (-> _ LooseBoxT))
+(: loose-size (-> LooseBoxT Number))
+(= (loose-size (LooseBox $x)) 1)
+!(get-type (LooseBox "w"))
+!(collapse (loose-size (LooseBox "w")))
+
+; Python boolean interchange (qualified separately by test-python-objects,
+; since this fixture also runs without Python): true/false argument values
+; become Python bool, including in legacy py-call. Janus's default atom
+; conversion makes both truthy strings. Quoted strings remain strings.
+; Upstream repair candidate: encode boolean leaves as Janus boolean terms
+; before invocation, recursively in positional and keyword arguments.
+; Decided: boolean round-trip semantics, Zar's review handoff, 2026-11-06.

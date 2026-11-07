@@ -305,6 +305,10 @@
   ; Computed truths use the caller's Boolean constructor. A value projection
   ; keeps its original carrier instead of reinterpreting data as a truth.
   (instruction boolean-dispatch)
+  ; One of the two evaluated operands, selected by the exact numeric order of
+  ; what they stand for: PeTTa's min and max.  Operands that are not numbers
+  ; replay canonically.
+  (instruction comparison-select)
   (sort OperandDiscipline)
   (operand-discipline strict-all)
   ; A sequential connective demands its first operand.  When that value is
@@ -1151,6 +1155,10 @@
   ; HE and PeTTa evaluate both operands of a connective.  Prime's
   ; connectives demand their second operand only when the first leaves the
   ; value open: False decides and, True decides or.
+  (prepared-pure-intrinsic-head
+    min 2 strict-all comparison-select (dialects petta))
+  (prepared-pure-intrinsic-head
+    max 2 strict-all comparison-select (dialects petta))
   (prepared-pure-intrinsic-head
     and 2 strict-all boolean-dispatch (dialects he petta))
   (prepared-pure-intrinsic-head

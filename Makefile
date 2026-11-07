@@ -11,7 +11,11 @@ SHELL = /bin/bash
 #   CESTA_BUILD=0      build with the native compiler alone
 CESTA_SRC ?= vendor/cesta
 CESTA_SRC_DIR := $(abspath $(CESTA_SRC))
+ifneq ($(origin CC),default)
+CESTA_NATIVE_CC ?= $(CC)
+else
 CESTA_NATIVE_CC ?= gcc
+endif
 CESTA_BUILD ?= 1
 CETTA_LTO ?= 0
 CETTA_LTO_JOBS ?= auto
@@ -4254,6 +4258,8 @@ bench-correctness:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) bench-dup-conj-backends
 
 bench-performance-light:
+	@$(MAKE) -s BUILD=$(BUILD_CANON) test-typed-fast-paths
+	@$(MAKE) -s BUILD=$(BUILD_CANON) test-deep-relation-lookups
 	@$(MAKE) -s BUILD=$(BUILD_CANON) perf-bench-tu
 	@$(MAKE) -s BUILD=$(BUILD_CANON) bench-lib-parse-inference-native
 	@$(MAKE) -s BUILD=$(BUILD_CANON) bench-prime-light
@@ -7350,7 +7356,7 @@ test-abt-scope-construction-candidates: $(BIN)
 test-abt: $(ABT_TEST_BIN) test-abt-mm2-boundary test-rhocalc-abt-substitution test-abt-mutations test-abt-default-signatures test-lib-parse-abt-bridge test-abt-integration-ledger
 	@result=$$(./$(ABT_TEST_BIN) 2>&1); \
 	printf '%s\n' "$$result"; \
-	if [ "$$(printf '%s\n' "$$result" | grep -Fxc '(ABTCoreSummary 211 211 0)')" -ne 1 ] || \
+	if [ "$$(printf '%s\n' "$$result" | grep -Fxc '(ABTCoreSummary 233 233 0)')" -ne 1 ] || \
 	   [ "$$(printf '%s\n' "$$result" | grep -Fxc 'PASS: iterative capture-avoiding ABT core')" -ne 1 ]; then \
 		echo "FAIL: ABT core exact summary absent or duplicated"; \
 		exit 1; \
@@ -7595,7 +7601,11 @@ SPACE_DENSE_SCALING_NODES ?= 2000
 test-space-dense-scaling: $(BIN) tests/petta/dense_relations_scaling.metta \
 		tests/support/check_dense_scaling.py
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_dense_scaling.py \
-		tests/petta/dense_relations_scaling.metta $(SPACE_DENSE_SCALING_NODES)
+		tests/petta/dense_relations_scaling.metta $(SPACE_DENSE_SCALING_NODES) \
+		$(if $(filter 1,$(ENABLE_SANITIZERS)),--answers-only)
+ifeq ($(ENABLE_SANITIZERS),1)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_SANITIZERS=0 test-space-dense-scaling
+endif
 
 # A PeTTa document read a few forms at a time answers as one read whole, an
 # import calling an equation defined after it among them; and reading a
@@ -7607,7 +7617,11 @@ PETTA_SLICES_FORMS ?= 200000
 test-petta-slices: $(BIN) tests/support/check_petta_slices.py \
 		$(foreach t,$(PETTA_SLICES_PROGRAMS),tests/petta/$(t).metta tests/petta/$(t).expected)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_petta_slices.py \
-		$(PETTA_SLICES_FORMS) $(foreach t,$(PETTA_SLICES_PROGRAMS),tests/petta/$(t).metta)
+		$(PETTA_SLICES_FORMS) $(foreach t,$(PETTA_SLICES_PROGRAMS),tests/petta/$(t).metta) \
+		$(if $(filter 1,$(ENABLE_SANITIZERS)),--answers-only)
+ifeq ($(ENABLE_SANITIZERS),1)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_SANITIZERS=0 test-petta-slices
+endif
 
 # A strict stack keeps no structure beyond its order: general matches grow
 # its peak memory by nothing, where a full stack builds its indexes.
@@ -7615,7 +7629,10 @@ SPACE_PROFILES_SCALING_ITEMS ?= 50000
 .PHONY: test-space-profiles-scaling
 test-space-profiles-scaling: $(BIN) tests/support/check_space_profiles_scaling.py
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_space_profiles_scaling.py \
-		$(SPACE_PROFILES_SCALING_ITEMS)
+		$(SPACE_PROFILES_SCALING_ITEMS) $(if $(filter 1,$(ENABLE_SANITIZERS)),--answers-only)
+ifeq ($(ENABLE_SANITIZERS),1)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_SANITIZERS=0 test-space-profiles-scaling
+endif
 
 # A count asked once rents a scan and builds no index; counts that keep
 # coming buy their column's index: as rows, and as a table of tuples, whose
@@ -7625,9 +7642,13 @@ COUNT_FOOTPRINT_TABLE_FACTS ?= 600000
 .PHONY: test-count-footprint
 test-count-footprint: $(BIN) tests/support/check_count_footprint.py
 	@CETTA_SPACE_DENSE=off $(CETTA_SCRIPT_RUN_ENV) python3 \
-		tests/support/check_count_footprint.py $(COUNT_FOOTPRINT_FACTS)
+		tests/support/check_count_footprint.py $(COUNT_FOOTPRINT_FACTS) \
+		$(if $(filter 1,$(ENABLE_SANITIZERS)),--answers-only)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_count_footprint.py \
-		$(COUNT_FOOTPRINT_TABLE_FACTS)
+		$(COUNT_FOOTPRINT_TABLE_FACTS) $(if $(filter 1,$(ENABLE_SANITIZERS)),--answers-only)
+ifeq ($(ENABLE_SANITIZERS),1)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_SANITIZERS=0 test-count-footprint
+endif
 
 # The counting checks must catch a hold, a release, a cascade or a reused
 # slot's candidacy gone missing.  The mutants check in full at every
@@ -23306,6 +23327,10 @@ test-runtime-stats-lane-body:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-prepared-pure-call-machine-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-prepared-pure-list-carrier-walk-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-activation-without-template-stats
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-parametric-versions-stats
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-duplicate-rows-stats
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-declared-builtin-stats
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-polymorphic-versions-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-pure-results-moved-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-exact-index-frontier-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-resource-ledger-stats
@@ -23318,6 +23343,7 @@ test-runtime-stats-lane-body:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-open-crossing-linear
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-he-frame-bytes-depth
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-he-completed-delivery-stats
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-he-canonical-tail-memory
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-open-values-frame-walk-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-frame-identity-refusal-sweep
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-identity-repeat-stats
@@ -23820,6 +23846,19 @@ main-readiness-consolidation: $(BIN)
 		--matrix-dir runtime/consolidation --require-paired --max-ratio 1.05 --min-slack 0 \
 		--baseline-commit c632ecd1479fc766dcdf0efafd4cbc311213af6d \
 		--baseline-sha256 "$$(sha256sum "$(CETTA_CONSOLIDATION_BASELINE_BIN)" | cut -d' ' -f1)"
+
+MAIN_READINESS_MINUTES ?= 20
+MAIN_READINESS_JOBS ?= 2
+.PHONY: main-readiness main-readiness-check main-readiness-plan test-main-readiness-runner
+main-readiness main-readiness-check:
+	@python3 scripts/cetta_main_readiness.py --tier candidate --build "$(BUILD_CANON)" \
+		--minutes "$(MAIN_READINESS_MINUTES)" --jobs "$(MAIN_READINESS_JOBS)"
+
+main-readiness-plan:
+	@python3 scripts/cetta_main_readiness.py --tier candidate --build "$(BUILD_CANON)" --dry-run
+
+test-main-readiness-runner:
+	@python3 -m unittest discover -s scripts -p test_cetta_candidate_readiness.py
 
 main-readiness-routine:
 	@python3 scripts/cetta_main_readiness.py --tier routine
@@ -24822,8 +24861,8 @@ test-prime-native-proof-search-mutations: $(BIN)
 	done; \
 	for mutation in native-check-disabled undetermined-accepted solved-slot-disabled result-executed; do \
 		case "$$mutation" in \
-			result-executed) source=src/main.c; \
-				objects="$(filter-out $(filter src/main.%,$(OBJ)),$(OBJ))";; \
+			result-executed) source=src/grounded.c; \
+				objects="$(filter-out $(filter src/grounded.%,$(OBJ)),$(OBJ))";; \
 			*) source=src/he_typing.c; \
 				objects="$(filter-out $(filter src/he_typing.%,$(OBJ)),$(OBJ))";; \
 		esac; \
@@ -29058,7 +29097,7 @@ test-petta-translation-time-callability: $(BIN)
 	diff -u \
 		tests/petta/search_machine_translation_time_callability.expected \
 		"$$actual"
-	@echo "PASS: PeTTa source occurrences preserve translation-time callability"
+	@echo "PASS: PeTTa source occurrences call equations installed after translation"
 
 .PHONY: test-petta-match-conjunction-cursor
 test-petta-match-conjunction-cursor: $(BIN)
@@ -29784,7 +29823,7 @@ test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-c
 		tests/petta/search_machine_temporal_compile.metta 2>&1); \
 	expected=$$(cat tests/petta/search_machine_temporal_compile.expected); \
 	if [ "$$result" != "$$expected" ]; then \
-		echo "FAIL: PeTTa source-ordered occurrence compilation"; \
+		echo "FAIL: PeTTa occurrences follow equations installed and removed at run time"; \
 		diff <(printf '%s\n' "$$expected") \
 			<(printf '%s\n' "$$result") | head -40; \
 		exit 1; \
@@ -30458,24 +30497,274 @@ test-petta-type-guard-versions-higher-order: $(BIN) tests/petta/type_guard_versi
 	done; \
 	verdicts=$$(CETTA_PETTA_VERSIONS_DEBUG=1 $(call cetta_exec,./$(BIN)) \
 		--lang petta tests/petta/type_guard_versions_higher_order.metta 2>&1 >/dev/null); \
-	if ! printf '%s\n' "$$verdicts" | grep -qF 'contract hop_Spec_[ctx-upd,ctx-stop]/4: version'; then \
-		echo "FAIL: a chainer whose function argument is called as a dispatch keeps its version"; \
-		printf '%s\n' "$$verdicts" | grep -F 'hop_Spec_' | head -5; \
-		exit 1; \
-	fi; \
+	for callee in ctx-upd ctx-stop; do \
+		if ! printf '%s\n' "$$verdicts" | grep -qF "contract $$callee/2: version"; then \
+			echo "FAIL: the chainer's function argument $$callee, called as a dispatch, keeps its version"; \
+			printf '%s\n' "$$verdicts" | grep -F "$$callee" | head -5; \
+			exit 1; \
+		fi; \
+	done; \
 	echo "PASS: versions of higher-order and calling functions keep the protocol's answers"
 
 .PHONY: test-petta-type-guard-versions
 test-petta-search-machine: test-petta-type-guard-versions
 test-petta-type-guard-versions: $(BIN) tests/petta/type_guard_versions.metta tests/petta/type_guard_versions.expected
 	@set -e; \
-	actual=$$($(call cetta_exec,./$(BIN)) --lang petta tests/petta/type_guard_versions.metta); \
 	expected=$$(cat tests/petta/type_guard_versions.expected); \
-	if [ "$$actual" != "$$expected" ]; then \
-		echo "FAIL: trusted versions of typed relations keep the protocol's answers"; \
-		printf '%s\n' "$$actual"; exit 1; \
-	fi; \
+	for versions in "" 1; do \
+		actual=$$(CETTA_PETTA_VERSIONS_REFERENCE=$$versions $(call cetta_exec,./$(BIN)) --lang petta tests/petta/type_guard_versions.metta); \
+		if [ "$$actual" != "$$expected" ]; then \
+			echo "FAIL: trusted versions of typed relations keep the protocol's answers (protocol only: $${versions:-no})"; \
+			printf '%s\n' "$$actual"; exit 1; \
+		fi; \
+	done; \
 	echo "PASS: trusted versions of typed relations keep the protocol's answers"
+
+.PHONY: test-petta-parametric-versions-stats
+# A fold over a parameterized constructor family typed at (List Number):
+# the builder and the fold enter trusted versions, whose calls to themselves
+# skip their protocol, so the type checker visits each element of the
+# 200-element list a bounded number of times, where the full protocol walks
+# the list again at every call (about 150,000 visits).  By default both run
+# on register code (structural formals), the list checked where it enters;
+# with the pure machine off they enter the open machine's versions.
+test-petta-parametric-versions-stats: $(BIN) tests/petta/parametric_versions_fold.metta
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@for route in versions register; do \
+		if [ "$$route" = versions ]; then off=1; else off=0; fi; \
+		result=$$(CETTA_PREPARED_PURE_REFERENCE=$$off ./$(BIN) \
+			--emit-runtime-stats --lang petta \
+			tests/petta/parametric_versions_fold.metta 2>&1); \
+		answer=$$(printf '%s\n' "$$result" | grep -E '^[0-9]+$$' | head -1); \
+		versions=$$(printf '%s\n' "$$result" | awk \
+			'$$1 == "runtime-counter" && $$2 == "petta-contract-version-compiled" { print $$3 }'); \
+		visits=$$(printf '%s\n' "$$result" | awk \
+			'$$1 == "runtime-counter" && $$2 == "petta-type-closed-visit" { print $$3 }'); \
+		if [ "$$answer" != "20100" ] || [ "$${visits:-0}" -gt 2000 ] || \
+		   { [ "$$route" = versions ] && [ "$${versions:-0}" -lt 2 ]; }; then \
+			echo "FAIL: parameterized constructor folds check their list a bounded number of times ($$route: answer $$answer, versions $${versions:-0}, closed visits $${visits:-0})"; \
+			exit 1; \
+		fi; \
+		printf '%s %s ' "$$route" "$${visits:-0}"; \
+	done; \
+	echo; echo "PASS: parameterized constructor folds check their list a bounded number of times, on trusted versions and on register code"
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
+
+.PHONY: test-petta-native-fold-typed-steps
+# A declared step whose one arrow integers meet once keeps the native fold;
+# its answers are the protocol's, as are those of every other declaration.
+test-petta-semantics: test-petta-native-fold-typed-steps
+test-petta-native-fold-typed-steps: $(BIN) tests/petta/native_fold_typed_steps.metta tests/petta/native_fold_typed_steps.expected
+	@set -e; \
+	for route in native protocol; do \
+		case $$route in \
+		native) env_set="";; \
+		protocol) env_set="CETTA_FOLD_ARITH_REFERENCE=1 CETTA_OPEN_EQUATIONS_REFERENCE=1";; \
+		esac; \
+		actual=$$(env $$env_set $(call cetta_exec,./$(BIN)) --lang petta tests/petta/native_fold_typed_steps.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/native_fold_typed_steps.expected)" ]; then \
+			echo "FAIL: native fold typed steps ($$route)"; \
+			printf '%s\n' "$$actual"; exit 1; \
+		fi; \
+	done; \
+	echo "PASS: typed steps integers meet keep the native fold with the protocol's answers"
+
+.PHONY: test-petta-typed-boundary-checks
+# A typed call's argument that a callee's own range check already typed at
+# the formal, and a result a trusted version proved, are not checked again;
+# the answers are those of the complete protocol on every route.
+test-petta-semantics: test-petta-typed-boundary-checks
+test-petta-typed-boundary-checks: $(BIN) tests/petta/typed_boundary_checks.metta tests/petta/typed_boundary_checks.expected
+	@set -e; \
+	for route in tier machine protocol; do \
+		case $$route in \
+		tier) env_set="";; \
+		machine) env_set="CETTA_OPEN_EQUATIONS_REFERENCE=1";; \
+		protocol) env_set="CETTA_PETTA_VERSIONS_REFERENCE=1";; \
+		esac; \
+		actual=$$(env $$env_set $(call cetta_exec,./$(BIN)) --lang petta tests/petta/typed_boundary_checks.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/typed_boundary_checks.expected)" ]; then \
+			echo "FAIL: typed boundary checks ($$route)"; \
+			printf '%s\n' "$$actual"; exit 1; \
+		fi; \
+	done; \
+	echo "PASS: typed boundary checks met by callee ranges and versions answer as the protocol"
+
+.PHONY: test-petta-type-walk-constructors
+# A ground tree of constructors read at a closed type is walked once, where
+# every node's head has one declaration and its range fixes its parameters;
+# every other case keeps the service's general path.  Every route answers
+# as the complete protocol does.
+test-petta-semantics: test-petta-type-walk-constructors
+test-petta-type-walk-constructors: $(BIN) tests/petta/type_walk_constructors.metta tests/petta/type_walk_constructors.expected
+	@set -e; \
+	for route in tier machine protocol; do \
+		case $$route in \
+		tier) env_set="";; \
+		machine) env_set="CETTA_OPEN_EQUATIONS_REFERENCE=1";; \
+		protocol) env_set="CETTA_PETTA_VERSIONS_REFERENCE=1";; \
+		esac; \
+		actual=$$(env $$env_set $(call cetta_exec,./$(BIN)) --lang petta tests/petta/type_walk_constructors.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/type_walk_constructors.expected)" ]; then \
+			echo "FAIL: constructor tree walk ($$route)"; \
+			printf '%s\n' "$$actual"; exit 1; \
+		fi; \
+	done; \
+	echo "PASS: constructor trees read at closed types answer as the protocol"
+
+.PHONY: test-petta-oem-identity-routes
+# A variable the host holds keeps one identity through the compiled tier,
+# by every route that reaches it; a variable a host goal made for one
+# answer, as a memo replay does, stays that answer's.
+test-petta-semantics: test-petta-oem-identity-routes
+test-petta-oem-identity-routes: $(BIN) tests/petta/oem_identity_seal.metta tests/petta/oem_identity_seal.expected tests/petta/oem_identity_order.metta tests/petta/oem_identity_order.expected
+	@set -e; \
+	for case in oem_identity_seal oem_identity_order; do \
+		for reference in "" 1; do \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(call cetta_exec,./$(BIN)) --lang petta tests/petta/$$case.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/$$case.expected)" ]; then \
+				echo "FAIL: identity routes ($$case, machine route: $${reference:-no})"; \
+				printf '%s\n' "$$actual"; exit 1; \
+			fi; \
+		done; \
+	done; \
+	echo "PASS: host-held variables keep one identity through the compiled tier"
+
+.PHONY: test-petta-polymorphic-versions
+# A formal whose type variables nothing else in the signature names is
+# private: trusted versions take it, and answer as the protocol does.
+test-petta-semantics: test-petta-polymorphic-versions
+test-petta-polymorphic-versions: $(BIN) tests/petta/polymorphic_versions.metta tests/petta/polymorphic_versions.expected tests/petta/uninterpreted_versions.metta tests/petta/uninterpreted_versions.expected tests/petta/tail_range_versions.metta tests/petta/tail_range_versions.expected
+	@set -e; \
+	for case in polymorphic_versions uninterpreted_versions tail_range_versions; do \
+		for versions in "" 1; do \
+			actual=$$(CETTA_PETTA_VERSIONS_REFERENCE=$$versions $(call cetta_exec,./$(BIN)) --lang petta tests/petta/$$case.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/$$case.expected)" ]; then \
+				echo "FAIL: polymorphic versions ($$case, complete protocol: $${versions:-no})"; \
+				printf '%s\n' "$$actual"; exit 1; \
+			fi; \
+		done; \
+	done; \
+	echo "PASS: polymorphic and uninterpreted parameters take trusted versions with the protocol's answers"
+
+.PHONY: test-petta-polymorphic-versions-stats
+# A fold at a private formal checks its list once, where it enters: sum,
+# at (List $a), enters its trusted version.  build, at the closed
+# (List Number), runs on the prepared machine, which needs no version.
+test-petta-polymorphic-versions-stats: $(BIN) tests/petta/polymorphic_versions_fold.metta
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@result=$$(./$(BIN) --emit-runtime-stats --lang petta \
+		tests/petta/polymorphic_versions_fold.metta 2>&1); \
+	answer=$$(printf '%s\n' "$$result" | grep -E '^[0-9]+$$' | head -1); \
+	versions=$$(printf '%s\n' "$$result" | awk \
+		'$$1 == "runtime-counter" && $$2 == "petta-contract-version-compiled" { print $$3 }'); \
+	prepared=$$(printf '%s\n' "$$result" | awk \
+		'$$1 == "runtime-counter" && $$2 == "prepared-pure-call-admission" { print $$3 }'); \
+	visits=$$(printf '%s\n' "$$result" | awk \
+		'$$1 == "runtime-counter" && $$2 == "petta-type-closed-visit" { print $$3 }'); \
+	if [ "$$answer" != "20100" ] || \
+	   { [ "$${versions:-0}" -lt 1 ] && [ "$${prepared:-0}" -lt 1 ]; } || \
+	   [ "$${visits:-0}" -gt 2000 ]; then \
+		echo "FAIL: private polymorphic folds enter trusted versions (answer $$answer, versions $${versions:-0}, prepared $${prepared:-0}, closed visits $${visits:-0})"; \
+		exit 1; \
+	fi; \
+	echo "PASS: private polymorphic folds enter trusted versions, on the open or the prepared machine (closed visits $$visits)"
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
+
+.PHONY: test-petta-declaration-rows
+# Rows that repeat one type are one declaration: a call answers once for
+# them, through a variable too, and get-type lists the type once.  Distinct
+# rows are typed alternatives.  The tier and the machine give the same
+# answers.
+test-petta-semantics: test-petta-declaration-rows
+test-petta-declaration-rows: $(BIN) tests/petta/duplicate_declaration_rows.metta tests/petta/duplicate_declaration_rows.expected tests/petta/distinct_declaration_rows.metta tests/petta/distinct_declaration_rows.expected
+	@set -e; \
+	for case in duplicate_declaration_rows distinct_declaration_rows; do \
+		for reference in "" 1; do \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(call cetta_exec,./$(BIN)) --lang petta tests/petta/$$case.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/$$case.expected)" ]; then \
+				echo "FAIL: declaration rows ($$case, machine route: $${reference:-no})"; \
+				printf '%s\n' "$$actual"; exit 1; \
+			fi; \
+		done; \
+	done; \
+	echo "PASS: repeated declaration rows are one declaration; distinct rows are alternatives"
+
+.PHONY: test-petta-memoize-register-recursion
+# A memoized relation keeps its table at the generator's root, where the
+# register accelerator for plain recursion would otherwise make the recursive
+# calls without it: memoized fib 25 misses 26 times and hits 23, on the tier
+# and on the machine.
+test-petta-semantics: test-petta-memoize-register-recursion
+test-petta-memoize-register-recursion: $(BIN) tests/petta/memoize_register_recursion.metta tests/petta/memoize_register_recursion.expected
+	@set -e; \
+	for reference in "" 1; do \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(call cetta_exec,./$(BIN)) --lang petta tests/petta/memoize_register_recursion.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/memoize_register_recursion.expected)" ]; then \
+			echo "FAIL: memoized relations keep their table (machine route: $${reference:-no})"; \
+			printf '%s\n' "$$actual"; exit 1; \
+		fi; \
+	done; \
+	echo "PASS: memoized relations keep their table at the generator's root"
+
+.PHONY: test-petta-declared-builtin-protocol
+# A declared builtin's call meets its declaration on the compiled tier as on
+# the machine, a program change while a body runs included.
+test-petta-semantics: test-petta-declared-builtin-protocol
+test-petta-declared-builtin-protocol: $(BIN) tests/petta/declared_builtin_protocol.metta tests/petta/declared_builtin_protocol.expected tests/petta/declared_builtin_program_change.metta tests/petta/declared_builtin_program_change.expected
+	@set -e; \
+	for case in declared_builtin_protocol declared_builtin_program_change; do \
+		for reference in "" 1; do \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(call cetta_exec,./$(BIN)) --lang petta tests/petta/$$case.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/$$case.expected)" ]; then \
+				echo "FAIL: declared builtin protocol ($$case, machine route: $${reference:-no})"; \
+				printf '%s\n' "$$actual"; exit 1; \
+			fi; \
+		done; \
+	done; \
+	echo "PASS: declared builtins meet their declarations on the tier as on the machine"
+
+.PHONY: test-petta-declared-builtin-stats
+# A loop whose arithmetic the program declares stays on the compiled tier:
+# no call of the declared builtin goes to the host.
+test-petta-declared-builtin-stats: $(BIN) tests/petta/declared_builtin_loop.metta
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@result=$$(./$(BIN) --emit-runtime-stats --lang petta \
+		tests/petta/declared_builtin_loop.metta 2>&1); \
+	answer=$$(printf '%s\n' "$$result" | grep -E '^[0-9]+$$' | head -1); \
+	hosted=$$(printf '%s\n' "$$result" | awk \
+		'$$1 == "runtime-counter" && $$2 == "open-equation-host" { print $$3 }'); \
+	if [ "$$answer" != "1000" ] || [ "$${hosted:-0}" -ne 0 ]; then \
+		echo "FAIL: declared builtins stay on the tier (answer $$answer, host goals $${hosted:-0})"; \
+		exit 1; \
+	fi; \
+	echo "PASS: declared builtins stay on the tier"
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
+
+.PHONY: test-petta-duplicate-rows-stats
+# A lambda called through a variable stays on the compiled tier when the
+# program's only repeated declaration rows repeat one type.
+test-petta-duplicate-rows-stats: $(BIN) tests/petta/duplicate_declaration_rows_loop.metta
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@result=$$(./$(BIN) --emit-runtime-stats --lang petta \
+		tests/petta/duplicate_declaration_rows_loop.metta 2>&1); \
+	answer=$$(printf '%s\n' "$$result" | grep -E '^[0-9]+$$' | head -1); \
+	hosted=$$(printf '%s\n' "$$result" | awk \
+		'$$1 == "runtime-counter" && $$2 == "open-equation-host" { print $$3 }'); \
+	if [ "$$answer" != "1000" ] || [ "$${hosted:-0}" -ne 0 ]; then \
+		echo "FAIL: repeated declaration rows keep lambda calls on the tier (answer $$answer, host goals $${hosted:-0})"; \
+		exit 1; \
+	fi; \
+	echo "PASS: repeated declaration rows keep lambda calls on the tier"
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
 
 test-petta-work-control: $(BIN) tests/petta/work_control.metta tests/petta/work_control.expected
 	@set -e; \
@@ -31753,6 +32042,56 @@ test-all: test-trie-window-scaling
 test-deep-facts-load: $(BIN) tests/support/check_deep_facts_load.py
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_deep_facts_load.py ./$(BIN)
 test-all: test-deep-facts-load
+.PHONY: test-deep-relation-lookups
+# A relation of deep facts keeps its reads indexed: backward chaining whose
+# reads fix a conclusion, or leave an implication to unification, grows
+# linearly with its knowledge base, not with its square.
+test-deep-relation-lookups: $(BIN) tests/support/check_deep_relation_lookups.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_deep_relation_lookups.py ./$(BIN)
+test-all: test-deep-relation-lookups
+.PHONY: test-typed-fast-paths
+# Types never slow a fast path: each typed probe, in the PeTTa and HE lanes,
+# within 1.25x of its untyped twin plus 3M instructions, with its twin's
+# answers and scaling.  Families still open are listed in the checker with
+# the reason; --open runs them.
+test-typed-fast-paths: $(BIN) tests/support/check_typed_fast_paths.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_typed_fast_paths.py ./$(BIN)
+test-all: test-typed-fast-paths
+.PHONY: test-admission-fixture-law
+# Admission by normal form changes no answer: every PeTTa fixture prints the
+# same and exits the same with the tier admitting spellings by their normal
+# form and without it, and the spellings' own fixture answers as written;
+# min and max (selections of an operand), lets that
+# bind a variable again, builtin heads a space authors equations for, and the
+# normal forms' guards answer on every route as the reference does.
+test-admission-fixture-law: $(BIN) tests/support/check_admission_fixture_law.py \
+		tests/petta/admission_normal_forms.metta \
+		tests/petta/admission_normal_forms.expected \
+		tests/petta/minmax_intrinsic.metta tests/petta/minmax_intrinsic.expected \
+		tests/petta/let_rebinding.metta tests/petta/let_rebinding.expected \
+		tests/petta/builtin_owned_by_space.metta \
+		tests/petta/builtin_owned_by_space.expected \
+		tests/petta/minmax_selection.metta \
+		tests/petta/minmax_selection.expected
+	@set -eu -o pipefail; \
+	diff -u tests/petta/admission_normal_forms.expected \
+		<($(CETTA_BIN_INVOKE) --lang petta tests/petta/admission_normal_forms.metta); \
+	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1" "CETTA_ADMISSION_NORMALIZE=0"; do \
+		for test in minmax_intrinsic minmax_selection let_rebinding \
+				builtin_owned_by_space \
+				$(notdir $(basename $(wildcard tests/petta/normal_form_guard_*.metta))); do \
+			diff -u tests/petta/$$test.expected \
+				<(env $$route $(CETTA_BIN_INVOKE) --lang petta tests/petta/$$test.metta); \
+		done; \
+	done; \
+	$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_admission_fixture_law.py ./$(BIN) tests/petta
+test-all: test-admission-fixture-law
+.PHONY: test-he-large-values-linear
+# A value larger than any walk budget costs linear work in HE: a list built
+# by one call and summed by another through let, typed and untyped.
+test-he-large-values-linear: $(BIN) tests/support/check_large_values_linear.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_large_values_linear.py ./$(BIN)
+test-all: test-he-large-values-linear
 .PHONY: test-relation-release
 # A relation holds exactly the ids its facts hold: once the facts are gone,
 # the universe reclaims the ids only they held.
@@ -33036,6 +33375,75 @@ test-petta-session-match-decisions: $(BIN)
 	fi; \
 	echo "PASS: compiled match decisions serve later queries while current"
 
+.PHONY: test-petta-prepared-return-checks
+# A typed head whose body is not shown to be of its range's class runs on
+# register code with its value checked at return; a value outside the class,
+# also through a tail call into another head, answers as the protocol does.
+# A range written as one parameter's type variable takes that argument's
+# class (prepared_parameter_range).
+test-petta-prepared-return-checks: $(BIN)
+	@set -eu; \
+	for fixture in prepared_return_checks prepared_parameter_range; do \
+		for run in code node pure-off collecting; do \
+			code=; pure=; budget=; \
+			if [ $$run = node ]; then code=1; fi; \
+			if [ $$run = pure-off ]; then pure=1; fi; \
+			if [ $$run = collecting ]; then budget=1; fi; \
+			actual=$$(CETTA_PREPARED_PURE_CODE_REFERENCE=$$code \
+				CETTA_PREPARED_PURE_REFERENCE=$$pure \
+				CETTA_GC_BUDGET_MB=$$budget $(CETTA_BIN_INVOKE) \
+				--lang petta tests/petta/$$fixture.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/$$fixture.expected)" ]; then \
+				echo "FAIL: $$fixture, $$run run"; \
+				diff <(cat tests/petta/$$fixture.expected) \
+					<(printf '%s\n' "$$actual") | head -20; \
+				exit 1; \
+			fi; \
+		done; \
+		trace=$$(CETTA_PREPARED_PURE_DEBUG=1 $(CETTA_BIN_INVOKE) \
+			--lang petta tests/petta/$$fixture.metta 2>&1 >/dev/null); \
+		if ! printf '%s\n' "$$trace" | \
+			grep -q 'prepared-pure code: bodies lowered to register code' || \
+		   ! printf '%s\n' "$$trace" | \
+			grep -q "a typed result is outside its range's class"; then \
+			echo "FAIL: $$fixture did not run its checks on register code"; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: typed results checked at return answer as the protocol"
+
+.PHONY: test-petta-prepared-structural-types
+# A typed head whose formal is a structural type its trusted version
+# certifies runs on register code: a call from elsewhere checks its argument
+# once, the head's calls to itself keep it, and every route answers alike.
+test-petta-semantics: test-petta-prepared-structural-types
+test-petta-prepared-structural-types: $(BIN)
+	@set -eu; \
+	for run in code pure-off protocol; do \
+		pure=; versions=; \
+		if [ $$run = pure-off ]; then pure=1; fi; \
+		if [ $$run = protocol ]; then pure=1; versions=1; fi; \
+		actual=$$(CETTA_PREPARED_PURE_REFERENCE=$$pure \
+			CETTA_PETTA_VERSIONS_REFERENCE=$$versions $(CETTA_BIN_INVOKE) \
+			--lang petta tests/petta/prepared_structural_types.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/prepared_structural_types.expected)" ]; then \
+			echo "FAIL: prepared structural types, $$run run"; \
+			diff <(cat tests/petta/prepared_structural_types.expected) \
+				<(printf '%s\n' "$$actual") | head -20; \
+			exit 1; \
+		fi; \
+	done; \
+	trace=$$(CETTA_PREPARED_PURE_DEBUG=1 $(CETTA_BIN_INVOKE) \
+		--lang petta tests/petta/prepared_structural_types.metta 2>&1 >/dev/null); \
+	if ! printf '%s\n' "$$trace" | \
+		grep -q 'prepared-pure code: bodies lowered to register code' || \
+	   ! printf '%s\n' "$$trace" | \
+		grep -q 'a structural argument is not of its formal'; then \
+		echo "FAIL: prepared structural types did not run their checks on register code"; \
+		exit 1; \
+	fi; \
+	echo "PASS: structural formals checked once on register code answer as the protocol"
+
 .PHONY: test-petta-prepared-code
 .PHONY: test-prepared-scalar-tree
 test-all: test-prepared-scalar-tree
@@ -33846,7 +34254,7 @@ test-petta-swi-differences: $(BIN)
 	done; \
 	echo "PASS: the registered differences from SWI-PeTTa hold, on the tier and in the machine"
 
-test-petta-semantics: $(BIN) test-petta-once-first-witness test-petta-relational-append-open test-petta-multifile test-petta-eval-in-space test-petta-list-values test-petta-value-occurrences test-petta-dispatch-error-scope test-petta-list-building-linear test-petta-runtime-heads test-petta-keyed-selection test-petta-tier-lists test-petta-tier-fold-dispatch test-petta-tier-spelled-cells test-petta-tier-repra test-petta-tier-head-occurrences test-petta-tier-list-natives test-petta-tier-value-observations test-petta-tier-let-patterns test-petta-match-conjunction-order test-petta-foldall-native-steps test-petta-tier-equation-cut test-petta-projection-grown-frames test-petta-metatype-registered-functions test-petta-tier-views-over-kept-storage test-petta-tier-tail-superpose test-petta-prepared-decons-views test-petta-tier-list-heads test-petta-open-term-walks test-petta-hyperpose-program-cache test-petta-tier-head-index test-petta-tier-session-programs test-petta-case-default-retire test-petta-tier-existence test-petta-tier-value-if test-petta-session-match-decisions test-petta-tier-small-space-rows test-petta-prepared-code test-petta-foreign-holds test-petta-libpl-registered-arities test-petta-number-order test-petta-specialization-after-import test-petta-special-form-arities test-petta-swi-differences
+test-petta-semantics: $(BIN) test-petta-once-first-witness test-petta-relational-append-open test-petta-multifile test-petta-eval-in-space test-petta-list-values test-petta-value-occurrences test-petta-dispatch-error-scope test-petta-list-building-linear test-petta-runtime-heads test-petta-keyed-selection test-petta-tier-lists test-petta-tier-fold-dispatch test-petta-tier-spelled-cells test-petta-tier-repra test-petta-tier-head-occurrences test-petta-tier-list-natives test-petta-tier-value-observations test-petta-tier-let-patterns test-petta-match-conjunction-order test-petta-foldall-native-steps test-petta-tier-equation-cut test-petta-projection-grown-frames test-petta-metatype-registered-functions test-petta-tier-views-over-kept-storage test-petta-tier-tail-superpose test-petta-prepared-decons-views test-petta-tier-list-heads test-petta-open-term-walks test-petta-hyperpose-program-cache test-petta-tier-head-index test-petta-tier-session-programs test-petta-case-default-retire test-petta-tier-existence test-petta-tier-value-if test-petta-session-match-decisions test-petta-tier-small-space-rows test-petta-prepared-code test-petta-prepared-return-checks test-petta-foreign-holds test-petta-libpl-registered-arities test-petta-number-order test-petta-specialization-after-import test-petta-special-form-arities test-petta-swi-differences
 	@set -eu; \
 	for stem in $(PETTA_SEMANTIC_ORACLE_STEMS); do \
 		contract=exact-stream; \
@@ -35174,7 +35582,6 @@ test-he-not-reducible: $(BIN) tests/he/not_reducible_boundary.metta \
 test-all: test-he-evaluated-values
 test-he-evaluated-values: $(BIN) tests/he/evaluated_values.metta \
 		tests/he/evaluated_values.expected \
-		tests/he/evaluated_values.compat.expected \
 		tests/he/evaluated_values_typed.metta \
 		tests/he/evaluated_values_typed.expected \
 		tests/he/evaluated_values_typed.compat.expected \
@@ -35189,12 +35596,9 @@ test-he-evaluated-values: $(BIN) tests/he/evaluated_values.metta \
 	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1" \
 			"CETTA_HE_CANONICAL_EXECUTION=0" "CETTA_HE_SHARED_EXECUTION=0" \
 			"CETTA_HE_COMPLETED_DELIVERY=0" "CETTA_GC=1 CETTA_GC_BUDGET_MB=1"; do \
-		values_expected=tests/he/evaluated_values.expected; \
-		case "$$lane" in *he-compat*) \
-			values_expected=tests/he/evaluated_values.compat.expected;; esac; \
 		env $$route $(CETTA_BIN_INVOKE) --lang $$lane \
 			tests/he/evaluated_values.metta \
-			| diff -u $$values_expected -; \
+			| diff -u tests/he/evaluated_values.expected -; \
 		for program in evaluated_values_typed evaluated_values_stuck prepared_completed_values; do \
 		expected=tests/he/$$program.expected; \
 		case "$$lane" in *he-compat*) \
@@ -35205,6 +35609,294 @@ test-he-evaluated-values: $(BIN) tests/he/evaluated_values.metta \
 	done; \
 	done; \
 	echo 'PASS: a value HE answered is answered again unevaluated, in every HE profile and on every route'
+
+# HE types == as (-> $t $t Bool): two values of different classes are an
+# argument type error, also inside a function body a machine runs natively,
+# and two values of one class compare.  The answers are Rust HE's, in every
+# HE profile and on every route; he-prime's == is total structural equality.
+.PHONY: test-he-equality-classes
+test-all: test-he-equality-classes
+test-he-equality-classes: $(BIN) tests/he/equality_classes.metta \
+		tests/he/equality_classes.expected \
+		tests/he/equality_classes.prime.expected
+	@set -eu -o pipefail; \
+	for lane in $(HE_PROFILE_LANES); do \
+	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1" \
+			"CETTA_OPEN_EQUATIONS_REFERENCE=1" \
+			"CETTA_HE_CANONICAL_EXECUTION=0" "CETTA_HE_SHARED_EXECUTION=0" \
+			"CETTA_HE_COMPLETED_DELIVERY=0" "CETTA_GC=1 CETTA_GC_BUDGET_MB=1"; do \
+		expected=tests/he/equality_classes.expected; \
+		case "$$lane" in *he-prime*) \
+			expected=tests/he/equality_classes.prime.expected;; esac; \
+		env $$route $(CETTA_BIN_INVOKE) --lang $$lane \
+			tests/he/equality_classes.metta | diff -u $$expected -; \
+	done; \
+	done; \
+	echo 'PASS: == on values of different classes is a type error where HE types it, in every HE profile and on every route'
+
+# A typed call inside HE's shared execution: the machine evaluates its
+# arguments where HE's evaluation of them at their formals is the machine's
+# own, and the host runs the call over those values on the prepared machine
+# or at the canonical dispatch step, never checking the values again.  Equal
+# to hyperon-experimental as bags, in every HE profile and on every route.
+.PHONY: test-he-typed-shared-dispatch
+test-all: test-he-typed-shared-dispatch
+test-he-typed-shared-dispatch: $(BIN) tests/he/typed_shared_dispatch.metta \
+		tests/he/typed_shared_dispatch.expected
+	@set -eu -o pipefail; \
+	for lane in $(HE_PROFILE_LANES); do \
+	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1" \
+			"CETTA_HE_CANONICAL_EXECUTION=0" "CETTA_HE_SHARED_EXECUTION=0" \
+			"CETTA_HE_COMPLETED_DELIVERY=0" "CETTA_GC=1 CETTA_GC_BUDGET_MB=1"; do \
+		python3 tests/support/compare_answers.py --lang he \
+			--program tests/he/typed_shared_dispatch.metta \
+			--expected tests/he/typed_shared_dispatch.expected \
+			--actual <(env $$route $(CETTA_BIN_INVOKE) --lang $$lane \
+				tests/he/typed_shared_dispatch.metta); \
+	done; \
+	done; \
+	echo 'PASS: typed calls in HE shared execution answer as HE does, in every HE profile and on every route'
+
+# HE's evaluation of an argument or a key keeps its errors only where no
+# answer succeeds, and an argument that is an error is its call's answer:
+# let and let* take the bound value as an argument, switch its key, and case
+# reads its key's answers as data after the same selection.  Equal to
+# hyperon-experimental as bags (collapse order is not observable), in every
+# HE profile and on every route.
+.PHONY: test-he-error-selection
+test-all: test-he-error-selection
+test-he-error-selection: $(BIN) tests/he/control_error_selection.metta \
+		tests/he/control_error_selection.expected
+	@set -eu -o pipefail; \
+	for lane in $(HE_PROFILE_LANES); do \
+	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1" \
+			"CETTA_HE_CANONICAL_EXECUTION=0" "CETTA_HE_SHARED_EXECUTION=0" \
+			"CETTA_HE_COMPLETED_DELIVERY=0" "CETTA_GC=1 CETTA_GC_BUDGET_MB=1"; do \
+		python3 tests/support/compare_answers.py --lang he \
+			--program tests/he/control_error_selection.metta \
+			--expected tests/he/control_error_selection.expected \
+			--actual <(env $$route $(CETTA_BIN_INVOKE) --lang $$lane \
+				tests/he/control_error_selection.metta); \
+	done; \
+	done; \
+	echo 'PASS: errors drop where an answer succeeds and an error argument answers its call, in every HE profile and on every route'
+
+# A fold its two equations spell over a free constructor, (= (g nil) base)
+# and (= (g (cons .. $r ..)) (op e (g $r))) with op + or *, answers in one
+# walk of its argument's spine; other ends, other cells, fields that are not
+# machine integers and steps that leave them run the equations.  HE: equal
+# to hyperon-experimental as bags in every HE profile and on every route;
+# PeTTa: equal to the route without it, overflowing steps included.
+.PHONY: test-recognized-folds
+test-all: test-recognized-folds
+test-recognized-folds: $(BIN) tests/he/recognized_folds.metta \
+		tests/he/recognized_folds.expected tests/petta/recognized_folds.metta \
+		tests/petta/recognized_folds.expected
+	@set -eu -o pipefail; \
+	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1" \
+			"CETTA_HE_CANONICAL_EXECUTION=0" "CETTA_HE_SHARED_EXECUTION=0" \
+			"CETTA_GC=1 CETTA_GC_BUDGET_MB=1"; do \
+		for lane in $(HE_PROFILE_LANES); do \
+			python3 tests/support/compare_answers.py --lang he \
+				--program tests/he/recognized_folds.metta \
+				--expected tests/he/recognized_folds.expected \
+				--actual <(env $$route $(CETTA_BIN_INVOKE) --lang $$lane \
+					tests/he/recognized_folds.metta); \
+		done; \
+		diff -u tests/petta/recognized_folds.expected \
+			<(env $$route $(CETTA_BIN_INVOKE) --lang petta \
+				tests/petta/recognized_folds.metta); \
+	done; \
+	echo 'PASS: recognized folds answer as their equations do, in every HE profile, in PeTTa and on every route'
+
+# The recognized folds of test-recognized-folds run as folds: calls whose
+# spine ends where their equations end answer in one walk, and the
+# reference route never does.
+.PHONY: test-recognized-folds-stats
+test-recognized-folds-stats: $(BIN) tests/he/recognized_folds.metta \
+		tests/petta/recognized_folds.metta
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@set -eu -o pipefail; \
+	for lane in he petta; do \
+		folds=$$($(CETTA_BIN_INVOKE) --emit-runtime-stats --lang $$lane \
+			tests/$$lane/recognized_folds.metta 2>&1 >/dev/null | awk \
+			'$$2 == "prepared-pure-recognized-fold" { print $$3 }'); \
+		reference=$$(CETTA_PREPARED_PURE_REFERENCE=1 $(CETTA_BIN_INVOKE) \
+			--emit-runtime-stats --lang $$lane \
+			tests/$$lane/recognized_folds.metta 2>&1 >/dev/null | awk \
+			'$$2 == "prepared-pure-recognized-fold" { print $$3 }'); \
+		echo "$$lane folds $$folds reference $$reference"; \
+		if [ "$${folds:-0}" -lt 12 ] || [ "$${reference:-0}" -ne 0 ]; then \
+			echo "FAIL: $$lane recognized folds $$folds (want >= 12), reference $$reference (want 0)"; \
+			exit 1; \
+		fi; \
+	done; \
+	echo 'PASS: recognized folds answer in one walk of their spine, in HE and PeTTa'
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
+
+# Typings the prepared machine knows without checking them.  HE: an
+# argument or a constructor's field returned at the head's range, a
+# let-bound value, and the answer a checked build made, which alone keeps
+# its typing; a value typed %Undefined% passes every check and keeps that
+# typing wherever it is passed on.  Equal to hyperon-experimental as bags,
+# in every HE profile and on every route.  PeTTa: an argument passed on at
+# its own formal and a call's answer at the range its callee's trusted
+# version proves; a head whose body does not show its range answers
+# nothing.  Equal to the route without the machine.
+.PHONY: test-typed-evidence
+test-all: test-typed-evidence
+test-typed-evidence: $(BIN) tests/he/typed_evidence.metta \
+		tests/he/typed_evidence.expected tests/petta/typed_evidence.metta \
+		tests/petta/typed_evidence.expected
+	@set -eu -o pipefail; \
+	for lane in $(HE_PROFILE_LANES); do \
+	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1" \
+			"CETTA_HE_CANONICAL_EXECUTION=0" "CETTA_HE_SHARED_EXECUTION=0" \
+			"CETTA_GC=1 CETTA_GC_BUDGET_MB=1"; do \
+		python3 tests/support/compare_answers.py --lang he \
+			--program tests/he/typed_evidence.metta \
+			--expected tests/he/typed_evidence.expected \
+			--actual <(env $$route $(CETTA_BIN_INVOKE) --lang $$lane \
+				tests/he/typed_evidence.metta); \
+	done; \
+	done; \
+	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1" \
+			"CETTA_GC=1 CETTA_GC_BUDGET_MB=1"; do \
+		diff -u tests/petta/typed_evidence.expected \
+			<(env $$route $(CETTA_BIN_INVOKE) --lang petta \
+				tests/petta/typed_evidence.metta); \
+	done; \
+	echo 'PASS: typings known without a check answer as HE and PeTTa do, in every HE profile and on every route'
+
+# HE's controls keep the bindings their operand's answers carry: case and
+# switch match each branch under the scrutinee answer's bindings, and nop gives
+# one unit per answer with its bindings, an error as itself and no answers as
+# none; collapse keeps its answers' bindings to itself.  Equal to
+# hyperon-experimental (he-compat prints its empty answer), on every route.
+.PHONY: test-he-control-bindings
+test-all: test-he-control-bindings
+test-he-control-bindings: $(BIN) tests/he/control_binding_continuations.metta \
+		tests/he/control_binding_continuations.expected \
+		tests/he/control_binding_continuations.compat.expected
+	@set -eu -o pipefail; \
+	for lane in $(HE_PROFILE_LANES); do \
+	expected=tests/he/control_binding_continuations.expected; \
+	case "$$lane" in *he-compat*) \
+		expected=tests/he/control_binding_continuations.compat.expected;; esac; \
+	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1" \
+			"CETTA_HE_CANONICAL_EXECUTION=0" "CETTA_HE_SHARED_EXECUTION=0" \
+			"CETTA_HE_COMPLETED_DELIVERY=0" "CETTA_GC=1 CETTA_GC_BUDGET_MB=1"; do \
+		env $$route $(CETTA_BIN_INVOKE) --lang $$lane \
+			tests/he/control_binding_continuations.metta | diff -u $$expected -; \
+	done; \
+	done; \
+	echo 'PASS: case, switch and nop keep their operand answers'"'"' bindings, in every HE profile and on every route'
+
+# HE's typings of a term-stable ground expression are kept by its address,
+# checked against its arena's identity and reset epoch, while the program's
+# declarations stand.  Kept typings answer as fresh ones in every HE profile:
+# a declaration added or removed between two typings of one value is seen.
+.PHONY: test-he-type-stamps
+test-all: test-he-type-stamps
+test-he-type-stamps: $(BIN) tests/he/type_stamps.metta tests/he/type_stamps.expected
+	@set -eu -o pipefail; \
+	for lane in he "he --profile he-compat" "he --profile extended"; do \
+	for stamps in 1 0; do \
+		CETTA_TYPE_STAMPS=$$stamps $(CETTA_BIN_INVOKE) --lang $$lane \
+			tests/he/type_stamps.metta \
+			| diff -u tests/he/type_stamps.expected -; \
+	done; \
+	done; \
+	echo 'PASS: typings kept by address answer as fresh ones, declarations changing included, in every HE profile'
+
+# Typings kept by shape answer as inference does where a parent's typing
+# reads a child symbol itself (a tuple part's own annotations, a native
+# handle's kind), and no typing is kept where a declaration holds a state
+# cell, whose contents change while the declarations do not: the program
+# answers the same with the store and without it, in every HE profile.
+# Untyped functions over typed constructors in a closed HE program: the
+# typings their call sites pass and their bodies answer, to a fixpoint,
+# decide the constructors' checks where every combination passes; a
+# combination that fails is checked as it runs.  Equal to
+# hyperon-experimental as bags, in every HE profile and on every route.
+# Typed rules where HE's checks bind them: a typed head folds only where
+# its constructor types the recursive field at the head's formal, a formal
+# or a typing with %Undefined% below its top is checked as HE checks it,
+# and the rule models' controls (type sets as lower bounds, fields a
+# constructor's range does not fix, escaping heads) answer as HE does.  Equal
+# to hyperon-experimental, in every HE profile and on every route.
+.PHONY: test-he-typed-rule-controls
+test-all: test-he-typed-rule-controls
+test-he-typed-rule-controls: $(BIN) tests/he/fold_inversion_sum.metta \
+		tests/he/fold_inversion_product.metta tests/he/undefined_nested_formal.metta \
+		tests/he/poly_build_instances.metta
+	@set -eu -o pipefail; \
+	for program in fold_inversion_sum fold_inversion_product undefined_nested_formal \
+			poly_build_instances; do \
+	for lane in $(HE_PROFILE_LANES); do \
+	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1" \
+			"CETTA_HE_SHARED_EXECUTION=0" "CETTA_TYPE_STAMPS=0"; do \
+		python3 tests/support/compare_answers.py --lang he \
+			--program tests/he/$$program.metta \
+			--expected tests/he/$$program.expected \
+			--actual <(env $$route $(CETTA_BIN_INVOKE) --lang $$lane \
+				tests/he/$$program.metta); \
+	done; \
+	done; \
+	done; \
+	for program in tests/he/typed_rule_controls/*.metta; do \
+	for lane in $(HE_PROFILE_LANES); do \
+	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1" "CETTA_TYPE_STAMPS=0"; do \
+		python3 tests/support/compare_answers.py --lang he \
+			--program $$program --expected $${program%.metta}.expected \
+			--actual <(env $$route $(CETTA_BIN_INVOKE) --lang $$lane $$program) \
+			|| { echo "FAIL: $$program [$$route] $$lane"; exit 1; }; \
+	done; \
+	done; \
+	done; \
+	echo 'PASS: typed folds, open formals, nested %Undefined% and the rule models'"'"' controls answer as HE does, in every HE profile and on every route'
+
+.PHONY: test-he-untyped-inference
+test-all: test-he-untyped-inference
+test-he-untyped-inference: $(BIN) tests/he/untyped_inference.metta \
+		tests/he/untyped_inference.expected
+	@set -eu -o pipefail; \
+	for lane in $(HE_PROFILE_LANES); do \
+	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1" \
+			"CETTA_HE_CANONICAL_EXECUTION=0" "CETTA_HE_SHARED_EXECUTION=0" \
+			"CETTA_GC=1 CETTA_GC_BUDGET_MB=1"; do \
+		python3 tests/support/compare_answers.py --lang he \
+			--program tests/he/untyped_inference.metta \
+			--expected tests/he/untyped_inference.expected \
+			--actual <(env $$route $(CETTA_BIN_INVOKE) --lang $$lane \
+				tests/he/untyped_inference.metta); \
+	done; \
+	done; \
+	echo 'PASS: untyped functions over typed constructors answer as HE does, in every HE profile and on every route'
+
+.PHONY: test-he-type-stamp-shapes
+test-all: test-he-type-stamp-shapes
+test-he-type-stamp-shapes: $(BIN) tests/he/type_stamp_shapes_tuple.metta \
+		tests/he/type_stamp_shapes_handle.metta \
+		tests/he/type_stamp_shapes_handle_kind.metta \
+		tests/he/type_stamp_shapes_handle_string.metta \
+		tests/he/type_stamp_shapes_mutable_reuse.metta \
+		tests/he/type_stamp_shapes_mutable_formal.metta \
+		tests/he/type_stamp_shapes_headless_subtype.metta \
+		tests/he/type_stamp_shapes_open_identity.metta
+	@set -eu -o pipefail; \
+	for program in tuple handle handle_kind handle_string mutable_reuse \
+			mutable_formal headless_subtype open_identity; do \
+	for lane in $(HE_PROFILE_LANES); do \
+		diff -u <(CETTA_TYPE_STAMPS=0 $(CETTA_BIN_INVOKE) --lang $$lane \
+				tests/he/type_stamp_shapes_$$program.metta) \
+			<(CETTA_TYPE_STAMPS=1 $(CETTA_BIN_INVOKE) --lang $$lane \
+				tests/he/type_stamp_shapes_$$program.metta); \
+	done; \
+	done; \
+	echo 'PASS: typings kept by shape answer as inference does, in every HE profile'
 
 # A typed head runs in the prepared machine as HE runs it: a parameter of a
 # value class is cast where HE casts it, the range is shown by the bodies,
@@ -35219,9 +35911,24 @@ test-all: test-he-typed-calls-prepared
 test-he-typed-calls-prepared: $(BIN) tests/he/typed_calls_prepared.metta \
 		tests/he/typed_calls_prepared.expected \
 		tests/he/typed_calls_authored_classifier.metta \
-		tests/he/typed_calls_authored_classifier.expected
+		tests/he/typed_calls_authored_classifier.expected \
+		tests/he/typed_parameter_range.metta \
+		tests/he/typed_parameter_range.expected \
+		tests/he/expected_type_casts.metta \
+		tests/he/expected_type_casts.expected \
+		tests/he/typed_constructor_builds.metta \
+		tests/he/typed_constructor_builds.expected \
+		tests/he/typed_structural_heads.metta \
+		tests/he/typed_structural_heads.expected \
+		tests/he/typed_constructor_values.metta \
+		tests/he/typed_constructor_values.expected \
+		tests/he/typed_open_structural.metta \
+		tests/he/typed_open_structural.expected
 	@set -eu -o pipefail; \
-	for program in typed_calls_prepared typed_calls_authored_classifier; do \
+	for program in typed_calls_prepared typed_calls_authored_classifier \
+		typed_parameter_range expected_type_casts typed_constructor_builds \
+		typed_structural_heads typed_constructor_values \
+		typed_open_structural; do \
 	for lane in he "he --profile he-compat" "he --profile extended"; do \
 	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1"; do \
 		env $$route $(CETTA_BIN_INVOKE) --lang $$lane \
@@ -35480,6 +36187,23 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 else
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
 endif
+
+# The canonical machine's last-call rule: a recursion whose levels end in a
+# tail call holds the same frames at every depth and flat memory, Python,
+# car-atom, typed and under kept bindings; levels with work after their child
+# keep their frames.  The answers gate runs named and generated programs with
+# the rule and without it (CETTA_HE_LAST_CALL=0); any difference fails.
+.PHONY: test-he-canonical-tail-memory test-he-canonical-tail-answers
+test-all: test-he-canonical-tail-memory test-he-canonical-tail-answers
+test-he-canonical-tail-memory: $(BIN) tests/support/check_he_last_call.py
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_he_last_call.py ./$(BIN) --memory
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
+
+test-he-canonical-tail-answers: $(BIN) tests/support/check_he_last_call.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_he_last_call.py ./$(BIN) --answers 1000 --seed 1
 
 # A stored value's frame identifiers are found in the value's own size: a
 # list naming a frame per element through one source variable, and a shared
@@ -36193,7 +36917,7 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 		$(CETTA_BIN_INVOKE) --emit-runtime-stats --profile extended \
 		--lang he \
 		-e '!(bind! &ordered (new-space stack))' \
-		-e '!(space-set-backend! &ordered pathmap)' \
+		-e '!(case (space-set-backend! &ordered pathmap) (((Error $$call $$reason) $$reason)))' \
 		-e '!(add-atom &ordered (edge a b))' \
 		-e '!(add-atom &ordered (edge c d))' \
 		-e '!(collapse (match &ordered (edge $$x $$y) ($$x $$y)))' 2>&1); \
@@ -36209,11 +36933,11 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 	unsupported_actual=$$(printf '%s\n' "$$unsupported" | grep '^\[' || true); \
 	positive_expected=$$(printf '%s\n' '[()]' '[()]' '[((a b))]'); \
 	automatic_expected=$$(printf '%s\n' '[()]' '[()]' '[((a b))]'); \
-	ordered_expected=$$(printf '%s\n' '[()]' '[()]' '[()]' '[()]' '[((a b) (c d))]'); \
+	ordered_refused=$$(printf '%s\n' "$$ordered_actual" | grep -c 'UnsupportedSpaceKind' || true); \
 	unsupported_expected=$$(printf '%s\n' '[()]' '[()]' '[(f)]'); \
 	if [ "$$positive_actual" != "$$positive_expected" ] || \
 	   [ "$$automatic_actual" != "$$automatic_expected" ] || \
-	   [ "$$ordered_actual" != "$$ordered_expected" ] || \
+	   [ "$$ordered_refused" != 1 ] || \
 	   [ "$$unsupported_actual" != "$$unsupported_expected" ]; then \
 		echo "FAIL: PathMap indexed admission changed answers"; \
 		exit 1; \
@@ -37286,7 +38010,10 @@ test-pathmap-program-shadow-sync-work: $(BIN)
 	petta_result=$$(CETTA_PATHMAP_QUERY_INDEX=1 $(CETTA_BIN_INVOKE) \
 		--emit-runtime-stats --profile extended --space-engine pathmap \
 		--lang petta tests/test_pathmap_program_shadow_sync_work.metta 2>&1); \
-	owned_result=$$(CETTA_PATHMAP_QUERY_INDEX=1 $(CETTA_BIN_INVOKE) \
+	owned_default_result=$$(CETTA_PATHMAP_QUERY_INDEX=1 CETTA_NATIVE_QUERY_REFERENCE=0 $(CETTA_BIN_INVOKE) \
+		--emit-runtime-stats --profile extended --space-engine pathmap \
+		--lang petta tests/petta/pathmap_owned_binding_snapshot.metta 2>&1); \
+	owned_result=$$(CETTA_PATHMAP_QUERY_INDEX=1 CETTA_NATIVE_QUERY_REFERENCE=1 $(CETTA_BIN_INVOKE) \
 		--emit-runtime-stats --profile extended --space-engine pathmap \
 		--lang petta tests/petta/pathmap_owned_binding_snapshot.metta 2>&1); \
 	expected=$$(cat tests/test_pathmap_program_shadow_sync_work.expected); \
@@ -37324,7 +38051,9 @@ test-pathmap-program-shadow-sync-work: $(BIN)
 		exit 1; \
 	fi; \
 	owned_actual=$$(printf '%s\n' "$$owned_result" | grep -v '^runtime-' || true); \
-	if [ "$$owned_actual" != "$$(cat tests/petta/pathmap_owned_binding_snapshot.expected)" ]; then \
+	owned_default_actual=$$(printf '%s\n' "$$owned_default_result" | grep -v '^runtime-' || true); \
+	if [ "$$owned_actual" != "$$(cat tests/petta/pathmap_owned_binding_snapshot.expected)" ] || \
+	   [ "$$owned_default_actual" != "$$owned_actual" ]; then \
 		echo "FAIL: PathMap PeTTa owned binding snapshot answers"; \
 		diff -u tests/petta/pathmap_owned_binding_snapshot.expected \
 			<(printf '%s\n' "$$owned_actual") | head -30; \
@@ -38111,7 +38840,21 @@ else
 	@$(MAKE) BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
 endif
 
-test-help-flags: $(BIN)
+.PHONY: test-cli-diagnostics
+test-cli-diagnostics: $(BIN) tests/support/check_cli_diagnostics.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_cli_diagnostics.py "$(CETTA_SCRIPT_BIN)"
+
+.PHONY: test-intensional-weighted-example
+test-all: test-intensional-weighted-example
+test-intensional-weighted-example: $(BIN) examples/intensional_weighted_max_demo.metta lib/lib_intensional_weighted.metta
+	@set -eu; for profile in he-compat extended; do \
+		$(CETTA_BIN_INVOKE) --lang he --profile "$$profile" --run-contract \
+			examples/intensional_weighted_max_demo.metta \
+			> "runtime/intensional-weighted.$(BUILD_OBJ_TAG).$$profile.log"; \
+	done
+	@echo 'PASS: weighted evidence example computes strengths, coverage and missing observations'
+
+test-help-flags: $(BIN) test-cli-diagnostics
 	@help_long=$$($(CETTA_BIN_INVOKE) --help 2>&1); \
 	help_short=$$($(CETTA_BIN_INVOKE) -h 2>&1); \
 	lang_list=$$($(CETTA_BIN_INVOKE) --list-languages 2>&1); \
@@ -48058,9 +48801,9 @@ test-tptp-official-dollar-words-v1-body: $(BIN) prepare-tptp-compact-morphism-v1
 # files under lib/petta and lib/prime are checked against it.  Prime needs
 # its own spelling only where the source hands values to natives.
 LIBRARY_SPELLING_TOOL_V1 = tools/library_spelling.py
-# The libraries that run on real PeTTa; the list library and the native
-# libraries after it run on the CeTTa host's PeTTa lane, over natives real
-# PeTTa does not have.
+PETTA_REFERENCE_VOCABULARY_V1 = tests/support/petta_reference_vocabulary_v1.txt
+# The libraries that run on real PeTTa; the remaining native libraries run
+# on the CeTTa host's PeTTa lane, over natives real PeTTa does not have.
 LIBRARY_PETTA_PORTABLE_SOURCES_V1 = langdef lib_bnf lib_lbnf lib_module lib_tptp json str
 LIBRARY_PETTA_SPELLING_SOURCES_V1 = $(LIBRARY_PETTA_PORTABLE_SOURCES_V1) lang list \
 	system fs proc sqlite shell cwp io durable space_service store llm llm/io llm/command llm/compat \
@@ -48311,7 +49054,8 @@ qualify-tensor-support-lean:
 		Mettapedia.GSLT.LanguageDef.ModuleSource.Controls; \
 	lake env lean -DwarningAsError=true "$$client"; \
 	lake env lean -DwarningAsError=true "$$descriptors"
-test-library-spellings-v1: $(LIBRARY_SPELLING_TOOL_V1) \
+
+test-library-spellings-v1: $(LIBRARY_SPELLING_TOOL_V1) $(PETTA_REFERENCE_VOCABULARY_V1) \
 		tests/support/test_library_spelling_v1.py \
 		$(foreach lib,$(LIBRARY_PETTA_SPELLING_SOURCES_V1),lib/$(lib).metta lib/petta/$(lib).metta) \
 		$(foreach lib,$(LIBRARY_PRIME_SPELLING_SOURCES_V1),lib/$(lib).metta lib/prime/$(lib).metta)
@@ -48332,7 +49076,6 @@ test-library-spellings-v1: $(LIBRARY_SPELLING_TOOL_V1) \
 # regenerated from a PeTTa checkout), a head the spelling or its imports
 # define, a declared native, or data to both.  A spelling that relies on a
 # head only CeTTa evaluates is reported by name; the mutated copy checks it.
-PETTA_REFERENCE_VOCABULARY_V1 = tests/support/petta_reference_vocabulary_v1.txt
 PETTA_VOCABULARY_CHECK_V1 = tools/petta_vocabulary_check.py
 .PHONY: test-petta-vocabulary-v1
 test-petta-vocabulary-v1: $(PETTA_VOCABULARY_CHECK_V1) $(PETTA_REFERENCE_VOCABULARY_V1) \
@@ -49888,7 +50631,11 @@ test-petta-oem-minmax-stats: $(BIN) \
 		tests/petta/oem_minmax_scalar.expected
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 	@set -eu; \
-	report=$$($(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
+	test "$$($(CETTA_BIN_INVOKE) --lang petta \
+		tests/petta/oem_minmax_scalar.metta)" = \
+		"$$(cat tests/petta/oem_minmax_scalar.expected)"; \
+	report=$$(CETTA_PREPARED_PURE_REFERENCE=1 $(CETTA_BIN_INVOKE) \
+		--emit-runtime-stats --lang petta \
 		tests/petta/oem_minmax_scalar.metta 2>&1); \
 	answers=$$(printf '%s\n' "$$report" | grep -v '^runtime-counter '); \
 	test "$$answers" = "$$(cat tests/petta/oem_minmax_scalar.expected)"; \
@@ -49896,7 +50643,7 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 		'$$1 == "runtime-counter" && $$2 == "open-equation-minmax" \
 		 { print $$3 }'); \
 	test "$$selected" = 2000; \
-	echo 'PASS: ready scalar min/max selects one original operand inside the equation region'
+	echo 'PASS: ready scalar min and max select an operand, on the prepared machine and inside the equation region with it off'
 else
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
 		test-petta-oem-minmax-stats
@@ -52974,6 +53721,37 @@ else
 	@echo "SKIP: Python callback completion (Python support disabled)"
 endif
 
+.PHONY: test-python-objects test-python-package bench-python-interop-light
+test-all: test-python-objects
+test-python-objects: $(BIN) test-python-retention
+ifeq ($(ENABLE_PYTHON),1)
+	@$(CETTA_SCRIPT_RUN_ENV) $(PYTHON_EXECUTABLE) tests/support/check_python_objects.py ./$(BIN)
+else
+	@echo "SKIP: Python objects (Python support disabled)"
+endif
+
+.PHONY: test-python-retention
+test-python-retention: $(BIN)
+ifeq ($(ENABLE_PYTHON),1)
+	@$(CETTA_SCRIPT_RUN_ENV) $(PYTHON_EXECUTABLE) tests/support/check_python_retention.py ./$(BIN)
+bench-performance-light: test-python-retention
+else
+	@echo "SKIP: Python retention (Python support disabled)"
+endif
+
+test-python-package:
+	+$(MAKE) --no-print-directory BUILD=core ENABLE_LIB_PROLOG=0 ENABLE_PIC=1 python-native test-embedding-context
+	PYTHONPATH=python $(PYTHON_EXECUTABLE) -m unittest discover -s python/tests -v
+
+bench-python-interop-light:
+	+$(MAKE) --no-print-directory BUILD=core ENABLE_LIB_PROLOG=0 ENABLE_PIC=1 python-native
+	PYTHONPATH=python $(PYTHON_EXECUTABLE) benchmarks/python/interop.py --lang petta
+	PYTHONPATH=python $(PYTHON_EXECUTABLE) benchmarks/python/interop.py --lang he
+
+ifeq ($(ENABLE_PYTHON),1)
+bench-performance-light: bench-python-interop-light
+endif
+
 .PHONY: test-petta-libpl-callback-completion
 test-execution-semantic-ledger test-petta-libpl: test-petta-libpl-callback-completion
 .PHONY: test-petta-libpl-callback-source
@@ -53214,7 +53992,7 @@ embedding-native: $(EMBED_LIB) $(EMBED_STATIC_LIB) runtime/cetta-proc-scope
 	ln -sfn $(notdir $(EMBED_STATIC_LIB)) runtime/libcetta.a
 runtime/cetta-proc-scope: $(BIN).proc-scope
 	cp $< $@
-test-embedding-api: $(EMBED_TEST)
+test-embedding-api: $(EMBED_TEST) test-embedding-context
 	./$(EMBED_TEST)
 
 EMBED_CONTEXT_TEST = runtime/test_embedding_context-$(EMBED_TAG)
@@ -53414,14 +54192,26 @@ PYTHON_EXTENSION_OUTPUT ?= python/cetta/_native$(PYTHON_EXTENSION_SUFFIX)
 PYTHON_EXTENSION_INCLUDE_DIR = $(shell $(PYTHON_EXECUTABLE) -c 'import sysconfig; print(sysconfig.get_path("include"))')
 PYTHON_EXTENSION_INCLUDES = -I'$(PYTHON_EXTENSION_INCLUDE_DIR)'
 PYTHON_EXTENSION_PATH_MAP = '-ffile-prefix-map=$(PYTHON_EXTENSION_INCLUDE_DIR)=Python/include' '-ffile-prefix-map=$(abspath .)=.'
+PYTHON_HOST_OBJ = runtime/bootstrap/python-host-$(EMBED_TAG)$(PYTHON_EXTENSION_SUFFIX).o
+PYTHON_HOST_LIB = runtime/libcetta-python-host-$(EMBED_TAG)$(PYTHON_EXTENSION_SUFFIX).a
+PYTHON_HOST_RUNTIME_OBJ = $(filter-out src/foreign.% src/foreign_stub.%,$(EMBED_RUNTIME_OBJ))
+
+$(PYTHON_HOST_OBJ): src/foreign.c src/python_objects.inc src/python_streams.inc src/python_context.inc src/python_provider.inc src/python_ownership.inc src/foreign.h $(BUILD_CONFIG_HEADER) Makefile
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(PYTHON_EXTENSION_PATH_MAP) $(PYTHON_EXTENSION_INCLUDES) -c -o '$@' $<
+
+$(PYTHON_HOST_LIB): $(EMBED_OBJ) $(PYTHON_HOST_RUNTIME_OBJ) $(PYTHON_HOST_OBJ) tools/build_embedding_static.py include/cetta_embed.h src/embedding_python.h
+	python3 tools/build_embedding_static.py --cc '$(CC)' --ar '$(AR)' --nm '$(NM)' --objcopy '$(OBJCOPY)' \
+		--header include/cetta_embed.h --header src/embedding_python.h --output '$@' \
+		--allocator '$(EMBED_ALLOCATOR_OBJ)' $(EMBED_OBJ) $(PYTHON_HOST_RUNTIME_OBJ) $(PYTHON_HOST_OBJ)
+
 .PHONY: python-native
-python-native: $(EMBED_STATIC_LIB) runtime/cetta-proc-scope python/native.c python/callbacks.inc python/host.inc python/buffers.inc python/exports.map
+python-native: $(PYTHON_HOST_LIB) runtime/cetta-proc-scope python/native.c python/callbacks.inc python/host.inc python/handles.inc python/buffers.inc python/exports.map
 	@mkdir -p '$(dir $(PYTHON_EXTENSION_OUTPUT))'
 	@set -eu; \
 	tmp_out=$$(mktemp '$(dir $(PYTHON_EXTENSION_OUTPUT)).cetta-extension.XXXXXX'); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(PYTHON_EXTENSION_PATH_MAP) -Iinclude $(PYTHON_EXTENSION_INCLUDES) -shared \
-		-o "$$tmp_out" python/native.c $(EMBED_STATIC_LIB) \
+		-o "$$tmp_out" python/native.c $(PYTHON_HOST_LIB) \
 		-Wl,--version-script=python/exports.map -Wl,--exclude-libs,ALL $(LDFLAGS); \
 	mv "$$tmp_out" '$(PYTHON_EXTENSION_OUTPUT)'
 	@mkdir -p '$(dir $(PYTHON_EXTENSION_OUTPUT))resources/runtime'

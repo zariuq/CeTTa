@@ -1,0 +1,162 @@
+Python objects and streams
+==========================
+
+The explicitly imported py library exposes synchronous Python protocols in
+PeTTa and HE, in Python-enabled executables and the cetta Python package.
+Arbitrary MeTTa symbols never trigger implicit Python lookup.
+
+    !(import! &self (library py))
+    !(bind! &math (py:import "math"))
+    !(py:bind! &self math:sqrt (py:get &math "sqrt"))
+    !(math:sqrt 81)
+
+py:import imports the exact name, including submodules such as numpy.linalg.
+py:get performs attribute lookup. Classes, callable instances and bound methods
+can be called directly or through py:call:
+
+    !(let $round (py:get (py:import "builtins") "round")
+       ($round 1.234 (py:kwargs ("ndigits" 2))))
+
+py:bind! captures one callable under an ordinary name in the selected space,
+with arbitrary Python arity. Repeating the same name/object binding succeeds.
+Fresh bound-method wrappers also agree when their function and receiver agree.
+A conflicting binding raises an error without replacing authored definitions
+or builtins. Later monkey-patching leaves the captured object unchanged.
+PeTTa also permits bind! to name results from this interface, including scalars; its
+ordinary state bindings continue to use new-state.
+These PeTTa names resolve inside py: operations; they are not general MeTTa
+variables. Use let when passing a result to ordinary MeTTa arithmetic or rules.
+
+Values
+
+Exact Python bool, int, float and str values become MeTTa scalars. Other values
+remain retained objects, including containers, generators, subclasses, NumPy
+arrays, NumPy scalars and None. (py:none) is distinct from the empty MeTTa
+tuple. Integers stay exact and strings preserve embedded NUL characters.
+Wrapping and unwrapping an object does not inspect its contents.
+
+PeTTa's true/false values (including computed booleans) become Python bool,
+both through py: and through legacy py-call. Quoted "true"/"false" remain
+strings. This deliberately repairs Janus's atom-to-string conversion for
+boolean values. Python callers read PeTTa boolean answers with Atom.as_bool(),
+as elsewhere in the embedding API.
+
+MeTTa tuples supplied as arguments become Python lists. Only a dedicated
+py:kwargs value in the final position supplies keywords. Ordinary tuple-shaped
+data does not become keyword syntax. Duplicate and non-string keyword names
+are errors. Legacy py-call also accepts this keyword value and keeps its
+existing dialect-specific result conventions. py-atom and py-dot remain available.
+
+A collection or generator is one answer. py:to-tuple explicitly materializes
+a shallow MeTTa tuple; nested Python objects remain retained. py:iter explicitly
+requests successive answers:
+
+    !(collapse (py:iter (py:list 1 2 3)))
+
+Operations
+
+    (py:import module)                 exact Python import
+    (py:get object name)               getattr
+    (py:set! object name value)        setattr
+    (py:del! object name)              delattr
+    (py:item object key)               object[key]
+    (py:set-item! object key value)    object[key] = value
+    (py:del-item! object key)          del object[key]
+    (py:call callable args...)         direct invocation
+    (py:kwargs (name value)...)        dedicated keyword arguments
+    (py:list values...)                retained Python list
+    (py:tuple values...)               retained Python tuple
+    (py:dict (key value)...)           retained Python dict
+    (py:slice stop)                    slice(stop)
+    (py:slice start stop [step])       slice(start, stop[, step])
+    (py:none)                         retained None
+    (py:is left right)                Python identity
+    (py:eq left right)                Python rich equality
+    (py:to-tuple iterable)             shallow materialization
+    (py:iter iterable)                lazy answer stream
+    (py:close! object)                explicit close()
+    (py:with manager body)            scoped body(resource) answers
+    (py:bind! space name callable)    captured callable binding
+
+py:eq preserves Python's result, which can itself be an array. Mutations
+return retained None. py:to-tuple consumes the entire iterable; use py:iter
+for a large or unbounded stream. Search branches perform separate effectful
+calls; backtracking does not undo mutation, and fallback never replays an
+entered invocation. PeTTa raises Python failures through its ordinary error
+mechanism. HE exposes them as (Error call (python_error Type exception)), so
+collapse can retain them and case can handle them. The exception object is
+retained by identity. At the Python API boundary an unhandled, top-level
+Python failure restores the original exception and traceback; a handled
+result or a collection containing Error values remains ordinary data.
+
+Resources and streaming
+
+py:iter owns its iterator, pulls on demand, and calls close(), when provided,
+on exhaustion, failure or abandonment. py:with calls a one-argument MeTTa or
+Python callable with the result of __enter__. The context stays open across
+the body's answers. __exit__ runs once; Python handles suppression and
+exception chaining. Early cancellation unwinds with GeneratorExit, as closing
+a Python generator does.
+MeTTa failures are presented to __exit__ as RuntimeError; an unsuppressed
+failure keeps its original MeTTa error term.
+
+    (= (response-lines $response)
+       (py:iter (py:call (py:get $response "iter_lines"))))
+    ; Given an HTTPX stream context manager in &response:
+    ; !(py:with &response response-lines)
+
+Place py:iter inside the scoped body when its resource must stay open while
+reading. Returning a generator as one retained value completes the body and
+closes the surrounding context. Python .query() supports early termination:
+
+    from cetta import Engine
+    with Engine() as engine:
+        py = engine.library("py")
+        with py.iter.query(engine.pyobject(iter(range(1000000)))) as answers:
+            assert next(answers).to_python() == 0
+
+HE now releases canonical evaluator frames that only wait to publish their last
+child's answers. Its collection budget bounds storage for the admitted tail-call
+loops. Frames with alternatives, checks or context to restore remain live; open
+calls under kept bindings and retained query execution still need separate work.
+test-he-canonical-tail-memory and test-he-canonical-tail-answers check this rule.
+Deterministic PeTTa Python calls retire their final choice immediately;
+test-python-retention checks growth and temporary-object release over increasing
+loop sizes.
+
+Python libraries and native libraries
+
+    import numpy as np
+    from cetta import Engine
+
+    with Engine() as engine:
+        tensor = engine.library("tensor")
+        values = engine.tensor(np.array([1.0, 2.0, 3.0]))
+        assert tensor.sum(values).one().to_python() == 6.0
+
+Engine.library imports the library. Its namespace defaults to the library
+name; pass namespace="" for unqualified functions. Attribute access selects
+that exact name; brackets support spellings such as tensor["dot-bounds"].
+Underscores are never rewritten to hyphens. Calls return Answers, preserving
+duplicates. .one() returns exactly one Atom, raising ValueError for zero or
+multiple answers. .query() streams the same structured call. Engine.query_call
+is the corresponding general operation; expression arguments remain data.
+
+Engine.pyobject retains an object by identity, bypassing Engine.atom's
+list-to-expression and array-to-tensor conversions. Use it for Python package
+operands; Atom.to_python recovers the original object. Native tensor conversion
+remains available through Engine.tensor and Atom.to_python, with its existing
+copy and immutability policy.
+
+The Python package attaches to the current main CPython interpreter and
+preserves host modules. Native executables own their configured interpreter.
+Core-only builds remain independent of CPython. Async iterators, subinterpreters,
+free-threaded Python, DLPack and inline Python source are outside this interface.
+
+Command line in the selected Python environment:
+
+    python -m cetta --lang petta examples/python/objects.metta
+    python -m cetta --lang he -e '!(+ 20 22)'
+
+--profile selects a language profile; --fuel controls evaluation fuel. Without
+files or -e, the command reads a document from standard input.

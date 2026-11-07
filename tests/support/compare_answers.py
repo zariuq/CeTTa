@@ -425,10 +425,13 @@ def compare_he(program, expected, actual):
         collapse = query < len(kinds) and kinds[query]
         query += 1
         ea, eb = split_elements(a[1:-1]), split_elements(b[1:-1])
+        # Answers are equal up to the names of their variables; one collapse
+        # keeps one renaming across its elements.
         if collapse and len(ea) == 1 and len(eb) == 1:
-            if collapse_bag(ea[0]) != collapse_bag(eb[0]):
+            if not collapse_equal(ea[0], eb[0]):
                 return False, f'collapse differs as a bag: {a!r} / {b!r}'
-        elif collections.Counter(ea) != collections.Counter(eb):
+        elif (collections.Counter(map(alpha_tokens, ea)) !=
+              collections.Counter(map(alpha_tokens, eb))):
             return False, f'answers differ as a bag: {a!r} / {b!r}'
     return True, ''
 

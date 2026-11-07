@@ -1,0 +1,160 @@
+{
+  "date": "2026-11-05T09:02:36.372685+01:00",
+  "cetta_commit": "2ca1c923b93def28c612d0e69c00e6b777dbab28",
+  "cetta_diff_sha256": "a2a1b121aa8105d05ecd5c554b048f8aac169570837b94249c1515a490e98a51",
+  "cetta_binary_sha256": "5b05f6158ea3ce8fbd5b66055c54cbe9731d57ac2a0855b340499db4da2fb779",
+  "cetta_version": "cetta 1.5.0-dev (main)",
+  "petta_commit": "b74af1bc26aff59636548ba7cde479ec16624577",
+  "petta_tracked_top_level_examples": 164,
+  "mork_commit": "ed57c6716d8c510296fb5fbb8be6fbfe2df241d7",
+  "platform": "Linux-7.0.0-38-generic-x86_64-with-glibc2.43",
+  "load_average": "4.75 4.87 4.23 5/5611 3973675",
+  "cpu": "Architecture:                            x86_64\nCPU op-mode(s):                          32-bit, 64-bit\nAddress sizes:                           48 bits physical, 48 bits virtual\nByte Order:                              Little Endian\nCPU(s):                                  16\nOn-line CPU(s) list:                     0-15\nVendor ID:                               AuthenticAMD\nModel name:                              AMD Ryzen 7 9800X3D 8-Core Processor\nCPU family:                              26\nModel:                                   68\nThread(s) per core:                      2\nCore(s) per socket:                      8\nSocket(s):                               1\nStepping:                                0\nFrequency boost:                         enabled\nCPU(s) scaling MHz:                      97%\nCPU max MHz:                             5271.6221\nCPU min MHz:                             603.3790\nBogoMIPS:                                9399.97\nFlags:                                   fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm constant_tsc rep_good amd_lbr_v2 nopl xtopology nonstop_tsc cpuid extd_apicid aperfmperf rapl pni pclmulqdq monitor ssse3 fma cx16 sse4_1 sse4_2 movbe popcnt aes xsave avx f16c rdrand lahf_lm cmp_legacy svm extapic cr8_legacy abm sse4a misalignsse 3dnowprefetch osvw ibs skinit wdt tce topoext perfctr_core perfctr_nb bpext perfctr_llc mwaitx cpuid_fault cpb cat_l3 cdp_l3 hw_pstate ssbd mba perfmon_v2 ibrs ibpb stibp ibrs_enhanced vmmcall fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid cqm rdt_a avx512f avx512dq rdseed adx smap avx512ifma clflushopt clwb avx512cd sha_ni avx512bw avx512vl xsaveopt xsavec xgetbv1 xsaves cqm_llc cqm_occup_llc cqm_mbm_total cqm_mbm_local user_shstk avx_vnni avx512_bf16 clzero irperf xsaveerptr rdpru wbnoinvd cppc arat npt lbrv svm_lock nrip_save tsc_scale vmcb_clean flushbyasid decodeassists pausefilter pfthreshold avic v_vmsave_vmload vgif x2avic v_spec_ctrl vnmi avx512vbmi umip pku ospke avx512_vbmi2 gfni vaes vpclmulqdq avx512_vnni avx512_bitalg avx512_vpopcntdq rdpid bus_lock_detect movdiri movdir64b overflow_recov succor smca fsrm avx512_vp2intersect flush_l1d amd_lbr_pmc_freeze\nVirtualization:                          AMD-V\nL1d cache:                               384 KiB (8 instances)\nL1i cache:                               256 KiB (8 instances)\nL2 cache:                                8 MiB (8 instances)\nL3 cache:                                96 MiB (1 instance)\nNUMA node(s):                            1\nNUMA node0 CPU(s):                       0-15\nVulnerability Gather data sampling:      Not affected\nVulnerability Ghostwrite:                Not affected\nVulnerability Indirect target selection: Not affected\nVulnerability Itlb multihit:             Not affected\nVulnerability L1tf:                      Not affected\nVulnerability Mds:                       Not affected\nVulnerability Meltdown:                  Not affected\nVulnerability Mmio stale data:           Not affected\nVulnerability Old microcode:             Not affected\nVulnerability Reg file data sampling:    Not affected\nVulnerability Retbleed:                  Not affected\nVulnerability Spec rstack overflow:      Mitigation; IBPB on VMEXIT only\nVulnerability Spec store bypass:         Mitigation; Speculative Store Bypass disabled via prctl\nVulnerability Spectre v1:                Mitigation; usercopy/swapgs barriers and __user pointer sanitization\nVulnerability Spectre v2:                Mitigation; Enhanced / Automatic IBRS; IBPB conditional; STIBP always-on; PBRSB-eIBRS Not affected; BHI Not affected\nVulnerability Srbds:                     Not affected\nVulnerability Tsa:                       Not affected\nVulnerability Tsx async abort:           Not affected\nVulnerability Vmscape:                   Mitigation; IBPB on VMEXIT\n",
+  "compiler": "gcc (Ubuntu 15.2.0-16ubuntu1) 15.2.0",
+  "petta_tracked_diff_sha256": "68ddf362e6d99723718423526c13296cf9ab956bb5d31b7af10e8531307227b2",
+  "petta_tracked_status": [
+    " M examples/tests.metta",
+    " M run.sh",
+    " M src/filereader.pl",
+    " M src/parser.pl",
+    " M src/translator.pl",
+    " M tests/test_parser_swrite.pl"
+  ],
+  "mork_tracked_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "mork_tracked_status": [],
+  "mork_binary_sha256": "dccdda60370b398afa4774bc1e2a93dfef4d25bcf3d58369f14f843059ddebf7",
+  "mork_build_provenance": "Built successfully from the recorded MORK/PathMap source checkouts with refreshed Cargo.lock and nightly Rust; subsequent locked offline build succeeded.",
+  "measurement_notes": [
+    "PeTTa examples: single screen, 2-second per-invocation cap, corpus fixture policy, no speedup for incomplete/different observations.",
+    "Paired panel: 3 alternating trials per applicable engine/case, 5-second cap, one logical CPU, RAYON_NUM_THREADS=1; all 192 completed runs passed independent result oracles.",
+    "Measurements include process/launcher startup and run on a shared workstation.",
+    "CeTTa snapshot includes lib/langdef/python resources beside the copied executable.",
+    "MORK numbers refreshed from the source-built executable. HE comparison has separate alternating trials and explicit non-comparable outcomes."
+  ],
+  "panel": {
+    "panels": {
+      "app": [
+        "ancestor_chain_256_natural",
+        "ancestor_chain_256_levelwise",
+        "closure_ring_32_levelwise",
+        "counter_64_natural",
+        "sort_64_natural",
+        "arithmetic_10000",
+        "tally_1000x8",
+        "kb_load_10000",
+        "space_step_1000_2000"
+      ],
+      "join": [
+        "triangle_dense_32_count",
+        "guarded_triangle_32_count",
+        "triangle_duplicates_witnesses",
+        "triangle_empty_witnesses"
+      ],
+      "path": [
+        "path_product_12_count",
+        "path_product_12_separator_count",
+        "path_correlated_6_witnesses",
+        "path_isolated_8_512_count"
+      ]
+    },
+    "trials": 3,
+    "timeout_seconds": 5,
+    "cpu": 15,
+    "engines": [
+      "cetta-petta",
+      "cetta-he",
+      "swi",
+      "mork"
+    ]
+  },
+  "examples": {
+    "count": 164,
+    "trials": 1,
+    "timeout_seconds": 2,
+    "statuses": {
+      "MATCH": 156,
+      "PETTA_TIMEOUT": 5,
+      "EXIT_MISMATCH": 3
+    }
+  },
+  "completed_at": "2026-11-05T09:53:32.259386+01:00",
+  "swi_version": "SWI-Prolog version 10.1.9 for x86_64-linux",
+  "mork_checkout_is_build_identity": true,
+  "driver_sha256": {
+    "scripts/bench_petta_live_sample.py": "75ee6eaf36435f81ce9171c25dcd71987b76fab13f9908a2753265da67022918",
+    "scripts/petta_corpus_manifest.py": "6a5df86a2d9432e731edd8bfa7f4d81e8660781c88997a7c56d437cca5f439ce",
+    "benchmarks/mam_families/app_panel.py": "383a462096a11c6abe19d0f497efa6a0d9e0b21e29f5a932a1bfd819ac1a8072",
+    "benchmarks/mam_families/join_panel.py": "592469714382dc4561fad0b0ca23d2d2ce4e3ca8693364c690e97849b5d01209",
+    "benchmarks/mam_families/path_panel.py": "d459ad66612abe92e1e9482ca1df5965f83d9cdf2c1a4d5befb6f0fd0c72f7ee",
+    "benchmarks/mam_families/run.py": "e8caeacc4ca8bfe04105251f428eafb9ab867e77dba28734e3170f0fa0c6e415",
+    "benchmarks/mam_families/joins.py": "9f11f9f23149642745076125729f54794d24972b11870af72a96abd1bb3a2aa9",
+    "benchmarks/mam_families/paths.py": "7a4024633f65ae12592e983bc3bf2f67b801d088b32a771cd597c90c250619f7"
+  },
+  "data_sha256": {
+    "petta-examples.tsv": "e73f61df19f026cacc3e50d221ac49d2d04791714dfc9e7e0c4fdb119b165c28",
+    "paired-trials.tsv": "4b54711a508141bcd8cf47db736fde68016a8b644911e7076d8e0e0403df2196",
+    "paired-summary.tsv": "cf1b78b9d52ba88c714feaa6c70057aa511a0aa8c1112d3674fc7e1d0426c5cb",
+    "workloads.json": "6b87076ad73fbc2c5d8deeda9fd14877db7c578f6f8be662110811137c73fed0",
+    "corpus-fixtures.json": "9dc152d91df1e362b95ab17be25d6b2600efed66da8bad51b85c0b46295e1ca3",
+    "reproduce.txt": "6c8a65129e5a21e71393d20ccc90e11a80e9c427293296be679ef9fef5053709",
+    "he-trials.tsv": "95585e2134990d132042e82cab1e65588b4a4ee6899d46957ba0961c05862ea5",
+    "he-summary.tsv": "d33a813bbe25ec179eec0cbe57840f10c65c01091ce9e33819cdcac8967a522d",
+    "he-workloads.json": "5d09f44138c43b41136adb8940c66843eda0c9b08b8e1ea71ca30b7fbcd4b348",
+    "mork-build.json": "605380677b44f1403e2b937886d9a37c80f730060bc7b79074b2353149d34f47",
+    "MORK.Cargo.lock": "2f4947183c295869a183fa0c75e48f59c0bc14629724bbd1acd0099b7c929d68"
+  },
+  "cetta_dynamic_libraries": [
+    "libgmp.so.10",
+    "libswipl.so.10",
+    "libpython3.13.so.1.0"
+  ],
+  "previous_mork_binary_sha256": "13bd3d0b7a913b73eb1b4f32eeb03347d5be7fa9a29051e9406351d401d778a2",
+  "mork_refresh": {
+    "runs": 45,
+    "statuses": {
+      "pass": 45
+    },
+    "order": "MORK-only refresh after original panel; other engines retained, not remeasured",
+    "build_receipt": "mork-build.json",
+    "lockfile": "MORK.Cargo.lock"
+  },
+  "upstream_he": {
+    "binary_sha256": "32b45f7dbeec730114fcc89ab46fd8208516aaba3e3c9db51b43ec6e2d4878d2",
+    "version": "metta-repl 0.2.10",
+    "checkout_commit": "b1b2206a8af81c7853c58dd9675afa0d9971dc25",
+    "trials": 3,
+    "timeout_seconds": 5,
+    "cpu": 15,
+    "engines": [
+      "he",
+      "cetta-he"
+    ],
+    "runner_sha256": "d21c753d25a7f06a8fae3c8ba275734f153e3c63ade7a02b4425527fc4255082",
+    "portable_selection": {
+      "app": [
+        "ancestor_chain_64_natural",
+        "counter_4_natural",
+        "sort_16_natural"
+      ],
+      "join": [
+        "triangle_dense_8_count",
+        "guarded_triangle_8_count"
+      ],
+      "path": [
+        "path_product_8_cardinality_count",
+        "path_product_12_cardinality_count",
+        "path_product_4_witnesses"
+      ]
+    },
+    "runs": 118,
+    "statuses": {
+      "timeout": 4,
+      "pass": 108,
+      "exit-failure": 3,
+      "wrong-answer": 3
+    },
+    "notes": "Identical HE source for both engines. Nonmatching, incomplete and expression-limit cases excluded from timing ratios; CeTTa extended fold is not an upstream HE builtin.",
+    "missing_values": "NA means unavailable or no valid completed timing"
+  },
+  "scope": "Secondary generated controls. The substantive original Opt application suite is published separately under opt-applications."
+}

@@ -120,7 +120,7 @@ mutations = {
                    "        if (!run->inert_ok[seen] && false)\n            return false;"),
     "let-head": ("            if (heads && heads->count < 4u &&\n                petta_native_region_head_conditioned(root, value)) {\n                heads->vars[heads->count++] = value->expr.elems[0];\n                return atom->expr.elems[3];\n            }",
                  "            if (heads && heads->count < 4u &&\n                petta_native_region_head_conditioned(root, value)) {\n                return atom->expr.elems[3];\n            }"),
-    "stored-symbol": ("    *out = hdr->sym_or_head == term->sym_id ? OEM_UNIFY_OK : OEM_UNIFY_FAIL;",
+    "stored-symbol": ("    *out = hdr->sym_or_head == atom_symbol_current_id(term) ? OEM_UNIFY_OK : OEM_UNIFY_FAIL;",
                       "    *out = OEM_UNIFY_OK;"),
     "stored-int": ("            return value->ground.ival == tu_int_from_header(hdr)\n                ? OEM_UNIFY_OK : OEM_UNIFY_FAIL;",
                    "            return OEM_UNIFY_OK;"),

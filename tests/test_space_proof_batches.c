@@ -65,7 +65,7 @@ static void init(Fixture *f) {
     f->universe = cetta_term_domain_universe(f->domain);
     arena_init_detached(&f->syntax);
     f->layout = (CettaProofRowLayout){.proof = {.length = 2u, .child = {3u, 2u}},
-        .arity = {4u, 3u}, .head = {parse(&f->syntax, "proofs")->sym_id, parse(&f->syntax, "C")->sym_id},
+        .arity = {4u, 3u}, .head = {atom_symbol_current_id(parse(&f->syntax, "proofs")), atom_symbol_current_id(parse(&f->syntax, "C"))},
         .universe_instance = f->universe->instance_id, .storage_epoch = f->universe->storage_epoch};
     f->root = key(f->universe, &f->syntax, "(proofs 4 2 (C (pair $a $a)))");
     f->seed = key(f->universe, &f->syntax, "I");

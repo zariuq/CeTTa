@@ -443,6 +443,11 @@ PettaProgram *petta_program_new_with_rules(unsigned admitted_forms);
 PettaProgram *petta_program_new_with_rules_and_host_intrinsics(unsigned admitted_forms,
     bool (*is_host_intrinsic)(SymbolId head));
 bool petta_program_admits_equation(const PettaProgram *program, Atom *atom);
+/* Published resource cleanup can outlive the execution context. These
+ * references keep only the program identity alive after free closes its
+ * metadata. They do not authorize execution after closure. */
+bool petta_program_lifetime_retain(PettaProgram *program);
+void petta_program_lifetime_release(PettaProgram *program);
 void petta_program_free(PettaProgram *program);
 /* The complete source/Atom backing region is independently held and the
  * program is quiescent. This counts owned allocations, not borrowed worlds. */

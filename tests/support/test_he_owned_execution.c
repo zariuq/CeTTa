@@ -1052,6 +1052,20 @@ static void let_function_boundary(void) {
             "(= (give $x) (function (return (println! $x))))",
             "(give owned-bound)",
             "()", "owned-bound\n", 0, false},
+        {"bare function non-instruction body is not executed",
+            "", "(function (println! owned-bare))",
+            "$result#17", "", 0, false},
+        {"nested function non-instruction body is not executed",
+            "(= (nested) (let $v 1 (function (println! owned-nested))))",
+            "(nested)",
+            "$result#17", "", 0, false},
+        {"named function nondeterministic fallthrough is filtered",
+            "(= (mixed) (function (eval (superpose ((println! owned-mixed) (return 11))))))",
+            "(mixed)",
+            "11", "", 0, false},
+        {"bare function nondeterministic fallthrough yields variable and return",
+            "", "(function (eval (superpose ((println! owned-mixed) (return 11)))))",
+            "$result#17|11", "", 0, false},
     };
 
     for (size_t c = 0u; c < sizeof(cases) / sizeof(cases[0]); c++) {

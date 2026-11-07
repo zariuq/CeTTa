@@ -162,7 +162,7 @@ def main():
     parser.add_argument('--output', type=Path)
     args = parser.parse_args()
     results = []
-    with tempfile.TemporaryDirectory(prefix='remote-db-', dir=ROOT / 'runtime') as temporary:
+    with tempfile.TemporaryDirectory(prefix='rdb-', dir=ROOT / 'runtime') as temporary:
         root = Path(temporary)
         for case, marker in [('Reads', 'REMOTE_READS_OK'), ('Named', 'REMOTE_NAMED_OK'),
                              ('Transactions', 'REMOTE_TRANSACTIONS_OK'),
@@ -177,7 +177,7 @@ def main():
             directory = root / case
             directory.mkdir(mode=0o700)
             results.append(check(args.binary.resolve(), args.worker.resolve(), directory, case, marker))
-        small_limit_dir = root / 'SmallClientReplyLimit'
+        small_limit_dir = root / 'SmallLimit'
         small_limit_dir.mkdir(mode=0o700)
         results.append(check(args.binary.resolve(), args.worker.resolve(), small_limit_dir,
                              'SmallClientReplyLimit', 'REMOTE_SMALL_CLIENT_REPLY_LIMIT_OK',
@@ -204,15 +204,16 @@ def main():
                 results.append(dict(case='CancelKeepsSiblingReader', marker='REMOTE_CANCELLED_READER_OK', exit=0))
             finally:
                 server.stop()
-        for mode, case, marker in [('legacy-server', 'Reads', 'REMOTE_READS_OK'),
-                                   ('legacy-server', 'Transactions', 'REMOTE_TRANSACTIONS_OK'),
-                                   ('legacy-client', 'Reads', 'REMOTE_READS_OK'),
-                                   ('legacy-client', 'Transactions', 'REMOTE_TRANSACTIONS_OK'),
-                                   ('lost', 'LostWrite', 'REMOTE_LOST_WRITE_OK'),
-                                   ('post-commit-error', 'LostWrite', 'REMOTE_LOST_WRITE_OK'),
-                                   ('stale', 'StaleWrite', 'REMOTE_STALE_WRITE_OK'),
-                                   ('read-disconnect', 'Interrupted', 'REMOTE_INTERRUPTED_OK')]:
-            directory = root / f'{mode}-{case}'
+        for proxy_idx, (mode, case, marker) in enumerate([
+                ('legacy-server', 'Reads', 'REMOTE_READS_OK'),
+                ('legacy-server', 'Transactions', 'REMOTE_TRANSACTIONS_OK'),
+                ('legacy-client', 'Reads', 'REMOTE_READS_OK'),
+                ('legacy-client', 'Transactions', 'REMOTE_TRANSACTIONS_OK'),
+                ('lost', 'LostWrite', 'REMOTE_LOST_WRITE_OK'),
+                ('post-commit-error', 'LostWrite', 'REMOTE_LOST_WRITE_OK'),
+                ('stale', 'StaleWrite', 'REMOTE_STALE_WRITE_OK'),
+                ('read-disconnect', 'Interrupted', 'REMOTE_INTERRUPTED_OK')]):
+            directory = root / f'p{proxy_idx}'
             directory.mkdir(mode=0o700)
             server = server_for(args.worker.resolve(), directory, directory / 'store')
             try:

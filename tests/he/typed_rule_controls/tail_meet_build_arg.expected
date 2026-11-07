@@ -1,0 +1,2 @@
+[(Cons 1 Nil)]
+[(Error (g (Cons "s" Nil)) (BadType (List String) (List Number)))]

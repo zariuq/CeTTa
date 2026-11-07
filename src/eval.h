@@ -534,6 +534,15 @@ void eval_read_scope_leave(CettaEvalReadScope *scope);
 bool eval_interaction_values(Space *space, Arena *arena, Atom *expression,
     Atom ***values_out, size_t *len_out, Atom **error_out);
 bool eval_current_profile_enables_dependent_telescope(void) __attribute__((weak));
+/* The type stamp store (space.c) keeps typings across inferences where the
+ * evaluator vouches for an atom's arena.  eval_type_stamp_scope says whether
+ * the current evaluation may, and names the language and profile it types
+ * under; eval_type_stamp_atom_epoch gives the identity and current reset
+ * epoch of the arena that holds `atom`. */
+bool eval_type_stamp_scope(uint64_t *scope) __attribute__((weak));
+bool eval_type_stamp_atom_epoch(const Space *space, const Atom *atom,
+                                uint32_t *arena, uint64_t *epoch)
+    __attribute__((weak));
 CettaLanguageId eval_current_language_id(void) __attribute__((weak));
 /* Whether the active PeTTa profile checks each step application (the
  * typecheck profiles): native folds have no such evidence. */
@@ -547,6 +556,18 @@ bool eval_current_petta_typed_line(void) __attribute__((weak));
  * evaluates (get-type, get-metatype) with an equation at its one-input arity
  * that can run; a protected default-program definition cannot. */
 bool eval_petta_classifier_extended(Space *space, SymbolId classifier)
+    __attribute__((weak));
+/* Whether head/arity has a trusted version of its typed relation in the
+ * running PeTTa program that enters on arguments each passing its guard and
+ * ground (PETTA_CONTRACT_ENTRY_ANY or _GROUND), matching no space by name;
+ * *range_proved then tells whether the version proves its range. */
+bool eval_petta_structural_version(Space *space, SymbolId head,
+                                   uint32_t arity, bool *range_proved,
+                                   Atom **instances, Arena *instance_arena)
+    __attribute__((weak));
+/* Whether VALUE passes PeTTa's typed-call guard at the closed TYPE exactly
+ * once, by the intrinsic type service's bound query. */
+bool eval_petta_value_typed_once(Space *space, Atom *value, Atom *type)
     __attribute__((weak));
 /* The shared profile-aware HE type inference engine. Returned arrays are heap
    allocated and must be freed by the caller; atoms live in `a`. */
@@ -623,6 +644,7 @@ bool eval_prime_lf_guest_evaluate(Arena *a, Atom *request,
 bool eval_prime_hol_guest_evaluate(Arena *a, Atom *request,
                                    Atom **answer_out, Atom **reason_out);
 bool eval_prime_hol_guest_running(void);
+Atom *eval_materialize_runtime_value(Space *, Arena *, Atom *);
 /* Called after retained computations have released any named lock. */
 void eval_named_mutex_registry_free(CettaLibraryContext *);
 bool eval_named_mutex_acquire(CettaLibraryContext *, Arena *, Atom *, void **);

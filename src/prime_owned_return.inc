@@ -69,6 +69,7 @@ static void prime_native_acquired_operation_free(PrimeNativeAcquiredOperation *o
 
 static PrimeNativeAcquiredOperation *prime_native_acquired_operation_adopt(
     CettaNativeHandleUse *held, Atom *origin, Arena *receiver, uint64_t allowance) {
+    origin = atom_prime_held_payload(origin);
     if (!held || !cetta_native_handle_use_resource(held) || !origin || !receiver) return NULL;
     PrimeNativeAcquiredOperation *operation = calloc(1u, sizeof(*operation));
     if (!operation) return NULL;

@@ -22,12 +22,15 @@
  *    symbol subjects only, no authored get-type equation), so the relation
  *    has at most one answer in every mode;
  *  - entry facts, checked once where a checked protocol enters the
- *    relation, make each guard succeed and keep it succeeding: a ground
- *    argument keeps its accepted type under later bindings, and an
- *    uninterpreted argument (no symbol of it has a declaration, an equation
- *    or a builtin meaning) has a purely structural type, so the guard pair
- *    of a polymorphic parameter shared with the result accepts any instance
- *    of the argument exactly once;
+ *    relation, make each guard succeed and keep it succeeding: every fact
+ *    holds of a ground argument, which keeps its accepted type under later
+ *    bindings, and an uninterpreted argument (no symbol of it has a
+ *    declaration, an equation or a builtin meaning) has a purely structural
+ *    type, so the guard pair of a polymorphic parameter shared with the
+ *    result accepts the argument exactly once.  An open argument would not
+ *    do: another argument may share its variables, and the activation may
+ *    bind them to interpreted terms (an open head bound to a declared
+ *    constructor changes the argument's type);
  *  - the relation's equations preserve the entry facts at every call to
  *    themselves, return an instance of the polymorphic argument, and perform
  *    no mutation, so the facts stay valid while a trusted activation runs.
@@ -40,6 +43,11 @@ typedef enum {
     /* The argument is the function name constants[i], whose one declaration
      * fixes the signature's type variables it meets. */
     PETTA_CONTRACT_ENTRY_CONSTANT,
+    /* A version of a closed instance of a signature with type variables:
+     * the argument, ground, is typed once at instances[i], that instance of
+     * its formal.  On such arguments every guard of the signature's
+     * protocol takes the instance, as the instance's own protocol does. */
+    PETTA_CONTRACT_ENTRY_INSTANCE,
 } PettaContractEntryFact;
 
 enum {
@@ -62,6 +70,15 @@ typedef struct {
     uint32_t arity;
     PettaContractEntryFact facts[PETTA_CONTRACT_MAX_ARITY];
     SymbolId constants[PETTA_CONTRACT_MAX_ARITY];
+    /* The closed formals of INSTANCE facts. */
+    Atom *instances[PETTA_CONTRACT_MAX_ARITY];
+    /* The analysis proves every answer of the version typed at its closed
+     * range.  False when an equation's answer is not shown of it but each
+     * of its calls to itself is in a tail position: such a call's answers
+     * are its caller's, which the caller's own result check meets once,
+     * the same check the call's would be.  The version's entry then keeps
+     * its result check, and no other version enters it directly. */
+    bool range_proved;
     /* Spaces the equations match by name; at entry, every symbol of every
      * row of each is uninterpreted. */
     SymbolId spaces[PETTA_CONTRACT_MAX_SPACES];
@@ -79,10 +96,12 @@ bool petta_contract_version_discharges(const PettaContractVersion *version,
                                        const Atom *call);
 
 /* Whether `head`/`arity`, a typed relation of `space`, has a trusted version;
- * fills `version` with its entry facts.  The answer describes the program
- * projection read now; callers hold it under that projection's token. */
+ * fills `version` with its entry facts, whose instances live in `arena`.
+ * The answer describes the program projection read now; callers hold it
+ * under that projection's token. */
 bool petta_contract_trusted_version(PettaProgram *program, Space *space,
                                     SymbolId head, uint32_t arity,
+                                    Arena *arena,
                                     PettaContractVersion *version);
 
 /* Whether `symbol` is uninterpreted in `space`: no type declaration, no

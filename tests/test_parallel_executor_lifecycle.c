@@ -222,9 +222,9 @@ typedef struct {
 } SharedHash;
 
 static void assert_hash_unpublished(const SharedHash *hash) {
-    assert((hash->root->flags & ATOM_FLAG_HASH_VALID) == 0u);
-    assert((hash->child->flags & ATOM_FLAG_HASH_VALID) == 0u);
-    assert((hash->leaf->flags & ATOM_FLAG_HASH_VALID) == 0u);
+    assert(hash->root->hash_cache == 0u);
+    assert(hash->child->hash_cache == 0u);
+    assert(hash->leaf->hash_cache == 0u);
 }
 
 static void hash_worker_hook(CettaParallelWorker *worker, void *user) {
@@ -282,9 +282,9 @@ static void test_shared_hash_cache(void) {
         cetta_parallel_executor_free(&executor);
         /* The joined coordinator retains its ordinary miss-cache behavior. */
         assert(atom_hash(hash.root) == hash.expected);
-        assert((hash.root->flags & ATOM_FLAG_HASH_VALID) != 0u);
-        assert((hash.child->flags & ATOM_FLAG_HASH_VALID) != 0u);
-        assert((hash.leaf->flags & ATOM_FLAG_HASH_VALID) != 0u);
+        assert(hash.root->hash_cache != 0u);
+        assert(hash.child->hash_cache != 0u);
+        assert(hash.leaf->hash_cache != 0u);
         atom_hash_read_scope_enter();
         assert(atom_hash(hash.root) == hash.expected);
         atom_hash_read_scope_leave();

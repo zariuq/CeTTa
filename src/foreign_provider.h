@@ -2,6 +2,7 @@
 #define CETTA_FOREIGN_PROVIDER_H
 
 #include "owned_execution.h"
+struct Space;
 
 /* A foreign provider owns an entered producer, independently of its host
  * language. Open consumes ready values, never source syntax. On success the
@@ -20,10 +21,11 @@ typedef struct {
 
 Atom *cetta_foreign_provider_atom(Arena *, const CettaForeignProviderSpec *);
 bool cetta_foreign_provider_callable(const Atom *);
+bool cetta_foreign_provider_callable_at(struct Space *, const Atom *);
 bool cetta_foreign_provider_thread_affine(const Atom *);
 /* False means the head is not a provider. A recognized refusal records its
  * incomplete cause and cannot authorize retrying entered host code. */
-bool cetta_foreign_provider_open(const CettaInvocation *, CettaOwnedExecution *,
+bool cetta_foreign_provider_open(struct Space *, const CettaInvocation *, CettaOwnedExecution *,
                                  CettaEvalCompletion *);
 /* Both roots of a borrowed packet must survive acceptance of its loan. */
 bool cetta_foreign_provider_copy_return(Arena *, CettaCallOutcome, CettaCallOutcome *);

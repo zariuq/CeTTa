@@ -58,7 +58,7 @@ static AtomId key(TermUniverse *u, Arena *a, const char *text) {
 }
 static CettaProofRowLayout layout(TermUniverse *u, Arena *a) {
     return (CettaProofRowLayout){.proof = {.length = 2u, .child = {3u, 2u}},
-        .arity = {4u, 3u}, .head = {parse(a, "proofs")->sym_id, parse(a, "C")->sym_id},
+        .arity = {4u, 3u}, .head = {atom_symbol_current_id(parse(a, "proofs")), atom_symbol_current_id(parse(a, "C"))},
         .universe_instance = u->instance_id, .storage_epoch = u->storage_epoch};
 }
 static CettaProofImage *image(TermUniverse *u, Arena *a) {

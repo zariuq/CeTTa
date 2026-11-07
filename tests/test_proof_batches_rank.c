@@ -11,7 +11,7 @@ static CettaProofBatchStore *new_rank_store(CettaTermDomain *domain, Arena *a,
 }
 static CettaProofRowLayout state_layout(TermUniverse *u, Arena *a) {
     return (CettaProofRowLayout){.proof={.length=2u,.child={3u,2u}},.arity={4u,3u},
-        .head={parse(a,"state")->sym_id,parse(a,"C")->sym_id},.universe_instance=u->instance_id,.storage_epoch=u->storage_epoch};
+        .head={atom_symbol_current_id(parse(a,"state")),atom_symbol_current_id(parse(a,"C"))},.universe_instance=u->instance_id,.storage_epoch=u->storage_epoch};
 }
 static void fixed_counter(void) {
     CettaTermDomainScope scope={0};CettaTermDomain *d=domain_new(true,&scope);TermUniverse *u=cetta_term_domain_universe(d);Arena a;arena_init_detached(&a);
@@ -52,7 +52,7 @@ static void fixed_counter(void) {
 }
 static void erased_paths(void) {
     CettaTermDomainScope scope={0};CettaTermDomain *d=domain_new(true,&scope);TermUniverse *u=cetta_term_domain_universe(d);Arena a;arena_init_detached(&a);
-    CettaProofRowLayout l={.proof={.length=2u,.child={1u,1u}},.arity={2u,3u},.head={parse(&a,"rows")->sym_id,parse(&a,"C")->sym_id},.universe_instance=u->instance_id,.storage_epoch=u->storage_epoch};
+    CettaProofRowLayout l={.proof={.length=2u,.child={1u,1u}},.arity={2u,3u},.head={atom_symbol_current_id(parse(&a,"rows")),atom_symbol_current_id(parse(&a,"C"))},.universe_instance=u->instance_id,.storage_epoch=u->storage_epoch};
     CettaProofBatchStore *s=new_rank_store(d,&a,l,"(rows (C 7))");
     CettaProofFieldPath after={.length=2u,.child={1u,2u}},deleted={.length=2u,.child={1u,1u}};int64_t root=-1;
     assert(cetta_proof_batch_store_bind_rank(s,&deleted,&root)==CETTA_PROOF_BATCH_DECLINED&&root==-1);

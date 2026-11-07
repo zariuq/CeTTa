@@ -33,7 +33,7 @@ static void batch_case(TermUniverseStoreFormat format) {
     AtomId root = key(observed_universe, parse(&syntax, "(rows 2 (C a))"));
     AtomId seed = key(observed_universe, parse(&syntax, "I"));
     CettaProofRowLayout layout = {.proof = {.length = 2u, .child = {2u, 2u}},
-        .arity = {3u, 3u}, .head = {parse(&syntax, "rows")->sym_id, parse(&syntax, "C")->sym_id},
+        .arity = {3u, 3u}, .head = {atom_symbol_current_id(parse(&syntax, "rows")), atom_symbol_current_id(parse(&syntax, "C"))},
         .universe_instance = observed_universe->instance_id, .storage_epoch = observed_universe->storage_epoch};
     Payload payload = {.domain = domain, .space_live = true};
     space_init_with_universe(&payload.space, observed_universe);
@@ -66,7 +66,7 @@ static void batch_case(TermUniverseStoreFormat format) {
     ClosedFactory f = {.domain = domain,
         .root = key(u, parse(&syntax, "(rows 2 (C a))")), .seed = key(u, parse(&syntax, "I"))};
     f.layout = (CettaProofRowLayout){.proof = {.length = 2u, .child = {2u, 2u}},
-        .arity = {3u, 3u}, .head = {parse(&syntax, "rows")->sym_id, parse(&syntax, "C")->sym_id},
+        .arity = {3u, 3u}, .head = {atom_symbol_current_id(parse(&syntax, "rows")), atom_symbol_current_id(parse(&syntax, "C"))},
         .universe_instance = u->instance_id, .storage_epoch = u->storage_epoch};
     arena_free(&syntax);
     assert(cetta_term_domain_close_if_last(&scope, domain, closed_factory, &f));
