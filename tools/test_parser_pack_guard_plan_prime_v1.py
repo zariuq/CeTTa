@@ -31,6 +31,7 @@ from parser_pack_lr1_v1 import (
     parse_plan_stream,
     summary_json,
 )
+from gslt2parse_oracles_v1 import ORACLES
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -285,14 +286,9 @@ def evidence_stream(
 
 
 def run_petta(
-    petta_root: Path, profile: ReaderProfile
+    profile: ReaderProfile
 ) -> dict[str, object]:
-    script = (
-        petta_root
-        / "experiments"
-        / "gslt2parse_foundation"
-        / "test_parser_pack_guard_plan_prime_v1.pl"
-    )
+    script = ORACLES / "test_parser_pack_guard_plan_prime_v1.pl"
     completed = subprocess.run(
         [
             "swipl", "-q", "-f", str(script), "--",
@@ -675,10 +671,9 @@ def main() -> int:
         raise GateFailure("PeTTa guard-plan checkout is absent")
 
     compiler_digest = sha256(REGULAR_COMPILER.read_bytes()).hexdigest()
-    abi = export_stream(petta_root, ABI_CASES[profile.label])
+    abi = export_stream(ABI_CASES[profile.label])
     lexical_terms, _, lexical_agreements = compile_case_tags(
         chart_binary,
-        petta_root,
         dict(profile.lexical_case),
         abi_scalar(abi, "source-digest"),
     )
@@ -686,7 +681,7 @@ def main() -> int:
     guard_replays = replay_guard_roots(chart_binary, profile, guard_row)
     guard_nfa = guard_nfa_row(chart_binary, profile.label)
     guard_terms = tuple(str(term) for term in guard_nfa["terms"])
-    petta = run_petta(petta_root, profile)
+    petta = run_petta(profile)
 
     with tempfile.TemporaryDirectory(
         prefix=f"gslt2parse-{profile.label}-guard-plan-"

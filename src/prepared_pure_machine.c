@@ -28,8 +28,9 @@ typedef enum {
     PREPARED_PURE_BIND,
     PREPARED_PURE_IF,
     PREPARED_PURE_CALL,
-    /* Choice zero: no answer.  Only answer producers compile it; their step
-     * lowering turns it into a failing step, so no executor ever meets it. */
+    /* Choice zero: no answer.  A producer's step lowering makes it a failing
+     * step; in a single-answer program it fails the call, as a let whose
+     * pattern its value fails. */
     PREPARED_PURE_ZERO,
     /* No answer in a single-answer program: the program declines, and the
      * canonical evaluator answers the call, as it answers HE's Empty. */
@@ -88,6 +89,9 @@ typedef struct {
     /* A non-variable head over distinct fresh variables: field i binds
      * bind_vars[first_var + i - 1]. */
     bool flat_fresh_fields;
+    /* Distinct fresh variables only, the head among them: element i binds
+     * bind_vars[first_var + i]. */
+    bool fresh_tuple;
     /* A source bind whose producer computes first only if its destination
      * evidence holds (prepared_pure_binds_meet_destinations). */
     bool destination_evidence;
@@ -481,6 +485,10 @@ typedef enum {
     /* MATCH, where an operand the pattern does not match continues at
      * `target`. */
     PREPARED_PURE_CODE_MATCH_ELSE,
+    /* Bind fresh-pair pattern `auxiliary` against what decons-atom node
+     * `target` answers for the operand, its two parts met directly where
+     * the pair they make is an ordinary expression. */
+    PREPARED_PURE_CODE_DECONS_MATCH,
     /* destination <- head `auxiliary` applied to the operands */
     PREPARED_PURE_CODE_CALL,
     /* Head `auxiliary` applied to the operands answers for this body. */
@@ -653,7 +661,19 @@ typedef struct {
     size_t aside;
 } PreparedPureAlternatives;
 
+/* Whether a symbol heads data at an arity as a run-time head
+ * (prepared_pure_bound_head_builds_data): a direct-mapped memo of the
+ * judgment, which reads only the program's pinned revision and its fixed
+ * views.  State 0 is empty, 1 data, 2 a call. */
+enum { PREPARED_PURE_BOUND_HEAD_MEMO = 16u };
+typedef struct {
+    SymbolId head;
+    uint32_t arity;
+    uint8_t state;
+} PreparedPureBoundHeadMemo;
+
 struct CettaPreparedPureProgram {
+    PreparedPureBoundHeadMemo bound_heads[PREPARED_PURE_BOUND_HEAD_MEMO];
     /* Owners: the creator, and each answer cursor reading the program. */
     uint32_t references;
     /* One empty, bounded worker for synchronous body entries. It holds no
@@ -2574,6 +2594,15 @@ static bool prepared_pure_compile_bind_pattern(
             var_id_eq(binding->var, pattern->expr.elems[i]->var_id) &&
             !binding->prebound;
     }
+    bool fresh_tuple = pattern->kind == ATOM_EXPR &&
+        pattern->expr.len > 0u && count_size == pattern->expr.len;
+    for (CettaExprIndex i = 0u; fresh_tuple && i < pattern->expr.len; i++) {
+        const PreparedPureBindVar *binding = &program->bind_vars[first_var + i];
+        fresh_tuple = pattern->expr.elems[i] &&
+            pattern->expr.elems[i]->kind == ATOM_VAR &&
+            var_id_eq(binding->var, pattern->expr.elems[i]->var_id) &&
+            !binding->prebound;
+    }
     *pattern_index_out = (uint32_t)program->bind_pattern_len;
     program->bind_patterns[program->bind_pattern_len++] =
         (PreparedPureBindPattern){
@@ -2581,6 +2610,7 @@ static bool prepared_pure_compile_bind_pattern(
             .first_var = first_var,
             .var_count = (uint32_t)count_size,
             .flat_fresh_fields = flat,
+            .fresh_tuple = fresh_tuple,
         };
     return true;
 }
@@ -3967,6 +3997,48 @@ static bool prepared_pure_template_head_is_inert(
     CettaPreparedPureProgram *program, Atom *source) {
     return prepared_pure_head_role(program, source) ==
            PREPARED_PURE_HEAD_INERT;
+}
+
+/* Whether an application built under a head computed or bound at run time
+ * is data.  A number or a string heads data.  In PeTTa so does a variable or
+ * an expression that is no callable value (a partial, a lambda): run-time
+ * dispatch applies only those.  A symbol heads data where the same
+ * application written with that symbol compiles as data
+ * (prepared_pure_compile_eval's eager build): the rule policy admits the
+ * head, it names nothing the program can call, and outside PeTTa no
+ * declaration types it.  Any other head makes the application a call, which
+ * the program leaves to the evaluator. */
+static bool prepared_pure_bound_head_builds_data(
+    CettaPreparedPureProgram *program, Atom *built) {
+    if (!program || !built || built->kind != ATOM_EXPR ||
+        built->expr.len == 0u)
+        return false;
+    Atom *head = built->expr.elems[0];
+    if (prepared_pure_data_head_value(head))
+        return true;
+    bool petta = eval_current_language_id &&
+        eval_current_language_id() == CETTA_LANGUAGE_PETTA;
+    if (petta && head && (head->kind == ATOM_VAR ||
+                          (head->kind == ATOM_EXPR && program->opaque_value &&
+                           !program->opaque_value(head))))
+        return true;
+    if (!head || head->kind != ATOM_SYMBOL)
+        return false;
+    uint32_t arity = (uint32_t)(built->expr.len - 1u);
+    PreparedPureBoundHeadMemo *memo = &program->bound_heads[
+        ((uint64_t)head->sym_id * UINT64_C(0x9e3779b97f4a7c15) + arity) >> 60];
+    if (memo->state && memo->head == head->sym_id && memo->arity == arity)
+        return memo->state == 1u;
+    bool data =
+        (!program->source_view.head_admitted ||
+         program->source_view.head_admitted(
+             program->source_view.context, program->space, head->sym_id)) &&
+        prepared_pure_head_role(program, built) == PREPARED_PURE_HEAD_INERT &&
+        (petta || space_head_call_untyped(program->space, head->sym_id,
+                                          built->expr.len - 1u));
+    *memo = (PreparedPureBoundHeadMemo){
+        .head = head->sym_id, .arity = arity, .state = data ? 1u : 2u};
+    return data;
 }
 
 /* Whether `atom` is a list the evaluator materialized: open list cells of
@@ -5674,7 +5746,23 @@ static bool prepared_pure_compile_eval_with_role_in_source(
                 program, "dialect-owned symbol requires canonical evaluation",
                 source);
     }
-    if (source_role == CETTA_PREPARED_PURE_SOURCE_DYNAMIC_CALL ||
+    /* A dialect's run-time dispatch of an application whose head a variable
+     * holds or an expression computes is the bound-head build below: data
+     * when that head's value heads data, and otherwise a call the program
+     * leaves to the evaluator. */
+    Atom *dispatched_head = source->kind == ATOM_EXPR &&
+        source->expr.len > 0u ? source->expr.elems[0] : NULL;
+    bool bound_head_dispatch =
+        source_role == CETTA_PREPARED_PURE_SOURCE_DYNAMIC_CALL &&
+        program->call_mode == CETTA_GSLT_PURE_CALL_EAGER && dispatched_head &&
+        ((dispatched_head->kind == ATOM_VAR &&
+          prepared_pure_context_lookup(context, dispatched_head->var_id,
+                                       NULL)) ||
+         (dispatched_head->kind == ATOM_EXPR &&
+          eval_current_language_id &&
+          eval_current_language_id() == CETTA_LANGUAGE_PETTA));
+    if ((source_role == CETTA_PREPARED_PURE_SOURCE_DYNAMIC_CALL &&
+         !bound_head_dispatch) ||
         source_role == CETTA_PREPARED_PURE_SOURCE_DECLINE)
         return prepared_pure_reject(
             program, "source view declines prepared evaluation", source);
@@ -5849,13 +5937,12 @@ static bool prepared_pure_compile_eval_with_role_in_source(
                 program, "dialect-owned form requires canonical evaluation",
                 source);
         }
+        /* Choice zero answers nothing: one fewer answer for a producer, and
+         * for a single-answer program, whose every call matched one
+         * equation, a call with no answer, as a let whose pattern its value
+         * fails. */
         if (expression_view_state ==
             CETTA_PREPARED_PURE_EXPRESSION_ZERO) {
-            if (!prepared_pure_wants_answers(program))
-                return prepared_pure_reject(
-                    program,
-                    "choice zero is not an ordinary prepared value",
-                    source);
             return prepared_pure_add_node(
                 program, (PreparedPureNode){.kind = PREPARED_PURE_ZERO},
                 NULL, 0u, node_out);
@@ -5885,9 +5972,15 @@ static bool prepared_pure_compile_eval_with_role_in_source(
         /* A head the program computes or binds rather than names.  A value
          * that heads data, or an expression computing an integer, makes the
          * whole expression data over its evaluated fields.  A head bound to
-         * a variable is data when its value is; otherwise the program
-         * declines at run time and the call is left to the evaluator. */
-        bool bound_head = head_atom->kind == ATOM_VAR;
+         * a variable, or in PeTTa any other computed head, is data when its
+         * value is (prepared_pure_bound_head_builds_data); otherwise the
+         * program declines at run time and the call is left to the
+         * evaluator. */
+        bool bound_head = head_atom->kind == ATOM_VAR ||
+            (head_atom->kind == ATOM_EXPR &&
+             eval_current_language_id &&
+             eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
+             !prepared_pure_integer_head(program, head_atom));
         if (program->call_mode != CETTA_GSLT_PURE_CALL_EAGER ||
             (!bound_head &&
              !prepared_pure_integer_head(program, head_atom) &&
@@ -7753,19 +7846,15 @@ static bool prepared_pure_value_certainly_meets(
         return prepared_pure_call_destination(
             program, check, node->auxiliary, pattern, true, depth + 1u);
     case PREPARED_PURE_BUILD: {
-        const PreparedPureNode *head =
-            children && children[0] < program->node_len
-            ? &program->nodes[children[0]] : NULL;
-        if (!head || pattern->kind != ATOM_EXPR ||
+        /* The head is met as every other element.  A head the program
+         * computes or binds meets only a receiving variable; where the
+         * program continues past such a build, its value is the tuple
+         * (prepared_pure_bound_head_builds_data). */
+        if (!children || pattern->kind != ATOM_EXPR ||
             atom_is_list_form(pattern) ||
-            pattern->expr.len != node->child_count ||
-            head->kind != PREPARED_PURE_LITERAL || !head->atom ||
-            atom_has_vars(head->atom) ||
-            !prepared_pure_pattern_certainly_matches(
-                program, check, pattern->expr.elems[0], head->atom,
-                depth + 1u))
+            pattern->expr.len != node->child_count)
             return false;
-        for (uint32_t i = 1u; i < node->child_count; i++) {
+        for (uint32_t i = 0u; i < node->child_count; i++) {
             if (!prepared_pure_value_certainly_meets(
                     program, check, children[i], pattern->expr.elems[i],
                     depth + 1u))
@@ -8600,7 +8689,10 @@ static PreparedPureMatchState prepared_pure_match_flat_fields(
     uint32_t local_base, Atom *value, bool *handled_out) {
     *handled_out = true;
     Atom *pattern = descriptor->pattern;
-    CettaExprLen fields = pattern->expr.len - 1u;
+    /* A fresh tuple binds every element, the head too; a flat pattern
+     * compares its head and binds the rest. */
+    CettaExprIndex first = descriptor->fresh_tuple ? 0u : 1u;
+    CettaExprLen fields = pattern->expr.len - first;
     Atom *const *values = NULL;
     if (program->pattern_view) {
         CettaPreparedPurePatternView view = {0};
@@ -8610,7 +8702,7 @@ static PreparedPureMatchState prepared_pure_match_flat_fields(
             return PREPARED_PURE_MATCH_MISMATCH;
         if (view_state == CETTA_PREPARED_PURE_PATTERN_VIEW_DECOMPOSE) {
             if (view.child_count != fields ||
-                view.pattern_children != pattern->expr.elems + 1u ||
+                view.pattern_children != pattern->expr.elems + first ||
                 !view.value_children) {
                 *handled_out = false;
                 return PREPARED_PURE_MATCH_ERROR;
@@ -8625,17 +8717,19 @@ static PreparedPureMatchState prepared_pure_match_flat_fields(
         if (value->kind != ATOM_EXPR ||
             value->expr.len != pattern->expr.len)
             return PREPARED_PURE_MATCH_MISMATCH;
-        bool equal = false;
-        if (!value->expr.elems[0] ||
-            !prepared_pure_match_rigid_atom(
-                program, pattern->expr.elems[0], value->expr.elems[0],
-                &equal)) {
-            *handled_out = false;
-            return PREPARED_PURE_MATCH_ERROR;
+        if (first == 1u) {
+            bool equal = false;
+            if (!value->expr.elems[0] ||
+                !prepared_pure_match_rigid_atom(
+                    program, pattern->expr.elems[0], value->expr.elems[0],
+                    &equal)) {
+                *handled_out = false;
+                return PREPARED_PURE_MATCH_ERROR;
+            }
+            if (!equal)
+                return PREPARED_PURE_MATCH_MISMATCH;
         }
-        if (!equal)
-            return PREPARED_PURE_MATCH_MISMATCH;
-        values = value->expr.elems + 1u;
+        values = value->expr.elems + first;
     }
     for (CettaExprLen i = 0u; i < fields; i++) {
         size_t slot = (size_t)local_base +
@@ -8654,7 +8748,7 @@ static PreparedPureMatchState prepared_pure_match_bind_pattern_into(
     const PreparedPureBindPattern *descriptor,
     uint32_t local_base, Atom *value, bool commit) {
     if (commit && program && descriptor && value &&
-        descriptor->flat_fresh_fields) {
+        (descriptor->flat_fresh_fields || descriptor->fresh_tuple)) {
         bool handled = false;
         PreparedPureMatchState flat = prepared_pure_match_flat_fields(
             program, descriptor, local_base, value, &handled);
@@ -9538,6 +9632,35 @@ static bool prepared_pure_petta_deconstruct_fails(
     return prepared_pure_petta_decons_refutes(values[0]);
 }
 
+/* The two parts decons-atom answers for `list`.  A cons cell is its head
+ * and its tail.  A list value is its first element and the list value of
+ * the others.  An expression is its first element and the rest, a view
+ * sharing the expression's storage, so a walk by deconstruction costs the
+ * expression's length, and the rest is data as it stands, never read as a
+ * Cons however it begins.  Any other internal representation, and an empty
+ * or atomic value, has none here. */
+static bool prepared_pure_deconstruct_parts(Arena *arena, Atom *list,
+                                            Atom *parts[2]) {
+    Atom *const *elems;
+    CettaExprLen len;
+    if (!atom_sequence_view(list, &elems, &len) || len == 0u)
+        return false;
+    if (petta_semantics_is_open_cons_value(list)) {
+        parts[0] = list->expr.elems[1];
+        parts[1] = list->expr.elems[2];
+    } else if (atom_is_list(list)) {
+        parts[0] = elems[0];
+        parts[1] = atom_list(arena, elems + 1u, len - 1u);
+    } else if (list->expr.elems[0]->kind == ATOM_GROUNDED &&
+               list->expr.elems[0]->ground.gkind == GV_INTERNAL_TAG) {
+        return false;
+    } else {
+        parts[0] = list->expr.elems[0];
+        parts[1] = atom_expr_suffix(arena, list, 1u);
+    }
+    return parts[1] != NULL;
+}
+
 static Atom *prepared_pure_execute_intrinsic(
     const CettaPreparedPureProgram *program, Arena *arena,
     CettaGsltPreparedPureIntrinsicInstruction instruction,
@@ -9613,37 +9736,10 @@ static Atom *prepared_pure_execute_intrinsic(
      * elements, and build a result of the same kind; a list pattern is
      * declined to the canonical evaluator. */
     case CETTA_GSLT_PREPARED_PURE_INTRINSIC_DECONSTRUCT_NONEMPTY_EXPRESSION: {
-        Atom *const *elems;
-        CettaExprLen len;
-        if (arity != 1u ||
-            !atom_sequence_view(arguments[0], &elems, &len) || len == 0u)
-            return NULL;
-        /* A cons cell is its head and its tail.  A list value is its first
-         * element and the list value of the others.  An expression is its
-         * first element and the rest, a view sharing the expression's
-         * storage, so a walk by deconstruction costs the expression's
-         * length, and the rest is data as it stands, never read as a Cons
-         * however it begins.  Any other internal representation is the
-         * canonical evaluator's. */
-        Atom *list = arguments[0];
         Atom *pair[2];
-        if (petta_semantics_is_open_cons_value(list)) {
-            pair[0] = list->expr.elems[1];
-            pair[1] = list->expr.elems[2];
-        } else if (atom_is_list(list)) {
-            pair[0] = elems[0];
-            pair[1] = atom_list(arena, elems + 1u, len - 1u);
-            if (!pair[1])
-                return NULL;
-        } else if (list->expr.elems[0]->kind == ATOM_GROUNDED &&
-                   list->expr.elems[0]->ground.gkind == GV_INTERNAL_TAG) {
+        if (arity != 1u ||
+            !prepared_pure_deconstruct_parts(arena, arguments[0], pair))
             return NULL;
-        } else {
-            pair[0] = list->expr.elems[0];
-            pair[1] = atom_expr_suffix(arena, list, 1u);
-            if (!pair[1])
-                return NULL;
-        }
         return program->construct_value(arena, pair, 2u);
     }
     case CETTA_GSLT_PREPARED_PURE_INTRINSIC_CONSTRUCT_EXPRESSION_CONS: {
@@ -10205,12 +10301,12 @@ static Atom *prepared_pure_inline_value(
             return NULL;
     }
     if (node->kind == PREPARED_PURE_BUILD) {
-        if (node->auxiliary == PREPARED_PURE_BUILD_DATA_HEAD &&
-            (node->child_count == 0u ||
-             !prepared_pure_data_head_value(operands[0])))
-            return NULL;
-        return program->construct_value(
+        Atom *built = program->construct_value(
             arena, operands, node->child_count);
+        if (node->auxiliary == PREPARED_PURE_BUILD_DATA_HEAD &&
+            !prepared_pure_bound_head_builds_data(program, built))
+            return NULL;
+        return built;
     }
     if (node->kind == PREPARED_PURE_INTRINSIC) {
         Atom *result = prepared_pure_execute_intrinsic(
@@ -11200,9 +11296,12 @@ static bool prepared_pure_compile_closed_entry_call(
         cetta_prepared_pure_intrinsic_program(head, arity, NULL)) {
         return true;
     }
+    /* Its calls of variable heads are admitted when they run (see
+     * prepared_pure_head_index). */
     bool defined = false;
-    if (space_query_effect_for_head(
-            program->space, head, &defined) !=
+    bool dynamic = false;
+    if (space_query_static_effect_for_head(
+            program->space, head, &defined, &dynamic) !=
             CETTA_GSLT_QUERY_EFFECT_PURE ||
         !defined)
         return true;
@@ -13642,15 +13741,29 @@ static bool prepared_pure_code_node(
             node.first_child > program->child_len ||
             2u > program->child_len - node.first_child)
             return false;
+        uint32_t producer = program->children[node.first_child];
+        const PreparedPureNode *made = &program->nodes[producer];
+        /* decons-atom met by a pattern of two fresh variables binds them to
+         * its parts; the pair is never built. */
+        bool decons_pair =
+            program->bind_patterns[node.auxiliary].fresh_tuple &&
+            program->bind_patterns[node.auxiliary].pattern->expr.len == 2u &&
+            made->kind == PREPARED_PURE_INTRINSIC &&
+            made->intrinsic_instruction ==
+                CETTA_GSLT_PREPARED_PURE_INTRINSIC_DECONSTRUCT_NONEMPTY_EXPRESSION &&
+            made->child_count == 1u && made->first_child < program->child_len;
         uint32_t bound = 0u;
         if (!prepared_pure_code_operand(
-                lowering, program->children[node.first_child], depth + 1u,
-                &bound) ||
+                lowering,
+                decons_pair ? program->children[made->first_child] : producer,
+                depth + 1u, &bound) ||
             !prepared_pure_code_emit(
                 program,
                 (PreparedPureCode){
-                    .kind = PREPARED_PURE_CODE_MATCH,
+                    .kind = decons_pair ? PREPARED_PURE_CODE_DECONS_MATCH
+                                        : PREPARED_PURE_CODE_MATCH,
                     .auxiliary = node.auxiliary,
+                    .target = decons_pair ? producer : 0u,
                 },
                 &bound, 1u, NULL))
             return false;
@@ -13770,7 +13883,8 @@ static bool prepared_pure_code_liveness(
             code->kind == PREPARED_PURE_CODE_BRANCH_REGISTER ||
             code->kind == PREPARED_PURE_CODE_MATCH_ELSE;
         bool matches = code->kind == PREPARED_PURE_CODE_MATCH ||
-            code->kind == PREPARED_PURE_CODE_MATCH_ELSE;
+            code->kind == PREPARED_PURE_CODE_MATCH_ELSE ||
+            code->kind == PREPARED_PURE_CODE_DECONS_MATCH;
         if (falls_through) {
             const uint64_t *next = &live_in[(size_t)(index + 1u - start) * words];
             for (size_t w = 0u; w < words; w++)
@@ -15538,13 +15652,12 @@ static bool prepared_pure_project_answer_value(
     /* A head bound at run time builds data only when its value is data, as
      * in every other executor; otherwise the application is a call, which
      * a projection does not make. */
-    if (ok && node->auxiliary == PREPARED_PURE_BUILD_DATA_HEAD &&
-        (node->child_count == 0u ||
-         !prepared_pure_data_head_value(children[0])))
-        ok = false;
     if (ok)
         *value_out = program->construct_value(
             arena, children, node->child_count);
+    if (ok && node->auxiliary == PREPARED_PURE_BUILD_DATA_HEAD &&
+        !prepared_pure_bound_head_builds_data(program, *value_out))
+        ok = false;
     if (children != inline_children)
         free(children);
     return ok && *value_out != NULL;
@@ -18941,14 +19054,13 @@ static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_run_code_worker(
                     program, registers, operands[i]);
             Atom *value = NULL;
             if (code->kind == PREPARED_PURE_CODE_BUILD) {
+                value = program->construct_value(arena, values, count);
                 if (node->kind == PREPARED_PURE_BUILD &&
                     node->auxiliary == PREPARED_PURE_BUILD_DATA_HEAD &&
-                    (count == 0u ||
-                     !prepared_pure_data_head_value(values[0]))) {
+                    !prepared_pure_bound_head_builds_data(program, value)) {
                     decline = "a bound head is not data";
                     goto declined;
                 }
-                value = program->construct_value(arena, values, count);
                 if (node->kind == PREPARED_PURE_TYPED_BUILD &&
                     (!value ||
                      !prepared_pure_typed_build_holds(program, arena, value))) {
@@ -19100,6 +19212,50 @@ static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_run_code_worker(
         case PREPARED_PURE_CODE_JUMP:
             frame->pc = code->target;
             continue;
+        case PREPARED_PURE_CODE_DECONS_MATCH: {
+            const PreparedPureNode *node = &program->nodes[code->target];
+            const PreparedPureBindPattern *pair_pattern =
+                &program->bind_patterns[code->auxiliary];
+            Atom *list =
+                prepared_pure_code_value(program, registers, operands[0]);
+            Atom *parts[2];
+            bool parted = list &&
+                cetta_prepared_pure_intrinsic_scope_supported(
+                    node->atom->sym_id, 1u) &&
+                prepared_pure_deconstruct_parts(arena, list, parts);
+            /* The pair they make is an ordinary expression, no error, which
+             * the fresh pair pattern meets part for part. */
+            if (parted && !atom_is_symbol_id(parts[0], g_builtin_syms.error) &&
+                (!program->pattern_view ||
+                 atom_petta_expression_representation(2u, parts[0], 0u, NULL) ==
+                     PETTA_VALUE_ORDINARY)) {
+                for (uint32_t i = 0u; i < 2u; i++)
+                    registers[program->bind_vars[pair_pattern->first_var + i].slot] =
+                        parts[i];
+                continue;
+            }
+            /* Otherwise as decons-atom's instruction and then the match. */
+            Atom *value = parted
+                ? program->construct_value(arena, parts, 2u) : NULL;
+            if (value && atom_is_error(value))
+                value = NULL;
+            if (!value) {
+                if (prepared_pure_petta_deconstruct_fails(node, &list, 1u))
+                    goto empty;
+                decline_node = node;
+                decline = "operation declined";
+                goto declined;
+            }
+            PreparedPureMatchState matched = prepared_pure_match_bind_pattern(
+                program, pair_pattern, frame->base, value);
+            if (matched == PREPARED_PURE_MATCH_MISMATCH)
+                goto empty;
+            if (matched != PREPARED_PURE_MATCH_MATCHED) {
+                decline = "let pattern matcher failed";
+                goto declined;
+            }
+            continue;
+        }
         case PREPARED_PURE_CODE_MATCH:
         case PREPARED_PURE_CODE_MATCH_ELSE: {
             Atom *value =
@@ -20400,16 +20556,14 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal_run(
                 program, "child evaluation arity invariant failed", node);
 
         if (node->kind == PREPARED_PURE_BUILD) {
-            if (node->auxiliary == PREPARED_PURE_BUILD_DATA_HEAD &&
-                (node->child_count == 0u ||
-                 !prepared_pure_data_head_value(
-                     program->values[frame->value_base])))
-                return prepared_pure_runtime_decline(
-                    program, "a bound head is not data", node);
             Atom *built = program->construct_value(
                 arena,
                 &program->values[frame->value_base],
                 node->child_count);
+            if (node->auxiliary == PREPARED_PURE_BUILD_DATA_HEAD &&
+                !prepared_pure_bound_head_builds_data(program, built))
+                return prepared_pure_runtime_decline(
+                    program, "a bound head is not data", node);
             program->value_len = frame->value_base;
             if (!prepared_pure_push_value(program, built))
                 return prepared_pure_runtime_decline(

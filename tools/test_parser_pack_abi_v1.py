@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+from gslt2parse_oracles_v1 import ORACLES
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -147,16 +148,10 @@ class GateFailure(RuntimeError):
 
 
 def export_stream(
-    petta_root: Path,
     case: dict,
     environment: dict[str, str] | None = None,
 ) -> bytes:
-    exporter = (
-        petta_root
-        / "experiments"
-        / "gslt2parse_foundation"
-        / "parser_pack_abi_export_v1.pl"
-    )
+    exporter = ORACLES / "parser_pack_abi_export_v1.pl"
     completed = subprocess.run(
         [
             "swipl",
@@ -211,11 +206,11 @@ def run_native(binary: Path, stream: bytes, expect_success: bool) -> str:
     return completed.stdout
 
 
-def check_matrix(binary: Path, petta_root: Path) -> tuple[int, bytes]:
+def check_matrix(binary: Path) -> tuple[int, bytes]:
     passed = 0
     prime_stream = b""
     for label, case in CASES.items():
-        stream = export_stream(petta_root, case)
+        stream = export_stream(case)
         output = run_native(binary, stream, expect_success=True)
         match = SUMMARY.fullmatch(output)
         if not match:
@@ -282,7 +277,7 @@ def main() -> int:
 
     binary = arguments.binary.resolve()
     petta_root = arguments.petta_root.resolve()
-    matrix, prime_stream = check_matrix(binary, petta_root)
+    matrix, prime_stream = check_matrix(binary)
     corruptions = check_corruption(binary, prime_stream)
     print(f"(ParserPackABIV1MatrixSummary {matrix} {matrix} {corruptions} 0)")
     return 0

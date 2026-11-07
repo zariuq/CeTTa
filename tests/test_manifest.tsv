@@ -157,6 +157,7 @@ tests/test_add_reduct.metta	he	metta	extended	main	native	test	golden	-
 tests/test_alpha_equiv.metta	he	metta	extended	main	native	test	golden	-
 tests/test_alpha_equiv_arity.metta	he	metta	extended	main	native	test	golden	-
 tests/test_arithmetic.metta	he	metta	extended	main	native	test	golden	-
+tests/test_asp_library.metta	he	metta	extended	main	native	test	golden	-
 tests/test_assert.metta	he	metta	extended	main	native	test	golden	-
 tests/test_assert_equal_to_result_bag_semantics.metta	he	metta	extended	main	native	test	golden	-
 tests/test_bad_type_error.metta	he	metta	extended	main	native	test	golden	-

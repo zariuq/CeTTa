@@ -10,7 +10,7 @@
 #include "parser_pack_guarded_lexical_exec_v1.h"
 
 const char *he_reader_cursor_v1_program_digest(void) {
-    return "f465beefb262396a789dd2ecf3916b43dc5fc328a6e7af8f7c686f810a4cae6c";
+    return "f927f1e92f90096badf4f982f0182b3f8db0fdecbc323279b2a109cec01762e5";
 }
 
 static bool he_reader_cursor_v1_copy(void **target, const void *source, size_t size,
@@ -37807,16 +37807,16 @@ bool he_reader_cursor_v1_program_init(PPGuardedLexCursorV1Program *out,
     if (!fh_ground_term_v1_parse(&result.actions.arena, he_reader_cursor_v1_action_term_370, sizeof(he_reader_cursor_v1_action_term_370), &result.actions.instructions[370].term, error_buf, error_buf_size)) goto fail;
     if (!fh_ground_term_v1_parse(&result.actions.arena, he_reader_cursor_v1_action_term_371, sizeof(he_reader_cursor_v1_action_term_371), &result.actions.instructions[371].term, error_buf, error_buf_size)) goto fail;
     memcpy(result.actions.base_pack_digest, "a0334e22b53a8319b23870d008af3fcdd27426f26bffd09f14f54565c12936c0", sizeof(result.actions.base_pack_digest));
-    memcpy(result.actions.compiler_digest, "ca623a23e19f2e5369b59906ada3cbcefcfbd2ccba64dedb9c7df6e463877cbf", sizeof(result.actions.compiler_digest));
+    memcpy(result.actions.compiler_digest, "d4a4a541a4902c1e6015578e6caf5f7d49350be4441a070e2aec0cc5f52ae3d8", sizeof(result.actions.compiler_digest));
     memcpy(result.actions.answer_set_digest, "9c4ff108eb75369434f5058333b5d921c9da217884eeb8ea02ff26ad3d926df4", sizeof(result.actions.answer_set_digest));
-    memcpy(result.actions.program_digest, "bc22bb25525c4126a82f6305742e71897f2688384577295a9f3757753adfae9e", sizeof(result.actions.program_digest));
+    memcpy(result.actions.program_digest, "89e7f3507b352bb24acaca25c47207591816d63f8b5a67bd3e6839478329d620", sizeof(result.actions.program_digest));
     memcpy(result.base_pack_digest, "a0334e22b53a8319b23870d008af3fcdd27426f26bffd09f14f54565c12936c0", sizeof(result.base_pack_digest));
     memcpy(result.lexical_plan_digest, "fb8658f0924ad4933dc75fb6e749687d1b63efaa94613aaf780362e041cc799b", sizeof(result.lexical_plan_digest));
     memcpy(result.guard_plan_digest, "1302f1eba1e7c64223c3d40498df28766d6931f077fe9b159847013d1c03b895", sizeof(result.guard_plan_digest));
     memcpy(result.guarded_plan_digest, "c782d8a7d08f1f4b5004855f286bbb90367c9699230a49cdcf96f5f91f03aecf", sizeof(result.guarded_plan_digest));
     memcpy(result.execution_plan_digest, "73f10ee4fb310df6006c2bce635e584eebbd4260fd2d039d3efecd2da6b56b35", sizeof(result.execution_plan_digest));
     memcpy(result.certificate_digest, "f474ce55b85bb50dd78f33be2361a2722e732e046ae16b39b1afdabfb8e0195f", sizeof(result.certificate_digest));
-    memcpy(result.program_digest, "f465beefb262396a789dd2ecf3916b43dc5fc328a6e7af8f7c686f810a4cae6c", sizeof(result.program_digest));
+    memcpy(result.program_digest, "f927f1e92f90096badf4f982f0182b3f8db0fdecbc323279b2a109cec01762e5", sizeof(result.program_digest));
     if (!ppguarded_lex_cursor_v1_program_validate(
             &result, error_buf, error_buf_size)) goto fail;
     ppguarded_lex_cursor_v1_program_free(out);

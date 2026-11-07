@@ -24,6 +24,7 @@
 #include "proc_capture.h"
 #include "library_fs.h"
 #include "library_postings.h"
+#include "library_asp.h"
 #include "library_tensor.h"
 #include "library_group.h"
 #include "library_re.h"
@@ -169,6 +170,7 @@ enum {
     CETTA_LIBRARY_TENSOR = 1u << 17,
     CETTA_LIBRARY_LANG = 1u << 18,
     CETTA_LIBRARY_PY = 1u << 19,
+    CETTA_LIBRARY_ASP = 1u << 20,
 #if CETTA_BUILD_WITH_JSON_GSLT
     CETTA_LIBRARY_JSON = 1u << 12
 #endif
@@ -200,6 +202,7 @@ static const CettaLibrarySpec CETTA_LIBRARIES[] = {
     {"lib_memo", CETTA_LIBRARY_PETTA_MEMO, NULL},
     {"lib_tabling", CETTA_LIBRARY_PETTA_TABLING, NULL},
     {"io", CETTA_LIBRARY_IO, NULL},
+    {"asp", CETTA_LIBRARY_ASP, NULL},
 #if CETTA_BUILD_WITH_JSON_GSLT
     {"json", CETTA_LIBRARY_JSON, NULL},
 #endif
@@ -12377,6 +12380,8 @@ bool cetta_library_call_native(CettaLibraryContext *ctx, Space *space,
         cetta_tensor_call(ctx, space, a, head, args, nargs, out)) return true;
     if (ctx && (ctx->active_mask & CETTA_LIBRARY_POSTINGS) &&
         cetta_postings_call(ctx, a, head, args, nargs, out)) return true;
+    if (ctx && (ctx->active_mask & CETTA_LIBRARY_ASP) &&
+        cetta_asp_call(ctx, a, head, args, nargs, out)) return true;
     if (ctx && (ctx->active_mask & CETTA_LIBRARY_RE) &&
         cetta_re_call(ctx, a, head, args, nargs, out)) return true;
     if (ctx && (ctx->active_mask & CETTA_LIBRARY_FS) &&

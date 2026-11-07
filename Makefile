@@ -781,7 +781,7 @@ SRC += src/shared_transition.c src/run_report.c src/run_cli.c src/error_presenta
 SRC += src/library_proc.c
 SRC += src/library_fs.c
 SRC += src/petta_priority_heap.c
-SRC += src/native_memory.c src/host_services.c src/library_postings.c src/tensor.c src/tensor_bounds.c src/tensor_screening.c src/library_tensor.c src/library_group.c
+SRC += src/native_memory.c src/host_services.c src/library_postings.c src/library_asp.c native/asp/asp_cdnl_v1.c native/asp/asp_clingo_v1.c src/tensor.c src/tensor_bounds.c src/tensor_screening.c src/library_tensor.c src/library_group.c
 SRC += src/binary_codec.c src/library_binary.c
 SRC += src/library_heap.c
 SRC += src/library_work.c
@@ -4112,6 +4112,31 @@ test-match-worklist-frames: $(MATCH_WORKLIST_FRAMES_TEST_BIN) $(MATCH_WORKLIST_F
 		exit 1; \
 	fi
 	@echo 'PASS: fresh-frame mutant (ignores frame mentions) is killed'
+
+# The ground answer-set solver (native/asp) refines the verified reference
+# driver of the Lean answer-set development step for step: on the reference's
+# own programs (its controls, 40 random and 24 choice programs, exported once)
+# it returns the same model or the same certificate, byte for byte.
+ASP_CDNL_TEST_BIN = runtime/asp_cdnl_main_v1-$(BUILD_OBJ_TAG)
+$(ASP_CDNL_TEST_BIN): tests/asp/asp_cdnl_main_v1.c native/asp/asp_cdnl_v1.c native/asp/asp_cdnl_v1.h
+	@mkdir -p runtime
+	$(CC) $(CFLAGS) -Inative/asp -o $@ tests/asp/asp_cdnl_main_v1.c native/asp/asp_cdnl_v1.c $(LDFLAGS)
+
+.PHONY: test-asp-reference-driver
+test-all: test-asp-reference-driver
+test-asp-reference-driver: $(BIN) $(ASP_CDNL_TEST_BIN) tests/asp/reference_driver_programs.txt tests/asp/reference_driver_answers.txt tests/asp/reference_driver_enumerations.txt
+	@$(call cetta_exec,./$(ASP_CDNL_TEST_BIN)) tests/asp/reference_driver_programs.txt > runtime/test-asp-reference-driver.out
+	@diff -u tests/asp/reference_driver_answers.txt runtime/test-asp-reference-driver.out
+	@$(call cetta_exec,./$(ASP_CDNL_TEST_BIN)) --enumerate tests/asp/reference_driver_programs.txt > runtime/test-asp-reference-enumerate.out
+	@diff -u tests/asp/reference_driver_enumerations.txt runtime/test-asp-reference-enumerate.out
+	@$(call cetta_exec,./$(ASP_CDNL_TEST_BIN)) --check tests/asp/reference_driver_programs.txt
+	@$(call cetta_exec,./$(BIN)) --lang petta tests/petta/asp_library.metta > runtime/test-asp-library-petta.out 2>&1
+	@diff -u tests/petta/asp_library.expected runtime/test-asp-library-petta.out
+	@$(call cetta_exec,./$(BIN)) --lang petta tests/petta/asp_weight_rules.metta > runtime/test-asp-weight-rules.out 2>&1
+	@diff -u tests/petta/asp_weight_rules.expected runtime/test-asp-weight-rules.out
+	@CETTA_CLINGO_LIBRARY=/nonexistent/libclingo.so $(call cetta_exec,./$(BIN)) --lang petta tests/petta/asp_clingo_absent.metta > runtime/test-asp-clingo-absent.out 2>&1
+	@diff -u tests/petta/asp_clingo_absent.expected runtime/test-asp-clingo-absent.out
+	@echo "PASS: the answer-set solver answers and enumerates as the verified reference driver on its 69 programs, models and certificates identical; the C checker accepts every certificate and refuses truncated ones and those offered for programs with a stable model; weight rules read by the verified normalization; without clingo its heads stay as written"
 
 NATIVE_TERM_DEPTH_TEST_BIN = runtime/test_native_term_depth-$(BUILD_OBJ_TAG)
 $(NATIVE_TERM_DEPTH_TEST_BIN): tests/test_native_term_depth.c src/parser.c src/parser.h src/name_key.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(BUILD_CONFIG_HEADER)
@@ -26326,6 +26351,78 @@ else
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
 endif
 
+.PHONY: test-petta-native-sort
+test-petta-search-machine: test-petta-native-sort
+test-petta-native-sort: $(BIN) tests/petta/native_sort.metta tests/petta/native_sort.expected
+	@set -eu; \
+	fixture=tests/petta/native_sort.metta; \
+	expected=tests/petta/native_sort.expected; \
+	for route in X CETTA_OPEN_EQUATIONS_REFERENCE CETTA_PREPARED_PURE_REFERENCE; do \
+		env $$route=1 $(call cetta_exec,./$(BIN)) --lang petta $$fixture > runtime/test-native-sort.out 2>&1; \
+		diff -u $$expected runtime/test-native-sort.out; \
+	done; \
+	declined=$$(CETTA_OPEN_EQUATIONS_DEBUG=1 $(call cetta_exec,./$(BIN)) --lang petta $$fixture 2>&1 >/dev/null | \
+		grep -c 'decline sorted-\|decline memo-sorted' || true); \
+	if [ "$$declined" != 0 ]; then \
+		echo "FAIL: a function that sorts left the open-equation tier"; \
+		exit 1; \
+	fi
+	@echo "PASS: sort of one list is SWI's sort/2 on every route, and functions that sort stay in the open-equation tier"
+
+.PHONY: test-petta-list-destructuring
+test-petta-search-machine: test-petta-list-destructuring
+test-petta-list-destructuring: $(BIN) tests/petta/list_destructuring.metta tests/petta/list_destructuring.expected
+	@set -eu; \
+	fixture=tests/petta/list_destructuring.metta; \
+	expected=tests/petta/list_destructuring.expected; \
+	for route in X CETTA_OPEN_EQUATIONS_REFERENCE CETTA_PREPARED_PURE_REFERENCE; do \
+		env $$route=1 $(call cetta_exec,./$(BIN)) --lang petta $$fixture > runtime/test-list-destructuring.out 2>&1; \
+		diff -u $$expected runtime/test-list-destructuring.out; \
+	done
+	@echo "PASS: decons-atom, car-atom and cdr-atom answer as SWI-PeTTa on every route, elements bound late and cons chains included"
+
+.PHONY: test-petta-dynamic-heads
+test-petta-search-machine: test-petta-dynamic-heads
+test-petta-dynamic-heads: $(BIN) tests/petta/dynamic_heads.metta tests/petta/dynamic_heads.expected
+	@set -eu; \
+	fixture=tests/petta/dynamic_heads.metta; \
+	expected=tests/petta/dynamic_heads.expected; \
+	for route in X CETTA_OPEN_EQUATIONS_REFERENCE CETTA_PREPARED_PURE_REFERENCE; do \
+		env $$route=1 $(call cetta_exec,./$(BIN)) --lang petta $$fixture > runtime/test-dynamic-heads.out 2>&1; \
+		diff -u $$expected runtime/test-dynamic-heads.out; \
+	done; \
+	refused=$$(CETTA_PREPARED_PURE_DEBUG=1 $(call cetta_exec,./$(BIN)) --lang petta $$fixture 2>&1 >/dev/null | \
+		grep -c 'precheck decline: effect=3\|choice zero is not' || true); \
+	if [ "$$refused" != 0 ]; then \
+		echo "FAIL: a function over a run-time head, or with choice zero, left the compiled tier"; \
+		exit 1; \
+	fi
+	@echo "PASS: applications under run-time heads answer as SWI-PeTTa on every route, and their functions compile"
+
+.PHONY: test-petta-let-fresh-tuples
+test-petta-search-machine: test-petta-let-fresh-tuples
+test-petta-let-fresh-tuples: $(BIN) tests/petta/let_fresh_tuples.metta tests/petta/let_fresh_tuples.expected
+	@set -eu; \
+	fixture=tests/petta/let_fresh_tuples.metta; \
+	expected=tests/petta/let_fresh_tuples.expected; \
+	for route in X CETTA_OPEN_EQUATIONS_REFERENCE CETTA_PREPARED_PURE_REFERENCE; do \
+		env $$route=1 $(call cetta_exec,./$(BIN)) --lang petta $$fixture > runtime/test-let-fresh-tuples.out 2>&1; \
+		diff -u $$expected runtime/test-let-fresh-tuples.out; \
+	done
+	@echo "PASS: let patterns of fresh variables, and decons-atom met by a pair of them, answer as SWI-PeTTa on every route"
+
+.PHONY: test-petta-term-keys
+test-petta-search-machine: test-petta-term-keys
+test-petta-term-keys: $(BIN) tests/petta/term_keys.metta tests/petta/term_keys.expected
+	@set -eu; \
+	fixture=tests/petta/term_keys.metta; \
+	expected=tests/petta/term_keys.expected; \
+	for route in X CETTA_OPEN_EQUATIONS_REFERENCE CETTA_PREPARED_PURE_REFERENCE; do \
+		env $$route=1 $(call cetta_exec,./$(BIN)) --lang petta $$fixture > runtime/test-term-keys.out 2>&1; \
+		diff -u $$expected runtime/test-term-keys.out; \
+	done
+	@echo "PASS: lookups keyed by ground terms answer as SWI-PeTTa on every route, rows with variables in the key included"
+
 .PHONY: test-petta-let-pattern-head-destination-stats
 test-petta-let-pattern-head-destination-stats: $(BIN) tests/petta/let_pattern_head_destination.metta
 ifeq ($(ENABLE_RUNTIME_STATS),1)
@@ -41397,6 +41494,30 @@ refresh-he-compiled-reader-direct-v1:
 		--c-prefix he_extended_reader_direct_v1 \
 		--output-c "$(GSLT2PARSE_HE_EXTENDED_DIRECT_GENERATED_C)" \
 		--output-h "$(GSLT2PARSE_HE_EXTENDED_DIRECT_GENERATED_H)"
+
+# The checked-in HE cursor regenerates from this tree alone: the native
+# compilers and CeTTa's own Prolog oracles, with their cross-checks and the
+# emission seals.  The comparison with HE and PeTTa themselves, and the
+# refresh that reseals, are mk/external.mk's.
+test-he-compiled-reader-cursor-generated-v1: \
+		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		$(PARSER_PACK_GUARD_REF_V1_STREAM_BIN) \
+		$(PARSER_PACK_GUARDED_LEXICAL_PLAN_V1_STREAM_BIN) \
+		$(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_BIN)
+	@mkdir -p "$(GSLT2PARSE_GENERATED_CHECK_DIR)"
+	@candidate="$(GSLT2PARSE_GENERATED_CHECK_DIR)/he_reader_cursor_v1.generated.c"; \
+	python3 tools/test_he_reader_guarded_lexical_v1.py \
+		--chart-binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--scalar-exec-binary $(PARSER_PACK_GUARD_REF_V1_STREAM_BIN) \
+		--plan-binary $(PARSER_PACK_GUARDED_LEXICAL_PLAN_V1_STREAM_BIN) \
+		--exec-binary $(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_BIN) \
+		--generate-only --generated-c-output "$$candidate" > /dev/null; \
+	if ! cmp -s "$$candidate" "$(GSLT2PARSE_HE_CURSOR_GENERATED_C)"; then \
+		echo "FAIL: checked-in HE cursor is not generated from its LanguageDef"; \
+		sha256sum "$(GSLT2PARSE_HE_CURSOR_GENERATED_C)" "$$candidate"; \
+		exit 1; \
+	fi; \
+	echo "PASS: checked-in HE cursor regenerates byte-for-byte"
 
 test-he-compiled-reader-direct-generated-v1:
 	@mkdir -p "$(GSLT2PARSE_GENERATED_CHECK_DIR)"

@@ -27,6 +27,7 @@ from test_parser_pack_guard_plan_prime_v1 import evidence_stream
 from test_parser_pack_guard_plan_prime_v1 import profile_guard_row
 from test_parser_pack_guard_regular_v1 import answer_tag
 from test_parser_pack_guard_regular_v1 import native_row as guard_nfa_row
+from gslt2parse_oracles_v1 import ORACLES
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -139,14 +140,9 @@ def run_native(
 
 
 def run_petta(
-    petta_root: Path, input_path: Path, max_depth: int = 4096
+    input_path: Path, max_depth: int = 4096
 ) -> dict[str, object]:
-    script = (
-        petta_root
-        / "experiments"
-        / "gslt2parse_foundation"
-        / "he_reader_gslt_reference_v1.pl"
-    )
+    script = ORACLES / "he_reader_gslt_reference_v1.pl"
     completed = subprocess.run(
         [
             "swipl",
@@ -184,17 +180,12 @@ def run_petta(
     return row
 
 
-def pin_authorities(petta_root: Path, he_root: Path) -> None:
+def pin_authorities(he_root: Path) -> None:
     if authority_revision(he_root) != EXPECTED_REVISION:
         raise GateFailure("HE parser authority revision changed")
     if authority_digest(he_root) != EXPECTED_SOURCE_DIGEST:
         raise GateFailure("HE parser authority source changed")
-    reference = (
-        petta_root
-        / "experiments"
-        / "gslt2parse_foundation"
-        / "he_reader_gslt_reference_v1.pl"
-    )
+    reference = ORACLES / "he_reader_gslt_reference_v1.pl"
     if sha256(reference.read_bytes()).hexdigest() != EXPECTED_ACTION_REFERENCE_DIGEST:
         raise GateFailure("HE host action reference changed")
     reference_text = reference.read_text(encoding="utf-8")
@@ -318,11 +309,11 @@ def main() -> int:
         raise GateFailure("native guarded-reader binary is absent")
     if not petta_root.is_dir() or not he_root.is_dir():
         raise GateFailure("HE or PeTTa authority checkout is absent")
-    pin_authorities(petta_root, he_root)
+    pin_authorities(he_root)
 
     he_oracle = build_oracle(he_root)
     compiler_digest = sha256(REGULAR_COMPILER.read_bytes()).hexdigest()
-    abi = export_stream(petta_root, ABI_CASES["he"])
+    abi = export_stream(ABI_CASES["he"])
     guard_row = profile_guard_row(chart_binary, PROFILE)
     guard_nfa = guard_nfa_row(chart_binary, "he")
     guard_terms = tuple(str(term) for term in guard_nfa["terms"])
@@ -366,7 +357,7 @@ def main() -> int:
             else:
                 authority_disagreements += 1
             decision = expected_decision(expected)
-            petta = run_petta(petta_root, input_path)
+            petta = run_petta(input_path)
             if petta.get("decision") != decision:
                 raise GateFailure(
                     f"ratified HE contract and PeTTa LanguageDef differ for {label}"

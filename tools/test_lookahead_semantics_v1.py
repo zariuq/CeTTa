@@ -8,6 +8,7 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+from gslt2parse_oracles_v1 import ORACLES
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -147,8 +148,8 @@ def native_rows(binary: Path) -> dict[str, tuple[str, ...]]:
     return rows
 
 
-def petta_rows(petta_root: Path) -> tuple[dict[str, tuple[str, ...]], int]:
-    foundation = petta_root / "experiments" / "gslt2parse_foundation"
+def petta_rows() -> tuple[dict[str, tuple[str, ...]], int]:
+    foundation = ORACLES
     script = foundation / "test_lookahead_semantics_v1.pl"
     result = run_json(
         [
@@ -204,7 +205,7 @@ def main() -> int:
     arguments = parser.parse_args()
 
     c_rows = native_rows(arguments.binary.resolve())
-    prolog_rows, duplicate_derivations = petta_rows(arguments.petta_root.resolve())
+    prolog_rows, duplicate_derivations = petta_rows()
     if c_rows != prolog_rows:
         raise GateFailure("C and PeTTa lookahead answer sets differ")
     digest = matrix_digest(c_rows)

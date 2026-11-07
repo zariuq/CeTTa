@@ -369,6 +369,13 @@ Atom *petta_semantics_closed_list(Arena *arena, Atom *list);
  * type_error(list, Value): NULL with `*type_error` set. */
 Atom *petta_semantics_sort_value(Arena *arena, Atom *value, bool total,
                                  bool *type_error);
+/* PeTTa's `sort` of one value, SWI's sort/2: as msort, with each run of
+ * elements the standard order calls equal, which are == terms, kept once.
+ * Errors as petta_semantics_sort_value's. */
+Atom *petta_semantics_sort_unique_value(Arena *arena, Atom *value,
+                                        bool *type_error);
+/* Whether `head` is `sort`, whose one-argument call is SWI's sort/2. */
+bool petta_semantics_is_sort(SymbolId head);
 /* The errors the reference raises, as its catch gives them: Prolog's
  * error(Formal, Context) reads (Error Formal Context), and an unbound
  * context is a fresh variable.

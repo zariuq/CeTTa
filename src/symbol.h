@@ -696,7 +696,12 @@ static inline SymbolSpelling symbol_spelling(
     X(op_neq, "!=") \
     X(tensor_dot_bounds, "tensor:dot-bounds") \
     X(tensor_matvec_bounds, "tensor:matvec-bounds") \
-    X(petta_machine_spelling, "__petta_machine")
+    X(petta_machine_spelling, "__petta_machine") \
+    X(lib_asp_solve, "__cetta_lib_asp_solve") \
+    X(lib_asp_models, "__cetta_lib_asp_models") \
+    X(lib_asp_ground, "__cetta_lib_asp_ground") \
+    X(lib_asp_clingo_models, "__cetta_lib_asp_clingo_models") \
+    X(lib_asp_trace, "__cetta_lib_asp_trace")
 
 /* Libraries may publish native primitives under their public names. The
  * shared registry supplies dispatch and operand-observation capability;

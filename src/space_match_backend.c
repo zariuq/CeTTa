@@ -11734,6 +11734,7 @@ bool space_match_candidates_ids64(Space *s, const TermUniverse *universe,
     SymbolId head = header->sym_or_head;
     bool ground = true;
     bool numbers = false;
+    bool terms = false;
     for (CettaExprIndex c = 1u; c < len; c++) {
         if (columns[c] == CETTA_ATOM_ID_NONE) {
             ground = false;
@@ -11744,12 +11745,26 @@ bool space_match_candidates_ids64(Space *s, const TermUniverse *universe,
             return false;
         if (header->tag == ATOM_SYMBOL)
             continue;
+        /* A ground term is one id in the universe, which only an equal term
+         * has: a bound prefix keyed by it selects the rows a symbol would.
+         * A row holding a variable there stays an uncertain candidate, as
+         * it does under a symbol. */
+        if (header->tag == ATOM_EXPR &&
+            (header->aux32 & CETTA_TERM_HDR_HAS_VARS) == 0u) {
+            terms = true;
+            continue;
+        }
         if (header->tag != ATOM_GROUNDED ||
             (header->subtag != GV_INT && header->subtag != GV_STRING &&
              header->subtag != GV_BOOL))
             return false;
         numbers |= header->subtag == GV_INT;
     }
+    /* The numbers inside a term are not seen here: where HE's numbers meet
+     * other representations, such a term is no key; and a whole ground row
+     * is read by the exact index, which keys symbols and scalars. */
+    if (terms && (ground || he_numbers_promote()))
+        return false;
     if (space_has_proof_image(s, head) &&
         space_settle_proof_images(s) != SPACE_PROOF_IMAGE_READY) return false;
     space_dense_settle_for_head(s, head, len);
@@ -11779,8 +11794,11 @@ bool space_match_candidates_ids64(Space *s, const TermUniverse *universe,
      * may answer while the space has no trie and has scans left; a trie
      * answers once the space has one. */
     SpaceMatchNativeState *state = &s->match_backend.native;
-    if ((len > 2u && columns[1] == CETTA_ATOM_ID_NONE) || state->match_trie ||
-        state->cold_flat_scans < NATIVE_COLD_FLAT_SCAN_LIMIT)
+    /* The trie cuts a deep term to a wildcard and a cold scan reads every
+     * row, so a bound prefix holding a term is the prefix index's. */
+    if ((len > 2u && columns[1] == CETTA_ATOM_ID_NONE) ||
+        (!terms && (state->match_trie ||
+                    state->cold_flat_scans < NATIVE_COLD_FLAT_SCAN_LIMIT)))
         return false;
     /* A column index selects the one bound column before a last free one
      * when it holds a symbol or an integer (space_path_index_may_select). */

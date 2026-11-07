@@ -56357,9 +56357,13 @@ static bool prepared_pure_closed_invocation_plan(
             "active table mode", call);
     }
     bool defined = false;
+    bool dynamic = false;
     SpaceProgramToken effect_source = space_program_token(space);
-    CettaGsltQueryEffect effect = space_query_effect_for_head(
-        space, head->sym_id, &defined);
+    /* A call whose head a variable supplies is admitted when it runs, by the
+     * head it then has (prepared_pure_head_index), so it leaves the
+     * definition pure here. */
+    CettaGsltQueryEffect effect = space_query_static_effect_for_head(
+        space, head->sym_id, &defined, &dynamic);
     if (effect != CETTA_GSLT_QUERY_EFFECT_PURE || !defined) {
         /* A completed source classification refuses this strategy for every
          * operand. An incomplete analysis leaves defined false and stays
@@ -57731,6 +57735,10 @@ static bool petta_eval_open_may_delay(void *context, SymbolId head,
         return true;
     if (form != PETTA_FORM_NONE || petta_program_head_is_intrinsic(head) ||
         is_grounded_op(head) || grounded_op_is_type_pure(head))
+        return false;
+    /* SWI's sort/2 orders a list and drops duplicates: it answers with no
+     * goal delayed on a variable. */
+    if (arity == 1u && petta_semantics_is_sort(head))
         return false;
     return eval_context && eval_context->library_context &&
            eval_context->library_context->lib_prolog &&
@@ -59340,11 +59348,13 @@ tail_call: ;
             ? petta_semantics_form(head_id)
             : PETTA_FORM_NONE;
 
-    /* Nested synchronous Need drivers belong to the same top-level
-     * observation. Keep their revision-checked programs in that observation's
-     * cache instead of recompiling at each native callback boundary. */
+    /* Nested synchronous Need drivers and PeTTa's host-evaluated bodies
+     * belong to the same top-level observation. Keep their revision-checked
+     * programs in that observation's cache instead of recompiling at each
+     * call. */
     PreparedPureProgramCache *program_cache =
-        (language_id == CETTA_LANGUAGE_HE || language_id == CETTA_LANGUAGE_PRIME)
+        (language_id == CETTA_LANGUAGE_HE || language_id == CETTA_LANGUAGE_PRIME ||
+         language_id == CETTA_LANGUAGE_PETTA)
             ? eval_execution_prepared_cache() : NULL;
 #if CETTA_PRIME_EVAL_STACK
     if (!program_cache && language_id == CETTA_LANGUAGE_PRIME &&

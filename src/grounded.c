@@ -3561,6 +3561,17 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
         return scalar_truth ? atom_true(a) : atom_false(a);
     }
 
+    /* ── Equality of values (any atom type) ──────────────────────────────
+     * Past the scalar cases no operation below reads == or its negation, so
+     * they are answered here rather than after every other operation. */
+    if (head_id == g_builtin_syms.op_eq && nargs == 2) {
+        return atom_value_eq(args[0], args[1]) ? atom_true(a) : atom_false(a);
+    }
+    if (head_id == g_builtin_syms.op_neq && nargs == 2 &&
+        is_grounded_op(head_id)) {
+        return atom_value_eq(args[0], args[1]) ? atom_false(a) : atom_true(a);
+    }
+
     if (head_id == g_builtin_syms.println_bang) {
         if (nargs != 1)
             return grounded_incorrect_arity(a, head, args, nargs);
@@ -4216,15 +4227,6 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
             out[out_len++] = candidate;
         }
         return atom_expr(a, out, out_len);
-    }
-
-    /* ── Equality of values (any atom type) ────────────────────────────── */
-    if (head_id == g_builtin_syms.op_eq && nargs == 2) {
-        return atom_value_eq(args[0], args[1]) ? atom_true(a) : atom_false(a);
-    }
-    if (head_id == g_builtin_syms.op_neq && nargs == 2 &&
-        is_grounded_op(head_id)) {
-        return atom_value_eq(args[0], args[1]) ? atom_false(a) : atom_true(a);
     }
 
     /* ── Boolean ops ───────────────────────────────────────────────────── */

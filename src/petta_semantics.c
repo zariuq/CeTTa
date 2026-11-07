@@ -129,6 +129,7 @@ typedef struct {
     SymbolId length;
     SymbolId msort;
     SymbolId sort_atom;
+    SymbolId sort;
     SymbolId first_from_pair;
     SymbolId first;
     SymbolId second_from_pair;
@@ -439,6 +440,7 @@ static const PeTTaSymbolIds *petta_symbol_ids_refresh(void) {
         ids.length = symbol_intern_cstr(g_symbols, "length");
         ids.msort = symbol_intern_cstr(g_symbols, "msort");
         ids.sort_atom = symbol_intern_cstr(g_symbols, "sort-atom");
+        ids.sort = symbol_intern_cstr(g_symbols, "sort");
         ids.first_from_pair =
             symbol_intern_cstr(g_symbols, "first-from-pair");
         ids.first = symbol_intern_cstr(g_symbols, "first");
@@ -1322,6 +1324,52 @@ Atom *petta_semantics_sort_value(Arena *arena, Atom *value, bool total,
         return atom_unit(arena);
     *type_error = true;
     return NULL;
+}
+
+bool petta_semantics_is_sort(SymbolId head) {
+    return head != SYMBOL_ID_NONE && head == petta_symbol_ids()->sort;
+}
+
+/* A sorted sequence with each run of equal elements kept once, in the
+ * sequence's own representation; the sequence itself when it has no run. */
+static Atom *petta_sorted_unique(Arena *arena, Atom *sorted) {
+    if (!sorted || sorted->kind != ATOM_EXPR)
+        return sorted;
+    bool list = atom_is_list(sorted);
+    Atom *const *elems = list ? atom_list_elems(sorted) : sorted->expr.elems;
+    CettaExprLen length = list ? atom_list_len(sorted) : sorted->expr.len;
+    Atom **items = NULL;
+    CettaExprLen kept = 0u;
+    for (CettaExprLen index = 0u; index < length; index++) {
+        if (index > 0u) {
+            int ordering = 0;
+            if (!petta_semantics_term_compare(elems[index - 1u],
+                                              elems[index], &ordering))
+                return NULL;
+            if (ordering == 0) {
+                if (!items) {
+                    items = arena_alloc(arena, sizeof(*items) * (size_t)length);
+                    if (!items)
+                        return NULL;
+                    memcpy(items, elems, sizeof(*items) * (size_t)index);
+                    kept = index;
+                }
+                continue;
+            }
+        }
+        if (items)
+            items[kept++] = elems[index];
+    }
+    if (!items)
+        return sorted;
+    return list ? atom_list(arena, items, kept)
+                : atom_expr(arena, items, kept);
+}
+
+Atom *petta_semantics_sort_unique_value(Arena *arena, Atom *value,
+                                        bool *type_error) {
+    Atom *sorted = petta_semantics_sort_value(arena, value, false, type_error);
+    return sorted ? petta_sorted_unique(arena, sorted) : NULL;
 }
 
 Atom *petta_semantics_materialize_closed_logical_list(
