@@ -55132,6 +55132,7 @@ static __attribute__((noinline)) bool petta_eval_machine_run(
                 " table_generator_rounds=%" PRIu64
                 " table_generator_rounds_reused=%" PRIu64
                 " table_scc_completions=%" PRIu64
+                " table_scc_merges=%" PRIu64
                 " table_answer_replays=%" PRIu64
                 " table_forward_edges=%" PRIu64
                 " table_forward_view_reads=%" PRIu64
@@ -55349,6 +55350,7 @@ static __attribute__((noinline)) bool petta_eval_machine_run(
                 stats.table_generator_rounds,
                 stats.table_generator_rounds_reused,
                 stats.table_scc_completions,
+                stats.table_scc_merges,
                 stats.table_answer_replays,
                 table_stats.forward_edges,
                 table_stats.forward_view_reads,

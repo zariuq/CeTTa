@@ -695,7 +695,8 @@ static inline SymbolSpelling symbol_spelling(
     X(work_exists, "work-exists") \
     X(op_neq, "!=") \
     X(tensor_dot_bounds, "tensor:dot-bounds") \
-    X(tensor_matvec_bounds, "tensor:matvec-bounds")
+    X(tensor_matvec_bounds, "tensor:matvec-bounds") \
+    X(petta_machine_spelling, "__petta_machine")
 
 /* Libraries may publish native primitives under their public names. The
  * shared registry supplies dispatch and operand-observation capability;

@@ -226,6 +226,25 @@
 !(get-type (LooseBox "w"))
 !(collapse (loose-size (LooseBox "w")))
 
+; 19. Every tabled declaration holds for its relation, whatever relations are
+;     declared after it: declarations of distinct relations commute, and a
+;     tabled relation answers each distinct answer of its least fixed point
+;     once.  SWI-PeTTa's lib_tabling loads each declaration from one source
+;     named user, so a later declaration replaces the earlier table and dt-t
+;     runs untabled, answering once per derivation (z = c1 and z = c0).
+;     Decided by the coherence rule (2026-11-06); upstream repair candidate:
+;     load each declaration from its own source.
+; SWI-PeTTa: true, true, true, (true true)
+!(import! &self (library lib_tabling))
+!(tabled (dt-t $x $y))
+!(tabled (dt-i $x $y))
+(= (dt-p c0 c1) True)
+(= (dt-p c1 c1) True)
+(= (dt-t $x $y) (let True (dt-i $x $z) (dt-i $z $y)))
+(= (dt-i $x $y) (dt-t $y $x))
+(= (dt-i $x $y) (dt-p $y $x))
+!(collapse (dt-t c1 c0))
+
 ; Python boolean interchange (qualified separately by test-python-objects,
 ; since this fixture also runs without Python): true/false argument values
 ; become Python bool, including in legacy py-call. Janus's default atom

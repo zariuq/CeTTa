@@ -496,6 +496,17 @@ bool petta_semantics_construct_value_allocation_bound(
     CettaExprLen length, size_t *bytes_out);
 Atom *petta_semantics_materialize_value(
     Arena *arena, Atom *value);
+/* Whether the materialized values of `left` and `right` are atom_value_eq,
+ * decided without building either.  UNDECIDED where materializing is the
+ * only exact answer: an improper or open cons chain, a chain spelling a quote
+ * or closure, a rational term, a resource with identity, or a value whose
+ * structural facts are unknown. */
+typedef enum {
+    PETTA_OBSERVED_EQUAL,
+    PETTA_OBSERVED_DIFFERENT,
+    PETTA_OBSERVED_UNDECIDED,
+} PeTTaObservedEquality;
+PeTTaObservedEquality petta_semantics_observed_equal(Atom *left, Atom *right);
 /* True exactly when materialize_value has an observable open-cons carrier
  * to erase.  Opaque closures and quoted syntax are not observation
  * boundaries, so carriers below them deliberately do not count.  Allocation

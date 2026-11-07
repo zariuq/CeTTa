@@ -1138,6 +1138,9 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
   [CETTA_RUNTIME_COUNTER_HE_CANONICAL_LAST_CALL] = "he-canonical-last-call",
   [CETTA_RUNTIME_COUNTER_PREPARED_PURE_REFUTED_CALL] = "prepared-pure-refuted-call",
   [CETTA_RUNTIME_COUNTER_PREPARED_PURE_SEALED_FOLD] = "prepared-pure-sealed-fold",
+  [CETTA_RUNTIME_COUNTER_OPEN_EQUATION_HEAD_DESTINATION_HANDOFF] = "open-equation-head-destination-handoff",
+  [CETTA_RUNTIME_COUNTER_PREPARED_PURE_OBSERVED_EQUALITY] = "prepared-pure-observed-equality",
+  [CETTA_RUNTIME_COUNTER_PREPARED_PURE_ENTRY_GUARD_REFUTED] = "prepared-pure-entry-guard-refuted",
 };
 
 #endif

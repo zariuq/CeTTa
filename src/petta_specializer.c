@@ -3535,8 +3535,9 @@ static Atom *petta_rewrite_specialized_body(
  * its body raises fails that path alone (DispatchErrorScope).  Specializing
  * the parameter to a known callee would make the call direct and drop the
  * handler, so the call is written `(reduce (callee args...))`, which is the
- * dispatch it was, as PeTTa's translator writes it.  Patterns and quoted
- * syntax are data and stay as they are.
+ * dispatch it was, as PeTTa's translator writes it.  Quoted syntax, match
+ * patterns and lambda parameters are data and stay as they are; a let's
+ * pattern is translated as an expression, so its dispatches are kept too.
  */
 static bool petta_specializer_var_selected(
     const Atom *atom, const VarId *selected, size_t selected_len) {
@@ -3583,12 +3584,17 @@ static Atom *petta_specializer_keep_dispatches(
     }
     for (CettaExprIndex index = 0u; index < len; index++) {
         Atom *child = atom->expr.elems[index];
-        /* A binder's pattern, and a lambda's parameters, are not code. */
+        /* A lambda's parameters, and match and unify patterns, are not
+         * code.  A let's (and chain's) pattern is: PeTTa translates it as an
+         * expression, so a subterm headed by a variable is a run-time
+         * dispatch, and keeps its handler when that variable is
+         * specialized. */
+        bool binder_pattern =
+            (form == PETTA_FORM_LET && len == 4u && index == 1u) ||
+            (form == PETTA_FORM_CHAIN && len == 4u && index == 2u);
         bool pattern =
             index == 0u ||
             (form == PETTA_FORM_LAMBDA && index == 1u) ||
-            (form == PETTA_FORM_LET && len == 4u && index == 1u) ||
-            (form == PETTA_FORM_CHAIN && len == 4u && index == 2u) ||
             (head_id == g_builtin_syms.match && len == 4u &&
              index == 2u) ||
             (head_id == g_builtin_syms.unify && index <= 2u);
@@ -3596,7 +3602,10 @@ static Atom *petta_specializer_keep_dispatches(
             petta_specializer_argument_mode(context, atom, index);
         if (context->declined)
             return NULL;
-        if (pattern || mode == PETTA_SPECIALIZE_DATA) {
+        if (binder_pattern) {
+            elements[index] = petta_specializer_keep_dispatches(
+                context, child, selected, selected_len, depth + 1u);
+        } else if (pattern || mode == PETTA_SPECIALIZE_DATA) {
             elements[index] = child;
         } else if (head_id == g_builtin_syms.let_star && len == 3u &&
                    index == 1u && child->kind == ATOM_EXPR) {
@@ -3614,13 +3623,15 @@ static Atom *petta_specializer_keep_dispatches(
                 pairs[pair] = binding;
                 if (binding->kind != ATOM_EXPR || binding->expr.len != 2u)
                     continue;
-                Atom *value = petta_specializer_keep_dispatches(
-                    context, binding->expr.elems[1], selected,
+                Atom *bound = petta_specializer_keep_dispatches(
+                    context, binding->expr.elems[0], selected,
                     selected_len, depth + 1u);
+                Atom *value = bound ? petta_specializer_keep_dispatches(
+                    context, binding->expr.elems[1], selected,
+                    selected_len, depth + 1u) : NULL;
                 if (!value)
                     return NULL;
-                pairs[pair] = atom_expr2(
-                    &context->scratch, binding->expr.elems[0], value);
+                pairs[pair] = atom_expr2(&context->scratch, bound, value);
             }
             elements[index] = atom_expr(
                 &context->scratch, pairs, child->expr.len);

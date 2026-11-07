@@ -16737,6 +16737,10 @@ static uint32_t get_atom_types_mode_inferred(Space *s, Arena *a, Atom *atom,
             count = he_close_type_array(s, a, &types, count, 0u, budget);
         break;
     case ATOM_EXPR:
+        /* HE gives the empty expression no type, as get-type does: a row
+         * declared for () is not read, so () fits any argument type. */
+        if (atom->expr.len == 0u)
+            break;
         if (atom_is_list_form(atom)) {
             types = cetta_malloc(sizeof(Atom *));
             types[0] = atom_list_type(a);
