@@ -1533,6 +1533,9 @@ bool space_type_stamps_hold(Space *s, const Atom *atom);
  * get_atom_types answers them) where the store holds or reads them by shape,
  * else -1; and whether one of them is exactly `type`. */
 int space_type_stamps_count(Space *s, Arena *a, Atom *atom);
+/* The same count for get_atom_types_structural's answers: an expression's
+ * own top-level declarations do not count. */
+int space_type_stamps_structural_count(Space *s, Arena *a, Atom *atom);
 /* A prepared pure run's typing scope, read once where it enters: enter
  * returns the enclosing run's space, which leave restores. */
 const Space *space_type_stamps_run_enter(Space *s);

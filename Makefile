@@ -4475,12 +4475,7 @@ chaining-tutorial: test-chaining-tutorial
 		-outdir=results/chaining-tutorial docs/chaining-tutorial.tex
 	cp results/chaining-tutorial/chaining-tutorial.pdf docs/chaining-tutorial.pdf
 
-.PHONY: test-pattern-lean-models
 PATTERN_MODEL_RECEIPT ?= results/directional-matching/model-source-receipt.json
-test-pattern-lean-models:
-	@test -n "$(METTAPEDIA_ROOT)" || { echo 'Set METTAPEDIA_ROOT to the Lean project root'; exit 1; }
-	@python3 tests/support/check_pattern_lean_models.py --mettapedia "$(METTAPEDIA_ROOT)" \
-		--receipt "$(PATTERN_MODEL_RECEIPT)"
 
 test-all: test-term-order-predicates
 test-term-order-predicates: $(BIN)
@@ -14600,46 +14595,6 @@ test-metamath-copy-actions-direct-petta-v1: \
 		MetamathCopyEachRowMatchingRefusedPeTTaV1; \
 	printf '%s\n' '(MetamathCopyActionsDirectPeTTaV1Summary 5 1 1 0)'
 
-.PHONY: test-metamath-bulk-actions-direct-swi-compat-v1
-test-metamath-bulk-actions-direct-swi-compat-v1: \
-		test-metamath-insert-each-matching-direct-petta-v1 \
-		test-metamath-copy-actions-direct-petta-v1 \
-		$(METAMATH_ROW_ACTIONS_DIRECT_PETTA_PROGRAM_V1)
-	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" || \
-		! -x "$(GSLT2PARSE_PETTA_ROOT)/run.sh" ]]; then \
-		echo 'set GSLT2PARSE_PETTA_ROOT to the pinned SWI PeTTa checkout'; \
-		exit 2; \
-	fi
-	@set -euo pipefail; \
-	work=$$(mktemp -d runtime/metamath-bulk-actions-swi-compat.XXXXXX); \
-	trap 'rm -rf "$$work"' EXIT INT TERM; \
-	for item in \
-		'$(METAMATH_INSERT_EACH_MATCHING_DIRECT_PETTA_QUERY_V1):1,47p:MetamathInsertEachMatchingMatchedPeTTaV1' \
-		'$(METAMATH_INSERT_EACH_MATCHING_DIRECT_PETTA_QUERY_V1):49,78p:MetamathInsertEachMatchingMissedPeTTaV1' \
-		'$(METAMATH_INSERT_EACH_MATCHING_DIRECT_PETTA_QUERY_V1):80,119p:MetamathInsertEachMatchingRefusedPeTTaV1' \
-		'$(METAMATH_COPY_ACTIONS_DIRECT_PETTA_QUERY_V1):1,34p:MetamathCopyEachRowAcceptedPeTTaV1' \
-		'$(METAMATH_COPY_ACTIONS_DIRECT_PETTA_QUERY_V1):36,68p:MetamathCopyEachRowRefusedPeTTaV1' \
-		'$(METAMATH_COPY_ACTIONS_DIRECT_PETTA_QUERY_V1):70,121p:MetamathCopyEachRowMatchingAcceptedPeTTaV1' \
-		'$(METAMATH_COPY_ACTIONS_DIRECT_PETTA_QUERY_V1):123,167p:MetamathCopyEachRowMatchingRefusedPeTTaV1' \
-		'$(METAMATH_COPY_ACTIONS_DIRECT_PETTA_QUERY_V1):169,204p:MetamathCopyEachRowMatchingMissedPeTTaV1'; do \
-		source=$${item%%:*}; rest=$${item#*:}; \
-		range=$${rest%%:*}; observation=$${rest#*:}; \
-		awk '1' $(METAMATH_ROW_ACTIONS_DIRECT_PETTA_PROGRAM_V1) \
-			> "$$work/run.metta"; \
-		sed -n "$$range" "$$source" >> "$$work/run.metta"; \
-		c_output=$$(timeout 30 $(CETTA_PETTA_DIRECT_RUN_V1) \
-			"$$work/run.metta" 2>&1); \
-		swi_output=$$(cd "$(GSLT2PARSE_PETTA_ROOT)" && timeout 30 \
-			sh run.sh --silent "$(abspath $$work/run.metta)" 2>&1); \
-		printf '%s\n' "$$c_output" | rg -F -q "$$observation"; \
-		printf '%s\n' "$$swi_output" | rg -F -q "$$observation"; \
-		c_observed=$$(printf '%s\n' "$$c_output" | rg '^[(][(]'); \
-		swi_observed=$$(printf '%s\n' "$$swi_output" | rg '^[(][(]'); \
-		test "$$(printf '%s\n' "$$c_observed" | wc -l)" -eq 1; \
-		test "$$(printf '%s\n' "$$swi_observed" | wc -l)" -eq 1; \
-		test "$$c_observed" = "$$swi_observed"; \
-	done; \
-	printf '%s\n' '(MetamathBulkActionsDirectSwiCompatibilityV1Summary 8 8 0)'
 
 .PHONY: prepare-metamath-state-transition-direct-petta-benchmark-v1
 prepare-metamath-state-transition-direct-petta-benchmark-v1: \
@@ -14652,42 +14607,6 @@ prepare-metamath-state-transition-direct-entry-mode-benchmark-v1: \
 	@printf '%s\n' \
 		$(METAMATH_STATE_TRANSITION_DIRECT_ENTRY_MODE_BENCHMARK_V1)
 
-.PHONY: benchmark-metamath-state-transition-direct-closed-petta-v1
-benchmark-metamath-state-transition-direct-closed-petta-v1: \
-		$(METAMATH_STATE_TRANSITION_DIRECT_ENTRY_MODE_BENCHMARK_V1) \
-		$(BIN)
-	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" || \
-		! -x "$(GSLT2PARSE_PETTA_ROOT)/run.sh" ]]; then \
-		echo 'set GSLT2PARSE_PETTA_ROOT to the pinned SWI PeTTa checkout'; \
-		exit 2; \
-	fi
-	@set -euo pipefail; \
-	swi_output=$$(cd "$(GSLT2PARSE_PETTA_ROOT)" && timeout 30 \
-		sh run.sh --silent \
-		"$(abspath $(METAMATH_STATE_TRANSITION_DIRECT_ENTRY_MODE_BENCHMARK_V1))" \
-		2>&1); \
-	printf '%s\n' "$$swi_output" | rg -F -q \
-		'((MetamathStateTransitionDirectEntryModeGoodV1 AcceptedV1 SequenceFourV1))'; \
-	printf '%s\n' "$$swi_output" | rg -F -q \
-		'((MetamathStateTransitionDirectEntryModeRepeatedV1 RefusedKeyPresentV1 RollbackSequenceZeroV1))'; \
-	set +e; \
-	c_output=$$(timeout $(METAMATH_STATE_TRANSITION_DIRECT_ENTRY_MODE_TIMEOUT_V1) \
-		$(CETTA_PETTA_DIRECT_RUN_V1) \
-		$(METAMATH_STATE_TRANSITION_DIRECT_ENTRY_MODE_BENCHMARK_V1) \
-		2>&1); \
-	c_status=$$?; \
-	set -e; \
-	if [[ $$c_status -eq 124 ]]; then \
-		printf 'c.Petta exceeded %ss on the direct closed residual; SWI PeTTa produced both expected observations.\n' \
-			$(METAMATH_STATE_TRANSITION_DIRECT_ENTRY_MODE_TIMEOUT_V1); \
-		exit 124; \
-	fi; \
-	test $$c_status -eq 0; \
-	printf '%s\n' "$$c_output" | rg -F -q \
-		'((MetamathStateTransitionDirectEntryModeGoodV1 AcceptedV1 SequenceFourV1))'; \
-	printf '%s\n' "$$c_output" | rg -F -q \
-		'((MetamathStateTransitionDirectEntryModeRepeatedV1 RefusedKeyPresentV1 RollbackSequenceZeroV1))'; \
-	printf '%s\n' 'c.Petta and SWI PeTTa produced both expected observations.'
 
 .PHONY: test-metamath-cogslt-petta-state-transition-direct-v1
 test-metamath-cogslt-petta-state-transition-direct-v1: \
@@ -15222,49 +15141,7 @@ test-metamath-cogslt-petta-direct-source-severance-core-v1: \
 		CETTA_DIRECT_PETTA_SOURCE_CONTROL_DIGEST="$(SOURCE_RESOLUTION_CONTROL_COMPILER_DIGEST_V1)" \
 		$(METAMATH_DIRECT_SOURCE_SEVERANCE_V1)
 
-.PHONY: probe-metamath-cogslt-petta-direct-corpus-v1 \
-		probe-metamath-cogslt-petta-direct-corpus-core-v1
-probe-metamath-cogslt-petta-direct-corpus-v1:
-	@$(MAKE) --no-print-directory BUILD=core ENABLE_LIB_PROLOG=0 \
-		BIN=$(METAMATH_COGSLT_CORE_BIN_V1) \
-		METAMATH_TEST_ROOT_V1="$(METAMATH_TEST_ROOT_V1)" \
-		METAMATH_DIRECT_PETTA_CORPUS_RESULTS_V1="$(METAMATH_DIRECT_PETTA_CORPUS_RESULTS_V1)" \
-		METAMATH_DIRECT_PETTA_CORPUS_LIMIT_V1="$(METAMATH_DIRECT_PETTA_CORPUS_LIMIT_V1)" \
-		METAMATH_DIRECT_PETTA_CORPUS_FILTER_V1="$(METAMATH_DIRECT_PETTA_CORPUS_FILTER_V1)" \
-		METAMATH_DIRECT_PETTA_CORPUS_STAGE_TIMEOUT_V1="$(METAMATH_DIRECT_PETTA_CORPUS_STAGE_TIMEOUT_V1)" \
-		probe-metamath-cogslt-petta-direct-corpus-core-v1
 
-probe-metamath-cogslt-petta-direct-corpus-core-v1: \
-		test-metamath-cogslt-petta-direct-outcome-driver-core-v1 \
-		$(LANGDEF_DIRECT_PETTA_CORPUS_DRIVER_V1)
-	@if [[ -z "$(strip $(METAMATH_TEST_ROOT_V1))" ]]; then \
-		echo 'set METAMATH_TEST_ROOT_V1 to the conformance corpus checkout'; \
-		exit 1; \
-	fi
-	@if [[ "$$(git -C "$(METAMATH_TEST_ROOT_V1)" rev-parse HEAD)" != \
-		"$(METAMATH_TEST_COMMIT_V1)" ]]; then \
-		echo 'Metamath conformance corpus revision does not match the pinned suite'; \
-		exit 1; \
-	fi
-	@if ! git -C "$(METAMATH_TEST_ROOT_V1)" diff --quiet || \
-		! git -C "$(METAMATH_TEST_ROOT_V1)" diff --cached --quiet; then \
-		echo 'Metamath conformance corpus tracked source is dirty'; \
-		exit 1; \
-	fi
-	@bash -n $(LANGDEF_DIRECT_PETTA_CORPUS_DRIVER_V1)
-	@shellcheck $(LANGDEF_DIRECT_PETTA_CORPUS_DRIVER_V1)
-	@CETTA_DIRECT_PETTA_ROOT="$(CURDIR)" \
-		CETTA_DIRECT_PETTA_BIN="$(abspath $(BIN))" \
-		CETTA_DIRECT_PETTA_PROGRAM="$(abspath $(METAMATH_STATE_PROOF_BRIDGE_DIRECT_PROGRAM_V1))" \
-		CETTA_DIRECT_PETTA_QUERY="$(abspath $(METAMATH_STATE_PROOF_OCCURRENCE_OUTCOME_QUERY_V1))" \
-		CETTA_DIRECT_PETTA_MANIFEST="$(abspath $(METAMATH_DIRECT_RUNTIME_MANIFEST_V1))" \
-		CETTA_DIRECT_PETTA_TIMEOUT="$(METAMATH_DIRECT_PETTA_CORPUS_STAGE_TIMEOUT_V1)" \
-		CETTA_DIRECT_PETTA_DRIVER="$(abspath $(LANGDEF_DIRECT_PETTA_OUTCOME_DRIVER_V1))" \
-		CETTA_DIRECT_PETTA_TEST_ROOT="$(abspath $(METAMATH_TEST_ROOT_V1))" \
-		CETTA_DIRECT_PETTA_RESULTS="$(abspath $(METAMATH_DIRECT_PETTA_CORPUS_RESULTS_V1))" \
-		CETTA_DIRECT_PETTA_CORPUS_LIMIT="$(METAMATH_DIRECT_PETTA_CORPUS_LIMIT_V1)" \
-		CETTA_DIRECT_PETTA_CORPUS_FILTER="$(METAMATH_DIRECT_PETTA_CORPUS_FILTER_V1)" \
-		$(LANGDEF_DIRECT_PETTA_CORPUS_DRIVER_V1)
 
 $(METAMATH_PROOF_COMPILER_DIRECT_PROGRAM_V1): \
 		$(METAMATH_PROOF_COMPILER_DIRECT_SOURCES_V1) \
@@ -15456,40 +15333,6 @@ test-metamath-cogslt-petta-direct-v1: \
 		test-metamath-cogslt-petta-proof-trace-direct-v1
 	@printf '%s\n' '(MetamathCoGSLTDirectCeTTaPeTTaV1Summary 5 0)'
 
-.PHONY: test-metamath-cogslt-petta-direct-swi-compat-v1
-# Cross-runner target-language canaries only.  Full .mm sources stay runtime
-# parser inputs under CeTTa; they are never materialized into PeTTa programs to
-# manufacture an SWI compatibility case.
-test-metamath-cogslt-petta-direct-swi-compat-v1: \
-		test-metamath-cogslt-petta-direct-v1
-	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" || \
-		! -x "$(GSLT2PARSE_PETTA_ROOT)/run.sh" ]]; then \
-		echo 'set GSLT2PARSE_PETTA_ROOT to the pinned SWI PeTTa checkout'; \
-		exit 1; \
-	fi
-	@set -euo pipefail; \
-	work=$$(mktemp -d runtime/metamath-direct-swi-compat.XXXXXX); \
-	trap 'rm -rf "$$work"' EXIT INT TERM; \
-	awk '1' $(METAMATH_STATE_TRANSITION_DIRECT_PROGRAM_V1) \
-		$(METAMATH_STATE_TRANSITION_DIRECT_QUERY_V1) \
-		> "$$work/state.metta"; \
-	awk '1' $(METAMATH_PROOF_TRACE_DIRECT_PROGRAM_V1) \
-		$(METAMATH_PROOF_TRACE_DIRECT_QUERY_V1) \
-		> "$$work/proof.metta"; \
-	for lane in relation state proof; do \
-		case "$$lane" in \
-			relation) source=$(GSLT_DIRECT_PETTA_QUERY_V1) ;; \
-			state) source="$$work/state.metta" ;; \
-			proof) source="$$work/proof.metta" ;; \
-		esac; \
-		timeout 60 $(CETTA_PETTA_DIRECT_RUN_V1) "$$source" \
-			> "$$work/$$lane.cetta" 2> "$$work/$$lane.cetta.stderr"; \
-		(cd "$(GSLT2PARSE_PETTA_ROOT)" && timeout 60 \
-			sh run.sh --silent "$(abspath $$source)") \
-			> "$$work/$$lane.swi" 2> "$$work/$$lane.swi.stderr"; \
-		cmp -s "$$work/$$lane.cetta" "$$work/$$lane.swi"; \
-	done; \
-	printf '%s\n' '(MetamathCoGSLTDirectSWIPeTTaCompatV1Summary 3 0)'
 
 PETTA_READER_MEMORY_BENCH_COUNT ?= 10000
 PETTA_READER_MEMORY_BENCH_TIMEOUT ?= 300
@@ -15514,39 +15357,7 @@ bench-petta-reader-memory-v1: $(BIN)
 		tools/benchmark_petta_reader_memory_v1.sh \
 		"$(PETTA_READER_MEMORY_BENCH_COUNT)"
 
-.PHONY: bench-metamath-verifier-memory-v1
-bench-metamath-verifier-memory-v1:
-	@if [[ -z "$(strip $(METAMATH_VERIFIER_MEMORY_BENCH_SOURCE))" || \
-		! -f "$(METAMATH_VERIFIER_MEMORY_BENCH_SOURCE)" ]]; then \
-		echo 'set METAMATH_VERIFIER_MEMORY_BENCH_SOURCE to a Metamath source'; \
-		exit 1; \
-	fi
-	@METAMATH_VERIFIER_BENCH_TIMEOUT="$(METAMATH_VERIFIER_MEMORY_BENCH_TIMEOUT)" \
-		tools/benchmark_metamath_verifier_memory_v1.sh \
-		"$(METAMATH_VERIFIER_MEMORY_BENCH_SOURCE)"
 
-.PHONY: bench-metamath-direct-petta-reference-memory-v1
-bench-metamath-direct-petta-reference-memory-v1: \
-		$(LANGDEF_DIRECT_PETTA_OUTCOME_DRIVER_V1) \
-		$(METAMATH_STATE_PROOF_BRIDGE_DIRECT_PROGRAM_V1) \
-		$(METAMATH_STATE_PROOF_OCCURRENCE_OUTCOME_QUERY_V1) \
-		$(METAMATH_DIRECT_COMPILED_CURSOR_V1) \
-		$(METAMATH_DIRECT_RUNTIME_LOCK_V1) \
-		$(METAMATH_DIRECT_RUNTIME_MANIFEST_V1) \
-		$(METAMATH_COGSLT_CORE_BIN_V1)
-	@if [[ -z "$(strip $(METAMATH_VERIFIER_MEMORY_BENCH_SOURCE))" || \
-		! -f "$(METAMATH_VERIFIER_MEMORY_BENCH_SOURCE)" ]]; then \
-		echo 'set METAMATH_VERIFIER_MEMORY_BENCH_SOURCE to a Metamath source'; \
-		exit 2; \
-	fi
-	@CETTA_DIRECT_PETTA_DRIVER="$(abspath $(LANGDEF_DIRECT_PETTA_OUTCOME_DRIVER_V1))" \
-		CETTA_DIRECT_PETTA_BIN="$(abspath $(METAMATH_COGSLT_CORE_BIN_V1))" \
-		CETTA_DIRECT_PETTA_PROGRAM="$(abspath $(METAMATH_STATE_PROOF_BRIDGE_DIRECT_PROGRAM_V1))" \
-		CETTA_DIRECT_PETTA_QUERY="$(abspath $(METAMATH_STATE_PROOF_OCCURRENCE_OUTCOME_QUERY_V1))" \
-		CETTA_DIRECT_PETTA_MANIFEST="$(abspath $(METAMATH_DIRECT_RUNTIME_MANIFEST_V1))" \
-		METAMATH_VERIFIER_BENCH_TIMEOUT="$(METAMATH_VERIFIER_MEMORY_BENCH_TIMEOUT)" \
-		tools/benchmark_metamath_verifier_memory_v1.sh \
-		"$(METAMATH_VERIFIER_MEMORY_BENCH_SOURCE)"
 
 .PHONY: bench-petta-sequence-fold-memory-v1
 bench-petta-sequence-fold-memory-v1: $(BIN)
@@ -15576,54 +15387,7 @@ bench-petta-program-memory-v1: $(BIN)
 		tools/benchmark_petta_program_memory_v1.sh \
 		"$(PETTA_PROGRAM_MEMORY_BENCH_SOURCE)"
 
-.PHONY: bench-metamath-cogslt-petta-direct-program-memory-v1 \
-		bench-metamath-cogslt-petta-direct-program-memory-core-v1
-bench-metamath-cogslt-petta-direct-program-memory-v1:
-	@$(MAKE) --no-print-directory BUILD=core ENABLE_LIB_PROLOG=0 \
-		BIN=$(METAMATH_COGSLT_CORE_BIN_V1) \
-		METAMATH_DIRECT_PETTA_MEMORY_BENCH_SOURCE="$(METAMATH_DIRECT_PETTA_MEMORY_BENCH_SOURCE)" \
-		METAMATH_DIRECT_PETTA_MEMORY_BENCH_STATS="$(METAMATH_DIRECT_PETTA_MEMORY_BENCH_STATS)" \
-		PETTA_PROGRAM_MEMORY_BENCH_TIMEOUT="$(PETTA_PROGRAM_MEMORY_BENCH_TIMEOUT)" \
-		bench-metamath-cogslt-petta-direct-program-memory-core-v1
 
-bench-metamath-cogslt-petta-direct-program-memory-core-v1: \
-		$(LANGDEF_DIRECT_PETTA_OUTCOME_DRIVER_V1) \
-		$(METAMATH_STATE_PROOF_BRIDGE_DIRECT_PROGRAM_V1) \
-		$(METAMATH_STATE_PROOF_OCCURRENCE_OUTCOME_QUERY_V1) \
-		$(METAMATH_DIRECT_COMPILED_CURSOR_V1) \
-		$(METAMATH_DIRECT_RUNTIME_LOCK_V1) \
-		$(METAMATH_DIRECT_RUNTIME_MANIFEST_V1) \
-		$(BIN)
-	@if [[ "$(ENABLE_PYTHON)" != 0 || "$(LIB_PROLOG_ENABLED)" != 0 ]]; then \
-		echo 'the direct PeTTa memory benchmark requires the C-only build'; \
-		exit 1; \
-	fi
-	@if ldd $(BIN) $(METAMATH_DIRECT_COMPILED_CURSOR_V1) | \
-		rg -qi 'python|libswipl|prolog'; \
-		then exit 1; fi
-	@if [[ -z "$(strip $(METAMATH_DIRECT_PETTA_MEMORY_BENCH_SOURCE))" || \
-		! -f "$(METAMATH_DIRECT_PETTA_MEMORY_BENCH_SOURCE)" ]]; then \
-		echo 'set METAMATH_DIRECT_PETTA_MEMORY_BENCH_SOURCE to a Metamath source'; \
-		exit 1; \
-	fi
-	@mkdir -p "$(dir $(METAMATH_DIRECT_PETTA_MEMORY_BENCH_STATS))"
-	@set -euo pipefail; \
-	work=$$(mktemp -d runtime/metamath-direct-petta-memory.XXXXXX); \
-	trap 'rm -rf "$$work"' EXIT INT TERM; \
-	/usr/bin/time -f 'elapsed_seconds=%e maxrss_kb=%M' \
-		-o "$(METAMATH_DIRECT_PETTA_MEMORY_BENCH_STATS)" \
-		env CETTA_DIRECT_PETTA_ROOT="$(CURDIR)" \
-		CETTA_DIRECT_PETTA_BIN="$(abspath $(BIN))" \
-		CETTA_DIRECT_PETTA_PROGRAM="$(abspath $(METAMATH_STATE_PROOF_BRIDGE_DIRECT_PROGRAM_V1))" \
-		CETTA_DIRECT_PETTA_QUERY="$(abspath $(METAMATH_STATE_PROOF_OCCURRENCE_OUTCOME_QUERY_V1))" \
-		CETTA_DIRECT_PETTA_MANIFEST="$(abspath $(METAMATH_DIRECT_RUNTIME_MANIFEST_V1))" \
-		CETTA_DIRECT_PETTA_TIMEOUT="$(PETTA_PROGRAM_MEMORY_BENCH_TIMEOUT)" \
-		$(LANGDEF_DIRECT_PETTA_OUTCOME_DRIVER_V1) \
-		"$(METAMATH_DIRECT_PETTA_MEMORY_BENCH_SOURCE)" \
-		>"$$work/outcome"; \
-	test "$$(rg -c '^[(]MetamathDirectPeTTaOutcomeV1 ' "$$work/outcome")" -eq 1; \
-	cat "$(METAMATH_DIRECT_PETTA_MEMORY_BENCH_STATS)"; \
-	cat "$$work/outcome"
 
 $(METAMATH_STATE_TRANSITION_PETTA_PROGRAM_V1) \
 		$(METAMATH_STATE_TRANSITION_PETTA_RECEIPT_V1) &: \
@@ -15675,142 +15439,7 @@ $(METAMATH_STATE_TRANSITION_PETTA_DRIFTED_PROGRAM_V1): \
 		$(METAMATH_STATE_TRANSITION_PETTA_PROGRAM_V1)
 	sed '$$a; artifact-drift-canary-v1' $< >$@
 
-.PHONY: test-petta-finite-horn-runtime-oracle-v1
-test-petta-finite-horn-runtime-oracle-v1: \
-		$(PETTA_FINITE_HORN_RUNTIME_CANARY_PROGRAM_V1) \
-		$(PETTA_FINITE_HORN_RUNTIME_CANARY_RECEIPT_V1)
-	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" || \
-		! -x "$(GSLT2PARSE_PETTA_ROOT)/run.sh" ]]; then \
-		echo 'set GSLT2PARSE_PETTA_ROOT to the pinned PeTTa checkout'; \
-		exit 1; \
-	fi
-	@set -euo pipefail; \
-	before=$$(sha256sum \
-		$(PETTA_FINITE_HORN_RUNTIME_CANARY_PROGRAM_V1) | cut -d' ' -f1); \
-	receipt_before=$$(sha256sum \
-		$(PETTA_FINITE_HORN_RUNTIME_CANARY_RECEIPT_V1) | cut -d' ' -f1); \
-	$(RELATIONAL_STATE_TRANSITION_LANGDEF_CORE_V1) oracle-petta-horn \
-		--runtime $(PETTA_FINITE_HORN_RUNTIME_V1) \
-		--source $(PETTA_FINITE_HORN_RUNTIME_CANARY_V1) \
-		--epilogue $(PETTA_FINITE_HORN_RUNTIME_CANARY_QUERY_V1) \
-		--out $(PETTA_FINITE_HORN_RUNTIME_CANARY_PROGRAM_V1) \
-		--receipt-out \
-		$(PETTA_FINITE_HORN_RUNTIME_CANARY_RECEIPT_V1) >/dev/null; \
-	after=$$(sha256sum \
-		$(PETTA_FINITE_HORN_RUNTIME_CANARY_PROGRAM_V1) | cut -d' ' -f1); \
-	receipt_after=$$(sha256sum \
-		$(PETTA_FINITE_HORN_RUNTIME_CANARY_RECEIPT_V1) | cut -d' ' -f1); \
-	test "$$before" = "$$after"; \
-	test "$$receipt_before" = "$$receipt_after"; \
-	$(RELATIONAL_STATE_TRANSITION_LANGDEF_CORE_V1) oracle-petta-horn-check \
-		--runtime $(PETTA_FINITE_HORN_RUNTIME_V1) \
-		--source $(PETTA_FINITE_HORN_RUNTIME_CANARY_V1) \
-		--epilogue $(PETTA_FINITE_HORN_RUNTIME_CANARY_QUERY_V1) \
-		--program $(PETTA_FINITE_HORN_RUNTIME_CANARY_PROGRAM_V1) \
-		--receipt $(PETTA_FINITE_HORN_RUNTIME_CANARY_RECEIPT_V1) \
-		>/dev/null; \
-	work=$$(mktemp -d runtime/petta-horn-joint-mutation.XXXXXX); \
-	trap 'rm -rf "$$work"' EXIT INT TERM; \
-	sed '$$a; joint-artifact-receipt-mutation-v1' \
-		$(PETTA_FINITE_HORN_RUNTIME_CANARY_PROGRAM_V1) \
-		>"$$work/program.metta"; \
-	forged_digest=$$(sha256sum "$$work/program.metta" | cut -d' ' -f1); \
-	awk -v digest="$$forged_digest" \
-		'$$1 == "(artifact-sha256" { \
-			print "  (artifact-sha256 \"" digest "\"))"; next \
-		} { print }' \
-		$(PETTA_FINITE_HORN_RUNTIME_CANARY_RECEIPT_V1) \
-		>"$$work/receipt.metta"; \
-	if $(RELATIONAL_STATE_TRANSITION_LANGDEF_CORE_V1) oracle-petta-horn-check \
-		--runtime $(PETTA_FINITE_HORN_RUNTIME_V1) \
-		--source $(PETTA_FINITE_HORN_RUNTIME_CANARY_V1) \
-		--epilogue $(PETTA_FINITE_HORN_RUNTIME_CANARY_QUERY_V1) \
-		--program "$$work/program.metta" \
-		--receipt "$$work/receipt.metta" >/dev/null 2>&1; then \
-		echo 'joint PeTTa Horn artifact/receipt mutation was admitted' >&2; \
-		exit 1; \
-	fi; \
-	output=$$(cd "$(GSLT2PARSE_PETTA_ROOT)" && timeout 30 \
-		sh run.sh --silent \
-		"$(abspath $(PETTA_FINITE_HORN_RUNTIME_CANARY_PROGRAM_V1))" 2>&1); \
-	printf '%s\n' "$$output" | rg -F -q \
-		'(CanaryAncestorV1 CanaryAliceV1 CanaryBobV1)'; \
-	printf '%s\n' "$$output" | rg -F -q \
-		'(CanaryAncestorV1 CanaryAliceV1 CanaryCaraV1)'; \
-	printf '%s\n' "$$output" | rg -F -q \
-		'(CanaryAncestorV1 CanaryAliceV1 CanaryDaraV1)'; \
-	receipt=$$(rg -o \
-		'FiniteHornPackageDigestV1 sha256-[0-9a-f]{64}' \
-		$(PETTA_FINITE_HORN_RUNTIME_CANARY_PROGRAM_V1)); \
-	printf '%s\n' "$$output" | rg -F -q "$$receipt"; \
-	test "$$(printf '%s\n' "$$output" | rg -c '^[(][)]$$')" -eq 1; \
-	printf '%s\n' '(PeTTaFiniteHornRuntimeV1Summary 7 7 0)'
 
-.PHONY: test-metamath-cogslt-petta-state-transition-horn-oracle-v1
-test-metamath-cogslt-petta-state-transition-horn-oracle-v1: \
-		test-petta-finite-horn-runtime-oracle-v1 \
-		$(METAMATH_STATE_TRANSITION_PETTA_PROGRAM_V1) \
-		$(METAMATH_STATE_TRANSITION_PETTA_RECEIPT_V1) \
-		$(METAMATH_STATE_TRANSITION_PETTA_SEVERED_PROGRAM_V1) \
-		$(METAMATH_STATE_TRANSITION_PETTA_SEVERED_RECEIPT_V1) \
-		$(METAMATH_STATE_TRANSITION_PETTA_DRIFTED_PROGRAM_V1)
-	@set -euo pipefail; \
-	$(RELATIONAL_STATE_TRANSITION_LANGDEF_CORE_V1) oracle-petta-horn-check \
-		--runtime $(PETTA_FINITE_HORN_RUNTIME_V1) \
-		--source $(RELATIONAL_STATE_TRANSITION_CORE_V1) \
-		--source $(RELATIONAL_STATE_EXECUTION_LINK_V1) \
-		--source $(METAMATH_STATE_TRANSITION_EXECUTION_CANARY_V1) \
-		--source $(METAMATH_STATE_TRANSITION_EXEC_IR_FACTS_V1) \
-		--epilogue $(METAMATH_STATE_TRANSITION_PETTA_QUERY_V1) \
-		--program $(METAMATH_STATE_TRANSITION_PETTA_PROGRAM_V1) \
-		--receipt $(METAMATH_STATE_TRANSITION_PETTA_RECEIPT_V1) \
-		>/dev/null; \
-	if $(RELATIONAL_STATE_TRANSITION_LANGDEF_CORE_V1) oracle-petta-horn-check \
-		--runtime $(PETTA_FINITE_HORN_RUNTIME_V1) \
-		--source $(RELATIONAL_STATE_TRANSITION_CORE_V1) \
-		--source $(RELATIONAL_STATE_EXECUTION_LINK_V1) \
-		--source $(METAMATH_STATE_TRANSITION_EXECUTION_CANARY_V1) \
-		--source $(METAMATH_STATE_TRANSITION_EXEC_IR_FACTS_V1) \
-		--epilogue $(METAMATH_STATE_TRANSITION_PETTA_QUERY_V1) \
-		--program $(METAMATH_STATE_TRANSITION_PETTA_DRIFTED_PROGRAM_V1) \
-		--receipt $(METAMATH_STATE_TRANSITION_PETTA_RECEIPT_V1) \
-		>/dev/null 2>&1; then exit 1; fi; \
-	if $(RELATIONAL_STATE_TRANSITION_LANGDEF_CORE_V1) oracle-petta-horn-check \
-		--runtime $(PETTA_FINITE_HORN_RUNTIME_V1) \
-		--source $(RELATIONAL_STATE_TRANSITION_CORE_V1) \
-		--source $(METAMATH_STATE_TRANSITION_PETTA_DELETED_LINK_V1) \
-		--source $(METAMATH_STATE_TRANSITION_EXECUTION_CANARY_V1) \
-		--source $(METAMATH_STATE_TRANSITION_EXEC_IR_FACTS_V1) \
-		--epilogue $(METAMATH_STATE_TRANSITION_PETTA_QUERY_V1) \
-		--program $(METAMATH_STATE_TRANSITION_PETTA_PROGRAM_V1) \
-		--receipt $(METAMATH_STATE_TRANSITION_PETTA_RECEIPT_V1) \
-		>/dev/null 2>&1; then exit 1; fi; \
-	$(RELATIONAL_STATE_TRANSITION_LANGDEF_CORE_V1) oracle-petta-horn-check \
-		--runtime $(PETTA_FINITE_HORN_RUNTIME_V1) \
-		--source $(RELATIONAL_STATE_TRANSITION_CORE_V1) \
-		--source $(METAMATH_STATE_TRANSITION_PETTA_DELETED_LINK_V1) \
-		--source $(METAMATH_STATE_TRANSITION_EXECUTION_CANARY_V1) \
-		--source $(METAMATH_STATE_TRANSITION_EXEC_IR_FACTS_V1) \
-		--epilogue $(METAMATH_STATE_TRANSITION_PETTA_QUERY_V1) \
-		--program $(METAMATH_STATE_TRANSITION_PETTA_SEVERED_PROGRAM_V1) \
-		--receipt $(METAMATH_STATE_TRANSITION_PETTA_SEVERED_RECEIPT_V1) \
-		>/dev/null; \
-	output=$$(cd "$(GSLT2PARSE_PETTA_ROOT)" && timeout 60 \
-		sh run.sh --silent \
-		"$(abspath $(METAMATH_STATE_TRANSITION_PETTA_PROGRAM_V1))" 2>&1); \
-	printf '%s\n' "$$output" | rg -F -q \
-		'((MetamathStateTransitionPeTTaGoodV1 AcceptedV1 SequenceFourV1))'; \
-	printf '%s\n' "$$output" | rg -F -q \
-		'((MetamathStateTransitionPeTTaRepeatedV1 RefusedKeyPresentV1 RollbackSequenceZeroV1))'; \
-	severed=$$(cd "$(GSLT2PARSE_PETTA_ROOT)" && timeout 60 \
-		sh run.sh --silent \
-		"$(abspath $(METAMATH_STATE_TRANSITION_PETTA_SEVERED_PROGRAM_V1))" 2>&1); \
-	test "$$(printf '%s\n' "$$severed" | rg -c '^[(][)]$$')" -eq 2; \
-	if printf '%s\n' "$$severed" | \
-		rg -q 'MetamathStateTransitionPeTTa(Good|Repeated)V1'; then \
-		exit 1; \
-	fi; \
-	printf '%s\n' '(MetamathStateTransitionPeTTaV1Summary 185 2 2 1 1 0)'
 
 $(METAMATH_PROOF_TRACE_PETTA_PROGRAM_V1) \
 		$(METAMATH_PROOF_TRACE_PETTA_RECEIPT_V1) &: \
@@ -15859,69 +15488,10 @@ $(METAMATH_PROOF_TRACE_PETTA_SEVERED_PROGRAM_V1) \
 		--out $(METAMATH_PROOF_TRACE_PETTA_SEVERED_PROGRAM_V1) \
 		--receipt-out $(METAMATH_PROOF_TRACE_PETTA_SEVERED_RECEIPT_V1)
 
-.PHONY: test-metamath-cogslt-petta-proof-trace-horn-oracle-v1
-test-metamath-cogslt-petta-proof-trace-horn-oracle-v1: \
-		test-metamath-cogslt-proof-trace-semantics-v1 \
-		test-petta-finite-horn-runtime-oracle-v1 \
-		$(METAMATH_PROOF_TRACE_PETTA_PROGRAM_V1) \
-		$(METAMATH_PROOF_TRACE_PETTA_RECEIPT_V1) \
-		$(METAMATH_PROOF_TRACE_PETTA_SEVERED_PROGRAM_V1) \
-		$(METAMATH_PROOF_TRACE_PETTA_SEVERED_RECEIPT_V1)
-	@set -euo pipefail; \
-	before=$$(sha256sum \
-		$(METAMATH_PROOF_TRACE_PETTA_PROGRAM_V1) | cut -d' ' -f1); \
-	receipt_before=$$(sha256sum \
-		$(METAMATH_PROOF_TRACE_PETTA_RECEIPT_V1) | cut -d' ' -f1); \
-	$(RELATIONAL_STATE_TRANSITION_LANGDEF_CORE_V1) oracle-petta-horn \
-		--runtime $(PETTA_FINITE_HORN_RUNTIME_V1) \
-		$(foreach source,$(METAMATH_PROOF_TRACE_PETTA_SOURCES_V1),--source $(source)) \
-		--epilogue $(METAMATH_PROOF_TRACE_PETTA_QUERY_V1) \
-		--out $(METAMATH_PROOF_TRACE_PETTA_PROGRAM_V1) \
-		--receipt-out $(METAMATH_PROOF_TRACE_PETTA_RECEIPT_V1) \
-		>/dev/null; \
-	after=$$(sha256sum \
-		$(METAMATH_PROOF_TRACE_PETTA_PROGRAM_V1) | cut -d' ' -f1); \
-	receipt_after=$$(sha256sum \
-		$(METAMATH_PROOF_TRACE_PETTA_RECEIPT_V1) | cut -d' ' -f1); \
-	test "$$before" = "$$after"; \
-	test "$$receipt_before" = "$$receipt_after"; \
-	$(RELATIONAL_STATE_TRANSITION_LANGDEF_CORE_V1) oracle-petta-horn-check \
-		--runtime $(PETTA_FINITE_HORN_RUNTIME_V1) \
-		$(foreach source,$(METAMATH_PROOF_TRACE_PETTA_SOURCES_V1),--source $(source)) \
-		--epilogue $(METAMATH_PROOF_TRACE_PETTA_QUERY_V1) \
-		--program $(METAMATH_PROOF_TRACE_PETTA_PROGRAM_V1) \
-		--receipt $(METAMATH_PROOF_TRACE_PETTA_RECEIPT_V1) >/dev/null; \
-	output=$$(cd "$(GSLT2PARSE_PETTA_ROOT)" && timeout 60 \
-		sh run.sh --silent \
-		"$(abspath $(METAMATH_PROOF_TRACE_PETTA_PROGRAM_V1))" 2>&1); \
-	printf '%s\n' "$$output" | rg -F -q \
-		'((MetamathProofTracePeTTaNormalV1 AcceptedV1))'; \
-	printf '%s\n' "$$output" | rg -F -q \
-		'((MetamathProofTracePeTTaCompressedV1 AcceptedV1))'; \
-	printf '%s\n' "$$output" | rg -F -q \
-		'((MetamathProofTracePeTTaNormalEvidenceV1 '; \
-	printf '%s\n' "$$output" | rg -F -q \
-		'((MetamathProofTracePeTTaCompressedEvidenceV1 '; \
-	test "$$(printf '%s\n' "$$output" | rg -c '^[(][)]$$')" -eq 1; \
-	severed=$$(cd "$(GSLT2PARSE_PETTA_ROOT)" && timeout 60 \
-		sh run.sh --silent \
-		"$(abspath $(METAMATH_PROOF_TRACE_PETTA_SEVERED_PROGRAM_V1))" 2>&1); \
-	test "$$(printf '%s\n' "$$severed" | rg -c '^[(][)]$$')" -eq 5; \
-	if printf '%s\n' "$$severed" | \
-		rg -q 'MetamathProofTracePeTTa(Normal|Compressed)(Evidence)?V1'; then \
-		exit 1; \
-	fi; \
-	printf '%s\n' '(MetamathProofTracePeTTaV1Summary 173 4 4 1 1 0)'
 
 # Optional semantic oracle only.  The authoritative Metamath compiler targets
 # below must neither depend on this route nor contain its Horn vocabulary.
 .PHONY: test-metamath-cogslt-petta-horn-oracle-v1 \
-		test-metamath-cogslt-petta-horn-oracle-core-v1
-test-metamath-cogslt-petta-horn-oracle-v1:
-	@$(MAKE) --no-print-directory BUILD=core ENABLE_LIB_PROLOG=0 \
-		BIN=$(METAMATH_COGSLT_CORE_BIN_V1) \
-		GSLT2PARSE_COMPILER_ROOT="$(GSLT2PARSE_COMPILER_ROOT)" \
-		GSLT2PARSE_PETTA_ROOT="$(GSLT2PARSE_PETTA_ROOT)" \
 		test-metamath-cogslt-petta-horn-oracle-core-v1
 
 test-metamath-cogslt-petta-horn-oracle-core-v1: \
@@ -17936,265 +17506,12 @@ test-metamath-cogslt-proof-mutations-v1: test-metamath-cogslt-langdef-v1 \
 		<<<"$$mutation_output"; \
 	printf '%s\n' '(MetamathCoGSLTProofMutationV1Summary 7 7 0)'
 
-.PHONY: test-metamath-cogslt-set-mm-v1 \
-	test-metamath-cogslt-set-mm-core-v1
-test-metamath-cogslt-set-mm-v1:
-	@$(MAKE) --no-print-directory BUILD=core ENABLE_LIB_PROLOG=0 \
-		BIN=$(METAMATH_COGSLT_CORE_BIN_V1) \
-		GSLT2PARSE_COMPILER_ROOT="$(GSLT2PARSE_COMPILER_ROOT)" \
-		METAMATH_SET_MM_V1="$(METAMATH_SET_MM_V1)" \
-		test-metamath-cogslt-set-mm-core-v1
 
-test-metamath-cogslt-set-mm-core-v1: test-metamath-cogslt-langdef-v1
-	@if [[ "$(ENABLE_PYTHON)" != 0 || "$(LIB_PROLOG_ENABLED)" != 0 ]]; then \
-		echo 'the Metamath set.mm gate requires the C-only core build'; \
-		exit 1; \
-	fi
-	@if ldd $(BIN) $(LANGDEF_COMPILER_V1_BIN) | rg -qi 'python|libswipl'; \
-		then exit 1; fi
-	@set -euo pipefail; \
-	corpus='$(METAMATH_SET_MM_V1)'; \
-	if [[ -z "$$corpus" ]]; then \
-		echo 'set METAMATH_SET_MM_V1 to the canonical set.mm corpus'; \
-		exit 1; \
-	fi; \
-	if [[ ! -f "$$corpus" ]]; then \
-		echo "Metamath corpus is not a regular file: $$corpus"; \
-		exit 1; \
-	fi; \
-	actual_digest=$$(sha256sum "$$corpus" | cut -d' ' -f1); \
-	if [[ "$$actual_digest" != "$(METAMATH_SET_MM_SHA256_V1)" ]]; then \
-		echo "Metamath corpus digest mismatch: $$actual_digest"; \
-		exit 1; \
-	fi; \
-	import_output=$$($(CETTA_BIN_INVOKE) --lang prime \
-		-e '!(import! &self langdef)' \
-		-e '!(bind! &metamath-langdef (langdef:load "$(METAMATH_LANGDEF_MANIFEST_V1)"))' \
-		-e "!(println! (langdef:import-file &metamath-langdef \"$$corpus\"))"); \
-	if printf '%s\n' "$$import_output" | rg -q '\(Error '; then \
-		printf '%s\n' "$$import_output" >&2; \
-		exit 1; \
-	fi; \
-	printf '%s\n' "$$import_output" | rg -q \
-		'^\(LangDef:Imported MetamathV1 "[0-9a-f]{64}" $(METAMATH_SET_MM_IMPORT_COUNT_V1)\)$$'; \
-	cli_output=$$($(CETTA_BIN_INVOKE) --lang metamath "$$corpus"); \
-	printf '%s\n' "$$cli_output" | rg -q \
-		'^\(LangDef:RunAccepted MetamathV1 "[0-9a-f]{64}" $(METAMATH_SET_MM_IMPORT_COUNT_V1)\)$$'; \
-	printf '%s\n' \
-		'(MetamathCoGSLTCliSetMmV1Summary 1 1 0 "$(METAMATH_SET_MM_SHA256_V1)" $(METAMATH_SET_MM_IMPORT_COUNT_V1))'; \
-	printf '%s\n' \
-		'(MetamathCoGSLTSetMmV1Summary 1 1 0 "$(METAMATH_SET_MM_SHA256_V1)" $(METAMATH_SET_MM_IMPORT_COUNT_V1))'
 
-.PHONY: test-metamath-cogslt-corpus-differential-v1 \
-		test-metamath-cogslt-corpus-differential-core-v1
-test-metamath-cogslt-corpus-differential-v1:
-	@$(MAKE) --no-print-directory BUILD=core ENABLE_LIB_PROLOG=0 \
-		BIN=$(METAMATH_COGSLT_CORE_BIN_V1) \
-		GSLT2PARSE_COMPILER_ROOT="$(GSLT2PARSE_COMPILER_ROOT)" \
-		METAMATH_TEST_ROOT_V1="$(METAMATH_TEST_ROOT_V1)" \
-		METAMATH_MMLEAN4_ROOT_V1="$(METAMATH_MMLEAN4_ROOT_V1)" \
-		METAMATH_MMLEAN4_BIN_V1="$(METAMATH_MMLEAN4_BIN_V1)" \
-		test-metamath-cogslt-corpus-differential-core-v1
 
-test-metamath-cogslt-corpus-differential-core-v1: \
-		test-metamath-cogslt-langdef-v1 \
-		$(LANGDEF_IMPORT_VERDICT_DRIVER_V1)
-	@if [[ "$(ENABLE_PYTHON)" != 0 || "$(LIB_PROLOG_ENABLED)" != 0 ]]; then \
-		echo 'the Metamath corpus differential requires the C-only core build'; \
-		exit 1; \
-	fi
-	@if ldd $(BIN) $(LANGDEF_COMPILER_V1_BIN) | rg -qi 'python|libswipl'; \
-		then exit 1; fi
-	@if [[ -z "$(strip $(METAMATH_TEST_ROOT_V1))" ]]; then \
-		echo 'set METAMATH_TEST_ROOT_V1 to the conformance corpus checkout'; \
-		exit 1; \
-	fi
-	@if [[ -z "$(strip $(METAMATH_MMLEAN4_ROOT_V1))" || \
-		-z "$(strip $(METAMATH_MMLEAN4_BIN_V1))" ]]; then \
-		echo 'set METAMATH_MMLEAN4_ROOT_V1 and METAMATH_MMLEAN4_BIN_V1'; \
-		exit 1; \
-	fi
-	@if [[ "$$(git -C "$(METAMATH_TEST_ROOT_V1)" rev-parse HEAD)" != \
-		"$(METAMATH_TEST_COMMIT_V1)" ]]; then \
-		echo 'Metamath conformance corpus revision does not match the pinned suite'; \
-		exit 1; \
-	fi
-	@if ! git -C "$(METAMATH_TEST_ROOT_V1)" diff --quiet || \
-		! git -C "$(METAMATH_TEST_ROOT_V1)" diff --cached --quiet; then \
-		echo 'Metamath conformance corpus tracked source is dirty'; \
-		exit 1; \
-	fi
-	@if [[ "$$(git -C "$(METAMATH_MMLEAN4_ROOT_V1)" rev-parse HEAD)" != \
-		"$(METAMATH_MMLEAN4_COMMIT_V1)" ]]; then \
-		echo 'mm-lean4 source revision does not match the pinned oracle'; \
-		exit 1; \
-	fi
-	@if ! git -C "$(METAMATH_MMLEAN4_ROOT_V1)" diff --quiet || \
-		! git -C "$(METAMATH_MMLEAN4_ROOT_V1)" diff --cached --quiet; then \
-		echo 'mm-lean4 tracked source is dirty'; \
-		exit 1; \
-	fi
-	@sh -n $(LANGDEF_IMPORT_VERDICT_DRIVER_V1)
-	@shellcheck $(LANGDEF_IMPORT_VERDICT_DRIVER_V1)
-	@set -uo pipefail; \
-	suite="$(METAMATH_TEST_ROOT_V1)/run-testsuite-all"; \
-	tests_root="$(METAMATH_TEST_ROOT_V1)/tests"; \
-	runtime_root="$(CURDIR)"; \
-	runtime_bin="$$(realpath $(BIN))"; \
-	manifest="$$(realpath $(METAMATH_LANGDEF_MANIFEST_V1))"; \
-	driver="$$(realpath $(LANGDEF_IMPORT_VERDICT_DRIVER_V1))"; \
-	mmlean="$$(realpath $(METAMATH_MMLEAN4_BIN_V1))"; \
-	if [[ ! -f "$$suite" || ! -d "$$tests_root" || \
-		! -x "$$runtime_bin" || ! -f "$$manifest" || \
-		! -x "$$driver" || ! -x "$$mmlean" ]]; then \
-		echo 'corpus differential resource is missing or invalid'; \
-		exit 1; \
-	fi; \
-	total=0; ours_checked=0; oracle_checked=0; agreement=0; \
-	failures=0; harness_failures=0; \
-	while IFS=$$'\t' read -r suite_expected relative; do \
-		total=$$((total + 1)); \
-		file="$$tests_root/$$relative"; \
-		if [[ ! -f "$$file" ]]; then \
-			printf 'missing corpus database: %s\n' "$$relative" >&2; \
-			failures=$$((failures + 1)); \
-			continue; \
-		fi; \
-		if CETTA_LANGDEF_ROOT="$$runtime_root" \
-			CETTA_LANGDEF_BIN="$$runtime_bin" \
-			CETTA_LANGDEF_MANIFEST="$$manifest" \
-			"$$driver" "$$file" >/dev/null 2>&1; then \
-			ours=pass; \
-		else \
-			status=$$?; \
-			case "$$status" in \
-				1) ours=fail ;; \
-				*) ours=harness ;; \
-			esac; \
-		fi; \
-		directory=$$(dirname "$$file"); \
-		basename=$$(basename "$$file"); \
-		if (cd "$$directory" && \
-			timeout 300 "$$mmlean" "$$basename" >/dev/null 2>&1); then \
-			oracle=pass; \
-		else \
-			status=$$?; \
-			case "$$status" in \
-				1) oracle=fail ;; \
-				*) oracle=harness ;; \
-			esac; \
-		fi; \
-		if [[ "$$ours" == harness || "$$oracle" == harness ]]; then \
-			printf 'harness failure: %s (generated=%s oracle=%s)\n' \
-				"$$relative" "$$ours" "$$oracle" >&2; \
-			harness_failures=$$((harness_failures + 1)); \
-			continue; \
-		fi; \
-		if [[ "$$ours" == "$$suite_expected" ]]; then \
-			ours_checked=$$((ours_checked + 1)); \
-		else \
-			printf 'spec mismatch: %s (expected=%s generated=%s)\n' \
-				"$$relative" "$$suite_expected" "$$ours" >&2; \
-			failures=$$((failures + 1)); \
-		fi; \
-		if [[ "$$oracle" == "$$suite_expected" ]]; then \
-			oracle_checked=$$((oracle_checked + 1)); \
-		else \
-			printf 'oracle/corpus mismatch: %s (expected=%s oracle=%s)\n' \
-				"$$relative" "$$suite_expected" "$$oracle" >&2; \
-			failures=$$((failures + 1)); \
-		fi; \
-		if [[ "$$ours" == "$$oracle" ]]; then \
-			agreement=$$((agreement + 1)); \
-		else \
-			printf 'unexplained differential: %s (generated=%s oracle=%s)\n' \
-				"$$relative" "$$ours" "$$oracle" >&2; \
-			failures=$$((failures + 1)); \
-		fi; \
-	done < <(awk '$$1 == "pass" || $$1 == "fail" { \
-		gsub(/\\/, "", $$2); print $$1 "\t" $$2 \
-	}' "$$suite"); \
-	if [[ "$$total" -ne $(METAMATH_TEST_CASE_COUNT_V1) || \
-		"$$ours_checked" -ne $(METAMATH_TEST_CASE_COUNT_V1) || \
-		"$$oracle_checked" -ne $(METAMATH_TEST_CASE_COUNT_V1) || \
-		"$$agreement" -ne $(METAMATH_TEST_CASE_COUNT_V1) || \
-		"$$failures" -ne 0 || \
-		"$$harness_failures" -ne 0 ]]; then \
-		exit 1; \
-	fi; \
-	printf '%s\n' \
-		'(MetamathCoGSLTCorpusDifferentialV1Summary $(METAMATH_TEST_CASE_COUNT_V1) $(METAMATH_TEST_CASE_COUNT_V1) $(METAMATH_TEST_CASE_COUNT_V1) $(METAMATH_TEST_CASE_COUNT_V1) 0 0 "$(METAMATH_TEST_COMMIT_V1)" "$(METAMATH_MMLEAN4_COMMIT_V1)")'
 
 # Optional whole-corpus oracle for auditing the direct authority.  This target
 # is deliberately absent from the authoritative compilation dependency graph.
-.PHONY: test-metamath-cogslt-generated-relational-corpus-oracle-v1
-test-metamath-cogslt-generated-relational-corpus-oracle-v1: \
-		test-metamath-cogslt-langdef-v1 \
-		$(LANGDEF_PROOF_VERDICT_DRIVER_V1)
-	@if [[ -z "$(strip $(METAMATH_TEST_ROOT_V1))" ]]; then \
-		echo 'set METAMATH_TEST_ROOT_V1 to the conformance corpus checkout'; \
-		exit 1; \
-	fi
-	@sh -n $(LANGDEF_PROOF_VERDICT_DRIVER_V1)
-	@shellcheck $(LANGDEF_PROOF_VERDICT_DRIVER_V1)
-	@set -uo pipefail; \
-	suite="$(METAMATH_TEST_ROOT_V1)/run-testsuite-all"; \
-	tests_root="$(METAMATH_TEST_ROOT_V1)/tests"; \
-	registry_root="$$(realpath langdef)"; \
-	runtime_bin="$$(realpath $(BIN))"; \
-	manifest="$$(realpath $(METAMATH_LANGDEF_MANIFEST_V1))"; \
-	driver="$$(realpath $(LANGDEF_PROOF_VERDICT_DRIVER_V1))"; \
-	if [[ ! -f "$$suite" || ! -d "$$tests_root" || \
-		! -d "$$registry_root" || ! -x "$$runtime_bin" || \
-		! -f "$$manifest" || ! -x "$$driver" ]]; then \
-		echo 'generated relational corpus resource is missing or invalid'; \
-		exit 1; \
-	fi; \
-	total=0; checked=0; failures=0; harness_failures=0; \
-	while IFS=$$'\t' read -r suite_expected relative; do \
-		total=$$((total + 1)); \
-		file="$$tests_root/$$relative"; \
-		if [[ ! -f "$$file" ]]; then \
-			printf 'missing corpus database: %s\n' "$$relative" >&2; \
-			failures=$$((failures + 1)); \
-			continue; \
-		fi; \
-		if timeout 300 env \
-			CETTA_LANGDEF_ROOT="$$registry_root" \
-			CETTA_LANGDEF_BIN="$$runtime_bin" \
-			CETTA_LANGDEF_MANIFEST="$$manifest" \
-			CETTA_LANGDEF_PROOF_BACKEND=generated-relational-audit-v1 \
-			"$$driver" "$$file" >/dev/null 2>&1; then \
-			ours=pass; \
-		else \
-			status=$$?; \
-			case "$$status" in \
-				1) ours=fail ;; \
-				*) ours=harness ;; \
-			esac; \
-		fi; \
-		if [[ "$$ours" == harness ]]; then \
-			printf 'harness failure: %s\n' "$$relative" >&2; \
-			harness_failures=$$((harness_failures + 1)); \
-			continue; \
-		fi; \
-		if [[ "$$ours" == "$$suite_expected" ]]; then \
-			checked=$$((checked + 1)); \
-		else \
-			printf 'spec mismatch: %s (expected=%s generated=%s)\n' \
-				"$$relative" "$$suite_expected" "$$ours" >&2; \
-			failures=$$((failures + 1)); \
-		fi; \
-	done < <(awk '$$1 == "pass" || $$1 == "fail" { \
-		gsub(/\\/, "", $$2); print $$1 "\t" $$2 \
-	}' "$$suite"); \
-	if [[ "$$total" -ne $(METAMATH_TEST_CASE_COUNT_V1) || \
-		"$$checked" -ne $(METAMATH_TEST_CASE_COUNT_V1) || \
-		"$$failures" -ne 0 || "$$harness_failures" -ne 0 ]]; then \
-		exit 1; \
-	fi; \
-	printf '%s\n' \
-		'(MetamathCoGSLTGeneratedRelationalCorpusV1Summary $(METAMATH_TEST_CASE_COUNT_V1) $(METAMATH_TEST_CASE_COUNT_V1) 0 0)'
 
 # The resolution vertical on the compact API: admitted boundaries, the
 # non-ground and ground refutations, a reported non-refutation, bounds, the
@@ -18262,14 +17579,6 @@ test-compact-resolution-include-v1-body: $(BIN) \
 		echo 'compact resolution include test emitted an error'; \
 		exit 1; \
 	fi
-test-compact-resolution-include-v1:
-	@$(MAKE) --no-print-directory \
-		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
-		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
-		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
-		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
-		TPTP_OFFICIAL_CORPUS_ROOT_V1="$(TPTP_OFFICIAL_CORPUS_ROOT_V1)" \
-		test-compact-resolution-include-v1-body
 
 # Formulas reach resolution through the verified clausification stages, each
 # clausification recorded with its frontiers and recomputed by the checker:
@@ -18306,14 +17615,6 @@ test-compact-resolution-clausification-v1-body: $(BIN) \
 		echo 'compact resolution clausification test emitted an error'; \
 		exit 1; \
 	fi
-test-compact-resolution-clausification-v1:
-	@$(MAKE) --no-print-directory \
-		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
-		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
-		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
-		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
-		TPTP_OFFICIAL_CORPUS_ROOT_V1="$(TPTP_OFFICIAL_CORPUS_ROOT_V1)" \
-		test-compact-resolution-clausification-v1-body
 
 # ITP024+5 read under the mixed policy peaks within 1.5 times the tagged
 # policy's peak, both measured for the same file, binary and build, and both
@@ -18351,14 +17652,6 @@ test-tptp-compact-policy-peak-v1-body: $(BIN) prepare-tptp-compact-morphism-v1-b
 	fi; \
 	echo "PASS: the mixed peak is within 1.5 times the tagged peak"
 
-test-tptp-compact-policy-peak-v1:
-	@$(MAKE) --no-print-directory \
-		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
-		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
-		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
-		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
-		TPTP_OFFICIAL_CORPUS_ROOT_V1="$(TPTP_OFFICIAL_CORPUS_ROOT_V1)" \
-		test-tptp-compact-policy-peak-v1-body
 
 # A resolution-input language without positive literals rejects the read
 # problem, and a trace language without steps rejects the certificate.
@@ -18755,21 +18048,6 @@ test-tptp-official-derivation-artifact-v1: $(BIN) \
 	done; \
 	echo 'PASS: admitted official TSTP semantic derivations round-trip as revision-keyed data under Prime, PeTTa, extended HE, and HE-prime'
 
-.PHONY: qualify-tptp-external-prover-fixtures-v1
-qualify-tptp-external-prover-fixtures-v1: \
-		$(TPTP_EXTERNAL_PROVER_FIXTURE_CHECK_V1) \
-		$(TPTP_EXTERNAL_GROUND_REFUTATION_V1) \
-		$(TPTP_E_GROUND_REFUTATION_FIXTURE_V1) \
-		$(TPTP_VAMPIRE_GROUND_REFUTATION_FIXTURE_V1)
-	@if [[ -z "$(strip $(TPTP_EPROVER_V1))" || \
-		-z "$(strip $(TPTP_VAMPIRE_V1))" ]]; then \
-		echo 'set TPTP_EPROVER_V1 and TPTP_VAMPIRE_V1 to executable prover paths' >&2; \
-		exit 2; \
-	fi
-	@sh -n $(TPTP_EXTERNAL_PROVER_FIXTURE_CHECK_V1)
-	@shellcheck $(TPTP_EXTERNAL_PROVER_FIXTURE_CHECK_V1)
-	@$(TPTP_EXTERNAL_PROVER_FIXTURE_CHECK_V1) \
-		"$(TPTP_EPROVER_V1)" "$(TPTP_VAMPIRE_V1)"
 
 %.$(BUILD_OBJ_TAG).o: %.c $(BUILD_CONFIG_HEADER)
 	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
@@ -19089,7 +18367,8 @@ NORMAL_TEST_TARGETS := \
 	test-prepared-bound-heads \
 	test-seal \
 	test-numerical-substrate-smoke \
-	test-application-panel
+	test-application-panel \
+	test-lang-chr
 
 .PHONY: test test-all test-test-target-scope
 test: $(NORMAL_TEST_TARGETS)
@@ -20379,15 +19658,6 @@ test-tptp-canonical-round-trip-v1-body: \
 	test "$$rejected" -eq $(words $(TPTP_CANONICAL_ROUND_TRIP_REJECTED_V1)); \
 	echo '(TptpCanonicalRoundTripGateV1Summary $(words $(TPTP_CANONICAL_ROUND_TRIP_ACCEPTED_V1)) $(words $(TPTP_CANONICAL_ROUND_TRIP_COMPATIBLE_V1)) $(words $(TPTP_CANONICAL_ROUND_TRIP_REJECTED_V1)))'
 
-test-tptp-canonical-round-trip-v1:
-	@$(MAKE) --no-print-directory \
-		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
-		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 \
-		JSON_BACKEND=gslt CETTA_PROVENANCE_ASSERT=0 \
-		RHOCOST_COMMIT_AUDIT=0 ENABLE_PRIME_NEED_HEAP_INDEX=0 \
-		ENABLE_PRIME_EVAL_STACK=0 \
-		TPTP_OFFICIAL_SYNTAX_BNF_V1="$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" \
-		test-tptp-canonical-round-trip-v1-body
 
 # The compact form is one equation per canonical form of the pinned grammar:
 # the check accepts the morphism against both reader profiles and rejects a
@@ -20494,15 +19764,6 @@ test-tptp-compact-policies-v1-body: $(BIN) prepare-tptp-compact-morphism-v1-body
 	done; \
 	echo '(TptpCompactPoliciesV1Summary 3 2 2)'
 
-test-tptp-compact-policies-v1:
-	@$(MAKE) --no-print-directory \
-		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
-		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 \
-		JSON_BACKEND=gslt CETTA_PROVENANCE_ASSERT=0 \
-		RHOCOST_COMMIT_AUDIT=0 ENABLE_PRIME_NEED_HEAP_INDEX=0 \
-		ENABLE_PRIME_EVAL_STACK=0 \
-		TPTP_OFFICIAL_SYNTAX_BNF_V1="$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" \
-		test-tptp-compact-policies-v1-body
 
 # Printed compact records read back to the same records under every policy
 # and profile in the PeTTa and HE lanes, and names that are builtins or heads of
@@ -20527,15 +19788,6 @@ test-tptp-compact-print-v1-body: $(BIN) prepare-tptp-compact-morphism-v1-body \
 	done; \
 	echo '(TptpCompactPrintV1Summary 3 2 2)'
 
-test-tptp-compact-print-v1:
-	@$(MAKE) --no-print-directory \
-		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
-		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 \
-		JSON_BACKEND=gslt CETTA_PROVENANCE_ASSERT=0 \
-		RHOCOST_COMMIT_AUDIT=0 ENABLE_PRIME_NEED_HEAP_INDEX=0 \
-		ENABLE_PRIME_EVAL_STACK=0 \
-		TPTP_OFFICIAL_SYNTAX_BNF_V1="$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" \
-		test-tptp-compact-print-v1-body
 
 # The reader uses the prepared compact equations only while every file the
 # manifest lists has its recorded digest: a changed or missing prepared file,
@@ -20564,15 +19816,6 @@ test-tptp-compact-stale-artifact-v1-body: $(CANONICAL_MORPHISM_CHECK_V1_BIN) \
 	test "$$(check manifest)" = '(CompactManifestV1 refused "no prepared manifest")'; \
 	echo '(TptpCompactStaleArtifactV1Summary 2 4)'
 
-test-tptp-compact-stale-artifact-v1:
-	@$(MAKE) --no-print-directory \
-		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
-		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 \
-		JSON_BACKEND=gslt CETTA_PROVENANCE_ASSERT=0 \
-		RHOCOST_COMMIT_AUDIT=0 ENABLE_PRIME_NEED_HEAP_INDEX=0 \
-		ENABLE_PRIME_EVAL_STACK=0 \
-		TPTP_OFFICIAL_SYNTAX_BNF_V1="$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" \
-		test-tptp-compact-stale-artifact-v1-body
 
 # Free variables, capture-avoiding substitution, renaming apart and alpha
 # equality over read formulas, through the compact form's binder declaration
@@ -20625,65 +19868,10 @@ test-tptp-compact-import-v1-body: $(BIN) prepare-tptp-compact-morphism-v1-body \
 	done; \
 	echo '(TptpCompactImportV1Summary 2 3)'
 
-test-tptp-compact-import-v1:
-	@$(MAKE) --no-print-directory \
-		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
-		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 \
-		JSON_BACKEND=gslt CETTA_PROVENANCE_ASSERT=0 \
-		RHOCOST_COMMIT_AUDIT=0 ENABLE_PRIME_NEED_HEAP_INDEX=0 \
-		ENABLE_PRIME_EVAL_STACK=0 \
-		TPTP_OFFICIAL_SYNTAX_BNF_V1="$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" \
-		test-tptp-compact-import-v1-body
 
-test-tptp-compact-binding-v1:
-	@$(MAKE) --no-print-directory \
-		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
-		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 \
-		JSON_BACKEND=gslt CETTA_PROVENANCE_ASSERT=0 \
-		RHOCOST_COMMIT_AUDIT=0 ENABLE_PRIME_NEED_HEAP_INDEX=0 \
-		ENABLE_PRIME_EVAL_STACK=0 \
-		TPTP_OFFICIAL_SYNTAX_BNF_V1="$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" \
-		test-tptp-compact-binding-v1-body
 
-check-tptp-compact-morphism-v1:
-	@$(MAKE) --no-print-directory \
-		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
-		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 \
-		JSON_BACKEND=gslt CETTA_PROVENANCE_ASSERT=0 \
-		RHOCOST_COMMIT_AUDIT=0 ENABLE_PRIME_NEED_HEAP_INDEX=0 \
-		ENABLE_PRIME_EVAL_STACK=0 \
-		TPTP_OFFICIAL_SYNTAX_BNF_V1="$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" \
-		check-tptp-compact-morphism-v1-body
 
-.PHONY: benchmark-tptp-frozen-size-ladder-v1-body
-benchmark-tptp-frozen-size-ladder-v1-body: \
-		$(TPTP_FROZEN_LADDER_V1_BIN) \
-		prepare-tptp-compact-morphism-v1-body \
-		$(TPTP_FROZEN_SIZE_LADDER_RUNNER_V1)
-	@if [[ -z "$(strip $(TPTP_OFFICIAL_CORPUS_ROOT_V1))" || \
-		! -d "$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems" ]]; then \
-		echo 'set TPTP_OFFICIAL_CORPUS_ROOT_V1 to the pinned distribution' >&2; \
-		exit 2; \
-	fi
-	@bash "$(TPTP_FROZEN_SIZE_LADDER_RUNNER_V1)" \
-		"$(TPTP_FROZEN_LADDER_V1_BIN)" \
-		"$(TPTP_OFFICIAL_CORPUS_COMPATIBILITY_SNAPSHOT_V1)" \
-		"$(TPTP_OFFICIAL_CORPUS_ROOT_V1)" \
-		"$(TPTP_FROZEN_SIZE_LADDER_OUTPUT_V1)"
-	@echo "TPTP frozen size ladder: $(TPTP_FROZEN_SIZE_LADDER_OUTPUT_V1)"
 
-.PHONY: benchmark-tptp-frozen-size-ladder-v1
-benchmark-tptp-frozen-size-ladder-v1:
-	@$(MAKE) --no-print-directory \
-		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
-		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 \
-		JSON_BACKEND=gslt CETTA_PROVENANCE_ASSERT=0 \
-		RHOCOST_COMMIT_AUDIT=0 ENABLE_PRIME_NEED_HEAP_INDEX=0 \
-		ENABLE_PRIME_EVAL_STACK=0 \
-		TPTP_OFFICIAL_SYNTAX_BNF_V1="$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" \
-		TPTP_OFFICIAL_CORPUS_ROOT_V1="$(TPTP_OFFICIAL_CORPUS_ROOT_V1)" \
-		TPTP_FROZEN_SIZE_LADDER_OUTPUT_V1="$(TPTP_FROZEN_SIZE_LADDER_OUTPUT_V1)" \
-		benchmark-tptp-frozen-size-ladder-v1-body
 
 .PHONY: build-tptp-frozen-corpus-qualifier-v1
 build-tptp-frozen-corpus-qualifier-v1: $(TPTP_FROZEN_CORPUS_QUALIFIER_V1_BIN)
@@ -20719,89 +19907,8 @@ test-tptp-frozen-corpus-qualifier-preflight-v1:
 		ENABLE_PRIME_EVAL_STACK=0 \
 		test-tptp-frozen-corpus-qualifier-preflight-v1-body
 
-.PHONY: qualify-tptp-frozen-full-corpus-v1-body
-qualify-tptp-frozen-full-corpus-v1-body: \
-		$(TPTP_FROZEN_CORPUS_QUALIFIER_V1_BIN) \
-		$(TPTP_FROZEN_CORPUS_SNAPSHOT_GATE_V1) \
-		prepare-tptp-compact-morphism-v1-body \
-		$(TPTP_OFFICIAL_TSTP_FIXTURES_V1)
-	@if [[ -z "$(strip $(TPTP_OFFICIAL_CORPUS_ROOT_V1))" || \
-		! -d "$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems" || \
-		! -d "$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Axioms" ]]; then \
-		echo 'set TPTP_OFFICIAL_CORPUS_ROOT_V1 to the pinned distribution' >&2; \
-		exit 2; \
-	fi
-	@set -euo pipefail; \
-	mkdir -p "$(dir $(TPTP_FROZEN_CORPUS_QUALIFICATION_OUTPUT_V1))" \
-		"$(dir $(TPTP_FROZEN_CORPUS_QUALIFICATION_SUMMARY_V1))"; \
-	tmp_tsv=$$(mktemp "$(dir $(TPTP_FROZEN_CORPUS_QUALIFICATION_OUTPUT_V1))/tptp-corpus-v1.XXXXXX"); \
-	tmp_summary=$$(mktemp "$(dir $(TPTP_FROZEN_CORPUS_QUALIFICATION_SUMMARY_V1))/tptp-corpus-summary-v1.XXXXXX"); \
-	trap 'mv -f "$$tmp_tsv" "$(TPTP_FROZEN_CORPUS_QUALIFICATION_OUTPUT_V1).failed"; mv -f "$$tmp_summary" "$(TPTP_FROZEN_CORPUS_QUALIFICATION_SUMMARY_V1).failed"' EXIT INT TERM; \
-	$(TPTP_FROZEN_CORPUS_QUALIFIER_V1_BIN) \
-		"$(TPTP_FROZEN_CORPUS_SNAPSHOT_V1)" \
-		"$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems" \
-		"$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Axioms" \
-		$(TPTP_OFFICIAL_TSTP_FIXTURES_V1) \
-		> "$$tmp_tsv" 2> >(tee "$$tmp_summary" >&2); \
-	rows=$$(awk 'END { print NR - 1 }' "$$tmp_tsv"); \
-	non_accept=$$(awk -F '\t' 'NR > 1 && $$2 != "accept" { n++ } END { print n + 0 }' "$$tmp_tsv"); \
-	test "$$rows" -eq 28694; \
-	test "$$non_accept" -eq "$(TPTP_FROZEN_CORPUS_EXPECTED_REJECTED_V1)"; \
-	if [[ "$(TPTP_FROZEN_CORPUS_PROFILE_V1)" == strict ]]; then \
-		itp_rejects=$$(awk -F '\t' 'NR > 1 && $$2 == "reject" && $$1 ~ /\/Problems\/ITP\// { n++ } END { print n + 0 }' "$$tmp_tsv"); \
-		syn_rejects=$$(awk -F '\t' 'NR > 1 && $$2 == "reject" && $$1 ~ /\/Problems\/SYN\// { n++ } END { print n + 0 }' "$$tmp_tsv"); \
-		other_rejects=$$(awk -F '\t' 'NR > 1 && $$2 == "reject" && $$1 !~ /\/Problems\/(ITP|SYN)\// { n++ } END { print n + 0 }' "$$tmp_tsv"); \
-		bad_witnesses=$$(awk -F '\t' 'NR > 1 && $$2 == "reject" && $$5 !~ /^TPTP:NoParse byte=[0-9]+ rule=TPTP_file$$/ { n++ } END { print n + 0 }' "$$tmp_tsv"); \
-		test "$$itp_rejects" -eq 148; \
-		test "$$syn_rejects" -eq 5; \
-		test "$$other_rejects" -eq 0; \
-		test "$$bad_witnesses" -eq 0; \
-		for name in 'SYN000^7.p' 'SYN000_2.p' 'SYN000-3.p' 'SYN000-2.p' 'SYN000+2.p'; do \
-			suffix="/Problems/SYN/$$name"; \
-			count=$$(awk -F '\t' -v suffix="$$suffix" 'NR > 1 && $$2 == "reject" && substr($$1, length($$1) - length(suffix) + 1) == suffix { n++ } END { print n + 0 }' "$$tmp_tsv"); \
-			test "$$count" -eq 1; \
-		done; \
-	fi; \
-	expected='(TptpCorpusQualificationV1 accepted=$(TPTP_FROZEN_CORPUS_EXPECTED_ACCEPTED_V1) rejected=$(TPTP_FROZEN_CORPUS_EXPECTED_REJECTED_V1) unprojected=0 skipped=0 cnf=8478 fof=10604 tff=3936 thf=5671 tcf=1 tpi=0 ax=2426 tstp=4 other=4)'; \
-	grep -Fqx "$$expected" "$$tmp_summary"; \
-	accepted='$(TPTP_FROZEN_CORPUS_EXPECTED_ACCEPTED_V1)'; \
-	grep -Eq "^\(TptpCorpusStagesV1 compacted=$$accepted printed=$$accepted round-trip=$$accepted compact-failed=0 print-failed=0 reread-failed=0 round-trip-differs=0 " "$$tmp_summary"; \
-	unstaged=$$(awk -F '\t' 'NR > 1 && $$2 == "accept" && $$7 != "ok" { n++ } END { print n + 0 }' "$$tmp_tsv"); \
-	test "$$unstaged" -eq 0; \
-	mv "$$tmp_tsv" "$(TPTP_FROZEN_CORPUS_QUALIFICATION_OUTPUT_V1)"; \
-	mv "$$tmp_summary" "$(TPTP_FROZEN_CORPUS_QUALIFICATION_SUMMARY_V1)"; \
-	trap - EXIT INT TERM; \
-	echo "TPTP frozen corpus qualification ($(TPTP_FROZEN_CORPUS_PROFILE_V1)): $(TPTP_FROZEN_CORPUS_EXPECTED_ACCEPTED_V1) accepted, $(TPTP_FROZEN_CORPUS_EXPECTED_REJECTED_V1) rejected"
 
-.PHONY: qualify-tptp-frozen-full-corpus-v1
-qualify-tptp-frozen-full-corpus-v1:
-	@$(MAKE) --no-print-directory \
-		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
-		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 \
-		JSON_BACKEND=gslt CETTA_PROVENANCE_ASSERT=0 \
-		RHOCOST_COMMIT_AUDIT=0 ENABLE_PRIME_NEED_HEAP_INDEX=0 \
-		ENABLE_PRIME_EVAL_STACK=0 \
-		TPTP_OFFICIAL_SYNTAX_BNF_V1="$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" \
-		TPTP_OFFICIAL_CORPUS_ROOT_V1="$(TPTP_OFFICIAL_CORPUS_ROOT_V1)" \
-		qualify-tptp-frozen-full-corpus-v1-body
 
-.PHONY: qualify-tptp-frozen-corpus-compatible-v1
-qualify-tptp-frozen-corpus-compatible-v1:
-	@$(MAKE) --no-print-directory \
-		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
-		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 \
-		JSON_BACKEND=gslt CETTA_PROVENANCE_ASSERT=0 \
-		RHOCOST_COMMIT_AUDIT=0 ENABLE_PRIME_NEED_HEAP_INDEX=0 \
-		ENABLE_PRIME_EVAL_STACK=0 \
-		TPTP_OFFICIAL_SYNTAX_BNF_V1="$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" \
-		TPTP_OFFICIAL_CORPUS_ROOT_V1="$(TPTP_OFFICIAL_CORPUS_ROOT_V1)" \
-		TPTP_FROZEN_CORPUS_PROFILE_V1=corpus-compatible \
-		TPTP_FROZEN_CORPUS_SNAPSHOT_V1="$(TPTP_OFFICIAL_CORPUS_COMPATIBILITY_SNAPSHOT_V1)" \
-		TPTP_FROZEN_CORPUS_EXPECTED_ACCEPTED_V1=28694 \
-		TPTP_FROZEN_CORPUS_EXPECTED_REJECTED_V1=0 \
-		TPTP_FROZEN_CORPUS_QUALIFICATION_OUTPUT_V1="$(TPTP_FROZEN_CORPUS_COMPATIBILITY_QUALIFICATION_OUTPUT_V1)" \
-		TPTP_FROZEN_CORPUS_QUALIFICATION_SUMMARY_V1="$(TPTP_FROZEN_CORPUS_COMPATIBILITY_QUALIFICATION_SUMMARY_V1)" \
-		qualify-tptp-frozen-full-corpus-v1-body
 
 .PHONY: test-tptp-official-syntax-snapshot-v1-body
 test-tptp-official-syntax-snapshot-v1-body: test-parser-pack-table-snapshot-v1 $(BIN) \
@@ -20964,15 +20071,6 @@ test-tptp-reader-artifact-reproducibility-v1-body: $(BIN) \
 	done; \
 	echo '(TptpReaderArtifactReproducibilityV1Summary 4 4 0)'
 
-.PHONY: test-tptp-reader-artifact-reproducibility-v1
-test-tptp-reader-artifact-reproducibility-v1:
-	@$(MAKE) --no-print-directory \
-		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
-		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
-		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
-		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
-		TPTP_OFFICIAL_SYNTAX_BNF_V1="$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" \
-		test-tptp-reader-artifact-reproducibility-v1-body
 
 test-gslt2parse-parser-pack-gll-v1-native: \
 		test-gslt-dense-bitset-v1 $(PARSER_PACK_GLL_V1_TEST_BIN)
@@ -21032,88 +20130,9 @@ test-gslt2parse-parser-pack-guard-plan-v1-native: \
 		exit 1; \
 	fi
 
-test-gslt2parse-parser-pack-lexical-v1-matrix: \
-		test-gslt2parse-parser-pack-lexical-v1-native \
-		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		$(REGULAR_SPAN_DFA_V1_STREAM_BIN) \
-		$(PARSER_PACK_GLL_V1_STREAM_BIN) \
-		$(PARSER_PACK_GLR_V1_STREAM_BIN)
-	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
-		echo 'GSLT2PARSE_PETTA_ROOT is required for the lexical projection matrix'; \
-		exit 1; \
-	fi
-	@python3 tools/test_parser_pack_lexical_v1.py \
-		--chart-binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		--projection-binary $(REGULAR_SPAN_DFA_V1_STREAM_BIN) \
-		--gll-binary $(PARSER_PACK_GLL_V1_STREAM_BIN) \
-		--glr-binary $(PARSER_PACK_GLR_V1_STREAM_BIN) \
-		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
 
-test-gslt2parse-parser-pack-gll-v1-matrix: \
-		test-gslt2parse-parser-pack-gll-v1-native \
-		$(PARSER_PACK_GLL_V1_STREAM_BIN)
-	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_PETTA_ROOT to the PeTTa foundation checkout'; \
-		exit 1; \
-	fi
-	@python3 tools/test_parser_pack_gll_v1.py \
-		--binary $(PARSER_PACK_GLL_V1_STREAM_BIN) \
-		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
-	@if rg -ni 'metamath|megalodon|tptp' \
-		experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c \
-		experiments/gslt2parse_foundation/native/parser_pack_gll_v1.h \
-		experiments/gslt2parse_foundation/native/parser_pack_gll_v1_stream.c \
-		experiments/gslt2parse_foundation/native/parser_pack_native_v1.c \
-		experiments/gslt2parse_foundation/native/parser_pack_native_v1.h \
-		experiments/gslt2parse_foundation/native/parser_pack_abi_stream_v1.c \
-		experiments/gslt2parse_foundation/native/parser_pack_abi_stream_v1.h \
-		src/lib_parse_native_grammar.c \
-		src/lib_parse_native_grammar.h; then \
-		echo 'guest-language name leaked into the generic ParserPack GLL path'; \
-		exit 1; \
-	fi
 
-test-gslt2parse-parser-pack-glr-v1-matrix: \
-		test-gslt2parse-parser-pack-gll-v1-native \
-		test-gslt2parse-parser-pack-glr-v1-native \
-		$(PARSER_PACK_GLL_V1_STREAM_BIN) \
-		$(PARSER_PACK_GLR_V1_STREAM_BIN)
-	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_PETTA_ROOT to the PeTTa foundation checkout'; \
-		exit 1; \
-	fi
-	@python3 tools/test_parser_pack_gll_v1.py \
-		--binary $(PARSER_PACK_GLL_V1_STREAM_BIN) \
-		--glr-binary $(PARSER_PACK_GLR_V1_STREAM_BIN) \
-		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
-	@if rg -ni 'metamath|megalodon|tptp' \
-		experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c \
-		experiments/gslt2parse_foundation/native/parser_pack_gll_v1.h \
-		experiments/gslt2parse_foundation/native/parser_pack_glr_v1.c \
-		experiments/gslt2parse_foundation/native/parser_pack_glr_v1.h \
-		experiments/gslt2parse_foundation/native/parser_pack_native_v1.c \
-		experiments/gslt2parse_foundation/native/parser_pack_native_v1.h \
-		experiments/gslt2parse_foundation/native/parser_pack_gll_v1_stream.c \
-		experiments/gslt2parse_foundation/native/parser_pack_glr_v1_stream.c \
-		experiments/gslt2parse_foundation/native/parser_pack_abi_stream_v1.c \
-		experiments/gslt2parse_foundation/native/parser_pack_abi_stream_v1.h \
-		src/lib_parse_native_grammar.c \
-		src/lib_parse_native_grammar.h; then \
-		echo 'guest-language name leaked into a generic ParserPack parser path'; \
-		exit 1; \
-	fi
 
-test-gslt2parse-parser-pack-wide-scale-v1: \
-		$(PARSER_PACK_GLL_V1_STREAM_BIN) \
-		$(PARSER_PACK_GLR_V1_STREAM_BIN)
-	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_PETTA_ROOT to the PeTTa foundation checkout'; \
-		exit 1; \
-	fi
-	@python3 tools/probe_parser_pack_wide_scale_v1.py \
-		--gll-binary $(PARSER_PACK_GLL_V1_STREAM_BIN) \
-		--glr-binary $(PARSER_PACK_GLR_V1_STREAM_BIN) \
-		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
 
 test-gslt2parse-regular-span-dfa-v1-native: \
 		$(REGULAR_SPAN_DFA_V1_TEST_BIN) \
@@ -21163,17 +20182,6 @@ test-regular-span-dfa-emitter-v1: \
 	test ! -e $$d/refused.h || { echo "FAIL: a refused emission left output"; exit 1; }; \
 	echo "regular-span DFA emitter: 6 refusals as wanted"
 
-test-gslt2parse-regular-span-dfa-v1-matrix: \
-		test-gslt2parse-regular-span-dfa-v1-native \
-		$(GSLT2PARSE_CHART_V1_NATIVE_BIN)
-	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_PETTA_ROOT to the PeTTa foundation checkout'; \
-		exit 1; \
-	fi
-	@python3 tools/test_regular_span_dfa_v1.py \
-		--chart-binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		--dfa-binary $(REGULAR_SPAN_DFA_V1_STREAM_BIN) \
-		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
 
 ifeq ($(ENABLE_PIC),1)
 test-gslt2parse-parser-pack-native-api-v1-matrix: \
@@ -21237,19 +20245,6 @@ test-gslt2parse-generic-engine-purity-v1:
 	@printf '(GSLT2ParseGenericCompilerPurityV1Summary %s 0)\n' \
 		"$(words $(GSLT2PARSE_GENERIC_COMPILER_SOURCES))"
 
-test-gslt2parse-c-production-v1:
-	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_PETTA_ROOT to the PeTTa foundation checkout'; \
-		exit 1; \
-	fi
-	@if [[ -z "$(strip $(GSLT2PARSE_HE_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_HE_ROOT to the pinned HE checkout'; \
-		exit 1; \
-	fi
-	@$(MAKE) --no-print-directory ENABLE_PIC=1 \
-		GSLT2PARSE_PETTA_ROOT="$(GSLT2PARSE_PETTA_ROOT)" \
-		GSLT2PARSE_HE_ROOT="$(GSLT2PARSE_HE_ROOT)" \
-		test-gslt2parse-c-production-v1-body
 
 test-gslt2parse-c-production-v1-body: \
 		test-gslt2parse-generic-engine-purity-v1 \
@@ -21955,6 +20950,9 @@ test-runtime-stats-lane-body:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-he-frame-bytes-depth
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-he-completed-delivery-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-he-canonical-tail-memory
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-profile-ai-stats
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-let-pattern-head-destination-stats
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-observed-equality-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-open-values-frame-walk-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-frame-identity-refusal-sweep
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-identity-repeat-stats
@@ -24138,26 +23136,6 @@ probe-prime-iggp-source: $(PRIME_GDL_STRATIFICATION_QUALIFIER_BIN)
 		--snapshot-root "$(IGGP_ROOT)" \
 		--runner "$(abspath $(PRIME_GDL_STRATIFICATION_QUALIFIER_BIN))"
 
-.PHONY: probe-prime-hopper-table1-source
-probe-prime-hopper-table1-source:
-	@test -n "$(HOPPER_TABLE1_ROOT)" || { \
-		echo 'FAIL: set HOPPER_TABLE1_ROOT to the pinned Hopper checkout'; \
-		exit 1; \
-	}
-	@python3 scripts/check_prime_hopper_table1_manifest.py \
-		--snapshot-root "$(HOPPER_TABLE1_ROOT)"
-	@python3 scripts/generate_prime_hopper_first_order.py \
-		--snapshot-root "$(HOPPER_TABLE1_ROOT)" --check
-	@python3 scripts/generate_prime_hopper_higher_order.py \
-		--snapshot-root "$(HOPPER_TABLE1_ROOT)" --check
-	@python3 scripts/generate_prime_hopper_additional_iterative.py \
-		--snapshot-root "$(HOPPER_TABLE1_ROOT)" --check
-	@python3 scripts/generate_prime_hopper_structural_list.py \
-		--snapshot-root "$(HOPPER_TABLE1_ROOT)" --check
-	@python3 scripts/generate_prime_hopper_relational_recursion.py \
-		--snapshot-root "$(HOPPER_TABLE1_ROOT)" --check
-	@python3 scripts/generate_prime_hopper_tree_relations.py \
-		--snapshot-root "$(HOPPER_TABLE1_ROOT)" --check
 
 .PHONY: probe-prime-popper-synthesis-source
 probe-prime-popper-synthesis-source:
@@ -26059,27 +25037,6 @@ qualify-match-decision-policy-lean-native-v1:
 		ENABLE_PRIME_NEED_CLOSURE_CAPTURE=0 ENABLE_PRIME_EVAL_STACK=0 \
 		qualify-match-decision-policy-lean-native-v1-body
 
-qualify-match-decision-policy-lean-native-v1-body: \
-		$(MATCH_DECISION_POLICY_GENERATED_V1) $(MATCH_DECISION_POLICY_RESULT_V1) \
-		tests/langdef/bnf/match_decision_policy_source_qualification_v1.lean \
-		tests/support/qualify_match_decision_policy_lean_native_v1.sh \
-		test-match-decision-policy-no-python-build-dependency-v1
-	@set -eu; \
-	lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
-	if [ -z "$$lean_root" ] && \
-	   [ -f "$(METTAPEDIA_LEAN_AUTO_ROOT)/lakefile.lean" ]; then \
-		lean_root="$(METTAPEDIA_LEAN_AUTO_ROOT)"; \
-	fi; \
-	test -n "$$lean_root" && test -f "$$lean_root/lakefile.lean" || { \
-		echo "METTAPEDIA_LEAN_ROOT must name the Mettapedia Lean project" >&2; \
-		exit 2; \
-	}; \
-	mkdir -p "$(BOOTSTRAP_TMPDIR)"; \
-	evidence=$$(mktemp -d "$(abspath $(BOOTSTRAP_TMPDIR))/match-policy-lean.XXXXXX"); \
-	sh tests/support/qualify_match_decision_policy_lean_native_v1.sh \
-		"$(CURDIR)/$(LANGDEF_COMPILER_V1_BIN)" \
-		"$(CURDIR)/$(GSLT2PARSE_CHART_V1_NATIVE_BIN)" \
-		"$$lean_root" "$$evidence"
 
 test-match-decision-lanes:
 ifeq ($(ENABLE_PRIME_CAUSAL_RECEIPTS),0)
@@ -27294,6 +26251,98 @@ test-petta-translation-time-callability: $(BIN)
 		"$$actual"
 	@echo "PASS: PeTTa source occurrences call equations installed after translation"
 
+.PHONY: test-petta-tabled-shared-and-runtime
+test-petta-tabled-shared-and-runtime: $(BIN)
+	@set -eu; \
+	for case in tabled_shared_variable_calls tabled_runtime_mutual_recursion \
+			tabled_component_reaches_below; do \
+		actual=runtime/test-petta-$$case.out; \
+		./$(BIN) --lang petta tests/petta/$$case.metta >"$$actual" 2>&1; \
+		diff -u tests/petta/$$case.expected "$$actual"; \
+		stats=$$(CETTA_PETTA_MACHINE_STATS=1 ./$(BIN) --lang petta \
+			tests/petta/$$case.metta 2>&1 >/dev/null); \
+		if ! printf '%s\n' "$$stats" | grep -Eq 'table_hits=[1-9][0-9]*'; then \
+			echo "FAIL: $$case answered without reusing a table"; \
+			exit 1; \
+		fi; \
+	done; \
+	stats=$$(CETTA_PETTA_MACHINE_STATS=1 ./$(BIN) --lang petta \
+		tests/petta/tabled_component_reaches_below.metta 2>&1 >/dev/null); \
+	if ! printf '%s\n' "$$stats" | grep -Eq 'table_scc_merges=[1-9][0-9]*'; then \
+		echo "FAIL: no component joined the older table it reads"; \
+		exit 1; \
+	fi
+	@echo "PASS: tabled calls with shared variables, run-time mutual recursion, and components that join an older table they read"
+
+# A let pattern headed by a variable: PeTTa dispatches it at run time.  A
+# head first bound by the pattern keeps it data, so the compiled tier and the
+# open-equation machine destructure there; a destination naming a function
+# makes it a call, which the machine hands to the host; and a head the
+# specializer fills with a function keeps its dispatch and its handler.
+# Answers equal SWI-PeTTa's on every route.
+.PHONY: test-petta-let-pattern-head-destination
+test-petta-search-machine: test-petta-let-pattern-head-destination
+test-petta-let-pattern-head-destination: $(BIN) tests/petta/let_pattern_head_destination.metta tests/petta/let_pattern_head_destination.expected
+	@set -eu; \
+	fixture=tests/petta/let_pattern_head_destination.metta; \
+	expected=tests/petta/let_pattern_head_destination.expected; \
+	for route in X CETTA_OPEN_EQUATIONS_REFERENCE CETTA_PREPARED_PURE_REFERENCE; do \
+		env $$route=1 $(call cetta_exec,./$(BIN)) --lang petta $$fixture > runtime/test-let-pattern-head.out 2>&1; \
+		diff -u $$expected runtime/test-let-pattern-head.out; \
+	done; \
+	CETTA_OPEN_EQUATIONS_REFERENCE=1 CETTA_PREPARED_PURE_REFERENCE=1 $(call cetta_exec,./$(BIN)) \
+		--lang petta $$fixture > runtime/test-let-pattern-head.out 2>&1; \
+	diff -u $$expected runtime/test-let-pattern-head.out
+	@echo "PASS: let patterns headed by a variable destructure where PeTTa keeps them data and dispatch where it calls them, on every route"
+
+# Equality as observed: a list spelled by cons cells compares as that list.
+# The compiled == decides it in place, without building either operand; the
+# check mode also builds both and stops where the answers differ.  Answers
+# equal SWI-PeTTa's.
+.PHONY: test-petta-observed-equality
+test-petta-search-machine: test-petta-observed-equality
+test-petta-observed-equality: $(BIN) tests/petta/observed_equality.metta tests/petta/observed_equality.expected
+	@set -eu; \
+	fixture=tests/petta/observed_equality.metta; \
+	expected=tests/petta/observed_equality.expected; \
+	for route in X CETTA_OPEN_EQUATIONS_REFERENCE CETTA_PREPARED_PURE_OBSERVED_EQUALITY_CHECK; do \
+		env $$route=1 $(call cetta_exec,./$(BIN)) --lang petta $$fixture > runtime/test-observed-equality.out 2>&1; \
+		diff -u $$expected runtime/test-observed-equality.out; \
+	done
+	@echo "PASS: equality observes the list cons cells spell, decided in place, on every route"
+
+.PHONY: test-petta-observed-equality-stats
+test-petta-observed-equality-stats: $(BIN) tests/petta/observed_equality.metta
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@set -eu; \
+	decided=$$($(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
+		tests/petta/observed_equality.metta 2>&1 >/dev/null | \
+		awk '$$2 == "prepared-pure-observed-equality" { print $$3 }'); \
+	if [ "$${decided:-0}" -lt 1 ]; then \
+		echo "FAIL: no compiled equality was decided in place"; \
+		exit 1; \
+	fi
+	@echo "PASS: compiled equality decides observed lists in place"
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
+
+.PHONY: test-petta-let-pattern-head-destination-stats
+test-petta-let-pattern-head-destination-stats: $(BIN) tests/petta/let_pattern_head_destination.metta
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@set -eu; \
+	handed=$$($(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
+		tests/petta/let_pattern_head_destination.metta 2>&1 >/dev/null | \
+		awk '$$2 == "open-equation-head-destination-handoff" { print $$3 }'); \
+	if [ "$${handed:-0}" -lt 1 ]; then \
+		echo "FAIL: no call was handed to the host for a destination naming a function"; \
+		exit 1; \
+	fi
+	@echo "PASS: a destination naming a function hands its call to the host"
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
+
 .PHONY: test-petta-match-conjunction-cursor
 test-petta-match-conjunction-cursor: $(BIN)
 ifeq ($(ENABLE_RUNTIME_STATS),1)
@@ -27391,7 +26440,7 @@ test-petta-named-arity-source-cache: $(BIN)
 	done; \
 	echo "PASS: shared source-arity cache preserves mutation, partial calls and duplicates"
 
-test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-controller test-controller-diversity test-petta-machine-trace-config test-petta-type-langdef-source-binding-v1 test-petta-boundary-langdef-source-binding-v1 test-petta-capability-ledger test-petta-specializer-relevance-filter test-petta-mam-contender-mutations test-petta-extended-query-algebra test-petta-prepared-register-loop test-petta-specialized-pure-call test-petta-memoization test-petta-match-existence-fusion test-petta-fresh-frame-occurs-check test-petta-equation-slot-admission test-petta-equation-template-c0 test-petta-relational-equation-view test-petta-argv-native test-petta-activation-admission-cache test-petta-activation-scalar-if test-petta-match-region-hole test-petta-binding-region-hole test-petta-rule-frame-region test-petta-deterministic-region-scalability test-petta-body-resume-segment test-petta-match-decision-tree-repository test-petta-match-decision-shape-receipt test-petta-activation-anonymous-hole test-petta-activation-scalar-argument-segment test-petta-activation-pure-data-segment test-petta-match-decision-equality test-match-closed-expression-decision test-petta-translation-time-callability
+test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-controller test-controller-diversity test-petta-machine-trace-config test-petta-type-langdef-source-binding-v1 test-petta-boundary-langdef-source-binding-v1 test-petta-capability-ledger test-petta-specializer-relevance-filter test-petta-mam-contender-mutations test-petta-extended-query-algebra test-petta-prepared-register-loop test-petta-specialized-pure-call test-petta-memoization test-petta-match-existence-fusion test-petta-fresh-frame-occurs-check test-petta-equation-slot-admission test-petta-equation-template-c0 test-petta-relational-equation-view test-petta-argv-native test-petta-activation-admission-cache test-petta-activation-scalar-if test-petta-match-region-hole test-petta-binding-region-hole test-petta-rule-frame-region test-petta-deterministic-region-scalability test-petta-body-resume-segment test-petta-match-decision-tree-repository test-petta-match-decision-shape-receipt test-petta-activation-anonymous-hole test-petta-activation-scalar-argument-segment test-petta-activation-pure-data-segment test-petta-match-decision-equality test-match-closed-expression-decision test-petta-translation-time-callability test-petta-tabled-shared-and-runtime
 	@env -u CETTA_PETTA_EQUATION_BODY_ACTIVATION \
 		-u CETTA_PETTA_EQUATION_BODY_ACTIVATION_REFERENCE \
 		./$(PETTA_SEARCH_MACHINE_TEST_BIN)
@@ -28688,6 +27737,39 @@ test-petta-type-guard-versions-higher-order: $(BIN) tests/petta/type_guard_versi
 		fi; \
 	done; \
 	echo "PASS: versions of higher-order and calling functions keep the protocol's answers"
+
+# A function parameter passed the same name at every call is a constant of
+# the call's version only when the name's effective type, the one its guard
+# reads, meets the parameter; a truth value is Bool whatever row is written
+# for it.  Answers equal the protocol's on every route.
+.PHONY: test-petta-contract-constant-effective-type
+test-petta-search-machine: test-petta-contract-constant-effective-type
+test-petta-contract-constant-effective-type: $(BIN) tests/petta/contract_constant_effective_type.metta tests/petta/contract_constant_effective_type.expected
+	@set -e; \
+	fixture=tests/petta/contract_constant_effective_type.metta; \
+	expected=$$(cat tests/petta/contract_constant_effective_type.expected); \
+	for route in X CETTA_PETTA_VERSIONS_REFERENCE CETTA_PREPARED_PURE_REFERENCE \
+			CETTA_OPEN_EQUATIONS_REFERENCE; do \
+		actual=$$(env $$route=1 $(call cetta_exec,./$(BIN)) --lang petta $$fixture); \
+		if [ "$$actual" != "$$expected" ]; then \
+			echo "FAIL: constant parameters keep the protocol's answers ($$route)"; \
+			diff <(printf '%s\n' "$$expected") <(printf '%s\n' "$$actual") | head -20; \
+			exit 1; \
+		fi; \
+	done; \
+	verdicts=$$(CETTA_PETTA_VERSIONS_DEBUG=1 $(call cetta_exec,./$(BIN)) \
+		--lang petta $$fixture 2>&1 >/dev/null); \
+	if ! printf '%s\n' "$$verdicts" | \
+			grep -Eq 'contract cc-apply-outer/1: version .*discharged [1-9]'; then \
+		echo "FAIL: a declared function passed at every call is no longer a constant"; \
+		exit 1; \
+	fi; \
+	if ! printf '%s\n' "$$verdicts" | \
+			grep -qF 'cc-inner: parameter 0 is no constant function (named true)'; then \
+		echo "FAIL: a truth value's authored arrow made it a constant function"; \
+		exit 1; \
+	fi; \
+	echo "PASS: constant parameters are earned from the effective type"
 
 .PHONY: test-petta-type-guard-versions
 test-petta-search-machine: test-petta-type-guard-versions
@@ -30503,6 +29585,101 @@ test-petta-1-1-c-call-contracts: $(BIN) tests/petta/petta_1_1_c_call_contracts.m
 	done; \
 	echo "PASS: petta@1.1.c call contracts raise the same error on every route, on the tier and in the machine"
 
+# PeTTa's ai profile (sealed sorts): a function's declaration types the
+# answers of its calls and never an unevaluated application of it.  The rows
+# of sealed_sorts give each profile's answers on every route.  The
+# refutation and fold programs answer as in the default profile on every
+# route; where the prepared machine compiles a call refuted by its declared
+# result, a call that would not terminate answers nothing at once.
+PETTA_PROFILE_AI_FIXTURES := $(wildcard tests/petta/profile_ai/*.metta) \
+	$(wildcard tests/petta/profile_ai/*.expected) tests/petta/profile_ai/counters.tsv
+PETTA_PROFILE_AI_SAME := refutation:refutation refutation_open:refutation \
+	folds_sealed:folds_sealed folds_open_constant:folds_open_constant \
+	folds_open_constructor:folds_open_constructor folds_open_row:folds_open_row \
+	folds_open_function_name:folds_open_function_name \
+	folds_open_peano:folds_open_peano
+
+.PHONY: test-petta-profile-ai
+test-petta-semantics: test-petta-profile-ai
+test-petta-profile-ai: $(BIN) $(PETTA_PROFILE_AI_FIXTURES)
+	@set -eu; \
+	dir=tests/petta/profile_ai; \
+	for route in tier machine protocol; do \
+		case $$route in \
+			tier) env=;; \
+			machine) env=CETTA_OPEN_EQUATIONS_REFERENCE=1;; \
+			protocol) env=CETTA_PETTA_VERSIONS_REFERENCE=1;; \
+		esac; \
+		for profile in default ai; do \
+			if [ $$profile = ai ]; then flags="--profile ai"; else flags=; fi; \
+			actual=$$(env $$env timeout 60 $(CETTA_BIN_INVOKE) --lang petta $$flags \
+				$$dir/sealed_sorts.metta 2>&1); \
+			if [ "$$actual" != "$$(cat $$dir/sealed_sorts.$$profile.expected)" ]; then \
+				echo "FAIL: sealed sorts rows, $$profile profile, $$route route"; \
+				diff <(cat $$dir/sealed_sorts.$$profile.expected) \
+					<(printf '%s\n' "$$actual") | head -20; \
+				exit 1; \
+			fi; \
+			for pair in $(PETTA_PROFILE_AI_SAME); do \
+				program=$${pair%%:*}; expected=$${pair#*:}; \
+				actual=$$(env $$env timeout 60 $(CETTA_BIN_INVOKE) --lang petta $$flags \
+					$$dir/$$program.metta 2>&1); \
+				if [ "$$actual" != "$$(cat $$dir/$$expected.expected)" ]; then \
+					echo "FAIL: $$program, $$profile profile, $$route route"; \
+					diff <(cat $$dir/$$expected.expected) \
+						<(printf '%s\n' "$$actual") | head -20; \
+					exit 1; \
+				fi; \
+			done; \
+		done; \
+	done; \
+	for env in "" CETTA_OPEN_EQUATIONS_REFERENCE=1; do \
+		set +e; \
+		actual=$$(env $$env timeout 20 $(CETTA_BIN_INVOKE) --lang petta --profile ai \
+			$$dir/refutation_spin.metta 2>&1); \
+		status=$$?; \
+		set -e; \
+		if [ $$status -ne 0 ] || [ -n "$$actual" ]; then \
+			echo "FAIL: refuted calls that would not terminate ($${env:-tier}): exit $$status"; \
+			printf '%s\n' "$$actual" | tail -5; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: PeTTa's ai profile answers its rows on every route; refuted calls and sealed folds answer as the default profile does"
+
+# The ai profile's fast paths run where their licences hold and nowhere
+# else: folds over sealed-closed sorts walk without the cell test, calls
+# refuted by their declared results are compiled not to run, and neither
+# happens in the default profile, outside the licences, or off the machine.
+.PHONY: test-petta-profile-ai-stats
+test-petta-profile-ai-stats: $(BIN) $(PETTA_PROFILE_AI_FIXTURES)
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@set -eu -o pipefail; \
+	dir=tests/petta/profile_ai; failures=0; \
+	while IFS=$$'\t' read -r program profile route counter relation value; do \
+		case "$$program" in ''|'#'*) continue;; esac; \
+		case $$route in \
+			tier) env=;; \
+			machine) env=CETTA_OPEN_EQUATIONS_REFERENCE=1;; \
+			pure-reference) env=CETTA_PREPARED_PURE_REFERENCE=1;; \
+		esac; \
+		if [ $$profile = ai ]; then flags="--profile ai"; else flags=; fi; \
+		count=$$(env $$env timeout 60 $(CETTA_BIN_INVOKE) --emit-runtime-stats \
+			--lang petta $$flags $$dir/$$program.metta 2>&1 >/dev/null | awk \
+			-v name="prepared-pure-$$counter" '$$2 == name { print $$3 }'); \
+		count=$${count:-0}; \
+		if { [ $$relation = eq ] && [ "$$count" -ne "$$value" ]; } || \
+		   { [ $$relation = ge ] && [ "$$count" -lt "$$value" ]; }; then \
+			echo "FAIL: $$program ($$profile, $$route): $$counter $$count, want $$relation $$value"; \
+			failures=$$((failures + 1)); \
+		fi; \
+	done < $$dir/counters.tsv; \
+	[ $$failures -eq 0 ]; \
+	echo 'PASS: sealed folds and refuted calls run in the ai profile where their licences hold, and nowhere else'
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
+
 .PHONY: test-petta-foldall-steps
 # foldall runs its generator and each application of its step as PeTTa
 # evaluations, in SWI's foldall/4 order: the step's declaration governs it,
@@ -30720,10 +29897,16 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 		echo "FAIL: space ledger: answer $$answer, live spaces at peak $$spaces, struct bytes $$bytes"; \
 		exit 1; \
 	fi; \
-	report=$$(./$(BIN) --emit-runtime-stats --lang petta tests/petta/entry_guard_retirement.metta 2>&1); \
+	report=$$(CETTA_PREPARED_PURE_REFERENCE=1 ./$(BIN) --emit-runtime-stats --lang petta tests/petta/entry_guard_retirement.metta 2>&1); \
 	refuted=$$(counter open-equation-entry-guard-refuted); live=$$(counter open-equation-cursor-live-peak); \
 	if [ "$$refuted" -lt 200 ] || [ "$$live" -gt 4 ]; then \
 		echo "FAIL: entry guard: $$refuted refutations, $$live cursors live at once over a 200-iteration loop"; \
+		exit 1; \
+	fi; \
+	report=$$(./$(BIN) --emit-runtime-stats --lang petta tests/petta/entry_guard_retirement.metta 2>&1); \
+	live=$$(counter open-equation-cursor-live-peak); \
+	if [ "$${live:-0}" -gt 4 ]; then \
+		echo "FAIL: entry guard on the default route: $$live cursors live at once over a 200-iteration loop"; \
 		exit 1; \
 	fi; \
 	report=$$(./$(BIN) --emit-runtime-stats --lang petta tests/petta/suspended_alternative_budget.metta 2>&1); \
@@ -31600,16 +30783,6 @@ runtime/test_prepared_scalar_tree-$(BUILD_OBJ_TAG): tests/test_prepared_scalar_t
 test-prepared-scalar-tree: runtime/test_prepared_scalar_tree-$(BUILD_OBJ_TAG) $(BIN)
 	python3 tests/support/check_prepared_scalar_tree.py --native ./$< --cetta ./$(BIN)
 
-.PHONY: qualify-prepared-scalar-lean
-qualify-prepared-scalar-lean:
-	@set -eu; \
-	lean_root="$(METTAPEDIA_LEAN_CHECKOUT)"; \
-	test -f "$$lean_root/lakefile.lean" || \
-		{ echo 'Set METTAPEDIA_LEAN_ROOT to the MeTTapedia Lean project' >&2; exit 2; }; \
-	cd "$$lean_root"; \
-	lake build Mettapedia.Machines.RegisterCode \
-		Mettapedia.GSLT.Dynamics.PartialRegionPlan; \
-	lake env lean -DwarningAsError=true Mettapedia/Machines/ScalarTreeRegion.lean
 # A closed pure call runs as register code lowered from its equations, and
 # so do an answer producer's steps that cannot choose: every instruction
 # kind, each way a call enters its equation, and the calls that leave to the
@@ -33070,26 +32243,7 @@ test-petta-typecheck-v3-chainer: $(BIN) test-petta-chainer-manifest-unit
 		--chainer-working-tree \
 		--reference
 
-probe-petta-corpus-manifest: test-petta-corpus-manifest-unit
-	@if [[ -z "$(strip $(PETTA_ORACLE_ROOT))" ]]; then \
-		echo 'set PETTA_ORACLE_ROOT to the pinned PeTTa oracle checkout'; \
-		exit 1; \
-	fi
-	@PYTHONDONTWRITEBYTECODE=1 \
-		python3 scripts/petta_corpus_manifest.py verify \
-		--petta-dir "$(PETTA_ORACLE_ROOT)" \
-		--manifest "$(PETTA_CORPUS_MANIFEST)"
 
-test-petta-corpus-manifest: test-petta-corpus-manifest-unit
-	@if [[ -z "$(strip $(PETTA_ORACLE_ROOT))" ]]; then \
-		echo 'set PETTA_ORACLE_ROOT to the pinned PeTTa oracle checkout'; \
-		exit 1; \
-	fi
-	@PYTHONDONTWRITEBYTECODE=1 \
-		python3 scripts/petta_corpus_manifest.py verify \
-		--petta-dir "$(PETTA_ORACLE_ROOT)" \
-		--manifest "$(PETTA_CORPUS_MANIFEST)" \
-		--require-complete
 
 probe-petta-corpus-differential: $(BIN) probe-petta-corpus-manifest
 	@CETTA_PETTA_SEARCH_MACHINE=1 PYTHONDONTWRITEBYTECODE=1 \
@@ -39972,160 +39126,9 @@ test-prime-nik-megalodon-v1: \
 		echo "SKIP: Megalodon executable differential (binary unavailable)"; \
 	fi
 
-.PHONY: test-prime-nik-megalodon-term-v1
-test-prime-nik-megalodon-term-v1: \
-		$(BIN) \
-		$(NIK_RUNTIME_TEST_BIN) \
-		$(PRIME_NIK_MEGALODON_TERM_TEST_V1) \
-		$(PRIME_NIK_MEGALODON_TERM_POSITIVE_V1) \
-		$(PRIME_NIK_MEGALODON_TERM_WITNESS_V1) \
-		$(PRIME_NIK_MEGALODON_TERM_EXPORTER_V1) \
-		$(PRIME_NIK_AUTHORITY_CATALOG_V1)
-	@set -eu; \
-	if [ ! -x "$(MEGALODON_AUTO_BIN)" ]; then \
-		echo "SKIP: Megalodon executable term differential (binary unavailable)"; \
-		exit 0; \
-	fi; \
-	lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
-	if [ -z "$$lean_root" ] && \
-	   [ -f "$(METTAPEDIA_LEAN_AUTO_ROOT)/lakefile.lean" ]; then \
-		lean_root="$(METTAPEDIA_LEAN_AUTO_ROOT)"; \
-	fi; \
-	witness_abs=$$(realpath "$(PRIME_NIK_MEGALODON_TERM_WITNESS_V1)"); \
-	if [ -n "$$lean_root" ]; then \
-		mkdir -p $(BOOTSTRAP_TMPDIR); \
-		tmp_witness=$$(mktemp "$(BOOTSTRAP_TMPDIR)/prime-nik-megalodon-term.XXXXXX"); \
-		tmp_witness_abs=$$(realpath "$$tmp_witness"); \
-		trap 'rm -f "$$tmp_witness_abs"' EXIT INT TERM; \
-		(cd "$$lean_root" && lake env lean --run \
-			"$(abspath $(PRIME_NIK_MEGALODON_TERM_EXPORTER_V1))" \
-			"$$tmp_witness_abs"); \
-		cmp -s "$$tmp_witness_abs" "$$witness_abs"; \
-		witness_abs="$$tmp_witness_abs"; \
-	fi; \
-	python3 $(PRIME_NIK_MEGALODON_TERM_TEST_V1) \
-		--megalodon "$(MEGALODON_AUTO_BIN)" \
-		--cetta "$(abspath $(BIN))" \
-		--differential "$(abspath $(NIK_RUNTIME_TEST_BIN))" \
-		--catalog $(PRIME_NIK_AUTHORITY_CATALOG_V1) \
-		--positive $(PRIME_NIK_MEGALODON_TERM_POSITIVE_V1) \
-		--lean-witness "$$witness_abs"
 
-.PHONY: test-prime-nik-megalodon-polymorphic-v1
-test-prime-nik-megalodon-polymorphic-v1: \
-		$(BIN) \
-		$(NIK_RUNTIME_TEST_BIN) \
-		$(PRIME_NIK_MEGALODON_POLY_TEST_V1) \
-		$(PRIME_NIK_MEGALODON_POLY_POSITIVE_V1) \
-		$(PRIME_NIK_MEGALODON_POLY_WITNESS_V1) \
-		$(PRIME_NIK_MEGALODON_POLY_EXPORTER_V1) \
-		$(PRIME_NIK_AUTHORITY_CATALOG_V1)
-	@set -eu; \
-	if [ ! -x "$(MEGALODON_AUTO_BIN)" ]; then \
-		echo "SKIP: Megalodon executable polymorphic differential (binary unavailable)"; \
-		exit 0; \
-	fi; \
-	lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
-	if [ -z "$$lean_root" ] && \
-	   [ -f "$(METTAPEDIA_LEAN_AUTO_ROOT)/lakefile.lean" ]; then \
-		lean_root="$(METTAPEDIA_LEAN_AUTO_ROOT)"; \
-	fi; \
-	witness_abs=$$(realpath "$(PRIME_NIK_MEGALODON_POLY_WITNESS_V1)"); \
-	if [ -n "$$lean_root" ]; then \
-		mkdir -p $(BOOTSTRAP_TMPDIR); \
-		tmp_witness=$$(mktemp "$(BOOTSTRAP_TMPDIR)/prime-nik-megalodon-poly.XXXXXX"); \
-		tmp_witness_abs=$$(realpath "$$tmp_witness"); \
-		trap 'rm -f "$$tmp_witness_abs"' EXIT INT TERM; \
-		(cd "$$lean_root" && lake env lean --run \
-			"$(abspath $(PRIME_NIK_MEGALODON_POLY_EXPORTER_V1))" \
-			"$$tmp_witness_abs"); \
-		cmp -s "$$tmp_witness_abs" "$$witness_abs"; \
-		witness_abs="$$tmp_witness_abs"; \
-	fi; \
-	python3 $(PRIME_NIK_MEGALODON_POLY_TEST_V1) \
-		--megalodon "$(MEGALODON_AUTO_BIN)" \
-		--cetta "$(abspath $(BIN))" \
-		--differential "$(abspath $(NIK_RUNTIME_TEST_BIN))" \
-		--catalog $(PRIME_NIK_AUTHORITY_CATALOG_V1) \
-		--positive $(PRIME_NIK_MEGALODON_POLY_POSITIVE_V1) \
-		--lean-witness "$$witness_abs"
 
-.PHONY: test-prime-nik-megalodon-known-implication-v1
-test-prime-nik-megalodon-known-implication-v1: \
-		$(BIN) \
-		$(NIK_RUNTIME_TEST_BIN) \
-		$(PRIME_NIK_MEGALODON_KNOWN_IMP_TEST_V1) \
-		$(PRIME_NIK_MEGALODON_KNOWN_IMP_POSITIVE_V1) \
-		$(PRIME_NIK_MEGALODON_KNOWN_IMP_WITNESS_V1) \
-		$(PRIME_NIK_MEGALODON_KNOWN_IMP_EXPORTER_V1) \
-		$(PRIME_NIK_AUTHORITY_CATALOG_V1)
-	@set -eu; \
-	if [ ! -x "$(MEGALODON_AUTO_BIN)" ]; then \
-		echo "SKIP: Megalodon executable known-implication differential (binary unavailable)"; \
-		exit 0; \
-	fi; \
-	lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
-	if [ -z "$$lean_root" ] && \
-	   [ -f "$(METTAPEDIA_LEAN_AUTO_ROOT)/lakefile.lean" ]; then \
-		lean_root="$(METTAPEDIA_LEAN_AUTO_ROOT)"; \
-	fi; \
-	witness_abs=$$(realpath "$(PRIME_NIK_MEGALODON_KNOWN_IMP_WITNESS_V1)"); \
-	if [ -n "$$lean_root" ]; then \
-		mkdir -p $(BOOTSTRAP_TMPDIR); \
-		tmp_witness=$$(mktemp "$(BOOTSTRAP_TMPDIR)/prime-nik-megalodon-known-imp.XXXXXX"); \
-		tmp_witness_abs=$$(realpath "$$tmp_witness"); \
-		trap 'rm -f "$$tmp_witness_abs"' EXIT INT TERM; \
-		(cd "$$lean_root" && lake env lean --run \
-			"$(abspath $(PRIME_NIK_MEGALODON_KNOWN_IMP_EXPORTER_V1))" \
-			"$$tmp_witness_abs"); \
-		cmp -s "$$tmp_witness_abs" "$$witness_abs"; \
-		witness_abs="$$tmp_witness_abs"; \
-	fi; \
-	python3 $(PRIME_NIK_MEGALODON_KNOWN_IMP_TEST_V1) \
-		--megalodon "$(MEGALODON_AUTO_BIN)" \
-		--cetta "$(abspath $(BIN))" \
-		--differential "$(abspath $(NIK_RUNTIME_TEST_BIN))" \
-		--positive $(PRIME_NIK_MEGALODON_KNOWN_IMP_POSITIVE_V1) \
-		--lean-witness "$$witness_abs"
 
-.PHONY: test-prime-nik-megalodon-definition-v1
-test-prime-nik-megalodon-definition-v1: \
-		$(BIN) \
-		$(NIK_RUNTIME_TEST_BIN) \
-		$(PRIME_NIK_MEGALODON_DEFINITION_TEST_V1) \
-		$(PRIME_NIK_MEGALODON_DEFINITION_POSITIVE_V1) \
-		$(PRIME_NIK_MEGALODON_DEFINITION_WITNESS_V1) \
-		$(PRIME_NIK_MEGALODON_DEFINITION_EXPORTER_V1) \
-		$(PRIME_NIK_AUTHORITY_CATALOG_V1)
-	@set -eu; \
-	if [ ! -x "$(MEGALODON_AUTO_BIN)" ]; then \
-		echo "SKIP: Megalodon executable definition differential (binary unavailable)"; \
-		exit 0; \
-	fi; \
-	lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
-	if [ -z "$$lean_root" ] && \
-	   [ -f "$(METTAPEDIA_LEAN_AUTO_ROOT)/lakefile.lean" ]; then \
-		lean_root="$(METTAPEDIA_LEAN_AUTO_ROOT)"; \
-	fi; \
-	witness_abs=$$(realpath "$(PRIME_NIK_MEGALODON_DEFINITION_WITNESS_V1)"); \
-	if [ -n "$$lean_root" ]; then \
-		mkdir -p $(BOOTSTRAP_TMPDIR); \
-		tmp_witness=$$(mktemp "$(BOOTSTRAP_TMPDIR)/prime-nik-megalodon-definition.XXXXXX"); \
-		tmp_witness_abs=$$(realpath "$$tmp_witness"); \
-		trap 'rm -f "$$tmp_witness_abs"' EXIT INT TERM; \
-		(cd "$$lean_root" && lake env lean --run \
-			"$(abspath $(PRIME_NIK_MEGALODON_DEFINITION_EXPORTER_V1))" \
-			"$$tmp_witness_abs"); \
-		cmp -s "$$tmp_witness_abs" "$$witness_abs"; \
-		witness_abs="$$tmp_witness_abs"; \
-	fi; \
-	python3 $(PRIME_NIK_MEGALODON_DEFINITION_TEST_V1) \
-		--megalodon "$(MEGALODON_AUTO_BIN)" \
-		--cetta "$(abspath $(BIN))" \
-		--differential "$(abspath $(NIK_RUNTIME_TEST_BIN))" \
-		--catalog $(PRIME_NIK_AUTHORITY_CATALOG_V1) \
-		--positive $(PRIME_NIK_MEGALODON_DEFINITION_POSITIVE_V1) \
-		--lean-witness "$$witness_abs"
 
 .PHONY: test-prime-nik-proof-dag-v1
 test-prime-nik-proof-dag-v1: \
@@ -40158,25 +39161,6 @@ test-prime-nik-core-v1: test-nik-runtime-v1 \
 		test-nik-licensed-implementation-selection test-prime-nik-generation-v1 \
 		test-prime-nik-proof-dag-v1
 
-.PHONY: test-prime-nik-qualification-v1
-test-prime-nik-qualification-v1: \
-		test-prime-nik-megalodon-v1 test-prime-nik-megalodon-term-v1 \
-		test-prime-nik-megalodon-polymorphic-v1 \
-		test-prime-nik-megalodon-known-implication-v1 \
-		test-prime-nik-megalodon-definition-v1 \
-		test-prime-nik-megalodon-tactics-package-v1
-	@set -eu; \
-	lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
-	if [ -z "$$lean_root" ] && \
-	   [ -f "$(METTAPEDIA_LEAN_AUTO_ROOT)/lakefile.lean" ]; then \
-		lean_root="$(METTAPEDIA_LEAN_AUTO_ROOT)"; \
-	fi; \
-	if [ -n "$$lean_root" ]; then \
-		$(MAKE) -s METTAPEDIA_LEAN_ROOT="$$lean_root" \
-			test-prime-nik-lean-export-v1; \
-	else \
-		echo "SKIP: Prime NIK Lean export (Mettapedia Lean project unavailable)"; \
-	fi
 
 .PHONY: test-prime-nik-v1
 test-prime-nik-v1: test-prime-nik-core-v1 \
@@ -40717,31 +39701,7 @@ test-gslt2parse-c-horn-v1-native: $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
 	@python3 tools/test_finite_horn_chart_v1.py \
 		--binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
 
-test-gslt2parse-c-horn-v1-differential: test-gslt2parse-c-horn-v1-native
-	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_PETTA_ROOT to the PeTTa foundation checkout'; \
-		exit 1; \
-	fi
-	@python3 tools/test_parser_action_bytecode_compiler_v1.py \
-		--binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		--petta-root "$(GSLT2PARSE_PETTA_ROOT)" \
-		--presentation-root \
-		"$(CURDIR)/experiments/gslt2parse_foundation/presentations"
-	@swipl -q -f \
-		"$(GSLT2PARSE_PETTA_ROOT)/experiments/gslt2parse_foundation/test_finite_horn_ground_terms.pl" \
-		-- "$(CURDIR)/experiments/gslt2parse_foundation/presentations"
 
-test-gslt2parse-parser-action-bytecode-v1: \
-		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		$(PARSER_ACTION_BYTECODE_V1_STREAM_BIN)
-	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_PETTA_ROOT to the PeTTa foundation checkout'; \
-		exit 1; \
-	fi
-	@python3 tools/test_parser_action_bytecode_v1.py \
-		--chart-binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		--stream-binary $(PARSER_ACTION_BYTECODE_V1_STREAM_BIN) \
-		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
 
 test-gslt2parse-lookahead-semantics-v1: $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
 	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
@@ -40752,54 +39712,12 @@ test-gslt2parse-lookahead-semantics-v1: $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
 		--binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
 
-test-gslt2parse-parser-pack-guard-compiler-v1: \
-		$(GSLT2PARSE_CHART_V1_NATIVE_BIN)
-	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_PETTA_ROOT to the PeTTa foundation checkout'; \
-		exit 1; \
-	fi
-	@python3 tools/test_parser_pack_guard_compiler_v1.py \
-		--binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
 
-test-gslt2parse-parser-pack-guard-regular-v1: \
-		$(GSLT2PARSE_CHART_V1_NATIVE_BIN)
-	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_PETTA_ROOT to the PeTTa foundation checkout'; \
-		exit 1; \
-	fi
-	@python3 tools/test_parser_pack_guard_regular_v1.py \
-		--binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
 
 test-gslt2parse-parser-pack-lr1-v1:
 	@python3 tools/test_parser_pack_lr1_v1.py
 
-test-gslt2parse-parser-pack-lexical-plan-v1: \
-		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		$(PARSER_PACK_LEXICAL_PLAN_V1_STREAM_BIN)
-	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_PETTA_ROOT to the PeTTa foundation checkout'; \
-		exit 1; \
-	fi
-	@python3 tools/test_parser_pack_lexical_plan_v1.py \
-		--chart-binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		--plan-binary $(PARSER_PACK_LEXICAL_PLAN_V1_STREAM_BIN) \
-		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
 
-test-gslt2parse-parser-pack-guarded-lexical-v1: \
-		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		$(PARSER_PACK_GUARDED_LEXICAL_PLAN_V1_STREAM_BIN) \
-		$(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_BIN)
-	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_PETTA_ROOT to the PeTTa foundation checkout'; \
-		exit 1; \
-	fi
-	@python3 tools/test_parser_pack_guarded_lexical_v1.py \
-		--chart-binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		--plan-binary $(PARSER_PACK_GUARDED_LEXICAL_PLAN_V1_STREAM_BIN) \
-		--exec-binary $(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_BIN) \
-		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
 
 .PHONY: test-mm0-cogslt-textual-syntax-v1 \
 	bench-mm0-cogslt-textual-parser-v1 \
@@ -41495,30 +40413,6 @@ test-mm0-cogslt-term-environment-core-v1: \
 	printf '%s\n' \
 		'(MM0TermEnvironmentDirectTargetsV1Summary 87 3 6 3 1 0)'
 
-test-mm0-cogslt-term-environment-swi-compat-v1: \
-		test-mm0-cogslt-term-environment-v1 \
-		$(MM0_TERM_ENVIRONMENT_SWI_QUERY_V1)
-	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" || \
-		! -x "$(GSLT2PARSE_PETTA_ROOT)/run.sh" ]]; then \
-		echo 'set GSLT2PARSE_PETTA_ROOT to the pinned SWI PeTTa checkout'; \
-		exit 1; \
-	fi
-	@set -euo pipefail; \
-	work=$$(mktemp -d runtime/mm0-term-swi-compat.XXXXXX); \
-	trap 'rm -rf "$$work"' EXIT INT TERM; \
-	(cd "$(GSLT2PARSE_PETTA_ROOT)" && timeout 60 \
-		sh run.sh --silent \
-		"$(abspath $(MM0_TERM_ENVIRONMENT_SWI_QUERY_V1))") \
-		>"$$work/stdout" 2>"$$work/stderr"; \
-	for expected in \
-		MM0TermEnvironmentSWIAcceptedV1 \
-		MM0TermEnvironmentSWIPureTargetRefusedV1 \
-		MM0TermEnvironmentSWIDependentSignatureAcceptedV1; do \
-		rg -F -x -q "$$expected" "$$work/stdout"; \
-	done; \
-	! rg -q 'Mismatch|partial|Error' "$$work/stdout"; \
-	printf '%s\n' \
-		'(MM0TermEnvironmentSWICompatibilityV1Summary 3 0)'
 
 $(MM0_NOTATION_ENVIRONMENT_PETTA_PROGRAM_V1): \
 		$(GSLT_GROUND_RELATIONS_V1) \
@@ -42423,228 +41317,28 @@ test-cogslt-direct-didactic-merge-set-core-v1: \
 	@printf '%s\n' \
 		'(CoGSLTDirectDidacticMergeSetV1Summary 1 10 0)'
 
-test-gslt2parse-parser-pack-guard-plan-prime-v1: \
-		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		$(PARSER_PACK_GUARD_PLAN_V1_STREAM_BIN)
-	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_PETTA_ROOT to the PeTTa foundation checkout'; \
-		exit 1; \
-	fi
-	@python3 tools/test_parser_pack_guard_plan_prime_v1.py \
-		--chart-binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		--plan-binary $(PARSER_PACK_GUARD_PLAN_V1_STREAM_BIN) \
-		--petta-root "$(GSLT2PARSE_PETTA_ROOT)" \
-		--profile prime
 
-test-gslt2parse-parser-pack-guard-plan-he-v1: \
-		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		$(PARSER_PACK_GUARD_PLAN_V1_STREAM_BIN)
-	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_PETTA_ROOT to the PeTTa foundation checkout'; \
-		exit 1; \
-	fi
-	@python3 tools/test_parser_pack_guard_plan_prime_v1.py \
-		--chart-binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		--plan-binary $(PARSER_PACK_GUARD_PLAN_V1_STREAM_BIN) \
-		--petta-root "$(GSLT2PARSE_PETTA_ROOT)" \
-		--profile he
 
-test-gslt2parse-he-parser-authority-v1:
-	@if [[ -z "$(strip $(GSLT2PARSE_HE_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_HE_ROOT to the pinned HE checkout'; \
-		exit 1; \
-	fi
-	@python3 tools/test_he_parser_authority_v1.py \
-		--he-root "$(GSLT2PARSE_HE_ROOT)"
 
 test-gslt2parse-he-unicode-residual-dfa-v1:
 	@python3 tools/test_he_unicode_residual_dfa_v1.py
 
-test-gslt2parse-he-string-slr-specialization-v1: \
-		$(PARSER_PACK_SLR_SUMMARY_V1_STREAM_BIN)
-	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_PETTA_ROOT to the pinned PeTTa checkout'; \
-		exit 1; \
-	fi
-	@python3 tools/test_he_string_slr_specialization_v1.py \
-		--binary $(PARSER_PACK_SLR_SUMMARY_V1_STREAM_BIN) \
-		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
 
-test-gslt2parse-he-reader-escape-differential-v1:
-	@if [[ -z "$(strip $(GSLT2PARSE_HE_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_HE_ROOT to the pinned HE checkout'; \
-		exit 1; \
-	fi
-	@python3 tools/test_he_reader_escape_differential_v1.py \
-		--he-root "$(GSLT2PARSE_HE_ROOT)" \
-		--cetta-root "$(CURDIR)" \
-		--mettapedia-root "$${METTAPEDIA_ROOT:-../../Mettapedia}"
 
-test-gslt2parse-he-reader-source-faithfulness-v1: \
-		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		$(PARSER_PACK_GUARD_REF_V1_STREAM_BIN)
-	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_PETTA_ROOT to the pinned PeTTa checkout'; \
-		exit 1; \
-	fi
-	@python3 tools/test_he_reader_source_faithfulness_v1.py \
-		--chart-binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		--exec-binary $(PARSER_PACK_GUARD_REF_V1_STREAM_BIN) \
-		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
 
-test-gslt2parse-he-reader-source-correspondence-v1: \
-		test-gslt2parse-he-unicode-residual-dfa-v1 \
-		test-gslt2parse-he-string-slr-specialization-v1 \
-		test-gslt2parse-he-reader-escape-differential-v1 \
-		test-gslt2parse-he-reader-source-faithfulness-v1
-	@if [[ -z "$(strip $(GSLT2PARSE_HE_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_HE_ROOT to the pinned HE checkout'; \
-		exit 1; \
-	fi
-	@python3 tools/test_he_reader_source_correspondence_v1.py \
-		--he-root "$(GSLT2PARSE_HE_ROOT)" \
-		--cetta-root "$(CURDIR)" \
-		--mettapedia-root "$${METTAPEDIA_ROOT:-../../Mettapedia}"
 
-test-gslt2parse-rho-abstract-syntax-v1:
-	@mettapedia_root="$${METTAPEDIA_ROOT:-../../Mettapedia/lean/mettapedia}"; \
-	python3 tools/test_rho_abstract_syntax_v1.py \
-		--mettapedia-root "$$mettapedia_root"
 
 test-gslt2parse-rhocalc-reader-authority-v1: $(BIN)
 	@python3 tools/test_rhocalc_reader_authority_v1.py \
 		--binary "$(CETTA_SCRIPT_BIN)"
 
-test-gslt2parse-rhocalc-parser-pack-v1: \
-		$(BIN) \
-		$(PARSER_PACK_GLL_V1_STREAM_BIN) \
-		$(PARSER_PACK_GLR_V1_STREAM_BIN)
-	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_PETTA_ROOT to the pinned PeTTa checkout'; \
-		exit 1; \
-	fi
-	@python3 tools/test_rhocalc_parser_pack_v1.py \
-		--cetta-binary "$(CETTA_SCRIPT_BIN)" \
-		--gll-binary $(PARSER_PACK_GLL_V1_STREAM_BIN) \
-		--glr-binary $(PARSER_PACK_GLR_V1_STREAM_BIN) \
-		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
 
-test-gslt2parse-rho-syntax-convergence-v1: \
-		$(BIN) \
-		$(PARSER_PACK_GLL_V1_STREAM_BIN) \
-		$(PARSER_PACK_GLR_V1_STREAM_BIN) \
-		$(GSLT2PARSE_TERM_PROJECTION_V1_STREAM_BIN)
-	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_PETTA_ROOT to the pinned PeTTa checkout'; \
-		exit 1; \
-	fi
-	@python3 tools/test_rhocalc_syntax_convergence_v1.py \
-		--cetta-binary "$(CETTA_SCRIPT_BIN)" \
-		--gll-binary $(PARSER_PACK_GLL_V1_STREAM_BIN) \
-		--glr-binary $(PARSER_PACK_GLR_V1_STREAM_BIN) \
-		--projection-binary $(GSLT2PARSE_TERM_PROJECTION_V1_STREAM_BIN) \
-		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
 
-test-gslt2parse-stable-parser-parse-only-v1:
-	@if [[ -z "$(strip $(GSLT2PARSE_HE_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_HE_ROOT to the pinned HE checkout'; \
-		exit 1; \
-	fi
-	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_PETTA_ROOT to the pinned PeTTa checkout'; \
-		exit 1; \
-	fi
-	@python3 tools/test_stable_parser_parse_only_v1.py \
-		--he-root "$(GSLT2PARSE_HE_ROOT)" \
-		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
 
-test-gslt2parse-he-gslt-parse-only-v1: \
-		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		$(HE_DOCUMENT_PIPELINE_V1_BENCH_BIN)
-	@if [[ -z "$(strip $(GSLT2PARSE_HE_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_HE_ROOT to the pinned HE checkout'; \
-		exit 1; \
-	fi
-	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_PETTA_ROOT to the pinned PeTTa checkout'; \
-		exit 1; \
-	fi
-	@python3 tools/test_he_gslt_parse_only_v1.py \
-		--chart-binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		--pipeline-binary $(HE_DOCUMENT_PIPELINE_V1_BENCH_BIN) \
-		--he-root "$(GSLT2PARSE_HE_ROOT)" \
-		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
 
-bench-gslt2parse-he-gslt-parse-only-v1: \
-		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		$(HE_DOCUMENT_PIPELINE_V1_BENCH_BIN)
-	@if [[ -z "$(strip $(GSLT2PARSE_HE_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_HE_ROOT to the pinned HE checkout'; \
-		exit 1; \
-	fi
-	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_PETTA_ROOT to the pinned PeTTa checkout'; \
-		exit 1; \
-	fi
-	@python3 tools/test_he_gslt_parse_only_v1.py \
-		--chart-binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		--pipeline-binary $(HE_DOCUMENT_PIPELINE_V1_BENCH_BIN) \
-		--he-root "$(GSLT2PARSE_HE_ROOT)" \
-		--petta-root "$(GSLT2PARSE_PETTA_ROOT)" \
-		--benchmark
 
-bench-gslt2parse-stable-parser-parse-only-v1:
-	@if [[ -z "$(strip $(GSLT2PARSE_HE_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_HE_ROOT to the pinned HE checkout'; \
-		exit 1; \
-	fi
-	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_PETTA_ROOT to the pinned PeTTa checkout'; \
-		exit 1; \
-	fi
-	@python3 tools/test_stable_parser_parse_only_v1.py \
-		--he-root "$(GSLT2PARSE_HE_ROOT)" \
-		--petta-root "$(GSLT2PARSE_PETTA_ROOT)" \
-		--benchmark
 
-test-gslt2parse-he-reader-guard-exec-v1: \
-		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		$(PARSER_PACK_GUARD_REF_V1_STREAM_BIN)
-	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_PETTA_ROOT to the pinned PeTTa checkout'; \
-		exit 1; \
-	fi
-	@if [[ -z "$(strip $(GSLT2PARSE_HE_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_HE_ROOT to the pinned HE checkout'; \
-		exit 1; \
-	fi
-	@python3 tools/test_he_reader_guard_exec_v1.py \
-		--chart-binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		--exec-binary $(PARSER_PACK_GUARD_REF_V1_STREAM_BIN) \
-		--petta-root "$(GSLT2PARSE_PETTA_ROOT)" \
-		--he-root "$(GSLT2PARSE_HE_ROOT)"
 
-test-gslt2parse-he-reader-guarded-lexical-v1: \
-		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		$(PARSER_PACK_GUARD_REF_V1_STREAM_BIN) \
-		$(PARSER_PACK_GUARDED_LEXICAL_PLAN_V1_STREAM_BIN) \
-		$(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_BIN)
-	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_PETTA_ROOT to the pinned PeTTa checkout'; \
-		exit 1; \
-	fi
-	@if [[ -z "$(strip $(GSLT2PARSE_HE_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_HE_ROOT to the pinned HE checkout'; \
-		exit 1; \
-	fi
-	@python3 tools/test_he_reader_guarded_lexical_v1.py \
-		--chart-binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		--scalar-exec-binary $(PARSER_PACK_GUARD_REF_V1_STREAM_BIN) \
-		--plan-binary $(PARSER_PACK_GUARDED_LEXICAL_PLAN_V1_STREAM_BIN) \
-		--exec-binary $(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_BIN) \
-		--petta-root "$(GSLT2PARSE_PETTA_ROOT)" \
-		--he-root "$(GSLT2PARSE_HE_ROOT)" \
-		$(if $(strip $(GSLT2PARSE_HE_GENERATED_C_OUTPUT)),--generated-c-output "$(GSLT2PARSE_HE_GENERATED_C_OUTPUT)",)
 
 .PHONY: refresh-he-compiled-reader-projection-v1 \
 	test-he-compiled-reader-projection-generated-v1 \
@@ -42684,27 +41378,7 @@ test-he-compiled-reader-projection-generated-v1:
 	fi; \
 	echo "PASS: checked-in HE host projection regenerates byte-for-byte"
 
-refresh-he-compiled-reader-cursor-v1:
-	@$(MAKE) --no-print-directory \
-		GSLT2PARSE_HE_ROOT="$(GSLT2PARSE_HE_ROOT)" \
-		GSLT2PARSE_PETTA_ROOT="$(GSLT2PARSE_PETTA_ROOT)" \
-		GSLT2PARSE_HE_GENERATED_C_OUTPUT="$(GSLT2PARSE_HE_CURSOR_GENERATED_C)" \
-		test-gslt2parse-he-reader-guarded-lexical-v1
 
-test-he-compiled-reader-cursor-generated-v1:
-	@mkdir -p "$(GSLT2PARSE_GENERATED_CHECK_DIR)"
-	@candidate="$(GSLT2PARSE_GENERATED_CHECK_DIR)/he_reader_cursor_v1.generated.c"; \
-	$(MAKE) --no-print-directory \
-		GSLT2PARSE_HE_ROOT="$(GSLT2PARSE_HE_ROOT)" \
-		GSLT2PARSE_PETTA_ROOT="$(GSLT2PARSE_PETTA_ROOT)" \
-		GSLT2PARSE_HE_GENERATED_C_OUTPUT="$$candidate" \
-		test-gslt2parse-he-reader-guarded-lexical-v1; \
-	if ! cmp -s "$$candidate" "$(GSLT2PARSE_HE_CURSOR_GENERATED_C)"; then \
-		echo "FAIL: checked-in HE cursor is not generated from its LanguageDef"; \
-		sha256sum "$(GSLT2PARSE_HE_CURSOR_GENERATED_C)" "$$candidate"; \
-		exit 1; \
-	fi; \
-	echo "PASS: checked-in HE cursor regenerates byte-for-byte"
 
 refresh-he-compiled-reader-direct-v1:
 	@python3 tools/compile_gslt_direct_reader_v1.py \
@@ -42870,78 +41544,11 @@ test-prime-compiled-reader-direct-generated-v1:
 test-gslt-prefix-reader-compiler-v1:
 	@python3 tools/test_gslt_prefix_reader_compiler_v1.py
 
-test-gslt2parse-he-document-pipeline-v1: \
-		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		$(HE_DOCUMENT_PIPELINE_V1_STREAM_BIN)
-	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_PETTA_ROOT to the pinned PeTTa checkout'; \
-		exit 1; \
-	fi
-	@if [[ -z "$(strip $(GSLT2PARSE_HE_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_HE_ROOT to the pinned HE checkout'; \
-		exit 1; \
-	fi
-	@python3 tools/test_he_document_pipeline_v1.py \
-		--chart-binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		--pipeline-binary $(HE_DOCUMENT_PIPELINE_V1_STREAM_BIN) \
-		--petta-root "$(GSLT2PARSE_PETTA_ROOT)" \
-		--he-root "$(GSLT2PARSE_HE_ROOT)"
 
 PREPARED_FINAL_FOREST_PROBE_ITERATIONS ?= 3
 
-bench-gslt2parse-prepared-final-forest-v1: \
-		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		$(PARSER_PACK_GUARD_REF_V1_STREAM_BIN) \
-		$(PARSER_PACK_GUARDED_LEXICAL_PLAN_V1_STREAM_BIN) \
-		$(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_BIN)
-	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_PETTA_ROOT to the PeTTa foundation checkout'; \
-		exit 1; \
-	fi
-	@if [[ -z "$(strip $(GSLT2PARSE_HE_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_HE_ROOT to the pinned HE checkout'; \
-		exit 1; \
-	fi
-	@python3 tools/test_parser_pack_guarded_lexical_v1.py \
-		--chart-binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		--plan-binary $(PARSER_PACK_GUARDED_LEXICAL_PLAN_V1_STREAM_BIN) \
-		--exec-binary $(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_BIN) \
-		--petta-root "$(GSLT2PARSE_PETTA_ROOT)" \
-		--probe-final-forest-growth \
-		--probe-iterations $(PREPARED_FINAL_FOREST_PROBE_ITERATIONS)
-	@python3 tools/test_he_reader_guarded_lexical_v1.py \
-		--chart-binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		--scalar-exec-binary $(PARSER_PACK_GUARD_REF_V1_STREAM_BIN) \
-		--plan-binary $(PARSER_PACK_GUARDED_LEXICAL_PLAN_V1_STREAM_BIN) \
-		--exec-binary $(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_BIN) \
-		--petta-root "$(GSLT2PARSE_PETTA_ROOT)" \
-		--he-root "$(GSLT2PARSE_HE_ROOT)" \
-		--probe-final-forest-growth \
-		--probe-iterations $(PREPARED_FINAL_FOREST_PROBE_ITERATIONS)
 
-test-gslt2parse-petta-form-guard-exec-v1: \
-		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		$(PARSER_PACK_GUARD_REF_V1_STREAM_BIN)
-	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_PETTA_ROOT to the pinned PeTTa checkout'; \
-		exit 1; \
-	fi
-	@python3 tools/test_petta_form_guard_exec_v1.py \
-		--chart-binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		--exec-binary $(PARSER_PACK_GUARD_REF_V1_STREAM_BIN) \
-		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
 
-test-gslt2parse-petta-document-splitter-v1: \
-		$(PARSER_PACK_GLL_V1_STREAM_BIN) \
-		$(PARSER_PACK_GLR_V1_STREAM_BIN)
-	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_PETTA_ROOT to the pinned PeTTa checkout'; \
-		exit 1; \
-	fi
-	@python3 tools/test_petta_document_splitter_v1.py \
-		--gll-binary $(PARSER_PACK_GLL_V1_STREAM_BIN) \
-		--glr-binary $(PARSER_PACK_GLR_V1_STREAM_BIN) \
-		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
 
 ifeq ($(ENABLE_PIC),1)
 test-gslt2parse-petta-document-pipeline-v1-body: \
@@ -42976,43 +41583,9 @@ test-gslt2parse-petta-document-pipeline-v1-body:
 		test-gslt2parse-petta-document-pipeline-v1-body
 endif
 
-test-gslt2parse-petta-ffi-v1:
-	@$(MAKE) --no-print-directory \
-		BUILD=core ENABLE_GMP=1 ENABLE_SANITIZERS=0 ENABLE_PIC=0 \
-		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
-		ENABLE_PRIME_RECEIPT_PRIMARY_INDEX=0 \
-		ENABLE_PRIME_NEED_HEAP_INDEX=0 \
-		ENABLE_PRIME_NEED_CLOSURE_CAPTURE=0 ENABLE_PRIME_EVAL_STACK=0 \
-		ENABLE_LIB_PROLOG=0 \
-		GSLT2PARSE_PETTA_ROOT="$(GSLT2PARSE_PETTA_ROOT)" \
-		test-gslt2parse-petta-ffi-v1-body
 
-test-gslt2parse-petta-document-pipeline-v1:
-	@$(MAKE) --no-print-directory \
-		BUILD=core ENABLE_GMP=1 ENABLE_SANITIZERS=0 ENABLE_PIC=0 \
-		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
-		ENABLE_PRIME_RECEIPT_PRIMARY_INDEX=0 \
-		ENABLE_PRIME_NEED_HEAP_INDEX=0 \
-		ENABLE_PRIME_NEED_CLOSURE_CAPTURE=0 ENABLE_PRIME_EVAL_STACK=0 \
-		ENABLE_LIB_PROLOG=0 \
-		GSLT2PARSE_PETTA_ROOT="$(GSLT2PARSE_PETTA_ROOT)" \
-		test-gslt2parse-petta-document-pipeline-v1-body
 
-test-gslt2parse-petta-ffi-v1-body:
-	@$(MAKE) --no-print-directory ENABLE_PIC=1 \
-		GSLT2PARSE_PETTA_ROOT="$(GSLT2PARSE_PETTA_ROOT)" \
-		test-gslt2parse-parser-pack-native-petta-v1
-	@$(MAKE) --no-print-directory \
-		GSLT2PARSE_PETTA_ROOT="$(GSLT2PARSE_PETTA_ROOT)" \
-		test-gslt2parse-petta-document-pipeline-v1-body
 
-test-gslt2parse-petta-parser-authority-v1:
-	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_PETTA_ROOT to the pinned PeTTa checkout'; \
-		exit 1; \
-	fi
-	@python3 tools/test_petta_parser_authority_v1.py \
-		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
 
 $(GSLT2PARSE_PARSER_PACK_ABI_V1_NATIVE_BIN): \
 		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/parser_pack_abi_v1.c \
@@ -43101,35 +41674,7 @@ test-gslt2parse-parser-atom-projection-v1-native: \
 		exit 1; \
 	fi
 
-test-gslt2parse-parser-atom-projection-closure-v1: \
-		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		$(PARSER_ATOM_PROJECTION_CLOSURE_V1_STREAM_BIN) \
-		tools/test_parser_atom_projection_closure_v1.py \
-		tools/sexpr_atom_projection_plan_v1.py \
-		experiments/gslt2parse_foundation/presentations/compiler/semantic_text_span_compiler_v1.metta
-	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_PETTA_ROOT to the paired PeTTa checkout'; \
-		exit 1; \
-	fi
-	@python3 tools/test_parser_atom_projection_closure_v1.py \
-		--chart-binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		--closure-binary $(PARSER_ATOM_PROJECTION_CLOSURE_V1_STREAM_BIN) \
-		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
 
-test-gslt2parse-semantic-mask-span-compiler-v1: \
-		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		$(SEMANTIC_MASK_NFA_V1_STREAM_BIN) \
-		tools/test_semantic_mask_span_compiler_v1.py \
-		experiments/gslt2parse_foundation/presentations/compiler/semantic_mask_span_compiler_v1.metta \
-		experiments/gslt2parse_foundation/presentations/canaries/semantic_mask_v1.metta
-	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_PETTA_ROOT to the paired PeTTa checkout'; \
-		exit 1; \
-	fi
-	@python3 tools/test_semantic_mask_span_compiler_v1.py \
-		--chart-binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		--stream-binary $(SEMANTIC_MASK_NFA_V1_STREAM_BIN) \
-		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
 
 $(GSLT2PARSE_TERM_PROJECTION_V1_STREAM_BIN): \
 		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/parser_term_projection_v1.c \
@@ -43166,26 +41711,6 @@ $(GSLT2PARSE_PARSER_PACK_ABI_V1_STREAM_BIN): \
 		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/finite_horn_ground_term_v1.c \
 		$(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c src/native_sha256.c $(LDFLAGS)
 
-test-gslt2parse-parser-pack-abi-v1-matrix: \
-		$(GSLT2PARSE_PARSER_PACK_ABI_V1_STREAM_BIN)
-	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_PETTA_ROOT to the PeTTa foundation checkout'; \
-		exit 1; \
-	fi
-	@python3 tools/test_parser_pack_abi_v1.py \
-		--binary $(GSLT2PARSE_PARSER_PACK_ABI_V1_STREAM_BIN) \
-		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
-	@if rg -ni 'metamath|megalodon|tptp' \
-		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/parser_pack_abi_v1.c \
-		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/parser_pack_abi_v1.h \
-		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/parser_pack_abi_stream_v1.c \
-		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/parser_pack_abi_stream_v1.h \
-		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/finite_horn_ground_term_v1.c \
-		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/finite_horn_ground_term_v1.h \
-		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/test_parser_pack_abi_v1_stream.c; then \
-		echo 'guest-language name leaked into the native ParserPack ABI path'; \
-		exit 1; \
-	fi
 
 refresh-he-matrices:
 	@python3 scripts/refresh_he_runtime_matrices.py
@@ -43280,7 +41805,7 @@ $(OPERATIONAL_LANGUAGE_DEF_V1_TEST_BIN): \
 	@set -eu; \
 	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-operational-language-def-v1.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
-	$(CC) $(CFLAGS) -Wl,--gc-sections,--wrap=cetta_lp_native_gll_prepare,--wrap=cetta_lp_native_glr_prepare -o "$$tmp_out" $^; \
+	$(CC) $(CFLAGS) -Wl,--gc-sections,--wrap=cetta_lp_native_gll_prepare,--wrap=cetta_lp_native_glr_prepare,--wrap=cetta_lp_native_gll_prepared_parse_utf8_lattice_forest_from_complete -o "$$tmp_out" $^; \
 	mv "$$tmp_out" $@
 
 .PHONY: test-operational-language-def-v1
@@ -43573,141 +42098,30 @@ PHONY_WIRE_PROVENANCE_V1 = \
 	check-tptp-fof-skolemization-ntt-wires-v1 \
 	check-tptp-official-semantic-carrier-wire-v1
 
-.PHONY: require-mettapedia-root-for-wire-provenance-v1
-require-mettapedia-root-for-wire-provenance-v1:
-	@test -n "$(strip $(METTAPEDIA_ROOT))" || { \
-		echo "METTAPEDIA_ROOT must name a Mettapedia checkout for wire provenance qualification" >&2; \
-		echo "usage: make METTAPEDIA_ROOT=/path/to/Mettapedia qualify-language-def-wire-provenance-v1" >&2; \
-		exit 2; \
-	}
-	@test -f "$(METTAPEDIA_ROOT)/lean/mettapedia/lakefile.lean" || { \
-		echo "METTAPEDIA_ROOT does not contain lean/mettapedia/lakefile.lean: $(METTAPEDIA_ROOT)" >&2; \
-		exit 2; \
-	}
 
-.PHONY: check-walters-zantema-da-wire-v1
-check-walters-zantema-da-wire-v1: require-mettapedia-root-for-wire-provenance-v1
-	@sh tools/check_walters_zantema_da_wire_v1.sh "$(METTAPEDIA_ROOT)"
 
-.PHONY: check-radix-digit-language-def-wire-v1
-check-radix-digit-language-def-wire-v1: require-mettapedia-root-for-wire-provenance-v1
-	@sh tools/check_radix_digit_language_def_wire_v1.sh "$(METTAPEDIA_ROOT)"
 
-.PHONY: check-external-call-machine-wire-v1
-check-external-call-machine-wire-v1: require-mettapedia-root-for-wire-provenance-v1
-	@sh tools/check_external_call_machine_wire_v1.sh "$(METTAPEDIA_ROOT)"
 
-.PHONY: check-structured-c-wire-v1
-check-structured-c-wire-v1: require-mettapedia-root-for-wire-provenance-v1
-	@sh tools/check_structured_c_wire_v1.sh "$(METTAPEDIA_ROOT)"
 
-.PHONY: check-arithmetic-target-coproduct-wire-v1
-check-arithmetic-target-coproduct-wire-v1: require-mettapedia-root-for-wire-provenance-v1
-	@sh tools/check_arithmetic_target_coproduct_wire_v1.sh "$(METTAPEDIA_ROOT)"
 
-.PHONY: check-exact-arithmetic-wire-v1
-check-exact-arithmetic-wire-v1: require-mettapedia-root-for-wire-provenance-v1
-	@sh tools/check_exact_arithmetic_wire_v1.sh "$(METTAPEDIA_ROOT)"
 
-.PHONY: check-rfc8259-json-syntax-wire-v1
-check-rfc8259-json-syntax-wire-v1: require-mettapedia-root-for-wire-provenance-v1
-	@sh tools/check_rfc8259_json_syntax_wire_v1.sh "$(METTAPEDIA_ROOT)"
 
-.PHONY: check-rfc8259-json-parser-profile-wire-v1
-check-rfc8259-json-parser-profile-wire-v1: require-mettapedia-root-for-wire-provenance-v1
-	@sh tools/check_rfc8259_json_parser_profile_wire_v1.sh "$(METTAPEDIA_ROOT)"
 
-.PHONY: check-json-value-language-def-wire-v1
-check-json-value-language-def-wire-v1: require-mettapedia-root-for-wire-provenance-v1
-	@sh tools/check_json_value_language_def_wire_v1.sh "$(METTAPEDIA_ROOT)"
 
-.PHONY: check-first-order-resolution-input-wire-v1
-check-first-order-resolution-input-wire-v1: require-mettapedia-root-for-wire-provenance-v1
-	@sh tools/check_first_order_resolution_input_wire_v1.sh "$(METTAPEDIA_ROOT)"
 
-.PHONY: check-first-order-resolution-example-trace-wire-v1
-check-first-order-resolution-example-trace-wire-v1: require-mettapedia-root-for-wire-provenance-v1
-	@sh tools/check_first_order_resolution_example_trace_wire_v1.sh "$(METTAPEDIA_ROOT)"
 
-.PHONY: check-tptp-fof-cnf-syntax-tree-wire-v1
-check-tptp-fof-cnf-syntax-tree-wire-v1: require-mettapedia-root-for-wire-provenance-v1
-	@sh tools/check_tptp_fof_cnf_syntax_tree_wire_v1.sh "$(METTAPEDIA_ROOT)"
 
-.PHONY: check-tptp-fof-skolemization-ntt-wires-v1
-check-tptp-fof-skolemization-ntt-wires-v1: require-mettapedia-root-for-wire-provenance-v1
-	@sh tools/check_tptp_fof_skolemization_ntt_wires_v1.sh "$(METTAPEDIA_ROOT)"
 
-.PHONY: check-tptp-fof-transformation-language-defs-v1
-check-tptp-fof-transformation-language-defs-v1: require-mettapedia-root-for-wire-provenance-v1 \
-		$(TPTP_FOF_TRANSFORMATION_LANGUAGE_DEFS_V1) \
-		$(TPTP_FOF_TRANSFORMATION_LANGUAGE_DEFS_LOCK_V1)
-	@sh tools/check_tptp_fof_transformation_language_defs_v1.sh \
-		"$(METTAPEDIA_ROOT)"
 
-.PHONY: check-tptp-official-include-directive-language-def-v1
-check-tptp-official-include-directive-language-def-v1: \
-		require-mettapedia-root-for-wire-provenance-v1 \
-		$(TPTP_OFFICIAL_INCLUDE_DIRECTIVE_LANGUAGE_DEF_V1) \
-		$(TPTP_OFFICIAL_INCLUDE_DIRECTIVE_LANGUAGE_DEF_LOCK_V1)
-	@sh tools/check_tptp_official_include_directive_language_def_v1.sh \
-		"$(METTAPEDIA_ROOT)"
 
-.PHONY: check-tptp-official-include-resolution-carrier-v1
-check-tptp-official-include-resolution-carrier-v1: \
-		require-mettapedia-root-for-wire-provenance-v1 \
-		$(TPTP_OFFICIAL_INCLUDE_RESOLUTION_CARRIER_V1) \
-		$(TPTP_OFFICIAL_INCLUDE_RESOLUTION_CARRIER_LOCK_V1)
-	@sh tools/check_tptp_official_include_resolution_carrier_v1.sh \
-		"$(METTAPEDIA_ROOT)"
 
-.PHONY: check-tptp-official-include-resolution-result-carrier-v1
-check-tptp-official-include-resolution-result-carrier-v1: \
-		require-mettapedia-root-for-wire-provenance-v1 \
-		$(TPTP_OFFICIAL_INCLUDE_RESOLUTION_RESULT_CARRIER_V1) \
-		$(TPTP_OFFICIAL_INCLUDE_RESOLUTION_RESULT_CARRIER_LOCK_V1)
-	@sh tools/check_tptp_official_include_resolution_result_carrier_v1.sh \
-		"$(METTAPEDIA_ROOT)"
 
-.PHONY: check-tptp-official-include-selection-v1
-check-tptp-official-include-selection-v1: \
-		require-mettapedia-root-for-wire-provenance-v1 \
-		$(TPTP_OFFICIAL_INCLUDE_SELECTION_V1) \
-		$(TPTP_OFFICIAL_INCLUDE_SELECTION_LOCK_V1)
-	@sh tools/check_tptp_official_include_selection_v1.sh \
-		"$(METTAPEDIA_ROOT)"
 
-.PHONY: check-tptp-official-include-environment-lookup-v1
-check-tptp-official-include-environment-lookup-v1: \
-		require-mettapedia-root-for-wire-provenance-v1 \
-		$(TPTP_OFFICIAL_INCLUDE_ENVIRONMENT_LOOKUP_V1) \
-		$(TPTP_OFFICIAL_INCLUDE_ENVIRONMENT_LOOKUP_LOCK_V1)
-	@sh tools/check_tptp_official_include_environment_lookup_v1.sh \
-		"$(METTAPEDIA_ROOT)"
 
-.PHONY: check-tptp-official-include-input-classification-v1
-check-tptp-official-include-input-classification-v1: \
-		require-mettapedia-root-for-wire-provenance-v1 \
-		$(TPTP_OFFICIAL_INCLUDE_INPUT_CLASSIFICATION_V1) \
-		$(TPTP_OFFICIAL_INCLUDE_INPUT_CLASSIFICATION_LOCK_V1)
-	@sh tools/check_tptp_official_include_input_classification_v1.sh \
-		"$(METTAPEDIA_ROOT)"
 
-.PHONY: check-derivation-word-machine-wire-v1
-check-derivation-word-machine-wire-v1: require-mettapedia-root-for-wire-provenance-v1
-	@sh tools/check_derivation_word_machine_wire_v1.sh "$(METTAPEDIA_ROOT)"
 
-.PHONY: check-tptp-ground-resolution-word-canary-v1
-check-tptp-ground-resolution-word-canary-v1: require-mettapedia-root-for-wire-provenance-v1
-	@sh tools/check_tptp_ground_resolution_word_canary_v1.sh "$(METTAPEDIA_ROOT)"
 
-.PHONY: check-tptp-official-ground-resolution-semantic-canary-v1
-check-tptp-official-ground-resolution-semantic-canary-v1: require-mettapedia-root-for-wire-provenance-v1
-	@sh tools/check_tptp_official_ground_resolution_semantic_canary_v1.sh \
-		"$(METTAPEDIA_ROOT)"
 
-.PHONY: check-tptp-official-semantic-carrier-wire-v1
-check-tptp-official-semantic-carrier-wire-v1: require-mettapedia-root-for-wire-provenance-v1
-	@sh tools/check_tptp_official_semantic_carrier_wire_v1.sh "$(METTAPEDIA_ROOT)"
 
 .PHONY: qualify-language-def-wire-provenance-v1
 qualify-language-def-wire-provenance-v1: $(PHONY_WIRE_PROVENANCE_V1)
@@ -45657,106 +44071,9 @@ test-plain-bnf-denotation-v1:
 # Selected authored-source qualification, including fresh-file authentication.
 # No CeTTa binary or generated target is needed for this Lean-only gate.
 # This does not qualify the generated PeTTa providers or native execution.
-.PHONY: qualify-ebnf-authored-source-lean-v1
-qualify-ebnf-authored-source-lean-v1:
-	@set -eu; \
-	lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
-	if [ -z "$$lean_root" ] && [ -f "$(METTAPEDIA_LEAN_AUTO_ROOT)/lakefile.lean" ]; then \
-		lean_root="$(METTAPEDIA_LEAN_AUTO_ROOT)"; \
-	fi; \
-	test -n "$$lean_root" && test -f "$$lean_root/lakefile.lean" || { \
-		echo 'METTAPEDIA_LEAN_ROOT must name the Mettapedia Lean project' >&2; exit 2; \
-	}; \
-	mkdir -p "$(BOOTSTRAP_TMPDIR)"; \
-	evidence=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/ebnf-source-parent.XXXXXX"); \
-	bash tests/support/check_ebnf_authored_source_lean_v1.sh "$$lean_root" "$$evidence/check"
 
-.PHONY: qualify-plain-bnf-selected-native-type-lean-v1
-qualify-plain-bnf-selected-native-type-lean-v1:
-	@set -eu; \
-	lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
-	if [ -z "$$lean_root" ] && [ -f "$(METTAPEDIA_LEAN_AUTO_ROOT)/lakefile.lean" ]; then \
-		lean_root="$(METTAPEDIA_LEAN_AUTO_ROOT)"; \
-	fi; \
-	test -n "$$lean_root" && test -f "$$lean_root/lakefile.lean" || { \
-		echo 'METTAPEDIA_LEAN_ROOT must name the Mettapedia Lean project' >&2; exit 2; \
-	}; \
-	mkdir -p "$(BOOTSTRAP_TMPDIR)"; \
-	evidence=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/plain-bnf-selected-type.XXXXXX"); \
-	bash tests/support/check_plain_bnf_selected_native_type_lean_v1.sh "$$lean_root" "$$evidence/check"
 
-.PHONY: qualify-plain-bnf-authored-source-lean-v1
-qualify-plain-bnf-authored-source-lean-v1:
-	@set -eu; \
-	lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
-	if [ -z "$$lean_root" ] && \
-	   [ -f "$(METTAPEDIA_LEAN_AUTO_ROOT)/lakefile.lean" ]; then \
-		lean_root="$(METTAPEDIA_LEAN_AUTO_ROOT)"; \
-	fi; \
-	test -n "$$lean_root" && test -f "$$lean_root/lakefile.lean" || { \
-		echo "METTAPEDIA_LEAN_ROOT must name the Mettapedia Lean project" >&2; \
-		exit 2; \
-	}; \
-	client="$(abspath tests/langdef/bnf/plain_bnf_authored_source_qualification_v1.lean)"; \
-	if grep -En '\b(sorry|axiom|native_decide|theorem_wanted)\b|_wanted|set_option[[:space:]]+(maxHeartbeats|maxRecDepth|maxSteps)' "$$client"; then \
-		echo 'authored source qualification contains a proof placeholder or resource override' >&2; \
-		exit 1; \
-	fi; \
-	(cd "$$lean_root" && lake build \
-		Mettapedia.GSLT.Parsing.CanonicalSourceQualification \
-		Mettapedia.GSLT.Parsing.CanonicalSourceOperationalGSLT \
-		Mettapedia.GSLT.Parsing.HornCertificateBoundary \
-		Mettapedia.GSLT.Parsing.HornIntegerProvider \
-		Mettapedia.GSLT.Parsing.HornIntegerProviderNativeType \
-		Mettapedia.GSLT.Parsing.HornProviderGSLT \
-		Mettapedia.GSLT.Parsing.PlainBnfLexicalScalarSemantics \
-		Mettapedia.GSLT.Parsing.PlainBnfLexicalInhabitation \
-		Mettapedia.GSLT.Parsing.PlainBnfSourceScalarCodec \
-		Mettapedia.GSLT.Parsing.PlainBnfExclusionLocalModel \
-		Mettapedia.GSLT.Parsing.PlainBnfDeclarationOccurrences \
-		Mettapedia.GSLT.Parsing.PlainBnfSourceTextAppend && \
-		lake env lean -DwarningAsError=true "$$client")
 
-.PHONY: qualify-plain-bnf-denotation-lean-native-v1-body
-qualify-plain-bnf-denotation-lean-native-v1-body: \
-		$(BIN) $(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
-		lib/lib_bnf.metta langdef/bnf/plain_bnf_denotation_v1.metta
-	@set -eu; \
-	lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
-	if [ -z "$$lean_root" ] && \
-	   [ -f "$(METTAPEDIA_LEAN_AUTO_ROOT)/lakefile.lean" ]; then \
-		lean_root="$(METTAPEDIA_LEAN_AUTO_ROOT)"; \
-	fi; \
-	test -n "$$lean_root" && test -f "$$lean_root/lakefile.lean" || { \
-		echo "METTAPEDIA_LEAN_ROOT must name the Mettapedia Lean project" >&2; \
-		exit 2; \
-	}; \
-	packet_root="$(abspath $(BOOTSTRAP_TMPDIR))"; \
-	mkdir -p "$$packet_root"; \
-	evidence=$$(mktemp -d "$$packet_root/plain-bnf-lean-denotation.XXXXXX"); \
-	(cd "$$lean_root" && lake build \
-		Mettapedia.GSLT.Tools.ExportPlainBnfDenotationCases) \
-		> "$$evidence/lean-build.log" 2>&1 || { \
-		tail -n 40 "$$evidence/lean-build.log" >&2; exit 1; \
-	}; \
-	(cd "$$lean_root" && lake env lean --run \
-		Mettapedia/GSLT/Tools/ExportPlainBnfDenotationCases.lean \
-		"$$evidence/cases.metta" "$$evidence/expected.txt" \
-		"$$evidence/mutated-cases.metta"); \
-	$(CETTA_PETTA_DIRECT_RUN_V1) \
-		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
-		lib/lib_bnf.metta "$$evidence/cases.metta" \
-		> "$$evidence/actual.txt"; \
-	(cd "$$lean_root" && nice -n 19 lake env lean --run \
-		Mettapedia/GSLT/Tools/ExportPlainBnfDenotationCases.lean \
-		--check "$$evidence/actual.txt"); \
-	$(CETTA_PETTA_DIRECT_RUN_V1) \
-		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
-		lib/lib_bnf.metta "$$evidence/mutated-cases.metta" \
-		> "$$evidence/mutated-actual.txt"; \
-	(cd "$$lean_root" && nice -n 19 lake env lean --run \
-		Mettapedia/GSLT/Tools/ExportPlainBnfDenotationCases.lean \
-		--check-mutant "$$evidence/mutated-actual.txt")
 
 .PHONY: test-plain-bnf-denotation-qualification-no-python-build-dependency-v1
 test-plain-bnf-denotation-qualification-no-python-build-dependency-v1:
@@ -45837,16 +44154,6 @@ $(TPTP_EXTENDED_BNF_META_PARSER_V1_TEST_BIN): \
 		-Wl,--gc-sections -ldl -lm -pthread; \
 	mv "$$tmp_out" $@
 
-.PHONY: test-tptp-extended-bnf-meta-parser-v1-body
-test-tptp-extended-bnf-meta-parser-v1-body: \
-		$(TPTP_EXTENDED_BNF_META_PARSER_V1_TEST_BIN)
-	@if [[ -z "$(strip $(TPTP_OFFICIAL_SYNTAX_BNF_V1))" || \
-		! -f "$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" ]]; then \
-		echo 'set TPTP_OFFICIAL_SYNTAX_BNF_V1 to the official SyntaxBNF file' >&2; \
-		exit 2; \
-	fi
-	@$(TPTP_EXTENDED_BNF_META_PARSER_V1_TEST_BIN) \
-		"$(TPTP_OFFICIAL_SYNTAX_BNF_V1)"
 
 .PHONY: test-tptp-extended-bnf-meta-parser-v1
 test-tptp-extended-bnf-meta-parser-v1:
@@ -45922,23 +44229,6 @@ test-tptp-extended-bnf-reader-v1:
 		ENABLE_PRIME_EVAL_STACK=0 \
 		test-tptp-extended-bnf-reader-v1-body
 
-.PHONY: test-tptp-extended-bnf-full-reader-v1-body
-test-tptp-extended-bnf-full-reader-v1-body: \
-		$(BIN) $(TPTP_EXTENDED_BNF_FULL_READER_V1_TEST) \
-		langdef/tptp/official_extended_bnf_source_v1.metta \
-		langdef/tptp/official_extended_bnf_parser_profile_v1.metta \
-		langdef/tptp/official_extended_bnf_ast_v1.metta \
-		langdef/tptp/official_extended_bnf_ast_projection_v1.metta
-	@if [[ -z "$(strip $(TPTP_OFFICIAL_SYNTAX_BNF_V1))" || \
-		! -f "$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" ]]; then \
-		echo 'set TPTP_OFFICIAL_SYNTAX_BNF_V1 to the official SyntaxBNF file' >&2; \
-		exit 2; \
-	fi
-	@set -eu; \
-	result=$$($(CETTA_BIN_INVOKE) --quiet --profile extended --lang he --profile extended \
-		$(TPTP_EXTENDED_BNF_FULL_READER_V1_TEST) \
-		"$(TPTP_OFFICIAL_SYNTAX_BNF_V1)"); \
-	test "$$result" = '(TptpOfficialExtendedBnfFullReaderV1Summary 2 2 0)'
 
 TPTP_OFFICIAL_LEXICAL_TEST_V1 ?= tests/langdef/tptp/official_lexical_to_ebnf_v1.metta
 TPTP_OFFICIAL_SYNTAX_COMPOSITION_TEST_V1 ?= tests/langdef/tptp/official_syntax_composition_v1.metta
@@ -45991,31 +44281,6 @@ TPTP_OFFICIAL_CORPUS_COMPATIBILITY_PACK_V1 ?= runtime/tptp-official-reader/f4794
 TPTP_OFFICIAL_CORPUS_COMPATIBILITY_SNAPSHOT_V1 ?= runtime/tptp-official-reader/f47940c43c23ed5ed8633a3b74a2847648d5ab794669430c8f0c38f138e61df6/corpus-compatible/tables.tpp1
 TPTP_OFFICIAL_SYNTAX_RECORDS_FAMILY_EXPECTED_V1 ?= tests/langdef/tptp/official_syntax_records_family_v1.expected
 
-.PHONY: qualify-tptp-reader-source-lean-v1
-qualify-tptp-reader-source-lean-v1:
-	@set -eu; \
-	lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
-	if [ -z "$$lean_root" ] && [ -f "$(METTAPEDIA_LEAN_AUTO_ROOT)/lakefile.lean" ]; then \
-		lean_root="$(METTAPEDIA_LEAN_AUTO_ROOT)"; \
-	fi; \
-	test -n "$$lean_root" && test -f "$$lean_root/lakefile.lean" || { \
-		echo 'METTAPEDIA_LEAN_ROOT must name the Mettapedia Lean project' >&2; exit 2; \
-	}; \
-	client="$(abspath $(TPTP_READER_SOURCE_QUALIFICATION_V1))"; \
-	models='Mettapedia/GSLT/Parsing/TptpCorpusCompatibilitySource.lean Mettapedia/GSLT/Parsing/TptpOfficialCompositionSource.lean'; \
-	if grep -En '\b(sorry|admit|axiom|native_decide|theorem_wanted)\b|_wanted' \
-		"$$client" $$(for model in $$models; do printf '%s/%s ' "$$lean_root" "$$model"; done); then \
-		echo 'TPTP reader source qualification contains a proof placeholder' >&2; exit 1; \
-	fi; \
-	if grep -En 'cetta-prime-nik|/home/|/shared/' \
-		"$$client" $$(for model in $$models; do printf '%s/%s ' "$$lean_root" "$$model"; done); then \
-		echo 'TPTP reader source qualification contains a checkout-specific path' >&2; exit 1; \
-	fi; \
-	(cd "$$lean_root" && LAKE_JOBS=3 nice -n 19 lake build \
-		Mettapedia.GSLT.Parsing.TptpCorpusCompatibilitySource \
-		Mettapedia.GSLT.Parsing.TptpOfficialCompositionSource && \
-		lake env lean -DwarningAsError=true "$$client")
-	@echo '(TptpReaderSourceLeanV1Summary 2 2 0)'
 
 .PHONY: test-tptp-official-lexical-to-ebnf-v1-body
 test-tptp-official-lexical-to-ebnf-v1-body: $(BIN) \
@@ -46358,16 +44623,6 @@ test-tptp-official-reusable-reader-v1-body: $(BIN) \
 	got=$$(printf '%s\n' "$$result" | sed '/^true$$/d'); \
 	test "$$got" = "$$(cat $(TPTP_OFFICIAL_REUSABLE_READER_EXPECTED_V1))"
 
-.PHONY: test-tptp-official-reusable-reader-v1
-test-tptp-official-reusable-reader-v1:
-	@$(MAKE) --no-print-directory \
-		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
-		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
-		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
-		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
-		TPTP_OFFICIAL_SYNTAX_BNF_V1="$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" \
-		TPTP_OFFICIAL_CORPUS_ROOT_V1="$(TPTP_OFFICIAL_CORPUS_ROOT_V1)" \
-		test-tptp-official-reusable-reader-v1-body
 
 .PHONY: test-tptp-official-corpus-compatibility-public-reader-v1-body
 test-tptp-official-corpus-compatibility-public-reader-v1-body: $(BIN) \
@@ -46434,15 +44689,6 @@ test-tptp-official-reader-utilities-real-v1-body: $(BIN) \
 	got=$$(printf '%s\n' "$$result" | sed '/^true$$/d'); \
 	test "$$got" = "$$(cat $(TPTP_OFFICIAL_READER_UTILITIES_REAL_EXPECTED_V1))"
 
-.PHONY: test-tptp-official-reader-utilities-real-v1
-test-tptp-official-reader-utilities-real-v1:
-	@$(MAKE) --no-print-directory \
-		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
-		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
-		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
-		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
-		TPTP_OFFICIAL_CORPUS_ROOT_V1="$(TPTP_OFFICIAL_CORPUS_ROOT_V1)" \
-		test-tptp-official-reader-utilities-real-v1-body
 
 .PHONY: test-tptp-official-reader-expression-inspection-v1-body
 test-tptp-official-reader-expression-inspection-v1-body: $(BIN) \
@@ -46561,14 +44807,6 @@ test-collection-ingress: $(BIN)
 	python3 tools/generate_collection_ingress.py --cetta ./$(BIN) --check
 	python3 tests/support/check_collection_ingress.py --cetta ./$(BIN)
 
-qualify-collection-ingress-lean:
-	@set -eu; \
-	lean_root="$(METTAPEDIA_LEAN_CHECKOUT)"; \
-	test -f "$$lean_root/lakefile.lean" || \
-		{ echo 'Set METTAPEDIA_LEAN_ROOT to the MeTTapedia Lean project' >&2; exit 2; }; \
-	contract="$(abspath langdef/collections/generated/Ingress.lean)"; \
-	cd "$$lean_root"; \
-	lake env lean -DwarningAsError=true "$$contract"
 
 test-all: test-collection-ingress
 
@@ -46580,11 +44818,6 @@ test-collection-keys: $(BIN)
 test-flatten-fold: $(BIN)
 	python3 tests/support/check_flatten_fold.py --cetta ./$(BIN)
 
-qualify-collection-keys-lean:
-	@set -eu; \
-	contract="$(abspath langdef/collections/generated/KeyEncoding.lean)"; \
-	cd "$(METTAPEDIA_LEAN_CHECKOUT)"; \
-	lake env lean -DwarningAsError=true "$$contract"
 
 test-all: test-collection-keys test-flatten-fold
 
@@ -46592,12 +44825,6 @@ test-all: test-collection-keys test-flatten-fold
 # hold in Lean's free structures for lists, bags and sets, and each extension
 # (order, then multiplicity forgotten) is strict.  The contract beside the
 # module is written by hand, not generated.
-.PHONY: qualify-collection-theories-lean
-qualify-collection-theories-lean:
-	@set -eu; \
-	contract="$(abspath langdef/collections/Theories.lean)"; \
-	cd "$(METTAPEDIA_LEAN_CHECKOUT)"; \
-	lake env lean -DwarningAsError=true "$$contract"
 
 .PHONY: test-postings-descriptors qualify-postings-descriptors-lean
 test-postings-descriptors: $(BIN) tools/generate_postings_descriptors.py \
@@ -46611,14 +44838,6 @@ test-postings-descriptors: $(BIN) tools/generate_postings_descriptors.py \
 	test "$$got" = "$$(cat tests/langdef/postings/descriptors_api_v1.expected)"; \
 	echo '(PostingsDescriptorAPI 5 0)'
 
-qualify-postings-descriptors-lean:
-	@set -eu; \
-	lean_root="$(METTAPEDIA_LEAN_CHECKOUT)"; \
-	test -f "$$lean_root/lakefile.lean" || \
-		{ echo 'Set METTAPEDIA_LEAN_ROOT to the MeTTapedia Lean project' >&2; exit 2; }; \
-	descriptors="$(abspath langdef/postings/generated/Descriptors.lean)"; \
-	cd "$$lean_root"; \
-	lake env lean -DwarningAsError=true "$$descriptors"
 
 .PHONY: test-group-sums
 test-group-sums: $(BIN)
@@ -46750,26 +44969,6 @@ test-tensor-support: $(BIN)
 
 test-all: test-tensor-support
 
-.PHONY: qualify-tensor-support-lean
-qualify-tensor-support-lean:
-	@set -eu; \
-	lean_root="$(METTAPEDIA_LEAN_CHECKOUT)"; \
-	test -f "$$lean_root/lakefile.lean" || \
-		{ echo 'Set METTAPEDIA_LEAN_ROOT to the MeTTapedia Lean project' >&2; exit 2; }; \
-	client="$(abspath tests/langdef/tensor/support_contract_v1.lean)"; \
-	descriptors="$(abspath langdef/tensor/generated/Descriptors.lean)"; \
-	cd "$$lean_root"; \
-	lake build Mettapedia.Algebra.SupportTensorRounding \
-		Mettapedia.Algebra.SupportTensorScreening \
-		Mettapedia.Algebra.SupportTensorLayout \
-		Mettapedia.Algebra.SupportTensorSchedule \
-		Mettapedia.Algebra.SupportTensorObservers \
-		Mettapedia.Algorithms.Retrieval.GroupedFold \
-		Mettapedia.Algorithms.Retrieval.PrefixSearch \
-		Mettapedia.GSLT.LanguageDef.ModuleSource.Commands \
-		Mettapedia.GSLT.LanguageDef.ModuleSource.Controls; \
-	lake env lean -DwarningAsError=true "$$client"; \
-	lake env lean -DwarningAsError=true "$$descriptors"
 
 test-library-spellings-v1: $(LIBRARY_SPELLING_TOOL_V1) $(PETTA_REFERENCE_VOCABULARY_V1) \
 		tests/support/test_library_spelling_v1.py \
@@ -46816,12 +45015,6 @@ test-petta-vocabulary-v1: $(PETTA_VOCABULARY_CHECK_V1) $(PETTA_REFERENCE_VOCABUL
 	done; \
 	echo '(PettaVocabularyV1Summary 5 3)'
 
-.PHONY: refresh-petta-reference-vocabulary-v1
-refresh-petta-reference-vocabulary-v1:
-	@test -n "$(PETTA_REFERENCE_ROOT)" || \
-		{ echo 'set PETTA_REFERENCE_ROOT to a PeTTa checkout' >&2; exit 2; }
-	bash tests/support/petta_reference_vocabulary_v1.sh \
-		"$(PETTA_REFERENCE_ROOT)" $(PETTA_REFERENCE_VOCABULARY_V1)
 
 test-all: test-library-spellings-v1 test-petta-vocabulary-v1
 
@@ -46965,15 +45158,6 @@ test-tptp-official-reader-canonical-print-real-v1-body: $(BIN) \
 	test "$$got" = \
 		"$$(cat $(TPTP_OFFICIAL_READER_CANONICAL_PRINT_REAL_EXPECTED_V1))"
 
-.PHONY: test-tptp-official-reader-canonical-print-real-v1
-test-tptp-official-reader-canonical-print-real-v1:
-	@$(MAKE) --no-print-directory \
-		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
-		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
-		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
-		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
-		TPTP_OFFICIAL_CORPUS_ROOT_V1="$(TPTP_OFFICIAL_CORPUS_ROOT_V1)" \
-		test-tptp-official-reader-canonical-print-real-v1-body
 
 .PHONY: test-tptp-official-compact-lexical-value-v1-body
 test-tptp-official-compact-lexical-value-v1-body: $(BIN) \
@@ -47072,15 +45256,6 @@ test-tptp-official-compact-include-resolution-real-v1-body: $(BIN) \
 		"$$(cat $(TPTP_OFFICIAL_COMPACT_INCLUDE_RESOLUTION_REAL_EXPECTED_V1))"; \
 	done
 
-.PHONY: test-tptp-official-compact-include-resolution-real-v1
-test-tptp-official-compact-include-resolution-real-v1:
-	@$(MAKE) --no-print-directory \
-		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
-		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
-		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
-		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
-		TPTP_OFFICIAL_CORPUS_ROOT_V1="$(TPTP_OFFICIAL_CORPUS_ROOT_V1)" \
-		test-tptp-official-compact-include-resolution-real-v1-body
 
 .PHONY: test-tptp-official-compact-resolution-consumer-v1-body
 test-tptp-official-compact-resolution-consumer-v1-body: $(BIN) \
@@ -47111,15 +45286,6 @@ test-tptp-official-compact-resolution-consumer-v1-body: $(BIN) \
 	test "$$got" = \
 		"$$(cat $(TPTP_OFFICIAL_COMPACT_RESOLUTION_CONSUMER_EXPECTED_V1))"
 
-.PHONY: test-tptp-official-compact-resolution-consumer-v1
-test-tptp-official-compact-resolution-consumer-v1:
-	@$(MAKE) --no-print-directory \
-		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
-		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
-		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
-		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
-		TPTP_OFFICIAL_CORPUS_ROOT_V1="$(TPTP_OFFICIAL_CORPUS_ROOT_V1)" \
-		test-tptp-official-compact-resolution-consumer-v1-body
 
 # Resolution input from compact clauses: occurrences, names, roles, literal
 # polarity, equality, symbol and number kinds, occurrence-scoped variables,
@@ -47234,13 +45400,6 @@ test-tptp-official-syntax-evidence-v1:
 		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
 		test-tptp-official-syntax-evidence-v1-body
 
-.PHONY: test-tptp-official-syntax-gate-failure-v1
-test-tptp-official-syntax-gate-failure-v1:
-	@set -eu; \
-	mkdir -p "$(BOOTSTRAP_TMPDIR)"; \
-	evidence=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/tptp-reader-gate-failure-v1.XXXXXX"); \
-	bash tests/support/check_tptp_reader_gate_failure_v1.sh "$$evidence" \
-		"$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" "$(TPTP_OFFICIAL_CORPUS_ROOT_V1)"
 
 GRAMMAR_CONSTRUCTOR_ACTIONS_V1_OBJ = runtime/bootstrap/test_grammar_constructor_actions_v1.$(BUILD_OBJ_TAG).o
 GRAMMAR_CONSTRUCTOR_ACTIONS_V1_BIN = runtime/test_grammar_constructor_actions_v1-$(BUILD_OBJ_TAG)
@@ -47265,26 +45424,6 @@ test-grammar-constructor-actions-v1:
 		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
 		test-grammar-constructor-actions-v1-body
 
-.PHONY: qualify-grammar-constructor-actions-lean-native-v1
-qualify-grammar-constructor-actions-lean-native-v1: test-grammar-constructor-actions-v1
-	@set -eu; \
-	lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
-	if [ -z "$$lean_root" ]; then lean_root="$(METTAPEDIA_LEAN_AUTO_ROOT)"; fi; \
-	test -f "$$lean_root/lakefile.lean" || { \
-		echo 'METTAPEDIA_LEAN_ROOT must name the Mettapedia Lean project' >&2; exit 2; \
-	}; \
-	mkdir -p "$(BOOTSTRAP_TMPDIR)"; \
-	evidence=$$(mktemp -d "$(abspath $(BOOTSTRAP_TMPDIR))/grammar-constructor-actions.XXXXXX"); \
-	(cd "$$lean_root" && LAKE_JOBS=3 nice -n 19 lake build \
-		Mettapedia.GSLT.Tools.ExportGrammarConstructorActions) \
-		> "$$evidence/lean-build.log" 2>&1 || { \
-		tail -n 35 "$$evidence/lean-build.log" >&2; exit 1; \
-	}; \
-	(cd "$$lean_root" && nice -n 19 lake env lean --run \
-		Mettapedia/GSLT/Tools/ExportGrammarConstructorActions.lean) \
-		> "$$evidence/cases.metta"; \
-	cmp "$$evidence/cases.metta" "$(GRAMMAR_CONSTRUCTOR_ACTIONS_V1_FIXTURES)"; \
-	printf '%s\n' 'Typed action export matches the checked-in native fixtures.'
 
 METTA_ATOM_ACTIONS_V1_FIXTURES = tests/langdef/metta_atom_actions_v1.metta
 
@@ -47303,26 +45442,6 @@ test-metta-atom-actions-v1:
 		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
 		test-metta-atom-actions-v1-body
 
-.PHONY: qualify-metta-atom-actions-lean-native-v1
-qualify-metta-atom-actions-lean-native-v1: test-metta-atom-actions-v1
-	@set -eu; \
-	lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
-	if [ -z "$$lean_root" ]; then lean_root="$(METTAPEDIA_LEAN_AUTO_ROOT)"; fi; \
-	test -f "$$lean_root/lakefile.lean" || { \
-		echo 'METTAPEDIA_LEAN_ROOT must name the Mettapedia Lean project' >&2; exit 2; \
-	}; \
-	mkdir -p "$(BOOTSTRAP_TMPDIR)"; \
-	evidence=$$(mktemp -d "$(abspath $(BOOTSTRAP_TMPDIR))/metta-atom-actions.XXXXXX"); \
-	(cd "$$lean_root" && LAKE_JOBS=3 nice -n 19 lake build \
-		Mettapedia.GSLT.Tools.ExportMeTTaAtomActions) \
-		> "$$evidence/lean-build.log" 2>&1 || { \
-		tail -n 35 "$$evidence/lean-build.log" >&2; exit 1; \
-	}; \
-	(cd "$$lean_root" && nice -n 19 lake env lean --run \
-		Mettapedia/GSLT/Tools/ExportMeTTaAtomActions.lean) \
-		> "$$evidence/cases.metta"; \
-	cmp "$$evidence/cases.metta" "$(METTA_ATOM_ACTIONS_V1_FIXTURES)"; \
-	printf '%s\n' 'Typed atom-action export matches the native fixtures.'
 
 .PHONY: test-lib-tptp-reader-v1
 test-lib-tptp-reader-v1:
@@ -47431,37 +45550,6 @@ test-json-gslt-mutation:
 		ENABLE_PRIME_EVAL_STACK=0 \
 		test-json-gslt-mutation-body
 
-.PHONY: qualify-json-gslt-native-forest-exact-v1-body
-qualify-json-gslt-native-forest-exact-v1-body: \
-		$(LANGUAGE_DEF_PARSER_PACK_V1_TEST_BIN)
-	@set -eu; \
-	lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
-	if [ -z "$$lean_root" ] && \
-	   [ -f "$(METTAPEDIA_LEAN_AUTO_ROOT)/lakefile.lean" ]; then \
-		lean_root="$(METTAPEDIA_LEAN_AUTO_ROOT)"; \
-	fi; \
-	test -n "$$lean_root" && test -f "$$lean_root/lakefile.lean" || { \
-		echo "METTAPEDIA_LEAN_ROOT must name the Mettapedia Lean project" >&2; \
-		exit 2; \
-	}; \
-	packet_root="$(abspath $(BOOTSTRAP_TMPDIR))"; \
-	mkdir -p "$$packet_root"; \
-	identity=$$(mktemp "$$packet_root/json-parser-identity.XXXXXX"); \
-	gll_forest=$$(mktemp "$$packet_root/json-gll-forest.XXXXXX"); \
-	glr_forest=$$(mktemp "$$packet_root/json-glr-forest.XXXXXX"); \
-	trap 'rm -f "$$identity" "$$gll_forest" "$$glr_forest"' \
-		EXIT INT TERM; \
-	CETTA_JSON_PARSER_PACK_IDENTITY_WIRE_OUT="$$identity" \
-	CETTA_JSON_GLL_FOREST_WIRE_OUT="$$gll_forest" \
-	CETTA_JSON_GLR_FOREST_WIRE_OUT="$$glr_forest" \
-		$(LANGUAGE_DEF_PARSER_PACK_V1_TEST_BIN); \
-	(cd "$$lean_root" && \
-		lake exe checkRFC8259NativeForestExact \
-			gll "$$identity" "$$gll_forest"); \
-	(cd "$$lean_root" && \
-		lake exe checkRFC8259NativeForestExact \
-			glr "$$identity" "$$glr_forest"); \
-	echo "PASS: live JSON GLL and GLR forests exactly cover the independent root-relative ParserPack chart"
 
 .PHONY: qualify-json-gslt-native-forest-exact-v1
 qualify-json-gslt-native-forest-exact-v1:
@@ -48113,28 +46201,6 @@ test-io-json-bridge:
 JSON_PROJECTION_REFINEMENT_LEAN_V1 ?= \
 	tests/langdef/json/json_projection_refinement_v1.lean
 
-.PHONY: qualify-json-projection-refinement-lean-v1
-qualify-json-projection-refinement-lean-v1:
-	@set -eu; \
-	lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
-	if [ -z "$$lean_root" ] && [ -f "$(METTAPEDIA_LEAN_AUTO_ROOT)/lakefile.lean" ]; then \
-		lean_root="$(METTAPEDIA_LEAN_AUTO_ROOT)"; \
-	fi; \
-	test -n "$$lean_root" && test -f "$$lean_root/lakefile.lean" || { \
-		echo 'METTAPEDIA_LEAN_ROOT must name the Mettapedia Lean project' >&2; exit 2; \
-	}; \
-	client="$(abspath $(JSON_PROJECTION_REFINEMENT_LEAN_V1))"; \
-	if grep -En '\b(sorry|admit|axiom|native_decide|theorem_wanted)\b|_wanted' "$$client"; then \
-		echo 'JSON projection refinement contains a proof placeholder' >&2; exit 1; \
-	fi; \
-	if grep -En 'cetta-prime-nik|/home/|/shared/' "$$client"; then \
-		echo 'JSON projection refinement contains a checkout-specific path' >&2; exit 1; \
-	fi; \
-	(cd "$$lean_root" && lake build \
-		Mettapedia.GSLT.LanguageDef.RFC8259ValueSemantics \
-		Mettapedia.GSLT.Dynamics.PartialRegionPlan && \
-		lake env lean -DwarningAsError=true "$$client")
-	@echo '(JsonProjectionRefinementLeanV1Summary 8 8 0)'
 
 .PHONY: test-petta-add-atoms-batch-v1
 test-petta-add-atoms-batch-v1: $(BIN) \
@@ -48743,8 +46809,6 @@ endif
 .PHONY: test-lib-parse-glr-utf8-forest
 .PHONY: test-gslt2parse-parser-pack-glr-v1-native test-gslt2parse-parser-pack-glr-v1-matrix test-gslt2parse-parser-pack-wide-scale-v1 test-gslt2parse-parser-pack-lexical-v1-native test-gslt2parse-parser-pack-lexical-v1-matrix test-gslt2parse-generic-engine-purity-v1 test-gslt2parse-c-production-v1 test-gslt2parse-c-production-v1-body
 .PHONY: test-gslt2parse-parser-pack-native-api-v1-matrix test-gslt2parse-parser-pack-native-petta-v1 test-gslt2parse-parser-pack-native-petta-v1-body test-gslt2parse-he-parser-authority-v1 test-gslt2parse-he-unicode-residual-dfa-v1 test-gslt2parse-he-string-slr-specialization-v1 test-gslt2parse-he-reader-escape-differential-v1 test-gslt2parse-he-reader-source-faithfulness-v1 test-gslt2parse-he-reader-source-correspondence-v1 test-gslt2parse-rho-abstract-syntax-v1 test-gslt2parse-rhocalc-reader-authority-v1 test-gslt2parse-rhocalc-parser-pack-v1 test-gslt2parse-he-reader-guard-exec-v1 test-gslt2parse-he-reader-guarded-lexical-v1 test-gslt2parse-he-document-pipeline-v1 test-gslt2parse-he-gslt-parse-only-v1 bench-gslt2parse-he-gslt-parse-only-v1 test-gslt2parse-petta-form-guard-exec-v1 test-gslt2parse-petta-document-splitter-v1 test-gslt2parse-petta-document-pipeline-v1 test-gslt2parse-petta-document-pipeline-v1-body test-gslt2parse-petta-ffi-v1 test-gslt2parse-petta-ffi-v1-body test-gslt2parse-petta-parser-authority-v1 test-gslt2parse-stable-parser-parse-only-v1 bench-gslt2parse-stable-parser-parse-only-v1 bench-gslt2parse-prepared-final-forest-v1
-.PHONY: test-gslt2parse-parser-pack-lexical-plan-v1 test-gslt2parse-parser-pack-guarded-lexical-v1
-.PHONY: test-gslt2parse-rho-syntax-convergence-v1
 .PHONY: list bench-index FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge doctor-gmp test-bigint-no-gmp-fallback test-rational-no-gmp-fallback test test-light test-correctness test-heavy test-heavy-golden list-heavy-diagnostics probe-heavy-diagnostics test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests refresh-he-compat-catalog test-he-compat-semantic-suite probe-he-compat-tier2 probe-he-compat-runnable-corpus test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-stdlib-growth-memory-regression test-asan test-asan-main test-asan-mork test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-var-scope-across-exprs test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-rhocalc test-rhocalc-cost-differential test-lib-parse-oracles test-rhocalc-lib-parse-reference test-lib-parse-shared-cert test-lib-parse-native-gparse test-lib-parse-generalized-native-integration test-lib-parse-generalized-cli test-lib-parse-generalized test-lib-parse-bounded test-rhocalc-runtime-stats test-variant-shape-roundtrip test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-comm-frontier bench-rho-comm-contention bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
 .PHONY: refresh-he-native-contracts test-he-compat-catalog-guards test-step-rules
 .PHONY: test-rhocalc-cost-parallel-stress test-rhocalc-canonical-selector-differential
@@ -49615,19 +47679,6 @@ IC_THEORY_ROOT ?= $(abspath ../../ic-theory)
 IC_ORIGINAL_TOOLCHAIN ?=
 
 .PHONY: test-ic-interpreter-correspondence test-incremental-compression-joined
-test-ic-interpreter-correspondence:
-	@test -n "$(strip $(IC_ORIGINAL_TOOLCHAIN))" || { \
-		echo 'Set IC_ORIGINAL_TOOLCHAIN to the installed toolchain matching ic-theory/lean-toolchain' >&2; exit 2; \
-	}
-	@test -f "$(METTAPEDIA_LEAN_CHECKOUT)/lakefile.lean" || { \
-		echo 'Set METTAPEDIA_LEAN_ROOT to the Mettapedia Lean project' >&2; exit 2; \
-	}
-	python3 tests/support/test_ic_interpreter_bridge.py
-	python3 tests/support/check_ic_interpreter_bridge.py \
-		--ic-theory "$(IC_THEORY_ROOT)" \
-		--mettapedia "$(abspath $(METTAPEDIA_LEAN_CHECKOUT)/../..)" \
-		--original-toolchain "$(IC_ORIGINAL_TOOLCHAIN)" \
-		--output runtime/ic-original-interpreter-qualification
 
 test-incremental-compression-joined: test-incremental-compression test-ic-interpreter-correspondence
 
@@ -49657,12 +47708,7 @@ test-petta-activation-source-budget: $(BIN)
 test-execution-semantic-ledger: test-petta-activation-source-budget
 
 .PHONY: test-execution-semantic-ledger
-.PHONY: test-execution-theory
 EXECUTION_MODEL_RECEIPT ?= runtime/execution-models/theory-receipt.json
-test-execution-theory:
-	@test -n "$(METTAPEDIA_ROOT)" || { echo 'Set METTAPEDIA_ROOT to the Lean project root'; exit 1; }
-	@python3 tests/support/check_execution_lean_models.py --mettapedia "$(METTAPEDIA_ROOT)" \
-		--receipt "$(EXECUTION_MODEL_RECEIPT)"
 
 test-execution-semantic-ledger: $(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN) $(PETTA_SEARCH_MACHINE_TEST_BIN) test-prepared-pure-answer-producer test-execution-control-plans
 	@$(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN) --semantic-ledger
@@ -50207,37 +48253,13 @@ test-sparse-interchange-mutants: $(SPARSE_INTERCHANGE_TEST)
 # In-process source preparation is a build artifact. Ordinary lang calls
 # load it directly and never launch a compiler or another interpreter.
 .PHONY: build-lang-datalog test-lang-library
-# Every provider shares one Lean runtime: Lean modules may initialize only
-# once per process, so the providers are built together.
-.PHONY: build-lang-compilers
-build-lang-compilers:
-	@set -eu; lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
-	if test -z "$$lean_root"; then lean_root="$(abspath ../../Mettapedia/lean/mettapedia)"; fi; \
-	test -f "$$lean_root/lakefile.lean" || \
-		{ echo 'Set METTAPEDIA_LEAN_ROOT to the MeTTapedia Lean project' >&2; exit 2; }; \
-	python3 tools/build_lean_source_compilers.py --lean-root "$$lean_root" --output-dir runtime/lang
-
-build-lang-datalog: build-lang-compilers
-
-.PHONY: test-lang-provider-coexistence
-test-lang-provider-coexistence: $(BIN)
-	@set -eu; lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
-	if test -z "$$lean_root"; then lean_root="$(abspath ../../Mettapedia/lean/mettapedia)"; fi; \
-	work="$$(mktemp -d runtime/lang-provider-coexistence.XXXXXX)"; \
-	python3 tests/support/check_lang_provider_coexistence.py ./$(BIN) "$$work/checks" --lean-root "$$lean_root"
-
 # The ground CHR package ships its compiler as MeTTa beside it
 # (langdef/lang/chr/); it needs no build step and no Lean.
-.PHONY: test-lang-chr test-lang-package-manifest check-lang-package-regeneration
+.PHONY: test-lang-chr test-lang-package-manifest
 
 # Generated and copied package files match the hashes in their manifest.
 test-lang-package-manifest:
 	@python3 tools/lang_package_manifest.py check
-
-# Opt-in: regenerate those files from a Mettapedia checkout and compare.
-check-lang-package-regeneration:
-	@test -n "$(METTAPEDIA_ROOT)" || { echo 'Set METTAPEDIA_ROOT to the Mettapedia checkout' >&2; exit 2; }
-	@python3 tools/lang_package_manifest.py check --regenerate --mettapedia "$(METTAPEDIA_ROOT)"
 
 .PHONY: test-source-occurrence-view
 runtime/test_source_occurrence_view-$(BUILD_OBJ_TAG): tests/test_source_occurrence_view.c $(OBJ) $(BRIDGE_DEPS)
@@ -50248,45 +48270,23 @@ runtime/test_source_occurrence_view-$(BUILD_OBJ_TAG): tests/test_source_occurren
 test-source-occurrence-view: runtime/test_source_occurrence_view-$(BUILD_OBJ_TAG)
 	@$(call cetta_exec,./runtime/test_source_occurrence_view-$(BUILD_OBJ_TAG))
 
+# Each run verifies the package documents once, then reads them from its own cache.
 test-lang-chr: $(BIN) test-source-occurrence-view test-lang-package-manifest
 	@set -eu; work="$$(mktemp -d runtime/lang-chr-tests.XXXXXX)"; \
-	python3 tests/support/check_lang_chr.py ./$(BIN) "$$work/chr"
-
-# SWI-Prolog library(chr) is the reference here only; lang calls run no
-# reference engine.
-.PHONY: test-lang-chr-reference
-test-lang-chr-reference: $(BIN)
-	@set -eu; command -v swipl >/dev/null || { echo 'test-lang-chr-reference needs swipl' >&2; exit 2; }; \
-	work="$$(mktemp -d runtime/lang-chr-reference.XXXXXX)"; \
-	python3 tests/support/check_lang_chr_reference.py ./$(BIN) "$$work/standard" \
-		--sources tests/lang/chr/standard --reference tests/support/chr_source_reference.pl; \
-	python3 tests/support/check_lang_chr_reference.py ./$(BIN) "$$work/controls" \
-		--sources tests/lang/chr --reference tests/support/chr_source_reference.pl; \
-	python3 tests/support/gen_chr_c0_programs.py "$$work/generated-sources" --count 60 --seed 1; \
-	python3 tests/support/check_lang_chr_reference.py ./$(BIN) "$$work/generated" \
-		--sources "$$work/generated-sources" --reference tests/support/chr_source_reference.pl
-
-# Soufflé is the reference here only; lang calls run no reference engine.
-SOUFFLE ?= souffle
-.PHONY: test-lang-datalog-reference
-test-lang-datalog-reference: $(BIN)
-	@test -f runtime/lang/datalog-compiler.so || \
-		{ echo 'Run make build-lang-datalog first' >&2; exit 2; }
-	@set -eu; command -v "$(SOUFFLE)" >/dev/null || { echo 'Set SOUFFLE to a souffle executable' >&2; exit 2; }; \
-	work="$$(mktemp -d runtime/lang-datalog-reference.XXXXXX)"; \
-	python3 tests/support/check_lang_datalog_reference.py ./$(BIN) "$$(command -v "$(SOUFFLE)")" \
-		tests/lang/datalog/souffle "$$work/souffle" --standard-corpus tests/lang/datalog/standard
+	CETTA_CACHE_DIR="$$work/cache" python3 tests/support/check_lang_chr.py ./$(BIN) "$$work/chr"; \
+	rm -rf "$$work/cache"
 
 test-lang-library: $(BIN)
 	@test -f runtime/lang/datalog-compiler.so || \
 		{ echo 'Run make build-lang-datalog first' >&2; exit 2; }
-	@set -eu; work="$$(mktemp -d runtime/lang-tests.XXXXXX)"; \
+	@set -eu; work="$$(mktemp -d runtime/lang-tests.XXXXXX)"; export CETTA_CACHE_DIR="$$work/cache"; \
 	python3 tests/support/check_lang_library.py ./$(BIN) "$$work/public"; \
 	python3 tests/support/check_lang_boundaries.py ./$(BIN) "$$work/boundaries"; \
 	python3 tests/support/check_source_input_view.py ./$(BIN) "$$work/input-views"; \
 	python3 tests/support/check_lang_source_verification.py ./$(BIN) "$$work/source-verification"; \
 	python3 tests/support/check_lang_repl.py ./$(BIN) "$$work/repl"; \
-	python3 tests/support/check_raw_source_cli.py ./$(BIN) "$$work/raw"
+	python3 tests/support/check_raw_source_cli.py ./$(BIN) "$$work/raw"; \
+	rm -rf "$$work/cache"
 
 runtime/source_compiler_fixture_v1.so: tests/support/source_compiler_fixture_v1.c native/source_compiler_provider_v1.h
 	@mkdir -p runtime
@@ -50602,3 +48602,6 @@ test-petta-string-literal-profile: $(BIN)
 	@$(CETTA_BIN_INVOKE) --lang petta tests/petta/string_literal_profile.metta | diff -u tests/petta/string_literal_profile.expected -
 
 test-petta-corrected-stable: test-petta-string-literal-profile
+
+# Gates that need material outside CeTTa; make test never runs them.
+include mk/external.mk

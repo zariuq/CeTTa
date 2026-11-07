@@ -1,0 +1,22 @@
+# Runtime counters of PeTTa's ai profile, read by test-petta-profile-ai-stats.
+# program	profile	route	counter	relation	value
+folds_sealed	ai	tier	sealed-fold	ge	6
+folds_sealed	ai	machine	sealed-fold	ge	6
+folds_sealed	ai	pure-reference	sealed-fold	eq	0
+folds_sealed	default	tier	sealed-fold	eq	0
+folds_sealed	default	tier	recognized-fold	ge	6
+folds_open_constant	ai	tier	sealed-fold	eq	0
+folds_open_constant	ai	tier	recognized-fold	ge	1
+folds_open_constructor	ai	tier	sealed-fold	eq	0
+folds_open_constructor	ai	tier	recognized-fold	ge	1
+folds_open_row	ai	tier	sealed-fold	eq	0
+folds_open_row	ai	tier	recognized-fold	ge	2
+folds_open_function_name	ai	tier	sealed-fold	eq	0
+folds_open_function_name	ai	tier	recognized-fold	ge	1
+folds_open_peano	ai	tier	sealed-fold	eq	0
+folds_open_peano	ai	tier	recognized-fold	ge	1
+refutation	ai	tier	refuted-call	ge	2
+refutation	ai	machine	refuted-call	ge	2
+refutation	default	tier	refuted-call	eq	0
+refutation_open	ai	tier	refuted-call	eq	0
+refutation_spin	ai	tier	refuted-call	ge	2

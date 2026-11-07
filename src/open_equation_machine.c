@@ -302,6 +302,13 @@ typedef struct {
      * is closed and not a non-empty list cannot answer from this equation. */
     bool has_entry_guard;
     uint32_t entry_guard_reg;
+    /* Bit n is set when a let in tail position reads the computed head of a
+     * pattern with n arguments from its output, which is the caller's
+     * destination (oem_pattern_output_independent).  A destination that is
+     * already a value binds that head before the pattern is read, and PeTTa
+     * then dispatches the pattern; the equation runs here only while such a
+     * dispatch would keep the pattern as data (oem_destination_keeps_head). */
+    uint32_t head_destination_arities;
 } OemEquation;
 
 /* A path from an argument into its structure, each step a child of an
@@ -1165,6 +1172,9 @@ typedef struct {
     /* A let has a late output (OemNode.late_output), and the pairs
      * (hole, list) that meet after their lets' bodies. */
     bool late_outputs;
+    /* Tail lets that read a pattern's head from the destination
+     * (OemEquation.head_destination_arities). */
+    uint32_t head_destination_arities;
     uint32_t *late_binds;
     uint32_t late_bind_len, late_bind_cap;
     /* While a let's pattern is lowered: the let (for a let*, the whole),
@@ -1725,7 +1735,7 @@ static bool oem_template_mentions_slot_directly(
  * by a call after the pattern, the let gets a late output (*late). */
 static bool oem_pattern_output_independent(OemCompile *compile, Atom *pattern,
         const PettaPlanNode *plan, uint32_t output, uint32_t depth,
-        bool *late) {
+        bool tail, bool *late) {
     if (!pattern || depth > OEM_MAX_DEPTH)
         return oem_reject(compile, "pattern proof is too deep");
     if (pattern->kind != ATOM_EXPR)
@@ -1736,9 +1746,21 @@ static bool oem_pattern_output_independent(OemCompile *compile, Atom *pattern,
         if (!oem_slot_of(compile, pattern->expr.elems[0]->var_id, &slot))
             return false;
         if (oem_template_mentions_slot_directly(compile->program, output,
-                                                slot, 0u))
-            return oem_reject(compile,
-                "pattern head can be bound by the demanded result");
+                                                slot, 0u)) {
+            /* In tail position the output is the caller's destination and
+             * nothing else.  Where the output is the head itself, each call
+             * sees what the head will be before the pattern is read
+             * (OemEquation.head_destination_arities).  A head inside built
+             * data takes its value from part of the destination, which the
+             * call does not inspect, so that pattern stays outside. */
+            CettaExprLen arity = pattern->expr.len - 1u;
+            const OemTemplate *whole = &compile->program->templates[output];
+            if (!tail || arity >= 32u || whole->kind != OEM_T_SLOT ||
+                whole->slot != slot)
+                return oem_reject(compile,
+                    "pattern head can be bound by the demanded result");
+            compile->head_destination_arities |= UINT32_C(1) << arity;
+        } else
         if (oem_template_mentions_slot(compile->program, output, slot, 0u))
             *late = true;
     }
@@ -1746,7 +1768,7 @@ static bool oem_pattern_output_independent(OemCompile *compile, Atom *pattern,
         if (!oem_pattern_output_independent(compile,
                 pattern->expr.elems[child],
                 plan ? petta_plan_child(plan, child) : NULL,
-                output, depth + 1u, late))
+                output, depth + 1u, tail, late))
             return false;
     }
     return true;
@@ -3829,7 +3851,7 @@ static bool oem_build_bindings(OemCompile *compile, Atom *expr,
         bool late = false;
         if (!oem_pattern_output_independent(compile, expr->expr.elems[pattern],
                 petta_plan_child(plan, pattern),
-                compile->nodes[node.body].exposed, 0u, &late))
+                compile->nodes[node.body].exposed, 0u, tail, &late))
             return false;
         oem_let_fills_pattern(compile, node.pattern, node.value);
         node.exposed = compile->nodes[node.body].exposed;
@@ -3876,7 +3898,7 @@ static bool oem_build_bindings(OemCompile *compile, Atom *expr,
             if (!lowered ||
                 !oem_pattern_output_independent(compile, pair->expr.elems[0],
                     petta_plan_child(pair_plan, 0u),
-                    compile->nodes[body].exposed, 0u, &late) ||
+                    compile->nodes[body].exposed, 0u, tail, &late) ||
                 !oem_build_producer(compile, pair->expr.elems[1],
                                     petta_plan_child(pair_plan, 1u),
                                     depth + 1u, counted, &let.value))
@@ -5445,6 +5467,7 @@ static bool oem_compile_equation(CettaOpenEquationProgram *program,
         const OemTemplate *exposed = &program->templates[node->exposed];
         compile.output = node->exposed;
         equation.destination = node->exposed;
+        equation.head_destination_arities = compile.head_destination_arities;
         equation.dest_kind =
             (node->kind == OEM_N_CALL && node->tail) ||
                     node->kind == OEM_N_FAIL
@@ -11942,6 +11965,39 @@ static bool oem_application_inert(CettaOpenEquationCursor *cursor,
     return inert;
 }
 
+/* Whether a destination that becomes the head of a let's pattern with n
+ * arguments, for each n in `arities`, leaves that pattern data, as PeTTa's
+ * run-time dispatch of a variable-headed pattern decides: an unbound
+ * destination leaves the head unbound, and a value heads a call only where
+ * the host or the runtime callables say it does (oem_symbol_application_inert,
+ * oem_application_inert). */
+static bool oem_destination_keeps_head(CettaOpenEquationCursor *cursor,
+                                       const CettaOpenEquationProgram *program,
+                                       uint32_t arities, Atom *destination) {
+    Atom *head = oem_deref(cursor, destination);
+    if (head->kind == ATOM_VAR)
+        return true;
+    if (head->kind != ATOM_SYMBOL)
+        return oem_application_inert(cursor, head);
+    Atom *elems[33];
+    for (uint32_t arity = 0u; arity < 32u; arity++) {
+        if (!(arities & (UINT32_C(1) << arity)))
+            continue;
+        elems[0] = head;
+        for (uint32_t index = 1u; index <= arity; index++)
+            elems[index] = head;
+        Arena *scratch = oem_scratch(cursor);
+        ArenaMark mark = arena_mark(scratch);
+        Atom *view = atom_expr(scratch, elems, (CettaExprLen)(arity + 1u));
+        bool inert = view &&
+            oem_symbol_application_inert(cursor, program, view);
+        arena_reset(scratch, mark);
+        if (!inert)
+            return false;
+    }
+    return true;
+}
+
 /* The most arguments a pure operation the region applies may take. */
 enum { OEM_PURE_INLINE_ARGS = 8u };
 
@@ -15708,6 +15764,16 @@ static inline __attribute__((always_inline)) OemRun oem_activate(
             : cursor->destination;
         if (!destination)
             return OEM_RUN_HANDOFF;
+    }
+    /* A tail let reads its pattern's head from the destination: where the
+     * destination would make that pattern a call, PeTTa dispatches it, and
+     * the call is the host's. */
+    if (eq->head_destination_arities && destination &&
+        !oem_destination_keeps_head(cursor, program,
+                                    eq->head_destination_arities, destination)) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_OPEN_EQUATION_HEAD_DESTINATION_HANDOFF);
+        return OEM_RUN_HANDOFF;
     }
     if (meets) {
         /* An output slot that head matching left unset is the destination

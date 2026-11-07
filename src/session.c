@@ -238,6 +238,10 @@ bool cetta_profile_is_petta_1_1_c(const CettaProfile *profile) {
     return profile && profile->id == CETTA_PROFILE_PETTA_1_1_C;
 }
 
+bool cetta_profile_is_petta_ai(const CettaProfile *profile) {
+    return profile && profile->id == CETTA_PROFILE_PETTA_AI;
+}
+
 bool cetta_language_version_petta_typed_line(
     const CettaLanguageVersion *version) {
     return version && (version->id == CETTA_LANGUAGE_VERSION_PETTA_1_1 ||
@@ -378,6 +382,9 @@ const CettaProfile *cetta_profile_from_name_for_language(CettaLanguageId languag
                 name, &CETTA_PROFILE_PETTA_1_1_C_VALUE)) {
             return &CETTA_PROFILE_PETTA_1_1_C_VALUE;
         }
+        if (cetta_profile_name_matches(name, &CETTA_PROFILE_PETTA_AI_VALUE)) {
+            return &CETTA_PROFILE_PETTA_AI_VALUE;
+        }
     }
     if (language_id == CETTA_LANGUAGE_ZERO &&
         cetta_profile_name_matches(name, &CETTA_PROFILE_ZERO_EXP_VALUE)) {
@@ -433,6 +440,7 @@ uint32_t cetta_profile_mask(const CettaProfile *profile) {
     case CETTA_PROFILE_PETTA_EXTENDED:
         return CETTA_PROFILE_MASK_PETTA_EXTENDED;
     case CETTA_PROFILE_PETTA_1_1_C:
+    case CETTA_PROFILE_PETTA_AI:
         return CETTA_PROFILE_MASK_PETTA_BASE;
     }
     return 0;
@@ -495,6 +503,9 @@ void cetta_profile_print_inventory_for_language(FILE *out,
         fprintf(out, "%s\t%s\n",
                 CETTA_PROFILE_PETTA_1_1_C_VALUE.name,
                 CETTA_PROFILE_PETTA_1_1_C_VALUE.note);
+        fprintf(out, "%s\t%s\n",
+                CETTA_PROFILE_PETTA_AI_VALUE.name,
+                CETTA_PROFILE_PETTA_AI_VALUE.note);
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
         fprintf(out, "%s\t%s\n",
                 CETTA_PROFILE_PETTA_TYPECHECK_V2_VALUE.name,

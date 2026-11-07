@@ -4419,14 +4419,18 @@ typedef enum {
     EVAL_HEAD_CHECKED_CONSTRUCTOR = 2,
 } EvalConstructorHead;
 
-/* Whether HE's typing finds the application `atom` well typed (the type
- * stamp store reads it by its shape). */
+/* Whether HE's typing finds the application `atom` well typed through its
+ * head's function type (the type stamp store reads it by its shape).  HE's
+ * evaluation checks the arguments against that function type and never
+ * consults a type declared for the whole application, so neither does this:
+ * `(: (Box "s") Range)` does not make `(Box "s")` a value of a constructor
+ * typed (-> Number Range). */
 static bool eval_he_application_well_typed(Space *s, Arena *a, Atom *atom) {
-    int known = space_type_stamps_count(s, a, atom);
+    int known = space_type_stamps_structural_count(s, a, atom);
     if (known >= 0)
         return known > 0;
     Atom **types = NULL;
-    uint32_t count = get_atom_types(s, a, atom, &types);
+    uint32_t count = get_atom_types_structural(s, a, atom, &types);
     free(types);
     return count > 0u;
 }
@@ -7678,6 +7682,58 @@ static Atom *bad_arg_type_error(Space *s, Arena *a, Atom *call, int64_t arg_inde
     }, 4);
     free(actual_types);
     return atom_error(a, call, reason);
+}
+
+/* The error for one of the argument's types: HE tries each type of an
+ * argument as its own branch, so each type that fails reports its own. */
+static Atom *bad_arg_type_error_of_type(Arena *a, Atom *call, int64_t arg_index,
+                                        Atom *expected_type, Atom *actual_type) {
+    Atom *reason = atom_expr(a, (Atom *[]) {
+        atom_symbol(a, "BadArgType"),
+        atom_int(a, arg_index),
+        expected_type,
+        actual_type
+    }, 4);
+    return atom_error(a, call, reason);
+}
+
+/* HE's check of an if condition against Bool, given the condition's types.
+ * Each concrete type that is not Bool is its own failed branch with its own
+ * error, in the typing's order (an application's own rows first); a
+ * grounded condition with no concrete type reports one.  True when the
+ * condition is rejected and its errors were added. */
+static bool eval_if_condition_rejected(Space *s, Arena *a, Atom *call,
+                                       Atom *cond, Atom **types,
+                                       uint32_t count, OutcomeSet *os,
+                                       const Bindings *env) {
+    Atom *bool_type = atom_symbol(a, "Bool");
+    bool may_be_bool = false;
+    uint32_t rejected = 0u;
+    for (uint32_t i = 0u; i < count; i++) {
+        if (atom_is_symbol_id(types[i], g_builtin_syms.undefined_type) ||
+            atom_is_meta_type(types[i]))
+            continue;
+        if (atom_eq_fast(types[i], bool_type)) {
+            may_be_bool = true;
+            break;
+        }
+        rejected++;
+    }
+    if (may_be_bool || (rejected == 0u && cond->kind != ATOM_GROUNDED))
+        return false;
+    if (rejected == 0u) {
+        outcome_set_add(os, bad_arg_type_error(s, a, call, 1, bool_type, cond),
+                        env);
+        return true;
+    }
+    for (uint32_t i = 0u; i < count; i++) {
+        if (atom_is_symbol_id(types[i], g_builtin_syms.undefined_type) ||
+            atom_is_meta_type(types[i]))
+            continue;
+        outcome_set_add(os,
+            bad_arg_type_error_of_type(a, call, 1, bool_type, types[i]), env);
+    }
+    return true;
 }
 
 static Atom *state_bad_arg_type_error(Space *s, Arena *a, Atom *call,
@@ -43185,6 +43241,17 @@ static bool petta_eval_open_function_registered(void *opaque,
     return petta_eval_function_registered(NULL, head);
 }
 
+bool eval_petta_sealed_sorts(void) {
+    return eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
+        cetta_profile_is_petta_ai(active_eval_session()->profile);
+}
+
+bool eval_petta_head_is_function(Space *space, SymbolId head) {
+    return head != SYMBOL_ID_NONE &&
+        (petta_semantics_registered_builtin(head) ||
+         petta_eval_function_registered(space, head));
+}
+
 static bool petta_eval_machine_builtin_allowed(
         void *opaque, SymbolId head) {
     PettaEvalMachineContext *context = opaque;
@@ -55065,6 +55132,7 @@ static __attribute__((noinline)) bool petta_eval_machine_run(
                 " table_generator_rounds=%" PRIu64
                 " table_generator_rounds_reused=%" PRIu64
                 " table_scc_completions=%" PRIu64
+                " table_scc_merges=%" PRIu64
                 " table_answer_replays=%" PRIu64
                 " table_forward_edges=%" PRIu64
                 " table_forward_view_reads=%" PRIu64
@@ -55282,6 +55350,7 @@ static __attribute__((noinline)) bool petta_eval_machine_run(
                 stats.table_generator_rounds,
                 stats.table_generator_rounds_reused,
                 stats.table_scc_completions,
+                stats.table_scc_merges,
                 stats.table_answer_replays,
                 table_stats.forward_edges,
                 table_stats.forward_view_reads,
@@ -60315,27 +60384,11 @@ petta_lowered_to_shared_form:
             cond = condition_roots[3];
             then_br = condition_roots[1];
             else_br = condition_roots[2];
-            Atom *bool_type = atom_symbol(a, "Bool");
-            bool has_nonbool_concrete_type = false;
-            bool may_be_bool = false;
-            for (uint32_t ti = 0; ti < ntypes; ti++) {
-                if (atom_is_symbol_id(actual_types[ti], g_builtin_syms.undefined_type) ||
-                    atom_is_meta_type(actual_types[ti])) {
-                    continue;
-                }
-                if (atom_eq_fast(actual_types[ti], bool_type)) {
-                    may_be_bool = true;
-                    continue;
-                }
-                has_nonbool_concrete_type = true;
-            }
+            bool rejected = eval_if_condition_rejected(
+                s, a, atom, cond, actual_types, ntypes, os, cond_env);
             free(actual_types);
-            if ((has_nonbool_concrete_type || cond->kind == ATOM_GROUNDED) && !may_be_bool) {
-                outcome_set_add(os,
-                    bad_arg_type_error(s, a, atom, 1, atom_symbol(a, "Bool"), cond),
-                    cond_env);
+            if (rejected)
                 continue;
-            }
 
             Atom **elems = arena_alloc(a, sizeof(Atom *) * (nargs + 1));
             elems[0] = atom->expr.elems[0];
@@ -63239,6 +63292,12 @@ petta_lowered_to_shared_form:
         }
         bool imported = false;
         uint32_t import_result_count = 0u;
+        /* The reference resolves a library to its first candidate that
+         * exists, else to its first candidate, whose import then raises the
+         * missing source's existence error (P-LIB-2). */
+        char first_library_candidate[PATH_MAX];
+        first_library_candidate[0] = '\0';
+        Atom *missing_library = NULL;
         if (!error && dest.space) {
             if (has_library_reference) {
                 for (uint32_t occurrence = 0u;; occurrence++) {
@@ -63249,7 +63308,17 @@ petta_lowered_to_shared_form:
                             occurrence, candidate, sizeof(candidate));
                     if (observation.kind ==
                             CETTA_PETTA_LIBRARY_REFERENCE_EXHAUSTED) {
+                        if (!imported && !error && first_library_candidate[0])
+                            missing_library = atom_symbol(
+                                a, first_library_candidate);
                         break;
+                    }
+                    if (observation.kind ==
+                            CETTA_PETTA_LIBRARY_REFERENCE_YIELD &&
+                        !first_library_candidate[0]) {
+                        snprintf(first_library_candidate,
+                                 sizeof(first_library_candidate), "%s",
+                                 candidate);
                     }
                     if (observation.kind ==
                             CETTA_PETTA_LIBRARY_REFERENCE_REFUSED) {
@@ -63397,6 +63466,13 @@ petta_lowered_to_shared_form:
                 has_library_reference) {
                 outcome_set_add(os, atom_error(a, atom, error), &_empty);
             }
+        } else if (missing_library) {
+            if (dest.is_fresh && dest.space)
+                space_free(dest.space);
+            Atom *missing = petta_semantics_missing_import_error(
+                a, missing_library);
+            if (missing)
+                petta_eval_raise(missing);
         } else if (dest.is_fresh && dest.space) {
             space_free(dest.space);
         }

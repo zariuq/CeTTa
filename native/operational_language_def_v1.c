@@ -1,12 +1,19 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include "operational_language_def_v1.h"
 
 #include "lib_parse_native_grammar.h"
 #include "native_sha256.h"
 
+#include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include "src/string_literal.h"
 
 #ifndef CETTA_OP_LANG_PREPARE_HOST_V1
@@ -1363,6 +1370,513 @@ malformed:
     return false;
 }
 
+/* ---- Verified document cache ----------------------------------------------
+ *
+ * A document is an immutable input. Once both parsers agree on one, its tree
+ * can be stored and reused by a later read of the same bytes, with the same
+ * comment mode and work limits, by the same executable: a rebuilt reader never
+ * reuses another build's trees. CETTA_CACHE_DIR names the directory; when it
+ * is unset or empty nothing is stored or reused. An entry ends with the
+ * SHA-256 of its contents; an entry that fails that or any other check is
+ * ignored, and the document is parsed and stored again. */
+
+#define OP_LANG_CACHE_MAGIC "CETTADOC"
+#define OP_LANG_CACHE_VERSION 1u
+#define OP_LANG_CACHE_NODE_MIN_BYTES 13u
+#define OP_LANG_CACHE_MAX_BYTES ((size_t)1 << 30)
+
+typedef struct {
+    uint8_t *data;
+    size_t len;
+    size_t cap;
+    bool failed;
+} OpLangCacheWriter;
+
+typedef struct {
+    const uint8_t *data;
+    size_t len;
+    size_t pos;
+    bool failed;
+} OpLangCacheReader;
+
+typedef struct {
+    CettaOpLangV1SExpr *node;
+    uint32_t total;
+    uint32_t filled;
+} OpLangCacheFrame;
+
+static bool op_lang_cache_location(const uint8_t *bytes, size_t byte_len,
+                                   uint32_t gll_work_limit,
+                                   uint32_t glr_work_limit,
+                                   bool source_comments,
+                                   char source_hex[65],
+                                   char path[PATH_MAX]) {
+    const char *directory = getenv("CETTA_CACHE_DIR");
+    struct stat executable;
+    char material[512];
+    char key[65];
+    int written;
+
+    if (!directory || !directory[0] ||
+        stat("/proc/self/exe", &executable) != 0)
+        return false;
+    cetta_native_sha256_hex(bytes, byte_len, source_hex);
+    written = snprintf(material, sizeof(material),
+        "op-lang-document-v%u %s comments=%d gll=%u glr=%u exe=%llu:%llu:%lld:%lld.%09ld",
+        OP_LANG_CACHE_VERSION, source_hex, source_comments ? 1 : 0,
+        gll_work_limit, glr_work_limit,
+        (unsigned long long)executable.st_dev,
+        (unsigned long long)executable.st_ino,
+        (long long)executable.st_size,
+        (long long)executable.st_mtim.tv_sec,
+        (long)executable.st_mtim.tv_nsec);
+    if (written < 0 || (size_t)written >= sizeof(material))
+        return false;
+    cetta_native_sha256_hex((const uint8_t *)material, (size_t)written, key);
+    written = snprintf(path, PATH_MAX, "%s/op-lang-%s.tree", directory, key);
+    return written > 0 && written < PATH_MAX;
+}
+
+static void op_lang_cache_put(OpLangCacheWriter *writer,
+                              const void *bytes, size_t len) {
+    if (writer->failed || len == 0u)
+        return;
+    if (len > OP_LANG_CACHE_MAX_BYTES - writer->len) {
+        writer->failed = true;
+        return;
+    }
+    if (writer->len + len > writer->cap) {
+        size_t cap = writer->cap ? writer->cap : 65536u;
+        while (cap < writer->len + len)
+            cap *= 2u;
+        uint8_t *data = realloc(writer->data, cap);
+        if (!data) {
+            writer->failed = true;
+            return;
+        }
+        writer->data = data;
+        writer->cap = cap;
+    }
+    memcpy(writer->data + writer->len, bytes, len);
+    writer->len += len;
+}
+
+static void op_lang_cache_put_u32(OpLangCacheWriter *writer, uint32_t value) {
+    uint8_t bytes[4] = {(uint8_t)value, (uint8_t)(value >> 8),
+                        (uint8_t)(value >> 16), (uint8_t)(value >> 24)};
+    op_lang_cache_put(writer, bytes, sizeof(bytes));
+}
+
+static void op_lang_cache_put_u64(OpLangCacheWriter *writer, uint64_t value) {
+    op_lang_cache_put_u32(writer, (uint32_t)value);
+    op_lang_cache_put_u32(writer, (uint32_t)(value >> 32));
+}
+
+static void op_lang_cache_put_text(OpLangCacheWriter *writer,
+                                   const void *bytes, size_t len) {
+    if (len > UINT32_MAX) {
+        writer->failed = true;
+        return;
+    }
+    op_lang_cache_put_u32(writer, (uint32_t)len);
+    op_lang_cache_put(writer, bytes, len);
+}
+
+static void op_lang_cache_put_receipt(OpLangCacheWriter *writer,
+                                      const CettaOpLangV1ParserReceipt *receipt) {
+    op_lang_cache_put_u32(writer, receipt->node_len);
+    op_lang_cache_put_u32(writer, receipt->choice_len);
+    op_lang_cache_put_u32(writer, receipt->work_item_len);
+    op_lang_cache_put_u32(writer, receipt->graph_node_len);
+    op_lang_cache_put_u32(writer, receipt->stack_node_len);
+    op_lang_cache_put_u32(writer, receipt->source_pass_count);
+    op_lang_cache_put_u32(writer, receipt->decoded_byte_len);
+    op_lang_cache_put_u32(writer, receipt->source_decode_pass_count);
+    op_lang_cache_put_u32(writer, receipt->lexical_projection_pass_count);
+    op_lang_cache_put_u64(writer, receipt->derivation_fingerprint);
+}
+
+/* Preorder, with an explicit stack: documents nest thousands deep. */
+static uint64_t op_lang_cache_put_tree(OpLangCacheWriter *writer,
+                                       const CettaOpLangV1SExpr *root) {
+    const CettaOpLangV1SExpr **stack = NULL;
+    size_t stack_len = 0u, stack_cap = 0u;
+    uint64_t count = 0u;
+
+    if (!root) {
+        writer->failed = true;
+        return 0u;
+    }
+    stack = malloc(64u * sizeof(*stack));
+    if (!stack) {
+        writer->failed = true;
+        return 0u;
+    }
+    stack_cap = 64u;
+    stack[stack_len++] = root;
+    while (stack_len > 0u && !writer->failed) {
+        const CettaOpLangV1SExpr *node = stack[--stack_len];
+        uint8_t kind = (uint8_t)node->kind;
+
+        count++;
+        op_lang_cache_put(writer, &kind, 1u);
+        op_lang_cache_put_u32(writer, node->byte_left);
+        op_lang_cache_put_u32(writer, node->byte_right);
+        switch (node->kind) {
+        case CETTA_OP_LANG_V1_SEXPR_SYMBOL:
+        case CETTA_OP_LANG_V1_SEXPR_NATURAL: {
+            const char *text = node->kind == CETTA_OP_LANG_V1_SEXPR_SYMBOL
+                ? node->as.symbol : node->as.natural;
+            if (!text) {
+                writer->failed = true;
+                break;
+            }
+            op_lang_cache_put_text(writer, text, strlen(text));
+            break;
+        }
+        case CETTA_OP_LANG_V1_SEXPR_STRING:
+            op_lang_cache_put_text(writer, node->as.string.bytes,
+                                   node->as.string.len);
+            break;
+        case CETTA_OP_LANG_V1_SEXPR_APPLICATION: {
+            uint32_t index = node->as.application.argument_len;
+            if (!node->as.application.head) {
+                writer->failed = true;
+                break;
+            }
+            op_lang_cache_put_text(writer, node->as.application.head,
+                                   strlen(node->as.application.head));
+            op_lang_cache_put_u32(writer, node->as.application.head_byte_left);
+            op_lang_cache_put_u32(writer, node->as.application.head_byte_right);
+            op_lang_cache_put_u32(writer, node->as.application.argument_len);
+            if (stack_len + index > stack_cap) {
+                size_t cap = stack_cap;
+                while (cap < stack_len + index)
+                    cap *= 2u;
+                const CettaOpLangV1SExpr **grown =
+                    realloc((void *)stack, cap * sizeof(*stack));
+                if (!grown) {
+                    writer->failed = true;
+                    break;
+                }
+                stack = grown;
+                stack_cap = cap;
+            }
+            while (index > 0u)
+                stack[stack_len++] = node->as.application.arguments[--index];
+            break;
+        }
+        default:
+            writer->failed = true;
+            break;
+        }
+    }
+    free((void *)stack);
+    return count;
+}
+
+static void op_lang_cache_store(const char *path, const char source_hex[65],
+                                const CettaOpLangV1Document *document) {
+    OpLangCacheWriter writer = {0};
+    OpLangCacheWriter tree = {0};
+    char trailer[65];
+    char temporary[PATH_MAX];
+    const char *slash = strrchr(path, '/');
+    uint64_t count;
+    int fd;
+
+    count = op_lang_cache_put_tree(&tree, document->root);
+    op_lang_cache_put(&writer, OP_LANG_CACHE_MAGIC, 8u);
+    op_lang_cache_put_u32(&writer, OP_LANG_CACHE_VERSION);
+    op_lang_cache_put(&writer, source_hex, 64u);
+    op_lang_cache_put_receipt(&writer, &document->gll);
+    op_lang_cache_put_receipt(&writer, &document->glr);
+    op_lang_cache_put_u64(&writer, count);
+    op_lang_cache_put(&writer, tree.data, tree.len);
+    if (tree.failed || writer.failed || !slash)
+        goto done;
+    cetta_native_sha256_hex(writer.data, writer.len, trailer);
+    op_lang_cache_put(&writer, trailer, 64u);
+    if (writer.failed)
+        goto done;
+    {
+        size_t directory_len = (size_t)(slash - path);
+        char directory[PATH_MAX];
+        if (directory_len == 0u || directory_len >= sizeof(directory))
+            goto done;
+        memcpy(directory, path, directory_len);
+        directory[directory_len] = '\0';
+        if (mkdir(directory, 0700) != 0 && errno != EEXIST)
+            goto done;
+        if (snprintf(temporary, sizeof(temporary), "%s/.op-lang-XXXXXX",
+                     directory) >= (int)sizeof(temporary))
+            goto done;
+    }
+    fd = mkstemp(temporary);
+    if (fd < 0)
+        goto done;
+    {
+        size_t offset = 0u;
+        bool complete = true;
+        while (offset < writer.len) {
+            ssize_t written = write(fd, writer.data + offset,
+                                    writer.len - offset);
+            if (written < 0 && errno == EINTR)
+                continue;
+            if (written <= 0) {
+                complete = false;
+                break;
+            }
+            offset += (size_t)written;
+        }
+        if (close(fd) != 0)
+            complete = false;
+        if (!complete || rename(temporary, path) != 0)
+            unlink(temporary);
+    }
+done:
+    free(tree.data);
+    free(writer.data);
+}
+
+static bool op_lang_cache_get(OpLangCacheReader *reader, void *out, size_t len) {
+    if (reader->failed || len > reader->len - reader->pos) {
+        reader->failed = true;
+        return false;
+    }
+    if (len > 0u)
+        memcpy(out, reader->data + reader->pos, len);
+    reader->pos += len;
+    return true;
+}
+
+static uint32_t op_lang_cache_get_u32(OpLangCacheReader *reader) {
+    uint8_t bytes[4] = {0};
+    if (!op_lang_cache_get(reader, bytes, sizeof(bytes)))
+        return 0u;
+    return (uint32_t)bytes[0] | ((uint32_t)bytes[1] << 8) |
+        ((uint32_t)bytes[2] << 16) | ((uint32_t)bytes[3] << 24);
+}
+
+static uint64_t op_lang_cache_get_u64(OpLangCacheReader *reader) {
+    uint64_t low = op_lang_cache_get_u32(reader);
+    uint64_t high = op_lang_cache_get_u32(reader);
+    return low | (high << 32);
+}
+
+/* NUL-terminated text: a symbol, numeral or head never holds a NUL. */
+static char *op_lang_cache_get_cstring(OpLangCacheReader *reader) {
+    uint32_t len = op_lang_cache_get_u32(reader);
+    char *text;
+    if (reader->failed || len > reader->len - reader->pos) {
+        reader->failed = true;
+        return NULL;
+    }
+    if (memchr(reader->data + reader->pos, '\0', len)) {
+        reader->failed = true;
+        return NULL;
+    }
+    text = malloc((size_t)len + 1u);
+    if (!text) {
+        reader->failed = true;
+        return NULL;
+    }
+    (void)op_lang_cache_get(reader, text, len);
+    text[len] = '\0';
+    return text;
+}
+
+static void op_lang_cache_get_receipt(OpLangCacheReader *reader,
+                                      CettaOpLangV1ParserReceipt *receipt) {
+    receipt->node_len = op_lang_cache_get_u32(reader);
+    receipt->choice_len = op_lang_cache_get_u32(reader);
+    receipt->work_item_len = op_lang_cache_get_u32(reader);
+    receipt->graph_node_len = op_lang_cache_get_u32(reader);
+    receipt->stack_node_len = op_lang_cache_get_u32(reader);
+    receipt->source_pass_count = op_lang_cache_get_u32(reader);
+    receipt->decoded_byte_len = op_lang_cache_get_u32(reader);
+    receipt->source_decode_pass_count = op_lang_cache_get_u32(reader);
+    receipt->lexical_projection_pass_count = op_lang_cache_get_u32(reader);
+    receipt->derivation_fingerprint = op_lang_cache_get_u64(reader);
+}
+
+static CettaOpLangV1SExpr *op_lang_cache_get_node(OpLangCacheReader *reader,
+                                                  uint32_t *argument_len) {
+    uint8_t kind = 0u;
+    uint32_t left, right;
+    CettaOpLangV1SExpr *node;
+
+    *argument_len = 0u;
+    if (!op_lang_cache_get(reader, &kind, 1u) ||
+        kind > (uint8_t)CETTA_OP_LANG_V1_SEXPR_APPLICATION)
+        return NULL;
+    left = op_lang_cache_get_u32(reader);
+    right = op_lang_cache_get_u32(reader);
+    if (reader->failed)
+        return NULL;
+    node = op_lang_node_alloc((CettaOpLangV1SExprKind)kind, left, right);
+    if (!node) {
+        reader->failed = true;
+        return NULL;
+    }
+    switch ((CettaOpLangV1SExprKind)kind) {
+    case CETTA_OP_LANG_V1_SEXPR_SYMBOL:
+        node->as.symbol = op_lang_cache_get_cstring(reader);
+        break;
+    case CETTA_OP_LANG_V1_SEXPR_NATURAL:
+        node->as.natural = op_lang_cache_get_cstring(reader);
+        break;
+    case CETTA_OP_LANG_V1_SEXPR_STRING: {
+        uint32_t len = op_lang_cache_get_u32(reader);
+        if (!reader->failed && len <= reader->len - reader->pos) {
+            node->as.string.bytes = malloc(len > 0u ? (size_t)len : 1u);
+            if (node->as.string.bytes) {
+                (void)op_lang_cache_get(reader, node->as.string.bytes, len);
+                node->as.string.len = len;
+            } else {
+                reader->failed = true;
+            }
+        } else {
+            reader->failed = true;
+        }
+        break;
+    }
+    case CETTA_OP_LANG_V1_SEXPR_APPLICATION: {
+        uint32_t total;
+        node->as.application.head = op_lang_cache_get_cstring(reader);
+        node->as.application.head_byte_left = op_lang_cache_get_u32(reader);
+        node->as.application.head_byte_right = op_lang_cache_get_u32(reader);
+        total = op_lang_cache_get_u32(reader);
+        /* Every child takes at least the bytes of an empty leaf. */
+        if (!reader->failed &&
+            total > (reader->len - reader->pos) / OP_LANG_CACHE_NODE_MIN_BYTES)
+            reader->failed = true;
+        if (!reader->failed && total > 0u) {
+            node->as.application.arguments = calloc(total, sizeof(*node->as.application.arguments));
+            if (!node->as.application.arguments)
+                reader->failed = true;
+        }
+        *argument_len = total;
+        break;
+    }
+    }
+    if (reader->failed) {
+        op_lang_sexpr_free(node);
+        return NULL;
+    }
+    return node;
+}
+
+static CettaOpLangV1SExpr *op_lang_cache_get_tree(OpLangCacheReader *reader,
+                                                  uint64_t count) {
+    OpLangCacheFrame *stack = NULL;
+    size_t stack_len = 0u, stack_cap = 0u;
+    CettaOpLangV1SExpr *root = NULL;
+    uint64_t read = 0u;
+
+    while (!reader->failed) {
+        uint32_t total = 0u;
+        CettaOpLangV1SExpr *node;
+        if (read == count) {
+            reader->failed = true;
+            break;
+        }
+        node = op_lang_cache_get_node(reader, &total);
+        if (!node)
+            break;
+        read++;
+        if (stack_len == 0u) {
+            root = node;
+        } else {
+            OpLangCacheFrame *top = &stack[stack_len - 1u];
+            top->node->as.application.arguments[top->filled++] = node;
+            top->node->as.application.argument_len = top->filled;
+        }
+        if (total > 0u) {
+            if (stack_len == stack_cap) {
+                size_t cap = stack_cap ? stack_cap * 2u : 64u;
+                OpLangCacheFrame *grown = realloc(stack, cap * sizeof(*stack));
+                if (!grown) {
+                    reader->failed = true;
+                    break;
+                }
+                stack = grown;
+                stack_cap = cap;
+            }
+            stack[stack_len++] = (OpLangCacheFrame){node, total, 0u};
+        }
+        while (stack_len > 0u &&
+               stack[stack_len - 1u].filled == stack[stack_len - 1u].total)
+            stack_len--;
+        if (stack_len == 0u)
+            break;
+    }
+    free(stack);
+    if (reader->failed || read != count) {
+        reader->failed = true;
+        op_lang_sexpr_free(root);
+        return NULL;
+    }
+    return root;
+}
+
+static bool op_lang_cache_load(const char *path, const char source_hex[65],
+                               CettaOpLangV1Document *document) {
+    OpLangCacheReader reader = {0};
+    uint8_t *data = NULL;
+    char magic[8];
+    char stored_source[65] = {0};
+    char trailer[65];
+    struct stat info;
+    FILE *file = fopen(path, "rb");
+    bool ok = false;
+
+    if (!file)
+        return false;
+    if (fstat(fileno(file), &info) != 0 || info.st_size < 64 ||
+        (unsigned long long)info.st_size > OP_LANG_CACHE_MAX_BYTES)
+        goto done;
+    data = malloc((size_t)info.st_size);
+    if (!data || fread(data, 1u, (size_t)info.st_size, file) != (size_t)info.st_size)
+        goto done;
+    cetta_native_sha256_hex(data, (size_t)info.st_size - 64u, trailer);
+    if (memcmp(trailer, data + info.st_size - 64, 64u) != 0)
+        goto done;
+    reader.data = data;
+    reader.len = (size_t)info.st_size - 64u;
+    if (!op_lang_cache_get(&reader, magic, 8u) ||
+        memcmp(magic, OP_LANG_CACHE_MAGIC, 8u) != 0 ||
+        op_lang_cache_get_u32(&reader) != OP_LANG_CACHE_VERSION ||
+        !op_lang_cache_get(&reader, stored_source, 64u) ||
+        memcmp(stored_source, source_hex, 64u) != 0)
+        goto done;
+    op_lang_cache_get_receipt(&reader, &document->gll);
+    op_lang_cache_get_receipt(&reader, &document->glr);
+    {
+        uint64_t count = op_lang_cache_get_u64(&reader);
+        if (reader.failed || count == 0u ||
+            count > (reader.len - reader.pos) / OP_LANG_CACHE_NODE_MIN_BYTES)
+            goto done;
+        document->root = op_lang_cache_get_tree(&reader, count);
+    }
+    if (!document->root || reader.pos != reader.len) {
+        op_lang_sexpr_free(document->root);
+        document->root = NULL;
+        goto done;
+    }
+    memcpy(document->source_sha256, source_hex, 65u);
+    memcpy(document->authority_sha256, source_hex, 65u);
+    ok = true;
+done:
+    if (!ok) {
+        memset(&document->gll, 0, sizeof(document->gll));
+        memset(&document->glr, 0, sizeof(document->glr));
+    }
+    free(data);
+    fclose(file);
+    return ok;
+}
+
 static bool op_lang_parse_document_bytes(
     CettaOpLangV1Document *out,
     const uint8_t *bytes,
@@ -1408,6 +1922,19 @@ static bool op_lang_parse_document_bytes(
     memset(&token_lattice, 0, sizeof(token_lattice));
     cetta_lp_native_utf8_forest_init(&gll_forest);
     cetta_lp_native_utf8_forest_init(&glr_forest);
+
+    char cache_path[PATH_MAX];
+    char cache_source[65];
+    bool cacheable = op_lang_cache_location(bytes, byte_len, gll_work_limit,
+        glr_work_limit, source_comments, cache_source, cache_path);
+    if (cacheable && op_lang_cache_load(cache_path, cache_source, &candidate)) {
+        cetta_op_lang_v1_document_free(out);
+        *out = candidate;
+        memset(&candidate, 0, sizeof(candidate));
+        op_lang_set_status(status, CETTA_OP_LANG_V1_OK);
+        ok = true;
+        goto done;
+    }
 
 #ifdef CETTA_OP_LANG_PREPARE_HOST_V1
     bool prepared = op_lang_grammar_build(&grammar) &&
@@ -1505,6 +2032,8 @@ static bool op_lang_parse_document_bytes(
     cetta_native_sha256_hex(bytes, byte_len, candidate.source_sha256);
     memcpy(candidate.authority_sha256, candidate.source_sha256,
            sizeof(candidate.authority_sha256));
+    if (cacheable)
+        op_lang_cache_store(cache_path, cache_source, &candidate);
     cetta_op_lang_v1_document_free(out);
     *out = candidate;
     memset(&candidate, 0, sizeof(candidate));

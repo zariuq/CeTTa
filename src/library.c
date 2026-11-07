@@ -3975,6 +3975,12 @@ static bool resolve_import_plan(CettaLibraryContext *ctx, const CettaModuleSpec 
                 *error_out = he_unresolved_module(eval_arena, name);
                 return false;
             }
+            /* A plain PeTTa import is a source-relative file: no file
+             * answering it is a missing source (P-LIB-2), as for a path. */
+            if (plain_petta_import && !reason[0]) {
+                *error_out = atom_symbol(eval_arena, CETTA_LIBRARY_MISSING_MODULE);
+                return false;
+            }
             char *msg = arena_alloc(eval_arena,
                                     strlen("Failed to resolve module ") +
                                     strlen(spec->path_or_member) +

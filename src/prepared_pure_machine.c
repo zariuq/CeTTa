@@ -5,6 +5,7 @@
 #include "eval.h"
 #include "grounded.h"
 #include "petta_semantics.h"
+#include "space_type_evidence.h"
 #include "stats.h"
 #include "symbol.h"
 #include "u64_index.h"
@@ -201,6 +202,13 @@ typedef struct {
     uint32_t code_key_ops;
     uint32_t code_key_length;
     bool code_binds;
+    /* The body is `(let PATTERN (decons-atom $x) ...)`, its pattern only
+     * variables and $x head argument `decons_guard_argument`: nothing runs
+     * before PeTTa's decons-atom reads that argument, so a call whose value
+     * there is one decons-atom has no answer for cannot answer from this
+     * equation, and selection passes over it (prepared_pure_skip_refuted).
+     * PREPARED_PURE_NO_DECONS_GUARD otherwise. */
+    uint32_t decons_guard_argument;
 } PreparedPureEquation;
 
 typedef enum {
@@ -395,6 +403,13 @@ typedef struct {
     SymbolId fold_cons;
     int64_t fold_base;
     int64_t fold_literal;
+    /* PeTTa's ai profile: the fold's formal is a sealed-closed list or
+     * Peano sort (prepared_pure_fold_sealed), so a ground argument reaching
+     * the fold is a spine of the sort's cells and the walk reads each
+     * expression as a cell by position, up to fold_max_index, without the
+     * cell test (SealedSorts.sealed_list_drop, sealed_nat_drop). */
+    bool fold_sealed;
+    uint8_t fold_max_index;
 } PreparedPureHead;
 
 typedef struct {
@@ -896,6 +911,11 @@ struct CettaPreparedPureProgram {
     Atom *built_last_type;
     /* Whether some HE head owes a structural range. */
     bool he_range_checks;
+    /* PeTTa's ai profile: the declarations are functional and rigid in head,
+     * so a call whose head's declared result has another head path than the
+     * checked type it feeds answers nothing (SealedJudgments.refute_version,
+     * refutesGround_of_shape) and is compiled not to run. */
+    bool refutes_by_shape;
     /* The instances of HE ranges its activations owe
      * (PreparedPureCodeFrame.expected), kept apart from the collected
      * arena: a frame owning one keeps it above witness_marks[its slot],
@@ -930,6 +950,7 @@ enum {
 };
 
 #define PREPARED_PURE_NO_SCALAR_GUARD UINT32_MAX
+#define PREPARED_PURE_NO_DECONS_GUARD UINT32_MAX
 #define PREPARED_PURE_ROOT_BODY UINT32_MAX
 #define PREPARED_PURE_ROOT_FRAME (UINT32_MAX - 1u)
 
@@ -4100,20 +4121,38 @@ static uint8_t prepared_pure_undefined_type_operands(
  * its subterms, and where the dialect plans its source, no subterm the plan
  * leaves unspecified has a head not proved inert.  PeTTa evaluates a
  * pattern's function-headed subterms, at any depth, before it matches. */
+/* PeTTa translates a pattern subterm whose head is a variable into a
+ * run-time dispatch (reduce), and runs those dispatches before the let
+ * unifies the whole pattern with its value.  A head that was not bound
+ * before the let is therefore still unbound when its dispatch runs, and the
+ * dispatch keeps the term as data: the subterm is a structural pattern.  A
+ * head bound before the let may name a function, so it stays a dispatch. */
+static bool prepared_pure_pattern_head_unbound(
+        const PreparedPureCompileContext *context, const Atom *pattern) {
+    return context && eval_current_language_id &&
+           eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
+           pattern->kind == ATOM_EXPR && pattern->expr.len > 0u &&
+           pattern->expr.elems[0]->kind == ATOM_VAR &&
+           !prepared_pure_context_lookup(context,
+                                         pattern->expr.elems[0]->var_id, NULL);
+}
+
 static bool prepared_pure_bind_pattern_is_inert(
-        CettaPreparedPureProgram *program, Atom *pattern,
+        CettaPreparedPureProgram *program,
+        const PreparedPureCompileContext *context, Atom *pattern,
         const void *source_view, uint32_t depth) {
     CettaPreparedPureSourceRole role =
         prepared_pure_source_role(program, source_view);
+    bool unbound_head = prepared_pure_pattern_head_unbound(context, pattern);
     if (role == CETTA_PREPARED_PURE_SOURCE_CALL ||
-        role == CETTA_PREPARED_PURE_SOURCE_DYNAMIC_CALL ||
+        (role == CETTA_PREPARED_PURE_SOURCE_DYNAMIC_CALL && !unbound_head) ||
         role == CETTA_PREPARED_PURE_SOURCE_DECLINE)
         return false;
     if (pattern->kind != ATOM_EXPR)
         return true;
     if (depth > PREPARED_PURE_MAX_COMPILE_DEPTH ||
         (role == CETTA_PREPARED_PURE_SOURCE_UNSPECIFIED &&
-         program->source_view.role &&
+         program->source_view.role && !unbound_head &&
          !prepared_pure_template_head_is_inert(program, pattern)))
         return false;
     for (CettaExprIndex index = 0u; index < pattern->expr.len; index++) {
@@ -4122,7 +4161,7 @@ static bool prepared_pure_bind_pattern_is_inert(
         if (index == 0u && child->kind != ATOM_EXPR)
             continue;
         if (!prepared_pure_bind_pattern_is_inert(
-                program, child,
+                program, context, child,
                 prepared_pure_source_child(program, source_view, index),
                 depth + 1u))
             return false;
@@ -4138,8 +4177,8 @@ static bool prepared_pure_compile_inert_bind_pattern(
         CettaPreparedPureProgram *program,
         PreparedPureCompileContext *context, Atom *pattern,
         const void *source_view, uint32_t *pattern_index_out) {
-    if (!prepared_pure_bind_pattern_is_inert(program, pattern, source_view,
-                                             0u))
+    if (!prepared_pure_bind_pattern_is_inert(program, context, pattern,
+                                             source_view, 0u))
         return prepared_pure_reject(
             program, "binding pattern requires source evaluation", pattern);
     if (!prepared_pure_compile_bind_pattern(
@@ -7274,6 +7313,35 @@ static void prepared_pure_compile_context_reads(
     equation->first_context_read = (uint32_t)first;
 }
 
+/* The head argument a PeTTa body destructures first with decons-atom, as
+ * `(let PATTERN (decons-atom $x) ...)` with a pattern of variables (so no
+ * call runs before the value) and $x a head argument; else
+ * PREPARED_PURE_NO_DECONS_GUARD. */
+static uint32_t prepared_pure_decons_guard_argument(Atom *lhs, Atom *rhs) {
+    if (!lhs || !rhs || lhs->kind != ATOM_EXPR || rhs->kind != ATOM_EXPR ||
+        rhs->expr.len != 4u ||
+        !atom_is_symbol_id(rhs->expr.elems[0], g_builtin_syms.let))
+        return PREPARED_PURE_NO_DECONS_GUARD;
+    Atom *pattern = rhs->expr.elems[1];
+    if (pattern->kind == ATOM_EXPR) {
+        for (CettaExprIndex i = 0u; i < pattern->expr.len; i++)
+            if (pattern->expr.elems[i]->kind != ATOM_VAR)
+                return PREPARED_PURE_NO_DECONS_GUARD;
+    } else if (pattern->kind != ATOM_VAR) {
+        return PREPARED_PURE_NO_DECONS_GUARD;
+    }
+    Atom *value = rhs->expr.elems[2];
+    if (value->kind != ATOM_EXPR || value->expr.len != 2u ||
+        !atom_is_symbol_id(value->expr.elems[0], g_builtin_syms.decons_atom) ||
+        value->expr.elems[1]->kind != ATOM_VAR)
+        return PREPARED_PURE_NO_DECONS_GUARD;
+    for (CettaExprIndex i = 1u; i < lhs->expr.len; i++)
+        if (lhs->expr.elems[i]->kind == ATOM_VAR &&
+            atom_eq(lhs->expr.elems[i], value->expr.elems[1]))
+            return (uint32_t)(i - 1u);
+    return PREPARED_PURE_NO_DECONS_GUARD;
+}
+
 /* Record the argument-to-slot map of an equation whose argument patterns are
  * all variables; matching it binds each argument to its slot, or compares it
  * with a repeated variable's first value.  Other equations compile a match
@@ -7462,6 +7530,8 @@ static bool prepared_pure_compile_head(
             .scalar_guard = scalar_guard,
             .repeated_variables = repeated_variables,
             .context_hole = prepared_pure_context_hole(program, root),
+            .decons_guard_argument = prepared_pure_decons_guard_argument(
+                occurrence.lhs, occurrence.rhs),
         };
         prepared_pure_compile_context_reads(
             program, &program->equations[program->equation_len - 1u]);
@@ -7714,12 +7784,39 @@ static bool prepared_pure_value_certainly_meets(
  * as prepared_pure_compile_source_bind admits at once).  Each branch of an
  * if and each equation of a call is judged on its own, since a clash in
  * one prunes only its own calls. */
+/* Whether `pattern` only gives the value a shape: each of its variables
+ * receives what it faces, and nothing in it is a constant to compare. */
+static bool prepared_pure_pattern_only_receives(
+    const CettaPreparedPureProgram *program,
+    const PreparedPureDestinationCheck *check, const Atom *pattern,
+    uint32_t depth) {
+    if (depth > PREPARED_PURE_MAX_COMPILE_DEPTH)
+        return false;
+    if (pattern->kind == ATOM_VAR)
+        return prepared_pure_destination_receives(program, check, pattern);
+    if (pattern->kind != ATOM_EXPR)
+        return false;
+    for (CettaExprIndex i = 0u; i < pattern->expr.len; i++)
+        if (!prepared_pure_pattern_only_receives(
+                program, check, pattern->expr.elems[i], depth + 1u))
+            return false;
+    return true;
+}
+
 static bool prepared_pure_value_admits_destination(
     CettaPreparedPureProgram *program, PreparedPureDestinationCheck *check,
     uint32_t node_index, const Atom *pattern, uint32_t depth) {
     if (node_index >= program->node_len ||
         depth > PREPARED_PURE_MAX_COMPILE_DEPTH)
         return false;
+    /* A strict intrinsic (decons-atom, cons-atom, arithmetic, comparison)
+     * computes one value from its operands alone.  Meeting a destination
+     * that only gives that value a shape before the intrinsic runs, as
+     * PeTTa's call protocol does, or after it, as this machine does, gives
+     * the same bindings, the same failure and the same error. */
+    if (program->nodes[node_index].kind == PREPARED_PURE_INTRINSIC &&
+        prepared_pure_pattern_only_receives(program, check, pattern, 0u))
+        return true;
     if ((pattern->kind == ATOM_VAR &&
          prepared_pure_destination_receives(program, check, pattern)) ||
         prepared_pure_value_tree(program, node_index, 0u) ||
@@ -9263,6 +9360,30 @@ static bool prepared_pure_equality_needs_observation(const Atom *value) {
            petta_semantics_value_contains_observable_open_cons(value);
 }
 
+/* CETTA_PREPARED_PURE_OBSERVED_EQUALITY_CHECK=1 also materializes both
+ * operands of every equality decided in place, and stops the run where the
+ * two answers differ. */
+static bool prepared_pure_observed_equality_checked(void) {
+    static _Thread_local int checked = -1;
+    if (checked < 0) {
+        const char *value = getenv("CETTA_PREPARED_PURE_OBSERVED_EQUALITY_CHECK");
+        checked = value && *value && strcmp(value, "0") != 0;
+    }
+    return checked != 0;
+}
+
+static __attribute__((cold, noreturn)) void
+prepared_pure_observed_equality_mismatch(Atom *left, Atom *right,
+                                         PeTTaObservedEquality decided) {
+    fprintf(stderr, "observed equality decided %s, materialized comparison differs:\n",
+            decided == PETTA_OBSERVED_EQUAL ? "equal" : "different");
+    atom_print(left, stderr);
+    fputc('\n', stderr);
+    atom_print(right, stderr);
+    fputc('\n', stderr);
+    abort();
+}
+
 /* Execute the generated register arm directly.  Dialect dispatch is absent by
  * construction: instruction and result layout were emitted from the active
  * execution-contract presentation when the program was compiled. */
@@ -9277,6 +9398,26 @@ static Atom *prepared_pure_execute_register(
         return NULL;
     Atom *observed[2];
     if (instruction == CETTA_GSLT_REGISTER_INSTRUCTION_ATOM_EQUAL) {
+        /* Equality as observed, decided in place: a list spelled by cons
+         * cells compares as that list without being built.  The answer is
+         * the boolean of the materialized comparison wherever the operands'
+         * shared type is not in question. */
+        PeTTaObservedEquality decided = PETTA_OBSERVED_UNDECIDED;
+        if (expected_kind == CETTA_GSLT_REGISTER_RESULT_BOOLEAN &&
+            (program->total_structural_equality ||
+             undefined_type_operands != 0u) &&
+            arguments[0] && arguments[1] &&
+            (atom_structural_may_have_list_carrier(arguments[0]) ||
+             atom_structural_may_have_list_carrier(arguments[1]))) {
+            decided = petta_semantics_observed_equal(arguments[0], arguments[1]);
+            if (decided != PETTA_OBSERVED_UNDECIDED &&
+                !prepared_pure_observed_equality_checked()) {
+                cetta_runtime_stats_inc(
+                    CETTA_RUNTIME_COUNTER_PREPARED_PURE_OBSERVED_EQUALITY);
+                return prepared_pure_boolean_atom(
+                    program, arena, decided == PETTA_OBSERVED_EQUAL);
+            }
+        }
         for (uint32_t i = 0u; i < 2u; i++) {
             observed[i] = prepared_pure_equality_needs_observation(arguments[i])
                 ? petta_semantics_materialize_value(arena, arguments[i])
@@ -9284,6 +9425,11 @@ static Atom *prepared_pure_execute_register(
             if (!observed[i])
                 return NULL;
         }
+        if (decided != PETTA_OBSERVED_UNDECIDED &&
+            atom_value_eq(observed[0], observed[1]) !=
+                (decided == PETTA_OBSERVED_EQUAL))
+            prepared_pure_observed_equality_mismatch(
+                arguments[0], arguments[1], decided);
         arguments = observed;
     }
     CettaGsltRegisterOperandDiscipline discipline;
@@ -9366,6 +9512,32 @@ static Atom *prepared_pure_execute_register(
 /* Execute only the successful value arm named by the generated intrinsic
  * program.  A fault, computation zero, or unsupported payload returns NULL;
  * the caller then replays the source through the canonical evaluator. */
+/* Whether PeTTa's decons-atom has no answer for `operand`: the empty
+ * expression, or a ground value that is no expression.  A variable or a value
+ * with an internal representation stays the canonical evaluator's. */
+static bool prepared_pure_petta_decons_refutes(const Atom *operand) {
+    if (operand->kind == ATOM_EXPR)
+        return operand->expr.len == 0u;
+    return operand->kind == ATOM_SYMBOL ||
+        (operand->kind == ATOM_GROUNDED &&
+         operand->ground.gkind != GV_INTERNAL_TAG &&
+         operand->ground.gkind != GV_CAPTURE &&
+         operand->ground.gkind != GV_FOREIGN);
+}
+
+/* Whether a PeTTa decons-atom node met an operand it has no answer for. */
+static bool prepared_pure_petta_deconstruct_fails(
+    const PreparedPureNode *node, Atom *const *values, uint32_t count) {
+    if (!node || node->kind != PREPARED_PURE_INTRINSIC ||
+        node->intrinsic_instruction !=
+            CETTA_GSLT_PREPARED_PURE_INTRINSIC_DECONSTRUCT_NONEMPTY_EXPRESSION ||
+        count != 1u || !values || !values[0] ||
+        !eval_current_language_id ||
+        eval_current_language_id() != CETTA_LANGUAGE_PETTA)
+        return false;
+    return prepared_pure_petta_decons_refutes(values[0]);
+}
+
 static Atom *prepared_pure_execute_intrinsic(
     const CettaPreparedPureProgram *program, Arena *arena,
     CettaGsltPreparedPureIntrinsicInstruction instruction,
@@ -13046,6 +13218,133 @@ static bool prepared_pure_typed_arguments_known(
     return true;
 }
 
+/* Under sealed sorts a function's range types no value, so it need not be
+ * rigid in head for a refutation by shape. */
+static bool prepared_pure_function_range_exempt(void *context, SymbolId subject) {
+    return eval_petta_head_is_function &&
+        eval_petta_head_is_function((Space *)context, subject);
+}
+
+/* A closed type a typed head checks: a value class's name, or a structural
+ * formal or range. */
+typedef struct {
+    SymbolId name;
+    const Atom *type;
+} PreparedPureCheckedType;
+
+static bool prepared_pure_class_checked(uint8_t class, const Atom *formal,
+                                        PreparedPureCheckedType *out) {
+    const char *name = class == PREPARED_PURE_VALUE_NUMBER ? "Number"
+        : class == PREPARED_PURE_VALUE_STRING ? "String"
+        : class == PREPARED_PURE_VALUE_BOOL ? "Bool" : NULL;
+    if (name) {
+        *out = (PreparedPureCheckedType){
+            .name = symbol_lookup_cstr(g_symbols, name)};
+        return out->name != SYMBOL_ID_NONE;
+    }
+    if (class != PREPARED_PURE_VALUE_STRUCTURAL || !formal ||
+        atom_has_vars(formal) || prepared_pure_metatype_name(formal))
+        return false;
+    *out = (PreparedPureCheckedType){.name = SYMBOL_ID_NONE, .type = formal};
+    return true;
+}
+
+/* Whether two closed types differ in head path: a different symbol, or an
+ * application of another length or whose first elements differ so.  A
+ * variable, or a leaf that is no symbol, decides nothing. */
+static bool prepared_pure_head_paths_differ(const Atom *a, const Atom *b) {
+    for (uint32_t depth = 0u; a && b && depth < 64u; depth++) {
+        if (a->kind == ATOM_VAR || b->kind == ATOM_VAR)
+            return false;
+        bool a_expr = a->kind == ATOM_EXPR, b_expr = b->kind == ATOM_EXPR;
+        if (a_expr != b_expr)
+            return true;
+        if (!a_expr)
+            return a->kind == ATOM_SYMBOL && b->kind == ATOM_SYMBOL &&
+                a->sym_id != b->sym_id;
+        if (a->expr.len != b->expr.len)
+            return true;
+        if (a->expr.len == 0u)
+            return false;
+        a = a->expr.elems[0];
+        b = b->expr.elems[0];
+    }
+    return false;
+}
+
+/* A structural type is no value class's name, so a class and a structural
+ * type always differ in head path. */
+static bool prepared_pure_checked_types_differ(PreparedPureCheckedType a,
+                                               PreparedPureCheckedType b) {
+    if (a.type && b.type)
+        return prepared_pure_head_paths_differ(a.type, b.type);
+    if (!a.type && !b.type)
+        return a.name != b.name;
+    return true;
+}
+
+/* The checked range of a head whose answers are ground values of it: a
+ * value class its return check or shown range holds, or a closed structural
+ * range its version proves. */
+static bool prepared_pure_result_checked(const CettaPreparedPureProgram *program,
+                                         uint32_t index,
+                                         PreparedPureCheckedType *out) {
+    if (index >= program->head_len)
+        return false;
+    const PreparedPureHead *head = &program->heads[index];
+    if (head->petta_range)
+        return prepared_pure_class_checked(PREPARED_PURE_VALUE_STRUCTURAL,
+                                           head->petta_range, out);
+    return head->typed && head->range_class != PREPARED_PURE_VALUE_STRUCTURAL &&
+        prepared_pure_class_checked(head->range_class, NULL, out);
+}
+
+/* PeTTa's ai profile: whether a call node answers nothing because an
+ * argument at a checked closed formal is a call to a head whose declared
+ * range has another head path, or because, in a tail position, its own
+ * range has another head path than the range of the head whose body is
+ * lowered.  No answer of such a call passes the check it feeds
+ * (refutesGround_of_shape, refute_version), so it is compiled not to run. */
+static bool prepared_pure_call_refuted(const PreparedPureCodeLowering *lowering,
+                                       const PreparedPureNode *node, bool tail) {
+    const CettaPreparedPureProgram *program = lowering->program;
+    if (!program->refutes_by_shape || node->auxiliary >= program->head_len ||
+        node->first_child > program->child_len ||
+        node->child_count > program->child_len - node->first_child)
+        return false;
+    PreparedPureCheckedType formal, result;
+    if (tail && lowering->head < program->head_len) {
+        const PreparedPureHead *caller = &program->heads[lowering->head];
+        if (prepared_pure_result_checked(program, node->auxiliary, &result) &&
+            caller->typed &&
+            (caller->petta_range
+                ? prepared_pure_class_checked(PREPARED_PURE_VALUE_STRUCTURAL,
+                                              caller->petta_range, &formal)
+                : (caller->range_class != PREPARED_PURE_VALUE_STRUCTURAL &&
+                   prepared_pure_class_checked(caller->range_class, NULL,
+                                               &formal))) &&
+            prepared_pure_checked_types_differ(result, formal))
+            return true;
+    }
+    const PreparedPureHead *head = &program->heads[node->auxiliary];
+    if (!head->typed || node->child_count != head->typed_arity)
+        return false;
+    for (uint32_t i = 0u; i < node->child_count; i++) {
+        uint32_t child = program->children[node->first_child + i];
+        if (child >= program->node_len ||
+            program->nodes[child].kind != PREPARED_PURE_CALL)
+            continue;
+        if (prepared_pure_class_checked(
+                program->value_classes[head->first_value_class + i],
+                program->value_formals[head->first_value_class + i], &formal) &&
+            prepared_pure_result_checked(program, program->nodes[child].auxiliary,
+                                         &result) &&
+            prepared_pure_checked_types_differ(result, formal))
+            return true;
+    }
+    return false;
+}
+
 /* Whether compilation decides a call's structural argument check
  * (prepared_pure_structural_arguments_accepted), given the positions
  * `discharged` it already decides: HE, every structural argument
@@ -13392,6 +13691,13 @@ static bool prepared_pure_code_node(
                  ? program->heads[node.auxiliary].unique_match
                  : program->heads[node.auxiliary].deterministic)))
             return false;
+        if (prepared_pure_call_refuted(lowering, &node, tail)) {
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_PREPARED_PURE_REFUTED_CALL);
+            return prepared_pure_code_emit(
+                program, (PreparedPureCode){.kind = PREPARED_PURE_CODE_FAIL},
+                NULL, 0u, NULL);
+        }
         uint32_t *operands = NULL;
         if (!prepared_pure_code_operands(
                 lowering, node.first_child, node.child_count, depth,
@@ -14305,6 +14611,54 @@ static bool prepared_pure_fold_integer(const Atom *atom, int64_t *out) {
     return true;
 }
 
+/* PeTTa's ai profile: whether a typed fold's one formal is a sealed-closed
+ * sort whose cells the fold reads: (List t) over Nil and (Cons item rest),
+ * or Nat over Z and (S rest) (space_type_sort_sealed_closed).  Every
+ * argument that reaches the fold has passed the head's check at that formal
+ * under the profile's relation, is a producer's answer whose version proves
+ * that range, or is the recursive field of an argument of the head's own
+ * activation, so a ground one is a spine of the sort's cells
+ * (SealedSorts.sealed_spine_of_count, sealed_nat_spine_of_count,
+ * producer_answers_spines). */
+static bool prepared_pure_fold_sealed(CettaPreparedPureProgram *program,
+                                      const PreparedPureHead *head) {
+    if (!eval_petta_sealed_sorts || !eval_petta_sealed_sorts() ||
+        !program->space || !head->typed || !head->self_trusted ||
+        head->typed_arity != 1u ||
+        program->value_classes[head->first_value_class] !=
+            PREPARED_PURE_VALUE_STRUCTURAL)
+        return false;
+    const Atom *formal = program->value_formals[head->first_value_class];
+    if (!formal)
+        return false;
+    SymbolId sort = SYMBOL_ID_NONE, nil = SYMBOL_ID_NONE,
+             cons = SYMBOL_ID_NONE;
+    bool parametric = formal->kind == ATOM_EXPR;
+    if (parametric) {
+        sort = symbol_lookup_cstr(g_symbols, "List");
+        nil = symbol_lookup_cstr(g_symbols, "Nil");
+        cons = symbol_lookup_cstr(g_symbols, "Cons");
+        if (formal->expr.len != 2u ||
+            formal->expr.elems[0]->kind != ATOM_SYMBOL ||
+            formal->expr.elems[0]->sym_id != sort ||
+            head->fold_cons_len != 3u || head->fold_rest != 2u)
+            return false;
+    } else {
+        sort = symbol_lookup_cstr(g_symbols, "Nat");
+        nil = symbol_lookup_cstr(g_symbols, "Z");
+        cons = symbol_lookup_cstr(g_symbols, "S");
+        if (formal->kind != ATOM_SYMBOL || formal->sym_id != sort ||
+            head->fold_cons_len != 2u || head->fold_rest != 1u)
+            return false;
+    }
+    return sort != SYMBOL_ID_NONE && nil != SYMBOL_ID_NONE &&
+        cons != SYMBOL_ID_NONE && head->fold_nil == nil &&
+        head->fold_cons == cons &&
+        space_type_sort_sealed_closed(program->space, sort, parametric, nil,
+                                      cons, prepared_pure_function_range_exempt,
+                                      program->space);
+}
+
 /* A head of one argument whose only two equations are a fold over a free
  * constructor (structure-by-proof R1): (= (g nil) base), nil a free symbol
  * and base an integer; and (= (g (cons $v1 .. $vm)) (op a b)), the $vi
@@ -14316,6 +14670,7 @@ static void prepared_pure_recognize_fold(CettaPreparedPureProgram *program,
                                          uint32_t h) {
     PreparedPureHead *head = &program->heads[h];
     head->fold_op = 0u;
+    head->fold_sealed = false;
     if (!head->compiled || head->equation_count != 2u ||
         head->first_equation > program->equation_len ||
         2u > program->equation_len - head->first_equation ||
@@ -14445,6 +14800,8 @@ static void prepared_pure_recognize_fold(CettaPreparedPureProgram *program,
     head->fold_cons = cons;
     head->fold_base = base;
     head->fold_literal = literal;
+    head->fold_max_index = rest > item ? rest : item;
+    head->fold_sealed = prepared_pure_fold_sealed(program, head);
 }
 
 /* A recognized fold's value at `argument`: the spine of cons cells to nil,
@@ -14503,21 +14860,27 @@ static Atom *prepared_pure_run_fold_exact(CettaPreparedPureProgram *program,
  * gives it.  A sum takes one pass from the left: each partial sum the
  * equations form from the right is base plus some of the fields, so where
  * |base| + n * max|field| is a machine integer none of them leaves the
- * machine integers, and the total is theirs. */
-static Atom *prepared_pure_run_fold(CettaPreparedPureProgram *program,
-                                    Arena *arena, const PreparedPureHead *head,
-                                    Atom *argument) {
+ * machine integers, and the total is theirs.  TRUSTED drops the cell test,
+ * as SealedSorts.trustedOperands walks: every expression is read as a cell
+ * by position, an index beyond it declining, and anything else ends the
+ * spine. */
+static inline __attribute__((always_inline)) Atom *prepared_pure_run_fold_pass(
+    CettaPreparedPureProgram *program, Arena *arena,
+    const PreparedPureHead *head, Atom *argument, bool trusted) {
     if (head->fold_op != PREPARED_PURE_FOLD_ADD)
         return prepared_pure_run_fold_exact(program, arena, head, argument);
     const CettaExprIndex cons_len = head->fold_cons_len;
+    const CettaExprIndex last = head->fold_max_index;
     const uint8_t rest = head->fold_rest, item = head->fold_item;
     const SymbolId cons = head->fold_cons;
     uint64_t largest = 0u, total = 0u, count = 0u;
     Atom *cell = argument;
     for (; cell->kind == ATOM_EXPR; cell = cell->expr.elems[rest], count++) {
         Atom *const *elems = cell->expr.elems;
-        if (cell->expr.len != cons_len || elems[0]->kind != ATOM_SYMBOL ||
-            elems[0]->sym_id != cons)
+        if (trusted ? cell->expr.len <= last
+                    : cell->expr.len != cons_len ||
+                          elems[0]->kind != ATOM_SYMBOL ||
+                          elems[0]->sym_id != cons)
             return NULL;
         if (item) {
             const Atom *field = elems[item];
@@ -14529,7 +14892,8 @@ static Atom *prepared_pure_run_fold(CettaPreparedPureProgram *program,
             total += value;
         }
     }
-    if (cell->kind != ATOM_SYMBOL || cell->sym_id != head->fold_nil)
+    if (!trusted &&
+        (cell->kind != ATOM_SYMBOL || cell->sym_id != head->fold_nil))
         return NULL;
     int64_t base = head->fold_base;
     if (!item) {
@@ -14552,6 +14916,22 @@ static Atom *prepared_pure_run_fold(CettaPreparedPureProgram *program,
     return atom_int(arena, (int64_t)(total + (uint64_t)base));
 }
 
+static Atom *prepared_pure_run_fold(CettaPreparedPureProgram *program,
+                                    Arena *arena, const PreparedPureHead *head,
+                                    Atom *argument) {
+    return prepared_pure_run_fold_pass(program, arena, head, argument, false);
+}
+
+/* The pass without the cell test, for a ground argument of a sealed fold
+ * (PreparedPureHead.fold_sealed): on such an argument it has the tested
+ * pass's value (SealedSorts.trustedMachine_eq_equations). */
+static Atom *prepared_pure_run_fold_trusted(CettaPreparedPureProgram *program,
+                                            Arena *arena,
+                                            const PreparedPureHead *head,
+                                            Atom *argument) {
+    return prepared_pure_run_fold_pass(program, arena, head, argument, true);
+}
+
 static bool prepared_pure_lower_code(CettaPreparedPureProgram *program) {
     if (!program || !program->closed_program ||
         program->call_mode != CETTA_GSLT_PURE_CALL_EAGER ||
@@ -14559,6 +14939,12 @@ static bool prepared_pure_lower_code(CettaPreparedPureProgram *program) {
         return false;
     prepared_pure_infer_untyped(program);
     prepared_pure_he_ranges_shown(program);
+    program->refutes_by_shape = program->space &&
+        eval_petta_sealed_sorts && eval_petta_sealed_sorts() &&
+        space_type_annotations_functional(program->space) &&
+        space_type_annotations_rigid(program->space,
+                                     prepared_pure_function_range_exempt,
+                                     program->space);
     for (size_t h = 0u; h < program->head_len; h++)
         prepared_pure_recognize_fold(program, (uint32_t)h);
     bool producer = program->answer_producer;
@@ -16901,6 +17287,37 @@ bool cetta_prepared_pure_answer_cursor_resume_native(
     return true;
 }
 
+/* Pass over the equations after the selected one that cannot answer the
+ * call: those of another arity, and PeTTa equations whose body begins by
+ * destructuring an argument decons-atom has no answer for, whose heads take
+ * any arguments.  Neither can answer or act, so a call whose remaining
+ * equations all fall that way has no alternative behind its answer, as the
+ * open-equation machine's entry guard leaves none. */
+static void prepared_pure_skip_refuted(
+    const CettaPreparedPureProgram *program, const PreparedPureHead *head,
+    PreparedPureAnswerFrame *frame, Atom *const *arguments) {
+    bool petta = eval_current_language_id &&
+        eval_current_language_id() == CETTA_LANGUAGE_PETTA;
+    while (frame->next_equation < head->equation_count) {
+        const PreparedPureEquation *equation =
+            &program->equations[head->first_equation + frame->next_equation];
+        if (equation->arity == frame->arity &&
+            (!petta || equation->decons_guard_argument >= equation->arity ||
+             !equation->variable_arguments || equation->repeated_variables ||
+             equation->scalar_guard != PREPARED_PURE_NO_SCALAR_GUARD ||
+             !arguments[equation->decons_guard_argument] ||
+             !prepared_pure_petta_decons_refutes(
+                 arguments[equation->decons_guard_argument])))
+            return;
+        if (equation->arity == frame->arity) {
+            frame->matched_equation = true;
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_PREPARED_PURE_ENTRY_GUARD_REFUTED);
+        }
+        frame->next_equation++;
+    }
+}
+
 CettaPreparedPureCursorStep cetta_prepared_pure_answer_cursor_next(
     CettaPreparedPureAnswerCursor *cursor, Atom **answer_out) {
     if (answer_out)
@@ -17156,6 +17573,8 @@ CettaPreparedPureCursorStep cetta_prepared_pure_answer_cursor_next(
         const PreparedPureEquation *equation =
             &program->equations[head->first_equation + ordinal];
         frame->next_equation++;
+        prepared_pure_skip_refuted(program, head, frame,
+                                   &cursor->arguments[frame->argument_base]);
         if (equation->arity != frame->arity)
             continue;
         uint32_t body_index = head->first_equation + ordinal;
@@ -18609,6 +19028,11 @@ static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_run_code_worker(
                               : petta_semantics_is_closed_list(operand))
                     : NULL;
             }
+            /* PeTTa's decons-atom has no answer for the empty expression or
+             * a value that is no expression: the path fails there, as the
+             * reference's does, rather than handing the call back. */
+            if (!value && prepared_pure_petta_deconstruct_fails(node, values, count))
+                goto empty;
             if (!value) {
                 if (prepared_pure_debug_enabled() && node->atom) {
                     fputs("prepared-pure declined operands for ", stderr);
@@ -18763,8 +19187,17 @@ static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_run_code_worker(
             if (program->heads[code->auxiliary].fold_op && !cursor &&
                 arity == 1u && !program->heads[code->auxiliary].range_formal) {
                 const PreparedPureHead *folded = &program->heads[code->auxiliary];
-                Atom *value = prepared_pure_run_fold(program, arena, folded,
-                                                     arguments[0]);
+                /* A sealed fold's ground argument has passed the head's
+                 * check here, been discharged by its producer's range, or
+                 * is the recursive field of the activation's own, so it is
+                 * a spine: its walk drops the cell test. */
+                bool sealed = folded->fold_sealed &&
+                    !atom_has_vars(arguments[0]);
+                Atom *value = sealed
+                    ? prepared_pure_run_fold_trusted(program, arena, folded,
+                                                     arguments[0])
+                    : prepared_pure_run_fold(program, arena, folded,
+                                             arguments[0]);
                 if (value && (!folded->checks_return ||
                               (folded->range_class !=
                                    PREPARED_PURE_VALUE_PARAMETER &&
@@ -18772,6 +19205,9 @@ static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_run_code_worker(
                                    folded->range_class))) {
                     cetta_runtime_stats_inc(
                         CETTA_RUNTIME_COUNTER_PREPARED_PURE_RECOGNIZED_FOLD);
+                    if (sealed)
+                        cetta_runtime_stats_inc(
+                            CETTA_RUNTIME_COUNTER_PREPARED_PURE_SEALED_FOLD);
                     if (code->kind == PREPARED_PURE_CODE_TAIL_CALL) {
                         returned = value;
                         goto return_value;

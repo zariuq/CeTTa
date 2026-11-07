@@ -14666,6 +14666,144 @@ static uint32_t space_type_chain_distinct_declarations(
     return distinct;
 }
 
+/* Whether a type's head path has no variable: a symbol, the empty
+ * expression, or an expression whose first element's head path has none. */
+static bool space_type_head_rigid(const Atom *type) {
+    for (uint32_t depth = 0u; type && depth < 64u; depth++) {
+        if (type->kind == ATOM_VAR)
+            return false;
+        if (type->kind != ATOM_EXPR || type->expr.len == 0u)
+            return true;
+        type = type->expr.elems[0];
+    }
+    return false;
+}
+
+/* Whether a type offers no instance of the sort: not a variable, not the
+ * sort's own symbol, and, for a sort with a parameter, no expression headed
+ * by the sort's symbol or by a variable, which a tuple type could read as
+ * one (CertifiedSpines.AwayFromList, AwayFromNat). */
+static bool space_type_away_from_sort(const Atom *type, SymbolId sort,
+                                      bool parametric) {
+    if (!type || type->kind == ATOM_VAR)
+        return false;
+    if (type->kind == ATOM_SYMBOL)
+        return type->sym_id != sort;
+    if (!parametric || type->kind != ATOM_EXPR || type->expr.len == 0u)
+        return true;
+    const Atom *head = type->expr.elems[0];
+    if (head->kind == ATOM_VAR)
+        return false;
+    return head->kind != ATOM_SYMBOL || head->sym_id != sort;
+}
+
+/* (S $a) for the sort S: the sort applied to a type variable. */
+static bool space_type_sort_of_var(const Atom *type, SymbolId sort,
+                                   const Atom *var) {
+    return type && type->kind == ATOM_EXPR && type->expr.len == 2u &&
+        atom_is_symbol_id(type->expr.elems[0], sort) &&
+        type->expr.elems[1]->kind == ATOM_VAR &&
+        (!var || var_id_eq(type->expr.elems[1]->var_id, var->var_id));
+}
+
+/* The usual rows of a sealed sort's two constructors: Nil (List $a) and
+ * Cons (-> $a (List $a) (List $a)), or Z Nat and S (-> Nat Nat). */
+static bool space_type_sort_constructor_row(const Atom *type, SymbolId sort,
+                                            bool parametric, bool nil) {
+    if (nil)
+        return parametric ? space_type_sort_of_var(type, sort, NULL)
+                          : type && type->kind == ATOM_SYMBOL &&
+                                type->sym_id == sort;
+    if (!type || type->kind != ATOM_EXPR ||
+        !atom_is_symbol_id(type->expr.elems[0], g_builtin_syms.arrow))
+        return false;
+    if (!parametric)
+        return type->expr.len == 3u &&
+            atom_is_symbol_id(type->expr.elems[1], sort) &&
+            atom_is_symbol_id(type->expr.elems[2], sort);
+    const Atom *var = type->expr.len == 4u ? type->expr.elems[1] : NULL;
+    return var && var->kind == ATOM_VAR &&
+        space_type_sort_of_var(type->expr.elems[2], sort, var) &&
+        space_type_sort_of_var(type->expr.elems[3], sort, var);
+}
+
+bool space_type_sort_sealed_closed(
+    Space *s, SymbolId sort, bool parametric, SymbolId nil, SymbolId cons,
+    bool (*function)(void *context, SymbolId subject), void *context) {
+    CETTA_SCOPED_SHARED_TRANSITION(observation);
+    if (!space_type_annotations_have_only_symbol_subjects(s))
+        return false;
+    const SpaceHeadChains *rows = &s->native.ty_idx.rows;
+    if (rows->headless.count != 0u)
+        return false;
+    bool saw_nil = false, saw_cons = false;
+    for (uint32_t slot = 0u; slot < rows->chain_cap; slot++) {
+        const SpaceHeadChain *chain = &rows->chains[slot];
+        if (chain->head == SYMBOL_ID_NONE)
+            continue;
+        bool is_function = function && function(context, chain->head);
+        bool constructor = chain->head == nil || chain->head == cons;
+        if (constructor &&
+            (is_function ||
+             space_type_chain_distinct_declarations(s, rows, chain) != 1u))
+            return false;
+        for (uint32_t i = chain->first; i != SPACE_HEAD_CHAIN_END;
+             i = rows->next[i]) {
+            Atom *type = space_type_chain_declared(s, rows, chain, i);
+            if (!type)
+                continue;
+            if (constructor) {
+                if (!space_type_sort_constructor_row(type, sort, parametric,
+                                                     chain->head == nil))
+                    return false;
+                continue;
+            }
+            bool arrow = type->kind == ATOM_EXPR && type->expr.len >= 2u &&
+                atom_is_symbol_id(type->expr.elems[0], g_builtin_syms.arrow);
+            /* A function's range types its calls' answers only; its name
+             * is data typed by every row. */
+            const Atom *offered = arrow && !is_function
+                ? type->expr.elems[type->expr.len - 1u] : type;
+            if ((!arrow || !is_function) &&
+                !space_type_away_from_sort(offered, sort, parametric))
+                return false;
+        }
+        saw_nil = saw_nil || chain->head == nil;
+        saw_cons = saw_cons || chain->head == cons;
+    }
+    return saw_nil && saw_cons;
+}
+
+bool space_type_annotations_rigid(
+    Space *s, bool (*exempt)(void *context, SymbolId subject), void *context) {
+    CETTA_SCOPED_SHARED_TRANSITION(observation);
+    if (!space_type_annotations_have_only_symbol_subjects(s))
+        return false;
+    const SpaceHeadChains *rows = &s->native.ty_idx.rows;
+    if (rows->headless.count != 0u)
+        return false;
+    for (uint32_t slot = 0u; slot < rows->chain_cap; slot++) {
+        const SpaceHeadChain *chain = &rows->chains[slot];
+        if (chain->head == SYMBOL_ID_NONE)
+            continue;
+        bool exempt_ranges = exempt && exempt(context, chain->head);
+        for (uint32_t i = chain->first; i != SPACE_HEAD_CHAIN_END;
+             i = rows->next[i]) {
+            Atom *type = space_type_chain_declared(s, rows, chain, i);
+            if (!type)
+                continue;
+            if (!space_type_head_rigid(type))
+                return false;
+            if (!exempt_ranges && type->kind == ATOM_EXPR &&
+                type->expr.len >= 2u &&
+                atom_is_symbol_id(type->expr.elems[0], g_builtin_syms.arrow) &&
+                !space_type_head_rigid(type->expr.elems[type->expr.len - 1u]))
+                return false;
+        }
+    }
+    return true;
+}
+
 bool space_type_arrow_declarations_visit(
     Space *s,
     bool (*visit)(void *context, SymbolId subject, uint32_t declarations,
@@ -16032,9 +16170,10 @@ static void type_stamps_transition_record(const TypeStampTransition *key,
     store->transition_len++;
 }
 
-/* The state of `atom`'s declared-question typing as the store holds it or
+/* The state of `atom`'s typing for `question` as the store holds it or
  * reads it by its shape (kept for the node on a shape hit), or 0. */
-static uint32_t type_stamps_state_of(Space *s, Arena *a, Atom *atom) {
+static uint32_t type_stamps_state_for(Space *s, Arena *a, Atom *atom,
+                                      uint32_t question) {
     /* A symbol's typing is its declared rows, kept per symbol. */
     if (atom && atom->kind == ATOM_SYMBOL)
         return type_stamps_bind_scope(s)
@@ -16043,7 +16182,6 @@ static uint32_t type_stamps_state_of(Space *s, Arena *a, Atom *atom) {
     uint64_t epoch = 0u;
     if (!type_stamps_admit(s, atom, NULL, &arena, &epoch))
         return 0u;
-    uint32_t question = TYPE_INFERENCE_MEMO_TYPES_DECLARED;
     uint32_t state = type_stamps_node_state(atom, question, arena, epoch);
     if (state)
         return state;
@@ -16056,8 +16194,27 @@ static uint32_t type_stamps_state_of(Space *s, Arena *a, Atom *atom) {
     return state;
 }
 
+/* The declared question's state: get_atom_types's answers. */
+static uint32_t type_stamps_state_of(Space *s, Arena *a, Atom *atom) {
+    return type_stamps_state_for(s, a, atom,
+                                 TYPE_INFERENCE_MEMO_TYPES_DECLARED);
+}
+
 int space_type_stamps_count(Space *s, Arena *a, Atom *atom) {
     uint32_t state = type_stamps_state_of(s, a, atom);
+    if (!state)
+        return -1;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TYPE_STAMP_HIT);
+    return (int)g_type_stamps.states[state - 1u].count;
+}
+
+int space_type_stamps_structural_count(Space *s, Arena *a, Atom *atom) {
+    /* get_atom_types_structural's question: an expression's own top-level
+     * declarations do not count; any other subject keeps its rows. */
+    uint32_t question = atom && atom->kind == ATOM_EXPR
+        ? TYPE_INFERENCE_MEMO_TYPES_INFERRED
+        : TYPE_INFERENCE_MEMO_TYPES_DECLARED;
+    uint32_t state = type_stamps_state_for(s, a, atom, question);
     if (!state)
         return -1;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TYPE_STAMP_HIT);
@@ -16580,6 +16737,10 @@ static uint32_t get_atom_types_mode_inferred(Space *s, Arena *a, Atom *atom,
             count = he_close_type_array(s, a, &types, count, 0u, budget);
         break;
     case ATOM_EXPR:
+        /* HE gives the empty expression no type, as get-type does: a row
+         * declared for () is not read, so () fits any argument type. */
+        if (atom->expr.len == 0u)
+            break;
         if (atom_is_list_form(atom)) {
             types = cetta_malloc(sizeof(Atom *));
             types[0] = atom_list_type(a);
@@ -16591,9 +16752,16 @@ static uint32_t get_atom_types_mode_inferred(Space *s, Arena *a, Atom *atom,
                     : 0;
         if (count && he_types_close_under_subtypes(s))
             count = he_close_type_array(s, a, &types, count, 0u, budget);
-        /* Also try to infer type from operator's function type */
+        /* The types the operator's function type gives, as HE gives them:
+         * in addition to the rows declared for the application itself, not
+         * only in their absence.  A row on an arrow-headed application keeps
+         * the arrow's own typing visible, so `(Box 1 2)` with a row
+         * `OtherRange` still has the type its constructor gives.  Where the
+         * fields do not fit, the rows remain and only an application with
+         * no rows is ill typed (empty). */
+        uint32_t annotated = count;
         bool tried_func_type = false;
-        if (count == 0 && atom->expr.len >= 1) {
+        if (atom->expr.len >= 1) {
             Atom *op = atom->expr.elems[0];
             Atom **op_types = NULL;
             uint32_t nop = get_annotated_types(
@@ -16696,6 +16864,15 @@ static uint32_t get_atom_types_mode_inferred(Space *s, Arena *a, Atom *atom,
                            then normalize arithmetic in type expressions */
                         Atom *concrete_ret = normalize_type_expr(
                             &scratch, bindings_apply_if_vars(&tb, &scratch, fresh_ret));
+                        /* A row that already says this type gives it. */
+                        bool declared = false;
+                        for (uint32_t di = 0u; !declared && di < annotated; di++)
+                            declared = atom_eq(types[di], concrete_ret);
+                        if (declared) {
+                            bindings_free(&tb);
+                            arena_reset(&scratch, scratch_mark);
+                            continue;
+                        }
                         if (!type_inference_can_add(budget, count)) {
                             bindings_free(&tb);
                             arena_reset(&scratch, scratch_mark);
