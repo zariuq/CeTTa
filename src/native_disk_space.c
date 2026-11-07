@@ -189,6 +189,7 @@ static bool cursor_plan(DiskSpaceCursor *cursor,const CettaDiskStoreView *root,A
                     for (size_t j=valid;j-->0;) {
                         CettaDiskStoreBlob blob;CettaDiskStatus status=CETTA_DISK_END;
                         while (items[j].active<2) {
+                            cetta_disk_buffer_free(&probe_key);
                             status=cetta_disk_store_cursor_next(items[j].probes[items[j].active],&probe_key,&blob);
                             if (status!=CETTA_DISK_END) break;
                             items[j].active++;

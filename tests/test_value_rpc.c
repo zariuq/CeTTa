@@ -12,7 +12,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
-typedef struct {int fd;unsigned messages;bool wrong,disconnect,remote_error;} Peer;
+typedef struct {int fd;unsigned messages;bool wrong,disconnect,remote_error,deep_reply,support_limit,expect_limit;} Peer;
 static void io(int fd,void *data,size_t size,bool writing) {
     unsigned char *p=data;
     while(size) {
@@ -31,7 +31,36 @@ static void *serve(void *raw) {
         assert(cetta_ipc_csp_size(header,1048576,&size));unsigned char *bytes=malloc(size);assert(bytes);io(p->fd,bytes,size,false);
         Arena arena;arena_init_detached(&arena);Atom *request=NULL;
         assert(cetta_atom_wire_decode(&arena,bytes,size,&request)==ATOM_WIRE_OK);free(bytes);
+        assert(request && request->kind==ATOM_EXPR && atom_is_symbol(request->expr.elems[0],"request"));
+        if(p->expect_limit) {
+            assert(request->expr.len==4);
+            assert(request->expr.elems[3]->kind==ATOM_GROUNDED && request->expr.elems[3]->ground.gkind==GV_INT && request->expr.elems[3]->ground.ival==1048576);
+        } else {
+            assert(request->expr.len==3);
+        }
+        Atom *body=request->expr.elems[2];
+        if(body && body->kind==ATOM_EXPR && body->expr.len==2 && atom_is_symbol(body->expr.elems[0],"RequestLimitV1")) {
+            Atom *id=request->expr.elems[1];
+            Atom *result=p->support_limit
+                ? atom_expr2(&arena,atom_symbol(&arena,"ServiceRequestLimitV1"),body->expr.elems[1])
+                : atom_expr2(&arena,atom_symbol(&arena,"ServiceRefusedV1"),atom_symbol(&arena,"request-shape"));
+            Atom *reply=atom_expr(&arena,(Atom *[]){atom_symbol(&arena,"reply"),id,
+                atom_symbol(&arena,p->support_limit ? "ok" : "error"),result},4);
+            assert(cetta_atom_wire_encode(reply,&bytes,&size)==ATOM_WIRE_OK && cetta_ipc_csp_header(header,size));
+            io(p->fd,header,8,true);io(p->fd,bytes,size,true);
+            free(bytes);arena_free(&arena);
+            p->expect_limit=p->support_limit;
+            continue;
+        }
         if(p->disconnect){arena_free(&arena);break;}
+        if(p->deep_reply) {
+            size=4+5*66+6;bytes=malloc(size);assert(bytes);memcpy(bytes,"CAV1",4);
+            for(size_t d=0;d<66;d++) memcpy(bytes+4+5*d,"E\1\0\0\0",5);
+            memcpy(bytes+4+5*66,"S\1\0\0\0a",6);
+            assert(cetta_ipc_csp_header(header,size));
+            io(p->fd,header,8,true);io(p->fd,bytes,size,true);
+            free(bytes);arena_free(&arena);continue;
+        }
         Atom *id=p->wrong ? atom_string(&arena,"wrong-id") : request->expr.elems[1];
         Atom *reply=atom_expr(&arena,(Atom *[]){atom_symbol(&arena,"reply"),id,
             atom_symbol(&arena,p->remote_error && !i ? "error" : "ok"),request->expr.elems[2]},4);
@@ -85,9 +114,27 @@ static void cancel_unsent(void) {
     cetta_value_rpc_release(discard);assert(cetta_value_rpc_await(r)==CETTA_RPC_OK);
     cetta_value_rpc_release(r);cetta_value_channel_release(c);arena_free(&a);assert(!pthread_join(thread,NULL));
 }
+static void reply_limit(void) {
+    Peer p={.messages=1,.deep_reply=true};CettaValueChannel *c=channel(&p);pthread_t thread;assert(!pthread_create(&thread,NULL,serve,&p));
+    Arena a;arena_init_detached(&a);CettaValueRpc *r=NULL;
+    assert(cetta_value_rpc_new(c,atom_symbol(&a,"deep"),&r)==CETTA_RPC_PENDING);
+    assert(cetta_value_rpc_await(r)==CETTA_RPC_LIMIT && !strcmp(cetta_value_rpc_reason(r),"reply-limit") && !cetta_value_rpc_result(r));
+    cetta_value_rpc_release(r);cetta_value_channel_release(c);arena_free(&a);assert(!pthread_join(thread,NULL));
+}
+static void negotiate_limit(bool support_limit) {
+    Peer p={.messages=2,.support_limit=support_limit};CettaValueChannel *c=channel(&p);pthread_t thread;assert(!pthread_create(&thread,NULL,serve,&p));
+    assert(!cetta_value_channel_send_limit(c));
+    assert(cetta_value_channel_negotiate_limit(c)==CETTA_RPC_OK);
+    assert(cetta_value_channel_send_limit(c)==support_limit);
+    Arena a;arena_init_detached(&a);CettaValueRpc *r=NULL;
+    assert(cetta_value_rpc_new(c,atom_expr2(&a,atom_symbol(&a,"echo"),atom_int(&a,42)),&r)==CETTA_RPC_PENDING);
+    assert(cetta_value_rpc_await(r)==CETTA_RPC_OK);
+    assert(atom_is_symbol(cetta_value_rpc_result(r)->expr.elems[0],"echo"));
+    cetta_value_rpc_release(r);cetta_value_channel_release(c);arena_free(&a);assert(!pthread_join(thread,NULL));
+}
 int main(void) {
     SymbolTable symbols;symbol_table_init(&symbols);symbol_table_init_builtins(&symbols,&g_builtin_syms);g_symbols=&symbols;
     peer_names=cetta_name_context_current();
-    ordered();failures(true);failures(false);cancel_unsent();symbol_table_free(&symbols);g_symbols=NULL;
-    puts("Value RPC: queued progress, inert retained replies, parent close, malformed/lost replies and unsent cancellation passed");
+    ordered();failures(true);failures(false);reply_limit();cancel_unsent();negotiate_limit(false);negotiate_limit(true);symbol_table_free(&symbols);g_symbols=NULL;
+    puts("Value RPC: queued progress, inert retained replies, parent close, malformed/lost replies, reply limits, limit negotiation and unsent cancellation passed");
 }

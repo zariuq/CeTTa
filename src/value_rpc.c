@@ -16,6 +16,7 @@
 
 struct CettaValueChannel {
     atomic_size_t references;
+    atomic_bool send_limit;
     pthread_mutex_t gate;
     CettaIpcSession *session;
     size_t maximum;
@@ -49,7 +50,7 @@ CettaValueChannel *cetta_value_channel_new(CettaIpcSession *session,size_t maxim
     if(!session || !maximum)return NULL;
     CettaValueChannel *c=calloc(1,sizeof(*c));if(!c)return NULL;
     if(!nonce(c->nonce) || pthread_mutex_init(&c->gate,NULL)){free(c);return NULL;}
-    atomic_init(&c->references,1);c->session=session;cetta_ipc_session_retain(session);c->maximum=maximum;c->timeout=timeout;return c;
+    atomic_init(&c->references,1);atomic_init(&c->send_limit,false);c->session=session;cetta_ipc_session_retain(session);c->maximum=maximum;c->timeout=timeout;return c;
 }
 void cetta_value_channel_retain(CettaValueChannel *c){if(c)atomic_fetch_add(&c->references,1);}
 void cetta_value_channel_release(CettaValueChannel *c) {
@@ -57,6 +58,8 @@ void cetta_value_channel_release(CettaValueChannel *c) {
     cetta_ipc_session_release(c->session);pthread_mutex_destroy(&c->gate);free(c);
 }
 size_t cetta_value_channel_limit(const CettaValueChannel *c){return c ? c->maximum : 0;}
+void cetta_value_channel_set_send_limit(CettaValueChannel *c,bool enabled){if(c)atomic_store(&c->send_limit,enabled);}
+bool cetta_value_channel_send_limit(const CettaValueChannel *c){return c && atomic_load(&c->send_limit);}
 static void unlink_rpc(CettaValueRpc *r) {
     if(!r->linked)return;
     CettaValueChannel *c=r->channel;
@@ -82,7 +85,9 @@ CettaValueRpcStatus cetta_value_rpc_new(CettaValueChannel *c,Atom *body,CettaVal
     CettaAtomWireStatus status;
     {
         CETTA_SCOPED_SHARED_TRANSITION(encode);
-        Atom *packet=atom_expr3(&request,atom_symbol(&request,"request"),atom_string(&request,r->identifier),body);
+        Atom *items[]={atom_symbol(&request,"request"),atom_string(&request,r->identifier),body,
+            atom_int(&request,c->maximum>INT64_MAX ? INT64_MAX : (int64_t)c->maximum)};
+        Atom *packet=atom_expr(&request,items,atomic_load(&c->send_limit) ? 4 : 3);
         status=cetta_atom_wire_encode_bounded(packet,c->maximum,&r->packet,&r->packet_size);
     }
     arena_free(&request);
@@ -125,7 +130,10 @@ static void step_locked(CettaValueRpc *r,uint64_t work) {
     }
     bool ok=valid && atom_is_symbol(reply->expr.elems[2],"ok");
     if(!valid || (!ok && !atom_is_symbol(reply->expr.elems[2],"error")) || !cetta_ipc_exchange_accept(r->exchange)) {
-        cetta_ipc_exchange_cancel(r->exchange);finish(r,CETTA_RPC_UNCERTAIN,status==ATOM_WIRE_NOMEM ? "reply-capacity" : "malformed-reply");return;
+        cetta_ipc_exchange_cancel(r->exchange);
+        finish(r,status==ATOM_WIRE_NOMEM || status==ATOM_WIRE_LIMIT ? CETTA_RPC_LIMIT : CETTA_RPC_UNCERTAIN,
+            status==ATOM_WIRE_NOMEM ? "reply-capacity" : status==ATOM_WIRE_LIMIT ? "reply-limit" : "malformed-reply");
+        return;
     }
     r->result=reply->expr.elems[3];finish(r,ok ? CETTA_RPC_OK : CETTA_RPC_REMOTE_ERROR,ok ? NULL : "remote-error");
 }
@@ -166,6 +174,40 @@ CettaValueRpcStatus cetta_value_rpc_await(CettaValueRpc *r) {
         if(n<0 && errno!=EINTR){cetta_value_rpc_cancel(r);break;}
     }
     return cetta_value_rpc_status(r);
+}
+CettaValueRpcStatus cetta_value_channel_negotiate_limit(CettaValueChannel *c) {
+    if(!c)return CETTA_RPC_INVALID;
+    Arena a;arena_init_detached(&a);CettaValueRpc *rpc=NULL;
+    CettaValueRpcStatus status;
+    {
+        CETTA_SCOPED_SHARED_TRANSITION(encode);
+        Atom *body=atom_expr2(&a,atom_symbol(&a,"RequestLimitV1"),
+            atom_int(&a,c->maximum>INT64_MAX ? INT64_MAX : (int64_t)c->maximum));
+        status=cetta_value_rpc_new(c,body,&rpc);
+    }
+    arena_free(&a);
+    if(status!=CETTA_RPC_PENDING)return status;
+    status=cetta_value_rpc_await(rpc);
+    {
+        CETTA_SCOPED_SHARED_TRANSITION(decode);
+        Atom *result=cetta_value_rpc_result(rpc);
+        if(status==CETTA_RPC_OK) {
+            if(result && result->kind==ATOM_EXPR && result->expr.len==2 &&
+                atom_is_symbol(result->expr.elems[0],"ServiceRequestLimitV1") &&
+                result->expr.elems[1]->kind==ATOM_GROUNDED &&
+                result->expr.elems[1]->ground.gkind==GV_INT &&
+                result->expr.elems[1]->ground.ival>0) {
+                atomic_store(&c->send_limit,true);
+            } else status=CETTA_RPC_INVALID;
+        } else if(status==CETTA_RPC_REMOTE_ERROR && result && result->kind==ATOM_EXPR &&
+            result->expr.len==2 && atom_is_symbol(result->expr.elems[0],"ServiceRefusedV1") &&
+            atom_is_symbol(result->expr.elems[1],"request-shape")) {
+            atomic_store(&c->send_limit,false);
+            status=CETTA_RPC_OK;
+        }
+    }
+    cetta_value_rpc_release(rpc);
+    return status;
 }
 void cetta_value_rpc_cancel(CettaValueRpc *r) {
     if(!r)return;

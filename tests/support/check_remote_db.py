@@ -54,7 +54,24 @@ class ProposalProxy:
                     packet = DropReplyProxy.frame(client)
                     if packet is None:
                         break
-                    body = decode(packet[8:])[2]
+                    req = decode(packet[8:])
+                    body = req[2]
+                    if self.mode == 'legacy-server':
+                        assert len(req) == 3, ('old server rejects 4-element request', req)
+                        if body[0] == S('RequestLimitV1'):
+                            self.observed = True
+                            refused = encode(E('reply', req[1], S('error'), E('ServiceRefusedV1', S('request-shape'))))
+                            client.sendall(b'CSP1' + struct.pack('>I', len(refused)) + refused)
+                            continue
+                    if self.mode == 'legacy-client':
+                        if body[0] == S('RequestLimitV1'):
+                            self.observed = True
+                            accepted = encode(E('reply', req[1], S('ok'), E('ServiceRequestLimitV1', body[1])))
+                            client.sendall(b'CSP1' + struct.pack('>I', len(accepted)) + accepted)
+                            continue
+                        if len(req) == 4:
+                            rewritten = encode(E('request', req[1], req[2]))
+                            packet = b'CSP1' + struct.pack('>I', len(rewritten)) + rewritten
                     operation = body[2] if body[0] == S('UseV1') else body[1]
                     if self.mode == 'cancel' and operation == S('DbScan'):
                         self.scans += 1
@@ -107,14 +124,15 @@ def seed(path):
                  E('rel', Var(0), Var(0)), E('blob', 'z' * 300000),
                  E('=', E('inert'), E('println!', S('ACCIDENTAL_EXECUTION'))))
         result = publish(client, source, 'seed', tuple(
-            E('SpaceInsertV1', i, fact) for i, fact in enumerate(facts)))
+            E('SpaceInsertV1', i, fact) for i, fact in enumerate(facts)),
+            values=('w' * 16000,))
         assert result[0] == S('KnowledgeCommittedV1'), result
         client.drop(source)
     finally:
         client.close()
 
 
-def check(binary, worker, directory, case, marker):
+def check(binary, worker, directory, case, marker, *, extra_args=()):
     server = server_for(worker, directory, directory / 'store')
     try:
         server.start()
@@ -124,7 +142,7 @@ def check(binary, worker, directory, case, marker):
         source.write_text('!(import! &self ' + json.dumps(str(fixture)) + ')\n'
                           '!(println! (remote-fixture:run (' + case + ' '
                           + json.dumps(str(server.path)) + ')))\n')
-        run = subprocess.run([str(binary), '--lang', 'petta', str(source)],
+        run = subprocess.run([str(binary), *extra_args, '--lang', 'petta', str(source)],
                              capture_output=True, text=True, timeout=40)
         assert run.returncode == 0 and marker in run.stdout.splitlines(), (
             case, run.returncode, run.stdout, run.stderr)
@@ -159,6 +177,11 @@ def main():
             directory = root / case
             directory.mkdir(mode=0o700)
             results.append(check(args.binary.resolve(), args.worker.resolve(), directory, case, marker))
+        small_limit_dir = root / 'SmallClientReplyLimit'
+        small_limit_dir.mkdir(mode=0o700)
+        results.append(check(args.binary.resolve(), args.worker.resolve(), small_limit_dir,
+                             'SmallClientReplyLimit', 'REMOTE_SMALL_CLIENT_REPLY_LIMIT_OK',
+                             extra_args=('--value-bytes', '8192')))
         if args.native_fixture:
             directory = root / 'native'
             directory.mkdir(mode=0o700)
@@ -181,11 +204,15 @@ def main():
                 results.append(dict(case='CancelKeepsSiblingReader', marker='REMOTE_CANCELLED_READER_OK', exit=0))
             finally:
                 server.stop()
-        for mode, case, marker in [('lost', 'LostWrite', 'REMOTE_LOST_WRITE_OK'),
+        for mode, case, marker in [('legacy-server', 'Reads', 'REMOTE_READS_OK'),
+                                   ('legacy-server', 'Transactions', 'REMOTE_TRANSACTIONS_OK'),
+                                   ('legacy-client', 'Reads', 'REMOTE_READS_OK'),
+                                   ('legacy-client', 'Transactions', 'REMOTE_TRANSACTIONS_OK'),
+                                   ('lost', 'LostWrite', 'REMOTE_LOST_WRITE_OK'),
                                    ('post-commit-error', 'LostWrite', 'REMOTE_LOST_WRITE_OK'),
                                    ('stale', 'StaleWrite', 'REMOTE_STALE_WRITE_OK'),
                                    ('read-disconnect', 'Interrupted', 'REMOTE_INTERRUPTED_OK')]:
-            directory = root / mode
+            directory = root / f'{mode}-{case}'
             directory.mkdir(mode=0o700)
             server = server_for(args.worker.resolve(), directory, directory / 'store')
             try:

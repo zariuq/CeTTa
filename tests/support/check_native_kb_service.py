@@ -27,9 +27,10 @@ class Client:
         self.socket.settimeout(10)
         self.socket.connect(str(path))
 
-    def send(self, body, identifier=None):
+    def send(self, body, identifier=None, capacity=None):
         identifier = identifier or uuid.uuid4().hex
-        data = encode(E("request", identifier, body), maximum_bytes=self.maximum_request_bytes)
+        packet = E("request", identifier, body) if capacity is None else E("request", identifier, body, capacity)
+        data = encode(packet, maximum_bytes=self.maximum_request_bytes)
         self.socket.sendall(b"CSP1" + struct.pack(">I", len(data)) + data)
         return identifier
 
@@ -51,8 +52,8 @@ class Client:
         assert value[:3] == (S("reply"), identifier, S("ok" if ok else "error")), value
         return value[3]
 
-    def call(self, body, identifier=None, ok=True):
-        return self.receive(self.send(body, identifier), ok=ok)
+    def call(self, body, identifier=None, ok=True, capacity=None):
+        return self.receive(self.send(body, identifier, capacity=capacity), ok=ok)
 
     def route(self, operation, argument=(), token=None, **kwargs):
         body = E("CallV1", S(operation), argument) if token is None else E("UseV1", token, S(operation), argument)
