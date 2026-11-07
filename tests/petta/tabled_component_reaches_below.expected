@@ -1,0 +1,7 @@
+true
+true
+(t-c1-c0 (true true))
+(i-c0-y (c0 c1))
+(i-x-y ((c0 c0) (c0 c1) (c1 c0) (c1 c1)))
+(i-x-c0 (c0 c1))
+(i-c2-y ())

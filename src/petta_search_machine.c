@@ -17873,6 +17873,8 @@ static void petta_machine_stats_accumulate(
         source->table_generator_rounds_reused;
     target->table_scc_completions +=
         source->table_scc_completions;
+    target->table_scc_merges +=
+        source->table_scc_merges;
     target->table_answer_replays +=
         source->table_answer_replays;
     target->count_aggregate_answers +=
@@ -18105,11 +18107,49 @@ static inline void petta_table_choice_complete_component(
     choice->as.table.phase = PETTA_TABLE_CHOICE_REPLAY;
 }
 
+/* The lowest stack position read by a member of the component that starts at
+ * `begin`.  Iterating a component can make calls its first round did not: an
+ * answer binds an argument, and the call it makes may read an older table
+ * still on the stack.  Below `begin`, the component belongs to that table's. */
+static size_t petta_table_component_lowlink(const PettaTableShared *shared,
+                                            size_t begin) {
+    size_t lowest = begin;
+    for (size_t rank = begin; rank < shared->tarjan_len; rank++) {
+        size_t entry_index = shared->tarjan_stack[rank];
+        if (entry_index < shared->entry_len &&
+            shared->entries[entry_index].tarjan_lowlink < lowest)
+            lowest = shared->entries[entry_index].tarjan_lowlink;
+    }
+    return lowest;
+}
+
+/* A fixed point completes the component only while it leads.  A component
+ * that has come to read an older table on the stack is joined to that
+ * table's: its members stay on the stack, the older leader's iteration runs
+ * them to the joint fixed point, and this call answers what its table holds
+ * so far, as a member's call does after its first round.  Completing here
+ * would freeze answers computed from the older table's partial answers. */
 static inline void petta_table_choice_complete_fixpoint(
     PettaMachineImpl *machine, PettaChoice *choice) {
+    PettaTableShared *shared = machine->table_shared;
     if (choice->as.table.schedule)
-        petta_table_release_schedule(machine->table_shared, &choice->as.table.schedule);
-    petta_table_choice_complete_component(machine, choice, choice->as.table.scc_begin);
+        petta_table_release_schedule(shared, &choice->as.table.schedule);
+    size_t begin = choice->as.table.scc_begin;
+    size_t lowest = begin < shared->tarjan_len
+        ? petta_table_component_lowlink(shared, begin) : begin;
+    if (lowest < begin) {
+        size_t leader = shared->tarjan_stack[begin];
+        shared->entries[leader].tarjan_lowlink = lowest;
+        petta_table_record_child_completion(
+            shared, choice->as.table.parent_entry, leader);
+        machine->stats.table_scc_merges++;
+        choice->as.table.phase = PETTA_TABLE_CHOICE_REPLAY;
+        choice->as.table.iteration_entry = choice->as.table.requested_entry;
+        choice->as.table.scc_begin = PETTA_TABLE_ENTRY_NONE;
+        choice->as.table.scc_cursor = PETTA_TABLE_ENTRY_NONE;
+        return;
+    }
+    petta_table_choice_complete_component(machine, choice, begin);
 }
 
 static bool petta_table_choice_begin_generator(

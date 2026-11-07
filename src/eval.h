@@ -251,6 +251,14 @@ bool eval_petta_structural_version(Space *space, SymbolId head,
  * once, by the intrinsic type service's bound query. */
 bool eval_petta_value_typed_once(Space *space, Atom *value, Atom *type)
     __attribute__((weak));
+/* Whether the active session is PeTTa's ai profile, whose type relation types
+ * an application of a function by its tuple type only (sealed sorts). */
+bool eval_petta_sealed_sorts(void) __attribute__((weak));
+/* Whether HEAD names a function in PeTTa: the program defines an equation
+ * headed by it, or it is a registered builtin.  These are the symbols whose
+ * get-metatype is Grounded, the truth values aside. */
+bool eval_petta_head_is_function(Space *space, SymbolId head)
+    __attribute__((weak));
 /* The shared profile-aware HE type inference engine. Returned arrays are heap
    allocated and must be freed by the caller; atoms live in `a`. */
 uint32_t eval_get_atom_types_profiled(Space *s, Arena *a, Atom *atom,
