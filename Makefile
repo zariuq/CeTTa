@@ -50226,8 +50226,18 @@ test-lang-provider-coexistence: $(BIN)
 	work="$$(mktemp -d runtime/lang-provider-coexistence.XXXXXX)"; \
 	python3 tests/support/check_lang_provider_coexistence.py ./$(BIN) "$$work/checks" --lean-root "$$lean_root"
 
-.PHONY: build-lang-chr test-lang-chr
-build-lang-chr: build-lang-compilers
+# The ground CHR package ships its compiler as MeTTa beside it
+# (langdef/lang/chr/); it needs no build step and no Lean.
+.PHONY: test-lang-chr test-lang-package-manifest check-lang-package-regeneration
+
+# Generated and copied package files match the hashes in their manifest.
+test-lang-package-manifest:
+	@python3 tools/lang_package_manifest.py check
+
+# Opt-in: regenerate those files from a Mettapedia checkout and compare.
+check-lang-package-regeneration:
+	@test -n "$(METTAPEDIA_ROOT)" || { echo 'Set METTAPEDIA_ROOT to the Mettapedia checkout' >&2; exit 2; }
+	@python3 tools/lang_package_manifest.py check --regenerate --mettapedia "$(METTAPEDIA_ROOT)"
 
 .PHONY: test-source-occurrence-view
 runtime/test_source_occurrence_view-$(BUILD_OBJ_TAG): tests/test_source_occurrence_view.c $(OBJ) $(BRIDGE_DEPS)
@@ -50238,27 +50248,34 @@ runtime/test_source_occurrence_view-$(BUILD_OBJ_TAG): tests/test_source_occurren
 test-source-occurrence-view: runtime/test_source_occurrence_view-$(BUILD_OBJ_TAG)
 	@$(call cetta_exec,./runtime/test_source_occurrence_view-$(BUILD_OBJ_TAG))
 
-test-lang-chr: $(BIN) test-source-occurrence-view
-	@test -f runtime/lang/chr-compiler.so || \
-		{ echo 'Run make build-lang-chr first' >&2; exit 2; }
+test-lang-chr: $(BIN) test-source-occurrence-view test-lang-package-manifest
 	@set -eu; work="$$(mktemp -d runtime/lang-chr-tests.XXXXXX)"; \
 	python3 tests/support/check_lang_chr.py ./$(BIN) "$$work/chr"
 
 # SWI-Prolog library(chr) is the reference here only; lang calls run no
-# reference engine. The standard C0 sources live in MeTTapedia.
+# reference engine.
 .PHONY: test-lang-chr-reference
 test-lang-chr-reference: $(BIN)
-	@test -f runtime/lang/chr-compiler.so || \
-		{ echo 'Run make build-lang-chr first' >&2; exit 2; }
-	@set -eu; root="$(METTAPEDIA_ROOT)"; \
-	if test -z "$$root"; then root="$(abspath ../../Mettapedia)"; fi; \
-	reference="$$root/metta/gslt/tools/chr_source_reference.pl"; \
-	test -f "$$reference" || { echo 'Set METTAPEDIA_ROOT to the MeTTapedia checkout' >&2; exit 2; }; \
+	@set -eu; command -v swipl >/dev/null || { echo 'test-lang-chr-reference needs swipl' >&2; exit 2; }; \
 	work="$$(mktemp -d runtime/lang-chr-reference.XXXXXX)"; \
 	python3 tests/support/check_lang_chr_reference.py ./$(BIN) "$$work/standard" \
-		--sources "$$root/metta/gslt/module/gold/CHR/examples/c0" --reference "$$reference"; \
+		--sources tests/lang/chr/standard --reference tests/support/chr_source_reference.pl; \
 	python3 tests/support/check_lang_chr_reference.py ./$(BIN) "$$work/controls" \
-		--sources tests/lang/chr --reference "$$reference"
+		--sources tests/lang/chr --reference tests/support/chr_source_reference.pl; \
+	python3 tests/support/gen_chr_c0_programs.py "$$work/generated-sources" --count 60 --seed 1; \
+	python3 tests/support/check_lang_chr_reference.py ./$(BIN) "$$work/generated" \
+		--sources "$$work/generated-sources" --reference tests/support/chr_source_reference.pl
+
+# Soufflé is the reference here only; lang calls run no reference engine.
+SOUFFLE ?= souffle
+.PHONY: test-lang-datalog-reference
+test-lang-datalog-reference: $(BIN)
+	@test -f runtime/lang/datalog-compiler.so || \
+		{ echo 'Run make build-lang-datalog first' >&2; exit 2; }
+	@set -eu; command -v "$(SOUFFLE)" >/dev/null || { echo 'Set SOUFFLE to a souffle executable' >&2; exit 2; }; \
+	work="$$(mktemp -d runtime/lang-datalog-reference.XXXXXX)"; \
+	python3 tests/support/check_lang_datalog_reference.py ./$(BIN) "$$(command -v "$(SOUFFLE)")" \
+		tests/lang/datalog/souffle "$$work/souffle" --standard-corpus tests/lang/datalog/standard
 
 test-lang-library: $(BIN)
 	@test -f runtime/lang/datalog-compiler.so || \
@@ -50580,445 +50597,8 @@ $(TERM_DOMAIN_EXCLUSIVE_BATCHES_TEST_BIN): tests/test_term_domain_exclusive_batc
 test-term-domain-exclusive-batches: $(TERM_DOMAIN_EXCLUSIVE_BATCHES_TEST_BIN)
 	@$(call cetta_exec,./$(TERM_DOMAIN_EXCLUSIVE_BATCHES_TEST_BIN))
 test-all: test-term-domain-exclusive-close test-term-domain-exclusive-batches
-<<<<<<< HEAD
-# Embedding uses the same configured native objects as the command-line host.
-EMBED_TAG = $(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,)
-EMBED_OBJ = runtime/bootstrap/embedding.$(EMBED_TAG).o
-EMBED_RUNTIME_OBJ = $(filter-out src/main.%,$(OBJ))
-EMBED_ALLOCATOR_OBJ = $(filter src/native_memory.%,$(EMBED_RUNTIME_OBJ))
-EMBED_LIB = runtime/libcetta-$(EMBED_TAG).so
-EMBED_STATIC_LIB = runtime/libcetta-$(EMBED_TAG).a
-EMBED_TEST = runtime/test_embedding-$(EMBED_TAG)
--include $(EMBED_OBJ:.o=.d)
-
-$(EMBED_OBJ): src/embedding.c include/cetta_embed.h src/runtime_names.h $(BUILD_CONFIG_HEADER)
-	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -Iinclude)
-
-$(EMBED_LIB): $(EMBED_STATIC_LIB) $(BRIDGE_DEPS) include/cetta_embed.map
-	@set -eu; \
-	tmp_out=$$(mktemp "runtime/.cetta-library.XXXXXX"); \
-	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
-	$(CC) -shared -Wl,-soname,libcetta.so.1 -Wl,--version-script=include/cetta_embed.map -o "$$tmp_out" -Wl,--whole-archive $(EMBED_STATIC_LIB) -Wl,--no-whole-archive $(BRIDGE_DEPS) $(LDFLAGS); \
-	mv "$$tmp_out" "$@"
-
-$(EMBED_STATIC_LIB): $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) tools/build_embedding_static.py include/cetta_embed.h
-	python3 tools/build_embedding_static.py --cc '$(CC)' --ar '$(AR)' --nm '$(NM)' --objcopy '$(OBJCOPY)' \
-		--header include/cetta_embed.h --output '$@' --allocator '$(EMBED_ALLOCATOR_OBJ)' $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ)
-
-.PHONY: install-cabi
-install-cabi: embedding-native
-	python3 tools/install_embedding.py --shared '$(EMBED_LIB)' --static '$(EMBED_STATIC_LIB)' \
-		--prefix '$(PREFIX)' --libdir '$(CABI_LIBDIR)' --includedir '$(CABI_INCLUDEDIR)' \
-		--datadir '$(CABI_DATADIR)' $(if $(DESTDIR),--destdir '$(DESTDIR)') \
-		--private-libs='-ldl -lm -pthread $(GMP_LDFLAGS)'
-
-.PHONY: test-embedding-install
-test-embedding-install:
-	CC='$(CC)' python3 tests/support/check_embedding_install.py
-
-.PHONY: test-native-memory
-test-native-memory:
-	$(CC) $(CFLAGS) -Isrc tests/support/test_native_memory.c src/native_memory.c -o runtime/test_native_memory $(LDFLAGS)
-	./runtime/test_native_memory
-
-EMBED_MEMORY_REFUSAL_TEST = runtime/test_embedding_memory_refusal-$(EMBED_TAG)
-$(EMBED_MEMORY_REFUSAL_TEST): tests/support/test_embedding_memory_refusal.c $(EMBED_STATIC_LIB)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Iinclude -o '$@' $< $(EMBED_STATIC_LIB) $(LDFLAGS) -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc
-
-.PHONY: test-embedding-memory
-test-embedding-memory: $(EMBED_MEMORY_REFUSAL_TEST)
-	python3 tests/support/check_embedding_memory.py --consumer '$(EMBED_MEMORY_REFUSAL_TEST)' --output 'runtime/embedding-memory-$(EMBED_TAG)'
-
-EMBED_MEMORY_BUDGET_TEST = runtime/test_embedding_memory_budget-$(EMBED_TAG)
-$(EMBED_MEMORY_BUDGET_TEST): tests/support/test_embedding_memory_budget.c $(EMBED_STATIC_LIB)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Iinclude -o '$@' $< $(EMBED_STATIC_LIB) $(LDFLAGS)
-.PHONY: test-embedding-memory-budget
-test-embedding-memory-budget: $(EMBED_MEMORY_BUDGET_TEST)
-	./$(EMBED_MEMORY_BUDGET_TEST)
-
-$(EMBED_TEST): tests/test_embedding.c $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
-	@set -eu; \
-	tmp_out=$$(mktemp "runtime/.cetta-consumer.XXXXXX"); \
-	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Iinclude -o "$$tmp_out" $< $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS) $(LDFLAGS); \
-	mv "$$tmp_out" "$@"
-
-.PHONY: embedding test-embedding-api
-embedding:
-	$(MAKE) --no-print-directory BUILD=core ENABLE_LIB_PROLOG=0 ENABLE_PIC=1 embedding-native
-.PHONY: embedding-native
-embedding-native: $(EMBED_LIB) $(EMBED_STATIC_LIB) runtime/cetta-proc-scope
-	ln -sfn $(notdir $(EMBED_LIB)) runtime/libcetta.so
-	ln -sfn $(notdir $(EMBED_LIB)) runtime/libcetta.so.1
-	ln -sfn $(notdir $(EMBED_STATIC_LIB)) runtime/libcetta.a
-runtime/cetta-proc-scope: $(BIN).proc-scope
-	cp $< $@
-test-embedding-api: $(EMBED_TEST)
-	./$(EMBED_TEST)
-
-EMBED_CONTEXT_TEST = runtime/test_embedding_context-$(EMBED_TAG)
-$(EMBED_CONTEXT_TEST): tests/support/test_embedding_context.c $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
-	@set -eu; \
-	tmp_out=$$(mktemp "runtime/.cetta-context-consumer.XXXXXX"); \
-	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Iinclude -o "$$tmp_out" $< $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS) $(LDFLAGS) -Wl,--wrap=grounded_call; \
-	mv "$$tmp_out" "$@"
-.PHONY: test-embedding-context
-test-embedding-context: $(EMBED_CONTEXT_TEST)
-	./$(EMBED_CONTEXT_TEST)
-
-EMBED_CACHE_REFUSAL_TEST = runtime/test_embedding_cache_refusal-$(EMBED_TAG)
-$(EMBED_CACHE_REFUSAL_TEST): tests/support/test_embedding_cache_refusal.c tests/test_embedding.c $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
-	@set -eu; \
-	tmp_out=$$(mktemp "runtime/.cetta-cache-refusal-consumer.XXXXXX"); \
-	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Iinclude -o "$$tmp_out" $< $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS) $(LDFLAGS) -Wl,--wrap=pthread_setspecific; \
-	mv "$$tmp_out" "$@"
-.PHONY: test-embedding-cache-refusal
-test-embedding-cache-refusal: $(EMBED_CACHE_REFUSAL_TEST)
-	./$(EMBED_CACHE_REFUSAL_TEST)
-
-EMBED_OWNER_REFUSAL_TEST = runtime/test_embedding_owner_refusal-$(EMBED_TAG)
-$(EMBED_OWNER_REFUSAL_TEST): tests/support/test_embedding_owner_refusal.c src/embedding.c $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
-	@set -eu; \
-	tmp_out=$$(mktemp "runtime/.cetta-owner-refusal.XXXXXX"); \
-	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Iinclude -o "$$tmp_out" $< $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS) $(LDFLAGS); \
-	mv "$$tmp_out" "$@"
-.PHONY: test-embedding-owner-refusal
-test-embedding-owner-refusal: $(EMBED_OWNER_REFUSAL_TEST)
-	./$(EMBED_OWNER_REFUSAL_TEST)
-
-EMBED_CONSTRUCTION_TEST = runtime/test_embedding_construction-$(EMBED_TAG)
-EMBED_CONSTRUCTION_WRAPS = malloc calloc realloc free pthread_mutex_init pthread_mutex_destroy \
-	symbol_table_try_init symbol_table_try_init_builtins var_intern_try_init \
-	cetta_library_context_try_init_for_language_profile space_try_init_with_universe \
-	registry_try_init arena_try_reserve \
-	cetta_runtime_stats_owner_new he_type_tables_new \
-	petta_compiled_reader_v1_new petta_compiled_reader_v1_new_with_lists \
-	he_compiled_reader_v1_new he_compiled_reader_v1_new_with_lists eval_resources_new
-$(EMBED_CONSTRUCTION_TEST): tests/support/test_embedding_construction.c $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
-	@set -eu; \
-	tmp_out=$$(mktemp "runtime/.cetta-construction-consumer.XXXXXX"); \
-	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Iinclude -o "$$tmp_out" $< $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS) $(LDFLAGS) \
-		$(foreach fn,$(EMBED_CONSTRUCTION_WRAPS),-Wl,--wrap=$(fn)); \
-	mv "$$tmp_out" "$@"
-.PHONY: test-embedding-construction
-test-embedding-construction: $(EMBED_CONSTRUCTION_TEST)
-	./$(EMBED_CONSTRUCTION_TEST)
-
-EMBED_STARTUP_REFUSAL_TEST = runtime/test_embedding_startup_refusal-$(EMBED_TAG)
-$(EMBED_STARTUP_REFUSAL_TEST): tests/support/test_embedding_startup_refusal.c $(EMBED_STATIC_LIB)
-	@set -eu; \
-	tmp_out=$$(mktemp "runtime/.cetta-startup-refusal.XXXXXX"); \
-	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Iinclude -o "$$tmp_out" $< $(EMBED_STATIC_LIB) $(LDFLAGS) \
-		-Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc; \
-	mv "$$tmp_out" "$@"
-.PHONY: test-embedding-startup-refusal
-test-embedding-startup-refusal: $(EMBED_STARTUP_REFUSAL_TEST)
-	python3 tests/support/check_embedding_startup_refusal.py $(EMBED_STARTUP_REFUSAL_TEST)
-
-HE_TABLES_REFUSAL_TEST = runtime/test_he_tables_refusal-$(EMBED_TAG)
-HE_TABLES_REFUSAL_OBJECTS = $(filter-out src/parser.% src/he_type_policy.%,$(EMBED_RUNTIME_OBJ))
-$(HE_TABLES_REFUSAL_TEST): tests/support/test_he_tables_refusal.c src/parser.c src/he_type_policy.c $(HE_TABLES_REFUSAL_OBJECTS) $(BRIDGE_DEPS)
-	@set -eu; \
-	tmp_out=$$(mktemp "runtime/.cetta-he-tables-refusal.XXXXXX"); \
-	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Iinclude -o "$$tmp_out" $< $(HE_TABLES_REFUSAL_OBJECTS) $(BRIDGE_DEPS) $(LDFLAGS) \
-		-Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=free; \
-	mv "$$tmp_out" "$@"
-.PHONY: test-he-tables-refusal
-test-he-tables-refusal: $(HE_TABLES_REFUSAL_TEST)
-	./$(HE_TABLES_REFUSAL_TEST)
-.PHONY: test-he-tables-refusal-mutants
-test-he-tables-refusal-mutants: $(HE_TABLES_REFUSAL_TEST)
-	python3 tests/support/check_embedding_context_mutants.py --cc='$(CC)' \
-		--cppflags='$(CPPFLAGS)' --cflags='$(CFLAGS)' --ldflags='$(LDFLAGS)' \
-		--only-prefix=he-catalog- --objects $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
-
-STDLIB_REFUSAL_TEST = runtime/test_stdlib_refusal-$(EMBED_TAG)
-$(STDLIB_REFUSAL_TEST): tests/support/test_stdlib_refusal.c src/cetta_stdlib.c src/cetta_stdlib.h $(filter-out src/cetta_stdlib.%,$(EMBED_RUNTIME_OBJ)) $(BRIDGE_DEPS)
-	@set -eu; \
-	tmp_out=$$(mktemp "runtime/.cetta-prelude-refusal.XXXXXX"); \
-	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Iinclude -o "$$tmp_out" $< $(filter-out src/cetta_stdlib.%,$(EMBED_RUNTIME_OBJ)) $(BRIDGE_DEPS) $(LDFLAGS); \
-	mv "$$tmp_out" "$@"
-.PHONY: test-stdlib-refusal
-test-stdlib-refusal: $(STDLIB_REFUSAL_TEST)
-	./$(STDLIB_REFUSAL_TEST)
-.PHONY: test-stdlib-refusal-mutants
-test-stdlib-refusal-mutants: $(STDLIB_REFUSAL_TEST)
-	python3 tests/support/check_embedding_context_mutants.py --cc='$(CC)' \
-		--cppflags='$(CPPFLAGS)' --cflags='$(CFLAGS)' --ldflags='$(LDFLAGS)' \
-		--only-prefix=prelude- --objects $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
-.PHONY: test-embedding-construction-mutants
-test-embedding-construction-mutants: $(EMBED_CONSTRUCTION_TEST)
-	python3 tests/support/check_embedding_context_mutants.py --cc='$(CC)' \
-		--cppflags='$(CPPFLAGS)' --cflags='$(CFLAGS)' --ldflags='$(LDFLAGS)' \
-		--only-prefix=construction- --consumer-wraps='$(EMBED_CONSTRUCTION_WRAPS)' \
-		--objects $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
-.PHONY: test-embedding-startup-mutants
-test-embedding-startup-mutants: $(EMBED_CONSTRUCTION_TEST)
-	python3 tests/support/check_embedding_context_mutants.py --cc='$(CC)' \
-		--cppflags='$(CPPFLAGS)' --cflags='$(CFLAGS)' --ldflags='$(LDFLAGS)' \
-		--only-prefix=startup- --consumer-wraps='$(EMBED_CONSTRUCTION_WRAPS)' \
-		--objects $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
-
-SYMBOL_CONSTRUCTION_TEST = runtime/test_symbol_construction-$(BUILD_OBJ_TAG)
-$(SYMBOL_CONSTRUCTION_TEST): tests/support/test_symbol_construction.c src/symbol.c src/symbol.h src/scalar_trie.c $(BUILD_CONFIG_HEADER)
-	@set -eu; \
-	tmp_out=$$(mktemp "runtime/.cetta-symbol-construction.XXXXXX"); \
-	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o "$$tmp_out" $< src/scalar_trie.c $(LDFLAGS); \
-	mv "$$tmp_out" "$@"
-.PHONY: test-symbol-construction
-test-symbol-construction: $(SYMBOL_CONSTRUCTION_TEST)
-	./$(SYMBOL_CONSTRUCTION_TEST)
-.PHONY: test-symbol-construction-mutants
-test-symbol-construction-mutants: $(SYMBOL_CONSTRUCTION_TEST)
-	python3 tests/support/check_embedding_context_mutants.py --cc='$(CC)' \
-		--cppflags='$(CPPFLAGS)' --cflags='$(CFLAGS)' --ldflags='$(LDFLAGS)' \
-		--only-prefix=symbol-construction-
-
-.PHONY: test-embedding-context-mutants
-EMBED_QUERY_TEST = runtime/test_embedding_query-$(EMBED_TAG)
-$(EMBED_QUERY_TEST): tests/support/test_embedding_query.c src/embedding.c $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
-	@set -eu; \
-	tmp_out=$$(mktemp "runtime/.cetta-query-consumer.XXXXXX"); \
-	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Iinclude -o "$$tmp_out" $< $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS) $(LDFLAGS); \
-	mv "$$tmp_out" "$@"
-.PHONY: test-embedding-query
-test-embedding-query: $(EMBED_QUERY_TEST)
-	./$(EMBED_QUERY_TEST)
-.PHONY: test-embedding-query-canonical
-test-embedding-query-canonical: $(EMBED_QUERY_TEST)
-	./$(EMBED_QUERY_TEST) --require-canonical
-.PHONY: test-embedding-query-streaming
-test-embedding-query-streaming: $(EMBED_QUERY_TEST)
-	./$(EMBED_QUERY_TEST) --require-streaming
-.PHONY: test-embedding-query-mutants
-test-embedding-query-mutants: $(EMBED_QUERY_TEST)
-	python3 tests/support/check_embedding_query_mutants.py --cc='$(CC)' \
-		--cppflags='$(CPPFLAGS)' --cflags='$(CFLAGS)' --ldflags='$(LDFLAGS)' \
-		--objects $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
-
-EMBED_HE_RETENTION_TEST_OBJ = runtime/bootstrap/test_he_retained_execution.$(EMBED_TAG).o
-EMBED_HE_RETENTION_TEST = runtime/test_he_retained_execution-$(EMBED_TAG)
--include $(EMBED_HE_RETENTION_TEST_OBJ:.o=.d)
-$(EMBED_HE_RETENTION_TEST_OBJ): tests/support/test_he_retained_execution.c src/eval.c $(BUILD_CONFIG_HEADER)
-	$(call compile_c_object,$(CPPFLAGS) $(filter-out -O%,$(CFLAGS)) -O0 $(DEPFLAGS) -Iinclude)
-$(EMBED_HE_RETENTION_TEST): $(EMBED_HE_RETENTION_TEST_OBJ) $(filter-out src/eval.%,$(EMBED_RUNTIME_OBJ)) $(BRIDGE_DEPS)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
-.PHONY: test-embedding-he-retention
-test-embedding-he-retention: $(EMBED_HE_RETENTION_TEST)
-	./$(EMBED_HE_RETENTION_TEST)
-
-test-embedding-context-mutants: $(EMBED_CONTEXT_TEST)
-	python3 tests/support/check_embedding_context_mutants.py --cc='$(CC)' \
-		--cppflags='$(CPPFLAGS)' --cflags='$(CFLAGS)' --ldflags='$(LDFLAGS)' \
-		--consumer-wraps='$(EMBED_CONSTRUCTION_WRAPS)' \
-		--objects $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
-
-.PHONY: test-embedding-space-mutants
-test-embedding-space-mutants: $(EMBED_TEST)
-	python3 tests/support/check_embedding_context_mutants.py --cc='$(CC)' \
-		--cppflags='$(CPPFLAGS)' --cflags='$(CFLAGS)' --ldflags='$(LDFLAGS)' \
-		--only-prefix=space- --objects $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
-
-EMBED_SHARED_TEST = runtime/test_embedding_shared-$(EMBED_TAG)
-$(EMBED_SHARED_TEST): tests/test_embedding.c $(EMBED_LIB)
-	@set -eu; \
-	tmp_out=$$(mktemp "runtime/.cetta-shared-consumer.XXXXXX"); \
-	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
-	$(CC) $(CFLAGS) -Iinclude -o "$$tmp_out" $< -Lruntime -l:$(notdir $(EMBED_LIB)) -Wl,-rpath,'$$ORIGIN'; \
-	mv "$$tmp_out" "$@"
-.PHONY: test-embedding-shared-api test-embedding-rust-api
-test-embedding-shared-api: embedding-native $(EMBED_SHARED_TEST)
-	./$(EMBED_SHARED_TEST)
-test-embedding-rust-api: embedding-native $(EMBED_LIB)
-	@set -eu; \
-	tmp_out=$$(mktemp "runtime/.cetta-rust-consumer.XXXXXX"); \
-	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
-	rustc --edition=2021 tests/support/embedding_consumer.rs -o "$$tmp_out" \
-		-L native=runtime -l dylib:+verbatim=$(notdir $(EMBED_LIB)) -C link-arg=-Wl,-rpath,'$$ORIGIN'; \
-	mv "$$tmp_out" runtime/test_embedding_rust-$(EMBED_TAG)
-	$(GSLT2PARSE_SHARED_ASAN_ENV) ./runtime/test_embedding_rust-$(EMBED_TAG)
-
-PYTHON_EXECUTABLE ?= python3
-PYTHON_EXTENSION_SUFFIX = $(shell $(PYTHON_EXECUTABLE) -c 'import sysconfig; print(sysconfig.get_config_var("EXT_SUFFIX"))')
-PYTHON_EXTENSION_OUTPUT ?= python/cetta/_native$(PYTHON_EXTENSION_SUFFIX)
-PYTHON_EXTENSION_INCLUDE_DIR = $(shell $(PYTHON_EXECUTABLE) -c 'import sysconfig; print(sysconfig.get_path("include"))')
-PYTHON_EXTENSION_INCLUDES = -I'$(PYTHON_EXTENSION_INCLUDE_DIR)'
-PYTHON_EXTENSION_PATH_MAP = '-ffile-prefix-map=$(PYTHON_EXTENSION_INCLUDE_DIR)=Python/include' '-ffile-prefix-map=$(abspath .)=.'
-.PHONY: python-native
-python-native: $(EMBED_STATIC_LIB) runtime/cetta-proc-scope python/native.c python/callbacks.inc python/host.inc python/buffers.inc python/exports.map
-	@mkdir -p '$(dir $(PYTHON_EXTENSION_OUTPUT))'
-	@set -eu; \
-	tmp_out=$$(mktemp '$(dir $(PYTHON_EXTENSION_OUTPUT)).cetta-extension.XXXXXX'); \
-	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(PYTHON_EXTENSION_PATH_MAP) -Iinclude $(PYTHON_EXTENSION_INCLUDES) -shared \
-		-o "$$tmp_out" python/native.c $(EMBED_STATIC_LIB) \
-		-Wl,--version-script=python/exports.map -Wl,--exclude-libs,ALL $(LDFLAGS); \
-	mv "$$tmp_out" '$(PYTHON_EXTENSION_OUTPUT)'
-	@mkdir -p '$(dir $(PYTHON_EXTENSION_OUTPUT))resources/runtime'
-	cp runtime/cetta-proc-scope '$(dir $(PYTHON_EXTENSION_OUTPUT))resources/runtime/cetta-proc-scope'
-
-$(EMBED_OBJ) $(EMBED_QUERY_TEST) $(EMBED_OWNER_REFUSAL_TEST): src/embedding_callbacks.inc src/embedding_buffers.inc src/embedding_sparse.inc
-EMBED_CALLBACK_TEST = runtime/test_embedding_callbacks-$(EMBED_TAG)
-$(EMBED_CALLBACK_TEST): tests/test_embedding_callbacks.c $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
-	@set -eu; \
-	tmp_out=$$(mktemp "runtime/.cetta-callback-consumer.XXXXXX"); \
-	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Iinclude -o "$$tmp_out" $< $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS) $(LDFLAGS); \
-	mv "$$tmp_out" "$@"
-.PHONY: test-embedding-callbacks
-test-embedding-callbacks: $(EMBED_CALLBACK_TEST)
-	./$(EMBED_CALLBACK_TEST)
-
-.PHONY: test-embedding-he-callbacks
-test-embedding-he-callbacks: $(EMBED_CALLBACK_TEST)
-	./$(EMBED_CALLBACK_TEST) --he
-
-.PHONY: test-embedding-callback-mutants
-test-embedding-callback-mutants: $(EMBED_CALLBACK_TEST)
-	python3 tests/support/check_embedding_context_mutants.py --cc='$(CC)' \
-		--cppflags='$(CPPFLAGS)' --cflags='$(CFLAGS)' --ldflags='$(LDFLAGS)' \
-		--only-prefix=callback- --objects $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
-
-EMBED_BUFFER_TEST = runtime/test_embedding_buffers-$(EMBED_TAG)
-$(EMBED_BUFFER_TEST): tests/test_embedding_buffers.c $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
-	@set -eu; \
-	tmp_out=$$(mktemp "runtime/.cetta-buffer-consumer.XXXXXX"); \
-	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Iinclude -o "$$tmp_out" $< $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS) $(LDFLAGS); \
-	mv "$$tmp_out" "$@"
-.PHONY: test-embedding-buffers
-test-embedding-buffers: $(EMBED_BUFFER_TEST)
-	./$(EMBED_BUFFER_TEST)
-
-EMBED_BUFFER_ALLOCATION_TEST = runtime/test_embedding_buffer_allocation-$(EMBED_TAG)
-$(EMBED_BUFFER_ALLOCATION_TEST): tests/test_embedding_buffer_allocation.c $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
-	@set -eu; \
-	tmp_out=$$(mktemp "runtime/.cetta-buffer-allocation.XXXXXX"); \
-	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Iinclude -o "$$tmp_out" $< $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS) $(LDFLAGS) -Wl,--wrap=malloc,--wrap=calloc; \
-	mv "$$tmp_out" "$@"
-.PHONY: test-embedding-buffer-allocation
-test-embedding-buffer-allocation: $(EMBED_BUFFER_ALLOCATION_TEST)
-	./$(EMBED_BUFFER_ALLOCATION_TEST)
-
-.PHONY: test-embedding-buffer-mutants
-test-embedding-buffer-mutants: $(EMBED_BUFFER_TEST)
-	python3 tests/support/check_embedding_context_mutants.py --cc='$(CC)' \
-		--cppflags='$(CPPFLAGS)' --cflags='$(CFLAGS)' --ldflags='$(LDFLAGS)' \
-		--only-prefix=buffer- --objects $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
-
-EMBED_CLEANUP_TEST = runtime/test_embedding_cleanup-$(EMBED_TAG)
-$(EMBED_CLEANUP_TEST): tests/support/test_embedding_cleanup.c src/embedding.c src/embedding_callbacks.inc src/embedding_buffers.inc src/embedding_sparse.inc $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
-	@set -eu; \
-	tmp_out=$$(mktemp "runtime/.cetta-cleanup-consumer.XXXXXX"); \
-	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Iinclude -o "$$tmp_out" $< $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS) $(LDFLAGS) -Wl,--wrap=pthread_mutex_unlock,--wrap=pthread_mutex_lock,--wrap=pthread_mutex_timedlock; \
-	mv "$$tmp_out" "$@"
-.PHONY: test-embedding-cleanup
-test-embedding-cleanup: $(EMBED_CLEANUP_TEST)
-	./$(EMBED_CLEANUP_TEST)
-
-.PHONY: test-embedding-cleanup-mutants
-test-embedding-cleanup-mutants: $(EMBED_CLEANUP_TEST)
-	python3 tests/support/check_embedding_context_mutants.py --cc='$(CC)' \
-		--cppflags='$(CPPFLAGS)' --cflags='$(CFLAGS)' --ldflags='$(LDFLAGS)' \
-		--only-prefix=cleanup- --objects $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
-
-RUNTIME_SESSION_TEST = runtime/test_runtime_session-$(EMBED_TAG)
-$(RUNTIME_SESSION_TEST): tests/support/test_runtime_session.c src/runtime_session.h $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Iinclude -o $@ $< $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS) $(LDFLAGS) -Wl,--wrap=eval_resources_new,--wrap=space_free,--wrap=malloc,--wrap=realloc
-.PHONY: test-runtime-session
-test-runtime-session: $(RUNTIME_SESSION_TEST)
-	./$(RUNTIME_SESSION_TEST)
-.PHONY: test-runtime-session-mutants
-test-runtime-session-mutants: $(RUNTIME_SESSION_TEST)
-	python3 tests/support/check_embedding_context_mutants.py --cc='$(CC)' \
-		--cppflags='$(CPPFLAGS)' --cflags='$(CFLAGS)' --ldflags='$(LDFLAGS)' \
-		--only-prefix=session- --objects $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
-
-EMBED_MODULE_TEST = runtime/test_embedding_modules-$(EMBED_TAG)
-$(EMBED_MODULE_TEST): tests/test_embedding_modules.c $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
-	@set -eu; \
-	tmp_out=$$(mktemp "runtime/.cetta-module-consumer.XXXXXX"); \
-	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Iinclude -o "$$tmp_out" $< $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS) $(LDFLAGS); \
-	mv "$$tmp_out" "$@"
-.PHONY: test-embedding-modules
-test-embedding-modules: $(EMBED_MODULE_TEST)
-	./$(EMBED_MODULE_TEST)
-
-.PHONY: test-embedding-module-mutants
-test-embedding-module-mutants: $(EMBED_MODULE_TEST)
-	python3 tests/support/check_embedding_context_mutants.py --cc='$(CC)' \
-		--cppflags='$(CPPFLAGS)' --cflags='$(CFLAGS)' --ldflags='$(LDFLAGS)' \
-		--only-prefix=module- --objects $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
-
-EMBED_MODULE_REFUSAL_TEST = runtime/test_embedding_module_refusal-$(EMBED_TAG)
-$(EMBED_MODULE_REFUSAL_TEST): tests/support/test_embedding_module_refusal.c $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
-	@set -eu; \
-	tmp_out=$$(mktemp "runtime/.cetta-module-refusal.XXXXXX"); \
-	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Iinclude -o "$$tmp_out" $< $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS) $(LDFLAGS) -Wl,--wrap=realloc,--wrap=cetta_library_resource_capture; \
-	mv "$$tmp_out" "$@"
-.PHONY: test-embedding-module-refusal
-test-embedding-module-refusal: $(EMBED_MODULE_REFUSAL_TEST)
-	./$(EMBED_MODULE_REFUSAL_TEST)
-
-TENSOR_BYTE_ORDER_TEST = runtime/test_tensor_byte_order-$(EMBED_TAG)
-$(TENSOR_BYTE_ORDER_TEST): tests/support/test_tensor_byte_order.c $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
-	@set -eu; \
-	tmp_out=$$(mktemp "runtime/.cetta-byte-order-consumer.XXXXXX"); \
-	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Iinclude -o "$$tmp_out" $< $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS) $(LDFLAGS); \
-	mv "$$tmp_out" "$@"
-.PHONY: test-tensor-byte-order
-test-all: test-tensor-byte-order
-test-tensor-byte-order: $(TENSOR_BYTE_ORDER_TEST)
-	./$(TENSOR_BYTE_ORDER_TEST)
-
-.PHONY: test-tensor-byte-order-mutants
-test-tensor-byte-order-mutants: $(TENSOR_BYTE_ORDER_TEST)
-	python3 tests/support/check_embedding_context_mutants.py --cc='$(CC)' \
-		--cppflags='$(CPPFLAGS)' --cflags='$(CFLAGS)' --ldflags='$(LDFLAGS)' \
-		--only-prefix=endian- --objects $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
-
-.PHONY: test-python-buffer-order-mutants
-test-python-buffer-order-mutants: $(EMBED_STATIC_LIB)
-	$(PYTHON_EXECUTABLE) tests/support/check_python_buffer_order_mutants.py --cc='$(CC)' \
-		--cppflags='$(CPPFLAGS)' --cflags='$(CFLAGS)' --ldflags='$(LDFLAGS)' \
-		--library='$(EMBED_STATIC_LIB)'
-
-SPARSE_INTERCHANGE_TEST = runtime/test_sparse_interchange-$(EMBED_TAG)
-$(SPARSE_INTERCHANGE_TEST): tests/support/test_sparse_interchange.c $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
-	@set -eu; \
-	tmp_out=$$(mktemp "runtime/.cetta-sparse-consumer.XXXXXX"); \
-	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Iinclude -o "$$tmp_out" $< $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS) $(LDFLAGS) -Wl,--wrap=malloc,--wrap=calloc,--wrap=free; \
-	mv "$$tmp_out" "$@"
-.PHONY: test-sparse-interchange
-test-all: test-sparse-interchange
-test-sparse-interchange: $(SPARSE_INTERCHANGE_TEST)
-	./$(SPARSE_INTERCHANGE_TEST)
-
-.PHONY: test-sparse-interchange-mutants
-test-sparse-interchange-mutants: $(SPARSE_INTERCHANGE_TEST)
-	python3 tests/support/check_embedding_context_mutants.py --cc='$(CC)' \
-		--cppflags='$(CPPFLAGS)' --cflags='$(CFLAGS)' --ldflags='$(LDFLAGS)' \
-		--only-prefix=sparse- --objects $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
-
 .PHONY: test-petta-string-literal-profile
 test-petta-string-literal-profile: $(BIN)
 	@$(CETTA_BIN_INVOKE) --lang petta tests/petta/string_literal_profile.metta | diff -u tests/petta/string_literal_profile.expected -
 
 test-petta-corrected-stable: test-petta-string-literal-profile
-=======
->>>>>>> main

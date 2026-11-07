@@ -9,6 +9,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import subprocess
 
 
@@ -54,7 +55,17 @@ GCD = ':- chr_constraint gcd/1.\ngcd_zero @ gcd(0) <=> true.\ngcd_reduce @ gcd(N
 PROPAGATION = ':- chr_constraint signal/1,published/1.\npublish @ signal(X) ==> published(X).\n'
 
 
-def cases(engine):
+def package_variant(engine, work, name, old, new):
+    """The CHR package with one edit, beside its own copy of the compiler libraries."""
+    folder = work / 'variants' / name
+    shutil.copytree(engine / 'langdef/lang/chr', folder / 'chr')
+    text = (engine / 'langdef/lang/CHR.module').read_text(encoding='utf-8')
+    assert text.count(old) == 1, (name, old)
+    (folder / 'CHR.module').write_text(text.replace(old, new), encoding='utf-8')
+    return f'(lang:load {quote(str(folder / "CHR.module"))})'
+
+
+def cases(engine, work):
     module_path = engine / 'langdef/lang/CHR.module'
     chr_ = '(lang:load CHR)'
     out = {}
@@ -328,16 +339,44 @@ def cases(engine):
     out['numeric-character-codes'] = f"!(test (lang:eval {chr_} {raw(charcodes)}) (LangCompleteV1 ((q 65) (q 955))))\n"
     invalid_scalar = r":- chr_constraint p/1. ?- p('\uD800')."
     out['invalid-scalar-retains-source'] = f"!(let (LangSourceErrorV1 (SourceDiagnosticV1 (SourceTextV1 $origin $kept) $reason)) {run(invalid_scalar)} (test $kept {raw(invalid_scalar)}))\n"
+    # Character code escapes name Unicode scalar values: surrogates and codes
+    # past U+10FFFF are refused in every escape form, however many digits.
+    refused = ["'\\x110000\\'", "'\\U00110000'", "'\\xD800\\'", "'\\154000\\'",
+               "'\\x10000000000000041\\'", "0'\\uDFFF"]
+    out['invalid-character-codes-refused'] = ''.join(
+        f"!(test (check:status {run(':- chr_constraint p/1. ?- p(' + text + ').')}) Rejected)\n" for text in refused)
+    boundary = ":- chr_constraint p/1. ?- p(0'\\xD7FF\\), p(0'\\xE000\\), p(0'\\U0010FFFF)."
+    out['character-code-boundaries'] = f"!(test (lang:eval {chr_} {raw(boundary)}) (LangCompleteV1 ((p 55295) (p 57344) (p 1114111))))\n"
+    # A long quoted atom reads exactly, including its closing escape.
+    long_atom = ':- chr_constraint w/1.\n?- w(\'' + 'a' * 1000 + '\\x41\\\').\n'
+    out['long-quoted-atom'] = f"!(test (lang:eval {chr_} {raw(long_atom)}) (LangCompleteV1 ((w {'a' * 1000}A))))\n"
+    # Each anonymous variable is its own variable: p(_,_) matches p(1,2). An
+    # anonymous variable in a body would post a non-ground constraint.
+    anonymous = (':- chr_constraint constant/2, seen/1, p/2, matched/0.\n'
+                 'note @ constant(N,_) ==> seen(N).\npair @ p(_,_) ==> matched.\n?- constant(a,1), p(1,2).\n')
+    out['anonymous-head-variables'] = (f'!(test (lang:eval {chr_} {raw(anonymous)}) '
+                                       '(LangCompleteV1 ((constant a 1) (seen a) (p 1 2) (matched))))\n')
+    anonymous_body = ':- chr_constraint p/1, q/1.\nmake @ p(X) <=> q(_).\n?- p(1).\n'
+    out['anonymous-body-variable-rejected'] = f"!(test (check:status {run(anonymous_body)}) Rejected)\n"
+    # The package carries its generated definitions and names its MeTTa
+    # libraries; each entry answers within the reply protocol.
+    missing = package_variant(engine, work, 'missing-library', 'chr/machine.metta"', 'chr/absent.metta"')
+    out['package-missing-library'] = f"!(test (check:status {missing}) Unadmitted)\n"
+    malformed = package_variant(engine, work, 'malformed-definitions',
+                                '(Field "definitions" "(= (c0:operator 0)', '(Field "definitions" "(= (c0:operator 0')
+    out['package-malformed-definitions'] = f"!(test (check:status {malformed}) Unadmitted)\n"
+    undefined = package_variant(engine, work, 'undefined-entry', '"c0:compiler-read"', '"c0:no-such-entry"')
+    query = raw(MINIMUM + '?- minimum(1).\n')
+    out['package-undefined-entry'] = (f'!(test (case (lang:eval {undefined} {query}) '
+                                      '(((LangProtocolErrorV1 MettaCompiler "read" $answer) Protocol) ($other $other))) Protocol)\n')
     overloaded_is = ":- chr_constraint p/1,is/1,is/3. go @ p(X) <=> is(X), is(X,X,X). ?- p(7)."
     out['builtin-name-other-arities'] = f"!(test (lang:eval {chr_} {raw(overloaded_is)}) (LangCompleteV1 ((is 7) (is 7 7 7))))\n"
-    # Unicode names read as SWI reads them: lowercase and uncased letters start
-    # atoms; an uppercase or titlecase start makes a variable.
-    unicode_names = ':- chr_constraint w/1. ?- w(café), w(λ), w(漢字), w(même).'
-    out['unicode-names'] = f"!(test (lang:eval {chr_} {raw(unicode_names)}) (LangCompleteV1 ((w café) (w λ) (w 漢字) (w même))))\n"
-    unicode_variable = ':- chr_constraint w/1. ?- w(Été).'
-    out['unicode-uppercase-is-variable'] = f"!(test (check:status {run(unicode_variable)}) Rejected)\n"
-    unicode_rule = ':- chr_constraint w/1, v/1. copy @ w(Ω) ==> v(Ω). ?- w(ünï).'
-    out['unicode-variable-in-rule'] = f"!(test (lang:eval {chr_} {raw(unicode_rule)}) (LangCompleteV1 ((w ünï) (v ünï))))\n"
+    # Quoted atoms carry any text. Unquoted names are ASCII; an ideographic
+    # space is never part of a name.
+    unicode_names = ":- chr_constraint w/1. ?- w('café'), w('λ'), w('漢字'), w('même')."
+    out['quoted-unicode-names'] = f"!(test (lang:eval {chr_} {raw(unicode_names)}) (LangCompleteV1 ((w café) (w λ) (w 漢字) (w même))))\n"
+    unquoted_unicode = ':- chr_constraint w/1. ?- w(café).'
+    out['unquoted-unicode-name-unread'] = f"!(test (check:status {run(unquoted_unicode)}) ReadRejected)\n"
     ideographic_space = ':- chr_constraint w/1. ?- w(a' + chr(0x3000) + 'b).'
     out['unicode-space-is-not-a-name'] = f"!(test (check:status {run(ideographic_space)}) ReadRejected)\n"
     # Double-quoted text is an atom (SWI's double_quotes=atom); other modes
@@ -366,7 +405,7 @@ def main():
     work = args.work.resolve()
     work.mkdir(parents=True, exist_ok=False)
     summary = {'binary_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(), 'cases': [], 'failed': []}
-    for name, body in cases(engine).items():
+    for name, body in cases(engine, work).items():
         if args.selected and name not in args.selected:
             continue
         body = body.replace('BODY', EXPECTED_ORDER)

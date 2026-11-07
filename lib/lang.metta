@@ -65,6 +65,66 @@
       ($other (LangDefinitionUnadmittedV1 $package (RequiredExports $other))))))
 
 (= (lang-internal:define-plan $package $source $core $plan-data $compiler-origin $compiler-data $execution)
+   (case (module:portable-field $compiler-data "kind")
+     (((ModuleValueFoundV1 "metta-v1")
+        (lang-internal:define-metta $package $plan-data $compiler-origin $compiler-data $execution))
+      ($native (lang-internal:define-native $package $source $core $plan-data $compiler-origin $compiler-data $execution)))))
+
+; A metta-v1 compiler is MeTTa shipped beside the package. One compiler space
+; receives the package's own generated definitions, then the named libraries;
+; it also runs the package's machine.
+(= (lang-internal:define-metta $package $plan-data $compiler-origin $compiler-data $execution)
+   (let* (($productions (lang-internal:field $plan-data "productions"))
+          ($classes (lang-internal:field $plan-data "classes"))
+          ($start (lang-internal:field $plan-data "start"))
+          ($selection (lang-internal:field $plan-data "selection"))
+          ($parser (langdef:load-source-plan $productions $classes $start $selection)))
+     (case $parser
+       (((NativeHandle $parser-kind $parser-id)
+          (case (lang-internal:metta-compiler $compiler-origin $compiler-data)
+            (((LangMettaCompilerV1 $space)
+               (LangDefinitionV1 (LangMettaV1 (LangComponentsV1 $package $parser (LangMettaCompilerV1 $space)
+                 $compiler-data $execution))))
+             ($other (LangDefinitionUnadmittedV1 $package $other)))))
+        ($other (LangDefinitionUnadmittedV1 $package $other))))))
+
+(= (lang-internal:metta-compiler $origin $compiler-data)
+   (let $space (new-space)
+     (let* (($_ (import! $space str)) ($_ (import! $space json)))
+       (case (lang-internal:metta-definitions $space $compiler-data)
+         ((LangMettaDefinitionsV1
+            (lang-internal:metta-libraries $space $origin
+              (str:split-whitespace (lang-internal:field $compiler-data "libraries"))))
+          ($other (CompilerDefinitions $other)))))))
+(= (lang-internal:metta-definitions $space $compiler-data)
+   (case (module:portable-field $compiler-data "definitions")
+     (((ModuleValueFoundV1 $text)
+        (case (module:install-definitions $space $text)
+          (((Error $call $reason) (Error $call $reason))
+           ($installed LangMettaDefinitionsV1))))
+      ($absent LangMettaDefinitionsV1))))
+(= (lang-internal:metta-libraries $space $origin $libraries)
+   (case $libraries
+     ((() (LangMettaCompilerV1 $space))
+      ((cons $library $rest)
+        (case (fs:try-canonical-from-file $origin $library)
+          (((FS:CanonicalPath $path)
+             (case (module:install-definitions $space (fs:read-text $path))
+               (((Error $call $reason) (CompilerLibrary $library (Error $call $reason)))
+                ($installed (lang-internal:metta-libraries $space $origin $rest)))))
+           ($other (CompilerLibrary $library $other))))))))
+
+; One call of a metta-v1 compiler's named entry function. It answers exactly
+; one (LangReplyV1 value) or (LangSourceErrorV1 message); any other answer,
+; including an entry the libraries do not define, is a protocol error.
+(= (lang-internal:metta-call (LangMettaCompilerV1 $space) $compiler-data $operation $arguments)
+   (let $call (cons-atom (str:string->symbol (lang-internal:field $compiler-data $operation)) $arguments)
+     (case (collapse (evalc $call $space))
+       ((((LangReplyV1 $value)) (LangReplyV1 $value))
+        (((LangSourceErrorV1 $message)) (LangSourceErrorV1 $message))
+        ($other (LangProtocolErrorV1 MettaCompiler $operation $other))))))
+
+(= (lang-internal:define-native $package $source $core $plan-data $compiler-origin $compiler-data $execution)
    (let* (($productions (lang-internal:field $plan-data "productions"))
           ($classes (lang-internal:field $plan-data "classes"))
           ($start (lang-internal:field $plan-data "start"))
@@ -95,7 +155,8 @@
         ($other (LangDefinitionUnadmittedV1 $package $other))))))
 (= (lang-internal:components $language)
    (case $language
-     (((LangDefinitionV1 $bound) (langdef:language-components $bound))
+     (((LangDefinitionV1 (LangMettaV1 $components)) $components)
+      ((LangDefinitionV1 $bound) (langdef:language-components $bound))
       ($other (LangDefinitionUnadmittedV1 $other BoundLanguageExpectedV1)))))
 (= (lang:module $language)
    (case (lang-internal:components $language)
@@ -248,6 +309,18 @@
 (= (lang-internal:verify
      (LangInvocationV1 $owner (LangComponentsV1 $module $parser $compiler $compiler-data $execution))
      (SourceTextV1 $origin $text) $sink $rows $values $forest $forest-wire $identity-wire $rounds)
+   (case $compiler
+     (((LangMettaCompilerV1 $space)
+        (lang-internal:read-selected
+          (LangInvocationV1 $owner (LangComponentsV1 $module $parser $compiler $compiler-data $execution))
+          (SourceTextV1 $origin $text) $sink $rows $values $forest))
+      ($native
+        (lang-internal:verify-native
+          (LangInvocationV1 $owner (LangComponentsV1 $module $parser $compiler $compiler-data $execution))
+          (SourceTextV1 $origin $text) $sink $rows $values $forest $forest-wire $identity-wire $rounds)))))
+(= (lang-internal:verify-native
+     (LangInvocationV1 $owner (LangComponentsV1 $module $parser $compiler $compiler-data $execution))
+     (SourceTextV1 $origin $text) $sink $rows $values $forest $forest-wire $identity-wire $rounds)
    (let* (($language (LangInvocationV1 $owner (LangComponentsV1 $module $parser $compiler $compiler-data $execution)))
           ($source (SourceTextV1 $origin $text))
           ($operation (lang-internal:field $compiler-data "verify"))
@@ -267,6 +340,12 @@
      (SourceTextV1 $origin $text) $sink $rows $values $forest)
    (case (lang-internal:selected-request $execution $values)
      (((SourceSelectedV1 $packet)
+        (case $compiler
+          (((LangMettaCompilerV1 $space)
+             (lang-internal:read-metta
+               (LangInvocationV1 $owner (LangComponentsV1 $module $parser $compiler $compiler-data $execution))
+               (SourceTextV1 $origin $text) $sink $rows $packet))
+           ($native
         (let* (($source (SourceTextV1 $origin $text))
                ($separator (lang-internal:field $compiler-data "namespaceSeparator"))
                ($operation (lang-internal:field $compiler-data "read"))
@@ -277,8 +356,28 @@
                (lang-internal:prepare
                  (LangInvocationV1 $owner (LangComponentsV1 $module $parser $compiler $compiler-data $execution))
                  $source $sink $rows $forest $read))
-             ($other (lang-internal:diagnostic $source $other))))))
+             ($other (lang-internal:diagnostic $source $other)))))))))
       ($other (LangSourceReadV1 (SourceTextV1 $origin $text) (SelectedCatalogueV1 $other))))))
+
+; A metta-v1 compiler reads, prepares and observes through its entry
+; functions, which answer (LangReplyV1 value) or (LangSourceErrorV1 message).
+(= (lang-internal:read-metta
+     (LangInvocationV1 $owner (LangComponentsV1 $module $parser (LangMettaCompilerV1 $space) $compiler-data $execution))
+     $source $sink $rows $packet)
+   (let $compiler (LangMettaCompilerV1 $space)
+   (case (lang-internal:metta-call $compiler $compiler-data "read" ($packet))
+     (((LangReplyV1 $program)
+        (case (lang-internal:metta-call $compiler $compiler-data "inputs" ($program))
+          (((LangReplyV1 $names)
+             (case (lang-internal:select-inputs $rows $names)
+               (((SourceInputFieldsV1 $facts)
+                  (case (lang-internal:metta-call $compiler $compiler-data "prepare" ($program $facts))
+                    (((LangReplyV1 (MettaPreparedV1 $run $dictionary))
+                       (LangStepV1 (LangPortExecutionV1 $owner $source $space $program $dictionary $run $sink $rows)))
+                     ($other (lang-internal:diagnostic $source $other)))))
+                ($other (lang-internal:diagnostic $source $other)))))
+           ($other (lang-internal:diagnostic $source $other)))))
+      ($other (lang-internal:diagnostic $source $other))))))
 
 ; A package port reads the whole selected catalogue and applies its own
 ; ambiguity policy; the snapshot profile reads exactly one selected packet.
@@ -561,6 +660,23 @@
 
 ; Observation decodes guest data; a failed or faulted run publishes nothing.
 (= (lang-internal:port-observe
+     (LangComponentsV1 $module $parser $compiler $compiler-data $execution) $wire $dictionary $data $sink $capture)
+   (case $compiler
+     (((LangMettaCompilerV1 $space)
+        (case (lang-internal:metta-call $compiler $compiler-data "observe" ($dictionary $data))
+          (((LangReplyV1 MettaFailedV1) LangGuestFailureV1)
+           ((LangReplyV1 (MettaFaultV1 $reason)) (LangGuestFaultV1 $reason))
+           ((LangReplyV1 (MettaCompleteV1 $values $consume $additions))
+             (lang-internal:port-finish-metta $sink $capture $values $consume $additions))
+           ($other $other))))
+      ($native
+        (lang-internal:port-observe-native
+          (LangComponentsV1 $module $parser $compiler $compiler-data $execution) $wire $dictionary $data $sink $capture)))))
+(= (lang-internal:port-finish-metta LangIsolatedV1 $capture $values $consume $additions)
+   (LangStepV1 (LangDoneV1 $values)))
+(= (lang-internal:port-finish-metta (LangPublishV1 $output) $capture $values $consume $additions)
+   (LangStepV1 (LangTransformV1 $output $capture LangMultisetV1 $consume $additions $values)))
+(= (lang-internal:port-observe-native
      (LangComponentsV1 $module $parser $compiler $compiler-data $execution) $wire $dictionary $data $sink $capture)
    (let* (($separator (lang-internal:field $compiler-data "namespaceSeparator"))
           ($operation (lang-internal:field $compiler-data "observe"))

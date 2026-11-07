@@ -24,8 +24,6 @@ import subprocess
 PROVIDERS = [
     ('Mettapedia.GSLT.LanguageDef.ModuleFormat.DatalogRuntimeProvider', 'datalog', 'DatalogD0',
      'datalog-compiler.so', 'langdef/lang/Datalog.module'),
-    ('Mettapedia.GSLT.LanguageDef.ModuleFormat.CHRRuntimeCompiler', 'chr', 'GroundCHRC0',
-     'chr-compiler.so', 'langdef/lang/CHR.module'),
 ]
 RUNTIME = 'libcetta-lean-providers.so'
 

@@ -1,0 +1,21 @@
+// Positive reachability with cycles and more than one route to a conclusion.
+.decl Edge(source:symbol, target:symbol)
+.input Edge
+.decl Task(name:symbol, source:symbol, target:symbol, priority:number)
+.input Task
+
+.decl Reach(source:symbol, target:symbol)
+Reach(X,Y) :- Edge(X,Y).
+Reach(X,Z) :- Reach(X,Y), Edge(Y,Z).
+.output Reach
+
+// An ordinary relation recording the final join of a non-reflexive route.
+// It is finite even when the graph has infinitely many unfolded walks.
+.decl PathStep(source:symbol, via:symbol, target:symbol)
+PathStep(X,Y,Z) :- Reach(X,Y), Edge(Y,Z), X != Z.
+.output PathStep
+
+.decl Eligible(name:symbol, priority:number)
+Eligible(Name,Priority) :-
+    Task(Name,Source,Target,Priority), Reach(Source,Target), Priority >= 1.
+.output Eligible
