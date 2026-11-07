@@ -4111,7 +4111,9 @@ static void test_declaration_retention(void) {
             Atom *tail = term_universe_get_atom(&universe, expected[len - 1u]);
             bool ordered = api == 2u || kind != 0u;
             bool declaration_change = row_has_form(row, g_builtin_syms.colon) ||
-                (!ordered && removed + 1u < len && row_has_form(tail, g_builtin_syms.colon));
+                row->kind == ATOM_VAR ||
+                (!ordered && removed + 1u < len &&
+                 (row_has_form(tail, g_builtin_syms.colon) || tail->kind == ATOM_VAR));
             uint64_t revision = space.declaration_revision;
             if (api == 2u) {
                 uint8_t mask[100] = {0}; mask[removed] = 1u;

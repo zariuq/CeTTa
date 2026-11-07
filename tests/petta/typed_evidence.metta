@@ -1,0 +1,27 @@
+; A typed call whose callee's trusted version proves its range passes its
+; answer on unchecked at that type, directly or through a let; a head
+; whose body does not show its range answers nothing, wherever its call
+; stands.
+(: List (-> Type Type))
+(: Nil (List $a))
+(: Cons (-> $a (List $a) (List $a)))
+(: bad (-> Number (List Number)))
+(= (bad $n) (Cons "s" Nil))
+(: pass (-> Number (List Number) (List Number)))
+(= (pass $n $l) $l)
+(: sum (-> (List Number) Number))
+(= (sum Nil) 0)
+(= (sum (Cons $x $xs)) (+ $x (sum $xs)))
+!(bad 1)
+!(sum (bad 1))
+!(sum (pass 1 (Cons 1 (Cons 2 Nil))))
+!(pass 1 (Cons "a" Nil))
+(: rep (-> Number (List Number) Number Number))
+(= (rep $k $l $a) (if (== $k 0) $a (rep (- $k 1) $l (+ $a (sum $l)))))
+!(rep 3 (pass 0 (Cons 1 (Cons 2 Nil))) 0)
+!(rep 2 (bad 0) 0)
+(: build (-> Number (List Number) (List Number)))
+(= (build $n $acc) (if (== $n 0) $acc (build (- $n 1) (Cons $n $acc))))
+(: go (-> Number Number))
+(= (go $n) (let $l (build $n Nil) (sum $l)))
+!(go 50)

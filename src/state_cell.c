@@ -702,7 +702,9 @@ StateCellImage *state_cell_image_prepare(Atom *value, Atom *content_type,
     atomic_init(&image->references, 1u);
     arena_init_detached(&image->syntax);
     arena_set_block_growth(&image->syntax, 256u);
-    if (canonical) {
+    /* Syntax interning identifies an evaluated value with its unmarked code,
+     * so a marked value (including marked fields) uses an owned copy. */
+    if (canonical && !atom_may_hold_he_mark(value)) {
         TermUniverse universe;
         term_universe_init(&universe);
         term_universe_set_persistent_arena(&universe, &image->syntax);

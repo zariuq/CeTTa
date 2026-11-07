@@ -69,7 +69,9 @@ CASES = [
     ('prepared-failure-mutation', 'he', '(= (miss $p) (let (Pair $x $y) $p 7))\n!(miss (Single 3))\n!(let $_ (add-atom &self (= (miss $p) 8)) (miss (Single 3)))\n', '[8]\n', 0),
     ('source-plan-completed-code', 'petta', '(= (emit $x) (println! forbidden))\n!(let $v (quote (emit 7)) $v)\n', '(emit 7)\n', 0),
     ('source-plan-constructor-fields', 'petta', '(= (emit $x) (let $_ (println! child) $x))\n!(Packet (emit 3) (quote (emit 4)))\n', 'child\n(Packet 3 (emit 4))\n', 0),
-    ('source-plan-constructor-authority', 'petta', '(= (build $x) (Packet $x))\n!(let $_ (add-atom &self (= (Packet $x) (println! forbidden))) (build 7))\n', '(Packet 7)\n', 0),
+    # A constructor occurrence translated before its head has equations calls
+    # an equation added later, as stable-fixed SWI-PeTTa does.
+    ('source-plan-constructor-authority', 'petta', '(= (build $x) (Packet $x))\n!(let $_ (add-atom &self (= (Packet $x) (println! called))) (build 7))\n', 'called\ntrue\n', 0),
     ('source-plan-call-retirement', 'petta', '(= (known $x) (Pair $x))\n(= (run $x) (known $x))\n!(let $_ (remove-atom &self (= (known $x) (Pair $x))) (run 7))\n', '(known 7)\n', 0),
     ('scope-caller-alternatives', 'petta', '(= (inner) (let $_ (cut) 1))\n(= (inner) 2)\n(= (outer) (let $before (superpose (a b)) (Pair $before (inner))))\n!(outer)\n', '(Pair a 1)\n(Pair b 1)\n', 0),
     ('scope-earlier-subgoal-and-later-duplicates', 'petta', '(= (inner) (superpose (1 2)))\n(= (outer) (let $x (inner) (let $_ (cut) (let $later (superpose (7 7)) (Pair $x $later)))))\n(= (outer) discarded)\n!(outer)\n', '(Pair 1 7)\n(Pair 1 7)\n', 0),

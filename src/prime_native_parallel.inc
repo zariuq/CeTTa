@@ -57,6 +57,7 @@ struct PrimeNativeParallel {
     VariantBank variants;
     bool variants_ready;
     TempSpaceSet temporary_spaces;
+    TempSpaceSet listed_spaces;
     TempSpaceSet created_spaces;
     size_t forwarded;
     size_t barriers_forwarded;
@@ -135,13 +136,19 @@ static void prime_native_parallel_destroy(PrimeNativeParallel *parallel) {
     if (previous != 1u) return;
     /* A partial adoption leaves these entries owned by the suspended slice.
      * Release their heap internals while every containing arena is live. */
-    TempSpaceSet *pending[] = {&parallel->temporary_spaces, &parallel->created_spaces};
-    for (size_t k = 0u; k < 2u; k++) {
+    TempSpaceSet *pending[] = {&parallel->temporary_spaces, &parallel->listed_spaces, &parallel->created_spaces};
+    for (size_t k = 0u; k < 3u; k++) {
         for (CettaCount i = 0u; i < pending[k]->len; i++) {
             EvalTrackedSpace tracked = pending[k]->items[i];
             if (!tracked.space) continue;
+            void *base_hold = space_hold_detach(tracked.space);
             if (tracked.petta_program) petta_program_forget_space(tracked.petta_program, tracked.space);
             space_free(tracked.space);
+            if (!parallel->world.storage ||
+                (!arena_owns_ptr(&parallel->world.storage->persistent_arena, tracked.space) &&
+                 !arena_owns_ptr(&parallel->world.storage->eval_arena, tracked.space)))
+                free(tracked.space);
+            space_lifetime_unpin(base_hold);
         }
         free(pending[k]->items);
     }
@@ -165,15 +172,18 @@ static void prime_native_parallel_retire(PrimeNativeParallel *parallel) {
     bool retirement_scope = !cetta_shared_transition_scope_active();
     if (retirement_scope) cetta_shared_transition_scope_enter();
     CETTA_SCOPED_SHARED_TRANSITION(retirement_transition);
-    for (CettaCount i = 0u; i < parallel->world.storage->owned_spaces.len; i++) {
-        HyperposeOwnedSpace *owned = &parallel->world.storage->owned_spaces.items[i];
-        if (owned->petta_program) {
-            petta_program_forget_space(owned->petta_program, owned->space);
-            owned->petta_program = NULL;
+    if (parallel->world.storage) {
+        for (CettaCount i = 0u; i < parallel->world.storage->owned_spaces.len; i++) {
+            HyperposeOwnedSpace *owned = &parallel->world.storage->owned_spaces.items[i];
+            if (owned->petta_program) {
+                petta_program_forget_space(owned->petta_program, owned->space);
+                petta_program_lifetime_release(owned->petta_program);
+                owned->petta_program = NULL;
+            }
         }
     }
-    TempSpaceSet *pending[] = {&parallel->temporary_spaces, &parallel->created_spaces};
-    for (size_t k = 0u; k < 2u; k++) {
+    TempSpaceSet *pending[] = {&parallel->temporary_spaces, &parallel->listed_spaces, &parallel->created_spaces};
+    for (size_t k = 0u; k < 3u; k++) {
         for (CettaCount i = 0u; i < pending[k]->len; i++) {
             EvalTrackedSpace *tracked = &pending[k]->items[i];
             if (tracked->petta_program) {
@@ -190,10 +200,12 @@ static void prime_native_parallel_storage(const PrimeNativeParallel *parallel,
     if (!parallel || !cetta_storage_object(census, parallel, sizeof(*parallel),
                                            CETTA_STORAGE_BLOCK)) return;
     cetta_storage_schedule(census, parallel->child, prime_native_control_storage_census);
-    arena_storage_census(&parallel->world.storage->persistent_arena, census);
-    arena_storage_census(&parallel->world.storage->eval_arena, census);
-    hashcons_storage_census(&parallel->world.storage->hashcons, census);
-    term_universe_storage_census(&parallel->world.storage->term_universe, census);
+    if (parallel->world.storage) {
+        arena_storage_census(&parallel->world.storage->persistent_arena, census);
+        arena_storage_census(&parallel->world.storage->eval_arena, census);
+        hashcons_storage_census(&parallel->world.storage->hashcons, census);
+        term_universe_storage_census(&parallel->world.storage->term_universe, census);
+    }
     registry_storage_census(&parallel->world.registry, census);
     if(parallel->borrowed_source.root.space)
         space_read_view_storage_census(&parallel->borrowed_source,census);
@@ -203,20 +215,24 @@ static void prime_native_parallel_storage(const PrimeNativeParallel *parallel,
     }
     bindings_storage_census(&parallel->world.capture_env, census);
     prime_need_snapshot_storage_census(&parallel->captured_need, census);
-    cetta_storage_array(census, parallel->world.storage->owned_spaces.items,
-        parallel->world.storage->owned_spaces.cap, sizeof(*parallel->world.storage->owned_spaces.items), 0u);
+    if (parallel->world.storage) {
+        cetta_storage_array(census, parallel->world.storage->owned_spaces.items,
+            parallel->world.storage->owned_spaces.cap, sizeof(*parallel->world.storage->owned_spaces.items), 0u);
+    }
     cetta_storage_array(census, parallel->slice_cost.events,
         parallel->slice_cost.capacity, sizeof(*parallel->slice_cost.events), 0u);
-    for (CettaCount i = 0u; i < parallel->world.storage->owned_spaces.len; i++) {
-        const Space *space = parallel->world.storage->owned_spaces.items[i].space;
-        if (!arena_owns_ptr(&parallel->world.storage->persistent_arena, space) &&
-            !arena_owns_ptr(&parallel->world.storage->eval_arena, space) &&
-            (!parallel->child || !arena_owns_ptr(&parallel->child->storage, space)))
-            cetta_storage_object(census, space, sizeof(*space), CETTA_STORAGE_BLOCK);
-        space_storage_census(space, census);
+    if (parallel->world.storage) {
+        for (CettaCount i = 0u; i < parallel->world.storage->owned_spaces.len; i++) {
+            const Space *space = parallel->world.storage->owned_spaces.items[i].space;
+            if (!arena_owns_ptr(&parallel->world.storage->persistent_arena, space) &&
+                !arena_owns_ptr(&parallel->world.storage->eval_arena, space) &&
+                (!parallel->child || !arena_owns_ptr(&parallel->child->storage, space)))
+                cetta_storage_object(census, space, sizeof(*space), CETTA_STORAGE_BLOCK);
+            space_storage_census(space, census);
+        }
     }
-    const TempSpaceSet *pending[] = {&parallel->temporary_spaces, &parallel->created_spaces};
-    for (size_t k = 0u; k < 2u; k++) {
+    const TempSpaceSet *pending[] = {&parallel->temporary_spaces, &parallel->listed_spaces, &parallel->created_spaces};
+    for (size_t k = 0u; k < 3u; k++) {
         cetta_storage_array(census, pending[k]->items, pending[k]->cap, sizeof(*pending[k]->items), 0u);
         for (CettaCount i = 0u; i < pending[k]->len; i++)
             space_storage_census(pending[k]->items[i].space, census);
@@ -599,7 +615,6 @@ static bool prime_native_parallel_prepare(PrimeNativeControl *owner,
     }
     __attribute__((cleanup(prime_native_restore_hashcons)))
     HashConsTable *previous_hashcons = g_hashcons;
-    g_hashcons = &parallel->world.storage->hashcons;
     /* Only preparation/ownership is reused here. Hyperpose's eager branch
      * execution and result observer are not involved. */
     SpaceEquationToken source_equations = space_equation_token(task->space);
@@ -627,6 +642,7 @@ static bool prime_native_parallel_prepare(PrimeNativeControl *owner,
         symbol_source.admission != prime_scoped_judgment_admission_epoch()) {
         prime_native_parallel_destroy(parallel); return false;
     }
+    g_hashcons = &parallel->world.storage->hashcons;
     /* This successful preparation actually copied (or retained) task->space.
      * Keep its logical source coordinates, including a prior worker copy's
      * coordinates. The copied Need heap already uses those cell identities.
@@ -642,8 +658,11 @@ static bool prime_native_parallel_prepare(PrimeNativeControl *owner,
         .admission = symbol_source.admission,
         .program_valid = inherited_program || direct_program,
     };
-    for (CettaCount i = 0u; i < parallel->world.storage->owned_spaces.len; i++)
-        parallel->world.storage->owned_spaces.items[i].petta_program = g_library_context->petta_program;
+    for (CettaCount i = 0u; i < parallel->world.storage->owned_spaces.len; i++) {
+        if (g_library_context->petta_program &&
+            petta_program_lifetime_retain(g_library_context->petta_program))
+            parallel->world.storage->owned_spaces.items[i].petta_program = g_library_context->petta_program;
+    }
     Bindings captured;
     bindings_init(&captured);
     if (!bindings_clone(&captured, &task->dynamic_env) ||
@@ -1404,13 +1423,15 @@ static inline __attribute__((always_inline)) bool prime_native_parallel_task_ker
     HashConsTable *hashcons = g_hashcons;
     CettaEvalEpisode *tracker = g_eval_completion_tracker;
     VariantBank *variants = g_owned_outcome_variant_bank;
-    TempSpaceSet temporary = g_made_spaces, created = g_new_space_track;
+    TempSpaceSet temporary = g_made_spaces, listed = g_listed_spaces, created = g_new_space_track;
     const PettaProgramRevisionProjection *projection = g_petta_program_revision_projection;
     Arena *persistent = g_eval_fallback_universe.persistent_arena;
     if (!resource_execution) {
         g_made_spaces = parallel->temporary_spaces;
+        g_listed_spaces = parallel->listed_spaces;
         g_new_space_track = parallel->created_spaces;
         parallel->temporary_spaces = (TempSpaceSet){0};
+        parallel->listed_spaces = (TempSpaceSet){0};
         parallel->created_spaces = (TempSpaceSet){0};
     }
     g_owned_outcome_variant_bank = &parallel->variants;
@@ -1421,7 +1442,7 @@ static inline __attribute__((always_inline)) bool prime_native_parallel_task_ker
         ? parallel->resource_universe : &parallel->world.storage->term_universe);
     g_registry = resource_execution ? registry : &parallel->world.registry;
     g_eval_root_space = resource_execution ? root : parallel->world.space;
-    g_hashcons = &parallel->world.storage->hashcons;
+    g_hashcons = parallel->world.storage ? &parallel->world.storage->hashcons : hashcons;
     g_eval_completion_tracker = &completion;
     eval_swap_library_context(run->library);
     eval_context_restore(&parallel->context);
@@ -1491,11 +1512,15 @@ static inline __attribute__((always_inline)) bool prime_native_parallel_task_ker
     if (metered) cetta_native_cost_scope_leave(&cost);
     cetta_native_cost_detach_end(containing_cost);
     if (!resource_execution) {
-        if (!hyperpose_adopt_tracked_spaces(&parallel->world))
+        if (!(hyperpose_adopt_space_set(&parallel->world, &g_made_spaces) &&
+              hyperpose_adopt_space_set(&parallel->world, &g_listed_spaces) &&
+              hyperpose_adopt_space_set(&parallel->world, &g_new_space_track)))
             child->driver.capacity_blocked = true;
         parallel->temporary_spaces = g_made_spaces;
+        parallel->listed_spaces = g_listed_spaces;
         parallel->created_spaces = g_new_space_track;
         g_made_spaces = temporary;
+        g_listed_spaces = listed;
         g_new_space_track = created;
     }
     g_owned_outcome_variant_bank = variants;

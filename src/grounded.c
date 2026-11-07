@@ -706,6 +706,9 @@ bool grounded_op_is_library_native(SymbolId head) {
 bool is_grounded_op(SymbolId id) {
     if (id == SYMBOL_ID_NONE)
         return false;
+    extern bool eval_current_python_object_head(SymbolId) __attribute__((weak));
+    if (eval_current_python_object_head && eval_current_python_object_head(id))
+        return true;
     /* Standalone PeTTa implements its standard inequality in C. With SWI,
      * its library owns the operation, including permitted redefinitions.
      * Other dialects retain their own interpretation of this spelling. */
@@ -810,10 +813,12 @@ static bool get_numeric_arg(Atom *a, NumArg *out) {
     if (!a || !out)
         return false;
     /*
-     * SWI reads `inf` and `-inf` as atoms but its arithmetic evaluator
-     * recognizes them as numeric constants.  Keep the authored atom intact
-     * for quotation, equality, and metatype observation; coerce it only at
-     * PeTTa's numeric-operation boundary.
+     * The atoms `inf`, `-inf`, `nan`, `pi`, `e` and `epsilon` are numeric
+     * constants at PeTTa's numeric-operation boundary.  `-inf` is the dual
+     * of `inf` (the identity of max, as `inf` is of min); SWI's reader
+     * leaves it an atom its evaluator rejects, an accident no program
+     * relies on.  Keep the authored atom intact for quotation, equality,
+     * and metatype observation; coerce it only here.
      */
     if (a->kind == ATOM_SYMBOL &&
         eval_current_language_id &&
@@ -1564,6 +1569,62 @@ static bool grounded_number_order(
 #else
     return grounded_double_order(left->val, right->val, ordering);
 #endif
+}
+
+bool petta_numeric_min_max(Arena *a, bool minimum, Atom *x, Atom *y,
+                           Atom **out) {
+    NumArg nx, ny;
+    if (!a || !x || !y || !out || !get_numeric_arg(x, &nx) ||
+        !get_numeric_arg(y, &ny))
+        return false;
+    /* A NaN operand propagates (IEEE 754-2019 minimum and maximum). */
+    if (nx.is_float && isnan(nx.val)) {
+        *out = x;
+        return true;
+    }
+    if (ny.is_float && isnan(ny.val)) {
+        *out = y;
+        return true;
+    }
+    /* The exact order of the values the operands stand for, whatever
+     * their kinds, a constant by its double. */
+    bool x_int = !nx.is_float && !nx.is_bigint && !nx.is_rational;
+    bool y_int = !ny.is_float && !ny.is_bigint && !ny.is_rational;
+    int cmp = 0;
+    if (x_int && y_int) {
+        cmp = nx.ival < ny.ival ? -1 : nx.ival > ny.ival ? 1 : 0;
+    } else if (nx.is_float && ny.is_float) {
+        if (!grounded_double_order(nx.val, ny.val, &cmp))
+            return false;
+    } else if (x_int && ny.is_float) {
+        if (!grounded_int_float_order(nx.ival, ny.val, &cmp))
+            return false;
+    } else if (nx.is_float && y_int) {
+        if (!grounded_int_float_order(ny.ival, nx.val, &cmp))
+            return false;
+        cmp = -cmp;
+    } else {
+#if CETTA_BUILD_WITH_GMP
+        if (!num_arg_compare_value(&nx, &ny, &cmp))
+            return false;
+#else
+        return false;
+#endif
+    }
+    if (cmp == 0) {
+        /* -0.0 below 0 and 0.0 (IEEE 754-2019). */
+        bool x_negative_zero = nx.is_float && nx.val == 0.0 && signbit(nx.val);
+        bool y_negative_zero = ny.is_float && ny.val == 0.0 && signbit(ny.val);
+        if (x_negative_zero != y_negative_zero)
+            cmp = x_negative_zero ? -1 : 1;
+    }
+    /* A tie: min answers its first operand, max its second, so that
+     * (min a b) and (max a b) are a stable sort of a and b. */
+    if (cmp == 0)
+        *out = minimum ? x : y;
+    else
+        *out = (minimum ? cmp < 0 : cmp > 0) ? x : y;
+    return true;
 }
 
 static bool grounded_order_truth(SymbolId head_id, int ordering) {
@@ -2763,6 +2824,12 @@ static Atom *grounded_parse_text(Arena *a, Atom *head, Atom **args,
         !parser_rest_is_delimiters_n(args[0]->ground.sval, args[0]->ground.slen, &pos))
         return grounded_raise(a, head, args, nargs,
                               atom_symbol(a, "ParseFailed"));
+    extern Registry *eval_current_registry(void) __attribute__((weak));
+    extern Atom *eval_read_registry_words(Registry *, Arena *, Atom *) __attribute__((weak));
+    if (eval_current_language_id &&
+        eval_current_language_id() == CETTA_LANGUAGE_HE &&
+        eval_current_registry && eval_read_registry_words)
+        return eval_read_registry_words(eval_current_registry(), a, parsed);
     return parsed;
 }
 

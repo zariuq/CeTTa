@@ -13,6 +13,27 @@ struct CettaForeignRuntime {
 };
 
 void cetta_foreign_drain_releases(void) {}
+void cetta_foreign_enable_objects(CettaForeignRuntime *rt, Registry *r) { (void)rt; (void)r; }
+bool cetta_foreign_object_head(CettaForeignRuntime *rt, const char *name) {
+    (void)rt; (void)name; return false;
+}
+Atom *cetta_foreign_object_wrap(CettaForeignRuntime *rt, Arena *a, void *object) {
+    (void)rt; (void)a; (void)object; return NULL;
+}
+void *cetta_foreign_object_borrow(const Atom *a) { (void)a; return NULL; }
+void *cetta_foreign_python_value(const Atom *a) { (void)a; return NULL; }
+void *cetta_foreign_python_owner_new(CettaForeignRuntime *rt) { (void)rt; return NULL; }
+void *cetta_foreign_python_owner(CettaForeignRuntime *rt) { (void)rt; return NULL; }
+void *cetta_foreign_python_exception(const Atom *a) { (void)a; return NULL; }
+void *cetta_foreign_python_he_exception(const Atom *a) { (void)a; return NULL; }
+Atom *cetta_foreign_he_error_value(Arena *a, Atom *call, Atom *error) {
+    (void)a; (void)call; (void)error; return NULL;
+}
+bool cetta_foreign_object_provider_callable(Space *s, const Atom *a) { (void)s; (void)a; return false; }
+bool cetta_foreign_object_binding_candidate(Space *s, const Atom *a) { (void)s; (void)a; return false; }
+bool cetta_foreign_object_provider_open(Space *s, const CettaInvocation *i, CettaOwnedExecution *e, CettaEvalCompletion *c) {
+    (void)s; (void)i; (void)e; (void)c; return false;
+}
 
 static const char *CETTA_FOREIGN_DISABLED_MSG =
     "python foreign modules require a Python-enabled build (BUILD=python or BUILD=main)";
@@ -159,7 +180,7 @@ bool cetta_foreign_load_module(CettaForeignRuntime *rt,
 }
 
 bool cetta_foreign_is_callable_atom(Atom *atom) {
-    return cetta_foreign_provider_callable(atom);
+    return atom && atom->kind == ATOM_GROUNDED && cetta_foreign_provider_callable(atom);
 }
 
 bool cetta_foreign_call(CettaForeignRuntime *rt,

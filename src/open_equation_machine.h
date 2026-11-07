@@ -528,6 +528,12 @@ typedef struct {
         Arena *arena, Atom *const *arguments, uint32_t arity,
         struct CettaPreparedPureAnswerCursor **remaining, CettaOwnedReturn *returned,
         CettaEvalCompletion *completion);
+    /* The space whose guards `type_guard` answers by the value's class
+     * alone, read when a guard runs; NULL when that service has other
+     * authorities (an analysis's type obligations).  A guard compiled with
+     * a class (OemStep.class_guard) is met in the region by a grounded value
+     * of that class when its program's space is this one. */
+    Space *const *class_guard_space;
 } CettaOpenEquationRuntime;
 
 /* Install the owning machine's pure guard service before the cursor runs.
@@ -538,6 +544,10 @@ void cetta_open_equation_cursor_set_type_guard(
         bool, Atom ***, uint32_t *));
 void cetta_open_equation_cursor_set_collection_raise_policy(
     CettaOpenEquationCursor *cursor, bool abort_collections);
+/* The space read by the guard service's class test, or NULL
+ * (CettaOpenEquationRuntime.class_guard_space). */
+void cetta_open_equation_cursor_set_class_guard_space(
+    CettaOpenEquationCursor *cursor, Space *const *space);
 
 /* Enumerate the answers of `(head args...)` against the consumer's
  * `expected` value (NULL: an unconstrained destination).  The arguments and
@@ -753,6 +763,21 @@ bool cetta_open_equation_cursor_can_prune_depth(
 bool cetta_open_equation_cursor_bound_cut(
     const CettaOpenEquationCursor *cursor);
 /* The cursor has changed a space or a named state itself. */
+/* Whether the root body runs in its relation's trusted version, whose
+ * analysis proves each answer of a closed range typed at it. */
+bool cetta_open_equation_cursor_root_versioned(
+    const CettaOpenEquationCursor *cursor);
+/* Whether that version is a closed instance of a signature with type
+ * variables, entered on arguments typed once at the instance: its answers
+ * are typed at the instance's range, which every instance of the
+ * signature's own range admits once. */
+bool cetta_open_equation_cursor_root_instance_versioned(
+    const CettaOpenEquationCursor *cursor);
+/* A body entry's choice of its trusted version, taken again once the guard
+ * service is installed and before the cursor has run: an INSTANCE entry
+ * fact needs that service (oem_typed_once_at). */
+void cetta_open_equation_cursor_retry_root_version(
+    CettaOpenEquationCursor *cursor);
 bool cetta_open_equation_cursor_effected(
     const CettaOpenEquationCursor *cursor);
 /* The cursor has entered an equation (for a query body, one past the

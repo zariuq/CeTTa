@@ -1,0 +1,318 @@
+{
+  "date": "2026-10-29",
+  "scope": "Historical Opt scale experiments; not measurements of the November preview. Single runs, shared workstation. Counter-machine results excluded after the observer found incorrect stored IC values.",
+  "ladder": [
+    {
+      "case": "oddeven_2000",
+      "reference_counts": [
+        2000
+      ],
+      "observed_counts": [
+        2000
+      ],
+      "mork": {
+        "wall": 8.201,
+        "rss": 101268,
+        "rc": 0
+      },
+      "cetta": {
+        "wall": 6.258,
+        "rss": 39792,
+        "rc": 0
+      }
+    },
+    {
+      "case": "oddeven_5000",
+      "reference_counts": [
+        5000
+      ],
+      "observed_counts": [
+        5000
+      ],
+      "mork": {
+        "wall": 44.386,
+        "rss": 594880,
+        "rc": 0
+      },
+      "cetta": {
+        "wall": 33.462,
+        "rss": 77696,
+        "rc": 0
+      }
+    },
+    {
+      "case": "transitive_200k",
+      "reference_counts": [
+        4794018,
+        16961
+      ],
+      "observed_counts": [
+        4794018,
+        16961
+      ],
+      "mork": {
+        "wall": 7.49,
+        "rss": 388428,
+        "rc": 0
+      },
+      "cetta": {
+        "wall": 0.662,
+        "rss": 111412,
+        "rc": 0
+      }
+    },
+    {
+      "case": "transitive_1m",
+      "reference_counts": [
+        19913332,
+        8935
+      ],
+      "observed_counts": [
+        19913332,
+        8935
+      ],
+      "mork": {
+        "wall": 25.44,
+        "rss": 1781056,
+        "rc": 0
+      },
+      "cetta": {
+        "wall": 5.161,
+        "rss": 502560,
+        "rc": 0
+      }
+    },
+    {
+      "case": "pc_500",
+      "reference_counts": [
+        2004
+      ],
+      "observed_counts": [
+        2004
+      ],
+      "mork": {
+        "wall": 381.248,
+        "rss": 34520,
+        "rc": 0
+      },
+      "cetta": {
+        "wall": 39.899,
+        "rss": 19852,
+        "rc": 0
+      }
+    },
+    {
+      "case": "hexlife_28_200_30",
+      "reference_counts": [
+        123
+      ],
+      "observed_counts": [
+        123
+      ],
+      "mork": {
+        "wall": 147.905,
+        "rss": 6664,
+        "rc": 0
+      },
+      "cetta": {
+        "wall": 0.17,
+        "rss": 16476,
+        "rc": 0
+      }
+    },
+    {
+      "case": "bc_3000",
+      "reference_counts": [
+        3000
+      ],
+      "observed_counts": [
+        3000
+      ],
+      "mork": {
+        "wall": 126.6,
+        "rss": 12880,
+        "rc": 0
+      },
+      "cetta": {
+        "wall": 0.101,
+        "rss": 19712,
+        "rc": 0
+      }
+    },
+    {
+      "case": "reach_1500",
+      "reference_counts": [
+        1194,
+        16152,
+        1195
+      ],
+      "observed_counts": [
+        1194,
+        16152,
+        1195
+      ],
+      "mork": {
+        "wall": 75.14,
+        "rss": 288960,
+        "rc": 0
+      },
+      "cetta": {
+        "wall": 0.17,
+        "rss": 25484,
+        "rc": 0
+      }
+    },
+    {
+      "case": "ancestry_3k",
+      "reference_counts": [
+        5996,
+        11872102,
+        177361
+      ],
+      "observed_counts": [
+        5996,
+        11872102,
+        177361
+      ],
+      "mork": {
+        "wall": 60.548,
+        "rss": 420316,
+        "rc": 0
+      },
+      "cetta": {
+        "wall": 6.195,
+        "rss": 1142828,
+        "rc": 0
+      }
+    },
+    {
+      "case": "clique5_300x8100",
+      "reference_counts": [
+        637
+      ],
+      "observed_counts": [
+        637
+      ],
+      "mork": {
+        "wall": 130.748,
+        "rss": 6796,
+        "rc": 0
+      },
+      "cetta": {
+        "wall": 0.058,
+        "rss": 11964,
+        "rc": 0
+      }
+    },
+    {
+      "case": "transitive_5m",
+      "reference_counts": [
+        99909346,
+        8356
+      ],
+      "observed_counts": [
+        99909346,
+        8356
+      ],
+      "mork": {
+        "wall": 113.192,
+        "rss": 8821456,
+        "rc": 0
+      },
+      "cetta": {
+        "wall": 32.768,
+        "rss": 2208748,
+        "rc": 0
+      }
+    }
+  ],
+  "large_graph": [
+    {
+      "task": "big_check",
+      "system": "mork",
+      "wall": 24.48,
+      "rss_kib": 1781640,
+      "rc": 0,
+      "counts": {
+        "trans": 19911522,
+        "dtrans": 8643
+      }
+    },
+    {
+      "task": "big_check",
+      "system": "cetta",
+      "wall": 5.07,
+      "rss_kib": 502848,
+      "rc": 0,
+      "counts": {
+        "trans": 19911522,
+        "dtrans": 8643
+      }
+    },
+    {
+      "task": "big150",
+      "system": "mork",
+      "wall": 176.85,
+      "rss_kib": 13211912,
+      "rc": 0,
+      "counts": {
+        "trans": 149892361,
+        "dtrans": 8897
+      }
+    },
+    {
+      "task": "big150",
+      "system": "cetta",
+      "wall": 47.87,
+      "rss_kib": 3318328,
+      "rc": 0,
+      "counts": {
+        "trans": 149892361,
+        "dtrans": 8897
+      }
+    },
+    {
+      "task": "big600",
+      "system": "cetta",
+      "wall": 323.81,
+      "rss_kib": 13148280,
+      "rc": 0,
+      "counts": {
+        "trans": 599911956,
+        "dtrans": 8426
+      }
+    },
+    {
+      "task": "big600",
+      "system": "mork",
+      "wall": 103.6472633460071,
+      "rss_kib": null,
+      "rc": 137,
+      "counts": {}
+    }
+  ],
+  "large_graph_parameters": {
+    "big_check": {
+      "nodes": 50000,
+      "draws": 1000000
+    },
+    "big150": {
+      "nodes": 375000,
+      "draws": 7500000
+    },
+    "big600": {
+      "nodes": 1500000,
+      "draws": 30000000
+    }
+  },
+  "source_receipts": {
+    "res-ladder-r19.json": "a99afaf4a202871268145576437a50454afa8a687607270ebc6ade1e6db492a7",
+    "res-big.json": "53a5edc514def6c2f0b4db71e96dd5680b41a4fd9d1a5976697d0b2914d36d8b"
+  },
+  "notes": [
+    "MORK is the original Opt reference at 1c44f70, PathMap fb979b4.",
+    "MORK 600M case was stopped externally and has no completed result; no timing ratio applies.",
+    "The large graph generator is now benchmarks/opt_suite/generate_large_graph.py.",
+    "Two-hop pairs and triangles, not fixed-point transitive closure."
+  ]
+}

@@ -806,6 +806,8 @@ static foreign_t petta_libpl_standard_eval(
             petta_libpl_eval_state_free(state);
         return true;
     }
+    if (phase == PL_RESUME)
+        return petta_libpl_interrupt();
     /* Without a retry no prune follows, so a redo that ends here releases
      * its state itself. */
     PettaLibplEvalState *state = phase == PL_REDO

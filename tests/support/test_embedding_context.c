@@ -125,7 +125,7 @@ bool __wrap_grounded_call(Arena *arena, Atom *head, Atom **arguments,
         if (mode == 6) {
             cetta_embed_engine_close(closing_engine);
             assert(atomic_load(&native_closes) == 0);
-            assert(cetta_native_handle_get_owned(library, value, "embedding-test-work") == resource);
+            assert(cetta_native_handle_get_owned(library, "embedding-test-work", value) == resource);
         }
         *outcome = cetta_call_completed_value(value);
         return true;
@@ -203,16 +203,15 @@ static void locks_are_separate(void) {
     assert(!pthread_join(second, NULL));
     assert(overlapped);
     atomic_store(&hook_mode, 0);
-    /* The service does not register a language operation in a build that
-     * lacks the library defining it. The unknown call stays data. */
-#if !CETTA_BUILD_WITH_LIB_PROLOG
-    cetta_result_t *unknown = run(left, "!(with_mutex shared-lock 42)");
+    /* Mutex execution is native PeTTa, including builds without Prolog.
+     * Host services still must not turn unrelated names into operations. */
+    assert(integer_result(run(left, "!(with_mutex shared-lock 42)")) == 42);
+    cetta_result_t *unknown = run(left, "!(embedding-unknown-lock shared-lock 42)");
     cetta_atom_t *answer = NULL;
     assert(cetta_embed_result_get(unknown, 0, &answer) == CETTA_OK);
     assert(cetta_embed_atom_kind(answer) == CETTA_ATOM_EXPRESSION);
     cetta_embed_atom_release(answer);
     cetta_embed_result_release(unknown);
-#endif
     cetta_embed_engine_release(left);
     cetta_embed_engine_release(right);
 }

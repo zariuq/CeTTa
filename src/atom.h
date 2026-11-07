@@ -312,6 +312,12 @@ static inline bool cetta_internal_tag_is_term_stable(int64_t tag) {
  * holds of every child; any other leaf, or a hand-built atom, leaves it
  * unset. */
 #define ATOM_STRUCTURAL_SYMBOLIC UINT32_C(0x00004000)
+/* HE's evaluated mark at every node: the expression carries the mark and
+ * every expression child with fields holds this fact.  Set where a marked
+ * node is built (atom_he_evaluated_build); a fact of the node alone, which
+ * no other expression inherits from a child or keeps from the expression
+ * it is derived from. */
+#define ATOM_STRUCTURAL_HE_EVALUATED_THROUGHOUT UINT32_C(0x00008000)
 /* Each fact has its own bit: for one-bit flags the sum equals the union
  * exactly when no two share one. */
 _Static_assert(ATOM_STRUCTURAL_FACTS_VALID + ATOM_STRUCTURAL_HAS_INTERNAL_TAG +
@@ -323,7 +329,8 @@ _Static_assert(ATOM_STRUCTURAL_FACTS_VALID + ATOM_STRUCTURAL_HAS_INTERNAL_TAG +
                        ATOM_STRUCTURAL_HAS_PETTA_NONLIST +
                        ATOM_STRUCTURAL_HAS_SPELLED_SYMBOL +
                        ATOM_STRUCTURAL_OWNER_CLOSED + ATOM_STRUCTURAL_STRING_STORAGE +
-                       ATOM_STRUCTURAL_HAS_HE_EVALUATED + ATOM_STRUCTURAL_SYMBOLIC ==
+                       ATOM_STRUCTURAL_HAS_HE_EVALUATED + ATOM_STRUCTURAL_SYMBOLIC +
+                       ATOM_STRUCTURAL_HE_EVALUATED_THROUGHOUT ==
                    (ATOM_STRUCTURAL_FACTS_VALID | ATOM_STRUCTURAL_HAS_INTERNAL_TAG |
                     ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID | ATOM_STRUCTURAL_HAS_NAN |
                     ATOM_STRUCTURAL_HAS_OPEN_LIST | ATOM_STRUCTURAL_HAS_LIST |
@@ -333,7 +340,8 @@ _Static_assert(ATOM_STRUCTURAL_FACTS_VALID + ATOM_STRUCTURAL_HAS_INTERNAL_TAG +
                     ATOM_STRUCTURAL_HAS_PETTA_NONLIST |
                     ATOM_STRUCTURAL_HAS_SPELLED_SYMBOL |
                     ATOM_STRUCTURAL_OWNER_CLOSED | ATOM_STRUCTURAL_STRING_STORAGE |
-                    ATOM_STRUCTURAL_HAS_HE_EVALUATED | ATOM_STRUCTURAL_SYMBOLIC),
+                    ATOM_STRUCTURAL_HAS_HE_EVALUATED | ATOM_STRUCTURAL_SYMBOLIC |
+                    ATOM_STRUCTURAL_HE_EVALUATED_THROUGHOUT),
                "structural fact bits overlap");
 
 /*
@@ -795,6 +803,18 @@ static inline bool atom_is_he_evaluated(const Atom *atom) {
            (atom->flags & ATOM_FLAG_HE_EVALUATED) != 0u;
 }
 
+/* Whether every expression node of `atom` with fields carries HE's
+ * evaluated mark, as the node's own fact says (false where it is not
+ * known). */
+static inline bool atom_is_he_evaluated_throughout(const Atom *atom) {
+    return atom_is_he_evaluated(atom) &&
+           (atom->structural_facts &
+            (ATOM_STRUCTURAL_FACTS_VALID |
+             ATOM_STRUCTURAL_HE_EVALUATED_THROUGHOUT)) ==
+               (ATOM_STRUCTURAL_FACTS_VALID |
+                ATOM_STRUCTURAL_HE_EVALUATED_THROUGHOUT);
+}
+
 /* Whether `atom` may hold an evaluated mark: its facts say so, or an
  * expression's facts are not known. */
 static inline bool atom_may_hold_he_mark(const Atom *atom) {
@@ -1057,15 +1077,26 @@ size_t arena_retained_owner_allocation_bytes(void);
 /* The same hold, charging BYTES of the immutable external resource on its
  * first acquisition in this arena segment. Repeated holds are uncharged;
  * a reset drops the charge with the hold. */
+bool arena_retain_owner_sized_with_storage(Arena *a, void *owner,
+                              void (*retain)(void *), void (*release)(void *),
+                              size_t bytes, CettaStorageVisitor storage);
 bool arena_retain_owner_sized(Arena *a, void *owner,
                               void (*retain)(void *), void (*release)(void *),
                               size_t bytes);
 /* Retain a typed managed resource. On the first acquisition, charge BYTES
  * to external storage and RESOURCE_BYTES to its managed-resource subset.
  * Aliases keep the original charge until the corresponding hold resets. */
+bool arena_retain_resource_sized_with_storage(Arena *a, void *owner,
+                                 void (*retain)(void *), void (*release)(void *),
+                                 size_t bytes, size_t resource_bytes,
+                                 CettaStorageVisitor storage);
 bool arena_retain_resource_sized(Arena *a, void *owner,
                                  void (*retain)(void *), void (*release)(void *),
                                  size_t bytes, size_t resource_bytes);
+bool arena_retain_state_resource_sized_with_storage(Arena *a, void *owner,
+                                 void (*retain)(void *), void (*release)(void *),
+                                 size_t bytes, size_t resource_bytes,
+                                 CettaStorageVisitor storage);
 bool arena_retain_state_resource_sized(Arena *a, void *owner,
                                  void (*retain)(void *), void (*release)(void *),
                                  size_t bytes, size_t resource_bytes);
@@ -1340,6 +1371,9 @@ void    var_intern_free(VarInternTable *t);
 VarId   var_intern(VarInternTable *t, SymbolId spelling);
 bool    fresh_var_id_try(VarId *id_out);
 VarId   fresh_var_id(void);
+/* A base no fresh variable this thread minted so far has, and no base it
+ * mints from now on is below: those minted later have bases >= it. */
+uint64_t fresh_var_base_watermark(void);
 
 /* A VarId's stable source identity and its activation epoch.  These
  * accessors are inline because matching and substitution consult the

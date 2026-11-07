@@ -96,7 +96,8 @@ class Client:
 class Server:
     def __init__(self, worker, directory, *, module=None, entry="kb-server:configuration", maximum_bytes=1048576):
         self.directory = directory
-        self.path = directory / "service.sock"
+        sock = directory / "service.sock"
+        self.path = Path(tempfile.gettempdir()) / f"cetta-{uuid.uuid4().hex[:12]}.sock" if len(str(sock)) > 96 else sock
         self.command = [str(worker), "--serve", "--lang", "petta",
                         str(module or ROOT / "examples/native_kb_server.metta"), entry]
         if maximum_bytes != 1048576:
@@ -128,6 +129,8 @@ class Server:
         self.logs.append((out, err))
         assert self.process.returncode == (-9 if crash else 0), (self.process.returncode, out, err)
         assert b"ACCIDENTAL_EXECUTION" not in out, out
+        if self.path.parent != self.directory and self.path.exists():
+            self.path.unlink()
         self.process = None
 
     def sample(self, client, round_number):

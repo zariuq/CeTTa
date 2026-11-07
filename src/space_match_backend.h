@@ -500,6 +500,10 @@ const char *space_match_backend_kind_name(SpaceEngine kind);
 bool space_match_backend_kind_from_name(const char *name, SpaceEngine *out);
 const char *space_match_backend_unavailable_reason(SpaceEngine kind);
 bool space_match_backend_attach_act_file(Space *s, const char *path, uint64_t *out_loaded);
+/* Whether `s` keeps its rows only in a PathMap index the run forces
+ * (CETTA_PATHMAP_QUERY_INDEX): a reader of native rows would build the
+ * native shadow that route avoids. */
+bool space_match_backend_index_forced_without_rows(const Space *s);
 bool space_match_backend_materialize_native_storage(Space *s,
                                                     Arena *persistent_arena);
 /* Compatibility name kept while callers migrate to the generic projection

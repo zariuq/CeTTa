@@ -103,15 +103,18 @@ class HEQueryTests(unittest.TestCase):
                                 self.assertEqual(actual, expected)
 
     def test_owned_function_returns_stop_before_later_body_effects(self):
-        sources = (
+        minimal_source = (
             "(function (chain (metta (superpose (1 2)) %Undefined% &self) $x "
-            "(chain (metta (emit $x) %Undefined% &self) $r (return $r))))",
+            "(chain (metta (emit $x) %Undefined% &self) $r (return $r))))"
+        )
+        non_minimal_sources = (
             "(function (let $x (superpose (1 2)) (let $u (add-atom &self (seen $x)) (return $x))))",
             "(function (superpose ((let $u (add-atom &self (seen 1)) (return 1)) "
             "(let $u (add-atom &self (seen 2)) (return 2)))))",
         )
         for profile in ("he", "he-compat"):
             for allowance in (1, 2, 10000):
+                sources = (minimal_source, *non_minimal_sources) if profile == "he" else (minimal_source,)
                 for source in sources:
                     with self.subTest(profile=profile, allowance=allowance, source=source), Engine(language="he", profile=profile) as engine:
                         engine.run("(= (emit $x) (let $u (add-atom &self (seen $x)) $x))")
@@ -119,6 +122,13 @@ class HEQueryTests(unittest.TestCase):
                             self.assertEqual(self.first(query, allowance).to_python(), 1)
                             self.assertEqual(self.seen(engine), [1])
                         self.assertEqual(self.seen(engine), [1])
+                if profile == "he-compat":
+                    for source in non_minimal_sources:
+                        with self.subTest(profile=profile, allowance=allowance, source=source), Engine(language="he", profile=profile) as engine:
+                            with engine.query(source) as query:
+                                self.assertEqual(self.first(query, allowance).kind, AtomKind.VARIABLE)
+                                self.assertEqual(self.seen(engine), [])
+                            self.assertEqual(self.seen(engine), [])
 
     def test_function_return_syntax_keeps_its_one_step_observation(self):
         cases = (
@@ -205,13 +215,28 @@ class HEQueryTests(unittest.TestCase):
                         self.assertEqual(engine.eval("(function (host:mixed))").to_python(), [11, 13])
                         pulls.clear()
                         closes.clear()
-                    with engine.query("(function (host:mixed))") as query:
-                        if profile == "he-compat":
+                        with engine.query("(function (host:mixed))") as query:
+                            self.assertEqual(self.first(query, allowance).to_python(), 11)
+                            self.assertEqual(pulls, [7, (Symbol("return"), 11)])
+                        self.assertEqual(closes, [1])
+                    else:
+                        eval_atoms = list(engine.eval("(function (host:mixed))"))
+                        self.assertEqual(len(eval_atoms), 1)
+                        self.assertEqual(eval_atoms[0].kind, AtomKind.VARIABLE)
+                        self.assertEqual(pulls, [])
+                        self.assertEqual(closes, [])
+                        with engine.query("(function (host:mixed))") as query:
+                            query_atoms = list(query)
+                            self.assertEqual(len(query_atoms), 1)
+                            self.assertEqual(query_atoms[0].kind, AtomKind.VARIABLE)
+                        self.assertEqual(pulls, [])
+                        self.assertEqual(closes, [])
+                        with engine.query("(function (metta (host:mixed) %Undefined% &self))") as query:
                             self.assertEqual(self.first(query, allowance).kind, AtomKind.VARIABLE)
                             self.assertEqual(pulls, [7])
-                        self.assertEqual(self.first(query, allowance).to_python(), 11)
-                        self.assertEqual(pulls, [7, (Symbol("return"), 11)])
-                    self.assertEqual(closes, [1])
+                            self.assertEqual(self.first(query, allowance).to_python(), 11)
+                            self.assertEqual(pulls, [7, (Symbol("return"), 11)])
+                        self.assertEqual(closes, [1])
 
     def test_open_call_keeps_each_returned_binding(self):
         with Engine(language="he") as engine:

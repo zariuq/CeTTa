@@ -58,7 +58,7 @@ static AtomId key(TermUniverse *u, Arena *a, const char *text) {
 }
 static CettaProofRowLayout layout(TermUniverse *u, Arena *a) {
     return (CettaProofRowLayout){.proof = {.length = 2u, .child = {3u, 2u}},
-        .arity = {4u, 3u}, .head = {parse(a, "proofs")->sym_id, parse(a, "C")->sym_id},
+        .arity = {4u, 3u}, .head = {atom_symbol_current_id(parse(a, "proofs")), atom_symbol_current_id(parse(a, "C"))},
         .universe_instance = u->instance_id, .storage_epoch = u->storage_epoch};
 }
 static CettaProofImage *image(TermUniverse *u, Arena *a) {
@@ -254,7 +254,7 @@ static CettaProofImage *single(TermUniverse *u, AtomId row, AtomId seed, unsigne
 }
 static void decoder_boundaries(TermUniverse *u, Arena *a) {
     AtomId seed = key(u, a, "I"), label = key(u, a, "M");
-    SymbolId head = parse(a, "wide")->sym_id;
+    SymbolId head = atom_symbol_current_id(parse(a, "wide"));
     CettaProofRowLayout l = {.proof = {.length = 1u, .child = {1u}},
         .arity = {2u}, .head = {head}, .universe_instance = u->instance_id,
         .storage_epoch = u->storage_epoch};
@@ -353,7 +353,7 @@ static void fallback_controls(TermUniverse *u, Arena *a, CettaProofImage *im,
 static void admission_controls(TermUniverse *u, Arena *a, CettaProofImage *im,
                                CettaProofRowLayout l) {
     Space s; space_init_with_universe(&s, u); s.kind = SPACE_KIND_SET;
-    CettaProofRowLayout wrong = l; wrong.head[1] = parse(a, "wrong")->sym_id;
+    CettaProofRowLayout wrong = l; wrong.head[1] = atom_symbol_current_id(parse(a, "wrong"));
     assert(space_attach_proof_image(&s, l.head[0], &wrong, im) == SPACE_PROOF_IMAGE_DECLINED);
     wrong = l; wrong.storage_epoch++;
     assert(space_attach_proof_image(&s, l.head[0], &wrong, im) == SPACE_PROOF_IMAGE_DECLINED);

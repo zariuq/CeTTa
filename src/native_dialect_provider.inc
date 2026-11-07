@@ -168,7 +168,8 @@ static bool native_dialect_capture_resource(void *raw, const Atom *atom,
          atom->ground.gkind != GV_CAPTURE)) return false;
     PrimeNativeParallel *parallel = owner->storage_owner
         ? owner->storage_owner : owner->control->parallel_owner;
-    if (parallel && (arena_owns_ptr(&parallel->world.storage->persistent_arena, atom->ground.ptr) ||
+    if (parallel && parallel->world.storage &&
+        (arena_owns_ptr(&parallel->world.storage->persistent_arena, atom->ground.ptr) ||
             arena_owns_ptr(&parallel->world.storage->eval_arena, atom->ground.ptr) ||
             (atom->ground.gkind == GV_SPACE &&
              hyperpose_branch_owns_space(&parallel->world, atom->ground.ptr)))) {
@@ -1308,12 +1309,12 @@ static bool native_dialect_parallel_prepare(PrimeNativeControl *control,
     parallel->variants_ready = true;
     __attribute__((cleanup(prime_native_restore_hashcons)))
     HashConsTable *previous_hashcons = g_hashcons;
-    g_hashcons = &parallel->world.storage->hashcons;
     if (!hyperpose_prepare_thread_branch(&parallel->world, 0u, control->space,
             &control->registry_read.initial, source->source_expression, NULL,
             NULL, true, true, NULL, NULL)) {
         prime_native_parallel_destroy(parallel); return false;
     }
+    g_hashcons = &parallel->world.storage->hashcons;
     parallel->child = calloc(1u, sizeof(*parallel->child));
     PrimeNativeControl *child = parallel->child;
     CettaSearchPolicySpec policy = {.native_control=true, .all=true,

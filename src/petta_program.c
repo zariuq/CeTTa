@@ -544,6 +544,8 @@ static void petta_program_release_unused_signature_universe(
 
 struct PettaProgram {
     PettaTransactionCatalog *private_catalogs;
+    _Atomic uint64_t lifetime_references;
+    _Atomic bool closed;
     unsigned admitted_rule_forms;
     bool refresh_callability;
     Arena plans;
@@ -4964,6 +4966,8 @@ PettaProgram *petta_program_new_with_rules_and_host_intrinsics(unsigned admitted
         return NULL;
     PettaProgram *program = calloc(1u, sizeof(*program));
     if (!program) return NULL;
+    atomic_init(&program->lifetime_references, 1u);
+    atomic_init(&program->closed, false);
     program->admitted_rule_forms = admitted_forms;
     program->is_host_intrinsic = is_host_intrinsic;
     if (!arena_try_init(&program->plans)) goto failed_plans;
@@ -5071,10 +5075,7 @@ bool petta_program_analysis_enabled(const PettaProgram *program) {
     return program && program->analysis;
 }
 
-void petta_program_free(PettaProgram *program) {
-    CETTA_SCOPED_SHARED_TRANSITION(program_retirement);
-    if (!program)
-        return;
+static void petta_program_dispose_metadata(PettaProgram *program) {
     /* Catalog owners can be retired after the program during cancellation.
      * Detach their back-pointers before dropping the program's root listing. */
     for (PettaTransactionCatalog *catalog=program->private_catalogs;catalog;) {
@@ -5114,7 +5115,56 @@ void petta_program_free(PettaProgram *program) {
     free(program->transient_values);
     free(program->transient_plans);
     arena_free(&program->transient_plan_atoms);
-    free(program);
+}
+
+bool petta_program_lifetime_retain(PettaProgram *program) {
+    if (!program || atomic_load_explicit(&program->closed, memory_order_acquire))
+        return false;
+    uint64_t value = atomic_load_explicit(&program->lifetime_references,
+                                          memory_order_relaxed);
+    while (value && value != UINT64_MAX) {
+        if (atomic_compare_exchange_weak_explicit(&program->lifetime_references,
+                &value, value + 1u, memory_order_relaxed, memory_order_relaxed)) {
+            if (!atomic_load_explicit(&program->closed, memory_order_acquire))
+                return true;
+            petta_program_lifetime_release(program);
+            return false;
+        }
+    }
+    return false;
+}
+
+void petta_program_lifetime_release(PettaProgram *program) {
+    if (!program)
+        return;
+    uint64_t before = atomic_fetch_sub_explicit(&program->lifetime_references,
+                                               1u, memory_order_acq_rel);
+    if (!before)
+        abort();
+    if (before == 1u) {
+        if (!atomic_load_explicit(&program->closed, memory_order_acquire))
+            abort();
+        free(program);
+    }
+}
+
+void petta_program_free(PettaProgram *program) {
+    if (!program)
+        return;
+    /* Retired worker cleanup uses this same transition guard. Close before
+     * disposing metadata so reentrant finalizers only release their leases. */
+    bool entered_scope = !cetta_shared_transition_scope_active();
+    if (entered_scope)
+        cetta_shared_transition_scope_enter();
+    CettaSharedTransitionGuard destruction = {0};
+    cetta_shared_transition_guard_enter(&destruction);
+    if (!atomic_exchange_explicit(&program->closed, true, memory_order_acq_rel)) {
+        petta_program_dispose_metadata(program);
+        petta_program_lifetime_release(program);
+    }
+    cetta_shared_transition_guard_leave(&destruction);
+    if (entered_scope)
+        cetta_shared_transition_scope_leave();
 }
 
 const PettaPlanNode *petta_program_plan_current(
@@ -6832,7 +6882,8 @@ bool petta_program_registered_space_token(PettaProgram *program,
 void petta_program_forget_space(
     PettaProgram *program, const Space *space) {
     CETTA_SCOPED_SHARED_TRANSITION(program_catalog_forget);
-    if (!program || !space)
+    if (!program || !space ||
+        atomic_load_explicit(&program->closed, memory_order_acquire))
         return;
     PettaTransactionCatalog *private = petta_program_private_catalog(program, space);
     if (private) {

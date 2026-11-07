@@ -705,7 +705,6 @@ static bool prime_replay_compare_selector(const EquationMatchDecisionCacheSlot *
     RC_S("selector_owner.pattern_ready",x->pattern_arena_initialized,y->pattern_arena_initialized);
     RC_S("selector_owner.head",x->head,y->head);RC_S("selector_owner.mode",x->mode,y->mode);
     RC_S("selector_owner.rows",x->equation_count,y->equation_count);
-    RC_S("selector_owner.refinements",x->guard_refinement_count,y->guard_refinement_count);
     const SpaceEquationToken *p=&x->equation_projection,*q=&y->equation_projection;
     if(p->space!=q->space||p->projection_dependency!=q->projection_dependency)return false;
     RC_P("selector_owner.source",p->space,q->space);
@@ -722,9 +721,7 @@ static bool prime_replay_compare_selector(const EquationMatchDecisionCacheSlot *
         RC_S("selector_owner.plan_index",j,j);
 #define SP(f) RC_A("selector_plan."#f,s->f,t->f)
         SP(equation);SP(match_pattern);SP(result_template);
-        SP(refinement_fallback_pattern);SP(refinement_failure_template);
 #undef SP
-        RC_S("selector_plan.guards",s->consumed_guard_count,t->consumed_guard_count);
         if(!bindings_frame_schema_compare(s->frame_schema,t->frame_schema,read))return false;
     }
     return true;

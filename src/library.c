@@ -206,13 +206,15 @@ enum {
 #define CETTA_LIBRARY_CRYPTO (UINT64_C(1) << 44)
 #define CETTA_LIBRARY_TOML (UINT64_C(1) << 45)
 #define CETTA_LIBRARY_LANG (UINT64_C(1) << 46)
+#define CETTA_LIBRARY_PY (UINT64_C(1) << 47)
 
 #define CETTA_LIBRARY_STORE (UINT64_C(1) << 36)
 #define CETTA_LIBRARY_ACT (UINT64_C(1) << 37)
 
 _Static_assert((CETTA_NATIVE_IMPORT_GPARSE &
                 (((UINT64_C(1) << 25) - 1) | CETTA_LIBRARY_STORE | CETTA_LIBRARY_ACT |
-                 CETTA_LIBRARY_CRYPTO | CETTA_LIBRARY_TOML | CETTA_LIBRARY_LANG)) == 0,
+                 CETTA_LIBRARY_CRYPTO | CETTA_LIBRARY_TOML | CETTA_LIBRARY_LANG |
+                 CETTA_LIBRARY_PY)) == 0,
                "native grammar import aliases the shared library catalog");
 _Static_assert((CETTA_LIBRARY_TOML & CETTA_LIBRARY_STORE) == 0,
                "TOML and native store imports must be independent");
@@ -238,6 +240,7 @@ static const CettaLibrarySpec CETTA_LIBRARIES[] = {
     {"crypto", CETTA_LIBRARY_CRYPTO, NULL},
     {"toml", CETTA_LIBRARY_TOML, NULL},
     {"lang", CETTA_LIBRARY_LANG, NULL},
+    {"py", CETTA_LIBRARY_PY, NULL},
     {"lts", CETTA_LIBRARY_LTS, NULL},
     {"mork", CETTA_LIBRARY_MORK, NULL},
     {"rho", CETTA_LIBRARY_RHO, NULL},
@@ -730,16 +733,14 @@ static bool library_context_init_services(CettaLibraryContext *ctx,
     if (ctx->petta_program && native_weight_profile)
         petta_program_enable_graded_equations(ctx->petta_program);
     if (needs_occurrence_program && !ctx->petta_program) return false;
-    const CettaLanguageVersion *program_version =
-        cetta_language_version_of(language_id, profile);
-    /* HE resolves a call's head when the call runs, and PeTTa's typed line
-     * does too: a plan compiled before a head had equations is rebuilt when
-     * the heads it read change.  PeTTa otherwise compiles an equation
-     * against the program as it stood when the equation was defined. */
+    /* A call's head is resolved against the program the call runs in: a plan
+     * compiled before a head had equations is rebuilt when the heads it read
+     * change.  HE resolves heads when calls run, and every PeTTa version uses
+     * an equation once it is present, one added by add-atom included, as
+     * stable-fixed SWI-PeTTa does (tests/petta/swi_differences, 10). */
     if (ctx->petta_program &&
         (language_id == CETTA_LANGUAGE_HE ||
-         (language_id == CETTA_LANGUAGE_PETTA &&
-          cetta_language_version_petta_typed_line(program_version))))
+         language_id == CETTA_LANGUAGE_PETTA))
         (void)petta_program_enable_callability_refresh(ctx->petta_program);
     if (ctx->petta_program && cetta_profile_uses_petta_typing(profile)) {
         (void)petta_program_enable_analysis(ctx->petta_program);
@@ -12244,6 +12245,8 @@ static bool library_import_native(CettaLibraryContext *ctx, const char *name,
         ctx->durable_runtime = cetta_durable_runtime_new();
     if (import_bit == CETTA_LIBRARY_IO && !ctx->io_runtime)
         ctx->io_runtime = cetta_io_runtime_new_with_value_limit(cetta_library_value_byte_limit(ctx));
+    if (import_bit == CETTA_LIBRARY_PY)
+        cetta_foreign_enable_objects(ctx->foreign_runtime, registry);
     return true;
 }
 

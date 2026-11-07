@@ -20,7 +20,7 @@ void __wrap_free(void *p) { if(p&&p==watched_domain){domain_frees++;watched_doma
 static Atom *parse(Arena *a,const char *text) { Atom **forms=NULL;assert(parse_metta_text(text,a,&forms)==1);Atom *p=forms[0];free(forms);return p; }
 static AtomId key(TermUniverse *u,Arena *a,const char *text) { AtomId id=term_universe_store_alpha_key(u,parse(a,text));assert(id!=CETTA_ATOM_ID_NONE);return id; }
 static CettaProofRowLayout layout(TermUniverse *u,Arena *a) {
-    return (CettaProofRowLayout){.proof={.length=2u,.child={2u,2u}},.arity={3u,3u},.head={parse(a,"rows")->sym_id,parse(a,"C")->sym_id},.universe_instance=u->instance_id,.storage_epoch=u->storage_epoch};
+    return (CettaProofRowLayout){.proof={.length=2u,.child={2u,2u}},.arity={3u,3u},.head={atom_symbol_current_id(parse(a,"rows")),atom_symbol_current_id(parse(a,"C"))},.universe_instance=u->instance_id,.storage_epoch=u->storage_epoch};
 }
 static CettaTermDomain *domain_new(bool counted,CettaTermDomainScope *scope) {
     CettaTermDomain *d=cetta_term_domain_new(TERM_UNIVERSE_STORE_FORMAT_COMPACT32_V1,TERM_UNIVERSE_COLLECTION_RECLAIM,false);assert(d&&cetta_term_domain_enter(d,scope));

@@ -36,19 +36,19 @@ static void test_collection_symbol_policy(void) {
         arena_init(&target);
         arena_set_own_symbols(&target, own_symbols != 0u);
         Atom *symbol = atom_symbol(&source, "gc-symbol-policy");
-        SymbolId id = symbol->sym_id;
+        SymbolId id = atom_symbol_current_id(symbol);
         CettaOpenEquationCursor cursor = {0};
         OemCollect collect = {.from_identity = source.identity, .to = &target};
         assert(oem_trace_atom(&cursor, &collect, symbol));
         Atom *copy = oem_collect_atom(&cursor, &collect, symbol);
-        assert(copy && copy->kind == ATOM_SYMBOL && copy->sym_id == id);
+        assert(copy && copy->kind == ATOM_SYMBOL && atom_symbol_current_id(copy) == id);
         assert(copy == oem_collect_atom(&cursor, &collect, symbol));
         if (own_symbols)
             assert(copy->arena_id == target.identity);
         else
             assert(copy == atom_symbol_canonical(id));
         arena_free(&source);
-        assert(copy->kind == ATOM_SYMBOL && copy->sym_id == id);
+        assert(copy->kind == ATOM_SYMBOL && atom_symbol_current_id(copy) == id);
         arena_free(&target);
         free(collect.keys);
         free(collect.values);

@@ -156,13 +156,16 @@ static bool scalar_bound(Atom *bound,const Atom **value,bool *exclusive) {
 }
 /* First signed-integer ordinal satisfying integer >/>= bound. None is the
  * conceptual ordinal2^64. At most65 comparisons; never round via double. */
-static bool integer_cut(const Atom *bound,bool strict,bool *exists,uint64_t *ordinal) {
+static bool integer_cut(Arena *arena,const Atom *bound,bool strict,bool *exists,uint64_t *ordinal) {
     uint64_t low=0,high=UINT64_MAX;*exists=false;*ordinal=0;
     for (;;) {
         uint64_t middle=low+(high-low)/2;
-        Atom value={0};value.kind=ATOM_GROUNDED;value.ground.gkind=GV_INT;
-        value.ground.ival=(int64_t)(middle^(UINT64_C(1)<<63));int order=0;
-        if (!petta_semantics_term_compare(&value,bound,&order)) return false;
+        ArenaMark mark=arena_mark(arena);
+        Atom *value=atom_int(arena,(int64_t)(middle^(UINT64_C(1)<<63)));
+        int order=0;
+        bool ok=petta_semantics_term_compare(value,bound,&order);
+        arena_reset(arena,mark);
+        if (!ok) return false;
         if (order>0 || (!strict && order==0)) {
             *exists=true;*ordinal=middle;
             if (!middle) break;
@@ -1154,8 +1157,8 @@ Atom *cetta_store_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **a
             return atom_symbol(a,inside ? "StoreScalarWithinV1" : "StoreScalarOutsideV1");
         }
         uint64_t first=0,last=0;bool has_first=true,has_last=false;
-        if ((lower && !integer_cut(lower,lo_strict,&has_first,&first)) ||
-                (upper && !integer_cut(upper,!hi_strict,&has_last,&last))) return refused(a,"invalid-scalar-order");
+        if ((lower && !integer_cut(a,lower,lo_strict,&has_first,&first)) ||
+                (upper && !integer_cut(a,upper,!hi_strict,&has_last,&last))) return refused(a,"invalid-scalar-order");
         if (!has_first || (has_last && first>=last)) return atom_symbol(a,"StoreIntegerWindowEmptyV1");
         return atom_expr3(a,atom_symbol(a,"StoreIntegerWindowV1"),ordinal_key(a,first),
             has_last ? ordinal_key(a,last) : atom_symbol(a,"NoBound"));

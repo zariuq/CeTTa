@@ -39,7 +39,9 @@
 (: import! (-> Atom Atom (->)))
 (: select (-> Atom %Undefined%))
 (: hyperpose (-> Expression %Undefined%))
-(: reify (-> Atom Expression))
+; An Expression codomain is a source-metatype demand in HE: a caller can
+; retain the collection call as syntax. Use collapse's ordinary completion.
+(: reify (-> Atom %Undefined%))
 (: collect (-> Atom Expression))
 (: fold (-> Atom Atom Variable Variable Atom %Undefined%))
 (: fold-by-key (-> Atom Atom Variable Variable Atom Atom %Undefined%))

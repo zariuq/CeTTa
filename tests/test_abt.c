@@ -15,7 +15,7 @@
 
 enum {
     ABT_DEEP_TERM_DEPTH = CETTA_ABT_MUTATION == 0 ? 100000 : 1000,
-    ABT_EXPECTED_CHECKS = 125 + 45 + 35 + 6,
+    ABT_EXPECTED_CHECKS = 125 + 45 + 35 + 6 + 18 + 4,
 };
 
 static unsigned failures = 0;

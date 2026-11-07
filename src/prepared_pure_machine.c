@@ -38,6 +38,12 @@ typedef enum {
     /* No answer in a single-answer program: the program declines, and the
      * canonical evaluator answers the call, as it answers HE's Empty. */
     PREPARED_PURE_DECLINE,
+    /* An HE constructor with one declared function type over computed
+     * parameters (cetta_prepared_pure_he_checked_constructor): its arguments
+     * are built as PREPARED_PURE_BUILD's, and the built atom is a value where
+     * HE's typing finds the application well typed; elsewhere the program
+     * declines, and the canonical evaluator gives HE's type error. */
+    PREPARED_PURE_TYPED_BUILD,
 } PreparedPureNodeKind;
 
 /* An intrinsic node's operand discipline, held in its auxiliary field:
@@ -350,13 +356,63 @@ typedef struct {
     /* An HE head with one value-class signature: a call takes typed_arity
      * arguments, value_classes[first_value_class, +typed_arity) are its
      * parameters' classes and range_class its range's.  checks_arguments
-     * when some parameter's class is not %Undefined%. */
+     * when some parameter's class is not %Undefined%; checks_return when
+     * some body is not shown to be of the range's class, whose value a call
+     * then checks when it returns. */
     bool typed;
     bool checks_arguments;
+    bool checks_return;
     uint8_t range_class;
+    /* Where range_class is PREPARED_PURE_VALUE_PARAMETER: the parameter
+     * whose argument's class the answer has. */
+    uint32_t range_parameter;
+    /* Some position is PREPARED_PURE_VALUE_STRUCTURAL, and the head's
+     * trusted version keeps its calls to itself typed. */
+    bool self_trusted;
+    /* An HE head with a structural position: every call checks each such
+     * argument at its formal by HE's typing, and a structural range, kept
+     * in range_formal, is checked where the head's activation returns. */
+    bool he_structural;
+    Atom *range_formal;
+    /* A PeTTa head with a trusted version and a closed structural range:
+     * that range, which the version proves of every answer. */
+    Atom *petta_range;
+    /* An untyped HE head of one arity: its parameters' and its answer's
+     * typings inferred over the program (prepared_pure_infer_untyped),
+     * inferred_sets[first_inferred, +inferred_arity] with the answer's
+     * last; UINT32_MAX for none. */
+    uint32_t first_inferred;
+    uint32_t inferred_arity;
+    /* Every return position of the head's equations gives a value HE's
+     * check at range_formal passes (prepared_pure_he_range_shown), so no
+     * activation owes that check. */
+    bool range_shown;
+    /* Some return position is a tail call that shows an open range only
+     * by meeting the callee's range with the activation's instance, and
+     * that meet is not implied by the call's checks
+     * (prepared_pure_returns_unmet_call), or the implied ones mix builds
+     * over a parameter with fields of it: every activation computes that
+     * instance. */
+    bool range_meets_tail;
+    /* The structural positions whose formals share a variable with an open
+     * range_formal, as bits: a call's range instance types each of these
+     * arguments once (prepared_pure_he_range_instance), which is their
+     * check. */
+    uint64_t instance_formals;
     uint32_t typed_arity;
     uint32_t first_value_class;
     bool requires_ready_bind_patterns;
+    /* A fold its two equations spell (prepared_pure_recognize_fold):
+     * (= (g nil) base) and (= (g (cons .. $r ..)) (op e (g $r))), e a field
+     * (fold_item) or an integer (fold_literal); fold_op 0 for none. */
+    uint8_t fold_op;
+    uint8_t fold_cons_len;
+    uint8_t fold_rest;
+    uint8_t fold_item;
+    SymbolId fold_nil;
+    SymbolId fold_cons;
+    int64_t fold_base;
+    int64_t fold_literal;
 } PreparedPureHead;
 
 typedef struct {
@@ -478,6 +534,18 @@ typedef struct {
     uint8_t entry;
     /* SCALAR_TREE only: bounded compact register instruction count. */
     uint8_t scalar_count;
+    /* CALL and TAIL_CALL into a head with structural positions: the
+     * argument positions (bits 0..7) whose structural check what the caller
+     * already knows decides (prepared_pure_discharged_arguments). */
+    uint8_t discharged;
+    /* CALL and TAIL_CALL: compilation knows every argument's class passes
+     * the callee's typed argument check (prepared_pure_typed_arguments_known),
+     * so the run skips it. */
+    bool typed_arguments_known;
+    /* CALL and TAIL_CALL: compilation decides the callee's structural
+     * argument check (prepared_pure_structural_arguments_known), so the run
+     * skips it. */
+    bool structural_arguments_known;
 } PreparedPureCode;
 
 /* An activation of register code: its next instruction, and its registers
@@ -485,6 +553,24 @@ typedef struct {
 typedef struct {
     uint32_t pc;
     uint32_t base;
+    /* The head whose body runs, or UINT32_MAX for the root. */
+    uint32_t head;
+    /* The class its value must have when it returns, or
+     * PREPARED_PURE_VALUE_UNDEFINED: the range of a head that checks its
+     * value at return (PreparedPureHead.checks_return), kept through the
+     * tail calls that re-enter in its place. */
+    uint8_t return_class;
+    /* The HE head whose structural range its value must have when it
+     * returns, or UINT32_MAX, kept through tail calls as return_class is. */
+    uint32_t return_head;
+    /* The type an HE activation owes, NULL for none: its head's range,
+     * an open one read under the call's argument typings and met at a tail
+     * call with the type its caller owed.  It is checked at return where
+     * return_head is set; a tail call meets it in any case. */
+    Atom *expected;
+    /* The program->witness_marks slot above whose mark this frame's
+     * `expected` lives, UINT32_MAX where it owns none. */
+    uint32_t witness_slot;
 } PreparedPureCodeFrame;
 
 /* How a call of a head enters its equation, decided when the program is
@@ -564,7 +650,25 @@ typedef struct {
     uint32_t next_slot;
     uint32_t ready_input_slots;
     uint32_t input_head;
+    /* Variables a binder bound whose scope has ended: HE and PeTTa keep
+     * such a binding for the rest of the body, so a later binder of one is
+     * an equality test, which the body leaves to the canonical evaluator. */
+    VarId *retired;
+    size_t retired_len;
+    size_t retired_cap;
+    /* Retirements of earlier alternatives, set aside while a later one
+     * compiles (prepared_pure_alternatives_next). */
+    VarId *aside;
+    size_t aside_len;
+    size_t aside_cap;
+    /* A retirement could not be recorded: no variable binds afresh. */
+    bool retire_lost;
 } PreparedPureCompileContext;
+
+typedef struct {
+    size_t retired;
+    size_t aside;
+} PreparedPureAlternatives;
 
 struct CettaPreparedPureProgram {
     /* Owners: the creator, and each answer cursor reading the program. */
@@ -657,6 +761,10 @@ struct CettaPreparedPureProgram {
     uint8_t *value_classes;
     size_t value_class_len;
     size_t value_class_cap;
+    /* Beside each class, the closed formal of a STRUCTURAL one, in the
+     * syntax arena; NULL elsewhere. */
+    Atom **value_formals;
+    size_t value_formal_cap;
     /* The syntax of expanded macro definitions, which the program's nodes
      * read; it lives as long as the program and interns nothing. */
     Arena *syntax_arena;
@@ -724,6 +832,14 @@ struct CettaPreparedPureProgram {
      * The result receiver is selected before lowering, never while running. */
     bool has_choice_zero;
     bool optional_empty;
+    /* Some head checks its value at return (PreparedPureHead.checks_return):
+     * the program runs only as register code without an answer cursor,
+     * whose frames carry the checks. */
+    bool return_checks;
+    /* Some head checks a structural argument where another head calls it
+     * (PREPARED_PURE_VALUE_STRUCTURAL): its frames know their head, so the
+     * program runs only as register code without an answer cursor. */
+    bool structural_checks;
     PreparedPureCode *code;
     size_t code_len;
     size_t code_cap;
@@ -809,6 +925,33 @@ struct CettaPreparedPureProgram {
     Arena gc_survivor;
     bool gc_survivor_ready;
     size_t gc_survivor_bytes;
+    /* A checked build whose typing its children's known types decide
+     * (prepared_pure_static_type): that type, by node, in the syntax arena;
+     * its code skips the check. */
+    Atom **node_static_types;
+    /* Typings inferred for untyped heads (PreparedPureHead.first_inferred). */
+    struct PreparedPureTypeSet *inferred_sets;
+    size_t inferred_len;
+    /* The value the run's latest such build made, and its type, until a
+     * collection moves values: where the run answers that value, its
+     * typing is kept for it (prepared_pure_keep_result_typing). */
+    Atom *built_last;
+    Atom *built_last_type;
+    /* Whether some HE head owes a structural range. */
+    bool he_range_checks;
+    /* The instances of HE ranges its activations owe
+     * (PreparedPureCodeFrame.expected), kept apart from the collected
+     * arena: a frame owning one keeps it above witness_marks[its slot],
+     * the marks a stack as the frames are.  They are computed in
+     * witness_scratch, emptied after each call that used it. */
+    Arena witness;
+    Arena witness_scratch;
+    ArenaMark witness_base;
+    ArenaMark witness_scratch_base;
+    ArenaMark *witness_marks;
+    uint32_t witness_mark_len;
+    size_t witness_mark_cap;
+    bool witness_ready;
     /* The survivor arena's size after the last major collection. */
     size_t gc_major_survivor_bytes;
     size_t gc_low_reclaim_growth_bytes;
@@ -890,6 +1033,164 @@ static const PreparedPureBody *prepared_pure_body(
         return &program->body;
     return index < program->equation_len
         ? &program->equations[index].body : NULL;
+}
+
+static bool prepared_pure_metatype_name(const Atom *type);
+
+/* Whether `head` with `arity` arguments, a head without equations, is an HE
+ * constructor the machine builds with a typing check: exactly one declared
+ * type, a function type of that arity whose parameters are no metatype, so
+ * that HE computes every argument as the untyped build does, and no type row
+ * but that declaration.  The build's check counts typings, and a row on an
+ * application, (: (Box 1 "s") T) next to (: Box (-> $t $t R)), counts
+ * whatever the arguments, while HE checks them against the constructor's
+ * type; such a head is HE's to build.  A row added later advances the
+ * declaration revision, so the program is prepared again. */
+bool cetta_prepared_pure_he_checked_constructor(Space *space, SymbolId head,
+                                                CettaExprLen arity) {
+    if (!space || head == SYMBOL_ID_NONE || arity == 0u || arity > 64u ||
+        !eval_current_language_id ||
+        eval_current_language_id() != CETTA_LANGUAGE_HE ||
+        !space_type_rows_only_declare(space, head))
+        return false;
+    Arena scratch;
+    arena_init(&scratch);
+    Atom **types = NULL;
+    uint32_t count = get_atom_types(space, &scratch,
+                                    atom_symbol_id(&scratch, head), &types);
+    Atom *type = count == 1u ? types[0] : NULL;
+    bool ok = type && type->kind == ATOM_EXPR &&
+        type->expr.len == (CettaExprLen)(arity + 2u) &&
+        atom_is_symbol_id(type->expr.elems[0], g_builtin_syms.arrow);
+    for (CettaExprLen i = 0u; ok && i < arity; i++)
+        ok = !prepared_pure_metatype_name(type->expr.elems[i + 1u]);
+    free(types);
+    arena_free(&scratch);
+    return ok;
+}
+
+/* Whether HE's typing finds the built application well typed: its
+ * operator's declared type admits the arguments' types.  The type stamp
+ * store reads the arguments' typings by their addresses. */
+static bool prepared_pure_value_typing_nests_undefined(
+    CettaPreparedPureProgram *program, Arena *arena, Atom *value);
+
+static bool prepared_pure_typed_build_holds(CettaPreparedPureProgram *program,
+                                            Arena *arena, Atom *built) {
+    /* A child typed with %Undefined% below its top is HE's to read. */
+    for (CettaExprIndex i = 1u; built && built->kind == ATOM_EXPR &&
+             i < built->expr.len; i++)
+        if (prepared_pure_value_typing_nests_undefined(program, arena,
+                                                       built->expr.elems[i]))
+            return false;
+    int known = space_type_stamps_count(program->space, arena, built);
+    if (known >= 0)
+        return known > 0;
+    Atom **types = NULL;
+    uint32_t count = get_atom_types(program->space, arena, built, &types);
+    free(types);
+    return count > 0u;
+}
+
+/* Whether `type` names %Undefined% anywhere. */
+static bool prepared_pure_type_names_undefined(const Atom *type) {
+    if (!type)
+        return false;
+    if (type->kind == ATOM_SYMBOL)
+        return atom_symbol_current_id(type) == g_builtin_syms.undefined_type;
+    if (type->kind != ATOM_EXPR)
+        return false;
+    for (CettaExprIndex i = 0u; i < type->expr.len; i++)
+        if (prepared_pure_type_names_undefined(type->expr.elems[i]))
+            return true;
+    return false;
+}
+
+/* Whether one of `value`'s typings names %Undefined% below its top, where
+ * HE does not take it as any type but match_types does. */
+static bool prepared_pure_value_typing_nests_undefined(
+    CettaPreparedPureProgram *program, Arena *arena, Atom *value) {
+    if (!value || (value->kind != ATOM_EXPR && value->kind != ATOM_SYMBOL))
+        return false;
+    Atom *const *held = NULL;
+    int count = space_type_stamps_types(program->space, arena, value, &held);
+    Atom **types = NULL;
+    if (count < 0) {
+        count = (int)get_atom_types(program->space, arena, value, &types);
+        held = types;
+    }
+    bool nests = false;
+    for (int i = 0; !nests && i < count; i++)
+        nests = held[i] && held[i]->kind == ATOM_EXPR &&
+            prepared_pure_type_names_undefined(held[i]);
+    free(types);
+    return nests;
+}
+
+/* Whether HE's typing gives `value` a type that matches the closed formal
+ * `formal`, as HE's argument check reads it: one of the value's types
+ * unifies with the formal (an untyped value's %Undefined% does).  A typing
+ * naming %Undefined% below its top is HE's to read. */
+/* Whether a type row may type an expression node of `value`: HE checks
+ * such a value at a formal by the first typing that unifies, which a row
+ * may give, and then checks the node's own application at that instance. */
+static bool prepared_pure_value_row_typed(const CettaPreparedPureProgram *program,
+                                          Atom *value) {
+    return value && value->kind == ATOM_EXPR &&
+        !space_type_rows_free_below(program->space, value);
+}
+
+static bool prepared_pure_he_value_has_type(
+    CettaPreparedPureProgram *program, Arena *arena, Atom *value,
+    Atom *formal) {
+    if (!value || !formal ||
+        prepared_pure_value_typing_nests_undefined(program, arena, value))
+        return false;
+    /* A typing the store keeps vouches that no node of the value is typed
+     * by a row on an expression; any other value is walked. */
+    if (space_type_stamps_has_type(program->space, arena, value, formal))
+        return true;
+    int unifies = space_type_stamps_unifies(program->space, arena, value, formal);
+    if (unifies >= 0)
+        return unifies > 0;
+    if (prepared_pure_value_row_typed(program, value))
+        return false;
+    Atom **types = NULL;
+    uint32_t count = get_atom_types(program->space, arena, value, &types);
+    bool found = false;
+    for (uint32_t i = 0u; !found && i < count; i++) {
+        Bindings bindings;
+        bindings_init(&bindings);
+        found = types[i] && match_types(types[i], formal, &bindings, arena);
+        bindings_free(&bindings);
+    }
+    free(types);
+    return found;
+}
+
+/* The program executing on this thread and the arena it runs on, for the
+ * type stamp store's arena oracle. */
+static _Thread_local const CettaPreparedPureProgram *g_prepared_pure_stamp_program;
+static _Thread_local const Arena *g_prepared_pure_stamp_arena;
+
+bool cetta_prepared_pure_stamp_arena_epoch(const Atom *atom, uint32_t *arena,
+                                           uint64_t *epoch) {
+    const Arena *run = g_prepared_pure_stamp_arena;
+    const CettaPreparedPureProgram *program = g_prepared_pure_stamp_program;
+    if (!atom || !arena || !epoch || !run || !program)
+        return false;
+    if (atom->arena_id == run->identity) {
+        *arena = atom->arena_id;
+        *epoch = run->reset_epoch;
+        return true;
+    }
+    if (program->gc_survivor_ready &&
+        atom->arena_id == program->gc_survivor.identity) {
+        *arena = atom->arena_id;
+        *epoch = program->gc_survivor.reset_epoch;
+        return true;
+    }
+    return false;
 }
 
 static bool prepared_pure_debug_enabled(void) {
@@ -1738,6 +2039,7 @@ static bool prepared_pure_plan_builds_structural_values(
         const PreparedPureNode *node =
             &program->nodes[program->structural_scan_len];
         if (node->kind == PREPARED_PURE_BUILD ||
+            node->kind == PREPARED_PURE_TYPED_BUILD ||
             (node->kind == PREPARED_PURE_INTRINSIC &&
              node->intrinsic_instruction ==
                  CETTA_GSLT_PREPARED_PURE_INTRINSIC_DECONSTRUCT_NONEMPTY_EXPRESSION))
@@ -2253,6 +2555,14 @@ static void prepared_pure_gc_collect(
     if (!prepared_pure_memo_rebuild_buckets(
             program, program->memo_len))
         goto copy_failed;
+    /* The noted build moves with the roots that keep it; a build they do
+     * not keep is forgotten. */
+    if (program->built_last)
+        program->built_last =
+            atom_deep_copy_session_settled(session, program->built_last)
+                ? program->built_last
+                : atom_deep_copy_session_forwarded(session,
+                                                   program->built_last);
     goto copy_finished;
 copy_failed:
     copied = false;
@@ -2484,11 +2794,86 @@ static bool prepared_pure_context_lookup(
     return false;
 }
 
+static bool prepared_pure_context_retired(
+    const PreparedPureCompileContext *context, VarId var) {
+    for (size_t i = 0u; i < context->retired_len; i++)
+        if (var_id_eq(context->retired[i], var))
+            return true;
+    return false;
+}
+
+static void prepared_pure_context_retire(PreparedPureCompileContext *context,
+                                         VarId var) {
+    if (prepared_pure_context_retired(context, var))
+        return;
+    if (!prepared_pure_reserve((void **)&context->retired,
+                               sizeof(*context->retired),
+                               &context->retired_cap,
+                               context->retired_len + 1u)) {
+        context->retire_lost = true;
+        return;
+    }
+    context->retired[context->retired_len++] = var;
+}
+
+/* The end of the scope a binder opened at `saved`: its variables leave the
+ * context and stay bound for the rest of the body. */
+static void prepared_pure_context_end_scope(PreparedPureCompileContext *context,
+                                            size_t saved) {
+    for (size_t i = saved; i < context->len; i++)
+        prepared_pure_context_retire(context, context->bindings[i].var);
+    context->len = saved;
+}
+
+/* Alternatives (branches, arms): each compiles under the retirements made
+ * before the first, and what follows the last sees every one's. */
+static PreparedPureAlternatives prepared_pure_alternatives_begin(
+    const PreparedPureCompileContext *context) {
+    return (PreparedPureAlternatives){
+        .retired = context->retired_len, .aside = context->aside_len};
+}
+
+static void prepared_pure_alternatives_next(
+    PreparedPureCompileContext *context,
+    const PreparedPureAlternatives *alternatives) {
+    size_t count = context->retired_len - alternatives->retired;
+    if (count == 0u)
+        return;
+    if (!prepared_pure_reserve((void **)&context->aside,
+                               sizeof(*context->aside), &context->aside_cap,
+                               context->aside_len + count)) {
+        context->retire_lost = true;
+        return;
+    }
+    memcpy(&context->aside[context->aside_len],
+           &context->retired[alternatives->retired],
+           count * sizeof(*context->aside));
+    context->aside_len += count;
+    context->retired_len = alternatives->retired;
+}
+
+static void prepared_pure_alternatives_end(
+    PreparedPureCompileContext *context,
+    const PreparedPureAlternatives *alternatives) {
+    size_t count = context->aside_len - alternatives->aside;
+    for (size_t i = 0u; i < count; i++)
+        prepared_pure_context_retire(
+            context, context->aside[alternatives->aside + i]);
+    context->aside_len = alternatives->aside;
+}
+
+static void prepared_pure_context_release(PreparedPureCompileContext *context) {
+    free(context->bindings);
+    free(context->retired);
+    free(context->aside);
+}
+
 static bool prepared_pure_context_bind(
     PreparedPureCompileContext *context, VarId var,
     bool allow_shadow, uint32_t *slot_out) {
     if (!context || var_id_is_none(var) ||
-        context->next_slot >= PREPARED_PURE_MAX_SLOTS)
+        context->next_slot >= PREPARED_PURE_MAX_SLOTS ||
+        context->retire_lost || prepared_pure_context_retired(context, var))
         return false;
     uint32_t existing = 0u;
     if (!allow_shadow &&
@@ -2782,6 +3167,16 @@ typedef enum {
     PREPARED_PURE_VALUE_STRING,
     PREPARED_PURE_VALUE_BOOL,
     PREPARED_PURE_VALUE_UNKNOWN,
+    /* A parameter and the range written as one type variable that no other
+     * position names: the argument there has to be a value of some class,
+     * and the call's answer has that class. */
+    PREPARED_PURE_VALUE_PARAMETER,
+    /* A closed type that is no value class nor a metatype's name, as Tree or
+     * (List Number), of a PeTTa head with a trusted version: a call from
+     * outside the head checks its argument at it once, a call the head makes
+     * to itself keeps it by the version, and a range of the kind is the
+     * version's to prove. */
+    PREPARED_PURE_VALUE_STRUCTURAL,
 } PreparedPureValueClass;
 
 /* The class a declared type names, or false when it names none. */
@@ -2837,6 +3232,51 @@ static bool prepared_pure_petta_intrinsic_type_guard(Space *space) {
 }
 
 static bool prepared_pure_type_mentions_var(
+    const Atom *type, VarId id, uint32_t depth);
+
+/* Whether position `index` of the arrow `signature` (its range when `index`
+ * is `arity`) is a type variable that exactly one bare parameter and the
+ * bare range name, and no other position mentions
+ * (value_parameter_protocol_at). */
+static bool prepared_pure_parameter_range_variable(
+    const Atom *signature, CettaExprLen arity, CettaExprLen index) {
+    const Atom *type = signature->expr.elems[index + 1u];
+    const Atom *range = signature->expr.elems[arity + 1u];
+    if (type->kind != ATOM_VAR || range->kind != ATOM_VAR ||
+        !var_id_eq(type->var_id, range->var_id))
+        return false;
+    uint32_t parameters = 0u;
+    for (CettaExprLen j = 0u; j < arity; j++) {
+        const Atom *position = signature->expr.elems[j + 1u];
+        if (position->kind == ATOM_VAR &&
+            var_id_eq(position->var_id, range->var_id))
+            parameters++;
+        else if (prepared_pure_type_mentions_var(position, range->var_id, 0u))
+            return false;
+    }
+    return parameters == 1u;
+}
+
+static bool prepared_pure_type_mentions_var(
+    const Atom *type, VarId id, uint32_t depth);
+
+/* Whether some variable of `left` occurs in `right`. */
+static bool prepared_pure_types_share_var(const Atom *left, const Atom *right,
+                                          uint32_t depth) {
+    if (left->kind == ATOM_VAR)
+        return prepared_pure_type_mentions_var(right, left->var_id, 0u);
+    if (left->kind != ATOM_EXPR)
+        return false;
+    if (depth > PREPARED_PURE_MAX_COMPILE_DEPTH)
+        return true;
+    for (CettaExprIndex i = 0u; i < left->expr.len; i++)
+        if (prepared_pure_types_share_var(left->expr.elems[i], right,
+                                          depth + 1u))
+            return true;
+    return false;
+}
+
+static bool prepared_pure_type_mentions_var(
     const Atom *type, VarId id, uint32_t depth) {
     if (type->kind == ATOM_VAR)
         return var_id_eq(type->var_id, id);
@@ -2877,8 +3317,38 @@ static bool prepared_pure_head_answers_parameter(
  * checks the same classes where it calls, and answers nothing for a call
  * that fails them, where its guard is the intrinsic one; its typed line
  * checks calls by its own contracts. */
-static bool prepared_pure_value_signature(
-    Space *space, SymbolId head, CettaExprLen arity, uint8_t *classes) {
+static bool prepared_pure_metatype_name(const Atom *type) {
+    return type->kind == ATOM_SYMBOL &&
+        (atom_symbol_current_id(type) == g_builtin_syms.atom ||
+         atom_symbol_current_id(type) == g_builtin_syms.symbol ||
+         atom_symbol_current_id(type) == g_builtin_syms.variable ||
+         atom_symbol_current_id(type) == g_builtin_syms.expression ||
+         atom_symbol_current_id(type) == g_builtin_syms.grounded);
+}
+
+/* As prepared_pure_value_signature, also giving each STRUCTURAL position's
+ * closed formal in FORMALS, copied into KEEP. */
+enum { PREPARED_PURE_MAX_VERSION_ARITY = 16u };
+
+/* Whether `type` names %Undefined% anywhere. */
+static bool prepared_pure_type_mentions_undefined(const Atom *type,
+                                                   uint32_t depth) {
+    if (!type || depth > 64u)
+        return type != NULL;
+    if (type->kind == ATOM_SYMBOL)
+        return atom_symbol_current_id(type) == g_builtin_syms.undefined_type;
+    if (type->kind != ATOM_EXPR)
+        return false;
+    for (CettaExprIndex i = 0u; i < type->expr.len; i++)
+        if (prepared_pure_type_mentions_undefined(type->expr.elems[i],
+                                                  depth + 1u))
+            return true;
+    return false;
+}
+
+static bool prepared_pure_value_signature_formals(
+    Space *space, SymbolId head, CettaExprLen arity, uint8_t *classes,
+    Atom **formals, Arena *keep) {
     if (!space || head == SYMBOL_ID_NONE || arity > 64u ||
         !eval_current_language_id)
         return false;
@@ -2900,9 +3370,32 @@ static bool prepared_pure_value_signature(
         types[0]->kind == ATOM_EXPR &&
         types[0]->expr.len == (CettaExprLen)(arity + 2u) &&
         atom_is_symbol_id(types[0]->expr.elems[0], g_builtin_syms.arrow);
+    bool structural = false;
     for (CettaExprLen i = 0u; ok && i <= arity; i++) {
         Atom *type = types[0]->expr.elems[i + 1u];
-        if (type->kind == ATOM_VAR) {
+        if (formals)
+            formals[i] = NULL;
+        /* The variable of one parameter that the range repeats, and no
+         * other position names: on a value of a class the argument's type
+         * is its class, PeTTa's guard and HE's cast pass once, and the
+         * answer has to be of that class, which a call checks where it
+         * returns.  HE's head that answers its argument keeps the unchecked
+         * rule below, and the range follows its parameter. */
+        bool parameter_range = type->kind == ATOM_VAR &&
+            prepared_pure_parameter_range_variable(types[0], arity, i);
+        if (parameter_range && i < arity &&
+            language == CETTA_LANGUAGE_HE &&
+            prepared_pure_head_answers_parameter(space, head, arity, i))
+            parameter_range = false;
+        if (parameter_range && i == arity) {
+            parameter_range = false;
+            for (CettaExprLen p = 0u; p < arity; p++)
+                parameter_range = parameter_range ||
+                    classes[p] == PREPARED_PURE_VALUE_PARAMETER;
+        }
+        if (parameter_range) {
+            classes[i] = PREPARED_PURE_VALUE_PARAMETER;
+        } else if (type->kind == ATOM_VAR) {
             /* In HE a type variable written once accepts every value, as
              * %Undefined% does, and asks nothing of the answer.  Written in
              * two parameters, it asks their types to agree, which a value's
@@ -2922,13 +3415,97 @@ static bool prepared_pure_value_signature(
                      types[0]->expr.elems[j + 1u]->kind == ATOM_VAR &&
                      prepared_pure_head_answers_parameter(
                          space, head, arity, i));
-        } else {
-            ok = prepared_pure_type_value_class(type, &classes[i]);
+        } else if (!prepared_pure_type_value_class(type, &classes[i])) {
+            classes[i] = PREPARED_PURE_VALUE_STRUCTURAL;
+            /* HE reads %Undefined% as any type at the top of a formal
+             * only; below it the canonical evaluator checks it. */
+            if (prepared_pure_type_mentions_undefined(type, 0u)) {
+                ok = false;
+                break;
+            }
+            /* HE checks an open formal by unifying an argument's typing
+             * with it at each call; PeTTa's trusted version decides an open
+             * one below. */
+            ok = !prepared_pure_metatype_name(type) &&
+                (language == CETTA_LANGUAGE_PETTA ||
+                 language == CETTA_LANGUAGE_HE);
+            structural = structural || ok;
+            if (ok && formals)
+                ok = (formals[i] = keep ? atom_deep_copy(keep, type) : type) != NULL;
         }
+    }
+    /* structuralRun_eq_protocol: a head with a structural formal runs its
+     * trusted version where the machine's checks pass.  Its parameters are
+     * value classes, structural or unchecked (%Undefined%), and its range is
+     * checked and proved by the version.  A type variable beside a structural
+     * formal, or a range left unchecked or checked at the return, keeps the
+     * head off the machine. */
+    for (CettaExprLen i = 0u; ok && structural && i <= arity; i++)
+        ok = classes[i] != PREPARED_PURE_VALUE_PARAMETER &&
+            (language == CETTA_LANGUAGE_HE || i < arity ||
+             classes[i] != PREPARED_PURE_VALUE_UNDEFINED);
+    /* Open formals are checked one by one, so they share no variable,
+     * whose binding HE would thread from one argument to the next. */
+    for (CettaExprLen i = 0u; ok && structural && i < arity; i++) {
+        Atom *left = types[0]->expr.elems[i + 1u];
+        if (classes[i] != PREPARED_PURE_VALUE_STRUCTURAL || !atom_has_vars(left))
+            continue;
+        for (CettaExprLen j = i + 1u; ok && j < arity; j++)
+            ok = classes[j] != PREPARED_PURE_VALUE_STRUCTURAL ||
+                !prepared_pure_types_share_var(
+                    left, types[0]->expr.elems[j + 1u], 0u);
+    }
+    /* HE checks a structural argument at every call and a structural range
+     * where each activation returns (prepared_pure_he_value_has_type), so
+     * it needs no trusted version. */
+    if (ok && structural && language == CETTA_LANGUAGE_PETTA) {
+        bool range_proved = false;
+        Atom *instances[PREPARED_PURE_MAX_VERSION_ARITY];
+        ok = arity <= PREPARED_PURE_MAX_VERSION_ARITY &&
+            eval_petta_structural_version &&
+            eval_petta_structural_version(space, head, (uint32_t)arity,
+                                          &range_proved, instances, &scratch) &&
+            range_proved;
+        /* A formal with type variables: its version's closed instance, the
+         * range read under the instances; or, with variables no other
+         * position names, the formal itself, checked at some closed
+         * instance. */
+        Bindings unifier;
+        bindings_init(&unifier);
+        for (CettaExprLen i = 0u; ok && i < arity; i++) {
+            Atom *formal = types[0]->expr.elems[i + 1u];
+            if (classes[i] != PREPARED_PURE_VALUE_STRUCTURAL ||
+                !atom_has_vars(formal))
+                continue;
+            if (instances[i]) {
+                ok = match_types(formal, instances[i], &unifier, &scratch);
+                if (ok && formals)
+                    ok = (formals[i] = atom_deep_copy(keep, instances[i])) != NULL;
+                continue;
+            }
+            for (CettaExprLen j = 0u; ok && j <= arity; j++)
+                ok = j == i || !prepared_pure_types_share_var(
+                    formal, types[0]->expr.elems[j + 1u], 0u);
+        }
+        Atom *range = types[0]->expr.elems[arity + 1u];
+        if (ok && classes[arity] == PREPARED_PURE_VALUE_STRUCTURAL &&
+            atom_has_vars(range)) {
+            Atom *instance = bindings_apply_if_vars(&unifier, &scratch, range);
+            ok = instance && !atom_has_vars(instance);
+            if (ok && formals)
+                ok = (formals[arity] = atom_deep_copy(keep, instance)) != NULL;
+        }
+        bindings_free(&unifier);
     }
     free(types);
     arena_free(&scratch);
     return ok;
+}
+
+static bool prepared_pure_value_signature(
+    Space *space, SymbolId head, CettaExprLen arity, uint8_t *classes) {
+    return prepared_pure_value_signature_formals(space, head, arity, classes,
+                                                 NULL, NULL);
 }
 
 bool cetta_prepared_pure_call_policy_supported(
@@ -2938,11 +3515,45 @@ bool cetta_prepared_pure_call_policy_supported(
         prepared_pure_value_signature(space, head, arity, classes);
 }
 
+bool cetta_prepared_pure_parameter_range(Space *space, SymbolId head,
+                                         CettaExprLen arity,
+                                         CettaExprLen *parameter) {
+    uint8_t classes[66];
+    if (!prepared_pure_value_signature(space, head, arity, classes) ||
+        classes[arity] != PREPARED_PURE_VALUE_PARAMETER)
+        return false;
+    for (CettaExprLen i = 0u; i < arity; i++) {
+        if (classes[i] == PREPARED_PURE_VALUE_PARAMETER) {
+            if (parameter)
+                *parameter = i;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool cetta_prepared_pure_value_signature(
+    Space *space, SymbolId head, CettaExprLen arity, bool *checks_range,
+    bool *structural_range) {
+    uint8_t classes[66];
+    if (!prepared_pure_value_signature(space, head, arity, classes) ||
+        classes[arity] == PREPARED_PURE_VALUE_PARAMETER)
+        return false;
+    if (checks_range)
+        *checks_range = classes[arity] != PREPARED_PURE_VALUE_UNDEFINED &&
+            classes[arity] != PREPARED_PURE_VALUE_STRUCTURAL;
+    if (structural_range)
+        *structural_range = classes[arity] == PREPARED_PURE_VALUE_STRUCTURAL;
+    return true;
+}
+
 /* The policy of calls of head `head_index` with `arity` arguments: untyped,
  * or the head's value-class signature, which the head then records.  The
  * machine evaluates a typed head's arguments as it evaluates an untyped
  * head's; HE then casts each value to its parameter's type, which the call
  * checks (prepared_pure_typed_arguments_accepted). */
+static Arena *prepared_pure_syntax_arena(CettaPreparedPureProgram *program);
+
 static bool prepared_pure_head_call_policy(
     CettaPreparedPureProgram *program, uint32_t head_index,
     CettaExprLen arity) {
@@ -2952,13 +3563,19 @@ static bool prepared_pure_head_call_policy(
     if (space_head_call_untyped(program->space, head->head, arity))
         return true;
     uint8_t classes[66];
+    Atom *formals[66];
+    Arena *keep = prepared_pure_syntax_arena(program);
     if (prepared_pure_wants_answers(program) ||
-        program->call_mode != CETTA_GSLT_PURE_CALL_EAGER ||
-        !prepared_pure_value_signature(
-            program->space, head->head, arity, classes) ||
+        program->call_mode != CETTA_GSLT_PURE_CALL_EAGER || !keep ||
+        !prepared_pure_value_signature_formals(
+            program->space, head->head, arity, classes, formals, keep) ||
         !prepared_pure_reserve(
             (void **)&program->value_classes,
             sizeof(*program->value_classes), &program->value_class_cap,
+            program->value_class_len + arity) ||
+        !prepared_pure_reserve(
+            (void **)&program->value_formals,
+            sizeof(*program->value_formals), &program->value_formal_cap,
             program->value_class_len + arity))
         return false;
     head = &program->heads[head_index];
@@ -2966,12 +3583,52 @@ static bool prepared_pure_head_call_policy(
     head->typed_arity = arity;
     head->first_value_class = (uint32_t)program->value_class_len;
     head->range_class = classes[arity];
+    head->range_parameter = 0u;
     head->checks_arguments = false;
+    head->self_trusted = false;
     for (CettaExprLen i = 0u; i < arity; i++) {
+        program->value_formals[program->value_class_len] = formals[i];
         program->value_classes[program->value_class_len++] = classes[i];
         head->checks_arguments = head->checks_arguments ||
             classes[i] != PREPARED_PURE_VALUE_UNDEFINED;
+        if (classes[i] == PREPARED_PURE_VALUE_PARAMETER)
+            head->range_parameter = (uint32_t)i;
+        head->self_trusted = head->self_trusted ||
+            classes[i] == PREPARED_PURE_VALUE_STRUCTURAL;
     }
+    head->self_trusted = head->self_trusted ||
+        classes[arity] == PREPARED_PURE_VALUE_STRUCTURAL;
+    head->he_structural = false;
+    head->range_formal = NULL;
+    head->petta_range = head->self_trusted &&
+            classes[arity] == PREPARED_PURE_VALUE_STRUCTURAL &&
+            formals[arity] && !atom_has_vars(formals[arity])
+        ? formals[arity] : NULL;
+    head->range_shown = false;
+    head->range_meets_tail = false;
+    if (head->self_trusted && eval_current_language_id &&
+        eval_current_language_id() == CETTA_LANGUAGE_HE) {
+        head->self_trusted = false;
+        head->petta_range = NULL;
+        head->he_structural = true;
+        head->range_formal = classes[arity] == PREPARED_PURE_VALUE_STRUCTURAL
+            ? formals[arity] : NULL;
+        program->he_range_checks = program->he_range_checks ||
+            head->range_formal != NULL;
+        head->instance_formals = 0u;
+        for (CettaExprLen i = 0u; head->range_formal &&
+                 atom_has_vars(head->range_formal) && i < arity && i < 64u; i++)
+            if (classes[i] == PREPARED_PURE_VALUE_STRUCTURAL &&
+                atom_has_vars(formals[i]) &&
+                prepared_pure_types_share_var(formals[i], head->range_formal, 0u))
+                head->instance_formals |= UINT64_C(1) << i;
+        /* An open range read from more arguments than one word names is
+         * left to the canonical evaluator. */
+        if (head->range_formal && atom_has_vars(head->range_formal) && arity > 64u)
+            return false;
+    }
+    program->structural_checks = program->structural_checks ||
+        head->self_trusted || head->he_structural;
     return true;
 }
 
@@ -2989,8 +3646,181 @@ static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_typed_arguments_accepted(
         return false;
     const uint8_t *classes = &program->value_classes[head->first_value_class];
     for (uint32_t i = 0u; i < arity; i++) {
-        if (classes[i] != PREPARED_PURE_VALUE_UNDEFINED &&
-            prepared_pure_value_class(arguments[i]) != classes[i])
+        if (classes[i] == PREPARED_PURE_VALUE_UNDEFINED ||
+            classes[i] == PREPARED_PURE_VALUE_STRUCTURAL)
+            continue;
+        uint8_t class = prepared_pure_value_class(arguments[i]);
+        if (classes[i] == PREPARED_PURE_VALUE_PARAMETER
+                ? class == PREPARED_PURE_VALUE_UNKNOWN
+                : class != classes[i])
+            return false;
+    }
+    return true;
+}
+
+/* A head's structural parameters (PREPARED_PURE_VALUE_STRUCTURAL) on a call
+ * from outside the head: each argument ground and typed once at its formal,
+ * which its trusted version enters on.  A call the head makes to itself
+ * keeps them by that version (version_eq_protocol). */
+static bool prepared_pure_types_share_var(const Atom *left, const Atom *right,
+                                          uint32_t depth);
+
+/* The instance of an HE head's open range at a call: each argument at a
+ * structural formal sharing a variable with the range has exactly one
+ * typing that unifies with the formal (formals share no variable), and the
+ * range is read under those unifiers.  NULL where an argument has none or
+ * several: the canonical evaluator then answers the call. */
+static Atom *prepared_pure_he_range_instance(
+    CettaPreparedPureProgram *program, Arena *scratch, uint32_t head_index,
+    Atom *const *arguments, uint32_t arity) {
+    const PreparedPureHead *head = &program->heads[head_index];
+    Atom *range = head->range_formal;
+    if (arity != head->typed_arity)
+        return NULL;
+
+    /* One argument decides the instance: the store keeps it per typing
+     * state. */
+    if (head->instance_formals &&
+        (head->instance_formals & (head->instance_formals - 1u)) == 0u) {
+        uint32_t i = (uint32_t)__builtin_ctzll(head->instance_formals);
+        Atom *instance = NULL;
+        int kept = i < arity ? space_type_stamps_instance(program->space,
+            scratch, arguments[i],
+            program->value_formals[head->first_value_class + i], range,
+            &instance) : -1;
+        if (kept >= 0)
+            return kept ? instance : NULL;
+    }
+    const uint8_t *classes = &program->value_classes[head->first_value_class];
+    Atom *const *formals = &program->value_formals[head->first_value_class];
+    Bindings unifier;
+    bindings_init(&unifier);
+    bool ok = true;
+    (void)classes;
+    for (uint32_t i = 0u; ok && i < arity && i < 64u; i++) {
+        Atom *formal = formals[i];
+        if (!((head->instance_formals >> i) & 1u))
+            continue;
+        Atom *const *types = NULL;
+        Atom **owned = NULL;
+        int count = space_type_stamps_types(program->space, scratch,
+                                            arguments[i], &types);
+        if (count < 0) {
+            /* A value the store keeps no typing for may hold a node a row
+             * types as an expression, which is HE's to check. */
+            if (prepared_pure_value_row_typed(program, arguments[i])) {
+                ok = false;
+                break;
+            }
+            count = (int)get_atom_types(program->space, scratch, arguments[i],
+                                        &owned);
+            types = owned;
+        }
+        uint32_t fits = 0u;
+        Bindings chosen;
+        bindings_init(&chosen);
+        for (int t = 0; ok && fits < 2u && t < count; t++) {
+            Bindings trial;
+            if (!bindings_clone(&trial, &unifier)) {
+                ok = false;
+                break;
+            }
+            if (types[t] && match_types(types[t], formal, &trial, scratch) &&
+                ++fits == 1u)
+                bindings_replace(&chosen, &trial);
+            else
+                bindings_free(&trial);
+        }
+        free(owned);
+        if (ok && fits == 1u)
+            bindings_replace(&unifier, &chosen);
+        else {
+            bindings_free(&chosen);
+            ok = false;
+        }
+    }
+    Atom *instance = ok ? bindings_apply_if_vars(&unifier, scratch, range)
+                        : NULL;
+    bindings_free(&unifier);
+    return instance;
+}
+
+/* What an activation owes after a tail call into a head owing `callee`
+ * where its caller owed `caller`: the two unified, read on the callee's
+ * side.  NULL where they do not unify, a call HE rejects before the
+ * callee's body runs. */
+static Atom *prepared_pure_he_range_meet(Arena *scratch, Atom *callee,
+                                         Atom *caller) {
+    if (callee == caller || atom_eq(callee, caller))
+        return caller;
+    Bindings unifier;
+    bindings_init(&unifier);
+    Atom *met = match_types(callee, caller, &unifier, scratch)
+        ? bindings_apply_if_vars(&unifier, scratch, callee) : NULL;
+    bindings_free(&unifier);
+    return met;
+}
+
+/* A computed instance kept by the frame with witness slot `*slot`
+ * (UINT32_MAX: a new one), its earlier instance released. */
+static Atom *prepared_pure_witness_keep(CettaPreparedPureProgram *program,
+                                        uint32_t *slot, Atom *expected) {
+    /* A meet may share parts of the frame's earlier instance. */
+    Atom *copy = atom_deep_copy(&program->witness_scratch, expected);
+    if (!copy)
+        return NULL;
+    if (*slot == UINT32_MAX) {
+        if (!prepared_pure_reserve(
+                (void **)&program->witness_marks,
+                sizeof(*program->witness_marks), &program->witness_mark_cap,
+                (size_t)program->witness_mark_len + 1u))
+            return NULL;
+        *slot = program->witness_mark_len++;
+        program->witness_marks[*slot] = arena_mark(&program->witness);
+    } else
+        arena_reset(&program->witness, program->witness_marks[*slot]);
+    return atom_deep_copy(&program->witness, copy);
+}
+
+static bool prepared_pure_he_value_has_type(
+    CettaPreparedPureProgram *program, Arena *arena, Atom *value,
+    Atom *formal);
+
+static bool prepared_pure_structural_arguments_accepted(
+    CettaPreparedPureProgram *program, Arena *arena, uint32_t head_index,
+    Atom *const *arguments, uint32_t arity, bool self_call,
+    uint8_t discharged) {
+    const PreparedPureHead *head = &program->heads[head_index];
+    if (head->he_structural) {
+        if (arity != head->typed_arity)
+            return false;
+        const uint8_t *classes =
+            &program->value_classes[head->first_value_class];
+        Atom *const *formals =
+            &program->value_formals[head->first_value_class];
+        for (uint32_t i = 0u; i < arity; i++) {
+            if (classes[i] == PREPARED_PURE_VALUE_STRUCTURAL &&
+                !(i < 64u && (head->instance_formals >> i) & 1u) &&
+                !(i < 8u && (discharged >> i) & 1u) &&
+                !prepared_pure_he_value_has_type(program, arena,
+                                                 arguments[i], formals[i]))
+                return false;
+        }
+        return true;
+    }
+    if (!head->self_trusted || self_call)
+        return true;
+    if (arity != head->typed_arity || !eval_petta_value_typed_once)
+        return false;
+    const uint8_t *classes = &program->value_classes[head->first_value_class];
+    Atom *const *formals = &program->value_formals[head->first_value_class];
+    for (uint32_t i = 0u; i < arity; i++) {
+        if (classes[i] != PREPARED_PURE_VALUE_STRUCTURAL ||
+            (i < 8u && (discharged >> i) & 1u))
+            continue;
+        if (!arguments[i] || !formals[i] || atom_has_vars(arguments[i]) ||
+            !eval_petta_value_typed_once(program->space, arguments[i],
+                                         formals[i]))
             return false;
     }
     return true;
@@ -3022,7 +3852,11 @@ static uint8_t prepared_pure_node_value_class(
         if (node->auxiliary < program->head_len &&
             program->heads[node->auxiliary].typed &&
             program->heads[node->auxiliary].range_class !=
-                PREPARED_PURE_VALUE_UNDEFINED)
+                PREPARED_PURE_VALUE_UNDEFINED &&
+            program->heads[node->auxiliary].range_class !=
+                PREPARED_PURE_VALUE_PARAMETER &&
+            program->heads[node->auxiliary].range_class !=
+                PREPARED_PURE_VALUE_STRUCTURAL)
             return program->heads[node->auxiliary].range_class;
         return PREPARED_PURE_VALUE_UNKNOWN;
     case PREPARED_PURE_IF: {
@@ -3189,6 +4023,30 @@ static CettaControlOperationPlan prepared_pure_control_plan(
 
 /* These lowerings consume three independent source places. Checking the
  * coordinates before reading also rejects absent and malformed operands. */
+bool cetta_prepared_pure_admission_normalize_enabled(void) {
+    static _Thread_local int enabled = -1;
+    if (enabled < 0) {
+        const char *setting = getenv("CETTA_ADMISSION_NORMALIZE");
+        enabled = !(setting && (strcmp(setting, "0") == 0 ||
+                                strcmp(setting, "false") == 0 ||
+                                strcmp(setting, "off") == 0));
+    }
+    return enabled != 0;
+}
+
+/* A branch written with no else, `(if c t)`, admitted as `(if c t
+ * (empty))` where the dialect gives it that meaning (its view admits the
+ * two-armed form). */
+static bool prepared_pure_control_two_armed_branch(
+        CettaControlOperationPlan plan, CettaExprLen arity) {
+    return plan.operation == CETTA_CONTROL_BRANCH && arity == 2u &&
+        plan.source == 0u && plan.first == 1u &&
+        plan.last == CETTA_CONTROL_OPERAND_ABSENT &&
+        eval_current_language_id &&
+        eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
+        cetta_prepared_pure_admission_normalize_enabled();
+}
+
 static bool prepared_pure_control_three_places(
         CettaControlOperationPlan plan, CettaExprLen arity) {
     return arity == 3u && plan.source < arity && plan.first < arity &&
@@ -3207,6 +4065,21 @@ static const void *prepared_pure_projected_source_child(
         if (source->expr.elems[index] == projected)
             return prepared_pure_source_child(
                 program, source_view, index);
+    }
+    /* An element of a child tuple, as a lone alternative: its view is the
+     * tuple's child. */
+    for (CettaExprIndex index = 0u;
+         index < source->expr.len; index++) {
+        Atom *child = source->expr.elems[index];
+        if (!child || child->kind != ATOM_EXPR)
+            continue;
+        for (CettaExprIndex inner = 0u; inner < child->expr.len; inner++)
+            if (child->expr.elems[inner] == projected) {
+                const void *tuple = prepared_pure_source_child(
+                    program, source_view, index);
+                return tuple ? prepared_pure_source_child(program, tuple, inner)
+                             : NULL;
+            }
     }
     return NULL;
 }
@@ -3383,19 +4256,23 @@ prepared_pure_compile_guarded_equation(
          rhs_role != CETTA_PREPARED_PURE_SOURCE_CALL) ||
         !prepared_pure_scalar_guard_enabled() ||
         !prepared_pure_scalar_guard_flat_lhs(lhs) ||
-        rhs->kind != ATOM_EXPR || rhs->expr.len != 4u ||
+        rhs->kind != ATOM_EXPR ||
+        (rhs->expr.len != 4u && rhs->expr.len != 3u) ||
         !rhs->expr.elems[0] ||
         rhs->expr.elems[0]->kind != ATOM_SYMBOL)
         return PREPARED_PURE_GUARDED_EQUATION_NOT_APPLICABLE;
 
     CettaControlOperationPlan control =
         prepared_pure_control_plan(program, rhs, rhs_view);
+    bool two_armed = rhs->kind == ATOM_EXPR && rhs->expr.len == 3u &&
+        prepared_pure_control_two_armed_branch(control, 2u);
     if (control.operation != CETTA_CONTROL_BRANCH ||
-        !prepared_pure_control_three_places(control, 3u))
+        (!two_armed && !prepared_pure_control_three_places(control, 3u)))
         return PREPARED_PURE_GUARDED_EQUATION_NOT_APPLICABLE;
     CettaExprIndex condition = (CettaExprIndex)control.source + 1u;
     CettaExprIndex when_true = (CettaExprIndex)control.first + 1u;
-    CettaExprIndex when_false = (CettaExprIndex)control.last + 1u;
+    CettaExprIndex when_false = two_armed
+        ? when_true : (CettaExprIndex)control.last + 1u;
     CettaComputationPlan condition_plan = prepared_pure_source_computation(
         program, prepared_pure_source_child(program, rhs_view, condition));
     if (condition_plan.control.operation != CETTA_CONTROL_NONE &&
@@ -3404,7 +4281,8 @@ prepared_pure_compile_guarded_equation(
     bool then_zero = prepared_pure_expression_is_zero(
         program, rhs->expr.elems[when_true],
         prepared_pure_source_child(program, rhs_view, when_true));
-    bool else_zero = prepared_pure_expression_is_zero(
+    /* No else answers nothing. */
+    bool else_zero = two_armed || prepared_pure_expression_is_zero(
         program, rhs->expr.elems[when_false],
         prepared_pure_source_child(program, rhs_view, when_false));
     if (then_zero == else_zero)
@@ -3885,6 +4763,20 @@ static bool prepared_pure_compile_bind_sequence(
         return prepared_pure_reject(
             program, "let* bound expression is outside the fragment",
             pair->expr.elems[1]);
+    /* PeTTa's (let* (.. ($y e)) $y) is (let* (..) e) where $y is free and
+     * not yet retired once e is compiled, as (let $y e $y) is e. */
+    if (index + 1u == pairs->expr.len && body && body->kind == ATOM_VAR &&
+        pair->expr.elems[0]->kind == ATOM_VAR &&
+        var_id_eq(pair->expr.elems[0]->var_id, body->var_id) &&
+        !prepared_pure_context_lookup(context, body->var_id, NULL) &&
+        !prepared_pure_context_retired(context, body->var_id) &&
+        eval_current_language_id &&
+        eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
+        cetta_prepared_pure_admission_normalize_enabled()) {
+        prepared_pure_context_retire(context, body->var_id);
+        *node_out = bound;
+        return true;
+    }
     size_t saved_bindings = context->len;
     uint32_t pattern_index = 0u;
     if (!prepared_pure_compile_inert_bind_pattern(
@@ -3898,7 +4790,7 @@ static bool prepared_pure_compile_bind_sequence(
     bool rest_ok = prepared_pure_compile_bind_sequence(
         program, context, pairs, pairs_view, index + 1u,
         body, body_view, depth, &rest);
-    context->len = saved_bindings;
+    prepared_pure_context_end_scope(context, saved_bindings);
     if (!rest_ok)
         return false;
     return prepared_pure_compile_source_bind(
@@ -4335,11 +5227,14 @@ static bool prepared_pure_compile_function_unify(
         return prepared_pure_reject(
             program, "neither unify operand holds a value", body);
     Atom *pattern = body->expr.elems[value_index == 1u ? 2u : 1u];
+    PreparedPureAlternatives alternatives =
+        prepared_pure_alternatives_begin(context);
     uint32_t else_node = 0u;
     if (!prepared_pure_compile_function(
             program, context, body->expr.elems[4], delivery, depth + 1u,
             &else_node))
         return false;
+    prepared_pure_alternatives_next(context, &alternatives);
     uint32_t target = 0u;
     if (!prepared_pure_compile_template(
             program, context, body->expr.elems[value_index], NULL,
@@ -4380,7 +5275,8 @@ static bool prepared_pure_compile_function_unify(
     bool then_ok = prepared_pure_compile_function(
         program, context, body->expr.elems[3], delivery, depth + 1u,
         &then_body);
-    context->len = saved_bindings;
+    prepared_pure_context_end_scope(context, saved_bindings);
+    prepared_pure_alternatives_end(context, &alternatives);
     if (!then_ok)
         return false;
     uint32_t bound[2] = {target, then_body};
@@ -4509,6 +5405,7 @@ static bool prepared_pure_compile_function(
         uint32_t continued = 0u;
         bool ok = prepared_pure_compile_function(
             program, context, rest, delivery, depth + 1u, &continued);
+        /* A chain's variable is its template's alone. */
         context->len = saved_bindings;
         if (!ok)
             return false;
@@ -4647,7 +5544,7 @@ static bool prepared_pure_compile_expansion(
     bool ok = prepared_pure_compile_expansion(
         program, context, expansion, call, call_view, delivery, next + 1u,
         depth + 1u, &rest);
-    context->len = saved_bindings;
+    prepared_pure_context_end_scope(context, saved_bindings);
     if (!ok)
         return false;
     uint32_t children[2] = {bound, rest};
@@ -4764,7 +5661,7 @@ static bool prepared_pure_compile_syntax_consumer(
     bool ok = prepared_pure_compile_syntax_consumer(
         program, context, call, lhs, body, syntax_index, next + 1u,
         depth + 1u, &rest);
-    context->len = saved_bindings;
+    prepared_pure_context_end_scope(context, saved_bindings);
     if (!ok)
         return false;
     uint32_t children[2] = {bound, rest};
@@ -5033,7 +5930,7 @@ static bool prepared_pure_compile_select_arm(
         program, context, arm->expr.elems[1],
         prepared_pure_source_child(program, arm_view, 1u), depth + 1u,
         &body);
-    context->len = saved_bindings;
+    prepared_pure_context_end_scope(context, saved_bindings);
     if (!body_ok)
         return prepared_pure_reject(
             program, "selection body is outside the fragment",
@@ -5087,6 +5984,51 @@ static bool prepared_pure_compile_select(
         return prepared_pure_reject(
             program, "selection key is outside the fragment",
             source->expr.elems[key_child]);
+    const void *arms_view =
+        prepared_pure_source_child(program, source_view, arms_child);
+    /* PeTTa's case commits to the first arm matching each answer of its
+     * key; a fresh variable matches every one, so the case is (let $v key
+     * body).  A $v bound or retired once the key is compiled compares, and
+     * a mismatch falls through to the next arm, which the let cannot: only
+     * a lone arm is then the let.  An arm written Empty is the case's own. */
+    Atom *first_arm = arms->expr.elems[0];
+    bool empty_arm = false;
+    for (CettaExprIndex index = 0u; index < arms->expr.len; index++)
+        empty_arm = empty_arm || atom_is_symbol_id(
+            arms->expr.elems[index]->expr.elems[0], g_builtin_syms.empty);
+    if (first_arm->expr.elems[0]->kind == ATOM_VAR && !empty_arm &&
+        (arms->expr.len == 1u ||
+         (!prepared_pure_context_lookup(
+              context, first_arm->expr.elems[0]->var_id, NULL) &&
+          !prepared_pure_context_retired(
+              context, first_arm->expr.elems[0]->var_id))) &&
+        eval_current_language_id &&
+        eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
+        cetta_prepared_pure_admission_normalize_enabled()) {
+        const void *arm_view =
+            prepared_pure_source_child(program, arms_view, 0u);
+        size_t saved_bindings = context->len;
+        uint32_t pattern_index = 0u;
+        if (!prepared_pure_compile_inert_bind_pattern(
+                program, context, first_arm->expr.elems[0],
+                prepared_pure_source_child(program, arm_view, 0u),
+                &pattern_index))
+            return prepared_pure_reject(
+                program, "selection pattern is outside the fragment",
+                first_arm->expr.elems[0]);
+        uint32_t body = 0u;
+        bool body_ok = prepared_pure_compile_eval(
+            program, context, first_arm->expr.elems[1],
+            prepared_pure_source_child(program, arm_view, 1u), depth + 1u,
+            &body);
+        prepared_pure_context_end_scope(context, saved_bindings);
+        if (!body_ok)
+            return prepared_pure_reject(
+                program, "selection body is outside the fragment",
+                first_arm->expr.elems[1]);
+        return prepared_pure_compile_source_bind(
+            program, pattern_index, key, body, node_out);
+    }
     Arena *arena = prepared_pure_syntax_arena(program);
     Atom *held = arena
         ? atom_var_with_id(arena, "__select_key", fresh_var_id()) : NULL;
@@ -5097,8 +6039,6 @@ static bool prepared_pure_compile_select(
     if (!prepared_pure_compile_bind_pattern(
             program, context, held, &held_pattern))
         return false;
-    const void *arms_view =
-        prepared_pure_source_child(program, source_view, arms_child);
     uint32_t next = 0u;
     bool ok = prepared_pure_add_node(
         program,
@@ -5106,12 +6046,17 @@ static bool prepared_pure_compile_select(
             .kind = PREPARED_PURE_ZERO,
         },
         NULL, 0u, &next);
-    for (CettaExprIndex index = arms->expr.len; ok && index-- > 0u;)
+    PreparedPureAlternatives alternatives =
+        prepared_pure_alternatives_begin(context);
+    for (CettaExprIndex index = arms->expr.len; ok && index-- > 0u;) {
+        prepared_pure_alternatives_next(context, &alternatives);
         ok = prepared_pure_compile_select_arm(
             program, context, held, arms->expr.elems[index],
             prepared_pure_source_child(program, arms_view, index), next,
             depth, &next);
-    context->len = saved_bindings;
+    }
+    prepared_pure_alternatives_end(context, &alternatives);
+    prepared_pure_context_end_scope(context, saved_bindings);
     if (!ok)
         return false;
     uint32_t children[2] = {key, next};
@@ -5543,6 +6488,7 @@ static bool prepared_pure_compile_eval_with_role_in_source(
             program, context, source->expr.elems[3],
             prepared_pure_source_child(program, source_view, 3u),
             depth + 1u, &body);
+        /* A chain's variable is its template's alone. */
         context->len = saved_bindings;
         if (!body_ok)
             return false;
@@ -5566,6 +6512,8 @@ static bool prepared_pure_compile_eval_with_role_in_source(
     if (unify_value != 0u && !prepared_pure_wants_answers(program) &&
         !atom_is_symbol_id(source->expr.elems[4], g_builtin_syms.empty) &&
         !atom_is_error(source->expr.elems[4])) {
+        PreparedPureAlternatives alternatives =
+            prepared_pure_alternatives_begin(context);
         uint32_t else_node = 0u;
         if (!prepared_pure_compile_eval(
                 program, context, source->expr.elems[4],
@@ -5574,6 +6522,7 @@ static bool prepared_pure_compile_eval_with_role_in_source(
             return prepared_pure_reject(
                 program, "unify else branch is outside the fragment",
                 source->expr.elems[4]);
+        prepared_pure_alternatives_next(context, &alternatives);
         uint32_t target = 0u;
         if (!prepared_pure_compile_template(
                 program, context, source->expr.elems[unify_value],
@@ -5621,7 +6570,8 @@ static bool prepared_pure_compile_eval_with_role_in_source(
             program, context, source->expr.elems[3],
             prepared_pure_source_child(program, source_view, 3u),
             depth + 1u, &then_body);
-        context->len = saved_bindings;
+        prepared_pure_context_end_scope(context, saved_bindings);
+        prepared_pure_alternatives_end(context, &alternatives);
         if (!then_ok)
             return prepared_pure_reject(
                 program, "unify branch is outside the fragment",
@@ -5669,7 +6619,7 @@ static bool prepared_pure_compile_eval_with_role_in_source(
             program, context, source->expr.elems[3],
             prepared_pure_source_child(program, source_view, 3u),
             depth + 1u, &body);
-        context->len = saved_bindings;
+        prepared_pure_context_end_scope(context, saved_bindings);
         if (!body_ok)
             return prepared_pure_reject(
                 program, "unify branch is outside the fragment",
@@ -5702,20 +6652,36 @@ static bool prepared_pure_compile_eval_with_role_in_source(
                 depth + 1u, node_out);
         }
         if (control.operation == CETTA_CONTROL_BRANCH) {
-            if (!prepared_pure_control_three_places(control, arity))
+            bool two_armed =
+                prepared_pure_control_two_armed_branch(control, arity);
+            if (!two_armed && !prepared_pure_control_three_places(control, arity))
                 return false;
             CettaExprIndex places[] = {(CettaExprIndex)control.source + 1u,
                 (CettaExprIndex)control.first + 1u,
-                (CettaExprIndex)control.last + 1u};
+                two_armed ? 0u : (CettaExprIndex)control.last + 1u};
             uint32_t children[3];
-            for (size_t index = 0u; index < 3u; index++) {
+            /* No else answers nothing: zero for an answer producer; a
+             * single-answer program leaves the call to the canonical
+             * evaluator there, as on (empty). */
+            if (two_armed && !prepared_pure_add_node(program,
+                    (PreparedPureNode){.kind = prepared_pure_wants_answers(program)
+                        ? PREPARED_PURE_ZERO : PREPARED_PURE_DECLINE},
+                    NULL, 0u, &children[2]))
+                return false;
+            PreparedPureAlternatives alternatives = {0};
+            for (size_t index = 0u; index < (two_armed ? 2u : 3u); index++) {
                 CettaExprIndex child = places[index];
+                if (index == 1u)
+                    alternatives = prepared_pure_alternatives_begin(context);
+                else if (index == 2u)
+                    prepared_pure_alternatives_next(context, &alternatives);
                 if (!prepared_pure_compile_eval(
                         program, context, source->expr.elems[child],
                         prepared_pure_source_child(program, source_view, child),
                         depth + 1u, &children[index]))
                     return false;
             }
+            prepared_pure_alternatives_end(context, &alternatives);
             return prepared_pure_add_node(
                 program, (PreparedPureNode){.kind = PREPARED_PURE_IF},
                 children, 3u, node_out);
@@ -5735,6 +6701,25 @@ static bool prepared_pure_compile_eval_with_role_in_source(
                 return prepared_pure_reject(
                     program, "let bound expression is outside the fragment",
                     source->expr.elems[producer]);
+            /* PeTTa's `(let $y e $y)` is e: the bound value, unchanged.
+             * A $y bound or retired once e is compiled (e may bind it) makes
+             * the let a test of e's value. */
+            if (source->expr.elems[binder]->kind == ATOM_VAR &&
+                source->expr.elems[continuation]->kind == ATOM_VAR &&
+                var_id_eq(source->expr.elems[binder]->var_id,
+                          source->expr.elems[continuation]->var_id) &&
+                !prepared_pure_context_lookup(
+                    context, source->expr.elems[binder]->var_id, NULL) &&
+                !prepared_pure_context_retired(
+                    context, source->expr.elems[binder]->var_id) &&
+                eval_current_language_id &&
+                eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
+                cetta_prepared_pure_admission_normalize_enabled()) {
+                prepared_pure_context_retire(
+                    context, source->expr.elems[binder]->var_id);
+                *node_out = bound;
+                return true;
+            }
             size_t saved_bindings = context->len;
             uint32_t pattern_index = 0u;
             if (!prepared_pure_compile_inert_bind_pattern(
@@ -5750,7 +6735,7 @@ static bool prepared_pure_compile_eval_with_role_in_source(
                 prepared_pure_source_child(
                     program, source_view, continuation),
                 depth + 1u, &body);
-            context->len = saved_bindings;
+            prepared_pure_context_end_scope(context, saved_bindings);
             if (!body_ok)
                 return prepared_pure_reject(
                     program, "let body is outside the fragment",
@@ -5793,6 +6778,16 @@ static bool prepared_pure_compile_eval_with_role_in_source(
 
     CettaGsltRegisterResultKind result_kind;
     CettaGsltRegisterInstruction instruction;
+    /* A PeTTa space's own equations for a builtin head are how that space
+     * evaluates it (in &self the builtin is protected): the canonical
+     * evaluator applies that policy. */
+    if (eval_current_language_id &&
+        eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
+        (prepared_pure_register_program(program, head, arity, NULL, NULL) ||
+         cetta_prepared_pure_intrinsic_program(head, arity, NULL)) &&
+        space_equations_may_match_known_head(program->space, head))
+        return prepared_pure_reject(program,
+            "the space authors equations for a builtin head", source);
     if (prepared_pure_register_program(program,
             head, arity, &result_kind, &instruction)) {
         uint32_t *children = NULL;
@@ -5929,7 +6924,8 @@ static bool prepared_pure_compile_eval_with_role_in_source(
             return false;
         /* HE rejects a typed call whose argument's type is not the
          * parameter's before it evaluates anything; such a call is left to
-         * it.  Arguments of unknown class are cast when the call runs. */
+         * it.  Arguments of unknown class are cast when the call runs, and
+         * so is the argument whose class the answer takes (PARAMETER). */
         if (program->heads[head_index].typed) {
             const uint8_t *classes = &program->value_classes[
                 program->heads[head_index].first_value_class];
@@ -5937,6 +6933,8 @@ static bool prepared_pure_compile_eval_with_role_in_source(
                 uint8_t known = prepared_pure_node_value_class(
                     program, children[i], NULL, 0u, 0u);
                 if (classes[i] != PREPARED_PURE_VALUE_UNDEFINED &&
+                    classes[i] != PREPARED_PURE_VALUE_PARAMETER &&
+                    classes[i] != PREPARED_PURE_VALUE_STRUCTURAL &&
                     known != PREPARED_PURE_VALUE_UNKNOWN &&
                     known != classes[i]) {
                     free(children);
@@ -5984,10 +6982,27 @@ static bool prepared_pure_compile_eval_with_role_in_source(
     if (program->call_mode == CETTA_GSLT_PURE_CALL_EAGER &&
         !(eval_current_language_id &&
           eval_current_language_id() == CETTA_LANGUAGE_PETTA) &&
-        !space_head_call_untyped(program->space, head, arity))
-        return prepared_pure_reject(
-            program, "declared constructor signature decides argument demand",
-            source);
+        !space_head_call_untyped(program->space, head, arity)) {
+        /* One declared function type over computed parameters: HE computes
+         * every argument, as the untyped build does, and the built atom is
+         * checked by HE's typing where it is built. */
+        if (!cetta_prepared_pure_he_checked_constructor(program->space, head,
+                                                        arity))
+            return prepared_pure_reject(
+                program, "declared constructor signature decides argument demand",
+                source);
+        uint32_t *children = NULL;
+        if (!prepared_pure_compile_children(
+                program, context, source->expr.elems, source->expr.len,
+                source_view, 0u, depth, true, false, &children))
+            return false;
+        bool ok = prepared_pure_add_node(
+            program,
+            (PreparedPureNode){.kind = PREPARED_PURE_TYPED_BUILD, .head = head},
+            children, source->expr.len, node_out);
+        free(children);
+        return ok;
+    }
     if (program->call_mode == CETTA_GSLT_PURE_CALL_EAGER) {
         uint32_t *children = NULL;
         if (!prepared_pure_compile_children(
@@ -6996,7 +8011,7 @@ static bool prepared_pure_compile_head(
         if (!pattern_ok || !prepared_pure_append_pattern_vars(
                 program, &context,
                 &first_pattern_var, &pattern_var_count)) {
-            free(context.bindings);
+            prepared_pure_context_release(&context);
             return prepared_pure_reject(
                 program,
                 "oversized equation pattern, or a repeated variable "
@@ -7024,12 +8039,16 @@ static bool prepared_pure_compile_head(
                 program, root, 0u);
         }
         /* HE evaluates a typed head's result with its range as the expected
-         * type.  The machine admits a typed head whose every body is shown
-         * to be of its range's class; the parameters of value classes were
+         * type, and PeTTa checks it at the range's class.  A body shown to
+         * be of that class needs no check; the value of any other is checked
+         * when its call returns, and one outside the class leaves the call
+         * to the canonical evaluator.  The parameters of value classes were
          * cast when the call entered. */
         head = &program->heads[head_index];
+        /* A structural range is the trusted version's to prove. */
         if (rhs_ok && head->typed &&
-            head->range_class != PREPARED_PURE_VALUE_UNDEFINED) {
+            head->range_class != PREPARED_PURE_VALUE_UNDEFINED &&
+            head->range_class != PREPARED_PURE_VALUE_STRUCTURAL) {
             uint8_t slot_classes[PREPARED_PURE_MAX_SLOTS];
             uint32_t slot_count = context.next_slot < PREPARED_PURE_MAX_SLOTS
                 ? context.next_slot : PREPARED_PURE_MAX_SLOTS;
@@ -7045,14 +8064,11 @@ static bool prepared_pure_compile_head(
                     slot_classes[slot] = program->value_classes[
                         head->first_value_class + i - 1u];
             }
-            rhs_ok = prepared_pure_node_value_class(
-                program, root, slot_classes, slot_count, 0u) ==
-                head->range_class;
-            if (!rhs_ok) {
-                free(context.bindings);
-                return prepared_pure_reject(
-                    program, "typed result is not shown to be of its range",
-                    occurrence.rhs);
+            if (prepared_pure_node_value_class(
+                    program, root, slot_classes, slot_count, 0u) !=
+                head->range_class) {
+                head->checks_return = true;
+                program->return_checks = true;
             }
         }
         if (!rhs_ok || context.next_slot > PREPARED_PURE_MAX_SLOTS ||
@@ -7060,7 +8076,7 @@ static bool prepared_pure_compile_head(
                 (void **)&program->equations,
                 sizeof(*program->equations), &program->equation_cap,
                 program->equation_len + 1u)) {
-            free(context.bindings);
+            prepared_pure_context_release(&context);
             return prepared_pure_reject(
                 program, "equation body is outside the pure machine fragment",
                 occurrence.rhs);
@@ -7079,7 +8095,7 @@ static bool prepared_pure_compile_head(
         };
         prepared_pure_compile_context_reads(
             program, &program->equations[program->equation_len - 1u]);
-        free(context.bindings);
+        prepared_pure_context_release(&context);
         if (!prepared_pure_record_argument_slots(
                 program, &program->equations[program->equation_len - 1u]))
             return prepared_pure_reject(
@@ -8905,11 +9921,6 @@ static bool prepared_pure_grounded_intrinsic_type_equal(
 static bool prepared_pure_equality_reads_fields(
     const CettaPreparedPureProgram *program, const Atom *left,
     const Atom *right) {
-    /* Private list spines are not the operand values equality observes,
-     * regardless of the dialect's evaluation discipline. */
-    if (petta_semantics_value_contains_observable_open_cons(left) ||
-        petta_semantics_value_contains_observable_open_cons(right))
-        return true;
     if (!program ||
         program->call_mode != CETTA_GSLT_PURE_CALL_CALL_BY_NEED ||
         !left || !right || left == right ||
@@ -9117,6 +10128,44 @@ static Atom *prepared_pure_execute_intrinsic(
         /* Native entry belongs to the retained step program. A scalar
          * attempt can decline here without executing the native twice. */
         return NULL;
+    }
+    case CETTA_GSLT_PREPARED_PURE_INTRINSIC_COMPARISON_SELECT: {
+        /* PeTTa's min and max select one of the evaluated operands
+         * (petta_numeric_min_max). */
+        if (arity != 2u || (atom_symbol_current_id(head) != g_builtin_syms.petta_min &&
+                            atom_symbol_current_id(head) != g_builtin_syms.petta_max))
+            return NULL;
+        /* Two machine integers: the smaller (larger); a tie is one
+         * value. */
+        if (arguments[0]->kind == ATOM_GROUNDED &&
+            arguments[0]->ground.gkind == GV_INT &&
+            arguments[1]->kind == ATOM_GROUNDED &&
+            arguments[1]->ground.gkind == GV_INT) {
+            int64_t a = arguments[0]->ground.ival;
+            int64_t b = arguments[1]->ground.ival;
+            bool first = atom_symbol_current_id(head) == g_builtin_syms.petta_min ? a <= b
+                                                                  : a > b;
+            return arguments[first ? 0u : 1u];
+        }
+        /* Numbers and constants: the selection petta_numeric_min_max
+         * makes. */
+        Atom *computed = NULL;
+        if (petta_numeric_min_max(arena,
+                                  atom_symbol_current_id(head) == g_builtin_syms.petta_min,
+                                  (Atom *)arguments[0], (Atom *)arguments[1],
+                                  &computed))
+            return computed;
+        Atom *comparison = atom_symbol_id(arena,
+            atom_symbol_current_id(head) == g_builtin_syms.petta_min ? g_builtin_syms.op_le
+                                                     : g_builtin_syms.op_ge);
+        Atom *ordered = comparison
+            ? grounded_dispatch(arena, comparison, (Atom **)arguments, 2u)
+            : NULL;
+        bool first = false;
+        if (!ordered || atom_is_empty_or_error(ordered) ||
+            !petta_semantics_truth_value(ordered, &first))
+            return NULL;
+        return arguments[first ? 0u : 1u];
     }
     /* The structural intrinsics read an expression's children or a list's
      * elements, and build a result of the same kind; a list pattern is
@@ -10662,12 +11711,12 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile(
         !prepared_pure_compile_eval(
             program, &context, expression,
             program->source_view.root, 0u, &program->body.root)) {
-        free(context.bindings);
+        prepared_pure_context_release(&context);
         cetta_prepared_pure_program_free(program);
         return NULL;
     }
     program->body.local_count = context.next_slot;
-    free(context.bindings);
+    prepared_pure_context_release(&context);
     if (!prepared_pure_compile_pending_heads(program)) {
         cetta_prepared_pure_program_free(program);
         return NULL;
@@ -11822,6 +12871,12 @@ typedef struct {
     uint32_t entry_base;
     bool root;
     uint32_t next_register;
+    /* The equation and head whose body is lowered, or NULL/UINT32_MAX. */
+    const PreparedPureEquation *equation;
+    uint32_t head;
+    /* Per local: the node a let in scope binds it to as a whole, or
+     * UINT32_MAX (prepared_pure_static_type reads its type there). */
+    uint32_t *bound_by;
 } PreparedPureCodeLowering;
 
 static bool prepared_pure_code_emit(
@@ -11995,6 +13050,1043 @@ static bool prepared_pure_code_operands(
     return true;
 }
 
+/* Which argument, and which field of it (UINT32_MAX: the whole argument),
+ * the equation binds slot `slot` to: by its variable arguments, its code
+ * binds, or its match ops (registers 0..arity-1 hold the arguments, an EXPR
+ * op loads an argument's elements, a BIND op gives a slot a register).
+ * False where the slot is neither. */
+static bool prepared_pure_slot_field(const CettaPreparedPureProgram *program,
+                                     const PreparedPureEquation *equation,
+                                     uint32_t slot, uint32_t *source,
+                                     uint32_t *field) {
+    if (equation->variable_arguments) {
+        for (uint32_t i = 0u; i < equation->arity; i++)
+            if (program->argument_slots[equation->first_argument_slot + i] ==
+                    slot) {
+                *source = i;
+                *field = UINT32_MAX;
+                return true;
+            }
+        return false;
+    }
+    if (equation->code_binds) {
+        for (uint32_t b = 0u; b < equation->bind_count; b++) {
+            const PreparedPureCodeBind *bind =
+                &program->code_binds[equation->first_bind + b];
+            if (bind->local == slot) {
+                *source = bind->source;
+                *field = b < equation->bind_field_count ? bind->field
+                                                        : UINT32_MAX;
+                return true;
+            }
+        }
+        return false;
+    }
+    if (!equation->compiled_match || equation->match_register_count == 0u ||
+        equation->match_register_count > 4096u)
+        return false;
+    uint32_t count = equation->match_register_count;
+    uint32_t *argument_of = malloc(sizeof(*argument_of) * count * 2u);
+    if (!argument_of)
+        return false;
+    uint32_t *field_of = argument_of + count;
+    for (uint32_t r = 0u; r < count; r++) {
+        argument_of[r] = r < equation->arity ? r : UINT32_MAX;
+        field_of[r] = UINT32_MAX;
+    }
+    bool found = false;
+    for (uint32_t i = 0u; i < equation->match_op_count; i++) {
+        const PreparedPureMatchOp *op =
+            &program->match_ops[equation->first_match_op + i];
+        if (op->kind == PREPARED_PURE_MATCH_OP_EXPR && op->source < count &&
+            argument_of[op->source] != UINT32_MAX &&
+            field_of[op->source] == UINT32_MAX) {
+            for (uint32_t k = 0u; k < op->length &&
+                     (size_t)op->operand + k < count; k++) {
+                argument_of[op->operand + k] = argument_of[op->source];
+                field_of[op->operand + k] = k;
+            }
+        } else if (op->kind == PREPARED_PURE_MATCH_OP_BIND &&
+                   op->operand == slot && op->source < count) {
+            if (argument_of[op->source] != UINT32_MAX) {
+                *source = argument_of[op->source];
+                *field = field_of[op->source];
+                found = true;
+            }
+            break;
+        }
+    }
+    free(argument_of);
+    return found;
+}
+
+/* The one function type a constructor's only type rows declare, or NULL. */
+static Atom *prepared_pure_constructor_type(
+    const CettaPreparedPureProgram *program, Arena *scratch, Atom *head,
+    size_t length) {
+    if (!head || head->kind != ATOM_SYMBOL ||
+        !space_type_rows_only_declare(program->space, atom_symbol_current_id(head)))
+        return NULL;
+    Atom **types = NULL;
+    uint32_t count = get_atom_types(program->space, scratch, head, &types);
+    Atom *type = count == 1u ? types[0] : NULL;
+    free(types);
+    return type && type->kind == ATOM_EXPR && type->expr.len == length + 1u &&
+        atom_is_symbol_id(type->expr.elems[0], g_builtin_syms.arrow)
+        ? type : NULL;
+}
+
+/* The closed type HE's typing gives the value of `node_index` in the body of
+ * the lowered equation, where the head's checks, its callees' ranges and its
+ * constructors' declarations decide it; NULL where they do not.
+ *   - a slot the equation binds to a whole argument at a closed checked
+ *     formal: that formal;
+ *   - a slot bound to field k of such an argument, matched by a constructor
+ *     C whose only rows declare one function type (-> T1 .. Tm R): Tk under
+ *     the unifier of R with the formal (inversion of C's typing);
+ *   - a literal with one type;
+ *   - a checked build of such a constructor over children of known types:
+ *     its range under the unifier of its parameters with them;
+ *   - a call of an HE head owing a closed range: that range, which the
+ *     callee's activation shows or checks. */
+/* The typings a value at a node may have: each member a possible value's
+ * one typing (with its own variables), `known` false where any typing is
+ * possible, and known with no member where no value reaches the node. */
+enum { PREPARED_PURE_TYPE_SET_MAX = 4u, PREPARED_PURE_TYPE_COMBINATIONS = 64u };
+typedef struct PreparedPureTypeSet {
+    bool known;
+    uint8_t count;
+    Atom *types[PREPARED_PURE_TYPE_SET_MAX];
+} PreparedPureTypeSet;
+
+static void prepared_pure_static_types(const PreparedPureCodeLowering *lowering,
+                                       Arena *scratch, uint32_t node_index,
+                                       uint32_t depth,
+                                       struct PreparedPureTypeSet *out,
+                                       bool *checked);
+static const struct PreparedPureTypeSet *prepared_pure_inferred(
+    const CettaPreparedPureProgram *program, uint32_t head, uint32_t i);
+static Atom *prepared_pure_type_set_closed(
+    const struct PreparedPureTypeSet *set);
+
+static Atom *prepared_pure_static_type_any(
+    const PreparedPureCodeLowering *lowering, Arena *scratch,
+    uint32_t node_index, uint32_t depth);
+
+/* Whether node `node` reads an inferred set: a slot of a head with inferred
+ * typings, at a position its declaration gives no closed type (an untyped
+ * head's, or an open structural formal), or a call of such a head whose
+ * range gives none.  A let's variable reads its bound value. */
+static bool prepared_pure_inferred_site(const PreparedPureCodeLowering *lowering,
+                                        const PreparedPureNode *node) {
+    const CettaPreparedPureProgram *program = lowering->program;
+    if (node->kind == PREPARED_PURE_CALL) {
+        if (node->auxiliary >= program->head_len)
+            return false;
+        const PreparedPureHead *callee = &program->heads[node->auxiliary];
+        return callee->first_inferred != UINT32_MAX &&
+            (!callee->typed ||
+             (callee->he_structural && callee->range_formal &&
+              atom_has_vars(callee->range_formal)));
+    }
+    if (node->kind != PREPARED_PURE_SLOT || lowering->head >= program->head_len ||
+        (lowering->bound_by && node->auxiliary < lowering->local_count &&
+         lowering->bound_by[node->auxiliary] != UINT32_MAX))
+        return false;
+    const PreparedPureHead *caller = &program->heads[lowering->head];
+    if (caller->first_inferred == UINT32_MAX)
+        return false;
+    if (!caller->typed)
+        return true;
+    uint32_t source = 0u, field = 0u;
+    if (!lowering->equation ||
+        !prepared_pure_slot_field(program, lowering->equation, node->auxiliary,
+                                  &source, &field) ||
+        source >= caller->typed_arity)
+        return false;
+    Atom *formal = program->value_formals[caller->first_value_class + source];
+    return program->value_classes[caller->first_value_class + source] ==
+            PREPARED_PURE_VALUE_STRUCTURAL &&
+        formal && atom_has_vars(formal);
+}
+
+/* A static type naming %Undefined% stands for no typing: HE reads it as any
+ * type at a formal's top only. */
+static Atom *prepared_pure_static_type(const PreparedPureCodeLowering *lowering,
+                                       Arena *scratch, uint32_t node_index,
+                                       uint32_t depth) {
+    Atom *type = prepared_pure_static_type_any(lowering, scratch, node_index,
+                                               depth);
+    return type && !prepared_pure_type_mentions_undefined(type, 0u) ? type
+                                                                     : NULL;
+}
+
+static Atom *prepared_pure_static_type_any(
+    const PreparedPureCodeLowering *lowering, Arena *scratch,
+    uint32_t node_index, uint32_t depth) {
+    const CettaPreparedPureProgram *program = lowering->program;
+    const PreparedPureEquation *equation = lowering->equation;
+    if (node_index >= program->node_len || depth > 32u)
+        return NULL;
+    const PreparedPureNode *node = &program->nodes[node_index];
+    if (node->kind == PREPARED_PURE_SLOT && lowering->bound_by &&
+        node->auxiliary < lowering->local_count &&
+        lowering->bound_by[node->auxiliary] != UINT32_MAX)
+        /* A let's variable is its bound value. */
+        return prepared_pure_static_type(lowering, scratch,
+            lowering->bound_by[node->auxiliary], depth + 1u);
+    /* An argument or answer its declaration does not type: its inferred
+     * typings, where they are one closed type. */
+    if (prepared_pure_inferred_site(lowering, node)) {
+        PreparedPureTypeSet set;
+        bool checked = true;
+        if (node->kind == PREPARED_PURE_CALL) {
+            const PreparedPureTypeSet *answer = prepared_pure_inferred(program,
+                node->auxiliary, program->heads[node->auxiliary].inferred_arity);
+            return prepared_pure_type_set_closed(answer);
+        }
+        prepared_pure_static_types(lowering, scratch, node_index, depth + 1u,
+                                   &set, &checked);
+        return prepared_pure_type_set_closed(&set);
+    }
+    if (node->kind == PREPARED_PURE_SLOT) {
+        if (!equation || lowering->head >= program->head_len)
+            return NULL;
+        const PreparedPureHead *caller = &program->heads[lowering->head];
+        uint32_t source = 0u, field = 0u;
+        if (!prepared_pure_slot_field(program, equation, node->auxiliary,
+                                      &source, &field) ||
+            source >= caller->typed_arity)
+            return NULL;
+        uint8_t class = program->value_classes[caller->first_value_class + source];
+        /* A value class's formal is its type's name; a structural one is
+         * kept. */
+        Atom *formal =
+            class == PREPARED_PURE_VALUE_NUMBER ? atom_symbol(scratch, "Number")
+            : class == PREPARED_PURE_VALUE_STRING ? atom_symbol(scratch, "String")
+            : class == PREPARED_PURE_VALUE_BOOL ? atom_symbol(scratch, "Bool")
+            : program->value_formals[caller->first_value_class + source];
+        if (!formal || atom_has_vars(formal) ||
+            class == PREPARED_PURE_VALUE_UNDEFINED ||
+            class == PREPARED_PURE_VALUE_PARAMETER ||
+            ((caller->instance_formals >> source) & 1u))
+            return NULL;
+        if (field == UINT32_MAX)
+            return formal;
+        Atom *occurrence = equation->equation;
+        Atom *lhs = occurrence && occurrence->kind == ATOM_EXPR &&
+                occurrence->expr.len == 3u ? occurrence->expr.elems[1] : NULL;
+        Atom *pattern = lhs && lhs->kind == ATOM_EXPR &&
+                source + 1u < lhs->expr.len ? lhs->expr.elems[source + 1u]
+                                            : NULL;
+        if (!pattern || pattern->kind != ATOM_EXPR || field == 0u ||
+            field >= pattern->expr.len)
+            return NULL;
+        Atom *type = prepared_pure_constructor_type(program, scratch,
+            pattern->expr.elems[0], pattern->expr.len);
+        if (!type)
+            return NULL;
+        Bindings unifier;
+        bindings_init(&unifier);
+        Atom *result = match_types(type->expr.elems[type->expr.len - 1u],
+                                   formal, &unifier, scratch)
+            ? bindings_apply_if_vars(&unifier, scratch, type->expr.elems[field])
+            : NULL;
+        bindings_free(&unifier);
+        return result && !atom_has_vars(result) ? result : NULL;
+    }
+    if (node->kind == PREPARED_PURE_LITERAL) {
+        if (!node->atom || node->atom->kind == ATOM_EXPR ||
+            node->atom->kind == ATOM_VAR)
+            return NULL;
+        Atom **types = NULL;
+        uint32_t count = get_atom_types(program->space, scratch, node->atom,
+                                        &types);
+        Atom *type = count == 1u && types[0] &&
+            !atom_is_meta_type(types[0]) &&
+            !atom_is_symbol_id(types[0], g_builtin_syms.undefined_type)
+            ? types[0] : NULL;
+        free(types);
+        return type;
+    }
+    if (node->kind == PREPARED_PURE_CALL) {
+        if (node->auxiliary >= program->head_len)
+            return NULL;
+        const PreparedPureHead *callee = &program->heads[node->auxiliary];
+        return callee->he_structural && callee->range_formal &&
+            !atom_has_vars(callee->range_formal) ? callee->range_formal : NULL;
+    }
+    if (node->kind == PREPARED_PURE_TYPED_BUILD) {
+        if (node->first_child > program->child_len ||
+            node->child_count > program->child_len - node->first_child)
+            return NULL;
+        /* Its children are the source's elements, the head first. */
+        Atom *type = prepared_pure_constructor_type(program, scratch,
+            atom_symbol_id(scratch, node->head), (size_t)node->child_count);
+        if (!type || node->child_count == 0u)
+            return NULL;
+        Bindings unifier;
+        bindings_init(&unifier);
+        bool ok = true;
+        for (uint32_t i = 1u; ok && i < node->child_count; i++) {
+            Atom *child = prepared_pure_static_type(lowering, scratch,
+                program->children[node->first_child + i], depth + 1u);
+            /* A child's type with variables would share them with the
+             * declaration's; only closed ones are read. */
+            ok = child && !atom_has_vars(child) &&
+                match_types(child, type->expr.elems[i], &unifier, scratch);
+        }
+        Atom *result = ok ? bindings_apply_if_vars(&unifier, scratch,
+            type->expr.elems[type->expr.len - 1u]) : NULL;
+        bindings_free(&unifier);
+        return result && !atom_has_vars(result) ? result : NULL;
+    }
+    return NULL;
+}
+
+static void prepared_pure_type_set_any(PreparedPureTypeSet *set) {
+    set->known = false;
+    set->count = 0u;
+}
+
+/* Adds `type`, kept in `keep`, as a member; a bare variable or a fifth
+ * member makes any typing possible.  Whether the set changed. */
+static bool prepared_pure_type_set_add(Arena *keep, PreparedPureTypeSet *set,
+                                       Atom *type) {
+    if (!set->known)
+        return false;
+    if (!type || type->kind == ATOM_VAR ||
+        prepared_pure_type_names_undefined(type) ||
+        atom_is_meta_type(type)) {
+        prepared_pure_type_set_any(set);
+        return true;
+    }
+    for (uint8_t i = 0u; i < set->count; i++)
+        if (atom_alpha_eq(set->types[i], type))
+            return false;
+    Atom *kept = set->count < PREPARED_PURE_TYPE_SET_MAX
+        ? atom_deep_copy(keep, type) : NULL;
+    if (!kept) {
+        prepared_pure_type_set_any(set);
+        return true;
+    }
+    set->types[set->count++] = kept;
+    return true;
+}
+
+static bool prepared_pure_type_set_join(Arena *keep, PreparedPureTypeSet *into,
+                                        const PreparedPureTypeSet *from) {
+    if (!into->known)
+        return false;
+    if (!from->known) {
+        prepared_pure_type_set_any(into);
+        return true;
+    }
+    bool changed = false;
+    for (uint8_t i = 0u; i < from->count && into->known; i++)
+        changed |= prepared_pure_type_set_add(keep, into, from->types[i]);
+    return changed;
+}
+
+/* The inferred set of untyped head `head`'s position `i` (its answer at
+ * the head's arity), or NULL. */
+static const PreparedPureTypeSet *prepared_pure_inferred(
+    const CettaPreparedPureProgram *program, uint32_t head, uint32_t i) {
+    if (head >= program->head_len)
+        return NULL;
+    const PreparedPureHead *known = &program->heads[head];
+    return known->first_inferred != UINT32_MAX && i <= known->inferred_arity
+        ? &program->inferred_sets[known->first_inferred + i] : NULL;
+}
+
+/* An inferred set's one closed member, or NULL. */
+static Atom *prepared_pure_type_set_closed(const PreparedPureTypeSet *set) {
+    return set && set->known && set->count == 1u &&
+            !atom_has_vars(set->types[0])
+        ? set->types[0] : NULL;
+}
+
+static void prepared_pure_static_types(const PreparedPureCodeLowering *lowering,
+                                       Arena *scratch, uint32_t node_index,
+                                       uint32_t depth, PreparedPureTypeSet *out,
+                                       bool *checked);
+
+/* A checked build's typings over its children's: each combination of
+ * their members, read freshly, unified with the constructor's parameters
+ * gives its range; *checked is false where some combination fails the
+ * constructor's check (the build is then checked when it runs). */
+static void prepared_pure_static_build_types(
+    const PreparedPureCodeLowering *lowering, Arena *scratch,
+    const PreparedPureNode *node, uint32_t depth, PreparedPureTypeSet *out,
+    bool *checked) {
+    const CettaPreparedPureProgram *program = lowering->program;
+    *checked = false;
+    prepared_pure_type_set_any(out);
+    if (node->first_child > program->child_len ||
+        node->child_count > program->child_len - node->first_child ||
+        node->child_count < 2u || node->child_count > 9u)
+        return;
+    Atom *type = prepared_pure_constructor_type(program, scratch,
+        atom_symbol_id(scratch, node->head), (size_t)node->child_count);
+    if (!type)
+        return;
+    PreparedPureTypeSet children[8];
+    uint32_t combinations = 1u;
+    for (uint32_t i = 1u; i < node->child_count; i++) {
+        bool inner = true;
+        prepared_pure_static_types(lowering, scratch,
+            program->children[node->first_child + i], depth + 1u,
+            &children[i - 1u], &inner);
+        if (!children[i - 1u].known)
+            return;
+        if (children[i - 1u].count == 0u) {
+            /* No value reaches a child, so none reaches the build. */
+            out->known = true;
+            out->count = 0u;
+            *checked = true;
+            return;
+        }
+        combinations *= children[i - 1u].count;
+        if (combinations > PREPARED_PURE_TYPE_COMBINATIONS)
+            return;
+    }
+    out->known = true;
+    out->count = 0u;
+    bool all = true;
+    for (uint32_t c = 0u; c < combinations && out->known; c++) {
+        Atom *fresh = cetta_instantiate_frame_syntax(scratch, type);
+        if (!fresh) {
+            prepared_pure_type_set_any(out);
+            return;
+        }
+        Bindings unifier;
+        bindings_init(&unifier);
+        bool ok = true;
+        uint32_t rest = c;
+        for (uint32_t i = 1u; ok && i < node->child_count; i++) {
+            const PreparedPureTypeSet *child = &children[i - 1u];
+            Atom *member = cetta_instantiate_frame_syntax(
+                scratch, child->types[rest % child->count]);
+            rest /= child->count;
+            ok = member && match_types(member, fresh->expr.elems[i],
+                                       &unifier, scratch);
+        }
+        if (ok)
+            prepared_pure_type_set_add(scratch, out,
+                bindings_apply_if_vars(&unifier, scratch,
+                    fresh->expr.elems[fresh->expr.len - 1u]));
+        else {
+            /* Lower bounds can fail where the values they cover pass: no
+             * proof that no value reaches the build. */
+            all = false;
+            prepared_pure_type_set_any(out);
+        }
+        bindings_free(&unifier);
+    }
+    *checked = all && out->known;
+}
+
+/* The typings a value at node `node_index` may have: the single static type
+ * where prepared_pure_static_type knows it; an untyped head's inferred
+ * parameter (a whole argument, or a field by inversion of its matched
+ * constructor's only declaration) and answer; a literal's one typing, open
+ * ones included; a register's result class; both branches of an if; a
+ * let's body; a checked build's typings over its children's.  *checked is
+ * false where a checked build below may fail its check. */
+/* Whether every variable of `type` occurs in `within`. */
+static bool prepared_pure_type_vars_within(const Atom *type, const Atom *within,
+                                           uint32_t depth) {
+    if (!type || depth > 64u)
+        return false;
+    if (type->kind == ATOM_VAR)
+        return prepared_pure_type_mentions_var(within, type->var_id, 0u);
+    if (type->kind != ATOM_EXPR)
+        return true;
+    for (CettaExprIndex i = 0u; i < type->expr.len; i++)
+        if (!prepared_pure_type_vars_within(type->expr.elems[i], within,
+                                            depth + 1u))
+            return false;
+    return true;
+}
+
+static void prepared_pure_static_types(const PreparedPureCodeLowering *lowering,
+                                       Arena *scratch, uint32_t node_index,
+                                       uint32_t depth, PreparedPureTypeSet *out,
+                                       bool *checked) {
+    const CettaPreparedPureProgram *program = lowering->program;
+    prepared_pure_type_set_any(out);
+    if (node_index >= program->node_len || depth > 32u)
+        return;
+    const PreparedPureNode *node = &program->nodes[node_index];
+    if (node->kind == PREPARED_PURE_TYPED_BUILD) {
+        bool built = false;
+        prepared_pure_static_build_types(lowering, scratch, node, depth, out,
+                                         &built);
+        *checked = *checked && built;
+        return;
+    }
+    /* An untyped head's argument or answer is read from its inferred set
+     * here, not through the single static type, which reads it here. */
+    bool inferred_site = prepared_pure_inferred_site(lowering, node);
+    Atom *single = inferred_site ? NULL
+        : prepared_pure_static_type(lowering, scratch, node_index, depth + 1u);
+    if (single) {
+        out->known = true;
+        prepared_pure_type_set_add(scratch, out, single);
+        return;
+    }
+    switch (node->kind) {
+    case PREPARED_PURE_SLOT: {
+        if (lowering->bound_by && node->auxiliary < lowering->local_count &&
+            lowering->bound_by[node->auxiliary] != UINT32_MAX) {
+            prepared_pure_static_types(lowering, scratch,
+                lowering->bound_by[node->auxiliary], depth + 1u, out, checked);
+            return;
+        }
+        uint32_t source = 0u, field = 0u;
+        const PreparedPureEquation *equation = lowering->equation;
+        if (!equation || !prepared_pure_slot_field(program, equation,
+                node->auxiliary, &source, &field))
+            return;
+        const PreparedPureTypeSet *parameter =
+            prepared_pure_inferred(program, lowering->head, source);
+        if (!parameter || !parameter->known ||
+            source >= program->heads[lowering->head].inferred_arity)
+            return;
+        if (field == UINT32_MAX) {
+            *out = *parameter;
+            return;
+        }
+        Atom *occurrence = equation->equation;
+        Atom *lhs = occurrence && occurrence->kind == ATOM_EXPR &&
+                occurrence->expr.len == 3u ? occurrence->expr.elems[1] : NULL;
+        Atom *pattern = lhs && lhs->kind == ATOM_EXPR &&
+                source + 1u < lhs->expr.len ? lhs->expr.elems[source + 1u] : NULL;
+        if (!pattern || pattern->kind != ATOM_EXPR || field == 0u ||
+            field >= pattern->expr.len)
+            return;
+        Atom *type = prepared_pure_constructor_type(program, scratch,
+            pattern->expr.elems[0], pattern->expr.len);
+        if (!type ||
+            !prepared_pure_type_vars_within(type->expr.elems[field],
+                type->expr.elems[type->expr.len - 1u], 0u))
+            return;
+        out->known = true;
+        for (uint8_t i = 0u; i < parameter->count && out->known; i++) {
+            Atom *fresh = cetta_instantiate_frame_syntax(scratch, type);
+            Atom *member = cetta_instantiate_frame_syntax(scratch,
+                                                          parameter->types[i]);
+            Bindings unifier;
+            bindings_init(&unifier);
+            /* A value of a typing the constructor's range does not meet does
+             * not match the pattern: it reaches no field. */
+            if (fresh && member && match_types(
+                    fresh->expr.elems[fresh->expr.len - 1u], member,
+                    &unifier, scratch))
+                prepared_pure_type_set_add(scratch, out,
+                    bindings_apply_if_vars(&unifier, scratch,
+                                           fresh->expr.elems[field]));
+            else if (!fresh || !member)
+                prepared_pure_type_set_any(out);
+            bindings_free(&unifier);
+        }
+        return;
+    }
+    case PREPARED_PURE_LITERAL: {
+        if (!node->atom || node->atom->kind == ATOM_EXPR ||
+            node->atom->kind == ATOM_VAR)
+            return;
+        Atom **types = NULL;
+        uint32_t count = get_atom_types(program->space, scratch, node->atom,
+                                        &types);
+        if (count == 1u) {
+            out->known = true;
+            prepared_pure_type_set_add(scratch, out, types[0]);
+        }
+        free(types);
+        return;
+    }
+    case PREPARED_PURE_CALL: {
+        const PreparedPureTypeSet *answer = node->auxiliary < program->head_len
+            ? prepared_pure_inferred(program, node->auxiliary,
+                  program->heads[node->auxiliary].inferred_arity)
+            : NULL;
+        /* No answer yet is none: the fixpoint has not reached one. */
+        if (answer && answer->known)
+            *out = *answer;
+        return;
+    }
+    case PREPARED_PURE_REGISTER:
+        out->known = true;
+        prepared_pure_type_set_add(scratch, out, atom_symbol(scratch,
+            node->result_kind == CETTA_GSLT_REGISTER_RESULT_BOOLEAN
+                ? "Bool" : "Number"));
+        return;
+    case PREPARED_PURE_IF: {
+        if (node->child_count != 3u || node->first_child > program->child_len ||
+            3u > program->child_len - node->first_child)
+            return;
+        PreparedPureTypeSet other;
+        prepared_pure_static_types(lowering, scratch,
+            program->children[node->first_child + 1u], depth + 1u, out, checked);
+        prepared_pure_static_types(lowering, scratch,
+            program->children[node->first_child + 2u], depth + 1u, &other,
+            checked);
+        prepared_pure_type_set_join(scratch, out, &other);
+        return;
+    }
+    case PREPARED_PURE_BIND: {
+        if (node->child_count != 2u || node->first_child > program->child_len ||
+            2u > program->child_len - node->first_child ||
+            node->auxiliary >= program->bind_pattern_len)
+            return;
+        const PreparedPureBindPattern *pattern =
+            &program->bind_patterns[node->auxiliary];
+        uint32_t local = UINT32_MAX, outer = UINT32_MAX;
+        if (lowering->bound_by && pattern->pattern &&
+            pattern->pattern->kind == ATOM_VAR && pattern->var_count == 1u &&
+            program->bind_vars[pattern->first_var].slot < lowering->local_count) {
+            local = program->bind_vars[pattern->first_var].slot;
+            outer = lowering->bound_by[local];
+            lowering->bound_by[local] = program->children[node->first_child];
+        }
+        prepared_pure_static_types(lowering, scratch,
+            program->children[node->first_child + 1u], depth + 1u, out, checked);
+        if (local != UINT32_MAX)
+            lowering->bound_by[local] = outer;
+        return;
+    }
+    default:
+        return;
+    }
+}
+
+/* Joins, into the inferred sets, the typings the program's calls of
+ * untyped heads pass and their bodies answer, walking the body at
+ * `node_index` with its lets in scope.  Whether a set changed. */
+static bool prepared_pure_infer_walk(const PreparedPureCodeLowering *lowering,
+                                     Arena *scratch, uint32_t node_index,
+                                     uint32_t depth) {
+    CettaPreparedPureProgram *program = lowering->program;
+    if (node_index >= program->node_len || depth > 64u)
+        return false;
+    const PreparedPureNode *node = &program->nodes[node_index];
+    if (node->first_child > program->child_len ||
+        node->child_count > program->child_len - node->first_child)
+        return false;
+    bool changed = false;
+    Arena *keep = prepared_pure_syntax_arena(program);
+    if (node->kind == PREPARED_PURE_CALL && node->auxiliary < program->head_len) {
+        const PreparedPureHead *callee = &program->heads[node->auxiliary];
+        if (callee->first_inferred != UINT32_MAX) {
+            for (uint32_t j = 0u; j < node->child_count; j++) {
+                PreparedPureTypeSet *parameter =
+                    &program->inferred_sets[callee->first_inferred + j];
+                if (j >= callee->inferred_arity || !parameter->known)
+                    continue;
+                PreparedPureTypeSet passed;
+                bool checked = true;
+                prepared_pure_static_types(lowering, scratch,
+                    program->children[node->first_child + j], 0u, &passed,
+                    &checked);
+                changed |= prepared_pure_type_set_join(keep, parameter, &passed);
+            }
+        }
+    }
+    uint32_t local = UINT32_MAX, outer = UINT32_MAX;
+    for (uint32_t i = 0u; i < node->child_count; i++) {
+        if (node->kind == PREPARED_PURE_BIND && i == 1u &&
+            node->auxiliary < program->bind_pattern_len && lowering->bound_by) {
+            const PreparedPureBindPattern *pattern =
+                &program->bind_patterns[node->auxiliary];
+            if (pattern->pattern && pattern->pattern->kind == ATOM_VAR &&
+                pattern->var_count == 1u &&
+                program->bind_vars[pattern->first_var].slot <
+                    lowering->local_count) {
+                local = program->bind_vars[pattern->first_var].slot;
+                outer = lowering->bound_by[local];
+                lowering->bound_by[local] = program->children[node->first_child];
+            }
+        }
+        changed |= prepared_pure_infer_walk(lowering, scratch,
+            program->children[node->first_child + i], depth + 1u);
+    }
+    if (local != UINT32_MAX)
+        lowering->bound_by[local] = outer;
+    return changed;
+}
+
+/* One pass over a body: its calls, and, for an untyped head's equation,
+ * its answer. */
+static bool prepared_pure_infer_body(CettaPreparedPureProgram *program,
+                                     const PreparedPureEquation *equation,
+                                     uint32_t head, uint32_t root,
+                                     uint32_t local_count) {
+    PreparedPureCodeLowering lowering = {
+        .program = program, .local_count = local_count, .equation = equation,
+        .head = head,
+        .bound_by = local_count ? malloc(sizeof(uint32_t) * local_count) : NULL,
+    };
+    if (local_count && !lowering.bound_by)
+        return false;
+    for (uint32_t i = 0u; i < local_count; i++)
+        lowering.bound_by[i] = UINT32_MAX;
+    Arena scratch;
+    arena_init(&scratch);
+    bool changed = prepared_pure_infer_walk(&lowering, &scratch, root, 0u);
+    PreparedPureTypeSet *answer = head < program->head_len &&
+            program->heads[head].first_inferred != UINT32_MAX
+        ? &program->inferred_sets[program->heads[head].first_inferred +
+                                  program->heads[head].inferred_arity]
+        : NULL;
+    if (answer && answer->known) {
+        PreparedPureTypeSet returned;
+        bool checked = true;
+        prepared_pure_static_types(&lowering, &scratch, root, 0u, &returned,
+                                   &checked);
+        changed |= prepared_pure_type_set_join(
+            prepared_pure_syntax_arena(program), answer, &returned);
+    }
+    arena_free(&scratch);
+    free(lowering.bound_by);
+    return changed;
+}
+
+/* Typings for the untyped heads of a closed HE program: each parameter has
+ * the typings its call sites in the program pass, each answer those its
+ * equations' return positions give, from no typing up to a fixpoint (sets
+ * grow, at most four members each).  A head whose symbol the program also
+ * holds as a value, or that no call in the program reaches, may be called
+ * with anything: its parameters are unknown. */
+static void prepared_pure_infer_untyped(CettaPreparedPureProgram *program) {
+    for (size_t h = 0u; h < program->head_len; h++)
+        program->heads[h].first_inferred = UINT32_MAX;
+    if (!eval_current_language_id ||
+        eval_current_language_id() != CETTA_LANGUAGE_HE ||
+        !prepared_pure_syntax_arena(program))
+        return;
+    size_t total = 0u;
+    for (size_t h = 0u; h < program->head_len; h++) {
+        PreparedPureHead *head = &program->heads[h];
+        if ((head->typed && !head->he_structural) || !head->compiled ||
+            head->equation_count == 0u ||
+            head->first_equation > program->equation_len ||
+            head->equation_count > program->equation_len - head->first_equation)
+            continue;
+        uint32_t arity = program->equations[head->first_equation].arity;
+        bool one_arity = arity <= 8u;
+        for (uint32_t e = 1u; one_arity && e < head->equation_count; e++)
+            one_arity = program->equations[head->first_equation + e].arity ==
+                arity;
+        if (!one_arity || (head->typed && arity != head->typed_arity))
+            continue;
+        head->first_inferred = (uint32_t)total;
+        head->inferred_arity = arity;
+        total += (size_t)arity + 1u;
+    }
+    if (total == 0u)
+        return;
+    free(program->inferred_sets);
+    program->inferred_sets = calloc(total, sizeof(*program->inferred_sets));
+    program->inferred_len = program->inferred_sets ? total : 0u;
+    if (!program->inferred_sets) {
+        for (size_t h = 0u; h < program->head_len; h++)
+            program->heads[h].first_inferred = UINT32_MAX;
+        return;
+    }
+    for (size_t i = 0u; i < total; i++)
+        program->inferred_sets[i].known = true;
+    /* A head the program holds as a value may be called from anywhere. */
+    for (size_t n = 0u; n < program->node_len; n++) {
+        const PreparedPureNode *node = &program->nodes[n];
+        if (node->kind != PREPARED_PURE_LITERAL || !node->atom ||
+            node->atom->kind != ATOM_SYMBOL)
+            continue;
+        for (size_t h = 0u; h < program->head_len; h++)
+            if (program->heads[h].head == atom_symbol_current_id(node->atom) &&
+                program->heads[h].first_inferred != UINT32_MAX)
+                for (uint32_t i = 0u; i < program->heads[h].inferred_arity; i++)
+                    prepared_pure_type_set_any(&program->inferred_sets[
+                        program->heads[h].first_inferred + i]);
+    }
+    bool changed = true;
+    for (uint32_t round = 0u; changed && round < 16u; round++) {
+        changed = prepared_pure_infer_body(program, NULL, UINT32_MAX,
+            program->body.root, program->body.local_count);
+        for (size_t h = 0u; h < program->head_len; h++) {
+            const PreparedPureHead *head = &program->heads[h];
+            if (!head->compiled || head->first_equation > program->equation_len ||
+                head->equation_count >
+                    program->equation_len - head->first_equation)
+                continue;
+            for (uint32_t e = 0u; e < head->equation_count; e++) {
+                const PreparedPureEquation *equation =
+                    &program->equations[head->first_equation + e];
+                changed |= prepared_pure_infer_body(program, equation,
+                    (uint32_t)h, equation->body.root, equation->body.local_count);
+            }
+        }
+    }
+    for (size_t i = 0u; i < total; i++) {
+        PreparedPureTypeSet *set = &program->inferred_sets[i];
+        /* Not settled, or never reached: anything. */
+        if (changed || (set->known && set->count == 0u))
+            prepared_pure_type_set_any(set);
+    }
+}
+
+/* Whether node `node_index`'s static type is its value's exact typing: a
+ * literal's one typing, a register's result class, an argument at a
+ * value-class formal, a checked build over such children.  Every other
+ * static type is one the value's typing is at least as general as. */
+static bool prepared_pure_static_type_exact(
+    const PreparedPureCodeLowering *lowering, uint32_t node_index,
+    uint32_t depth) {
+    const CettaPreparedPureProgram *program = lowering->program;
+    if (node_index >= program->node_len || depth > 32u)
+        return false;
+    const PreparedPureNode *node = &program->nodes[node_index];
+    switch (node->kind) {
+    case PREPARED_PURE_LITERAL:
+    case PREPARED_PURE_REGISTER:
+        return true;
+    case PREPARED_PURE_SLOT: {
+        if (lowering->bound_by && node->auxiliary < lowering->local_count &&
+            lowering->bound_by[node->auxiliary] != UINT32_MAX)
+            return prepared_pure_static_type_exact(lowering,
+                lowering->bound_by[node->auxiliary], depth + 1u);
+        uint32_t source = 0u, field = 0u;
+        if (!lowering->equation || lowering->head >= program->head_len ||
+            !prepared_pure_slot_field(program, lowering->equation,
+                                      node->auxiliary, &source, &field) ||
+            field != UINT32_MAX)
+            return false;
+        const PreparedPureHead *caller = &program->heads[lowering->head];
+        if (!caller->typed || source >= caller->typed_arity)
+            return false;
+        uint8_t class = program->value_classes[caller->first_value_class + source];
+        return class == PREPARED_PURE_VALUE_NUMBER ||
+            class == PREPARED_PURE_VALUE_STRING ||
+            class == PREPARED_PURE_VALUE_BOOL;
+    }
+    case PREPARED_PURE_TYPED_BUILD:
+        if (node->first_child > program->child_len ||
+            node->child_count > program->child_len - node->first_child)
+            return false;
+        for (uint32_t i = 1u; i < node->child_count; i++)
+            if (!prepared_pure_static_type_exact(lowering,
+                    program->children[node->first_child + i], depth + 1u))
+                return false;
+        return true;
+    default:
+        return false;
+    }
+}
+
+/* Whether a checked build's own typing is decided by its children's known
+ * types: its code then skips the check, and the type is kept for the node
+ * in the syntax arena. */
+static bool prepared_pure_static_build_type(
+    const PreparedPureCodeLowering *lowering, uint32_t node_index) {
+    CettaPreparedPureProgram *program = lowering->program;
+    Arena scratch;
+    arena_init(&scratch);
+    PreparedPureTypeSet set;
+    bool checked = true;
+    prepared_pure_static_types(lowering, &scratch, node_index, 0u, &set,
+                               &checked);
+    /* Every combination of its children's typings passes: no check; a
+     * typing is kept where they give one closed type. */
+    bool passes = checked && set.known;
+    /* The type kept for the answer is its exact typing only. */
+    Atom *type = prepared_pure_static_type_exact(lowering, node_index, 0u)
+        ? prepared_pure_type_set_closed(&set) : NULL;
+    bool kept = passes && !type;
+    if (passes && type) {
+        Arena *syntax = prepared_pure_syntax_arena(program);
+        if (syntax && !program->node_static_types)
+            program->node_static_types =
+                calloc(program->node_len, sizeof(*program->node_static_types));
+        Atom *copy = syntax && program->node_static_types
+            ? atom_deep_copy(syntax, type) : NULL;
+        if (copy) {
+            program->node_static_types[node_index] = copy;
+            kept = true;
+        }
+    }
+    arena_free(&scratch);
+    return kept;
+}
+
+/* PeTTa: whether node `child` is known to pass PeTTa's check at the closed
+ * `formal`: a whole argument of the head whose body is lowered, at a
+ * structural position whose formal is `formal` (every activation of a PeTTa
+ * head with a trusted version has passed its check there: a call from
+ * outside checks it, a call to itself keeps it by the version), or a call
+ * into a head whose version proves the range `formal` of its answers.  A
+ * call passing that value on at the same formal passes the same check of
+ * the same value. */
+static bool prepared_pure_petta_slot_at_formal(
+    const PreparedPureCodeLowering *lowering, uint32_t child, const Atom *formal) {
+    const CettaPreparedPureProgram *program = lowering->program;
+    /* A let's variable is its bound value. */
+    for (uint32_t depth = 0u; child < program->node_len &&
+             program->nodes[child].kind == PREPARED_PURE_SLOT &&
+             lowering->bound_by &&
+             program->nodes[child].auxiliary < lowering->local_count &&
+             lowering->bound_by[program->nodes[child].auxiliary] != UINT32_MAX &&
+             depth < 32u; depth++)
+        child = lowering->bound_by[program->nodes[child].auxiliary];
+    if (child < program->node_len &&
+        program->nodes[child].kind == PREPARED_PURE_CALL &&
+        program->nodes[child].auxiliary < program->head_len) {
+        const Atom *range = program->heads[program->nodes[child].auxiliary].petta_range;
+        return range && atom_eq((Atom *)range, (Atom *)formal);
+    }
+    if (child >= program->node_len || !lowering->equation ||
+        lowering->head >= program->head_len ||
+        program->nodes[child].kind != PREPARED_PURE_SLOT)
+        return false;
+    const PreparedPureHead *caller = &program->heads[lowering->head];
+    uint32_t source = 0u, field = 0u;
+    if (!caller->self_trusted ||
+        !prepared_pure_slot_field(program, lowering->equation,
+                                  program->nodes[child].auxiliary, &source,
+                                  &field) ||
+        field != UINT32_MAX || source >= caller->typed_arity ||
+        program->value_classes[caller->first_value_class + source] !=
+            PREPARED_PURE_VALUE_STRUCTURAL)
+        return false;
+    const Atom *known = program->value_formals[caller->first_value_class + source];
+    return known && atom_eq((Atom *)known, (Atom *)formal);
+}
+
+/* Whether compilation knows a call passes its callee's typed argument check
+ * (prepared_pure_typed_arguments_accepted): each argument at a value-class
+ * parameter has that class by its node (prepared_pure_node_value_class), and
+ * one at the parameter whose class the answer takes has some class.  That
+ * check is the guard itself under the head's typed admission, so a class
+ * known to pass it passes at every run. */
+static bool prepared_pure_typed_arguments_known(
+    const CettaPreparedPureProgram *program, const PreparedPureNode *node) {
+    const PreparedPureHead *head = &program->heads[node->auxiliary];
+    if (!head->checks_arguments)
+        return true;
+    if (node->child_count != head->typed_arity ||
+        node->first_child > program->child_len ||
+        node->child_count > program->child_len - node->first_child)
+        return false;
+    const uint8_t *classes = &program->value_classes[head->first_value_class];
+    for (uint32_t i = 0u; i < node->child_count; i++) {
+        uint8_t formal = classes[i];
+        if (formal == PREPARED_PURE_VALUE_UNDEFINED ||
+            formal == PREPARED_PURE_VALUE_STRUCTURAL)
+            continue;
+        uint8_t known = prepared_pure_node_value_class(
+            program, program->children[node->first_child + i], NULL, 0u, 0u);
+        if (formal == PREPARED_PURE_VALUE_PARAMETER
+                ? known == PREPARED_PURE_VALUE_UNKNOWN
+                : known != formal)
+            return false;
+    }
+    return true;
+}
+
+/* Whether compilation decides a call's structural argument check
+ * (prepared_pure_structural_arguments_accepted), given the positions
+ * `discharged` it already decides: HE, every structural argument
+ * discharged or read by the open range's instance; PeTTa, a callee without
+ * a trusted structural version, the head's call to itself, or every
+ * structural argument discharged. */
+static bool prepared_pure_structural_arguments_known(
+    const PreparedPureCodeLowering *lowering, const PreparedPureNode *node,
+    uint8_t discharged) {
+    const CettaPreparedPureProgram *program = lowering->program;
+    const PreparedPureHead *head = &program->heads[node->auxiliary];
+    if (!head->he_structural &&
+        (!head->self_trusted || lowering->head == node->auxiliary))
+        return true;
+    if (node->child_count != head->typed_arity)
+        return false;
+    const uint8_t *classes = &program->value_classes[head->first_value_class];
+    for (uint32_t i = 0u; i < node->child_count; i++) {
+        if (classes[i] != PREPARED_PURE_VALUE_STRUCTURAL)
+            continue;
+        if (head->he_structural && i < 64u &&
+            ((head->instance_formals >> i) & 1u))
+            continue;
+        if (i >= 8u || !((discharged >> i) & 1u))
+            return false;
+    }
+    return true;
+}
+
+/* The argument positions of a call whose structural check the types the
+ * caller already knows decide, so the call site skips it.  HE: an argument
+ * whose static type (prepared_pure_static_type) is the callee's closed
+ * formal there passes the callee's check.  PeTTa: an argument the caller
+ * itself holds at the same formal (prepared_pure_petta_slot_at_formal). */
+static uint8_t prepared_pure_discharged_arguments(
+    const PreparedPureCodeLowering *lowering, const PreparedPureNode *node) {
+    const CettaPreparedPureProgram *program = lowering->program;
+    if (node->auxiliary >= program->head_len ||
+        node->first_child > program->child_len ||
+        node->child_count > program->child_len - node->first_child)
+        return 0u;
+    const PreparedPureHead *callee = &program->heads[node->auxiliary];
+    if (callee->self_trusted) {
+        uint8_t mask = 0u;
+        for (uint32_t j = 0u; j < node->child_count && j < 8u &&
+                 j < callee->typed_arity; j++) {
+            Atom *formal = program->value_formals[callee->first_value_class + j];
+            if (program->value_classes[callee->first_value_class + j] ==
+                    PREPARED_PURE_VALUE_STRUCTURAL &&
+                formal && !atom_has_vars(formal) &&
+                prepared_pure_petta_slot_at_formal(
+                    lowering, program->children[node->first_child + j], formal))
+                mask |= (uint8_t)(1u << j);
+        }
+        return mask;
+    }
+    if (!callee->he_structural)
+        return 0u;
+    uint8_t mask = 0u;
+    Arena scratch;
+    arena_init(&scratch);
+    for (uint32_t j = 0u; j < node->child_count && j < 8u &&
+             j < callee->typed_arity; j++) {
+        if (program->value_classes[callee->first_value_class + j] !=
+                PREPARED_PURE_VALUE_STRUCTURAL)
+            continue;
+        Atom *formal = program->value_formals[callee->first_value_class + j];
+        if (!formal)
+            continue;
+        /* HE's check: the argument's one typing unifies with the formal,
+         * for every typing the argument may have (an open formal read
+         * freshly, as each call reads it: its variables are its own). */
+        PreparedPureTypeSet types;
+        bool checked = true;
+        prepared_pure_static_types(lowering, &scratch,
+            program->children[node->first_child + j], 0u, &types, &checked);
+        bool fits = types.known && types.count > 0u;
+        for (uint8_t t = 0u; fits && t < types.count; t++) {
+            Bindings unifier;
+            bindings_init(&unifier);
+            Atom *member = cetta_instantiate_frame_syntax(&scratch,
+                                                          types.types[t]);
+            Atom *read = atom_has_vars(formal)
+                ? cetta_instantiate_frame_syntax(&scratch, formal) : formal;
+            fits = member && read && (atom_eq(member, read) ||
+                              match_types(member, read, &unifier, &scratch));
+            bindings_free(&unifier);
+        }
+        if (fits)
+            mask |= (uint8_t)(1u << j);
+    }
+    arena_free(&scratch);
+    return mask;
+}
+
 /* Lower one node into code that puts its value in `destination`, or, in
  * tail position, answers it for the body. */
 static bool prepared_pure_code_node(
@@ -12027,6 +14119,7 @@ static bool prepared_pure_code_node(
                 &operand, 1u, NULL);
     }
     case PREPARED_PURE_BUILD:
+    case PREPARED_PURE_TYPED_BUILD:
     case PREPARED_PURE_REGISTER:
     case PREPARED_PURE_INTRINSIC:
     case PREPARED_PURE_OBSERVE: {
@@ -12079,14 +14172,17 @@ static bool prepared_pure_code_node(
             node.child_count > 0u
                 ? &program->nodes[program->children[node.first_child]]
                 : NULL;
-        bool expression = node.kind == PREPARED_PURE_BUILD &&
-            node.auxiliary != PREPARED_PURE_BUILD_DATA_HEAD && head &&
+        bool expression = (node.kind == PREPARED_PURE_TYPED_BUILD ||
+                           (node.kind == PREPARED_PURE_BUILD &&
+                            node.auxiliary != PREPARED_PURE_BUILD_DATA_HEAD)) &&
+            head &&
             head->kind == PREPARED_PURE_LITERAL &&
             prepared_pure_constructs_expression(
                 program, head->atom, node.child_count);
         uint8_t kind = expression
             ? PREPARED_PURE_CODE_BUILD_EXPRESSION
-            : node.kind == PREPARED_PURE_BUILD
+            : node.kind == PREPARED_PURE_BUILD ||
+              node.kind == PREPARED_PURE_TYPED_BUILD
             ? PREPARED_PURE_CODE_BUILD
             : node.kind == PREPARED_PURE_REGISTER
             ? PREPARED_PURE_CODE_REGISTER
@@ -12114,6 +14210,8 @@ static bool prepared_pure_code_node(
                 .auxiliary = node_index,
                 .target = head_index,
                 .returns = tail,
+                .discharged = node.kind == PREPARED_PURE_TYPED_BUILD &&
+                    prepared_pure_static_build_type(lowering, node_index),
             },
             operands, node.child_count, NULL);
         free(operands);
@@ -12202,19 +14300,35 @@ static bool prepared_pure_code_node(
             2u > program->child_len - node.first_child)
             return false;
         uint32_t bound = 0u;
-        return prepared_pure_code_operand(
-                   lowering, program->children[node.first_child],
-                   depth + 1u, &bound) &&
-            prepared_pure_code_emit(
+        if (!prepared_pure_code_operand(
+                lowering, program->children[node.first_child], depth + 1u,
+                &bound) ||
+            !prepared_pure_code_emit(
                 program,
                 (PreparedPureCode){
                     .kind = PREPARED_PURE_CODE_MATCH,
                     .auxiliary = node.auxiliary,
                 },
-                &bound, 1u, NULL) &&
-            prepared_pure_code_node(
-                lowering, program->children[node.first_child + 1u], tail,
-                destination, depth + 1u);
+                &bound, 1u, NULL))
+            return false;
+        /* A variable pattern binds its local to the bound value, in the
+         * body's scope. */
+        const PreparedPureBindPattern *pattern =
+            &program->bind_patterns[node.auxiliary];
+        uint32_t local = UINT32_MAX, outer = UINT32_MAX;
+        if (lowering->bound_by && pattern->pattern &&
+            pattern->pattern->kind == ATOM_VAR && pattern->var_count == 1u &&
+            program->bind_vars[pattern->first_var].slot < lowering->local_count) {
+            local = program->bind_vars[pattern->first_var].slot;
+            outer = lowering->bound_by[local];
+            lowering->bound_by[local] = program->children[node.first_child];
+        }
+        bool ok = prepared_pure_code_node(
+            lowering, program->children[node.first_child + 1u], tail,
+            destination, depth + 1u);
+        if (local != UINT32_MAX)
+            lowering->bound_by[local] = outer;
+        return ok;
     }
     case PREPARED_PURE_DECLINE:
         return prepared_pure_code_emit(
@@ -12235,6 +14349,8 @@ static bool prepared_pure_code_node(
                 lowering, node.first_child, node.child_count, depth,
                 &operands))
             return false;
+        uint8_t discharged = prepared_pure_discharged_arguments(
+            lowering, &node);
         bool ok = prepared_pure_code_emit(
             program,
             (PreparedPureCode){
@@ -12242,6 +14358,12 @@ static bool prepared_pure_code_node(
                              : PREPARED_PURE_CODE_CALL,
                 .destination = destination,
                 .auxiliary = node.auxiliary,
+                .discharged = discharged,
+                .typed_arguments_known =
+                    prepared_pure_typed_arguments_known(program, &node),
+                .structural_arguments_known =
+                    prepared_pure_structural_arguments_known(
+                        lowering, &node, discharged),
             },
             operands, node.child_count, NULL);
         free(operands);
@@ -12707,7 +14829,8 @@ static bool prepared_pure_code_entry(
 static bool prepared_pure_lower_code_body(
     CettaPreparedPureProgram *program, uint32_t node, uint32_t local_count,
     uint32_t entry_argument_count, bool root, bool owned,
-    uint32_t *first_code_out, uint32_t *register_count_out) {
+    uint32_t *first_code_out, uint32_t *register_count_out,
+    const PreparedPureEquation *equation, uint32_t head) {
     if (local_count >= PREPARED_PURE_MAX_SLOTS ||
         entry_argument_count > PREPARED_PURE_MAX_SLOTS - local_count - 1u)
         return false;
@@ -12717,18 +14840,28 @@ static bool prepared_pure_lower_code_body(
         .entry_base = local_count,
         .root = root,
         .next_register = local_count + entry_argument_count,
+        .equation = equation,
+        .head = head,
+        .bound_by = local_count > 0u
+            ? malloc(sizeof(uint32_t) * local_count) : NULL,
     };
+    if (local_count > 0u && !lowering.bound_by)
+        return false;
+    for (uint32_t i = 0u; i < local_count; i++)
+        lowering.bound_by[i] = UINT32_MAX;
     uint32_t first_code = (uint32_t)program->code_len;
     uint32_t value = lowering.next_register;
     if (!owned)
         lowering.next_register++;
-    if (!(owned
-              ? prepared_pure_code_node(&lowering, node, true, 0u, 0u)
-              : prepared_pure_code_node(&lowering, node, false, value, 0u) &&
-                    prepared_pure_code_emit(
-                        program,
-                        (PreparedPureCode){.kind = PREPARED_PURE_CODE_RETURN},
-                        &value, 1u, NULL)) ||
+    bool lowered = owned
+        ? prepared_pure_code_node(&lowering, node, true, 0u, 0u)
+        : prepared_pure_code_node(&lowering, node, false, value, 0u) &&
+              prepared_pure_code_emit(
+                  program,
+                  (PreparedPureCode){.kind = PREPARED_PURE_CODE_RETURN},
+                  &value, 1u, NULL);
+    free(lowering.bound_by);
+    if (!lowered ||
         !prepared_pure_code_liveness(
             program, first_code, (uint32_t)program->code_len,
             lowering.next_register))
@@ -12759,9 +14892,12 @@ static __attribute__((noinline, cold)) bool prepared_pure_lower_native_code(Cett
         uint32_t *positions = calloc((size_t)body->step_count + 1u, sizeof(*positions));
         if (!positions)
             return false;
+        /* Native code runs under no one head's parameters: no call is the
+         * head's call to itself, and no slot takes a parameter's type. */
         PreparedPureCodeLowering lowering = {.program = program,
             .local_count = body->frame_slot_count,
-            .next_register = body->frame_slot_count};
+            .next_register = body->frame_slot_count,
+            .head = UINT32_MAX};
         bool ok = true;
         for (uint32_t k = 0u; ok && k < body->step_count; k++) {
             uint32_t pc = body->first_step + k;
@@ -12863,11 +14999,521 @@ static __attribute__((noinline, cold)) bool prepared_pure_lower_native_code(Cett
  * node kinds leaves the program to the node executor. Native-aware code
  * instead lowers selected equations' continuation steps and transfers an
  * ambiguous ready call to the cursor with its actual return frames. */
+/* Whether every return position under `node_index` gives a value that HE's
+ * check at the closed range `range` passes, as HE checks an expression by
+ * its operator's function type: a checked build of a constructor whose one
+ * declared range is `range`, a symbol declared at `range` alone, an if whose
+ * branches both do, or a tail call into an HE head whose range is `range`
+ * (which either checks it or shows it in turn). */
+static bool prepared_pure_he_range_shown(CettaPreparedPureProgram *program,
+                                         Arena *scratch, uint32_t head_index,
+                                         const PreparedPureEquation *equation,
+                                         uint32_t node_index,
+                                         Atom *range, uint32_t depth) {
+    if (node_index >= program->node_len || depth > 64u)
+        return false;
+    const PreparedPureNode *node = &program->nodes[node_index];
+    if (node->kind == PREPARED_PURE_IF) {
+        if (node->child_count != 3u || node->first_child > program->child_len ||
+            3u > program->child_len - node->first_child)
+            return false;
+        return prepared_pure_he_range_shown(program, scratch, head_index,
+                   equation, program->children[node->first_child + 1u], range,
+                   depth + 1u) &&
+            prepared_pure_he_range_shown(program, scratch, head_index,
+                   equation, program->children[node->first_child + 2u], range,
+                   depth + 1u);
+    }
+    /* A parameter whose formal is the range itself, its variables the
+     * range's: the call's check of the argument shows the answer. */
+    if (node->kind == PREPARED_PURE_SLOT && equation &&
+        equation->variable_arguments) {
+        const PreparedPureHead *head = &program->heads[head_index];
+        for (uint32_t i = 0u; i < equation->arity && i < head->typed_arity; i++) {
+            if (program->argument_slots[equation->first_argument_slot + i] !=
+                node->auxiliary)
+                continue;
+            Atom *formal = program->value_formals[head->first_value_class + i];
+            return formal && atom_eq(formal, range);
+        }
+        return false;
+    }
+    /* A slot whose static type is the closed range itself: a whole
+     * argument at that formal, or a field the constructor's declaration
+     * types so under the argument's formal. */
+    if (node->kind == PREPARED_PURE_SLOT && equation && !atom_has_vars(range)) {
+        PreparedPureCodeLowering lowering = {
+            .program = program, .equation = equation, .head = head_index};
+        Atom *type = prepared_pure_static_type(&lowering, scratch, node_index,
+                                               0u);
+        return type && atom_eq(type, range);
+    }
+    /* A tail call into a head owing a structural range shows it: the
+     * call meets the callee's instance with the caller's, and the callee
+     * owes the result (the machine's TAIL_CALL).  A constructor whose
+     * declared range is the range shows it only when the range is closed:
+     * an open range is instantiated per activation, the constructor's
+     * application by its own arguments. */
+    bool closed = !atom_has_vars(range);
+    if (node->kind == PREPARED_PURE_CALL) {
+        if (node->auxiliary >= program->head_len)
+            return false;
+        const PreparedPureHead *callee = &program->heads[node->auxiliary];
+        return callee->he_structural && callee->range_formal &&
+            (!closed || atom_eq(callee->range_formal, range));
+    }
+    Atom *typed = NULL;
+    if (node->kind == PREPARED_PURE_TYPED_BUILD && !closed)
+        return false;
+    if (node->kind == PREPARED_PURE_TYPED_BUILD)
+        typed = atom_symbol_id(scratch, node->head);
+    else if (node->kind == PREPARED_PURE_LITERAL && node->atom &&
+             node->atom->kind == ATOM_SYMBOL)
+        typed = node->atom;
+    if (!typed)
+        return false;
+    Atom **types = NULL;
+    uint32_t count = get_atom_types(program->space, scratch, typed, &types);
+    Atom *type = count == 1u ? types[0] : NULL;
+    bool shown = false;
+    if (type && node->kind == PREPARED_PURE_TYPED_BUILD)
+        shown = type->kind == ATOM_EXPR && type->expr.len >= 2u &&
+            atom_is_symbol_id(type->expr.elems[0], g_builtin_syms.arrow) &&
+            atom_eq(type->expr.elems[type->expr.len - 1u], range);
+    else if (type)
+        shown = atom_eq(type, range);
+    free(types);
+    return shown;
+}
+
+/* The field of `type`, a constructor's declared (-> T1 .. Tm R), that it
+ * types as R itself; 0 for none. */
+static CettaExprIndex prepared_pure_range_field(Atom *type,
+                                                CettaExprIndex from) {
+    if (!type || type->kind != ATOM_EXPR || type->expr.len < 3u)
+        return 0u;
+    Atom *range = type->expr.elems[type->expr.len - 1u];
+    for (CettaExprIndex k = from; k + 1u < type->expr.len; k++)
+        if (atom_eq(type->expr.elems[k], range))
+            return k;
+    return 0u;
+}
+
+/* Whether the meet of the head's open range at the instance the tail call
+ * `call`'s arguments give with the activation's own instance is implied by
+ * the checks the call makes: the call is the head's own, and each argument
+ * at a formal the range reads is the activation's parameter there, a
+ * checked build over it at a field its constructor types as its range, or
+ * such a field of it.  The build's typing is the field's typing under the
+ * build check's unifier (the matched value's, the field's under its own),
+ * so one unifier gives both formals their instances. */
+enum { PREPARED_PURE_MEET_BUILD = 1u, PREPARED_PURE_MEET_FIELD = 2u };
+
+static bool prepared_pure_tail_meet_implied(CettaPreparedPureProgram *program,
+                                            Arena *scratch, uint32_t head_index,
+                                            const PreparedPureEquation *equation,
+                                            const PreparedPureNode *call,
+                                            uint8_t *kinds) {
+    const PreparedPureHead *head = &program->heads[head_index];
+    if (call->auxiliary != head_index || !equation || !equation->lhs ||
+        equation->lhs->kind != ATOM_EXPR ||
+        equation->lhs->expr.len != head->typed_arity + 1u ||
+        call->child_count != head->typed_arity ||
+        call->first_child > program->child_len ||
+        call->child_count > program->child_len - call->first_child)
+        return false;
+    for (uint32_t i = 0u; i < head->typed_arity && i < 64u; i++) {
+        if (!((head->instance_formals >> i) & 1u))
+            continue;
+        uint32_t argument = program->children[call->first_child + i];
+        if (argument >= program->node_len)
+            return false;
+        const PreparedPureNode *node = &program->nodes[argument];
+        Atom *parameter = equation->lhs->expr.elems[i + 1u];
+        uint32_t slot = 0u;
+        if (parameter->kind == ATOM_VAR) {
+            if (!prepared_pure_equation_var_slot(program, equation,
+                                                 parameter->var_id, &slot))
+                return false;
+            /* (a) */
+            if (node->kind == PREPARED_PURE_SLOT && node->auxiliary == slot)
+                continue;
+            /* (b) */
+            if (node->kind != PREPARED_PURE_TYPED_BUILD ||
+                node->child_count < 2u ||
+                node->first_child > program->child_len ||
+                node->child_count > program->child_len - node->first_child)
+                return false;
+            Atom *type = prepared_pure_constructor_type(program, scratch,
+                atom_symbol_id(scratch, node->head), node->child_count);
+            bool held = false;
+            for (CettaExprIndex k = prepared_pure_range_field(type, 1u);
+                 !held && k != 0u && k < node->child_count;
+                 k = prepared_pure_range_field(type, k + 1u)) {
+                uint32_t field = program->children[node->first_child + k];
+                held = field < program->node_len &&
+                    program->nodes[field].kind == PREPARED_PURE_SLOT &&
+                    program->nodes[field].auxiliary == slot;
+            }
+            if (!held)
+                return false;
+            *kinds |= PREPARED_PURE_MEET_BUILD;
+            continue;
+        }
+        /* (c) */
+        if (parameter->kind != ATOM_EXPR || parameter->expr.len < 2u ||
+            node->kind != PREPARED_PURE_SLOT)
+            return false;
+        Atom *type = prepared_pure_constructor_type(program, scratch,
+            parameter->expr.elems[0], parameter->expr.len);
+        bool held = false;
+        for (CettaExprIndex k = prepared_pure_range_field(type, 1u);
+             !held && k != 0u && k < parameter->expr.len;
+             k = prepared_pure_range_field(type, k + 1u)) {
+            Atom *field = parameter->expr.elems[k];
+            held = field->kind == ATOM_VAR &&
+                prepared_pure_equation_var_slot(program, equation,
+                                                field->var_id, &slot) &&
+                node->auxiliary == slot;
+            /* A variable the pattern names twice is compared, not bound. */
+            for (CettaExprIndex j = 1u; held && j < parameter->expr.len; j++)
+                held = j == k || parameter->expr.elems[j]->kind != ATOM_VAR ||
+                    !var_id_eq(parameter->expr.elems[j]->var_id, field->var_id);
+        }
+        if (!held)
+            return false;
+        *kinds |= PREPARED_PURE_MEET_FIELD;
+    }
+    return true;
+}
+
+/* Whether a return position under `node_index` is a call whose meet with
+ * the activation's instance the call's checks do not imply. */
+static bool prepared_pure_returns_unmet_call(CettaPreparedPureProgram *program,
+                                             Arena *scratch, uint32_t head_index,
+                                             const PreparedPureEquation *equation,
+                                             uint32_t node_index,
+                                             uint32_t depth, uint8_t *kinds) {
+    if (node_index >= program->node_len || depth > 64u)
+        return true;
+    const PreparedPureNode *node = &program->nodes[node_index];
+    if (node->kind == PREPARED_PURE_CALL)
+        return !prepared_pure_tail_meet_implied(program, scratch, head_index,
+                                                equation, node, kinds);
+    if (node->kind != PREPARED_PURE_IF || node->child_count != 3u ||
+        node->first_child > program->child_len ||
+        3u > program->child_len - node->first_child)
+        return false;
+    return prepared_pure_returns_unmet_call(program, scratch, head_index,
+               equation, program->children[node->first_child + 1u],
+               depth + 1u, kinds) ||
+        prepared_pure_returns_unmet_call(program, scratch, head_index,
+               equation, program->children[node->first_child + 2u],
+               depth + 1u, kinds);
+}
+
+static void prepared_pure_he_ranges_shown(CettaPreparedPureProgram *program) {
+    Arena scratch;
+    arena_init(&scratch);
+    for (size_t h = 0u; h < program->head_len; h++) {
+        PreparedPureHead *head = &program->heads[h];
+        if (!head->he_structural || !head->range_formal || !head->compiled ||
+            head->first_equation > program->equation_len ||
+            head->equation_count > program->equation_len - head->first_equation)
+            continue;
+        bool shown = head->equation_count > 0u;
+        for (uint32_t i = 0u; shown && i < head->equation_count; i++) {
+            const PreparedPureEquation *equation =
+                &program->equations[head->first_equation + i];
+            shown = prepared_pure_he_range_shown(
+                program, &scratch, (uint32_t)h, equation, equation->body.root,
+                head->range_formal, 0u);
+        }
+        head->range_shown = shown;
+        head->range_meets_tail = false;
+        uint8_t kinds = 0u;
+        for (uint32_t i = 0u; shown && atom_has_vars(head->range_formal) &&
+                 i < head->equation_count; i++) {
+            const PreparedPureEquation *equation =
+                &program->equations[head->first_equation + i];
+            head->range_meets_tail = head->range_meets_tail ||
+                prepared_pure_returns_unmet_call(program, &scratch,
+                    (uint32_t)h, equation, equation->body.root, 0u, &kinds);
+        }
+        /* A field step leaves its caller's more specific instance owed,
+         * which a build step after it can fail. */
+        if (kinds == (PREPARED_PURE_MEET_BUILD | PREPARED_PURE_MEET_FIELD))
+            head->range_meets_tail = true;
+    }
+    arena_free(&scratch);
+}
+
+enum { PREPARED_PURE_FOLD_ADD = 1u, PREPARED_PURE_FOLD_MUL = 2u };
+
+/* The integer a literal is, where it is a machine integer. */
+static bool prepared_pure_fold_integer(const Atom *atom, int64_t *out) {
+    if (!atom || atom->kind != ATOM_GROUNDED || atom->ground.gkind != GV_INT)
+        return false;
+    *out = atom->ground.ival;
+    return true;
+}
+
+/* A head of one argument whose only two equations are a fold over a free
+ * constructor (structure-by-proof R1): (= (g nil) base), nil a free symbol
+ * and base an integer; and (= (g (cons $v1 .. $vm)) (op a b)), the $vi
+ * distinct variables, cons free, op + or *, one of a, b the call (g $vr) on
+ * a field, the other a field other than $vr or an integer.  A call then
+ * walks the argument's spine of cons cells to nil and folds the fields from
+ * the right; any other argument runs the equations. */
+static void prepared_pure_recognize_fold(CettaPreparedPureProgram *program,
+                                         uint32_t h) {
+    PreparedPureHead *head = &program->heads[h];
+    head->fold_op = 0u;
+    if (!head->compiled || head->equation_count != 2u ||
+        head->first_equation > program->equation_len ||
+        2u > program->equation_len - head->first_equation ||
+        !program->space)
+        return;
+    /* + and * are the grounded operations only where no equation names
+     * them. */
+    SymbolId add = symbol_lookup_cstr(g_symbols, "+");
+    SymbolId mul = symbol_lookup_cstr(g_symbols, "*");
+    if (add != SYMBOL_ID_NONE &&
+        space_equations_may_match_known_head(program->space, add))
+        add = SYMBOL_ID_NONE;
+    if (mul != SYMBOL_ID_NONE &&
+        space_equations_may_match_known_head(program->space, mul))
+        mul = SYMBOL_ID_NONE;
+    int64_t base = 0, literal = 0;
+    SymbolId nil = SYMBOL_ID_NONE, cons = SYMBOL_ID_NONE;
+    uint8_t op = 0u, cons_len = 0u, rest = 0u, item = 0u;
+    bool have_base = false, have_step = false;
+    for (uint32_t e = 0u; e < 2u; e++) {
+        Atom *occurrence = program->equations[head->first_equation + e].equation;
+        if (!occurrence || occurrence->kind != ATOM_EXPR ||
+            occurrence->expr.len != 3u)
+            return;
+        Atom *lhs = occurrence->expr.elems[1];
+        Atom *rhs = occurrence->expr.elems[2];
+        if (lhs->kind != ATOM_EXPR || lhs->expr.len != 2u ||
+            !atom_is_symbol_id(lhs->expr.elems[0], head->head))
+            return;
+        Atom *pattern = lhs->expr.elems[1];
+        if (pattern->kind == ATOM_SYMBOL && !have_base &&
+            prepared_pure_fold_integer(rhs, &base) &&
+            !space_equations_may_match_known_head(program->space,
+                                                  atom_symbol_current_id(pattern))) {
+            nil = atom_symbol_current_id(pattern);
+            have_base = true;
+            continue;
+        }
+        if (pattern->kind != ATOM_EXPR || have_step || pattern->expr.len < 2u ||
+            pattern->expr.len > 8u ||
+            pattern->expr.elems[0]->kind != ATOM_SYMBOL ||
+            space_equations_may_match_known_head(program->space,
+                atom_symbol_current_id(pattern->expr.elems[0])))
+            return;
+        for (CettaExprIndex i = 1u; i < pattern->expr.len; i++) {
+            if (pattern->expr.elems[i]->kind != ATOM_VAR)
+                return;
+            for (CettaExprIndex j = 1u; j < i; j++)
+                if (var_id_eq(pattern->expr.elems[i]->var_id,
+                              pattern->expr.elems[j]->var_id))
+                    return;
+        }
+        if (rhs->kind != ATOM_EXPR || rhs->expr.len != 3u ||
+            rhs->expr.elems[0]->kind != ATOM_SYMBOL)
+            return;
+        SymbolId operation = atom_symbol_current_id(rhs->expr.elems[0]);
+        if (operation == SYMBOL_ID_NONE ||
+            (operation != add && operation != mul))
+            return;
+        /* Which operand is the recursive call, and which field it takes. */
+        for (CettaExprIndex side = 1u; side <= 2u && !have_step; side++) {
+            Atom *call = rhs->expr.elems[side];
+            Atom *other = rhs->expr.elems[3u - side];
+            if (call->kind != ATOM_EXPR || call->expr.len != 2u ||
+                !atom_is_symbol_id(call->expr.elems[0], head->head) ||
+                call->expr.elems[1]->kind != ATOM_VAR)
+                continue;
+            uint8_t r = 0u, k = 0u;
+            for (CettaExprIndex i = 1u; i < pattern->expr.len; i++) {
+                if (var_id_eq(pattern->expr.elems[i]->var_id,
+                              call->expr.elems[1]->var_id))
+                    r = (uint8_t)i;
+                if (other->kind == ATOM_VAR &&
+                    var_id_eq(pattern->expr.elems[i]->var_id, other->var_id))
+                    k = (uint8_t)i;
+            }
+            if (!r || k == r)
+                continue;
+            if (!k && !prepared_pure_fold_integer(other, &literal))
+                continue;
+            cons = atom_symbol_current_id(pattern->expr.elems[0]);
+            cons_len = (uint8_t)pattern->expr.len;
+            rest = r;
+            item = k;
+            op = operation == add ? PREPARED_PURE_FOLD_ADD
+                                  : PREPARED_PURE_FOLD_MUL;
+            have_step = true;
+        }
+        if (!have_step)
+            return;
+    }
+    if (!have_base || !have_step || nil == cons)
+        return;
+    /* A typed head's calls to itself are checked: the fold skips them only
+     * where the constructor's only declaration, read at the head's formal,
+     * types the recursive field at that formal (an open formal at each of
+     * its instances: the unifier names the formal's own variables). */
+    if (head->typed) {
+        Atom *formal = head->typed_arity == 1u &&
+                program->value_classes[head->first_value_class] ==
+                    PREPARED_PURE_VALUE_STRUCTURAL
+            ? program->value_formals[head->first_value_class] : NULL;
+        if (!formal || prepared_pure_type_mentions_undefined(formal, 0u))
+            return;
+        Arena scratch;
+        arena_init(&scratch);
+        Atom *type = prepared_pure_constructor_type(program, &scratch,
+            atom_symbol_id(&scratch, cons), (size_t)cons_len);
+        Bindings unifier;
+        bindings_init(&unifier);
+        bool inverts = type && match_types(type->expr.elems[type->expr.len - 1u],
+                                           formal, &unifier, &scratch);
+        Atom *field = inverts
+            ? bindings_apply_if_vars(&unifier, &scratch, type->expr.elems[rest])
+            : NULL;
+        inverts = field && atom_eq(field, formal);
+        bindings_free(&unifier);
+        arena_free(&scratch);
+        if (!inverts)
+            return;
+    }
+    head->fold_op = op;
+    head->fold_cons_len = cons_len;
+    head->fold_rest = rest;
+    head->fold_item = item;
+    head->fold_nil = nil;
+    head->fold_cons = cons;
+    head->fold_base = base;
+    head->fold_literal = literal;
+}
+
+/* A recognized fold's value at `argument`: the spine of cons cells to nil,
+ * its fields folded from the right in machine integers, each step as the
+ * equations take it.  NULL where the argument is not such a spine, a field
+ * is not a machine integer, or a step leaves the machine integers: the
+ * equations then run. */
+static Atom *prepared_pure_run_fold_exact(CettaPreparedPureProgram *program,
+                                          Arena *arena,
+                                          const PreparedPureHead *head,
+                                          Atom *argument) {
+    size_t count = 0u;
+    for (Atom *cell = argument;; count++) {
+        if (cell->kind == ATOM_SYMBOL && atom_symbol_current_id(cell) == head->fold_nil)
+            break;
+        if (cell->kind != ATOM_EXPR || cell->expr.len != head->fold_cons_len ||
+            cell->expr.elems[0]->kind != ATOM_SYMBOL ||
+            atom_symbol_current_id(cell->expr.elems[0]) != head->fold_cons)
+            return NULL;
+        cell = cell->expr.elems[head->fold_rest];
+    }
+    /* The fields wait above the machine's live values. */
+    size_t top = program->value_len;
+    if (count > 0u && head->fold_item &&
+        !prepared_pure_reserve((void **)&program->values,
+                               sizeof(*program->values), &program->value_cap,
+                               top + count))
+        return NULL;
+    Atom **fields = &program->values[top];
+    size_t n = 0u;
+    for (Atom *cell = argument; cell->kind == ATOM_EXPR;
+         cell = cell->expr.elems[head->fold_rest]) {
+        if (head->fold_item) {
+            Atom *field = cell->expr.elems[head->fold_item];
+            if (field->kind != ATOM_GROUNDED || field->ground.gkind != GV_INT)
+                return NULL;
+            fields[n] = field;
+        }
+        n++;
+    }
+    /* From the right, as the equations compute it: where no step leaves
+     * the machine integers, theirs does not either. */
+    int64_t acc = head->fold_base;
+    for (size_t i = n; i > 0u; i--) {
+        int64_t value = head->fold_item ? fields[i - 1u]->ground.ival
+                                        : head->fold_literal;
+        if (head->fold_op == PREPARED_PURE_FOLD_ADD
+                ? __builtin_add_overflow(value, acc, &acc)
+                : __builtin_mul_overflow(value, acc, &acc))
+            return NULL;
+    }
+    return atom_int(arena, acc);
+}
+
+/* A recognized fold's value at `argument`, as prepared_pure_run_fold_exact
+ * gives it.  A sum takes one pass from the left: each partial sum the
+ * equations form from the right is base plus some of the fields, so where
+ * |base| + n * max|field| is a machine integer none of them leaves the
+ * machine integers, and the total is theirs. */
+static Atom *prepared_pure_run_fold(CettaPreparedPureProgram *program,
+                                    Arena *arena, const PreparedPureHead *head,
+                                    Atom *argument) {
+    if (head->fold_op != PREPARED_PURE_FOLD_ADD)
+        return prepared_pure_run_fold_exact(program, arena, head, argument);
+    const CettaExprIndex cons_len = head->fold_cons_len;
+    const uint8_t rest = head->fold_rest, item = head->fold_item;
+    const SymbolId cons = head->fold_cons;
+    uint64_t largest = 0u, total = 0u, count = 0u;
+    Atom *cell = argument;
+    for (; cell->kind == ATOM_EXPR; cell = cell->expr.elems[rest], count++) {
+        Atom *const *elems = cell->expr.elems;
+        if (cell->expr.len != cons_len || elems[0]->kind != ATOM_SYMBOL ||
+            atom_symbol_current_id(elems[0]) != cons)
+            return NULL;
+        if (item) {
+            const Atom *field = elems[item];
+            if (field->kind != ATOM_GROUNDED || field->ground.gkind != GV_INT)
+                return NULL;
+            uint64_t value = (uint64_t)field->ground.ival;
+            uint64_t magnitude = field->ground.ival < 0 ? -value : value;
+            largest = magnitude > largest ? magnitude : largest;
+            total += value;
+        }
+    }
+    if (cell->kind != ATOM_SYMBOL || atom_symbol_current_id(cell) != head->fold_nil)
+        return NULL;
+    int64_t base = head->fold_base;
+    if (!item) {
+        /* The partial sums base + j * literal run monotonically from base
+         * to the total. */
+        int64_t steps;
+        if (count > (uint64_t)INT64_MAX ||
+            __builtin_mul_overflow((int64_t)count, head->fold_literal, &steps) ||
+            __builtin_add_overflow(base, steps, &steps))
+            return NULL;
+        return atom_int(arena, steps);
+    }
+    uint64_t bound;
+    if (__builtin_mul_overflow(count, largest, &bound) ||
+        __builtin_add_overflow(bound,
+                               base < 0 ? -(uint64_t)base : (uint64_t)base,
+                               &bound) ||
+        bound > (uint64_t)INT64_MAX)
+        return prepared_pure_run_fold_exact(program, arena, head, argument);
+    return atom_int(arena, (int64_t)(total + (uint64_t)base));
+}
+
 static bool prepared_pure_lower_code(CettaPreparedPureProgram *program) {
     if (!program || !program->closed_program ||
         program->call_mode != CETTA_GSLT_PURE_CALL_EAGER ||
         program->body.root >= program->node_len)
         return false;
+    prepared_pure_infer_untyped(program);
+    prepared_pure_he_ranges_shown(program);
+    for (size_t h = 0u; h < program->head_len; h++)
+        prepared_pure_recognize_fold(program, (uint32_t)h);
     bool producer = program->answer_producer;
     if (producer && program->has_native_calls) {
         if (!prepared_pure_lower_native_code(program))
@@ -12888,7 +15534,7 @@ static bool prepared_pure_lower_code(CettaPreparedPureProgram *program) {
             if (!prepared_pure_lower_code_body(
                     program, equation->body.root, equation->body.local_count, 0u,
                     false, true, &equation->body.first_code,
-                    &equation->body.register_count))
+                    &equation->body.register_count, equation, (uint32_t)h))
                 return false;
         }
     }
@@ -12896,7 +15542,8 @@ static bool prepared_pure_lower_code(CettaPreparedPureProgram *program) {
         if (!prepared_pure_lower_code_body(
                 program, program->body.root, program->body.local_count,
                 (uint32_t)program->entry_argument_count, true, true,
-                &program->body.first_code, &program->body.register_count))
+                &program->body.first_code, &program->body.register_count,
+                NULL, UINT32_MAX))
             return false;
     } else {
         for (size_t e = 0u; e < program->equation_len + program->body_entry; e++) {
@@ -12919,7 +15566,8 @@ static bool prepared_pure_lower_code(CettaPreparedPureProgram *program) {
                 uint32_t register_count = 0u;
                 if (!prepared_pure_lower_code_body(
                         program, step->node, body->frame_slot_count, 0u,
-                        false, false, &first_code, &register_count))
+                        false, false, &first_code, &register_count,
+                        NULL, UINT32_MAX))
                     return false;
                 step = &program->steps[body->first_step + k];
                 step->coded = true;
@@ -13103,7 +15751,7 @@ prepared_pure_program_compile_closed_mode(
             program->source_view.root, 0u, &program->body.root);
     }
     program->body.local_count = context.next_slot;
-    free(context.bindings);
+    prepared_pure_context_release(&context);
     if (compiled)
         compiled = prepared_pure_compile_pending_heads(program);
     if (compiled)
@@ -13144,6 +15792,15 @@ prepared_pure_program_compile_closed_mode(
                         : "a body left to the node executor");
     }
     if (optional_result && !program->code_ready) {
+        cetta_prepared_pure_program_free(program);
+        return NULL;
+    }
+    if ((program->return_checks || program->structural_checks) &&
+        !program->code_ready) {
+        (void)prepared_pure_reject(program,
+            "a value checked at return needs register code", NULL);
+        prepared_pure_compile_failure_report(report, space, NULL, false,
+            entry_arguments_are_values, call_mode, answer_producer);
         cetta_prepared_pure_program_free(program);
         return NULL;
     }
@@ -13315,7 +15972,7 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile_body_answers(
         compiled = prepared_pure_compile_eval(program, &context, expression,
             program->source_view.root, 0u, &program->body.root);
     program->body.local_count = context.next_slot;
-    free(context.bindings);
+    prepared_pure_context_release(&context);
     if (!compiled || !prepared_pure_compile_pending_heads(program) ||
         !prepared_pure_native_calls_supported(program) ||
         !prepared_pure_lower_answer_producer(program)) {
@@ -13324,6 +15981,11 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile_body_answers(
     }
     if (prepared_pure_code_enabled())
         program->code_ready = prepared_pure_lower_code(program);
+    if ((program->return_checks || program->structural_checks) &&
+        !program->code_ready) {
+        cetta_prepared_pure_program_free(program);
+        return NULL;
+    }
     return program;
 }
 
@@ -16862,6 +19524,35 @@ static bool prepared_pure_code_enter_frontier(CettaPreparedPureAnswerCursor *cur
  * a published result. */
 static bool prepared_pure_value_has_callable_node(const Atom *,void *);
 
+/* HE ranges owed by activations are kept apart from the collected arena,
+ * from empty at each run; the root code frame starts with no caller head
+ * or witness slot. */
+static void prepared_pure_init_root_code_frame(
+    CettaPreparedPureProgram *program, uint32_t first_code) {
+    if (program->he_range_checks && !program->witness_ready) {
+        arena_init(&program->witness);
+        arena_set_hashcons(&program->witness, NULL);
+        arena_init(&program->witness_scratch);
+        arena_set_hashcons(&program->witness_scratch, NULL);
+        program->witness_base = arena_mark(&program->witness);
+        program->witness_scratch_base = arena_mark(&program->witness_scratch);
+        program->witness_ready = true;
+    }
+    if (program->witness_ready) {
+        arena_reset(&program->witness, program->witness_base);
+        arena_reset(&program->witness_scratch, program->witness_scratch_base);
+        program->witness_mark_len = 0u;
+    }
+    program->code_frames[0] = (PreparedPureCodeFrame){
+        .pc = first_code,
+        .head = UINT32_MAX,
+        .return_head = UINT32_MAX,
+        .witness_slot = UINT32_MAX,
+    };
+    program->code_frame_len = 1u;
+    program->built_last = NULL;
+}
+
 static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_run_code_worker(
     CettaPreparedPureProgram *program, Arena *arena, uint32_t first_code,
     uint32_t register_count, bool step, size_t nursery_budget_bytes,
@@ -16869,6 +19560,9 @@ static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_run_code_worker(
     void *interrupt_context, Atom **result_out,
     CettaPreparedPureAnswerCursor *cursor,
     const PreparedPureContinuation *continuation, CettaCallOutcome *outcome) {
+    if (cursor && (program->return_checks || program->structural_checks))
+        return prepared_pure_runtime_decline(
+            program, "an answer cursor keeps no return checks", NULL);
     CettaPreparedPureClosedExecution *execution=program->execution;
     if (!execution) {
     if (!prepared_pure_reserve(
@@ -16880,10 +19574,7 @@ static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_run_code_worker(
         return prepared_pure_runtime_decline(
             program, "cannot allocate root registers", NULL);
     program->slot_len = register_count;
-    program->code_frames[0] = (PreparedPureCodeFrame){
-        .pc = first_code,
-    };
-    program->code_frame_len = 1u;
+    prepared_pure_init_root_code_frame(program, first_code);
 
     }
     ArenaMark gc_anchor = arena_mark(arena);
@@ -16974,6 +19665,21 @@ static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_run_code_worker(
                     program, registers, operands[i]);
             value = atom_expr_headed(arena, head, values, count);
         built:
+            /* A build whose typing is known needs no check; the run notes
+             * it, in case the run answers this value. */
+            if (code->discharged && value &&
+                program->nodes[code->auxiliary].kind ==
+                    PREPARED_PURE_TYPED_BUILD) {
+                program->built_last = value;
+                program->built_last_type = program->node_static_types
+                    ? program->node_static_types[code->auxiliary] : NULL;
+            } else if (program->nodes[code->auxiliary].kind == PREPARED_PURE_TYPED_BUILD &&
+                (!value ||
+                 !prepared_pure_typed_build_holds(program, arena, value))) {
+                decline_node = &program->nodes[code->auxiliary];
+                decline = "a constructor's arguments are outside its declared type";
+                goto declined;
+            }
             if (code->returns) {
                 returned = value;
                 goto return_value;
@@ -17015,13 +19721,20 @@ static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_run_code_worker(
                     program, registers, operands[i]);
             Atom *value = NULL;
             if (code->kind == PREPARED_PURE_CODE_BUILD) {
-                if (node->auxiliary == PREPARED_PURE_BUILD_DATA_HEAD &&
+                if (node->kind == PREPARED_PURE_BUILD &&
+                    node->auxiliary == PREPARED_PURE_BUILD_DATA_HEAD &&
                     (count == 0u ||
                      !prepared_pure_data_head_value(values[0]))) {
                     decline = "a bound head is not data";
                     goto declined;
                 }
                 value = program->construct_value(arena, values, count);
+                if (node->kind == PREPARED_PURE_TYPED_BUILD &&
+                    (!value ||
+                     !prepared_pure_typed_build_holds(program, arena, value))) {
+                    decline = "a constructor's arguments are outside its declared type";
+                    goto declined;
+                }
             } else if (code->kind == PREPARED_PURE_CODE_REGISTER) {
                 value = prepared_pure_ready_register(
                     program, arena, node, values, count);
@@ -17230,14 +19943,129 @@ static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_run_code_worker(
                     goto residual;
                 }
             }
-            if (!prepared_pure_typed_arguments_accepted(
+            if (!code->typed_arguments_known &&
+                !prepared_pure_typed_arguments_accepted(
                     program, code->auxiliary, arguments, arity)) {
                 decline = "a typed argument is outside its parameter's class";
                 goto call_refused;
             }
+            if (!code->structural_arguments_known &&
+                !prepared_pure_structural_arguments_accepted(
+                    program, arena, code->auxiliary, arguments, arity,
+                    frame->head == code->auxiliary, code->discharged)) {
+                decline = "a structural argument is not of its formal's type";
+                goto call_refused;
+            }
+            /* A recognized fold answers in one walk of its spine, where its
+             * value meets the range class its head checks; an activation
+             * owing a structural type runs its equations. */
+            if (program->heads[code->auxiliary].fold_op && !cursor &&
+                arity == 1u && !program->heads[code->auxiliary].range_formal) {
+                const PreparedPureHead *folded = &program->heads[code->auxiliary];
+                Atom *value = prepared_pure_run_fold(program, arena, folded,
+                                                     arguments[0]);
+                if (value && (!folded->checks_return ||
+                              (folded->range_class !=
+                                   PREPARED_PURE_VALUE_PARAMETER &&
+                               prepared_pure_value_class(value) ==
+                                   folded->range_class))) {
+                    cetta_runtime_stats_inc(
+                        CETTA_RUNTIME_COUNTER_PREPARED_PURE_RECOGNIZED_FOLD);
+                    if (code->kind == PREPARED_PURE_CODE_TAIL_CALL) {
+                        returned = value;
+                        goto return_value;
+                    }
+                    registers[code->destination] = value;
+                    continue;
+                }
+            }
             bool tail = code->kind == PREPARED_PURE_CODE_TAIL_CALL;
             if (cursor && tail)
                 cursor->tail_calls++;
+            /* The class the callee's activation owes at return: the
+             * callee's range where it checks its value there, and for a
+             * tail call the class its caller's activation owes already. */
+            const PreparedPureHead *callee = &program->heads[code->auxiliary];
+            uint8_t return_class = !callee->checks_return
+                ? PREPARED_PURE_VALUE_UNDEFINED
+                : callee->range_class == PREPARED_PURE_VALUE_PARAMETER
+                ? prepared_pure_value_class(arguments[callee->range_parameter])
+                : callee->range_class;
+            if (tail && frame->return_class != PREPARED_PURE_VALUE_UNDEFINED) {
+                if (return_class != PREPARED_PURE_VALUE_UNDEFINED &&
+                    return_class != frame->return_class) {
+                    decline = "a tail call owes two range classes";
+                    goto declined;
+                }
+                return_class = frame->return_class;
+            }
+            /* An HE head's structural range is the type its activation
+             * owes: an open one read under the call's argument typings, and
+             * at a tail call met with the type its caller owed, as HE
+             * checks a call against its expected type before the body
+             * runs.  It is checked where the activation returns unless
+             * every return position shows it.  A tail call into a head
+             * owing none keeps its caller's obligation. */
+            Atom *expected = NULL;
+            uint32_t return_head = UINT32_MAX;
+            bool scratched = false;
+            /* An open range's instance is wanted where the activation
+             * checks its answer (a range not shown), where it is shown by
+             * a tail call, which meets the callee's range with it, where a
+             * tail call meets the type its caller owes, or where an
+             * argument it types is not known to pass its formal. */
+            bool instance_wanted = callee->he_structural &&
+                callee->range_formal && atom_has_vars(callee->range_formal) &&
+                (!callee->range_shown || callee->range_meets_tail ||
+                 (tail && frame->expected) ||
+                 (callee->instance_formals & ~(uint64_t)code->discharged) != 0u);
+            if (callee->he_structural && callee->range_formal &&
+                atom_has_vars(callee->range_formal) && !instance_wanted) {
+                /* Shown, owed by no caller, its arguments known: no
+                 * instance, no check. */
+            } else if (callee->he_structural && callee->range_formal) {
+                expected = callee->range_formal;
+                scratched = atom_has_vars(expected);
+                if (atom_has_vars(expected)) {
+                    expected = prepared_pure_he_range_instance(
+                        program, &program->witness_scratch, code->auxiliary,
+                        arguments, arity);
+                    if (!expected) {
+                        arena_reset(&program->witness_scratch,
+                                    program->witness_scratch_base);
+                        decline = "an open range has no single instance here";
+                        goto call_refused;
+                    }
+                }
+                if (tail && frame->expected && expected != frame->expected &&
+                    !scratched && !atom_has_vars(frame->expected)) {
+                    /* Two closed ranges meet only where they are equal. */
+                    if (!atom_eq(expected, frame->expected)) {
+                        decline = "a tail call's range does not meet its caller's";
+                        goto declined;
+                    }
+                    expected = frame->expected;
+                } else if (tail && frame->expected && expected != frame->expected) {
+                    scratched = true;
+                    expected = prepared_pure_he_range_meet(
+                        &program->witness_scratch, expected, frame->expected);
+                    if (!expected) {
+                        arena_reset(&program->witness_scratch,
+                                    program->witness_scratch_base);
+                        decline = "a tail call's range does not meet its caller's";
+                        goto declined;
+                    }
+                }
+                if (!callee->range_shown)
+                    return_head = code->auxiliary;
+            } else if (tail) {
+                expected = frame->expected;
+                return_head = frame->return_head;
+            }
+            if (expected && return_class != PREPARED_PURE_VALUE_UNDEFINED) {
+                decline = "a tail call owes a range class and a range type";
+                goto declined;
+            }
             uint32_t base = tail ? frame->base : (uint32_t)program->slot_len;
             program->slot_len = base;
             const PreparedPureCodeEntry *entry =
@@ -17376,6 +20204,22 @@ static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_run_code_worker(
                 decline = "cannot allocate call registers";
                 goto declined;
             }
+            /* A computed instance is kept by the callee's frame; a tail
+             * call's replaces its caller's. */
+            uint32_t witness_slot = tail ? frame->witness_slot : UINT32_MAX;
+            if (scratched) {
+                if (expected != callee->range_formal &&
+                    expected != (tail ? frame->expected : NULL)) {
+                    expected = prepared_pure_witness_keep(
+                        program, &witness_slot, expected);
+                    if (!expected) {
+                        decline = "cannot keep a range instance";
+                        goto declined;
+                    }
+                }
+                arena_reset(&program->witness_scratch,
+                            program->witness_scratch_base);
+            }
             program->slot_len = (size_t)base + equation->body.register_count;
             /* A tail call's callee re-enters in place of its caller, as
              * the node executor's tail reentry does. */
@@ -17388,6 +20232,11 @@ static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_run_code_worker(
             *frame = (PreparedPureCodeFrame){
                 .pc = equation->body.first_code,
                 .base = base,
+                .head = code->auxiliary,
+                .return_class = return_class,
+                .return_head = return_head,
+                .expected = expected,
+                .witness_slot = witness_slot,
             };
             registers = &program->slots[base];
             continue;
@@ -17416,7 +20265,24 @@ static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_run_code_worker(
         }
     return_value:
         /* The body answers `returned`: into its caller's destination, or
-         * as the program's value. */
+         * as the program's value, once it meets the class its activation
+         * owes. */
+        if (frame->return_class != PREPARED_PURE_VALUE_UNDEFINED &&
+            prepared_pure_value_class(returned) != frame->return_class) {
+            decline = "a typed result is outside its range's class";
+            goto declined;
+        }
+        if (frame->return_head != UINT32_MAX &&
+            !prepared_pure_he_value_has_type(
+                program, arena, returned, frame->expected)) {
+            decline = "a typed result is outside its range's type";
+            goto declined;
+        }
+        if (frame->witness_slot != UINT32_MAX) {
+            arena_reset(&program->witness,
+                        program->witness_marks[frame->witness_slot]);
+            program->witness_mark_len = frame->witness_slot;
+        }
         program->slot_len = frame->base;
         if (--program->code_frame_len == 0u) {
             result = returned;
@@ -17445,6 +20311,13 @@ static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_run_code_worker(
     }
 finished:
     program->code_frame_len = 0u;
+    /* Values in the run keep no typing, their code knowing their types; the
+     * answer, which a check outside may read, keeps the typing of the build
+     * that made it. */
+    if (result && result == program->built_last)
+        space_type_stamps_record_type(program->space, arena, result,
+                                      program->built_last_type);
+    program->built_last = NULL;
     if (!result ||
         !prepared_pure_memo_complete_deferred(program, result)) {
         decline="code did not produce one value";goto declined;
@@ -17706,6 +20579,9 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_retained(
         return prepared_pure_run_code(
             program, arena, nursery_budget_bytes, interrupt_poll,
             interrupt_context, result_out, outcome);
+    if (program->return_checks || program->structural_checks)
+        return prepared_pure_runtime_decline(
+            program, "the node executor keeps no return checks", NULL);
     if (step) {
         program->slot_len = step_slot_count;
     } else {
@@ -18494,6 +21370,22 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_retained(
             program->frame_len--;
             continue;
         }
+        if (node->kind == PREPARED_PURE_TYPED_BUILD) {
+            Atom *built = program->construct_value(
+                arena,
+                &program->values[frame->value_base],
+                node->child_count);
+            program->value_len = frame->value_base;
+            if (!built || !prepared_pure_typed_build_holds(program, arena, built))
+                return prepared_pure_runtime_decline(
+                    program, "a constructor's arguments are outside its declared type",
+                    node);
+            if (!prepared_pure_push_value(program, built))
+                return prepared_pure_runtime_decline(
+                    program, "cannot push constructed value", node);
+            program->frame_len--;
+            continue;
+        }
         if (node->kind == PREPARED_PURE_ZERO) {
             if (outcome)
                 *outcome = cetta_call_failure();
@@ -18714,9 +21606,22 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
     if (outcome) *outcome=(CettaCallOutcome){0};
     if (program && (program->execution || program->service_source_nodes ||
                    program->optional_result)) return false;
-    return prepared_pure_program_execute_retained(program,arena,accumulator,item,
-        runtime_expression,step_node,step_slot_count,closed,nursery_budget_bytes,
-        interrupt_poll,interrupt_context,result_out,NULL,outcome,native_entered);
+    const CettaPreparedPureProgram *outer_program = g_prepared_pure_stamp_program;
+    const Arena *outer_arena = g_prepared_pure_stamp_arena;
+    g_prepared_pure_stamp_program = program;
+    g_prepared_pure_stamp_arena = arena;
+    /* A pure run changes neither the program's declarations nor the
+     * evaluator's language and profile: its typings keep one scope. */
+    const Space *outer_scope = space_type_stamps_run_enter(
+        program ? program->space : NULL);
+    bool completed = prepared_pure_program_execute_retained(
+        program, arena, accumulator, item, runtime_expression, step_node,
+        step_slot_count, closed, nursery_budget_bytes, interrupt_poll,
+        interrupt_context, result_out, NULL, outcome, native_entered);
+    space_type_stamps_run_leave(outer_scope);
+    g_prepared_pure_stamp_program = outer_program;
+    g_prepared_pure_stamp_arena = outer_arena;
+    return completed;
 }
 
 bool cetta_prepared_pure_program_execute(
@@ -19285,8 +22190,7 @@ static CettaPreparedPureClosedExecution *prepared_pure_closed_open_mode(
     if (program->code_ready) {
         for (size_t i=0u;i<program->entry_argument_count;i++)
             program->slots[program->body.local_count+i]=program->entry_arguments[i];
-        program->code_frame_len=1u;
-        program->code_frames[0]=(PreparedPureCodeFrame){.pc=program->body.first_code};
+        prepared_pure_init_root_code_frame(program, program->body.first_code);
     } else {
         program->code_frame_len=0u;
         if (!prepared_pure_push_frame(program,program->body.root,0u)) {free(execution);return NULL;}
@@ -19668,6 +22572,14 @@ void cetta_prepared_pure_program_free(
     free(program->scalar_guards);
     free(program->scalar_guard_arguments);
     free(program->value_classes);
+    free(program->value_formals);
+    free(program->node_static_types);
+    free(program->inferred_sets);
+    if (program->witness_ready) {
+        arena_free(&program->witness);
+        arena_free(&program->witness_scratch);
+    }
+    free(program->witness_marks);
     if (program->syntax_arena) {
         arena_free(program->syntax_arena);
         free(program->syntax_arena);

@@ -370,6 +370,7 @@ Atom *cetta_native_handle_owned_atom(CettaLibraryContext *ctx, Arena *a,
 }
 
 bool cetta_native_handle_arg(Atom *arg, const char *expected_kind, uint64_t *id_out) {
+    arg = atom_prime_held_payload(arg);
     if (!arg || !id_out || arg->kind != ATOM_EXPR || arg->expr.len != 3) return false;
     if (!atom_is_symbol_id(arg->expr.elems[0], g_builtin_syms.native_handle)) return false;
     if (!native_handle_kind_matches(arg->expr.elems[1], expected_kind)) return false;
@@ -452,6 +453,7 @@ void *cetta_native_handle_get(struct CettaLibraryContext *ctx, const char *kind,
 
 void *cetta_native_handle_get_owned(CettaLibraryContext *ctx, const char *kind,
         Atom *handle) {
+    handle = atom_prime_held_payload(handle);
     uint64_t id = 0u;
     if (!cetta_native_handle_arg(handle, kind, &id)) return NULL;
     pthread_mutex_lock(&native_handle_mutex);
@@ -563,6 +565,7 @@ bool cetta_native_handle_test_reserve_use_count(size_t *count) {
 bool cetta_native_handle_acquire_owned(CettaLibraryContext *ctx,
         const char *kind, Atom *handle, CettaNativeHandleUseMode mode,
         CettaNativeHandleUse *use) {
+    handle = atom_prime_held_payload(handle);
     uint64_t id = 0u;
     if (!native_handle_use_empty(use) ||
         (mode != CETTA_NATIVE_HANDLE_USE_LIFETIME && mode != CETTA_NATIVE_HANDLE_USE_EXCLUSIVE) ||

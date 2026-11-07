@@ -1,0 +1,43 @@
+{
+  "cetta_commit": "2ca1c923b93def28c612d0e69c00e6b777dbab28",
+  "cetta_binary_sha256": "5b05f6158ea3ce8fbd5b66055c54cbe9731d57ac2a0855b340499db4da2fb779",
+  "mork_commit": "1c44f70f34db6305c3ba7bdb2e1434db3387778b",
+  "mork_binary_sha256": "88c740354eae0ce6a53bc2ebf91afc919ff5975d8b19d3da3de85c86dbdec84e",
+  "pathmap_commit": "fb979b423e674ab3729b548946678f5ba8677fa5",
+  "mork_build": "cargo +nightly build --release --locked --offline -p mork",
+  "origin": "Recovered original Opt generators. Eight base workload pairs reproduce the original sources byte-for-byte; the counter MeTTa program was corrected as recorded in counter-correction.json. All original MM2 baseline inputs are unchanged.",
+  "date": "2026-11-05T11:03:08.987608+01:00",
+  "scope": "Original Opt application suite, not the MORK-backed MM2 front end.",
+  "measurements": "3 fresh-process trials per engine/case; shared Ryzen 7 9800X3D Linux workstation, logical CPU 15; no --timing (which adds timing facts). MORK execution summary excludes loading/dump; wall includes complete CLI job. CeTTa/SWI publish counts; MORK publishes its store.",
+  "qualification": {
+    "base_runs": 81,
+    "scale_runs": 12,
+    "small_complete_set_runs": 18,
+    "all_pass": true,
+    "independent_oracles": "Python bit sets for both graph sizes; independent clique enumeration and integer counter simulation."
+  },
+  "counter_and_scale_stack": {
+    "stack_limit": "unlimited for every engine in counter and scale jobs",
+    "reason": "default-stack MORK counter run aborted before completion",
+    "trials": 3,
+    "timeout_seconds": 180,
+    "cpu": 15
+  },
+  "data_sha256": {
+    "historical-scale.json": "5e4dfc2789d4babd4a7e53864de4c9d2ee32cd275ac1d1ae113e15adc74b75bc",
+    "trials.tsv": "327a0dd493cafb322c7a52e4ae2c51c640559476ace4416c371da34cb0137173",
+    "summary.tsv": "7614f8836c532ca607111eb02ad7e776fd4f97473c3d94d01096f9e7dd309c63",
+    "small-set-checks.json": "a5b3a2bda376492a1a9549c4dbdb147ddfbfaa4517d7049a8fc7289d3f4c5c33",
+    "independent-oracles.json": "f9d728dc49950a790b7eb2b6eefc7e3a648403a854dd1f4161a2d8c93d1b7eb4",
+    "counter-correction.json": "59fae7879bf30bfc05473f3a4b00e3a85c87e0c9362444bb7c2e274746e95104",
+    "workloads.json": "2578322c90dd54719bbc347cef9b0892d218cdb90af800de3ad99b59d76853a6",
+    "MORK.Cargo.lock": "f73aba82f2daca5e88d66fbd43661d21697cbb66da01de344a2e8b6115ac8309"
+  },
+  "generator_sources": {
+    "benchmarks/opt_suite/workloads.py": "64ebafa302edf4ac519d74b9f27fdf2f229e95b665baaa59ee6c6fee6efc1fbf",
+    "benchmarks/opt_suite/generate.py": "b45bc778e79c9086daea565535671cc7b0fc0f07d1174f46a7ce8a68cdb8691d",
+    "benchmarks/opt_suite/run.py": "ce5dc014a2861a9bd5155a6e5022a2bf4eb76f63ac718eb9a2acf56f3326751a",
+    "benchmarks/opt_suite/generate_large_graph.py": "59853d71344631e8d23e4a6bb34334bc1893ad557d3db8e648fb8a52c74a02f5",
+    "benchmarks/opt_suite/oracles.py": "11a1b4771993905e9142c00975ca4e867c1def949acede2e5fca59ef8cbb1ce4"
+  }
+}
