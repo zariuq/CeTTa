@@ -83,6 +83,13 @@ of gaining an execution interpretation. Unknown execution profiles likewise
 return LangRunUnadmittedV1 with the source. D0 execution is qualified here for
 PeTTa extended; loading its data does not establish a cross-dialect adapter.
 
+Reading a package document runs two independent parsers and requires their
+trees to agree. When CETTA_CACHE_DIR names a directory, an agreed tree is
+stored there, keyed by the document's bytes, the read limits and the running
+executable, and later reads of the same document reuse it; an entry that fails
+its own SHA-256 check is ignored and replaced. Without CETTA_CACHE_DIR nothing
+is stored. The language test targets use a cache of their own for each run.
+
 File dependencies use SHA-256 commitments to exact captured file bytes.
 Bare paths and file: references resolve relative to their declaring package.
 An export reference is the explicit record {dependency: URI, export: NAME}.

@@ -1186,6 +1186,7 @@ typedef struct {
     uint64_t table_generator_rounds;
     uint64_t table_generator_rounds_reused;
     uint64_t table_scc_completions;
+    uint64_t table_scc_merges;
     uint64_t table_answer_replays;
     uint64_t count_aggregate_answers;
     uint64_t count_aggregate_boundary_copies_avoided;
