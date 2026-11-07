@@ -1,8 +1,8 @@
 :- use_module(library(chr)).
-:- chr_constraint mot/1, vu/1, même/2.
+:- chr_constraint mot/1, vu/1, 'même'/2.
 :- chr_option(optimize, off).
 
-note @ mot(Été) ==> vu(Été).
-pair @ vu(Ω), mot(Ω) ==> même(Ω, Ω).
+note @ mot(X) ==> vu(X).
+pair @ vu(Y), mot(Y) ==> 'même'(Y, Y).
 
-?- mot(café), mot(λ), mot(漢字), mot('Ünïcode').
+?- mot('café'), mot('λ'), mot('漢字'), mot('Ünïcode').
