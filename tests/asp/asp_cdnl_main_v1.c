@@ -5,7 +5,13 @@
  *                                  program, refused when truncated, and refused
  *                                  for every program that has a stable model
  *   asp_cdnl_main_v1 --enumerate FILE  every stable model, then the certificate
- *                                  that no further one exists, then "###" */
+ *                                  that no further one exists, then "###"
+ *   asp_cdnl_main_v1 --differential FILE  the fast search against the
+ *                                  reference one: the same verdicts and sets of
+ *                                  models, each fast answer a model the
+ *                                  reference finds or a refutation the
+ *                                  checker accepts
+ * The reference search runs by default; --fast first runs the fast one. */
 #include "asp_cdnl_v1.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -71,19 +77,115 @@ static uint32_t read_programs(FILE *in, Program *programs) {
     return count + (started || count ? 1u : 0u);
 }
 
+/* whether a model with these atoms is among the enumeration's, as sets */
+static bool has_model(const AspEnumeration *e, const int32_t *atoms, uint32_t len) {
+    for (uint32_t k = 0u; k < e->models_len; k++) {
+        const AspModel *m = &e->models[k];
+        if (m->len != len)
+            continue;
+        bool all = true;
+        for (uint32_t i = 0u; i < len && all; i++) {
+            bool found = false;
+            for (uint32_t j = 0u; j < m->len && !found; j++)
+                found = m->atoms[j] == atoms[i];
+            all = found;
+        }
+        if (all)
+            return true;
+    }
+    return false;
+}
+
+static int differential(Program *programs, uint32_t n) {
+    int failures = 0;
+    uint32_t sat = 0u, unsat = 0u, models = 0u, refused = 0u;
+    for (uint32_t i = 0u; i < n; i++) {
+        const AspRule *rules = programs[i].rules;
+        uint32_t nr = programs[i].nrules;
+        AspEnumeration ref = asp_cdnl_enumerate_search(rules, nr, ASP_SEARCH_REFERENCE);
+        AspEnumeration fast = asp_cdnl_enumerate_search(rules, nr, ASP_SEARCH_FAST);
+        AspAnswer a = asp_cdnl_solve_search(rules, nr, ASP_SEARCH_FAST, NULL, NULL);
+        bool same = ref.kind == fast.kind && ref.models_len == fast.models_len;
+        for (uint32_t k = 0u; same && k < fast.models_len; k++)
+            same = has_model(&ref, fast.models[k].atoms, fast.models[k].len);
+        if (!same)
+            printf("FAIL: program %u: the fast enumeration differs\n", i), failures++;
+        models += ref.models_len;
+        /* The model check: it accepts every stable model, and refuses one less
+         * an atom or with another atom, since stable models never contain one
+         * another. */
+        for (uint32_t k = 0u; k < ref.models_len; k++) {
+            const AspModel *m = &ref.models[k];
+            if (!asp_model_check(rules, nr, m->atoms, m->len))
+                printf("FAIL: program %u: the model check refuses a stable model\n", i), failures++;
+            if (m->len > 0u && asp_model_check(rules, nr, m->atoms, m->len - 1u))
+                printf("FAIL: program %u: the model check accepts a model less an atom\n", i), failures++;
+            else if (m->len > 0u)
+                refused++;
+            int32_t *more = malloc(sizeof(*more) * (m->len + 1u));
+            bool extra = false;
+            for (uint32_t r = 0u; more && r < nr && !extra; r++) {
+                bool in = false;
+                for (uint32_t j = 0u; j < m->len && !in; j++)
+                    in = m->atoms[j] == rules[r].head;
+                if (!in) {
+                    memcpy(more, m->atoms, sizeof(*more) * m->len);
+                    more[m->len] = rules[r].head;
+                    extra = true;
+                }
+            }
+            if (extra && asp_model_check(rules, nr, more, m->len + 1u))
+                printf("FAIL: program %u: the model check accepts a model with another atom\n", i), failures++;
+            else if (extra)
+                refused++;
+            free(more);
+        }
+        if (a.kind == ASP_ANSWER_SAT) {
+            sat++;
+            if (!has_model(&ref, a.model, a.model_len))
+                printf("FAIL: program %u: the fast answer is no stable model\n", i), failures++;
+        } else if (a.kind == ASP_ANSWER_UNSAT) {
+            unsat++;
+            if (ref.models_len != 0u)
+                printf("FAIL: program %u: the fast search finds no model\n", i), failures++;
+            else if (!asp_certificate_check(rules, nr, a.steps, a.steps_len))
+                printf("FAIL: program %u: the fast certificate is refused\n", i), failures++;
+        } else {
+            printf("FAIL: program %u: the fast search is stuck\n", i), failures++;
+        }
+        asp_answer_free(&a);
+        asp_enumeration_free(&ref);
+        asp_enumeration_free(&fast);
+    }
+    printf("fast search: %u programs, %u with a model, %u without; %u models, all as the reference's; certificates accepted; the model check accepts every model and refuses %u mutants\n",
+           n, sat, unsat, models, refused);
+    return failures ? 1 : 0;
+}
+
 int main(int argc, char **argv) {
-    bool check = argc > 2 && strcmp(argv[1], "--check") == 0;
-    bool enumerate = argc > 2 && strcmp(argv[1], "--enumerate") == 0;
-    FILE *in = fopen(argv[check || enumerate ? 2 : 1], "r");
+    AspSearch search = ASP_SEARCH_REFERENCE;
+    int arg = 1;
+    if (arg < argc && strcmp(argv[arg], "--fast") == 0) {
+        search = ASP_SEARCH_FAST;
+        arg++;
+    }
+    bool check = arg + 1 < argc && strcmp(argv[arg], "--check") == 0;
+    bool enumerate = arg + 1 < argc && strcmp(argv[arg], "--enumerate") == 0;
+    bool compare = arg + 1 < argc && strcmp(argv[arg], "--differential") == 0;
+    if (arg >= argc)
+        return 2;
+    FILE *in = fopen(argv[check || enumerate || compare ? arg + 1 : arg], "r");
     if (!in)
         return 2;
     static Program programs[MAX_PROGRAMS];
     uint32_t n = read_programs(in, programs);
     fclose(in);
+    if (compare)
+        return differential(programs, n);
     if (enumerate) {
         int bad = 0;
         for (uint32_t i = 0u; i < n; i++) {
-            AspEnumeration e = asp_cdnl_enumerate(programs[i].rules, programs[i].nrules);
+            AspEnumeration e = asp_cdnl_enumerate_search(programs[i].rules, programs[i].nrules, search);
             for (uint32_t k = 0u; k < e.models_len; k++) {
                 fputs("model", stdout);
                 for (uint32_t j = 0u; j < e.models[k].len; j++)
@@ -101,7 +203,7 @@ int main(int argc, char **argv) {
     }
     static AspAnswer answers[MAX_PROGRAMS];
     for (uint32_t i = 0u; i < n; i++) {
-        answers[i] = asp_cdnl_solve(programs[i].rules, programs[i].nrules);
+        answers[i] = asp_cdnl_solve_search(programs[i].rules, programs[i].nrules, search, NULL, NULL);
         if (!check) {
             asp_answer_print(stdout, &answers[i]);
             puts("===");

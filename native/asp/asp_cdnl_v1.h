@@ -47,6 +47,7 @@ typedef enum {
     ASP_ANSWER_UNSAT = 1,
     ASP_ANSWER_STUCK = 2,   /* never expected: the reference proves totality */
     ASP_ANSWER_ERROR = 3,   /* allocation failure */
+    ASP_ANSWER_REFUSED = 4, /* a fast answer its own check refused: a solver fault */
 } AspAnswerKind;
 
 typedef struct {
@@ -57,7 +58,27 @@ typedef struct {
     uint32_t steps_len;
 } AspAnswer;
 
-/* Solve the ground program.  The answer owns its arrays. */
+/* Whether the atoms are a stable model of the program: exactly the least
+ * model of its reduct by them (the rules whose negative atoms they leave
+ * false, without those atoms). */
+bool asp_model_check(const AspRule *rules, uint32_t rule_count,
+                     const int32_t *atoms, uint32_t len);
+
+/* How the solver searches.  ASP_SEARCH_REFERENCE takes the steps of the
+ * verified driver (Driver.lean) one for one, so its answers and certificates
+ * are the reference's byte for byte.  ASP_SEARCH_FAST re-queues only the
+ * literal a backjump asserts, watches a learned nogood on its asserting
+ * literal and its highest-level other literal, and keeps watch lists in
+ * place.  It checks its own answers: a model by asp_model_check, a refutation
+ * by asp_certificate_check, and answers ASP_ANSWER_REFUSED where either
+ * refuses. */
+typedef enum {
+    ASP_SEARCH_FAST,
+    ASP_SEARCH_REFERENCE,
+} AspSearch;
+
+/* Solve the ground program, by the fast search.  The answer owns its
+ * arrays. */
 AspAnswer asp_cdnl_solve(const AspRule *rules, uint32_t rule_count);
 
 /* An observer of a solve's steps, over the certificate's numbering
@@ -83,6 +104,10 @@ typedef struct {
 
 AspAnswer asp_cdnl_solve_traced(const AspRule *rules, uint32_t rule_count,
                                 const AspTraceSink *trace, void *context);
+/* Either search, observed or not (trace may be NULL). */
+AspAnswer asp_cdnl_solve_search(const AspRule *rules, uint32_t rule_count,
+                                AspSearch search, const AspTraceSink *trace,
+                                void *context);
 void asp_answer_free(AspAnswer *answer);
 
 /* The certificate checker (Certificate.lean, Program.checkCert): every step is
@@ -109,6 +134,8 @@ typedef struct {
 } AspEnumeration;
 
 AspEnumeration asp_cdnl_enumerate(const AspRule *rules, uint32_t rule_count);
+AspEnumeration asp_cdnl_enumerate_search(const AspRule *rules, uint32_t rule_count,
+                                         AspSearch search);
 void asp_enumeration_free(AspEnumeration *enumeration);
 
 /* Print an answer in the reference's text form. */

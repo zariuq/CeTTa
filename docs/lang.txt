@@ -51,24 +51,44 @@ separately keeps base inputs and published outputs in different Spaces.
 Both operations support the same retained pending results and lang:resume.
 
 A language package retains separate syntax/profile, parser-plan, operational
-core, compiler, execution and region exports. The source provider compares the
-resolved components to its authored binding, and the loader checks the actual
-parser owner against the declared plan. These checks bind components; they do
-not by themselves establish correctness of arbitrary native providers. The
-included D0 lowering reuses the existing typed prepared IR and MeTTa runner.
-Other providers require their own correspondence and qualification.
+core, compiler, execution and region exports. Its compiler is one of two kinds.
+
+A native provider is a shared library built from Lean preparation functions.
+It compares the resolved components to its authored binding, and the loader
+checks the actual parser owner against the declared plan. These checks bind
+components; they do not by themselves establish correctness of arbitrary
+native providers. The included D0 lowering is such a provider; it reuses the
+existing typed prepared IR and MeTTa runner.
+
+A metta-v1 compiler is MeTTa shipped with the engine. The package carries the
+definitions generated from its own syntax profile and names the libraries and
+the entry functions that read, list inputs, prepare and observe. One compiler
+Space receives the definitions, then the libraries, and also runs the
+package's machine. Each entry answers (LangReplyV1 VALUE) or
+(LangSourceErrorV1 MESSAGE); any other answer, including an entry the
+libraries do not define, is a protocol error. The included C0 compiler is of
+this kind. Other compilers require their own correspondence and qualification.
 
 Recognition retains its packed forest and actual parser-table identities.
-The package's verification operation independently checks whole-input coverage
-and the complete selected catalogue before lowering. Empty and ambiguous
-catalogues cross the same boundary; an unfinished check remains pending.
-The command-line and in-process readers share the evidence encoding.
+A native provider's verification operation independently checks whole-input
+coverage and the complete selected catalogue before lowering. Empty and
+ambiguous catalogues cross the same boundary; an unfinished check remains
+pending. The command-line and in-process readers share the evidence encoding.
+A metta-v1 compiler reads the parser's selected catalogue directly; every
+selected interpretation must lower to the same program.
 
 An assembled module/1 package is distinct from guest source and from source
 module authoring syntax. Source-only packages retain their obligations instead
 of gaining an execution interpretation. Unknown execution profiles likewise
 return LangRunUnadmittedV1 with the source. D0 execution is qualified here for
 PeTTa extended; loading its data does not establish a cross-dialect adapter.
+
+Reading a package document runs two independent parsers and requires their
+trees to agree. When CETTA_CACHE_DIR names a directory, an agreed tree is
+stored there, keyed by the document's bytes, the read limits and the running
+executable, and later reads of the same document reuse it; an entry that fails
+its own SHA-256 check is ignored and replaced. Without CETTA_CACHE_DIR nothing
+is stored. The language test targets use a cache of their own for each run.
 
 File dependencies use SHA-256 commitments to exact captured file bytes.
 Bare paths and file: references resolve relative to their declaring package.
@@ -119,6 +139,46 @@ owned handle rather than copying the grammar and core into each machine state.
 An effect refusal retains the uncommitted publication list. Multi-fact
 publication is not an atomic transaction.
 
+Ground CHR (C0)
+
+lang:load CHR selects ordinary CHR source and the refined ground machine
+written in MeTTa. It retains ordered rule occurrences, distinct constraint
+occurrences, propagation history and body-before-continuation execution.
+The compiler is MeTTa as well: reading, lowering, preparation and
+observation run in the calling process.
+
+C0 values are integers, atom names and tuples. A host symbol or string can
+supply an atom name, including Unicode, empty names and embedded NUL. A
+string such as "12" is an atom name, not an integer. String and symbol heads
+can name a declared constraint; a declared zero-arity constraint can also
+be supplied as a bare symbol or string. Booleans, floats and open variables
+do not silently become these guest values.
+
+CHR source names follow SWI-Prolog's ASCII rules: unquoted atoms start with
+a lowercase letter and variables with an uppercase letter or underscore.
+Quoted atoms carry any text, including Unicode. Double-quoted text reads as
+an atom, as under SWI's double_quotes=atom, so "abc" and abc are the same
+atom name. The directive :- set_prolog_flag(double_quotes, atom). is
+accepted; the other double_quotes modes produce strings or lists, which C0
+values do not include, so a source that selects one is refused, not
+reinterpreted.
+
+New results use the established canonical host representation: symbols,
+with strings for empty, NUL-bearing and uppercase truth names.
+Native MeTTa still distinguishes strings and symbols. The adapter identifies
+them only in the declared CHR observation; it does not change host equality.
+
+lang:eval returns the private final store. In the same input/output Space,
+lang:run removes precisely the consumed captured occurrences, keeps surviving
+occurrences in their original representation, and appends new occurrences.
+Duplicates remain distinct. With a separate destination, the input is kept
+and the final multiset is appended to that destination. Resuming continues
+one retained computation; a fresh invocation may fire propagation again.
+
+The compiler-pass example composes Datalog demand analysis with CHR constant
+folding. Datalog's strings pass directly into the CHR adapter. Its checks
+compare guest stores and also check that surviving host strings stay strings.
+
 Source views and raw regions
 
 Extended HE and PeTTa readers recognize r#"BODY"#, r##"BODY"## and deeper
@@ -158,16 +218,25 @@ Invalid completed source is diagnosed; subsequent submissions can continue.
 Build and verification
 
     make BUILD=core
-    make build-lang-datalog METTAPEDIA_LEAN_ROOT=PATH_TO_METTAPEDIA_LEAN
-    make test-lang-library
-    make test-source-compiler-v1 test-lib-he-evalc-spaces test-lang-repl
+    make test-lang-chr test-lang-chr-reference
+    make build-lang-compilers METTAPEDIA_LEAN_ROOT=PATH_TO_METTAPEDIA_LEAN
+    make test-lang-library-datalog test-lang-datalog-reference SOUFFLE=PATH_TO_SOUFFLE
+    make test-lang-library test-source-compiler-v1 test-lib-he-evalc-spaces test-lang-repl
 
-The provider is compiled once from the Lean preparation functions. Ordinary
-lang calls load native code in process; they do not launch Python, Lean or SWI.
+The CHR package needs no build step. test-lang-chr-reference compares its
+results with SWI-Prolog library(chr) and needs swipl: on the standard
+examples, on the controls, and on seeded generated programs whose outcomes
+depend on rule and partner order. Package files that CeTTa ships but does not
+author are listed with their source and SHA-256 in langdef/lang/manifest.json;
+test-lang-chr checks those hashes, and check-lang-package-regeneration
+METTAPEDIA_ROOT=PATH regenerates the files from a Mettapedia checkout and
+compares them. The Datalog provider is compiled once from the Lean preparation
+functions. Ordinary lang calls load native code or MeTTa in process; they do
+not launch Python, Lean or SWI.
 Datalog inference still runs through the shared emitted MeTTa reference route.
 Native join/saturation acceleration requires a separately justified lowering.
 
-The provider pins process-lifetime module code/constants. Its one-time Lean
+The Lean provider pins process-lifetime module code/constants. Its one-time Lean
 and scalar-codec initialization is annotated as a permanent allocation scope for LeakSanitizer;
 request allocations and owned parser/compiler/language resources remain checked.
 

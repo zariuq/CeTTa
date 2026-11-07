@@ -61,20 +61,31 @@ typedef struct {
     bool choice;
 } AspClingoRule;
 
-/* Every stable model, as calls of `model` with the true atoms in
- * increasing order; false with *error set where clingo fails. */
+/* What a model callback answers: on to the next model, stop here (the
+ * search ends without error), or fail. */
+typedef enum {
+    ASP_CLINGO_MORE,
+    ASP_CLINGO_STOP,
+    ASP_CLINGO_FAIL,
+} AspClingoNext;
+
+/* The stable models, as calls of `model` with the true atoms in increasing
+ * order, until there are no more or `model` stops; false with *error set
+ * where clingo or `model` fails. */
 bool asp_clingo_models(uint32_t atom_count, const AspClingoRule *rules,
                        size_t rule_count,
-                       bool (*model)(void *context, const uint32_t *atoms,
-                                     size_t len),
+                       AspClingoNext (*model)(void *context,
+                                              const uint32_t *atoms,
+                                              size_t len),
                        void *context, const char **error);
 
-/* Every stable model of the program TEXT (its base part), as clingo grounds
- * and solves it: calls of `model` with the shown symbols true in it. */
+/* The stable models of the program TEXT (its base part), as clingo grounds
+ * and solves it: calls of `model` with the shown symbols true in it, until
+ * there are no more or `model` stops. */
 bool asp_clingo_text_models(const char *text,
-                            bool (*model)(void *context,
-                                          const AspClingoSymbol *symbols,
-                                          size_t len),
+                            AspClingoNext (*model)(void *context,
+                                                   const AspClingoSymbol *symbols,
+                                                   size_t len),
                             void *context, const char **error);
 
 #endif

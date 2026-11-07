@@ -294,6 +294,8 @@ typedef struct {
     const GSLTDirectCodepointMapV1 *string_escape_map;
     uint32_t string_escape_map_len;
     bool string_escape_identity_fallback;
+    /* Explicit body projection; other authored profiles retain their maps. */
+    bool string_body_metta;
     /* [x y] and [x y | rest]; list_open is 0 without lists.  Elements are
      * separated by layout; inside a list a token uses the list classes and
      * ends at list_token_boundary, which holds both brackets; the bar alone

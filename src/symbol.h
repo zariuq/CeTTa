@@ -699,9 +699,12 @@ static inline SymbolSpelling symbol_spelling(
     X(petta_machine_spelling, "__petta_machine") \
     X(lib_asp_solve, "__cetta_lib_asp_solve") \
     X(lib_asp_models, "__cetta_lib_asp_models") \
-    X(lib_asp_ground, "__cetta_lib_asp_ground") \
-    X(lib_asp_clingo_models, "__cetta_lib_asp_clingo_models") \
-    X(lib_asp_trace, "__cetta_lib_asp_trace")
+    X(lib_clingo_ground, "__cetta_lib_clingo_ground") \
+    X(lib_clingo_models, "__cetta_lib_clingo_models") \
+    X(lib_clingo_solve, "__cetta_lib_clingo_solve") \
+    X(lib_asp_trace, "__cetta_lib_asp_trace") \
+    X(lib_provenance_supports, "__cetta_lib_provenance_supports") \
+    X(lib_provenance_supports_each, "__cetta_lib_provenance_supports_each")
 
 /* Libraries may publish native primitives under their public names. The
  * shared registry supplies dispatch and operand-observation capability;

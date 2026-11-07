@@ -781,6 +781,7 @@ SRC += src/shared_transition.c src/run_report.c src/run_cli.c src/error_presenta
 SRC += src/library_proc.c
 SRC += src/library_fs.c
 SRC += src/petta_priority_heap.c
+SRC += src/library_provenance.c native/provenance/prov_kernel_v1.c
 SRC += src/native_memory.c src/host_services.c src/library_postings.c src/library_asp.c native/asp/asp_cdnl_v1.c native/asp/asp_clingo_v1.c src/tensor.c src/tensor_bounds.c src/tensor_screening.c src/library_tensor.c src/library_group.c
 SRC += src/binary_codec.c src/library_binary.c
 SRC += src/library_heap.c
@@ -906,7 +907,7 @@ LANGDEF_COMPILED_CURSOR_RUNTIME_SRC = \
 	experiments/gslt2parse_foundation/native/parser_atom_projection_action_v1.c \
 	experiments/gslt2parse_foundation/native/semantic_mask_nfa_v1.c
 SRC += experiments/gslt2parse_foundation/native/parser_pack_abi_stream_v1.c \
-	$(LANGDEF_COMPILED_CURSOR_RUNTIME_SRC) native/langdef_module.c native/source_compiler_module_v1.c native/source_parser_plan_v1.c native/source_input_view_v1.c \
+	$(LANGDEF_COMPILED_CURSOR_RUNTIME_SRC) native/langdef_module.c native/source_compiler_module_v1.c native/source_parser_plan_v1.c native/source_input_view_v1.c native/source_occurrence_view_v1.c \
 	native/parser_baked_v1.c \
 	native/operational_language_def_v1.c \
 	native/language_def_core_v1.c \
@@ -4130,13 +4131,31 @@ test-asp-reference-driver: $(BIN) $(ASP_CDNL_TEST_BIN) tests/asp/reference_drive
 	@$(call cetta_exec,./$(ASP_CDNL_TEST_BIN)) --enumerate tests/asp/reference_driver_programs.txt > runtime/test-asp-reference-enumerate.out
 	@diff -u tests/asp/reference_driver_enumerations.txt runtime/test-asp-reference-enumerate.out
 	@$(call cetta_exec,./$(ASP_CDNL_TEST_BIN)) --check tests/asp/reference_driver_programs.txt
+	@$(call cetta_exec,./$(ASP_CDNL_TEST_BIN)) --fast --check tests/asp/reference_driver_programs.txt > runtime/test-asp-fast-check.out
+	@$(call cetta_exec,./$(ASP_CDNL_TEST_BIN)) --differential tests/asp/reference_driver_programs.txt > runtime/test-asp-fast-differential.out
 	@$(call cetta_exec,./$(BIN)) --lang petta tests/petta/asp_library.metta > runtime/test-asp-library-petta.out 2>&1
 	@diff -u tests/petta/asp_library.expected runtime/test-asp-library-petta.out
 	@$(call cetta_exec,./$(BIN)) --lang petta tests/petta/asp_weight_rules.metta > runtime/test-asp-weight-rules.out 2>&1
 	@diff -u tests/petta/asp_weight_rules.expected runtime/test-asp-weight-rules.out
-	@CETTA_CLINGO_LIBRARY=/nonexistent/libclingo.so $(call cetta_exec,./$(BIN)) --lang petta tests/petta/asp_clingo_absent.metta > runtime/test-asp-clingo-absent.out 2>&1
-	@diff -u tests/petta/asp_clingo_absent.expected runtime/test-asp-clingo-absent.out
-	@echo "PASS: the answer-set solver answers and enumerates as the verified reference driver on its 69 programs, models and certificates identical; the C checker accepts every certificate and refuses truncated ones and those offered for programs with a stable model; weight rules read by the verified normalization; without clingo its heads stay as written"
+	@CETTA_CLINGO_LIBRARY=/nonexistent/libclingo.so $(call cetta_exec,./$(BIN)) --lang petta tests/petta/clingo_absent.metta > runtime/test-clingo-absent.out 2>&1
+	@diff -u tests/petta/clingo_absent.expected runtime/test-clingo-absent.out
+	@echo "PASS: the answer-set solver answers and enumerates as the verified reference driver on its 69 programs, models and certificates identical; the C checker accepts every certificate and refuses truncated ones and those offered for programs with a stable model; the fast search finds the same stable models and verdicts on every program, its certificates accepted; weight rules read by the verified normalization; without clingo the clingo library's heads stay as written"
+
+PROV_KERNEL_TEST_BIN = runtime/prov_kernel_main_v1-$(BUILD_OBJ_TAG)
+$(PROV_KERNEL_TEST_BIN): tests/provenance/prov_kernel_main_v1.c native/provenance/prov_kernel_v1.c native/provenance/prov_kernel_v1.h
+	@mkdir -p runtime
+	$(CC) $(CFLAGS) -Inative/provenance -o $@ tests/provenance/prov_kernel_main_v1.c native/provenance/prov_kernel_v1.c $(LDFLAGS)
+
+.PHONY: test-provenance
+test-provenance: $(BIN) $(PROV_KERNEL_TEST_BIN) tests/provenance/programs.txt tests/provenance/answers.txt
+	@$(call cetta_exec,./$(PROV_KERNEL_TEST_BIN)) tests/provenance/programs.txt > runtime/test-provenance-kernel.out
+	@diff -u tests/provenance/answers.txt runtime/test-provenance-kernel.out
+	@$(call cetta_exec,./$(BIN)) --lang petta tests/petta/provenance_library.metta > runtime/test-provenance-library.out 2>&1
+	@diff -u tests/petta/provenance_library.expected runtime/test-provenance-library.out
+	@$(call cetta_exec,./$(BIN)) --lang petta tests/petta/provenance_forest.metta > runtime/test-provenance-forest.out 2>&1
+	@diff -u tests/petta/provenance_forest.expected runtime/test-provenance-forest.out
+	@for t in tests/provenance/tasks/*.metta; do 		$(call cetta_exec,./$(BIN)) --lang petta lib/ilp/forest.metta $$t tests/provenance/run_task.metta > runtime/test-provenance-task.out 2>&1 || exit 1; 		diff -u $${t%.metta}.expected runtime/test-provenance-task.out || exit 1; 	done
+	@echo "PASS: the provenance kernel answers as the forest on its recorded programs, by steps and by labels; the library gives sorted supports, any arity, open goal arguments, and refuses malformed programs; the forest learner on the library learns what the SWI forest learns on the recorded Vanilla problems"
 
 NATIVE_TERM_DEPTH_TEST_BIN = runtime/test_native_term_depth-$(BUILD_OBJ_TAG)
 $(NATIVE_TERM_DEPTH_TEST_BIN): tests/test_native_term_depth.c src/parser.c src/parser.h src/name_key.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(BUILD_CONFIG_HEADER)
@@ -18392,7 +18411,9 @@ NORMAL_TEST_TARGETS := \
 	test-prepared-bound-heads \
 	test-seal \
 	test-numerical-substrate-smoke \
-	test-application-panel
+	test-application-panel \
+	test-lang-chr \
+	test-provenance
 
 .PHONY: test test-all test-test-target-scope
 test: $(NORMAL_TEST_TARGETS)
@@ -24303,7 +24324,7 @@ test-petta-compiled-reader-v1: test-petta-compiled-reader-direct-generated-v1 $(
 	@result=$$(./$(PETTA_COMPILED_READER_TEST_BIN) 2>&1); \
 	printf '%s\n' "$$result"; \
 	if [ "$$(printf '%s\n' "$$result" | \
-		grep -Fxc '(PeTTaCompiledReaderV1Summary 34 34 0 source-pass 1 two-stage 1)')" -ne 1 ]; then \
+		grep -Fxc '(PeTTaCompiledReaderV1Summary 45 45 0 source-pass 1 two-stage 1)')" -ne 1 ]; then \
 		echo "FAIL: compiled PeTTa reader exact integration summary absent or duplicated"; \
 		exit 1; \
 	fi; \
@@ -41925,7 +41946,7 @@ $(OPERATIONAL_LANGUAGE_DEF_V1_TEST_BIN): \
 	@set -eu; \
 	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-operational-language-def-v1.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
-	$(CC) $(CFLAGS) -Wl,--gc-sections,--wrap=cetta_lp_native_gll_prepare,--wrap=cetta_lp_native_glr_prepare -o "$$tmp_out" $^; \
+	$(CC) $(CFLAGS) -Wl,--gc-sections,--wrap=cetta_lp_native_gll_prepare,--wrap=cetta_lp_native_glr_prepare,--wrap=cetta_lp_native_gll_prepared_parse_utf8_lattice_forest_from_complete -o "$$tmp_out" $^; \
 	mv "$$tmp_out" $@
 
 .PHONY: test-operational-language-def-v1
@@ -48373,17 +48394,40 @@ test-sparse-interchange-mutants: $(SPARSE_INTERCHANGE_TEST)
 # In-process source preparation is a build artifact. Ordinary lang calls
 # load it directly and never launch a compiler or another interpreter.
 .PHONY: build-lang-datalog test-lang-library
+# The ground CHR package ships its compiler as MeTTa beside it
+# (langdef/lang/chr/); it needs no build step and no Lean.
+.PHONY: test-lang-chr test-lang-package-manifest
 
+# Generated and copied package files match the hashes in their manifest.
+test-lang-package-manifest:
+	@python3 tools/lang_package_manifest.py check
+
+.PHONY: test-source-occurrence-view
+runtime/test_source_occurrence_view-$(BUILD_OBJ_TAG): tests/test_source_occurrence_view.c $(OBJ) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_source_occurrence_view.c $(filter-out src/main.%,$(OBJ)) \
+		-Wl,--wrap=cetta_shared_transition_guard_enter $(LDFLAGS)
+
+test-source-occurrence-view: runtime/test_source_occurrence_view-$(BUILD_OBJ_TAG)
+	@$(call cetta_exec,./runtime/test_source_occurrence_view-$(BUILD_OBJ_TAG))
+
+# Each run verifies the package documents once, then reads them from its own cache.
+test-lang-chr: $(BIN) test-source-occurrence-view test-lang-package-manifest
+	@set -eu; work="$$(mktemp -d runtime/lang-chr-tests.XXXXXX)"; \
+	CETTA_CACHE_DIR="$$work/cache" python3 tests/support/check_lang_chr.py ./$(BIN) "$$work/chr"; \
+	rm -rf "$$work/cache"
+
+# The lang library's checks that need no language provider built elsewhere:
+# source input views, the REPL and raw source on the command line.  Its
+# checks through the Datalog package need the Datalog compiler built from
+# Lean (test-lang-library-datalog in mk/external.mk) until that compiler runs
+# as MeTTa, as the CHR compiler does.
 test-lang-library: $(BIN)
-	@test -f runtime/lang/datalog-compiler.so || \
-		{ echo 'Run make build-lang-datalog first' >&2; exit 2; }
-	@set -eu; work="$$(mktemp -d runtime/lang-tests.XXXXXX)"; \
-	python3 tests/support/check_lang_library.py ./$(BIN) "$$work/public"; \
-	python3 tests/support/check_lang_boundaries.py ./$(BIN) "$$work/boundaries"; \
+	@set -eu; work="$$(mktemp -d runtime/lang-tests.XXXXXX)"; export CETTA_CACHE_DIR="$$work/cache"; \
 	python3 tests/support/check_source_input_view.py ./$(BIN) "$$work/input-views"; \
-	python3 tests/support/check_lang_source_verification.py ./$(BIN) "$$work/source-verification"; \
 	python3 tests/support/check_lang_repl.py ./$(BIN) "$$work/repl"; \
-	python3 tests/support/check_raw_source_cli.py ./$(BIN) "$$work/raw"
+	python3 tests/support/check_raw_source_cli.py ./$(BIN) "$$work/raw"; \
+	rm -rf "$$work/cache"
 
 runtime/source_compiler_fixture_v1.so: tests/support/source_compiler_fixture_v1.c native/source_compiler_provider_v1.h
 	@mkdir -p runtime
@@ -48694,6 +48738,11 @@ $(TERM_DOMAIN_EXCLUSIVE_BATCHES_TEST_BIN): tests/test_term_domain_exclusive_batc
 test-term-domain-exclusive-batches: $(TERM_DOMAIN_EXCLUSIVE_BATCHES_TEST_BIN)
 	@$(call cetta_exec,./$(TERM_DOMAIN_EXCLUSIVE_BATCHES_TEST_BIN))
 test-all: test-term-domain-exclusive-close test-term-domain-exclusive-batches
+.PHONY: test-petta-string-literal-profile
+test-petta-string-literal-profile: $(BIN)
+	@$(CETTA_BIN_INVOKE) --lang petta tests/petta/string_literal_profile.metta | diff -u tests/petta/string_literal_profile.expected -
+
+test-petta-corrected-stable: test-petta-string-literal-profile
 
 # Gates that need material outside CeTTa; make test never runs them.
 include mk/external.mk

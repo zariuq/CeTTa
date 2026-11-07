@@ -558,6 +558,7 @@ tests/test_print_nondet_probe.metta	he	metta	extended	main	native	probe-core-lan
 tests/test_println_arity.metta	he	metta	extended	main	native	test	golden	-
 tests/test_println_syntax.metta	he	metta	extended	main	native	test	golden	-
 tests/test_println_unit_binding.metta	he	metta	extended	main	native	test	golden	-
+tests/test_provenance_library.metta	he	metta	extended	main	native	test	golden	-
 tests/test_py_ops_syntax.metta	he	metta	extended	python	native	test-python	golden	Python-enabled build golden regression
 tests/test_queue_space.metta	he	metta	extended	main	native	test	golden	-
 tests/test_queue_space_errors.metta	he	metta	extended	main	native	test	golden	-

@@ -1,0 +1,15 @@
+.decl Number(value:number)
+Number(1).
+Number(2).
+
+.decl Pair(left:number, right:number)
+Pair(1,1).
+Pair(1,2).
+
+.decl Same(value:number)
+Same(X) :- Pair(X,X).
+.output Same
+
+.decl Low(value:number)
+Low(X) :- Number(X), X < 2.
+.output Low

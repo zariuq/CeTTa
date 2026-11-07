@@ -1,0 +1,11 @@
+// Duplicate inline facts, an empty relation and a rule with no answer.
+.decl Seed(value:number)
+Seed(1).
+Seed(1).
+.output Seed
+
+.decl Empty(value:number)
+.output Empty
+.decl Copy(value:number)
+Copy(X) :- Empty(X).
+.output Copy

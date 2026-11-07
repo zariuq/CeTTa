@@ -1,3 +1,4 @@
+#include "string_literal.h"
 #include "gslt_direct_reader_v1.h"
 #include "raw_source_region.h"
 
@@ -2716,6 +2717,7 @@ static AtomId gslt_direct_petta_parse_string(
         codepoint != state->plan->string_quote)
         goto failed;
     gslt_direct_reader_v1_consume_width(&state->cursor, width);
+    size_t body_start = state->cursor.pos;
     while (state->cursor.pos < state->cursor.input_len) {
         size_t scalar_start = state->cursor.pos;
         if (!gslt_direct_petta_peek(
@@ -2724,13 +2726,26 @@ static AtomId gslt_direct_petta_parse_string(
             goto failed;
         if (codepoint == state->plan->string_quote) {
             gslt_direct_reader_v1_consume_width(&state->cursor, width);
+            if (state->plan->string_body_metta) {
+                /* Recognition obeys the authored grammar above. Decode the
+                 * retained body only after its closing quote is established. */
+                size_t at = body_start;
+                while (at < scalar_start) {
+                    uint8_t unit[4];
+                    size_t written;
+                    size_t consumed = cetta_string_literal_decode_unit(
+                        state->cursor.input + at, scalar_start - at, unit, &written);
+                    if (!gslt_direct_reader_v1_bytes_append(&decoded, unit, written))
+                        goto failed;
+                    at += consumed;
+                }
+            }
             result = state->projection->string_bytes(
                 state->projection->context, decoded.data, decoded.len);
-            if (result == CETTA_ATOM_ID_NONE && decoded.len > 0u &&
-                memchr(decoded.data, '\0', decoded.len)) {
+            if (result == CETTA_ATOM_ID_NONE) {
                 gslt_direct_reader_v1_error(
                     state->error_buf, state->error_buf_size,
-                    "PeTTa string contains an embedded NUL that CeTTa cannot represent");
+                    "PeTTa string projection failed");
             }
             free(decoded.data);
             return result;
@@ -2738,7 +2753,7 @@ static AtomId gslt_direct_petta_parse_string(
         if (gslt_direct_reader_v1_class_contains(
                 state->plan->string_plain, codepoint)) {
             gslt_direct_reader_v1_consume_width(&state->cursor, width);
-            if (!gslt_direct_reader_v1_bytes_append(
+            if (!state->plan->string_body_metta && !gslt_direct_reader_v1_bytes_append(
                     &decoded, state->cursor.input + scalar_start, width))
                 goto failed;
             continue;
@@ -2749,10 +2764,9 @@ static AtomId gslt_direct_petta_parse_string(
             if (!gslt_direct_petta_peek(
                     &state->cursor, &codepoint, &width,
                     state->error_buf, state->error_buf_size) ||
-                !gslt_direct_petta_escape_target(
-                    state->plan, codepoint, &target) ||
-                !gslt_direct_reader_v1_bytes_append_codepoint(
-                    &decoded, target))
+                (!state->plan->string_body_metta &&
+                 (!gslt_direct_petta_escape_target(state->plan, codepoint, &target) ||
+                  !gslt_direct_reader_v1_bytes_append_codepoint(&decoded, target))))
                 goto failed;
             gslt_direct_reader_v1_consume_width(&state->cursor, width);
             continue;
@@ -3172,6 +3186,8 @@ bool gslt_direct_petta_reader_v1_plan_validate(
         !gslt_direct_reader_v1_sha256_valid(plan->projection_digest) ||
         !gslt_direct_reader_v1_sha256_valid(plan->compiler_digest) ||
         !gslt_direct_reader_v1_sha256_valid(plan->composition_digest) ||
+        (plan->string_body_metta &&
+         (plan->escape_marker != '\\' || plan->string_quote != '"')) ||
         plan->depth_limit == 0u) {
         gslt_direct_reader_v1_error(
             error_buf, error_buf_size,
@@ -3208,10 +3224,10 @@ bool gslt_direct_petta_reader_v1_plan_validate(
         plan->expression_open == plan->expression_close ||
         plan->string_quote == plan->escape_marker ||
         plan->splitter_string_escape != plan->escape_marker ||
-        plan->string_escape_map_len == 0u ||
-        !gslt_direct_reader_v1_map_valid(
-            plan->string_escape_map, plan->string_escape_map_len) ||
-        !plan->string_escape_identity_fallback ||
+        (!plan->string_body_metta &&
+         (plan->string_escape_map_len == 0u ||
+          !gslt_direct_reader_v1_map_valid(plan->string_escape_map, plan->string_escape_map_len) ||
+          !plan->string_escape_identity_fallback)) ||
         gslt_direct_reader_v1_class_contains(
             plan->splitter_string_plain, plan->string_quote) ||
         gslt_direct_reader_v1_class_contains(

@@ -1,0 +1,8 @@
+(example 1)
+((m identity ancestor mother))
+(example 2)
+((m identity ancestor father) (m tailrec ancestor father) (m tailrec ancestor mother))
+(example 3)
+((m identity ancestor father) (m tailrec ancestor mother))
+true
+()
