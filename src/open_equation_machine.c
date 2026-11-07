@@ -7529,6 +7529,10 @@ typedef struct {
     /* The depth of the activation the frame resumes: for a call, one
      * deeper than its caller. */
     uint32_t depth;
+    /* The remembered slots' count when the frame was pushed; zero once a
+     * collection has emptied the remembered set, since every slot recorded
+     * after that collection was stored after the frame. */
+    uint32_t remembered_slot_mark;
     /* For a call of an indexed relation, the equations its index leaves,
      * found as the call enters its first. */
     uint64_t candidates;
@@ -9025,6 +9029,15 @@ static inline void oem_restore(CettaOpenEquationCursor *cursor,
         if (cursor->store_len < cursor->store_low)
             cursor->store_low = cursor->store_len;
     }
+    /* A slot of an older activation stored after the mark while no newer
+     * frame was live was not trailed.  When the restore removes that
+     * activation its slot vector is dead, but it may still hold a region
+     * atom the reset above has just freed; the remembered set must not
+     * lead the next minor collection to it.  Every slot recorded after the
+     * mark is either such a dead slot or a trailed one the store trail has
+     * just emptied, so the set returns to its length at the mark. */
+    if (cursor->remembered_slot_len > frame->remembered_slot_mark)
+        cursor->remembered_slot_len = frame->remembered_slot_mark;
     cursor->cell_len = frame->cell_mark;
     /* Cells created after the frame are gone; old atoms still reachable
      * were made before it and name none of them, and no slot holds what a
@@ -9052,6 +9065,7 @@ static inline void oem_trial_begin(CettaOpenEquationCursor *cursor,
     trial->marks.cell_mark = cursor->cell_len;
     trial->marks.trail_mark = cursor->trail_len;
     trial->marks.store_mark = cursor->store_len;
+    trial->marks.remembered_slot_mark = cursor->remembered_slot_len;
     trial->marks.exported_mark = cursor->exported_len;
     trial->marks.path_depth = cursor->path_depth;
     trial->oldest = oem_choice_cells(cursor);
@@ -9113,6 +9127,7 @@ static bool oem_push_frame(CettaOpenEquationCursor *cursor,
         .store_mark = cursor->store_len,
         .exported_mark = cursor->exported_len,
         .depth = depth,
+        .remembered_slot_mark = cursor->remembered_slot_len,
         .candidates = UINT64_MAX,
         .path_depth = cursor->path_depth,
     };
@@ -17289,6 +17304,9 @@ static bool oem_collect_generation(CettaOpenEquationCursor *cursor,
         frame->cell_mark = before[frame->cell_mark - cell_base];
         frame->trail_mark = kept_before[frame->trail_mark - trail_base];
         frame->store_mark = stores_before[frame->store_mark - store_base];
+        /* The remembered set is emptied below; a frame below `frame_base`
+         * was given zero by an earlier collection. */
+        frame->remembered_slot_mark = 0u;
     }
     cursor->trail_len = kept;
     if (stores_kept > store_base)
