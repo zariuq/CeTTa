@@ -18,6 +18,7 @@
 #include "match.h"
 #include "binding/term_cursor.h"
 #include "petta_semantics.h"
+#include "transform_core.h"
 #include "petta_type_policy.h"
 #include "petta_specializer.h"
 #include "petta_typecheck_census.h"
@@ -24940,7 +24941,16 @@ petta_machine_try_native_collapse(
         body->kind != ATOM_EXPR)
         return false;
     Atom *query = NULL;
-    if (body->expr.len == 4u &&
+    /* A transform is the host's to collect whole, as a match is. */
+    static SymbolId transform = SYMBOL_ID_NONE;
+    if (transform == SYMBOL_ID_NONE)
+        transform = atom_symbol_literal_id("transform");
+    if ((body->expr.len == 4u || body->expr.len == 5u) &&
+        atom_is_symbol_id(body->expr.elems[0], transform)) {
+        query = petta_machine_apply_bindings(
+            machine, search_context_bindings(&machine->search),
+            &machine->heap, body);
+    } else if (body->expr.len == 4u &&
         (atom_is_symbol_id(body->expr.elems[0], g_builtin_syms.match) ||
          atom_is_symbol_id(body->expr.elems[0], g_builtin_syms.let))) {
         query = petta_machine_apply_bindings(

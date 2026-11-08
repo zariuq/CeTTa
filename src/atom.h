@@ -1174,6 +1174,10 @@ Atom *atom_symbol_id(Arena *a, SymbolId sym_id);
 /* Initialize borrowed symbol metadata without allocation or an arena owner.
  * Storage must outlive its readers; escaping terms use an owning constructor. */
 void atom_init_symbol(Atom *target, SymbolId sym_id);
+/* An expression read in place over ELEMS, its facts those of its children,
+ * owned by no arena: storage must outlive its readers, as for
+ * atom_init_symbol. */
+void atom_init_expr_view(Atom *target, Atom **elems, CettaExprLen len);
 /* The symbol's one atom owned by the symbol table (no arena): for atoms a
  * compiled program hands to terms that may outlive it.  NULL without a
  * table or for an id it does not hold. */

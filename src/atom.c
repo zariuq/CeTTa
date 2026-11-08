@@ -4297,6 +4297,18 @@ void atom_init_symbol(Atom *target, SymbolId sym_id) {
     };
 }
 
+void atom_init_expr_view(Atom *target, Atom **elems, CettaExprLen len) {
+    uint32_t structural_facts = 0u;
+    uint32_t flags = atom_flags_from_children(0u, 0u, elems, len, &structural_facts);
+    *target = (Atom){
+        .kind = ATOM_EXPR,
+        .flags = flags,
+        .var_id = atom_single_variable_id_of(flags, elems, len),
+        .structural_facts = structural_facts,
+        .expr = {.elems = elems, .len = len},
+    };
+}
+
 Atom *atom_symbol_id(Arena *a, SymbolId sym_id) {
     /* A symbol's admission depends on its id alone, so the canonical atom a
      * hash-cons table already published for the id is the one interning

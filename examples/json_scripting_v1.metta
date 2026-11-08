@@ -1,6 +1,6 @@
 ; PeTTa 1.0.6: ordinary JSON data, without scalar expansion.
 !(import! &self json)
-!(import! &self list)
+!(import! &self (library list))
 !(import! &self str)
 
 ; A response can be queried directly, including arrays and nested objects.
