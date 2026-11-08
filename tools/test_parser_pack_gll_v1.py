@@ -16,10 +16,10 @@ from gslt2parse_oracles_v1 import ORACLES
 
 ROOT = Path(__file__).resolve().parents[1]
 PRESENTATIONS = ROOT / "experiments" / "gslt2parse_foundation" / "presentations"
-MATRIX_DIGEST = "34791ce2f3fcf354d171ba43c09da37a6220cf203dc195b587cf8df9bac90141"
+MATRIX_DIGEST = "690d0208bf451b6079e1a48e57294622ddaae3ff94f3a52f7bc3cd309ffb29ed"
 STREAMING_FOREST_SCALARS = 768
 STREAMING_FOREST_DIGEST = (
-    "f2da536c07c0af06092799fe6899934a6d24694a113e8706c8f7d73d15e828d0"
+    "416bc2f5d76d00f6a2fd64617bcdbaaf67de6cadbb2fdfedc824267cc1620567"
 )
 
 STARTS = {

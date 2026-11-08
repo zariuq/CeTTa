@@ -22,8 +22,22 @@
  * own; otherwise it declines and the authored definition runs.  A call whose
  * conjuncts it cannot read the library's way also declines. */
 
+/* The library a firing realizes: the two dialects' libraries differ in how a
+ * commit removes a taken atom and in what an error a mutation answers does. */
+typedef enum {
+    /* lib/petta/lib_transform.metta: remove-atom removes every copy, so a take
+     * removes them all and stores back the copies the firing does not take;
+     * a mutation's error is raised. */
+    CETTA_TRANSFORM_DIALECT_PETTA = 0,
+    /* lib/lib_transform.metta: remove-atom removes one copy, so a take removes
+     * exactly the copies it takes; a mutation's error is a value the library
+     * binds and goes on from, and the instances routed are counted as added. */
+    CETTA_TRANSFORM_DIALECT_HE,
+} CettaTransformDialect;
+
 typedef struct {
     void *context;
+    CettaTransformDialect dialect;
     /* The space a conjunct's space reference names.  False for an operand
      * that names no space; true with *space_out NULL for a location that
      * holds no space yet, which reads as empty. */
@@ -47,10 +61,11 @@ typedef enum {
     CETTA_TRANSFORM_ERROR,        /* *answer_out is the error */
 } CettaTransformOutcome;
 
-/* Read-only: whether the live presentation is the library at
+/* Read-only: whether the live presentation is the dialect's library at
  * `library_path`.  The verdict is cached per program revision. */
 bool cetta_transform_presentation_admitted(Space *program,
-                                           const char *library_path);
+                                           const char *library_path,
+                                           CettaTransformDialect dialect);
 
 /* `call` is (tf:fire SPACE CONJUNCTS TEMPLATE), or (tf:fire-into SPACE
  * CONJUNCTS TEMPLATE DESTINATION), whose instances are added to DESTINATION

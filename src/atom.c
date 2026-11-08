@@ -6767,6 +6767,10 @@ static inline __attribute__((always_inline)) bool atom_walk_any(
                 continue;
             root_seen = true;
         }
+        /* Behind a barrier nothing is visited; met again or not, the
+         * answer is the same, so the barrier comes before the seen set. */
+        if (barrier && node != root && barrier(node, context))
+            continue;
         /* A subexpression met again was answered where it was first met. */
         if (unique && node != root && node->kind == ATOM_EXPR && node->expr.len &&
             !fault && !atom_visit_set_add(&seen, node, &fault) && !fault)

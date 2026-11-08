@@ -29,7 +29,7 @@ BOUNDS = {
 TRANSFORM = """!(import! &self (library lib_transform))
 !(bind! &q (new-space))
 {adds}
-(= (drain $q $k) (let $r (collapse (transform $q (take (job $j)) (done $j) $q))
+(= (drain $q $k) (let $r (collapse (once (transform $q (take (job $j)) (done $j) $q)))
    (if (== $r ()) $k (drain $q (+ $k 1)))))
 !(drain &q 0)
 !(size-atom (collapse (match &q (done $j) x)))

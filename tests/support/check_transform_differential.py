@@ -4,11 +4,13 @@
 Usage: check_transform_differential.py CETTA_BINARY [--programs N] [--seed S]
 
 The fixed programs (tests/petta/transform_*.metta) must answer their expected
-output, the output SWI-PeTTa gives with the same library, both when tf:fire
-runs natively and with CETTA_TRANSFORM_REFERENCE=1 (the authored firing), and
-with lib_transform_specs, the operation's specification, imported instead.
+output both when tf:fire runs natively and with CETTA_TRANSFORM_REFERENCE=1
+(the authored firing), and with lib_transform_specs, the operation's
+specification, imported instead.  SWI-PeTTa answers alike with the same library
+where it runs a call once; stable-fixed c3adb86 runs a call once per type
+declaration of its head, and transform has two.
 The native firing must have run in each of them and declined nowhere.
-Seeded programs over random stores mix every mode, an `every` at random
+Seeded programs over random stores mix every mode, an `all` or `once` at random
 positions, comma templates and both destinations, and must answer alike on
 all three.  A program that redefines one of the library's operations, or
 gives one of its data constructors an equation, runs the authored definition:
@@ -22,7 +24,10 @@ import sys
 import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-FIXED = ["transform_concurrency", "transform_rules", "transform_aggregates"]
+# transform_conjunctions holds absent, unique and collect of patterns headed by
+# ',', which range over joint matches.
+FIXED = ["transform_concurrency", "transform_rules", "transform_aggregates",
+         "transform_match_alignment", "transform_conjunctions"]
 HEADER = ("!(import! &self (library lib_transform))\n"
           "(= (show $s) (sort-atom (collapse (match $s $a $a))))\n")
 LIBRARY_IMPORT = "!(import! &self (library lib_transform))"
@@ -90,8 +95,8 @@ def check_source_fuel(binary):
         "take": header + "!(collapse (transform &s (take (job $j)) (hit $j)))\n",
         "effect": header + "!(collapse (transform &s (, (take (job $j)) "
                   "(let $v (println! entered))) (hit $j)))\n",
-        "every": header + "".join(f"!(add-atom &s (job n{i}))\n" for i in range(12)) +
-                 "!(collapse (transform &s (every (take (job $j))) (hit $j)))\n",
+        "all": header + "".join(f"!(add-atom &s (job n{i}))\n" for i in range(12)) +
+               "!(collapse (transform &s (all (take (job $j))) (hit $j)))\n",
     }
     budgets = [0, 1, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047, -1]
     with tempfile.TemporaryDirectory(prefix="cetta-transform-fuel-") as work:
@@ -135,10 +140,14 @@ def term(rng, relation):
 
 def sources(rng, index):
     conjuncts, bound = [], set()
-    every_at = rng.randrange(4) if rng.random() < 0.4 else None
+    all_at = rng.randrange(4) if rng.random() < 0.4 else None
     for position in range(rng.randint(1, 4)):
         pattern, names = term(rng, rng.choice(sorted(RELATIONS)))
-        kind = rng.choice(["read", "read", "take", "take", "absent", "unique", "all"])
+        if rng.random() < 0.25:
+            # a pattern headed by ',' is a conjunctive query in every conjunct kind
+            second, more = term(rng, rng.choice(sorted(RELATIONS)))
+            pattern, names = f"(, {pattern} {second})", names | more
+        kind = rng.choice(["read", "read", "take", "take", "absent", "unique", "collect"])
         if kind == "read":
             c = pattern
             bound |= names
@@ -153,14 +162,15 @@ def sources(rng, index):
         else:
             collection = f"$c{index}{position}"
             inner = pattern if rng.random() < 0.6 else f"(take {pattern})"
-            c = f"(all {inner} {collection})"
+            c = f"(collect {inner} {collection})"
             bound.add(collection)
             if rng.random() < 0.6:
                 count = f"$n{index}{position}"
                 c += f" (let {count} (size-atom {collection}))"
                 bound.add(count)
-        if position == every_at:
-            c = f"(every {c})" if " (let " not in c else f"(every (, {c}))"
+        if position == all_at:
+            wrap = rng.choice(["all", "all", "once"])
+            c = f"({wrap} {c})" if " (let " not in c else f"({wrap} (, {c}))"
         conjuncts.append(c)
     return f"(, {' '.join(conjuncts)})", sorted(bound)
 
@@ -177,6 +187,10 @@ def program(rng):
     lines = [HEADER, "!(bind! &s (new-space))\n"]
     for _ in range(rng.randint(6, 14)):
         fact, _ = term(rng, rng.choice(sorted(RELATIONS)))
+        if rng.random() < 0.1:
+            # a stored atom headed by ',' is data
+            second, _ = term(rng, rng.choice(sorted(RELATIONS)))
+            fact = f"(, {fact} {second})"
         for name in VARIABLES:
             fact = fact.replace(name, rng.choice(CONSTANTS))
         lines.append(f"!(add-atom &s {fact})\n")
@@ -232,7 +246,7 @@ def main():
                 print(open(path).read())
                 return 1
             trace = trace_lines(stderr)
-            if code != 0 or any("declined" in line or "refused" in line for line in trace):
+            if code != 0 or any("refused" in line or "declined" in line for line in trace):
                 print(f"FAIL: seeded program {number}: the native firing declined")
                 return 1
             fired += sum(1 for line in trace if line.startswith("[transform] fired"))

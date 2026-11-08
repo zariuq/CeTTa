@@ -1,0 +1,10 @@
+true
+(sdr ((a 2) (b 3) (c 1)))
+(hall (a b c) (1 2))
+(hall (a) ())
+(sdr ())
+(sdr ((a (on y)) (b (on x))))
+(hall (p1 p2 p3 p4) (h1 h2 h3))
+((r1 1) (r2 2) (r3 3))
+(__cetta_lib_asp_distinct ((a $V0)))
+(__cetta_lib_asp_distinct foo)

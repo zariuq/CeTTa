@@ -35,3 +35,8 @@
 !(agree-text weighted "{a;b;c}. p :- 3 #sum { 2 : a; 2 : not b; 1 : c }.")
 !(agree-text hamiltonian "v(1..4). e(1,2). e(2,3). e(3,4). e(4,1). e(1,3). e(2,4). {h(X,Y) : e(X,Y)} = 1 :- v(X). {h(X,Y) : e(X,Y)} = 1 :- v(Y). r(1). r(Y) :- r(X), h(X,Y). :- v(X), not r(X).")
 !(agree-text bounded-weight "{a;b;c;d}. :- 5 #sum { 3 : a; 2 : b; 2 : c; 1 : d }. ok :- 2 { a; b; c; d }.")
+; Disjunctions, grounded by clingo and read by shifting (head-cycle-free).
+!(agree-text disjunctive-colouring "node(1..3). edge(1,2). edge(2,3). col(r;g). in(X,C) | out(X,C) :- node(X), col(C). :- node(X), not some(X). some(X) :- in(X,C). :- in(X,C), in(X,D), C != D. :- edge(X,Y), in(X,C), in(Y,C).")
+!(agree-text disjunction-of-three "a | b | c :- not d. d :- not e. e :- not d.")
+!(agree-text repeated-head "a | a :- not b. b :- not a.")
+!(agree-text disjunction-refuted "a | b. :- a. :- b.")

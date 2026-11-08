@@ -34,15 +34,18 @@
 #   METAMATH_MMLEAN4_BIN_V1    its built binary.
 #
 # Reference implementations
-#   GSLT2PARSE_PETTA_ROOT,     SWI-PeTTa at the corrected-stable revision that
-#   PETTA_ORACLE_ROOT,         tools/check_petta_release_reference.py pins (the
-#   PETTA_REFERENCE_ROOT       stable-fixed branch of PeTTa).  The gslt2parse
-#                              gates run their own Prolog oracles from this
-#                              repository; the PeTTa parser authority, and the
-#                              document splitter that reads with it, run from
-#                              GSLT2PARSE_PETTA_ROOT/experiments/gslt2parse_foundation/:
-#                              link that directory to this repository's
-#                              experiments/gslt2parse_foundation/prolog.
+#   PETTA_ORACLE_ROOT,         SWI-PeTTa at the corrected-stable revision that
+#   PETTA_REFERENCE_ROOT       tools/check_petta_release_reference.py pins (the
+#                              stable-fixed branch of PeTTa).
+#   GSLT2PARSE_PETTA_ROOT      SWI-PeTTa's stable-fixed branch at the revision
+#                              tools/test_petta_parser_authority_v1.py pins
+#                              (c3adb86), as a checkout or a source snapshot
+#                              (git archive); a snapshot is identified by the
+#                              digests of its reader sources.  The gslt2parse
+#                              gates run their Prolog oracles from this
+#                              repository's experiments/gslt2parse_foundation/prolog
+#                              and read only PeTTa's own sources and run.sh
+#                              from this root.
 #   GSLT2PARSE_HE_ROOT         A git checkout of hyperon-experimental at its v0.2.10
 #                              release (commit 3f76dc46); the gates read its
 #                              revision with git.
@@ -58,6 +61,10 @@
 #                              CLINGO_BUILD_SHARED): the clingo library grounds
 #                              program texts and answers reference models
 #                              through it.
+#   CETTA_IPASIR_LIBRARY       A shared library with the IPASIR interface
+#                              (CaDiCaL, for one, built with -fPIC and linked
+#                              as libcadical.so): the ipasir library answers
+#                              reference verdicts and models through it.
 #   swipl                      SWI-Prolog with library(chr) on PATH, for
 #                              test-lang-chr-reference.
 #   SOUFFLE                    A Souffle executable, for test-lang-datalog-reference.
@@ -1511,7 +1518,7 @@ test-gslt2parse-c-horn-v1-differential: test-gslt2parse-c-horn-v1-native
 		--presentation-root \
 		"$(CURDIR)/experiments/gslt2parse_foundation/presentations"
 	@swipl -q -f \
-		"$(GSLT2PARSE_PETTA_ROOT)/experiments/gslt2parse_foundation/test_finite_horn_ground_terms.pl" \
+		"$(CURDIR)/experiments/gslt2parse_foundation/prolog/test_finite_horn_ground_terms.pl" \
 		-- "$(CURDIR)/experiments/gslt2parse_foundation/presentations"
 
 test-gslt2parse-parser-action-bytecode-v1: \
@@ -1641,15 +1648,18 @@ test-gslt2parse-he-string-slr-specialization-v1: \
 		--binary $(PARSER_PACK_SLR_SUMMARY_V1_STREAM_BIN) \
 		--petta-root "$(GSLT2PARSE_PETTA_ROOT)"
 
+# With GSLT2PARSE_HE_ROOT and METTAPEDIA_ROOT set, the Rust and LeaTTa
+# readers are observed again at their pinned sources; without them CeTTa is
+# observed against the fixture's recorded observations of both.
 test-gslt2parse-he-reader-escape-differential-v1:
-	@if [[ -z "$(strip $(GSLT2PARSE_HE_ROOT))" ]]; then \
-		echo 'set GSLT2PARSE_HE_ROOT to the pinned HE checkout'; \
-		exit 1; \
+	@if [[ -n "$(strip $(GSLT2PARSE_HE_ROOT))" && -n "$${METTAPEDIA_ROOT:-}" ]]; then \
+		python3 tools/test_he_reader_escape_differential_v1.py \
+			--he-root "$(GSLT2PARSE_HE_ROOT)" \
+			--cetta-root "$(CURDIR)" \
+			--mettapedia-root "$${METTAPEDIA_ROOT}"; \
+	else \
+		python3 tools/test_he_reader_escape_differential_v1.py --recorded --cetta-root "$(CURDIR)"; \
 	fi
-	@python3 tools/test_he_reader_escape_differential_v1.py \
-		--he-root "$(GSLT2PARSE_HE_ROOT)" \
-		--cetta-root "$(CURDIR)" \
-		--mettapedia-root "$${METTAPEDIA_ROOT:-../../Mettapedia}"
 
 test-gslt2parse-he-reader-source-faithfulness-v1: \
 		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
@@ -1677,10 +1687,15 @@ test-gslt2parse-he-reader-source-correspondence-v1: \
 		--cetta-root "$(CURDIR)" \
 		--mettapedia-root "$${METTAPEDIA_ROOT:-../../Mettapedia}"
 
+# With METTAPEDIA_ROOT set (its lean/mettapedia project) the checked-in
+# abstract syntax is regenerated from rhoCalc at its pinned origin and
+# compared; without it the checked-in export is the record.
 test-gslt2parse-rho-abstract-syntax-v1:
-	@mettapedia_root="$${METTAPEDIA_ROOT:-../../Mettapedia/lean/mettapedia}"; \
-	python3 tools/test_rho_abstract_syntax_v1.py \
-		--mettapedia-root "$$mettapedia_root"
+	@if [[ -n "$${METTAPEDIA_ROOT:-}" ]]; then \
+		python3 tools/test_rho_abstract_syntax_v1.py --mettapedia-root "$${METTAPEDIA_ROOT}"; \
+	else \
+		python3 tools/test_rho_abstract_syntax_v1.py --recorded; \
+	fi
 
 test-gslt2parse-rhocalc-parser-pack-v1: \
 		$(BIN) \
@@ -2542,9 +2557,90 @@ test-asp-clingo-differential: $(ASP_CDNL_TEST_BIN)
 	@echo "PASS: the answer-set solver's stable models equal clingo's on 600 random programs, and its certificates check"
 
 # The clingo heads of the asp library against its solver.
+# The smt library against cvc5 (CVC5: a cvc5 binary): the seeded QF_UF
+# problems of tests/petta/smt_euf_seeded.metta, written as SMT-LIB (each run
+# writes the same files again), each verdict equal to cvc5's.
+.PHONY: test-smt-cvc5-reference
+test-smt-cvc5-reference: $(BIN) tests/petta/smt_euf_seeded.metta tests/petta/smt_lra_seeded.metta tests/petta/smt_uflra_seeded.metta tests/petta/smt_lia_seeded.metta
+	@if [ -z "$(strip $(CVC5))" ]; then echo 'set CVC5 to a cvc5 binary'; exit 1; fi
+	@mkdir -p runtime/smt-cvc5-reference
+	@SMT_DIR=runtime/smt-cvc5-reference $(call cetta_exec,./$(BIN)) --lang petta tests/petta/smt_euf_seeded.metta > runtime/smt-cvc5-reference/verdicts.out 2>&1
+	@set -e; grep '^([0-9]' runtime/smt-cvc5-reference/verdicts.out | sed 's/(certificate.*//' | tr -d '()' | while read seed verdict text; do \
+		theirs=$$("$(CVC5)" runtime/smt-cvc5-reference/$$seed.smt2 | head -1); \
+		ours=$$([ "$$verdict" = model ] && echo sat || echo $$verdict); \
+		if [ "$$ours" != "$$theirs" ] || [ "$$text" != "$$theirs" ]; then echo "FAIL: seed $$seed: smt $$ours, smt text $$text, cvc5 $$theirs"; exit 1; fi; \
+	done
+	@mkdir -p runtime/smt-cvc5-reference-lra
+	@SMT_DIR=runtime/smt-cvc5-reference-lra $(call cetta_exec,./$(BIN)) --lang petta tests/petta/smt_lra_seeded.metta > runtime/smt-cvc5-reference-lra/verdicts.out 2>&1
+	@set -e; grep '^([0-9]' runtime/smt-cvc5-reference-lra/verdicts.out | sed 's/(certificate.*//' | tr -d '()' | while read seed verdict text; do \
+		theirs=$$("$(CVC5)" runtime/smt-cvc5-reference-lra/$$seed.smt2 | head -1); \
+		ours=$$([ "$$verdict" = model ] && echo sat || echo $$verdict); \
+		if [ "$$ours" != "$$theirs" ] || [ "$$text" != "$$theirs" ]; then echo "FAIL: seed $$seed: smt $$ours, smt text $$text, cvc5 $$theirs"; exit 1; fi; \
+	done
+	@mkdir -p runtime/smt-cvc5-reference-uflra
+	@SMT_DIR=runtime/smt-cvc5-reference-uflra $(call cetta_exec,./$(BIN)) --lang petta tests/petta/smt_uflra_seeded.metta > runtime/smt-cvc5-reference-uflra/verdicts.out 2>&1
+	@set -e; grep '^([0-9]' runtime/smt-cvc5-reference-uflra/verdicts.out | tr -d '()' | while read seed verdict; do \
+		theirs=$$("$(CVC5)" runtime/smt-cvc5-reference-uflra/$$seed.smt2 | head -1); \
+		if [ "$$verdict" != "$$theirs" ]; then echo "FAIL: seed $$seed: smt text $$verdict, cvc5 $$theirs"; exit 1; fi; \
+	done
+	@mkdir -p runtime/smt-cvc5-reference-lia
+	@SMT_DIR=runtime/smt-cvc5-reference-lia $(call cetta_exec,./$(BIN)) --lang petta tests/petta/smt_lia_seeded.metta > runtime/smt-cvc5-reference-lia/verdicts.out 2>&1
+	@set -e; grep '^([0-9]' runtime/smt-cvc5-reference-lia/verdicts.out | tr -d '()' | while read seed verdict; do \
+		theirs=$$("$(CVC5)" runtime/smt-cvc5-reference-lia/$$seed.smt2 | head -1); \
+		if [ "$$verdict" != "$$theirs" ]; then echo "FAIL: seed $$seed: smt text $$verdict, cvc5 $$theirs"; exit 1; fi; \
+	done
+	@echo "PASS: the smt library's verdicts on 200 seeded QF_UF and 200 seeded QF_LRA problems, read as clauses and as SMT-LIB text, and on 200 seeded QF_UFLRA and 200 seeded QF_LIA problems read as SMT-LIB text, equal cvc5's"
+
+# Optimization in linear real arithmetic against Z3 (Z3: a z3 binary): 150
+# seeded problems with an objective, minimized or maximized, read by the smt
+# library as clauses and as SMT-LIB text; each optimum, infimum, supremum,
+# unboundedness and refutation equals Z3's objectives.  The seeds are fixed,
+# so each run writes the same files.
+.PHONY: test-smt-z3-omt-reference
+test-smt-z3-omt-reference: $(BIN) tests/petta/smt_omt_seeded.metta tests/petta/smt_lex_seeded.metta tests/petta/fixtures/smt_lra_generator.metta tests/petta/fixtures/smt_z3_objectives.metta
+	@if [ -z "$(strip $(Z3))" ]; then echo 'set Z3 to a z3 binary'; exit 1; fi
+	@mkdir -p runtime/smt-z3-omt
+	@SMT_DIR=runtime/smt-z3-omt $(call cetta_exec,./$(BIN)) --lang petta tests/petta/smt_omt_seeded.metta > runtime/smt-z3-omt/written.out 2>&1
+	@for f in runtime/smt-z3-omt/*.smt2; do "$(Z3)" "$$f" > "$${f%.smt2}.out" 2>&1; done
+	@Z3_DIR=runtime/smt-z3-omt $(call cetta_exec,./$(BIN)) --lang petta tests/petta/smt_omt_seeded.metta > runtime/smt-z3-omt/verdicts.out 2>&1
+	@n=$$(grep -c 'z3-agrees)$$' runtime/smt-z3-omt/verdicts.out); \
+	if [ "$$n" != 150 ]; then grep '^(' runtime/smt-z3-omt/verdicts.out | grep -v 'z3-agrees)$$' | head -5; echo "FAIL: $$n of 150 agree with Z3"; exit 1; fi
+	@mkdir -p runtime/smt-z3-lex
+	@SMT_DIR=runtime/smt-z3-lex $(call cetta_exec,./$(BIN)) --lang petta tests/petta/smt_lex_seeded.metta > runtime/smt-z3-lex/written.out 2>&1
+	@for f in runtime/smt-z3-lex/*.smt2; do "$(Z3)" "$$f" > "$${f%.smt2}.out" 2>&1; done
+	@Z3_DIR=runtime/smt-z3-lex $(call cetta_exec,./$(BIN)) --lang petta tests/petta/smt_lex_seeded.metta > runtime/smt-z3-lex/verdicts.out 2>&1
+	@n=$$(grep -c 'z3-agrees)$$' runtime/smt-z3-lex/verdicts.out); \
+	if [ "$$n" != 120 ]; then grep '^(' runtime/smt-z3-lex/verdicts.out | grep -v 'z3-agrees)$$' | head -5; echo "FAIL: $$n of 120 lexicographic problems agree with Z3"; exit 1; fi
+	@echo "PASS: on 150 seeded optimization problems in linear real arithmetic the smt library's optimum, infimum, supremum, unboundedness and refutation, by clauses and by SMT-LIB text, and on 120 seeded lexicographic problems with two objectives every stage, equal Z3's objectives"
+
+# Learning from failures (lib/ilp/popper.metta) against Popper (POPPER_ROOT: a
+# Popper checkout, whose generator encoding and examples it reads;
+# CETTA_CLINGO_LIBRARY: libclingo, the grounder).  The learner, on the asp
+# library's solver, finds Popper's solution of its next-value task (two rules,
+# nine literals, every positive example and no negative one) and of its
+# attrition task (fourteen literals), and hypotheses with Popper's scores on its
+# buttons task (72 of 98 positive examples, 28 literals) and rps task (73 of
+# 108, 10 literals).
+.PHONY: test-ilp-popper-reference
+test-ilp-popper-reference: $(BIN) lib/ilp/popper.metta tests/ilp/popper_task.metta tests/ilp/popper_minimal_decay.expected tests/ilp/popper_buttons.expected tests/ilp/popper_attrition.expected tests/ilp/popper_rps.expected
+	@if [ -z "$(strip $(POPPER_ROOT))" ] || [ -z "$(strip $(CETTA_CLINGO_LIBRARY))" ]; then \
+		echo 'set POPPER_ROOT to a Popper checkout and CETTA_CLINGO_LIBRARY to a libclingo shared library'; \
+		exit 2; \
+	fi
+	@TASK="$(POPPER_ROOT)/examples/iggp-minimal-decay-next-value" POPPER_ROOT="$(POPPER_ROOT)" MAX_VARS=6 MAX_BODY=4 \
+		CETTA_CLINGO_LIBRARY="$(CETTA_CLINGO_LIBRARY)" $(call cetta_exec,./$(BIN)) --lang petta tests/ilp/popper_task.metta > runtime/test-ilp-popper.out 2>&1
+	@diff -u tests/ilp/popper_minimal_decay.expected runtime/test-ilp-popper.out
+	@for t in "buttons iggp-buttons-next 6" "attrition iggp-attrition-next-score 6" "rps iggp-rps-next-score 7"; do \
+		set -- $$t; \
+		TASK="$(POPPER_ROOT)/examples/$$2" POPPER_ROOT="$(POPPER_ROOT)" MAX_VARS=$$3 MAX_BODY=4 \
+			CETTA_CLINGO_LIBRARY="$(CETTA_CLINGO_LIBRARY)" $(call cetta_exec,./$(BIN)) --lang petta tests/ilp/popper_task.metta > runtime/test-ilp-popper-$$1.out 2>&1; \
+		diff -u tests/ilp/popper_$$1.expected runtime/test-ilp-popper-$$1.out || exit 1; \
+	done
+	@echo "PASS: learning from failures on the asp library finds Popper's solutions of its next-value and attrition tasks, and hypotheses with Popper's scores on its buttons and rps tasks"
+
 .PHONY: test-asp-clingo-reference
 test-asp-clingo-reference: $(BIN) tests/asp/clingo_reference.metta tests/asp/clingo_reference.expected \
-		tests/asp/clingo_as_asp.metta tests/asp/clingo_as_asp.expected
+		tests/asp/clingo_as_asp.metta tests/asp/clingo_as_asp.expected tests/asp/clingo_pretenure.metta
 	@if [ -z "$(strip $(CETTA_CLINGO_LIBRARY))" ]; then \
 		echo 'set CETTA_CLINGO_LIBRARY to a libclingo shared library'; \
 		exit 2; \
@@ -2553,7 +2649,27 @@ test-asp-clingo-reference: $(BIN) tests/asp/clingo_reference.metta tests/asp/cli
 	@diff -u tests/asp/clingo_reference.expected runtime/test-asp-clingo-reference.out
 	@CETTA_CLINGO_LIBRARY="$(CETTA_CLINGO_LIBRARY)" $(call cetta_exec,./$(BIN)) --lang petta tests/asp/clingo_as_asp.metta > runtime/test-clingo-as-asp.out 2>&1
 	@diff -u tests/asp/clingo_as_asp.expected runtime/test-clingo-as-asp.out
-	@echo "PASS: on programs grounded by clingo and programs given as data, the answer-set solver's stable models equal clingo's; imported as asp, the clingo library answers in the asp library's shapes"
+	@CETTA_PETTA_MACHINE_STATS=1 CETTA_CLINGO_LIBRARY="$(CETTA_CLINGO_LIBRARY)" $(call cetta_exec,./$(BIN)) --lang petta tests/asp/clingo_pretenure.metta > runtime/test-clingo-pretenure.out 2>&1
+	@grep -q '^(verdict 672334 model)$$' runtime/test-clingo-pretenure.out
+	@copied=$$(tr ' ' '\n' < runtime/test-clingo-pretenure.out | sed -n 's/^choice_nursery_bytes_evacuated=//p'); \
+		tenured=$$(tr ' ' '\n' < runtime/test-clingo-pretenure.out | sed -n 's/^max_tenured_live_bytes=//p'); \
+		if [ -z "$$copied" ] || [ -z "$$tenured" ] || [ "$$tenured" -lt 50000000 ] || [ "$$copied" -gt 1000000 ]; then \
+			echo "FAIL: the grounded program was copied by a collection ($$copied bytes copied, $$tenured bytes in the old generation)"; exit 1; fi
+	@echo "PASS: on programs grounded by clingo and programs given as data, the answer-set solver's stable models equal clingo's; imported as asp, the clingo library answers in the asp library's shapes; a grounded program of 672,334 statements is made in the old generation and no collection copies it"
+
+# The SAT personality against an IPASIR solver.
+.PHONY: test-sat-ipasir-reference
+test-sat-ipasir-reference: $(BIN) tests/asp/ipasir_reference.metta tests/asp/ipasir_reference.expected \
+		tests/asp/ipasir_as_sat.metta tests/asp/ipasir_as_sat.expected
+	@if [ -z "$(strip $(CETTA_IPASIR_LIBRARY))" ]; then \
+		echo 'set CETTA_IPASIR_LIBRARY to a shared library with the IPASIR interface'; \
+		exit 2; \
+	fi
+	@CETTA_IPASIR_LIBRARY="$(CETTA_IPASIR_LIBRARY)" $(call cetta_exec,./$(BIN)) --lang petta tests/asp/ipasir_reference.metta > runtime/test-sat-ipasir-reference.out 2>&1
+	@diff -u tests/asp/ipasir_reference.expected runtime/test-sat-ipasir-reference.out
+	@CETTA_IPASIR_LIBRARY="$(CETTA_IPASIR_LIBRARY)" $(call cetta_exec,./$(BIN)) --lang petta tests/asp/ipasir_as_sat.metta > runtime/test-ipasir-as-sat.out 2>&1
+	@diff -u tests/asp/ipasir_as_sat.expected runtime/test-ipasir-as-sat.out
+	@echo "PASS: on every clause set the SAT personality's verdict and models equal the IPASIR solver's; imported as sat, the ipasir library answers in the sat library's shapes"
 
 # ---------- Megalodon: corpora and benchmark against a Megalodon checkout ----------
 #

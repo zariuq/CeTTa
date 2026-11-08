@@ -248,6 +248,12 @@ typedef struct CettaLibraryContext {
     CettaPettaRelationKey *petta_tabled_relations;
     uint32_t petta_tabled_relation_len;
     uint32_t petta_tabled_relation_cap;
+    /* Tabled relations whose answers are joined (tabled-lattice): the join
+     * of each, min or max. */
+    CettaPettaRelationKey *petta_lattice_relations;
+    SymbolId *petta_lattice_joins;
+    uint32_t petta_lattice_len;
+    uint32_t petta_lattice_cap;
     uint64_t petta_tabled_symbol_table_instance;
     CettaPettaMemoState petta_memo;
     struct PettaMachineTable *petta_shared_table;
@@ -503,6 +509,10 @@ bool cetta_library_print_loaded_modules(CettaLibraryContext *ctx, FILE *out,
 bool cetta_library_call_native(CettaLibraryContext *ctx, Space *space,
                                Arena *a, Atom *head, Atom **args,
                                uint32_t nargs, CettaCallOutcome *out);
+/* Whether an active library's operation `head` makes a value built to be
+ * consumed by later calls (a grounder's program), which an evaluator with
+ * generations makes in its old one instead of copying it there. */
+bool cetta_library_result_long_lived(const CettaLibraryContext *ctx, SymbolId head);
 /* The prepared pure machine keeps every argument alive until it has consumed
  * the result.  A library may therefore return an immutable view into an
  * argument instead of copying it; callers outside that lifetime use the
@@ -526,6 +536,12 @@ uint64_t cetta_library_petta_translator_rule_revision(
 uint64_t cetta_library_petta_admission_revision(CettaLibraryContext *ctx);
 bool cetta_library_petta_tabled_relation_contains(
     CettaLibraryContext *ctx, SymbolId head, CettaExprLen arity);
+/* The join of a tabled-lattice relation, or SYMBOL_ID_NONE. */
+SymbolId cetta_library_petta_tabled_relation_join(
+    CettaLibraryContext *ctx, SymbolId head, CettaExprLen arity);
+bool cetta_library_petta_tabled_relation_join_set(
+    CettaLibraryContext *ctx, SymbolId head, CettaExprLen arity,
+    SymbolId join);
 bool cetta_library_petta_tabled_relation_set(
     CettaLibraryContext *ctx, SymbolId head, CettaExprLen arity,
     bool enabled);

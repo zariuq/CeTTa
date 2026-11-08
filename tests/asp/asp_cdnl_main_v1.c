@@ -2,8 +2,11 @@
  * a rule is "H : p1 p2 : n1 n2" over integer atoms.
  *   asp_cdnl_main_v1 FILE          print each answer, then "==="
  *   asp_cdnl_main_v1 --check FILE  re-check every certificate: accepted for its
- *                                  program, refused when truncated, and refused
- *                                  for every program that has a stable model
+ *                                  program, refused when truncated (unless the
+ *                                  program's inputs hold the empty clause, a
+ *                                  rule p :- not p, when the empty certificate
+ *                                  refutes it), and refused for every program
+ *                                  that has a stable model
  *   asp_cdnl_main_v1 --enumerate FILE  every stable model, then the certificate
  *                                  that no further one exists, then "###"
  *   asp_cdnl_main_v1 --differential FILE  the fast search against the
@@ -11,7 +14,17 @@
  *                                  models, each fast answer a model the
  *                                  reference finds or a refutation the
  *                                  checker accepts
- * The reference search runs by default; --fast first runs the fast one. */
+ *   asp_cdnl_main_v1 --multishot FILE  every stable model by one session, each
+ *                                  model blocked by an added constraint (its
+ *                                  atoms true, the program's others false)
+ *                                  before the search goes on: the models are
+ *                                  the enumeration's, and the final refutation
+ *                                  is accepted over the added constraints and
+ *                                  refused without the last one, with an input
+ *                                  clause altered, and by the checker without
+ *                                  added constraints
+ * The reference search runs by default; --fast first runs the fast one, and
+ * --hall the fast one with Hall's condition over the program's constraints. */
 #include "asp_cdnl_v1.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -96,15 +109,15 @@ static bool has_model(const AspEnumeration *e, const int32_t *atoms, uint32_t le
     return false;
 }
 
-static int differential(Program *programs, uint32_t n) {
+static int differential(Program *programs, uint32_t n, AspSearch fastkind) {
     int failures = 0;
     uint32_t sat = 0u, unsat = 0u, models = 0u, refused = 0u;
     for (uint32_t i = 0u; i < n; i++) {
         const AspRule *rules = programs[i].rules;
         uint32_t nr = programs[i].nrules;
         AspEnumeration ref = asp_cdnl_enumerate_search(rules, nr, ASP_SEARCH_REFERENCE);
-        AspEnumeration fast = asp_cdnl_enumerate_search(rules, nr, ASP_SEARCH_FAST);
-        AspAnswer a = asp_cdnl_solve_search(rules, nr, ASP_SEARCH_FAST, NULL, NULL);
+        AspEnumeration fast = asp_cdnl_enumerate_search(rules, nr, fastkind);
+        AspAnswer a = asp_cdnl_solve_search(rules, nr, fastkind, NULL, NULL);
         bool same = ref.kind == fast.kind && ref.models_len == fast.models_len;
         for (uint32_t k = 0u; same && k < fast.models_len; k++)
             same = has_model(&ref, fast.models[k].atoms, fast.models[k].len);
@@ -162,26 +175,156 @@ static int differential(Program *programs, uint32_t n) {
     return failures ? 1 : 0;
 }
 
+static bool in_list(const int32_t *xs, uint32_t n, int32_t x) {
+    for (uint32_t i = 0u; i < n; i++)
+        if (xs[i] == x)
+            return true;
+    return false;
+}
+
+static int multishot(Program *programs, uint32_t n, AspSearch search) {
+    int failures = 0;
+    uint32_t models = 0u, refutations = 0u, refused = 0u;
+    for (uint32_t i = 0u; i < n; i++) {
+        const AspRule *rules = programs[i].rules;
+        uint32_t nr = programs[i].nrules;
+        /* the program's atoms */
+        uint32_t cap = 16u, natoms = 0u;
+        int32_t *atoms = malloc(sizeof(*atoms) * cap);
+        for (uint32_t r = 0u; atoms && r < nr; r++) {
+            uint32_t len = 1u + rules[r].pos_len + rules[r].neg_len;
+            for (uint32_t k = 0u; k < len; k++) {
+                int32_t a = k == 0u ? rules[r].head
+                          : k <= rules[r].pos_len ? rules[r].pos[k - 1u]
+                          : rules[r].neg[k - 1u - rules[r].pos_len];
+                if (a < 0 || in_list(atoms, natoms, a))
+                    continue;
+                if (natoms == cap) {
+                    cap *= 2u;
+                    int32_t *grown = realloc(atoms, sizeof(*atoms) * cap);
+                    if (!grown) { free(atoms); atoms = NULL; break; }
+                    atoms = grown;
+                }
+                atoms[natoms++] = a;
+            }
+        }
+        AspEnumeration ref = asp_cdnl_enumerate_search(rules, nr, ASP_SEARCH_REFERENCE);
+        AspSession *session = atoms ? asp_session_new(rules, nr, search, NULL, NULL) : NULL;
+        AspRule *extra = NULL;
+        uint32_t nextra = 0u;
+        bool ok = session != NULL;
+        while (ok) {
+            while (asp_session_step(session) == ASP_SESSION_RUNNING) {
+            }
+            int32_t *model = NULL;
+            uint32_t len = 0u;
+            if (!asp_session_model(session, &model, &len))
+                break;
+            models++;
+            if (!has_model(&ref, model, len))
+                printf("FAIL: program %u: a session model the enumeration does not have\n", i), failures++;
+            int32_t *neg = malloc(sizeof(*neg) * (natoms ? natoms : 1u));
+            uint32_t nn = 0u;
+            for (uint32_t k = 0u; neg && k < natoms; k++)
+                if (!in_list(model, len, atoms[k]))
+                    neg[nn++] = atoms[k];
+            AspRule *grown = neg ? realloc(extra, sizeof(*extra) * (nextra + 1u)) : NULL;
+            ok = grown && asp_session_constrain(session, model, len, neg, nn);
+            if (grown) {
+                extra = grown;
+                extra[nextra++] = (AspRule){.head = -1, .pos = model, .pos_len = len,
+                                            .neg = neg, .neg_len = nn};
+            } else {
+                free(model);
+                free(neg);
+            }
+        }
+        AspAnswer a = ok ? asp_session_answer(session) : (AspAnswer){.kind = ASP_ANSWER_ERROR};
+        if (!ok || a.kind != ASP_ANSWER_UNSAT || nextra != ref.models_len) {
+            printf("FAIL: program %u: %u session models, %u in the enumeration, kind %d\n",
+                   i, nextra, ref.models_len, (int)a.kind);
+            failures++;
+        } else {
+            refutations++;
+            if (!asp_certificate_check_constrained(rules, nr, NULL, 0u, extra, nextra,
+                                                   a.steps, a.steps_len))
+                printf("FAIL: program %u: its refutation is refused over its constraints\n", i), failures++;
+            if (nextra) {
+                /* without the last constraint */
+                if (asp_certificate_check_constrained(rules, nr, NULL, 0u, extra, nextra - 1u,
+                                                      a.steps, a.steps_len))
+                    printf("FAIL: program %u: accepted without its last constraint\n", i), failures++;
+                else
+                    refused++;
+                if (asp_certificate_check(rules, nr, a.steps, a.steps_len))
+                    printf("FAIL: program %u: accepted without its constraints\n", i), failures++;
+                else
+                    refused++;
+                /* an input clause with its first literal complemented: the
+                 * clause of no blocking constraint (no stable model is a
+                 * subset of another) */
+                AspStep *steps = malloc(sizeof(*steps) * a.steps_len);
+                int32_t *clause = NULL;
+                uint32_t k = 0u;
+                while (k < a.steps_len && !(a.steps[k].kind == ASP_STEP_INPUT && a.steps[k].clause_len))
+                    k++;
+                if (steps && k < a.steps_len &&
+                    (clause = malloc(sizeof(*clause) * a.steps[k].clause_len))) {
+                    memcpy(steps, a.steps, sizeof(*steps) * a.steps_len);
+                    memcpy(clause, a.steps[k].clause, sizeof(*clause) * a.steps[k].clause_len);
+                    clause[0] = -clause[0];
+                    steps[k].clause = clause;
+                    if (asp_certificate_check_constrained(rules, nr, NULL, 0u, extra, nextra,
+                                                          steps, a.steps_len))
+                        printf("FAIL: program %u: accepted with an altered input clause\n", i), failures++;
+                    else
+                        refused++;
+                }
+                free(clause);
+                free(steps);
+            }
+        }
+        asp_answer_free(&a);
+        asp_session_free(session);
+        for (uint32_t k = 0u; k < nextra; k++) {
+            free((int32_t *)extra[k].pos);
+            free((int32_t *)extra[k].neg);
+        }
+        free(extra);
+        free(atoms);
+        asp_enumeration_free(&ref);
+    }
+    printf("multi-shot: %u programs, %u models, all the enumeration's; %u refutations accepted over their constraints, mutants refused %u\n",
+           n, models, refutations, refused);
+    return failures ? 1 : 0;
+}
+
 int main(int argc, char **argv) {
     AspSearch search = ASP_SEARCH_REFERENCE;
     int arg = 1;
     if (arg < argc && strcmp(argv[arg], "--fast") == 0) {
         search = ASP_SEARCH_FAST;
         arg++;
+    } else if (arg < argc && strcmp(argv[arg], "--hall") == 0) {
+        search = ASP_SEARCH_FAST_HALL;
+        arg++;
     }
     bool check = arg + 1 < argc && strcmp(argv[arg], "--check") == 0;
     bool enumerate = arg + 1 < argc && strcmp(argv[arg], "--enumerate") == 0;
     bool compare = arg + 1 < argc && strcmp(argv[arg], "--differential") == 0;
+    bool shots = arg + 1 < argc && strcmp(argv[arg], "--multishot") == 0;
     if (arg >= argc)
         return 2;
-    FILE *in = fopen(argv[check || enumerate || compare ? arg + 1 : arg], "r");
+    FILE *in = fopen(argv[check || enumerate || compare || shots ? arg + 1 : arg], "r");
     if (!in)
         return 2;
     static Program programs[MAX_PROGRAMS];
     uint32_t n = read_programs(in, programs);
     fclose(in);
+    if (shots)
+        return multishot(programs, n, search);
     if (compare)
-        return differential(programs, n);
+        return differential(programs, n, search == ASP_SEARCH_FAST_HALL ? ASP_SEARCH_FAST_HALL : ASP_SEARCH_FAST);
     if (enumerate) {
         int bad = 0;
         for (uint32_t i = 0u; i < n; i++) {
@@ -211,7 +354,7 @@ int main(int argc, char **argv) {
     }
     int failures = 0;
     if (check) {
-        uint32_t accepted = 0u, refused = 0u;
+        uint32_t accepted = 0u, refused = 0u, by_inputs = 0u;
         for (uint32_t i = 0u; i < n; i++) {
             const AspAnswer *a = &answers[i];
             if (a->kind != ASP_ANSWER_UNSAT)
@@ -220,9 +363,17 @@ int main(int argc, char **argv) {
                 accepted++;
             else
                 printf("FAIL: program %u: its certificate is refused\n", i), failures++;
-            if (asp_certificate_check(programs[i].rules, programs[i].nrules, a->steps, a->steps_len - 1u))
+            /* a program whose inputs hold the empty clause is refuted by them */
+            bool inputs_refute = asp_certificate_check(programs[i].rules, programs[i].nrules,
+                                                       a->steps, 0u);
+            by_inputs += inputs_refute;
+            if (inputs_refute && a->steps_len > 1u)
+                printf("FAIL: program %u: its inputs refute it, yet its certificate has %u steps\n",
+                       i, a->steps_len), failures++;
+            else if (!inputs_refute &&
+                     asp_certificate_check(programs[i].rules, programs[i].nrules, a->steps, a->steps_len - 1u))
                 printf("FAIL: program %u: a truncated certificate is accepted\n", i), failures++;
-            else
+            else if (!inputs_refute)
                 refused++;
             for (uint32_t j = 0u; j < n; j++) {
                 if (answers[j].kind != ASP_ANSWER_SAT)
@@ -233,7 +384,8 @@ int main(int argc, char **argv) {
                     refused++;
             }
         }
-        printf("certificates accepted %u, mutants refused %u\n", accepted, refused);
+        printf("certificates accepted %u (%u refuted by their inputs), mutants refused %u\n",
+               accepted, by_inputs, refused);
     }
     for (uint32_t i = 0u; i < n; i++)
         asp_answer_free(&answers[i]);

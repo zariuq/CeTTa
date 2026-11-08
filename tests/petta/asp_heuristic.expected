@@ -1,0 +1,13 @@
+true
+(model (a))
+(model (c))
+(model (b))
+(decided 1 (c) ((-7 0 16) (6 1 -1)))
+(assigned True)
+(model (b))
+(unsat (certificate (rup 8 () (3 4))))
+(learned true true)
+unsat
+unsat
+(Error (__cetta_lib_asp_decide (NativeHandle "asp-session" 9)) "not an atom of the program")
+(Error (__cetta_lib_asp_decide (NativeHandle "asp-session" 10)) "expected an atom and True or False")

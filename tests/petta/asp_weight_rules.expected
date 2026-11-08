@@ -10,4 +10,4 @@ true
 (() (a b c) (a c) (b c) (c))
 (() (q))
 ((a))
-(Error (__cetta_lib_asp_solve ((weight-rule p 2 ((a -1)) ()))) "a statement is (rule H (P ...) (N ...)), (choice A (P ...) (N ...)), (constraint (P ...) (N ...)) or a weight statement")
+(Error (__cetta_lib_asp_solve ((weight-rule p 2 ((a -1)) ()))) "a statement is (rule H (P ...) (N ...)), (choice A (P ...) (N ...)), (constraint (P ...) (N ...)), (disjunction (H ...) (P ...) (N ...)) or a weight statement")

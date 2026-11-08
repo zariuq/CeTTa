@@ -155,6 +155,7 @@ typedef struct {
     SymbolId assertz_predicate;
     SymbolId retract_predicate;
     SymbolId tabled;
+    SymbolId tabled_lattice;
     SymbolId add_translator_rule;
     SymbolId remove_translator_rule;
     SymbolId cut;
@@ -270,6 +271,7 @@ static PeTTaForm petta_form_overflow_lookup(
     X(ids->assertz_predicate, PETTA_FORM_ASSERTZ_PREDICATE);             \
     X(ids->retract_predicate, PETTA_FORM_RETRACT_PREDICATE);             \
     X(ids->tabled, PETTA_FORM_TABLED);                                   \
+    X(ids->tabled_lattice, PETTA_FORM_TABLED_LATTICE);                   \
     X(ids->add_translator_rule, PETTA_FORM_ADD_TRANSLATOR_RULE);         \
     X(ids->remove_translator_rule, PETTA_FORM_REMOVE_TRANSLATOR_RULE);   \
     X(ids->cut, PETTA_FORM_CUT);                                         \
@@ -482,6 +484,7 @@ static const PeTTaSymbolIds *petta_symbol_ids_refresh(void) {
         ids.retract_predicate =
             symbol_intern_cstr(g_symbols, "retractPredicate");
         ids.tabled = symbol_intern_cstr(g_symbols, "tabled");
+        ids.tabled_lattice = symbol_intern_cstr(g_symbols, "tabled-lattice");
         ids.add_translator_rule =
             symbol_intern_cstr(g_symbols, "add-translator-rule!");
         ids.remove_translator_rule =
@@ -3855,6 +3858,7 @@ Atom *petta_semantics_lower(
     case PETTA_FORM_ASSERTZ_PREDICATE:
     case PETTA_FORM_RETRACT_PREDICATE:
     case PETTA_FORM_TABLED:
+    case PETTA_FORM_TABLED_LATTICE:
     case PETTA_FORM_ADD_TRANSLATOR_RULE:
     case PETTA_FORM_REMOVE_TRANSLATOR_RULE:
     case PETTA_FORM_CUT:

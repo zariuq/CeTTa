@@ -67,13 +67,13 @@ EXPECTED = {
         "digest": "ed42222f9affc916ccbd1a27d8c5472a1e8dbc56e6238c91f7f36c18831a4d41",
     },
     "prime": {
-        "count": 173,
-        "tag_count": 7,
-        "digest": "72229e01844933b6e5cd179fd92b792ffb5ab02c302cf5cf98403d4cd1768993",
+        "count": 481,
+        "tag_count": 16,
+        "digest": "3892b616bda1220f65527f1144d960b2b18eef374ec3a7a4b838bd09466aa916",
     },
 }
 EXPECTED_MATRIX_DIGEST = (
-    "2b44611def9122833c25d560c1b3a0162a90ed6a8f4f093e44abfc745052780f"
+    "c6dc14545e7cdf57638a8232e9e2bc7b4ffe47866293696e58e99eeeda0e326a"
 )
 
 

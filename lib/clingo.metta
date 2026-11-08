@@ -5,14 +5,18 @@
 ;                          program TEXT, as the asp library's statements: shown
 ;                          atoms as terms (f(1,a) as (f 1 a), a tuple as an
 ;                          expression, -p as (- p)), other atoms (asp:aux N),
-;                          and weight bodies as (weight-rule H L ((P W) ...)
+;                          weight bodies as (weight-rule H L ((P W) ...)
 ;                          ((N W) ...)), (weight-constraint L ...) or
-;                          (weight-choice (A ...) L ...)
+;                          (weight-choice (A ...) L ...), disjunctive heads
+;                          as (disjunction (H ...) (P ...) (N ...)), and
+;                          minimize statements and weak constraints as
+;                          (minimize PRIORITY ((P W) ...) ((N W) ...))
 ;   (clingo:models P)      (models ((A ...) ...) (reference clingo)): every
 ;                          stable model clingo finds of P, given as normal
 ;                          rules, choices and constraints (each model over P's
-;                          atoms in order of first appearance) or as a program
-;                          text (each model its shown atoms)
+;                          atoms in order of first appearance, without the
+;                          hidden atoms (asp:aux N)) or as a program text (each
+;                          model its shown atoms)
 ;   (clingo:solve P)       (model (A ...)) for the first stable model clingo
 ;                          finds, or (unsat (reference clingo))
 ; The answers have the asp library's shapes, with clingo as the evidence where

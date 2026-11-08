@@ -34,16 +34,16 @@ CASES = {
             "languages/cetta_prime_reader_v1.metta",
         ),
         "productions": (
-            179,
-            "b3d25912cf037b8785f45979d62951c69814d0556d0c53e0788bc504211fe669",
+            352,
+            "5569cb7bb502378c4adf51475946b55146400ba2c83c99a1d5c24556b4875176",
         ),
         "classes": (
-            14,
-            "9158ab8e1e5d7839bc1c8cdb54ecd1275fb3affc28b1a45077002e490e9e39d6",
+            18,
+            "3df9e0296065db5505ce5226cde250fb38db048b8cc8eced9d797f025df5f9fb",
         ),
         "actions": (
-            179,
-            "b9194af90380048ffbf7a50f0b54f560fe7c5dac97116c961a17bbfa56a4f833",
+            352,
+            "00757f4e3188a95336d4d3abe9db49e4947b36359eff080ef5618dbbafd42200",
         ),
     },
     "metamath": {
@@ -53,16 +53,16 @@ CASES = {
             "../../../langdef/metamath/syntax_v1.metta",
         ),
         "productions": (
-            270,
-            "dc6d68b5a0996a3201bd87f7586c6ffa0b2585c240551fc0003a64e34df9d41f",
+            441,
+            "7b1804b231d3cb1e5946a508b4602efba6036fa4b7f11d5d4815c5b4bf6d74fa",
         ),
         "classes": (
             375,
             "eb5cfda104e75f5fc5d623fc7ca27a835814963274201784c80a951fca628989",
         ),
         "actions": (
-            270,
-            "738417b94ad546c87d59dab83985475a8abff6f4e441a4f93148974576150e39",
+            441,
+            "4a10ec30168f1e048991d223de79268f90399e57c463f4a52fc1d4eba211fb47",
         ),
     },
     "megalodon": {
@@ -90,19 +90,21 @@ CASES = {
             "core/syntax_core_v1.metta",
             "shared/lookahead_core_v1.metta",
             "shared/char_core_v1.metta",
+            "shared/ground_relations_v1.metta",
+            "../../../langdef/tptp/unicode_scalar_classes_v1.metta",
             "../../../langdef/tptp/syntax_fof_cnf_v1.metta",
         ),
         "productions": (
-            688,
-            "0117175e8ddf25f5a2563a418572fd28cb83cf9e8b9fe761c3dd231663822373",
+            691,
+            "b8bbe67ef03c4751e98dc7b5dc1faa582099fdca6ed5ec1443a467d99d7c5391",
         ),
         "classes": (
-            562,
-            "0c778826915ed484c5d1d3f3df92fca4c12d16a2e326a44ffcd6cb244487a90a",
+            566,
+            "fefd990de02ef4f1b44c2402423cf8c4becd4b43b9b54c823488394aad6594a4",
         ),
         "actions": (
-            688,
-            "d8882993f494f523f6214bffef652e772e3663dac518cd0e917748dc06e4fbbd",
+            691,
+            "3ae1c5e4b78bcc86d18fe8a77d0a02bfd9bb55edbbbd10f5b645b38a52038e00",
         ),
     },
 }

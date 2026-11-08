@@ -57,13 +57,13 @@ from test_semantic_mask_span_compiler_v1 import SEMANTIC_COMPILER_PREFIX
 ROOT = Path(__file__).resolve().parents[1]
 HEX_DIGEST = re.compile(r"[0-9a-f]{64}")
 EXPECTED_MATRIX_DIGEST = (
-    "b2b1dd78a8b4087df48ed71d2b09cfd4d52d6009cd6692e6857a5def8a4f23e1"
+    "693f3a3dcc1dfddf67297c8616a28f28aacf7ccf6af84a4da0d8af592f699d15"
 )
 EXPECTED_SEMANTIC_MASK_ANSWER_DIGEST = (
     "978a1efdabf631d4736d2b0cd7dee832cfe2c40a3d45f8b0eec97fc5b289e4a1"
 )
 EXPECTED_SEMANTIC_MASK_BINDING_DIGEST = (
-    "be9e4de55893f3f7980493d07c10a218a7053b48fc34a3f42705c3b8da3b366e"
+    "4c30e8af2c6ce340ee145bea070fd296c694d64b270feb3d624055fd5f2390d3"
 )
 EXPECTED_MASK_EXECUTION = {
     "word": (1, 5, 5),
@@ -305,7 +305,7 @@ def require_receipt(
         "action-answer-digest": EXPECTED_GUARD_ACTION_ANSWER_DIGEST,
         "action-program-digest": EXPECTED_GUARD_ACTION_PROGRAM_DIGEST,
         "projection-action-program-digest":
-            "1b4e40b04f9f41068b0ad6d22586a253649c47963ada2d8268ef091462d7fb6c",
+            "d8f8e9ac6bcccce34fbd129d293965de68b55975d291e7e65ea0df7cc313bd1b",
         "semantic-mask-compiler-digest":
             EXPECTED_SEMANTIC_MASK_COMPILER_DIGEST,
         "semantic-mask-answer-digest":

@@ -776,13 +776,13 @@ endif
 ifeq ($(ENABLE_PETTA_TYPECHECK_CENSUS),1)
 PETTA_TYPECHECK_CENSUS_SRC = src/petta_typecheck_census.c
 endif
-SRC = src/symbol.c src/scalar_trie.c src/atom.c src/state_cell.c src/term_graph.c src/delay_service.c src/string_ops.c src/str_natives.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c src/raw_source_region.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/binding/rule.c src/binding/closure.c src/binding/frame_schema.c src/binding/slot_store.c src/binding/activation_view.c src/match_decision.c src/select/code_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/search_control_advice.c src/petta_program.c src/petta_type_fact_provider_v1.c src/petta_builtin_registry.c src/petta_typecheck_v3_decision_v1.c src/petta_typecheck_v3.c src/generated/petta_typecheck_v3_core_v1.generated.c src/generated/petta_typecheck_v3_core_provider_catalog_v1.generated.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/fixpoint.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/term_domain.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/petta_numeric.c src/petta_runtime.c src/prepared_pure_machine.c src/owned_execution.c src/answer_storage.c src/fold_algebra.c src/native_fold.c src/exec_saturation.c src/transform_core.c src/open_equation_machine.c src/eval.c src/grounded.c src/he_macro_expansion.c src/he_typing.c src/he_typing_authority.c src/generated/he_typing_consistency_core_source_binding_v1.generated.c src/generated/he_profiled_type_inference_core_source_binding_v1.generated.c src/inference_checker.c src/nik_direct_authority.c src/nik_hosted_calculus.c src/nik_licensed_implementation_selection.c src/nik_runtime.c src/prime_semantics.c src/generated/prime_typing_closed_formation_source_binding_v1.generated.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/library_pattern.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_dense_bitset_v1.c src/gslt_compiled_runtime.c src/gslt_indexed_instruction_decoder_v1.c src/gslt_indexed_value_table_v1.c src/gslt_split_indexed_table_v1.c src/gslt_literal_hole_program_v1.c src/gslt_u32_index_v1.c src/gslt_u32_slice_arena_v1.c src/gslt_epoch_slots_v1.c src/gslt_ground_dense_term_v1.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c src/foreign_provider.c src/runtime_prelude.c src/runtime_session.c
+SRC = src/symbol.c src/scalar_trie.c src/atom.c src/state_cell.c src/term_graph.c src/delay_service.c src/string_ops.c src/str_natives.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c src/raw_source_region.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/binding/rule.c src/binding/closure.c src/binding/frame_schema.c src/binding/slot_store.c src/binding/activation_view.c src/match_decision.c src/select/code_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/search_control_advice.c src/petta_program.c src/petta_type_fact_provider_v1.c src/petta_builtin_registry.c src/petta_typecheck_v3_decision_v1.c src/petta_typecheck_v3.c src/generated/petta_typecheck_v3_core_v1.generated.c src/generated/petta_typecheck_v3_core_provider_catalog_v1.generated.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/fixpoint.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/term_domain.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/petta_numeric.c src/petta_runtime.c src/prepared_pure_machine.c src/owned_execution.c src/answer_storage.c src/fold_algebra.c src/native_fold.c src/exec_saturation.c src/transform_core.c src/library_presentation.c src/support_view.c src/open_equation_machine.c src/eval.c src/grounded.c src/he_macro_expansion.c src/he_typing.c src/he_typing_authority.c src/generated/he_typing_consistency_core_source_binding_v1.generated.c src/generated/he_profiled_type_inference_core_source_binding_v1.generated.c src/inference_checker.c src/nik_direct_authority.c src/nik_hosted_calculus.c src/nik_licensed_implementation_selection.c src/nik_runtime.c src/prime_semantics.c src/generated/prime_typing_closed_formation_source_binding_v1.generated.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/library_pattern.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_dense_bitset_v1.c src/gslt_compiled_runtime.c src/gslt_indexed_instruction_decoder_v1.c src/gslt_indexed_value_table_v1.c src/gslt_split_indexed_table_v1.c src/gslt_literal_hole_program_v1.c src/gslt_u32_index_v1.c src/gslt_u32_slice_arena_v1.c src/gslt_epoch_slots_v1.c src/gslt_ground_dense_term_v1.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c src/foreign_provider.c src/runtime_prelude.c src/runtime_session.c
 SRC += src/shared_transition.c src/run_report.c src/run_cli.c src/error_presentation.c src/run_guard.c
 SRC += src/library_proc.c
 SRC += src/library_fs.c
 SRC += src/petta_priority_heap.c
 SRC += src/library_provenance.c native/provenance/prov_kernel_v1.c
-SRC += src/native_memory.c src/host_services.c src/library_postings.c src/library_asp.c native/asp/asp_cdnl_v1.c native/asp/asp_clingo_v1.c src/tensor.c src/tensor_bounds.c src/tensor_screening.c src/library_tensor.c src/library_group.c
+SRC += src/native_memory.c src/host_services.c src/library_postings.c src/library_asp.c native/asp/asp_cdnl_v1.c native/asp/asp_hall_v1.c native/support/support_v1.c native/smt/euf_cc_v1.c native/smt/lra_simplex_v1.c native/asp/asp_clingo_v1.c native/asp/sat_ipasir_v1.c src/tensor.c src/tensor_bounds.c src/tensor_screening.c src/library_tensor.c src/library_group.c
 SRC += src/binary_codec.c src/library_binary.c
 SRC += src/library_heap.c
 SRC += src/library_work.c
@@ -4119,13 +4119,18 @@ test-match-worklist-frames: $(MATCH_WORKLIST_FRAMES_TEST_BIN) $(MATCH_WORKLIST_F
 # own programs (its controls, 40 random and 24 choice programs, exported once)
 # it returns the same model or the same certificate, byte for byte.
 ASP_CDNL_TEST_BIN = runtime/asp_cdnl_main_v1-$(BUILD_OBJ_TAG)
-$(ASP_CDNL_TEST_BIN): tests/asp/asp_cdnl_main_v1.c native/asp/asp_cdnl_v1.c native/asp/asp_cdnl_v1.h
+$(ASP_CDNL_TEST_BIN): tests/asp/asp_cdnl_main_v1.c native/asp/asp_cdnl_v1.c native/asp/asp_cdnl_v1.h native/asp/asp_hall_v1.c native/asp/asp_hall_v1.h native/support/support_v1.c native/support/support_v1.h native/smt/euf_cc_v1.c native/smt/euf_cc_v1.h native/smt/lra_simplex_v1.c native/smt/lra_simplex_v1.h
 	@mkdir -p runtime
-	$(CC) $(CFLAGS) -Inative/asp -o $@ tests/asp/asp_cdnl_main_v1.c native/asp/asp_cdnl_v1.c $(LDFLAGS)
+	$(CC) $(CFLAGS) -DCETTA_BUILD_WITH_GMP=$(ENABLE_GMP) -Inative/asp -o $@ tests/asp/asp_cdnl_main_v1.c native/asp/asp_cdnl_v1.c native/asp/asp_hall_v1.c native/support/support_v1.c native/smt/euf_cc_v1.c native/smt/lra_simplex_v1.c $(LDFLAGS)
+
+ASP_WEIGHT_CERT_TEST_BIN = runtime/asp_weight_certificates_v1-$(BUILD_OBJ_TAG)
+$(ASP_WEIGHT_CERT_TEST_BIN): tests/asp/asp_weight_certificates_v1.c native/asp/asp_cdnl_v1.c native/asp/asp_cdnl_v1.h native/asp/asp_hall_v1.c native/asp/asp_hall_v1.h native/support/support_v1.c native/support/support_v1.h native/smt/euf_cc_v1.c native/smt/euf_cc_v1.h native/smt/lra_simplex_v1.c native/smt/lra_simplex_v1.h
+	@mkdir -p runtime
+	$(CC) $(CFLAGS) -DCETTA_BUILD_WITH_GMP=$(ENABLE_GMP) -Inative/asp -o $@ tests/asp/asp_weight_certificates_v1.c native/asp/asp_cdnl_v1.c native/asp/asp_hall_v1.c native/support/support_v1.c native/smt/euf_cc_v1.c native/smt/lra_simplex_v1.c $(LDFLAGS)
 
 .PHONY: test-asp-reference-driver
 test-all: test-asp-reference-driver
-test-asp-reference-driver: $(BIN) $(ASP_CDNL_TEST_BIN) tests/asp/reference_driver_programs.txt tests/asp/reference_driver_answers.txt tests/asp/reference_driver_enumerations.txt
+test-asp-reference-driver: $(BIN) $(ASP_CDNL_TEST_BIN) $(ASP_WEIGHT_CERT_TEST_BIN) tests/asp/reference_driver_programs.txt tests/asp/reference_driver_answers.txt tests/asp/reference_driver_enumerations.txt
 	@$(call cetta_exec,./$(ASP_CDNL_TEST_BIN)) tests/asp/reference_driver_programs.txt > runtime/test-asp-reference-driver.out
 	@diff -u tests/asp/reference_driver_answers.txt runtime/test-asp-reference-driver.out
 	@$(call cetta_exec,./$(ASP_CDNL_TEST_BIN)) --enumerate tests/asp/reference_driver_programs.txt > runtime/test-asp-reference-enumerate.out
@@ -4133,13 +4138,151 @@ test-asp-reference-driver: $(BIN) $(ASP_CDNL_TEST_BIN) tests/asp/reference_drive
 	@$(call cetta_exec,./$(ASP_CDNL_TEST_BIN)) --check tests/asp/reference_driver_programs.txt
 	@$(call cetta_exec,./$(ASP_CDNL_TEST_BIN)) --fast --check tests/asp/reference_driver_programs.txt > runtime/test-asp-fast-check.out
 	@$(call cetta_exec,./$(ASP_CDNL_TEST_BIN)) --differential tests/asp/reference_driver_programs.txt > runtime/test-asp-fast-differential.out
+	@$(call cetta_exec,./$(ASP_CDNL_TEST_BIN)) --differential tests/asp/nontight_random_programs.txt > runtime/test-asp-nontight-differential.out
+	@$(call cetta_exec,./$(ASP_CDNL_TEST_BIN)) --check tests/asp/nontight_random_programs.txt > runtime/test-asp-nontight-check.out
+	@$(call cetta_exec,./$(ASP_CDNL_TEST_BIN)) --hall --differential tests/asp/nontight_random_programs.txt > runtime/test-asp-nontight-hall-differential.out
+	@$(call cetta_exec,./$(ASP_CDNL_TEST_BIN)) --multishot tests/asp/reference_driver_programs.txt > runtime/test-asp-multishot-reference.out
+	@$(call cetta_exec,./$(ASP_CDNL_TEST_BIN)) --fast --multishot tests/asp/nontight_random_programs.txt > runtime/test-asp-multishot-nontight.out
+	@$(call cetta_exec,./$(BIN)) --lang petta tests/petta/asp_session.metta > runtime/test-asp-session.out 2>&1
+	@diff -u tests/petta/asp_session.expected runtime/test-asp-session.out
+	@$(call cetta_exec,./$(BIN)) --lang petta tests/petta/asp_multishot.metta > runtime/test-asp-multishot.out 2>&1
+	@diff -u tests/petta/asp_multishot.expected runtime/test-asp-multishot.out
+	@$(call cetta_exec,./$(BIN)) --lang petta tests/petta/asp_heuristic.metta > runtime/test-asp-heuristic.out 2>&1
+	@diff -u tests/petta/asp_heuristic.expected runtime/test-asp-heuristic.out
 	@$(call cetta_exec,./$(BIN)) --lang petta tests/petta/asp_library.metta > runtime/test-asp-library-petta.out 2>&1
 	@diff -u tests/petta/asp_library.expected runtime/test-asp-library-petta.out
 	@$(call cetta_exec,./$(BIN)) --lang petta tests/petta/asp_weight_rules.metta > runtime/test-asp-weight-rules.out 2>&1
 	@diff -u tests/petta/asp_weight_rules.expected runtime/test-asp-weight-rules.out
+	@$(call cetta_exec,./$(BIN)) --lang petta tests/petta/asp_disjunction.metta > runtime/test-asp-disjunction.out 2>&1
+	@diff -u tests/petta/asp_disjunction.expected runtime/test-asp-disjunction.out
+	@$(call cetta_exec,./$(BIN)) --lang petta tests/petta/asp_weights_differential.metta > runtime/test-asp-weights-differential.out 2>&1
+	@diff -u tests/petta/asp_weights_differential.expected runtime/test-asp-weights-differential.out
+	@CETTA_ASP_WEIGHTS_NORMALIZED=1 $(call cetta_exec,./$(BIN)) --lang petta tests/petta/asp_weights_differential.metta > runtime/test-asp-weights-normalized.out 2>&1
+	@diff -u tests/petta/asp_weights_differential.expected runtime/test-asp-weights-normalized.out
+	@$(call cetta_exec,./$(BIN)) --lang petta tests/petta/asp_optimize.metta > runtime/test-asp-optimize.out 2>&1
+	@diff -u tests/petta/asp_optimize.expected runtime/test-asp-optimize.out
+	@$(call cetta_exec,./$(ASP_WEIGHT_CERT_TEST_BIN)) > runtime/test-asp-weight-certificates.out
+	@grep -q '^PASS' runtime/test-asp-weight-certificates.out
 	@CETTA_CLINGO_LIBRARY=/nonexistent/libclingo.so $(call cetta_exec,./$(BIN)) --lang petta tests/petta/clingo_absent.metta > runtime/test-clingo-absent.out 2>&1
 	@diff -u tests/petta/clingo_absent.expected runtime/test-clingo-absent.out
-	@echo "PASS: the answer-set solver answers and enumerates as the verified reference driver on its 69 programs, models and certificates identical; the C checker accepts every certificate and refuses truncated ones and those offered for programs with a stable model; the fast search finds the same stable models and verdicts on every program, its certificates accepted; weight rules read by the verified normalization; without clingo the clingo library's heads stay as written"
+	@echo "PASS: the answer-set solver answers and enumerates as the verified reference driver on its 69 programs, models and certificates identical; the C checker accepts every certificate and refuses truncated ones and those offered for programs with a stable model; the fast search finds the same stable models and verdicts on every program and on 251 programs with positive loops (250 random, one a falsum atom inside an unfounded set), its certificates and the reference search's accepted; a session steps the search and ends as asp:solve answers, and takes constraints between answers, its refutation holding them as checked input steps; one session finds every model of the 320 programs by blocking each with an added constraint, its refutation accepted over them and refused without the last, with an input clause altered and without them; a MeTTa program steers a session's decisions (asp:decide) to other stable models and into dead ends it backtracks from, the answers still checked, and reads the nogoods it learned (asp:nogoods); weight rules read by the verified normalization; disjunctions read by shifting when head-cycle-free and refused otherwise; weight statements propagated by the solver with checked weight steps, where no positive cycle runs through them, answer as the verified normalization on 200 seeded programs; minimize statements optimized by branch and bound, the optimum and the optimal models equal to brute force on 120 seeded programs; without clingo the clingo library's heads stay as written"
+
+# Hall's condition over groups (native/asp/asp_hall_v1.h) against brute force
+# under random exclusions and inclusions, and asp:distinct over it.
+ASP_HALL_TEST_BIN = runtime/asp_hall_main_v1-$(BUILD_OBJ_TAG)
+$(ASP_HALL_TEST_BIN): tests/asp/asp_hall_main_v1.c native/asp/asp_hall_v1.c native/asp/asp_hall_v1.h
+	@mkdir -p runtime
+	$(CC) $(CFLAGS) -Inative/asp -o $@ tests/asp/asp_hall_main_v1.c native/asp/asp_hall_v1.c $(LDFLAGS)
+
+.PHONY: test-asp-distinct
+test-asp-distinct: $(BIN) $(ASP_HALL_TEST_BIN) tests/petta/asp_distinct.metta tests/petta/asp_distinct.expected
+	@$(call cetta_exec,./$(ASP_HALL_TEST_BIN)) 3000 1 > runtime/test-asp-hall.out
+	@$(call cetta_exec,./$(BIN)) --lang petta tests/petta/asp_distinct.metta > runtime/test-asp-distinct.out 2>&1
+	@diff -u tests/petta/asp_distinct.expected runtime/test-asp-distinct.out
+	@echo "PASS: Hall's condition kept incrementally agrees with brute force under random exclusions and inclusions, its violators and matchings checked; asp:distinct answers distinct representatives or a violator, and leaves data that is not ground groups as written"
+
+# Hall's condition in the solver: the fast search with it finds the
+# reference's models and verdicts on the reference programs, its
+# refutations accepted; pigeonhole programs are refuted by certificates with
+# Hall steps, which the checker accepts, and every mutant of a Hall step
+# that is invalid by construction (a group dropped where the step has one
+# group more than cliques, a clique atom dropped that the clause does not
+# hold) makes the certificate refused.
+ASP_HALL_CERT_TEST_BIN = runtime/asp_hall_certificates_v1-$(BUILD_OBJ_TAG)
+$(ASP_HALL_CERT_TEST_BIN): tests/asp/asp_hall_certificates_v1.c native/asp/asp_cdnl_v1.c native/asp/asp_cdnl_v1.h native/asp/asp_hall_v1.c native/asp/asp_hall_v1.h native/support/support_v1.c native/support/support_v1.h native/smt/euf_cc_v1.c native/smt/euf_cc_v1.h native/smt/lra_simplex_v1.c native/smt/lra_simplex_v1.h
+	@mkdir -p runtime
+	$(CC) $(CFLAGS) -DCETTA_BUILD_WITH_GMP=$(ENABLE_GMP) -Inative/asp -o $@ tests/asp/asp_hall_certificates_v1.c native/asp/asp_cdnl_v1.c native/asp/asp_hall_v1.c native/support/support_v1.c native/smt/euf_cc_v1.c native/smt/lra_simplex_v1.c $(LDFLAGS)
+
+.PHONY: test-asp-hall-certificates
+test-asp-hall-certificates: $(ASP_CDNL_TEST_BIN) $(ASP_HALL_CERT_TEST_BIN) tests/asp/reference_driver_programs.txt tests/asp/hall_pigeons_5_4.txt tests/asp/hall_pigeons_8_7.txt
+	@$(call cetta_exec,./$(ASP_CDNL_TEST_BIN)) --hall --differential tests/asp/reference_driver_programs.txt > runtime/test-asp-hall-differential.out
+	@$(call cetta_exec,./$(ASP_HALL_CERT_TEST_BIN)) tests/asp/hall_pigeons_5_4.txt tests/asp/hall_pigeons_8_7.txt > runtime/test-asp-hall-certificates.out
+	@echo "PASS: the search with Hall's condition answers as the reference on its programs, refutations accepted; pigeonhole programs are refuted by Hall steps the checker accepts, and invalid mutants of them are refused"
+
+# The SAT personality (asp_sat_solve in native/asp/asp_cdnl_v1.h): its
+# verdicts on the fixture formulas; every refutation, an LRAT proof over the
+# clauses, accepted by the certificate checker, refused when truncated and
+# refused for every satisfiable fixture; every model checked against its
+# clauses; and the sat library over atoms in the PeTTa lane.
+SAT_TEST_BIN = runtime/sat_main_v1-$(BUILD_OBJ_TAG)
+SAT_FIXTURES = $(sort $(wildcard tests/asp/sat/*.cnf))
+$(SAT_TEST_BIN): tests/asp/sat_main_v1.c native/asp/asp_cdnl_v1.c native/asp/asp_cdnl_v1.h native/asp/asp_hall_v1.c native/asp/asp_hall_v1.h native/support/support_v1.c native/support/support_v1.h native/smt/euf_cc_v1.c native/smt/euf_cc_v1.h native/smt/lra_simplex_v1.c native/smt/lra_simplex_v1.h
+	@mkdir -p runtime
+	$(CC) $(CFLAGS) -DCETTA_BUILD_WITH_GMP=$(ENABLE_GMP) -Inative/asp -o $@ tests/asp/sat_main_v1.c native/asp/asp_cdnl_v1.c native/asp/asp_hall_v1.c native/support/support_v1.c native/smt/euf_cc_v1.c native/smt/lra_simplex_v1.c $(LDFLAGS)
+
+.PHONY: test-sat-library
+test-sat-library: $(BIN) $(SAT_TEST_BIN) $(SAT_FIXTURES) tests/asp/sat_check.expected tests/petta/sat_library.metta tests/petta/sat_library.expected
+	@$(call cetta_exec,./$(SAT_TEST_BIN)) --check $(SAT_FIXTURES) > runtime/test-sat-check.out
+	@diff -u tests/asp/sat_check.expected runtime/test-sat-check.out
+	@$(call cetta_exec,./$(BIN)) --lang petta tests/petta/sat_library.metta > runtime/test-sat-library-petta.out 2>&1
+	@diff -u tests/petta/sat_library.expected runtime/test-sat-library-petta.out
+	@CETTA_IPASIR_LIBRARY=/nonexistent/libipasir.so $(call cetta_exec,./$(BIN)) --lang petta tests/petta/ipasir_absent.metta > runtime/test-ipasir-absent.out 2>&1
+	@diff -u tests/petta/ipasir_absent.expected runtime/test-ipasir-absent.out
+	@echo "PASS: the SAT personality's verdicts on the fixture formulas; every refutation accepted as an LRAT proof by the certificate checker, refused when truncated and refused for every satisfiable formula; every model checked; the sat library answers over atoms; without an IPASIR solver the ipasir library's heads stay as written"
+
+# The smt library: satisfiability modulo equality with uninterpreted functions
+# on the answer-set solver's kernel, congruence closure as the theory
+# (native/smt/euf_cc_v1.h).  Fixed problems with their certificates, and 200
+# seeded problems' verdicts; every answer is checked before it is given (EUF
+# steps by recomputing the closure).  test-smt-cvc5-reference compares the
+# seeded verdicts with cvc5's.
+LRA_SIMPLEX_TEST_BIN = runtime/lra_simplex_v1_test-$(BUILD_OBJ_TAG)
+$(LRA_SIMPLEX_TEST_BIN): tests/smt/lra_simplex_v1_test.c native/smt/lra_simplex_v1.c native/smt/lra_simplex_v1.h
+	@mkdir -p runtime
+	$(CC) $(CFLAGS) -DCETTA_BUILD_WITH_GMP=$(ENABLE_GMP) -Inative/smt -o $@ tests/smt/lra_simplex_v1_test.c native/smt/lra_simplex_v1.c $(LDFLAGS)
+
+.PHONY: test-smt-library
+test-smt-library: $(BIN) $(LRA_SIMPLEX_TEST_BIN) lib/smt.metta lib/petta/smt.metta tests/petta/smt_library.metta tests/petta/smt_library.expected tests/petta/smt_euf_seeded.metta tests/petta/smt_euf_seeded.expected tests/petta/smt_lra_seeded.metta tests/petta/smt_lra_seeded.expected tests/petta/smt_omt_seeded.metta tests/petta/smt_omt_seeded.expected tests/petta/fixtures/smt_lra_generator.metta tests/petta/smt_uflra_seeded.metta tests/petta/smt_uflra_seeded.expected tests/petta/smt_lex_seeded.metta tests/petta/smt_lex_seeded.expected tests/petta/fixtures/smt_z3_objectives.metta tests/petta/smt_lia_seeded.metta tests/petta/smt_lia_seeded.expected
+	@$(call cetta_exec,./$(BIN)) --lang petta tests/petta/smt_library.metta > runtime/test-smt-library.out 2>&1
+	@diff -u tests/petta/smt_library.expected runtime/test-smt-library.out
+	@$(call cetta_exec,./$(BIN)) --lang petta tests/petta/smt_euf_seeded.metta > runtime/test-smt-euf-seeded.out 2>&1
+	@diff -u tests/petta/smt_euf_seeded.expected runtime/test-smt-euf-seeded.out
+	@$(call cetta_exec,./$(BIN)) --lang petta tests/petta/smt_lra_seeded.metta > runtime/test-smt-lra-seeded.out 2>&1
+	@diff -u tests/petta/smt_lra_seeded.expected runtime/test-smt-lra-seeded.out
+	@$(call cetta_exec,./$(BIN)) --lang petta tests/petta/smt_omt_seeded.metta > runtime/test-smt-omt-seeded.out 2>&1
+	@diff -u tests/petta/smt_omt_seeded.expected runtime/test-smt-omt-seeded.out
+	@$(call cetta_exec,./$(BIN)) --lang petta tests/petta/smt_uflra_seeded.metta > runtime/test-smt-uflra-seeded.out 2>&1
+	@diff -u tests/petta/smt_uflra_seeded.expected runtime/test-smt-uflra-seeded.out
+	@$(call cetta_exec,./$(BIN)) --lang petta tests/petta/smt_lex_seeded.metta > runtime/test-smt-lex-seeded.out 2>&1
+	@diff -u tests/petta/smt_lex_seeded.expected runtime/test-smt-lex-seeded.out
+	@$(call cetta_exec,./$(BIN)) --lang petta tests/petta/smt_lia_seeded.metta > runtime/test-smt-lia-seeded.out 2>&1
+	@diff -u tests/petta/smt_lia_seeded.expected runtime/test-smt-lia-seeded.out
+	@$(call cetta_exec,./$(LRA_SIMPLEX_TEST_BIN)) > runtime/test-lra-simplex.out
+	@grep -q '^PASS' runtime/test-lra-simplex.out
+	@echo "PASS: the smt library answers its fixed problems with checked certificates, and 200 seeded problems in equality with uninterpreted functions and 200 in linear real arithmetic as pinned, and 150 seeded optimization problems answered alike by clauses and by SMT-LIB text (minimize, maximize), each optimum certified, and 200 seeded problems with uninterpreted functions over reals (QF_UFLRA) and 120 seeded lexicographic optimization problems with two objectives and 200 seeded problems over integers (QF_LIA) as pinned; the simplex over bounds meets every bound in force or gives a conflict the Farkas check accepts, on 3000 random bound sets with undo, and its least values are attained, refuted below and, on 2000 random two-variable programs, equal to the best vertex"
+
+# Maintained derived spaces (lib/petta/lib_support.metta): access control with a
+# cycle of inherited roles, a base fact that is also derived, and reachability
+# over routers under link failures, each state checked against saturating the
+# remaining base facts from scratch.
+# The realization (src/support_view.c) answers them while the library's
+# presentation is live; CETTA_SUPPORT_REFERENCE=1 runs the library's own
+# definitions, which must answer alike.
+.PHONY: test-support-views
+test-support-views: $(BIN) lib/petta/lib_support.metta tests/petta/support_views.metta tests/petta/support_views.expected
+	@CETTA_SUPPORT_TRACE=1 $(call cetta_exec,./$(BIN)) --lang petta --profile extended tests/petta/support_views.metta > runtime/test-support-views.out 2> runtime/test-support-views.trace
+	@diff -u tests/petta/support_views.expected runtime/test-support-views.out
+	@grep -q '^\[support\] support:retract answered' runtime/test-support-views.trace
+	@! grep -q -E '^\[support\] .* (declined|error)$$' runtime/test-support-views.trace
+	@CETTA_SUPPORT_REFERENCE=1 $(call cetta_exec,./$(BIN)) --lang petta --profile extended tests/petta/support_views.metta > runtime/test-support-views.reference.out 2>&1
+	@diff -u tests/petta/support_views.expected runtime/test-support-views.reference.out
+	@echo "PASS: a maintained view keeps exactly the atoms with a well-founded derivation from its base facts: a cycle of derivations alone keeps nothing, and every state equals saturation from scratch (realized and as written)"
+
+# Seeded scenarios: random stores, directive mixes (derived and base relations,
+# joins, two templates, self-justifying rules, shared keys) and operation
+# sequences, with writes to the view outside the library among them.  The
+# realization and the library's own definitions must print the same canonical
+# answers, views and logs; the realization must have answered, and declined
+# only where the library alone can answer.
+.PHONY: test-support-view-differential
+test-support-view-differential: $(BIN) lib/petta/lib_support.metta tests/petta/support_view_differential.metta tests/petta/support_view_differential.expected
+	@CETTA_SUPPORT_TRACE=1 $(call cetta_exec,./$(BIN)) --lang petta --profile extended tests/petta/support_view_differential.metta > runtime/test-support-view-differential.out 2> runtime/test-support-view-differential.trace
+	@diff -u tests/petta/support_view_differential.expected runtime/test-support-view-differential.out
+	@test "$$(grep -c -E '^\[support\] support:[a-z]+ answered$$' runtime/test-support-view-differential.trace)" -ge 900
+	@! grep -q -E '^\[support\] .* error$$' runtime/test-support-view-differential.trace
+	@CETTA_SUPPORT_REFERENCE=1 $(call cetta_exec,./$(BIN)) --lang petta --profile extended tests/petta/support_view_differential.metta > runtime/test-support-view-differential.reference.out 2>&1
+	@diff -u tests/petta/support_view_differential.expected runtime/test-support-view-differential.reference.out
+	@echo "PASS: maintained views realized incrementally answer as the library over 120 seeded scenarios"
 
 PROV_KERNEL_TEST_BIN = runtime/prov_kernel_main_v1-$(BUILD_OBJ_TAG)
 $(PROV_KERNEL_TEST_BIN): tests/provenance/prov_kernel_main_v1.c native/provenance/prov_kernel_v1.c native/provenance/prov_kernel_v1.h
@@ -18401,12 +18544,20 @@ NORMAL_TEST_TARGETS := \
 	test-petta-native-value-boundaries \
 	test-petta-oem-single-sequence \
 	test-petta-oem-collection-after-restore \
+	test-prune-build-products \
+	test-asp-distinct \
+	test-asp-hall-certificates \
+	test-sat-library \
+	test-support-views \
+	test-smt-library \
+	test-support-view-differential \
 	test-petta-callability-refresh \
 	test-petta-add-atoms-batch-v1 \
 	test-petta-tier-composition \
 	test-evaluator-tax-routes \
 	test-petta-closure-specialization \
 	test-petta-transform \
+	test-transform-he \
 	test-language-versions \
 	test-prime-normal-fixtures \
 	test-prepared-bound-heads \
@@ -20270,8 +20421,9 @@ test-gslt2parse-parser-pack-native-petta-v1-body: \
 		$(PARSER_PACK_NATIVE_API_V1_LIB) \
 		$(PETTA_DOCUMENT_PIPELINE_V1_LIB)
 	@$(MAKE) -C \
-		"$(GSLT2PARSE_PETTA_ROOT)/experiments/gslt2parse_foundation/native" \
-		test CETTA_ROOT="$(CURDIR)" CETTA_OBJ_TAG="$(BUILD_OBJ_TAG)"
+		"$(CURDIR)/experiments/gslt2parse_foundation/prolog/native" \
+		test CETTA_ROOT="$(CURDIR)" CETTA_OBJ_TAG="$(BUILD_OBJ_TAG)" \
+		PETTA_ROOT="$(GSLT2PARSE_PETTA_ROOT)"
 else
 test-gslt2parse-parser-pack-native-api-v1-matrix \
 test-gslt2parse-parser-pack-native-petta-v1:
@@ -21573,6 +21725,18 @@ test-manifest test-manifest-check:
 
 test-manifest-sync:
 	@./scripts/sync_test_manifest.py --write
+
+# Build products of configurations none of whose products changed in the last
+# KEEP_DAYS days (7), and the older sources of mutation suites, listed by
+# directory; with PRUNE=1 they are removed.  Only ignored, untracked files that
+# carry a configured build tag are touched (tools/prune_build_products.py).
+.PHONY: prune-build-products test-prune-build-products
+prune-build-products:
+	@python3 tools/prune_build_products.py --keep-days $(or $(KEEP_DAYS),7) --show \
+		$(if $(filter 1,$(PRUNE)),--delete,)
+
+test-prune-build-products:
+	@python3 tests/support/check_prune_build_products.py
 
 test-manifest-strict: test-manifest-check
 
@@ -26320,6 +26484,20 @@ test-petta-tabled-shared-and-runtime: $(BIN)
 	fi
 	@echo "PASS: tabled calls with shared variables, run-time mutual recursion, and components that join an older table they read"
 
+# tabled-lattice: the results for each instance of a tabled call joined (min
+# or max) inside the fixpoint, against SWI's mode-directed tabling through the
+# embedded Prolog on 40 seeded graphs.
+.PHONY: test-petta-tabled-lattice
+test-petta-tabled-lattice: $(BIN)
+	@actual=runtime/test-petta-tabled-lattice.out; \
+	./$(BIN) --lang petta tests/petta/tabled_lattice.metta >"$$actual" 2>&1; \
+	diff -u tests/petta/tabled_lattice.expected "$$actual"
+	@actual=runtime/test-petta-tabled-lattice-join-error.out; \
+	if ./$(BIN) --lang petta tests/petta/tabled_lattice_join_error.metta >"$$actual" 2>&1; then \
+		echo "FAIL: a join giving two values was not reported"; exit 1; fi; \
+	diff -u tests/petta/tabled_lattice_join_error.expected "$$actual"
+	@echo "PASS: tabled-lattice joins each call instance's results by min, max or a function of two arguments inside the fixpoint: shortest paths and reachable sets on cyclic graphs terminate, and on 40 seeded graphs every pair's shortest and longest path and every node's reachable set equal SWI's mode-directed tabling (min, max, lattice(J/3)); a plain table keeps every cost; a join giving two values is reported"
+
 # A let pattern headed by a variable: PeTTa dispatches it at run time.  A
 # head first bound by the pattern keeps it data, so the compiled tier and the
 # open-equation machine destructure there; a destination naming a function
@@ -26558,7 +26736,7 @@ test-petta-named-arity-source-cache: $(BIN)
 	done; \
 	echo "PASS: shared source-arity cache preserves mutation, partial calls and duplicates"
 
-test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-controller test-controller-diversity test-petta-machine-trace-config test-petta-type-langdef-source-binding-v1 test-petta-boundary-langdef-source-binding-v1 test-petta-capability-ledger test-petta-specializer-relevance-filter test-petta-mam-contender-mutations test-petta-extended-query-algebra test-petta-prepared-register-loop test-petta-specialized-pure-call test-petta-memoization test-petta-match-existence-fusion test-petta-fresh-frame-occurs-check test-petta-equation-slot-admission test-petta-equation-template-c0 test-petta-relational-equation-view test-petta-argv-native test-petta-activation-admission-cache test-petta-activation-scalar-if test-petta-match-region-hole test-petta-binding-region-hole test-petta-rule-frame-region test-petta-deterministic-region-scalability test-petta-body-resume-segment test-petta-match-decision-tree-repository test-petta-match-decision-shape-receipt test-petta-activation-anonymous-hole test-petta-activation-scalar-argument-segment test-petta-activation-pure-data-segment test-petta-match-decision-equality test-match-closed-expression-decision test-petta-translation-time-callability test-petta-tabled-shared-and-runtime
+test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-controller test-controller-diversity test-petta-machine-trace-config test-petta-type-langdef-source-binding-v1 test-petta-boundary-langdef-source-binding-v1 test-petta-capability-ledger test-petta-specializer-relevance-filter test-petta-mam-contender-mutations test-petta-extended-query-algebra test-petta-prepared-register-loop test-petta-specialized-pure-call test-petta-memoization test-petta-match-existence-fusion test-petta-fresh-frame-occurs-check test-petta-equation-slot-admission test-petta-equation-template-c0 test-petta-relational-equation-view test-petta-argv-native test-petta-activation-admission-cache test-petta-activation-scalar-if test-petta-match-region-hole test-petta-binding-region-hole test-petta-rule-frame-region test-petta-deterministic-region-scalability test-petta-body-resume-segment test-petta-match-decision-tree-repository test-petta-match-decision-shape-receipt test-petta-activation-anonymous-hole test-petta-activation-scalar-argument-segment test-petta-activation-pure-data-segment test-petta-match-decision-equality test-match-closed-expression-decision test-petta-translation-time-callability test-petta-tabled-shared-and-runtime test-petta-tabled-lattice
 	@env -u CETTA_PETTA_EQUATION_BODY_ACTIVATION \
 		-u CETTA_PETTA_EQUATION_BODY_ACTIVATION_REFERENCE \
 		./$(PETTA_SEARCH_MACHINE_TEST_BIN)
@@ -27709,7 +27887,7 @@ PETTA_SEMANTIC_EXACT_STREAM_STEMS = \
 	foldall_order_oracle list_length parse_data metatype_intrinsics \
 	type_failure_is_empty println_string unknown_head_quote \
 	library_descriptor library_absolute_path library_standard_compat \
-	library_standard_missing_descriptor library_path_relation \
+	library_standard_missing_descriptor library_path_relation empty_symbol \
 	git_import_zero_arity hyperpose_shared_space_concurrent_add \
 	hyperpose_shared_space_indirect_add hyperpose_shared_space_read_write \
 	hyperpose_shared_space_sloppy_update hyperpose_shared_space_transactions \
@@ -30937,14 +31115,31 @@ test-petta-prepared-code: $(BIN)
 
 .PHONY: test-petta-transform
 test-petta-semantics: test-petta-transform
-# transform (lib/petta/lib_transform.metta) answers as SWI-PeTTa does with the
-# same library on its fixed programs, whether tf:fire runs natively or as
-# written, and as its specification (lib/petta/lib_transform_specs.metta)
-# does; the native firing runs throughout them; seeded programs answer alike
-# on all three; a redefined operation or a data constructor given an equation
-# runs the authored definition.
+# transform (lib/petta/lib_transform.metta) answers its fixed programs' expected
+# output, whether tf:fire runs natively or as written, and as its specification
+# (lib/petta/lib_transform_specs.metta) does; a reads-only transform answers as
+# match does, one branch per match; the native firing runs throughout them;
+# seeded programs answer alike on all three; a redefined operation or a data
+# constructor given an equation runs the authored definition.
 test-petta-transform: $(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_transform_differential.py ./$(BIN) --programs 60
+
+# transform in the HE dialect (lib/lib_transform.metta) fires natively as its
+# library does: the fixed test and 120 seeded scenarios (every source form,
+# both destinations, stores holding copies) answer their expected output both
+# natively, where every firing is the realization's, joint conditions
+# included, and with CETTA_TRANSFORM_REFERENCE=1.
+.PHONY: test-transform-he
+test-transform-he: $(BIN) lib/lib_transform.metta tests/test_transform_he.metta tests/test_transform_he.expected tests/test_transform_he_differential.metta tests/test_transform_he_differential.expected
+	@for t in test_transform_he test_transform_he_differential; do \
+		CETTA_TRANSFORM_TRACE=1 $(call cetta_exec,./$(BIN)) --profile extended --lang he tests/$$t.metta > runtime/$$t.out 2> runtime/$$t.trace || exit 1; \
+		diff -u tests/$$t.expected runtime/$$t.out || exit 1; \
+		CETTA_TRANSFORM_REFERENCE=1 $(call cetta_exec,./$(BIN)) --profile extended --lang he tests/$$t.metta > runtime/$$t.reference.out 2>&1 || exit 1; \
+		diff -u tests/$$t.expected runtime/$$t.reference.out || exit 1; \
+		! grep -q -E '^\[transform\] (declined|error)' runtime/$$t.trace || { echo "FAIL: $$t: the realization declined or answered an error"; exit 1; }; \
+	done
+	@test "$$(grep -c '^\[transform\] fired' runtime/test_transform_he_differential.trace)" -ge 600
+	@echo "PASS: transform fires natively in HE as its library does (fixed test, 120 seeded scenarios)"
 
 .PHONY: test-petta-closure-specialization
 test-petta-semantics: test-petta-closure-specialization
@@ -38125,7 +38320,7 @@ test-gslt2parse-schema-v1-native-megalodon: \
 test-gslt2parse-schema-v1-native-prime: \
 		$(GSLT2PARSE_SCHEMA_V1_NATIVE_BIN)
 	@$(GSLT2PARSE_SCHEMA_V1_NATIVE_BIN) \
-		993ef4d50f23ed8738a4a35cac9b09855b4843a753e75f6e80290451298b0438 \
+		7d90c256218c4c469ac451332d6d9713d11536fc4818f8a6bf8e4a886d3f54eb \
 		experiments/gslt2parse_foundation/presentations/core/syntax_core_v1.metta \
 		experiments/gslt2parse_foundation/presentations/shared/lookahead_core_v1.metta \
 		experiments/gslt2parse_foundation/presentations/shared/ground_relations_v1.metta \
@@ -38185,7 +38380,7 @@ test-gslt2parse-schema-v1-native: $(GSLT2PARSE_SCHEMA_V1_NATIVE_BIN)
 		experiments/gslt2parse_foundation/presentations/compiler/relational_cfg_lowering_v1.metta \
 		experiments/gslt2parse_foundation/presentations/compiler/relational_cfg_link_v1.metta
 	@$(GSLT2PARSE_SCHEMA_V1_NATIVE_BIN) \
-		493efbe57646f3e566e02e5e112d4243728a389f0b1ad1eb6bb1bd5e0cdfcdb5 \
+		944cd230567183bc8e184380d5b4ff11f3dbfd5f655855164842495a187f75b4 \
 		experiments/gslt2parse_foundation/presentations/core/syntax_core_v1.metta \
 		experiments/gslt2parse_foundation/presentations/shared/lookahead_core_v1.metta \
 		experiments/gslt2parse_foundation/presentations/parserpack/parser_pack_core_v1.metta \
@@ -41720,17 +41915,15 @@ ifeq ($(ENABLE_PIC),1)
 test-gslt2parse-petta-document-pipeline-v1-body: \
 		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(PETTA_DOCUMENT_PIPELINE_V1_BIN) \
+		$(PARSER_PACK_NATIVE_API_V1_LIB) \
 		$(PETTA_DOCUMENT_PIPELINE_V1_LIB)
 	@if [[ -z "$(strip $(GSLT2PARSE_PETTA_ROOT))" ]]; then \
 		echo 'set GSLT2PARSE_PETTA_ROOT to the pinned PeTTa checkout'; \
 		exit 1; \
 	fi
-	@$(MAKE) --no-print-directory ENABLE_SANITIZERS=0 ENABLE_PIC=1 \
-		runtime/libcetta_parser_pack_native_v1-$(BUILD_CANON).pic.so \
-		runtime/libcetta_petta_document_pipeline_v1-$(BUILD_CANON).pic.so
 	@$(MAKE) -C \
-		"$(GSLT2PARSE_PETTA_ROOT)/experiments/gslt2parse_foundation/native" \
-		all CETTA_ROOT="$(CURDIR)" CETTA_OBJ_TAG="$(BUILD_CANON).pic"
+		"$(CURDIR)/experiments/gslt2parse_foundation/prolog/native" \
+		all CETTA_ROOT="$(CURDIR)" CETTA_OBJ_TAG="$(BUILD_OBJ_TAG)"
 	@$(GSLT2PARSE_SHARED_ASAN_ENV) python3 \
 		tools/test_petta_document_pipeline_v1.py \
 		--chart-binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \

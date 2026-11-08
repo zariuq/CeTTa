@@ -211,8 +211,27 @@ static bool observe_unsupported(void *data, const char *what) {
 static bool observe_minimize(clingo_weight_t priority,
                              const clingo_weighted_literal_t *literals,
                              size_t size, void *data) {
-    (void)priority; (void)literals; (void)size;
-    return observe_unsupported(data, "minimize statement");
+    AspClingoObserver *o = data;
+    if (!o->sink->minimize)
+        return observe_unsupported(data, "minimize statement");
+    if (size > o->cap) {
+        size_t cap = size * 2u;
+        int32_t *lits = realloc(o->literals, sizeof(*lits) * cap);
+        if (!lits)
+            return false;
+        o->literals = lits;
+        int32_t *weights = realloc(o->weights, sizeof(*weights) * cap);
+        if (!weights)
+            return false;
+        o->weights = weights;
+        o->cap = cap;
+    }
+    for (size_t i = 0u; i < size; i++) {
+        o->literals[i] = literals[i].literal;
+        o->weights[i] = literals[i].weight;
+    }
+    return o->sink->minimize(o->context, priority, o->literals, o->weights,
+                             size);
 }
 
 static bool observe_external(clingo_atom_t atom, int type, void *data) {
@@ -287,7 +306,9 @@ bool asp_clingo_ground(const char *text, const AspClingoGroundSink *sink,
         .theory_atom_with_guard = observe_theory_atom_with_guard,
     };
     clingo_part_t base = {.name = "base", .params = NULL, .size = 0u};
-    bool ok = clingo.control_register_observer(control, &calls, false, &observer) &&
+    /* replace: the grounding goes to the observer only, never into clasp's
+     * own program, which nothing here solves */
+    bool ok = clingo.control_register_observer(control, &calls, true, &observer) &&
         clingo.control_add(control, "base", NULL, 0u, text) &&
         clingo.control_ground(control, &base, 1u, NULL, NULL);
     if (!ok)

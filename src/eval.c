@@ -19,6 +19,7 @@
 #include "native_fold.h"
 #include "exec_saturation.h"
 #include "transform_core.h"
+#include "support_view.h"
 #include "fixpoint.h"
 #include "symbol_index.h"
 #include "open_equation_machine.h"
@@ -26849,12 +26850,15 @@ static bool eval_try_exec_saturation(Space *s, Arena *a, Atom *atom,
 /* tf:fire and tf:fire-into (lib/petta/lib_transform.metta) realized natively
  * while the library's presentation is live (transform_core.h).  Takes go through the
  * shared add-atom and remove-atom contracts, and `let` code through the
- * ordinary evaluator, in the library's order. */
+ * ordinary evaluator, in the library's order.  The maintained views of
+ * lib/petta/lib_support.metta (support_view.h) write through the same
+ * contracts. */
 typedef struct {
     Space *root;
     Arena *arena;
     int fuel;
-} EvalTransformHost;
+    const char *refusal;   /* the error a refused mutation answers */
+} EvalLibraryHost;
 
 static bool petta_eval_machine_run(
     Space *space, Arena *arena, Atom *expression, Atom *etype,
@@ -26880,30 +26884,35 @@ static bool eval_transform_head(SymbolId head, CettaExprLen arity) {
            (head == eval_transform_fire_into_symbol() && arity == 4u);
 }
 
-static bool eval_transform_library_path(char *out, size_t out_size) {
+/* The dialect's library: lib/petta/lib_transform.metta, or the HE library
+ * lib/lib_transform.metta. */
+static bool eval_transform_library_path(char *out, size_t out_size,
+                                        CettaTransformDialect dialect) {
     if (!g_library_context || !g_library_context->root_dir[0])
         return false;
-    int n = snprintf(out, out_size, "%s/lib/petta/lib_transform.metta",
-                     g_library_context->root_dir);
+    int n = snprintf(out, out_size, "%s/lib/%slib_transform.metta",
+                     g_library_context->root_dir,
+                     dialect == CETTA_TRANSFORM_DIALECT_HE ? "" : "petta/");
     return n > 0 && (size_t)n < out_size;
 }
 
-static bool eval_transform_presentation_admitted(Space *s) {
+static bool eval_transform_presentation_admitted(
+    Space *s, CettaTransformDialect dialect) {
     char path[4200];
-    return eval_transform_library_path(path, sizeof(path)) &&
-           cetta_transform_presentation_admitted(s, path);
+    return eval_transform_library_path(path, sizeof(path), dialect) &&
+           cetta_transform_presentation_admitted(s, path, dialect);
 }
 
 static bool eval_transform_resolve_space(void *context, Atom *space_ref,
                                          Space **space_out) {
-    EvalTransformHost *host = context;
+    EvalLibraryHost *host = context;
     PettaSpaceReadOccurrence read =
         petta_classify_space_read(host->root, space_ref);
     *space_out = read.kind == PETTA_SPACE_READ_PRESENT ? read.space : NULL;
     return read.kind != PETTA_SPACE_READ_INVALID;
 }
 
-static Atom *eval_transform_mutate(EvalTransformHost *host, SymbolId head,
+static Atom *eval_transform_mutate(EvalLibraryHost *host, SymbolId head,
                                    EvalSpaceMutationKind kind,
                                    Atom *space_ref, Atom *atom) {
     Arena *a = host->arena;
@@ -26914,7 +26923,7 @@ static Atom *eval_transform_mutate(EvalTransformHost *host, SymbolId head,
     outcome_set_init(&outcomes);
     bool handled = eval_space_mutation_contract_kind(
         host->root, a, call, host->fuel, &empty, &outcomes, kind);
-    Atom *error = handled ? NULL : atom_symbol(a, "TransformMutationRefused");
+    Atom *error = handled ? NULL : atom_symbol(a, host->refusal);
     for (CettaCount i = 0u; i < outcomes.len && !error; i++) {
         Atom *answer = outcome_atom_materialize(a, &outcomes.items[i]);
         if (answer && atom_is_error(answer))
@@ -26937,7 +26946,7 @@ static Atom *eval_transform_add(void *context, Atom *space_ref, Atom *atom) {
 static bool eval_transform_evaluate(void *context, Arena *a, Atom *expression,
                                     Atom ***results_out, size_t *len_out,
                                     Atom **error_out) {
-    EvalTransformHost *host = context;
+    EvalLibraryHost *host = context;
     *results_out = NULL;
     *len_out = 0u;
     *error_out = NULL;
@@ -27001,35 +27010,151 @@ static bool eval_transform_evaluate(void *context, Arena *a, Atom *expression,
     return true;
 }
 
+/* The HE library's spaces: a registered space or &self.  Anything else the
+ * realization leaves to the library, which reads it as HE's match does. */
+static bool eval_transform_resolve_space_he(void *context, Atom *space_ref,
+                                            Space **space_out) {
+    EvalLibraryHost *host = context;
+    Space *space = g_registry
+        ? resolve_registry_space_payload(g_registry, space_ref) : NULL;
+    if (!space && space_ref && space_ref->kind == ATOM_SYMBOL &&
+        space_ref->sym_id == g_builtin_syms.self)
+        space = host->root;
+    *space_out = space;
+    return space != NULL;
+}
+
+/* The HE library evaluates a `let` conjunct's code as HE's `let` evaluates
+ * its value: every result, an error among them being a value like any other. */
+static bool eval_transform_evaluate_he(void *context, Arena *a,
+                                       Atom *expression, Atom ***results_out,
+                                       size_t *len_out, Atom **error_out) {
+    EvalLibraryHost *host = context;
+    *results_out = NULL;
+    *len_out = 0u;
+    *error_out = NULL;
+    ResultSet values;
+    result_set_init(&values);
+    metta_eval(host->root, a, NULL, expression, host->fuel, &values);
+    if (eval_unwinding() || eval_cancel_check()) {
+        result_set_free(&values);
+        *error_out = atom_error(a, expression,
+                                atom_symbol(a, "TransformLetInterrupted"));
+        return false;
+    }
+    Atom **results = values.len
+        ? cetta_malloc(sizeof(Atom *) * (size_t)values.len) : NULL;
+    for (CettaCount i = 0u; i < values.len; i++)
+        results[i] = values.items[i];
+    *results_out = results;
+    *len_out = (size_t)values.len;
+    result_set_free(&values);
+    return true;
+}
+
+/* While the authored firing of a declined call runs, tf:fire and tf:fire-into
+ * are ordinary heads: their equations open as relation bodies. */
+static _Thread_local bool g_transform_authored;
+
+/* A call the realization declines is answered by the authored firing: the
+ * call runs in the relational machine with the heads' host ownership
+ * suspended, so their equations open as ordinary bodies.  The authored
+ * firing's answers, or the error it raises, are the call's. */
+static bool eval_transform_authored(Space *s, Arena *a, Atom *call, int fuel,
+                                    OutcomeSet *os) {
+    Bindings environment;
+    bindings_init(&environment);
+    OutcomeSet outcomes;
+    outcome_set_init_with_owner(&outcomes, a);
+    bool enclosing_authored = g_transform_authored;
+    bool enclosing_shared = g_he_shared_execution;
+    bool enclosing_active = g_active_petta_search_machine;
+    bool enclosing_raised = g_petta_machine_run_raised;
+    g_transform_authored = true;
+    g_he_shared_execution = false;
+    g_active_petta_search_machine = true;
+    g_petta_machine_run_raised = false;
+    CettaEvalEpisode tracker;
+    eval_completion_child_begin(&tracker);
+    bool handled = petta_eval_machine_run(s, a, call, NULL, fuel,
+        &environment, false, &outcomes, PETTA_RELATION_SAFETY_STATIC,
+        CETTA_SEARCH_CONTROLLER_INLINE_DEPTH_FIRST, false, false);
+    if (!handled && tracker.completion == CETTA_EVAL_COMPLETE)
+        eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+    CettaEvalCompletion completion = eval_completion_child_end(&tracker);
+    bool raised = g_petta_machine_run_raised;
+    g_transform_authored = enclosing_authored;
+    g_he_shared_execution = enclosing_shared;
+    g_active_petta_search_machine = enclosing_active;
+    g_petta_machine_run_raised = enclosing_raised;
+    bindings_free(&environment);
+    if (!handled || completion != CETTA_EVAL_COMPLETE || eval_unwinding() ||
+        eval_cancel_check()) {
+        outcome_set_free(&outcomes);
+        return false;
+    }
+    if (raised && outcomes.len) {
+        Atom *error = outcomes.items[outcomes.len - 1u].atom;
+        outcome_set_free(&outcomes);
+        petta_eval_raise(error);
+        return true;
+    }
+    Bindings empty;
+    bindings_init(&empty);
+    for (CettaCount i = 0u; i < outcomes.len; i++) {
+        Atom *answer = outcome_atom_materialize(a, &outcomes.items[i]);
+        if (answer)
+            outcome_set_add(os, answer, &empty);
+    }
+    outcome_set_free(&outcomes);
+    return true;
+}
+
+/* The PeTTa lane's firing, or the HE lane's: in HE a declined call goes on as
+ * ordinary evaluation of the library's equations, and an error is the
+ * firing's answer, as HE's errors are values. */
 static bool eval_try_transform_fire(Space *s, Arena *a, Atom *atom, int fuel,
                                     const Bindings *environment,
                                     OutcomeSet *os) {
-    if (!cetta_eval_episode_allows_unmetered(g_eval_completion_tracker, fuel) ||
+    bool he = eval_current_language_id() == CETTA_LANGUAGE_HE;
+    CettaTransformDialect dialect = he ? CETTA_TRANSFORM_DIALECT_HE
+                                       : CETTA_TRANSFORM_DIALECT_PETTA;
+    if (g_transform_authored ||
+        !cetta_eval_episode_allows_unmetered(g_eval_completion_tracker, fuel) ||
         gslt_match_chain_trace_active() ||
         (environment && environment->eq_len != 0u) ||
         cetta_delay_holds(g_petta_eval_delay_service) ||
-        !eval_transform_presentation_admitted(s))
+        !eval_transform_presentation_admitted(s, dialect))
         return false;
     Atom *call = environment && !bindings_logically_empty(environment)
         ? bindings_apply_if_vars((Bindings *)environment, a, atom)
         : atom;
-    EvalTransformHost context = {.root = s, .arena = a, .fuel = fuel};
+    EvalLibraryHost context = {.root = s, .arena = a, .fuel = fuel,
+                               .refusal = "TransformMutationRefused"};
     CettaTransformHost host = {
         .context = &context,
-        .resolve_space = eval_transform_resolve_space,
+        .dialect = dialect,
+        .resolve_space = he ? eval_transform_resolve_space_he
+                            : eval_transform_resolve_space,
         .remove_atom = eval_transform_remove,
         .add_atom = eval_transform_add,
-        .evaluate = eval_transform_evaluate,
+        .evaluate = he ? eval_transform_evaluate_he : eval_transform_evaluate,
     };
     Atom *answer = NULL;
     CettaTransformOutcome outcome =
         cetta_transform_fire(s, a, call, &host, &answer);
     if (outcome == CETTA_TRANSFORM_DECLINED)
-        return false;
+        return he ? false : eval_transform_authored(s, a, call, fuel, os);
     /* An error the firing met is raised, as the authored firing raises it
-     * from the `let` or the mutation that met it. */
+     * from the `let` or the mutation that met it; in HE it is the answer. */
     if (outcome == CETTA_TRANSFORM_ERROR) {
-        petta_eval_raise(answer);
+        if (he) {
+            Bindings empty;
+            bindings_init(&empty);
+            outcome_set_add(os, answer, &empty);
+        } else {
+            petta_eval_raise(answer);
+        }
         return true;
     }
     if (outcome == CETTA_TRANSFORM_FIRED) {
@@ -44177,6 +44302,26 @@ static bool petta_eval_machine_tabled_relation_set(
                eval_context->library_context, head, arity, enabled);
 }
 
+static SymbolId petta_eval_machine_tabled_relation_join(
+    void *context, SymbolId head, CettaExprLen arity) {
+    PettaEvalMachineContext *eval_context = context;
+    return eval_context && eval_context->library_context
+        ? cetta_library_petta_tabled_relation_join(
+              eval_context->library_context, head, arity)
+        : SYMBOL_ID_NONE;
+}
+
+static bool petta_eval_machine_tabled_relation_join_set(
+    void *context, SymbolId head, CettaExprLen arity, SymbolId join) {
+    PettaEvalMachineContext *eval_context = context;
+    return eval_context && !eval_context->transaction &&
+           eval_context->library_context &&
+           cetta_library_petta_tabling_enabled(
+               eval_context->library_context) &&
+           cetta_library_petta_tabled_relation_join_set(
+               eval_context->library_context, head, arity, join);
+}
+
 static PeTTaNamedArity petta_eval_machine_foreign_named_arity(
     void *context, SymbolId head, CettaExprLen supplied) {
     PettaEvalMachineContext *eval_context = context;
@@ -46113,14 +46258,46 @@ static bool petta_eval_exec_saturation_host_owned(
 static bool petta_eval_transform_host_owned(
     void *context, Space *space, SymbolId head, CettaExprLen arity) {
     PettaEvalMachineContext *owner = context;
-    return eval_transform_head(head, arity) &&
+    return !g_transform_authored && eval_transform_head(head, arity) &&
         cetta_eval_episode_allows_unmetered(
             g_eval_completion_tracker, owner ? owner->fuel : -1) &&
         eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
         !petta_eval_typed_line() &&
         (!owner || !owner->transaction) &&
         !gslt_match_chain_trace_active() &&
-        eval_transform_presentation_admitted(space);
+        eval_transform_presentation_admitted(space,
+                                             CETTA_TRANSFORM_DIALECT_PETTA);
+}
+
+/* While the library's definition of a declined support call runs, the
+ * support heads are ordinary heads: their equations open as relation bodies. */
+static _Thread_local bool g_support_authored;
+
+static bool eval_support_presentation_admitted(Space *s) {
+    char path[4200];
+    if (!g_library_context || !g_library_context->root_dir[0])
+        return false;
+    int n = snprintf(path, sizeof(path), "%s/lib/petta/lib_support.metta",
+                     g_library_context->root_dir);
+    return n > 0 && (size_t)n < sizeof(path) &&
+           cetta_support_presentation_admitted(s, path);
+}
+
+/* support:open, support:assert, support:retract and support:why are strict
+ * host applications while the library's presentation is live: the machine
+ * evaluates their arguments as their equations would, and the realization
+ * receives the values (eval_support_apply). */
+static bool petta_eval_support_host_owned(
+    void *context, Space *space, SymbolId head, CettaExprLen arity) {
+    PettaEvalMachineContext *owner = context;
+    return !g_support_authored && cetta_support_head(head, arity) &&
+        cetta_eval_episode_allows_unmetered(
+            g_eval_completion_tracker, owner ? owner->fuel : -1) &&
+        eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
+        !petta_eval_typed_line() &&
+        (!owner || !owner->transaction) &&
+        !gslt_match_chain_trace_active() &&
+        eval_support_presentation_admitted(space);
 }
 
 static bool he_shared_native_new_space_ready(Space *space,
@@ -46172,6 +46349,9 @@ static PettaMachineHostMode petta_eval_machine_classify_host(
     if (head->kind == ATOM_SYMBOL && petta_eval_transform_host_owned(
             context, space, head->sym_id, expression->expr.len - 1u))
         return PETTA_MACHINE_HOST_READY_UNCONSTRAINED_REGION;
+    if (head->kind == ATOM_SYMBOL && petta_eval_support_host_owned(
+            context, space, head->sym_id, expression->expr.len - 1u))
+        return PETTA_MACHINE_HOST_STRICT_APPLICATION;
     /* An HE typed head the shared machine admits meets HE's protocol at
      * the dispatch boundary (he_dispatch_host_mode). */
     if (g_he_shared_execution && head->kind == ATOM_SYMBOL) {
@@ -51537,6 +51717,158 @@ static bool petta_value_predicate_answer(
     }
 }
 
+static Space *eval_support_resolve_space(void *context, Atom *space_ref) {
+    Space *space = NULL;
+    return eval_transform_resolve_space(context, space_ref, &space)
+        ? space : NULL;
+}
+
+static Atom *eval_support_add(void *context, Atom *space_ref, Atom *atom) {
+    return eval_transform_mutate(context, g_builtin_syms.add_atom,
+                                 EVAL_SPACE_MUTATION_ADD, space_ref, atom);
+}
+
+static Atom *eval_support_remove(void *context, Atom *space_ref, Atom *atom) {
+    return eval_transform_mutate(context, g_builtin_syms.remove_atom,
+                                 EVAL_SPACE_MUTATION_REMOVE, space_ref, atom);
+}
+
+static Atom *eval_support_new_space(void *context) {
+    EvalLibraryHost *host = context;
+    Atom *head = atom_symbol(host->arena, "new-space");
+    Atom *expression = head ? atom_expr(host->arena, &head, 1u) : NULL;
+    Atom **values = NULL;
+    size_t len = 0u;
+    Atom *error = NULL;
+    bool evaluated = expression &&
+        eval_transform_evaluate(context, host->arena, expression, &values,
+                                &len, &error);
+    Atom *space = evaluated && len == 1u ? values[0] : NULL;
+    free(values);
+    return space;
+}
+
+/* The library's definition of a support call the realization declined, on
+ * the arguments' values: the call runs in the relational machine with the
+ * heads' host ownership suspended and the values bound to fresh variables,
+ * so they are not evaluated again.  Its answers are the call's, with the
+ * bindings it made of variables the values hold; an error it raises is the
+ * call's outcome. */
+static void eval_support_authored(PettaEvalMachineContext *context,
+                                  Space *s, Arena *a, Atom *head,
+                                  Atom *const *values,
+                                  const Bindings *environment,
+                                  OutcomeSet *outcomes,
+                                  CettaCallOutcome *end) {
+    Atom *view = atom_var_with_id(a, "support-handle", fresh_var_id());
+    Atom *atom = atom_var_with_id(a, "support-atom", fresh_var_id());
+    Atom *call = view && atom ? atom_expr3(a, head, view, atom) : NULL;
+    Bindings bound;
+    bool ready = call && bindings_clone(&bound, environment);
+    if (ready)
+        ready = bindings_add_var(&bound, view, values[0]) &&
+                bindings_add_var(&bound, atom, values[1]);
+    OutcomeSet run;
+    outcome_set_init_with_owner(&run, a);
+    bool handled = false;
+    CettaEvalCompletion completion = CETTA_EVAL_COMPLETE;
+    bool raised = false;
+    if (ready) {
+        bool enclosing_authored = g_support_authored;
+        bool enclosing_shared = g_he_shared_execution;
+        bool enclosing_active = g_active_petta_search_machine;
+        bool enclosing_raised = g_petta_machine_run_raised;
+        g_support_authored = true;
+        g_he_shared_execution = false;
+        g_active_petta_search_machine = true;
+        g_petta_machine_run_raised = false;
+        CettaEvalEpisode tracker;
+        eval_completion_child_begin(&tracker);
+        handled = petta_eval_machine_run(s, a, call, NULL, context->fuel,
+            &bound, true, &run, PETTA_RELATION_SAFETY_STATIC,
+            CETTA_SEARCH_CONTROLLER_INLINE_DEPTH_FIRST, false, false);
+        if (!handled && tracker.completion == CETTA_EVAL_COMPLETE)
+            eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+        completion = eval_completion_child_end(&tracker);
+        raised = g_petta_machine_run_raised;
+        g_support_authored = enclosing_authored;
+        g_he_shared_execution = enclosing_shared;
+        g_active_petta_search_machine = enclosing_active;
+        g_petta_machine_run_raised = enclosing_raised;
+    }
+    if (call)
+        bindings_free(&bound);
+    if (!ready || !handled || completion != CETTA_EVAL_COMPLETE ||
+        eval_unwinding() || eval_cancel_check()) {
+        if (!ready)
+            eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+        if (end)
+            *end = cetta_call_interrupted();
+    } else if (raised && run.len) {
+        if (end)
+            *end = cetta_call_raised(run.items[run.len - 1u].atom);
+    } else {
+        bool open = atom_has_vars(values[0]) || atom_has_vars(values[1]);
+        for (CettaCount i = 0u; i < run.len; i++) {
+            Atom *answer = outcome_atom_materialize(a, &run.items[i]);
+            if (answer)
+                petta_ready_add_answer(context, a, outcomes,
+                                       open ? &run.items[i].env : environment,
+                                       answer);
+        }
+    }
+    outcome_set_free(&run);
+}
+
+/* support:open, support:assert, support:retract or support:why on its
+ * arguments' values: the realization's answer or error, or on a decline the
+ * library's definition. */
+static bool eval_support_apply(PettaEvalMachineContext *context, Space *space,
+                               Arena *arena,
+                               const CettaInvocation *invocation,
+                               const Bindings *environment,
+                               OutcomeSet *outcomes, CettaCallOutcome *end) {
+    Atom *const *arguments = cetta_invocation_borrow_arguments(invocation);
+    if (!arguments)
+        arguments = cetta_invocation_materialize_arguments(arena, invocation);
+    if (!arguments)
+        return false;
+    Atom *values[2] = {
+        bindings_apply_if_vars(environment, arena, arguments[0]),
+        bindings_apply_if_vars(environment, arena, arguments[1]),
+    };
+    Atom *head = invocation->head.skeleton;
+    Atom *call = values[0] && values[1]
+        ? atom_expr3(arena, head, values[0], values[1]) : NULL;
+    if (!call)
+        return false;
+    EvalLibraryHost library = {.root = space, .arena = arena,
+                               .fuel = context->fuel,
+                               .refusal = "SupportMutationRefused"};
+    CettaSupportHost host = {
+        .context = &library,
+        .resolve_space = eval_support_resolve_space,
+        .add = eval_support_add,
+        .remove = eval_support_remove,
+        .new_space = eval_support_new_space,
+    };
+    Atom *answer = NULL;
+    CettaSupportOutcome outcome =
+        cetta_support_call(space, arena, call, &host, &answer);
+    if (outcome == CETTA_SUPPORT_ANSWERED) {
+        petta_ready_add_answer(context, arena, outcomes, environment, answer);
+        return true;
+    }
+    if (outcome == CETTA_SUPPORT_ERROR) {
+        if (end)
+            *end = cetta_call_raised(answer);
+        return true;
+    }
+    eval_support_authored(context, space, arena, head, values, environment,
+                          outcomes, end);
+    return true;
+}
+
 /* Apply an admitted operation to the values already computed by the machine.
  * Language forms, mutation/import protocols, transactions and open operands
  * retain their ordinary owners. Completion is the same service used by an
@@ -51560,6 +51892,14 @@ static bool petta_eval_machine_apply_ready_values(
         if (signature)
             return he_dispatch_apply_ready(space, arena, invocation, signature,
                 eval_context->fuel, environment, outcomes, end);
+    }
+    if (eval_current_language_id() == CETTA_LANGUAGE_PETTA) {
+        CettaExprLen support_arity = 0u;
+        if (cetta_invocation_arity(invocation, &support_arity) &&
+            petta_eval_support_host_owned(context, space, head->sym_id,
+                                          support_arity))
+            return eval_support_apply(eval_context, space, arena, invocation,
+                                      environment, outcomes, end);
     }
     PeTTaForm form = petta_semantics_form(head->sym_id);
     if (eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
@@ -51606,6 +51946,12 @@ static bool petta_eval_machine_apply_ready_values(
     petta_eval_machine_deliver_native_return(
         context, space, arena, native_outcome, environment, outcomes, end, &completion);
     return true;
+}
+
+static bool petta_eval_machine_result_long_lived(void *context, const Atom *head) {
+    (void)context;
+    return head && head->kind == ATOM_SYMBOL &&
+           cetta_library_result_long_lived(g_library_context, head->sym_id);
 }
 
 static bool petta_eval_machine_evaluate_planned_host(
@@ -53591,6 +53937,8 @@ static PettaMachineHost petta_eval_machine_host(
             petta_eval_machine_evaluate_planned_host,
         .apply_ready_values = prime_machine
             ? NULL : petta_eval_machine_apply_ready_values,
+        .result_long_lived = prime_machine
+            ? NULL : petta_eval_machine_result_long_lived,
         .deliver_native_return = petta_eval_machine_deliver_native_return,
         .translate_source = !prime_machine && !portable_machine
             ? petta_eval_machine_translate_source : NULL,
@@ -53692,6 +54040,10 @@ static PettaMachineHost petta_eval_machine_host(
                 : NULL,
         .tabled_relation_set =
             petta_eval_machine_tabled_relation_set,
+        .tabled_relation_join =
+            petta_eval_machine_tabled_relation_join,
+        .tabled_relation_join_set =
+            petta_eval_machine_tabled_relation_join_set,
         /* The session lease is serial. Workers use a private root table;
          * synchronous child machines still share that root's table. */
         .shared_table = !cetta_parallel_worker_active() && context->library_context
@@ -57752,6 +58104,8 @@ static bool petta_eval_open_body_admitted(
         return false;
     if (petta_eval_transform_host_owned(context, space, head, arity))
         return false;
+    if (petta_eval_support_host_owned(context, space, head, arity))
+        return false;
     if (eval_petta_builtin_definition_protected(
             g_registry, space, head, (CettaExprLen)arity))
         return false;
@@ -59372,7 +59726,8 @@ tail_call: ;
         head_id == g_builtin_syms.exec_saturate &&
         eval_try_exec_saturation(s, a, atom, fuel, CURRENT_ENV, os))
         return;
-    if (language_id == CETTA_LANGUAGE_PETTA && !petta_eval_typed_line() &&
+    if ((language_id == CETTA_LANGUAGE_HE ||
+         (language_id == CETTA_LANGUAGE_PETTA && !petta_eval_typed_line())) &&
         eval_transform_head(head_id, (CettaExprLen)nargs) &&
         eval_try_transform_fire(s, a, atom, fuel, CURRENT_ENV, os))
         return;

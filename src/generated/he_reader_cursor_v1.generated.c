@@ -10,7 +10,7 @@
 #include "parser_pack_guarded_lexical_exec_v1.h"
 
 const char *he_reader_cursor_v1_program_digest(void) {
-    return "f927f1e92f90096badf4f982f0182b3f8db0fdecbc323279b2a109cec01762e5";
+    return "a70a6d239e96c076ccec07fb310d2f966509d4d5f16ee8c62dcf924ba7d748b7";
 }
 
 static bool he_reader_cursor_v1_copy(void **target, const void *source, size_t size,
@@ -37812,11 +37812,11 @@ bool he_reader_cursor_v1_program_init(PPGuardedLexCursorV1Program *out,
     memcpy(result.actions.program_digest, "89e7f3507b352bb24acaca25c47207591816d63f8b5a67bd3e6839478329d620", sizeof(result.actions.program_digest));
     memcpy(result.base_pack_digest, "a0334e22b53a8319b23870d008af3fcdd27426f26bffd09f14f54565c12936c0", sizeof(result.base_pack_digest));
     memcpy(result.lexical_plan_digest, "fb8658f0924ad4933dc75fb6e749687d1b63efaa94613aaf780362e041cc799b", sizeof(result.lexical_plan_digest));
-    memcpy(result.guard_plan_digest, "1302f1eba1e7c64223c3d40498df28766d6931f077fe9b159847013d1c03b895", sizeof(result.guard_plan_digest));
-    memcpy(result.guarded_plan_digest, "c782d8a7d08f1f4b5004855f286bbb90367c9699230a49cdcf96f5f91f03aecf", sizeof(result.guarded_plan_digest));
-    memcpy(result.execution_plan_digest, "73f10ee4fb310df6006c2bce635e584eebbd4260fd2d039d3efecd2da6b56b35", sizeof(result.execution_plan_digest));
-    memcpy(result.certificate_digest, "f474ce55b85bb50dd78f33be2361a2722e732e046ae16b39b1afdabfb8e0195f", sizeof(result.certificate_digest));
-    memcpy(result.program_digest, "f927f1e92f90096badf4f982f0182b3f8db0fdecbc323279b2a109cec01762e5", sizeof(result.program_digest));
+    memcpy(result.guard_plan_digest, "dfadfc60be00017f041a2e07c989799d082e6880828df7171b052a7d5691dd4b", sizeof(result.guard_plan_digest));
+    memcpy(result.guarded_plan_digest, "dda185ffb9d9f10c2939d6ec611cf1d6ed8084ec6844c3685e349cd64a68b760", sizeof(result.guarded_plan_digest));
+    memcpy(result.execution_plan_digest, "a6019975436f6409d068e2d9a84705333752a83c67ddc339220e9745240b613a", sizeof(result.execution_plan_digest));
+    memcpy(result.certificate_digest, "5f17034b0dcad10a328751d3e1ca29f23b1a32f9059db85b6ba5f85a67e01151", sizeof(result.certificate_digest));
+    memcpy(result.program_digest, "a70a6d239e96c076ccec07fb310d2f966509d4d5f16ee8c62dcf924ba7d748b7", sizeof(result.program_digest));
     if (!ppguarded_lex_cursor_v1_program_validate(
             &result, error_buf, error_buf_size)) goto fail;
     ppguarded_lex_cursor_v1_program_free(out);

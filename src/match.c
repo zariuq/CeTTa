@@ -8195,12 +8195,19 @@ static bool bindings_captured_support_present(const Atom *atom, void *unused) {
     return !captured || captured->support_count != 0u;
 }
 
+/* A captured bindings value is identity-bearing, and the flag rises to every
+ * expression holding one: a subterm without it holds none. */
+static bool bindings_support_barrier(const Atom *atom, void *unused) {
+    (void)unused;
+    return !atom_has_identity_grounded(atom);
+}
+
 bool bindings_value_has_captured_support(const Atom *value) {
     if (!value || !atom_has_identity_grounded(value))
         return false;
     bool complete = false;
     bool found = atom_graph_any_checked(value, bindings_captured_support_present,
-        NULL, NULL, SIZE_MAX, &complete);
+        bindings_support_barrier, NULL, SIZE_MAX, &complete);
     return !complete || found;
 }
 

@@ -5,35 +5,56 @@
 ;
 ; SOURCES is one conjunct, a conjunction (, c1 ... cn), or () for one empty row.
 ;
-;   p                      read one stored atom matching p (a choice among the matches)
+;   p                      read a stored atom matching p (one branch per match)
 ;   (read [S] p)           the same, explicitly; it also matches atoms headed by a mode word
 ;   (take [S] p)           consume the matched occurrence
 ;   (absent [S] p)         no stored atom matches p
-;   (unique c)             exactly one match of c
-;   (all c C)              every match of c, collected as one value matched against C;
+;   (unique c)             exactly one match of c (a joint match, when c's pattern is
+;                          a conjunction)
+;   (collect c C)          every match of c, collected as one value matched against C;
 ;                          a take-mode c takes every member
 ;   (let P E)              E is evaluated before the commit and matched against P;
 ;                          no result means no row
-;   (every c)              from here on every match: all of them fire in this one commit
+;   (all c)                from here on every match: all of them fire in this one commit
+;   (once c)               from here on the first match that holds: it alone fires
 ;
 ; S names the space of a conjunct; it defaults to SPACE.
 ;
-; Firing.  The conjuncts before the first `every` form the kernel: one kernel match
-; fires, the first in match order whose footprint validates.  From the first `every`
-; on, every extension of that kernel match fires in the same commit, so
-; (, (every p) (every q)) is every pair.  A footprint validates when each taken atom
-; is stored with at least the multiplicity the firing takes, plus one more copy when
-; the firing also reads that atom.  A read-mode `all` is a condition on the store
-; before the commit and keeps nothing, so a rule may take what its condition counted.
-; The commit removes the takes and then routes the instances.  Nothing runs between
-; validation and the commit.
+; Firing.  A transform answers as `match` does: the conjuncts before the first `all`
+; or `once` form the kernel, and each kernel match against the store as it is when
+; the transform is called is one branch.  A branch is the match it stands for: it
+; fires if the atoms its reads and takes matched are still there when it runs, and
+; its other conditions are evaluated then, each with its own variables free: absence
+; and collections over the store at that moment, a unique counted again with its one
+; match the atom the proposal matched, and lets; a branch whose atom an earlier branch took
+; fires nothing.  With reads alone and no `once`, a transform gives exactly the
+; answers `match` gives.  From the first `all` on, every extension of the branch's
+; kernel match fires in the branch's one commit, so (, (all p) (all q)) is every
+; pair, and a `once` after it is part of that extension.  From a `once` before any
+; `all`, the first extension that holds fires alone.  (once (transform ...)) gives
+; the first answer, and a firing without instances gives none, so it may fire more
+; than one branch; a `once` among the sources fires one extension in each branch.
+; A footprint
+; validates when each taken atom is stored with at least the multiplicity the firing
+; takes, plus one more copy when the firing also reads that atom.  A read-mode
+; `collect` is a condition on the store before the commit and keeps nothing, so a
+; rule may take what its condition counted.  The commit removes the takes and then
+; routes the instances.  Nothing runs between validation and the commit.
+;
+; `,` is conjunction where a query is read and a constructor where data is.  A read
+; or take of a pattern headed by `,` reads or takes each part, and absent, unique and
+; collect of one range over its joint matches: reads may meet one occurrence twice,
+; takes need distinct occurrences, and a take never makes an atom.  Templates, let
+; patterns and stored atoms are data, so a stored atom headed by `,` is reached by a
+; pattern that is not (a variable, say), as `match` reaches it.
 ;
 ; TEMPLATE is instantiated as data by each fired row, as add-atom stores its argument;
-; a template (, t1 ... tn) gives n instances per row.  DESTINATION is a space, which
+; a template (, t1 ... tn) gives n instances per row, by its own syntax: a value a
+; source bound to a comma expression is one instance.  DESTINATION is a space, which
 ; receives the instances and the transform answers how many it routed, or a function,
 ; applied to each instance after the commit.  Without one, each instance is evaluated
-; after the commit, as `match` evaluates its template.  A kernel with no validating
-; match fires nothing and answers nothing; an `every` with no extension fires with no
+; after the commit, as `match` evaluates its template.  A kernel with no match that
+; holds fires nothing and answers nothing; an `all` with no extension fires with no
 ; instances.
 ;
 ; A `let` expression and a template evaluated by the caller are code whose variables
@@ -47,9 +68,13 @@
 ; How the firing is computed.  lib_transform_specs defines the same operation directly
 ; from this description; this library gives the same answers and leaves the same store.
 ;
-; - Without a `let` among the sources, nothing in the proposal runs code, so the
-;   search stops at the first candidate whose footprint validates (`once`).  With a
-;   `let`, every candidate is proposed before any is validated.
+; - The kernel's matches are proposed once, from the store at the call, each as the
+;   atoms its reads, takes and unique conjuncts matched.  A branch fires the original
+;   sources with each of those conjuncts guided to its atom ((tf:as P A) unifies the
+;   pattern with it), so the match is checked again against the store when it runs.
+; - Within a firing, without a `let` among the sources, nothing in the proposal runs
+;   code, so the search stops at the first candidate whose footprint validates
+;   (`once`).  With a `let`, every candidate is proposed before any is validated.
 ; - Footprints are built front first and reversed once, so a firing of n rows costs
 ;   its length rather than its square.
 ; - A footprint whose atoms are ground and pairwise distinct validates without
@@ -67,14 +92,68 @@
    (tf:run $space $sources $template $destination))
 
 (= (tf:run $space $sources $template $destination)
-   (let $plain (tf:conjuncts $sources)
+   (let $plain (tf:normalize (tf:conjuncts $sources))
      (let $vars (tf:source-vars $plain ())
        (let $conjuncts (tf:protect-lets $vars $plain)
          (let $instance (if (== $destination tf:caller) (tf:protect $vars $template) $template)
-           (if (is-space $destination)
-               (tf:fire-into $space $conjuncts $instance $destination)
-               (let (tf:fired $instances) (tf:fire $space $conjuncts $instance)
-                 (tf:route $instances $destination))))))))
+           (let $matches (tf:proposals $space $conjuncts $instance)
+             (let (tf:kmatch $guide) (superpose $matches)
+               (let $kc (tf:guided $conjuncts $guide)
+                 (if (is-space $destination)
+                     (tf:fire-into $space $kc $instance $destination)
+                     (let $comma (tf:comma $instance)
+                       (let (tf:fired $instances) (tf:fire $space $kc $instance)
+                         (tf:route $comma $instances $destination))))))))))))
+
+; The kernel's matches against the store as it is when the transform is called, each
+; as (tf:kmatch GUIDE): the atoms its read, take and unique conjuncts matched, in
+; conjunct order.  Each becomes one branch.
+(= (tf:proposals $space $conjuncts $template)
+   (collapse (tf:walk $space $conjuncts () $template tf:propose)))
+
+; A branch's sources: the original conjuncts, each kernel read or take of a pattern
+; P whose proposal matched the atom A becoming that access of A with (tf:as P A), and
+; a kernel unique followed by (tf:as P A).  So the branch fires the match it stands
+; for if those atoms are still there, and its other conditions (absence, unique's
+; count, collections and lets) are evaluated when it fires, each with its own
+; variables free.
+(= (tf:guided $cs $guide)
+   (if (== $cs ()) ()
+     (let ($c $rest) (decons-atom $cs)
+       (let $mode (tf:mode $c)
+         (if (is-member $mode (all once)) $cs
+           (if (is-member $mode (absent collect let))
+               (let $more (tf:guided $rest $guide) (cons-atom $c $more))
+               (let (tf:at $_m $_s $p) (tf:locate-in $c)
+                 (if (and (== $mode unique) (tf:comma $p))
+                     ; a unique joint match: one guide entry per part, bound as the tuple
+                     (let (tf:taken $atoms $guide2) (tf:take-guide (- (size-atom $p) 1) $guide ())
+                       (let $as (tf:triple tf:as $p (cons-atom , $atoms))
+                         (let $more (tf:guided $rest $guide2) (cons-atom $c (cons-atom $as $more)))))
+                     (let ($e $guide2) (decons-atom $guide)
+                       (let ($use $s $a) $e
+                         (let $as (tf:triple tf:as $p $a)
+                           (let $more (tf:guided $rest $guide2)
+                             (if (== $mode unique)
+                                 (cons-atom $c (cons-atom $as $more))
+                                 (let $access (tf:triple $use $s $a)
+                                   (cons-atom $access (cons-atom $as $more))))))))))))))))
+
+; The atoms of the next N guide entries, and the guide after them.
+(= (tf:take-guide $n $guide $acc)
+   (if (== $n 0) (tf:taken (tf:rev-onto $acc ()) $guide)
+     (let ($e $more) (decons-atom $guide)
+       (let ($_use $_s $a) $e
+         (tf:take-guide (- $n 1) $more (cons-atom $a $acc))))))
+
+; The pattern of a read, take or unique conjunct, without resolving its space.
+(= (tf:locate-in $c)
+   (let $mode (tf:mode $c)
+     (if (== $mode tf:plain) (tf:at read none $c)
+       (if (== $mode unique) (tf:locate-in (car-atom (cdr-atom $c)))
+         (if (== (size-atom $c) 3)
+             (let ($_m $_s $p) (tf:parts $c) (tf:at $mode none $p))
+             (tf:at $mode none (car-atom (cdr-atom $c))))))))
 
 ; One firing: commit the first candidate whose footprint validates and answer
 ; (tf:fired INSTANCES), one instance per fired row, in row order; nothing when none
@@ -90,16 +169,19 @@
 ; The same firing into a destination space: its instances are added after the commit
 ; and the answer is how many.
 (= (tf:fire-into $space $conjuncts $template $destination)
-   (let (tf:fired $instances) (tf:fire $space $conjuncts $template)
-     (tf:add-all $destination (tf:split $instances) 0)))
+   (let $comma (tf:comma $template)
+     (let (tf:fired $instances) (tf:fire $space $conjuncts $template)
+       (tf:add-all $destination (tf:split $comma $instances) 0))))
 
 (= (tf:has-let $cs)
    (if (== $cs ()) False
      (let ($c $more) (decons-atom $cs)
        (case (tf:mode $c)
          ((let True)
-          (every (if (tf:has-let (tf:conjuncts (car-atom (cdr-atom $c)))) True
+          (all (if (tf:has-let (tf:conjuncts (car-atom (cdr-atom $c)))) True
                    (tf:has-let $more)))
+          (once (if (tf:has-let (tf:conjuncts (car-atom (cdr-atom $c)))) True
+                  (tf:has-let $more)))
           ($_other (tf:has-let $more)))))))
 
 ;; ---- code and data ----------------------------------------------------------------
@@ -112,7 +194,8 @@
 (= (tf:conjunct-vars $c $acc)
    (case (tf:mode $c)
      ((let (let ($l $pattern $expression) (tf:parts $c) (tf:vars $pattern $acc)))
-      (every (tf:source-vars (tf:conjuncts (car-atom (cdr-atom $c))) $acc))
+      (all (tf:source-vars (tf:conjuncts (car-atom (cdr-atom $c))) $acc))
+      (once (tf:source-vars (tf:conjuncts (car-atom (cdr-atom $c))) $acc))
       ($_other (tf:vars $c $acc)))))
 
 (= (tf:vars $e $acc)
@@ -153,11 +236,54 @@
    (case (tf:mode $c)
      ((let (let ($l $pattern $expression) (tf:parts $c)
              (let $pe (tf:protect $vars $expression) (tf:triple $l $pattern $pe))))
-      (every (let $inner (tf:protect-lets $vars (tf:conjuncts (car-atom (cdr-atom $c))))
-               (let $wrapped (cons-atom , $inner) (cons-atom every (cons-atom $wrapped ())))))
+      (all (let $inner (tf:protect-lets $vars (tf:conjuncts (car-atom (cdr-atom $c))))
+               (let $wrapped (cons-atom , $inner) (cons-atom all (cons-atom $wrapped ())))))
+      (once (let $inner (tf:protect-lets $vars (tf:conjuncts (car-atom (cdr-atom $c))))
+                (let $wrapped (cons-atom , $inner) (cons-atom once (cons-atom $wrapped ())))))
       ($_other $c))))
 
 ;; ---- conjuncts --------------------------------------------------------------------
+
+; ',' is conjunction where a query is read and a constructor where data is.  Reading
+; the sources splices a conjunction nested in the conjunction, and a read or take of
+; a pattern headed by ',' (an access of each part, in the conjunct's space), into the
+; conjunction they sit in; all and once bodies are read the same way.  absent,
+; unique and collect read a pattern headed by ',' as a query over its joint matches.
+; Templates, let patterns and values, and the atoms a branch accesses exactly are data.
+(= (tf:normalize $cs)
+   (if (== $cs ()) ()
+     (let ($c $more) (decons-atom $cs)
+       (let $head (tf:normal-conjunct $c)
+         (let $tail (tf:normalize $more) (tf:append $head $tail))))))
+
+(= (tf:normal-conjunct $c)
+   (if (tf:comma $c) (tf:normalize (cdr-atom $c))
+     (let $mode (tf:mode $c)
+       (if (is-member $mode (read take))
+           (let (tf:at $_m $_s $p) (tf:locate-in $c)
+             (if (tf:comma $p)
+                 (tf:normalize (tf:accesses $c (cdr-atom $p)))
+                 (cons-atom $c ())))
+           (if (is-member $mode (all once))
+               (let $body (tf:normalize (tf:conjuncts (car-atom (cdr-atom $c))))
+                 (let $wrapped (if (== $body ()) () (cons-atom , $body))
+                   (cons-atom (cons-atom $mode (cons-atom $wrapped ())) ())))
+               (cons-atom $c ()))))))
+
+; The conjunct's access of each part: (read p1) ..., or (read S p1) ...
+(= (tf:accesses $c $parts)
+   (if (== $parts ()) ()
+     (let ($p $more) (decons-atom $parts)
+       (let $one (if (== (size-atom $c) 3)
+                     (tf:triple (car-atom $c) (car-atom (cdr-atom $c)) $p)
+                     (cons-atom (car-atom $c) (cons-atom $p ())))
+         (let $tail (tf:accesses $c $more) (cons-atom $one $tail))))))
+
+; The atom A itself, matched as data when it is headed by ',': as ($h a1 ... an) with
+; $h then ','.  BODY is the match's template.
+(= (tf:exact $s $a $body)
+   (let $q (cons-atom $h (cdr-atom $a))
+     (match $s $q (if (== $h ,) $body (empty)))))
 
 (= (tf:comma $x)
    (if (== (get-metatype $x) Expression)
@@ -173,7 +299,7 @@
        (if (== $c ()) tf:plain
          (let $head (car-atom $c)
            (if (== (get-metatype $head) Variable) tf:plain
-             (if (is-member $head (read take absent unique all every let)) $head tf:plain))))
+             (if (is-member $head (read take absent unique collect all once let tf:as)) $head tf:plain))))
        tf:plain))
 
 (= (tf:locate $space $c)
@@ -213,27 +339,47 @@
          (tf:conjunct $space $c $rest $fp $template $phase))))
 
 (= (tf:finish $fp $template $phase)
-   (if (== $phase tf:kernel)
-       (let $row (tf:row () $template) (tf:cand $fp (cons-atom $row ())))
-       (tf:row $fp $template)))
+   (if (== $phase tf:propose) (tf:proposal $fp)
+     (if (== $phase tf:kernel)
+         (let $row (tf:row () $template) (tf:cand $fp (cons-atom $row ())))
+         (tf:row $fp $template))))
 
 (= (tf:conjunct $space $c $rest $fp $template $phase)
    (let $mode (tf:mode $c)
      (case $mode
-       ((every (tf:every $space $c $rest $fp $template $phase))
+       ((tf:as (tf:as-conj $space $c $rest $fp $template $phase))
+        (all (tf:all $space $c $rest $fp $template $phase))
+        (once (tf:once $space $c $rest $fp $template $phase))
         (let (tf:let $space $c $rest $fp $template $phase))
         (unique (tf:unique $space $c $rest $fp $template $phase))
-        (all (tf:all $space $c $rest $fp $template $phase))
+        (collect (tf:collect $space $c $rest $fp $template $phase))
         (absent (tf:absent $space $c $rest $fp $template $phase))
         ($_other (tf:match $space $c $rest $fp $template $phase))))))
 
-(= (tf:every $space $c $rest $fp $template $phase)
-   (let $inner (car-atom (cdr-atom $c))
-     (let $cs (tf:append (tf:conjuncts $inner) $rest)
-       (if (== $phase tf:kernel)
-           (let $rows (collapse (tf:walk $space $cs () $template tf:extension))
-             (tf:cand $fp $rows))
-           (tf:walk $space $cs $fp $template $phase)))))
+; A proposal: its kernel footprint in conjunct order.
+(= (tf:proposal $fp) (let $guide (tf:rev-onto $fp ()) (tf:kmatch $guide)))
+
+; `once` scopes to the right like `all`: the matches before it are branches, and
+; within a branch its inner conjuncts and everything after it are plain conjuncts of
+; the branch's one firing, which commits the first candidate that validates.
+(= (tf:once $space $c $rest $fp $template $phase)
+   (if (== $phase tf:propose) (tf:proposal $fp)
+     (let $cs (tf:append (tf:conjuncts (car-atom (cdr-atom $c))) $rest)
+       (tf:walk $space $cs $fp $template $phase))))
+
+(= (tf:all $space $c $rest $fp $template $phase)
+   (if (== $phase tf:propose) (tf:proposal $fp)
+     (let $inner (car-atom (cdr-atom $c))
+       (let $cs (tf:append (tf:conjuncts $inner) $rest)
+         (if (== $phase tf:kernel)
+             (let $rows (collapse (tf:walk $space $cs () $template tf:extension))
+               (tf:cand $fp $rows))
+             (tf:walk $space $cs $fp $template $phase))))))
+
+; (tf:as P A): the branch's pattern P is the atom A its proposal matched.
+(= (tf:as-conj $space $c $rest $fp $template $phase)
+   (let ($_as $p $a) (tf:parts $c)
+     (let $p $a (tf:walk $space $rest $fp $template $phase))))
 
 (= (tf:let $space $c $rest $fp $template $phase)
    (let ($_l $pattern $expression) (tf:parts $c)
@@ -246,22 +392,78 @@
        (if (== (size-atom $found) 1)
            (let $one (car-atom $found)
              (let $p $one
-               (let $fp2 (cons-atom (tf:triple $mode $s $one) $fp)
+               (let $fp2 (tf:entries-onto $mode $s $one (tf:comma $p) $fp)
                  (tf:walk $space $rest $fp2 $template $phase))))
            (empty)))))
 
-(= (tf:all $space $c $rest $fp $template $phase)
+(= (tf:collect $space $c $rest $fp $template $phase)
    (let ($_a $inner $collection) (tf:parts $c)
      (let (tf:at $mode $s $p) (tf:locate $space $inner)
-       (let $found (collapse (match $s $p $p))
-         (let $collection $found
-           (let $fp2 (if (== $mode take) (tf:takes-onto $s $found $fp) $fp)
-             (tf:walk $space $rest $fp2 $template $phase)))))))
+       (let $joint (tf:comma $p)
+         (let $all (collapse (match $s $p $p))
+           (let $found (if (and (== $mode take) $joint) (tf:distinct-tuples $s $all) $all)
+             (let $collection $found
+               (let $fp2 (if (and (== $mode take) (not (== $phase tf:propose)))
+                             (tf:takes-onto $s $found $joint $fp) $fp)
+                 (tf:walk $space $rest $fp2 $template $phase)))))))))
 
-(= (tf:takes-onto $s $atoms $fp)
+; A match of a pattern headed by ',' is a joint match: its footprint is each atom of
+; the tuple, pushed in order onto the (reversed) footprint.
+(= (tf:entries-onto $mode $s $match $joint $fp)
+   (if $joint (tf:each-onto $mode $s (cdr-atom $match) $fp) (cons-atom (tf:triple $mode $s $match) $fp)))
+
+(= (tf:each-onto $mode $s $atoms $fp)
    (if (== $atoms ()) $fp
      (let ($a $more) (decons-atom $atoms)
-       (tf:takes-onto $s $more (cons-atom (tf:triple take $s $a) $fp)))))
+       (tf:each-onto $mode $s $more (cons-atom (tf:triple $mode $s $a) $fp)))))
+
+; A take-mode collect's footprint: for one pattern, each matched occurrence; over a
+; conjunction, the occurrences that take part in some joint match, each taken once,
+; that is every stored copy of each participating atom.
+(= (tf:takes-onto $s $matches $joint $fp)
+   (if $joint
+       (tf:every-copy-onto $s (tf:participants $matches ()) $fp)
+       (if (== $matches ()) $fp
+         (let ($a $more) (decons-atom $matches)
+           (tf:takes-onto $s $more $joint (cons-atom (tf:triple take $s $a) $fp))))))
+
+; The distinct atoms of the tuples, in order of first appearance.
+(= (tf:participants $tuples $seen)
+   (if (== $tuples ()) (tf:rev-onto $seen ())
+     (let ($t $more) (decons-atom $tuples)
+       (tf:participants $more (tf:add-new (cdr-atom $t) $seen)))))
+
+(= (tf:add-new $atoms $seen)
+   (if (== $atoms ()) $seen
+     (let ($a $more) (decons-atom $atoms)
+       (tf:add-new $more (if (is-alpha-member $a $seen) $seen (cons-atom $a $seen))))))
+
+(= (tf:every-copy-onto $s $atoms $fp)
+   (if (== $atoms ()) $fp
+     (let ($a $more) (decons-atom $atoms)
+       (tf:every-copy-onto $s $more (tf:copies-onto $s $a (tf:stored $s $a) $fp)))))
+
+(= (tf:copies-onto $s $a $n $fp)
+   (if (<= $n 0) $fp
+     (tf:copies-onto $s $a (- $n 1) (cons-atom (tf:triple take $s $a) $fp))))
+
+; The joint matches whose take positions are distinct occurrences: no atom more
+; often in the tuple than it is stored.
+(= (tf:distinct-tuples $s $tuples)
+   (if (== $tuples ()) ()
+     (let ($t $more) (decons-atom $tuples)
+       (let $tail (tf:distinct-tuples $s $more)
+         (if (tf:fits $s (cdr-atom $t) (cdr-atom $t)) (cons-atom $t $tail) $tail)))))
+
+(= (tf:fits $s $atoms $all)
+   (if (== $atoms ()) True
+     (let ($a $more) (decons-atom $atoms)
+       (if (<= (tf:occurrences $a $all) (tf:stored $s $a)) (tf:fits $s $more $all) False))))
+
+(= (tf:occurrences $a $xs)
+   (if (== $xs ()) 0
+     (let ($x $more) (decons-atom $xs)
+       (let $n (tf:occurrences $a $more) (if (=alpha $x $a) (+ $n 1) $n)))))
 
 (= (tf:absent $space $c $rest $fp $template $phase)
    (let (tf:at $_m $s $p) (tf:locate $space $c)
@@ -269,11 +471,17 @@
          (tf:walk $space $rest $fp $template $phase)
          (empty))))
 
+; Read sources hold no pattern headed by ',' here, so one is an atom a branch
+; accesses exactly, which is data.
 (= (tf:match $space $c $rest $fp $template $phase)
    (let (tf:at $mode $s $p) (tf:locate $space $c)
-     (match $s $p
-       (let $fp2 (cons-atom (tf:triple $mode $s $p) $fp)
-         (tf:walk $space $rest $fp2 $template $phase)))))
+     (if (tf:comma $p)
+         (tf:exact $s $p
+           (let $fp2 (cons-atom (tf:triple $mode $s $p) $fp)
+             (tf:walk $space $rest $fp2 $template $phase)))
+         (match $s $p
+           (let $fp2 (cons-atom (tf:triple $mode $s $p) $fp)
+             (tf:walk $space $rest $fp2 $template $phase))))))
 
 ;; ---- validation -------------------------------------------------------------------
 ; The footprint of a candidate is its kernel's, then each row's in row order.
@@ -326,7 +534,10 @@
        (let $n (tf:count $entry $more)
          (if (=alpha $e $entry) (+ $n 1) $n)))))
 
-(= (tf:stored $s $a) (size-atom (collapse (match $s $a found))))
+(= (tf:stored $s $a)
+   (if (tf:comma $a)
+       (size-atom (collapse (tf:exact $s $a found)))
+       (size-atom (collapse (match $s $a found)))))
 
 (= (tf:valid $all $todo)
    (if (== $todo ()) True
@@ -381,14 +592,20 @@
 
 ;; ---- routing ----------------------------------------------------------------------
 
-(= (tf:split $instances)
+; The instances of a firing: a template (, t1 ... tn) gives the n parts of each, any
+; other template its instances whole.  The template's own syntax decides, read before
+; the firing binds its variables; a value a source bound to a comma expression stays
+; one instance.  COMMA is that reading.
+(= (tf:split $comma $instances)
+   (if $comma (tf:parts-of $instances) $instances))
+
+(= (tf:parts-of $instances)
    (if (== $instances ()) ()
      (let ($i $more) (decons-atom $instances)
-       (let $tail (tf:split $more)
-         (if (tf:comma $i) (tf:append (cdr-atom $i) $tail) (cons-atom $i $tail))))))
+       (let $tail (tf:parts-of $more) (tf:append (cdr-atom $i) $tail)))))
 
-(= (tf:route $instances $destination)
-   (let $all (tf:split $instances)
+(= (tf:route $comma $instances $destination)
+   (let $all (tf:split $comma $instances)
      (if (== $destination tf:caller)
          (let $instance (superpose $all) (eval $instance))
          (let $instance (superpose $all) (reduce ($destination $instance))))))
