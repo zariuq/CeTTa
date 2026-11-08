@@ -2015,10 +2015,8 @@ static bool petta_observed_view(Atom *node, bool raw, PeTTaObservedView *view) {
         view->list = atom_is_list(end);
         if (!view->list) {
             /* The expression the chain spells, read in place. */
-            Atom spelled = {0};
-            spelled.kind = ATOM_EXPR;
-            spelled.expr.elems = view->items.items;
-            spelled.expr.len = view->len;
+            Atom spelled;
+            atom_init_expr_view(&spelled, view->items.items, view->len);
             if (petta_materialize_opaque_value(&spelled))
                 return false;
         }

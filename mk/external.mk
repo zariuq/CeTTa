@@ -74,9 +74,10 @@
 #   TPTP_VAMPIRE_V1
 #
 # Published corpora
-#   TPTP_OFFICIAL_SYNTAX_BNF_V1  The TPTP distribution's official SyntaxBNF, at the
-#                                pinned release.
-#   TPTP_OFFICIAL_CORPUS_ROOT_V1 The TPTP distribution's Problems directory.
+#   TPTP_OFFICIAL_CORPUS_ROOT_V1 The TPTP distribution's Problems directory.  The
+#                                TPTP grammar itself ships in vendor/tptp;
+#                                TPTP_OFFICIAL_SYNTAX_BNF_V1 names another
+#                                release's SyntaxBNF to check the reader against.
 #   METAMATH_SET_MM_V1         The canonical set.mm (the metamath/set.mm
 #                              repository).
 #   METAMATH_TEST_ROOT_V1      The metamath-test conformance corpus.
@@ -967,76 +968,6 @@ qualify-tptp-external-prover-fixtures-v1: \
 	@$(TPTP_EXTERNAL_PROVER_FIXTURE_CHECK_V1) \
 		"$(TPTP_EPROVER_V1)" "$(TPTP_VAMPIRE_V1)"
 
-test-tptp-canonical-round-trip-v1:
-	@$(MAKE) --no-print-directory \
-		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
-		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 \
-		JSON_BACKEND=gslt CETTA_PROVENANCE_ASSERT=0 \
-		RHOCOST_COMMIT_AUDIT=0 ENABLE_PRIME_NEED_HEAP_INDEX=0 \
-		ENABLE_PRIME_EVAL_STACK=0 \
-		TPTP_OFFICIAL_SYNTAX_BNF_V1="$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" \
-		test-tptp-canonical-round-trip-v1-body
-
-test-tptp-compact-policies-v1:
-	@$(MAKE) --no-print-directory \
-		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
-		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 \
-		JSON_BACKEND=gslt CETTA_PROVENANCE_ASSERT=0 \
-		RHOCOST_COMMIT_AUDIT=0 ENABLE_PRIME_NEED_HEAP_INDEX=0 \
-		ENABLE_PRIME_EVAL_STACK=0 \
-		TPTP_OFFICIAL_SYNTAX_BNF_V1="$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" \
-		test-tptp-compact-policies-v1-body
-
-test-tptp-compact-print-v1:
-	@$(MAKE) --no-print-directory \
-		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
-		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 \
-		JSON_BACKEND=gslt CETTA_PROVENANCE_ASSERT=0 \
-		RHOCOST_COMMIT_AUDIT=0 ENABLE_PRIME_NEED_HEAP_INDEX=0 \
-		ENABLE_PRIME_EVAL_STACK=0 \
-		TPTP_OFFICIAL_SYNTAX_BNF_V1="$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" \
-		test-tptp-compact-print-v1-body
-
-test-tptp-compact-stale-artifact-v1:
-	@$(MAKE) --no-print-directory \
-		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
-		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 \
-		JSON_BACKEND=gslt CETTA_PROVENANCE_ASSERT=0 \
-		RHOCOST_COMMIT_AUDIT=0 ENABLE_PRIME_NEED_HEAP_INDEX=0 \
-		ENABLE_PRIME_EVAL_STACK=0 \
-		TPTP_OFFICIAL_SYNTAX_BNF_V1="$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" \
-		test-tptp-compact-stale-artifact-v1-body
-
-test-tptp-compact-import-v1:
-	@$(MAKE) --no-print-directory \
-		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
-		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 \
-		JSON_BACKEND=gslt CETTA_PROVENANCE_ASSERT=0 \
-		RHOCOST_COMMIT_AUDIT=0 ENABLE_PRIME_NEED_HEAP_INDEX=0 \
-		ENABLE_PRIME_EVAL_STACK=0 \
-		TPTP_OFFICIAL_SYNTAX_BNF_V1="$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" \
-		test-tptp-compact-import-v1-body
-
-test-tptp-compact-binding-v1:
-	@$(MAKE) --no-print-directory \
-		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
-		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 \
-		JSON_BACKEND=gslt CETTA_PROVENANCE_ASSERT=0 \
-		RHOCOST_COMMIT_AUDIT=0 ENABLE_PRIME_NEED_HEAP_INDEX=0 \
-		ENABLE_PRIME_EVAL_STACK=0 \
-		TPTP_OFFICIAL_SYNTAX_BNF_V1="$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" \
-		test-tptp-compact-binding-v1-body
-
-check-tptp-compact-morphism-v1:
-	@$(MAKE) --no-print-directory \
-		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
-		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 \
-		JSON_BACKEND=gslt CETTA_PROVENANCE_ASSERT=0 \
-		RHOCOST_COMMIT_AUDIT=0 ENABLE_PRIME_NEED_HEAP_INDEX=0 \
-		ENABLE_PRIME_EVAL_STACK=0 \
-		TPTP_OFFICIAL_SYNTAX_BNF_V1="$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" \
-		check-tptp-compact-morphism-v1-body
-
 benchmark-tptp-frozen-size-ladder-v1-body: \
 		$(TPTP_FROZEN_LADDER_V1_BIN) \
 		prepare-tptp-compact-morphism-v1-body \
@@ -1145,15 +1076,6 @@ qualify-tptp-frozen-corpus-compatible-v1:
 		TPTP_FROZEN_CORPUS_QUALIFICATION_OUTPUT_V1="$(TPTP_FROZEN_CORPUS_COMPATIBILITY_QUALIFICATION_OUTPUT_V1)" \
 		TPTP_FROZEN_CORPUS_QUALIFICATION_SUMMARY_V1="$(TPTP_FROZEN_CORPUS_COMPATIBILITY_QUALIFICATION_SUMMARY_V1)" \
 		qualify-tptp-frozen-full-corpus-v1-body
-
-test-tptp-reader-artifact-reproducibility-v1:
-	@$(MAKE) --no-print-directory \
-		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
-		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
-		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
-		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
-		TPTP_OFFICIAL_SYNTAX_BNF_V1="$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" \
-		test-tptp-reader-artifact-reproducibility-v1-body
 
 test-gslt2parse-parser-pack-lexical-v1-matrix: \
 		test-gslt2parse-parser-pack-lexical-v1-native \
@@ -2203,33 +2125,6 @@ qualify-plain-bnf-denotation-lean-native-v1-body: \
 		Mettapedia/GSLT/Tools/ExportPlainBnfDenotationCases.lean \
 		--check-mutant "$$evidence/mutated-actual.txt")
 
-test-tptp-extended-bnf-meta-parser-v1-body: \
-		$(TPTP_EXTENDED_BNF_META_PARSER_V1_TEST_BIN)
-	@if [[ -z "$(strip $(TPTP_OFFICIAL_SYNTAX_BNF_V1))" || \
-		! -f "$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" ]]; then \
-		echo 'set TPTP_OFFICIAL_SYNTAX_BNF_V1 to the official SyntaxBNF file' >&2; \
-		exit 2; \
-	fi
-	@$(TPTP_EXTENDED_BNF_META_PARSER_V1_TEST_BIN) \
-		"$(TPTP_OFFICIAL_SYNTAX_BNF_V1)"
-
-test-tptp-extended-bnf-full-reader-v1-body: \
-		$(BIN) $(TPTP_EXTENDED_BNF_FULL_READER_V1_TEST) \
-		langdef/tptp/official_extended_bnf_source_v1.metta \
-		langdef/tptp/official_extended_bnf_parser_profile_v1.metta \
-		langdef/tptp/official_extended_bnf_ast_v1.metta \
-		langdef/tptp/official_extended_bnf_ast_projection_v1.metta
-	@if [[ -z "$(strip $(TPTP_OFFICIAL_SYNTAX_BNF_V1))" || \
-		! -f "$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" ]]; then \
-		echo 'set TPTP_OFFICIAL_SYNTAX_BNF_V1 to the official SyntaxBNF file' >&2; \
-		exit 2; \
-	fi
-	@set -eu; \
-	result=$$($(CETTA_BIN_INVOKE) --quiet --profile extended --lang he --profile extended \
-		$(TPTP_EXTENDED_BNF_FULL_READER_V1_TEST) \
-		"$(TPTP_OFFICIAL_SYNTAX_BNF_V1)"); \
-	test "$$result" = '(TptpOfficialExtendedBnfFullReaderV1Summary 2 2 0)'
-
 qualify-tptp-reader-source-lean-v1:
 	@set -eu; \
 	lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
@@ -2361,6 +2256,7 @@ test-tptp-official-syntax-gate-failure-v1:
 	@set -eu; \
 	mkdir -p "$(BOOTSTRAP_TMPDIR)"; \
 	evidence=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/tptp-reader-gate-failure-v1.XXXXXX"); \
+	trap 'status=$$?; if [ $$status -eq 0 ]; then rm -rf "$$evidence"; else echo "kept for inspection: $$evidence" >&2; fi' EXIT; \
 	bash tests/support/check_tptp_reader_gate_failure_v1.sh "$$evidence" \
 		"$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" "$(TPTP_OFFICIAL_CORPUS_ROOT_V1)"
 

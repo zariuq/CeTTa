@@ -329,6 +329,17 @@ uint32_t cetta_library_loaded_module_count(const CettaLibraryContext *ctx);
 const CettaLoadedModule *cetta_library_loaded_module_at(const CettaLibraryContext *ctx,
                                                         uint32_t index);
 
+/* Whether NAME is one of CeTTa's registered libraries, native or built in. */
+bool cetta_library_registered(const char *name);
+/* CeTTa's own library file NAME, lib/NAME.metta under the library root, for
+ * the lanes that read lib/; false for a NAME that is no plain name or no
+ * such file. */
+bool cetta_library_file_path(const CettaLibraryContext *ctx, const char *name,
+                             char *out, size_t size);
+/* The import spec (library NAME) stands for when NAME is no registered
+ * library: CeTTa's library file NAME, its path in A; NULL otherwise. */
+const char *cetta_library_file_spec(const CettaLibraryContext *ctx, Arena *a,
+                                    const char *name);
 bool cetta_library_import(CettaLibraryContext *ctx, const char *name,
                           Space *space, Arena *eval_arena,
                           Arena *persistent_arena, Registry *registry,

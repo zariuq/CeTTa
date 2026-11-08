@@ -339,7 +339,7 @@ bool eval_payload_space_redirect_at(CettaCount idx, Space **orig,
 CettaCount eval_payload_state_redirect_count(void);
 bool eval_payload_state_redirect_at(CettaCount idx, StateCell **orig,
                                     StateCell **redirect);
-Registry *eval_current_registry(void);
+Registry *eval_current_registry(void) __attribute__((weak));
 /* Base PeTTa protects the default program's static primitive predicates.
  * Named owners and extended profiles admit their own equations. */
 bool eval_petta_builtin_definition_protected(
@@ -357,7 +357,8 @@ Atom *eval_capture_registry_tokens(Registry *registry, Arena *a, Atom *atom);
 /* Put the HE whole-word tokens, including &-names, into a newly read form.
  * Inserted values are not traversed or interpreted as further source text.
  * Returns `atom` itself when nothing in it is bound. */
-Atom *eval_read_registry_words(Registry *registry, Arena *a, Atom *atom);
+Atom *eval_read_registry_words(Registry *registry, Arena *a, Atom *atom)
+    __attribute__((weak));
 /* Copy a top-level HE form into its evaluation arena while reading its names.
  * Inserted values are copied without applying the reader to their contents. */
 Atom *eval_copy_read_registry_form(Registry *registry, TermUniverse *universe,

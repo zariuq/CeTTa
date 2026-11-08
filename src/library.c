@@ -12319,6 +12319,36 @@ static void observe_import_failure(CettaLibraryContext *context, const char *nam
     CettaImportFailureScope *scope = context ? context->import_failure_scope : NULL;
     if (scope && scope->observe) scope->observe(scope->context, name, reason);
 }
+bool cetta_library_registered(const char *name) {
+    return name && (cetta_library_lookup(name) || cetta_native_module_lookup(name));
+}
+
+__attribute__((noinline))
+const char *cetta_library_file_spec(const CettaLibraryContext *ctx, Arena *a,
+                                    const char *name) {
+    char path[PATH_MAX];
+    if (!a || cetta_library_registered(name) ||
+        !cetta_library_file_path(ctx, name, path, sizeof(path)))
+        return NULL;
+    size_t len = strlen(path) + 1u;
+    char *kept = arena_alloc(a, len);
+    if (kept)
+        memcpy(kept, path, len);
+    return kept;
+}
+
+bool cetta_library_file_path(const CettaLibraryContext *ctx, const char *name,
+                             char *out, size_t size) {
+    if (!ctx || !ctx->root_dir[0] || !name || !name[0] || !out)
+        return false;
+    for (const char *c = name; *c; c++)
+        if (!((*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z') ||
+              (*c >= '0' && *c <= '9') || *c == '_' || *c == '-'))
+            return false;
+    int n = snprintf(out, size, "%s/lib/%s.metta", ctx->root_dir, name);
+    return n > 0 && (size_t)n < size && access(out, R_OK) == 0;
+}
+
 bool cetta_library_import(CettaLibraryContext *context, const char *name,
         Space *space, Arena *arena, Arena *persistent, Registry *registry,
         int fuel, Atom **error) {

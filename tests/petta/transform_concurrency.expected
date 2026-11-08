@@ -23,15 +23,14 @@ true
 (forks-store ((eating A)))
 true
 true
-(claim ((claimed a)))
-(claim-store ((job b)))
+(claim (claimed 1 (a b)))
 true
 true
 true
 (coin-all ())
 (coin-each 1)
 (coin-each-again ())
-(coin-store ((bought u1 c1) (wants u1) (wants u2)))
+(coin-store (sold 1 0 (u1 u2)))
 true
 true
 (skew-a 1)

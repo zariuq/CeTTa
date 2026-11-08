@@ -1,0 +1,13 @@
+SyntaxBNF is the syntax of the TPTP language, copied verbatim from the TPTP
+distribution v9.2.1 (Documents/SyntaxBNF, sha256
+f47940c43c23ed5ed8633a3b74a2847648d5ab794669430c8f0c38f138e61df6). The TPTP
+is at https://www.tptp.org.
+
+From the TPTP distribution's ReadMe:
+
+Copyright
+---------
+The TPTP  is copyrighted 1993-onwards,  by Geoff Sutcliffe & Christian Suttner.
+Verbatim redistribution of the TPTP and parts of the TPTP is permitted provided
+that the redistribution is clearly attributed to the TPTP.  Distribution of any
+modified version or modified part of the TPTP requires permission.
