@@ -234,17 +234,17 @@ action_case(
       'shared/cetta_prime_scalar_classes_v1.metta',
       'languages/cetta_prime_reader_v1.metta'
     ],
-    179,
-    b9194af90380048ffbf7a50f0b54f560fe7c5dac97116c961a17bbfa56a4f833).
+    352,
+    '00757f4e3188a95336d4d3abe9db49e4947b36359eff080ef5618dbbafd42200').
 
 action_case(
     metamath,
     [ 'core/syntax_core_v1.metta',
       'shared/lookahead_core_v1.metta',
-      'languages/metamath_appendix_e_v1.metta'
+      '../../../langdef/metamath/syntax_v1.metta'
     ],
-    270,
-    '738417b94ad546c87d59dab83985475a8abff6f4e441a4f93148974576150e39').
+    441,
+    '4a10ec30168f1e048991d223de79268f90399e57c463f4a52fc1d4eba211fb47').
 
 action_case(
     megalodon,
@@ -261,10 +261,12 @@ action_case(
     [ 'core/syntax_core_v1.metta',
       'shared/lookahead_core_v1.metta',
       'shared/char_core_v1.metta',
-      'languages/tptp_fof_cnf_v1.metta'
+      'shared/ground_relations_v1.metta',
+      '../../../langdef/tptp/unicode_scalar_classes_v1.metta',
+      '../../../langdef/tptp/syntax_fof_cnf_v1.metta'
     ],
-    688,
-    d8882993f494f523f6214bffef652e772e3663dac518cd0e917748dc06e4fbbd).
+    691,
+    '3ae1c5e4b78bcc86d18fe8a77d0a02bfd9bb55edbbbd10f5b645b38a52038e00').
 
 require(Condition, Label) :-
     ( call(Condition) -> true

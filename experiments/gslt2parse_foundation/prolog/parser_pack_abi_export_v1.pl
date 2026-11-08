@@ -19,8 +19,13 @@
 write_parser_pack_abi_v1(PresentationRoot, RelativePaths,
                          StartName, ExpectedClosure, Stream) :-
     parser_pack_reference_compile(
-        PresentationRoot, RelativePaths, 4096,
-        completed(Compilation)),
+        PresentationRoot, RelativePaths, 4096, Outcome),
+    (   Outcome = completed(Compilation)
+    ->  true
+    ;   outcome_reason(Outcome, Reason),
+        throw(error(gate_failed(parser_pack_compilation(Reason)),
+                    write_parser_pack_abi_v1/5))
+    ),
     StartState = list([sym('pp-def'), sym(StartName)]),
     write_parser_pack_compilation_abi_v1(
         Compilation, StartState, ExpectedClosure, Stream).
@@ -40,7 +45,13 @@ write_parser_pack_compilation_abi_v1(
             class_evidence(ClassEvidence))),
     parser_pack_digest(Pack, PackDigest),
     parser_pack_missing_states(Pack, [StartState], MissingStates),
-    closure_matches(ExpectedClosure, MissingStates),
+    (   closure_matches(ExpectedClosure, MissingStates)
+    ->  true
+    ;   length(MissingStates, MissingCount),
+        throw(error(gate_failed(closure(ExpectedClosure,
+                                        missing_states(MissingCount))),
+                    write_parser_pack_compilation_abi_v1/4))
+    ),
     render_wire_term(StartState, StartText),
     format(Stream, 'parser-pack-abi-v1~n', []),
     write_scalar_record(Stream, 'source-digest', SourceDigest),
@@ -61,6 +72,20 @@ write_parser_pack_compilation_abi_v1(
 
 closure_matches(closed, []).
 closure_matches(partial, [_|_]).
+
+% The outcome's kind and its first argument's kind, never a whole program.
+outcome_reason(Outcome, Reason) :-
+    (   compound(Outcome)
+    ->  compound_name_arguments(Outcome, Kind, Arguments),
+        (   Arguments = [Detail|_], compound(Detail)
+        ->  compound_name_arity(Detail, DetailName, DetailArity),
+            Reason =.. [Kind, DetailName/DetailArity]
+        ;   Arguments = [Detail|_]
+        ->  Reason =.. [Kind, Detail]
+        ;   Reason = Kind
+        )
+    ;   Reason = Outcome
+    ).
 
 write_scalar_record(Stream, Name, Value) :-
     text_string(Value, Text),
@@ -115,7 +140,10 @@ main_ :-
     RelativePaths = [_|_],
     text_atom(StartValue, StartName),
     text_atom(ClosureValue, ExpectedClosure),
-    memberchk(ExpectedClosure, [closed, partial]),
+    (   memberchk(ExpectedClosure, [closed, partial])
+    ->  true
+    ;   throw(error(domain_error(closure, ExpectedClosure), main_/0))
+    ),
     write_parser_pack_abi_v1(
         PresentationRoot, RelativePaths, StartName, ExpectedClosure,
         current_output).

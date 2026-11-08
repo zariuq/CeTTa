@@ -124,6 +124,24 @@ expected_prime_pairs(Pairs) :-
             ( member(Owner-Path-BodyKind-BodyName,
                      [ 'cetta-prime-anonymous-variable'-[body,right]-ref-
                            'cetta-prime-token-boundary',
+                       'cetta-prime-list-anonymous-variable'-[body,right]-ref-
+                           'cetta-prime-list-token-boundary',
+                       'cetta-prime-list-rest'-[body,left,right]-ref-
+                           'cetta-prime-list-token-boundary',
+                       'cetta-prime-list-unquote'-[body,right,left]-class-
+                           'cetta-prime-list-star-payload-start-scalar',
+                       'cetta-prime-list-variable'-[body,right]-ref-
+                           'cetta-prime-list-token-boundary',
+                       'cetta-prime-list-word-amp'-[right]-ref-
+                           'cetta-prime-list-token-boundary',
+                       'cetta-prime-list-word-bar'-[right]-ref-
+                           'cetta-prime-list-token-boundary',
+                       'cetta-prime-list-word-bare-amp'-[right]-ref-
+                           'cetta-prime-list-token-boundary',
+                       'cetta-prime-list-word-general'-[right]-ref-
+                           'cetta-prime-list-token-boundary',
+                       'cetta-prime-list-word-star'-[right]-ref-
+                           'cetta-prime-list-star-boundary',
                        'cetta-prime-unquote'-[body,right,left]-class-
                            'cetta-prime-star-payload-start-scalar',
                        'cetta-prime-variable'-[body,right]-ref-

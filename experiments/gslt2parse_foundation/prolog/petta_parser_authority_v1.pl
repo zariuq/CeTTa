@@ -1,12 +1,14 @@
 :- use_module(library(readutil)).
 
-:- prolog_load_context(directory, Here),
-   directory_file_path(Here, '../../src/parser.pl', ParserRelative),
-   absolute_file_name(ParserRelative, ParserSource),
-   ensure_loaded(ParserSource),
-   directory_file_path(Here, '../../src/filereader.pl', ReaderRelative),
-   absolute_file_name(ReaderRelative, ReaderSource),
-   ensure_loaded(ReaderSource).
+% The authority is PeTTa's own reader, loaded from the checkout that the
+% path alias `petta` names: swipl -p petta=<PeTTa checkout> -f <this file>.
+:- catch(( ensure_loaded(petta('src/parser')),
+           ensure_loaded(petta('src/filereader')) ),
+         Error,
+         ( print_message(error, Error),
+           writeln(user_error,
+                   'usage: swipl -p petta=PETTA_ROOT -f petta_parser_authority_v1.pl -- form|document INPUT'),
+           halt(2) )).
 
 :- initialization(main, main).
 

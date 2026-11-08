@@ -4,3 +4,8 @@ equal
 true
 true
 2
+true
+true
+(true true)
+((moved one))
+((kept two))

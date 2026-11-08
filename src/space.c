@@ -14023,6 +14023,16 @@ bool space_contains_exact_symbol_application(
         id_present_contains(&s->native, query_id);
 }
 
+/* Whether `match` reads PATTERN as a query over parts: a conjunction
+ * (, P ...) or a disjunction (| P ...), whose rows no membership test of
+ * the pattern itself answers, even when it is ground. */
+static bool space_match_pattern_is_connective(Atom *const *elems,
+                                              CettaExprLen len) {
+    return len >= 1u && elems[0]->kind == ATOM_SYMBOL &&
+        (elems[0]->sym_id == g_builtin_syms.comma ||
+         elems[0]->sym_id == g_builtin_syms.pipe);
+}
+
 bool space_match_exists_ground_exact(Space *s, Atom *pattern,
                                      bool *out_applicable) {
     bool found = false;
@@ -14030,7 +14040,10 @@ bool space_match_exists_ground_exact(Space *s, Atom *pattern,
     if (out_applicable)
         *out_applicable = false;
     if (!s || !pattern || atom_has_vars(pattern) ||
-        !atom_is_exact_indexable(pattern) || space_has_dependencies(s)) {
+        !atom_is_exact_indexable(pattern) || space_has_dependencies(s) ||
+        (pattern->kind == ATOM_EXPR &&
+         space_match_pattern_is_connective(pattern->expr.elems,
+                                           pattern->expr.len))) {
         return false;
     }
     /* Membership answers only where a present pattern matches by identity. */
@@ -14070,6 +14083,7 @@ bool space_match_exists_ground_exact_expression_coordinates(
     if (out_applicable)
         *out_applicable = false;
     if (!s || coordinate_count == 0u || !coordinates ||
+        space_match_pattern_is_connective(coordinates, coordinate_count) ||
         space_has_overlay_base(s) || space_has_dependencies(s) ||
         space_engine_uses_pathmap(s->match_backend.kind) ||
         !s->native.universe || !space_contains_only_exact_atoms(s)) {
