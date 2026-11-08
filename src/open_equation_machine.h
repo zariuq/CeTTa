@@ -146,6 +146,10 @@ typedef struct {
     bool call_contracts;
     /* PeTTa selects live declarations before entering intrinsic functions. */
     bool declared_builtin_protocol;
+    /* HE's case: a key with no answers is switched on Empty, which a
+     * variable pattern meets.  The machine's case is PeTTa's, where such a
+     * key fails, so a case with a variable arm stays with the host. */
+    bool case_switches_on_empty;
 } CettaOpenEquationHost;
 
 /* Term carriers the compiled region interprets. Sharing is visited once;

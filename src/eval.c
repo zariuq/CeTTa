@@ -2212,7 +2212,8 @@ bool eval_current_python_object_head(SymbolId head) {
     if (!g_library_context) return false;
     const char *name = symbol_bytes(g_symbols, head);
     if (name && name[0] == '&') {
-        Atom reference = {.kind = ATOM_SYMBOL, .sym_id = head};
+        Atom reference;
+        atom_init_symbol(&reference, head);
         return cetta_foreign_object_provider_callable(NULL, &reference);
     }
     return g_library_context && cetta_foreign_object_head(
@@ -26878,10 +26879,26 @@ static SymbolId eval_transform_fire_into_symbol(void) {
     return atom_symbol_literal_id("tf:fire-into");
 }
 
+/* PeTTa's tf:proposals and tf:guided are native too (transform_core.h). */
+static SymbolId eval_transform_proposals_symbol(void) {
+    return atom_symbol_literal_id("tf:proposals");
+}
+
+static SymbolId eval_transform_guided_symbol(void) {
+    return atom_symbol_literal_id("tf:guided");
+}
+
+static bool eval_transform_step_head(SymbolId head, CettaExprLen arity) {
+    return eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
+           ((head == eval_transform_proposals_symbol() && arity == 3u) ||
+            (head == eval_transform_guided_symbol() && arity == 2u));
+}
+
 /* tf:fire with its three arguments, or tf:fire-into with four. */
 static bool eval_transform_head(SymbolId head, CettaExprLen arity) {
     return (head == eval_transform_fire_symbol() && arity == 3u) ||
-           (head == eval_transform_fire_into_symbol() && arity == 4u);
+           (head == eval_transform_fire_into_symbol() && arity == 4u) ||
+           eval_transform_step_head(head, arity);
 }
 
 /* The dialect's library: lib/petta/lib_transform.metta, or the HE library
@@ -27141,8 +27158,19 @@ static bool eval_try_transform_fire(Space *s, Arena *a, Atom *atom, int fuel,
         .evaluate = he ? eval_transform_evaluate_he : eval_transform_evaluate,
     };
     Atom *answer = NULL;
-    CettaTransformOutcome outcome =
-        cetta_transform_fire(s, a, call, &host, &answer);
+    SymbolId head = call->kind == ATOM_EXPR && call->expr.len &&
+            call->expr.elems[0]->kind == ATOM_SYMBOL
+        ? call->expr.elems[0]->sym_id : SYMBOL_ID_NONE;
+    CettaTransformOutcome outcome;
+    if (head == eval_transform_guided_symbol() && !he) {
+        if (!cetta_transform_guided(a, call, &answer))
+            return eval_transform_authored(s, a, call, fuel, os);
+        outcome = CETTA_TRANSFORM_FIRED;
+    } else if (head == eval_transform_proposals_symbol() && !he) {
+        outcome = cetta_transform_propose(s, a, call, &host, &answer);
+    } else {
+        outcome = cetta_transform_fire(s, a, call, &host, &answer);
+    }
     if (outcome == CETTA_TRANSFORM_DECLINED)
         return he ? false : eval_transform_authored(s, a, call, fuel, os);
     /* An error the firing met is raised, as the authored firing raises it
@@ -50991,6 +51019,116 @@ static CettaNativeQueryStatus petta_grouped_count_run(
                                              wrap_collection, value);
 }
 
+/* The read-only step's host: one space, no mutation, no code. */
+static bool petta_match_step_space(void *context, Atom *ref, Space **out) {
+    (void)ref;
+    *out = context;
+    return true;
+}
+
+static Atom *petta_match_step_no_mutation(void *context, Atom *space_ref,
+                                          Atom *atom) {
+    (void)context;
+    (void)space_ref;
+    (void)atom;
+    return NULL;
+}
+
+static bool petta_match_step_no_code(void *context, Arena *a, Atom *expression,
+                                     Atom ***results, size_t *len,
+                                     Atom **error) {
+    (void)context;
+    (void)a;
+    (void)expression;
+    *results = NULL;
+    *len = 0u;
+    *error = NULL;
+    return false;
+}
+
+static CettaNativeQueryStatus petta_eval_match_as_step(
+    Space *source, Arena *arena, Atom *space_ref, Atom *pattern,
+    Atom *template_atom, bool count_only, bool wrap_collection, Atom **value) {
+    CettaTransformHost host = {
+        .context = source,
+        .dialect = CETTA_TRANSFORM_DIALECT_PETTA,
+        .resolve_space = petta_match_step_space,
+        .remove_atom = petta_match_step_no_mutation,
+        .add_atom = petta_match_step_no_mutation,
+        .evaluate = petta_match_step_no_code,
+    };
+    Atom *collection = NULL;
+    uint64_t count = 0u;
+    /* The tier's contract: what the engine declines, the ordinary path
+     * answers. */
+    if (cetta_transform_reads(&host, arena, space_ref, pattern, template_atom,
+                              CETTA_STEP_READS_ENGINE, &collection, &count) !=
+        CETTA_TRANSFORM_FIRED)
+        return CETTA_NATIVE_QUERY_DECLINED;
+    if (count_only)
+        *value = wrap_collection ? atom_counted_collection(arena, (int64_t)count)
+                                 : atom_int(arena, (int64_t)count);
+    else
+        *value = collection;
+    return *value ? CETTA_NATIVE_QUERY_DONE : CETTA_NATIVE_QUERY_FAILED;
+}
+
+/* A transform whose answers are collected whole, its template answering itself or its
+ * destination a space, runs every branch in turn natively
+ * (cetta_transform_collect): with every answer collected, nothing observes a
+ * branch before the next one fires. */
+static CettaNativeQueryStatus petta_eval_transform_collect(
+    void *machine_context, Space *root, Arena *arena, Atom *query,
+    bool count_only, bool wrap_collection, Atom **value) {
+    *value = NULL;
+    static SymbolId transform = SYMBOL_ID_NONE;
+    if (transform == SYMBOL_ID_NONE)
+        transform = atom_symbol_literal_id("transform");
+    if (query->expr.len < 4u ||
+        query->expr.len > 5u ||
+        !atom_is_symbol_id(query->expr.elems[0], transform))
+        return CETTA_NATIVE_QUERY_DECLINED;
+    PettaEvalMachineContext *owner = machine_context;
+    if (g_transform_authored || petta_eval_typed_line() ||
+        !cetta_eval_episode_allows_unmetered(g_eval_completion_tracker,
+                                             owner ? owner->fuel : -1) ||
+        (owner && owner->transaction) ||
+        gslt_match_chain_trace_active() ||
+        cetta_delay_holds(g_petta_eval_delay_service) ||
+        !eval_transform_presentation_admitted(root,
+                                              CETTA_TRANSFORM_DIALECT_PETTA) ||
+        (query->expr.len == 4u &&
+         !petta_native_region_answers_itself(root, query->expr.elems[3], 0u)))
+        return CETTA_NATIVE_QUERY_DECLINED;
+    EvalLibraryHost context = {.root = root, .arena = arena,
+                               .fuel = owner ? owner->fuel : -1,
+                               .refusal = "TransformMutationRefused"};
+    CettaTransformHost host = {
+        .context = &context,
+        .dialect = CETTA_TRANSFORM_DIALECT_PETTA,
+        .resolve_space = eval_transform_resolve_space,
+        .remove_atom = eval_transform_remove,
+        .add_atom = eval_transform_add,
+        .evaluate = eval_transform_evaluate,
+    };
+    Atom *collection = NULL;
+    uint64_t count = 0u;
+    CettaTransformOutcome outcome =
+        cetta_transform_collect(root, arena, query, &host, &collection, &count);
+    if (outcome == CETTA_TRANSFORM_DECLINED)
+        return CETTA_NATIVE_QUERY_DECLINED;
+    if (outcome != CETTA_TRANSFORM_FIRED) {
+        petta_eval_raise(collection);
+        return CETTA_NATIVE_QUERY_FAILED;
+    }
+    if (count_only)
+        *value = wrap_collection ? atom_counted_collection(arena, (int64_t)count)
+                                 : atom_int(arena, (int64_t)count);
+    else
+        *value = collection;
+    return *value ? CETTA_NATIVE_QUERY_DONE : CETTA_NATIVE_QUERY_FAILED;
+}
+
 static CettaNativeQueryStatus petta_eval_machine_native_collect(
     void *context, Space *root, Arena *arena, Atom *query,
     const PettaPlanNode *plan, bool count_only, bool wrap_collection,
@@ -51000,6 +51138,12 @@ static CettaNativeQueryStatus petta_eval_machine_native_collect(
         eval_current_language_id() != CETTA_LANGUAGE_PETTA ||
         query->kind != ATOM_EXPR)
         return CETTA_NATIVE_QUERY_DECLINED;
+    {
+        CettaNativeQueryStatus transformed = petta_eval_transform_collect(
+            context, root, arena, query, count_only, wrap_collection, value);
+        if (transformed != CETTA_NATIVE_QUERY_DECLINED)
+            return transformed;
+    }
     /* A frontier of a relaxation runs as one loop
      * (petta_relaxation_region_run). */
     if (context) {
@@ -51312,6 +51456,16 @@ static CettaNativeQueryStatus petta_eval_machine_native_collect(
         native.inert_head_count = heads.count;
         native.head_inert = petta_native_query_head_inert;
         native.head_inert_context = root;
+    }
+    /* A match of data collected whole is the step with reads only, whose
+     * reads the native query engine joins (cetta_transform_reads). */
+    if (!made && !listed && !nested_legs &&
+        !distinct_key && heads.count == 0u) {
+        CettaNativeQueryStatus stepped = petta_eval_match_as_step(
+            source, arena, query->expr.elems[1], pattern, native.template_atom,
+            count_only, wrap_collection, value);
+        if (stepped != CETTA_NATIVE_QUERY_DECLINED)
+            return stepped;
     }
     CettaNativeQueryResult result = {0};
     CettaNativeQueryStatus status =
@@ -58348,6 +58502,7 @@ static CettaOpenEquationHost petta_eval_open_compile_host(
         .evaluates_instances = language == CETTA_LANGUAGE_HE,
         .call_contracts = petta_eval_contracts(),
         .declared_builtin_protocol = language == CETTA_LANGUAGE_PETTA,
+        .case_switches_on_empty = language == CETTA_LANGUAGE_HE,
     };
     return host;
 }
@@ -63639,9 +63794,20 @@ petta_lowered_to_shared_form:
         const char *spec = string_like_atom(import_spec);
         bool structured_library = language_id != CETTA_LANGUAGE_PETTA &&
             import_spec->kind == ATOM_EXPR && import_spec->expr.len == 2u &&
-            atom_is_symbol(import_spec->expr.elems[0], "library");
+            atom_is_symbol_id(import_spec->expr.elems[0],
+                              atom_symbol_literal_id("library"));
         if (structured_library)
             spec = string_like_atom(import_spec->expr.elems[1]);
+        /* (library NAME) names CeTTa's library NAME in every lane: a
+         * registered library, or else CeTTa's library file of that name,
+         * imported as a module by its path.  The path lives in the arena:
+         * this frame recurses with evaluation and keeps no buffer. */
+        const char *library_file = structured_library && spec
+            ? cetta_library_file_spec(g_library_context, a, spec) : NULL;
+        if (library_file) {
+            spec = library_file;
+            structured_library = false;
+        }
         PeTTaLibraryReference library_reference;
         bool has_library_reference =
             language_id == CETTA_LANGUAGE_PETTA &&

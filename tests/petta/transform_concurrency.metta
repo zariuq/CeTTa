@@ -40,8 +40,9 @@
 !(bind! &q (new-space))
 !(add-atom &q (job a))
 !(add-atom &q (job b))
-!(claim (collapse (once (transform &q (take (job $j)) (claimed $j)))))
-!(claim-store (show &q))
+; one job is claimed: it and the job left are the two stored
+!(claim (let $c (collapse (once (transform &q (take (job $j)) $j)))
+   (claimed (size-atom $c) (sort-atom (cons-atom (car-atom $c) (collapse (match &q (job $k) $k)))))))
 
 ; one coin, two buyers: every buyer taking the same coin is refused as a whole;
 ; one buyer at a time succeeds once
@@ -52,7 +53,10 @@
 !(coin-all (collapse (transform &m (, (all (wants $u)) (take (coin $c))) (bought $u $c) &m)))
 !(coin-each (transform &m (, (wants $u) (take (coin $c))) (bought $u $c) &m))
 !(coin-each-again (collapse (transform &m (, (wants $u) (take (coin $c))) (bought $u $c) &m)))
-!(coin-store (show &m))
+; one buyer, whichever ran first, bought the coin; both still want
+!(coin-store (let $b (collapse (match &m (bought $u $c) $u))
+   (sold (size-atom $b) (size-atom (collapse (match &m (coin $c) $c)))
+         (sort-atom (collapse (match &m (wants $w) $w))))))
 
 ; write skew: A reads x and takes y; B reads y and takes x.  In sequence B finds y gone.
 !(bind! &w (new-space))

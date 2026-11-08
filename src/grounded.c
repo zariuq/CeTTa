@@ -2770,6 +2770,12 @@ static Atom *grounded_parse_text(Arena *a, Atom *head, Atom **args,
         !parser_rest_is_delimiters_n(args[0]->ground.sval, args[0]->ground.slen, &pos))
         return grounded_raise(a, head, args, nargs,
                               atom_symbol(a, "ParseFailed"));
+    /* HE reads text with the tokens bound before it, as it reads a
+     * program's forms. */
+    if (eval_current_language_id && eval_current_registry &&
+        eval_read_registry_words &&
+        eval_current_language_id() == CETTA_LANGUAGE_HE)
+        parsed = eval_read_registry_words(eval_current_registry(), a, parsed);
     return parsed;
 }
 

@@ -1130,6 +1130,14 @@ static bool row_has_form(Atom *row, SymbolId head) {
         atom_is_symbol_id(row->expr.elems[0], head);
 }
 
+/* A row a declaration query may meet: a declaration, or an open row, a
+ * variable or an expression headed by one, which may stand for one. */
+static bool row_may_declare(Atom *row) {
+    return row_has_form(row, g_builtin_syms.colon) || row->kind == ATOM_VAR ||
+           (row->kind == ATOM_EXPR && row->expr.len > 0u &&
+            row->expr.elems[0]->kind == ATOM_VAR);
+}
+
 static void test_single_erasure_equation_retention(void) {
     const SpaceKind kinds[] = {SPACE_KIND_ATOM, SPACE_KIND_STACK, SPACE_KIND_QUEUE};
     for (unsigned variant = 0u; variant < 48u; variant++) {
@@ -1355,8 +1363,10 @@ static void test_declaration_retention(void) {
             Atom *row = term_universe_get_atom(&universe, expected[removed]);
             Atom *tail = term_universe_get_atom(&universe, expected[len - 1u]);
             bool ordered = api == 2u || kind != 0u;
-            bool declaration_change = row_has_form(row, g_builtin_syms.colon) ||
-                (!ordered && removed + 1u < len && row_has_form(tail, g_builtin_syms.colon));
+            /* Removing a row that may declare changes the declarations, and
+             * so does moving one into the removed row's place. */
+            bool declaration_change = row_may_declare(row) ||
+                (!ordered && removed + 1u < len && row_may_declare(tail));
             uint64_t revision = space.declaration_revision;
             if (api == 2u) {
                 uint8_t mask[100] = {0}; mask[removed] = 1u;

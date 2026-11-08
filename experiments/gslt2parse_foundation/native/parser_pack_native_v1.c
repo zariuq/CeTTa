@@ -1092,6 +1092,9 @@ bool ppnative_v1_prepared_import_programs(
     if (!cetta_lp_native_gll_prepared_import_program(&result->gll, gll, error, error_size) ||
         !cetta_lp_native_glr_prepared_import_program(&result->glr, glr, gll, error, error_size))
         goto failed;
+    /* A stored preparation is read into the names installed here, as a
+     * fresh one is prepared in them. */
+    result->names = g_symbols;
     ppnative_v1_prepared_free(out);
     out->implementation = result;
     return true;

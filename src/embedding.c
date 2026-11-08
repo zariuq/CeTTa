@@ -769,6 +769,10 @@ static int read_forms(cetta_engine_t *engine, const char *text, Arena *owner, At
     if (!values || !copy) { free(values); free(ids); atom_deep_copy_session_free(copy); return -1; }
     bool ok = true;
     for (int i = 0; i < count && ok; ++i) {
+        /* HE reads a form with the tokens bound before it. */
+        if (engine->language == CETTA_LANGUAGE_HE)
+            ids[i] = eval_read_registry_words_id(&engine->session.registry,
+                &engine->session.libraries.term_universe, owner, &engine->persistent, ids[i]);
         Atom *atom = term_universe_get_atom(&engine->session.libraries.term_universe, ids[i]);
         values[i] = atom ? atom_deep_copy_session_copy(copy, atom) : NULL;
         ok = values[i] != NULL;

@@ -46,6 +46,40 @@ only to prose or Git commit history do not. Incremental builds are always
 invoked, and executable identities are checked before reusing test receipts.
 The cache is local to this checkout and does not certify another machine.
 
+The complete suite, in stages
+-----------------------------
+
+test-all runs in four stages, cheapest first:
+
+    make main-readiness-suite
+
+Correctness comes first: test-all's own gates, which are unit and fixture
+checks. Then the asymptotic checks, which measure how time or memory grows
+with size; they run one at a time, since other runs would disturb them. Then
+the examples. Then the comprehensive sweeps: whole corpora under each switch,
+generated programs, and the mutation tests, which check that a test catches
+the defects it is for. The run stops after the first stage with a failure.
+
+Within a stage, the gates that failed when last run go first, then the
+longest. The gates that build another configuration run one at a time; the
+others run three at a time (MAIN_READINESS_SUITE_JOBS). After a repair, rerun
+only what failed:
+
+    make main-readiness-suite-failed
+
+or one stage, or named gates:
+
+    python3 scripts/cetta_main_readiness.py --tier suite --stage comprehensive
+    python3 scripts/cetta_main_readiness.py --tier suite --target test-megalodon
+
+Each gate's latest output is runtime/main-readiness/suite/logs/GATE.log, and
+every result is appended to runtime/main-readiness/suite/results.tsv.
+
+A gate joins a stage in the Makefile, next to its rule: test-all for
+correctness, otherwise test-asymptotic, test-examples or test-comprehensive.
+A feature whose broad check belongs to a later stage keeps a small essential
+check in correctness, so the first stage still covers it.
+
 Stronger qualification
 ----------------------
 

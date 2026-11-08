@@ -22,18 +22,17 @@ true
 (after-copies ((coin 2)))
 true
 true
-(spend-once ((got 1)))
-(after-once ((coin 2)))
+(spend-once (spent 1 (1 2)))
 true
 true
 true
-(contend ((won a 1)))
+(contend (contended 1 (a)))
 (after-contend ((k 1) (k 2)))
 true
 true
 true
 true
-(all-per-branch ((moved 1 a) (moved 1 b)))
+(all-per-branch (moved 1 (a b)))
 (after-all ((r 1) (r 2)))
 true
 true
@@ -43,24 +42,23 @@ true
 true
 true
 true
-(once-marker ((got 1)))
-(after-once-marker ((coin 2) (coin 5)))
+(once-marker (spent 1 (1 2 5)))
 true
 true
 true
 true
 true
-(once-per-branch ((moved 1 a) (moved 2 b)))
-(after-once-per-branch ((q c) (r 1) (r 2)))
+(once-per-branch (moved (1 2) 2 1))
+(after-once-per-branch (1 2))
 true
 true
 true
-(collect-bound-later ((got 1 ((q 1) (q 2)))))
+(collect-bound-later ((got 1 (collected ((q 1) (q 2))))))
 true
 true
 true
 (unique-growth (1))
-(after-unique-growth ((k 2) (p 1) (p 7)))
+(after-unique-growth (grown 1 2 (1 2 7)))
 true
 (comma-value (1))
 (after-comma-value ((, a b)))

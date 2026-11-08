@@ -12,7 +12,9 @@ declaration of its head, and transform has two.
 The native firing must have run in each of them and declined nowhere.
 Seeded programs over random stores mix every mode, an `all` or `once` at random
 positions, comma templates and both destinations, and must answer alike on
-all three.  A program that redefines one of the library's operations, or
+all three.  Answers are compared as bags, since no MeTTa defines an order of
+execution: the answers of a collapse, of one statement and of a collection
+(the generated templates mark each as (collected C)) may come in any order.  A program that redefines one of the library's operations, or
 gives one of its data constructors an equation, runs the authored definition:
 the presentation is refused and the answers are those of the authored firing.
 """
@@ -51,6 +53,93 @@ def run(binary, path, reference, trace, fuel=None, workers=None, machine="1"):
     return p.returncode, p.stdout, p.stderr
 
 
+def atoms_of(text):
+    """The atoms of one output line, as nested tuples of tokens."""
+    tokens, i = [], 0
+    while i < len(text):
+        c = text[i]
+        if c in "()":
+            tokens.append(c)
+            i += 1
+        elif c.isspace():
+            i += 1
+        elif c == '"':
+            j = i + 1
+            while j < len(text) and text[j] != '"':
+                j += 2 if text[j] == "\\" else 1
+            tokens.append(text[i:j + 1])
+            i = j + 1
+        else:
+            j = i
+            while j < len(text) and not text[j].isspace() and text[j] not in "()":
+                j += 1
+            tokens.append(text[i:j])
+            i = j
+
+    def atom(k):
+        if tokens[k] != "(":
+            return tokens[k], k + 1
+        items, k = [], k + 1
+        while tokens[k] != ")":
+            item, k = atom(k)
+            items.append(item)
+        return tuple(items), k + 1
+
+    atoms, k = [], 0
+    while k < len(tokens):
+        item, k = atom(k)
+        atoms.append(item)
+    return atoms
+
+
+def bag_key(x):
+    return repr(x)
+
+
+def as_bags(x):
+    """A collection's elements, (collected C), sorted, at any depth."""
+    if not isinstance(x, tuple):
+        return x
+    if len(x) == 2 and x[0] == "collected" and isinstance(x[1], tuple):
+        return ("collected", tuple(sorted((as_bags(e) for e in x[1]), key=bag_key)))
+    return tuple(as_bags(e) for e in x)
+
+
+def canonical(output):
+    """OUTPUT with each statement's answers, each collapse's answers and each
+    collection's elements in a fixed order: (LABEL ANSWERS) with ANSWERS an
+    expression is a collapse, and consecutive lines with one label are one
+    statement's answers."""
+    lines = []
+    for line in output.splitlines():
+        try:
+            atoms = atoms_of(line)
+        except (IndexError, ValueError):
+            lines.append((None, line))
+            continue
+        if len(atoms) == 1 and isinstance(atoms[0], tuple) and len(atoms[0]) == 2 \
+                and isinstance(atoms[0][1], tuple):
+            label, answers = atoms[0]
+            answers = tuple(sorted((as_bags(a) for a in answers), key=bag_key))
+            lines.append((label, repr((label, answers))))
+        elif len(atoms) == 1 and isinstance(atoms[0], tuple) and atoms[0]:
+            lines.append((atoms[0][0], repr(as_bags(atoms[0]))))
+        else:
+            lines.append((None, repr([as_bags(a) for a in atoms])))
+    statements, at = [], 0
+    while at < len(lines):
+        end = at + 1
+        while lines[at][0] is not None and end < len(lines) and lines[end][0] == lines[at][0]:
+            end += 1
+        statements.append(sorted(text for _, text in lines[at:end]))
+        at = end
+    return statements
+
+
+def same(left, right):
+    return canonical(left) == canonical(right)
+
+
 def trace_lines(stderr):
     return [line for line in stderr.splitlines() if line.startswith("[transform]")]
 
@@ -64,8 +153,8 @@ def check_fixed(binary):
         _, reference, _ = run(binary, path, True, False)
         trace = trace_lines(stderr)
         fired = sum(1 for line in trace if line.startswith("[transform] fired"))
-        if native != expected or reference != expected:
-            print(f"FAIL: {stem}: {'native' if native != expected else 'reference'} "
+        if not same(native, expected) or not same(reference, expected):
+            print(f"FAIL: {stem}: {'native' if not same(native, expected) else 'reference'} "
                   "answers differ from the expected output")
             return False
         if code != 0 or fired == 0 or any("declined" in line or "refused" in line
@@ -82,7 +171,7 @@ def check_fixed(binary):
             with open(specs_path, "w") as f:
                 f.write(source.replace(LIBRARY_IMPORT, SPECS_IMPORT))
             _, specs, _ = run(binary, specs_path, False, False)
-        if specs != expected:
+        if not same(specs, expected):
             print(f"FAIL: {stem}: lib_transform_specs answers differ from the expected output")
             return False
     return True
@@ -112,8 +201,8 @@ def check_source_fuel(binary):
                     authored = run(binary, path, True, False, fuel, workers, machine)
                     diagnostics = "\n".join(line for line in native[2].splitlines()
                                             if not line.startswith("[transform]"))
-                    if (native[0], native[1], diagnostics) != \
-                            (authored[0], authored[1], authored[2].rstrip("\n")):
+                    if (native[0], canonical(native[1]), diagnostics) != \
+                            (authored[0], canonical(authored[1]), authored[2].rstrip("\n")):
                         print(f"FAIL: transform source fuel: {name}, {fuel}, {machine}, {workers}")
                         print("native:", native, "authored:", authored)
                         return False
@@ -177,6 +266,8 @@ def sources(rng, index):
 
 def template(rng, bound):
     used = bound[:rng.randint(0, len(bound))] if bound else []
+    # a collection is a bag: marked, so the comparison reads it as one
+    used = [f"(collected {v})" if v.startswith("$c") else v for v in used]
     one = f"(out {' '.join(used)})" if used else "(out)"
     if rng.random() < 0.25:
         return f"(, {one} (seen))"
@@ -232,7 +323,7 @@ def main():
                 f.write(program(rng))
             code, native, stderr = run(binary, path, False, True)
             _, reference, _ = run(binary, path, True, False)
-            if native != reference:
+            if not same(native, reference):
                 print(f"FAIL: seeded program {number} (seed {args.seed}) answers differently")
                 print(open(path).read())
                 return 1
@@ -240,7 +331,7 @@ def main():
             with open(specs_path, "w") as f:
                 f.write(open(path).read().replace(LIBRARY_IMPORT, SPECS_IMPORT))
             _, specs, _ = run(binary, specs_path, False, False)
-            if specs != reference:
+            if not same(specs, reference):
                 print(f"FAIL: seeded program {number} (seed {args.seed}): "
                       "lib_transform_specs answers differently")
                 print(open(path).read())
@@ -260,7 +351,8 @@ def main():
             _, native, stderr = run(binary, path, False, True)
             _, reference, _ = run(binary, path, True, False)
             trace = trace_lines(stderr)
-            if native != reference or any(line.startswith("[transform] fired") for line in trace) or \
+            if not same(native, reference) or \
+               any(line.startswith("[transform] fired") for line in trace) or \
                not any("refused" in line for line in trace):
                 print(f"FAIL: {name}: the authored definition did not run")
                 return 1

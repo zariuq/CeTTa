@@ -4150,6 +4150,8 @@ static bool oem_build_case(OemCompile *compile, Atom *expr,
         data = arm->kind == ATOM_EXPR && arm->expr.len == 2u && arm_plan &&
             arm_plan->child_count == 2u &&
             !atom_is_symbol_id(arm->expr.elems[0], g_builtin_syms.empty) &&
+            !(compile->host && compile->host->case_switches_on_empty &&
+              arm->expr.elems[0]->kind == ATOM_VAR) &&
             oem_head_data(compile, arm->expr.elems[0], 0u);
     }
     if (!data) {

@@ -75,4 +75,50 @@ CettaTransformOutcome cetta_transform_fire(
     Space *program, Arena *a, Atom *call, const CettaTransformHost *host,
     Atom **answer_out);
 
+/* `call` is (tf:proposals SPACE CONJUNCTS TEMPLATE): the kernel's matches
+ * against the store at the call, *answer_out the expression of each
+ * (tf:kmatch GUIDE), its read, take and unique entries (MODE SPACE ATOM) in
+ * conjunct order.  The order of the proposals is free, as a space's answers
+ * are.  FIRED, ERROR when code a `let` ran answered an error, or DECLINED. */
+CettaTransformOutcome cetta_transform_propose(
+    Space *program, Arena *a, Atom *call, const CettaTransformHost *host,
+    Atom **answer_out);
+
+/* `call` is (tf:guided CONJUNCTS GUIDE): a branch's sources, each kernel read
+ * or take pinned to the atom its proposal matched.  Data only: false when the
+ * call is not of the library's shape. */
+bool cetta_transform_guided(Arena *a, Atom *call, Atom **answer_out);
+
+/* `call` is (transform SPACE SOURCES TEMPLATE) or (transform SPACE SOURCES
+ * TEMPLATE DESTINATION) with DESTINATION a space, as tf:run runs it under an
+ * observer that collects every answer: each branch in turn fires on the store
+ * the branches before it left.  FIRED with *collection_out the expression of
+ * the answers: TEMPLATE's instances, as data, or each branch's routed count;
+ * NONE never; ERROR with *collection_out the error; DECLINED before any
+ * branch fired. */
+CettaTransformOutcome cetta_transform_collect(
+    Space *program, Arena *a, Atom *call, const CettaTransformHost *host,
+    Atom **collection_out, uint64_t *count_out);
+
+/* How the read-only step reads. */
+typedef enum {
+    /* Occurrence order: a caller that continues each answer before the next. */
+    CETTA_STEP_READS_ORDERED = 0,
+    /* A bag: the caller takes every answer, so their order is free; rows the
+     * native query engine declines are read by the occurrence cursors. */
+    CETTA_STEP_READS_BAG,
+    /* A bag the native query engine answers alone: anything it declines,
+     * the step declines, for a caller whose ordinary path answers then. */
+    CETTA_STEP_READS_ENGINE,
+} CettaStepReads;
+
+/* match as the step with reads only: (match SPACE PATTERN TEMPLATE)'s
+ * answers, each read of PATTERN (or of each part of a conjunction) on the
+ * store at the call answering TEMPLATE's instance as data.  FIRED, or
+ * DECLINED, having read nothing. */
+CettaTransformOutcome cetta_transform_reads(
+    const CettaTransformHost *host, Arena *a, Atom *space, Atom *pattern,
+    Atom *template_atom, CettaStepReads mode, Atom **collection_out,
+    uint64_t *count_out);
+
 #endif /* CETTA_TRANSFORM_CORE_H */

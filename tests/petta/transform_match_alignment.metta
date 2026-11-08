@@ -31,30 +31,34 @@
 !(spend-copies (collapse (transform &d (take (coin 1)) spent)))
 !(after-copies (show &d))
 
-; once fires the first match that holds.
+; once fires one match that holds: one coin is taken, and it and the coin left
+; are the two stored.  Which match is tried first is the engine's.
 !(bind! &o (new-space))
 !(add-atom &o (coin 1))
 !(add-atom &o (coin 2))
-!(spend-once (collapse (once (transform &o (take (coin $v)) (got $v)))))
-!(after-once (show &o))
+!(spend-once (let $got (collapse (once (transform &o (take (coin $v)) $v)))
+   (spent (size-atom $got) (sort-atom (cons-atom (car-atom $got) (collapse (match &o (coin $w) $w)))))))
 
-; Two matches want the one token: the first branch takes it, and the second
-; finds its match no longer holds and fires nothing.
+; Two matches want the one token: the branch that runs first takes it, and the
+; other finds its match no longer holds and fires nothing.
 !(bind! &t (new-space))
 !(add-atom &t (tok a))
 !(add-atom &t (k 1))
 !(add-atom &t (k 2))
-!(contend (collapse (transform &t (, (take (tok $x)) (k $y)) (won $x $y))))
+!(contend (let $won (collapse (transform &t (, (take (tok $x)) (k $y)) (won $x $y)))
+   (contended (size-atom $won) (collapse (let (won $x $y) (superpose $won) $x)))))
 !(after-contend (show &t))
 
-; all is computed when a branch fires: the first branch takes every q, and the
-; second fires with none left.
+; all is computed when a branch fires: the branch that runs first takes every q,
+; and the other fires with none left, so every move is one branch's.
 !(bind! &e (new-space))
 !(add-atom &e (r 1))
 !(add-atom &e (r 2))
 !(add-atom &e (q a))
 !(add-atom &e (q b))
-!(all-per-branch (collapse (transform &e (, (r $x) (all (take (q $y)))) (moved $x $y))))
+!(all-per-branch (let $m (collapse (transform &e (, (r $x) (all (take (q $y)))) (moved $x $y)))
+   (moved (size-atom (unique-atom (collapse (let (moved $x $y) (superpose $m) $x))))
+          (sort-atom (collapse (let (moved $x $y) (superpose $m) $y))))))
 !(after-all (show &e))
 
 ; Into a destination space: each branch answers how many it routed.
@@ -66,22 +70,25 @@
 !(after-src (show &src))
 !(after-dst (show &dst))
 
-; once fires the first match that holds, as a source too: alone it takes one
-; coin; after a read, each branch takes the first q still there.
+; once fires one match that holds, as a source too: alone it takes one coin;
+; after a read, each branch takes a q still there.
 !(bind! &w (new-space))
 !(add-atom &w (coin 1))
 !(add-atom &w (coin 2))
 !(add-atom &w (coin 5))
-!(once-marker (collapse (transform &w (once (take (coin $v))) (got $v))))
-!(after-once-marker (show &w))
+!(once-marker (let $got (collapse (transform &w (once (take (coin $v))) $v))
+   (spent (size-atom $got) (sort-atom (cons-atom (car-atom $got) (collapse (match &w (coin $c) $c)))))))
 !(bind! &f (new-space))
 !(add-atom &f (r 1))
 !(add-atom &f (r 2))
 !(add-atom &f (q a))
 !(add-atom &f (q b))
 !(add-atom &f (q c))
-!(once-per-branch (collapse (transform &f (, (r $x) (once (take (q $y)))) (moved $x $y))))
-!(after-once-per-branch (show &f))
+!(once-per-branch (let $m (collapse (transform &f (, (r $x) (once (take (q $y)))) (moved $x $y)))
+   (moved (sort-atom (collapse (let (moved $x $y) (superpose $m) $x)))
+          (size-atom (unique-atom (collapse (let (moved $x $y) (superpose $m) $y))))
+          (size-atom (collapse (match &f (q $z) $z))))))
+!(after-once-per-branch (sort-atom (collapse (match &f (r $x) $x))))
 
 ; A branch is the match it stands for: its other conditions are evaluated when it
 ; fires, each with its own variables free.  A collection whose variable a later
@@ -90,13 +97,16 @@
 !(add-atom &g (q 1))
 !(add-atom &g (q 2))
 !(add-atom &g (r 1))
-!(collect-bound-later (collapse (transform &g (, (collect (q $y) $C) (r $y)) (got $y $C))))
+!(collect-bound-later (collapse (transform &g (, (collect (q $y) $C) (r $y)) (got $y (collected $C)))))
 !(bind! &u (new-space))
 !(add-atom &u (k 1))
 !(add-atom &u (k 2))
 !(add-atom &u (p 7))
 !(unique-growth (collapse (transform &u (, (take (k $n)) (unique (p $x))) (p $n) &u)))
-!(after-unique-growth (show &u))
+; one k is left, its number beside the p the branch that fired added and (p 7)
+!(after-unique-growth (let $k (collapse (match &u (k $n) $n))
+   (grown (size-atom $k) (size-atom (collapse (match &u (p $x) $x)))
+          (sort-atom (cons-atom (car-atom $k) (collapse (match &u (p $x) $x)))))))
 
 ; The template's own syntax decides how many instances a row gives: a value bound to
 ; a comma expression is one instance.

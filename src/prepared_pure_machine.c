@@ -2515,10 +2515,20 @@ static bool prepared_pure_compile_bind_pattern(
         (void **)&stack, sizeof(*stack), &stack_cap, 1u);
     if (ok)
         stack[stack_len++] = pattern;
+    /* A list pattern with a rest, [h ... | t], meets a list by its prefix
+     * and binds its rest to the list that remains, a value the match builds;
+     * the matcher here reads only the atoms it is given, so such a pattern
+     * stays with the dialect's own matcher. */
+    bool list_rest = false;
 
     while (ok && stack_len > 0u) {
         Atom *current = stack[--stack_len];
         if (!current) {
+            ok = false;
+            break;
+        }
+        if (atom_is_list_rest(current)) {
+            list_rest = true;
             ok = false;
             break;
         }
@@ -2579,7 +2589,9 @@ static bool prepared_pure_compile_bind_pattern(
         context->len = saved_context_len;
         context->next_slot = saved_next_slot;
         program->bind_var_len = saved_bind_var_len;
-        return false;
+        return list_rest
+            ? prepared_pure_reject(program, "a list pattern with a rest", pattern)
+            : false;
     }
     bool flat = pattern->kind == ATOM_EXPR && pattern->expr.len > 0u &&
         pattern->expr.elems[0] &&
