@@ -28,7 +28,7 @@ true
 true
 true
 true
-(coin-every ())
+(coin-all ())
 (coin-each 1)
 (coin-each-again ())
 (coin-store ((bought u1 c1) (wants u1) (wants u2)))

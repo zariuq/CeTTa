@@ -108,14 +108,17 @@ def emit_except_class(out: list[str], name: str, exclusions: set[int]) -> None:
 def emit_classes(path: Path) -> None:
     out = [
         "; Scalar classes pinned to PeTTa filereader.pl under SWI-Prolog 10.1.9.\n",
-        "; Comment termination is LF-only; quote toggling is escape-oblivious.\n",
+        "; Comment termination is LF-only; inside a string a backslash and the scalar\n",
+        "; after it are one escape, so an escaped quote does not end the string.\n",
         "(gslt-presentation-v1 PeTTaDocumentSplitterScalarClassesV1\n",
         "  (signature)\n",
         "  (equations)\n",
         "  (rewrites\n",
     ]
     emit_point_class(out, "petta-splitter-blank-scalar", PETTA_BLANKS)
-    emit_except_class(out, "petta-splitter-nonquote-scalar", {0x0022})
+    emit_except_class(
+        out, "petta-splitter-string-plain-scalar", {0x0022, 0x005C}
+    )
     emit_except_class(out, "petta-splitter-comment-body-scalar", {0x000A})
     emit_except_class(
         out,
@@ -154,7 +157,8 @@ def emit_splitter(path: Path) -> None:
     )
     out = [
         "; PeTTa filereader.pl strip/3 plus top_forms//2 as scannerless GSLT data.\n",
-        "; This compatibility presentation intentionally toggles quotes without escape handling.\n",
+        "; Inside a string a backslash and the scalar after it are one escape, as in\n",
+        "; PeTTa's reader, so an escaped quote does not end the string.\n",
         "(gslt-presentation-v1 PeTTaDocumentSplitterSyntaxV1\n",
         "  (signature)\n",
         "  (equations)\n",
@@ -184,11 +188,19 @@ def emit_splitter(path: Path) -> None:
             "petta-splitter-quoted",
             app(
                 "node",
-                "naive-quoted",
+                "escaped-quoted",
                 seq(
                     [
                         char(0x0022),
-                        app("star", cls("petta-splitter-nonquote-scalar")),
+                        app(
+                            "star",
+                            alt(
+                                [
+                                    seq([char(0x005C), "any"]),
+                                    cls("petta-splitter-string-plain-scalar"),
+                                ]
+                            ),
+                        ),
                         char(0x0022),
                     ]
                 ),

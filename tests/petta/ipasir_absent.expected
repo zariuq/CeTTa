@@ -1,0 +1,5 @@
+true
+(__cetta_lib_ipasir_solve ((clause (a) ()) (clause (b) (a))))
+(__cetta_lib_ipasir_models ((clause (a) ())))
+true
+(__cetta_lib_ipasir_solve ((clause (a) ())))

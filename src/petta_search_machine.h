@@ -475,6 +475,12 @@ typedef struct {
         const CettaInvocation *invocation,
         const Bindings *environment, OutcomeSet *outcomes,
         CettaCallOutcome *end);
+    /* Whether the operation `head` names makes a value built to be consumed
+     * by later calls, such as a grounder's program: the machine then gives
+     * apply_ready_values its old generation as the arena, so no collection
+     * copies the value, and settles there whatever of the answers refers to
+     * younger storage.  Optional. */
+    bool (*result_long_lived)(void *context, const Atom *head);
     /* Complete a native invocation that has already executed. No refusal
      * or native replay is permitted here; terminal faults go through end.
      * Its values retain their provenance and conditional roots. */
@@ -792,6 +798,12 @@ typedef struct {
     bool (*tabled_relation_set)(
         void *context, SymbolId head, CettaExprLen arity,
         bool enabled);
+    /* tabled-lattice: a tabled relation whose answers for one instance of
+     * the call are joined, by min or max, inside the fixpoint. */
+    SymbolId (*tabled_relation_join)(
+        void *context, SymbolId head, CettaExprLen arity);
+    bool (*tabled_relation_join_set)(
+        void *context, SymbolId head, CettaExprLen arity, SymbolId join);
     /* A shared table is an optional physical realization.  The language
      * still decides which relations are memoized through the callbacks
      * below; merely supplying storage cannot make a call cacheable. */

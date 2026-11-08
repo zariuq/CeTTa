@@ -43,6 +43,35 @@ bool cetta_exec_saturation_presentation_admitted(Space *program);
  * published on a decline. */
 bool cetta_exec_saturation_admitted(Space *program, Atom *call, Space *facts);
 
+/* A directive the authored rounds read as data: (exec KEY (, P ...) (, T ...))
+ * with a flat query of one or more patterns, each read by the space's own
+ * conjunction query as `match` reads it, and templates whose heads are
+ * constants other than `=` and `:`, so a published fact is never a
+ * definition.  The parts point into the directive. */
+typedef struct {
+    Atom *key;
+    Atom **patterns;
+    CettaExprLen npatterns;
+    Atom **templates;
+    CettaExprLen ntemplates;
+} CettaExecDirective;
+
+bool cetta_exec_directive_read(Atom *directive, CettaExecDirective *out);
+
+/* A row of a directive's query: VISIT answers false to stop the walk. */
+typedef bool (*CettaExecRowVisit)(void *context,
+                                  const CettaExecDirective *directive,
+                                  Bindings *row);
+
+/* Every row of the directive's query over `facts` when `delta` is NULL;
+ * otherwise every row that reads at least one atom of `delta`, each query
+ * position in turn reading `delta` and the other patterns `facts`, so a row
+ * reading several atoms of `delta` is visited once per such position.
+ * False when a visit stopped the walk or memory ran out. */
+bool cetta_exec_directive_rows(Space *facts, Space *delta, Arena *a,
+                               const CettaExecDirective *directive,
+                               CettaExecRowVisit visit, void *context);
+
 /* `call` is `(exec:saturate SPACE DIRECTIVES)` with its arguments as data;
  * `program` holds the live definitions and `facts` is the space SPACE
  * resolves to. */

@@ -17,3 +17,7 @@ true
 (weighted true 8)
 (hamiltonian true 1)
 (bounded-weight true 10)
+(disjunctive-colouring true 2)
+(disjunction-of-three true 4)
+(repeated-head true 2)
+(disjunction-refuted true 0)

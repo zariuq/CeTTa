@@ -126,13 +126,6 @@ bool cetta_exec_saturation_presentation_admitted(Space *program) {
     return admitted;
 }
 
-typedef struct {
-    Atom **patterns;
-    CettaExprLen npatterns;
-    Atom **templates;
-    CettaExprLen ntemplates;
-} ExecSaturationRule;
-
 static bool exec_saturation_is_connective(Atom *atom) {
     return atom && atom->kind == ATOM_EXPR && atom->expr.len >= 1u &&
            (atom_is_symbol_id(atom->expr.elems[0], g_builtin_syms.comma) ||
@@ -150,12 +143,7 @@ static bool exec_saturation_tuple(Atom *tuple, Atom ***items_out,
     return true;
 }
 
-/* A directive the authored round reads as data: `(exec KEY (, P...) (, T...))`
- * with a flat query of one or more patterns, each read by the space's own
- * conjunction query as `match` reads it, and templates whose heads are
- * constants other than `=` and `:`, so a published fact is never a
- * definition. */
-static bool exec_saturation_rule(Atom *directive, ExecSaturationRule *rule) {
+bool cetta_exec_directive_read(Atom *directive, CettaExecDirective *rule) {
     if (!directive || directive->kind != ATOM_EXPR ||
         directive->expr.len != 4u ||
         !atom_is_symbol(directive->expr.elems[0], "exec") ||
@@ -165,6 +153,7 @@ static bool exec_saturation_rule(Atom *directive, ExecSaturationRule *rule) {
         !exec_saturation_tuple(directive->expr.elems[3], &rule->templates,
                                &rule->ntemplates))
         return false;
+    rule->key = directive->expr.elems[1];
     for (CettaExprLen i = 0u; i < rule->npatterns; i++) {
         Atom *pattern = rule->patterns[i];
         if (!pattern || pattern->kind == ATOM_VAR ||
@@ -192,8 +181,8 @@ bool cetta_exec_saturation_admitted(Space *program, Atom *call, Space *facts) {
         return false;
     Atom *directives = call->expr.elems[2];
     for (CettaExprLen i = 0u; i < directives->expr.len; i++) {
-        ExecSaturationRule rule;
-        if (!exec_saturation_rule(directives->expr.elems[i], &rule))
+        CettaExecDirective rule;
+        if (!cetta_exec_directive_read(directives->expr.elems[i], &rule))
             return false;
     }
     return true;
@@ -217,40 +206,20 @@ static bool exec_saturation_push(ExecSaturationAtoms *list, Atom *atom) {
     return true;
 }
 
-/* Every template instance under one row of a directive's query. */
-static bool exec_saturation_propose(Arena *a, const ExecSaturationRule *rule,
-                                    Bindings *row,
-                                    ExecSaturationAtoms *proposals) {
-    for (CettaExprLen i = 0u; i < rule->ntemplates; i++) {
-        Atom *instance = bindings_apply(row, a, rule->templates[i]);
-        if (!instance || !exec_saturation_push(proposals, instance))
-            return false;
+bool cetta_exec_directive_rows(Space *facts, Space *delta, Arena *a,
+                               const CettaExecDirective *rule,
+                               CettaExecRowVisit visit, void *context) {
+    if (!delta) {
+        BindingSet rows;
+        binding_set_init(&rows);
+        space_query_conjunction(facts, a, rule->patterns, rule->npatterns,
+                                NULL, &rows);
+        bool ok = true;
+        for (CettaCount r = 0u; ok && r < rows.len; r++)
+            ok = visit(context, rule, &rows.items[r]);
+        binding_set_free(&rows);
+        return ok;
     }
-    return true;
-}
-
-/* Rows of the whole query, the first round's. */
-static bool exec_saturation_round_all(Space *facts, Arena *a,
-                                      const ExecSaturationRule *rule,
-                                      ExecSaturationAtoms *proposals) {
-    BindingSet rows;
-    binding_set_init(&rows);
-    space_query_conjunction(facts, a, rule->patterns, rule->npatterns,
-                            NULL, &rows);
-    bool ok = true;
-    for (CettaCount r = 0u; ok && r < rows.len; r++)
-        ok = exec_saturation_propose(a, rule, &rows.items[r], proposals);
-    binding_set_free(&rows);
-    return ok;
-}
-
-/* Rows that read at least one fact of `delta`: each query position in turn
- * reads the delta, and the other patterns the whole space.  A row reading
- * several new facts is proposed once per such position; publication without
- * duplicates absorbs the repeats. */
-static bool exec_saturation_round_delta(Space *facts, Space *delta, Arena *a,
-                                        const ExecSaturationRule *rule,
-                                        ExecSaturationAtoms *proposals) {
     Atom **rest = rule->npatterns > 1u
         ? arena_alloc(a, sizeof(*rest) * (size_t)(rule->npatterns - 1u))
         : NULL;
@@ -268,8 +237,7 @@ static bool exec_saturation_round_delta(Space *facts, Space *delta, Arena *a,
                 rest[k++] = rule->patterns[j];
         for (CettaCount s = 0u; ok && s < seeds.len; s++) {
             if (k == 0u) {
-                ok = exec_saturation_propose(a, rule, &seeds.items[s],
-                                             proposals);
+                ok = visit(context, rule, &seeds.items[s]);
                 continue;
             }
             BindingSet rows;
@@ -277,13 +245,31 @@ static bool exec_saturation_round_delta(Space *facts, Space *delta, Arena *a,
             space_query_conjunction(facts, a, rest, k, &seeds.items[s],
                                     &rows);
             for (CettaCount r = 0u; ok && r < rows.len; r++)
-                ok = exec_saturation_propose(a, rule, &rows.items[r],
-                                             proposals);
+                ok = visit(context, rule, &rows.items[r]);
             binding_set_free(&rows);
         }
         binding_set_free(&seeds);
     }
     return ok;
+}
+
+typedef struct {
+    Arena *arena;
+    ExecSaturationAtoms *proposals;
+} ExecSaturationProposer;
+
+/* Every template instance under one row of a directive's query. */
+static bool exec_saturation_propose(void *context,
+                                    const CettaExecDirective *rule,
+                                    Bindings *row) {
+    ExecSaturationProposer *proposer = context;
+    for (CettaExprLen i = 0u; i < rule->ntemplates; i++) {
+        Atom *instance = bindings_apply(row, proposer->arena,
+                                        rule->templates[i]);
+        if (!instance || !exec_saturation_push(proposer->proposals, instance))
+            return false;
+    }
+    return true;
 }
 
 CettaExecSaturationOutcome cetta_exec_saturate(
@@ -296,12 +282,12 @@ CettaExecSaturationOutcome cetta_exec_saturate(
         !cetta_exec_saturation_admitted(program, call, facts))
         return CETTA_EXEC_SATURATION_DECLINED;
     CettaExprLen nrules = directives->expr.len;
-    ExecSaturationRule *rules = nrules
+    CettaExecDirective *rules = nrules
         ? arena_alloc(a, sizeof(*rules) * (size_t)nrules) : NULL;
     if (nrules && !rules)
         return CETTA_EXEC_SATURATION_DECLINED;
     for (CettaExprLen i = 0u; i < nrules; i++)
-        if (!exec_saturation_rule(directives->expr.elems[i], &rules[i]))
+        if (!cetta_exec_directive_read(directives->expr.elems[i], &rules[i]))
             return CETTA_EXEC_SATURATION_DECLINED;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_EXEC_SATURATION_ADMITTED);
 
@@ -319,12 +305,12 @@ CettaExecSaturationOutcome cetta_exec_saturate(
             for (size_t i = 0u; i < added.len; i++)
                 space_add(&delta, added.items[i]);
         }
+        ExecSaturationProposer proposer = {a, &proposals};
         bool ok = true;
         for (CettaExprLen i = 0u; ok && i < nrules; i++)
-            ok = first
-                ? exec_saturation_round_all(facts, a, &rules[i], &proposals)
-                : exec_saturation_round_delta(facts, &delta, a, &rules[i],
-                                              &proposals);
+            ok = cetta_exec_directive_rows(facts, first ? NULL : &delta, a,
+                                           &rules[i], exec_saturation_propose,
+                                           &proposer);
         if (delta_live) {
             space_free(&delta);
             delta_live = false;

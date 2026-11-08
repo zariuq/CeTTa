@@ -34,7 +34,7 @@ REGULAR_COMPILER = (
     / "compiler"
     / "regular_span_compiler_v1.metta"
 )
-MATRIX_DIGEST = "cf6f155b6102ec6864754f62b6e7946bb30ea5f227faad0b5661f92028892ed5"
+MATRIX_DIGEST = "14748eb98ff204558705cbb20e34f186cb5da89dda2005b35146dff021a1e099"
 
 SUPPORTED_CASES = (
     ("metamath", "whitespace"),

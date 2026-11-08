@@ -20,9 +20,9 @@ typedef enum {
 } AspClingoSymbolKind;
 
 /* What a ground program reports, statement by statement: a rule (a choice
- * when `choice`), a weight rule over weighted literals, and the symbol an
- * output atom names (atom 0: a fact that always holds).  `unsupported`
- * names a statement kind with no reading here. */
+ * when `choice`), a weight rule over weighted literals, a minimize statement,
+ * and the symbol an output atom names (atom 0: a fact that always holds).
+ * `unsupported` names a statement kind with no reading here. */
 typedef struct {
     bool (*rule)(void *context, bool choice, const uint32_t *head,
                  size_t head_len, const int32_t *body, size_t body_len);
@@ -32,6 +32,10 @@ typedef struct {
                         size_t body_len);
     bool (*output)(void *context, AspClingoSymbol symbol, uint32_t atom);
     bool (*unsupported)(void *context, const char *what);
+    /* a minimize statement: at `priority`, the weights of the true literals
+     * (weights may be negative); NULL reports it unsupported */
+    bool (*minimize)(void *context, int32_t priority, const int32_t *literals,
+                     const int32_t *weights, size_t len);
 } AspClingoGroundSink;
 
 bool asp_clingo_available(void);

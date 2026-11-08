@@ -272,13 +272,19 @@ void symbol_table_free(SymbolTable *st) {
     st->slot_used = 0;
 }
 
+/* The empty name is a symbol like any other (the identity of name
+ * concatenation, Prolog's ''): a span of length 0 may come without bytes. */
+static const uint8_t symbol_empty_bytes[1] = {0};
+
 static SymbolId symbol_intern_span_hashed_unlocked(SymbolTable *st,
                                                    const uint8_t *bytes,
                                                    uint32_t len,
                                                    uint64_t hash) {
     uint32_t entry_len;
 
-    if (!st || !bytes || len == 0) return SYMBOL_ID_NONE;
+    if (!st || (!bytes && len)) return SYMBOL_ID_NONE;
+    if (!bytes)
+        bytes = symbol_empty_bytes;
     if (((uint64_t)st->slot_used + 1u) * SYMBOL_TABLE_MAX_LOAD_DEN >
         (uint64_t)st->slot_cap * SYMBOL_TABLE_MAX_LOAD_NUM) {
         if (st->slot_cap > UINT32_MAX / 2u) {
@@ -350,7 +356,7 @@ static SymbolId symbol_intern_span_hashed_unlocked(SymbolTable *st,
 SymbolId symbol_try_intern_span_hashed(SymbolTable *st, const uint8_t *bytes,
                                    uint32_t len, uint64_t hash) {
     SymbolId id;
-    if (!st || !bytes || !len) { errno = EINVAL; return SYMBOL_ID_NONE; }
+    if (!st || (!bytes && len)) { errno = EINVAL; return SYMBOL_ID_NONE; }
     pthread_mutex_lock(&st->write_mutex);
     id = symbol_intern_span_hashed_unlocked(st, bytes, len, hash);
     pthread_mutex_unlock(&st->write_mutex);
@@ -359,7 +365,7 @@ SymbolId symbol_try_intern_span_hashed(SymbolTable *st, const uint8_t *bytes,
 
 SymbolId symbol_intern_span_hashed(SymbolTable *st, const uint8_t *bytes,
                                    uint32_t len, uint64_t hash) {
-    if (!st || !bytes || !len) return SYMBOL_ID_NONE;
+    if (!st || (!bytes && len)) return SYMBOL_ID_NONE;
     SymbolId id = symbol_try_intern_span_hashed(st, bytes, len, hash);
     if (!id && !(cetta_native_memory_recover && cetta_native_memory_recover()))
         symbol_fatal("symbol interning");
@@ -431,7 +437,9 @@ done:
 }
 
 SymbolId symbol_intern_bytes(SymbolTable *st, const uint8_t *bytes, uint32_t len) {
-    if (!st || !bytes || len == 0) return SYMBOL_ID_NONE;
+    if (!st || (!bytes && len)) return SYMBOL_ID_NONE;
+    if (!bytes)
+        bytes = symbol_empty_bytes;
     return symbol_intern_span_hashed(st, bytes, len,
                                      symbol_hash_bytes(bytes, len));
 }

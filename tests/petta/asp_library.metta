@@ -20,3 +20,11 @@
 !(asp:trace ((rule p (q) ()) (rule q (p) ()) (rule r () (p))))
 ; a trace ends as the solver answers
 !(let $solved (asp:solve ((rule a () (b)) (rule b () (a)) (constraint (a) ()))) (let (trace $atoms $steps $result) (asp:trace ((rule a () (b)) (rule b () (a)) (constraint (a) ()))) (== $result $solved)))
+; the variants of a body under the injective maps of its variables into 1 .. 3
+!(asp:injections ((p 0 $a) (q $a $b)) ($a $b) (1 2 3))
+; without variables to map the term itself; too few values, none
+!(asp:injections ((p 0 0)) () (1 2))
+!(asp:injections ((p $a $b $c)) ($a $b $c) (1 2))
+; variables only, and distinct
+!(asp:injections (p $a) (x) (1 2))
+!(asp:injections (p $a) ($a $a) (1 2))

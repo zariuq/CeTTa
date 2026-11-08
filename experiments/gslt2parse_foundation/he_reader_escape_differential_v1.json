@@ -15,7 +15,7 @@
     },
     "cetta_parser": {
       "path": "src/parser.c",
-      "sha256": "fb01bd8578fbb413b6282bf88b23832d1ac5348e3ac57d80a6155b6ebc585446"
+      "sha256": "0e3bb5c3d6f659b2a66427c461437199ae3bcf40be51927a00abb769c3fd2164"
     },
     "leatta_parser": {
       "path": "lean/algorithms/Algorithms/MeTTa/Simple/Parser.lean",
@@ -37,7 +37,7 @@
     },
     "cetta_oracle": {
       "path": "tools/cetta_parser_oracle_v1.c",
-      "sha256": "773096f5cd7b5a96df703a11e2ac58aec92864747705e3cdd21d246cbaa460a3"
+      "sha256": "36ae0b44305a9897bc6a82a856db11086783d1df4b817cba4d96eda624fe3101"
     },
     "leatta_oracle": {
       "path": "tools/leatta_parser_oracle_v1.lean",
@@ -79,7 +79,7 @@
       "id": "unicode-basic",
       "source_hex": "225c757b34317d22",
       "rust": {"status": "accepted", "value_hex": "224122"},
-      "cetta": {"status": "accepted", "value_hex": "757b34317d"},
+      "cetta": {"status": "accepted", "value_hex": "41"},
       "leatta": {"status": "accepted", "value_hex": "225c757b34317d22"},
       "unicode": {"opening_braces": 1, "has_closing_brace": true, "body": "41", "recognizer_accepts": true, "projection_covers": true}
     },
@@ -87,7 +87,7 @@
       "id": "unicode-no-brace",
       "source_hex": "225c753030343122",
       "rust": {"status": "rejected", "error_contains": "Invalid escape sequence"},
-      "cetta": {"status": "accepted", "value_hex": "7530303431"},
+      "cetta": {"status": "accepted", "value_hex": "41"},
       "leatta": {"status": "accepted", "value_hex": "225c753030343122"},
       "unicode": {"opening_braces": 0, "has_closing_brace": false, "body": "0041", "recognizer_accepts": false, "projection_covers": false}
     },
@@ -95,7 +95,7 @@
       "id": "unicode-empty",
       "source_hex": "225c757b7d22",
       "rust": {"status": "accepted", "value_hex": "220022"},
-      "cetta": {"status": "accepted", "value_hex": "757b7d"},
+      "cetta": {"status": "accepted", "value_hex": "5c757b7d"},
       "leatta": {"status": "accepted", "value_hex": "225c757b7d22"},
       "unicode": {"opening_braces": 1, "has_closing_brace": true, "body": "", "recognizer_accepts": false, "projection_covers": false}
     },
@@ -103,7 +103,7 @@
       "id": "unicode-repeat-open",
       "source_hex": "225c757b7b34317d22",
       "rust": {"status": "accepted", "value_hex": "224122"},
-      "cetta": {"status": "accepted", "value_hex": "757b7b34317d"},
+      "cetta": {"status": "accepted", "value_hex": "5c757b7b34317d"},
       "leatta": {"status": "accepted", "value_hex": "225c757b7b34317d22"},
       "unicode": {"opening_braces": 2, "has_closing_brace": true, "body": "41", "recognizer_accepts": false, "projection_covers": false}
     },
@@ -111,7 +111,7 @@
       "id": "unicode-invalid-hex",
       "source_hex": "225c757b646566677d22",
       "rust": {"status": "rejected", "error_contains": "Invalid escape sequence"},
-      "cetta": {"status": "accepted", "value_hex": "757b646566677d"},
+      "cetta": {"status": "accepted", "value_hex": "5c757b646566677d"},
       "leatta": {"status": "accepted", "value_hex": "225c757b646566677d22"},
       "unicode": {"opening_braces": 1, "has_closing_brace": true, "body": "defg", "recognizer_accepts": false, "projection_covers": false}
     },
@@ -119,7 +119,7 @@
       "id": "unicode-nine-digits",
       "source_hex": "225c757b3031323334353637387d22",
       "rust": {"status": "rejected", "error_contains": "Invalid escape sequence"},
-      "cetta": {"status": "accepted", "value_hex": "757b3031323334353637387d"},
+      "cetta": {"status": "accepted", "value_hex": "5c757b3031323334353637387d"},
       "leatta": {"status": "accepted", "value_hex": "225c757b3031323334353637387d22"},
       "unicode": {"opening_braces": 1, "has_closing_brace": true, "body": "012345678", "recognizer_accepts": false, "projection_covers": false}
     },
@@ -127,7 +127,7 @@
       "id": "unicode-surrogate",
       "source_hex": "225c757b443830307d22",
       "rust": {"status": "rejected", "error_contains": "Invalid escape sequence"},
-      "cetta": {"status": "accepted", "value_hex": "757b443830307d"},
+      "cetta": {"status": "accepted", "value_hex": "5c757b443830307d"},
       "leatta": {"status": "accepted", "value_hex": "225c757b443830307d22"},
       "unicode": {"opening_braces": 1, "has_closing_brace": true, "body": "D800", "recognizer_accepts": false, "projection_covers": false}
     },
@@ -135,7 +135,7 @@
       "id": "unicode-out-of-range",
       "source_hex": "225c757b3131303030307d22",
       "rust": {"status": "rejected", "error_contains": "Invalid escape sequence"},
-      "cetta": {"status": "accepted", "value_hex": "757b3131303030307d"},
+      "cetta": {"status": "accepted", "value_hex": "5c757b3131303030307d"},
       "leatta": {"status": "accepted", "value_hex": "225c757b3131303030307d22"},
       "unicode": {"opening_braces": 1, "has_closing_brace": true, "body": "110000", "recognizer_accepts": false, "projection_covers": false}
     },
@@ -143,7 +143,7 @@
       "id": "unicode-unclosed-brace",
       "source_hex": "225c757b3030343122",
       "rust": {"status": "rejected", "error_contains": "Invalid escape sequence"},
-      "cetta": {"status": "accepted", "value_hex": "757b30303431"},
+      "cetta": {"status": "accepted", "value_hex": "5c757b30303431"},
       "leatta": {"status": "accepted", "value_hex": "225c757b3030343122"},
       "unicode": {"opening_braces": 1, "has_closing_brace": false, "body": "0041", "recognizer_accepts": false, "projection_covers": false}
     },
@@ -151,7 +151,7 @@
       "id": "unicode-seven-leading-zero",
       "source_hex": "225c757b303030303034317d22",
       "rust": {"status": "accepted", "value_hex": "224122"},
-      "cetta": {"status": "accepted", "value_hex": "757b303030303034317d"},
+      "cetta": {"status": "accepted", "value_hex": "41"},
       "leatta": {"status": "accepted", "value_hex": "225c757b303030303034317d22"},
       "unicode": {"opening_braces": 1, "has_closing_brace": true, "body": "0000041", "recognizer_accepts": false, "projection_covers": false}
     },
@@ -159,7 +159,7 @@
       "id": "unicode-eight-leading-zero",
       "source_hex": "225c757b30303030303034317d22",
       "rust": {"status": "accepted", "value_hex": "224122"},
-      "cetta": {"status": "accepted", "value_hex": "757b30303030303034317d"},
+      "cetta": {"status": "accepted", "value_hex": "41"},
       "leatta": {"status": "accepted", "value_hex": "225c757b30303030303034317d22"},
       "unicode": {"opening_braces": 1, "has_closing_brace": true, "body": "00000041", "recognizer_accepts": false, "projection_covers": false}
     },
@@ -181,14 +181,14 @@
       "id": "byte-nul",
       "source_hex": "225c78303022",
       "rust": {"status": "accepted", "value_hex": "220022"},
-      "cetta": {"status": "accepted", "value_hex": "783030"},
+      "cetta": {"status": "accepted", "value_hex": "00"},
       "leatta": {"status": "accepted", "value_hex": "225c78303022"}
     },
     {
       "id": "unknown-escape",
       "source_hex": "225c7122",
       "rust": {"status": "rejected", "error_contains": "Invalid escape sequence"},
-      "cetta": {"status": "accepted", "value_hex": "71"},
+      "cetta": {"status": "accepted", "value_hex": "5c71"},
       "leatta": {"status": "accepted", "value_hex": "225c7122"}
     }
   ]

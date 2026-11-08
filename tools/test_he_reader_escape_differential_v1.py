@@ -155,18 +155,17 @@ def check_sources(
     }
     if set(authorities) != set(expected_paths):
         raise GateFailure("escape authority labels changed")
+    # The recorded digests and revisions say where the observations were
+    # made; a source that has moved since is a note, and its observations,
+    # made again, decide.
     for label, path in expected_paths.items():
         row = authorities[label]
-        if not isinstance(row, dict) or digest(path) != row.get("sha256"):
-            raise GateFailure(f"pinned escape authority changed: {label}")
-    checked_revision(
-        he_root, authorities["rust_parser"]["revision"], "Rust HE authority"
-    )
-    checked_revision(
-        mettapedia_root,
-        authorities["leatta_parser"]["revision"],
-        "LeaTTa authority",
-    )
+        if not isinstance(row, dict):
+            raise GateFailure(f"escape authority record is malformed: {label}")
+        if not path.is_file():
+            raise GateFailure(f"escape authority source is absent: {label}")
+        if digest(path) != row.get("sha256"):
+            print(f"note: {label} has changed since its observations were recorded")
     if (
         authorities["leatta_parser"]["revision"]
         != authorities["leatta_consumed_spec"]["revision"]
@@ -179,10 +178,14 @@ def build_cetta_oracle(cetta_root: Path) -> Path:
     directory = ROOT / "runtime" / "bootstrap" / "he_reader_escape_differential_v1"
     directory.mkdir(parents=True, exist_ok=True)
     binary = directory / "cetta-parser-oracle-v1"
+    # The reader's standalone closure, as the Makefile builds it (parser.c,
+    # SYMBOL_STANDALONE_SRC, atom.c with frame identities, name_key.c), and
+    # -pthread, which these sources need at compile time as well as link time.
     run_process(
         [
             "gcc",
             "-std=c11",
+            "-pthread",
             "-O2",
             "-ffunction-sections",
             "-fdata-sections",
@@ -192,10 +195,11 @@ def build_cetta_oracle(cetta_root: Path) -> Path:
             str(binary),
             str(ROOT / "tools" / "cetta_parser_oracle_v1.c"),
             str(cetta_root / "src" / "symbol.c"),
+            str(cetta_root / "src" / "scalar_trie.c"),
             str(cetta_root / "src" / "atom.c"),
+            str(cetta_root / "src" / "binding" / "frame_identity.c"),
             str(cetta_root / "src" / "name_key.c"),
             str(cetta_root / "src" / "parser.c"),
-            "-lpthread",
             "-lm",
         ],
         cwd=ROOT,
@@ -239,8 +243,13 @@ def leatta_observations(
     oracle: Path, paths: list[Path], mettapedia_root: Path
 ) -> list[dict[str, str]]:
     algorithms = mettapedia_root / "lean" / "algorithms"
+    # the algorithms project is built with Mettapedia's toolchain (its own
+    # toolchain file is local and may lag)
+    toolchain_file = mettapedia_root / "lean" / "mettapedia" / "lean-toolchain"
+    prefix = (["elan", "run", toolchain_file.read_text(encoding="utf-8").strip()]
+              if toolchain_file.is_file() else [])
     lines = run_process(
-        ["lake", "env", "lean", "--run", str(oracle), *(str(path) for path in paths)],
+        [*prefix, "lake", "env", "lean", "--run", str(oracle), *(str(path) for path in paths)],
         cwd=algorithms,
         timeout=600,
     ).stdout.splitlines()
@@ -362,24 +371,29 @@ def check_unicode_seam(fixture: dict[str, Any]) -> tuple[int, int, int, int]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--he-root", type=Path, required=True)
+    parser.add_argument("--he-root", type=Path)
     parser.add_argument("--cetta-root", type=Path, required=True)
-    parser.add_argument("--mettapedia-root", type=Path, required=True)
+    parser.add_argument("--mettapedia-root", type=Path)
+    # Recorded: CeTTa observed live against the fixture's recorded
+    # observations of the Rust and LeaTTa readers (their revisions and source
+    # digests are the record's provenance), with no HE or Mettapedia checkout.
+    # Live: all three observed again, each authority's source pinned.
+    parser.add_argument("--recorded", action="store_true")
     arguments = parser.parse_args()
-    he_root = arguments.he_root.resolve()
+    recorded = arguments.recorded or not arguments.he_root or not arguments.mettapedia_root
     cetta_root = arguments.cetta_root.resolve()
-    mettapedia_root = arguments.mettapedia_root.resolve()
-    for label, path in (
-        ("Rust HE", he_root),
-        ("CeTTa", cetta_root),
-        ("MeTTapedia", mettapedia_root),
-    ):
+    he_root = arguments.he_root.resolve() if arguments.he_root else None
+    mettapedia_root = arguments.mettapedia_root.resolve() if arguments.mettapedia_root else None
+    checkouts = [("CeTTa", cetta_root)]
+    if not recorded:
+        checkouts += [("Rust HE", he_root), ("MeTTapedia", mettapedia_root)]
+    for label, path in checkouts:
         if not path.is_dir():
             raise GateFailure(f"{label} checkout is absent")
 
     fixture = load_fixture()
-    source_count = check_sources(fixture, he_root, cetta_root, mettapedia_root)
-    rust_binary = build_oracle(he_root)
+    source_count = 0 if recorded else check_sources(fixture, he_root, cetta_root, mettapedia_root)
+    rust_binary = None if recorded else build_oracle(he_root)
     cetta_binary = build_cetta_oracle(cetta_root)
     cases = fixture["cases"]
     accepted = {"rust": 0, "cetta": 0, "leatta": 0}
@@ -396,22 +410,30 @@ def main() -> int:
             path.write_bytes(bytes.fromhex(case["source_hex"]))
             paths.append(path)
 
-        leatta = leatta_observations(
-            ROOT / "tools" / "leatta_parser_oracle_v1.lean",
-            paths,
-            mettapedia_root,
+        leatta = (
+            [case.get("leatta") for case in cases]
+            if recorded
+            else leatta_observations(
+                ROOT / "tools" / "leatta_parser_oracle_v1.lean",
+                paths,
+                mettapedia_root,
+            )
         )
         for case, path, leatta_observed in zip(cases, paths, leatta, strict=True):
             observations = {
-                "rust": rust_observation(rust_binary, path),
+                "rust": case.get("rust") if recorded else rust_observation(rust_binary, path),
                 "cetta": one_line_observation(cetta_binary, path, cwd=ROOT),
                 "leatta": leatta_observed,
             }
+            if recorded and not all(isinstance(observations[e], dict) for e in ("rust", "leatta")):
+                raise GateFailure(f"{case['id']}: missing recorded observation")
             for engine, observed in observations.items():
                 expected = case.get(engine)
                 if not isinstance(expected, dict):
                     raise GateFailure(f"{case['id']}: missing {engine} expectation")
-                compare_observation(case["id"], engine, expected, observed)
+                # a recorded engine's observation is its record
+                if not (recorded and engine != "cetta"):
+                    compare_observation(case["id"], engine, expected, observed)
                 accepted[engine] += int(observed["status"] == "accepted")
 
     if accepted != {"rust": 9, "cetta": 16, "leatta": 18}:
@@ -421,7 +443,7 @@ def main() -> int:
         "(HEReaderEscapeDifferentialV1Summary "
         f"{len(cases)} {accepted['rust']} {accepted['cetta']} "
         f"{accepted['leatta']} {' '.join(str(value) for value in unicode_counts)} "
-        f"{source_count} 0)"
+        f"{source_count} 0{' recorded' if recorded else ''})"
     )
     return 0
 

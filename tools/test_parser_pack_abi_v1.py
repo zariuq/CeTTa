@@ -25,7 +25,7 @@ CASES = {
             "shared/petta_document_splitter_scalar_classes_v1.metta",
             "languages/petta_document_splitter_v1.metta",
         ),
-        "summary": (73, 24, 97, 1),
+        "summary": (78, 24, 102, 1),
     },
     "petta": {
         "start": "petta-form",
@@ -61,7 +61,7 @@ CASES = {
             "shared/cetta_prime_scalar_classes_v1.metta",
             "languages/cetta_prime_reader_v1.metta",
         ),
-        "summary": (179, 14, 193, 0),
+        "summary": (352, 18, 370, 0),
     },
     "rho": {
         "start": "cetta-rho-document",
@@ -132,9 +132,11 @@ CASES = {
             "core/syntax_core_v1.metta",
             "shared/lookahead_core_v1.metta",
             "shared/char_core_v1.metta",
+            "shared/ground_relations_v1.metta",
+            "../../../langdef/tptp/unicode_scalar_classes_v1.metta",
             "../../../langdef/tptp/syntax_fof_cnf_v1.metta",
         ),
-        "summary": (688, 562, 1250, 1),
+        "summary": (691, 271, 962, 1),
     },
 }
 

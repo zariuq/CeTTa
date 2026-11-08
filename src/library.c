@@ -174,6 +174,9 @@ enum {
     CETTA_LIBRARY_ASP = 1u << 20,
     CETTA_LIBRARY_CLINGO = 1u << 21,
     CETTA_LIBRARY_PROVENANCE = 1u << 22,
+    CETTA_LIBRARY_SAT = 1u << 23,
+    CETTA_LIBRARY_IPASIR = 1u << 24,
+    CETTA_LIBRARY_SMT = 1u << 25,
 #if CETTA_BUILD_WITH_JSON_GSLT
     CETTA_LIBRARY_JSON = 1u << 12
 #endif
@@ -208,6 +211,9 @@ static const CettaLibrarySpec CETTA_LIBRARIES[] = {
     {"asp", CETTA_LIBRARY_ASP, NULL},
     {"clingo", CETTA_LIBRARY_CLINGO, NULL},
     {"provenance", CETTA_LIBRARY_PROVENANCE, NULL},
+    {"sat", CETTA_LIBRARY_SAT, NULL},
+    {"ipasir", CETTA_LIBRARY_IPASIR, NULL},
+    {"smt", CETTA_LIBRARY_SMT, NULL},
 #if CETTA_BUILD_WITH_JSON_GSLT
     {"json", CETTA_LIBRARY_JSON, NULL},
 #endif
@@ -557,6 +563,10 @@ bool cetta_library_context_try_init_for_language_profile(CettaLibraryContext *ct
     ctx->petta_tabled_relations = NULL;
     ctx->petta_tabled_relation_len = 0u;
     ctx->petta_tabled_relation_cap = 0u;
+    ctx->petta_lattice_relations = NULL;
+    ctx->petta_lattice_joins = NULL;
+    ctx->petta_lattice_len = 0u;
+    ctx->petta_lattice_cap = 0u;
     ctx->petta_tabled_symbol_table_instance =
         symbol_table_instance_id(g_symbols);
     memset(&ctx->petta_memo, 0, sizeof(ctx->petta_memo));
@@ -760,6 +770,12 @@ void cetta_library_context_free(CettaLibraryContext *ctx) {
     ctx->petta_tabled_relations = NULL;
     ctx->petta_tabled_relation_len = 0u;
     ctx->petta_tabled_relation_cap = 0u;
+    free(ctx->petta_lattice_relations);
+    free(ctx->petta_lattice_joins);
+    ctx->petta_lattice_relations = NULL;
+    ctx->petta_lattice_joins = NULL;
+    ctx->petta_lattice_len = 0u;
+    ctx->petta_lattice_cap = 0u;
     ctx->petta_tabled_symbol_table_instance = 0u;
     free(ctx->petta_memo.all_arities);
     free(ctx->petta_memo.exact_arities);
@@ -984,6 +1000,7 @@ static void cetta_library_petta_tabled_relation_sync(
     if (ctx->petta_tabled_symbol_table_instance == instance)
         return;
     ctx->petta_tabled_relation_len = 0u;
+    ctx->petta_lattice_len = 0u;
     ctx->petta_tabled_symbol_table_instance = instance;
     cetta_library_petta_admission_advance(ctx);
 }
@@ -1027,6 +1044,48 @@ bool cetta_library_petta_tabled_relation_contains(
     return index < ctx->petta_tabled_relation_len &&
            cetta_library_petta_relation_key_compare(
                ctx->petta_tabled_relations[index], key) == 0;
+}
+
+SymbolId cetta_library_petta_tabled_relation_join(
+    CettaLibraryContext *ctx, SymbolId head, CettaExprLen arity) {
+    if (!ctx || head == SYMBOL_ID_NONE)
+        return SYMBOL_ID_NONE;
+    cetta_library_petta_tabled_relation_sync(ctx);
+    for (uint32_t i = 0u; i < ctx->petta_lattice_len; i++)
+        if (ctx->petta_lattice_relations[i].head == head &&
+            ctx->petta_lattice_relations[i].arity == arity)
+            return ctx->petta_lattice_joins[i];
+    return SYMBOL_ID_NONE;
+}
+
+bool cetta_library_petta_tabled_relation_join_set(
+    CettaLibraryContext *ctx, SymbolId head, CettaExprLen arity,
+    SymbolId join) {
+    if (!ctx || head == SYMBOL_ID_NONE)
+        return false;
+    cetta_library_petta_tabled_relation_sync(ctx);
+    for (uint32_t i = 0u; i < ctx->petta_lattice_len; i++)
+        if (ctx->petta_lattice_relations[i].head == head &&
+            ctx->petta_lattice_relations[i].arity == arity) {
+            if (ctx->petta_lattice_joins[i] != join)
+                cetta_library_petta_admission_advance(ctx);
+            ctx->petta_lattice_joins[i] = join;
+            return true;
+        }
+    if (ctx->petta_lattice_len == ctx->petta_lattice_cap) {
+        uint32_t next = ctx->petta_lattice_cap ? ctx->petta_lattice_cap * 2u : 4u;
+        ctx->petta_lattice_relations = cetta_realloc(
+            ctx->petta_lattice_relations,
+            sizeof(*ctx->petta_lattice_relations) * (size_t)next);
+        ctx->petta_lattice_joins = cetta_realloc(
+            ctx->petta_lattice_joins, sizeof(*ctx->petta_lattice_joins) * (size_t)next);
+        ctx->petta_lattice_cap = next;
+    }
+    ctx->petta_lattice_relations[ctx->petta_lattice_len] =
+        (CettaPettaRelationKey){.head = head, .arity = arity};
+    ctx->petta_lattice_joins[ctx->petta_lattice_len++] = join;
+    cetta_library_petta_admission_advance(ctx);
+    return true;
 }
 
 bool cetta_library_petta_tabled_relation_set(
@@ -12389,6 +12448,12 @@ bool cetta_library_call_native(CettaLibraryContext *ctx, Space *space,
         cetta_asp_call(ctx, a, head, args, nargs, out)) return true;
     if (ctx && (ctx->active_mask & CETTA_LIBRARY_CLINGO) &&
         cetta_clingo_call(ctx, a, head, args, nargs, out)) return true;
+    if (ctx && (ctx->active_mask & CETTA_LIBRARY_SAT) &&
+        cetta_sat_call(ctx, a, head, args, nargs, out)) return true;
+    if (ctx && (ctx->active_mask & CETTA_LIBRARY_IPASIR) &&
+        cetta_ipasir_call(ctx, a, head, args, nargs, out)) return true;
+    if (ctx && (ctx->active_mask & CETTA_LIBRARY_SMT) &&
+        cetta_smt_call(ctx, a, head, args, nargs, out)) return true;
     if (ctx && (ctx->active_mask & CETTA_LIBRARY_PROVENANCE) &&
         cetta_provenance_call(ctx, a, head, args, nargs, out)) return true;
     if (ctx && (ctx->active_mask & CETTA_LIBRARY_RE) &&
@@ -12413,6 +12478,11 @@ bool cetta_library_call_native(CettaLibraryContext *ctx, Space *space,
     return ctx && ctx->foreign_runtime &&
            cetta_foreign_call_native(ctx->foreign_runtime,
                                      space, a, head, args, nargs, out);
+}
+
+bool cetta_library_result_long_lived(const CettaLibraryContext *ctx, SymbolId head) {
+    return ctx && (ctx->active_mask & CETTA_LIBRARY_CLINGO) &&
+           cetta_clingo_result_long_lived(head);
 }
 
 bool cetta_library_call_native_prepared_view(

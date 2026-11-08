@@ -1,0 +1,18 @@
+empty_clause.cnf UNSATISFIABLE
+empty_formula.cnf SATISFIABLE
+php_3_2.cnf UNSATISFIABLE
+php_4_3.cnf UNSATISFIABLE
+php_4_4.cnf SATISFIABLE
+php_5_4.cnf UNSATISFIABLE
+rand3_20_60_s1.cnf SATISFIABLE
+rand3_20_60_s2.cnf SATISFIABLE
+rand3_20_60_s3.cnf SATISFIABLE
+rand3_30_160_s1.cnf UNSATISFIABLE
+rand3_30_160_s2.cnf UNSATISFIABLE
+rand3_30_160_s3.cnf UNSATISFIABLE
+rand3_50_213_s1.cnf UNSATISFIABLE
+rand3_50_213_s2.cnf SATISFIABLE
+rand3_50_213_s3.cnf SATISFIABLE
+tautology_duplicates.cnf SATISFIABLE
+units_conflict.cnf UNSATISFIABLE
+8 satisfiable, 9 unsatisfiable; certificates accepted 9, mutants refused 80
