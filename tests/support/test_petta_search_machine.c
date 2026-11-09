@@ -14457,7 +14457,7 @@ static void test_owned_resource_transfer(Space *space) {
     assert(petta_machine_next(&source,&answer,&environment)==PETTA_MACHINE_STEP_SUSPENDED);
     bindings_free(&environment);
     CettaOwnedContinuation image={0};
-    assert(capture_relational_continuation(&source,&image)==CETTA_CONTINUATION_CAPACITY);
+    assert(capture_relational_continuation(&source,&image)==CETTA_CONTINUATION_UNSUPPORTED);
     assert(image.payload==NULL && from.authority.remaining==0u && resource->references==1u);
     from.admitted=true;to.admitted=true;
     assert(capture_relational_continuation(&source,&image)==CETTA_CONTINUATION_READY);

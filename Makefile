@@ -52230,7 +52230,7 @@ test-prime: test-native-parent-checkpoint
 $(PROVIDER_GRAPH_COPY_TEST_BIN): tests/test_provider_graph_copy.c src/petta_search_machine.c src/petta_search_machine.h src/match.h src/prime_need.h $(BUILD_CONFIG_HEADER) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_provider_graph_copy.c \
-		$(filter-out src/petta_search_machine.$(BUILD_OBJ_TAG).o src/petta_search_machine.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS) $(LDFLAGS)
+		$(filter-out src/petta_search_machine.$(BUILD_OBJ_TAG).o src/petta_search_machine.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS) $(LDFLAGS) -Wl,--wrap=arena_retain_owner_with_storage
 .PHONY: test-provider-graph-copy
 test-provider-graph-copy: $(PROVIDER_GRAPH_COPY_TEST_BIN)
 	@$(call cetta_exec,./$(PROVIDER_GRAPH_COPY_TEST_BIN))

@@ -9413,29 +9413,43 @@ static void petta_owned_continuation_impl_free(
 }
 
 static bool petta_continuation_resource_add(PettaContinuationTermPool *pool,
-        int kind, const void *identity, PettaMachineResourceLease lease) {
+        int kind, const void *identity, PettaMachineResourceLease lease,
+        CettaContinuationStatus *failure) {
     if (!pool || !identity || !lease.scope ||
         (lease.owner && (!lease.retain || !lease.release)) ||
-        (!lease.owner && (lease.retain || lease.release || lease.storage)))
+        (!lease.owner && (lease.retain || lease.release || lease.storage))) {
+        if (failure) *failure = CETTA_CONTINUATION_UNSUPPORTED;
         return false;
+    }
     for (size_t i = 0u; i < pool->resource_len; ++i) {
         const PettaContinuationResource *known = &pool->resources[i];
-        if (known->kind == kind && known->identity == identity)
-            return known->lease.scope == lease.scope &&
+        if (known->kind == kind && known->identity == identity) {
+            bool same = known->lease.scope == lease.scope &&
                 known->lease.owner == lease.owner &&
                 known->lease.retain == lease.retain &&
                 known->lease.release == lease.release;
+            if (!same && failure) *failure = CETTA_CONTINUATION_UNSUPPORTED;
+            return same;
+        }
     }
     if (pool->resource_len == pool->resource_cap) {
         size_t next = pool->resource_cap ? pool->resource_cap * 2u : 4u;
-        if (next <= pool->resource_cap || next > SIZE_MAX / sizeof(*pool->resources))
+        if (next <= pool->resource_cap || next > SIZE_MAX / sizeof(*pool->resources)) {
+            if (failure) *failure = CETTA_CONTINUATION_CAPACITY;
             return false;
+        }
         PettaContinuationResource *items = realloc(pool->resources, next * sizeof(*items));
-        if (!items) return false;
+        if (!items) {
+            if (failure) *failure = CETTA_CONTINUATION_CAPACITY;
+            return false;
+        }
         pool->resources = items; pool->resource_cap = next;
     }
     if (lease.owner && !arena_retain_owner_with_storage(&pool->owner,
-            lease.owner, lease.retain, lease.release, lease.storage)) return false;
+            lease.owner, lease.retain, lease.release, lease.storage)) {
+        if (failure) *failure = CETTA_CONTINUATION_CAPACITY;
+        return false;
+    }
     pool->resources[pool->resource_len++] = (PettaContinuationResource){kind, identity, lease};
     return true;
 }
@@ -9443,6 +9457,7 @@ static bool petta_continuation_resource_add(PettaContinuationTermPool *pool,
 typedef struct {
     PettaContinuationTermPool *pool;
     const PettaMachineHost *host;
+    CettaContinuationStatus failure;
 } PettaResourceCapture;
 
 /* The standard copier already retains these payloads in its destination.
@@ -9470,16 +9485,24 @@ static bool petta_continuation_external_atom(PettaResourceCapture *capture,
     if (petta_copy_retains_external_atom(atom)) return true;
     for (size_t i = 0u; i < capture->pool->resource_len; ++i) {
         const PettaContinuationResource *known = &capture->pool->resources[i];
-        if (known->kind == atom->ground.gkind && known->identity == atom->ground.ptr)
-            return !capture->host || known->lease.scope == capture->host->resource_scope;
+        if (known->kind == atom->ground.gkind && known->identity == atom->ground.ptr) {
+            if (!capture->host || known->lease.scope == capture->host->resource_scope)
+                return true;
+            capture->failure = CETTA_CONTINUATION_UNSUPPORTED;
+            return false;
+        }
     }
     PettaMachineResourceLease lease = {0};
-    return capture->host && capture->host->resource_scope &&
-        capture->host->capture_resource &&
-        capture->host->capture_resource(capture->host->context, atom, &lease) &&
-        lease.scope == capture->host->resource_scope &&
-        petta_continuation_resource_add(capture->pool, atom->ground.gkind,
-                                       atom->ground.ptr, lease);
+    if (!capture->host || !capture->host->resource_scope ||
+        !capture->host->capture_resource ||
+        !capture->host->capture_resource(capture->host->context, atom, &lease) ||
+        lease.scope != capture->host->resource_scope) {
+        capture->failure = CETTA_CONTINUATION_UNSUPPORTED;
+        return false;
+    }
+    return petta_continuation_resource_add(capture->pool, atom->ground.gkind,
+                                          atom->ground.ptr, lease,
+                                          &capture->failure);
 }
 
 static Atom *petta_continuation_resource_resolve(void *raw, Atom *atom) {
@@ -9631,7 +9654,7 @@ static bool petta_continuation_copyable_shape(
 
 static bool petta_continuation_resources_admitted(
         const PettaOwnedContinuationImpl *source, PettaContinuationTermPool *pool) {
-    PettaResourceCapture capture = {pool, NULL};
+    PettaResourceCapture capture = {.pool = pool};
     if (!petta_continuation_resource_graph(source->readout.query, &capture) ||
         !petta_continuation_resource_graph(source->readout.answer_variable, &capture) ||
         !petta_continuation_resource_graph(source->readout.raised_error, &capture) ||
@@ -9662,10 +9685,12 @@ static bool petta_owned_continuation_copy_atoms_with_session(
     PettaOwnedContinuationImpl *continuation,
     Arena *destination,
     AtomDeepCopySession *session, const PettaMachineHost *host,
-    bool owned_copy, bool use_resolver) {
+    bool owned_copy, bool use_resolver,
+    CettaContinuationStatus *failure) {
     if (!continuation || !destination || !session)
         return false;
-    PettaResourceCapture capture = {continuation->terms.pool, host};
+    PettaResourceCapture capture = {
+        .pool = continuation->terms.pool, .host = host};
     if (use_resolver)
         atom_deep_copy_session_set_resolver(session, petta_continuation_resource_resolve, &capture);
     if (space_atom_hold)
@@ -9726,16 +9751,19 @@ static bool petta_owned_continuation_copy_atoms_with_session(
                 &continuation->bindings.bindings, destination, session);
     }
     if (use_resolver) atom_deep_copy_session_set_resolver(session, NULL, NULL);
-    return ok && continuation->readout.query &&
+    bool copied = ok && continuation->readout.query &&
         continuation->readout.answer_variable &&
         bindings_logical_atoms_satisfy(
             &continuation->bindings.bindings.current,
             petta_continuation_atom_closed, &capture);
+    if (!copied && failure) *failure = capture.failure;
+    return copied;
 }
 
 static bool petta_owned_continuation_copy_atoms(
     PettaOwnedContinuationImpl *continuation,
-    Arena *destination, const PettaMachineHost *host) {
+    Arena *destination, const PettaMachineHost *host,
+    CettaContinuationStatus *failure) {
     if (!continuation || !destination)
         return false;
     AtomDeepCopySession *session =
@@ -9743,7 +9771,7 @@ static bool petta_owned_continuation_copy_atoms(
     if (!session)
         return false;
     bool ok = petta_owned_continuation_copy_atoms_with_session(
-        continuation, destination, session, host, false, true);
+        continuation, destination, session, host, false, true, failure);
     atom_deep_copy_session_free(session);
     return ok;
 }
@@ -9838,7 +9866,8 @@ petta_owned_continuation_clone_to_term_pool(
     for (size_t i = 0u; ok && i < source->terms.pool->resource_len; ++i) {
         const PettaContinuationResource *resource = &source->terms.pool->resources[i];
         ok = petta_continuation_resource_add(pool, resource->kind,
-                                            resource->identity, resource->lease);
+                                            resource->identity, resource->lease,
+                                            NULL);
     }
     bool mapped = atom_deep_copy_session_maps_arena(
         session, &source->terms.pool->owner, &pool->owner);
@@ -9883,7 +9912,7 @@ petta_owned_continuation_clone_to_term_pool(
     }
     if (ok) {
         ok = petta_owned_continuation_copy_atoms_with_session(
-            copy, &pool->owner, session, NULL, true, !mapped);
+            copy, &pool->owner, session, NULL, true, !mapped, NULL);
     }
     if (ok) ok = petta_continuation_copy_plans(copy);
     if (!ok) {
@@ -10807,9 +10836,11 @@ static CettaContinuationStatus petta_continuation_capture(
             owned->obligations.type_obligation_len *
                 sizeof(*owned->obligations.type_obligations));
     }
+    CettaContinuationStatus capture_failure = CETTA_CONTINUATION_READY;
     if (ok)
         ok = petta_owned_continuation_copy_atoms(
-            owned, &owned->terms.pool->owner, &source->host);
+            owned, &owned->terms.pool->owner, &source->host,
+            &capture_failure);
 
     CettaBranchAuthorityToken confirmed_authority = {0};
     CettaContinuationStatus confirmed =
@@ -10830,6 +10861,10 @@ static CettaContinuationStatus petta_continuation_capture(
         if (!current) {
             source->stats.owned_continuation_capture_invalidated++;
             return CETTA_CONTINUATION_INVALIDATED;
+        }
+        if (capture_failure == CETTA_CONTINUATION_UNSUPPORTED) {
+            source->stats.owned_continuation_capture_unsupported++;
+            return CETTA_CONTINUATION_UNSUPPORTED;
         }
         return CETTA_CONTINUATION_CAPACITY;
     }
