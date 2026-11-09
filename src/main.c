@@ -4357,6 +4357,8 @@ petta_next_slice:
                         detailed.steps_spent);
             } else if (g_count_only || run_cli ||
                        lang->id == CETTA_LANGUAGE_PETTA ||
+                       (lang->id == CETTA_LANGUAGE_HE && fuel_override_requested &&
+                        fuel_override >= 0) ||
                        (profile && profile->id == CETTA_PROFILE_HE_EXTENDED)) {
                 /* PeTTa and HE/extended directives publish a whole stream, which
                  * claims there are no further answers, so it is always

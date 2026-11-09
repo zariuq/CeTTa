@@ -636,6 +636,10 @@ bool cetta_open_equation_cursor_host_goal(
     Atom **destination_out, Atom *const **vars_out,
     uint32_t *var_count_out, const struct PettaPlanNode **plan_out,
     CettaOpenEquationHostMode *mode_out, bool *recovers_out);
+/* Whether the newest host goal is beneath a once, captured before any
+ * terminal cursor transfer. */
+bool cetta_open_equation_cursor_host_first(
+    const CettaOpenEquationCursor *cursor);
 bool cetta_open_equation_cursor_host_return(
     const CettaOpenEquationCursor *cursor, CettaCallOutcome *outcome);
 /* A terminal host goal needs no cursor continuation or alternatives. Its

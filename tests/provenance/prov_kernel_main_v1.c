@@ -149,7 +149,8 @@ static int run_program(const char *name, ProvProgram *P, const ProvLit *goals,
     if (st != PROV_OK) {
         printf("(status %d)\n", st);
     } else {
-        qsort(out.lines, out.n, sizeof(char *), cmp_line);
+        if (out.n > 1u)
+            qsort(out.lines, out.n, sizeof(char *), cmp_line);
         for (size_t i = 0; i < out.n; i++) puts(out.lines[i]);
     }
     printf("(end %s %zu)\n", name, out.n);

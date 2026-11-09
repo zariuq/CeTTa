@@ -1,8 +1,8 @@
 ; Seeded scenarios for transform in the HE dialect (lib/lib_transform.metta).
 ; Each draws a store, copies of an atom among its atoms, and four transforms
 ; from a menu of every source form and both destinations, and prints each
-; transform's answers and the store after it, sorted.  Run with the library's
-; own definitions (CETTA_TRANSFORM_REFERENCE=1) it must print the same.  Joint
+; transform's answers and the store after it, sorted.  Run with the full authored
+; implementation in tests/reference it must print the same.  Joint
 ; conditions (absent, unique and collect of a pattern headed by `,`) are among
 ; the forms.
 !(import! &self lib_transform)

@@ -2671,3 +2671,21 @@ bench-megalodon: $(MG_CHECK) $(MG_SEXPRINFO)
 	@python3 tests/megalodon/bench_elab.py --mode rows --kernel --megalodon "$(MEGALODON_BENCH_BIN)" \
 		--tool $(MG_SEXPRINFO) --root "$(MEGALODON_ROOT)/examples"
 	@python3 tests/megalodon/bench_elab.py --mode aby --tool $(MG_CHECK) --root "$(MEGALODON_ROOT)/examples"
+
+
+.PHONY: test-transform-swi-smoke
+test-transform-swi-smoke: $(BIN) lib/petta/lib_transform_swi.metta tests/petta/transform_swi_smoke.metta
+	@if [[ -z "$(strip $(PETTA_ORACLE_ROOT))" || ! -x "$(PETTA_ORACLE_ROOT)/run.sh" ]]; then \
+		echo 'set PETTA_ORACLE_ROOT to a SWI-PeTTa checkout with executable run.sh'; exit 2; \
+	fi
+	@set -eu; \
+	mkdir -p "$(BOOTSTRAP_TMPDIR)"; \
+	work=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/transform-swi-smoke.XXXXXX"); \
+	trap 'status=$$?; if [ $$status -eq 0 ]; then rm -rf "$$work"; else echo "kept for inspection: $$work" >&2; fi' EXIT; \
+	$(CETTA_BIN_INVOKE) --lang petta tests/petta/transform_swi_smoke.metta > "$$work/cetta.out"; \
+	(cd "$(PETTA_ORACLE_ROOT)" && timeout 60 ./run.sh "$(abspath tests/petta/transform_swi_smoke.metta)" --silent) > "$$work/swi.out"; \
+	for lane in cetta swi; do \
+		rg -F -q '(smoke ((done a)))' "$$work/$$lane.out"; \
+		rg -F -q '(remaining ())' "$$work/$$lane.out"; \
+	done; \
+	printf '%s\n' 'PASS: the preserved authored transform runs in CeTTa and SWI-PeTTa'
