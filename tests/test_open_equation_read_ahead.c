@@ -3,7 +3,32 @@
 #ifndef CETTA_OEM_READ_AHEAD_SOURCE
 #define CETTA_OEM_READ_AHEAD_SOURCE "open_equation_machine.c"
 #endif
+#include <stdlib.h>
+#include <stdbool.h>
+/* Inject only the collector translation unit's fallible staging allocations.
+ * The arena allocator and the rest of the engine keep their normal policy. */
+static size_t collection_allocation_index,collection_refuse_at;
+static bool collection_allocation_tracking;
+static bool collection_allocation_refused(void) {
+    return collection_allocation_tracking &&
+        ++collection_allocation_index==collection_refuse_at;
+}
+static void *collection_malloc(size_t bytes) {
+    return collection_allocation_refused() ? NULL : malloc(bytes);
+}
+static void *collection_calloc(size_t count,size_t bytes) {
+    return collection_allocation_refused() ? NULL : calloc(count,bytes);
+}
+static void *collection_realloc(void *old,size_t bytes) {
+    return collection_allocation_refused() ? NULL : realloc(old,bytes);
+}
+#define malloc collection_malloc
+#define calloc collection_calloc
+#define realloc collection_realloc
 #include CETTA_OEM_READ_AHEAD_SOURCE
+#undef malloc
+#undef calloc
+#undef realloc
 #include "parser.h"
 #include <assert.h>
 
@@ -184,6 +209,42 @@ static void test_collection_leaf_ownership(void) {
     puts("PASS: collection preserves leaf aliases, large shared bytes, variable spelling, managed owners and HE marks");
 }
 
+static size_t test_collection_staging_refusal(size_t refuse) {
+    CettaOpenEquationCursor cursor={0};arena_init(&cursor.region);
+    GcOwnerProbe owner={0};
+    Atom *left=atom_symbol_data_n(&cursor.region,"staged-left",11u);
+    Atom *right=atom_symbol_data_n(&cursor.region,"staged-right",12u);
+    Atom *held=atom_native_handle_identifier(&cursor.region,42,&owner,
+        gc_owner_retain,gc_owner_release);
+    Atom *root=atom_expr3(&cursor.region,left,right,held);
+    cursor.destination=root;
+    collection_allocation_index=0u;collection_refuse_at=refuse;
+    collection_allocation_tracking=true;
+    bool complete=oem_collect_generation(&cursor,0u,true,true);
+    collection_allocation_tracking=false;
+    size_t reached=collection_allocation_index;
+    if(!refuse)assert(complete);
+    if(refuse)assert(reached>=refuse);
+    if(complete) {
+        assert(cursor.old_ready && cursor.stats.collections==1u);
+        assert(atom_is_symbol(cursor.destination->expr.elems[0],"staged-left"));
+        assert(atom_is_symbol(cursor.destination->expr.elems[1],"staged-right"));
+        assert(atom_native_handle_identifier_matches(cursor.destination->expr.elems[2],
+            &owner,gc_owner_retain,gc_owner_release));
+    } else {
+        /* No new root/generation is published. This does not claim that the
+         * failed cursor can resume: temporary forwarding headers may change. */
+        assert(cursor.destination==root && !cursor.old_ready && !cursor.stats.collections);
+        assert(atom_is_symbol(left,"staged-left") && atom_is_symbol(right,"staged-right"));
+    }
+    assert(owner.references==1u && !owner.final_releases);
+    if(cursor.old_ready)arena_free(&cursor.old);
+    arena_free(&cursor.region);
+    assert(!owner.references && owner.final_releases==1u);
+    free(cursor.walk);free(cursor.resolve_stack);free(cursor.resolve_results);
+    return reached;
+}
+
 static void test_collection_ordered_roots(void) {
     Arena source,target;arena_init(&source);arena_init(&target);
     Atom *left=atom_symbol_data_n(&source,"left-label",10u);
@@ -222,6 +283,10 @@ int main(void) {
     test_collection_symbol_policy();
     test_collection_ordered_roots();
     test_collection_leaf_ownership();
+    size_t allocations=test_collection_staging_refusal(0u);
+    assert(allocations>0u);
+    for(size_t at=1u;at<=allocations;at++)test_collection_staging_refusal(at);
+    printf("PASS: %zu collector staging refusals publish no partial root and balance ownership\n",allocations);
     Arena persistent, source;
     arena_init(&persistent);
     arena_init(&source);
