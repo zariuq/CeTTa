@@ -847,6 +847,10 @@ typedef struct HeInstructionFrame {
     Atom *atom;
     /* Named reduction that produced this function, when one is known. */
     Atom *function_caller;
+    /* A fallthrough result belongs to this activation. Its alternatives
+     * share the identity, but another function activation must not. */
+    VarId function_result;
+    bool function_result_ready;
     Atom *syntax;
     Bindings env;
     OutcomeSet inner;
@@ -903,6 +907,8 @@ static void he_instruction_pop(CettaOwnedFrameStack *stack) {
     eval_gc_root_frame_leave(&frame->lexical);
     outcome_set_free(&frame->inner);
     bindings_free(&frame->env);
+    if (frame->function_result_ready)
+        cetta_frame_identity_release(var_epoch_suffix(frame->function_result));
     free(frame);
 }
 
@@ -1205,6 +1211,17 @@ static void he_instruction_publish_return(HeInstructionFrame *frame,
 
 /* Pure function-handler cases may finish before later body alternatives.
  * Embedded instructions still enter through the instruction machine. */
+static Atom *he_function_noreturn_caller(HeInstructionFrame *frame) {
+    if (frame->function_caller && frame->function_caller != frame->atom)
+        return frame->function_caller;
+    if (frame->continuation.next) {
+        HeInstructionFrame *caller = (HeInstructionFrame *)frame->continuation.next;
+        if (caller->atom && caller->atom != frame->atom)
+            return caller->atom;
+    }
+    return NULL;
+}
+
 static bool he_instruction_complete_function_return(HeInstructionFrame *frame,
         const Outcome *source, Atom *result) {
     Atom *value;
@@ -1212,12 +1229,35 @@ static bool he_instruction_complete_function_return(HeInstructionFrame *frame,
         value = result->expr.elems[1];
     else if (he_minimal_instruction(result))
         return false;
-    else if (active_profile_uses_rust_he_compat_semantics())
-        value = frame->function_caller && frame->function_caller != frame->atom
-            ? atom_error(frame->arena, frame->function_caller,
-                         atom_symbol(frame->arena, "NoReturn"))
-            : atom_var_with_id(frame->arena, "result", (VarId){1u, {17u}});
-    else
+    else if (active_profile_uses_rust_he_compat_semantics()) {
+        Atom *caller = he_function_noreturn_caller(frame);
+        if (caller)
+            value = atom_error(frame->arena, caller,
+                               atom_symbol(frame->arena, "NoReturn"));
+        else {
+            if (!frame->function_result_ready) {
+                CettaFrameIdentity identity;
+                if (!cetta_frame_identity_acquire(&identity)) {
+                    eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
+                    return true;
+                }
+                frame->function_result = var_epoch_id(var_id_from_base(1u), identity);
+                frame->function_result_ready = true;
+            }
+            /* The frame owns the activation across pauses; each receiving
+             * arena keeps its own lease after this frame has returned. */
+            if (!arena_retain_frame_identity(frame->arena,
+                    var_epoch_suffix(frame->function_result))) {
+                eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
+                return true;
+            }
+            value = atom_var_with_id(frame->arena, "result", frame->function_result);
+            if (!value) {
+                eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
+                return true;
+            }
+        }
+    } else
         value = atom_error(frame->arena, frame->syntax, atom_symbol(frame->arena, "NoReturn"));
     he_instruction_publish_return(frame, source, value);
     return true;

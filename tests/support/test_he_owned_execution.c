@@ -1016,6 +1016,41 @@ static void capture_close(FILE *capture, int saved, char *output, size_t capacit
     fclose(capture);
 }
 
+/* Fresh result identities are observed structurally, not by an incidental
+ * allocator suffix. Repeated alternatives must still share their identity. */
+static void expect_function_boundary(Fixture *f, CettaHeExecution *owner,
+                                     const char *expected) {
+    const char *fresh = "$fresh-result";
+    size_t prefix = strlen(fresh);
+    if (strncmp(expected, fresh, prefix)) {
+        expect(f, owner, expected);
+        return;
+    }
+    bool repeated = !strcmp(expected + prefix, "|$fresh-result");
+    bool returned = !strcmp(expected + prefix, "|11");
+    check(repeated || returned || expected[prefix] == '\0',
+        "known fresh-result observation");
+    CettaHeExecutionView view = inspect(owner);
+    check(view.outcomes->len == (repeated || returned ? 2u : 1u),
+        "exact fresh-result multiplicity");
+    const Outcome *first_out = &view.outcomes->items[0];
+    check(first_out->kind == CETTA_OUTCOME_INLINE, "structural fallthrough outcome");
+    Atom *first = first_out->materialized_atom ? first_out->materialized_atom : first_out->atom;
+    check(first && first->kind == ATOM_VAR, "fallthrough returns a variable");
+    if (repeated || returned) {
+        const Outcome *second_out = &view.outcomes->items[1];
+        check(second_out->kind == CETTA_OUTCOME_INLINE, "structural second outcome");
+        Atom *second = second_out->materialized_atom ? second_out->materialized_atom : second_out->atom;
+        check(second != NULL, "second function outcome exists");
+        if (repeated)
+            check(second->kind == ATOM_VAR && var_id_eq(first->var_id, second->var_id),
+                "one function activation shares its fallthrough identity");
+        else
+            check(atom_eq(second, atom_int(&f->scratch, 11)),
+                "the later explicit return is still delivered in order");
+    }
+}
+
 /* He-compat occurrences of the real library let, and of a function body,
  * across pause, resume, and cancellation. The extended println/change-state
  * sweep above is a different profile and does not cross this boundary. */
@@ -1054,18 +1089,33 @@ static void let_function_boundary(void) {
             "()", "owned-bound\n", 0, false},
         {"bare function non-instruction body is not executed",
             "", "(function (println! owned-bare))",
-            "$result#17", "", 0, false},
+            "$fresh-result", "", 0, false},
         {"nested function non-instruction body is not executed",
             "(= (nested) (let $v 1 (function (println! owned-nested))))",
             "(nested)",
-            "$result#17", "", 0, false},
+            "$fresh-result", "", 0, false},
         {"named function nondeterministic fallthrough is filtered",
             "(= (mixed) (function (eval (superpose ((println! owned-mixed) (return 11))))))",
             "(mixed)",
             "11", "", 0, false},
         {"bare function nondeterministic fallthrough yields variable and return",
             "", "(function (eval (superpose ((println! owned-mixed) (return 11)))))",
-            "$result#17|11", "", 0, false},
+            "$fresh-result|11", "", 0, false},
+        {"one activation shares fallthrough identity",
+            "", "(function (eval (superpose (7 8))))",
+            "$fresh-result|$fresh-result", "", 0, false},
+        {"separate activations have independent fallthrough identities",
+            "", "(== (function (+ 1 2)) (function (+ 3 4)))",
+            "False", "", 0, false},
+        {"independent fallthrough results accept independent bindings",
+            "", "(let $x (function (+ 1 2)) (let $y (function (+ 3 4)) "
+                 "(let $x A (let $y B (Pair $x $y)))))",
+            "(Pair A B)", "", 0, false},
+        {"fallthrough keeps an enclosing instruction caller",
+            "", "(collapse (superpose ((function (+ 1 2)) (function (+ 3 4)))))",
+            "((Error (superpose ((function (+ 1 2)) (function (+ 3 4)))) NoReturn) "
+            "(Error (superpose ((function (+ 1 2)) (function (+ 3 4)))) NoReturn))",
+            "", 0, false},
     };
 
     for (size_t c = 0u; c < sizeof(cases) / sizeof(cases[0]); c++) {
@@ -1095,7 +1145,7 @@ static void let_function_boundary(void) {
                     outcome, printed);
             check(raw_step, "raw let returns the single unevaluated library step");
         } else {
-            expect(&baseline, initial, cases[c].outcome);
+            expect_function_boundary(&baseline, initial, cases[c].outcome);
         }
         check(!strcmp(printed, cases[c].printed), "baseline effect text");
         check(atom_eq(base_cell->value, atom_int(&baseline.scratch, cases[c].cell)),
@@ -1152,7 +1202,7 @@ static void let_function_boundary(void) {
                 }
                 check(true, "resume returns the same raw library step");
             } else {
-                expect(&f, owner, cases[c].outcome);
+                expect_function_boundary(&f, owner, cases[c].outcome);
             }
             check(atom_eq(cell->value, atom_int(&f.scratch, cases[c].cell)),
                 "resume leaves the cell at the single committed value");
