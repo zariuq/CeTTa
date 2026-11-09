@@ -7,6 +7,11 @@ static const char *const python_object_operations[] = {
 
 void cetta_foreign_enable_objects(CettaForeignRuntime *rt, Registry *registry) {
     if (rt) {
+        /* Import introduces these callable names. A managed symbol parsed
+         * before import can then resolve its spelling on every execution
+         * tier, without registering arbitrary data when it is copied. */
+        for (size_t i = 0u; i < sizeof(python_object_operations) / sizeof(*python_object_operations); i++)
+            (void)symbol_intern_cstr(g_symbols, python_object_operations[i]);
         rt->objects_enabled = true;
         if (!rt->object_registry) rt->object_registry = registry;
     }
