@@ -16430,7 +16430,8 @@ static inline void oem_collect_check_program_storage(
 /* Plain leaves need no nested graph-copy session. Managed identifiers keep
  * their resource transport, and marked values keep the general copy path. */
 static Atom *oem_collect_copy_leaf(Arena *arena, Atom *atom) {
-    if (atom->kind == ATOM_SYMBOL && arena->own_symbols)
+    if (atom->kind == ATOM_SYMBOL && arena->own_symbols &&
+        !atom_symbol_is_spelled(atom))
         return atom_symbol_id(arena, atom_symbol_current_id(atom));
     CettaPlainScalar scalar;
     if (!(atom->structural_facts & ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID) &&
@@ -16466,7 +16467,7 @@ static Atom *oem_collect_atom(CettaOpenEquationCursor *cursor,
             result = atom;
         } else if (oem_export_copy_is_detached(collect, atom)) {
             atom->name_key = NULL;
-        } else if (atom->kind != ATOM_VAR &&
+        } else if (atom->kind != ATOM_VAR && !atom_symbol_is_spelled(atom) &&
                    atom->name_key && atom->name_key != &oem_traced_mark &&
                    atom->name_key != &oem_exported_mark) {
             result = atom->name_key;
@@ -16478,16 +16479,17 @@ static Atom *oem_collect_atom(CettaOpenEquationCursor *cursor,
                 : NULL;
             if (result)
                 atom->name_key = result;
-        } else if (atom->kind == ATOM_VAR &&
-                   (result = oem_collect_find(collect, atom)) != NULL) {
+        } else if ((atom->kind == ATOM_VAR || atom_symbol_is_spelled(atom)) &&
+                   (result = oem_collect_find(collect, atom)) != NULL &&
+                   (atom->kind == ATOM_VAR || result != atom)) {
         } else {
             result = oem_collect_copy_leaf(collect->to, atom);
             if (!result)
                 return NULL;
-            /* The trace already marked each non-variable leaf in this
-             * field. Forward it in place as an expression is forwarded;
-             * variables keep their structural spelling and table entry. */
-            if (atom->kind == ATOM_VAR) {
+            /* Forward through name_key only where that field is not the
+             * atom's own spelling; variables and spelled symbols use fresh
+             * entries in the collection's copy-phase alias table. */
+            if (atom->kind == ATOM_VAR || atom_symbol_is_spelled(atom)) {
                 if (!oem_collect_put(collect, atom, result))
                     return NULL;
             } else {
