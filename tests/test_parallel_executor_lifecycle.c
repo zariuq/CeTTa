@@ -320,6 +320,52 @@ static void test_state_comparison_thread_retirement(void) {
     puts("PASS: state comparisons reuse scratch and release it at thread retirement");
 }
 
+typedef struct {
+    CettaNameContext names;
+    unsigned mode, calls;
+} NameEpisode;
+
+static bool name_episode_task(CettaParallelWorker *worker,void *task,void *raw) {
+    NameEpisode *episode=raw;assert(task==episode);
+    CettaNameContext current=cetta_name_context_current();
+    assert(current.symbols==episode->names.symbols &&
+           current.variables==episode->names.variables &&
+           !memcmp(&current.builtins,&episode->names.builtins,sizeof(current.builtins)));
+    episode->calls++;
+    if(episode->mode==2u)cetta_parallel_executor_cancel(worker->executor);
+    return episode->mode!=1u;
+}
+
+static void test_name_domains_across_episodes(void) {
+    CettaNameContext original=cetta_name_context_current();
+    CettaNameDomain domains[2];
+    cetta_name_domain_init(&domains[0]);cetta_name_domain_init(&domains[1]);
+    for(unsigned i=0u;i<6u;i++) {
+        NameEpisode episode={.names=cetta_name_domain_context(&domains[i%2u]),.mode=i%3u};
+        cetta_name_context_install(&episode.names);
+        CettaParallelExecutor executor;
+        CettaParallelExecutorConfig config={.thread_count=1u,
+            .prefer_persistent_workers=true,.user=&episode,.task_fn=name_episode_task};
+        assert(cetta_parallel_executor_init(&executor,&config));
+        /* The submitted episode carries its domain after the caller restores
+         * a different one. Success, task failure and cancellation all join. */
+        cetta_name_context_install(&original);
+        assert(cetta_parallel_executor_push(&executor,&episode));
+        bool okay=cetta_parallel_executor_run(&executor);
+        assert(episode.calls==1u);
+        /* Cancellation ends work without reporting a failed task. */
+        assert(okay==(episode.mode!=1u));
+        assert(cetta_parallel_executor_failed(&executor)==(episode.mode==1u));
+        if(episode.mode==2u)assert(executor.queue.cancelled);
+        cetta_parallel_executor_free(&executor);
+        CettaNameContext after=cetta_name_context_current();
+        assert(after.symbols==original.symbols && after.variables==original.variables &&
+               !memcmp(&after.builtins,&original.builtins,sizeof(original.builtins)));
+    }
+    cetta_name_domain_free(&domains[1]);cetta_name_domain_free(&domains[0]);
+    puts("PASS: reused worker episodes carry their own name domain after success, failure and cancellation");
+}
+
 int main(int argc, char **argv) {
     CettaParallelExecutor empty_executor;
     CettaParallelExecutor first_executor;
@@ -344,6 +390,7 @@ int main(int argc, char **argv) {
     assert_worker_exit_does_not_deadlock(argv[0]);
     test_shared_hash_cache();
     test_state_comparison_thread_retirement();
+    test_name_domains_across_episodes();
 
     cetta_runtime_stats_reset();
     cetta_runtime_stats_enable();

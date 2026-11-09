@@ -54437,7 +54437,7 @@ test-open-equation-read-ahead-mutants: $(OPEN_EQUATION_READ_AHEAD_TEST_BIN) $(BI
 	@set -eu; \
 	mutation_dir=runtime/bootstrap/oem-read-ahead-mutations-$(BUILD_OBJ_TAG); \
 	mkdir -p "$$mutation_dir"; \
-	for kind in unbounded scalar-owner he-mark; do \
+	for kind in unbounded scalar-owner he-mark root-reorder root-collapse child-reorder $(if $(filter 1,$(ENABLE_MANAGED_SYMBOLS)),spelled-inline stale-alias,); do \
 		python3 tests/support/mutate_oem_read_ahead.py src/open_equation_machine.c "$$mutation_dir/$$kind.c" "$$kind"; \
 		mutation_source="$(abspath runtime/bootstrap/oem-read-ahead-mutations-$(BUILD_OBJ_TAG))/$$kind.c"; \
 		$(CC) $(CPPFLAGS) $(CFLAGS) "-DCETTA_OEM_READ_AHEAD_SOURCE=\"$$mutation_source\"" \
@@ -54446,7 +54446,10 @@ test-open-equation-read-ahead-mutants: $(OPEN_EQUATION_READ_AHEAD_TEST_BIN) $(BI
 			$(OPEN_EQUATION_READ_AHEAD_TEST_LINK_OBJ) $(LDFLAGS); \
 		if [ "$$kind" = unbounded ]; then assertion='oem_lazy_rows_fetch(&cursor, &lazy, pattern)'; \
 		elif [ "$$kind" = scalar-owner ]; then assertion='atom_native_handle_identifier_matches(moved_managed'; \
-		else assertion='atom_is_he_evaluated(marked_copy)'; fi; \
+		elif [ "$$kind" = he-mark ]; then assertion='atom_is_he_evaluated(marked_copy)'; \
+		elif [ "$$kind" = root-reorder ] || [ "$$kind" = root-collapse ]; then assertion='ok && moved && moved[0]==moved[1]'; \
+		elif [ "$$kind" = child-reorder ]; then assertion='moved[2]->expr.elems[0]==moved[0]->expr.elems[1]'; \
+		else assertion='copy && copy->kind == ATOM_SYMBOL'; fi; \
 		CETTA_SPACE_DENSE=eager $(NATIVE_MUTATION_GATE) \
 			$(OPEN_EQUATION_READ_AHEAD_TEST_BIN) "$$mutation_dir/$$kind" "$$assertion"; \
 	done
