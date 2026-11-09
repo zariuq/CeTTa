@@ -1,0 +1,108 @@
+Transform
+=========
+
+Import (library lib_transform) in PeTTa or HE. The extended profiles also
+provide transform directly. Plain profiles leave it as data before import.
+
+The native implementation uses these short internal names:
+
+  tf:cands       enumerate the candidates against the entry store
+  tf:cand        one candidate's matched-atom record
+  tf:pin         restrict a branch to those matched atoms
+  tf:fire        validate and fire one branch
+  tf:fire-into   fire a branch and route its instances into a space
+  tf:as         re-establish the pattern bindings for a matched atom
+
+Pinning does not reserve an occurrence or freeze the store. Every branch
+rechecks its matched atoms when it fires.
+
+The reference implementations also use tf:batch for a candidate footprint
+and its extension rows. It is distinct from the entry candidate tf:cand.
+
+Both dialects use the native transform engine. The full PeTTa implementation
+is lib/petta/lib_transform_swi.metta, for SWI-PeTTa and differential tests.
+The full HE reference is tests/reference/lib_transform_he.metta. User-authored
+definitions remain ordinary MeTTa equations; they are not a second built-in
+transform engine. Old private helpers such as tf:valid and tf:row belong to
+those reference libraries; defining them does not reprogram the native engine.
+An authored override of the public transform operation is still honored.
+
+A transform first materializes its entry candidates. The evaluator then
+continues branches, rechecking each against the store left by previous
+firings. PeTTa and HE/extended provide outer once, which stops after the
+first answering branch; it does not fire all branches and discard their later answers. Plain HE keeps once as an
+uninterpreted head, so its argument evaluation can fire several branches. Candidate enumeration itself
+is still eager, so this is not a constant-memory cursor over a large join.
+
+HE streaming and errors
+-----------------------
+
+HE's internal carriers hold their fields as atoms. Empty guides remain data,
+so an empty-source transform produces one instance; caller templates and
+function destinations are evaluated through the ordinary HE boundary.
+The HE evaluator selects branches and errors around the native candidate,
+pinning and firing operations. PeTTa additionally uses the whole-bag shortcut.
+
+HE source errors prevent the rest of that branch from taking atoms. Earlier
+source-level let effects remain visible. A failed destination write returns
+its Error, not a success count, and earlier completed takes remain visible.
+When a let source supplies ordinary values alongside errors, its ordinary
+values take precedence; when it supplies only errors, their multiplicity is
+preserved. Malformed recognized source forms report MalformedTransformSource
+at the offending form rather than exposing an interpreted helper's stack.
+Space operands are resolved when their conjunct runs, after earlier bindings
+and effects.
+
+Outer once stops later transform firings after the first answer. Computation
+inside the selected template retains ordinary HE evaluation behavior. In
+particular, HE's general once/superpose implementation can evaluate alternatives
+inside that computation eagerly; this is not a general lazy iterator contract.
+
+Fuel
+----
+
+Finite --fuel keeps transform native. It adds native work to the enclosing
+evaluation's budget: one unit at a conjunct/terminal transition, one per
+occurrence-cursor advance, and one reserved before an atomic firing's store
+changes. Nested MeTTa code borrows the remaining budget rather than receiving
+a fresh allowance. A refused debit is unspent, records fuel-exhausted, and
+never means an empty match or permission to retry another implementation.
+
+The commit debit precedes every take and destination-space write of that
+firing. No further fuel cutoff occurs inside those writes. Earlier completed
+firings and effects of source-level let code remain when later work exhausts
+the budget. This is search over an evolving store, not rollback.
+
+Metered matching uses the native occurrence cursors; unmetered runs can use
+the native query engine's whole-bag shortcuts. The charge is a logical work
+measure, not elapsed time, memory usage, or an instruction count. Planning,
+atom copying and index internals are not separately charged. Fuel cutoffs
+therefore differ from interpreting the old library's helper equations.
+Completed answers and effects retain their dialect semantics.
+
+Lean correspondence
+-------------------
+
+The names here correspond to proposals, guided, and fire in
+Languages/MeTTa/PeTTa/LibTransform.lean. Its firing_atomic law identifies the
+atomic store transition; its Search/transformWith model keeps earlier effects
+when later branches run. That model has stated limits, including one space
+and no source-level let code.
+
+GSLT/Core/CostBoundedReachability.lean supplies the accounting laws:
+nonnegative natural-number spending composes by addition; prefix_within_budget
+keeps earlier states affordable, and reachableWithin_mono makes larger budgets
+admit at least as much. budget_depends_on_grading explicitly shows why two
+lawful cost policies can have different cutoffs. These laws guide the native
+meter; they do not by themselves prove its C implementation corresponds to
+the model.
+
+test-transform-read-fuel distinguishes interruption, an empty answer bag,
+and an engine refusal before any work. test-transform-fuel checks atomic
+writes and monotone effects over individual
+budget boundaries, outer once, and nested code in both dialects/profiles.
+test-petta-transform compares completed metered runs to the authored reference
+across execution settings, while test-transform-he and test-transform-profiles
+check the HE/reference and profile contracts.
+
+The focused HE boundary gate is test-transform-he-boundaries.

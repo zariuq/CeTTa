@@ -10,6 +10,7 @@
 #include "library_supervise.h"
 #include "petta_semantics.h"
 #include "library_pattern.h"
+#include "library_transform.h"
 #include "library_binary.h"
 #include "library_heap.h"
 #include "library_work.h"
@@ -1245,6 +1246,8 @@ static const CettaNativeBuiltinModule g_native_modules[] = {
     {"langdef", CETTA_NATIVE_IMPORT_LANGDEF, NULL, NULL, langdef_module_call, NULL,
      true},
     {"pat", CETTA_NATIVE_IMPORT_PAT, NULL, "pat:", cetta_pattern_module_call, NULL},
+    {"lib_transform", CETTA_NATIVE_IMPORT_TRANSFORM, NULL, "tf:", cetta_eval_transform_module_call,
+     "tf:run tf:split tf:cands tf:pin tf:fire tf:fire-into"},
     {"holkernel", CETTA_NATIVE_IMPORT_HOL, NULL, "__cetta_lib_hol_", hol_module_call, NULL},
     {"mm0kernel", CETTA_NATIVE_IMPORT_MM0, NULL, "__cetta_lib_mm0_", mm0_module_call, NULL},
     {"seal", CETTA_NATIVE_IMPORT_SEAL, NULL, "__cetta_lib_seal_", cetta_seal_module_call, NULL},

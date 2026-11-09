@@ -61,6 +61,7 @@
 #include "langdef_pack.h"
 #include "native/syntax_gslt_v1.h"
 #include "native/native_modules.h"
+#include "library_transform.h"
 /* Standalone evaluator clients need not link optional library modules. */
 extern bool cetta_native_module_builtin_enabled(struct CettaLibraryContext *,
     uint32_t, const char *) __attribute__((weak));
@@ -266,6 +267,11 @@ static const PettaPlanNode *petta_eval_translation_plan_current(
     const Arena *const *source_arenas, size_t source_arena_count);
 static bool active_builtin_allowed(const char *syntax_name);
 static bool active_builtin_symbol_allowed(SymbolId head);
+static bool eval_transform_any_head(SymbolId head, CettaExprLen arity);
+static bool eval_transform_run_head(SymbolId head, CettaExprLen arity);
+static SymbolId eval_transform_run_symbol(void);
+static Atom *eval_transform_lower_run(Space *s, Arena *a, Atom *atom, int fuel,
+                                      const Bindings *environment);
 /* Current evaluation root space and persistent fallback. */
 static __thread Space *g_eval_root_space = NULL;
 static __thread TermUniverse g_eval_fallback_universe = {0};
@@ -4400,6 +4406,9 @@ static bool petta_atom_requires_control_eval(Atom *atom) {
         PETTA_FORM_NONE) {
         return true;
     }
+    if (eval_transform_any_head(atom->expr.elems[0]->sym_id,
+                                atom->expr.len - 1u))
+        return true;
     return petta_eval_extension_named_arity(
                atom->expr.elems[0]->sym_id,
                atom->expr.len - 1u).known;
@@ -4625,6 +4634,10 @@ typedef struct {
 
 static bool atom_is_constructor_normal_form(Space *s, Arena *a, Atom *atom,
                                             int fuel) {
+    if (eval_transform_any_head(atom_head_symbol_id(atom),
+                                atom && atom->kind == ATOM_EXPR
+                                    ? atom->expr.len - 1u : 0u))
+        return false;
     Atom **stack = NULL;
     size_t len = 0;
     size_t cap = 0;
@@ -4709,7 +4722,10 @@ done:
 
 static bool eval_has_normal_constructor_value(Space *s, Arena *a, Atom *atom,
                                                int fuel) {
-    return !petta_atom_requires_control_eval(atom) &&
+    return !eval_transform_any_head(atom_head_symbol_id(atom),
+                                    atom->kind == ATOM_EXPR
+                                        ? atom->expr.len - 1u : 0u) &&
+           !petta_atom_requires_control_eval(atom) &&
            !prime_need_is_canonical_app(atom) &&
            !prime_need_is_explicit_control_form(atom) &&
            !prime_need_atom_has_observable_ref(atom) &&
@@ -17624,7 +17640,6 @@ static void stream_emit(Space *s, Arena *a, Atom *stream_expr, int fuel,
                         OutcomeSet *os) {
     Bindings _empty;
     bindings_init(&_empty);
-
     if (bounded && limit == 0) {
         outcome_set_add(os, atom_unit(a), &_empty);
         return;
@@ -17632,6 +17647,24 @@ static void stream_emit(Space *s, Arena *a, Atom *stream_expr, int fuel,
 
     if (bounded && limit == 1 &&
         order == CETTA_SEARCH_POLICY_ORDER_NATIVE) {
+        OutcomeSet first_transform;
+        outcome_set_init(&first_transform);
+        if (cetta_eval_transform_first(s, a, stream_expr, &first_transform)) {
+            if (eval_unwinding()) {
+                outcome_set_free(&first_transform);
+                return;
+            }
+            if (first_transform.len == 0u) {
+                if (eval_current_language_id() != CETTA_LANGUAGE_PRIME)
+                    outcome_set_add(os, legacy_empty_sentinel(a), &_empty);
+            } else {
+                outcome_set_add(os, first_transform.items[0].atom,
+                                &first_transform.items[0].env);
+            }
+            outcome_set_free(&first_transform);
+            return;
+        }
+        outcome_set_free(&first_transform);
         bool recognized = false;
         bool emitted = prime_need_stream_emit_first_static_choice(
             s, a, stream_expr, fuel, os, &recognized);
@@ -26849,7 +26882,7 @@ static bool eval_try_exec_saturation(Space *s, Arena *a, Atom *atom,
 }
 
 /* tf:fire and tf:fire-into (lib/petta/lib_transform.metta) realized natively
- * while the library's presentation is live (transform_core.h).  Takes go through the
+ * while its imported definitions are current (transform_core.h). Takes use the
  * shared add-atom and remove-atom contracts, and `let` code through the
  * ordinary evaluator, in the library's order.  The maintained views of
  * lib/petta/lib_support.metta (support_view.h) write through the same
@@ -26879,45 +26912,81 @@ static SymbolId eval_transform_fire_into_symbol(void) {
     return atom_symbol_literal_id("tf:fire-into");
 }
 
-/* PeTTa's tf:proposals and tf:guided are native too (transform_core.h). */
-static SymbolId eval_transform_proposals_symbol(void) {
-    return atom_symbol_literal_id("tf:proposals");
+static SymbolId eval_transform_run_symbol(void) {
+    return atom_symbol_literal_id("tf:run");
 }
 
-static SymbolId eval_transform_guided_symbol(void) {
-    return atom_symbol_literal_id("tf:guided");
+static SymbolId eval_transform_split_symbol(void) {
+    return atom_symbol_literal_id("tf:split");
+}
+
+/* PeTTa's tf:cands and tf:pin are native too (transform_core.h). */
+static SymbolId eval_transform_candidates_symbol(void) {
+    return atom_symbol_literal_id("tf:cands");
+}
+
+static SymbolId eval_transform_pin_symbol(void) {
+    return atom_symbol_literal_id("tf:pin");
 }
 
 static bool eval_transform_step_head(SymbolId head, CettaExprLen arity) {
-    return eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
-           ((head == eval_transform_proposals_symbol() && arity == 3u) ||
-            (head == eval_transform_guided_symbol() && arity == 2u));
+    return (head == eval_transform_candidates_symbol() && arity == 3u) ||
+           (head == eval_transform_pin_symbol() && arity == 2u);
+}
+
+static bool eval_transform_run_head(SymbolId head, CettaExprLen arity) {
+    return head == eval_transform_run_symbol() && arity == 4u;
+}
+
+static bool eval_transform_head(SymbolId head, CettaExprLen arity);
+
+static bool eval_transform_any_head(SymbolId head, CettaExprLen arity) {
+    return (head == atom_symbol_literal_id("transform") &&
+            (arity == 3u || arity == 4u)) ||
+           eval_transform_head(head, arity);
+}
+
+static bool eval_transform_symbol(SymbolId head) {
+    return head == atom_symbol_literal_id("transform") ||
+           head == eval_transform_run_symbol() ||
+           head == eval_transform_split_symbol() ||
+           head == eval_transform_candidates_symbol() ||
+           head == eval_transform_pin_symbol() ||
+           head == eval_transform_fire_symbol() ||
+           head == eval_transform_fire_into_symbol();
 }
 
 /* tf:fire with its three arguments, or tf:fire-into with four. */
 static bool eval_transform_head(SymbolId head, CettaExprLen arity) {
     return (head == eval_transform_fire_symbol() && arity == 3u) ||
            (head == eval_transform_fire_into_symbol() && arity == 4u) ||
+           (head == eval_transform_split_symbol() && arity == 2u) ||
+           eval_transform_run_head(head, arity) ||
            eval_transform_step_head(head, arity);
 }
 
-/* The dialect's library: lib/petta/lib_transform.metta, or the HE library
- * lib/lib_transform.metta. */
-static bool eval_transform_library_path(char *out, size_t out_size,
-                                        CettaTransformDialect dialect) {
-    if (!g_library_context || !g_library_context->root_dir[0])
+static bool eval_transform_native_admitted(Space *s,
+                                           CettaTransformDialect dialect) {
+    const CettaProfile *profile = active_profile();
+    if (profile &&
+        ((dialect == CETTA_TRANSFORM_DIALECT_HE &&
+          profile->id == CETTA_PROFILE_HE_EXTENDED) ||
+         (dialect == CETTA_TRANSFORM_DIALECT_PETTA &&
+          profile->id == CETTA_PROFILE_PETTA_EXTENDED)))
+        return true;
+    if (!g_library_context)
         return false;
-    int n = snprintf(out, out_size, "%s/lib/%slib_transform.metta",
-                     g_library_context->root_dir,
-                     dialect == CETTA_TRANSFORM_DIALECT_HE ? "" : "petta/");
-    return n > 0 && (size_t)n < out_size;
-}
-
-static bool eval_transform_presentation_admitted(
-    Space *s, CettaTransformDialect dialect) {
-    char path[4200];
-    return eval_transform_library_path(path, sizeof(path), dialect) &&
-           cetta_transform_presentation_admitted(s, path, dialect);
+    if (g_library_context->transform_program_valid &&
+        !cetta_library_transform_program_current(g_library_context, s)) {
+        if (getenv("CETTA_TRANSFORM_TRACE"))
+            fputs("[transform] refused (transform program changed)\n", stderr);
+        return false;
+    }
+    if (g_library_context->active_mask & CETTA_NATIVE_IMPORT_TRANSFORM)
+        return true;
+    return cetta_native_module_builtin_enabled &&
+        cetta_native_module_builtin_enabled(g_library_context,
+            g_library_context->active_mask, "tf:run");
 }
 
 static bool eval_transform_resolve_space(void *context, Atom *space_ref,
@@ -27059,6 +27128,8 @@ static bool eval_transform_evaluate_he(void *context, Arena *a,
                                 atom_symbol(a, "TransformLetInterrupted"));
         return false;
     }
+    /* Empty is a control sentinel in HE, not a value for the let pattern. */
+    result_set_filter_empty(&values);
     Atom **results = values.len
         ? cetta_malloc(sizeof(Atom *) * (size_t)values.len) : NULL;
     for (CettaCount i = 0u; i < values.len; i++)
@@ -27069,61 +27140,290 @@ static bool eval_transform_evaluate_he(void *context, Arena *a,
     return true;
 }
 
-/* While the authored firing of a declined call runs, tf:fire and tf:fire-into
- * are ordinary heads: their equations open as relation bodies. */
-static _Thread_local bool g_transform_authored;
-
-/* A call the realization declines is answered by the authored firing: the
- * call runs in the relational machine with the heads' host ownership
- * suspended, so their equations open as ordinary bodies.  The authored
- * firing's answers, or the error it raises, are the call's. */
-static bool eval_transform_authored(Space *s, Arena *a, Atom *call, int fuel,
-                                    OutcomeSet *os) {
-    Bindings environment;
-    bindings_init(&environment);
-    OutcomeSet outcomes;
-    outcome_set_init_with_owner(&outcomes, a);
-    bool enclosing_authored = g_transform_authored;
-    bool enclosing_shared = g_he_shared_execution;
-    bool enclosing_active = g_active_petta_search_machine;
-    bool enclosing_raised = g_petta_machine_run_raised;
-    g_transform_authored = true;
-    g_he_shared_execution = false;
-    g_active_petta_search_machine = true;
-    g_petta_machine_run_raised = false;
-    CettaEvalEpisode tracker;
-    eval_completion_child_begin(&tracker);
-    bool handled = petta_eval_machine_run(s, a, call, NULL, fuel,
-        &environment, false, &outcomes, PETTA_RELATION_SAFETY_STATIC,
-        CETTA_SEARCH_CONTROLLER_INLINE_DEPTH_FIRST, false, false);
-    if (!handled && tracker.completion == CETTA_EVAL_COMPLETE)
-        eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
-    CettaEvalCompletion completion = eval_completion_child_end(&tracker);
-    bool raised = g_petta_machine_run_raised;
-    g_transform_authored = enclosing_authored;
-    g_he_shared_execution = enclosing_shared;
-    g_active_petta_search_machine = enclosing_active;
-    g_petta_machine_run_raised = enclosing_raised;
-    bindings_free(&environment);
-    if (!handled || completion != CETTA_EVAL_COMPLETE || eval_unwinding() ||
-        eval_cancel_check()) {
-        outcome_set_free(&outcomes);
+static bool eval_transform_spend(void *context, uint64_t work) {
+    (void)context;
+    if (eval_unwinding() || eval_cancel_check())
+        return false;
+    if (!cetta_eval_episode_step(g_eval_completion_tracker, work)) {
+        eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_FUEL);
         return false;
     }
-    if (raised && outcomes.len) {
-        Atom *error = outcomes.items[outcomes.len - 1u].atom;
-        outcome_set_free(&outcomes);
-        petta_eval_raise(error);
-        return true;
-    }
+    return true;
+}
+
+static Atom *eval_transform_lower_run(Space *s, Arena *a, Atom *atom, int fuel,
+                                      const Bindings *environment) {
+    bool he = eval_current_language_id() == CETTA_LANGUAGE_HE;
+    CettaTransformDialect dialect = he ? CETTA_TRANSFORM_DIALECT_HE
+                                       : CETTA_TRANSFORM_DIALECT_PETTA;
+    if (gslt_match_chain_trace_active() ||
+        cetta_delay_holds(g_petta_eval_delay_service) ||
+        !eval_transform_native_admitted(s, dialect))
+        return NULL;
+    Atom *call = environment && !bindings_logically_empty(environment)
+        ? bindings_apply_if_vars((Bindings *)environment, a, atom) : atom;
+    EvalLibraryHost context = {.root = s, .arena = a, .fuel = fuel,
+                               .refusal = "TransformMutationRefused"};
+    CettaTransformHost host = {
+        .context = &context,
+        .dialect = dialect,
+        .resolve_space = he ? eval_transform_resolve_space_he
+                            : eval_transform_resolve_space,
+        .remove_atom = eval_transform_remove,
+        .add_atom = eval_transform_add,
+        .evaluate = he ? eval_transform_evaluate_he : eval_transform_evaluate,
+        .spend = g_eval_completion_tracker && g_eval_completion_tracker->budget_limited
+            ? eval_transform_spend : NULL,
+    };
+    return cetta_transform_lower(a, call, &host);
+}
+
+static bool eval_transform_first_publish(Arena *a, OutcomeSet *answers,
+                                         Atom *value) {
+    Atom *owned = atom_deep_copy(a, value);
+    if (!owned)
+        return false;
     Bindings empty;
     bindings_init(&empty);
-    for (CettaCount i = 0u; i < outcomes.len; i++) {
-        Atom *answer = outcome_atom_materialize(a, &outcomes.items[i]);
-        if (answer)
-            outcome_set_add(os, answer, &empty);
+    outcome_set_add(answers, owned, &empty);
+    return true;
+}
+
+static bool eval_transform_first_visit(Arena *arena, Atom *value,
+                                       const Bindings *env, void *context) {
+    OutcomeSet *answers = context;
+    Atom *owned = atom_deep_copy(arena, value);
+    if (!owned) {
+        eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_CAPACITY);
+        return false;
     }
-    outcome_set_free(&outcomes);
+    outcome_set_add(answers, owned, env);
+    return false;
+}
+
+static bool eval_transform_first_instance(
+    const CettaTransformHost *host, Arena *a, Atom *instance, bool caller,
+    Atom *destination, OutcomeSet *answers) {
+    bool he = host->dialect == CETTA_TRANSFORM_DIALECT_HE;
+    Atom *expression = instance;
+    if (caller && !he) {
+        Atom *parts[2] = {atom_symbol(a, "eval"), instance};
+        expression = atom_expr(a, parts, 2u);
+    } else if (!caller) {
+        Atom *parts[2] = {destination, instance};
+        Atom *application = atom_expr(a, parts, 2u);
+        if (!he) {
+            Atom *reduce[2] = {atom_symbol(a, "reduce"), application};
+            application = atom_expr(a, reduce, 2u);
+        }
+        expression = application;
+    }
+    Atom **results = NULL;
+    size_t len = 0u;
+    Atom *error = NULL;
+    if (!expression)
+        return false;
+    if (he) {
+        EvalLibraryHost *owner = host->context;
+        expression = atom_deep_copy(a, expression);
+        if (!expression) {
+            eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_CAPACITY);
+            return true;
+        }
+        CettaCount visited = metta_eval_bind_visit_demand(owner->root, a,
+            expression, owner->fuel, CETTA_SEARCH_POLICY_ORDER_NATIVE,
+            (CettaObservationDemand){.completion = CETTA_OBSERVATION_FIRST},
+            eval_transform_first_visit, answers);
+        if (g_eval_completion_tracker &&
+            g_eval_completion_tracker->completion != CETTA_EVAL_COMPLETE) {
+            eval_mark_interrupted(g_eval_completion_tracker->completion);
+            return true;
+        }
+        return visited != 0u;
+    }
+    __attribute__((cleanup(eval_observation_demand_leave)))
+    EvalObservationDemandGuard observation = eval_observation_demand_enter(
+        (CettaObservationDemand){.completion = CETTA_OBSERVATION_FIRST});
+    if (!host->evaluate(host->context, a, expression, &results, &len, &error)) {
+        if (error) {
+            if (he)
+                return eval_transform_first_publish(a, answers, error);
+            Atom *owned = atom_deep_copy(a, error);
+            if (!owned)
+                return false;
+            petta_eval_raise(owned);
+            return true;
+        }
+        return false;
+    }
+    bool published = len != 0u &&
+        eval_transform_first_publish(a, answers, results[0]);
+    free(results);
+    return published;
+}
+
+static bool eval_transform_first_error(Arena *a, bool he,
+                                       OutcomeSet *answers, Atom *error) {
+    if (he)
+        return eval_transform_first_publish(a, answers, error);
+    Atom *owned = atom_deep_copy(a, error);
+    if (!owned)
+        return false;
+    petta_eval_raise(owned);
+    return true;
+}
+
+bool cetta_eval_transform_first(Space *space, Arena *a, Atom *call,
+                                OutcomeSet *answers) {
+    if (!space || !a || !call || call->kind != ATOM_EXPR || !answers)
+        return false;
+    bool he = eval_current_language_id() == CETTA_LANGUAGE_HE;
+    CettaTransformDialect dialect = he ? CETTA_TRANSFORM_DIALECT_HE
+                                       : CETTA_TRANSFORM_DIALECT_PETTA;
+    if (!eval_transform_native_admitted(space, dialect))
+        return false;
+    Atom *space_ref, *sources, *template_atom, *destination;
+    if (call->expr.len == 5u &&
+        atom_is_symbol_id(call->expr.elems[0], eval_transform_run_symbol())) {
+        space_ref = call->expr.elems[1];
+        sources = call->expr.elems[2];
+        template_atom = call->expr.elems[3];
+        destination = call->expr.elems[4];
+    } else if ((call->expr.len == 4u || call->expr.len == 5u) &&
+               atom_is_symbol_id(call->expr.elems[0],
+                                 atom_symbol_literal_id("transform"))) {
+        space_ref = call->expr.elems[1];
+        sources = call->expr.elems[2];
+        template_atom = call->expr.elems[3];
+        destination = call->expr.len == 5u
+            ? call->expr.elems[4] : atom_symbol(a, "tf:caller");
+    } else {
+        return false;
+    }
+    bool caller = atom_is_symbol_id(destination,
+                                    atom_symbol_literal_id("tf:caller"));
+    bool into = !caller &&
+        (he ? destination->kind == ATOM_GROUNDED
+            : (destination->kind == ATOM_GROUNDED &&
+               destination->ground.gkind == GV_SPACE) ||
+              (destination->kind == ATOM_SYMBOL &&
+               atom_name_cstr(destination)[0] == '&'));
+    EvalLibraryHost context = {.root = space, .arena = a, .fuel = -1,
+                               .refusal = "TransformMutationRefused"};
+    CettaTransformHost host = {
+        .context = &context,
+        .dialect = dialect,
+        .resolve_space = he ? eval_transform_resolve_space_he
+                            : eval_transform_resolve_space,
+        .remove_atom = eval_transform_remove,
+        .add_atom = eval_transform_add,
+        .evaluate = he ? eval_transform_evaluate_he : eval_transform_evaluate,
+        .spend = g_eval_completion_tracker && g_eval_completion_tracker->budget_limited
+            ? eval_transform_spend : NULL,
+    };
+    Arena work;
+    arena_init(&work);
+    Atom *listed = NULL, *instance = NULL, *prepare_error = NULL;
+    if (!cetta_transform_prepare(&work, sources, template_atom, dialect,
+                                 caller && !into, &listed, &instance, &prepare_error)) {
+        bool handled = prepare_error &&
+            eval_transform_first_error(a, he, answers, prepare_error);
+        arena_free(&work);
+        return handled;
+    }
+    Atom *propose_parts[4] = {atom_symbol(&work, "tf:cands"), space_ref,
+                              listed, instance};
+    Atom *propose = atom_expr(&work, propose_parts, 4u);
+    Atom *matches = NULL;
+    CettaTransformOutcome outcome = cetta_transform_candidates(
+        space, &work, propose, &host, &matches);
+    if (outcome == CETTA_TRANSFORM_INTERRUPTED) {
+        arena_free(&work);
+        return true;
+    }
+    if (outcome == CETTA_TRANSFORM_DECLINED) {
+        arena_free(&work);
+        return false;
+    }
+    if (outcome == CETTA_TRANSFORM_ERROR) {
+        bool published = eval_transform_first_error(a, he, answers, matches);
+        arena_free(&work);
+        return published;
+    }
+    bool has_candidate = false;
+    for (CettaExprLen i = 0u; he && i < matches->expr.len; i++)
+        has_candidate = has_candidate || !atom_is_error(matches->expr.elems[i]);
+    for (CettaExprLen i = 0u; i < matches->expr.len; i++) {
+        Atom *candidate = matches->expr.elems[i];
+        if (he && atom_is_error(candidate)) {
+            if (has_candidate)
+                continue;
+            bool handled = eval_transform_first_error(a, true, answers, candidate);
+            arena_free(&work);
+            return handled;
+        }
+        Atom *guided_call = atom_expr2(&work, atom_symbol(&work, "tf:pin"), listed);
+        Atom *guided = NULL;
+        if (!candidate || candidate->kind != ATOM_EXPR || candidate->expr.len != 2u ||
+            !guided_call) {
+            arena_free(&work);
+            return false;
+        }
+        Atom *parts[3] = {guided_call->expr.elems[0], listed, candidate->expr.elems[1]};
+        if (!cetta_transform_pin(&work, atom_expr(&work, parts, 3u), &guided)) {
+            arena_free(&work);
+            return false;
+        }
+        Atom *fire;
+        if (into) {
+            Atom *args[5] = {atom_symbol(&work, "tf:fire-into"), space_ref,
+                             guided, instance, destination};
+            fire = atom_expr(&work, args, 5u);
+        } else {
+            Atom *args[4] = {atom_symbol(&work, "tf:fire"), space_ref,
+                             guided, instance};
+            fire = atom_expr(&work, args, 4u);
+        }
+        Atom *fired = NULL;
+        outcome = fire ? cetta_transform_fire(space, &work, fire, &host, &fired)
+                       : CETTA_TRANSFORM_DECLINED;
+        if (outcome == CETTA_TRANSFORM_INTERRUPTED) {
+            arena_free(&work);
+            return true;
+        }
+        if (outcome == CETTA_TRANSFORM_DECLINED) {
+            arena_free(&work);
+            return false;
+        }
+        if (outcome == CETTA_TRANSFORM_ERROR) {
+            bool published = eval_transform_first_error(a, he, answers, fired);
+            arena_free(&work);
+            return published;
+        }
+        if (outcome == CETTA_TRANSFORM_NONE)
+            continue;
+        if (into) {
+            bool published = eval_transform_first_publish(a, answers, fired);
+            arena_free(&work);
+            return published;
+        }
+        Atom *instances = fired->expr.elems[1];
+        bool comma = atom_head_symbol_id(instance) == g_builtin_syms.comma;
+        for (CettaExprLen r = 0u; r < instances->expr.len; r++) {
+            Atom *row = instances->expr.elems[r];
+            CettaExprLen first = comma ? 1u : 0u;
+            CettaExprLen last = comma ? row->expr.len : 1u;
+            for (CettaExprLen k = first; k < last; k++) {
+                Atom *item = comma ? row->expr.elems[k] : row;
+                if (eval_transform_first_instance(&host, a, item, caller,
+                                                  destination, answers)) {
+                    arena_free(&work);
+                    return true;
+                }
+            }
+        }
+    }
+    arena_free(&work);
     return true;
 }
 
@@ -27136,12 +27436,9 @@ static bool eval_try_transform_fire(Space *s, Arena *a, Atom *atom, int fuel,
     bool he = eval_current_language_id() == CETTA_LANGUAGE_HE;
     CettaTransformDialect dialect = he ? CETTA_TRANSFORM_DIALECT_HE
                                        : CETTA_TRANSFORM_DIALECT_PETTA;
-    if (g_transform_authored ||
-        !cetta_eval_episode_allows_unmetered(g_eval_completion_tracker, fuel) ||
-        gslt_match_chain_trace_active() ||
-        (environment && environment->eq_len != 0u) ||
+    if (gslt_match_chain_trace_active() ||
         cetta_delay_holds(g_petta_eval_delay_service) ||
-        !eval_transform_presentation_admitted(s, dialect))
+        !eval_transform_native_admitted(s, dialect))
         return false;
     Atom *call = environment && !bindings_logically_empty(environment)
         ? bindings_apply_if_vars((Bindings *)environment, a, atom)
@@ -27156,23 +27453,34 @@ static bool eval_try_transform_fire(Space *s, Arena *a, Atom *atom, int fuel,
         .remove_atom = eval_transform_remove,
         .add_atom = eval_transform_add,
         .evaluate = he ? eval_transform_evaluate_he : eval_transform_evaluate,
+        .spend = g_eval_completion_tracker && g_eval_completion_tracker->budget_limited
+            ? eval_transform_spend : NULL,
     };
     Atom *answer = NULL;
     SymbolId head = call->kind == ATOM_EXPR && call->expr.len &&
             call->expr.elems[0]->kind == ATOM_SYMBOL
         ? call->expr.elems[0]->sym_id : SYMBOL_ID_NONE;
     CettaTransformOutcome outcome;
-    if (head == eval_transform_guided_symbol() && !he) {
-        if (!cetta_transform_guided(a, call, &answer))
-            return eval_transform_authored(s, a, call, fuel, os);
+    if (head == atom_symbol_literal_id("transform"))
+        return false;
+    if (eval_transform_run_head(head, call->expr.len - 1u))
+        return false;
+    if (head == eval_transform_split_symbol()) {
+        answer = cetta_transform_split(a, call, dialect);
+        outcome = answer ? CETTA_TRANSFORM_FIRED : CETTA_TRANSFORM_DECLINED;
+    } else if (head == eval_transform_pin_symbol()) {
+        if (!cetta_transform_pin(a, call, &answer))
+            return false;
         outcome = CETTA_TRANSFORM_FIRED;
-    } else if (head == eval_transform_proposals_symbol() && !he) {
-        outcome = cetta_transform_propose(s, a, call, &host, &answer);
+    } else if (head == eval_transform_candidates_symbol()) {
+        outcome = cetta_transform_candidates(s, a, call, &host, &answer);
     } else {
         outcome = cetta_transform_fire(s, a, call, &host, &answer);
     }
+    if (outcome == CETTA_TRANSFORM_INTERRUPTED)
+        return true;
     if (outcome == CETTA_TRANSFORM_DECLINED)
-        return he ? false : eval_transform_authored(s, a, call, fuel, os);
+        return false;
     /* An error the firing met is raised, as the authored firing raises it
      * from the `let` or the mutation that met it; in HE it is the answer. */
     if (outcome == CETTA_TRANSFORM_ERROR) {
@@ -27188,8 +27496,60 @@ static bool eval_try_transform_fire(Space *s, Arena *a, Atom *atom, int fuel,
     if (outcome == CETTA_TRANSFORM_FIRED) {
         Bindings empty;
         bindings_init(&empty);
-        outcome_set_add(os, answer, &empty);
+        outcome_set_add(os, he ? he_answer_as_value(a, answer) : answer, &empty);
     }
+    return true;
+}
+
+bool cetta_eval_transform_module_call(
+    CettaLibraryContext *ctx, Space *space, Arena *a,
+    Atom *head, Atom **args, uint32_t nargs, CettaCallOutcome *out) {
+    (void)ctx;
+    if (!space || !a || !head || !out || (nargs && !args))
+        return false;
+    Atom **elems = arena_alloc(a, sizeof(*elems) * ((size_t)nargs + 1u));
+    if (!elems)
+        return false;
+    elems[0] = head;
+    for (uint32_t i = 0u; i < nargs; i++)
+        elems[i + 1u] = args[i];
+    Atom *call = atom_expr(a, elems, (CettaExprLen)(nargs + 1u));
+    if (!call)
+        return false;
+    if (eval_transform_run_head(head->sym_id, (CettaExprLen)nargs)) {
+        Atom *lowered = eval_transform_lower_run(space, a, call, -1, NULL);
+        if (!lowered)
+            return false;
+        *out = cetta_call_value(lowered);
+        return true;
+    }
+    OutcomeSet outcomes;
+    outcome_set_init(&outcomes);
+    bool handled = eval_try_transform_fire(space, a, call, -1, NULL, &outcomes);
+    Atom *raised = petta_eval_take_raise();
+    if (!handled) {
+        outcome_set_free(&outcomes);
+        return false;
+    }
+    if (raised) {
+        *out = cetta_call_raised(raised);
+        outcome_set_free(&outcomes);
+        return true;
+    }
+    if (outcomes.len == 0u) {
+        *out = cetta_call_failure();
+        outcome_set_free(&outcomes);
+        return true;
+    }
+    if (outcomes.len != 1u) {
+        outcome_set_free(&outcomes);
+        return false;
+    }
+    Atom *answer = outcome_atom_materialize(a, &outcomes.items[0]);
+    outcome_set_free(&outcomes);
+    if (!answer)
+        return false;
+    *out = cetta_call_completed_value(answer);
     return true;
 }
 
@@ -29952,7 +30312,10 @@ static void eval_for_caller(Space *s, Arena *a, Atom *type, Atom *atom, int fuel
     Atom *applied = !bindings_has_bound_values(prefix)
         ? atom
         : bindings_apply_if_vars(prefix, a, atom);
-    if (atom_eval_is_immediate_value(applied, fuel)) {
+    if (!eval_transform_any_head(atom_head_symbol_id(applied),
+                                 applied->kind == ATOM_EXPR
+                                     ? applied->expr.len - 1u : 0u) &&
+        atom_eval_is_immediate_value(applied, fuel)) {
         outcome_set_add(os, applied, &empty);
         return;
     }
@@ -43426,7 +43789,8 @@ static bool petta_eval_machine_builtin_allowed(
     }
     const char *name = head == SYMBOL_ID_NONE
         ? NULL : symbol_bytes(g_symbols, head);
-    bool allowed = !name || active_builtin_allowed(name);
+    bool allowed = (!name || active_builtin_allowed(name)) ||
+        eval_transform_symbol(head);
     if (entry) {
         *entry = (PettaBuiltinAdmissionCacheEntry){
             .head = head,
@@ -46286,15 +46650,20 @@ static bool petta_eval_exec_saturation_host_owned(
 static bool petta_eval_transform_host_owned(
     void *context, Space *space, SymbolId head, CettaExprLen arity) {
     PettaEvalMachineContext *owner = context;
-    return !g_transform_authored && eval_transform_head(head, arity) &&
-        cetta_eval_episode_allows_unmetered(
-            g_eval_completion_tracker, owner ? owner->fuel : -1) &&
-        eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
+    const CettaProfile *profile = active_profile();
+    (void)profile;
+    bool public_native = head == atom_symbol_literal_id("transform") &&
+        (arity == 3u || arity == 4u);
+    bool owned = (eval_transform_head(head, arity) || public_native) &&
+        (eval_current_language_id() == CETTA_LANGUAGE_PETTA ||
+         eval_current_language_id() == CETTA_LANGUAGE_HE) &&
         !petta_eval_typed_line() &&
         (!owner || !owner->transaction) &&
         !gslt_match_chain_trace_active() &&
-        eval_transform_presentation_admitted(space,
-                                             CETTA_TRANSFORM_DIALECT_PETTA);
+        eval_transform_native_admitted(space,
+            eval_current_language_id() == CETTA_LANGUAGE_HE
+                ? CETTA_TRANSFORM_DIALECT_HE : CETTA_TRANSFORM_DIALECT_PETTA);
+    return owned;
 }
 
 /* While the library's definition of a declined support call runs, the
@@ -46376,7 +46745,7 @@ static PettaMachineHostMode petta_eval_machine_classify_host(
         return PETTA_MACHINE_HOST_READY_UNCONSTRAINED_REGION;
     if (head->kind == ATOM_SYMBOL && petta_eval_transform_host_owned(
             context, space, head->sym_id, expression->expr.len - 1u))
-        return PETTA_MACHINE_HOST_READY_UNCONSTRAINED_REGION;
+        return PETTA_MACHINE_HOST_READY_APPLICATION;
     if (head->kind == ATOM_SYMBOL && petta_eval_support_host_owned(
             context, space, head->sym_id, expression->expr.len - 1u))
         return PETTA_MACHINE_HOST_STRICT_APPLICATION;
@@ -47337,6 +47706,40 @@ static bool petta_eval_machine_evaluate_host_body(
 
     SymbolId host_head =
         atom_head_symbol_id(host_expression);
+    CettaExprLen host_arity = host_expression &&
+        host_expression->kind == ATOM_EXPR
+            ? host_expression->expr.len - 1u : 0u;
+    if (eval_transform_run_head(host_head, host_arity) ||
+        (host_head == atom_symbol_literal_id("transform") &&
+         (host_arity == 3u || host_arity == 4u))) {
+        Atom *run = host_expression;
+        if (host_head != eval_transform_run_symbol()) {
+            Atom *parts[5] = {
+                atom_symbol_id(arena, eval_transform_run_symbol()),
+                host_expression->expr.elems[1], host_expression->expr.elems[2],
+                host_expression->expr.elems[3],
+                host_arity == 4u ? host_expression->expr.elems[4]
+                                 : atom_symbol(arena, "tf:caller"),
+            };
+            run = atom_expr(arena, parts, 5u);
+        }
+        Atom *lowered = run
+            ? eval_transform_lower_run(space, arena, run,
+                                       eval_context ? eval_context->fuel : -1,
+                                       environment)
+            : NULL;
+        if (lowered)
+            host_expression = lowered;
+    } else if (eval_transform_head(host_head, host_arity) &&
+               eval_try_transform_fire(space, arena, host_expression,
+                                       eval_context ? eval_context->fuel : -1,
+                                       environment, outcomes)) {
+        if (transaction) {
+            g_registry = previous_registry;
+            g_eval_root_space = previous_root_space;
+        }
+        return true;
+    }
     PeTTaForm host_form =
         host_head == SYMBOL_ID_NONE
             ? PETTA_FORM_NONE
@@ -51081,6 +51484,8 @@ static CettaNativeQueryStatus petta_eval_transform_collect(
     void *machine_context, Space *root, Arena *arena, Atom *query,
     bool count_only, bool wrap_collection, Atom **value) {
     *value = NULL;
+    if (eval_current_language_id() != CETTA_LANGUAGE_PETTA)
+        return CETTA_NATIVE_QUERY_DECLINED;
     static SymbolId transform = SYMBOL_ID_NONE;
     if (transform == SYMBOL_ID_NONE)
         transform = atom_symbol_literal_id("transform");
@@ -51089,14 +51494,13 @@ static CettaNativeQueryStatus petta_eval_transform_collect(
         !atom_is_symbol_id(query->expr.elems[0], transform))
         return CETTA_NATIVE_QUERY_DECLINED;
     PettaEvalMachineContext *owner = machine_context;
-    if (g_transform_authored || petta_eval_typed_line() ||
+    if (petta_eval_typed_line() ||
         !cetta_eval_episode_allows_unmetered(g_eval_completion_tracker,
                                              owner ? owner->fuel : -1) ||
         (owner && owner->transaction) ||
         gslt_match_chain_trace_active() ||
         cetta_delay_holds(g_petta_eval_delay_service) ||
-        !eval_transform_presentation_admitted(root,
-                                              CETTA_TRANSFORM_DIALECT_PETTA) ||
+        !eval_transform_native_admitted(root, CETTA_TRANSFORM_DIALECT_PETTA) ||
         (query->expr.len == 4u &&
          !petta_native_region_answers_itself(root, query->expr.elems[3], 0u)))
         return CETTA_NATIVE_QUERY_DECLINED;
@@ -53492,6 +53896,11 @@ static bool petta_eval_machine_admits_root(
         return true;
     if (cetta_petta_data_op_applies(
             head, expression->expr.len - 1u))
+        return true;
+    if (eval_transform_head(head, expression->expr.len - 1u) &&
+        eval_transform_native_admitted(space,
+            eval_current_language_id() == CETTA_LANGUAGE_HE
+                ? CETTA_TRANSFORM_DIALECT_HE : CETTA_TRANSFORM_DIALECT_PETTA))
         return true;
     /*
      * The evaluator's list builtins observe computed arguments in PeTTa, as
@@ -58309,6 +58718,12 @@ static bool petta_eval_open_call_protocol_admitted(
 
 static bool petta_eval_open_relation_admitted(
     void *context, Space *space, SymbolId head, uint32_t arity) {
+    if (head != atom_symbol_literal_id("transform") &&
+        eval_transform_head(head, (CettaExprLen)arity) &&
+        eval_transform_native_admitted(space,
+            eval_current_language_id() == CETTA_LANGUAGE_HE
+                ? CETTA_TRANSFORM_DIALECT_HE : CETTA_TRANSFORM_DIALECT_PETTA))
+        return false;
     if (!petta_eval_open_call_protocol_admitted(context, space, head, arity))
         return false;
     Arena scratch;
@@ -58355,6 +58770,10 @@ static bool petta_eval_open_head_callable(
                context, head, supplied).known ||
            petta_eval_machine_foreign_named_arity_resolved(
                context, head, supplied).known ||
+           (eval_transform_any_head(head, supplied) &&
+            eval_transform_native_admitted(space,
+                eval_current_language_id() == CETTA_LANGUAGE_HE
+                    ? CETTA_TRANSFORM_DIALECT_HE : CETTA_TRANSFORM_DIALECT_PETTA)) ||
            petta_eval_machine_classify_host(context, space, expression) !=
                PETTA_MACHINE_HOST_NONE;
 }
@@ -59689,12 +60108,18 @@ tail_call: ;
     }
 
     HeTypeDemand demand = eval_atom_type_demand(a, atom, etype);
-    if (demand == HE_TYPE_KEEP) {
+    if (demand == HE_TYPE_KEEP &&
+        !eval_transform_any_head(atom_head_symbol_id(atom),
+                                 atom->kind == ATOM_EXPR
+                                     ? atom->expr.len - 1u : 0u)) {
         outcome_set_add(os, atom, &_empty);
         return;
     }
 
-    if (demand == HE_TYPE_CAST) {
+    if (demand == HE_TYPE_CAST &&
+        !eval_transform_any_head(atom_head_symbol_id(atom),
+                                 atom->kind == ATOM_EXPR
+                                     ? atom->expr.len - 1u : 0u)) {
         if (language_id == CETTA_LANGUAGE_HE) {
             OutcomeSet cast;
             outcome_set_init(&cast);
@@ -59881,6 +60306,33 @@ tail_call: ;
         head_id == g_builtin_syms.exec_saturate &&
         eval_try_exec_saturation(s, a, atom, fuel, CURRENT_ENV, os))
         return;
+    const CettaProfile *transform_profile = active_profile();
+    if ((language_id == CETTA_LANGUAGE_HE ||
+         (language_id == CETTA_LANGUAGE_PETTA && !petta_eval_typed_line())) &&
+        head_id == atom_symbol_literal_id("transform") &&
+        (nargs == 3u || nargs == 4u) && transform_profile &&
+        ((language_id == CETTA_LANGUAGE_HE &&
+          transform_profile->id == CETTA_PROFILE_HE_EXTENDED) ||
+         (language_id == CETTA_LANGUAGE_PETTA &&
+          transform_profile->id == CETTA_PROFILE_PETTA_EXTENDED))) {
+        Atom *run_parts[5] = {
+            atom_symbol_id(a, eval_transform_run_symbol()),
+            atom->expr.elems[1], atom->expr.elems[2], atom->expr.elems[3],
+            nargs == 4u ? atom->expr.elems[4] : atom_symbol(a, "tf:caller"),
+        };
+        Atom *run = atom_expr(a, run_parts, 5u);
+        Atom *lowered = run ? eval_transform_lower_run(s, a, run, fuel, CURRENT_ENV)
+                            : NULL;
+        if (lowered)
+            TAIL_REENTER(lowered);
+    }
+    if ((language_id == CETTA_LANGUAGE_HE ||
+         (language_id == CETTA_LANGUAGE_PETTA && !petta_eval_typed_line())) &&
+        eval_transform_run_head(head_id, (CettaExprLen)nargs)) {
+        Atom *lowered = eval_transform_lower_run(s, a, atom, fuel, CURRENT_ENV);
+        if (lowered)
+            TAIL_REENTER(lowered);
+    }
     if ((language_id == CETTA_LANGUAGE_HE ||
          (language_id == CETTA_LANGUAGE_PETTA && !petta_eval_typed_line())) &&
         eval_transform_head(head_id, (CettaExprLen)nargs) &&

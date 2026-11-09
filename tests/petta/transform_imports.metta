@@ -1,0 +1,8 @@
+!(import! &self (library lib_transform))
+!(import! &self ../../lib/petta/lib_transform.metta)
+!(import! &self (library lib_transform))
+!(bind! &s (new-space))
+!(add-atom &s (job a))
+!(add-atom &s (job b))
+!(sort-atom (collapse (transform &s (take (job $j)) (done $j))))
+!(collapse (match &s (job $j) $j))

@@ -15,6 +15,7 @@
 #include "foreign_provider.h"
 #include "foreign.h"
 #include "library_pattern.h"
+#include "library_transform.h"
 #include "match.h"
 #include "binding/term_cursor.h"
 #include "petta_semantics.h"
@@ -16632,6 +16633,26 @@ static bool petta_machine_start_once(
         *failure = PETTA_MACHINE_STEP_CAPACITY;
         return false;
     }
+    SymbolId body_head = atom_head_symbol_id(body);
+    CettaExprLen body_arity = body->kind == ATOM_EXPR
+        ? body->expr.len - 1u : 0u;
+    if ((body_head == atom_symbol_literal_id("transform") &&
+         (body_arity == 3u || body_arity == 4u)) ||
+        (body_head == atom_symbol_literal_id("tf:run") && body_arity == 4u)) {
+        OutcomeSet *first = cetta_malloc(sizeof(*first));
+        if (!first) {
+            *failure = PETTA_MACHINE_STEP_CAPACITY;
+            return false;
+        }
+        outcome_set_init_with_owner(first, &machine->heap);
+        if (cetta_eval_transform_first(machine->space, &machine->heap, body,
+                                       first)) {
+            return petta_machine_start_outcome_choice(
+                machine, first, expected, barrier);
+        }
+        outcome_set_free(first);
+        free(first);
+    }
 
     size_t entry_choice_len = machine->choice_len;
     PettaChoice choice = {
@@ -24938,7 +24959,9 @@ petta_machine_try_native_collapse(
     uint32_t barrier, bool *handled, PettaMachineStep *failure) {
     *handled = false;
     if (!petta_machine_native_collect_admitted(machine) ||
-        body->kind != ATOM_EXPR)
+        body->kind != ATOM_EXPR ||
+        (body->expr.len == 2u &&
+         atom_is_symbol_id(body->expr.elems[0], g_builtin_syms.once)))
         return false;
     Atom *query = NULL;
     /* A transform is the host's to collect whole, as a match is. */
@@ -32854,7 +32877,11 @@ static bool petta_open_host_receiver_emit(void *context,
 /* Run a region's host goal. A terminal transfer releases the cursor; otherwise
  * OPEN_RESUME returns each answer to the holder beneath the goal's choices. */
 static bool petta_machine_open_host(PettaMachineImpl *machine,
-                                    size_t holder, uint32_t barrier) {
+                                    size_t holder, uint32_t barrier,
+                                    PettaMachineStep *failure) {
+    PettaMachineStep local_failure = PETTA_MACHINE_STEP_DECLINED;
+    if (!failure)
+        failure = &local_failure;
     PettaOpenAnswers *open = machine->choices[holder].as.answers.open;
     Atom *goal = NULL;
     Atom *destination = NULL;
@@ -32867,6 +32894,15 @@ static bool petta_machine_open_host(PettaMachineImpl *machine,
                                               &destination, &vars, &count,
                                               &plan, &mode, &recovers))
         return false;
+    bool transform_first =
+        (mode == CETTA_OPEN_EQUATION_HOST_SOLVE ||
+         mode == CETTA_OPEN_EQUATION_HOST_READY_CALL) &&
+        cetta_open_equation_cursor_host_first(open->cursor) &&
+        goal && goal->kind == ATOM_EXPR &&
+        ((atom_head_symbol_id(goal) == atom_symbol_literal_id("transform") &&
+          (goal->expr.len == 4u || goal->expr.len == 5u)) ||
+         (atom_head_symbol_id(goal) == atom_symbol_literal_id("tf:run") &&
+          goal->expr.len == 5u));
     CettaCallOutcome native_return = cetta_call_failure();
     if (mode == CETTA_OPEN_EQUATION_HOST_NATIVE_RETURN &&
         !cetta_open_equation_cursor_host_return(open->cursor, &native_return))
@@ -32933,7 +32969,7 @@ static bool petta_machine_open_host(PettaMachineImpl *machine,
                          }))
         return false;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_OPEN_EQUATION_HOST);
-    bool pushed;
+    bool pushed = false;
     if (mode == CETTA_OPEN_EQUATION_HOST_NATIVE_RETURN) {
         pushed = petta_goal_push(machine, &(PettaGoal){
             .kind = PETTA_GOAL_NATIVE_RETURN, .barrier = barrier,
@@ -32960,14 +32996,24 @@ static bool petta_machine_open_host(PettaMachineImpl *machine,
                                    .first = goal,
                                    .second = destination,
                                });
-    else if (mode == CETTA_OPEN_EQUATION_HOST_READY_CALL ||
-             mode == CETTA_OPEN_EQUATION_HOST_READY_DATA)
+    if (transform_first) {
+        PettaMachineStep once_failure = PETTA_MACHINE_STEP_DECLINED;
+        pushed = petta_machine_start_once(
+            machine, goal, destination, barrier, plan, &once_failure);
+        if (!pushed && once_failure == PETTA_MACHINE_STEP_DECLINED)
+            pushed = petta_goal_push(machine, &(PettaGoal){
+                .kind = PETTA_GOAL_FAIL, .barrier = barrier,
+            });
+        if (!pushed)
+            *failure = once_failure;
+    } else if (mode == CETTA_OPEN_EQUATION_HOST_READY_CALL ||
+               mode == CETTA_OPEN_EQUATION_HOST_READY_DATA)
         pushed = petta_goal_push(machine, &(PettaGoal){
             .kind = mode == CETTA_OPEN_EQUATION_HOST_READY_DATA
                 ? PETTA_GOAL_CALL_READY_DATA : PETTA_GOAL_CALL_READY,
             .barrier = barrier, .first = goal, .second = destination,
         });
-    else
+    else if (mode == CETTA_OPEN_EQUATION_HOST_SOLVE)
         pushed = petta_push_solve_planned(machine, goal, destination, barrier,
                                           plan);
     return pushed && (!query_vars ||
@@ -33528,7 +33574,8 @@ static bool petta_machine_start_open_term_answers(
         }
         return petta_machine_open_host(machine, machine->choice_len - 1u,
                                        machine->choices[
-                                           machine->choice_len - 1u].barrier);
+                                           machine->choice_len - 1u].barrier,
+                                       NULL);
     }
     /* A raised error ends this branch as equation search's would; the
      * call's remaining alternatives stay behind it. */
@@ -33804,7 +33851,7 @@ static __attribute__((noinline)) bool petta_machine_resume_open_answer_choice(
     if (step == CETTA_OPEN_EQUATION_HOST) {
         if (petta_machine_open_host(machine,
                                     (size_t)(choice - machine->choices),
-                                    choice->barrier))
+                                    choice->barrier, failure))
             return true;
         *failure = PETTA_MACHINE_STEP_CAPACITY;
         return false;
@@ -34046,7 +34093,8 @@ static __attribute__((noinline)) bool petta_machine_open_resume(
         if (step == CETTA_OPEN_EQUATION_COLLECTION)
             return petta_machine_export_open_collection(machine, open, current,
                 goal->barrier, failure);
-        bool exported = petta_machine_open_host(machine, current, goal->barrier);
+        bool exported = petta_machine_open_host(
+            machine, current, goal->barrier, failure);
         if (exported)
             return true;
         *failure = PETTA_MACHINE_STEP_CAPACITY;

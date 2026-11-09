@@ -172,6 +172,15 @@ typedef struct CettaLibraryContext {
     struct CettaAuthoredParserV1 *parser_cache;
     TermUniverse term_universe;
     uint32_t active_mask;
+    SpaceProgramToken transform_program;
+    SpaceProgramToken *transform_views;
+    size_t transform_view_count;
+    Arena transform_definitions;
+    Atom *transform_definition_rows;
+    bool transform_definitions_ready;
+    SpaceReadToken transform_read;
+    CettaCount transform_scanned_rows;
+    bool transform_program_valid;
     char root_dir[4096];
     char working_dir[PATH_MAX];
     char script_path[PATH_MAX];
@@ -545,6 +554,7 @@ uint64_t cetta_library_petta_translator_rule_revision(
 /* The revision of every relation-dispatch table above, after synchronizing
  * them with the current symbol table. */
 uint64_t cetta_library_petta_admission_revision(CettaLibraryContext *ctx);
+bool cetta_library_transform_program_current(CettaLibraryContext *ctx, Space *space);
 bool cetta_library_petta_tabled_relation_contains(
     CettaLibraryContext *ctx, SymbolId head, CettaExprLen arity);
 /* The join of a tabled-lattice relation, or SYMBOL_ID_NONE. */

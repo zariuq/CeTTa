@@ -18578,6 +18578,7 @@ NORMAL_TEST_TARGETS := \
 	test-petta-transform \
 	test-petta-transform-step-paths \
 	test-transform-he \
+	test-transform-profiles \
 	test-language-versions \
 	test-prime-normal-fixtures \
 	test-prepared-bound-heads \
@@ -31321,7 +31322,8 @@ test-petta-semantics: test-petta-transform
 # (lib/petta/lib_transform_specs.metta) does; a reads-only transform answers as
 # match does, one branch per match; the native firing runs throughout them;
 # seeded programs answer alike on all three; a redefined operation or a data
-# constructor given an equation runs the authored definition.
+# public override runs its authored definition; reference-only helpers do not
+# reprogram the native implementation.
 test-petta-transform: $(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_transform_differential.py ./$(BIN) --programs 60
 
@@ -31338,18 +31340,60 @@ test-petta-transform-step-paths: $(BIN) tests/support/check_transform_step_paths
 # library does: the fixed test and 120 seeded scenarios (every source form,
 # both destinations, stores holding copies) answer their expected output both
 # natively, where every firing is the realization's, joint conditions
-# included, and with CETTA_TRANSFORM_REFERENCE=1.
+# included, and with the full authored implementation in tests/reference.
 .PHONY: test-transform-he
-test-transform-he: $(BIN) lib/lib_transform.metta tests/test_transform_he.metta tests/test_transform_he.expected tests/test_transform_he_differential.metta tests/test_transform_he_differential.expected
+test-transform-he: $(BIN) lib/lib_transform.metta tests/reference/lib_transform_he.metta tests/test_transform_he.metta tests/test_transform_he.expected tests/test_transform_he_differential.metta tests/test_transform_he_differential.expected
 	@for t in test_transform_he test_transform_he_differential; do \
 		CETTA_TRANSFORM_TRACE=1 $(call cetta_exec,./$(BIN)) --profile extended --lang he tests/$$t.metta > runtime/$$t.out 2> runtime/$$t.trace || exit 1; \
 		diff -u tests/$$t.expected runtime/$$t.out || exit 1; \
-		CETTA_TRANSFORM_REFERENCE=1 $(call cetta_exec,./$(BIN)) --profile extended --lang he tests/$$t.metta > runtime/$$t.reference.out 2>&1 || exit 1; \
+		sed -e 's#\.\./lib/lib_transform\.metta#../tests/reference/lib_transform_he.metta#' \
+		    -e 's#&self lib_transform#\&self ../tests/reference/lib_transform_he.metta#' tests/$$t.metta > runtime/$$t.reference.metta; \
+		CETTA_TRANSFORM_TRACE=1 $(call cetta_exec,./$(BIN)) --lang he runtime/$$t.reference.metta \
+			> runtime/$$t.reference.out 2> runtime/$$t.reference.trace || exit 1; \
 		diff -u tests/$$t.expected runtime/$$t.reference.out || exit 1; \
+		! grep -q '^\[transform\]' runtime/$$t.reference.trace || { echo "FAIL: $$t: reference entered native transform"; exit 1; }; \
 		! grep -q -E '^\[transform\] (declined|error)' runtime/$$t.trace || { echo "FAIL: $$t: the realization declined or answered an error"; exit 1; }; \
 	done
 	@test "$$(grep -c '^\[transform\] fired' runtime/test_transform_he_differential.trace)" -ge 600
 	@echo "PASS: transform fires natively in HE as its library does (fixed test, 120 seeded scenarios)"
+
+# The authored HE reference runs in plain HE, where native transform is off.
+.PHONY: test-transform-he-boundaries
+test-transform-he: test-transform-he-boundaries
+test-transform-he-boundaries: $(BIN) tests/support/check_transform_he_boundaries.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_transform_he_boundaries.py "$(CETTA_SCRIPT_BIN)"
+
+.PHONY: test-transform-profiles
+test-transform-profiles: $(BIN) lib/lib_transform.metta lib/petta/lib_transform.metta \
+	tests/he/transform_profile.metta tests/he/transform_profile.extended.expected tests/he/transform_profile.plain.expected \
+	tests/he/transform_imports.metta tests/he/transform_imports.expected tests/he/transform_once.metta tests/he/transform_once.expected \
+	tests/petta/transform_profile.metta tests/petta/transform_profile.extended.expected tests/petta/transform_profile.plain.expected \
+	tests/petta/transform_imports.metta tests/petta/transform_imports.expected tests/petta/transform_once.metta tests/petta/transform_once.expected
+	@set -eu; \
+	for lang in he petta; do \
+		CETTA_TRANSFORM_TRACE=1 $(CETTA_BIN_INVOKE) --lang $$lang --profile extended tests/$$lang/transform_profile.metta \
+			> runtime/transform-profile-$$lang.extended.out 2> runtime/transform-profile-$$lang.extended.trace; \
+		diff -u tests/$$lang/transform_profile.extended.expected runtime/transform-profile-$$lang.extended.out; \
+		grep -q '^\[transform\] fired' runtime/transform-profile-$$lang.extended.trace; \
+		CETTA_TRANSFORM_TRACE=1 $(CETTA_BIN_INVOKE) --lang $$lang tests/$$lang/transform_profile.metta \
+			> runtime/transform-profile-$$lang.plain.raw 2> runtime/transform-profile-$$lang.plain.trace; \
+		sed -E 's/<space 0x[0-9a-f]+>/<space>/g' runtime/transform-profile-$$lang.plain.raw \
+			> runtime/transform-profile-$$lang.plain.out; \
+		diff -u tests/$$lang/transform_profile.plain.expected runtime/transform-profile-$$lang.plain.out; \
+		! grep -q '^\[transform\] fired' runtime/transform-profile-$$lang.plain.trace; \
+		CETTA_TRANSFORM_TRACE=1 $(CETTA_BIN_INVOKE) --lang $$lang tests/$$lang/transform_imports.metta \
+			> runtime/transform-imports-$$lang.out 2> runtime/transform-imports-$$lang.trace; \
+		diff -u tests/$$lang/transform_imports.expected runtime/transform-imports-$$lang.out; \
+		grep -q '^\[transform\] fired' runtime/transform-imports-$$lang.trace; \
+		CETTA_TRANSFORM_TRACE=1 $(CETTA_BIN_INVOKE) --lang $$lang --profile extended tests/$$lang/transform_once.metta \
+			> runtime/transform-once-$$lang.out 2> runtime/transform-once-$$lang.trace; \
+		diff -u tests/$$lang/transform_once.expected runtime/transform-once-$$lang.out; \
+		test "$$(grep -c '^\[transform\] fired' runtime/transform-once-$$lang.trace)" -eq 4; \
+	done
+	@grep -q '^\[transform\] refused (transform program changed)' runtime/transform-imports-he.trace
+	@echo "PASS: transform's profile, import, redefinition, and once contracts hold in HE and PeTTa"
+
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_transform_profiles.py "$(CETTA_SCRIPT_BIN)"
 
 .PHONY: test-petta-closure-specialization
 test-petta-semantics: test-petta-closure-specialization
@@ -48622,6 +48666,30 @@ $(EMBED_QUERY_TEST): tests/support/test_embedding_query.c src/embedding.c $(EMBE
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Iinclude -o "$$tmp_out" $< $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS) $(LDFLAGS); \
 	mv "$$tmp_out" "$@"
+TRANSFORM_READ_FUEL_TEST = runtime/test_transform_read_fuel-$(EMBED_TAG)
+$(TRANSFORM_READ_FUEL_TEST): tests/support/test_transform_read_fuel.c src/embedding.c $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
+	@set -eu; \
+	tmp_out=$$(mktemp "runtime/.cetta-transform-read-fuel.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Iinclude -o "$$tmp_out" $< $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS) $(LDFLAGS); \
+	mv "$$tmp_out" "$@"
+.PHONY: test-transform-read-fuel
+test-transform-read-fuel: $(TRANSFORM_READ_FUEL_TEST)
+	@$(call cetta_exec,./$(TRANSFORM_READ_FUEL_TEST))
+test-transform-fuel: test-transform-read-fuel
+
+TRANSFORM_FUEL_TEST = runtime/test_transform_fuel-$(EMBED_TAG)
+$(TRANSFORM_FUEL_TEST): tests/support/test_transform_fuel.c $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
+	@set -eu; \
+	tmp_out=$$(mktemp "runtime/.cetta-transform-fuel.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Iinclude -o "$$tmp_out" $< $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS) $(LDFLAGS); \
+	mv "$$tmp_out" "$@"
+.PHONY: test-transform-fuel
+test-transform-fuel: $(TRANSFORM_FUEL_TEST)
+	@$(call cetta_exec,./$(TRANSFORM_FUEL_TEST))
+test-petta-transform test-all: test-transform-fuel
+
 .PHONY: test-embedding-query
 test-embedding-query: $(EMBED_QUERY_TEST)
 	./$(EMBED_QUERY_TEST)

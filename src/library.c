@@ -6,6 +6,7 @@
 #include "mm2_lower.h"
 #include "mork_space_bridge_runtime.h"
 #include "native/native_modules.h"
+#include "library_transform.h"
 #include "nik_runtime.h"
 #include "parser.h"
 #include "petta_search_machine.h"
@@ -515,7 +516,12 @@ bool cetta_library_context_try_init_for_language_profile(CettaLibraryContext *ct
     term_universe_init(&ctx->term_universe);
     ctx->owned_term_domain = NULL;
     if (mutex_error) { errno = mutex_error; return false; }
-    ctx->active_mask = 0;
+    ctx->active_mask = profile &&
+        ((language_id == CETTA_LANGUAGE_HE &&
+          profile->id == CETTA_PROFILE_HE_EXTENDED) ||
+         (language_id == CETTA_LANGUAGE_PETTA &&
+          profile->id == CETTA_PROFILE_PETTA_EXTENDED))
+        ? CETTA_NATIVE_IMPORT_TRANSFORM : 0u;
     ctx->root_dir[0] = '\0';
     if (!getcwd(ctx->working_dir, sizeof(ctx->working_dir))) {
         ctx->working_dir[0] = '\0';
@@ -668,6 +674,13 @@ void cetta_library_context_free(CettaLibraryContext *ctx) {
     ctx->top_module_space = NULL;
     ctx->top_module_registry = NULL;
     free(ctx->import_dirs);
+    free(ctx->transform_views);
+    ctx->transform_views = NULL;
+    ctx->transform_view_count = 0u;
+    if (ctx->transform_definitions_ready)
+        arena_free(&ctx->transform_definitions);
+    ctx->transform_definitions_ready = false;
+    ctx->transform_definition_rows = NULL;
     ctx->import_dirs = NULL;
     ctx->import_dir_len = ctx->import_dir_cap = 0u;
     library_he_failures_free(ctx->he_module_failures);
@@ -10049,6 +10062,174 @@ static bool load_module_file_transactional(CettaLibraryContext *ctx, const char 
     return ok;
 }
 
+static bool transform_native_head(SymbolId head) {
+    if (head == SYMBOL_ID_NONE)
+        return true;
+    const char *name = symbol_bytes(g_symbols, head);
+    if (!name)
+        return true;
+    static const char *const operations[] = {
+        "transform", "tf:run", "tf:split", "tf:cands", "tf:pin",
+        "tf:fire", "tf:fire-into", "tf:cand", "tf:fired", "tf:cs",
+    };
+    for (size_t i = 0u; i < sizeof operations / sizeof operations[0]; i++)
+        if (strcmp(name, operations[i]) == 0)
+            return true;
+    return false;
+}
+
+static bool transform_native_row(Atom *atom) {
+    CettaRuleDescriptor rule;
+    if (cetta_rule_view(atom,
+                        CETTA_RULE_SYNTAX_ORDINARY | CETTA_RULE_SYNTAX_DIRECTIONAL,
+                        &rule)) {
+        Atom *lhs = atom->expr.elems[1];
+        if (!lhs || lhs->kind != ATOM_EXPR || lhs->expr.len == 0u ||
+            lhs->expr.elems[0]->kind != ATOM_SYMBOL)
+            return true;
+        return transform_native_head(lhs->expr.elems[0]->sym_id);
+    }
+    return atom && atom->kind == ATOM_EXPR && atom->expr.len == 3u &&
+           atom_is_symbol_id(atom->expr.elems[0], g_builtin_syms.colon) &&
+           atom->expr.elems[1]->kind == ATOM_SYMBOL &&
+           transform_native_head(atom->expr.elems[1]->sym_id);
+}
+
+/* An overlay's read token changes when base facts are removed. Its program
+ * remains the same when every view's equation and declaration revisions do.
+ * Store those semantic coordinates, without retaining facts or comparing
+ * library source text. Dependency imports publish to these revisions too. */
+static bool transform_views_current(const CettaLibraryContext *ctx, const Space *space) {
+    if (!ctx->transform_view_count)
+        return false;
+    for (size_t i = 0u; i < ctx->transform_view_count; i++) {
+        if (!space)
+            return false;
+        SpaceProgramToken old = ctx->transform_views[i];
+        if (old.space != space || old.instance_id != space_instance_id(space) ||
+            old.equation_revision != space_equation_revision(space) ||
+            old.declaration_revision != space_declaration_revision(space)) {
+            return false;
+        }
+        space = space->overlay_base;
+    }
+    return !space;
+}
+
+static bool transform_record_views(CettaLibraryContext *ctx, const Space *space) {
+    if (space_program_token(space).base_dependency_epoch == UINT64_MAX)
+        return false;
+    size_t count = 0u;
+    for (const Space *view = space; view; view = view->overlay_base)
+        count++;
+    SpaceProgramToken *views = cetta_realloc(ctx->transform_views, count * sizeof(*views));
+    if (!views)
+        return false;
+    ctx->transform_views = views;
+    ctx->transform_view_count = count;
+    for (size_t i = 0u; space; i++, space = space->overlay_base)
+        views[i] = space_program_token(space);
+    return true;
+}
+
+/* Only definition occurrences are held, never the mutable fact store. A
+ * prefix rewrite may have removed data while an unrelated equation was
+ * added, so row positions alone cannot decide semantic currency. */
+static bool transform_definitions_match(CettaLibraryContext *ctx, Space *space) {
+    Atom *saved = ctx->transform_definition_rows;
+    if (!saved)
+        return false;
+    CettaExprLen at = 0u;
+    CettaCount rows = space_length64(space);
+    for (CettaIndex i = 0u; i < rows; i++) {
+        Atom *row = space_get_at64(space, i);
+        if (!transform_native_row(row))
+            continue;
+        if (at == saved->expr.len || !atom_eq(row, saved->expr.elems[at++]))
+            return false;
+    }
+    return at == saved->expr.len;
+}
+
+static bool transform_record_definitions(CettaLibraryContext *ctx, Space *space) {
+    if (ctx->transform_definitions_ready)
+        arena_free(&ctx->transform_definitions);
+    arena_init(&ctx->transform_definitions);
+    ctx->transform_definitions_ready = true;
+    ctx->transform_definition_rows = NULL;
+    ResultSet rows;
+    result_set_init(&rows);
+    CettaCount count = space_length64(space);
+    for (CettaIndex i = 0u; i < count; i++) {
+        Atom *row = space_get_at64(space, i);
+        if (transform_native_row(row)) {
+            Atom *copy = atom_deep_copy(&ctx->transform_definitions, row);
+            if (!copy) { result_set_free(&rows); return false; }
+            result_set_add(&rows, copy);
+        }
+    }
+    ctx->transform_definition_rows = atom_expr(&ctx->transform_definitions,
+        rows.items, rows.len);
+    result_set_free(&rows);
+    return ctx->transform_definition_rows != NULL;
+}
+
+bool cetta_library_transform_program_current(CettaLibraryContext *ctx, Space *space) {
+    if (!ctx || !ctx->transform_program_valid || !space)
+        return false;
+    SpaceProgramToken now = space_program_token(space);
+    if (space_program_token_eq(ctx->transform_program, now))
+        return true;
+    CettaCount rows = space_length64(space);
+    if (transform_views_current(ctx, space)) {
+        ctx->transform_program = now;
+        ctx->transform_read = space_read_token(space);
+        ctx->transform_scanned_rows = rows;
+        return true;
+    }
+    if (ctx->transform_read.space != space)
+        return false;
+    bool appended = space_read_token_prefix_intact(ctx->transform_read) &&
+        space_read_token(space).base_dependency_epoch ==
+            ctx->transform_read.base_dependency_epoch &&
+        rows >= ctx->transform_scanned_rows;
+    if (appended) {
+        for (CettaIndex index = ctx->transform_scanned_rows; index < rows; index++)
+            if (transform_native_row(space_get_at64(space, index)))
+                return false;
+    } else if (!transform_definitions_match(ctx, space)) {
+        return false;
+    }
+    if (!transform_record_views(ctx, space))
+        return false;
+    ctx->transform_program = now;
+    ctx->transform_read = space_read_token(space);
+    ctx->transform_scanned_rows = rows;
+    return true;
+}
+
+static bool record_transform_import(CettaLibraryContext *ctx,
+                                    const CettaImportPlan *plan) {
+    size_t path_len = strlen(plan->canonical_path);
+    if (path_len >= sizeof("/lib_transform.metta") - 1u &&
+        strcmp(plan->canonical_path + path_len -
+               (sizeof("/lib_transform.metta") - 1u), "/lib_transform.metta") == 0) {
+        Space *space = plan->execution_target_space;
+        ctx->transform_program = space_program_token(space);
+        ctx->transform_read = space_read_token(space);
+        ctx->transform_scanned_rows = space_length64(space);
+        ctx->transform_program_valid = true;
+        if (!transform_record_views(ctx, space) ||
+            !transform_record_definitions(ctx, space)) {
+            ctx->transform_program = (SpaceProgramToken){0};
+            ctx->transform_read = (SpaceReadToken){0};
+            ctx->transform_view_count = 0u;
+            return false;
+        }
+    }
+    return true;
+}
+
 static bool execute_import_plan(CettaLibraryContext *ctx, const CettaImportPlan *plan,
                                 Arena *eval_arena,
                                 Arena *persistent_arena, Registry *registry,
@@ -10078,8 +10259,13 @@ static bool execute_import_plan(CettaLibraryContext *ctx, const CettaImportPlan 
                                                  registry, fuel, last_results, error_out);
         if (!ok) {
             rollback_loaded_modules(ctx, loaded_len_before);
+            return false;
         }
-        return ok;
+        if (!record_transform_import(ctx, plan)) {
+            *error_out = module_reason(ctx, eval_arena, "ModuleInitError", plan->canonical_path);
+            return false;
+        }
+        return true;
     }
     if (!load_module_file(ctx, plan->canonical_path, plan->logical_target_space,
                           plan->execution_target_space, eval_arena,
@@ -10088,6 +10274,10 @@ static bool execute_import_plan(CettaLibraryContext *ctx, const CettaImportPlan 
             rollback_imported_files(ctx, imported_len_before);
         }
         rollback_loaded_modules(ctx, loaded_len_before);
+        return false;
+    }
+    if (!record_transform_import(ctx, plan)) {
+        *error_out = module_reason(ctx, eval_arena, "ModuleInitError", plan->canonical_path);
         return false;
     }
     return true;
