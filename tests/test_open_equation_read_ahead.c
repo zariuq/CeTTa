@@ -184,6 +184,34 @@ static void test_collection_leaf_ownership(void) {
     puts("PASS: collection preserves leaf aliases, large shared bytes, variable spelling, managed owners and HE marks");
 }
 
+static void test_collection_ordered_roots(void) {
+    Arena source,target;arena_init(&source);arena_init(&target);
+    Atom *left=atom_symbol_data_n(&source,"left-label",10u);
+    Atom *right=atom_symbol_data_n(&source,"right-label",11u);
+    Atom *a=atom_expr3(&source,left,right,left);
+    Atom *b=atom_expr2(&source,right,a);
+    Atom **roots=arena_alloc(&source,3u*sizeof(*roots));assert(roots);
+    roots[0]=a;roots[1]=a;roots[2]=b;
+    CettaOpenEquationCursor cursor={0};
+    OemCollect collect={.from_identity=source.identity,.to=&target};
+    for(unsigned i=0u;i<3u;i++) assert(oem_trace_atom(&cursor,&collect,roots[i]));
+    free(collect.keys);free(collect.values);
+    collect.keys=NULL;collect.values=NULL;collect.cap=collect.len=0u;
+    bool ok=true;
+    Atom **moved=oem_collect_slots(&cursor,&collect,roots,3u,false,&ok);
+    assert(ok && moved && moved[0]==moved[1] && moved[0]!=moved[2]);
+    assert(moved[0]->expr.len==3u && moved[2]->expr.len==2u);
+    assert(moved[0]->expr.elems[0]==moved[0]->expr.elems[2]);
+    assert(moved[2]->expr.elems[0]==moved[0]->expr.elems[1]);
+    assert(moved[2]->expr.elems[1]==moved[0]);
+    arena_free(&source);
+    assert(atom_is_symbol(moved[0]->expr.elems[0],"left-label"));
+    assert(atom_is_symbol(moved[0]->expr.elems[1],"right-label"));
+    arena_free(&target);free(collect.keys);free(collect.values);
+    free(cursor.walk);free(cursor.resolve_stack);free(cursor.resolve_results);
+    puts("PASS: collection preserves ordered roots, duplicate occurrences and labelled shared children");
+}
+
 int main(void) {
     SymbolTable symbols;
     symbol_table_init(&symbols);
@@ -192,6 +220,7 @@ int main(void) {
     g_hashcons = NULL;
     g_var_intern = NULL;
     test_collection_symbol_policy();
+    test_collection_ordered_roots();
     test_collection_leaf_ownership();
     Arena persistent, source;
     arena_init(&persistent);

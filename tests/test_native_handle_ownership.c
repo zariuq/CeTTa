@@ -326,7 +326,9 @@ static void use_overlap_case(void) {
 
 static void use_authentication_case(void) {
     unsigned before = atomic_load(&released);
+    CettaNameContext names=cetta_name_context_current();
     CettaLibraryContext *left = use_context(), *right = use_context();
+    assert(left!=right);
     Arena arena;
     arena_init_detached(&arena);
     uint64_t a = new_resource(left), b = new_resource(right);
@@ -365,6 +367,9 @@ static void use_authentication_case(void) {
     assert(atomic_load(&released) == before + 1u);
     assert(!cetta_native_handle_acquire_owned(left, kind, holder,
         CETTA_NATIVE_HANDLE_USE_LIFETIME, &use));
+    CettaNameContext after=cetta_name_context_current();
+    assert(after.symbols==names.symbols && after.variables==names.variables &&
+        !memcmp(&after.builtins,&names.builtins,sizeof(names.builtins)));
     assert(cetta_native_handle_close(right, kind, b));
     arena_free(&arena);
     /* Both real owners are retired here; copied.self still names the real
