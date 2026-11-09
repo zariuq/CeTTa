@@ -190,6 +190,21 @@ static bool native_dialect_capture_resource(void *raw, const Atom *atom,
         *lease = (PettaMachineResourceLease){.scope=library};
         return library != NULL;
     }
+    /* A fresh malloc-backed Space is not in either arena above. Its registered
+     * hold is the lifetime edge; copying the grounded atom separately retains
+     * its storage owner/universe. Keep the original mutable Space identity. */
+    if (atom->ground.gkind == GV_SPACE && library && library->petta_program) {
+        Space *space = atom->ground.ptr;
+        SpaceHold *hold = space->arena_hold;
+        if (hold && hold->space == space &&
+            hold->petta_program == library->petta_program) {
+            *lease = (PettaMachineResourceLease){
+                .scope = library, .owner = hold,
+                .retain = space_hold_retain, .release = space_hold_release,
+                .storage = space_hold_storage_census};
+            return true;
+        }
+    }
     return false;
 }
 
@@ -428,6 +443,19 @@ static void native_dialect_parallel_operation(PrimeNativeWork *work) {
     job->operation_pending = true;
 }
 
+static void native_dialect_continuation_failure(PrimeNativeControl *control,
+                                                 CettaContinuationStatus status) {
+    if (status == CETTA_CONTINUATION_INVALIDATED) {
+        control->invalidated = true;
+    } else if (status == CETTA_CONTINUATION_UNSUPPORTED) {
+        /* Repeating an unchanged ownership refusal is not a budget wait. */
+        control->failed = true;
+        eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+    } else {
+        control->driver.capacity_blocked = true;
+    }
+}
+
 static bool native_dialect_source_start(PrimeNativeWork *work, Atom *source, Atom *type,
                                         bool owned_call) {
     NativeDialectWork *job=work->dialect;
@@ -459,8 +487,7 @@ static bool native_dialect_source_start(PrimeNativeWork *work, Atom *source, Ato
         if (getenv("CETTA_PRIME_NATIVE_CONTROL_TRACE"))
             fprintf(stderr,"[native-dialect] source capture status=%d owned=%d\n",status,owned_call);
         prime_eval_stack_frame_free(frame);
-        if (status == CETTA_CONTINUATION_INVALIDATED) control->invalidated=true;
-        else control->driver.capacity_blocked=true;
+        native_dialect_continuation_failure(control, status);
         return false;
     }
     owner->live=NULL;
@@ -629,7 +656,7 @@ static bool native_dialect_source_return(PrimeEvalStackFrame *frame, CettaCount 
         if (restored != CETTA_CONTINUATION_READY) {
             if (getenv("CETTA_PRIME_NATIVE_CONTROL_TRACE"))
                 fprintf(stderr,"[native-dialect] return restore status=%d owned=%d\n",restored,frame->dialect_source_is_call);
-            if (restored == CETTA_CONTINUATION_INVALIDATED) control->invalidated=true;
+            native_dialect_continuation_failure(control, restored);
             return false;
         }
     }
@@ -652,7 +679,7 @@ static bool native_dialect_source_return(PrimeEvalStackFrame *frame, CettaCount 
             petta_machine_continuation_machine(&owner->machine),&template->image);
     if (captured != CETTA_CONTINUATION_READY) {
         native_dialect_work_free(child);free(branch);
-        if (captured == CETTA_CONTINUATION_INVALIDATED) control->invalidated=true;
+        native_dialect_continuation_failure(control, captured);
         return false;
     }
     owner->live=NULL;
@@ -683,7 +710,9 @@ static void native_dialect_source_resume(PrimeEvalStackFrame *frame) {
         if (!value) {control->driver.capacity_blocked=true;return;}
         if (frame->dialect_source_is_call || !atom_is_error(value)) {
             if (!native_dialect_source_return(frame,frame->index)) {
-                control->driver.capacity_blocked=true;return;
+                if (!control->failed && !control->invalidated)
+                    control->driver.capacity_blocked=true;
+                return;
             }
             frame->dialect_source_success=true;
             frame->index++;
@@ -694,7 +723,9 @@ static void native_dialect_source_resume(PrimeEvalStackFrame *frame) {
     if (frame->control_pending) return;
     if (!frame->dialect_source_success && frame->dialect_error_index < frame->child.len) {
         if (!native_dialect_source_return(frame,frame->dialect_error_index)) {
-            control->driver.capacity_blocked=true;return;
+            if (!control->failed && !control->invalidated)
+                control->driver.capacity_blocked=true;
+            return;
         }
         frame->dialect_error_index++;
         return;
@@ -726,8 +757,7 @@ static bool native_dialect_work_step(PrimeNativeWork *work) {
         CettaContinuationStatus status = cetta_continuation_restore(
             petta_machine_continuation_machine(&owner->machine),&job->image);
         if (status != CETTA_CONTINUATION_READY) {
-            if (status == CETTA_CONTINUATION_INVALIDATED) control->invalidated = true;
-            else control->driver.capacity_blocked = true;
+            native_dialect_continuation_failure(control, status);
             return false;
         }
     }
@@ -844,8 +874,7 @@ static bool native_dialect_work_step(PrimeNativeWork *work) {
             return native_dialect_commit_batch(work);
         }
         cetta_continuation_batch_destroy(&images);
-        if (expanded == CETTA_CONTINUATION_INVALIDATED) control->invalidated = true;
-        if (expanded == CETTA_CONTINUATION_CAPACITY) control->driver.capacity_blocked = true;
+        native_dialect_continuation_failure(control, expanded);
     }
 capture_residual:
     /* A sole image's live machine already is its owned residual. Capturing
@@ -854,8 +883,7 @@ capture_residual:
         CettaContinuationStatus captured = cetta_continuation_capture(
             petta_machine_continuation_machine(&owner->machine),&job->image);
         if (captured == CETTA_CONTINUATION_READY) owner->live = NULL;
-        else if (captured == CETTA_CONTINUATION_INVALIDATED) control->invalidated = true;
-        else if (captured == CETTA_CONTINUATION_CAPACITY) control->driver.capacity_blocked = true;
+        else native_dialect_continuation_failure(control, captured);
     }
     return false;
 }
