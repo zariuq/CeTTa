@@ -12,6 +12,13 @@ from cetta import Engine
 
 
 class PythonObjectsTests(unittest.TestCase):
+    def test_preparsed_python_call_activates_with_library_import(self):
+        for language in ('petta', 'he'):
+            with self.subTest(language=language), Engine(language=language) as e:
+                call = e.parse('(py:call (py:get (py:import "math") "sqrt") 81)')
+                e.library('py')
+                self.assertEqual(e.eval(call).one().to_python(), 9.0)
+
     def test_shallow_tuple_booleans_use_the_dialect_values(self):
         for language in ('petta', 'he'):
             with Engine(language=language) as e:
