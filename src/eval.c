@@ -8622,9 +8622,9 @@ static bool eval_rule_head_arity_bounds(Space *space, SymbolId head,
         has_exact, arity, eval_admitted_rule_forms(), native_control_profile_active());
 }
 
-/* Where `&self` was last found in a registry: every dispatch of a builtin
- * asks whether its space is `&self`. */
-static uint32_t g_petta_self_binding_hint = UINT32_MAX;
+/* Where `&self` was last found in this thread's registry: every dispatch of
+ * a builtin asks whether its space is `&self`. Workers use distinct registries. */
+static _Thread_local uint32_t g_petta_self_binding_hint = UINT32_MAX;
 
 static bool petta_builtin_self_space(Registry *registry, Space *space) {
     if (!registry || !space)
