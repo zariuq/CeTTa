@@ -11,10 +11,13 @@ SHELL = /bin/bash
 #   CESTA_BUILD=0      build with the native compiler alone
 CESTA_SRC ?= vendor/cesta
 CESTA_SRC_DIR := $(abspath $(CESTA_SRC))
+ifeq ($(origin CESTA_NATIVE_CC),undefined)
 ifneq ($(origin CC),default)
-CESTA_NATIVE_CC ?= $(CC)
+# Capture the caller's compiler before CC becomes the Cesta driver below.
+CESTA_NATIVE_CC := $(CC)
 else
-CESTA_NATIVE_CC ?= gcc
+CESTA_NATIVE_CC := gcc
+endif
 endif
 CESTA_BUILD ?= 1
 CETTA_LTO ?= 0
@@ -8035,6 +8038,11 @@ test-all test-prime-all: test-helper-build-config
 .PHONY: test-helper-build-config
 test-helper-build-config:
 	@python3 scripts/check_helper_build_config.py
+
+test-all test-prime-all: test-compiler-selection
+.PHONY: test-compiler-selection
+test-compiler-selection:
+	@python3 tests/support/check_compiler_selection.py
 
 test-all test-prime test-prime-all: test-atomic-object-publication
 .PHONY: test-atomic-object-publication
