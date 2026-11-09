@@ -31,28 +31,51 @@ static void gc_owner_release(void *opaque) {
 
 static void test_collection_symbol_policy(void) {
     for (unsigned own_symbols = 0u; own_symbols < 2u; own_symbols++) {
-        Arena source, target;
-        arena_init(&source);
-        arena_init(&target);
-        arena_set_own_symbols(&target, own_symbols != 0u);
-        Atom *symbol = atom_symbol(&source, "gc-symbol-policy");
-        SymbolId id = atom_symbol_current_id(symbol);
-        CettaOpenEquationCursor cursor = {0};
-        OemCollect collect = {.from_identity = source.identity, .to = &target};
-        assert(oem_trace_atom(&cursor, &collect, symbol));
-        Atom *copy = oem_collect_atom(&cursor, &collect, symbol);
-        assert(copy && copy->kind == ATOM_SYMBOL && atom_symbol_current_id(copy) == id);
-        assert(copy == oem_collect_atom(&cursor, &collect, symbol));
-        if (own_symbols)
-            assert(copy->arena_id == target.identity);
-        else
-            assert(copy == atom_symbol_canonical(id));
-        arena_free(&source);
-        assert(copy->kind == ATOM_SYMBOL && atom_symbol_current_id(copy) == id);
-        arena_free(&target);
-        free(collect.keys);
-        free(collect.values);
-        free(cursor.walk);
+        for (unsigned spelled = 0u; spelled < 2u; spelled++) {
+#if !CETTA_MANAGED_SYMBOLS
+            if (spelled)
+                continue;
+#endif
+            Arena source, target;
+            arena_init(&source);
+            arena_init(&target);
+            arena_set_own_symbols(&target, own_symbols != 0u);
+            char text[96];
+            snprintf(text, sizeof(text), "gc-symbol-policy-%u-%u",
+                     own_symbols, spelled);
+            Atom *symbol = spelled
+                ? atom_symbol_data_n(&source, text, (uint32_t)strlen(text))
+                : atom_symbol(&source, text);
+            if (spelled)
+                assert(atom_symbol_is_spelled(symbol));
+            SymbolId id = atom_symbol_current_id(symbol);
+            if (spelled)
+                assert(id == SYMBOL_ID_NONE);
+            CettaOpenEquationCursor cursor = {0};
+            OemCollect collect = {.from_identity = source.identity, .to = &target};
+            assert(oem_trace_atom(&cursor, &collect, symbol));
+            /* The collector starts copying with a fresh alias table. */
+            free(collect.keys);
+            free(collect.values);
+            collect.keys = NULL;
+            collect.values = NULL;
+            collect.cap = collect.len = 0u;
+            Atom *copy = oem_collect_atom(&cursor, &collect, symbol);
+            assert(copy && copy->kind == ATOM_SYMBOL && atom_symbol_current_id(copy) == id);
+            assert(copy == oem_collect_atom(&cursor, &collect, symbol));
+            if (spelled)
+                assert(atom_symbol_is_spelled(symbol));
+            if (own_symbols || spelled)
+                assert(copy->arena_id == target.identity);
+            else
+                assert(copy == atom_symbol_canonical(id));
+            arena_free(&source);
+            assert(copy->kind == ATOM_SYMBOL && atom_symbol_equals_cstr(copy, text));
+            arena_free(&target);
+            free(collect.keys);
+            free(collect.values);
+            free(cursor.walk);
+        }
     }
     puts("PASS: collection preserves canonical and owned symbol policies with shared aliases");
 }
