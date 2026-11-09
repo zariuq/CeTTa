@@ -22,6 +22,40 @@ class HEQueryTests(unittest.TestCase):
     def seen(self, engine, head="seen"):
         return engine.eval(f"(match &self ({head} $x) $x)").to_python()
 
+    def test_function_fallthrough_identity_belongs_to_its_activation(self):
+        cases = (
+            ("(== (function (+ 1 2)) (function (+ 3 4)))", [False]),
+            ("(let $x (function (+ 1 2)) (let $y (function (+ 3 4)) "
+             "(let $x A (let $y B (Pair $x $y)))))",
+             [(Symbol("Pair"), Symbol("A"), Symbol("B"))]),
+        )
+        for expression, expected in cases:
+            for allowance in (1, 2, 10000):
+                with self.subTest(expression=expression, allowance=allowance), Engine(language="he", profile="he-compat") as engine:
+                    self.assertEqual(engine.eval(expression).to_python(), expected)
+                    with engine.query(expression) as query:
+                        self.assertEqual(self.first(query, allowance).to_python(), expected[0])
+                        self.assertEqual(query.to_python(), [])
+        with Engine(language="he", profile="he-compat") as engine:
+            alternatives = list(engine.eval("(function (eval (superpose (7 8))))"))
+            self.assertEqual(len(alternatives), 2)
+            self.assertEqual(engine.call("==", *alternatives).to_python(), [True])
+            pair = next(iter(engine.eval("(Pair (function (+ 1 2)) (function (+ 3 4)))")))
+            # Printed identities must distinguish the two free variables too.
+            self.assertNotEqual(str(pair).split()[1], str(pair).split()[2].rstrip(")"))
+
+    def test_function_fallthrough_keeps_enclosing_instruction_caller(self):
+        caller = (Symbol("superpose"), (
+            (Symbol("function"), (Symbol("+"), 1, 2)),
+            (Symbol("function"), (Symbol("+"), 3, 4)),
+        ))
+        error = (Symbol("Error"), caller, Symbol("NoReturn"))
+        expression = "(collapse (superpose ((function (+ 1 2)) (function (+ 3 4)))))"
+        with Engine(language="he", profile="he-compat") as engine:
+            self.assertEqual(engine.eval(expression).to_python(), [(error, error)])
+            with engine.query(expression) as query:
+                self.assertEqual(query.to_python(), [(error, error)])
+
     def test_completed_call_prefix_and_cancellation(self):
         for profile in ("he", "he-compat"):
             for allowance in (1, 2, 10000):
