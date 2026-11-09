@@ -4,8 +4,8 @@
 Usage: check_transform_differential.py CETTA_BINARY [--programs N] [--seed S]
 
 The fixed programs (tests/petta/transform_*.metta) must answer their expected
-output both when tf:fire runs natively and with CETTA_TRANSFORM_REFERENCE=1
-(the authored firing), and with lib_transform_specs, the operation's
+output both when tf:fire runs natively and with lib_transform_swi (the full
+authored firing), and with lib_transform_specs, the operation's
 specification, imported instead.  SWI-PeTTa answers alike with the same library
 where it runs a call once; stable-fixed c3adb86 runs a call once per type
 declaration of its head, and transform has two.
@@ -33,14 +33,20 @@ FIXED = ["transform_concurrency", "transform_rules", "transform_aggregates",
 HEADER = ("!(import! &self (library lib_transform))\n"
           "(= (show $s) (sort-atom (collapse (match $s $a $a))))\n")
 LIBRARY_IMPORT = "!(import! &self (library lib_transform))"
+SWI_IMPORT = "!(import! &self (library lib_transform_swi))"
 SPECS_IMPORT = "!(import! &self (library lib_transform_specs))"
 
 
 def run(binary, path, reference, trace, fuel=None, workers=None, machine="1"):
     env = dict(os.environ, CETTA_PETTA_SEARCH_MACHINE=machine)
-    env.pop("CETTA_TRANSFORM_REFERENCE", None)
+    reference_dir = None
     if reference:
-        env["CETTA_TRANSFORM_REFERENCE"] = "1"
+        with open(path) as source_file:
+            source = source_file.read().replace(LIBRARY_IMPORT, SWI_IMPORT)
+        reference_dir = tempfile.TemporaryDirectory(prefix="cetta-transform-reference-")
+        path = os.path.join(reference_dir.name, "reference.metta")
+        with open(path, "w") as reference_file:
+            reference_file.write(source)
     if trace:
         env["CETTA_TRANSFORM_TRACE"] = "1"
     if workers is not None:
@@ -50,6 +56,8 @@ def run(binary, path, reference, trace, fuel=None, workers=None, machine="1"):
         command += ["--fuel", str(fuel)]
     p = subprocess.run(command + [path], cwd=ROOT, env=env,
                        capture_output=True, text=True, timeout=120)
+    if reference_dir:
+        reference_dir.cleanup()
     return p.returncode, p.stdout, p.stderr
 
 
@@ -177,7 +185,9 @@ def check_fixed(binary):
     return True
 
 
-def check_source_fuel(binary):
+def check_native_fuel(binary):
+    # Native work has its own grading. Compare completed runs to the authored
+    # reference, not the number of helper reductions before its cutoff.
     header = (LIBRARY_IMPORT + "\n!(bind! &s (new-space))\n"
               "!(add-atom &s (job a))\n")
     programs = {
@@ -187,32 +197,35 @@ def check_source_fuel(binary):
         "all": header + "".join(f"!(add-atom &s (job n{i}))\n" for i in range(12)) +
                "!(collapse (transform &s (all (take (job $j))) (hit $j)))\n",
     }
-    budgets = [0, 1, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047, -1]
+    observed = 0
     with tempfile.TemporaryDirectory(prefix="cetta-transform-fuel-") as work:
         for name, source in programs.items():
             path = os.path.join(work, name + ".metta")
             with open(path, "w") as stream:
                 stream.write(source)
+            authored = run(binary, path, True, False)
             for machine, oem, prepared in [(m, o, p) for m in ("0", "1")
                                           for o in ("0", "1") for p in ("0", "1")]:
-                workers = (oem, prepared)
-                for fuel in budgets:
-                    native = run(binary, path, False, True, fuel, workers, machine)
-                    authored = run(binary, path, True, False, fuel, workers, machine)
-                    diagnostics = "\n".join(line for line in native[2].splitlines()
-                                            if not line.startswith("[transform]"))
-                    if (native[0], canonical(native[1]), diagnostics) != \
-                            (authored[0], canonical(authored[1]), authored[2].rstrip("\n")):
-                        print(f"FAIL: transform source fuel: {name}, {fuel}, {machine}, {workers}")
-                        print("native:", native, "authored:", authored)
-                        return False
+                complete = False
+                for fuel in (1, 7, 31, 127, 511, 2047, 8191):
+                    native = run(binary, path, False, True, fuel, (oem, prepared), machine)
                     fired = any(line.startswith("[transform] fired")
                                 for line in trace_lines(native[2]))
-                    if (fuel >= 0 and fired) or (fuel < 0 and (not fired or native[0])):
-                        print(f"FAIL: transform source-fuel admission: {name}, {fuel}, {machine}, {workers}")
+                    if native[0] == 0:
+                        if not same(native[1], authored[1]) or not fired:
+                            print(f"FAIL: native transform fuel completion: {name}, {fuel}, {machine}, {(oem, prepared)}")
+                            print(native, authored)
+                            return False
+                        complete = True
+                    elif complete or "fuel-exhausted" not in native[2]:
+                        print(f"FAIL: native transform fuel cutoff: {name}, {fuel}, {machine}, {(oem, prepared)}")
+                        print(native)
                         return False
-    print(f"PASS: transform preserves source-fuel prefixes and effects "
-          f"({len(programs) * 8 * len(budgets) * 2} observations)")
+                    observed += 1
+                if not complete:
+                    print(f"FAIL: native transform never completes: {name}")
+                    return False
+    print(f"PASS: native transform fuel cutoffs are explicit; completed answers and effects agree ({observed} runs)")
     return True
 
 
@@ -293,7 +306,7 @@ def program(rng):
     return "".join(lines)
 
 
-DECLINED = [
+REFERENCE_HELPERS = [
     ("redefined-operation", "(= (tf:valid $all $todo) True)\n"),
     ("constructor-equation", "(= (tf:row $f $i) (wrapped $f $i))\n"),
 ]
@@ -312,7 +325,7 @@ def main():
     parser.add_argument("--seed", type=int, default=20261026)
     args = parser.parse_args()
     binary = os.path.abspath(args.binary)
-    if not check_fixed(binary) or not check_source_fuel(binary):
+    if not check_fixed(binary) or not check_native_fuel(binary):
         return 1
     rng = random.Random(args.seed)
     with tempfile.TemporaryDirectory(prefix="cetta-transform-") as work:
@@ -344,18 +357,30 @@ def main():
         if fired == 0:
             print("FAIL: no seeded program fired natively")
             return 1
-        for name, redefinition in DECLINED:
+        for name, redefinition in REFERENCE_HELPERS:
             path = os.path.join(work, f"{name}.metta")
             with open(path, "w") as f:
                 f.write(HEADER + redefinition + DECLINED_BODY)
             _, native, stderr = run(binary, path, False, True)
-            _, reference, _ = run(binary, path, True, False)
+            baseline_path = os.path.join(work, f"{name}-baseline.metta")
+            with open(baseline_path, "w") as f:
+                f.write(HEADER + DECLINED_BODY)
+            _, baseline, _ = run(binary, baseline_path, True, False)
             trace = trace_lines(stderr)
-            if not same(native, reference) or \
-               any(line.startswith("[transform] fired") for line in trace) or \
-               not any("refused" in line for line in trace):
-                print(f"FAIL: {name}: the authored definition did not run")
+            if not same(native, baseline) or \
+               not any(line.startswith("[transform] fired") for line in trace) or \
+               any("refused" in line for line in trace):
+                print(f"FAIL: {name}: a reference-only helper changed the native operation")
                 return 1
+        override_path = os.path.join(work, "public-override.metta")
+        with open(override_path, "w") as f:
+            f.write(LIBRARY_IMPORT + "\n(= (transform $s $c $t) user-transform)\n"
+                    "!(transform &self () done)\n")
+        code, output, stderr = run(binary, override_path, False, True)
+        if code or not output.strip().endswith("user-transform") or \
+                any(line.startswith("[transform] fired") for line in trace_lines(stderr)):
+            print("FAIL: authored public transform override", code, output, stderr)
+            return 1
     print(f"PASS: transform fires natively as its library does, and as its specification "
           f"does ({len(FIXED)} fixed, {args.programs} seeded programs, "
           f"{fired} seeded firings)")

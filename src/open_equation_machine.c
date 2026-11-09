@@ -7944,6 +7944,7 @@ struct CettaOpenEquationCursor {
     uint32_t host_var_count, host_var_cap;
     const PettaPlanNode *host_plan;
     CettaOpenEquationHostMode host_mode;
+    bool host_first;
     CettaCallOutcome host_return;
     /* The newest host goal was issued inside a call dispatched at run
      * time, whose handler it runs under. */
@@ -11530,6 +11531,13 @@ static __attribute__((noinline)) OemRun oem_host_with_continuation(
     kept->count = count;
     kept->height = UINT32_MAX;
     kept->fresh_floor = fresh_var_base_watermark();
+    cursor->host_first = false;
+    for (uint32_t index = cursor->frame_len; index > 0u; index--) {
+        if (cursor->frames[index - 1u].relation == OEM_ONCE_FRAME) {
+            cursor->host_first = true;
+            break;
+        }
+    }
     if (!oem_push_frame(cursor, resume ? resume->program : cursor->program,
                         OEM_HOST_FRAME, NULL, resume,
                         resume ? resume->depth : 0u))
@@ -19563,6 +19571,11 @@ bool cetta_open_equation_cursor_host_goal(
     *mode_out = cursor->host_mode;
     *recovers_out = cursor->host_recovers;
     return true;
+}
+
+bool cetta_open_equation_cursor_host_first(
+    const CettaOpenEquationCursor *cursor) {
+    return cursor && cursor->host_goal && cursor->host_first;
 }
 
 bool cetta_open_equation_cursor_host_terminal(

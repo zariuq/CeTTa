@@ -1,0 +1,5 @@
+!(import! &self ../../lib/petta/lib_transform_swi.metta)
+!(bind! &s (new-space))
+!(add-atom &s (job a))
+!(smoke (collapse (transform &s (take (job $j)) (done $j))))
+!(remaining (collapse (match &s (job $j) $j)))

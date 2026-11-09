@@ -8,8 +8,8 @@ trace reports: a collected transform with reads only, answered by the native
 query engine as match's answers are; a collected transform with takes, its
 proposals and its firings native; a transform whose branches the caller
 continues one by one, its proposals and guided sources native; and a collected
-match of data, answered as the step with reads only.  The authored library
-(CETTA_TRANSFORM_REFERENCE=1) runs none of them and answers alike.
+match of data, answered as the step with reads only.  The full authored library
+(lib_transform_swi) runs none of them and answers alike.
 
 A collected transform with reads only joins as fast as the match with the same
 conjunction: over 20000 facts and 40000 answers, the best of three runs of the
@@ -23,6 +23,7 @@ import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 IMPORT = "!(import! &self (library lib_transform))\n"
+SWI_IMPORT = "!(import! &self (library lib_transform_swi))\n"
 
 PATHS = [
     ("reads only", IMPORT +
@@ -51,7 +52,6 @@ PATHS = [
 
 def run(binary, path, env_extra=None):
     env = dict(os.environ)
-    env.pop("CETTA_TRANSFORM_REFERENCE", None)
     env.update(env_extra or {})
     p = subprocess.run([binary, "--lang", "petta", path], cwd=ROOT, env=env,
                        capture_output=True, text=True, timeout=300)
@@ -76,8 +76,11 @@ def check_paths(binary, work):
         if missing or any("declined" in line for line in trace):
             print(f"FAIL: {name}: the native step did not run ({missing or 'declined'})")
             return False
-        code, out, err = run(binary, path, {"CETTA_TRANSFORM_REFERENCE": "1",
-                                            "CETTA_TRANSFORM_TRACE": "1"})
+        with open(path) as current:
+            reference_source = current.read().replace(IMPORT, SWI_IMPORT)
+        with open(path, "w") as f:
+            f.write(reference_source)
+        code, out, err = run(binary, path, {"CETTA_TRANSFORM_TRACE": "1"})
         if code != 0 or answers(out) != expected or \
                 any(line.startswith("[transform] fired") for line in err.splitlines()):
             print(f"FAIL: {name}: the authored library answered otherwise or fired natively")
