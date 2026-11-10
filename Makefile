@@ -5416,13 +5416,15 @@ test-all: test-symbol-lifetimes
 test-symbol-lifetimes: runtime/test_symbol_lifetimes-$(BUILD_OBJ_TAG)
 	@$(call cetta_exec,./runtime/test_symbol_lifetimes-$(BUILD_OBJ_TAG))
 
-# Managed spellings are the configuration every deployed runtime uses, so
-# their gates belong to every `make test`. The value fixture and its mutants
+# Managed spellings are the configuration every deployed runtime uses. Their
+# value/owner fixtures belong to correctness, mutations to comprehensive.
+# The value fixture and its mutants
 # compile atom.c and symbol.c themselves; they always do so with managed
 # spellings, in their own configuration, whatever the runtime selects. The
 # owner fixture runs the selected runtime and holds in either configuration.
 MANAGED_SYMBOL_TEST_CPPFLAGS = $(CPPFLAGS) -UCETTA_MANAGED_SYMBOLS -DCETTA_MANAGED_SYMBOLS=1
-test-all: test-managed-symbol-values test-managed-symbol-mutants test-managed-symbol-owners
+test-all: test-managed-symbol-values test-managed-symbol-owners
+test-comprehensive: test-managed-symbol-mutants
 runtime/test_managed_symbol_values-$(BUILD_OBJ_TAG): tests/test_managed_symbol_values.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
 	$(CC) $(MANAGED_SYMBOL_TEST_CPPFLAGS) $(CFLAGS) -o $@ tests/test_managed_symbol_values.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(LDFLAGS)
@@ -5525,7 +5527,7 @@ test-space-init-state: $(SPACE_INIT_STATE_TEST_BIN)
 # variant runs windows fifty times longer.
 PETTA_MEMORY_PLATEAU_TURNS ?= 1000
 .PHONY: test-petta-memory-plateau test-petta-memory-plateau-long
-test-all: test-petta-memory-plateau
+test-asymptotic: test-petta-memory-plateau
 test-petta-memory-plateau: $(BIN)
 	@set -eu; \
 	if [ "$(LIB_PROLOG_ENABLED)" != 1 ] || [ "$(ENABLE_MANAGED_SYMBOLS)" != 1 ]; then \
@@ -5658,7 +5660,8 @@ gc-symbol-archive-regions: $(GC_EPOCH_REGIONS_BIN)
 		test "$$status" = 1 && test "$${message#detected-mutant: }" != "$$message" || exit 1; done
 
 .PHONY: test-symbol-holder-census test-symbol-holder-census-unit
-test-all: test-symbol-holder-census test-symbol-holder-census-unit
+test-all: test-symbol-holder-census-unit
+test-comprehensive: test-symbol-holder-census
 test-symbol-holder-census: $(BIN)
 	@python3 scripts/check_symbol_lifetimes.py --clang $(LLVM_CLANG) \
 		--cppflags='$(CPPFLAGS) -DCETTA_PARSER_COMPILER' --sources $(SRC)
@@ -24797,8 +24800,9 @@ test-prime-regular-pattern: $(PRIME_REGULAR_PATTERN_TEST_BIN)
 # The authored-syntax lowering and its mutation controls are gates of the
 # whole suite: they are quick, and every Prime judgment reads terms through
 # this lowering.
-test-all: test-prime-regular-pattern test-prime-regular-pattern-mutations
-test-all: test-prime-native-proof-search-mutations
+test-all: test-prime-regular-pattern
+test-comprehensive: test-prime-regular-pattern-mutations
+test-comprehensive: test-prime-native-proof-search-mutations
 
 .PHONY: test-prime-regular-pattern-mutations
 test-prime-regular-pattern-mutations: $(PRIME_REGULAR_PATTERN_TEST_BIN)
@@ -52091,7 +52095,7 @@ test-all: test-petta-contextual-case
 test-petta-overloaded-choice-retention: $(BIN) tests/support/check_petta_overloaded_choice_retention.py
 	python3 tests/support/check_petta_overloaded_choice_retention.py ./$(BIN)
 
-test-petta-search-machine test-all: test-petta-overloaded-choice-retention
+test-asymptotic: test-petta-overloaded-choice-retention
 
 .PHONY: test-petta-prepared-native-values
 test-petta-prepared-native-values: $(BIN)
