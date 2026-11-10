@@ -268,3 +268,14 @@
 (= (str:find-ascii-uncased $text $needle)
    (function (chain (eval (__cetta_lib_str_value find-ascii-uncased ($text $needle))) $result
      (return $result))))
+
+; Unwrap HEAD envelopes and anonymous lists of forms through DEPTH levels.
+; Ordinary forms and quoted arguments retain their exact bytes and order.
+; Incomplete input is unchanged. If no named envelope is removed, all input
+; bytes are unchanged; otherwise emit one list of surviving complete forms,
+; excluding outside prose and stray closing parentheses. Double quotes and
+; escaped characters shield parentheses; this does not parse or evaluate code.
+; Whitespace follows Unicode 15 Python str.isspace; input must be valid UTF-8.
+(= (str:unwrap-envelopes $text $head $depth)
+   (function
+     (chain (eval (__cetta_lib_str unwrap-envelopes $text $head $depth)) $result (return $result))))
