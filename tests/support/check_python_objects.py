@@ -14,6 +14,25 @@ def main():
     args = parser.parse_args()
     env = dict(os.environ)
     env['PYTHONPATH'] = str(ROOT / 'tests/support') + os.pathsep + env.get('PYTHONPATH', '')
+    # A library's explicitly named Python member must reach the same format
+    # loader as a path import. lib_llm's import only defines helpers; these
+    # checks perform local arithmetic and never request a provider.
+    source = '''!(import! &self (library lib_llm.py))
+!(import! &self (library lib_llm))
+!(py-eval "6 * 7")
+!(import! &self (library lib_llm.py))
+!(py-eval "7 * 8")
+'''
+    run = subprocess.run([str(args.binary.resolve()), '--lang', 'petta', '-e', source],
+                         env=env, text=True, capture_output=True, timeout=60)
+    assert run.returncode == 0 and run.stdout.splitlines() == [
+        'true', 'true', '42', 'true', '56'], (run.stdout, run.stderr)
+    missing = subprocess.run([str(args.binary.resolve()), '--lang', 'petta', '-e',
+        '!(import! &self (library cetta_absent_python_member.py))'],
+        env=env, text=True, capture_output=True, timeout=60)
+    assert missing.returncode != 0 and 'existence_error source_sink' in missing.stderr, (
+        missing.stdout, missing.stderr)
+    print('PASS: library Python members load before authored helpers; missing members still fail')
     fixture = ROOT / 'tests/support/python_objects.metta'
     for language in ('petta', 'he'):
         run = subprocess.run([str(args.binary.resolve()), '--lang', language, str(fixture)],
