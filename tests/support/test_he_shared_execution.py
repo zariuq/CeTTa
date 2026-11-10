@@ -710,18 +710,29 @@ DEEP_CASES = [
      "!(descend 20000)\n", "[()]\n[7]\n"),
 ]
 
-# Finite fuel retains the dialect's boundary behavior, including publication
-# after a source that was held when its evaluation budget reached zero.
-FUEL_CASES = [
-    ("duplicates", 1, ""),
-    ("duplicates", 3, "[(1 1), (1 1), (2 2)]\n"),
-    ("minimal-return", 3, ""),
-    ("minimal-return", 7, "[3]\n"),
-    ("entered-empty", 1, "[unexpected]\n"),
-    ("entered-empty", 3, ""),
-    ("source-demand", 3, "[(println! unexpected)]\n"),
-    ("state-effects", 3, "[()]\n[0]\n"),
-]
+# CLI fuel is an observation allowance: exhaustion is explicit, not a
+# successful empty answer. Completed observations keep their ordinary meaning.
+# Sweep finite budgets instead of encoding the retired recursive-depth counts.
+FUEL_CASES = ("duplicates", "minimal-return", "entered-empty", "source-demand", "state-effects")
+FUEL_BUDGETS = (1, 3, 7, 16, 64)
+
+
+def check_fuel_result(name, fuel, result, expected):
+    if result.returncode == 0:
+        if result.stdout != expected or result.stderr:
+            raise AssertionError((name, fuel, "completed", result.stdout, result.stderr))
+    elif result.returncode == 1 and result.stderr == "error: observation incomplete: fuel-exhausted\n":
+        # Exhaustion cannot fabricate a completed answer. Previously executed
+        # effects remain visible exactly once, in their authored order.
+        allowed = ("", "one\n", "one\ntwo\n") if name == "state-effects" else ("",)
+        if result.stdout not in allowed:
+            raise AssertionError((name, fuel, "unpublished or duplicated output", result.stdout))
+    else:
+        raise AssertionError((name, fuel, result.returncode, result.stdout, result.stderr))
+    if fuel == FUEL_BUDGETS[0] and result.returncode != 1:
+        raise AssertionError((name, "insufficient fuel reported success"))
+    if fuel == FUEL_BUDGETS[-1] and result.returncode != 0:
+        raise AssertionError((name, "finite completion control did not complete"))
 
 
 VARIABLE_OR_STRING = re.compile(r'"(?:\\.|[^"\\])*"|\$[^\s()\[\],"]+')
@@ -1030,20 +1041,24 @@ def main():
                     raise AssertionError((name, canonical, enabled, result.returncode,
                                           result.stdout, result.stderr))
                 observations += 1
-        for name, fuel, expected in FUEL_CASES:
+        for name in FUEL_CASES:
             path = Path(directory) / (name + ".metta")
+            expected = next(row[2] for row in CASES if row[0] == name)
             for enabled in ("0", "1"):
                 env = dict(os.environ, CETTA_HE_CANONICAL_EXECUTION="1",
                            CETTA_HE_SHARED_EXECUTION=enabled,
                            CETTA_OPEN_EQUATIONS_REFERENCE="1",
                            CETTA_PREPARED_PURE_REFERENCE="1")
-                result = subprocess.run([str(binary), "--lang", "he", "--fuel",
-                                         str(fuel), str(path)], cwd=root, env=env,
-                                        capture_output=True, text=True, timeout=timeout)
-                if result.returncode or result.stdout != expected or result.stderr:
-                    raise AssertionError((name, fuel, enabled, result.returncode,
-                                          result.stdout[:4096], result.stderr[:4096]))
-                observations += 1
+                completed = False
+                for fuel in FUEL_BUDGETS:
+                    result = subprocess.run([str(binary), "--lang", "he", "--fuel",
+                                             str(fuel), str(path)], cwd=root, env=env,
+                                            capture_output=True, text=True, timeout=timeout)
+                    check_fuel_result(name, fuel, result, expected)
+                    if completed and result.returncode:
+                        raise AssertionError((name, enabled, fuel, "completion regressed with more fuel"))
+                    completed |= result.returncode == 0
+                    observations += 1
         # A raw equation returns another instruction. The delimiter continues
         # it; a raw invocation alone retains instruction syntax as a value.
         source = """(= (descend $n)
