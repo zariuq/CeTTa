@@ -399,7 +399,7 @@ static void runtime_add_transform_library(Space *space, Arena *arena,
         static const struct { const char *name; uint32_t arity; bool data; } types[] = {
             {"tf:cand", 1u, true}, {"tf:cs", 1u, true}, {"tf:fired", 1u, true},
             {"tf:run", 4u, false}, {"tf:split", 2u, false},
-            {"tf:cands", 3u, false}, {"tf:pin", 2u, false},
+            {"tf:propose", 3u, false}, {"tf:inst", 2u, false},
             {"tf:fire", 3u, false}, {"tf:fire-into", 4u, false},
         };
         for (size_t i = 0u; i < sizeof types / sizeof types[0]; i++) {

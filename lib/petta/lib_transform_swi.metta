@@ -96,9 +96,9 @@
      (let $vars (tf:source-vars $plain ())
        (let $conjuncts (tf:protect-lets $vars $plain)
          (let $instance (if (== $destination tf:caller) (tf:protect $vars $template) $template)
-           (let $matches (tf:cands $space $conjuncts $instance)
+           (let $matches (tf:propose $space $conjuncts $instance)
              (let (tf:cand $guide) (superpose $matches)
-               (let $kc (tf:pin $conjuncts $guide)
+               (let $kc (tf:inst $conjuncts $guide)
                  (if (is-space $destination)
                      (tf:fire-into $space $kc $instance $destination)
                      (let $comma (tf:comma $instance)
@@ -108,7 +108,7 @@
 ; The kernel's matches against the store as it is when the transform is called, each
 ; as (tf:cand GUIDE): the atoms its read, take and unique conjuncts matched, in
 ; conjunct order.  Each becomes one branch.
-(= (tf:cands $space $conjuncts $template)
+(= (tf:propose $space $conjuncts $template)
    (collapse (tf:walk $space $conjuncts () $template tf:propose)))
 
 ; A branch's sources: the original conjuncts, each kernel read or take of a pattern
@@ -117,23 +117,23 @@
 ; for if those atoms are still there, and its other conditions (absence, unique's
 ; count, collections and lets) are evaluated when it fires, each with its own
 ; variables free.
-(= (tf:pin $cs $guide)
+(= (tf:inst $cs $guide)
    (if (== $cs ()) ()
      (let ($c $rest) (decons-atom $cs)
        (let $mode (tf:mode $c)
          (if (is-member $mode (all once)) $cs
            (if (is-member $mode (absent collect let))
-               (let $more (tf:pin $rest $guide) (cons-atom $c $more))
+               (let $more (tf:inst $rest $guide) (cons-atom $c $more))
                (let (tf:at $_m $_s $p) (tf:locate-in $c)
                  (if (and (== $mode unique) (tf:comma $p))
                      ; a unique joint match: one guide entry per part, bound as the tuple
                      (let (tf:taken $atoms $guide2) (tf:take-guide (- (size-atom $p) 1) $guide ())
                        (let $as (tf:triple tf:as $p (cons-atom , $atoms))
-                         (let $more (tf:pin $rest $guide2) (cons-atom $c (cons-atom $as $more)))))
+                         (let $more (tf:inst $rest $guide2) (cons-atom $c (cons-atom $as $more)))))
                      (let ($e $guide2) (decons-atom $guide)
                        (let ($use $s $a) $e
                          (let $as (tf:triple tf:as $p $a)
-                           (let $more (tf:pin $rest $guide2)
+                           (let $more (tf:inst $rest $guide2)
                              (if (== $mode unique)
                                  (cons-atom $c (cons-atom $as $more))
                                  (let $access (tf:triple $use $s $a)

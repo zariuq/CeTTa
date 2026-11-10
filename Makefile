@@ -1001,6 +1001,12 @@ STABLE_OCCURRENCE_TRANSPORT_TEST_SRC = tests/test_stable_occurrence_transport.c
 STABLE_OCCURRENCE_TRANSPORT_TEST_OBJ = runtime/bootstrap/test_stable_occurrence_transport.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 STABLE_OCCURRENCE_TRANSPORT_TEST_BIN = runtime/test_stable_occurrence_transport-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 STABLE_OCCURRENCE_TRANSPORT_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+STORE_EFFECT_ALLOCATION_TEST_SRC = tests/support/test_store_effect_allocation.c
+STORE_EFFECT_ALLOCATION_TEST_OBJ = runtime/bootstrap/test_store_effect_allocation.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+STORE_EFFECT_ALLOCATION_TEST_BIN = runtime/test_store_effect_allocation-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+TRANSFORM_CURSOR_FAULT_SRC = tests/support/transform_cursor_faults.c
+TRANSFORM_CURSOR_FAULT_OBJ = runtime/bootstrap/transform_cursor_faults.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+TRANSFORM_CURSOR_FAULT_BIN = runtime/cetta-transform-cursor-faults-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 OCCURRENCE_CURSOR_BENCH_SRC = benchmarks/bench_occurrence_cursor.c
 OCCURRENCE_CURSOR_BENCH_OBJ = runtime/bootstrap/bench_occurrence_cursor.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 OCCURRENCE_CURSOR_BENCH_BIN = runtime/bench_occurrence_cursor-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
@@ -5512,6 +5518,21 @@ $(STABLE_OCCURRENCE_TRANSPORT_TEST_BIN): $(STABLE_OCCURRENCE_TRANSPORT_TEST_OBJ)
 .PHONY: test-stable-occurrence-transport
 test-stable-occurrence-transport: $(STABLE_OCCURRENCE_TRANSPORT_TEST_BIN)
 	@$(call cetta_exec,./$(STABLE_OCCURRENCE_TRANSPORT_TEST_BIN))
+
+$(STORE_EFFECT_ALLOCATION_TEST_OBJ): $(STORE_EFFECT_ALLOCATION_TEST_SRC) src/space.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime/bootstrap
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+
+$(STORE_EFFECT_ALLOCATION_TEST_BIN): $(STORE_EFFECT_ALLOCATION_TEST_OBJ) $(STABLE_OCCURRENCE_TRANSPORT_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CFLAGS) -o $@ $(STORE_EFFECT_ALLOCATION_TEST_OBJ) $(STABLE_OCCURRENCE_TRANSPORT_TEST_LINK_OBJ) -Wl,--wrap=malloc $(LDFLAGS)
+
+.PHONY: test-store-effect-allocation test-store-effect
+test-store-effect-allocation: $(STORE_EFFECT_ALLOCATION_TEST_BIN)
+	@$(call cetta_exec,./$(STORE_EFFECT_ALLOCATION_TEST_BIN))
+test-store-effect: test-stable-occurrence-transport test-store-effect-allocation
+test-correctness: test-store-effect
+test-all: test-store-effect-allocation
 
 SPACE_PATH_INDEX_TEST_OBJ = runtime/bootstrap/test_space_path_index.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 SPACE_PATH_INDEX_TEST_BIN = runtime/test_space_path_index-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
@@ -18656,7 +18677,17 @@ test-comprehensive: test-term-universe-collection-mutants
 # import the checkout at its sibling location.
 METTAPEDIA_LEAN_CHECKOUT = $(if $(strip $(METTAPEDIA_LEAN_ROOT)),$(METTAPEDIA_LEAN_ROOT),$(METTAPEDIA_LEAN_AUTO_ROOT))
 test-lean: test-rhocalc-lean test-lean-corpus test-abt-differential \
-	test-petta-typecheck-v3-core-parity-v1
+	test-petta-typecheck-v3-core-parity-v1 test-store-demand-contracts
+
+# Co7's checked contracts calibrate the runtime through their independent
+# fixtures; this opt-in gate does not make the shipped suite need a checkout.
+.PHONY: test-store-demand-contracts
+test-store-demand-contracts: $(BIN)
+	@set -eu; \
+	fixtures="$(METTAPEDIA_LEAN_CHECKOUT)/../../MettaKernel/Examples/StoreAndDemand"; \
+	test -f "$$fixtures/replay.py"; \
+	python3 "$$fixtures/replay.py" --binary "$(abspath $(BIN))"; \
+	python3 "$$fixtures/replay.py" --binary "$(abspath $(BIN))" --petta-reference
 
 test-rhocalc-lean: $(BIN)
 	@pass=0; fail=0; \
@@ -31324,8 +31355,43 @@ test-petta-semantics: test-petta-transform
 # seeded programs answer alike on all three; a redefined operation or a data
 # public override runs its authored definition; reference-only helpers do not
 # reprogram the native implementation.
-test-petta-transform: $(BIN)
+test-petta-transform: $(BIN) test-transform-store-effect-stats
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_transform_differential.py ./$(BIN) --programs 60
+
+# The open guided-row fixture proves that selection reuse really executes;
+# ground controls decline it and ordinary publication allocates no receipt.
+.PHONY: test-transform-store-effect-stats test-transform-store-effect-stats-body
+test-transform-store-effect-stats:
+	@$(MAKE) --no-print-directory BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		test-transform-store-effect-stats-body
+test-transform-store-effect-stats-body: $(BIN) tests/support/check_transform_store_effect_stats.py \
+		tests/petta/transform_store_effects.metta tests/petta/transform_store_effects.expected
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_transform_store_effect_stats.py ./$(BIN)
+
+# First-answer entry joins stop at the successful candidate prefix.  The same
+# binary's materializing route is the differential oracle; the 40,000-answer
+# case counts candidates, occurrence scans, proposal allocations and cursor
+# bytes separately, with n versus 2n and repeated early-close ownership checks.
+# A same-objects fault executable refuses the second outer row's inner clone;
+# its earlier answerless write must not escape into whole-transform replay.
+$(TRANSFORM_CURSOR_FAULT_OBJ): $(TRANSFORM_CURSOR_FAULT_SRC) src/space.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+$(TRANSFORM_CURSOR_FAULT_BIN): LDFLAGS += -Wl,--wrap=space_occurrence_cursor_clone
+$(TRANSFORM_CURSOR_FAULT_BIN): $(OBJ) $(TRANSFORM_CURSOR_FAULT_OBJ) $(BRIDGE_DEPS)
+	$(link_cetta_binary)
+-include $(TRANSFORM_CURSOR_FAULT_OBJ:.o=.d)
+.PHONY: test-transform-stream-control test-transform-stream-control-body
+test-petta-transform: test-transform-stream-control
+test-transform-stream-control:
+	@$(MAKE) --no-print-directory BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		test-transform-stream-control-body
+test-transform-stream-control-body: $(BIN) $(TRANSFORM_CURSOR_FAULT_BIN) tests/support/check_transform_stream_control.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_transform_stream_control.py ./$(BIN) 24 ./$(TRANSFORM_CURSOR_FAULT_BIN)
+
+.PHONY: bench-transform-stream-control
+bench-transform-stream-control: $(BIN) tests/support/bench_transform_stream_control.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/bench_transform_stream_control.py ./$(BIN) --repeat 5
 
 .PHONY: test-petta-transform-step-paths
 test-petta-semantics: test-petta-transform-step-paths
@@ -31364,11 +31430,12 @@ test-transform-he-boundaries: $(BIN) tests/support/check_transform_he_boundaries
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_transform_he_boundaries.py "$(CETTA_SCRIPT_BIN)"
 
 .PHONY: test-transform-profiles
-test-transform-profiles: $(BIN) lib/lib_transform.metta lib/petta/lib_transform.metta \
+test-transform-profiles: test-builtin-policy-lookup $(BIN) lib/lib_transform.metta lib/petta/lib_transform.metta \
 	tests/he/transform_profile.metta tests/he/transform_profile.extended.expected tests/he/transform_profile.plain.expected \
 	tests/he/transform_imports.metta tests/he/transform_imports.expected tests/he/transform_once.metta tests/he/transform_once.expected \
 	tests/petta/transform_profile.metta tests/petta/transform_profile.extended.expected tests/petta/transform_profile.plain.expected \
-	tests/petta/transform_imports.metta tests/petta/transform_imports.expected tests/petta/transform_once.metta tests/petta/transform_once.expected
+	tests/petta/transform_imports.metta tests/petta/transform_imports.expected tests/petta/transform_once.metta tests/petta/transform_once.expected \
+		tests/petta/transform_extended_let.metta tests/petta/transform_extended_let.expected
 	@set -eu; \
 	for lang in he petta; do \
 		CETTA_TRANSFORM_TRACE=1 $(CETTA_BIN_INVOKE) --lang $$lang --profile extended tests/$$lang/transform_profile.metta \
@@ -31390,6 +31457,11 @@ test-transform-profiles: $(BIN) lib/lib_transform.metta lib/petta/lib_transform.
 		diff -u tests/$$lang/transform_once.expected runtime/transform-once-$$lang.out; \
 		test "$$(grep -c '^\[transform\] fired' runtime/transform-once-$$lang.trace)" -eq 4; \
 	done
+	@CETTA_TRANSFORM_TRACE=1 $(CETTA_BIN_INVOKE) --lang petta --profile extended \
+		tests/petta/transform_extended_let.metta \
+		> runtime/transform-extended-let-petta.out 2> runtime/transform-extended-let-petta.trace
+	@diff -u tests/petta/transform_extended_let.expected runtime/transform-extended-let-petta.out
+	@grep -q '^\[transform\] fired' runtime/transform-extended-let-petta.trace
 	@grep -q '^\[transform\] refused (transform program changed)' runtime/transform-imports-he.trace
 	@echo "PASS: transform's profile, import, redefinition, and once contracts hold in HE and PeTTa"
 

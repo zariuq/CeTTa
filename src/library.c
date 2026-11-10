@@ -10069,7 +10069,7 @@ static bool transform_native_head(SymbolId head) {
     if (!name)
         return true;
     static const char *const operations[] = {
-        "transform", "tf:run", "tf:split", "tf:cands", "tf:pin",
+        "transform", "tf:run", "tf:split", "tf:propose", "tf:inst",
         "tf:fire", "tf:fire-into", "tf:cand", "tf:fired", "tf:cs",
     };
     for (size_t i = 0u; i < sizeof operations / sizeof operations[0]; i++)

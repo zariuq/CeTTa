@@ -603,7 +603,7 @@ static void he_instruction_resume(CettaOwnedFrameStack *stack) {
         Space *target = resolve_single_space_arg(
             s, a, expr_arg(atom, 2), child_fuel);
         if (target)
-            eval_for_caller(target, a, expr_arg(frame->atom, 1),
+            eval_metta_outcomes(target, a, expr_arg(frame->atom, 1),
                 expr_arg(frame->atom, 0), child_fuel, &frame->env, true, os);
         else
             outcome_set_add(os, call_signature_error(a, frame->syntax,
