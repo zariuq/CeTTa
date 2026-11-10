@@ -1074,29 +1074,34 @@ def weight_licence_dependencies(gate):
 
 
     if getattr(gate, 'language', 'prime') == 'petta':
-        # A missing logical location is empty, but has no physical query cursor.
-        # bind! accepts new-state in this dialect and does not create a Space.
-        source = '!(bind! &licence-absent (new-space)) ' + slow
-        source += f'(=w (licence-answer) (licence-slow 120 '
-        source += f'(match &licence-absent (stored-computation $code) $code)) {tenth}) '
-        source += '(=w (licence-answer) Visible 1) '
-        for mutation, status in [
-            ('(add-atom &licence-absent (stored-computation (weight:where Hidden 20)))', 'invalidated'),
-            ('(add-atom &unrelated-absent Irrelevant)', 'suspended')]:
-            trees, parts = gate.run('absent-location licence ' + mutation, source +
-                f'!(let {pattern} (select 1 {policy(20, 1)} {read("(licence-answer)")}) '
-                f'(let $_ {mutation} (select 1 {policy(0, 1)} $r)))')
-            result = parts[-1]
-            assert result['status'] == status and result['closed'] == 'False', result
-            assert result['work'] == 20 and not result['values'], result
-            observed = list(weight_observations(trees))[-1]
-            assert weight_order_record(observed)[1] == [
-                'Refused', ['UnresolvedCoefficientSpace', '&licence-absent']], observed
-            order = next(x for x in observed['_fields'] if x[0] == 'weight-order')
-            record = next(x for x in order[1:] if x[0] == 'analysis')
-            fields = {x[0]: x[1] for x in record[1:]}
-            assert fields['query-service'] == 'NoQueryCaptured', fields
-        gate.passed_case('absent location retains registry absence without inventing a query cursor')
+        # Truly absent and explicitly bound locations have different query
+        # authorities. Keep both: binding first cannot test registry absence.
+        for bound in (False, True):
+            source = ('!(bind! &licence-absent (new-space)) ' if bound else '') + slow
+            source += f'(=w (licence-answer) (licence-slow 120 '
+            source += f'(match &licence-absent (stored-computation $code) $code)) {tenth}) '
+            source += '(=w (licence-answer) Visible 1) '
+            for mutation, status in [
+                ('()', 'suspended'),
+                ('(add-atom &licence-absent (stored-computation (weight:where Hidden 20)))', 'invalidated'),
+                ('(add-atom &unrelated-absent Irrelevant)', 'suspended')]:
+                trees, parts = gate.run(f'location bound={bound} licence ' + mutation, source +
+                    f'!(let {pattern} (select 1 {policy(20, 1)} {read("(licence-answer)")}) '
+                    f'(let $_ {mutation} (select 1 {policy(0, 1)} $r)))')
+                result = parts[-1]
+                assert result['status'] == status and result['closed'] == 'False', result
+                assert result['work'] == 20 and not result['values'], result
+                observed = list(weight_observations(trees))[-1]
+                expected = ['Pending', 'Analysis'] if bound else [
+                    'Refused', ['UnresolvedCoefficientSpace', '&licence-absent']]
+                assert weight_order_record(observed)[1] == expected, observed
+                order = next(x for x in observed['_fields'] if x[0] == 'weight-order')
+                record = next(x for x in order[1:] if x[0] == 'analysis')
+                fields = {x[0]: x[1] for x in record[1:]}
+                assert fields['query-service'] == ('NativeNodeCursor' if bound else 'NoQueryCaptured'), fields
+                assert fields['status'] == ('Invalidated' if status == 'invalidated' else
+                                            'Pending' if bound else 'Refused'), fields
+            gate.passed_case(f'location bound={bound} retains its own query authority across mutations')
 
 
 
@@ -2381,8 +2386,9 @@ def authored_programs(gate):
                     assert parts[-1][field]==final[field],(style,width,cut,field,parts[-1],final)
             gate.passed_case(style+f' shares each graded argument and its factor once through seven cuts/{width}')
 
-        # A name captured as PeTTa data stays data after later insertion.
-        # Prime and HE interpret that same authored position dynamically.
+        # An unquoted call remains late-bound after insertion/replacement,
+        # including in PeTTa (dynamic_explicit_evaluation.metta). Only
+        # explicit quotation holds authored syntax across those revisions.
         initial='(= (cached-pair $x) (Pair $x $x)) (= (cached-call) (cached-pair (item))) '
         grade_row=row('(item)','2','3').strip()
         replacement=row('(item)','5','7').strip()
@@ -2394,14 +2400,12 @@ def authored_programs(gate):
         trees,_=gate.run(style+' prepared plan revision and mixed rows',program)
         values=[contribution(x) for tree in trees for x in tree
                 if isinstance(x,list) and x and x[0]=='Weighted']
-        expected_dynamic=([
-            [['Pair',['item'],['item']],1,[]]]*5
-            if getattr(gate,'language','prime')=='petta' else [
+        expected_dynamic=[
             [['Pair',['item'],['item']],1,[]], [['Pair',2,2],3,[3]],
             [['Pair',5,5],7,[7]], [['Pair',5,5],7,[7]],
-            [['Pair',8,8],1,[]], [['Pair',8,8],1,[]]])
+            [['Pair',8,8],1,[]], [['Pair',8,8],1,[]]]
         assert bag(values)==bag(expected_dynamic),(style,values)
-        gate.passed_case(style+' preserves authored data or dynamic callable roles through insertion')
+        gate.passed_case(style+' preserves late-bound callable roles through insertion')
 
         # Cache a previously callable, unannotated head, then replace its
         # physical rows. All hosts must re-admit the plan at each revision.
