@@ -34905,6 +34905,28 @@ static Atom *prime_need_strict_demand_value(Space *s, Arena *a, Atom *source,
     return prime_completed_value(s, a, observed);
 }
 
+/* A structural observer reads the public syntax of an earned value, whereas
+ * a pattern keeps the held parts it binds.  Finish the strict demand first,
+ * then erase only the private holding carriers.  The existing held-to-value
+ * projection certifies every payload node as completed: removing its carrier
+ * cannot turn held code back into a computation on evaluator re-entry.
+ * Projection failure is an explicit observation failure, never an empty answer
+ * or a successful partial observation. */
+static Atom *prime_need_structural_observation_value(
+        Space *s, Arena *a, Atom *call, Atom *source, Atom *observed,
+        const Bindings *environment, bool *failed) {
+    *failed = false;
+    Atom *value = prime_need_strict_demand_value(
+        s, a, source, observed, environment);
+    if (value && !atom_is_legacy_empty_or_error(value))
+        value = prime_held_as_value(s, a, value);
+    if (value)
+        return value;
+    *failed = true;
+    return atom_error(
+        a, call, atom_symbol(a, "PrimeStructuralObservationFailed"));
+}
+
 /* The builtins that build a value from their operands: what they return is
  * a completed value, its parts data, as a grounded operation's is
  * (emit_completed_native_value). */
@@ -49908,7 +49930,8 @@ static int prime_need_demanded_argument(Space *s, Arena *a, SymbolId head,
             demanded = prime_need_strict_argument_needs_eval(
                            s, a, argument) ||
                        prime_need_atom_contains_private_capability(argument) ||
-                       atom_contains_vars(argument);
+                       atom_contains_vars(argument) ||
+                       atom_contains_prime_held(argument);
         if (demanded) {
             if (out_mode)
                 *out_mode = mode;
@@ -59022,8 +59045,13 @@ static inline __attribute__((always_inline)) void prime_eval_stack_resume_strict
             value && !atom_is_legacy_empty_or_error(value))
             value = frame->strict_source;
 #endif
-        if (frame->strict_mode == PRIME_NEED_ARGUMENT_STRUCTURE ||
-            frame->strict_mode == PRIME_NEED_ARGUMENT_PATTERN)
+        bool observation_failed = false;
+        if (frame->strict_mode == PRIME_NEED_ARGUMENT_STRUCTURE) {
+            value = prime_need_observe_data(frame->arena, value, &only->env);
+            value = prime_need_structural_observation_value(
+                frame->space, frame->arena, frame->atom, frame->strict_source,
+                value, &only->env, &observation_failed);
+        } else if (frame->strict_mode == PRIME_NEED_ARGUMENT_PATTERN)
             value = prime_need_strict_demand_value(
                 frame->space, frame->arena, frame->strict_source,
                 prime_need_observe_data(frame->arena, value, &only->env),
@@ -59033,7 +59061,8 @@ static inline __attribute__((always_inline)) void prime_eval_stack_resume_strict
                 frame->space, frame->arena, frame->strict_source, value,
                 &only->env);
         if (value && !atom_is_legacy_empty_sentinel(value) &&
-            (!atom_is_error(value) || frame->strict_error_is_data)) {
+            (!atom_is_error(value) ||
+             (frame->strict_error_is_data && !observation_failed))) {
             if (atom_eq(value, frame->strict_source)) {
                 frame->state = PRIME_EVAL_STACK_FRAME_WAIT_CALL;
                 if (prime_eval_stack_schedule_seeded_call(
@@ -59075,8 +59104,13 @@ static inline __attribute__((always_inline)) void prime_eval_stack_resume_strict
             value && !atom_is_legacy_empty_or_error(value))
             value = frame->strict_source;
 #endif
-        if (frame->strict_mode == PRIME_NEED_ARGUMENT_STRUCTURE ||
-            frame->strict_mode == PRIME_NEED_ARGUMENT_PATTERN)
+        bool observation_failed = false;
+        if (frame->strict_mode == PRIME_NEED_ARGUMENT_STRUCTURE) {
+            value = prime_need_observe_data(frame->arena, value, &item->env);
+            value = prime_need_structural_observation_value(
+                frame->space, frame->arena, frame->atom, frame->strict_source,
+                value, &item->env, &observation_failed);
+        } else if (frame->strict_mode == PRIME_NEED_ARGUMENT_PATTERN)
             value = prime_need_strict_demand_value(
                 frame->space, frame->arena, frame->strict_source,
                 prime_need_observe_data(frame->arena, value, &item->env),
@@ -59087,7 +59121,8 @@ static inline __attribute__((always_inline)) void prime_eval_stack_resume_strict
                 &item->env);
         if (!value || atom_is_legacy_empty_sentinel(value))
             continue;
-        if (atom_is_error(value) && !frame->strict_error_is_data) {
+        if (atom_is_error(value) &&
+            (!frame->strict_error_is_data || observation_failed)) {
             prime_eval_stack_add_prefixed(frame, value, &item->env);
             if (g_prime_eval_stack_driver->streaming) {
                 prime_eval_stack_stream_note(frame->target);
@@ -59133,19 +59168,25 @@ static PrimeEvalStackTake prime_eval_stack_strict_take(
             value && !atom_is_legacy_empty_or_error(value))
             value = frame->strict_source;
 #endif
-        if (frame->strict_mode == PRIME_NEED_ARGUMENT_STRUCTURE ||
-            frame->strict_mode == PRIME_NEED_ARGUMENT_PATTERN)
-            value = prime_need_strict_demand_value(
-                frame->space, frame->arena, frame->strict_source,
-                prime_need_observe_data(frame->arena, value, &item->env),
-                &item->env);
-        else if (frame->strict_argument != PRIME_EVAL_STACK_READY_HEAD)
-            value = prime_need_strict_demand_value(
-                frame->space, frame->arena, frame->strict_source, value,
-                &item->env);
+    bool observation_failed = false;
+    if (frame->strict_mode == PRIME_NEED_ARGUMENT_STRUCTURE) {
+        value = prime_need_observe_data(frame->arena, value, &item->env);
+        value = prime_need_structural_observation_value(
+            frame->space, frame->arena, frame->atom, frame->strict_source,
+            value, &item->env, &observation_failed);
+    } else if (frame->strict_mode == PRIME_NEED_ARGUMENT_PATTERN)
+        value = prime_need_strict_demand_value(
+            frame->space, frame->arena, frame->strict_source,
+            prime_need_observe_data(frame->arena, value, &item->env),
+            &item->env);
+    else if (frame->strict_argument != PRIME_EVAL_STACK_READY_HEAD)
+        value = prime_need_strict_demand_value(
+            frame->space, frame->arena, frame->strict_source, value,
+            &item->env);
     if (!value || atom_is_legacy_empty_sentinel(value))
         return PRIME_EVAL_STACK_TAKE_SKIPPED;
-    if (atom_is_error(value) && !frame->strict_error_is_data) {
+    if (atom_is_error(value) &&
+        (!frame->strict_error_is_data || observation_failed)) {
         prime_eval_stack_add_prefixed(frame, value, &item->env);
         return PRIME_EVAL_STACK_TAKE_EMITTED;
     }
@@ -101446,8 +101487,13 @@ prime_need_next_strict_argument: ;
             atom, (CettaExprIndex)strict_argument);
         if (values.len == 1u) {
             Atom *value = outcome_atom_materialize(a, &values.items[0]);
-            if (strict_mode == PRIME_NEED_ARGUMENT_STRUCTURE ||
-                strict_mode == PRIME_NEED_ARGUMENT_PATTERN)
+            bool observation_failed = false;
+            if (strict_mode == PRIME_NEED_ARGUMENT_STRUCTURE) {
+                value = prime_need_observe_data(a, value, &values.items[0].env);
+                value = prime_need_structural_observation_value(
+                    s, a, atom, strict_source, value, &values.items[0].env,
+                    &observation_failed);
+            } else if (strict_mode == PRIME_NEED_ARGUMENT_PATTERN)
                 value = prime_need_strict_demand_value(
                     s, a, strict_source,
                     prime_need_observe_data(a, value, &values.items[0].env),
@@ -101456,7 +101502,8 @@ prime_need_next_strict_argument: ;
                 value = prime_need_strict_demand_value(
                     s, a, strict_source, value, &values.items[0].env);
             if (value && !atom_is_legacy_empty_sentinel(value) &&
-                (!atom_is_error(value) || strict_error_is_data)) {
+                (!atom_is_error(value) ||
+                 (strict_error_is_data && !observation_failed))) {
                 if (atom_eq(value, strict_source)) {
                     /* The argument evaluator reached a stable residual.
                        It is therefore a weak-head value for this observer;
@@ -101493,8 +101540,13 @@ prime_need_next_strict_argument: ;
         }
         for (CettaCount i = 0u; i < values.len; i++) {
             Atom *value = outcome_atom_materialize(a, &values.items[i]);
-            if (strict_mode == PRIME_NEED_ARGUMENT_STRUCTURE ||
-                strict_mode == PRIME_NEED_ARGUMENT_PATTERN)
+            bool observation_failed = false;
+            if (strict_mode == PRIME_NEED_ARGUMENT_STRUCTURE) {
+                value = prime_need_observe_data(a, value, &values.items[i].env);
+                value = prime_need_structural_observation_value(
+                    s, a, atom, strict_source, value, &values.items[i].env,
+                    &observation_failed);
+            } else if (strict_mode == PRIME_NEED_ARGUMENT_PATTERN)
                 value = prime_need_strict_demand_value(
                     s, a, strict_source,
                     prime_need_observe_data(a, value, &values.items[i].env),
@@ -101504,7 +101556,8 @@ prime_need_next_strict_argument: ;
                     s, a, strict_source, value, &values.items[i].env);
             if (!value || atom_is_legacy_empty_sentinel(value))
                 continue;
-            if (atom_is_error(value) && !strict_error_is_data) {
+            if (atom_is_error(value) &&
+                (!strict_error_is_data || observation_failed)) {
                 outcome_set_add(os, value, &values.items[i].env);
                 continue;
             }

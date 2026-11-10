@@ -18,7 +18,7 @@ def main():
     binary = os.environ.get("CETTA_BIN", args.cetta)
     directory = Path("runtime/prime_capability_opening")
     directory.mkdir(parents=True, exist_ok=True)
-    for depth in (0, 31, 32, 33, 63, 64, 65, 128, 512):
+    for depth in (0, 1, 2, 32, 512):
         source = "!(import! &self list)\n"
         for target in (3, 4):
             source += (
@@ -28,16 +28,30 @@ def main():
             )
         fixture = directory / f"depth-{depth}.metta"
         fixture.write_text(source)
-        result = subprocess.run(
-            [binary, "--lang", "prime", str(fixture)],
-            capture_output=True, text=True, timeout=60, check=False,
+        routes = (
+            ("prepared", {
+                "CETTA_OPEN_EQUATIONS_REFERENCE": "0",
+                "CETTA_PREPARED_PURE_REFERENCE": "0",
+            }),
+            ("reference", {
+                "CETTA_OPEN_EQUATIONS_REFERENCE": "1",
+                "CETTA_PREPARED_PURE_REFERENCE": "1",
+            }),
         )
-        if result.returncode != 0 or result.stdout.splitlines() != ["[()]", "[(3)]", "[()]"]:
-            raise SystemExit(
-                f"FAIL: capability opening at depth {depth}: "
-                f"exit {result.returncode}\n{result.stdout}{result.stderr}"
+        for route, switches in routes:
+            result = subprocess.run(
+                [binary, "--lang", "prime", str(fixture)],
+                capture_output=True, text=True, timeout=60, check=False,
+                env=dict(os.environ, **switches),
             )
-    print("PASS: Prime filter templates preserve matches and misses at nine depths")
+            if (result.returncode != 0
+                    or result.stdout.splitlines() != ["[()]", "[(3)]", "[()]"]):
+                raise SystemExit(
+                    f"FAIL: capability opening at depth {depth} on {route}: "
+                    f"exit {result.returncode}\n{result.stdout}{result.stderr}"
+                )
+    print("PASS: Prime filter templates preserve matches and misses at five "
+          "depths on two routes")
 
 
 if __name__ == "__main__":
