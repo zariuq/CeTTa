@@ -927,7 +927,137 @@ static Atom *str_char_slice(Arena *a, Atom *const *args, CettaStrRefusal *r) {
     return atom_string_n(a, text + from, to - from);
 }
 
+/* Text envelopes, not evaluated syntax. Quotes and backslash escapes shield
+ * parentheses. A stray close parenthesis is outside text; an unfinished form
+ * or quote leaves the whole input unchanged. No comments or reader macros are
+ * interpreted. Whitespace is the Unicode 15 Python str.isspace set. */
+static bool str_envelope_space(uint32_t c) {
+    return (c >= 9u && c <= 13u) || (c >= 0x1cu && c <= 0x20u) ||
+        c == 0x85u || c == 0xa0u || c == 0x1680u ||
+        (c >= 0x2000u && c <= 0x200au) || c == 0x2028u ||
+        c == 0x2029u || c == 0x202fu || c == 0x205fu || c == 0x3000u;
+}
+
+static size_t str_envelope_skip_space(const char *text, size_t at, size_t end) {
+    while (at < end) {
+        uint32_t c, width;
+        if (!cetta_utf8_decode_one((const uint8_t *)text, end, at, &c, &width) ||
+            !str_envelope_space(c)) break;
+        at += width;
+    }
+    return at;
+}
+
+/* 1: a complete form, 0: end, -1: unfinished text. Bytes are prevalidated. */
+static int str_envelope_next(const char *text, size_t *cursor, size_t end,
+                              size_t *start, size_t *stop) {
+    size_t depth = 0u;
+    bool quoted = false;
+    while (*cursor < end) {
+        size_t at = (*cursor)++;
+        char c = text[at];
+        if (quoted) {
+            if (c == '\\') { if (*cursor < end) ++*cursor; }
+            else if (c == '"') quoted = false;
+        } else if (c == '"') quoted = true;
+        else if (c == '(') {
+            if (!depth) *start = at;
+            depth++;
+        } else if (c == ')' && depth && --depth == 0u) {
+            *stop = *cursor;
+            return 1;
+        }
+    }
+    return depth || quoted ? -1 : 0;
+}
+
+static bool str_envelope_children(const char *text, size_t at, size_t end) {
+    for (;;) {
+        at = str_envelope_skip_space(text, at, end);
+        if (at == end) return true;
+        if (text[at] != '(') return false;
+        size_t start = 0u, stop = 0u;
+        if (str_envelope_next(text, &at, end, &start, &stop) != 1) return false;
+    }
+}
+
+typedef struct { size_t at, end, depth; } StrEnvelopeFrame;
+
+static Atom *str_unwrap_envelopes(Arena *arena, Atom *const *args,
+                                   CettaStrRefusal *r) {
+    const char *text, *head;
+    size_t len, head_len, limit, bad;
+    if (!str_text(args[0], &text, &len) || !str_text(args[1], &head, &head_len) ||
+        !str_offset(args[2], &limit))
+        return str_expects(r, "expected text, envelope head and nonnegative depth");
+    if (!cetta_utf8_count(text, len, NULL, &bad) ||
+        !cetta_utf8_count(head, head_len, NULL, &bad))
+        return str_refuses(r, "StrMalformedUtf8V1", bad);
+    if (!head_len) return str_expects(r, "expected a nonempty envelope head");
+    for (size_t at = 0u; at < head_len;) {
+        uint32_t c, width;
+        if (!cetta_utf8_decode_one((const uint8_t *)head, head_len, at, &c, &width))
+            return str_refuses(r, "StrMalformedUtf8V1", at);
+        if (str_envelope_space(c) || c == '(' || c == ')' || c == '"')
+            return str_expects(r, "expected a single envelope head word");
+        at += width;
+    }
+    size_t at = 0u, start = 0u, stop = 0u;
+    int status;
+    while ((status = str_envelope_next(text, &at, len, &start, &stop)) == 1) {}
+    if (status < 0 || !limit) return atom_string_n(arena, text, len);
+
+    size_t capacity = 8u, count = 1u, emitted = 0u;
+    StrEnvelopeFrame *frames = malloc(capacity * sizeof(*frames));
+    CettaByteBuffer output;
+    cetta_byte_buffer_init(&output);
+    bool ok = frames && cetta_byte_buffer_append_byte(&output, '(');
+    bool changed = false;
+    if (frames) frames[0] = (StrEnvelopeFrame){0u, len, 0u};
+    while (ok && count) {
+        StrEnvelopeFrame *frame = &frames[count - 1u];
+        if (str_envelope_next(text, &frame->at, frame->end, &start, &stop) != 1) {
+            count--;
+            continue;
+        }
+        size_t child_at = str_envelope_skip_space(text, start + 1u, stop - 1u);
+        bool named = head_len <= stop - 1u - child_at &&
+            memcmp(text + child_at, head, head_len) == 0 &&
+            (child_at + head_len == stop - 1u ||
+             str_envelope_skip_space(text, child_at + head_len, stop - 1u) > child_at + head_len);
+        bool container = child_at < stop - 1u && text[child_at] == '(';
+        if (named) child_at = str_envelope_skip_space(text, child_at + head_len, stop - 1u);
+        if (frame->depth < limit && (named || container) &&
+            str_envelope_children(text, child_at, stop - 1u)) {
+            size_t depth = frame->depth + 1u;
+            changed |= named;
+            if (count == capacity) {
+                if (capacity > SIZE_MAX / 2u / sizeof(*frames)) { ok = false; break; }
+                size_t next = capacity * 2u;
+                StrEnvelopeFrame *grown = realloc(frames, next * sizeof(*frames));
+                if (!grown) { ok = false; break; }
+                frames = grown; capacity = next;
+            }
+            frames[count++] = (StrEnvelopeFrame){child_at, stop - 1u, depth};
+        } else {
+            ok = (!emitted || cetta_byte_buffer_append_byte(&output, ' ')) &&
+                 cetta_byte_buffer_append(&output, text + start, stop - start);
+            emitted++;
+        }
+    }
+    free(frames);
+    if (ok) ok = cetta_byte_buffer_append_byte(&output, ')');
+    if (!ok) {
+        cetta_byte_buffer_free(&output);
+        return str_refuses(r, "StrCapacityV1", 0u);
+    }
+    if (changed) return str_from_buffer(arena, &output);
+    cetta_byte_buffer_free(&output);
+    return atom_string_n(arena, text, len);
+}
+
 static const CettaStrNative str_natives[] = {
+    {"unwrap-envelopes", 3u, 0u, str_unwrap_envelopes, CETTA_STR_RESULT_ATOM},
     {"utf8-new", 1u, 0u, cetta_str_utf8_new, CETTA_STR_RESULT_STRUCTURE},
     {"utf8-feed", 3u, 1u << 0, cetta_str_utf8_feed, CETTA_STR_RESULT_STRUCTURE},
     {"line-segments", 2u, 0u, cetta_str_line_segments, CETTA_STR_RESULT_STRUCTURE},
