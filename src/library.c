@@ -3992,6 +3992,8 @@ static bool resolve_relative_module_candidate_for_language(
 
 static bool build_library_path(CettaLibraryContext *ctx, const char *name,
                                char *out, size_t out_sz);
+static bool build_library_resource_path(CettaLibraryContext *ctx,
+    const char *name, const char *suffix, char *out, size_t out_sz);
 
 static bool parse_module_spec(const char *spec, CettaModuleSpec *out,
                               Arena *eval_arena, Atom **error_out) {
@@ -4345,7 +4347,12 @@ static bool resolve_import_plan(CettaLibraryContext *ctx, const CettaModuleSpec 
             return false;
         }
         plan->provider_kind = CETTA_MODULE_PROVIDER_STDLIB_FILE;
-        if (!build_library_path(ctx, spec->path_or_member, candidate, sizeof(candidate))) {
+        /* An explicitly suffixed member may be a foreign module. Keep the
+         * normal MeTTa lookup first, then let the common format/policy
+         * checks below inspect the exact resource, as a path import does. */
+        if (!build_library_path(ctx, spec->path_or_member, candidate, sizeof(candidate)) &&
+            !build_library_resource_path(ctx, spec->path_or_member, "",
+                                         candidate, sizeof(candidate))) {
             *error_out = atom_symbol(eval_arena, "library file not found");
             return false;
         }
