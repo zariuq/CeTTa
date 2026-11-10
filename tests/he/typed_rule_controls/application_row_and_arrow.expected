@@ -1,0 +1,6 @@
+[((OtherDemandPair 1 2))]
+[((Error (OtherDemandPair 1 2) (BadType OtherDemandRange DemandRange)))]
+[((OtherDemandPair 1 2))]
+[OtherDemandRange, DemandRange]
+[((Error (use-third (OtherDemandPair 1 2)) (BadArgType 1 ThirdRange OtherDemandRange)) (Error (use-third (OtherDemandPair 1 2)) (BadArgType 1 ThirdRange DemandRange)))]
+[((Error (OtherDemandPair 1 "two") (BadArgType 2 Number String)))]

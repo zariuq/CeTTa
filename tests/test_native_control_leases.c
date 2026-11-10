@@ -3621,6 +3621,68 @@ static void native_capture_observer_contract_case(
     space_free(&unrelated);space_free(&dependency);space_free(&root);arena_free(&arena);
 }
 
+typedef struct { unsigned references, retired; } PreparedRemovalLifetime;
+static void prepared_removal_retain(void *raw) {
+    ((PreparedRemovalLifetime *)raw)->references++;
+}
+static void prepared_removal_release(void *raw) {
+    PreparedRemovalLifetime *owner=raw;assert(owner->references);
+    if(!--owner->references)owner->retired++;
+}
+
+static void prepared_removal_lifetime_case(void) {
+    for(unsigned publish=0u;publish<2u;publish++) {
+        Arena source,persistent;arena_init(&source);arena_init(&persistent);
+        TermUniverse universe;term_universe_init(&universe);
+        term_universe_set_persistent_arena(&universe,&persistent);
+        Space space;space_init_with_universe(&space,&universe);
+        PreparedRemovalLifetime owner={0};
+        Atom *held=atom_native_handle_identifier(&source,73u,&owner,
+            prepared_removal_retain,prepared_removal_release);
+        Atom *head=atom_symbol(&source,"prepared-removal-held-row");
+        Atom *row=atom_expr2(&source,head,held);assert(row);
+        space_add(&space,row);space_add(&space,row);
+        Atom *pattern=atom_expr2(&source,head,atom_var(&source,"held"));
+        PettaSpacePreparedRemoval prepared;CettaCount selected=0u,removed=0u;
+        CHECK(petta_space_remove_pattern_all_impl(&space,pattern,NULL,&prepared,&selected));
+        CHECK(selected==2u && space_length64(&space)==2u && prepared.receipt_len==2u);
+        CHECK(prepared.effect_prepared && prepared.receipt_storage);
+        CHECK(prepared.receipt_storage->retained_resource_bytes>0u);
+        for(CettaCount i=0u;i<prepared.receipt_len;i++) {
+            Atom *saved=prepared.removed_atoms[i];
+            CHECK(saved->kind==ATOM_EXPR && saved->expr.len==2u &&
+                atom_native_handle_identifier_matches(saved->expr.elems[1],&owner,
+                    prepared_removal_retain,prepared_removal_release));
+        }
+        if(publish) {
+            CHECK(petta_space_prepared_removal_publish(&prepared,&removed));
+            CHECK(removed==2u && space_length64(&space)==0u);
+            CHECK(!petta_space_prepared_removal_publish(&prepared,&removed));
+            space_free(&space);term_universe_free(&universe);
+            arena_free(&persistent);arena_free(&source);
+            CHECK(owner.references>0u && !owner.retired);
+            /* Scoped views may borrow the fallback image instead of copying
+             * its header. The receipt must own that image through teardown. */
+            for(CettaCount i=0u;i<prepared.receipt_len;i++)
+                CHECK(atom_native_handle_identifier_matches(
+                    prepared.removed_atoms[i]->expr.elems[1],&owner,
+                    prepared_removal_retain,prepared_removal_release));
+        }
+        petta_space_prepared_removal_dispose(&prepared);
+        if(!publish) {
+            CHECK(space_length64(&space)==2u);
+            CHECK(petta_space_remove_pattern_limit(&space,pattern,NULL,1u,&removed));
+            CHECK(removed==1u && space_length64(&space)==1u);
+            CHECK(petta_space_remove_pattern_all(&space,pattern,NULL,&removed));
+            CHECK(removed==1u && space_length64(&space)==0u);
+            space_free(&space);term_universe_free(&universe);
+            arena_free(&persistent);arena_free(&source);
+        }
+        CHECK(owner.references==0u && owner.retired==1u);
+    }
+    puts("PASS: prepared removal retains materialized resource rows through publication or cancellation");
+}
+
 static void native_fresh_space_capture_case(void) {
     CettaLibraryContext *library=calloc(1u,sizeof(*library));
     CettaLibraryContext *foreign=calloc(1u,sizeof(*foreign));
@@ -17486,6 +17548,12 @@ int main(int argc, char **argv) {
     SymbolTable symbols;symbol_table_init(&symbols);
     symbol_table_init_builtins(&symbols,&g_builtin_syms);g_symbols=&symbols;
     VarInternTable variables;var_intern_init(&variables);g_var_intern=&variables;g_hashcons=NULL;
+    if (argc==2 && strcmp(argv[1],"--prepared-removal-lifetime")==0) {
+        prepared_removal_lifetime_case();
+        var_intern_free(&variables);g_var_intern=NULL;symbol_table_free(&symbols);g_symbols=NULL;
+        printf("Prepared removal lifetime: %zu checks, %zu failures\n",checks,failures);
+        return failures?1:0;
+    }
     if (argc==2 && strcmp(argv[1],"--readiness-copy")==0) {
         equation_observation_readiness_cases();
         var_intern_free(&variables);g_var_intern=NULL;symbol_table_free(&symbols);g_symbols=NULL;
@@ -17756,6 +17824,7 @@ int main(int argc, char **argv) {
                         distinct!=0u,query_first!=0u,fallback!=0u));
             }
     native_fresh_space_capture_case();
+    prepared_removal_lifetime_case();
     native_capture_observer_contract_case(CETTA_LANGUAGE_HE,cetta_profile_he_extended());
     native_capture_observer_contract_case(CETTA_LANGUAGE_PETTA,cetta_profile_petta_extended());
     sealed_licence_environment_case();

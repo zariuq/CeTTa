@@ -5,6 +5,10 @@
 
 #define MODULE_TUPLE_CATEGORY_PREFIX_V1 "$module:tuple:"
 
+/* Module values are walked recursively. A list written as a cons term nests
+ * one level per element, so the bound must admit whole language packages;
+ * it remains a C stack bound, not a semantic limit. */
+#define MODULE_STRUCTURAL_DEPTH_V1 4096u
 typedef struct { Atom **items; size_t len, capacity; } ModuleValuesV1;
 typedef struct {
     Arena *arena;

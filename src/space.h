@@ -1258,6 +1258,12 @@ Atom *space_occurrence_cursor_receive_atom(const SpaceOccurrenceCursor *cursor,
     CettaIndex index, Arena *arena);
 Atom *space_occurrence_cursor_identity(const SpaceOccurrenceCursor *cursor,
     CettaIndex index, Arena *arena);
+/* Cursor-owned traversal arrays, plus the detached row/mark storage when
+ * INCLUDE_VIEW is true.  Sharing owners pass INCLUDE_VIEW for exactly one
+ * cursor on each view.  Live store rows, shared trie/head indexes and dense
+ * kept-fact storage are not charged to the cursor by this account. */
+size_t space_occurrence_cursor_accounted_bytes(
+    const SpaceOccurrenceCursor *cursor, bool include_view);
 void space_occurrence_cursor_release(SpaceOccurrenceCursor *cursor);
 void space_occurrence_cursor_storage_census(const SpaceOccurrenceCursor *cursor,
                                            CettaStorageCensus *census);
@@ -1790,6 +1796,142 @@ bool space_remove_occurrence_mask_stable(
     Space *s, const uint8_t *remove_mask, CettaCount mask_len,
     CettaCount *out_removed);
 
+/* One prepared primitive store effect.  This is the publication role shared
+ * by add/remove adapters and transform's ordered takes/routing, conceptually
+ * TcPreparedStep plus tc_commit_prepared (not tcalc's ABI or outcome model).
+ * Preparation never publishes.  Borrowed atom/arena inputs must outlive the
+ * preparation; a mask is owned only after its successful preparation.  For a
+ * positional or mask selection, the read token names the exact Space lifetime
+ * and captured prefix.  Appends do not stale that prefix; a prefix rewrite
+ * requires the caller to select again, and is reported separately from no
+ * match and from host failure. */
+typedef enum {
+    SPACE_STORE_EFFECT_ADD = 0,
+    SPACE_STORE_EFFECT_ADD_BATCH,
+    SPACE_STORE_EFFECT_REMOVE_ONE,
+    SPACE_STORE_EFFECT_REMOVE_MASK,
+    SPACE_STORE_EFFECT_REMOVE_POSITIONS,
+} SpaceStoreEffectKind;
+
+typedef enum {
+    SPACE_STORE_BATCH_ALPHA_KEYS = 0,
+    SPACE_STORE_BATCH_DENSE_TUPLES,
+    SPACE_STORE_BATCH_DEEP_HOLES,
+} SpaceStoreBatchKind;
+
+typedef enum {
+    SPACE_STORE_PUBLISH_ERROR = 0,
+    SPACE_STORE_PUBLISH_STALE,
+    SPACE_STORE_PUBLISH_NO_MATCH,
+    SPACE_STORE_PUBLISH_PUBLISHED,
+} SpaceStorePublishResult;
+
+typedef struct {
+    Space *space;
+    SpaceReadToken read;
+    SpaceStoreEffectKind kind;
+    Arena *storage_arena;
+    const Arena *source_arena;
+    Atom *atom;
+    AtomId atom_id;
+    SpaceStoreBatchKind batch_kind;
+    const AtomId *batch_items;
+    const CettaSkeleton *batch_skeleton;
+    SymbolId batch_head;
+    AtomId batch_head_id;
+    uint32_t batch_arity;
+    CettaCount batch_len;
+    uint8_t *remove_mask;
+    CettaCount mask_len;
+    /* Physical rows validated before publication.  Dense relation selections
+     * complement row copies without settling the relation on the exact path. */
+    CettaIndex *remove_positions;
+    CettaIndex *remove_rows;
+    CettaCount remove_row_len;
+    Atom *dense_atom;
+    CettaCount dense_selected;
+    AtomId *remove_ids;
+    uint8_t *remove_id_dense;
+    CettaCount remove_id_len;
+    /* A single exact selection stays in the effect itself.  Null arrays select
+     * these values, so moving the effect structure never leaves self-pointers. */
+    AtomId remove_id_single;
+    uint8_t remove_id_dense_single;
+    CettaCount selected_len;
+    /* Stable under structure-assignment moves; binds an optional receipt to
+     * this preparation rather than to a same-kind operation on the space. */
+    uint64_t preparation_id;
+    bool consumed;
+} SpaceStoreEffect;
+
+/* An optional retained record, not a proof.  Its atoms and array are owned
+ * independently of the source arena, stored rows, and occurrence cursors.
+ * The selected values and their positions are copied before publication;
+ * space instance and committed revision identify the publication scope.
+ * A no-match/stale/error result has no committed items.  An idempotent add
+ * that admits an already-held set row likewise records no new make. */
+typedef struct {
+    Arena owned;
+    Atom **items;
+    CettaIndex *positions;
+    CettaCount len;
+    CettaCount cap;
+    uint64_t space_instance;
+    uint64_t preparation_id;
+    uint64_t committed_revision;
+    SpaceStoreEffectKind kind;
+    bool initialized;
+} SpaceStoreReceipt;
+
+void space_store_effect_init(SpaceStoreEffect *effect);
+void space_store_effect_dispose(SpaceStoreEffect *effect);
+void space_store_receipt_init(SpaceStoreReceipt *receipt);
+void space_store_receipt_dispose(SpaceStoreReceipt *receipt);
+
+bool space_store_effect_prepare_add(
+    SpaceStoreEffect *effect, Space *space, Arena *storage_arena,
+    const Arena *source_arena, Atom *atom, SpaceStoreReceipt *receipt);
+/* Fused public add-atom instances.  These borrowed batch views retain their
+ * native representation and per-instance publication behavior; no receipt is
+ * allocated for a batch without record-level atoms. */
+bool space_store_effect_prepare_add_alpha_keys(
+    SpaceStoreEffect *effect, Space *space, const AtomId *keys,
+    CettaCount count);
+bool space_store_effect_prepare_add_dense_tuples(
+    SpaceStoreEffect *effect, Space *space, SymbolId head, AtomId head_id,
+    uint32_t arity, const AtomId *tuples, CettaCount count);
+bool space_store_effect_prepare_add_deep_holes(
+    SpaceStoreEffect *effect, Space *space, SymbolId head,
+    const CettaSkeleton *skeleton, const AtomId *holes, CettaCount count);
+/* atom_id is the exact-id specialization when known; NONE selects by the
+ * same structural equality as space_remove. */
+bool space_store_effect_prepare_remove_one(
+    SpaceStoreEffect *effect, Space *space, Atom *atom, AtomId atom_id,
+    SpaceStoreReceipt *receipt);
+/* Takes ownership of remove_mask only on success.  selected_len is the
+ * caller's completed mask selection, so an ordinary call need not rescan it.
+ * A ground dense_atom still held in a relation is folded into that mask without
+ * a second logical write.  Receipt recording verifies the claimed count. */
+bool space_store_effect_prepare_remove_mask(
+    SpaceStoreEffect *effect, Space *space, uint8_t *remove_mask,
+    CettaCount mask_len, CettaCount selected_len, Atom *dense_atom,
+    SpaceStoreReceipt *receipt);
+/* Validate ascending logical positions and retain their physical rows.  Takes
+ * ownership of positions only on success.  A ground dense_atom is selected only
+ * when its relation still holds it; appended rows are not implicitly selected. */
+bool space_store_effect_prepare_remove_positions(
+    SpaceStoreEffect *effect, Space *space, const CettaIndex *positions,
+    CettaCount position_len, Atom *dense_atom, SpaceStoreReceipt *receipt);
+/* Exact-index specialization over ground ids.  The id array is copied.  When
+ * dense_atom is non-null it supplies the single id's dense selection; otherwise
+ * each id's relation occurrence is selected independently. */
+bool space_store_effect_prepare_remove_exact(
+    SpaceStoreEffect *effect, Space *space, SymbolId head, const AtomId *ids,
+    size_t count, Atom *dense_atom, SpaceStoreReceipt *receipt);
+SpaceStorePublishResult space_store_effect_publish(
+    SpaceStoreEffect *effect, SpaceStoreReceipt *receipt,
+    CettaCount *out_removed);
+
 /* ── Match Indexing ─────────────────────────────────────────────────────── */
 
 /* Return backend-private candidate coordinates for a match pattern via its
@@ -2045,6 +2187,9 @@ bool space_type_stamps_hold(Space *s, const Atom *atom);
  * get_atom_types answers them) where the store holds or reads them by shape,
  * else -1; and whether one of them is exactly `type`. */
 int space_type_stamps_count(Space *s, Arena *a, Atom *atom);
+/* The same count for get_atom_types_structural's answers: an expression's
+ * own top-level declarations do not count. */
+int space_type_stamps_structural_count(Space *s, Arena *a, Atom *atom);
 /* A prepared pure run's typing scope, read once where it enters: enter
  * returns the enclosing run's space, which leave restores. */
 const Space *space_type_stamps_run_enter(Space *s);

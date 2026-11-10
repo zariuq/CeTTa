@@ -2824,12 +2824,12 @@ static Atom *grounded_parse_text(Arena *a, Atom *head, Atom **args,
         !parser_rest_is_delimiters_n(args[0]->ground.sval, args[0]->ground.slen, &pos))
         return grounded_raise(a, head, args, nargs,
                               atom_symbol(a, "ParseFailed"));
-    extern Registry *eval_current_registry(void) __attribute__((weak));
-    extern Atom *eval_read_registry_words(Registry *, Arena *, Atom *) __attribute__((weak));
-    if (eval_current_language_id &&
-        eval_current_language_id() == CETTA_LANGUAGE_HE &&
-        eval_current_registry && eval_read_registry_words)
-        return eval_read_registry_words(eval_current_registry(), a, parsed);
+    /* HE reads text with the tokens bound before it, as it reads a
+     * program's forms. */
+    if (eval_current_language_id && eval_current_registry &&
+        eval_read_registry_words &&
+        eval_current_language_id() == CETTA_LANGUAGE_HE)
+        parsed = eval_read_registry_words(eval_current_registry(), a, parsed);
     return parsed;
 }
 
@@ -3672,6 +3672,29 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
         return scalar_truth ? atom_true(a) : atom_false(a);
     }
 
+    /* ── Equality of values (any atom type) ──────────────────────────────
+     * Past the scalar cases no operation below reads == or its negation, so
+     * they are answered here rather than after every other operation. */
+    if (head_id == g_builtin_syms.op_eq && nargs == 2) {
+        Atom *left = atom_prime_held_payload(args[0]);
+        Atom *right = atom_prime_held_payload(args[1]);
+        /* In Prime `==` compares authored terms: inferred ownership is not
+         * part of them, and bound names are compared by position, never by
+         * spelling (prime_semantics_binders_eq). */
+        bool equal = eval_current_language_id &&
+                     eval_current_language_id() == CETTA_LANGUAGE_PRIME
+            ? atom_value_eq(left, right) ||
+                  atom_prime_authored_eq(left, right) ||
+                  (prime_semantics_binders_eq &&
+                   prime_semantics_binders_eq(a, left, right))
+            : atom_value_eq(left, right);
+        return equal ? atom_true(a) : atom_false(a);
+    }
+    if (head_id == g_builtin_syms.op_neq && nargs == 2 &&
+        is_grounded_op(head_id)) {
+        return atom_value_eq(args[0], args[1]) ? atom_false(a) : atom_true(a);
+    }
+
     if (head_id == g_builtin_syms.println_bang) {
         if (nargs != 1)
             return grounded_incorrect_arity(a, head, args, nargs);
@@ -4357,26 +4380,6 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
         return atom_expr(a, out, out_len);
     }
 
-    /* ── Equality of values (any atom type) ────────────────────────────── */
-    if (head_id == g_builtin_syms.op_eq && nargs == 2) {
-        Atom *left = atom_prime_held_payload(args[0]);
-        Atom *right = atom_prime_held_payload(args[1]);
-        /* In Prime `==` compares authored terms: inferred ownership is not
-         * part of them, and bound names are compared by position, never by
-         * spelling (prime_semantics_binders_eq). */
-        bool equal = eval_current_language_id &&
-                     eval_current_language_id() == CETTA_LANGUAGE_PRIME
-            ? atom_value_eq(left, right) ||
-                  atom_prime_authored_eq(left, right) ||
-                  (prime_semantics_binders_eq &&
-                   prime_semantics_binders_eq(a, left, right))
-            : atom_value_eq(left, right);
-        return equal ? atom_true(a) : atom_false(a);
-    }
-    if (head_id == g_builtin_syms.op_neq && nargs == 2 &&
-        is_grounded_op(head_id)) {
-        return atom_value_eq(args[0], args[1]) ? atom_false(a) : atom_true(a);
-    }
 
     /* ── Boolean ops ───────────────────────────────────────────────────── */
     if (head_id == g_builtin_syms.op_not) {

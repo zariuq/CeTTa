@@ -1,0 +1,36 @@
+; transform's conditions over a conjunction: absent, unique and collect of a pattern
+; headed by ',' range over its joint matches.  The native firing declines these
+; plans and the authored firing answers them; the answers are the specification's.
+!(import! &self (library lib_transform))
+(= (show $s) (sort-atom (collapse (match $s $a $a))))
+!(bind! &jb (new-space))
+!(add-atom &jb (p 1)) !(add-atom &jb (q 2))
+!(absent-joint (collapse (transform &jb (absent (, (p $x) (q $x))) none)))
+!(add-atom &jb (q 1))
+!(absent-joint-after (collapse (transform &jb (absent (, (p $x) (q $x))) none)))
+!(bind! &ju (new-space))
+!(add-atom &ju (p 1)) !(add-atom &ju (q 1)) !(add-atom &ju (q 2))
+!(unique-joint (collapse (transform &ju (unique (take (, (p $x) (q $x)))) ($x took))))
+!(after-unique-joint (show &ju))
+!(bind! &jk (new-space))
+!(add-atom &jk (p 1)) !(add-atom &jk (q 1)) !(add-atom &jk (p 2)) !(add-atom &jk (q 2))
+!(collect-joint (collapse (transform &jk (collect (, (p $x) (q $x)) $all) (size-atom $all))))
+!(bind! &jl (new-space))
+!(add-atom &jl (p 1)) !(add-atom &jl (q 1)) !(add-atom &jl (p 2)) !(add-atom &jl (q 2)) !(add-atom &jl (r 0))
+!(collect-take-joint (collapse (transform &jl (, (r $n) (collect (take (, (p $x) (q $x))) $all)) (size-atom $all))))
+!(after-collect-take-joint (show &jl))
+; A take-mode collect over a conjunction takes the occurrences that take part in some
+; joint match, each once: every stored copy of each participating atom.  Within one
+; joint match its take positions are distinct occurrences.
+!(bind! &ka (new-space))
+!(add-atom &ka (p 1)) !(add-atom &ka (q 1)) !(add-atom &ka (q 2))
+!(shared-p (collapse (transform &ka (collect (take (, (p $x) (q $y))) $c) (size-atom $c))))
+!(after-shared-p (show &ka))
+!(bind! &kb (new-space))
+!(add-atom &kb (p 1)) !(add-atom &kb (p 1)) !(add-atom &kb (q 1))
+!(copies-p (collapse (transform &kb (collect (take (, (p $x) (q $y))) $c) (size-atom $c))))
+!(after-copies-p (show &kb))
+!(bind! &kc (new-space))
+!(add-atom &kc a)
+!(take-aa-collect (collapse (transform &kc (collect (take (, a a)) $c) $c)))
+!(after-take-aa-collect (show &kc))

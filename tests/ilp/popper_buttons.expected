@@ -1,0 +1,7 @@
+true
+true
+true
+true
+true
+true
+(partial 72 98 28 ((rule "next(V0,V1)" "not_my_true(V0,V1),c_a(V3),c_p(V1),does(V0,V2,V3)") (rule "next(V0,V1)" "c_c(V2),c_p(V1),my_true(V0,V1),does(V0,V3,V2)") (rule "next(V0,V1)" "c_b(V2),c_r(V1),my_true(V0,V1),does(V0,V3,V2)") (rule "next(V0,V1)" "c_a(V2),c_q(V1),my_true(V0,V1),does(V0,V3,V2)") (rule "next(V0,V1)" "c_a(V2),c_r(V1),my_true(V0,V1),does(V0,V3,V2)") (rule "next(V0,V1)" "my_succ(V2,V1),my_true(V0,V2)")))

@@ -1254,7 +1254,7 @@ def real_metamath_gate(
     petta_root: Path,
     generated_c_output: Path | None = None,
 ) -> dict[str, str | list[str]]:
-    source_stream = export_stream(petta_root, ABI_CASES["metamath"])
+    source_stream = export_stream(ABI_CASES["metamath"])
     source = parse_abi_stream(source_stream)
     require(
         len(source.productions) == 441,

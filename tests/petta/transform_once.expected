@@ -1,0 +1,15 @@
+true
+true
+true
+true
+(once-first ((claimed a alice)))
+(jobs-after-first (b))
+(receivers-after-first (bob))
+(second ((claimed b bob)))
+(remaining ())
+true
+true
+(dest-first (1))
+(dest-second (1))
+(dest-remaining ())
+(dest-done (a b))

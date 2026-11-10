@@ -1,0 +1,5 @@
+:- chr_constraint constant/2, seen/1, p/2, matched/0, add/3.
+note @ constant(N,_) ==> seen(N).
+pair @ p(_,_) ==> matched.
+fold @ constant(A,X) \ add(N,A,_) <=> Z is X+X, constant(N,Z).
+?- constant(a,1), p(1,2), add(b,a,7).

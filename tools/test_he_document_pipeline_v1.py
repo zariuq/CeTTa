@@ -34,7 +34,7 @@ from test_he_reader_guarded_lexical_v1 import guard_action_compiler_digest
 from test_he_reader_guarded_lexical_v1 import PROFILE
 from test_he_reader_guarded_lexical_v1 import native_guard_action_answers
 from test_he_reader_guarded_lexical_v1 import native_guarded_answers
-from test_he_reader_guarded_lexical_v1 import petta_guarded_answers
+from test_he_reader_guarded_lexical_v1 import oracle_guarded_answers
 from test_parser_pack_abi_v1 import CASES as ABI_CASES
 from test_parser_pack_abi_v1 import export_stream
 from test_parser_pack_guard_plan_prime_v1 import REGULAR_COMPILER
@@ -57,13 +57,13 @@ from test_semantic_mask_span_compiler_v1 import SEMANTIC_COMPILER_PREFIX
 ROOT = Path(__file__).resolve().parents[1]
 HEX_DIGEST = re.compile(r"[0-9a-f]{64}")
 EXPECTED_MATRIX_DIGEST = (
-    "b2b1dd78a8b4087df48ed71d2b09cfd4d52d6009cd6692e6857a5def8a4f23e1"
+    "693f3a3dcc1dfddf67297c8616a28f28aacf7ccf6af84a4da0d8af592f699d15"
 )
 EXPECTED_SEMANTIC_MASK_ANSWER_DIGEST = (
     "978a1efdabf631d4736d2b0cd7dee832cfe2c40a3d45f8b0eec97fc5b289e4a1"
 )
 EXPECTED_SEMANTIC_MASK_BINDING_DIGEST = (
-    "be9e4de55893f3f7980493d07c10a218a7053b48fc34a3f42705c3b8da3b366e"
+    "4c30e8af2c6ce340ee145bea070fd296c694d64b270feb3d624055fd5f2390d3"
 )
 EXPECTED_MASK_EXECUTION = {
     "word": (1, 5, 5),
@@ -305,7 +305,7 @@ def require_receipt(
         "action-answer-digest": EXPECTED_GUARD_ACTION_ANSWER_DIGEST,
         "action-program-digest": EXPECTED_GUARD_ACTION_PROGRAM_DIGEST,
         "projection-action-program-digest":
-            "1b4e40b04f9f41068b0ad6d22586a253649c47963ada2d8268ef091462d7fb6c",
+            "d8f8e9ac6bcccce34fbd129d293965de68b55975d291e7e65ea0df7cc313bd1b",
         "semantic-mask-compiler-digest":
             EXPECTED_SEMANTIC_MASK_COMPILER_DIGEST,
         "semantic-mask-answer-digest":
@@ -377,14 +377,13 @@ def main() -> int:
         raise GateFailure("prepared HE pipeline binary dependency is absent")
     if not petta_root.is_dir() or not he_root.is_dir():
         raise GateFailure("HE or PeTTa authority checkout is absent")
-    pin_authorities(petta_root, he_root)
+    pin_authorities(he_root)
 
     he_oracle = build_oracle(he_root)
-    abi = export_stream(petta_root, ABI_CASES["he"])
+    abi = export_stream(ABI_CASES["he"])
     source_digest = abi_scalar(abi, "source-digest")
     lexical_terms, _, lexical_agreements = compile_case_tags(
         chart_binary,
-        petta_root,
         dict(PROFILE.lexical_case),
         source_digest,
     )
@@ -393,7 +392,7 @@ def main() -> int:
         str(term) for term in guard_nfa_row(chart_binary, "he")["terms"]
     )
     guarded_terms = native_guarded_answers(chart_binary)
-    petta_source_digest, petta_guarded_terms = petta_guarded_answers(petta_root)
+    petta_source_digest, petta_guarded_terms = oracle_guarded_answers()
     if (
         guarded_terms != petta_guarded_terms
         or petta_source_digest != source_digest
@@ -492,7 +491,7 @@ def main() -> int:
                 authority_agreements += 1
             else:
                 authority_disagreements += 1
-            reference = run_petta(petta_root, input_path)
+            reference = run_petta(input_path)
             decision = expected_decision(expected)
             if reference.get("decision") != decision:
                 raise GateFailure(

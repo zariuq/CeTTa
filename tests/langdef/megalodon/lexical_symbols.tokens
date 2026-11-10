@@ -1,0 +1,126 @@
+BINDER
+(NAM "exists!")
+COMMA
+DEQ
+(NAM "exu")
+DOT
+AXIOM
+(NAM "y1")
+COLON
+(NAM "x")
+MEM
+(NAM "X")
+DOT
+AXIOM
+(NAM "y2")
+COLON
+(NAM "x")
+(NAM "/:e")
+(NAM "X")
+DOT
+AXIOM
+(NAM "y3")
+COLON
+(NAM "X")
+SUBEQ
+(NAM "Y")
+DOT
+AXIOM
+(NAM "y4")
+COLON
+(NAM "X")
+(NAM "/c=")
+(NAM "Y")
+DOT
+AXIOM
+(NAM "y5")
+COLON
+(NAM "x")
+(NAM "<>")
+(NAM "y")
+DOT
+AXIOM
+(NAM "y6")
+COLON
+(NAM "p")
+(NAM "->")
+(NAM "q")
+DOT
+AXIOM
+(NAM "y7")
+COLON
+(NAM "p")
+(NAM "<->")
+(NAM "q")
+DOT
+AXIOM
+(NAM "y8")
+COLON
+(NAM "p")
+(NAM "<=>")
+(NAM "q")
+DOT
+AXIOM
+(NAM "y9")
+COLON
+(NAM "p")
+(NAM "/\\")
+(NAM "q")
+(NAM "\\/")
+(NAM "r")
+DOT
+AXIOM
+(NAM "y10")
+COLON
+(NAM "~")
+(NAM "p")
+DOT
+AXIOM
+(NAM "y11")
+COLON
+(NAM "x")
+(NAM "+")
+(NAM "y")
+(NAM "*")
+(NAM "z")
+(NAM "^")
+(NAM "w")
+(NAM "-")
+(NAM "v")
+DOT
+AXIOM
+(NAM "y12")
+COLON
+(NAM "x")
+(NAM ">=")
+(NAM "y")
+DOT
+AXIOM
+(NAM "y13")
+COLON
+(NAM "x")
+(NAM "<=")
+(NAM "y")
+DOT
+AXIOM
+(NAM "y14")
+COLON
+(NAM "x")
+(NAM "<")
+(NAM "y")
+DOT
+AXIOM
+(NAM "y15")
+COLON
+(NAM "x")
+(NAM ">")
+(NAM "y")
+DOT
+AXIOM
+(NAM "y16")
+COLON
+(NAM "exists!")
+(NAM "x")
+COMMA
+(NAM "p")
+DOT

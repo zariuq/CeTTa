@@ -1,0 +1,22 @@
+Section Eq.
+Variable A:SType.
+Definition eq : A->A->prop := fun x y:A => forall Q:A->A->prop, Q x y -> Q y x.
+Definition neq : A->A->prop := fun x y:A => eq x y -> forall P:prop, P.
+End Eq.
+Infix = 502 := eq.
+Infix <> 502 := neq.
+Section Ex.
+Variable A:SType.
+Definition ex : (A->prop)->prop := fun Q:A->prop => forall P:prop, (forall x:A, Q x -> P) -> P.
+End Ex.
+Binder+ exists , := ex.
+Parameter In:set->set->prop.
+Parameter Empty : set.
+Parameter Union : set->set.
+Parameter Power : set->set.
+Parameter Repl : set -> (set -> set) -> set.
+Notation Repl Repl.
+Definition and : prop -> prop -> prop := fun A B:prop => forall P:prop, (A -> B -> P) -> P.
+Infix /\ 780 left := and.
+Definition Subq : set -> set -> prop := fun A B => forall x :e A, x :e B.
+Infix c= 900 := Subq.

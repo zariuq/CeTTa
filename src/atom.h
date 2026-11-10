@@ -1451,6 +1451,10 @@ void atom_pin_syntax_symbols(const Atom *root);
 /* Initialize borrowed symbol metadata without allocation or an arena owner.
  * Storage must outlive its readers; escaping terms use an owning constructor. */
 void atom_init_symbol(Atom *target, SymbolId sym_id);
+/* An expression read in place over ELEMS, its facts those of its children,
+ * owned by no arena: storage must outlive its readers, as for
+ * atom_init_symbol. */
+void atom_init_expr_view(Atom *target, Atom **elems, CettaExprLen len);
 /* The symbol's one atom owned by the symbol table (no arena): for atoms a
  * compiled program hands to terms that may outlive it.  NULL without a
  * table or for an id it does not hold. */
@@ -1933,6 +1937,12 @@ Atom *atom_empty(Arena *a);     /* Symbol "Empty" */
 Atom *atom_unit(Arena *a);      /* Expression () — empty expr */
 /* The empty expression's one atom for the process, owned by no arena. */
 Atom *atom_unit_canonical(void);
+/* Whether ATOM is one of the atoms no arena owns that live for the process:
+ * a symbol's canonical atom (atom_symbol_canonical) or the empty
+ * expression's (atom_unit_canonical).  Copies into an arena may hand these
+ * out instead of arena atoms, so a check that an atom lies in given arenas
+ * accepts them too. */
+bool atom_process_canonical(const Atom *atom);
 Atom *atom_true(Arena *a);      /* Symbol "True" */
 Atom *atom_false(Arena *a);     /* Symbol "False" */
 

@@ -1,0 +1,56 @@
+(THEOREM "Theorem")
+(NAM "t4")
+COLON
+(NAM "x")
+(NAM "=")
+(NAM "y")
+(NAM "->")
+(NAM "P")
+(NAM "x")
+(NAM "->")
+(NAM "P")
+(NAM "y")
+DOT
+ASSUME
+(NAM "H1")
+(NAM "H2")
+DOT
+(NAM "rewrite")
+(NAM "<-")
+(NAM "H1")
+DOT
+(NAM "rewrite")
+(NAM "H1")
+AT
+(NUM False "2" None None)
+DOT
+(NAM "rewrite")
+(NAM "<-")
+(NAM "H1")
+AT
+(NUM False "1" None None)
+(NUM False "3" None None)
+DOT
+(NAM "cases")
+(NAM "H2")
+COLON
+(NAM "a")
+COLON
+(NAM "A")
+COMMA
+(NAM "b")
+COLON
+(NAM "B")
+VBAR
+(NAM "c")
+COLON
+(NAM "C")
+DOT
+EXACT
+(NAM "a")
+DOT
+EXACT
+(NAM "c")
+DOT
+QED
+DOT

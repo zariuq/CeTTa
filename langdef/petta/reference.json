@@ -293,7 +293,8 @@
     "lib_import.metta": "804bb2bc4af7c8b4889be5d71f3cff378444c1ee5b60b4dd3ddb72f9558757a6",
     "lib_llm.metta": "fafeb4e40e7e06d73ac04827c315b3947c0aa38cd9e5e4865dd11ede33e0695a",
     "lib_memo.metta": "5c045f4c029e041aba98b2719914e7084c60a8357c703f31306460095b69ffc4",
-    "lib_spaces.metta": "7f46468090499e5334b4ff7e2162edd5fd826a453d0cae3533a0bd62b53baa8d"
+    "lib_spaces.metta": "d7dbd3b54389d93c0eee7042fe434b5d6dfd14cf2caaae9afd3ea0a9b3df4c17",
+    "lib_tabling.metta": "85fc944e4edb69c651b48f150e781db418fd326e0d164451c3c19a026664ef4d"
   },
   "native_library_helpers": {
     "lib_import.pl": "src/petta_libpl.c",

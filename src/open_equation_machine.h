@@ -146,6 +146,10 @@ typedef struct {
     bool call_contracts;
     /* PeTTa selects live declarations before entering intrinsic functions. */
     bool declared_builtin_protocol;
+    /* HE's case: a key with no answers is switched on Empty, which a
+     * variable pattern meets.  The machine's case is PeTTa's, where such a
+     * key fails, so a case with a variable arm stays with the host. */
+    bool case_switches_on_empty;
 } CettaOpenEquationHost;
 
 /* Term carriers the compiled region interprets. Sharing is visited once;
@@ -648,6 +652,10 @@ bool cetta_open_equation_cursor_host_goal(
     Atom **destination_out, Atom *const **vars_out,
     uint32_t *var_count_out, const struct PettaPlanNode **plan_out,
     CettaOpenEquationHostMode *mode_out, bool *recovers_out);
+/* Whether the newest host goal is beneath a once, captured before any
+ * terminal cursor transfer. */
+bool cetta_open_equation_cursor_host_first(
+    const CettaOpenEquationCursor *cursor);
 bool cetta_open_equation_cursor_host_return(
     const CettaOpenEquationCursor *cursor, CettaCallOutcome *outcome);
 /* A terminal host goal needs no cursor continuation or alternatives. Its

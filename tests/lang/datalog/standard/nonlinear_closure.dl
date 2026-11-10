@@ -1,0 +1,16 @@
+// Two recursive formulations over the same cyclic input.
+.decl Edge(source:symbol, target:symbol)
+Edge("a","b").
+Edge("b","c").
+Edge("c","a").
+Edge("c","d").
+
+.decl Linear(source:symbol, target:symbol)
+Linear(X,Y) :- Edge(X,Y).
+Linear(X,Z) :- Linear(X,Y), Edge(Y,Z).
+.output Linear
+
+.decl Nonlinear(source:symbol, target:symbol)
+Nonlinear(X,Y) :- Edge(X,Y).
+Nonlinear(X,Z) :- Nonlinear(X,Y), Nonlinear(Y,Z).
+.output Nonlinear

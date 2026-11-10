@@ -1,0 +1,168 @@
+unsat
+rup 3 : : 1
+===
+sat 0
+===
+unsat
+rup 7 : 1 : 1 2 5
+rup 8 : : 7 4 6 3
+===
+sat
+===
+sat 2
+===
+unsat
+rup 11 : : 7 8 10 1 6
+===
+sat 0
+===
+sat 2 4
+===
+unsat
+rup 16 : 2 : 2 3 14
+rup 17 : : 10 1 8 12 16 11 15 9
+===
+unsat
+rup 17 : : 10 4 9 11 15
+===
+unsat
+rup 21 : : 3 4
+===
+sat 2
+===
+sat 3 5
+===
+sat 1
+===
+sat 0
+===
+sat 0 4
+===
+sat 1 4 2 5
+===
+unsat
+rup 10 : : 5
+===
+sat 3 2
+===
+sat 4
+===
+sat 2 1
+===
+unsat
+rup 14 : : 1 10 5 13
+===
+unsat
+rup 23 : -2 1 : 2 1
+rup 24 : : 9 21 14 23 4 19 13 15 16
+===
+sat 0
+===
+unsat
+rup 13 : : 6 8 10 4 11
+===
+unsat
+rup 9 : : 1
+===
+sat 3
+===
+sat 0 2
+===
+unsat
+rup 29 : : 11
+===
+sat 0
+===
+sat 1 3
+===
+sat 0 1 3
+===
+sat 1 5 2
+===
+sat 1 2
+===
+sat 3 0
+===
+sat 2
+===
+sat
+===
+unsat
+rup 9 : : 1
+===
+unsat
+rup 21 : : 1 11 17 4 20 8 18 15
+===
+sat 0 3
+===
+unsat
+loop 27 : -1 -5 : 0 3 : 0
+loop 28 : -4 -5 : 0 3 : 3
+rup 29 : 4 3 : 17 18
+rup 30 : : 16 15 27 28 1 14 13 29 19 24
+===
+sat 1 2
+===
+unsat
+rup 16 : : 1
+===
+sat 2 1
+===
+sat 2
+===
+sat 0
+===
+unsat
+rup 13 : : 7
+===
+sat 4 3 0 2
+===
+unsat
+rup 20 : : 14 16 15 18
+===
+sat 0 3
+===
+sat 4 0 3
+===
+unsat
+rup 17 : : 13 15 5 10 12 16
+===
+sat 0 2 4
+===
+sat 0 2 5
+===
+unsat
+rup 13 : : 3
+===
+sat 2 0
+===
+sat 4 1 2
+===
+sat 0 2
+===
+sat 2 1 3
+===
+sat 4 2 1
+===
+unsat
+rup 17 : : 7
+===
+sat 2 1
+===
+sat 2 0 5
+===
+unsat
+rup 16 : -3 2 : 8 7
+rup 17 : : 11 6 13 16 10 14
+===
+unsat
+rup 25 : : 5 15 14 13 24
+===
+sat 1 3 5
+===
+sat 1 2
+===
+sat 0 3
+===
+sat 4 2 1
+===

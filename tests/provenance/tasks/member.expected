@@ -1,0 +1,10 @@
+(example 1)
+((m identity f head) (m tailrec f tail))
+(example 2)
+((m identity f head))
+(example 3)
+((m identity f head) (m tailrec f tail))
+(example 4)
+((m identity f head) (m tailrec f tail))
+true
+()

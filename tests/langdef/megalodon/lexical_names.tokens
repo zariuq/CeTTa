@@ -1,0 +1,44 @@
+AXIOM
+(NAM "x'")
+COLON
+(NAM "x''")
+DOT
+AXIOM
+(NAM "_a1")
+COLON
+(NAM "a_1'b")
+DOT
+AXIOM
+(NAM "atom")
+COLON
+(NAM "letter")
+DOT
+AXIOM
+(NAM "Theoremx")
+COLON
+(NAM "Lemmas")
+DOT
+AXIOM
+(NAM "ifp")
+COLON
+(NAM "thenq")
+DOT
+AXIOM
+(NAM "'+-'")
+COLON
+(NAM "'")
+(NAM ":=:")
+(NAM "'")
+DOT
+AXIOM
+(NAM "q")
+COLON
+(NAM ":+:")
+(NAM "x")
+DOT
+AXIOM
+(NAM "r")
+COLON
+(NAM ":/\\:")
+(NAM "x")
+DOT

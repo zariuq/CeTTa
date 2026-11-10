@@ -28,6 +28,7 @@ from test_he_reader_guard_exec_v1 import parse_native_output
 from test_parser_pack_abi_v1 import CASES as ABI_CASES
 from test_parser_pack_guard_compiler_v1 import COMPILER as GUARD_COMPILER
 from test_parser_pack_guard_regular_v1 import COMPILER as REGULAR_COMPILER
+from gslt2parse_oracles_v1 import ORACLES
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -387,13 +388,8 @@ def run_checked(command: list[str], *, cwd: Path, timeout: int = 180) -> bytes:
     return completed.stdout
 
 
-def export_abi(petta_root: Path, presentation_root: Path) -> bytes:
-    exporter = (
-        petta_root
-        / "experiments"
-        / "gslt2parse_foundation"
-        / "parser_pack_abi_export_v1.pl"
-    )
+def export_abi(presentation_root: Path) -> bytes:
+    exporter = ORACLES / "parser_pack_abi_export_v1.pl"
     stream = run_checked(
         [
             "swipl",
@@ -440,13 +436,8 @@ def chart_query(
     return result
 
 
-def petta_guard_row(petta_root: Path, presentation_root: Path) -> dict[str, object]:
-    script = (
-        petta_root
-        / "experiments"
-        / "gslt2parse_foundation"
-        / "test_parser_pack_guard_compiler_v1.pl"
-    )
+def petta_guard_row(presentation_root: Path) -> dict[str, object]:
+    script = ORACLES / "test_parser_pack_guard_compiler_v1.pl"
     output = run_checked(
         ["swipl", "-q", "-f", str(script), "--", str(presentation_root)],
         cwd=script.parent,
@@ -467,7 +458,6 @@ def petta_guard_row(petta_root: Path, presentation_root: Path) -> dict[str, obje
 
 def guard_artifacts(
     chart_binary: Path,
-    petta_root: Path,
     presentation_root: Path,
 ) -> tuple[tuple[str, ...], bytes]:
     guard = chart_query(
@@ -487,7 +477,7 @@ def guard_artifacts(
         or len(certificates) != 3
     ):
         raise GateFailure("mutated HE positive-guard compilation changed shape")
-    reference = petta_guard_row(petta_root, presentation_root)
+    reference = petta_guard_row(presentation_root)
     if (
         reference.get("count") != 3
         or reference.get("digest") != guard.get("term_digest")
@@ -532,14 +522,9 @@ def guard_artifacts(
 
 
 def petta_decision(
-    petta_root: Path, presentation_root: Path, input_path: Path
+    presentation_root: Path, input_path: Path
 ) -> dict[str, object]:
-    script = (
-        petta_root
-        / "experiments"
-        / "gslt2parse_foundation"
-        / "he_reader_gslt_reference_v1.pl"
-    )
+    script = ORACLES / "he_reader_gslt_reference_v1.pl"
     output = run_checked(
         [
             "swipl",
@@ -635,7 +620,6 @@ def run_mutant(
     expected_decision: str,
     chart_binary: Path,
     exec_binary: Path,
-    petta_root: Path,
     baseline_source_digest: str,
 ) -> int:
     with tempfile.TemporaryDirectory(
@@ -652,16 +636,16 @@ def run_mutant(
         source_digest = package_digest(admitted)
         if source_digest == baseline_source_digest:
             raise GateFailure(f"{label}: source mutation retained its digest")
-        abi = export_abi(petta_root, presentation_root)
+        abi = export_abi(presentation_root)
         fields, _ = abi_fields(abi)
         if fields.get("source-digest") != source_digest:
             raise GateFailure(f"{label}: compiled ABI lost source identity")
         guard_terms, evidence = guard_artifacts(
-            chart_binary, petta_root, presentation_root
+            chart_binary, presentation_root
         )
         input_path = directory / "reference-input.metta"
         input_path.write_bytes(input_bytes)
-        reference = petta_decision(petta_root, presentation_root, input_path)
+        reference = petta_decision(presentation_root, input_path)
         if reference.get("decision") != expected_decision:
             raise GateFailure(
                 f"{label}: PeTTa mutation decision is "
@@ -734,7 +718,7 @@ def main() -> int:
         tuple(PRESENTATIONS / path for path in HE_SOURCES)
     )
     source_digest = package_digest(admitted)
-    abi = export_abi(petta_root, PRESENTATIONS)
+    abi = export_abi(PRESENTATIONS)
     fields, compiled_specs = abi_fields(abi)
     if fields.get("source-digest") != source_digest:
         raise GateFailure("compiled HE ABI source digest differs from source")
@@ -759,7 +743,6 @@ def main() -> int:
         "rejected",
         chart_binary,
         exec_binary,
-        petta_root,
         source_digest,
     )
     mutations += run_mutant(
@@ -769,7 +752,6 @@ def main() -> int:
         "accepted",
         chart_binary,
         exec_binary,
-        petta_root,
         source_digest,
     )
 

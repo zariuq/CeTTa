@@ -1,0 +1,13 @@
+true
+((a b c p) (a b p) (a c p) (a p) (b c p) (b p) (c p) (p))
+(() (a b c p) (a b p) (a c p) (a p) (b c p) (b p) (c p))
+(() (a) (a b) (a b c p) (a c) (b) (b c) (c))
+(() (a) (a b) (a b c) (a c) (b) (b c) (c))
+(() (a) (b) (c))
+(() (a b) (a b c p) (a c p) (a p) (b) (b c) (c p))
+((p) (q))
+((a b two) (a c two) (b c two))
+(() (a b c) (a c) (b c) (c))
+(() (q))
+((a))
+(Error (__cetta_lib_asp_solve ((weight-rule p 2 ((a -1)) ()))) "a statement is (rule H (P ...) (N ...)), (choice A (P ...) (N ...)), (constraint (P ...) (N ...)), (disjunction (H ...) (P ...) (N ...)) or a weight statement")

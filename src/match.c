@@ -572,6 +572,35 @@ static inline bool match_shared_ground_reflexivity_try(
     return true;
 }
 
+/* Structural equality of two ground atoms that opens at most *budget pairs
+ * of expressions and none whose atoms are shared: 1 equal, 0 unequal, -1 when
+ * the bound runs out or a rational view needs its own walk.  It agrees with
+ * the active read-view equality wherever it decides. */
+#define MATCH_GROUND_EQUAL_SHARED_BUDGET 256u
+
+static int match_ground_equal_shared(Atom *left, Atom *right,
+                                     uint32_t *budget) {
+    if (left == right && !atom_structural_may_have_nan(left))
+        return 1;
+    if (atom_structural_has_rational(left) ||
+        atom_structural_has_rational(right))
+        return -1;
+    if (left->kind != ATOM_EXPR || right->kind != ATOM_EXPR)
+        return atom_eq_with_resolved_spaces(left, right) ? 1 : 0;
+    if (left->expr.len != right->expr.len)
+        return 0;
+    if (*budget == 0u)
+        return -1;
+    (*budget)--;
+    for (CettaExprIndex index = 0u; index < left->expr.len; index++) {
+        int child = match_ground_equal_shared(
+            left->expr.elems[index], right->expr.elems[index], budget);
+        if (child != 1)
+            return child;
+    }
+    return 1;
+}
+
 /* Two finite ground expressions have no substitution effect.  Interned
  * closed DAGs already factor through identity/hash; eval-heap trees use
  * structural equality once acyclicity is certified. */
@@ -589,6 +618,16 @@ static bool match_finite_ground_equal_try(
         !atom_structural_has_rational(left) &&
         !atom_structural_has_rational(right)) {
         *equal_out = false;
+        return true;
+    }
+    /* Shared subterms are equal without a walk, so a value rebuilt around
+     * another's parts, as a returned result is around the rest of its
+     * input, is decided by the few pairs that differ.  The bound keeps this
+     * finite on any graph; past it, the audit below decides. */
+    uint32_t budget = MATCH_GROUND_EQUAL_SHARED_BUDGET;
+    int shared = match_ground_equal_shared(left, right, &budget);
+    if (shared >= 0) {
+        *equal_out = shared == 1;
         return true;
     }
     if (!match_occurrence_is_finite_dag(left) ||
@@ -7779,6 +7818,21 @@ bool bindings_builder_payloads_satisfy(const BindingsBuilder *bb,
     return true;
 }
 
+size_t bindings_builder_owned_vector_bytes(const BindingsBuilder *bb) {
+    if (!bb)
+        return 0u;
+    size_t bytes = 0u;
+    bytes += (size_t)bb->current.cap * sizeof(*bb->current.entries);
+    bytes += (size_t)bb->current.eq_cap * sizeof(*bb->current.constraints);
+    bytes += (size_t)bb->owner_undo_cap * sizeof(*bb->owner_undo);
+    bytes += (size_t)bb->trail_cap * sizeof(*bb->trail);
+    bytes += (size_t)bb->frame_undo_cap * sizeof(*bb->frame_undo);
+    bytes += (size_t)bb->frame_registration_undo_cap *
+        sizeof(*bb->frame_registration_undo);
+    bytes += (size_t)bb->prime_trail_cap * sizeof(*bb->prime_trail);
+    return bytes;
+}
+
 void bindings_builder_free(BindingsBuilder *bb) {
     bindings_builder_discard_owner_history(bb);
     free(bb->owner_undo);
@@ -9061,12 +9115,19 @@ static bool bindings_captured_support_present(const Atom *atom, void *unused) {
     return !captured || captured->support_count != 0u;
 }
 
+/* A captured bindings value is identity-bearing, and the flag rises to every
+ * expression holding one: a subterm without it holds none. */
+static bool bindings_support_barrier(const Atom *atom, void *unused) {
+    (void)unused;
+    return !atom_has_identity_grounded(atom);
+}
+
 bool bindings_value_has_captured_support(const Atom *value) {
     if (!value || !atom_has_identity_grounded(value))
         return false;
     bool complete = false;
     bool found = atom_graph_any_checked(value, bindings_captured_support_present,
-        NULL, NULL, SIZE_MAX, &complete);
+        bindings_support_barrier, NULL, SIZE_MAX, &complete);
     return !complete || found;
 }
 

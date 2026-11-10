@@ -1,0 +1,35 @@
+; Folds over sealed-closed sorts.  Nil and Cons, Z and S keep their usual
+; declarations, no other symbol offers a list or Nat, and the folds are
+; typed at the sort, so in ai every ground argument that passes a fold's
+; check is a spine of the sort's cells and the fold walks it without the
+; cell test.  A held call never passes the check (the last two rows), so it
+; never reaches the walk: there it would read (build 5 Nil) as a cell.
+(: List (-> Type Type))
+(: Nil (List $a))
+(: Cons (-> $a (List $a) (List $a)))
+(: build (-> Number (List Number) (List Number)))
+(= (build $n $acc) (if (== $n 0) $acc (build (- $n 1) (Cons $n $acc))))
+(: sum (-> (List Number) Number))
+(= (sum Nil) 0)
+(= (sum (Cons $x $xs)) (+ $x (sum $xs)))
+(: len (-> (List Number) Number))
+(= (len Nil) 0)
+(= (len (Cons $x $xs)) (+ 1 (len $xs)))
+(: Nat Type)
+(: Z Nat)
+(: S (-> Nat Nat))
+(: fromint (-> Number Nat))
+(= (fromint $n) (if (== $n 0) Z (S (fromint (- $n 1)))))
+(: toint (-> Nat Number))
+(= (toint Z) 0)
+(= (toint (S $k)) (+ 1 (toint $k)))
+(: hold (-> Atom Atom))
+(= (hold $x) $x)
+!(sum (build 100 Nil))
+!(len (build 100 Nil))
+!(toint (fromint 100))
+!(sum Nil)
+!(toint Z)
+!(sum (Cons 1 (Cons 2 Nil)))
+!(sum (hold (build 5 Nil)))
+!(toint (hold (fromint 3)))

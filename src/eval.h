@@ -569,6 +569,14 @@ bool eval_petta_structural_version(Space *space, SymbolId head,
  * once, by the intrinsic type service's bound query. */
 bool eval_petta_value_typed_once(Space *space, Atom *value, Atom *type)
     __attribute__((weak));
+/* Whether the active session is PeTTa's ai profile, whose type relation types
+ * an application of a function by its tuple type only (sealed sorts). */
+bool eval_petta_sealed_sorts(void) __attribute__((weak));
+/* Whether HEAD names a function in PeTTa: the program defines an equation
+ * headed by it, or it is a registered builtin.  These are the symbols whose
+ * get-metatype is Grounded, the truth values aside. */
+bool eval_petta_head_is_function(Space *space, SymbolId head)
+    __attribute__((weak));
 /* The shared profile-aware HE type inference engine. Returned arrays are heap
    allocated and must be freed by the caller; atoms live in `a`. */
 uint32_t eval_get_atom_types_profiled(Space *s, Arena *a, Atom *atom,
@@ -728,7 +736,7 @@ bool eval_payload_space_redirect_at(CettaCount idx, Space **orig,
 CettaCount eval_payload_state_redirect_count(void);
 bool eval_payload_state_redirect_at(CettaCount idx, StateCell **orig,
                                     StateCell **redirect);
-Registry *eval_current_registry(void);
+Registry *eval_current_registry(void) __attribute__((weak));
 /* Base PeTTa protects the default program's static primitive predicates.
  * Named owners and extended profiles admit their own equations. */
 bool eval_petta_builtin_definition_protected(
@@ -746,7 +754,8 @@ Atom *eval_capture_registry_tokens(Registry *registry, Arena *a, Atom *atom);
 /* Put the HE whole-word tokens, including &-names, into a newly read form.
  * Inserted values are not traversed or interpreted as further source text.
  * Returns `atom` itself when nothing in it is bound. */
-Atom *eval_read_registry_words(Registry *registry, Arena *a, Atom *atom);
+Atom *eval_read_registry_words(Registry *registry, Arena *a, Atom *atom)
+    __attribute__((weak));
 
 /* Nonexecuting Prime judgment view in the active owned world. Inspection
  * follows only permitted immutable origins; explicit promises stay values.

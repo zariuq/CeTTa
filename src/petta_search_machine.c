@@ -15,9 +15,11 @@
 #include "foreign_provider.h"
 #include "foreign.h"
 #include "library_pattern.h"
+#include "library_transform.h"
 #include "match.h"
 #include "binding/term_cursor.h"
 #include "petta_semantics.h"
+#include "transform_core.h"
 #include "petta_type_policy.h"
 #include "petta_specializer.h"
 #include "petta_typecheck_census.h"
@@ -208,6 +210,8 @@ typedef struct {
     uint64_t memo_key_bytes;
     uint64_t retained_bytes;
     PettaMemoAggregateMode memo_aggregate_mode;
+    /* tabled-lattice: min or max; SYMBOL_ID_NONE for a plain table. */
+    SymbolId lattice_join;
     bool tarjan_on_stack;
     bool self_edge;
     bool memoized;
@@ -4573,10 +4577,88 @@ static PettaTableRoundSlot *petta_table_round_slot(
  * are counted in one transient table.  An ordinary table keeps one
  * occurrence of each answer; a memo table keeps the occurrences a round
  * derives beyond those already retained. */
+/* A lattice table keeps, for each instance of its call, the join of the
+ * values derived for it (SWI's mode-directed tabling): a value that changes
+ * the join is a new answer, one that does not is not.  The join is min or
+ * max in the standard order of terms, or a function of two arguments, its
+ * values joined before the merge (petta_table_lattice_join_round).  Superseded answers stay until the
+ * table completes (consumers inside the fixpoint may read them, as in SWI);
+ * completion keeps each instance's last, which is its join. */
+static bool petta_table_lattice_native(SymbolId join) {
+    return symbol_eq_cstr(g_symbols, join, "min") || symbol_eq_cstr(g_symbols, join, "max");
+}
+
+/* Whether VALUE, joined with BEST already (a user join's round answers are
+ * joined before the merge), changes the instance's join. */
+static bool petta_table_lattice_improves(SymbolId join, Atom *value, Atom *best) {
+    if (!petta_table_lattice_native(join))
+        return !atom_eq(value, best);
+    int ordering = 0;
+    if (!petta_semantics_term_compare(value, best, &ordering))
+        return false;
+    return symbol_eq_cstr(g_symbols, join, "max") ? ordering > 0 : ordering < 0;
+}
+
+static bool petta_table_merge_lattice(
+    PettaTableShared *shared, size_t entry_index,
+    Atom *const *answers, size_t answer_len,
+    PettaTableStats *stats, bool *changed) {
+    bool ok = true;
+    for (size_t index = 0u; ok && index < answer_len; index++) {
+        PettaTableEntry *entry = &shared->entries[entry_index];
+        Atom *record = answers[index];
+        if (!record || record->kind != ATOM_EXPR || record->expr.len != 2u)
+            return false;
+        if (stats)
+            stats->merge_answers++;
+        Atom *best = NULL;
+        for (size_t at = entry->answer_len; at > 0u && !best; at--) {
+            Atom *old = entry->answers[at - 1u];
+            if (old && old->kind == ATOM_EXPR && old->expr.len == 2u &&
+                atom_eq(old->expr.elems[0], record->expr.elems[0]))
+                best = old->expr.elems[1];
+        }
+        if (best && !petta_table_lattice_improves(
+                entry->lattice_join, record->expr.elems[1], best))
+            continue;
+        Atom *key = petta_table_record_index_key(entry, record);
+        if (!key)
+            return false;
+        ok = petta_table_append_answer(shared, entry_index, record,
+                                       petta_table_key_hash(key), stats);
+        if (ok)
+            *changed = true;
+    }
+    return ok;
+}
+
+/* At completion, a lattice table keeps each instance's last answer, the
+ * join of its values, in the order the instances first appeared. */
+static void petta_table_lattice_compact(PettaTableEntry *entry) {
+    size_t kept = 0u;
+    for (size_t at = 0u; at < entry->answer_len; at++) {
+        Atom *record = entry->answers[at];
+        bool later = false;
+        for (size_t next = at + 1u; next < entry->answer_len && !later; next++)
+            later = atom_eq(entry->answers[next]->expr.elems[0], record->expr.elems[0]);
+        if (!later)
+            entry->answers[kept++] = record;
+    }
+    if (kept != entry->answer_len && entry->factor) {
+        /* positions moved: lookups scan */
+        entry->factor->index = NULL;
+        entry->factor->index_extent = 0u;
+    }
+    entry->answer_len = kept;
+}
+
 static bool petta_table_merge_counted(
     PettaTableShared *shared, size_t entry_index,
     Atom *const *answers, size_t answer_len,
     PettaTableStats *stats, bool *changed) {
+    if (shared->entries[entry_index].lattice_join != SYMBOL_ID_NONE)
+        return petta_table_merge_lattice(shared, entry_index, answers,
+                                         answer_len, stats, changed);
     PettaTableEntry *entry = &shared->entries[entry_index];
     size_t items = entry->answer_len + answer_len;
     size_t capacity = 16u;
@@ -4640,6 +4722,10 @@ static __attribute__((noinline)) bool petta_table_merge_round_answers(
         return false;
     if (answer_len == 0u && forward_entry == PETTA_TABLE_ENTRY_NONE)
         return true;
+    if (shared->entries[entry_index].lattice_join != SYMBOL_ID_NONE &&
+        forward_entry == PETTA_TABLE_ENTRY_NONE)
+        return petta_table_merge_lattice(shared, entry_index, answers,
+                                         answer_len, stats, changed);
     PettaTableRoundSlot *round = NULL;
     size_t capacity = 0u;
     PettaTableEntry *merging = &shared->entries[entry_index];
@@ -17802,6 +17888,26 @@ static bool petta_machine_start_once(
         *failure = PETTA_MACHINE_STEP_CAPACITY;
         return false;
     }
+    SymbolId body_head = atom_head_symbol_id(body);
+    CettaExprLen body_arity = body->kind == ATOM_EXPR
+        ? body->expr.len - 1u : 0u;
+    if ((body_head == atom_symbol_literal_id("transform") &&
+         (body_arity == 3u || body_arity == 4u)) ||
+        (body_head == atom_symbol_literal_id("tf:run") && body_arity == 4u)) {
+        OutcomeSet *first = cetta_malloc(sizeof(*first));
+        if (!first) {
+            *failure = PETTA_MACHINE_STEP_CAPACITY;
+            return false;
+        }
+        outcome_set_init_with_owner(first, &machine->heap);
+        if (cetta_eval_transform_first(machine->space, &machine->heap, body,
+                                       first)) {
+            return petta_machine_start_outcome_choice(
+                machine, first, expected, barrier);
+        }
+        outcome_set_free(first);
+        free(first);
+    }
 
     size_t entry_choice_len = machine->choice_len;
     PettaChoice choice = {
@@ -19217,6 +19323,8 @@ static void petta_machine_stats_accumulate(
         source->table_generator_rounds_reused;
     target->table_scc_completions +=
         source->table_scc_completions;
+    target->table_scc_merges +=
+        source->table_scc_merges;
     target->table_answer_replays +=
         source->table_answer_replays;
     target->count_aggregate_answers +=
@@ -19435,11 +19543,95 @@ static void petta_table_complete_suffix(
             continue;
         PettaTableEntry *entry =
             &shared->entries[entry_index];
+        if (entry->lattice_join != SYMBOL_ID_NONE &&
+            entry->state != PETTA_TABLE_ENTRY_COMPLETE)
+            petta_table_lattice_compact(entry);
         entry->state = PETTA_TABLE_ENTRY_COMPLETE;
         entry->tarjan_on_stack = false;
     }
     petta_table_retire_rounds(shared, begin, shared->tarjan_len);
     shared->tarjan_len = begin;
+}
+
+/* (JOIN BEST VALUE), evaluated by a machine of its own over the same space
+ * without the table store (a join reads no table of the fixpoint it serves):
+ * its one value, copied to OUT, or NULL when it gives none or several. */
+static Atom *petta_table_lattice_user_join(PettaMachineImpl *machine, SymbolId join,
+                                           Atom *best, Atom *value, Arena *out) {
+    Arena answers;
+    arena_init(&answers);
+    Atom *items[3] = {atom_symbol_id(&answers, join), best, value};
+    Atom *query = items[0] ? atom_expr(&answers, items, 3u) : NULL;
+    PettaMachineHost host = machine->host;
+    host.shared_table = NULL;
+    PettaMachine nested;
+    Atom *result = NULL;
+    size_t count = 0u;
+    if (query && petta_machine_init(&nested, machine->space, &answers, query, NULL, &host)) {
+        for (;;) {
+            Atom *answer = NULL;
+            Bindings environment;
+            bindings_init(&environment);
+            PettaMachineStep step = petta_machine_next(&nested, &answer, &environment);
+            bindings_free(&environment);
+            if (step == PETTA_MACHINE_STEP_ANSWER) {
+                if (count++ == 0u)
+                    result = atom_deep_copy(out, answer);
+                if (count > 1u)
+                    break;
+                continue;
+            }
+            if (step != PETTA_MACHINE_STEP_EXHAUSTED)
+                count = 2u;
+            break;
+        }
+        petta_machine_destroy(&nested);
+    }
+    arena_free(&answers);
+    return count == 1u ? result : NULL;
+}
+
+/* A user join's round: each answer (I V) becomes (I J), J the join of the
+ * instance's value so far (the table's, or an earlier answer of the round)
+ * with V, and is dropped when J is that value.  False when the join does
+ * not give exactly one value. */
+static bool petta_table_lattice_join_round(PettaMachineImpl *machine, size_t entry_index,
+                                           Atom **answers, size_t *len) {
+    SymbolId join = machine->table_shared->entries[entry_index].lattice_join;
+    size_t kept = 0u;
+    for (size_t i = 0u; i < *len; i++) {
+        Atom *record = answers[i];
+        if (!record || record->kind != ATOM_EXPR || record->expr.len != 2u)
+            return false;
+        Atom *best = NULL;
+        for (size_t at = kept; at > 0u && !best; at--)
+            if (atom_eq(answers[at - 1u]->expr.elems[0], record->expr.elems[0]))
+                best = answers[at - 1u]->expr.elems[1];
+        const PettaTableEntry *entry = &machine->table_shared->entries[entry_index];
+        for (size_t at = entry->answer_len; at > 0u && !best; at--) {
+            Atom *old = entry->answers[at - 1u];
+            if (old && old->kind == ATOM_EXPR && old->expr.len == 2u &&
+                atom_eq(old->expr.elems[0], record->expr.elems[0]))
+                best = old->expr.elems[1];
+        }
+        if (!best) {
+            answers[kept++] = record;
+            continue;
+        }
+        Atom *joined = petta_table_lattice_user_join(machine, join, best,
+                                                     record->expr.elems[1], &machine->heap);
+        if (!joined)
+            return false;
+        if (atom_eq(joined, best))
+            continue;
+        Atom *items[2] = {record->expr.elems[0], joined};
+        Atom *rebuilt = atom_expr(&machine->heap, items, 2u);
+        if (!rebuilt)
+            return false;
+        answers[kept++] = rebuilt;
+    }
+    *len = kept;
+    return true;
 }
 
 static inline void petta_table_choice_complete_component(
@@ -19449,11 +19641,49 @@ static inline void petta_table_choice_complete_component(
     choice->as.table.phase = PETTA_TABLE_CHOICE_REPLAY;
 }
 
+/* The lowest stack position read by a member of the component that starts at
+ * `begin`.  Iterating a component can make calls its first round did not: an
+ * answer binds an argument, and the call it makes may read an older table
+ * still on the stack.  Below `begin`, the component belongs to that table's. */
+static size_t petta_table_component_lowlink(const PettaTableShared *shared,
+                                            size_t begin) {
+    size_t lowest = begin;
+    for (size_t rank = begin; rank < shared->tarjan_len; rank++) {
+        size_t entry_index = shared->tarjan_stack[rank];
+        if (entry_index < shared->entry_len &&
+            shared->entries[entry_index].tarjan_lowlink < lowest)
+            lowest = shared->entries[entry_index].tarjan_lowlink;
+    }
+    return lowest;
+}
+
+/* A fixed point completes the component only while it leads.  A component
+ * that has come to read an older table on the stack is joined to that
+ * table's: its members stay on the stack, the older leader's iteration runs
+ * them to the joint fixed point, and this call answers what its table holds
+ * so far, as a member's call does after its first round.  Completing here
+ * would freeze answers computed from the older table's partial answers. */
 static inline void petta_table_choice_complete_fixpoint(
     PettaMachineImpl *machine, PettaChoice *choice) {
+    PettaTableShared *shared = machine->table_shared;
     if (choice->as.table.schedule)
-        petta_table_release_schedule(machine->table_shared, &choice->as.table.schedule);
-    petta_table_choice_complete_component(machine, choice, choice->as.table.scc_begin);
+        petta_table_release_schedule(shared, &choice->as.table.schedule);
+    size_t begin = choice->as.table.scc_begin;
+    size_t lowest = begin < shared->tarjan_len
+        ? petta_table_component_lowlink(shared, begin) : begin;
+    if (lowest < begin) {
+        size_t leader = shared->tarjan_stack[begin];
+        shared->entries[leader].tarjan_lowlink = lowest;
+        petta_table_record_child_completion(
+            shared, choice->as.table.parent_entry, leader);
+        machine->stats.table_scc_merges++;
+        choice->as.table.phase = PETTA_TABLE_CHOICE_REPLAY;
+        choice->as.table.iteration_entry = choice->as.table.requested_entry;
+        choice->as.table.scc_begin = PETTA_TABLE_ENTRY_NONE;
+        choice->as.table.scc_cursor = PETTA_TABLE_ENTRY_NONE;
+        return;
+    }
+    petta_table_choice_complete_component(machine, choice, begin);
 }
 
 static bool petta_table_choice_begin_generator(
@@ -19956,6 +20186,14 @@ static bool petta_table_choice_drive_generator(
     PettaTableEntry *entry =
         &machine->table_shared
              ->entries[choice->as.table.iteration_entry];
+    if (entry->lattice_join != SYMBOL_ID_NONE &&
+        !petta_table_lattice_native(entry->lattice_join) &&
+        !petta_table_lattice_join_round(machine, choice->as.table.iteration_entry,
+            choice->as.table.round_answers, &choice->as.table.round_len)) {
+        *failure = PETTA_MACHINE_STEP_HOST_ERROR;
+        return false;
+    }
+    entry = &machine->table_shared->entries[choice->as.table.iteration_entry];
     bool merged = petta_table_merge_round_answers(
         machine->table_shared, choice->as.table.iteration_entry,
         choice->as.table.round_answers,
@@ -20140,6 +20378,8 @@ static PettaTableForwardAdmission petta_table_forward_admission(
         return PETTA_TABLE_FORWARD_CONTINUATION;
     const PettaTableEntry *parent = &shared->entries[owner];
     if (choice->as.table.memoized || parent->memoized ||
+        parent->lattice_join != SYMBOL_ID_NONE ||
+        requested->lattice_join != SYMBOL_ID_NONE ||
         choice->as.table.aggregate_mode != PETTA_MEMO_AGGREGATE_NONE ||
         choice->as.table.replay_initial_answers)
         return PETTA_TABLE_FORWARD_POLICY;
@@ -25670,6 +25910,9 @@ static bool petta_machine_start_tabled_call(
 
     PettaTableEntry *entry =
         &machine->table_shared->entries[entry_index];
+    if (inserted && !memoized && machine->host.tabled_relation_join)
+        entry->lattice_join = machine->host.tabled_relation_join(
+            machine->host.context, head, arity);
     if (memoized) {
         if (inserted) {
             if (UINT64_MAX -
@@ -26218,10 +26461,21 @@ petta_machine_try_native_collapse(
     uint32_t barrier, bool *handled, PettaMachineStep *failure) {
     *handled = false;
     if (!petta_machine_native_collect_admitted(machine) ||
-        body->kind != ATOM_EXPR)
+        body->kind != ATOM_EXPR ||
+        (body->expr.len == 2u &&
+         atom_is_symbol_id(body->expr.elems[0], g_builtin_syms.once)))
         return false;
     Atom *query = NULL;
-    if (body->expr.len == 4u &&
+    /* A transform is the host's to collect whole, as a match is. */
+    static SymbolId transform = SYMBOL_ID_NONE;
+    if (transform == SYMBOL_ID_NONE)
+        transform = atom_symbol_literal_id("transform");
+    if ((body->expr.len == 4u || body->expr.len == 5u) &&
+        atom_is_symbol_id(body->expr.elems[0], transform)) {
+        query = petta_machine_apply_bindings(
+            machine, search_context_bindings(&machine->search),
+            &machine->heap, body);
+    } else if (body->expr.len == 4u &&
         (atom_is_symbol_id(body->expr.elems[0], g_builtin_syms.match) ||
          atom_is_symbol_id(body->expr.elems[0], g_builtin_syms.let))) {
         query = petta_machine_apply_bindings(
@@ -34194,7 +34448,11 @@ static bool petta_open_host_receiver_emit(void *context,
 /* Run a region's host goal. A terminal transfer releases the cursor; otherwise
  * OPEN_RESUME returns each answer to the holder beneath the goal's choices. */
 static bool petta_machine_open_host(PettaMachineImpl *machine,
-                                    size_t holder, uint32_t barrier) {
+                                    size_t holder, uint32_t barrier,
+                                    PettaMachineStep *failure) {
+    PettaMachineStep local_failure = PETTA_MACHINE_STEP_DECLINED;
+    if (!failure)
+        failure = &local_failure;
     PettaOpenAnswers *open = machine->choices[holder].as.answers.open;
     Atom *goal = NULL;
     Atom *destination = NULL;
@@ -34207,6 +34465,15 @@ static bool petta_machine_open_host(PettaMachineImpl *machine,
                                               &destination, &vars, &count,
                                               &plan, &mode, &recovers))
         return false;
+    bool transform_first =
+        (mode == CETTA_OPEN_EQUATION_HOST_SOLVE ||
+         mode == CETTA_OPEN_EQUATION_HOST_READY_CALL) &&
+        cetta_open_equation_cursor_host_first(open->cursor) &&
+        goal && goal->kind == ATOM_EXPR &&
+        ((atom_head_symbol_id(goal) == atom_symbol_literal_id("transform") &&
+          (goal->expr.len == 4u || goal->expr.len == 5u)) ||
+         (atom_head_symbol_id(goal) == atom_symbol_literal_id("tf:run") &&
+          goal->expr.len == 5u));
     CettaCallOutcome native_return = cetta_call_failure();
     if (mode == CETTA_OPEN_EQUATION_HOST_NATIVE_RETURN &&
         !cetta_open_equation_cursor_host_return(open->cursor, &native_return))
@@ -34279,7 +34546,7 @@ static bool petta_machine_open_host(PettaMachineImpl *machine,
                          }))
         return false;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_OPEN_EQUATION_HOST);
-    bool pushed;
+    bool pushed = false;
     if (mode == CETTA_OPEN_EQUATION_HOST_NATIVE_RETURN) {
         pushed = petta_goal_push(machine, &(PettaGoal){
             .kind = PETTA_GOAL_NATIVE_RETURN, .barrier = barrier,
@@ -34306,14 +34573,24 @@ static bool petta_machine_open_host(PettaMachineImpl *machine,
                                    .first = goal,
                                    .second = destination,
                                });
-    else if (mode == CETTA_OPEN_EQUATION_HOST_READY_CALL ||
-             mode == CETTA_OPEN_EQUATION_HOST_READY_DATA)
+    if (transform_first) {
+        PettaMachineStep once_failure = PETTA_MACHINE_STEP_DECLINED;
+        pushed = petta_machine_start_once(
+            machine, goal, destination, barrier, plan, &once_failure);
+        if (!pushed && once_failure == PETTA_MACHINE_STEP_DECLINED)
+            pushed = petta_goal_push(machine, &(PettaGoal){
+                .kind = PETTA_GOAL_FAIL, .barrier = barrier,
+            });
+        if (!pushed)
+            *failure = once_failure;
+    } else if (mode == CETTA_OPEN_EQUATION_HOST_READY_CALL ||
+               mode == CETTA_OPEN_EQUATION_HOST_READY_DATA)
         pushed = petta_goal_push(machine, &(PettaGoal){
             .kind = mode == CETTA_OPEN_EQUATION_HOST_READY_DATA
                 ? PETTA_GOAL_CALL_READY_DATA : PETTA_GOAL_CALL_READY,
             .barrier = barrier, .first = goal, .second = destination,
         });
-    else
+    else if (mode == CETTA_OPEN_EQUATION_HOST_SOLVE)
         pushed = petta_push_solve_planned(machine, goal, destination, barrier,
                                           plan);
     return pushed && (!query_vars ||
@@ -34874,7 +35151,8 @@ static bool petta_machine_start_open_term_answers(
         }
         return petta_machine_open_host(machine, machine->choice_len - 1u,
                                        machine->choices[
-                                           machine->choice_len - 1u].barrier);
+                                           machine->choice_len - 1u].barrier,
+                                       NULL);
     }
     /* A raised error ends this branch as equation search's would; the
      * call's remaining alternatives stay behind it. */
@@ -34919,6 +35197,7 @@ static bool petta_machine_effect_head(SymbolId head) {
     static const char *const names[] = {
         "println!", "print!", "trace!", "add-atom", "remove-atom",
         "add-reduct", "add-atoms", "remove-atoms", "bind!", "import!",
+        "import-as!",
         "test", "assertEqual", "assertEqualToResult", "assertAlphaEqual",
         "assert", "py-call", "py-atom", "py-dot", "call", "call-predicate",
         "assertzPredicate", "assertaPredicate", "retractPredicate",
@@ -35149,7 +35428,7 @@ static __attribute__((noinline)) bool petta_machine_resume_open_answer_choice(
     if (step == CETTA_OPEN_EQUATION_HOST) {
         if (petta_machine_open_host(machine,
                                     (size_t)(choice - machine->choices),
-                                    choice->barrier))
+                                    choice->barrier, failure))
             return true;
         *failure = PETTA_MACHINE_STEP_CAPACITY;
         return false;
@@ -35391,7 +35670,8 @@ static __attribute__((noinline)) bool petta_machine_open_resume(
         if (step == CETTA_OPEN_EQUATION_COLLECTION)
             return petta_machine_export_open_collection(machine, open, current,
                 goal->barrier, failure);
-        bool exported = petta_machine_open_host(machine, current, goal->barrier);
+        bool exported = petta_machine_open_host(
+            machine, current, goal->barrier, failure);
         if (exported)
             return true;
         *failure = PETTA_MACHINE_STEP_CAPACITY;
@@ -37749,6 +38029,33 @@ static bool petta_machine_dispatch_solve(
         plan = goal->plan;
     }
 
+    /* Extended transform syntax is evaluator-owned even when the source
+     * planner saw no equation for its head.  Schedule it before the generic
+     * data-application path evaluates its source and template operands. */
+    if (goal->kind == PETTA_GOAL_SOLVE && goal->first &&
+        goal->first->kind == ATOM_EXPR && goal->first->expr.len > 0u &&
+        goal->first->expr.elems[0]->kind == ATOM_SYMBOL &&
+        cetta_transform_call_head(atom_symbol_current_id(goal->first->expr.elems[0]),
+                                  goal->first->expr.len - 1u) &&
+        machine->host.classify) {
+        PettaMachineHostMode mode = machine->host.classify(
+            machine->host.context, machine->space, goal->first);
+        if (mode == PETTA_MACHINE_HOST_READY_UNCONSTRAINED_REGION) {
+            const CettaDelayView delay = petta_machine_delay_view(machine);
+            const Bindings *bindings = search_context_bindings(&machine->search);
+            mode = bindings->eq_len == 0u && !cetta_delay_holds(delay.service)
+                ? PETTA_MACHINE_HOST_READY_APPLICATION : PETTA_MACHINE_HOST_NONE;
+        }
+        if (mode == PETTA_MACHINE_HOST_READY_APPLICATION)
+            return petta_goal_push(machine, &(PettaGoal){
+                .kind = PETTA_GOAL_HOST_READY,
+                .barrier = goal->barrier,
+                .first = goal->first,
+                .second = goal->second,
+                .plan = plan,
+            });
+    }
+
     PettaGoal completed_goal;
     if (petta_machine_he_completes_evaluation(machine, goal)) {
         Atom *target = goal->second;
@@ -39956,6 +40263,36 @@ static bool petta_machine_dispatch_solve(
             machine, true, expected);
     }
 
+    /* (tabled-lattice CALL JOIN): CALL tabled, the answers for each instance
+     * of it joined by JOIN: min or max, or a function of two arguments. */
+    if (form == PETTA_FORM_TABLED_LATTICE && nargs == 2u) {
+        Atom *relation = petta_machine_apply_bindings(machine,
+            environment, &machine->heap,
+            expression->expr.elems[1]);
+        Atom *join = petta_machine_apply_bindings(machine,
+            environment, &machine->heap,
+            expression->expr.elems[2]);
+        if (!relation || relation->kind != ATOM_EXPR ||
+            relation->expr.len == 0u ||
+            relation->expr.elems[0]->kind != ATOM_SYMBOL ||
+            !join || join->kind != ATOM_SYMBOL ||
+            !machine->host.tabled_relation_set ||
+            !machine->host.tabled_relation_join_set ||
+            !machine->host.tabled_relation_join_set(
+                machine->host.context,
+                atom_symbol_current_id(relation->expr.elems[0]),
+                relation->expr.len - 1u, atom_symbol_current_id(join)) ||
+            !machine->host.tabled_relation_set(
+                machine->host.context,
+                atom_symbol_current_id(relation->expr.elems[0]),
+                relation->expr.len - 1u, true)) {
+            return petta_machine_unify_resolved(
+                machine, expression, expected);
+        }
+        return petta_machine_boolean(
+            machine, true, expected);
+    }
+
     if ((form == PETTA_FORM_ADD_TRANSLATOR_RULE ||
          form == PETTA_FORM_REMOVE_TRANSLATOR_RULE) &&
         nargs == 1u) {
@@ -40524,6 +40861,9 @@ static void petta_machine_record_transition(
         fputc('\n', stderr);
     }
 }
+
+static bool petta_machine_settle_pretenured(PettaMachineImpl *machine,
+                                            OutcomeSet *outcomes);
 
 static bool petta_machine_dispatch_goal(
     PettaMachineImpl *machine, PettaGoal goal,
@@ -43303,14 +43643,43 @@ static bool petta_machine_dispatch_goal(
                          .count = first->expr.len - 1u},
         };
     }
+    /* A long-lived value is made in the old generation (pretenured): a
+     * grounder's program of millions of rules would otherwise be copied out
+     * of the nursery by the next collection. */
+    bool pretenure = goal.kind == PETTA_GOAL_HOST_STRICT_READY &&
+        machine->host.apply_ready_values && machine->host.result_long_lived &&
+        invocation.head.skeleton &&
+        machine->host.result_long_lived(machine->host.context, invocation.head.skeleton);
+    size_t tenured_before = pretenure ? arena_accounted_live_bytes(&machine->tenured) : 0u;
     bool evaluated =
         (goal.kind == PETTA_GOAL_HOST_STRICT_READY ||
          (goal.kind == PETTA_GOAL_HOST_READY &&
           ready_host_mode != PETTA_MACHINE_HOST_READY_OVERRIDE)) &&
         machine->host.apply_ready_values &&
         machine->host.apply_ready_values(
-            machine->host.context, machine->space, &machine->heap,
+            machine->host.context, machine->space,
+            pretenure ? &machine->tenured : &machine->heap,
             &invocation, &host_environment, outcomes, &end);
+    if (evaluated && pretenure && !petta_machine_settle_pretenured(machine, outcomes)) {
+        bindings_free(&host_environment);
+        outcome_set_free(outcomes);
+        free(outcomes);
+        *failure = PETTA_MACHINE_STEP_CAPACITY;
+        return false;
+    }
+    /* The value is presumed live, as its long life is why it was made there:
+     * its bytes join the old generation's baseline, which then grows by as
+     * much again before a major collection copies it, as after any baseline
+     * (petta_machine_next_major_threshold). */
+    if (pretenure) {
+        size_t tenured_after = arena_accounted_live_bytes(&machine->tenured);
+        if (tenured_after > tenured_before) {
+            size_t shifted = petta_size_add_saturating(
+                machine->tenured_major_after, tenured_after - tenured_before);
+            size_t baseline = petta_machine_next_major_threshold(tenured_after);
+            machine->tenured_major_after = shifted > baseline ? shifted : baseline;
+        }
+    }
     if (!evaluated) {
         evaluated = machine->host.evaluate_planned
             ? machine->host.evaluate_planned(
@@ -43354,6 +43723,37 @@ static bool petta_machine_dispatch_goal(
     }
     return petta_machine_start_outcome_choice(
         machine, outcomes, second, goal.barrier);
+}
+
+/* The answers of a pretenured application, settled in the old generation:
+ * an answer the operation made there may hold an argument or another value
+ * of the nursery, which the next collection frees; such parts are copied
+ * into the old generation once (the rest, already settled, is shared). */
+static bool petta_machine_settle_pretenured(PettaMachineImpl *machine,
+                                            OutcomeSet *outcomes) {
+    AtomDeepCopySession *session = NULL;
+    bool ok = true;
+    for (CettaCount i = 0u; ok && i < outcomes->len; i++) {
+        Atom **slots[3] = {&outcomes->items[i].atom,
+                           &outcomes->items[i].materialized_atom,
+                           &outcomes->items[i].delayed};
+        for (unsigned k = 0u; ok && k < 3u; k++) {
+            Atom *atom = *slots[k];
+            if (!atom || atom->arena_id != machine->tenured.identity ||
+                atom_settled_for_arena(&machine->tenured, atom))
+                continue;
+            if (!session && !(session = atom_deep_copy_session_new(&machine->tenured)))
+                ok = false;
+            Atom *settled = ok ? atom_deep_copy_session_copy(session, atom) : NULL;
+            if (settled)
+                *slots[k] = settled;
+            else
+                ok = false;
+        }
+    }
+    if (session)
+        atom_deep_copy_session_free(session);
+    return ok;
 }
 
 static bool petta_machine_emit(

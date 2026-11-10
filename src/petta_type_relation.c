@@ -27,6 +27,10 @@ typedef struct PettaTypeResourceScope {
     CettaEvalCStackBoundary stack;
     CettaEvalCompletion completion;
     struct PettaTypeResourceScope *parent;
+    /* PeTTa's ai profile (sealed sorts): a function's rows type the answers
+     * of its calls and never an application of it, which has its tuple
+     * type.  Read once per query. */
+    bool sealed;
 } PettaTypeResourceScope;
 
 static _Thread_local PettaTypeResourceScope *g_petta_type_resource_scope;
@@ -48,6 +52,19 @@ static bool petta_type_stack_available(void) {
 
 static bool petta_type_list_push(PeTTaTypeList *list, Atom *type);
 
+static bool petta_type_sealed(void) {
+    return g_petta_type_resource_scope && g_petta_type_resource_scope->sealed;
+}
+
+/* Whether the application headed by HEAD is typed by no row of HEAD: under
+ * sealed sorts, HEAD names a function, whose rows type its calls' answers
+ * only. */
+static bool petta_type_head_sealed(Space *space, const Atom *head) {
+    return head && head->kind == ATOM_SYMBOL && petta_type_sealed() &&
+        eval_petta_head_is_function &&
+        eval_petta_head_is_function(space, atom_symbol_current_id(head));
+}
+
 enum {
     PETTA_TYPE_FACT_ENTRIES = 4096u,
     PETTA_TYPE_FACT_BYTES = 8u * 1024u * 1024u,
@@ -64,15 +81,17 @@ typedef struct {
     uint64_t generation;
 } PeTTaTypeFact;
 
-/* The intrinsic service has one fixed PeTTa authority in every profile. Its
- * facts are private to the executing thread and the request arena's allocation
- * epoch. Source pointers come from that arena or hash-cons storage; any
- * hash-cons reclamation invalidates the pointer keys before their next use.
- * A fact may borrow a ground answer graph already closed in that request
- * arena: resetting it invalidates the whole fact generation before lookup
- * can read the graph. This does not retain or delay reset of the arena.
- * Other schemes are owned by the bounded fact arena. The vector shell
- * always belongs to that arena and never escapes to an answer consumer. */
+/* The intrinsic service has one PeTTa authority in every profile but ai,
+ * whose sealed sorts type no application of a function by its rows; the
+ * facts are kept apart by that mode.  They are private to the executing
+ * thread and the request arena's allocation epoch. Source pointers come
+ * from that arena or hash-cons storage; any hash-cons reclamation
+ * invalidates the pointer keys before their next use. A fact may borrow a
+ * ground answer graph already closed in that request arena: resetting it
+ * invalidates the whole fact generation before lookup can read the graph.
+ * This does not retain or delay reset of the arena. Other schemes are owned
+ * by the bounded fact arena. The vector shell always belongs to that arena
+ * and never escapes to an answer consumer. */
 static _Thread_local struct {
     PeTTaTypeFact *entries;
     Arena payloads;
@@ -85,6 +104,7 @@ static _Thread_local struct {
     bool enabled;
     bool configured;
     bool ready;
+    bool sealed;
 } petta_type_facts;
 
 void petta_type_facts_free_for_current_thread(void) {
@@ -156,18 +176,21 @@ static bool petta_type_fact_key(Space *space, Arena *arena, Atom *subject,
         if (!petta_type_facts.entries)
             return false;
     }
+    bool sealed = petta_type_sealed();
     if (!petta_type_facts.ready ||
         !space_program_token_eq(petta_type_facts.program, program) ||
         petta_type_facts.arena_identity != arena->identity ||
         petta_type_facts.arena_epoch != arena->reset_epoch ||
         petta_type_facts.hashcons_epoch != hashcons_epoch ||
-        petta_type_facts.hashcons != arena->hashcons) {
+        petta_type_facts.hashcons != arena->hashcons ||
+        petta_type_facts.sealed != sealed) {
         petta_type_facts_clear();
         petta_type_facts.program = program;
         petta_type_facts.arena_identity = arena->identity;
         petta_type_facts.arena_epoch = arena->reset_epoch;
         petta_type_facts.hashcons_epoch = hashcons_epoch;
         petta_type_facts.hashcons = arena->hashcons;
+        petta_type_facts.sealed = sealed;
     }
     uint8_t mode = !target ? 0u : target->kind == ATOM_VAR ? 1u : 2u;
     Atom *required = mode == 2u ? target : NULL;
@@ -520,7 +543,7 @@ static bool petta_type_function_answers(
     Space *space, Arena *arena, const PeTTaTypeFrame *frame,
     PeTTaTypeList *out) {
     Atom *head = frame->length > 0u ? frame->elements[0] : NULL;
-    if (head && head->kind != ATOM_VAR) {
+    if (head && head->kind != ATOM_VAR && !petta_type_head_sealed(space, head)) {
         Atom **declared = NULL;
         uint32_t count = space_get_declared_types(
             space, arena, head, &declared);
@@ -1048,6 +1071,12 @@ static bool petta_type_walk_once(Space *space, Arena *arena, Atom *subject,
         CettaExprLen arity = node->expr.len - 1u;
         if (head != kept_head || type != kept_type || node->expr.len != kept_len) {
             kept_head = SYMBOL_ID_NONE;
+            /* An application of a function under sealed sorts has its tuple
+             * type: the general path decides it. */
+            if (petta_type_head_sealed(space, node->expr.elems[0])) {
+                ok = false;
+                continue;
+            }
             Atom *declaration = petta_type_walk_declaration(
                 space, arena, node->expr.elems[0], heads, &head_count);
             if (arity > PETTA_TYPE_WALK_ARITY || !declaration ||
@@ -1199,7 +1228,8 @@ static bool petta_type_answers_bound_uncached(
             bool tuple_possible = target->kind == ATOM_VAR ||
                                   target->kind == ATOM_EXPR;
             bool function_present = false;
-            if (length > 0u && elements[0]->kind != ATOM_VAR) {
+            if (length > 0u && elements[0]->kind != ATOM_VAR &&
+                !petta_type_head_sealed(space, elements[0])) {
                 Atom **declared = NULL;
                 uint32_t count = space_get_declared_types(
                     space, arena, elements[0], &declared);
@@ -1629,6 +1659,7 @@ bool petta_type_intrinsic_answers(
     PettaTypeResourceScope scope = {
         .completion = CETTA_EVAL_COMPLETE,
         .parent = g_petta_type_resource_scope,
+        .sealed = eval_petta_sealed_sorts && eval_petta_sealed_sorts(),
     };
     eval_c_stack_boundary_capture(&scope.stack);
     g_petta_type_resource_scope = &scope;

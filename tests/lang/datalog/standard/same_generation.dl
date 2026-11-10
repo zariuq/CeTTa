@@ -1,0 +1,15 @@
+// Recursive three-way join with a disconnected negative control.
+.decl Flat(left:symbol, right:symbol)
+Flat("b","c").
+.decl Up(child:symbol, parent:symbol)
+Up("a","b").
+Up("e","a").
+Up("unused","missing").
+.decl Down(parent:symbol, child:symbol)
+Down("c","d").
+Down("d","f").
+
+.decl SameGeneration(left:symbol, right:symbol)
+SameGeneration(X,Y) :- Flat(X,Y).
+SameGeneration(X,Y) :- Up(X,U), SameGeneration(U,V), Down(V,Y).
+.output SameGeneration

@@ -1,0 +1,7 @@
+true
+(model (a b))
+(unsat (reference clingo))
+(3 (reference clingo))
+(3 (reference clingo))
+(model (b))
+(asp:trace ((rule a () ())))

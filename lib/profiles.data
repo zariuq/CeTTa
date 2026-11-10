@@ -75,4 +75,5 @@
       (Row 23 CETTA_PROFILE_HOL_STANDARD CETTA_PROFILE_HOL_STANDARD_VALUE CETTA_LANGUAGE_HOL_LIGHT "standard" "Default: permit only checked HOL Light standard axioms." false false false false CETTA_LANGUAGE_VERSION_NONE CETTA_IDENTITY_POLICY_J CETTA_CONTEXT_SELF_PROGRAM false hol)
       (Row 24 CETTA_PROFILE_HOL_OPEN CETTA_PROFILE_HOL_OPEN_VALUE CETTA_LANGUAGE_HOL_LIGHT "open" "Permit explicit user axioms and retain their dependencies." false false false false CETTA_LANGUAGE_VERSION_NONE CETTA_IDENTITY_POLICY_J CETTA_CONTEXT_SELF_PROGRAM false hol)
       (Row 25 CETTA_PROFILE_HOL_SEALED CETTA_PROFILE_HOL_SEALED_VALUE CETTA_LANGUAGE_HOL_LIGHT "sealed" "Permit no new axioms." false false false false CETTA_LANGUAGE_VERSION_NONE CETTA_IDENTITY_POLICY_J CETTA_CONTEXT_SELF_PROGRAM false hol)
+      (Row 26 CETTA_PROFILE_PETTA_AI CETTA_PROFILE_PETTA_AI_VALUE CETTA_LANGUAGE_PETTA "ai" "Corrected stable PeTTa with sealed sorts: a function's declaration types its calls' answers, never an unevaluated application of it." false false false false CETTA_LANGUAGE_VERSION_PETTA_STABLE CETTA_IDENTITY_POLICY_J CETTA_CONTEXT_SELF_PROGRAM false before)
     )))

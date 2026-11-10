@@ -10,10 +10,11 @@ from pathlib import Path
 import subprocess
 
 from test_finite_horn_chart_v1 import COMMON, PRESENTATIONS, CASES, run_json
+from gslt2parse_oracles_v1 import ORACLES
 
 
 EXPECTED_MATRIX_DIGEST = (
-    "44fc543a0f265e5d978b9370114530a0e8855656c9c27e2042b991bc3a11f913"
+    "0e3edf5cd0b21199cdff8b82cda22f98661d099d96790f00e71e5922ed27a2df"
 )
 EXPECTED_GUARD_MATRIX_DIGEST = (
     "05a6bfff40ee347c1131ea14c865679e6a14085585ee4c2137bfb66ad5c08844"
@@ -153,13 +154,8 @@ def native_guard_rows(binary: Path) -> tuple[dict[str, dict], int]:
     return rows, certificate_count
 
 
-def run_petta(petta_root: Path, presentation_root: Path) -> dict:
-    script = (
-        petta_root
-        / "experiments"
-        / "gslt2parse_foundation"
-        / "test_parser_action_bytecode_compiler_v1.pl"
-    )
+def run_petta(presentation_root: Path) -> dict:
+    script = ORACLES / "test_parser_action_bytecode_compiler_v1.pl"
     if not script.is_file():
         raise GateFailure(f"PeTTa action compiler oracle is absent: {script}")
     completed = subprocess.run(
@@ -263,7 +259,7 @@ def main() -> int:
 
     native, native_certificates = native_rows(binary)
     guard_native, guard_native_certificates = native_guard_rows(binary)
-    petta = run_petta(petta_root, presentation_root)
+    petta = run_petta(presentation_root)
     agreements = compare_rows(native, petta)
     guard_agreements = compare_guard_rows(guard_native, petta)
     expected_answers = sum(

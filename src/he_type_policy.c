@@ -218,6 +218,7 @@ static const struct {
     {"//", "(-> Number Number Number)"},
     {"new-space", "(-> Atom SpaceType)"},
     {"new-space", "(-> Atom Atom SpaceType)"},
+    {"import-as!", "(-> Atom Atom Atom (->))"},
 };
 
 #define HE_GROUNDED_TYPE_SLOTS 256u
@@ -834,7 +835,12 @@ HeTypeApplicability he_type_call_applicable(
                 found |= matched;
             }
             search_context_free(&trial);
-            bool saved = found || he_type_errors_push(errors, argument_error(arena, expression, i + 1u, expected, actual[0]));
+            /* HE tries each of the argument's types as its own branch, so
+             * each type that fails reports its own error. */
+            bool saved = true;
+            for (uint32_t t = 0u; saved && !found && t < count; t++)
+                saved = he_type_errors_push(errors, argument_error(
+                    arena, expression, i + 1u, expected, actual[t]));
             free(actual);
             if (!saved) goto incomplete;
         }
