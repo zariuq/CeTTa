@@ -27,11 +27,13 @@ class CandidateReadinessTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
         (self.root / "src").mkdir()
         (self.root / "src/value.c").write_text("original runtime\n")
+        (self.root / "mk").mkdir()
+        (self.root / "mk/external.mk").write_text("test-external:\n\ttrue\n")
         (self.root / "README.md").write_text("original prose\n")
 
     def identity_command(self, command, **kwargs):
         if command[:2] == ["git", "ls-files"]:
-            return b"src/value.c\0README.md\0"
+            return b"src/value.c\0mk/external.mk\0README.md\0"
         return b"test compiler version 1\n"
 
     def args(self, **overrides):
@@ -93,6 +95,16 @@ class CandidateReadinessTests(unittest.TestCase):
         self.assertEqual(0, self.invoke(steps))
         (self.root / "src/value.c").write_text("fixed runtime\n")
         self.assertEqual(0, self.invoke(steps))
+        self.assertFalse(self.latest()["steps"][0]["reused"])
+
+    def test_included_recipe_change_rejects_old_cache(self):
+        steps = [("test-external", ["make", "-f", "mk/external.mk", "test-external"], True)]
+        self.assertEqual(0, self.invoke(steps, target=["test-external"]))
+        self.assertEqual(0, self.invoke(steps, target=["test-external"]))
+        self.assertTrue(self.latest()["steps"][0]["reused"])
+        (self.root / "mk/external.mk").write_text("test-external:\n\tfalse\n")
+        self.assertEqual(1, self.invoke(steps, target=["test-external"]))
+        self.assertEqual("failed", self.latest()["status"])
         self.assertFalse(self.latest()["steps"][0]["reused"])
 
     def test_source_edit_during_test_never_qualifies(self):

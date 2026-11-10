@@ -18,7 +18,7 @@ from cetta_readiness_model import terminate_process_session
 
 
 SCHEMA = "cetta.candidate-readiness.v1"
-INPUT_DIRS = {"src", "include", "native", "lib", "langdef", "python", "tests",
+INPUT_DIRS = {"src", "include", "native", "lib", "langdef", "python", "tests", "mk",
               "scripts", "tools", "rust", "experiments", "benchmarks", "examples",
               "specs", "vendor", "showcase", "repos"}
 INPUT_FILES = {"Makefile", "setup.py", "setup.cfg", "pyproject.toml", "MANIFEST.in",
