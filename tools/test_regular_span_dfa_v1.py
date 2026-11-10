@@ -15,6 +15,7 @@ from typing import Iterable
 from gslt2parse_schema_v1 import SExpr, Symbol, parse_sexprs, render
 from test_parser_pack_abi_v1 import CASES as ABI_CASES
 from test_parser_pack_abi_v1 import export_stream
+from gslt2parse_oracles_v1 import ORACLES
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -354,15 +355,10 @@ def c_compiler_answers(binary: Path, case: dict[str, object]) -> dict[str, objec
 
 
 def petta_compiler_answers(
-    petta_root: Path, case: dict[str, object]
+    case: dict[str, object]
 ) -> dict[str, object]:
     language = str(case["language"])
-    oracle = (
-        petta_root
-        / "experiments"
-        / "gslt2parse_foundation"
-        / "regular_span_oracle_v1.pl"
-    )
+    oracle = ORACLES / "regular_span_oracle_v1.pl"
     command = [
         "swipl", "-q", "-f", str(oracle), "--",
         str(PRESENTATIONS), str(case["tag"]),
@@ -472,12 +468,11 @@ def matrix_row(case: dict[str, object], result: dict[str, object]) -> str:
 def check_case(
     chart_binary: Path,
     dfa_binary: Path,
-    petta_root: Path,
     case: dict[str, object],
     temp: Path,
 ) -> tuple[str, tuple[Path, Path, Path], int]:
     language = str(case["language"])
-    stream = export_stream(petta_root, ABI_CASES[language])
+    stream = export_stream(ABI_CASES[language])
     source_digest = abi_scalar(stream, "source-digest")
     tag_specs = [(
         str(case["tag"]), int(case["answers"]), str(case["answer_digest"])
@@ -491,7 +486,7 @@ def check_case(
         tagged_case = dict(case)
         tagged_case["tag"] = tag
         c_result = c_compiler_answers(chart_binary, tagged_case)
-        petta_result = petta_compiler_answers(petta_root, tagged_case)
+        petta_result = petta_compiler_answers(tagged_case)
         c_terms = tuple(c_result.get("terms", ()))
         petta_terms = petta_result.get("terms")
         if not isinstance(petta_terms, tuple):
@@ -549,7 +544,6 @@ def check_case(
 def check_boundaries(
     chart_binary: Path,
     dfa_binary: Path,
-    petta_root: Path,
     temp: Path,
     paths: tuple[Path, Path, Path],
 ) -> int:
@@ -611,7 +605,7 @@ def check_boundaries(
     unsupported = dict(CASES[0])
     unsupported["tag"] = "cetta-prime-variable"
     c_result = c_compiler_answers(chart_binary, unsupported)
-    petta_result = petta_compiler_answers(petta_root, unsupported)
+    petta_result = petta_compiler_answers(unsupported)
     empty_digest = answer_digest(())
     if (
         c_result.get("outcome") != "NoAnswer"
@@ -642,7 +636,7 @@ def main() -> int:
         boundary_paths: tuple[Path, Path, Path] | None = None
         for case in CASES:
             row, paths, agreements = check_case(
-                chart_binary, dfa_binary, petta_root, case, temp
+                chart_binary, dfa_binary, case, temp
             )
             rows.append(row)
             compiler_agreements += agreements
@@ -650,7 +644,7 @@ def main() -> int:
                 boundary_paths = paths
         assert boundary_paths is not None
         boundaries = check_boundaries(
-            chart_binary, dfa_binary, petta_root, temp, boundary_paths
+            chart_binary, dfa_binary, temp, boundary_paths
         )
     digest = hashlib.sha256("\n".join(rows).encode("utf-8")).hexdigest()
     if digest != MATRIX_DIGEST:

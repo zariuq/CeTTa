@@ -1,0 +1,23 @@
+INFIX
+(NAM "foo")
+(NUM False "200" None None)
+(NAM "left")
+DEQ
+(NAM "f")
+DOT
+INFIX
+(NAM "bar")
+(NUM False "100" None None)
+(NAM "left")
+DEQ
+(NAM "g")
+DOT
+AXIOM
+(NAM "witness")
+COLON
+(NAM "a")
+(NAM "foo")
+(NAM "b")
+(NAM "bar")
+(NAM "c")
+DOT

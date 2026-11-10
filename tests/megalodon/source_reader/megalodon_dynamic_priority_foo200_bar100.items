@@ -1,0 +1,3 @@
+(Doc (PostInfixDecl "foo" (NaL "f") 200 InfixLeft))
+(Doc (PostInfixDecl "bar" (NaL "g") 100 InfixLeft))
+(Doc (AxDecl "witness" (InfoL (InfNam "foo") (NaL "a") (InfoL (InfNam "bar") (NaL "b") (NaL "c")))))

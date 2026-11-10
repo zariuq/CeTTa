@@ -2,6 +2,7 @@
 #include "tensor_dense_v1.h"
 
 int cetta_dense_tensor_v1_compare(const CettaDenseTensorV1 *, const CettaDenseTensorV1 *) __attribute__((weak));
+#include "fallible_alloc.h"
 
 #include "space.h"
 #include "stats.h"
@@ -131,6 +132,7 @@ typedef struct {
     SymbolId length;
     SymbolId msort;
     SymbolId sort_atom;
+    SymbolId sort;
     SymbolId first_from_pair;
     SymbolId first;
     SymbolId second_from_pair;
@@ -156,6 +158,7 @@ typedef struct {
     SymbolId assertz_predicate;
     SymbolId retract_predicate;
     SymbolId tabled;
+    SymbolId tabled_lattice;
     SymbolId add_translator_rule;
     SymbolId remove_translator_rule;
     SymbolId cut;
@@ -271,6 +274,7 @@ static PeTTaForm petta_form_overflow_lookup(
     X(ids->assertz_predicate, PETTA_FORM_ASSERTZ_PREDICATE);             \
     X(ids->retract_predicate, PETTA_FORM_RETRACT_PREDICATE);             \
     X(ids->tabled, PETTA_FORM_TABLED);                                   \
+    X(ids->tabled_lattice, PETTA_FORM_TABLED_LATTICE);                   \
     X(ids->add_translator_rule, PETTA_FORM_ADD_TRANSLATOR_RULE);         \
     X(ids->remove_translator_rule, PETTA_FORM_REMOVE_TRANSLATOR_RULE);   \
     X(ids->cut, PETTA_FORM_CUT);                                         \
@@ -441,6 +445,7 @@ static const PeTTaSymbolIds *petta_symbol_ids_refresh(void) {
         ids.length = symbol_intern_cstr(g_symbols, "length");
         ids.msort = symbol_intern_cstr(g_symbols, "msort");
         ids.sort_atom = symbol_intern_cstr(g_symbols, "sort-atom");
+        ids.sort = symbol_intern_cstr(g_symbols, "sort");
         ids.first_from_pair =
             symbol_intern_cstr(g_symbols, "first-from-pair");
         ids.first = symbol_intern_cstr(g_symbols, "first");
@@ -482,6 +487,7 @@ static const PeTTaSymbolIds *petta_symbol_ids_refresh(void) {
         ids.retract_predicate =
             symbol_intern_cstr(g_symbols, "retractPredicate");
         ids.tabled = symbol_intern_cstr(g_symbols, "tabled");
+        ids.tabled_lattice = symbol_intern_cstr(g_symbols, "tabled-lattice");
         ids.add_translator_rule =
             symbol_intern_cstr(g_symbols, "add-translator-rule!");
         ids.remove_translator_rule =
@@ -1326,6 +1332,52 @@ Atom *petta_semantics_sort_value(Arena *arena, Atom *value, bool total,
     return NULL;
 }
 
+bool petta_semantics_is_sort(SymbolId head) {
+    return head != SYMBOL_ID_NONE && head == petta_symbol_ids()->sort;
+}
+
+/* A sorted sequence with each run of equal elements kept once, in the
+ * sequence's own representation; the sequence itself when it has no run. */
+static Atom *petta_sorted_unique(Arena *arena, Atom *sorted) {
+    if (!sorted || sorted->kind != ATOM_EXPR)
+        return sorted;
+    bool list = atom_is_list(sorted);
+    Atom *const *elems = list ? atom_list_elems(sorted) : sorted->expr.elems;
+    CettaExprLen length = list ? atom_list_len(sorted) : sorted->expr.len;
+    Atom **items = NULL;
+    CettaExprLen kept = 0u;
+    for (CettaExprLen index = 0u; index < length; index++) {
+        if (index > 0u) {
+            int ordering = 0;
+            if (!petta_semantics_term_compare(elems[index - 1u],
+                                              elems[index], &ordering))
+                return NULL;
+            if (ordering == 0) {
+                if (!items) {
+                    items = arena_alloc(arena, sizeof(*items) * (size_t)length);
+                    if (!items)
+                        return NULL;
+                    memcpy(items, elems, sizeof(*items) * (size_t)index);
+                    kept = index;
+                }
+                continue;
+            }
+        }
+        if (items)
+            items[kept++] = elems[index];
+    }
+    if (!items)
+        return sorted;
+    return list ? atom_list(arena, items, kept)
+                : atom_expr(arena, items, kept);
+}
+
+Atom *petta_semantics_sort_unique_value(Arena *arena, Atom *value,
+                                        bool *type_error) {
+    Atom *sorted = petta_semantics_sort_value(arena, value, false, type_error);
+    return sorted ? petta_sorted_unique(arena, sorted) : NULL;
+}
+
 Atom *petta_semantics_materialize_closed_logical_list(
     Arena *arena, Atom *list) {
     if (!arena || !list)
@@ -1920,6 +1972,160 @@ Atom *const *petta_semantics_materialize_arguments(
             return NULL;
     }
     return observed ? observed : arguments;
+}
+
+/* ── Observed equality ─────────────────────────────────────────────────────
+ *
+ * Whether two values are equal as observed: whether their materialized
+ * values (petta_semantics_materialize_value) are atom_value_eq, decided without
+ * building either.  A closed chain of cons cells reads as the list it
+ * spells; quotes and closures keep what they hold, as written; every other
+ * node keeps its shape.  An improper or open chain, a chain whose spelled
+ * expression would be a quote or a closure, a rational term, a resource with
+ * identity, or a value whose structural facts are unknown leaves the answer
+ * UNDECIDED, and the caller materializes. */
+
+typedef struct {
+    Atom *left;
+    Atom *right;
+    bool left_raw;
+    bool right_raw;
+} PeTTaObservedPair;
+
+typedef struct {
+    PeTTaObservedPair *items;
+    size_t length;
+    size_t capacity;
+} PeTTaObservedStack;
+
+static bool petta_observed_push(PeTTaObservedStack *stack,
+                                PeTTaObservedPair pair) {
+    if (stack->length == stack->capacity) {
+        size_t capacity = stack->capacity ? stack->capacity * 2u : 32u;
+        if (capacity > SIZE_MAX / sizeof(*stack->items))
+            return false;
+        PeTTaObservedPair *items = cetta_fallible_realloc(
+            stack->items, capacity * sizeof(*items));
+        if (!items)
+            return false;
+        stack->items = items;
+        stack->capacity = capacity;
+    }
+    stack->items[stack->length++] = pair;
+    return true;
+}
+
+/* A node's materialized shape: whether it is a list value (its tag first),
+ * the elements after that tag, and whether its children are copied as
+ * written.  `items` owns a closed chain's elements. */
+typedef struct {
+    Atom *const *elems;
+    CettaExprLen len;
+    bool list;
+    bool raw_children;
+    PeTTaListItems items;
+} PeTTaObservedView;
+
+static bool petta_observed_view(Atom *node, bool raw, PeTTaObservedView *view) {
+    *view = (PeTTaObservedView){0};
+    if (!raw && petta_semantics_is_open_cons_value(node)) {
+        Atom *end = petta_logical_list_collect(node, &view->items);
+        Atom *const *tail = NULL;
+        CettaExprLen tail_len = 0u;
+        if (!end || end->kind != ATOM_EXPR ||
+            !petta_semantics_sequence_view(end, &tail, &tail_len) ||
+            (uint64_t)tail_len > (uint64_t)SIZE_MAX ||
+            !petta_list_items_append(&view->items, tail, (size_t)tail_len) ||
+            !cetta_expr_len_fits_size((CettaExprLen)view->items.length))
+            return false;
+        view->elems = view->items.items;
+        view->len = (CettaExprLen)view->items.length;
+        view->list = atom_is_list(end);
+        if (!view->list) {
+            /* The expression the chain spells, read in place. */
+            Atom spelled;
+            atom_init_expr_view(&spelled, view->items.items, view->len);
+            if (petta_materialize_opaque_value(&spelled))
+                return false;
+        }
+        return true;
+    }
+    view->list = atom_is_list(node);
+    view->elems = node->expr.elems + (view->list ? 1u : 0u);
+    view->len = node->expr.len - (view->list ? 1u : 0u);
+    view->raw_children = raw || petta_materialize_opaque_value(node);
+    return true;
+}
+
+static inline bool petta_observed_root_admitted(const Atom *value) {
+    return (value->structural_facts & ATOM_STRUCTURAL_FACTS_VALID) != 0u &&
+           !atom_structural_has_rational(value) &&
+           !atom_is_rational_node(value) &&
+           !(value->flags & (ATOM_FLAG_HAS_IDENTITY_GROUNDED |
+                             ATOM_FLAG_HAS_THREAD_LOCAL_RESOURCE));
+}
+
+/* Within a side copied as written, or a subtree with no private tag, the
+ * materialized value is the value itself. */
+static inline bool petta_observed_as_written(const Atom *value, bool raw) {
+    return raw || !atom_structural_may_have_internal_tag(value);
+}
+
+PeTTaObservedEquality petta_semantics_observed_equal(Atom *left,
+                                                     Atom *right) {
+    if (!left || !right || !petta_observed_root_admitted(left) ||
+        !petta_observed_root_admitted(right))
+        return PETTA_OBSERVED_UNDECIDED;
+    PeTTaObservedStack stack = {0};
+    PeTTaObservedEquality result = PETTA_OBSERVED_EQUAL;
+    if (!petta_observed_push(&stack, (PeTTaObservedPair){left, right, false, false}))
+        return PETTA_OBSERVED_UNDECIDED;
+    while (stack.length && result == PETTA_OBSERVED_EQUAL) {
+        PeTTaObservedPair pair = stack.items[--stack.length];
+        if (petta_observed_as_written(pair.left, pair.left_raw) &&
+            petta_observed_as_written(pair.right, pair.right_raw)) {
+            if (!atom_value_eq(pair.left, pair.right))
+                result = PETTA_OBSERVED_DIFFERENT;
+            continue;
+        }
+        if (pair.left->kind != ATOM_EXPR || pair.right->kind != ATOM_EXPR) {
+            /* A leaf is copied as itself, and an expression stays one. */
+            if (pair.left->kind == ATOM_EXPR || pair.right->kind == ATOM_EXPR ||
+                !atom_value_eq(pair.left, pair.right))
+                result = PETTA_OBSERVED_DIFFERENT;
+            continue;
+        }
+        PeTTaObservedView left_view;
+        PeTTaObservedView right_view;
+        bool left_known = petta_observed_view(pair.left, pair.left_raw, &left_view);
+        bool right_known = left_known &&
+            petta_observed_view(pair.right, pair.right_raw, &right_view);
+        if (!left_known || !right_known) {
+            free(left_view.items.items);
+            if (left_known)
+                free(right_view.items.items);
+            result = PETTA_OBSERVED_UNDECIDED;
+            break;
+        }
+        if (left_view.list != right_view.list ||
+            left_view.len != right_view.len) {
+            result = PETTA_OBSERVED_DIFFERENT;
+        } else {
+            for (CettaExprLen index = left_view.len; index > 0u; index--) {
+                if (!petta_observed_push(&stack, (PeTTaObservedPair){
+                        left_view.elems[index - 1u],
+                        right_view.elems[index - 1u],
+                        left_view.raw_children, right_view.raw_children})) {
+                    result = PETTA_OBSERVED_UNDECIDED;
+                    break;
+                }
+            }
+        }
+        free(left_view.items.items);
+        free(right_view.items.items);
+    }
+    free(stack.items);
+    return result;
 }
 
 typedef struct {
@@ -2758,6 +2964,7 @@ static const struct {
     {"eval", PETTA_ARITY(1) | PETTA_ARITY(2)},
     {"reduce", PETTA_ARITY(1)},
     {"import!", PETTA_ARITY(2)},
+    {"import-as!", PETTA_ARITY(3)},
     {"add-atom", PETTA_ARITY(2)},
     {"remove-atom", PETTA_ARITY(2) | PETTA_ARITY(3)},
     {"get-atoms", PETTA_ARITY(1)},
@@ -3678,6 +3885,7 @@ Atom *petta_semantics_lower(
     case PETTA_FORM_ASSERTZ_PREDICATE:
     case PETTA_FORM_RETRACT_PREDICATE:
     case PETTA_FORM_TABLED:
+    case PETTA_FORM_TABLED_LATTICE:
     case PETTA_FORM_ADD_TRANSLATOR_RULE:
     case PETTA_FORM_REMOVE_TRANSLATOR_RULE:
     case PETTA_FORM_CUT:

@@ -451,7 +451,7 @@ language_pack_case(
     metamath,
     [ 'core/syntax_core_v1.metta',
       'shared/lookahead_core_v1.metta',
-      'languages/metamath_appendix_e_v1.metta'
+      '../../../langdef/metamath/syntax_v1.metta'
     ],
     database).
 
@@ -469,7 +469,9 @@ language_pack_case(
     [ 'core/syntax_core_v1.metta',
       'shared/lookahead_core_v1.metta',
       'shared/char_core_v1.metta',
-      'languages/tptp_fof_cnf_v1.metta'
+      'shared/ground_relations_v1.metta',
+      '../../../langdef/tptp/unicode_scalar_classes_v1.metta',
+      '../../../langdef/tptp/syntax_fof_cnf_v1.metta'
     ],
     'tptp-file').
 

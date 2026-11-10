@@ -290,6 +290,7 @@ static inline SymbolSpelling symbol_spelling(
     X(git_import_bang, "git-import!") \
     X(register_module_bang, "register-module!") \
     X(import_bang, "import!") \
+    X(import_as_bang, "import-as!") \
     X(include, "include") \
     X(module_parse_failed, "ModuleParseFailed") \
     X(mod_space_bang, "mod-space!") \
@@ -903,7 +904,30 @@ static inline SymbolSpelling symbol_spelling(
     X(tensor_matvec_bounds, "tensor:matvec-bounds") \
     X(lib_proc_write, "__cetta_lib_proc_write") \
     X(lib_proc_read, "__cetta_lib_proc_read") \
-    X(lib_proc_close_input, "__cetta_lib_proc_close_input")
+    X(lib_proc_close_input, "__cetta_lib_proc_close_input") \
+    X(petta_machine_spelling, "__petta_machine") \
+    X(lib_asp_solve, "__cetta_lib_asp_solve") \
+    X(lib_asp_models, "__cetta_lib_asp_models") \
+    X(lib_clingo_ground, "__cetta_lib_clingo_ground") \
+    X(lib_clingo_models, "__cetta_lib_clingo_models") \
+    X(lib_clingo_solve, "__cetta_lib_clingo_solve") \
+    X(lib_asp_trace, "__cetta_lib_asp_trace") \
+    X(lib_asp_distinct, "__cetta_lib_asp_distinct") \
+    X(lib_asp_start, "__cetta_lib_asp_start") \
+    X(lib_asp_step, "__cetta_lib_asp_step") \
+    X(lib_asp_state, "__cetta_lib_asp_state") \
+    X(lib_asp_close, "__cetta_lib_asp_close") \
+    X(lib_asp_next, "__cetta_lib_asp_next") \
+    X(lib_asp_constrain, "__cetta_lib_asp_constrain") \
+    X(lib_asp_injections, "__cetta_lib_asp_injections") \
+    X(lib_asp_decide, "__cetta_lib_asp_decide") \
+    X(lib_asp_nogoods, "__cetta_lib_asp_nogoods") \
+    X(lib_sat_solve, "__cetta_lib_sat_solve") \
+    X(lib_sat_models, "__cetta_lib_sat_models") \
+    X(lib_ipasir_solve, "__cetta_lib_ipasir_solve") \
+    X(lib_ipasir_models, "__cetta_lib_ipasir_models") \
+    X(lib_provenance_supports, "__cetta_lib_provenance_supports") \
+    X(lib_provenance_supports_each, "__cetta_lib_provenance_supports_each")
 
 /* Identity, dialect ownership and constructor role are separate facts.
  * These columns supplement the registered vocabulary without changing IDs. */
@@ -1241,6 +1265,10 @@ void symbol_table_init_builtins(SymbolTable *st, BuiltinSyms *builtins);
 /* On failure, builtins is zero and the table retains its interned prefix. */
 bool symbol_table_try_init_builtins(SymbolTable *st, BuiltinSyms *builtins);
 
+/* A span of bytes names a symbol, the empty span included: the empty name is
+ * the symbol of name concatenation's identity (bytes may be NULL when len is
+ * 0).  The C-string entry points below name symbols from C literals and
+ * refuse "". */
 SymbolId symbol_intern_bytes(SymbolTable *st, const uint8_t *bytes, uint32_t len);
 SymbolId symbol_intern_span_hashed(SymbolTable *st, const uint8_t *bytes,
                                    uint32_t len, uint64_t hash);

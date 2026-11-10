@@ -1,0 +1,8 @@
+(Doc (PrefixDecl "~" (NaL "not") 700))
+(Doc (PostInfixDecl "'" (NaL "tag") 100 Postfix))
+(Doc (PostInfixDecl "''" (NaL "ctag") 100 Postfix))
+(Doc (PostInfixDecl "+" (NaL "add") 400 InfixLeft))
+(Doc (AxDecl "b1" (PreoL "~" (NaL "p"))))
+(Doc (AxDecl "b2" (PostoL "'" (NaL "x"))))
+(Doc (AxDecl "b3" (PostoL "''" (PostoL "'" (NaL "x")))))
+(Doc (AxDecl "b4" (PreoL "~" (InfoL (InfNam "+") (NaL "x") (PostoL "'" (NaL "y"))))))

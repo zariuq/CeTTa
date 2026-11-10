@@ -86,14 +86,14 @@ def generated_presentations(directory: Path, *, duplicate: bool) -> Path:
     return presentations
 
 
-def export_string_pack(petta_root: Path, presentations: Path) -> bytes:
+def export_string_pack(presentations: Path) -> bytes:
     case = dict(abi.CASES["he"])
     case["start"] = "he-string"
     case["closure"] = "closed"
     original = abi.PRESENTATIONS
     try:
         abi.PRESENTATIONS = presentations
-        return abi.export_stream(petta_root, case)
+        return abi.export_stream(case)
     finally:
         abi.PRESENTATIONS = original
 
@@ -151,9 +151,7 @@ def main() -> int:
         candidate_presentations = generated_presentations(
             candidate_dir, duplicate=False
         )
-        candidate_stream = export_string_pack(
-            petta_root, candidate_presentations
-        )
+        candidate_stream = export_string_pack(candidate_presentations)
         observed = native_summary(
             binary,
             candidate_dir,
@@ -188,7 +186,7 @@ def main() -> int:
         mutant_presentations = generated_presentations(
             mutant_dir, duplicate=True
         )
-        mutant_stream = export_string_pack(petta_root, mutant_presentations)
+        mutant_stream = export_string_pack(mutant_presentations)
         mutant = native_summary(
             binary,
             mutant_dir,

@@ -1,0 +1,150 @@
+Demand-aware producers and consumers
+====================================
+
+Observation contracts
+---------------------
+
+The dialect adapter owns admission. An inactive or unimported operation remains
+uninterpreted; it does not acquire streaming behavior merely because another
+profile has that operation. In particular, plain HE leaves `once` alone. HE and
+PeTTa retain their respective value and raise boundaries in every active route.
+
+The rows below describe the existing contracts that a shared implementation
+must preserve. "Prefix" includes all work needed to reach the first accepted
+answer, not merely the first candidate or firing. "Close" releases unused
+continuations and retained views; it does not execute them or undo earlier
+writes. Unless a space declares an order, a complete answer collection is a
+bag, not a license to select a different first answer under an ordered policy.
+
+| Producer / consumer | Operand and alternative observations | Answer, bindings and errors | Demand, effects and close |
+| --- | --- | --- | --- |
+| `superpose` (HE/extended, PeTTa) | The operand is evaluated as the dialect requires before its choice frontier is available. Alternatives retain source order where an ordered observer requires it; a complete unordered bag need not acquire hash order as a new policy. | Each selected expression or completed value retains the adapter's environment and provenance. HE errors remain values subject to its completion policy; PeTTa raises remain control, not ordinary items. | First demand enters only the required prefix. Answerless branches can already have written. Closing skips optional later branches without rollback. |
+| `collapse` | It consumes the producer's complete frontier in the selected policy order. It does not make the producer's operands lazy. | HE applies normal-value preference to its collected frontier; all-error collections retain error multiplicity. PeTTa copies each answer with its own variables and discards no duplicate. The collection has the collector's empty outer environment. | All demand exhausts the producer unless evaluation interrupts. `collapse(once(P))` contains at most the first answer of P, while preserving effects of P's answerless prefix. |
+| `once` | It observes alternatives, not proposals: rejected candidates and answerless firings precede the answer. Required operand evaluation still occurs before the first alternative. | It returns one completed answer with that answer's retained bindings. Zero answers has the dialect's ordinary empty observation. HE error preference is not replaced by a global one-row limiter; PeTTa faults follow their handler. | Acceptance closes the residual producer and never runs its unused suffix. Earlier effects, including an invalid-destination failure after a take, remain in their established order. |
+| `foldall` (PeTTa lowering) and the shared fold worker | The generator is consumed in its established order. The step runs once per observed item; a no-answer step leaves the state unchanged in the PeTTa foldall contract. | PeTTa step answers replace the state in order until a step/generator error boundary. The HE/ordinary fold retains its single-result checks and answer/error distinction. Captured variables are installed before each step. | This is all-demand, not first-demand. An early fault stops later items but retains prior effects and the specified partial state. Specialized compiled folds keep explicit handoff and residual ownership. |
+| Existence and count observers | They perform the reads, joins and template evaluation their source semantics require. A ground exact membership specialization may omit work only when its admitted observation is equivalent. | Existence yields the dialect's truth/failure observation; counts include duplicates and retain their integer/result policy. Unknown comparison or producer heads remain data where required. | Existence may close after its deciding answer only where template evaluation is not separately required. Counting is all-demand. Neither turns an incomplete query into false or zero. |
+| Transform as producer | Entry reads/takes follow occurrence-cursor order and the current binding trail. `let` code and dynamic space resolution occur at their source positions; `all`, uniqueness and collection perform their required reads. | A proposal is not an answer. A validated firing supplies template instances, then caller/function/destination evaluation supplies answers with the established environments. HE error-valued proposals and PeTTa raises stay distinct. | First demand may stop after the first answer-producing firing. Earlier rejected candidates, takes, routing failures and answerless template evaluations remain effective. Closing never publishes an unused firing. |
+
+Current native boundaries
+-------------------------
+
+`CettaOwnedExecution`, `CettaOwnedReturn`, `CettaOwnedBind` and
+`CettaCallReturnCursor` already provide return, completion, pause, handoff,
+interruption, acceptance and cancellation. Prepared pure consumers and the
+PeTTa search-machine adapters use those types. The ordered outcome visitor is
+the HE/public evaluator adapter; it supplies first versus ordered-stream versus
+finite-prefix demand without introducing another evaluator or wrapping every
+scalar in a heap object.
+
+`stream_emit` carries bounded demand. Its transform-specific first route calls
+`cetta_eval_transform_first`; the remaining direct and dialect paths retain
+their existing admission. Public `tf:propose` is deliberately a materializing
+collector and remains so.
+
+Before the resumable-entry specialization, `cetta_eval_transform_first` called
+`cetta_transform_propose` before its firing loop. `tf_walk` and
+`tf_keep_candidate` therefore built the complete proposal product even when
+the first candidate answered. That is the candidate-production defect addressed
+here, not a request to make arbitrary HE operands lazy.
+
+The admitted first-answer route now opens `CettaTransformCandidateCursor` and
+requests one `(tf:cand GUIDE)` at a time. Each conjunct has an explicit level,
+an unstarted occurrence view, an active position-preserving clone, binding and
+arena marks, and its footprint length. Returning a proposal restores the last
+level's candidate marks and decrements the depth; exhausting a level restores
+its parent. Thus a rejected firing resumes the actual next match rather than
+re-emitting a partial guide or restarting the product.
+
+Every level's initial view is captured before the first firing, using its
+source pattern before later bindings narrow it. That frontier is a superset of
+the matches available under those later bindings; matching still performs the
+actual unification. Re-entering a level clones its unstarted view. Later
+inserts therefore do not join late, deleted rows can remain discoverable, and
+phase-one live validation separately decides whether a captured firing remains
+enabled. Public `tf:propose` remains materializing, and no cursor atom is
+exposed to a program. For an eligible fragment whose store-cardinality
+upper-bound product reaches 64, the all-demand collector exhausts the cursor
+into the public bag. Smaller products retain the cheaper eager collector;
+this choice is made before constructing cursor pins or traversal arrays, and
+first-answer evaluation streams at every size. The established reads-only bag
+fast path and all ineligible walkers remain in place.
+
+`CETTA_TRANSFORM_CURSOR_REFERENCE=1` permanently selects the former
+materializing proposal route for both first-answer evaluation and public
+collection in the same binary. The differential gate compares complete stdout,
+termination and diagnostics after normalizing fresh variable identities and
+space addresses. Its counter gates additionally reject an implementation that
+hides an eager fallback behind equal answers.
+
+The counters separate open/close ownership, completed entry candidates,
+occurrence rows yielded to matching, proposal-guide allocation work, and two
+byte accounts. `transform-cursor-owned-bytes-peak` covers the cursor, levels,
+plan/entry capacities, directly owned binding-builder vectors, any heap-grown
+frame-identity vector, traversal arrays and scratch arena. Shared syntax owners
+and cached/shared lookup, frame and Prime occurrence payloads are outside that
+vector account. `transform-cursor-accounted-bytes-peak` adds each distinct
+detached view's row and removal-mark storage once. It does not charge live store
+rows, shared trie/head indexes or dense kept-fact storage to the cursor, so it
+is an exact account of the named components, not a total RSS measurement. In
+the taking acceptance case the owned peak is unchanged from n to 2n while the
+entry-inclusive account grows with detached rows. High-water sampling occurs
+before binding/arena rollback and before active occurrence-view release, so
+failed matches and a traversal with no proposals cannot lose their transient
+peak merely because later cleanup frees the storage.
+
+`test-transform-stream-control` checks 40,000 and 160,000 answer products with
+a successful first candidate: one candidate and two occurrence rows in each.
+It also covers a rejected prefix through cursor exhaustion, an empty producer,
+a 200 by 200 disjoint traversal yielding no proposals, an empty first
+public-proposal frontier followed by a nonempty one, 100 repeated early closes,
+nested answerless firings, later insert/delete/reinsert, equal copies, overlapping read/take footprints, irrelevant writes, function and
+invalid destinations, captured bindings, dynamic-space and `let` barriers,
+full-drain controls, and a seeded differential corpus. A same-objects fault
+executable refuses the second outer row's inner cursor clone; the first
+answerless effect must remain exactly once, with no whole-transform fallback.
+The cursor counter gates run under ASan/UBSan as well as in the ordinary build.
+
+Evaluation barriers and retained views
+--------------------------------------
+
+The eligible internal cursor admits only a static run of ordinary read/take
+conjuncts. It captures occurrence views before the first firing and yields one
+copied proposal at a time. Later firings cannot make an unopened join leg see
+appended entry rows. Live validation still decides whether a captured take can
+fire; the view is not a reservation or a substitute for phase-one publication.
+
+A `let`, `all`, `once` source section, absence/uniqueness/collection, joint
+condition, dynamic space, host-space form the occurrence view cannot retain,
+or another effectful generation segment keeps the existing eager/native route.
+These are evaluation barriers, not blanket unsupported-feature errors. Public
+materialization and full-drain behavior remain available for the complete
+language surface. No effectful segment is moved across a firing to obtain
+laziness.
+
+A returned proposal owns its syntax independently of scratch bindings. The
+cursor releases every level, occurrence pin, retained environment and arena
+exactly once on exhaustion, error, interruption or early close. Publication of
+an answer precedes closing storage it borrows. Cancellation is not rollback.
+Native fallback is permitted only before the first firing; after an answerless
+firing, a later producer, clone, freshening or allocation decline is terminal
+and handled, so it cannot restart and repeat the published prefix.
+
+Independent calibration and negative controls
+---------------------------------------------
+
+The Lean `Demand` and `SearchCursor` contracts supply the semantic controls:
+first answer after an answerless effectful prefix, `collapse(once(P))`,
+answer-order sensitivity, HE all-error multiplicity and later-success
+preference, PeTTa raise sequencing, and publish-then-close ownership. They do
+not establish C correspondence.
+
+The independent HE library reference, Rust HE observations, PeTTa differential,
+profile tests, native fuel controls and owned resumable-consumer gates remain
+the executable references. Raw `eval`/`evalc` retaining an `Empty` invocation
+value while `metta` exposes an empty answer frontier is a required negative
+control for any shared frontier adapter.
+
+Measurements distinguish candidate production, occurrence-row scans, proposal
+allocations, cursor/view retention, first-answer work and full-drain throughput.
+Entry data/index retention is not answer materialization, and constant retained
+answer storage is not a claim of constant-time search.

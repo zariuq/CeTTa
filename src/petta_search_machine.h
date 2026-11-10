@@ -616,6 +616,12 @@ typedef struct {
      * type and caller destination stay in the machine until an owned return
      * supplies a value and the completed branch environment. */
     bool (*owns_call)(void *context, const Atom *expression);
+    /* Whether the operation `head` names makes a value built to be consumed
+     * by later calls, such as a grounder's program: the machine then gives
+     * apply_ready_values its old generation as the arena, so no collection
+     * copies the value, and settles there whatever of the answers refers to
+     * younger storage.  Optional. */
+    bool (*result_long_lived)(void *context, const Atom *head);
     /* Complete a native invocation that has already executed. No refusal
      * or native replay is permitted here; terminal faults go through end.
      * Its values retain their provenance and conditional roots. */
@@ -938,6 +944,12 @@ typedef struct {
     bool (*tabled_relation_set)(
         void *context, SymbolId head, CettaExprLen arity,
         bool enabled);
+    /* tabled-lattice: a tabled relation whose answers for one instance of
+     * the call are joined, by min or max, inside the fixpoint. */
+    SymbolId (*tabled_relation_join)(
+        void *context, SymbolId head, CettaExprLen arity);
+    bool (*tabled_relation_join_set)(
+        void *context, SymbolId head, CettaExprLen arity, SymbolId join);
     /* A shared table is an optional physical realization.  The language
      * still decides which relations are memoized through the callbacks
      * below; merely supplying storage cannot make a call cacheable. */
@@ -1444,6 +1456,7 @@ typedef struct {
     uint64_t table_generator_rounds;
     uint64_t table_generator_rounds_reused;
     uint64_t table_scc_completions;
+    uint64_t table_scc_merges;
     uint64_t table_answer_replays;
     uint64_t count_aggregate_answers;
     uint64_t count_aggregate_boundary_copies_avoided;

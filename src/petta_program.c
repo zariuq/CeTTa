@@ -1861,7 +1861,8 @@ bool petta_program_head_is_intrinsic(SymbolId head) {
     bool intrinsic_form =
         form != PETTA_FORM_NONE &&
         form != PETTA_FORM_PROCESS_METTA_STRING &&
-        form != PETTA_FORM_TABLED;
+        form != PETTA_FORM_TABLED &&
+        form != PETTA_FORM_TABLED_LATTICE;
     return head != SYMBOL_ID_NONE &&
            (intrinsic_form ||
             /* Builtin data names are not PeTTa operations.  User
@@ -8470,6 +8471,7 @@ static bool petta_table_safety_form_is_pure(
     case PETTA_FORM_ASSERTZ_PREDICATE:
     case PETTA_FORM_RETRACT_PREDICATE:
     case PETTA_FORM_TABLED:
+    case PETTA_FORM_TABLED_LATTICE:
     case PETTA_FORM_ADD_TRANSLATOR_RULE:
     case PETTA_FORM_REMOVE_TRANSLATOR_RULE:
     case PETTA_FORM_CUT:

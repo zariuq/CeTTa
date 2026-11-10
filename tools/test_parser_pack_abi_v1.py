@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+from gslt2parse_oracles_v1 import ORACLES
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,7 +25,7 @@ CASES = {
             "shared/petta_document_splitter_scalar_classes_v1.metta",
             "languages/petta_document_splitter_v1.metta",
         ),
-        "summary": (73, 24, 97, 1),
+        "summary": (78, 24, 102, 1),
     },
     "petta": {
         "start": "petta-form",
@@ -60,7 +61,7 @@ CASES = {
             "shared/cetta_prime_scalar_classes_v1.metta",
             "languages/cetta_prime_reader_v1.metta",
         ),
-        "summary": (179, 14, 193, 0),
+        "summary": (352, 18, 370, 0),
     },
     "rho": {
         "start": "cetta-rho-document",
@@ -131,9 +132,11 @@ CASES = {
             "core/syntax_core_v1.metta",
             "shared/lookahead_core_v1.metta",
             "shared/char_core_v1.metta",
+            "shared/ground_relations_v1.metta",
+            "../../../langdef/tptp/unicode_scalar_classes_v1.metta",
             "../../../langdef/tptp/syntax_fof_cnf_v1.metta",
         ),
-        "summary": (688, 562, 1250, 1),
+        "summary": (691, 271, 962, 1),
     },
 }
 
@@ -147,16 +150,10 @@ class GateFailure(RuntimeError):
 
 
 def export_stream(
-    petta_root: Path,
     case: dict,
     environment: dict[str, str] | None = None,
 ) -> bytes:
-    exporter = (
-        petta_root
-        / "experiments"
-        / "gslt2parse_foundation"
-        / "parser_pack_abi_export_v1.pl"
-    )
+    exporter = ORACLES / "parser_pack_abi_export_v1.pl"
     completed = subprocess.run(
         [
             "swipl",
@@ -211,11 +208,11 @@ def run_native(binary: Path, stream: bytes, expect_success: bool) -> str:
     return completed.stdout
 
 
-def check_matrix(binary: Path, petta_root: Path) -> tuple[int, bytes]:
+def check_matrix(binary: Path) -> tuple[int, bytes]:
     passed = 0
     prime_stream = b""
     for label, case in CASES.items():
-        stream = export_stream(petta_root, case)
+        stream = export_stream(case)
         output = run_native(binary, stream, expect_success=True)
         match = SUMMARY.fullmatch(output)
         if not match:
@@ -282,7 +279,7 @@ def main() -> int:
 
     binary = arguments.binary.resolve()
     petta_root = arguments.petta_root.resolve()
-    matrix, prime_stream = check_matrix(binary, petta_root)
+    matrix, prime_stream = check_matrix(binary)
     corruptions = check_corruption(binary, prime_stream)
     print(f"(ParserPackABIV1MatrixSummary {matrix} {matrix} {corruptions} 0)")
     return 0

@@ -1,0 +1,13 @@
+(gslt-langdef-lock-v1
+  (manifest-sha256 "eaa3922d64583761b724df61adaadea388a00e60d5193ef92aadac2d26b8eac2")
+  (parser-pack-sha256 "f72b0fe6dc2756ac678bbce08f29a4460ea85ec8054d77568df759dde6d63c89")
+  (source-digest "2be91ad6435a6090b4544fa5a234139fd15693d0d8333f463b7c98d5645a4fa2")
+  (compiler-digest "38e77d87d2b2187c86452c9e1add3c2bc0823d73ca86ed9680664b8740348a07")
+  (environment-digest "1e1603e9df10072278b8acd3c2c4e77cfe1688ea244130fdf91f38638b890ae2")
+  (pack-digest "d694ca69323cdb966ff8c9b424b5106afe59dfdaa9cbdd9f5ba199f9b791474b")
+  (source-sha256 "../../experiments/gslt2parse_foundation/presentations/core/syntax_core_v1.metta" "9d6ddbc0fc6ebdea36f6302ba24b4155ba9e007ee6a9bcada58f29e01f1cf438")
+  (source-sha256 "../../experiments/gslt2parse_foundation/presentations/shared/lookahead_core_v1.metta" "6f7bfbba089f371ce4b0afcdb7a1eb22b6d4771b7bd9dca2b207397c4b76e993")
+  (source-sha256 "../../experiments/gslt2parse_foundation/presentations/shared/char_core_v1.metta" "da023b9a0d6d9f93de7112995ba05bfd177824fd888b5ea33708af1f21ebd2bc")
+  (source-sha256 "../../experiments/gslt2parse_foundation/presentations/shared/ground_relations_v1.metta" "cf6eae2778f3afc5db8358eba83c7d0e856f7a184bb963af315fe5822db27314")
+  (source-sha256 "source_v1.metta" "6b44600ca40106e1d44a147ed32ffb017afba492e02dedc58afffb8acb3f948c")
+)

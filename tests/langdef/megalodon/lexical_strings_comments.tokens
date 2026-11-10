@@ -1,0 +1,24 @@
+OPENCOM
+TITLE
+(STRING "strings and comments")
+CLOSECOM
+OPENCOM
+AUTHOR
+(STRING "someone")
+(STRING "someone else")
+CLOSECOM
+AXIOM
+(NAM "s1")
+COLON
+(STRING "a string")
+DOT
+AXIOM
+(NAM "s2")
+COLON
+(QUESTIONSTRING "a question string")
+DOT
+AXIOM
+(NAM "s3")
+COLON
+(STRING "")
+DOT

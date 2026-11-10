@@ -9,7 +9,7 @@
 !(add-atom &db (order ann o1))
 !(add-atom &db (order ann o2))
 !(add-atom &db (order bob o3))
-!(count (transform &db (, (every (customer $c)) (all (order $c $o) $os) (let $n (size-atom $os))) (orders-of $c $n) &db))
+!(count (transform &db (, (all (customer $c)) (collect (order $c $o) $os) (let $n (size-atom $os))) (orders-of $c $n) &db))
 !(count-store (sort-atom (collapse (match &db (orders-of $c $n) ($c $n)))))
 
 ; keep the rate, consume the order
@@ -18,12 +18,12 @@
 !(add-atom &w (order 1))
 !(add-atom &w (order 2))
 !(add-atom &w (order 3))
-!(rate-one (transform &w (, (rate $r) (take (order $o))) (billed $o $r) &w))
-!(rate-every (transform &w (, (unique (rate $r)) (every (take (order $o)))) (billed $o $r) &w))
+!(rate-one (once (transform &w (, (rate $r) (take (order $o))) (billed $o $r) &w)))
+!(rate-all (transform &w (, (unique (rate $r)) (all (take (order $o)))) (billed $o $r) &w))
 !(rate-store (show &w))
 !(add-atom &w (order 4))
 !(add-atom &w (rate 5))
-!(rate-two-rates (collapse (transform &w (, (unique (rate $r)) (every (take (order $o)))) (billed $o $r) &w)))
+!(rate-two-rates (collapse (transform &w (, (unique (rate $r)) (all (take (order $o)))) (billed $o $r) &w)))
 !(rate-orders (sort-atom (collapse (match &w (order $o) $o))))
 
 ; a solver at the barrier: collect every constraint, decide once
@@ -34,10 +34,10 @@
 !(add-atom &cs (constraint (>= x 3)))
 !(add-atom &cs (constraint (<= x 7)))
 !(add-atom &cs (constraint (>= x 5)))
-!(solver (transform &cs (, (all (constraint $c) $all) (let $r (solve (unwrap $all)))) (verdict $r) &cs))
+!(solver (transform &cs (, (collect (constraint $c) $all) (let $r (solve (unwrap $all)))) (verdict $r) &cs))
 !(solver-store (collapse (match &cs (verdict $v) $v)))
 !(add-atom &cs (constraint (<= x 4)))
-!(solver-b (collapse (transform &cs (, (all (constraint $c) $all) (let $r (solve (unwrap $all)))) $r)))
+!(solver-b (collapse (transform &cs (, (collect (constraint $c) $all) (let $r (solve (unwrap $all)))) $r)))
 
 ; PLN revision with linear evidence: evidence tokens are consumed into the belief
 (= (add-evidence $evs $p0 $n0) (foldl-atom $evs ($p0 $n0) $acc $e (let (($p $n) (evidence $s $ep $en)) ($acc $e) ((+ $p $ep) (+ $n $en)))))
@@ -46,7 +46,7 @@
 !(add-atom &pln (evidence (likes ann tea) 3 0))
 !(add-atom &pln (evidence (likes ann tea) 1 1))
 !(add-atom &pln (evidence (likes bob tea) 0 2))
-!(revise (transform &pln (, (take (belief $s $p0 $n0)) (all (take (evidence $s $ep $en)) $evs) (let ($p $n) (add-evidence $evs $p0 $n0))) (belief $s $p $n) &pln))
+!(revise (transform &pln (, (take (belief $s $p0 $n0)) (collect (take (evidence $s $ep $en)) $evs) (let ($p $n) (add-evidence $evs $p0 $n0))) (belief $s $p $n) &pln))
 !(revise-store (show &pln))
 
 ; a synchronous attention update: the kernel takes every weight at once
@@ -63,7 +63,7 @@
 !(add-atom &att (node a))
 !(add-atom &att (node b))
 !(add-atom &att (node c))
-!(attend (transform &att (, (all (take (sti $x $v)) $ws) (all (link $a1 $b1 $s1) $links) (every (node $n)) (let $w (attend $ws $links $n))) (sti $n $w) &att))
+!(attend (transform &att (, (collect (take (sti $x $v)) $ws) (collect (link $a1 $b1 $s1) $links) (all (node $n)) (let $w (attend $ws $links $n))) (sti $n $w) &att))
 !(attend-store (sort-atom (collapse (match &att (sti $x $v) ($x $v)))))
 
 ; remove every match and count, in one firing
@@ -72,7 +72,7 @@
 !(add-atom &tmp (scratch 2))
 !(add-atom &tmp (scratch 3))
 !(add-atom &tmp (keep 9))
-!(remove-all (collapse (transform &tmp (, (all (take (scratch $x)) $xs) (let $n (size-atom $xs))) (removed $n))))
+!(remove-all (collapse (transform &tmp (, (collect (take (scratch $x)) $xs) (let $n (size-atom $xs))) (removed $n))))
 !(remove-all-store (show &tmp))
 
 ; top-k over the collection
@@ -84,7 +84,7 @@
 !(add-atom &sc (score a 3))
 !(add-atom &sc (score b 9))
 !(add-atom &sc (score c 5))
-!(top-k (collapse (transform &sc (all (score $x $v) $xs) (first-k 2 (sort-desc $xs)))))
+!(top-k (collapse (transform &sc (collect (score $x $v) $xs) (first-k 2 (sort-desc $xs)))))
 
 ; a counter and a write-once cell
 !(bind! &ctr (new-space))

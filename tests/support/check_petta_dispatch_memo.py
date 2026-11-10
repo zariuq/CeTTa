@@ -6,12 +6,16 @@ each remembered decision against a fresh one (CETTA_PETTA_DISPATCH_MEMO=check,
 which stops the program on a difference) as without the memo (=off).
 Programs that end abnormally or answer differently from run to run without
 the memo are only checked for differences in the decisions themselves.
+With --key-changes, only the programs that change what a decision depends on:
+those that give a registered builtin head equations, and those that import
+after their first evaluation.
 
-Usage: check_petta_dispatch_memo.py CETTA [PROGRAM ...]
+Usage: check_petta_dispatch_memo.py CETTA [--key-changes | PROGRAM ...]
 """
 import concurrent.futures
 import glob
 import os
+import re
 import subprocess
 import sys
 
@@ -68,12 +72,39 @@ def compare(cetta, program):
                      f"line {at + 1}: {shown[0]!r} -> {shown[1]!r}")
 
 
+def registered_builtins():
+    """The heads the memo decides for: PeTTa's registered builtins."""
+    source = open("src/petta_semantics.c").read()
+    table = re.search(r"petta_registered_builtins\[\] = \{(.*?)\n\};", source, re.S)
+    return set(re.findall(r'\{"([^"]+)", ', table.group(1))) if table else set()
+
+
+def changes_key(path, builtins):
+    """Gives a registered builtin head equations, or imports after it first
+    evaluates something."""
+    lines = [line.strip() for line in open(path, errors="replace")]
+    heads = {head for line in lines
+             for head in re.findall(r"\(= \(([^\s()]+)[\s)]", line)}
+    first = next((i for i, line in enumerate(lines)
+                  if line.startswith("!(") and not line.startswith("!(import!")), None)
+    return bool(heads & builtins) or (first is not None and any(
+        line.startswith("!(import!") for line in lines[first + 1:]))
+
+
 def main():
     if len(sys.argv) < 2:
         print(__doc__)
         sys.exit(2)
     cetta = os.path.abspath(sys.argv[1])
-    programs = sys.argv[2:] or sorted(glob.glob("tests/petta/*.metta"))
+    if sys.argv[2:] == ["--key-changes"]:
+        builtins = registered_builtins()
+        programs = [p for p in sorted(glob.glob("tests/petta/*.metta"))
+                    if changes_key(p, builtins)]
+        if not builtins or not programs:
+            print("FAIL: no PeTTa test program changes what a dispatch decision depends on")
+            sys.exit(1)
+    else:
+        programs = sys.argv[2:] or sorted(glob.glob("tests/petta/*.metta"))
     failures, skipped = [], []
     workers = 2
     with concurrent.futures.ThreadPoolExecutor(workers) as pool:

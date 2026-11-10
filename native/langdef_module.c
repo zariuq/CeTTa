@@ -37,6 +37,7 @@
 #include "native/module_package_v1.h"
 #include "native/source_region_module_v1.h"
 #include "native/source_input_view_v1.h"
+#include "native/source_occurrence_view_v1.h"
 #include "native/module_value_internal_v1.h"
 #include "native/module_fields_v1.h"
 #include "native_handle.h"
@@ -7817,6 +7818,8 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
 #ifndef CETTA_LANGDEF_ARTIFACT_ONLY
     Atom *inputView=cetta_source_input_view_dispatch_v1(ctx,arena,head,args,nargs);
     if(inputView)return inputView;
+    Atom *occurrenceView=cetta_source_occurrence_view_dispatch_v1(ctx,arena,head,args,nargs);
+    if(occurrenceView)return occurrenceView;
     Atom *regions=cetta_source_region_dispatch_v1(ctx,arena,head,args,nargs);
     if(regions)return regions;
     if(atom_is_symbol(head,"__cetta_lib_module_run_source_v1")&&nargs==2u&&

@@ -1990,22 +1990,11 @@ static void he_canonical_resume_control_in(HeCanonicalFrame *frame,
             frame->index++;
             Atom **types = NULL;
             uint32_t count = eval_get_atom_types_profiled(frame->space, a, value, &types);
-            Atom *boolean = atom_symbol(a, "Bool");
-            bool concrete = false, may_bool = false;
-            for (uint32_t i = 0u; i < count; i++) {
-                if (atom_is_symbol_id(types[i], g_builtin_syms.undefined_type) ||
-                    atom_is_meta_type(types[i]))
-                    continue;
-                if (atom_eq_fast(types[i], boolean))
-                    may_bool = true;
-                else
-                    concrete = true;
-            }
+            bool rejected = eval_if_condition_rejected(
+                frame->space, a, frame->atom, value, types, count,
+                &frame->paths, &source->env);
             free(types);
-            if ((concrete || value->kind == ATOM_GROUNDED) && !may_bool)
-                outcome_set_add(&frame->paths, bad_arg_type_error(frame->space, a,
-                    frame->atom, 1, boolean, value), &source->env);
-            else
+            if (!rejected)
                 outcome_set_add(&frame->paths,
                     he_canonical_if_call(a, frame->atom, value), &source->env);
         }

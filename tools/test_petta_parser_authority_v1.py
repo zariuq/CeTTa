@@ -11,15 +11,27 @@ import subprocess
 import tempfile
 from typing import Any
 
+from gslt2parse_oracles_v1 import ORACLES
 
-EXPECTED_REVISION = "eb85359f8aae8ffae34f8c7c210593d3733fccfd"
-EXPECTED_PARSER_DIGEST = "54d90136f61ef14c78c06809f116a4d4990572691a55ea0985a49ac937ec2088"
-EXPECTED_READER_DIGEST = "e9a6d1cc98c133feba44153bfb1aa66d55ef5ccbe9635b72adacd683bb097286"
-EXPECTED_MATRIX_DIGEST = "1cd322cb281e183dbc1b8f0ca20f101e6231cc9ca18828af1923abd6d605cd0d"
+
+EXPECTED_REVISION = "c3adb863b4ad51df6dc37dfb51290f10cd70fb16"
+EXPECTED_PARSER_DIGEST = "69ab6dd840fcc585d916fd25a496a09dd30ca9aaacf6e55baaa67c8c020c84c1"
+EXPECTED_READER_DIGEST = "a155dd608858edf7f9e644e67820e032a1117032517f2c9d2cd9a656a2a7e5e0"
+EXPECTED_MATRIX_DIGEST = "64871d0779e360277a795adaa02ef9b454f2f6a129d636b2291717a067daee3a"
+
+
+# PeTTa's own reader, run from CeTTa's oracle directory over the PeTTa
+# checkout or snapshot that the `petta` path alias names.
+FORM_AUTHORITY = ORACLES / "petta_parser_authority_v1.pl"
+SPLITTER_AUTHORITY = ORACLES / "petta_document_splitter_authority_v1.pl"
 
 
 class GateFailure(RuntimeError):
     pass
+
+
+def authority_command(oracle: Path, root: Path, *arguments: str) -> list[str]:
+    return ["swipl", "-q", "-p", f"petta={root}", "-f", str(oracle), "--", *arguments]
 
 
 Observation = tuple[str, ...]
@@ -128,14 +140,7 @@ DOCUMENT_CASES: dict[str, tuple[bytes, tuple[Observation, ...]]] = {
     ),
     "single-escaped-quote-splitter-boundary": (
         b"(a \"quote: \\\"\")\n",
-        (
-            (
-                "error",
-                "error(syntax_error('missing \\')\\', starting at line 1:\\na \"quote: "
-                "\\\\"
-                "\"\")'),none)",
-            ),
-        ),
+        (("form", "expression", "(a \"quote: \\\"\")", "[a,\"quote: \\\"\"]"),),
     ),
     "unicode-leading-blank": (
         "\u1680(a)\n".encode("utf-8"),
@@ -170,7 +175,25 @@ def file_digest(path: Path) -> str:
     return sha256(path.read_bytes()).hexdigest()
 
 
-def revision(root: Path) -> str:
+def revision(root: Path) -> str | None:
+    """The checkout's revision, or None for a source snapshot.
+
+    A snapshot does not inherit the revision of a repository that happens to
+    enclose it; the authority digests pin it instead."""
+    toplevel = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+    if (
+        toplevel.returncode != 0
+        or Path(toplevel.stdout.strip()).resolve() != root.resolve()
+    ):
+        return None
     completed = subprocess.run(
         ["git", "rev-parse", "HEAD"],
         cwd=root,
@@ -195,7 +218,7 @@ def decode_hex(field: bytes) -> str:
 
 def run_case(oracle: Path, root: Path, mode: str, input_path: Path) -> tuple[Observation, ...]:
     completed = subprocess.run(
-        ["swipl", "-q", "-f", str(oracle), "--", mode, str(input_path)],
+        authority_command(oracle, root, mode, str(input_path)),
         cwd=root,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -262,7 +285,7 @@ def check_cases(oracle: Path, root: Path) -> tuple[int, int, list[dict[str, Any]
 
 def check_invalid_mode(oracle: Path, root: Path) -> int:
     completed = subprocess.run(
-        ["swipl", "-q", "-f", str(oracle), "--", "invalid", "missing"],
+        authority_command(oracle, root, "invalid", "missing"),
         cwd=root,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -291,7 +314,7 @@ def main() -> int:
     root = arguments.petta_root.resolve()
 
     observed_revision = revision(root)
-    if observed_revision != EXPECTED_REVISION:
+    if observed_revision is not None and observed_revision != EXPECTED_REVISION:
         raise GateFailure(
             f"PeTTa authority revision mismatch: expected {EXPECTED_REVISION}, got {observed_revision}"
         )
@@ -302,12 +325,7 @@ def main() -> int:
     if reader_digest != EXPECTED_READER_DIGEST:
         raise GateFailure("PeTTa document reader authority digest mismatch")
 
-    oracle = (
-        root
-        / "experiments"
-        / "gslt2parse_foundation"
-        / "petta_parser_authority_v1.pl"
-    )
+    oracle = FORM_AUTHORITY
     positive, negative, records = check_cases(oracle, root)
     corruptions = check_invalid_mode(oracle, root)
     digest = matrix_digest(records)

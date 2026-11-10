@@ -1,0 +1,5 @@
+true
+(not-verified (summary (theorems 3) (checked 3) (verified 1) (admitted 0) (aby 0) (dependent 0) (unfinished 0) (out-of-budget 0) (document-axioms 1) (aby-steps-tried 0) (aby-steps-proved 0)) (entries (axiom "A" 1) (theorem "T1" 2 (checked-assuming "A")) (theorem "T2" 5 (checked-assuming "A")) (theorem "T3" 8 verified)))
+(not-verified (entries (theorem "and_comm" 15 verified) (theorem "or_comm" 18 verified) (theorem "iff_trans" 21 verified) (theorem "eq_trans" 24 verified) (theorem "uses_hint" 27 verified) (theorem "peirce" 30 aby)))
+(not-verified (entries (theorem "Small" 1 verified) (theorem "Large" 4 out-of-budget) (theorem "UsesLarge" 8 (dependent "Large")) (theorem "Independent" 11 verified)))
+(failed "Syntax error between line 1 char 33 and line 1 char 33:")

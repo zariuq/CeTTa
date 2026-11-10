@@ -1,0 +1,42 @@
+; The answer-set solver against clingo, loaded at run time: programs grounded
+; by clingo's grounder from text, and programs given as data; each line says
+; whether the two sets of stable models are equal.
+!(import! &self asp)
+!(import! &self clingo)
+(= (canon-each $ms)
+   (if (== $ms ()) () (let ($h $t) (decons-atom $ms) (cons-atom (sort $h) (canon-each $t)))))
+(= (canon $ms) (sort (canon-each $ms)))
+(= (ours $p) (let (models $ms $cert) (asp:models $p) (canon $ms)))
+(= (theirs $p) (let (models $ms (reference clingo)) (clingo:models $p) (canon $ms)))
+(= (agree $name $p) ($name (== (ours $p) (theirs $p)) (size-atom (theirs $p))))
+!(agree even-loop (clingo:ground "p :- not q. q :- not p. r :- p. :- r, q."))
+!(agree positive-loop (clingo:ground "a :- b. b :- a. c :- not a."))
+!(agree choices (clingo:ground "{x;y;z}. :- x, y. w :- z, not x."))
+!(agree reachability (clingo:ground "node(1..4). {e(X,Y)} :- node(X), node(Y), X < Y. r(1). r(Y) :- r(X), e(X,Y). :- node(X), not r(X)."))
+!(agree odd-loop (clingo:ground "a :- not a."))
+!(agree odd-cycle (clingo:ground "a :- not b. b :- not c. c :- not a."))
+!(agree successors (clingo:ground "{p(1..4)}. q(X) :- p(X), not p(X+1). :- q(2)."))
+!(agree mutual (clingo:ground "{s(1..3)}. t(X) :- s(X), t(Y), Y = X - 1. t(1) :- s(1). u :- t(3)."))
+!(agree as-data ((rule a () (b)) (rule b () (a)) (rule c (b) ()) (choice d (a) ()) (constraint (d) (c))))
+!(agree constraint-only ((choice x () ()) (choice y () ()) (constraint (x y) ()) (constraint () (x y))))
+; Weight rules: programs with cardinality bounds and weighted sums, grounded
+; by clingo into weight rules and solved here, against clingo solving the
+; text itself, both read as sets of models over the shown atoms.
+(= (shown $m) (if (== $m ()) () (let ($h $t) (decons-atom $m) (if (== (car-atom-or $h) asp:aux) (shown $t) (cons-atom $h (shown $t))))))
+(= (car-atom-or $h) (if (== (get-metatype $h) Expression) (car-atom $h) $h))
+(= (shown-each $ms) (if (== $ms ()) () (let ($h $t) (decons-atom $ms) (cons-atom (sort (shown $h)) (shown-each $t)))))
+(= (ours-text $text) (let (models $ms $cert) (asp:models (clingo:ground $text)) (sort (shown-each $ms))))
+(= (theirs-text $text) (let (models $ms (reference clingo)) (clingo:models $text) (sort (canon-each $ms))))
+(= (agree-text $name $text) ($name (== (ours-text $text) (theirs-text $text)) (size-atom (theirs-text $text))))
+!(agree-text colouring "node(1..4). edge(1,2). edge(2,3). edge(3,4). edge(1,3). color(r;g;b). {col(X,C) : color(C)} = 1 :- node(X). :- edge(X,Y), col(X,C), col(Y,C).")
+!(agree-text exactly-two "{a;b;c} = 2.")
+!(agree-text queens "q(1..4). {at(R,C) : q(C)} = 1 :- q(R). :- at(R1,C), at(R2,C), R1 < R2. :- at(R1,C1), at(R2,C2), R1 < R2, R2 - R1 = |C2 - C1|.")
+!(agree-text pigeons "p(1..3). h(1..2). {in(P,H) : h(H)} = 1 :- p(P). :- h(H), 2 {in(P,H) : p(P)}.")
+!(agree-text weighted "{a;b;c}. p :- 3 #sum { 2 : a; 2 : not b; 1 : c }.")
+!(agree-text hamiltonian "v(1..4). e(1,2). e(2,3). e(3,4). e(4,1). e(1,3). e(2,4). {h(X,Y) : e(X,Y)} = 1 :- v(X). {h(X,Y) : e(X,Y)} = 1 :- v(Y). r(1). r(Y) :- r(X), h(X,Y). :- v(X), not r(X).")
+!(agree-text bounded-weight "{a;b;c;d}. :- 5 #sum { 3 : a; 2 : b; 2 : c; 1 : d }. ok :- 2 { a; b; c; d }.")
+; Disjunctions, grounded by clingo and read by shifting (head-cycle-free).
+!(agree-text disjunctive-colouring "node(1..3). edge(1,2). edge(2,3). col(r;g). in(X,C) | out(X,C) :- node(X), col(C). :- node(X), not some(X). some(X) :- in(X,C). :- in(X,C), in(X,D), C != D. :- edge(X,Y), in(X,C), in(Y,C).")
+!(agree-text disjunction-of-three "a | b | c :- not d. d :- not e. e :- not d.")
+!(agree-text repeated-head "a | a :- not b. b :- not a.")
+!(agree-text disjunction-refuted "a | b. :- a. :- b.")

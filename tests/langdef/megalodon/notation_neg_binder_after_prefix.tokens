@@ -1,0 +1,12 @@
+PREFIX
+(NAM "all")
+(NUM False "400" None None)
+DEQ
+(NAM "neg")
+DOT
+BINDER
+(NAM "all")
+COMMA
+DEQ
+(NAM "univ")
+DOT

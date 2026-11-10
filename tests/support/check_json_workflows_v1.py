@@ -241,8 +241,10 @@ def workflows(binary, output, languages, timeout=None):
         (let (LCons (JsonLineV1 $number $value) LNil) (json-demo:parse-lines $lines)
           (case $value (((JsonFailureV1 $p $s $c $m) "rejected") ($other "WRONG"))))))''', "rejected")
 
+    # (library list) names CeTTa's list library in every language; in PeTTa a
+    # bare name is a file beside the program, as in SWI-PeTTa.
     prefix = ('!(import! &self fs)\n!(import! &self system)\n'
-              '!(import! &self list)\n' +
+              '!(import! &self (library list))\n' +
               f'!(import! &self {quote(ROOT / "examples/json_scripting_v1.metta")})\n')
     checks = 0
     for language in languages:

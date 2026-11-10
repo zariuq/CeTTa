@@ -1,0 +1,5 @@
+:- chr_constraint candidate/1,prime/1.
+sieve_end @ candidate(1) <=> true.
+sieve_next @ candidate(N) <=> prime(N), M is N-1, candidate(M).
+sieve_remove @ prime(Y) \ prime(X) <=> 0 =:= X mod Y | true.
+?- candidate(10).

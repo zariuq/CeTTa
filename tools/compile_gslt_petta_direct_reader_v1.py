@@ -64,11 +64,14 @@ class PeTTaProjectionPolicy:
     # A list node, the node closing a list pattern, and the token, variable
     # and dollar-symbol nodes inside a list; None when there are no lists.
     list_labels: tuple[str, str, str, str, str] | None = None
+    string_body_metta: bool = False
 
 
 def projection_policy(
     presentation: Presentation, profile_name: str
 ) -> PeTTaProjectionPolicy:
+    string_body_metta = False
+    body_labels = None
     form_label: str | None = None
     expression_label: str | None = None
     atom_rules: dict[str, tuple[str, str]] = {}
@@ -130,6 +133,13 @@ def projection_policy(
             maps[symbol(value[2], "map wrapper")] = (
                 symbol(value[3], "map failure mode"), tuple(entries)
             )
+        elif tag == "sexpr-string-body-codec":
+            value = form(rule.head, tag, 4, f"{presentation.source}:{rule.name}")
+            if symbol(value[1], "projection profile") == profile_name:
+                if body_labels is not None or symbol(value[4], "string body codec") != "metta-literal-v1":
+                    raise CompileError("expected one declared MeTTa string body codec")
+                body_labels = (symbol(value[2], "string node"), symbol(value[3], "escape node"))
+                string_body_metta = True
         elif tag == "sexpr-document-rule":
             value = form(
                 rule.head, tag, 3, f"{presentation.source}:{rule.name}"
@@ -176,11 +186,17 @@ def projection_policy(
         name for name, mode in document_rules.items()
         if mode == "bang-prefix"
     ]
-    if len(variables) != 1 or len(escapes) != 1 or len(runnables) != 1:
-        raise CompileError(
-            "projection needs one underscore-fresh variable, identity escape, "
-            "and bang-prefix runnable"
-        )
+    if len(variables) != 1 or len(runnables) != 1:
+        raise CompileError("projection needs one underscore-fresh variable and bang-prefix runnable")
+    string_label = unique_atom("string", "decoded", "PeTTa string")
+    if body_labels is not None:
+        if maps or body_labels[0] != string_label:
+            raise CompileError("whole-body and per-escape projections cannot compete")
+        escape_label, escape_map, identity = body_labels[1], (), False
+    else:
+        if len(escapes) != 1:
+            raise CompileError("projection needs one declared escape map or whole-body codec")
+        escape_label, escape_map, identity = escapes[0], maps[escapes[0]][1], True
     if document_rules.get(form_label) != "value":
         raise CompileError("ordinary PeTTa forms must project as values")
     return PeTTaProjectionPolicy(
@@ -188,15 +204,16 @@ def projection_policy(
         form_label,
         expression_label,
         unique_atom("symbol", "swi-number-bool", "PeTTa token"),
-        unique_atom("string", "decoded", "PeTTa string"),
+        string_label,
         variables[0],
         unique_atom("string", "retain-backslashes", "quoted token"),
         unique_atom("symbol", "raw", "dollar symbol"),
-        escapes[0],
-        maps[escapes[0]][1],
-        True,
+        escape_label,
+        escape_map,
+        identity,
         runnables[0],
         list_labels,
+        string_body_metta,
     )
 
 
@@ -228,6 +245,7 @@ class PeTTaDirectPlan:
     # [x y] and [x y | rest]: open, close, bar; the token classes and
     # boundary inside a list.  None without lists.
     lists: tuple[int, int, int, str, str, str] | None = None
+    string_body_metta: bool = False
 
 
 def only(items: Sequence[SExpr], where: str) -> SExpr:
@@ -635,6 +653,9 @@ def derive_plan(
             raise CompileError(f"PeTTa splitter/form {key} values disagree")
     if split["string_escape"] != parsed["escape_marker"]:
         raise CompileError("PeTTa splitter/form escape markers disagree")
+    if policy.string_body_metta and (int(parsed["escape_marker"]) != 92 or
+                                     int(parsed["string_quote"]) != 34):
+        raise CompileError("MeTTa literal codec requires quote and backslash delimiters")
     used = {
         str(split["blank"]), str(split["string_plain"]),
         str(split["comment_body"]), str(split["ordinary"]),
@@ -667,7 +688,7 @@ def derive_plan(
                                        classes[str(lists[4])]):
             raise CompileError(
                 "a PeTTa list token may continue where the bar alone would end")
-    if not policy.escape_map:
+    if not policy.string_body_metta and not policy.escape_map:
         raise CompileError("PeTTa projection has no named escape map")
     if split["string_escape"] != parsed["escape_marker"]:
         raise CompileError("PeTTa splitter and form escape markers disagree")
@@ -685,6 +706,7 @@ def derive_plan(
         int(parsed["variable_marker"]), int(split["runnable_marker"]),
         policy.escape_map, policy.identity_escape, tuple(sorted(used)),
         lists,
+        policy.string_body_metta,
     )
 
 
@@ -766,11 +788,13 @@ def generate(
             f"    .complement = {'true' if scalar_class.complement else 'false'},\n"
             "};\n"
         )
-    escape_name = f"{c_prefix}_string_escape_map"
-    lines.append(f"static const GSLTDirectCodepointMapV1 {escape_name}[] = {{\n")
-    for source, target in plan.escape_map:
-        lines.append(f"    {{UINT32_C({source}), UINT32_C({target})}},\n")
-    lines.append("};\n")
+    escape_name = "NULL"
+    if plan.escape_map:
+        escape_name = f"{c_prefix}_string_escape_map"
+        lines.append(f"static const GSLTDirectCodepointMapV1 {escape_name}[] = {{\n")
+        for source, target in plan.escape_map:
+            lines.append(f"    {{UINT32_C({source}), UINT32_C({target})}},\n")
+        lines.append("};\n")
     lines.append(
         f"\nconst GSLTDirectPeTTaReaderV1Plan {c_prefix}_plan = {{\n"
         f'    .presentation_name = "{plan.presentation_name}",\n'
@@ -805,6 +829,7 @@ def generate(
         f"    .string_escape_map = {escape_name},\n"
         f"    .string_escape_map_len = UINT32_C({len(plan.escape_map)}),\n"
         f"    .string_escape_identity_fallback = {'true' if plan.identity_escape else 'false'},\n"
+        f"    .string_body_metta = {'true' if plan.string_body_metta else 'false'},\n"
         f"    .list_open = UINT32_C({plan.lists[0] if plan.lists else 0}),\n"
         f"    .list_close = UINT32_C({plan.lists[1] if plan.lists else 0}),\n"
         f"    .list_rest = UINT32_C({plan.lists[2] if plan.lists else 0}),\n"

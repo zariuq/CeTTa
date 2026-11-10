@@ -191,6 +191,20 @@ static void refusal_remove_equation(Space *space, Atom *equation) {
     petta_program_note_remove_one(g_library_context->petta_program, space, equation);
 }
 
+/* The effect inquiries made of the probed head, through either reading of
+ * its effects: mode 1 answers that its effect is uncertain, and mode 2, once,
+ * reads it and then replaces its effectful equation by a pure one. */
+static void refusal_effect_after(Space *space, CettaGsltQueryEffect result,
+                                 bool defined) {
+    if (refusal_effect_mode == 2u) {
+        refusal_effect_mode = 0u;
+        assert(defined && result != CETTA_GSLT_QUERY_EFFECT_PURE);
+        refusal_remove_equation(space, refusal_effect_equation);
+        refusal_add_equation(space, refusal_effect_owner,
+            "(= (refusal-source $x) (+ $x 2))");
+    }
+}
+
 CettaGsltQueryEffect __real_space_query_effect_for_head(Space *, SymbolId, bool *);
 CettaGsltQueryEffect __wrap_space_query_effect_for_head(Space *space, SymbolId head,
         bool *defined) {
@@ -202,13 +216,25 @@ CettaGsltQueryEffect __wrap_space_query_effect_for_head(Space *space, SymbolId h
         return CETTA_GSLT_QUERY_EFFECT_UNCERTAIN_HEAD;
     }
     CettaGsltQueryEffect result = __real_space_query_effect_for_head(space, head, defined);
-    if (refusal_effect_mode == 2u) {
-        refusal_effect_mode = 0u;
-        assert(*defined && result != CETTA_GSLT_QUERY_EFFECT_PURE);
-        refusal_remove_equation(space, refusal_effect_equation);
-        refusal_add_equation(space, refusal_effect_owner,
-            "(= (refusal-source $x) (+ $x 2))");
+    refusal_effect_after(space, result, *defined);
+    return result;
+}
+
+CettaGsltQueryEffect __real_space_query_static_effect_for_head(Space *, SymbolId,
+        bool *, bool *);
+CettaGsltQueryEffect __wrap_space_query_static_effect_for_head(Space *space,
+        SymbolId head, bool *defined, bool *dynamic) {
+    if (head != refusal_effect_head)
+        return __real_space_query_static_effect_for_head(space, head, defined, dynamic);
+    refusal_effect_calls++;
+    if (refusal_effect_mode == 1u) {
+        *defined = false;
+        *dynamic = false;
+        return CETTA_GSLT_QUERY_EFFECT_UNCERTAIN_HEAD;
     }
+    CettaGsltQueryEffect result =
+        __real_space_query_static_effect_for_head(space, head, defined, dynamic);
+    refusal_effect_after(space, result, *defined);
     return result;
 }
 
@@ -1421,6 +1447,8 @@ static unsigned failure_contract_controls(CettaLibraryContext *context,
         "(= (identity-or-empty-data $x $condition) (if $condition $x Empty))",
         "(: only-zero (-> $a $a))",
         "(= (only-zero $x) (empty))",
+        "(: identity-or-noted (-> $a Bool $a))",
+        "(= (identity-or-noted $x $condition) (if $condition $x (let $_ (add-atom &self (noted $x)) $x)))",
     };
     for (size_t index = 0u; index < sizeof(forms) / sizeof(*forms); index++) {
         Atom *form = fixture_atom(arena, forms[index]);
@@ -1431,19 +1459,24 @@ static unsigned failure_contract_controls(CettaLibraryContext *context,
         assert(petta_program_note_add(context->petta_program, space,
             space_get_at64(space, position), plan));
     }
-    const char *heads[] = {"identity-or-zero", "identity-or-empty-data", "only-zero"};
-    for (unsigned index = 0u; index < 3u; index++) {
+    /* A zero-answer branch preserves the range contract. Empty as data needs
+     * a result check. A space-mutating body cannot retain trusted entry facts
+     * across its execution, so it is not admitted by this contract checker. */
+    const char *heads[] = {"identity-or-zero", "identity-or-empty-data", "only-zero",
+                           "identity-or-noted"};
+    for (unsigned index = 0u; index < 4u; index++) {
         PettaContractVersion version;
         bool admitted = petta_contract_trusted_version(context->petta_program, space,
             symbol_intern_cstr(g_symbols, heads[index]), index == 2u ? 1u : 2u,
             arena, &version);
         bool range_proved = admitted && version.range_proved;
-        if (range_proved != (index != 1u))
+        if (admitted != (index != 3u) || range_proved != (index == 0u || index == 2u))
             fprintf(stderr, "failure contract head=%s admitted=%u range_proved=%u\n",
                 heads[index], admitted, admitted ? version.range_proved : 0u);
-        assert(range_proved == (index != 1u));
+        assert(admitted == (index != 3u));
+        assert(range_proved == (index == 0u || index == 2u));
     }
-    return 3u;
+    return 4u;
 }
 
 static unsigned result_policy_admissions(CettaLibraryContext *context,
@@ -2643,7 +2676,13 @@ static void caller_check_data(Arena *arena, Atom *value) {
             : caller_packet_mode == 9u ? "Empty" : caller_packet_mode == 10u ? "37"
             : caller_packet_mode == 11u ? "true" : caller_packet_mode == 12u ? "false"
             : "(caller-result-extension 7)";
-        assert(atom_eq(value, fixture_atom(arena, text)));
+        Atom *expected = fixture_atom(arena, text);
+        if (!atom_eq(value, expected)) {
+            fprintf(stderr, "caller packet mode %u answered ", caller_packet_mode);
+            atom_print(value, stderr);
+            fprintf(stderr, ", expected %s\n", text);
+        }
+        assert(atom_eq(value, expected));
     }
 }
 
@@ -2661,8 +2700,11 @@ static unsigned caller_result_controls(void) {
     space_init_with_universe(&space, &universe);
     caller_owner_head = symbol_intern_cstr(g_symbols, "caller-result-owner");
     caller_extension_head = symbol_intern_cstr(g_symbols, "caller-result-extension");
+    /* The owner answers the data (caller-result-extension 7), which the
+     * prepared packet answers too: a declined fast path answers alike.  The
+     * data is a call, so evaluating a returned value again would show. */
     refusal_add_equation(&space, &source,
-        "(= (caller-result-owner $x) (caller-result-extension 7))");
+        "(= (caller-result-owner $x) (quote (caller-result-extension 7)))");
     refusal_add_equation(&space, &source,
         "(= (caller-result-condition $x $open) (if (caller-result-owner $x) selected-true selected-false))");
     PettaEvalMachineContext context = {.library_context = library, .fuel = -1,
@@ -3448,6 +3490,9 @@ static unsigned uncertified_compile_refusal_controls(void) {
             &context.prepared_pure_cache, &result));
         assert(refusal_compile_calls == attempts[call] && !context.prepared_pure_cache.entries);
         /* A paused ready inquiry has no frontend/source preparation to do. */
+        if (refusal_effect_calls != attempts[call])
+            fprintf(stderr, "uncertified call %u: effect calls %u, compile calls %u, attempts %u\n",
+                    call, refusal_effect_calls, refusal_compile_calls, attempts[call]);
         assert(refusal_effect_calls == attempts[call]);
         checks++;
     }
@@ -3713,7 +3758,29 @@ static unsigned shared_compilation_refusals(void) {
             (CettaMatchDecisionSemanticIdentity){0}, &report);
         assert(cetta_prepared_pure_compile_refused(&report, &space, true) ==
             (i == 0u || i == 4u));
+        /* The ordinary result ABI requires a value. Its explicit optional
+         * counterpart admits zero as well; neither commits to one of two
+         * possible answers. Keep both contracts visible. */
+        if (!!scalar != (i == 1u))
+            fprintf(stderr, "shared refusal %s: scalar program %s, status %d\n",
+                    calls[i], scalar ? "compiled" : "refused", (int)report.status);
         assert(!!scalar == (i == 1u));
+        CettaPreparedPureProgram *optional = cetta_prepared_pure_program_compile_closed_optional(
+            &space, call, CETTA_GSLT_PURE_CALL_EAGER, atom_bool, atom_expr,
+            cetta_prepared_pure_constructs_expression_always, NULL, NULL,
+            refusal_test_view, NULL, NULL, true, true,
+            (CettaMatchDecisionSemanticIdentity){0});
+        assert(!!optional == (i == 1u || i == 3u));
+        if (i == 3u) {
+            /* The program of a call with no answer answers nothing, as the
+             * call's equation does. */
+            PreparedPureProgramCache cache = {.root_space = &space};
+            CettaCallOutcome none;
+            if (prepared_pure_closed_call_try(&space, &source, call, -1, true, true,
+                                              &cache, &none))
+                assert(none.kind == CETTA_CALL_FAILURE);
+            prepared_pure_program_cache_free(&cache);
+        }
         CettaPreparedPureProgram *answers = cetta_prepared_pure_program_compile_closed_answers(
             &space, call, CETTA_GSLT_PURE_CALL_EAGER, atom_bool, atom_expr,
             cetta_prepared_pure_constructs_expression_always, NULL, NULL,
@@ -3721,6 +3788,7 @@ static unsigned shared_compilation_refusals(void) {
             (CettaMatchDecisionSemanticIdentity){0}, NULL);
         assert(!!answers == (i >= 1u && i <= 3u));
         cetta_prepared_pure_program_free(scalar);
+        cetta_prepared_pure_program_free(optional);
         cetta_prepared_pure_program_free(answers);
         checks++;
     }
@@ -5916,17 +5984,14 @@ static unsigned he_prepared_completion_controls(void) {
             if (demand == 1u && profile != 1u)
                 expected = atom_error(&arena, marked_value, fixture_atom(&arena,
                     "(BadType Number CompletedBox)"));
-            /* A prepared call answers with the marks the canonical route
-             * gives its answer.  A value HE marked at every node, or an
-             * unmarked checked-constructor normal form, passes through in he
-             * and extended (for closed expected types in
-             * he_evaluated_call_answers_try).  The prepared finish would mark
-             * a value marked only at its root (completed-held holds its field
-             * unevaluated), where the canonical route keeps it as it is, and
-             * he-compat marks each answer by its own call's arguments: those
-             * calls keep their canonical entry. */
-            bool prepared = value_index == 0u && profile != 1u;
-            bool call_admitted = prepared && demand != 3u;
+            /* A prepared call answers what the canonical route answers, its
+             * evaluation marks included, or declines: a declined fast path
+             * never means another answer.  It answers a value HE marked at
+             * every node at a ground demand, in he and extended, which is the
+             * call it is for; a demand holding a variable is cast by the
+             * canonical route, which binds it (he_expected_cast). */
+            bool required = marked && value_index == 0u && profile != 1u &&
+                !atom_has_vars(expected_type);
             Bindings outer;
             bindings_init(&outer);
             Atom *shared = fixture_atom(&arena, "$completed-outer");
@@ -5939,17 +6004,29 @@ static unsigned he_prepared_completion_controls(void) {
                 outcome_set_init_with_owner(&outputs, &arena);
                 bool admitted = he_evaluated_call_answers_try(&space, &arena, call,
                     expected_type, -1, &outer, true, &outputs);
-                if (admitted != call_admitted)
-                    fprintf(stderr, "HE prepared profile=%u value=%u marked=%u demand=%u multiple=%u admitted=%u provenance=%u\n",
-                        profile, value_index, marked, demand, multiple, admitted, atom_is_he_evaluated(value));
-                assert(admitted == call_admitted);
-                assert(outputs.len == (call_admitted ? (multiple ? 2u : 1u) : 0u));
-                for (CettaCount index = 0u; index < outputs.len; index++) {
-                    assert(atom_eq(outcome_atom_materialize(&arena, &outputs.items[index]), expected));
-                    assert(atom_eq(bindings_apply_if_vars(&outputs.items[index].env, &arena, shared),
-                        atom_int(&arena, 13)));
-                }
+                if (required && !admitted)
+                    fprintf(stderr, "HE prepared profile=%u value=%u marked=%u demand=%u multiple=%u declined\n",
+                        profile, value_index, marked, demand, multiple);
+                assert(admitted || !required);
+                assert(admitted || outputs.len == 0u);
                 assert(!prepared_calls && !prepared_attempts && !prepared_effects);
+                if (admitted) {
+                    ResultSet canonical;
+                    result_set_init(&canonical);
+                    metta_eval(&space, &arena, expected_type, call, -1, &canonical);
+                    assert(outputs.len == canonical.len &&
+                           outputs.len == (multiple ? 2u : 1u));
+                    for (CettaCount index = 0u; index < outputs.len; index++) {
+                        Atom *answer = outcome_atom_materialize(&arena, &outputs.items[index]);
+                        assert(atom_eq(answer, expected) && atom_eq(answer, canonical.items[index]) &&
+                            atom_is_he_evaluated(answer) ==
+                                atom_is_he_evaluated(canonical.items[index]));
+                        assert(atom_eq(bindings_apply_if_vars(&outputs.items[index].env, &arena, shared),
+                            atom_int(&arena, 13)));
+                    }
+                    result_set_free(&canonical);
+                    prepared_calls = prepared_attempts = prepared_effects = 0u;
+                }
                 outcome_set_free(&outputs);
                 checks++;
             }
@@ -5959,7 +6036,7 @@ static unsigned he_prepared_completion_controls(void) {
             CettaCallOutcome returned;
             bool invoked = prepared_pure_closed_invocation_try(&space, &arena,
                 &invocation, NULL, -1, true, true, NULL, PREPARED_PURE_PROGRAM_OPTIONAL_VALUE, &returned);
-            assert(invoked == prepared);
+            assert(invoked || !required);
             if (invoked) {
                 assert(returned.kind == CETTA_CALL_VALUE &&
                     returned.result_form == CETTA_CALL_RESULT_COMPLETED_VALUE &&

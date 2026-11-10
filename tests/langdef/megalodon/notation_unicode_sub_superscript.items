@@ -1,0 +1,6 @@
+(Doc (PostInfixDecl "/\\" (NaL "and") 780 InfixLeft))
+(Doc (UnicodeDecl "/\\" (List "2227")))
+(Doc (UnicodeDecl "Union" (List "22C3")))
+(Doc (SubscriptDecl "ap"))
+(Doc (SuperscriptDecl "exp"))
+(Doc (AxDecl "d1" (InfoL (InfNam "/\\") (NaL "p") (NaL "q"))))

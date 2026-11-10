@@ -15,9 +15,9 @@
 !(add-atom &pk (send ch1 bob))
 !(add-atom &pk (peek ch1 greet))
 !(add-atom &pk (peek ch1 greet))
-!(peek1 (collapse (transform &pk (, (send $c $m) (take (peek $c $f))) (seen-by-peek $m))))
-!(peek2 (collapse (transform &pk (, (send $c $m) (take (peek $c $f))) (seen-by-peek $m))))
-!(peek3 (collapse (transform &pk (, (send $c $m) (take (peek $c $f))) (seen-by-peek $m))))
+!(peek1 (collapse (once (transform &pk (, (send $c $m) (take (peek $c $f))) (seen-by-peek $m)))))
+!(peek2 (collapse (once (transform &pk (, (send $c $m) (take (peek $c $f))) (seen-by-peek $m)))))
+!(peek3 (collapse (once (transform &pk (, (send $c $m) (take (peek $c $f))) (seen-by-peek $m)))))
 !(peek-store (show &pk))
 
 ; persistent receive: the contract is read, every message taken in one commit
@@ -25,7 +25,7 @@
 !(add-atom &pr (contract ch2 greet))
 !(add-atom &pr (send ch2 carol))
 !(add-atom &pr (send ch2 dave))
-!(served (sort-atom (collapse (transform &pr (, (contract $c $f) (every (take (send $c $m)))) (served $m)))))
+!(served (sort-atom (collapse (transform &pr (, (contract $c $f) (all (take (send $c $m)))) (served $m)))))
 !(served-store (show &pr))
 
 ; crossed two-fork join: the second philosopher finds no fork
@@ -40,8 +40,9 @@
 !(bind! &q (new-space))
 !(add-atom &q (job a))
 !(add-atom &q (job b))
-!(claim (collapse (transform &q (take (job $j)) (claimed $j))))
-!(claim-store (show &q))
+; one job is claimed: it and the job left are the two stored
+!(claim (let $c (collapse (once (transform &q (take (job $j)) $j)))
+   (claimed (size-atom $c) (sort-atom (cons-atom (car-atom $c) (collapse (match &q (job $k) $k)))))))
 
 ; one coin, two buyers: every buyer taking the same coin is refused as a whole;
 ; one buyer at a time succeeds once
@@ -49,10 +50,13 @@
 !(add-atom &m (coin c1))
 !(add-atom &m (wants u1))
 !(add-atom &m (wants u2))
-!(coin-every (collapse (transform &m (, (every (wants $u)) (take (coin $c))) (bought $u $c) &m)))
+!(coin-all (collapse (transform &m (, (all (wants $u)) (take (coin $c))) (bought $u $c) &m)))
 !(coin-each (transform &m (, (wants $u) (take (coin $c))) (bought $u $c) &m))
 !(coin-each-again (collapse (transform &m (, (wants $u) (take (coin $c))) (bought $u $c) &m)))
-!(coin-store (show &m))
+; one buyer, whichever ran first, bought the coin; both still want
+!(coin-store (let $b (collapse (match &m (bought $u $c) $u))
+   (sold (size-atom $b) (size-atom (collapse (match &m (coin $c) $c)))
+         (sort-atom (collapse (match &m (wants $w) $w))))))
 
 ; write skew: A reads x and takes y; B reads y and takes x.  In sequence B finds y gone.
 !(bind! &w (new-space))

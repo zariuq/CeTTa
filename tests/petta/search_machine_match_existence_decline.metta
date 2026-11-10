@@ -33,3 +33,15 @@
    (== () (collapse (once (match $Space $Pattern $Template)))))
 !(resolved-empty-template
     &template-existence-space (key a) ())
+
+; match reads a pattern headed by `,` as the conjunction of its parts, so a
+; ground one is no atom to look up: (, a b) has its row when a and b are
+; stored, though (, a b) itself is not.
+!(bind! &connective-existence-space (new-space))
+!(add-atom &connective-existence-space a)
+!(add-atom &connective-existence-space b)
+!(== (collapse (match &connective-existence-space (, a b) found)) ())
+!(== (collapse (once (match &connective-existence-space (, a b) found))) ())
+!(== (size-atom (collapse (match &connective-existence-space (, a b) found))) 0)
+!(== (collapse (match &connective-existence-space (, a c) found)) ())
+!(== (collapse (match &connective-existence-space (,) found)) ())

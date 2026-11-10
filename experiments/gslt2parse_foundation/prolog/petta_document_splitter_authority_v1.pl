@@ -2,10 +2,14 @@
 :- use_module(library(dcg/basics),
               [blanks//0, blanks_to_nl//0, eos//0, string_without//2]).
 
-:- prolog_load_context(directory, Here),
-   directory_file_path(Here, '../../src/filereader.pl', ReaderRelative),
-   absolute_file_name(ReaderRelative, ReaderSource),
-   ensure_loaded(ReaderSource).
+% The authority is PeTTa's own document reader, loaded from the checkout that
+% the path alias `petta` names: swipl -p petta=<PeTTa checkout> -f <this file>.
+:- catch(ensure_loaded(petta('src/filereader')),
+         Error,
+         ( print_message(error, Error),
+           writeln(user_error,
+                   'usage: swipl -p petta=PETTA_ROOT -f petta_document_splitter_authority_v1.pl -- INPUT'),
+           halt(2) )).
 
 :- initialization(main, main).
 

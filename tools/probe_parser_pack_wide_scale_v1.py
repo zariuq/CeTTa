@@ -157,7 +157,7 @@ def main() -> int:
     gll_binary = arguments.gll_binary.resolve()
     glr_binary = arguments.glr_binary.resolve()
     petta_root = arguments.petta_root.resolve()
-    stream = export_stream(petta_root, CASES["petta-splitter"])
+    stream = export_stream(CASES["petta-splitter"])
     gll_receipts: list[Receipt] = []
     glr_receipts: list[Receipt] = []
 

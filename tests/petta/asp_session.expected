@@ -1,0 +1,7 @@
+true
+(finished 2 (model (c a d)))
+(model (c a d))
+(state-shape 1)
+(finished 0 (unsat (certificate (rup 8 () (3 4)))))
+(unsat (certificate (rup 8 () (3 4))))
+(c closed)

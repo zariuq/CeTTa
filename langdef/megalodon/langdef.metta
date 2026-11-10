@@ -1,0 +1,11 @@
+(gslt-langdef-v1
+  (name MegalodonSourceV1)
+  (source "../../experiments/gslt2parse_foundation/presentations/core/syntax_core_v1.metta")
+  (source "../../experiments/gslt2parse_foundation/presentations/shared/lookahead_core_v1.metta")
+  (source "../../experiments/gslt2parse_foundation/presentations/shared/char_core_v1.metta")
+  (source "../../experiments/gslt2parse_foundation/presentations/shared/ground_relations_v1.metta")
+  (source "source_v1.metta")
+  (start (pp-def mg-source))
+  (parser-pack "generated/parser_pack_v1.abi")
+  (parser-pack-closure closed)
+  (lock "generated/langdef_lock_v1.metta"))

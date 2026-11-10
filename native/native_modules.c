@@ -11,6 +11,7 @@
 #include "petta_semantics.h"
 #include "library_pattern.h"
 #include "library_hol.h"
+#include "library_transform.h"
 #include "library_binary.h"
 #include "library_heap.h"
 #include "library_work.h"
@@ -1251,6 +1252,8 @@ static const CettaNativeBuiltinModule g_native_modules[] = {
     {"set", CETTA_NATIVE_IMPORT_SET, NULL, "__cetta_lib_set_", cetta_hol_module_call, NULL},
     {"holkernel", CETTA_NATIVE_IMPORT_HOL_KERNEL, NULL, "__cetta_lib_hol_", hol_module_call, NULL},
     {"mm0kernel", CETTA_NATIVE_IMPORT_MM0_KERNEL, NULL, "__cetta_lib_mm0_", mm0_module_call, NULL},
+    {"lib_transform", CETTA_NATIVE_IMPORT_TRANSFORM, NULL, "tf:", cetta_eval_transform_module_call,
+     "tf:run tf:split tf:propose tf:inst tf:fire tf:fire-into"},
     {"seal", CETTA_NATIVE_IMPORT_SEAL, NULL, "__cetta_lib_seal_", cetta_seal_module_call, NULL},
     {"interaction", CETTA_NATIVE_IMPORT_INTERACTION, NULL, "__cetta_lib_interaction_",
      cetta_interaction_module_call, NULL},

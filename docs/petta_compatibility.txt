@@ -50,6 +50,15 @@ DIFF-14's live declarations and DIFF-10's non-executable forward declarations.
 The accepted F5 type-confirmation repair and typed-partial repair supersede the
 older Undefined fallback and partial-codomain rejection observations.
 
+String literals
+---------------
+
+The declared metta-literal-v1 projection preserves unknown escape spellings,
+reads byte and Unicode scalar escapes, and agrees with the portable module
+codec. This is an explicit CeTTa reading contract, not a claim that the
+pinned SWI-PeTTa source reader implements it. See string_literal_profiles.txt;
+raw source regions preserve guest text without applying this interpretation.
+
 Qualification
 -------------
 

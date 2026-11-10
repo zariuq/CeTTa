@@ -1479,8 +1479,9 @@ Atom *bindings_builder_new_variable(BindingsBuilder *builder, Arena *arena,
     uint32_t slot = 0u;
     if (!cetta_frame_identity_new_slot(identity, frame ? frame->slot_len : 0u, &slot))
         return NULL;
-    Atom *variable = atom_var_with_literal(
-        arena, "__petta_machine", var_epoch_id(var_id_from_base(slot), identity));
+    Atom *variable = atom_var_with_spelling(
+        arena, g_builtin_syms.petta_machine_spelling,
+        var_epoch_id(var_id_from_base(slot), identity));
     if (!variable)
         return NULL;
     if (!frame) {

@@ -1,0 +1,9 @@
+:- use_module(library(chr)).
+:- chr_constraint word/1, seen/1, 'True'/1, pair/2.
+:- chr_option(optimize, off).
+
+note @ word(X) ==> seen(X).
+named @ 'True'(X) ==> pair(X, 'False').
+nest @ seen(tuple(a, X)) ==> pair(X, '').
+
+?- word('True'), word(''), word(tuple(a, 'True')), 'True'(1).

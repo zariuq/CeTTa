@@ -638,7 +638,7 @@ def main() -> int:
     )
 
     source_stream = export_stream(
-        arguments.petta_root, ABI_CASES["metamath"]
+        ABI_CASES["metamath"]
     )
     source = parse_abi_stream(source_stream)
     normalized = inline_transparent_substates(source)

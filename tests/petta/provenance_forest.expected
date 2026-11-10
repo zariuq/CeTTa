@@ -1,0 +1,8 @@
+true
+true
+(((sub chain inv_1 a b) (sub chain inv_1 a inv_1) (sub chain s inv_1 b)) ((sub chain inv_1 a b) (sub chain s a s) (sub chain s inv_1 b)) ((sub chain inv_1 a s) (sub chain s a b) (sub chain s inv_1 b)) ((sub chain inv_1 s b) (sub chain s a b) (sub chain s a inv_1)))
+(((m s (cell a (cell b nil)) nil) (((sub chain s a b)))))
+10
+18
+118
+()

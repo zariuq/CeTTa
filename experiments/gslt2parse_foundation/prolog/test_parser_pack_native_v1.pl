@@ -53,7 +53,7 @@ run_parser_pack_native_v1_gate(
     atomics_to_string(RowTexts, "\n", Payload),
     crypto_data_hash(Payload, MatrixDigest, [algorithm(sha256)]),
     require(MatrixDigest ==
-                '34791ce2f3fcf354d171ba43c09da37a6220cf203dc195b587cf8df9bac90141',
+                '690d0208bf451b6079e1a48e57294622ddaae3ff94f3a52f7bc3cd309ffb29ed',
             exact_native_petta_matrix_digest),
     boundary_gate(PresentationRoot, NativePlans, Boundaries),
     Replays is CaseCount * 2,

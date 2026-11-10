@@ -34,7 +34,7 @@ REGULAR_COMPILER = (
     / "compiler"
     / "regular_span_compiler_v1.metta"
 )
-MATRIX_DIGEST = "cf6f155b6102ec6864754f62b6e7946bb30ea5f227faad0b5661f92028892ed5"
+MATRIX_DIGEST = "14748eb98ff204558705cbb20e34f186cb5da89dda2005b35146dff021a1e099"
 
 SUPPORTED_CASES = (
     ("metamath", "whitespace"),
@@ -68,14 +68,13 @@ def parser_case(language: str, label: str) -> tuple[int, ...]:
 
 def compile_tag(
     chart_binary: Path,
-    petta_root: Path,
     case: dict[str, object],
     source_digest: str,
 ) -> tuple[str, ...]:
     language = str(case["language"])
     tag = str(case["tag"])
     c_result = c_compiler_answers(chart_binary, case)
-    petta_result = petta_compiler_answers(petta_root, case)
+    petta_result = petta_compiler_answers(case)
     c_terms = tuple(c_result.get("terms", ()))
     petta_terms = petta_result.get("terms")
     expected_count = int(case["answers"])
@@ -99,7 +98,6 @@ def compile_tag(
 
 def compile_case_tags(
     chart_binary: Path,
-    petta_root: Path,
     case: dict[str, object],
     source_digest: str,
 ) -> tuple[tuple[str, ...], tuple[str, ...], int]:
@@ -120,7 +118,7 @@ def compile_case_tags(
         tagged_case["answers"] = count
         tagged_case["answer_digest"] = digest
         all_terms.extend(compile_tag(
-            chart_binary, petta_root, tagged_case, source_digest
+            chart_binary, tagged_case, source_digest
         ))
         tags.append(tag)
     if len(set(all_terms)) != len(all_terms):
@@ -333,7 +331,6 @@ def check_supported_case(
     projection_binary: Path,
     gll_binary: Path,
     glr_binary: Path,
-    petta_root: Path,
     oracle: dict[tuple[str, str], dict[str, object]],
     compiler_digest: str,
     language: str,
@@ -342,12 +339,11 @@ def check_supported_case(
 ) -> tuple[str, tuple[Path, Path, Path], int]:
     codepoints = parser_case(language, label)
     payload = input_bytes(codepoints)
-    stream = export_stream(petta_root, ABI_CASES[language])
+    stream = export_stream(ABI_CASES[language])
     case = regular_case(language)
     case["input"] = payload.decode("utf-8")
     terms, tags, compiler_agreements = compile_case_tags(
         chart_binary,
-        petta_root,
         case,
         abi_scalar(stream, "source-digest"),
     )
@@ -405,19 +401,17 @@ def check_prime_boundary(
     projection_binary: Path,
     gll_binary: Path,
     glr_binary: Path,
-    petta_root: Path,
     compiler_digest: str,
     temp: Path,
 ) -> tuple[str, tuple[Path, Path, Path], int]:
     language = "prime"
     codepoints = (9, 10, 11, 12, 13, 32, 34, 40, 41, 59, 36, 97, 955)
     payload = input_bytes(codepoints)
-    stream = export_stream(petta_root, ABI_CASES[language])
+    stream = export_stream(ABI_CASES[language])
     case = regular_case(language)
     case["input"] = payload.decode("utf-8")
     terms, tags, compiler_agreements = compile_case_tags(
         chart_binary,
-        petta_root,
         case,
         abi_scalar(stream, "source-digest"),
     )
@@ -512,7 +506,7 @@ def main() -> int:
     glr_binary = arguments.glr_binary.resolve()
     petta_root = arguments.petta_root.resolve()
     compiler_digest = hashlib.sha256(REGULAR_COMPILER.read_bytes()).hexdigest()
-    oracle = oracle_rows(petta_root)
+    oracle = oracle_rows()
     rows: list[str] = []
     compiler_agreements = 0
     with tempfile.TemporaryDirectory(
@@ -526,7 +520,6 @@ def main() -> int:
                 projection_binary,
                 gll_binary,
                 glr_binary,
-                petta_root,
                 oracle,
                 compiler_digest,
                 language,
@@ -542,7 +535,6 @@ def main() -> int:
             projection_binary,
             gll_binary,
             glr_binary,
-            petta_root,
             compiler_digest,
             temp,
         )

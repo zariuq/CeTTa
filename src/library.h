@@ -23,6 +23,7 @@ typedef struct ResultSet ResultSet;
 typedef struct EvalOutcome EvalOutcome;
 
 #define CETTA_MAX_CMDLINE_ARGS 256
+#define CETTA_IMPORT_PREFIX_MAX 128
 
 typedef struct {
     char display_name[PATH_MAX];
@@ -176,6 +177,15 @@ typedef struct CettaLibraryContext {
     /* Trusted host policy, selected before program loading/evaluation and
      * retained by private child contexts. It grants no storage authority. */
     size_t value_byte_limit;
+    SpaceProgramToken transform_program;
+    SpaceProgramToken *transform_views;
+    size_t transform_view_count;
+    Arena transform_definitions;
+    Atom *transform_definition_rows;
+    bool transform_definitions_ready;
+    SpaceReadToken transform_read;
+    CettaCount transform_scanned_rows;
+    bool transform_program_valid;
     char root_dir[4096];
     char working_dir[PATH_MAX];
     char script_path[PATH_MAX];
@@ -193,6 +203,9 @@ typedef struct CettaLibraryContext {
     /* Set while an he-compat include that met a syntax fault keeps the
        statements it had already read. */
     bool include_fault_keeps_prefix;
+    /* The prefix of a pending import-as!.  The next module document read
+       takes it, so imports that document performs are not renamed. */
+    char import_as_prefix[CETTA_IMPORT_PREFIX_MAX];
     /* Further `top:` names under which loaded HE modules were imported. */
     char **he_module_aliases;
     uint32_t he_module_alias_len, he_module_alias_cap;
@@ -249,6 +262,12 @@ typedef struct CettaLibraryContext {
     CettaPettaRelationKey *petta_tabled_relations;
     uint32_t petta_tabled_relation_len;
     uint32_t petta_tabled_relation_cap;
+    /* Tabled relations whose answers are joined (tabled-lattice): the join
+     * of each, min or max. */
+    CettaPettaRelationKey *petta_lattice_relations;
+    SymbolId *petta_lattice_joins;
+    uint32_t petta_lattice_len;
+    uint32_t petta_lattice_cap;
     uint64_t petta_tabled_symbol_table_instance;
     CettaPettaMemoState petta_memo;
     struct PettaMachineTable *petta_shared_table;
@@ -354,6 +373,17 @@ uint32_t cetta_library_loaded_module_count(const CettaLibraryContext *ctx);
 const CettaLoadedModule *cetta_library_loaded_module_at(const CettaLibraryContext *ctx,
                                                         uint32_t index);
 
+/* Whether NAME is one of CeTTa's registered libraries, native or built in. */
+bool cetta_library_registered(const char *name);
+/* CeTTa's own library file NAME, lib/NAME.metta under the library root, for
+ * the lanes that read lib/; false for a NAME that is no plain name or no
+ * such file. */
+bool cetta_library_file_path(const CettaLibraryContext *ctx, const char *name,
+                             char *out, size_t size);
+/* The import spec (library NAME) stands for when NAME is no registered
+ * library: CeTTa's library file NAME, its path in A; NULL otherwise. */
+const char *cetta_library_file_spec(const CettaLibraryContext *ctx, Arena *a,
+                                    const char *name);
 bool cetta_library_import(CettaLibraryContext *ctx, const char *name,
                           Space *space, Arena *eval_arena,
                           Arena *persistent_arena, Registry *registry,
@@ -555,6 +585,10 @@ bool cetta_library_native_execution_supported(const CettaLibraryContext *ctx, Sy
 bool cetta_library_native_execution_open(CettaLibraryContext *ctx, Space *space,
     Arena *arena, Atom *call, const struct RhocalcPayloadProvider *payload,
     CettaOwnedExecution *out);
+/* Whether an active library's operation `head` makes a value built to be
+ * consumed by later calls (a grounder's program), which an evaluator with
+ * generations makes in its old one instead of copying it there. */
+bool cetta_library_result_long_lived(const CettaLibraryContext *ctx, SymbolId head);
 /* The prepared pure machine keeps every argument alive until it has consumed
  * the result.  A library may therefore return an immutable view into an
  * argument instead of copying it; callers outside that lifetime use the
@@ -576,8 +610,15 @@ uint64_t cetta_library_petta_translator_rule_revision(
 /* The revision of every relation-dispatch table above, after synchronizing
  * them with the current symbol table. */
 uint64_t cetta_library_petta_admission_revision(CettaLibraryContext *ctx);
+bool cetta_library_transform_program_current(CettaLibraryContext *ctx, Space *space);
 bool cetta_library_petta_tabled_relation_contains(
     CettaLibraryContext *ctx, SymbolId head, CettaExprLen arity);
+/* The join of a tabled-lattice relation, or SYMBOL_ID_NONE. */
+SymbolId cetta_library_petta_tabled_relation_join(
+    CettaLibraryContext *ctx, SymbolId head, CettaExprLen arity);
+bool cetta_library_petta_tabled_relation_join_set(
+    CettaLibraryContext *ctx, SymbolId head, CettaExprLen arity,
+    SymbolId join);
 bool cetta_library_petta_tabled_relation_set(
     CettaLibraryContext *ctx, SymbolId head, CettaExprLen arity,
     bool enabled);

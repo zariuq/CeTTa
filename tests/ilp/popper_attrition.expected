@@ -1,0 +1,7 @@
+true
+true
+true
+true
+true
+true
+(solution 14 ((rule "next_score(V0,V1,V2)" "opponent(V1,V3),my_true_score(V0,V1,V2),lay_claim(V4),does(V0,V3,V4)") (rule "next_score(V0,V1,V2)" "my_true_score(V0,V1,V3),my_succ(V2,V3),lay_claim(V4),does(V0,V1,V4)") (rule "next_score(V0,V1,V2)" "my_true_score(V0,V1,V2),end_game(V3),does(V0,V1,V3)")))

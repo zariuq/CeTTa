@@ -52,3 +52,6 @@ global-exclude AGENTS.md CLAUDE.md
 prune runtime
 prune build
 prune dist
+
+include docs/transform.txt tests/support/test_transform_fuel.c tests/support/test_transform_read_fuel.c
+include tests/support/check_transform_he_boundaries.py

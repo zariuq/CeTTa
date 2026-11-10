@@ -1,0 +1,2 @@
+(Doc (PostInfixDecl "+" (NaL "add") 300 InfixRight))
+(Doc (PostInfixDecl "*" (NaL "mul") 300 InfixLeft))

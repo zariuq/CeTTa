@@ -1,0 +1,7 @@
+INFIX
+(NAM "+")
+(NUM False "300" None None)
+LPAREN
+DEQ
+(NAM "add")
+DOT

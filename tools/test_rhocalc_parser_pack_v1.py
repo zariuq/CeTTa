@@ -15,6 +15,7 @@ from test_parser_pack_gll_v1 import run_native
 from test_rhocalc_reader_authority_v1 import ACCEPTED_CASES
 from test_rhocalc_reader_authority_v1 import REJECTED_CASES
 from test_rhocalc_reader_authority_v1 import translate
+from gslt2parse_oracles_v1 import ORACLES
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,13 +28,8 @@ class GateFailure(RuntimeError):
     pass
 
 
-def oracle_rows(petta_root: Path) -> dict[tuple[str, str], dict[str, object]]:
-    oracle = (
-        petta_root
-        / "experiments"
-        / "gslt2parse_foundation"
-        / "rhocalc_parser_pack_oracle_v1.pl"
-    )
+def oracle_rows() -> dict[tuple[str, str], dict[str, object]]:
+    oracle = ORACLES / "rhocalc_parser_pack_oracle_v1.pl"
     completed = subprocess.run(
         ["swipl", "-q", "-f", str(oracle), "--", str(PRESENTATIONS)],
         cwd=oracle.parent,
@@ -128,9 +124,8 @@ def check(
     cetta_binary: Path,
     gll_binary: Path,
     glr_binary: Path,
-    petta_root: Path,
 ) -> tuple[int, int, int, int, int, int, str]:
-    expected = oracle_rows(petta_root)
+    expected = oracle_rows()
     cases = ACCEPTED_CASES + REJECTED_CASES
     expected_keys = {(profile_key(case.profile), case.label) for case in cases}
     if set(expected) != expected_keys:
@@ -149,7 +144,7 @@ def check(
         for profile, abi_label in (("strict", "rho"), ("cost", "cost-rho")):
             abi_case = ABI_CASES[abi_label]
             path = temp / f"{profile}.abi"
-            path.write_bytes(export_stream(petta_root, abi_case))
+            path.write_bytes(export_stream(abi_case))
             pack_paths[profile] = path
             starts[profile] = f"(pp-def {abi_case['start']})"
 
@@ -249,7 +244,6 @@ def main() -> int:
         arguments.cetta_binary.resolve(),
         arguments.gll_binary.resolve(),
         arguments.glr_binary.resolve(),
-        arguments.petta_root.resolve(),
     )
     print(
         "(RhoCalcParserPackV1Summary "

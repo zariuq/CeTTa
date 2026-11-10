@@ -345,7 +345,7 @@ static Atom *jd_string(JsonDirectV1 *p) {
     if (!jd_take(p, '"')) {
         jd_error(p, CETTA_JSON_RUNTIME_V1_SYNTAX_REJECTED, "a closing string quote"); goto done;
     }
-    if (!(jd_lex_accept[p->lex] & 4u)) {
+    if (!jd_lex_accepts(p->lex, jd_lex_tag_JsonString)) {
         jd_error(p, CETTA_JSON_RUNTIME_V1_SYNTAX_REJECTED, "a complete string token"); goto done;
     }
     if (p->ordinary) {
@@ -374,7 +374,7 @@ static Atom *jd_number(JsonDirectV1 *p) {
         if (next == UINT32_MAX) break;
         state = next; p->at++; p->scalar++;
     }
-    if (!(jd_lex_accept[state] & 2u)) goto invalid;
+    if (!jd_lex_accepts(state, jd_lex_tag_JsonNumber)) goto invalid;
     size_t length = p->at - start;
     if (!p->ordinary || p->legacy) {
         return jd_one(p, JD_NUMBER,
@@ -443,7 +443,7 @@ bool cetta_json_direct_v1_number_valid(const uint8_t *bytes, size_t len) {
         state = jd_lex_step(state, bytes[at]);
         if (state == UINT32_MAX) return false;
     }
-    return !!(jd_lex_accept[state] & 2u);
+    return !!jd_lex_accepts(state, jd_lex_tag_JsonNumber);
 }
 
 typedef enum {
@@ -708,7 +708,7 @@ static bool jd_project_string(JsonDirectV1 *p,
                  "a closing string quote");
         goto failed;
     }
-    if (!(jd_lex_accept[p->lex] & 4u)) {
+    if (!jd_lex_accepts(p->lex, jd_lex_tag_JsonString)) {
         jd_error(p, CETTA_JSON_RUNTIME_V1_SYNTAX_REJECTED,
                  "a complete string token");
         goto failed;
@@ -741,7 +741,7 @@ static bool jd_project_number(JsonDirectV1 *p) {
         p->at++;
         p->scalar++;
     }
-    if (jd_lex_accept[state] & 2u)
+    if (jd_lex_accepts(state, jd_lex_tag_JsonNumber))
         return true;
     jd_error(p, CETTA_JSON_RUNTIME_V1_SYNTAX_REJECTED,
              "a JSON number digit");

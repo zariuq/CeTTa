@@ -1,0 +1,3 @@
+true
+((model (a)) (model ()) (model (b)) (unsat (certificate (input 11 (-3)) (input 12 (3 4)) (input 13 (-3)) (input 14 (-4)) (rup 15 () (10 11 1 12 7 14)))))
+((model (a)) constrained (model (a)) closed)

@@ -4571,6 +4571,18 @@ void atom_init_symbol(Atom *target, SymbolId sym_id) {
     };
 }
 
+void atom_init_expr_view(Atom *target, Atom **elems, CettaExprLen len) {
+    uint32_t structural_facts = 0u;
+    uint32_t flags = atom_flags_from_children(0u, 0u, elems, len, &structural_facts);
+    *target = (Atom){
+        .kind = ATOM_EXPR,
+        .flags = flags,
+        .var_id = atom_single_variable_id_of(flags, elems, len),
+        .structural_facts = structural_facts,
+        .expr = {.elems = elems, .len = len},
+    };
+}
+
 Atom *atom_symbol_id(Arena *a, SymbolId sym_id) {
     /* A symbol's admission depends on its id alone, so the canonical atom a
      * hash-cons table already published for the id is the one interning
@@ -4664,6 +4676,16 @@ Atom *atom_unit_canonical(void) {
         return made;
     free(made);
     return atom;
+}
+
+bool atom_process_canonical(const Atom *atom) {
+    if (!atom || atom->arena_id != 0u)
+        return false;
+    if (atom->kind == ATOM_SYMBOL)
+        return g_symbols &&
+            symbol_canonical_atom(g_symbols, atom_symbol_current_id(atom)) == atom;
+    return atom == atomic_load_explicit(&g_atom_unit_canonical,
+                                        memory_order_acquire);
 }
 
 Atom *atom_symbol(Arena *a, const char *name) {
@@ -7728,6 +7750,10 @@ static inline __attribute__((always_inline)) bool atom_walk_any(
                 continue;
             root_seen = true;
         }
+        /* Behind a barrier nothing is visited; met again or not, the
+         * answer is the same, so the barrier comes before the seen set. */
+        if (barrier && node != root && barrier(node, context))
+            continue;
         /* A subexpression met again was answered where it was first met. */
         if (unique && node != root && node->kind == ATOM_EXPR && node->expr.len &&
             !fault && !atom_visit_set_add(&seen, node, &fault) && !fault)
