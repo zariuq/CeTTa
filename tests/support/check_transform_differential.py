@@ -29,7 +29,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 # transform_conjunctions holds absent, unique and collect of patterns headed by
 # ',', which range over joint matches.
 FIXED = ["transform_concurrency", "transform_rules", "transform_aggregates",
-         "transform_match_alignment", "transform_conjunctions"]
+         "transform_match_alignment", "transform_conjunctions",
+         "transform_store_effects"]
 HEADER = ("!(import! &self (library lib_transform))\n"
           "(= (show $s) (sort-atom (collapse (match $s $a $a))))\n")
 LIBRARY_IMPORT = "!(import! &self (library lib_transform))"

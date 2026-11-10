@@ -6,6 +6,10 @@
 
 #include <stddef.h>
 
+/* The public operation and its evaluator-private surface.  Shape recognition
+ * is separate from profile/library admission and never evaluates a call. */
+bool cetta_transform_call_head(SymbolId head, CettaExprLen arity);
+
 /* One firing of a transform: commit the first kernel candidate of the
  * sources, in proposal order, whose footprint validates, remove its takes and
  * answer (tf:fired INSTANCES).  Proposals use the spaces' occurrence cursors
@@ -37,6 +41,14 @@ typedef struct {
      * contracts: NULL, or the error the builtin answers. */
     Atom *(*remove_atom)(void *context, Atom *space_ref, Atom *atom);
     Atom *(*add_atom)(void *context, Atom *space_ref, Atom *atom);
+    /* Optional prepared take.  True retains a completed selection and its
+     * stored multiplicity through an uninterrupted first publication; false
+     * declines reuse and keeps the ordinary validate/remove path.  Commit
+     * consumes the handle; discard releases an unused or invalid candidate. */
+    bool (*prepare_take)(void *context, Atom *space_ref, Atom *atom,
+                         void **prepared_out, size_t *stored_out);
+    Atom *(*commit_take)(void *context, void *prepared);
+    void (*discard_take)(void *context, void *prepared);
     /* Results of a let's code, in order. HE Error values stay in the list
      * for its normal-value preference and error multiplicity; a PeTTa raise
      * or interrupted host evaluation returns false with *error_out set.
@@ -68,19 +80,38 @@ CettaTransformOutcome cetta_transform_fire(
 
 /* The surface cands/pin names correspond to proposals/guided in
  * Languages/MeTTa/PeTTa/LibTransform.lean.
- * `call` is (tf:cands SPACE CONJUNCTS TEMPLATE): the kernel's matches
+ * `call` is (tf:propose SPACE CONJUNCTS TEMPLATE): the kernel's matches
  * against the store at the call, *answer_out the expression of each
  * (tf:cand GUIDE), its read, take and unique entries (MODE SPACE ATOM) in
  * conjunct order.  The order of the proposals is free, as a space's answers
  * are.  FIRED, ERROR when code a `let` ran answered an error, or DECLINED. */
-CettaTransformOutcome cetta_transform_candidates(
+CettaTransformOutcome cetta_transform_propose(
+    Space *program, Arena *a, Atom *call, const CettaTransformHost *host,
+    Atom **answer_out);
+/* The explicit materializing walker, used by ineligible sources and as the
+ * first-answer differential reference. */
+CettaTransformOutcome cetta_transform_propose_eager(
     Space *program, Arena *a, Atom *call, const CettaTransformHost *host,
     Atom **answer_out);
 
-/* `call` is (tf:pin CONJUNCTS GUIDE): a branch's sources, each kernel read
+/* Evaluator-private resumable entry proposals.  Admission is restricted to a
+ * static, effect-free run of read/take conjuncts.  Each FIRED result is one
+ * independently owned (tf:cand GUIDE); NONE is exhaustion, DECLINED is a
+ * pre-publication refusal, and ERROR/INTERRUPTED retain their usual meanings.
+ * No cursor atom or other public language object is exposed. */
+typedef struct CettaTransformCandidateCursor CettaTransformCandidateCursor;
+bool cetta_transform_candidate_cursor_open(
+    Space *program, Arena *a, Atom *call, const CettaTransformHost *host,
+    CettaTransformCandidateCursor **cursor_out);
+CettaTransformOutcome cetta_transform_candidate_cursor_next(
+    CettaTransformCandidateCursor *cursor, Atom **proposal_out);
+void cetta_transform_candidate_cursor_close(
+    CettaTransformCandidateCursor *cursor);
+
+/* `call` is (tf:inst CONJUNCTS GUIDE): a branch's sources, each kernel read
  * or take pinned to the atom its proposal matched.  Data only: false when the
  * call is not of the library's shape. */
-bool cetta_transform_pin(Arena *a, Atom *call, Atom **answer_out);
+bool cetta_transform_inst(Arena *a, Atom *call, Atom **answer_out);
 
 /* Prepare a public transform for the native step.  `work` owns the returned
  * conjuncts and template.  PeTTa quotes source variables in lets and in a

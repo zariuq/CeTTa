@@ -36374,6 +36374,27 @@ static bool petta_machine_dispatch_solve(
         plan = goal->plan;
     }
 
+    /* Extended transform syntax is evaluator-owned even when the source
+     * planner saw no equation for its head.  Schedule it before the generic
+     * data-application path evaluates its source and template operands. */
+    if (goal->kind == PETTA_GOAL_SOLVE && goal->first &&
+        goal->first->kind == ATOM_EXPR && goal->first->expr.len > 0u &&
+        goal->first->expr.elems[0]->kind == ATOM_SYMBOL &&
+        cetta_transform_call_head(goal->first->expr.elems[0]->sym_id,
+                                  goal->first->expr.len - 1u) &&
+        machine->host.classify &&
+        machine->host.classify(
+            machine->host.context, machine->space, goal->first) ==
+            PETTA_MACHINE_HOST_READY_APPLICATION) {
+        return petta_goal_push(machine, &(PettaGoal){
+            .kind = PETTA_GOAL_HOST_READY,
+            .barrier = goal->barrier,
+            .first = goal->first,
+            .second = goal->second,
+            .plan = plan,
+        });
+    }
+
     PettaGoal completed_goal;
     if (petta_machine_he_completes_evaluation(machine, goal)) {
         Atom *target = goal->second;

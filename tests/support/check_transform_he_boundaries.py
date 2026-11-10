@@ -73,6 +73,21 @@ def main():
         ('space supplied by let', setup + directive(term('transform', '&self',
             term(',', term('let', '$s', '&q'), '(take $s (job $j))'), '$j')) + jobs,
             ['[()]', '[()]', '[a]', '[()]']),
+        ('answerless metta suppresses chain', directive(term('collapse',
+            term('chain', term('metta', '(empty)', '%Undefined%', '&self'),
+                 '$x', 'nope'))), ['[()]']),
+        ('raw eval empty remains an invocation value', directive(term('collapse',
+            term('chain', term('eval', '(empty)'), '$x', 'nope'))), ['[(nope)]']),
+        ('raw evalc empty remains an invocation value', directive(term('collapse',
+            term('chain', term('evalc', '(empty)', '&self'), '$x', 'nope'))),
+            ['[(nope)]']),
+        ('answerless chain retains only earlier effects', setup +
+            directive(term('collapse', term('chain',
+                term('metta', term('let', '$_', '(add-atom &q seen)', '(empty)'),
+                     '%Undefined%', '&self'), '$ignored',
+                term('eval', '(add-atom &q wrong)')))) + seen +
+            directive(term('collapse', term('match', '&q', 'wrong', 'yes'))),
+            ['[()]', '[()]', '[()]', '[(yes)]', '[()]']),
     ]
     observations = 0
     for name, body, expected in cases:

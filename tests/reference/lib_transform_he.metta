@@ -70,7 +70,7 @@
 ; The library's own data: proposals, candidates, rows, footprint entries and fired
 ; instances hold syntax and instances that run only once routed.
 (: tf:cand (-> Atom TfData))
-(: tf:pin (-> Atom Atom %Undefined%))
+(: tf:inst (-> Atom Atom %Undefined%))
 (: tf:locate-in (-> Atom %Undefined%))
 (: tf:as-conj (-> Atom Atom Atom Atom Atom Atom %Undefined%))
 (: tf:split (-> Atom Atom %Undefined%))
@@ -101,7 +101,7 @@
 (: tf:fits (-> Atom Atom Atom %Undefined%))
 (: tf:occurrences (-> Atom Atom %Undefined%))
 (: tf:run (-> Atom Atom Atom Atom %Undefined%))
-(: tf:cands (-> Atom Atom Atom %Undefined%))
+(: tf:propose (-> Atom Atom Atom %Undefined%))
 (: tf:fire (-> Atom Atom Atom %Undefined%))
 (: tf:fire-into (-> Atom Atom Atom Atom %Undefined%))
 (: tf:has-let (-> Atom %Undefined%))
@@ -128,9 +128,9 @@
 (= (tf:run $space $sources $template $destination)
    (let (tf:cs $raw) (tf:conjuncts $sources)
     (let (tf:cs $conjuncts) (tf:normalize $raw)
-     (let $matches (tf:cands $space $conjuncts $template)
+     (let $matches (tf:propose $space $conjuncts $template)
        (let (tf:cand $guide) (superpose $matches)
-         (let (tf:cs $kc) (tf:pin $conjuncts $guide)
+         (let (tf:cs $kc) (tf:inst $conjuncts $guide)
            (if (tf:is-space $destination)
                (tf:fire-into $space $kc $template $destination)
                (let $comma (tf:comma $template)
@@ -140,7 +140,7 @@
 ; The kernel's matches against the store as it is when the transform is called, each
 ; as (tf:cand GUIDE): the atoms its read, take and unique conjuncts matched, in
 ; conjunct order.  Each becomes one branch.
-(= (tf:cands $space $conjuncts $template)
+(= (tf:propose $space $conjuncts $template)
    (collapse (tf:walk $space $conjuncts () $template tf:propose)))
 
 ; A proposal: its kernel footprint in conjunct order.
@@ -151,13 +151,13 @@
 ; a kernel unique followed by (tf:as P A).  So the branch fires the match it stands
 ; for if those atoms are still there, and its other conditions are evaluated when it
 ; fires, each with its own variables free.
-(= (tf:pin $cs $guide)
+(= (tf:inst $cs $guide)
    (if (tf:nil $cs) (tf:cs ())
      (let ($c $rest) (decons-atom $cs)
        (let $mode (tf:mode $c)
          (if (if (== $mode tf:m-all) True (== $mode tf:m-once)) (tf:cs $cs)
            (if (if (== $mode tf:m-absent) True (if (== $mode tf:m-collect) True (== $mode tf:m-let)))
-               (let (tf:cs $more) (tf:pin $rest $guide)
+               (let (tf:cs $more) (tf:inst $rest $guide)
                  (let $cs2 (cons-atom $c $more) (tf:cs $cs2)))
                (let (tf:at $_m $_s $p) (tf:locate-in $c)
                  (if (if (== $mode tf:m-unique) (tf:comma $p) False)
@@ -166,13 +166,13 @@
                        (let (tf:taken $atoms $guide2) (tf:take-guide $n $guide ())
                          (let $tuple (cons-atom , $atoms)
                            (let $as (tf:triple tf:as $p $tuple)
-                             (let (tf:cs $more) (tf:pin $rest $guide2)
+                             (let (tf:cs $more) (tf:inst $rest $guide2)
                                (let $tail (cons-atom $as $more)
                                  (let $cs2 (cons-atom $c $tail) (tf:cs $cs2))))))))
                      (let ($e $guide2) (decons-atom $guide)
                        (let ($use $s $a) $e
                          (let $as (tf:triple tf:as $p $a)
-                           (let (tf:cs $more) (tf:pin $rest $guide2)
+                           (let (tf:cs $more) (tf:inst $rest $guide2)
                              (let $tail (cons-atom $as $more)
                                (if (== $mode tf:m-unique)
                                    (let $cs2 (cons-atom $c $tail) (tf:cs $cs2))

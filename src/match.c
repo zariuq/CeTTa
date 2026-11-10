@@ -6898,6 +6898,21 @@ bool bindings_builder_promote_atoms_to_arena(
         bindings_builder_promote_prime_atoms_to_arena(bb, owner);
 }
 
+size_t bindings_builder_owned_vector_bytes(const BindingsBuilder *bb) {
+    if (!bb)
+        return 0u;
+    size_t bytes = 0u;
+    bytes += (size_t)bb->current.cap * sizeof(*bb->current.entries);
+    bytes += (size_t)bb->current.eq_cap * sizeof(*bb->current.constraints);
+    bytes += (size_t)bb->owner_undo_cap * sizeof(*bb->owner_undo);
+    bytes += (size_t)bb->trail_cap * sizeof(*bb->trail);
+    bytes += (size_t)bb->frame_undo_cap * sizeof(*bb->frame_undo);
+    bytes += (size_t)bb->frame_registration_undo_cap *
+        sizeof(*bb->frame_registration_undo);
+    bytes += (size_t)bb->prime_trail_cap * sizeof(*bb->prime_trail);
+    return bytes;
+}
+
 void bindings_builder_free(BindingsBuilder *bb) {
     bindings_builder_discard_owner_history(bb);
     free(bb->owner_undo);

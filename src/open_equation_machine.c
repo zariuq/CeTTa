@@ -3800,6 +3800,13 @@ static bool oem_build_value_native(OemCompile *compile, Atom *expr,
     if (!undefined && !oem_data_node(expr, plan))
         return oem_build_host(compile, expr, plan, depth,
                               "operation outside the fragment", out);
+    /* A host-owned operation can be absent from the source plan: native
+     * admission may be visible before the planner has an equation for the
+     * head.  Keep the same live-head authority as the search machine rather
+     * than freezing that occurrence into a data template. */
+    if (!undefined && symbol_head && oem_head_callable(compile, expr))
+        return oem_build_host(compile, expr, plan, depth,
+                              "host-owned head absent from source plan", out);
     if (!oem_build_elements(compile, expr, plan, depth, 0u,
                             &node.first, &node.count))
         return false;

@@ -3014,6 +3014,38 @@ Atom *space_occurrence_cursor_atom(const SpaceOccurrenceCursor *cursor,
         occurrences, space_view_row(&marks, index));
 }
 
+size_t space_occurrence_cursor_accounted_bytes(
+        const SpaceOccurrenceCursor *cursor, bool include_view) {
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
+    if (!cursor)
+        return 0u;
+    size_t bytes = 0u;
+    if (cursor->nodes)
+        bytes += (size_t)cursor->node_len * sizeof(*cursor->nodes);
+    if (cursor->leaf_pos)
+        bytes += (size_t)cursor->node_len * sizeof(*cursor->leaf_pos);
+    if (cursor->flat)
+        bytes += (size_t)cursor->flat_len * sizeof(*cursor->flat);
+    if (cursor->heap)
+        bytes += (size_t)cursor->node_len * sizeof(*cursor->heap);
+    const SpacePinnedOccurrences *view = cursor->occurrences;
+    if (include_view && view && !view->space) {
+        bytes += sizeof(*view);
+        /* Live rows and indexes belong to the Space.  Once detached, the
+         * view owns this row and removal-mark storage; shared trie/head-index
+         * and dense kept-fact storage are deliberately outside this account. */
+        size_t width = cetta_atom_id_storage_width_bytes_from_bits(
+            view->atom_id_width_bits);
+        bytes += (size_t)view->len * width;
+        size_t words = ((size_t)view->mark_rows + 63u) / 64u;
+        if (view->marks)
+            bytes += words * sizeof(*view->marks);
+        if (view->mark_tree)
+            bytes += (words + 1u) * sizeof(*view->mark_tree);
+    }
+    return bytes;
+}
+
 void space_occurrence_cursor_release(SpaceOccurrenceCursor *cursor) {
     CETTA_SCOPED_SHARED_TRANSITION(transition);
     if (!cursor)
@@ -7790,14 +7822,12 @@ CettaCount space_dense_remove_ground(Space *s, Atom *atom) {
     return 1u;
 }
 
-/* Remove ATOM_ID from its relation: true when it held it.  A copy kept as
- * a row is just as good to remove; either leaves the same bag. */
-static bool space_dense_route_remove(Space *s, AtomId atom_id) {
+static SpaceDenseHead *space_dense_route_head(
+        Space *s, AtomId atom_id, AtomId *columns) {
     if (s->native.dense_facts == 0u)
-        return false;
+        return NULL;
     SymbolId head_sym;
     AtomId head_id;
-    AtomId columns[CETTA_TUPLE_MAX_ARITY];
     uint32_t arity = 0u;
     SpaceDenseHead *head = space_dense_deep_record(s, atom_id, columns);
     if (!head &&
@@ -7806,8 +7836,21 @@ static bool space_dense_route_remove(Space *s, AtomId atom_id) {
         if (head && (head->arity != arity || head->skeleton))
             head = NULL;
     }
-    if (!head || head->state != SPACE_DENSE_KEPT ||
-        !space_dense_kept_remove(s, head, columns))
+    return head && head->state == SPACE_DENSE_KEPT ? head : NULL;
+}
+
+static bool space_dense_route_holds(Space *s, AtomId atom_id) {
+    AtomId columns[CETTA_TUPLE_MAX_ARITY];
+    SpaceDenseHead *head = space_dense_route_head(s, atom_id, columns);
+    return head && space_dense_kept_contains(head, columns);
+}
+
+/* Remove ATOM_ID from its relation: true when it held it.  A copy kept as
+ * a row is just as good to remove; either leaves the same bag. */
+static bool space_dense_route_remove(Space *s, AtomId atom_id) {
+    AtomId columns[CETTA_TUPLE_MAX_ARITY];
+    SpaceDenseHead *head = space_dense_route_head(s, atom_id, columns);
+    if (!head || !space_dense_kept_remove(s, head, columns))
         return false;
     s->native.dense_facts--;
     space_note_released(s, 1u);
@@ -8030,8 +8073,14 @@ static bool space_marks_admit(const Space *s) {
            s->native.atom_ids && s->native.start == 0u;
 }
 
-bool space_remove_logical_positions(Space *s, const CettaIndex *positions,
-                                    CettaCount count) {
+/* Validate logical positions and retain their physical rows before any write.
+ * Appends preserve those rows; a prefix rewrite stales the enclosing prepared
+ * effect.  Splitting this from publication lets a dense relation selection and
+ * its row copies commit as one primitive without a second validation scan. */
+static bool space_logical_positions_prepare(
+        Space *s, const CettaIndex *positions, CettaCount count,
+        CettaIndex **rows_out) {
+    *rows_out = NULL;
     if (!space_proof_prepare_mutation(s)) return false;
     if (!s || (count && !positions))
         return false;
@@ -8044,10 +8093,10 @@ bool space_remove_logical_positions(Space *s, const CettaIndex *positions,
     if (space_dense_facts(s) != 0u &&
         positions[count - 1u] >= space_length64(s) - space_dense_facts(s))
         space_dense_settle(s, SYMBOL_ID_NONE);
-    /* Pinned readers keep the rows and marks they began with. */
-    space_pinned_occurrences_detach(s);
     CettaCount live = space_length64(s);
-    CettaIndex *rows = cetta_malloc((size_t)count * sizeof(*rows));
+    CettaIndex *rows = cetta_fallible_malloc((size_t)count * sizeof(*rows));
+    if (!rows)
+        return false;
     for (CettaCount i = 0u; i < count; i++) {
         if (positions[i] >= live || (i && positions[i] <= positions[i - 1u])) {
             free(rows);
@@ -8062,6 +8111,19 @@ bool space_remove_logical_positions(Space *s, const CettaIndex *positions,
             return false;
         }
     }
+    *rows_out = rows;
+    return true;
+}
+
+/* Publish rows whose admission and allocation completed above.  No route
+ * refusal remains in this section. */
+static void space_logical_positions_publish(
+        Space *s, const CettaIndex *positions, const CettaIndex *rows,
+        CettaCount count) {
+    if (count == 0u)
+        return;
+    /* Pinned readers keep the rows and marks they began with. */
+    space_pinned_occurrences_detach(s);
     /* While no two synced rows share a key, a removed row's key leaves the
      * presence bits with it, read before the row's id is released, and the
      * synced prefix loses the rows it held; once two do, the bits are
@@ -8100,7 +8162,6 @@ bool space_remove_logical_positions(Space *s, const CettaIndex *positions,
             s->native.exact_idx_dirty = true;
         space_path_indexes_note_mark(s, rows[i], atom_id);
     }
-    free(rows);
     s->native.has_non_exact_atoms_dirty = true;
     if (presence_follows) {
         s->native.id_present_synced_len -= presence_removed;
@@ -8119,6 +8180,15 @@ bool space_remove_logical_positions(Space *s, const CettaIndex *positions,
      * twice the rows it removes. */
     if (s->native.marked >= s->native.len - s->native.marked)
         space_settle_marks(s);
+}
+
+bool space_remove_logical_positions(Space *s, const CettaIndex *positions,
+                                    CettaCount count) {
+    CettaIndex *rows = NULL;
+    if (!space_logical_positions_prepare(s, positions, count, &rows))
+        return false;
+    space_logical_positions_publish(s, positions, rows, count);
+    free(rows);
     return true;
 }
 
@@ -13579,6 +13649,472 @@ static bool space_contract_occurrence_mask(
     return ok;
 }
 
+void space_store_effect_init(SpaceStoreEffect *effect) {
+    if (effect)
+        *effect = (SpaceStoreEffect){0};
+}
+
+void space_store_effect_dispose(SpaceStoreEffect *effect) {
+    if (!effect)
+        return;
+    free(effect->remove_mask);
+    free(effect->remove_positions);
+    free(effect->remove_rows);
+    free(effect->remove_ids);
+    free(effect->remove_id_dense);
+    *effect = (SpaceStoreEffect){0};
+}
+
+void space_store_receipt_init(SpaceStoreReceipt *receipt) {
+    if (!receipt)
+        return;
+    *receipt = (SpaceStoreReceipt){0};
+    arena_init_detached(&receipt->owned);
+    arena_set_block_growth(&receipt->owned, 256u);
+    receipt->initialized = true;
+}
+
+void space_store_receipt_dispose(SpaceStoreReceipt *receipt) {
+    if (!receipt || !receipt->initialized)
+        return;
+    free(receipt->items);
+    free(receipt->positions);
+    arena_free(&receipt->owned);
+    *receipt = (SpaceStoreReceipt){0};
+}
+
+static void space_store_receipt_refuse(SpaceStoreReceipt *receipt) {
+    if (!receipt)
+        return;
+    receipt->len = 0u;
+    receipt->committed_revision = 0u;
+}
+
+static bool space_store_receipt_reserve(SpaceStoreReceipt *receipt,
+                                        const SpaceStoreEffect *effect,
+                                        CettaCount count) {
+    if (!receipt)
+        return true;
+    if (!receipt->initialized || receipt->len != 0u || receipt->items ||
+        receipt->positions || count > SIZE_MAX / sizeof(*receipt->items) ||
+        count > SIZE_MAX / sizeof(*receipt->positions))
+        return false;
+    receipt->kind = effect->kind;
+    receipt->space_instance = space_instance_id(effect->space);
+    receipt->preparation_id = effect->preparation_id;
+    receipt->committed_revision = 0u;
+    receipt->cap = count;
+    if (count == 0u)
+        return true;
+    receipt->items = cetta_fallible_malloc((size_t)count * sizeof(*receipt->items));
+    receipt->positions = cetta_fallible_malloc((size_t)count * sizeof(*receipt->positions));
+    return receipt->items && receipt->positions;
+}
+
+static bool space_store_receipt_record(SpaceStoreReceipt *receipt,
+                                       Atom *atom, CettaIndex position) {
+    if (!receipt)
+        return true;
+    if (receipt->len >= receipt->cap || !atom)
+        return false;
+    CettaCount at = receipt->len;
+    receipt->items[at] = atom_deep_copy(&receipt->owned, atom);
+    receipt->positions[at] = position;
+    if (!receipt->items[at])
+        return false;
+    receipt->len++;
+    return true;
+}
+
+static bool space_store_effect_available(const SpaceStoreEffect *effect) {
+    return effect && !effect->space && !effect->consumed;
+}
+
+static _Atomic uint64_t g_space_store_preparation_id = 0u;
+
+static bool space_store_effect_prepare(SpaceStoreEffect *effect, Space *space,
+                                       SpaceStoreReceipt *receipt,
+                                       CettaCount receipt_count) {
+    if (!space_store_effect_available(effect) || !space)
+        return false;
+    effect->space = space;
+    /* Ordinary publication allocates no receipt and pays no shared preparation
+     * counter cost.  Only recording mode needs a cross-effect association. */
+    effect->preparation_id = receipt ? atomic_fetch_add_explicit(
+        &g_space_store_preparation_id, 1u, memory_order_relaxed) + 1u : 0u;
+    if (receipt && effect->preparation_id == 0u) {
+        *effect = (SpaceStoreEffect){0};
+        return false;
+    }
+    /* Additions select no existing occurrence.  Single removal deliberately
+     * falls back from an exact id to value equality.  Only retained positional
+     * and mask selections need a prefix-validity token. */
+    if (effect->kind == SPACE_STORE_EFFECT_REMOVE_MASK ||
+        effect->kind == SPACE_STORE_EFFECT_REMOVE_POSITIONS)
+        effect->read = space_read_token(space);
+    if (!space_store_receipt_reserve(receipt, effect, receipt_count)) {
+        *effect = (SpaceStoreEffect){0};
+        return false;
+    }
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_STORE_PREPARED);
+    if (receipt)
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_STORE_RECEIPT);
+    return true;
+}
+
+bool space_store_effect_prepare_add(
+    SpaceStoreEffect *effect, Space *space, Arena *storage_arena,
+    const Arena *source_arena, Atom *atom, SpaceStoreReceipt *receipt) {
+    if (!space_store_effect_available(effect) || !atom)
+        return false;
+    effect->kind = SPACE_STORE_EFFECT_ADD;
+    if (!space_store_effect_prepare(effect, space, receipt, 1u))
+        return false;
+    effect->storage_arena = storage_arena;
+    effect->source_arena = source_arena;
+    effect->atom = atom;
+    effect->atom_id = CETTA_ATOM_ID_NONE;
+    effect->selected_len = 1u;
+    if (!space_store_receipt_record(receipt, atom, (CettaIndex)-1)) {
+        space_store_effect_dispose(effect);
+        return false;
+    }
+    return true;
+}
+
+static bool space_store_effect_prepare_add_batch(
+        SpaceStoreEffect *effect, Space *space, SpaceStoreBatchKind kind,
+        const AtomId *items, CettaCount count) {
+    if (!space_store_effect_available(effect) || (count && !items))
+        return false;
+    effect->kind = SPACE_STORE_EFFECT_ADD_BATCH;
+    if (!space_store_effect_prepare(effect, space, NULL, count))
+        return false;
+    effect->batch_kind = kind;
+    effect->batch_items = items;
+    effect->batch_len = count;
+    effect->selected_len = count;
+    return true;
+}
+
+bool space_store_effect_prepare_add_alpha_keys(
+    SpaceStoreEffect *effect, Space *space, const AtomId *keys,
+    CettaCount count) {
+    return space_store_effect_prepare_add_batch(
+        effect, space, SPACE_STORE_BATCH_ALPHA_KEYS, keys, count);
+}
+
+bool space_store_effect_prepare_add_dense_tuples(
+    SpaceStoreEffect *effect, Space *space, SymbolId head, AtomId head_id,
+    uint32_t arity, const AtomId *tuples, CettaCount count) {
+    if (!space_store_effect_prepare_add_batch(
+            effect, space, SPACE_STORE_BATCH_DENSE_TUPLES, tuples, count))
+        return false;
+    effect->batch_head = head;
+    effect->batch_head_id = head_id;
+    effect->batch_arity = arity;
+    return true;
+}
+
+bool space_store_effect_prepare_add_deep_holes(
+    SpaceStoreEffect *effect, Space *space, SymbolId head,
+    const CettaSkeleton *skeleton, const AtomId *holes, CettaCount count) {
+    if (!skeleton || !space_store_effect_prepare_add_batch(
+            effect, space, SPACE_STORE_BATCH_DEEP_HOLES, holes, count))
+        return false;
+    effect->batch_head = head;
+    effect->batch_skeleton = skeleton;
+    return true;
+}
+
+bool space_store_effect_prepare_remove_one(
+    SpaceStoreEffect *effect, Space *space, Atom *atom, AtomId atom_id,
+    SpaceStoreReceipt *receipt) {
+    if (!space_store_effect_available(effect) || !atom)
+        return false;
+    effect->kind = SPACE_STORE_EFFECT_REMOVE_ONE;
+    if (!space_store_effect_prepare(effect, space, receipt, 1u))
+        return false;
+    effect->atom = atom;
+    effect->atom_id = atom_id;
+    effect->selected_len = 1u;
+    Atom *selected = atom;
+    if (receipt && atom_id != CETTA_ATOM_ID_NONE && space->native.universe) {
+        Atom *stored = term_universe_get_atom(space->native.universe, atom_id);
+        if (stored)
+            selected = stored;
+    }
+    if (!space_store_receipt_record(receipt, selected, (CettaIndex)-1)) {
+        space_store_effect_dispose(effect);
+        return false;
+    }
+    return true;
+}
+
+/* A mask contraction settles any relation it still addresses.  Fold a ground
+ * relation selection into that same mask first: settlement is representation
+ * only, and the selected fact keeps its logical position as it becomes a row. */
+static bool space_store_effect_fold_dense_mask(
+        Space *space, uint8_t *remove_mask, CettaCount mask_len,
+        Atom *dense_atom, CettaCount *selected_len) {
+    if (!dense_atom || !space_dense_holds_atom(space, dense_atom))
+        return true;
+    CettaCount dense_len = space_dense_facts(space);
+    if (dense_len == 0u || mask_len < dense_len)
+        return false;
+    CettaIndex dense_begin = mask_len - dense_len;
+    space_dense_settle(space, SYMBOL_ID_NONE);
+    for (CettaIndex i = dense_begin; i < mask_len; i++) {
+        Atom *candidate = space_get_at64(space, i);
+        if (remove_mask[i] == 0u && candidate &&
+            atom_eq(candidate, dense_atom)) {
+            remove_mask[i] = 1u;
+            (*selected_len)++;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool space_store_effect_prepare_remove_mask(
+    SpaceStoreEffect *effect, Space *space, uint8_t *remove_mask,
+    CettaCount mask_len, CettaCount selected_len, Atom *dense_atom,
+    SpaceStoreReceipt *receipt) {
+    if (!space_store_effect_available(effect) ||
+        (!remove_mask && mask_len != 0u) || selected_len > mask_len)
+        return false;
+    effect->kind = SPACE_STORE_EFFECT_REMOVE_MASK;
+    if (!space_store_effect_fold_dense_mask(
+            space, remove_mask, mask_len, dense_atom, &selected_len))
+        return false;
+    if (!space_store_effect_prepare(effect, space, receipt, selected_len))
+        return false;
+    effect->remove_mask = remove_mask;
+    effect->mask_len = mask_len;
+    effect->selected_len = selected_len;
+    CettaCount recorded = 0u;
+    for (CettaIndex i = 0u; receipt && i < mask_len; i++) {
+        if (remove_mask[i] == 0u)
+            continue;
+        if (!space_store_receipt_record(receipt, space_get_at64(space, i), i)) {
+            /* Ownership of the mask transfers only on successful preparation. */
+            *effect = (SpaceStoreEffect){0};
+            return false;
+        }
+        recorded++;
+    }
+    if (receipt && recorded != selected_len) {
+        *effect = (SpaceStoreEffect){0};
+        return false;
+    }
+    return true;
+}
+
+bool space_store_effect_prepare_remove_positions(
+    SpaceStoreEffect *effect, Space *space, const CettaIndex *positions,
+    CettaCount position_len, Atom *dense_atom, SpaceStoreReceipt *receipt) {
+    if (!space_store_effect_available(effect) || (position_len && !positions))
+        return false;
+    effect->kind = SPACE_STORE_EFFECT_REMOVE_POSITIONS;
+    CettaIndex *rows = NULL;
+    if (!space_logical_positions_prepare(
+            space, positions, position_len, &rows))
+        return false;
+    CettaCount dense_selected =
+        dense_atom && space_dense_holds_atom(space, dense_atom) ? 1u : 0u;
+    CettaCount selected = position_len + dense_selected;
+    if (!space_store_effect_prepare(effect, space, receipt, selected)) {
+        free(rows);
+        return false;
+    }
+    for (CettaCount i = 0u; receipt && i < position_len; i++) {
+        if (!space_store_receipt_record(
+                receipt, space_get_at64(space, positions[i]), positions[i])) {
+            free(rows);
+            *effect = (SpaceStoreEffect){0};
+            return false;
+        }
+    }
+    if (receipt && dense_selected &&
+        !space_store_receipt_record(receipt, dense_atom, (CettaIndex)-1)) {
+        free(rows);
+        *effect = (SpaceStoreEffect){0};
+        return false;
+    }
+    effect->remove_positions = (CettaIndex *)positions;
+    effect->remove_rows = rows;
+    effect->remove_row_len = position_len;
+    effect->dense_atom = dense_atom;
+    effect->dense_selected = dense_selected;
+    effect->selected_len = selected;
+    return true;
+}
+
+static AtomId space_store_effect_remove_id_at(
+        const SpaceStoreEffect *effect, CettaCount index) {
+    return effect->remove_ids
+        ? effect->remove_ids[index] : effect->remove_id_single;
+}
+
+static bool space_store_effect_remove_id_is_dense(
+        const SpaceStoreEffect *effect, CettaCount index) {
+    return effect->remove_id_dense
+        ? effect->remove_id_dense[index] != 0u
+        : effect->remove_id_dense_single != 0u;
+}
+
+SpaceStorePublishResult space_store_effect_publish(
+    SpaceStoreEffect *effect, SpaceStoreReceipt *receipt,
+    CettaCount *out_removed) {
+    if (out_removed)
+        *out_removed = 0u;
+    if (!effect || !effect->space || effect->consumed)
+        return SPACE_STORE_PUBLISH_ERROR;
+    /* A receipt belongs to one preparation, including after the effect moves
+     * by structure assignment.  Reject a foreign receipt without clearing or
+     * rewriting that other operation's retained record. */
+    if (receipt && (!receipt->initialized || receipt->kind != effect->kind ||
+                    receipt->space_instance != space_instance_id(effect->space) ||
+                    effect->preparation_id == 0u ||
+                    receipt->preparation_id != effect->preparation_id))
+        return SPACE_STORE_PUBLISH_ERROR;
+    effect->consumed = true;
+    CETTA_SCOPED_SHARED_TRANSITION(guard);
+    /* A selected occurrence/prefix may survive appends, but not a prefix
+     * rewrite.  This is a backend retry condition, never a semantic no-match. */
+    if ((effect->kind == SPACE_STORE_EFFECT_REMOVE_MASK ||
+         effect->kind == SPACE_STORE_EFFECT_REMOVE_POSITIONS) &&
+        !space_read_token_prefix_intact(effect->read)) {
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_STORE_PUBLISH_STALE);
+        space_store_receipt_refuse(receipt);
+        return SPACE_STORE_PUBLISH_STALE;
+    }
+    Space *space = effect->space;
+    uint64_t before = receipt ? space_revision(space) : 0u;
+    bool ok = false;
+    CettaCount removed = 0u;
+    switch (effect->kind) {
+    case SPACE_STORE_EFFECT_ADD:
+        ok = space_admit_atom_from_source_arena(
+            space, effect->storage_arena, effect->source_arena, effect->atom);
+        break;
+    case SPACE_STORE_EFFECT_ADD_BATCH:
+        switch (effect->batch_kind) {
+        case SPACE_STORE_BATCH_ALPHA_KEYS:
+            ok = space_add_alpha_keys_batch(
+                space, effect->batch_items, effect->batch_len);
+            break;
+        case SPACE_STORE_BATCH_DENSE_TUPLES:
+            ok = space_add_dense_tuples(
+                space, effect->batch_head, effect->batch_head_id,
+                effect->batch_arity, effect->batch_items, effect->batch_len);
+            break;
+        case SPACE_STORE_BATCH_DEEP_HOLES:
+            ok = space_add_deep_holes(
+                space, effect->batch_head, effect->batch_skeleton,
+                effect->batch_items, effect->batch_len);
+            break;
+        }
+        break;
+    case SPACE_STORE_EFFECT_REMOVE_ONE:
+        ok = true;
+        if (effect->atom_id != CETTA_ATOM_ID_NONE)
+            removed = space_remove_atom_id(space, effect->atom_id) ? 1u : 0u;
+        if (removed == 0u)
+            removed = space_remove(space, effect->atom) ? 1u : 0u;
+        break;
+    case SPACE_STORE_EFFECT_REMOVE_POSITIONS: {
+        /* Every refusal is before the first write.  Dense removal leaves the
+         * validated physical rows in place; their publication has no failure
+         * route, so the combined relation/row update is one primitive. */
+        ok = true;
+        if (effect->dense_selected &&
+            !space_dense_holds_atom(space, effect->dense_atom))
+            ok = false;
+        for (CettaCount i = 0u; ok && i < effect->remove_id_len; i++) {
+            if (space_store_effect_remove_id_is_dense(effect, i) &&
+                !space_dense_route_holds(
+                    space, space_store_effect_remove_id_at(effect, i)))
+                ok = false;
+        }
+        if (!ok)
+            break;
+        if (effect->dense_selected &&
+            space_dense_remove_ground(space, effect->dense_atom) != 1u) {
+            fputs("CeTTa: prepared dense fact disappeared during publication\n",
+                  stderr);
+            abort();
+        }
+        for (CettaCount i = 0u; i < effect->remove_id_len; i++) {
+            if (space_store_effect_remove_id_is_dense(effect, i) &&
+                !space_dense_route_remove(
+                    space, space_store_effect_remove_id_at(effect, i))) {
+                fputs("CeTTa: prepared dense id disappeared during publication\n",
+                      stderr);
+                abort();
+            }
+        }
+        space_logical_positions_publish(
+            space, effect->remove_positions, effect->remove_rows,
+            effect->remove_row_len);
+        removed = effect->selected_len;
+        ok = true;
+        break;
+    }
+    case SPACE_STORE_EFFECT_REMOVE_MASK: {
+        CettaCount current_len = space_length64(space);
+        if (current_len < effect->mask_len) {
+            space_store_receipt_refuse(receipt);
+            return SPACE_STORE_PUBLISH_STALE;
+        }
+        const uint8_t *mask = effect->remove_mask;
+        uint8_t *extended = NULL;
+        if (current_len != effect->mask_len) {
+            if (current_len > SIZE_MAX)
+                return SPACE_STORE_PUBLISH_ERROR;
+            extended = cetta_fallible_malloc((size_t)current_len);
+            if (!extended) {
+                space_store_receipt_refuse(receipt);
+                return SPACE_STORE_PUBLISH_ERROR;
+            }
+            memcpy(extended, effect->remove_mask, (size_t)effect->mask_len);
+            memset(extended + effect->mask_len, 0,
+                   (size_t)(current_len - effect->mask_len));
+            mask = extended;
+        }
+        ok = space_remove_occurrence_mask_stable(
+            space, mask, current_len, &removed);
+        free(extended);
+        break;
+    }
+    }
+    if (!ok) {
+        space_store_receipt_refuse(receipt);
+        return SPACE_STORE_PUBLISH_ERROR;
+    }
+    if (out_removed)
+        *out_removed = removed;
+    if (effect->kind != SPACE_STORE_EFFECT_ADD &&
+        effect->kind != SPACE_STORE_EFFECT_ADD_BATCH && removed == 0u) {
+        space_store_receipt_refuse(receipt);
+        return SPACE_STORE_PUBLISH_NO_MATCH;
+    }
+    if (receipt) {
+        /* A set may admit an already-held row without publishing a revision.
+         * Only a requested receipt observes that distinction; the ordinary
+         * path never reads a write back to validate its success. */
+        if ((effect->kind == SPACE_STORE_EFFECT_ADD ||
+             effect->kind == SPACE_STORE_EFFECT_ADD_BATCH) &&
+            space_revision(space) == before)
+            receipt->len = 0u;
+        else if (effect->kind != SPACE_STORE_EFFECT_ADD &&
+                 effect->kind != SPACE_STORE_EFFECT_ADD_BATCH)
+            receipt->len = removed;
+        receipt->committed_revision = space_revision(space);
+    }
+    return SPACE_STORE_PUBLISH_PUBLISHED;
+}
+
 AtomId space_get_atom_id_at(const Space *s, uint32_t idx) {
     return space_get_atom_id_at64(s, idx);
 }
@@ -14276,14 +14812,17 @@ bool space_exact_head_certified(Space *s, SymbolId head) {
     return exact_index_head_exact(s, head);
 }
 
-bool space_remove_exact_ids(Space *s, SymbolId head, const AtomId *ids,
-                            size_t count) {
-    if (!s || head == SYMBOL_ID_NONE || (count && !ids) ||
-        !s->native.universe || space_has_overlay_base(s) ||
-        space_has_dependencies(s) ||
+bool space_store_effect_prepare_remove_exact(
+    SpaceStoreEffect *effect, Space *s, SymbolId head, const AtomId *ids,
+    size_t count, Atom *dense_atom, SpaceStoreReceipt *receipt) {
+    if (!space_store_effect_available(effect) || !s || head == SYMBOL_ID_NONE ||
+        (count && !ids) || (dense_atom && count != 1u) || !s->native.universe ||
+        count > SIZE_MAX / sizeof(*ids) ||
+        space_has_overlay_base(s) || space_has_dependencies(s) ||
         (s->match_backend.kind != SPACE_ENGINE_NATIVE &&
          s->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT))
         return false;
+    effect->kind = SPACE_STORE_EFFECT_REMOVE_POSITIONS;
     CETTA_SCOPED_SHARED_TRANSITION(exact_removal);
     /* A row holding a variable could unify with an instance without
      * equalling it; the index certifies there is none under this head. */
@@ -14295,9 +14834,36 @@ bool space_remove_exact_ids(Space *s, SymbolId head, const AtomId *ids,
         if (!atom_id_is_exact_indexable(s, ids[i]))
             return false;
     }
-    /* Each id's fact goes from its relation; its row copies, below. */
-    for (size_t i = 0u; space_dense_facts(s) != 0u && i < count; i++)
-        (void)space_dense_route_remove(s, ids[i]);
+    AtomId *owned_ids = count > 1u
+        ? cetta_fallible_malloc(count * sizeof(*owned_ids)) : NULL;
+    uint8_t *dense_ids = count > 1u
+        ? cetta_fallible_calloc(count, sizeof(*dense_ids)) : NULL;
+    if (count > 1u && (!owned_ids || !dense_ids)) {
+        free(owned_ids);
+        free(dense_ids);
+        return false;
+    }
+    CettaCount dense_count = 0u;
+    for (size_t i = 0u; i < count; i++) {
+        bool dense = !dense_atom && space_dense_route_holds(s, ids[i]);
+        /* The exact-id input is a set of target values.  Row positions retain
+         * their own multiplicity below, but one relation fact is selected and
+         * removed only once even if its id occurs repeatedly in the input. */
+        for (size_t j = 0u; dense && j < i; j++)
+            if (ids[j] == ids[i])
+                dense = false;
+        if (count == 1u) {
+            effect->remove_id_single = ids[i];
+            effect->remove_id_dense_single = dense ? 1u : 0u;
+        } else {
+            owned_ids[i] = ids[i];
+            dense_ids[i] = dense ? 1u : 0u;
+        }
+        if (dense)
+            dense_count++;
+    }
+    CettaCount dense_selected =
+        dense_atom && space_dense_holds_atom(s, dense_atom) ? 1u : 0u;
     CettaIndex *positions = NULL;
     CettaIndex position_len = 0u, position_cap = 0u;
     for (size_t i = 0u; i < count; i++) {
@@ -14311,31 +14877,94 @@ bool space_remove_exact_ids(Space *s, SymbolId head, const AtomId *ids,
         for (CettaIndex r = 0u; r < row_len; r++) {
             if (position_len == position_cap) {
                 position_cap = position_cap ? position_cap * 2u : 16u;
-                positions = cetta_realloc(positions,
-                                          sizeof(*positions) * position_cap);
+                CettaIndex *grown = cetta_fallible_realloc(
+                    positions, sizeof(*positions) * position_cap);
+                if (!grown) {
+                    free(rows);
+                    free(positions);
+                    free(owned_ids);
+                    free(dense_ids);
+                    return false;
+                }
+                positions = grown;
             }
             positions[position_len++] = rows[r];
         }
         free(rows);
     }
-    if (position_len == 0u) {
-        free(positions);
-        return true;
-    }
     /* Index rows are physical; the removal reads ascending logical
      * positions, each once. */
     position_len = space_marks_physical_to_logical(s, positions, position_len);
-    qsort(positions, (size_t)position_len, sizeof(*positions),
-          exact_index_row_compare);
+    if (position_len > 1u)
+        qsort(positions, (size_t)position_len, sizeof(*positions),
+              exact_index_row_compare);
     CettaIndex unique = 0u;
     for (CettaIndex i = 0u; i < position_len; i++) {
         if (unique == 0u || positions[unique - 1u] != positions[i])
             positions[unique++] = positions[i];
     }
-    bool removed = unique == 0u ||
-        space_remove_logical_positions(s, positions, unique);
-    free(positions);
-    return removed;
+    CettaIndex *physical = NULL;
+    if (!space_logical_positions_prepare(s, positions, unique, &physical)) {
+        free(positions);
+        free(owned_ids);
+        free(dense_ids);
+        return false;
+    }
+    CettaCount selected = unique + dense_count + dense_selected;
+    if (!space_store_effect_prepare(effect, s, receipt, selected)) {
+        free(physical);
+        free(positions);
+        free(owned_ids);
+        free(dense_ids);
+        return false;
+    }
+    bool recorded = true;
+    for (CettaCount i = 0u; receipt && i < unique; i++)
+        recorded = recorded && space_store_receipt_record(
+            receipt, space_get_at64(s, positions[i]), positions[i]);
+    if (receipt && dense_selected)
+        recorded = recorded && space_store_receipt_record(
+            receipt, dense_atom, (CettaIndex)-1);
+    for (CettaCount i = 0u; receipt && i < count; i++) {
+        bool dense = dense_ids
+            ? dense_ids[i] != 0u : effect->remove_id_dense_single != 0u;
+        if (dense)
+            recorded = recorded && space_store_receipt_record(
+                receipt, term_universe_get_atom(s->native.universe, ids[i]),
+                (CettaIndex)-1);
+    }
+    if (!recorded) {
+        free(physical);
+        free(positions);
+        free(owned_ids);
+        free(dense_ids);
+        *effect = (SpaceStoreEffect){0};
+        return false;
+    }
+    effect->remove_positions = positions;
+    effect->remove_rows = physical;
+    effect->remove_row_len = unique;
+    effect->dense_atom = dense_atom;
+    effect->dense_selected = dense_selected;
+    effect->remove_ids = owned_ids;
+    effect->remove_id_dense = dense_ids;
+    effect->remove_id_len = count;
+    effect->selected_len = selected;
+    return true;
+}
+
+bool space_remove_exact_ids(Space *s, SymbolId head, const AtomId *ids,
+                            size_t count) {
+    SpaceStoreEffect effect;
+    space_store_effect_init(&effect);
+    bool prepared = space_store_effect_prepare_remove_exact(
+        &effect, s, head, ids, count, NULL, NULL);
+    SpaceStorePublishResult published = prepared
+        ? space_store_effect_publish(&effect, NULL, NULL)
+        : SPACE_STORE_PUBLISH_ERROR;
+    space_store_effect_dispose(&effect);
+    return published == SPACE_STORE_PUBLISH_PUBLISHED ||
+           published == SPACE_STORE_PUBLISH_NO_MATCH;
 }
 
 /* ── Type Expression Normalization ───────────────────────────────────────── */

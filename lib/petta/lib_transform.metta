@@ -32,7 +32,7 @@
 ; handles each head before relation search; an unhandled call has no fallback.
 (= (tf:run $a $b $c $d) (empty))
 (= (tf:split $a $b) (empty))
-(= (tf:cands $a $b $c) (empty))
-(= (tf:pin $a $b) (empty))
+(= (tf:propose $a $b $c) (empty))
+(= (tf:inst $a $b) (empty))
 (= (tf:fire $a $b $c) (empty))
 (= (tf:fire-into $a $b $c $d) (empty))
