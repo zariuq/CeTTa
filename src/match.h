@@ -890,6 +890,9 @@ bool      bindings_builder_promote_atoms_to_arena(
 bool      bindings_builder_promote_prime_atoms_to_arena(
               BindingsBuilder *bb, Arena *owner);
 void      bindings_builder_free(BindingsBuilder *bb);
+/* Directly owned vector capacities, excluding shared syntax owners and
+ * cached/shared lookup, frame and Prime occurrence payloads. */
+size_t    bindings_builder_owned_vector_bytes(const BindingsBuilder *bb);
 void      bindings_builder_set_history(BindingsBuilder *bb,
                                        BindingsBuilderHistory history);
 /* The trail position of a change the history is about to record: a

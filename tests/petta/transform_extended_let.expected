@@ -1,0 +1,5 @@
+x
+(destination x 2 (a b))
+(taken done ())
+(effectful done () (yes))
+(lost-keep ((got a)) (b))
