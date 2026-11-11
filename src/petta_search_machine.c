@@ -11818,10 +11818,10 @@ static bool petta_transfer_hosts_equal(
     if (left->equation_result_payload_observed != right->equation_result_payload_observed) return false;
     if (left->equation_activation_relation_admissible != right->equation_activation_relation_admissible) return false;
     if (left->translator_rule_contains != right->translator_rule_contains) return false;
-    if (left->translator_rule_set != right->translator_rule_set) return false;
     if (left->tabled_relation_contains != right->tabled_relation_contains) return false;
     if (left->tabled_relation_admissible != right->tabled_relation_admissible) return false;
-    if (left->tabled_relation_set != right->tabled_relation_set) return false;
+    /* The rule and table setters live in the shared optional-services table. */
+    if (left->optional_services != right->optional_services) return false;
     if (left->memoized_relation_contains != right->memoized_relation_contains) return false;
     if (left->memoized_relation_aggregate != right->memoized_relation_aggregate) return false;
     if (left->memoized_relation_float_precision != right->memoized_relation_float_precision) return false;

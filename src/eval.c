@@ -5487,7 +5487,7 @@ static bool petta_space_remove_pattern_limit_impl(
             if (!prepared && !exact_empty) {
                 CettaCount removed = 0u, removed_rows = 0u;
                 if (space_remove_exact_ids_immediate(
-                        space, pattern->expr.elems[0]->sym_id, &id, 1u,
+                        space, atom_symbol_current_id(pattern->expr.elems[0]), &id, 1u,
                         pattern, &removed, &removed_rows)) {
                     petta_space_remove_observe(space, pattern, program, NULL,
                                                removed_rows, removed, false);
@@ -6956,7 +6956,7 @@ static EvalConstructorHead atom_constructor_head_kind(Space *s, Arena *a,
          cetta_foreign_is_callable_atom(head)) ||
         eval_space_has_equations(s, atom_symbol_current_id(head)))
         return EVAL_HEAD_NOT_CONSTRUCTOR;
-    if (eval_transform_any_head(head->sym_id, atom->expr.len - 1u))
+    if (eval_transform_any_head(atom_symbol_current_id(head), atom->expr.len - 1u))
         return EVAL_HEAD_NOT_CONSTRUCTOR;
     /* Typecheck-v2 erasure heads are operations, not constructors: freezing
      * them as normal forms would return them inert before evaluation. */
