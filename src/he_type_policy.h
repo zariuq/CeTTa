@@ -59,10 +59,19 @@ CettaHeTypeTables *he_type_tables_exchange(CettaHeTypeTables *tables);
 /* HE's grounded operations type themselves, as upstream's grounded atoms do
  * (Grounded::type_): the type is not a declaration atom in any space, and a
  * declaration a program writes for the name does not change it.  The types
- * of a grounded operation's name, or 0 for any other symbol; `extensions`
- * adds CeTTa's extended signatures, which the profile with upstream's exact
- * semantics leaves out. */
-uint32_t he_grounded_symbol_types(SymbolId symbol, bool extensions,
+ * of a grounded operation's name, or 0 for any other symbol, as the profile's
+ * tier has them: each tier adds signatures to the one before it. */
+typedef enum {
+    /* Upstream's signatures, exactly. */
+    HE_GROUNDED_TIER_UPSTREAM = 0,
+    /* With CeTTa's extended signatures of upstream's operations. */
+    HE_GROUNDED_TIER_EXTENSIONS,
+    /* With the operations the extended profile alone provides: the
+     * transform family, whose arguments stay syntax. */
+    HE_GROUNDED_TIER_EXTENDED_PROFILE,
+} HeGroundedTier;
+
+uint32_t he_grounded_symbol_types(SymbolId symbol, HeGroundedTier tier,
                                   Atom *const **types);
 
 /* The declarations of HE's standard library, in upstream's order, parsed by

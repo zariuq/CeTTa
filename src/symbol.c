@@ -252,8 +252,8 @@ static SymbolEntry *symbol_table_entry_mut(SymbolTable *st, SymbolId id) {
     return &chunk[id & SYMBOL_ENTRY_CHUNK_MASK];
 }
 
-static void symbol_table_add_flags(SymbolTable *st, SymbolId id,
-                                   uint32_t flags) {
+static void symbol_table_add_flags_initial(SymbolTable *st, SymbolId id,
+                                           uint32_t flags) {
     if (!st || id == SYMBOL_ID_NONE || flags == 0u)
         return;
     uint32_t entry_len = atomic_load_explicit(
@@ -283,6 +283,19 @@ static void symbol_pin_entry(SymbolTable *st, SymbolEntry *entry) {
     st->stats.owned_count++;
     st->stats.owned_bytes += bytes;
     st->stats.promotions++;
+}
+
+void symbol_table_add_flags(SymbolTable *st, SymbolId id,
+                            uint32_t flags) {
+    if (!st || id == SYMBOL_ID_NONE || flags == 0u)
+        return;
+    uint32_t entry_len = atomic_load_explicit(
+        &st->entry_len, memory_order_relaxed);
+    if (id >= entry_len)
+        return;
+    SymbolEntry *entry = symbol_table_entry_mut(st, id);
+    if (entry)
+        atomic_fetch_or_explicit(&entry->flags, flags, memory_order_relaxed);
 }
 
 static bool symbol_table_ensure_entry_chunk(SymbolTable *st, SymbolId id) {
@@ -1014,14 +1027,14 @@ bool symbol_table_try_init_builtins(SymbolTable *st, BuiltinSyms *builtins) {
 #undef CETTA_MARK_CONSTRUCTOR
 
 #define CETTA_MARK_STATIC_GROUNDED(field) \
-    symbol_table_add_flags( \
+    symbol_table_add_flags_initial( \
         st, builtins->field, CETTA_SYMBOL_FLAG_STATIC_GROUNDED_OP | \
             CETTA_SYMBOL_FLAG_CORE_GROUNDED_OP);
     CETTA_STATIC_GROUNDED_SYMBOL_FIELDS(CETTA_MARK_STATIC_GROUNDED)
 #undef CETTA_MARK_STATIC_GROUNDED
 
 #define CETTA_MARK_TYPE_PURE_GROUNDED(field) \
-    symbol_table_add_flags( \
+    symbol_table_add_flags_initial( \
         st, builtins->field, \
         CETTA_SYMBOL_FLAG_TYPE_PURE_GROUNDED_OP);
     CETTA_TYPE_PURE_GROUNDED_SYMBOL_FIELDS(
@@ -1034,7 +1047,7 @@ bool symbol_table_try_init_builtins(SymbolTable *st, BuiltinSyms *builtins) {
     CETTA_SPECULATIVE_SYMBOL_FIELDS(CETTA_MARK_SPECULATIVE)
 #undef CETTA_MARK_SPECULATIVE
 #define CETTA_MARK_PUBLIC_LIBRARY_GROUNDED(field) \
-    symbol_table_add_flags(st, builtins->field, \
+    symbol_table_add_flags_initial(st, builtins->field, \
         CETTA_SYMBOL_FLAG_STATIC_GROUNDED_OP | CETTA_SYMBOL_FLAG_LIBRARY_NATIVE_OP);
     CETTA_PUBLIC_LIBRARY_NATIVE_SYMBOL_FIELDS(CETTA_MARK_PUBLIC_LIBRARY_GROUNDED)
 #undef CETTA_MARK_PUBLIC_LIBRARY_GROUNDED
@@ -1044,7 +1057,7 @@ bool symbol_table_try_init_builtins(SymbolTable *st, BuiltinSyms *builtins) {
        name-based fallback in is_grounded_op. */
 #define CETTA_MARK_LIBRARY_GROUNDED(field, text) do { \
     if (strncmp((text), "__cetta_lib_", 12u) == 0) \
-        symbol_table_add_flags( \
+        symbol_table_add_flags_initial( \
             st, builtins->field, CETTA_SYMBOL_FLAG_STATIC_GROUNDED_OP | \
                 CETTA_SYMBOL_FLAG_LIBRARY_NATIVE_OP); \
 } while (0);

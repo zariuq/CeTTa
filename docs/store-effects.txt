@@ -7,14 +7,14 @@ Scope
 This is the observation contract shared by public add-atom, public remove-atom,
 transform takes, and transform destination writes.  It is not a transaction
 around a whole firing.  Store construction, imports, maintained-view repair,
-backend materialization, and internal settling are outside this surface; their
+backend materialization, and internal settling are not these operations; their
 low-level writes remain visible at their own call sites.
 
 An entry proposal is data, not a reservation.  It neither pins an occurrence
 for a later firing nor freezes the store.  A firing validates against the live
 store left by earlier source code, callbacks, and firings.  A prepared effect
 owns the evidence needed for one primitive publication; it does not make later
-surface operations happen earlier.
+source operations happen earlier.
 
 Operation and observation table
 -------------------------------
@@ -206,7 +206,7 @@ Prepared representations
   falls back from an exact id to value equality, so those ordinary operations
   do not acquire or validate a prefix token.
 
-Remaining low-level writes outside this surface
+Remaining low-level writes that are not these operations
   Store construction, resource transfer, and cloning in eval.c admit rows into
   spaces being constructed; they are not source-level add-atom calls.
   Namespace construction and module/view replacement similarly build or
@@ -214,10 +214,10 @@ Remaining low-level writes outside this surface
   Static-import loading uses the common mask removal for prior predicate rows,
   then performs its own batch insertion and maintained-view replacement.
   Token-space assert/erase manipulates clause registrations and token handles;
-  it is a distinct language surface, not public add-atom/remove-atom.
+  these are distinct operations, not public add-atom/remove-atom.
   Collection add-atoms and private collection ingress are bulk operations with
   their own result and admission contracts.  Prime type-declaration publication
-  is likewise a separate language surface.  Ordered-space push/pop and MORK
+  is likewise a separate operation.  Ordered-space push/pop and MORK
   space stepping are also distinct operations.  Dense promotion/settling,
   mark settling, occurrence transport, index maintenance, and backend
   materialization in space.c are representation work beneath these contracts,

@@ -97,6 +97,10 @@ typedef struct {
 
 /* Room for every special form whose symbol lies above the dense range. */
 #define PETTA_RUNTIME_HEAD_OVERFLOW_CAP 48u
+enum {
+    PETTA_RUNTIME_HEAD_VALUE_MASK = 3u,
+    PETTA_RUNTIME_HEAD_NATIVE_LIBRARY = 4u,
+};
 
 typedef struct {
     SymbolId symbol;
@@ -411,6 +415,20 @@ static void petta_runtime_heads_build(PeTTaSymbolIds *ids) {
         petta_runtime_head_note(
             ids, function[index], PETTA_RUNTIME_HEAD_FUNCTION);
     }
+    /* Library hosts are ordinary/data/function exactly as before.  The extra
+     * internal bit lets dispatch exempt them from its ordinary-call exit
+     * without probing each library's names on every user function call. */
+    static const char *const native_library[] = {
+        "transform", "tf:split", "tf:propose", "tf:inst", "tf:fire",
+        "tf:fire-into", "tf:run", "support:open", "support:assert",
+        "support:retract", "support:why",
+    };
+    for (size_t index = 0u;
+         index < sizeof(native_library) / sizeof(native_library[0]); index++) {
+        petta_runtime_head_note(ids,
+            symbol_intern_cstr(g_symbols, native_library[index]),
+            (PeTTaRuntimeHead)PETTA_RUNTIME_HEAD_NATIVE_LIBRARY);
+    }
 }
 
 static const PeTTaSymbolIds *petta_symbol_ids_refresh(void) {
@@ -571,18 +589,38 @@ bool petta_semantics_special_form_reads(SymbolId head, CettaExprLen nargs) {
     return true;
 }
 
-PeTTaRuntimeHead petta_semantics_runtime_head(SymbolId head) {
-    const PeTTaSymbolIds *ids = petta_symbol_ids();
+static uint8_t petta_runtime_head_raw(const PeTTaSymbolIds *ids,
+                                      SymbolId head) {
     if (head == SYMBOL_ID_NONE || !ids->table)
         return PETTA_RUNTIME_HEAD_ORDINARY;
     if (head < PETTA_FORM_DENSE_CAP)
-        return (PeTTaRuntimeHead)ids->runtime_head_by_symbol[head];
+        return ids->runtime_head_by_symbol[head];
     for (uint8_t index = 0u;
          index < ids->runtime_head_overflow_len; index++) {
         if (ids->runtime_head_overflow[index].symbol == head)
             return ids->runtime_head_overflow[index].head;
     }
     return PETTA_RUNTIME_HEAD_ORDINARY;
+}
+
+PeTTaRuntimeHead petta_semantics_runtime_head(SymbolId head) {
+    return (PeTTaRuntimeHead)(petta_runtime_head_raw(petta_symbol_ids(), head) &
+                              PETTA_RUNTIME_HEAD_VALUE_MASK);
+}
+
+bool petta_semantics_native_library_head(SymbolId head) {
+    return (petta_runtime_head_raw(petta_symbol_ids(), head) &
+            PETTA_RUNTIME_HEAD_NATIVE_LIBRARY) != 0u;
+}
+
+PeTTaForm petta_semantics_form_and_native_library(
+    SymbolId head, bool *native_library_out) {
+    const PeTTaSymbolIds *ids = petta_symbol_ids();
+    if (native_library_out)
+        *native_library_out =
+            (petta_runtime_head_raw(ids, head) &
+             PETTA_RUNTIME_HEAD_NATIVE_LIBRARY) != 0u;
+    return petta_form_lookup_ids(ids, head);
 }
 
 PeTTaNamedArity petta_semantics_named_arity(

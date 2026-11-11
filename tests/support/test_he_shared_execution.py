@@ -710,29 +710,19 @@ DEEP_CASES = [
      "!(descend 20000)\n", "[()]\n[7]\n"),
 ]
 
-# CLI fuel is an observation allowance: exhaustion is explicit, not a
-# successful empty answer. Completed observations keep their ordinary meaning.
-# Sweep finite budgets instead of encoding the retired recursive-depth counts.
-FUEL_CASES = ("duplicates", "minimal-return", "entered-empty", "source-demand", "state-effects")
-FUEL_BUDGETS = (1, 3, 7, 16, 64)
+# A finite budget either completes with the unlimited run's observation or
+# reports that it ran out; it never publishes a different answer.  A larger
+# budget completes whatever a smaller one completed.  The budgets where a
+# program crosses over belong to the cost accounting, not to this check.
+FUEL_CASES = ["duplicates", "minimal-return", "entered-empty",
+              "source-demand", "state-effects"]
+FUEL_BUDGETS = (1, 2, 3, 5, 8, 13, 21, 34, 55, 89)
+FUEL_EXHAUSTED = "error: observation incomplete: fuel-exhausted\n"
 
 
-def check_fuel_result(name, fuel, result, expected):
-    if result.returncode == 0:
-        if result.stdout != expected or result.stderr:
-            raise AssertionError((name, fuel, "completed", result.stdout, result.stderr))
-    elif result.returncode == 1 and result.stderr == "error: observation incomplete: fuel-exhausted\n":
-        # Exhaustion cannot fabricate a completed answer. Previously executed
-        # effects remain visible exactly once, in their authored order.
-        allowed = ("", "one\n", "one\ntwo\n") if name == "state-effects" else ("",)
-        if result.stdout not in allowed:
-            raise AssertionError((name, fuel, "unpublished or duplicated output", result.stdout))
-    else:
-        raise AssertionError((name, fuel, result.returncode, result.stdout, result.stderr))
-    if fuel == FUEL_BUDGETS[0] and result.returncode != 1:
-        raise AssertionError((name, "insufficient fuel reported success"))
-    if fuel == FUEL_BUDGETS[-1] and result.returncode != 0:
-        raise AssertionError((name, "finite completion control did not complete"))
+def is_subsequence(part, whole):
+    rest = iter(whole)
+    return all(line in rest for line in part)
 
 
 VARIABLE_OR_STRING = re.compile(r'"(?:\\.|[^"\\])*"|\$[^\s()\[\],"]+')
@@ -1044,21 +1034,36 @@ def main():
         for name in FUEL_CASES:
             path = Path(directory) / (name + ".metta")
             expected = next(row[2] for row in CASES if row[0] == name)
-            for enabled in ("0", "1"):
+
+            def observe(fuel, enabled):
                 env = dict(os.environ, CETTA_HE_CANONICAL_EXECUTION="1",
                            CETTA_HE_SHARED_EXECUTION=enabled,
                            CETTA_OPEN_EQUATIONS_REFERENCE="1",
                            CETTA_PREPARED_PURE_REFERENCE="1")
-                completed = False
-                for fuel in FUEL_BUDGETS:
-                    result = subprocess.run([str(binary), "--lang", "he", "--fuel",
-                                             str(fuel), str(path)], cwd=root, env=env,
-                                            capture_output=True, text=True, timeout=timeout)
-                    check_fuel_result(name, fuel, result, expected)
-                    if completed and result.returncode:
-                        raise AssertionError((name, enabled, fuel, "completion regressed with more fuel"))
-                    completed |= result.returncode == 0
-                    observations += 1
+                budget = [] if fuel is None else ["--fuel", str(fuel)]
+                result = subprocess.run([str(binary), "--lang", "he", *budget,
+                                         str(path)], cwd=root, env=env,
+                                        capture_output=True, text=True, timeout=timeout)
+                return result.returncode, result.stdout, result.stderr
+
+            whole = observe(None, "1")
+            if whole != (0, expected, "") or whole != observe(None, "0"):
+                raise AssertionError((name, "unlimited", whole))
+            completed = exhausted = False
+            for fuel in FUEL_BUDGETS:
+                seen = observe(fuel, "1")
+                if seen != observe(fuel, "0"):
+                    raise AssertionError((name, fuel, "shared execution changes the observation", seen))
+                if seen == whole:
+                    completed = True
+                elif (completed or seen[0] != 1 or seen[2] != FUEL_EXHAUSTED or
+                      not is_subsequence(seen[1].splitlines(), whole[1].splitlines())):
+                    raise AssertionError((name, fuel, seen[0], seen[1][:4096], seen[2][:4096]))
+                else:
+                    exhausted = True
+                observations += 2
+            if not (completed and exhausted):
+                raise AssertionError((name, "budgets reach one side only", completed, exhausted))
         # A raw equation returns another instruction. The delimiter continues
         # it; a raw invocation alone retains instruction syntax as a value.
         source = """(= (descend $n)

@@ -4522,6 +4522,36 @@ static void test_store_effect_contract(TermUniverse *universe, Arena *scratch) {
            space_dense_facts(&batched) == 0u && space_length64(&batched) == 0u);
     space_store_effect_dispose(&effect);
     space_store_receipt_dispose(&receipt);
+    /* Immediate exact removal uses the same completed selection without a
+     * retained effect.  Pure dense removal needs no preliminary membership
+     * query; mixed removal publishes every equal row and the relation fact. */
+    Space immediate;
+    space_init_with_universe(&immediate, universe);
+    immediate.dense_from_first = true;
+    assert(space_add_dense_tuples(&immediate, edge, edge_head, 2u, columns, 3u));
+    CettaCount immediate_rows = 99u;
+    assert(space_remove_exact_ids_immediate(
+        &immediate, edge, &edge_ids[1], 1u, edge_atoms[1],
+        &removed, &immediate_rows));
+    assert(removed == 1u && immediate_rows == 0u &&
+           space_dense_facts(&immediate) == 2u &&
+           space_length64(&immediate) == 2u);
+    space_add_atom_id(&immediate, edge_ids[0]);
+    space_add_atom_id(&immediate, edge_ids[0]);
+    assert(space_remove_exact_ids_immediate(
+        &immediate, edge, &edge_ids[0], 1u, edge_atoms[0],
+        &removed, &immediate_rows));
+    assert(removed == 3u && immediate_rows == 2u &&
+           space_dense_facts(&immediate) == 1u &&
+           space_length64(&immediate) == 1u &&
+           space_get_atom_id_at64(&immediate, 0u) == edge_ids[2]);
+    assert(space_remove_exact_ids_immediate(
+        &immediate, edge, &edge_ids[1], 1u, edge_atoms[1],
+        &removed, &immediate_rows));
+    assert(removed == 0u && immediate_rows == 0u &&
+           space_length64(&immediate) == 1u);
+    space_free(&immediate);
+
     space_free(&batched);
     space_free(&dense);
 

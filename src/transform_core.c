@@ -29,20 +29,136 @@ static bool transform_cursor_reference(void) {
 
 /* ── The plan ──────────────────────────────────────────────────────────── */
 
-bool cetta_transform_call_head(SymbolId head, CettaExprLen arity) {
-    if (head == atom_symbol_literal_id("transform"))
-        return arity == 3u || arity == 4u;
-    if (head == atom_symbol_literal_id("tf:split"))
-        return arity == 2u;
-    if (head == atom_symbol_literal_id("tf:propose"))
-        return arity == 3u;
-    if (head == atom_symbol_literal_id("tf:inst"))
-        return arity == 2u;
-    if (head == atom_symbol_literal_id("tf:fire"))
-        return arity == 3u;
-    if (head == atom_symbol_literal_id("tf:fire-into"))
-        return arity == 4u;
-    return head == atom_symbol_literal_id("tf:run") && arity == 4u;
+enum {
+    TF_HEAD_PUBLIC_2 = 1u << 0,
+    TF_HEAD_PUBLIC_3 = 1u << 1,
+    TF_HEAD_PUBLIC_4 = 1u << 2,
+    TF_HEAD_NATIVE_2 = 1u << 3,
+    TF_HEAD_NATIVE_3 = 1u << 4,
+    TF_HEAD_NATIVE_4 = 1u << 5,
+    TF_HEAD_RUN_4 = 1u << 6,
+    TF_HEAD_NAME = 1u << 7,
+};
+
+typedef struct {
+    SymbolId head;
+    uint32_t mask;
+} TransformHeadMemo;
+
+typedef struct {
+    const SymbolTable *owner;
+    uint64_t owner_id;
+    SymbolId ids[7];
+    TransformHeadMemo recent[16];
+} TransformNameCache;
+
+static void transform_name_cache_reset(TransformNameCache *cache) {
+    memset(cache, 0, sizeof(*cache));
+    cache->ids[CETTA_TRANSFORM_NAME_TRANSFORM] = atom_symbol_literal_id("transform");
+    cache->ids[CETTA_TRANSFORM_NAME_SPLIT] = atom_symbol_literal_id("tf:split");
+    cache->ids[CETTA_TRANSFORM_NAME_PROPOSE] = atom_symbol_literal_id("tf:propose");
+    cache->ids[CETTA_TRANSFORM_NAME_INST] = atom_symbol_literal_id("tf:inst");
+    cache->ids[CETTA_TRANSFORM_NAME_FIRE] = atom_symbol_literal_id("tf:fire");
+    cache->ids[CETTA_TRANSFORM_NAME_FIRE_INTO] = atom_symbol_literal_id("tf:fire-into");
+    cache->ids[CETTA_TRANSFORM_NAME_RUN] = atom_symbol_literal_id("tf:run");
+    cache->owner = g_symbols;
+    cache->owner_id = g_symbols->instance_id;
+}
+
+static inline __attribute__((always_inline)) TransformNameCache *
+transform_name_cache(void) {
+    /* Ids and their classifications belong to one table incarnation. */
+    static _Thread_local TransformNameCache cache;
+    if (!g_symbols)
+        return NULL;
+    if (cache.owner != g_symbols || cache.owner_id != g_symbols->instance_id)
+        transform_name_cache_reset(&cache);
+    return &cache;
+}
+
+static uint32_t transform_head_classify_slow(TransformNameCache *cache,
+                                             SymbolId head) {
+    /* Every name of the family begins with `t`: any other symbol is
+     * classified by its first byte. */
+    const char *spelling = symbol_bytes(g_symbols, head);
+    if (!spelling || spelling[0] != 't')
+        return 0u;
+    uint32_t mask = 0u;
+    for (size_t i = 0u; i < 7u && mask == 0u; i++) {
+        if (head != cache->ids[i])
+            continue;
+        mask = TF_HEAD_NAME;
+        switch ((CettaTransformName)i) {
+        case CETTA_TRANSFORM_NAME_TRANSFORM:
+            mask |= TF_HEAD_PUBLIC_3 | TF_HEAD_PUBLIC_4;
+            break;
+        case CETTA_TRANSFORM_NAME_SPLIT:
+            mask |= TF_HEAD_PUBLIC_2 | TF_HEAD_NATIVE_2;
+            break;
+        case CETTA_TRANSFORM_NAME_PROPOSE:
+            mask |= TF_HEAD_PUBLIC_3 | TF_HEAD_NATIVE_3;
+            break;
+        case CETTA_TRANSFORM_NAME_INST:
+            mask |= TF_HEAD_PUBLIC_2 | TF_HEAD_NATIVE_2;
+            break;
+        case CETTA_TRANSFORM_NAME_FIRE:
+            mask |= TF_HEAD_PUBLIC_3 | TF_HEAD_NATIVE_3;
+            break;
+        case CETTA_TRANSFORM_NAME_FIRE_INTO:
+            mask |= TF_HEAD_PUBLIC_4 | TF_HEAD_NATIVE_4;
+            break;
+        case CETTA_TRANSFORM_NAME_RUN:
+            mask |= TF_HEAD_PUBLIC_4 | TF_HEAD_NATIVE_4 | TF_HEAD_RUN_4;
+            break;
+        }
+    }
+    return mask;
+}
+
+static inline __attribute__((always_inline)) uint32_t
+transform_head_mask(SymbolId head) {
+    TransformNameCache *cache = transform_name_cache();
+    if (!cache)
+        return 0u;
+    TransformHeadMemo *memo = &cache->recent[head & 15u];
+    if (memo->head != head) {
+        *memo = (TransformHeadMemo){
+            head, transform_head_classify_slow(cache, head)};
+        if (memo->mask == 0u)
+            symbol_table_add_flags(g_symbols, head,
+                                   CETTA_SYMBOL_FLAG_NOT_TRANSFORM_NAME);
+    }
+    return memo->mask;
+}
+
+SymbolId cetta_transform_name_id(CettaTransformName name) {
+    TransformNameCache *cache = transform_name_cache();
+    return cache && name >= CETTA_TRANSFORM_NAME_TRANSFORM &&
+           name <= CETTA_TRANSFORM_NAME_RUN
+        ? cache->ids[name] : SYMBOL_ID_NONE;
+}
+
+bool cetta_transform_call_head_slow(SymbolId head, CettaExprLen arity) {
+    if (arity < 2u || arity > 4u)
+        return false;
+    uint32_t mask = transform_head_mask(head);
+    return (mask & (TF_HEAD_PUBLIC_2 << (arity - 2u))) != 0u;
+}
+
+bool cetta_transform_native_call_head_slow(SymbolId head, CettaExprLen arity) {
+    if (arity < 2u || arity > 4u)
+        return false;
+    uint32_t mask = transform_head_mask(head);
+    return (mask & (TF_HEAD_NATIVE_2 << (arity - 2u))) != 0u;
+}
+
+bool cetta_transform_run_call_head_slow(SymbolId head, CettaExprLen arity) {
+    return arity == 4u &&
+        (transform_head_mask(head) & TF_HEAD_RUN_4) != 0u;
+}
+
+bool cetta_transform_name_head_slow(SymbolId head) {
+    return (transform_head_mask(head) & TF_HEAD_NAME) != 0u;
 }
 
 typedef enum {

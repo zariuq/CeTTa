@@ -182,6 +182,11 @@ typedef enum {
 } PeTTaRuntimeHead;
 
 PeTTaRuntimeHead petta_semantics_runtime_head(SymbolId head);
+/* Internal host-dispatch classification; it does not change the public
+ * ordinary/data/function meaning of a name when a library is unavailable. */
+bool petta_semantics_native_library_head(SymbolId head);
+PeTTaForm petta_semantics_form_and_native_library(
+    SymbolId head, bool *native_library_out);
 PeTTaNamedArity petta_semantics_named_arity(
     struct Space *space, Arena *scratch, Atom *head,
     CettaExprLen supplied);

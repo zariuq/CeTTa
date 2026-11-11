@@ -3625,12 +3625,15 @@ static bool term_universe_append_raw_record(TermUniverse *universe,
         if (!term_universe_blob_reserve(universe, off + total_len))
             return false;
     }
-    memset(universe->blob_pool + off, 0, total_len);
     memcpy(universe->blob_pool + off, hdr, sizeof(*hdr));
     if (payload_len != 0 && payload) {
         memcpy(universe->blob_pool + off + sizeof(CettaTermHdr), payload,
                payload_len);
     }
+    /* The header and every payload byte have just been initialized.  Only
+     * alignment padding needs zeroing, including for a reused record. */
+    if (total_len > raw_len)
+        memset(universe->blob_pool + off + raw_len, 0, total_len - raw_len);
 
     if (!reused)
         universe->blob_len += total_len;

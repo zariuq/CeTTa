@@ -154,6 +154,11 @@ typedef struct HeCanonicalFrame {
      * answer keeps only the bindings its value and goals reach. Set when
      * this frame took over such a call's publication (he_last_call). */
     bool publish_closed;
+    /* The frame lifts a nested computation's answers (metta): the
+     * computation's no-answer marker is not one of them.  Plain answers
+     * are delivered as any caller's; a range holding the marker is
+     * published through the frame, which drops it. */
+    bool lift_answers;
     struct HeCanonicalFrame *delivery_owner;
     HeCanonicalDynamic *saved_context;
     CettaOwnedExecution *provider;
@@ -534,8 +539,20 @@ static void he_canonical_free_frames(HeCanonicalDriver *driver) {
     }
 }
 
+/* A lifting frame (metta) publishes its computation's answers; the
+ * computation's no-answer marker is not one of them.  Every route that
+ * publishes a frame's outcome asks this first. */
+static __attribute__((cold, noinline)) bool he_canonical_lifted_marker(
+    HeCanonicalFrame *frame, Outcome *out) {
+    Atom *lifted = outcome_atom_materialize(frame->arena, out);
+    return !lifted || atom_is_legacy_empty_sentinel(lifted);
+}
+
 static inline __attribute__((always_inline)) void he_canonical_publish_one(
     HeCanonicalFrame *frame, Outcome *out, bool invocation) {
+    if (__builtin_expect(frame->lift_answers, 0) &&
+        he_canonical_lifted_marker(frame, out))
+        return;
     /* A closed publication reads no bindings through the call or its types
      * (he_last_call): what it keeps is what the answer and its goals reach. */
     bool closed = invocation && frame->publish_closed &&
@@ -584,6 +601,9 @@ static inline __attribute__((always_inline)) void he_canonical_publish_one(
 }
 
 static void he_canonical_publish_raw_return(HeCanonicalFrame *frame, Outcome *out) {
+    if (__builtin_expect(frame->lift_answers, 0) &&
+        he_canonical_lifted_marker(frame, out))
+        return;
     if (frame->atom &&
         !he_return_retain_invocation_outcome(frame->arena, frame->atom,
                                              NULL, out))
@@ -645,6 +665,9 @@ he_canonical_publish_evaluated(HeCanonicalFrame *frame, Outcome *out) {
     Atom *value=outcome_atom_materialize_traced(frame->arena,out,
         CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_TOP_LEVEL);
     if (!value) return;
+    if (__builtin_expect(frame->lift_answers, 0) &&
+        atom_is_legacy_empty_sentinel(value))
+        return;
     CettaCount before = frame->target->len;
     outcome_set_add(frame->target,
         he_canonical_evaluated_answer(frame,value),
@@ -1024,22 +1047,45 @@ static bool he_canonical_argument_schedule(Space *s, Arena *a, Atom *type,
     return true;
 }
 
-static bool he_canonical_caller_schedule(Space *s, Arena *a, Atom *type,
-    Atom *atom, int fuel, const Bindings *prefix, bool preserve,
-    OutcomeSet *os) {
+static HeCanonicalFrame *he_canonical_caller_push(Space *s, Arena *a,
+    Atom *type, Atom *atom, int fuel, const Bindings *prefix, bool preserve,
+    OutcomeSet *os, bool *scheduled) {
+    *scheduled = false;
     HeCanonicalFrame *frame = g_he_canonical_driver
         ? (HeCanonicalFrame *)g_he_canonical_driver->stack.top : NULL;
     if (!frame || frame->kind != HE_CANONICAL_INSTRUCTION ||
         !frame->instructions.top)
-        return false;
+        return NULL;
     HeInstructionFrame *instruction =
         (HeInstructionFrame *)frame->instructions.top;
     /* Stack-local foreign result sets cannot become suspended targets. */
     if (os != &instruction->inner && os != instruction->target)
-        return false;
-    he_canonical_push(HE_CANONICAL_CALLER, s, a, atom, type, fuel,
+        return NULL;
+    *scheduled = true;
+    return he_canonical_push(HE_CANONICAL_CALLER, s, a, atom, type, fuel,
         prefix, preserve, os);
-    return true;
+}
+
+static bool he_canonical_caller_schedule(Space *s, Arena *a, Atom *type,
+    Atom *atom, int fuel, const Bindings *prefix, bool preserve,
+    OutcomeSet *os) {
+    bool scheduled;
+    he_canonical_caller_push(s, a, type, atom, fuel, prefix, preserve, os,
+        &scheduled);
+    return scheduled;
+}
+
+/* The same for metta, whose caller lifts the nested computation's answers:
+ * the frame drops the computation's no-answer marker as it publishes. */
+static bool he_canonical_lifting_caller_schedule(Space *s, Arena *a,
+    Atom *type, Atom *atom, int fuel, const Bindings *prefix, bool preserve,
+    OutcomeSet *os) {
+    bool scheduled;
+    HeCanonicalFrame *caller = he_canonical_caller_push(s, a, type, atom,
+        fuel, prefix, preserve, os, &scheduled);
+    if (caller)
+        caller->lift_answers = true;
+    return scheduled;
 }
 
 static void he_canonical_instruction_push(HeCanonicalFrame *parent,
@@ -1357,7 +1403,10 @@ static void he_canonical_resume_result(HeCanonicalFrame *frame) {
         he_relay_sink(frame, &frame->child));
 }
 
-static void he_canonical_resume_bind(HeCanonicalFrame *frame) {
+/* The frame every let and chain binding resumes: part of the driver's
+ * dispatch, not a call from it. */
+static inline __attribute__((always_inline)) void he_canonical_resume_bind(
+    HeCanonicalFrame *frame) {
     Arena *a = frame->arena;
     if (frame->phase) {
         he_frame_mark_answers(frame, &frame->child);

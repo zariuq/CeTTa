@@ -585,6 +585,8 @@ bool cetta_library_native_execution_supported(const CettaLibraryContext *ctx, Sy
 bool cetta_library_native_execution_open(CettaLibraryContext *ctx, Space *space,
     Arena *arena, Atom *call, const struct RhocalcPayloadProvider *payload,
     CettaOwnedExecution *out);
+/* Whether any active operation can request old-generation result allocation. */
+bool cetta_library_result_pretenure_enabled(const CettaLibraryContext *ctx);
 /* Whether an active library's operation `head` makes a value built to be
  * consumed by later calls (a grounder's program), which an evaluator with
  * generations makes in its old one instead of copying it there. */
