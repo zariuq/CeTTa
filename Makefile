@@ -921,6 +921,7 @@ SRC += src/library_syntax.c
 SRC += src/str_stream.c
 SRC += src/relational_plan.c src/relational_cursor.c src/native_query.c src/dense_relation.c
 SRC += src/proof_language_region.c src/proof_producer.c src/proof_row.c src/proof_batches.c
+SRC += src/act_trie.c src/act_space.c src/library_act.c
 SRC += src/space_dense.c
 SRC += src/space_tuples.c
 SRC += src/space_skeleton.c
@@ -4841,6 +4842,49 @@ $(SOURCE_OVERLAY_TEST_BIN): tests/test_space_source_overlay.c $(FALLBACK_EVAL_TE
 test-all: test-source-overlay
 test-source-overlay: $(SOURCE_OVERLAY_TEST_BIN)
 	@$(PYTHON) tests/support/check_source_overlay.py ./$(SOURCE_OVERLAY_TEST_BIN)
+
+SPACE_OWNER_TEST_BIN = runtime/test_space_owner-$(BUILD_OBJ_TAG)
+$(SPACE_OWNER_TEST_BIN): tests/test_space_owner.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_space_owner.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
+.PHONY: test-space-owner
+test-all: test-space-owner
+test-space-owner: $(SPACE_OWNER_TEST_BIN)
+	$<
+
+.PHONY: test-space-workspace
+test-all: test-space-workspace
+test-space-workspace: $(BIN)
+	$(PYTHON) tests/support/check_space_workspace.py $(BIN)
+
+.PHONY: test-db
+test-all: test-db
+test-db: $(BIN) value-worker
+	$(PYTHON) tests/support/check_db.py $(BIN) --worker $(VALUE_WORKER_BIN)
+
+.PHONY: test-constraint-curriculum
+test-all: test-constraint-curriculum
+test-constraint-curriculum: $(VALUE_WORKER_BIN)
+	$(PYTHON) tests/support/check_constraint_curriculum.py $(VALUE_WORKER_BIN)
+
+.PHONY: test-recursive-computed-graph
+test-all: test-recursive-computed-graph
+test-recursive-computed-graph: $(VALUE_WORKER_BIN)
+	$(PYTHON) tests/support/check_recursive_computed_graph.py $(VALUE_WORKER_BIN) \
+		--output runtime/recursive-computed-graph.json
+
+.PHONY: test-db-concurrency bench-db-concurrency
+test-db-concurrency: $(VALUE_WORKER_BIN)
+	$(PYTHON) tests/support/bench_db_concurrency.py $(VALUE_WORKER_BIN) \
+		--facts 1024 --operations 5 --clients 1 2 \
+		--output runtime/db-concurrency-smoke.json
+bench-db-concurrency: $(VALUE_WORKER_BIN)
+	$(PYTHON) tests/support/bench_db_concurrency.py $(VALUE_WORKER_BIN) \
+		--output runtime/db-concurrency.json
+
+.PHONY: test-petta-bounded-removal
+test-all: test-petta-bounded-removal
+test-petta-bounded-removal: $(BIN)
+	@set -e -o pipefail; $(CETTA_BIN_INVOKE) --lang petta tests/petta/remove_atom_bounded.metta | $(PYTHON) -c 'import sys; value=sys.stdin.read().splitlines(); assert value==["true", "BOUNDED_REMOVAL_OK"],value'
 
 .PHONY: test-persistent-space-api
 test-all: test-persistent-space-api
@@ -48043,6 +48087,8 @@ LIBRARY_PETTA_SPELLING_SOURCES_V1 = $(LIBRARY_PETTA_PORTABLE_SOURCES_V1) list \
 LIBRARY_PRIME_SPELLING_SOURCES_V1 = json re crypto toml holkernel mm0kernel
 LIBRARY_PETTA_SPELLING_SOURCES_V1 += lib_tensor
 LIBRARY_PRIME_SPELLING_SOURCES_V1 += lib_tensor
+LIBRARY_PRIME_SPELLING_SOURCES_V1 += act
+LIBRARY_PETTA_SPELLING_SOURCES_V1 += act
 .PHONY: test-library-spellings-v1
 .PHONY: test-list-prefix-search test-tensor-support
 test-list-prefix-search: $(BIN)
@@ -53234,3 +53280,24 @@ $(TERM_DOMAIN_EXCLUSIVE_BATCHES_TEST_BIN): tests/test_term_domain_exclusive_batc
 test-term-domain-exclusive-batches: $(TERM_DOMAIN_EXCLUSIVE_BATCHES_TEST_BIN)
 	@$(call cetta_exec,./$(TERM_DOMAIN_EXCLUSIVE_BATCHES_TEST_BIN))
 test-all: test-term-domain-exclusive-close test-term-domain-exclusive-batches
+
+.PHONY: test-act-trie
+runtime/test-act-trie: tests/test_act_trie.c src/act_trie.c src/act_trie.h
+	@mkdir -p runtime
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Isrc tests/test_act_trie.c src/act_trie.c -o $@
+
+runtime/test-act-faults: tests/test_act_faults.c src/act_trie.c src/act_trie.h
+	@mkdir -p runtime
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Isrc tests/test_act_faults.c src/act_trie.c \
+		-Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=write,--wrap=fsync,--wrap=rename -o $@
+test-act-trie: runtime/test-act-trie runtime/test-act-faults
+	@./runtime/test-act-trie
+	@./runtime/test-act-faults
+
+ACT_SPACE_TEST_BIN = runtime/test_act_space-$(BUILD_OBJ_TAG)
+$(ACT_SPACE_TEST_BIN): tests/test_act_space.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_act_space.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
+.PHONY: test-act-space
+test-act-space: $(ACT_SPACE_TEST_BIN) $(BIN)
+	@python3 tests/support/check_act_space.py ./$(ACT_SPACE_TEST_BIN) ./$(BIN)

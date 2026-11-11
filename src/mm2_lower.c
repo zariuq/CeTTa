@@ -1283,6 +1283,11 @@ static Atom *bridge_packet_parse_token(Arena *a, const uint8_t *bytes,
     memcpy(token, bytes, len);
     token[len] = '\0';
 
+    /* MORK symbols are byte strings. An embedded NUL must not truncate the
+     * token through the text-to-number or global-symbol-table paths. */
+    if (token[0] != '"' && memchr(bytes, 0, len))
+        return atom_symbol_data_n(a, (const char *)bytes, len);
+
     if (token[0] == '"') {
         if (len < 2u || token[len - 1u] != '"')
             return NULL;
@@ -1343,7 +1348,7 @@ static Atom *bridge_packet_parse_token(Arena *a, const uint8_t *bytes,
             return atom_float(a, floating);
     }
 
-    return atom_symbol_id(a, symbol_intern_cstr(g_symbols, token));
+    return atom_symbol_data_n(a, token, len);
 }
 
 static Atom *bridge_packet_decode_atom_rec(Arena *a,
@@ -1469,6 +1474,48 @@ bool cetta_mm2_bridge_expr_packet_to_atom(Arena *a,
     }
     *out_atom = atom;
     return true;
+}
+
+bool cetta_mm2_bridge_expr_bytes_to_atom(Arena *a, const uint8_t *bytes,
+        size_t length, Atom **out_atom, const char **out_error) {
+    if (out_atom) *out_atom = NULL;
+    if (out_error) *out_error = "invalid compact MORK expression";
+    if (!a || !bytes || !length || !out_atom) return false;
+    BridgeExprBuf packet = {0};
+    uint64_t remaining = 1u;
+    unsigned depth = 0u, introduced = 0u;
+    unsigned pending[65] = {1u};
+    bool ok = true;
+    for (size_t i = 0; ok && i < length;) {
+        if (!remaining || depth >= 64u) { ok = false; break; }
+        unsigned tag = bytes[i++];
+        remaining--;
+        pending[depth]--;
+        if (tag < 64u) {
+            ok = bridge_expr_buf_push_u8(&packet, BRIDGE_EXPR_PACKET_ARITY) &&
+                 bridge_expr_buf_push_u32_be(&packet, tag);
+            remaining += tag;
+            if (tag) pending[++depth] = tag;
+        } else if (tag == 192u) {
+            ok = introduced++ < 64u && bridge_expr_buf_push_u8(&packet, BRIDGE_EXPR_PACKET_NEWVAR);
+        } else if (tag >= 128u && tag < 192u) {
+            ok = tag - 128u < introduced && bridge_expr_buf_push_u8(&packet, BRIDGE_EXPR_PACKET_VARREF) &&
+                 bridge_expr_buf_push_u8(&packet, (uint8_t)(tag - 128u));
+        } else if (tag > 192u) {
+            size_t size = tag - 192u;
+            ok = size <= length - i &&
+                 bridge_expr_buf_push_u8(&packet, BRIDGE_EXPR_PACKET_SYMBOL) &&
+                 bridge_expr_buf_push_u32_be(&packet, (uint32_t)size) &&
+                 bridge_expr_buf_push_bytes(&packet, bytes + i, size);
+            if (ok) i += size;
+        } else ok = false;
+        while (depth && !pending[depth]) --depth;
+    }
+    if (ok && !remaining)
+        ok = cetta_mm2_bridge_expr_packet_to_atom(a, packet.data, packet.len, out_atom, out_error);
+    else ok = false;
+    free(packet.data);
+    return ok;
 }
 
 Atom *cetta_mm2_alpha_canonicalize_atom(Arena *a, Atom *atom,

@@ -65,7 +65,7 @@ def main():
             assert opened[0] == S("ServiceResourceV1"), opened
             client.drop(view)
             reached, _ = service_rows(client, opened[1], 1, 3)
-            assert bag(reached) == bag([S("parse"), S("check"), S("lex")]), reached
+            assert bag(reached) == bag([S("parse"), S("check"), S("lex"), S("emit")]), reached
             await_resources(client, 0)
             # Retract just one supporting occurrence. Its logical judgement
             # and other supporting/source memberships must remain present.

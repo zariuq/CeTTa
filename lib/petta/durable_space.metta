@@ -19,6 +19,33 @@
   (case (durable-space:metadata $collection)
     (((KnowledgeAddressV1 $key) (store:space-view $view $key)) ($error $error))))
 
+; Ordinary local Space edits over one captured database revision. The
+; workspace owns its data independently of the view handle; publishing it
+; requires that same view and collection, checked before extracting edits.
+(: durable-space:workspace (-> %Undefined% Atom %Undefined%))
+(= (durable-space:workspace $view $collection)
+  (case (durable-space:metadata $collection)
+    (((KnowledgeAddressV1 $key) (store:space-workspace $view $key)) ($error $error))))
+
+(: durable-space:commit-workspace (-> %Undefined% %Undefined% Atom Atom %Undefined% %Undefined%))
+(= (durable-space:commit-workspace $owner $view $collection $request $workspace)
+  (case (durable-space:metadata $collection)
+    (((KnowledgeAddressV1 $key)
+      (case (store:space-changes $workspace $view $key)
+        (((StoreSpaceChanges $added $removed)
+          (let* (($deletes (map-atom $removed $reference (SpaceDeleteV1 $reference)))
+                 ($inserts (durable-space:workspace-inserts $added 0))
+                 ($changes (list:append $deletes $inserts)))
+            (durable-space:commit $owner $view $collection $request $changes)))
+         ($error $error))))
+     ($error $error))))
+(: durable-space:workspace-inserts (-> Atom Number %Undefined%))
+(= (durable-space:workspace-inserts $rows $index)
+  (if (== $rows ()) ()
+    (let* (($row (car-atom $rows)) ($tail (cdr-atom $rows))
+           ($rest (durable-space:workspace-inserts $tail (+ $index 1))))
+      (cons-atom (SpaceInsertV1 $index $row) $rest))))
+
 (= (durable-space:cursor $view $collection $pattern $template)
   (case (durable-space:metadata $collection)
     (((KnowledgeAddressV1 $key) (store:space-query-open $view $key $pattern $template)) ($error $error))))
@@ -258,13 +285,18 @@
 (= (durable-space:publish-indexed $owner $view $request $command $key $prefix $next $ops $created $indexes)
   (durable-space:publish-policy $owner $view $request $command $key $prefix $next $ops $created $indexes NoProgramWatchV1))
 (= (durable-space:publish-policy $owner $view $request $command $key $prefix $next $ops $created $indexes $policy)
+  (durable-space:publish-result-policy $owner $view $request $command $key $prefix $next $ops $created $indexes $policy DefaultSpaceResultV1))
+; A scoped transaction may durably retain its portable return values in the
+; same receipt/metadata/index publication. Existing callers keep their result.
+(= (durable-space:publish-result-policy $owner $view $request $command $key $prefix $next $ops $created $indexes $policy $answer)
   (case (store:key-i64 $next)
     (((StoreKeyBytes $integer)
       (let $record (durable-space:descriptor $prefix $next $indexes)
       (case (store:encode $record)
         (((StoreEncoded $body)
           (knowledge:publish-whole-policy $owner $view $request $command
-            (SpaceAppliedV1 $created) (cons-atom ops (cons-atom (put $key $body) $ops)) $policy))
+            (if (== $answer DefaultSpaceResultV1) (SpaceAppliedV1 $created) $answer)
+            (cons-atom ops (cons-atom (put $key $body) $ops)) $policy))
          ($error $error)))))
      ($other (SpaceRefusedV1 metadata-count)))))
 
@@ -281,6 +313,9 @@
   (durable-space:commit-policy $owner $view $collection $request $command $changes NoProgramWatchV1))
 (: durable-space:commit-policy (-> %Undefined% %Undefined% Atom Atom Atom Atom Atom %Undefined%))
 (= (durable-space:commit-policy $owner $view $collection $request $command $changes $policy)
+  (durable-space:commit-policy-result $owner $view $collection $request $command $changes $policy DefaultSpaceResultV1))
+(: durable-space:commit-policy-result (-> %Undefined% %Undefined% Atom Atom Atom Atom Atom Atom %Undefined%))
+(= (durable-space:commit-policy-result $owner $view $collection $request $command $changes $policy $answer)
     (case (knowledge:receipt $view $request $command (durable-space:wire-limit))
       ((KnowledgeReceiptAbsentV1
         (case (durable-space:metadata $collection)
@@ -293,7 +328,7 @@
                       (((StoreViewInfo $epoch $revision)
                         (case (durable-space:stage-indexed $view $epoch $prefix $request $changes () $count () () $indexes)
                           (((SpacePreparedV1 $next $ops $created)
-                            (durable-space:publish-policy $owner $view $request $command $key $prefix $next $ops $created $indexes $policy))
+                            (durable-space:publish-result-policy $owner $view $request $command $key $prefix $next $ops $created $indexes $policy $answer))
                            ($error $error))))
                        ($error $error))))
                    ($error $error))))

@@ -7,6 +7,99 @@ Embedded programs and server clients use the same core and storage owner.
 The queue example is one application of these capabilities. The contracts and
 qualification scopes below describe the current implementation.
 
+## ACT snapshots without Rust
+
+`(library act)` reads and writes PathMap/MORK `ACTree03` in native C and
+provides the `CACT0001` profile for typed MeTTa occurrence bags. No Rust bridge
+is needed for this library or for importing `.act`/`.cact` data. File magic
+selects the decoder. The distinct `mork:*` execution service retains its own
+backend requirements.
+
+```metta
+!(import! &self (library act))
+!(let* (($space (new-space))
+         ($_ (add-atom $space (edge alice bob)))
+         ($_ (add-atom $space (edge alice bob)))
+         ($_ (act:dump! $space "graph.cact"))
+         ($saved (act:open "graph.cact"))
+         ($answers (collapse (match $saved (edge alice $who) $who)))
+         ($_ (act:close! $saved))) $answers)
+; (bob bob)
+```
+
+HE and Prime use `!(import! &self act)`. `act:open` returns an ordinary
+read-only Space. `act:workspace` supplies an editable overlay on the captured
+base; additions and removals use the ordinary Space operations. It retains
+the base independently. `act:dump!` publishes a new immutable snapshot;
+`act:load!` copies atoms into an editable Space as one admission batch.
+`act:close!` closes a snapshot or workspace. Already captured cursors retain
+their own backing until closed.
+
+`act:dump-mork!` writes the upstream set profile, deduplicating equal encoded
+terms. Its compact expression codec cannot represent every CAV1 value.
+Unsupported exports refuse before changing the destination. Use `act:dump!`
+to retain typed values, duplicate occurrences and saved identities.
+
+The PeTTa DB interface adds `db:export-act owner path` and
+`db:import-act owner path`, with collection-name overloads. Export captures
+one committed view; import uses one existing durable transaction and allocates
+occurrences in the destination database's domain. Neither callback nor an
+uncertain external action is automatically retried.
+
+Snapshot publication synchronizes the new file, renames it and synchronizes
+its directory. A directory-sync failure after rename returns `uncertain`;
+the destination may already contain the new image. Opening validates the
+image before exposing a Space. Queries use cursors over the immutable mapping,
+with first-three-field scalar indexes and a complete scan fallback. Startup
+validation is linear in the image; dumping currently constructs the encoded
+image and sorted entries in memory. This is not yet a bounded-memory bulk
+writer for billion-fact datasets.
+
+The live durable store still publishes its existing CDS2 index and journal.
+ACT snapshots do not replace transaction receipts, recovery, or the owner.
+Attaching ACT as a compacted durable base with a mutable delta remains a
+separate storage integration step. See [the format contract](ACT_FORMAT.txt)
+and [the integration requirements](ACT_SPACE_REQUIREMENTS.md).
+
+`make test-act-trie test-act-space` checks native round trips, byte ranges,
+allocation and publication failures, cross-process reopen, typed/open facts,
+duplicate identities, indexed joins, overlays, retained readers and corruption
+refusal. The independent format check is:
+
+```sh
+python3 tests/support/check_act_trie.py --pathmap /path/to/PathMap
+```
+
+The Rust oracle is a test dependency only. It compares logical key/value
+contents in both directions; valid encoders need not choose identical layouts.
+
+One native fixture of 131,072 `(row String Int)` occurrences produced
+13,997,336 bytes (106.79 bytes per occurrence, including identities and
+indexes). A single local run measured 0.51 s to dump and 1.01 s to validate
+and open. Across 1,000 indexed point matches, mean query time was 9.44 us
+for ACT and 14.68 us for the ordinary in-memory Space through the same
+matcher. These are fixture measurements, not SQLite parity or a density claim
+for arbitrary graphs. `test_act_space ... bench FILE 131072` reproduces the
+workload using the configured native test executable.
+
+## Database connections
+
+The PeTTa `(library db)` interface exposes connections, ordinary captured
+Spaces and scoped transactions over this same owner. Start with the short
+[Space example](../../examples/kb/README.md#using-persistent-spaces).
+`store:open path "create-directory"` creates only the requested private leaf
+and synchronizes its parent entry before initialization. Its immediate parent
+must already be a private directory owned by the process; ancestors must exist
+durably.
+The existing `"create"` and `"existing"` modes retain their prior contracts.
+
+`store:space-edit` runs one callable against an owned workspace, checks complete
+Space/program reads, extracts its occurrence delta and closes it on every
+outcome. Successful watches seal a conservative mutation epoch. The existing
+MeTTa commit path publishes metadata, indexes, portable return values and the
+receipt together. Named state, I/O and other storage domains require their own
+external-effect contract; the Space watch does not make them transactional.
+
 ## Portable-value byte policy
 
 The execution owner selects `--value-bytes N` before the MeTTa program loads.
@@ -52,6 +145,41 @@ policy through the guarded getter; the running agents' SDK is not upgraded.
 
 ## Staging ordinary Space edits
 
+Captured stored Spaces now retain their storage through ordinary arena copies,
+captured read views and cursors. They no longer rely on a session-long list of
+temporary Space headers. `store:close` also accepts these Space values and
+revokes their aliases; outstanding lifetime holds retain a safe header until
+release. PeTTa's ordinary per-operation invalid-argument behavior remains:
+`get-atoms` may raise while `match` may fail without an answer. Store operations
+report explicit closed-resource refusals.
+
+The advanced MeTTa bridge is executable:
+
+```metta
+(let (StoreSpace $work $epoch $revision)
+       (durable-space:workspace $view claims)
+  (let* (($_ (add-atom $work (supports evidence1 claim1)))
+         ($rows (collapse (match $work (supports $e $c) ($e $c))))
+         ($result (durable-space:commit-workspace $owner $view claims request1 $work))
+         ($_ (store:close $work)))
+    $result))
+```
+
+The workspace checks the original data-view epoch, revision and collection
+before extracting changes. The existing MeTTa commit logic maintains indexes,
+counts and receipts atomically. This explicit data-edit layer does not supply
+automatic request IDs, scoped transaction blocks or automatic dynamic-program
+dependency capture. Those remain the responsibility of the forthcoming `db`
+facade and existing qualified read/program-watch interfaces.
+
+PeTTa `remove-atom` retains its remove-all-matches semantics. Source-backed
+filtering uses the shared checked matcher and collects changes before one local
+publication; an incomplete predicate or unavailable source publishes no
+removal. Native exact/unique-alpha single-occurrence removal remains separate.
+`test-space-workspace` qualifies ordinary MeTTa edits, replay, closed aliases,
+view mismatch and fresh-process reopening. Its optional worker argument also
+records repeated-request memory and descriptor samples.
+
 The existing native `space_init_overlay_local` now accepts captured disk
 Spaces through their owner's overlay capability. Its copy retains the exact
 captured root, candidate indexes, point bounds and byte policy independently
@@ -84,6 +212,28 @@ transaction blocks.
 `make test-source-overlay` checks ordinary matching, candidate-index reuse,
 duplicate identities, open atoms, failed batches, captured cursor lifetimes,
 rollback and an independent native-Space update oracle.
+
+### Removing up to a number of matches
+
+In the PeTTa profile, `(remove-atom space pattern count)` removes at most
+`count` matching occurrences. It uses the same matcher as the two-argument
+form, which continues to remove all matches. `0` succeeds without a change;
+`1` removes at most one occurrence, even when several have equal payloads.
+The count is evaluated and must be a nonnegative integer. Invalid counts
+fail without removal. Positive arbitrary-precision integer bounds are accepted;
+a bound larger than the possible occurrence count acts as an unrestricted
+upper bound.
+
+The operation stages selected identities before publishing. An incomplete
+comparison or source read before reaching the bound publishes no removals.
+Once the bound is reached, later candidates need not be inspected. Standard
+memory Spaces and durable edit workspaces support this operation; captured
+durable Spaces remain read-only. To select a particular occurrence, use its
+explicit identity rather than relying on which equal match is selected.
+
+`test-petta-bounded-removal`, `test-source-overlay` and `test-space-workspace`
+cover duplicate data, compiled-rule multiplicity, evaluated counts and their
+bindings, invalid counts, zero, incomplete comparisons and durable workspaces.
 
 ## Measuring ordinary Space queries
 

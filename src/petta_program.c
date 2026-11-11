@@ -3318,8 +3318,8 @@ const PettaPlanNode *petta_plan_copy_semantics(Arena *owner, const PettaPlanNode
 static void petta_plan_semantic_key(
     const PettaPlanNode *node, uint64_t key[PETTA_PLAN_NODE_KEY_WORDS]) {
     petta_plan_node_key(node, key);
-    key[4] = 0u;
-    key[5] = 0u;
+    key[4] = 0u; /* deterministic_region is tied to its source owner. */
+    key[5] = 0u; /* region_hole_program is tied to its source owner. */
 }
 
 typedef struct {

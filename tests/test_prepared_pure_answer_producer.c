@@ -126,31 +126,38 @@ static void test_need_pattern_admission(void) {
         for (unsigned need = 0u; need < 2u; need++) {
             CettaGsltPureCallMode mode = need
                 ? CETTA_GSLT_PURE_CALL_CALL_BY_NEED : CETTA_GSLT_PURE_CALL_EAGER;
-            /* The answer frontend supports eager calls. Need's scalar
-             * frontend admits a rigid comparison when the entry certifies
-             * values, as well as a fresh structural binder. */
+            /* The answer frontend supports eager calls; Need's supported
+             * scalar frontend admits fresh binders. A checked ready entry
+             * also licenses comparison against its parameter slots. */
             for (unsigned answers = 0u; answers < (need ? 1u : 2u); answers++) {
+              for (unsigned ready = 0u; ready < (need ? 2u : 1u); ready++) {
+                bool entry_values = !need || ready != 0u;
                 Atom *call = parse(&fixture.source, call_text);
                 CettaPreparedPureProgram *program = answers
                     ? cetta_prepared_pure_program_compile_closed_answers(
                         &fixture.space, call, mode, atom_bool, atom_expr,
                         cetta_prepared_pure_constructs_expression_always,
-                        NULL, NULL, NULL, NULL, NULL, true, true,
+                        NULL, NULL, NULL, NULL, NULL, entry_values, true,
                         (CettaMatchDecisionSemanticIdentity){0}, NULL)
                     : cetta_prepared_pure_program_compile_closed(
                         &fixture.space, call, mode, atom_bool, atom_expr,
                         cetta_prepared_pure_constructs_expression_always,
-                        NULL, NULL, NULL, NULL, NULL, true, true,
+                        NULL, NULL, NULL, NULL, NULL, entry_values, true,
                         (CettaMatchDecisionSemanticIdentity){0}, NULL);
-                assert(program);
-                Atom *value = NULL;
-                if (!answers) {
-                    assert(cetta_prepared_pure_program_execute_closed(
-                        program, &fixture.scratch, 0u, &value));
-                    assert(value && atom_eq(value,
-                        parse(&fixture.source, "two")));
+                if (need && bound && !entry_values) {
+                    assert(!program);
+                } else {
+                    assert(program);
+                    Atom *value = NULL;
+                    if (!answers) {
+                        assert(cetta_prepared_pure_program_execute_closed(
+                            program, &fixture.scratch, 0u, &value));
+                        assert(value && atom_eq(value,
+                            parse(&fixture.source, "two")));
+                    }
                 }
                 cetta_prepared_pure_program_free(program);
+              }
             }
         }
 
@@ -745,6 +752,18 @@ static void test_entry_value_certificate_survives_service_roles(void) {
     assert(status == CETTA_PREPARED_CLOSED_ANSWER && answer);
     assert(atom_eq(answer, parse(&fixture.source, "(Rigid next later)")));
     assert(cetta_prepared_pure_closed_close(execution, &fixture));
+    assert(space_admit_atom(&fixture.space, &fixture.source,
+        parse(&fixture.source,
+            "(= (ready-required $x $pair)"
+            " (let (Pair $x $y) $pair (ready-required (+ 1 2) $pair)))")));
+    CettaPreparedPureProgram *uncertified = cetta_prepared_pure_program_compile_closed(
+        &fixture.space, parse(&fixture.source,
+            "(ready-required same (Pair same tail))"),
+        CETTA_GSLT_PURE_CALL_CALL_BY_NEED, atom_bool, atom_expr,
+        cetta_prepared_pure_constructs_expression_always,
+        NULL, NULL, NULL, NULL, NULL, true, true,
+        (CettaMatchDecisionSemanticIdentity){0}, NULL);
+    assert(!uncertified);
     destroy(&fixture);
 
     /* A false certificate retains demand: the callable structured argument
@@ -978,6 +997,11 @@ static void inspect_cursor_storage(Fixture *fixture, CettaPreparedPureAnswerCurs
     cetta_prepared_pure_answer_cursor_storage_census(cursor,&census);
     cetta_prepared_pure_program_storage_census(fixture->program,&census);
     cetta_storage_finish(&census);
+    if (census.incomplete || census.retained != retained || census.length != objects ||
+        !census.repeated || fixture->polls != polls)
+        fprintf(stderr, "repeat census reason=%s bytes=%zu/%zu objects=%zu/%zu repeated=%zu polls=%zu/%zu\n",
+            census.incomplete ? census.incomplete : "none", census.retained, retained,
+            census.length, objects, census.repeated, fixture->polls, polls);
     assert(!census.incomplete && census.retained==retained && census.length==objects &&
         census.repeated>0u && fixture->polls==polls &&
         cetta_prepared_pure_answer_cursor_answer_count(cursor)==answers &&
@@ -3143,7 +3167,7 @@ static void test_spelled_value_across_prepared_choices(void) {
         cetta_prepared_pure_constructs_expression_always,
         NULL, NULL, NULL, NULL, NULL, true, true,
         (CettaMatchDecisionSemanticIdentity){
-            .compiler_identity = cetta_match_decision_compiler_identity()});
+            .compiler_identity = cetta_match_decision_compiler_identity()}, NULL);
     assert(fixture.program);
     CettaPreparedPureAnswerCursor *cursor = open_cursor(&fixture, false);
     Atom *saved = NULL;

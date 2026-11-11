@@ -3311,7 +3311,7 @@ static unsigned source_admission_refusal_controls(void) {
     checks++;
 
     /* The existing authority guard applies before either kind of hit. */
-    uint32_t mask = library->active_mask;
+    CettaLibraryMask mask = library->active_mask;
     library->active_mask ^= 1u;
     assert(!source_refusal_hit(&cache, &space, refusal_effect_head,
         PREPARED_PURE_ENTRY_INQUIRY) && !cache.entries);
@@ -3721,8 +3721,8 @@ static unsigned shared_compilation_refusals(void) {
         assert(prepared_pure_program_cache_prepare_revision(&cache, &space,
             petta_libpl_capability_revision(library->lib_prolog)));
         generation = cache.entry_generation;
-        uint32_t mask = library->active_mask;
-        library->active_mask ^= 1u;
+        CettaLibraryMask mask = library->active_mask;
+        library->active_mask ^= UINT64_C(1) << 37;
         prepared_pure_program_cache_publish_report(&cache, &space, call, NULL,
             CETTA_LANGUAGE_PETTA, CETTA_GSLT_PURE_CALL_EAGER,
             PREPARED_PURE_PROGRAM_SINGLE_VALUE,
@@ -9383,6 +9383,9 @@ static unsigned he_completed_error_controls(void) {
             fprintf(stderr, "HE completion item=%u entered %u times, at most %u permitted\n",
                 item, he_division_entries, cases[item].entries);
         assert(he_division_entries <= cases[item].entries);
+        if (observed.completion != CETTA_EVAL_COMPLETE || observed.results.len != 1u)
+            fprintf(stderr, "HE completion item=%u completion=%u results=%zu\n",
+                item, (unsigned)observed.completion, (size_t)observed.results.len);
         assert(observed.completion == CETTA_EVAL_COMPLETE && observed.results.len == 1u);
         assert(atom_eq(observed.results.items[0], fixture_atom(&arena, cases[item].expected)));
         eval_outcome_free(&observed);

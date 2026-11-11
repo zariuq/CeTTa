@@ -1751,6 +1751,7 @@ static bool path_candidates(Space *space, CettaSpacePathIndex *index, Atom *patt
 bool space_path_index_candidates(Space *space, Atom *pattern,
                                 CettaIndex **out, CettaIndex *count,
                                 CettaIndex *capacity) {
+    if (capacity) *capacity = 0;
     space_dense_settle_for_pattern(space, pattern);
     if (!space || !space->native.universe || !out || !count || space->overlay_base ||
         (space->match_backend.kind != SPACE_ENGINE_NATIVE &&
@@ -1793,6 +1794,7 @@ bool space_path_index_candidates(Space *space, Atom *pattern,
         if (rent) {
             *out = rented;
             *count = rented_count;
+            if (capacity) *capacity = rented_count;
             cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MATCH_POSITION_INDEX_CANDIDATE,
                                     rented_count);
             return true;
@@ -1829,14 +1831,13 @@ static bool path_candidates_head(Space *space, CettaSpacePathIndex *index,
         cetta_oom(SIZE_MAX);
     CettaIndex *positions = candidates
         ? cetta_malloc((size_t)candidates * sizeof(*positions)) : NULL;
+    if (capacity) *capacity = candidates;
     CettaCount open_len = index->uncertain.len + headed_len;
     if (open_len == 0u) {
         for (CettaCount next = 0u; next < known; next++)
             positions[next] = posting_at(posting, next);
         *out = positions;
         *count = known;
-        if (capacity)
-            *capacity = candidates;
         cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MATCH_POSITION_INDEX_CANDIDATE,
                                known);
         cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MATCH_NATIVE_CANDIDATES, known);
@@ -1846,8 +1847,6 @@ static bool path_candidates_head(Space *space, CettaSpacePathIndex *index,
         headed, headed_len, query_head, candidates, positions);
     *out = positions;
     *count = retained;
-    if (capacity)
-        *capacity = candidates;
     cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MATCH_POSITION_INDEX_CANDIDATE,
                            retained);
     cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MATCH_NATIVE_CANDIDATES, retained);

@@ -7806,7 +7806,6 @@ static void imported_bucket_add_entry(ImportedBridgeState *st,
     imported_bucket_push_builder(st, bucket, &b, atom_idx, atom_has_vars(atom));
 }
 
-
 static ImportedFlatBucket *imported_bucket_for_atom(ImportedBridgeState *st, Atom *atom) {
     SymbolId head = atom_head_sym(atom);
     return head != SYMBOL_ID_NONE ? imported_headed_bucket(st, head) : &st->wildcard;
@@ -12295,6 +12294,35 @@ void space_subst_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out) {
 static inline __attribute__((always_inline)) void space_subst_query_member(
         Space *s, Arena *a, Atom *query, SubstMatchSet *out) {
     CETTA_SCOPED_SHARED_TRANSITION(shared_read);
+    if (s && s->match_backend.kind == SPACE_ENGINE_SOURCE) {
+        /* The incremental matcher owns the captured source and promotes
+         * bindings before its next borrowed row. Exact results need no
+         * positional replay against an empty native shadow. */
+        smset_init(out);
+        SpaceQueryCursor *cursor = space_query_cursor_new(s, a, query, NULL);
+        SpaceQueryCursorStep step = SPACE_QUERY_CURSOR_CAPACITY;
+        if (cursor) {
+            for (;;) {
+                Bindings row;
+                bindings_init(&row);
+                step = space_query_cursor_step(cursor, &row);
+                if (step == SPACE_QUERY_CURSOR_ROW)
+                    subst_matchset_push(out, out->len,
+                        CETTA_FRAME_IDENTITY_NONE, &row, true);
+                bindings_free(&row);
+                if (step != SPACE_QUERY_CURSOR_PROGRESS &&
+                    step != SPACE_QUERY_CURSOR_ROW)
+                    break;
+            }
+        }
+        space_query_cursor_free(cursor);
+        if (step != SPACE_QUERY_CURSOR_END) {
+            smset_free(out);
+            smset_init(out);
+            space_match_backend_set_error(SPACE_MATCH_BACKEND_ERROR_PACKET_TOO_LARGE);
+        }
+        goto finalize_shared_snapshot;
+    }
     if (s && s->overlay_base) {
         overlay_subst_query(s, a, query, out);
         goto finalize_shared_snapshot;
@@ -12602,7 +12630,13 @@ static bool space_query_bindings_rec(Space *space, Arena *a, Atom *pattern,
 
 bool space_query_bindings(Space *space, Arena *arena, Atom *pattern,
                           const Bindings *seed, BindingSet *out) {
-    return space_query_bindings_rec(space, arena, pattern, seed, out, NULL);
+    bool complete = true;
+    bool ok = space_query_bindings_rec(space, arena, pattern, seed, out, &complete);
+    if (ok && !complete) {
+        binding_set_free(out);
+        binding_set_init(out);
+    }
+    return ok && complete;
 }
 
 /* A query continuation is an immutable sequence of borrowed pattern spans.

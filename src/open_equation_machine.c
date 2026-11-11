@@ -11661,7 +11661,7 @@ enum { OEM_PURE_INLINE_ARGS = 8u };
 static inline __attribute__((always_inline)) OemRun oem_pure_apply(
     CettaOpenEquationCursor *cursor, const CettaOpenEquationProgram *program,
     Atom **locals, const OemStep *step, Atom *head, Atom **args,
-    uint32_t count);
+    uint32_t count, Atom **value_out);
 
 /* Whether the host's machine runs an application of `head` to `arity`
  * values as the type-pure operation `head` itself, directly: an operation
@@ -11686,7 +11686,8 @@ static bool oem_applied_pure(const CettaOpenEquationCursor *cursor,
 static __attribute__((noinline)) OemRun oem_applied_pure_step(
         CettaOpenEquationCursor *cursor,
         const CettaOpenEquationProgram *program, Atom **locals,
-        const OemStep *step, Atom *head, Atom *const *operands, uint32_t arity) {
+        const OemStep *step, Atom *head, Atom *const *operands, uint32_t arity,
+        Atom **value_out) {
     SymbolId head_id = atom_symbol_current_id(head);
     if (!oem_applied_pure(cursor, program, head_id, arity))
         return OEM_RUN_DECLINED;
@@ -11711,7 +11712,7 @@ static __attribute__((noinline)) OemRun oem_applied_pure_step(
         if (!args[index])
             return OEM_RUN_HANDOFF;
     }
-    return oem_pure_apply(cursor, program, locals, step, head, args, arity);
+    return oem_pure_apply(cursor, program, locals, step, head, args, arity, value_out);
 }
 
 /* A dynamic call's evaluated elements: data when the head's value cannot
@@ -12270,7 +12271,7 @@ static OemRun oem_apply_step(CettaOpenEquationCursor *cursor,
     }
     if (symbol && !target) {
         OemRun run = oem_applied_pure_step(cursor, program, locals, step,
-                                           head, operands, arity);
+                                           head, operands, arity, value_out);
         if (run != OEM_RUN_DECLINED)
             return run;
     }
@@ -12752,7 +12753,7 @@ static __attribute__((noinline)) OemRun oem_exists_step(
 static inline __attribute__((always_inline)) OemRun oem_pure_apply(
     CettaOpenEquationCursor *cursor, const CettaOpenEquationProgram *program,
     Atom **locals, const OemStep *step, Atom *head, Atom **args,
-    uint32_t count) {
+    uint32_t count, Atom **value_out) {
     SymbolId op = atom_symbol_current_id(head);
     CettaPlainScalar scalar;
     Atom *result = NULL;
@@ -12799,12 +12800,30 @@ static inline __attribute__((always_inline)) OemRun oem_pure_apply(
          * it again. */
         bool hosted = cursor->runtime.grounded_call != NULL;
         if (hosted) {
+            /* A withdrawing HE consumer must leave undecided work to its
+             * host before entry. A completed callback cannot be replayed
+             * merely because its returned value is an error. */
+            if (cursor->runtime.withdraws_on_error)
+                return OEM_RUN_DECLINED;
             CettaCallOutcome outcome = {0};
-            if (!cursor->runtime.grounded_call(cursor->runtime.context,
+            bool handled = cursor->runtime.grounded_call(cursor->runtime.context,
                     program->space, &cursor->region, head, args, count,
-                    &outcome) || outcome.kind != CETTA_CALL_VALUE)
-                return OEM_RUN_HOST;
+                    &outcome);
+            if (!handled)
+                return OEM_RUN_DECLINED;
+            if (outcome.kind == CETTA_CALL_RAISED)
+                return oem_publish_raise(cursor, outcome.term, value_out);
+            if (outcome.kind == CETTA_CALL_FAILURE)
+                return OEM_RUN_FAILED;
+            if (outcome.kind == CETTA_CALL_INTERRUPTED) {
+                cursor->handoff = CETTA_OPEN_EQUATION_HANDOFF_INTERRUPT;
+                return OEM_RUN_HANDOFF;
+            }
+            if (outcome.kind != CETTA_CALL_VALUE || !outcome.term)
+                return oem_service_fault(cursor);
             result = outcome.term;
+            if (cursor->runtime.raises_he_errors && atom_is_error(result))
+                return oem_publish_raise(cursor, result, value_out);
         } else {
             result = grounded_dispatch(&cursor->region, head, args, count);
         }
@@ -13213,7 +13232,7 @@ static __attribute__((noinline)) OemRun oem_fast_host_step(
         ? spelled->literal : atom_symbol_id(&cursor->region, step->op);
     if (!head)
         return OEM_RUN_HANDOFF;
-    return oem_pure_apply(cursor, program, locals, step, head, args, count);
+    return oem_pure_apply(cursor, program, locals, step, head, args, count, value_out);
 }
 
 /* A private callable carrier is a value at this boundary. Its expression

@@ -2606,7 +2606,7 @@ static void absent_read_watch_controls(void) {
     SpaceOccurrenceCursor cursor={0};
     SpaceCheckpointBudget clean={.work_limit=100u,.byte_limit=SIZE_MAX};
     CHECK(agenda_checkpoint_cursor_empty(&cursor,&clean));
-    _Atomic uint64_t stamp=1u;SpaceReadWatch watch={&stamp,1u};
+    _Atomic uint64_t stamp=1u;SpaceReadWatch watch={.stamp=&stamp,.expected=1u};
     for(unsigned field=0u;field<3u;field++) {
         cursor=(SpaceOccurrenceCursor){0};
         if(field==0u)cursor.logical_reads.root_watch.stamp=&stamp;

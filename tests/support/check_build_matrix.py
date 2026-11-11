@@ -45,6 +45,46 @@ def file_hash(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def project_compile(record, root=ROOT):
+    """Identify project code, independently of a dependency's warning policy."""
+    root = root.resolve()
+    cwd = Path(record["cwd"]).resolve()
+    if cwd != root:
+        return False
+    for argument in record["arguments"]:
+        if argument.startswith("-") or not argument.endswith(".c"):
+            continue
+        try:
+            relative = (cwd / argument).resolve().relative_to(root)
+        except ValueError:
+            continue
+        if relative.parts and relative.parts[0] != "vendor":
+            return True
+    return False
+
+
+def compiler_output(record):
+    """Use the issued object target, including atomic publication recipes."""
+    arguments = record["arguments"]
+    output = None
+    for position, argument in enumerate(arguments):
+        if argument == "-o" and position + 1 < len(arguments):
+            output = (Path(record["cwd"]) / arguments[position + 1]).resolve()
+            break
+        if argument.startswith("-o") and len(argument) > 2:
+            output = (Path(record["cwd"]) / argument[2:]).resolve()
+            break
+    # The normal object recipe compiles to a temporary -o, then renames it.
+    # Its dependency target records the final object name, including config.
+    if output and output.name.startswith(".cetta-object."):
+        for position, argument in enumerate(arguments[:-1]):
+            if argument == "-MT":
+                target = (Path(record["cwd"]) / arguments[position + 1]).resolve()
+                if target.suffix == ".o":
+                    return target
+    return output
+
+
 def smoke_observation(language, output):
     lines = output.splitlines()
     if language == "petta":
@@ -105,12 +145,10 @@ def run_case(compiler, profile, arguments, directory, run_id):
         records = [json.loads(line) for line in invocations.read_text().splitlines()]
         compiled = [record for record in records if "-c" in record["arguments"] and
                     any(word.endswith(".c") for word in record["arguments"])]
-        # SQLite and the optional bridge's dependencies have separate warning
+        # Vendored and optional bridge dependencies have separate warning
         # policies. Record the working directory so a dependency's src/arena.c
         # cannot be mistaken for CeTTa's translation unit with the same name.
-        owned = [record["arguments"] for record in compiled if
-                 Path(record["cwd"]) == ROOT and
-                 "vendor/sqlite/sqlite3.c" not in record["arguments"]]
+        owned = [record["arguments"] for record in compiled if project_compile(record)]
         if not owned or any("-Werror" not in call for call in owned):
             result["error"] = "fresh warning-strict source compilation was not established"
             return result
@@ -125,7 +163,12 @@ def run_case(compiler, profile, arguments, directory, run_id):
         stats = settings.get("ENABLE_RUNTIME_STATS") == "1"
         binary = ROOT / "runtime" / ("cetta-" + tag + ("-runtime-stats" if stats else ""))
         result["binary_sha256"] = file_hash(binary)
-        object_file = ROOT / "src" / ("atom." + tag + (".runtime-stats" if stats else "") + ".o")
+        atom_objects = [compiler_output(record) for record in compiled
+                        if "src/atom.c" in record["arguments"] and project_compile(record)]
+        object_file = next((path for path in atom_objects if path and path.parent == ROOT / "src"), None)
+        if object_file is None:
+            result["error"] = "the primary atom translation unit has no recorded object output"
+            return result
         if shutil.which("readelf"):
             comment = subprocess.run(["readelf", "--string-dump=.comment", str(object_file)],
                                      capture_output=True, text=True, timeout=30, check=True)

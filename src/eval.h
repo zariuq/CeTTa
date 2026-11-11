@@ -451,6 +451,7 @@ void eval_top_with_registry_outcome(
     Space *s, Arena *a, Arena *persistent, Registry *r, Atom *expr,
     EvalOutcome *outcome, CettaPrimeNeedAnswerObserver observer,
     void *observer_context);
+
 /* Evaluate a proposal in a host-owned HE context. Load trusted program modules
  * before calling; registry/query spaces must be fresh in-memory projections of
  * the exact observation being validated. No live handles or cached state may

@@ -10195,7 +10195,8 @@ static void petta_choice_storage(const PettaChoice *choice,
         petta_child_storage(choice->as.collapse.machine, census);
         cetta_storage_array(census, choice->as.collapse.items,
             choice->as.collapse.item_cap, sizeof(*choice->as.collapse.items), 0u);
-
+        cetta_storage_array(census, choice->as.collapse.item_fallbacks,
+            choice->as.collapse.item_fallback_cap, sizeof(*choice->as.collapse.item_fallbacks), 0u);
         cetta_storage_array(census, choice->as.collapse.item_delayed,
             choice->as.collapse.item_delayed_cap, sizeof(*choice->as.collapse.item_delayed), 0u);
         break;
@@ -22362,12 +22363,8 @@ static bool petta_machine_advance_choice(
         for (;;) {
             CettaIndex candidate_index = 0u;
             AtomId stored = CETTA_ATOM_ID_NONE;
-            Atom *candidate = NULL;
-            bool external = choice->as.match.occurrences.source_ops != NULL;
-            SpaceOccurrenceCursorStep step = external
-                ? space_occurrence_cursor_next(
-                    &choice->as.match.occurrences, &candidate_index, &candidate)
-                : space_occurrence_cursor_next_id(
+            SpaceOccurrenceCursorStep step =
+                space_occurrence_cursor_next_id(
                     &choice->as.match.occurrences, &candidate_index, &stored);
             if (step == SPACE_OCCURRENCE_CURSOR_PROGRESS) {
                 *failure = PETTA_MACHINE_STEP_SUSPENDED;
@@ -22391,18 +22388,22 @@ static bool petta_machine_advance_choice(
                     ? PETTA_MACHINE_STEP_CAPACITY : PETTA_MACHINE_STEP_HOST_ERROR;
                 return false;
             }
-            if (external && !choice->as.match.pattern_query) {
-                if (!petta_choice_restore(machine, choice)) {
+            Atom *candidate = NULL;
+            if (choice->as.match.occurrences.source_ops) {
+                if (!choice->as.match.pattern_query && !petta_choice_restore(machine, choice)) {
                     *failure = PETTA_MACHINE_STEP_CAPACITY;
                     return false;
                 }
-                candidate = space_occurrence_cursor_receive_atom(
-                    &choice->as.match.occurrences, candidate_index, &machine->heap);
+                candidate = choice->as.match.pattern_query
+                    ? space_occurrence_cursor_atom(&choice->as.match.occurrences, candidate_index)
+                    : space_occurrence_cursor_receive_atom(
+                        &choice->as.match.occurrences, candidate_index, &machine->heap);
                 if (!candidate) {
                     *failure = PETTA_MACHINE_STEP_CAPACITY;
                     return false;
                 }
-            } else if (!external && stored != CETTA_ATOM_ID_NONE) {
+            }
+            if (stored != CETTA_ATOM_ID_NONE) {
                 /* A view or a decode writes the entry's slot, and the
                  * record must not meet another branch's insert: both are
                  * transitions of the shared universe. */
