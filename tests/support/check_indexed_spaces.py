@@ -3,6 +3,7 @@ import argparse
 from collections import Counter
 import json
 from pathlib import Path
+import random
 import sys
 import tempfile
 
@@ -15,6 +16,115 @@ from check_native_kb_service import Server, Client, await_resources
 
 def bag(values):
     return Counter(encode(value) for value in values)
+
+
+def check_index_operations_equivalence(worker, root):
+    eq_path = root / "equiv-store"
+    eq_path.mkdir(mode=0o700)
+    assert worker.call(E("CreatePlain", str(eq_path)))[0] == S("KnowledgeCommittedV1")
+    def eq_call(cmd):
+        return worker.call(E("At", str(eq_path), cmd))
+    ledger_specs = (
+        E("SpaceIndexV1", 3, 0), E("SpaceIndexV1", 4, 0), E("SpaceIndexV1", 5, 0), E("SpaceIndexV1", 6, 0),
+        E("SpaceIndexV1", 8, 0), E("SpaceIndexV1", 9, 0), E("SpaceIndexV1", 10, 0), E("SpaceIndexV1", 11, 0),
+        E("SpaceIndexV1", 3, 1), E("SpaceIndexV1", 11, 1), E("SpaceIndexV1", 11, 2),
+        E("SpaceIndexV1", 11, 4), E("SpaceIndexV1", 11, 8),
+        E("SpaceIndexV1", 10, 1), E("SpaceIndexV1", 10, 5), E("SpaceIndexV1", 4, 1),
+        E("SpaceIndexV1", 5, 1), E("SpaceIndexV1", 9, 1), E("SpaceIndexV1", 9, 2),
+        E("SpaceIndexV1", 9, 6), E("SpaceIndexV1", 9, 7), E("SpaceIndexV1", 6, 1), E("SpaceIndexV1", 8, 1),
+    )
+    range_specs = ledger_specs + (
+        E("SpaceRangeIndexV1", 3, 2), E("SpaceRangeIndexV1", 9, 5), E("SpaceRangeIndexV1", 11, 6),
+    )
+    ledger_desc = eq_call(E("Descriptors", S("inputs"), ledger_specs))
+    assert ledger_desc[0] == S("SpaceIndexesV1") and len(ledger_desc[1]) == 23, ledger_desc
+    ledger_idxs = ledger_desc[1]
+    mixed_desc = eq_call(E("Descriptors", S("inputs"), range_specs))
+    assert mixed_desc[0] == S("SpaceIndexesV1") and len(mixed_desc[1]) == 26, mixed_desc
+    mixed_idxs = mixed_desc[1]
+    rng = random.Random(42)
+    leaves = [
+        S("ledger:action"), S("input-notice"), S("request"), S("processed-input"),
+        S("unobserved"), S("observed"), S("True"), S("False"), S("+"),
+        "ticket-1", "a\0b", "", "hello world",
+        -(1 << 63), -42, -1, 0, 1, 42, (1 << 63) - 1,
+        0.0, -0.0, 3.14159, -2.5, True, False,
+        Var(0), Var(1), E("nested", S("a"), 7), E("pair", Var(0), "str"),
+    ]
+    def rand_atom():
+        if rng.randint(0, 6) == 0:
+            return rng.choice(leaves)
+        arity = rng.choice([1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12])
+        return tuple(rng.choice(leaves) for _ in range(arity))
+    checked = 0
+    for i in range(64):
+        a1 = rand_atom()
+        a2 = rand_atom()
+        key = f"occ/{i}"
+        b1 = eq_call(E("PutRaw", key, a1))
+        b2 = eq_call(E("Encode", a2))
+        for idxs in ((), ledger_idxs, mixed_idxs):
+            for delta, op in ((1, E("put", key, b1)), (0, E("put", key, b2)), (-1, E("remove", key))):
+                res = eq_call(E("CompareIndexOps", idxs, key, delta, op))
+                assert res[0] == S("IndexOpsComparison") and encode(res[1]) == encode(res[2]), (i, delta, res)
+                checked += 1
+    b_valid = eq_call(E("Encode", E("edge", S("alice"), S("bob"))))
+    error_cases = [
+        (ledger_idxs, "occ/0", 1, E("bad", "occ/0"), E("SpaceRefusedV1", S("index-operation"))),
+        (ledger_idxs, "occ/0", 1, E("put", "occ/0"), E("SpaceRefusedV1", S("index-operation"))),
+        (ledger_idxs, "occ/0", 1, E("remove", "occ/0", "extra"), E("SpaceRefusedV1", S("index-operation"))),
+        (ledger_idxs, "occ/0", 1, E("put", "occ/0", 123), E("StoreRefused", S("invalid-decode"))),
+        (ledger_idxs, "occ/0", 1, E("put", "occ/0", "not-cav1"), E("StoreCodecRefused", "corrupt")),
+        (ledger_idxs, "occ/missing", 0, E("remove", "occ/missing"), S("StoreAbsent")),
+        (ledger_idxs, 123, 1, E("put", "occ/0", b_valid), E("SpaceRefusedV1", S("index-operation"))),
+        (ledger_idxs, 123, -1, E("remove", "occ/0"), E("StoreRefused", S("invalid-get"))),
+        (S("not-a-list"), "occ/0", 1, E("put", "occ/0", b_valid), E("SpaceRefusedV1", S("index-list"))),
+        ((E("BadIndexV1", 3, 1, "idx/"),), "occ/0", 1, E("put", "occ/0", b_valid), E("SpaceRefusedV1", S("index-format"))),
+        ((E("StoreSpaceIndexV1", 0, 0, "idx/"),), "occ/0", 1, E("put", "occ/0", b_valid), E("SpaceRefusedV1", S("index-format"))),
+        ((E("StoreSpaceIndexV1", 3, -1, "idx/"),), "occ/0", 1, E("put", "occ/0", b_valid), E("SpaceRefusedV1", S("index-format"))),
+        ((E("StoreSpaceIndexV1", 3, 3, "idx/"),), "occ/0", 1, E("put", "occ/0", b_valid), E("SpaceRefusedV1", S("index-format"))),
+        ((E("StoreSpaceIndexV1", 2.5, 0, "idx/"),), "occ/0", 1, E("put", "occ/0", b_valid), E("SpaceRefusedV1", S("index-format"))),
+        ((E("StoreSpaceIndexV1", 3, 1, 123),), "occ/0", 1, E("put", "occ/0", b_valid), E("SpaceRefusedV1", S("index-format"))),
+        ((E("StoreSpaceIndexV1", 3, 1, ""),), "occ/0", 1, E("put", "occ/0", b_valid), E("SpaceRefusedV1", S("index-format"))),
+        ((E("StoreSpaceRangeIndexV1", 3, 5, "idx/"),), "occ/0", 1, E("put", "occ/0", b_valid), E("SpaceRefusedV1", S("index-format"))),
+    ]
+    for idxs, k, delta, op, expected_err in error_cases:
+        res = eq_call(E("CompareIndexOps", idxs, k, delta, op))
+        assert res[0] == S("IndexOpsComparison") and encode(res[1]) == encode(res[2]) == encode(expected_err), res
+        checked += 1
+    res_closed = eq_call(E("CompareIndexOpsClosed", ledger_idxs, "occ/0", -1, E("remove", "occ/0")))
+    assert res_closed[0] == S("IndexOpsComparison") and encode(res_closed[1]) == encode(res_closed[2]) == encode(E("StoreRefused", S("closed-view"))), res_closed
+    return checked + 1
+
+
+def check_tie_order(worker, root):
+    tie_path = root / "tie-store"
+    tie_path.mkdir(mode=0o700)
+    tie_specs = (E("SpaceIndexV1", 4, 1), E("SpaceIndexV1", 4, 2))
+    assert worker.call(E("Create", str(tie_path), tie_specs))[0] == S("KnowledgeCommittedV1")
+    def tie_call(cmd):
+        return worker.call(E("At", str(tie_path), cmd))
+    tie_changes = (
+        E("SpaceInsertV1", 0, E("row", S("k"), Var(0), S("left"))),
+        E("SpaceInsertV1", 1, E("row", Var(0), S("v"), S("right"))),
+    )
+    assert tie_call(E("Commit", "tie-seed", tie_changes))[0] == S("KnowledgeCommittedV1")
+    tag = Var(0)
+    pattern = E("row", S("k"), S("v"), tag)
+    actual = tie_call(E("Query", pattern, tag))
+    reference = tie_call(E("Reference", pattern, tag))
+    raw = tie_call(E("Raw", pattern, tag))
+    assert actual[0] == S("IndexedRows") and reference[0] == S("ReferenceRows") and raw[0] == S("ReferenceRows"), (actual, reference, raw)
+    actual_order = tuple(row[1] for row in actual[1])
+    raw_order = tuple(raw[1])
+    expected_bag = bag((S("left"), S("right")))
+    assert bag(actual_order) == expected_bag, actual_order
+    assert bag(raw_order) == expected_bag, raw_order
+    assert bag(reference[1]) == expected_bag, reference[1]
+    assert actual_order == (S("right"), S("left")), ("tie did not select last-declared projection", actual_order)
+    assert raw_order == (S("right"), S("left")), ("raw match tie did not select last-declared projection", raw_order)
+    assert actual[2][0] == S("StoreQueryInfo") and actual[2][2] == 1 and actual[2][3] == 2, actual[2]
+    return actual_order
 
 
 def main():
@@ -216,12 +326,16 @@ def main():
             refused = call(E("Commit", "legacy-write", (E("SpaceInsertV1", 0, E("legacy-no-write")),)))
             assert refused == E("SpaceRefusedV1", S("index-upgrade-required")), refused
             assert call(E("Info")) == legacy_info
+            equiv_checks = check_index_operations_equivalence(worker, root)
+            tie_order = [str(x) for x in check_tie_order(worker, root)]
             report = {"facts": len(values), "independent_pattern_comparisons": len(probes),
                       "comparisons": comparisons, "service_info": info[1:],
                       "atomic_update_delete_replay": True, "captured_index_survives_compaction": True,
                       "restart_preserves_occurrences_and_indexes": True,
                       "backup_restore_preserves_index_access": True,
                       "legacy_v2_scan_only": True, "legacy_v2_edits_refused": True,
+                      "index_operations_equivalence_checks": equiv_checks,
+                      "tie_last_declared_order": tie_order,
                       "post_warmup_indexed_service_rounds": args.rounds, "lifetime_samples": samples}
             if args.output: args.output.write_text(json.dumps(report, indent=2) + "\n")
             print(json.dumps(report, indent=2))

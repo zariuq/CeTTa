@@ -101,6 +101,8 @@ typedef struct {
     const GSLTDirectScalarClassV1 *list_variable_tail;
 
     uint32_t depth_limit;
+    /* Independently admitted counted-fence lexical service. */
+    bool raw_source_regions;
 } GSLTDirectReaderV1Plan;
 
 typedef struct {
@@ -323,6 +325,8 @@ typedef struct {
     const GSLTDirectCodepointMapV1 *string_escape_map;
     uint32_t string_escape_map_len;
     bool string_escape_identity_fallback;
+    /* Explicit body projection; other authored profiles retain their maps. */
+    bool string_body_metta;
     /* [x y] and [x y | rest]; list_open is 0 without lists.  Elements are
      * separated by layout; inside a list a token uses the list classes and
      * ends at list_token_boundary, which holds both brackets; the bar alone
@@ -334,6 +338,7 @@ typedef struct {
     const GSLTDirectScalarClassV1 *list_token;
     const GSLTDirectScalarClassV1 *list_token_boundary;
     uint32_t depth_limit;
+    bool raw_source_regions;
 } GSLTDirectPeTTaReaderV1Plan;
 
 typedef struct {

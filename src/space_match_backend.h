@@ -50,6 +50,19 @@ typedef enum {
  * decode arenas must be detached from process-wide interning. Patterns
  * supplied to open/select are call-scoped: encode bounds or own a copy;
  * retaining a caller's Atom pointer across nursery relocation is invalid. */
+/* A readiness continuation owns its context independently of the cursor.
+ * Synchronous observation boundaries may wait outside transition guards;
+ * incremental consumers keep returning PROGRESS to their scheduler. */
+typedef struct {
+    void *context;
+    void (*wait)(void *context);
+    void (*release)(void *context);
+    CettaStorageVisitor storage;
+} SpaceSourceWait;
+static inline void space_source_wait_clear(SpaceSourceWait *wait) {
+    if (wait->release) wait->release(wait->context);
+    *wait = (SpaceSourceWait){0};
+}
 typedef struct SpaceSourceCursorOps {
     bool (*clone)(const void *source, bool rewind, void **out);
     /* Reopen candidates against the same captured source, never its live
@@ -61,6 +74,10 @@ typedef struct SpaceSourceCursorOps {
     /* Stable, ground occurrence identity. NULL means this source really uses
      * the ordinary Space's positional coordinates, not a scan-local counter. */
     Atom *(*identity)(const void *source, CettaIndex index);
+    /* Optional selected portable-record policy, retained across captures.
+     * A generic editable overlay needs this rather than inventing an allowance. */
+    size_t (*value_byte_limit)(const void *source);
+    bool (*pending_wait)(const void *source, SpaceSourceWait *out);
     void (*free)(void *source);
     CettaStorageVisitor storage;
 } SpaceSourceCursorOps;
@@ -483,6 +500,10 @@ const char *space_match_backend_kind_name(SpaceEngine kind);
 bool space_match_backend_kind_from_name(const char *name, SpaceEngine *out);
 const char *space_match_backend_unavailable_reason(SpaceEngine kind);
 bool space_match_backend_attach_act_file(Space *s, const char *path, uint64_t *out_loaded);
+/* Whether `s` keeps its rows only in a PathMap index the run forces
+ * (CETTA_PATHMAP_QUERY_INDEX): a reader of native rows would build the
+ * native shadow that route avoids. */
+bool space_match_backend_index_forced_without_rows(const Space *s);
 bool space_match_backend_materialize_native_storage(Space *s,
                                                     Arena *persistent_arena);
 /* Compatibility name kept while callers migrate to the generic projection

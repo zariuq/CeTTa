@@ -35,11 +35,10 @@ static unsigned char *read_file(const char *path, size_t *length) {
     return buffer;
 }
 
-static void print_hex(const unsigned char *bytes) {
-    while (*bytes) {
-        printf("%02x", (unsigned int)*bytes);
-        bytes++;
-    }
+/* A string is its bytes, an embedded NUL included. */
+static void print_hex(const unsigned char *bytes, size_t length) {
+    for (size_t index = 0; index < length; index++)
+        printf("%02x", (unsigned int)bytes[index]);
 }
 
 int main(int argc, char **argv) {
@@ -72,7 +71,8 @@ int main(int argc, char **argv) {
     if (atom && position == length && atom->kind == ATOM_GROUNDED &&
         atom->ground.gkind == GV_STRING) {
         printf("accepted\t");
-        print_hex((const unsigned char *)atom->ground.sval);
+        print_hex((const unsigned char *)atom->ground.sval,
+                  atom_string_len(atom));
         putchar('\n');
     } else {
         puts("rejected\t");

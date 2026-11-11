@@ -582,6 +582,31 @@ def captured_query_publications(gate, history_controls=False):
             assert bag(final_world) == bag([['Fact', x] for x in final]), trees
             gate.passed_case(f'{language} extended own {name} retains its captured return')
 
+    # An unchanged ownership refusal must not look like a recoverable budget
+    # pause. Keep the former 130-resume reproduction as a bounded regression;
+    # a repaired capture closes before the explicit resume budget is consumed.
+    resume = (
+        '(= (resume-owned $remaining $policy $observation) '
+        '(let (Observation $v (satisfied $s) (closed $c) (residual $r) (work $w) (status $t)) '
+        '$observation (if $c $observation '
+        '(if (== $remaining 0) $observation '
+        '(resume-owned (- $remaining 1) $policy (select 100 $policy $r))))))\n')
+    repeated = [('he', cases[0]), ('he', cases[1]), ('he', cases[-1]),
+                ('petta', cases[-1])]
+    for language, (name, setup, expected, final) in repeated:
+        program = (setup + resume +
+            f'!(let $policy {policy(2,quantum=3,evidence=False)} '
+            '(resume-owned 130 $policy (select 100 $policy (selfwrite))))' + state)
+        trees, results = gate.run(f'{language} own {name} after at most 130 resumes',
+            program, language=language, profile='extended')
+        if language == 'petta':
+            trees = parse(gate.receipts[-1]['stdout'])
+            results = list(observations(trees))
+        assert results[-1]['closed'] == 'True' and bag(results[-1]['values']) == bag(expected), results
+        final_world = trees[-1] if language == 'petta' else trees[-1][0]
+        assert bag(final_world) == bag([['Fact', x] for x in final]), trees
+        gate.passed_case(f'{language} extended own {name} closes within 130 explicit resumes')
+
     if history_controls:
         recording = '(history (selections 2048) (nodes 4096) (bytes 1048576) (owners 10000))'
         setup = cases[0][1]

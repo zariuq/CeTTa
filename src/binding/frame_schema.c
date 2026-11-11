@@ -20,6 +20,7 @@ void bindings_frame_schema_release(BindingsFrameSchema *schema) {
 BindingsFrameSchema *bindings_frame_schema_alloc(uint32_t capacity) {
     BindingsFrameSchema *schema = cetta_malloc(
         sizeof(*schema) + (size_t)capacity * sizeof(*schema->source_ids));
+    if (!schema) return NULL;
     atomic_init(&schema->references, 1u);
     schema->len = 0u;
     schema->cap = capacity;
@@ -32,6 +33,10 @@ BindingsFrameSchema *bindings_frame_schema_alloc(uint32_t capacity) {
         ? cetta_malloc((size_t)capacity * sizeof(*schema->name_keys))
         : NULL;
     if (capacity > 0u) {
+        if (!schema->spellings || !schema->name_keys) {
+            free(schema->spellings); free(schema->name_keys); free(schema);
+            return NULL;
+        }
         for (uint32_t slot = 0u; slot < capacity; slot++)
             schema->spellings[slot] = SYMBOL_ID_NONE;
         memset(schema->name_keys, 0,
@@ -64,6 +69,7 @@ BindingsFrameSchema *bindings_frame_schema_new(
             return NULL;
     }
     BindingsFrameSchema *schema = bindings_frame_schema_alloc(source_len);
+    if (!schema) return NULL;
     if (source_len > 0u)
         memcpy(schema->source_ids, source_ids, (size_t)source_len * sizeof(VarId));
     bindings_frame_schema_publish(schema, source_len);

@@ -8,10 +8,21 @@
 typedef struct Space Space;
 
 #include "generated/cetta_runtime_counters.generated.h"
+#ifndef CETTA_RUNTIME_COUNTER_STATISTICS_RECORDED
+#define CETTA_RUNTIME_COUNTER_STATISTICS_RECORDED CETTA_RUNTIME_COUNTER_RUNTIME_STATISTICS_RECORDED
+#endif
 
 typedef struct {
     uint64_t counters[CETTA_RUNTIME_COUNTER_COUNT];
 } CettaRuntimeStats;
+
+typedef struct CettaRuntimeStatsOwner CettaRuntimeStatsOwner;
+CettaRuntimeStatsOwner *cetta_runtime_stats_owner_new(void);
+void cetta_runtime_stats_owner_free(CettaRuntimeStatsOwner *);
+/* NULL selects the command-line host's default owner. Worker episodes borrow
+ * their submitting owner's counters and restore their previous context. */
+CettaRuntimeStatsOwner *cetta_runtime_stats_owner_current(void);
+CettaRuntimeStatsOwner *cetta_runtime_stats_owner_exchange(CettaRuntimeStatsOwner *);
 
 #ifndef CETTA_BUILD_WITH_RUNTIME_STATS
 #define CETTA_BUILD_WITH_RUNTIME_STATS 0

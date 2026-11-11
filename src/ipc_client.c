@@ -1,5 +1,7 @@
 #define _GNU_SOURCE
 #include "ipc_client.h"
+#include "storage_census.h"
+#include <fcntl.h>
 #include <errno.h>
 #include <poll.h>
 #include <stdlib.h>
@@ -50,7 +52,8 @@ struct CettaIpcClient {
     CettaIpcFraming framing;
     enum { CONNECTING, SENDING, HEADER, RECEIVING, FINISHED } phase;
     unsigned char *request, *reply, header[8];
-    size_t request_size, sent, received, header_used, reply_size, max_reply;
+    size_t request_size, sent, received, header_used, reply_size, max_reply, reply_allocation;
+    bool keep_connection;
     uint64_t deadline;
     const char *error;
 };
@@ -61,42 +64,62 @@ static uint64_t now_ms(void) {
 }
 static void finish(CettaIpcClient *c, const char *error) {
     c->error = error; c->phase = FINISHED;
-    if (c->fd >= 0) { close(c->fd); c->fd = -1; }
+    if (c->fd >= 0 && (error || !c->keep_connection)) { close(c->fd); c->fd = -1; }
 }
 
-CettaIpcClient *cetta_ipc_client_new(const char *path, CettaIpcFraming framing,
-    const void *request, size_t size, uint64_t timeout, size_t max_reply) {
-    if (!path || !request || !size || !max_reply) return NULL;
-    if (framing == CETTA_IPC_CSP && (size > UINT32_MAX || size > SIZE_MAX - 8u)) return NULL;
-    struct sockaddr_un address = {.sun_family = AF_UNIX};
-    if (!path[0] || strlen(path) >= sizeof(address.sun_path)) return NULL;
-    CettaIpcClient *c = calloc(1, sizeof(*c));
-    if (!c) return NULL;
-    c->fd = -1; c->framing = framing; c->max_reply = max_reply;
-    c->deadline = timeout ? now_ms() + timeout : UINT64_MAX;
-    c->request_size = size + (framing == CETTA_IPC_CSP ? 8 : 0);
-    c->request = malloc(c->request_size);
-    if (!c->request) { free(c); return NULL; }
-    if (framing == CETTA_IPC_CSP) {
-        memcpy(c->request, "CSP1", 4);
-        for (size_t i = 0; i < 4; ++i) c->request[4+i] = (unsigned char)(size >> (24-8*i));
-        memcpy(c->request + 8, request, size);
-    } else memcpy(c->request, request, size);
-    memcpy(address.sun_path, path, strlen(path) + 1);
-    c->fd = socket(AF_UNIX, (framing == CETTA_IPC_CWP ? SOCK_SEQPACKET : SOCK_STREAM)
-                   | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
-    c->phase = SENDING;
-    if (c->fd < 0) finish(c, "socket");
-    else if (connect(c->fd, (struct sockaddr *)&address, sizeof(address))) {
-        if (errno == EINPROGRESS) c->phase = CONNECTING;
-        else finish(c, errno == ENOENT || errno == ECONNREFUSED ? "absent" : "connect");
+static CettaIpcClient *new_request(CettaIpcFraming framing,const void *request,
+        size_t size,uint64_t timeout,size_t max_reply) {
+    if (!request || !size || !max_reply || (framing!=CETTA_IPC_CSP && framing!=CETTA_IPC_CWP)) return NULL;
+    if (framing==CETTA_IPC_CSP && (size>UINT32_MAX || size>SIZE_MAX-8)) return NULL;
+    CettaIpcClient *c=calloc(1,sizeof(*c));if (!c) return NULL;
+    c->fd=-1;c->framing=framing;c->max_reply=max_reply;c->phase=SENDING;
+    uint64_t now=now_ms();c->deadline=!timeout || timeout>UINT64_MAX-now ? UINT64_MAX : now+timeout;
+    c->request_size=size+(framing==CETTA_IPC_CSP ? 8 : 0);
+    c->request=malloc(c->request_size);
+    if (!c->request) {free(c);return NULL;}
+    if (framing==CETTA_IPC_CSP) {
+        memcpy(c->request,"CSP1",4);
+        for (size_t i=0;i<4;i++) c->request[4+i]=(unsigned char)(size>>(24-8*i));
+        memcpy(c->request+8,request,size);
+    } else memcpy(c->request,request,size);
+    return c;
+}
+CettaIpcClient *cetta_ipc_client_new(const char *path,CettaIpcFraming framing,
+        const void *request,size_t size,uint64_t timeout,size_t max_reply) {
+    struct sockaddr_un address={.sun_family=AF_UNIX};
+    if (!path || !*path || strlen(path)>=sizeof(address.sun_path)) return NULL;
+    CettaIpcClient *c=new_request(framing,request,size,timeout,max_reply);if (!c) return NULL;
+    memcpy(address.sun_path,path,strlen(path)+1);
+    c->fd=socket(AF_UNIX,(framing==CETTA_IPC_CWP ? SOCK_SEQPACKET : SOCK_STREAM)|SOCK_NONBLOCK|SOCK_CLOEXEC,0);
+    if (c->fd<0) finish(c,"socket");
+    else if (connect(c->fd,(struct sockaddr *)&address,sizeof(address))) {
+        if (errno==EINPROGRESS) c->phase=CONNECTING;
+        else finish(c,errno==ENOENT || errno==ECONNREFUSED ? "absent" : "connect");
     }
     return c;
 }
-
-void cetta_ipc_client_pump(CettaIpcClient *c) {
-    if (!c || c->phase == FINISHED) return;
-    if (now_ms() >= c->deadline) { finish(c, "timeout"); return; }
+CettaIpcClient *cetta_ipc_client_new_connected(int fd,CettaIpcFraming framing,
+        const void *request,size_t size,uint64_t timeout,size_t max_reply) {
+    int flags=fcntl(fd,F_GETFL);
+    if (flags<0 || !(flags&O_NONBLOCK)) return NULL;
+    CettaIpcClient *c=new_request(framing,request,size,timeout,max_reply);
+    if (c) {c->fd=fd;c->keep_connection=true;}
+    return c;
+}
+int cetta_ipc_client_take_connection(CettaIpcClient *c) {
+    if (!c || c->phase!=FINISHED || c->error || !c->keep_connection) return -1;
+    int fd=c->fd;c->fd=-1;return fd;
+}
+void cetta_ipc_client_cancel(CettaIpcClient *c) {if (c) finish(c,"cancelled");}
+static void spend(uint64_t *work,size_t bytes) {
+    *work=bytes>=*work ? 0 : *work-bytes;
+}
+static bool expired(CettaIpcClient *c) {
+    if (now_ms()<c->deadline) return false;
+    finish(c,"timeout");return true;
+}
+void cetta_ipc_client_pump_bounded(CettaIpcClient *c,uint64_t work) {
+    if (!c || !work || c->phase==FINISHED || expired(c)) return;
     if (c->phase == CONNECTING) {
         struct pollfd p = {c->fd, POLLOUT, 0};
         if (poll(&p, 1, 0) <= 0) return;
@@ -104,27 +127,33 @@ void cetta_ipc_client_pump(CettaIpcClient *c) {
         if (getsockopt(c->fd, SOL_SOCKET, SO_ERROR, &error, &size) || error) {
             finish(c, "connect"); return;
         }
-        c->phase = SENDING;
+        c->phase=SENDING;--work;
     }
     while (c->phase == SENDING) {
-        ssize_t n = send(c->fd, c->request + c->sent, c->request_size - c->sent, MSG_NOSIGNAL);
+        if (!work || expired(c)) return;
+        size_t amount=c->request_size-c->sent;
+        if (c->framing==CETTA_IPC_CSP && amount>work) amount=(size_t)work;
+        --work;
+        ssize_t n=send(c->fd,c->request+c->sent,amount,MSG_NOSIGNAL);
         if (n < 0 && errno == EINTR) continue;
         if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return;
         if (n <= 0 || (c->framing == CETTA_IPC_CWP && (size_t)n != c->request_size)) {
             finish(c, "send"); return;
         }
-        c->sent += (size_t)n;
+        c->sent += (size_t)n;spend(&work,(size_t)n);
         if (c->sent == c->request_size) {
-            free(c->request); c->request = NULL;
+            if (!c->keep_connection) {free(c->request);c->request=NULL;}
             c->phase = c->framing == CETTA_IPC_CSP ? HEADER : RECEIVING;
         }
     }
     while (c->phase == HEADER) {
-        ssize_t n = recv(c->fd, c->header + c->header_used, 8 - c->header_used, 0);
+        if (!work || expired(c)) return;
+        size_t amount=8-c->header_used;if (amount>work) amount=(size_t)work;--work;
+        ssize_t n=recv(c->fd,c->header+c->header_used,amount,0);
         if (n < 0 && errno == EINTR) continue;
         if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return;
         if (n <= 0) { finish(c, "disconnect"); return; }
-        c->header_used += (size_t)n;
+        c->header_used += (size_t)n;spend(&work,(size_t)n);
         if (c->header_used != 8) continue;
         if (memcmp(c->header, "CSP1", 4)) { finish(c, "malformed-reply"); return; }
         for (size_t i = 4; i < 8; ++i) c->reply_size = (c->reply_size << 8) | c->header[i];
@@ -133,35 +162,52 @@ void cetta_ipc_client_pump(CettaIpcClient *c) {
         }
         c->phase = RECEIVING;
     }
+    if (!work || expired(c)) return;
     if (!c->reply) {
-        c->reply = malloc(c->framing == CETTA_IPC_CWP ? c->max_reply : c->reply_size);
+        c->reply_allocation=c->framing==CETTA_IPC_CWP ? c->max_reply : c->reply_size;
+        c->reply=malloc(c->reply_allocation);
         if (!c->reply) { finish(c, "memory"); return; }
     }
     while (c->phase == RECEIVING) {
-        size_t room = c->framing == CETTA_IPC_CWP ? c->max_reply : c->reply_size - c->received;
+        if (!work || expired(c)) return;
+        size_t room=c->framing==CETTA_IPC_CWP ? c->max_reply : c->reply_size-c->received;
+        if (c->framing==CETTA_IPC_CSP && room>work) room=(size_t)work;
+        --work;
         ssize_t n = recv(c->fd, c->reply + c->received, room,
                          c->framing == CETTA_IPC_CWP ? MSG_TRUNC : 0);
         if (n < 0 && errno == EINTR) continue;
         if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return;
         if (n <= 0) { finish(c, "disconnect"); return; }
         if ((size_t)n > room) { finish(c, "malformed-reply"); return; }
-        c->received += (size_t)n;
+        c->received += (size_t)n;spend(&work,(size_t)n);
         if (c->framing == CETTA_IPC_CWP) c->reply_size = c->received;
         if (c->received == c->reply_size) { finish(c, NULL); return; }
     }
 }
 
+void cetta_ipc_client_pump(CettaIpcClient *c) {cetta_ipc_client_pump_bounded(c,UINT64_MAX);}
 int cetta_ipc_client_fd(const CettaIpcClient *c) { return c ? c->fd : -1; }
 short cetta_ipc_client_events(const CettaIpcClient *c) {
-    return c && (c->phase == CONNECTING || c->phase == SENDING) ? POLLOUT : POLLIN;
+    return !c || c->phase==FINISHED ? 0 : c->phase==CONNECTING || c->phase==SENDING ? POLLOUT : POLLIN;
 }
 uint64_t cetta_ipc_client_deadline(const CettaIpcClient *c) { return c ? c->deadline : UINT64_MAX; }
 bool cetta_ipc_client_ready(const CettaIpcClient *c) { return c && c->phase == FINISHED; }
 bool cetta_ipc_client_sent(const CettaIpcClient *c) { return c && c->sent != 0; }
 const char *cetta_ipc_client_error(const CettaIpcClient *c) { return c ? c->error : "unavailable"; }
 const unsigned char *cetta_ipc_client_reply(const CettaIpcClient *c, size_t *size) {
-    if (size) *size = c ? c->reply_size : 0;
-    return c ? c->reply : NULL;
+    bool ready=c && c->phase==FINISHED && !c->error;
+    if (size) *size=ready ? c->reply_size : 0;
+    return ready ? c->reply : NULL;
+}
+const unsigned char *cetta_ipc_client_request(const CettaIpcClient *c,size_t *size) {
+    size_t prefix=c && c->framing==CETTA_IPC_CSP ? 8 : 0;
+    if (size) *size=c && c->request ? c->request_size-prefix : 0;
+    return c && c->request ? c->request+prefix : NULL;
+}
+void cetta_ipc_client_storage(const CettaIpcClient *c,CettaStorageCensus *census) {
+    if (!c || !cetta_storage_object(census,c,sizeof(*c),CETTA_STORAGE_BLOCK)) return;
+    if (c->request) cetta_storage_array(census,c->request,c->request_size,1,0);
+    if (c->reply) cetta_storage_array(census,c->reply,c->reply_allocation,1,0);
 }
 void cetta_ipc_client_free(CettaIpcClient *c) {
     if (!c) return;

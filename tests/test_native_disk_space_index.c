@@ -47,14 +47,18 @@ static void posting(Batch *batch,const CettaDiskSpaceIndex *index,Atom *atom,con
     memcpy(cursor,key,strlen(key));
     add(batch,(CettaDiskBytes){name,length},bytes(""));free(name);free(encoded);
 }
-static void insert(Batch *batch,Arena *arena,Space *ordinary,const CettaDiskSpaceIndex *indexes,size_t count,
-        unsigned position,const char *text) {
-    char key[64];snprintf(key,sizeof(key),"facts/%08u",position);
+static void insert_prefix(Batch *batch,Arena *arena,Space *ordinary,const CettaDiskSpaceIndex *indexes,size_t count,
+        const char *fact_prefix,unsigned position,const char *text) {
+    char key[64];snprintf(key,sizeof(key),"%s%08u",fact_prefix,position);
     Atom *atom=parse(arena,text);space_add(ordinary,atom);
     unsigned char *encoded=NULL;size_t length;
     assert(cetta_atom_wire_encode(atom,&encoded,&length)==ATOM_WIRE_OK);
     add(batch,bytes(key),(CettaDiskBytes){encoded,length});free(encoded);
     for (size_t i=0;i<count;i++) posting(batch,&indexes[i],atom,key);
+}
+static void insert(Batch *batch,Arena *arena,Space *ordinary,const CettaDiskSpaceIndex *indexes,size_t count,
+        unsigned position,const char *text) {
+    insert_prefix(batch,arena,ordinary,indexes,count,"facts/",position,text);
 }
 static void bag_push(Bag *bag,Atom *value) {
     if (bag->count==bag->capacity) {
@@ -76,10 +80,11 @@ static bool identity(SpaceReadToken read,Atom *id,void *raw) {
     (void)read;size_t *count=raw;
     assert(id && id->kind==ATOM_EXPR && id->expr.len==3 && atom_is_symbol(id->expr.elems[0],"StoreOccurrenceV1"));
     Atom *key=id->expr.elems[2];assert(key->kind==ATOM_GROUNDED && key->ground.gkind==GV_STRING);
-    assert(atom_string_len(key)==strlen("facts/00000000") && !memcmp(key->ground.sval,"facts/",6));
+    assert((atom_string_len(key)==strlen("facts/00000000") && !memcmp(key->ground.sval,"facts/",6)) ||
+           (atom_string_len(key)==strlen("selct/00000000") && !memcmp(key->ground.sval,"selct/",6)));
     (*count)++;return true;
 }
-static Bag drain(SpaceQueryCursor *query,Arena *arena,Atom *projection,bool ids) {
+static Bag drain_mode(SpaceQueryCursor *query,Arena *arena,Atom *projection,bool ids,bool sort_bag) {
     Bag bag={0};unsigned long work=0;
     for (;;) {
         Bindings bindings;bindings_init(&bindings);SpaceQueryCursorStep step=space_query_cursor_step(query,&bindings);
@@ -92,8 +97,11 @@ static Bag drain(SpaceQueryCursor *query,Arena *arena,Atom *projection,bool ids)
         if (step==SPACE_QUERY_CURSOR_END) break;
         assert(step==SPACE_QUERY_CURSOR_ROW || step==SPACE_QUERY_CURSOR_PROGRESS);
     }
-    if (bag.count) qsort(bag.items,bag.count,sizeof(*bag.items),compare);
+    if (sort_bag && bag.count) qsort(bag.items,bag.count,sizeof(*bag.items),compare);
     return bag;
+}
+static Bag drain(SpaceQueryCursor *query,Arena *arena,Atom *projection,bool ids) {
+    return drain_mode(query,arena,projection,ids,true);
 }
 static size_t equivalent(Space *indexed,Space *ordinary,const char *syntax) {
     Arena arena;arena_init_detached(&arena);Atom *spec=parse(&arena,syntax);
@@ -106,6 +114,88 @@ static size_t equivalent(Space *indexed,Space *ordinary,const char *syntax) {
     for (size_t i=0;i<actual.count;i++) assert(!compare(&actual.items[i],&wanted.items[i]));
     size_t count=actual.count;
     bag_free(&actual);bag_free(&wanted);space_query_cursor_free(query);space_query_cursor_free(reference);arena_free(&arena);return count;
+}
+static void equivalent_ordered(Space *left,Space *right,const char *syntax) {
+    Arena arena;arena_init_detached(&arena);Atom *spec=parse(&arena,syntax);
+    assert(spec->kind==ATOM_EXPR && spec->expr.len==2);
+    SpaceQueryCursor *qleft=space_query_cursor_new_captured(left,&arena,spec->expr.elems[0],NULL);
+    SpaceQueryCursor *qright=space_query_cursor_new_captured(right,&arena,spec->expr.elems[0],NULL);
+    assert(qleft && qright);
+    Bag a=drain_mode(qleft,&arena,spec->expr.elems[1],true,false);
+    Bag b=drain_mode(qright,&arena,spec->expr.elems[1],false,false);
+    assert(a.count==b.count);
+    for (size_t i=0;i<a.count;i++) assert(!compare(&a.items[i],&b.items[i]));
+    bag_free(&a);bag_free(&b);space_query_cursor_free(qleft);space_query_cursor_free(qright);arena_free(&arena);
+}
+static void check_selectivity_and_random_patterns(CettaDiskStore *store,const CettaDiskStoreView *base,Arena *persistent) {
+    CettaDiskSpaceIndex sel_indexes[]={
+        {4,0,bytes("selpost/head")},
+        {4,1,bytes("selpost/ticket")},
+        {4,2,bytes("selpost/kind")},
+        {4,3,bytes("selpost/state")}
+    };
+    Space sel_ordinary,sel_indexed,sel_scan,sel_ticket_only,sel_state_only;
+    space_init(&sel_ordinary);space_init(&sel_indexed);space_init(&sel_scan);
+    space_init(&sel_ticket_only);space_init(&sel_state_only);
+    Batch batch={0};unsigned count=0;
+    for (unsigned i=0;i<250;i++) {
+        char text[128];
+        const char *kind=(i%2==0) ? "kind-a" : "kind-b";
+        const char *state=(i==249) ? "unique-state" : "unobserved";
+        snprintf(text,sizeof(text),"(action \"ticket-%u\" %s %s)",i,kind,state);
+        insert_prefix(&batch,persistent,&sel_ordinary,sel_indexes,4,"selct/",count++,text);
+    }
+    insert_prefix(&batch,persistent,&sel_ordinary,sel_indexes,4,"selct/",count++,"(action $anyTicket kind-wild $anyState)");
+    insert_prefix(&batch,persistent,&sel_ordinary,sel_indexes,4,"selct/",count++,"(action \"ticket-0\" (nested 1) unobserved)");
+    insert_prefix(&batch,persistent,&sel_ordinary,sel_indexes,4,"selct/",count++,"(action \"ticket-1\" 42 unobserved)");
+    CettaDiskStoreView *sel_view=NULL;
+    assert(cetta_disk_store_commit(store,base,batch.ops,batch.count,&sel_view)==CETTA_STORE_OK);
+    clear(&batch);
+    assert(cetta_disk_space_capture_indexed(&sel_indexed,sel_view,bytes("selct/"),count,sel_indexes,4)==CETTA_STORE_OK);
+    assert(cetta_disk_space_capture_indexed(&sel_ticket_only,sel_view,bytes("selct/"),count,&sel_indexes[1],1)==CETTA_STORE_OK);
+    assert(cetta_disk_space_capture_indexed(&sel_state_only,sel_view,bytes("selct/"),count,&sel_indexes[3],1)==CETTA_STORE_OK);
+    assert(cetta_disk_space_capture(&sel_scan,sel_view,bytes("selct/"),count)==CETTA_STORE_OK);
+
+    /* 1. Ground query with narrow index at pos 1 ("ticket-7": 1 exact + 1 any = 2)
+     * and wide later-declared index at pos 3 (unobserved: 251 exact + 1 any = 252).
+     * Must pick pos 1, read only 2 candidates, and preserve exact-then-any order. */
+    CettaDiskSpaceStatistics before,after;
+    assert(cetta_disk_space_statistics(&sel_indexed,&before));
+    size_t matched=equivalent(&sel_indexed,&sel_ordinary,"((action \"ticket-7\" kind-b unobserved) found)");
+    assert(matched==1 && cetta_disk_space_statistics(&sel_indexed,&after));
+    assert(after.indexed_selections==before.indexed_selections+1);
+    assert(after.candidates-before.candidates==2);
+    equivalent_ordered(&sel_indexed,&sel_ticket_only,"((action \"ticket-0\" $k unobserved) $k)");
+
+    /* 2. Tie-break: "ticket-249" (pos 1: 1 exact + 1 any = 2) vs unique-state (pos 3: 1 exact + 1 any = 2).
+     * Both have 2 candidates; tie breaks to the last-declared applicable index (pos 3). */
+    assert(cetta_disk_space_statistics(&sel_indexed,&before));
+    matched=equivalent(&sel_indexed,&sel_ordinary,"((action \"ticket-249\" $k unique-state) $k)");
+    assert(matched==2 && cetta_disk_space_statistics(&sel_indexed,&after));
+    assert(after.indexed_selections==before.indexed_selections+1);
+    assert(after.candidates-before.candidates==2);
+    equivalent_ordered(&sel_indexed,&sel_state_only,"((action \"ticket-249\" $k unique-state) $k)");
+
+    /* 3. Random patterns over (head, ticket, kind, state) compared against full scan and ordinary Space. */
+    const char *heads[]={"action","other","$h"};
+    const char *tickets[]={"\"ticket-0\"","\"ticket-1\"","\"ticket-7\"","\"ticket-249\"","\"ticket-999\"","$t"};
+    const char *kinds[]={"kind-a","kind-b","kind-wild","(nested 1)","42","$k"};
+    const char *states[]={"unobserved","unique-state","absent-state","$s"};
+    uint32_t rng=0xC0FFEE11u;
+    for (unsigned iter=0;iter<200;iter++) {
+        rng=rng*1664525u+1013904223u;const char *h=heads[rng%3];
+        rng=rng*1664525u+1013904223u;const char *t=tickets[rng%6];
+        rng=rng*1664525u+1013904223u;const char *k=kinds[rng%6];
+        rng=rng*1664525u+1013904223u;const char *s=states[rng%4];
+        char syntax[256];
+        snprintf(syntax,sizeof(syntax),"((%s %s %s %s) (%s %s %s %s))",h,t,k,s,h,t,k,s);
+        equivalent(&sel_indexed,&sel_scan,syntax);
+        equivalent(&sel_indexed,&sel_ordinary,syntax);
+    }
+
+    space_free(&sel_indexed);space_free(&sel_ticket_only);space_free(&sel_state_only);
+    space_free(&sel_scan);space_free(&sel_ordinary);
+    cetta_disk_store_view_close(sel_view);
 }
 int main(int argc,char **argv) {
     assert(argc==2);SymbolTable symbols;symbol_table_init(&symbols);symbol_table_init_builtins(&symbols,&g_builtin_syms);g_symbols=&symbols;
@@ -204,6 +294,7 @@ int main(int argc,char **argv) {
     /* Captured indexes and their fact lookups survive publication/collection. */
     CettaDiskStoreView *compacted=NULL;assert(cetta_disk_store_compact(store,&compacted)==CETTA_STORE_OK);
     uint64_t removed;assert(cetta_disk_store_collect(store,&removed)==CETTA_STORE_OK && removed>0);
+    check_selectivity_and_random_patterns(store,compacted,&persistent);
     cetta_disk_store_view_close(view);cetta_disk_store_view_close(compacted);cetta_disk_store_close(store);
     equivalent(&indexed,&ordinary,"((edge alice $x) $x)");
     equivalent(&scan,&ordinary,"((edge alice $x) $x)");

@@ -1,0 +1,6 @@
+true
+(__cetta_lib_clingo_ground "a :- not b.")
+(__cetta_lib_clingo_models ((rule a () ())))
+(__cetta_lib_clingo_solve ((rule a () ())))
+true
+(__cetta_lib_clingo_models ((rule a () ())))

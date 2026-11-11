@@ -1,0 +1,2 @@
+(Doc (PrefixDecl "~" (NaL "not") 700))
+(Doc (PostInfixDecl "tilde" (NaL "and") 700 InfixLeft))

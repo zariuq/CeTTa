@@ -106,8 +106,11 @@ EXPECTED = {
                       '((Pair a $V0) (Pair b $V1) (Pair a $V2))\n'
                       '((Pair a $V0))\n'
                       '(shared shared)\n',
+             # HE shares the instantiated equation's $x between the two a
+             # answers, as Rust HE prints $x#41 twice; PeTTa's collapse
+             # copies each answer.
              'he': '[((Pair none $V0))]\n'
-                   '[((Pair a $V0) (Pair b $V1) (Pair a $V2))]\n'
+                   '[((Pair a $V0) (Pair b $V1) (Pair a $V0))]\n'
                    '[((once (Pair a $V0)) (once (Pair b $V1)) (once (Pair a $V0)))]\n'
                    '[(shared shared)]\n'},
  'prepare-effects': {'petta': 'key\n'
@@ -125,7 +128,9 @@ EXPECTED = {
                               '(one)\n'
                               '()\n',
                      'he': 'key\nkey\nkey\n[()]\n[()]\n[()]\n[()]\n'},
- 'key-binding': {'petta': '((Pair hit a))\n()\n', 'he': '[((Pair hit a))]\n[()]\n'},
+ # HE switches a case whose key has no answers on Empty, which $other meets
+ # (Rust HE 0.2.10); PeTTa's case takes only a written Empty arm.
+ 'key-binding': {'petta': '((Pair hit a))\n()\n', 'he': '[((Pair hit a))]\n[(wrong)]\n'},
  'cons': {'petta': '((Pair 1 $V0))\n((Pair 1 (2 3)))\n((Pair 1 ()) (Pair 1 (2 3)))\n',
           'he': '[((Pair 1 $V0))]\n[((Pair 1 (2 3)))]\n[((Pair 1 ()) (Pair 1 (2 3)))]\n'},
  'opaque-argument': {'petta': '(Pair 7 (cons first $V0))\n'},

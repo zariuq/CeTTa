@@ -1,0 +1,9 @@
+(THEOREM "Theorem")
+(NAM "u1")
+COLON
+(NAM "p")
+DOT
+(NAM "smash")
+DOT
+QED
+DOT

@@ -1,0 +1,17 @@
+true
+true
+(open-result ((got $V0)))
+(open-left ())
+true
+true
+(ground-result ((got a) (got a)))
+(ground-left ())
+true
+(read-take-refused ())
+(read-take-refused-left ((item a)))
+true
+true
+(read-take-accepted ((got a)))
+(read-take-accepted-left ((item a)))
+(empty-result ())
+(empty-left ())

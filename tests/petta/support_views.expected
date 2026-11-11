@@ -1,0 +1,28 @@
+true
+true
+true
+true
+true
+true
+true
+true
+((before ((can alice read-logs) (can alice rotate-keys) (can bob read-logs) (can bob rotate-keys))) (why (derived grant ((has-role alice admins) (grants admins rotate-keys)))) (removed ((assigned alice admins) (can alice read-logs) (can alice rotate-keys) (has-role alice admins) (has-role alice staff))) (after ((can bob read-logs) (can bob rotate-keys))) (bob (derived inherit ((has-role bob staff) (inherits staff admins)))) (none ()) (added ((assigned alice admins) (can alice read-logs) (can alice rotate-keys) (has-role alice admins) (has-role alice staff))) (again ((can alice read-logs) (can alice rotate-keys) (can bob read-logs) (can bob rotate-keys))))
+true
+true
+true
+((removed ()) (still ((path a b) (path a c) (path b c))) (why (derived two ((path a b) (edge b c)))))
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+((routes 49) (ring-link 1 1 49 true) (spur-link 8 7 36 true) (restored 7 8 49 true))

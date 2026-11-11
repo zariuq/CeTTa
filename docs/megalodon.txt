@@ -1,0 +1,250 @@
+Megalodon in CeTTa
+==================
+
+CeTTa reads, evaluates and checks Megalodon documents natively, and checks
+every proof in a kernel of its own. The reading, the evaluation (notations,
+sections, definitions, tactics, megaauto) and every identity are Megalodon's.
+On all 1,661 documents of Megalodon's example collections, the rows the
+native tools print are the rows `megalodon -sexprinfo` prints, failures and
+exit statuses included. Checking runs no OCaml, Python or outside prover.
+
+Checking a document
+-------------------
+
+  make runtime/megalodon/mg-check
+  runtime/megalodon/mg-check [-hf|-mizar|-hoas|-setmm] [-I SIGNATURE]... DOC
+
+`mg-check --help` lists every option. The theory flags are Megalodon's, and
+Egal is the default. A theorem is verified when two things hold:
+
+- the kernel checked its proof;
+- every axiom of the document that the proof rests on, directly or through
+  the theorems it cites, is approved.
+
+The signatures (-I) are the theory, and their axioms need no approval. A
+document's own axioms are approved with --allow-axiom NAME (a name or an
+identity) or --allow-document-axioms.
+
+The report lists every theorem that is not verified, with its verdict:
+
+- checked, assuming document axioms;
+- not checked, because it cites theorems without proof;
+- admitted by the document;
+- left to automation (aby);
+- unfinished at the end of the document;
+- not decided, because it used up its work budget.
+
+Then come the axioms the document states, a summary and the verdict. The
+exit status is 0 when every theorem, or each --theorem, is verified, 1 when
+one is not, and 2 when the document does not go through (a syntax error, a
+failure, a kernel refusal). --verbose lists every theorem, with its identity
+and the work its check took.
+
+Each theorem is checked within a work budget (--theorem-work, in kernel work
+units, default 10^9). A theorem whose check uses it up is not decided, and
+the document goes on.
+
+  make runtime/megalodon/mg-sexprinfo
+  runtime/megalodon/mg-sexprinfo [-kernel] [-hf|-mizar|-hoas|-setmm] [-I SIGNATURE]... DOC
+
+This prints what `megalodon -sexprinfo` prints. With -kernel, it also admits
+every item into the kernel, and prints the kernel's counts on stderr.
+
+Automation
+----------
+
+megaauto (??, ?SALT?, ?t:SALT?, ?*SALT?, ?t:*SALT?, ?+?, ?t:+?) is
+Megalodon's: the basic search and the typed one, and both salt searches. A
+salt makes the same choices in both, so it names the same proof, or the same
+failure. Typed megaauto recognizes Egal's set functions, pairs and products,
+and their knowns, by identity as they are declared, as Megalodon does.
+
+aby: Megalodon admits the goal of an aby step and leaves it to an outside
+hammer. By default mg-check does the same, and the verdict says "left to
+automation". With --prove-aby, mg-check first searches for a proof from the
+goal's context and the facts the step names. A proof found is the step's
+proof, and the kernel checks it with the rest. The search is a focused
+sequent calculus for Megalodon's higher-order logic:
+
+- higher-order unification modulo beta, eta and, lazily, delta;
+- equational rewriting with the symmetric Leibniz equality;
+- induction-like facts applied whole;
+- reductio with a named dneg or xm.
+
+It runs under a step budget (--aby-steps, --aby-depth). A search leaves only
+the proof it found: every other term it made is released, so memory follows
+the largest single search, not the number of searches.
+
+From MeTTa
+----------
+
+  !(import! &self megalodon)
+  (mg:check-document SIGNATURES PATH OPTIONS)
+  (mg:gslt-tokens PATH)
+  (mg:gslt-items SIGNATURES PATH)
+
+check-document checks a document as mg-check does. Its options are
+(theory NAME), prove-aby, (theorem-work N), (aby-steps N) and
+allow-document-axioms. It returns this value:
+
+  (Megalodon.document THEORY AUTHORITY VERDICT SUMMARY ENTRIES)
+
+The value holds the theory it built and its authority (for the rest of the
+mg: interface), the verdict, the counts, and every axiom and theorem with its
+own verdict. gslt-tokens and gslt-items read a file with Megalodon's syntax
+as GSLT presentations (below). lib/megalodon.metta describes the kernel's
+operations: theories, sessions, rules and libraries.
+
+Reading
+-------
+
+Megalodon's syntax is written as GSLT presentations in langdef/megalodon,
+one module each: lexical, notation, term, proof, document and whole_file.
+They read what Megalodon's lexer and parser read: the tokens, the document
+items and proof tactics, and terms against the notation environment that the
+document's declarations build. Where Megalodon refuses a document, they
+answer its error, with its message, as a value.
+
+The presentations are compiled to C when CeTTa is built
+(langdef-compile petta-direct --target c). The compiled reader is the only
+reader: the evaluator, mg-check, mg-sexprinfo and the gslt- operations all
+use it (native/megalodon/mg_gslt_reader.c), and it keeps Megalodon's
+positions for its error messages. CeTTa's PeTTa lane runs the same
+presentations as a MeTTa program.
+
+The C target reads the lexical relations as they are and specializes them:
+
+- a relation taking the longest run of a class of scalars (the word and
+  digit runs) is a scan, and its text a span of the source;
+- a relation that tests one value against many literal texts (the
+  keywords) dispatches on the text's key;
+- the token relation (MgNextTokenV1) is unfolded into one function over
+  byte positions: blanks loop, a scalar's class is a switch, lookahead
+  reads the next scalars, a word is scanned and its text tested against the
+  keywords in place.  What the unfolding cannot decide stays a call of the
+  relation's compiled mode.
+
+Each is recognized from the rules, and a relation not recognized is
+compiled as written.  The generated file says which relations became scans
+and token automata.
+
+On every example document, the tokens and items read are those of
+Megalodon's own lexer and parser. On the fixtures, the errors are too,
+message and positions alike.
+
+A build of the compiled reader with -DGN_TRACE writes a trace of a reading:
+each relation entered, each rule that answers or misses, and each relation
+without an answer (runtime/megalodon/mg-gslt-native-trace --trace FILE). The
+ordinary build has no trace code: its machine code is the same as without
+the hooks. A trace is a reading aid; nothing checks it.
+
+Faithfulness and tests
+----------------------
+
+  make test-megalodon
+
+This runs the whole suite, which needs no Megalodon:
+
+- the kernel's unit tests;
+- the reader and elaboration fixtures, with Megalodon's recorded output;
+- the verdict fixtures, with reports written from the verdict rules;
+- the GSLT presentations' fixtures, module by module, in both engines,
+  refusals compared by Megalodon's message;
+- the traced build of the reader, which must read as the ordinary one;
+- the C target's fixtures;
+- the MeTTa tests, in the HE and PeTTa lanes.
+
+The targets below compare with a Megalodon checkout (its examples and its
+binary):
+
+  make test-megalodon-elab-corpus MEGALODON_ROOT=DIR
+  make test-megalodon-megaauto-corpus MEGALODON_ROOT=DIR
+  make test-megalodon-source-corpus MEGALODON_ROOT=DIR
+  make test-megalodon-gslt-corpus MEGALODON_ROOT=DIR
+
+- elab-corpus checks every example document with both tools and compares
+  every row, proofs and identities included. The kernel admits every
+  declaration and proof.
+- megaauto-corpus starts both salt searches from random salts, and uses
+  random salts as they are, failures included. It runs over a small
+  signature and over Egal's August 2022 preamble.
+- source-corpus compares the items the evaluator receives with an oracle
+  built from Megalodon's own parser, refusals included.
+- gslt-corpus compares the presentations' tokens and items with oracles
+  built from Megalodon's lexer and parser, read by the compiled reader; with
+  MEGALODON_GSLT_CORPUS_ENGINES='native cetta', by CeTTa's PeTTa lane too.
+
+tests/megalodon/proof_mutants.py corrupts checked proofs (another hypothesis,
+another known, a dropped argument, another term) and replays them through the
+kernel under a work budget. No mutant may be accepted.
+
+Performance
+-----------
+
+  make bench-megalodon MEGALODON_ROOT=DIR [MEGALODON_BENCH_BIN=BIN]
+
+Both tools check every example document, one process at a time, and do the
+same work. In checking, mg-check's kernel also rechecks every proof.
+
+Measured on 2026-11-05 against Megalodon 1.13's native build, on an x86-64
+machine shared with other work. Memory is the largest peak of one document.
+
+                                    Megalodon 1.13     native
+  checking, all 1,661 documents     71.3 s, 789 MB     38.7 s, 381 MB   1.8x
+  -sexprinfo rows, all documents    116.2 s, 1.44 GB   37.3 s, 379 MB   3.1x
+
+Reading takes about a third of the native time: the compiled presentations
+read some 10 MB a second.
+
+Native aby on Megalodon's hammer example (examples/hammer/100thms_12_h.mg:
+999 theorems, 3,401 aby steps) proves 2,077 steps by search in 54.6 s, with
+263 MB peak. Megalodon admits every one of those steps.
+
+Map
+---
+
+  native/megalodon/mg_core.h           the kernel interface: types, terms,
+                                       proofs, contexts, rules, theories
+  mg_store.c                           hash-consed store
+  mg_ops.c, mg_rules.c, mg_conv.c      the Mathdata operations, the proof
+                                       rules, lazy conversion
+  mg_theory.c, mg_session.c            theories, admission, sessions
+  mg_library.c                         admission of document items, the
+                                       verdict ledger, libraries
+  mg_hash.c, mg_pfg.c                  Megalodon's identities and Proofgold's
+  mg_profiles.c, mg_upstream.c         the five theories' tables, generated
+                                       from Megalodon's sources
+  mg_gslt_reader.c                     reading .mg documents with the
+                                       compiled presentations
+  mg_elab.c                            evaluating document items
+  mg_front.c                           Megalodon's front-end terms
+  mg_proof.c                           the tactic engine and basic megaauto
+  mg_type_megaauto.c                   typed megaauto
+  mg_aby.c                             native aby
+  mg_run.c                             running documents as the binary does
+  mg_worker.c                          deep kernel work on a large stack
+  mg_cetta_module.c, mg_atom.c         the mg: operations in MeTTa
+  langdef/megalodon/                   Megalodon's syntax as GSLT
+                                       presentations, generated by
+                                       tools/generate_megalodon_gslt_v1.py
+  tests/megalodon/mg_check.c           mg-check
+  tests/megalodon/mg_sexprinfo.c       mg-sexprinfo
+
+Limits
+------
+
+Native aby proves only part of the hammer example's steps. What remains:
+
+- existential witnesses that need synthesized functions;
+- arithmetic with many hints, where the search is too broad;
+- forward chaining through elimination facts.
+
+Search alone barely helps these. The GSLT C target is tested against CeTTa
+running the same presentations, but it does not yet carry a proof that its
+compilation is correct.
+
+Megalodon reads a document as bytes, and a string or comment may hold bytes
+that are not UTF-8. The compiled reader reads them as Megalodon does. CeTTa's
+PeTTa lane reads a langdef's source as UTF-8 text, so it refuses such a file
+(tests/langdef/megalodon/bytes_*.mg run on the compiled reader only). Every
+example document is UTF-8.

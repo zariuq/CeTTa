@@ -1,0 +1,3 @@
+:- chr_constraint token/1, pick/0, picked/1.
+choose @ pick, token(X) <=> picked(X).
+?- token(1), token(2), pick, token(3), pick, pick.

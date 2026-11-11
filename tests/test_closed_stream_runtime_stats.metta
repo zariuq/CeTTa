@@ -21,12 +21,16 @@
   (match &stats (runtime-counter rename-vars $n) (< $n 50))
   (True))
 !(assertEqualToResult
-  ; Bound real evaluated work, including setup and observation. Increasing
-  ; the stream length one hundred times must cost at most one hundred times
-  ; as many merges; a residual expression is not a successful cheap stream.
-  (match &stats (runtime-counter bindings-merge $n) (< $n 45000))
+  ; Bound per-item work and fixed setup separately. Both streams permit
+  ; nine merges per answer plus at most 64 for setup and observation.
+  (match &small-stats (runtime-counter bindings-merge $n) (< $n (+ (* 9 50) 64)))
   (True))
 !(assertEqualToResult
+  (match &stats (runtime-counter bindings-merge $n) (< $n (+ (* 9 5000) 64)))
+  (True))
+!(assertEqualToResult
+  ; Scaling by one hundred must not cost more than one hundred times the
+  ; work. The size checks above also reject a cheap residual expression.
   (let $small (match &small-stats (runtime-counter bindings-merge $n) $n)
     (match &stats (runtime-counter bindings-merge $large) (<= $large (* 100 $small))))
   (True))

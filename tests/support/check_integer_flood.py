@@ -15,6 +15,7 @@ import tempfile
 
 M = (1 << 64) - 1
 C1 = 0xbf58476d1ce4e5b9
+C1_INVERSE = pow(C1, -1, 1 << 64)
 K = 24
 N = 40000
 
@@ -35,7 +36,7 @@ def public_hash(x):
 
 def public_hash_inv(h):
     x = inv_xorshift(h, 27)
-    x = (x * pow(C1, -1, 1 << 64)) & M
+    x = (x * C1_INVERSE) & M
     return inv_xorshift(x, 30)
 
 

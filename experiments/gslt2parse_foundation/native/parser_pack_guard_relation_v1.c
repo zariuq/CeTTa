@@ -141,6 +141,16 @@ static bool ppguard_relation_v1_owner_index_contains(
     return low > 0u && end <= owners->ranges[low - 1u].end;
 }
 
+/* An atom a borrowing relation may hold: one in a declared owner's storage,
+ * or one no arena owns that lives for the process, which copies into an
+ * owner hand out in place of an arena atom. */
+static bool ppguard_relation_v1_owner_index_holds_atom(
+    const PPGuardRelationV1OwnerIndex *owners,
+    const Atom *atom) {
+    return atom_process_canonical(atom) ||
+        ppguard_relation_v1_owner_index_contains(owners, atom, sizeof(*atom));
+}
+
 static bool ppguard_relation_v1_atom_storage_valid(
     const PPGuardRelationV1 *relation) {
     uint32_t index;
@@ -168,7 +178,7 @@ static bool ppguard_relation_v1_atom_is_available(
     const Atom *atom) {
     return relation->atom_storage ==
                PPGUARD_RELATION_V1_ATOMS_SELF_CONTAINED ||
-        ppguard_relation_v1_owner_index_contains(owners, atom, sizeof(*atom));
+        ppguard_relation_v1_owner_index_holds_atom(owners, atom);
 }
 
 static int ppguard_relation_v1_u32_compare(const void *left,
@@ -686,10 +696,8 @@ static bool ppguard_relation_v1_build_impl(
         size_t canonical_len = 0u;
         if (!base_witness_values[index] ||
             (atom_storage == PPGUARD_RELATION_V1_ATOMS_BORROWED &&
-             !ppguard_relation_v1_owner_index_contains(
-                 &owners,
-                 base_witness_values[index],
-                 sizeof(*base_witness_values[index]))) ||
+             !ppguard_relation_v1_owner_index_holds_atom(
+                 &owners, base_witness_values[index])) ||
             !fh_ground_term_v1_render(
                 base_witness_values[index], &canonical, &canonical_len,
                 NULL, 0u)) {
@@ -736,18 +744,16 @@ static bool ppguard_relation_v1_build_impl(
             goto done;
         }
         if (atom_storage == PPGUARD_RELATION_V1_ATOMS_BORROWED &&
-            !ppguard_relation_v1_owner_index_contains(
-                &owners,
-                match->value, sizeof(*match->value))) {
+            !ppguard_relation_v1_owner_index_holds_atom(
+                &owners, match->value)) {
             ppguard_relation_v1_set_error(
                 error_buf, error_buf_size,
                 "positive guard value is outside declared Atom owners");
             goto done;
         }
         if (atom_storage == PPGUARD_RELATION_V1_ATOMS_BORROWED &&
-            !ppguard_relation_v1_owner_index_contains(
-                &owners,
-                match->proof, sizeof(*match->proof))) {
+            !ppguard_relation_v1_owner_index_holds_atom(
+                &owners, match->proof)) {
             ppguard_relation_v1_set_error(
                 error_buf, error_buf_size,
                 "positive guard proof is outside declared Atom owners");

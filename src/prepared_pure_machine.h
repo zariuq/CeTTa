@@ -180,9 +180,35 @@ bool cetta_prepared_pure_intrinsic_row(
     SymbolId head, CettaExprLen arity,
     CettaGsltPreparedPureIntrinsicOperandDiscipline *discipline_out,
     CettaGsltPreparedPureIntrinsicInstruction *instruction_out);
-/* The strict rows of the running language: shared interpretation of the
- * authored strict primitive fragment.  This is operation metadata, not
- * source authority or permission to speculate. */
+/* Whether `head` has such a value-class signature at `arity`; *checks_range
+ * says whether its range names a class (Number, String or Bool) a call's
+ * answer must have, rather than accepting every value. */
+/* Whether head/arity's one signature writes its range as the type variable
+ * of one bare parameter, *parameter, that no other position names, the
+ * prepared machine checking that argument's class as the answer's. */
+/* Whether `head` with `arity` arguments, a head without equations, is an HE
+ * constructor the machine builds with a typing check: one declared function
+ * type of that arity over parameters that are no metatype. */
+bool cetta_prepared_pure_he_checked_constructor(Space *space, SymbolId head,
+                                                CettaExprLen arity);
+/* The identity and current reset epoch of the arena holding `atom` where it
+ * is the running program's arena or its collector's survivor. */
+bool cetta_prepared_pure_stamp_arena_epoch(const Atom *atom, uint32_t *arena,
+                                           uint64_t *epoch);
+bool cetta_prepared_pure_parameter_range(Space *space, SymbolId head,
+                                         CettaExprLen arity,
+                                         CettaExprLen *parameter);
+/* *checks_range: a value-class range the answer is checked at;
+ * *structural_range: a closed range that is no value class, which HE
+ * checks where each activation returns. */
+bool cetta_prepared_pure_value_signature(
+    Space *space, SymbolId head, CettaExprLen arity, bool *checks_range,
+    bool *structural_range);
+/* Authored dialect restrictions are shared by source admission, lowering
+ * and execution. Unscoped intrinsics retain their existing policy. */
+bool cetta_prepared_pure_intrinsic_scope_supported(SymbolId head, CettaExprLen arity);
+/* Shared interpretation of the authored strict primitive fragment. This is
+ * operation metadata, not source authority or permission to speculate. */
 bool cetta_prepared_pure_intrinsic_program(
     SymbolId head, CettaExprLen arity,
     CettaGsltPreparedPureIntrinsicInstruction *instruction_out);
@@ -360,6 +386,10 @@ typedef const void *(*CettaPreparedPureProjectSourceFn)(
  * its address cannot key a reusable program or refusal. */
 typedef bool (*CettaPreparedPureSourceIdentityRetainedFn)(
     void *context, const void *source_view);
+/* Whether the tier admits spellings by their normal form (the admission
+ * normalizer's rules; CETTA_ADMISSION_NORMALIZE=0 turns it off). */
+bool cetta_prepared_pure_admission_normalize_enabled(void);
+
 typedef struct {
     void *context;
     const void *root;

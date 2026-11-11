@@ -2,14 +2,6 @@
   "schema": "prime-scope-library-spellings-v1",
   "libraries": [
     {
-      "source": "clist.metta",
-      "output": "clist.metta",
-      "source_sha256": "56b56c78da92c7f02e7cf773bbcf20a3c5af34450f1f5339c35386c633329e33",
-      "output_sha256": "d89649a51e29105d088d881f5823df4a690664231e6de532fec4b8691490aacd",
-      "edits": 1,
-      "code_diagnostics": 0
-    },
-    {
       "source": "cwp.metta",
       "output": "cwp.metta",
       "source_sha256": "18971d3638339e6aa5e20cc76bb0743c9b9ef4b662d27dd639b2c0f875067746",
@@ -86,8 +78,8 @@
     {
       "source": "gslt_execution_contracts.metta",
       "output": "gslt_execution_contracts.metta",
-      "source_sha256": "fc4377076aa26211d07ca9b16306d28cb507535a938a9afe9ad48a02372cd674",
-      "output_sha256": "25636bc730f50792a015b576febac4c4f19595caed541c0aecb000f14576b5d1",
+      "source_sha256": "ad6e631de793cb758d50f017708589a902690bb6d7c02aac25229e254b7953e6",
+      "output_sha256": "1a01e3edd61c56c3b29e690fae0a7f5beb02abb40f5fe9ad9cbfe8d74d876a79",
       "edits": 4,
       "code_diagnostics": 0
     },
@@ -164,11 +156,19 @@
       "code_diagnostics": 0
     },
     {
+      "source": "lang.metta",
+      "output": "lang.metta",
+      "source_sha256": "1eabdc1d56f04d42dc0929fb1a1f073d7ec50399ad7cf4c9d2956622f8f4eb62",
+      "output_sha256": "820d5dc05a4cd14353ec13858fbb4993a05e7e9d80831496e43172fd252bcd53",
+      "edits": 69,
+      "code_diagnostics": 0
+    },
+    {
       "source": "langdef.metta",
       "output": "langdef.metta",
-      "source_sha256": "52e371c1c0aed949e17233c67edfe439e221d269950f1ad2d4fb92afae8ff720",
-      "output_sha256": "6db0bb1d1da2fde50770b496154576eb705225a26ab9ff291578547fedc11e7c",
-      "edits": 71,
+      "source_sha256": "4cc6fabc01d215b7fb2cc4997ed61adb2c2969f3b89d4e78290a332620b34ded",
+      "output_sha256": "a018a3ad4dde6f744ab3beb1775cd5202e3de830d19bf5fe1caa11afff32c460",
+      "edits": 97,
       "code_diagnostics": 0
     },
     {
@@ -177,6 +177,14 @@
       "source_sha256": "075b83c78d9548b11b40317cbb03c3dac3a168c7479e62ce76462aa278536c33",
       "output_sha256": "7f01983e779dc109d0ab35f2239ce2961e25e1a18338b9d9f400c94cf2e0c0ca",
       "edits": 64,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "lib_evidence_ledger.metta",
+      "output": "lib_evidence_ledger.metta",
+      "source_sha256": "5954b5bcd1b27a83619b53850a76676bea5ebd6b3b51cc5e073ab1fbe7af410e",
+      "output_sha256": "284e6ef809ff3fe8cfa3b363be5922042465d13ad23ed2ca7e44b8489851a62d",
+      "edits": 72,
       "code_diagnostics": 0
     },
     {
@@ -190,8 +198,8 @@
     {
       "source": "lib_intensional_weighted.metta",
       "output": "lib_intensional_weighted.metta",
-      "source_sha256": "a2878d6bcc5c518e3bc6b9deb9a097ce924d76cddc74031377cb09bf0c7f99b2",
-      "output_sha256": "88ae74255c43322f7401a1b245eca536ffa33543d00ed81513b6ba7f5200e5d8",
+      "source_sha256": "74cc4f04aeccfc3fc95d4163aa811f1e70134f8e0b05150154837a4783b336c5",
+      "output_sha256": "353d145fd50a194462e1354e72079b4d7a4593fca4b36d427026cf5c2f811ae7",
       "edits": 11,
       "code_diagnostics": 0
     },
@@ -206,9 +214,9 @@
     {
       "source": "lib_module.metta",
       "output": "lib_module.metta",
-      "source_sha256": "5e83191898b324b5341c74bb7d65985554c50ee82d67fafeb8a49407b01a825b",
-      "output_sha256": "34dfb9ec677d1afb9951e2bc82d5be95a7956d8dc85d0bc13a2e8f9e596c5a09",
-      "edits": 17,
+      "source_sha256": "42b4c0526e80b84f8d3b00298cbe80541c13f5c219a15ef902bf8aa4a2ea3efd",
+      "output_sha256": "b78da21f4bba82f323cc1062c66c0e7f78ec00a10e3be2bb0a2dcb6e0431fe6a",
+      "edits": 23,
       "code_diagnostics": 0
     },
     {
@@ -276,6 +284,14 @@
       "code_diagnostics": 0
     },
     {
+      "source": "lib_random_closure.metta",
+      "output": "lib_random_closure.metta",
+      "source_sha256": "98eaa78013519d9f554f5410df3b3735e0eb28c3e3502779bbe1bcbf00272211",
+      "output_sha256": "1b91c78a011d3a2038eeba3f9c86d2080acc22145ef50d7e9329d0e471956891",
+      "edits": 142,
+      "code_diagnostics": 0
+    },
+    {
       "source": "lib_tptp.metta",
       "output": "lib_tptp.metta",
       "source_sha256": "964783a73d59f0283f129eb113effa6135deca8b1eb60622cb116abcc645ad68",
@@ -302,8 +318,8 @@
     {
       "source": "list.metta",
       "output": "list.metta",
-      "source_sha256": "5de0bf6f40a53fbe38244b19a505a33e07ddf17a61e1fb2e237dce64129175e9",
-      "output_sha256": "5892ee45d90de1a58b8a1e59da9f88f728d227a0115e6e201501b833950cb14c",
+      "source_sha256": "afee6c3222a282a09224bc037a49272de537f49594d76e92f632d866699a49e6",
+      "output_sha256": "92a1849cbe19caf55362363bc3383a88fd17340f8b3627856142e1e5727188ec",
       "edits": 60,
       "code_diagnostics": 0
     },
@@ -509,17 +525,17 @@
     {
       "source": "stdlib.metta",
       "output": "stdlib.metta",
-      "source_sha256": "ba92a8a55c8648c587531a429e9176a2bc6c128ab0af2f2c07dbb43a85ea266d",
-      "output_sha256": "24921f86799368558b3bc2a522eaaf0bc662977b676ab92decde15412abe59dc",
+      "source_sha256": "296e961379d2a98262f60c8e6d0627470ac40e9ea1ed9902fc8c87d316f82198",
+      "output_sha256": "9211eb0064d81df26ce07a34f2dfe0cdd747afd3106cea05956416f88125c2d5",
       "edits": 63,
       "code_diagnostics": 2
     },
     {
       "source": "str.metta",
       "output": "str.metta",
-      "source_sha256": "f797092d3ce245aa94f7f16e91a5e7f4e96475fe7b4612b5310c552e6394f4f2",
-      "output_sha256": "169a9d8339354479f8aba7edb9c2b8843353bb3a2275fd9043b3e112da817a77",
-      "edits": 48,
+      "source_sha256": "5d33acb529916067a4b77fe023e7eac75101e7f4e1d58d584f683da10fe15b25",
+      "output_sha256": "75397a7869c17ab7a7ea6a8d2a882882b4a2449b32231440b3d57444e1fd0f87",
+      "edits": 49,
       "code_diagnostics": 0,
       "dialect_replacements": 4
     },
@@ -534,8 +550,8 @@
     {
       "source": "tensor.metta",
       "output": "tensor.metta",
-      "source_sha256": "b7c2dfc50de6581903553bd71e00b81ba4b577d04ae2a1212dde7c0df7cdb2b9",
-      "output_sha256": "3995711bf13c55df326db1472574e285c732eb6f2ad247862d1906b5e27b8cd9",
+      "source_sha256": "372a94cc44a82328da462bb622b5f1f0b5995f7048764f615f12c2eb92c6280b",
+      "output_sha256": "767b44beb8e385185454aba499f296674e220715d20583309b11a6251f1dd86c",
       "edits": 16,
       "code_diagnostics": 0
     },
@@ -565,6 +581,11 @@
     }
   ],
   "delegated": [
+    {
+      "source": "act.metta",
+      "generator": "library_spelling.py",
+      "output_sha256": "2c3c41c7601d49c964b2b5ad616d85819573d1135564e947582bf063e0d691e6"
+    },
     {
       "source": "binary.metta",
       "generator": "library_spelling.py",
@@ -683,7 +704,7 @@
     {
       "source": "math.metta",
       "generator": "library_spelling.py",
-      "output_sha256": "c61cf1b987ce65f8883faa793cc23aff5d58e1cca0771980a8af3fe83fe22e89"
+      "output_sha256": "7768246f3e223071fc3250a924efc0d16cc9d5c641c858ff5ce27d8f4f8d03af"
     },
     {
       "source": "mm0kernel.metta",
@@ -698,7 +719,7 @@
     {
       "source": "store.metta",
       "generator": "library_spelling.py",
-      "output_sha256": "21966cc0837f20f2ebf71a38de4a030a79bda15eb74d68a063b03c9754411ef6"
+      "output_sha256": "9c7a13fc0175e443ee571374adf9ccd0e0dec11cf5d45d419338ff39aa6e6096"
     },
     {
       "source": "syntax.metta",

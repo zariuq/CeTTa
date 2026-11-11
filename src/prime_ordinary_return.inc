@@ -49,7 +49,7 @@ static bool prime_ordinary_source_selected(PrimeNativeTopEpisode *owner) {
     return services && atomic_load_explicit(&services->active,memory_order_acquire) &&
         g_prime_owned_region==region && g_library_context==owner->library &&
         g_registry==owner->registry && g_eval_root_space==owner->space &&
-        !g_hashcons && g_eval_term_universe_override==&owner->library->term_universe &&
+        !g_hashcons && g_eval_term_universe_override==cetta_library_context_universe((CettaLibraryContext *)(owner->library)) &&
         g_eval_fallback_universe.persistent_arena==owner->persistent &&
         g_equation_match_cache_selected==&services->selectors &&
         space_execution_analysis_cache_selected()==services->effects &&

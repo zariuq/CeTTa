@@ -8,6 +8,7 @@
 
 typedef struct { uint32_t arity, position; CettaDiskBuffer prefix; } Index;
 typedef struct {
+    atomic_size_t references;
     _Atomic uint64_t scans, indexed, candidates, bytes;
     _Atomic bool overflow;
 } Statistics;
@@ -18,10 +19,10 @@ typedef struct {
     uint64_t count;
     size_t maximum_bytes;
     bool point;
-    Statistics statistics;
+    Statistics *statistics;
 } DiskSpace;
 typedef struct {
-    CettaDiskCursor *disks[2];
+    CettaDiskStoreCursor *disks[2];
     CettaDiskBuffer prefix, ranges[2], key, fact_key;
     Index *indexes; size_t index_count, streams, active, value_size;
     Arena row; ArenaMark empty;
@@ -31,11 +32,13 @@ typedef struct {
     uint32_t arity, position;
     CettaIndex last;
     SpaceOccurrenceCursorStep terminal;
-    Statistics *statistics; /* The enclosing Space outlives its queries. */
+    Statistics *statistics; /* Shared independently of the Space header. */
     size_t maximum_bytes;
     bool indexed, started, done,point;
 } DiskSpaceCursor;
 
+static void statistics_retain(Statistics *s) { if (s) atomic_fetch_add(&s->references,1); }
+static void statistics_release(Statistics *s) { if (s && atomic_fetch_sub(&s->references,1)==1) free(s); }
 static void charge(Statistics *statistics,_Atomic uint64_t *counter,uint64_t amount) {
     uint64_t before=atomic_load_explicit(counter,memory_order_relaxed);
     for (;;) {
@@ -89,18 +92,18 @@ static bool bucket(CettaDiskBytes prefix,const char *tag,const unsigned char *va
     if (size) { memcpy(out->data+prefix.size+tag_size,value,size);out->data[out->size-1]='/'; }
     return true;
 }
-static const CettaDiskRoot *cursor_root(const DiskSpaceCursor *cursor) {
-    for (size_t i=0;i<cursor->streams;i++) if (cursor->disks[i]) return cetta_disk_cursor_root(cursor->disks[i]);
+static const CettaDiskStoreView *cursor_root(const DiskSpaceCursor *cursor) {
+    for (size_t i=0;i<cursor->streams;i++) if (cursor->disks[i]) return cetta_disk_store_cursor_view(cursor->disks[i]);
     return NULL;
 }
 static void cursor_free(void *raw) {
     DiskSpaceCursor *cursor=raw;if (!cursor) return;
-    for (size_t i=0;i<2;i++) { cetta_disk_cursor_close(cursor->disks[i]);cetta_disk_buffer_free(&cursor->ranges[i]); }
+    for (size_t i=0;i<2;i++) { cetta_disk_store_cursor_close(cursor->disks[i]);cetta_disk_buffer_free(&cursor->ranges[i]); }
     cetta_disk_buffer_free(&cursor->prefix);cetta_disk_buffer_free(&cursor->key);cetta_disk_buffer_free(&cursor->fact_key);
-    indexes_free(cursor->indexes,cursor->index_count);arena_free(&cursor->row);free(cursor);
+    indexes_free(cursor->indexes,cursor->index_count);arena_free(&cursor->row);statistics_release(cursor->statistics);free(cursor);
 }
-static bool open_range(const CettaDiskRoot *root,CettaDiskBytes prefix,const CettaDiskBytes *after,
-        CettaDiskCursor **out,SpaceOccurrenceCursorStep *failure) {
+static bool open_range(const CettaDiskStoreView *root,CettaDiskBytes prefix,const CettaDiskBytes *after,
+        CettaDiskStoreCursor **out,SpaceOccurrenceCursorStep *failure) {
     CettaDiskBuffer upper={0};size_t end=prefix.size;
     while (end && prefix.data[end-1]==255) --end;
     if (end) {
@@ -109,7 +112,7 @@ static bool open_range(const CettaDiskRoot *root,CettaDiskBytes prefix,const Cet
     }
     CettaDiskBytes bound=borrowed(&upper);
     const CettaDiskBytes *lower=after ? after : (prefix.size ? &prefix : NULL);
-    CettaDiskStatus status=cetta_disk_cursor_open_range(root,lower,after!=NULL,end ? &bound : NULL,out);
+    CettaDiskStatus status=cetta_disk_store_cursor_open_range(root,lower,after!=NULL,end ? &bound : NULL,out);
     cetta_disk_buffer_free(&upper);
     if (status!=CETTA_DISK_OK && failure)
         *failure=status==CETTA_DISK_NOMEM ? SPACE_OCCURRENCE_CURSOR_CAPACITY : SPACE_OCCURRENCE_CURSOR_INCOMPLETE;
@@ -119,49 +122,116 @@ static DiskSpaceCursor *cursor_allocate(CettaDiskBytes prefix,const Index *index
         const unsigned char epoch[16],uint64_t expected,Statistics *statistics,size_t maximum_bytes) {
     DiskSpaceCursor *cursor=calloc(1,sizeof(*cursor));if (!cursor) return NULL;
     arena_init_detached(&cursor->row);cursor->empty=arena_mark(&cursor->row);
-    cursor->expected=expected;cursor->statistics=statistics;cursor->maximum_bytes=maximum_bytes;memcpy(cursor->epoch,epoch,16);
+    cursor->expected=expected;cursor->statistics=statistics;statistics_retain(statistics);cursor->maximum_bytes=maximum_bytes;memcpy(cursor->epoch,epoch,16);
     if (!buffer_copy(&cursor->prefix,prefix) || !indexes_copy(&cursor->indexes,indexes,count)) { cursor_free(cursor);return NULL; }
     cursor->index_count=count;return cursor;
 }
-/* Prefer the last eligible declared projection. This is observable access
- * selection, not a cardinality optimizer. Unknown equality keeps a full scan. */
-static bool cursor_plan(DiskSpaceCursor *cursor,const CettaDiskRoot *root,Atom *pattern) {
-    unsigned char *value=NULL;size_t size=0;const Index *chosen=NULL;
-    if (!cursor->point && pattern && pattern->kind==ATOM_EXPR) {
-        for (size_t i=0;i<cursor->index_count;i++) {
-            const Index *index=&cursor->indexes[i];
-            if (index->arity==pattern->expr.len && exact_value(pattern->expr.elems[index->position])) chosen=index;
+typedef struct {
+    const Index *index;
+    size_t value_size;
+    CettaDiskBuffer ranges[2];
+    CettaDiskStoreCursor *probes[2];
+    size_t active;
+} PlanCandidate;
+
+static void plan_candidates_free(PlanCandidate *items,size_t count) {
+    if (!items) return;
+    for (size_t i=0;i<count;i++) {
+        for (size_t s=0;s<2;s++) {
+            cetta_disk_store_cursor_close(items[i].probes[s]);
+            cetta_disk_buffer_free(&items[i].ranges[s]);
         }
     }
-    if (chosen) {
-        CettaAtomWireStatus status=cetta_atom_wire_encode_bounded(pattern->expr.elems[chosen->position],cursor->maximum_bytes,&value,&size);
-        if (status==ATOM_WIRE_NOMEM) return false;
-        if (status==ATOM_WIRE_OK) {
-            bool exact=bucket(borrowed(&chosen->prefix),"/exact/",value,size,root->key_limit,&cursor->ranges[0]);
-            if (exact && bucket(borrowed(&chosen->prefix),"/any/",NULL,0,root->key_limit,&cursor->ranges[1])) {
-                free(value);cursor->indexed=true;cursor->streams=2;cursor->arity=chosen->arity;cursor->position=chosen->position;cursor->value_size=size;return true;
+    free(items);
+}
+
+/* Prefer the eligible declared projection with the fewest total candidates
+ * (exact bucket plus any-stream), breaking ties toward the last eligible
+ * declared projection. Unknown equality keeps a full scan. */
+static bool cursor_plan(DiskSpaceCursor *cursor,const CettaDiskStoreView *root,Atom *pattern,
+        SpaceOccurrenceCursorStep *failure) {
+    if (!cursor->point && pattern && pattern->kind==ATOM_EXPR && cursor->index_count) {
+        PlanCandidate *items=calloc(cursor->index_count,sizeof(*items));
+        if (!items) return false;
+        size_t valid=0,key_limit=cetta_disk_store_view_limits(root).key_bytes;
+        for (size_t i=0;i<cursor->index_count;i++) {
+            const Index *index=&cursor->indexes[i];
+            if (index->arity!=pattern->expr.len || !exact_value(pattern->expr.elems[index->position])) continue;
+            unsigned char *value=NULL;size_t size=0;
+            CettaAtomWireStatus status=cetta_atom_wire_encode_bounded(
+                pattern->expr.elems[index->position],cursor->maximum_bytes,&value,&size);
+            if (status==ATOM_WIRE_NOMEM) { plan_candidates_free(items,valid);return false; }
+            if (status==ATOM_WIRE_OK) {
+                CettaDiskBuffer exact_range={0},any_range={0};
+                if (bucket(borrowed(&index->prefix),"/exact/",value,size,key_limit,&exact_range) &&
+                    bucket(borrowed(&index->prefix),"/any/",NULL,0,key_limit,&any_range)) {
+                    items[valid++]=(PlanCandidate){
+                        .index=index,.value_size=size,.ranges={exact_range,any_range}
+                    };
+                } else {
+                    cetta_disk_buffer_free(&exact_range);cetta_disk_buffer_free(&any_range);
+                }
             }
-            cetta_disk_buffer_free(&cursor->ranges[0]);cetta_disk_buffer_free(&cursor->ranges[1]);
+            free(value);
         }
-        free(value);
+        if (valid) {
+            size_t winner=valid-1;
+            if (valid>1) {
+                for (size_t j=0;j<valid;j++) {
+                    for (size_t s=0;s<2;s++) {
+                        if (!open_range(root,borrowed(&items[j].ranges[s]),NULL,&items[j].probes[s],failure)) {
+                            plan_candidates_free(items,valid);return false;
+                        }
+                    }
+                }
+                CettaDiskBuffer probe_key={0};bool decided=false;
+                while (!decided) {
+                    for (size_t j=valid;j-->0;) {
+                        CettaDiskStoreBlob blob;CettaDiskStatus status=CETTA_DISK_END;
+                        while (items[j].active<2) {
+                            cetta_disk_buffer_free(&probe_key);
+                            status=cetta_disk_store_cursor_next(items[j].probes[items[j].active],&probe_key,&blob);
+                            if (status!=CETTA_DISK_END) break;
+                            items[j].active++;
+                        }
+                        if (status==CETTA_DISK_END) { winner=j;decided=true;break; }
+                        if (status!=CETTA_DISK_OK) {
+                            cetta_disk_buffer_free(&probe_key);plan_candidates_free(items,valid);
+                            if (failure)
+                                *failure=status==CETTA_DISK_NOMEM || status==CETTA_DISK_LIMIT
+                                    ? SPACE_OCCURRENCE_CURSOR_CAPACITY : SPACE_OCCURRENCE_CURSOR_INCOMPLETE;
+                            return false;
+                        }
+                    }
+                }
+                cetta_disk_buffer_free(&probe_key);
+            }
+            const Index *chosen=items[winner].index;
+            cursor->ranges[0]=items[winner].ranges[0];cursor->ranges[1]=items[winner].ranges[1];
+            items[winner].ranges[0]=(CettaDiskBuffer){0};items[winner].ranges[1]=(CettaDiskBuffer){0};
+            cursor->indexed=true;cursor->streams=2;cursor->arity=chosen->arity;
+            cursor->position=chosen->position;cursor->value_size=items[winner].value_size;
+            plan_candidates_free(items,valid);return true;
+        }
+        plan_candidates_free(items,valid);
     }
     cursor->streams=1;return buffer_copy(&cursor->ranges[0],borrowed(&cursor->prefix));
 }
-static bool cursor_new(const CettaDiskRoot *root,CettaDiskBytes prefix,const Index *indexes,size_t count,
+static bool cursor_new(const CettaDiskStoreView *root,CettaDiskBytes prefix,const Index *indexes,size_t count,
         const unsigned char epoch[16],uint64_t expected,Statistics *statistics,size_t maximum_bytes,Atom *pattern,
         bool point,void **out,SpaceOccurrenceCursorStep *failure) {
     *out=NULL;DiskSpaceCursor *cursor=cursor_allocate(prefix,indexes,count,epoch,expected,statistics,maximum_bytes);
     if (cursor) cursor->point=point;
-    if (!cursor || !cursor_plan(cursor,root,pattern)) { cursor_free(cursor);return false; }
+    if (!cursor || !cursor_plan(cursor,root,pattern,failure)) { cursor_free(cursor);return false; }
     for (size_t i=0;i<cursor->streams;i++)
         if (!open_range(root,borrowed(&cursor->ranges[i]),NULL,&cursor->disks[i],failure)) { cursor_free(cursor);return false; }
     *out=cursor;return true;
 }
 static bool source_open(Space *space,Atom *pattern,void **out,SpaceOccurrenceCursorStep *failure) {
     DiskSpace *source=space->match_backend.source;
-    return source && cursor_new(cetta_disk_store_view_root(source->view),borrowed(&source->prefix),
+    return source && cursor_new(source->view,borrowed(&source->prefix),
         source->indexes,source->index_count,cetta_disk_store_view_epoch(source->view),source->count,
-        &source->statistics,source->maximum_bytes,pattern,source->point,out,failure);
+        source->statistics,source->maximum_bytes,pattern,source->point,out,failure);
 }
 static bool cursor_clone(const void *raw,bool rewind,void **out) {
     const DiskSpaceCursor *source=raw;if (!source || !out) return false;*out=NULL;
@@ -197,10 +267,10 @@ static bool cursor_select(const void *raw,Atom *pattern,void **out,SpaceOccurren
 static SpaceOccurrenceCursorStep stop(DiskSpaceCursor *cursor,SpaceOccurrenceCursorStep result) {
     cursor->done=true;cursor->terminal=result;return result;
 }
-static CettaDiskStatus read_buffer(const CettaDiskRoot *root,CettaDiskBlob blob,size_t maximum,CettaDiskBuffer *out) {
+static CettaDiskStatus read_buffer(const CettaDiskStoreView *root,CettaDiskStoreBlob blob,size_t maximum,CettaDiskBuffer *out) {
     if (blob.size>maximum || blob.size>SIZE_MAX) return CETTA_DISK_LIMIT;
     out->data=malloc(blob.size ? (size_t)blob.size : 1);if (!out->data) return CETTA_DISK_NOMEM;
-    size_t got=0;CettaDiskStatus status=cetta_disk_blob_read(root,blob,0,out->data,(size_t)blob.size,&got);
+    size_t got=0;CettaDiskStatus status=cetta_disk_store_blob_read(root,blob,0,out->data,(size_t)blob.size,&got);
     if (status==CETTA_DISK_OK && got!=blob.size) status=CETTA_DISK_CORRUPT;
     out->size=(size_t)blob.size;return status;
 }
@@ -229,9 +299,9 @@ static SpaceOccurrenceCursorStep cursor_next(void *raw,CettaIndex *index) {
     }
     arena_reset(&cursor->row,cursor->empty);cursor->atom=cursor->identity=NULL;
     cetta_disk_buffer_free(&cursor->key);cetta_disk_buffer_free(&cursor->fact_key);
-    CettaDiskBlob blob;CettaDiskStatus status;
+    CettaDiskStoreBlob blob;CettaDiskStatus status;
     for (;;) {
-        status=cetta_disk_cursor_next(cursor->disks[cursor->active],&cursor->key,&blob);
+        status=cetta_disk_store_cursor_next(cursor->disks[cursor->active],&cursor->key,&blob);
         if (status!=CETTA_DISK_END) break;
         if (cursor->active+1==cursor->streams) return stop(cursor,
             cursor->indexed || cursor->seen==cursor->expected ? SPACE_OCCURRENCE_CURSOR_END : SPACE_OCCURRENCE_CURSOR_INCOMPLETE);
@@ -242,18 +312,18 @@ static SpaceOccurrenceCursorStep cursor_next(void *raw,CettaIndex *index) {
     if (cursor->point && (cursor->key.size!=cursor->prefix.size ||
             (cursor->key.size && memcmp(cursor->key.data,cursor->prefix.data,cursor->key.size))))
         return stop(cursor,SPACE_OCCURRENCE_CURSOR_INCOMPLETE);
-    const CettaDiskRoot *root=cursor_root(cursor);
+    const CettaDiskStoreView *root=cursor_root(cursor);
     if (cursor->statistics) charge(cursor->statistics,&cursor->statistics->candidates,1);
     if (cursor->indexed) {
         CettaDiskBytes selected=borrowed(&cursor->ranges[cursor->active]);
         size_t got=0;
         if (blob.size || !starts(borrowed(&cursor->key),selected) ||
-            cetta_disk_blob_read(root,blob,0,NULL,0,&got)!=CETTA_DISK_OK || got)
+            cetta_disk_store_blob_read(root,blob,0,NULL,0,&got)!=CETTA_DISK_OK || got)
             return stop(cursor,SPACE_OCCURRENCE_CURSOR_INCOMPLETE);
         CettaDiskBytes fact={cursor->key.data+selected.size,cursor->key.size-selected.size};
         if (!starts(fact,borrowed(&cursor->prefix))) return stop(cursor,SPACE_OCCURRENCE_CURSOR_INCOMPLETE);
         if (!buffer_copy(&cursor->fact_key,fact)) return stop(cursor,SPACE_OCCURRENCE_CURSOR_CAPACITY);
-        status=cetta_disk_lookup(root,borrowed(&cursor->fact_key),&blob);
+        status=cetta_disk_store_lookup(root,borrowed(&cursor->fact_key),&blob);
         if (status!=CETTA_DISK_OK) return stop(cursor,SPACE_OCCURRENCE_CURSOR_INCOMPLETE);
     } else if (!buffer_copy(&cursor->fact_key,borrowed(&cursor->key))) return stop(cursor,SPACE_OCCURRENCE_CURSOR_CAPACITY);
     CettaDiskBuffer body={0};status=read_buffer(root,blob,cursor->maximum_bytes,&body);
@@ -296,14 +366,15 @@ static void cursor_storage(const void *raw,CettaStorageCensus *census) {
     index_storage(cursor->indexes,cursor->index_count,census);
     for (size_t i=0;i<2;i++) {
         cetta_storage_array(census,cursor->ranges[i].data,cursor->ranges[i].size,1,0);
-        cetta_disk_cursor_storage_census(cursor->disks[i],census);
+        cetta_disk_store_cursor_storage_census(cursor->disks[i],census);
     }
+    cetta_storage_object(census,cursor->statistics,sizeof(Statistics),CETTA_STORAGE_BLOCK);
     arena_storage_census(&cursor->row,census);
 }
 static void source_free(Space *space) {
     DiskSpace *source=space->match_backend.source;if (!source) return;
     cetta_disk_store_view_close(source->view);cetta_disk_buffer_free(&source->prefix);
-    indexes_free(source->indexes,source->index_count);free(source);space->match_backend.source=NULL;
+    indexes_free(source->indexes,source->index_count);statistics_release(source->statistics);free(source);space->match_backend.source=NULL;
 }
 static uint64_t source_count(const Space *space) {
     const DiskSpace *source=space->match_backend.source;return source->count;
@@ -312,11 +383,13 @@ static void source_storage(const Space *space,CettaStorageCensus *census) {
     const DiskSpace *source=space->match_backend.source;
     if (!source || !cetta_storage_object(census,source,sizeof(*source),CETTA_STORAGE_BLOCK)) return;
     cetta_storage_array(census,source->prefix.data,source->prefix.size,1,0);
+    cetta_storage_object(census,source->statistics,sizeof(Statistics),CETTA_STORAGE_BLOCK);
     index_storage(source->indexes,source->index_count,census);cetta_disk_store_view_storage_census(source->view,census);
 }
+static size_t cursor_value_limit(const void *raw) {return ((const DiskSpaceCursor *)raw)->maximum_bytes;}
 static const SpaceSourceCursorOps cursor_ops={
     .clone=cursor_clone,.select=cursor_select,.next=cursor_next,.atom=cursor_atom,
-    .identity=cursor_identity,.free=cursor_free,.storage=cursor_storage,
+    .identity=cursor_identity,.value_byte_limit=cursor_value_limit,.free=cursor_free,.storage=cursor_storage,
 };
 static bool source_overlay_local(Space *target, const Space *base);
 static const SpaceMatchBackendOps source_ops={
@@ -325,7 +398,7 @@ static const SpaceMatchBackendOps source_ops={
 };
 bool cetta_disk_space_statistics(const Space *space,CettaDiskSpaceStatistics *out) {
     if (!space || !out || space->match_backend.ops!=&source_ops || !space->match_backend.source) return false;
-    const Statistics *s=&((const DiskSpace *)space->match_backend.source)->statistics;
+    const Statistics *s=((const DiskSpace *)space->match_backend.source)->statistics;
     *out=(CettaDiskSpaceStatistics){atomic_load(&s->scans),atomic_load(&s->indexed),
         atomic_load(&s->candidates),atomic_load(&s->bytes),atomic_load(&s->overflow)};return true;
 }
@@ -340,11 +413,11 @@ CettaDiskStoreStatus cetta_disk_space_capture_indexed_bounded(Space *target,cons
         index_count>SIZE_MAX/sizeof(Index) || target->kind!=SPACE_KIND_ATOM ||
         target->match_backend.kind!=SPACE_ENGINE_NATIVE || space_length64(target) ||
         target->overlay_base || space_has_dependencies(target) || target->module_own_view) return CETTA_STORE_INVALID;
-    const CettaDiskRoot *root=cetta_disk_store_view_root(view);
+    const CettaDiskStoreView *root=view;
     for (size_t i=0;i<index_count;i++) {
         const CettaDiskSpaceIndex *index=&indexes[i];
         if (!index->arity || index->position>=index->arity || !index->prefix.size || !index->prefix.data ||
-            index->prefix.size>root->key_limit || starts(index->prefix,prefix) || starts(prefix,index->prefix)) return CETTA_STORE_INVALID;
+            index->prefix.size>cetta_disk_store_view_limits(root).key_bytes || starts(index->prefix,prefix) || starts(prefix,index->prefix)) return CETTA_STORE_INVALID;
         for (size_t j=0;j<i;j++) if ((index->arity==indexes[j].arity && index->position==indexes[j].position) ||
             starts(index->prefix,indexes[j].prefix) || starts(indexes[j].prefix,index->prefix)) return CETTA_STORE_INVALID;
     }
@@ -366,8 +439,14 @@ CettaDiskStoreStatus cetta_disk_space_capture_indexed_bounded(Space *target,cons
         indexes_free(source->indexes,index_count);cetta_disk_buffer_free(&source->prefix);free(source);return status;
     }
     source->count=count;source->maximum_bytes=maximum_bytes;
-    atomic_init(&source->statistics.scans,0);atomic_init(&source->statistics.indexed,0);
-    atomic_init(&source->statistics.candidates,0);atomic_init(&source->statistics.bytes,0);atomic_init(&source->statistics.overflow,false);
+    source->statistics=calloc(1,sizeof(*source->statistics));
+    if (!source->statistics) {
+        cetta_disk_store_view_close(source->view);indexes_free(source->indexes,source->index_count);
+        cetta_disk_buffer_free(&source->prefix);free(source);return CETTA_STORE_NOMEM;
+    }
+    atomic_init(&source->statistics->references,1);
+    atomic_init(&source->statistics->scans,0);atomic_init(&source->statistics->indexed,0);
+    atomic_init(&source->statistics->candidates,0);atomic_init(&source->statistics->bytes,0);atomic_init(&source->statistics->overflow,false);
     target->match_backend.kind=SPACE_ENGINE_SOURCE;target->match_backend.ops=&source_ops;target->match_backend.source=source;
     space_read_view_invalidate(target);return CETTA_STORE_OK;
 }
@@ -382,7 +461,7 @@ CettaDiskStoreStatus cetta_disk_space_capture_point(Space *target,const CettaDis
 CettaDiskStoreStatus cetta_disk_space_capture_point_bounded(Space *target,const CettaDiskStoreView *view,
         CettaDiskBytes key,size_t maximum_bytes) {
     if (!view || (key.size && !key.data)) return CETTA_STORE_INVALID;
-    CettaDiskBlob value;CettaDiskStatus found=cetta_disk_lookup(cetta_disk_store_view_root(view),key,&value);
+    CettaDiskStoreBlob value;CettaDiskStatus found=cetta_disk_store_lookup(view,key,&value);
     if (found!=CETTA_DISK_OK) return found==CETTA_DISK_ABSENT ? CETTA_STORE_ABSENT :
         found==CETTA_DISK_NOMEM ? CETTA_STORE_NOMEM : found==CETTA_DISK_IO ? CETTA_STORE_IO :
         found==CETTA_DISK_LIMIT ? CETTA_STORE_LIMIT : CETTA_STORE_CORRUPT;

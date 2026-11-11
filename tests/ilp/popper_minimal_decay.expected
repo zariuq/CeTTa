@@ -1,0 +1,7 @@
+true
+true
+true
+true
+true
+true
+(solution 9 ((rule "next_value(V0,V1)" "noop(V3),my_succ(V1,V2),true_value(V0,V2),does(V0,V4,V3)") (rule "next_value(V0,V1)" "c5(V1),press_button(V3),does(V0,V2,V3)")))

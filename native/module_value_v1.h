@@ -4,6 +4,11 @@
 #include "lbnf_document_v1.h"
 #include "gslt_composition_v1.h"
 
+/* Observe opaque module/1 export specifications and their record fields.
+ * Found/absent/malformed are distinct; observation grants no execution. */
+Atom *cetta_module_portable_export_v1(Arena *, Atom *, Atom *);
+Atom *cetta_module_portable_field_v1(Arena *, Atom *, Atom *);
+
 /* Historical module declarations are ordinary immutable data. This
  * frontend consumes the existing parser's labelled trees and introduces no
  * text parser. Source locations are held in a separate ordered source map. */

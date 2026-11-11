@@ -5,6 +5,8 @@
 #include "parser.h"
 #include "petta_search_machine.h"
 #include "space_source_overlay.h"
+#include "space_source_snapshot.h"
+#include "source_owner.h"
 #include "storage_census.h"
 #include <assert.h>
 #include <stdio.h>
@@ -138,8 +140,132 @@ static CettaMatchCompletion edge_a(Atom *value, Atom *unused) {
              ? CETTA_MATCH_MATCHED
              : CETTA_MATCH_REFUTED;
 }
+static Atom *candidate_packet(CettaCandidateCursor *cursor,uint64_t sequence,bool identity,size_t length,Arena *arena) {
+  unsigned char *packet=malloc(length ? length : 1);assert(packet);
+  size_t at=0;
+  while(at<length) {
+    const unsigned char *bytes=NULL;size_t n=0;
+    assert(cetta_candidate_cursor_read(cursor,sequence,identity,at,257,&bytes,&n)==CETTA_CANDIDATE_OK && n && n<=257);
+    memcpy(packet+at,bytes,n);at+=n;
+  }
+  Atom *value=NULL;assert(cetta_atom_wire_decode_bounded(arena,packet,length,2u*1024u*1024u,&value)==ATOM_WIRE_OK);
+  free(packet);return value;
+}
+static void original_candidates(const char *path,TermUniverse *universe,Arena *data) {
+  Space space;space_init_with_universe(&space,universe);
+  assert(cetta_act_space_capture(&space,path,2u*1024u*1024u)==CETTA_ACT_OK);
+  uint64_t count=space_length64(&space);CettaOccurrenceSource *source=NULL;
+  assert(cetta_occurrence_source_open(&space,2u*1024u*1024u,&source)==CETTA_CANDIDATE_OK);
+  assert(cetta_occurrence_source_count(source)==count && cetta_occurrence_source_limit(source)==2u*1024u*1024u);
+  CettaCandidateCursor *all=NULL,*selected=NULL,*clone=NULL;
+  assert(cetta_candidate_cursor_open(source,NULL,&all)==CETTA_CANDIDATE_OK);
+  assert(cetta_candidate_cursor_open(source,parse(data,"(rel one $to)"),&selected)==CETTA_CANDIDATE_OK);
+  cetta_occurrence_source_release(source);space_free(&space);
+  CettaCandidateRow row;
+  assert(cetta_candidate_cursor_next(all,0,0,&row)==CETTA_CANDIDATE_PROGRESS && row.body_bytes==0);
+  assert(cetta_candidate_cursor_next(all,0,1,&row)==CETTA_CANDIDATE_ROW);
+  CettaCandidateRow replay;assert(cetta_candidate_cursor_next(all,0,1,&replay)==CETTA_CANDIDATE_ROW && replay.body_bytes==row.body_bytes);
+  assert(cetta_candidate_cursor_clone(all,false,&clone)==CETTA_CANDIDATE_OK);
+  cetta_candidate_cursor_close(all);
+  Arena packet;arena_init_detached(&packet);ArenaMark empty=arena_mark(&packet);
+  Atom *first=candidate_packet(clone,0,false,row.body_bytes,&packet);assert(first && first->kind==ATOM_EXPR && atom_is_symbol(first->expr.elems[0],"edge"));
+  for(uint64_t i=1;i<count;i++) assert(cetta_candidate_cursor_next(clone,i,1,&row)==CETTA_CANDIDATE_ROW);
+  assert(cetta_candidate_cursor_next(clone,count,1,&row)==CETTA_CANDIDATE_END);
+  CettaCandidateCursor *rewound=NULL;assert(cetta_candidate_cursor_clone(clone,true,&rewound)==CETTA_CANDIDATE_OK);
+  assert(cetta_candidate_cursor_next(rewound,0,1,&row)==CETTA_CANDIDATE_ROW);cetta_candidate_cursor_close(rewound);cetta_candidate_cursor_close(clone);
+  uint64_t seen=0;bool open_fact=false;CettaCandidateStatus status;
+  while((status=cetta_candidate_cursor_next(selected,seen,1,&row))==CETTA_CANDIDATE_ROW) {
+    arena_reset(&packet,empty);
+    Atom *body=candidate_packet(selected,seen,false,row.body_bytes,&packet);
+    Atom *identity=candidate_packet(selected,seen,true,row.identity_bytes,&packet);assert(identity && !atom_has_vars(identity));
+    if(body->kind==ATOM_EXPR && atom_is_symbol(body->expr.elems[0],"rel")) {
+      assert(body->expr.elems[1]->kind==ATOM_VAR && body->expr.elems[2]->kind==ATOM_VAR);
+      assert(var_id_eq(body->expr.elems[1]->var_id,body->expr.elems[2]->var_id));open_fact=true;
+    }
+    ++seen;
+  }
+  assert(status==CETTA_CANDIDATE_END && open_fact && seen>=2);
+  assert(cetta_candidate_cursor_cancel(selected)==CETTA_CANDIDATE_CANCELLED);
+  assert(cetta_candidate_cursor_next(selected,0,1,&row)==CETTA_CANDIDATE_CANCELLED);
+  assert(cetta_candidate_cursor_clone(selected,true,&clone)==CETTA_CANDIDATE_CANCELLED && !clone);
+  cetta_candidate_cursor_close(selected);arena_free(&packet);
+}
+typedef struct { Arena arena;Atom *row;CettaIndex next; } PositionalRows;
+static void positional_free(void *raw) {
+  PositionalRows *p=raw;if (p) {arena_free(&p->arena);free(p);}
+}
+static bool positional_copy(Atom *row,CettaIndex next,void **out) {
+  PositionalRows *p=calloc(1,sizeof(*p));if (!p) return false;
+  arena_init_detached(&p->arena);p->row=atom_deep_copy(&p->arena,row);p->next=next;
+  if (!p->row) {positional_free(p);return false;}*out=p;return true;
+}
+static bool positional_clone(const void *raw,bool rewind,void **out) {
+  const PositionalRows *p=raw;return positional_copy(p->row,rewind ? 0 : p->next,out);
+}
+static bool positional_open(Space *space,Atom *pattern,void **out,SpaceOccurrenceCursorStep *failure) {
+  (void)pattern;(void)failure;return positional_copy(space->match_backend.source,0,out);
+}
+static SpaceOccurrenceCursorStep positional_next(void *raw,CettaIndex *index) {
+  PositionalRows *p=raw;if(p->next==2)return SPACE_OCCURRENCE_CURSOR_END;
+  *index=p->next++;return SPACE_OCCURRENCE_CURSOR_ITEM;
+}
+static Atom *positional_atom(const void *raw,CettaIndex index) {
+  const PositionalRows *p=raw;return p->next && index==p->next-1 ? p->row : NULL;
+}
+static uint64_t positional_count(const Space *space) {(void)space;return 2;}
+static const SpaceSourceCursorOps positional_rows={.clone=positional_clone,.next=positional_next,
+  .atom=positional_atom,.free=positional_free};
+static const SpaceMatchBackendOps positional_source={.name="test-positional-rows",.occurrence_ops=&positional_rows,
+  .occurrence_open=positional_open,.logical_len=positional_count};
+static void positional_snapshot(const char *path,TermUniverse *universe,Arena *data) {
+  Space source,target;space_init_with_universe(&source,universe);space_init_with_universe(&target,universe);
+  source.match_backend.kind=SPACE_ENGINE_SOURCE;source.match_backend.ops=&positional_source;
+  source.match_backend.source=parse(data,"(positional duplicate)");
+  CettaOccurrenceSource *captured=NULL;CettaCandidateCursor *left=NULL,*right=NULL;
+  assert(cetta_occurrence_source_open(&source,CETTA_ATOM_WIRE_BYTES,&captured)==CETTA_CANDIDATE_OK);
+  assert(cetta_candidate_cursor_open(captured,NULL,&left)==CETTA_CANDIDATE_OK);
+  assert(cetta_candidate_cursor_open(captured,NULL,&right)==CETTA_CANDIDATE_OK);
+  cetta_occurrence_source_release(captured);CettaCandidateRow row;
+  assert(cetta_candidate_cursor_next(left,0,1,&row)==CETTA_CANDIDATE_ROW);
+  assert(cetta_candidate_cursor_next(right,0,1,&row)==CETTA_CANDIDATE_ROW);
+  Arena identities;arena_init_detached(&identities);
+  Atom *a=candidate_packet(left,0,true,row.identity_bytes,&identities),*b=candidate_packet(right,0,true,row.identity_bytes,&identities);
+  assert(atom_eq(a,b) && a->kind==ATOM_EXPR && atom_is_symbol(a->expr.elems[0],"SpaceOccurrenceIdV1"));
+  cetta_candidate_cursor_close(left);cetta_candidate_cursor_close(right);arena_free(&identities);
+  size_t n=strlen(path)+17;char *copy=malloc(n);assert(copy);snprintf(copy,n,"%s.positional",path);
+  assert(cetta_act_space_dump(&source,copy,false,CETTA_ATOM_WIRE_BYTES)==CETTA_ACT_OK);
+  assert(cetta_act_space_capture(&target,copy,CETTA_ATOM_WIRE_BYTES)==CETTA_ACT_OK);
+  SpaceOccurrenceCursor cursor;assert(space_occurrence_cursor_init_scan(&target,&cursor));CettaIndex index;
+  Arena ids;arena_init_detached(&ids);
+  for (unsigned i=0;i<2;i++) {
+    assert(space_occurrence_cursor_next(&cursor,&index,NULL)==SPACE_OCCURRENCE_CURSOR_ITEM);
+    Atom *id=space_occurrence_cursor_identity(&cursor,index,&ids);
+    assert(id && id->kind==ATOM_EXPR && id->expr.len==3 && atom_is_symbol(id->expr.elems[0],"SpaceOccurrenceIdV1"));
+    assert(id->expr.elems[2]->ground.ival==(int64_t)i);
+  }
+  space_occurrence_cursor_release(&cursor);arena_free(&ids);space_free(&source);space_free(&target);assert(!unlink(copy));free(copy);
+}
+static void wide_snapshot(const char *path,TermUniverse *universe,Arena *data) {
+  Space source,snapshot,workspace,nested,second;
+  space_init_with_universe(&source,universe);space_init_with_universe(&snapshot,universe);
+  space_init_with_universe(&workspace,universe);space_init_with_universe(&nested,universe);
+  space_init_with_universe(&second,universe);
+  assert(cetta_act_space_capture(&source,path,2u*1024u*1024u)==CETTA_ACT_OK);
+  uint64_t base=space_length64(&source);
+  assert(space_source_snapshot_init(&snapshot,&source));
+  assert(space_init_overlay_local(&workspace,&snapshot));
+  space_free(&source);space_free(&snapshot);
+  size_t n=1024u*1024u+17;char *bytes=malloc(n);assert(bytes);memset(bytes,'w',n);
+  Atom *large=atom_string_n(data,bytes,n);free(bytes);
+  assert(space_admit_atom(&workspace,data,large) && space_length64(&workspace)==base+1);
+  assert(space_source_snapshot_init(&nested,&workspace));
+  assert(space_init_overlay_local(&second,&nested));
+  space_free(&nested);space_free(&workspace);
+  assert(space_admit_atom(&second,data,large) && space_length64(&second)==base+2);
+  space_free(&second);
+}
 int main(int argc, char **argv) {
-  assert(argc == 3 || argc == 4);
+  assert(argc >= 3 && argc <= 5);
   SymbolTable symbols;
   symbol_table_init(&symbols);
   symbol_table_init_builtins(&symbols, &g_builtin_syms);
@@ -155,7 +281,41 @@ int main(int argc, char **argv) {
   space_init_with_universe(&actual, &universe);
   bool actual_freed = false;
   CettaActStatus status;
-  if (!strcmp(argv[1], "bench")) {
+  if (!strcmp(argv[1], "verify-generated")) {
+    assert(argc==4 || argc==5);
+    uint64_t count=strtoull(argv[3],NULL,10),seen=0;
+    size_t width=argc==5 ? (size_t)strtoull(argv[4],NULL,10) : 512;
+    assert(count<=SIZE_MAX && count<=INT64_MAX);
+    unsigned char *present=calloc((size_t)(count/8)+1,1);assert(present);
+    assert(cetta_act_space_capture(&actual,argv[2],CETTA_ATOM_WIRE_BYTES)==CETTA_ACT_OK);
+    SpaceOccurrenceCursor cursor;assert(space_occurrence_cursor_init_scan(&actual,&cursor));
+    CettaIndex index;Atom *row;SpaceOccurrenceCursorStep step;
+    while ((step=space_occurrence_cursor_next(&cursor,&index,&row))!=SPACE_OCCURRENCE_CURSOR_END) {
+      if (step==SPACE_OCCURRENCE_CURSOR_PROGRESS) continue;
+      assert(step==SPACE_OCCURRENCE_CURSOR_ITEM && row->kind==ATOM_EXPR && row->expr.len==3);
+      assert(atom_is_symbol(row->expr.elems[0],"row"));
+      Atom *number=row->expr.elems[1],*body=row->expr.elems[2];
+      assert(number->kind==ATOM_GROUNDED && number->ground.gkind==GV_INT && number->ground.ival>=0);
+      uint64_t ordinal=(uint64_t)number->ground.ival;assert(ordinal<count);
+      unsigned char bit=(unsigned char)(1u<<(ordinal%8));assert(!(present[ordinal/8]&bit));present[ordinal/8]|=bit;
+      assert(body->kind==ATOM_GROUNDED && body->ground.gkind==GV_STRING && atom_string_len(body)==width);
+      for(size_t i=0;i<width;i++) assert(body->ground.sval[i]=='g');
+      ++seen;
+    }
+    assert(seen==count);space_occurrence_cursor_release(&cursor);free(present);
+    printf("ACT_VERIFIED_GENERATED rows=%llu\n",(unsigned long long)seen);
+  } else if (!strcmp(argv[1], "generate")) {
+    assert(argc==4 || argc==5);
+    uint64_t count=strtoull(argv[3],NULL,10);
+    size_t width=argc==5 ? (size_t)strtoull(argv[4],NULL,10) : 512;
+    assert(count<=INT64_MAX && width<CETTA_ATOM_WIRE_BYTES/2);
+    char *payload=malloc(width ? width : 1);assert(payload);memset(payload,'g',width);
+    Atom *body=atom_string_n(&data,payload,width),*head=atom_symbol(&data,"row");free(payload);
+    for(uint64_t i=0;i<count;i++)assert(space_admit_atom(&expected,&data,
+      atom_expr3(&data,head,atom_int(&data,(int64_t)i),body)));
+    assert(cetta_act_space_dump(&expected,argv[2],false,CETTA_ATOM_WIRE_BYTES)==CETTA_ACT_OK);
+    printf("ACT_GENERATED rows=%llu\n",(unsigned long long)count);
+  } else if (!strcmp(argv[1], "bench")) {
     size_t count = argc == 4 ? (size_t)strtoull(argv[3], NULL, 10) : 65536;
     assert(count && count <= INT64_MAX);
     Atom *head = atom_symbol(&data, "row");
@@ -195,6 +355,41 @@ int main(int argc, char **argv) {
            "validate_open_s=%.3f\n",
            count, (unsigned long long)st.st_size, (double)st.st_size / count,
            dumped - began, opened - dumped);
+  } else if (!strcmp(argv[1], "stream")) {
+    size_t count=argc==4 ? (size_t)strtoull(argv[3],NULL,10) : 12000;
+    fill(&expected,&data);
+    for (size_t i=0;i<count;i++) {
+      char key[64];snprintf(key,sizeof(key),"shared-prefix-row-%016llx",(unsigned long long)(i%997));
+      assert(space_admit_atom(&expected,&data,atom_expr3(&data,atom_symbol(&data,"row"),
+          atom_string(&data,key),atom_int(&data,(int64_t)(i%127)))));
+    }
+    assert(cetta_act_space_dump(&expected,argv[2],false,CETTA_ATOM_WIRE_BYTES)==CETTA_ACT_OK);
+    assert(cetta_act_space_capture(&actual,argv[2],CETTA_ATOM_WIRE_BYTES)==CETTA_ACT_OK);
+    Space saved;space_init_with_universe(&saved,&universe);
+    assert(space_source_snapshot_init(&saved,&actual));
+    CettaActSpaceExport *job=NULL;
+    assert(cetta_act_space_export_open(&actual,argv[2],false,CETTA_ATOM_WIRE_BYTES,1024*1024,&job)==CETTA_ACT_OK);
+    space_free(&actual);actual_freed=true;
+    assert(cetta_act_space_export_step(job,0)==CETTA_ACT_PROGRESS);
+    size_t steps=0,peak=0;
+    do {
+      status=cetta_act_space_export_step(job,4096);
+      CettaActSpaceExportInfo info;assert(cetta_act_space_export_info(job,&info));
+      if (info.heap_bytes>peak) peak=info.heap_bytes;
+      assert(++steps<10000000);
+    } while(status==CETTA_ACT_PROGRESS);
+    assert(status==CETTA_ACT_OK && peak<2*1024*1024);
+    cetta_act_space_export_close(job);
+    space_init_with_universe(&actual,&universe);actual_freed=false;
+    assert(cetta_act_space_capture(&actual,argv[2],CETTA_ATOM_WIRE_BYTES)==CETTA_ACT_OK);
+    assert(equal_spaces(&saved,&actual,true)==count+17);
+    assert(equal_spaces(&expected,&actual,false)==count+17);
+    Space workspace;space_init_with_universe(&workspace,&universe);
+    assert(space_init_overlay_local(&workspace,&saved));
+    assert(space_admit_atom(&workspace,&data,parse(&data,"(snapshot local)")));
+    assert(space_length64(&saved)==count+17 && space_length64(&workspace)==count+18);
+    space_free(&workspace);space_free(&saved);
+    fprintf(stderr,"stream export: rows=%zu steps=%zu auxiliary_peak=%zu\n",count+17,steps,peak);
   } else if (!strcmp(argv[1], "reject")) {
     status = cetta_act_space_capture(&actual, argv[2], CETTA_ATOM_WIRE_BYTES);
     assert(status == CETTA_ACT_CORRUPT);
@@ -208,6 +403,9 @@ int main(int argc, char **argv) {
     fill(&expected, &data);
     assert(cetta_act_space_dump(&expected, argv[2], false,
                                 CETTA_ATOM_WIRE_BYTES) == CETTA_ACT_OK);
+    wide_snapshot(argv[2],&universe,&data);
+    positional_snapshot(argv[2],&universe,&data);
+    original_candidates(argv[2],&universe,&data);
   } else {
     /* Reopening with a different symbol-table history must preserve bytes. */
     for (unsigned i = 0; i < 100; i++) {

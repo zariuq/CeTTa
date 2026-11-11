@@ -48,6 +48,12 @@ if __name__ == '__main__':
                  ('Escape', 'DB_ESCAPE_CLOSED_OK'), ('SpaceRemove', 'DB_REMOVE_OK'), ('Page', 'DB_PAGE_OK'), ('QueryData', 'DB_QUERY_DATA_OK'), ('Resolve', 'DB_RESOLVE_OK'), ('Convenience', 'DB_CONVENIENCE_OK'), ('LocalRead', 'DB_LOCAL_READ_OK'), ('CloseBody', 'DB_CLOSED_BODY_REFUSED_OK'), ('Nested', 'DB_NESTED_REFUSED_OK'), ('RawNested', 'DB_RAW_NESTED_REFUSED_OK'), ('OtherDomain', 'DB_OTHER_DOMAIN_OK'), ('RaisedError', 'DB_RAISED_ERROR_OK'), ('Cycle', 'DB_CYCLE_OK')]
         results = [check_case(args.binary.resolve(), directory, case, expected) for case, expected in cases]
         results.append(check_case(args.binary.resolve(), directory, 'ActTransfer', 'DB_ACT_TRANSFER_OK'))
+        results.append(check_case(args.binary.resolve(), directory, 'ActMaintenance', 'DB_ACT_MAINTENANCE_OK'))
+        results.append(check_case(args.binary.resolve(), directory, 'CooperativeCompaction', 'DB_COOPERATIVE_COMPACTION_OK'))
+        results.append(check_case(args.binary.resolve(), directory, 'ActFile', 'DB_ACT_FILE_OK'))
+        results.append(check_case(args.binary.resolve(), directory, 'ActExportJob', 'DB_ACT_EXPORT_JOB_OK'))
+        results.append(check_case(args.binary.resolve(), directory, 'Candidates', 'DB_CANDIDATES_OK'))
+        results.append(check_case(args.binary.resolve(), directory, 'SourceOrigin', 'DB_SOURCE_ORIGIN_OK'))
         named = directory / 'named-script.metta'
         named.write_text('!(import! &self (library db))\n'
             + '!(import! &self (library system))\n'

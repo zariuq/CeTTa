@@ -29,6 +29,9 @@ enum {
     CETTA_SYMBOL_FLAG_BUILTIN_CONSTRUCTOR = 1u << 6,
     CETTA_SYMBOL_FLAG_LIBRARY_NATIVE_OP = 1u << 7,
     CETTA_SYMBOL_FLAG_CORE_GROUNDED_OP = 1u << 8,
+    /* Negative result of the transform-name classifier, owned by this table.
+     * IDs are never reused, so the flag cannot outlive its symbol. */
+    CETTA_SYMBOL_FLAG_NOT_TRANSFORM_NAME = 1u << 9,
 };
 
 typedef struct {
@@ -290,6 +293,7 @@ static inline SymbolSpelling symbol_spelling(
     X(git_import_bang, "git-import!") \
     X(register_module_bang, "register-module!") \
     X(import_bang, "import!") \
+    X(import_as_bang, "import-as!") \
     X(include, "include") \
     X(module_parse_failed, "ModuleParseFailed") \
     X(mod_space_bang, "mod-space!") \
@@ -448,7 +452,6 @@ static inline SymbolSpelling symbol_spelling(
     X(minimal_sum_by, "_minimal-sum-by") \
     X(minimal_foldl_atom, "_minimal-foldl-atom") \
     X(minimal_foldl_llist, "_minimal-foldl-llist") \
-    X(minimal_foldl_sequence, "_minimal-foldl-sequence") \
     X(minimal_space_contains_exact, "_minimal-space-contains-exact") \
     X(minimal_space_revision, "_minimal-space-revision") \
     X(collapse_add_next, "_collapse-add-next-atom-from-collapse-bind-result") \
@@ -899,9 +902,35 @@ static inline SymbolSpelling symbol_spelling(
     X(work_route, "work-route") \
     X(work_count, "work-count") \
     X(work_exists, "work-exists") \
+    X(op_neq, "!=") \
+    X(tensor_dot_bounds, "tensor:dot-bounds") \
+    X(tensor_matvec_bounds, "tensor:matvec-bounds") \
     X(lib_proc_write, "__cetta_lib_proc_write") \
     X(lib_proc_read, "__cetta_lib_proc_read") \
-    X(lib_proc_close_input, "__cetta_lib_proc_close_input")
+    X(lib_proc_close_input, "__cetta_lib_proc_close_input") \
+    X(petta_machine_spelling, "__petta_machine") \
+    X(lib_asp_solve, "__cetta_lib_asp_solve") \
+    X(lib_asp_models, "__cetta_lib_asp_models") \
+    X(lib_clingo_ground, "__cetta_lib_clingo_ground") \
+    X(lib_clingo_models, "__cetta_lib_clingo_models") \
+    X(lib_clingo_solve, "__cetta_lib_clingo_solve") \
+    X(lib_asp_trace, "__cetta_lib_asp_trace") \
+    X(lib_asp_distinct, "__cetta_lib_asp_distinct") \
+    X(lib_asp_start, "__cetta_lib_asp_start") \
+    X(lib_asp_step, "__cetta_lib_asp_step") \
+    X(lib_asp_state, "__cetta_lib_asp_state") \
+    X(lib_asp_close, "__cetta_lib_asp_close") \
+    X(lib_asp_next, "__cetta_lib_asp_next") \
+    X(lib_asp_constrain, "__cetta_lib_asp_constrain") \
+    X(lib_asp_injections, "__cetta_lib_asp_injections") \
+    X(lib_asp_decide, "__cetta_lib_asp_decide") \
+    X(lib_asp_nogoods, "__cetta_lib_asp_nogoods") \
+    X(lib_sat_solve, "__cetta_lib_sat_solve") \
+    X(lib_sat_models, "__cetta_lib_sat_models") \
+    X(lib_ipasir_solve, "__cetta_lib_ipasir_solve") \
+    X(lib_ipasir_models, "__cetta_lib_ipasir_models") \
+    X(lib_provenance_supports, "__cetta_lib_provenance_supports") \
+    X(lib_provenance_supports_each, "__cetta_lib_provenance_supports_each")
 
 /* Identity, dialect ownership and constructor role are separate facts.
  * These columns supplement the registered vocabulary without changing IDs. */
@@ -933,7 +962,8 @@ static inline SymbolSpelling symbol_spelling(
     X(tensor_entries) X(tensor_gather) X(tensor_gather_rows) X(tensor_where) X(tensor_merge) \
     X(tensor_scan_sum) X(tensor_concatenate) X(tensor_permute) \
     X(tensor_copy) X(tensor_convert) X(tensor_cast) X(tensor_promote) X(tensor_view) X(tensor_reshape) X(tensor_sum) \
-    X(tensor_matvec) X(tensor_top_k) X(tensor_encode) X(tensor_decode) \
+    X(tensor_matvec) X(tensor_dot_bounds) X(tensor_matvec_bounds) \
+    X(tensor_top_k) X(tensor_encode) X(tensor_decode) \
     X(tensor_encode_bytes) X(tensor_decode_bytes) \
     X(tensor_builder) X(tensor_put) X(tensor_freeze) X(tensor_freeze_log) X(tensor_close) \
     X(tensor_all_finite) X(tensor_normalize) X(tensor_cosine_index) \
@@ -994,7 +1024,6 @@ static inline SymbolSpelling symbol_spelling(
     X(minimal_sum_by) \
     X(minimal_foldl_atom) \
     X(minimal_foldl_llist) \
-    X(minimal_foldl_sequence) \
     X(minimal_space_contains_exact) \
     X(minimal_space_revision) \
     X(collapse_add_next) \
@@ -1182,7 +1211,6 @@ static inline SymbolSpelling symbol_spelling(
     X(sealed_text) \
     X(minimal_foldl_atom) \
     X(minimal_foldl_llist) \
-    X(minimal_foldl_sequence) \
     X(minimal_retain_top_k_by_number) \
     X(minimal_space_contains_exact) \
     X(minimal_space_revision) \
@@ -1213,8 +1241,8 @@ typedef struct {
 #undef CETTA_BUILTIN_SYMBOL_FIELD
 } BuiltinSyms;
 
-extern SymbolTable *g_symbols;
-extern BuiltinSyms g_builtin_syms;
+extern _Thread_local SymbolTable *g_symbols;
+extern _Thread_local BuiltinSyms g_builtin_syms;
 
 /* Registration flags identify the builtin vocabulary independently of IDs.
  * Executable membership additionally depends on dialect and constructor role;
@@ -1231,12 +1259,25 @@ bool symbol_id_is_builtin_for(SymbolId id, CettaLanguageId language);
 uint64_t cetta_placement_key_next(void);
 
 void symbol_table_init(SymbolTable *st);
+/* Failed initialization releases acquired storage. No free is needed on
+ * failure; a successful table requires symbol_table_free. errno retains
+ * the allocation, mutex or identity-capacity cause. */
+bool symbol_table_try_init(SymbolTable *st);
 void symbol_table_free(SymbolTable *st);
 void symbol_table_init_builtins(SymbolTable *st, BuiltinSyms *builtins);
+/* On failure, builtins is zero and the table retains its interned prefix. */
+bool symbol_table_try_init_builtins(SymbolTable *st, BuiltinSyms *builtins);
 
+/* A span of bytes names a symbol, the empty span included: the empty name is
+ * the symbol of name concatenation's identity (bytes may be NULL when len is
+ * 0).  The C-string entry points below name symbols from C literals and
+ * refuse "". */
 SymbolId symbol_intern_bytes(SymbolTable *st, const uint8_t *bytes, uint32_t len);
 SymbolId symbol_intern_span_hashed(SymbolTable *st, const uint8_t *bytes,
                                    uint32_t len, uint64_t hash);
+/* Return NONE with errno describing allocation/identity refusal. */
+SymbolId symbol_try_intern_span_hashed(SymbolTable *st, const uint8_t *, uint32_t, uint64_t);
+SymbolId symbol_try_intern_cstr(SymbolTable *st, const char *text);
 SymbolId symbol_intern_cstr(SymbolTable *st, const char *text);
 /* Data births preserve the same spelling, ID equality and hash as owned
  * interning. An owned intern of an existing data spelling promotes it;
@@ -1265,6 +1306,8 @@ uint32_t symbol_len(const SymbolTable *st, SymbolId id);
 int symbol_compare(const SymbolTable *st, SymbolId left, SymbolId right);
 uint64_t symbol_hash_value(const SymbolTable *st, SymbolId id);
 uint32_t symbol_flags(const SymbolTable *st, SymbolId id);
+/* Classification flags are monotonic within a table incarnation. */
+void symbol_table_add_flags(SymbolTable *st, SymbolId id, uint32_t flags);
 uint32_t symbol_builtin_policy(const SymbolTable *st, SymbolId id);
 /* The value depends only on the name, so concurrent callers record the same. */
 void symbol_set_builtin_policy(SymbolTable *st, SymbolId id, uint32_t value);
@@ -1295,4 +1338,5 @@ typedef enum {
 
 CettaPettaArrowMode cetta_petta_arrow_mode(SymbolId id);
 
+#include "native_memory.h"
 #endif /* CETTA_SYMBOL_H */

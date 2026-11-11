@@ -1,6 +1,7 @@
 #include "atom.h"
 #include "library.h"
 #include "native_handle.h"
+#include "runtime_names.h"
 #include <assert.h>
 #include <pthread.h>
 #include <stdatomic.h>
@@ -185,6 +186,7 @@ static void use_gate_free(UseGate *gate) {
 typedef struct {
     CettaLibraryContext *context;
     Atom *holder;
+    CettaNameContext names;
     UseGate gate;
     bool close_first;
     CettaNativeHandleUseMode mode;
@@ -192,6 +194,10 @@ typedef struct {
 
 static void *use_worker(void *raw) {
     UseWorker *worker = raw;
+    /* The holder's symbol IDs belong to the creating runtime. Borrow that
+     * name domain just as the executor does when transporting a task. */
+    CettaNameContext previous = cetta_name_context_current();
+    cetta_name_context_install(&worker->names);
     CettaNativeHandleUse use = {0};
     unsigned char empty[sizeof(use)];
     memcpy(empty, &use, sizeof(use));
@@ -202,6 +208,7 @@ static void *use_worker(void *raw) {
             worker->holder, worker->mode, &use));
         assert(!memcmp(empty, &use, sizeof(use)));
         use_gate_set(&worker->gate, 3u);
+        cetta_name_context_install(&previous);
         return NULL;
     }
     assert(cetta_native_handle_acquire_owned(worker->context, kind,
@@ -219,6 +226,7 @@ static void *use_worker(void *raw) {
     assert(!cetta_native_handle_use_resource(&use));
     assert(!cetta_native_handle_use_release(&use));
     use_gate_set(&worker->gate, 3u);
+    cetta_name_context_install(&previous);
     return NULL;
 }
 
@@ -240,6 +248,7 @@ static void use_order_case(bool close_first, bool reset_holder) {
     Atom *holder = cetta_native_handle_owned_atom(context, &arena, kind, id);
     assert(holder);
     UseWorker worker = {.context=context, .holder=holder, .close_first=close_first,
+                        .names=cetta_name_context_current(),
                         .mode=CETTA_NATIVE_HANDLE_USE_EXCLUSIVE};
     use_gate_init(&worker.gate);
     pthread_t thread;
@@ -293,6 +302,7 @@ static void use_overlap_case(void) {
                             {.context=context,.holder=holder}};
     pthread_t threads[2];
     for (unsigned i=0u; i<2u; ++i) {
+        workers[i].names = cetta_name_context_current();
         use_gate_init(&workers[i].gate);
         assert(!pthread_create(&threads[i], NULL, use_worker, &workers[i]));
     }
@@ -316,7 +326,9 @@ static void use_overlap_case(void) {
 
 static void use_authentication_case(void) {
     unsigned before = atomic_load(&released);
+    CettaNameContext names=cetta_name_context_current();
     CettaLibraryContext *left = use_context(), *right = use_context();
+    assert(left!=right);
     Arena arena;
     arena_init_detached(&arena);
     uint64_t a = new_resource(left), b = new_resource(right);
@@ -355,6 +367,9 @@ static void use_authentication_case(void) {
     assert(atomic_load(&released) == before + 1u);
     assert(!cetta_native_handle_acquire_owned(left, kind, holder,
         CETTA_NATIVE_HANDLE_USE_LIFETIME, &use));
+    CettaNameContext after=cetta_name_context_current();
+    assert(after.symbols==names.symbols && after.variables==names.variables &&
+        !memcmp(&after.builtins,&names.builtins,sizeof(names.builtins)));
     assert(cetta_native_handle_close(right, kind, b));
     arena_free(&arena);
     /* Both real owners are retired here; copied.self still names the real

@@ -15,6 +15,7 @@ from sexpr_atom_projection_plan_v1 import compile_artifact
 from sexpr_atom_projection_plan_v1 import HE_READER, PROJECTION
 from test_parser_pack_abi_v1 import CASES as ABI_CASES
 from test_parser_pack_abi_v1 import export_stream
+from gslt2parse_oracles_v1 import ORACLES
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -119,13 +120,8 @@ def native_answer_set(chart_binary: Path) -> tuple[str, ...]:
     return tuple(sorted(terms))
 
 
-def petta_answer_set(petta_root: Path) -> tuple[str, tuple[str, ...], str]:
-    oracle = (
-        petta_root
-        / "experiments"
-        / "gslt2parse_foundation"
-        / "semantic_text_span_oracle_v1.pl"
-    )
+def petta_answer_set() -> tuple[str, tuple[str, ...], str]:
+    oracle = ORACLES / "semantic_text_span_oracle_v1.pl"
     completed = run_process(
         [
             "swipl",
@@ -272,10 +268,10 @@ def main() -> int:
     if not petta_root.is_dir():
         raise GateFailure("paired PeTTa checkout is absent")
 
-    abi = export_stream(petta_root, ABI_CASES["he"])
+    abi = export_stream(ABI_CASES["he"])
     source_digest = abi_field(abi, "source-digest")
     native_terms = native_answer_set(chart_binary)
-    petta_source_digest, petta_terms, petta_digest = petta_answer_set(petta_root)
+    petta_source_digest, petta_terms, petta_digest = petta_answer_set()
     observed_digest = answer_digest(native_terms)
     if (
         native_terms != petta_terms

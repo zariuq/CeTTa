@@ -2,9 +2,11 @@
 #include "act_trie.h"
 #include <assert.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <dirent.h>
 #include <unistd.h>
 
 static size_t allocation, fail_allocation, syncs, fail_sync;
@@ -14,7 +16,7 @@ void *__real_calloc(size_t, size_t);
 void *__real_realloc(void *, size_t);
 ssize_t __real_write(int, const void *, size_t);
 int __real_fsync(int);
-int __real_rename(const char *, const char *);
+int __real_renameat(int,const char *,int,const char *);
 static bool denied(void) {
   return fail_allocation && ++allocation == fail_allocation;
 }
@@ -39,12 +41,27 @@ int __wrap_fsync(int fd) {
   }
   return __real_fsync(fd);
 }
-int __wrap_rename(const char *a, const char *b) {
+int __wrap_renameat(int da,const char *a,int db,const char *b) {
   if (fail_rename) {
     errno = EIO;
     return -1;
   }
-  return __real_rename(a, b);
+  return __real_renameat(da,a,db,b);
+}
+/* No staged image survives a failed publication: the image's directory holds
+ * nothing but the image. */
+static void no_staged_images(const char *path) {
+  char directory[128];
+  const char *slash = strrchr(path, '/');
+  assert(slash && (size_t)(slash - path) < sizeof directory);
+  memcpy(directory, path, (size_t)(slash - path));
+  directory[slash - path] = 0;
+  DIR *dir = opendir(directory);
+  assert(dir);
+  for (struct dirent *entry; (entry = readdir(dir));)
+    assert(!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..") ||
+           !strcmp(entry->d_name, slash + 1));
+  closedir(dir);
 }
 static uint64_t read_value(const char *path) {
   CettaActTree *tree = NULL;
@@ -87,27 +104,29 @@ int main(void) {
   assert(cetta_act_build(&item, 1, &old, &old_size) == CETTA_ACT_OK);
   item.value = 2;
   assert(cetta_act_build(&item, 1, &next, &next_size) == CETTA_ACT_OK);
-  char path[] = "runtime/act-publish-XXXXXX";
-  int fd = mkstemp(path);
-  assert(fd >= 0);
-  close(fd);
+  char staging[] = "runtime/act-publish-XXXXXX", path[64];
+  assert(mkdtemp(staging));
+  snprintf(path, sizeof path, "%s/image.act", staging);
   assert(cetta_act_publish(path, (CettaActBytes){old, old_size}) ==
          CETTA_ACT_OK);
   fail_write = true;
   assert(cetta_act_publish(path, (CettaActBytes){next, next_size}) ==
          CETTA_ACT_IO);
   fail_write = false;
+  no_staged_images(path);
   assert(read_value(path) == 1);
   syncs = 0;
   fail_sync = 1;
   assert(cetta_act_publish(path, (CettaActBytes){next, next_size}) ==
          CETTA_ACT_IO);
   fail_sync = 0;
+  no_staged_images(path);
   assert(read_value(path) == 1);
   fail_rename = true;
   assert(cetta_act_publish(path, (CettaActBytes){next, next_size}) ==
-         CETTA_ACT_IO);
+         CETTA_ACT_UNCERTAIN);
   fail_rename = false;
+  no_staged_images(path);
   assert(read_value(path) == 1);
   syncs = 0;
   fail_sync = 2;
@@ -115,10 +134,33 @@ int main(void) {
          CETTA_ACT_UNCERTAIN);
   fail_sync = 0;
   assert(read_value(path) == 2);
+  no_staged_images(path);
   unlink(path);
+  rmdir(staging);
+  /* Names remain bound to the opened directory even if its pathname moves. */
+  char directory[]="runtime/act-publication-directory-XXXXXX";assert(mkdtemp(directory));
+  char moved[128],destination[160],installed[160],sidecar[176];
+  snprintf(moved,sizeof(moved),"%s-moved",directory);
+  snprintf(destination,sizeof(destination),"%s/facts.act",directory);
+  snprintf(installed,sizeof(installed),"%s/facts.act",moved);
+  snprintf(sidecar,sizeof(sidecar),"%s.copies",destination);
+  assert(cetta_act_publish(destination,(CettaActBytes){old,old_size})==CETTA_ACT_OK);
+  int copies=open(sidecar,O_WRONLY|O_CREAT|O_EXCL,0600);assert(copies>=0);
+  assert(write(copies,"old",3)==3);close(copies);
+  CettaActPublication *publication=NULL;
+  assert(cetta_act_publication_open(destination,&publication)==CETTA_ACT_OK);
+  assert(cetta_act_publication_sidecar(publication,false)==CETTA_ACT_OK);
+  assert(write(cetta_act_publication_fd(publication),next,next_size)==(ssize_t)next_size);
+  assert(!rename(directory,moved));
+  assert(cetta_act_publication_commit(publication)==CETTA_ACT_OK);
+  assert(cetta_act_publication_sidecar(publication,true)==CETTA_ACT_OK);
+  cetta_act_publication_close(publication);
+  assert(read_value(installed)==2 && access(destination,F_OK));
+  snprintf(sidecar,sizeof(sidecar),"%s.copies",installed);assert(access(sidecar,F_OK));
+  assert(!unlink(installed) && !rmdir(moved));
   free(old);
   free(next);
-  printf("ACT faults: %zu allocation failures and four publication cutpoints\n",
+  printf("ACT faults: %zu allocation failures, four publication cutpoints and directory binding\n",
          faults);
   return 0;
 }

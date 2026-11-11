@@ -57,7 +57,7 @@ typedef struct {
     SymbolId *tag_symbol_ids;
     /* Version 5 adds immutable dense GLL preparation and the enclosing
      * general parser's symbolic grammar, policy and projection metadata.
-     * Version 4 remains byte-compatible for existing TPTP snapshots. */
+     * Version 4 remains byte-compatible for existing version-4 snapshots. */
     CettaLpNativeGllProgram gll;
     PPNativeV1TerminalPlan scalar_terminals;
     uint8_t *general_metadata;

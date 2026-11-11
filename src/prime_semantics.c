@@ -13949,6 +13949,8 @@ static Atom *prime_eq_canon_lambda(PrimeEqCanon *c, Atom *inner,
 
 static Atom *prime_eq_canon(PrimeEqCanon *c, Atom *term, bool pattern) {
     if (c->failed || !term) return term;
+    while (atom_prime_held_is(term)) term = atom_prime_held_payload(term);
+    if (!term) return term;
     /* A variable bound around is its binder's number in a pattern too: the
      * pattern refines it there. */
     if (term->kind == ATOM_VAR ||
@@ -15515,7 +15517,7 @@ Atom *prime_semantics_rules_normal_form(Arena *arena, Space *space,
         !prime_head_has_type_rule(arena, space, head))
         return NULL;
     CettaPrimeRegularKernelBudget budget;
-    cetta_prime_regular_kernel_budget_init(&budget, true, 100000u);
+    cetta_prime_regular_kernel_budget_init(&budget, false, 0u);
     PrimeRegularDeclarationContext declarations = {0};
     bool saved_open = g_prime_admit_open_parameters;
     g_prime_admit_open_parameters = false;

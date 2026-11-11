@@ -1,0 +1,32 @@
+(s inv_1)
+(foo 2 3)
+(7 x)
+("str" x)
+(a (b c))
+((a b) (c))
+(s inv_1)
+((s inv_1) (inv_1 a) (s a))
+false
+true
+done
+(foo x)
+((p q) x)
+((sub chain s) (sub chain t))
+(9 1)
+(3 x)
+25
+5
+true
+(a b)
+(quote 4)
+4
+4
+30
+2
+()
+102
+()
+(7)
+(2 7)
+yes
+()

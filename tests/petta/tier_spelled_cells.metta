@@ -1,7 +1,8 @@
-; Data spelled with `cons` and `nil`, as the parser pack's forests are: an
-; authored list pattern in a head, a `let` or a `case` reads a value spelled
-; `(cons h t)` as the cell it spells, on the open-equation tier as in the
-; machine; foldl reads only lists.  The gate runs it on both routes.
+; Data spelled with `cons` and `nil` is data, as in SWI-PeTTa: a list
+; pattern in a head, a `let` or a `case` meets a stored `(cons a (cons b nil))`
+; as the three-element expression it is, whose head is `cons`; `nil` is a
+; symbol, so the walks find no list and answer nothing, and the case answers
+; cons.  foldl reads only lists.  The gate runs it on both routes.
 
 (item (cons a (cons b nil)))
 (= (spelled) (match &self (item $l) $l))

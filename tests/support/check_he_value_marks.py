@@ -27,9 +27,9 @@ Laws checked:
         it is a whole template that unify, let, chain or match fills;
       - he: a call that comes back stuck over its evaluated arguments is a
         value; an empty answer prints nothing;
-      - open: a field of a certified value of a typed constructor (the value
-        index's one-level mark) is evaluated again once a program change
-        retires the certificates (typed-ev ... field).
+      - a value of typed constructors is marked at every node, as HE marks
+        each node it evaluates, so its fields stay values after a program
+        change (typed-ev ... index).
 
 --record <metta-repl> rewrites the expected answers: hyperon-experimental's,
 and each profile's canonical answer where it differs.

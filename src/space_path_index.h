@@ -210,6 +210,15 @@ bool space_head_index_admits(const Atom *pattern);
  * the Space keeps no such index. */
 bool space_head_index_open(Space *space, const Atom *pattern,
                            CettaSpaceHeadCursor *cursor);
+/* Retain this index only under a pinned occurrence view. No rows are lent
+ * here; first construction builds the Space's shared head projection. */
+CettaSpaceHeadIndex *space_head_index_prepare(Space *space);
+/* Candidates for exact syntactic heads at every arity, including bare
+ * symbols. Uncertain carriers are included for the caller's exact filter.
+ * The returned raw row coordinates are sorted and occurrence-preserving. */
+bool space_head_index_select_heads(const CettaSpaceHeadIndex *index,
+    const SymbolId *heads, size_t count, CettaIndex ceiling,
+    CettaIndex **rows_out, CettaCount *count_out);
 /* The cursor's next row below `ceiling` that `marks` (a bitmap over
  * [0, mark_rows), NULL when none) does not mark; false at the end. */
 bool space_head_index_next(CettaSpaceHeadCursor *cursor, CettaIndex ceiling,

@@ -28,17 +28,36 @@ installs its definitions there as well.
 Authority and reference
 -----------------------
 
+Python boolean interchange is an accepted semantic repair: both py: and
+legacy py-call map PeTTa true/false values to Python bool, including nested
+arguments and keywords. Janus's default atom-to-string rule would turn false
+into a truthy string. Quoted strings keep their string meaning. This difference
+is checked by test-python-objects. The corresponding SWI-PeTTa repair is to
+encode boolean argument leaves as Janus boolean terms before the call; it is
+an upstream repair candidate, not a change to that repository here.
+
 Explicit language decisions take precedence over settled contracts, which take
 precedence over observations of a pinned implementation. A new test or a new
 reference commit does not by itself establish the intended semantics.
 
-langdef/petta/reference.json pins the SWI source at e1db30d, libraries and their
-adaptations. tests/petta/swi_differences.metta retains numbered historical
+The reference is stable-fixed SWI-PeTTa: https://github.com/godelclaw/PeTTa,
+branch stable-fixed. langdef/petta/reference.json records the snapshot whose
+example files, libraries and adaptations the suite was qualified against.
+tests/petta/swi_differences.metta retains numbered historical
 observations and intended native outcomes. Some entries are retired or open;
 being numbered does not make an observation an approved difference. Preserve
 DIFF-14's live declarations and DIFF-10's non-executable forward declarations.
 The accepted F5 type-confirmation repair and typed-partial repair supersede the
 older Undefined fallback and partial-codomain rejection observations.
+
+String literals
+---------------
+
+The declared metta-literal-v1 projection preserves unknown escape spellings,
+reads byte and Unicode scalar escapes, and agrees with the portable module
+codec. This is an explicit CeTTa reading contract, not a claim that the
+pinned SWI-PeTTa source reader implements it. See string_literal_profiles.txt;
+raw source regions preserve guest text without applying this interpretation.
 
 Qualification
 -------------

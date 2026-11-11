@@ -1,0 +1,109 @@
+INFIX
+(NAM "/\\")
+(NUM False "780" None None)
+(NAM "left")
+DEQ
+(NAM "and")
+DOT
+INFIX
+(NAM "\\/")
+(NUM False "785" None None)
+(NAM "left")
+DEQ
+(NAM "or")
+DOT
+INFIX
+(NAM "=")
+(NUM False "502" None None)
+DEQ
+(NAM "eq")
+DOT
+INFIX
+(NAM "+")
+(NUM False "360" None None)
+(NAM "right")
+DEQ
+(NAM "add")
+DOT
+PREFIX
+(NAM "~")
+(NUM False "700" None None)
+DEQ
+(NAM "not")
+DOT
+AXIOM
+(NAM "f1")
+COLON
+(NAM "f")
+(NAM "x")
+(NAM "y")
+(NAM "=")
+(NAM "g")
+LPAREN
+(NAM "h")
+(NAM "z")
+RPAREN
+DOT
+AXIOM
+(NAM "f2")
+COLON
+(NAM "~")
+(NAM "p")
+(NAM "/\\")
+(NAM "q")
+(NAM "\\/")
+(NAM "r")
+(NAM "->")
+(NAM "s")
+DOT
+AXIOM
+(NAM "f3")
+COLON
+(NAM "x")
+(NAM "+")
+(NAM "y")
+(NAM "+")
+(NAM "z")
+(NAM "=")
+LPAREN
+(NAM "x")
+(NAM "+")
+(NAM "y")
+RPAREN
+(NAM "+")
+(NAM "z")
+DOT
+AXIOM
+(NAM "f4")
+COLON
+(NAM "p")
+(NAM "->")
+(NAM "q")
+(NAM "->")
+(NAM "r")
+DOT
+AXIOM
+(NAM "f5")
+COLON
+LPAREN
+(NAM "p")
+(NAM "->")
+(NAM "q")
+RPAREN
+(NAM "->")
+(NAM "r")
+DOT
+AXIOM
+(NAM "f6")
+COLON
+(NAM "~")
+LPAREN
+(NAM "p")
+(NAM "\\/")
+(NAM "q")
+RPAREN
+(NAM "/\\")
+(NAM "~")
+(NAM "~")
+(NAM "r")
+DOT

@@ -17,7 +17,7 @@
     ]},
     {"id": "transform", "corpus": "term-row", "family": "space-transform", "source": "lib/petta/lib_transform.metta", "queries": [
       {"call": "(let $s (new-space) (let $added (add-atom $s (p A)) (transform $s (p $x) (tag $x))))", "expected": "((tag A))"},
-      {"call": "(let $s (new-space) (let* (($a (add-atom $s (p A))) ($b (add-atom $s (p A)))) (transform $s (every (p $x)) (tag $x))))", "expected": "((tag A) (tag A))"}
+      {"call": "(let $s (new-space) (let* (($a (add-atom $s (p A))) ($b (add-atom $s (p A)))) (transform $s (all (p $x)) (tag $x))))", "expected": "((tag A) (tag A))"}
     ]},
     {"id": "scope", "corpus": "term-row", "family": "source-binding", "source": "lib/petta/lib_source_scope.metta", "queries": [
       {"call": "(source-scope:indices 4 2)", "expected": "((2 3))"},

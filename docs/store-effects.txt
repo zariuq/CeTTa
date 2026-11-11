@@ -1,0 +1,233 @@
+Store effects
+=============
+
+Scope
+-----
+
+This is the observation contract shared by public add-atom, public remove-atom,
+transform takes, and transform destination writes.  It is not a transaction
+around a whole firing.  Store construction, imports, maintained-view repair,
+backend materialization, and internal settling are not these operations; their
+low-level writes remain visible at their own call sites.
+
+An entry proposal is data, not a reservation.  It neither pins an occurrence
+for a later firing nor freezes the store.  A firing validates against the live
+store left by earlier source code, callbacks, and firings.  A prepared effect
+owns the evidence needed for one primitive publication; it does not make later
+source operations happen earlier.
+
+Operation and observation table
+-------------------------------
+
+add-atom / add-atom-nodup
+  Selection and reads
+    Resolve and materialize the destination at the call.  Reify and flatten the
+    supplied payload according to the active dialect.  add-atom-nodup alone
+    performs the existing duplicate query.  An ordinary comma expression is
+    one payload, not a sequence of writes.
+  Primitive effects
+    Admit exactly the supplied atom, or no atom for an eligible duplicate.
+    Update the store's indexes, revisions, pinned-reader views, specializer,
+    and executable metadata through their existing owners.
+  Result and failure
+    Preserve static-row, cyclic-term, type, backend, allocation, and compiled
+    definition behavior.  In particular, the PeTTa compiled-definition error
+    that currently follows a stored row is a post-publication error, not a
+    refusal that rolls the row back.  Successful add-atom answers the dialect's
+    ordinary success value; add-atom-nodup retains its separate result policy.
+  Synchronization owner
+    The active evaluator/shared-transition scope serializes source evaluation
+    and mutation.  Space publication owns derived-view and reader invalidation.
+
+PeTTa remove-atom
+  Selection and reads
+    Compare against the live logical store using PeTTa unification, including
+    stored open terms and independently freshened stored variables.  A root
+    variable retains its existing no-answer behavior.  Ground and indexed fast
+    paths select the same occurrences as the general scan.
+  Primitive effects
+    Remove every selected occurrence in one stable ordered-bag contraction,
+    including any dense-ground representation, then update derived execution
+    views for the removed rows.
+  Result and failure
+    Answer true iff at least one occurrence was removed, false for an empty
+    match.  Static/type/backend/allocation failures retain their current error
+    or interruption behavior.  No match is not an engine decline.
+  Synchronization owner
+    The removal's shared-transition guard covers selection and publication;
+    stable occurrence contraction publishes and transports retained readers.
+
+HE remove-atom
+  Selection and reads
+    Compare against the live store with HE's existing structural/value
+    equality.  Prefer the exact atom-id occurrence, with the structural path
+    as the established fallback.
+  Primitive effects
+    Remove one occurrence, never every equal occurrence.
+  Result and failure
+    Preserve HE's ordinary success result and its invalid-space, backend, and
+    mutation errors.  Absence is not transform refusal or interruption.
+  Synchronization owner
+    The active evaluator/shared-transition scope serializes the operation;
+    the selected space primitive owns publication.
+
+Transform take
+  Selection and reads
+    Revalidate every guided take against the live store at firing.  Repeated
+    takes require sufficient multiplicity; a read plus a take of the same atom
+    requires one additional copy.  Preserve PeTTa unification/open-term rules
+    and HE value/equality rules.  A proposal or instantiation alone supplies
+    no reusable validity evidence after intervening code.
+  Primitive effects, HE
+    Remove exactly the take count for each guided take, in source order.
+  Primitive effects, PeTTa
+    For each guided take, remove all rows matching it, then re-add exactly the
+    surviving copies not taken, in their existing order.  Keeps are computed
+    from the same live selection as the removal; they are not recovered by a
+    second match.  This ordered remove-all/re-add sequence is observable and
+    is not replaced by mask-only deletion.
+  Result and failure
+    A failed enabling condition produces no firing answer and publishes none
+    of that firing's takes.  Once firing begins, preserve ordered primitive
+    errors and all earlier effects.  There is no rollback on backtracking,
+    cancellation, later failure, or an invalid destination.
+  Synchronization owner
+    The firing runs in its evaluator episode.  Selection and each publication
+    share the same store-effect authority; space revisions detect unsupported
+    movement but are not a lock or a logical absence test.
+
+Transform destination write
+  Selection and reads
+    Resolve the function or space destination at its established observation
+    point, after source evaluation, template computation, and takes.  Comma
+    splitting and template evaluation remain above the store-effect boundary.
+  Primitive effects
+    Add each routed instance to the selected destination in order, using the
+    same addition contract as public add-atom.
+  Result and failure
+    Return the dialect's instance answers or routed count.  A failed later
+    destination write returns its existing error and retains completed takes
+    and earlier destination writes.  Do not preflight this error before takes.
+  Synchronization owner
+    The evaluator owns destination evaluation and ordering; each store write
+    uses the common publication authority.
+
+Prepared evidence and reuse
+---------------------------
+
+Preparation classifies the operation and retains only the selected occurrence
+identities, kept values, additions, destinations, dialect adapter, and backing
+ownership needed by that primitive.  Required receipt capacity is reserved
+before publication only when a caller requested a receipt.  Ordinary calls
+allocate no generic receipt envelope.
+
+Selection may be reused only across an exclusive, uninterrupted preparation
+and publication interval with unchanged relevant dependencies.  A stale or
+equal-replaced occurrence is revalidated by the operation's value semantics;
+physical identity is not silently substituted for equality.  Disjoint physical
+takes alone do not establish independence: keeps, absence/count/unique reads,
+bindings, permissions, freshness, and callback mutation remain dependencies.
+
+A primitive refusal publishes none of that primitive's update and returns no
+success receipt.  A rejected reprepare leaves an already-pending operation
+unchanged.  Each successful preparation has a move-safe preparation id, and a
+requested receipt is bound to that id as well as its operation kind and space;
+publication rejects a foreign receipt without clearing it or consuming either
+operation.  Batched exact ids select a dense relation fact once even when its
+id repeats, while ordinary row positions retain occurrence multiplicity.
+Receipt recording reads the prepared dense-selection flags themselves, before
+any relation update.  An error observed after publication does not erase the
+publication or earlier primitives.  Retry, no match, error, interruption, and
+route decline remain distinct outcomes.  Whole-space revision checks are a
+conservative backend mechanism, never a new semantic refusal for independent
+changes and never sufficient synchronization for concurrent writers.
+
+Fuel remains outside the primitive wrappers: one firing debit precedes all of
+its takes and destination writes, with no additional debit or fuel cutoff
+inside that ordered sequence.
+
+Implementation and contract map
+-------------------------------
+
+Public addition
+  eval_apply_space_addition_unchecked_static_from_source prepares
+  SPACE_STORE_EFFECT_ADD.  Publication calls the existing source-arena
+  admission routine; dialect checks, static-row policy, compiled-definition
+  errors, specializer updates, and executable metadata remain in their
+  established owners around that primitive.
+
+Native fused public additions
+  petta_eval_machine_add_ground_instances, petta_native_query_apply_tuples,
+  and petta_native_query_apply_holes prepare SPACE_STORE_EFFECT_ADD_BATCH over
+  their existing alpha-key, dense-tuple, and deep-hole views.  Publication uses
+  the same fused writers as before.  These are batches of source-level
+  add-atom instances, not a new rollback transaction or a record-atom receipt
+  format.  Their established per-instance order and failure behavior stand.
+
+Public PeTTa removal
+  petta_space_remove_pattern_all_impl performs the dialect selection.  Ground
+  exact rows and relation-backed facts prepare REMOVE_POSITIONS through the
+  exact-index specialization.  Ordinary data rows use that same effect with
+  validated logical positions and retained physical rows.  Other stores use
+  REMOVE_MASK.  Native-query batches of exact removals call the thin
+  space_remove_exact_ids wrapper, which is itself prepare/publish/dispose over
+  that same contract.  A dense fact that would be settled by mask contraction is
+  folded into the mask during preparation, so there is no dense-then-mask
+  partial publication.  petta_space_remove_effect_publish performs all
+  post-publication specializer and program notifications.
+
+Public HE removal
+  eval_apply_space_removal prepares REMOVE_ONE.  Publication prefers the exact
+  atom id and then uses the established structural fallback.  It removes one
+  occurrence and retains HE's separate answer/error policy.
+
+Transform takes and destinations
+  Takes enter the same dialect mutation adapters as public removal.  Eligible
+  open PeTTa takes retain their first completed selection in
+  PettaSpacePreparedRemoval and publish it once; interfering groups select
+  again.  Destination writes enter the same addition adapter as public
+  addition.  Template evaluation, comma splitting, destination evaluation, and
+  callback ordering remain above this boundary.
+
+Prepared representations
+  Position preparation validates ascending logical positions, allocates the
+  physical-row array, and checks equation/data admission before publication.
+  It retains both logical positions (presence bookkeeping) and physical rows
+  (marked deletion), transferring the caller's existing position array rather
+  than copying it.  A single exact-id selection and its dense marker stay in
+  the effect itself; only a multi-id batch allocates owned id arrays.  These
+  inline values remain valid when the evaluator moves the effect structure.
+  Mask preparation receives the already-computed selected count; without a
+  receipt it does not rescan the mask.  Receipt recording verifies that count
+  while making its required pass.  Ordinary add/remove and transform execution
+  request no receipt.
+  Prefix tokens belong only to retained positional and mask selections.
+  Addition selects no existing occurrence, and single removal deliberately
+  falls back from an exact id to value equality, so those ordinary operations
+  do not acquire or validate a prefix token.
+
+Remaining low-level writes that are not these operations
+  Store construction, resource transfer, and cloning in eval.c admit rows into
+  spaces being constructed; they are not source-level add-atom calls.
+  Namespace construction and module/view replacement similarly build or
+  replace stores rather than perform this task's four public operations.
+  Static-import loading uses the common mask removal for prior predicate rows,
+  then performs its own batch insertion and maintained-view replacement.
+  Token-space assert/erase manipulates clause registrations and token handles;
+  these are distinct operations, not public add-atom/remove-atom.
+  Collection add-atoms and private collection ingress are bulk operations with
+  their own result and admission contracts.  Prime type-declaration publication
+  is likewise a separate operation.  Ordered-space push/pop and MORK
+  space stepping are also distinct operations.  Dense promotion/settling,
+  mark settling, occurrence transport, index maintenance, and backend
+  materialization in space.c are representation work beneath these contracts,
+  not additional public-transform fallbacks.
+
+Synchronization and proof scope
+  The existing evaluator/shared-transition authority serializes preparation
+  and publication.  Read tokens distinguish append-compatible validity from a
+  rewritten prefix; they are not presented as a concurrent-writer lock.
+  The prepared effect, optional receipt, and one-shot publication correspond
+  conceptually to TcPreparedStep, TcAdmissionReceipt, and tc_commit_prepared.
+  This C implementation and its differential evidence do not constitute a C
+  correspondence proof or a concurrency safety proof.

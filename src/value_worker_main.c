@@ -147,6 +147,7 @@ int main(int argc, char **argv) {
             fputs("value service: only PeTTa handlers are qualified\n",stderr);
             goto done;
         }
+        arena_free(&scratch); arena_init(&scratch);
         rc=cetta_value_service_run(libraries,&top,&registry,&permanent,entry);
         goto done;
     }

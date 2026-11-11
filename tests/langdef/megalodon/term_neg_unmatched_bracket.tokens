@@ -1,0 +1,8 @@
+AXIOM
+(NAM "j1")
+COLON
+LBRACK
+(NAM "a")
+COMMA
+(NAM "b")
+DOT

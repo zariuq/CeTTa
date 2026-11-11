@@ -30,8 +30,8 @@ test "$(rg -c 'complete answers=2 live-before=0 live-after=1 opened=1 ' \
 test "$(rg -Fxc '(BnfLifetimeOccurrenceV1 HandleScopeStoredV1)' \
     "$scope_evidence/observed.out")" = 2
 rg -Fxq 'HandleScopeEscapedParserWorksV1' "$scope_evidence/observed.out"
-rg -Fxq '(HandleScopeEarlyCloseV1 True)' "$scope_evidence/observed.out"
-rg -Fxq '(HandleScopeSecondCloseV1 False)' "$scope_evidence/observed.out"
+rg -Fxq '(HandleScopeEarlyCloseV1 true)' "$scope_evidence/observed.out"
+rg -Fxq '(HandleScopeSecondCloseV1 false)' "$scope_evidence/observed.out"
 rg -Fxq '(BnfLifetimeContextTeardownV1 live-before=0 live-after=0 probes=4)' \
     "$scope_evidence/observed.out"
 for scope_dialect in he prime; do

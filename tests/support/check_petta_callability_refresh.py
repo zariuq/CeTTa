@@ -20,8 +20,8 @@ def main():
     observations = 0
     for options, modern in profiles:
         expected = {
-            'late_definition': '(later 41)\ntrue\n42\n' +
-                               ('42\n' if modern else '(later 41)\n'),
+            # Every version calls a definition once it is present.
+            'late_definition': '(later 41)\ntrue\n42\n42\n',
             # Foreign import makes direct calls available without refreshing
             # the MeTTa caller's earlier translation in either version.
             'late_foreign': ('(succ 41)\ntrue\n42\n(succ 41)\n' if args.lib_prolog else

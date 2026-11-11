@@ -54,6 +54,7 @@ from test_parser_pack_guarded_lexical_v1 import run_plan
 from test_parser_pack_lexical_v1 import compile_case_tags
 from test_regular_span_dfa_v1 import abi_scalar
 from test_regular_span_dfa_v1 import answer_digest
+from gslt2parse_oracles_v1 import ORACLES
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -65,25 +66,25 @@ EXPECTED_GUARDED_ANSWER_DIGEST = (
     "d751955053b1efc8611dc374e42b8b3500f0e217b8d5f5c147fa7275c7e5e44b"
 )
 EXPECTED_GUARDED_PLAN_DIGEST = (
-    "c782d8a7d08f1f4b5004855f286bbb90367c9699230a49cdcf96f5f91f03aecf"
+    "dda185ffb9d9f10c2939d6ec611cf1d6ed8084ec6844c3685e349cd64a68b760"
 )
 EXPECTED_EXECUTION_PLAN_DIGEST = (
-    "73f10ee4fb310df6006c2bce635e584eebbd4260fd2d039d3efecd2da6b56b35"
+    "a6019975436f6409d068e2d9a84705333752a83c67ddc339220e9745240b613a"
 )
 EXPECTED_CURSOR_CERTIFICATE_DIGEST = (
-    "f474ce55b85bb50dd78f33be2361a2722e732e046ae16b39b1afdabfb8e0195f"
+    "5f17034b0dcad10a328751d3e1ca29f23b1a32f9059db85b6ba5f85a67e01151"
 )
 EXPECTED_CURSOR_PROGRAM_DIGEST = (
-    "f465beefb262396a789dd2ecf3916b43dc5fc328a6e7af8f7c686f810a4cae6c"
+    "a70a6d239e96c076ccec07fb310d2f966509d4d5f16ee8c62dcf924ba7d748b7"
 )
 EXPECTED_GUARD_ACTION_COMPILER_DIGEST = (
-    "ca623a23e19f2e5369b59906ada3cbcefcfbd2ccba64dedb9c7df6e463877cbf"
+    "d4a4a541a4902c1e6015578e6caf5f7d49350be4441a070e2aec0cc5f52ae3d8"
 )
 EXPECTED_GUARD_ACTION_ANSWER_DIGEST = (
     "9c4ff108eb75369434f5058333b5d921c9da217884eeb8ea02ff26ad3d926df4"
 )
 EXPECTED_GUARD_ACTION_PROGRAM_DIGEST = (
-    "bc22bb25525c4126a82f6305742e71897f2688384577295a9f3757753adfae9e"
+    "89e7f3507b352bb24acaca25c47207591816d63f8b5a67bd3e6839478329d620"
 )
 GUARD_ACTION_COMPILER_COMPONENTS = (
     "compiler/parser_action_bytecode_compiler_v1.metta",
@@ -91,16 +92,16 @@ GUARD_ACTION_COMPILER_COMPONENTS = (
     "compiler/parser_pack_guard_action_link_v1.metta",
 )
 EXPECTED_PLAN_MATRIX_DIGEST = (
-    "732d0fb00923a3bc9c95e9af4350943027c76df3467b938409d6fbb2b1ecb749"
+    "ef09cf7055bc80fb807fcb0b0f0e529ff5251e1192dfae7a1c8fb3d93aa653b6"
 )
 EXPECTED_EXECUTION_MATRIX_DIGEST = (
-    "0369fa874a02676e1c0394277a18843f23ab147350302873573cde4e8694b8f5"
+    "ce85e8b1e4e65f67e961c9243031941edcdd4391078896b6fb315361d79a8822"
 )
 EXPECTED_SLR_SHADOW_MATRIX_DIGEST = (
     "a40e913b655e4dc9ae862bdb5733934a781213feaadc7f0d5795b2485311e2e7"
 )
 EXPECTED_CURSOR_TRACE_MATRIX_DIGEST = (
-    "4550e9fcd4abe3b44900dd47e2577babb16f967c8090d0b5bbe964a3f8e56ea9"
+    "c2b21d652f36e468117af85fc7cb096846a77a3d4ca93a53bfcd16bbb5330e06"
 )
 EXPECTED_CURSOR_SEMANTIC_MATRIX_DIGEST = (
     "e9950304bb60ce67ec0912f3bbd683f5f175ccf08f8bb98f9f3a4db7fc091dc5"
@@ -319,25 +320,25 @@ def native_guard_action_answers(chart_binary: Path) -> tuple[str, ...]:
     return tuple(str(term) for term in terms)
 
 
-def parse_petta_guarded_output(output: str) -> tuple[str, tuple[str, ...]]:
+def parse_oracle_guarded_output(output: str) -> tuple[str, tuple[str, ...]]:
     lines = output.splitlines()
     if (
         not lines
         or lines[0] != "guarded-span-oracle-v1"
         or lines[-1] != "end"
     ):
-        raise GateFailure("PeTTa HE guarded compiler framing changed")
+        raise GateFailure("Prolog-oracle HE guarded compiler framing changed")
     fields: dict[str, object] = {"answer": []}
     for line in lines[1:-1]:
         name, separator, value = line.partition("\t")
         if not separator:
-            raise GateFailure("PeTTa HE guarded compiler record is malformed")
+            raise GateFailure("Prolog-oracle HE guarded compiler record is malformed")
         if name == "answer":
             answers = fields[name]
             assert isinstance(answers, list)
             answers.append(value)
         elif name in fields:
-            raise GateFailure(f"PeTTa HE guarded compiler duplicated {name}")
+            raise GateFailure(f"Prolog-oracle HE guarded compiler duplicated {name}")
         else:
             fields[name] = value
     answers = fields["answer"]
@@ -349,19 +350,13 @@ def parse_petta_guarded_output(output: str) -> tuple[str, tuple[str, ...]]:
         or fields.get("answer-digest") != answer_digest(answers)
         or answers != sorted(answers)
     ):
-        raise GateFailure("PeTTa HE guarded compiler seals changed")
+        raise GateFailure("Prolog-oracle HE guarded compiler seals changed")
     return source_digest, tuple(answers)
 
 
-def petta_guarded_answers(
-    petta_root: Path,
+def oracle_guarded_answers(
 ) -> tuple[str, tuple[str, ...]]:
-    oracle = (
-        petta_root
-        / "experiments"
-        / "gslt2parse_foundation"
-        / "guarded_span_oracle_v1.pl"
-    )
+    oracle = ORACLES / "guarded_span_oracle_v1.pl"
     source_digest: str | None = None
     answers: list[str] = []
     for tag in GUARDED_TAGS:
@@ -386,16 +381,16 @@ def petta_guarded_answers(
         )
         if completed.returncode != 0:
             raise GateFailure(
-                "PeTTa HE guarded compiler failed: "
+                "Prolog-oracle HE guarded compiler failed: "
                 + completed.stderr.strip()
             )
-        observed_source, observed_answers = parse_petta_guarded_output(
+        observed_source, observed_answers = parse_oracle_guarded_output(
             completed.stdout
         )
         if source_digest is None:
             source_digest = observed_source
         elif source_digest != observed_source:
-            raise GateFailure("PeTTa HE guarded source digests differ by tag")
+            raise GateFailure("Prolog-oracle HE guarded source digests differ by tag")
         answers.extend(observed_answers)
     normalized = tuple(sorted(answers))
     if (
@@ -404,19 +399,14 @@ def petta_guarded_answers(
         or len(set(normalized)) != len(normalized)
         or answer_digest(normalized) != EXPECTED_GUARDED_ANSWER_DIGEST
     ):
-        raise GateFailure("PeTTa HE guarded union changed")
+        raise GateFailure("Prolog-oracle HE guarded union changed")
     return source_digest, normalized
 
 
 def negative_compiler_gates(
-    chart_binary: Path, petta_root: Path
+    chart_binary: Path
 ) -> int:
-    oracle = (
-        petta_root
-        / "experiments"
-        / "gslt2parse_foundation"
-        / "guarded_span_oracle_v1.pl"
-    )
+    oracle = ORACLES / "guarded_span_oracle_v1.pl"
     agreements = 0
     for tag in NEGATIVE_TAGS:
         row = run_compiler(
@@ -444,12 +434,12 @@ def negative_compiler_gates(
         )
         if completed.returncode != 0:
             raise GateFailure("PeTTa negative HE guarded query failed")
-        _, petta_answers = parse_petta_guarded_output(completed.stdout)
+        _, oracle_answers = parse_oracle_guarded_output(completed.stdout)
         if (
             row.get("outcome") != "NoAnswer"
             or row.get("answers") != 0
             or row.get("terms") != []
-            or petta_answers
+            or oracle_answers
         ):
             raise GateFailure(f"non-trailing HE definition {tag} was compiled")
         agreements += 1
@@ -770,8 +760,12 @@ def main() -> int:
     parser.add_argument("--scalar-exec-binary", type=Path, required=True)
     parser.add_argument("--plan-binary", type=Path, required=True)
     parser.add_argument("--exec-binary", type=Path, required=True)
-    parser.add_argument("--petta-root", type=Path, required=True)
-    parser.add_argument("--he-root", type=Path, required=True)
+    parser.add_argument("--petta-root", type=Path)
+    parser.add_argument("--he-root", type=Path)
+    # The generated cursor from this tree alone: the native compilers and
+    # CeTTa's own Prolog oracles, with their cross-checks and the emission
+    # seals, without the HE and PeTTa authority comparisons.
+    parser.add_argument("--generate-only", action="store_true")
     parser.add_argument("--probe-final-forest-growth", action="store_true")
     parser.add_argument("--probe-cursor-hybrid-growth", action="store_true")
     parser.add_argument("--probe-iterations", type=int, default=3)
@@ -779,13 +773,18 @@ def main() -> int:
     arguments = parser.parse_args()
     if arguments.probe_iterations <= 0:
         parser.error("probe-iterations must be positive")
+    if arguments.generate_only and arguments.generated_c_output is None:
+        parser.error("--generate-only needs --generated-c-output")
+    if not arguments.generate_only and (
+            arguments.petta_root is None or arguments.he_root is None):
+        parser.error("the authority comparisons need --petta-root and --he-root")
 
     chart_binary = arguments.chart_binary.resolve()
     scalar_exec_binary = arguments.scalar_exec_binary.resolve()
     plan_binary = arguments.plan_binary.resolve()
     exec_binary = arguments.exec_binary.resolve()
-    petta_root = arguments.petta_root.resolve()
-    he_root = arguments.he_root.resolve()
+    petta_root = None if arguments.generate_only else arguments.petta_root.resolve()
+    he_root = None if arguments.generate_only else arguments.he_root.resolve()
     if not all(
         path.is_file()
         for path in (
@@ -796,16 +795,16 @@ def main() -> int:
         )
     ):
         raise GateFailure("native HE guarded lexical dependency is absent")
-    if not petta_root.is_dir() or not he_root.is_dir():
-        raise GateFailure("HE or PeTTa authority checkout is absent")
-    pin_authorities(petta_root, he_root)
-
-    he_oracle = build_oracle(he_root)
-    abi = export_stream(petta_root, ABI_CASES["he"])
+    he_oracle = None
+    if not arguments.generate_only:
+        if not petta_root.is_dir() or not he_root.is_dir():
+            raise GateFailure("HE or PeTTa authority checkout is absent")
+        pin_authorities(he_root)
+        he_oracle = build_oracle(he_root)
+    abi = export_stream(ABI_CASES["he"])
     source_digest = abi_scalar(abi, "source-digest")
     lexical_terms, _, lexical_agreements = compile_case_tags(
         chart_binary,
-        petta_root,
         dict(PROFILE.lexical_case),
         source_digest,
     )
@@ -815,14 +814,14 @@ def main() -> int:
     )
     guarded_terms = native_guarded_answers(chart_binary)
     action_terms = native_guard_action_answers(chart_binary)
-    petta_source_digest, petta_guarded_terms = petta_guarded_answers(petta_root)
+    oracle_source_digest, oracle_guarded_terms = oracle_guarded_answers()
     if (
-        guarded_terms != petta_guarded_terms
-        or petta_source_digest != source_digest
+        guarded_terms != oracle_guarded_terms
+        or oracle_source_digest != source_digest
     ):
-        raise GateFailure("C and PeTTa HE guarded compiler results differ")
+        raise GateFailure("C and Prolog-oracle HE guarded compiler results differ")
     compiler_negative_agreements = negative_compiler_gates(
-        chart_binary, petta_root
+        chart_binary
     )
 
     regular_digest = sha256(REGULAR_COMPILER.read_bytes()).hexdigest()
@@ -926,6 +925,15 @@ def main() -> int:
             generated_c_path, generated_binary, generated_prefix
         )
         generated_c_source = generated_c_path.read_text(encoding="utf-8")
+        if arguments.generate_only:
+            output_path = arguments.generated_c_output.resolve()
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(generated_c_source, encoding="utf-8")
+            print(
+                "(HEReaderCursorGeneratedV1 "
+                f"{EXPECTED_CURSOR_PROGRAM_DIGEST} 0)"
+            )
+            return 0
         plan = parse_plan_stream(
             run_plan(
                 plan_binary,
@@ -956,7 +964,7 @@ def main() -> int:
             else:
                 authority_disagreements += 1
             decision = expected_decision(expected)
-            petta = run_petta(petta_root, input_path)
+            petta = run_petta(input_path)
             if petta.get("decision") != decision:
                 raise GateFailure(
                     f"ratified HE contract and PeTTa LanguageDef differ for {label}"
@@ -1439,7 +1447,7 @@ def main() -> int:
                 growth_authority_agreements += 1
                 if token_count == TOKEN_COUNTS[-1]:
                     return
-                reference = run_petta(petta_root, input_path)
+                reference = run_petta(input_path)
                 if (
                     reference.get("decision") != "accepted"
                     or row.get("gll-result") != reference.get("results")
@@ -1461,7 +1469,7 @@ def main() -> int:
                 authority = run_he_case(he_oracle, "atoms", input_path)
                 if authority != expected:
                     raise GateFailure("HE flat replay authority changed")
-                reference = run_petta(petta_root, input_path)
+                reference = run_petta(input_path)
                 if (
                     reference.get("decision") != "accepted"
                     or row.get("gll-result") != reference.get("results")

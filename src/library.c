@@ -10,6 +10,7 @@
 #include "mm2_lower.h"
 #include "mork_space_bridge_runtime.h"
 #include "native/native_modules.h"
+#include "library_transform.h"
 #include "nik_runtime.h"
 #include "parser.h"
 #include "petta_search_machine.h"
@@ -36,6 +37,8 @@
 #include "proc_capture.h"
 #include "library_fs.h"
 #include "library_postings.h"
+#include "library_asp.h"
+#include "library_provenance.h"
 #include "library_tensor.h"
 #include "library_crypto.h"
 #include "library_toml.h"
@@ -68,6 +71,30 @@
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
 #endif
+#include <stdatomic.h>
+#include <assert.h>
+
+struct CettaLibraryResourceContext {
+    atomic_uint references;
+    const char *directory, *entry_directory;
+    char bytes[];
+};
+
+struct CettaDocumentSourceScope {
+    struct CettaDocumentSourceScope *previous;
+    Space *space;
+    const char *path;
+    CettaLibraryResourceContext *resources;
+    CettaLibraryResourceScope activation;
+};
+
+static bool document_source_active(const CettaLibraryContext *ctx,
+        const Space *space, const char *path) {
+    for (const struct CettaDocumentSourceScope *scope = ctx->document_source_scope;
+            scope; scope = scope->previous)
+        if (scope->space == space && !strcmp(scope->path, path)) return true;
+    return false;
+}
 
 #ifndef CETTA_BUILD_WITH_JSON_GSLT
 #define CETTA_BUILD_WITH_JSON_GSLT 0
@@ -268,13 +295,37 @@ enum {
 /* Native modules and the store reserve the lower 44 import bits. */
 #define CETTA_LIBRARY_CRYPTO (UINT64_C(1) << 44)
 #define CETTA_LIBRARY_TOML (UINT64_C(1) << 45)
+#define CETTA_LIBRARY_LANG (UINT64_C(1) << 46)
+#define CETTA_LIBRARY_PY (UINT64_C(1) << 47)
+#define CETTA_LIBRARY_ASP (UINT64_C(1) << 48)
+#define CETTA_LIBRARY_CLINGO (UINT64_C(1) << 49)
+#define CETTA_LIBRARY_PROVENANCE (UINT64_C(1) << 50)
+#define CETTA_LIBRARY_SAT (UINT64_C(1) << 51)
+#define CETTA_LIBRARY_IPASIR (UINT64_C(1) << 52)
+#define CETTA_LIBRARY_SMT (UINT64_C(1) << 53)
+
+_Static_assert(((CETTA_LIBRARY_ASP | CETTA_LIBRARY_CLINGO |
+                 CETTA_LIBRARY_PROVENANCE | CETTA_LIBRARY_SAT |
+                 CETTA_LIBRARY_IPASIR | CETTA_LIBRARY_SMT |
+                 CETTA_NATIVE_IMPORT_TRANSFORM) & ((UINT64_C(1) << 48) - 1)) == 0,
+               "solver and transform imports must not alias existing services");
+_Static_assert((CETTA_LIBRARY_ASP + CETTA_LIBRARY_CLINGO +
+                CETTA_LIBRARY_PROVENANCE + CETTA_LIBRARY_SAT +
+                CETTA_LIBRARY_IPASIR + CETTA_LIBRARY_SMT +
+                CETTA_NATIVE_IMPORT_TRANSFORM) ==
+               (CETTA_LIBRARY_ASP | CETTA_LIBRARY_CLINGO |
+                CETTA_LIBRARY_PROVENANCE | CETTA_LIBRARY_SAT |
+                CETTA_LIBRARY_IPASIR | CETTA_LIBRARY_SMT |
+                CETTA_NATIVE_IMPORT_TRANSFORM),
+               "solver and transform import bits must be distinct");
 
 #define CETTA_LIBRARY_STORE (UINT64_C(1) << 36)
 #define CETTA_LIBRARY_ACT (UINT64_C(1) << 37)
 
 _Static_assert((CETTA_NATIVE_IMPORT_GPARSE &
                 (((UINT64_C(1) << 25) - 1) | CETTA_LIBRARY_STORE | CETTA_LIBRARY_ACT |
-                 CETTA_LIBRARY_CRYPTO | CETTA_LIBRARY_TOML)) == 0,
+                 CETTA_LIBRARY_CRYPTO | CETTA_LIBRARY_TOML | CETTA_LIBRARY_LANG |
+                 CETTA_LIBRARY_PY)) == 0,
                "native grammar import aliases the shared library catalog");
 _Static_assert((CETTA_LIBRARY_TOML & CETTA_LIBRARY_STORE) == 0,
                "TOML and native store imports must be independent");
@@ -299,6 +350,8 @@ static const CettaLibrarySpec CETTA_LIBRARIES[] = {
     {"tensor", CETTA_LIBRARY_TENSOR, NULL},
     {"crypto", CETTA_LIBRARY_CRYPTO, NULL},
     {"toml", CETTA_LIBRARY_TOML, NULL},
+    {"lang", CETTA_LIBRARY_LANG, NULL},
+    {"py", CETTA_LIBRARY_PY, NULL},
     {"lts", CETTA_LIBRARY_LTS, NULL},
     {"mork", CETTA_LIBRARY_MORK, NULL},
     {"rho", CETTA_LIBRARY_RHO, NULL},
@@ -319,6 +372,12 @@ static const CettaLibrarySpec CETTA_LIBRARIES[] = {
     {"mailbox", CETTA_LIBRARY_MAILBOX, NULL},
     {"sqlite", CETTA_LIBRARY_SQLITE, NULL},
     {"siwc", CETTA_LIBRARY_SIWC, NULL},
+    {"asp", CETTA_LIBRARY_ASP, NULL},
+    {"clingo", CETTA_LIBRARY_CLINGO, NULL},
+    {"provenance", CETTA_LIBRARY_PROVENANCE, NULL},
+    {"sat", CETTA_LIBRARY_SAT, NULL},
+    {"ipasir", CETTA_LIBRARY_IPASIR, NULL},
+    {"smt", CETTA_LIBRARY_SMT, NULL},
 #if CETTA_BUILD_WITH_JSON_GSLT
     {"json", CETTA_LIBRARY_JSON, NULL},
 #endif
@@ -360,7 +419,11 @@ static bool library_prime_snapshot_common(const CettaLibraryContext *ctx) {
         ctx->petta_match_decisions || ctx->petta_match_decisions_free ||
         ctx->petta_static_imports || ctx->petta_static_imports_free ||
         ctx->petta_runtime || ctx->petta_typecheck_v3 || ctx->petta_token_space_clause_registry ||
-        ctx->io_runtime || ctx->durable_runtime || ctx->json_runtime)
+        ctx->io_runtime || ctx->durable_runtime || ctx->json_runtime ||
+        ctx->transform_program_valid || ctx->transform_definitions_ready ||
+        ctx->transform_views || ctx->transform_view_count || ctx->transform_definition_rows ||
+        ctx->petta_lattice_relations || ctx->petta_lattice_joins ||
+        ctx->petta_lattice_len || ctx->petta_lattice_cap)
         return false;
     for (size_t i=0u;i<CETTA_PETTA_MEMO_CONTROL_COUNT;i++)
         if (ctx->petta_memo.imported_controls[i]) return false;
@@ -646,26 +709,52 @@ void cetta_library_context_init(CettaLibraryContext *ctx) {
     cetta_library_context_init_for_language_profile(ctx, CETTA_LANGUAGE_HE, NULL);
 }
 
-static void library_context_init_services(CettaLibraryContext *ctx,
+static void library_transform_register_heads(void) {
+    if (!g_symbols)
+        return;
+    const char *heads[] = {"transform", "tf:run", "tf:split", "tf:propose",
+        "tf:inst", "tf:fire", "tf:fire-into"};
+    for (size_t i = 0u; i < sizeof(heads) / sizeof(*heads); i++)
+        (void)symbol_intern_cstr(g_symbols, heads[i]);
+}
+
+static bool library_context_init_services(CettaLibraryContext *ctx,
         CettaLanguageId language_id, const CettaProfile *profile,
         bool foreign_services) {
     if (!library_catalog_valid()) {
         fputs("cetta: conflicting library import bits\n", stderr);
         abort();
     }
+    if (!ctx) { errno = EINVAL; return false; }
+    memset(ctx, 0, sizeof(*ctx));
     cetta_eval_session_init(&ctx->session, language_id, profile);
     ctx->prime_interpretation = prime_interpretation_selection_new(language_id,
         cetta_language_uses_rust_he_compat_semantics(language_id, profile),
         language_id == CETTA_LANGUAGE_PRIME && !(profile && profile->quote_as_written));
-    ctx->nik_runtime_mutex_ready =
-        pthread_mutex_init(&ctx->nik_runtime_mutex, NULL) == 0;
+    int mutex_error = pthread_mutex_init(&ctx->named_mutexes_init_lock, NULL);
+    ctx->named_mutexes_init_lock_ready = mutex_error == 0;
+    ctx->named_mutexes = NULL;
+    int error = pthread_mutex_init(&ctx->nik_runtime_mutex, NULL);
+    ctx->nik_runtime_mutex_ready = error == 0;
+    if (!mutex_error) mutex_error = error;
     ctx->nik_runtime = NULL;
-    ctx->parser_cache_mutex_ready =
-        pthread_mutex_init(&ctx->parser_cache_mutex, NULL) == 0;
+    error = pthread_mutex_init(&ctx->parser_cache_mutex, NULL);
+    ctx->parser_cache_mutex_ready = error == 0;
+    if (!mutex_error) mutex_error = error;
     ctx->parser_cache = NULL;
     term_universe_init(&ctx->term_universe);
     ctx->owned_term_domain = NULL;
-    ctx->active_mask = 0;
+    if (mutex_error) { errno = mutex_error; return false; }
+    ctx->active_mask = profile &&
+        ((language_id == CETTA_LANGUAGE_HE &&
+          profile->id == CETTA_PROFILE_HE_EXTENDED) ||
+         (language_id == CETTA_LANGUAGE_PETTA &&
+          profile->id == CETTA_PROFILE_PETTA_EXTENDED))
+        ? CETTA_NATIVE_IMPORT_TRANSFORM : 0u;
+    /* Managed source symbols can precede their first execution. Register
+     * this finite intrinsic vocabulary before nested-call classification. */
+    if (ctx->active_mask & CETTA_NATIVE_IMPORT_TRANSFORM)
+        library_transform_register_heads();
     ctx->value_byte_limit = CETTA_ATOM_WIRE_BYTES;
     ctx->root_dir[0] = '\0';
     if (!getcwd(ctx->working_dir, sizeof(ctx->working_dir))) {
@@ -693,6 +782,8 @@ static void library_context_init_services(CettaLibraryContext *ctx,
     ctx->module_token_scope = NULL;
     ctx->he_module_failures = NULL;
     ctx->he_module_run_scope = NULL;
+    ctx->document_source_scope = NULL;
+    ctx->resource_scope = NULL;
     ctx->top_module_space = NULL;
     ctx->top_module_registry = NULL;
     ctx->module_own_views = NULL;
@@ -712,6 +803,10 @@ static void library_context_init_services(CettaLibraryContext *ctx,
     ctx->petta_tabled_relations = NULL;
     ctx->petta_tabled_relation_len = 0u;
     ctx->petta_tabled_relation_cap = 0u;
+    ctx->petta_lattice_relations = NULL;
+    ctx->petta_lattice_joins = NULL;
+    ctx->petta_lattice_len = 0u;
+    ctx->petta_lattice_cap = 0u;
     ctx->petta_tabled_symbol_table_instance =
         symbol_table_instance_id(g_symbols);
     memset(&ctx->petta_memo, 0, sizeof(ctx->petta_memo));
@@ -725,8 +820,11 @@ static void library_context_init_services(CettaLibraryContext *ctx,
     ctx->petta_memo.answer_limit = 2048u;
     ctx->petta_memo.aggregate =
         CETTA_PETTA_MEMO_AGGREGATE_NONE;
+    PettaTableMutationPolicy table_policy = profile && profile->enable_cetta_extensions
+        ? PETTA_TABLE_MUTATION_REVISION_GUARDED : PETTA_TABLE_MUTATION_STATIC_WORLD;
     ctx->petta_shared_table = language_id == CETTA_LANGUAGE_PETTA
-        ? petta_machine_table_new() : NULL;
+        ? petta_machine_table_new_with_mutation_policy(table_policy) : NULL;
+    if (language_id == CETTA_LANGUAGE_PETTA && !ctx->petta_shared_table) return false;
     ctx->petta_open_programs = NULL;
     ctx->petta_open_programs_free = NULL;
     ctx->petta_match_decisions = NULL;
@@ -741,14 +839,6 @@ static void library_context_init_services(CettaLibraryContext *ctx,
     ctx->module_source_scope = NULL;
     ctx->prime_standard_library = NULL;
     ctx->prime_standard_library_free = NULL;
-    if (ctx->petta_shared_table) {
-        PettaTableMutationPolicy table_policy =
-            profile && profile->enable_cetta_extensions
-                ? PETTA_TABLE_MUTATION_REVISION_GUARDED
-                : PETTA_TABLE_MUTATION_STATIC_WORLD;
-        (void)petta_machine_table_set_mutation_policy(
-            ctx->petta_shared_table, table_policy);
-    }
     /* Prime's guarded relational plan is the default execution strategy.
        The environment switch exists only so the differential gate can retain
        the canonical evaluator as an executable reference implementation. */
@@ -757,6 +847,7 @@ static void library_context_init_services(CettaLibraryContext *ctx,
         getenv("CETTA_PRIME_RELATIONAL_PLAN_REFERENCE") == NULL;
     ctx->petta_runtime = language_id == CETTA_LANGUAGE_PETTA
         ? cetta_petta_runtime_state_new() : NULL;
+    if (language_id == CETTA_LANGUAGE_PETTA && !ctx->petta_runtime) return false;
     CettaSearchControllerPolicy requested_controller;
     const char *controller = getenv("CETTA_SEARCH_CONTROLLER");
     bool portable_relational_control_requested =
@@ -790,16 +881,15 @@ static void library_context_init_services(CettaLibraryContext *ctx,
         : NULL;
     if (ctx->petta_program && native_weight_profile)
         petta_program_enable_graded_equations(ctx->petta_program);
-    const CettaLanguageVersion *program_version =
-        cetta_language_version_of(language_id, profile);
-    /* HE resolves a call's head when the call runs, and PeTTa's typed line
-     * does too: a plan compiled before a head had equations is rebuilt when
-     * the heads it read change.  PeTTa otherwise compiles an equation
-     * against the program as it stood when the equation was defined. */
+    if (needs_occurrence_program && !ctx->petta_program) return false;
+    /* A call's head is resolved against the program the call runs in: a plan
+     * compiled before a head had equations is rebuilt when the heads it read
+     * change.  HE resolves heads when calls run, and every PeTTa version uses
+     * an equation once it is present, one added by add-atom included, as
+     * stable-fixed SWI-PeTTa does (tests/petta/swi_differences, 10). */
     if (ctx->petta_program &&
         (language_id == CETTA_LANGUAGE_HE ||
-         (language_id == CETTA_LANGUAGE_PETTA &&
-          cetta_language_version_petta_typed_line(program_version))))
+         language_id == CETTA_LANGUAGE_PETTA))
         (void)petta_program_enable_callability_refresh(ctx->petta_program);
     if (ctx->petta_program && cetta_profile_uses_petta_typing(profile)) {
         (void)petta_program_enable_analysis(ctx->petta_program);
@@ -809,35 +899,52 @@ static void library_context_init_services(CettaLibraryContext *ctx,
         char error[256] = {0};
         ctx->petta_typecheck_v3 =
             cetta_petta_typecheck_v3_create(error, sizeof error);
+        if (!ctx->petta_typecheck_v3) return false;
     }
     ctx->petta_token_space_clause_registry =
         language_id == CETTA_LANGUAGE_PETTA
             ? cetta_petta_token_space_clause_registry_new()
             : NULL;
+    if (language_id == CETTA_LANGUAGE_PETTA && !ctx->petta_token_space_clause_registry)
+        return false;
     ctx->lib_prolog = foreign_services ? cetta_lib_prolog_runtime_new() : NULL;
+    if (foreign_services && !ctx->lib_prolog) return false;
     if (ctx->lib_prolog && ctx->working_dir[0] != '\0') {
-        (void)cetta_lib_prolog_runtime_set_working_dir(
-            ctx->lib_prolog, ctx->working_dir);
+        if (!cetta_lib_prolog_runtime_set_working_dir(ctx->lib_prolog, ctx->working_dir))
+            return false;
     }
     ctx->foreign_runtime = foreign_services ? cetta_foreign_runtime_new() : NULL;
+    if (foreign_services && !ctx->foreign_runtime) return false;
     ctx->io_runtime = NULL;
     ctx->durable_runtime = NULL;
     ctx->json_runtime = NULL;
+    return true;
 }
 
 void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
         CettaLanguageId language_id, const CettaProfile *profile) {
-    library_context_init_services(ctx, language_id, profile, true);
+    if (!library_context_init_services(ctx, language_id, profile, true)) {
+        int error = errno;
+        if (ctx) cetta_library_context_free(ctx);
+        errno = error;
+        perror("fatal: library context initialization");
+        abort();
+    }
+}
+
+bool cetta_library_context_try_init_for_language_profile(CettaLibraryContext *ctx,
+        CettaLanguageId language_id, const CettaProfile *profile) {
+    return library_context_init_services(ctx, language_id, profile, true);
 }
 
 bool cetta_library_context_init_prime_snapshot(CettaLibraryContext *ctx) {
     if (!ctx) return false;
     HashConsTable *previous_hashcons = g_hashcons;
     g_hashcons = NULL;
-    library_context_init_services(ctx, CETTA_LANGUAGE_PRIME,
+    bool initialized = library_context_init_services(ctx, CETTA_LANGUAGE_PRIME,
         cetta_profile_prime_default(), false);
     g_hashcons = previous_hashcons;
-    return ctx->nik_runtime_mutex_ready && ctx->petta_program != NULL &&
+    return initialized && ctx->nik_runtime_mutex_ready && ctx->petta_program != NULL &&
         ctx->prime_interpretation != NULL;
 }
 
@@ -869,9 +976,17 @@ void cetta_library_context_free(CettaLibraryContext *ctx) {
     cetta_native_handle_cleanup_all(ctx);
     prime_interpretation_selection_free(ctx->prime_interpretation);
     ctx->prime_interpretation = NULL;
+    eval_named_mutex_registry_free(ctx);
     ctx->top_module_space = NULL;
     ctx->top_module_registry = NULL;
     free(ctx->import_dirs);
+    free(ctx->transform_views);
+    ctx->transform_views = NULL;
+    ctx->transform_view_count = 0u;
+    if (ctx->transform_definitions_ready)
+        arena_free(&ctx->transform_definitions);
+    ctx->transform_definitions_ready = false;
+    ctx->transform_definition_rows = NULL;
     ctx->import_dirs = NULL;
     ctx->import_dir_len = ctx->import_dir_cap = 0u;
     library_he_failures_free(ctx->he_module_failures);
@@ -989,6 +1104,12 @@ void cetta_library_context_free(CettaLibraryContext *ctx) {
     ctx->petta_tabled_relations = NULL;
     ctx->petta_tabled_relation_len = 0u;
     ctx->petta_tabled_relation_cap = 0u;
+    free(ctx->petta_lattice_relations);
+    free(ctx->petta_lattice_joins);
+    ctx->petta_lattice_relations = NULL;
+    ctx->petta_lattice_joins = NULL;
+    ctx->petta_lattice_len = 0u;
+    ctx->petta_lattice_cap = 0u;
     ctx->petta_tabled_symbol_table_instance = 0u;
     free(ctx->petta_memo.all_arities);
     free(ctx->petta_memo.exact_arities);
@@ -1217,6 +1338,7 @@ static void cetta_library_petta_tabled_relation_sync(
     if (ctx->petta_tabled_symbol_table_instance == instance)
         return;
     ctx->petta_tabled_relation_len = 0u;
+    ctx->petta_lattice_len = 0u;
     ctx->petta_tabled_symbol_table_instance = instance;
     cetta_library_petta_admission_advance(ctx);
 }
@@ -1260,6 +1382,48 @@ bool cetta_library_petta_tabled_relation_contains(
     return index < ctx->petta_tabled_relation_len &&
            cetta_library_petta_relation_key_compare(
                ctx->petta_tabled_relations[index], key) == 0;
+}
+
+SymbolId cetta_library_petta_tabled_relation_join(
+    CettaLibraryContext *ctx, SymbolId head, CettaExprLen arity) {
+    if (!ctx || head == SYMBOL_ID_NONE)
+        return SYMBOL_ID_NONE;
+    cetta_library_petta_tabled_relation_sync(ctx);
+    for (uint32_t i = 0u; i < ctx->petta_lattice_len; i++)
+        if (ctx->petta_lattice_relations[i].head == head &&
+            ctx->petta_lattice_relations[i].arity == arity)
+            return ctx->petta_lattice_joins[i];
+    return SYMBOL_ID_NONE;
+}
+
+bool cetta_library_petta_tabled_relation_join_set(
+    CettaLibraryContext *ctx, SymbolId head, CettaExprLen arity,
+    SymbolId join) {
+    if (!ctx || head == SYMBOL_ID_NONE)
+        return false;
+    cetta_library_petta_tabled_relation_sync(ctx);
+    for (uint32_t i = 0u; i < ctx->petta_lattice_len; i++)
+        if (ctx->petta_lattice_relations[i].head == head &&
+            ctx->petta_lattice_relations[i].arity == arity) {
+            if (ctx->petta_lattice_joins[i] != join)
+                cetta_library_petta_admission_advance(ctx);
+            ctx->petta_lattice_joins[i] = join;
+            return true;
+        }
+    if (ctx->petta_lattice_len == ctx->petta_lattice_cap) {
+        uint32_t next = ctx->petta_lattice_cap ? ctx->petta_lattice_cap * 2u : 4u;
+        ctx->petta_lattice_relations = cetta_realloc(
+            ctx->petta_lattice_relations,
+            sizeof(*ctx->petta_lattice_relations) * (size_t)next);
+        ctx->petta_lattice_joins = cetta_realloc(
+            ctx->petta_lattice_joins, sizeof(*ctx->petta_lattice_joins) * (size_t)next);
+        ctx->petta_lattice_cap = next;
+    }
+    ctx->petta_lattice_relations[ctx->petta_lattice_len] =
+        (CettaPettaRelationKey){.head = head, .arity = arity};
+    ctx->petta_lattice_joins[ctx->petta_lattice_len++] = join;
+    cetta_library_petta_admission_advance(ctx);
+    return true;
 }
 
 bool cetta_library_petta_tabled_relation_set(
@@ -1428,7 +1592,7 @@ static void cetta_library_petta_memo_control_cache_refresh(void) {
 
 static bool cetta_library_petta_memo_control_lookup(
     SymbolId head, CettaPettaMemoControl *control_out) {
-    if (head == SYMBOL_ID_NONE || !g_symbols)
+    if (head == SYMBOL_ID_NONE || symbol_id_is_builtin(head) || !g_symbols)
         return false;
     uint64_t table_instance = symbol_table_instance_id(g_symbols);
     if (g_petta_memo_control_cache.table != g_symbols ||
@@ -1475,6 +1639,7 @@ bool cetta_library_petta_memo_control_imported(
     CettaPettaMemoControl control;
     return ctx &&
         ctx->session.language_id == CETTA_LANGUAGE_PETTA &&
+        (ctx->active_mask & CETTA_LIBRARY_PETTA_MEMO) &&
         cetta_library_petta_memo_control_lookup(head, &control) &&
         ctx->petta_memo.imported_controls[control];
 }
@@ -1485,6 +1650,7 @@ PeTTaNamedArity cetta_library_petta_memo_control_named_arity(
     CettaPettaMemoControl control;
     if (!ctx ||
         ctx->session.language_id != CETTA_LANGUAGE_PETTA ||
+        !(ctx->active_mask & CETTA_LIBRARY_PETTA_MEMO) ||
         !cetta_library_petta_memo_control_lookup(head, &control) ||
         !ctx->petta_memo.imported_controls[control]) {
         return (PeTTaNamedArity){0};
@@ -1955,20 +2121,24 @@ static bool library_reserve_loaded_module(CettaLibraryContext *ctx) {
     return true;
 }
 
-void cetta_library_context_note_document_file(CettaLibraryContext *ctx, Space *space,
-                                              const char *filename) {
-    char resolved[PATH_MAX];
+static bool note_canonical_document(CettaLibraryContext *ctx, Space *space,
+                                    const char *resolved) {
     uint32_t slot;
-
-    if (!ctx || !space || !filename) return;
-    if (!realpath(filename, resolved)) return;
-    if (imported_file_lookup(ctx, space, resolved) >= 0) return;
-    if (!library_reserve_imported_file(ctx)) return;
+    if (imported_file_lookup(ctx, space, resolved) >= 0) return true;
+    if (!library_reserve_imported_file(ctx)) return false;
     slot = ctx->imported_file_len++;
     ctx->imported_files[slot].space = space;
     ctx->imported_files[slot].loading = false;
     snprintf(ctx->imported_files[slot].path,
              sizeof(ctx->imported_files[slot].path), "%s", resolved);
+    return true;
+}
+
+void cetta_library_context_note_document_file(CettaLibraryContext *ctx, Space *space,
+                                              const char *filename) {
+    char resolved[PATH_MAX];
+    if (!ctx || !space || !filename || !realpath(filename, resolved)) return;
+    (void)note_canonical_document(ctx, space, resolved);
 }
 
 void cetta_library_context_set_cli_args(CettaLibraryContext *ctx, int argc,
@@ -1983,12 +2153,18 @@ void cetta_library_context_set_cli_args(CettaLibraryContext *ctx, int argc,
     }
 }
 
+static const char *library_entry_directory(const CettaLibraryContext *ctx) {
+    return ctx->resource_scope ? ctx->resource_scope->context->entry_directory : ctx->script_dir;
+}
+
 static const char *cetta_library_current_dir(CettaLibraryContext *ctx) {
+    if (ctx->resource_scope && ctx->import_dir_len <= ctx->resource_scope->import_depth)
+        return ctx->resource_scope->context->directory;
     if (ctx->import_dir_len > 0) {
         return ctx->import_dirs[ctx->import_dir_len - 1];
     }
-    if (ctx->script_dir[0] != '\0') {
-        return ctx->script_dir;
+    if (library_entry_directory(ctx)[0] != '\0') {
+        return library_entry_directory(ctx);
     }
     if (ctx->working_dir[0] != '\0') {
         return ctx->working_dir;
@@ -2008,12 +2184,51 @@ static const char *cetta_library_relative_base_dir(CettaLibraryContext *ctx) {
          * fixed while nested imports run.  Prefer the corresponding script
          * root here; the process cwd is only the inline/source-less fallback.
          */
-        if (ctx->script_dir[0] != '\0')
-            return ctx->script_dir;
+        if (library_entry_directory(ctx)[0] != '\0')
+            return library_entry_directory(ctx);
         if (ctx->working_dir[0] != '\0')
             return ctx->working_dir;
     }
     return cetta_library_current_dir(ctx);
+}
+
+static CettaLibraryResourceContext *resource_context_new(const char *directory,
+                                                         const char *entry_directory) {
+    size_t first = strlen(directory) + 1u, second = strlen(entry_directory) + 1u;
+    if (first > SIZE_MAX - sizeof(CettaLibraryResourceContext) ||
+        second > SIZE_MAX - sizeof(CettaLibraryResourceContext) - first) return NULL;
+    CettaLibraryResourceContext *context = malloc(sizeof(*context) + first + second);
+    if (!context) return NULL;
+    atomic_init(&context->references, 1u);
+    context->directory = context->bytes;
+    context->entry_directory = context->bytes + first;
+    memcpy(context->bytes, directory, first);
+    memcpy(context->bytes + first, entry_directory, second);
+    return context;
+}
+CettaLibraryResourceContext *cetta_library_resource_capture(CettaLibraryContext *ctx) {
+    return ctx ? resource_context_new(cetta_library_current_dir(ctx), library_entry_directory(ctx)) : NULL;
+}
+void cetta_library_resource_release(CettaLibraryResourceContext *context) {
+    if (context && atomic_fetch_sub_explicit(&context->references, 1u, memory_order_acq_rel) == 1u)
+        free(context);
+}
+void cetta_library_resource_enter(CettaLibraryContext *ctx, CettaLibraryResourceContext *context,
+                                 CettaLibraryResourceScope *scope) {
+    *scope = (CettaLibraryResourceScope){0};
+    if (!context) return;
+    atomic_fetch_add_explicit(&context->references, 1u, memory_order_relaxed);
+    scope->previous = ctx->resource_scope;
+    scope->context = context;
+    scope->import_depth = ctx->import_dir_len;
+    ctx->resource_scope = scope;
+}
+void cetta_library_resource_leave(CettaLibraryContext *ctx, CettaLibraryResourceScope *scope) {
+    if (!scope->context) return;
+    assert(ctx->resource_scope == scope);
+    ctx->resource_scope = scope->previous;
+    cetta_library_resource_release(scope->context);
+    scope->context = NULL;
 }
 
 static TermUniverse *cetta_library_space_universe(CettaLibraryContext *ctx,
@@ -2064,8 +2279,8 @@ static const char *cetta_library_display_path(CettaLibraryContext *ctx,
         snprintf(out, out_sz, "%s", path);
         return out;
     }
-    if (ctx && ctx->script_dir[0] != '\0' &&
-        cetta_path_strip_prefix(path, ctx->script_dir, &relative)) {
+    if (ctx && library_entry_directory(ctx)[0] != '\0' &&
+        cetta_path_strip_prefix(path, library_entry_directory(ctx), &relative)) {
         snprintf(out, out_sz, "%s", relative);
         return out;
     }
@@ -3883,6 +4098,8 @@ static bool resolve_relative_module_candidate_for_language(
 
 static bool build_library_path(CettaLibraryContext *ctx, const char *name,
                                char *out, size_t out_sz);
+static bool build_library_resource_path(CettaLibraryContext *ctx,
+    const char *name, const char *suffix, char *out, size_t out_sz);
 
 static bool parse_module_spec(const char *spec, CettaModuleSpec *out,
                               Arena *eval_arena, Atom **error_out) {
@@ -3966,7 +4183,7 @@ static bool he_module_tree_candidate(CettaLibraryContext *ctx,
     if (!(n > 0 && (size_t)n < name_sz))
         return false;
     n = snprintf(dir, sizeof(dir), "%s",
-                 from_top ? (ctx->script_dir[0] ? ctx->script_dir
+                 from_top ? (library_entry_directory(ctx)[0] ? library_entry_directory(ctx)
                                                 : ctx->working_dir)
                           : cetta_library_relative_base_dir(ctx));
     if (!(n > 0 && (size_t)n < sizeof(dir)))
@@ -4212,6 +4429,12 @@ static bool resolve_import_plan_live(CettaLibraryContext *ctx, const CettaModule
                 *error_out = he_unresolved_module(eval_arena, name);
                 return false;
             }
+            /* A plain PeTTa import is a source-relative file: no file
+             * answering it is a missing source (P-LIB-2), as for a path. */
+            if (plain_petta_import && !reason[0]) {
+                *error_out = atom_symbol(eval_arena, CETTA_LIBRARY_MISSING_MODULE);
+                return false;
+            }
             char *msg = arena_alloc(eval_arena,
                                     strlen("Failed to resolve module ") +
                                     strlen(spec->path_or_member) +
@@ -4232,7 +4455,12 @@ static bool resolve_import_plan_live(CettaLibraryContext *ctx, const CettaModule
             return false;
         }
         plan->provider_kind = CETTA_MODULE_PROVIDER_STDLIB_FILE;
-        if (!build_library_path(ctx, spec->path_or_member, candidate, sizeof(candidate))) {
+        /* An explicitly suffixed member may be a foreign module. Keep the
+         * normal MeTTa lookup first, then let the common format/policy
+         * checks below inspect the exact resource, as a path import does. */
+        if (!build_library_path(ctx, spec->path_or_member, candidate, sizeof(candidate)) &&
+            !build_library_resource_path(ctx, spec->path_or_member, "",
+                                         candidate, sizeof(candidate))) {
             *error_out = atom_symbol(eval_arena, "library file not found");
             return false;
         }
@@ -5353,7 +5581,7 @@ static Atom *cetta_library_dispatch_system(CettaLibraryContext *ctx,
     if (head_id == g_builtin_syms.lib_system_entry_directory) {
         if (!system_zero_arg_ok(args, nargs))
             return library_signature_error(a, head, args, nargs, "expected: (system:entry-directory)");
-        return ctx->script_dir[0] ? atom_string(a, ctx->script_dir)
+        return library_entry_directory(ctx)[0] ? atom_string(a, library_entry_directory(ctx))
             : library_signature_error(a, head, args, nargs, "entry directory is not established");
     }
     if (atom_is_symbol(head, "__cetta_lib_system_runtime_root")) {
@@ -9807,12 +10035,20 @@ static AtomId library_module_capture_tokens(CettaLibraryContext *ctx,
         persistent_arena ? persistent_arena : eval_arena, statement);
 }
 
+typedef struct {
+    CettaDocumentOutcomeObserver observer;
+    void *context;
+    CettaEvalCompletion completion;
+    bool refused;
+} CettaDocumentExecution;
+
 static bool cetta_library_petta_execute_listed_document_ids(
     CettaLibraryContext *ctx, Space *work_space,
     Arena *eval_arena, Arena *persistent_arena,
     Registry *registry, AtomId *atom_ids, int atom_count,
     ResultSet *runnable_results, ResultSet *last_results,
     CettaDocumentResultObserver observer, void *observer_context,
+    CettaDocumentExecution *execution,
     CettaPettaDocumentFailure *failure_out,
     Atom **detail_out);
 
@@ -9837,6 +10073,7 @@ static bool cetta_library_petta_execute_document_ids(
     Registry *registry, AtomId *atom_ids, int atom_count,
     ResultSet *runnable_results, ResultSet *last_results,
     CettaDocumentResultObserver observer, void *observer_context,
+    CettaDocumentExecution *execution,
     CettaPettaDocumentFailure *failure_out,
     Atom **detail_out) {
     TermUniverse *universe = work_space ? work_space->native.universe : NULL;
@@ -9848,7 +10085,7 @@ static bool cetta_library_petta_execute_document_ids(
     bool ok = cetta_library_petta_execute_listed_document_ids(
         ctx, work_space, eval_arena, persistent_arena, registry, atom_ids,
         atom_count, runnable_results, last_results, observer,
-        observer_context, failure_out, detail_out);
+        observer_context, execution, failure_out, detail_out);
     if (universe)
         term_universe_remove_root_provider(
             universe, cetta_library_document_roots, &roots);
@@ -9861,6 +10098,7 @@ static bool cetta_library_petta_execute_listed_document_ids(
     Registry *registry, AtomId *atom_ids, int atom_count,
     ResultSet *runnable_results, ResultSet *last_results,
     CettaDocumentResultObserver observer, void *observer_context,
+    CettaDocumentExecution *execution,
     CettaPettaDocumentFailure *failure_out,
     Atom **detail_out) {
     if (failure_out)
@@ -9960,6 +10198,24 @@ static bool cetta_library_petta_execute_listed_document_ids(
                 persistent_arena, registry,
                 eval_form, source_plan, &observed);
             ResultSet *results = &observed.results;
+            if (execution) {
+                execution->completion = observed.completion;
+                bool accepted = !execution->observer ||
+                    execution->observer(execution->context, &observed);
+                eval_outcome_free(&observed);
+                eval_release_temporary_spaces();
+                if (!accepted) {
+                    execution->refused = true;
+                    return false;
+                }
+                if (execution->completion != CETTA_EVAL_COMPLETE) {
+                    if (failure_out)
+                        *failure_out = CETTA_PETTA_DOCUMENT_EVAL_FAILED;
+                    return false;
+                }
+                index += 2;
+                continue;
+            }
 
             Atom *first_error =
                 observed.completion != CETTA_EVAL_COMPLETE
@@ -10175,6 +10431,59 @@ static Atom *module_reason_with_detail(CettaLibraryContext *ctx, Arena *a,
     }, 3);
 }
 
+bool cetta_library_run_source_bytes(CettaLibraryContext *ctx,Space *space,
+    const uint8_t *bytes,size_t length,Arena *a,Atom **results,Atom **error_out) {
+    if(!ctx||!space||!space->native.universe||!bytes||!a||!results||!error_out)return false;
+    *results=NULL;*error_out=NULL;
+    AtomId *ids=NULL;int count=0;char diagnostic[512]={0};
+    int parsed=parse_metta_bytes_prefix_ids(bytes,length,space->native.universe,&ids,&count,diagnostic,sizeof(diagnostic));
+    if(parsed<0) {
+        free(ids);*error_out=atom_string(a,diagnostic[0]?diagnostic:"invalid complete submission");return false;
+    }
+    ResultSet observed;result_set_init(&observed);
+    CettaPettaDocumentFailure failure=CETTA_PETTA_DOCUMENT_OK;Atom *detail=NULL;
+    bool ok=cetta_library_petta_execute_document_ids(ctx,space,a,eval_current_persistent_arena(),
+        eval_current_registry(),ids,count,&observed,NULL,NULL,NULL,NULL,&failure,&detail);
+    free(ids);
+    if(ok)*results=atom_expr(a,observed.items,observed.len);
+    else *error_out=detail?detail:atom_string(a,"submission execution failed");
+    result_set_free(&observed);return ok;
+}
+
+bool cetta_library_install_definitions(CettaLibraryContext *ctx, Space *space,
+    const char *text, size_t length, Arena *arena, Atom **error_out) {
+    if (error_out) *error_out = NULL;
+    if (!ctx || !space || !space->native.universe || !text || !arena ||
+        !error_out || strlen(text) != length) return false;
+    AtomId *ids = NULL;
+    char diagnostic[512] = {0};
+    int count = parse_metta_text_ids_diagnostic(text, space->native.universe,
+        &ids, diagnostic, sizeof(diagnostic));
+    if (count < 0) {
+        *error_out = atom_string(arena, diagnostic[0] ? diagnostic : "invalid definition source");
+        free(ids); return false;
+    }
+    /* Validate the entire block before handing it to the ordinary loader.
+     * No directive, import, or arbitrary top-level datum is executable here. */
+    for (int i = 0; i < count; ++i) {
+        Atom *form = term_universe_get_atom(space->native.universe, ids[i]);
+        if (!form || form->kind != ATOM_EXPR || form->expr.len != 3u ||
+            !(atom_is_symbol(form->expr.elems[0], "=") ||
+              atom_is_symbol(form->expr.elems[0], ":"))) {
+            *error_out = atom_string(arena, "expected only equation and type declarations");
+            free(ids); return false;
+        }
+    }
+    CettaPettaDocumentFailure failure = CETTA_PETTA_DOCUMENT_OK;
+    Atom *detail = NULL;
+    bool ok = cetta_library_petta_execute_document_ids(ctx, space, arena,
+        eval_current_persistent_arena(), eval_current_registry(), ids, count,
+        NULL, NULL, NULL, NULL, NULL, &failure, &detail);
+    free(ids);
+    if (!ok) *error_out = detail ? detail : atom_string(arena, "definition installation failed");
+    return ok;
+}
+
 bool cetta_library_petta_process_text(
     CettaLibraryContext *ctx, Space *space,
     Arena *eval_arena, Arena *persistent_arena,
@@ -10219,7 +10528,7 @@ bool cetta_library_petta_process_text(
     bool ok = cetta_library_petta_execute_document_ids(
         ctx, space, eval_arena, persistent_arena,
         registry, atom_ids, atom_count,
-        &runnable_results, NULL, NULL, NULL, &failure, &detail);
+        &runnable_results, NULL, NULL, NULL, NULL, &failure, &detail);
     free(atom_ids);
     if (!ok) {
         if (failure == CETTA_PETTA_DOCUMENT_EVAL_FAILED &&
@@ -10536,10 +10845,205 @@ static bool load_module_mm2_file_into_mork_bridge(CettaLibraryContext *ctx,
 
 /* A syntax failure does not suppress effects of the complete prefix.
  * Parsing and statement execution retain their established implementations. */
+/* import-as!: a module's own definitions are read under the importer's
+ * prefix.  The module defines the heads of its equations; their type
+ * declarations and every other occurrence in the document follow them.
+ * When all the qualified names it defines share one namespace, the prefix
+ * replaces that namespace (mg:new-theory read as m:new-theory); otherwise
+ * the prefix is put before each name. */
+typedef struct {
+    SymbolId from;
+    SymbolId to;
+} ImportAsRename;
+
+typedef struct {
+    SymbolId *from;
+    SymbolId *to;
+    uint32_t len;
+} ImportAsRenames;
+
+static void import_as_renames_free(ImportAsRenames *renames) {
+    free(renames->from);
+    free(renames->to);
+    memset(renames, 0, sizeof(*renames));
+}
+
+static int import_as_rename_order(const void *left, const void *right) {
+    SymbolId a = ((const ImportAsRename *)left)->from;
+    SymbolId b = ((const ImportAsRename *)right)->from;
+    return a < b ? -1 : a > b;
+}
+
+static SymbolId import_as_defined_head(TermUniverse *universe, AtomId id) {
+    if (tu_kind(universe, id) != ATOM_EXPR || tu_arity(universe, id) != 3u)
+        return SYMBOL_ID_NONE;
+    AtomId equals = tu_child(universe, id, 0u);
+    if (tu_kind(universe, equals) != ATOM_SYMBOL ||
+        tu_sym(universe, equals) != g_builtin_syms.equals)
+        return SYMBOL_ID_NONE;
+    AtomId lhs = tu_child(universe, id, 1u);
+    if (tu_kind(universe, lhs) == ATOM_SYMBOL)
+        return tu_sym(universe, lhs);
+    if (tu_kind(universe, lhs) == ATOM_EXPR && tu_arity(universe, lhs) > 0u) {
+        AtomId head = tu_child(universe, lhs, 0u);
+        if (tu_kind(universe, head) == ATOM_SYMBOL)
+            return tu_sym(universe, head);
+    }
+    return SYMBOL_ID_NONE;
+}
+
+static bool import_as_renames_build(TermUniverse *universe,
+                                    const AtomId *ids, int count,
+                                    const char *prefix,
+                                    ImportAsRenames *out) {
+    memset(out, 0, sizeof(*out));
+    ImportAsRename *pairs = malloc(sizeof(*pairs) * (count > 0 ? (size_t)count : 1u));
+    if (!pairs)
+        return false;
+    uint32_t len = 0u;
+    for (int i = 0; i < count; i++) {
+        SymbolId head = import_as_defined_head(universe, ids[i]);
+        if (head != SYMBOL_ID_NONE)
+            pairs[len++] = (ImportAsRename){.from = head};
+    }
+    qsort(pairs, len, sizeof(*pairs), import_as_rename_order);
+    uint32_t unique = 0u;
+    for (uint32_t i = 0u; i < len; i++)
+        if (!unique || pairs[unique - 1u].from != pairs[i].from)
+            pairs[unique++] = pairs[i];
+    len = unique;
+
+    /* The namespace every qualified definition shares, if there is one. */
+    char space_name[CETTA_IMPORT_PREFIX_MAX] = {0};
+    bool shared = true, seen = false;
+    for (uint32_t i = 0u; i < len && shared; i++) {
+        const char *name = symbol_bytes(g_symbols, pairs[i].from);
+        const char *colon = name ? strchr(name, ':') : NULL;
+        if (!colon || colon == name)
+            continue;
+        size_t width = (size_t)(colon - name);
+        if (!seen) {
+            if (width >= sizeof(space_name)) {
+                shared = false;
+                break;
+            }
+            memcpy(space_name, name, width);
+            space_name[width] = '\0';
+            seen = true;
+        } else if (strlen(space_name) != width ||
+                   strncmp(space_name, name, width) != 0) {
+            shared = false;
+        }
+    }
+    size_t space_width = seen && shared ? strlen(space_name) : 0u;
+
+    bool ok = true;
+    for (uint32_t i = 0u; i < len && ok; i++) {
+        const char *name = symbol_bytes(g_symbols, pairs[i].from);
+        const char *local = name;
+        if (space_width && strncmp(name, space_name, space_width) == 0 &&
+            name[space_width] == ':')
+            local = name + space_width + 1u;
+        size_t size = strlen(prefix) + 1u + strlen(local) + 1u;
+        char *renamed = malloc(size);
+        if (!renamed) {
+            ok = false;
+            break;
+        }
+        snprintf(renamed, size, "%s:%s", prefix, local);
+        pairs[i].to = symbol_intern_cstr(g_symbols, renamed);
+        free(renamed);
+        ok = pairs[i].to != SYMBOL_ID_NONE;
+    }
+    if (ok && len) {
+        out->from = malloc(sizeof(*out->from) * len);
+        out->to = malloc(sizeof(*out->to) * len);
+        ok = out->from && out->to;
+        for (uint32_t i = 0u; ok && i < len; i++) {
+            out->from[i] = pairs[i].from;
+            out->to[i] = pairs[i].to;
+        }
+        out->len = ok ? len : 0u;
+    }
+    free(pairs);
+    if (!ok) {
+        import_as_renames_free(out);
+        return false;
+    }
+    return true;
+}
+
+static SymbolId import_as_renamed(const ImportAsRenames *renames,
+                                  SymbolId symbol) {
+    uint32_t lo = 0u, hi = renames->len;
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2u;
+        if (renames->from[mid] < symbol)
+            lo = mid + 1u;
+        else
+            hi = mid;
+    }
+    return lo < renames->len && renames->from[lo] == symbol
+        ? renames->to[lo] : symbol;
+}
+
+/* The read document with the module's definitions renamed.  Variables and
+ * grounded values are untouched; an expression is rebuilt only where a
+ * child changed. */
+static AtomId import_as_rename_id(TermUniverse *universe,
+                                  const ImportAsRenames *renames,
+                                  AtomId id, uint32_t depth) {
+    if (depth > 100000u)
+        return CETTA_ATOM_ID_NONE;
+    AtomKind kind = tu_kind(universe, id);
+    if (kind == ATOM_SYMBOL) {
+        SymbolId symbol = tu_sym(universe, id);
+        SymbolId renamed = import_as_renamed(renames, symbol);
+        return renamed == symbol ? id : tu_intern_symbol(universe, renamed);
+    }
+    if (kind != ATOM_EXPR)
+        return id;
+    CettaExprLen arity = tu_arity(universe, id);
+    AtomId local[16];
+    AtomId *children = arity <= 16u ? local : malloc(sizeof(*children) * arity);
+    if (!children)
+        return CETTA_ATOM_ID_NONE;
+    bool changed = false, ok = true;
+    for (CettaExprLen i = 0u; i < arity && ok; i++) {
+        AtomId child = tu_child(universe, id, i);
+        children[i] = import_as_rename_id(universe, renames, child, depth + 1u);
+        ok = children[i] != CETTA_ATOM_ID_NONE;
+        changed |= children[i] != child;
+    }
+    AtomId result = !ok ? CETTA_ATOM_ID_NONE
+        : changed ? tu_expr_from_ids(universe, children, arity) : id;
+    if (children != local)
+        free(children);
+    return result;
+}
+
+static bool import_as_rename_document(TermUniverse *universe,
+                                      const char *prefix,
+                                      AtomId *ids, int count) {
+    if (!prefix || !prefix[0] || count <= 0)
+        return true;
+    ImportAsRenames renames;
+    if (!import_as_renames_build(universe, ids, count, prefix, &renames))
+        return false;
+    bool ok = true;
+    for (int i = 0; ok && renames.len && i < count; i++) {
+        ids[i] = import_as_rename_id(universe, &renames, ids[i], 0u);
+        ok = ids[i] != CETTA_ATOM_ID_NONE;
+    }
+    import_as_renames_free(&renames);
+    return ok;
+}
+
 static bool load_he_document(CettaLibraryContext *ctx, const char *path,
                               Space *space, Arena *eval_arena,
                               Arena *persistent_arena, Registry *registry,
                               const CettaModuleSource *source,
+                              const char *as_prefix,
                               ResultSet *last_results, Atom **error_out) {
     char diagnostic[512] = {0};
     AtomId *ids = NULL;
@@ -10548,6 +11052,11 @@ static bool load_he_document(CettaLibraryContext *ctx, const char *path,
         source->bytes, source->length, space->native.universe,
         &ids, &count, diagnostic, sizeof(diagnostic)) : parse_metta_file_prefix_ids(
         path, space->native.universe, &ids, &count, diagnostic, sizeof(diagnostic));
+    if (!import_as_rename_document(space->native.universe, as_prefix, ids, count)) {
+        free(ids);
+        *error_out = module_reason(ctx, eval_arena, "ModuleParseFailed", path);
+        return false;
+    }
     /* A trailing directive marker has no complete body to execute. */
     if (count > 0 && tu_kind(space->native.universe, ids[count - 1]) == ATOM_SYMBOL &&
         tu_sym(space->native.universe, ids[count - 1]) == g_builtin_syms.bang)
@@ -10556,7 +11065,7 @@ static bool load_he_document(CettaLibraryContext *ctx, const char *path,
     Atom *detail = NULL;
     bool ok = cetta_library_petta_execute_document_ids(
         ctx, space, eval_arena, persistent_arena, registry,
-        ids, count, NULL, last_results, NULL, NULL, &failure, &detail);
+        ids, count, NULL, last_results, NULL, NULL, NULL, &failure, &detail);
     free(ids);
     if (!ok) {
         *error_out = detail ? detail : module_reason(
@@ -10581,13 +11090,31 @@ static bool load_module_file(CettaLibraryContext *ctx, const char *path,
                              Arena *persistent_arena, Registry *registry,
                              int fuel, const CettaModuleSource *source,
                              ResultSet *last_results, Atom **error_out) {
+    /* A pending import-as! belongs to this document alone: imports that its
+     * statements perform read their modules under their own names.  The
+     * inventory records each prefix as its own import of the file. */
+    char as_prefix[CETTA_IMPORT_PREFIX_MAX];
+    snprintf(as_prefix, sizeof(as_prefix), "%s", ctx->import_as_prefix);
+    ctx->import_as_prefix[0] = '\0';
+    char as_key[PATH_MAX];
+    const char *inventory_path = path;
+    if (as_prefix[0]) {
+        int width = snprintf(as_key, sizeof(as_key), "%s\x1f" "as:%s",
+                             path, as_prefix);
+        if (width < 0 || (size_t)width >= sizeof(as_key)) {
+            *error_out = atom_symbol(eval_arena, "import-as! module path too long");
+            return false;
+        }
+        inventory_path = as_key;
+    }
     bool source_scoped = ctx->module_sources && ctx->module_source_scope &&
         source == &ctx->module_source_scope->image->source;
     if (ctx->module_sources && (!source_scoped || !module_source_context_matches(ctx))) {
         *error_out = atom_symbol(eval_arena, "ModuleSourceContextChanged");
         return false;
     }
-    int64_t slot = imported_file_lookup(ctx, logical_space, path);
+    if (!last_results && document_source_active(ctx, logical_space, inventory_path)) return true;
+    int64_t slot = imported_file_lookup(ctx, logical_space, inventory_path);
     if (slot >= 0) {
         if (ctx->imported_files[slot].loading) {
             const CettaLanguageVersion *version = cetta_language_version_of(
@@ -10610,7 +11137,7 @@ static bool load_module_file(CettaLibraryContext *ctx, const char *path,
     ctx->imported_files[slot].space = logical_space;
     ctx->imported_files[slot].loading = true;
     snprintf(ctx->imported_files[slot].path,
-             sizeof(ctx->imported_files[slot].path), "%s", path);
+             sizeof(ctx->imported_files[slot].path), "%s", inventory_path);
 
     char import_dir[PATH_MAX];
     copy_language_source_dir(ctx, import_dir, sizeof(import_dir), path);
@@ -10645,7 +11172,12 @@ static bool load_module_file(CettaLibraryContext *ctx, const char *path,
     }
 
     bool ok = true;
-    if (format.kind == CETTA_MODULE_FORMAT_FOREIGN) {
+    if (as_prefix[0] && format.kind != CETTA_MODULE_FORMAT_METTA) {
+        *error_out = atom_symbol(eval_arena, "import-as! reads MeTTa documents");
+        ok = false;
+    }
+    if (!ok) {
+    } else if (format.kind == CETTA_MODULE_FORMAT_FOREIGN) {
         ok = cetta_foreign_load_module(ctx->foreign_runtime, path, work_space,
                                        persistent_arena, error_out);
         if (!ok && error_out && *error_out) {
@@ -10662,7 +11194,8 @@ static bool load_module_file(CettaLibraryContext *ctx, const char *path,
                (ctx->module_token_scope || !loaded ||
                 loaded->provider_kind != CETTA_MODULE_PROVIDER_STDLIB_FILE)) {
         ok = load_he_document(ctx, path, work_space, eval_arena,
-                              persistent_arena, registry, source, last_results, error_out);
+                              persistent_arena, registry, source,
+                              as_prefix, last_results, error_out);
     } else {
         int n = ctx->session.language_id == CETTA_LANGUAGE_PRIME
             ? source
@@ -10672,6 +11205,10 @@ static bool load_module_file(CettaLibraryContext *ctx, const char *path,
                     work_space ? work_space->native.universe : NULL, &atom_ids, NULL, 0u)
             : parse_metta_file_ids(path,
                 work_space ? work_space->native.universe : NULL, &atom_ids);
+        if (n > 0 && work_space &&
+            !import_as_rename_document(work_space->native.universe, as_prefix,
+                                       atom_ids, n))
+            n = -1;
         if (n < 0) {
             ok = false;
             *error_out = module_reason(ctx, eval_arena, "ModuleParseFailed", path);
@@ -10682,7 +11219,7 @@ static bool load_module_file(CettaLibraryContext *ctx, const char *path,
             ok = cetta_library_petta_execute_document_ids(
                 ctx, work_space, eval_arena,
                 persistent_arena, registry,
-                atom_ids, n, NULL, last_results, NULL, NULL, &failure, &detail);
+                atom_ids, n, NULL, last_results, NULL, NULL, NULL, &failure, &detail);
             if (!ok) {
                 if (failure == CETTA_PETTA_DOCUMENT_EVAL_FAILED &&
                     detail) {
@@ -10791,6 +11328,175 @@ static bool load_module_file_transactional(CettaLibraryContext *ctx, const char 
     return ok;
 }
 
+static bool transform_native_head(SymbolId head) {
+    if (head == SYMBOL_ID_NONE)
+        return true;
+    const char *name = symbol_bytes(g_symbols, head);
+    if (!name)
+        return true;
+    static const char *const operations[] = {
+        "transform", "tf:run", "tf:split", "tf:propose", "tf:inst",
+        "tf:fire", "tf:fire-into", "tf:cand", "tf:fired", "tf:cs",
+    };
+    for (size_t i = 0u; i < sizeof operations / sizeof operations[0]; i++)
+        if (strcmp(name, operations[i]) == 0)
+            return true;
+    return false;
+}
+
+static bool transform_native_row(Atom *atom) {
+    CettaRuleDescriptor rule;
+    if (cetta_rule_view(atom,
+                        CETTA_RULE_SYNTAX_ORDINARY | CETTA_RULE_SYNTAX_DIRECTIONAL,
+                        &rule)) {
+        Atom *lhs = atom->expr.elems[1];
+        if (!lhs || lhs->kind != ATOM_EXPR || lhs->expr.len == 0u ||
+            lhs->expr.elems[0]->kind != ATOM_SYMBOL)
+            return true;
+        return transform_native_head(atom_symbol_current_id(lhs->expr.elems[0]));
+    }
+    return atom && atom->kind == ATOM_EXPR && atom->expr.len == 3u &&
+           atom_is_symbol_id(atom->expr.elems[0], g_builtin_syms.colon) &&
+           atom->expr.elems[1]->kind == ATOM_SYMBOL &&
+           transform_native_head(atom_symbol_current_id(atom->expr.elems[1]));
+}
+
+/* An overlay's read token changes when base facts are removed. Its program
+ * remains the same when every view's equation and declaration revisions do.
+ * Store those semantic coordinates, without retaining facts or comparing
+ * library source text. Dependency imports publish to these revisions too. */
+static bool transform_views_current(const CettaLibraryContext *ctx, const Space *space) {
+    if (!ctx->transform_view_count)
+        return false;
+    for (size_t i = 0u; i < ctx->transform_view_count; i++) {
+        if (!space)
+            return false;
+        SpaceProgramToken old = ctx->transform_views[i];
+        if (old.space != space || old.instance_id != space_instance_id(space) ||
+            old.equation_revision != space_equation_revision(space) ||
+            old.declaration_revision != space_declaration_revision(space)) {
+            return false;
+        }
+        space = space->overlay_base;
+    }
+    return !space;
+}
+
+static bool transform_record_views(CettaLibraryContext *ctx, const Space *space) {
+    if (space_program_token(space).base_dependency_epoch == UINT64_MAX)
+        return false;
+    size_t count = 0u;
+    for (const Space *view = space; view; view = view->overlay_base)
+        count++;
+    SpaceProgramToken *views = cetta_realloc(ctx->transform_views, count * sizeof(*views));
+    if (!views)
+        return false;
+    ctx->transform_views = views;
+    ctx->transform_view_count = count;
+    for (size_t i = 0u; space; i++, space = space->overlay_base)
+        views[i] = space_program_token(space);
+    return true;
+}
+
+/* Only definition occurrences are held, never the mutable fact store. A
+ * prefix rewrite may have removed data while an unrelated equation was
+ * added, so row positions alone cannot decide semantic currency. */
+static bool transform_definitions_match(CettaLibraryContext *ctx, Space *space) {
+    Atom *saved = ctx->transform_definition_rows;
+    if (!saved)
+        return false;
+    CettaExprLen at = 0u;
+    CettaCount rows = space_length64(space);
+    for (CettaIndex i = 0u; i < rows; i++) {
+        Atom *row = space_get_at64(space, i);
+        if (!transform_native_row(row))
+            continue;
+        if (at == saved->expr.len || !atom_eq(row, saved->expr.elems[at++]))
+            return false;
+    }
+    return at == saved->expr.len;
+}
+
+static bool transform_record_definitions(CettaLibraryContext *ctx, Space *space) {
+    if (ctx->transform_definitions_ready)
+        arena_free(&ctx->transform_definitions);
+    arena_init(&ctx->transform_definitions);
+    ctx->transform_definitions_ready = true;
+    ctx->transform_definition_rows = NULL;
+    ResultSet rows;
+    result_set_init(&rows);
+    CettaCount count = space_length64(space);
+    for (CettaIndex i = 0u; i < count; i++) {
+        Atom *row = space_get_at64(space, i);
+        if (transform_native_row(row)) {
+            Atom *copy = atom_deep_copy(&ctx->transform_definitions, row);
+            if (!copy) { result_set_free(&rows); return false; }
+            result_set_add(&rows, copy);
+        }
+    }
+    ctx->transform_definition_rows = atom_expr(&ctx->transform_definitions,
+        rows.items, rows.len);
+    result_set_free(&rows);
+    return ctx->transform_definition_rows != NULL;
+}
+
+bool cetta_library_transform_program_current(CettaLibraryContext *ctx, Space *space) {
+    if (!ctx || !ctx->transform_program_valid || !space)
+        return false;
+    SpaceProgramToken now = space_program_token(space);
+    if (space_program_token_eq(ctx->transform_program, now))
+        return true;
+    CettaCount rows = space_length64(space);
+    if (transform_views_current(ctx, space)) {
+        ctx->transform_program = now;
+        ctx->transform_read = space_read_token(space);
+        ctx->transform_scanned_rows = rows;
+        return true;
+    }
+    if (ctx->transform_read.space != space)
+        return false;
+    bool appended = space_read_token_prefix_intact(ctx->transform_read) &&
+        space_read_token(space).base_dependency_epoch ==
+            ctx->transform_read.base_dependency_epoch &&
+        rows >= ctx->transform_scanned_rows;
+    if (appended) {
+        for (CettaIndex index = ctx->transform_scanned_rows; index < rows; index++)
+            if (transform_native_row(space_get_at64(space, index)))
+                return false;
+    } else if (!transform_definitions_match(ctx, space)) {
+        return false;
+    }
+    if (!transform_record_views(ctx, space))
+        return false;
+    ctx->transform_program = now;
+    ctx->transform_read = space_read_token(space);
+    ctx->transform_scanned_rows = rows;
+    return true;
+}
+
+static bool record_transform_import(CettaLibraryContext *ctx,
+                                    const CettaImportPlan *plan) {
+    size_t path_len = strlen(plan->canonical_path);
+    if (path_len >= sizeof("/lib_transform.metta") - 1u &&
+        strcmp(plan->canonical_path + path_len -
+               (sizeof("/lib_transform.metta") - 1u), "/lib_transform.metta") == 0) {
+        library_transform_register_heads();
+        Space *space = plan->execution_target_space;
+        ctx->transform_program = space_program_token(space);
+        ctx->transform_read = space_read_token(space);
+        ctx->transform_scanned_rows = space_length64(space);
+        ctx->transform_program_valid = true;
+        if (!transform_record_views(ctx, space) ||
+            !transform_record_definitions(ctx, space)) {
+            ctx->transform_program = (SpaceProgramToken){0};
+            ctx->transform_read = (SpaceReadToken){0};
+            ctx->transform_view_count = 0u;
+            return false;
+        }
+    }
+    return true;
+}
+
 static bool execute_import_plan_body(CettaLibraryContext *ctx, const CettaImportPlan *plan,
                                 Arena *eval_arena,
                                 Arena *persistent_arena, Registry *registry,
@@ -10822,8 +11528,13 @@ static bool execute_import_plan_body(CettaLibraryContext *ctx, const CettaImport
                                                  last_results, error_out);
         if (!ok) {
             rollback_loaded_modules(ctx, loaded_len_before);
+            return false;
         }
-        return ok;
+        if (!record_transform_import(ctx, plan)) {
+            *error_out = module_reason(ctx, eval_arena, "ModuleInitError", plan->canonical_path);
+            return false;
+        }
+        return true;
     }
     if (!load_module_file(ctx, plan->canonical_path, plan->logical_target_space,
                           plan->execution_target_space, eval_arena,
@@ -10834,6 +11545,10 @@ static bool execute_import_plan_body(CettaLibraryContext *ctx, const CettaImport
             rollback_imported_files(ctx, imported_len_before);
         }
         rollback_loaded_modules(ctx, loaded_len_before);
+        return false;
+    }
+    if (!record_transform_import(ctx, plan)) {
+        *error_out = module_reason(ctx, eval_arena, "ModuleInitError", plan->canonical_path);
         return false;
     }
     return true;
@@ -11225,9 +11940,12 @@ bool cetta_library_module_context(CettaLibraryContext *ctx, uint64_t instance,
     return false;
 }
 
-bool cetta_library_he_run_text(CettaLibraryContext *ctx, Space *space,
-    Registry *registry, const char *text, Arena *arena, Arena *persistent,
-    CettaDocumentResultObserver observer, void *observer_context, Atom **error_out) {
+static bool cetta_library_run_text_internal(CettaLibraryContext *ctx, Space *space,
+    Registry *registry, const char *text, const char *origin, Arena *arena, Arena *persistent,
+    CettaDocumentResultObserver observer, void *observer_context,
+    CettaDocumentExecution *execution, CettaDocumentRunReport *report, Atom **error_out) {
+    if (report)
+        *report = (CettaDocumentRunReport){.status = CETTA_DOCUMENT_RESOURCE_FAILURE};
     if (error_out)
         *error_out = NULL;
     if (!ctx || !space || !text || !arena)
@@ -11236,9 +11954,11 @@ bool cetta_library_he_run_text(CettaLibraryContext *ctx, Space *space,
     if (!work || !work->native.universe)
         return false;
     char resource_dir[PATH_MAX] = {0};
-    if (space == ctx->top_module_space) {
+    if (origin) {
+        copy_parent_dir(resource_dir, sizeof(resource_dir), origin);
+    } else if (space == ctx->top_module_space) {
         snprintf(resource_dir, sizeof(resource_dir), "%s",
-            ctx->script_dir[0] ? ctx->script_dir : ctx->working_dir);
+            library_entry_directory(ctx)[0] ? library_entry_directory(ctx) : ctx->working_dir);
     } else {
         for (uint32_t i = 0u; i < ctx->loaded_module_len; i++) {
             if (ctx->loaded_modules[i]->space == space) {
@@ -11252,6 +11972,8 @@ bool cetta_library_he_run_text(CettaLibraryContext *ctx, Space *space,
                 snprintf(resource_dir, sizeof(resource_dir), "%s",
                     ctx->retired_modules[i].resource_dir);
         }
+        if (!resource_dir[0] && ctx->resource_scope)
+            snprintf(resource_dir, sizeof(resource_dir), "%s", cetta_library_current_dir(ctx));
     }
     if (!cetta_library_push_dir(ctx, resource_dir[0] ? resource_dir : ".")) {
         if (error_out)
@@ -11264,15 +11986,37 @@ bool cetta_library_he_run_text(CettaLibraryContext *ctx, Space *space,
     int parsed = parse_metta_bytes_prefix_ids(
         (const uint8_t *)text, strlen(text), work->native.universe,
         &ids, &count, diagnostic, sizeof(diagnostic));
-    if (count > 0 && tu_kind(work->native.universe, ids[count - 1]) == ATOM_SYMBOL &&
-        tu_sym(work->native.universe, ids[count - 1]) == g_builtin_syms.bang)
-        count--;
+    bool dangling_directive = count > 0 &&
+        tu_kind(work->native.universe, ids[count - 1]) == ATOM_SYMBOL &&
+        tu_sym(work->native.universe, ids[count - 1]) == g_builtin_syms.bang;
+    if (execution && (parsed < 0 || dangling_directive)) {
+        if (report) {
+            report->status = CETTA_DOCUMENT_PARSE_FAILED;
+            report->detail = atom_symbol(arena, dangling_directive
+                ? "directive has no expression"
+                : diagnostic[0] ? diagnostic : "MeTTa source parse failed");
+        }
+        cetta_library_pop_dir(ctx);
+        free(ids);
+        return false;
+    }
+    if (dangling_directive) count--;
     Registry *outer_scope = ctx->module_token_scope;
     ctx->module_token_scope = registry;
     CettaPettaDocumentFailure failure = CETTA_PETTA_DOCUMENT_OK;
     bool ok = cetta_library_petta_execute_document_ids(
         ctx, work, arena, persistent, registry, ids, count,
-        NULL, NULL, observer, observer_context, &failure, error_out);
+        NULL, NULL, observer, observer_context, execution, &failure, error_out);
+    if (report) {
+        report->completion = execution ? execution->completion : CETTA_EVAL_COMPLETE;
+        report->detail = error_out ? *error_out : NULL;
+        report->status = execution && execution->completion != CETTA_EVAL_COMPLETE
+            ? CETTA_DOCUMENT_INTERRUPTED
+            : execution && execution->refused ? CETTA_DOCUMENT_OBSERVER_REFUSED
+            : ok ? CETTA_DOCUMENT_COMPLETE
+            : failure == CETTA_PETTA_DOCUMENT_EVAL_FAILED ? CETTA_DOCUMENT_REJECTED
+            : CETTA_DOCUMENT_RESOURCE_FAILURE;
+    }
     ctx->module_token_scope = outer_scope;
     cetta_library_pop_dir(ctx);
     free(ids);
@@ -11283,6 +12027,60 @@ bool cetta_library_he_run_text(CettaLibraryContext *ctx, Space *space,
                 diagnostic[0] ? diagnostic : "MeTTa source parse failed");
         return false;
     }
+    return ok;
+}
+
+bool cetta_library_he_run_text(CettaLibraryContext *ctx, Space *space,
+    Registry *registry, const char *text, Arena *arena, Arena *persistent,
+    CettaDocumentResultObserver observer, void *observer_context, Atom **error_out) {
+    return cetta_library_run_text_internal(ctx, space, registry, text, NULL, arena,
+        persistent, observer, observer_context, NULL, NULL, error_out);
+}
+
+bool cetta_library_run_text(CettaLibraryContext *ctx, Space *space,
+    Registry *registry, const char *text, Arena *arena, Arena *persistent,
+    CettaDocumentOutcomeObserver observer, void *observer_context,
+    CettaDocumentRunReport *report) {
+    CettaDocumentExecution execution = {.observer = observer, .context = observer_context};
+    Atom *detail = NULL;
+    return cetta_library_run_text_internal(ctx, space, registry, text, NULL, arena,
+        persistent, NULL, NULL, &execution, report, &detail);
+}
+
+bool cetta_library_run_text_at(CettaLibraryContext *ctx, Space *space,
+    Registry *registry, const char *text, const char *canonical_path,
+    Arena *arena, Arena *persistent, CettaDocumentOutcomeObserver observer,
+    void *observer_context, CettaDocumentRunReport *report) {
+    CettaDocumentRunReport local;
+    if (!report) report = &local;
+    *report = (CettaDocumentRunReport){.status = CETTA_DOCUMENT_RESOURCE_FAILURE,
+        .completion = CETTA_EVAL_INCOMPLETE_CAPACITY};
+    if (!ctx || !space || !text || !canonical_path || !canonical_path[0] ||
+        strlen(canonical_path) >= PATH_MAX) return false;
+    struct CettaDocumentSourceScope *scope = malloc(sizeof(*scope));
+    if (!scope) return false;
+    *scope = (struct CettaDocumentSourceScope){.previous = ctx->document_source_scope,
+        .space = logical_import_space(ctx, space), .path = canonical_path};
+    char directory[PATH_MAX];
+    copy_parent_dir(directory, sizeof(directory), canonical_path);
+    scope->resources = resource_context_new(directory, directory);
+    if (!scope->resources) { free(scope); return false; }
+    cetta_library_resource_enter(ctx, scope->resources, &scope->activation);
+    ctx->document_source_scope = scope;
+    CettaDocumentExecution execution = {.observer = observer, .context = observer_context};
+    Atom *detail = NULL;
+    bool ok = cetta_library_run_text_internal(ctx, space, registry, text, canonical_path,
+        arena, persistent, NULL, NULL, &execution, report, &detail);
+    if (ok && report->status == CETTA_DOCUMENT_COMPLETE &&
+        !note_canonical_document(ctx, scope->space, canonical_path)) {
+        report->status = CETTA_DOCUMENT_RESOURCE_FAILURE;
+        report->completion = CETTA_EVAL_INCOMPLETE_CAPACITY;
+        ok = false;
+    }
+    ctx->document_source_scope = scope->previous;
+    cetta_library_resource_leave(ctx, &scope->activation);
+    cetta_library_resource_release(scope->resources);
+    free(scope);
     return ok;
 }
 
@@ -12424,7 +13222,7 @@ bool cetta_library_print_loaded_modules(CettaLibraryContext *ctx, FILE *out,
     return true;
 }
 
-bool cetta_library_import(CettaLibraryContext *ctx, const char *name,
+static bool library_import_native(CettaLibraryContext *ctx, const char *name,
                           Space *space, Arena *eval_arena,
                           Arena *persistent_arena, Registry *registry,
                           int fuel, Atom **error_out) {
@@ -12449,7 +13247,7 @@ bool cetta_library_import(CettaLibraryContext *ctx, const char *name,
      * libraries alone republish words into each reader. PeTTa source modules
      * use the per-space file inventory below. */
     if (previously_active && ctx->session.language_id != CETTA_LANGUAGE_PETTA &&
-        import_bit != CETTA_LIBRARY_RHO)
+        import_bit != CETTA_LIBRARY_RHO && !ctx->import_as_prefix[0])
         return true;
 
 #if CETTA_BUILD_WITH_JSON_GSLT
@@ -12489,6 +13287,8 @@ bool cetta_library_import(CettaLibraryContext *ctx, const char *name,
         ctx->durable_runtime = cetta_durable_runtime_new();
     if (import_bit == CETTA_LIBRARY_IO && !ctx->io_runtime)
         ctx->io_runtime = cetta_io_runtime_new_with_value_limit(cetta_library_value_byte_limit(ctx));
+    if (import_bit == CETTA_LIBRARY_PY)
+        cetta_foreign_enable_objects(ctx->foreign_runtime, registry);
     return true;
 }
 
@@ -12899,7 +13699,7 @@ static CettaLoadedModule *loaded_he_named_module(CettaLibraryContext *ctx,
     return NULL;
 }
 
-bool cetta_library_import_module(CettaLibraryContext *ctx, const char *spec,
+static bool library_import_module(CettaLibraryContext *ctx, const char *spec,
                                  Space *space, bool target_is_fresh,
                                  Arena *eval_arena,
                                  Arena *persistent_arena, Registry *registry,
@@ -12923,6 +13723,27 @@ bool cetta_library_import_module(CettaLibraryContext *ctx, const char *spec,
                                     persistent_arena, registry, fuel, error_out);
     }
 
+    /* import-as! reads a renamed copy of the document into the destination.
+     * The copy is not the module: HE's shared module space and the loaded
+     * module record are left to plain imports. */
+    if (ctx->import_as_prefix[0]) {
+        if (!parse_module_spec(spec, &parsed_spec, eval_arena, error_out) ||
+            !resolve_import_plan(ctx, &parsed_spec, logical_space, space,
+                                 target_is_fresh, &plan, eval_arena, error_out))
+            return false;
+        if (plan.format.kind != CETTA_MODULE_FORMAT_METTA) {
+            *error_out = atom_symbol(eval_arena, "import-as! reads MeTTa documents");
+            return false;
+        }
+        if (module_space_out && target_is_fresh)
+            *module_space_out = plan.execution_target_space;
+        return load_module_file(ctx, plan.canonical_path,
+                                plan.logical_target_space,
+                                plan.execution_target_space, eval_arena,
+                                persistent_arena, registry, fuel, NULL, NULL,
+                                error_out);
+    }
+
     CettaLoadedModule *entry = loaded_he_named_module(ctx, spec, registry);
     if (!entry) {
         if (!parse_module_spec(spec, &parsed_spec, eval_arena, error_out))
@@ -12930,6 +13751,11 @@ bool cetta_library_import_module(CettaLibraryContext *ctx, const char *spec,
         if (!resolve_import_plan(ctx, &parsed_spec, logical_space, space,
                                  target_is_fresh, &plan, eval_arena, error_out))
             return false;
+        if (!target_is_fresh) {
+            int64_t document = imported_file_lookup(ctx, logical_space, plan.canonical_path);
+            if (document_source_active(ctx, logical_space, plan.canonical_path) ||
+                (document >= 0 && !ctx->imported_files[document].loading)) return true;
+        }
     }
     if (entry || library_loads_he_module(ctx, &plan) ||
         library_loads_he_provider(ctx, &plan)) {
@@ -13206,7 +14032,63 @@ static bool import_rooted_library_reference(
     return imported;
 }
 
-bool cetta_library_import_petta_reference_at(
+void cetta_library_import_observe_begin(CettaLibraryContext *context, CettaImportFailureScope *scope) {
+    scope->previous = context->import_failure_scope;
+    context->import_failure_scope = scope;
+}
+void cetta_library_import_observe_end(CettaLibraryContext *context, CettaImportFailureScope *scope) {
+    context->import_failure_scope = scope->previous;
+}
+static void observe_import_failure(CettaLibraryContext *context, const char *name, Atom *reason) {
+    CettaImportFailureScope *scope = context ? context->import_failure_scope : NULL;
+    if (scope && scope->observe) scope->observe(scope->context, name, reason);
+}
+bool cetta_library_registered(const char *name) {
+    return name && (cetta_library_lookup(name) || cetta_native_module_lookup(name));
+}
+
+__attribute__((noinline))
+const char *cetta_library_file_spec(const CettaLibraryContext *ctx, Arena *a,
+                                    const char *name) {
+    char path[PATH_MAX];
+    if (!a || cetta_library_registered(name) ||
+        !cetta_library_file_path(ctx, name, path, sizeof(path)))
+        return NULL;
+    size_t len = strlen(path) + 1u;
+    char *kept = arena_alloc(a, len);
+    if (kept)
+        memcpy(kept, path, len);
+    return kept;
+}
+
+bool cetta_library_file_path(const CettaLibraryContext *ctx, const char *name,
+                             char *out, size_t size) {
+    if (!ctx || !ctx->root_dir[0] || !name || !name[0] || !out)
+        return false;
+    for (const char *c = name; *c; c++)
+        if (!((*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z') ||
+              (*c >= '0' && *c <= '9') || *c == '_' || *c == '-'))
+            return false;
+    int n = snprintf(out, size, "%s/lib/%s.metta", ctx->root_dir, name);
+    return n > 0 && (size_t)n < size && access(out, R_OK) == 0;
+}
+
+bool cetta_library_import(CettaLibraryContext *context, const char *name,
+        Space *space, Arena *arena, Arena *persistent, Registry *registry,
+        int fuel, Atom **error) {
+    bool ok = library_import_native(context, name, space, arena, persistent, registry, fuel, error);
+    if (!ok) observe_import_failure(context, name, error ? *error : NULL);
+    return ok;
+}
+bool cetta_library_import_module(CettaLibraryContext *context, const char *name,
+        Space *space, bool fresh, Arena *arena, Arena *persistent, Registry *registry,
+        int fuel, Space **module, Atom **error) {
+    bool ok = library_import_module(context, name, space, fresh, arena, persistent, registry, fuel, module, error);
+    if (!ok) observe_import_failure(context, name, error ? *error : NULL);
+    return ok;
+}
+
+static bool library_import_petta_reference_at(
     CettaLibraryContext *ctx,
     const PeTTaLibraryReference *reference,
     uint32_t occurrence,
@@ -13252,6 +14134,16 @@ Atom *cetta_library_durable_admin(CettaLibraryContext *ctx, Arena *a, Atom *form
             form->expr.elems+1,form->expr.len-1);
     }
     return NULL;
+}
+
+bool cetta_library_import_petta_reference_at(CettaLibraryContext *context,
+        const PeTTaLibraryReference *reference, uint32_t occurrence,
+        Space *space, bool fresh, Arena *arena, Arena *persistent,
+        Registry *registry, int fuel, Atom **error) {
+    bool ok = library_import_petta_reference_at(context, reference, occurrence,
+        space, fresh, arena, persistent, registry, fuel, error);
+    if (!ok) observe_import_failure(context, reference ? reference->member : NULL, error ? *error : NULL);
+    return ok;
 }
 
 /* The active libraries' native operations, as values; a foreign call
@@ -13405,6 +14297,18 @@ bool cetta_library_call_native(CettaLibraryContext *ctx, Space *space,
         cetta_tensor_call(ctx, space, a, head, args, nargs, out)) return true;
     if (ctx && (ctx->active_mask & CETTA_LIBRARY_POSTINGS) &&
         cetta_postings_call(ctx, a, head, args, nargs, out)) return true;
+    if (ctx && (ctx->active_mask & CETTA_LIBRARY_ASP) &&
+        cetta_asp_call(ctx, a, head, args, nargs, out)) return true;
+    if (ctx && (ctx->active_mask & CETTA_LIBRARY_CLINGO) &&
+        cetta_clingo_call(ctx, a, head, args, nargs, out)) return true;
+    if (ctx && (ctx->active_mask & CETTA_LIBRARY_SAT) &&
+        cetta_sat_call(ctx, a, head, args, nargs, out)) return true;
+    if (ctx && (ctx->active_mask & CETTA_LIBRARY_IPASIR) &&
+        cetta_ipasir_call(ctx, a, head, args, nargs, out)) return true;
+    if (ctx && (ctx->active_mask & CETTA_LIBRARY_SMT) &&
+        cetta_smt_call(ctx, a, head, args, nargs, out)) return true;
+    if (ctx && (ctx->active_mask & CETTA_LIBRARY_PROVENANCE) &&
+        cetta_provenance_call(ctx, a, head, args, nargs, out)) return true;
     if (ctx && (ctx->active_mask & CETTA_LIBRARY_RE) &&
         cetta_re_call(ctx, a, head, args, nargs, out)) return true;
     if (ctx && (ctx->active_mask & CETTA_LIBRARY_CRYPTO) &&
@@ -13460,6 +14364,15 @@ void cetta_library_context_prime_snapshot_storage(const CettaLibraryContext *ctx
         ctx->lib_prolog || ctx->foreign_runtime || ctx->parser_cache ||
         ctx->prime_hol_guest || ctx->prime_hol_guest_free || ctx->prime_lf_guest || ctx->prime_lf_guest_free)
         cetta_storage_refuse(census, "PrivateServiceProfileChanged");
+}
+
+bool cetta_library_result_pretenure_enabled(const CettaLibraryContext *ctx) {
+    return ctx && (ctx->active_mask & CETTA_LIBRARY_CLINGO);
+}
+
+bool cetta_library_result_long_lived(const CettaLibraryContext *ctx, SymbolId head) {
+    return ctx && (ctx->active_mask & CETTA_LIBRARY_CLINGO) &&
+           cetta_clingo_result_long_lived(head);
 }
 
 bool cetta_library_call_native_prepared_view(

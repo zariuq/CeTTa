@@ -20,9 +20,13 @@ from test_parser_pack_gll_v1 import run_native
 from test_petta_parser_authority_v1 import EXPECTED_PARSER_DIGEST
 from test_petta_parser_authority_v1 import EXPECTED_READER_DIGEST
 from test_petta_parser_authority_v1 import EXPECTED_REVISION
+from test_petta_parser_authority_v1 import FORM_AUTHORITY
+from test_petta_parser_authority_v1 import SPLITTER_AUTHORITY
+from test_petta_parser_authority_v1 import authority_command
 from test_petta_parser_authority_v1 import file_digest
 from test_petta_parser_authority_v1 import revision
 from test_petta_parser_authority_v1 import run_case as run_form_authority
+from gslt2parse_oracles_v1 import ORACLES
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,28 +34,28 @@ PRESENTATIONS = ROOT / "experiments" / "gslt2parse_foundation" / "presentations"
 START = "(pp-def petta-document)"
 
 EXPECTED_AUTHORITY_ADAPTER_DIGEST = (
-    "b754f23f66ca3646336f1cb9abe1bdf22a1a275a02f5fb52d8e084e8f4c9c7ec"
+    "92d197017fb03ec1c24cf4bb6a71ca602a960781eb76985d08f6f660606cdd09"
 )
 EXPECTED_CLASSES_DIGEST = (
-    "a227411f64e0b6071e9be5a0995ab19e22313a8126ebf6953157e00aa6baf7e2"
+    "55200130eb87c36e63c4e4ea596e067a3ebb46e3ed31dd48e53a138861437d83"
 )
 EXPECTED_SPLITTER_DIGEST = (
-    "6cd9ffbdd6b2b33896360fade27c07fcc619c6319f049cd776de3d97c315f6f7"
+    "ee92a299d0a6016d7c48645afe98220fbd127850e846835e8e0017349c627c7d"
 )
 EXPECTED_SOURCE_DIGEST = (
-    "538dcab8a48eaa8670378e4defd300d8e01f944e9f73f9dd4f6f2744a13baac0"
+    "e847c8b9e20e8ff2f433e8e3179fba8690641a52d226d1284cedb5015801bb0a"
 )
 EXPECTED_COMPILER_DIGEST = (
-    "bcc036af326a6ee1b56b285e0cf6ee2cd8cc174a8bccc209c51e76b079305cd6"
+    "cd91aea5647802306307c09c57074a83058d5e8cad2b28f73f8d1111bab78beb"
 )
 EXPECTED_ENVIRONMENT_DIGEST = (
-    "a3e9da3e47a8a6bb9598d3e60daa410784aa5fffed42c23e033119138107ca9f"
+    "22becc0f4fb74b298077306601b784f1428a8e9eb6fb9afac4d4aed9e6542971"
 )
 EXPECTED_PACK_DIGEST = (
-    "369958a39dec4e1073388f74381ef5d8d6293792318232e0fe7b677ecc5c54f3"
+    "5106a4f49f513dfc39de7981503a13426e4dc3ad2a42ebd3c8eb05ffc522e443"
 )
 EXPECTED_MATRIX_DIGEST = (
-    "3ef42cf57766ca0d5d21c48d4c7f5c85e74df563c2eeb09e804b7a1b6ae52e15"
+    "5a9dec1e244271ae3bcbd4fdecf5a255fb038587cf4e041d52123e830b582581"
 )
 
 
@@ -154,7 +158,7 @@ def run_splitter_authority(
     oracle: Path, petta_root: Path, input_path: Path
 ) -> tuple[RawObservation, ...]:
     completed = subprocess.run(
-        ["swipl", "-q", "-f", str(oracle), "--", str(input_path)],
+        authority_command(oracle, petta_root, str(input_path)),
         cwd=petta_root,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -183,14 +187,9 @@ def run_splitter_authority(
 
 
 def run_reference(
-    petta_root: Path, input_path: Path, max_depth: int = 4096
+    input_path: Path, max_depth: int = 4096
 ) -> dict[str, object]:
-    script = (
-        petta_root
-        / "experiments"
-        / "gslt2parse_foundation"
-        / "petta_document_splitter_gslt_reference_v1.pl"
-    )
+    script = ORACLES / "petta_document_splitter_gslt_reference_v1.pl"
     completed = subprocess.run(
         [
             "swipl",
@@ -391,8 +390,9 @@ def reproduce_generated_files(directory: Path) -> int:
 
 
 def pin_sources(petta_root: Path, authority_oracle: Path) -> None:
-    if revision(petta_root) != EXPECTED_REVISION:
-        raise GateFailure("PeTTa authority revision changed")
+    observed = revision(petta_root)
+    if observed is not None and observed != EXPECTED_REVISION:
+        raise GateFailure(f"PeTTa authority revision changed: {observed}")
     if file_digest(petta_root / "src" / "parser.pl") != EXPECTED_PARSER_DIGEST:
         raise GateFailure("PeTTa per-form parser authority changed")
     if file_digest(petta_root / "src" / "filereader.pl") != EXPECTED_READER_DIGEST:
@@ -441,21 +441,11 @@ def main() -> int:
     if not petta_root.is_dir():
         raise GateFailure("PeTTa authority checkout is absent")
 
-    authority_oracle = (
-        petta_root
-        / "experiments"
-        / "gslt2parse_foundation"
-        / "petta_document_splitter_authority_v1.pl"
-    )
-    form_oracle = (
-        petta_root
-        / "experiments"
-        / "gslt2parse_foundation"
-        / "petta_parser_authority_v1.pl"
-    )
+    authority_oracle = SPLITTER_AUTHORITY
+    form_oracle = FORM_AUTHORITY
     pin_sources(petta_root, authority_oracle)
 
-    abi = export_stream(petta_root, ABI_CASES["petta-splitter"])
+    abi = export_stream(ABI_CASES["petta-splitter"])
     require_abi_seals(abi)
     records: list[dict[str, object]] = []
     accepted = 0
@@ -495,7 +485,7 @@ def main() -> int:
                 decision = "accepted"
                 accepted += 1
 
-            reference = run_reference(petta_root, input_path)
+            reference = run_reference(input_path)
             if (
                 reference.get("decode") != "valid-utf8"
                 or reference.get("outcome") != "completed"
@@ -593,7 +583,7 @@ def main() -> int:
 
         invalid = directory / "invalid-utf8.input"
         invalid.write_bytes(b"(\xff)")
-        invalid_reference = run_reference(petta_root, invalid)
+        invalid_reference = run_reference(invalid)
         if (
             invalid_reference.get("decode") != "invalid-utf8"
             or invalid_reference.get("decision") != "rejected"

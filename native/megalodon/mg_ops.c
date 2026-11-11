@@ -57,6 +57,13 @@ void mg_budget_init(MgBudget *budget, uint64_t work_limit) {
     budget->stop = MG_OK;
 }
 
+void mg_budget_restart(MgBudget *budget, uint64_t work_limit) {
+    budget->work_limit = work_limit;
+    budget->work_used = 0;
+    budget->poll_countdown = MG_POLL_INTERVAL;
+    budget->stop = MG_OK;
+}
+
 bool mg_budget_poll(MgBudget *budget) {
     if (!budget)
         return true;
@@ -164,6 +171,7 @@ typedef struct {
     uint64_t rev;     /* environment-dependent entries */
     uint32_t param;
     int32_t amount;
+    uint32_t epoch;   /* the store's memo epoch when made (a release ends it) */
     uint8_t op;
 } MgCacheEntry;
 
@@ -198,7 +206,7 @@ static void *cache_get(MgCheck *c, uint8_t op, const void *a, const void *b,
         return NULL;
     MgCacheEntry *e = &table[cache_slot(op, a, b, param, amount)];
     if (e->op != op || e->a != a || e->b != b || e->param != param ||
-        e->amount != amount)
+        e->amount != amount || e->epoch != ST(c)->memo_epoch)
         return NULL;
     if (env_dependent &&
         (e->rev > c->env.rev ||
@@ -214,7 +222,7 @@ static void cache_put(MgCheck *c, uint8_t op, const void *a, const void *b,
         return;
     MgCacheEntry *e = &table[cache_slot(op, a, b, param, amount)];
     *e = (MgCacheEntry){.a = a, .b = b, .result = result, .rev = c->env.rev,
-                        .param = param, .amount = amount, .op = op};
+                        .param = param, .amount = amount, .epoch = ST(c)->memo_epoch, .op = op};
 }
 
 /* ── types ────────────────────────────────────────────────────────────── */
@@ -257,8 +265,10 @@ MgTp *mg_tp_shift(MgCheck *c, MgTp *a, uint32_t cutoff, int32_t amount) {
     mg_leave(c);
     if (!r)
         return c->status == MG_OK ? mg_oom(c) : NULL;
-    if (cutoff == 0u && amount == 1)
+    if (cutoff == 0u && amount == 1) {
+        mg_store_cache_write(ST(c), &a->shift1);
         a->shift1 = r;
+    }
     else
         cache_put(c, OP_TP_SHIFT, a, NULL, cutoff, amount, r);
     return r;
@@ -452,8 +462,10 @@ static MgTm *shift_rec(ShiftRun *run, MgTm *m, uint32_t cutoff) {
     mg_leave(c);
     if (!r)
         return c->status == MG_OK ? mg_oom(c) : NULL;
-    if (cutoff == 0u && amount == 1)
+    if (cutoff == 0u && amount == 1) {
+        mg_store_cache_write(ST(c), &m->shift1);
         m->shift1 = r;
+    }
     if (memo)
         opmemo_put(&run->memo, m, cutoff, NULL, r);
     return r;
@@ -722,6 +734,7 @@ MgTpList *mg_tplist_shift1(MgCheck *c, MgTpList *l) {
     mg_leave(c);
     if (!r)
         return c->status == MG_OK ? mg_oom(c) : NULL;
+    mg_store_cache_write(ST(c), &l->shift1);
     l->shift1 = r;
     return r;
 }
@@ -740,6 +753,7 @@ MgTmList *mg_tmlist_shift1(MgCheck *c, MgTmList *l) {
     mg_leave(c);
     if (!r)
         return c->status == MG_OK ? mg_oom(c) : NULL;
+    mg_store_cache_write(ST(c), &l->shift1);
     l->shift1 = r;
     return r;
 }
@@ -852,9 +866,12 @@ MgTm *mg_tm_nf(MgCheck *c, MgTm *m) {
     mg_leave(c);
     if (!r)
         return c->status == MG_OK ? mg_oom(c) : NULL;
+    mg_store_cache_write(ST(c), &m->nf);
     m->nf = r;
-    if (!r->nf)
+    if (!r->nf) {
+        mg_store_cache_write(ST(c), &r->nf);
         r->nf = r;
+    }
     return r;
 }
 
@@ -954,6 +971,8 @@ static MgTm *delta_rec(MgCheck *c, MgTm *m, bool *touched_absent) {
     if (absent) {
         *touched_absent = true;
     } else {
+        mg_store_cache_write(ST(c), &m->dnf);
+        mg_store_cache_write(ST(c), &m->dnf_rev);
         m->dnf = r;
         m->dnf_rev = c->env.rev;
     }
@@ -1188,6 +1207,19 @@ bool mg_footprint_add(MgFootprint *f, uint32_t name, MgNamespace ns) {
     f->items[lo] = key;
     ++f->len;
     return true;
+}
+
+bool mg_footprint_has(const MgFootprint *f, uint32_t name, MgNamespace ns) {
+    uint64_t key = ((uint64_t)name << 1) | (uint64_t)ns;
+    uint32_t lo = 0, hi = f->len;
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2u;
+        if (f->items[mid] < key)
+            lo = mid + 1u;
+        else
+            hi = mid;
+    }
+    return lo < f->len && f->items[lo] == key;
 }
 
 bool mg_footprint_union(MgFootprint *dst, const MgFootprint *src) {

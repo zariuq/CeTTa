@@ -40,7 +40,7 @@ CettaTensorStatus cetta_tensor_scan_sum(const CettaTensor *t, size_t axis,
     CettaTensorScalar total;
     memset(&total, 0, sizeof(total));
     for (size_t i = 0; i < n; i++) {
-        const void *value = stored_value(t, entries[i].ordinal);
+        const void *value = stored_value(t, entries[i].ordinal, &(CettaTensorScalar){0});
         if (!i || entries[i].group != entries[i-1].group) memcpy(&total, value, width);
         else status = scalar_add(t->dtype, &total, value);
         if (status != CETTA_TENSOR_OK) break;
@@ -88,7 +88,7 @@ CettaTensorStatus cetta_tensor_concatenate(const CettaTensor *left,
             size_t old = stored_coordinate(input, i);
             coordinates[used] = (old / block) * (shape[axis] * inner) + old % block +
                 (j ? left->shape[axis] * inner : 0);
-            memcpy(data + used * width, stored_value(input, i), width); used++;
+            memcpy(data + used * width, stored_value(input, i, &(CettaTensorScalar){0}), width); used++;
         }
     }
     status = cetta_tensor_coo(left->dtype, shape, left->rank, coordinates, data,
@@ -132,7 +132,7 @@ CettaTensorStatus cetta_tensor_permute(const CettaTensor *t, const size_t *axes,
         }
         for (size_t j = 0; j < rank; j++) next = next * shape[j] + positions[axes[j]];
         coordinates[i] = next;
-        memcpy(data + i * width, stored_value(t, i), width);
+        memcpy(data + i * width, stored_value(t, i, &(CettaTensorScalar){0}), width);
     }
     CettaTensorStatus status = cetta_tensor_coo(t->dtype, shape, rank, coordinates,
         data, n, CETTA_TENSOR_REJECT, out);

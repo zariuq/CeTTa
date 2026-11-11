@@ -73,7 +73,7 @@ bool cetta_test_transaction_state_views(Space *root, Arena *arena,
     child_view->value = atom_int(arena, 33);
     TRANSACTION_STATE_REQUIRE(petta_eval_machine_transaction_commit(&context, child));
     petta_eval_machine_transaction_rollback(&context, outer);
-    Atom *saved = registry_state_lookup(&registry, name->sym_id);
+    Atom *saved = registry_state_lookup(&registry, atom_symbol_current_id(name));
     observed[6] = saved && saved->kind == ATOM_GROUNDED &&
         saved->ground.gkind == GV_STATE && saved->ground.ptr == &fresh;
     observed[7] = fresh.value->ground.ival;
@@ -314,6 +314,7 @@ typedef struct {
     Space *kept;
     pthread_barrier_t barrier;
     size_t baseline;
+    CettaNameContext names;
 } CettaTestWorkerResourceLeases;
 
 static void cetta_test_resource_barrier(CettaTestWorkerResourceLeases *test) {
@@ -323,6 +324,8 @@ static void cetta_test_resource_barrier(CettaTestWorkerResourceLeases *test) {
 
 static void *cetta_test_resource_owner_thread(void *argument) {
     CettaTestWorkerResourceLeases *test = argument;
+    CettaNameContext previous = cetta_name_context_current();
+    cetta_name_context_install(&test->names);
     hyperpose_worker_enter(NULL, NULL);
     Arena source;
     arena_init_detached(&source);
@@ -374,11 +377,14 @@ static void *cetta_test_resource_owner_thread(void *argument) {
     }
     assert(test->root->native.universe->root_provider_len == test->baseline);
     hyperpose_worker_leave(NULL, NULL);
+    cetta_name_context_install(&previous);
     return NULL;
 }
 
 static void *cetta_test_resource_reader_thread(void *argument) {
     CettaTestWorkerResourceLeases *test = argument;
+    CettaNameContext previous = cetta_name_context_current();
+    cetta_name_context_install(&test->names);
     hyperpose_worker_enter(NULL, NULL);
     Arena lease;
     arena_init_detached(&lease);
@@ -407,13 +413,15 @@ static void *cetta_test_resource_reader_thread(void *argument) {
     cetta_test_resource_barrier(test);
     cetta_test_resource_barrier(test);
     hyperpose_worker_leave(NULL, NULL);
+    cetta_name_context_install(&previous);
     return NULL;
 }
 
 bool cetta_test_worker_resource_leases(Space *root, Arena *persistent) {
     assert(root && persistent);
     CettaTestWorkerResourceLeases test = {.root = root, .persistent = persistent,
-        .baseline = root->native.universe->root_provider_len};
+        .baseline = root->native.universe->root_provider_len,
+        .names = cetta_name_context_current()};
     test.fact[0] = atom_int(persistent, 17);
     test.fact[1] = atom_int(persistent, 19);
     test.fact[2] = test.fact[0];
@@ -1303,7 +1311,7 @@ bool cetta_test_foreign_snapshot_universe(Space *root, bool in_worker,
         assert(space_published_as_copy(snapshot));
         bind_publish_value(&construction, call, wrapper, &empty, false, &published);
         assert(published.len == 1u && !atom_is_error(published.items[0].atom));
-        Atom *bound = registry_lookup_id(g_registry, name->sym_id);
+        Atom *bound = registry_lookup_id(g_registry, atom_symbol_current_id(name));
         assert(bound && bound->kind == ATOM_GROUNDED &&
                bound->ground.gkind == GV_SPACE && bound->ground.ptr != snapshot);
         snapshot = bound->ground.ptr;

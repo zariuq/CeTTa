@@ -329,11 +329,6 @@ static const GSLTDirectScalarClassV1 petta_extended_reader_direct_v1_class_12_pe
     .point_len = UINT32_C(6),
     .complement = true,
 };
-static const GSLTDirectCodepointMapV1 petta_extended_reader_direct_v1_string_escape_map[] = {
-    {UINT32_C(110), UINT32_C(10)},
-    {UINT32_C(116), UINT32_C(9)},
-    {UINT32_C(114), UINT32_C(13)},
-};
 
 const GSLTDirectPeTTaReaderV1Plan petta_extended_reader_direct_v1_plan = {
     .presentation_name = "PeTTaDocumentSplitterSyntaxV1+PeTTaFormReaderSyntaxV1+PeTTaFormListExtensionV1",
@@ -342,9 +337,9 @@ const GSLTDirectPeTTaReaderV1Plan petta_extended_reader_direct_v1_plan = {
     .splitter_class_digest = "55200130eb87c36e63c4e4ea596e067a3ebb46e3ed31dd48e53a138861437d83",
     .form_syntax_digest = "47dac8e18ec75a597f78cf32082983564d1b957b4096a3b58a9e92b95f3b5055",
     .form_class_digest = "deba4443775a053347697a693fb73cd5a68cdcd468e2ab877d415fe5174d4166",
-    .projection_digest = "f45d393532f9a60097d5a1d7959e8061476c920d0f9e53a62bcbde2778a4f356",
-    .compiler_digest = "19ab1fd335bc98e1c035fa725ba03867a014f5c98ee1dcec2056f97bab6cb8c3",
-    .composition_digest = "f9d1b0b867271d37432b9c5e2349e7b9afaad0a916225fdc6606849b2a317d07",
+    .projection_digest = "9ca92e342c3b5c4e199b852f4121207e34ae9352ad5eeab27fc0d3ca98cc084d",
+    .compiler_digest = "c4343be1a400ffde98f146412545f74c1bd371de798af40d60f980eb9fb6ef8b",
+    .composition_digest = "e71ac004472e5a697a3fdeccf1392a686580b52654fa329c2fe8da210979fb28",
     .profile = "cetta-petta-v1",
     .splitter_blank = &petta_extended_reader_direct_v1_class_5_petta_splitter_blank_scalar,
     .splitter_string_plain = &petta_extended_reader_direct_v1_class_8_petta_splitter_string_plain_scalar,
@@ -365,15 +360,17 @@ const GSLTDirectPeTTaReaderV1Plan petta_extended_reader_direct_v1_plan = {
     .splitter_string_escape = UINT32_C(92),
     .variable_marker = UINT32_C(36),
     .runnable_marker = UINT32_C(33),
-    .string_escape_map = petta_extended_reader_direct_v1_string_escape_map,
-    .string_escape_map_len = UINT32_C(3),
-    .string_escape_identity_fallback = true,
+    .string_escape_map = NULL,
+    .string_escape_map_len = UINT32_C(0),
+    .string_escape_identity_fallback = false,
+    .string_body_metta = true,
     .list_open = UINT32_C(91),
     .list_close = UINT32_C(93),
     .list_rest = UINT32_C(124),
     .list_token_first = &petta_extended_reader_direct_v1_class_2_petta_list_token_first_scalar,
     .list_token = &petta_extended_reader_direct_v1_class_3_petta_list_token_scalar,
     .list_token_boundary = &petta_extended_reader_direct_v1_class_1_petta_list_token_boundary_scalar,
+    .raw_source_regions = true,
     .depth_limit = UINT32_C(4096),
 };
 

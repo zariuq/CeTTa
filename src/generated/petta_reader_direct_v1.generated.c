@@ -254,11 +254,6 @@ static const GSLTDirectScalarClassV1 petta_reader_direct_v1_class_9_petta_token_
     .point_len = UINT32_C(6),
     .complement = true,
 };
-static const GSLTDirectCodepointMapV1 petta_reader_direct_v1_string_escape_map[] = {
-    {UINT32_C(110), UINT32_C(10)},
-    {UINT32_C(116), UINT32_C(9)},
-    {UINT32_C(114), UINT32_C(13)},
-};
 
 const GSLTDirectPeTTaReaderV1Plan petta_reader_direct_v1_plan = {
     .presentation_name = "PeTTaDocumentSplitterSyntaxV1+PeTTaFormReaderSyntaxV1",
@@ -267,9 +262,9 @@ const GSLTDirectPeTTaReaderV1Plan petta_reader_direct_v1_plan = {
     .splitter_class_digest = "55200130eb87c36e63c4e4ea596e067a3ebb46e3ed31dd48e53a138861437d83",
     .form_syntax_digest = "d974dc0e8f68ce1ccfa1948a26e215d1226b78b14a0f097e1bef2467a0558523",
     .form_class_digest = "b648099c04b6f5485c1fe55cf0ab87568d0b2199fddb6acbcede0a17cdf19cb3",
-    .projection_digest = "c3fb68e257fb31694dcae844bafb09e42441549c84d75461b4c1ecb692ddaaeb",
-    .compiler_digest = "19ab1fd335bc98e1c035fa725ba03867a014f5c98ee1dcec2056f97bab6cb8c3",
-    .composition_digest = "91f446041519b5f0f910316fe49e954a7512ffc205ae91ed3bac87aa3954dab0",
+    .projection_digest = "f524eeaf4afe0818a3c867242ad9e408de7badcfe03c4b4caed3d72753ccb031",
+    .compiler_digest = "c4343be1a400ffde98f146412545f74c1bd371de798af40d60f980eb9fb6ef8b",
+    .composition_digest = "8aa7c012c4a24b57bb8109afa8eb7f9c7a2ec166c790986b0c3730265536133d",
     .profile = "cetta-petta-v1",
     .splitter_blank = &petta_reader_direct_v1_class_2_petta_splitter_blank_scalar,
     .splitter_string_plain = &petta_reader_direct_v1_class_5_petta_splitter_string_plain_scalar,
@@ -290,9 +285,10 @@ const GSLTDirectPeTTaReaderV1Plan petta_reader_direct_v1_plan = {
     .splitter_string_escape = UINT32_C(92),
     .variable_marker = UINT32_C(36),
     .runnable_marker = UINT32_C(33),
-    .string_escape_map = petta_reader_direct_v1_string_escape_map,
-    .string_escape_map_len = UINT32_C(3),
-    .string_escape_identity_fallback = true,
+    .string_escape_map = NULL,
+    .string_escape_map_len = UINT32_C(0),
+    .string_escape_identity_fallback = false,
+    .string_body_metta = true,
     .list_open = UINT32_C(0),
     .list_close = UINT32_C(0),
     .list_rest = UINT32_C(0),

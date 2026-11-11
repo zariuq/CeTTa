@@ -44,27 +44,30 @@ from test_petta_form_guard_exec_v1 import expected_decision
 from test_petta_form_guard_exec_v1 import guard_row
 from test_petta_form_guard_exec_v1 import pin_authority as pin_form_authority
 from test_petta_form_guard_exec_v1 import run_petta_reference
+from test_petta_parser_authority_v1 import FORM_AUTHORITY
+from test_petta_parser_authority_v1 import SPLITTER_AUTHORITY
 from test_petta_parser_authority_v1 import run_case as run_form_authority
 from test_regular_span_dfa_v1 import abi_scalar
+from gslt2parse_oracles_v1 import ORACLES
 
 
 EXPECTED_MATRIX_DIGEST = (
-    "300a4b8a8889a257d75eb7042a569ea2b5db4913439050670a6f322d978328b3"
+    "b7b162e7b6969c691365fd1d98c79b83bef2320fd3d1611f3e5097bf7b50f29a"
 )
 EXPECTED_ACTION_MATRIX_DIGEST = (
-    "d0f7e92aaeab48016c9b18453fcddbc4b12b881d4fb7993aff7967680f1d6368"
+    "cb4ed50ce1aff598bd4bff5e95e4916d17bdf5139e7aee759b4b4af10529b34c"
 )
 EXPECTED_NATIVE_API_MATRIX_DIGEST = (
-    "ab341e4b507c00d00845531f01b4bc06e032d71fd6de9f13cd4ec18c096c243a"
+    "8bc2c14fb0ed4a3c3fef2c807a4c9777c5d97a3dc9905e8d2dcf42d1c294ba53"
 )
 EXPECTED_REFLECTIVE_API_MATRIX_DIGEST = (
-    "e171879ad4dcfaf613d6d40cc5788f48691608982f8b1904d51847fdc1bc71a0"
+    "af5ed1cd026602bf7c2d975c07131e4fbbec5f1d4198df046a790c4b5f69321f"
 )
 EXPECTED_LEXICAL_SHADOW_MATRIX_DIGEST = (
-    "894819360be2130c796a75027fec55ff6ea215438a9507205292aa43e68523aa"
+    "d52d562804c5cd501a40ad2819fca0e56544412c80c747ad2b45b395856bef5d"
 )
 EXPECTED_PREPARED_MATRIX_DIGEST = (
-    "d710e41a9f26f099aa4e5d03828e69ab11dbdb482034426bc3dbb75d94a782cd"
+    "9866c7a590ebecbbca6c3a48e7840823ddb56a06c6024bf58cb45abf99e51a79"
 )
 
 
@@ -948,7 +951,6 @@ def run_native(
 
 
 def run_petta_native(
-    petta_root: Path,
     splitter_abi: Path,
     form_abi: Path,
     guard_nfa: Path,
@@ -956,12 +958,7 @@ def run_petta_native(
     input_path: Path,
     compiler_digest: str,
 ) -> dict[str, object]:
-    script = (
-        petta_root
-        / "experiments"
-        / "gslt2parse_foundation"
-        / "test_petta_document_native_v1.pl"
-    )
+    script = ORACLES / "test_petta_document_native_v1.pl"
     completed = subprocess.run(
         [
             "swipl",
@@ -1008,12 +1005,9 @@ def run_petta_native_syntax(
     evidence: Path,
     compiler_digest: str,
 ) -> None:
-    fixture = (
-        petta_root
-        / "experiments"
-        / "gslt2parse_foundation"
-        / "test_petta_document_native_syntax_v1.metta"
-    )
+    fixture = ORACLES / "test_petta_document_native_syntax_v1.metta"
+    # SWI-PeTTa runs from the oracle directory, where the fixture's Prolog
+    # module is found; the PeTTa root supplies only run.sh and PeTTa itself.
     completed = subprocess.run(
         [
             "bash",
@@ -1026,7 +1020,7 @@ def run_petta_native_syntax(
             compiler_digest,
             "--silent",
         ],
-        cwd=petta_root,
+        cwd=ORACLES,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -1211,23 +1205,13 @@ def main() -> int:
         os.environ.pop("LD_PRELOAD", None)
         os.environ.pop("ASAN_OPTIONS", None)
 
-    splitter_oracle = (
-        petta_root
-        / "experiments"
-        / "gslt2parse_foundation"
-        / "petta_document_splitter_authority_v1.pl"
-    )
-    form_oracle = (
-        petta_root
-        / "experiments"
-        / "gslt2parse_foundation"
-        / "petta_parser_authority_v1.pl"
-    )
+    splitter_oracle = SPLITTER_AUTHORITY
+    form_oracle = FORM_AUTHORITY
     pin_sources(petta_root, splitter_oracle)
     pin_form_authority(petta_root)
 
-    splitter_stream = export_stream(petta_root, ABI_CASES["petta-splitter"])
-    form_stream = export_stream(petta_root, ABI_CASES["petta"])
+    splitter_stream = export_stream(ABI_CASES["petta-splitter"])
+    form_stream = export_stream(ABI_CASES["petta"])
     evidence_row = guard_row(chart_binary)
     guard_row_native = guard_nfa_row(chart_binary, "petta")
     guard_terms = tuple(str(term) for term in guard_row_native["terms"])
@@ -1235,7 +1219,6 @@ def main() -> int:
     guarded_compiler_digest = sha256(GUARDED_COMPILER.read_bytes()).hexdigest()
     lexical_terms, _, _ = compile_case_tags(
         chart_binary,
-        petta_root,
         SHADOW_LEXICAL_CASE,
         abi_scalar(form_stream, "source-digest"),
     )
@@ -1402,7 +1385,7 @@ def main() -> int:
                 accepted_documents += 1
                 expected_forms = case.forms
 
-            reference = run_splitter_reference(petta_root, input_path)
+            reference = run_splitter_reference(input_path)
             if reference.get("decision") != decision:
                 raise GateFailure(
                     f"splitter authority and LanguageDef differ for {case.label}"
@@ -1531,7 +1514,6 @@ def main() -> int:
                 }
             )
             petta_native = run_petta_native(
-                petta_root,
                 splitter_abi,
                 form_abi,
                 guard_nfa,
@@ -1629,7 +1611,7 @@ def main() -> int:
                 form_authority = run_form_authority(
                     form_oracle, petta_root, "form", raw_path
                 )
-                form_reference = run_petta_reference(petta_root, raw_path)
+                form_reference = run_petta_reference(raw_path)
                 expected_form_decision = authority_decision(form_authority)
                 if native_form.decision != expected_form_decision:
                     raise GateFailure(
@@ -1890,7 +1872,6 @@ def main() -> int:
         if wrong_compiler_api != wrong_compiler:
             raise GateFailure("wrong-compiler native API and CLI differ")
         wrong_compiler_petta = run_petta_native(
-            petta_root,
             splitter_abi,
             form_abi,
             guard_nfa,

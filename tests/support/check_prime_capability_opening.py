@@ -29,16 +29,30 @@ def main():
             )
         fixture = directory / f"depth-{depth}.metta"
         fixture.write_text(source)
-        result = subprocess.run(
-            [binary, "--lang", "prime", str(fixture)],
-            capture_output=True, text=True, timeout=60, check=False,
+        routes = (
+            ("prepared", {
+                "CETTA_OPEN_EQUATIONS_REFERENCE": "0",
+                "CETTA_PREPARED_PURE_REFERENCE": "0",
+            }),
+            ("reference", {
+                "CETTA_OPEN_EQUATIONS_REFERENCE": "1",
+                "CETTA_PREPARED_PURE_REFERENCE": "1",
+            }),
         )
-        if result.returncode != 0 or result.stdout.splitlines() != ["[()]", "[(3)]", "[()]"]:
-            raise SystemExit(
-                f"FAIL: capability opening at depth {depth}: "
-                f"exit {result.returncode}\n{result.stdout}{result.stderr}"
+        for route, switches in routes:
+            result = subprocess.run(
+                [binary, "--lang", "prime", str(fixture)],
+                capture_output=True, text=True, timeout=60, check=False,
+                env=dict(os.environ, **switches),
             )
-    print(f"PASS: Prime filter templates preserve matches and misses at {len(depths)} depths")
+            if (result.returncode != 0
+                    or result.stdout.splitlines() != ["[()]", "[(3)]", "[()]"]):
+                raise SystemExit(
+                    f"FAIL: capability opening at depth {depth} on {route}: "
+                    f"exit {result.returncode}\n{result.stdout}{result.stderr}"
+                )
+    print(f"PASS: Prime filter templates preserve matches and misses at "
+          f"{len(depths)} depths on two routes")
 
 
 if __name__ == "__main__":

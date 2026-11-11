@@ -1,0 +1,10 @@
+AXIOM
+(NAM "a")
+COLON
+LET
+(NUM False "1" None None)
+DEQ
+(NAM "y")
+IN
+(NAM "x")
+DOT

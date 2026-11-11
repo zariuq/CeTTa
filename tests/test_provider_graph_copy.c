@@ -1,6 +1,19 @@
 #include "petta_search_machine.c"
 #include "parser.h"
 
+static _Thread_local unsigned provider_retain_refusals;
+bool __real_arena_retain_owner_with_storage(Arena *, void *,
+    void (*)(void *), void (*)(void *), CettaStorageVisitor);
+bool __wrap_arena_retain_owner_with_storage(Arena *arena, void *owner,
+    void (*retain)(void *), void (*release)(void *), CettaStorageVisitor storage) {
+    if (provider_retain_refusals) {
+        provider_retain_refusals--;
+        return false;
+    }
+    return __real_arena_retain_owner_with_storage(
+        arena, owner, retain, release, storage);
+}
+
 typedef struct {
     size_t references, retains, releases;
     uint64_t *invalidate_revision;
@@ -24,9 +37,8 @@ static CettaBranchAdmission probe_admission(void *raw, Space *space) {
         .capacity=CETTA_BRANCH_CAPTURE_MULTI_SHOT,
         .authority={.words={0x4f574e4544u,authority->revision},.length=2u}};
 }
-static bool probe_permit(void *raw, const CettaSourceStep *source) {
-    (void)source;
-    ProbeAuthority *authority=raw;
+static bool probe_permit(void *raw, const CettaSourceStep *step) {
+    (void)step;ProbeAuthority *authority=raw;
     if(!authority->remaining)return false;
     authority->remaining--;return true;
 }
@@ -231,7 +243,16 @@ static void provider_resource_case(unsigned carrier) {
         assert(builder->prime_trail_len && builder->prime_trail[0].prime_need.top);
     }
     CettaOwnedContinuation image={0};
+    provider_retain_refusals=1u;
+    assert(cetta_continuation_capture(petta_machine_continuation_machine(&machine),&image)==
+        CETTA_CONTINUATION_CAPACITY);
+    assert(!provider_retain_refusals && !image.payload && lease.references==1u);
     assert(cetta_continuation_capture(petta_machine_continuation_machine(&machine),&image)==CETTA_CONTINUATION_READY);
+    CettaOwnedContinuation sibling={0};
+    assert(cetta_continuation_capture(petta_machine_continuation_machine(&machine),&sibling)==
+        CETTA_CONTINUATION_READY);
+    cetta_owned_continuation_destroy(&sibling);
+    assert(lease.references==2u);
     PettaOwnedContinuationImpl *source=image.payload;
     assert(source->terms.pool->resource_len==1u);
     PettaContinuationCopyGroup *group=NULL;
@@ -275,7 +296,7 @@ static void provider_resource_case(unsigned carrier) {
     atom_deep_copy_session_free(atoms);petta_continuation_copy_group_free(group);
     cetta_owned_continuation_destroy(&image);petta_machine_destroy(&machine);
     bindings_free(&seed);arena_free(&seed_arena);arena_free(&parent_source);arena_free(&parent_destination);
-    PettaResourceCapture capture={moved->terms.pool,NULL};
+    PettaResourceCapture capture={.pool=moved->terms.pool};
     assert(bindings_builder_payloads_satisfy(&moved->bindings.bindings,
         petta_continuation_resource_graph,petta_continuation_state_resource,&capture));
     assert(lease.references==2u);

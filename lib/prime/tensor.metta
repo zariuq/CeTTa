@@ -51,6 +51,21 @@
 (: tensor:sum (-> %Undefined% %Undefined%))
 (: tensor:matvec (-> %Undefined% %Undefined% %Undefined% %Undefined%))
 (: tensor:matvec (-> %Undefined% %Undefined% %Undefined%))
+; Opt-in real-input enclosures: (Tensor:Bounds value lower upper). Dot returns
+; three f64 scalars; matvec returns three dense f64 vectors. Inputs are finite
+; f32/f64 stored values, with matching dimensions and a fully present right
+; vector. The center uses separate sequential binary64 multiplies and adds in
+; logical coordinate order. Missing left entries add no operations; stored
+; zeroes do. Bounds cover the exact real result of these stored inputs, not
+; errors from earlier computations or conversions into the input dtype.
+; Certification needs nearest rounding, gradual underflow, at most 2^51 stored
+; terms per row, and an outward sum of absolute products at most DBL_MAX/8.
+; The conservative radius is at least 4*n*(2^-53*A + 2^-1074), with outward
+; endpoints. An unadmitted environment or range returns (Tensor:Fault uncertified).
+; Empty rows return exact zero without the rounding-environment requirement.
+; This does not certify exp, log or a sigmoid applied to the center alone.
+(: tensor:dot-bounds (-> %Undefined% %Undefined% %Undefined%))
+(: tensor:matvec-bounds (-> %Undefined% %Undefined% %Undefined%))
 (: tensor:top-k (-> %Undefined% %Undefined% %Undefined% %Undefined%))
 (: tensor:top-k (-> %Undefined% %Undefined% %Undefined%))
 (: tensor:encode (-> %Undefined% %Undefined%))

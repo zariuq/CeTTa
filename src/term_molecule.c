@@ -73,11 +73,6 @@ static inline bool mol_frame_free(const CettaMolStore *store, uint32_t frame) {
            store->frame_bound[frame] == 0u;
 }
 
-static inline bool mol_unbound(const CettaMolStore *store, uint32_t cell) {
-    return store->cells[cell].id == CETTA_ATOM_ID_NONE &&
-           store->cells[cell].at == cell;
-}
-
 /* The cells and the frames that read them share one capacity, published
  * once both hold it: a store refused a growth stays one a later branch may
  * use. */

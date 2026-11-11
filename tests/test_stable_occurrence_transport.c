@@ -3861,6 +3861,14 @@ static bool row_has_form(Atom *row, SymbolId head) {
         atom_is_symbol_id(row->expr.elems[0], head);
 }
 
+/* A row a declaration query may meet: a declaration, or an open row, a
+ * variable or an expression headed by one, which may stand for one. */
+static bool row_may_declare(Atom *row) {
+    return row_has_form(row, g_builtin_syms.colon) || row->kind == ATOM_VAR ||
+           (row->kind == ATOM_EXPR && row->expr.len > 0u &&
+            row->expr.elems[0]->kind == ATOM_VAR);
+}
+
 static void test_single_erasure_equation_retention(void) {
     const SpaceKind kinds[] = {SPACE_KIND_ATOM, SPACE_KIND_STACK, SPACE_KIND_QUEUE};
     for (unsigned variant = 0u; variant < 48u; variant++) {
@@ -4110,8 +4118,10 @@ static void test_declaration_retention(void) {
             Atom *row = term_universe_get_atom(&universe, expected[removed]);
             Atom *tail = term_universe_get_atom(&universe, expected[len - 1u]);
             bool ordered = api == 2u || kind != 0u;
-            bool declaration_change = row_has_form(row, g_builtin_syms.colon) ||
-                (!ordered && removed + 1u < len && row_has_form(tail, g_builtin_syms.colon));
+            /* Removing a row that may declare changes the declarations, and
+             * so does moving one into the removed row's place. */
+            bool declaration_change = row_may_declare(row) ||
+                (!ordered && removed + 1u < len && row_may_declare(tail));
             uint64_t revision = space.declaration_revision;
             if (api == 2u) {
                 uint8_t mask[100] = {0}; mask[removed] = 1u;
@@ -4269,6 +4279,310 @@ static void test_declaration_views(void) {
     puts("PASS: indexed declaration views preserve nested masks, local offsets, prefix ceilings, imports, duplicate rows and live module selection");
 }
 
+static void test_store_effect_contract(TermUniverse *universe, Arena *scratch) {
+    Space space;
+    space_init_with_universe(&space, universe);
+    Atom *a_atom = atom_symbol(scratch, "store-effect-a");
+    Atom *b_atom = atom_symbol(scratch, "store-effect-b");
+    Atom *c_atom = atom_symbol(scratch, "store-effect-c");
+    Atom *d_atom = atom_symbol(scratch, "store-effect-d");
+    AtomId a = store_atom(universe, a_atom);
+    AtomId b = store_atom(universe, b_atom);
+    AtomId c = store_atom(universe, c_atom);
+    AtomId d = store_atom(universe, d_atom);
+    const AtomId initial[] = {a, b, a, c};
+    for (size_t i = 0u; i < sizeof(initial) / sizeof(initial[0]); i++)
+        space_add_atom_id(&space, initial[i]);
+
+    /* Duplicate takes retain their positions and values.  An unrelated append
+     * after preparation neither stales the selection nor becomes selected. */
+    uint8_t *mask = cetta_malloc(4u);
+    mask[0] = 1u; mask[1] = 0u; mask[2] = 1u; mask[3] = 0u;
+    SpaceStoreEffect effect;
+    SpaceStoreReceipt receipt;
+    space_store_effect_init(&effect);
+    space_store_receipt_init(&receipt);
+    assert(space_store_effect_prepare_remove_mask(
+        &effect, &space, mask, 4u, 2u, NULL, &receipt));
+    space_add_atom_id(&space, d);
+    CettaCount removed = 0u;
+    assert(space_store_effect_publish(&effect, &receipt, &removed) ==
+           SPACE_STORE_PUBLISH_PUBLISHED);
+    assert(removed == 2u && receipt.len == 2u);
+    assert(receipt.positions[0] == 0u && receipt.positions[1] == 2u);
+    assert(atom_eq(receipt.items[0], a_atom) && atom_eq(receipt.items[1], a_atom));
+    const AtomId survivors[] = {b, c, d};
+    assert_atom_ids(&space, survivors, 3u);
+    /* Publication is one-shot: replay cannot consume another equal row. */
+    assert(space_store_effect_publish(&effect, NULL, NULL) ==
+           SPACE_STORE_PUBLISH_ERROR);
+    assert_atom_ids(&space, survivors, 3u);
+    space_store_effect_dispose(&effect);
+    assert(space_remove_atom_id(&space, b));
+    /* The retained receipt owns its rows after publication and later mutation. */
+    assert(receipt.len == 2u && atom_eq(receipt.items[0], a_atom));
+    space_store_receipt_dispose(&receipt);
+
+    /* A rewritten prefix is stale/retry, not no-match and not a partial take. */
+    mask = cetta_malloc(1u);
+    mask[0] = 1u;
+    space_store_effect_init(&effect);
+    space_store_receipt_init(&receipt);
+    assert(space_store_effect_prepare_remove_mask(
+        &effect, &space, mask, 1u, 1u, NULL, &receipt));
+    assert(space_remove_atom_id(&space, c));
+    assert(space_store_effect_publish(&effect, &receipt, &removed) ==
+           SPACE_STORE_PUBLISH_STALE);
+    assert(removed == 0u && receipt.len == 0u && receipt.committed_revision == 0u);
+    assert_atom_ids(&space, &d, 1u);
+    space_store_effect_dispose(&effect);
+    space_store_receipt_dispose(&receipt);
+
+    /* No occurrence is a successful empty observation with no success receipt. */
+    space_store_effect_init(&effect);
+    space_store_receipt_init(&receipt);
+    assert(space_store_effect_prepare_remove_one(
+        &effect, &space, a_atom, a, &receipt));
+    assert(space_store_effect_publish(&effect, &receipt, &removed) ==
+           SPACE_STORE_PUBLISH_NO_MATCH);
+    assert(removed == 0u && receipt.len == 0u && space_length64(&space) == 1u);
+    space_store_effect_dispose(&effect);
+    space_store_receipt_dispose(&receipt);
+
+    /* A make receipt outlives both the source arena and the stored row. */
+    Arena source;
+    arena_init(&source);
+    Atom *e_atom = atom_symbol(&source, "store-effect-e");
+    space_store_effect_init(&effect);
+    space_store_receipt_init(&receipt);
+    assert(space_store_effect_prepare_add(
+        &effect, &space, NULL, &source, e_atom, &receipt));
+    assert(space_store_effect_publish(&effect, &receipt, NULL) ==
+           SPACE_STORE_PUBLISH_PUBLISHED);
+    assert(receipt.len == 1u && space_length64(&space) == 2u);
+    space_store_effect_dispose(&effect);
+    arena_free(&source);
+    AtomId stored_e = space_get_atom_id_at64(&space, 1u);
+    assert(space_remove_atom_id(&space, stored_e));
+    assert(receipt.len == 1u &&
+           atom_is_symbol(receipt.items[0], "store-effect-e"));
+    space_store_receipt_dispose(&receipt);
+
+    /* An idempotent set admission has no make in its requested receipt. */
+    Space set;
+    space_init_with_universe(&set, universe);
+    set.kind = SPACE_KIND_SET;
+    space_add_atom_id(&set, d);
+    space_store_effect_init(&effect);
+    space_store_receipt_init(&receipt);
+    assert(space_store_effect_prepare_add(
+        &effect, &set, NULL, NULL, d_atom, &receipt));
+    assert(space_store_effect_publish(&effect, &receipt, NULL) ==
+           SPACE_STORE_PUBLISH_PUBLISHED);
+    assert(receipt.len == 0u && space_length64(&set) == 1u);
+    space_store_effect_dispose(&effect);
+    space_store_receipt_dispose(&receipt);
+    space_free(&set);
+
+    /* Rejected repreparation leaves the pending operation untouched. */
+    Space lifecycle;
+    space_init_with_universe(&lifecycle, universe);
+    space_add_atom_id(&lifecycle, a);
+    space_store_effect_init(&effect);
+    assert(space_store_effect_prepare_add(
+        &effect, &lifecycle, NULL, NULL, b_atom, NULL));
+    assert(effect.preparation_id == 0u); /* no receipt, no shared id work */
+    SpaceStoreEffectKind pending_kind = effect.kind;
+    uint64_t pending_preparation = effect.preparation_id;
+    assert(!space_store_effect_prepare_remove_one(
+        &effect, &lifecycle, a_atom, a, NULL));
+    assert(effect.kind == pending_kind &&
+           effect.preparation_id == pending_preparation);
+    assert(space_store_effect_publish(&effect, NULL, &removed) ==
+           SPACE_STORE_PUBLISH_PUBLISHED);
+    assert(removed == 0u && space_length64(&lifecycle) == 2u);
+    space_store_effect_dispose(&effect);
+
+    /* Receipts are preparation-bound and survive an effect's structural move.
+     * A foreign receipt is rejected before a write and remains usable by its
+     * own preparation; neither operation is consumed by the mismatch. */
+    SpaceStoreEffect other;
+    SpaceStoreReceipt other_receipt;
+    space_store_effect_init(&effect);
+    space_store_effect_init(&other);
+    space_store_receipt_init(&receipt);
+    space_store_receipt_init(&other_receipt);
+    assert(space_store_effect_prepare_remove_one(
+        &effect, &lifecycle, a_atom, a, &receipt));
+    assert(space_store_effect_prepare_remove_one(
+        &other, &lifecycle, b_atom, b, &other_receipt));
+    assert(receipt.preparation_id != other_receipt.preparation_id);
+    SpaceStoreEffect moved = effect;
+    space_store_effect_init(&effect); /* ownership moved with the structure */
+    assert(space_store_effect_publish(&moved, &other_receipt, &removed) ==
+           SPACE_STORE_PUBLISH_ERROR);
+    assert(removed == 0u && space_length64(&lifecycle) == 2u);
+    assert(other_receipt.len == 1u &&
+           atom_is_symbol(other_receipt.items[0], "store-effect-b"));
+    assert(space_store_effect_publish(&moved, &receipt, &removed) ==
+           SPACE_STORE_PUBLISH_PUBLISHED);
+    assert(removed == 1u && space_length64(&lifecycle) == 1u &&
+           atom_is_symbol(space_get_at64(&lifecycle, 0u), "store-effect-b"));
+    assert(space_store_effect_publish(&other, &other_receipt, &removed) ==
+           SPACE_STORE_PUBLISH_PUBLISHED);
+    assert(removed == 1u && space_length64(&lifecycle) == 0u);
+    space_store_effect_dispose(&effect);
+    space_store_effect_dispose(&moved);
+    space_store_effect_dispose(&other);
+    space_store_receipt_dispose(&receipt);
+    space_store_receipt_dispose(&other_receipt);
+    space_free(&lifecycle);
+
+    /* Exact removal selects a relation-backed fact and its equal row copy as
+     * one effect.  An unrelated append survives and does not join the take. */
+    SymbolId edge = symbol_intern_cstr(g_symbols, "store-effect-edge");
+    AtomId edge_head = store_atom(universe, atom_symbol_id(scratch, edge));
+    Atom *edge_atoms[3];
+    AtomId edge_ids[3], columns[6];
+    for (int64_t i = 0; i < 3; i++) {
+        edge_atoms[i] = edge_value(scratch, edge, i);
+        edge_ids[i] = store_atom(universe, edge_atoms[i]);
+        columns[2 * i] = store_atom(universe, atom_int(scratch, i));
+        columns[2 * i + 1] = store_atom(universe, atom_int(scratch, i + 1000));
+    }
+    Space dense;
+    space_init_with_universe(&dense, universe);
+    dense.dense_from_first = true;
+    assert(space_add_dense_tuples(&dense, edge, edge_head, 2u, columns, 3u));
+    space_add_atom_id(&dense, edge_ids[1]);
+    space_add_atom_id(&dense, d);
+    assert(space_dense_facts(&dense) == 3u && space_length64(&dense) == 5u);
+    space_store_effect_init(&effect);
+    space_store_receipt_init(&receipt);
+    assert(space_store_effect_prepare_remove_exact(
+        &effect, &dense, edge, &edge_ids[1], 1u, edge_atoms[1], &receipt));
+    assert(effect.selected_len == 2u && space_length64(&dense) == 5u);
+    space_add_atom_id(&dense, c);
+    removed = 0u;
+    assert(space_store_effect_publish(&effect, &receipt, &removed) ==
+           SPACE_STORE_PUBLISH_PUBLISHED);
+    assert(removed == 2u && receipt.len == 2u);
+    assert(space_dense_facts(&dense) == 2u && space_length64(&dense) == 4u);
+    size_t selected_seen = 0u, edge0_seen = 0u, edge2_seen = 0u;
+    size_t c_seen = 0u, d_seen = 0u;
+    for (CettaIndex i = 0u; i < space_length64(&dense); i++) {
+        AtomId id = space_get_atom_id_at64(&dense, i);
+        selected_seen += id == edge_ids[1];
+        edge0_seen += id == edge_ids[0];
+        edge2_seen += id == edge_ids[2];
+        c_seen += id == c;
+        d_seen += id == d;
+    }
+    assert(selected_seen == 0u && edge0_seen == 1u && edge2_seen == 1u &&
+           c_seen == 1u && d_seen == 1u);
+    assert(atom_eq(receipt.items[0], edge_atoms[1]) &&
+           atom_eq(receipt.items[1], edge_atoms[1]));
+    assert(space_store_effect_publish(&effect, NULL, NULL) ==
+           SPACE_STORE_PUBLISH_ERROR);
+    space_store_effect_dispose(&effect);
+    space_store_receipt_dispose(&receipt);
+
+    /* Batched dense ids record their own flags before publication.  Repeated
+     * ids select one relation fact, not an impossible second physical copy. */
+    Space batched;
+    space_init_with_universe(&batched, universe);
+    batched.dense_from_first = true;
+    assert(space_add_dense_tuples(&batched, edge, edge_head, 2u, columns, 3u));
+    AtomId distinct_ids[] = {edge_ids[0], edge_ids[1]};
+    space_store_effect_init(&effect);
+    space_store_receipt_init(&receipt);
+    assert(space_store_effect_prepare_remove_exact(
+        &effect, &batched, edge, distinct_ids, 2u, NULL, &receipt));
+    assert(effect.selected_len == 2u && receipt.len == 2u &&
+           receipt.preparation_id == effect.preparation_id);
+    assert(atom_eq(receipt.items[0], edge_atoms[0]) &&
+           atom_eq(receipt.items[1], edge_atoms[1]));
+    assert(space_store_effect_publish(&effect, &receipt, &removed) ==
+           SPACE_STORE_PUBLISH_PUBLISHED);
+    assert(removed == 2u && receipt.len == 2u &&
+           space_dense_facts(&batched) == 1u && space_length64(&batched) == 1u);
+    space_store_effect_dispose(&effect);
+    space_store_receipt_dispose(&receipt);
+
+    AtomId repeated_ids[] = {edge_ids[2], edge_ids[2]};
+    space_store_effect_init(&effect);
+    space_store_receipt_init(&receipt);
+    assert(space_store_effect_prepare_remove_exact(
+        &effect, &batched, edge, repeated_ids, 2u, NULL, &receipt));
+    assert(effect.selected_len == 1u && receipt.len == 1u &&
+           atom_eq(receipt.items[0], edge_atoms[2]));
+    assert(space_store_effect_publish(&effect, &receipt, &removed) ==
+           SPACE_STORE_PUBLISH_PUBLISHED);
+    assert(removed == 1u && receipt.len == 1u &&
+           space_dense_facts(&batched) == 0u && space_length64(&batched) == 0u);
+    space_store_effect_dispose(&effect);
+    space_store_receipt_dispose(&receipt);
+    /* Immediate exact removal uses the same completed selection without a
+     * retained effect.  Pure dense removal needs no preliminary membership
+     * query; mixed removal publishes every equal row and the relation fact. */
+    Space immediate;
+    space_init_with_universe(&immediate, universe);
+    immediate.dense_from_first = true;
+    assert(space_add_dense_tuples(&immediate, edge, edge_head, 2u, columns, 3u));
+    CettaCount immediate_rows = 99u;
+    assert(space_remove_exact_ids_immediate(
+        &immediate, edge, &edge_ids[1], 1u, edge_atoms[1],
+        &removed, &immediate_rows));
+    assert(removed == 1u && immediate_rows == 0u &&
+           space_dense_facts(&immediate) == 2u &&
+           space_length64(&immediate) == 2u);
+    space_add_atom_id(&immediate, edge_ids[0]);
+    space_add_atom_id(&immediate, edge_ids[0]);
+    assert(space_remove_exact_ids_immediate(
+        &immediate, edge, &edge_ids[0], 1u, edge_atoms[0],
+        &removed, &immediate_rows));
+    assert(removed == 3u && immediate_rows == 2u &&
+           space_dense_facts(&immediate) == 1u &&
+           space_length64(&immediate) == 1u &&
+           space_get_atom_id_at64(&immediate, 0u) == edge_ids[2]);
+    assert(space_remove_exact_ids_immediate(
+        &immediate, edge, &edge_ids[1], 1u, edge_atoms[1],
+        &removed, &immediate_rows));
+    assert(removed == 0u && immediate_rows == 0u &&
+           space_length64(&immediate) == 1u);
+    space_free(&immediate);
+
+    space_free(&batched);
+    space_free(&dense);
+
+    /* The general mask owns the same dense selection after representation
+     * settlement; it is not a second dense-then-mask publication. */
+    Space folded;
+    space_init_with_universe(&folded, universe);
+    folded.dense_from_first = true;
+    assert(space_add_dense_tuples(&folded, edge, edge_head, 2u, columns, 2u));
+    space_add_atom_id(&folded, edge_ids[0]);
+    assert(space_dense_facts(&folded) == 2u && space_length64(&folded) == 3u);
+    mask = cetta_malloc(3u);
+    mask[0] = 1u; mask[1] = 0u; mask[2] = 0u;
+    space_store_effect_init(&effect);
+    space_store_receipt_init(&receipt);
+    assert(space_store_effect_prepare_remove_mask(
+        &effect, &folded, mask, 3u, 1u, edge_atoms[0], &receipt));
+    assert(effect.selected_len == 2u && space_dense_facts(&folded) == 0u);
+    removed = 0u;
+    assert(space_store_effect_publish(&effect, &receipt, &removed) ==
+           SPACE_STORE_PUBLISH_PUBLISHED);
+    assert(removed == 2u && receipt.len == 2u && space_length64(&folded) == 1u);
+    assert(space_get_atom_id_at64(&folded, 0u) == edge_ids[1]);
+    space_store_effect_dispose(&effect);
+    space_store_receipt_dispose(&receipt);
+    space_free(&folded);
+
+    space_free(&space);
+    puts("PASS: prepared store effects preserve duplicates, dense/exact/mask publication, append/stale boundaries and owned receipts");
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena persistent;
@@ -4333,6 +4647,7 @@ int main(void) {
     test_single_erasure_equation_retention();
     test_declaration_retention();
     test_declaration_views();
+    test_store_effect_contract(&universe, &scratch);
 
 #if CETTA_BUILD_WITH_RUNTIME_STATS
     CettaRuntimeStats stats;

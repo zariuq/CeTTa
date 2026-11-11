@@ -305,6 +305,10 @@
   ; Computed truths use the caller's Boolean constructor. A value projection
   ; keeps its original carrier instead of reinterpreting data as a truth.
   (instruction boolean-dispatch)
+  ; One of the two evaluated operands, selected by the exact numeric order of
+  ; what they stand for: PeTTa's min and max.  Operands that are not numbers
+  ; replay canonically.
+  (instruction comparison-select)
   (sort OperandDiscipline)
   (operand-discipline strict-all)
   ; A sequential connective demands its first operand.  When that value is
@@ -482,27 +486,7 @@
        (join (effects $value)
              (effects (control-operand pattern-pairs $rest)))))
   (law empty-pattern-pairs-are-pure
-    (= (effects (control-operand pattern-pairs ())) pure))
-  (law represented-sequence-fold-equivalence
-    (implies
-      (= (sequence-representation $name)
-         ($materializer $empty $cons))
-      (= (bag-observe
-           (prepared-represented-fold
-             $name $items $initial $step))
-         (bag-observe
-           (ordinary-fold
-             ($materializer $items) $initial $step)))))
-  (law represented-sequence-preserves-occurrence-order
-    (implies
-      (= (sequence-representation $name)
-         ($materializer $empty $cons))
-      (= (occurrence-sequence
-           (prepared-represented-fold
-             $name $items $initial $step))
-         (occurrence-sequence
-           (ordinary-fold
-             ($materializer $items) $initial $step))))))
+    (= (effects (control-operand pattern-pairs ())) pure)))
 
 (gslt determinate-pure-call-continuation
   (sort CallMode)
@@ -1172,6 +1156,10 @@
   ; connectives demand their second operand only when the first leaves the
   ; value open: False decides and, True decides or.
   (prepared-pure-intrinsic-head
+    min 2 strict-all comparison-select (dialects petta))
+  (prepared-pure-intrinsic-head
+    max 2 strict-all comparison-select (dialects petta))
+  (prepared-pure-intrinsic-head
     and 2 strict-all boolean-dispatch (dialects he petta))
   (prepared-pure-intrinsic-head
     and 2 short-circuit boolean-dispatch (dialects prime))
@@ -1288,17 +1276,6 @@
     __cetta_lib_str 4 strict-all library-value-dispatch)
   (prepared-pure-intrinsic-head
     __cetta_lib_str_value 2 strict-all library-value-dispatch)
-  (sequence-representation clist clist:to-list ClistNil ClistCons)
-  (sequence-fold-consumer clist clist:foldl 5 0)
-  (sequence-fold-target clist list:foldl)
-  (sequence-erasure
-    clist clist:from-list identity unwrap 1 1)
-  (sequence-erasure
-    clist clist:append list:append recursive-all 2 2)
-  (sequence-erasure
-    clist clist:range list:range scalar-all 1 2)
-  (sequence-erasure
-    clist clist:repeat list:repeat scalar-all 2 2)
   (owned-local Bindings bindings_init bindings_free))
 
 (fixtures relational-admission

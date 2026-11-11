@@ -1,8 +1,9 @@
 #define _POSIX_C_SOURCE 200809L
-/* ACTree03 format derived from PathMap src/arena_compact.rs, revision
- * cb4e1e4eecb75f0be9846b4b75c69d5e2d2f647b.
- * Copyright (c) Adam Vandervorst. MIT license; see LICENSES/PathMap-MIT.txt.
- * This implementation uses checked byte reads and explicit traversal stacks. */
+/* ACTree03, the byte-trie format of PathMap's src/arena_compact.rs
+ * (revision cb4e1e4eecb75f0be9846b4b75c69d5e2d2f647b), read and written in
+ * C.  The format follows PathMap, Copyright (c) Adam Vandervorst, whose MIT
+ * license (LICENSES/PathMap-MIT.txt) covers this file.  This implementation
+ * uses checked byte reads and explicit traversal stacks. */
 #include "act_trie.h"
 #include "storage_census.h"
 #include <errno.h>
@@ -36,6 +37,7 @@ struct CettaActTree {
 typedef struct {
   Node node;
   size_t base, child;
+  size_t *children;
   unsigned next;
   bool entered, emitted;
 } Frame;
@@ -44,7 +46,8 @@ struct CettaActCursor {
   Frame *frames;
   size_t len, cap;
   Buffer key, lower, upper;
-  bool has_lower, has_upper, terminal;
+  size_t key_limit;
+  bool has_lower, has_upper, terminal, reverse;
   CettaActStatus status;
 };
 static uint64_t read64(const unsigned char *p) {
@@ -222,27 +225,21 @@ static CettaActStatus image_check(CettaActTree *t) {
   CettaActStatus s = node_read(t, t->root, &n);
   return s == CETTA_ACT_OK && n.end > t->size - 8 ? CETTA_ACT_CORRUPT : s;
 }
-CettaActStatus cetta_act_map(const char *path, CettaActTree **out) {
-  if (!out || !path)
+CettaActStatus cetta_act_map_fd(int fd, CettaActTree **out) {
+  if (!out)
     return CETTA_ACT_CORRUPT;
   *out = NULL;
-  int fd = open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
-  if (fd < 0)
-    return CETTA_ACT_IO;
   struct stat st;
   if (fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_size < 25 ||
       (uintmax_t)st.st_size > SIZE_MAX) {
-    close(fd);
     return CETTA_ACT_CORRUPT;
   }
   CettaActTree *t = calloc(1, sizeof(*t));
   if (!t) {
-    close(fd);
     return CETTA_ACT_NOMEM;
   }
   t->size = (size_t)st.st_size;
   t->data = mmap(NULL, t->size, PROT_READ, MAP_PRIVATE, fd, 0);
-  close(fd);
   if (t->data == MAP_FAILED) {
     free(t);
     return CETTA_ACT_IO;
@@ -251,6 +248,13 @@ CettaActStatus cetta_act_map(const char *path, CettaActTree **out) {
   atomic_init(&t->refs, 1);
   *out = t;
   return CETTA_ACT_OK;
+}
+CettaActStatus cetta_act_map(const char *path, CettaActTree **out) {
+  if (!out || !path) return CETTA_ACT_CORRUPT;
+  *out = NULL;
+  int fd = open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
+  if (fd < 0) return CETTA_ACT_IO;
+  CettaActStatus s = cetta_act_map_fd(fd,out); close(fd); return s;
 }
 CettaActStatus cetta_act_open(const char *path, CettaActTree **out) {
   CettaActStatus s = cetta_act_map(path, out);
@@ -338,12 +342,27 @@ static CettaActStatus push(CettaActCursor *c, size_t id, size_t base) {
   if (s != CETTA_ACT_OK)
     return s;
   f.child = f.node.child;
+  if (c->reverse && f.node.count) {
+    f.children = malloc(f.node.count * sizeof(*f.children));
+    if (!f.children) return CETTA_ACT_NOMEM;
+    size_t child = f.node.child;
+    for (unsigned i = 0; i < f.node.count; i++) {
+      f.children[i] = child;
+      s = node_skip(c->tree, child, &child);
+      if (s != CETTA_ACT_OK || child > f.node.id) {
+        free(f.children);
+        return s == CETTA_ACT_OK ? CETTA_ACT_CORRUPT : s;
+      }
+    }
+    f.next = f.node.count;
+  }
   c->frames[c->len++] = f;
   return CETTA_ACT_OK;
 }
 void cetta_act_cursor_close(CettaActCursor *c) {
   if (c) {
     cetta_act_release(c->tree);
+    for (size_t i = 0; i < c->len; i++) free(c->frames[i].children);
     free(c->frames);
     free(c->key.data);
     free(c->lower.data);
@@ -364,14 +383,16 @@ void cetta_act_cursor_storage(const CettaActCursor *c,
   if (!c || !cetta_storage_object(census, c, sizeof(*c), CETTA_STORAGE_BLOCK))
     return;
   cetta_storage_array(census, c->frames, c->cap, sizeof(*c->frames), 0);
+  for (size_t i = 0; i < c->len; i++)
+    cetta_storage_array(census, c->frames[i].children,
+        c->frames[i].children ? c->frames[i].node.count : 0, sizeof(size_t), 0);
   cetta_storage_array(census, c->key.data, c->key.cap, 1, 0);
   cetta_storage_array(census, c->lower.data, c->lower.cap, 1, 0);
   cetta_storage_array(census, c->upper.data, c->upper.cap, 1, 0);
   cetta_act_storage(c->tree, census);
 }
-CettaActStatus cetta_act_cursor_open(CettaActTree *t, const CettaActBytes *lo,
-                                     const CettaActBytes *hi,
-                                     CettaActCursor **out) {
+static CettaActStatus cursor_open(CettaActTree *t, const CettaActBytes *lo,
+    const CettaActBytes *hi, bool reverse, CettaActCursor **out) {
   if (!out || !t || (lo && lo->size && !lo->data) ||
       (hi && hi->size && !hi->data))
     return CETTA_ACT_CORRUPT;
@@ -380,6 +401,7 @@ CettaActStatus cetta_act_cursor_open(CettaActTree *t, const CettaActBytes *lo,
   if (!c)
     return CETTA_ACT_NOMEM;
   c->tree = t;
+  c->reverse = reverse;c->key_limit=SIZE_MAX;
   cetta_act_retain(t);
   c->has_lower = lo != NULL;
   c->has_upper = hi != NULL;
@@ -395,6 +417,14 @@ CettaActStatus cetta_act_cursor_open(CettaActTree *t, const CettaActBytes *lo,
   }
   *out = c;
   return CETTA_ACT_OK;
+}
+CettaActStatus cetta_act_cursor_open(CettaActTree *t, const CettaActBytes *lo,
+    const CettaActBytes *hi, CettaActCursor **out) {
+  return cursor_open(t, lo, hi, false, out);
+}
+CettaActStatus cetta_act_cursor_open_reverse(CettaActTree *t,
+    const CettaActBytes *lo, const CettaActBytes *hi, CettaActCursor **out) {
+  return cursor_open(t, lo, hi, true, out);
 }
 CettaActStatus cetta_act_cursor_prefix(CettaActTree *t, CettaActBytes prefix,
                                        CettaActCursor **out) {
@@ -419,20 +449,31 @@ CettaActStatus cetta_act_cursor_clone(const CettaActCursor *c, bool rewind,
     return CETTA_ACT_CORRUPT;
   CettaActBytes lo = {c->lower.data, c->lower.len},
                 hi = {c->upper.data, c->upper.len};
-  CettaActStatus s = cetta_act_cursor_open(c->tree, c->has_lower ? &lo : NULL,
-                                           c->has_upper ? &hi : NULL, out);
+  CettaActStatus s = cursor_open(c->tree, c->has_lower ? &lo : NULL,
+                               c->has_upper ? &hi : NULL, c->reverse, out);
   if (s != CETTA_ACT_OK || rewind)
     return s;
-  CettaActCursor *d = *out;
+  CettaActCursor *d = *out;d->key_limit=c->key_limit;
+  for (size_t i = 0; i < d->len; i++) free(d->frames[i].children);
+  d->len = 0;
   if (!reserve((void **)&d->frames, &d->cap, c->len, sizeof(*d->frames)) ||
       !append(&d->key, c->key.data, c->key.len)) {
     cetta_act_cursor_close(d);
     *out = NULL;
     return CETTA_ACT_NOMEM;
   }
-  if (c->len)
-    memcpy(d->frames, c->frames, c->len * sizeof(*d->frames));
-  d->len = c->len;
+  for (size_t i = 0; i < c->len; i++) {
+    Frame frame = c->frames[i]; frame.children = NULL;
+    if (c->frames[i].children) {
+      frame.children = malloc(frame.node.count * sizeof(*frame.children));
+      if (!frame.children) {
+        cetta_act_cursor_close(d); *out = NULL; return CETTA_ACT_NOMEM;
+      }
+      memcpy(frame.children, c->frames[i].children,
+             frame.node.count * sizeof(*frame.children));
+    }
+    d->frames[d->len++] = frame;
+  }
   d->terminal = c->terminal;
   d->status = c->status;
   return CETTA_ACT_OK;
@@ -441,20 +482,72 @@ static bool below_lower(const CettaActCursor *c) {
   size_t n = c->key.len < c->lower.len ? c->key.len : c->lower.len;
   return c->has_lower && n && memcmp(c->key.data, c->lower.data, n) < 0;
 }
-CettaActStatus cetta_act_cursor_next(CettaActCursor *c, CettaActBytes *key,
+static CettaActStatus cursor_previous(CettaActCursor *c,uint64_t work,CettaActBytes *key,
+                                       uint64_t *value) {
+  if (c->terminal) return c->status;
+  CettaActStatus s = CETTA_ACT_END;
+  while (c->len) {
+    if (!work--) return CETTA_ACT_PROGRESS;
+    Frame *f = &c->frames[c->len - 1]; Node *n = &f->node;
+    if (f->entered) c->key.len = f->base + (n->line ? n->line_len : 0);
+    if (!f->entered) {
+      c->key.len = f->base;
+      if (n->line && (c->key.len>c->key_limit || n->line_len>c->key_limit-c->key.len)) {
+        s=CETTA_ACT_CORRUPT;break;
+      }
+      if (n->line && !append(&c->key, c->tree->data + n->line_at, n->line_len)) {
+        s = CETTA_ACT_NOMEM; break;
+      }
+      f->entered = true;
+      if (below_lower(c)) break;
+      if (c->has_upper && compare((CettaActBytes){c->key.data,c->key.len},
+              (CettaActBytes){c->upper.data,c->upper.len}) >= 0) {
+        free(f->children); f->children = NULL; --c->len; continue;
+      }
+    }
+    if (f->next) {
+      unsigned i = --f->next; size_t id = f->children[i];
+      if (!n->line && c->key.len>=c->key_limit) {s=CETTA_ACT_CORRUPT;break;}
+      if (!n->line && !append(&c->key, n->labels + i, 1)) {
+        s = CETTA_ACT_NOMEM; break;
+      }
+      s = push(c,id,c->key.len);
+      if (s != CETTA_ACT_OK) break;
+      continue;
+    }
+    if (!f->emitted) {
+      f->emitted = true;
+      if (n->valued && (!c->has_lower ||
+          compare((CettaActBytes){c->key.data,c->key.len},
+                  (CettaActBytes){c->lower.data,c->lower.len}) >= 0)) {
+        *key = (CettaActBytes){c->key.data,c->key.len}; *value = n->value;
+        return CETTA_ACT_OK;
+      }
+    }
+    free(f->children); f->children = NULL; --c->len;
+  }
+  if (s == CETTA_ACT_OK) s = CETTA_ACT_END;
+  c->terminal = true; c->status = s; return s;
+}
+CettaActStatus cetta_act_cursor_next_bounded(CettaActCursor *c,uint64_t work,CettaActBytes *key,
                                      uint64_t *value) {
   if (!c || !key || !value)
     return CETTA_ACT_CORRUPT;
+  if (c->reverse) return cursor_previous(c,work,key,value);
   if (c->terminal)
     return c->status;
   CettaActStatus s = CETTA_ACT_END;
   while (c->len) {
+    if (!work--) return CETTA_ACT_PROGRESS;
     Frame *f = &c->frames[c->len - 1];
     Node *n = &f->node;
     if (f->entered)
       c->key.len = f->base + (n->line ? n->line_len : 0);
     if (!f->entered) {
       c->key.len = f->base;
+      if (n->line && (c->key.len>c->key_limit || n->line_len>c->key_limit-c->key.len)) {
+        s=CETTA_ACT_CORRUPT;break;
+      }
       if (n->line &&
           !append(&c->key, c->tree->data + n->line_at, n->line_len)) {
         s = CETTA_ACT_NOMEM;
@@ -493,6 +586,7 @@ CettaActStatus cetta_act_cursor_next(CettaActCursor *c, CettaActBytes *key,
         break;
       }
       f->child = child.end;
+      if (!n->line && c->key.len>=c->key_limit) {s=CETTA_ACT_CORRUPT;break;}
       if (!n->line && !append(&c->key, &n->labels[next], 1)) {
         s = CETTA_ACT_NOMEM;
         break;
@@ -513,6 +607,13 @@ CettaActStatus cetta_act_cursor_next(CettaActCursor *c, CettaActBytes *key,
   c->terminal = true;
   c->status = s;
   return s;
+}
+CettaActStatus cetta_act_cursor_next(CettaActCursor *c,CettaActBytes *key,uint64_t *value) {
+  return cetta_act_cursor_next_bounded(c,UINT64_MAX,key,value);
+}
+bool cetta_act_cursor_key_limit(CettaActCursor *c,size_t maximum) {
+  if (!c || c->key.len>maximum) return false;
+  c->key_limit=maximum;return true;
 }
 CettaActStatus cetta_act_get(const CettaActTree *t, CettaActBytes key,
                              uint64_t *out) {
@@ -612,230 +713,531 @@ typedef struct {
   unsigned count;
   unsigned char labels[256];
 } Written;
-typedef struct {
-  size_t lo, hi, depth, common, next, stop;
-  unsigned count;
-  bool initialized;
-  Written *children;
-  size_t capacity;
-  unsigned char labels[256];
-} BuildFrame;
-static bool put(Buffer *b, uint64_t v) {
-  unsigned char bytes[9];
-  size_t n = cetta_act_put_varint(bytes, v);
-  return append(b, bytes, n);
+static CettaActStatus build_memory(const CettaActItem *,size_t,unsigned char **,size_t *);
+CettaActStatus cetta_act_build(const CettaActItem *items,size_t count,
+                                unsigned char **out,size_t *size) {
+  return build_memory(items,count,out,size);
 }
-static bool emit(Buffer *b, const Written *n, size_t *id) {
-  *id = b->len;
-  unsigned char h =
-      (n->line ? 128 : 0) | (n->valued ? 64 : 0) |
+
+/* Only the active branch is resident. Ancestor summaries and oversized keys
+ * are kept in private seekable scratch files. Child descriptors are emitted
+ * together after all descendants, as required by ACTree03. */
+typedef struct {
+  uint64_t depth, value;
+  unsigned count;
+  bool valued;
+  Written children[256];
+  unsigned char labels[256];
+} StreamFrame;
+typedef struct {
+  uint64_t depth, value, count, valued;
+} SavedFrame;
+struct CettaActBuilder {
+  int output, frontier, key_file;
+  uint64_t end, flushed, frontier_end, previous_size, value, records;
+  size_t budget, key_limit, output_used, peak_heap;
+  Buffer previous, memory_output, memory_frontier;
+  StreamFrame frame;
+  bool active, have_previous, spooled, finished, finishing, memory;
+  Written final;
+  uint64_t final_depth;
+  CettaActStatus failure;
+  unsigned char output_buffer[32768], scratch[32768], incoming[32768];
+};
+static bool file_at(int fd, void *data, size_t size, uint64_t offset,
+                    bool writing) {
+  if (offset > INT64_MAX || size > (uint64_t)INT64_MAX - offset)
+    return false;
+  unsigned char *p = data;
+  while (size) {
+    ssize_t n = writing ? pwrite(fd, p, size, (off_t)offset)
+                        : pread(fd, p, size, (off_t)offset);
+    if (n < 0 && errno == EINTR) continue;
+    if (n <= 0) return false;
+    p += (size_t)n; size -= (size_t)n; offset += (uint64_t)n;
+  }
+  return true;
+}
+static CettaActStatus builder_fail(CettaActBuilder *b, CettaActStatus s) {
+  if (b && b->failure == CETTA_ACT_OK) b->failure = s;
+  return b ? b->failure : s;
+}
+static bool stream_flush(CettaActBuilder *b) {
+  if (b->memory) return true;
+  if (!file_at(b->output, b->output_buffer, b->output_used, b->flushed, true))
+    return false;
+  b->flushed += b->output_used; b->output_used = 0;
+  return true;
+}
+static bool stream_append(CettaActBuilder *b, const void *raw, size_t size) {
+  if (size > (uint64_t)INT64_MAX - b->end) return false;
+  if (b->memory) {
+    if (!append(&b->memory_output,raw,size)) {b->failure=CETTA_ACT_NOMEM;return false;}
+    b->end+=size;return true;
+  }
+  const unsigned char *p = raw;
+  while (size) {
+    size_t amount = sizeof(b->output_buffer) - b->output_used;
+    if (amount > size) amount = size;
+    memcpy(b->output_buffer + b->output_used, p, amount);
+    b->output_used += amount; b->end += amount; p += amount; size -= amount;
+    if (b->output_used == sizeof(b->output_buffer) && !stream_flush(b))
+      return false;
+  }
+  return true;
+}
+static bool stream_number(CettaActBuilder *b, uint64_t value) {
+  unsigned char bytes[9]; size_t n = cetta_act_put_varint(bytes, value);
+  return stream_append(b, bytes, n);
+}
+static bool stream_emit(CettaActBuilder *b, const Written *n, size_t *id) {
+  if (b->end > SIZE_MAX) return false;
+  *id = (size_t)b->end;
+  unsigned char h = (n->line ? 128 : 0) | (n->valued ? 64 : 0) |
       (n->line ? (n->count ? 1 : 0) : (n->count < 32 ? n->count : 32));
-  if (!append(b, &h, 1) || (n->valued && !put(b, n->value)) ||
-      (n->count && !put(b, *id - n->child)))
+  if (!stream_append(b, &h, 1) || (n->valued && !stream_number(b, n->value)) ||
+      (n->count && (n->child >= *id || !stream_number(b, *id - n->child))))
     return false;
   if (n->line)
-    return put(b, *id - n->line_id);
-  if (n->count < 32)
-    return append(b, n->labels, n->count);
+    return n->line_id < *id && stream_number(b, *id - n->line_id);
+  if (n->count < 32) return stream_append(b, n->labels, n->count);
   unsigned char mask[32] = {0};
   for (unsigned i = 0; i < n->count; i++)
     mask[n->labels[i] / 8] |= 1u << (n->labels[i] % 8);
-  return append(b, mask, 32);
+  return stream_append(b, mask, sizeof(mask));
 }
-CettaActStatus cetta_act_build(const CettaActItem *items, size_t count,
-                               unsigned char **out, size_t *size) {
-  if (!out || !size || (count && !items))
-    return CETTA_ACT_CORRUPT;
-  *out = NULL;
-  *size = 0;
-  for (size_t i = 0; i < count; i++)
-    if (items[i].key.size && !items[i].key.data)
-      return CETTA_ACT_CORRUPT;
-  for (size_t i = 1; i < count; i++)
-    if (compare(items[i - 1].key, items[i].key) >= 0)
-      return CETTA_ACT_CORRUPT;
-  Buffer b = {0};
-  unsigned char header[16] = "ACTree03";
-  if (!append(&b, header, 16))
-    return CETTA_ACT_NOMEM;
-  BuildFrame *stack = NULL;
-  size_t len = 0, cap = 0;
-  CettaActStatus s = CETTA_ACT_NOMEM;
-  if (!reserve((void **)&stack, &cap, 1, sizeof(*stack)))
-    goto done;
-  stack[len++] = (BuildFrame){.hi = count};
-  Written result = {0};
-  while (len) {
-    BuildFrame *f = &stack[len - 1];
-    if (!f->initialized) {
-      f->initialized = true;
-      f->common = f->depth;
-      f->next = f->lo;
-      if (f->lo < f->hi) {
-        CettaActBytes first = items[f->lo].key, last = items[f->hi - 1].key;
-        while (f->common < first.size && f->common < last.size &&
-               first.data[f->common] == last.data[f->common])
-          f->common++;
-      }
-      if (f->common > f->depth) {
-        size_t lo = f->lo, hi = f->hi, d = f->common;
-        if (!reserve((void **)&stack, &cap, len + 1, sizeof(*stack)))
-          goto done;
-        stack[len++] = (BuildFrame){.lo = lo, .hi = hi, .depth = d};
-        continue;
-      }
-      if (f->next < f->hi && items[f->next].key.size == f->depth)
-        f->next++;
-    }
-    if (f->common > f->depth) {
-      Written line = {.line = true};
-      if (result.valued && !result.count && !result.line) {
-        line.valued = true;
-        line.value = result.value;
-      } else {
-        if (!emit(&b, &result, &line.child))
-          goto done;
-        line.count = 1;
-      }
-      line.line_id = b.len;
-      if (!put(&b, f->common - f->depth) ||
-          !append(&b, items[f->lo].key.data + f->depth, f->common - f->depth))
-        goto done;
-      result = line;
-      len--;
-    } else if (f->next < f->hi) {
-      size_t lo = f->next, hi = lo + 1, d = f->depth;
-      unsigned char label = items[lo].key.data[d];
-      while (hi < f->hi && items[hi].key.size > d &&
-             items[hi].key.data[d] == label)
-        hi++;
-      f->labels[f->count] = label;
-      f->next = hi;
-      f->stop = 1;
-      if (!reserve((void **)&stack, &cap, len + 1, sizeof(*stack)))
-        goto done;
-      stack[len++] = (BuildFrame){.lo = lo, .hi = hi, .depth = d + 1};
-      continue;
-    } else {
-      Written branch = {.count = f->count};
-      if (f->lo < f->hi && items[f->lo].key.size == f->depth) {
-        branch.valued = true;
-        branch.value = items[f->lo].value;
-      }
-      for (unsigned i = 0; i < f->count; i++) {
-        size_t id;
-        if (!emit(&b, &f->children[i], &id))
-          goto done;
-        if (!i)
-          branch.child = id;
-        branch.labels[i] = f->labels[i];
-      }
-      result = branch;
-      free(f->children);
-      f->children = NULL;
-      len--;
-    }
-    if (len) {
-      BuildFrame *parent = &stack[len - 1];
-      if (parent->common == parent->depth && parent->stop) {
-        if (!reserve((void **)&parent->children, &parent->capacity,
-                     parent->count + 1u, sizeof(*parent->children)))
-          goto done;
-        parent->children[parent->count++] = result;
-        parent->stop = 0;
-      }
-    }
-  }
-  size_t root;
-  if (!emit(&b, &result, &root))
-    goto done;
-  write64(b.data + 8, root);
-  unsigned char pad[8] = {0};
-  if (!append(&b, pad, 8))
-    goto done;
-  *out = b.data;
-  *size = b.len;
-  b.data = NULL;
-  s = CETTA_ACT_OK;
-done:
-  for (size_t i = 0; i < len; i++)
-    free(stack[i].children);
-  free(stack);
-  free(b.data);
-  return s;
+static bool previous_read(CettaActBuilder *b, uint64_t offset, void *out,
+                          size_t size) {
+  if (offset > b->previous_size || size > b->previous_size - offset) return false;
+  if (b->spooled) return file_at(b->key_file, out, size, offset, false);
+  if (size) memcpy(out, b->previous.data + (size_t)offset, size);
+  return true;
 }
-CettaActStatus cetta_act_publish(const char *path, CettaActBytes bytes) {
-  if (!path || !*path || (bytes.size && !bytes.data))
-    return CETTA_ACT_CORRUPT;
-  size_t n = strlen(path);
-  if (n > SIZE_MAX - 16)
-    return CETTA_ACT_LIMIT;
-  char *tmp = malloc(n + 16), *parent = strdup(path);
-  if (!tmp || !parent) {
-    free(tmp);
-    free(parent);
-    return CETTA_ACT_NOMEM;
-  }
-  memcpy(tmp, path, n);
-  memcpy(tmp + n, ".tmp-XXXXXX", 12);
-  char *slash = strrchr(parent, '/');
-  if (slash) {
-    if (slash == parent)
-      slash[1] = 0;
-    else
-      *slash = 0;
+
+typedef struct {const unsigned char *data;int fd;uint64_t offset,size;} InputKey;
+static bool input_read(const InputKey *key,uint64_t offset,void *out,size_t size) {
+  if (offset>key->size || size>key->size-offset) return false;
+  if (key->fd>=0) return file_at(key->fd,out,size,key->offset+offset,false);
+  if (size) memcpy(out,key->data+(size_t)offset,size);
+  return true;
+}
+static CettaActStatus previous_save(CettaActBuilder *b,const InputKey *key) {
+  if (key->size<=b->key_limit) {
+    size_t size=(size_t)key->size;
+    if (size>b->previous.cap) {
+      size_t cap=b->previous.cap ? b->previous.cap : 1;
+      while (cap<size && cap<=b->key_limit/2) cap*=2;
+      if (cap<size) cap=size;
+      void *p=realloc(b->previous.data,cap);if (!p) return CETTA_ACT_NOMEM;
+      if (!b->memory) {
+        size_t preparation=sizeof(*b)+b->previous.cap+cap;
+        if (preparation>b->peak_heap) b->peak_heap=preparation;
+      }
+      b->previous.data=p;b->previous.cap=cap;
+    }
+    if (!input_read(key,0,b->previous.data,size)) return CETTA_ACT_IO;
+    if (b->spooled && ftruncate(b->key_file,0)) return CETTA_ACT_IO;
+    b->spooled=false;b->previous.len=size;
   } else {
-    free(parent);
-    parent = strdup(".");
-    if (!parent) {
-      free(tmp);
-      return CETTA_ACT_NOMEM;
+    for (uint64_t offset=0;offset<key->size;) {
+      size_t n=key->size-offset<sizeof(b->scratch) ? (size_t)(key->size-offset) : sizeof(b->scratch);
+      if (!input_read(key,offset,b->scratch,n) || !file_at(b->key_file,b->scratch,n,offset,true)) return CETTA_ACT_IO;
+      offset+=n;
+    }
+    if (ftruncate(b->key_file,(off_t)key->size)) return CETTA_ACT_IO;
+    b->spooled=true;
+  }
+  b->previous_size=key->size;b->have_previous=true;return CETTA_ACT_OK;
+}
+static bool frontier_at(CettaActBuilder *b,void *data,size_t n,uint64_t at,bool writing) {
+  if (!b->memory) return file_at(b->frontier,data,n,at,writing);
+  if (at>SIZE_MAX || n>SIZE_MAX-(size_t)at) return false;
+  if (writing) {
+    if (at!=b->memory_frontier.len || !append(&b->memory_frontier,data,n)) {
+      b->failure=CETTA_ACT_NOMEM;return false;
+    }
+  } else {
+    if (at>b->memory_frontier.len || n>b->memory_frontier.len-(size_t)at) return false;
+    memcpy(data,b->memory_frontier.data+(size_t)at,n);
+  }
+  return true;
+}
+static bool frame_save(CettaActBuilder *b) {
+  SavedFrame h = {b->frame.depth, b->frame.value, b->frame.count,
+                   b->frame.valued ? 1u : 0u};
+  uint64_t at = b->frontier_end;
+  size_t children = b->frame.count * sizeof(Written);
+  uint64_t size = sizeof(h) + children + b->frame.count;
+  unsigned char tail[8]; write64(tail, size);
+  if (!frontier_at(b, &h, sizeof(h), at, true) ||
+      !frontier_at(b, b->frame.children, children, at + sizeof(h), true) ||
+      !frontier_at(b, b->frame.labels, b->frame.count,
+                at + sizeof(h) + children, true) ||
+      !frontier_at(b, tail, sizeof(tail), at + size, true)) return false;
+  b->frontier_end += size + sizeof(tail); return true;
+}
+static bool frame_restore(CettaActBuilder *b) {
+  if (!b->frontier_end) { b->active = false; return true; }
+  unsigned char tail[8]; SavedFrame h;
+  if (b->frontier_end < sizeof(tail) ||
+      !frontier_at(b, tail, sizeof(tail), b->frontier_end - sizeof(tail), false))
+    return false;
+  uint64_t size = read64(tail);
+  if (size > b->frontier_end - sizeof(tail) || size < sizeof(h)) return false;
+  uint64_t at = b->frontier_end - sizeof(tail) - size;
+  if (!frontier_at(b, &h, sizeof(h), at, false) || h.count > 256 || h.valued > 1 ||
+      size != sizeof(h) + h.count * sizeof(Written) + h.count) return false;
+  size_t children = (size_t)h.count * sizeof(Written);
+  if (!frontier_at(b, b->frame.children, children, at + sizeof(h), false) ||
+      !frontier_at(b, b->frame.labels, (size_t)h.count,
+                at + sizeof(h) + children, false) || (!b->memory && ftruncate(b->frontier, (off_t)at)))
+    return false;
+  b->frame.depth = h.depth; b->frame.value = h.value;
+  b->frame.count = (unsigned)h.count; b->frame.valued = h.valued != 0;
+  if (b->memory) b->memory_frontier.len=(size_t)at;
+  b->frontier_end = at; b->active = true; return true;
+}
+static bool wrap_previous(CettaActBuilder *b, Written *result,
+                          uint64_t from, uint64_t to) {
+  if (from > to || to > b->previous_size) return false;
+  if (from == to) return true;
+  Written line = {.line = true};
+  if (result->valued && !result->count && !result->line) {
+    line.valued = true; line.value = result->value;
+  } else {
+    if (!stream_emit(b, result, &line.child)) return false;
+    line.count = 1;
+  }
+  if (b->end > SIZE_MAX) return false;
+  line.line_id = (size_t)b->end;
+  if (!stream_number(b, to - from)) return false;
+  while (from < to) {
+    size_t amount = to - from < sizeof(b->scratch) ? (size_t)(to - from) : sizeof(b->scratch);
+    if (!previous_read(b, from, b->scratch, amount) || !stream_append(b, b->scratch, amount))
+      return false;
+    from += amount;
+  }
+  *result = line; return true;
+}
+static bool frame_attach(CettaActBuilder *b, Written result, uint64_t depth) {
+  unsigned char label;
+  if (!b->active || b->frame.count == 256 || b->frame.depth == UINT64_MAX ||
+      !wrap_previous(b, &result, b->frame.depth + 1, depth) ||
+      !previous_read(b, b->frame.depth, &label, 1)) return false;
+  unsigned n = b->frame.count;
+  if (n && label <= b->frame.labels[n - 1]) return false;
+  b->frame.children[n] = result; b->frame.labels[n] = label;
+  ++b->frame.count; return true;
+}
+static bool frame_finish(CettaActBuilder *b, Written *result, uint64_t *depth) {
+  Written branch = {.count = b->frame.count, .valued = b->frame.valued,
+                     .value = b->frame.value};
+  for (unsigned i = 0; i < b->frame.count; i++) {
+    size_t id;
+    if (!stream_emit(b, &b->frame.children[i], &id)) return false;
+    if (!i) branch.child = id;
+    branch.labels[i] = b->frame.labels[i];
+  }
+  *depth = b->frame.depth; *result = branch;
+  return frame_restore(b);
+}
+void cetta_act_builder_close(CettaActBuilder *b) {
+  if (!b) return;
+  if (b->output >= 0) close(b->output);
+  if (b->frontier >= 0) close(b->frontier);
+  if (b->key_file >= 0) close(b->key_file);
+  free(b->previous.data);free(b->memory_output.data);free(b->memory_frontier.data);free(b);
+}
+size_t cetta_act_builder_minimum_memory(void) {return sizeof(CettaActBuilder);}
+CettaActStatus cetta_act_builder_open(int output, int frontier, int key_file,
+                                      size_t budget, CettaActBuilder **out) {
+  if (!out) return CETTA_ACT_CORRUPT;
+  *out = NULL;
+  if (budget < sizeof(CettaActBuilder)) return CETTA_ACT_LIMIT;
+  int files[3] = {output, frontier, key_file}; struct stat st[3];
+  for (unsigned i = 0; i < 3; i++) {
+    if (fstat(files[i], &st[i])) return CETTA_ACT_IO;
+    int flags=fcntl(files[i],F_GETFL);if (flags<0) return CETTA_ACT_IO;
+    if ((flags&O_ACCMODE)!=O_RDWR || (flags&O_APPEND) || !S_ISREG(st[i].st_mode) || st[i].st_size) return CETTA_ACT_CORRUPT;
+    for (unsigned j = 0; j < i; j++)
+      if (st[i].st_dev == st[j].st_dev && st[i].st_ino == st[j].st_ino) return CETTA_ACT_CORRUPT;
+  }
+  CettaActBuilder *b = calloc(1, sizeof(*b));
+  if (!b) return CETTA_ACT_NOMEM;
+  b->output = b->frontier = b->key_file = -1;
+  /* Reserve the old and new key buffers together during realloc. */
+  b->budget = budget; b->key_limit = (budget - sizeof(*b)) / 2;
+  b->peak_heap = sizeof(*b);
+  b->output = fcntl(output, F_DUPFD_CLOEXEC, 0);
+  b->frontier = fcntl(frontier, F_DUPFD_CLOEXEC, 0);
+  b->key_file = fcntl(key_file, F_DUPFD_CLOEXEC, 0);
+  if (b->output < 0 || b->frontier < 0 || b->key_file < 0) {
+    cetta_act_builder_close(b); return CETTA_ACT_IO;
+  }
+  unsigned char header[16] = "ACTree03";
+  if (!stream_append(b, header, sizeof(header))) {
+    cetta_act_builder_close(b); return CETTA_ACT_IO;
+  }
+  *out = b; return CETTA_ACT_OK;
+}
+static CettaActStatus builder_put_key(CettaActBuilder *b,const InputKey *key,uint64_t value) {
+  if (!b || b->finished || b->finishing) return CETTA_ACT_CORRUPT;
+  if (b->failure != CETTA_ACT_OK) return b->failure;
+  if (key->size>INT64_MAX || b->records==UINT64_MAX)
+    return builder_fail(b, CETTA_ACT_LIMIT);
+  if (b->have_previous) {
+    uint64_t common = 0, smaller = b->previous_size < key->size ? b->previous_size : key->size;
+    int order = 0;
+    while (common < smaller) {
+      size_t amount = smaller - common < sizeof(b->scratch) ? (size_t)(smaller - common) : sizeof(b->scratch);
+      if (!previous_read(b,common,b->scratch,amount) || !input_read(key,common,b->incoming,amount)) return builder_fail(b,CETTA_ACT_IO);
+      size_t i=0;
+      while (i<amount && b->scratch[i]==b->incoming[i]) i++;
+      common+=i;
+      if (i<amount) {order=b->scratch[i]<b->incoming[i] ? -1 : 1;break;}
+    }
+    if (!order) order = (b->previous_size > key->size) - (b->previous_size < key->size);
+    if (order >= 0) return builder_fail(b, CETTA_ACT_CORRUPT);
+    Written result = {.valued = true, .value = b->value};
+    uint64_t depth = b->previous_size;
+    while (b->active && b->frame.depth > common) {
+      if (!frame_attach(b, result, depth) || !frame_finish(b, &result, &depth))
+        return builder_fail(b, CETTA_ACT_IO);
+    }
+    if (b->active && b->frame.depth == common) {
+      if (!frame_attach(b, result, depth)) return builder_fail(b, CETTA_ACT_IO);
+    } else {
+      if (b->active && !frame_save(b)) return builder_fail(b, CETTA_ACT_IO);
+      b->frame.count = 0; b->frame.depth = common;
+      b->frame.valued = common == depth;
+      b->frame.value = b->frame.valued ? result.value : 0;
+      b->active = true;
+      if (!b->frame.valued && !frame_attach(b, result, depth))
+        return builder_fail(b, CETTA_ACT_IO);
     }
   }
-  int dir = open(parent, O_RDONLY | O_DIRECTORY | O_CLOEXEC), fd = -1;
-  CettaActStatus s = CETTA_ACT_IO;
-  if (dir < 0)
-    goto end;
-  fd = mkstemp(tmp);
-  if (fd < 0)
-    goto end;
-  size_t at = 0;
-  while (at < bytes.size) {
-    ssize_t w = write(fd, bytes.data + at, bytes.size - at);
-    if (w < 0 && errno == EINTR)
-      continue;
-    if (w <= 0)
-      goto end;
-    at += (size_t)w;
+  CettaActStatus s = previous_save(b, key);
+  if (s != CETTA_ACT_OK) return builder_fail(b, s);
+  b->value = value; ++b->records; return CETTA_ACT_OK;
+}
+
+CettaActStatus cetta_act_builder_put(CettaActBuilder *b,CettaActBytes key,uint64_t value) {
+  if (key.size && !key.data) return b ? builder_fail(b,CETTA_ACT_CORRUPT) : CETTA_ACT_CORRUPT;
+  InputKey input={.data=key.data,.fd=-1,.size=key.size};return builder_put_key(b,&input,value);
+}
+CettaActStatus cetta_act_builder_put_fd(CettaActBuilder *b,int fd,uint64_t offset,uint64_t size,uint64_t value) {
+  if (!b) return CETTA_ACT_CORRUPT;
+  if (b->failure!=CETTA_ACT_OK) return b->failure;
+  struct stat source,other;
+  if (fstat(fd,&source)) return builder_fail(b,CETTA_ACT_IO);
+  if (!S_ISREG(source.st_mode) || source.st_size<0 || offset>(uint64_t)source.st_size || size>(uint64_t)source.st_size-offset)
+    return builder_fail(b,CETTA_ACT_CORRUPT);
+  int owned[]={b->output,b->frontier,b->key_file};
+  for (unsigned i=0;i<3;i++) if (owned[i]>=0) {
+    if (fstat(owned[i],&other)) return builder_fail(b,CETTA_ACT_IO);
+    if (source.st_dev==other.st_dev && source.st_ino==other.st_ino) return builder_fail(b,CETTA_ACT_CORRUPT);
   }
-  if (fsync(fd))
-    goto end;
-  if (close(fd)) {
-    fd = -1;
-    goto end;
+  InputKey input={.fd=fd,.offset=offset,.size=size};return builder_put_key(b,&input,value);
+}
+CettaActStatus cetta_act_builder_finish_step(CettaActBuilder *b,uint64_t work,uint64_t *size) {
+  if (!b || !size) return CETTA_ACT_CORRUPT;
+  *size=0;
+  if (b->failure!=CETTA_ACT_OK) return b->failure;
+  if (b->finished) {*size=b->end;return CETTA_ACT_OK;}
+  if (!work) return CETTA_ACT_PROGRESS;
+  if (!b->finishing) {
+    b->finishing=true;b->final=(Written){.valued=b->have_previous,.value=b->value};
+    b->final_depth=b->previous_size;
   }
-  fd = -1;
-  if (rename(tmp, path))
-    goto end;
-  if (fsync(dir)) {
-    s = CETTA_ACT_UNCERTAIN;
-    goto end;
+  while (b->active && work) {
+    uint64_t before=b->end,frontier=b->frontier_end;
+    if (!frame_attach(b,b->final,b->final_depth) || !frame_finish(b,&b->final,&b->final_depth))
+      return builder_fail(b,CETTA_ACT_IO);
+    uint64_t emitted=b->end-before,read=frontier-b->frontier_end;
+    if (emitted>=work || read>=work-emitted) work=0;
+    else work-=emitted+read+1;
   }
-  s = CETTA_ACT_OK;
-end:
-  if (fd >= 0)
-    close(fd);
-  if (s != CETTA_ACT_OK)
-    unlink(tmp);
-  if (dir >= 0)
-    close(dir);
-  free(tmp);
-  free(parent);
+  if (b->active || !work) return CETTA_ACT_PROGRESS;
+  size_t root;unsigned char tail[8]={0},encoded[8];
+  if (!wrap_previous(b,&b->final,0,b->final_depth) || !stream_emit(b,&b->final,&root) ||
+      !stream_append(b,tail,sizeof(tail)) || !stream_flush(b)) return builder_fail(b,CETTA_ACT_IO);
+  write64(encoded,root);
+  if (b->memory) memcpy(b->memory_output.data+8,encoded,sizeof(encoded));
+  else if (!file_at(b->output,encoded,sizeof(encoded),8,true)) return builder_fail(b,CETTA_ACT_IO);
+  b->finished=true;*size=b->end;return CETTA_ACT_OK;
+}
+CettaActStatus cetta_act_builder_finish(CettaActBuilder *b,uint64_t *size) {
+  CettaActStatus s;
+  do {s=cetta_act_builder_finish_step(b,UINT64_MAX,size);} while (s==CETTA_ACT_PROGRESS);
   return s;
+}
+bool cetta_act_builder_info(const CettaActBuilder *b, CettaActBuildInfo *out) {
+  if (!b || !out) return false;
+  *out = (CettaActBuildInfo){.records = b->records, .output_bytes = b->end,
+      .scratch_bytes = b->frontier_end + (b->spooled ? b->previous_size : 0),
+      .heap_bytes = sizeof(*b) + b->previous.cap + b->memory_output.cap + b->memory_frontier.cap,
+      .peak_heap_bytes = b->peak_heap};
+  return true;
+}
+
+void cetta_act_builder_storage(const CettaActBuilder *b,CettaStorageCensus *census) {
+  if (!b || !cetta_storage_object(census,b,sizeof(*b),CETTA_STORAGE_BLOCK)) return;
+  cetta_storage_array(census,b->previous.data,b->previous.cap,1,0);
+  cetta_storage_array(census,b->memory_output.data,b->memory_output.cap,1,0);
+  cetta_storage_array(census,b->memory_frontier.data,b->memory_frontier.cap,1,0);
+}
+static CettaActStatus build_memory(const CettaActItem *items,size_t count,
+                                    unsigned char **out,size_t *size) {
+  if (!out || !size || (count && !items)) return CETTA_ACT_CORRUPT;
+  *out=NULL;*size=0;
+  for (size_t i=0;i<count;i++)
+    if (items[i].key.size && !items[i].key.data) return CETTA_ACT_CORRUPT;
+  CettaActBuilder *b=calloc(1,sizeof(*b));
+  if (!b) return CETTA_ACT_NOMEM;
+  b->output=b->frontier=b->key_file=-1;b->memory=true;
+  b->budget=SIZE_MAX;b->key_limit=SIZE_MAX-sizeof(*b);
+  unsigned char header[16]="ACTree03";
+  CettaActStatus s=stream_append(b,header,sizeof(header)) ? CETTA_ACT_OK : CETTA_ACT_NOMEM;
+  for (size_t i=0;s==CETTA_ACT_OK && i<count;i++) s=cetta_act_builder_put(b,items[i].key,items[i].value);
+  uint64_t length;
+  if (s==CETTA_ACT_OK) s=cetta_act_builder_finish(b,&length);
+  if (s==CETTA_ACT_OK) {
+    *out=b->memory_output.data;*size=b->memory_output.len;b->memory_output=(Buffer){0};
+  }
+  cetta_act_builder_close(b);return s;
+}
+
+struct CettaActPublication {
+  int directory,output;
+  char *name;
+  char temporary[48];
+  bool renamed,committed,attempted,private_output;
+};
+static bool publication_sync(int fd) {
+  int status;do {status=fsync(fd);} while (status<0 && errno==EINTR);return status==0;
+}
+static bool temporary_name(char out[48],const char *prefix) {
+  unsigned char nonce[16];int fd=open("/dev/urandom",O_RDONLY|O_CLOEXEC);
+  if (fd<0) return false;
+  size_t at=0;
+  while (at<sizeof(nonce)) {
+    ssize_t n=read(fd,nonce+at,sizeof(nonce)-at);
+    if (n<0 && errno==EINTR) continue;
+    if (n<=0) {close(fd);return false;}at+=(size_t)n;
+  }
+  close(fd);size_t n=strlen(prefix);memcpy(out,prefix,n);
+  static const char digits[]="0123456789abcdef";
+  for (unsigned i=0;i<16;i++) {out[n+2*i]=digits[nonce[i]>>4];out[n+2*i+1]=digits[nonce[i]&15];}
+  out[n+32]=0;return true;
+}
+void cetta_act_publication_close(CettaActPublication *p) {
+  if (!p) return;
+  if (p->output>=0) close(p->output);
+  if (p->directory>=0) {
+    if (!p->renamed && p->temporary[0]) unlinkat(p->directory,p->temporary,0);
+    close(p->directory);
+  }
+  free(p->name);free(p);
+}
+CettaActStatus cetta_act_publication_open(const char *path,CettaActPublication **out) {
+  if (!out || !path || !*path) return CETTA_ACT_CORRUPT;
+  *out=NULL;char *parent=strdup(path);
+  if (!parent) return CETTA_ACT_NOMEM;
+  char *slash=strrchr(parent,'/');const char *name=slash ? slash+1 : parent;
+  if (!*name || !strcmp(name,".") || !strcmp(name,"..")) {free(parent);return CETTA_ACT_CORRUPT;}
+  CettaActPublication *p=calloc(1,sizeof(*p));
+  if (!p) {free(parent);return CETTA_ACT_NOMEM;}
+  p->directory=p->output=-1;p->name=strdup(name);
+  if (!p->name) {free(parent);cetta_act_publication_close(p);return CETTA_ACT_NOMEM;}
+  const char *directory=".";
+  if (slash) {if (slash==parent) slash[1]=0;else *slash=0;directory=parent;}
+  p->directory=open(directory,O_RDONLY|O_DIRECTORY|O_CLOEXEC);free(parent);
+  if (p->directory<0) {cetta_act_publication_close(p);return CETTA_ACT_IO;}
+  for (;;) {
+    p->temporary[0]=0;
+    if (!temporary_name(p->temporary,".act-publish-")) {cetta_act_publication_close(p);return CETTA_ACT_IO;}
+    /* Created as any file written there would be: 0666 under the umask and
+     * the directory's default ACL, so a published image is as readable as its
+     * neighbours.  Private outputs and scratch files stay 0600. */
+    p->output=openat(p->directory,p->temporary,O_RDWR|O_CREAT|O_EXCL|O_CLOEXEC,0666);
+    if (p->output>=0) break;
+    if (errno!=EEXIST) {p->temporary[0]=0;cetta_act_publication_close(p);return CETTA_ACT_IO;}
+    p->temporary[0]=0;
+  }
+  *out=p;return CETTA_ACT_OK;
+}
+int cetta_act_publication_fd(const CettaActPublication *p) {return p ? p->output : -1;}
+CettaActStatus cetta_act_publication_open_private(int directory,CettaActPublication **out) {
+  if (!out || directory<0) return CETTA_ACT_CORRUPT;
+  *out=NULL;CettaActPublication *p=calloc(1,sizeof(*p));
+  if (!p) return CETTA_ACT_NOMEM;
+  p->directory=fcntl(directory,F_DUPFD_CLOEXEC,0);p->output=-1;p->private_output=true;
+  if (p->directory<0) {cetta_act_publication_close(p);return CETTA_ACT_IO;}
+  CettaActStatus s=cetta_act_publication_scratch(p,&p->output);
+  if (s!=CETTA_ACT_OK) {cetta_act_publication_close(p);return s;}
+  *out=p;return CETTA_ACT_OK;
+}
+CettaActStatus cetta_act_publication_scratch(const CettaActPublication *p,int *out) {
+  if (!p || !out) return CETTA_ACT_CORRUPT;
+  *out=-1;
+#ifdef O_TMPFILE
+  int anonymous=openat(p->directory,".",O_TMPFILE|O_RDWR|O_CLOEXEC,0600);
+  if (anonymous>=0) {*out=anonymous;return CETTA_ACT_OK;}
+#endif
+  for (;;) {
+    char name[48];if (!temporary_name(name,".act-scratch-")) return CETTA_ACT_IO;
+    int fd=openat(p->directory,name,O_RDWR|O_CREAT|O_EXCL|O_CLOEXEC,0600);
+    if (fd<0) {if (errno==EEXIST) continue;return CETTA_ACT_IO;}
+    if (unlinkat(p->directory,name,0)) {close(fd);return CETTA_ACT_IO;}
+    *out=fd;return CETTA_ACT_OK;
+  }
+}
+CettaActStatus cetta_act_publication_commit(CettaActPublication *p) {
+  if (!p) return CETTA_ACT_CORRUPT;
+  if (p->committed) return CETTA_ACT_OK;
+  if (p->attempted) return CETTA_ACT_UNCERTAIN;
+  if (!publication_sync(p->output)) return CETTA_ACT_IO;
+  if (p->private_output) {p->committed=true;return CETTA_ACT_OK;}
+  p->attempted=true;
+  if (renameat(p->directory,p->temporary,p->directory,p->name)) return CETTA_ACT_UNCERTAIN;
+  p->renamed=true;
+  if (!publication_sync(p->directory)) return CETTA_ACT_UNCERTAIN;
+  p->committed=true;return CETTA_ACT_OK;
+}
+CettaActStatus cetta_act_publication_sidecar(CettaActPublication *p,bool retire) {
+  if (!p) return CETTA_ACT_CORRUPT;
+  if (p->private_output) return CETTA_ACT_OK;
+  size_t n=strlen(p->name);
+  if (n>SIZE_MAX-8) return CETTA_ACT_LIMIT;
+  char *name=malloc(n+8);if (!name) return CETTA_ACT_NOMEM;
+  memcpy(name,p->name,n);memcpy(name+n,".copies",8);
+  struct stat st;CettaActStatus status=CETTA_ACT_OK;
+  if (fstatat(p->directory,name,&st,AT_SYMLINK_NOFOLLOW)) {
+    if (errno!=ENOENT) status=CETTA_ACT_IO;
+  } else if (!S_ISREG(st.st_mode)) status=CETTA_ACT_IO;
+  else if (retire) {
+    if (!p->renamed) status=CETTA_ACT_UNCERTAIN;
+    else if (unlinkat(p->directory,name,0) || !publication_sync(p->directory)) status=CETTA_ACT_UNCERTAIN;
+  }
+  free(name);return status;
+}
+CettaActStatus cetta_act_publish(const char *path,CettaActBytes bytes) {
+  if (bytes.size && !bytes.data) return CETTA_ACT_CORRUPT;
+  CettaActPublication *p=NULL;CettaActStatus status=cetta_act_publication_open(path,&p);
+  if (status!=CETTA_ACT_OK) return status;
+  size_t at=0;
+  while (at<bytes.size) {
+    ssize_t n=write(p->output,bytes.data+at,bytes.size-at);
+    if (n<0 && errno==EINTR) continue;
+    if (n<=0) {status=CETTA_ACT_IO;goto done;}at+=(size_t)n;
+  }
+  status=cetta_act_publication_commit(p);
+done:
+  cetta_act_publication_close(p);return status;
 }
 const char *cetta_act_status_name(CettaActStatus s) {
   static const char *const names[] = {
       "ok",       "end",   "not-found", "io",          "corrupt",
-      "capacity", "limit", "uncertain", "unsupported", "read-only"};
+      "capacity", "limit", "uncertain", "unsupported", "read-only", "progress"};
   return (unsigned)s < sizeof(names) / sizeof(*names) ? names[s] : "unknown";
 }

@@ -13,6 +13,9 @@
 #include "mg_profiles.h"
 #include "mg_session.h"
 #include "mg_worker.h"
+#include "mg_elab.h"
+#include "mg_gslt_reader.h"
+#include "mg_run.h"
 
 #include <pthread.h>
 #include <stdatomic.h>
@@ -2134,6 +2137,448 @@ static bool op_check_evidence(const Call *c) {
     return done;
 }
 
+/* ── Megalodon syntax read by the compiled GSLT presentations ─────────── */
+
+/* A reading as an atom: constructors become expressions or symbols, integers
+ * integers.  Iterative: readings nest as deeply as the text they read. */
+/* A span as the list it reads, (CONS (cp N) ... NIL), built from its end. */
+static Atom *gslt_span_atom(Arena *a, const GnProgramV1 *p, const GnVal *v) {
+    const GnSpanTailV1 *t = gn_span_tail(v);
+    size_t n = 0;
+    for (size_t pos = (size_t)v->i; pos < t->end; n++) {
+        uint32_t c;
+        pos += gn_utf8_next(v->src, pos, &c);
+    }
+    uint32_t *scalars = arena_alloc(a, (n ? n : 1u) * sizeof *scalars);
+    n = 0;
+    for (size_t pos = (size_t)v->i; pos < t->end; n++)
+        pos += gn_utf8_next(v->src, pos, &scalars[n]);
+    Atom *cons = atom_symbol(a, p->ops[t->cons - GN_FIRST_OP].name);
+    Atom *cp = atom_symbol(a, p->ops[p->op_cp - GN_FIRST_OP].name);
+    Atom *list = atom_symbol(a, p->ops[t->nil - GN_FIRST_OP].name);
+    while (n--) {
+        Atom *scalar[2] = {cp, atom_int(a, scalars[n])};
+        Atom *cell[3] = {cons, atom_expr(a, scalar, 2u), list};
+        list = atom_expr(a, cell, 3u);
+    }
+    return list;
+}
+
+static Atom *gslt_atom(Arena *a, GnCtx *cx, const GnVal *root) {
+    typedef struct {
+        const GnVal *v;
+        uint32_t k;
+        Atom **kids;
+    } Frame;
+    const GnProgramV1 *p = gn_ctx_program(cx);
+    Frame *st = NULL;
+    size_t len = 0, cap = 0;
+    Atom *result = NULL;
+#define GSLT_PUSH(val) do { \
+        if (len == cap) { \
+            cap = cap ? cap * 2u : 64u; \
+            Frame *g = realloc(st, cap * sizeof *g); \
+            if (!g) { free(st); return NULL; } \
+            st = g; \
+        } \
+        st[len++] = (Frame){(val), 0u, NULL}; \
+    } while (0)
+    GSLT_PUSH(root);
+    while (len) {
+        Frame *f = &st[len - 1u];
+        const GnVal *v = f->v;
+        Atom *done = NULL;
+        if (v->op == GN_INT) {
+            done = atom_int(a, v->i);
+        } else if (v->op == GN_CURSOR) {
+            done = atom_symbol(a, "Megalodon.unread-input");
+        } else if (v->op == GN_SPAN) {
+            done = gslt_span_atom(a, p, v);
+        } else if (v->n == 0u) {
+            done = atom_symbol(a, p->ops[v->op - GN_FIRST_OP].name);
+        } else if (!f->kids) {
+            f->kids = arena_alloc(a, sizeof(Atom *) * (v->n + 1u));
+            f->kids[0] = atom_symbol(a, p->ops[v->op - GN_FIRST_OP].name);
+            GSLT_PUSH(v->kid[0]);
+            continue;
+        } else if (f->k < v->n) {
+            GSLT_PUSH(v->kid[f->k]);
+            continue;
+        } else {
+            done = atom_expr(a, f->kids, v->n + 1u);
+        }
+        len--;
+        if (!len) {
+            result = done;
+            break;
+        }
+        Frame *parent = &st[len - 1u];
+        parent->kids[++parent->k] = done;
+        if (parent->k < parent->v->n) {
+            GSLT_PUSH(parent->v->kid[parent->k]);
+        }
+    }
+#undef GSLT_PUSH
+    free(st);
+    return result;
+}
+
+typedef struct {
+    MgDeepCall call;          /* first: the worker hands back this */
+    char (*paths)[4096];      /* the signatures, then the file */
+    size_t n;
+    bool items;
+    GnCtx *cx;                /* the readings' values */
+    GnSourceV1 *src;          /* tokens: the file's scalars */
+    MgSource *source;         /* items: the reader, which owns cx */
+    char **bytes;             /* items: each file, borrowed by the reader */
+    GnVal **readings;
+    size_t len, cap;
+    bool nomem, unreadable;
+    MgGsltReadStatus status;
+    char message[512];
+} GsltJob;
+
+static void gslt_collect(void *ctx, GnVal *v) {
+    GsltJob *j = ctx;
+    if (j->nomem)
+        return;
+    if (j->len == j->cap) {
+        size_t cap = j->cap ? j->cap * 2u : 1024u;
+        GnVal **g = realloc(j->readings, cap * sizeof *g);
+        if (!g) {
+            j->nomem = true;
+            return;
+        }
+        j->readings = g;
+        j->cap = cap;
+    }
+    j->readings[j->len++] = gn_keep_result(j->cx, v);
+}
+
+static void gslt_read_tokens(GsltJob *j) {
+    if (!(j->src = mg_gslt_source_load(j->paths[j->n - 1u]))) {
+        j->unreadable = true;
+        return;
+    }
+    if (!(j->cx = mg_gslt_reader_context())) {
+        j->nomem = true;
+        return;
+    }
+    if (!GN_TRY(j->cx, j->status = mg_gslt_read_tokens(j->cx, j->src, gslt_collect, j)))
+        j->nomem = true;
+    else if (j->status == MG_GSLT_READ_ERROR)
+        snprintf(j->message, sizeof j->message, "%s", MG_GSLT_LEXING_FAILURE);
+}
+
+/* The signatures read through, then the file's items kept. */
+static void gslt_read_items(GsltJob *j) {
+    if (!(j->bytes = calloc(j->n, sizeof *j->bytes))) {
+        j->nomem = true;
+        return;
+    }
+    j->status = MG_GSLT_READ_END;
+    for (size_t f = 0; f < j->n && j->status == MG_GSLT_READ_END; f++) {
+        size_t len;
+        if (!(j->bytes[f] = mg_gslt_file_bytes(j->paths[f], &len))) {
+            j->unreadable = true;
+            return;
+        }
+        if (!j->source) {
+            if (!(j->source = mg_source_new(j->bytes[f], len))) {
+                j->nomem = true;
+                return;
+            }
+            j->cx = mg_source_context(j->source);
+        } else {
+            mg_source_set_input(j->source, j->bytes[f], len);
+        }
+        j->status = mg_source_read_items(j->source, f + 1u == j->n ? gslt_collect : NULL, j);
+        if (j->status != MG_GSLT_READ_END)
+            snprintf(j->message, sizeof j->message, "%s", mg_source_error(j->source));
+    }
+}
+
+static void gslt_run(MgDeepCall *call) {
+    GsltJob *j = (GsltJob *)call;
+    if (j->items)
+        gslt_read_items(j);
+    else
+        gslt_read_tokens(j);
+}
+
+/* (mg:gslt-tokens PATH), (mg:gslt-items SIGNATURES PATH): a Megalodon file read
+ * by the presentations of langdef/megalodon/, compiled when CeTTa is built.
+ * Megalodon's error is a MegalodonSyntax error with its message. */
+static bool op_gslt_read(const Call *c, bool items) {
+    const char *usage = items ? "(mg:gslt-items (SIGNATURE-PATH ...) PATH)" : "(mg:gslt-tokens PATH)";
+    Atom *sigs = items && c->nargs == 2u ? c->args[0] : NULL;
+    if (c->nargs != (items ? 2u : 1u) || (items && sigs->kind != ATOM_EXPR))
+        return invalid(c, usage);
+    size_t n = 1u + (sigs ? sigs->expr.len : 0u);
+    GsltJob j = {.items = items, .n = n};
+    if (!(j.paths = calloc(n, sizeof *j.paths)))
+        return raise_kind(c, "MegalodonResource", "no-memory");
+    bool ok = text_arg(c->args[c->nargs - 1u], j.paths[n - 1u], sizeof j.paths[n - 1u]);
+    for (size_t i = 0; ok && i + 1u < n; i++)
+        ok = text_arg(sigs->expr.elems[i], j.paths[i], sizeof j.paths[i]);
+    if (!ok) {
+        free(j.paths);
+        return invalid(c, usage);
+    }
+    j.call.run = gslt_run;
+    bool ran = mg_deep_call(&j.call, NULL, NULL);
+    bool result;
+    if (ran && j.unreadable)
+        result = raise_kind(c, "MegalodonSource", "cannot read the file");
+    else if (!ran || j.nomem || j.status == MG_GSLT_READ_NOMEM)
+        result = raise_kind(c, "MegalodonResource", "no-memory");
+    else if (j.status == MG_GSLT_READ_ERROR)
+        result = raise_kind(c, "MegalodonSyntax", j.message);
+    else if (j.status == MG_GSLT_READ_REFUSED)
+        result = raise_kind(c, "MegalodonSyntax", "the presentations have no reading");
+    else if (j.status == MG_GSLT_READ_MALFORMED)
+        result = raise_kind(c, "MegalodonSyntax", "a reading step answered outside its contract");
+    else {
+        Atom **elems = arena_alloc(c->a, sizeof(Atom *) * (j.len + 1u));
+        elems[0] = atom_symbol(c->a, items ? "Megalodon.items" : "Megalodon.tokens");
+        bool all = true;
+        for (size_t i = 0; all && i < j.len; i++)
+            all = (elems[i + 1u] = gslt_atom(c->a, j.cx, j.readings[i])) != NULL;
+        result = all ? value(c, atom_expr(c->a, elems, j.len + 1u))
+                     : raise_kind(c, "MegalodonResource", "no-memory");
+    }
+    free(j.readings);
+    if (j.source)
+        mg_source_free(j.source);
+    else
+        gn_ctx_free(j.cx);
+    mg_gslt_source_free(j.src);
+    for (size_t f = 0; j.bytes && f < n; f++)
+        free(j.bytes[f]);
+    free(j.bytes);
+    free(j.paths);
+    return result;
+}
+
+static bool op_gslt_tokens(const Call *c) { return op_gslt_read(c, false); }
+static bool op_gslt_items(const Call *c) { return op_gslt_read(c, true); }
+
+/* ── documents ─────────────────────────────────────────────────────────── */
+
+typedef struct {
+    MgDeepCall call;          /* first: the worker hands back this */
+    MgElabOptions options;
+    MgRunFile *files;
+    int nfiles;
+    MgElab *e;
+    MgRunStatus run;
+    MgStatus fin;
+    char message[1024], summary[512];
+} DocJob;
+
+static void doc_run(MgDeepCall *call) {
+    DocJob *j = (DocJob *)call;
+    j->e = mg_elab_new(&j->options);
+    if (!j->e)
+        return;
+    j->run = mg_run_files(j->e, j->files, j->nfiles, j->message, sizeof j->message);
+    j->fin = mg_elab_finish(j->e, j->summary, sizeof j->summary);
+}
+
+static Atom *count_atom(Arena *a, const char *name, uint64_t n) {
+    return atom_expr2(a, atom_symbol(a, name), atom_int(a, (int64_t)n));
+}
+
+/* The verdict of ledger entry x (a theorem) as an atom; *verified when
+ * the kernel checked it and every document axiom it rests on is allowed. */
+static Atom *theorem_verdict_atom(Arena *a, const MgLedger *l, const MgLedgerEntry *x, bool allow_axioms,
+                                  bool *verified) {
+    *verified = false;
+    switch (x->verdict) {
+    case MG_VERDICT_CHECKED:
+    case MG_VERDICT_REPROVED:
+        if (x->axiom_count == 0u || allow_axioms) {
+            *verified = true;
+            return atom_symbol(a, "verified");
+        } else {
+            Atom **elems = arena_alloc(a, sizeof(Atom *) * (x->axiom_count + 1u));
+            elems[0] = atom_symbol(a, "checked-assuming");
+            for (uint32_t i = 0; i < x->axiom_count; ++i) {
+                MgLedgerEntry ax;
+                mg_ledger_get(l, x->axioms[i], &ax);
+                elems[i + 1u] = atom_string(a, ax.name);
+            }
+            return atom_expr(a, elems, x->axiom_count + 1u);
+        }
+    case MG_VERDICT_DEPENDENT: {
+        Atom **elems = arena_alloc(a, sizeof(Atom *) * (x->unproved_count + 1u));
+        elems[0] = atom_symbol(a, "dependent");
+        for (uint32_t i = 0; i < x->unproved_count; ++i) {
+            MgLedgerEntry t;
+            mg_ledger_get(l, x->unproved[i], &t);
+            elems[i + 1u] = atom_string(a, t.name);
+        }
+        return atom_expr(a, elems, x->unproved_count + 1u);
+    }
+    case MG_VERDICT_ADMITTED: return atom_symbol(a, "admitted");
+    case MG_VERDICT_ABY: return atom_symbol(a, "aby");
+    case MG_VERDICT_PENDING: return atom_symbol(a, "unfinished");
+    case MG_VERDICT_EXHAUSTED: return atom_symbol(a, "out-of-budget");
+    }
+    return atom_symbol(a, "unknown");
+}
+
+/* (mg:check-document (SIGNATURE-PATH ...) PATH (OPTION ...)): the
+ * document checked by the elaborator with the kernel (mg-check's
+ * verdicts).  OPTION: (theory egal|hf|mizar|hoas|setmm), prove-aby,
+ * (theorem-work N), (aby-steps N), allow-document-axioms.  The value is
+ * (Megalodon.document THEORY AUTHORITY VERDICT SUMMARY ENTRIES): the
+ * theory it built (and its authority), verified, not-verified or
+ * (failed MESSAGE), the counts, and each axiom and theorem of the
+ * document with its verdict. */
+static bool op_check_document(const Call *c) {
+    const char *usage = "(mg:check-document (SIGNATURE-PATH ...) PATH (OPTION ...))";
+    if (c->nargs != 3u || c->args[0]->kind != ATOM_EXPR || c->args[2]->kind != ATOM_EXPR)
+        return invalid(c, usage);
+    Atom *sigs = c->args[0], *opts = c->args[2];
+    DocJob j = {.options = {.theory = MG_PROFILE_EGAL, .kernel = true, .theorem_work = 1000000000u}};
+    bool allow_axioms = false;
+    for (uint32_t i = 0; i < opts->expr.len; ++i) {
+        Atom *o = opts->expr.elems[i];
+        char name[64];
+        if (o->kind == ATOM_SYMBOL && text_arg(o, name, sizeof name)) {
+            if (strcmp(name, "prove-aby") == 0)
+                j.options.prove_aby = true;
+            else if (strcmp(name, "allow-document-axioms") == 0)
+                allow_axioms = true;
+            else
+                return invalid(c, usage);
+            continue;
+        }
+        uint64_t n = 0;
+        char val[64];
+        if (o->kind != ATOM_EXPR || o->expr.len != 2u || !text_arg(o->expr.elems[0], name, sizeof name))
+            return invalid(c, usage);
+        if (strcmp(name, "theory") == 0 && text_arg(o->expr.elems[1], val, sizeof val)) {
+            MgProfileTag tag;
+            if (!mg_profile_from_name(val, &tag))
+                return raise_kind(c, "MegalodonMalformed", "unknown theory (egal, hf, mizar, hoas, setmm)");
+            j.options.theory = tag;
+        } else if (strcmp(name, "theorem-work") == 0 && mg_atom_natural(o->expr.elems[1], &n)) {
+            j.options.theorem_work = n;
+        } else if (strcmp(name, "aby-steps") == 0 && mg_atom_natural(o->expr.elems[1], &n)) {
+            j.options.aby_max_steps = n;
+        } else {
+            return invalid(c, usage);
+        }
+    }
+    size_t nf = 1u + sigs->expr.len;
+    j.files = calloc(nf, sizeof *j.files);
+    char (*paths)[4096] = calloc(nf, sizeof *paths);
+    if (!j.files || !paths) {
+        free(j.files);
+        free(paths);
+        return raise_kind(c, "MegalodonResource", "no-memory");
+    }
+    bool ok = true;
+    for (size_t i = 0; ok && i + 1u < nf; ++i) {
+        ok = text_arg(sigs->expr.elems[i], paths[i], sizeof paths[i]);
+        j.files[i] = (MgRunFile){paths[i], true};
+    }
+    ok = ok && text_arg(c->args[1], paths[nf - 1u], sizeof paths[nf - 1u]);
+    j.files[nf - 1u] = (MgRunFile){paths[nf - 1u], false};
+    j.nfiles = (int)nf;
+    MgLedger *ledger = ok ? mg_ledger_new() : NULL;
+    j.options.ledger = ledger;
+    bool ran = false;
+    if (ledger) {
+        j.call.run = doc_run;
+        ran = mg_deep_call(&j.call, NULL, NULL);
+    }
+    bool result;
+    if (!ok) {
+        result = invalid(c, usage);
+    } else if (!ledger || !ran || !j.e) {
+        result = raise_kind(c, "MegalodonResource", "no-memory");
+    } else {
+        Arena *a = c->a;
+        MgTheory *t = mg_elab_theory(j.e);
+        Atom *use = capsule(a, theory_brand(), &g_kind_theory, t, theory_retain_cb, theory_release_cb);
+        Atom *admin = capsule(a, admin_brand(), &g_kind_admin, t, theory_retain_cb, theory_release_cb);
+        uint32_t n = mg_ledger_len(ledger);
+        Atom **entries = arena_alloc(a, sizeof(Atom *) * (n + 1u));
+        entries[0] = atom_symbol(a, "entries");
+        uint32_t ne = 1;
+        uint64_t thms = 0, nchecked = 0, nverified = 0, admitted = 0, aby = 0, dependent = 0,
+                 pending = 0, exhausted = 0, daxioms = 0;
+        bool all = true;
+        for (uint32_t i = 0; i < n; ++i) {
+            MgLedgerEntry x;
+            mg_ledger_get(ledger, i, &x);
+            if (!x.theorem) {
+                if (x.origin != MG_ORIGIN_DOCUMENT)
+                    continue;
+                ++daxioms;
+                entries[ne++] = atom_expr3(a, atom_symbol(a, "axiom"), atom_string(a, x.name),
+                                           atom_int(a, (int64_t)x.line));
+                continue;
+            }
+            bool v;
+            Atom *verdict = theorem_verdict_atom(a, ledger, &x, allow_axioms, &v);
+            ++thms;
+            nchecked += x.verdict == MG_VERDICT_CHECKED || x.verdict == MG_VERDICT_REPROVED;
+            nverified += v;
+            admitted += x.verdict == MG_VERDICT_ADMITTED;
+            aby += x.verdict == MG_VERDICT_ABY;
+            dependent += x.verdict == MG_VERDICT_DEPENDENT;
+            pending += x.verdict == MG_VERDICT_PENDING;
+            exhausted += x.verdict == MG_VERDICT_EXHAUSTED;
+            all = all && v;
+            Atom *items[4] = {atom_symbol(a, "theorem"), atom_string(a, x.name), atom_int(a, (int64_t)x.line),
+                              verdict};
+            entries[ne++] = atom_expr(a, items, 4u);
+        }
+        Atom *verdict;
+        if (j.run != MG_RUN_OK) {
+            const char *nl = strchr(j.message, '\n');
+            size_t len = nl ? (size_t)(nl - j.message) : strlen(j.message);
+            char msg[1024];
+            snprintf(msg, sizeof msg, "%.*s", (int)len, j.message);
+            verdict = atom_expr2(a, atom_symbol(a, "failed"), atom_string(a, msg));
+        } else if (j.fin != MG_OK || !mg_ledger_complete(ledger)) {
+            verdict = atom_expr2(a, atom_symbol(a, "failed"),
+                                 atom_string(a, j.fin != MG_OK ? j.summary : "the verdict ledger is incomplete"));
+        } else {
+            verdict = atom_symbol(a, all ? "verified" : "not-verified");
+        }
+        uint64_t tried = 0, proved = 0;
+        mg_elab_aby_counts(j.e, &tried, &proved);
+        Atom *counts[] = {atom_symbol(a, "summary"),
+                            count_atom(a, "theorems", thms),
+                            count_atom(a, "checked", nchecked),
+                            count_atom(a, "verified", nverified),
+                            count_atom(a, "admitted", admitted),
+                            count_atom(a, "aby", aby),
+                            count_atom(a, "dependent", dependent),
+                            count_atom(a, "unfinished", pending),
+                            count_atom(a, "out-of-budget", exhausted),
+                            count_atom(a, "document-axioms", daxioms),
+                            count_atom(a, "aby-steps-tried", tried),
+                            count_atom(a, "aby-steps-proved", proved)};
+        Atom *items[6] = {atom_symbol(a, "Megalodon.document"), use, admin, verdict,
+                          atom_expr(a, counts, (CettaExprLen)(sizeof counts / sizeof counts[0])),
+                          atom_expr(a, entries, ne)};
+        result = use && admin ? value(c, atom_expr(a, items, 6u)) : raise_kind(c, "MegalodonResource", "no-memory");
+    }
+    if (j.e)
+        mg_elab_free(j.e);
+    mg_ledger_free(ledger);
+    free(j.files);
+    free(paths);
+    return result;
+}
+
 /* ── dispatch ─────────────────────────────────────────────────────────── */
 
 /* The operation a head names, after the prefix and an optional "try-". */
@@ -2159,6 +2604,9 @@ static bool op_import_sexpr(const Call *c) { return op_import(c, false); }
 static bool op_load_library(const Call *c) { return op_import(c, true); }
 
 static const OpEntry g_ops[] = {
+    {"gslt-tokens", op_gslt_tokens},
+    {"gslt-items", op_gslt_items},
+    {"check-document", op_check_document},
     {"new-theory", op_new_theory},
     {"new-labeled-theory", op_new_theory},
     {"check-bounded", op_check},

@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+from gslt2parse_oracles_v1 import ORACLES
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -57,42 +58,42 @@ CASES = {
 EXPECTED_DIGESTS = {
     "he": "9640c3b9caacf354a8bd853765d9f15616e58d4a6b429af1c983bd90d185a02d",
     "petta": "a343ebd17f880a01428dc2b0a21f0eb758142eecdaee6934347be47283d4ece2",
-    "prime": "f387c60f206ddea72b57aa09f127fb6e922b00a063dfe88cb4c3b97f9fdc7d6b",
+    "prime": "e2af4981d526a7a377ffb56fc0d36d59c2d392ec44499f7ac2e5abb5c14f5fa0",
     "canary": "177a93c6329859ae5ab0fdf45891e6be268cd5d4747628c68a8b553e9f79311b",
 }
 
 EXPECTED_COUNTS = {
     "he": 3,
     "petta": 1,
-    "prime": 7,
+    "prime": 16,
     "canary": 3,
 }
 
 EXPECTED_PROVENANCE = {
     "he": {
-        "source_digest": "ecf63c6d9c777f34e93d769af322b21bf2082c9e3d7850a4f6fb197e73539580",
-        "pre_reflection_digest": "2d185650ca0a37ca952ce4ee5a0dcf3d425084efcdd0f93aebf28b131244385d",
-        "environment_digest": "a847c6803f107b0f90a63873e306d1d948c799695986e501741673e8772e4ec7",
+        "source_digest": "8b45088a064ac374598708e94816926dfb9532363883138239454e62cb92a01a",
+        "pre_reflection_digest": "08abf17cc6d530af8402fbc07c54b8d6ff5dcef9df9177c63539b7600dea9221",
+        "environment_digest": "5a76aa9dfe73cc6dea412f48a79b4e8faa2598f8872868a39b6eb1cee7dba8a6",
     },
     "petta": {
-        "source_digest": "5f00a6f5734ec6babce012888dbef9642d7be1fcafcbc71f59c5b30bf2073d88",
-        "pre_reflection_digest": "97b375b8b6e10a9120795420725baa97545055c99887ad8c95943f8136fe3126",
-        "environment_digest": "3aa4efeeb2fb62a16b5462d746d7c6a49460bc2edeed15bde590127acd86a3a5",
+        "source_digest": "baa6a5f58bfd8d8bc4da70f77dafb886639198381946df9d772b0e6bc783f7e5",
+        "pre_reflection_digest": "e12eee5710d69be18717f495b8025d76273ca38bd66db76a83400dcd9890ccf7",
+        "environment_digest": "a00e275669c3d9912a2736c3b0de705560352f3d09029b019c162dc393075212",
     },
     "prime": {
-        "source_digest": "9c39249e6f56edfff37766fecd63ecea2a2664eb2a920e27d74d47c3fbc3f1dd",
-        "pre_reflection_digest": "84c4c49f968a26403fb7ae7eeb99ebcb45b6499b6c88d33ab8dda55d75dcb2b5",
-        "environment_digest": "6d5b3e9cac3e5f1816062c269a4d7bfeb7148ecf1b210937cb879914f1dcfdce",
+        "source_digest": "7d90c256218c4c469ac451332d6d9713d11536fc4818f8a6bf8e4a886d3f54eb",
+        "pre_reflection_digest": "fdb1a1ccdbf2bf7003f6c72862fa39e01343e89ac54c2f7a1edb67782e38c5af",
+        "environment_digest": "5ed812999ecc8817c1cbbddda18d39decdd5fe72ca2954ec59e4bea9e48e0299",
     },
     "canary": {
         "source_digest": "7e4f09fc2d85ae5c281a16daf9b9649210843bb09b0e5e3af8d85145dc421c26",
-        "pre_reflection_digest": "570182be3cbe6658020ef8bf2d39e09733da9b2b2e13ecb2e208131f9ebfae23",
-        "environment_digest": "21e4c4fc1d7f0796470f1f784b7a36a421805e0c1a4de75c1fc4ce18587fee33",
+        "pre_reflection_digest": "b2502f47498a611a7cdbd7e07380d2429befb2cd5001860c36edaa32113bf5c2",
+        "environment_digest": "81308adb5d57e7f7d3f590dff72e6129d15051fd22532702bacfce25147ec317",
     },
 }
 
 EXPECTED_MATRIX_DIGEST = (
-    "463d9964f4567ec14ae12779c77a4a0d74934cd70d3cdf76448d6162beb651f4"
+    "d3892322f0f8a348997d411818ee876eaa9594b06bc7b4bd5dc54788b6454624"
 )
 
 
@@ -143,13 +144,8 @@ def run_native(
         ) from error
 
 
-def run_petta(petta_root: Path) -> dict:
-    script = (
-        petta_root
-        / "experiments"
-        / "gslt2parse_foundation"
-        / "test_parser_pack_guard_compiler_v1.pl"
-    )
+def run_petta() -> dict:
+    script = ORACLES / "test_parser_pack_guard_compiler_v1.pl"
     if not script.is_file():
         raise GateFailure(f"PeTTa guard oracle is absent: {script}")
     completed = subprocess.run(
@@ -353,7 +349,7 @@ def main() -> int:
         raise GateFailure(f"PeTTa root is absent: {petta_root}")
 
     rows, native_certificate_count = native_rows(binary)
-    petta = run_petta(petta_root)
+    petta = run_petta()
     agreements, petta_replays, petta_negatives = compare_petta(rows, petta)
     native_replays = replay_native_certificates(binary, rows)
     if (

@@ -5,6 +5,7 @@
 #include "string_literal.h"
 
 #include <inttypes.h>
+#include <errno.h>
 #include <limits.h>
 #include <math.h>
 #include <pthread.h>
@@ -291,6 +292,19 @@ static void term_universe_fallback_release(void *owner) {
         arena_free(&image->syntax);
         free(image);
     }
+}
+
+static void term_universe_fallback_storage(const void *raw,
+                                           CettaStorageCensus *census) {
+    const TermUniverseFallbackImage *image = raw;
+    if (!image || !cetta_storage_object(census, image, sizeof(*image),
+                                        CETTA_STORAGE_BLOCK))
+        return;
+    for (const TermUniverseResourceEdge *edge = image->owners; edge;
+         edge = edge->image_next)
+        (void)cetta_storage_object(census, edge, sizeof(*edge),
+                                   CETTA_STORAGE_BLOCK);
+    arena_storage_census(&image->syntax, census);
 }
 
 bool term_universe_resource_image_owner_view(void *owner,
@@ -947,8 +961,13 @@ bool term_universe_add_store_format_observer(
     if (universe->observer_len == universe->observer_cap) {
         size_t next_cap =
             universe->observer_cap ? universe->observer_cap * 2u : 8u;
+        if (next_cap <= universe->observer_cap ||
+            next_cap > SIZE_MAX / sizeof(*universe->observers)) {
+            term_universe_set_error(universe, TERM_UNIVERSE_ERROR_ALLOCATION_FAILED);
+            errno = EOVERFLOW; return false;
+        }
         TermUniverseStoreFormatObserverEntry *next =
-            cetta_realloc(universe->observers, sizeof(*next) * next_cap);
+            realloc(universe->observers, sizeof(*next) * next_cap);
         if (!next) {
             term_universe_set_error(universe,
                                     TERM_UNIVERSE_ERROR_ALLOCATION_FAILED);
@@ -1714,6 +1733,15 @@ void term_universe_storage_census(const TermUniverse *u, CettaStorageCensus *c) 
             size_t n = support->representation == CETTA_TERM_VARIABLE_SUPPORT_DENSE64 ? 0u : support->count;
             cetta_storage_array(c, support, n, sizeof(*support->sparse_base_ids), sizeof(*support));
         }
+    }
+    if (u->fallbacks &&
+        cetta_storage_object(c, u->fallbacks, sizeof(*u->fallbacks),
+                             CETTA_STORAGE_BLOCK)) {
+        cetta_storage_array(c, u->fallbacks->slots, u->fallbacks->cap,
+                            sizeof(*u->fallbacks->slots), 0u);
+        for (uint32_t i = 0u; i < u->fallbacks->len; i++)
+            if (u->fallbacks->slots[i].image)
+                term_universe_fallback_storage(u->fallbacks->slots[i].image, c);
     }
 }
 
@@ -3597,12 +3625,15 @@ static bool term_universe_append_raw_record(TermUniverse *universe,
         if (!term_universe_blob_reserve(universe, off + total_len))
             return false;
     }
-    memset(universe->blob_pool + off, 0, total_len);
     memcpy(universe->blob_pool + off, hdr, sizeof(*hdr));
     if (payload_len != 0 && payload) {
         memcpy(universe->blob_pool + off + sizeof(CettaTermHdr), payload,
                payload_len);
     }
+    /* The header and every payload byte have just been initialized.  Only
+     * alignment padding needs zeroing, including for a reused record. */
+    if (total_len > raw_len)
+        memset(universe->blob_pool + off + raw_len, 0, total_len - raw_len);
 
     if (!reused)
         universe->blob_len += total_len;
@@ -5894,6 +5925,8 @@ static Atom *term_universe_copy_atom_impl(const TermUniverse *universe,
             if (!cetta_expr_len_mul_fits_size(count, sizeof(Atom *)))
                 goto failed;
             frame.children = arena_alloc(dst, (size_t)count * sizeof(Atom *));
+            if (!frame.children)
+                goto failed;
             frame.finish = true;
             if (!term_universe_copy_frame_push(&frames, &len, &cap, frame))
                 goto failed;
@@ -6623,15 +6656,16 @@ static bool term_universe_borrow_scope(const TermUniverse *universe, Arena *dst)
 static bool term_universe_fallback_hold(TermUniverseFallbackImage *image,
                                         Arena *dst, bool resource) {
     if (image->syntax.state_root_acquisition_generation)
-        return arena_retain_state_resource_sized(dst, image,
+        return arena_retain_state_resource_sized_with_storage(dst, image,
             term_universe_fallback_retain, term_universe_fallback_release,
-            image->bytes, image->bytes);
+            image->bytes, image->bytes, term_universe_fallback_storage);
     return resource
-        ? arena_retain_resource_sized(dst, image, term_universe_fallback_retain,
-            term_universe_fallback_release, image->bytes,
-            image->bytes)
-        : arena_retain_owner_sized(dst, image, term_universe_fallback_retain,
-            term_universe_fallback_release, image->bytes);
+        ? arena_retain_resource_sized_with_storage(dst, image,
+            term_universe_fallback_retain, term_universe_fallback_release,
+            image->bytes, image->bytes, term_universe_fallback_storage)
+        : arena_retain_owner_sized_with_storage(dst, image,
+            term_universe_fallback_retain, term_universe_fallback_release,
+            image->bytes, term_universe_fallback_storage);
 }
 
 static Atom *term_universe_fallback_view(TermUniverseFallbackImage *image,
@@ -7610,7 +7644,13 @@ static bool term_universe_add_provider(TermUniverse *universe,
     if (universe->root_provider_len == universe->root_provider_cap) {
         size_t next_cap = universe->root_provider_cap
             ? universe->root_provider_cap * 2u : 8u;
-        TermUniverseRootProviderEntry *next = cetta_realloc(
+        if (next_cap <= universe->root_provider_cap ||
+            next_cap > SIZE_MAX / sizeof(*universe->root_providers)) {
+            universe->collection_mode = TERM_UNIVERSE_COLLECTION_OFF;
+            term_universe_set_error(universe, TERM_UNIVERSE_ERROR_ALLOCATION_FAILED);
+            errno = EOVERFLOW; return false;
+        }
+        TermUniverseRootProviderEntry *next = realloc(
             universe->root_providers, sizeof(*next) * next_cap);
         if (!next) {
             /* A holder that cannot be listed could lose what it holds, so

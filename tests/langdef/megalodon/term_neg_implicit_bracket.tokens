@@ -1,0 +1,13 @@
+NOTATION
+(NAM "SetImplicitOp")
+(NAM "ap")
+DOT
+AXIOM
+(NAM "a")
+COLON
+(NAM "f")
+LBRACK
+(NAM "x")
+COMMA
+(NAM "y")
+DOT

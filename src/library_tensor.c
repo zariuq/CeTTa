@@ -873,6 +873,38 @@ bool cetta_tensor_call(CettaLibraryContext *context,Space *space,Arena *a,Atom *
         return true;
     }
 #endif
+    if (op == g_builtin_syms.tensor_dot_bounds || op == g_builtin_syms.tensor_matvec_bounds) {
+        if (nargs != 2u) return false;
+        CettaTensor *left = cetta_tensor_from_atom(args[0]);
+        CettaTensor *right = cetta_tensor_from_atom(args[1]);
+        if (!left || !right) return false;
+        if (eval_native_interrupted()) { *out = cetta_call_interrupted(); return true; }
+        Atom *parts[4] = {atom_symbol(a, "Tensor:Bounds"), NULL, NULL, NULL};
+        CettaTensorStatus status;
+        if (op == g_builtin_syms.tensor_dot_bounds) {
+            CettaFloatBounds result;
+            status = cetta_tensor_dot_bounds(left, right, &result);
+            if (status == CETTA_TENSOR_OK) {
+                parts[1] = atom_float(a, result.value);
+                parts[2] = atom_float(a, result.lower);
+                parts[3] = atom_float(a, result.upper);
+            }
+        } else {
+            CettaTensor *value = NULL, *lower = NULL, *upper = NULL;
+            status = cetta_tensor_matvec_bounds(left, right, &value, &lower, &upper);
+            if (status == CETTA_TENSOR_OK) {
+                parts[1] = cetta_tensor_atom(a, value);
+                parts[2] = cetta_tensor_atom(a, lower);
+                parts[3] = cetta_tensor_atom(a, upper);
+            }
+            cetta_tensor_release(value); cetta_tensor_release(lower); cetta_tensor_release(upper);
+        }
+        if (status == CETTA_TENSOR_OK && (!parts[0] || !parts[1] || !parts[2] || !parts[3]))
+            status = CETTA_TENSOR_NOMEM;
+        *out = cetta_call_completed_value(status == CETTA_TENSOR_OK
+            ? atom_expr(a, parts, 4u) : fault(a, status));
+        return true;
+    }
     bool make=op==g_builtin_syms.tensor_from_values,coo=op==g_builtin_syms.tensor_from_coo;
     bool builder=op==g_builtin_syms.tensor_builder,put=op==g_builtin_syms.tensor_put,
         freeze=op==g_builtin_syms.tensor_freeze,freeze_log=op==g_builtin_syms.tensor_freeze_log,

@@ -3,6 +3,11 @@
 
 #include "foreign.h"
 #include "effect_policy.h"
+#include "foreign_provider.h"
+#include "eval_query.h"
+#include "grounded.h"
+#include "host_services.h"
+#include "petta_semantics.h"
 #include "error_presentation.h"
 #include "library.h"
 #include "host_notice.h"
@@ -22,6 +27,7 @@
  * last hold goes the record is freed, and its object waits for
  * cetta_foreign_drain_releases, since a hold may go during an arena reset,
  * where running Python code is not safe. */
+typedef struct PythonRoots PythonRoots;
 typedef struct CettaForeignValue {
     /* First, so that atom_foreign finds it. */
     CettaForeignHold hold;
@@ -29,22 +35,43 @@ typedef struct CettaForeignValue {
     CettaForeignBackendKind backend;
     bool callable;
     bool unwrap;
+    bool object_mode;
+    bool keywords;
+    bool exception;
     PyObject *obj;
+    PythonRoots *owner;
+    struct CettaForeignValue *owner_prev, *owner_next;
+    struct CettaForeignValue *released_next;
     /* The runtime whose list holds the record; NULL once it is freed. */
     struct CettaForeignRuntime *runtime;
     struct CettaForeignValue *prev;
     struct CettaForeignValue *next;
 } CettaForeignValue;
 
+static CettaForeignValue *foreign_python_record(const Atom *);
+
+typedef struct PythonBinding {
+    struct PythonBinding *next;
+    char *name;
+    Space *space;
+    void *space_hold;
+    CettaForeignValue *callable;
+} PythonBinding;
+
 struct CettaForeignRuntime {
     CettaForeignValue *values;
+    bool objects_enabled;
+    Registry *object_registry;
+    PythonBinding *bindings;
+    PythonRoots *owner; /* Borrowed: Python handles own this GC-visible root. */
 };
 
 /* The runtimes' record lists, and the objects of released records. */
 static pthread_mutex_t g_foreign_records_mutex = PTHREAD_MUTEX_INITIALIZER;
-static PyObject **g_foreign_released = NULL;
-static size_t g_foreign_released_len = 0;
-static size_t g_foreign_released_cap = 0;
+static CettaForeignValue *g_foreign_released = NULL;
+static CettaForeignValue *g_foreign_released_tail = NULL;
+
+#include "python_ownership.inc"
 
 static void foreign_record_retain(void *record) {
     CettaForeignValue *value = record;
@@ -70,18 +97,12 @@ static void foreign_record_release(void *record) {
     (void)pthread_mutex_lock(&g_foreign_records_mutex);
     if (value->runtime)
         foreign_record_unlink_locked(value);
-    if (value->obj) {
-        if (g_foreign_released_len == g_foreign_released_cap) {
-            g_foreign_released_cap =
-                g_foreign_released_cap ? 2u * g_foreign_released_cap : 64u;
-            g_foreign_released = cetta_realloc(
-                g_foreign_released,
-                sizeof(*g_foreign_released) * g_foreign_released_cap);
-        }
-        g_foreign_released[g_foreign_released_len++] = value->obj;
-    }
+    value->runtime = NULL;
+    value->released_next = NULL;
+    if (g_foreign_released_tail) g_foreign_released_tail->released_next = value;
+    else g_foreign_released = value;
+    g_foreign_released_tail = value;
     (void)pthread_mutex_unlock(&g_foreign_records_mutex);
-    free(value);
 }
 
 /* Release the queued objects; the caller holds the GIL.  An object's
@@ -89,23 +110,29 @@ static void foreign_record_release(void *record) {
 static void foreign_drain_released_with_gil(void) {
     for (;;) {
         (void)pthread_mutex_lock(&g_foreign_records_mutex);
-        PyObject **objects = g_foreign_released;
-        size_t len = g_foreign_released_len;
-        g_foreign_released = NULL;
-        g_foreign_released_len = 0;
-        g_foreign_released_cap = 0;
+        CettaForeignValue *objects = g_foreign_released;
+        g_foreign_released = g_foreign_released_tail = NULL;
         (void)pthread_mutex_unlock(&g_foreign_records_mutex);
-        for (size_t index = 0; index < len; index++)
-            Py_XDECREF(objects[index]);
-        free(objects);
-        if (len == 0)
-            return;
+        if (!objects) return;
+        while (objects) {
+            CettaForeignValue *value = objects;
+            objects = value->released_next;
+            pthread_mutex_lock(&g_foreign_records_mutex);
+            python_roots_unlink_locked(value);
+            PyObject *object = value->obj;
+            value->obj = NULL;
+            pthread_mutex_unlock(&g_foreign_records_mutex);
+            free(value);
+            Py_XDECREF(object);
+        }
     }
 }
 
 void cetta_foreign_drain_releases(void) {
+    __attribute__((cleanup(cetta_host_foreign_leave))) CettaHostForeignScope host = {0};
+    cetta_host_foreign_enter(&host);
     (void)pthread_mutex_lock(&g_foreign_records_mutex);
-    bool pending = g_foreign_released_len > 0;
+    bool pending = g_foreign_released != NULL;
     (void)pthread_mutex_unlock(&g_foreign_records_mutex);
     if (!pending || !Py_IsInitialized())
         return;
@@ -117,15 +144,17 @@ void cetta_foreign_drain_releases(void) {
 static bool g_python_bootstrap_ready = false;
 static bool g_python_inittab_ready = false;
 static bool g_python_interpreter_prepared = false;
+static bool g_python_owned = false;
 static pthread_mutex_t g_python_lifecycle_mutex = PTHREAD_MUTEX_INITIALIZER;
 static PyObject *g_bridge_module = NULL;
 static PyObject *g_bridge_cetta_atom_class = NULL;
 static PyObject *g_bridge_operation_atom_class = NULL;
 static PyObject *g_bridge_value_atom_class = NULL;
+static PyObject *g_python_context_factory = NULL;
 static PyObject *g_bridge_load_module = NULL;
 static PyObject *g_bridge_resolve = NULL;
 static uint64_t g_bridge_module_counter = 0;
-static Space *g_python_callback_space = NULL;
+static _Thread_local Space *g_python_callback_space = NULL;
 
 static void python_space_hold_release(void **hold) {
     if (space_lifetime_unpin)
@@ -136,7 +165,6 @@ PyMODINIT_FUNC PyInit_cetta_bridge(void);
 
 static const char *PYTHON_BOOTSTRAP =
 "import sys, types, builtins, importlib, importlib.util, os\n"
-"import cetta_bridge as _cetta_bridge\n"
 "\n"
 "def _split_top_level(text):\n"
 "    s = str(text).strip()\n"
@@ -308,6 +336,10 @@ static const char *PYTHON_BOOTSTRAP =
 "    return lambda func: register(arg, func)\n"
 "\n"
 "def _cetta_load_module(unique_name, path, source=None):\n"
+"    base_name, suffix = unique_name, 0\n"
+"    while unique_name in sys.modules:\n"
+"        suffix += 1\n"
+"        unique_name = f'{base_name}_{suffix}'\n"
 "    path = os.path.realpath(path)\n"
 "    is_package = path.endswith('__init__.py')\n"
 "    if is_package:\n"
@@ -416,11 +448,12 @@ static const char *PYTHON_BOOTSTRAP =
 "hyperon_base.Tokenizer = Tokenizer\n"
 "hyperon_base.SExprParser = SExprParser\n"
 "\n"
-"sys.modules['hyperon'] = hyperon\n"
-"sys.modules['hyperon.ext'] = hyperon_ext\n"
-"sys.modules['hyperon.atoms'] = hyperon_atoms\n"
-"sys.modules['hyperon.base'] = hyperon_base\n"
-"sys.modules['hyperonpy'] = hyperonpy\n"
+"if _cetta_bridge._owns_interpreter:\n"
+"    sys.modules['hyperon'] = hyperon\n"
+"    sys.modules['hyperon.ext'] = hyperon_ext\n"
+"    sys.modules['hyperon.atoms'] = hyperon_atoms\n"
+"    sys.modules['hyperon.base'] = hyperon_base\n"
+"    sys.modules['hyperonpy'] = hyperonpy\n"
 "\n"
 "_cetta_bridge.CettaAtom = CettaAtom\n"
 "_cetta_bridge.OperationAtom = OperationAtom\n"
@@ -474,6 +507,7 @@ static Atom *foreign_error_atom(Arena *a, const char *message) {
 typedef struct {
     bool active;
     PyGILState_STATE state;
+    CettaHostForeignScope host;
 } PythonExecutionGuard;
 
 /* CPython's GIL is a provider execution capability, not a language
@@ -491,9 +525,8 @@ static bool python_prepare_interpreter(Arena *error_arena,
     }
 
     bool ok = true;
-    if (!g_python_inittab_ready) {
-        if (Py_IsInitialized() ||
-            PyImport_AppendInittab(
+    if (!g_python_inittab_ready && !Py_IsInitialized()) {
+        if (PyImport_AppendInittab(
                 "cetta_bridge", PyInit_cetta_bridge) == -1) {
             if (error_out) {
                 *error_out = foreign_error_atom(
@@ -506,7 +539,16 @@ static bool python_prepare_interpreter(Arena *error_arena,
     }
 
     if (ok && !Py_IsInitialized()) {
-        Py_Initialize();
+        PyConfig config;
+        PyConfig_InitPythonConfig(&config);
+        PyStatus status = Py_InitializeFromConfig(&config);
+        PyConfig_Clear(&config);
+        if (PyStatus_Exception(status)) {
+            (void)pthread_mutex_unlock(&g_python_lifecycle_mutex);
+            if (error_out) *error_out = foreign_error_atom(error_arena, "Python initialization failed");
+            return false;
+        }
+        g_python_owned = true;
         if (!Py_IsInitialized()) {
             if (error_out) {
                 *error_out = foreign_error_atom(
@@ -539,8 +581,11 @@ static bool python_execution_guard_enter(
         if (error_out) *error_out=cetta_effect_denied(error_arena);
         return false;
     }
-    if (!python_prepare_interpreter(error_arena, error_out))
+    cetta_host_foreign_enter(&guard->host);
+    if (!python_prepare_interpreter(error_arena, error_out)) {
+        cetta_host_foreign_leave(&guard->host);
         return false;
+    }
     guard->state = PyGILState_Ensure();
     guard->active = true;
     foreign_drain_released_with_gil();
@@ -552,12 +597,14 @@ static void python_execution_guard_leave(PythonExecutionGuard *guard) {
         return;
     guard->active = false;
     PyGILState_Release(guard->state);
+    cetta_host_foreign_leave(&guard->host);
 }
 
 static CettaForeignValue *foreign_new_python_value(CettaForeignRuntime *rt,
                                                    PyObject *obj,
                                                    bool callable,
                                                    bool unwrap);
+static Atom *python_foreign_atom(CettaForeignRuntime *, Arena *, PyObject *, bool, bool);
 
 /* The Python exception now set, fetched and cleared, as the failure of
  * `prefix`.  HE and Prime read it as the symbol "prefix: message".  PeTTa
@@ -575,13 +622,16 @@ static Atom *python_error_atom(CettaForeignRuntime *rt, Arena *a,
     Atom *error = NULL;
     if (foreign_language_is_petta() && rt && ptype && pvalue &&
         PyType_Check(ptype)) {
-        Atom *object = atom_foreign(
-            a, foreign_new_python_value(rt, pvalue, false, false));
-        Atom *formal = atom_expr3(
-            a, atom_symbol(a, "python_error"),
-            atom_symbol(a, ((PyTypeObject *)ptype)->tp_name), object);
-        error = atom_error(a, formal,
-                           atom_var_with_id(a, "_", fresh_var_id()));
+        if (ptrace) PyException_SetTraceback(pvalue, ptrace);
+        Atom *object = python_foreign_atom(rt, a, pvalue, false, false);
+        if (object) {
+            foreign_python_record(object)->exception = true;
+            Atom *formal = atom_expr3(
+                a, atom_symbol(a, "python_error"),
+                atom_symbol(a, ((PyTypeObject *)ptype)->tp_name), object);
+            error = atom_error(a, formal,
+                               atom_var_with_id(a, "_", fresh_var_id()));
+        }
     } else {
         const char *detail = "";
         PyObject *detail_obj = NULL;
@@ -662,6 +712,7 @@ bool cetta_foreign_resolve_candidate(const char *candidate,
 /* SWI-PeTTa prints a Python object reference as (<py_Type>(Address)). */
 static void foreign_record_print_petta(const void *record, FILE *out) {
     const CettaForeignValue *value = record;
+    if (!value->obj) { fputs("(PythonObject released)", out); return; }
     fprintf(out, "(<py_%s>(%p))", Py_TYPE(value->obj)->tp_name,
             (void *)value->obj);
 }
@@ -670,7 +721,12 @@ static CettaForeignValue *foreign_new_python_value(CettaForeignRuntime *rt,
                                                    PyObject *obj,
                                                    bool callable,
                                                    bool unwrap) {
+    if (!rt || (rt->owner && rt->owner->clearing)) {
+        PyErr_SetString(PyExc_RuntimeError, "Python object owner is closing");
+        return NULL;
+    }
     CettaForeignValue *value = cetta_malloc(sizeof(CettaForeignValue));
+    if (!value) { PyErr_NoMemory(); return NULL; }
     *value = (CettaForeignValue){
         .hold = {foreign_record_retain, foreign_record_release,
                  foreign_record_print_petta},
@@ -683,6 +739,12 @@ static CettaForeignValue *foreign_new_python_value(CettaForeignRuntime *rt,
     atomic_init(&value->holds, 0u);
     Py_INCREF(obj);
     (void)pthread_mutex_lock(&g_foreign_records_mutex);
+    if (rt->owner) {
+        value->owner = rt->owner;
+        value->owner_next = rt->owner->values;
+        if (value->owner_next) value->owner_next->owner_prev = value;
+        rt->owner->values = value;
+    }
     value->next = rt->values;
     if (rt->values)
         rt->values->prev = value;
@@ -691,13 +753,24 @@ static CettaForeignValue *foreign_new_python_value(CettaForeignRuntime *rt,
     return value;
 }
 
+static Atom *python_foreign_atom(CettaForeignRuntime *rt, Arena *arena,
+        PyObject *object, bool callable, bool unwrap) {
+    CettaForeignValue *value = foreign_new_python_value(rt, object, callable, unwrap);
+    return value ? atom_foreign(arena, value) : NULL;
+}
+
 static void cetta_foreign_runtime_init(CettaForeignRuntime *rt) {
     if (!rt) return;
     rt->values = NULL;
+    rt->objects_enabled = false;
+    rt->object_registry = NULL;
+    rt->bindings = NULL;
+    rt->owner = NULL;
 }
 
 CettaForeignRuntime *cetta_foreign_runtime_new(void) {
-    CettaForeignRuntime *rt = cetta_malloc(sizeof(CettaForeignRuntime));
+    CettaForeignRuntime *rt = malloc(sizeof(CettaForeignRuntime));
+    if (!rt) return NULL;
     cetta_foreign_runtime_init(rt);
     return rt;
 }
@@ -714,6 +787,14 @@ void cetta_foreign_runtime_free(CettaForeignRuntime *rt) {
         python.active = true;
         foreign_drain_released_with_gil();
     }
+    while (rt->bindings) {
+        PythonBinding *binding = rt->bindings;
+        rt->bindings = binding->next;
+        foreign_record_release(binding->callable);
+        python_space_hold_release(&binding->space_hold);
+        free(binding->name);
+        free(binding);
+    }
     /* An object's finalizer may convert more objects into this runtime, so
      * the list is taken until it stays empty. */
     for (;;) {
@@ -728,7 +809,16 @@ void cetta_foreign_runtime_free(CettaForeignRuntime *rt) {
         while (cur) {
             CettaForeignValue *next = cur->next;
             PyObject *obj = cur->obj;
+            if (cur->object_mode && atomic_load_explicit(&cur->holds, memory_order_acquire)) {
+                cur->prev = NULL;
+                cur->next = NULL;
+                cur = next;
+                continue;
+            }
             cur->obj = NULL;
+            pthread_mutex_lock(&g_foreign_records_mutex);
+            python_roots_unlink_locked(cur);
+            pthread_mutex_unlock(&g_foreign_records_mutex);
             cur->prev = NULL;
             cur->next = NULL;
             if (atomic_load_explicit(&cur->holds, memory_order_acquire) == 0u)
@@ -738,13 +828,15 @@ void cetta_foreign_runtime_free(CettaForeignRuntime *rt) {
             cur = next;
         }
     }
+    if (rt->owner) rt->owner->runtime = NULL;
+    if (python.active) foreign_drain_released_with_gil();
     free(rt);
 }
 
 void cetta_foreign_global_shutdown(void) {
     if (pthread_mutex_lock(&g_python_lifecycle_mutex) != 0)
         return;
-    if (!Py_IsInitialized()) {
+    if (!Py_IsInitialized() || !g_python_owned) {
         (void)pthread_mutex_unlock(&g_python_lifecycle_mutex);
         return;
     }
@@ -762,9 +854,11 @@ void cetta_foreign_global_shutdown(void) {
     Py_CLEAR(g_bridge_operation_atom_class);
     Py_CLEAR(g_bridge_cetta_atom_class);
     Py_CLEAR(g_bridge_module);
+    Py_CLEAR(g_python_context_factory);
     g_python_bootstrap_ready = false;
     (void)Py_FinalizeEx();
     g_python_interpreter_prepared = false;
+    g_python_owned = false;
     (void)pthread_mutex_unlock(&g_python_lifecycle_mutex);
 }
 
@@ -937,12 +1031,26 @@ static bool ensure_python_bridge(Arena *error_arena, Atom **error_out) {
 
     if (g_python_bootstrap_ready) return true;
 
-    if (PyRun_SimpleString(PYTHON_BOOTSTRAP) != 0) {
+    if (!g_bridge_module) {
+        g_bridge_module = g_python_owned ? PyImport_ImportModule("cetta_bridge") : PyInit_cetta_bridge();
+        if (!g_bridge_module) return false;
+        PyObject *modules = PyImport_GetModuleDict();
+        if (!PyDict_GetItemString(modules, "cetta_bridge") &&
+            PyDict_SetItemString(modules, "cetta_bridge", g_bridge_module) < 0)
+            return false;
+    }
+    if (PyDict_SetItemString(PyModule_GetDict(g_bridge_module), "_cetta_bridge", g_bridge_module) < 0)
+        return false;
+    if (PyObject_SetAttrString(g_bridge_module, "_owns_interpreter",
+                              g_python_owned ? Py_True : Py_False) < 0) return false;
+    PyObject *boot = PyRun_String(PYTHON_BOOTSTRAP, Py_file_input,
+        PyModule_GetDict(g_bridge_module), PyModule_GetDict(g_bridge_module));
+    if (!boot) {
         if (error_out) *error_out = python_error_atom(NULL, error_arena, "python bootstrap failed");
         return false;
     }
 
-    g_bridge_module = PyImport_ImportModule("cetta_bridge");
+    Py_DECREF(boot);
     if (!g_bridge_module) {
         if (error_out) *error_out = python_error_atom(NULL, error_arena, "failed to import cetta_bridge");
         return false;
@@ -984,6 +1092,7 @@ static bool literal_token_name(const char *pattern) {
 static const char *literal_token_word(Arena *arena, const char *pattern) {
     if (!pattern || !*pattern) return NULL;
     char *word = arena_alloc(arena, strlen(pattern) + 1u);
+    if (!word) return NULL;
     size_t length = 0u;
     for (const unsigned char *p = (const unsigned char *)pattern; *p; p++) {
         switch (*p) {
@@ -1115,6 +1224,7 @@ static Atom *python_fraction_to_atom(Arena *a, PyObject *obj) {
     size_t nlen = strlen(num);
     size_t dlen = strlen(den);
     char *text = cetta_malloc(nlen + dlen + 2);
+    if (!text) { free(num); free(den); PyErr_NoMemory(); return NULL; }
     memcpy(text, num, nlen);
     text[nlen] = '/';
     memcpy(text + nlen + 1, den, dlen + 1);
@@ -1153,8 +1263,7 @@ static bool python_emit_single(CettaForeignRuntime *rt, Arena *a, PyObject *obj,
         PyObject *unwrap_obj = PyObject_GetAttrString(obj, "unwrap");
         bool unwrap = !unwrap_obj || PyObject_IsTrue(unwrap_obj);
         Py_XDECREF(unwrap_obj);
-        result_set_add(rs, atom_foreign(a,
-            foreign_new_python_value(rt, callable_obj, true, unwrap)));
+        result_set_add(rs, python_foreign_atom(rt, a, callable_obj, true, unwrap));
         Py_DECREF(callable_obj);
         return true;
     }
@@ -1228,11 +1337,11 @@ static bool python_emit_single(CettaForeignRuntime *rt, Arena *a, PyObject *obj,
     }
 
     if (PyCallable_Check(obj)) {
-        result_set_add(rs, atom_foreign(a, foreign_new_python_value(rt, obj, true, true)));
+        result_set_add(rs, python_foreign_atom(rt, a, obj, true, true));
         return true;
     }
 
-    result_set_add(rs, atom_foreign(a, foreign_new_python_value(rt, obj, false, true)));
+    result_set_add(rs, python_foreign_atom(rt, a, obj, false, true));
     return true;
 }
 
@@ -1276,7 +1385,8 @@ static PyObject *python_fraction_from_atom(Atom *atom) {
     return out;
 }
 
-static PyObject *python_from_atom(Arena *a, Atom *atom, bool unwrap) {
+static PyObject *python_from_atom(Arena *, Atom *, bool);
+static PyObject *python_from_atom_policy(Arena *a, Atom *atom, bool unwrap, bool object_mode) {
     if (!unwrap) {
         return python_wrap_atom(atom, a);
     }
@@ -1290,16 +1400,21 @@ static PyObject *python_from_atom(Arena *a, Atom *atom, bool unwrap) {
         case GV_BOOL:
             return PyBool_FromLong(atom->ground.bval ? 1 : 0);
         case GV_STRING:
-            return PyUnicode_FromStringAndSize(atom->ground.sval, atom->ground.slen);
+            return PyUnicode_DecodeUTF8(atom->ground.sval, atom->ground.slen, "strict");
         case GV_BIGINT:
             return PyLong_FromString((char *)atom_bigint_cstr(atom), NULL, 10);
         case GV_RATIONAL:
             return python_fraction_from_atom(atom);
         case GV_BINDINGS:
+            if (object_mode) break;
             return python_wrap_atom(atom, a);
         case GV_FOREIGN: {
-            CettaForeignValue *value = (CettaForeignValue *)atom->ground.ptr;
+            CettaForeignValue *value = foreign_python_record(atom);
             if (value && value->backend == CETTA_FOREIGN_BACKEND_PYTHON) {
+                if (!value->obj) {
+                    PyErr_SetString(PyExc_RuntimeError, "Python object has been released");
+                    return NULL;
+                }
                 Py_INCREF(value->obj);
                 return value->obj;
             }
@@ -1311,12 +1426,15 @@ static PyObject *python_from_atom(Arena *a, Atom *atom, bool unwrap) {
     }
 
     if (atom->kind == ATOM_SYMBOL) {
+        bool truth = false;
+        if (foreign_language_is_petta() && petta_semantics_truth_value(atom, &truth))
+            return PyBool_FromLong(truth);
         const char *name = atom_name_cstr(atom);
         return name ? PyUnicode_FromStringAndSize(name, atom_symbol_length(atom)) : NULL;
     }
     if (atom->kind == ATOM_EXPR &&
-        eval_current_language_id &&
-        eval_current_language_id() == CETTA_LANGUAGE_PETTA) {
+        (object_mode || (eval_current_language_id &&
+        eval_current_language_id() == CETTA_LANGUAGE_PETTA))) {
         typedef struct {
             Atom *expression;
             PyObject *list;
@@ -1339,8 +1457,11 @@ static PyObject *python_from_atom(Arena *a, Atom *atom, bool unwrap) {
             free(frames); \
             return NULL; \
         } \
-        frames = cetta_realloc( \
-            frames, next_cap * sizeof(*frames)); \
+        PythonListFrame *grown = realloc(frames, next_cap * sizeof(*frames)); \
+        if (!grown) { \
+            PyErr_NoMemory(); Py_DECREF(root); free(frames); return NULL; \
+        } \
+        frames = grown; \
         frame_cap = next_cap; \
     } \
     frames[frame_len++] = (PythonListFrame){ \
@@ -1375,7 +1496,7 @@ static PyObject *python_from_atom(Arena *a, Atom *atom, bool unwrap) {
                 continue;
             }
             PyObject *item =
-                python_from_atom(a, child, unwrap);
+                python_from_atom_policy(a, child, unwrap, object_mode);
             if (!item) {
                 Py_DECREF(root);
                 free(frames);
@@ -1388,7 +1509,107 @@ static PyObject *python_from_atom(Arena *a, Atom *atom, bool unwrap) {
 #undef PYTHON_LIST_PUSH
         return root;
     }
+    if (object_mode) {
+        PyErr_SetString(PyExc_TypeError, "expected a scalar, tuple or retained Python object");
+        return NULL;
+    }
     return python_wrap_atom(atom, a);
+}
+
+static PyObject *python_from_atom(Arena *a, Atom *atom, bool unwrap) {
+    return python_from_atom_policy(a, atom, unwrap, false);
+}
+
+Atom *cetta_foreign_object_wrap(CettaForeignRuntime *rt, Arena *a, void *object) {
+    CettaForeignValue *value = foreign_new_python_value(rt, object,
+        PyCallable_Check((PyObject *)object), true);
+    if (!value) return NULL;
+    value->object_mode = true;
+    return atom_foreign(a, value);
+}
+void *cetta_foreign_object_borrow(const Atom *atom) {
+    CettaForeignValue *value = foreign_python_record(atom);
+    return value && value->object_mode ? value->obj : NULL;
+}
+void *cetta_foreign_python_value(const Atom *atom) {
+    CettaForeignValue *value = foreign_python_record(atom);
+    return value ? value->obj : NULL;
+}
+static bool python_emit_object(CettaForeignRuntime *rt, Arena *a, PyObject *obj,
+                               ResultSet *rs, Atom **error) {
+    (void)error;
+    Atom *value = NULL;
+    if (PyBool_Check(obj)) value = foreign_language_is_petta()
+        ? petta_semantics_boolean_value(a, obj == Py_True) : atom_bool(a, obj == Py_True);
+    else if (PyLong_CheckExact(obj)) {
+        int overflow = 0;
+        long long integer = PyLong_AsLongLongAndOverflow(obj, &overflow);
+        if (PyErr_Occurred()) return false;
+        if (overflow) {
+            char *text = python_long_text_owned(obj);
+            if (!text) return false;
+            value = atom_bigint(a, text);
+            free(text);
+        } else value = atom_int(a, integer);
+    } else if (PyFloat_CheckExact(obj)) value = atom_float(a, PyFloat_AS_DOUBLE(obj));
+    else if (PyUnicode_CheckExact(obj)) {
+        Py_ssize_t length = 0;
+        const char *text = PyUnicode_AsUTF8AndSize(obj, &length);
+        if (!text) return false;
+        if ((uint64_t)length > UINT32_MAX) {
+            PyErr_SetString(PyExc_OverflowError, "string exceeds CeTTa's atom size");
+            return false;
+        }
+        value = atom_string_n(a, text, (size_t)length);
+    } else value = cetta_foreign_object_wrap(rt, a, obj);
+    if (!value) { if (!PyErr_Occurred()) PyErr_NoMemory(); return false; }
+    result_set_add(rs, value);
+    return true;
+}
+
+static Atom *python_object_error(CettaForeignRuntime *rt, Arena *a, const char *message) {
+    PyObject *type = NULL, *value = NULL, *traceback = NULL;
+    PyErr_Fetch(&type, &value, &traceback);
+    PyErr_NormalizeException(&type, &value, &traceback);
+    if (!value) { value = PyObject_CallFunction(PyExc_RuntimeError, "s", message); }
+    if (!value) { Py_XDECREF(type); Py_XDECREF(traceback); PyErr_Clear(); return foreign_error_atom(a, message); }
+    if (traceback) PyException_SetTraceback(value, traceback);
+    Atom *object = cetta_foreign_object_wrap(rt, a, value);
+    if (!object) {
+        Py_XDECREF(type); Py_DECREF(value); Py_XDECREF(traceback);
+        return NULL;
+    }
+    foreign_python_record(object)->exception = true;
+    Atom *error = atom_error(a, atom_expr3(a, atom_symbol(a, "python_error"),
+        atom_symbol(a, Py_TYPE(value)->tp_name), object), atom_var_with_id(a, "_", fresh_var_id()));
+    Py_XDECREF(type); Py_DECREF(value); Py_XDECREF(traceback);
+    return error;
+}
+
+static void *python_exception_payload(const Atom *formal) {
+    if (!formal || formal->kind != ATOM_EXPR || formal->expr.len != 3u ||
+        !atom_is_symbol(formal->expr.elems[0], "python_error")) return NULL;
+    CettaForeignValue *value = foreign_python_record(formal->expr.elems[2]);
+    return value && value->exception ? value->obj : NULL;
+}
+
+void *cetta_foreign_python_he_exception(const Atom *atom) {
+    if (!atom || atom->kind != ATOM_EXPR || atom->expr.len != 3u ||
+        !atom_is_symbol(atom->expr.elems[0], "Error")) return NULL;
+    return python_exception_payload(atom->expr.elems[2]);
+}
+
+void *cetta_foreign_python_exception(const Atom *atom) {
+    if (!atom || atom->kind != ATOM_EXPR || atom->expr.len != 3u ||
+        !atom_is_symbol(atom->expr.elems[0], "Error")) return NULL;
+    void *exception = python_exception_payload(atom->expr.elems[1]);
+    return exception ? exception : cetta_foreign_python_he_exception(atom);
+}
+
+Atom *cetta_foreign_he_error_value(Arena *arena, Atom *call, Atom *error) {
+    if (cetta_foreign_python_he_exception(error)) return error;
+    if (!call || !cetta_foreign_python_exception(error)) return NULL;
+    return atom_error(arena, call, error->expr.elems[1]);
 }
 
 typedef struct {
@@ -1432,8 +1653,13 @@ static bool python_emit_petta_value(
                 Py_DECREF(sequence_value); \
             goto sequence_failure; \
         } \
-        frames = cetta_realloc( \
-            frames, next_cap * sizeof(*frames)); \
+        PythonPettaSequenceFrame *grown = realloc(frames, next_cap * sizeof(*frames)); \
+        if (!grown) { \
+            PyErr_NoMemory(); \
+            if (owned_value) Py_DECREF(sequence_value); \
+            goto sequence_failure; \
+        } \
+        frames = grown; \
         frame_cap = next_cap; \
     } \
     Atom **sequence_elements = sequence_len > 0 \
@@ -1615,44 +1841,84 @@ static PyObject *python_resolve_path(CettaForeignRuntime *rt,
     return result;
 }
 
+static PyObject *python_invoke(Arena *a, PyObject *callable, bool unwrap,
+        bool object_mode, Atom **args, uint32_t nargs) {
+    if (!callable) {
+        PyErr_SetString(PyExc_RuntimeError, "Python callable has been released");
+        return NULL;
+    }
+    PyObject *small[16] = {0}, **vector = small, *names = NULL, *result = NULL;
+    CettaForeignValue *kw = nargs ? foreign_python_record(args[nargs - 1u]) : NULL;
+    PyObject *dict = kw && kw->keywords ? kw->obj : NULL;
+    /* Argument conversion can run Python finalizers. Snapshot keyword entries
+     * before sizing the vector so mutations cannot change its cardinality. */
+    dict = dict ? PyDict_Copy(dict) : NULL;
+    if (kw && kw->keywords && !dict) return NULL;
+    size_t positional = nargs - (dict ? 1u : 0u), converted = 0;
+    size_t count = positional + (dict ? (size_t)PyDict_Size(dict) : 0u);
+    if (count > sizeof(small) / sizeof(*small)) {
+        vector = calloc(count, sizeof(*vector));
+        if (!vector) { Py_XDECREF(dict); return PyErr_NoMemory(); }
+    }
+    for (; converted < positional; converted++) {
+        CettaForeignValue *arg = foreign_python_record(args[converted]);
+        if (arg && arg->keywords) {
+            PyErr_SetString(PyExc_TypeError, "py:kwargs must be the final argument");
+            goto done;
+        }
+        vector[converted] = python_from_atom_policy(a, args[converted], unwrap, object_mode);
+        if (!vector[converted]) goto done;
+    }
+    if (dict) {
+        names = PyTuple_New((Py_ssize_t)(count - positional));
+        if (!names) goto done;
+        Py_ssize_t pos = 0, index = 0;
+        PyObject *key, *value;
+        while (PyDict_Next(dict, &pos, &key, &value)) {
+            if (!PyUnicode_Check(key)) {
+                PyErr_SetString(PyExc_TypeError, "keyword names must be strings");
+                goto done;
+            }
+            PyTuple_SET_ITEM(names, index++, Py_NewRef(key));
+            vector[converted++] = Py_NewRef(value);
+        }
+    }
+    result = PyObject_Vectorcall(callable, vector, positional, names);
+done:
+    for (size_t i = 0; i < converted; i++) Py_DECREF(vector[i]);
+    if (vector != small) free(vector);
+    Py_XDECREF(names);
+    Py_XDECREF(dict);
+    return result;
+}
+
 static bool python_call_object(CettaForeignRuntime *rt, Space *space, Arena *a,
-                               PyObject *callable, bool unwrap,
+                               PyObject *callable, bool unwrap, bool object_mode,
                                Atom **args, uint32_t nargs,
                                ResultSet *rs, Atom **error_out) {
-    PyObject *tuple = PyTuple_New((Py_ssize_t)nargs);
-    if (!tuple) {
-        if (error_out) *error_out = python_error_atom(rt, a, "failed to allocate python arg tuple");
-        return false;
-    }
-    for (uint32_t i = 0; i < nargs; i++) {
-        PyObject *item = python_from_atom(a, args[i], unwrap);
-        if (!item) {
-            Py_DECREF(tuple);
-            if (error_out) *error_out = python_error_atom(rt, a, "failed to convert CeTTa arg to python");
-            return false;
-        }
-        PyTuple_SET_ITEM(tuple, (Py_ssize_t)i, item);
-    }
 
     __attribute__((cleanup(python_space_hold_release))) void *space_hold =
         space_lifetime_pin ? space_lifetime_pin(space) : NULL;
     Space *saved_space = g_python_callback_space;
     g_python_callback_space = space;
-    PyObject *result = PyObject_CallObject(callable, tuple);
+    PyObject *result = python_invoke(a, callable, unwrap, object_mode, args, nargs);
     g_python_callback_space = saved_space;
-    Py_DECREF(tuple);
     if (!result) {
-        if (error_out) *error_out = python_error_atom(rt, a, "python callable failed");
+        if (error_out) *error_out = object_mode
+            ? python_object_error(rt, a, "Python callable failed")
+            : python_error_atom(rt, a, "python callable failed");
         return false;
     }
     bool petta_result =
         eval_current_language_id &&
         eval_current_language_id() == CETTA_LANGUAGE_PETTA;
-    bool ok = petta_result
+    bool ok = object_mode ? python_emit_object(rt, a, result, rs, error_out) : petta_result
         ? python_emit_petta_value(
               rt, a, result, rs, error_out)
         : python_emit_many(
               rt, a, result, rs, error_out);
+    if (object_mode && !ok && error_out)
+        *error_out = python_object_error(rt, a, "Python result conversion failed");
     Py_DECREF(result);
     return ok;
 }
@@ -1679,6 +1945,7 @@ static Atom *module_export_lhs(Arena *a, const char *name, long arity, Atom ***v
     uint32_t nargs = arity > 0 ? (uint32_t)arity : 0;
     Atom **elems = arena_alloc(a, sizeof(Atom *) * (nargs + 1));
     Atom **vars = nargs > 0 ? arena_alloc(a, sizeof(Atom *) * nargs) : NULL;
+    if (!elems || (nargs && !vars)) return NULL;
     elems[0] = atom_symbol(a, name);
     for (uint32_t i = 0; i < nargs; i++) {
         char buf[32];
@@ -1750,8 +2017,9 @@ static bool module_add_export_callable(CettaForeignRuntime *rt, Space *target_sp
     Atom **vars = NULL;
     Atom *lhs = module_export_lhs(persistent_arena, name, arity, &vars);
     Atom **rhs_elems = arena_alloc(persistent_arena, sizeof(Atom *) * ((uint32_t)arity + 1));
-    rhs_elems[0] = atom_foreign(persistent_arena,
-        foreign_new_python_value(rt, callable_obj, true, unwrap));
+    if (!lhs || !rhs_elems) return false;
+    rhs_elems[0] = python_foreign_atom(rt, persistent_arena, callable_obj, true, unwrap);
+    if (!rhs_elems[0]) return false;
     for (uint32_t i = 0; i < (uint32_t)arity; i++) {
         rhs_elems[i + 1] = vars[i];
     }
@@ -1907,7 +2175,7 @@ bool cetta_foreign_load_module(CettaForeignRuntime *rt,
 
 struct CettaForeignHEModule {
     CettaForeignRuntime *runtime;
-    PyObject *module;
+    CettaForeignValue *module;
 };
 
 bool cetta_foreign_he_module_execute(CettaForeignRuntime *rt,
@@ -1943,8 +2211,12 @@ bool cetta_foreign_he_module_execute(CettaForeignRuntime *rt,
         return true;
     }
     CettaForeignHEModule *loaded = cetta_malloc(sizeof(*loaded));
+    if (!loaded) { Py_DECREF(module); PyErr_NoMemory(); return false; }
     loaded->runtime = rt;
-    loaded->module = module;
+    loaded->module = foreign_new_python_value(rt, module, false, true);
+    Py_DECREF(module);
+    if (!loaded->module) { free(loaded); return false; }
+    foreign_record_retain(loaded->module);
     *out = loaded;
     return true;
 }
@@ -1952,11 +2224,7 @@ bool cetta_foreign_he_module_execute(CettaForeignRuntime *rt,
 void cetta_foreign_he_module_release(CettaForeignHEModule *module) {
     if (!module)
         return;
-    if (module->module && Py_IsInitialized()) {
-        PyGILState_STATE gil = PyGILState_Ensure();
-        Py_DECREF(module->module);
-        PyGILState_Release(gil);
-    }
+    if (module->module) foreign_record_release(module->module);
     free(module);
 }
 
@@ -1984,15 +2252,14 @@ static Atom *he_export_atom(CettaForeignRuntime *rt, Arena *arena,
         PyObject *callable = PyObject_GetAttrString(object, "callable");
         PyObject *unwrap = PyObject_GetAttrString(object, "unwrap");
         if (callable)
-            atom = atom_foreign(arena, foreign_new_python_value(
-                rt, callable, true, !unwrap || PyObject_IsTrue(unwrap)));
+            atom = python_foreign_atom(rt, arena, callable, true, !unwrap || PyObject_IsTrue(unwrap));
         else if (error_out)
             *error_out = python_error_atom(rt, arena, "failed to read OperationAtom.callable");
         PyErr_Clear();
         Py_XDECREF(unwrap);
         Py_XDECREF(callable);
     } else if (PyCallable_Check(object)) {
-        atom = atom_foreign(arena, foreign_new_python_value(rt, object, true, true));
+        atom = python_foreign_atom(rt, arena, object, true, true);
     } else {
         ResultSet rs;
         result_set_init(&rs);
@@ -2014,7 +2281,8 @@ bool cetta_foreign_he_module_exports(CettaForeignHEModule *module, Arena *arena,
     if (!module || !python_execution_guard_enter(&python, arena, error_out))
         return false;
     CettaForeignRuntime *rt = module->runtime;
-    PyObject *names = PyObject_Dir(module->module);
+    if (!module->module->obj) return false;
+    PyObject *names = PyObject_Dir(module->module->obj);
     if (!names) {
         if (error_out)
             *error_out = python_error_atom(rt, arena, "failed to enumerate python module exports");
@@ -2024,7 +2292,7 @@ bool cetta_foreign_he_module_exports(CettaForeignHEModule *module, Arena *arena,
     size_t count = 0u, capacity = 0u;
     bool ok = true;
     for (Py_ssize_t i = 0; ok && i < PyList_Size(names); i++) {
-        PyObject *attr = PyObject_GetAttr(module->module, PyList_GetItem(names, i));
+        PyObject *attr = PyObject_GetAttr(module->module->obj, PyList_GetItem(names, i));
         if (!attr) {
             ok = false;
             break;
@@ -2062,6 +2330,7 @@ bool cetta_foreign_he_module_exports(CettaForeignHEModule *module, Arena *arena,
             /* A constructor receives the text as written; the word is bound
                in the reader's spelling of it. */
             const char *name = parser_canonicalize_namespace_token(arena, word);
+            if (!name) { PyErr_NoMemory(); ok = false; break; }
             Atom *atom = he_export_atom(rt, arena, word, PyTuple_GetItem(pair, 1),
                                         token, error_out);
             if (!atom) {
@@ -2070,10 +2339,13 @@ bool cetta_foreign_he_module_exports(CettaForeignHEModule *module, Arena *arena,
             }
             if (count == capacity) {
                 capacity = capacity ? capacity * 2u : 8u;
-                exports = cetta_realloc(exports, capacity * sizeof(*exports));
+                CettaForeignHEExport *grown = realloc(exports, capacity * sizeof(*exports));
+                if (!grown) { PyErr_NoMemory(); ok = false; break; }
+                exports = grown;
             }
             size_t size = strlen(name) + 1u;
             exports[count].name = cetta_malloc(size);
+            if (!exports[count].name) { PyErr_NoMemory(); ok = false; break; }
             memcpy(exports[count].name, name, size);
             exports[count++].atom = atom;
         }
@@ -2093,11 +2365,17 @@ bool cetta_foreign_he_module_exports(CettaForeignHEModule *module, Arena *arena,
     return true;
 }
 
+static CettaForeignValue *foreign_python_record(const Atom *atom) {
+    if (!atom || atom->kind != ATOM_GROUNDED || atom->ground.gkind != GV_FOREIGN ||
+        !atom->ground.ptr) return NULL;
+    const CettaForeignHold *hold = atom->ground.ptr;
+    return hold->retain == foreign_record_retain ? atom->ground.ptr : NULL;
+}
+
 bool cetta_foreign_is_callable_atom(Atom *atom) {
-    return atom &&
-           atom->kind == ATOM_GROUNDED &&
-           atom->ground.gkind == GV_FOREIGN &&
-           ((CettaForeignValue *)atom->ground.ptr)->callable;
+    CettaForeignValue *value = foreign_python_record(atom);
+    return (atom && atom->kind == ATOM_GROUNDED && cetta_foreign_provider_callable(atom)) ||
+        (value && value->callable);
 }
 
 bool cetta_foreign_call(CettaForeignRuntime *rt,
@@ -2108,7 +2386,7 @@ bool cetta_foreign_call(CettaForeignRuntime *rt,
                         uint32_t nargs,
                         ResultSet *rs,
                         Atom **error_out) {
-    if (!callable || callable->kind != ATOM_GROUNDED || callable->ground.gkind != GV_FOREIGN) {
+    if (!foreign_python_record(callable)) {
         if (error_out) *error_out = foreign_error_atom(a, "not a foreign callable");
         return false;
     }
@@ -2121,9 +2399,10 @@ bool cetta_foreign_call(CettaForeignRuntime *rt,
     PythonExecutionGuard python = {0};
     if (!python_execution_guard_enter(&python, a, error_out))
         return false;
-    if (!ensure_python_bridge(a, error_out))
+    if (!value->object_mode && !ensure_python_bridge(a, error_out))
         return false;
-    return python_call_object(rt, space, a, value->obj, value->unwrap, args, nargs, rs, error_out);
+    return python_call_object(rt, space, a, value->obj, value->unwrap, value->object_mode,
+                              args, nargs, rs, error_out);
 }
 
 static Atom *result_set_collapse_for_native(Arena *a, ResultSet *rs) {
@@ -2211,9 +2490,7 @@ bool cetta_foreign_dispatch_native_results(CettaForeignRuntime *rt,
         if (PyCallable_Check(obj)) {
             result_set_add(
                 results,
-                atom_foreign(a,
-                             foreign_new_python_value(rt, obj, true,
-                                                      unwrap)));
+                python_foreign_atom(rt, a, obj, true, unwrap));
         } else {
             ResultSet produced;
             result_set_init(&produced);
@@ -2243,8 +2520,8 @@ bool cetta_foreign_dispatch_native_results(CettaForeignRuntime *rt,
         PyObject *base = NULL;
         Atom *error = NULL;
         if (args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_FOREIGN) {
-            CettaForeignValue *value = (CettaForeignValue *)args[0]->ground.ptr;
-            if (value->backend == CETTA_FOREIGN_BACKEND_PYTHON) {
+            CettaForeignValue *value = foreign_python_record(args[0]);
+            if (value && value->backend == CETTA_FOREIGN_BACKEND_PYTHON) {
                 base = value->obj;
                 Py_INCREF(base);
             }
@@ -2268,9 +2545,7 @@ bool cetta_foreign_dispatch_native_results(CettaForeignRuntime *rt,
         if (PyCallable_Check(obj)) {
             result_set_add(
                 results,
-                atom_foreign(a,
-                             foreign_new_python_value(rt, obj, true,
-                                                      unwrap)));
+                python_foreign_atom(rt, a, obj, true, unwrap));
         } else {
             ResultSet produced;
             result_set_init(&produced);
@@ -2315,10 +2590,7 @@ bool cetta_foreign_dispatch_native_results(CettaForeignRuntime *rt,
             if (PyCallable_Check(obj)) {
                 result_set_add(
                     results,
-                    atom_foreign(
-                        a,
-                        foreign_new_python_value(
-                            rt, obj, true, true)));
+                    python_foreign_atom(rt, a, obj, true, true));
             } else {
                 ResultSet produced;
                 result_set_init(&produced);
@@ -2398,7 +2670,7 @@ bool cetta_foreign_dispatch_native_results(CettaForeignRuntime *rt,
             result_set_init(&method_results);
             Atom *method_error = NULL;
             bool called = python_call_object(
-                rt, space, a, method, true,
+                rt, space, a, method, true, false,
                 call_args + 1u, call_nargs - 1u,
                 &method_results, &method_error);
             Py_DECREF(method);
@@ -2425,7 +2697,7 @@ bool cetta_foreign_dispatch_native_results(CettaForeignRuntime *rt,
                 return true;
             }
             if (PyCallable_Check(obj)) {
-                callable_atom = atom_foreign(a, foreign_new_python_value(rt, obj, true, true));
+                callable_atom = python_foreign_atom(rt, a, obj, true, true);
             } else {
                 ResultSet produced;
                 result_set_init(&produced);
@@ -2459,6 +2731,11 @@ bool cetta_foreign_dispatch_native_results(CettaForeignRuntime *rt,
     return false;
 }
 
+#include "python_streams.inc"
+#include "python_context.inc"
+#include "python_objects.inc"
+#include "python_provider.inc"
+
 bool cetta_foreign_call_native(CettaForeignRuntime *rt,
                                Space *space,
                                Arena *a,
@@ -2466,6 +2743,8 @@ bool cetta_foreign_call_native(CettaForeignRuntime *rt,
                                Atom **args,
                                uint32_t nargs,
                                CettaCallOutcome *out) {
+    if (head && head->kind == ATOM_SYMBOL && python_object_head_at(rt, space, atom_name_cstr(head)))
+        return python_objects_call(rt, space, a, head, args, nargs, out);
     ResultSet results;
     result_set_init(&results);
     CettaCallOutcome end;

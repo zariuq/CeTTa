@@ -1,0 +1,16 @@
+true
+true
+true
+((a 3) (b 1) (c 2) (d 4))
+(4)
+((a 4) (b 3) (c 2))
+true
+((t 1) (u 5) (v 6))
+true
+((t 1) (u 2) (u 5) (v 3) (v 6))
+true
+((a (a b c d)) (b (a b c d)) (c (a b c d)))
+true
+true
+true
+530

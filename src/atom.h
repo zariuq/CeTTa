@@ -312,6 +312,12 @@ static inline bool cetta_internal_tag_is_term_stable(int64_t tag) {
  * holds of every child; any other leaf, or a hand-built atom, leaves it
  * unset. */
 #define ATOM_STRUCTURAL_SYMBOLIC UINT32_C(0x00004000)
+/* HE's evaluated mark at every node: the expression carries the mark and
+ * every expression child with fields holds this fact.  Set where a marked
+ * node is built (atom_he_evaluated_build); a fact of the node alone, which
+ * no other expression inherits from a child or keeps from the expression
+ * it is derived from. */
+#define ATOM_STRUCTURAL_HE_EVALUATED_THROUGHOUT UINT32_C(0x00008000)
 /* Each fact has its own bit: for one-bit flags the sum equals the union
  * exactly when no two share one. */
 _Static_assert(ATOM_STRUCTURAL_FACTS_VALID + ATOM_STRUCTURAL_HAS_INTERNAL_TAG +
@@ -323,7 +329,8 @@ _Static_assert(ATOM_STRUCTURAL_FACTS_VALID + ATOM_STRUCTURAL_HAS_INTERNAL_TAG +
                        ATOM_STRUCTURAL_HAS_PETTA_NONLIST +
                        ATOM_STRUCTURAL_HAS_SPELLED_SYMBOL +
                        ATOM_STRUCTURAL_OWNER_CLOSED + ATOM_STRUCTURAL_STRING_STORAGE +
-                       ATOM_STRUCTURAL_HAS_HE_EVALUATED + ATOM_STRUCTURAL_SYMBOLIC ==
+                       ATOM_STRUCTURAL_HAS_HE_EVALUATED + ATOM_STRUCTURAL_SYMBOLIC +
+                       ATOM_STRUCTURAL_HE_EVALUATED_THROUGHOUT ==
                    (ATOM_STRUCTURAL_FACTS_VALID | ATOM_STRUCTURAL_HAS_INTERNAL_TAG |
                     ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID | ATOM_STRUCTURAL_HAS_NAN |
                     ATOM_STRUCTURAL_HAS_OPEN_LIST | ATOM_STRUCTURAL_HAS_LIST |
@@ -333,7 +340,8 @@ _Static_assert(ATOM_STRUCTURAL_FACTS_VALID + ATOM_STRUCTURAL_HAS_INTERNAL_TAG +
                     ATOM_STRUCTURAL_HAS_PETTA_NONLIST |
                     ATOM_STRUCTURAL_HAS_SPELLED_SYMBOL |
                     ATOM_STRUCTURAL_OWNER_CLOSED | ATOM_STRUCTURAL_STRING_STORAGE |
-                    ATOM_STRUCTURAL_HAS_HE_EVALUATED | ATOM_STRUCTURAL_SYMBOLIC),
+                    ATOM_STRUCTURAL_HAS_HE_EVALUATED | ATOM_STRUCTURAL_SYMBOLIC |
+                    ATOM_STRUCTURAL_HE_EVALUATED_THROUGHOUT),
                "structural fact bits overlap");
 
 /*
@@ -795,6 +803,18 @@ static inline bool atom_is_he_evaluated(const Atom *atom) {
            (atom->flags & ATOM_FLAG_HE_EVALUATED) != 0u;
 }
 
+/* Whether every expression node of `atom` with fields carries HE's
+ * evaluated mark, as the node's own fact says (false where it is not
+ * known). */
+static inline bool atom_is_he_evaluated_throughout(const Atom *atom) {
+    return atom_is_he_evaluated(atom) &&
+           (atom->structural_facts &
+            (ATOM_STRUCTURAL_FACTS_VALID |
+             ATOM_STRUCTURAL_HE_EVALUATED_THROUGHOUT)) ==
+               (ATOM_STRUCTURAL_FACTS_VALID |
+                ATOM_STRUCTURAL_HE_EVALUATED_THROUGHOUT);
+}
+
 /* Whether `atom` may hold an evaluated mark: its facts say so, or an
  * expression's facts are not known. */
 static inline bool atom_may_hold_he_mark(const Atom *atom) {
@@ -971,11 +991,17 @@ _Noreturn void cetta_oom(size_t size);
 void *cetta_malloc(size_t size);
 void *cetta_realloc(void *ptr, size_t size);
 void  arena_init(Arena *a);
+/* Failed initialization leaves a dead empty arena with no name or storage. */
+bool  arena_try_init(Arena *a);
 /* Initialize an arena whose allocation identity must not inherit the
  * calling thread's hash-cons table.  Use this for process-lifetime and
  * cross-thread owners: an ordinary arena_init deliberately inherits the
  * current evaluator's table for branch-local sharing. */
 void  arena_init_detached(Arena *a);
+bool  arena_try_init_detached(Arena *a);
+/* Reserve room for the next size bytes without advancing the allocation
+ * cursor. Failure preserves existing allocations and ownership. */
+bool  arena_try_reserve(Arena *a, size_t size);
 /* Explicit context for transient descriptor operations. Initializers do not
  * inherit it: an arena's lifetime owner must be assigned by its owner. */
 void *arena_current_resource_scope(void);
@@ -1069,15 +1095,26 @@ size_t arena_retained_owner_allocation_bytes(void);
 /* The same hold, charging BYTES of the immutable external resource on its
  * first acquisition in this arena segment. Repeated holds are uncharged;
  * a reset drops the charge with the hold. */
+bool arena_retain_owner_sized_with_storage(Arena *a, void *owner,
+                              void (*retain)(void *), void (*release)(void *),
+                              size_t bytes, CettaStorageVisitor storage);
 bool arena_retain_owner_sized(Arena *a, void *owner,
                               void (*retain)(void *), void (*release)(void *),
                               size_t bytes);
 /* Retain a typed managed resource. On the first acquisition, charge BYTES
  * to external storage and RESOURCE_BYTES to its managed-resource subset.
  * Aliases keep the original charge until the corresponding hold resets. */
+bool arena_retain_resource_sized_with_storage(Arena *a, void *owner,
+                                 void (*retain)(void *), void (*release)(void *),
+                                 size_t bytes, size_t resource_bytes,
+                                 CettaStorageVisitor storage);
 bool arena_retain_resource_sized(Arena *a, void *owner,
                                  void (*retain)(void *), void (*release)(void *),
                                  size_t bytes, size_t resource_bytes);
+bool arena_retain_state_resource_sized_with_storage(Arena *a, void *owner,
+                                 void (*retain)(void *), void (*release)(void *),
+                                 size_t bytes, size_t resource_bytes,
+                                 CettaStorageVisitor storage);
 bool arena_retain_state_resource_sized(Arena *a, void *owner,
                                  void (*retain)(void *), void (*release)(void *),
                                  size_t bytes, size_t resource_bytes);
@@ -1349,10 +1386,15 @@ typedef struct {
 } VarInternTable;
 
 void    var_intern_init(VarInternTable *t);
+/* Failure leaves no acquired storage; do not free an unsuccessful table. */
+bool    var_intern_try_init(VarInternTable *t);
 void    var_intern_free(VarInternTable *t);
 VarId   var_intern(VarInternTable *t, SymbolId spelling);
 bool    fresh_var_id_try(VarId *id_out);
 VarId   fresh_var_id(void);
+/* A base no fresh variable this thread minted so far has, and no base it
+ * mints from now on is below: those minted later have bases >= it. */
+uint64_t fresh_var_base_watermark(void);
 
 /* A VarId's stable source identity and its activation epoch.  These
  * accessors are inline because matching and substitution consult the
@@ -1378,7 +1420,7 @@ inline VarId var_epoch_id(VarId id, CettaFrameIdentity epoch) {
 void fresh_var_id_test_reset(uint64_t next_base);
 #endif
 
-extern VarInternTable *g_var_intern;
+extern _Thread_local VarInternTable *g_var_intern;
 
 /* ── Constructors ───────────────────────────────────────────────────────── */
 
@@ -1388,6 +1430,8 @@ Atom *atom_symbol_data_n(Arena *a, const char *bytes, uint32_t len);
 /* A symbol spelled by static, immutable storage. Uses the literal cache;
  * dynamic or mutable name buffers must use atom_symbol instead. */
 Atom *atom_symbol_literal(Arena *a, const char *name);
+/* The same literal cache, qualified by the active symbol-table instance. */
+SymbolId atom_symbol_literal_id(const char *name);
 Atom *atom_symbol_id(Arena *a, SymbolId sym_id);
 Atom *atom_symbol_copy(Arena *owner, const Atom *source);
 bool atom_symbol_is_spelled(const Atom *atom);
@@ -1428,6 +1472,10 @@ void atom_pin_syntax_symbols(const Atom *root);
 /* Initialize borrowed symbol metadata without allocation or an arena owner.
  * Storage must outlive its readers; escaping terms use an owning constructor. */
 void atom_init_symbol(Atom *target, SymbolId sym_id);
+/* An expression read in place over ELEMS, its facts those of its children,
+ * owned by no arena: storage must outlive its readers, as for
+ * atom_init_symbol. */
+void atom_init_expr_view(Atom *target, Atom **elems, CettaExprLen len);
 /* The symbol's one atom owned by the symbol table (no arena): for atoms a
  * compiled program hands to terms that may outlive it.  NULL without a
  * table or for an id it does not hold. */
@@ -1910,6 +1958,12 @@ Atom *atom_empty(Arena *a);     /* Symbol "Empty" */
 Atom *atom_unit(Arena *a);      /* Expression () — empty expr */
 /* The empty expression's one atom for the process, owned by no arena. */
 Atom *atom_unit_canonical(void);
+/* Whether ATOM is one of the atoms no arena owns that live for the process:
+ * a symbol's canonical atom (atom_symbol_canonical) or the empty
+ * expression's (atom_unit_canonical).  Copies into an arena may hand these
+ * out instead of arena atoms, so a check that an atom lies in given arenas
+ * accepts them too. */
+bool atom_process_canonical(const Atom *atom);
 Atom *atom_true(Arena *a);      /* Symbol "True" */
 Atom *atom_false(Arena *a);     /* Symbol "False" */
 
@@ -2127,6 +2181,8 @@ char *atom_to_parseable_bytes(Arena *a, Atom *atom, bool petta,
  * guarantee of reader round-trip; the source adapter checks that separately. */
 char *atom_to_source_bytes(Arena *a, Atom *atom, bool petta,
                           size_t *len_out);
+/* Host display retains quoted control bytes and binary64 precision. */
+char *atom_to_host_bytes(Arena *a, Atom *atom, size_t *len_out);
 
 /* Deep-copy an atom DAG into a different arena, preserving source pointer
    sharing within one copy episode. */

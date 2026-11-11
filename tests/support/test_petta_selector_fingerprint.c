@@ -206,7 +206,8 @@ static void check_admission_cache_invalidation(Arena *arena) {
     Space space;
     space_init(&space);
     SpaceProgramToken program = space_program_token(&space);
-    SymbolId source = atom_symbol(arena, "cache-generation-source")->sym_id;
+    SymbolId source =
+        atom_symbol_current_id(atom_symbol(arena, "cache-generation-source"));
     Atom *head = atom_symbol_id(arena, source);
     Atom *equation = atom_expr3(
         arena, atom_symbol_id(arena, g_builtin_syms.equals),

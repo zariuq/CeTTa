@@ -1,0 +1,9 @@
+true
+((a) (b))
+((a) (b) (c) (d))
+((a) (b))
+(())
+unsat
+((a c) (b d))
+(Error (__cetta_lib_asp_models ((disjunction (a b) () ()) (rule a (b) ()) (rule b (a) ()))) "a disjunction two of whose head atoms depend positively on each other: the program is not head-cycle-free")
+(Error (__cetta_lib_asp_models ((disjunction (a b) () ()) (rule c (a) ()) (rule b (c) ()) (rule a (b) ()))) "a disjunction two of whose head atoms depend positively on each other: the program is not head-cycle-free")

@@ -10,3 +10,5 @@
 !(assertEqual (path:join "/a/b" "c.mm") "/a/b/c.mm")
 !(assertEqual (path:join "/a/b" "../c.mm") "/a/c.mm")
 !(assertEqual (path:resolve-from "/tmp/demo/file.mm" "./helper.mm") "/tmp/demo/helper.mm")
+!(assertEqual (path:dirname 42) (Error (quote (path:dirname 42)) "expected a path string"))
+!(assertEqual (path:join "a" 7) (Error (quote (path:join "a" 7)) "expected a path string"))

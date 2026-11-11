@@ -45,21 +45,33 @@ typedef enum {
 HeTypeArgumentCheck he_type_argument_check(Atom *expected);
 Atom *he_type_result_demand(Arena *arena, Atom *codomain);
 
-/* HE's grounded operation types and library declarations: immutable
- * language data, built once per process and shared by every session.
- * Lookups build them on first use; false reports tables that failed to
- * load. */
+/* HE's grounded operation types and library declarations: immutable after
+ * construction, owned by the active runtime context and qualified by its
+ * symbol table. Lookups build them on first use; false reports a failed
+ * construction whose partial state is released before a later retry. */
 bool he_library_tables_init(void);
-/* Native module operation identity, supplied by the existing HE catalog.
- * The process's shared catalog is initialized before HE execution. */
-extern SymbolId g_he_module_space_no_deps_symbol;
+/* Native module operation identity, supplied by the active HE catalog. */
+extern _Thread_local SymbolId g_he_module_space_no_deps_symbol;
+typedef struct CettaHeTypeTables CettaHeTypeTables;
+CettaHeTypeTables *he_type_tables_new(void);
+void he_type_tables_free(CettaHeTypeTables *tables);
+CettaHeTypeTables *he_type_tables_exchange(CettaHeTypeTables *tables);
 /* HE's grounded operations type themselves, as upstream's grounded atoms do
  * (Grounded::type_): the type is not a declaration atom in any space, and a
  * declaration a program writes for the name does not change it.  The types
- * of a grounded operation's name, or 0 for any other symbol; `extensions`
- * adds CeTTa's extended signatures, which the profile with upstream's exact
- * semantics leaves out. */
-uint32_t he_grounded_symbol_types(SymbolId symbol, bool extensions,
+ * of a grounded operation's name, or 0 for any other symbol, as the profile's
+ * tier has them: each tier adds signatures to the one before it. */
+typedef enum {
+    /* Upstream's signatures, exactly. */
+    HE_GROUNDED_TIER_UPSTREAM = 0,
+    /* With CeTTa's extended signatures of upstream's operations. */
+    HE_GROUNDED_TIER_EXTENSIONS,
+    /* With the operations the extended profile alone provides: the
+     * transform family, whose arguments stay syntax. */
+    HE_GROUNDED_TIER_EXTENDED_PROFILE,
+} HeGroundedTier;
+
+uint32_t he_grounded_symbol_types(SymbolId symbol, HeGroundedTier tier,
                                   Atom *const **types);
 
 /* The declarations of HE's standard library, in upstream's order, parsed by

@@ -49,3 +49,7 @@
 !(let $v (fr a) (let $s (new-state $v)
    (let $u (change-state! $s $v) (wrap (get-state $s)))))
 !(let $v (fr a) (let $s (new-state (Box $v)) (wrap (get-state $s))))
+; Reification must complete inside a caller, including an empty bag.
+!(== (reify (superpose ())) ())
+!(== (reify (superpose (7))) ())
+!(reify (superpose (7 7)))

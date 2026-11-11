@@ -2,6 +2,7 @@
 ; Joins remain MeTTa control flow; matching, identities and candidates belong
 ; to the same native Space source used by match and pat.
 !(import! &self "durable_query.metta")
+!(import! &self (library act))
 !(import! &self "query_range_source.metta")
 
 (: kbq:open-space (-> %Undefined% Atom Number %Undefined%))
@@ -20,13 +21,13 @@
            ($failure (let $_ (store:close $copy) $failure)))))
        ($failure $failure)))
     (KbRefused query-row-budget)))
-(= (kbq:source-validate $source)
+(= (kbq:source-validate-store $source)
   (if (knowledge:tagged? $source KqSpaceViewV1 2)
     (let (KqSpaceViewV1 $view) $source
       (case (store:view-info $view)
         (((StoreViewInfo $epoch $revision) KbViewReady) ($failure $failure))))
     (kb:validate-view $source)))
-(= (kbq:source-observe $source)
+(= (kbq:source-observe-store $source)
   (if (knowledge:tagged? $source KqSpaceViewV2 3)
     (let (KqSpaceViewV2 $view $watch) $source (kbq:source-observe (KqSpaceViewV1 $view)))
    (if (knowledge:tagged? $source KqSpaceViewV1 2)
@@ -35,13 +36,13 @@
         (((StoreViewInfo $epoch $revision) (KqSpaceObservationV1 $epoch $revision))
          ($failure $failure))))
     (kb:observe-selector $source KbAll))))
-(= (kbq:source-close-view $source)
+(= (kbq:source-close-view-store $source)
   (if (knowledge:tagged? $source KqSpaceViewV2 3)
     (let (KqSpaceViewV2 $view $watch) $source
       (let* (($_ (store:close $view)) ($_ (store:close $watch))) KqClosed))
    (if (knowledge:tagged? $source KqSpaceViewV1 2)
     (let (KqSpaceViewV1 $view) $source (store:close $view)) KqClosed)))
-(= (kbq:program-check $source)
+(= (kbq:program-check-store $source)
   (if (knowledge:tagged? $source KqSpaceViewV2 3)
     (let (KqSpaceViewV2 $view $watch) $source (store:program-watch-check $watch)) StoreProgramCurrent))
 
@@ -61,7 +62,7 @@
 (: kbq:commit-read-command (-> %Undefined% Atom Atom Atom Atom Atom %Undefined%))
 (= (kbq:commit-read-command $owner $context $collection $request $command $changes)
   (durable-query:commit-command $owner $context $collection $request $command $changes))
-(= (kbq:begin-space $source $collection $pattern $template $bytes)
+(= (kbq:begin-space-store $source $collection $pattern $template $bytes)
   (if (knowledge:tagged? $source KqSpaceViewV1 2)
     (let (KqSpaceViewV1 $view) $source
       (case (durable-space:cursor $view $collection $pattern $template)
@@ -76,7 +77,9 @@
          ($checkpoint (store:space-query-checkpoint $query)))
     (if (== $checkpoint StoreQueryCheckpointed)
       (case (store:space-query-info $query)
-        (((StoreQueryInfo $scans $indexes $candidates $decoded $overflow)
+        ((StoreQueryInfoUnavailable
+          (kbq:space-answer $query $sequence $maximum $keys $bytes $answer 0 0))
+         ((StoreQueryInfo $scans $indexes $candidates $decoded $overflow)
           (if $overflow
             (let $_ (kbq:close-space-query $query)
               (KqFail (KbRefused query-statistics-overflow) 0 0))
@@ -108,6 +111,10 @@
   (case $state
     (((KqSpaceStateV1 $query $sequence $maximum $keys $bytes) (store:space-query-info $query))
      ((KqRangeStateV1 $config $pending $source $point) (range-i:inspect $config $source $point))
+     ((KqRemoteRangeStateV1 $job $program $maximum $sequence $limit $chunk $point)
+      (KqRemoteRangeAccessV1 $sequence $maximum $limit $chunk))
+     ((KqPlainRangeStateV1 $cursor $sequence $arity $position $lower $upper $program $maximum $point)
+      (KqHistoricalRangeAccessV1 $arity $position $lower $upper $sequence $maximum))
      ((KqRowsState $rows) KqNoActiveScanV1)
      ((KqPipeStateV1 $kind $active $config $data $maximum)
       (KqPipelineAccessV1 $kind $maximum (kbq:space-access $active)))
@@ -116,3 +123,74 @@
      ((KqInnerState $view $bytes $outer $program $mode $inner $missing $seen $row)
       (KqActivePairV1 (kbq:space-access $outer) (kbq:space-access $inner)))
      ($other KqNoActiveScanV1))))
+
+; Standalone snapshots and remote candidate providers share the ordinary
+; captured matcher. Historical observations confer no commit authority.
+(= (kbq:open-captured $space $plan $bytes) (if (and (kb:integer? $bytes) (and (> $bytes 0) (<= $bytes (durable-space:wire-limit)))) (let $captured (act:snapshot $space) (case $captured (((Error $where $why) (Error $where $why)) ($copy (case (kbq:open (KqCapturedSpaceV1 $copy) $plan $bytes) (((KqCursor $source $state $steps $keys $decoded) (case (store:program-watch-open) (((StoreProgramWatch $watch) (KqCursor (KqCapturedSpaceV2 $copy $watch) $state $steps $keys $decoded)) ($failure (let* (($_ (kbq:close-state $state)) ($_ (act:close! $copy))) $failure))))) ($failure (let $_ (act:close! $copy) $failure)))))))) (KbRefused query-row-budget)))
+(= (kbq:source-validate $source)
+  (case $source
+    (((KqRemoteViewV1 $space)
+      (case (store:remote-observation $space)
+        (((DbCapturedContextV1 $_ $_ $_ $_) KbViewReady) ($failure $failure))))
+     ((KqCapturedSpaceV1 $space) KbViewReady)
+     ($other (kbq:source-validate-store $source)))))
+(= (kbq:source-observe $source)
+  (case $source
+    (((KqRemoteViewV1 $space) (store:remote-observation $space))
+     ((KqRemoteViewV2 $space $watch) (store:remote-observation $space))
+     ((KqCapturedSpaceV1 $space) KqHistoricalSpaceObservationV1)
+     ((KqCapturedSpaceV2 $space $watch) KqHistoricalSpaceObservationV1)
+     ($other (kbq:source-observe-store $source)))))
+(= (kbq:source-close-view $source)
+  (case $source
+    (((KqRemoteViewV1 $space) (let $_ (store:close $space) KqClosed))
+     ((KqRemoteViewV2 $space $watch)
+      (let* (($_ (store:close $space)) ($_ (store:close $watch))) KqClosed))
+     ((KqCapturedSpaceV1 $space) (let $_ (act:close! $space) KqClosed))
+     ((KqCapturedSpaceV2 $space $watch)
+      (let* (($_ (act:close! $space)) ($_ (store:close $watch))) KqClosed))
+     ($other (kbq:source-close-view-store $source)))))
+(= (kbq:program-check $source)
+  (case $source
+    (((KqRemoteViewV2 $space $watch) (store:program-watch-check $watch))
+     ((KqCapturedSpaceV2 $space $watch) (store:program-watch-check $watch))
+     ($other (kbq:program-check-store $source)))))
+(= (kbq:begin-space $source $collection $pattern $template $bytes)
+  (case $source
+    (((KqRemoteViewV1 $space)
+      (kbq:begin-remote-space $space $collection $pattern $template $bytes))
+     ((KqCapturedSpaceV1 $space)
+      (if (== $collection data)
+        (case (store:space-query-source $space $pattern $template)
+          (((StoreQueryOpened $query $_ $_) (KqReady (KqSpaceStateV1 $query 0 $bytes 0 0)))
+           ($failure $failure)))
+        (KbRefused collection-absent)))
+     ($other (kbq:begin-space-store $source $collection $pattern $template $bytes)))))
+(= (kbq:space-answer $query $sequence $maximum $keys $bytes $answer $extra $read)
+  (case $answer
+    ((StoreQueryPaused (KqSkip (KqSpaceStateV1 $query $sequence $maximum $keys $bytes) $extra $read))
+     (StoreQueryEnd (let $_ (store:close $query) (KqEnd $extra $read)))
+     ((StoreQueryRow $same $value $identities)
+      (KqOut (SpaceAnswerV1 $value $identities) (KqSpaceStateV1 $query (+ $sequence 1) $maximum $keys $bytes) $extra $read))
+     ($failure (let $_ (kbq:close-space-query $query) (KqFail $failure $extra $read))))))
+
+; Related leaves capture the same database revision, including leaves opened
+; later by a join. The root is observation evidence, not a write capability.
+(= (kbq:open-remote $space $plan $bytes)
+  (if (and (kb:integer? $bytes) (and (> $bytes 0) (<= $bytes (durable-space:wire-limit))))
+    (let $copy (store:remote-related $space data)
+      (case (kbq:open (KqRemoteViewV1 $copy) $plan $bytes)
+        (((KqCursor $source $state $steps $keys $decoded)
+          (case (store:program-watch-open)
+            (((StoreProgramWatch $watch)
+              (KqCursor (KqRemoteViewV2 $copy $watch) $state $steps $keys $decoded))
+             ($failure (let* (($_ (kbq:close-state $state)) ($_ (store:close $copy))) $failure)))))
+         ($failure (let $_ (store:close $copy) $failure)))))
+    (KbRefused query-row-budget)))
+(= (kbq:begin-remote-space $root $collection $pattern $template $bytes)
+  (let $source (store:remote-related $root $collection)
+    (let* (($opened (store:space-query-source $source $pattern $template))
+           ($_ (store:close $source)))
+      (case $opened
+        (((StoreQueryOpened $query $_ $_) (KqReady (KqSpaceStateV1 $query 0 $bytes 0 0)))
+         ($failure $failure))))))

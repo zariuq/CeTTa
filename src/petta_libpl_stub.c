@@ -8,7 +8,8 @@ struct CettaLibPrologRuntime {
 
 CettaLibPrologRuntime *cetta_lib_prolog_runtime_new(void) {
     CettaLibPrologRuntime *runtime =
-        cetta_malloc(sizeof(*runtime));
+        malloc(sizeof(*runtime));
+    if (!runtime) return NULL;
     runtime->unavailable = true;
     return runtime;
 }

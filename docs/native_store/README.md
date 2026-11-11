@@ -7,6 +7,88 @@ Embedded programs and server clients use the same core and storage owner.
 The queue example is one application of these capabilities. The contracts and
 qualification scopes below describe the current implementation.
 
+## Database Spaces, embedded or served
+
+PeTTa programs import `(library db)`. `db:open` opens an embedded database;
+`db:connect` connects to `examples/native_db_server.metta` over a Unix socket.
+Both return connections with the same snapshot and transaction operations:
+
+```metta
+!(import! &self (library db))
+!(db:connect claims "claims.sock")
+!(db:transaction claims
+   (|-> ($space) (add-atom $space (edge alice bob))))
+!(match (db:snapshot claims) (edge alice $who) $who)
+!(db:close claims)
+```
+
+A transaction callback receives an ordinary editable Space, sees its edits,
+and runs once in the caller. A remote commit sends inert edits and portable
+answers, validates the captured database revision, and records the receipt
+atomically. `db:transaction-result` accepts a retained request and operation
+identity; `db:resolve` resolves a lost reply before another attempt. The
+callback is never automatically replayed. Snapshot and query children retain
+their connection independently of the parent handle.
+
+Unfiltered database scans enumerate stable occurrence keys in key order;
+capture and compaction preserve that order. It is not a commit-time ordering.
+Indexed candidate traversal follows the selected projection as described below.
+Use an explicit query ordering when an application needs a specified answer order.
+
+`db:query` and compositional matching plans use the ordinary client matcher.
+Related collection leaves, including later join legs, retain the same captured
+database revision. `KqRange` applies the existing stored-scalar range contract
+to embedded, remote and standalone ACT sources. The server transfers original
+candidate facts and saved identities; the client performs ordinary matching
+and projection. `KqIndexedI64Range` requires a declared V4 range index and
+returns Int64 fields in signed-value order with stable occurrence-key ties.
+General ranges retain the other-scalar or complete-scan fallback. Standalone
+ACT files have no declared database range index and refuse the indexed-only
+operation. Ordinary remote transaction proposals must fit the selected
+portable request policy; bulk transfer uses private chunked artifacts.
+
+Connections verify `DbProtocolV1` version 1 and original-fact, immutable-position,
+physical-domain and retained-session capabilities before admitting a remote
+database. Directory owner identity separates the logical epoch from the native physical commit
+domain, including independent backup copies. Unknown versions
+or missing required capabilities refuse explicitly. Capability discovery
+describes implementation support; an individual collection must still declare
+the index required by an indexed-only query.
+The DB service keeps quiet sessions open while enforcing partial-request and
+blocked-reply deadlines. Retained children outlive a logical parent close.
+`examples/db_server_client.metta` is an executable named-connection example;
+`CETTA_DB_SOCKET` selects its server.
+
+`db:compact` also works remotely. `db:compact-open`, `db:compact-step`,
+`db:compact-info` and `db:compact-cancel` expose cooperative jobs for embedded
+and remote connections. An open job retains its owner after connection close;
+each step takes an explicit work quantum. Cancellation leaves the frozen cut
+recoverable by a later compaction. Completed jobs retain inspectable status
+until `db:close`; `db:compact` closes its job automatically.
+
+The native DB server schedules automatic maintenance after writes when active
+delta bytes reach `max(8 MiB, base bytes / 4)`. A retained job advances between
+socket events with a selected work quantum, keeping the writer gate free
+during construction. Once idle, it performs no repeated MeTTa evaluation.
+Startup can resume an interrupted frozen cut; opening CDS2 never converts it.
+Cancelling a small manual compaction does not immediately restart that cut.
+`db:maintenance-info`, `db:maintenance-cancel` and `db:maintenance-resume`
+inspect and control the service-owned job. Cancellation releases construction
+and retains recoverable data; another write or explicit resume may schedule
+work again. A maintenance failure is observable separately from acknowledged
+database writes and does not rewrite their receipts.
+
+`CETTA_DB_MAINTENANCE_MEMORY` selects builder memory (default 32 MiB), and
+`CETTA_DB_MAINTENANCE_WORK` selects one step's work allowance (default 65536).
+These are construction policies, not database-size limits. Embedded callers
+use the explicit cooperative job API. `make test-db-maintenance` checks
+writer coexistence, retained readers, idle behaviour, cancellation, restart,
+legacy format preservation and failure isolation.
+See the [remote contract](REMOTE_SPACE_PROTOCOL.txt). `make test-remote-db`
+checks ordinary programs, retained readers, callback receipts and failures.
+The [ACT server acceptance map](ACT_SERVER_ACCEPTANCE.txt) states the combined
+scope, resource accounting and reproducible separating controls.
+
 ## ACT snapshots without Rust
 
 `(library act)` reads and writes PathMap/MORK `ACTree03` in native C and
@@ -42,24 +124,81 @@ to retain typed values, duplicate occurrences and saved identities.
 
 The PeTTa DB interface adds `db:export-act owner path` and
 `db:import-act owner path`, with collection-name overloads. Export captures
-one committed view; import uses one existing durable transaction and allocates
-occurrences in the destination database's domain. Neither callback nor an
-uncertain external action is automatically retried.
+one committed view. Import stages one portable row at a time into
+the existing disk-backed batch, including declared index postings and an
+origin map. One guarded publication installs metadata, facts, mappings and
+the durable receipt. It allocates destination occurrences and keeps its own
+publication handle across yields. Stale revisions, changed programs,
+incomplete input and failed staging publish nothing.
+
+`db:import-act-result owner collection request operation path` retains an
+explicit request. Its operation fingerprint includes the validated source
+profile and content digest. A repeated request returns the saved result;
+changing that artifact under the same request refuses as a collision.
+`act:info` supplies the captured file's profile, row count, byte length,
+SHA-256 and selected record policy. `durable-space:append-open`, `append-next`,
+`append-info`, `append-finish` and `append-close` expose staged admission to
+trusted MeTTa handlers.
+
+Remote import uploads bounded chunks to an unlinked server artifact, checks
+the whole-file digest and fully validates the ACT structure before staging
+database changes. Export builds a private artifact from one captured view;
+the caller downloads chunks into a private local publication file, validates
+it, then publishes its own destination. No client argument selects a server
+filesystem destination. Interrupted transfer and cancelled staging publish
+no database rows. A lost final admission reply remains uncertain and resolves
+through the same durable receipt API; the callback is never replayed.
+
+The server creates artifact files relative to an owning descriptor for its
+configured private socket directory. Files are unlinked immediately, so
+connection cleanup or process exit releases working data without leaving
+named upload/export artifacts. `DbTransferInfo` discovers the transfer
+version and selected chunk allowance. Low-level artifact build, validation,
+read, cancellation and admission routes are cooperative; the public
+`db:export-act` and `db:import-act` convenience calls drive those steps to
+completion. `make test-db-artifacts` checks both the independent protocol
+client and ordinary MeTTa calls, including lost replies and restart.
 
 Snapshot publication synchronizes the new file, renames it and synchronizes
 its directory. A directory-sync failure after rename returns `uncertain`;
 the destination may already contain the new image. Opening validates the
 image before exposing a Space. Queries use cursors over the immutable mapping,
 with first-three-field scalar indexes and a complete scan fallback. Startup
-validation is linear in the image; dumping currently constructs the encoded
-image and sorted entries in memory. This is not yet a bounded-memory bulk
-writer for billion-fact datasets.
+validation is linear in the image. Whole-Space dumping uses external sorted
+runs, full-byte body deduplication and sequential offset joins, with a
+configurable construction-buffer budget. One codec-sized row workspace,
+retained input ownership and mapped residency are additional. Its primitives
+are bounded by the selected record policy rather than a hard wall-time limit.
+See the [snapshot format](ACT_FORMAT.txt) for these resource boundaries.
 
-The live durable store still publishes its existing CDS2 index and journal.
-ACT snapshots do not replace transaction receipts, recovery, or the owner.
-Attaching ACT as a compacted durable base with a mutable delta remains a
-separate storage integration step. See [the format contract](ACT_FORMAT.txt)
-and [the integration requirements](ACT_SPACE_REQUIREMENTS.md).
+The native byte-trie kernel also provides a sorted-input file builder with
+bounded working heap, private frontier/key spools and reverse range cursors.
+The generic `CDBACT01` base codec streams packed byte values alongside that
+trie. `make test-act-stream test-native-act-base` checks these components;
+the [base format](ACT_BASE_FORMAT.txt) specifies their layout and ownership.
+The same file builder receives sorted file spans from the complete Space
+exporter. `make test-byte-run-sort test-act-export-faults` checks multi-pass
+sorting, large keys and interrupted construction/publication. Public
+`act:export-open`, `act:export-step`, `act:export-info` and `act:export-close`
+expose owning, cancellable in-process jobs; `act:dump!` drives that same job.
+
+`db:open` also accepts an existing ACTree03 or CACT0001 file. That connection
+is read-only and has one default collection, `data`. Its `db:snapshot` returns
+an ordinary captured Space; `db:query` and compositional Space query plans use
+the existing matcher and cursor. Closing the connection does not invalidate
+captured snapshots or queries. A write refuses before invoking the callback.
+ACT providers report unavailable disk-access counters explicitly, rather than
+inventing CSI scan counts. Snapshot evidence carries no write authority or
+freshness promise about another owner.
+
+New `(library db)` databases use the CDS3 publication owner with immutable
+ACT bases and CSI deltas. Existing CDS2 stores reopen unchanged; `db:compact`
+explicitly converts them. Compaction freezes a cut while new writes continue,
+then installs the base with the latest delta and logical revision. Captured
+readers retain their previous storage. Receipts and indexes remain ordinary
+records under the same owner. See the [store format](ACT_STORE_FORMAT.txt),
+[portable snapshot format](ACT_FORMAT.txt) and
+[integration requirements](ACT_SPACE_REQUIREMENTS.md).
 
 `make test-act-trie test-act-space` checks native round trips, byte ranges,
 allocation and publication failures, cross-process reopen, typed/open facts,
@@ -92,6 +231,11 @@ and synchronizes its parent entry before initialization. Its immediate parent
 must already be a private directory owned by the process; ancestors must exist
 durably.
 The existing `"create"` and `"existing"` modes retain their prior contracts.
+`"create-act-directory"` selects CDS3 only for a newly created store.
+`db:compact connection` builds and installs an ACT base; `db:info connection`
+reports the captured storage revision, base/delta bytes and frozen-cut state.
+Native service handlers can drive `store:compact-act-open/step/info` in work
+quanta; closing the job leaves a recoverable frozen cut.
 
 `store:space-edit` runs one callable against an owned workspace, checks complete
 Space/program reads, extracts its occurrence delta and closes it on every
@@ -910,9 +1054,27 @@ Use `durable_space` to maintain this descriptor rather than editing it by hand.
 
 For example, an edge `(knows alice bob)` has arity three. Declarations
 `((SpaceIndexV1 3 0) (SpaceIndexV1 3 1) (SpaceIndexV1 3 2))` supply relation,
-outgoing and incoming candidate access. A probe uses the last declared eligible
-projection whose pattern field is a symbol or string. This is a deterministic
-selection rule, not a cardinality optimizer or an intersection of indexes.
+outgoing and incoming candidate access. A projection is eligible when its arity
+matches and its pattern field is a symbol or string with an encodable exact key.
+With multiple eligible projections, a probe selects the projection with the
+fewest candidate postings, counting its exact bucket and wildcard bucket together.
+Ties select the last declared eligible projection. Selection uses only the
+captured root; later writes cannot change an open cursor's plan or candidates.
+
+The planner advances temporary key cursors in lockstep until one projection is
+exhausted. For m eligible projections and a minimum candidate count c, selection
+uses O(m * (c + 1)) cursor steps plus range-opening work, without decoding fact
+payloads. A single eligible projection needs no cardinality probe. The reader
+uses one projection rather than intersecting indexes. Candidate statistics count
+subsequent fact candidates; they do not include these planning cursor steps.
+
+Within the selected projection, exact postings precede wildcard postings, and
+each range follows occurrence-key order. Selecting another projection may change
+answer traversal order between snapshots, including after unrelated additions.
+Complete matching still returns the same unordered answer bag with the same
+occurrence multiplicities. Unfiltered scans and explicitly ordered range queries
+retain their respective ordering contracts. Bounded removal retains its scan
+path so index selection does not change which occurrences it removes.
 
 An indexed collection stores `(StoreSpaceV3 prefix occurrence-count indexes)`;
 each index descriptor is `(StoreSpaceIndexV1 arity position index-prefix)`.

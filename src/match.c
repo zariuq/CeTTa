@@ -372,8 +372,10 @@ static bool match_occurrence_identity_finite(const Atom *root) {
         g_match_dag_stack_cap = 32u;
         g_match_dag_stack = cetta_malloc(
             sizeof(*g_match_dag_stack) * g_match_dag_stack_cap);
-        if (!g_match_dag_stack)
+        if (!g_match_dag_stack) {
+            g_match_dag_stack_cap = 0u;
             return false;
+        }
     }
     sp = 0u;
     g_match_dag_stack[sp++] = (MatchDagFrame){root, 0u};
@@ -426,8 +428,10 @@ static bool match_occurrence_is_finite_dag_qualified(
         g_match_dag_stack_cap = 32u;
         g_match_dag_stack = cetta_malloc(
             sizeof(*g_match_dag_stack) * g_match_dag_stack_cap);
-        if (!g_match_dag_stack)
+        if (!g_match_dag_stack) {
+            g_match_dag_stack_cap = 0u;
             return false;
+        }
     }
     if (g_match_dag_hash_cap == 0u && !match_dag_hash_grow())
         return false;
@@ -568,6 +572,35 @@ static inline bool match_shared_ground_reflexivity_try(
     return true;
 }
 
+/* Structural equality of two ground atoms that opens at most *budget pairs
+ * of expressions and none whose atoms are shared: 1 equal, 0 unequal, -1 when
+ * the bound runs out or a rational view needs its own walk.  It agrees with
+ * the active read-view equality wherever it decides. */
+#define MATCH_GROUND_EQUAL_SHARED_BUDGET 256u
+
+static int match_ground_equal_shared(Atom *left, Atom *right,
+                                     uint32_t *budget) {
+    if (left == right && !atom_structural_may_have_nan(left))
+        return 1;
+    if (atom_structural_has_rational(left) ||
+        atom_structural_has_rational(right))
+        return -1;
+    if (left->kind != ATOM_EXPR || right->kind != ATOM_EXPR)
+        return atom_eq_with_resolved_spaces(left, right) ? 1 : 0;
+    if (left->expr.len != right->expr.len)
+        return 0;
+    if (*budget == 0u)
+        return -1;
+    (*budget)--;
+    for (CettaExprIndex index = 0u; index < left->expr.len; index++) {
+        int child = match_ground_equal_shared(
+            left->expr.elems[index], right->expr.elems[index], budget);
+        if (child != 1)
+            return child;
+    }
+    return 1;
+}
+
 /* Two finite ground expressions have no substitution effect.  Interned
  * closed DAGs already factor through identity/hash; eval-heap trees use
  * structural equality once acyclicity is certified. */
@@ -585,6 +618,16 @@ static bool match_finite_ground_equal_try(
         !atom_structural_has_rational(left) &&
         !atom_structural_has_rational(right)) {
         *equal_out = false;
+        return true;
+    }
+    /* Shared subterms are equal without a walk, so a value rebuilt around
+     * another's parts, as a returned result is around the rest of its
+     * input, is decided by the few pairs that differ.  The bound keeps this
+     * finite on any graph; past it, the audit below decides. */
+    uint32_t budget = MATCH_GROUND_EQUAL_SHARED_BUDGET;
+    int shared = match_ground_equal_shared(left, right, &budget);
+    if (shared >= 0) {
+        *equal_out = shared == 1;
         return true;
     }
     if (!match_occurrence_is_finite_dag(left) ||
@@ -772,6 +815,29 @@ static __thread size_t g_binding_entry_retained_bytes = 0;
 static __thread size_t g_binding_constraint_active_bytes = 0;
 static __thread size_t g_binding_constraint_pool_bytes = 0;
 static __thread size_t g_binding_constraint_retained_bytes = 0;
+static pthread_key_t g_binding_cache_key;
+static pthread_once_t g_binding_cache_once = PTHREAD_ONCE_INIT;
+static int g_binding_cache_key_error;
+static _Thread_local bool g_binding_cache_registered;
+
+static void bindings_cache_thread_exit(void *unused) {
+    (void)unused;
+    bindings_thread_cache_free();
+}
+
+static void bindings_cache_key_init(void) {
+    g_binding_cache_key_error = pthread_key_create(
+        &g_binding_cache_key, bindings_cache_thread_exit);
+}
+
+static bool bindings_cache_register(void) {
+    if (g_binding_cache_registered) return true;
+    if (pthread_once(&g_binding_cache_once, bindings_cache_key_init) ||
+        g_binding_cache_key_error ||
+        pthread_setspecific(g_binding_cache_key, &g_binding_cache_registered))
+        return false;
+    return g_binding_cache_registered = true;
+}
 
 static void bindings_pool_free_all(BindingPoolBlock **pools) {
     for (uint32_t i = 0; i < BINDINGS_POOL_CLASS_COUNT; i++) {
@@ -786,6 +852,10 @@ static void bindings_pool_free_all(BindingPoolBlock **pools) {
 }
 
 void bindings_thread_cache_free(void) {
+    if (g_binding_cache_registered) {
+        (void)pthread_setspecific(g_binding_cache_key, NULL);
+        g_binding_cache_registered = false;
+    }
     bindings_pool_free_all(g_binding_entry_pools);
     bindings_pool_free_all(g_binding_constraint_pools);
     free(g_bindings_single_reach_path);
@@ -1034,10 +1104,11 @@ static Binding *bindings_entries_alloc(uint32_t cap) {
             &block->references, 1u, memory_order_relaxed);
         return (Binding *)(block + 1);
     }
+    block = cetta_malloc(sizeof(*block) + bytes);
+    if (!block) return NULL;
     g_binding_entry_active_bytes += bytes;
     g_binding_entry_retained_bytes += bytes;
     bindings_note_entry_pool_metrics();
-    block = cetta_malloc(sizeof(*block) + bytes);
     block->next = NULL;
     block->capacity = cap;
     atomic_init(&block->references, 1u);
@@ -1055,7 +1126,7 @@ static void bindings_entries_release(Binding *entries, uint32_t cap) {
     if (previous != 1u)
         return;
     bytes = sizeof(Binding) * cap;
-    int klass = bindings_pool_class(cap);
+    int klass = bindings_cache_register() ? bindings_pool_class(cap) : -1;
     if (klass < 0) {
         if (g_binding_entry_active_bytes >= bytes)
             g_binding_entry_active_bytes -= bytes;
@@ -1098,10 +1169,11 @@ static BindingConstraint *bindings_constraints_alloc(uint32_t cap) {
             &block->references, 1u, memory_order_relaxed);
         return (BindingConstraint *)(block + 1);
     }
+    block = cetta_malloc(sizeof(*block) + bytes);
+    if (!block) return NULL;
     g_binding_constraint_active_bytes += bytes;
     g_binding_constraint_retained_bytes += bytes;
     bindings_note_constraint_pool_metrics();
-    block = cetta_malloc(sizeof(*block) + bytes);
     block->next = NULL;
     block->capacity = cap;
     atomic_init(&block->references, 1u);
@@ -1119,7 +1191,7 @@ static void bindings_constraints_release(BindingConstraint *constraints, uint32_
     if (previous != 1u)
         return;
     bytes = sizeof(BindingConstraint) * cap;
-    int klass = bindings_pool_class(cap);
+    int klass = bindings_cache_register() ? bindings_pool_class(cap) : -1;
     if (klass < 0) {
         if (g_binding_constraint_active_bytes >= bytes)
             g_binding_constraint_active_bytes -= bytes;
@@ -1173,6 +1245,7 @@ static size_t bindings_var_id_hash(VarId id) {
 BindingsExclusiveFrame *bindings_exclusive_frame_new(void) {
     BindingsExclusiveFrame *frame =
         cetta_malloc(sizeof(BindingsExclusiveFrame));
+    if (!frame) return NULL;
     memset(frame, 0, sizeof(*frame));
     return frame;
 }
@@ -2604,6 +2677,7 @@ static bool bindings_flatten_unique(Bindings *b) {
     while (next_cap <= b->len)
         next_cap *= 2u;
     next = bindings_entries_alloc(next_cap);
+    if (!next) return false;
     if (b->shared_len > 0u)
         memcpy(next, b->shared_entries,
                sizeof(Binding) * b->shared_len);
@@ -2656,6 +2730,7 @@ static bool bindings_reserve_entries(Bindings *b, uint32_t needed) {
             CETTA_RUNTIME_COUNTER_BINDINGS_VERSION_ENTRY_DETACH);
     }
     next = bindings_entries_alloc(next_cap);
+    if (!next) return false;
     exclusive_have = b->len - b->shared_len;
     if (exclusive_have > 0u)
         memcpy(next, b->entries, sizeof(Binding) * exclusive_have);
@@ -2677,6 +2752,7 @@ static bool bindings_reserve_constraints(Bindings *b, uint32_t needed) {
             CETTA_RUNTIME_COUNTER_BINDINGS_VERSION_CONSTRAINT_DETACH);
     }
     BindingConstraint *next = bindings_constraints_alloc(next_cap);
+    if (!next) return false;
     if (b->eq_len > 0)
         memcpy(next, b->constraints, sizeof(BindingConstraint) * b->eq_len);
     bindings_constraints_release(b->constraints, b->eq_cap);
@@ -2750,6 +2826,7 @@ static BindingsReachability bindings_value_reaches_var(
     Bindings *bindings, BindingValue value, VarId target);
 
 static bool bindings_single_reach_path_reserve(size_t needed) {
+    if (!bindings_cache_register()) return false;
     if (needed <= g_bindings_single_reach_path_cap)
         return true;
     size_t capacity = g_bindings_single_reach_path_cap
@@ -5538,7 +5615,8 @@ typedef struct BindingApplyGraph {
     struct BindingApplyGraph *active_path;
 } BindingApplyGraph;
 
-static size_t bindings_apply_graph_hash(Atom *source, BindingsApplyScope scope,
+static size_t bindings_apply_graph_hash(Atom *source,
+                                        BindingsApplyScope scope,
                                         uint32_t code_depth) {
     uint64_t hash = (uint64_t)(uintptr_t)source;
     hash ^= scope.epoch.word * UINT64_C(0x9e3779b97f4a7c15);
@@ -7239,7 +7317,9 @@ static bool binding_set_ensure_one(BindingSet *bs) {
         next = limit;
     if (next < need)
         return false;
-    bs->items = cetta_realloc(bs->items, sizeof(Bindings) * (size_t)next);
+    Bindings *items = cetta_realloc(bs->items, sizeof(Bindings) * (size_t)next);
+    if (!items) return false;
+    bs->items = items;
     bs->cap = next;
     return true;
 }
@@ -7295,9 +7375,11 @@ bool bindings_builder_trail_reserve(BindingsBuilder *bb, uint32_t needed) {
         SIZE_MAX / sizeof(BindingsBuilderTrailEntry)) {
         return false;
     }
-    bb->trail = cetta_realloc(bb->trail,
+    BindingsBuilderTrailEntry *trail = cetta_realloc(bb->trail,
                               sizeof(BindingsBuilderTrailEntry) *
                                   (size_t)next_cap);
+    if (!trail) return false;
+    bb->trail = trail;
     bb->trail_cap = next_cap;
     return true;
 }
@@ -7316,8 +7398,10 @@ static bool bindings_builder_frame_undo_reserve(
     }
     if ((size_t)next_cap > SIZE_MAX / sizeof(*bb->frame_undo))
         return false;
-    bb->frame_undo = cetta_realloc(
+    BindingsFrameUndoEntry *undo = cetta_realloc(
         bb->frame_undo, (size_t)next_cap * sizeof(*bb->frame_undo));
+    if (!undo) return false;
+    bb->frame_undo = undo;
     bb->frame_undo_cap = next_cap;
     return true;
 }
@@ -7853,6 +7937,21 @@ bool bindings_builder_payloads_satisfy(const BindingsBuilder *bb,
                 return false;
     }
     return true;
+}
+
+size_t bindings_builder_owned_vector_bytes(const BindingsBuilder *bb) {
+    if (!bb)
+        return 0u;
+    size_t bytes = 0u;
+    bytes += (size_t)bb->current.cap * sizeof(*bb->current.entries);
+    bytes += (size_t)bb->current.eq_cap * sizeof(*bb->current.constraints);
+    bytes += (size_t)bb->owner_undo_cap * sizeof(*bb->owner_undo);
+    bytes += (size_t)bb->trail_cap * sizeof(*bb->trail);
+    bytes += (size_t)bb->frame_undo_cap * sizeof(*bb->frame_undo);
+    bytes += (size_t)bb->frame_registration_undo_cap *
+        sizeof(*bb->frame_registration_undo);
+    bytes += (size_t)bb->prime_trail_cap * sizeof(*bb->prime_trail);
+    return bytes;
 }
 
 void bindings_builder_free(BindingsBuilder *bb) {
@@ -9037,8 +9136,10 @@ static bool bindings_support_push(BindingsSupportCollector *collector,
         size_t cap = collector->cap ? collector->cap * 2u : 16u;
         if (cap < collector->cap || cap > SIZE_MAX / sizeof(*collector->pending))
             return false;
-        collector->pending = cetta_realloc(
+        BindingValue *pending = cetta_realloc(
             collector->pending, cap * sizeof(*collector->pending));
+        if (!pending) return false;
+        collector->pending = pending;
         collector->cap = cap;
     }
     collector->pending[collector->len++] = value;
@@ -9132,12 +9233,19 @@ static bool bindings_captured_support_present(const Atom *atom, void *unused) {
     return !captured || captured->support_count != 0u;
 }
 
+/* A captured bindings value is identity-bearing, and the flag rises to every
+ * expression holding one: a subterm without it holds none. */
+static bool bindings_support_barrier(const Atom *atom, void *unused) {
+    (void)unused;
+    return !atom_has_identity_grounded(atom);
+}
+
 bool bindings_value_has_captured_support(const Atom *value) {
     if (!value || !atom_has_identity_grounded(value))
         return false;
     bool complete = false;
     bool found = atom_graph_any_checked(value, bindings_captured_support_present,
-        NULL, NULL, SIZE_MAX, &complete);
+        bindings_support_barrier, NULL, SIZE_MAX, &complete);
     return !complete || found;
 }
 
@@ -9165,6 +9273,7 @@ bool bindings_collect_support(const Bindings *bindings,
     if (!bindings_support_drain(&collector)) goto done;
     if (collector.ids.len) {
         *ids = cetta_malloc(sizeof(**ids) * collector.ids.len);
+        if (!*ids) { ok = false; goto done; }
         memcpy(*ids, collector.ids.items, sizeof(**ids) * collector.ids.len);
     }
     *count = collector.ids.len;
@@ -9203,6 +9312,7 @@ bool bindings_contextualize_unframed(
     uint32_t original_len = converted.len;
     Binding *pending = original_len
         ? cetta_malloc((size_t)original_len * sizeof(*pending)) : NULL;
+    if (original_len && !pending) { bindings_free(&converted); return false; }
     uint32_t pending_len = 0u;
     for (uint32_t index = 0u; index < original_len; index++) {
         Binding entry = *bindings_entry_at(&converted, index);
@@ -9228,6 +9338,9 @@ bool bindings_contextualize_unframed(
         ? cetta_malloc((size_t)inventory->len * sizeof(*slots)) : NULL;
     Atom **variables = inventory->len
         ? cetta_malloc((size_t)inventory->len * sizeof(*variables)) : NULL;
+    if (inventory->len && (!slots || !variables)) {
+        free(slots); free(variables); goto fail;
+    }
     for (uint32_t slot = 0u; slot < inventory->len; slot++) {
         slots[slot] = var_id_from_base((uint64_t)slot + 1u);
         variables[slot] = inventory->items[slot].mapped_var;
@@ -9282,6 +9395,7 @@ static bool bindings_prepare_var_batch(Bindings *bindings,
     if ((size_t)count > SIZE_MAX / (2u * sizeof(Atom *)))
         return false;
     Atom **roots = cetta_malloc((size_t)count * 2u * sizeof(*roots));
+    if (!roots) return false;
     for (uint32_t i = 0u; i < count; i++) {
         roots[2u * (size_t)i] = variables[i];
         roots[2u * (size_t)i + 1u] = values[i];
@@ -15605,7 +15719,7 @@ static bool match_cursor_copy_reach(MatchGraphCheck *check,
         BindingValue value = check->items[check->len - 1u].value;
         check->probe = bindings_apply_graph_hash(value.skeleton,
             (BindingsApplyScope){.epoch = binding_value_epoch(value),
-                .kind = binding_value_kind(value)}, 0u) & (check->graph.cap - 1u);
+                                 .kind = binding_value_kind(value)}, 0u) & (check->graph.cap - 1u);
     }
     return true;
 }
@@ -15710,8 +15824,9 @@ bool match_atoms_cursor_test_graph(const CettaMatchCursor *cursor,
 }
 
 size_t match_atoms_cursor_test_bucket(Atom *atom, size_t mask) {
-    return bindings_apply_graph_hash(atom, (BindingsApplyScope){
-        .epoch = CETTA_FRAME_IDENTITY_NONE, .kind = BINDING_VALUE_MATERIALIZED}, 0u) & mask;
+    return bindings_apply_graph_hash(atom,
+        (BindingsApplyScope){.epoch = CETTA_FRAME_IDENTITY_NONE,
+                             .kind = BINDING_VALUE_MATERIALIZED}, 0u) & mask;
 }
 #endif
 

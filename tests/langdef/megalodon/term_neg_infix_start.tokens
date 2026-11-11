@@ -1,0 +1,13 @@
+INFIX
+(NAM "+")
+(NUM False "300" None None)
+(NAM "left")
+DEQ
+(NAM "add")
+DOT
+AXIOM
+(NAM "a")
+COLON
+(NAM "+")
+(NAM "x")
+DOT

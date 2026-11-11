@@ -121,6 +121,10 @@ def classify(
 ) -> tuple[str, bool, bool, bool]:
     petta_exit, petta_stdout, petta_stderr = petta
     cetta_exit, cetta_stdout, cetta_stderr = cetta
+    if petta_exit == "timeout" or cetta_exit == "timeout":
+        status = ("BOTH_TIMEOUT" if petta_exit == cetta_exit else
+                  "PETTA_TIMEOUT" if petta_exit == "timeout" else "CETTA_TIMEOUT")
+        return status, False, False, False
     stdout_observation_equal = corpus.stdout_observation_equal(
         petta_stdout, cetta_stdout, stdout_contract
     )
@@ -156,9 +160,15 @@ def semantic_stderr(text: str) -> str:
     return OPTIONAL_JANUS_INIT_FAILURE_RE.sub("", text)
 
 
-def run_timed(function: object, *arguments: object) -> tuple[object, float]:
+def run_timed(function: object, *arguments: object,
+              record_timeouts: bool = False) -> tuple[object, float]:
     started = time.monotonic()
-    result = function(*arguments)  # type: ignore[operator]
+    try:
+        result = function(*arguments)  # type: ignore[operator]
+    except RuntimeError as error:
+        if not record_timeouts or " timed out after " not in str(error):
+            raise
+        result = ("timeout", "", str(error))
     return result, time.monotonic() - started
 
 
@@ -171,6 +181,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--per-stratum", type=int, default=1)
     parser.add_argument("--all-tracked", action="store_true")
     parser.add_argument("--timeout", type=float, default=30.0)
+    parser.add_argument("--record-timeouts", action="store_true",
+                        help="record incomplete timing cells and continue; never count them as matches")
     parser.add_argument("--require-match", action="store_true")
     parser.add_argument(
         "--search-controller",
@@ -268,7 +280,8 @@ def main() -> int:
                     arguments.controller_stats,
                 )
             )
-            result, seconds = run_timed(function, *call_arguments)
+            result, seconds = run_timed(function, *call_arguments,
+                                        record_timeouts=arguments.record_timeouts)
             results[engine] = result  # type: ignore[assignment]
             elapsed[engine] = seconds
 
@@ -361,6 +374,7 @@ def main() -> int:
     summary = {
         "schema": SCHEMA,
         "selection_mode": selection_mode,
+        "record_timeouts": arguments.record_timeouts,
         "seed": seed,
         "per_stratum": (
             None if arguments.all_tracked else arguments.per_stratum

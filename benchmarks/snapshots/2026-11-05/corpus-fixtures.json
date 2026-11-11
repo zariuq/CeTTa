@@ -1,0 +1,65 @@
+{
+  "git_import2.metta": {
+    "class": "external",
+    "name": "local-git-and-build-fixture",
+    "mode": "complete",
+    "kind": "local-git",
+    "stdin": "",
+    "files": [
+      "tests/petta/fixtures/faiss/build.sh",
+      "tests/petta/fixtures/faiss/faiss.pl",
+      "tests/petta/fixtures/faiss/embed.pl",
+      "tests/petta/fixtures/faiss/lib_faiss.metta"
+    ],
+    "source_replacements": {
+      "https://github.com/patham9/faiss_ffi": "./faiss_ffi",
+      "build.sh": "../../fixture/build.sh",
+      "(library lib_faiss)": "(library faiss_ffi lib_faiss)"
+    },
+    "source_prefix": "!(import! &self (library lib_import))\n\n"
+  },
+  "greedy_chess.metta": {
+    "class": "interactive",
+    "name": "scripted-quit-session",
+    "mode": "complete",
+    "stdin": "q\n"
+  },
+  "llm_cities.metta": {
+    "class": "external",
+    "name": "deterministic-llm-fixture",
+    "mode": "complete",
+    "kind": "patched-library",
+    "stdin": "",
+    "python_files": [
+      "openai.py"
+    ],
+    "library_file": "lib/lib_llm.metta",
+    "library_replacements": {
+      "(= (py-str-helper () $outp) $outp)\n(= (py-str-helper $L $outp)\n   (let* (($head (car-atom $L))\n          ($tail (cdr-atom $L))\n          ($outp2 (py-call (operator.add $outp (py-call (str $head))))))\n     (py-str-helper $tail $outp2)))\n": "(= (py-str-helper $L $outp)\n   (if (== $L ())\n       $outp\n       (let* (($head (car-atom $L))\n              ($tail (cdr-atom $L))\n              ($outp2 (py-call (operator.add $outp (py-call (str $head))))))\n         (py-str-helper $tail $outp2))))\n"
+    }
+  },
+  "repl.metta": {
+    "class": "interactive",
+    "name": "scripted-prefix-session",
+    "mode": "prefix",
+    "stdin": "(+ 1 2)\n",
+    "expected_prefix": "3\n"
+  },
+  "test_datetime.metta": {
+    "class": "external",
+    "name": "deterministic-clock-fixture",
+    "mode": "complete",
+    "kind": "source-file-with-library",
+    "stdin": "",
+    "source_file": "tests/petta/fixtures/test_datetime_fixed.metta"
+  },
+  "torch.metta": {
+    "class": "external",
+    "name": "deterministic-python-torch-fixture",
+    "mode": "complete",
+    "stdin": "",
+    "python_files": [
+      "torch.py"
+    ]
+  }
+}

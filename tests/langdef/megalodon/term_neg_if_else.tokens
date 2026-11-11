@@ -1,0 +1,12 @@
+NOTATION
+(NAM "IfThenElse")
+(NAM "If_i")
+DOT
+AXIOM
+(NAM "a")
+COLON
+IF
+(NAM "x")
+THEN
+(NAM "y")
+DOT

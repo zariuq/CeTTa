@@ -663,7 +663,230 @@ typedef struct {
      * proofs citing one), open addressing over name + 1 */
     uint32_t *unproved;
     size_t unproved_cap, unproved_len;
+    /* verdicts, when the caller keeps a ledger */
+    MgLedger *ledger;
+    MgOrigin item_origin;
+    /* each theorem's work budget (0: none), and whether the pending
+     * theorem's kernel check ran out of it */
+    uint64_t theorem_work;
+    bool exhausted;
 } Importer;
+
+/* ── the ledger ───────────────────────────────────────────────────────── */
+
+typedef struct {
+    char *name;
+    uint32_t id;
+    uint64_t line;
+    bool theorem;
+    uint8_t origin, verdict;
+    uint32_t ax_off, ax_len;   /* document axioms, ledger positions ascending */
+    uint32_t up_off, up_len;   /* cited theorems without authority */
+    uint32_t ext;              /* cited knowns from before the ledger */
+    uint64_t work;             /* units its checking used (budgeted theorems) */
+} LedgerRow;
+
+struct MgLedger {
+    LedgerRow *rows;
+    uint32_t len, cap;
+    uint32_t *pool;
+    size_t pool_len, pool_cap;
+    /* by identity: position + 1 of the row a citation rests on */
+    uint32_t *index;
+    uint32_t index_cap, index_len;
+    bool incomplete;
+};
+
+typedef struct {
+    uint32_t *v;
+    size_t len, cap;
+} U32Vec;
+
+static bool vec_push(U32Vec *v, uint32_t x) {
+    if (v->len == v->cap) {
+        size_t cap = v->cap ? v->cap * 2u : 16u;
+        uint32_t *grown = mg_sys_realloc(v->v, sizeof(uint32_t) * cap);
+        if (!grown)
+            return false;
+        v->v = grown;
+        v->cap = cap;
+    }
+    v->v[v->len++] = x;
+    return true;
+}
+
+static int u32_cmp(const void *a, const void *b) {
+    uint32_t x = *(const uint32_t *)a, y = *(const uint32_t *)b;
+    return x < y ? -1 : x > y;
+}
+
+static void vec_sort_unique(U32Vec *v) {
+    if (v->len < 2u)
+        return;
+    qsort(v->v, v->len, sizeof(uint32_t), u32_cmp);
+    size_t k = 1;
+    for (size_t i = 1; i < v->len; ++i)
+        if (v->v[i] != v->v[k - 1u])
+            v->v[k++] = v->v[i];
+    v->len = k;
+}
+
+MgLedger *mg_ledger_new(void) {
+    MgLedger *l = mg_sys_alloc(sizeof *l);
+    if (l)
+        memset(l, 0, sizeof *l);
+    return l;
+}
+
+void mg_ledger_free(MgLedger *l) {
+    if (!l)
+        return;
+    for (uint32_t i = 0; i < l->len; ++i)
+        mg_sys_free(l->rows[i].name);
+    mg_sys_free(l->rows);
+    mg_sys_free(l->pool);
+    mg_sys_free(l->index);
+    mg_sys_free(l);
+}
+
+bool mg_ledger_complete(const MgLedger *l) { return l && !l->incomplete; }
+
+uint32_t mg_ledger_len(const MgLedger *l) { return l ? l->len : 0u; }
+
+void mg_ledger_get(const MgLedger *l, uint32_t i, MgLedgerEntry *out) {
+    const LedgerRow *r = &l->rows[i];
+    *out = (MgLedgerEntry){
+        .name = r->name, .id = r->id, .line = r->line, .theorem = r->theorem,
+        .origin = (MgOrigin)r->origin, .verdict = (MgVerdict)r->verdict,
+        .axioms = l->pool + r->ax_off, .axiom_count = r->ax_len,
+        .unproved = l->pool + r->up_off, .unproved_count = r->up_len,
+        .external_count = r->ext, .work = r->work,
+    };
+}
+
+static bool row_authority(const LedgerRow *r) {
+    return !r->theorem || r->verdict == MG_VERDICT_CHECKED || r->verdict == MG_VERDICT_REPROVED;
+}
+
+/* What citing a row assumes: 0 nothing beyond the signature, 1 document
+ * axioms through a proof, 2 a document axiom, 3 no authority. */
+static int row_rank(const LedgerRow *r) {
+    if (!r->theorem)
+        return r->origin == MG_ORIGIN_SIGNATURE ? 0 : 2;
+    if (!row_authority(r))
+        return 3;
+    return r->ax_len ? 1 : 0;
+}
+
+static size_t ledger_slot(uint32_t id, uint32_t cap) {
+    return (size_t)(((uint64_t)id + 1u) * UINT64_C(0x9e3779b97f4a7c15) >> 17) & (cap - 1u);
+}
+
+/* The row a citation of `id` rests on, or UINT32_MAX. */
+static uint32_t ledger_find(const MgLedger *l, uint32_t id) {
+    if (!l->index_cap)
+        return UINT32_MAX;
+    for (size_t i = ledger_slot(id, l->index_cap);; i = (i + 1u) & (l->index_cap - 1u)) {
+        uint32_t v = l->index[i];
+        if (!v)
+            return UINT32_MAX;
+        if (l->rows[v - 1u].id == id)
+            return v - 1u;
+    }
+}
+
+static bool ledger_index(MgLedger *l, uint32_t pos) {
+    if ((l->index_len + 1u) * 2u > l->index_cap) {
+        uint32_t cap = l->index_cap ? l->index_cap * 2u : 256u;
+        uint32_t *grown = mg_sys_alloc(sizeof(uint32_t) * cap);
+        if (!grown)
+            return false;
+        memset(grown, 0, sizeof(uint32_t) * cap);
+        for (uint32_t i = 0; i < l->index_cap; ++i) {
+            uint32_t v = l->index[i];
+            if (!v)
+                continue;
+            size_t j = ledger_slot(l->rows[v - 1u].id, cap);
+            while (grown[j])
+                j = (j + 1u) & (cap - 1u);
+            grown[j] = v;
+        }
+        mg_sys_free(l->index);
+        l->index = grown;
+        l->index_cap = cap;
+    }
+    uint32_t id = l->rows[pos].id;
+    size_t i = ledger_slot(id, l->index_cap);
+    for (; l->index[i]; i = (i + 1u) & (l->index_cap - 1u)) {
+        uint32_t cur = l->index[i] - 1u;
+        if (l->rows[cur].id == id) {
+            if (row_rank(&l->rows[pos]) < row_rank(&l->rows[cur]))
+                l->index[i] = pos + 1u;
+            return true;
+        }
+    }
+    l->index[i] = pos + 1u;
+    ++l->index_len;
+    return true;
+}
+
+static bool pool_push(MgLedger *l, const U32Vec *v, uint32_t *off) {
+    if (l->pool_len + v->len > UINT32_MAX)
+        return false;
+    if (l->pool_len + v->len > l->pool_cap) {
+        size_t cap = l->pool_cap ? l->pool_cap : 1024u;
+        while (cap < l->pool_len + v->len)
+            cap *= 2u;
+        uint32_t *grown = mg_sys_realloc(l->pool, sizeof(uint32_t) * cap);
+        if (!grown)
+            return false;
+        l->pool = grown;
+        l->pool_cap = cap;
+    }
+    *off = (uint32_t)l->pool_len;
+    if (v->len)
+        memcpy(l->pool + l->pool_len, v->v, sizeof(uint32_t) * v->len);
+    l->pool_len += v->len;
+    return true;
+}
+
+static void ledger_axiom(Importer *im, const char *name, uint32_t id, uint64_t line);
+
+static void ledger_add(MgLedger *l, const char *name, uint32_t id, uint64_t line, bool theorem,
+                       MgOrigin origin, MgVerdict verdict, const U32Vec *ax, const U32Vec *up,
+                       uint32_t ext, uint64_t work) {
+    if (l->incomplete)
+        return;
+    if (l->len == l->cap) {
+        uint32_t cap = l->cap ? l->cap * 2u : 256u;
+        LedgerRow *grown = mg_sys_realloc(l->rows, sizeof(LedgerRow) * cap);
+        if (!grown) {
+            l->incomplete = true;
+            return;
+        }
+        l->rows = grown;
+        l->cap = cap;
+    }
+    size_t n = strlen(name);
+    char *copy = mg_sys_alloc(n + 1u);
+    LedgerRow r = {.name = copy, .id = id, .line = line, .theorem = theorem,
+                   .origin = (uint8_t)origin, .verdict = (uint8_t)verdict,
+                   .ax_len = (uint32_t)ax->len, .up_len = (uint32_t)up->len, .ext = ext,
+                   .work = work};
+    if (!copy || !pool_push(l, ax, &r.ax_off) || !pool_push(l, up, &r.up_off)) {
+        mg_sys_free(copy);
+        l->incomplete = true;
+        return;
+    }
+    memcpy(copy, name, n + 1u);
+    l->rows[l->len] = r;
+    if (!ledger_index(l, l->len)) {
+        mg_sys_free(copy);
+        l->incomplete = true;
+        return;
+    }
+    ++l->len;
+}
 
 static size_t unproved_slot(uint32_t name, size_t cap) {
     return (size_t)(((uint64_t)name + 1u) * UINT64_C(0x9e3779b97f4a7c15) >> 17) & (cap - 1u);
@@ -792,6 +1015,11 @@ static bool admit_out(Importer *im, MgItem *item, uint64_t line, const char *wha
     MgStatus st = mg_theory_admit(im->t, im->budget, item, 0, out);
     if (st == MG_OK)
         return true;
+    /* a budgeted theorem's check ran out: its verdict, not a stop */
+    if (st == MG_EXHAUSTED && im->theorem_work && im->pending && item->kind == MG_ITEM_THEOREM) {
+        im->exhausted = true;
+        return false;
+    }
     const char *why = (st == MG_REFUSED || st == MG_MALFORMED)
         ? check_reason(im->t, item) : mg_status_name(st);
     char label[256];
@@ -828,19 +1056,19 @@ static uint32_t type_levels(const MgTp *t) {
     return n;
 }
 
-static bool import_prim(Importer *im, const MgSx *x) {
-    uint64_t j, line;
-    const char *name = x->len == 6u ? sx_string(x->items[2]) : NULL;
-    const char *hash = name ? sx_string(x->items[3]) : NULL;
-    if (!hash || !sx_nat(x->items[1], &j) || !sx_nat(x->items[5], &line))
-        return stop(im, x->line, MG_MALFORMED, "malformed PRIM%s%s", NULL, NULL);
+/* ── admission of the declarations an export states ──────────────────
+ * Each admit_* receives a decoded item: its source name, its stated
+ * identity, its type binders, and its type, body, proposition or proof in
+ * the kernel's conventions (type binders included).  The export reader
+ * below decodes -sexprinfo rows into them; the native front end
+ * (mg_elab.c) states its declarations through MgAdmission. */
+
+static bool admit_prim(Importer *im, const char *name, const char *hash, uint64_t j,
+                       MgTp *type, uint64_t line) {
     MgTheory *t = im->t;
     if (j >= t->prim_len || !t->prims[j])
         return stop(im, line, MG_REFUSED, "PRIM %s is not a primitive of the selected profile%s",
                     name, NULL);
-    uint32_t levels = type_levels(t->prims[j]);
-    MgTp *body = mg_sx_upstream_tp(im->s, x->items[4], levels);
-    MgTp *type = poly_tp(im->s, body, levels);
     if (type != t->prims[j])
         return stop(im, line, MG_REFUSED,
                     "PRIM %s: the export's type disagrees with the selected profile%s",
@@ -864,15 +1092,24 @@ static bool import_prim(Importer *im, const MgSx *x) {
     return true;
 }
 
-static bool import_param(Importer *im, const MgSx *x) {
-    uint64_t levels, line;
-    const char *name = x->len == 6u ? sx_string(x->items[1]) : NULL;
-    const char *hash = name ? sx_string(x->items[2]) : NULL;
-    if (!hash || !sx_nat(x->items[3], &levels) || !sx_nat(x->items[5], &line) ||
-        levels > 64u)
-        return stop(im, x->line, MG_MALFORMED, "malformed PARAM%s%s", NULL, NULL);
-    MgTp *type = poly_tp(im->s, mg_sx_upstream_tp(im->s, x->items[4], (uint32_t)levels),
-                         (uint32_t)levels);
+static bool import_prim(Importer *im, const MgSx *x) {
+    uint64_t j, line;
+    const char *name = x->len == 6u ? sx_string(x->items[2]) : NULL;
+    const char *hash = name ? sx_string(x->items[3]) : NULL;
+    if (!hash || !sx_nat(x->items[1], &j) || !sx_nat(x->items[5], &line))
+        return stop(im, x->line, MG_MALFORMED, "malformed PRIM%s%s", NULL, NULL);
+    MgTheory *t = im->t;
+    if (j >= t->prim_len || !t->prims[j])
+        return stop(im, line, MG_REFUSED, "PRIM %s is not a primitive of the selected profile%s",
+                    name, NULL);
+    uint32_t levels = type_levels(t->prims[j]);
+    MgTp *body = mg_sx_upstream_tp(im->s, x->items[4], levels);
+    return admit_prim(im, name, hash, j, poly_tp(im->s, body, levels), line);
+}
+
+static bool admit_param(Importer *im, const char *name, const char *hash, uint32_t levels,
+                        MgTp *type, uint64_t line) {
+    (void)levels;
     if (!type)
         return stop(im, line, MG_MALFORMED, "PARAM %s: malformed type%s", name, NULL);
     uint32_t h = intern(im, hash);
@@ -897,16 +1134,34 @@ static bool import_param(Importer *im, const MgSx *x) {
     return true;
 }
 
-static bool import_def(Importer *im, const MgSx *x) {
+static bool import_param(Importer *im, const MgSx *x) {
     uint64_t levels, line;
-    const char *name = x->len == 7u ? sx_string(x->items[1]) : NULL;
+    const char *name = x->len == 6u ? sx_string(x->items[1]) : NULL;
     const char *hash = name ? sx_string(x->items[2]) : NULL;
-    if (!hash || !sx_nat(x->items[3], &levels) || !sx_nat(x->items[6], &line) ||
+    if (!hash || !sx_nat(x->items[3], &levels) || !sx_nat(x->items[5], &line) ||
         levels > 64u)
-        return stop(im, x->line, MG_MALFORMED, "malformed DEF%s%s", NULL, NULL);
-    uint32_t l = (uint32_t)levels;
-    MgTp *type = poly_tp(im->s, mg_sx_upstream_tp(im->s, x->items[4], l), l);
-    MgTm *body = poly_tm(im->s, mg_sx_upstream_tm(im->s, x->items[5], l), l, true);
+        return stop(im, x->line, MG_MALFORMED, "malformed PARAM%s%s", NULL, NULL);
+    MgTp *type = poly_tp(im->s, mg_sx_upstream_tp(im->s, x->items[4], (uint32_t)levels),
+                         (uint32_t)levels);
+    return admit_param(im, name, hash, (uint32_t)levels, type, line);
+}
+
+/* The body is the name h itself, at type variables only.  Upstream adds no
+ * delta rule for such a definition (megalodon.ml add_sigdelta): its identity
+ * is h's, so it is h's object under another spelling. */
+static bool body_is_name(const MgTm *m, uint32_t h) {
+    while (m->tag == MG_TM_TLAM)
+        m = m->f;
+    while (m->tag == MG_TM_TAP) {
+        if (!m->tp || m->tp->tag != MG_TP_VAR)
+            return false;
+        m = m->f;
+    }
+    return m->tag == MG_TM_NAME && m->n == h;
+}
+
+static bool admit_def(Importer *im, const char *name, const char *hash, uint32_t l,
+                      MgTp *type, MgTm *body, uint64_t line) {
     if (!type || !body)
         return stop(im, line, MG_MALFORMED, "DEF %s: malformed type or body%s", name, NULL);
     /* The front end admits non-normal bodies; native admission requires
@@ -926,7 +1181,7 @@ static bool import_def(Importer *im, const MgSx *x) {
     bool realizes = false;
     if (d) {
         /* The same identity is the same object, whatever its spelling. */
-        if (d->type == type && d->def) {
+        if (d->type == type && (d->def || body_is_name(normal, h))) {
             ++im->r->repeated;
             return true;
         }
@@ -951,15 +1206,21 @@ static bool import_def(Importer *im, const MgSx *x) {
     return true;
 }
 
-static bool import_axiom(Importer *im, const MgSx *x) {
+static bool import_def(Importer *im, const MgSx *x) {
     uint64_t levels, line;
-    const char *name = x->len == 6u ? sx_string(x->items[1]) : NULL;
+    const char *name = x->len == 7u ? sx_string(x->items[1]) : NULL;
     const char *hash = name ? sx_string(x->items[2]) : NULL;
-    if (!hash || !sx_nat(x->items[3], &levels) || !sx_nat(x->items[5], &line) ||
+    if (!hash || !sx_nat(x->items[3], &levels) || !sx_nat(x->items[6], &line) ||
         levels > 64u)
-        return stop(im, x->line, MG_MALFORMED, "malformed AXIOM%s%s", NULL, NULL);
+        return stop(im, x->line, MG_MALFORMED, "malformed DEF%s%s", NULL, NULL);
     uint32_t l = (uint32_t)levels;
-    MgTm *prop = poly_tm(im->s, mg_sx_upstream_tm(im->s, x->items[4], l), l, false);
+    MgTp *type = poly_tp(im->s, mg_sx_upstream_tp(im->s, x->items[4], l), l);
+    MgTm *body = poly_tm(im->s, mg_sx_upstream_tm(im->s, x->items[5], l), l, true);
+    return admit_def(im, name, hash, l, type, body, line);
+}
+
+static bool admit_axiom(Importer *im, const char *name, const char *hash, uint32_t l,
+                        MgTm *prop, uint64_t line) {
     if (!prop)
         return stop(im, line, MG_MALFORMED, "AXIOM %s: malformed proposition%s", name, NULL);
     if (!verify_identity(im, "AXIOM", name, hash, prop, l, false, line))
@@ -968,6 +1229,7 @@ static bool import_axiom(Importer *im, const MgSx *x) {
     const MgDecl *d = existing(im, h, MG_NS_KNOWN);
     if (d) {
         ++im->r->repeated; /* the same proposition, already known */
+        ledger_axiom(im, name, h, line);
         return true;
     }
     if (!axiom_accepted(im, name, hash))
@@ -980,27 +1242,37 @@ static bool import_axiom(Importer *im, const MgSx *x) {
     if (!admit(im, &item, line, "AXIOM", name))
         return false;
     ++im->r->axioms;
+    ledger_axiom(im, name, h, line);
     return true;
 }
 
+static bool import_axiom(Importer *im, const MgSx *x) {
+    uint64_t levels, line;
+    const char *name = x->len == 6u ? sx_string(x->items[1]) : NULL;
+    const char *hash = name ? sx_string(x->items[2]) : NULL;
+    if (!hash || !sx_nat(x->items[3], &levels) || !sx_nat(x->items[5], &line) ||
+        levels > 64u)
+        return stop(im, x->line, MG_MALFORMED, "malformed AXIOM%s%s", NULL, NULL);
+    uint32_t l = (uint32_t)levels;
+    MgTm *prop = poly_tm(im->s, mg_sx_upstream_tm(im->s, x->items[4], l), l, false);
+    return admit_axiom(im, name, hash, l, prop, line);
+}
+
 static void clear_pending(Importer *im) {
+    /* the theorem's budget ends with it */
+    if (im->pending && im->theorem_work && im->budget)
+        mg_budget_restart(im->budget, 0u);
     mg_sys_free(im->pending_name);
     im->pending_name = NULL;
     im->pending = false;
+    im->exhausted = false;
 }
 
-static bool import_thm(Importer *im, const MgSx *x) {
-    uint64_t levels, line;
-    const char *name = x->len == 7u ? sx_string(x->items[1]) : NULL;
-    const char *hash = name ? sx_string(x->items[2]) : NULL;
-    if (!hash || !sx_nat(x->items[4], &levels) || !sx_nat(x->items[6], &line) ||
-        levels > 64u)
-        return stop(im, x->line, MG_MALFORMED, "malformed THM%s%s", NULL, NULL);
+static bool admit_thm(Importer *im, const char *name, const char *hash, uint32_t l,
+                      MgTm *prop, uint64_t line) {
     if (im->pending)
         return stop(im, line, MG_MALFORMED, "THM %s: the previous theorem has no proof%s",
                     name, NULL);
-    uint32_t l = (uint32_t)levels;
-    MgTm *prop = poly_tm(im->s, mg_sx_upstream_tm(im->s, x->items[5], l), l, false);
     if (!prop)
         return stop(im, line, MG_MALFORMED, "THM %s: malformed proposition%s", name, NULL);
     if (!verify_identity(im, "THM", name, hash, prop, l, false, line))
@@ -1015,15 +1287,29 @@ static bool import_thm(Importer *im, const MgSx *x) {
     im->pending_levels = l;
     im->pending_prop = prop;
     im->pending_line = line;
+    im->exhausted = false;
+    if (im->theorem_work && im->budget)
+        mg_budget_restart(im->budget, im->theorem_work);
     return true;
 }
 
-/* Whether a proof cites, as KNOWN, a theorem without authority that is not
- * known otherwise.  A walk over the distinct nodes of the proof DAG. */
-static MgStatus cites_unproved(Importer *im, MgPf *root, bool *out) {
-    *out = false;
-    if (!im->unproved_len)
-        return MG_OK;
+static bool import_thm(Importer *im, const MgSx *x) {
+    uint64_t levels, line;
+    const char *name = x->len == 7u ? sx_string(x->items[1]) : NULL;
+    const char *hash = name ? sx_string(x->items[2]) : NULL;
+    if (!hash || !sx_nat(x->items[4], &levels) || !sx_nat(x->items[6], &line) ||
+        levels > 64u)
+        return stop(im, x->line, MG_MALFORMED, "malformed THM%s%s", NULL, NULL);
+    uint32_t l = (uint32_t)levels;
+    if (im->pending)
+        return stop(im, line, MG_MALFORMED, "THM %s: the previous theorem has no proof%s",
+                    name, NULL);
+    MgTm *prop = poly_tm(im->s, mg_sx_upstream_tm(im->s, x->items[5], l), l, false);
+    return admit_thm(im, name, hash, l, prop, line);
+}
+
+/* Visit each distinct node of a proof DAG once, until `visit` says stop. */
+static MgStatus pf_walk(MgPf *root, bool (*visit)(MgPf *p, void *ctx), void *ctx) {
     size_t cap = 256u, len = 0, scap = 64u, sl = 0;
     MgPf **seen = mg_sys_alloc(sizeof(MgPf *) * cap);
     MgPf **stack = mg_sys_alloc(sizeof(MgPf *) * scap);
@@ -1034,7 +1320,7 @@ static MgStatus cites_unproved(Importer *im, MgPf *root, bool *out) {
     }
     memset(seen, 0, sizeof(MgPf *) * cap);
     stack[sl++] = root;
-    while (sl && !*out) {
+    while (sl) {
         MgPf *p = stack[--sl];
         size_t h = (size_t)(((uintptr_t)p >> 4) * UINT64_C(0x9e3779b97f4a7c15) >> 20) & (cap - 1u);
         bool dup = false;
@@ -1069,8 +1355,8 @@ static MgStatus cites_unproved(Importer *im, MgPf *root, bool *out) {
             seen = grown;
             cap = ncap;
         }
-        if (p->tag == MG_PF_KNOWN && unproved_has(im, p->n) && !existing(im, p->n, MG_NS_KNOWN))
-            *out = true;
+        if (!visit(p, ctx))
+            break;
         if (sl + 2u > scap) {
             MgPf **grown = mg_sys_realloc(stack, sizeof(MgPf *) * scap * 2u);
             if (!grown) {
@@ -1091,13 +1377,131 @@ done:
     return st;
 }
 
-static bool import_proof(Importer *im, const MgSx *x) {
-    const char *name = x->len == 3u ? sx_string(x->items[1]) : NULL;
-    if (!name || !im->pending || strcmp(name, im->pending_name) != 0)
-        return stop(im, x->line, MG_MALFORMED, "PROOF %s does not follow its THM%s",
-                    name, NULL);
-    MgPf *proof = poly_pf(im->s, mg_sx_upstream_pf(im->s, x->items[2], im->pending_levels),
-                          im->pending_levels);
+/* A known without authority here: a theorem without authority that is not
+ * known otherwise. */
+static bool known_unproved(Importer *im, uint32_t name) {
+    return unproved_has(im, name) && !existing(im, name, MG_NS_KNOWN);
+}
+
+typedef struct {
+    Importer *im;
+    bool found;
+} CiteUnproved;
+
+static bool visit_unproved(MgPf *p, void *ctx) {
+    CiteUnproved *c = ctx;
+    if (p->tag == MG_PF_KNOWN && known_unproved(c->im, p->n)) {
+        c->found = true;
+        return false;
+    }
+    return true;
+}
+
+/* Whether a proof cites, as KNOWN, a theorem without authority. */
+static MgStatus cites_unproved(Importer *im, MgPf *root, bool *out) {
+    *out = false;
+    if (!im->unproved_len)
+        return MG_OK;
+    CiteUnproved c = {im, false};
+    MgStatus st = pf_walk(root, visit_unproved, &c);
+    *out = c.found;
+    return st;
+}
+
+typedef struct {
+    U32Vec *ids;
+    bool nomem;
+} CiteKnowns;
+
+static bool visit_known(MgPf *p, void *ctx) {
+    CiteKnowns *c = ctx;
+    if (p->tag == MG_PF_KNOWN && !vec_push(c->ids, p->n)) {
+        c->nomem = true;
+        return false;
+    }
+    return true;
+}
+
+/* What a proof citing `ids` rests on: the document axioms, directly or
+ * through the checked theorems it cites, and the cited theorems without
+ * authority (the kernel's own test, known_unproved). */
+static bool ledger_rests_on(Importer *im, const U32Vec *ids, U32Vec *ax, U32Vec *up,
+                            uint32_t *ext) {
+    const MgLedger *l = im->ledger;
+    for (size_t k = 0; k < ids->len; ++k) {
+        uint32_t pos = ledger_find(l, ids->v[k]);
+        const LedgerRow *r = pos == UINT32_MAX ? NULL : &l->rows[pos];
+        if (r && r->theorem && !row_authority(r) && !known_unproved(im, ids->v[k]))
+            r = NULL; /* known to the kernel otherwise, before this ledger */
+        if (!r) {
+            ++*ext;
+            continue;
+        }
+        if (!r->theorem) {
+            if (r->origin == MG_ORIGIN_DOCUMENT && !vec_push(ax, pos))
+                return false;
+        } else if (!row_authority(r)) {
+            if (!vec_push(up, pos))
+                return false;
+        } else {
+            for (uint32_t j = 0; j < r->ax_len; ++j)
+                if (!vec_push(ax, l->pool[r->ax_off + j]))
+                    return false;
+        }
+    }
+    vec_sort_unique(ax);
+    vec_sort_unique(up);
+    return true;
+}
+
+/* The pending theorem's verdict, with what its proof rests on.  The
+ * kernel decided its authority; a ledger that sees the citations
+ * differently records nothing more. */
+static void ledger_theorem(Importer *im, MgPf *proof, MgVerdict v) {
+    MgLedger *l = im->ledger;
+    if (!l || l->incomplete)
+        return;
+    U32Vec ids = {0}, ax = {0}, up = {0};
+    uint32_t ext = 0;
+    bool ok = true;
+    if (proof) {
+        CiteKnowns c = {&ids, false};
+        ok = pf_walk(proof, visit_known, &c) == MG_OK && !c.nomem;
+        if (ok)
+            vec_sort_unique(&ids);
+        ok = ok && ledger_rests_on(im, &ids, &ax, &up, &ext);
+        if (ok && (v == MG_VERDICT_DEPENDENT) != (up.len > 0u))
+            ok = false;
+    }
+    if (ok)
+        ledger_add(l, im->pending_name, im->pending_hash, im->pending_line, true, im->item_origin, v,
+                   &ax, &up, ext, im->theorem_work && im->budget ? im->budget->work_used : 0u);
+    else
+        l->incomplete = true;
+    mg_sys_free(ids.v);
+    mg_sys_free(ax.v);
+    mg_sys_free(up.v);
+}
+
+static void ledger_axiom(Importer *im, const char *name, uint32_t id, uint64_t line) {
+    if (!im->ledger)
+        return;
+    U32Vec none = {0};
+    ledger_add(im->ledger, name, id, line, false, im->item_origin, (MgVerdict)0, &none, &none, 0u, 0u);
+}
+
+/* The pending theorem's check used up its budget: no authority, and the
+ * admission goes on. */
+static bool exhausted_theorem(Importer *im) {
+    ++im->r->unproved;
+    if (!unproved_add(im, im->pending_hash))
+        return stop(im, im->pending_line, MG_NOMEM, "THM %s: out of memory%s", im->pending_name, NULL);
+    ledger_theorem(im, NULL, MG_VERDICT_EXHAUSTED);
+    return true;
+}
+
+/* The proof of the pending theorem, with its type binders. */
+static bool admit_proof(Importer *im, const char *name, MgPf *proof) {
     uint64_t line = im->pending_line;
     if (!proof)
         return stop(im, line, MG_MALFORMED, "PROOF %s: malformed proof%s", name, NULL);
@@ -1110,10 +1514,13 @@ static bool import_proof(Importer *im, const MgSx *x) {
         MgStatus st = mg_check_proposition(&c, 0, NULL, im->pending_prop)
             ? mg_check_theorem_proof(&c, im->pending_prop, proof)
             : (c.status == MG_OK ? MG_REFUSED : c.status);
+        if (st == MG_EXHAUSTED && im->theorem_work)
+            return exhausted_theorem(im);
         if (st != MG_OK)
             return stop(im, line, st, "THM %s (repeated): %s", name,
                         c.reason ? c.reason : "proof does not prove the stated proposition");
         ++im->r->reproved;
+        ledger_theorem(im, proof, MG_VERDICT_REPROVED);
         return true;
     }
     bool dependent = false;
@@ -1124,14 +1531,41 @@ static bool import_proof(Importer *im, const MgSx *x) {
         if (!unproved_add(im, im->pending_hash))
             return stop(im, line, MG_NOMEM, "THM %s: out of memory%s", name, NULL);
         ++im->r->dependent;
+        ledger_theorem(im, proof, MG_VERDICT_DEPENDENT);
         return true;
     }
     MgItem item = {.kind = MG_ITEM_THEOREM, .name = im->pending_hash,
                    .prop = im->pending_prop, .proof = proof};
     if (!admit(im, &item, line, "THM", name))
-        return false;
+        return im->exhausted ? exhausted_theorem(im) : false;
     ++im->r->theorems;
+    ledger_theorem(im, proof, MG_VERDICT_CHECKED);
     return true;
+}
+
+static bool import_proof(Importer *im, const MgSx *x) {
+    const char *name = x->len == 3u ? sx_string(x->items[1]) : NULL;
+    if (!name || !im->pending || strcmp(name, im->pending_name) != 0)
+        return stop(im, x->line, MG_MALFORMED, "PROOF %s does not follow its THM%s",
+                    name, NULL);
+    MgPf *proof = poly_pf(im->s, mg_sx_upstream_pf(im->s, x->items[2], im->pending_levels),
+                          im->pending_levels);
+    return admit_proof(im, name, proof);
+}
+
+/* QEDWITHADMITS / ADMITTED: the pending theorem has no authority. */
+static bool admit_unproved(Importer *im, MgVerdict why) {
+    bool ok = true;
+    if (im->pending) {
+        ++im->r->unproved;
+        if (!unproved_add(im, im->pending_hash))
+            ok = stop(im, im->pending_line, MG_NOMEM, "THM %s: out of memory%s",
+                      im->pending_name, NULL);
+        else
+            ledger_theorem(im, NULL, why);
+    }
+    clear_pending(im);
+    return ok;
 }
 
 /* MG_IMPORT_TRACE=1 prints each theorem's checking time and store growth to
@@ -1194,15 +1628,9 @@ MgStatus mg_import_sexprinfo(MgTheory *t, const char *text, size_t len,
                         trace_now() - t0, (unsigned long long)(t->store.nodes - nodes0));
         }
         else if (strcmp(head, "QED") == 0) clear_pending(&im);
-        else if (strcmp(head, "QEDWITHADMITS") == 0 || strcmp(head, "ADMITTED") == 0) {
-            if (im.pending) {
-                ++r->unproved;
-                if (!unproved_add(&im, im.pending_hash))
-                    ok = stop(&im, im.pending_line, MG_NOMEM, "THM %s: out of memory%s",
-                              im.pending_name, NULL);
-            }
-            clear_pending(&im);
-        } else if (strcmp(head, "DELTA") == 0 || strcmp(head, "USESKNOWN") == 0) {
+        else if (strcmp(head, "QEDWITHADMITS") == 0 || strcmp(head, "ADMITTED") == 0)
+            ok = admit_unproved(&im, MG_VERDICT_ADMITTED);
+        else if (strcmp(head, "DELTA") == 0 || strcmp(head, "USESKNOWN") == 0) {
             /* informational: the delta set and the knowns the front end
              * used; the kernel recomputes what it needs */
         } else {
@@ -1242,6 +1670,83 @@ MgStatus mg_import_sexprinfo_file(MgTheory *t, const char *path,
     }
     MgStatus st = mg_import_sexprinfo(t, text, len, path, policy, budget, r);
     mg_sys_free(text);
+    return st;
+}
+
+/* ── MgAdmission: the same admission, item by item ──────────────────── */
+
+struct MgAdmission {
+    Importer im;
+};
+
+MgAdmission *mg_admission_new(MgTheory *t, const char *origin, const MgImportPolicy *policy,
+                              MgBudget *budget, MgImportReport *report) {
+    MgAdmission *a = mg_sys_alloc(sizeof *a);
+    if (!a)
+        return NULL;
+    memset(a, 0, sizeof *a);
+    memset(report, 0, sizeof *report);
+    a->im = (Importer){.t = t, .s = &t->store, .policy = policy, .budget = budget,
+                       .r = report, .origin = origin};
+    return a;
+}
+
+bool mg_admit_prim(MgAdmission *a, const char *name, const char *hash, uint32_t prim,
+                   MgTp *type, uint64_t line) {
+    return !a->im.r->stopped && admit_prim(&a->im, name, hash, prim, type, line);
+}
+
+bool mg_admit_param(MgAdmission *a, const char *name, const char *hash, uint32_t levels,
+                    MgTp *type, uint64_t line) {
+    return !a->im.r->stopped && admit_param(&a->im, name, hash, levels, type, line);
+}
+
+bool mg_admit_def(MgAdmission *a, const char *name, const char *hash, uint32_t levels,
+                  MgTp *type, MgTm *body, uint64_t line) {
+    return !a->im.r->stopped && admit_def(&a->im, name, hash, levels, type, body, line);
+}
+
+bool mg_admit_axiom(MgAdmission *a, const char *name, const char *hash, uint32_t levels,
+                    MgTm *prop, uint64_t line) {
+    return !a->im.r->stopped && admit_axiom(&a->im, name, hash, levels, prop, line);
+}
+
+bool mg_admit_theorem(MgAdmission *a, const char *name, const char *hash, uint32_t levels,
+                      MgTm *prop, uint64_t line) {
+    return !a->im.r->stopped && admit_thm(&a->im, name, hash, levels, prop, line);
+}
+
+bool mg_admit_proof(MgAdmission *a, MgPf *proof) {
+    if (a->im.r->stopped || !a->im.pending)
+        return false;
+    bool ok = admit_proof(&a->im, a->im.pending_name, proof);
+    clear_pending(&a->im);
+    return ok;
+}
+
+bool mg_admit_unproved(MgAdmission *a) { return mg_admit_unproved_as(a, MG_VERDICT_ADMITTED); }
+
+bool mg_admit_unproved_as(MgAdmission *a, MgVerdict why) {
+    return !a->im.r->stopped && admit_unproved(&a->im, why);
+}
+
+void mg_admission_record(MgAdmission *a, MgLedger *ledger) { a->im.ledger = ledger; }
+
+void mg_admission_budget_theorems(MgAdmission *a, uint64_t work) { a->im.theorem_work = work; }
+
+void mg_admission_set_origin(MgAdmission *a, MgOrigin origin) { a->im.item_origin = origin; }
+
+MgStatus mg_admission_finish(MgAdmission *a) {
+    MgImportReport *r = a->im.r;
+    /* A document may end inside a proof, as Megalodon allows: that
+     * theorem has no authority. */
+    if (!r->stopped && a->im.pending)
+        admit_unproved(&a->im, MG_VERDICT_PENDING);
+    clear_pending(&a->im);
+    mg_sys_free(a->im.unproved);
+    r->revision = a->im.t->rev;
+    MgStatus st = r->stopped ? (r->status ? r->status : MG_MALFORMED) : MG_OK;
+    mg_sys_free(a);
     return st;
 }
 

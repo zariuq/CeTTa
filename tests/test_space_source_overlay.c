@@ -3,6 +3,7 @@
 #include "atom_wire.h"
 #include "parser.h"
 #include "petta_search_machine.h"
+#include "shared_transition.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -65,6 +66,62 @@ static CettaMatchCompletion incomplete_after_a(Atom *a, Atom *b) {
     return a && a->kind == ATOM_EXPR && a->expr.len == 3 && atom_is_symbol(a->expr.elems[0], "edge")
         ? CETTA_MATCH_INCOMPLETE : CETTA_MATCH_REFUTED;
 }
+static size_t match_comparisons;
+static CettaMatchCompletion unify_matches(Atom *row, Atom *pattern) {
+    ++match_comparisons;
+    Arena scratch; arena_init_detached(&scratch);
+    BindingsBuilder builder;
+    if (!bindings_builder_init(&builder, NULL)) {
+        arena_free(&scratch);
+        return CETTA_MATCH_INCOMPLETE;
+    }
+    CettaMatchCompletion result = match_atoms_epoch_builder_checked(
+        pattern, row, &builder, &scratch, (CettaFrameIdentity){1}, UINT64_MAX);
+    bindings_builder_free(&builder);
+    arena_free(&scratch);
+    return result;
+}
+static void assert_cursor_matches_reference(Space *overlay, Atom **ref, size_t ref_len,
+        Atom *pattern, bool ordered_base, Arena *a) {
+    SpaceOccurrenceCursor cur;
+    assert(pattern ? space_occurrence_cursor_init(overlay, pattern, &cur)
+                   : space_occurrence_cursor_init_scan(overlay, &cur));
+    Atom *got[512]; size_t got_len = 0;
+    CettaIndex idx; SpaceOccurrenceCursorStep step;
+    while ((step = space_occurrence_cursor_next(&cur, &idx, NULL)) == SPACE_OCCURRENCE_CURSOR_ITEM ||
+            step == SPACE_OCCURRENCE_CURSOR_PROGRESS) {
+        if (step != SPACE_OCCURRENCE_CURSOR_ITEM) continue;
+        Atom *row = space_occurrence_cursor_receive_atom(&cur, idx, a);
+        assert(row && cur.source_ops->identity(cur.source_state, idx));
+        if (!pattern || unify_matches(row, pattern) == CETTA_MATCH_MATCHED) {
+            assert(got_len < 512);
+            got[got_len++] = row;
+        }
+    }
+    assert(step == SPACE_OCCURRENCE_CURSOR_END);
+    space_occurrence_cursor_release(&cur);
+
+    Atom *exp[512]; size_t exp_len = 0;
+    for (size_t i = 0; i < ref_len; ++i) {
+        if (!pattern || unify_matches(ref[i], pattern) == CETTA_MATCH_MATCHED) {
+            assert(exp_len < 512);
+            exp[exp_len++] = ref[i];
+        }
+    }
+    assert(got_len == exp_len);
+    if (ordered_base) {
+        for (size_t i = 0; i < got_len; ++i) assert(atom_alpha_eq(got[i], exp[i]));
+    } else {
+        bool used[512] = {0};
+        for (size_t i = 0; i < got_len; ++i) {
+            bool found = false;
+            for (size_t j = 0; j < exp_len; ++j) {
+                if (!used[j] && atom_alpha_eq(got[i], exp[j])) { used[j] = true; found = true; break; }
+            }
+            assert(found);
+        }
+    }
+}
 static unsigned paused_polls;
 static bool paused_clone(const void *source, bool rewind, void **out) {
     (void)source; (void)rewind; *out = malloc(1); return *out != NULL;
@@ -82,6 +139,26 @@ static const SpaceSourceCursorOps paused_rows = {
 };
 static const SpaceMatchBackendOps paused_ops = {
     .name = "paused-fixture", .occurrence_ops = &paused_rows, .occurrence_open = paused_open, .logical_len = paused_length,
+};
+static Space *wait_workspace;
+static Arena *wait_arena;
+static Atom *wait_atom;
+static void invalidating_wait(void *context) {
+    assert(context == wait_workspace && !cetta_shared_transition_guard_held_by_current_thread());
+    assert(space_admit_atom(wait_workspace, wait_arena, wait_atom));
+}
+static bool invalidating_pending(const void *source, SpaceSourceWait *out) {
+    (void)source;
+    *out = (SpaceSourceWait){.context = wait_workspace, .wait = invalidating_wait};
+    return true;
+}
+static const SpaceSourceCursorOps waiting_rows = {
+    .clone = paused_clone, .next = paused_next, .atom = paused_atom, .identity = paused_atom,
+    .pending_wait = invalidating_pending, .free = free,
+};
+static const SpaceMatchBackendOps waiting_ops = {
+    .name = "invalidating-wait-fixture", .occurrence_ops = &waiting_rows,
+    .occurrence_open = paused_open, .logical_len = paused_length,
 };
 
 int main(int argc, char **argv) {
@@ -189,7 +266,7 @@ int main(int argc, char **argv) {
     assert(space_remove_checked(&overlay, parse(&data, "(edge a d)")) == CETTA_MATCH_MATCHED);
     assert(space_admit_atom(&overlay, &data, parse(&data, "(edge a newer)")));
     assert(space_occurrence_cursor_select(&captured, parse(&data, "(edge a $x)"), &selected));
-    assert(drain(&selected) == 4); /* Indexed base candidates plus the old local delta. */
+    assert(drain(&selected) == 3); /* Indexed base candidates plus the matching old local delta. */
     space_occurrence_cursor_release(&selected);
     assert(drain(&captured) == length); assert(drain(&clone) == length);
     space_occurrence_cursor_release(&captured); space_occurrence_cursor_release(&clone);
@@ -295,6 +372,196 @@ int main(int argc, char **argv) {
     assert(paused_polls == 1 && !affected && space_length64(&pending) == 1);
     assert(space_source_overlay_changes(&pending, &answers, &added, &removed));
     assert(!added->expr.len && !removed->expr.len); space_free(&pending);
+
+    /* IO drops physical guards, never the captured observation. If another
+     * edit occurs during the wait, keep that edit and publish no removals. */
+    space_init(&pending); paused = malloc(sizeof(*paused)); assert(paused); space_init(paused);
+    paused->match_backend.kind = SPACE_ENGINE_SOURCE; paused->match_backend.ops = &waiting_ops;
+    assert(space_source_overlay_init_owned(&pending, paused, 4096));
+    wait_workspace = &pending; wait_arena = &data; wait_atom = parse(&data, "(intervening edit)");
+    paused_polls = 0;
+    cetta_shared_transition_scope_enter();
+    CettaSharedTransitionGuard outer = {0}, inner = {0};
+    cetta_shared_transition_guard_enter(&outer); cetta_shared_transition_guard_enter(&inner);
+    assert(space_remove_up_to_compared(&pending, parse(&data, "filter"), selects_edge_a, 1, &affected)
+        == CETTA_MATCH_INCOMPLETE);
+    assert(cetta_shared_transition_guard_held_by_current_thread());
+    cetta_shared_transition_guard_leave(&inner); cetta_shared_transition_guard_leave(&outer);
+    cetta_shared_transition_scope_leave();
+    assert(paused_polls == 1 && !affected && space_length64(&pending) == 2);
+    assert(space_source_overlay_changes(&pending, &answers, &added, &removed));
+    assert(added->expr.len == 1 && removed->expr.len == 0); space_free(&pending);
+
+    /* Differential test: random sequences of add/remove/match inside one
+     * transaction, comparing overlay results against a plain list (order
+     * included when the base is unindexed). */
+    const char *pool[] = {
+        "(edge a b)", "(edge a c)", "(edge b c)", "(edge a \"str1\")",
+        "(edge \"str1\" b)", "(edge a 42)", "(edge a $v)", "(rel $x $x)",
+        "(rel a b)", "(tag x y z)", "$topvar"
+    };
+    const char *patterns[] = {
+        NULL, "(edge a $x)", "(edge $x c)", "(edge a \"str1\")",
+        "(edge \"str1\" $x)", "(edge a 42)", "(rel $a $b)", "(tag $a y $c)"
+    };
+    for (int mode = 0; mode < 2; ++mode) {
+        bool ordered_base = (mode == 0);
+        Space diff_ovl; space_init(&diff_ovl);
+        Space *diff_base = malloc(sizeof(*diff_base)); assert(diff_base); space_init(diff_base);
+        if (ordered_base) {
+            assert(cetta_disk_space_capture(diff_base, view, bytes("facts/"), 5) == CETTA_STORE_OK);
+        } else {
+            assert(cetta_disk_space_capture_indexed(diff_base, view, bytes("facts/"), 5, &declared, 1) == CETTA_STORE_OK);
+        }
+        assert(space_source_overlay_init_owned(&diff_ovl, diff_base, 4096));
+        Atom *ref_list[512]; size_t ref_len = 0;
+        for (size_t i = 0; i < 5; ++i) ref_list[ref_len++] = parse(&data, facts[i]);
+
+        unsigned rng = 1337u + (unsigned)mode * 997u;
+        for (unsigned step_idx = 0; step_idx < 250; ++step_idx) {
+            rng = rng * 1664525u + 1013904223u;
+            unsigned action = (rng >> 24) % 5;
+            rng = rng * 1664525u + 1013904223u;
+            Atom *item = parse(&data, pool[(rng >> 16) % (sizeof(pool) / sizeof(pool[0]))]);
+
+            SpaceOccurrenceCursor snap;
+            bool check_snap = ((step_idx % 7) == 0);
+            Atom *snap_ref[512]; size_t snap_ref_len = ref_len;
+            Atom *snap_pat = patterns[(step_idx / 7) % (sizeof(patterns) / sizeof(patterns[0]))]
+                ? parse(&data, patterns[(step_idx / 7) % (sizeof(patterns) / sizeof(patterns[0]))])
+                : NULL;
+            if (check_snap) {
+                memcpy(snap_ref, ref_list, ref_len * sizeof(Atom *));
+                assert(snap_pat ? space_occurrence_cursor_init(&diff_ovl, snap_pat, &snap)
+                                : space_occurrence_cursor_init_scan(&diff_ovl, &snap));
+            }
+
+            if (action <= 1 && ref_len < 480) {
+                assert(space_admit_atom(&diff_ovl, &data, item));
+                ref_list[ref_len++] = item;
+            } else if (action == 2) {
+                CettaMatchCompletion ovl_res = space_remove_checked(&diff_ovl, item);
+                size_t hit = SIZE_MAX; bool ambig = false;
+                for (size_t i = 0; i < ref_len; ++i) {
+                    if (atom_eq(ref_list[i], item)) { hit = i; ambig = false; break; }
+                    if (atom_alpha_eq(ref_list[i], item)) {
+                        if (hit == SIZE_MAX) hit = i;
+                        else ambig = true;
+                    }
+                }
+                if (hit != SIZE_MAX && !ambig) {
+                    assert(ovl_res == CETTA_MATCH_MATCHED);
+                    memmove(&ref_list[hit], &ref_list[hit + 1], (ref_len - hit - 1) * sizeof(Atom *));
+                    --ref_len;
+                } else {
+                    assert(ovl_res == CETTA_MATCH_REFUTED);
+                }
+            } else if (action == 3 && ordered_base) {
+                Atom *pat = patterns[(rng >> 8) % (sizeof(patterns) / sizeof(patterns[0]))]
+                    ? parse(&data, patterns[(rng >> 8) % (sizeof(patterns) / sizeof(patterns[0]))])
+                    : item;
+                CettaCount rem_cnt = 0;
+                CettaMatchCompletion ovl_res = space_remove_up_to_compared(
+                    &diff_ovl, pat, unify_matches, 2, &rem_cnt);
+                size_t exp_cnt = 0;
+                for (size_t i = 0; i < ref_len && exp_cnt < 2; ) {
+                    if (unify_matches(ref_list[i], pat) == CETTA_MATCH_MATCHED) {
+                        memmove(&ref_list[i], &ref_list[i + 1], (ref_len - i - 1) * sizeof(Atom *));
+                        --ref_len; ++exp_cnt;
+                    } else ++i;
+                }
+                assert(ovl_res == (exp_cnt ? CETTA_MATCH_MATCHED : CETTA_MATCH_REFUTED));
+                assert(rem_cnt == exp_cnt);
+            } else if (action == 4) {
+                Atom *pat = patterns[(rng >> 8) % (sizeof(patterns) / sizeof(patterns[0]))]
+                    ? parse(&data, patterns[(rng >> 8) % (sizeof(patterns) / sizeof(patterns[0]))])
+                    : item;
+                CettaCount rem_cnt = 0;
+                CettaMatchCompletion ovl_res = space_remove_all_compared(
+                    &diff_ovl, pat, unify_matches, &rem_cnt);
+                size_t exp_cnt = 0;
+                for (size_t i = 0; i < ref_len; ) {
+                    if (unify_matches(ref_list[i], pat) == CETTA_MATCH_MATCHED) {
+                        memmove(&ref_list[i], &ref_list[i + 1], (ref_len - i - 1) * sizeof(Atom *));
+                        --ref_len; ++exp_cnt;
+                    } else ++i;
+                }
+                assert(ovl_res == (exp_cnt ? CETTA_MATCH_MATCHED : CETTA_MATCH_REFUTED));
+                assert(rem_cnt == exp_cnt);
+            }
+
+            if (check_snap) {
+                /* Verify snapshot cursor opened before the edit still sees pre-edit state. */
+                Atom *got[512]; size_t got_len = 0;
+                CettaIndex sidx; SpaceOccurrenceCursorStep sstep;
+                while ((sstep = space_occurrence_cursor_next(&snap, &sidx, NULL)) == SPACE_OCCURRENCE_CURSOR_ITEM ||
+                        sstep == SPACE_OCCURRENCE_CURSOR_PROGRESS) {
+                    if (sstep != SPACE_OCCURRENCE_CURSOR_ITEM) continue;
+                    Atom *r = space_occurrence_cursor_receive_atom(&snap, sidx, &answers);
+                    if (!snap_pat || unify_matches(r, snap_pat) == CETTA_MATCH_MATCHED) got[got_len++] = r;
+                }
+                space_occurrence_cursor_release(&snap);
+                size_t exp_snap_len = 0;
+                for (size_t i = 0; i < snap_ref_len; ++i) {
+                    if (!snap_pat || unify_matches(snap_ref[i], snap_pat) == CETTA_MATCH_MATCHED) {
+                        if (ordered_base) assert(atom_alpha_eq(got[exp_snap_len], snap_ref[i]));
+                        ++exp_snap_len;
+                    }
+                }
+                assert(got_len == exp_snap_len);
+            }
+
+            assert(space_length64(&diff_ovl) == ref_len);
+            for (size_t p = 0; p < sizeof(patterns) / sizeof(patterns[0]); ++p) {
+                Atom *pat = patterns[p] ? parse(&data, patterns[p]) : NULL;
+                assert_cursor_matches_reference(&diff_ovl, ref_list, ref_len, pat, ordered_base, &answers);
+            }
+        }
+        space_free(&diff_ovl);
+    }
+
+    /* Linear cost test: k remove+add+match pairs in one transaction must do
+     * O(1) candidate work per pair (k=20 vs k=200). */
+    size_t work_per_pair[2] = {0, 0};
+    const size_t ks[2] = {20, 200};
+    for (int run = 0; run < 2; ++run) {
+        size_t k = ks[run];
+        Space cost_ovl; space_init(&cost_ovl);
+        Space *cost_base = malloc(sizeof(*cost_base)); assert(cost_base); space_init(cost_base);
+        assert(cetta_disk_space_capture_indexed(cost_base, view, bytes("facts/"), 5, &declared, 1) == CETTA_STORE_OK);
+        assert(space_source_overlay_init_owned(&cost_ovl, cost_base, 4096));
+        for (size_t i = 0; i < k; ++i) {
+            char buf[64]; snprintf(buf, sizeof(buf), "(action k%zu unobserved)", i);
+            assert(space_admit_atom(&cost_ovl, &data, parse(&data, buf)));
+        }
+        match_comparisons = 0;
+        for (size_t i = 0; i < k; ++i) {
+            char old_buf[64], new_buf[64], pat_buf[64];
+            snprintf(old_buf, sizeof(old_buf), "(action k%zu unobserved)", i);
+            snprintf(new_buf, sizeof(new_buf), "(action k%zu observed)", i);
+            snprintf(pat_buf, sizeof(pat_buf), "(action k%zu $state)", i);
+            CettaCount rem = 0;
+            assert(space_remove_all_compared(&cost_ovl, parse(&data, old_buf), unify_matches, &rem) == CETTA_MATCH_MATCHED);
+            assert(rem == 1);
+            assert(space_admit_atom(&cost_ovl, &data, parse(&data, new_buf)));
+            assert(space_remove_checked(&cost_ovl, parse(&data, new_buf)) == CETTA_MATCH_MATCHED);
+            assert(space_admit_atom(&cost_ovl, &data, parse(&data, new_buf)));
+            SpaceOccurrenceCursor cur;
+            assert(space_occurrence_cursor_init(&cost_ovl, parse(&data, pat_buf), &cur));
+            size_t candidates = 0; CettaIndex cidx; SpaceOccurrenceCursorStep cstep;
+            while ((cstep = space_occurrence_cursor_next(&cur, &cidx, NULL)) == SPACE_OCCURRENCE_CURSOR_ITEM ||
+                    cstep == SPACE_OCCURRENCE_CURSOR_PROGRESS) {
+                if (cstep == SPACE_OCCURRENCE_CURSOR_ITEM) ++candidates;
+            }
+            space_occurrence_cursor_release(&cur);
+            assert(candidates == 1);
+        }
+        work_per_pair[run] = match_comparisons / k;
+        assert(work_per_pair[run] <= 2);
+        space_free(&cost_ovl);
+    }
+    assert(work_per_pair[1] <= work_per_pair[0]);
+
     cetta_disk_store_view_close(view); cetta_disk_store_view_close(empty); cetta_disk_store_close(store);
     arena_free(&transient); arena_free(&answers); arena_free(&data); symbol_table_free(&symbols);
     puts("source overlay: ordinary queries, identities, atomic edits, snapshot cursors and rollback passed");

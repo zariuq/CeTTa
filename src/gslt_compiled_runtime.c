@@ -1604,9 +1604,14 @@ static bool compiled_match_flat_variable_head(
     return true;
 }
 
+/* A worklist state owns what its step built.  Graphs closed in a `loans`
+ * arena, which outlives the worklist (the query's and the program's ground
+ * graphs), are borrowed, not copied: a state costs what its step built, not
+ * the size of the whole query. */
 static GsltCompiledState *compiled_state_new(
     const Arena *query_arena, Atom *query, Atom *const *goals,
-    uint32_t goal_count, uint32_t depth) {
+    uint32_t goal_count, uint32_t depth,
+    const uint32_t *loans, size_t loan_count) {
     if (!query || (goal_count != 0u && !goals))
         return NULL;
     GsltCompiledState *state = cetta_malloc(sizeof(*state));
@@ -1619,6 +1624,8 @@ static GsltCompiledState *compiled_state_new(
      * Copying still owns all newly substituted/transient structure here. */
     arena_set_older_generation(&state->arena, query_arena);
     AtomDeepCopySession *copy = atom_deep_copy_session_new(&state->arena);
+    if (copy && loan_count)
+        (void)atom_deep_copy_session_loan_arenas(copy, loans, loan_count);
     state->query = atom_deep_copy_session_copy(copy, query);
     state->goals = goal_count
         ? arena_alloc(&state->arena, sizeof(*state->goals) * goal_count)
@@ -1767,9 +1774,17 @@ bool cetta_gslt_compiled_query_with_providers_v1(
         program->max_variable_count > 0u ? 2u : 0u;
     uint64_t variable_epoch = 0u;
     uint64_t worklist_live_bytes = 0u;
+    /* The query and the program outlive every state of this worklist. */
+    uint32_t loans[2];
+    size_t loan_count = 0u;
+    if (query_arena.identity != 0u)
+        loans[loan_count++] = query_arena.identity;
+    if (program->ground_arena.identity != 0u &&
+        program->ground_arena.identity != query_arena.identity)
+        loans[loan_count++] = program->ground_arena.identity;
     Atom *initial_goals[] = {retained_query};
     GsltCompiledState *initial_state = compiled_state_new(
-        &query_arena, retained_query, initial_goals, 1u, 0u);
+        &query_arena, retained_query, initial_goals, 1u, 0u, loans, loan_count);
     bool healthy = initial_state &&
         compiled_queue_push(&queue, initial_state);
     if (healthy) {
@@ -1881,7 +1896,8 @@ bool cetta_gslt_compiled_query_with_providers_v1(
                             GsltCompiledState *next_state =
                                 compiled_state_new(
                                     &query_arena, next_query_scratch, next_goals,
-                                    next_count, state->depth + 1u);
+                                    next_count, state->depth + 1u,
+                                    loans, loan_count);
                             healthy = next_state &&
                                 compiled_queue_push(&queue, next_state);
                             if (healthy) {
@@ -2064,7 +2080,7 @@ bool cetta_gslt_compiled_query_with_providers_v1(
                 if (healthy) {
                     GsltCompiledState *next_state = compiled_state_new(
                         &query_arena, next_query_scratch, next_goals, next_count,
-                        state->depth + 1u);
+                        state->depth + 1u, loans, loan_count);
                     healthy = next_state &&
                         compiled_queue_push(&queue, next_state);
                     if (healthy) {

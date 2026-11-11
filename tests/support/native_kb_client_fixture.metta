@@ -3,7 +3,7 @@
 
 (= (kb-client:call $connection $body)
   (let $identifier (space:request-id)
-    (case (space:exchange $connection (request $identifier $body) 5000)
+    (case (space:exchange $connection (request $identifier $body) 60001)
       (((reply $same ok $value) $value) ($failure $failure)))))
 
 (= (kb-client:drain $connection $query $sequence $rows)
@@ -15,7 +15,7 @@
      ($failure $failure))))
 
 (= (kb-client:run (Inspect $socket))
-  (let* (((SpaceConnected $connection) (space:connect $socket 5000))
+  (let* (((SpaceConnected $connection) (space:connect $socket 60001))
          ((ServiceResourceV1 $view $metadata) (kb-client:call $connection (CallV1 Snapshot ())))
          ((ServiceResourceV1 $query $captured)
           (kb-client:call $connection (UseV1 $view Query (QueryV1 sample (edge alice $who) $who))))

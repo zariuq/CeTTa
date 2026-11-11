@@ -369,7 +369,8 @@ def build_artifact(syntax, lexical, target, elaboration, dfa_compiler, output,
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="predictive-", dir=output) as temporary:
         work = Path(temporary); nfa.write(work/"lexical.nfa", start)
-        subprocess.run([str(dfa_compiler.resolve()), str(work/"lexical.nfa"), str(work/"lexical.h")], check=True)
+        subprocess.run([str(dfa_compiler.resolve()), str(work/"lexical.nfa"), str(work/"lexical.h"),
+                        "--prefix", "jd_lex", "--tag-names", ",".join(report["lexical_categories"])], check=True)
         lexical_code = (work/"lexical.h").read_bytes()
         identity = dict(report=report, decisions_sha256=sha256(code.encode()).hexdigest(),
                         lexical_sha256=sha256(lexical_code).hexdigest())

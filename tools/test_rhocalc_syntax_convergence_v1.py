@@ -16,6 +16,7 @@ from test_parser_pack_abi_v1 import CASES as ABI_CASES
 from test_parser_pack_abi_v1 import export_stream
 from test_parser_pack_gll_v1 import run_native
 from test_rhocalc_reader_authority_v1 import translate
+from gslt2parse_oracles_v1 import ORACLES
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -281,13 +282,8 @@ def normalize_result(result: str, syntax: str, label: str) -> str:
     return render(normalize_process(process, (), f"{syntax}/{label}"))
 
 
-def oracle_rows(petta_root: Path) -> dict[tuple[str, str], dict[str, object]]:
-    oracle = (
-        petta_root
-        / "experiments"
-        / "gslt2parse_foundation"
-        / "rhocalc_syntax_convergence_oracle_v1.pl"
-    )
+def oracle_rows() -> dict[tuple[str, str], dict[str, object]]:
+    oracle = ORACLES / "rhocalc_syntax_convergence_oracle_v1.pl"
     completed = subprocess.run(
         ["swipl", "-q", "-f", str(oracle), "--", str(PRESENTATIONS)],
         cwd=oracle.parent,
@@ -434,9 +430,8 @@ def check(
     gll_binary: Path,
     glr_binary: Path,
     projection_binary: Path,
-    petta_root: Path,
 ) -> tuple[int, int, int, int, int, int, int, int, str]:
-    expected = oracle_rows(petta_root)
+    expected = oracle_rows()
     expected_keys = {
         (syntax, case.label) for case in CASES for syntax in ("rho", "mrho")
     }
@@ -463,7 +458,7 @@ def check(
         for syntax, abi_label in (("rho", "rho"), ("mrho", "rho-mrho")):
             abi_case = ABI_CASES[abi_label]
             pack_path = temp / f"{syntax}.abi"
-            pack_path.write_bytes(export_stream(petta_root, abi_case))
+            pack_path.write_bytes(export_stream(abi_case))
             pack_paths[syntax] = pack_path
             starts[syntax] = f"(pp-def {abi_case['start']})"
 
@@ -665,7 +660,6 @@ def main() -> int:
         arguments.gll_binary.resolve(),
         arguments.glr_binary.resolve(),
         arguments.projection_binary.resolve(),
-        arguments.petta_root.resolve(),
     )
     print(
         "(RhoSyntaxConvergenceV1Summary "
