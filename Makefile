@@ -6694,7 +6694,7 @@ $(STORE_EFFECT_ALLOCATION_TEST_OBJ): $(STORE_EFFECT_ALLOCATION_TEST_SRC) src/spa
 
 $(STORE_EFFECT_ALLOCATION_TEST_BIN): $(STORE_EFFECT_ALLOCATION_TEST_OBJ) $(STABLE_OCCURRENCE_TRANSPORT_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p runtime
-	$(CC) $(CFLAGS) -o $@ $(STORE_EFFECT_ALLOCATION_TEST_OBJ) $(STABLE_OCCURRENCE_TRANSPORT_TEST_LINK_OBJ) -Wl,--wrap=malloc $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(STORE_EFFECT_ALLOCATION_TEST_OBJ) $(STABLE_OCCURRENCE_TRANSPORT_TEST_LINK_OBJ) -Wl,--wrap=malloc,--wrap=cetta_fallible_malloc $(LDFLAGS)
 
 .PHONY: test-store-effect-allocation test-store-effect
 test-store-effect-allocation: $(STORE_EFFECT_ALLOCATION_TEST_BIN)
@@ -31430,6 +31430,39 @@ test-space-index-removal-scaling: $(BIN) tests/support/check_index_removal_scali
 
 test-asymptotic: test-space-index-removal-scaling
 
+.PHONY: test-ordinary-performance-rule test-ordinary-performance
+# The rule of the ordinary-performance comparison, on fixed samples.
+test-ordinary-performance-rule: tests/support/check_ordinary_performance.py
+	@python3 tests/support/check_ordinary_performance.py --self-test
+
+test-all: test-ordinary-performance-rule
+
+# Ordinary programs (stores, matches, joins, folds, allocation) cost no more
+# instructions than at the baseline revision, in HE and PeTTa, and show no
+# measured loss in processor cycles.  The baseline is built once from this
+# repository's history; ORDINARY_PERFORMANCE_BASELINE names a baseline binary
+# to compare against instead.  A source tree without that history has no
+# qualification and fails as unavailable rather than silently passing.  Some
+# workloads' counts depend on where memory lands (tables keyed by address), so
+# the comparison samples over layouts rather than fixing one: a fixed layout
+# measures one placement exactly and says nothing of the others.  Batches pair
+# equal numbers of baseline-first and candidate-first runs; predetermined
+# extra samples for address-sensitive cases are recorded in the JSON report.
+ORDINARY_PERFORMANCE_BASELINE_REV ?= d938ce41
+ORDINARY_PERFORMANCE_BASELINE ?=
+test-ordinary-performance: $(BIN) test-ordinary-performance-rule
+	@if [ -n "$(strip $(ORDINARY_PERFORMANCE_BASELINE))" ] || \
+		git rev-parse --verify -q "$(ORDINARY_PERFORMANCE_BASELINE_REV)^{commit}" >/dev/null 2>&1; then \
+		python3 tests/support/check_ordinary_performance.py --candidate ./$(BIN) \
+			$(if $(strip $(ORDINARY_PERFORMANCE_BASELINE)),--baseline $(ORDINARY_PERFORMANCE_BASELINE),--baseline-rev $(ORDINARY_PERFORMANCE_BASELINE_REV)) \
+			--work runtime/ordinary-performance; \
+	else \
+		echo "UNAVAILABLE: no baseline for the ordinary-performance comparison (revision $(ORDINARY_PERFORMANCE_BASELINE_REV) is not in this tree's history; set ORDINARY_PERFORMANCE_BASELINE)"; \
+		exit 1; \
+	fi
+
+test-asymptotic: test-ordinary-performance
+
 .PHONY: test-space-bits-join-scaling
 # A binary relation kept as bits answers probes of either column by their
 # answers, and a join over it reads the smaller leg at each visit: reverse
@@ -33354,7 +33387,8 @@ test-transform-profiles: test-builtin-policy-lookup $(BIN) lib/lib_transform.met
 	tests/he/transform_imports.metta tests/he/transform_imports.expected tests/he/transform_once.metta tests/he/transform_once.expected \
 	tests/petta/transform_profile.metta tests/petta/transform_profile.extended.expected tests/petta/transform_profile.plain.expected \
 	tests/petta/transform_imports.metta tests/petta/transform_imports.expected tests/petta/transform_once.metta tests/petta/transform_once.expected \
-		tests/petta/transform_extended_let.metta tests/petta/transform_extended_let.expected
+		tests/petta/transform_extended_let.metta tests/petta/transform_extended_let.expected \
+		tests/petta/transform_once_let.metta tests/petta/transform_once_let.expected
 	@set -eu; \
 	for lang in he petta; do \
 		CETTA_TRANSFORM_TRACE=1 $(CETTA_BIN_INVOKE) --lang $$lang --profile extended tests/$$lang/transform_profile.metta \
@@ -33381,6 +33415,9 @@ test-transform-profiles: test-builtin-policy-lookup $(BIN) lib/lib_transform.met
 		> runtime/transform-extended-let-petta.out 2> runtime/transform-extended-let-petta.trace
 	@diff -u tests/petta/transform_extended_let.expected runtime/transform-extended-let-petta.out
 	@grep -q '^\[transform\] fired' runtime/transform-extended-let-petta.trace
+	@$(CETTA_BIN_INVOKE) --lang petta --profile extended tests/petta/transform_once_let.metta \
+		> runtime/transform-once-let-petta.out
+	@diff -u tests/petta/transform_once_let.expected runtime/transform-once-let-petta.out
 	@grep -q '^\[transform\] refused (transform program changed)' runtime/transform-imports-he.trace
 	@echo "PASS: transform's profile, import, redefinition, and once contracts hold in HE and PeTTa"
 

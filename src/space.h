@@ -1335,6 +1335,16 @@ bool space_exact_head_certified(Space *s, SymbolId head);
  * position. */
 bool space_remove_exact_ids(Space *s, SymbolId head, const AtomId *ids,
                             size_t count);
+/* Immediate exact removal with the same completed selection as retained
+ * preparation.  The caller's uninterrupted transition licenses publication
+ * without a generic effect record or a second validation.  OUT_ROWS excludes
+ * relation-only facts.  False means the exact route declined or refused before
+ * publication; no partial dense-first fallback is permitted. */
+bool space_remove_exact_ids_immediate(Space *s, SymbolId head,
+                                      const AtomId *ids, size_t count,
+                                      Atom *dense_atom,
+                                      CettaCount *out_removed,
+                                      CettaCount *out_rows);
 /* The rows holding a ground pattern, ascending, read from a current exact
  * index without settling marks: physical rows while rows are marked. */
 CettaIndex space_exact_index_rows64(Space *s, Atom *pattern, CettaIndex **out);

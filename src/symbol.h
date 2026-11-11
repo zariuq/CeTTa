@@ -29,6 +29,9 @@ enum {
     CETTA_SYMBOL_FLAG_BUILTIN_CONSTRUCTOR = 1u << 6,
     CETTA_SYMBOL_FLAG_LIBRARY_NATIVE_OP = 1u << 7,
     CETTA_SYMBOL_FLAG_CORE_GROUNDED_OP = 1u << 8,
+    /* Negative result of the transform-name classifier, owned by this table.
+     * IDs are never reused, so the flag cannot outlive its symbol. */
+    CETTA_SYMBOL_FLAG_NOT_TRANSFORM_NAME = 1u << 9,
 };
 
 typedef struct {
@@ -1303,6 +1306,8 @@ uint32_t symbol_len(const SymbolTable *st, SymbolId id);
 int symbol_compare(const SymbolTable *st, SymbolId left, SymbolId right);
 uint64_t symbol_hash_value(const SymbolTable *st, SymbolId id);
 uint32_t symbol_flags(const SymbolTable *st, SymbolId id);
+/* Classification flags are monotonic within a table incarnation. */
+void symbol_table_add_flags(SymbolTable *st, SymbolId id, uint32_t flags);
 uint32_t symbol_builtin_policy(const SymbolTable *st, SymbolId id);
 /* The value depends only on the name, so concurrent callers record the same. */
 void symbol_set_builtin_policy(SymbolTable *st, SymbolId id, uint32_t value);

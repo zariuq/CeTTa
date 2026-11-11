@@ -3,12 +3,58 @@
 
 #include "atom.h"
 #include "space.h"
+#include "symbol.h"
 
 #include <stddef.h>
 
-/* The public operation and its evaluator-private surface.  Shape recognition
+/* The public operation and its evaluator-private names.  Shape recognition
  * is separate from profile/library admission and never evaluates a call. */
-bool cetta_transform_call_head(SymbolId head, CettaExprLen arity);
+typedef enum {
+    CETTA_TRANSFORM_NAME_TRANSFORM = 0,
+    CETTA_TRANSFORM_NAME_SPLIT,
+    CETTA_TRANSFORM_NAME_PROPOSE,
+    CETTA_TRANSFORM_NAME_INST,
+    CETTA_TRANSFORM_NAME_FIRE,
+    CETTA_TRANSFORM_NAME_FIRE_INTO,
+    CETTA_TRANSFORM_NAME_RUN,
+} CettaTransformName;
+
+/* Symbol ids are cached per thread and per symbol-table incarnation.  Builtin
+ * spellings and impossible arities never enter that cache. */
+SymbolId cetta_transform_name_id(CettaTransformName name);
+bool cetta_transform_call_head_slow(SymbolId head, CettaExprLen arity);
+bool cetta_transform_native_call_head_slow(SymbolId head, CettaExprLen arity);
+bool cetta_transform_run_call_head_slow(SymbolId head, CettaExprLen arity);
+bool cetta_transform_name_head_slow(SymbolId head);
+
+static inline bool cetta_transform_call_head(SymbolId head, CettaExprLen arity) {
+    return arity >= 2u && arity <= 4u && head != SYMBOL_ID_NONE &&
+        !symbol_id_is_builtin(head) &&
+        !(symbol_flags(g_symbols, head) & CETTA_SYMBOL_FLAG_NOT_TRANSFORM_NAME) &&
+        cetta_transform_call_head_slow(head, arity);
+}
+
+static inline bool cetta_transform_native_call_head(SymbolId head,
+                                                    CettaExprLen arity) {
+    return arity >= 2u && arity <= 4u && head != SYMBOL_ID_NONE &&
+        !symbol_id_is_builtin(head) &&
+        !(symbol_flags(g_symbols, head) & CETTA_SYMBOL_FLAG_NOT_TRANSFORM_NAME) &&
+        cetta_transform_native_call_head_slow(head, arity);
+}
+
+static inline bool cetta_transform_run_call_head(SymbolId head,
+                                                 CettaExprLen arity) {
+    return arity == 4u && head != SYMBOL_ID_NONE &&
+        !symbol_id_is_builtin(head) &&
+        !(symbol_flags(g_symbols, head) & CETTA_SYMBOL_FLAG_NOT_TRANSFORM_NAME) &&
+        cetta_transform_run_call_head_slow(head, arity);
+}
+
+static inline bool cetta_transform_name_head(SymbolId head) {
+    return head != SYMBOL_ID_NONE && !symbol_id_is_builtin(head) &&
+        !(symbol_flags(g_symbols, head) & CETTA_SYMBOL_FLAG_NOT_TRANSFORM_NAME) &&
+        cetta_transform_name_head_slow(head);
+}
 
 /* One firing of a transform: commit the first kernel candidate of the
  * sources, in proposal order, whose footprint validates, remove its takes and
@@ -78,7 +124,7 @@ CettaTransformOutcome cetta_transform_fire(
     Space *program, Arena *a, Atom *call, const CettaTransformHost *host,
     Atom **answer_out);
 
-/* The surface cands/pin names correspond to proposals/guided in
+/* The names cands and pin correspond to proposals/guided in
  * Languages/MeTTa/PeTTa/LibTransform.lean.
  * `call` is (tf:propose SPACE CONJUNCTS TEMPLATE): the kernel's matches
  * against the store at the call, *answer_out the expression of each

@@ -438,8 +438,10 @@ static AtomId deserialize_atom_id_scoped(BlobReader *r, TermUniverse *universe,
         return tu_intern_rational(universe, rd_str(r, rd_u16(r)));
     case BLOB_TAG_EXPR: {
         uint16_t count = rd_u16(r);
-        AtomId *child_ids = count ? malloc(sizeof(AtomId) * count) : NULL;
-        if (count && !child_ids) return CETTA_ATOM_ID_NONE;
+        AtomId inline_child_ids[16];
+        AtomId *child_ids = count == 0 ? NULL : count <= 16 ? inline_child_ids
+            : malloc(sizeof(AtomId) * count);
+        if (count > 16 && !child_ids) return CETTA_ATOM_ID_NONE;
         AtomId expr_id = CETTA_ATOM_ID_NONE;
         for (uint16_t i = 0; i < count; i++) {
             child_ids[i] = deserialize_atom_id_scoped(r, universe, scope);
@@ -448,7 +450,8 @@ static AtomId deserialize_atom_id_scoped(BlobReader *r, TermUniverse *universe,
         }
         expr_id = tu_expr_from_ids(universe, child_ids, count);
 cleanup:
-        free(child_ids);
+        if (count > 16)
+            free(child_ids);
         return expr_id;
     }
     default:

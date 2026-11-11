@@ -294,6 +294,20 @@ typedef enum {
     PETTA_MACHINE_NATIVE_COLLECTION_CAPACITY,
 } PettaMachineNativeCollectionResult;
 
+/* Optional host facilities shared by every machine made from the same host.
+ * The table is borrowed and must outlive those machines.  Keeping these cold
+ * entry points together avoids enlarging each machine's copied host value. */
+typedef struct {
+    bool (*translator_rule_set)(
+        void *context, SymbolId head, bool enabled);
+    bool (*tabled_relation_set)(
+        void *context, SymbolId head, CettaExprLen arity, bool enabled);
+    SymbolId (*tabled_relation_join)(
+        void *context, SymbolId head, CettaExprLen arity);
+    bool (*tabled_relation_join_set)(
+        void *context, SymbolId head, CettaExprLen arity, SymbolId join);
+} PettaMachineOptionalServices;
+
 typedef struct {
     void *context;
     const PettaAnalysisService *analysis;
@@ -622,6 +636,8 @@ typedef struct {
      * copies the value, and settles there whatever of the answers refers to
      * younger storage.  Optional. */
     bool (*result_long_lived)(void *context, const Atom *head);
+    /* Cold table-control entry points shared by all machines from this host. */
+    const PettaMachineOptionalServices *optional_services;
     /* Complete a native invocation that has already executed. No refusal
      * or native replay is permitted here; terminal faults go through end.
      * Its values retain their provenance and conditional roots. */
@@ -924,8 +940,6 @@ typedef struct {
         SymbolId head, CettaExprLen arity);
     bool (*translator_rule_contains)(
         void *context, SymbolId head);
-    bool (*translator_rule_set)(
-        void *context, SymbolId head, bool enabled);
     bool (*tabled_relation_contains)(
         void *context, SymbolId head, CettaExprLen arity);
     /* Language-owned table admission. Static-world profiles may permit
@@ -941,15 +955,6 @@ typedef struct {
     bool (*tabled_relation_round_reusable)(
         void *context, Space *space,
         SymbolId head, CettaExprLen arity);
-    bool (*tabled_relation_set)(
-        void *context, SymbolId head, CettaExprLen arity,
-        bool enabled);
-    /* tabled-lattice: a tabled relation whose answers for one instance of
-     * the call are joined, by min or max, inside the fixpoint. */
-    SymbolId (*tabled_relation_join)(
-        void *context, SymbolId head, CettaExprLen arity);
-    bool (*tabled_relation_join_set)(
-        void *context, SymbolId head, CettaExprLen arity, SymbolId join);
     /* A shared table is an optional physical realization.  The language
      * still decides which relations are memoized through the callbacks
      * below; merely supplying storage cannot make a call cacheable. */

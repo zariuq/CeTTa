@@ -246,6 +246,25 @@ def acceptance(binary):
             raise AssertionError(f"full drain {key}: expected {expected}, got {counters.get(key)}")
     print("PASS: small public drains stay eager; the cursor exhausts 64 proposals and eight diagonal firings")
 
+    lines = ["!(bind! &s (new-space))"]
+    lines += [f"!(add-atom &s (item {i}))" for i in range(100)]
+    lines += ["!(reset-runtime-stats!)",
+              "!(once (transform &s (take (item $x)) (item c) &s))",
+              "!(remaining (size-atom (collapse (match &s $x $x))))",
+              "!(copies (size-atom (collapse (match &s (item c) $x))))"]
+    proc, counters = run(binary, source(lines), "destination_write_detaches_none", stats=True)
+    if proc.returncode != 0 or proc.stdout.splitlines()[-2:] != [
+            "(remaining 100)", "(copies 1)"]:
+        raise AssertionError(f"self-destination first answer changed the store: {proc.stdout!r}; {proc.stderr!r}")
+    for key, expected in (("transform-cursor-open", 1),
+                          ("transform-cursor-close", 1),
+                          ("transform-cursor-candidate", 1),
+                          ("space-pinned-occurrences-detach", 0),
+                          ("space-pinned-occurrences-detached-row", 0)):
+        if counters.get(key) != expected:
+            raise AssertionError(f"destination write {key}: expected {expected}, got {counters.get(key)}")
+    print("PASS: a first-answer self-destination write closes its reader without detaching 99 unread rows")
+
 
 def named_fixtures(binary):
     fixtures = {

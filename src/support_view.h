@@ -3,6 +3,7 @@
 
 #include "atom.h"
 #include "space.h"
+#include "symbol.h"
 
 /* support:open, support:assert, support:retract and support:why
  * (lib/petta/lib_support.metta) realized incrementally while the library's
@@ -49,8 +50,12 @@ bool cetta_support_presentation_admitted(Space *program,
                                          const char *library_path);
 
 /* support:open, support:assert, support:retract or support:why with its two
- * arguments. */
-bool cetta_support_head(SymbolId head, CettaExprLen arity);
+ * arguments.  Ordinary builtin heads reject before entering the name cache. */
+bool cetta_support_head_slow(SymbolId head, CettaExprLen arity);
+static inline bool cetta_support_head(SymbolId head, CettaExprLen arity) {
+    return arity == 2u && head != SYMBOL_ID_NONE &&
+        !symbol_id_is_builtin(head) && cetta_support_head_slow(head, arity);
+}
 
 /* `call` is one of those calls with its arguments' values. */
 CettaSupportOutcome cetta_support_call(Space *program, Arena *a, Atom *call,

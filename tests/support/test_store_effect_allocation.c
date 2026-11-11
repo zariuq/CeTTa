@@ -8,6 +8,16 @@
 #include <stdlib.h>
 
 static bool refuse_allocation;
+static bool refuse_fallible_allocation;
+
+void *__real_cetta_fallible_malloc(size_t bytes);
+void *__wrap_cetta_fallible_malloc(size_t bytes) {
+    if (refuse_fallible_allocation) {
+        refuse_fallible_allocation = false;
+        return NULL;
+    }
+    return __real_cetta_fallible_malloc(bytes);
+}
 
 void *__real_malloc(size_t bytes);
 void *__wrap_malloc(size_t bytes) {
@@ -91,12 +101,41 @@ int main(void) {
            space_get_atom_id_at64(&space, 1u) == b);
     space_store_effect_dispose(&effect);
 
+    /* Immediate mixed removal finishes its fallible row preparation before
+     * either the relation fact or its equal row copy can disappear. */
+    Space mixed;
+    space_init_with_universe(&mixed, &universe);
+    mixed.dense_from_first = true;
+    Atom *edge_head_atom = atom_symbol(&scratch, "store-effect-allocation-edge");
+    SymbolId edge = edge_head_atom->sym_id;
+    AtomId edge_head = term_universe_store_atom_id(&universe, NULL, edge_head_atom);
+    Atom *row = atom_expr3(&scratch, edge_head_atom, a_atom, b_atom);
+    AtomId row_id = term_universe_store_atom_id(&universe, NULL, row);
+    AtomId columns[2] = {a, b};
+    assert(edge_head != CETTA_ATOM_ID_NONE && row_id != CETTA_ATOM_ID_NONE);
+    assert(space_add_dense_tuples(&mixed, edge, edge_head, 2u, columns, 1u));
+    space_add_atom_id(&mixed, row_id);
+    assert(space_dense_facts(&mixed) == 1u && space_length64(&mixed) == 2u);
+    revision = space_revision(&mixed);
+    refuse_fallible_allocation = true;
+    CettaCount rows = 99u;
+    assert(!space_remove_exact_ids_immediate(
+        &mixed, edge, &row_id, 1u, row, &removed, &rows));
+    assert(!refuse_fallible_allocation && removed == 0u && rows == 0u);
+    assert(space_dense_facts(&mixed) == 1u && space_length64(&mixed) == 2u &&
+           space_revision(&mixed) == revision);
+    assert(space_remove_exact_ids_immediate(
+        &mixed, edge, &row_id, 1u, row, &removed, &rows));
+    assert(removed == 2u && rows == 1u &&
+           space_dense_facts(&mixed) == 0u && space_length64(&mixed) == 0u);
+    space_free(&mixed);
+
     space_free(&space);
     term_universe_free(&universe);
     arena_free(&scratch);
     arena_free(&persistent);
     g_symbols = NULL;
     symbol_table_free(&symbols);
-    puts("PASS: store-effect allocation refusal publishes no selected, appended, or positioned update");
+    puts("PASS: store-effect allocation refusal publishes no selected, appended, positioned, or immediate mixed update");
     return 0;
 }

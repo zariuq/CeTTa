@@ -1449,7 +1449,8 @@ static bool he_dispatch_arguments_fit(Space *space, Atom *term) {
  * admission walk on the same predicate, including the library exception.
  * A typed head with a dispatch signature runs in the machine through the
  * host's dispatch boundary. */
-static bool he_execution_head_requires_canonical(Space *space, SymbolId head,
+static inline __attribute__((always_inline)) bool
+he_execution_head_requires_canonical(Space *space, SymbolId head,
     CettaExprLen arity, bool intrinsic, bool collection, bool library_stream) {
     return !intrinsic && head != SYMBOL_ID_NONE && !collection &&
         !library_stream && (is_grounded_op(head) || symbol_id_is_builtin_for(head, eval_current_language_id()) ||
