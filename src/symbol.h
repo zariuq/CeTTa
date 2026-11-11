@@ -930,7 +930,8 @@ static inline SymbolSpelling symbol_spelling(
     X(lib_ipasir_solve, "__cetta_lib_ipasir_solve") \
     X(lib_ipasir_models, "__cetta_lib_ipasir_models") \
     X(lib_provenance_supports, "__cetta_lib_provenance_supports") \
-    X(lib_provenance_supports_each, "__cetta_lib_provenance_supports_each")
+    X(lib_provenance_supports_each, "__cetta_lib_provenance_supports_each") \
+    X(prime_eval_value, "__cetta_prime_eval_value")
 
 /* Identity, dialect ownership and constructor role are separate facts.
  * These columns supplement the registered vocabulary without changing IDs. */

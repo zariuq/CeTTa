@@ -63335,7 +63335,8 @@ static bool prime_native_expression_safe_in(Space *space, Arena *arena,
             safe=opened && prime_eval_stack_support_buffer_push(&scan,opened);
             continue;
         }
-        if (opening_head==g_builtin_syms.eval && authored_len==2u) {
+        if ((opening_head==g_builtin_syms.eval ||
+             opening_head==g_builtin_syms.prime_eval_value) && authored_len==2u) {
             safe=prime_eval_stack_support_buffer_push(&scan,atom->expr.elems[1]);
             continue;
         }
@@ -63543,6 +63544,8 @@ static bool prime_native_actual_call_allowed(Space *space, Arena *arena,
      * this guard, so opening grants no authority to the operation it names. */
     if (cetta_prime_open_code_head(head) ||
         (head == g_builtin_syms.eval && atom_authored_len(call) == 2u) ||
+        (head == g_builtin_syms.prime_eval_value &&
+            atom_authored_len(call) == 2u) ||
         (atom_authored_len(call)==3u &&
             (head==g_builtin_syms.eval || head==g_builtin_syms.evalc ||
                 head==g_builtin_syms.ctx_colon_capture)))
@@ -64593,7 +64596,8 @@ static void prime_weight_licence_scan(PrimeWeightLicence *licence) {
         prime_weight_licence_push_task(licence, atom->expr.elems[2], PRIME_LICENCE_FACTOR);
     } else if (head == ids->weight_read || head == g_builtin_syms.collapse ||
                head == g_builtin_syms.collapse_bind || head == g_builtin_syms.reify ||
-               head == g_builtin_syms.select || head == g_builtin_syms.eval) {
+               head == g_builtin_syms.select || head == g_builtin_syms.eval ||
+               head == g_builtin_syms.prime_eval_value) {
         prime_weight_licence_refuse(licence, "FactorDroppingObservation", head_atom);
     } else if (head == g_builtin_syms.quote) {
         return;
@@ -102184,13 +102188,15 @@ prime_need_next_strict_argument: ;
             TAIL_REENTER(atom_prime_held_payload(evaluated_argument));
         if (language_id == CETTA_LANGUAGE_PRIME && !held_code &&
             evaluated_argument && evaluated_argument->kind == ATOM_EXPR) {
-            /* `eval` is the ordinary bind of its operand followed by eval of
-             * each returned value. Use the existing retained `chain` owner
+            /* `eval` is the ordinary bind of its operand followed by the
+             * opening of each returned value that carries code (the
+             * continuation below). Use the existing retained `chain` owner
              * instead of a stack-local answer set: a refusal in either the
              * operand or selected code then keeps the exact continuation. */
             Atom *value=atom_var_with_id(a,"eval-value",fresh_var_id());
             Atom *resume=value
-                ? atom_expr2(a,atom_symbol_id(a,g_builtin_syms.eval),value) : NULL;
+                ? atom_expr2(a,atom_symbol_id(a,g_builtin_syms.prime_eval_value),value)
+                : NULL;
             Atom *next=resume
                 ? atom_expr(a,(Atom *[]){atom_symbol_id(a,g_builtin_syms.chain),
                     evaluated_argument,value,resume},4u) : NULL;
@@ -102202,6 +102208,33 @@ prime_need_next_strict_argument: ;
             TAIL_REENTER(next);
         }
         TAIL_REENTER(held_code ? held_code : expr_arg(atom, 0));
+    }
+
+    /* The continuation of a Prime eval, given each value its operand
+     * returned.  A value that carries code runs as that code, as an explicit
+     * eval of it does: held syntax its payload, a ready value its code, a
+     * completed value the code it spells.  Any other value is the operand's
+     * answer.  Evaluating it again would only repeat the finished bind, and
+     * an open value would repeat it without end. */
+    if (head_id == g_builtin_syms.prime_eval_value && nargs == 1u &&
+        language_id == CETTA_LANGUAGE_PRIME) {
+        Atom *value = resolve_registry_refs(
+            a, bindings_apply_if_vars(CURRENT_ENV, a, expr_arg(atom, 0)));
+        Atom *code = prime_need_ready_code(a, value, CURRENT_ENV);
+        if (!code && prime_is_completed_value(value)) {
+            code = prime_value_code(a, value);
+            if (!code) {
+                outcome_set_add(os, atom_error(a, atom,
+                    atom_symbol(a, "OutOfMemory")), &_empty);
+                return;
+            }
+        }
+        if (!code && atom_prime_held_is(value))
+            code = atom_prime_held_payload(value);
+        if (code)
+            TAIL_REENTER(code);
+        outcome_set_add(os, value, CURRENT_ENV);
+        return;
     }
 
     /* ── foldl-atom-in-space (clean extension syntax) ────────────────── */

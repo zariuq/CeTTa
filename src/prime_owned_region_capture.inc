@@ -205,7 +205,8 @@ static bool prime_native_owned_region_call_admitted(Space *space, Arena *arena,
         head == g_builtin_syms.get_atoms || head == g_builtin_syms.add_atom ||
         head == g_builtin_syms.remove_atom || head == g_builtin_syms.collapse ||
         head == g_builtin_syms.function || head == g_builtin_syms.return_text ||
-        head == g_builtin_syms.eval || head == g_builtin_syms.unify ||
+        head == g_builtin_syms.eval || head == g_builtin_syms.prime_eval_value ||
+        head == g_builtin_syms.unify ||
         head == g_builtin_syms.context_space))
         return true;
     /* This profile may enter a native handler with an actual retained
