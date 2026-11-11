@@ -265,6 +265,75 @@ bool eval_prime_install_standard_library(Space *space, Arena *arena) {
     return true;
 }
 
+/* Whether `equation` is a forwarder prime_standard_delegate made for `head`:
+ * (= (name $argument0 ...) (original $argument0 ...)). */
+static bool prime_standard_is_forwarder(const PrimeStandardHead *head,
+                                        Atom *equation) {
+    if (!equation || equation->kind != ATOM_EXPR || equation->expr.len != 3u)
+        return false;
+    Atom *lhs = equation->expr.elems[1];
+    Atom *rhs = equation->expr.elems[2];
+    if (!lhs || !rhs || lhs->kind != ATOM_EXPR || rhs->kind != ATOM_EXPR ||
+        lhs->expr.len == 0u || lhs->expr.len != rhs->expr.len ||
+        !atom_is_symbol_id(lhs->expr.elems[0], head->name) ||
+        !atom_is_symbol_id(rhs->expr.elems[0], head->original))
+        return false;
+    for (CettaExprIndex i = 1u; i < lhs->expr.len; i++)
+        if (lhs->expr.elems[i]->kind != ATOM_VAR ||
+            !atom_eq(lhs->expr.elems[i], rhs->expr.elems[i]))
+            return false;
+    return true;
+}
+
+/* A forwarder stands for a native head that has no equation of its arity
+ * (prime_standard_delegate).  The standard library is installed before any
+ * import, so a library imported later can define a head that its native
+ * operation only accelerates: _minimal-retain-top-k-by-number in list, the
+ * hol: and set: operations.  Kept beside that definition, the forwarder
+ * answers as well, once more when the native operation succeeds and without
+ * end when it declines, since its original then reaches this forwarder
+ * again.  An import that makes an equation of a forwarder's arity visible in
+ * the program retires that forwarder's occurrence there.  The standard
+ * record keeps it, so std: still names the native original. */
+static void eval_prime_standard_note_import(Space *space) {
+    PrimeStandardLibrary *library = prime_standard_library();
+    if (!library || !space) return;
+    const Space *base = space;
+    while (base && base->overlay_base) base = base->overlay_base;
+    if (base != library->program ||
+        space_instance_id(base) != library->program_instance)
+        return;
+    for (size_t i = 0u; i < library->count; i++) {
+        PrimeStandardHead *head = &library->heads[i];
+        if (!head->native) continue;
+        for (size_t j = 0u; j < head->equation_count; j++) {
+            Atom *forwarder = head->equations[j];
+            if (!prime_standard_is_forwarder(head, forwarder)) continue;
+            CettaExprLen width = forwarder->expr.elems[1]->expr.len;
+            SpaceEquationCursor cursor;
+            if (!space_equation_cursor_init(space, head->name, &cursor)) continue;
+            Atom *occurrence = NULL;
+            bool defined = false;
+            for (;;) {
+                SpaceEquationOccurrenceId id;
+                if (space_equation_cursor_next(&cursor, &id) !=
+                    SPACE_EQUATION_CURSOR_ITEM) break;
+                SpaceEquationOccurrence row;
+                if (!space_equation_occurrence_resolve(id, &row) || !row.equation)
+                    continue;
+                if (atom_alpha_eq(row.equation, forwarder)) {
+                    if (!occurrence) occurrence = row.equation;
+                } else if (row.lhs && row.lhs->kind == ATOM_EXPR &&
+                           row.lhs->expr.len == width) {
+                    defined = true;
+                }
+            }
+            if (defined && occurrence)
+                (void)space_remove(space, occurrence);
+        }
+    }
+}
+
 static bool prime_standard_head_unchanged(Space *space, SymbolId name) {
     PrimeStandardHead *head = prime_standard_head(name);
     if (!head || !head->native) return true;
