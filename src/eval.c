@@ -94368,6 +94368,8 @@ static __attribute__((noinline)) MettaDispatchResult metta_storage_dispatch(
         if (!error && imported) {
             if (language_id == CETTA_LANGUAGE_PETTA)
                 petta_specializer_note_import(dest.space);
+            if (language_id == CETTA_LANGUAGE_PRIME)
+                eval_prime_standard_note_import(dest.space);
             if (dest.is_fresh) {
                 Arena *pa = eval_storage_arena(a);
                 Atom *space_value = atom_space(pa, dest.space);
