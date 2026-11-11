@@ -30210,6 +30210,19 @@ else
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
 endif
 
+.PHONY: test-petta-path-non-text
+# A path is a string; anything else is refused at once with an error that
+# names the call, instead of being taken apart without end.
+test-petta-semantics: test-petta-path-non-text
+test-petta-path-non-text: $(BIN) lib/path.metta tests/petta/path_non_text.metta tests/petta/path_non_text.expected
+	@set -e; \
+	actual=$$($(call cetta_exec,./$(BIN)) --lang petta tests/petta/path_non_text.metta 2>&1); \
+	if [ "$$actual" != "$$(cat tests/petta/path_non_text.expected)" ]; then \
+		echo "FAIL: path functions refuse a non-string at once"; \
+		printf '%s\n' "$$actual"; exit 1; \
+	fi; \
+	echo "PASS: path functions refuse a non-string at once"
+
 .PHONY: test-petta-native-fold-typed-steps
 # A declared step whose one arrow integers meet once keeps the native fold;
 # its answers are the protocol's, as are those of every other declaration.
