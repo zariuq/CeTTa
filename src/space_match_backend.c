@@ -12031,6 +12031,13 @@ bool space_match_exists_flat_linear_view64(
     CettaGsltTermViewOpenBindingObservationV1 open_bindings,
     bool *exists,
     CettaIndex *examined) {
+    /* Only a space whose rows all live in its own native storage can answer
+     * existence here. A source backend or an overlay base keeps rows
+     * elsewhere; existence there is left to ordinary matching. */
+    if (!s || s->overlay_base || space_has_dependencies(s) ||
+        (s->match_backend.kind != SPACE_ENGINE_NATIVE &&
+         s->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT))
+        return false;
     CettaCount bits = 0u;
     if (space_match_dense_view_count(s, view, open_bindings, &bits)) {
         if (bits != 0u) {
