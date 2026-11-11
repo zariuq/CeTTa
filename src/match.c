@@ -8056,6 +8056,14 @@ static bool bindings_builder_add_constraint_internal(BindingsBuilder *bb,
                                                      bool normalize_constraints,
                                                      CettaMatchCompletion *failure);
 
+/* A failed audit refutes the bind only when its walk found the cycle; a walk
+ * that could not represent the environment found nothing. */
+static void bindings_builder_note_found_cycle(
+        const BindingsBuilder *bb, CettaMatchCompletion *failure) {
+    if (failure && bb->current.cycle_state == BINDINGS_CYCLE_PRESENT)
+        *failure = CETTA_MATCH_REFUTED;
+}
+
 static bool bindings_builder_add_id_internal_with_cycle_evidence(
         BindingsBuilder *bb, VarId var_id,
         SymbolId spelling, Atom *name_key, BindingValue val,
@@ -8159,6 +8167,8 @@ static bool bindings_builder_add_id_internal_with_cycle_evidence(
         &bb->current, var_id, val,
         has_cycle_evidence, cycle_evidence);
     if (verdict == BINDINGS_BIND_REFUSE) {
+        /* The occurs check proved the cycle: no finite unifier exists. */
+        if (failure) *failure = CETTA_MATCH_REFUTED;
         bindings_builder_rollback(bb, rollback_mark);
         return false;
     }
@@ -8174,6 +8184,7 @@ static bool bindings_builder_add_id_internal_with_cycle_evidence(
         bindings_rhs_variable_bloom_add(&bb->current, val);
         if (verdict == BINDINGS_BIND_AUDIT &&
             !bindings_trial_is_acyclic(&bb->current)) {
+            bindings_builder_note_found_cycle(bb, failure);
             bindings_builder_rollback(bb, rollback_mark);
             return false;
         }
@@ -8199,6 +8210,7 @@ static bool bindings_builder_add_id_internal_with_cycle_evidence(
     bb->current.len++;
     if (verdict == BINDINGS_BIND_AUDIT &&
         !bindings_trial_is_acyclic(&bb->current)) {
+        bindings_builder_note_found_cycle(bb, failure);
         bindings_builder_rollback(bb, rollback_mark);
         return false;
     }
@@ -8278,7 +8290,10 @@ static bool bindings_match_store_value(
         AtomDeepCopySession **transport,
         MatchBindContextRole role, bool contextual_id,
         VarId id, SymbolId spelling, Atom *name_key, BindingValue value,
-        BindingsReachability evidence, BindingValue *authoritative_out) {
+        BindingsReachability evidence, BindingValue *authoritative_out,
+        CettaMatchCompletion *failure) {
+    if (failure)
+        *failure = CETTA_MATCH_INCOMPLETE;
     if (authoritative_out)
         *authoritative_out = binding_value_from_atom(NULL);
     if (!value.skeleton)
@@ -8348,7 +8363,7 @@ static bool bindings_match_store_value(
         return bindings_builder_add_id_internal_with_cycle_evidence(
             builder, id, spelling, name_key, value,
             evidence != BINDINGS_REACHABILITY_UNKNOWN, evidence,
-            authoritative_out, NULL);
+            authoritative_out, failure);
     bool added = bindings && bindings_add_internal(
         bindings, id, spelling, name_key, value, true);
     if (added && authoritative_out)
@@ -8386,7 +8401,10 @@ static bool bindings_builder_add_rule_epoch_key_fresh(
         BindingsBuilder *bb, Atom *source_var, CettaFrameIdentity epoch,
         BindingValue value, Arena *arena, AtomDeepCopySession **transport,
         RuleFrameRegion *frame_region,
-        BindingValue *authoritative_value_out, BindingsReachability cycle_evidence) {
+        BindingValue *authoritative_value_out, BindingsReachability cycle_evidence,
+        CettaMatchCompletion *failure) {
+    if (failure)
+        *failure = CETTA_MATCH_INCOMPLETE;
     if (authoritative_value_out)
         *authoritative_value_out = binding_value_from_atom(NULL);
     static _Thread_local int direct_enabled = -1;
@@ -8419,7 +8437,7 @@ static bool bindings_builder_add_rule_epoch_key_fresh(
             MATCH_BIND_CONTEXT_ACTIVATION_SOURCE, true,
             var_epoch_id(source_var->var_id, epoch),
             atom_symbol_current_id(source_var), source_var->name_key, value,
-            cycle_evidence, authoritative_value_out);
+            cycle_evidence, authoritative_value_out, failure);
         if (added) {
             cetta_runtime_stats_inc(
                 CETTA_RUNTIME_COUNTER_BINDINGS_RULE_EPOCH_DIRECT_KEY_COMMIT);
@@ -8433,7 +8451,7 @@ static bool bindings_builder_add_rule_epoch_key_fresh(
             MATCH_BIND_CONTEXT_ACTIVATION_SOURCE, true,
             materialized->var_id, atom_symbol_current_id(materialized),
             materialized->name_key, value, cycle_evidence,
-            authoritative_value_out);
+            authoritative_value_out, failure);
     if (added && authoritative_value_out) {
         *authoritative_value_out = bindings_lookup_value_id(
             &bb->current, materialized->var_id);
@@ -10212,7 +10230,10 @@ static bool bindings_match_store_value_in_rule_region(
         bool contextual_id, VarId id, SymbolId spelling,
         Atom *name_key, BindingValue value,
         BindingsReachability evidence,
-        BindingValue *authoritative_value_out) {
+        BindingValue *authoritative_value_out,
+        CettaMatchCompletion *failure) {
+    if (failure)
+        *failure = CETTA_MATCH_INCOMPLETE;
     bool handled = false;
     bool stored = rule_frame_region_store_exclusive(
         view, builder, arena, transport, role, id, spelling,
@@ -10222,7 +10243,7 @@ static bool bindings_match_store_value_in_rule_region(
     return bindings_match_store_value(
         bindings, builder, arena, transport, role, contextual_id,
         id, spelling, name_key, value, evidence,
-        authoritative_value_out);
+        authoritative_value_out, failure);
 }
 
 /*
@@ -15065,23 +15086,35 @@ retry_pair:
                     cetta_frame_identity_eq(right_epoch, rule_epoch)) {
                     BindingValue value = left_value;
                     value.skeleton = left;
+                    CettaMatchCompletion bind_failure = CETTA_MATCH_INCOMPLETE;
                     bool added = builder && value.skeleton
                         ? bindings_builder_add_rule_epoch_key_fresh(
                               builder, right, right_epoch, value, a, &transport,
-                              right_frame_region, NULL, binding_evidence)
+                              right_frame_region, NULL, binding_evidence,
+                              &bind_failure)
                         : false;
-                    if (!added) goto fail;
+                    if (!added) {
+                        /* An occurs-check refusal is a completed comparison. */
+                        if (bind_failure == CETTA_MATCH_REFUTED) goto mismatch;
+                        goto fail;
+                    }
                     continue;
                 }
                 BindingValue value = right_value;
                 value.skeleton = right;
+                CettaMatchCompletion bind_failure = CETTA_MATCH_INCOMPLETE;
                 bool added = bindings_match_store_value_in_rule_region(
                     right_frame_region,
                     bindings, builder, a, &transport,
                     MATCH_BIND_CONTEXT_STORED_EQUATION, left_original,
                     left_id, atom_symbol_current_id(left),
-                    left->name_key, value, binding_evidence, NULL);
-                if (!added) goto fail;
+                    left->name_key, value, binding_evidence, NULL,
+                    &bind_failure);
+                if (!added) {
+                    /* An occurs-check refusal is a completed comparison. */
+                    if (bind_failure == CETTA_MATCH_REFUTED) goto mismatch;
+                    goto fail;
+                }
                 continue;
             }
             BindingsReachability cycle_evidence =
@@ -15107,6 +15140,7 @@ retry_pair:
                     &cycle_evidence, &primitive_pending))
                 goto pause_primitive;
             bool added = false;
+            CettaMatchCompletion bind_failure = CETTA_MATCH_INCOMPLETE;
             if (builder &&
                 cycle_evidence != BINDINGS_REACHABILITY_UNKNOWN) {
                 added =
@@ -15115,16 +15149,22 @@ retry_pair:
                         NULL, builder, a, &transport,
                         MATCH_BIND_CONTEXT_STORED_EQUATION, left_original,
                         left_id, atom_symbol_current_id(left),
-                        left->name_key, value, cycle_evidence, NULL);
+                        left->name_key, value, cycle_evidence, NULL,
+                        &bind_failure);
             } else {
                 added = bindings_match_store_value_in_rule_region(
                     right_frame_region,
                     bindings, builder, a, &transport,
                     MATCH_BIND_CONTEXT_STORED_EQUATION, left_original,
                     left_id, atom_symbol_current_id(left),
-                    left->name_key, value, BINDINGS_REACHABILITY_UNKNOWN, NULL);
+                    left->name_key, value, BINDINGS_REACHABILITY_UNKNOWN, NULL,
+                    &bind_failure);
             }
-            if (!added) goto fail;
+            if (!added) {
+                /* An occurs-check refusal is a completed comparison. */
+                if (bind_failure == CETTA_MATCH_REFUTED) goto mismatch;
+                goto fail;
+            }
             continue;
         }
         if (right->kind == ATOM_VAR) {
@@ -15158,20 +15198,26 @@ retry_pair:
                     &binding_evidence, &primitive_pending))
                 goto pause_primitive;
             bool added = false;
+            CettaMatchCompletion bind_failure = CETTA_MATCH_INCOMPLETE;
             if (builder && right_original && cetta_frame_identity_eq(right_epoch, rule_epoch) &&
                 (prefer_right_rule_slot || !right->name_key)) {
                 added = bindings_builder_add_rule_epoch_key_fresh(
                     builder, right, right_epoch, binding_value, a, &transport,
-                    right_frame_region, NULL, binding_evidence);
+                    right_frame_region, NULL, binding_evidence, &bind_failure);
             } else {
                 added = bindings_match_store_value_in_rule_region(
                     right_frame_region,
                     bindings, builder, a, &transport,
                     MATCH_BIND_CONTEXT_ACTIVATION_SOURCE, right_original,
                     right_id, atom_symbol_current_id(right),
-                    right->name_key, binding_value, binding_evidence, NULL);
+                    right->name_key, binding_value, binding_evidence, NULL,
+                    &bind_failure);
             }
-            if (!added) goto fail;
+            if (!added) {
+                /* An occurs-check refusal is a completed comparison. */
+                if (bind_failure == CETTA_MATCH_REFUTED) goto mismatch;
+                goto fail;
+            }
             continue;
         }
         if (left->kind == ATOM_SYMBOL && right->kind == ATOM_SYMBOL) {
@@ -15983,7 +16029,7 @@ retry_pair:
                             binding_value_from_context_kind(
                                 left, left_epoch, left_kind),
                             a, &transport,
-                            &frame_region, NULL, BINDINGS_REACHABILITY_UNKNOWN);
+                            &frame_region, NULL, BINDINGS_REACHABILITY_UNKNOWN, NULL);
                     if (!added)
                         goto fail;
                     continue;
@@ -15995,7 +16041,7 @@ retry_pair:
                     bindings, builder, a, &transport,
                     MATCH_BIND_CONTEXT_STORED_EQUATION, left_original,
                     left_id, atom_symbol_current_id(left),
-                    left->name_key, value, BINDINGS_REACHABILITY_UNKNOWN, NULL);
+                    left->name_key, value, BINDINGS_REACHABILITY_UNKNOWN, NULL, NULL);
                 if (!added)
                     goto fail;
                 continue;
@@ -16028,14 +16074,14 @@ retry_pair:
                         NULL, builder, a, &transport,
                         MATCH_BIND_CONTEXT_STORED_EQUATION, left_original,
                         left_id, atom_symbol_current_id(left),
-                        left->name_key, value, cycle_evidence, NULL);
+                        left->name_key, value, cycle_evidence, NULL, NULL);
             } else {
                 added = bindings_match_store_value_in_rule_region(
                     &frame_region,
                     bindings, builder, a, &transport,
                     MATCH_BIND_CONTEXT_STORED_EQUATION, left_original,
                     left_id, atom_symbol_current_id(left),
-                    left->name_key, value, BINDINGS_REACHABILITY_UNKNOWN, NULL);
+                    left->name_key, value, BINDINGS_REACHABILITY_UNKNOWN, NULL, NULL);
             }
             if (!added)
                 goto fail;
@@ -16070,14 +16116,14 @@ retry_pair:
             if (builder && prefer_right_rule_slot) {
                 added = bindings_builder_add_rule_epoch_key_fresh(
                     builder, right, right_epoch, binding_value, a, &transport,
-                    &frame_region, NULL, BINDINGS_REACHABILITY_UNKNOWN);
+                    &frame_region, NULL, BINDINGS_REACHABILITY_UNKNOWN, NULL);
             } else {
                 added = bindings_match_store_value_in_rule_region(
                     &frame_region,
                     bindings, builder, a, &transport,
                     MATCH_BIND_CONTEXT_ACTIVATION_SOURCE, true,
                     right_id, atom_symbol_current_id(right),
-                    right->name_key, binding_value, BINDINGS_REACHABILITY_UNKNOWN, NULL);
+                    right->name_key, binding_value, BINDINGS_REACHABILITY_UNKNOWN, NULL, NULL);
             }
             if (!added)
                 goto fail;
@@ -16325,7 +16371,7 @@ static MatchBareVariableStep match_exclusive_bare_variable(
     MatchWriteStamp start = match_write_stamp(
         &bb->current, rule_frame_region_staged_len(&region));
     bool bound = bindings_builder_add_rule_epoch_key_fresh(
-        bb, right, right_epoch, left, a, &transport, &region, NULL, BINDINGS_REACHABILITY_UNKNOWN);
+        bb, right, right_epoch, left, a, &transport, &region, NULL, BINDINGS_REACHABILITY_UNKNOWN, NULL);
     atom_deep_copy_session_free(transport);
     match_note_unification_attempt(
         bound,
