@@ -3071,10 +3071,14 @@ static Atom *grounded_remove_all_atom(
     Atom **survivors = arena_alloc(
         a, sizeof(Atom *) * (size_t)args[1]->expr.len);
     CettaExprLen survivor_count = 0u;
+    /* Held syntax is compared by the syntax it holds, as == compares it:
+     * the item arrives held through its Atom parameter, and holding is not
+     * part of either term. */
+    Atom *removed = atom_prime_held_payload(args[0]);
     for (CettaExprIndex index = 0u;
          index < args[1]->expr.len; index++) {
         Atom *candidate = args[1]->expr.elems[index];
-        if (!atom_eq(args[0], candidate))
+        if (!atom_eq(removed, atom_prime_held_payload(candidate)))
             survivors[survivor_count++] = candidate;
     }
     return atom_expr(a, survivors, survivor_count);
