@@ -547,6 +547,14 @@ endif
 ifneq ($(filter $(SIWC_TEST),0 1),$(SIWC_TEST))
 $(error SIWC_TEST must be 0 or 1)
 endif
+# SIWC runs on HTTP.  A recursive build that turns HTTP off builds without
+# the SIWC it inherited from its caller's command line; asking for both at
+# the top is a contradiction and stops.
+ifneq ($(MAKELEVEL),0)
+ifneq ($(ENABLE_HTTP),1)
+override ENABLE_SIWC := 0
+endif
+endif
 ifeq ($(ENABLE_SIWC),1)
 ifneq ($(ENABLE_HTTP),1)
 $(error ENABLE_SIWC=1 requires ENABLE_HTTP=1)
@@ -1181,10 +1189,10 @@ STABLE_OCCURRENCE_TRANSPORT_TEST_BIN = runtime/test_stable_occurrence_transport-
 STABLE_OCCURRENCE_TRANSPORT_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
 STORE_EFFECT_ALLOCATION_TEST_SRC = tests/support/test_store_effect_allocation.c
 STORE_EFFECT_ALLOCATION_TEST_OBJ = runtime/bootstrap/test_store_effect_allocation.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
-STORE_EFFECT_ALLOCATION_TEST_BIN = runtime/test_store_effect_allocation-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+STORE_EFFECT_ALLOCATION_TEST_BIN = runtime/test_store_effect_allocation-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 TRANSFORM_CURSOR_FAULT_SRC = tests/support/transform_cursor_faults.c
 TRANSFORM_CURSOR_FAULT_OBJ = runtime/bootstrap/transform_cursor_faults.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
-TRANSFORM_CURSOR_FAULT_BIN = runtime/cetta-transform-cursor-faults-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+TRANSFORM_CURSOR_FAULT_BIN = runtime/cetta-transform-cursor-faults-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 OCCURRENCE_CURSOR_BENCH_SRC = benchmarks/bench_occurrence_cursor.c
 OCCURRENCE_CURSOR_BENCH_OBJ = runtime/bootstrap/bench_occurrence_cursor.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 OCCURRENCE_CURSOR_BENCH_BIN = runtime/bench_occurrence_cursor-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
@@ -5563,9 +5571,13 @@ probe-petta-memory-plateau-pending: $(BIN)
 # stored in an older space, in named state or in a closure is reached; a
 # cycle and dropped spaces are not, and neither yet is a space held only by
 # a running form or, inside a transaction, by the registry outside it.
-.PHONY: test-petta-space-reachability
+.PHONY: test-petta-space-reachability test-petta-space-reachability-body
 test-all: test-petta-space-reachability
-test-petta-space-reachability: $(BIN)
+# The counts are runtime-stats! counters, which a runtime-stats build keeps.
+test-petta-space-reachability:
+	@$(MAKE) --no-print-directory BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		test-petta-space-reachability-body
+test-petta-space-reachability-body: $(BIN)
 	@set -eu; \
 	for route in 0 1; do \
 		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$route $(CETTA_BIN_INVOKE) --profile extended \
@@ -53313,7 +53325,7 @@ test-lang-package-manifest:
 runtime/test_source_occurrence_view-$(BUILD_OBJ_TAG): tests/test_source_occurrence_view.c $(OBJ) $(BRIDGE_DEPS)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_source_occurrence_view.c $(filter-out src/main.%,$(OBJ)) \
-		-Wl,--wrap=cetta_shared_transition_guard_enter $(LDFLAGS)
+		-Wl,--wrap=cetta_shared_transition_guard_acquire $(LDFLAGS)
 
 test-source-occurrence-view: runtime/test_source_occurrence_view-$(BUILD_OBJ_TAG)
 	@$(call cetta_exec,./runtime/test_source_occurrence_view-$(BUILD_OBJ_TAG))
