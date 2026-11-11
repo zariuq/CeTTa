@@ -33,6 +33,53 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <stddef.h>
+
+/* Space names its native storage's fields through an anonymous view in the
+ * same union, which keeps the storage's layout field for field. */
+#define SPACE_NATIVE_VIEW_FIELD(field) \
+    _Static_assert(offsetof(Space, field) == offsetof(Space, native.field), \
+                   "Space's " #field " is its native storage's")
+SPACE_NATIVE_VIEW_FIELD(atom_ids);
+SPACE_NATIVE_VIEW_FIELD(atom_id_width_bits);
+SPACE_NATIVE_VIEW_FIELD(eq_idx_dirty);
+SPACE_NATIVE_VIEW_FIELD(ty_idx_dirty);
+SPACE_NATIVE_VIEW_FIELD(exact_idx_dirty);
+SPACE_NATIVE_VIEW_FIELD(has_non_exact_atoms);
+SPACE_NATIVE_VIEW_FIELD(has_non_exact_atoms_dirty);
+SPACE_NATIVE_VIEW_FIELD(has_graded_equations);
+SPACE_NATIVE_VIEW_FIELD(has_proof_image);
+SPACE_NATIVE_VIEW_FIELD(start);
+SPACE_NATIVE_VIEW_FIELD(len);
+SPACE_NATIVE_VIEW_FIELD(cap);
+SPACE_NATIVE_VIEW_FIELD(universe);
+SPACE_NATIVE_VIEW_FIELD(eq_idx);
+SPACE_NATIVE_VIEW_FIELD(ty_idx);
+SPACE_NATIVE_VIEW_FIELD(exact_idx);
+SPACE_NATIVE_VIEW_FIELD(id_present);
+SPACE_NATIVE_VIEW_FIELD(id_present_bits);
+SPACE_NATIVE_VIEW_FIELD(id_present_table);
+SPACE_NATIVE_VIEW_FIELD(id_present_table_cap);
+SPACE_NATIVE_VIEW_FIELD(id_present_table_used);
+SPACE_NATIVE_VIEW_FIELD(id_present_synced_len);
+SPACE_NATIVE_VIEW_FIELD(id_present_dirty);
+SPACE_NATIVE_VIEW_FIELD(id_present_incomplete);
+SPACE_NATIVE_VIEW_FIELD(id_present_shared);
+SPACE_NATIVE_VIEW_FIELD(id_present_keys);
+SPACE_NATIVE_VIEW_FIELD(id_present_key_len);
+SPACE_NATIVE_VIEW_FIELD(id_present_key_cap);
+SPACE_NATIVE_VIEW_FIELD(resource_owner);
+SPACE_NATIVE_VIEW_FIELD(dense);
+SPACE_NATIVE_VIEW_FIELD(dense_facts);
+SPACE_NATIVE_VIEW_FIELD(dense_epoch);
+SPACE_NATIVE_VIEW_FIELD(dense_rows_head);
+SPACE_NATIVE_VIEW_FIELD(secondary_index_deferral_depth);
+SPACE_NATIVE_VIEW_FIELD(marks);
+SPACE_NATIVE_VIEW_FIELD(mark_tree);
+SPACE_NATIVE_VIEW_FIELD(marked);
+SPACE_NATIVE_VIEW_FIELD(mark_rows);
+SPACE_NATIVE_VIEW_FIELD(mark_cap);
+#undef SPACE_NATIVE_VIEW_FIELD
 
 static __attribute__((noinline, cold)) bool space_proof_prepare_mutation_slow(Space *);
 /* Selected storage is not a module-own view: both constructors of such
@@ -14342,8 +14389,7 @@ RegistryBindingPublication *registry_binding_publication_new(Registry *destinati
     if (!publication)
         return NULL;
     publication->destination = destination;
-    registry_init(&publication->prepared);
-    if (!publication->prepared.name_keys) {
+    if (!registry_try_init(&publication->prepared)) {
         registry_binding_publication_free(publication);
         return NULL;
     }
@@ -23963,10 +24009,32 @@ bool space_checkpoint_native_admitted(const Space *space,
         if (!term_universe_hdr_checked(space->universe,space->id_present_keys[i]))
             return space_checkpoint_refuse(budget,"WorldPresenceKey");
     }
-    if ((space->id_present_bits & 7u) ||
-        !space_checkpoint_extent_admitted(space->id_present,
-            space->id_present_bits / 8u, space->id_present_bits / 8u, 1u, budget))
+    /* The presence keys take one of two forms (PresenceSetForm): the bitset,
+     * id_present_bits wide, or, while id_present is NULL, the table of keys
+     * whose bitset would be that wide.  Probes of the table end at a vacant
+     * slot. */
+    if (space->id_present_bits & 7u)
         return space_checkpoint_refuse(budget, "WorldPresenceShape");
+    if (space->id_present) {
+        if (space->id_present_table || space->id_present_table_cap ||
+            space->id_present_table_used ||
+            !space_checkpoint_extent_admitted(space->id_present,
+                space->id_present_bits / 8u, space->id_present_bits / 8u, 1u, budget))
+            return space_checkpoint_refuse(budget, "WorldPresenceShape");
+    } else {
+        uint32_t table_cap = space->id_present_table_cap;
+        if ((table_cap & (table_cap - 1u)) ||
+            !space_checkpoint_extent_admitted(space->id_present_table,
+                space->id_present_table_used, table_cap, sizeof(AtomId), budget))
+            return space_checkpoint_refuse(budget, "WorldPresenceShape");
+        uint32_t filed = 0u;
+        for (uint32_t at = 0u; at < table_cap; at++) {
+            if (!space_checkpoint_work(budget, 1u)) return false;
+            if (space->id_present_table[at] != CETTA_ATOM_ID_NONE) filed++;
+        }
+        if (filed != space->id_present_table_used || (table_cap && filed == table_cap))
+            return space_checkpoint_refuse(budget, "WorldPresenceShape");
+    }
     if (!space_checkpoint_head_chains_admitted(space, &space->eq_idx.head_rows, budget) ||
         !space_checkpoint_head_set_admitted(&space->eq_idx.directional_heads, budget) ||
         !space_checkpoint_head_chains_admitted(space, &space->ty_idx.rows, budget) ||
@@ -24112,8 +24180,18 @@ bool space_checkpoint_native_copy(const Space *source, Space *image,
     image->atom_id_width_bits = source->atom_id_width_bits;
     image->start = source->start;
     image->id_present_bits = source->id_present_bits;
-    image->id_present = space_checkpoint_array_copy(source->id_present,
-        source->id_present_bits / 8u, source->id_present_bits / 8u, 1u, budget);
+    if (source->id_present) {
+        image->id_present = space_checkpoint_array_copy(source->id_present,
+            source->id_present_bits / 8u, source->id_present_bits / 8u, 1u, budget);
+    } else if (source->id_present_table_cap) {
+        image->id_present_table = space_checkpoint_array_copy(
+            source->id_present_table, source->id_present_table_cap,
+            source->id_present_table_cap, sizeof(AtomId), budget);
+        if (image->id_present_table) {
+            image->id_present_table_cap = source->id_present_table_cap;
+            image->id_present_table_used = source->id_present_table_used;
+        }
+    }
     if (budget->refusal) return false;
     if (!space_checkpoint_head_chains_copy(&source->eq_idx.head_rows,
             &image->eq_idx.head_rows, budget)) return false;
@@ -24202,6 +24280,7 @@ bool space_checkpoint_native_copy(const Space *source, Space *image,
     image->declaration_revision = source->declaration_revision;
     image->id_present_synced_len = source->id_present_synced_len;
     image->id_present_dirty = source->id_present_dirty;
+    image->id_present_shared = source->id_present_shared;
     image->eq_idx_dirty = source->eq_idx_dirty;
     image->ty_idx_dirty = source->ty_idx_dirty;
     image->exact_idx_dirty = source->exact_idx_dirty;
@@ -24311,6 +24390,7 @@ bool space_checkpoint_native_compare(const Space *a, const Space *b,
     WORLD_SCALAR(kind);
     WORLD_SCALAR(strict);
     WORLD_SCALAR(id_present_incomplete);
+    WORLD_SCALAR(id_present_shared);
     WORLD_SCALAR(revision);
     WORLD_SCALAR(equation_revision);
     WORLD_SCALAR(declaration_revision);
@@ -24371,12 +24451,25 @@ bool space_checkpoint_native_compare(const Space *a, const Space *b,
         !read->bytes(read->context, "world.rows",
             a->atom_ids ? a->atom_ids + a->start * width : NULL, a->len * width,
             b->atom_ids ? b->atom_ids + b->start * width : NULL, b->len * width)) return false;
+    /* The presence keys compare in their form: the bitset as its bytes, the
+     * table as its slots, and either as the width its bitset has or would
+     * have (PresenceSetForm). */
+    size_t left_bitset = a->id_present ? a->id_present_bits / 8u : 0u;
+    size_t right_bitset = b->id_present ? b->id_present_bits / 8u : 0u;
     if (!space_checkpoint_compare_array("world.presence_keys",a->id_present_keys,
             a->id_present_key_len,a->id_present_key_cap,b->id_present_keys,
             b->id_present_key_len,b->id_present_key_cap,sizeof(AtomId),read) ||
+        !read->scalar(read->context, "world.presence_form",
+            a->id_present != NULL, b->id_present != NULL) ||
+        !read->physical(read->context, "world.presence_width",
+            a->id_present_bits, b->id_present_bits) ||
         !space_checkpoint_compare_array("world.presence", a->id_present,
-            a->id_present_bits / 8u, a->id_present_bits / 8u,
-            b->id_present, b->id_present_bits / 8u, b->id_present_bits / 8u, 1u, read) ||
+            left_bitset, left_bitset, b->id_present, right_bitset, right_bitset, 1u, read) ||
+        !read->scalar(read->context, "world.presence_table_used",
+            a->id_present_table_used, b->id_present_table_used) ||
+        !space_checkpoint_compare_array("world.presence_table", a->id_present_table,
+            a->id_present_table_cap, a->id_present_table_cap, b->id_present_table,
+            b->id_present_table_cap, b->id_present_table_cap, sizeof(AtomId), read) ||
         !space_checkpoint_head_chains_compare("world.heads",
             &a->eq_idx.head_rows, &b->eq_idx.head_rows, read) ||
         !read->scalar(read->context, "world.directional_len",

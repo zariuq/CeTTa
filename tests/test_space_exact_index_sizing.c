@@ -272,7 +272,7 @@ static void overlays(TermUniverse *universe) {
 
 typedef struct {
     size_t scalar_mismatches, physical_mismatches;
-    bool exact_filed_equal, exact_used_equal;
+    bool exact_filed_equal, exact_used_equal, fresh_read_stamp;
     uint64_t exact_capacity[2];
 } Reading;
 
@@ -312,6 +312,11 @@ static bool read_physical(void *raw, const char *site, uint64_t a,
     if (strcmp(site, "world.exact.capacity") == 0) {
         r->exact_capacity[0] = a;
         r->exact_capacity[1] = b;
+    }
+    /* A copied world receives fresh invalidation currency. */
+    if (strcmp(site, "world.read_stamp") == 0) {
+        r->fresh_read_stamp = a != b;
+        return true;
     }
     r->physical_mismatches += a != b;
     return true;
@@ -358,6 +363,9 @@ static void checkpoints(TermUniverse *universe) {
             space_add(&s, row(k % 7));
         check_query(&s, row(0));
         assert(space_exact_index_test_slots(&s) == slots[i]);
+        /* Membership brings the presence keys up to date: a table at five
+         * rows, keys shared by equal rows past seven. */
+        assert(space_contains_exact(&s, row(0)));
         bool ready = false;
         SpaceCheckpointBudget spent = budget();
         assert(space_checkpoint_native_copy(&s, &image, &ready, &spent));
@@ -365,7 +373,21 @@ static void checkpoints(TermUniverse *universe) {
         assert(space_exact_index_test_slots(&image) == slots[i]);
         assert(space_exact_index_test_used(&image) == (size_t)sizes[i]);
         Reading same = compare(&s, &image);
-        assert(same.scalar_mismatches == 0u && same.physical_mismatches == 0u);
+        assert(same.scalar_mismatches == 0u && same.physical_mismatches == 0u &&
+               same.fresh_read_stamp);
+        /* The image's presence keys answer as the source's do, after a
+         * removal too: an equal row left behind is still held. */
+        assert(space_remove(&image, row(0)));
+        assert(space_remove(&s, row(0)));
+        CettaIndex left = 0u;
+        for (CettaIndex k = 0u; k < space_length64(&image); k++) {
+            Atom *candidate = space_get_at64(&image, k);
+            if (candidate && atom_eq(candidate, row(0))) left++;
+        }
+        assert(left == (CettaIndex)((sizes[i] + 6) / 7 - 1));
+        assert(space_contains_exact(&image, row(0)) == (left > 0u));
+        assert(space_contains_exact(&s, row(0)) == (left > 0u));
+        check_query(&image, row(0));
         space_free(&image);
         space_free(&s);
     }

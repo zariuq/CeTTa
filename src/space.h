@@ -203,6 +203,15 @@ typedef enum {
 typedef struct {
     uint8_t *atom_ids;
     uint8_t atom_id_width_bits;
+    /* The index flags fill the row width's word. */
+    bool eq_idx_dirty;
+    bool ty_idx_dirty;
+    bool exact_idx_dirty;
+    bool has_non_exact_atoms;
+    bool has_non_exact_atoms_dirty;
+    bool has_graded_equations; /* derived alongside the ordinary equation index */
+    /* Cached representation presence; occupies existing flag padding. */
+    _Atomic bool has_proof_image;
     CettaIndex start;
     CettaIndex len, cap;
     TermUniverse *universe;
@@ -240,14 +249,6 @@ typedef struct {
     /* The head last found to keep rows, whose facts an add asks no more
      * than their header. */
     SymbolId dense_rows_head;
-    bool eq_idx_dirty;
-    bool ty_idx_dirty;
-    bool exact_idx_dirty;
-    bool has_non_exact_atoms;
-    bool has_non_exact_atoms_dirty;
-    bool has_graded_equations; /* derived alongside the ordinary equation index */
-    /* Cached representation presence; occupies existing flag padding. */
-    _Atomic bool has_proof_image;
     uint32_t secondary_index_deferral_depth;
     /* Rows removed and not yet contracted away (space_mark_rows): one bit
      * per row, their number, and a Fenwick tree of the live rows of each
@@ -279,6 +280,13 @@ typedef struct Space {
         struct {
             uint8_t *atom_ids;
             uint8_t atom_id_width_bits;
+            bool eq_idx_dirty;
+            bool ty_idx_dirty;
+            bool exact_idx_dirty;
+            bool has_non_exact_atoms;
+            bool has_non_exact_atoms_dirty;
+            bool has_graded_equations;
+            _Atomic bool has_proof_image;
             CettaIndex start;
             CettaIndex len, cap;
             TermUniverse *universe;
@@ -300,13 +308,6 @@ typedef struct Space {
             CettaCount dense_facts;
             uint64_t dense_epoch;
             SymbolId dense_rows_head;
-            bool eq_idx_dirty;
-            bool ty_idx_dirty;
-            bool exact_idx_dirty;
-            bool has_non_exact_atoms;
-            bool has_non_exact_atoms_dirty;
-            bool has_graded_equations;
-            _Atomic bool has_proof_image;
             uint32_t secondary_index_deferral_depth;
             uint64_t *marks;
             CettaIndex *mark_tree;
@@ -325,6 +326,10 @@ typedef struct Space {
     bool dense_from_first;
     /* A live projection of a module's own storage, not a writable overlay. */
     bool module_own_view;
+    /* A `(:< sub super)` row, or a mutation that could not be classified, has
+       been published here. Never cleared: a read that finds it false knows
+       the space has no subtype rows. */
+    bool declares_subtypes;
     /* Process-local lifetime identity.  A revision identifies a state only
        within one Space lifetime; instance_id prevents pointer reuse from
        reviving cached state from a freed Space at the same address. */
@@ -342,10 +347,6 @@ typedef struct Space {
        equation and declaration projections together and nothing else, so
        caches of those facts key on this pair rather than on `revision`. */
     uint64_t declaration_revision;
-    /* A `(:< sub super)` row, or a mutation that could not be classified, has
-       been published here. Never cleared: a read that finds it false knows
-       the space has no subtype rows. */
-    bool declares_subtypes;
     /* Process-wide unique prefix stamp, refreshed at initialization and when
        a publication may rewrite an already visible prefix.  Append-only
        publications preserve it: the rows keep their positions and new rows
