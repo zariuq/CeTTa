@@ -109,6 +109,25 @@ static void compare_variation(const PettaPlanNode *base, const PettaPlanNode *ch
 
 int main(void) {
     check_scratch_worklists();
+    /* Erasing source-owned accelerators must retain debit, position and
+     * arity. These fields moved when the node key was packed more tightly. */
+    PettaPlanNode semantic = {.source_position = 4u, .source_debit = 7u,
+                             .child_count = 3u};
+    uint64_t key[PETTA_PLAN_NODE_KEY_WORDS], altered[PETTA_PLAN_NODE_KEY_WORDS];
+    petta_plan_semantic_key(&semantic, key);
+    PettaPlanNode variant = semantic;
+    variant.source_debit++;
+    petta_plan_semantic_key(&variant, altered);
+    assert(memcmp(key, altered, sizeof(key)) != 0);
+    variant = semantic;
+    variant.child_count++;
+    petta_plan_semantic_key(&variant, altered);
+    assert(memcmp(key, altered, sizeof(key)) != 0);
+    variant = semantic;
+    variant.deterministic_region = (void *)(uintptr_t)1u;
+    variant.region_hole_program = (void *)(uintptr_t)2u;
+    petta_plan_semantic_key(&variant, altered);
+    assert(memcmp(key, altered, sizeof(key)) == 0);
     PettaPlanNode base = {0}, changed;
 #define VARY(field, value) do { changed = base; changed.field = (value); \
     assert(!same_metadata(&base, &changed)); compare_variation(&base, &changed); } while (0)

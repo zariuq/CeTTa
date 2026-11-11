@@ -356,6 +356,7 @@ typedef struct {
     uint8_t range_class;
     uint32_t typed_arity;
     uint32_t first_value_class;
+    bool requires_ready_bind_patterns;
 } PreparedPureHead;
 
 typedef struct {
@@ -561,6 +562,8 @@ typedef struct {
     size_t len;
     size_t cap;
     uint32_t next_slot;
+    uint32_t ready_input_slots;
+    uint32_t input_head;
 } PreparedPureCompileContext;
 
 struct CettaPreparedPureProgram {
@@ -3790,12 +3793,18 @@ static bool prepared_pure_compile_inert_bind_pattern(
     if (program->call_mode == CETTA_GSLT_PURE_CALL_CALL_BY_NEED) {
         const PreparedPureBindPattern *bound =
             &program->bind_patterns[*pattern_index_out];
-        for (uint32_t i = 0u; i < bound->var_count; i++)
-            if (program->bind_vars[bound->first_var + i].prebound &&
-                (!program->closed_program ||
-                 !program->entry_arguments_are_values))
+        for (uint32_t i = 0u; i < bound->var_count; i++) {
+            const PreparedPureBindVar *var = &program->bind_vars[bound->first_var + i];
+            if (!var->prebound)
+                continue;
+            if (var->slot < context->ready_input_slots &&
+                context->input_head < program->head_len) {
+                program->heads[context->input_head].requires_ready_bind_patterns = true;
+            } else {
                 return prepared_pure_reject(
                     program, "binding pattern demands a bound Need value", pattern);
+            }
+        }
     }
     return true;
 }
@@ -6987,6 +6996,11 @@ static bool prepared_pure_compile_head(
                 break;
             }
         }
+        if (program->closed_program && program->entry_arguments_are_values &&
+            program->heads[head_index].head == program->entry_head) {
+            context.ready_input_slots = context.next_slot;
+            context.input_head = head_index;
+        }
         /* Occurrences of a repeated variable compare values.  An eager
          * closed program forces every argument before it matches, so its
          * arguments are values; elsewhere one may still be unevaluated. */
@@ -7400,6 +7414,17 @@ static bool prepared_pure_compile_pending_heads(
         if (!program->heads[i].compiled &&
             !prepared_pure_compile_head(program, i))
             return false;
+    }
+    /* Entry readiness licenses that entry's parameter slots. It is not a
+     * certificate for later lazy calls into the same head. Validate every
+     * such call before publishing the compiled program. */
+    for (size_t i = 0u; i < program->node_len; i++) {
+        const PreparedPureNode *node = &program->nodes[i];
+        if (node->kind == PREPARED_PURE_CALL && node->auxiliary < program->head_len &&
+            program->heads[node->auxiliary].requires_ready_bind_patterns &&
+            !node->call_arguments_are_values)
+            return prepared_pure_reject(program,
+                "bound Need pattern has an uncertified call", node->atom);
     }
     return space_program_token_is_current(program->source_program) &&
         prepared_pure_binds_meet_destinations(program);

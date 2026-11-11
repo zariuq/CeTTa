@@ -256,6 +256,19 @@ typedef struct {
     CettaIndex mark_cap;
 } SpaceNativeStorage;
 
+/* Optional header/storage lifetime, independent of mutation authority. The
+ * owner and operation table stay stable through every issued hold. Retain and
+ * release are thread-safe and infallible; current is a nonallocating currency
+ * check, not protection against concurrent mutation. Legacy caller-owned
+ * Spaces leave this empty. Payload moves never move the header's owner. */
+typedef struct {
+    void (*retain)(void *owner);
+    void (*release)(void *owner);
+    bool (*current)(const void *owner);
+    CettaStorageVisitor storage;
+} SpaceOwnerOps;
+typedef struct { void *owner; const SpaceOwnerOps *ops; } SpaceOwner;
+
 typedef struct Space {
     union {
         SpaceNativeStorage native;
@@ -369,6 +382,7 @@ typedef struct Space {
     uint64_t module_dependency_epoch;
     /* Charged to the resource ledger's space gauges at initialization. */
     bool ledger_counted;
+    SpaceOwner lifetime;
     /* Set when the space lives only while an arena holds an atom of it: the
        evaluator's record of those holds.  NULL for a space its owner frees. */
     struct SpaceHold *arena_hold;
@@ -421,6 +435,11 @@ void space_exact_index_test_refuse(size_t allocations);
 
 
 void space_init_with_universe(Space *s, TermUniverse *universe);
+/* Space atoms and captured views retain this owner through existing arena
+ * finalizers. Closing an owner may revoke operations while holds keep its
+ * header address valid. A stale owned Space never resolves as an empty one. */
+bool space_owner_is_current(const Space *space);
+bool space_retain_in_arena(const void *space, Arena *arena);
 void space_init_overlay(Space *s, const Space *base);
 /* Immutable source-backed bases require the checked local constructor. It
  * uses the source owner's captured overlay capability, where available. */
@@ -439,6 +458,10 @@ bool space_module_own_view_select(Space *view, Space *storage);
 void space_module_own_view_release(Space *view, Space *storage);
 static inline Space *space_mutation_target(Space *s) {
     s = s && s->module_own_view ? (Space *)s->overlay_base : s;
+    if (s && !space_owner_is_current(s)) {
+        space_match_backend_set_error(SPACE_MATCH_BACKEND_ERROR_READ_ONLY);
+        return NULL;
+    }
     if (s && s->match_backend.kind == SPACE_ENGINE_SOURCE &&
         (!s->match_backend.ops || !s->match_backend.ops->source_edits)) {
         space_match_backend_set_error(SPACE_MATCH_BACKEND_ERROR_READ_ONLY);
@@ -907,10 +930,11 @@ bool space_execution_analysis_cache_compare_targets(const SpaceExecutionAnalysis
 typedef struct {
     const _Atomic uint64_t *stamp;
     uint64_t expected;
+    SpaceOwner lifetime;
 } SpaceReadWatch;
 
-/* Original authorities for one logical Space view. The caller retains every
- * Space and its universe; this view owns only its captured token array. A
+/* Original authorities for one logical Space view. Declared lifetime owners
+ * are retained; the caller retains legacy Spaces and their universes. A
  * non-overlay view has no allocation. Watches are immutable after capture;
  * checking them does not permit unlocked access to mutable storage. Cloning preserves the issued tokens,
  * including stale ones, rather than capturing a later revision. Capture and
@@ -1742,6 +1766,13 @@ CettaMatchCompletion space_remove_checked(Space *s, Atom *atom);
 typedef CettaMatchCompletion (*SpaceAtomComparison)(Atom *left, Atom *right);
 CettaMatchCompletion space_remove_compared(Space *s, Atom *atom,
     SpaceAtomComparison equal, SpaceAtomComparison alpha_equal);
+/* Source-backed atomic filtering without materializing the base. The callback
+ * is stable throughout the operation; incomplete comparison publishes nothing.
+ * Native positional stores retain their existing removal APIs. */
+CettaMatchCompletion space_remove_all_compared(Space *s, Atom *pattern,
+    SpaceAtomComparison matches, CettaCount *removed);
+CettaMatchCompletion space_remove_up_to_compared(Space *s, Atom *pattern,
+    SpaceAtomComparison matches, CettaCount maximum, CettaCount *removed);
 CettaMatchCompletion space_contains_compared(Space *s, Atom *atom, SpaceAtomComparison equal);
 /* Resolve removal without changing the store. The caller retains the Space,
  * body and protection mask for the search lifetime. Each step performs at

@@ -1,0 +1,54 @@
+Opt integration on cetta-ours
+============================
+
+Imported checkpoint: d32e909d608e41d9bd80c427853cbfcfdcb1a0ef
+(WIP: integrate Opt reclamation, relation storage and indexed dispatch).
+
+The integration retains captured source-backed Spaces and the durable DB
+API while adopting the new relation storage, query planning and resource
+reclamation. Internal API changes are reconciled in both branches' controls;
+the imported tests are retained rather than replacing local lifetime tests.
+
+Integration corrections include:
+
+- Source cursors remain authoritative when no native shadow exists. HE's
+  ordinary query/get-atoms adapters now consume that captured source.
+- Scoped resource images and held Space headers coexist with explicit durable
+  owners. Admission uses borrowed syntax for metadata inspection, allowing
+  opaque self/mutual/base cycles to retire while real readers survive.
+- Residual and closed-answer collectors retain a child's completion cause,
+  including when no parent completion tracker exists. Interrupted private
+  prefixes are not published as completed answers.
+- Native completion preserves actual entered outcomes. Refusal before entry
+  follows the host path; completed errors do not replay a native callback.
+- Compiler cache entries distinguish certified source refusals from transient
+  resource/input failures. Library capability masks retain their full width.
+- Retained control plans select collection versus first-success semantics
+  and their operand position. Plan keys preserve arity, source debit and
+  source position while erasing only source-owned accelerator pointers.
+- A ready Need entry can compare its parameter values in a structural binder.
+  This certificate is scoped to that head's input slots; compilation rejects
+  an unqualified later lazy call into a head that requires those ready slots.
+
+Qualified controls include 19,566 conditional/context checks, 76,262 plan-key
+checks, prepared entry/return and ownership controls, 272 corrected-profile
+assertions on both equation routes, generated native/reference query
+comparisons, and the persistent Space/workspace and public DB tests.
+This is scoped qualification, not a claim that every optional build/profile
+and performance panel has completed.
+
+Open upstream WIP hold
+---------------------
+
+The new mutual-cycle RSS diagnostic remains open. The measured 8,000,
+64,000 and 640,000 iteration ladder used 30,056, 30,132 and 38,544 KiB,
+exceeding that diagnostic's 8,192 KiB delta. The imported WIP already recorded
+this hold. Its threshold is unchanged. Self cycles and removed Space-valued
+facts pass their corresponding ladders, and retained cyclic Spaces remain
+covered by the native ownership controls.
+
+The upstream ordinary-cost holds and final fixed MORK panels are not closed
+by this integration. In particular, importing this experimental checkpoint
+does not establish a fixed-factor speedup or production readiness for every
+workload. Its semantic and durability evidence should be assessed separately
+from the remaining Opt performance programme.

@@ -28,6 +28,8 @@
 #include "library_cwp.h"
 #include "library_space_service.h"
 #include "library_store.h"
+#include "library_act.h"
+#include "act_space.h"
 #include "library_math.h"
 #include "library_proc.h"
 #include "proc_child.h"
@@ -268,9 +270,10 @@ enum {
 #define CETTA_LIBRARY_TOML (UINT64_C(1) << 45)
 
 #define CETTA_LIBRARY_STORE (UINT64_C(1) << 36)
+#define CETTA_LIBRARY_ACT (UINT64_C(1) << 37)
 
 _Static_assert((CETTA_NATIVE_IMPORT_GPARSE &
-                (((UINT64_C(1) << 25) - 1) | CETTA_LIBRARY_STORE |
+                (((UINT64_C(1) << 25) - 1) | CETTA_LIBRARY_STORE | CETTA_LIBRARY_ACT |
                  CETTA_LIBRARY_CRYPTO | CETTA_LIBRARY_TOML)) == 0,
                "native grammar import aliases the shared library catalog");
 _Static_assert((CETTA_LIBRARY_TOML & CETTA_LIBRARY_STORE) == 0,
@@ -312,6 +315,7 @@ static const CettaLibrarySpec CETTA_LIBRARIES[] = {
     {"llm", CETTA_LIBRARY_LLM, NULL},
     {"space_service", CETTA_LIBRARY_SPACE_SERVICE, NULL},
     {"store", CETTA_LIBRARY_STORE, NULL},
+    {"act", CETTA_LIBRARY_ACT, NULL},
     {"mailbox", CETTA_LIBRARY_MAILBOX, NULL},
     {"sqlite", CETTA_LIBRARY_SQLITE, NULL},
     {"siwc", CETTA_LIBRARY_SIWC, NULL},
@@ -2685,7 +2689,7 @@ static bool module_name_is_legal(const char *name) {
 static bool module_spec_looks_like_relative_path(const char *spec) {
     return spec && (*spec == '.' || strchr(spec, '/') != NULL ||
                     path_has_suffix(spec, ".metta") ||
-                    path_has_suffix(spec, ".act") ||
+                    path_has_suffix(spec, ".act") || path_has_suffix(spec, ".cact") ||
                     path_has_suffix(spec, ".mm2"));
 }
 
@@ -3658,7 +3662,7 @@ static bool resolve_module_candidate_act(const char *candidate,
     char path[PATH_MAX];
 
     if (reason && reason_sz > 0) reason[0] = '\0';
-    if (path_has_suffix(candidate, ".act")) {
+    if (path_has_suffix(candidate, ".act") || path_has_suffix(candidate, ".cact")) {
         snprintf(path, sizeof(path), "%s", candidate);
     } else {
         int n = snprintf(path, sizeof(path), "%s.act", candidate);
@@ -10305,98 +10309,15 @@ static bool load_act_dump_text_into_space(CettaLibraryContext *ctx,
 }
 
 static bool load_module_act_file(CettaLibraryContext *ctx, const char *path,
-                                 Space *work_space,
-                                 Arena *eval_arena,
-                                 Arena *persistent_arena,
-                                 Atom **error_out) {
-    CettaMorkSpaceHandle *bridge = NULL;
-    Space imported;
-    uint8_t *packet = NULL;
-    size_t packet_len = 0;
-    uint64_t rows = 0;
-    bool imported_init = false;
-    bool ok = false;
-
-    if (space_is_ordered(work_space)) {
-        *error_out = module_reason(ctx, eval_arena, "ModuleCompiledOrderedSpaceUnsupported", path);
-        return false;
-    }
-    if (!cetta_mork_bridge_is_available()) {
-        *error_out = module_reason_with_detail(
-            ctx, eval_arena, "ModuleCompiledBridgeUnavailable", path,
-            atom_string(eval_arena, cetta_mork_bridge_last_error()));
-        return false;
-    }
-    bridge = cetta_mork_bridge_space_new();
-    if (!bridge) {
-        *error_out = module_reason_with_detail(
-            ctx, eval_arena, "ModuleCompiledBridgeAllocationFailed", path,
-            atom_string(eval_arena, cetta_mork_bridge_last_error()));
-        return false;
-    }
-    if (!cetta_mork_bridge_space_load_act_file(
-            bridge, (const uint8_t *)path, strlen(path), NULL)) {
-        *error_out = module_reason_with_detail(
-            ctx, eval_arena, "ModuleCompiledLoadFailed", path,
-            atom_string(eval_arena, cetta_mork_bridge_last_error()));
-        goto cleanup;
-    }
-
-    space_init_with_universe(
-        &imported, work_space ? work_space->native.universe : NULL);
-    imported_init = true;
-    SpaceTransferEndpoint import_dst = {
-        .kind = SPACE_TRANSFER_ENDPOINT_SPACE,
-        .space = &imported,
-    };
-    SpaceTransferEndpoint import_src = {
-        .kind = SPACE_TRANSFER_ENDPOINT_MORK_BRIDGE,
-        .bridge = bridge,
-    };
-    switch (space_match_backend_transfer_resolved_result(import_dst, import_src,
-                                                         persistent_arena, NULL)) {
-    case SPACE_TRANSFER_OK:
-        {
-            uint32_t n = 0;
-            if (!space_length_u32_checked(&imported, &n)) {
-                *error_out = module_reason(
-                    ctx, eval_arena, space_match_backend_last_error(), path);
-                goto cleanup;
-            }
-            for (uint32_t i = 0; i < n; i++) {
-                space_add_atom_id(work_space, space_get_atom_id_at(&imported, i));
-            }
-        }
-        break;
-    case SPACE_TRANSFER_NEEDS_TEXT_FALLBACK:
-        if (!cetta_mork_bridge_space_dump(bridge, &packet, &packet_len, &rows)) {
-            *error_out = module_reason_with_detail(
-                ctx, eval_arena, "ModuleCompiledDumpFailed", path,
-                atom_string(eval_arena, cetta_mork_bridge_last_error()));
-            goto cleanup;
-        }
-        if (!load_act_dump_text_into_space(ctx, path, packet, packet_len, work_space,
-                                           persistent_arena, eval_arena, error_out)) {
-            goto cleanup;
-        }
-        break;
-    case SPACE_TRANSFER_ERROR:
-    default:
-        *error_out = module_reason_with_detail(
-            ctx, eval_arena, "ModuleCompiledImportFailed", path,
-            atom_string(eval_arena, "structural bridge import failed"));
-        goto cleanup;
-    }
-
-    ok = true;
-
-cleanup:
-    cetta_mork_bridge_bytes_free(packet, packet_len);
-    if (imported_init)
-        space_free(&imported);
-    cetta_mork_bridge_space_free(bridge);
-    (void)rows;
-    return ok;
+                                 Space *work_space, Arena *eval_arena,
+                                 Arena *persistent_arena, Atom **error_out) {
+    CettaActStatus status = cetta_act_space_load(work_space, persistent_arena,
+        path, cetta_library_value_byte_limit(ctx));
+    if (status == CETTA_ACT_OK) return true;
+    *error_out = module_reason_with_detail(ctx, eval_arena,
+        "ModuleCompiledLoadFailed", path,
+        atom_symbol(eval_arena, cetta_act_status_name(status)));
+    return false;
 }
 
 static bool load_module_act_file_pathmap_materialized(CettaLibraryContext *ctx,
@@ -13419,6 +13340,10 @@ static Atom *cetta_library_dispatch_native_value(
             *result_form = CETTA_CALL_RESULT_COMPLETED_VALUE;
             return result;
         }
+    }
+    if (ctx->active_mask & CETTA_LIBRARY_ACT) {
+        Atom *result = cetta_act_dispatch(ctx, a, head, args, nargs);
+        if (result) { *result_form = CETTA_CALL_RESULT_COMPLETED_VALUE; return result; }
     }
     if (ctx->active_mask & CETTA_LIBRARY_STORE) {
         Atom *result=cetta_store_dispatch(ctx,a,head,args,nargs);

@@ -11,6 +11,9 @@
 (: __cetta_lib_store_program_watch_check (-> Atom Atom))
 (: __cetta_lib_store_commit_guarded (-> Atom Atom Atom Atom Atom))
 (: __cetta_lib_store_space_view (-> Atom String Atom))
+(: __cetta_lib_store_space_workspace (-> Atom String Atom))
+(: __cetta_lib_store_space_edit (-> Atom String Atom Atom Atom))
+(: __cetta_lib_store_space_changes (-> Atom Atom String Atom))
 (: __cetta_lib_store_space_query_open (-> Atom String Atom Atom Atom))
 (: __cetta_lib_store_space_point_query_open (-> Atom String Atom Atom Atom))
 (: __cetta_lib_store_space_query_next (-> Atom Number Number Number Atom))
@@ -79,6 +82,18 @@
 ; resulting read-only Space owns its snapshot independently of the handles.
 (= (store:space-view $view $metadata-key)
    (function (case (__cetta_lib_store_space_view $view $metadata-key) (($result (return $result))))))
+; A local editable Space over the same captured root. Ordinary add/remove and
+; match operate on its workspace; publication still uses the MeTTa commit path.
+; Copies retain storage through their arenas. store:close revokes aliases.
+(= (store:space-workspace $view $metadata-key)
+   (function (case (__cetta_lib_store_space_workspace $view $metadata-key) (($result (return $result))))))
+; Call BODY once with an ordinary edit Space. Only a complete answer bag can
+; yield a delta. The temporary Space is closed before returning on every path.
+; WATCH is sealed to the completed influencing reads for guarded publication.
+(= (store:space-edit $view $metadata-key $body $watch)
+   (function (case (__cetta_lib_store_space_edit $view $metadata-key $body $watch) (($result (return $result))))))
+(= (store:space-changes $space $view $metadata-key)
+   (function (case (__cetta_lib_store_space_changes $space $view $metadata-key) (($result (return $result))))))
 ; A request-owned cursor over that same captured Space/matcher. Query syntax
 ; is held data; row templates are instantiated without evaluation. Sequence
 ; retries replay the last offered row until the next sequence is requested.
