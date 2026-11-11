@@ -19,8 +19,10 @@ static pthread_mutex_t reached_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t reached_condition = PTHREAD_COND_INITIALIZER;
 static bool reached;
 static _Thread_local bool observe_guard;
-void __real_cetta_shared_transition_guard_enter(CettaSharedTransitionGuard *guard);
-void __wrap_cetta_shared_transition_guard_enter(CettaSharedTransitionGuard *guard) {
+/* The guard's entry is inline; inside a concurrent-evaluation scope it calls
+ * its out-of-line half, which blocks while another thread holds the guard. */
+void __real_cetta_shared_transition_guard_acquire(CettaSharedTransitionGuard *guard);
+void __wrap_cetta_shared_transition_guard_acquire(CettaSharedTransitionGuard *guard) {
     if (observe_guard) {
         observe_guard = false;
         assert(pthread_mutex_lock(&reached_mutex) == 0);
@@ -28,7 +30,7 @@ void __wrap_cetta_shared_transition_guard_enter(CettaSharedTransitionGuard *guar
         assert(pthread_cond_signal(&reached_condition) == 0);
         assert(pthread_mutex_unlock(&reached_mutex) == 0);
     }
-    __real_cetta_shared_transition_guard_enter(guard);
+    __real_cetta_shared_transition_guard_acquire(guard);
 }
 
 typedef struct {

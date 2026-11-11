@@ -44,8 +44,12 @@ int main(void) {
     arena_init(&arena);
 
     /* Appending a builtin must not make it a constructor or an unknown call.
-     * Its registration is the authority, independently of the legacy range. */
-#define CHECK_BUILTIN(field, text) assert(symbol_id_is_builtin(g_builtin_syms.field));
+     * Its registration is the authority, independently of the legacy range.
+     * != alone is registered without the flag: is_grounded_op decides its
+     * policy, and with SWI PeTTa's library owns it. */
+#define CHECK_BUILTIN(field, text) \
+    assert(symbol_id_is_builtin(g_builtin_syms.field) == \
+           (&g_builtin_syms.field != &g_builtin_syms.op_neq));
     CETTA_BUILTIN_SYMBOLS(CHECK_BUILTIN)
 #undef CHECK_BUILTIN
 #define CHECK_DIALECT_BUILTIN(field) do { \

@@ -55,6 +55,14 @@ def main():
         ('durable-host', dict(ENABLE_DURABLE='1', ENABLE_HTTP='1', ENABLE_JSON_GSLT='1')),
     ]
     env = dict(os.environ)
+    # A caller's command-line variables reach this process as environment
+    # variables as well as through MAKEFLAGS (after its ' -- '); the probes
+    # evaluate the configurations listed here and no other.
+    overrides = env.get('MAKEFLAGS', '').partition(' -- ')[2]
+    for word in re.split(r'(?<!\\) ', overrides):
+        name = re.match(r'([A-Za-z_][A-Za-z0-9_]*)=', word)
+        if name:
+            env.pop(name.group(1), None)
     for key in ['MAKEFLAGS', 'MFLAGS', 'MAKEOVERRIDES', 'MAKELEVEL']:
         env.pop(key, None)
     records = []

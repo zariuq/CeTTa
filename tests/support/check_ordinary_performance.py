@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import random
+import re
 import shutil
 import statistics
 import subprocess
@@ -441,6 +442,21 @@ def self_test():
     return 0
 
 
+def own_make_environment():
+    """This environment without a calling make's variables, which reach it
+    through MAKEFLAGS and as exported variables: a baseline revision builds
+    in its own default configuration."""
+    env = dict(os.environ)
+    overrides = env.get("MAKEFLAGS", "").partition(" -- ")[2]
+    for word in re.split(r"(?<!\\) ", overrides):
+        name = re.match(r"([A-Za-z_][A-Za-z0-9_]*)=", word)
+        if name:
+            env.pop(name.group(1), None)
+    for key in ("MAKEFLAGS", "MFLAGS", "MAKEOVERRIDES", "MAKELEVEL"):
+        env.pop(key, None)
+    return env
+
+
 def build_baseline(root, revision, work):
     full = subprocess.run(["git", "rev-parse", revision], cwd=root,
                           capture_output=True, text=True, check=True).stdout.strip()
@@ -458,7 +474,8 @@ def build_baseline(root, revision, work):
     subprocess.run(["tar", "-xf", archive, "-C", directory], check=True)
     archive.unlink()
     subprocess.run(["make", "-s", "BUILD=python", "ENABLE_RUNTIME_STATS=0",
-                    "BIN=cetta", "-j3"], cwd=directory, check=True)
+                    "BIN=cetta", "-j3"], cwd=directory, check=True,
+                   env=own_make_environment())
     stamp.write_text(full + "\n")
     return binary
 
