@@ -102,4 +102,22 @@ void petta_compiled_document_v1_release_read(
 void petta_compiled_document_v1_rewind(PeTTaCompiledDocumentV1 *document);
 void petta_compiled_document_v1_close(PeTTaCompiledDocumentV1 *document);
 
+/* The PeTTa reader's grounding of leaves, for readers of other
+ * presentations of PeTTa programs: a word is a truth value, a number or a
+ * symbol exactly as the PeTTa reader reads it; variables co-refer by
+ * spelling within a form ($_ is fresh each time); strings keep their bytes. */
+typedef struct PeTTaGroundingV1 PeTTaGroundingV1;
+PeTTaGroundingV1 *petta_grounding_v1_new(TermUniverse *universe);
+void petta_grounding_v1_free(PeTTaGroundingV1 *grounding);
+bool petta_grounding_v1_begin_form(PeTTaGroundingV1 *grounding);
+AtomId petta_grounding_v1_word(PeTTaGroundingV1 *grounding,
+                               const uint8_t *bytes, size_t len);
+/* NAME is the spelling after $; an empty name is the symbol $. */
+AtomId petta_grounding_v1_variable(PeTTaGroundingV1 *grounding,
+                                   const uint8_t *bytes, size_t len);
+AtomId petta_grounding_v1_string(PeTTaGroundingV1 *grounding,
+                                 const uint8_t *bytes, size_t len);
+AtomId petta_grounding_v1_expression(PeTTaGroundingV1 *grounding,
+                                     const AtomId *children, size_t len);
+
 #endif /* CETTA_PETTA_COMPILED_READER_H */

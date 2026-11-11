@@ -886,8 +886,35 @@ static bool lower_definition(Lower *l, Atom *body, size_t index) {
     if (form(body, "LbnfPragmaV1", 2u) && string(body->expr.elems[1])) {
         const char *name = body->expr.elems[1]->ground.sval;
         if (!strcmp(name, "Delimiters")) return fail(l, "removed-delimiters", "The delimiters pragma was removed in BNFC 2.9.0.");
-        if (!strcmp(name, "Layout") || !strcmp(name, "LayoutStop") || !strcmp(name, "LayoutTop"))
-            return fail(l, "layout", "Layout declarations are retained in the document but not lowered in this profile.");
+        if (!strcmp(name, "LayoutTop")) {
+            /* BNFC's layout toplevel: the document is one implicit block */
+            Atom *values[] = {atom_string(l->arena, "toplevel"), origin(l, "layout", index)};
+            return push(l, &l->comments, make(l->arena, "ParserLayoutToplevelV1", values, 2u));
+        }
+        if (!strcmp(name, "Layout") || !strcmp(name, "LayoutStop")) {
+            /* layout "w", ...: the words after which an implicit block may
+               open; layout stop "w", ...: the words that close one.  The
+               lexical stream carries them; a reader that cannot resolve
+               layout refuses them. */
+            Atom *children[1];
+            Atom *node = body->expr.elems[2];
+            if (!args(ast_children(node, name), children, 1u) || !form(children[0], "LbnfAstListV1", 3u))
+                return fail(l, "malformed-layout", "Expected a list of layout words.");
+            Values words = {0};
+            Atom *rows = children[0]->expr.elems[3];
+            for (; form(rows, "LCons", 2u); rows = rows->expr.elems[2]) {
+                Atom *word = text_string(l, token_text(rows->expr.elems[1]));
+                if (!string(word) || !word->ground.sval[0] || !push(l, &words, word)) {
+                    clear(&words);
+                    return fail(l, "malformed-layout", "A layout word is a nonempty terminal.");
+                }
+            }
+            Atom *values[] = {list(l->arena, &words), origin(l, "layout", index)};
+            clear(&words);
+            return push(l, &l->comments, make(l->arena, !strcmp(name, "Layout") ? "ParserLayoutV1"
+                                                                                : "ParserLayoutStopV1",
+                                              values, 2u));
+        }
         if (!strcmp(name, "Function")) return fail(l, "define", "Define declarations are retained in the document but not lowered in this profile.");
     }
     return fail(l, "malformed-definition", "Unknown or malformed LBNF document declaration.");

@@ -724,10 +724,15 @@ PETTA_COMPILED_READER_RUNTIME_SRC = \
 PRIME_COMPILED_READER_RUNTIME_SRC = \
 	src/prime_compiled_reader.c \
 	src/generated/prime_reader_direct_v1.generated.c
+# Presentations of MeTTa compiled at build time (they read with the dialect
+# readers' grounding, so they belong with the readers).
+PRESENTATION_READER_RUNTIME_SRC = \
+	src/gslt_presentation_v1.c
 COMPILED_READER_RUNTIME_SRC = \
 	$(HE_COMPILED_READER_RUNTIME_SRC) \
 	$(PETTA_COMPILED_READER_RUNTIME_SRC) \
-	$(PRIME_COMPILED_READER_RUNTIME_SRC)
+	$(PRIME_COMPILED_READER_RUNTIME_SRC) \
+	$(PRESENTATION_READER_RUNTIME_SRC)
 JSON_SOURCE_EMBED_TOOL_V1 = runtime/bootstrap/embed_c_sources_v1
 JSON_SOURCE_EMBED_TOOL_V1_SRC = tools/embed_c_sources_v1.c
 LDPP_COMPILER_SOURCE_V1 = langdef/bnf/language_def_parser_compiler_v1.metta
@@ -7231,6 +7236,80 @@ $(PARSER_BAKED_OBJ): native/parser_baked_v1.c native/parser_baked_v1.h $(PARSER_
 
 .PHONY: parser-artifacts
 parser-artifacts: $(PARSER_BAKED_HEADER)
+
+# GSLT presentations of MeTTa, compiled at build time with no Python: the
+# module's syntax as CeTTa assembles it (lib/presentation/export_presentation.metta),
+# then the C compiler of presentations, which fails on any LALR(1) conflict, so
+# a generated table certifies its grammar unambiguous.  The generated tables
+# are checked-in sources: `make presentation-readers` regenerates them and
+# `make check-presentation-readers` requires a fresh generation byte-identical.
+# Each entry is NAME:MODULE:THEORY:ENTRY[:KEY] over lib/presentation; KEY
+# names the generated tables (gslt_presentation_KEY_v1), NAME by default.  An
+# earlier version of a presentation stays compiled, frozen, under its own KEY
+# after the current one, so that its texts stay readable (--syntax NAME@1.0).
+PRESENTATION_COMPILER = runtime/gslt_presentation_compile_v1
+# The declared types of builtin operations, from which every presentation's
+# printer derives which of their positions hold data and which run.
+PRESENTATION_POSITION_ROLES = lib/presentation/position_roles.metta
+PRESENTATIONS = cstyle:MeTTaCStylePresentation:CStyle:Prog \
+	pystyle:MeTTaPythonStylePresentation:PythonStyle:Prog \
+	rhostyle:MeTTaRhoStylePresentation:RhoStyle:Prog \
+	sexpr:MeTTaSExpressionPresentation:SExpression:SProg \
+	cstyle:MeTTaCStylePresentation-1.0:CStyle:Prog:cstyle_1_0 \
+	rhostyle:MeTTaRhoStylePresentation-1.0:RhoStyle:Prog:rhostyle_1_0
+
+$(PRESENTATION_COMPILER): tools/gslt_presentation_compile_v1.c src/gslt_presentation_v1.h
+	@mkdir -p $(dir $@)
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -o $@ tools/gslt_presentation_compile_v1.c
+
+# $(1): the directory the generated headers go to.  The registry header lists
+# every presentation, so a new one is a module, its forms and an entry here.
+define presentation_generate
+	@set -e; mkdir -p runtime/generated/presentation $(1); \
+	reg=$(1)/gslt_presentation_registry_v1.generated.h; \
+	printf '/* Generated from PRESENTATIONS in the Makefile. Do not edit. */\n' > $$reg.tmp; \
+	names=""; entries=""; \
+	for spec in $(PRESENTATIONS); do \
+	  name=$${spec%%:*}; rest=$${spec#*:}; module=$${rest%%:*}; rest=$${rest#*:}; \
+	  theory=$${rest%%:*}; rest=$${rest#*:}; entry=$${rest%%:*}; key=$$name; \
+	  case $$rest in *:*) key=$${rest#*:};; esac; \
+	  ./$(BIN) --lang petta --profile extended --no-results lib/presentation/export_presentation.metta \
+	    lib/presentation/$$module.module $$theory $$entry runtime/generated/presentation/$$key.inspection; \
+	  $(PRESENTATION_COMPILER) $$name runtime/generated/presentation/$$key.inspection \
+	    lib/presentation/$$module.forms.metta $$entry $(1)/gslt_presentation_$${key}_v1.generated.h \
+	    $(PRESENTATION_POSITION_ROLES); \
+	  printf '#include "generated/gslt_presentation_%s_v1.generated.h"\n' $$key >> $$reg.tmp; \
+	  entries="$$entries    &gslt_presentation_$${key}_v1,\n"; \
+	  case " $$names, " in *" $$name, "*) ;; *) names="$${names:+$$names, }$$name";; esac; \
+	done; \
+	printf '\nstatic const GSLTPresentationTablesV1 *const gslt_presentation_registry[] = {\n%b};\n' "$$entries" >> $$reg.tmp; \
+	printf '\nstatic const char gslt_presentation_registry_names[] = "%s";\n' "$$names" >> $$reg.tmp; \
+	mv $$reg.tmp $$reg
+endef
+
+.PHONY: presentation-readers check-presentation-readers test-presentations
+presentation-readers: $(PRESENTATION_COMPILER) $(BIN)
+	$(call presentation_generate,src/generated)
+
+# The presentations' laws over checked-in programs (read(print(a)) = a for
+# every presentation, the generated S-expression reader against the standard
+# reader, comments kept, programs run identically from C-style text).
+test-presentations: $(BIN)
+	@sh tests/support/check_presentation_laws.sh ./$(BIN)
+
+check-presentation-readers: $(PRESENTATION_COMPILER) $(BIN)
+	$(call presentation_generate,runtime/generated/presentation/check)
+	@set -e; for spec in $(PRESENTATIONS); do \
+	  key=$${spec%%:*}; rest=$${spec#*:}; rest=$${rest#*:}; rest=$${rest#*:}; \
+	  case $$rest in *:*) key=$${rest#*:};; esac; \
+	  cmp src/generated/gslt_presentation_$${key}_v1.generated.h \
+	    runtime/generated/presentation/check/gslt_presentation_$${key}_v1.generated.h || \
+	    { echo "presentation $$key: the checked-in tables differ from a fresh generation" >&2; exit 1; }; \
+	done; \
+	cmp src/generated/gslt_presentation_registry_v1.generated.h \
+	  runtime/generated/presentation/check/gslt_presentation_registry_v1.generated.h || \
+	  { echo "the presentation registry differs from a fresh generation" >&2; exit 1; }; \
+	echo "PASS: presentation tables are byte-identical to a fresh generation"
 
 ifneq ($(BIN),$(PUBLIC_BIN))
 $(PUBLIC_BIN): $(OBJ) $(BRIDGE_DEPS) $(PUBLIC_BIN_FORCE)
@@ -18607,7 +18686,9 @@ NORMAL_TEST_TARGETS := \
 	test-numerical-substrate-smoke \
 	test-application-panel \
 	test-lang-chr \
-	test-provenance
+	test-provenance \
+	check-presentation-readers \
+	test-presentations
 
 .PHONY: test test-all test-test-target-scope
 test: $(NORMAL_TEST_TARGETS)
@@ -43407,7 +43488,7 @@ $(LANGUAGE_DEF_PARSER_PACK_V1_TEST_BIN): \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections \
 		-o "$$tmp_out" $(LANGUAGE_DEF_PARSER_PACK_V1_C_SOURCES) \
-		-Wl,--gc-sections -ldl -lm -pthread; \
+		-Wl,--gc-sections -ldl -lm -pthread $(GMP_LDFLAGS); \
 	mv "$$tmp_out" $@
 
 JSON_DIRECT_V1_TEST_BIN = runtime/test-json-direct-v1-$(BUILD_OBJ_TAG)
@@ -43445,7 +43526,7 @@ $(LANGUAGE_DEF_PARSER_PACK_V1_MUTATION_BIN): \
 		-DCETTA_JSON_CST_VALUE_V1_MUTATION=1 \
 		-ffunction-sections -fdata-sections \
 		-o "$$tmp_out" $(LANGUAGE_DEF_PARSER_PACK_V1_C_SOURCES) \
-		-Wl,--gc-sections -ldl -lm -pthread; \
+		-Wl,--gc-sections -ldl -lm -pthread $(GMP_LDFLAGS); \
 	mv "$$tmp_out" $@
 
 $(PARSER_PACK_FOREST_ENCODING_V1_TEST_BIN): \
@@ -43491,7 +43572,7 @@ $(LANGUAGE_DEF_PARSER_PACK_V1_BENCH_BIN): \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections \
 		-o "$$tmp_out" $(LANGUAGE_DEF_PARSER_PACK_V1_BENCH_C_SOURCES) \
-		-Wl,--gc-sections -ldl -lm -pthread; \
+		-Wl,--gc-sections -ldl -lm -pthread $(GMP_LDFLAGS); \
 	mv "$$tmp_out" $@
 
 $(LANGUAGE_DEF_PARSER_PACK_V1_CORPUS_BIN): \
@@ -43507,7 +43588,7 @@ $(LANGUAGE_DEF_PARSER_PACK_V1_CORPUS_BIN): \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections \
 		-o "$$tmp_out" $(LANGUAGE_DEF_PARSER_PACK_V1_CORPUS_C_SOURCES) \
-		-Wl,--gc-sections -ldl -lm -pthread; \
+		-Wl,--gc-sections -ldl -lm -pthread $(GMP_LDFLAGS); \
 	mv "$$tmp_out" $@
 
 $(JSON_NIK_V1_TEST_BIN): \
@@ -43523,7 +43604,7 @@ $(JSON_NIK_V1_TEST_BIN): \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections \
 		-o "$$tmp_out" $(JSON_NIK_V1_TEST_C_SOURCES) \
-		-Wl,--gc-sections -ldl -lm -pthread; \
+		-Wl,--gc-sections -ldl -lm -pthread $(GMP_LDFLAGS); \
 	mv "$$tmp_out" $@
 
 .PHONY: test-language-def-parser-pack-v1-body
@@ -44889,7 +44970,7 @@ $(TPTP_EXTENDED_BNF_META_PARSER_V1_TEST_BIN): \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections \
 		-o "$$tmp_out" $(TPTP_EXTENDED_BNF_META_PARSER_V1_C_SOURCES) \
-		-Wl,--gc-sections -ldl -lm -pthread; \
+		-Wl,--gc-sections -ldl -lm -pthread $(GMP_LDFLAGS); \
 	mv "$$tmp_out" $@
 
 

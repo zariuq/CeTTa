@@ -1,0 +1,24 @@
+import library[lib_transform] in &self;
+import library[lib_flow] in &self;
+new &jobs;
+foreach ($j of [build, check, deploy]) { &jobs!(job[$j, 2]) };
+&jobs!(worker[alice]);
+&jobs!(worker[bob]);
+contract run-round() = {
+  select {
+    job[$j, $left] <- &jobs &
+    @{ worker[$w] } <<- &jobs where $left > 0 &
+    let $rest = $left - 1 =>
+    &jobs!(worked[$w, $j]) |
+    &jobs!(job[$j, $rest])
+  }
+};
+repeat { run-round() };
+for (worked[$w, $j] <= &jobs) { stdout!(share($w, $j)) };
+sort-atom(collapse(for (job[$j, 0] <<- &jobs) { $j }));
+`bind!`(&budget, new-state(3));
+while (get-state(&budget) > 0) {
+  let _ <- stdout!(tick(get-state(&budget))) in
+  { `change-state!`(&budget, get-state(&budget) - 1) }
+};
+get-state(&budget);

@@ -1,0 +1,36 @@
+first
+second
+(item a)
+(item b)
+(item c)
+(each (p q))
+(each (r))
+(got 6)
+(cost j1 3)
+(cost j2 5)
+true
+true
+last
+(done)
+(done done)
+()
+()
+(())
+()
+true
+true
+()
+()
+true
+()
+3
+()
+true
+()
+2
+true
+true
+true
+3
+(a b c)
+()

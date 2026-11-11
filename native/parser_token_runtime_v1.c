@@ -11,6 +11,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "bnfc_layout_v1.h"
+
 extern const uint8_t cetta_regular_token_compiler_v1_source[];
 extern const size_t cetta_regular_token_compiler_v1_source_len;
 
@@ -50,6 +52,13 @@ typedef struct {
     uint32_t start_state_id;
     uint32_t trivia_terminal;
     uint32_t eof_terminal;
+    /* BNFC layout, from the profile's layout declarations: resolved on the
+       text before the scan (native/bnfc_layout_v1.h) */
+    bool has_layout;
+    bool layout_toplevel;
+    int32_t layout_open, layout_sep, layout_close;
+    uint8_t *layout_kind; /* per terminal id: 1 opens a block, 2 closes one */
+    uint32_t layout_kind_len;
 } TokenRuntime;
 
 static bool token_error(char *error, size_t size, const char *format, ...) {
@@ -162,6 +171,39 @@ static bool terminal_for(TokenRuntime *runtime, const Atom *tag, uint32_t *out) 
     return false;
 }
 
+/* The terminal of the grammar's literal WORD (a string), when it has one. */
+static bool keyword_terminal(TokenRuntime *runtime, const Atom *word, uint32_t *out) {
+    const PPNativeV1ForestExtension *extension = &runtime->compiled->token_bindings.extension;
+    uint32_t *want, want_len;
+    if (!scalar_text(&runtime->arena, word, &want, &want_len) || !want_len) return false;
+    for (uint32_t i = 0u; i < extension->terminal_len; ++i) {
+        Atom *identity = extension->terminals[i].identity;
+        Atom *tag = form(identity, "pp-span-terminal", 1u) ? identity->expr.elems[1] : NULL;
+        uint32_t *have, have_len;
+        if (!form(tag, "pp-keyword", 1u) ||
+            !scalar_text(&runtime->arena, tag->expr.elems[1], &have, &have_len))
+            continue;
+        if (have_len == want_len && !memcmp(have, want, (size_t)want_len * sizeof(*want))) {
+            *out = extension->terminals[i].terminal_id;
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool layout_mark(TokenRuntime *runtime, uint32_t terminal, uint8_t kind) {
+    if (terminal >= runtime->layout_kind_len) {
+        uint32_t len = terminal + 1u;
+        uint8_t *k = realloc(runtime->layout_kind, len);
+        if (!k) return false;
+        memset(k + runtime->layout_kind_len, 0, len - runtime->layout_kind_len);
+        runtime->layout_kind = k;
+        runtime->layout_kind_len = len;
+    }
+    runtime->layout_kind[terminal] = kind;
+    return true;
+}
+
 static bool add_rule(TokenRuntime *runtime, Atom *tag, Atom *regex,
                       Atom *kind, TokenRuleKind rule_kind, uint32_t terminal,
                       uint32_t priority, char *error, size_t error_size) {
@@ -243,6 +285,24 @@ static bool runtime_rules(TokenRuntime *runtime, char *error, size_t error_size)
     uint32_t comment_index = 0u;
     for (Atom *p = profile->comments; form(p, "LCons", 2u); p = p->expr.elems[2], ++comment_index) {
         Atom *row = p->expr.elems[1];
+        if (form(row, "ParserLayoutToplevelV1", 2u)) {
+            runtime->has_layout = true;
+            runtime->layout_toplevel = true;
+            continue;
+        }
+        if (form(row, "ParserLayoutV1", 2u) || form(row, "ParserLayoutStopV1", 2u)) {
+            /* each word is a literal terminal of the grammar */
+            uint8_t kind = form(row, "ParserLayoutV1", 2u) ? 1u : 2u;
+            runtime->has_layout = true;
+            for (Atom *w = row->expr.elems[1]; form(w, "LCons", 2u); w = w->expr.elems[2]) {
+                uint32_t terminal;
+                if (!keyword_terminal(runtime, w->expr.elems[1], &terminal))
+                    return token_error(error, error_size, "a layout word is no terminal of the grammar");
+                if (!layout_mark(runtime, terminal, kind))
+                    return token_error(error, error_size, "layout table allocation failed");
+            }
+            continue;
+        }
         bool block = form(row, "ParserBlockCommentV1", 3u);
         uint32_t *points, len;
         if (!scalar_text(arena, row->expr.elems[1], &points, &len) || !len)
@@ -260,6 +320,22 @@ static bool runtime_rules(TokenRuntime *runtime, char *error, size_t error_size)
                 &runtime->rules[runtime->rule_len - 1u].comment_suffix_len) ||
                 !runtime->rules[runtime->rule_len - 1u].comment_suffix_len))
             return token_error(error, error_size, "invalid comment closer");
+    }
+    if (runtime->has_layout) {
+        /* BNFC's block terminals */
+        uint32_t t;
+        runtime->layout_open = runtime->layout_sep = runtime->layout_close = -1;
+        if (keyword_terminal(runtime, atom_string(arena, "{"), &t)) runtime->layout_open = (int32_t)t;
+        if (keyword_terminal(runtime, atom_string(arena, ";"), &t)) runtime->layout_sep = (int32_t)t;
+        if (keyword_terminal(runtime, atom_string(arena, "}"), &t)) runtime->layout_close = (int32_t)t;
+        if (runtime->layout_open < 0 || runtime->layout_close < 0 ||
+            (runtime->layout_toplevel && runtime->layout_sep < 0))
+            return token_error(error, error_size,
+                "a grammar with layout declarations needs the terminals \"{\" and \"}\" (and \";\" for layout toplevel)");
+        if (!layout_mark(runtime, (uint32_t)runtime->layout_open, 0u) ||
+            !layout_mark(runtime, (uint32_t)runtime->layout_close, 0u) ||
+            (runtime->layout_sep >= 0 && !layout_mark(runtime, (uint32_t)runtime->layout_sep, 0u)))
+            return token_error(error, error_size, "layout table allocation failed");
     }
     if (!runtime->rule_len && !add_rule(runtime, atom_symbol(arena, "pp-trivia"),
             atom_symbol(arena, "rx-empty"), atom_symbol(arena, "TokenTextV1"),
@@ -339,6 +415,7 @@ void cetta_parser_token_runtime_v1_free(CettaParserTokenRuntimeV1 *runtime) {
     rsnfa_v1_plan_free(&owned->nfa);
     free(owned->rules);
     free(owned->tag_rules);
+    free(owned->layout_kind);
     arena_free(&owned->arena);
     free(owned);
     runtime->implementation = NULL;
@@ -604,8 +681,24 @@ void cetta_parser_token_scan_v1_free(CettaParserTokenScanV1 *scan) {
     free(scan->start_offsets);
     free(scan->terminal_ids);
     free(scan->witness_values);
+    free(scan->layout_inserted);
     arena_free(&scan->arena);
     memset(scan, 0, sizeof(*scan));
+}
+
+void cetta_parser_token_scan_v1_source_position(const CettaParserTokenScanV1 *scan,
+                                                uint32_t *scalar, uint32_t *byte) {
+    if (!scan || !byte || !scan->layout_inserted_len) return;
+    uint32_t shift = 0u, at = *byte;
+    for (uint32_t i = 0u; i < scan->layout_inserted_len; ++i) {
+        uint32_t starts = scan->layout_inserted[i] + shift; /* in the scanned text */
+        if (at < starts) break;
+        if (at < starts + 3u) { at = starts; break; }
+        shift += 3u;
+    }
+    uint32_t taken = (*byte >= at ? *byte - at : 0u) + shift;
+    if (scalar) *scalar = *scalar >= taken ? *scalar - taken : 0u;
+    *byte = *byte >= taken ? *byte - taken : 0u;
 }
 
 static uint32_t scalar_boundary(const CettaLpNativeUtf8ScalarView *view, uint32_t byte) {
@@ -748,7 +841,109 @@ static bool c_character_end(const uint8_t *bytes, uint32_t length, uint32_t left
     return true;
 }
 
+static bool token_runtime_scan_plain(
+    const CettaParserTokenRuntimeV1 *runtime_value,
+    const uint8_t *bytes, size_t length, uint64_t work_limit,
+    bool audit, CettaParserTokenScanV1 *out, char *error, size_t error_size);
+
+/* A grammar with layout reads the text with BNFC's layout made explicit:
+   the text is scanned, the layout resolution decides where blocks open,
+   separate and close, those braces and separators are written into the
+   text between its tokens, and that text is scanned for the parser.  The
+   positions the parser reports are positions in that text; the scan keeps
+   where each insertion stands, so a rejection is reported at its position
+   in the source (cetta_parser_token_scan_v1_source_position). */
 static bool token_runtime_scan(
+    const CettaParserTokenRuntimeV1 *runtime_value,
+    const uint8_t *bytes, size_t length, uint64_t work_limit,
+    bool audit, CettaParserTokenScanV1 *out, char *error, size_t error_size) {
+    const TokenRuntime *runtime = runtime_value ? runtime_value->implementation : NULL;
+    if (!runtime || !runtime->has_layout)
+        return token_runtime_scan_plain(runtime_value, bytes, length, work_limit, audit, out, error, error_size);
+    CettaParserTokenScanV1 first;
+    cetta_parser_token_scan_v1_init(&first);
+    if (!token_runtime_scan_plain(runtime_value, bytes, length, work_limit, audit, &first, error, error_size)) {
+        cetta_parser_token_scan_v1_free(&first);
+        return false;
+    }
+    if (first.outcome != CETTA_PARSER_TOKEN_SCAN_V1_COMPLETED) {
+        cetta_parser_token_scan_v1_free(out);
+        *out = first;
+        return true;
+    }
+    CettaBnfcLayoutTokensV1 toks = {0}, resolved = {0};
+    uint8_t *text = NULL;
+    bool ok = false;
+    for (uint32_t e = 0u; e < first.lattice.edge_len; ++e) {
+        const CettaLpNativeUtf8LatticeEdge *edge = &first.lattice.edges[e];
+        if (edge->terminal_id == runtime->trivia_terminal || edge->terminal_id == runtime->eof_terminal) continue;
+        CettaBnfcLayoutTokenV1 t;
+        memset(&t, 0, sizeof t);
+        t.start = edge->byte_left;
+        t.end = edge->byte_right;
+        t.term = (int32_t)edge->terminal_id;
+        t.extra = -1;
+        if (!cetta_bnfc_layout_v1_push(&toks, t)) { token_error(error, error_size, "layout allocation failed"); goto done; }
+    }
+    cetta_bnfc_layout_v1_positions(bytes, length, toks.v, toks.n);
+    {
+        CettaBnfcLayoutRulesV1 rules = {runtime->layout_open, runtime->layout_sep, runtime->layout_close,
+                                        runtime->layout_toplevel, runtime->layout_kind, runtime->layout_kind_len};
+        char lerr[256] = "";
+        if (!cetta_bnfc_layout_v1_resolve(&rules, toks.v, toks.n, &resolved, lerr, sizeof lerr)) {
+            token_error(error, error_size, "layout: %s", lerr);
+            goto done;
+        }
+    }
+    {
+        /* the text with every inserted brace and separator written out */
+        size_t inserted = 0u;
+        for (size_t i = 0u; i < resolved.n; ++i) if (resolved.v[i].virt) inserted++;
+        text = malloc(length + 3u * inserted + 1u);
+        if (!text) { token_error(error, error_size, "layout allocation failed"); goto done; }
+        size_t at = 0u, w = 0u;
+        for (size_t i = 0u; i < resolved.n; ++i) {
+            if (!resolved.v[i].virt) continue;
+            size_t p = resolved.v[i].start;
+            if (p > length) p = length;
+            if (p > at) { memcpy(text + w, bytes + at, p - at); w += p - at; at = p; }
+            const char *lit = resolved.v[i].term == runtime->layout_open ? "{"
+                            : resolved.v[i].term == runtime->layout_close ? "}" : ";";
+            text[w++] = ' ';
+            text[w++] = (uint8_t)lit[0];
+            text[w++] = ' ';
+        }
+        if (length > at) { memcpy(text + w, bytes + at, length - at); w += length - at; }
+        text[w] = '\0';
+        cetta_parser_token_scan_v1_free(&first);
+        cetta_parser_token_scan_v1_init(&first);
+        ok = token_runtime_scan_plain(runtime_value, text, w, work_limit, audit, out, error, error_size);
+        if (ok && inserted) {
+            /* where each insertion stands in the source, for positions the
+               parser reports (cetta_parser_token_scan_v1_source_position) */
+            uint32_t *where = malloc(inserted * sizeof *where);
+            if (!where) { ok = false; token_error(error, error_size, "layout allocation failed"); goto done; }
+            uint32_t k = 0u, last = 0u;
+            for (size_t i = 0u; i < resolved.n; ++i) {
+                if (!resolved.v[i].virt) continue;
+                uint32_t p = resolved.v[i].start > length ? (uint32_t)length : (uint32_t)resolved.v[i].start;
+                if (p < last) p = last;
+                where[k++] = last = p;
+            }
+            free(out->layout_inserted);
+            out->layout_inserted = where;
+            out->layout_inserted_len = k;
+        }
+    }
+done:
+    cetta_parser_token_scan_v1_free(&first);
+    free(toks.v);
+    free(resolved.v);
+    free(text);
+    return ok;
+}
+
+static bool token_runtime_scan_plain(
     const CettaParserTokenRuntimeV1 *runtime_value,
     const uint8_t *bytes, size_t length, uint64_t work_limit,
     bool audit, CettaParserTokenScanV1 *out, char *error, size_t error_size) {

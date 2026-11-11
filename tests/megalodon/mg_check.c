@@ -33,6 +33,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "gslt_native_runtime_v1.h"
 #include "mg_core.h"
 #include "mg_elab.h"
 #include "mg_library.h"
@@ -332,9 +333,11 @@ int main(int argc, char **argv) {
         printf("aby: %llu of %llu steps proved by search\n", (unsigned long long)proved,
                (unsigned long long)tried);
     }
-    if (verbose)
+    if (verbose) {
         printf("%s\nwork: the costliest theorem took %llu units (budget %llu)\n", summary,
                (unsigned long long)most_work, (unsigned long long)options.theorem_work);
+        printf("reading: %llu relation calls\n", (unsigned long long)gn_calls());
+    }
     int status;
     if (run != MG_RUN_OK) {
         const char *nl = strchr(message, '\n');

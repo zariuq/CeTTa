@@ -1,6 +1,7 @@
 #include "gslt_native_runtime_v1.h"
 
 #include <stdarg.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -726,6 +727,10 @@ static uint64_t gn_hash(GnCtx *cx, const GnVal *v) {
     cx->hash_cap = cap;
     return out;
 }
+
+static _Atomic uint64_t gn_call_count;
+void gn_count_call(void) { atomic_fetch_add_explicit(&gn_call_count, 1u, memory_order_relaxed); }
+uint64_t gn_calls(void) { return atomic_load_explicit(&gn_call_count, memory_order_relaxed); }
 
 /* Equality without the work stack while the terms are small and not
  * lists: children but the last by recursion (to a bounded depth), the last

@@ -781,3 +781,60 @@ int petta_compiled_reader_v1_parse_file_ids(
     free(bytes);
     return result;
 }
+
+/* The grounding above, for readers of other presentations of PeTTa. */
+struct PeTTaGroundingV1 {
+    PeTTaProjectionContextV1 context;
+};
+
+PeTTaGroundingV1 *petta_grounding_v1_new(TermUniverse *universe) {
+    PeTTaGroundingV1 *grounding;
+    if (!universe || !g_symbols)
+        return NULL;
+    grounding = calloc(1u, sizeof(*grounding));
+    if (!grounding)
+        return NULL;
+    grounding->context.universe = universe;
+    return grounding;
+}
+
+void petta_grounding_v1_free(PeTTaGroundingV1 *grounding) {
+    if (!grounding)
+        return;
+    cetta_var_index_free(&grounding->context.variable_index);
+    free(grounding->context.variables);
+    free(grounding->context.tokens);
+    free(grounding);
+}
+
+bool petta_grounding_v1_begin_form(PeTTaGroundingV1 *grounding) {
+    return grounding && petta_projection_begin_form(&grounding->context);
+}
+
+AtomId petta_grounding_v1_word(PeTTaGroundingV1 *grounding,
+                               const uint8_t *bytes, size_t len) {
+    return grounding ? petta_projection_token_bytes(&grounding->context, bytes, len)
+                     : CETTA_ATOM_ID_NONE;
+}
+
+AtomId petta_grounding_v1_variable(PeTTaGroundingV1 *grounding,
+                                   const uint8_t *bytes, size_t len) {
+    if (!grounding)
+        return CETTA_ATOM_ID_NONE;
+    if (len == 0u)
+        return petta_projection_dollar_symbol(&grounding->context);
+    return petta_projection_variable_bytes(
+        &grounding->context, bytes, len, len == 1u && bytes[0] == (uint8_t)'_');
+}
+
+AtomId petta_grounding_v1_string(PeTTaGroundingV1 *grounding,
+                                 const uint8_t *bytes, size_t len) {
+    return grounding ? petta_projection_string_bytes(&grounding->context, bytes, len)
+                     : CETTA_ATOM_ID_NONE;
+}
+
+AtomId petta_grounding_v1_expression(PeTTaGroundingV1 *grounding,
+                                     const AtomId *children, size_t len) {
+    return grounding ? petta_projection_expression(&grounding->context, children, len)
+                     : CETTA_ATOM_ID_NONE;
+}
