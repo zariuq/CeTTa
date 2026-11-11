@@ -107,7 +107,7 @@ int main(void) {
     space_init_with_universe(&mixed, &universe);
     mixed.dense_from_first = true;
     Atom *edge_head_atom = atom_symbol(&scratch, "store-effect-allocation-edge");
-    SymbolId edge = edge_head_atom->sym_id;
+    SymbolId edge = atom_symbol_current_id(edge_head_atom);
     AtomId edge_head = term_universe_store_atom_id(&universe, NULL, edge_head_atom);
     Atom *row = atom_expr3(&scratch, edge_head_atom, a_atom, b_atom);
     AtomId row_id = term_universe_store_atom_id(&universe, NULL, row);
