@@ -211,6 +211,27 @@ bool cetta_parser_token_profile_v1_decode(
     }
     for (Atom *p = candidate.comments; token_form(p, "LCons", 2u); p = p->expr.elems[2]) {
         Atom *row = p->expr.elems[1];
+        if (token_form(row, "ParserLayoutV1", 2u) || token_form(row, "ParserLayoutStopV1", 2u)) {
+            /* layout words: a nonempty list of nonempty strings */
+            Atom *words = row->expr.elems[1];
+            bool any = false;
+            for (; token_form(words, "LCons", 2u); words = words->expr.elems[2]) {
+                if (!token_string(words->expr.elems[1])) break;
+                any = true;
+            }
+            if (!any || !atom_is_symbol(words, "LNil") || !token_origin(row->expr.elems[2])) {
+                token_error(error, error_size, "malformed origin-bearing layout declaration");
+                goto done;
+            }
+            continue;
+        }
+        if (token_form(row, "ParserLayoutToplevelV1", 2u)) {
+            if (!token_origin(row->expr.elems[2])) {
+                token_error(error, error_size, "malformed origin-bearing layout declaration");
+                goto done;
+            }
+            continue;
+        }
         bool line = token_form(row, "ParserLineCommentV1", 2u);
         bool block = token_form(row, "ParserBlockCommentV1", 3u);
         if ((!line && !block) || !token_nonempty_text(row->expr.elems[1]) ||

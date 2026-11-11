@@ -51,6 +51,7 @@
 #include "rhocalc_syntax.h"
 #include "stats.h"
 #include "native/langdef_module.h"
+#include "gslt_presentation_v1.h"
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -59,6 +60,8 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <unistd.h>
+#include <errno.h>
+#include <sys/wait.h>
 
 static char alt_stack_buf[16384];  /* alternate signal stack for SIGSEGV handler */
 
@@ -1904,6 +1907,12 @@ static void print_usage(FILE *out) {
     fputs("       cetta -e '<expr>' [-e '<expr>' ...]  # inline expressions (multiple -e concatenate)\n", out);
     fputs("       cetta --repl [--lang petta --profile extended] # multiline source; :cancel / :quit\n", out);
     fputs("       cetta --translate --lang A [--syntax S] --lang B [--syntax T] <file>\n", out);
+    fputs("       cetta --lang petta --profile extended --syntax <cstyle|pystyle|rhostyle|sexpr> <file> # read by a GSLT presentation compiled at build time\n", out);
+    fputs("       cetta --lang petta --syntax <cstyle-gll|pystyle-gll> <file>   # the same presentation by run-time GLL in lib/presentation\n", out);
+    fputs("       cetta --lang petta [--syntax S] --print-syntax T <file> # print the document's atoms in presentation T (metta, cstyle, pystyle, rhostyle, sexpr)\n", out);
+    fputs("       cetta --presentations                           # the compiled presentations: name, version, source digest, certificate\n", out);
+    fputs("       cetta --lang petta --syntax S --check-looks <file> # report data looks written where code runs (and calls where data is held)\n", out);
+    fputs("       cetta ... --syntax cstyle@1.0 ...               # a presentation at a version: same MAJOR, MINOR at least as high\n", out);
     fputs("       cetta [--lang he[@0.2.10] --profile <he|he-compat|extended|he-prime>] <file.metta>\n", out);
     fputs("       note: HE is CeTTa's fork of Hyperon Experimental 0.2.10; he-compat keeps Rust's behavior where he differs\n", out);
     fputs("       cetta --lang prime@0.0.1 <file.metta> # frozen Prime draft\n", out);
@@ -2742,6 +2751,144 @@ static int main_run_langdef_source(const char *manifest_path,
     return rc;
 }
 
+/* --syntax NAME for a MeTTa document: the program is read by a GSLT
+ * presentation module in lib/presentation. CeTTa compiles that module's parser
+ * (GLL/GLR) and the module's forms give each production its atom; this reading
+ * runs as MeTTa in a child of this executable, which writes the standard text
+ * of the atoms. The document is then read from that text as usual. */
+static char *main_presentation_read(const char *presentation, const char *filename,
+                                    char *error, size_t error_size) {
+    char self[4096], dir[4096], lib[4200], reader[4300];
+    ssize_t len = readlink("/proc/self/exe", self, sizeof(self) - 1);
+    if (len <= 0) {
+        snprintf(error, error_size, "cannot locate the cetta executable");
+        return NULL;
+    }
+    self[len] = '\0';
+    snprintf(dir, sizeof(dir), "%s", self);
+    char *slash = strrchr(dir, '/');
+    if (slash) *slash = '\0';
+    snprintf(lib, sizeof(lib), "%s/lib/presentation", dir);
+    snprintf(reader, sizeof(reader), "%s/read_presentation.metta", lib);
+    if (access(reader, R_OK) != 0) {
+        snprintf(lib, sizeof(lib), "%s/../lib/presentation", dir);
+        snprintf(reader, sizeof(reader), "%s/read_presentation.metta", lib);
+    }
+    if (access(reader, R_OK) != 0) {
+        snprintf(error, error_size, "no lib/presentation reader beside the cetta executable");
+        return NULL;
+    }
+    int fds[2];
+    if (pipe(fds) != 0) {
+        snprintf(error, error_size, "cannot open a pipe for the presentation reader");
+        return NULL;
+    }
+    pid_t pid = fork();
+    if (pid < 0) {
+        close(fds[0]);
+        close(fds[1]);
+        snprintf(error, error_size, "cannot start the presentation reader");
+        return NULL;
+    }
+    if (pid == 0) {
+        dup2(fds[1], STDOUT_FILENO);
+        close(fds[0]);
+        close(fds[1]);
+        execl(self, self, "--lang", "petta", "--profile", "extended", "--no-results",
+              reader, lib, presentation, filename, (char *)NULL);
+        _exit(127);
+    }
+    close(fds[1]);
+    size_t cap = 65536, used = 0;
+    char *text = malloc(cap);
+    for (;;) {
+        if (!text) break;
+        if (cap - used < 4096) {
+            char *grown = realloc(text, cap * 2);
+            if (!grown) { free(text); text = NULL; break; }
+            text = grown;
+            cap *= 2;
+        }
+        ssize_t got = read(fds[0], text + used, cap - used - 1);
+        if (got > 0) used += (size_t)got;
+        else if (got < 0 && errno == EINTR) continue;
+        else break;
+    }
+    close(fds[0]);
+    int status = 0;
+    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+    static const char marker[] = "; presentation ";
+    if (!text) {
+        snprintf(error, error_size, "out of memory reading the %s presentation", presentation);
+        return NULL;
+    }
+    text[used] = '\0';
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0 ||
+        strncmp(text, marker, sizeof(marker) - 1) != 0) {
+        snprintf(error, error_size, "the %s presentation did not read %s", presentation, filename);
+        free(text);
+        return NULL;
+    }
+    return text;
+}
+
+/* NAME[@MAJOR[.MINOR]] for --syntax and --print-syntax: the compiled
+ * presentation NAME, which must read every text of the version asked for:
+ * the same MAJOR and a MINOR at least as high (docs/presentations.txt).
+ * NULL when NAME is no compiled presentation; *refused when it is one at a
+ * version that does not read the texts asked for. */
+static const GSLTPresentationTablesV1 *main_presentation_select(const char *spec, bool *refused) {
+    char name[64];
+    const char *at = strchr(spec, '@');
+    size_t n = at ? (size_t)(at - spec) : strlen(spec);
+    *refused = false;
+    if (n == 0 || n >= sizeof name)
+        return NULL;
+    memcpy(name, spec, n);
+    name[n] = '\0';
+    /* the current version is registered first; earlier ones follow, frozen */
+    const GSLTPresentationTablesV1 *t = gslt_presentation_v1_find(name);
+    if (!t || !at)
+        return t;
+    char *end = NULL;
+    unsigned long want_major = strtoul(at + 1, &end, 10), want_minor = 0;
+    bool ok = end != at + 1;
+    if (ok && *end == '.') {
+        const char *minor = end + 1;
+        want_minor = strtoul(minor, &end, 10);
+        ok = end != minor;
+    }
+    ok = ok && *end == '\0';
+    for (size_t i = 0; ok; i++) {
+        const GSLTPresentationTablesV1 *v = gslt_presentation_v1_at(i);
+        if (!v)
+            break;
+        if (strcmp(v->name, name) != 0)
+            continue;
+        unsigned long have_major = strtoul(v->version, &end, 10), have_minor = 0;
+        if (*end == '.')
+            have_minor = strtoul(end + 1, NULL, 10);
+        if (want_major == have_major && want_minor <= have_minor)
+            return v;
+    }
+    {
+        char versions[256] = "";
+        size_t used = 0;
+        for (size_t i = 0;; i++) {
+            const GSLTPresentationTablesV1 *v = gslt_presentation_v1_at(i);
+            if (!v)
+                break;
+            if (strcmp(v->name, name) == 0 && used + strlen(v->version) + 3 < sizeof versions)
+                used += (size_t)snprintf(versions + used, sizeof versions - used, "%s%s",
+                                         used ? ", " : "", v->version);
+        }
+        fprintf(stderr, "error: this cetta has the %s presentation at versions %s, none of which reads "
+                        "the texts of %s\n", t->name, versions, spec);
+    }
+    *refused = true;
+    return NULL;
+}
+
 static int cetta_main(int argc, char **argv) {
     /* Frame identity diagnostics: a bound on live identities, to reach their
      * exhaustion without holding millions of them, and a refusal point, to
@@ -2785,6 +2932,17 @@ static int cetta_main(int argc, char **argv) {
     CettaRelativeModulePolicy import_mode = CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY;
     const char *filename = NULL;
     const char *inline_text = NULL;
+    const char *presentation_syntax = NULL;
+    /* the compiled presentation read, at the version asked for */
+    const GSLTPresentationTablesV1 *presentation_tables = NULL;
+    /* the run-time GLL route of a presentation (--syntax NAME-gll) */
+    bool presentation_gll = false;
+    /* --print-syntax NAME: print the document's atoms in a presentation */
+    const char *print_syntax = NULL;
+    const GSLTPresentationTablesV1 *print_tables = NULL;
+    /* --check-looks: report data written where code runs, and calls
+       written where data is held, in a presentation text; run nothing */
+    bool check_looks = false;
     char *inline_buf = NULL;
     size_t inline_len = 0;
     size_t inline_cap = 0;
@@ -2896,6 +3054,45 @@ static int cetta_main(int argc, char **argv) {
         }
         if (strcmp(argv[i], "--no-results") == 0) {
             g_no_results = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--print-hard-keywords") == 0) {
+            /* keyword-spelled symbols always backquoted, as the run-time
+               route reads them */
+            gslt_presentation_v1_set_soft_keywords(false);
+            continue;
+        }
+        if (strcmp(argv[i], "--presentations") == 0) {
+            /* the compiled presentations: name, version, certificate */
+            for (size_t k = 0; gslt_presentation_v1_at(k); k++) {
+                const GSLTPresentationTablesV1 *t = gslt_presentation_v1_at(k);
+                printf("%s %s %s; %s\n", t->name, t->version, t->source_digest, t->certificate);
+            }
+            return 0;
+        }
+        if (strcmp(argv[i], "--print-syntax") == 0) {
+            if (i + 1 >= argc) {
+                print_usage(stderr);
+                return 1;
+            }
+            print_syntax = argv[++i];
+            if (strcmp(print_syntax, "metta") != 0 && strcmp(print_syntax, "atoms") != 0) {
+                bool refused = false;
+                const GSLTPresentationTablesV1 *chosen = main_presentation_select(print_syntax, &refused);
+                if (refused)
+                    return 2;
+                if (!chosen) {
+                    fprintf(stderr, "error: unknown presentation '%s' (compiled: metta, atoms, %s)\n",
+                            print_syntax, gslt_presentation_v1_names());
+                    return 2;
+                }
+                print_syntax = chosen->name;
+                print_tables = chosen;
+            }
+            continue;
+        }
+        if (strcmp(argv[i], "--check-looks") == 0) {
+            check_looks = true;
             continue;
         }
         if (strcmp(argv[i], "--emit-runtime-stats") == 0) {
@@ -3117,6 +3314,25 @@ static int cetta_main(int argc, char **argv) {
             if (i + 1 >= argc) {
                 print_usage(stderr);
                 return 1;
+            }
+            {
+                bool refused = false;
+                const GSLTPresentationTablesV1 *chosen = main_presentation_select(argv[i + 1], &refused);
+                if (refused)
+                    return 2;
+                if (chosen) {
+                    presentation_syntax = chosen->name;
+                    presentation_tables = chosen;
+                    presentation_gll = false;
+                    i++;
+                    continue;
+                }
+            }
+            if (strcmp(argv[i + 1], "cstyle-gll") == 0 || strcmp(argv[i + 1], "pystyle-gll") == 0) {
+                presentation_syntax = argv[i + 1][0] == 'c' ? "cstyle" : "pystyle";
+                presentation_gll = true;
+                i++;
+                continue;
             }
             if (!cetta_syntax_from_name(argv[++i], &current_endpoint->syntax)) {
                 fprintf(stderr, "error: unknown syntax '%s'\n", argv[i]);
@@ -3835,19 +4051,150 @@ static int cetta_main(int argc, char **argv) {
     }
 
     if (!lang_is_mm2) {
+        char *presentation_text = NULL;
+        bool presented = false;
+        /* a conversion keeps the comments of a presentation's text */
+        GSLTPresentationCommentV1 *doc_comments = NULL;
+        size_t n_doc_comments = 0;
+        /* A presentation grounds words as the dialect's own reader does. */
+        GSLTPresentationGroundingKindV1 presentation_grounding =
+            lang->id == CETTA_LANGUAGE_PETTA ? GSLT_PRES_GROUNDING_PETTA
+                                             : GSLT_PRES_GROUNDING_HOST;
+        if (check_looks && (!presentation_syntax || presentation_gll || inline_text || !filename)) {
+            fprintf(stderr, "error: --check-looks reads a file written in a compiled presentation "
+                            "(--syntax %s)\n", gslt_presentation_v1_names());
+            rc = 2;
+            goto cleanup;
+        }
+        if (presentation_syntax && !inline_text && filename && presentation_gll) {
+            presentation_text = main_presentation_read(presentation_syntax, filename,
+                document_reader_error, sizeof(document_reader_error));
+            if (!presentation_text) {
+                fprintf(stderr, "error: %s\n", document_reader_error);
+                rc = 1;
+                goto cleanup;
+            }
+        } else if (presentation_syntax && !inline_text && filename) {
+            /* The presentation's reader compiled at build time: atoms are
+               built directly, in this process. */
+            size_t source_len = 0u;
+            uint8_t *source = read_file_bytes(filename, &source_len);
+            if (!source) {
+                fprintf(stderr, "error: cannot read %s\n", filename);
+                rc = 1;
+                goto cleanup;
+            }
+            const GSLTPresentationTablesV1 *read_tables =
+                presentation_tables ? presentation_tables : gslt_presentation_v1_find(presentation_syntax);
+            if (check_looks) {
+                /* the lint: a report on standard error, nothing runs */
+                char *report = NULL;
+                int found = gslt_presentation_v1_check_looks(
+                    read_tables, presentation_grounding, (const char *)source, source_len,
+                    cetta_library_context_universe(&runtime.libraries), &report,
+                    document_reader_error, sizeof(document_reader_error));
+                free(source);
+                if (found < 0) {
+                    fprintf(stderr, "error: %s: %s\n", filename, document_reader_error);
+                    rc = 1;
+                    goto cleanup;
+                }
+                if (report) fprintf(stderr, "%s", report);
+                free(report);
+                rc = found > 0 ? 1 : 0;
+                goto cleanup;
+            }
+            n = print_syntax
+                ? gslt_presentation_v1_read_ids_comments(
+                      read_tables, presentation_grounding,
+                      (const char *)source, source_len,
+                      cetta_library_context_universe(&runtime.libraries), &atom_ids,
+                      &doc_comments, &n_doc_comments,
+                      document_reader_error, sizeof(document_reader_error))
+                : gslt_presentation_v1_read_ids(
+                      read_tables, presentation_grounding,
+                      (const char *)source, source_len,
+                      cetta_library_context_universe(&runtime.libraries), &atom_ids,
+                      document_reader_error, sizeof(document_reader_error));
+            free(source);
+            if (n < 0) {
+                fprintf(stderr, "error: %s: %s\n", filename, document_reader_error);
+                rc = 1;
+                goto cleanup;
+            }
+            presented = true;
+        }
+        const char *document_text = inline_text ? inline_text : presentation_text;
         /* Its slices are read where the document is processed. */
-        bool sliced = lang->id == CETTA_LANGUAGE_PETTA && !inline_text &&
+        bool sliced = !presented && !print_syntax &&
+            lang->id == CETTA_LANGUAGE_PETTA && !document_text &&
             !compile_mode && !run_cli &&
             !(profile && cetta_profile_uses_petta_typing(profile)) &&
             main_petta_open_slices(&cleanup, filename);
+        if (!presented)
         n = sliced ? 0
-            : inline_text
+            : document_text
             ? parse_metta_text_ids_diagnostic(
-                  inline_text, cetta_library_context_universe(&runtime.libraries), &atom_ids,
+                  document_text, cetta_library_context_universe(&runtime.libraries), &atom_ids,
                   document_reader_error, sizeof(document_reader_error))
             : parse_metta_file_ids_diagnostic(
                   filename, cetta_library_context_universe(&runtime.libraries), &atom_ids,
                   document_reader_error, sizeof(document_reader_error));
+        free(presentation_text);
+        if (print_syntax && n >= 0) {
+            /* Conversion through the atoms: print them in another
+               presentation, or in the standard one. */
+            TermUniverse *universe = cetta_library_context_universe(&runtime.libraries);
+            const GSLTPresentationTablesV1 *target =
+                print_tables ? print_tables : gslt_presentation_v1_find(print_syntax);
+            if (strcmp(print_syntax, "atoms") == 0) {
+                char *view = gslt_presentation_v1_canonical_ids(universe, atom_ids, (size_t)n);
+                fputs(view ? view : "", stdout);
+                free(view);
+            } else if (target) {
+                char *printed = gslt_presentation_v1_print_ids_comments(
+                    target, presentation_grounding, universe, atom_ids, (size_t)n,
+                    doc_comments, n_doc_comments,
+                    document_reader_error, sizeof(document_reader_error));
+                if (!printed) {
+                    fprintf(stderr, "error: %s\n", document_reader_error);
+                    free(atom_ids);
+                    gslt_presentation_v1_comments_free(doc_comments, n_doc_comments);
+                    rc = 1;
+                    goto cleanup;
+                }
+                fputs(printed, stdout);
+                free(printed);
+            } else {
+                Arena print_arena;
+                size_t next_comment = 0;
+                arena_init(&print_arena);
+                for (int k = 0; k < n; k++) {
+                    while (next_comment < n_doc_comments && doc_comments[next_comment].before <= (size_t)k)
+                        gslt_presentation_v1_put_metta_comment(doc_comments[next_comment++].text, stdout);
+                    char *s = term_universe_atom_to_parseable_string(&print_arena, universe, atom_ids[k]);
+                    bool bang = tu_kind(universe, atom_ids[k]) == ATOM_SYMBOL &&
+                                tu_sym(universe, atom_ids[k]) == g_builtin_syms.bang && k + 1 < n;
+                    fputs(s ? s : "?", stdout);
+                    fputs(bang ? "" : "\n", stdout);
+                    if (bang) {
+                        /* the run's atom follows on the same line */
+                        k++;
+                        s = term_universe_atom_to_parseable_string(&print_arena, universe, atom_ids[k]);
+                        fputs(s ? s : "?", stdout);
+                        fputs("\n", stdout);
+                    }
+                }
+                while (next_comment < n_doc_comments)
+                    gslt_presentation_v1_put_metta_comment(doc_comments[next_comment++].text, stdout);
+                arena_free(&print_arena);
+            }
+            fflush(stdout);
+            free(atom_ids);
+            gslt_presentation_v1_comments_free(doc_comments, n_doc_comments);
+            rc = 0;
+            goto cleanup;
+        }
         if (n < 0 && lang->id == CETTA_LANGUAGE_HE) {
             /* HE reads one form at a time: the forms before a syntax fault
                run, and the fault is reported only if the run reaches it. */

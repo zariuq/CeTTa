@@ -1,0 +1,25 @@
+(body 12)
+true
+true
+((twice 3))
+true
+()
+(twice 3)
+(Error (existence_error source_sink modname) (context import! modname))
+true
+(kept)
+true
+10
+3
+(got 2)
+(got 4)
+10
+true
+(14)
+1
+((kept (twice 1)))
+()
+(2 b)
+Grounded
+Number
+(no-such-function 6)

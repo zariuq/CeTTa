@@ -1,0 +1,22 @@
+import!(&self, library{lib_transform});
+import!(&self, library{lib_flow});
+bind!(&jobs, new-space());
+for ($j of [build, check, deploy]) { add-atom(&jobs, job{$j, 2}) };
+add-atom(&jobs, worker{alice});
+add-atom(&jobs, worker{bob});
+run-round() = transform &jobs {
+  take job{$j, $left},
+  read worker{$w},
+  when $left > 0,
+  let $rest = $left - 1 =>
+  worked{$w, $j},
+  job{$j, $rest}
+} into &jobs;
+repeat { run-round() };
+for (worked{$w, $j} from &jobs) { println!(share($w, $j)) };
+sort-atom(collapse(match &jobs { job{$j, 0} => $j }));
+bind!(&budget, new-state(3));
+while (get-state(&budget) > 0) {
+  println!(tick(get-state(&budget))); change-state!(&budget, get-state(&budget) - 1)
+};
+get-state(&budget);

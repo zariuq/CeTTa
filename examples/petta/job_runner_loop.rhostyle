@@ -1,0 +1,37 @@
+// The job runner of job_runner_loop.cm in the Rholang-style presentation
+// (2.0), printed from the C-style text through its atoms, comments kept.  A
+// select is one step over one store: `<-` takes, `<<-` reads, `@{p} <<-`
+// reads the pattern p literally, `where` guards; `for (p <= s)` loops over
+// every match, `foreach (x of [a, b])` over each item of a list,
+// `foreach (x <- e)` over each answer, and `let _ <- s ; ... in { e }` runs
+// statements in order.
+// Run: cetta --lang petta --profile extended --syntax rhostyle job_runner_loop.rhostyle
+import library[lib_transform] in &self;
+import library[lib_flow] in &self;
+new &jobs;
+foreach ($j of [build, check, deploy]) { &jobs!(job[$j, 2]) };
+&jobs!(worker[alice]);
+&jobs!(worker[bob]);
+// One step of the runner: a worker takes a job with work left and puts it
+// back with one unit less; the worker's share is logged in the same firing.
+contract run-round() = {
+  select {
+    job[$j, $left] <- &jobs &
+    @{ worker[$w] } <<- &jobs where $left > 0 &
+    let $rest = $left - 1 =>
+    &jobs!(worked[$w, $j]) |
+    &jobs!(job[$j, $rest])
+  }
+};
+// Rounds until the runner is quiet; the answer is how many rounds fired.
+repeat { run-round() };
+// Every logged share, then the finished jobs.
+for (worked[$w, $j] <= &jobs) { stdout!(share($w, $j)) };
+sort-atom(collapse(for (job[$j, 0] <<- &jobs) { $j }));
+// A budgeted loop: a statement block runs while the budget lasts.
+`bind!`(&budget, new-state(3));
+while (get-state(&budget) > 0) {
+  let _ <- stdout!(tick(get-state(&budget))) in
+  { `change-state!`(&budget, get-state(&budget) - 1) }
+};
+get-state(&budget);

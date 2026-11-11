@@ -1,0 +1,139 @@
+{- A C-style presentation of MeTTa atoms, version 1.0, frozen.
+
+   Version 2.0 (MeTTaCStylePresentation.module) writes data f{a, b} and
+   parenthesizes the head of if; this module is kept unchanged so that every
+   text written for 1.0 reads as it always did: --syntax cstyle@1.0.
+
+   Every derivation interprets into one ordinary MeTTa atom; the interpretation
+   of each production is the form with the same label in
+   MeTTaCStylePresentation-1.0.forms.metta. Printing is derived from the same
+   productions: a view is kept only when its expansion is the atom it prints.
+
+   A file is read in order, one statement after another:
+     e;              e runs (the standard text writes !e)
+     f(x) = e;       a definition, the equation (= (f x) e)
+     e : T;          a type declaration (: e T)
+     atom e;         the atom e is put in the program's space
+   A statement is the scope of its variables.
+
+   Primaries:   $x  name  `any symbol`  42  -7  1.5  "text"  r#"raw text"#
+   Calls:       f(a, b) is (f a b), written where it runs; e(args) applies any atom
+   Data:        f[a, b] is (f a b) too, written where it is held: a pattern,
+                an argument declared Atom, an atom put in a space; [a, b] is
+                (a b) as data or as a list whose items run (superpose([a, b]))
+   Operators:   || && == < > <= >= + - * / %  (C precedence, binary only)
+                A -> B -> C is the flat arrow (-> A B C)
+   Quotation:   @e is (quote e); *e is (unquote e)
+   Forms:       if c { t } else { e }   case e { p => b, ... }
+                let p = e in b          let* p = e, q = f in b
+                fn(p, q) => b           (|-> (p q) b)
+                (c1, c2) is the conjunction (, c1 c2)
+   Steps:       match s { p, q => t }
+                transform s { take p, read q, absent r, when g, let v = e => t, u } [into d]
+                take/read/absent are the step's patterns, when g is the guard
+                (let True g), and several outputs are made together as (, t u);
+                all { c } (every extension), once { c } (the first),
+                unique { c } (exactly one), collect { c } into $l (every match
+                into the list $l) are the answer sets of sources c.  Without
+                into, the outputs are evaluated as match evaluates its template.
+   Flows (lib_flow): do { s1; s2; e }   for (x in e) { ... }  (each answer of e)
+                for (p from store) { ... }   while (c) { ... }   repeat { step }
+   Keywords are soft: a keyword is read as a name wherever the grammar cannot
+   take the keyword; any symbol can be written `like this`. -}
+Module MeTTaCStylePresentation {
+  Theory Lexical() {
+    Empty Terms {
+      comment "//" ;
+      comment "/*" "*/" ;
+      token CVar '$' (letter | digit | ["_'"] | ('-' letter))* ;
+      token CName (letter | '_' | '&') (letter | digit | ["_'"] | ('-' letter) | (':' letter))* ["!?"]? ;
+      token CQuoted '`' ((char - ["`\\"]) | ('\\' ["`\\"]))* '`' ;
+      token CRaw 'r' '#' '"' ((char - ["\""]) | ('"' (char - ["#"])))* '"' '#' ;
+    }
+  }
+  Theory Statements(lex: Lexical) {
+    lex Terms {
+      Program . Prog ::= [Stmt] ;
+      terminator Stmt ";" ;
+      SFact . Stmt ::= "atom" Exp ;
+      SEq   . Stmt ::= Exp "=" Exp ;
+      SType . Stmt ::= Exp ":" Exp ;
+      SRun  . Stmt ::= Exp ;
+
+      ELambda  . Exp ::= "fn" "(" [Exp] ")" "=>" Exp ;
+      ELet     . Exp ::= "let" Exp1 "=" Exp "in" Exp ;
+      ELetStar . Exp ::= "let*" [Binding] "in" Exp ;
+      BindOne  . Binding ::= Exp1 "=" Exp ;
+      separator nonempty Binding "," ;
+      EArrow   . Exp ::= Exp1 "->" ArrowTail ;
+      ATLast   . ArrowTail ::= Exp1 ;
+      ATMore   . ArrowTail ::= Exp1 "->" ArrowTail ;
+
+      EOr  . Exp1 ::= Exp1 "||" Exp2 ;
+      EAnd . Exp2 ::= Exp2 "&&" Exp3 ;
+      EEq  . Exp3 ::= Exp4 "==" Exp4 ;
+      ELt  . Exp3 ::= Exp4 "<" Exp4 ;
+      EGt  . Exp3 ::= Exp4 ">" Exp4 ;
+      ELe  . Exp3 ::= Exp4 "<=" Exp4 ;
+      EGe  . Exp3 ::= Exp4 ">=" Exp4 ;
+      EAdd . Exp4 ::= Exp4 "+" Exp5 ;
+      ESub . Exp4 ::= Exp4 "-" Exp5 ;
+      EMul . Exp5 ::= Exp5 "*" Exp6 ;
+      EDiv . Exp5 ::= Exp5 "/" Exp6 ;
+      EMod . Exp5 ::= Exp5 "%" Exp6 ;
+      EQuote   . Exp6 ::= "@" Exp6 ;
+      EUnquote . Exp6 ::= "*" Exp6 ;
+      ECall . Exp7 ::= Exp7 "(" [Exp] ")" ;
+      EData . Exp7 ::= Exp7 "[" [Exp] "]" ;
+
+      EVar       . Exp8 ::= CVar ;
+      ESym       . Exp8 ::= CName ;
+      EQSym      . Exp8 ::= CQuoted ;
+      EInt       . Exp8 ::= Integer ;
+      ENegInt    . Exp8 ::= "-" Integer ;
+      EDouble    . Exp8 ::= Double ;
+      ENegDouble . Exp8 ::= "-" Double ;
+      EStr       . Exp8 ::= String ;
+      ERaw       . Exp8 ::= CRaw ;
+      ETuple     . Exp8 ::= "[" [Exp] "]" ;
+      EConj      . Exp8 ::= "(" Conj "," [Conj] ")" ;
+      EIf        . Exp8 ::= "if" Exp "{" Exp "}" "else" "{" Exp "}" ;
+      ECase      . Exp8 ::= "case" Exp "{" [Arm] "}" ;
+      ArmOne     . Arm ::= Exp1 "=>" Exp ;
+      separator Arm "," ;
+      EMatch     . Exp8 ::= "match" Exp "{" Srcs "=>" Exp "}" ;
+      ETransform . Exp8 ::= "transform" Exp "{" Srcs "=>" Tpls "}" ;
+      ETransformInto . Exp8 ::= "transform" Exp "{" Srcs "=>" Tpls "}" "into" Exp8 ;
+
+      EDo      . Exp8 ::= "do" "{" Exp ";" Seq "}" ;
+      SeqMore  . Seq ::= Exp ";" Seq ;
+      SeqLast  . Seq ::= Exp ;
+      EFor     . Exp8 ::= "for" "(" Exp1 "in" Exp ")" "{" Seq "}" ;
+      EForFrom . Exp8 ::= "for" "(" Exp1 "from" Exp ")" "{" Seq "}" ;
+      EWhile   . Exp8 ::= "while" "(" Exp ")" "{" Seq "}" ;
+      ERepeat  . Exp8 ::= "repeat" "{" Seq "}" ;
+
+      SrcsMany . Srcs ::= Conj "," [Conj] ;
+      SrcsOne  . Srcs ::= Conj ;
+      separator nonempty Conj "," ;
+      CTake   . Conj ::= "take" Exp1 ;
+      CRead   . Conj ::= "read" Exp1 ;
+      CAbsent . Conj ::= "absent" Exp1 ;
+      CWhen   . Conj ::= "when" Exp1 ;
+      CLet    . Conj ::= "let" Exp1 "=" Exp1 ;
+      CAll     . Conj ::= "all" "{" Srcs "}" ;
+      COnce    . Conj ::= "once" "{" Srcs "}" ;
+      CUnique  . Conj ::= "unique" "{" Srcs "}" ;
+      CCollect . Conj ::= "collect" "{" Srcs "}" "into" Exp1 ;
+      CPlain  . Conj ::= Exp1 ;
+      TplsMany . Tpls ::= Exp1 "," [Exp1] ;
+      TplsOne  . Tpls ::= Exp1 ;
+      separator nonempty Exp1 "," ;
+
+      coercions Exp 8 ;
+      separator Exp "," ;
+    }
+  }
+  Theory CStyle() { Statements(Lexical()) }
+  theory CStyle()
+}

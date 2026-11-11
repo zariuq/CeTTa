@@ -1,0 +1,310 @@
+Presentations of MeTTa atoms
+============================
+
+A presentation is a syntax for MeTTa programs: one more way to write the same
+atoms. CeTTa compiles four of them at build time from GSLT modules:
+
+  cstyle    2.0  C-style statements and calls          (--syntax cstyle, file.cm)
+  pystyle   1.1  Python-style, indentation for blocks  (--syntax pystyle)
+  rhostyle  2.0  Rholang / f1r3lang style              (--syntax rhostyle)
+  sexpr     1.0  the standard parenthesized text       (--syntax sexpr)
+
+and keeps the earlier versions cstyle 1.0 and rhostyle 1.0 compiled, frozen
+(see Versions).
+
+  cetta --lang petta --profile extended --syntax cstyle prog.cm
+  cetta --lang petta [--syntax S] --print-syntax T prog     convert S to T
+  cetta --lang petta --print-syntax atoms prog              canonical atom view
+  cetta --lang petta --syntax S --check-looks prog          the lint of looks
+  cetta --presentations                                     name, version,
+                                                            digest, certificate
+  cetta --lang petta --syntax cstyle@1.0 prog.cm            at a version
+
+Each presentation is a module (its grammar, BNFC-style) and a forms table (the
+atom each production denotes):
+
+  Mettapedia/metta/gslt/module/MeTTa<Name>Presentation.module
+  Mettapedia/metta/gslt/module/MeTTa<Name>Presentation.forms.metta
+  Mettapedia/metta/gslt/module/MeTTa<Name>Presentation-1.0.*  (frozen 1.0)
+  (shipped copies in lib/presentation/)
+
+tools/gslt_presentation_compile_v1.c reads the module's syntax as CeTTa
+assembles it (lib/presentation/export_presentation.metta), the forms table and
+the builtins' declarations (lib/presentation/position_roles.metta), and writes
+src/generated/gslt_presentation_<key>_v1.generated.h: an LALR(1) parse table,
+a DFA lexer, template code and the printer's tables. src/gslt_presentation_v1.c
+reads and prints with them. A new presentation is a module, its forms and one
+entry in PRESENTATIONS in the Makefile.
+
+
+Laws
+----
+
+- Unambiguity. The generator fails on any LALR(1) conflict, so a generated
+  table certifies that its grammar is unambiguous.
+- Same atoms. Reading builds atoms directly through the dialect's own word
+  grounding, so a word means in every presentation what it means in the
+  standard text. The generated S-expression reader reads every checked-in
+  program as the standard reader does.
+- Round trip. read(print(a)) = a for every atom a that prints. Printing keeps
+  a view only when its template expands to the atom, and spells a leaf only
+  when reading the spelling back gives the same atom (floats by their
+  shortest round-trip digits).
+- Honest looks. Every printing is clean under the lint of looks: the printer
+  writes each expression in a look its position's role admits.
+- Freshness. The checked-in tables are byte-identical to a fresh generation
+  (make check-presentation-readers).
+- Comments are not atoms; a conversion keeps them as text, each before the
+  statement that follows it.
+
+Gates: make check-presentation-readers, make test-presentations (both in
+make test).
+
+
+Versions
+--------
+
+Each presentation has a version MAJOR.MINOR, declared in its forms table
+((pres:version NAME "2.0")) and carried in its tables (--presentations).
+
+- MAJOR changes when a text that an earlier version read is no longer read,
+  or reads as other atoms.
+- MINOR changes when texts that an earlier version refused become readable,
+  every earlier text keeping its atoms.
+- A printer change that keeps every atom and prints only texts the same
+  version reads is no version change; the checked-in printings
+  (tests/petta/*.<name>.expected) make every such change visible.
+
+A text may name the version it is written for: --syntax NAME@MAJOR[.MINOR]
+reads with the compiled version of NAME that reads every text of it, that is,
+the same MAJOR and a MINOR at least as high; any other version is refused.
+--print-syntax takes the same form. When a MAJOR version replaces another,
+the earlier one stays compiled, frozen (its module and forms unchanged, its
+tables generated under the key NAME_MAJOR_MINOR), so that its texts stay
+readable: --syntax cstyle@1.0. The checked-in 1.0 texts
+(tests/petta/*.cstyle-1.0.expected, *.rhostyle-1.0.expected) are printed and
+read by the frozen versions in the gate, and Python style 1.1 reads its 1.0
+texts (*.pystyle-1.0.expected) as the same atoms.
+
+  cstyle 2.0    data is written f{a, b}; if takes its condition in
+                parentheses, if (c) { .. }; the subject of case, match and
+                transform is a primary; for (x of [a, b]).  Major: a 1.0 text
+                writing f[a] or if c { .. } no longer reads.
+  pystyle 1.1   data f{a, b} (1.0's f[a, b] still reads); for x of [a, b].
+  rhostyle 2.0  the absence clause attaches to the receipt before it;
+                foreach (x of [a, b]).  Major: in 1.0,
+                p <<- s where count(x) == 0 was a guard calling count.
+
+
+Statements
+----------
+
+A file is read in order. In the C and Python styles a statement runs; nothing
+marks it.
+
+  C style            Python style        atoms
+  e;                 e                   !e (e runs; its answers print)
+  f(x) = e;          def f(x): e         (= (f x) e)
+  lhs = rhs;         lhs = rhs           (= lhs rhs)
+  e : T;             e :: T              (: e T)
+  atom e;            atom e              e, put in the program's space
+
+A fact and the statement add-atom(&self, e); put the same atom in the same
+space at the same point of the file: the same atoms in the same order,
+duplicates kept, the atom held as written, an equation callable exactly as a
+written definition, a declaration typing exactly as a written one, and in a
+module both go to the space the module is imported into (&self there is that
+space). They differ in one thing: add-atom(&self, e); is a statement, and its
+answer, true, prints where the program's statements print their answers. So
+they are two statements with two spellings, and the printer writes each atom
+as what it is: a fact as atom e;, a statement as add-atom(&self, e);. In a
+module, whose statements' answers do not print, the two are indistinguishable.
+
+The fact keyword is atom: fact names 21 functions and relations in CeTTa's own
+tests and libraries (factorial among them), and fact(5); would read as a fact.
+Keywords are soft: a keyword is read as a name wherever the grammar cannot
+take the keyword. Where it can (a statement may begin with atom; a step's
+source or receipt with all, once, unique or collect; where with count), a
+function of that name is written `atom`(x) there; the printer does so by
+itself, keeping a bare spelling only when the statement reads back to the
+same atoms.
+
+The Rholang style writes e; for a run, @{ e }; for an atom in the space
+(a quoted process is data), s!(e) for add-atom, contract f(x) = { e }; for a
+definition and new &s; for a fresh bound space. Rholang has no file order, so
+the terminating ; is the one place where the style extends Rholang.
+
+
+Steps
+-----
+
+  C style                                  atoms
+  match s { p, q => t }                    (match s (, p q) t)
+  transform s { take p, read q, absent r,  (transform s (, (take p) (read q)
+    when g, let v = e => t, u } into d       (absent r) (let True g) (let v e))
+                                             (, t u) d)
+  all { c }  once { c }  unique { c }      (all c)  (once c)  (unique c)
+  collect { c } into $l                    (collect c $l)
+  if (c) { t } else { e }                  (if c t e)
+  case e { p => b, ... }                   (case e ((p b) ...))
+
+The subject s of match, transform and case is a primary: a name, a variable,
+a literal or a parenthesized expression (match (spaces()) { .. }), so that the
+"{" after it never continues it as data.
+
+The Python style writes a transform as an indented block of sources after
+"transform s into d:" and its outputs after "yield"; all:, once:, unique:
+and "collect $l:" open nested blocks of sources; [t for p in s] is match.
+Without "into", the outputs are evaluated as match evaluates its template.
+
+
+Positions and their looks
+-------------------------
+
+MeTTa has one expression form, (f a b). Whether it is a call or data depends
+on its position (only Atom and (Data T) positions hold; every other position
+runs). The presentations write the difference:
+
+  f(a, b)    a call: the position runs
+  f{a, b}    data: the position holds (a symbol head), as C, C++, Go and Rust
+             write a composite literal; the Rholang style writes f[a, b]
+  [a, b]     data with another head, or a list whose items run
+             (superpose([f(1), f(2)]))
+
+Reading is position-free: f(a, b), f{a, b} and [f, a, b] all read as (f a b).
+So the look never changes the atoms, and the printer chooses the honest one.
+The role of a position comes from
+
+- the form: patterns (match, case, let, lambda parameters, a step's
+  sources, loop patterns), atoms put in a space, a definition's head (a call
+  pattern whose arguments are data), type declarations, quoted atoms hold;
+  match's template, a guard, a let's value, a body run; transform without a
+  destination evaluates its instances (as match evaluates its template), and
+  routed into a destination makes them as data;
+- the program's own declarations: (: f (-> A1 ... An R)) makes argument i
+  data when Ai is Atom or (Data T), a running position otherwise;
+- the builtins' declarations, lib/presentation/position_roles.metta, read by
+  the same rule and matched by the number of arguments: (: add-atom (->
+  SpaceType Atom (->))) holds the atom, (: quote (-> Atom Atom)) its argument,
+  match, let, unify, chain and |-> their patterns ...; superpose, a special
+  form whose list is held and whose items run, is the one position given by
+  its role.  CeTTa's PeTTa lane declares no types for its builtins, so they
+  are declared there as the lane evaluates them, and
+  tests/petta/presentation_builtin_positions.metta checks each declaration
+  against the lane's behaviour (get-type, get-metatype and eval run their
+  argument in this lane, so they are not declared);
+- otherwise the position runs. An untyped (%Undefined%) position runs, so the
+  call look is the honest reading there: [build, check, deploy] written where
+  it runs is a call of build, and prints as build(check, deploy). A list of
+  items to loop over is for (x of [build, check, deploy]).
+
+Inside data everything is data. Operators and the special forms (if, case,
+let, match, transform, fn) are notation in every role. A conjunction
+(a, b) holds patterns among a step's sources; written where it runs, its
+items run.
+
+
+The lint of looks
+-----------------
+
+  cetta --lang petta --syntax cstyle --check-looks prog.cm
+
+reads the text, gives every expression its position's role as the printer
+does, and reports each look the role does not admit, with its line and column:
+
+  f{a} or a list [f, a] written where the position runs   (it is a call)
+  f(a) written where the position holds data               (it is data)
+  f(a) written where the position holds a list            (it is a list)
+
+It runs nothing; the exit status is 1 when it reports anything. Since reading
+is position-free, a wrong look never changes the atoms; it misleads the
+reader of the text.
+
+
+Loops and sequences (lib/petta/lib_flow.metta)
+---------------------------------------------
+
+  C style                     Python style        Rholang style
+  do { s1; s2; e }            do: s1 / s2 / e     let _ <- s1 ; _ <- s2 in { e }
+  for (x of [a, b]) { b }     for x of [a, b]: b  foreach (x of [a, b]) { b }
+  for (x in e) { b }          for x in e: b       foreach (x <- e) { b }
+  for (p from s) { b }        for p from s: b     for (p <= s) { b }
+  while (c) { b }             while c: b          while (c) { b }
+  repeat { step }             repeat: step        repeat { step }
+
+for (x of [a, b]) loops over the items of a list written in place: it is
+(flow:for-each (superpose (a b)) (|-> (x) b)), whose list is held (never a
+call of a) and whose items run, as superpose's do.  for (x in e) loops over
+the answers of the computation e.  Two spellings, two meanings: a list written
+for (x in [a, b]) is a call of a, and the lint says so.
+
+flow:then runs each statement to completion and drops its answers.
+flow:for-each runs e to completion as the loop starts and runs the body for
+each answer, in order. flow:for-match runs the body for every match of p in
+the store as the loop starts. flow:while runs the body while one answer of c
+is True. flow:until-quiet repeats the step until a round has no answer and
+answers the number of rounds that had answers.
+
+
+The Rholang style
+-----------------
+
+  for (p <<- s) { t }                 (match s p t)
+  select { receipts => outs }         (transform s receipts outs)
+    p <- s                            (take p)
+    p <<- s                           p (a read)
+    @{p} <<- s                        (read p): the pattern quoted, so taken
+                                      literally even when its head is take,
+                                      absent, let, all, once, unique, collect
+    p <<- s where count(q <<- s) == 0 p, (absent q): the count clause attached
+                                      to the receipt before it, as a guard is
+    where count(q <<- s) == 0         (absent q) on its own, when no receipt
+                                      precedes it
+    let v = e                         (let v e)
+    ... where g                       (let True g)
+    all { rs }  once { rs }           (all c)  (once c)
+    unique { rs }                     (unique c)
+    collect { rs } into $c            (collect c $c)
+    outs: t | u, or d!(t) | d!(u)     (, t u), routed into d
+  s!(a)  stdout!(e)                   (add-atom s a)  (println! e)
+  new $s in { b }                     (let $s (new-space) b)
+  import m in s                       (import! s m)
+  let p <- e in { b }                 (let p e b)
+  let p <- e ; q <- f in { b }        (let* ((p e) (q f)) b)
+  match e { p => b, ... }             (case e ((p b) ...))
+  contract(x) = { b }                 (|-> (x) b)
+
+Every receipt of one select names the same store, and every send of its
+outputs the same destination: one step reads one store. A select over two
+stores is refused.
+
+What has no faithful Rholang form, precisely:
+
+- A single spelling for both reads. Transform has two atoms for one meaning,
+  p and (read p); a reader returns one atom for one text, so an exact
+  presentation spells them differently. Both use Rholang's peek, and the
+  explicit one quotes its pattern.
+- Counts other than zero. The count clause reads only as absence; transform
+  has no count item, so count(...) == 1 has no atom and is refused.
+- Absence as ~. Rholang's ~p is a pattern connective about one message's
+  shape: for (~p <- c) receives a message that does not match p. Store
+  absence says no message matches p, which is the count clause.
+- File order. Rholang's top level is concurrent; the style's ; is ordered.
+- Names ending in !, which sends: println!, import! and bind! of a new space
+  have forms; other such names are written `quoted`.
+- Variables keep $: Rholang binds by position and has no symbol atoms.
+
+
+The run-time route
+------------------
+
+--syntax cstyle-gll and pystyle-gll read the same modules at run time with
+CeTTa's GLL machinery (lib/presentation/read_presentation.metta), the route a
+program's own notation takes. The run-time parser reserves its keywords; it
+rejects a text at the start of the first token no reading can take (a grammar
+with layout is parsed from its text with the layout written out, and its
+rejection is reported at the position in the source). Where that token is a
+keyword, the route reads the text again with the word written `quoted`, so a
+keyword is a name exactly where the grammar cannot take the keyword, which is
+the compiled reader's rule: the two routes read one language, soft keywords
+included. Its MeTTa printer does not know roles.

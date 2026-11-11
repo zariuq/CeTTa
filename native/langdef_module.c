@@ -4311,6 +4311,12 @@ static Atom *authored_parser_parse_values(
                 result_limit, selected, &parsed, error, sizeof(error));
     }
     if (!executed) goto failed;
+    /* a layout grammar was parsed from its text with the layout written
+       out: its farthest position is reported in the source */
+    if (resource->compiled.tokenized && parsed.outcome != PPNATIVE_V1_CYCLIC_FOREST &&
+        (parsed.outcome != PPNATIVE_V1_COMPLETED || !parsed.accepted))
+        cetta_parser_token_scan_v1_source_position(&scan, &parsed.forest.farthest_scalar,
+                                                   &parsed.forest.farthest_byte);
     if (parsed.outcome == PPNATIVE_V1_CYCLIC_FOREST) {
         Atom *args[] = {atom_bool(arena, parsed.accepted)};
         result = langdef_expr(arena, "ParserCyclicV1", args, 1u);
@@ -4604,6 +4610,9 @@ static Atom *authored_parser_parse_bytes(
             resource, input_sha256, &parsed, "GLL execution incomplete", arena);
         goto done;
     }
+    if (!parsed.accepted && resource->compiled.tokenized)
+        cetta_parser_token_scan_v1_source_position(&token_scan, &parsed.forest.farthest_scalar,
+                                                   &parsed.forest.farthest_byte);
     if (!parsed.accepted) {
         Atom *expected = authored_parser_expected(
             resource, &parsed.forest, arena);

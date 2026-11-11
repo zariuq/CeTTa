@@ -233,6 +233,7 @@ tests/test_fc_native_depth3_count_regression.metta	he	metta	extended	runtime-sta
 tests/test_fc_selfjoin_regression.metta	he	metta	extended	main	native	test	golden	-
 tests/test_filter_atom_function_syntax.metta	he	metta	extended	main	native	test	golden	-
 tests/test_float_ops.metta	he	metta	extended	main	native	test	golden	-
+tests/test_float_shortest_roundtrip.metta	he	metta	extended	main	native	test	golden	-
 tests/test_fold.metta	he	metta	extended	main	native	test	golden	-
 tests/test_fold_by_key.metta	he	metta	extended	main	native	test	golden	-
 tests/test_fold_by_key_docs.metta	he	metta	extended	main	native	test	golden	-

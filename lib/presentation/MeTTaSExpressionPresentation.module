@@ -1,0 +1,29 @@
+{- The standard parenthesized presentation of MeTTa atoms, as a GSLT module, so
+   that it and MeTTaCStylePresentation interpret into the same atoms and a
+   program can be converted between them through those atoms.
+
+   A word is a variable when it begins with $, a number when it reads as one,
+   and a symbol otherwise; ! before an atom marks a statement to run. -}
+Module MeTTaSExpressionPresentation {
+  Theory Lexical() {
+    Empty Terms {
+      comment ";" ;
+      token SWord (char - [" \t\n\r\f()\";"]) (char - [" \t\n\r\f()\";"])* ;
+      token SRaw 'r' '#' '"' ((char - ["\""]) | ('"' (char - ["#"])))* '"' '#' ;
+    }
+  }
+  Theory Atoms(lex: Lexical) {
+    lex Terms {
+      SProgram . SProg ::= [STop] ;
+      separator STop "" ;
+      STopAtom . STop ::= SAtom ;
+      separator SAtom "" ;
+      SExpr . SAtom ::= "(" [SAtom] ")" ;
+      SLeaf . SAtom ::= SWord ;
+      SText . SAtom ::= String ;
+      SRawText . SAtom ::= SRaw ;
+    }
+  }
+  Theory SExpression() { Atoms(Lexical()) }
+  theory SExpression()
+}

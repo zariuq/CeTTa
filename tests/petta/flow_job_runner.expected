@@ -1,0 +1,20 @@
+(share alice build)
+(share alice check)
+(share alice deploy)
+(share alice build)
+(share alice check)
+(share alice deploy)
+(tick 3)
+(tick 2)
+(tick 1)
+true
+true
+()
+true
+true
+2
+()
+(build check deploy)
+true
+()
+0

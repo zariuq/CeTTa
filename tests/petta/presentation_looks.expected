@@ -1,0 +1,32 @@
+(item a)
+(item b)
+(item 2)
+(item b)
+(answer 4)
+first
+(has j1)
+true
+true
+2
+((pair a b) (pair b c))
+(twice 3)
+(no-such-function 6)
+built
+(build check deploy)
+(2 4)
+Grounded
+true
+(red green)
+true
+true
+true
+(3 1)
+((free j1))
+1
+(j1)
+(1)
+()
+()
+()
+second
+()
