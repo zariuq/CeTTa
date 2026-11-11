@@ -139,8 +139,8 @@ static SymbolEntry *symbol_table_entry_mut(SymbolTable *st, SymbolId id) {
     return &chunk[id & SYMBOL_ENTRY_CHUNK_MASK];
 }
 
-static void symbol_table_add_flags(SymbolTable *st, SymbolId id,
-                                   uint32_t flags) {
+static void symbol_table_add_flags_initial(SymbolTable *st, SymbolId id,
+                                           uint32_t flags) {
     if (!st || id == SYMBOL_ID_NONE || flags == 0u)
         return;
     uint32_t entry_len = atomic_load_explicit(
@@ -150,6 +150,19 @@ static void symbol_table_add_flags(SymbolTable *st, SymbolId id,
     SymbolEntry *entry = symbol_table_entry_mut(st, id);
     if (entry)
         entry->flags |= flags;
+}
+
+void symbol_table_add_flags(SymbolTable *st, SymbolId id,
+                            uint32_t flags) {
+    if (!st || id == SYMBOL_ID_NONE || flags == 0u)
+        return;
+    uint32_t entry_len = atomic_load_explicit(
+        &st->entry_len, memory_order_relaxed);
+    if (id >= entry_len)
+        return;
+    SymbolEntry *entry = symbol_table_entry_mut(st, id);
+    if (entry)
+        __atomic_fetch_or(&entry->flags, flags, __ATOMIC_RELAXED);
 }
 
 static bool symbol_table_ensure_entry_chunk(SymbolTable *st, SymbolId id) {
@@ -514,14 +527,6 @@ int symbol_compare(const SymbolTable *st, SymbolId left, SymbolId right) {
     return a_len < b_len ? -1 : a_len > b_len ? 1 : 0;
 }
 
-bool symbol_id_is_builtin(SymbolId id) {
-    return id != SYMBOL_ID_NONE &&
-           (id <= g_builtin_syms.native_handle ||
-            id == g_builtin_syms.empty_form ||
-            (id >= g_builtin_syms.work_new &&
-             id <= g_builtin_syms.work_exists));
-}
-
 uint64_t symbol_hash_value(const SymbolTable *st, SymbolId id) {
     if (!st || id == SYMBOL_ID_NONE) return (uint64_t)id;
     uint32_t entry_len = atomic_load_explicit(&st->entry_len, memory_order_acquire);
@@ -538,7 +543,7 @@ uint32_t symbol_flags(const SymbolTable *st, SymbolId id) {
     if (id >= entry_len)
         return 0u;
     const SymbolEntry *entry = symbol_table_entry_ref(st, id);
-    return entry ? entry->flags : 0u;
+    return entry ? __atomic_load_n(&entry->flags, __ATOMIC_RELAXED) : 0u;
 }
 
 uint32_t symbol_builtin_policy(const SymbolTable *st, SymbolId id) {
@@ -615,14 +620,14 @@ bool symbol_table_try_init_builtins(SymbolTable *st, BuiltinSyms *builtins) {
 #undef CETTA_INIT_BUILTIN
 
 #define CETTA_MARK_STATIC_GROUNDED(field) \
-    symbol_table_add_flags( \
+    symbol_table_add_flags_initial( \
         st, builtins->field, CETTA_SYMBOL_FLAG_STATIC_GROUNDED_OP | \
             CETTA_SYMBOL_FLAG_CORE_GROUNDED_OP);
     CETTA_STATIC_GROUNDED_SYMBOL_FIELDS(CETTA_MARK_STATIC_GROUNDED)
 #undef CETTA_MARK_STATIC_GROUNDED
 
 #define CETTA_MARK_TYPE_PURE_GROUNDED(field) \
-    symbol_table_add_flags( \
+    symbol_table_add_flags_initial( \
         st, builtins->field, \
         CETTA_SYMBOL_FLAG_TYPE_PURE_GROUNDED_OP);
     CETTA_TYPE_PURE_GROUNDED_SYMBOL_FIELDS(
@@ -630,7 +635,7 @@ bool symbol_table_try_init_builtins(SymbolTable *st, BuiltinSyms *builtins) {
 #undef CETTA_MARK_TYPE_PURE_GROUNDED
 
 #define CETTA_MARK_PUBLIC_LIBRARY_GROUNDED(field) \
-    symbol_table_add_flags(st, builtins->field, \
+    symbol_table_add_flags_initial(st, builtins->field, \
         CETTA_SYMBOL_FLAG_STATIC_GROUNDED_OP | CETTA_SYMBOL_FLAG_LIBRARY_NATIVE_OP);
     CETTA_PUBLIC_LIBRARY_NATIVE_SYMBOL_FIELDS(CETTA_MARK_PUBLIC_LIBRARY_GROUNDED)
 #undef CETTA_MARK_PUBLIC_LIBRARY_GROUNDED
@@ -640,7 +645,7 @@ bool symbol_table_try_init_builtins(SymbolTable *st, BuiltinSyms *builtins) {
        name-based fallback in is_grounded_op. */
 #define CETTA_MARK_LIBRARY_GROUNDED(field, text) do { \
     if (strncmp((text), "__cetta_lib_", 12u) == 0) \
-        symbol_table_add_flags( \
+        symbol_table_add_flags_initial( \
             st, builtins->field, CETTA_SYMBOL_FLAG_STATIC_GROUNDED_OP | \
                 CETTA_SYMBOL_FLAG_LIBRARY_NATIVE_OP); \
 } while (0);

@@ -31,7 +31,7 @@ static bool runtime_try_add_builtin_type_decls_direct(Space *space,
     AtomId undefined_id =
         tu_intern_symbol(universe, symbol_intern_cstr(g_symbols, "%Undefined%"));
     SymbolId t_spelling = symbol_intern_cstr(g_symbols, "t");
-    VarId t_var = g_var_intern ? var_intern(g_var_intern, t_spelling) : fresh_var_id();
+    VarId t_var = fresh_var_id();
     AtomId t_var_id = tu_intern_var(universe, t_spelling, t_var);
     AtomId arrow_nnn_children[4] = {arrow_id, number_id, number_id, number_id};
     AtomId arrow_nnb_children[4] = {arrow_id, number_id, number_id, bool_id};
@@ -288,7 +288,9 @@ static bool runtime_he_prepare_library(Space *space, Arena *arena,
             continue;
         }
         bool grounded = subject->kind == ATOM_SYMBOL &&
-            he_grounded_symbol_types(subject->sym_id, extensions, NULL) != 0u;
+            he_grounded_symbol_types(subject->sym_id,
+                extensions ? HE_GROUNDED_TIER_EXTENSIONS
+                           : HE_GROUNDED_TIER_UPSTREAM, NULL) != 0u;
         if (!grounded && !he_library_names_subject(subject))
             continue;
         mask[i] = 1u;
@@ -366,70 +368,6 @@ static void runtime_add_builtin_type_decls(Space *space, Arena *arena,
 
 }
 
-static void runtime_add_transform_library(Space *space, Arena *arena,
-                                          CettaLanguageId language,
-                                          const CettaProfile *profile) {
-    if (!profile ||
-        !((language == CETTA_LANGUAGE_HE &&
-           profile->id == CETTA_PROFILE_HE_EXTENDED) ||
-          (language == CETTA_LANGUAGE_PETTA &&
-           profile->id == CETTA_PROFILE_PETTA_EXTENDED)))
-        return;
-    Atom *transform = atom_symbol(arena, "transform");
-    Atom *tf_run = atom_symbol(arena, "tf:run");
-    Atom *caller = atom_symbol(arena, "tf:caller");
-    Atom *space_var = atom_var(arena, "space");
-    Atom *sources_var = atom_var(arena, "sources");
-    Atom *template_var = atom_var(arena, "template");
-    Atom *destination_var = atom_var(arena, "destination");
-    Atom *atom_type = atom_symbol_id(arena, g_builtin_syms.atom);
-    Atom *undefined = atom_undefined_type(arena);
-    for (uint32_t arity = 3u; arity <= 4u; arity++) {
-        Atom *type_children[6] = {atom_symbol_id(arena, g_builtin_syms.arrow),
-                                  atom_type, atom_type, atom_type, atom_type,
-                                  undefined};
-        type_children[arity + 1u] = undefined;
-        Atom *declaration = atom_expr3(arena,
-            atom_symbol_id(arena, g_builtin_syms.colon), transform,
-            atom_expr(arena, type_children, arity + 2u));
-        if (!space_admit_atom(space, arena, declaration))
-            space_add(space, declaration);
-    }
-    if (language == CETTA_LANGUAGE_HE) {
-        static const struct { const char *name; uint32_t arity; bool data; } types[] = {
-            {"tf:cand", 1u, true}, {"tf:cs", 1u, true}, {"tf:fired", 1u, true},
-            {"tf:run", 4u, false}, {"tf:split", 2u, false},
-            {"tf:propose", 3u, false}, {"tf:inst", 2u, false},
-            {"tf:fire", 3u, false}, {"tf:fire-into", 4u, false},
-        };
-        for (size_t i = 0u; i < sizeof types / sizeof types[0]; i++) {
-            Atom *parts[6] = {atom_symbol_id(arena, g_builtin_syms.arrow)};
-            for (uint32_t j = 1u; j <= types[i].arity; j++)
-                parts[j] = atom_type;
-            parts[types[i].arity + 1u] = types[i].data
-                ? atom_symbol(arena, "TfData") : undefined;
-            Atom *declaration = atom_expr3(arena,
-                atom_symbol_id(arena, g_builtin_syms.colon),
-                atom_symbol(arena, types[i].name),
-                atom_expr(arena, parts, types[i].arity + 2u));
-            if (!space_admit_atom(space, arena, declaration))
-                space_add(space, declaration);
-        }
-    }
-    Atom *call3[4] = {transform, space_var, sources_var, template_var};
-    Atom *run3[5] = {tf_run, space_var, sources_var, template_var, caller};
-    Atom *equation3 = atom_expr3(arena, atom_symbol_id(arena, g_builtin_syms.equals),
-        atom_expr(arena, call3, 4u), atom_expr(arena, run3, 5u));
-    if (!space_admit_atom(space, arena, equation3))
-        space_add(space, equation3);
-    Atom *call4[5] = {transform, space_var, sources_var, template_var, destination_var};
-    Atom *run4[5] = {tf_run, space_var, sources_var, template_var, destination_var};
-    Atom *equation4 = atom_expr3(arena, atom_symbol_id(arena, g_builtin_syms.equals),
-        atom_expr(arena, call4, 5u), atom_expr(arena, run4, 5u));
-    if (!space_admit_atom(space, arena, equation4))
-        space_add(space, equation4);
-}
-
 bool cetta_runtime_load_prelude(Space *space, Arena *arena,
                                 CettaLanguageId language, const CettaProfile *profile) {
     if (language == CETTA_LANGUAGE_HE && !he_library_tables_init()) return false;
@@ -446,7 +384,6 @@ bool cetta_runtime_load_prelude(Space *space, Arena *arena,
     }
     /* Extended profiles carry the public wrapper directly, without importing
      * a module or making the program an importer. */
-    runtime_add_transform_library(space, arena, language, profile);
     if (language == CETTA_LANGUAGE_HE)
         (void)space_mark_imported_prefix(space);
     return true;

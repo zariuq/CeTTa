@@ -69,6 +69,16 @@ this choice is made before constructing cursor pins or traversal arrays, and
 first-answer evaluation streams at every size. The established reads-only bag
 fast path and all ineligible walkers remain in place.
 
+An eligible first-answer destination firing closes its cursor before live
+validation and publication, so inserting the answer does not detach every
+unread row merely to preserve a continuation that will not be used after the
+answer. A successful destination firing returns immediately. If validation
+declines without a write, reopening reads the unchanged store and skips the
+already-tried prefix. Metered evaluation keeps the captured cursor instead;
+source computations never acquire a second observable execution. The
+self-destination counter control checks both the answers and that no pinned
+view or row is detached by the write.
+
 `CETTA_TRANSFORM_CURSOR_REFERENCE=1` permanently selects the former
 materializing proposal route for both first-answer evaluation and public
 collection in the same binary. The differential gate compares complete stdout,
@@ -99,7 +109,8 @@ a 200 by 200 disjoint traversal yielding no proposals, an empty first
 public-proposal frontier followed by a nonempty one, 100 repeated early closes,
 nested answerless firings, later insert/delete/reinsert, equal copies, overlapping read/take footprints, irrelevant writes, function and
 invalid destinations, captured bindings, dynamic-space and `let` barriers,
-full-drain controls, and a seeded differential corpus. A same-objects fault
+full-drain controls, a first-answer self-destination write with no pinned-view
+detachment, and a seeded differential corpus. A same-objects fault
 executable refuses the second outer row's inner cursor clone; the first
 answerless effect must remain exactly once, with no whole-transform fallback.
 The cursor counter gates run under ASan/UBSan as well as in the ordinary build.
@@ -117,8 +128,8 @@ A `let`, `all`, `once` source section, absence/uniqueness/collection, joint
 condition, dynamic space, host-space form the occurrence view cannot retain,
 or another effectful generation segment keeps the existing eager/native route.
 These are evaluation barriers, not blanket unsupported-feature errors. Public
-materialization and full-drain behavior remain available for the complete
-language surface. No effectful segment is moved across a firing to obtain
+materialization and full-drain behavior remain available for the whole
+language. No effectful segment is moved across a firing to obtain
 laziness.
 
 A returned proposal owns its syntax independently of scratch bindings. The

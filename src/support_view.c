@@ -80,20 +80,29 @@ typedef enum {
 } SvOperation;
 
 static SvOperation support_operation(SymbolId head, CettaExprLen arity) {
-    if (arity != 2u || head == SYMBOL_ID_NONE)
+    if (arity != 2u || head == SYMBOL_ID_NONE ||
+        symbol_id_is_builtin(head) || !g_symbols)
         return SV_NOT_OURS;
-    if (head == atom_symbol_literal_id("support:open"))
-        return SV_OPEN;
-    if (head == atom_symbol_literal_id("support:assert"))
-        return SV_ASSERT;
-    if (head == atom_symbol_literal_id("support:retract"))
-        return SV_RETRACT;
-    if (head == atom_symbol_literal_id("support:why"))
-        return SV_WHY;
+    /* Names are resolved once for this symbol-table incarnation. */
+    static _Thread_local const SymbolTable *owner;
+    static _Thread_local uint64_t owner_id;
+    static _Thread_local SymbolId ids[4];
+    uint64_t current_id = symbol_table_instance_id(g_symbols);
+    if (owner != g_symbols || owner_id != current_id) {
+        ids[0] = atom_symbol_literal_id("support:open");
+        ids[1] = atom_symbol_literal_id("support:assert");
+        ids[2] = atom_symbol_literal_id("support:retract");
+        ids[3] = atom_symbol_literal_id("support:why");
+        owner = g_symbols;
+        owner_id = current_id;
+    }
+    for (size_t i = 0u; i < 4u; i++)
+        if (head == ids[i])
+            return (SvOperation)i;
     return SV_NOT_OURS;
 }
 
-bool cetta_support_head(SymbolId head, CettaExprLen arity) {
+bool cetta_support_head_slow(SymbolId head, CettaExprLen arity) {
     return support_operation(head, arity) != SV_NOT_OURS;
 }
 

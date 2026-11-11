@@ -213,14 +213,28 @@ static const struct {
     {"import-as!", "(-> Atom Atom Atom (->))"},
 };
 
+/* The extended profile's own operations: the transform family.  An
+ * operation keeps each argument as syntax; a data carrier keeps its field. */
+static const struct {
+    const char *name;
+    uint8_t arity;
+    bool carrier;
+} HE_GROUNDED_EXTENDED_PROFILE_TYPES[] = {
+    {"transform", 3u, false}, {"transform", 4u, false},
+    {"tf:cand", 1u, true}, {"tf:cs", 1u, true}, {"tf:fired", 1u, true},
+    {"tf:run", 4u, false}, {"tf:split", 2u, false},
+    {"tf:propose", 3u, false}, {"tf:inst", 2u, false},
+    {"tf:fire", 3u, false}, {"tf:fire-into", 4u, false},
+};
+
 #define HE_GROUNDED_TYPE_SLOTS 256u
 #define HE_GROUNDED_TYPES_PER_NAME 3u
+#define HE_GROUNDED_TIERS 3u
 
-/* Upstream's types first, then CeTTa's extended signatures. */
+/* A name's types in tier order; counts[t] is how many tier t has. */
 typedef struct {
     SymbolId symbol;
-    uint32_t base_count;
-    uint32_t count;
+    uint32_t counts[HE_GROUNDED_TIERS];
     Atom *types[HE_GROUNDED_TYPES_PER_NAME];
 } HeGroundedTypeSlot;
 
@@ -282,9 +296,9 @@ static HeGroundedTypeSlot *he_grounded_slot(SymbolId symbol, bool insert) {
     for (uint32_t probe = 0u; probe < HE_GROUNDED_TYPE_SLOTS; probe++) {
         HeGroundedTypeSlot *slot =
             &g_he_grounded_slots[(start + probe) % HE_GROUNDED_TYPE_SLOTS];
-        if (slot->count != 0u && slot->symbol == symbol)
+        if (slot->symbol == symbol)
             return slot;
-        if (slot->count == 0u)
+        if (slot->symbol == SYMBOL_ID_NONE)
             return insert ? slot : NULL;
     }
     return NULL;
@@ -304,20 +318,44 @@ static Atom *he_parse_catalog_atom(const char *text) {
     return atom;
 }
 
-static bool he_grounded_add(const char *name, const char *text,
-                            bool extension) {
+/* Tiers are added in order, so a type joins its tier and each later one. */
+static bool he_grounded_add_type(const char *name, Atom *type,
+                                 HeGroundedTier tier) {
     SymbolId symbol = symbol_try_intern_cstr(g_symbols, name);
     if (symbol == SYMBOL_ID_NONE) return false;
-    Atom *type = he_parse_catalog_atom(text);
     HeGroundedTypeSlot *slot = he_grounded_slot(symbol, true);
-    if (symbol == SYMBOL_ID_NONE || !type || !slot ||
-        slot->count == HE_GROUNDED_TYPES_PER_NAME)
+    uint32_t held = slot ? slot->counts[HE_GROUNDED_TIERS - 1u] : 0u;
+    if (!type || !slot || held == HE_GROUNDED_TYPES_PER_NAME)
         return false;
     slot->symbol = symbol;
-    slot->types[slot->count++] = type;
-    if (!extension)
-        slot->base_count = slot->count;
+    slot->types[held] = type;
+    for (uint32_t later = tier; later < HE_GROUNDED_TIERS; later++)
+        slot->counts[later] = held + 1u;
     return true;
+}
+
+static bool he_grounded_add(const char *name, const char *text,
+                            HeGroundedTier tier) {
+    return he_grounded_add_type(name, he_parse_catalog_atom(text), tier);
+}
+
+/* (-> Atom ... Atom RESULT) with `arity` arguments, built directly; each
+ * distinct type is built once (`built` holds them by arity, carriers at 0). */
+static Atom *he_syntax_keeping_type(uint8_t arity, bool carrier,
+                                    Atom *built[5]) {
+    Arena *a = &g_he_grounded_arena;
+    uint8_t slot = carrier ? 0u : arity;
+    if (arity > 4u || (carrier && arity != 1u))
+        return NULL;
+    if (built[slot])
+        return built[slot];
+    Atom *argument = atom_symbol_id(a, g_builtin_syms.atom);
+    Atom *parts[6] = {atom_symbol_id(a, g_builtin_syms.arrow)};
+    for (uint8_t field = 1u; field <= arity; field++)
+        parts[field] = argument;
+    parts[arity + 1u] = carrier
+        ? atom_symbol(a, "TfData") : atom_undefined_type(a);
+    return built[slot] = atom_expr(a, parts, (uint32_t)arity + 2u);
 }
 
 
@@ -391,13 +429,27 @@ static bool he_library_tables_build(void) {
     }
     for (size_t i = 0u; i < sizeof HE_GROUNDED_TYPES / sizeof HE_GROUNDED_TYPES[0]; i++) {
         if (!he_grounded_add(HE_GROUNDED_TYPES[i].name,
-                             HE_GROUNDED_TYPES[i].type, false))
+                             HE_GROUNDED_TYPES[i].type,
+                             HE_GROUNDED_TIER_UPSTREAM))
             return false;
     }
     for (size_t i = 0u; i < sizeof HE_GROUNDED_EXTENSION_TYPES /
                             sizeof HE_GROUNDED_EXTENSION_TYPES[0]; i++) {
         if (!he_grounded_add(HE_GROUNDED_EXTENSION_TYPES[i].name,
-                             HE_GROUNDED_EXTENSION_TYPES[i].type, true))
+                             HE_GROUNDED_EXTENSION_TYPES[i].type,
+                             HE_GROUNDED_TIER_EXTENSIONS))
+            return false;
+    }
+    Atom *syntax_keeping[5] = {NULL, NULL, NULL, NULL, NULL};
+    for (size_t i = 0u; i < sizeof HE_GROUNDED_EXTENDED_PROFILE_TYPES /
+                            sizeof HE_GROUNDED_EXTENDED_PROFILE_TYPES[0]; i++) {
+        if (!he_grounded_add_type(
+                HE_GROUNDED_EXTENDED_PROFILE_TYPES[i].name,
+                he_syntax_keeping_type(
+                    HE_GROUNDED_EXTENDED_PROFILE_TYPES[i].arity,
+                    HE_GROUNDED_EXTENDED_PROFILE_TYPES[i].carrier,
+                    syntax_keeping),
+                HE_GROUNDED_TIER_EXTENDED_PROFILE))
             return false;
     }
     g_he_module_space_no_deps_symbol =
@@ -429,14 +481,14 @@ bool he_library_tables_init(void) {
     return tables->loaded;
 }
 
-uint32_t he_grounded_symbol_types(SymbolId symbol, bool extensions,
+uint32_t he_grounded_symbol_types(SymbolId symbol, HeGroundedTier tier,
                                   Atom *const **types) {
     if (types)
         *types = NULL;
     if (symbol == SYMBOL_ID_NONE || !he_library_tables_init())
         return 0u;
     HeGroundedTypeSlot *slot = he_grounded_slot(symbol, false);
-    uint32_t count = !slot ? 0u : extensions ? slot->count : slot->base_count;
+    uint32_t count = !slot ? 0u : slot->counts[tier];
     if (count != 0u && types)
         *types = slot->types;
     return count;
