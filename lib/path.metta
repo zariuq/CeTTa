@@ -9,11 +9,13 @@
        (let ($head $tail) (decons-atom $items)
          (path:reverse-atom-expr-acc $tail (cons-atom $head $acc)))))
 
-;; Paths are strings. Anything else is answered with an error at once; the
+;; A path is a string, or a symbol spelled as one (command-line arguments
+;; arrive as symbols). Anything else is answered with an error at once; the
 ;; parts below would otherwise take it apart without end. The refused call is
 ;; quoted, so that a dialect evaluating Error's arguments does not repeat it.
 (= (path:text? $path)
-   (== (get-type $path) String))
+   (or (== (get-type $path) String)
+       (== (get-metatype $path) Symbol)))
 
 (= (path:is-absolute $path)
    (if (path:text? $path)

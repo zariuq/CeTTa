@@ -4,3 +4,4 @@ true
 (Error (path:join "a" 7) "expected a path string")
 (Error (path:resolve-from 1 "a") "expected a path string")
 "/a/b"
+"some/session/guidance.json"
