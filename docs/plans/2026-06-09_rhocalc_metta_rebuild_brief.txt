@@ -6,10 +6,10 @@ Status
 
 The rebuild is now LIVE in the active tree as the Rhometta syntax:
 
-- `/home/aimama/aihub/hyperon/cetta-rho-threading/lib/rhometta.metta`
-- `/home/aimama/aihub/hyperon/cetta-rho-threading/src/rhocalc_core.c`
-- `/home/aimama/aihub/hyperon/cetta-rho-threading/src/eval.c`
-- `/home/aimama/aihub/hyperon/cetta-rho-threading/src/eval.h`
+- `lib/rhometta.metta`
+- `src/rhocalc_core.c`
+- `src/eval.c`
+- `src/eval.h`
 
 The active implementation keeps the earlier hard constraint: there is still NO
 shadow reducer stack.  Rhometta is a narrow extension seam in the existing
@@ -39,11 +39,11 @@ The active tree has a passing transactional Rhometta lane in both `core` and
 
 Important current witnesses:
 
-- `/home/aimama/aihub/hyperon/cetta-rho-threading/tests/test_rhometta_lib_syntax.metta`
-- `/home/aimama/aihub/hyperon/cetta-rho-threading/tests/test_rhometta_threaded_differential.metta`
-- `/home/aimama/aihub/hyperon/cetta-rho-threading/tests/test_rhometta_threaded_runtime_stats.metta`
-- `/home/aimama/aihub/hyperon/cetta-rho-threading/tests/test_rhometta_isolation_oracle.metta`
-- `/home/aimama/aihub/hyperon/cetta-rho-threading/scripts/rhometta_macro_differential_audit.py`
+- `tests/test_rhometta_lib_syntax.metta`
+- `tests/test_rhometta_threaded_differential.metta`
+- `tests/test_rhometta_threaded_runtime_stats.metta`
+- `tests/test_rhometta_isolation_oracle.metta`
+- `scripts/rhometta_macro_differential_audit.py`
 
 These cover:
 
@@ -65,27 +65,27 @@ The live engine exposes Rhometta as a library syntax backed by the existing
 reducer stack:
 
 - Rhometta library syntax:
-  `/home/aimama/aihub/hyperon/cetta-rho-threading/lib/rhometta.metta`
+  `lib/rhometta.metta`
 
 - COMM seam:
-  `/home/aimama/aihub/hyperon/cetta-rho-threading/src/rhocalc_core.c`
+  `src/rhocalc_core.c`
   `rho_compute_comm_continuation(...)`
 
 - Sequential and threaded reducer entry points:
-  `/home/aimama/aihub/hyperon/cetta-rho-threading/src/rhocalc_core.c`
+  `src/rhocalc_core.c`
   `rhocalc_reduce_to_quiescence_with_profile(...)`
   `rhocalc_reduce_to_quiescence_threaded(...)`
 
 - Threaded endpoint publication / rendezvous:
-  `/home/aimama/aihub/hyperon/cetta-rho-threading/src/rhocalc_core.c`
+  `src/rhocalc_core.c`
   `rho_async_publish_endpoint(...)`
 
 - Worker-pool substrate:
-  `/home/aimama/aihub/hyperon/cetta-rho-threading/src/parallel_executor.c`
-  `/home/aimama/aihub/hyperon/cetta-rho-threading/src/parallel_executor.h`
+  `src/parallel_executor.c`
+  `src/parallel_executor.h`
 
 - Existing proof that MeTTa evaluation can run on worker threads:
-  `/home/aimama/aihub/hyperon/cetta-rho-threading/src/eval.c`
+  `src/eval.c`
   parallel branch execution path around `cetta_parallel_executor_*`
 
 The active Rhometta payload contract is:
@@ -229,8 +229,8 @@ Relevant surviving evidence in the tree
 The following surviving tests/fixtures matter because they already show useful
 MeTTa-with-rho workloads running through ordinary rhocalc paths:
 
-- `/home/aimama/aihub/hyperon/cetta-rho-threading/tests/rhocalc_m3_may_must.tsv`
-- `/home/aimama/aihub/hyperon/cetta-rho-threading/tests/rhocalc_m3_rholang_cli.tsv`
+- `tests/rhocalc_m3_may_must.tsv`
+- `tests/rhocalc_m3_rholang_cli.tsv`
 
 In particular, the fixtures named below are useful witnesses that MeTTa terms
 can already participate in rho-driven workflows at the current abstraction
@@ -244,7 +244,7 @@ layer:
 
 The old draft syntax notes remain available only as historical scratch:
 
-- `/home/aimama/aihub/hyperon/cetta-rho-threading/benchmarks/rho/metta-eval-bridge-drafts/bridge_syntax.txt`
+- `benchmarks/rho/metta-eval-bridge-drafts/bridge_syntax.txt`
 
 They should not be mistaken for the target API.
 
