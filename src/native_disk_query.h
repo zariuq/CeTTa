@@ -44,6 +44,10 @@ CettaDiskStoreStatus cetta_disk_query_open_indexed_bounded(const CettaDiskStoreV
 CettaDiskStoreStatus cetta_disk_query_open_point_bounded(const CettaDiskStoreView *view,
     CettaDiskBytes key, Atom *pattern, Atom *template, size_t maximum_bytes,
     CettaDiskQuery **out);
+/* Captured ACT/remote/overlay sources use the same matcher. Their access
+ * counters are unavailable unless the provider exposes disk statistics. */
+CettaDiskStoreStatus cetta_space_query_open_source_bounded(Space *,Atom *pattern,
+    Atom *template,size_t maximum_bytes,CettaDiskQuery **out);
 bool cetta_disk_query_statistics(const CettaDiskQuery *query,CettaDiskSpaceStatistics *out);
 
 /* Bounded matcher transitions; each grants at most 32 matcher node actions.

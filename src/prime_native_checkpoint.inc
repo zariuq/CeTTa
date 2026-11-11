@@ -168,7 +168,8 @@ static bool parent_copy_registry(PrimeParentCopy *copy, const Registry *source,
     if (source->states || name_key_count(source->name_keys) ||
         source->len > source->cap || !source->entries || !source->index_slots)
         return parent_copy_refuse(copy, "RegistryOwner");
-    registry_init(image);
+    if (!registry_try_init(image))
+        return parent_copy_refuse(copy, "Allocation");
     if (source->entries == source->inline_entries) {
         if (source->cap != 16u) return parent_copy_refuse(copy,"RegistryExtent");
         memcpy(image->inline_entries,source->inline_entries,sizeof(source->inline_entries));

@@ -33,9 +33,11 @@ from test_petta_form_guard_exec_v1 import expected_decision
 from test_petta_form_guard_exec_v1 import guard_row
 from test_petta_form_guard_exec_v1 import pin_authority
 from test_petta_form_guard_exec_v1 import run_petta_reference
+from test_petta_parser_authority_v1 import FORM_AUTHORITY
 from test_petta_parser_authority_v1 import FORM_CASES
 from test_petta_parser_authority_v1 import run_case as run_authority_case
 from test_regular_span_dfa_v1 import abi_scalar
+from gslt2parse_oracles_v1 import ORACLES
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -81,11 +83,11 @@ EXPECTED_NATIVE = {
     "lexical-plan-digest":
         "5f826f37f49ecf89e7b7c6b0f48f857eba9f88ad6940ce3e439f1fc987005c3d",
     "guard-source-digest":
-        "5f00a6f5734ec6babce012888dbef9642d7be1fcafcbc71f59c5b30bf2073d88",
+        "baa6a5f58bfd8d8bc4da70f77dafb886639198381946df9d772b0e6bc783f7e5",
     "guard-pre-reflection-digest":
-        "97b375b8b6e10a9120795420725baa97545055c99887ad8c95943f8136fe3126",
+        "e12eee5710d69be18717f495b8025d76273ca38bd66db76a83400dcd9890ccf7",
     "guard-environment-digest":
-        "3aa4efeeb2fb62a16b5462d746d7c6a49460bc2edeed15bde590127acd86a3a5",
+        "a00e275669c3d9912a2736c3b0de705560352f3d09029b019c162dc393075212",
     "guard-answer-set-digest":
         "a343ebd17f880a01428dc2b0a21f0eb758142eecdaee6934347be47283d4ece2",
     "guard-evidence-count": "1",
@@ -94,16 +96,16 @@ EXPECTED_NATIVE = {
     "guard-nfa-answers": "10",
     "guard-tag-count": "1",
     "guard-plan-digest":
-        "7814a2e726fb3e62519fbe57940ce0cacc7d83b4f5fe77f6487b6d4631006659",
+        "b77cdc1455934d476f99e7abdcf8e4bac533e8b0c57921c276ed5506bde2fdae",
     "guard-evidence-digest":
-        "a5e7b8da5050b20fc55b36a1f10135b94562143f818a2b2d6f73f8860fb63511",
+        "d7d6e4d19dfd64e0ac4296076b4143a61dfc4ee9e4a358f08e8c4f16488c9099",
     "guarded-compiler-digest":
         "395867dc43f7a202ec500faf1dfb28b281fd04e699a63a48d4d90f937204c181",
     "guarded-nfa-answer-digest": EXPECTED_GUARDED_DIGEST,
     "guarded-nfa-answers": str(EXPECTED_GUARDED_ANSWERS),
     "guarded-tag-count": "1",
     "guarded-plan-digest":
-        "a338fa2cb3c2c63dca764f3ecdf8b47cbaa580b7cf611d3ad8f27f223fcce1ef",
+        "91690035ac1fabc9b5b746e4df7fda31c70b87ec21a64c24630655b62dbac970",
     "guarded-terminal-extension-count": "1",
     "composite-grammar-productions": "85",
     "slr-states": "36",
@@ -133,13 +135,13 @@ EXPECTED_LR1 = {
     "terminals": 6,
 }
 EXPECTED_MATRIX_DIGEST = (
-    "65789fc1a5ebb285157ce36bd0f48ab76ed4c60c2a38e4d0073d9738f9f7b71d"
+    "e963ba090018b1639f13cb5cd2183bb09da555321add1272fa92fa26a7342abf"
 )
 EXPECTED_EXECUTION_PLAN_DIGEST = (
-    "1c6873759c8dd5725dbf609de5cecc58a7e589c9aa096c874877f822b17499b4"
+    "d06f7503089091d7292f22d85c143440b1f22fc57970390bd620095005b992e9"
 )
 EXPECTED_EXECUTION_MATRIX_DIGEST = (
-    "fb9d472196d94951cd2943b1266c50507243fd93723ed80a53c857b3ec18def3"
+    "cb14174155c5d6c9a5f80882f69885b218fe0f8ec91d2a427881ca248fe0282a"
 )
 EXPECTED_SLR_SHADOW_MATRIX_DIGEST = (
     "d57c5b504d9a65aaa22c186930228d04f3b4b75243661f83798d7eeaab0edb1b"
@@ -205,13 +207,8 @@ def guarded_native(chart_binary: Path) -> tuple[str, ...]:
     return tuple(terms)
 
 
-def guarded_petta(petta_root: Path) -> tuple[str, tuple[str, ...]]:
-    oracle = (
-        petta_root
-        / "experiments"
-        / "gslt2parse_foundation"
-        / "guarded_span_oracle_v1.pl"
-    )
+def guarded_petta() -> tuple[str, tuple[str, ...]]:
+    oracle = ORACLES / "guarded_span_oracle_v1.pl"
     completed = subprocess.run(
         [
             "swipl",
@@ -580,16 +577,16 @@ def main() -> int:
         raise GateFailure("PeTTa foundation checkout is absent")
     pin_authority(petta_root)
 
-    abi = export_stream(petta_root, ABI_CASES["petta"])
+    abi = export_stream(ABI_CASES["petta"])
     source_digest = abi_scalar(abi, "source-digest")
     lexical_terms, _, lexical_agreements = compile_case_tags(
-        chart_binary, petta_root, dict(LEXICAL_CASE), source_digest
+        chart_binary, dict(LEXICAL_CASE), source_digest
     )
     evidence_row = guard_row(chart_binary)
     guard_nfa = guard_nfa_row(chart_binary, "petta")
     guard_terms = tuple(str(term) for term in guard_nfa["terms"])
     native_guarded_terms = guarded_native(chart_binary)
-    guarded_source_digest, petta_guarded_terms = guarded_petta(petta_root)
+    guarded_source_digest, petta_guarded_terms = guarded_petta()
     if (
         native_guarded_terms != petta_guarded_terms
         or guarded_source_digest != source_digest
@@ -652,12 +649,7 @@ def main() -> int:
             parse_abi_stream(abi), native
         )))
 
-        authority_oracle = (
-            petta_root
-            / "experiments"
-            / "gslt2parse_foundation"
-            / "petta_parser_authority_v1.pl"
-        )
+        authority_oracle = FORM_AUTHORITY
         for case_index, (label, (input_bytes, expected)) in enumerate(
             FORM_CASES.items()
         ):
@@ -668,7 +660,7 @@ def main() -> int:
             )
             if authority != expected:
                 raise GateFailure(f"PeTTa authority changed for {label}")
-            reference = run_petta_reference(petta_root, input_path)
+            reference = run_petta_reference(input_path)
             decision = expected_decision(expected)
             if reference.get("decision") != decision:
                 raise GateFailure(
@@ -898,7 +890,7 @@ def main() -> int:
                 growth_authority_agreements += 1
                 if token_count == TOKEN_COUNTS[-1]:
                     return
-                reference = run_petta_reference(petta_root, input_path)
+                reference = run_petta_reference(input_path)
                 if (
                     reference.get("decision") != "accepted"
                     or tuple(row["gll-result"])
@@ -941,7 +933,7 @@ def main() -> int:
                     raise GateFailure(
                         "PeTTa flat replay authority changed"
                     )
-                reference = run_petta_reference(petta_root, input_path)
+                reference = run_petta_reference(input_path)
                 if (
                     reference.get("decision") != "accepted"
                     or tuple(row["gll-result"])

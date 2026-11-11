@@ -6,6 +6,7 @@
 #include "petta_search_machine.h"
 #include "library_pattern.h"
 #include "native_query.h"
+#include "space_source_snapshot.h"
 #include <assert.h>
 #include <signal.h>
 #include <stdio.h>
@@ -162,7 +163,14 @@ int main(int argc,char **argv) {
             assert(!space_match_backend_try_set(&source,SPACE_ENGINE_NATIVE));
             assert(space_match_backend_last_error_code()==SPACE_MATCH_BACKEND_ERROR_READ_ONLY && space_length64(&source)==count);
             assert(query(&source,&answers,"(match &self (edge alice $who) $who)",NULL)==count-2);
-            space_match_backend_clear_error();puts("OWNED_SPACE_REOPEN_OK");
+            space_match_backend_clear_error();
+            Space saved;space_init_with_universe(&saved,&universe);
+            assert(space_source_snapshot_init(&saved,&source));
+            SpaceOccurrenceCursor retained;assert(space_occurrence_cursor_init_scan(&saved,&retained));
+            space_free(&source);space_init_with_universe(&source,&universe);
+            space_free(&saved);
+            assert(drain(&retained)==count);space_occurrence_cursor_release(&retained);
+            puts("OWNED_SPACE_REOPEN_OK");
         }
         space_occurrence_cursor_release(&scan);space_free(&source);term_universe_free(&universe);
     }

@@ -10,6 +10,7 @@
 #include "var_index.h"
 
 #include <fcntl.h>
+#include <errno.h>
 #include <limits.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -186,9 +187,11 @@ static AtomId petta_projection_variable_bytes(
                                 : 16u;
             if (next < context->variable_cap)
                 return CETTA_ATOM_ID_NONE;
-            context->variables = cetta_realloc(
+            PeTTaVariableEntryV1 *variables = cetta_realloc(
                 context->variables,
                 (size_t)next * sizeof(*context->variables));
+            if (!variables) return CETTA_ATOM_ID_NONE;
+            context->variables = variables;
             context->variable_cap = next;
         }
         context->variables[context->variable_len++] =
@@ -528,8 +531,7 @@ static bool petta_compiled_reader_v1_read_file(
     size_t len = 0u;
     size_t cap = 0u;
     bool ok = false;
-    if (!filename || !bytes_out || !len_out)
-        return false;
+    if (!filename || !bytes_out || !len_out) { errno = EINVAL; return false; }
     *bytes_out = NULL;
     *len_out = 0u;
     file = fopen(filename, "rb");
@@ -540,11 +542,9 @@ static bool petta_compiled_reader_v1_read_file(
         if (len == cap) {
             size_t next_cap = cap ? cap * 2u : 4096u;
             uint8_t *next;
-            if (next_cap < cap)
-                goto done;
+            if (next_cap < cap) { errno = EOVERFLOW; goto done; }
             next = realloc(bytes, next_cap);
-            if (!next)
-                goto done;
+            if (!next) { errno = ENOMEM; goto done; }
             bytes = next;
             cap = next_cap;
         }
@@ -552,19 +552,21 @@ static bool petta_compiled_reader_v1_read_file(
         len += amount;
         if (amount > 0u)
             continue;
-        if (ferror(file))
-            goto done;
+        if (ferror(file)) { if (!errno) errno = EIO; goto done; }
         break;
     }
     *bytes_out = bytes;
     *len_out = len;
     bytes = NULL;
     ok = true;
-done:
+done: {
+    int saved_error = errno;
     if (file)
         (void)fclose(file);
     free(bytes);
+    errno = saved_error;
     return ok;
+}
 }
 
 bool petta_compiled_document_v1_open(PeTTaCompiledDocumentV1 *document,
@@ -827,7 +829,7 @@ int petta_compiled_reader_v1_parse_file_ids(
     *out_ids = NULL;
     if (!petta_compiled_reader_v1_read_file(filename, &bytes, &len)) {
         petta_compiled_reader_v1_set_error(
-            error_buf, error_buf_size, "cannot read PeTTa source file");
+            error_buf, error_buf_size, "cannot read PeTTa source file: %s", strerror(errno));
         return -1;
     }
     result = petta_compiled_reader_v1_parse_bytes_ids(

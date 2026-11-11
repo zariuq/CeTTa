@@ -1,0 +1,8 @@
+[((Error (DirectAnnotatedBox "wrong-field") (BadArgType 1 Number String)))]
+[DirectAnnotatedRange]
+[((Error (DirectAnnotatedBox "wrong-field") (BadArgType 1 Number String)))]
+[(DirectAnnotatedBox 1)]
+[(DirectAnnotatedBox 2)]
+[(wrap (DirectAnnotatedBox 3))]
+[9]
+[(Error (DirectAnnotatedBox "wrong-field") (BadArgType 1 Number String))]

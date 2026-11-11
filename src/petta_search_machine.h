@@ -171,6 +171,7 @@ typedef enum {
 } PettaTableMutationPolicy;
 
 PettaMachineTable *petta_machine_table_new(void);
+PettaMachineTable *petta_machine_table_new_with_mutation_policy(PettaTableMutationPolicy);
 void petta_machine_table_free(PettaMachineTable *table);
 
 /*
@@ -287,12 +288,25 @@ typedef struct {
     void (*release)(void *);
     CettaStorageVisitor storage;
 } PettaMachineResourceLease;
-
 typedef enum {
     PETTA_MACHINE_NATIVE_COLLECTION_COMPLETE = 0,
     PETTA_MACHINE_NATIVE_COLLECTION_DEFERRED,
     PETTA_MACHINE_NATIVE_COLLECTION_CAPACITY,
 } PettaMachineNativeCollectionResult;
+
+/* Optional host facilities shared by every machine made from the same host.
+ * The table is borrowed and must outlive those machines.  Keeping these cold
+ * entry points together avoids enlarging each machine's copied host value. */
+typedef struct {
+    bool (*translator_rule_set)(
+        void *context, SymbolId head, bool enabled);
+    bool (*tabled_relation_set)(
+        void *context, SymbolId head, CettaExprLen arity, bool enabled);
+    SymbolId (*tabled_relation_join)(
+        void *context, SymbolId head, CettaExprLen arity);
+    bool (*tabled_relation_join_set)(
+        void *context, SymbolId head, CettaExprLen arity, SymbolId join);
+} PettaMachineOptionalServices;
 
 typedef struct {
     void *context;
@@ -367,6 +381,15 @@ typedef struct {
      * matched equation with no returns still completes with no returns. */
     bool unmatched_call_is_value;
     bool empty_result_is_failure;
+    /* HE's case: a key with no results is switched on Empty, so the first
+     * arm whose pattern matches Empty answers, a variable pattern included,
+     * and an Empty pattern matches an Empty value as data.  PeTTa's case
+     * takes only a written Empty arm, for a key with no results. */
+    bool case_switches_on_empty;
+    /* PeTTa's typed calls, whose failed checks only filter: a value that a
+     * callee's own range check, or a trusted version, typed at a closed
+     * type is not checked there again. */
+    bool range_discharge;
     bool retain_query_variable_identity;
     /* An eager tuple completes an argument before starting the next one.
      * A fault occurrence returns from this application, rather than becoming
@@ -474,7 +497,7 @@ typedef struct {
      * false; the machine then classifies only where another mode decides
      * something. */
     bool classify_may_override;
-    /* The host admits the extended bind!-Space surface and owns its inert
+    /* The host admits the extended bind!-Space operation and owns its inert
      * authored name and constructor evaluation/publication boundary. */
     bool named_space_binding;
     /* Direct grounded execution is a physical realization of a language
@@ -607,6 +630,14 @@ typedef struct {
      * type and caller destination stay in the machine until an owned return
      * supplies a value and the completed branch environment. */
     bool (*owns_call)(void *context, const Atom *expression);
+    /* Whether the operation `head` names makes a value built to be consumed
+     * by later calls, such as a grounder's program: the machine then gives
+     * apply_ready_values its old generation as the arena, so no collection
+     * copies the value, and settles there whatever of the answers refers to
+     * younger storage.  Optional. */
+    bool (*result_long_lived)(void *context, const Atom *head);
+    /* Cold table-control entry points shared by all machines from this host. */
+    const PettaMachineOptionalServices *optional_services;
     /* Complete a native invocation that has already executed. No refusal
      * or native replay is permitted here; terminal faults go through end.
      * Its values retain their provenance and conditional roots. */
@@ -909,8 +940,6 @@ typedef struct {
         SymbolId head, CettaExprLen arity);
     bool (*translator_rule_contains)(
         void *context, SymbolId head);
-    bool (*translator_rule_set)(
-        void *context, SymbolId head, bool enabled);
     bool (*tabled_relation_contains)(
         void *context, SymbolId head, CettaExprLen arity);
     /* Language-owned table admission. Static-world profiles may permit
@@ -926,9 +955,6 @@ typedef struct {
     bool (*tabled_relation_round_reusable)(
         void *context, Space *space,
         SymbolId head, CettaExprLen arity);
-    bool (*tabled_relation_set)(
-        void *context, SymbolId head, CettaExprLen arity,
-        bool enabled);
     /* A shared table is an optional physical realization.  The language
      * still decides which relations are memoized through the callbacks
      * below; merely supplying storage cannot make a call cacheable. */
@@ -1040,6 +1066,9 @@ typedef struct PettaMachineImpl PettaMachineImpl;
 typedef struct {
     PettaMachineImpl *impl;
 } PettaMachine;
+/* Resume an IO suspension without restarting the search. True identifies
+ * source progress, including finite sources with no external wait. */
+bool petta_machine_await_source(PettaMachine *machine);
 
 /* Relational-control adapter for the evaluator-neutral continuation seam.
  * Capture is observational and restore is same-machine, authority-pinned, and
@@ -1422,6 +1451,7 @@ typedef struct {
     uint64_t table_generator_rounds;
     uint64_t table_generator_rounds_reused;
     uint64_t table_scc_completions;
+    uint64_t table_scc_merges;
     uint64_t table_answer_replays;
     uint64_t count_aggregate_answers;
     uint64_t count_aggregate_boundary_copies_avoided;

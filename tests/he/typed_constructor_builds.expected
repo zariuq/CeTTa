@@ -1,0 +1,8 @@
+[465]
+[((Error (Cons "s" (Cons 1 (Cons 2 (Cons 3 Nil)))) (BadArgType 2 (List String) (List Number))))]
+[25]
+[((Error (S 5) (BadArgType 1 Nat Number)))]
+[127]
+[(Q (+ 1 1))]
+[(Two "w")]
+[(Two 4)]

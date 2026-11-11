@@ -1,0 +1,23 @@
+BINDER
+(NAM "lam_")
+DARR
+DEQ
+(NAM "setlam")
+DOT
+AXIOM
+(NAM "a")
+COLON
+(NAM "lam_")
+LPAREN
+(NAM "x")
+COLON
+(NAM "set")
+RPAREN
+LPAREN
+(NAM "y")
+COLON
+(NAM "set")
+RPAREN
+COMMA
+(NAM "x")
+DOT

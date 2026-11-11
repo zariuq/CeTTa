@@ -22,6 +22,31 @@ elif kind == "he-mark":
     old = ("            if (result && atom_is_he_evaluated(item->atom))\n"
            "                result = atom_he_evaluated_copy(collect->to, result);\n")
     new = ""
+elif kind in ("root-reorder", "root-collapse"):
+    start = source.index("static Atom **oem_collect_slots(")
+    end = source.index("return copied;", source.index("for (uint32_t index = 0u; index < count; index++)", start))
+    old = "oem_collect_atom(cursor, collect, slots[index])"
+    index = "(index + 1u) % count" if kind == "root-reorder" else "0u"
+    new = f"oem_collect_atom(cursor, collect, slots[{index}])"
+elif kind == "child-reorder":
+    start = source.index("static Atom *oem_collect_atom(")
+    end = source.index("/* A slot vector's copy:", start)
+    old = "            result = atom_expr(collect->to,\n"
+    new = ("            if (item->atom->expr.len > 1u) {\n"
+           "                Atom *first = cursor->resolve_results[item->base];\n"
+           "                cursor->resolve_results[item->base] = cursor->resolve_results[results - 1u];\n"
+           "                cursor->resolve_results[results - 1u] = first;\n"
+           "            }\n" + old)
+elif kind == "spelled-inline":
+    start = source.index("static Atom *oem_collect_atom(")
+    end = source.index("/* A slot vector's copy:", start)
+    old = "atom->kind != ATOM_VAR && !atom_symbol_is_spelled(atom) &&"
+    new = "atom->kind != ATOM_VAR &&"
+elif kind == "stale-alias":
+    start = source.index("static Atom *oem_collect_atom(")
+    end = source.index("/* A slot vector's copy:", start)
+    old = "if (!oem_collect_put(collect, atom, result))"
+    new = "if (!oem_collect_value_at(collect, atom))"
 else:
     raise SystemExit(f"unknown worker mutation: {kind}")
 body = source[start:end]

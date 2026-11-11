@@ -36,7 +36,11 @@ struct CettaDiskCursor {
     CettaDiskBuffer terminal, previous;
     bool failed, has_terminal, terminal_exclusive, has_previous, reverse;
 };
-struct CettaDiskBlobReader { CettaDiskRoot root; CettaDiskBlob value; };
+struct CettaDiskBlobReader {
+    CettaDiskRoot root;CettaDiskBlob value;
+    uint64_t offset;bool streaming,verified,failed;
+    CettaNativeSha256 hash;char expected[64];
+};
 
 static uint64_t number(const unsigned char *p,size_t n) {
     uint64_t value=0;
@@ -312,13 +316,13 @@ CettaDiskStatus cetta_disk_blob_reader_open(const CettaDiskRoot *root,CettaDiskB
     size_t verified=0;
     CettaDiskStatus status=cetta_disk_blob_read(&reader->root,value,0,NULL,0,&verified);
     if (status!=CETTA_DISK_OK) { cetta_disk_blob_reader_close(reader); return status; }
-    *out=reader; return CETTA_DISK_OK;
+    reader->verified=true;*out=reader;return CETTA_DISK_OK;
 }
 CettaDiskStatus cetta_disk_blob_reader_read(CettaDiskBlobReader *reader,uint64_t offset,
                                             void *destination,size_t capacity,size_t *written) {
     if (!written) return CETTA_DISK_INVALID;
     *written=0;
-    if (!reader || offset>reader->value.size || (capacity && !destination)) return CETTA_DISK_INVALID;
+    if (!reader || !reader->verified || offset>reader->value.size || (capacity && !destination)) return CETTA_DISK_INVALID;
     size_t count=reader->value.size-offset<capacity ? (size_t)(reader->value.size-offset) : capacity;
     CettaDiskStatus status=read_all(reader->root.fd,destination,count,
                                   reader->value.reference-1+FRAME+1+offset);
@@ -330,6 +334,44 @@ void cetta_disk_blob_reader_close(CettaDiskBlobReader *reader) {
 }
 uint64_t cetta_disk_blob_reader_size(const CettaDiskBlobReader *reader) {
     return reader ? reader->value.size : 0;
+}
+
+CettaDiskStatus cetta_disk_blob_stream_open(const CettaDiskRoot *root,CettaDiskBlob value,CettaDiskBlobReader **out) {
+    if (!out) return CETTA_DISK_INVALID;
+    *out=NULL;
+    if (!valid(root)) return CETTA_DISK_INVALID;
+    CettaDiskStatus s=cetta_disk_root_check(root);if (s!=CETTA_DISK_OK) return s;
+    unsigned char bytes[FRAME],tag;size_t n=0;
+    s=header(root,value.reference,bytes,&n);
+    if (s!=CETTA_DISK_OK) return s;
+    if (!n || n-1!=value.size || value.size>root->value_limit) return CETTA_DISK_CORRUPT;
+    s=read_all(root->fd,&tag,1,value.reference-1+FRAME);
+    if (s!=CETTA_DISK_OK) return s;
+    if (tag!=VALUE) return CETTA_DISK_CORRUPT;
+    CettaDiskBlobReader *r=calloc(1,sizeof(*r));if (!r) return CETTA_DISK_NOMEM;
+    r->root=*root;r->value=value;r->streaming=true;
+    r->root.fd=fcntl(root->fd,F_DUPFD_CLOEXEC,0);
+    if (r->root.fd<0) {free(r);return CETTA_DISK_IO;}
+    memcpy(r->expected,bytes+8,64);cetta_native_sha256_init(&r->hash);cetta_native_sha256_update(&r->hash,&tag,1);
+    *out=r;return CETTA_DISK_OK;
+}
+CettaDiskStatus cetta_disk_blob_stream_next(CettaDiskBlobReader *r,void *data,size_t capacity,size_t *written) {
+    if (!written) return CETTA_DISK_INVALID;
+    *written=0;
+    if (!r || !r->streaming || r->failed || (capacity && !data)) return CETTA_DISK_INVALID;
+    if (r->verified) return CETTA_DISK_END;
+    uint64_t remaining=r->value.size-r->offset;
+    if (remaining && !capacity) return CETTA_DISK_INVALID;
+    size_t n=remaining<capacity ? (size_t)remaining : capacity;
+    CettaDiskStatus s=read_all(r->root.fd,data,n,r->value.reference-1+FRAME+1+r->offset);
+    if (s!=CETTA_DISK_OK) {r->failed=true;return s;}
+    cetta_native_sha256_update(&r->hash,data,n);r->offset+=n;
+    if (r->offset==r->value.size) {
+        char digest[65];cetta_native_sha256_finish_hex(&r->hash,digest);
+        if (memcmp(digest,r->expected,64)) {r->failed=true;return CETTA_DISK_CORRUPT;}
+        r->verified=true;
+    }
+    *written=n;return n ? CETTA_DISK_OK : CETTA_DISK_END;
 }
 static CettaDiskStatus branch(CettaDiskRoot *root,uint64_t bit,uint64_t left,uint64_t right,uint64_t *out) {
     unsigned char data[25]={BRANCH};
@@ -426,6 +468,124 @@ CettaDiskStatus cetta_disk_build(const CettaDiskRoot *base,const CettaDiskOp *op
         if (status!=CETTA_DISK_OK) return status;
     }
     *candidate=draft; return CETTA_DISK_OK;
+}
+
+static bool stream_write(int fd,const void *raw,size_t n) {
+    const unsigned char *p=raw;
+    while (n) {
+        ssize_t amount=write(fd,p,n);
+        if (amount<0 && errno==EINTR) continue;
+        if (amount<=0) return false;
+        p+=amount;n-=(size_t)amount;
+    }
+    return true;
+}
+CettaDiskStatus cetta_disk_blob_append_stream(CettaDiskRoot *root,uint64_t size,
+        CettaDiskReadBytes reader,void *context,CettaDiskBlob *out) {
+    if (!root || !out || !valid(root) || size>root->value_limit || (size && !reader)) return CETTA_DISK_INVALID;
+    *out=(CettaDiskBlob){0};
+    int flags=fcntl(root->fd,F_GETFL);
+    if (flags<0) return CETTA_DISK_IO;
+    if (flags&O_APPEND) return CETTA_DISK_INVALID;
+    off_t end=lseek(root->fd,0,SEEK_END);
+    if (end<0) return CETTA_DISK_IO;
+    if ((uint64_t)end<root->end) return CETTA_DISK_CORRUPT;
+    CettaDiskRoot draft=*root;draft.end=(uint64_t)end;
+    CettaDiskStatus s=prepare_segment(&draft);if (s!=CETTA_DISK_OK) return s;
+    if (size>(uint64_t)INT64_MAX-FRAME-1 || draft.end>(uint64_t)INT64_MAX-FRAME-1-size) return CETTA_DISK_LIMIT;
+    if (lseek(root->fd,(off_t)draft.end,SEEK_SET)!=(off_t)draft.end) return CETTA_DISK_IO;
+    unsigned char header_bytes[FRAME]={0},buffer[32768],tag=VALUE;
+    memcpy(header_bytes,"CSL1",4);put_number(header_bytes+4,4,size+1);
+    if (!stream_write(root->fd,header_bytes,FRAME) || !stream_write(root->fd,&tag,1)) return CETTA_DISK_IO;
+    CettaNativeSha256 hash;cetta_native_sha256_init(&hash);cetta_native_sha256_update(&hash,&tag,1);
+    if (!size && reader) {
+        size_t got=0;s=reader(context,0,NULL,0,&got);
+        if (s!=CETTA_DISK_OK && s!=CETTA_DISK_END) return s;
+        if (got) return CETTA_DISK_CORRUPT;
+    }
+    for (uint64_t offset=0;offset<size;) {
+        size_t wanted=size-offset<sizeof(buffer) ? (size_t)(size-offset) : sizeof(buffer),got=0;
+        s=reader(context,offset,buffer,wanted,&got);
+        if (s!=CETTA_DISK_OK) return s;
+        if (!got || got>wanted) return CETTA_DISK_CORRUPT;
+        if (!stream_write(root->fd,buffer,got)) return CETTA_DISK_IO;
+        cetta_native_sha256_update(&hash,buffer,got);offset+=got;
+    }
+    char digest[65];cetta_native_sha256_finish_hex(&hash,digest);memcpy(header_bytes+8,digest,64);
+    if (lseek(root->fd,(off_t)draft.end,SEEK_SET)!=(off_t)draft.end ||
+        !stream_write(root->fd,header_bytes,FRAME)) return CETTA_DISK_IO;
+    uint64_t reference=draft.end+1;draft.end+=FRAME+1+size;
+    if (lseek(root->fd,(off_t)draft.end,SEEK_SET)!=(off_t)draft.end) return CETTA_DISK_IO;
+    *out=(CettaDiskBlob){reference,size};*root=draft;return CETTA_DISK_OK;
+}
+
+typedef struct {uint64_t bit,left;} SortedBranch;
+struct CettaDiskSortedBuilder {
+    CettaDiskRoot root;
+    SortedBranch *branches;
+    size_t count,capacity;
+    CettaDiskBuffer previous;
+    uint64_t pending;
+    bool started,finished;
+    CettaDiskStatus failure;
+};
+void cetta_disk_sorted_close(CettaDiskSortedBuilder *b) {
+    if (b) {free(b->branches);cetta_disk_buffer_free(&b->previous);free(b);}
+}
+CettaDiskStatus cetta_disk_sorted_open(const CettaDiskRoot *root,CettaDiskSortedBuilder **out) {
+    if (!out) return CETTA_DISK_INVALID;
+    *out=NULL;
+    if (!valid(root) || root->root || (root->end && root->end!=CETTA_DISK_SEGMENT_HEADER_BYTES)) return CETTA_DISK_INVALID;
+    struct stat st;
+    if (fstat(root->fd,&st)) return CETTA_DISK_IO;
+    if (st.st_size<0 || (uint64_t)st.st_size!=root->end || (fcntl(root->fd,F_GETFL)&O_APPEND)) return CETTA_DISK_INVALID;
+    CettaDiskSortedBuilder *b=calloc(1,sizeof(*b));if (!b) return CETTA_DISK_NOMEM;
+    b->root=*root;CettaDiskStatus s=prepare_segment(&b->root);
+    if (s!=CETTA_DISK_OK) {free(b);return s;}
+    *out=b;return CETTA_DISK_OK;
+}
+CettaDiskStatus cetta_disk_sorted_put(CettaDiskSortedBuilder *b,CettaDiskBytes key,
+        uint64_t size,CettaDiskReadBytes reader,void *context) {
+    if (!b || b->finished) return CETTA_DISK_INVALID;
+    if (b->failure!=CETTA_DISK_OK) return b->failure;
+    CettaDiskStatus s=CETTA_DISK_OK;
+    if (!bytes_valid(key,b->root.key_limit) || size>b->root.value_limit) s=CETTA_DISK_INVALID;
+    CettaDiskBytes previous={b->previous.data,b->previous.size};
+    if (s==CETTA_DISK_OK && b->started) {
+        if (key_compare(previous,key)>=0) s=CETTA_DISK_INVALID;
+        else {
+            uint64_t bit=first_bit(previous,key);
+            if (key_bit(previous,bit) || !key_bit(key,bit)) s=CETTA_DISK_CORRUPT;
+            while (s==CETTA_DISK_OK && b->count && b->branches[b->count-1].bit>bit) {
+                SortedBranch top=b->branches[--b->count];
+                s=branch(&b->root,top.bit,top.left,b->pending,&b->pending);
+            }
+            if (s==CETTA_DISK_OK && b->count && b->branches[b->count-1].bit==bit) s=CETTA_DISK_CORRUPT;
+            if (s==CETTA_DISK_OK) s=grow((void **)&b->branches,&b->capacity,b->count+1,
+                sizeof(*b->branches),((uint64_t)b->root.key_limit+1)*9+1);
+            if (s==CETTA_DISK_OK) b->branches[b->count++]=(SortedBranch){bit,b->pending};
+        }
+    }
+    CettaDiskBlob value;
+    if (s==CETTA_DISK_OK) s=cetta_disk_blob_append_stream(&b->root,size,reader,context,&value);
+    if (s==CETTA_DISK_OK) s=leaf(&b->root,key,value.reference,&b->pending);
+    if (s==CETTA_DISK_OK) s=remember_key(&b->previous,key);
+    if (s==CETTA_DISK_OK) b->started=true;else b->failure=s;
+    return s;
+}
+CettaDiskStatus cetta_disk_sorted_finish(CettaDiskSortedBuilder *b,CettaDiskRoot *out) {
+    if (!b || !out) return CETTA_DISK_INVALID;
+    *out=(CettaDiskRoot){.fd=-1};
+    if (b->failure!=CETTA_DISK_OK) return b->failure;
+    if (!b->finished) {
+        while (b->count) {
+            SortedBranch top=b->branches[--b->count];
+            CettaDiskStatus s=branch(&b->root,top.bit,top.left,b->pending,&b->pending);
+            if (s!=CETTA_DISK_OK) {b->failure=s;return s;}
+        }
+        b->root.root=b->pending;b->finished=true;
+    }
+    *out=b->root;return CETTA_DISK_OK;
 }
 CettaDiskStatus cetta_disk_sync(CettaDiskRoot *candidate) {
     if (!valid(candidate)) return CETTA_DISK_INVALID;
@@ -658,4 +818,8 @@ CettaDiskStatus cetta_disk_compact(const CettaDiskRoot *source,int destination,C
     free(stack);cetta_disk_buffer_free(&previous);
     if (status==CETTA_DISK_OK) { draft.root=result; *candidate=draft; }
     return status;
+}
+
+void cetta_disk_blob_reader_storage(const CettaDiskBlobReader *r,CettaStorageCensus *census) {
+    if (r) cetta_storage_object(census,r,sizeof(*r),CETTA_STORAGE_BLOCK);
 }

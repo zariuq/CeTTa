@@ -1,0 +1,18 @@
+// Inclusion-based points-to analysis over a finite abstract heap.
+.decl Address(variable:symbol, object:symbol)
+.input Address
+.decl Copy(target:symbol, source:symbol)
+.input Copy
+.decl Load(target:symbol, pointer:symbol)
+.input Load
+.decl Store(pointer:symbol, source:symbol)
+.input Store
+
+.decl PointsTo(variable:symbol, object:symbol)
+.decl Heap(cell:symbol, object:symbol)
+PointsTo(V,O) :- Address(V,O).
+PointsTo(V,O) :- Copy(V,W), PointsTo(W,O).
+Heap(Cell,O) :- Store(P,V), PointsTo(P,Cell), PointsTo(V,O).
+PointsTo(V,O) :- Load(V,P), PointsTo(P,Cell), Heap(Cell,O).
+.output PointsTo
+.output Heap

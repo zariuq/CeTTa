@@ -1,5 +1,6 @@
 #include "hol_cetta_module.h"
 #include "library.h"
+#include "runtime_names.h"
 #include "seal.h"
 #include "test_util.h"
 #include <time.h>
@@ -35,10 +36,13 @@ static unsigned live_values(void) {
 typedef struct {
     Atom *kernel, *term, *refl_head, *sequent_head;
     unsigned failures;
+    CettaNameContext names;
 } ConcurrentCheck;
 
 static void *concurrent_checks(void *data) {
     ConcurrentCheck *work = data;
+    CettaNameContext previous = cetta_name_context_current();
+    cetta_name_context_install(&work->names);
     for (unsigned round = 0; round < 128; ++round) {
         Arena local;
         arena_init_detached(&local);
@@ -50,6 +54,7 @@ static void *concurrent_checks(void *data) {
         if (!tag(view, "thm")) ++work->failures;
         arena_free(&local);
     }
+    cetta_name_context_install(&previous);
     return NULL;
 }
 
@@ -280,7 +285,8 @@ int main(int argc, char **argv) {
     Atom *sequent_head = sym("__cetta_lib_hol_sequent");
     unsigned concurrent_before = live_values();
     for (unsigned i = 0; i < 4; ++i) {
-        work[i] = (ConcurrentCheck){k, x, refl_head, sequent_head, 0};
+        work[i] = (ConcurrentCheck){k, x, refl_head, sequent_head, 0,
+                                    cetta_name_context_current()};
         if (pthread_create(&threads[i], NULL, concurrent_checks, &work[i])) break;
         ++created;
     }

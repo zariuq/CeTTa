@@ -17,8 +17,10 @@ FOREIGN_LIBRARY = parser_pack_native_ffi_v1.so
 FOREIGN_SOURCE = parser_pack_native_ffi_v1.c
 PIPELINE_FOREIGN_LIBRARY = petta_document_pipeline_ffi_v1.so
 PIPELINE_FOREIGN_SOURCE = petta_document_pipeline_ffi_v1.c
-PETTA_ROOT = $(abspath ../../..)
-PETTA_EXPERIMENT_DIR = $(PETTA_ROOT)/experiments/gslt2parse_foundation
+# CeTTa's own Prolog oracles, the parent of this directory.  The syntax test
+# runs SWI-PeTTa from PETTA_ROOT, a PeTTa checkout or source snapshot.
+ORACLE_DIR = $(abspath ..)
+PETTA_ROOT ?=
 CETTA_PRESENTATION_ROOT = $(CETTA_ROOT)/experiments/gslt2parse_foundation/presentations
 
 .PHONY: all
@@ -28,14 +30,18 @@ all: $(FOREIGN_LIBRARY) $(PIPELINE_FOREIGN_LIBRARY)
 test: test-prolog test-syntax
 
 test-prolog: all
-	cd $(PETTA_EXPERIMENT_DIR) && \
+	cd $(ORACLE_DIR) && \
 		swipl --stack_limit=8g -q -s test_parser_pack_native_v1.pl -- \
 		$(CETTA_PRESENTATION_ROOT)
 
 test-syntax: all
-	@raw=$$(cd $(PETTA_ROOT) && \
-		./run.sh \
-			experiments/gslt2parse_foundation/test_parser_pack_native_syntax_v1.metta \
+	@if [ -z "$(strip $(PETTA_ROOT))" ]; then \
+		echo 'set PETTA_ROOT to the SWI-PeTTa checkout'; \
+		exit 1; \
+	fi
+	@raw=$$(cd $(ORACLE_DIR) && \
+		$(PETTA_ROOT)/run.sh \
+			$(ORACLE_DIR)/test_parser_pack_native_syntax_v1.metta \
 			$(CETTA_PRESENTATION_ROOT) --silent 2>&1); \
 	status=$$?; \
 	result=$$(printf '%s\n' "$$raw" | rg '^(true|completed|unsupported)$$'); \

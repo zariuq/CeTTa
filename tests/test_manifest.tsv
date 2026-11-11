@@ -33,6 +33,7 @@ tests/he_c1_grounded_basic.metta	he	metta	extended	main	native	test	golden	-
 tests/he_c2_spaces_kb.metta	he	metta	extended	main	native	test	golden	-
 tests/he_c3_pln_stv.metta	he	metta	extended	main	native	test	golden	-
 tests/he_case_empty_scrutinee.metta	he	metta	extended	main	native	test	golden	-
+tests/he_case_empty_scrutinee_collapse.metta	he	metta	extended	main	native	test	golden	-
 tests/he_case_two_sided.metta	he	metta	extended	main	native	test	golden	-
 tests/he_d1_gadt.metta	he	metta	extended	main	native	test	golden	-
 tests/he_d2_higherfunc.metta	he	metta	extended	main	native	test	golden	-
@@ -362,6 +363,7 @@ tests/test_add_reduct.metta	he	metta	extended	main	native	test	golden	-
 tests/test_alpha_equiv.metta	he	metta	extended	main	native	test	golden	-
 tests/test_alpha_equiv_arity.metta	he	metta	extended	main	native	test	golden	-
 tests/test_arithmetic.metta	he	metta	extended	main	native	test	golden	-
+tests/test_asp_library.metta	he	metta	extended	main	native	test	golden	-
 tests/test_assert.metta	he	metta	extended	main	native	test	golden	-
 tests/test_assert_equal_to_result_bag_semantics.metta	he	metta	extended	main	native	test	golden	-
 tests/test_bad_type_error.metta	he	metta	extended	main	native	test	golden	-
@@ -394,7 +396,6 @@ tests/test_change_state_first_arg_type_error.metta	he	metta	extended	main	native
 tests/test_change_state_partial_arity.metta	he	metta	extended	main	native	test	golden	-
 tests/test_checkpoint_disease_route_probe.metta	he	metta	extended	main	native	test-heavy	probe	heavy WM-PLN disease route probe
 tests/test_checkpoint_group_extract_cross_form_regression.metta	he	metta	extended	main	native	test-heavy	golden	heavy backend golden regression
-tests/test_clist_syntax.metta	he	metta	extended	main	native	test	golden	-
 tests/test_closed_stream_fastpath.metta	he	metta	extended	main	native	test-backend-dedicated	golden	dedicated backend or bridge golden regression
 tests/test_closed_stream_runtime_stats.metta	he	metta	extended	runtime-stats	native	test-backend-dedicated	golden	dedicated backend or bridge golden regression
 tests/test_collapse_add_next_atom_from_collapse_bind_result.metta	he	metta	extended	main	native	test	golden	-
@@ -763,7 +764,6 @@ tests/test_pragma_modes.metta	he	metta	extended	main	native	test	golden	-
 tests/test_pragma_thread_count_error.metta	he	metta	extended	main	native	test	golden	-
 tests/test_pragma_wrong_arity.metta	he	metta	extended	main	native	test	golden	-
 tests/test_prepared_keyed_top_k_stats.metta	he	metta	extended	main	native	test	golden	-
-tests/test_prepared_sequence_erasure_stats.metta	he	metta	extended	main	native	test	golden	-
 tests/test_pretty_namespaces_syntax.metta	he	metta	extended	main	native	test	golden	-
 tests/test_pretty_vars_syntax.metta	he	metta	extended	main	native	test-backend-dedicated	golden	dedicated backend or bridge golden regression
 tests/test_print_alternatives.metta	he	metta	extended	main	native	test	golden	-
@@ -774,6 +774,7 @@ tests/test_print_nondet_probe.metta	he	metta	extended	main	native	probe-core-lan
 tests/test_println_arity.metta	he	metta	extended	main	native	test	golden	-
 tests/test_println_syntax.metta	he	metta	extended	main	native	test	golden	-
 tests/test_println_unit_binding.metta	he	metta	extended	main	native	test	golden	-
+tests/test_provenance_library.metta	he	metta	extended	main	native	test	golden	-
 tests/test_py_ops_syntax.metta	he	metta	extended	python	native	test-python	golden	Python-enabled build golden regression
 tests/test_queue_space.metta	he	metta	extended	main	native	test	golden	-
 tests/test_queue_space_errors.metta	he	metta	extended	main	native	test	golden	-
@@ -818,6 +819,7 @@ tests/test_round_math_bad_type.metta	he	metta	extended	main	native	test	golden	-
 tests/test_runtime_builtin_docs.metta	he	metta	extended	main	native	test	golden	-
 tests/test_runtime_stats_contract.metta	he	metta	extended	runtime-stats	native	test-runtime-stats-lane	golden	runtime-stats lane golden regression
 tests/test_runtime_stats_syntax.metta	he	metta	extended	runtime-stats	native	test-runtime-stats-lane	golden	runtime-stats lane golden regression
+tests/test_sat_library.metta	he	metta	extended	main	native	test	golden	-
 tests/test_sealed.metta	he	metta	extended	main	native	test	golden	-
 tests/test_sealed_arity.metta	he	metta	extended	main	native	test	golden	-
 tests/test_search_machine_config_variant_backchain.metta	he	metta	extended	main	native	test	golden	-
@@ -896,6 +898,8 @@ tests/test_text_stream.metta	he	metta	extended	main	native	test	golden	-
 tests/test_top_level_output_order.metta	he	metta	extended	main	native	test	golden	-
 tests/test_trace_arity.metta	he	metta	extended	main	native	test	golden	-
 tests/test_trace_syntax.metta	he	metta	extended	main	native	test	golden	-
+tests/test_transform_he.metta	he	metta	extended	main	native	test	golden	-
+tests/test_transform_he_differential.metta	he	metta	extended	main	native	test	golden	-
 tests/test_tuple_head_effect_probe_regression.metta	he	metta	extended	main	native	test	golden	-
 tests/test_type_atom_directionality.metta	he	metta	extended	main	native	test	golden	-
 tests/test_type_cast.metta	he	metta	extended	main	native	test	golden	-

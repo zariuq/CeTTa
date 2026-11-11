@@ -305,7 +305,7 @@ static inline SymbolId bindings_frame_slot_spelling(const BindingsFrameIndexEntr
     return slot < frame->schema->len ||
         (slot < frame->schema->cap && frame->schema->spellings[slot] != SYMBOL_ID_NONE)
         ? frame->schema->spellings[slot]
-        : symbol_intern_cstr(g_symbols, "__petta_machine");
+        : g_builtin_syms.petta_machine_spelling;
 }
 
 static inline Atom *bindings_frame_slot_name_key(const BindingsFrameIndexEntry *frame,

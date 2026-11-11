@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run and record CeTTa's routine or exhaustive main-readiness matrix."""
+"""Run bounded candidate checks or the explicit release-qualification matrices."""
 
 from __future__ import annotations
 
@@ -91,10 +91,27 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--tier",
-        choices=("routine", "exhaustive"),
-        default="exhaustive",
-        help="routine is the qualifying fast gate; exhaustive is the merge boundary",
+        choices=("candidate", "suite", "routine", "exhaustive"),
+        default="candidate",
+        help=("candidate is bounded; suite runs test-all in stages, cheapest first; "
+              "routine/exhaustive are the legacy broad campaigns"),
     )
+    parser.add_argument("--stage",
+                        choices=("correctness", "asymptotic", "examples", "comprehensive"),
+                        help="suite: run only this stage")
+    parser.add_argument("--failed", action="store_true",
+                        help="suite: run only the gates that failed when last run")
+    parser.add_argument("--minutes", type=float, default=20,
+                        help="candidate total wall-clock budget, including builds (default: 20)")
+    parser.add_argument("--jobs", type=int,
+                        help="candidate CLI build jobs (default: 2); suite gates at a time (default: 3)")
+    parser.add_argument("--build", default=os.environ.get("BUILD", "python"),
+                        choices=("core", "python", "mork", "main", "pathmap", "full"),
+                        help="candidate CLI configuration (default: python)")
+    parser.add_argument("--target", action="append", default=[],
+                        help="candidate or suite: run only this test-* target; repeat as needed")
+    parser.add_argument("--fresh", action="store_true",
+                        help="candidate: rerun passing checks instead of reusing them")
     parser.add_argument(
         "--reuse",
         action="store_true",
@@ -694,6 +711,14 @@ def reusable_common_results(
 def main() -> int:
     args = parse_args()
     root = Path(__file__).resolve().parent.parent
+    if args.tier == "suite":
+        from cetta_suite_readiness import run_suite
+        return run_suite(args, root)
+    if args.jobs is None:
+        args.jobs = 2
+    if args.tier == "candidate":
+        from cetta_candidate_readiness import run_candidate
+        return run_candidate(args, root)
     mettapedia = os.environ.get("METTAPEDIA_ROOT", "")
     if not mettapedia:
         print(

@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <errno.h>
 
 /* ── Binary blob format ────────────────────────────────────────────────
    Header:
@@ -294,6 +295,9 @@ int stdlib_compile(const char *metta_path, Arena *a, FILE *out) {
 
 #ifdef CETTA_NO_STDLIB
 
+bool stdlib_try_load(Space *s, Arena *a) { (void)s; (void)a; return true; }
+bool stdlib_try_load_petta_shared_subset(Space *s, Arena *a) { (void)s; (void)a; return true; }
+
 void stdlib_load(Space *s, Arena *a) {
     (void)s; (void)a;
 }
@@ -333,29 +337,41 @@ static void blob_var_scope_init(BlobVarScope *scope) {
 static void blob_var_scope_free(BlobVarScope *scope) {
     if (!scope)
         return;
+    int error = errno;
     free(scope->spellings);
     free(scope->ids);
     scope->spellings = NULL;
     scope->ids = NULL;
     scope->len = 0;
     scope->cap = 0;
+    errno = error;
 }
 
 static VarId blob_var_scope_id(BlobVarScope *scope, SymbolId spelling) {
-    if (!scope)
-        return fresh_var_id();
+    if (!scope) {
+        VarId id;
+        if (fresh_var_id_try(&id)) return id;
+        errno = EOVERFLOW; return VAR_ID_NONE;
+    }
     for (uint32_t i = 0; i < scope->len; i++) {
         if (scope->spellings[i] == spelling)
             return scope->ids[i];
     }
     if (scope->len == scope->cap) {
         uint32_t next_cap = scope->cap ? scope->cap * 2 : 16;
-        scope->spellings =
-            cetta_realloc(scope->spellings, sizeof(SymbolId) * next_cap);
-        scope->ids = cetta_realloc(scope->ids, sizeof(VarId) * next_cap);
+        if (next_cap <= scope->cap || (size_t)next_cap > SIZE_MAX / sizeof(VarId)) {
+            errno = EOVERFLOW; return VAR_ID_NONE;
+        }
+        SymbolId *spellings = realloc(scope->spellings, sizeof(SymbolId) * next_cap);
+        if (!spellings) return VAR_ID_NONE;
+        scope->spellings = spellings;
+        VarId *ids = realloc(scope->ids, sizeof(VarId) * next_cap);
+        if (!ids) return VAR_ID_NONE;
+        scope->ids = ids;
         scope->cap = next_cap;
     }
-    VarId id = fresh_var_id();
+    VarId id;
+    if (!fresh_var_id_try(&id)) { errno = EOVERFLOW; return VAR_ID_NONE; }
     scope->spellings[scope->len] = spelling;
     scope->ids[scope->len] = id;
     scope->len++;
@@ -397,12 +413,15 @@ static AtomId deserialize_atom_id_scoped(BlobReader *r, TermUniverse *universe,
     uint8_t tag = rd_u8(r);
     switch (tag) {
     case BLOB_TAG_SYMBOL: {
-        SymbolId spelling = symbol_intern_cstr(g_symbols, rd_str(r, rd_u16(r)));
+        SymbolId spelling = symbol_try_intern_cstr(g_symbols, rd_str(r, rd_u16(r)));
+        if (!spelling) return CETTA_ATOM_ID_NONE;
         return tu_intern_symbol(universe, spelling);
     }
     case BLOB_TAG_VAR: {
-        SymbolId spelling = symbol_intern_cstr(g_symbols, rd_str(r, rd_u16(r)));
+        SymbolId spelling = symbol_try_intern_cstr(g_symbols, rd_str(r, rd_u16(r)));
+        if (!spelling) return CETTA_ATOM_ID_NONE;
         VarId var_id = blob_var_scope_id(scope, spelling);
+        if (var_id_is_none(var_id)) return CETTA_ATOM_ID_NONE;
         return tu_intern_var(universe, spelling, var_id);
     }
     case BLOB_TAG_INT:
@@ -419,7 +438,10 @@ static AtomId deserialize_atom_id_scoped(BlobReader *r, TermUniverse *universe,
         return tu_intern_rational(universe, rd_str(r, rd_u16(r)));
     case BLOB_TAG_EXPR: {
         uint16_t count = rd_u16(r);
-        AtomId *child_ids = cetta_malloc(sizeof(AtomId) * count);
+        AtomId inline_child_ids[16];
+        AtomId *child_ids = count == 0 ? NULL : count <= 16 ? inline_child_ids
+            : malloc(sizeof(AtomId) * count);
+        if (count > 16 && !child_ids) return CETTA_ATOM_ID_NONE;
         AtomId expr_id = CETTA_ATOM_ID_NONE;
         for (uint16_t i = 0; i < count; i++) {
             child_ids[i] = deserialize_atom_id_scoped(r, universe, scope);
@@ -428,7 +450,8 @@ static AtomId deserialize_atom_id_scoped(BlobReader *r, TermUniverse *universe,
         }
         expr_id = tu_expr_from_ids(universe, child_ids, count);
 cleanup:
-        free(child_ids);
+        if (count > 16)
+            free(child_ids);
         return expr_id;
     }
     default:
@@ -445,6 +468,7 @@ static Atom *deserialize_atom_scoped(BlobReader *r, Arena *a,
     case BLOB_TAG_VAR: {
         SymbolId spelling = symbol_intern_cstr(g_symbols, rd_str(r, rd_u16(r)));
         VarId id = blob_var_scope_id(scope, spelling);
+        if (var_id_is_none(id)) return NULL;
         return atom_var_with_spelling(a, spelling, id);
     }
     case BLOB_TAG_INT:    return atom_int(a, rd_i64(r));
@@ -459,8 +483,10 @@ static Atom *deserialize_atom_scoped(BlobReader *r, Arena *a,
     case BLOB_TAG_EXPR: {
         uint16_t count = rd_u16(r);
         Atom **elems = arena_alloc(a, sizeof(Atom *) * count);
-        for (uint16_t i = 0; i < count; i++)
+        for (uint16_t i = 0; i < count; i++) {
             elems[i] = deserialize_atom_scoped(r, a, scope);
+            if (!elems[i]) return NULL;
+        }
         return atom_expr(a, elems, count);
     }
     default:
@@ -527,7 +553,9 @@ static bool stdlib_load_blob_internal(
     if (!lower_petta_control && s && s->native.universe) {
         BlobReader direct = r;
         bool direct_ok = true;
-        AtomId *atom_ids = cetta_malloc(sizeof(AtomId) * num_atoms);
+        AtomId *atom_ids = num_atoms ? malloc(sizeof(AtomId) * num_atoms) : NULL;
+        if (num_atoms && !atom_ids) return false;
+        errno = 0;
         for (uint16_t i = 0; i < num_atoms; i++) {
             BlobVarScope scope;
             blob_var_scope_init(&scope);
@@ -539,6 +567,7 @@ static bool stdlib_load_blob_internal(
                 break;
             }
         }
+        int direct_error = errno;
         if (direct_ok) {
             for (uint16_t i = 0; i < num_atoms; i++) {
                 if (!include_type_annotations &&
@@ -552,12 +581,18 @@ static bool stdlib_load_blob_internal(
             return true;
         }
         free(atom_ids);
+        if (direct_error == ENOMEM || direct_error == EOVERFLOW ||
+            term_universe_last_error_code(s->native.universe) == TERM_UNIVERSE_ERROR_ALLOCATION_FAILED) {
+            errno = direct_error ? direct_error : ENOMEM;
+            return false;
+        }
     }
     for (uint16_t i = 0; i < num_atoms; i++) {
         BlobVarScope scope;
         blob_var_scope_init(&scope);
         Atom *atom = deserialize_atom_scoped(&r, a, &scope);
         blob_var_scope_free(&scope);
+        if (!atom) return false;
         if (!include_type_annotations &&
             stdlib_atom_is_type_annotation(atom)) {
             continue;
@@ -570,14 +605,19 @@ static bool stdlib_load_blob_internal(
     return true;
 }
 
-void stdlib_load(Space *s, Arena *a) {
-    (void)stdlib_load_blob_internal(
+bool stdlib_try_load(Space *s, Arena *a) {
+    return stdlib_load_blob_internal(
         s, a, STDLIB_BLOB, STDLIB_BLOB_LEN, true, false);
 }
 
-void stdlib_load_petta_shared_subset(Space *s, Arena *a) {
-    (void)stdlib_load_blob_internal(
+bool stdlib_try_load_petta_shared_subset(Space *s, Arena *a) {
+    return stdlib_load_blob_internal(
         s, a, STDLIB_BLOB, STDLIB_BLOB_LEN, false, true);
+}
+
+void stdlib_load(Space *s, Arena *a) { (void)stdlib_try_load(s, a); }
+void stdlib_load_petta_shared_subset(Space *s, Arena *a) {
+    (void)stdlib_try_load_petta_shared_subset(s, a);
 }
 
 #if CETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS

@@ -513,8 +513,8 @@ static PrimeNativeOwnedRegion *prime_native_owned_region_capture(
         arena_init_detached(&region->snapshot); arena_set_scalar_cache(&region->snapshot,false);
         arena_init_detached(&region->persistent); arena_set_scalar_cache(&region->persistent,false);
         region->arenas_ready=true;
-        term_universe_set_persistent_arena(&region->library->term_universe,&region->snapshot);
-        space_init_with_universe(&region->world,&region->library->term_universe);
+        term_universe_set_persistent_arena(cetta_library_context_universe((CettaLibraryContext *)(region->library)),&region->snapshot);
+        space_init_with_universe(&region->world,cetta_library_context_universe((CettaLibraryContext *)(region->library)));
         region->world_ready=true;
         HashConsTable *previous_hashcons=g_hashcons;
         g_hashcons=NULL;
@@ -538,9 +538,9 @@ static PrimeNativeOwnedRegion *prime_native_owned_region_capture(
         okay=capture.nodes[i].image && prime_native_region_tick(&capture);
         if (okay) {
             capture.nodes[i].stored=term_universe_store_snapshot_image(
-                &region->library->term_universe,copy,capture.nodes[i].source);
+                cetta_library_context_universe((CettaLibraryContext *)(region->library)),copy,capture.nodes[i].source);
             okay=capture.nodes[i].stored!=CETTA_ATOM_ID_NONE &&
-                term_universe_get_atom(&region->library->term_universe,
+                term_universe_get_atom(cetta_library_context_universe((CettaLibraryContext *)(region->library)),
                     capture.nodes[i].stored)==capture.nodes[i].image;
         }
         okay=okay && prime_native_region_measure(&capture,copy);

@@ -487,8 +487,10 @@ fi
 # crossing a continuation frame.  A recursively represented sequence exposes
 # the old failure sharply: copying the full accumulated environment makes the
 # released binding capacity superlinear even though the observable result is a
-# single integer.  Two scales pin both the exact projection path and its
-# linear-retention envelope without constraining a future whole-fold fusion.
+# single integer.  The probe builds its sequence of cells from a list and
+# counts it with an accumulator, each step a continuation of the last.  Two
+# scales pin both the exact projection path and its linear-retention envelope
+# without constraining a future whole-fold fusion.
 support_released_100=0
 support_released_200=0
 run_support_probe() {
@@ -497,8 +499,13 @@ run_support_probe() {
     local stats_file="$probe_dir/support-${n}.stats"
 
     "$BIN" --emit-runtime-stats --lang prime \
-        -e '!(import! &self clist)' \
-        -e "!(clist:len (clist:range 0 ${n}))" \
+        -e '!(import! &self list)' \
+        -e '(= (probe:cons $head $tail) (ProbeCons $head $tail))' \
+        -e '(= (probe:from-list ()) ProbeNil)' \
+        -e '(= (probe:from-list $xs) (let ($head $tail) (decons-atom $xs) (let $rest (probe:from-list $tail) (probe:cons $head $rest))))' \
+        -e '(= (probe:len-acc ProbeNil $acc) $acc)' \
+        -e '(= (probe:len-acc (ProbeCons $head $tail) $acc) (let $next (eval (+ $acc 1)) (probe:len-acc $tail $next)))' \
+        -e "!(probe:len-acc (probe:from-list (list:range 0 ${n})) 0)" \
         >"$stdout_file" 2>"$stats_file"
 
     local expected

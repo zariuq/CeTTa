@@ -479,6 +479,9 @@ typedef struct {
     char environment_digest[65];
     char pack_digest[65];
     char *start_canonical;
+    /* The names the pack's terms are spelled in: those installed on the
+     * preparing thread.  A thread using the prepared pack borrows them. */
+    const SymbolTable *names;
     PPNativeV1TerminalPlan terminal_plan;
     CettaLpNativeGllPrepared gll;
     CettaLpNativeGlrPrepared glr;
@@ -967,6 +970,7 @@ bool ppnative_v1_prepare(PPNativeV1Prepared *prepared,
     cetta_lp_native_glr_prepared_init(&implementation->glr);
     implementation->pack = pack;
     implementation->start_state = start_state;
+    implementation->names = g_symbols;
     implementation->start_state_id = (uint32_t)start_state_id;
     implementation->state_len = pack->state_len;
     implementation->terminal_len = pack->terminal_len;
@@ -1088,6 +1092,9 @@ bool ppnative_v1_prepared_import_programs(
     if (!cetta_lp_native_gll_prepared_import_program(&result->gll, gll, error, error_size) ||
         !cetta_lp_native_glr_prepared_import_program(&result->glr, glr, gll, error, error_size))
         goto failed;
+    /* A stored preparation is read into the names installed here, as a
+     * fresh one is prepared in them. */
+    result->names = g_symbols;
     ppnative_v1_prepared_free(out);
     out->implementation = result;
     return true;
@@ -1120,11 +1127,26 @@ bool ppnative_v1_prepared_view(
             "prepared ParserPack is not ready");
         goto done;
     }
+    if (implementation->names != g_symbols) {
+        ppnative_v1_set_error(
+            error_buf, error_buf_size,
+            g_symbols ? "prepared ParserPack used under other names than "
+                        "it was prepared in"
+                      : "prepared ParserPack used on a thread with no names "
+                        "installed");
+        goto done;
+    }
     start_state_id = ppnative_v1_state_find(
         implementation->pack, implementation->start_state);
     start_canonical = ppnative_v1_render(
         (Atom *)implementation->start_state);
-    if (start_state_id < 0 || !start_canonical ||
+    if (!start_canonical) {
+        ppnative_v1_set_error(
+            error_buf, error_buf_size,
+            "prepared ParserPack start state does not render");
+        goto done;
+    }
+    if (start_state_id < 0 ||
         !ppnative_v1_prepared_binding_equal(
             implementation, implementation->pack,
             (uint32_t)start_state_id, start_canonical)) {

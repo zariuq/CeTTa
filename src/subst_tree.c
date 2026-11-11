@@ -10,6 +10,7 @@
 SubstNode *snode_new(void) {
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SUBST_NODE_NEW);
     SubstNode *n = cetta_malloc(sizeof(SubstNode));
+    if (!n) return NULL;
     memset(n, 0, sizeof(SubstNode));
     return n;
 }
@@ -199,7 +200,7 @@ static inline uint32_t sym_hash(SymbolId key) {
     return (uint32_t)((uint64_t)key * 2654435761u);
 }
 
-static void sym_ht_init(SymHashTable *ht, uint32_t min_cap) {
+static bool sym_ht_init(SymHashTable *ht, uint32_t min_cap) {
     uint32_t cap = 32;
     if (min_cap > UINT32_MAX / 2u) {
         fputs("CeTTa: symbol substitution index capacity exhausted\n", stderr);
@@ -214,11 +215,14 @@ static void sym_ht_init(SymHashTable *ht, uint32_t min_cap) {
         }
         cap *= 2u;
     }
-    ht->entries = cetta_malloc(sizeof(SymHashEntry) * cap);
+    SymHashEntry *entries = cetta_malloc(sizeof(SymHashEntry) * cap);
+    if (!entries) return false;
+    ht->entries = entries;
     ht->mask = cap - 1;
     ht->count = 0;
     for (uint32_t i = 0; i < cap; i++)
         ht->entries[i].key = SYMBOL_ID_NONE;
+    return true;
 }
 
 static SubstNode *sym_ht_get(SymHashTable *ht, SymbolId key) {
@@ -232,7 +236,7 @@ static SubstNode *sym_ht_get(SymHashTable *ht, SymbolId key) {
     }
 }
 
-static void sym_ht_put(SymHashTable *ht, SymbolId key, SubstNode *child) {
+static bool sym_ht_put(SymHashTable *ht, SymbolId key, SubstNode *child) {
     /* Resize if load factor > 0.7 */
     if ((uint64_t)ht->count * 10u >
         (uint64_t)(ht->mask + 1u) * 7u) {
@@ -244,7 +248,9 @@ static void sym_ht_put(SymHashTable *ht, SymbolId key, SubstNode *child) {
             abort();
         }
         uint32_t new_cap = old_cap * 2;
-        ht->entries = cetta_malloc(sizeof(SymHashEntry) * new_cap);
+        SymHashEntry *entries = cetta_malloc(sizeof(SymHashEntry) * new_cap);
+        if (!entries) return false;
+        ht->entries = entries;
         ht->mask = new_cap - 1;
         for (uint32_t i = 0; i < new_cap; i++)
             ht->entries[i].key = SYMBOL_ID_NONE;
@@ -260,19 +266,20 @@ static void sym_ht_put(SymHashTable *ht, SymbolId key, SubstNode *child) {
     while (ht->entries[idx].key != SYMBOL_ID_NONE) {
         if (ht->entries[idx].key == key) {
             ht->entries[idx].child = child;
-            return;
+            return true;
         }
         idx = (idx + 1) & ht->mask;
     }
     ht->entries[idx].key = key;
     ht->entries[idx].child = child;
     ht->count++;
+    return true;
 }
 
 static void snode_sym_promote(SubstNode *n) {
     SubstSymBranch *old_sym = n->sym;
     uint32_t count = n->nsym;
-    sym_ht_init(&n->sym_ht, count + 16);
+    if (!sym_ht_init(&n->sym_ht, count + 16)) return;
     for (uint32_t i = 0; i < count; i++)
         sym_ht_put(&n->sym_ht, old_sym[i].key, old_sym[i].child);
     free(old_sym);
@@ -304,7 +311,7 @@ static inline uint32_t int_hash(int64_t key) {
     return (uint32_t)(x ^ (x >> 32));
 }
 
-static void int_ht_init(IntHashTable *ht, uint32_t min_cap) {
+static bool int_ht_init(IntHashTable *ht, uint32_t min_cap) {
     uint32_t cap = 32;
     if (min_cap > UINT32_MAX / 2u) {
         fputs("CeTTa: integer substitution index capacity exhausted\n", stderr);
@@ -319,11 +326,14 @@ static void int_ht_init(IntHashTable *ht, uint32_t min_cap) {
         }
         cap *= 2u;
     }
-    ht->entries = cetta_malloc(sizeof(IntHashEntry) * cap);
+    IntHashEntry *entries = cetta_malloc(sizeof(IntHashEntry) * cap);
+    if (!entries) return false;
+    ht->entries = entries;
     ht->mask = cap - 1;
     ht->count = 0;
     for (uint32_t i = 0; i < cap; i++)
         ht->entries[i].child = NULL;
+    return true;
 }
 
 static SubstNode *int_ht_get(IntHashTable *ht, int64_t key) {
@@ -337,7 +347,7 @@ static SubstNode *int_ht_get(IntHashTable *ht, int64_t key) {
     }
 }
 
-static void int_ht_put(IntHashTable *ht, int64_t key, SubstNode *child) {
+static bool int_ht_put(IntHashTable *ht, int64_t key, SubstNode *child) {
     /* Resize if load factor > 0.7 */
     if ((uint64_t)ht->count * 10u >
         (uint64_t)(ht->mask + 1u) * 7u) {
@@ -349,7 +359,9 @@ static void int_ht_put(IntHashTable *ht, int64_t key, SubstNode *child) {
             abort();
         }
         uint32_t new_cap = old_cap * 2;
-        ht->entries = cetta_malloc(sizeof(IntHashEntry) * new_cap);
+        IntHashEntry *entries = cetta_malloc(sizeof(IntHashEntry) * new_cap);
+        if (!entries) return false;
+        ht->entries = entries;
         ht->mask = new_cap - 1;
         for (uint32_t i = 0; i < new_cap; i++)
             ht->entries[i].child = NULL;
@@ -365,18 +377,19 @@ static void int_ht_put(IntHashTable *ht, int64_t key, SubstNode *child) {
     while (ht->entries[idx].child) {
         if (ht->entries[idx].val == key) {
             ht->entries[idx].child = child;
-            return;
+            return true;
         }
         idx = (idx + 1) & ht->mask;
     }
     ht->entries[idx].val = key;
     ht->entries[idx].child = child;
     ht->count++;
+    return true;
 }
 
 static void snode_int_promote(SubstNode *n) {
     uint32_t count = n->nints;
-    int_ht_init(&n->int_ht, count + 16);
+    if (!int_ht_init(&n->int_ht, count + 16)) return;
     for (uint32_t i = 0; i < count; i++)
         int_ht_put(&n->int_ht, n->ints[i].val, n->ints[i].child);
     free(n->ints);
@@ -507,7 +520,8 @@ static SubstNode *snode_get_sym(SubstNode *n, SymbolId key) {
         SubstNode *existing = sym_ht_get(&n->sym_ht, key);
         if (existing) return existing;
         SubstNode *child = snode_new();
-        sym_ht_put(&n->sym_ht, key, child);
+        if (!child) return NULL;
+        if (!sym_ht_put(&n->sym_ht, key, child)) { snode_free(child); return NULL; }
         n->nsym++;
         return child;
     }
@@ -515,10 +529,13 @@ static SubstNode *snode_get_sym(SubstNode *n, SymbolId key) {
         if (n->sym[i].key == key)
             return n->sym[i].child;
     if (n->nsym >= n->csym) {
-        n->csym = n->csym ? n->csym * 2 : 4;
-        n->sym = cetta_realloc(n->sym, sizeof(n->sym[0]) * n->csym);
+        uint32_t capacity = n->csym ? n->csym * 2u : 4u;
+        void *grown = cetta_realloc(n->sym, sizeof(n->sym[0]) * capacity);
+        if (!grown) return NULL;
+        n->sym = grown; n->csym = capacity;
     }
     SubstNode *child = snode_new();
+    if (!child) return NULL;
     n->sym[n->nsym].key = key;
     n->sym[n->nsym].child = child;
     n->nsym++;
@@ -532,10 +549,13 @@ static SubstNode *snode_get_var(SubstNode *n, VarId var_id,
     for (uint32_t i = 0; i < n->nvars; i++)
         if (var_id_eq(n->vars[i].var_id, var_id)) return n->vars[i].child;
     if (n->nvars >= n->cvars) {
-        n->cvars = n->cvars ? n->cvars * 2 : 4;
-        n->vars = cetta_realloc(n->vars, sizeof(n->vars[0]) * n->cvars);
+        uint32_t capacity = n->cvars ? n->cvars * 2u : 4u;
+        void *grown = cetta_realloc(n->vars, sizeof(n->vars[0]) * capacity);
+        if (!grown) return NULL;
+        n->vars = grown; n->cvars = capacity;
     }
     SubstNode *child = snode_new();
+    if (!child) return NULL;
     n->vars[n->nvars].var_id = var_id;
     n->vars[n->nvars].spelling = spelling;
     n->vars[n->nvars].name_key = name_key;
@@ -548,10 +568,13 @@ static SubstNode *snode_get_expr(SubstNode *n, CettaExprLen arity) {
     for (uint32_t i = 0; i < n->nexpr; i++)
         if (n->expr[i].arity == arity) return n->expr[i].child;
     if (n->nexpr >= n->cexpr) {
-        n->cexpr = n->cexpr ? n->cexpr * 2 : 4;
-        n->expr = cetta_realloc(n->expr, sizeof(n->expr[0]) * n->cexpr);
+        uint32_t capacity = n->cexpr ? n->cexpr * 2u : 4u;
+        void *grown = cetta_realloc(n->expr, sizeof(n->expr[0]) * capacity);
+        if (!grown) return NULL;
+        n->expr = grown; n->cexpr = capacity;
     }
     SubstNode *child = snode_new();
+    if (!child) return NULL;
     n->expr[n->nexpr].arity = arity;
     n->expr[n->nexpr].child = child;
     n->nexpr++;
@@ -563,17 +586,21 @@ static SubstNode *snode_get_int(SubstNode *n, int64_t val) {
         SubstNode *existing = int_ht_get(&n->int_ht, val);
         if (existing) return existing;
         SubstNode *child = snode_new();
-        int_ht_put(&n->int_ht, val, child);
+        if (!child) return NULL;
+        if (!int_ht_put(&n->int_ht, val, child)) { snode_free(child); return NULL; }
         n->nints++;
         return child;
     }
     for (uint32_t i = 0; i < n->nints; i++)
         if (n->ints[i].val == val) return n->ints[i].child;
     if (n->nints >= n->cints) {
-        n->cints = n->cints ? n->cints * 2 : 4;
-        n->ints = cetta_realloc(n->ints, sizeof(n->ints[0]) * n->cints);
+        uint32_t capacity = n->cints ? n->cints * 2u : 4u;
+        void *grown = cetta_realloc(n->ints, sizeof(n->ints[0]) * capacity);
+        if (!grown) return NULL;
+        n->ints = grown; n->cints = capacity;
     }
     SubstNode *child = snode_new();
+    if (!child) return NULL;
     n->ints[n->nints].val = val;
     n->ints[n->nints].child = child;
     n->nints++;
@@ -607,9 +634,12 @@ static SubstNode *snode_get_text(SubstNode *n, const SubstTextKey *key) {
 }
 
 static void snode_add_leaf(SubstNode *n, CettaIndex idx, CettaFrameIdentity epoch) {
+    if (!n) return;
     if (n->nleaves >= n->cleaves) {
-        n->cleaves = n->cleaves ? n->cleaves * 2 : 4;
-        n->leaves = cetta_realloc(n->leaves, sizeof(n->leaves[0]) * n->cleaves);
+        uint32_t capacity = n->cleaves ? n->cleaves * 2u : 4u;
+        void *grown = cetta_realloc(n->leaves, sizeof(n->leaves[0]) * capacity);
+        if (!grown) return;
+        n->leaves = grown; n->cleaves = capacity;
     }
     n->leaves[n->nleaves].idx = idx;
     n->leaves[n->nleaves].epoch = epoch;
@@ -634,6 +664,7 @@ static SubstNode *snode_get_grounded_placeholder(SubstNode *node) {
 
 static SubstNode *snode_insert_atom(SubstNode *node, Atom *a, unsigned depth,
                                     CettaIndexExpansionBudget *budget) {
+    if (!node || !a) return NULL;
     if (a->kind == ATOM_EXPR &&
         !cetta_index_expand_expression(budget, depth, a->expr.len))
         return snode_get_grounded_placeholder(node);
@@ -838,8 +869,9 @@ void stree_bucket_insert(SubstBucket *bucket, Atom *atom, CettaIndex atom_idx) {
     /* Ground rows have no variables to standardize apart. Retaining one
      * activation identity per such row makes a large fact index consume the
      * finite frame inventory without introducing any variable scope. */
-    CettaFrameIdentity epoch = atom_has_vars(atom)
-        ? cetta_frame_identity_scope_fresh(&frame_identity_scope) : CETTA_FRAME_IDENTITY_NONE;
+    CettaFrameIdentity epoch = CETTA_FRAME_IDENTITY_NONE;
+    if (atom_has_vars(atom) && !cetta_frame_identity_scope_try(&frame_identity_scope, &epoch))
+        return;
     if (!bucket->root) bucket->root = snode_new();
     CettaIndexExpansionBudget budget = cetta_index_expansion_budget();
     SubstNode *leaf = snode_insert_atom(bucket->root, atom, 0u, &budget);
@@ -852,8 +884,9 @@ bool stree_bucket_insert_id(SubstBucket *bucket, const TermUniverse *universe,
                                 CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
     if (!bucket || !universe || atom_id == CETTA_ATOM_ID_NONE)
         return false;
-    CettaFrameIdentity epoch = tu_has_vars(universe, atom_id)
-        ? cetta_frame_identity_scope_fresh(&frame_identity_scope) : CETTA_FRAME_IDENTITY_NONE;
+    CettaFrameIdentity epoch = CETTA_FRAME_IDENTITY_NONE;
+    if (tu_has_vars(universe, atom_id) && !cetta_frame_identity_scope_try(&frame_identity_scope, &epoch))
+        return false;
     if (!bucket->root)
         bucket->root = snode_new();
     CettaIndexExpansionBudget budget = cetta_index_expansion_budget();

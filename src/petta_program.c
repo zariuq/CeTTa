@@ -1,4 +1,5 @@
 #include "petta_program.h"
+#include "foreign_provider.h"
 
 #include "eval.h"
 #include "grounded.h"
@@ -12,6 +13,7 @@
 #include "term_canon.h"
 
 #include <stdlib.h>
+#include <errno.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdint.h>
@@ -542,6 +544,8 @@ static void petta_program_release_unused_signature_universe(
 
 struct PettaProgram {
     PettaTransactionCatalog *private_catalogs;
+    _Atomic uint64_t lifetime_references;
+    _Atomic bool closed;
     unsigned admitted_rule_forms;
     bool refresh_callability;
     Arena plans;
@@ -635,9 +639,11 @@ static bool petta_program_reserve(
     }
     if (next > SIZE_MAX / width)
         return false;
-    *items = *items
+    void *grown = *items
         ? cetta_realloc(*items, width * next)
         : cetta_malloc(width * next);
+    if (!grown) return false;
+    *items = grown;
     *capacity = next;
     return true;
 }
@@ -1863,7 +1869,8 @@ bool petta_program_head_is_intrinsic(SymbolId head) {
     bool intrinsic_form =
         form != PETTA_FORM_NONE &&
         form != PETTA_FORM_PROCESS_METTA_STRING &&
-        form != PETTA_FORM_TABLED;
+        form != PETTA_FORM_TABLED &&
+        form != PETTA_FORM_TABLED_LATTICE;
     return head != SYMBOL_ID_NONE &&
            (intrinsic_form ||
             /* Builtin data names are not PeTTa operations.  User
@@ -2893,7 +2900,8 @@ static PettaPlanNode *petta_plan_build_in(
              * retains the implicit run-time-dispatch handler. */
             node->dispatch_handler =
                 !petta_semantics_lambda_body(head_atom, NULL) &&
-                !petta_semantics_nullary_lambda_body(head_atom, NULL);
+                !petta_semantics_nullary_lambda_body(head_atom, NULL) &&
+                !cetta_foreign_provider_callable(head_atom);
         }
 
         if (node->computation.control.operation == CETTA_CONTROL_NONE) {
@@ -4976,26 +4984,34 @@ PettaProgram *petta_program_new_with_rules_and_host_intrinsics(unsigned admitted
     if (!(admitted_forms & CETTA_RULE_SYNTAX_ORDINARY) ||
         (admitted_forms & ~(CETTA_RULE_SYNTAX_ORDINARY | CETTA_RULE_SYNTAX_DIRECTIONAL)))
         return NULL;
-    PettaProgram *program = cetta_malloc(sizeof(*program));
-    memset(program, 0, sizeof(*program));
+    PettaProgram *program = calloc(1u, sizeof(*program));
+    if (!program) return NULL;
+    atomic_init(&program->lifetime_references, 1u);
+    atomic_init(&program->closed, false);
     program->admitted_rule_forms = admitted_forms;
     program->is_host_intrinsic = is_host_intrinsic;
-    program->admitted_rule_forms = admitted_forms;
-    arena_init(&program->plans);
+    if (!arena_try_init(&program->plans)) goto failed_plans;
     arena_set_runtime_kind(
         &program->plans, CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
     arena_set_hashcons(&program->plans, NULL);
-    arena_init(&program->transient_scratch);
+    if (!arena_try_init(&program->transient_scratch)) goto failed_scratch;
     /* Memo keys belong to the bounded memo. Publishing their fresh variable
      * identities or substituted values in the global hash-cons table would
      * keep them after eviction and make a long-lived evaluator grow. */
-    arena_init_detached(&program->transient_plan_atoms);
+    if (!arena_try_init_detached(&program->transient_plan_atoms)) goto failed_atoms;
     /* Bounded source keys usually occupy a small fraction of a worker
      * block; grow the metadata pool only as actual retained keys require. */
     arena_set_block_capacity(&program->transient_plan_atoms, ARENA_BLOCK_SIZE / 16u);
     arena_set_block_growth(&program->transient_plan_atoms, true);
     arena_set_hashcons(&program->transient_scratch, NULL);
     return program;
+failed_atoms:
+    { int error = errno; arena_free(&program->transient_scratch); errno = error; }
+failed_scratch:
+    { int error = errno; arena_free(&program->plans); errno = error; }
+failed_plans:
+    { int error = errno; free(program); errno = error; }
+    return NULL;
 }
 
 PettaProgram *petta_program_new_with_rules(unsigned admitted_forms) {
@@ -5079,10 +5095,7 @@ bool petta_program_analysis_enabled(const PettaProgram *program) {
     return program && program->analysis;
 }
 
-void petta_program_free(PettaProgram *program) {
-    CETTA_SCOPED_SHARED_TRANSITION(program_retirement);
-    if (!program)
-        return;
+static void petta_program_dispose_metadata(PettaProgram *program) {
     /* Catalog owners can be retired after the program during cancellation.
      * Detach their back-pointers before dropping the program's root listing. */
     for (PettaTransactionCatalog *catalog=program->private_catalogs;catalog;) {
@@ -5122,7 +5135,56 @@ void petta_program_free(PettaProgram *program) {
     free(program->transient_values);
     free(program->transient_plans);
     arena_free(&program->transient_plan_atoms);
-    free(program);
+}
+
+bool petta_program_lifetime_retain(PettaProgram *program) {
+    if (!program || atomic_load_explicit(&program->closed, memory_order_acquire))
+        return false;
+    uint64_t value = atomic_load_explicit(&program->lifetime_references,
+                                          memory_order_relaxed);
+    while (value && value != UINT64_MAX) {
+        if (atomic_compare_exchange_weak_explicit(&program->lifetime_references,
+                &value, value + 1u, memory_order_relaxed, memory_order_relaxed)) {
+            if (!atomic_load_explicit(&program->closed, memory_order_acquire))
+                return true;
+            petta_program_lifetime_release(program);
+            return false;
+        }
+    }
+    return false;
+}
+
+void petta_program_lifetime_release(PettaProgram *program) {
+    if (!program)
+        return;
+    uint64_t before = atomic_fetch_sub_explicit(&program->lifetime_references,
+                                               1u, memory_order_acq_rel);
+    if (!before)
+        abort();
+    if (before == 1u) {
+        if (!atomic_load_explicit(&program->closed, memory_order_acquire))
+            abort();
+        free(program);
+    }
+}
+
+void petta_program_free(PettaProgram *program) {
+    if (!program)
+        return;
+    /* Retired worker cleanup uses this same transition guard. Close before
+     * disposing metadata so reentrant finalizers only release their leases. */
+    bool entered_scope = !cetta_shared_transition_scope_active();
+    if (entered_scope)
+        cetta_shared_transition_scope_enter();
+    CettaSharedTransitionGuard destruction = {0};
+    cetta_shared_transition_guard_enter(&destruction);
+    if (!atomic_exchange_explicit(&program->closed, true, memory_order_acq_rel)) {
+        petta_program_dispose_metadata(program);
+        petta_program_lifetime_release(program);
+    }
+    cetta_shared_transition_guard_leave(&destruction);
+    if (entered_scope)
+        cetta_shared_transition_scope_leave();
 }
 
 const PettaPlanNode *petta_program_plan_current(
@@ -6840,7 +6902,8 @@ bool petta_program_registered_space_token(PettaProgram *program,
 void petta_program_forget_space(
     PettaProgram *program, const Space *space) {
     CETTA_SCOPED_SHARED_TRANSITION(program_catalog_forget);
-    if (!program || !space)
+    if (!program || !space ||
+        atomic_load_explicit(&program->closed, memory_order_acquire))
         return;
     PettaTransactionCatalog *private = petta_program_private_catalog(program, space);
     if (private) {
@@ -8427,6 +8490,7 @@ static bool petta_table_safety_form_is_pure(
     case PETTA_FORM_ASSERTZ_PREDICATE:
     case PETTA_FORM_RETRACT_PREDICATE:
     case PETTA_FORM_TABLED:
+    case PETTA_FORM_TABLED_LATTICE:
     case PETTA_FORM_ADD_TRANSLATOR_RULE:
     case PETTA_FORM_REMOVE_TRANSLATOR_RULE:
     case PETTA_FORM_CUT:

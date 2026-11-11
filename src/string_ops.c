@@ -301,66 +301,16 @@ static bool append_scalar(CettaByteBuffer *out, uint32_t scalar) {
 
 static bool unescape_metta(const char *text, size_t len, CettaByteBuffer *out,
                            size_t *bad_offset) {
-    const uint8_t *bytes = (const uint8_t *)text;
+    (void)bad_offset;
     size_t i = 0u;
     while (i < len) {
-        if (bytes[i] != '\\') {
-            if (!cetta_byte_buffer_append_byte(out, bytes[i]))
-                return false;
-            i++;
-            continue;
-        }
-        size_t at = i;
-        if (i + 1u >= len)
-            goto bad;
-        uint8_t kind = bytes[i + 1u];
-        uint8_t simple = 0u;
-        switch (kind) {
-        case 'n': simple = '\n'; break;
-        case 'r': simple = '\r'; break;
-        case 't': simple = '\t'; break;
-        case '"': simple = '"'; break;
-        case '\'': simple = '\''; break;
-        case '\\': simple = '\\'; break;
-        default: break;
-        }
-        if (simple) {
-            if (!cetta_byte_buffer_append_byte(out, simple))
-                return false;
-            i += 2u;
-            continue;
-        }
-        if (kind == 'x') {
-            int high = i + 2u < len ? hex_digit(bytes[i + 2u]) : -1;
-            int low = i + 3u < len ? hex_digit(bytes[i + 3u]) : -1;
-            if (high < 0 || low < 0)
-                goto bad;
-            if (!cetta_byte_buffer_append_byte(out, (uint8_t)((high << 4) | low)))
-                return false;
-            i += 4u;
-            continue;
-        }
-        if (kind == 'u' && i + 2u < len && bytes[i + 2u] == '{') {
-            size_t j = i + 3u;
-            uint32_t scalar = 0u;
-            size_t digits = 0u;
-            while (j < len && digits < 6u && hex_digit(bytes[j]) >= 0) {
-                scalar = (scalar << 4) | (uint32_t)hex_digit(bytes[j]);
-                digits++;
-                j++;
-            }
-            if (digits == 0u || j >= len || bytes[j] != '}' ||
-                !cetta_utf8_scalar_valid(scalar))
-                goto bad;
-            if (!append_scalar(out, scalar))
-                return false;
-            i = j + 1u;
-            continue;
-        }
-    bad:
-        if (bad_offset)
-            *bad_offset = at;
-        return false;
+        uint8_t decoded[4];
+        size_t written;
+        size_t consumed = cetta_string_literal_decode_unit(
+            (const uint8_t *)text + i, len - i, decoded, &written);
+        if (!cetta_byte_buffer_append(out, (const char *)decoded, written))
+            return false;
+        i += consumed;
     }
     return true;
 }

@@ -4,6 +4,7 @@
 #include "fold_algebra.h"
 #include "match.h"
 #include "petta_semantics.h"
+#include "petta_type_policy.h"
 #include "stats.h"
 
 #include <stdlib.h>
@@ -131,11 +132,28 @@ static bool native_fold_one_equation(
     return found == 1u && *body;
 }
 
-/* Whether a named step's declared arrows at arity two all read
- * (-> Number Number Number).  PeTTa checks a declared step's arguments and
+/* Whether a declared position meets every integer once: Number; a type
+ * get-type never checks there (%Undefined%, _); or a type variable, which
+ * an integer binds to Number once, so that item, accumulator and result,
+ * all integers, give every variable one consistent binding.  Atom is not
+ * one: it keeps an argument or a result as written. */
+static bool native_fold_position_meets_integers(Atom *formal) {
+    if (!formal)
+        return false;
+    if (formal->kind == ATOM_VAR)
+        return true;
+    if (formal->kind != ATOM_SYMBOL)
+        return false;
+    return atom_is_symbol(formal, "Number") ||
+        petta_type_demand(formal) == PETTA_TYPE_TRANSLATE;
+}
+
+/* Whether a named step's declarations at arity two are one arrow whose
+ * positions all meet integers.  PeTTa checks a declared step's arguments and
  * result on every application; the native fold applies none, so it stands
- * in only for steps those checks cannot refuse: undeclared ones, or ones
- * whose declarations integer items, accumulators and results all meet. */
+ * in only for steps those checks cannot refuse: undeclared ones, or one
+ * arrow that integer items, accumulators and results all meet once.
+ * Distinct arrows are typed alternatives, each a step of its own. */
 static bool native_fold_step_declarations_numeric(Space *space, Arena *arena,
                                                   SymbolId head) {
     if (!space_head_has_arrow_signature(space, head, 2u))
@@ -145,6 +163,7 @@ static bool native_fold_step_declarations_numeric(Space *space, Arena *arena,
         arena, atom_symbol_id(arena, g_builtin_syms.colon),
         atom_symbol_id(arena, head), type);
     bool numeric = true;
+    Atom *first = NULL;
     for (uint32_t member = 0u;
          numeric && member <= space_dependency_count(space); member++) {
         Space *source = member == 0u
@@ -157,8 +176,14 @@ static bool native_fold_step_declarations_numeric(Space *space, Arena *arena,
             if (!arrow || arrow->kind != ATOM_EXPR || arrow->expr.len != 4u ||
                 !atom_is_symbol_id(arrow->expr.elems[0], g_builtin_syms.arrow))
                 continue;
+            if (first && !atom_alpha_eq(first, arrow)) {
+                numeric = false;
+                break;
+            }
+            first = arrow;
             for (CettaExprIndex k = 1u; numeric && k < 4u; k++)
-                numeric = atom_is_symbol(arrow->expr.elems[k], "Number");
+                numeric = native_fold_position_meets_integers(
+                    arrow->expr.elems[k]);
         }
         binding_set_free(&declared);
     }

@@ -1,0 +1,3 @@
+:- chr_constraint pair_gate/0,pair_item/1,chosen_pair/2.
+pick_pair @ pair_gate,pair_item(X),pair_item(Y) <=> chosen_pair(X,Y).
+?- pair_item(1),pair_item(2),pair_item(3),pair_gate.

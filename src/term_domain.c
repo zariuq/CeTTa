@@ -30,12 +30,29 @@ static CettaTermDomain *domain_new(TermUniverseStoreFormat format,
         free(domain);
         return NULL;
     }
-    symbol_table_init(&domain->symbols);
-    symbol_table_init_builtins(&domain->symbols, &domain->builtins);
-    var_intern_init(&domain->variables);
+    if (!symbol_table_try_init(&domain->symbols)) {
+        term_universe_free(&domain->universe);
+        free(domain);
+        return NULL;
+    }
+    if (!symbol_table_try_init_builtins(&domain->symbols, &domain->builtins) ||
+        !var_intern_try_init(&domain->variables)) {
+        symbol_table_free(&domain->symbols);
+        term_universe_free(&domain->universe);
+        free(domain);
+        return NULL;
+    }
     domain->shares_atoms = shares_atoms;
     if (shares_atoms) hashcons_init(&domain->hashcons);
-    arena_init_detached(&domain->persistent);
+    if ((shares_atoms && !domain->hashcons.table) ||
+        !arena_try_init_detached(&domain->persistent)) {
+        if (shares_atoms) hashcons_free(&domain->hashcons);
+        var_intern_free(&domain->variables);
+        symbol_table_free(&domain->symbols);
+        term_universe_free(&domain->universe);
+        free(domain);
+        return NULL;
+    }
     arena_set_runtime_kind(&domain->persistent,
                             CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
     arena_set_hashcons(&domain->persistent,

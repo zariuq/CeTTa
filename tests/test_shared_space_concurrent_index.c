@@ -15,6 +15,7 @@
 #include "space.h"
 #include "space_match_backend.h"
 #include "symbol.h"
+#include "runtime_names.h"
 
 enum {
     BASE_ROW_COUNT = 64,
@@ -32,6 +33,7 @@ typedef struct {
     Atom *stable_exact_pattern;
     pthread_barrier_t *start;
     bool ok;
+    CettaNameContext names;
 } ReaderTask;
 
 typedef struct {
@@ -39,6 +41,7 @@ typedef struct {
     AtomId optional_id;
     pthread_barrier_t *start;
     bool ok;
+    CettaNameContext names;
 } WriterTask;
 
 static void init_symbols(SymbolTable *symbols) {
@@ -169,6 +172,8 @@ static bool validate_occurrence_cursors(Space *space, Atom *pattern) {
 
 static void *reader_main(void *opaque) {
     ReaderTask *task = opaque;
+    CettaNameContext previous = cetta_name_context_current();
+    cetta_name_context_install(&task->names);
     Arena scratch;
     int barrier_result;
 
@@ -178,6 +183,7 @@ static void *reader_main(void *opaque) {
                barrier_result == PTHREAD_BARRIER_SERIAL_THREAD;
     if (!task->ok) {
         arena_free(&scratch);
+        cetta_name_context_install(&previous);
         return NULL;
     }
 
@@ -209,17 +215,22 @@ static void *reader_main(void *opaque) {
     cetta_shared_transition_scope_leave();
     arena_free(&scratch);
     bindings_thread_cache_free();
+    cetta_name_context_install(&previous);
     return NULL;
 }
 
 static void *writer_main(void *opaque) {
     WriterTask *task = opaque;
+    CettaNameContext previous = cetta_name_context_current();
+    cetta_name_context_install(&task->names);
     int barrier_result = pthread_barrier_wait(task->start);
 
     task->ok = barrier_result == 0 ||
                barrier_result == PTHREAD_BARRIER_SERIAL_THREAD;
-    if (!task->ok)
+    if (!task->ok) {
+        cetta_name_context_install(&previous);
         return NULL;
+    }
 
     cetta_shared_transition_scope_enter();
     for (uint32_t round = 0u; round < WRITER_ROUNDS && task->ok; round++) {
@@ -238,6 +249,7 @@ static void *writer_main(void *opaque) {
             sched_yield();
     }
     cetta_shared_transition_scope_leave();
+    cetta_name_context_install(&previous);
     return NULL;
 }
 
@@ -287,6 +299,7 @@ static void assert_concurrent_snapshot(Space *space, Arena *scratch,
  * Mutations occur only after joining the previous episode. */
 typedef struct {
     SymbolTable *symbols;
+    CettaNameContext names;
     Space *space;
     Atom *subject;
     const SymbolId *expected;
@@ -314,6 +327,8 @@ static void check_type_result(TypeReaderTask *task, Atom **types,
 
 static void *type_reader_main(void *raw) {
     TypeReaderTask *task = raw;
+    CettaNameContext previous = cetta_name_context_current();
+    cetta_name_context_install(&task->names);
     assert(g_symbols == task->symbols);
     g_hashcons = NULL;
     assert(g_var_intern == NULL);
@@ -367,6 +382,7 @@ static void *type_reader_main(void *raw) {
     task->checks += 2u;
     arena_free(&results);
     bindings_thread_cache_free();
+    cetta_name_context_install(&previous);
     return NULL;
 }
 
@@ -376,11 +392,12 @@ static uint64_t type_read_episode(SymbolTable *symbols, Space *space,
     pthread_barrier_t start;
     pthread_t threads[READERS];
     TypeReaderTask tasks[READERS];
+    CettaNameContext names = cetta_name_context_current();
     assert(pthread_barrier_init(&start, NULL, READERS) == 0);
     for (uint32_t i = 0u; i < READERS; ++i) {
-        tasks[i] = (TypeReaderTask){.symbols=symbols, .space=space,
-            .subject=subject, .expected=expected, .expected_count=count,
-            .mode=i%3u, .start=&start};
+        tasks[i] = (TypeReaderTask){.symbols=symbols, .names=names,
+            .space=space, .subject=subject, .expected=expected,
+            .expected_count=count, .mode=i%3u, .start=&start};
         assert(pthread_create(&threads[i], NULL, type_reader_main, &tasks[i]) == 0);
     }
     uint64_t checks = 0u;
@@ -463,6 +480,7 @@ static void check_concurrent_declared_types(SymbolTable *symbols) {
 }
 
 typedef struct {
+    CettaNameContext names;
     Space *space;
     Atom *present;
     Atom *absent;
@@ -503,6 +521,8 @@ static bool membership_read(MembershipReaderTask *task, Atom *query) {
 
 static void *membership_reader_main(void *raw) {
     MembershipReaderTask *task = raw;
+    CettaNameContext previous = cetta_name_context_current();
+    cetta_name_context_install(&task->names);
     cetta_shared_transition_scope_enter();
     int started = pthread_barrier_wait(task->start);
     assert(started == 0 || started == PTHREAD_BARRIER_SERIAL_THREAD);
@@ -524,6 +544,7 @@ static void *membership_reader_main(void *raw) {
     cetta_shared_transition_scope_leave();
     assert(!cetta_shared_transition_scope_active());
     task->checks += 2u;
+    cetta_name_context_install(&previous);
     return NULL;
 }
 
@@ -532,10 +553,11 @@ static uint64_t membership_read_episode(Space *space, Atom *present, Atom *absen
     pthread_barrier_t start;
     pthread_t threads[READERS];
     MembershipReaderTask tasks[READERS];
+    CettaNameContext names = cetta_name_context_current();
     assert(pthread_barrier_init(&start, NULL, READERS) == 0);
     for (unsigned i = 0u; i < READERS; i++) {
-        tasks[i] = (MembershipReaderTask){.space=space, .present=present,
-            .absent=absent, .start=&start, .mode=i%5u};
+        tasks[i] = (MembershipReaderTask){.names=names, .space=space,
+            .present=present, .absent=absent, .start=&start, .mode=i%5u};
         assert(pthread_create(&threads[i], NULL, membership_reader_main, &tasks[i]) == 0);
     }
     uint64_t checks = 0u;
@@ -850,6 +872,7 @@ int main(void) {
             .query = query,
             .stable_exact_pattern = stable_exact_pattern,
             .start = &start,
+            .names = cetta_name_context_current(),
         };
         assert(pthread_create(&readers[i], NULL, reader_main,
                               &reader_tasks[i]) == 0);
@@ -858,6 +881,7 @@ int main(void) {
         .space = &concurrent_space,
         .optional_id = optional_id,
         .start = &start,
+        .names = cetta_name_context_current(),
     };
     assert(pthread_create(&writer, NULL, writer_main, &writer_task) == 0);
 

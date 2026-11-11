@@ -24,6 +24,17 @@ static int sync_failure=-1,sync_fail_at,sync_calls,rename_failure,rename_after_s
 static int pause_ready=-1,pause_resume=-1;
 static bool pause_lock,pause_batch;
 static off_t drop_unsynced_to=-1;
+static unsigned char collision_generation[16];
+static volatile unsigned collision_reads;
+ssize_t __real_read(int,void *,size_t);
+ssize_t __wrap_read(int fd,void *data,size_t size) {
+    struct stat source,random;
+    if(collision_reads && size==16 && !fstat(fd,&source) && S_ISCHR(source.st_mode) &&
+       !stat("/dev/urandom",&random) && source.st_rdev==random.st_rdev) {
+        memcpy(data,collision_generation,16);collision_reads--;return 16;
+    }
+    return __real_read(fd,data,size);
+}
 ssize_t __real_write(int,const void *,size_t);
 int __real_fsync(int);
 int __real_renameat(int,const char *,int,const char *);
@@ -121,7 +132,13 @@ static void ordinary(const char *path) {
     check(cetta_disk_store_commit(second,fresh,NULL,0,&no_op)==CETTA_STORE_OK);
     check(cetta_disk_store_view_revision(no_op)==2);
     CettaDiskStoreView *compacted=NULL;
+    /* Force the random source to repeat the live generation. Exclusive
+     * creation must retry, without replacing that generation or its readers. */
+    memcpy(collision_generation,cetta_disk_store_view_root(fresh)->segment,16);
+    collision_reads=1;
     check(cetta_disk_store_compact(second,&compacted)==CETTA_STORE_OK);
+    check(!collision_reads);
+    check(memcmp(cetta_disk_store_view_root(compacted)->segment,collision_generation,16)!=0);
     check(cetta_disk_store_view_revision(compacted)==2);
     expect(compacted,"receipt","done"); expect(fresh,"answer","retained");
     uint64_t removed=0;
@@ -227,17 +244,24 @@ static void corrupt_manifest(const char *path) {
 static void ownership(const char *path) {
     CettaDiskStore *store=open_store(path);cetta_disk_store_close(store);store=NULL;
     int directory=open(path,O_RDONLY|O_DIRECTORY);check(directory>=0);
-    check(!fchmod(directory,0750));
-    check(cetta_disk_store_open(path,false,NULL,&store)==CETTA_STORE_OWNERSHIP && !store);
+    /* Access is the file system's decision: a group-shared store, a store
+     * reached through a symbolic link and group-readable files all open. */
+    check(!fchmod(directory,02770));
+    check(cetta_disk_store_open(path,false,NULL,&store)==CETTA_STORE_OK && store);
+    cetta_disk_store_close(store);store=NULL;
     check(!fchmod(directory,0700));
     check(!symlinkat(".",directory,"alias"));char alias[512];
     check(snprintf(alias,sizeof(alias),"%s/alias",path)>0);
-    check(cetta_disk_store_open(alias,false,NULL,&store)==CETTA_STORE_OWNERSHIP && !store);
+    check(cetta_disk_store_open(alias,false,NULL,&store)==CETTA_STORE_OK && store);
+    cetta_disk_store_close(store);store=NULL;
     check(!unlinkat(directory,"alias",0));
     int manifest=openat(directory,"root.csl",O_RDWR);check(manifest>=0);
-    check(!fchmod(manifest,0640));
-    check(cetta_disk_store_open(path,false,NULL,&store)==CETTA_STORE_OWNERSHIP && !store);
+    check(!fchmod(manifest,0664));
+    check(cetta_disk_store_open(path,false,NULL,&store)==CETTA_STORE_OK && store);
+    cetta_disk_store_close(store);store=NULL;
     check(!fchmod(manifest,0600));close(manifest);
+    /* The store's own files stay single regular files: an extra hard link or
+     * a symbolic link in place of the manifest would alias its storage. */
     check(!linkat(directory,"root.csl",directory,"linked",0));
     check(cetta_disk_store_open(path,false,NULL,&store)==CETTA_STORE_OWNERSHIP && !store);
     check(!unlinkat(directory,"linked",0));
@@ -306,7 +330,7 @@ static void lost_writeback(const char *path) {
     cetta_disk_store_view_close(empty);cetta_disk_store_view_close(stable);
     cetta_disk_store_view_close(current);cetta_disk_store_view_close(out);cetta_disk_store_close(store);
 }
-static void live_builder(const char *path) {
+static void live_builder(const char *path,bool interleaved_writer) {
     CettaDiskStore *store=open_store(path);CettaDiskStoreView *before=snapshot(store),*written=NULL;
     CettaDiskOp op={false,text("body"),text("preserved")};
     check(cetta_disk_store_commit(store,before,&op,1,&written)==CETTA_STORE_OK);
@@ -315,8 +339,10 @@ static void live_builder(const char *path) {
     if (!child) {
         close(ready[0]);close(resume[1]);pause_ready=ready[1];pause_resume=resume[0];
         CettaDiskStoreView *compacted=NULL;
-        check(cetta_disk_store_compact(store,&compacted)==CETTA_STORE_OK);
-        expect(compacted,"body","preserved");
+        CettaDiskStoreStatus result=cetta_disk_store_compact(store,&compacted);
+        check(result==(interleaved_writer ? CETTA_STORE_CONFLICT : CETTA_STORE_OK));
+        if(interleaved_writer)check(!compacted);
+        else expect(compacted,"body","preserved");
         cetta_disk_store_view_close(compacted);cetta_disk_store_close(store);_exit(0);
     }
     close(ready[1]);close(resume[0]);char byte;
@@ -324,9 +350,16 @@ static void live_builder(const char *path) {
     uint64_t removed=99;
     check(cetta_disk_store_collect(store,&removed)==CETTA_STORE_OK && removed==0);
     check(segments(path)==2);
+    if(interleaved_writer) {
+        CettaDiskStoreView *base=snapshot(store),*changed=NULL;
+        CettaDiskOp later={false,text("after-capture"),text("must-survive")};
+        check(cetta_disk_store_commit(store,base,&later,1,&changed)==CETTA_STORE_OK);
+        cetta_disk_store_view_close(base);cetta_disk_store_view_close(changed);
+    }
     check(write(resume[1],"x",1)==1);close(ready[0]);close(resume[1]);
     int status;check(waitpid(child,&status,0)==child && WIFEXITED(status) && !WEXITSTATUS(status));
     before=snapshot(store);expect(before,"body","preserved");
+    if(interleaved_writer)expect(before,"after-capture","must-survive");
     check(cetta_disk_store_collect(store,&removed)==CETTA_STORE_OK && removed==1);
     cetta_disk_store_view_close(before);cetta_disk_store_close(store);
 }
@@ -519,9 +552,11 @@ static void backup_cases(const char *root) {
             cetta_disk_store_view_close(restored);cetta_disk_store_close(copy);
         }
     }
-    check(!chmod(destinations[11],0750));
-    check(cetta_disk_store_backup(view,destinations[11])==CETTA_STORE_OWNERSHIP);
-    check(!chmod(destinations[11],0700));
+    check(!chmod(destinations[11],02770));
+    check(cetta_disk_store_backup(view,destinations[11])==CETTA_STORE_OK);
+    check(cetta_disk_store_open(destinations[11],false,NULL,&copy)==CETTA_STORE_OK);
+    restored=snapshot(copy);expect(restored,"fact","captured");
+    cetta_disk_store_view_close(restored);cetta_disk_store_close(copy);copy=NULL;
     /* Kill in bootstrap, immediately after the first lock creation. Even
      * this early boundary must not leave an apparently new empty store. */
     int ready[2],resume[2];check(!pipe(ready) && !pipe(resume));pid_t child=fork();check(child>=0);
@@ -699,18 +734,22 @@ static void create_directory(const char *root) {
     snprintf(missing,sizeof(missing),"%s/absent/child",root);
     CettaDiskStore *store=NULL;
     check(cetta_disk_store_open_created(path,NULL,&store)==CETTA_STORE_OK);
-    struct stat st;check(!stat(path,&st) && !(st.st_mode&077));
+    /* A created store takes the parent's ordinary defaults (umask and
+     * default ACL), exactly like a directory made there with mode 0777. */
+    char plain[1024];check(snprintf(plain,sizeof(plain),"%s-plain",path)>0);
+    check(!mkdir(plain,0777));struct stat expected;check(!stat(plain,&expected));check(!rmdir(plain));
+    struct stat st;check(!stat(path,&st) && (st.st_mode&07777)==(expected.st_mode&07777));
     CettaDiskStoreView *view=snapshot(store);check(cetta_disk_store_view_revision(view)==0);
     cetta_disk_store_view_close(view);cetta_disk_store_close(store);store=NULL;
     check(cetta_disk_store_open_created(path,NULL,&store)==CETTA_STORE_OK);
     cetta_disk_store_close(store);store=NULL;
     check(!symlink("created",link));
-    check(cetta_disk_store_open_created(link,NULL,&store)==CETTA_STORE_OWNERSHIP && !store);
+    check(cetta_disk_store_open_created(link,NULL,&store)==CETTA_STORE_OK && store);
+    cetta_disk_store_close(store);store=NULL;
     check(!unlink(link));
-    check(!mkdir(public_path,0700));check(!chmod(public_path,0755));
-    check(cetta_disk_store_open_created(public_child,NULL,&store)==CETTA_STORE_OWNERSHIP && !store);
-    check(cetta_disk_store_open_created(public_path,NULL,&store)==CETTA_STORE_OWNERSHIP && !store);
-    check(!rmdir(public_path));
+    check(!mkdir(public_path,0700));check(!chmod(public_path,02775));
+    check(cetta_disk_store_open_created(public_child,NULL,&store)==CETTA_STORE_OK && store);
+    cetta_disk_store_close(store);store=NULL;
     sync_calls=0;sync_fail_at=1;
     check(cetta_disk_store_open_created(failed,NULL,&store)==CETTA_STORE_IO && !store);
     sync_fail_at=0;
@@ -721,11 +760,53 @@ static void create_directory(const char *root) {
     check(cetta_disk_store_open_created(missing,NULL,&store)!=CETTA_STORE_OK && !store);
     check(cetta_disk_store_open_created("",NULL,&store)==CETTA_STORE_INVALID && !store);
     empty_directory(failed);empty_directory(path);
+    empty_directory(public_child);check(!rmdir(public_path));
+}
+
+static void logical_readers(const char *root) {
+    char path[512];snprintf(path,sizeof(path),"%s/logical",root);check(!mkdir(path,0700));
+    CettaDiskStore *store=open_store(path);CettaDiskStoreView *view=snapshot(store),*updated=NULL;
+    CettaDiskOp operations[]={ {.key=text("a"),.value=text("value")},
+        {.key=text("b"),.value=text("")}, {.key=text("c"),.value=text("last")} };
+    check(cetta_disk_store_commit(store,view,operations,3,&updated)==CETTA_STORE_OK);
+    cetta_disk_store_view_close(view);view=updated;
+    CettaDiskStoreBlob blob;check(cetta_disk_store_lookup(view,text("a"),&blob)==CETTA_DISK_OK && blob.size==5);
+    CettaDiskStoreBlobReader *reader=NULL;
+    check(cetta_disk_store_blob_reader_open(view,blob,&reader)==CETTA_DISK_OK);
+    CettaDiskStoreCursor *forward=NULL,*reverse=NULL;CettaDiskBytes lo=text("a"),hi=text("c");
+    check(cetta_disk_store_cursor_open_range(view,&lo,false,&hi,&forward)==CETTA_DISK_OK);
+    check(cetta_disk_store_cursor_open_reverse_range(view,&lo,true,NULL,&reverse)==CETTA_DISK_OK);
+    cetta_disk_store_view_close(view);
+    CettaDiskStoreView *compacted=NULL;
+    check(cetta_disk_store_compact(store,&compacted)==CETTA_STORE_OK);
+    cetta_disk_store_view_close(compacted);uint64_t removed;
+    check(cetta_disk_store_collect(store,&removed)==CETTA_STORE_OK && removed==1);
+    cetta_disk_store_close(store);
+    unsigned char data[8];size_t got=99;
+    check(cetta_disk_store_blob_reader_size(reader)==5);
+    check(cetta_disk_store_blob_reader_read(reader,1,data,3,&got)==CETTA_DISK_OK && got==3 && !memcmp(data,"alu",3));
+    cetta_disk_store_blob_reader_close(reader);
+    for (unsigned i=0;i<2;i++) {
+        CettaDiskBuffer key={0};
+        check(cetta_disk_store_cursor_next(forward,&key,&blob)==CETTA_DISK_OK && key.size==1 && key.data[0]=='a'+i);
+        got=99;
+        check(cetta_disk_store_blob_read(cetta_disk_store_cursor_view(forward),blob,0,data,sizeof(data),&got)==CETTA_DISK_OK);
+        check(got==(i ? 0u : 5u));cetta_disk_buffer_free(&key);
+    }
+    CettaDiskBuffer key={0};
+    check(cetta_disk_store_cursor_next(forward,&key,&blob)==CETTA_DISK_END && !key.data);
+    for (unsigned i=0;i<2;i++) {
+        check(cetta_disk_store_cursor_next(reverse,&key,&blob)==CETTA_DISK_OK && key.size==1 && key.data[0]=='c'-i);
+        cetta_disk_buffer_free(&key);
+    }
+    check(cetta_disk_store_cursor_next(reverse,&key,&blob)==CETTA_DISK_END);
+    cetta_disk_store_cursor_close(forward);cetta_disk_store_cursor_close(reverse);
+    empty_directory(path);
 }
 int main(void) {
     char root[]="runtime/disk-store-test.XXXXXX"; check(mkdtemp(root));
     create_directory(root);
-    const char *labels[]={"ordinary","lock","unknown-before","unknown-after","partial","corrupt","sync-data","sync-manifest","sync-directory","scoped","parallel","spenders","collection-confirmation","live-builder","lost-writeback","ownership","old-version","wrong-header","view-domain-a","view-domain-b","backups"};
+    const char *labels[]={"ordinary","lock","unknown-before","unknown-after","partial","corrupt","sync-data","sync-manifest","sync-directory","scoped","parallel","spenders","collection-confirmation","live-builder","lost-writeback","ownership","old-version","wrong-header","view-domain-a","view-domain-b","backups","stale-compaction"};
     enum { CASES=sizeof(labels)/sizeof(*labels) };char paths[CASES][256];
     for (size_t i=0;i<CASES;++i) {
         check(snprintf(paths[i],sizeof(paths[i]),"%s/%s",root,labels[i])>0);
@@ -735,11 +816,13 @@ int main(void) {
     partial_writes(paths[4]); corrupt_manifest(paths[5]);
     for (size_t i=0;i<3;++i) sync_faults(paths[6+i],(int)i+1);
     scoped(paths[9]);parallel(paths[10],false);parallel(paths[11],true);
-    collection_confirmation(paths[12]);live_builder(paths[13]);
+    collection_confirmation(paths[12]);live_builder(paths[13],false);
     lost_writeback(paths[14]);
     ownership(paths[15]);old_manifest_version(paths[16]);wrong_segment_header(paths[17]);
     view_domains(paths[18],paths[19]);
     backup_cases(paths[20]);
+    live_builder(paths[21],true);
+    logical_readers(root);
     operation_batches(root);
     batch_crash_cases(root);
     for (size_t i=0;i<CASES;++i) empty_directory(paths[i]);

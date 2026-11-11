@@ -1,0 +1,36 @@
+true
+true
+true
+(absent-joint (none))
+true
+(absent-joint-after ())
+true
+true
+true
+(unique-joint ((1 took)))
+(after-unique-joint ((q 2)))
+true
+true
+true
+true
+(collect-joint (2))
+true
+true
+true
+true
+true
+(collect-take-joint (2))
+(after-collect-take-joint ((r 0)))
+true
+true
+true
+(shared-p (2))
+(after-shared-p ())
+true
+true
+true
+(copies-p (2))
+(after-copies-p ())
+true
+(take-aa-collect (()))
+(after-take-aa-collect (a))

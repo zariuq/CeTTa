@@ -1,0 +1,42 @@
+Persistent native transport foundation
+======================================
+
+The ordinary space:call/space:connect/space:exchange client and captured
+provider clients share ipc_client.c framing and ipc_session.c ownership.
+This is a transport foundation, not the completed remote database facade.
+
+A session owns one connected socket. A successful begin temporarily transfers
+it to one exchange. Other begins return busy while that exchange is pending
+or holds an unaccepted reply. Native pumping is nonblocking and accepts a
+byte/attempt allowance; the existing one-shot pump remains available. A CWP
+packet is an indivisible message rather than a stream fragment. Zero work
+performs no IO. Partial replies are never exposed as complete payloads.
+
+After receiving a complete frame, the caller validates the reply identity and
+schema before accepting it. Acceptance returns the socket to the session.
+The accepted reply and exact outgoing request remain owned by the exchange,
+so a later exchange cannot overwrite those bytes. Closing or rejecting an
+unfinished/unaccepted exchange makes the stream unusable. A failed stream is
+never silently reconnected. Failures before any bytes were sent remain
+separate from uncertain delivery after transmission began. This distinction
+is evidence about transport; durable application receipts resolve publication.
+
+Sessions and exchanges have independent owning references. Releasing a parent
+connection releases that parent's reference. Captured children can keep the
+session alive and use it after that slot closes. An active exchange retains
+the session. Final release closes the socket; an exchange's accepted payload
+survives until its own final release. An accepted exchange cannot cancel a
+later exchange using the same session. Native session accessors expose a
+borrowed descriptor for readiness polling, not independent socket ownership.
+
+The space library releases evaluator transition guards during socket IO.
+Request identity bytes are owned across that boundary. Deadlines use the
+caller's monotonic deadline without a fixed sixty-second acceptance ceiling;
+polling clamps individual waits to the operating system's integer range.
+This does not change server-configured idle deadlines or caller cancellation.
+
+make test-ipc-client-stream test-ipc-session checks fragmented frames,
+one-byte work, serial acceptance, retained child/reply lifetimes, cancellation,
+competing begins, allocation refusal, malformed/partial replies and lost
+replies. Existing native IO and KB-service checks cover one-shot CSP/CWP and
+persistent MeTTa clients. Python embedding is a separate integration boundary.

@@ -12,9 +12,7 @@
 #include "search_machine.h"
 #include "rule_binding.h"
 #include "stats.h"
-#if defined(__GLIBC__)
-#include <malloc.h>
-#endif
+#include "allocator_info.h"
 #include "eval.h"
 #include "state_cell.h"
 #pragma weak state_cell_snapshot_acquire
@@ -24,8 +22,11 @@
 #include "proof_row.h"
 #include "proof_batches.h"
 #include "u64_index.h"
+#include "generated/cetta_execution_contracts.generated.h"
 #include <assert.h>
+#include <errno.h>
 #include <inttypes.h>
+#include <pthread.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -457,11 +458,13 @@ static DiscPool *disc_root_pool(DiscNode *root) {
 static void *disc_pool_alloc_alone(DiscPool *pool, size_t bytes) {
     if (pool->block_len == pool->block_cap) {
         size_t cap = pool->block_cap ? pool->block_cap * 2u : 16u;
-        pool->blocks = cetta_realloc(pool->blocks,
-                                     sizeof(*pool->blocks) * cap);
+        DiscBlock **blocks = cetta_realloc(pool->blocks, sizeof(*pool->blocks) * cap);
+        if (!blocks) return NULL;
+        pool->blocks = blocks;
         pool->block_cap = cap;
     }
     DiscBlock *block = cetta_malloc(sizeof(*block) + bytes);
+    if (!block) return NULL;
     block->index = pool->block_len;
     block->allocated_bytes = bytes;
     pool->blocks[pool->block_len++] = block;
@@ -474,6 +477,7 @@ static void *disc_pool_alloc(DiscPool *pool, size_t bytes) {
         DiscChunk *chunk = pool->chunks;
         if (!chunk || chunk->cap - chunk->used < bytes) {
             chunk = cetta_malloc(sizeof(*chunk) + DISC_POOL_CHUNK);
+            if (!chunk) return NULL;
             chunk->next = pool->chunks;
             chunk->used = 0u;
             chunk->cap = DISC_POOL_CHUNK;
@@ -528,6 +532,7 @@ static DiscNode *disc_pool_node(DiscPool *pool, bool inner) {
 #else
         node = disc_pool_alloc(pool, bytes);
 #endif
+    if (!node) return NULL;
     memset(node, 0, bytes);
     node->inner = inner;
     return node;
@@ -590,6 +595,7 @@ static DiscNode *disc_singleton_insert(
         abort();
     }
     DiscNode *child = disc_pool_node(pool, inner);
+    if (!child) return NULL;
     node->edge_kind = kind;
     node->edge.one.key = key;
     node->edge.one.child = child;
@@ -599,6 +605,7 @@ static DiscNode *disc_singleton_insert(
 /* A trie's root, with the pool that holds the trie. */
 DiscNode *disc_node_new(void) {
     DiscRoot *root = cetta_malloc(sizeof(*root));
+    if (!root) return NULL;
     memset(root, 0, sizeof(*root));
     root->node.inner = true;
     return &root->node;
@@ -738,6 +745,7 @@ CettaCount disc_transport_stable_coordinates(
 }
 
 static void disc_add_leaf(DiscPool *pool, DiscNode *n, CettaIndex idx) {
+    if (!n) return;
     if (n->leaf_capacity == 0u) {
         if (pool->coordinate_leaves_ready)
             disc_node_vector_push(&pool->coordinate_leaves, n);
@@ -754,16 +762,17 @@ static void disc_add_leaf(DiscPool *pool, DiscNode *n, CettaIndex idx) {
     }
     if (n->leaf_capacity == 1u) {
         CettaIndex first = n->leaf.one;
+        CettaIndex *many = disc_pool_alloc(pool, sizeof(CettaIndex) * 4u);
+        if (!many) return;
+        n->leaf.many = many;
         n->leaf_capacity = 2u;
-        n->leaf.many = disc_pool_alloc(
-            pool, sizeof(CettaIndex) * (size_t)disc_leaf_capacity(n));
         n->leaf.many[0] = first;
     } else if (n->leaf_count >= disc_leaf_capacity(n)) {
         size_t old_bytes = sizeof(CettaIndex) * (size_t)disc_leaf_capacity(n);
+        CettaIndex *many = disc_pool_grow(pool, n->leaf.many, old_bytes, old_bytes * 2u);
+        if (!many) return;
+        n->leaf.many = many;
         n->leaf_capacity++;
-        n->leaf.many = disc_pool_grow(
-            pool, n->leaf.many, old_bytes,
-            sizeof(CettaIndex) * (size_t)disc_leaf_capacity(n));
     }
     n->leaf.many[n->leaf_count++] = idx;
 }
@@ -772,16 +781,18 @@ static inline uint32_t disc_sym_hash(SymbolId key) {
     return (uint32_t)((uint64_t)key * 2654435761u);
 }
 
-static void disc_sym_ht_init(DiscPool *pool, DiscSymHashTable *ht,
+static bool disc_sym_ht_init(DiscPool *pool, DiscSymHashTable *ht,
                              uint32_t min_cap) {
     uint32_t cap = 32;
     while (cap < min_cap * 2)
         cap *= 2;
     ht->entries = disc_pool_alloc(pool, sizeof(DiscSymHashEntry) * cap);
+    if (!ht->entries) return false;
     ht->mask = cap - 1;
     ht->count = 0;
     for (uint32_t i = 0; i < cap; i++)
         ht->entries[i].key = SYMBOL_ID_NONE;
+    return true;
 }
 
 static DiscNode *disc_sym_ht_get(const DiscSymHashTable *ht, SymbolId key) {
@@ -799,14 +810,16 @@ static DiscNode *disc_sym_ht_get(const DiscSymHashTable *ht, SymbolId key) {
     }
 }
 
-static void disc_sym_ht_put(DiscPool *pool, DiscSymHashTable *ht,
+static bool disc_sym_ht_put(DiscPool *pool, DiscSymHashTable *ht,
                             SymbolId key, DiscNode *child) {
     if (ht->count * 10 > (ht->mask + 1) * 7) {
         uint32_t old_cap = ht->mask + 1;
         DiscSymHashEntry *old = ht->entries;
         uint32_t new_cap = old_cap * 2;
-        ht->entries = disc_pool_alloc(
+        DiscSymHashEntry *entries = disc_pool_alloc(
             pool, sizeof(DiscSymHashEntry) * new_cap);
+        if (!entries) return false;
+        ht->entries = entries;
         ht->mask = new_cap - 1;
         ht->count = 0;
         for (uint32_t i = 0; i < new_cap; i++)
@@ -823,6 +836,7 @@ static void disc_sym_ht_put(DiscPool *pool, DiscSymHashTable *ht,
     ht->entries[idx].key = key;
     ht->entries[idx].child = child;
     ht->count++;
+    return true;
 }
 
 static DiscBranchSet *disc_promote_singleton(DiscPool *pool,
@@ -831,12 +845,14 @@ static DiscBranchSet *disc_promote_singleton(DiscPool *pool,
     DiscEdgeKey key = node->edge.one.key;
     DiscNode *child = node->edge.one.child;
     DiscBranchSet *branches = disc_pool_alloc(pool, sizeof(*branches));
+    if (!branches) return NULL;
     memset(branches, 0, sizeof(*branches));
     switch (kind) {
     case DISC_EDGE_SYMBOL:
         branches->csym = 4u;
         branches->sym = disc_pool_alloc(
             pool, sizeof(*branches->sym) * branches->csym);
+        if (!branches->sym) return NULL;
         branches->sym[0] = (DiscSymBranch){
             .key = key.symbol,
             .child = child,
@@ -850,6 +866,7 @@ static DiscBranchSet *disc_promote_singleton(DiscPool *pool,
         branches->cexpr = 4u;
         branches->expr = disc_pool_alloc(
             pool, sizeof(*branches->expr) * branches->cexpr);
+        if (!branches->expr) return NULL;
         branches->expr[0] = (DiscExprBranch){
             .arity = key.arity,
             .child = child,
@@ -863,6 +880,7 @@ static DiscBranchSet *disc_promote_singleton(DiscPool *pool,
         scalars->cap = 4u;
         scalars->list = disc_pool_alloc(
             pool, sizeof(*scalars->list) * scalars->cap);
+        if (!scalars->list) return NULL;
         scalars->list[0] = (DiscIntBranch){
             .key = key.integer,
             .child = child,
@@ -882,7 +900,7 @@ static DiscBranchSet *disc_promote_singleton(DiscPool *pool,
 static void disc_sym_promote(DiscPool *pool, DiscBranchSet *branches) {
     DiscSymBranch *old_sym = branches->sym;
     uint32_t count = branches->nsym;
-    disc_sym_ht_init(pool, &branches->sym_ht, count + 16u);
+    if (!disc_sym_ht_init(pool, &branches->sym_ht, count + 16u)) return;
     for (uint32_t i = 0; i < count; i++)
         disc_sym_ht_put(
             pool, &branches->sym_ht, old_sym[i].key, old_sym[i].child);
@@ -906,11 +924,12 @@ static DiscNode *disc_get_sym(DiscPool *pool, DiscNode *n, SymbolId key,
     DiscBranchSet *branches = n->edge_kind == DISC_EDGE_MANY
         ? n->edge.many
         : disc_promote_singleton(pool, n);
+    if (!branches) return NULL;
     if (branches->sym_hashed) {
         DiscNode *existing = disc_sym_ht_get(&branches->sym_ht, key);
         if (existing) return existing;
         DiscNode *child = disc_pool_node(pool, inner);
-        disc_sym_ht_put(pool, &branches->sym_ht, key, child);
+        if (!child || !disc_sym_ht_put(pool, &branches->sym_ht, key, child)) return NULL;
         branches->nsym++;
         return child;
     }
@@ -918,12 +937,15 @@ static DiscNode *disc_get_sym(DiscPool *pool, DiscNode *n, SymbolId key,
         if (branches->sym[i].key == key) return branches->sym[i].child;
     if (branches->nsym >= branches->csym) {
         size_t old_bytes = sizeof(branches->sym[0]) * branches->csym;
-        branches->csym = branches->csym ? branches->csym * 2u : 4u;
-        branches->sym = disc_pool_grow(
+        uint32_t capacity = branches->csym ? branches->csym * 2u : 4u;
+        void *grown = disc_pool_grow(
             pool, branches->sym, old_bytes,
-            sizeof(branches->sym[0]) * branches->csym);
+            sizeof(branches->sym[0]) * capacity);
+        if (!grown) return NULL;
+        branches->sym = grown; branches->csym = capacity;
     }
     DiscNode *child = disc_pool_node(pool, inner);
+    if (!child) return NULL;
     branches->sym[branches->nsym].key = key;
     branches->sym[branches->nsym].child = child;
     branches->nsym++;
@@ -944,6 +966,7 @@ static DiscNode *disc_get_var(DiscPool *pool, DiscNode *n, bool inner) {
     DiscBranchSet *branches = n->edge_kind == DISC_EDGE_MANY
         ? n->edge.many
         : disc_promote_singleton(pool, n);
+    if (!branches) return NULL;
     if (!branches->var_child)
         branches->var_child = disc_pool_node(pool, inner);
     return branches->var_child;
@@ -962,17 +985,21 @@ static DiscNode *disc_get_expr(DiscPool *pool, DiscNode *n,
     DiscBranchSet *branches = n->edge_kind == DISC_EDGE_MANY
         ? n->edge.many
         : disc_promote_singleton(pool, n);
+    if (!branches) return NULL;
     for (uint32_t i = 0; i < branches->nexpr; i++)
         if (branches->expr[i].arity == arity)
             return branches->expr[i].child;
     if (branches->nexpr >= branches->cexpr) {
         size_t old_bytes = sizeof(branches->expr[0]) * branches->cexpr;
-        branches->cexpr = branches->cexpr ? branches->cexpr * 2u : 4u;
-        branches->expr = disc_pool_grow(
+        uint32_t capacity = branches->cexpr ? branches->cexpr * 2u : 4u;
+        void *grown = disc_pool_grow(
             pool, branches->expr, old_bytes,
-            sizeof(branches->expr[0]) * branches->cexpr);
+            sizeof(branches->expr[0]) * capacity);
+        if (!grown) return NULL;
+        branches->expr = grown; branches->cexpr = capacity;
     }
     DiscNode *child = disc_pool_node(pool, inner);
+    if (!child) return NULL;
     branches->expr[branches->nexpr].arity = arity;
     branches->expr[branches->nexpr].child = child;
     branches->nexpr++;
@@ -989,15 +1016,17 @@ static inline uint32_t disc_int_hash(int64_t key) {
     return (uint32_t)(mixed ^ (mixed >> 32u));
 }
 
-static void disc_int_ht_init(DiscPool *pool, DiscIntHashTable *ht,
+static bool disc_int_ht_init(DiscPool *pool, DiscIntHashTable *ht,
                              uint32_t min_cap) {
     uint32_t cap = 32u;
     while (cap < min_cap * 2u)
         cap *= 2u;
     ht->entries = disc_pool_alloc(pool, sizeof(*ht->entries) * (size_t)cap);
+    if (!ht->entries) return false;
     memset(ht->entries, 0, sizeof(*ht->entries) * (size_t)cap);
     ht->mask = cap - 1u;
     ht->count = 0u;
+    return true;
 }
 
 static DiscNode *disc_int_ht_get(
@@ -1013,14 +1042,16 @@ static DiscNode *disc_int_ht_get(
     }
 }
 
-static void disc_int_ht_put(
+static bool disc_int_ht_put(
         DiscPool *pool, DiscIntHashTable *ht, int64_t key, DiscNode *child) {
     if (ht->count * 10u > (ht->mask + 1u) * 7u) {
         uint32_t old_cap = ht->mask + 1u;
         DiscIntBranch *old = ht->entries;
         uint32_t new_cap = old_cap * 2u;
-        ht->entries = disc_pool_alloc(
+        DiscIntBranch *entries = disc_pool_alloc(
             pool, sizeof(*ht->entries) * (size_t)new_cap);
+        if (!entries) return false;
+        ht->entries = entries;
         memset(ht->entries, 0,
                sizeof(*ht->entries) * (size_t)new_cap);
         ht->mask = new_cap - 1u;
@@ -1039,12 +1070,13 @@ static void disc_int_ht_put(
         .child = child,
     };
     ht->count++;
+    return true;
 }
 
 static void disc_scalar_promote(DiscPool *pool, DiscScalarBranches *scalars) {
     DiscIntBranch *old = scalars->list;
     uint32_t count = scalars->count;
-    disc_int_ht_init(pool, &scalars->ht, count + 16u);
+    if (!disc_int_ht_init(pool, &scalars->ht, count + 16u)) return;
     for (uint32_t i = 0u; i < count; i++)
         disc_int_ht_put(pool, &scalars->ht, old[i].key, old[i].child);
     disc_pool_release(pool, old, sizeof(*old) * (size_t)scalars->cap);
@@ -1065,6 +1097,7 @@ static DiscNode *disc_get_scalar(DiscPool *pool, DiscNode *n,
     DiscBranchSet *branches = n->edge_kind == DISC_EDGE_MANY
         ? n->edge.many
         : disc_promote_singleton(pool, n);
+    if (!branches) return NULL;
     DiscScalarBranches *scalars = kind == DISC_EDGE_STRING
         ? &branches->strs : &branches->ints;
     if (scalars->hashed) {
@@ -1072,7 +1105,7 @@ static DiscNode *disc_get_scalar(DiscPool *pool, DiscNode *n,
         if (existing)
             return existing;
         DiscNode *child = disc_pool_node(pool, inner);
-        disc_int_ht_put(pool, &scalars->ht, key, child);
+        if (!child || !disc_int_ht_put(pool, &scalars->ht, key, child)) return NULL;
         scalars->count++;
         return child;
     }
@@ -1081,12 +1114,15 @@ static DiscNode *disc_get_scalar(DiscPool *pool, DiscNode *n,
             return scalars->list[i].child;
     if (scalars->count >= scalars->cap) {
         size_t old_bytes = sizeof(scalars->list[0]) * scalars->cap;
-        scalars->cap = scalars->cap ? scalars->cap * 2u : 4u;
-        scalars->list = disc_pool_grow(
+        uint32_t capacity = scalars->cap ? scalars->cap * 2u : 4u;
+        void *grown = disc_pool_grow(
             pool, scalars->list, old_bytes,
-            sizeof(scalars->list[0]) * scalars->cap);
+            sizeof(scalars->list[0]) * capacity);
+        if (!grown) return NULL;
+        scalars->list = grown; scalars->cap = capacity;
     }
     DiscNode *child = disc_pool_node(pool, inner);
+    if (!child) return NULL;
     scalars->list[scalars->count].key = key;
     scalars->list[scalars->count].child = child;
     scalars->count++;
@@ -1123,6 +1159,7 @@ static int64_t disc_string_key_id(const TermUniverse *universe,
 static DiscNode *disc_insert_atom(DiscPool *pool, DiscNode *node, Atom *a,
                                   unsigned depth, CettaIndexExpansionBudget *budget,
                                   bool last) {
+    if (!node || !a) return NULL;
     /* The coordinate made here ends the whole term when it is the last of
      * a last subterm: then its node is a leaf. */
     bool inner = !last;
@@ -1227,6 +1264,7 @@ static bool disc_insert_atom_id(DiscPool *pool, DiscNode *node,
 }
 
 void disc_insert(DiscNode *root, Atom *lhs, CettaIndex eq_idx) {
+    if (!root) return;
     DiscPool *pool = disc_root_pool(root);
     CettaIndexExpansionBudget budget = cetta_index_expansion_budget();
     DiscNode *leaf = disc_insert_atom(pool, root, lhs, 0u, &budget, true);
@@ -1235,6 +1273,7 @@ void disc_insert(DiscNode *root, Atom *lhs, CettaIndex eq_idx) {
 
 bool disc_insert_id(DiscNode *root, const TermUniverse *universe,
                     AtomId atom_id, CettaIndex eq_idx) {
+    if (!root) return false;
     DiscPool *pool = disc_root_pool(root);
     DiscNode *leaf = NULL;
     CettaIndexExpansionBudget budget = cetta_index_expansion_budget();
@@ -2027,6 +2066,7 @@ static SpacePinnedOccurrences *space_pinned_occurrences_acquire(Space *s) {
     SpaceMatchNativeState *st = &s->match_backend.native;
     if (!st->pinned) {
         st->pinned = cetta_malloc(sizeof(*st->pinned));
+        if (!st->pinned) return NULL;
         *st->pinned = (SpacePinnedOccurrences){
             .space = s,
             .lifetime_hold = space_lifetime_pin ? space_lifetime_pin(s) : NULL,
@@ -2358,6 +2398,7 @@ static bool space_occurrence_cursor_capture(
     cursor->prefix_epoch = space->prefix_epoch;
     cursor->ceiling = space->native.len;
     cursor->occurrences = space_pinned_occurrences_acquire(space);
+    if (!cursor->occurrences) return false;
     cursor->pinned = true;
     return space_read_token_prefix_intact(cursor->read);
 }
@@ -2640,6 +2681,7 @@ static bool space_occurrence_cursor_init_rows(Space *s, Atom *pattern,
         cursor->flat_mode = true;
         return space_occurrence_cursor_capture(s, cursor);
     }
+    if (cetta_native_memory_failed && cetta_native_memory_failed()) return false;
     /* A head over variables selects by its head alone: its rows, read in
      * order as they are needed, where the trie would merge every leaf below
      * the head before the first match. */
@@ -2648,6 +2690,7 @@ static bool space_occurrence_cursor_init_rows(Space *s, Atom *pattern,
         cursor->head_mode = true;
         return space_occurrence_cursor_capture(s, cursor);
     }
+    if (cetta_native_memory_failed && cetta_native_memory_failed()) return false;
     /* Rows removed by marks stay where they are and the cursor skips them.
      * The cold scan and a position index being built read rows by logical
      * position, so a marked Space takes the trie instead. */
@@ -3196,6 +3239,38 @@ Atom *space_occurrence_cursor_identity(const SpaceOccurrenceCursor *cursor,
     return index <= INT64_MAX ? atom_int(arena, (int64_t)index) : NULL;
 }
 
+size_t space_occurrence_cursor_accounted_bytes(
+        const SpaceOccurrenceCursor *cursor, bool include_view) {
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
+    if (!cursor)
+        return 0u;
+    size_t bytes = 0u;
+    if (cursor->nodes)
+        bytes += (size_t)cursor->node_len * sizeof(*cursor->nodes);
+    if (cursor->leaf_pos)
+        bytes += (size_t)cursor->node_len * sizeof(*cursor->leaf_pos);
+    if (cursor->flat)
+        bytes += (size_t)cursor->flat_len * sizeof(*cursor->flat);
+    if (cursor->heap)
+        bytes += (size_t)cursor->node_len * sizeof(*cursor->heap);
+    const SpacePinnedOccurrences *view = cursor->occurrences;
+    if (include_view && view && !view->space) {
+        bytes += sizeof(*view);
+        /* Live rows and indexes belong to the Space.  Once detached, the
+         * view owns this row and removal-mark storage; shared trie/head-index
+         * and dense kept-fact storage are deliberately outside this account. */
+        size_t width = cetta_atom_id_storage_width_bytes_from_bits(
+            view->atom_id_width_bits);
+        bytes += (size_t)view->len * width;
+        size_t words = ((size_t)view->mark_rows + 63u) / 64u;
+        if (view->marks)
+            bytes += words * sizeof(*view->marks);
+        if (view->mark_tree)
+            bytes += (words + 1u) * sizeof(*view->mark_tree);
+    }
+    return bytes;
+}
+
 void space_occurrence_cursor_release(SpaceOccurrenceCursor *cursor) {
     CETTA_SCOPED_SHARED_TRANSITION(transition);
     if (!cursor)
@@ -3211,6 +3286,37 @@ void space_occurrence_cursor_release(SpaceOccurrenceCursor *cursor) {
     free(cursor->flat);
     free(cursor->heap);
     space_occurrence_cursor_init_empty(cursor);
+}
+
+bool space_head_snapshot_init(Space *space, SpaceHeadSnapshot *snapshot) {
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
+    if(!snapshot)return false;
+    memset(snapshot,0,sizeof(*snapshot));
+    Arena scratch;arena_init(&scratch);
+    Atom *all=atom_var(&scratch,"source-view-row");
+    bool ok=all&&space_occurrence_cursor_init(space,all,&snapshot->rows);
+    if(ok)snapshot->heads=space_head_index_prepare(space);
+    if(!snapshot->heads)ok=false;
+    if(!ok)space_occurrence_cursor_release(&snapshot->rows);
+    arena_free(&scratch);return ok;
+}
+
+bool space_head_snapshot_select(const SpaceHeadSnapshot *snapshot,
+    const SymbolId *heads, size_t count, SpaceOccurrenceCursor *cursor) {
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
+    if(!snapshot||!snapshot->heads||!cursor)return false;
+    CettaIndex *rows=NULL;CettaCount length=0u;
+    if(!space_head_index_select_heads(snapshot->heads,heads,count,
+        snapshot->rows.ceiling,&rows,&length))return false;
+    if(!space_occurrence_cursor_clone(&snapshot->rows,cursor)){free(rows);return false;}
+    free(cursor->flat);cursor->flat=rows;cursor->flat_len=length;cursor->flat_next=0u;
+    cursor->full_scan=false;cursor->flat_mode=true;cursor->head_mode=false;
+    cursor->has_last=false;return true;
+}
+
+void space_head_snapshot_release(SpaceHeadSnapshot *snapshot) {
+    if(!snapshot)return;
+    space_occurrence_cursor_release(&snapshot->rows);snapshot->heads=NULL;
 }
 
 void disc_lookup_expression_coordinates(
@@ -3798,10 +3904,16 @@ static void eq_bucket_add(EqBucket *b, Atom *lhs, CettaIndex atom_idx,
     CettaIndex idx = b->len;
     SymbolId head = eq_head_symbol(lhs);
     if (b->len >= b->cap) {
-        b->cap = b->cap ? b->cap * 2 : 8;
-        b->atom_indices =
-            cetta_realloc(b->atom_indices, sizeof(CettaIndex) * b->cap);
-        b->atom_ids = cetta_realloc(b->atom_ids, sizeof(AtomId) * b->cap);
+        CettaIndex capacity = b->cap ? b->cap * 2u : 8u;
+        CettaIndex *indices = cetta_malloc(sizeof(*indices) * capacity);
+        AtomId *ids = cetta_malloc(sizeof(*ids) * capacity);
+        if (!indices || !ids) { free(indices); free(ids); return; }
+        if (b->len) {
+            memcpy(indices, b->atom_indices, sizeof(*indices) * b->len);
+            memcpy(ids, b->atom_ids, sizeof(*ids) * b->len);
+        }
+        free(b->atom_indices); free(b->atom_ids);
+        b->atom_indices = indices; b->atom_ids = ids; b->cap = capacity;
     }
     b->atom_indices[b->len] = atom_idx;
     b->atom_ids[b->len] = equation_id;
@@ -3809,7 +3921,9 @@ static void eq_bucket_add(EqBucket *b, Atom *lhs, CettaIndex atom_idx,
     eq_bucket_note_head(b, head);
     /* Add to discrimination trie */
     if (!b->trie) b->trie = disc_node_new();
+    if (!b->trie) return;
     disc_insert(b->trie, lhs, idx);
+    if (cetta_native_memory_failed && cetta_native_memory_failed()) return;
     stree_bucket_insert(&b->subst, lhs, idx);
     b->subst_safe = b->subst_safe && atom_is_eq_subst_safe(lhs);
 }
@@ -3828,10 +3942,16 @@ static void eq_bucket_add_id(EqBucket *b, const Space *s, AtomId lhs_id,
     }
     CettaIndex idx = b->len;
     if (b->len >= b->cap) {
-        b->cap = b->cap ? b->cap * 2 : 8;
-        b->atom_indices =
-            cetta_realloc(b->atom_indices, sizeof(CettaIndex) * b->cap);
-        b->atom_ids = cetta_realloc(b->atom_ids, sizeof(AtomId) * b->cap);
+        CettaIndex capacity = b->cap ? b->cap * 2u : 8u;
+        CettaIndex *indices = cetta_malloc(sizeof(*indices) * capacity);
+        AtomId *ids = cetta_malloc(sizeof(*ids) * capacity);
+        if (!indices || !ids) { free(indices); free(ids); return; }
+        if (b->len) {
+            memcpy(indices, b->atom_indices, sizeof(*indices) * b->len);
+            memcpy(ids, b->atom_ids, sizeof(*ids) * b->len);
+        }
+        free(b->atom_indices); free(b->atom_ids);
+        b->atom_indices = indices; b->atom_ids = ids; b->cap = capacity;
     }
     b->atom_indices[b->len] = atom_idx;
     b->atom_ids[b->len] = equation_id;
@@ -3839,6 +3959,7 @@ static void eq_bucket_add_id(EqBucket *b, const Space *s, AtomId lhs_id,
     eq_bucket_note_head(b, head);
     if (!b->trie)
         b->trie = disc_node_new();
+    if (!b->trie) return;
     if (!disc_insert_id(b->trie, s->native.universe, lhs_id, idx)) {
         Atom *lhs = term_universe_get_atom(s->native.universe, lhs_id);
         if (lhs)
@@ -4118,13 +4239,16 @@ static SpaceHeadChain *space_head_chain_insert(SpaceHeadChains *rows,
                                                SymbolId head) {
     if (head == SYMBOL_ID_NONE)
         return &rows->headless;
-    if (((uint64_t)rows->chain_len + 1u) * 4u > (uint64_t)rows->chain_cap * 3u) {
+    /* Keep linear-probing occupancy below 1/2.  Library suffixes must not
+     * turn an ordinary head's constant-time lookup into a collision chain. */
+    if (((uint64_t)rows->chain_len + 1u) * 2u > (uint64_t)rows->chain_cap) {
         if (rows->chain_cap > UINT32_MAX / 2u) {
             fputs("CeTTa: exhausted head-chain heads\n", stderr);
             abort();
         }
         uint32_t cap = rows->chain_cap ? rows->chain_cap * 2u : 64u;
         SpaceHeadChain *chains = cetta_malloc(sizeof(*chains) * cap);
+        if (!chains) return NULL;
         memset(chains, 0, sizeof(*chains) * cap);
         for (uint32_t i = 0u; i < rows->chain_cap; i++) {
             if (rows->chains[i].head != SYMBOL_ID_NONE)
@@ -4154,17 +4278,25 @@ static void space_head_chains_append(SpaceHeadChains *rows, SymbolId head,
             abort();
         }
         CettaIndex cap = rows->cap ? rows->cap * 2u : 16u;
-        rows->atom_indices =
-            cetta_realloc(rows->atom_indices, sizeof(CettaIndex) * cap);
-        rows->atom_ids = cetta_realloc(rows->atom_ids, sizeof(AtomId) * cap);
-        rows->next = cetta_realloc(rows->next, sizeof(uint32_t) * cap);
+        CettaIndex *indices = cetta_malloc(sizeof(*indices) * cap);
+        AtomId *ids = cetta_malloc(sizeof(*ids) * cap);
+        uint32_t *next = cetta_malloc(sizeof(*next) * cap);
+        if (!indices || !ids || !next) { free(indices); free(ids); free(next); return; }
+        if (rows->len) {
+            memcpy(indices, rows->atom_indices, sizeof(*indices) * rows->len);
+            memcpy(ids, rows->atom_ids, sizeof(*ids) * rows->len);
+            memcpy(next, rows->next, sizeof(*next) * rows->len);
+        }
+        free(rows->atom_indices); free(rows->atom_ids); free(rows->next);
+        rows->atom_indices = indices; rows->atom_ids = ids; rows->next = next;
         rows->cap = cap;
     }
+    SpaceHeadChain *chain = space_head_chain_insert(rows, head);
+    if (!chain) return;
     uint32_t row = (uint32_t)rows->len++;
     rows->atom_indices[row] = atom_idx;
     rows->atom_ids[row] = atom_id;
     rows->next[row] = SPACE_HEAD_CHAIN_END;
-    SpaceHeadChain *chain = space_head_chain_insert(rows, head);
     if (chain->last == SPACE_HEAD_CHAIN_END)
         chain->first = row;
     else
@@ -4203,7 +4335,7 @@ static inline const EqBucket *eq_index_bucket_view(const EqIndex *idx,
 }
 
 /* Filing an equation allocates the bucket array (all buckets empty). */
-static EqBucket *eq_index_bucket_for_add(EqIndex *idx, uint32_t i) {
+static __attribute__((unused)) EqBucket *eq_index_bucket_for_add(EqIndex *idx, uint32_t i) {
     if (!idx->buckets) {
         idx->buckets = cetta_malloc(sizeof(*idx->buckets) * EQ_INDEX_BUCKETS);
         for (uint32_t b = 0; b < EQ_INDEX_BUCKETS; b++)
@@ -4232,14 +4364,28 @@ static void eq_index_note_directional_row(EqIndex *idx, const Space *s,
         idx->directional_wildcard = true;
 }
 
+/* HEAD's bucket, the buckets made with the index's first equation with a
+ * head. */
+static EqBucket *eq_index_head_bucket(EqIndex *idx, SymbolId head) {
+    if (!idx->buckets) {
+        EqBucket *buckets = cetta_malloc(sizeof(*buckets) * EQ_INDEX_BUCKETS);
+        if (!buckets) return NULL;
+        for (uint32_t i = 0; i < EQ_INDEX_BUCKETS; i++)
+            eq_bucket_init(&buckets[i]);
+        idx->buckets = buckets;
+    }
+    return &idx->buckets[symbol_hash(head)];
+}
 
 static void eq_index_add(EqIndex *idx, Atom *lhs, CettaIndex atom_idx,
                          AtomId equation_id) {
     SymbolId head = eq_head_symbol(lhs);
     if (head != SYMBOL_ID_NONE) {
         space_head_chains_append(&idx->head_rows, head, atom_idx, equation_id);
-        eq_bucket_add(eq_index_bucket_for_add(idx, symbol_hash(head)), lhs,
-                      atom_idx, equation_id);
+        if (cetta_native_memory_failed && cetta_native_memory_failed()) return;
+        EqBucket *bucket = eq_index_head_bucket(idx, head);
+        if (!bucket) return;
+        eq_bucket_add(bucket, lhs, atom_idx, equation_id);
     } else {
         eq_bucket_add(&idx->wildcard, lhs, atom_idx, equation_id);
     }
@@ -4250,8 +4396,10 @@ static void eq_index_add_id(EqIndex *idx, const Space *s, AtomId lhs_id,
     SymbolId head = eq_head_symbol_id(s, lhs_id);
     if (head != SYMBOL_ID_NONE) {
         space_head_chains_append(&idx->head_rows, head, atom_idx, equation_id);
-        eq_bucket_add_id(eq_index_bucket_for_add(idx, symbol_hash(head)), s,
-                         lhs_id, atom_idx, equation_id);
+        if (cetta_native_memory_failed && cetta_native_memory_failed()) return;
+        EqBucket *bucket = eq_index_head_bucket(idx, head);
+        if (!bucket) return;
+        eq_bucket_add_id(bucket, s, lhs_id, atom_idx, equation_id);
     } else {
         eq_bucket_add_id(&idx->wildcard, s, lhs_id, atom_idx, equation_id);
     }
@@ -4291,6 +4439,7 @@ static void ty_ann_index_init(TypeAnnIndex *idx) {
     space_head_chains_init(&idx->rows);
     idx->has_open_rows = false;
     idx->has_non_symbol_subjects = false;
+    idx->has_identity_rows = false;
 }
 static void ty_ann_index_free(TypeAnnIndex *idx) {
     space_head_chains_free(&idx->rows);
@@ -4332,29 +4481,87 @@ static void ty_ann_index_add_id(TypeAnnIndex *idx, const Space *s,
                              atom_idx, annotation_id);
 }
 
-static void ty_ann_index_note_row(TypeAnnIndex *idx, const Space *s,
-                                   AtomId row_id) {
-    if (idx->has_open_rows)
-        return;
+/* Whether the stored term `id` holds an identity-carrying value (the
+ * grounded kinds atom.c flags ATOM_FLAG_HAS_IDENTITY_GROUNDED: a state cell,
+ * a space, a capture, bindings, a foreign value, a seal), read by id
+ * through the term records and, for an entry without a record, from its
+ * atom's flags.  Past `budget` nodes the answer is yes. */
+static bool space_term_holds_identity(const TermUniverse *universe,
+                                      AtomId id, uint32_t *budget) {
+    if (!universe || id == CETTA_ATOM_ID_NONE || *budget == 0u)
+        return true;
+    (*budget)--;
+    const CettaTermHdr *hdr = tu_hdr(universe, id);
+    if (!hdr) {
+        const Atom *atom = term_universe_peek_atom(universe, id);
+        return !atom || (atom->flags & ATOM_FLAG_HAS_IDENTITY_GROUNDED) != 0u;
+    }
+    switch ((AtomKind)hdr->tag) {
+    case ATOM_GROUNDED: {
+        GroundedKind kind = (GroundedKind)hdr->subtag;
+        return cetta_gslt_identity_bearing_grounded_kind(kind) ||
+            kind == GV_SEAL;
+    }
+    case ATOM_EXPR: {
+        CettaExprLen arity =
+            (CettaExprLen)(hdr->aux32 & CETTA_TERM_HDR_DATA_MASK);
+        for (CettaExprIndex i = 0u; i < arity; i++) {
+            if (space_term_holds_identity(
+                    universe, tu_child_from_header(universe, hdr, i), budget))
+                return true;
+        }
+        return false;
+    }
+    default:
+        return false;
+    }
+}
+
+static void ty_ann_index_note_identity(TypeAnnIndex *idx, const Space *s,
+                                       AtomId row_id) {
     const TermUniverse *universe = s->native.universe;
+    if (idx->has_identity_rows || tu_kind(universe, row_id) != ATOM_EXPR ||
+        tu_arity(universe, row_id) != 3u)
+        return;
+    SymbolId head = tu_head_sym(universe, row_id);
+    if (head != g_builtin_syms.colon && head != g_builtin_syms.subtype)
+        return;
+    uint32_t budget = 1024u;
+    if (space_term_holds_identity(universe, row_id, &budget))
+        idx->has_identity_rows = true;
+}
+
+/* Whether a row's outer form is open: a variable, an expression headed by
+ * no symbol, or a PeTTa value that is not ordinary.  Such a row can match a
+ * declaration, a subtype or an equation query without being headed by ':',
+ * ':<' or '='. */
+static bool space_atom_outer_open(const Atom *row) {
+    return !row || row->kind == ATOM_VAR || atom_structural_has_rational(row) ||
+        (row->kind == ATOM_EXPR && row->expr.len != 0u &&
+         (atom_head_symbol_id(row) == SYMBOL_ID_NONE ||
+          atom_petta_value_representation(row) != PETTA_VALUE_ORDINARY));
+}
+
+static bool space_row_outer_open(const TermUniverse *universe, AtomId row_id) {
     const CettaTermHdr *header = tu_hdr(universe, row_id);
     if (header) {
         /* These structural tests share the already validated record header. */
         AtomKind kind = (AtomKind)header->tag;
-        if (kind == ATOM_VAR ||
+        return kind == ATOM_VAR ||
             (kind == ATOM_EXPR &&
              (header->aux32 & CETTA_TERM_HDR_DATA_MASK) != 0u &&
              (header->sym_or_head == SYMBOL_ID_NONE ||
               tu_petta_value_representation(universe, row_id) !=
-                  PETTA_VALUE_ORDINARY)))
-            idx->has_open_rows = true;
-        return;
+                  PETTA_VALUE_ORDINARY));
     }
-    Atom *row = term_universe_peek_atom(universe, row_id);
-    if (!row || row->kind == ATOM_VAR || atom_structural_has_rational(row) ||
-        (row->kind == ATOM_EXPR && row->expr.len != 0u &&
-         (atom_head_symbol_id(row) == SYMBOL_ID_NONE ||
-          atom_petta_value_representation(row) != PETTA_VALUE_ORDINARY)))
+    return space_atom_outer_open(term_universe_peek_atom(universe, row_id));
+}
+
+static void ty_ann_index_note_row(TypeAnnIndex *idx, const Space *s,
+                                   AtomId row_id) {
+    ty_ann_index_note_identity(idx, s, row_id);
+    if (!idx->has_open_rows &&
+        space_row_outer_open(s->native.universe, row_id))
         idx->has_open_rows = true;
 }
 
@@ -5549,17 +5756,34 @@ static void space_term_universe_roots(const TermUniverse *universe,
                                visit_context);
 }
 
-static void space_attach_to_universe(Space *s, TermUniverse *universe) {
+static void space_detach_from_universe(Space *s);
+
+static bool space_attach_to_universe_try(Space *s, TermUniverse *universe, bool empty_unpublished) {
     if (!s || !universe)
-        return;
-    (void)term_universe_add_store_format_observer(
-        universe, space_term_universe_store_format_observer, s);
-    (void)term_universe_add_owned_root_provider(
-        universe, space_term_universe_counted_roots, s, true, s);
-    (void)term_universe_add_owned_root_provider(
-        universe, space_term_universe_roots, s, false, s);
-    if (space_reclaim_resource_cycles)
-        universe->resource_collector = space_reclaim_resource_cycles;
+        return true;
+    TermUniverseCollectionMode mode = universe->collection_mode;
+    if (term_universe_add_store_format_observer(
+            universe, space_term_universe_store_format_observer, s) &&
+        term_universe_add_owned_root_provider(
+            universe, space_term_universe_counted_roots, s, true, s) &&
+        term_universe_add_owned_root_provider(
+            universe, space_term_universe_roots, s, false, s)) {
+        if (space_reclaim_resource_cycles)
+            universe->resource_collector = space_reclaim_resource_cycles;
+        return true;
+    }
+    int error = errno;
+    space_detach_from_universe(s);
+    if (empty_unpublished) universe->collection_mode = mode;
+    errno = error;
+    return false;
+}
+
+static void space_attach_to_universe(Space *s, TermUniverse *universe) {
+    if (!space_attach_to_universe_try(s, universe, false)) {
+        perror("fatal: space root registration");
+        abort();
+    }
 }
 
 static void space_detach_from_universe(Space *s) {
@@ -5814,20 +6038,23 @@ static bool space_overlay_remove_local_raw_index(Space *s, CettaIndex raw_idx) {
     return true;
 }
 
-static void space_reserve_linear(Space *s, CettaIndex min_cap) {
+static bool space_reserve_linear(Space *s, CettaIndex min_cap) {
     size_t width = 0;
     if (s->native.cap >= min_cap)
-        return;
+        return true;
     if (!space_sync_atom_id_storage_width(s))
-        return;
+        return false;
     CettaIndex new_cap = s->native.cap ? s->native.cap : 64;
     while (new_cap < min_cap)
         new_cap *= 2;
     width = space_atom_id_width_bytes_bits(s->native.atom_id_width_bits);
-    s->native.atom_ids = cetta_realloc(
+    uint8_t *atom_ids = cetta_realloc(
         s->native.atom_ids, width * (size_t)new_cap);
+    if (!atom_ids) return false;
+    s->native.atom_ids = atom_ids;
     s->native.cap = new_cap;
     space_note_atom_id_storage_peak(s);
+    return true;
 }
 
 /* Rows a space removes release the references they held: the universe
@@ -6010,12 +6237,14 @@ static void space_dense_touch(Space *s) {
 /* CETTA_SPACE_DENSE_TRACE=1 prints each head that takes a relation and each
  * that gives one back. */
 static bool space_dense_trace(void) {
-    static int trace = -1;
-    if (trace < 0) {
+    static _Atomic int trace = -1;
+    int value = atomic_load_explicit(&trace, memory_order_relaxed);
+    if (value < 0) {
         const char *flag = getenv("CETTA_SPACE_DENSE_TRACE");
-        trace = flag && *flag && strcmp(flag, "0") != 0;
+        value = flag && *flag && strcmp(flag, "0") != 0;
+        atomic_store_explicit(&trace, value, memory_order_relaxed);
     }
-    return trace != 0;
+    return value != 0;
 }
 
 /* CETTA_SPACE_DENSE: off (or 0) keeps every fact a row; eager gives a head
@@ -6024,16 +6253,18 @@ static bool space_dense_trace(void) {
 enum { SPACE_DENSE_MODE_OFF, SPACE_DENSE_MODE_ON, SPACE_DENSE_MODE_EAGER };
 
 static int space_dense_mode(void) {
-    static int mode = -1;
-    if (mode < 0) {
+    static _Atomic int mode = -1;
+    int value = atomic_load_explicit(&mode, memory_order_relaxed);
+    if (value < 0) {
         const char *flag = getenv("CETTA_SPACE_DENSE");
-        mode = !flag ? SPACE_DENSE_MODE_ON
+        value = !flag ? SPACE_DENSE_MODE_ON
              : strcmp(flag, "off") == 0 || strcmp(flag, "0") == 0
                  ? SPACE_DENSE_MODE_OFF
              : strcmp(flag, "eager") == 0 ? SPACE_DENSE_MODE_EAGER
              : SPACE_DENSE_MODE_ON;
+        atomic_store_explicit(&mode, value, memory_order_relaxed);
     }
-    return mode;
+    return value;
 }
 
 static bool space_dense_off(void) {
@@ -7070,6 +7301,20 @@ static SpaceKeptOccurrences *space_dense_deep_occurrences(
     bool none = !cetta_skeleton_align(s->native.universe, head->skeleton,
                                       pattern, head->open_holes, fixed,
                                       &exact);
+    /* A hole holds a part whole, so a part the pattern leaves to
+     * unification there (an expression with variables, or any part where
+     * some fact holds a variable) selects no tuple by its id.  When no hole
+     * selects any, every read would walk the whole relation, which the
+     * rows' index answers by structure: the relation goes back to them. */
+    if (!none && !exact) {
+        bool selects = false;
+        for (uint32_t c = 0u; c < head->arity; c++)
+            selects = selects || fixed[c] != CETTA_DENSE_ANY;
+        if (!selects) {
+            space_dense_settle_head(s, head);
+            return NULL;
+        }
+    }
     SpaceKeptGather gather;
     space_kept_gather_init(&gather, head->arity);
     bool ok = none || cetta_tuple_table_each(&head->table, fixed,
@@ -8039,14 +8284,12 @@ CettaCount space_dense_remove_ground(Space *s, Atom *atom) {
     return 1u;
 }
 
-/* Remove ATOM_ID from its relation: true when it held it.  A copy kept as
- * a row is just as good to remove; either leaves the same bag. */
-static bool space_dense_route_remove(Space *s, AtomId atom_id) {
+static SpaceDenseHead *space_dense_route_head(
+        Space *s, AtomId atom_id, AtomId *columns) {
     if (s->native.dense_facts == 0u)
-        return false;
+        return NULL;
     SymbolId head_sym;
     AtomId head_id;
-    AtomId columns[CETTA_TUPLE_MAX_ARITY];
     uint32_t arity = 0u;
     SpaceDenseHead *head = space_dense_deep_record(s, atom_id, columns);
     if (!head &&
@@ -8055,8 +8298,21 @@ static bool space_dense_route_remove(Space *s, AtomId atom_id) {
         if (head && (head->arity != arity || head->skeleton))
             head = NULL;
     }
-    if (!head || head->state != SPACE_DENSE_KEPT ||
-        !space_dense_kept_remove(s, head, columns))
+    return head && head->state == SPACE_DENSE_KEPT ? head : NULL;
+}
+
+static bool space_dense_route_holds(Space *s, AtomId atom_id) {
+    AtomId columns[CETTA_TUPLE_MAX_ARITY];
+    SpaceDenseHead *head = space_dense_route_head(s, atom_id, columns);
+    return head && space_dense_kept_contains(head, columns);
+}
+
+/* Remove ATOM_ID from its relation: true when it held it.  A copy kept as
+ * a row is just as good to remove; either leaves the same bag. */
+static bool space_dense_route_remove(Space *s, AtomId atom_id) {
+    AtomId columns[CETTA_TUPLE_MAX_ARITY];
+    SpaceDenseHead *head = space_dense_route_head(s, atom_id, columns);
+    if (!head || !space_dense_kept_remove(s, head, columns))
         return false;
     s->native.dense_facts--;
     space_note_released(s, 1u);
@@ -8279,8 +8535,14 @@ static bool space_marks_admit(const Space *s) {
            s->native.atom_ids && s->native.start == 0u;
 }
 
-bool space_remove_logical_positions(Space *s, const CettaIndex *positions,
-                                    CettaCount count) {
+/* Validate logical positions and retain their physical rows before any write.
+ * Appends preserve those rows; a prefix rewrite stales the enclosing prepared
+ * effect.  Splitting this from publication lets a dense relation selection and
+ * its row copies commit as one primitive without a second validation scan. */
+static bool space_logical_positions_prepare(
+        Space *s, const CettaIndex *positions, CettaCount count,
+        CettaIndex **rows_out) {
+    *rows_out = NULL;
     if (!space_proof_prepare_mutation(s)) return false;
     if (!s || (count && !positions))
         return false;
@@ -8293,10 +8555,10 @@ bool space_remove_logical_positions(Space *s, const CettaIndex *positions,
     if (space_dense_facts(s) != 0u &&
         positions[count - 1u] >= space_length64(s) - space_dense_facts(s))
         space_dense_settle(s, SYMBOL_ID_NONE);
-    /* Pinned readers keep the rows and marks they began with. */
-    space_pinned_occurrences_detach(s);
     CettaCount live = space_length64(s);
-    CettaIndex *rows = cetta_malloc((size_t)count * sizeof(*rows));
+    CettaIndex *rows = cetta_fallible_malloc((size_t)count * sizeof(*rows));
+    if (!rows)
+        return false;
     for (CettaCount i = 0u; i < count; i++) {
         if (positions[i] >= live || (i && positions[i] <= positions[i - 1u])) {
             free(rows);
@@ -8311,6 +8573,19 @@ bool space_remove_logical_positions(Space *s, const CettaIndex *positions,
             return false;
         }
     }
+    *rows_out = rows;
+    return true;
+}
+
+/* Publish rows whose admission and allocation completed above.  No route
+ * refusal remains in this section. */
+static void space_logical_positions_publish(
+        Space *s, const CettaIndex *positions, const CettaIndex *rows,
+        CettaCount count) {
+    if (count == 0u)
+        return;
+    /* Pinned readers keep the rows and marks they began with. */
+    space_pinned_occurrences_detach(s);
     /* While no two synced rows share a key, a removed row's key leaves the
      * presence bits with it, read before the row's id is released, and the
      * synced prefix loses the rows it held; once two do, the bits are
@@ -8349,7 +8624,6 @@ bool space_remove_logical_positions(Space *s, const CettaIndex *positions,
             s->native.exact_idx_dirty = true;
         space_path_indexes_note_mark(s, rows[i], atom_id);
     }
-    free(rows);
     s->native.has_non_exact_atoms_dirty = true;
     if (presence_follows) {
         s->native.id_present_synced_len -= presence_removed;
@@ -8368,6 +8642,15 @@ bool space_remove_logical_positions(Space *s, const CettaIndex *positions,
      * twice the rows it removes. */
     if (s->native.marked >= s->native.len - s->native.marked)
         space_settle_marks(s);
+}
+
+bool space_remove_logical_positions(Space *s, const CettaIndex *positions,
+                                    CettaCount count) {
+    CettaIndex *rows = NULL;
+    if (!space_logical_positions_prepare(s, positions, count, &rows))
+        return false;
+    space_logical_positions_publish(s, positions, rows, count);
+    free(rows);
     return true;
 }
 
@@ -8385,17 +8668,17 @@ void space_linearize(Space *s) {
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_QUEUE_COMPACT);
 }
 
-static void space_queue_reserve_tail(Space *s, CettaIndex extra) {
+static bool space_queue_reserve_tail(Space *s, CettaIndex extra) {
     CettaIndex tail = s->native.start + s->native.len;
     if (tail + extra <= s->native.cap)
-        return;
+        return true;
     if (s->native.start > 0) {
         space_linearize(s);
         tail = s->native.len;
         if (tail + extra <= s->native.cap)
-            return;
+            return true;
     }
-    space_reserve_linear(s, s->native.len + extra);
+    return space_reserve_linear(s, s->native.len + extra);
 }
 
 const char *space_kind_name(SpaceKind kind) {
@@ -8706,8 +8989,12 @@ space_atom_equation_projection(const Space *s, AtomId atom_id, Atom *atom) {
                     return SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION |
                         SPACE_MUTATION_EQUATION_PROJECTION_SUBTYPE;
             }
-            return space_atom_id_is_graded(s, atom_id, atom)
-                ? SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT
+            if (space_atom_id_is_graded(s, atom_id, atom))
+                return SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT;
+            /* An open row can match a declaration, a subtype or an equation
+             * query: it changes them all. */
+            return space_row_outer_open(s->native.universe, atom_id)
+                ? SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE
                 : SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY;
         }
         if (!atom)
@@ -8722,7 +9009,9 @@ space_atom_equation_projection(const Space *s, AtomId atom_id, Atom *atom) {
         if (space_atom_form_is(atom, g_builtin_syms.subtype, 3u))
             return SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION |
                 SPACE_MUTATION_EQUATION_PROJECTION_SUBTYPE;
-        return SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY;
+        return space_atom_outer_open(atom)
+            ? SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE
+            : SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY;
     }
     return SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE;
 }
@@ -8898,7 +9187,10 @@ static void space_append_backend_primary_shadow_id(Space *s,
     if (!st->native_shadow_synced)
         return;
     atom_idx = s->native.len;
-    space_reserve_linear(s, s->native.len + 1u);
+    if (!space_reserve_linear(s, s->native.len + 1u)) {
+        st->native_shadow_synced = false;
+        return;
+    }
     (void)space_atom_id_storage_store_at(
         s->native.atom_ids, s->native.atom_id_width_bits,
         atom_idx, atom_id);
@@ -9119,6 +9411,27 @@ static void ensure_ty_ann_index(Space *s) {
     }
 }
 
+/* Whether a declaration `s` reads, its own, an overlay base's or a
+ * dependency's, holds an identity-carrying value; yes where the index
+ * cannot be brought up to date. */
+static bool space_declarations_hold_identity(const Space *s, uint32_t depth) {
+    if (!s || depth > 8u)
+        return true;
+    for (const Space *view = s; view; view = view->overlay_base) {
+        Space *space = (Space *)view;
+        ensure_ty_ann_index(space);
+        if (space->native.ty_idx_dirty || space->native.ty_idx.has_identity_rows)
+            return true;
+    }
+    uint32_t count = space_dependency_count(s);
+    for (uint32_t i = 0u; i < count; i++) {
+        if (space_declarations_hold_identity(space_dependency_at(s, i),
+                                             depth + 1u))
+            return true;
+    }
+    return false;
+}
+
 /* Whether the exact index is current, building it when it is not. */
 static bool ensure_exact_index(Space *s) {
     return s && space_keeps_exact_index(s) && (!s->native.exact_idx_dirty || exact_index_rebuild(s));
@@ -9186,6 +9499,7 @@ static void space_native_storage_init_empty(Space *s, TermUniverse *universe) {
     s->native.id_present_table_used = 0u;
     s->native.id_present_synced_len = 0;
     s->native.id_present_dirty = false;
+    s->native.id_present_shared = false;
     s->native.id_present_incomplete = false;
     s->native.id_present_shared = false;
     s->native.id_present_keys = NULL;
@@ -9286,21 +9600,21 @@ static void space_reset_moved_from(Space *s) {
  * account of what initializing a space allocates; zero where the library
  * does not report it. */
 static uint64_t space_ledger_heap_in_use(void) {
-#if CETTA_BUILD_WITH_RUNTIME_STATS && defined(__GLIBC__)
+#if CETTA_BUILD_WITH_RUNTIME_STATS
     if (cetta_runtime_stats_is_enabled())
-        return (uint64_t)mallinfo2().uordblks;
+        return (uint64_t)cetta_allocator_info().in_use;
 #endif
     return 0u;
 }
 
-void space_init_with_universe(Space *s, TermUniverse *universe) {
+bool space_try_init_with_universe(Space *s, TermUniverse *universe) {
+    if (!s) { errno = EINVAL; return false; }
     s->lifetime = (SpaceOwner){0};
     s->arena_hold = NULL;
-    if (!s)
-        return;
     atomic_init(&s->read_stamp,0u);
-    s->ledger_counted = cetta_runtime_stats_is_enabled();
-    uint64_t heap_before = s->ledger_counted ? space_ledger_heap_in_use() : 0u;
+    bool ledger_counted = cetta_runtime_stats_is_enabled();
+    s->ledger_counted = false;
+    uint64_t heap_before = ledger_counted ? space_ledger_heap_in_use() : 0u;
     s->kind = SPACE_KIND_ATOM;
     s->strict = false;
     s->dense_from_first = false;
@@ -9312,7 +9626,6 @@ void space_init_with_universe(Space *s, TermUniverse *universe) {
     s->declares_subtypes = false;
     s->prefix_epoch = space_fresh_prefix_epoch();
     space_match_backend_init(s);
-    space_attach_to_universe(s, s->native.universe);
     s->payload_owner_epoch = 0;
     s->payload_export_owner_epoch = 0;
     s->imported_len = 0;
@@ -9326,6 +9639,8 @@ void space_init_with_universe(Space *s, TermUniverse *universe) {
     /* Never cleared later: false is the claim that no subtype row exists. */
     s->declares_subtypes = false;
     space_read_stamp_publish(s);
+    if (!space_attach_to_universe_try(s, s->native.universe, true)) return false;
+    s->ledger_counted = ledger_counted;
     s->arena_hold = NULL;
     if (s->ledger_counted) {
         uint64_t heap_after = space_ledger_heap_in_use();
@@ -9338,6 +9653,14 @@ void space_init_with_universe(Space *s, TermUniverse *universe) {
         if (heap_after > heap_before)
             cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_SPACE_INIT_HEAP_BYTES,
                                     heap_after - heap_before);
+    }
+    return true;
+}
+
+void space_init_with_universe(Space *s, TermUniverse *universe) {
+    if (s && !space_try_init_with_universe(s, universe)) {
+        perror("fatal: space initialization");
+        abort();
     }
 }
 
@@ -10058,7 +10381,7 @@ bool space_read_view_capture(const Space *space, SpaceReadView *out) {
     CETTA_SCOPED_SHARED_TRANSITION(transition);
     if (!out) return false;
     *out = (SpaceReadView){0};
-    if (!space_owner_is_current(space)) return false;
+    if (!space || (space->lifetime.ops && !space_owner_is_current(space))) return false;
     const Space *slow = space->overlay_base;
     const Space *fast = slow;
     while (fast && fast->overlay_base) {
@@ -10068,7 +10391,7 @@ bool space_read_view_capture(const Space *space, SpaceReadView *out) {
     }
     size_t count = 0u;
     for (const Space *base = space->overlay_base; base; base = base->overlay_base) {
-        if (!space_owner_is_current(base)) return false;
+        if (base->lifetime.ops && !space_owner_is_current(base)) return false;
         if (count == SIZE_MAX / sizeof(*out->bases)) return false;
         count++;
     }
@@ -10746,8 +11069,37 @@ SpaceExecutionAnalysisCache *space_execution_analysis_cache_select(
 }
 
 #define g_space_effect_cache (*space_execution_analysis_cache_current())
+static pthread_key_t g_space_effect_cache_key;
+static pthread_once_t g_space_effect_cache_once = PTHREAD_ONCE_INIT;
+static int g_space_effect_cache_key_error;
+static _Thread_local bool g_space_effect_cache_registered;
+
+static void space_effect_cache_thread_exit(void *unused) {
+    (void)unused;
+    /* The thread's own cache, not an image another owner selected. */
+    g_space_effect_cache_selected = NULL;
+    space_execution_analysis_cache_free_for_current_thread();
+}
+
+static void space_effect_cache_key_init(void) {
+    g_space_effect_cache_key_error = pthread_key_create(
+        &g_space_effect_cache_key, space_effect_cache_thread_exit);
+}
+
+static bool space_effect_cache_register(void) {
+    if (g_space_effect_cache_registered) return true;
+    if (pthread_once(&g_space_effect_cache_once, space_effect_cache_key_init) ||
+        g_space_effect_cache_key_error ||
+        pthread_setspecific(g_space_effect_cache_key, &g_space_effect_cache_default))
+        return false;
+    return g_space_effect_cache_registered = true;
+}
 
 void space_execution_analysis_cache_free_for_current_thread(void) {
+    if (g_space_effect_cache_registered) {
+        (void)pthread_setspecific(g_space_effect_cache_key, NULL);
+        g_space_effect_cache_registered = false;
+    }
     for (size_t index = 0u;
          index < SPACE_EFFECT_CACHE_SHARDS; index++) {
         free(g_space_effect_cache.shards[index].entries);
@@ -11009,6 +11361,7 @@ bool space_execution_analysis_cache_transport_target(SpaceExecutionAnalysisCache
 
 static bool space_effect_cache_rehash(
     SpaceEffectCacheShard *shard, size_t requested_cap) {
+    if (!space_effect_cache_register()) return false;
     SpaceEffectCacheEntry *old_entries = shard->entries;
     size_t old_cap = shard->cap;
     size_t next = 128u;
@@ -11790,7 +12143,7 @@ static void eq_index_rebuild(Space *s) {
         else if (space_atom_id_is_graded(s, atom_id, NULL))
             s->native.has_graded_equations = true;
     }
-    s->native.eq_idx_dirty = false;
+    s->native.eq_idx_dirty = cetta_native_memory_failed && cetta_native_memory_failed();
 }
 
 static void ty_ann_index_rebuild(Space *s) {
@@ -11813,7 +12166,7 @@ static void ty_ann_index_rebuild(Space *s) {
         if (subject)
             ty_ann_index_add(&s->native.ty_idx, subject, i, atom_id);
     }
-    s->native.ty_idx_dirty = false;
+    s->native.ty_idx_dirty = cetta_native_memory_failed && cetta_native_memory_failed();
 }
 
 /* Lazily bring the presence bitset up to date with membership.  id_present is a
@@ -12058,8 +12411,7 @@ static bool space_set_holds(Space *s, AtomId atom_id, Atom *atom) {
          s->match_backend.kind == SPACE_ENGINE_NATIVE_CANDIDATE_EXACT)) {
         if (!tu_has_vars(universe, atom_id)) {
             if (s->native.id_present_dirty && !s->native.exact_idx_dirty)
-                return exact_index_holds_id(
-                    universe, &s->native.exact_idx, atom_id);
+                return exact_index_holds_id(universe, &s->native.exact_idx, atom_id);
             if (id_present_sync(s))
                 return id_present_contains(&s->native, atom_id);
         } else {
@@ -12077,6 +12429,17 @@ static bool space_set_holds(Space *s, AtomId atom_id, Atom *atom) {
 }
 
 static void space_add_stored_id(Space *s, AtomId atom_id, Atom *backend_atom) {
+    /* Refusal has already recorded its backend error. Void public mutations
+     * preserve that channel; admission callers use the acceptance result. */
+    (void)space_add_stored_id_as(s, atom_id, backend_atom, false);
+}
+
+/* `set_checked`: the caller has just found, by the presence bitset, that
+ * the set holds no copy of the atom and no alpha-variant, and `atom_id` is
+ * the atom's own presence key (its alpha key). */
+static bool space_add_stored_id_as(Space *s, AtomId atom_id,
+                                   Atom *backend_atom, bool set_checked) {
+    if (!space_proof_prepare_storage(s)) return false;
 #if CETTA_MANAGED_SYMBOLS
     /* Equations and arrow declarations introduce callable identities. Ordinary
      * facts only retain their values; they do not register their spellings. */
@@ -12116,17 +12479,6 @@ static void space_add_stored_id(Space *s, AtomId atom_id, Atom *backend_atom) {
             (void)atom_symbol_register_id(name);
     }
 #endif
-    /* Refusal has already recorded its backend error. Void public mutations
-     * preserve that channel; admission callers use the acceptance result. */
-    (void)space_add_stored_id_as(s, atom_id, backend_atom, false);
-}
-
-/* `set_checked`: the caller has just found, by the presence bitset, that
- * the set holds no copy of the atom and no alpha-variant, and `atom_id` is
- * the atom's own presence key (its alpha key). */
-static bool space_add_stored_id_as(Space *s, AtomId atom_id,
-                                   Atom *backend_atom, bool set_checked) {
-    if (!space_proof_prepare_storage(s)) return false;
     if (space_dense_route_add(s, atom_id, set_checked))
         return true;
     /* A set holds a fact once, as a row or in a relation, which may hold it
@@ -12168,12 +12520,12 @@ static bool space_add_stored_id_as(Space *s, AtomId atom_id,
     }
     CettaIndex idx = s->native.len;
     if (space_is_queue(s)) {
-        space_queue_reserve_tail(s, 1);
+        if (!space_queue_reserve_tail(s, 1)) return false;
         (void)space_atom_id_storage_store_at(
             s->native.atom_ids, s->native.atom_id_width_bits,
             s->native.start + s->native.len, atom_id);
     } else {
-        space_reserve_linear(s, s->native.len + 1);
+        if (!space_reserve_linear(s, s->native.len + 1)) return false;
         (void)space_atom_id_storage_store_at(
             s->native.atom_ids, s->native.atom_id_width_bits, s->native.len,
             atom_id);
@@ -12243,6 +12595,13 @@ static bool space_add_stored_id_as(Space *s, AtomId atom_id,
         if (!s->native.has_non_exact_atoms_dirty &&
             !atom_id_is_exact_indexable(s, atom_id))
             s->native.has_non_exact_atoms = true;
+    }
+    if (cetta_native_memory_failed && cetta_native_memory_failed()) {
+        /* The primary occurrence is committed. Secondary observations must
+         * rebuild from it after a refused incremental index allocation. */
+        space_mark_indexes_dirty(s);
+        space_match_backend_note_remove(s);
+        return true;
     }
     /* Match backend owns its own incremental indexing policy. */
     if (backend_needs_atom)
@@ -12631,7 +12990,7 @@ static bool space_add_atom_ids_batch_rows(Space *s, const AtomId *atom_ids,
         size_t width = space_atom_id_width_bytes_bits(s->native.atom_id_width_bits);
         if (!width || next_len > SIZE_MAX / width)
             return false;
-        space_reserve_linear(s, next_len);
+        if (!space_reserve_linear(s, next_len)) return false;
         CettaIndex start = s->native.len;
         for (CettaCount i = 0u; i < atom_count; i++) {
             if (!space_atom_id_storage_store_at(s->native.atom_ids,
@@ -12932,7 +13291,6 @@ bool space_admit_atoms_batch_from_source_arena(
  * instance identities: a copy (a clone holds what its source held) or a
  * move (a space takes over another's contents). */
 static SpaceContentsMovedHook g_space_contents_moved_hook;
-
 enum { SPACE_ADDITIVE_COPY_WINDOW = 512u };
 
 static bool space_additive_copy_supported(const Space *source,
@@ -13589,11 +13947,14 @@ static bool query_results_ensure_one(QueryResults *qr) {
                                      sizeof(QueryResult) * (size_t)need);
     if (qr->items == qr->inline_items) {
         QueryResult *heap = cetta_malloc(sizeof(QueryResult) * (size_t)next);
+        if (!heap) return false;
         if (qr->len > 0)
             memcpy(heap, qr->items, sizeof(QueryResult) * (size_t)qr->len);
         qr->items = heap;
     } else {
-        qr->items = cetta_realloc(qr->items, sizeof(QueryResult) * (size_t)next);
+        QueryResult *heap = cetta_realloc(qr->items, sizeof(QueryResult) * (size_t)next);
+        if (!heap) return false;
+        qr->items = heap;
     }
     qr->cap = next;
     return true;
@@ -13683,6 +14044,7 @@ static bool query_visible_var_set_reserve(QueryVisibleVarSet *set,
     QueryVisibleVar *next = set->items == set->inline_items
         ? cetta_malloc(sizeof(QueryVisibleVar) * (size_t)next_cap)
         : cetta_realloc(set->items, sizeof(QueryVisibleVar) * (size_t)next_cap);
+    if (!next) return false;
     if (set->items == set->inline_items && set->len > 0)
         memcpy(next, set->items, sizeof(QueryVisibleVar) * (size_t)set->len);
     set->items = next;
@@ -13904,8 +14266,8 @@ static void registry_revision_advance(Registry *r) {
     }
 }
 
-void registry_init(Registry *r) {
-    if (!r) return;
+bool registry_try_init(Registry *r) {
+    if (!r) { errno = EINVAL; return false; }
     atomic_init(&r->revision,1u);
     r->states = NULL;
     r->text_keys = NULL;
@@ -13919,6 +14281,14 @@ void registry_init(Registry *r) {
     r->index_cap = (uint32_t)(sizeof(r->inline_index_slots) /
                               sizeof(r->inline_index_slots[0]));
     memset(r->inline_index_slots, 0, sizeof(r->inline_index_slots));
+    return r->name_keys != NULL;
+}
+
+void registry_init(Registry *r) {
+    if (r && !registry_try_init(r)) {
+        perror("fatal: registry initialization");
+        abort();
+    }
 }
 
 static void registry_states_free(struct RegistryStates *states);
@@ -15453,6 +15823,7 @@ static bool space_contract_occurrence_mask(
 
         CettaIndex *source_to_target = cetta_malloc(
             sizeof(*source_to_target) * (size_t)logical_len);
+        if (!source_to_target) return false;
         CettaIndex target = 0u;
         for (CettaIndex source_index = 0u;
              source_index < logical_len; source_index++) {
@@ -15561,6 +15932,7 @@ static bool space_contract_occurrence_mask(
 
     SpaceReadToken source = space_read_token(s);
     Space *replacement = cetta_malloc(sizeof(*replacement));
+    if (!replacement) return false;
     space_init_with_universe(replacement, s->native.universe);
     replacement->kind = s->kind;
     space_set_strict(replacement, s->strict);
@@ -15622,6 +15994,455 @@ static bool space_contract_occurrence_mask(
     if (ok && out_removed)
         *out_removed = removed;
     return ok;
+}
+
+void space_store_effect_init(SpaceStoreEffect *effect) {
+    if (effect)
+        *effect = (SpaceStoreEffect){0};
+}
+
+void space_store_effect_dispose(SpaceStoreEffect *effect) {
+    if (!effect)
+        return;
+    free(effect->remove_mask);
+    free(effect->remove_positions);
+    free(effect->remove_rows);
+    free(effect->remove_ids);
+    free(effect->remove_id_dense);
+    *effect = (SpaceStoreEffect){0};
+}
+
+void space_store_receipt_init(SpaceStoreReceipt *receipt) {
+    if (!receipt)
+        return;
+    *receipt = (SpaceStoreReceipt){0};
+    arena_init_detached(&receipt->owned);
+    arena_set_block_growth(&receipt->owned, 256u);
+    receipt->initialized = true;
+}
+
+void space_store_receipt_dispose(SpaceStoreReceipt *receipt) {
+    if (!receipt || !receipt->initialized)
+        return;
+    free(receipt->items);
+    free(receipt->positions);
+    arena_free(&receipt->owned);
+    *receipt = (SpaceStoreReceipt){0};
+}
+
+static void space_store_receipt_refuse(SpaceStoreReceipt *receipt) {
+    if (!receipt)
+        return;
+    receipt->len = 0u;
+    receipt->committed_revision = 0u;
+}
+
+static bool space_store_receipt_reserve(SpaceStoreReceipt *receipt,
+                                        const SpaceStoreEffect *effect,
+                                        CettaCount count) {
+    if (!receipt)
+        return true;
+    if (!receipt->initialized || receipt->len != 0u || receipt->items ||
+        receipt->positions || count > SIZE_MAX / sizeof(*receipt->items) ||
+        count > SIZE_MAX / sizeof(*receipt->positions))
+        return false;
+    receipt->kind = effect->kind;
+    receipt->space_instance = space_instance_id(effect->space);
+    receipt->preparation_id = effect->preparation_id;
+    receipt->committed_revision = 0u;
+    receipt->cap = count;
+    if (count == 0u)
+        return true;
+    receipt->items = cetta_fallible_malloc((size_t)count * sizeof(*receipt->items));
+    receipt->positions = cetta_fallible_malloc((size_t)count * sizeof(*receipt->positions));
+    return receipt->items && receipt->positions;
+}
+
+static bool space_store_receipt_record(SpaceStoreReceipt *receipt,
+                                       Atom *atom, CettaIndex position) {
+    if (!receipt)
+        return true;
+    if (receipt->len >= receipt->cap || !atom)
+        return false;
+    CettaCount at = receipt->len;
+    receipt->items[at] = atom_deep_copy(&receipt->owned, atom);
+    receipt->positions[at] = position;
+    if (!receipt->items[at])
+        return false;
+    receipt->len++;
+    return true;
+}
+
+static bool space_store_effect_available(const SpaceStoreEffect *effect) {
+    return effect && !effect->space && !effect->consumed;
+}
+
+static _Atomic uint64_t g_space_store_preparation_id = 0u;
+
+static bool space_store_effect_prepare(SpaceStoreEffect *effect, Space *space,
+                                       SpaceStoreReceipt *receipt,
+                                       CettaCount receipt_count) {
+    if (!space_store_effect_available(effect) || !space)
+        return false;
+    effect->space = space;
+    /* Ordinary publication allocates no receipt and pays no shared preparation
+     * counter cost.  Only recording mode needs a cross-effect association. */
+    effect->preparation_id = receipt ? atomic_fetch_add_explicit(
+        &g_space_store_preparation_id, 1u, memory_order_relaxed) + 1u : 0u;
+    if (receipt && effect->preparation_id == 0u) {
+        *effect = (SpaceStoreEffect){0};
+        return false;
+    }
+    /* Additions select no existing occurrence.  Single removal deliberately
+     * falls back from an exact id to value equality.  Only retained positional
+     * and mask selections need a prefix-validity token. */
+    if (effect->kind == SPACE_STORE_EFFECT_REMOVE_MASK ||
+        effect->kind == SPACE_STORE_EFFECT_REMOVE_POSITIONS)
+        effect->read = space_read_token(space);
+    if (!space_store_receipt_reserve(receipt, effect, receipt_count)) {
+        *effect = (SpaceStoreEffect){0};
+        return false;
+    }
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_STORE_PREPARED);
+    if (receipt)
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_STORE_RECEIPT);
+    return true;
+}
+
+bool space_store_effect_prepare_add(
+    SpaceStoreEffect *effect, Space *space, Arena *storage_arena,
+    const Arena *source_arena, Atom *atom, SpaceStoreReceipt *receipt) {
+    if (!space_store_effect_available(effect) || !atom)
+        return false;
+    effect->kind = SPACE_STORE_EFFECT_ADD;
+    if (!space_store_effect_prepare(effect, space, receipt, 1u))
+        return false;
+    effect->storage_arena = storage_arena;
+    effect->source_arena = source_arena;
+    effect->atom = atom;
+    effect->atom_id = CETTA_ATOM_ID_NONE;
+    effect->selected_len = 1u;
+    if (!space_store_receipt_record(receipt, atom, (CettaIndex)-1)) {
+        space_store_effect_dispose(effect);
+        return false;
+    }
+    return true;
+}
+
+static bool space_store_effect_prepare_add_batch(
+        SpaceStoreEffect *effect, Space *space, SpaceStoreBatchKind kind,
+        const AtomId *items, CettaCount count) {
+    if (!space_store_effect_available(effect) || (count && !items))
+        return false;
+    effect->kind = SPACE_STORE_EFFECT_ADD_BATCH;
+    if (!space_store_effect_prepare(effect, space, NULL, count))
+        return false;
+    effect->batch_kind = kind;
+    effect->batch_items = items;
+    effect->batch_len = count;
+    effect->selected_len = count;
+    return true;
+}
+
+bool space_store_effect_prepare_add_alpha_keys(
+    SpaceStoreEffect *effect, Space *space, const AtomId *keys,
+    CettaCount count) {
+    return space_store_effect_prepare_add_batch(
+        effect, space, SPACE_STORE_BATCH_ALPHA_KEYS, keys, count);
+}
+
+bool space_store_effect_prepare_add_dense_tuples(
+    SpaceStoreEffect *effect, Space *space, SymbolId head, AtomId head_id,
+    uint32_t arity, const AtomId *tuples, CettaCount count) {
+    if (!space_store_effect_prepare_add_batch(
+            effect, space, SPACE_STORE_BATCH_DENSE_TUPLES, tuples, count))
+        return false;
+    effect->batch_head = head;
+    effect->batch_head_id = head_id;
+    effect->batch_arity = arity;
+    return true;
+}
+
+bool space_store_effect_prepare_add_deep_holes(
+    SpaceStoreEffect *effect, Space *space, SymbolId head,
+    const CettaSkeleton *skeleton, const AtomId *holes, CettaCount count) {
+    if (!skeleton || !space_store_effect_prepare_add_batch(
+            effect, space, SPACE_STORE_BATCH_DEEP_HOLES, holes, count))
+        return false;
+    effect->batch_head = head;
+    effect->batch_skeleton = skeleton;
+    return true;
+}
+
+bool space_store_effect_prepare_remove_one(
+    SpaceStoreEffect *effect, Space *space, Atom *atom, AtomId atom_id,
+    SpaceStoreReceipt *receipt) {
+    if (!space_store_effect_available(effect) || !atom)
+        return false;
+    effect->kind = SPACE_STORE_EFFECT_REMOVE_ONE;
+    if (!space_store_effect_prepare(effect, space, receipt, 1u))
+        return false;
+    effect->atom = atom;
+    effect->atom_id = atom_id;
+    effect->selected_len = 1u;
+    Atom *selected = atom;
+    if (receipt && atom_id != CETTA_ATOM_ID_NONE && space->native.universe) {
+        Atom *stored = term_universe_get_atom(space->native.universe, atom_id);
+        if (stored)
+            selected = stored;
+    }
+    if (!space_store_receipt_record(receipt, selected, (CettaIndex)-1)) {
+        space_store_effect_dispose(effect);
+        return false;
+    }
+    return true;
+}
+
+/* A mask contraction settles any relation it still addresses.  Fold a ground
+ * relation selection into that same mask first: settlement is representation
+ * only, and the selected fact keeps its logical position as it becomes a row. */
+static bool space_store_effect_fold_dense_mask(
+        Space *space, uint8_t *remove_mask, CettaCount mask_len,
+        Atom *dense_atom, CettaCount *selected_len) {
+    if (!dense_atom || !space_dense_holds_atom(space, dense_atom))
+        return true;
+    CettaCount dense_len = space_dense_facts(space);
+    if (dense_len == 0u || mask_len < dense_len)
+        return false;
+    CettaIndex dense_begin = mask_len - dense_len;
+    space_dense_settle(space, SYMBOL_ID_NONE);
+    for (CettaIndex i = dense_begin; i < mask_len; i++) {
+        Atom *candidate = space_get_at64(space, i);
+        if (remove_mask[i] == 0u && candidate &&
+            atom_eq(candidate, dense_atom)) {
+            remove_mask[i] = 1u;
+            (*selected_len)++;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool space_store_effect_prepare_remove_mask(
+    SpaceStoreEffect *effect, Space *space, uint8_t *remove_mask,
+    CettaCount mask_len, CettaCount selected_len, Atom *dense_atom,
+    SpaceStoreReceipt *receipt) {
+    if (!space_store_effect_available(effect) ||
+        (!remove_mask && mask_len != 0u) || selected_len > mask_len)
+        return false;
+    effect->kind = SPACE_STORE_EFFECT_REMOVE_MASK;
+    if (!space_store_effect_fold_dense_mask(
+            space, remove_mask, mask_len, dense_atom, &selected_len))
+        return false;
+    if (!space_store_effect_prepare(effect, space, receipt, selected_len))
+        return false;
+    effect->remove_mask = remove_mask;
+    effect->mask_len = mask_len;
+    effect->selected_len = selected_len;
+    CettaCount recorded = 0u;
+    for (CettaIndex i = 0u; receipt && i < mask_len; i++) {
+        if (remove_mask[i] == 0u)
+            continue;
+        if (!space_store_receipt_record(receipt, space_get_at64(space, i), i)) {
+            /* Ownership of the mask transfers only on successful preparation. */
+            *effect = (SpaceStoreEffect){0};
+            return false;
+        }
+        recorded++;
+    }
+    if (receipt && recorded != selected_len) {
+        *effect = (SpaceStoreEffect){0};
+        return false;
+    }
+    return true;
+}
+
+bool space_store_effect_prepare_remove_positions(
+    SpaceStoreEffect *effect, Space *space, const CettaIndex *positions,
+    CettaCount position_len, Atom *dense_atom, SpaceStoreReceipt *receipt) {
+    if (!space_store_effect_available(effect) || (position_len && !positions))
+        return false;
+    effect->kind = SPACE_STORE_EFFECT_REMOVE_POSITIONS;
+    CettaIndex *rows = NULL;
+    if (!space_logical_positions_prepare(
+            space, positions, position_len, &rows))
+        return false;
+    CettaCount dense_selected =
+        dense_atom && space_dense_holds_atom(space, dense_atom) ? 1u : 0u;
+    CettaCount selected = position_len + dense_selected;
+    if (!space_store_effect_prepare(effect, space, receipt, selected)) {
+        free(rows);
+        return false;
+    }
+    for (CettaCount i = 0u; receipt && i < position_len; i++) {
+        if (!space_store_receipt_record(
+                receipt, space_get_at64(space, positions[i]), positions[i])) {
+            free(rows);
+            *effect = (SpaceStoreEffect){0};
+            return false;
+        }
+    }
+    if (receipt && dense_selected &&
+        !space_store_receipt_record(receipt, dense_atom, (CettaIndex)-1)) {
+        free(rows);
+        *effect = (SpaceStoreEffect){0};
+        return false;
+    }
+    effect->remove_positions = (CettaIndex *)positions;
+    effect->remove_rows = rows;
+    effect->remove_row_len = position_len;
+    effect->dense_atom = dense_atom;
+    effect->dense_selected = dense_selected;
+    effect->selected_len = selected;
+    return true;
+}
+
+typedef struct SpaceExactRemoval {
+    CettaIndex *positions;
+    CettaIndex *rows;
+    CettaCount row_len;
+    Atom *dense_atom;
+    CettaCount dense_selected;
+    AtomId *ids;
+    uint8_t *id_dense;
+    CettaCount id_len;
+    AtomId id_single;
+    uint8_t id_dense_single;
+    CettaCount selected_len;
+} SpaceExactRemoval;
+static bool space_exact_removal_publish(Space *s,
+        const SpaceExactRemoval *selection, bool revalidate,
+        CettaCount *out_removed);
+
+SpaceStorePublishResult space_store_effect_publish(
+    SpaceStoreEffect *effect, SpaceStoreReceipt *receipt,
+    CettaCount *out_removed) {
+    if (out_removed)
+        *out_removed = 0u;
+    if (!effect || !effect->space || effect->consumed)
+        return SPACE_STORE_PUBLISH_ERROR;
+    /* A receipt belongs to one preparation, including after the effect moves
+     * by structure assignment.  Reject a foreign receipt without clearing or
+     * rewriting that other operation's retained record. */
+    if (receipt && (!receipt->initialized || receipt->kind != effect->kind ||
+                    receipt->space_instance != space_instance_id(effect->space) ||
+                    effect->preparation_id == 0u ||
+                    receipt->preparation_id != effect->preparation_id))
+        return SPACE_STORE_PUBLISH_ERROR;
+    effect->consumed = true;
+    CETTA_SCOPED_SHARED_TRANSITION(guard);
+    /* A selected occurrence/prefix may survive appends, but not a prefix
+     * rewrite.  This is a backend retry condition, never a semantic no-match. */
+    if ((effect->kind == SPACE_STORE_EFFECT_REMOVE_MASK ||
+         effect->kind == SPACE_STORE_EFFECT_REMOVE_POSITIONS) &&
+        !space_read_token_prefix_intact(effect->read)) {
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_STORE_PUBLISH_STALE);
+        space_store_receipt_refuse(receipt);
+        return SPACE_STORE_PUBLISH_STALE;
+    }
+    Space *space = effect->space;
+    uint64_t before = receipt ? space_revision(space) : 0u;
+    bool ok = false;
+    CettaCount removed = 0u;
+    switch (effect->kind) {
+    case SPACE_STORE_EFFECT_ADD:
+        ok = space_admit_atom_from_source_arena(
+            space, effect->storage_arena, effect->source_arena, effect->atom);
+        break;
+    case SPACE_STORE_EFFECT_ADD_BATCH:
+        switch (effect->batch_kind) {
+        case SPACE_STORE_BATCH_ALPHA_KEYS:
+            ok = space_add_alpha_keys_batch(
+                space, effect->batch_items, effect->batch_len);
+            break;
+        case SPACE_STORE_BATCH_DENSE_TUPLES:
+            ok = space_add_dense_tuples(
+                space, effect->batch_head, effect->batch_head_id,
+                effect->batch_arity, effect->batch_items, effect->batch_len);
+            break;
+        case SPACE_STORE_BATCH_DEEP_HOLES:
+            ok = space_add_deep_holes(
+                space, effect->batch_head, effect->batch_skeleton,
+                effect->batch_items, effect->batch_len);
+            break;
+        }
+        break;
+    case SPACE_STORE_EFFECT_REMOVE_ONE:
+        ok = true;
+        if (effect->atom_id != CETTA_ATOM_ID_NONE)
+            removed = space_remove_atom_id(space, effect->atom_id) ? 1u : 0u;
+        if (removed == 0u)
+            removed = space_remove(space, effect->atom) ? 1u : 0u;
+        break;
+    case SPACE_STORE_EFFECT_REMOVE_POSITIONS: {
+        const SpaceExactRemoval selection = {
+            .positions = effect->remove_positions,
+            .rows = effect->remove_rows,
+            .row_len = effect->remove_row_len,
+            .dense_atom = effect->dense_atom,
+            .dense_selected = effect->dense_selected,
+            .ids = effect->remove_ids,
+            .id_dense = effect->remove_id_dense,
+            .id_len = effect->remove_id_len,
+            .id_single = effect->remove_id_single,
+            .id_dense_single = effect->remove_id_dense_single,
+            .selected_len = effect->selected_len,
+        };
+        ok = space_exact_removal_publish(space, &selection, true, &removed);
+        break;
+    }
+    case SPACE_STORE_EFFECT_REMOVE_MASK: {
+        CettaCount current_len = space_length64(space);
+        if (current_len < effect->mask_len) {
+            space_store_receipt_refuse(receipt);
+            return SPACE_STORE_PUBLISH_STALE;
+        }
+        const uint8_t *mask = effect->remove_mask;
+        uint8_t *extended = NULL;
+        if (current_len != effect->mask_len) {
+            if (current_len > SIZE_MAX)
+                return SPACE_STORE_PUBLISH_ERROR;
+            extended = cetta_fallible_malloc((size_t)current_len);
+            if (!extended) {
+                space_store_receipt_refuse(receipt);
+                return SPACE_STORE_PUBLISH_ERROR;
+            }
+            memcpy(extended, effect->remove_mask, (size_t)effect->mask_len);
+            memset(extended + effect->mask_len, 0,
+                   (size_t)(current_len - effect->mask_len));
+            mask = extended;
+        }
+        ok = space_remove_occurrence_mask_stable(
+            space, mask, current_len, &removed);
+        free(extended);
+        break;
+    }
+    }
+    if (!ok) {
+        space_store_receipt_refuse(receipt);
+        return SPACE_STORE_PUBLISH_ERROR;
+    }
+    if (out_removed)
+        *out_removed = removed;
+    if (effect->kind != SPACE_STORE_EFFECT_ADD &&
+        effect->kind != SPACE_STORE_EFFECT_ADD_BATCH && removed == 0u) {
+        space_store_receipt_refuse(receipt);
+        return SPACE_STORE_PUBLISH_NO_MATCH;
+    }
+    if (receipt) {
+        /* A set may admit an already-held row without publishing a revision.
+         * Only a requested receipt observes that distinction; the ordinary
+         * path never reads a write back to validate its success. */
+        if ((effect->kind == SPACE_STORE_EFFECT_ADD ||
+             effect->kind == SPACE_STORE_EFFECT_ADD_BATCH) &&
+            space_revision(space) == before)
+            receipt->len = 0u;
+        else if (effect->kind != SPACE_STORE_EFFECT_ADD &&
+                 effect->kind != SPACE_STORE_EFFECT_ADD_BATCH)
+            receipt->len = removed;
+        receipt->committed_revision = space_revision(space);
+    }
+    return SPACE_STORE_PUBLISH_PUBLISHED;
 }
 
 AtomId space_get_atom_id_at(const Space *s, uint32_t idx) {
@@ -16102,6 +16923,16 @@ bool space_contains_exact_symbol_application(
         id_present_contains(&s->native, query_id);
 }
 
+/* Whether `match` reads PATTERN as a query over parts: a conjunction
+ * (, P ...) or a disjunction (| P ...), whose rows no membership test of
+ * the pattern itself answers, even when it is ground. */
+static bool space_match_pattern_is_connective(Atom *const *elems,
+                                              CettaExprLen len) {
+    return len >= 1u && elems[0]->kind == ATOM_SYMBOL &&
+        (atom_symbol_current_id(elems[0]) == g_builtin_syms.comma ||
+         atom_symbol_current_id(elems[0]) == g_builtin_syms.pipe);
+}
+
 bool space_match_exists_ground_exact(Space *s, Atom *pattern,
                                      bool *out_applicable) {
     CETTA_SCOPED_SHARED_TRANSITION(observation);
@@ -16110,7 +16941,10 @@ bool space_match_exists_ground_exact(Space *s, Atom *pattern,
     if (out_applicable)
         *out_applicable = false;
     if (!s || !pattern || atom_has_vars(pattern) ||
-        !atom_is_exact_indexable(pattern) || space_has_dependencies(s)) {
+        !atom_is_exact_indexable(pattern) || space_has_dependencies(s) ||
+        (pattern->kind == ATOM_EXPR &&
+         space_match_pattern_is_connective(pattern->expr.elems,
+                                           pattern->expr.len))) {
         return false;
     }
     /* An identical row is a match.  A miss is an answer only where every
@@ -16153,6 +16987,7 @@ bool space_match_exists_ground_exact_expression_coordinates(
     if (out_applicable)
         *out_applicable = false;
     if (!s || coordinate_count == 0u || !coordinates ||
+        space_match_pattern_is_connective(coordinates, coordinate_count) ||
         space_has_overlay_base(s) || space_has_dependencies(s) ||
         space_engine_uses_pathmap(s->match_backend.kind) ||
         !s->native.universe || s->native.universe->snapshot_entries ||
@@ -16217,6 +17052,8 @@ bool space_contains_canonical(Space *s, Atom *atom, bool *out_applicable) {
 CettaMatchCompletion space_contains_compared(Space *s, Atom *atom, SpaceAtomComparison equal) {
     CETTA_SCOPED_SHARED_TRANSITION(observation);
     if (!s || !atom || !equal)
+        return CETTA_MATCH_INCOMPLETE;
+    if (!space_prepare_proof_read(s, atom))
         return CETTA_MATCH_INCOMPLETE;
     CettaCount logical_len = space_length64(s);
     for (CettaIndex index = 0u; index < logical_len; index++) {
@@ -16367,28 +17204,115 @@ bool space_exact_head_certified(Space *s, SymbolId head) {
     return exact_index_head_exact(s, head);
 }
 
-bool space_remove_exact_ids(Space *s, SymbolId head, const AtomId *ids,
-                            size_t count) {
+static void space_exact_removal_dispose(SpaceExactRemoval *selection) {
+    if (!selection)
+        return;
+    free(selection->positions);
+    free(selection->rows);
+    free(selection->ids);
+    free(selection->id_dense);
+    *selection = (SpaceExactRemoval){0};
+}
+
+static AtomId space_exact_removal_id_at(
+        const SpaceExactRemoval *selection, CettaCount index) {
+    return selection->ids ? selection->ids[index] : selection->id_single;
+}
+
+static bool space_exact_removal_id_is_dense(
+        const SpaceExactRemoval *selection, CettaCount index) {
+    return selection->id_dense
+        ? selection->id_dense[index] != 0u
+        : selection->id_dense_single != 0u;
+}
+
+/* The caller holds the space transition.  Admission and every fallible row
+ * allocation precede any write, including in the immediate specialization. */
+static bool space_exact_removal_admitted(Space *s, SymbolId head,
+                                         const AtomId *ids, size_t count,
+                                         Atom *dense_atom) {
     if (!s || head == SYMBOL_ID_NONE || (count && !ids) ||
-        !s->native.universe || space_has_overlay_base(s) ||
-        space_has_dependencies(s) ||
+        (dense_atom && count != 1u) || !s->native.universe ||
+        count > SIZE_MAX / sizeof(*ids) ||
+        space_has_overlay_base(s) || space_has_dependencies(s) ||
         (s->match_backend.kind != SPACE_ENGINE_NATIVE &&
          s->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT))
         return false;
-    CETTA_SCOPED_SHARED_TRANSITION(exact_removal);
     /* A row holding a variable could unify with an instance without
      * equalling it; the index certifies there is none under this head. */
     if (!exact_index_head_exact(s, head))
         return false;
-    ExactAtomIndex *idx = &s->native.exact_idx;
     /* Only an exact row is filed under its id. */
     for (size_t i = 0u; i < count; i++) {
         if (!atom_id_is_exact_indexable(s, ids[i]))
             return false;
     }
-    /* Each id's fact goes from its relation; its row copies, below. */
-    for (size_t i = 0u; space_dense_facts(s) != 0u && i < count; i++)
-        (void)space_dense_route_remove(s, ids[i]);
+    return true;
+}
+
+/* Appends the rows holding `id` itself, in probe order; the caller sorts
+ * and deduplicates.  The index is keyed by the term's hash in `universe`. */
+static bool space_exact_removal_append_rows(const TermUniverse *universe,
+        const ExactAtomIndex *idx, AtomId id, CettaIndex **positions,
+        CettaIndex *position_len, CettaIndex *position_cap) {
+    if (!idx->slots)
+        return true;
+    for (size_t at = exact_index_id_home(universe, id, idx->mask);
+         !exact_slot_vacant(idx, at); at = (at + 1u) & idx->mask) {
+        if (exact_slot_id(idx, at) != id)
+            continue;
+        if (*position_len == *position_cap) {
+            CettaIndex cap = *position_cap ? *position_cap * 2u : 16u;
+            CettaIndex *grown = cetta_fallible_realloc(
+                *positions, sizeof(**positions) * cap);
+            if (!grown)
+                return false;
+            *positions = grown;
+            *position_cap = cap;
+        }
+        (*positions)[(*position_len)++] = exact_slot_row(idx, at);
+    }
+    return true;
+}
+
+static bool space_exact_removal_select(Space *s, SymbolId head,
+                                       const AtomId *ids, size_t count,
+                                       Atom *dense_atom,
+                                       SpaceExactRemoval *selection) {
+    if (!selection || !space_exact_removal_admitted(
+            s, head, ids, count, dense_atom))
+        return false;
+    ExactAtomIndex *idx = &s->native.exact_idx;
+    AtomId *owned_ids = count > 1u
+        ? cetta_fallible_malloc(count * sizeof(*owned_ids)) : NULL;
+    uint8_t *dense_ids = count > 1u
+        ? cetta_fallible_calloc(count, sizeof(*dense_ids)) : NULL;
+    if (count > 1u && (!owned_ids || !dense_ids)) {
+        free(owned_ids);
+        free(dense_ids);
+        return false;
+    }
+    CettaCount dense_count = 0u;
+    for (size_t i = 0u; i < count; i++) {
+        bool dense = !dense_atom && space_dense_route_holds(s, ids[i]);
+        /* The exact-id input is a set of target values.  Row positions retain
+         * their own multiplicity below, but one relation fact is selected and
+         * removed only once even if its id occurs repeatedly in the input. */
+        for (size_t j = 0u; dense && j < i; j++)
+            if (ids[j] == ids[i])
+                dense = false;
+        if (count == 1u) {
+            selection->id_single = ids[i];
+            selection->id_dense_single = dense ? 1u : 0u;
+        } else {
+            owned_ids[i] = ids[i];
+            dense_ids[i] = dense ? 1u : 0u;
+        }
+        if (dense)
+            dense_count++;
+    }
+    CettaCount dense_selected =
+        dense_atom && space_dense_holds_atom(s, dense_atom) ? 1u : 0u;
     CettaIndex *positions = NULL;
     CettaIndex position_len = 0u, position_cap = 0u;
     for (size_t i = 0u; i < count; i++) {
@@ -16397,36 +17321,174 @@ bool space_remove_exact_ids(Space *s, SymbolId head, const AtomId *ids,
             repeated = ids[j] == ids[i];
         if (repeated)
             continue;
-        CettaIndex *rows = NULL;
-        CettaIndex row_len = exact_index_rows(s->native.universe, idx, ids[i], &rows);
-        for (CettaIndex r = 0u; r < row_len; r++) {
-            if (position_len == position_cap) {
-                position_cap = position_cap ? position_cap * 2u : 16u;
-                positions = cetta_realloc(positions,
-                                          sizeof(*positions) * position_cap);
-            }
-            positions[position_len++] = rows[r];
+        if (!space_exact_removal_append_rows(
+                s->native.universe, idx, ids[i],
+                &positions, &position_len, &position_cap)) {
+            free(positions);
+            free(owned_ids);
+            free(dense_ids);
+            return false;
         }
-        free(rows);
-    }
-    if (position_len == 0u) {
-        free(positions);
-        return true;
     }
     /* Index rows are physical; the removal reads ascending logical
      * positions, each once. */
     position_len = space_marks_physical_to_logical(s, positions, position_len);
-    qsort(positions, (size_t)position_len, sizeof(*positions),
-          exact_index_row_compare);
+    if (position_len > 1u)
+        qsort(positions, (size_t)position_len, sizeof(*positions),
+              exact_index_row_compare);
     CettaIndex unique = 0u;
     for (CettaIndex i = 0u; i < position_len; i++) {
         if (unique == 0u || positions[unique - 1u] != positions[i])
             positions[unique++] = positions[i];
     }
-    bool removed = unique == 0u ||
-        space_remove_logical_positions(s, positions, unique);
-    free(positions);
-    return removed;
+    CettaIndex *physical = NULL;
+    if (!space_logical_positions_prepare(s, positions, unique, &physical)) {
+        free(positions);
+        free(owned_ids);
+        free(dense_ids);
+        return false;
+    }
+    selection->positions = positions;
+    selection->rows = physical;
+    selection->row_len = unique;
+    selection->dense_atom = dense_atom;
+    selection->dense_selected = dense_selected;
+    selection->ids = owned_ids;
+    selection->id_dense = dense_ids;
+    selection->id_len = (CettaCount)count;
+    selection->selected_len = unique + dense_count + dense_selected;
+    return true;
+}
+
+/* With revalidate false the caller's uninterrupted transition is the
+ * readiness evidence.  Retained publication passes true and rechecks the
+ * captured relation selections before the first write. */
+static bool space_exact_removal_publish(Space *s,
+        const SpaceExactRemoval *selection, bool revalidate,
+        CettaCount *out_removed) {
+    if (out_removed)
+        *out_removed = 0u;
+    if (revalidate) {
+        if (selection->dense_selected &&
+            !space_dense_holds_atom(s, selection->dense_atom))
+            return false;
+        for (CettaCount i = 0u; i < selection->id_len; i++) {
+            if (space_exact_removal_id_is_dense(selection, i) &&
+                !space_dense_route_holds(
+                    s, space_exact_removal_id_at(selection, i)))
+                return false;
+        }
+    }
+    if (selection->dense_selected &&
+        space_dense_remove_ground(s, selection->dense_atom) != 1u) {
+        fputs("CeTTa: prepared dense fact disappeared during publication\n",
+              stderr);
+        abort();
+    }
+    for (CettaCount i = 0u; i < selection->id_len; i++) {
+        if (space_exact_removal_id_is_dense(selection, i) &&
+            !space_dense_route_remove(
+                s, space_exact_removal_id_at(selection, i))) {
+            fputs("CeTTa: prepared dense id disappeared during publication\n",
+                  stderr);
+            abort();
+        }
+    }
+    space_logical_positions_publish(
+        s, selection->positions, selection->rows, selection->row_len);
+    if (out_removed)
+        *out_removed = selection->selected_len;
+    return true;
+}
+
+bool space_store_effect_prepare_remove_exact(
+    SpaceStoreEffect *effect, Space *s, SymbolId head, const AtomId *ids,
+    size_t count, Atom *dense_atom, SpaceStoreReceipt *receipt) {
+    if (!space_store_effect_available(effect))
+        return false;
+    SpaceExactRemoval selection = {0};
+    CETTA_SCOPED_SHARED_TRANSITION(exact_preparation);
+    if (!space_exact_removal_select(
+            s, head, ids, count, dense_atom, &selection))
+        return false;
+    effect->kind = SPACE_STORE_EFFECT_REMOVE_POSITIONS;
+    if (!space_store_effect_prepare(effect, s, receipt, selection.selected_len)) {
+        space_exact_removal_dispose(&selection);
+        return false;
+    }
+    bool recorded = true;
+    for (CettaCount i = 0u; receipt && i < selection.row_len; i++)
+        recorded = recorded && space_store_receipt_record(
+            receipt, space_get_at64(s, selection.positions[i]),
+            selection.positions[i]);
+    if (receipt && selection.dense_selected)
+        recorded = recorded && space_store_receipt_record(
+            receipt, dense_atom, (CettaIndex)-1);
+    for (CettaCount i = 0u; receipt && i < count; i++) {
+        if (space_exact_removal_id_is_dense(&selection, (CettaCount)i))
+            recorded = recorded && space_store_receipt_record(
+                receipt, term_universe_get_atom(s->native.universe, ids[i]),
+                (CettaIndex)-1);
+    }
+    if (!recorded) {
+        space_exact_removal_dispose(&selection);
+        *effect = (SpaceStoreEffect){0};
+        return false;
+    }
+    effect->remove_positions = selection.positions;
+    effect->remove_rows = selection.rows;
+    effect->remove_row_len = selection.row_len;
+    effect->dense_atom = selection.dense_atom;
+    effect->dense_selected = selection.dense_selected;
+    effect->remove_ids = selection.ids;
+    effect->remove_id_dense = selection.id_dense;
+    effect->remove_id_single = selection.id_single;
+    effect->remove_id_dense_single = selection.id_dense_single;
+    effect->remove_id_len = selection.id_len;
+    effect->selected_len = selection.selected_len;
+    return true;
+}
+
+bool space_remove_exact_ids_immediate(Space *s, SymbolId head,
+        const AtomId *ids, size_t count, Atom *dense_atom,
+        CettaCount *out_removed, CettaCount *out_rows) {
+    if (out_removed)
+        *out_removed = 0u;
+    if (out_rows)
+        *out_rows = 0u;
+    CETTA_SCOPED_SHARED_TRANSITION(immediate_exact_removal);
+    if (!space_exact_removal_admitted(s, head, ids, count, dense_atom))
+        return false;
+    /* With no ordinary rows there is no fallible preparation to protect.
+     * The destructive route itself supplies membership and multiplicity. */
+    if (space_length64(s) == space_dense_facts(s)) {
+        CettaCount removed = 0u;
+        for (size_t i = 0u; i < count; i++) {
+            bool repeated = false;
+            for (size_t j = 0u; j < i && !repeated; j++)
+                repeated = ids[j] == ids[i];
+            if (!repeated && space_dense_route_remove(s, ids[i]))
+                removed++;
+        }
+        if (out_removed)
+            *out_removed = removed;
+        return true;
+    }
+    SpaceExactRemoval selection = {0};
+    if (!space_exact_removal_select(
+            s, head, ids, count, dense_atom, &selection))
+        return false;
+    bool ok = space_exact_removal_publish(s, &selection, false, out_removed);
+    if (ok && out_rows)
+        *out_rows = selection.row_len;
+    space_exact_removal_dispose(&selection);
+    return ok;
+}
+
+bool space_remove_exact_ids(Space *s, SymbolId head, const AtomId *ids,
+                            size_t count) {
+    return space_remove_exact_ids_immediate(
+        s, head, ids, count, NULL, NULL, NULL);
 }
 
 /* ── Type Expression Normalization ───────────────────────────────────────── */
@@ -16592,16 +17654,16 @@ Atom *get_grounded_type(Arena *a, Atom *atom) {
         bool held = state_cell_snapshot_acquire && state_cell_snapshot_release &&
             state_cell_snapshot_acquire(cell, &snapshot);
         Atom *content_type = held ? snapshot.content_type : cell->content_type;
-        Atom *kept = content_type && held ? atom_deep_copy(a, content_type) : content_type;
+        Atom *owned_type = held && content_type ? atom_deep_copy(a, content_type) : content_type;
         Atom *result;
         if (eval_current_uses_rust_he_compat_semantics &&
             eval_current_uses_rust_he_compat_semantics())
             result = atom_expr2(a, atom_symbol_literal(a, "StateMonad"),
-                kept ? kept : atom_undefined_type(a));
+                owned_type ? owned_type : atom_undefined_type(a));
         else
-            result = kept &&
-                !atom_is_symbol_id(kept, g_builtin_syms.undefined_type)
-                ? atom_expr2(a, atom_symbol_literal(a, "StateMonad"), kept)
+            result = content_type &&
+                !atom_is_symbol_id(content_type, g_builtin_syms.undefined_type)
+                ? atom_expr2(a, atom_symbol_literal(a, "StateMonad"), owned_type)
                 : atom_symbol_literal(a, "State");
         if (held)
             state_cell_snapshot_release(&snapshot);
@@ -16681,6 +17743,50 @@ bool space_type_annotations_have_only_symbol_subjects(Space *s) {
 
 /* With symbol subjects only, each subject's rows form one chain, and a chain
  * longer than one row is a second declaration (a duplicated row included). */
+static uint32_t space_type_chain_distinct_declarations(
+    Space *s, const SpaceHeadChains *rows, const SpaceHeadChain *chain);
+
+static Atom *space_type_chain_declared(Space *s, const SpaceHeadChains *rows,
+                                       const SpaceHeadChain *chain,
+                                       uint32_t row);
+
+/* No annotation gives a symbol, a variable or a grounded value a metatype.
+ * Every subject is a symbol or an expression with a symbol head (no
+ * headless row: no variable or grounded subject), an expression subject
+ * types no scalar, and no symbol subject is declared at a metatype's name
+ * (Atom, Symbol, Variable, Expression, Grounded). */
+bool space_scalar_types_name_no_metatype(Space *s) {
+    CETTA_SCOPED_SHARED_TRANSITION(observation);
+    if (!s || space_has_overlay_base(s) || space_has_dependencies(s) ||
+        s->match_backend.kind != SPACE_ENGINE_NATIVE)
+        return false;
+    ensure_ty_ann_index(s);
+    if (s->native.ty_idx_dirty || s->native.ty_idx.has_open_rows)
+        return false;
+    const SpaceHeadChains *rows = &s->native.ty_idx.rows;
+    if (rows->headless.count != 0u)
+        return false;
+    for (uint32_t slot = 0u; slot < rows->chain_cap; slot++) {
+        const SpaceHeadChain *chain = &rows->chains[slot];
+        if (chain->head == SYMBOL_ID_NONE || chain->count == 0u)
+            continue;
+        for (uint32_t i = chain->first; i != SPACE_HEAD_CHAIN_END;
+             i = rows->next[i]) {
+            Atom *type = space_type_chain_declared(s, rows, chain, i);
+            if (type && type->kind == ATOM_SYMBOL &&
+                (atom_symbol_current_id(type) == g_builtin_syms.atom ||
+                 atom_symbol_current_id(type) == g_builtin_syms.symbol ||
+                 atom_symbol_current_id(type) == g_builtin_syms.variable ||
+                 atom_symbol_current_id(type) == g_builtin_syms.expression ||
+                 atom_symbol_current_id(type) == g_builtin_syms.grounded))
+                return false;
+        }
+    }
+    return true;
+}
+
+/* Each symbol declares at most one type, rows that repeat one type being
+ * one declaration. */
 bool space_type_annotations_functional(Space *s) {
     CETTA_SCOPED_SHARED_TRANSITION(observation);
     if (!space_type_annotations_have_only_symbol_subjects(s))
@@ -16689,11 +17795,188 @@ bool space_type_annotations_functional(Space *s) {
     if (rows->headless.count != 0u)
         return false;
     for (uint32_t slot = 0u; slot < rows->chain_cap; slot++) {
-        if (rows->chains[slot].head != SYMBOL_ID_NONE &&
-            rows->chains[slot].count > 1u)
+        const SpaceHeadChain *chain = &rows->chains[slot];
+        if (chain->head != SYMBOL_ID_NONE && chain->count > 1u &&
+            space_type_chain_distinct_declarations(s, rows, chain) > 1u)
             return false;
     }
     return !space_equations_may_match_known_head(s, g_builtin_syms.get_type);
+}
+
+/* The type row `i` of `chain` declares for the chain's symbol, or NULL when
+ * the row is no (: symbol type) annotation of it. */
+static Atom *space_type_chain_declared(Space *s, const SpaceHeadChains *rows,
+                                       const SpaceHeadChain *chain,
+                                       uint32_t i) {
+    Atom *annotation = space_indexed_occurrence_atom(
+        s, rows->atom_indices, rows->atom_ids, i);
+    if (!annotation || annotation->kind != ATOM_EXPR ||
+        annotation->expr.len != 3u ||
+        !atom_is_symbol_id(annotation->expr.elems[0], g_builtin_syms.colon) ||
+        !atom_is_symbol_id(annotation->expr.elems[1], chain->head))
+        return NULL;
+    return annotation->expr.elems[2];
+}
+
+/* The distinct types, up to the names of their variables, that the rows of
+ * `chain` declare for its symbol.  Rows that repeat one type are one
+ * declaration: one typed alternative, and one get-type answer. */
+static uint32_t space_type_chain_distinct_declarations(
+    Space *s, const SpaceHeadChains *rows, const SpaceHeadChain *chain) {
+    uint32_t distinct = 0u;
+    for (uint32_t i = chain->first; i != SPACE_HEAD_CHAIN_END;
+         i = rows->next[i]) {
+        Atom *type = space_type_chain_declared(s, rows, chain, i);
+        if (!type)
+            continue;
+        bool repeated = false;
+        for (uint32_t j = chain->first; !repeated && j != i;
+             j = rows->next[j]) {
+            Atom *earlier = space_type_chain_declared(s, rows, chain, j);
+            repeated = earlier && atom_alpha_eq(earlier, type);
+        }
+        if (!repeated)
+            distinct++;
+    }
+    return distinct;
+}
+
+/* Whether a type's head path has no variable: a symbol, the empty
+ * expression, or an expression whose first element's head path has none. */
+static bool space_type_head_rigid(const Atom *type) {
+    for (uint32_t depth = 0u; type && depth < 64u; depth++) {
+        if (type->kind == ATOM_VAR)
+            return false;
+        if (type->kind != ATOM_EXPR || type->expr.len == 0u)
+            return true;
+        type = type->expr.elems[0];
+    }
+    return false;
+}
+
+/* Whether a type offers no instance of the sort: not a variable, not the
+ * sort's own symbol, and, for a sort with a parameter, no expression headed
+ * by the sort's symbol or by a variable, which a tuple type could read as
+ * one (CertifiedSpines.AwayFromList, AwayFromNat). */
+static bool space_type_away_from_sort(const Atom *type, SymbolId sort,
+                                      bool parametric) {
+    if (!type || type->kind == ATOM_VAR)
+        return false;
+    if (type->kind == ATOM_SYMBOL)
+        return atom_symbol_current_id(type) != sort;
+    if (!parametric || type->kind != ATOM_EXPR || type->expr.len == 0u)
+        return true;
+    const Atom *head = type->expr.elems[0];
+    if (head->kind == ATOM_VAR)
+        return false;
+    return head->kind != ATOM_SYMBOL || atom_symbol_current_id(head) != sort;
+}
+
+/* (S $a) for the sort S: the sort applied to a type variable. */
+static bool space_type_sort_of_var(const Atom *type, SymbolId sort,
+                                   const Atom *var) {
+    return type && type->kind == ATOM_EXPR && type->expr.len == 2u &&
+        atom_is_symbol_id(type->expr.elems[0], sort) &&
+        type->expr.elems[1]->kind == ATOM_VAR &&
+        (!var || var_id_eq(type->expr.elems[1]->var_id, var->var_id));
+}
+
+/* The usual rows of a sealed sort's two constructors: Nil (List $a) and
+ * Cons (-> $a (List $a) (List $a)), or Z Nat and S (-> Nat Nat). */
+static bool space_type_sort_constructor_row(const Atom *type, SymbolId sort,
+                                            bool parametric, bool nil) {
+    if (nil)
+        return parametric ? space_type_sort_of_var(type, sort, NULL)
+                          : type && type->kind == ATOM_SYMBOL &&
+                                atom_symbol_current_id(type) == sort;
+    if (!type || type->kind != ATOM_EXPR ||
+        !atom_is_symbol_id(type->expr.elems[0], g_builtin_syms.arrow))
+        return false;
+    if (!parametric)
+        return type->expr.len == 3u &&
+            atom_is_symbol_id(type->expr.elems[1], sort) &&
+            atom_is_symbol_id(type->expr.elems[2], sort);
+    const Atom *var = type->expr.len == 4u ? type->expr.elems[1] : NULL;
+    return var && var->kind == ATOM_VAR &&
+        space_type_sort_of_var(type->expr.elems[2], sort, var) &&
+        space_type_sort_of_var(type->expr.elems[3], sort, var);
+}
+
+bool space_type_sort_sealed_closed(
+    Space *s, SymbolId sort, bool parametric, SymbolId nil, SymbolId cons,
+    bool (*function)(void *context, SymbolId subject), void *context) {
+    CETTA_SCOPED_SHARED_TRANSITION(observation);
+    if (!space_type_annotations_have_only_symbol_subjects(s))
+        return false;
+    const SpaceHeadChains *rows = &s->native.ty_idx.rows;
+    if (rows->headless.count != 0u)
+        return false;
+    bool saw_nil = false, saw_cons = false;
+    for (uint32_t slot = 0u; slot < rows->chain_cap; slot++) {
+        const SpaceHeadChain *chain = &rows->chains[slot];
+        if (chain->head == SYMBOL_ID_NONE)
+            continue;
+        bool is_function = function && function(context, chain->head);
+        bool constructor = chain->head == nil || chain->head == cons;
+        if (constructor &&
+            (is_function ||
+             space_type_chain_distinct_declarations(s, rows, chain) != 1u))
+            return false;
+        for (uint32_t i = chain->first; i != SPACE_HEAD_CHAIN_END;
+             i = rows->next[i]) {
+            Atom *type = space_type_chain_declared(s, rows, chain, i);
+            if (!type)
+                continue;
+            if (constructor) {
+                if (!space_type_sort_constructor_row(type, sort, parametric,
+                                                     chain->head == nil))
+                    return false;
+                continue;
+            }
+            bool arrow = type->kind == ATOM_EXPR && type->expr.len >= 2u &&
+                atom_is_symbol_id(type->expr.elems[0], g_builtin_syms.arrow);
+            /* A function's range types its calls' answers only; its name
+             * is data typed by every row. */
+            const Atom *offered = arrow && !is_function
+                ? type->expr.elems[type->expr.len - 1u] : type;
+            if ((!arrow || !is_function) &&
+                !space_type_away_from_sort(offered, sort, parametric))
+                return false;
+        }
+        saw_nil = saw_nil || chain->head == nil;
+        saw_cons = saw_cons || chain->head == cons;
+    }
+    return saw_nil && saw_cons;
+}
+
+bool space_type_annotations_rigid(
+    Space *s, bool (*exempt)(void *context, SymbolId subject), void *context) {
+    CETTA_SCOPED_SHARED_TRANSITION(observation);
+    if (!space_type_annotations_have_only_symbol_subjects(s))
+        return false;
+    const SpaceHeadChains *rows = &s->native.ty_idx.rows;
+    if (rows->headless.count != 0u)
+        return false;
+    for (uint32_t slot = 0u; slot < rows->chain_cap; slot++) {
+        const SpaceHeadChain *chain = &rows->chains[slot];
+        if (chain->head == SYMBOL_ID_NONE)
+            continue;
+        bool exempt_ranges = exempt && exempt(context, chain->head);
+        for (uint32_t i = chain->first; i != SPACE_HEAD_CHAIN_END;
+             i = rows->next[i]) {
+            Atom *type = space_type_chain_declared(s, rows, chain, i);
+            if (!type)
+                continue;
+            if (!space_type_head_rigid(type))
+                return false;
+            if (!exempt_ranges && type->kind == ATOM_EXPR &&
+                type->expr.len >= 2u &&
+                atom_is_symbol_id(type->expr.elems[0], g_builtin_syms.arrow) &&
+                !space_type_head_rigid(type->expr.elems[type->expr.len - 1u]))
+                return false;
+        }
+    }
+    return true;
 }
 
 bool space_type_arrow_declarations_visit(
@@ -16714,21 +17997,15 @@ bool space_type_arrow_declarations_visit(
         const SpaceHeadChain *chain = &rows->chains[slot];
         if (chain->head == SYMBOL_ID_NONE || chain->count == 0u)
             continue;
+        uint32_t declarations = space_type_chain_distinct_declarations(
+            s, rows, chain);
         for (uint32_t i = chain->first; i != SPACE_HEAD_CHAIN_END;
              i = rows->next[i]) {
-            Atom *annotation = space_indexed_occurrence_atom(
-                s, rows->atom_indices, rows->atom_ids, i);
-            if (!annotation || annotation->kind != ATOM_EXPR ||
-                annotation->expr.len != 3u ||
-                !atom_is_symbol_id(annotation->expr.elems[0],
-                                   g_builtin_syms.colon) ||
-                !atom_is_symbol_id(annotation->expr.elems[1], chain->head))
-                continue;
-            Atom *type = annotation->expr.elems[2];
-            if (type->kind == ATOM_EXPR && type->expr.len > 0u &&
+            Atom *type = space_type_chain_declared(s, rows, chain, i);
+            if (type && type->kind == ATOM_EXPR && type->expr.len > 0u &&
                 atom_is_symbol_id(type->expr.elems[0],
                                   g_builtin_syms.arrow) &&
-                !visit(context, chain->head, chain->count, type))
+                !visit(context, chain->head, declarations, type))
                 return true;
         }
     }
@@ -16745,8 +18022,18 @@ typedef struct {
     bool stopped;
 } SpaceAnnotatedTypes;
 
+/* In PeTTa, rows that declare one type, up to the names of its variables,
+ * are one declaration: the lookup answers it once.  HE's lookup is a
+ * sequence that keeps every row, as hyperon-experimental's get-type does;
+ * its calls answer once for repeated rows all the same. */
 static void space_annotated_types_append(SpaceAnnotatedTypes *list,
                                          Atom *type) {
+    if (space_effect_language() == CETTA_LANGUAGE_PETTA) {
+        for (uint32_t i = 0u; i < list->count; i++) {
+            if (atom_alpha_eq(list->types[i], type))
+                return;
+        }
+    }
     if (list->count >= list->cap) {
         list->cap = list->cap ? list->cap * 2u : 4u;
         list->types = cetta_realloc(list->types,
@@ -17004,6 +18291,7 @@ static uint32_t get_annotated_types(Space *s, Arena *a, Atom *atom,
     if (grounded_count != 0u) {
         /* A grounded operation's type is its own. */
         Atom **types = cetta_malloc(sizeof(*types) * grounded_count);
+        if (!types) goto allocation_failed;
         uint32_t count = 0u;
         for (uint32_t i = 0u; i < grounded_count; i++) {
             if (!type_inference_step(budget, 1) ||
@@ -17539,6 +18827,1235 @@ static uint32_t get_atom_types_mode_inferred(Space *s, Arena *a, Atom *atom,
                                              bool include_direct_annotations,
                                              CettaTypeInferenceBudget *budget);
 
+/* Typings kept across inferences.  An expression's types follow from its
+ * operator's declared rows, the declarations whose subject it is, and each
+ * child's kind and types; none of these changes while the program's
+ * declarations stand.  So a term-stable ground expression typed once keeps
+ * its ground answers, keyed by its address and checked against the identity
+ * and current reset epoch of its arena, which together name one incarnation
+ * of the address.  Answers are interned as states, and a node whose head no
+ * declaration has as an expression subject is typed by its shape: the state
+ * its head, arity and children's kinds and states give, once any node of
+ * that shape was typed.  A typing whose arena the evaluator cannot vouch for
+ * is not kept, and nothing is kept for a budgeted inference, whose answers
+ * depend on the budget left. */
+typedef struct {
+    uint32_t count;
+    Atom **types;
+    uint64_t hash;
+} TypeStampState;
+
+typedef struct {
+    const Atom *atom;
+    uint64_t epoch;
+    uint32_t arena;
+    uint32_t question;
+    uint32_t state;
+} TypeStampEntry;
+
+#define TYPE_STAMP_TRANSITION_ARITY 4u
+
+typedef struct {
+    uint64_t hash;
+    SymbolId head;
+    uint32_t question;
+    uint32_t arity;
+    uint32_t kinds;
+    uint32_t args[TYPE_STAMP_TRANSITION_ARITY];
+    uint32_t state;
+} TypeStampTransition;
+
+/* A symbol's own typing state as a child (0 not read yet, UINT32_MAX none
+ * that keys a shape) and whether shapes headed by it may be read. */
+typedef struct {
+    SymbolId symbol;
+    uint32_t state;
+    uint8_t shapes;
+    /* Whether a type row types an expression headed by the symbol
+     * (TYPE_STAMP_ROWS_*), for the bound scope. */
+    uint8_t expression_rows;
+} TypeStampSymbol;
+
+enum { TYPE_STAMP_ROWS_UNKNOWN = 0u, TYPE_STAMP_ROWS_NONE = 1u,
+       TYPE_STAMP_ROWS_SOME = 2u };
+
+/* The store's question for a node whose expression nodes no type row types
+ * (space_type_rows_free_below); state 1 where it holds. */
+enum { TYPE_STAMP_QUESTION_ROWS_FREE = 7u };
+
+enum { TYPE_STAMP_SHAPES_UNKNOWN = 0u, TYPE_STAMP_SHAPES_READ = 1u,
+       TYPE_STAMP_SHAPES_NOT = 2u };
+
+typedef struct {
+    TypeStampState *states;
+    uint32_t state_len, state_cap;
+    uint32_t *state_index;
+    size_t state_index_cap;
+    TypeStampEntry *slots;
+    size_t cap, len;
+    TypeStampTransition *transitions;
+    size_t transition_cap, transition_len;
+    TypeStampSymbol *symbols;
+    size_t symbol_cap, symbol_len;
+    Arena types;
+    bool types_ready;
+    /* Kept answers to type questions about states
+     * (type_stamps_query_find). */
+    struct TypeStampQuery *queries;
+    size_t query_cap, query_len;
+    /* By grounded kind up to GV_BIGINT: a literal's typing state where no
+     * type row names a literal (type_stamps_literal_state); 0 unread,
+     * TYPE_STAMP_NONE where the kind's typing is not kept. */
+    uint32_t literal_states[GV_BIGINT + 1];
+    const Space *space;
+    uint64_t instance_id;
+    uint64_t declaration_revision;
+    uint64_t base_dependency_epoch;
+    uint64_t scope;
+} TypeStampStore;
+
+static __thread TypeStampStore g_type_stamps;
+
+#define TYPE_STAMPS_MAX_ENTRIES ((size_t)1u << 20)
+#define TYPE_STAMPS_MAX_STATES ((uint32_t)1u << 16)
+#define TYPE_STAMP_NONE UINT32_MAX
+
+static bool type_stamps_enabled(void) {
+    static _Thread_local int enabled = -1;
+    if (enabled < 0) {
+        const char *setting = getenv("CETTA_TYPE_STAMPS");
+        enabled = !setting || strcmp(setting, "0") != 0;
+    }
+    return enabled != 0;
+}
+
+static void type_stamps_clear(void) {
+    TypeStampStore *store = &g_type_stamps;
+    for (uint32_t i = 0u; i < store->state_len; i++)
+        free(store->states[i].types);
+    free(store->states);
+    free(store->state_index);
+    free(store->slots);
+    free(store->transitions);
+    free(store->symbols);
+    free(store->queries);
+    store->queries = NULL;
+    store->query_cap = store->query_len = 0u;
+    if (store->types_ready)
+        arena_free(&store->types);
+    store->states = NULL;
+    store->state_len = store->state_cap = 0u;
+    store->state_index = NULL;
+    store->state_index_cap = 0u;
+    store->slots = NULL;
+    store->cap = store->len = 0u;
+    store->transitions = NULL;
+    store->transition_cap = store->transition_len = 0u;
+    store->symbols = NULL;
+    store->symbol_cap = store->symbol_len = 0u;
+    memset(store->literal_states, 0, sizeof(store->literal_states));
+    store->types_ready = false;
+}
+
+static uint64_t type_stamps_mix(uint64_t hash, uint64_t value) {
+    hash ^= value + UINT64_C(0x9e3779b97f4a7c15) + (hash << 6) + (hash >> 2);
+    return hash;
+}
+
+static bool type_stamps_bind_scope(Space *s);
+static bool type_stamps_head_types_expressions(Space *s, SymbolId head,
+                                               bool bound);
+
+/* Whether `atom`'s typings may be read from and kept in the store: an
+ * unbudgeted inference in the evaluator's scope, of a term-stable ground
+ * expression with a symbol head and no registry, identity-carrying,
+ * thread-local or rational parts, in an arena the evaluator vouches for.
+ * The store is first bound to `s`'s declarations and the scope. */
+static bool type_stamps_admit(Space *s, const Atom *atom,
+                              const CettaTypeInferenceBudget *budget,
+                              uint32_t *arena, uint64_t *epoch) {
+    if (budget || !s || !atom || atom->kind != ATOM_EXPR ||
+        atom->expr.len == 0u || !atom->expr.elems[0] ||
+        atom->expr.elems[0]->kind != ATOM_SYMBOL ||
+        !eval_type_stamp_scope || !eval_type_stamp_atom_epoch ||
+        !type_stamps_enabled())
+        return false;
+    if (!(atom->flags & ATOM_FLAG_TERM_STABLE) || atom_has_vars(atom) ||
+        atom_has_registry_refs(atom) ||
+        atom_structural_may_have_internal_tag(atom) ||
+        (atom->flags & (ATOM_FLAG_HAS_IDENTITY_GROUNDED |
+                        ATOM_FLAG_HAS_THREAD_LOCAL_RESOURCE)) ||
+        atom_structural_has_rational(atom))
+        return false;
+    if (!eval_type_stamp_atom_epoch(s, atom, arena, epoch))
+        return false;
+    /* A node a type row may type as an expression keeps no typing: HE
+     * reads the row before its application, and a kept typing vouches
+     * that no node below it is such a node. */
+    return type_stamps_bind_scope(s) &&
+        !type_stamps_head_types_expressions(
+            s, atom_symbol_current_id(atom->expr.elems[0]), true);
+}
+
+/* Whether every expression child of `atom` has a kept typing: what a
+ * typing kept for `atom` itself then vouches for. */
+static uint32_t type_stamps_node_state(const Atom *atom, uint32_t question,
+                                       uint32_t arena, uint64_t epoch);
+static bool type_stamps_children_kept(Space *s, const Atom *atom) {
+    for (CettaExprIndex i = 1u; i < atom->expr.len; i++) {
+        const Atom *child = atom->expr.elems[i];
+        if (!child || child->kind != ATOM_EXPR)
+            continue;
+        uint32_t arena = 0u;
+        uint64_t epoch = 0u;
+        if (!type_stamps_admit(s, child, NULL, &arena, &epoch) ||
+            !type_stamps_node_state(child, TYPE_INFERENCE_MEMO_TYPES_DECLARED,
+                                    arena, epoch))
+            return false;
+    }
+    return true;
+}
+
+/* Bind the store to `s`'s declarations and the evaluator's scope, clearing
+ * what another scope kept; false where the evaluator keeps no typings. */
+/* The space a prepared pure run keeps one typing scope for: the
+ * evaluator's scope is read once when the run enters. */
+static __thread const Space *g_type_stamps_run_space;
+static __thread bool g_type_stamps_run_bound;
+
+static bool type_stamps_bind_scope(Space *s) {
+    TypeStampStore *store = &g_type_stamps;
+    if (s && g_type_stamps_run_space == s && g_type_stamps_run_bound &&
+        store->space == s && !s->overlay_base &&
+        store->instance_id == s->instance_id &&
+        store->declaration_revision == s->declaration_revision &&
+        store->base_dependency_epoch == 0u)
+        return true;
+    uint64_t scope = 0u;
+    if (!s || !eval_type_stamp_scope || !eval_type_stamp_scope(&scope) ||
+        !type_stamps_enabled())
+        return false;
+    /* The bound scope, read from the space's live fields: a space without
+     * an overlay base has dependency epoch zero (space_program_token). */
+    if (store->space == s && store->scope == scope && !s->overlay_base &&
+        store->instance_id == s->instance_id &&
+        store->declaration_revision == s->declaration_revision &&
+        store->base_dependency_epoch == 0u)
+        return true;
+    /* A declaration holding a state cell is observed afresh by every
+     * inference: its typings are kept for no node. */
+    if (space_declarations_hold_identity(s, 0u)) {
+        if (store->len || store->state_len || store->symbol_len)
+            type_stamps_clear();
+        store->space = NULL;
+        return false;
+    }
+    SpaceProgramToken token = space_program_token(s);
+    if (store->space != s || store->instance_id != token.instance_id ||
+        store->declaration_revision != token.declaration_revision ||
+        store->base_dependency_epoch != token.base_dependency_epoch ||
+        store->scope != scope) {
+        if (store->len || store->state_len || store->symbol_len) {
+            type_stamps_clear();
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TYPE_STAMP_SCOPE_CLEAR);
+        }
+        store->space = s;
+        store->instance_id = token.instance_id;
+        store->declaration_revision = token.declaration_revision;
+        store->base_dependency_epoch = token.base_dependency_epoch;
+        store->scope = scope;
+    }
+    return true;
+}
+
+static bool type_stamps_types_ready(void) {
+    TypeStampStore *store = &g_type_stamps;
+    if (!store->types_ready) {
+        arena_init(&store->types);
+        arena_set_hashcons(&store->types, NULL);
+        arena_set_runtime_kind(&store->types,
+                               CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
+        store->types_ready = true;
+    }
+    return true;
+}
+
+/* The state id (index + 1) of a ground typing list, interned; 0 where the
+ * list has a variable or the store cannot grow. */
+static uint32_t type_stamps_intern(Atom *const *types, uint32_t count) {
+    uint64_t hash = type_stamps_mix(UINT64_C(0xcbf29ce484222325), count);
+    for (uint32_t i = 0u; i < count; i++) {
+        if (!types[i] || atom_has_vars(types[i]))
+            return 0u;
+        hash = type_stamps_mix(hash, atom_hash(types[i]));
+    }
+    TypeStampStore *store = &g_type_stamps;
+    if (store->state_index_cap) {
+        size_t mask = store->state_index_cap - 1u;
+        for (size_t slot = (size_t)hash & mask; store->state_index[slot];
+             slot = (slot + 1u) & mask) {
+            const TypeStampState *state =
+                &store->states[store->state_index[slot] - 1u];
+            if (state->hash != hash || state->count != count)
+                continue;
+            bool same = true;
+            for (uint32_t i = 0u; same && i < count; i++)
+                same = atom_eq(state->types[i], types[i]);
+            if (same)
+                return store->state_index[slot];
+        }
+    }
+    if (store->state_len >= TYPE_STAMPS_MAX_STATES)
+        return 0u;
+    if ((size_t)(store->state_len + 1u) * 2u > store->state_index_cap) {
+        size_t cap = store->state_index_cap ? store->state_index_cap * 2u : 64u;
+        uint32_t *index = calloc(cap, sizeof(*index));
+        if (!index)
+            return 0u;
+        for (uint32_t id = 1u; id <= store->state_len; id++) {
+            size_t slot = (size_t)store->states[id - 1u].hash & (cap - 1u);
+            while (index[slot])
+                slot = (slot + 1u) & (cap - 1u);
+            index[slot] = id;
+        }
+        free(store->state_index);
+        store->state_index = index;
+        store->state_index_cap = cap;
+    }
+    if (store->state_len == store->state_cap) {
+        uint32_t cap = store->state_cap ? store->state_cap * 2u : 32u;
+        TypeStampState *states =
+            realloc(store->states, sizeof(*states) * cap);
+        if (!states)
+            return 0u;
+        store->states = states;
+        store->state_cap = cap;
+    }
+    type_stamps_types_ready();
+    Atom **kept = NULL;
+    if (count) {
+        kept = malloc(sizeof(*kept) * count);
+        if (!kept)
+            return 0u;
+        for (uint32_t i = 0u; i < count; i++) {
+            kept[i] = atom_deep_copy(&store->types, types[i]);
+            if (!kept[i]) {
+                free(kept);
+                return 0u;
+            }
+        }
+    }
+    store->states[store->state_len] =
+        (TypeStampState){.count = count, .types = kept, .hash = hash};
+    uint32_t id = ++store->state_len;
+    size_t mask = store->state_index_cap - 1u;
+    size_t slot = (size_t)hash & mask;
+    while (store->state_index[slot])
+        slot = (slot + 1u) & mask;
+    store->state_index[slot] = id;
+    return id;
+}
+
+/* State `id`'s types, copied into `a`. */
+static bool type_stamps_materialize(Arena *a, uint32_t id, Atom ***out_types,
+                                    uint32_t *out_count) {
+    const TypeStampState *state = &g_type_stamps.states[id - 1u];
+    Atom **types = NULL;
+    if (state->count) {
+        types = malloc(sizeof(*types) * state->count);
+        if (!types)
+            return false;
+        for (uint32_t i = 0u; i < state->count; i++) {
+            types[i] = atom_deep_copy(a, state->types[i]);
+            if (!types[i]) {
+                free(types);
+                return false;
+            }
+        }
+    }
+    *out_types = types;
+    *out_count = state->count;
+    return true;
+}
+
+static size_t type_stamps_slot(const Atom *atom, uint32_t question,
+                               size_t cap) {
+    uintptr_t key = (uintptr_t)atom ^ (uintptr_t)question;
+    key ^= key >> 33u;
+    key *= (uintptr_t)UINT64_C(0xff51afd7ed558ccd);
+    key ^= key >> 29u;
+    return (size_t)key & (cap - 1u);
+}
+
+static TypeStampEntry *type_stamps_find(const Atom *atom, uint32_t question) {
+    TypeStampStore *store = &g_type_stamps;
+    if (!store->cap)
+        return NULL;
+    size_t slot = type_stamps_slot(atom, question, store->cap);
+    while (store->slots[slot].atom) {
+        TypeStampEntry *entry = &store->slots[slot];
+        if (entry->atom == atom && entry->question == question)
+            return entry;
+        slot = (slot + 1u) & (store->cap - 1u);
+    }
+    return NULL;
+}
+
+/* The state kept for this incarnation of `atom`, or 0. */
+static uint32_t type_stamps_node_state(const Atom *atom, uint32_t question,
+                                       uint32_t arena, uint64_t epoch) {
+    const TypeStampEntry *entry = type_stamps_find(atom, question);
+    return entry && entry->arena == arena && entry->epoch == epoch
+        ? entry->state : 0u;
+}
+
+static void type_stamps_record(const Atom *atom, uint32_t question,
+                               uint32_t arena, uint64_t epoch,
+                               uint32_t state) {
+    TypeStampStore *store = &g_type_stamps;
+    TypeStampEntry *entry = type_stamps_find(atom, question);
+    if (!entry) {
+        if ((store->len + 1u) * 2u > store->cap) {
+            size_t cap = store->cap ? store->cap * 2u : 256u;
+            TypeStampEntry *slots = calloc(cap, sizeof(*slots));
+            if (!slots)
+                return;
+            for (size_t i = 0u; i < store->cap; i++) {
+                if (!store->slots[i].atom)
+                    continue;
+                size_t slot = type_stamps_slot(store->slots[i].atom,
+                                               store->slots[i].question, cap);
+                while (slots[slot].atom)
+                    slot = (slot + 1u) & (cap - 1u);
+                slots[slot] = store->slots[i];
+            }
+            free(store->slots);
+            store->slots = slots;
+            store->cap = cap;
+        }
+        size_t slot = type_stamps_slot(atom, question, store->cap);
+        while (store->slots[slot].atom)
+            slot = (slot + 1u) & (store->cap - 1u);
+        entry = &store->slots[slot];
+        store->len++;
+    }
+    *entry = (TypeStampEntry){.atom = atom, .epoch = epoch, .arena = arena,
+                              .question = question, .state = state};
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TYPE_STAMP_RECORD);
+}
+
+static TypeStampSymbol *type_stamps_symbol(SymbolId symbol) {
+    TypeStampStore *store = &g_type_stamps;
+    if ((store->symbol_len + 1u) * 2u > store->symbol_cap) {
+        size_t cap = store->symbol_cap ? store->symbol_cap * 2u : 64u;
+        TypeStampSymbol *symbols = calloc(cap, sizeof(*symbols));
+        if (!symbols)
+            return NULL;
+        for (size_t i = 0u; i < store->symbol_cap; i++) {
+            if (store->symbols[i].symbol == SYMBOL_ID_NONE)
+                continue;
+            size_t slot = symbol_id_mix(store->symbols[i].symbol) & (cap - 1u);
+            while (symbols[slot].symbol != SYMBOL_ID_NONE)
+                slot = (slot + 1u) & (cap - 1u);
+            symbols[slot] = store->symbols[i];
+        }
+        free(store->symbols);
+        store->symbols = symbols;
+        store->symbol_cap = cap;
+    }
+    size_t mask = store->symbol_cap - 1u;
+    size_t slot = symbol_id_mix(symbol) & mask;
+    while (store->symbols[slot].symbol != SYMBOL_ID_NONE) {
+        if (store->symbols[slot].symbol == symbol)
+            return &store->symbols[slot];
+        slot = (slot + 1u) & mask;
+    }
+    store->symbols[slot] = (TypeStampSymbol){.symbol = symbol};
+    store->symbol_len++;
+    return &store->symbols[slot];
+}
+
+/* Whether a node headed by `head` may be typed by its shape: every type row
+ * filed under `head` is a declaration of the symbol itself, so no row has an
+ * expression with that head as its subject, and no row is headless. */
+/* Whether every type row whose subject `head` heads is a declaration of
+ * `head` itself: no expression subject headed by it, no open row, no
+ * headless row in the space. */
+bool space_type_rows_only_declare(Space *s, SymbolId head) {
+    if (!s || head == SYMBOL_ID_NONE)
+        return false;
+    ensure_ty_ann_index(s);
+    bool ok = !s->native.ty_idx_dirty && !s->native.ty_idx.has_open_rows &&
+        s->native.ty_idx.rows.headless.count == 0u;
+    const SpaceHeadChains *rows = &s->native.ty_idx.rows;
+    const SpaceHeadChain *chain = ok ? space_head_chains_find(rows, head) : NULL;
+    for (uint32_t i = chain ? chain->first : SPACE_HEAD_CHAIN_END;
+         ok && i != SPACE_HEAD_CHAIN_END; i = rows->next[i])
+        ok = space_type_chain_declared(s, rows, chain, i) != NULL;
+    return ok && chain != NULL;
+}
+
+bool space_type_rows_type_no_expression_of(Space *s, SymbolId head) {
+    if (!s || head == SYMBOL_ID_NONE)
+        return false;
+    ensure_ty_ann_index(s);
+    if (s->native.ty_idx_dirty || s->native.ty_idx.has_open_rows ||
+        s->native.ty_idx.rows.headless.count != 0u)
+        return false;
+    const SpaceHeadChains *rows = &s->native.ty_idx.rows;
+    const SpaceHeadChain *chain = space_head_chains_find(rows, head);
+    for (uint32_t i = chain ? chain->first : SPACE_HEAD_CHAIN_END;
+         i != SPACE_HEAD_CHAIN_END; i = rows->next[i])
+        if (!space_type_chain_declared(s, rows, chain, i))
+            return false;
+    return true;
+}
+
+/* Whether a type row of `s` may type an expression headed by `head`,
+ * kept per symbol while the store is bound to `s`'s declarations. */
+static bool type_stamps_head_types_expressions(Space *s, SymbolId head,
+                                               bool bound) {
+    if (!bound)
+        return !space_type_rows_type_no_expression_of(s, head);
+    TypeStampSymbol *known = type_stamps_symbol(head);
+    if (!known)
+        return !space_type_rows_type_no_expression_of(s, head);
+    if (known->expression_rows == TYPE_STAMP_ROWS_UNKNOWN) {
+        bool some = !space_type_rows_type_no_expression_of(s, head);
+        known = type_stamps_symbol(head);
+        if (!known)
+            return some;
+        known->expression_rows = some ? TYPE_STAMP_ROWS_SOME
+                                      : TYPE_STAMP_ROWS_NONE;
+    }
+    return known->expression_rows == TYPE_STAMP_ROWS_SOME;
+}
+
+bool space_type_rows_free_below(Space *s, Atom *atom) {
+    if (!atom || atom->kind != ATOM_EXPR)
+        return true;
+    if (!s)
+        return false;
+    bool bound = type_stamps_enabled() && type_stamps_bind_scope(s);
+    size_t cap = 64u, len = 0u, done_len = 0u, done_cap = 0u;
+    Atom **stack = malloc(cap * sizeof(*stack));
+    const Atom **done = NULL;
+    if (!stack)
+        return false;
+    stack[len++] = atom;
+    AtomVisitSet seen = {0};
+    bool free_below = true;
+    while (free_below && len > 0u) {
+        Atom *node = stack[--len];
+        bool fault = false;
+        if (!atom_visit_set_add(&seen, node, &fault)) {
+            free_below = !fault;
+            continue;
+        }
+        if (node->expr.len == 0u)
+            continue;
+        if (node->expr.elems[0]->kind != ATOM_SYMBOL) {
+            free_below = false;
+            break;
+        }
+        uint32_t arena = 0u;
+        uint64_t epoch = 0u;
+        bool admitted = bound &&
+            type_stamps_admit(s, node, NULL, &arena, &epoch);
+        if (admitted && type_stamps_node_state(
+                node, TYPE_STAMP_QUESTION_ROWS_FREE, arena, epoch))
+            continue;
+        if (type_stamps_head_types_expressions(
+                s, atom_symbol_current_id(node->expr.elems[0]), bound)) {
+            free_below = false;
+            break;
+        }
+        if (admitted) {
+            if (done_len == done_cap) {
+                size_t grown = done_cap ? done_cap * 2u : 64u;
+                const Atom **more = realloc(done, grown * sizeof(*done));
+                if (!more) {
+                    free_below = false;
+                    break;
+                }
+                done = more;
+                done_cap = grown;
+            }
+            done[done_len++] = node;
+        }
+        if (len + node->expr.len > cap) {
+            size_t grown = cap;
+            while (len + node->expr.len > grown)
+                grown *= 2u;
+            Atom **more = realloc(stack, grown * sizeof(*stack));
+            if (!more) {
+                free_below = false;
+                break;
+            }
+            stack = more;
+            cap = grown;
+        }
+        for (CettaExprIndex i = 1u; i < node->expr.len; i++)
+            if (node->expr.elems[i]->kind == ATOM_EXPR)
+                stack[len++] = node->expr.elems[i];
+    }
+    /* Every node walked is free below once the whole walk is. */
+    for (size_t i = 0u; free_below && i < done_len; i++) {
+        uint32_t arena = 0u;
+        uint64_t epoch = 0u;
+        if (type_stamps_admit(s, done[i], NULL, &arena, &epoch))
+            type_stamps_record(done[i], TYPE_STAMP_QUESTION_ROWS_FREE, arena,
+                               epoch, 1u);
+    }
+    atom_visit_set_free(&seen);
+    free(done);
+    free(stack);
+    return free_below;
+}
+
+static bool type_stamps_head_reads_shapes(Space *s, SymbolId head) {
+    /* A native handle's typing reads its kind's literal value. */
+    if (head == g_builtin_syms.native_handle)
+        return false;
+    TypeStampSymbol *known = type_stamps_symbol(head);
+    if (!known)
+        return false;
+    if (known->shapes != TYPE_STAMP_SHAPES_UNKNOWN)
+        return known->shapes == TYPE_STAMP_SHAPES_READ;
+    ensure_ty_ann_index(s);
+    bool ok = !s->native.ty_idx_dirty && !s->native.ty_idx.has_open_rows &&
+        s->native.ty_idx.rows.headless.count == 0u;
+    const SpaceHeadChains *rows = &s->native.ty_idx.rows;
+    const SpaceHeadChain *chain = ok ? space_head_chains_find(rows, head) : NULL;
+    for (uint32_t i = chain ? chain->first : SPACE_HEAD_CHAIN_END;
+         ok && i != SPACE_HEAD_CHAIN_END; i = rows->next[i])
+        ok = space_type_chain_declared(s, rows, chain, i) != NULL;
+    known = type_stamps_symbol(head);
+    if (known)
+        known->shapes = ok ? TYPE_STAMP_SHAPES_READ : TYPE_STAMP_SHAPES_NOT;
+    return ok;
+}
+
+static uint32_t get_atom_types_mode(Space *s, Arena *a, Atom *atom,
+                                    Atom ***out_types,
+                                    bool include_direct_annotations,
+                                    CettaTypeInferenceBudget *budget);
+
+/* Whether no type row of `s` or of a space it depends on can name a
+ * literal: every row is chained by its subject's head symbol (a symbol, or
+ * an expression headed by one), none headless (a variable or a grounded
+ * subject) and none open. */
+static bool type_stamps_rows_name_no_literal(Space *s, uint32_t depth) {
+    if (!s || depth > 32u || space_has_overlay_base(s) ||
+        s->match_backend.kind != SPACE_ENGINE_NATIVE)
+        return false;
+    ensure_ty_ann_index(s);
+    if (s->native.ty_idx_dirty || s->native.ty_idx.has_open_rows ||
+        s->native.ty_idx.rows.headless.count != 0u)
+        return false;
+    for (uint32_t d = 0u; d < space_dependency_count(s); d++)
+        if (!type_stamps_rows_name_no_literal(space_dependency_at(s, d),
+                                              depth + 1u))
+            return false;
+    return true;
+}
+
+/* A number's, a string's or a truth value's typing state: where no type row
+ * names a literal (type_stamps_rows_name_no_literal), its typing is its
+ * kind's, read once per scope; 0 where the store keeps none for it. */
+static uint32_t type_stamps_literal_state(Space *s, Arena *a, Atom *child) {
+    GroundedKind kind = child->ground.gkind;
+    if (kind != GV_INT && kind != GV_FLOAT && kind != GV_BOOL &&
+        kind != GV_STRING && kind != GV_BIGINT)
+        return 0u;
+    TypeStampStore *store = &g_type_stamps;
+    uint32_t *kept = &store->literal_states[kind];
+    if (*kept == 0u) {
+        uint32_t id = 0u;
+        if (type_stamps_rows_name_no_literal(s, 0u)) {
+            Atom **types = NULL;
+            uint32_t count = get_atom_types_mode(s, a, child, &types, true, NULL);
+            id = type_stamps_intern(types, count);
+            free(types);
+        }
+        *kept = id ? id : TYPE_STAMP_NONE;
+    }
+    return *kept == TYPE_STAMP_NONE ? 0u : *kept;
+}
+
+/* The kind and state that key a child in a shape: a kept node's state, a
+ * symbol's or grounded value's typing as the inference reads it (declared
+ * rows included); 0 where the child keys no shape. */
+static uint32_t type_stamps_child_state(Space *s, Arena *a, Atom *child) {
+    if (!child)
+        return 0u;
+    if (child->kind == ATOM_EXPR) {
+        uint32_t arena = 0u;
+        uint64_t epoch = 0u;
+        if (!type_stamps_admit(s, child, NULL, &arena, &epoch))
+            return 0u;
+        return type_stamps_node_state(child, TYPE_INFERENCE_MEMO_TYPES_DECLARED,
+                                      arena, epoch);
+    }
+    if (child->kind == ATOM_SYMBOL) {
+        TypeStampSymbol *known = type_stamps_symbol(atom_symbol_current_id(child));
+        if (!known)
+            return 0u;
+        if (known->state == 0u) {
+            Atom **types = NULL;
+            uint32_t count = get_atom_types_mode(s, a, child, &types, true, NULL);
+            uint32_t id = type_stamps_intern(types, count);
+            free(types);
+            known = type_stamps_symbol(atom_symbol_current_id(child));
+            if (!known)
+                return 0u;
+            known->state = id ? id : TYPE_STAMP_NONE;
+        }
+        return known->state == TYPE_STAMP_NONE ? 0u : known->state;
+    }
+    if (child->kind == ATOM_GROUNDED) {
+        uint32_t kept = type_stamps_literal_state(s, a, child);
+        if (kept)
+            return kept;
+        Atom **types = NULL;
+        uint32_t count = get_atom_types_mode(s, a, child, &types, true, NULL);
+        uint32_t id = type_stamps_intern(types, count);
+        free(types);
+        return id;
+    }
+    return 0u;
+}
+
+/* The shape key of `atom` under `question`: its head, arity, and each
+ * child's kind and key: a symbol itself, since a parent's typing may read
+ * the symbol and not only its typing (a tuple part's raw annotations, a
+ * native handle's kind), and the typing state of any other child; false
+ * where a child keys no shape. */
+static bool type_stamps_shape(Space *s, Arena *a, const Atom *atom,
+                              uint32_t question, TypeStampTransition *key) {
+    CettaExprLen arity = atom->expr.len - 1u;
+    if (arity > TYPE_STAMP_TRANSITION_ARITY)
+        return false;
+    SymbolId head = atom_symbol_current_id(atom->expr.elems[0]);
+    if (!type_stamps_head_reads_shapes(s, head))
+        return false;
+    *key = (TypeStampTransition){.head = head, .question = question,
+                                 .arity = (uint32_t)arity};
+    uint64_t hash = type_stamps_mix(type_stamps_mix(question, head), arity);
+    for (CettaExprLen i = 0u; i < arity; i++) {
+        Atom *child = atom->expr.elems[i + 1u];
+        uint32_t state = child && child->kind == ATOM_SYMBOL
+            ? (uint32_t)atom_symbol_current_id(child)
+            : type_stamps_child_state(s, a, child);
+        if (!state)
+            return false;
+        key->kinds |= (uint32_t)(child->kind & 7u) << (3u * i);
+        key->args[i] = state;
+        hash = type_stamps_mix(type_stamps_mix(hash, child->kind), state);
+    }
+    key->hash = hash;
+    return true;
+}
+
+static bool type_stamps_transition_same(const TypeStampTransition *left,
+                                        const TypeStampTransition *right) {
+    if (left->hash != right->hash || left->head != right->head ||
+        left->question != right->question || left->arity != right->arity ||
+        left->kinds != right->kinds)
+        return false;
+    for (uint32_t i = 0u; i < left->arity; i++)
+        if (left->args[i] != right->args[i])
+            return false;
+    return true;
+}
+
+static uint32_t type_stamps_transition_find(const TypeStampTransition *key) {
+    TypeStampStore *store = &g_type_stamps;
+    if (!store->transition_cap)
+        return 0u;
+    size_t mask = store->transition_cap - 1u;
+    for (size_t slot = (size_t)key->hash & mask;
+         store->transitions[slot].state; slot = (slot + 1u) & mask)
+        if (type_stamps_transition_same(&store->transitions[slot], key))
+            return store->transitions[slot].state;
+    return 0u;
+}
+
+static void type_stamps_transition_record(const TypeStampTransition *key,
+                                          uint32_t state) {
+    TypeStampStore *store = &g_type_stamps;
+    if ((store->transition_len + 1u) * 2u > store->transition_cap) {
+        size_t cap = store->transition_cap ? store->transition_cap * 2u : 64u;
+        TypeStampTransition *table = calloc(cap, sizeof(*table));
+        if (!table)
+            return;
+        for (size_t i = 0u; i < store->transition_cap; i++) {
+            if (!store->transitions[i].state)
+                continue;
+            size_t slot = (size_t)store->transitions[i].hash & (cap - 1u);
+            while (table[slot].state)
+                slot = (slot + 1u) & (cap - 1u);
+            table[slot] = store->transitions[i];
+        }
+        free(store->transitions);
+        store->transitions = table;
+        store->transition_cap = cap;
+    }
+    size_t mask = store->transition_cap - 1u;
+    size_t slot = (size_t)key->hash & mask;
+    while (store->transitions[slot].state) {
+        if (type_stamps_transition_same(&store->transitions[slot], key))
+            return;
+        slot = (slot + 1u) & mask;
+    }
+    store->transitions[slot] = *key;
+    store->transitions[slot].state = state;
+    store->transition_len++;
+}
+
+/* The state of `atom`'s typing for `question` as the store holds it or
+ * reads it by its shape (kept for the node on a shape hit), or 0. */
+static uint32_t type_stamps_state_for(Space *s, Arena *a, Atom *atom,
+                                      uint32_t question) {
+    /* A symbol's typing is its declared rows, kept per symbol. */
+    if (atom && atom->kind == ATOM_SYMBOL)
+        return type_stamps_bind_scope(s)
+            ? type_stamps_child_state(s, a, atom) : 0u;
+    uint32_t arena = 0u;
+    uint64_t epoch = 0u;
+    if (!type_stamps_admit(s, atom, NULL, &arena, &epoch))
+        return 0u;
+    uint32_t state = type_stamps_node_state(atom, question, arena, epoch);
+    if (state)
+        return state;
+    TypeStampTransition shape;
+    if (!type_stamps_shape(s, a, atom, question, &shape))
+        return 0u;
+    state = type_stamps_transition_find(&shape);
+    if (state)
+        type_stamps_record(atom, question, arena, epoch, state);
+    return state;
+}
+
+/* The declared question's state: get_atom_types's answers. */
+static uint32_t type_stamps_state_of(Space *s, Arena *a, Atom *atom) {
+    return type_stamps_state_for(s, a, atom,
+                                 TYPE_INFERENCE_MEMO_TYPES_DECLARED);
+}
+
+int space_type_stamps_count(Space *s, Arena *a, Atom *atom) {
+    uint32_t state = type_stamps_state_of(s, a, atom);
+    if (!state)
+        return -1;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TYPE_STAMP_HIT);
+    return (int)g_type_stamps.states[state - 1u].count;
+}
+
+int space_type_stamps_structural_count(Space *s, Arena *a, Atom *atom) {
+    /* get_atom_types_structural's question: an expression's own top-level
+     * declarations do not count; any other subject keeps its rows. */
+    uint32_t question = atom && atom->kind == ATOM_EXPR
+        ? TYPE_INFERENCE_MEMO_TYPES_INFERRED
+        : TYPE_INFERENCE_MEMO_TYPES_DECLARED;
+    uint32_t state = type_stamps_state_for(s, a, atom, question);
+    if (!state)
+        return -1;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TYPE_STAMP_HIT);
+    return (int)g_type_stamps.states[state - 1u].count;
+}
+
+bool space_type_stamps_has_type(Space *s, Arena *a, Atom *atom,
+                                Atom *type) {
+    uint32_t state = type_stamps_state_of(s, a, atom);
+    if (!state || !type)
+        return false;
+    const TypeStampState *held = &g_type_stamps.states[state - 1u];
+    for (uint32_t i = 0u; i < held->count; i++) {
+        if (atom_eq(held->types[i], type)) {
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TYPE_STAMP_HIT);
+            return true;
+        }
+    }
+    return false;
+}
+
+const Space *space_type_stamps_run_enter(Space *s) {
+    const Space *outer = g_type_stamps_run_bound ? g_type_stamps_run_space
+                                                 : NULL;
+    g_type_stamps_run_space = s;
+    g_type_stamps_run_bound = s && type_stamps_bind_scope(s);
+    return outer;
+}
+
+void space_type_stamps_run_leave(const Space *outer) {
+    g_type_stamps_run_space = outer;
+    g_type_stamps_run_bound = outer != NULL;
+}
+
+int space_type_stamps_types(Space *s, Arena *a, Atom *atom,
+                            Atom *const **types) {
+    uint32_t state = type_stamps_state_of(s, a, atom);
+    if (!state || !types)
+        return -1;
+    const TypeStampState *held = &g_type_stamps.states[state - 1u];
+    *types = held->types;
+    return (int)held->count;
+}
+
+/* A kept answer: for UNIFY, whether state `state`'s typings unify with
+ * `formal`; for INSTANCE, `range` under the unifier of the state's one
+ * fitting typing with `formal` (NULL: none or several fit). */
+typedef struct TypeStampQuery {
+    uint64_t hash;
+    uint32_t state;
+    uint8_t kind;
+    uint8_t answer;
+    const Atom *formal;
+    const Atom *range;
+    Atom *instance;
+} TypeStampQuery;
+
+enum { TYPE_STAMP_QUERY_UNIFY = 1u, TYPE_STAMP_QUERY_INSTANCE = 2u };
+
+static uint64_t type_stamps_query_hash(uint8_t kind, uint32_t state,
+                                       const Atom *formal, const Atom *range) {
+    uint64_t hash = type_stamps_mix(type_stamps_mix(kind, state),
+                                    atom_hash((Atom *)formal));
+    return range ? type_stamps_mix(hash, atom_hash((Atom *)range)) : hash;
+}
+
+static TypeStampQuery *type_stamps_query_find(uint8_t kind, uint32_t state,
+                                              const Atom *formal,
+                                              const Atom *range,
+                                              uint64_t hash) {
+    TypeStampStore *store = &g_type_stamps;
+    if (!store->query_cap)
+        return NULL;
+    size_t mask = store->query_cap - 1u;
+    for (size_t slot = (size_t)hash & mask; store->queries[slot].kind;
+         slot = (slot + 1u) & mask) {
+        TypeStampQuery *query = &store->queries[slot];
+        if (query->hash == hash && query->kind == kind &&
+            query->state == state &&
+            atom_eq((Atom *)query->formal, (Atom *)formal) &&
+            (range ? query->range &&
+                         atom_eq((Atom *)query->range, (Atom *)range)
+                   : !query->range))
+            return query;
+    }
+    return NULL;
+}
+
+static void type_stamps_query_keep(uint8_t kind, uint32_t state,
+                                   const Atom *formal, const Atom *range,
+                                   uint64_t hash, uint8_t answer,
+                                   Atom *instance) {
+    TypeStampStore *store = &g_type_stamps;
+    if (store->query_len * 2u + 2u > store->query_cap) {
+        size_t cap = store->query_cap ? store->query_cap * 2u : 64u;
+        TypeStampQuery *grown = cetta_malloc(cap * sizeof(*grown));
+        if (!grown)
+            return;
+        memset(grown, 0, cap * sizeof(*grown));
+        for (size_t i = 0u; i < store->query_cap; i++) {
+            TypeStampQuery *old = &store->queries[i];
+            if (!old->kind)
+                continue;
+            size_t slot = (size_t)old->hash & (cap - 1u);
+            while (grown[slot].kind)
+                slot = (slot + 1u) & (cap - 1u);
+            grown[slot] = *old;
+        }
+        free(store->queries);
+        store->queries = grown;
+        store->query_cap = cap;
+    }
+    if (!type_stamps_types_ready())
+        return;
+    Atom *kept_formal = atom_deep_copy(&store->types, (Atom *)formal);
+    Atom *kept_range = range ? atom_deep_copy(&store->types, (Atom *)range)
+                             : NULL;
+    Atom *kept_instance = instance
+        ? atom_deep_copy(&store->types, instance) : NULL;
+    if (!kept_formal || (range && !kept_range) || (instance && !kept_instance))
+        return;
+    size_t mask = store->query_cap - 1u;
+    size_t slot = (size_t)hash & mask;
+    while (store->queries[slot].kind)
+        slot = (slot + 1u) & mask;
+    store->queries[slot] = (TypeStampQuery){.hash = hash, .state = state,
+        .kind = kind, .answer = answer, .formal = kept_formal,
+        .range = kept_range, .instance = kept_instance};
+    store->query_len++;
+}
+
+int space_type_stamps_unifies(Space *s, Arena *a, Atom *atom, Atom *type) {
+    uint32_t state = type_stamps_state_of(s, a, atom);
+    if (!state || !type)
+        return -1;
+    uint64_t hash = type_stamps_query_hash(TYPE_STAMP_QUERY_UNIFY, state,
+                                           type, NULL);
+    const TypeStampQuery *kept = type_stamps_query_find(
+        TYPE_STAMP_QUERY_UNIFY, state, type, NULL, hash);
+    if (kept)
+        return kept->answer;
+    const TypeStampState *held = &g_type_stamps.states[state - 1u];
+    int answer = 0;
+    for (uint32_t i = 0u; !answer && i < held->count; i++) {
+        Bindings bindings;
+        bindings_init(&bindings);
+        if (match_types(held->types[i], type, &bindings, a))
+            answer = 1;
+        bindings_free(&bindings);
+    }
+    type_stamps_query_keep(TYPE_STAMP_QUERY_UNIFY, state, type, NULL, hash,
+                           (uint8_t)answer, NULL);
+    return answer;
+}
+
+/* `range` under the unifier of `atom`'s one typing that unifies with
+ * `formal`: 1 with *instance set (owned by the store until it clears),
+ * 0 where none or several of its typings fit, -1 where the store holds
+ * none of its typings. */
+int space_type_stamps_instance(Space *s, Arena *a, Atom *atom, Atom *formal,
+                               Atom *range, Atom **instance) {
+    uint32_t state = type_stamps_state_of(s, a, atom);
+    if (!state || !formal || !range || !instance)
+        return -1;
+    uint64_t hash = type_stamps_query_hash(TYPE_STAMP_QUERY_INSTANCE, state,
+                                           formal, range);
+    const TypeStampQuery *kept = type_stamps_query_find(
+        TYPE_STAMP_QUERY_INSTANCE, state, formal, range, hash);
+    if (kept) {
+        *instance = kept->instance;
+        return kept->answer;
+    }
+    const TypeStampState *held = &g_type_stamps.states[state - 1u];
+    uint32_t fits = 0u;
+    Atom *found = NULL;
+    for (uint32_t i = 0u; fits < 2u && i < held->count; i++) {
+        Bindings bindings;
+        bindings_init(&bindings);
+        if (match_types(held->types[i], formal, &bindings, a) && ++fits == 1u)
+            found = bindings_apply_if_vars(&bindings, a, range);
+        bindings_free(&bindings);
+    }
+    uint8_t answer = fits == 1u && found ? 1u : 0u;
+    type_stamps_query_keep(TYPE_STAMP_QUERY_INSTANCE, state, formal, range,
+                           hash, answer, answer ? found : NULL);
+    kept = type_stamps_query_find(TYPE_STAMP_QUERY_INSTANCE, state, formal,
+                                  range, hash);
+    *instance = kept ? kept->instance : (answer ? found : NULL);
+    return answer;
+}
+
+/* Copy `from`'s kept typings onto `to`, a copy of `from` with the same
+ * shape: a node of `to` the store admits, and keeps no typing for, takes the
+ * state its source node holds under one of `sources`' current incarnations.
+ * The walk is iterative; a shape mismatch stops at that node. */
+void space_type_stamps_transfer(Space *s, const Atom *from, Atom *to,
+                                const Arena *const *sources,
+                                size_t source_count) {
+    /* Nothing kept, nothing to carry. */
+    if (!s || !from || !to || !sources || !type_stamps_enabled() ||
+        g_type_stamps.len == 0u)
+        return;
+    typedef struct { const Atom *from; Atom *to; } Pair;
+    Pair inline_pairs[64];
+    Pair *pairs = inline_pairs;
+    size_t len = 0u, cap = 64u;
+    pairs[len++] = (Pair){from, to};
+    static const uint32_t questions[] = {
+        TYPE_INFERENCE_MEMO_TYPES_DECLARED, TYPE_INFERENCE_MEMO_TYPES_INFERRED};
+    /* A value shares subterms: each node of the copy is read once, and a
+     * part the copy shares with its source holds its source's typings. */
+    AtomVisitSet seen = {0};
+    while (len) {
+        Pair pair = pairs[--len];
+        if (pair.from == pair.to || pair.from->kind != ATOM_EXPR ||
+            pair.to->kind != ATOM_EXPR ||
+            pair.from->expr.len != pair.to->expr.len)
+            continue;
+        bool fault = false;
+        if (!atom_visit_set_add(&seen, pair.to, &fault)) {
+            if (fault)
+                break;
+            continue;
+        }
+        uint32_t arena = 0u;
+        uint64_t epoch = 0u;
+        if (pair.from != pair.to &&
+            type_stamps_admit(s, pair.to, NULL, &arena, &epoch)) {
+            for (size_t q = 0u; q < sizeof(questions) / sizeof(*questions); q++) {
+                const TypeStampEntry *entry =
+                    type_stamps_find(pair.from, questions[q]);
+                if (!entry || !entry->state ||
+                    type_stamps_node_state(pair.to, questions[q], arena, epoch))
+                    continue;
+                bool current = false;
+                for (size_t k = 0u; !current && k < source_count; k++)
+                    current = sources[k] &&
+                        entry->arena == sources[k]->identity &&
+                        entry->epoch == sources[k]->reset_epoch;
+                if (current)
+                    type_stamps_record(pair.to, questions[q], arena, epoch,
+                                       entry->state);
+            }
+        }
+        for (CettaExprIndex i = 0u; i < pair.from->expr.len; i++) {
+            if (pair.from->expr.elems[i]->kind != ATOM_EXPR)
+                continue;
+            if (len == cap) {
+                size_t grown = cap * 2u;
+                Pair *more = pairs == inline_pairs
+                    ? cetta_malloc(grown * sizeof(*more))
+                    : cetta_realloc(pairs, grown * sizeof(*more));
+                if (!more)
+                    break;
+                if (pairs == inline_pairs)
+                    memcpy(more, inline_pairs, len * sizeof(*more));
+                pairs = more;
+                cap = grown;
+            }
+            pairs[len++] = (Pair){pair.from->expr.elems[i], pair.to->expr.elems[i]};
+        }
+    }
+    atom_visit_set_free(&seen);
+    if (pairs != inline_pairs)
+        free(pairs);
+}
+
+/* Keep `type` as the one typing of this incarnation of `atom`, a value whose
+ * typing the caller derived from its parts' (a checked build whose children's
+ * types decide it), where the store admits the atom. */
+void space_type_stamps_record_type(Space *s, Arena *a, Atom *atom,
+                                   Atom *type) {
+    (void)a;
+    uint32_t arena = 0u;
+    uint64_t epoch = 0u;
+    if (!type || !type_stamps_admit(s, atom, NULL, &arena, &epoch) ||
+        (!type_stamps_children_kept(s, atom) &&
+         !space_type_rows_free_below(s, atom)))
+        return;
+    Atom *types[1] = {type};
+    uint32_t state = type_stamps_intern(types, 1u);
+    if (state)
+        type_stamps_record(atom, TYPE_INFERENCE_MEMO_TYPES_DECLARED, arena,
+                           epoch, state);
+}
+
+/* Whether the store holds typings of this incarnation of `atom`. */
+bool space_type_stamps_hold(Space *s, const Atom *atom) {
+    uint32_t arena = 0u;
+    uint64_t epoch = 0u;
+    if (!type_stamps_admit(s, atom, NULL, &arena, &epoch))
+        return false;
+    return type_stamps_node_state(atom, TYPE_INFERENCE_MEMO_TYPES_INFERRED,
+                                  arena, epoch) ||
+        type_stamps_node_state(atom, TYPE_INFERENCE_MEMO_TYPES_DECLARED,
+                               arena, epoch);
+}
+
+static uint32_t get_atom_types_mode(Space *s, Arena *a, Atom *atom,
+                                    Atom ***out_types,
+                                    bool include_direct_annotations,
+                                    CettaTypeInferenceBudget *budget);
+
+/* Whether `node` is an expression the store admits and keeps no declared
+ * typing for yet. */
+static bool type_stamps_untyped_node(Space *s, const Atom *node) {
+    uint32_t arena = 0u;
+    uint64_t epoch = 0u;
+    return node && node->kind == ATOM_EXPR &&
+        type_stamps_admit(s, node, NULL, &arena, &epoch) &&
+        !type_stamps_node_state(node, TYPE_INFERENCE_MEMO_TYPES_DECLARED,
+                                arena, epoch);
+}
+
+/* Type each expression descendant of `atom` that the store admits and keeps
+ * no typing for yet, from the leaves up (get_atom_types_mode records each);
+ * false where none needed it.  A node whose shape the store has seen takes
+ * that state without inference. */
+static bool type_stamps_type_children(Space *s, Arena *a, Atom *atom) {
+    const Space *outer = space_type_stamps_run_enter(s);
+    size_t cap = atom->expr.len > 64u ? atom->expr.len : 64u;
+    size_t len = 0u, order_len = 0u, order_cap = 0u;
+    Atom **stack = malloc(cap * sizeof(*stack));
+    Atom **order = NULL;
+    AtomVisitSet seen = {0};
+    bool ok = stack != NULL;
+    for (CettaExprIndex i = 1u; ok && i < atom->expr.len; i++)
+        if (type_stamps_untyped_node(s, atom->expr.elems[i]))
+            stack[len++] = atom->expr.elems[i];
+    /* Untyped descendants, each parent before its children. */
+    while (ok && len > 0u) {
+        Atom *node = stack[--len];
+        bool fault = false;
+        if (!atom_visit_set_add(&seen, node, &fault)) {
+            ok = !fault;
+            continue;
+        }
+        if (order_len == order_cap) {
+            size_t grown = order_cap ? order_cap * 2u : 64u;
+            Atom **more = realloc(order, grown * sizeof(*order));
+            if (!more) {
+                ok = false;
+                break;
+            }
+            order = more;
+            order_cap = grown;
+        }
+        order[order_len++] = node;
+        if (node->expr.len == 0u ||
+            node->expr.elems[0]->kind != ATOM_SYMBOL ||
+            node->expr.len - 1u > TYPE_STAMP_TRANSITION_ARITY ||
+            !type_stamps_head_reads_shapes(s, atom_symbol_current_id(node->expr.elems[0])))
+            continue;
+        if (len + node->expr.len > cap) {
+            size_t grown = cap;
+            while (len + node->expr.len > grown)
+                grown *= 2u;
+            Atom **more = realloc(stack, grown * sizeof(*stack));
+            if (!more) {
+                ok = false;
+                break;
+            }
+            stack = more;
+            cap = grown;
+        }
+        for (CettaExprIndex i = 1u; i < node->expr.len; i++)
+            if (type_stamps_untyped_node(s, node->expr.elems[i]))
+                stack[len++] = node->expr.elems[i];
+    }
+    /* From the leaves up: every node's children are typed before it. */
+    for (size_t k = order_len; ok && k > 0u; k--) {
+        Atom *node = order[k - 1u];
+        uint32_t arena = 0u;
+        uint64_t epoch = 0u;
+        if (!type_stamps_admit(s, node, NULL, &arena, &epoch) ||
+            type_stamps_node_state(node, TYPE_INFERENCE_MEMO_TYPES_DECLARED,
+                                   arena, epoch))
+            continue;
+        TypeStampTransition shape;
+        uint32_t state = type_stamps_shape(
+                s, a, node, TYPE_INFERENCE_MEMO_TYPES_DECLARED, &shape)
+            ? type_stamps_transition_find(&shape) : 0u;
+        if (state) {
+            type_stamps_record(node, TYPE_INFERENCE_MEMO_TYPES_DECLARED,
+                               arena, epoch, state);
+            continue;
+        }
+        Atom **types = NULL;
+        (void)get_atom_types_mode(s, a, node, &types, true, NULL);
+        free(types);
+    }
+    atom_visit_set_free(&seen);
+    free(order);
+    free(stack);
+    space_type_stamps_run_leave(outer);
+    return order_len > 0u;
+}
+
 static uint32_t get_atom_types_mode(Space *s, Arena *a, Atom *atom,
                                     Atom ***out_types,
                                     bool include_direct_annotations,
@@ -17546,6 +20063,37 @@ static uint32_t get_atom_types_mode(Space *s, Arena *a, Atom *atom,
     TypeInferenceMemoQuestion question = include_direct_annotations
         ? TYPE_INFERENCE_MEMO_TYPES_DECLARED
         : TYPE_INFERENCE_MEMO_TYPES_INFERRED;
+    uint32_t stamp_arena = 0u;
+    uint64_t stamp_epoch = 0u;
+    bool stamped = type_stamps_admit(s, atom, budget, &stamp_arena,
+                                     &stamp_epoch);
+    TypeStampTransition shape;
+    bool shaped = false;
+    if (stamped) {
+        uint32_t state = type_stamps_node_state(atom, (uint32_t)question,
+                                                stamp_arena, stamp_epoch);
+        if (!state) {
+            shaped = type_stamps_shape(s, a, atom, (uint32_t)question, &shape);
+            /* A child no typing is kept for yet is typed first, bottom up,
+             * so it keeps its state: a node then reads its shape, and a
+             * spine of one shape is inferred at its first cells only. */
+            if (!shaped && atom->expr.len - 1u <= TYPE_STAMP_TRANSITION_ARITY &&
+                type_stamps_head_reads_shapes(s, atom_symbol_current_id(atom->expr.elems[0])) &&
+                type_stamps_type_children(s, a, atom))
+                shaped = type_stamps_shape(s, a, atom, (uint32_t)question,
+                                           &shape);
+            state = shaped ? type_stamps_transition_find(&shape) : 0u;
+            if (state)
+                type_stamps_record(atom, (uint32_t)question, stamp_arena,
+                                   stamp_epoch, state);
+        }
+        uint32_t stamped_count = 0u;
+        if (state && type_stamps_materialize(a, state, out_types,
+                                             &stamped_count)) {
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TYPE_STAMP_HIT);
+            return stamped_count;
+        }
+    }
     bool keyed = type_inference_memo_applies(s, a, atom, budget);
     if (keyed) {
         TypeInferenceMemoEntry *known = type_inference_memo_find(atom, question);
@@ -17560,7 +20108,8 @@ static uint32_t get_atom_types_mode(Space *s, Arena *a, Atom *atom,
     bool entered = type_inference_memo_enter(s, a, budget);
     uint32_t count = get_atom_types_mode_inferred(
         s, a, atom, out_types, include_direct_annotations, budget);
-    if (keyed && type_inference_types_ground(*out_types, count) &&
+    if (keyed && !(cetta_native_memory_failed && cetta_native_memory_failed()) &&
+        type_inference_types_ground(*out_types, count) &&
         !type_inference_memo_find(atom, question)) {
         Atom **kept = type_inference_types_copy(*out_types, count);
         TypeInferenceMemoEntry *entry = (kept || !count)
@@ -17570,6 +20119,17 @@ static uint32_t get_atom_types_mode(Space *s, Arena *a, Atom *atom,
             entry->types = kept;
         } else {
             free(kept);
+        }
+    }
+    if (stamped &&
+        !(cetta_native_memory_failed && cetta_native_memory_failed()) &&
+        (shaped || type_stamps_children_kept(s, atom))) {
+        uint32_t state = type_stamps_intern(*out_types, count);
+        if (state) {
+            type_stamps_record(atom, (uint32_t)question, stamp_arena,
+                               stamp_epoch, state);
+            if (shaped)
+                type_stamps_transition_record(&shape, state);
         }
     }
     if (entered)
@@ -17588,9 +20148,11 @@ static uint32_t get_atom_types_mode_inferred(Space *s, Arena *a, Atom *atom,
         return 0;
     }
     Atom *native_handle_type = get_native_handle_type(a, atom);
+    if (!native_handle_type) { *out_types = NULL; return 0u; }
 
     if (!atom_is_symbol_id(native_handle_type, g_builtin_syms.undefined_type)) {
         types = cetta_malloc(sizeof(Atom *));
+        if (!types) { *out_types = NULL; return 0u; }
         types[0] = native_handle_type;
         *out_types = types;
         return 1;
@@ -17604,6 +20166,7 @@ static uint32_t get_atom_types_mode_inferred(Space *s, Arena *a, Atom *atom,
         Atom *ty = get_grounded_type(a, atom);
         if (!atom_is_symbol_id(ty, g_builtin_syms.undefined_type)) {
             types = cetta_malloc(sizeof(Atom *));
+            if (!types || !ty) { free(types); *out_types = NULL; return 0u; }
             types[0] = ty;
             count = 1;
         }
@@ -17617,6 +20180,10 @@ static uint32_t get_atom_types_mode_inferred(Space *s, Arena *a, Atom *atom,
             count = he_close_type_array(s, a, &types, count, 0u, budget);
         break;
     case ATOM_EXPR:
+        /* HE gives the empty expression no type, as get-type does: a row
+         * declared for () is not read, so () fits any argument type. */
+        if (atom->expr.len == 0u)
+            break;
         if (atom_is_list_form(atom)) {
             types = cetta_malloc(sizeof(Atom *));
             types[0] = atom_list_type(a);
@@ -17628,9 +20195,16 @@ static uint32_t get_atom_types_mode_inferred(Space *s, Arena *a, Atom *atom,
                     : 0;
         if (count && he_types_close_under_subtypes(s))
             count = he_close_type_array(s, a, &types, count, 0u, budget);
-        /* Also try to infer type from operator's function type */
+        /* The types the operator's function type gives, as HE gives them:
+         * in addition to the rows declared for the application itself, not
+         * only in their absence.  A row on an arrow-headed application keeps
+         * the arrow's own typing visible, so `(Box 1 2)` with a row
+         * `OtherRange` still has the type its constructor gives.  Where the
+         * fields do not fit, the rows remain and only an application with
+         * no rows is ill typed (empty). */
+        uint32_t annotated = count;
         bool tried_func_type = false;
-        if (count == 0 && atom->expr.len >= 1) {
+        if (atom->expr.len >= 1) {
             Atom *op = atom->expr.elems[0];
             Atom **op_types = NULL;
             uint32_t nop = get_annotated_types(
@@ -17747,6 +20321,15 @@ static uint32_t get_atom_types_mode_inferred(Space *s, Arena *a, Atom *atom,
                            then normalize arithmetic in type expressions */
                         Atom *concrete_ret = normalize_type_expr(
                             &scratch, bindings_apply_if_vars(&tb, &scratch, fresh_ret));
+                        /* A row that already says this type gives it. */
+                        bool declared = false;
+                        for (uint32_t di = 0u; !declared && di < annotated; di++)
+                            declared = atom_eq(types[di], concrete_ret);
+                        if (declared) {
+                            bindings_free(&tb);
+                            arena_reset(&scratch, scratch_mark);
+                            continue;
+                        }
                         if (!type_inference_can_add(budget, count)) {
                             bindings_free(&tb);
                             arena_reset(&scratch, scratch_mark);
@@ -17789,7 +20372,9 @@ static uint32_t get_atom_types_mode_inferred(Space *s, Arena *a, Atom *atom,
             return 0;
         }
         types = cetta_malloc(sizeof(Atom *));
+        if (!types) { *out_types = NULL; return 0u; }
         types[0] = atom_undefined_type(a);
+        if (!types[0]) { free(types); *out_types = NULL; return 0u; }
         count = 1;
     }
     *out_types = types;
@@ -21702,9 +24287,15 @@ bool space_checkpoint_native_admitted(const Space *space,
         space->module_dependency_epoch || space->secondary_index_deferral_depth)
         return space_checkpoint_refuse(budget, "WorldAttachedAuthority");
     /* NativeFlatWorldV1 copies row storage. Dense relation metadata needs
-     * its own complete representation transport before this profile admits it. */
-    if (space->native.dense || space->native.dense_facts)
+     * its own complete representation transport before this profile admits it.
+     * Unpromoted counting heads hold no dense facts or TermUniverse references. */
+    if (space->native.dense_facts || space_proof_present(space))
         return space_checkpoint_refuse(budget,"WorldDenseStorage");
+    for (uint32_t i = 0u; space->native.dense && i < space->native.dense->len; i++) {
+        if (!space_checkpoint_work(budget, 1u)) return false;
+        if (space->native.dense->heads[i].state == SPACE_DENSE_KEPT)
+            return space_checkpoint_refuse(budget, "WorldDenseStorage");
+    }
     const SpaceMatchNativeState *native = &space->match_backend.native;
     if (native->match_trie || native->stree || native->match_trie_pins ||
         native->pinned)

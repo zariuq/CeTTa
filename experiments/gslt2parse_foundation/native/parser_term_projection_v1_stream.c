@@ -126,7 +126,7 @@ static bool variable_ordinal(
     uint32_t cap;
 
     for (index = 0u; index < digest->len; index++) {
-        if (digest->data[index].id == id) {
+        if (var_id_eq(digest->data[index].id, id)) {
             *out = digest->data[index].ordinal;
             return true;
         }

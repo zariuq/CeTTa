@@ -1,0 +1,37 @@
+String values and source profiles
+================================
+
+The MeTTa literal body codec is shared by the bootstrap reader,
+str:unescape metta, portable module text, and the PeTTa reader's declared
+metta-literal-v1 projection. Other grammar projections keep their own rules.
+Selecting a language grammar does not silently replace its string semantics.
+
+Recognized input spellings are quote, backslash, slash, apostrophe, and the
+named n, r, t, b and f escapes; two-digit byte escapes (\xhh); braced Unicode
+scalars (\u{h...}, one or more hex digits, leading zeros unlimited);
+and four-digit Unicode escapes.
+A UTF-16 surrogate pair denotes its scalar. An isolated surrogate, unknown
+escape or incomplete numeric escape retains its spelling, including the
+backslash. Ordinary UTF-8 is retained. Byte escapes can represent NUL and
+non-UTF-8 bytes; callers requiring Unicode must check that separate contract.
+
+Canonical MeTTa output escapes quotes and backslashes, uses \n, \r and \t,
+and writes other control bytes, DEL and invalid UTF-8 bytes as \xhh. Valid
+non-ASCII text remains readable UTF-8. Raw display modes retain their separate
+display contract. Readers accept more spellings than the canonical writer
+emits. Portable module strings do not require codepoint-list expansion;
+the explicit module:codepoints input representation remains readable.
+
+Preserving unknown escapes does not make an ordinary string verbatim:
+\frac starts with the recognized form-feed escape. Use raw source fences
+for guest text that must cross the host reader unchanged. Their opener
+determines the closer; their bodies have no implicit escape interpretation.
+
+JSON remains JSON. str:escape json and str:unescape json implement that
+format separately, including its own failure behavior. Datalog captured
+values written into MeTTa source use the MeTTa codec, not JSON serialization.
+
+Prolog numeric escapes describe Unicode character codes, not MeTTa bytes.
+In particular, \x41\n has different readings under a Prolog escape profile
+and the MeTTa literal codec. Such conflicts belong to explicit source
+profiles or raw guest regions; they cannot be resolved by guessing from text.

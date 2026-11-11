@@ -13,10 +13,13 @@
 #include "../src/library.h"
 #include <stdlib.h>
 /* Refuse only the explicitly selected lookup collection in this control
- * thread; production has no allocator fault state. */
-static _Thread_local unsigned br_payload_lookup_refusals;
-static _Thread_local unsigned br_payload_lookup_skip;
-static _Thread_local size_t br_payload_lookup_bytes;
+ * thread; production has no allocator fault state. Linker wrapping is invisible
+ * to compiler interprocedural analysis: calloc's wrapper changes these controls
+ * even when its original declaration appears unable to access them. Keep those
+ * observations explicit, including under optimized sanitizer builds. */
+static _Thread_local volatile unsigned br_payload_lookup_refusals;
+static _Thread_local volatile unsigned br_payload_lookup_skip;
+static _Thread_local volatile size_t br_payload_lookup_bytes;
 void *__real_calloc(size_t count,size_t bytes);
 void *__wrap_calloc(size_t count,size_t bytes) {
     if (br_payload_lookup_refusals && (!br_payload_lookup_bytes ||
@@ -3675,6 +3678,195 @@ static void native_capture_observer_contract_case(
     free(control);free(owner);
     cetta_library_context_free(library);free(library);eval_set_library_context(NULL);
     space_free(&unrelated);space_free(&dependency);space_free(&root);arena_free(&arena);
+}
+
+typedef struct { unsigned references, retired; } PreparedRemovalLifetime;
+static void prepared_removal_retain(void *raw) {
+    ((PreparedRemovalLifetime *)raw)->references++;
+}
+static void prepared_removal_release(void *raw) {
+    PreparedRemovalLifetime *owner=raw;assert(owner->references);
+    if(!--owner->references)owner->retired++;
+}
+
+static void prepared_removal_lifetime_case(void) {
+    for(unsigned publish=0u;publish<2u;publish++) {
+        Arena source,persistent;arena_init(&source);arena_init(&persistent);
+        TermUniverse universe;term_universe_init(&universe);
+        term_universe_set_persistent_arena(&universe,&persistent);
+        Space space;space_init_with_universe(&space,&universe);
+        PreparedRemovalLifetime owner={0};
+        Atom *held=atom_native_handle_identifier(&source,73u,&owner,
+            prepared_removal_retain,prepared_removal_release);
+        Atom *head=atom_symbol(&source,"prepared-removal-held-row");
+        Atom *row=atom_expr2(&source,head,held);assert(row);
+        space_add(&space,row);space_add(&space,row);
+        Atom *pattern=atom_expr2(&source,head,atom_var(&source,"held"));
+        PettaSpacePreparedRemoval prepared;CettaCount selected=0u,removed=0u;
+        CHECK(petta_space_remove_pattern_all_impl(&space,pattern,NULL,&prepared,&selected));
+        CHECK(selected==2u && space_length64(&space)==2u && prepared.receipt_len==2u);
+        CHECK(prepared.effect_prepared && prepared.receipt_storage);
+        CHECK(prepared.receipt_storage->retained_resource_bytes>0u);
+        for(CettaCount i=0u;i<prepared.receipt_len;i++) {
+            Atom *saved=prepared.removed_atoms[i];
+            CHECK(saved->kind==ATOM_EXPR && saved->expr.len==2u &&
+                atom_native_handle_identifier_matches(saved->expr.elems[1],&owner,
+                    prepared_removal_retain,prepared_removal_release));
+        }
+        if(publish) {
+            CHECK(petta_space_prepared_removal_publish(&prepared,&removed));
+            CHECK(removed==2u && space_length64(&space)==0u);
+            CHECK(!petta_space_prepared_removal_publish(&prepared,&removed));
+            space_free(&space);term_universe_free(&universe);
+            arena_free(&persistent);arena_free(&source);
+            CHECK(owner.references>0u && !owner.retired);
+            /* Scoped views may borrow the fallback image instead of copying
+             * its header. The receipt must own that image through teardown. */
+            for(CettaCount i=0u;i<prepared.receipt_len;i++)
+                CHECK(atom_native_handle_identifier_matches(
+                    prepared.removed_atoms[i]->expr.elems[1],&owner,
+                    prepared_removal_retain,prepared_removal_release));
+        }
+        petta_space_prepared_removal_dispose(&prepared);
+        if(!publish) {
+            CHECK(space_length64(&space)==2u);
+            CHECK(petta_space_remove_pattern_limit(&space,pattern,NULL,1u,&removed));
+            CHECK(removed==1u && space_length64(&space)==1u);
+            CHECK(petta_space_remove_pattern_all(&space,pattern,NULL,&removed));
+            CHECK(removed==1u && space_length64(&space)==0u);
+            space_free(&space);term_universe_free(&universe);
+            arena_free(&persistent);arena_free(&source);
+        }
+        CHECK(owner.references==0u && owner.retired==1u);
+    }
+    puts("PASS: prepared removal retains materialized resource rows through publication or cancellation");
+}
+
+static void native_fresh_space_capture_case(void) {
+    CettaLibraryContext *library=calloc(1u,sizeof(*library));
+    CettaLibraryContext *foreign=calloc(1u,sizeof(*foreign));
+    assert(library && foreign);
+    cetta_library_context_init_for_language_profile(
+        library,CETTA_LANGUAGE_HE,cetta_profile_he_extended());
+    cetta_library_context_init_for_language_profile(
+        foreign,CETTA_LANGUAGE_HE,cetta_profile_he_extended());
+    eval_set_library_context(library);
+    Arena source,first,second;
+    arena_init(&source);arena_init(&first);arena_init(&second);
+    Space *fresh=calloc(1u,sizeof(*fresh));assert(fresh);
+    space_init(fresh);held_space_register(fresh,false);
+    SpaceHold *hold=fresh->arena_hold;
+    Atom *source_atom=atom_space(&source,fresh);assert(source_atom);
+    PrimeNativeControl control={0};
+    NativeDialectOwner owner={.control=&control};
+    owner.context.library_context=library;
+    PettaMachineResourceLease lease={0};
+    assert(native_dialect_capture_resource(&owner,source_atom,&lease));
+    CHECK(lease.scope==library && lease.owner==hold &&
+        lease.retain==space_hold_retain && lease.release==space_hold_release &&
+        lease.storage==space_hold_storage_census);
+
+    /* Two independent images retain the same mutable Space and its storage.
+     * Either source arena or the first image can retire without detaching the
+     * surviving image's grounded identity. */
+    Atom *first_atom=atom_space(&first,fresh);
+    Atom *second_atom=atom_space(&second,fresh);
+    assert(first_atom && second_atom);
+    assert(arena_retain_owner_with_storage(&first,lease.owner,
+        lease.retain,lease.release,lease.storage));
+    assert(arena_retain_owner_with_storage(&second,lease.owner,
+        lease.retain,lease.release,lease.storage));
+    arena_free(&source);eval_release_temporary_spaces();
+    arena_free(&first);eval_release_temporary_spaces();
+    CHECK(hold->space==fresh && second_atom->ground.ptr==fresh);
+    CettaStorageCensus census={0};
+    lease.storage(lease.owner,&census);cetta_storage_finish(&census);
+    CHECK(!census.incomplete && !census.invalidated && !census.overflow &&
+        census.retained>=sizeof(*hold)+sizeof(*fresh));
+    cetta_storage_census_free(&census);
+
+    /* A hold is not a blanket capability: another program, a detached hold,
+     * a missing registration and a missing library scope all refuse. */
+    PettaMachineResourceLease refused={0};
+    hold->petta_program=foreign->petta_program;
+    CHECK(!native_dialect_capture_resource(&owner,second_atom,&refused));
+    hold->petta_program=library->petta_program;
+    hold->space=NULL;
+    CHECK(!native_dialect_capture_resource(&owner,second_atom,&refused));
+    hold->space=fresh;
+    fresh->arena_hold=NULL;
+    CHECK(!native_dialect_capture_resource(&owner,second_atom,&refused));
+    fresh->arena_hold=hold;
+    owner.context.library_context=NULL;
+    CHECK(!native_dialect_capture_resource(&owner,second_atom,&refused));
+    owner.context.library_context=library;
+    Space unheld;space_init(&unheld);
+    Atom *unheld_atom=atom_space(&second,&unheld);assert(unheld_atom);
+    CHECK(!native_dialect_capture_resource(&owner,unheld_atom,&refused));
+
+    arena_free(&second);eval_release_temporary_spaces();
+    space_free(&unheld);
+
+    /* Exercise the separate storage/universe edge too: the source worker
+     * retires while one independently copied image still uses its Space. */
+    CettaEvalResources resources={0};
+    CettaEvalResources *previous_resources=eval_resources_exchange(&resources);
+    size_t owners_before=atomic_load(&g_hyperpose_storage_owners_live);
+    HyperposeStorageOwner *storage=hyperpose_storage_owner_new();assert(storage);
+    void *previous_scope=arena_set_resource_scope(storage);
+    Space *owned=calloc(1u,sizeof(*owned));assert(owned);
+    space_init_with_universe(owned,&storage->term_universe);
+    held_space_register(owned,false);
+    space_add(owned,atom_int(&storage->persistent_arena,73));
+    Atom *owned_source=atom_space(&storage->eval_arena,owned);assert(owned_source);
+    assert(native_dialect_capture_resource(&owner,owned_source,&lease));
+    arena_init(&first);arena_init(&second);
+    first_atom=atom_deep_copy(&first,owned_source);
+    second_atom=atom_deep_copy(&second,owned_source);
+    assert(first_atom && second_atom);
+    assert(arena_retain_owner_with_storage(&first,lease.owner,
+        lease.retain,lease.release,lease.storage));
+    assert(arena_retain_owner_with_storage(&second,lease.owner,
+        lease.retain,lease.release,lease.storage));
+    HyperposeThreadBranch branch={.storage=storage};
+    assert(hyperpose_adopt_tracked_spaces(&branch));
+    arena_set_resource_scope(previous_scope);
+    eval_resources_exchange(previous_resources);
+    CHECK(atomic_load(&storage->references)==3u);
+    arena_free(&first);
+    hyperpose_storage_owner_release(storage);
+    CHECK(atomic_load(&storage->references)==1u);
+    CHECK(second_atom->ground.ptr==owned &&
+        owned->native.universe==&storage->term_universe &&
+        space_get_at(owned,0)->ground.ival==73);
+    arena_free(&second);eval_release_temporary_spaces();
+    CHECK(atomic_load(&g_hyperpose_storage_owners_live)==owners_before);
+    eval_set_library_context(NULL);
+    cetta_library_context_free(foreign);cetta_library_context_free(library);
+    free(foreign);free(library);
+    puts("PASS: fresh Space leases retain identity/storage and refuse foreign or detached ownership");
+}
+
+static void native_continuation_failure_classification_case(void) {
+    CettaEvalEpisode *saved=g_eval_completion_tracker;
+    CettaEvalEpisode episode={0};
+    PrimeNativeControl control={0};
+    g_eval_completion_tracker=&episode;
+    native_dialect_continuation_failure(&control,CETTA_CONTINUATION_UNSUPPORTED);
+    CHECK(control.failed && !control.invalidated && !control.driver.capacity_blocked &&
+        episode.interrupted && episode.completion==CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+
+    memset(&control,0,sizeof(control));episode=(CettaEvalEpisode){0};
+    native_dialect_continuation_failure(&control,CETTA_CONTINUATION_CAPACITY);
+    CHECK(!control.failed && !control.invalidated && control.driver.capacity_blocked &&
+        !episode.interrupted && episode.completion==CETTA_EVAL_COMPLETE);
+
+    memset(&control,0,sizeof(control));
+    native_dialect_continuation_failure(&control,CETTA_CONTINUATION_INVALIDATED);
+    CHECK(!control.failed && control.invalidated && !control.driver.capacity_blocked &&
+        !episode.interrupted && episode.completion==CETTA_EVAL_COMPLETE);
+    g_eval_completion_tracker=saved;
+    puts("PASS: capture refusal, exhaustion and invalidation retain distinct terminal states");
 }
 
 static Atom *owning_consumer_field(Atom *record, const char *name) {
@@ -13787,7 +13979,7 @@ static void equation_publication_retry_cases(void) {
      * packet copy, after both rules have genuinely matched and been charged. */
     outcome_init(outcome_set_push_slot(&continuation.raw_results));
     outcome_init(outcome_set_push_slot(&continuation.raw_results));
-    prime_need_equation_outcome_set_clear(&continuation.raw_results);
+    outcome_set_clear(&continuation.raw_results);
     OutcomeSet output; outcome_set_init(&output);
     PrimeEvalStackFrame frame = {.equation_search = &continuation, .arena = &arena,
         .space = &space, .target = &output};
@@ -13819,7 +14011,7 @@ static void equation_publication_retry_cases(void) {
         CHECK(prime_need_equation_packet_copy(&continuation.raw_results,
             &continuation.raw_metadata, &continuation.publication.items[i],
             continuation.publication_metadata.items[i]));
-    prime_need_equation_outcome_set_clear(&continuation.publication);
+    outcome_set_clear(&continuation.publication);
     continuation.publication_metadata.has_observations = false;
     continuation.publication_returns_to_search = false;
     br_weight_clone_source = &continuation.raw_results.items[1].env; br_weight_clone_refusals = 1u;
@@ -14137,7 +14329,10 @@ static void prepared_result_cache_case(CettaLanguageId language) {
         bool completed = prepared_pure_closed_result_try(&space, &arena,
             parse_one(&arena, calls[i]), -1, true, true, &cache,
             PREPARED_PURE_PROGRAM_OPTIONAL_VALUE, &reply);
-        CHECK(completed == (i != 4u));
+        /* Value cases must complete on the prepared route. An empty optional
+         * result may either return logical failure or decline to the generic
+         * evaluator, depending on the dialect's compiled program. */
+        CHECK(!expected[i] || completed);
         if (expected[i]) {
             CHECK(completed && reply.kind == CETTA_CALL_VALUE);
             CHECK(completed && atom_eq(reply.term, parse_one(&arena, expected[i])));
@@ -14191,8 +14386,8 @@ static Atom *br_prepared_native_value(void *context, Space *space, Arena *arena,
         const CettaInvocation *invocation) {
     CettaCallOutcome outcome;
     CettaEvalCompletion completion;
-    return eval_prepared_pure_native_call(context, space, arena, invocation, &outcome, &completion) &&
-        completion == CETTA_EVAL_COMPLETE &&
+    return eval_prepared_pure_native_call(context, space, arena, invocation,
+        &outcome, &completion) && completion == CETTA_EVAL_COMPLETE &&
         outcome.kind == CETTA_CALL_VALUE &&
         outcome.result_form == CETTA_CALL_RESULT_COMPLETED_VALUE ? outcome.term : NULL;
 }
@@ -15042,35 +15237,42 @@ static void owned_space_tracking_refusal_cases(void) {
     Registry *previous_registry=g_registry;g_registry=&registry;
     registry_bind(&registry,"&self",atom_space(&arena,&world));
     ResultSet rows;result_set_init(&rows);
-    TempSpaceSet previous_spaces=g_new_space_track;
+    TempSpaceSet previous_spaces=g_made_spaces;
+    TempSpaceSet previous_new_spaces=g_new_space_track;
     CettaCount limit=eval_array_capacity_limit(sizeof(EvalTrackedSpace));
     bool transactional=eval_set_payload_transactional(false);
-    /* Reach the real checked arithmetic refusal without allocating a table
-     * of that size. Its old storage remains held in previous_spaces. */
+    /* Exercise both the legacy tracked-Space refusal and the current held-Space
+     * fallback without allocating a table of the checked arithmetic limit. */
     g_new_space_track=(TempSpaceSet){.len=limit,.cap=limit};
+    g_made_spaces=(TempSpaceSet){.len=limit,.cap=limit};
     bool tracked=eval_track_new_space(&unowned);
     Space *algebra=space_algebra_fresh_result(&arena);
     CettaEvalCompletion completion=eval_top_with_registry_completion(
         &world,&arena,&arena,&registry,parse_one(&arena,"(new-space)"),&rows);
-    bool unchanged=g_new_space_track.len==limit && g_new_space_track.cap==limit &&
-        !g_new_space_track.items;
-    g_new_space_track=previous_spaces;
+    bool unchanged=g_made_spaces.len==limit && g_made_spaces.cap==limit &&
+        !g_made_spaces.items && g_new_space_track.len==limit &&
+        g_new_space_track.cap==limit && !g_new_space_track.items;
+    g_made_spaces=previous_spaces;
+    g_new_space_track=previous_new_spaces;
     eval_set_payload_transactional(transactional);
-    CHECK(!tracked && !algebra && unchanged);
-    CHECK(completion==CETTA_EVAL_COMPLETE && rows.len==1u &&
-        atom_is_error(rows.items[0]));
-    if(rows.len==1u) CHECK(atom_eq(rows.items[0],parse_one(&arena,
-        "(Error (new-space) SpaceOwnershipFailed)")));
-    if(algebra) space_free(algebra);
-    for(CettaCount i=0u;i<rows.len;i++)
-        if(rows.items[i] && rows.items[i]->kind==ATOM_GROUNDED &&
-            rows.items[i]->ground.gkind==GV_SPACE)
-            space_free((Space *)rows.items[i]->ground.ptr);
+    CHECK(!tracked && algebra && unchanged);
+    Atom *published=rows.len==1u ? rows.items[0] : NULL;
+    Space *created=published && published->kind==ATOM_GROUNDED &&
+        published->ground.gkind==GV_SPACE ? published->ground.ptr : NULL;
+    CHECK(completion==CETTA_EVAL_COMPLETE && created);
+    /* Listing exhaustion no longer exposes an unowned result or rejects the
+     * operation. The hold is pinned so its arena/session owner retains it. */
+    if(algebra) CHECK(algebra->arena_hold && algebra->arena_hold->pinned);
+    if(created) CHECK(created->arena_hold && created->arena_hold->pinned);
     result_set_free(&rows);
+    if(created) eval_free_held_space((EvalTrackedSpace){
+        .space=created,.petta_program=context.petta_program});
+    if(algebra) eval_free_held_space((EvalTrackedSpace){
+        .space=algebra,.petta_program=context.petta_program});
     g_registry=previous_registry;eval_swap_library_context(previous_library);
     cetta_library_context_free(&context);registry_free(&registry);
     space_free(&unowned);space_free(&world);arena_free(&arena);
-    puts("Space tracking refusal remains explicit and cannot expose an unowned result");
+    puts("Space tracking exhaustion pins fresh Spaces without exposing unowned results");
 }
 
 typedef struct {
@@ -19410,6 +19612,38 @@ int main(int argc, char **argv) {
         printf("Demand index: %zu checks, %zu failures\n",checks,failures);
         return failures?1:0;
     }
+    if (argc==2 && strcmp(argv[1],"--prepared-removal-lifetime")==0) {
+        prepared_removal_lifetime_case();
+        var_intern_free(&variables);g_var_intern=NULL;symbol_table_free(&symbols);g_symbols=NULL;
+        printf("Prepared removal lifetime: %zu checks, %zu failures\n",checks,failures);
+        return failures?1:0;
+    }
+    if (argc==2 && strcmp(argv[1],"--readiness-copy")==0) {
+        equation_observation_readiness_cases();
+        var_intern_free(&variables);g_var_intern=NULL;symbol_table_free(&symbols);g_symbols=NULL;
+        printf("Readiness copy: %zu checks, %zu failures\n",checks,failures);
+        return failures?1:0;
+    }
+    if (argc==2 && strcmp(argv[1],"--fresh-space-capture")==0) {
+        native_continuation_failure_classification_case();
+        native_fresh_space_capture_case();
+        var_intern_free(&variables);g_var_intern=NULL;symbol_table_free(&symbols);g_symbols=NULL;
+        printf("Fresh Space capture: %zu checks, %zu failures\n",checks,failures);
+        return failures?1:0;
+    }
+    if (argc==2 && strcmp(argv[1],"--space-tracking-refusal")==0) {
+        owned_space_tracking_refusal_cases();
+        var_intern_free(&variables);g_var_intern=NULL;symbol_table_free(&symbols);g_symbols=NULL;
+        printf("Space tracking refusal: %zu checks, %zu failures\n",checks,failures);
+        return failures?1:0;
+    }
+    if (argc==2 && strcmp(argv[1],"--prepared-result-cache")==0) {
+        prepared_result_cache_case(CETTA_LANGUAGE_HE);
+        prepared_result_cache_case(CETTA_LANGUAGE_PETTA);
+        var_intern_free(&variables);g_var_intern=NULL;symbol_table_free(&symbols);g_symbols=NULL;
+        printf("Prepared result cache: %zu checks, %zu failures\n",checks,failures);
+        return failures?1:0;
+    }
     if (argc==3 && strcmp(argv[1],"--binding-role")==0) {
         unsigned which=(unsigned)strtoul(argv[2],NULL,10);
         if (which>31u) return 2;
@@ -19504,6 +19738,7 @@ int main(int argc, char **argv) {
         return failures?1:0;
     }
     eval_retained_return_cases();
+    native_continuation_failure_classification_case();
     worker_caller_authority_controls();
     ordinary_top_storage_cases();
     resident_force_production_case();
@@ -19667,6 +19902,8 @@ int main(int argc, char **argv) {
                     CHECK(owned_query_need_world_case(cut,&limit,
                         distinct!=0u,query_first!=0u,fallback!=0u));
             }
+    native_fresh_space_capture_case();
+    prepared_removal_lifetime_case();
     native_capture_observer_contract_case(CETTA_LANGUAGE_HE,cetta_profile_he_extended());
     native_capture_observer_contract_case(CETTA_LANGUAGE_PETTA,cetta_profile_petta_extended());
     sealed_licence_environment_case();

@@ -91,7 +91,7 @@ def main():
             assert refused==E("ServiceRefusedV1",S("read-only")),refused
             readonly.drop(view);readonly.close();extra.remove(readonly)
             assert native.client.route("Commit",(),ok=False)==E("ServiceRefusedV1",S("unknown-operation"))
-            checks.append("read-only-and-closed-write-surface")
+            checks.append("read-only-and-closed-write-boundary")
 
             lost=Client(native.server.path);extra.append(lost);view,_=lost.snapshot()
             command=E("GatewaySubmitV1","lost-reply","lost-fp","{}",S("write"),10000.0,14.0)

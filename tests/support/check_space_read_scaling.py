@@ -29,7 +29,7 @@ BOUNDS = {
 TRANSFORM = """!(import! &self (library lib_transform))
 !(bind! &q (new-space))
 {adds}
-(= (drain $q $k) (let $r (collapse (transform $q (take (job $j)) (done $j) $q))
+(= (drain $q $k) (let $r (collapse (once (transform $q (take (job $j)) (done $j) $q)))
    (if (== $r ()) $k (drain $q (+ $k 1)))))
 !(drain &q 0)
 !(size-atom (collapse (match &q (done $j) x)))
@@ -48,7 +48,7 @@ LOOP = """!(bind! &q (new-space))
 
 DRAINS = (
     ("transform", TRANSFORM, {}),
-    ("authored transform", TRANSFORM, {"CETTA_TRANSFORM_REFERENCE": "1"}),
+    ("authored transform", TRANSFORM.replace("lib_transform)", "lib_transform_swi)"), {}),
     ("once-match loop", LOOP, {}),
 )
 
@@ -72,7 +72,6 @@ def main():
                 with open(path, "w") as f:
                     f.write(source.format(adds=adds))
                 env = dict(os.environ)
-                env.pop("CETTA_TRANSFORM_REFERENCE", None)
                 env.update(CETTA_PETTA_SEARCH_MACHINE="1", **env_extra)
                 p = subprocess.run([binary, "--emit-runtime-stats", "--lang", "petta", path],
                                    cwd=ROOT, env=env, capture_output=True, text=True,

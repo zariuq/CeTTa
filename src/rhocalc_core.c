@@ -3023,7 +3023,7 @@ static bool rho_state_source_descriptor(const RhoStateCloneMap *map,StateCell *c
     if (map->source_frame && eval_payload_frame_source_state)
         return eval_payload_frame_source_state(map->source_frame,map->source_arena,
             cell,value,content_type);
-    /* Otherwise the contents observed when the cell was noted. */
+    /* A managed cell is read through the snapshot taken when it was noted. */
     for (int i=0;i<map->len;i++)
         if (map->orig[i]==cell) {
             StateCellSnapshot view=rho_state_clone_view(map,i);
@@ -3104,10 +3104,11 @@ static bool rho_state_clone_map_note(RhoStateCloneMap *map, StateCell *orig,
     int needed=(known ? 0 : 1)+(orig!=visible ? 1 : 0);
     if (map->len>INT_MAX-needed || !rho_state_clone_map_ensure(map,map->len+needed)) return false;
     if (!known) {
-        if (!rho_state_clone_observe(map,map->len,visible)) return false;
+        if (!rho_state_clone_observe(map, map->len, visible)) return false;
         map->orig[map->len]=visible;map->clone[map->len++]=NULL;
     }
     if (orig!=visible) {
+        if (!rho_state_clone_observe(map, map->len, orig)) return false;
         map->orig[map->len]=orig;map->clone[map->len++]=NULL;
     }
     if (inserted) *inserted=!known;

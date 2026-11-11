@@ -103,7 +103,7 @@ static bool new_space_signatures(Space *space, Arena *arena, Atom *subject,
 }
 
 /* HE's grounded operation types follow the active session, not the process:
- * new-space's kind/profile signatures appear outside he-compat only, and no
+ * new-space's kind and kind/backend signatures appear outside he-compat, and no
  * grounded type exists outside HE. */
 static bool he_grounded_type_session_contract(Space *space, Arena *arena) {
     /* A library context is megabytes: the four live on the heap. */

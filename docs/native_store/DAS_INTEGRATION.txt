@@ -71,7 +71,7 @@ VERIFIED INTERFACE MAP AT THE PIN
    rather than assuming this field supplies a unique persistent namespace.
 
 2. src/atomdb/AtomDBAPITypes.h
-   HandleList/HandleSet and their iterators are useful candidate surfaces.
+   HandleList/HandleSet and their iterators are useful candidate interfaces.
    They are not a persistent occurrence-identity contract. AtomDB's default
    add semantics are upsert by atom identity, rather than insertion of a fresh
    independently referenced duplicate occurrence.

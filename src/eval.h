@@ -18,6 +18,22 @@ bool eval_native_interrupted(void);
  * borrowed episode. No episode pointer, retry licence or ownership escapes;
  * an adapter retaining the outcome must also retain its completion owner. */
 void eval_native_interrupt(CettaEvalCompletion completion);
+typedef struct CettaEvalCancellationPair {
+    _Atomic bool *owner;
+    _Atomic bool *query;
+    const struct CettaEvalCancellationPair *parent;
+} CettaEvalCancellationPair;
+typedef struct {
+    _Atomic bool *token;
+    bool observed;
+    const CettaEvalCancellationPair *previous_pair;
+    CettaEvalCancellationPair pair;
+} CettaEvalCancellationScope;
+void eval_cancellation_enter(CettaEvalCancellationScope *, _Atomic bool *);
+/* Compose a retained query's cancellation with its active engine owner.
+ * A nested independent engine still establishes its own root scope. */
+void eval_cancellation_enter_query(CettaEvalCancellationScope *, _Atomic bool *);
+void eval_cancellation_leave(CettaEvalCancellationScope *);
 /* Opaque revision of a live owned retained computation; NULL if not owned. */
 Atom *eval_current_work_epoch(Arena *arena, Atom *handle);
 struct CettaPettaTokenSpaceClauseRegistry;
@@ -522,6 +538,15 @@ void eval_read_scope_leave(CettaEvalReadScope *scope);
 bool eval_interaction_values(Space *space, Arena *arena, Atom *expression,
     Atom ***values_out, size_t *len_out, Atom **error_out);
 bool eval_current_profile_enables_dependent_telescope(void) __attribute__((weak));
+/* The type stamp store (space.c) keeps typings across inferences where the
+ * evaluator vouches for an atom's arena.  eval_type_stamp_scope says whether
+ * the current evaluation may, and names the language and profile it types
+ * under; eval_type_stamp_atom_epoch gives the identity and current reset
+ * epoch of the arena that holds `atom`. */
+bool eval_type_stamp_scope(uint64_t *scope) __attribute__((weak));
+bool eval_type_stamp_atom_epoch(const Space *space, const Atom *atom,
+                                uint32_t *arena, uint64_t *epoch)
+    __attribute__((weak));
 CettaLanguageId eval_current_language_id(void) __attribute__((weak));
 /* Whether the active PeTTa profile checks each step application (the
  * typecheck profiles): native folds have no such evidence. */
@@ -535,6 +560,26 @@ bool eval_current_petta_typed_line(void) __attribute__((weak));
  * evaluates (get-type, get-metatype) with an equation at its one-input arity
  * that can run; a protected default-program definition cannot. */
 bool eval_petta_classifier_extended(Space *space, SymbolId classifier)
+    __attribute__((weak));
+/* Whether head/arity has a trusted version of its typed relation in the
+ * running PeTTa program that enters on arguments each passing its guard and
+ * ground (PETTA_CONTRACT_ENTRY_ANY or _GROUND), matching no space by name;
+ * *range_proved then tells whether the version proves its range. */
+bool eval_petta_structural_version(Space *space, SymbolId head,
+                                   uint32_t arity, bool *range_proved,
+                                   Atom **instances, Arena *instance_arena)
+    __attribute__((weak));
+/* Whether VALUE passes PeTTa's typed-call guard at the closed TYPE exactly
+ * once, by the intrinsic type service's bound query. */
+bool eval_petta_value_typed_once(Space *space, Atom *value, Atom *type)
+    __attribute__((weak));
+/* Whether the active session is PeTTa's ai profile, whose type relation types
+ * an application of a function by its tuple type only (sealed sorts). */
+bool eval_petta_sealed_sorts(void) __attribute__((weak));
+/* Whether HEAD names a function in PeTTa: the program defines an equation
+ * headed by it, or it is a registered builtin.  These are the symbols whose
+ * get-metatype is Grounded, the truth values aside. */
+bool eval_petta_head_is_function(Space *space, SymbolId head)
     __attribute__((weak));
 /* The shared profile-aware HE type inference engine. Returned arrays are heap
    allocated and must be freed by the caller; atoms live in `a`. */
@@ -584,6 +629,9 @@ bool eval_prime_install_standard_library(Space *space, Arena *arena);
 /* Select an existing invocation context without initializing its options.
  * The scoped caller restores the returned context before yielding. */
 CettaLibraryContext *eval_swap_library_context(CettaLibraryContext *next);
+/* Scoped host entry preserves the engine's own options. The returned
+ * context is reinstalled by the caller at the end of this execution. */
+CettaLibraryContext *eval_exchange_library_context(CettaLibraryContext *ctx);
 CettaLibraryContext *eval_current_library_context(void);
 /* The live application root of the current top evaluation. Observation only;
  * callers retain no lifetime/authority by saving this borrowed pointer. */
@@ -608,6 +656,11 @@ bool eval_prime_lf_guest_evaluate(Arena *a, Atom *request,
 bool eval_prime_hol_guest_evaluate(Arena *a, Atom *request,
                                    Atom **answer_out, Atom **reason_out);
 bool eval_prime_hol_guest_running(void);
+Atom *eval_materialize_runtime_value(Space *, Arena *, Atom *);
+/* Called after retained computations have released any named lock. */
+void eval_named_mutex_registry_free(CettaLibraryContext *);
+bool eval_named_mutex_acquire(CettaLibraryContext *, Arena *, Atom *, void **);
+void eval_named_mutex_release(void *);
 
 /* Rhometta deferred payload mode: each payload evaluates against a
  * sibling-isolated transactional snapshot.  The flag marks that context; the
@@ -665,6 +718,17 @@ bool eval_payload_track_scratch_state(StateCell *cell);
  * the registry teardown pass). Return false before exposing an unowned
  * initialized shell; cleanup ownership does not publish its contents. */
 bool eval_track_new_space(Space *space);
+typedef struct CettaEvalResources CettaEvalResources;
+typedef struct CettaEvalGc CettaEvalGc;
+CettaEvalGc *eval_resources_collector(CettaEvalResources *);
+CettaEvalGc *eval_collector_exchange(CettaEvalGc *);
+struct PettaProgram;
+CettaEvalResources *eval_resources_new(void);
+void eval_resources_set_native_memory(CettaEvalResources *, CettaNativeMemory *);
+CettaEvalResources *eval_resources_exchange(CettaEvalResources *);
+/* The session retires registry-owned spaces separately. Their identities
+ * remain in the registry until these tracked resources have been released. */
+void eval_resources_free(CettaEvalResources *, struct PettaProgram *, Registry *, Space *);
 void eval_cleanup_owned_new_spaces_for_current_thread(void);
 void eval_drain_owned_new_spaces_for_current_thread(void);
 void eval_match_decision_cache_free_for_current_thread(void);
@@ -676,7 +740,7 @@ bool eval_payload_space_redirect_at(CettaCount idx, Space **orig,
 CettaCount eval_payload_state_redirect_count(void);
 bool eval_payload_state_redirect_at(CettaCount idx, StateCell **orig,
                                     StateCell **redirect);
-Registry *eval_current_registry(void);
+Registry *eval_current_registry(void) __attribute__((weak));
 /* Base PeTTa protects the default program's static primitive predicates.
  * Named owners and extended profiles admit their own equations. */
 bool eval_petta_builtin_definition_protected(
@@ -694,7 +758,8 @@ Atom *eval_capture_registry_tokens(Registry *registry, Arena *a, Atom *atom);
 /* Put the HE whole-word tokens, including &-names, into a newly read form.
  * Inserted values are not traversed or interpreted as further source text.
  * Returns `atom` itself when nothing in it is bound. */
-Atom *eval_read_registry_words(Registry *registry, Arena *a, Atom *atom);
+Atom *eval_read_registry_words(Registry *registry, Arena *a, Atom *atom)
+    __attribute__((weak));
 
 /* Nonexecuting Prime judgment view in the active owned world. Inspection
  * follows only permitted immutable origins; explicit promises stay values.

@@ -113,7 +113,7 @@ The service entry is `jobs:configuration`, using `CETTA_KB_DIRECTORY`,
 `CETTA_KB_SOCKET` and `CETTA_JOB_AGENT`. Embedded `jobs:run` and service `Apply`
 use the same transition function. The service offers captured `Snapshot`,
 `Find`, `EventsOpen`/`RelPage`/`RelCancel`, `Resolve` and `Compact` operations;
-its write surface excludes arbitrary fact edits. Effect labels must come
+its write protocol excludes arbitrary fact edits. Effect labels must come
 from the trusted dispatcher configuration. This is storage, not a dispatcher.
 
 Ready and running jobs expose separate Int64 order projections. The explicit

@@ -1,0 +1,10 @@
+true
+(models ((b) (a)) (certificate (rup 5 (1) (1 3)) (rup 6 () (5 2 4))))
+(model (p q r))
+(unsat (certificate (rup 3 () (1 2))))
+(model ((on a) (lit b)))
+refuted
+(models (()) (certificate (rup 2 () (1))))
+(unsat (certificate (rup 3 () (1 2))))
+(Error (__cetta_lib_sat_solve ((clause ($V0) ()))) "a clause must be ground")
+(Error (__cetta_lib_sat_solve ((a b))) "a clause is (clause (P ...) (N ...))")

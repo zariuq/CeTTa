@@ -742,8 +742,8 @@ static bool prime_native_history_forget(Space *space,Arena *arena,Atom *call,
     Atom *argument=bindings_apply_if_vars(environment,arena,expr_arg(call,1u));
     uint64_t limit=0u;
     if(!prime_replay_uint(argument,&limit)||limit>SIZE_MAX)return false;
-    Atom *input=bindings_apply_if_vars(environment,arena,expr_arg(call,0u));
-    Atom *registered=registry_lookup_atom(input);if(registered)input=registered;
+    Atom *input=atom_prime_held_payload(bindings_apply_if_vars(environment,arena,expr_arg(call,0u)));
+    Atom *registered=registry_lookup_atom(input);if(registered)input=atom_prime_held_payload(registered);
     /* An Observation's first payload is positional values, not a field. */
     input=prime_native_history_record_handle(input,"Observation","residual",2u);
     input=prime_native_history_record_handle(input,"HistoryPolicy","residual",1u);
@@ -791,8 +791,8 @@ static bool prime_native_replay_dispatch(Space *space,Arena *arena,Atom *call,
     if(!capture&&!inspect&&!dispose&&!record&&!replay&&!forget)return false;
     if(!prime_native_replay_caller_admitted())return false;
     if(forget)return prime_native_history_forget(space,arena,call,environment,target);
-    Atom *input=bindings_apply_if_vars(environment,arena,expr_arg(call,0u));
-    Atom *registered=registry_lookup_atom(input);if(registered)input=registered;
+    Atom *input=atom_prime_held_payload(bindings_apply_if_vars(environment,arena,expr_arg(call,0u)));
+    Atom *registered=registry_lookup_atom(input);if(registered)input=atom_prime_held_payload(registered);
     PrimeReplayCapsule *capsule=capture?NULL:cetta_native_handle_get_owned(g_library_context,
         "prime-replay",prime_replay_capsule_handle(input));
     size_t frames=0u,commands=0u,bytes=0u;

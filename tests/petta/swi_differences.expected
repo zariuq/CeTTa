@@ -8,9 +8,6 @@
 (1)
 true
 (1 (extra 1))
-done
-(a b)
-a
 Grounded
 (20)
 (installed-later 5)
@@ -20,3 +17,20 @@ true
 ((Visible visibility-a) (Visible visibility-a))
 ()
 (Raw (+ 1 2))
+()
+()
+()
+((-> Number Number))
+-inf
+1
+true
+pi
+true
+2
+2
+LooseBoxT
+(1)
+true
+true
+true
+(true)

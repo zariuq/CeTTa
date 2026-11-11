@@ -20,7 +20,7 @@
 
 typedef struct { unsigned char *data;size_t size; } Buffer;
 typedef struct {
-    int fd;uid_t uid;bool readonly;
+    int fd;uid_t uid;bool readonly;size_t client_limit;
     unsigned char header[8];size_t header_read,input_read,sent;
     Buffer input,output,last_request,last_reply;
     Arena cache;Atom *last_id;uint64_t deadline;
@@ -31,13 +31,22 @@ typedef struct {
     CettaLibraryContext *context;Space *program;Registry *registry;Arena *permanent;
     Arena configuration;Atom *data;const char *path;
     Route *routes;size_t route_count,client_count,resource_count,frame,owned_limit;
-    uint64_t idle,next_resource;int fuel;char boot[33];
+    uint64_t idle,session_idle,next_resource;int fuel;char boot[33];
     Connection *clients;Resource *resources;
     const char *evaluation_failure;
+    Arena maintenance[2];unsigned maintenance_arena;
+    Atom *maintenance_state,*maintenance_initial,*maintenance_status;
+    const char *maintenance_entry,*maintenance_failure;
+    uint64_t maintenance_work,maintenance_steps;
+    bool maintenance_dirty,maintenance_more,maintenance_cancelled;
 } Host;
 static volatile sig_atomic_t stopping;
 static void stop(int signal_number) { (void)signal_number;stopping=1; }
 static uint64_t now_ms(void) { struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);return (uint64_t)t.tv_sec*1000+t.tv_nsec/1000000; }
+static uint64_t deadline_after(uint64_t milliseconds) {
+    uint64_t now=now_ms();return milliseconds>UINT64_MAX-now ? UINT64_MAX : now+milliseconds;
+}
+static uint64_t session_deadline(const Host *host) {return host->session_idle ? deadline_after(host->session_idle) : UINT64_MAX;}
 static void clear(Buffer *buffer) { free(buffer->data);*buffer=(Buffer){0}; }
 static bool copy(Buffer *out,Buffer source) {
     out->data=malloc(source.size ? source.size : 1);
@@ -49,7 +58,7 @@ static const char *text(Atom *a) { return a && a->kind==ATOM_GROUNDED && a->grou
 static bool natural(Atom *a,uint64_t *value) { if (!a || a->kind!=ATOM_GROUNDED || a->ground.gkind!=GV_INT || a->ground.ival<0) return false;*value=(uint64_t)a->ground.ival;return true; }
 static Atom *failure(Arena *a,bool ran,const char *reason) { return atom_expr2(a,atom_symbol(a,ran ? "ServiceFailedV1" : "ServiceRefusedV1"),atom_symbol(a,reason)); }
 static Atom *reply(Arena *a,Atom *id,bool ok,Atom *value) { return atom_expr(a,(Atom *[]){atom_symbol(a,"reply"),id,atom_symbol(a,ok ? "ok" : "error"),value},4); }
-static bool encode(Host *host,Atom *atom,Buffer *out) { return cetta_atom_wire_encode_bounded(atom,host->frame,&out->data,&out->size)==ATOM_WIRE_OK; }
+static bool encode(size_t limit,Atom *atom,Buffer *out) { return cetta_atom_wire_encode_bounded(atom,limit,&out->data,&out->size)==ATOM_WIRE_OK; }
 static const char *incomplete_reason(CettaEvalCompletion completion) {
     switch (completion) {
     case CETTA_EVAL_INCOMPLETE_FUEL: return "handler-fuel";
@@ -154,6 +163,10 @@ static const char *state_failure(Host *host,Atom *value,bool fresh) {
 }
 static bool resources_fit(Host *host) {
     CettaStorageCensus census={0};bool ready=true;
+    if (host->maintenance_state) {
+        ready=!state_failure(host,host->maintenance_state,false);
+        if (ready) arena_storage_census(&host->maintenance[host->maintenance_arena],&census);
+    }
     for (size_t i=0;ready && i<host->resource_count;i++) if (host->resources[i].live) {
         Resource *r=&host->resources[i];CettaNativeHandleUse use={0};
         if (r->value) {
@@ -168,6 +181,56 @@ static bool resources_fit(Host *host) {
     cetta_storage_finish(&census);ready=ready && !census.incomplete && !census.overflow && !census.invalidated && census.bytes<=host->owned_limit;
     cetta_storage_census_free(&census);return ready;
 }
+static Atom *maintenance_info(Host *host,Arena *a) {
+    const char *phase=!host->maintenance_entry ? "unconfigured" : host->maintenance_cancelled ? "cancelled" : host->maintenance_failure ? "failed"
+        : host->maintenance_more || host->maintenance_dirty ? "scheduled" : "idle";
+    return atom_expr(a,(Atom *[]){atom_symbol(a,"ServiceMaintenanceInfoV1"),atom_symbol(a,phase),
+        atom_int(a,host->maintenance_steps>INT64_MAX ? INT64_MAX : (int64_t)host->maintenance_steps),
+        host->maintenance_status ? atom_deep_copy(a,host->maintenance_status)
+            : host->maintenance_failure ? atom_symbol(a,host->maintenance_failure) : atom_symbol(a,"NoMaintenanceStatusV1")},4);
+}
+static void maintenance_step(Host *host) {
+    if (!host->maintenance_entry || (!host->maintenance_dirty && !host->maintenance_more)) return;
+    host->maintenance_dirty=false;
+    unsigned selected=host->maintenance_arena^1u;
+    Arena *next=&host->maintenance[selected];arena_free(next);arena_init_detached(next);
+    Arena invocation;arena_init_detached(&invocation);
+    Atom *state=host->maintenance_state ? host->maintenance_state : host->maintenance_initial;
+    Atom *input=atom_expr(&invocation,(Atom *[]){atom_symbol(&invocation,"ServiceMaintenanceCallV1"),host->data,state,
+        atom_int(&invocation,(int64_t)host->maintenance_work)},4);
+    Atom *result=evaluate(host,&invocation,host->maintenance_entry,input);
+    const char *failure=result ? NULL : host->evaluation_failure;
+    bool more=tagged(result,"ServiceMaintenanceMoreV1",3);
+    bool stopped=tagged(result,"ServiceMaintenanceStoppedV1",3);
+    if (result && !more && !stopped && !tagged(result,"ServiceMaintenanceIdleV1",3)) failure="maintenance-result";
+    if (!failure) failure=state_failure(host,result->expr.elems[1],false);
+    if (!failure) {
+        Buffer encoded={0};
+        if (!encode(host->frame,result->expr.elems[2],&encoded)) failure="maintenance-status";
+        clear(&encoded);
+    }
+    Atom *successor=NULL,*status=NULL;
+    if (!failure) {
+        successor=atom_deep_copy(next,result->expr.elems[1]);status=atom_deep_copy(next,result->expr.elems[2]);
+        if (!successor || !status) failure="maintenance-capacity";
+    }
+    if (host->maintenance_steps<UINT64_MAX) ++host->maintenance_steps;
+    /* Keep the new holders before retiring the predecessor. Maintenance is
+     * outside request acknowledgement and never revises its saved reply. */
+    if (!failure) {
+        arena_free(&host->maintenance[host->maintenance_arena]);host->maintenance_arena=selected;
+        host->maintenance_state=successor;host->maintenance_status=status;
+        host->maintenance_more=more;host->maintenance_failure=stopped ? "maintenance-refused" : NULL;
+        if (!resources_fit(host)) failure="maintenance-budget";
+    }
+    if (failure) {
+        arena_free(&host->maintenance[host->maintenance_arena]);arena_init_detached(&host->maintenance[host->maintenance_arena]);
+        host->maintenance_state=host->maintenance_status=NULL;host->maintenance_more=false;host->maintenance_failure=failure;
+        fprintf(stderr,"value service: maintenance stopped: %s\n",failure);
+    }
+    if (failure) {arena_free(next);arena_init_detached(next);}
+    arena_free(&invocation);
+}
 static void connection_close(Host *host,size_t index) {
     Connection *c=&host->clients[index];
     for (size_t i=0;host->resources && i<host->resource_count;i++) if (host->resources[i].live && host->resources[i].client==index) resource_close(host,&host->resources[i]);
@@ -180,7 +243,7 @@ static bool queue(Host *host,Connection *c,Buffer body) {
     c->output.data=malloc(body.size+8);if (!c->output.data) return false;
     c->output.size=body.size+8;c->sent=0;
     if (!cetta_ipc_csp_header(c->output.data,body.size)) { clear(&c->output);return false; }
-    memcpy(c->output.data+8,body.data,body.size);c->deadline=now_ms()+host->idle;return true;
+    memcpy(c->output.data+8,body.data,body.size);c->deadline=deadline_after(host->idle);return true;
 }
 static Route *route_find(Host *host,Atom *operation) {
     for (size_t i=0;i<host->route_count;i++) if (atom_eq(host->routes[i].operation,operation)) return &host->routes[i];
@@ -223,6 +286,12 @@ static Atom *keep_value(Host *host,size_t client,Arena *arena,Atom *result,Resou
 static Atom *dispatch(Host *host,size_t index,Arena *arena,Atom *body,Resource **added,bool *ran) {
     Connection *c=&host->clients[index];
     if (tagged(body,"ReadOnlyV1",1)) { c->readonly=true;return atom_symbol(arena,"ServiceReadOnlyV1"); }
+    if (tagged(body,"RequestLimitV1",2)) {
+        uint64_t requested=0;
+        if (!natural(body->expr.elems[1],&requested) || !requested) return failure(arena,false,"request-shape");
+        c->client_limit=requested<host->frame ? (size_t)requested : host->frame;
+        return atom_expr2(arena,atom_symbol(arena,"ServiceRequestLimitV1"),atom_int(arena,(int64_t)c->client_limit));
+    }
     if (tagged(body,"StatsV1",1)) {
         size_t clients=0,resources=0;
         for (size_t i=0;i<host->client_count;i++) clients+=host->clients[i].fd>=0;
@@ -234,13 +303,27 @@ static Atom *dispatch(Host *host,size_t index,Arena *arena,Atom *body,Resource *
         Resource *r=resource_find(host,index,body->expr.elems[1]);if (!r) return failure(arena,false,"unknown-resource");
         resource_close(host,r);return atom_symbol(arena,"ServiceClosedV1");
     }
+    if (tagged(body,"CallV1",3) && atom_is_symbol(body->expr.elems[1],"ServiceMaintenanceInfo")) return maintenance_info(host,arena);
+    if (tagged(body,"CallV1",3) && (atom_is_symbol(body->expr.elems[1],"ServiceMaintenanceCancel") ||
+            atom_is_symbol(body->expr.elems[1],"ServiceMaintenanceResume"))) {
+        if (c->readonly) return failure(arena,false,"read-only");
+        if (!host->maintenance_entry) return failure(arena,false,"maintenance-unconfigured");
+        if (atom_is_symbol(body->expr.elems[1],"ServiceMaintenanceCancel")) {
+            arena_free(&host->maintenance[0]);arena_init_detached(&host->maintenance[0]);
+            arena_free(&host->maintenance[1]);arena_init_detached(&host->maintenance[1]);
+            host->maintenance_state=host->maintenance_status=NULL;host->maintenance_failure=NULL;
+            host->maintenance_more=host->maintenance_dirty=false;host->maintenance_cancelled=true;
+        } else {host->maintenance_dirty=true;host->maintenance_cancelled=false;host->maintenance_failure=NULL;}
+        return maintenance_info(host,arena);
+    }
     Atom *operation=NULL,*argument=NULL,*resource=atom_symbol(arena,"ServiceNoResourceV1");
-    Resource *consumed=NULL;
+    Resource *consumed=NULL,*used=NULL;
     if (tagged(body,"CallV1",3)) { operation=body->expr.elems[1];argument=body->expr.elems[2]; }
     else if (tagged(body,"UseV1",4) || tagged(body,"UseValueV1",4)) {
         Resource *r=resource_find(host,index,body->expr.elems[1]);if (!r) return failure(arena,false,"unknown-resource");
         if (r->value!=atom_is_symbol(body->expr.elems[0],"UseValueV1")) return failure(arena,false,"resource-mode");
         if (r->value) consumed=r;
+        used=r;
         operation=body->expr.elems[2];argument=body->expr.elems[3];resource=r->handle;
     } else return failure(arena,false,"request-shape");
     Route *route=route_find(host,operation);
@@ -248,12 +331,22 @@ static Atom *dispatch(Host *host,size_t index,Arena *arena,Atom *body,Resource *
     if (c->readonly && route->write) return failure(arena,false,"read-only");
     Atom *peer=atom_expr3(arena,atom_symbol(arena,"ServicePeerV1"),atom_int(arena,c->uid),atom_symbol(arena,c->readonly ? "ReadOnly" : "ReadWrite"));
     Atom *input=atom_expr(arena,(Atom *[]){atom_symbol(arena,"ServiceCallV1"),host->data,peer,resource,argument},5);
-    *ran=true;Atom *result=evaluate(host,arena,route->entry,input);
+    *ran=route->write || consumed!=NULL;
+    if (route->write && host->maintenance_entry) {host->maintenance_dirty=true;host->maintenance_cancelled=false;host->maintenance_failure=NULL;}
+    Atom *result=evaluate(host,arena,route->entry,input);
     /* UseValue moves a linear continuation. Success transfers its owned
      * leaves through the copied result; failure retires it explicitly. The
      * exact request/reply cache handles wire retries before token lookup. */
     if (consumed) resource_close(host,consumed);
     if (!result) return failure(arena,true,host->evaluation_failure);
+    /* A terminal resource operation retires its host entry before census.
+     * Closing only the native handle inside a handler would leave a stale
+     * entry and misreport it as a resource-budget failure. */
+    if (tagged(result,"ServiceReleaseV1",2)) {
+        if (!used) return failure(arena,true,"resource-required");
+        result=result->expr.elems[1];
+        if (used->live) { resource_close(host,used);*ran=true; }
+    }
     if (tagged(result,"ServiceKeepV1",3)) return keep(host,index,arena,result,added);
     if (tagged(result,"ServiceKeepValueV1",3)) return keep_value(host,index,arena,result,added);
     if (!resources_fit(host)) {
@@ -265,20 +358,28 @@ static Atom *dispatch(Host *host,size_t index,Arena *arena,Atom *body,Resource *
 static bool respond(Host *host,size_t index) {
     Connection *c=&host->clients[index];Arena arena;arena_init_detached(&arena);Atom *request=NULL;Buffer encoded={0};bool valid=false;
     Resource *added=NULL;bool ran=false;
-    if (cetta_atom_wire_decode_bounded(&arena,c->input.data,c->input.size,host->frame,&request)!=ATOM_WIRE_OK || !tagged(request,"request",3)) goto done;
+    if (cetta_atom_wire_decode_bounded(&arena,c->input.data,c->input.size,host->frame,&request)!=ATOM_WIRE_OK) goto done;
+    bool has_limit=tagged(request,"request",4);
+    if (!has_limit && !tagged(request,"request",3)) goto done;
+    size_t limit=c->client_limit && c->client_limit<host->frame ? c->client_limit : host->frame;
+    if (has_limit) {
+        uint64_t requested=0;
+        if (!natural(request->expr.elems[3],&requested) || !requested) goto done;
+        if (requested<limit) limit=(size_t)requested;
+    }
     Atom *id=request->expr.elems[1];
-    if (!text(id) || !atom_string_len(id) || atom_string_len(id)>128) goto done;
+    if (!text(id) || !atom_string_len(id)) goto done;
     if (c->last_id && atom_string_equal(c->last_id,id)) {
         if (c->last_request.size==c->input.size && !memcmp(c->last_request.data,c->input.data,c->input.size)) { valid=queue(host,c,c->last_reply);goto done; }
-        if (!encode(host,reply(&arena,id,false,failure(&arena,false,"request-id-collision")),&encoded)) goto done;
+        if (!encode(limit,reply(&arena,id,false,failure(&arena,false,"request-id-collision")),&encoded)) goto done;
         valid=queue(host,c,encoded);goto done;
     }
     Atom *body=dispatch(host,index,&arena,request->expr.elems[2],&added,&ran);
     bool ok=!tagged(body,"ServiceFailedV1",2) && !tagged(body,"ServiceRefusedV1",2);
-    if (!encode(host,reply(&arena,id,ok,body),&encoded) || encoded.size>host->frame) {
+    if (!encode(limit,reply(&arena,id,ok,body),&encoded) || encoded.size>limit) {
         if (added) { resource_close(host,added);added=NULL; }
         clear(&encoded);
-        if (!encode(host,reply(&arena,id,false,failure(&arena,ran,"reply-limit")),&encoded)) goto done;
+        if (!encode(limit,reply(&arena,id,false,failure(&arena,ran,"reply-limit")),&encoded)) goto done;
     }
     clear(&c->last_request);clear(&c->last_reply);arena_free(&c->cache);arena_init_detached(&c->cache);c->last_id=NULL;
     if (!copy(&c->last_request,c->input) || !copy(&c->last_reply,encoded)) goto done;
@@ -291,7 +392,7 @@ static bool read_client(Host *host,size_t index) {
     Connection *c=&host->clients[index];
     while (c->header_read<8) {
         ssize_t n=recv(c->fd,c->header+c->header_read,8-c->header_read,0);
-        if (n>0) c->header_read+=(size_t)n;
+        if (n>0) {if (!c->header_read)c->deadline=deadline_after(host->idle);c->header_read+=(size_t)n;}
         else if (n<0 && errno==EINTR) continue;
         else return n<0 && (errno==EAGAIN || errno==EWOULDBLOCK);
     }
@@ -308,29 +409,44 @@ static bool read_client(Host *host,size_t index) {
     }
     return respond(host,index);
 }
-static bool write_client(Connection *c) {
+static bool write_client(Host *host,Connection *c) {
     while (c->sent<c->output.size) {
         ssize_t n=send(c->fd,c->output.data+c->sent,c->output.size-c->sent,MSG_NOSIGNAL);
         if (n>0) c->sent+=(size_t)n;
         else if (n<0 && errno==EINTR) continue;
         else return n<0 && (errno==EAGAIN || errno==EWOULDBLOCK);
     }
-    clear(&c->input);clear(&c->output);c->header_read=c->input_read=c->sent=0;return true;
+    clear(&c->input);clear(&c->output);c->header_read=c->input_read=c->sent=0;c->deadline=session_deadline(host);return true;
 }
 static bool configure(Host *host,const char *entry) {
     Atom *config=evaluate(host,&host->configuration,entry,NULL);
-    if (!tagged(config,"ValueServiceV1",5)) return false;
+    bool maintenance=tagged(config,"ValueServiceV2",6);
+    if (!maintenance && !tagged(config,"ValueServiceV1",5)) return false;
     host->path=text(config->expr.elems[1]);host->data=config->expr.elems[2];Atom *routes=config->expr.elems[3],*limits=config->expr.elems[4];
-    if (!host->path || host->path[0]!='/' || !routes || routes->kind!=ATOM_EXPR || !routes->expr.len || !tagged(limits,"ServiceLimitsV1",7)) return false;
+    bool separate_idle=tagged(limits,"ServiceLimitsV2",8);
+    if (!host->path || host->path[0]!='/' || !routes || routes->kind!=ATOM_EXPR || !routes->expr.len ||
+        (!separate_idle && !tagged(limits,"ServiceLimitsV1",7))) return false;
     uint64_t values[6];for (size_t i=0;i<6;i++) if (!natural(limits->expr.elems[i+1],&values[i])) return false;
     if (!values[0] || values[0]>1024 || !values[1] || values[1]>4096 || values[2]<1024 || values[2]>UINT32_MAX || values[2]>cetta_library_value_byte_limit(host->context) ||
-        !values[3] || values[3]>3600000 || !values[4] || values[4]>SIZE_MAX || !values[5] || values[5]>INT32_MAX) return false;
+        !values[3] || !values[4] || values[4]>SIZE_MAX || !values[5] || values[5]>INT32_MAX) return false;
     host->client_count=(size_t)values[0];host->resource_count=(size_t)values[1];host->frame=(size_t)values[2];host->idle=values[3];host->owned_limit=(size_t)values[4];host->fuel=(int)values[5];
+    host->session_idle=host->idle;
+    if (separate_idle && !natural(limits->expr.elems[7],&host->session_idle)) return false;
+    if (maintenance) {
+        Atom *hook=config->expr.elems[5];uint64_t work;
+        if (!tagged(hook,"ServiceMaintenanceV1",4) || hook->expr.elems[1]->kind!=ATOM_SYMBOL ||
+            !natural(hook->expr.elems[3],&work) || !work || work>INT64_MAX) return false;
+        host->maintenance_entry=atom_symbol_bytes(hook->expr.elems[1]);host->maintenance_initial=hook->expr.elems[2];
+        if (memchr(host->maintenance_entry,0,atom_symbol_length(hook->expr.elems[1])) || state_failure(host,host->maintenance_initial,false)) return false;
+        host->maintenance_work=work;host->maintenance_dirty=true;
+    }
     host->route_count=routes->expr.len;host->routes=calloc(host->route_count,sizeof(*host->routes));
     if (!host->routes) return false;
     for (size_t i=0;i<host->route_count;i++) {
         Atom *r=routes->expr.elems[i];
         if (!tagged(r,"ServiceRouteV1",4) || r->expr.elems[1]->kind!=ATOM_SYMBOL || r->expr.elems[3]->kind!=ATOM_SYMBOL ||
+            atom_is_symbol(r->expr.elems[1],"ServiceMaintenanceInfo") || atom_is_symbol(r->expr.elems[1],"ServiceMaintenanceCancel") ||
+            atom_is_symbol(r->expr.elems[1],"ServiceMaintenanceResume") ||
             !(atom_is_symbol(r->expr.elems[2],"Read") || atom_is_symbol(r->expr.elems[2],"Write"))) return false;
         for (size_t j=0;j<i;j++) if (atom_eq(r->expr.elems[1],host->routes[j].operation)) return false;
         host->routes[i]=(Route){r->expr.elems[1],atom_symbol_bytes(r->expr.elems[3]),atom_is_symbol(r->expr.elems[2],"Write")};
@@ -345,20 +461,19 @@ static bool private_parent(const char *path) {
     char *slash=strrchr(parent,'/');
     if (!slash) { free(parent);return false; }
     if (slash==parent) slash[1]=0;else *slash=0;
-    struct stat st;bool valid=!lstat(parent,&st) && S_ISDIR(st.st_mode) &&
-        st.st_uid==geteuid() && !(st.st_mode&077);
+    struct stat st;bool valid=!stat(parent,&st) && S_ISDIR(st.st_mode);
     free(parent);return valid;
 }
 int cetta_value_service_run(CettaLibraryContext *context,Space *program,Registry *registry,Arena *permanent,const char *configuration) {
     Host host={.context=context,.program=program,.registry=registry,.permanent=permanent,.fuel=1000000,.next_resource=1};
-    arena_init_detached(&host.configuration);int listener=-1,lock=-1,rc=1;struct stat bound={0};
+    arena_init_detached(&host.configuration);arena_init_detached(&host.maintenance[0]);arena_init_detached(&host.maintenance[1]);int listener=-1,lock=-1,rc=1;struct stat bound={0};
     struct sigaction prior_term,prior_int;bool signals=false;
     if (!configure(&host,configuration)) { fputs("value service: invalid configuration\n",stderr);goto done; }
-    if (!private_parent(host.path)) { fputs("value service: socket requires a private owned directory\n",stderr);goto done; }
+    if (!private_parent(host.path)) { fputs("value service: socket directory unavailable\n",stderr);goto done; }
     char *lock_path=malloc(strlen(host.path)+6);if (!lock_path) goto done;
     sprintf(lock_path,"%s.lock",host.path);lock=open(lock_path,O_RDWR|O_CREAT|O_CLOEXEC|O_NOFOLLOW,0600);free(lock_path);
     struct stat lock_stat;
-    if (lock<0 || fstat(lock,&lock_stat) || !S_ISREG(lock_stat.st_mode) || lock_stat.st_uid!=geteuid() || (lock_stat.st_mode&077) || flock(lock,LOCK_EX|LOCK_NB)) goto done;
+    if (lock<0 || fstat(lock,&lock_stat) || !S_ISREG(lock_stat.st_mode) || flock(lock,LOCK_EX|LOCK_NB)) goto done;
     listener=cetta_ipc_listen(host.path,0600,(gid_t)-1,(int)host.client_count);
     if (listener<0 || lstat(host.path,&bound)) { fputs("value service: listener unavailable\n",stderr);goto done; }
     host.clients=calloc(host.client_count,sizeof(*host.clients));
@@ -368,7 +483,7 @@ int cetta_value_service_run(CettaLibraryContext *context,Space *program,Registry
     struct sigaction action={.sa_handler=stop};sigemptyset(&action.sa_mask);stopping=0;
     sigaction(SIGTERM,&action,&prior_term);sigaction(SIGINT,&action,&prior_int);signals=true;
     while (!stopping) {
-        fds[0]=(struct pollfd){listener,POLLIN,0};uint64_t now=now_ms(),due=now+1000;
+        fds[0]=(struct pollfd){listener,POLLIN,0};uint64_t now=now_ms(),due=now+(host.maintenance_dirty || host.maintenance_more ? 0u : 1000u);
         for (size_t i=0;i<host.client_count;i++) {
             Connection *c=&host.clients[i];
             if (c->fd>=0 && now>=c->deadline) connection_close(&host,i);
@@ -381,15 +496,16 @@ int cetta_value_service_run(CettaLibraryContext *context,Space *program,Registry
             for (size_t i=0;i<host.client_count;i++) if (host.clients[i].fd<0) { slot=i;break; }
             if (fd>=0) {
                 if (slot==host.client_count || getsockopt(fd,SOL_SOCKET,SO_PEERCRED,&peer,&length) || length!=sizeof(peer) || peer.uid!=geteuid()) close(fd);
-                else { host.clients[slot]=(Connection){.fd=fd,.uid=peer.uid,.deadline=now_ms()+host.idle};arena_init_detached(&host.clients[slot].cache); }
+                else { host.clients[slot]=(Connection){.fd=fd,.uid=peer.uid,.client_limit=host.frame,.deadline=session_deadline(&host)};arena_init_detached(&host.clients[slot].cache); }
             }
         }
         for (size_t i=0;i<host.client_count;i++) {
             Connection *c=&host.clients[i];short events=fds[i+1].revents;if (c->fd<0 || !events) continue;
             if ((events&(POLLERR|POLLNVAL)) || ((events&POLLHUP) && !(events&POLLIN)) ||
                 ((events&POLLIN) && !c->output.data && !read_client(&host,i)) ||
-                ((events&POLLOUT) && c->output.data && !write_client(c))) connection_close(&host,i);
+                ((events&POLLOUT) && c->output.data && !write_client(&host,c))) connection_close(&host,i);
         }
+        maintenance_step(&host);
     }
     free(fds);if (rc!=2) rc=0;
 done:
@@ -398,5 +514,5 @@ done:
     if (listener>=0) { close(listener);struct stat current;if (!lstat(host.path,&current) && current.st_dev==bound.st_dev && current.st_ino==bound.st_ino) unlink(host.path); }
     if (lock>=0) close(lock);
     if (signals) { sigaction(SIGTERM,&prior_term,NULL);sigaction(SIGINT,&prior_int,NULL); }
-    arena_free(&host.configuration);return rc;
+    arena_free(&host.maintenance[0]);arena_free(&host.maintenance[1]);arena_free(&host.configuration);return rc;
 }

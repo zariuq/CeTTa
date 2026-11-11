@@ -1,0 +1,85 @@
+NOTATION
+(NAM "IfThenElse")
+(NAM "If_i")
+DOT
+INFIX
+(NAM "=")
+(NUM False "502" None None)
+DEQ
+(NAM "eq")
+DOT
+AXIOM
+(NAM "i1")
+COLON
+LPAREN
+IF
+(NAM "p")
+THEN
+(NAM "x")
+ELSE
+(NAM "y")
+RPAREN
+(NAM "=")
+(NAM "z")
+DOT
+AXIOM
+(NAM "i2")
+COLON
+LET
+(NAM "x")
+DEQ
+(NAM "y")
+IN
+(NAM "x")
+(NAM "=")
+(NAM "y")
+DOT
+AXIOM
+(NAM "i3")
+COLON
+LET
+(NAM "x")
+COLON
+(NAM "set")
+DEQ
+(NAM "y")
+IN
+(NAM "x")
+(NAM "=")
+(NAM "y")
+DOT
+AXIOM
+(NAM "i4")
+COLON
+LET
+LBRACK
+(NAM "u")
+COMMA
+(NAM "v")
+RBRACK
+DEQ
+(NAM "w")
+IN
+(NAM "u")
+(NAM "=")
+(NAM "v")
+DOT
+AXIOM
+(NAM "i5")
+COLON
+LBRACK
+(NAM "a")
+COMMA
+(NAM "b")
+COMMA
+(NAM "c")
+RBRACK
+(NAM "=")
+LPAREN
+(NAM "a")
+COMMA
+(NAM "b")
+COMMA
+(NAM "c")
+RPAREN
+DOT

@@ -13,6 +13,7 @@ import tempfile
 from gslt2parse_schema_v1 import parse_sexprs, render, Symbol
 from test_parser_pack_abi_v1 import CASES as ABI_CASES
 from test_parser_pack_abi_v1 import export_stream
+from gslt2parse_oracles_v1 import ORACLES
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -41,15 +42,15 @@ CANARY_SOURCES = (
 )
 
 EXPECTED_SOURCE_DIGEST = (
-    "ecf63c6d9c777f34e93d769af322b21bf2082c9e3d7850a4f6fb197e73539580"
+    "8b45088a064ac374598708e94816926dfb9532363883138239454e62cb92a01a"
 )
 EXPECTED_COMPILER_DIGEST = (
-    "61e47fd81d24ee79e119810f99ee49bccfd1e03a7675850bc16feee1e1cb2a16"
+    "e2dd7dbe555752340b4e568ac6a510fcbed9161ba8b88dccc32790fb316bf251"
 )
 EXPECTED_ROOT_LINK_DIGEST = (
-    "e0ab61597f3feec4d99ce9586a6294be1a897b27ebfb623f043eb73f78308f7e"
+    "4481f4c5a637d2fec1cb755091add64ff242ff3cdeb57e42278e0ee48073459c"
 )
-EXPECTED_ROOT_LINKS = 7
+EXPECTED_ROOT_LINKS = 8
 MASK_CASES = {
     "word": {
         "recognition": "he-word",
@@ -217,7 +218,7 @@ for _label, _trace in {
         "trace-probe-wrapper": "0",
         "trace-probe-work": "20",
         "certificate-digest": (
-            "f524eec7219ac20d4897c4938d1ea63f2ae75c1e9389bdcde8ef77ed74403167"
+            "6b105d3d4773388e47f1e8aecd5999308a41dc27dc1c06e0a279f8a8fc380e41"
         ),
     },
     "variable": {
@@ -235,7 +236,7 @@ for _label, _trace in {
         "trace-probe-wrapper": "0",
         "trace-probe-work": "14",
         "certificate-digest": (
-            "1090fd34ba75b8592c948e95f0ad4d46cc0ad9c6a0d82c7dbf60e46d0bedcf07"
+            "d7bfaa3461a2fc0b8271c26bfe9a706a27dcbab665e52b9ffb2b973c2ec3cf96"
         ),
     },
     "string": {
@@ -253,7 +254,7 @@ for _label, _trace in {
         "trace-probe-wrapper": "5",
         "trace-probe-work": "62",
         "certificate-digest": (
-            "5f58ab94dd4d59318412a5c0457f99d2e8015bac817d2e9610a8a569dc1606b6"
+            "023d2a3a3388bae767196435d1bc137dda4314b3fbf0a4bcc04e1b719e9f9442"
         ),
     },
 }.items():
@@ -319,14 +320,9 @@ def native_query(
 
 
 def petta_answer_set(
-    petta_root: Path, label: str
+    label: str
 ) -> tuple[str, tuple[str, ...], str]:
-    oracle = (
-        petta_root
-        / "experiments"
-        / "gslt2parse_foundation"
-        / "semantic_mask_span_oracle_v1.pl"
-    )
+    oracle = ORACLES / "semantic_mask_span_oracle_v1.pl"
     completed = run_process(
         [
             "swipl",
@@ -525,7 +521,7 @@ def main() -> int:
 
     semantic_compilers = (*SEMANTIC_COMPILER_PREFIX, SEMANTIC_COMPILER)
     compiler_digest = sha256(SEMANTIC_COMPILER.read_bytes()).hexdigest()
-    abi = export_stream(petta_root, ABI_CASES["he"])
+    abi = export_stream(ABI_CASES["he"])
     source_digest = abi_field(abi, "source-digest")
     compiled_cases: dict[
         str, tuple[tuple[str, ...], tuple[str, ...]]
@@ -539,7 +535,7 @@ def main() -> int:
         )
         recognition = native_recognition(chart_binary, case)
         petta_source_digest, petta_terms, petta_digest = petta_answer_set(
-            petta_root, label
+            label
         )
         mask_terms = native_mask["terms"]
         recognition_terms = recognition["terms"]
@@ -577,7 +573,7 @@ def main() -> int:
         root_link_source_digest,
         petta_root_links,
         petta_root_link_digest,
-    ) = petta_answer_set(petta_root, "--root-links")
+    ) = petta_answer_set("--root-links")
     native_root_link_terms = native_root_links["terms"]
     assert isinstance(native_root_link_terms, tuple)
     if (

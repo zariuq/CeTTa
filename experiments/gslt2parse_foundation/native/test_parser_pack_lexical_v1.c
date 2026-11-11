@@ -284,6 +284,19 @@ static void report_result_failure(const char *label,
     }
 }
 
+/* A self-contained relation holds each root in its own arena, or, for a
+ * symbol, as the symbol table's canonical atom, which no arena owns and
+ * which outlives every arena: a copy takes that atom for a symbol. */
+static bool relation_holds_root(const Arena *relation_arena,
+                                const Arena *source_arena,
+                                const Atom *root) {
+    if (!root || arena_owns_ptr(source_arena, root))
+        return false;
+    return arena_owns_ptr(relation_arena, root) ||
+           (root->kind == ATOM_SYMBOL &&
+            root == atom_symbol_canonical(root->sym_id));
+}
+
 static void test_guard_relation_contract(TestCounts *counts,
                                          Arena *arena,
                                          char out_digest[65]) {
@@ -352,7 +365,7 @@ static void test_guard_relation_contract(TestCounts *counts,
     Atom *proof_nullable = atom_symbol(arena, "proof-nullable");
     Atom *proof_eof = atom_symbol(arena, "proof-eof");
     Atom *proof_mutated = atom_symbol(arena, "proof-mutated");
-    Atom *variable_proof = atom_var_with_id(arena, "x", 1u);
+    Atom *variable_proof = atom_var_with_id(arena, "x", var_id_from_base(1u));
     Atom *expiring_base_value;
     Atom *expiring_value;
     Atom *expiring_proof;
@@ -428,12 +441,12 @@ static void test_guard_relation_contract(TestCounts *counts,
                 relation.terminal_ids[2] == 8u &&
                 relation.witness_values[0] != base_value &&
                 atom_eq(relation.witness_values[0], base_value) &&
-                arena_owns_ptr(
-                    &relation.arena, relation.witness_values[0]) &&
-                arena_owns_ptr(
-                    &relation.arena, relation.evidence[0].value) &&
-                arena_owns_ptr(
-                    &relation.arena, relation.evidence[0].proof) &&
+                relation_holds_root(
+                    &relation.arena, arena, relation.witness_values[0]) &&
+                relation_holds_root(
+                    &relation.arena, arena, relation.evidence[0].value) &&
+                relation_holds_root(
+                    &relation.arena, arena, relation.evidence[0].proof) &&
                 relation.lattice.source_pass_count == 1u,
             "guard relation owns roots despite ambient hash-consing and "
             "canonicalizes duplicates");

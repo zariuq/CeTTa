@@ -23,7 +23,7 @@ def main():
     for host in ("he", "petta"):
         library = ROOT / ("lib/lib_module.metta" if host == "he" else "lib/petta/lib_module.metta")
         prefix = "!(import! &self " + text(str(library)) + ")\n"
-        prefix += "!(import! &self " + text(str(library.parent / "str.metta")) + ")\n"
+        prefix += "!(import! &self str)\n"
 
         def check(name, expression, predicate):
             nonlocal count
@@ -137,7 +137,7 @@ def main():
         check("counted-symbol", lets([
             ("$module", form("module:read-text", "ModulePortableV1", text("symbols"), text(symbol_source))),
         ], form("module:write-text", "ModulePortableV1", "$module")),
-            lambda value: isinstance(value, StringLiteral) and nul_symbol in value.text)
+            lambda value: isinstance(value, StringLiteral) and '(module:symbol "A\\x00B")' in value.text)
         for name, marker, document in (
             ("nul-carrier-tag", "CarrierAst", '(LanguageDefV2 "NulTag" (LCons (TypeDecl "T" TAG) LNil) LNil LNil LNil)'),
             ("nul-core-head", "LanguageDefV2", '(TAG "NulTag" LNil LNil LNil LNil)'),
@@ -159,20 +159,23 @@ def main():
             ], form("langdef:load-language-value", "$payload")),
                 lambda value: headed(value, "Error", 2))
         raw_source = '(module:document "A\0B")'
-        # Raw control bytes are not quoted-text syntax; portable codepoint
-        # escapes above preserve the value without weakening that grammar.
+        # Input accepts literal text as well as escaped spellings; writing
+        # remains canonical.
         check("raw-control-source", lets([
             ("$source", form("str:from-codepoints", "(" + " ".join(str(ord(c)) for c in raw_source) + ")")),
-        ], form("module:read-text", "ModulePortableV1", text("counted"), "$source")),
-            lambda value: headed(value, "Error", 2))
+            ("(ModulePortableValueV1 $origin $payload)",
+             form("module:read-text", "ModulePortableV1", text("counted"), "$source")),
+        ], form("str:compare", "$payload", form("str:from-codepoints", "(65 0 66)"))),
+            lambda value: value == 0)
         check("future-payload", form("module:read-text", "ModulePortableV1", text("future"),
               text('(module:document (FutureLayerV7 "opaque" 18446744073709551616))')),
               lambda value: headed(value, "ModulePortableValueV1", 2) and value[2][2] == 18446744073709551616)
         check("future-schema", form("module:read-text", "ModulePortableV1", text("future"),
               text('(module:document (Record (Field "mettail" "module/2") (Field "payload" (FutureTerm 7))))')),
               lambda value: headed(value, "ModulePortableValueV1", 2))
-        check("structural-limit", form("module:write-text", "ModulePortableV1", "(X " * 513 + "Z" + ")" * 513),
-              lambda value: headed(value, "ModuleRefusedV1", 3) and value[1] == Symbol("incomplete"))
+        check("deep-data", form("module:write-text", "ModulePortableV1", "(X " * 513 + "Z" + ")" * 513),
+              lambda value: isinstance(value, StringLiteral) and
+                  value.text == "(module:document " + "(X " * 513 + "Z" + ")" * 513 + ")")
 
         for name, source in (
             ("command", "!(module:document (LanguageDefV2 \"X\" LNil LNil LNil LNil))"),
@@ -213,7 +216,7 @@ def main():
         check("inert-dependency-path", lets([
             ("$module", form("module:read-text", "ModulePortableV1", text("inert"), text(envelope(inert_dependency)))),
         ], form("module:write-text", "ModulePortableV1", "$module")),
-            lambda value: isinstance(value, StringLiteral) and nul_uri in value.text)
+            lambda value: isinstance(value, StringLiteral) and '(Field "uri" "A\\x00B")' in value.text)
         check("opaque-export", form("module:read-text", "ModulePortableV1", text("opaque"), text(envelope(exports=
             '(List (Record (Field "name" "Metadata") (Field "spec" (List (Integer 18446744073709551616) (Bytes 0 255) Nil))))'))),
             lambda value: headed(value, "ModulePortableValueV1", 2))

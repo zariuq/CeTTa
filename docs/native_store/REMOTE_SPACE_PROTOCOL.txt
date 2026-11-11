@@ -1,0 +1,233 @@
+Native remote database Spaces
+=============================
+
+The native CSP1/CAV1 value host runs the trusted native_db_server.metta
+configuration. CETTA_DB_SOURCE selects a database directory or a supported ACT
+file; CETTA_DB_SOCKET selects the Unix socket. Requests never select a server
+filesystem destination. The existing same-account admission, read-only
+attenuation and configurable service limits remain in force.
+
+DbCapabilities reports owner identity, process incarnation, source kind,
+rights and the selected portable record allowance. DbCapture captures one
+collection. Its connection-owned token retains an independent native source
+and, for directory sources, the original publication view and collection
+scope. DbCaptureRelated opens another collection from exactly that informing
+view. A historical source is not freshness evidence or write authority.
+
+DbProtocolInfo returns DbProtocolV1 with version 1 and symbolic feature names.
+The native client requires OriginalFactsV1, ImmutablePositionsV1,
+PhysicalDomainsV1 and RetainedSessionsV1 before admitting the connection;
+unsupported versions or missing required features
+refuse. Further flags describe linear continuations, private artifacts,
+stored-scalar ranges, maintenance and fact-local variables. These flags do
+not grant an index, freshness or authority over another collection.
+Directory owner identity is DbOwnerV1(logical epoch, physical domain). The
+physical component uses the native store's same-host device/inode domain,
+so independent backup copies do not become one commit domain merely because
+they retain an epoch. Two activations of the same directory still share the
+nested-publication barrier. Incarnation separately fences current observations;
+these readable coordinates never grant publication authority.
+
+ServiceLimitsV2 separates a partial-request/blocked-reply deadline from the
+optional whole-session idle allowance. The DB configuration disables the
+latter: a paused connection or retained child is not revoked merely for being
+quiet. Partial frames and blocked replies keep a deadline. Generic V1 service
+configurations retain their selected idle policy; timeout arithmetic saturates
+at the platform clock range rather than imposing a separate one-hour ceiling.
+
+DbCandidates and DbScan open raw native candidate cursors. Each row retains
+its original atom and ground occurrence identity in separate CAV1 packets.
+DbCandidateRead reads bounded chunks of those packets. The client applies
+the existing Space matcher; the server does not substitute projected answers
+or bindings for original candidates. Repeated variables remain fact-local.
+
+DbCandidateStep clones an immutable cursor position and advances the copy.
+The predecessor remains usable by retained or pending client clones. A row
+or progress response returns the successor token; confirmed exhaustion and
+failure return terminal data. The older mutable DbCandidateNext route stays
+available to independent protocol clients. Native client resource descriptors
+retire unused positions between exchanges, or on final connection close.
+
+The native SpaceSourceCursorOps provider retains its captured source and
+selection across clone/rewind. Transport polls return PROGRESS while a framed
+exchange is pending. An owned readiness continuation lets an ordinary
+evaluator wait outside physical transition guards and resume its existing
+search. Progress never grants an empty answer or completion. A disconnected,
+cancelled, malformed or incomplete traversal is a terminal failure. Explicit
+full scans also check the captured occurrence count.
+
+Cancelling a cursor discards exchanges that have not acquired the stream.
+An active read is retained for draining; any unused resource token in its
+reply is retired. This preserves sibling readers on the same connection.
+Destructors perform neither allocation nor socket IO. Deferred exchanges own
+the channel rather than the database owner, so final owner close has no
+reference cycle and closes remaining connection resources.
+
+An editable transaction overlay retains this source and stages its net local
+occurrence changes. The common callback runner checks program and ordinary
+read observations and seals the local observation before serializing an
+immutable proposal. DbPublish checks the source's protected owner, revision
+and collection under the existing durable publication path. Facts, metadata,
+indexes, portable callback answers and receipts publish together. A sent
+request without a confirmed reply is uncertain; the client retains its
+request/collection/operation identities for DbResolve. Neither transport nor
+the public db facade automatically reruns a callback. A receipt collision
+retains its database reason as protocol result data, rather than becoming a
+generic handler exception.
+An error after a handler may have published is also uncertain, even when its
+error frame arrived completely. Native unknown/recovery-required publication
+outcomes likewise retain the request identity; they never imply rollback.
+
+Explicit DbFreshV1 requirements name owner, incarnation, revision and scope.
+The server enforces its own informing revision and refuses a foreign current
+requirement. DbHistoricalV1 requirements assert no freshness. This is one
+database publication domain, without a distributed commit protocol.
+The conservative whole-revision validator also covers reads of another
+collection under that owner. Such a read requirement grants no write right:
+the publication collection must still match the protected source scope.
+
+Cooperative compaction
+----------------------
+DbCompactOpen opens an owner-held native ACT compaction with a selected
+builder memory budget (the db facade defaults to 32 MiB). DbCompactStep takes
+a work quantum. DbCompactInfo reports phase, informing revision, processed
+records and byte progress. The immutable cut is built outside the writer
+gate; installation preserves intervening writes and logical revision.
+Completed jobs retain their status and repeatable completion until explicit
+db:close or cancellation. The db:compact convenience driver closes its job.
+DbCompactCancel retires the job. Closing an interrupted job preserves the
+single frozen delta for a later attempt; it does not stack frozen layers.
+
+Terminal native resources use ServiceReleaseV1 from the trusted handler. The
+host closes the selected resource and removes its entry before accounting
+remaining resources. Returning a closed handle as a live entry would turn
+ordinary cancellation into an accounting failure. The client's owning
+remote-resource handle keeps the session alive independently of db:close.
+
+Stored-scalar ranges
+----------------------
+DbRangeOpen is scoped to a protected captured source. It receives dimensions,
+bounds and an indexed-order flag, never the client's pattern or projection.
+The existing MeTTa range planner validates metadata and postings and checks
+stored scalar values. Declared integer ranges retain signed-value order and
+stable occurrence-key ties. General ranges retain other-scalar or complete
+original-candidate scanning. ACT files use the latter and refuse indexed-only
+plans because they contain no declared database range index.
+
+DbRangeNext moves a linear continuation. A selected row is retained as separate
+original-fact and identity packets, read by bounded DbRangeRead operations.
+Each read moves the same continuation while retaining that immutable row.
+The client decodes the packets separately and opens an owned one-fact source
+with that saved identity. Its existing matcher performs binding/projection;
+no server-instantiated substitute becomes the stored candidate. The source
+has exactly one known occurrence and carries no publication capability.
+Filtered range cardinality is never substituted for the captured Space count.
+
+Completion requires confirmed cursor exhaustion. Failure, cancellation and
+disconnect remain terminal failures rather than empty completion. Closing
+the original connection owner does not revoke a live query child. Late
+publications and compaction do not recapture that child's informing view.
+DbRangeCancel or resource/connection close releases the continuation, cached
+row and protected view. General order/map/fold composition remains in the
+existing client query pipeline.
+
+Automatic maintenance
+-----------------------
+The native value host accepts its existing ValueServiceV1 configuration and
+an optional ValueServiceV2 with one ServiceMaintenanceV1 entry, initial state
+and work allowance. The trusted callback receives ServiceMaintenanceCallV1
+with configuration, retained state and work. More, Idle and Stopped results
+retain a successor state and portable status. Only that live continuation is
+copied into alternating owned arenas; predecessor and evaluation workspace
+are retired after the successor owns its leaves.
+
+Write dispatch schedules one maintenance check even if its handler later
+reports uncertainty. An active job gets one bounded step between socket event
+sweeps. Idle service polling does not invoke the MeTTa callback. Maintenance
+failure has its own status and cannot alter an already queued/cached user
+reply. Allocation, malformed callback and accounting failures stop the job
+and release its construction state. A subsequent write can retry.
+
+ServiceMaintenanceInfo, ServiceMaintenanceCancel and ServiceMaintenanceResume
+are reserved native host CallV1 operations. Cancellation and resumption
+require the existing write right. Cancellation releases construction and
+stops its work clock; another write or explicit resume can schedule work.
+The db facade exposes maintenance-info, maintenance-cancel and
+maintenance-resume. Embedded connections keep explicit cooperative jobs.
+
+The DB configuration checks the CDS3 active delta against
+max(8 MiB, base bytes / 4), using 32 MiB builder memory by default. A startup
+check also resumes a frozen cut. Later checks preserve explicit cancellation
+of a small manual job rather than immediately reacquiring its cut. CDS2
+remains unchanged until explicit ACT compaction. Builder memory and work
+quanta are independently configurable; neither limits corpus size.
+
+Private transfer artifacts
+---------------------------
+DbTransferInfo returns (DbTransferV1 chunk-bytes default-builder-bytes).
+The native client selects the smaller local/remote chunk allowance before
+transferring. Transfer support is discovered explicitly; an older service
+that lacks it refuses the operation rather than silently using another path.
+
+DbExportOpen captures a collection into a native, connection-owned artifact.
+DbUploadOpen admits an expected file length and full SHA-256. The artifact's
+private descriptor and all construction scratch files are unlinked. The
+trusted configuration selects a private socket directory; requests contain
+no server filesystem paths. DbArtifactWrite accepts the next offset, or an
+exact replay of already retained bytes. Changed replays, holes and writes
+after sealing refuse. DbArtifactStep advances bounded construction, hashing
+and full ACT validation. DbArtifactInfo reports phase, received/total bytes,
+computed digest, temporary construction bytes and construction heap bytes.
+DbArtifactRead returns bounded immutable chunks only after confirmed ready.
+DbArtifactCancel and connection close release the private files.
+
+DbImportOpen uses a validated artifact and captures a destination view. It
+reuses the ordinary MeTTa append schema and native disk-backed batch, not a
+second native encoding of database facts. The spool retains its input and
+independent destination capability; closing the artifact does not invalidate
+an admitted job. Facts, indexes, occurrence mappings and the receipt remain
+invisible until DbImportFinish validates the captured revision and program
+observations and publishes one image. Stale views and partial inputs refuse.
+The request fingerprint includes the actual validated profile and digest.
+
+Import continuations use ServiceKeepValueV1 / UseValueV1. Metadata explicitly
+marks DbLinearV1, distinct from reusable native resources. Each successful
+step consumes its predecessor token and returns one successor; the accepted
+reply itself owns the successor token before the old reply is released.
+Native client uses are exclusive. Pre-handler refusals preserve the token;
+post-handler failures or uncertain delivery never imply that it is reusable.
+DbImportCancel closes staged resources. A lost final publication reply is
+resolved with DbResolve before any new admission; a saved receipt replays its
+original result, including after restart.
+
+The local destination is also staged and fully validated before atomic file
+publication. Rename/directory-sync uncertainty keeps the ordinary ACT
+publication semantics. Temporary-disk and mapped residency are separate from
+the construction heap measure; an image can be larger than either buffer or
+transport frame.
+
+Qualification boundaries
+-------------------------
+The focused checks include ordinary matching and paging, duplicates, open
+facts, fact-local repeated variables, numeric matching against an in-memory
+Space, parent close, pending clones, callback-once receipt replay, collisions,
+local read invalidation, nested publication refusal, self-close refusal,
+lost publication replies, restart resolution, stale absent reads, interrupted
+reads, cross-collection join consistency, read-only ACT sources, concurrent
+writes during compaction, retained readers and cancellation/resumption.
+
+The combined controls also cover raw stored-scalar candidates, indexed order
+and identity across ACT compaction, typed/open facts, standalone ACT range
+fallback, chunked private transfer, bounded persistent admission, maintenance
+failure/restart, retained sessions and independent backup commit domains.
+Abstract Lean cursor, layer and owner laws are specifications with native
+controls, not a proof of the C program. Live application migration and Python
+embedding remain separate work.
+
+Commit identity and activation
+------------------------------
+The callback's nested-publication barrier uses the native physical directory
+domain. Two activations serving that directory share the barrier even when
+their incarnations differ. Freshness separately checks logical epoch,
+incarnation and revision. A backup preserves logical history and receipts;
+an independent directory copy has its own physical publication domain.

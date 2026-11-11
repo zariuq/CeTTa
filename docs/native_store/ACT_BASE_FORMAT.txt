@@ -1,0 +1,61 @@
+Native ACT byte-map bases
+========================
+
+CDBACT01 represents an immutable map from byte keys to byte values. It is
+distinct from CACT0001, which represents portable MeTTa occurrences. A base
+contains application keys unchanged; schemas, indexes and receipts remain
+the application's records. Its trie section is ordinary ACTree03.
+
+All header integers are unsigned little-endian 64-bit words. Header offsets:
+
+    0   8   ASCII CDBACT01
+    8   8   header size, exactly 128
+   16  16   nonzero generation identity
+   32   8   trie offset, exactly 128
+   40   8   trie byte length
+   48   8   payload offset, exactly 128 + trie length
+   56   8   payload byte length
+   64   8   key count
+   72   8   key byte allowance
+   80   8   value byte allowance
+   88   8   integrity/layout profile, exactly 1
+   96  32   reserved, zero
+
+A final 32-byte SHA-256 covers the complete finalized header, trie and
+payload. The payload ends immediately before this digest. Unknown profiles,
+invalid geometry and arithmetic overflow refuse opening.
+
+Each ACT value addresses a payload record, relative to the payload section.
+A record is a canonical ACT varint length followed by that many bytes. The
+first payload byte is zero: every empty value references this shared record
+at offset zero. Nonempty records appear exactly once in key order; their
+offsets must consume the remaining payload without gaps or extra records.
+Physical deduplication of nonempty records is outside profile 1.
+
+Opening verifies the digest, complete ACT structure/key order, key count,
+item allowances, payload offsets and lengths. A validated mapping can be
+retained by independent captured readers after its original fd closes or
+its pathname is unlinked. Published backing must remain immutable.
+
+The sorted ACT builder holds one branch and bounded key/copy buffers. Pending
+ancestor summaries use private scratch storage. Oversized previous keys use
+a separate private spool. Child roots are emitted adjacently, after their
+descendants. The key cache reserves simultaneous old/new allocations before
+growth. Working-heap accounting excludes caller-owned input and file-backed
+residency; these need separate process measurements.
+
+The native base builder accepts value chunks followed by the next ordered
+key. It constructs trie/payload spools, finalizes their lengths, and copies
+them beneath the finalized envelope header while hashing. No complete image
+or corpus-sized dictionary is retained in heap. Scratch files and partial
+output belong to the construction operation.
+
+finish completes private bytes; it does not acknowledge durable publication.
+The publication owner must validate the result and establish its durability
+before installing a root that references it. Construction failure poisons
+the builder and never authorizes exposing its incomplete output.
+
+The CDS3 publication owner uses this codec beneath its logical byte-map
+interface; ACT_STORE_FORMAT.txt specifies base/delta installation and recovery.
+Ordinary Space export still needs bounded external organization for its
+occurrence, identity and candidate-index namespaces.

@@ -1,0 +1,17 @@
+NOTATION
+(NAM "ReplSep")
+(NAM "ReplSep")
+DOT
+AXIOM
+(NAM "a")
+COLON
+LCBRACE
+(NAM "f")
+(NAM "x")
+VBAR
+(NAM "x")
+MEM
+(NAM "y")
+COMMA
+(NAM "z")
+DOT

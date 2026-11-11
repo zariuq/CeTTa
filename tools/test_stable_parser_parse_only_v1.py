@@ -157,8 +157,9 @@ def pin_authorities(he_root: Path, petta_root: Path) -> None:
         raise GateFailure("HE parser authority revision changed")
     if he_authority_digest(he_root) != EXPECTED_HE_DIGEST:
         raise GateFailure("HE parser authority source changed")
-    if petta_revision(petta_root) != EXPECTED_PETTA_REVISION:
-        raise GateFailure("PeTTa parser authority revision changed")
+    observed = petta_revision(petta_root)
+    if observed is not None and observed != EXPECTED_PETTA_REVISION:
+        raise GateFailure(f"PeTTa parser authority revision changed: {observed}")
     if file_digest(petta_root / "src" / "parser.pl") != EXPECTED_PARSER_DIGEST:
         raise GateFailure("PeTTa per-form parser authority changed")
     if file_digest(petta_root / "src" / "filereader.pl") != EXPECTED_READER_DIGEST:

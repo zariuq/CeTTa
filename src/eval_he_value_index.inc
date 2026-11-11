@@ -72,7 +72,9 @@ typedef struct {
  * the newest are the likeliest to be met again. */
 #define HE_VALUE_INDEX_MAX_CERTIFICATES ((size_t)1u << 18)
 
-static __thread HeValueIndex g_he_value_index;
+static __thread HeValueIndex g_he_value_index_fallback;
+static __thread HeValueIndex *g_he_value_index_current;
+#define g_he_value_index (*(g_he_value_index_current ? g_he_value_index_current : &g_he_value_index_fallback))
 
 static bool he_value_index_enabled(void) {
     static _Thread_local int enabled = -1;
@@ -161,6 +163,51 @@ static bool he_value_arena_epoch(const Atom *atom, uint32_t *arena,
         return true;
     }
     return false;
+}
+
+/* The type stamp store's scope: HE's typing outside bare-minimal profiles
+ * and dependent telescopes, named by the session's language and profile. */
+bool eval_type_stamp_scope(uint64_t *scope) {
+    if (!scope || eval_current_language_id() != CETTA_LANGUAGE_HE ||
+        cetta_evaluator_options_is_bare_minimal(active_eval_options()) ||
+        eval_dependent_telescope_enabled())
+        return false;
+    CettaEvalSession *session = active_eval_session();
+    uint32_t profile = session && session->profile
+        ? (uint32_t)session->profile->id : UINT32_MAX;
+    *scope = ((uint64_t)CETTA_LANGUAGE_HE << 32) | profile;
+    return true;
+}
+
+/* The arenas whose incarnations the evaluator can name: the hash-cons arena,
+ * the running HE observation's, the collector's survivor and the space's
+ * term universe. */
+bool eval_type_stamp_atom_epoch(const Space *space, const Atom *atom,
+                                uint32_t *arena, uint64_t *epoch) {
+    if (!atom || !arena || !epoch)
+        return false;
+    *arena = atom->arena_id;
+    if (atom->arena_id == 0u) {
+        *epoch = hashcons_reclamation_epoch();
+        return *epoch != UINT64_MAX;
+    }
+    const Arena *run = g_he_value_index.open ? g_he_value_index.arena : NULL;
+    if (run && atom->arena_id == run->identity) {
+        *epoch = run->reset_epoch;
+        return true;
+    }
+    if (atom->arena_id == g_eval_gc.survivor.identity) {
+        *epoch = g_eval_gc.survivor.reset_epoch;
+        return true;
+    }
+    const Arena *stored = space && space->native.universe
+        ? space->native.universe->persistent_arena : NULL;
+    if (stored && atom->arena_id == stored->identity) {
+        *epoch = stored->reset_epoch;
+        return true;
+    }
+    /* The prepared machine's own arenas, while it runs. */
+    return cetta_prepared_pure_stamp_arena_epoch(atom, arena, epoch);
 }
 
 static size_t he_value_slot(const Atom *atom, size_t cap) {

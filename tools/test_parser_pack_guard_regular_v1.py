@@ -12,6 +12,7 @@ import subprocess
 import tempfile
 
 from gslt2parse_schema_v1 import Symbol, parse_sexprs, render
+from gslt2parse_oracles_v1 import ORACLES
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -66,13 +67,13 @@ EXPECTED = {
         "digest": "ed42222f9affc916ccbd1a27d8c5472a1e8dbc56e6238c91f7f36c18831a4d41",
     },
     "prime": {
-        "count": 173,
-        "tag_count": 7,
-        "digest": "72229e01844933b6e5cd179fd92b792ffb5ab02c302cf5cf98403d4cd1768993",
+        "count": 481,
+        "tag_count": 16,
+        "digest": "3892b616bda1220f65527f1144d960b2b18eef374ec3a7a4b838bd09466aa916",
     },
 }
 EXPECTED_MATRIX_DIGEST = (
-    "2b44611def9122833c25d560c1b3a0162a90ed6a8f4f093e44abfc745052780f"
+    "c6dc14545e7cdf57638a8232e9e2bc7b4ffe47866293696e58e99eeeda0e326a"
 )
 
 
@@ -126,13 +127,8 @@ def run_native(
         ) from error
 
 
-def run_petta(petta_root: Path) -> dict:
-    script = (
-        petta_root
-        / "experiments"
-        / "gslt2parse_foundation"
-        / "test_parser_pack_guard_regular_v1.pl"
-    )
+def run_petta() -> dict:
+    script = ORACLES / "test_parser_pack_guard_regular_v1.pl"
     if not script.is_file():
         raise GateFailure(f"PeTTa guard regular oracle is absent: {script}")
     completed = subprocess.run(
@@ -387,7 +383,7 @@ def main() -> int:
         raise GateFailure(f"PeTTa root is absent: {petta_root}")
 
     rows = {label: native_row(binary, label) for label in SOURCES}
-    petta = run_petta(petta_root)
+    petta = run_petta()
     agreements, petta_replays, petta_negatives = compare_petta(rows, petta)
     native_replays = sum(
         replay_native_certificates(binary, label, row)

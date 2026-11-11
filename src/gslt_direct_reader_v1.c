@@ -1,4 +1,6 @@
+#include "string_literal.h"
 #include "gslt_direct_reader_v1.h"
+#include "raw_source_region.h"
 
 #include <limits.h>
 #include <stdarg.h>
@@ -52,6 +54,57 @@ static void gslt_direct_reader_v1_error(char *buf, size_t size,
     va_start(arguments, format);
     (void)vsnprintf(buf, size, format, arguments);
     va_end(arguments);
+}
+
+static void gslt_direct_reader_v1_error_position(
+    char *buf, size_t size, const GSLTDirectCursorV1 *cursor) {
+    if (!buf || !size || !cursor || (!cursor->input && cursor->input_len))
+        return;
+    char detail[512];
+    snprintf(detail, sizeof(detail), "%s", buf);
+    size_t position = cursor->pos, line = 1u, column = 1u;
+    const char *offset = strstr(detail, "at byte ");
+    if (offset) {
+        size_t explicit_position;
+        if (sscanf(offset, "at byte %zu", &explicit_position) == 1 &&
+            explicit_position <= cursor->input_len)
+            position = explicit_position;
+    }
+    for (size_t i = 0u; i < position && i < cursor->input_len; i++) {
+        if (cursor->input[i] == '\n') { line++; column = 1u; }
+        else if ((cursor->input[i] & 0xc0u) != 0x80u) column++;
+    }
+    gslt_direct_reader_v1_error(buf, size, "line %zu, column %zu: %s",
+        line, column, detail[0] ? detail : "source syntax rejected");
+}
+
+/* A lexical service returns original source spans; the surrounding reader
+ * chooses whether it is part of its profile. No guest constructor runs. */
+static bool gslt_direct_raw_region(
+    bool enabled, GSLTDirectCursorV1 *cursor,
+    void *context, AtomId (*string_bytes)(void *, const uint8_t *, size_t),
+    AtomId *result, char *error, size_t error_size) {
+    if (!enabled) return false;
+    CettaRawSourceRegion region;
+    CettaRawSourceStatus status = cetta_raw_source_scan(
+        cursor->input, cursor->input_len, cursor->pos, &region);
+    if (status == CETTA_RAW_NOT_PRESENT) return false;
+    *result = CETTA_ATOM_ID_NONE;
+    if (status != CETTA_RAW_COMPLETE) {
+        gslt_direct_reader_v1_error(error, error_size,
+            "%s at byte %zu", status == CETTA_RAW_INCOMPLETE
+                ? "incomplete raw source region" : "invalid UTF-8 in raw source region",
+            region.error_offset);
+        return true;
+    }
+    *result = string_bytes(context, cursor->input + region.body_start,
+                           region.body_end - region.body_start);
+    /* The scanner has validated UTF-8. Count scalar shifts consistently
+     * with the rest of the direct reader, retaining the original bytes. */
+    for (size_t i = cursor->pos; i < region.end; ++i)
+        if ((cursor->input[i] & 0xc0u) != 0x80u) ++cursor->shifts;
+    cursor->pos = region.end;
+    return true;
 }
 
 static bool gslt_direct_reader_v1_cp_in(const uint32_t *points,
@@ -231,7 +284,9 @@ static bool gslt_direct_reader_v1_bytes_reserve(
         }
         cap *= 2u;
     }
-    bytes->data = cetta_realloc(bytes->data, cap);
+    uint8_t *data = cetta_realloc(bytes->data, cap);
+    if (!data) return false;
+    bytes->data = data;
     bytes->cap = cap;
     return true;
 }
@@ -690,8 +745,9 @@ static AtomId gslt_direct_reader_v1_parse_expression(
             uint32_t next = cap ? cap * 2u : 16u;
             if (next < cap || SIZE_MAX / (size_t)next < sizeof(*children))
                 goto done;
-            children = cetta_realloc(
-                children, (size_t)next * sizeof(*children));
+            AtomId *grown = cetta_realloc(children, (size_t)next * sizeof(*children));
+            if (!grown) goto done;
+            children = grown;
             cap = next;
         }
         children[len++] = child;
@@ -785,7 +841,9 @@ static AtomId gslt_direct_reader_v1_parse_list(
             uint32_t next = cap ? cap * 2u : 8u;
             if (next < cap || SIZE_MAX / (size_t)next < sizeof(*elems))
                 goto done;
-            elems = cetta_realloc(elems, (size_t)next * sizeof(*elems));
+            AtomId *grown = cetta_realloc(elems, (size_t)next * sizeof(*elems));
+            if (!grown) goto done;
+            elems = grown;
             cap = next;
         }
         elems[len++] = element;
@@ -812,6 +870,12 @@ static AtomId gslt_direct_reader_v1_parse_atom(
     AtomId result;
     if (depth == 0u || state->cursor.pos >= state->cursor.input_len)
         return CETTA_ATOM_ID_NONE;
+    if (gslt_direct_raw_region(state->plan->raw_source_regions, &state->cursor,
+            state->projection->context, state->projection->string_bytes, &result,
+            state->error_buf, state->error_buf_size)) {
+        if (result != CETTA_ATOM_ID_NONE) { state->tokens++; state->reductions++; }
+        return result;
+    }
     if (state->cursor.input[state->cursor.pos] < UINT8_C(0x80)) {
         /* ASCII fast path: a single indexed dispatch precomputed to preserve
          * the exact branch order (string, variable, expression, list, word). */
@@ -1495,7 +1559,9 @@ int gslt_direct_reader_v1_parse_bytes_ids_impl(
             uint32_t next = cap ? cap * 2u : 64u;
             if (next < cap || SIZE_MAX / (size_t)next < sizeof(*ids))
                 goto done;
-            ids = cetta_realloc(ids, (size_t)next * sizeof(*ids));
+            AtomId *grown = cetta_realloc(ids, (size_t)next * sizeof(*ids));
+            if (!grown) goto done;
+            ids = grown;
             cap = next;
         }
         ids[len++] = id;
@@ -1523,6 +1589,8 @@ done:
     if (result < 0 && projection->retain_prefix &&
         projection->retain_prefix(projection->retain_context, ids, len))
         ids = NULL;
+    if (result < 0)
+        gslt_direct_reader_v1_error_position(error_buf, error_buf_size, &state.cursor);
     free(ids);
     return result;
 }
@@ -2022,7 +2090,7 @@ static AtomId gslt_direct_prefix_parse_atom(
                 uint32_t next = frame_cap ? frame_cap * 2u : 64u;
                 if (next < frame_cap || SIZE_MAX / (size_t)next < sizeof(*frames))
                     goto done;
-                frames = cetta_realloc(frames, (size_t)next * sizeof(*frames));
+                { GSLTDirectPrefixFrameV1 *grown = cetta_realloc(frames, (size_t)next * sizeof(*frames)); if (!grown) goto done; frames = grown; }
                 frame_cap = next;
             }
             frames[frame_len++] = (GSLTDirectPrefixFrameV1){
@@ -2100,8 +2168,11 @@ static AtomId gslt_direct_prefix_parse_atom(
                     if (next < frame_cap ||
                         SIZE_MAX / (size_t)next < sizeof(*frames))
                         goto done;
-                    frames = cetta_realloc(frames,
-                                           (size_t)next * sizeof(*frames));
+                    GSLTDirectPrefixFrameV1 *grown = cetta_realloc(
+                        frames, (size_t)next * sizeof(*frames));
+                    if (!grown)
+                        goto done;
+                    frames = grown;
                     frame_cap = next;
                 }
                 frames[frame_len++] = (GSLTDirectPrefixFrameV1){
@@ -2149,8 +2220,13 @@ static AtomId gslt_direct_prefix_parse_atom(
                     result = CETTA_ATOM_ID_NONE;
                     goto done;
                 }
-                frame->children = cetta_realloc(
+                AtomId *grown = cetta_realloc(
                     frame->children, (size_t)next * sizeof(*frame->children));
+                if (!grown) {
+                    result = CETTA_ATOM_ID_NONE;
+                    goto done;
+                }
+                frame->children = grown;
                 frame->cap = next;
             }
             frame->children[frame->len++] = result;
@@ -2756,7 +2832,9 @@ int gslt_direct_prefix_reader_v1_parse_bytes_ids(
             uint32_t next = cap ? cap * 2u : 64u;
             if (next < cap || SIZE_MAX / (size_t)next < sizeof(*ids))
                 goto done;
-            ids = cetta_realloc(ids, (size_t)next * sizeof(*ids));
+            AtomId *grown = cetta_realloc(ids, (size_t)next * sizeof(*ids));
+            if (!grown) goto done;
+            ids = grown;
             cap = next;
         }
         ids[len++] = id;
@@ -2778,6 +2856,8 @@ done:
     if (result < 0 && error_buf && error_buf_size > 0u &&
         error_buf[0] == '\0')
         gslt_direct_prefix_rejection(&state);
+    if (result < 0)
+        gslt_direct_reader_v1_error_position(error_buf, error_buf_size, &state.cursor);
     free(ids);
     return result;
 }
@@ -2866,6 +2946,7 @@ static bool gslt_direct_petta_extract_form(
     size_t start = cursor->pos;
     size_t run = start;
     bool commented = false;
+    bool token_boundary = true;
 
     if (!gslt_direct_petta_peek(
             cursor, &codepoint, &width, error_buf, error_buf_size) ||
@@ -2881,6 +2962,27 @@ static bool gslt_direct_petta_extract_form(
         if (!gslt_direct_petta_peek(
                 cursor, &codepoint, &width, error_buf, error_buf_size))
             return false;
+        if (plan->raw_source_regions && token_boundary && codepoint == 'r') {
+            CettaRawSourceRegion region;
+            CettaRawSourceStatus status = cetta_raw_source_scan(
+                cursor->input, cursor->input_len, cursor->pos, &region);
+            if (status != CETTA_RAW_NOT_PRESENT) {
+                if (status != CETTA_RAW_COMPLETE) {
+                    gslt_direct_reader_v1_error(error_buf, error_buf_size,
+                        "%s at byte %zu", status == CETTA_RAW_INCOMPLETE
+                            ? "incomplete raw source region" : "invalid UTF-8 in raw source region",
+                        region.error_offset);
+                    return false;
+                }
+                while (cursor->pos < region.end) {
+                    if (!gslt_direct_petta_peek(cursor, &codepoint, &width, error_buf, error_buf_size))
+                        return false;
+                    gslt_direct_reader_v1_consume_width(cursor, width);
+                }
+                token_boundary = true;
+                continue;
+            }
+        }
         if (codepoint == plan->string_quote) {
             gslt_direct_reader_v1_consume_width(cursor, width);
             for (;;) {
@@ -2918,6 +3020,7 @@ static bool gslt_direct_petta_extract_form(
                     return false;
                 gslt_direct_reader_v1_consume_width(cursor, width);
             }
+            token_boundary = true;
             continue;
         }
         if (codepoint == plan->comment_marker) {
@@ -2948,6 +3051,7 @@ static bool gslt_direct_petta_extract_form(
             }
             gslt_direct_reader_v1_consume_width(cursor, width);
             run = cursor->pos;
+            token_boundary = true;
             continue;
         }
         if (codepoint == plan->expression_open) {
@@ -2959,11 +3063,13 @@ static bool gslt_direct_petta_extract_form(
             }
             gslt_direct_reader_v1_consume_width(cursor, width);
             depth++;
+            token_boundary = true;
             continue;
         }
         if (codepoint == plan->expression_close) {
             gslt_direct_reader_v1_consume_width(cursor, width);
             depth--;
+            token_boundary = true;
             if (depth > 0u)
                 continue;
             if (!commented) {
@@ -2985,6 +3091,9 @@ static bool gslt_direct_petta_extract_form(
                 "compiled PeTTa splitter rejected a balanced-form scalar");
             return false;
         }
+        token_boundary = gslt_direct_reader_v1_class_contains(plan->splitter_blank, codepoint) ||
+            (plan->list_open && codepoint == plan->list_open) ||
+            (plan->list_close && codepoint == plan->list_close);
         gslt_direct_reader_v1_consume_width(cursor, width);
     }
     gslt_direct_reader_v1_error(
@@ -3060,6 +3169,7 @@ static AtomId gslt_direct_petta_parse_string(
         codepoint != state->plan->string_quote)
         goto failed;
     gslt_direct_reader_v1_consume_width(&state->cursor, width);
+    size_t body_start = state->cursor.pos;
     while (state->cursor.pos < state->cursor.input_len) {
         size_t scalar_start = state->cursor.pos;
         if (!gslt_direct_petta_peek(
@@ -3068,13 +3178,26 @@ static AtomId gslt_direct_petta_parse_string(
             goto failed;
         if (codepoint == state->plan->string_quote) {
             gslt_direct_reader_v1_consume_width(&state->cursor, width);
+            if (state->plan->string_body_metta) {
+                /* Recognition obeys the authored grammar above. Decode the
+                 * retained body only after its closing quote is established. */
+                size_t at = body_start;
+                while (at < scalar_start) {
+                    uint8_t unit[4];
+                    size_t written;
+                    size_t consumed = cetta_string_literal_decode_unit(
+                        state->cursor.input + at, scalar_start - at, unit, &written);
+                    if (!gslt_direct_reader_v1_bytes_append(&decoded, unit, written))
+                        goto failed;
+                    at += consumed;
+                }
+            }
             result = state->projection->string_bytes(
                 state->projection->context, decoded.data, decoded.len);
-            if (result == CETTA_ATOM_ID_NONE && decoded.len > 0u &&
-                memchr(decoded.data, '\0', decoded.len)) {
+            if (result == CETTA_ATOM_ID_NONE) {
                 gslt_direct_reader_v1_error(
                     state->error_buf, state->error_buf_size,
-                    "PeTTa string contains an embedded NUL that CeTTa cannot represent");
+                    "PeTTa string projection failed");
             }
             free(decoded.data);
             return result;
@@ -3082,7 +3205,7 @@ static AtomId gslt_direct_petta_parse_string(
         if (gslt_direct_reader_v1_class_contains(
                 state->plan->string_plain, codepoint)) {
             gslt_direct_reader_v1_consume_width(&state->cursor, width);
-            if (!gslt_direct_reader_v1_bytes_append(
+            if (!state->plan->string_body_metta && !gslt_direct_reader_v1_bytes_append(
                     &decoded, state->cursor.input + scalar_start, width))
                 goto failed;
             continue;
@@ -3093,10 +3216,9 @@ static AtomId gslt_direct_petta_parse_string(
             if (!gslt_direct_petta_peek(
                     &state->cursor, &codepoint, &width,
                     state->error_buf, state->error_buf_size) ||
-                !gslt_direct_petta_escape_target(
-                    state->plan, codepoint, &target) ||
-                !gslt_direct_reader_v1_bytes_append_codepoint(
-                    &decoded, target))
+                (!state->plan->string_body_metta &&
+                 (!gslt_direct_petta_escape_target(state->plan, codepoint, &target) ||
+                  !gslt_direct_reader_v1_bytes_append_codepoint(&decoded, target))))
                 goto failed;
             gslt_direct_reader_v1_consume_width(&state->cursor, width);
             continue;
@@ -3319,8 +3441,9 @@ static AtomId gslt_direct_petta_parse_expression(
             uint32_t next = cap ? cap * 2u : 16u;
             if (next < cap)
                 goto failed;
-            children = cetta_realloc(
-                children, (size_t)next * sizeof(*children));
+            AtomId *grown = cetta_realloc(children, (size_t)next * sizeof(*children));
+            if (!grown) goto failed;
+            children = grown;
             cap = next;
         }
         children[len++] = child;
@@ -3404,7 +3527,9 @@ static AtomId gslt_direct_petta_parse_list(
             uint32_t next = cap ? cap * 2u : 8u;
             if (next < cap)
                 goto failed;
-            elems = cetta_realloc(elems, (size_t)next * sizeof(*elems));
+            AtomId *grown = cetta_realloc(elems, (size_t)next * sizeof(*elems));
+            if (!grown) goto failed;
+            elems = grown;
             cap = next;
         }
         elems[len++] = element;
@@ -3432,6 +3557,12 @@ static AtomId gslt_direct_petta_parse_atom(
             &state->cursor, &codepoint, &width,
             state->error_buf, state->error_buf_size))
         return CETTA_ATOM_ID_NONE;
+    if (gslt_direct_raw_region(state->plan->raw_source_regions, &state->cursor,
+            state->projection->context, state->projection->string_bytes, &result,
+            state->error_buf, state->error_buf_size)) {
+        if (result != CETTA_ATOM_ID_NONE) { state->tokens++; state->reductions++; }
+        return result;
+    }
     if (codepoint == state->plan->string_quote) {
         result = gslt_direct_petta_parse_string(state);
         if (result == CETTA_ATOM_ID_NONE && !in_list) {
@@ -3507,6 +3638,8 @@ bool gslt_direct_petta_reader_v1_plan_validate(
         !gslt_direct_reader_v1_sha256_valid(plan->projection_digest) ||
         !gslt_direct_reader_v1_sha256_valid(plan->compiler_digest) ||
         !gslt_direct_reader_v1_sha256_valid(plan->composition_digest) ||
+        (plan->string_body_metta &&
+         (plan->escape_marker != '\\' || plan->string_quote != '"')) ||
         plan->depth_limit == 0u) {
         gslt_direct_reader_v1_error(
             error_buf, error_buf_size,
@@ -3543,10 +3676,10 @@ bool gslt_direct_petta_reader_v1_plan_validate(
         plan->expression_open == plan->expression_close ||
         plan->string_quote == plan->escape_marker ||
         plan->splitter_string_escape != plan->escape_marker ||
-        plan->string_escape_map_len == 0u ||
-        !gslt_direct_reader_v1_map_valid(
-            plan->string_escape_map, plan->string_escape_map_len) ||
-        !plan->string_escape_identity_fallback ||
+        (!plan->string_body_metta &&
+         (plan->string_escape_map_len == 0u ||
+          !gslt_direct_reader_v1_map_valid(plan->string_escape_map, plan->string_escape_map_len) ||
+          !plan->string_escape_identity_fallback)) ||
         gslt_direct_reader_v1_class_contains(
             plan->splitter_string_plain, plan->string_quote) ||
         gslt_direct_reader_v1_class_contains(
@@ -3720,7 +3853,9 @@ int gslt_direct_petta_reader_v1_parse_bytes_ids_from(
                     goto done;
                 next *= 2u;
             }
-            ids = cetta_realloc(ids, (size_t)next * sizeof(*ids));
+            AtomId *grown = cetta_realloc(ids, (size_t)next * sizeof(*ids));
+            if (!grown) goto done;
+            ids = grown;
             cap = next;
         }
         for (uint32_t index = 0u; index < projected_len; index++) {
@@ -3755,6 +3890,8 @@ done:
             error_buf, error_buf_size,
             "source is outside the compiled PeTTa LanguageDef composition");
     }
+    if (result < 0)
+        gslt_direct_reader_v1_error_position(error_buf, error_buf_size, &document);
     free(ids);
     return result;
 }

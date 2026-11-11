@@ -1,6 +1,12 @@
 # Build outputs
 /cetta
 /cetta-stage0
+/build/
+/dist/
+/python/*.egg-info/
+/python/cetta/_native*.so
+/python/cetta/resources/
+__pycache__/
 *.proc-scope
 .cetta-object.*
 .cetta-deps.*

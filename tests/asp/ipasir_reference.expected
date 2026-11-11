@@ -1,0 +1,9 @@
+true
+true
+(one-of-two true true 2)
+(chain true true 1)
+(contradiction true true 0)
+(xor3 true true 4)
+(pigeons32 true true 0)
+(no-clauses true true 1)
+(empty-clause true true 0)

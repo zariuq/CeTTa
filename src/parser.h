@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include "term_universe.h"
+#include "raw_source_region.h"
 
 /* The current reader and renderer expression-depth allowance. A caller that
  * generates source syntax can report representation exhaustion before expansion. */
@@ -79,7 +80,7 @@ int parse_metta_bytes_prefix_ids(
     const uint8_t *bytes, size_t length, TermUniverse *universe, AtomId **out_ids,
     int *complete_count, char *error_buf, size_t error_buf_size);
 
-/* Install one process-wide immutable document reader for the active session. */
+/* Install the document reader for the calling thread's active session. */
 bool parser_set_document_ids_backend(
     const ParserDocumentIdsBackend *backend);
 void parser_clear_document_ids_backend(void *context);
@@ -89,6 +90,13 @@ void parser_clear_document_ids_backend(void *context);
  * program's language installed. */
 bool parser_set_builtin_document_reader(bool builtin);
 
+typedef struct {
+    ParserDocumentIdsBackend backend;
+    bool active;
+} ParserDocumentBackendScope;
+void parser_document_backend_enter(ParserDocumentBackendScope *,
+                                    const ParserDocumentIdsBackend *);
+void parser_document_backend_leave(ParserDocumentBackendScope *);
 /* One term read by the session's document reader, when that reader reads
  * terms: a dialect's parse then reads as its source does.  *handled is false
  * when the session has no such reader; NULL with *handled true is text that
@@ -164,6 +172,10 @@ AtomId parse_sexpr_to_id(TermUniverse *universe, const char *text, size_t *pos);
    the reader's delimiter rules. */
 bool parser_text_well_formed(const char *text);
 bool parser_text_well_formed_n(const char *text, size_t text_len);
+typedef CettaRawSourceStatus (*ParserRawSourceScanner)(
+    const uint8_t *, size_t, size_t, CettaRawSourceRegion *);
+ParserRawSourceScanner parser_set_raw_source_scanner(ParserRawSourceScanner scanner);
+bool parser_raw_source_regions_enabled(void);
 
 /* Advance *pos past delimiters and return whether no non-delimiter text
    remains. */
@@ -183,6 +195,8 @@ const char *parser_canonicalize_namespace_token(Arena *a, const char *tok);
  * The session option also controls legacy parsing and host name publication.
  * A compiled projection can select its policy without changing the session. */
 bool parser_set_namespace_sugar_enabled(bool enabled);
+/* Scoped source-token interpretation for native document/form readers. */
+bool parser_set_petta_scalar_policy(bool enabled);
 bool parser_namespace_sugar_enabled(void);
 void parser_host_projection_v1_set_namespace_sugar(
     ParserHostProjectionV1 *projection, bool enabled);

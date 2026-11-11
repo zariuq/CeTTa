@@ -54,3 +54,4 @@
 (= (str:feed-lines $buffer $text $final) (__cetta_lib_str_value feed-lines ($buffer $text $final)))
 (= (str:advance-lines $buffer $text $final) (__cetta_lib_str_value advance-lines ($buffer $text $final)))
 (= (str:find-ascii-uncased $text $needle) (__cetta_lib_str_value find-ascii-uncased ($text $needle)))
+(= (str:unwrap-envelopes $text $head $depth) (__cetta_lib_str unwrap-envelopes $text $head $depth))

@@ -59,6 +59,7 @@ static const CettaBuiltinPolicy CETTA_BUILTIN_POLICIES[] = {
     {"git-module!", CETTA_PROFILE_MASK_HE_PUBLIC | CETTA_PROFILE_MASK_PETTA_EXTENDED, "keep_he_public_builtin"},
     {"hyperpose", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_BASE_FORMS, "clean_primary_extension"},
     {"import!", CETTA_PROFILE_MASK_ALL, "keep_he_public_builtin"},
+    {"import-as!", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_BASE_FORMS, "clean_primary_extension"},
     {"include", CETTA_PROFILE_MASK_HE_PUBLIC | CETTA_PROFILE_MASK_PETTA_EXTENDED, "keep_he_public_builtin"},
     {"include-space-target", CETTA_PROFILE_MASK_HE_NON_COMPAT | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
     {"mod-space!", CETTA_PROFILE_MASK_HE_PUBLIC | CETTA_PROFILE_MASK_PETTA_EXTENDED, "keep_he_public_builtin"},
@@ -88,6 +89,13 @@ static const CettaBuiltinPolicy CETTA_BUILTIN_POLICIES[] = {
     {"space-set-match-backend!", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "compat_alias"},
     {"space-truncate", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
     {"step!", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"tf:fire", CETTA_PROFILE_MASK_HE_EXTENDED | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"tf:fire-into", CETTA_PROFILE_MASK_HE_EXTENDED | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"tf:inst", CETTA_PROFILE_MASK_HE_EXTENDED | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"tf:propose", CETTA_PROFILE_MASK_HE_EXTENDED | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"tf:run", CETTA_PROFILE_MASK_HE_EXTENDED | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"tf:split", CETTA_PROFILE_MASK_HE_EXTENDED | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"transform", CETTA_PROFILE_MASK_HE_EXTENDED | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
     {"unify", CETTA_PROFILE_MASK_HE_PUBLIC | CETTA_PROFILE_MASK_PETTA_EXTENDED, "keep_he_public_builtin"},
     {"unquote", CETTA_PROFILE_MASK_ALL, "keep_he_public_builtin"},
     {"with-space-snapshot", CETTA_PROFILE_MASK_HE_NON_COMPAT | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
@@ -262,6 +270,10 @@ bool cetta_profile_is_petta_1_1_c(const CettaProfile *profile) {
     return profile && profile->id == CETTA_PROFILE_PETTA_1_1_C;
 }
 
+bool cetta_profile_is_petta_ai(const CettaProfile *profile) {
+    return profile && profile->id == CETTA_PROFILE_PETTA_AI;
+}
+
 bool cetta_language_version_petta_typed_line(
     const CettaLanguageVersion *version) {
     return version && (version->id == CETTA_LANGUAGE_VERSION_PETTA_1_1 ||
@@ -421,6 +433,9 @@ const CettaProfile *cetta_profile_from_name_for_language(CettaLanguageId languag
                 name, &CETTA_PROFILE_PETTA_1_1_C_VALUE)) {
             return &CETTA_PROFILE_PETTA_1_1_C_VALUE;
         }
+        if (cetta_profile_name_matches(name, &CETTA_PROFILE_PETTA_AI_VALUE)) {
+            return &CETTA_PROFILE_PETTA_AI_VALUE;
+        }
     }
     if (language_id == CETTA_LANGUAGE_ZERO &&
         cetta_profile_name_matches(name, &CETTA_PROFILE_ZERO_EXP_VALUE)) {
@@ -483,6 +498,7 @@ uint32_t cetta_profile_mask(const CettaProfile *profile) {
     case CETTA_PROFILE_PETTA_EXTENDED:
         return CETTA_PROFILE_MASK_PETTA_EXTENDED;
     case CETTA_PROFILE_PETTA_1_1_C:
+    case CETTA_PROFILE_PETTA_AI:
         return CETTA_PROFILE_MASK_PETTA_BASE;
     }
     return 0;
@@ -560,6 +576,9 @@ void cetta_profile_print_inventory_for_language(FILE *out,
         fprintf(out, "%s\t%s\n",
                 CETTA_PROFILE_PETTA_1_1_C_VALUE.name,
                 CETTA_PROFILE_PETTA_1_1_C_VALUE.note);
+        fprintf(out, "%s\t%s\n",
+                CETTA_PROFILE_PETTA_AI_VALUE.name,
+                CETTA_PROFILE_PETTA_AI_VALUE.note);
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
         fprintf(out, "%s\t%s\n",
                 CETTA_PROFILE_PETTA_TYPECHECK_V2_VALUE.name,
@@ -671,6 +690,13 @@ bool cetta_language_reads_lists(CettaLanguageId language_id,
         return true;
     return profile &&
            cetta_profile_is_valid_for_language(language_id, profile) &&
+           profile->enable_cetta_extensions;
+}
+
+bool cetta_language_reads_raw_source(CettaLanguageId language_id,
+                                     const CettaProfile *profile) {
+    return (language_id == CETTA_LANGUAGE_HE || language_id == CETTA_LANGUAGE_PETTA) &&
+           profile && cetta_profile_is_valid_for_language(language_id, profile) &&
            profile->enable_cetta_extensions;
 }
 

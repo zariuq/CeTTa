@@ -48,26 +48,26 @@ LEXICAL_CASE = {
         ),
         (
             "petta-splitter-quoted",
-            15,
-            "c622b353701b18ef5c99bfe0be3c5339e3f851dbb260dd76e91d589743bde715",
+            24,
+            "f9f616f292eb060131e1894d329ee89b9e2d74277ff1ab4a52799079c857e3d8",
         ),
     ),
 }
 
 EXPECTED_NATIVE = {
     "base-pack-digest":
-        "369958a39dec4e1073388f74381ef5d8d6293792318232e0fe7b677ecc5c54f3",
-    "base-productions": "73",
-    "base-states": "61",
-    "base-terminals": "11",
+        "5106a4f49f513dfc39de7981503a13426e4dc3ad2a42ebd3c8eb05ffc522e443",
+    "base-productions": "78",
+    "base-states": "65",
+    "base-terminals": "13",
     "lexical-nfa-answer-digest":
-        "2d98378b58198ff117bdb51a0c5e16219b8a41f5661ac6d50466851e7f823eab",
-    "lexical-nfa-answers": "83",
+        "f54ed2c6f1fc177dfc1a8f506f8d7de07b217007fbcd0e4044551decb9c9fcbb",
+    "lexical-nfa-answers": "92",
     "lexical-plan-digest":
-        "918b25000dbbec3e95955f7f1fd8671a6e48ec4ac7ea0bfdeb0d960669a2b60b",
+        "899fa8a6215a132ba8de1e8c66334ae4febf14719ca1ca017d1b9a104e174684",
     "lexical-tag-count": "3",
     "lexical-terminal-extension-count": "3",
-    "projected-grammar-productions": "73",
+    "projected-grammar-productions": "78",
     "slr-accepts": "1",
     "slr-conflicts": "0",
     "slr-gotos": "63",
@@ -86,7 +86,7 @@ EXPECTED_LR1 = {
         "85c448a0ddc7ceb20fd5c4cdf161e485a2d9c5de1489517a9ad93250bc2a4b7f",
     "max_state_items": 87,
     "nonterminals": 32,
-    "productions": 73,
+    "productions": 78,
     "reachable_productions": 38,
     "reductions": 123,
     "shifts": 22,
@@ -121,7 +121,7 @@ EXPECTED_ENTRIES = (
 )
 
 EXPECTED_MATRIX_DIGEST = (
-    "514637f4704f3e766d7be36668491b63d15f361f53c5a943e57ba03be0c41260"
+    "0903821973109964a4129b79b8e97f26b8a4982bb9c08c1928805035809c701a"
 )
 
 
@@ -204,11 +204,10 @@ def main() -> int:
     if not petta_root.is_dir():
         raise GateFailure("PeTTa foundation checkout is absent")
 
-    abi = export_stream(petta_root, ABI_CASES["petta-splitter"])
+    abi = export_stream(ABI_CASES["petta-splitter"])
     compiler_digest = sha256(REGULAR_COMPILER.read_bytes()).hexdigest()
     lexical_terms, tags, compiler_agreements = compile_case_tags(
         chart_binary,
-        petta_root,
         dict(LEXICAL_CASE),
         abi_scalar(abi, "source-digest"),
     )

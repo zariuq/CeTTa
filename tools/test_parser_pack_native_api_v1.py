@@ -223,7 +223,6 @@ def require_case(
 
 def check_matrix(
     library: Path,
-    petta_root: Path,
     isolate_oracle_environment: bool = False,
 ) -> tuple[int, int, int, int]:
     oracle_environment = None
@@ -232,7 +231,7 @@ def check_matrix(
         oracle_environment.pop("LD_PRELOAD", None)
         oracle_environment.pop("ASAN_OPTIONS", None)
     api = NativeApi(library)
-    expected = oracle_rows(petta_root, oracle_environment)
+    expected = oracle_rows(oracle_environment)
     gll_exact = 0
     glr_exact = 0
     gll_rows: list[str] = []
@@ -244,13 +243,13 @@ def check_matrix(
             abi_path = temp / f"{language}.abi"
             abi_path.write_bytes(
                 export_stream(
-                    petta_root, ABI_CASES[language], oracle_environment
+                    ABI_CASES[language], oracle_environment
                 )
             )
             abi_paths[language] = abi_path
         prime_path = temp / "prime.abi"
         prime_path.write_bytes(
-            export_stream(petta_root, ABI_CASES["prime"], oracle_environment)
+            export_stream(ABI_CASES["prime"], oracle_environment)
         )
         abi_paths["prime"] = prime_path
 
@@ -325,7 +324,6 @@ def main() -> int:
     arguments = parser.parse_args()
     gll, glr, partial, invalid = check_matrix(
         arguments.library.resolve(),
-        arguments.petta_root.resolve(),
         arguments.isolate_oracle_environment,
     )
     print(

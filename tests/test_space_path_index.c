@@ -575,12 +575,16 @@ static void test_bound_prefix(TermUniverse *universe, Arena *arena) {
 
 /* Compare the unindexed candidate stream with the complete matcher in both
  * record widths, including duplicate occurrences and undecodable records. */
-static void test_cold_candidates(Arena *arena, TermUniverseStoreFormat format) {
-    Arena persistent;
+static void test_cold_candidates(TermUniverseStoreFormat format) {
+    Arena persistent, syntax;
     arena_init(&persistent);
+    arena_init(&syntax);
+    Arena *arena = &syntax;
     TermUniverse universe;
     assert(term_universe_init_with_store_format(&universe, format));
     term_universe_set_persistent_arena(&universe, &persistent);
+    Space descriptor_space;
+    space_init_with_universe(&descriptor_space, &universe);
     SymbolId head = symbol_intern_cstr(g_symbols, "cold-record-row");
     SymbolId other = symbol_intern_cstr(g_symbols, "cold-record-other");
     Atom *correlated = atom_var(arena, "cold-correlated");
@@ -599,7 +603,7 @@ static void test_cold_candidates(Arena *arena, TermUniverseStoreFormat format) {
         row(arena, other, atom_int(arena, 2), atom_int(arena, 7)),
         atom_symbol_id(arena, head), atom_int(arena, 7),
         atom_expr(arena, short_children, 2u),
-        row(arena, head, atom_space(arena, &universe), atom_int(arena, 7)),
+        row(arena, head, atom_space(arena, &descriptor_space), atom_int(arena, 7)),
     };
     Atom *output = atom_var(arena, "cold-output");
     Atom *queries[] = {
@@ -641,6 +645,8 @@ static void test_cold_candidates(Arena *arena, TermUniverseStoreFormat format) {
         free(positions);
         space_free(&space);
     }
+    arena_free(&syntax);
+    space_free(&descriptor_space);
     term_universe_free(&universe);
     arena_free(&persistent);
 }
@@ -740,6 +746,55 @@ static void test_unrecorded_string_paths(Arena *arena) {
     arena_free(&persistent);
 }
 
+static void test_captured_head_projection(TermUniverse *universe, Arena *arena) {
+    SymbolId chosen = symbol_intern_cstr(g_symbols, "captured-input");
+    SymbolId noise = symbol_intern_cstr(g_symbols, "captured-noise");
+    for (unsigned mutation = 0u; mutation < 4u; mutation++) {
+        Space space, replacement;
+        space_init_with_universe(&space, universe);
+        space_init_with_universe(&replacement, universe);
+        for (unsigned i = 0u; i < 200u; i++)
+            add(&space, row(arena, noise, atom_int(arena, i), atom_int(arena, i)));
+        Atom *duplicate = row(arena, chosen, atom_int(arena, 1), atom_int(arena, 2));
+        Atom *bare = atom_symbol_id(arena, chosen);
+        Atom *short_row = atom_expr2(arena, bare, atom_int(arena, 3));
+        Atom *removed = row(arena, chosen, atom_int(arena, 9), atom_int(arena, 9));
+        add(&space, duplicate);add(&space, duplicate);
+        add(&space, bare);add(&space, short_row);add(&space, removed);
+        assert(space_remove(&space, removed));
+        SpaceHeadSnapshot saved;
+        assert(space_head_snapshot_init(&space, &saved));
+        assert(saved.rows.ceiling >= 204u);
+        if (mutation == 0u)
+            add(&space, removed);
+        else if (mutation == 1u)
+            assert(space_remove(&space, duplicate));
+        else if (mutation == 2u) {
+            add(&replacement, removed);
+            space_replace_contents(&space, &replacement);
+        } else {
+            space_free(&space);
+        }
+        for (unsigned again = 0u; again < 2u; again++) {
+            SpaceOccurrenceCursor selected;
+            SymbolId heads[] = {chosen, chosen};
+            assert(space_head_snapshot_select(&saved, heads, 2u, &selected));
+            Atom *expected[] = {duplicate, duplicate, bare, short_row};
+            for (size_t i = 0u; i < 4u; i++) {
+                Atom *actual;
+                assert(space_occurrence_cursor_next(&selected, NULL, &actual) == SPACE_OCCURRENCE_CURSOR_ITEM);
+                assert(atom_eq(actual, expected[i]));
+            }
+            assert(space_occurrence_cursor_next(&selected, NULL, NULL) == SPACE_OCCURRENCE_CURSOR_END);
+            space_occurrence_cursor_release(&selected);
+        }
+        space_head_snapshot_release(&saved);
+        if (mutation != 3u)space_free(&space);
+        space_free(&replacement);
+    }
+    puts("PASS: captured head projections retain all arities and ordered duplicate occurrences across append, removal, replacement and source release");
+}
+
 int main(void) {
     SymbolTable symbols;
     symbol_table_init(&symbols);
@@ -757,8 +812,8 @@ int main(void) {
     cetta_runtime_stats_enable();
     cetta_runtime_stats_reset();
 #endif
-    test_cold_candidates(&scratch, TERM_UNIVERSE_STORE_FORMAT_COMPACT32_V1);
-    test_cold_candidates(&scratch, TERM_UNIVERSE_STORE_FORMAT_WIDE64_V1);
+    test_cold_candidates(TERM_UNIVERSE_STORE_FORMAT_COMPACT32_V1);
+    test_cold_candidates(TERM_UNIVERSE_STORE_FORMAT_WIDE64_V1);
     test_string_prefixes_collisions_and_binary_values(&universe, &scratch);
     test_unrecorded_string_paths(&scratch);
     test_flat_and_captured_readers(&universe, &scratch);
@@ -769,6 +824,7 @@ int main(void) {
     test_unrelated_rows(&universe, &scratch, 2048u);
     test_shortest_column(&universe, &scratch);
     test_bound_prefix(&universe, &scratch);
+    test_captured_head_projection(&universe, &scratch);
 #if CETTA_BUILD_WITH_RUNTIME_STATS
     CettaRuntimeStats stats;
     cetta_runtime_stats_snapshot(&stats);

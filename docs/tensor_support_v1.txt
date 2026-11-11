@@ -64,6 +64,8 @@ narrowing refuses discarded payload bits. Signed floating zero is retained.
   tensor:promote value dtype
   tensor:sum value [sequential|fixed4]
   tensor:matvec matrix vector [sequential|fixed4]
+  tensor:dot-bounds left-vector right-vector
+  tensor:matvec-bounds matrix vector
   tensor:top-k scores [mask] k
   tensor:normalize value              tensor:all-finite value
   tensor:encode value                 tensor:decode bytes
@@ -137,6 +139,45 @@ Option-valued COO lookup, including stored zeroes.
 Top-k visits enabled stored scores, uses coordinate-ascending ties, and
 rejects enabled nonfinite scores even for k=0. A sparse Boolean mask treats
 absence as disabled. Stable scaled normalization refuses zero/nonfinite rows.
+
+Dot and matvec error enclosures
+-------------------------------
+
+These opt-in operations return (Tensor:Bounds value lower upper). Dot returns
+three f64 scalars; matvec returns three f64 vectors. Each interval encloses the
+exact real dot product of the stored input values. The value is the ordinary
+left-to-right binary64 calculation used by this operation; an enclosure can
+be wide when cancellation makes that value inaccurate.
+
+Inputs use f32 or f64. Dot takes two equal-length vectors; matvec takes a
+matrix and a vector whose length is the matrix's column count. The right
+vector must contain every coordinate. The left input may be sparse; absent
+entries add no operations, while stored zeroes participate in the bound.
+
+The implementation admits round-to-nearest IEEE arithmetic with gradual
+underflow and finite inputs/results. If the environment or computed bound
+cannot establish an enclosure, the result is (Tensor:Fault uncertified).
+Shape and dtype faults remain distinct. Floating exception flags are restored.
+Ordinary sum and matvec keep their existing behavior.
+
+Python example, after installing the NumPy extra:
+
+    import numpy as np
+    from cetta import Engine, Symbol
+
+    with Engine() as engine:
+        engine.import_("(library tensor)")
+        left = engine.tensor(np.array([1e16, 1.0, -1e16], dtype=np.float64))
+        right = engine.tensor(np.ones(3, dtype=np.float64))
+        tag, value, lower, upper = engine.call("tensor:dot-bounds", left, right)[0].to_python()
+        assert tag == Symbol("Tensor:Bounds")
+        assert value == 0.0 and lower <= 1.0 <= upper
+
+For HE, use Engine(language="he") and engine.import_("tensor"). The same
+stored floating inputs have the same numerical contract. These operations
+bound dot/matvec arithmetic; they do not certify exp/log, sigmoid, or a whole
+neural probability model. The evidence-ledger example uses an explicitly
+quantized sensor model.
 
 Builders and derived owners
 ---------------------------

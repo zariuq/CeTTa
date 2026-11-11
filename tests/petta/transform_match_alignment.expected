@@ -1,0 +1,81 @@
+true
+true
+true
+true
+true
+(reads-transform ((tag A) (tag B) (tag A)))
+(reads-match ((tag A) (tag B) (tag A)))
+(join-transform ((both B)))
+(join-match ((both B)))
+(absent-transform ((alone A) (alone A)))
+(unique-transform ((only B)))
+(no-match ())
+true
+true
+true
+(spend-each ((got 1) (got 2) (got 5)))
+(after-each ())
+true
+true
+true
+(spend-copies (spent spent))
+(after-copies ((coin 2)))
+true
+true
+(spend-once (spent 1 (1 2)))
+true
+true
+true
+(contend (contended 1 (a)))
+(after-contend ((k 1) (k 2)))
+true
+true
+true
+true
+(all-per-branch (moved 1 (a b)))
+(after-all ((r 1) (r 2)))
+true
+true
+(routed (1 1))
+(after-src ())
+(after-dst ((done a) (done b)))
+true
+true
+true
+(once-marker (spent 1 (1 2 5)))
+true
+true
+true
+true
+true
+(once-per-branch (moved (1 2) 2 1))
+(after-once-per-branch (1 2))
+true
+true
+true
+(collect-bound-later ((got 1 (collected ((q 1) (q 2))))))
+true
+true
+true
+(unique-growth (1))
+(after-unique-growth (grown 1 2 (1 2 7)))
+true
+(comma-value (1))
+(after-comma-value ((, a b)))
+true
+true
+true
+(joint-take (took))
+(after-joint-take (a))
+true
+(stored-comma ((, a b)))
+(stored-comma-match ((, a b)))
+true
+true
+(read-pairs 4)
+(read-pairs-match 4)
+true
+(take-aa-one ())
+true
+(take-aa-two (took))
+(after-take-aa ())

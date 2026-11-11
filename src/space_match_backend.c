@@ -13,6 +13,7 @@
 #include "storage_census.h"
 #include "stats.h"
 #include "space_path_index.h"
+#include "space_source_snapshot.h"
 #include "generated/cetta_execution_contracts.generated.h"
 #include <inttypes.h>
 #include <ctype.h>
@@ -564,14 +565,16 @@ static void subst_matchset_push(SubstMatchSet *out, CettaIndex atom_idx,
         if (out->items == out->inline_items) {
             SubstMatch *next =
                 cetta_malloc(sizeof(SubstMatch) * (size_t)next_cap);
+            if (!next) return;
             if (out->len > 0) {
                 memcpy(next, out->items,
                        sizeof(SubstMatch) * (size_t)out->len);
             }
             out->items = next;
         } else {
-            out->items =
-                cetta_realloc(out->items, sizeof(SubstMatch) * (size_t)next_cap);
+            SubstMatch *next = cetta_realloc(out->items, sizeof(SubstMatch) * (size_t)next_cap);
+            if (!next) return;
+            out->items = next;
         }
         out->cap = next_cap;
     }
@@ -653,6 +656,7 @@ static void subst_matchset_normalize(SubstMatchSet *out) {
     }
     SubstMatch *tmp =
         cetta_malloc(sizeof(SubstMatch) * (size_t)out->len);
+    if (!tmp) return;
     subst_matchset_sort(out->items, out->len, tmp);
     free(tmp);
     CettaIndex w = 1;
@@ -691,8 +695,14 @@ static void native_rebuild_match_trie(Space *s) {
         s->native.len);
     disc_node_free(st->match_trie);
     st->match_trie = disc_node_new();
-    for (CettaIndex i = 0; i < s->native.len; i++)
+    for (CettaIndex i = 0; st->match_trie && i < s->native.len; i++) {
         native_insert_match_trie_entry(s, i);
+        if (cetta_native_memory_failed && cetta_native_memory_failed()) break;
+    }
+    if (cetta_native_memory_failed && cetta_native_memory_failed()) {
+        disc_node_free(st->match_trie); st->match_trie = NULL;
+        st->match_trie_dirty = true; return;
+    }
     st->match_trie_dirty = false;
     st->match_trie_stale_occurrences = 0u;
 }
@@ -707,8 +717,14 @@ static void native_ensure_match_trie(Space *s) {
             CETTA_RUNTIME_COUNTER_NATIVE_PATTERN_INDEX_BUILD_ROW,
             s->native.len);
         st->match_trie = disc_node_new();
-        for (CettaIndex i = 0; i < s->native.len; i++)
+        for (CettaIndex i = 0; st->match_trie && i < s->native.len; i++) {
             native_insert_match_trie_entry(s, i);
+            if (cetta_native_memory_failed && cetta_native_memory_failed()) break;
+        }
+        if (cetta_native_memory_failed && cetta_native_memory_failed()) {
+            disc_node_free(st->match_trie); st->match_trie = NULL;
+            st->match_trie_dirty = true; return;
+        }
         st->match_trie_dirty = false;
         st->match_trie_stale_occurrences = 0u;
         /* The trie descends every bound prefix: indexes of prefixes kept
@@ -1453,6 +1469,7 @@ static bool native_pattern_is_flat_linear(Atom *pattern) {
     }
     VarId *seen = cetta_malloc(
         (size_t)pattern->expr.len * sizeof(*seen));
+    if (!seen) return false;
     size_t seen_len = 0u;
     bool admissible = true;
     for (CettaExprIndex index = 0u;
@@ -1570,7 +1587,9 @@ static bool native_cold_flat_candidates(
                 return false;
             }
             capacity = capacity ? capacity * 2u : 16u;
-            indices = cetta_realloc(indices, (size_t)capacity * sizeof(*indices));
+            CettaIndex *grown = cetta_realloc(indices, (size_t)capacity * sizeof(*indices));
+            if (!grown) { free(indices); return false; }
+            indices = grown;
         }
         indices[length++] = position;
     }
@@ -5339,6 +5358,8 @@ bool space_match_backend_bridge_space(Space *s,
 }
 
 bool space_match_backend_snapshot_clone(Space *dst, Space *src) {
+    if (src && src->match_backend.kind == SPACE_ENGINE_SOURCE)
+        return space_source_snapshot_init(dst,src);
     space_dense_settle(src, SYMBOL_ID_NONE);
     CettaMorkSpaceHandle *source_bridge = NULL;
     CettaMorkSpaceHandle *snapshot_bridge = NULL;
@@ -5377,6 +5398,12 @@ bool space_match_backend_snapshot_clone(Space *dst, Space *src) {
     dst->equation_revision = space_equation_revision(src);
     space_read_view_invalidate(dst);
     return true;
+}
+
+bool space_match_backend_index_forced_without_rows(const Space *s) {
+    return s && s->match_backend.kind == SPACE_ENGINE_PATHMAP &&
+        pathmap_indexed_query_mode() == PATHMAP_QUERY_INDEX_MODE_FORCED &&
+        !s->match_backend.pathmap.bridge.native_shadow_synced;
 }
 
 bool space_match_backend_require_logical_order(Space *s,
@@ -9019,11 +9046,11 @@ static void pathmap_local_query(Space *s, Arena *a, Atom *query,
          * authored-order native view; no bridge row is published first. */
         uint64_t indexed_count = 0u;
         Atom *factor = query;
-        if (!st->native_shadow_synced &&
-            pathmap_indexed_single_factor_enabled() &&
+        if (pathmap_indexed_single_factor_enabled() &&
             !epoch_query &&
             !bridge_query &&
             pathmap_order_pinned_index_pattern_safe(query) &&
+            pathmap_local_ensure_bridge_live(s) && st->bridge_space &&
             pathmap_local_count_conjunction(
                 s, a, &factor, 1u, NULL, &indexed_count) &&
             indexed_count <= 1u) {
@@ -11763,6 +11790,7 @@ bool space_match_candidates_ids64(Space *s, const TermUniverse *universe,
     SymbolId head = header->sym_or_head;
     bool ground = true;
     bool numbers = false;
+    bool terms = false;
     for (CettaExprIndex c = 1u; c < len; c++) {
         if (columns[c] == CETTA_ATOM_ID_NONE) {
             ground = false;
@@ -11773,12 +11801,26 @@ bool space_match_candidates_ids64(Space *s, const TermUniverse *universe,
             return false;
         if (header->tag == ATOM_SYMBOL)
             continue;
+        /* A ground term is one id in the universe, which only an equal term
+         * has: a bound prefix keyed by it selects the rows a symbol would.
+         * A row holding a variable there stays an uncertain candidate, as
+         * it does under a symbol. */
+        if (header->tag == ATOM_EXPR &&
+            (header->aux32 & CETTA_TERM_HDR_HAS_VARS) == 0u) {
+            terms = true;
+            continue;
+        }
         if (header->tag != ATOM_GROUNDED ||
             (header->subtag != GV_INT && header->subtag != GV_STRING &&
              header->subtag != GV_BOOL))
             return false;
         numbers |= header->subtag == GV_INT;
     }
+    /* The numbers inside a term are not seen here: where HE's numbers meet
+     * other representations, such a term is no key; and a whole ground row
+     * is read by the exact index, which keys symbols and scalars. */
+    if (terms && (ground || he_numbers_promote()))
+        return false;
     if (space_has_proof_image(s, head) &&
         space_settle_proof_images(s) != SPACE_PROOF_IMAGE_READY) return false;
     space_dense_settle_for_head(s, head, len);
@@ -11808,8 +11850,11 @@ bool space_match_candidates_ids64(Space *s, const TermUniverse *universe,
      * may answer while the space has no trie and has scans left; a trie
      * answers once the space has one. */
     SpaceMatchNativeState *state = &s->match_backend.native;
-    if ((len > 2u && columns[1] == CETTA_ATOM_ID_NONE) || state->match_trie ||
-        state->cold_flat_scans < NATIVE_COLD_FLAT_SCAN_LIMIT)
+    /* The trie cuts a deep term to a wildcard and a cold scan reads every
+     * row, so a bound prefix holding a term is the prefix index's. */
+    if ((len > 2u && columns[1] == CETTA_ATOM_ID_NONE) ||
+        (!terms && (state->match_trie ||
+                    state->cold_flat_scans < NATIVE_COLD_FLAT_SCAN_LIMIT)))
         return false;
     /* A column index selects the one bound column before a last free one
      * when it holds a symbol or an integer (space_path_index_may_select). */
@@ -12234,6 +12279,7 @@ static void subst_matchset_own_first(SubstMatchSet *set, CettaIndex imported) {
     if (!own_after_imported)
         return;
     SubstMatch *sorted = cetta_malloc(sizeof(*sorted) * (size_t)set->len);
+    if (!sorted) return;
     CettaIndex write = 0u;
     for (int pass = 0; pass < 2; pass++) {
         for (CettaIndex i = 0u; i < set->len; i++) {
@@ -13902,6 +13948,8 @@ bool space_native_flat_pattern_each_int(
         !cetta_flat_join_pattern_ok(pattern) ||
         column >= (size_t)pattern->expr.len)
         return false;
+    /* A reader of rows: the pattern's relation gives its facts back first. */
+    space_dense_settle_for_pattern(space, pattern);
     CettaFlatJoinBind binds[CETTA_FLAT_JOIN_MAX_BINDS];
     CettaCount rows = space->native.len;
     for (CettaIndex row = 0u; row < rows; row++) {
@@ -13977,6 +14025,8 @@ bool space_native_pattern_each_int(
          space->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) ||
         pattern->kind != ATOM_EXPR)
         return false;
+    /* A reader of rows: the pattern's relation gives its facts back first. */
+    space_dense_settle_for_pattern(space, pattern);
     CettaFlatJoinBind binds[CETTA_FLAT_JOIN_MAX_BINDS];
     CettaCount rows = space->native.len;
     for (CettaIndex row = 0u; row < rows; row++) {
@@ -14153,6 +14203,8 @@ bool space_native_flat_chain_aggregate(
     bool with_column, size_t column_pattern, size_t column,
     __int128 *count_out, __int128 *sum_out) {
     space_settle_marks(space);
+    /* A reader of rows: the patterns' relations give their facts back first. */
+    space_dense_settle_for_patterns(space, patterns, (CettaExprLen)pattern_count);
     CETTA_SCOPED_SHARED_TRANSITION(shared_read);
     /* ChainAggregation extends the grouped-message law to arbitrary finite
      * paths. Machine overflow still declines to ordinary enumeration. */
@@ -14314,6 +14366,8 @@ bool space_native_flat_conjunction_int_moments(
     uint64_t *count_out, __int128 *sum_out,
     int64_t *product_out, bool *product_ok) {
     space_settle_marks(space);
+    /* A reader of rows: the patterns' relations give their facts back first. */
+    space_dense_settle_for_patterns(space, patterns, (CettaExprLen)pattern_count);
     if (count_out)
         *count_out = 0u;
     if (sum_out)

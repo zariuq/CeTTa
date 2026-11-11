@@ -78,7 +78,7 @@ typedef struct EvalGcRootFrame {
     bool precise_suspension;
 } EvalGcRootFrame;
 
-typedef struct {
+typedef struct CettaEvalGc {
     Arena survivor;
     EvalGcRootFrame *roots;
     Arena *region_arena;
@@ -104,7 +104,11 @@ typedef struct {
     Arena *prime_episode_owner;
 } EvalGcEvacuationContext;
 
-static __thread EvalGc g_eval_gc;
+static __thread EvalGc g_eval_gc_fallback;
+static __thread EvalGc *g_eval_gc_current;
+/* Retained execution owns its collector at a stable address. TLS selects
+ * the active owner; it never stores a suspended owner's movable state. */
+#define g_eval_gc (*(g_eval_gc_current ? g_eval_gc_current : &g_eval_gc_fallback))
 
 static void eval_gc_init_survivor_arena(Arena *arena) {
     arena_init(arena);
@@ -358,6 +362,15 @@ static void eval_gc_root_frame_enter_outcome_continuation(
     frame->payload.outcome_continuation.parent_outcomes = parent_outcomes;
     eval_gc_root_frame_link(
         frame, CETTA_EVAL_GC_FRAME_OUTCOME_CONTINUATION);
+}
+
+/* A suspended continuation that now publishes into another set roots that
+ * set (or none, when the set's owner roots it) in place of its old one. */
+static void eval_gc_root_frame_update_outcome_parent(
+    EvalGcRootFrame *frame, OutcomeSet *parent_outcomes) {
+    assert(frame && frame->linked &&
+           frame->kind == CETTA_EVAL_GC_FRAME_OUTCOME_CONTINUATION);
+    frame->payload.outcome_continuation.parent_outcomes = parent_outcomes;
 }
 
 static void eval_gc_root_frame_enter_evaluation_retry(

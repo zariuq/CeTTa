@@ -19,3 +19,6 @@
 [(wrap (fr a)), (wrap (fr a)), (wrap (fr a)), (wrap (fr a))]
 [(wrap (fr a)), (wrap (fr a))]
 [(wrap (Box (fr a))), (wrap (Box (fr a)))]
+[True]
+[False]
+[(7 7)]

@@ -1,0 +1,4 @@
+mg-check: declared-axiom-approved.mg (theory egal, 0 signatures)
+axiom Assumption line 1: stated by the document, approved
+summary: 1 theorems: 1 checked (1 verified), 0 admitted, 0 aby, 0 dependent, 0 unfinished, 0 out of budget; 1 document axioms (1 approved)
+verdict: verified

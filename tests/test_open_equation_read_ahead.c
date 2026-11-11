@@ -3,7 +3,32 @@
 #ifndef CETTA_OEM_READ_AHEAD_SOURCE
 #define CETTA_OEM_READ_AHEAD_SOURCE "open_equation_machine.c"
 #endif
+#include <stdlib.h>
+#include <stdbool.h>
+/* Inject only the collector translation unit's fallible staging allocations.
+ * The arena allocator and the rest of the engine keep their normal policy. */
+static size_t collection_allocation_index,collection_refuse_at;
+static bool collection_allocation_tracking;
+static bool collection_allocation_refused(void) {
+    return collection_allocation_tracking &&
+        ++collection_allocation_index==collection_refuse_at;
+}
+static void *collection_malloc(size_t bytes) {
+    return collection_allocation_refused() ? NULL : malloc(bytes);
+}
+static void *collection_calloc(size_t count,size_t bytes) {
+    return collection_allocation_refused() ? NULL : calloc(count,bytes);
+}
+static void *collection_realloc(void *old,size_t bytes) {
+    return collection_allocation_refused() ? NULL : realloc(old,bytes);
+}
+#define malloc collection_malloc
+#define calloc collection_calloc
+#define realloc collection_realloc
 #include CETTA_OEM_READ_AHEAD_SOURCE
+#undef malloc
+#undef calloc
+#undef realloc
 #include "parser.h"
 #include <assert.h>
 
@@ -31,28 +56,51 @@ static void gc_owner_release(void *opaque) {
 
 static void test_collection_symbol_policy(void) {
     for (unsigned own_symbols = 0u; own_symbols < 2u; own_symbols++) {
-        Arena source, target;
-        arena_init(&source);
-        arena_init(&target);
-        arena_set_own_symbols(&target, own_symbols != 0u);
-        Atom *symbol = atom_symbol(&source, "gc-symbol-policy");
-        SymbolId id = atom_symbol_current_id(symbol);
-        CettaOpenEquationCursor cursor = {0};
-        OemCollect collect = {.from_identity = source.identity, .to = &target};
-        assert(oem_trace_atom(&cursor, &collect, symbol));
-        Atom *copy = oem_collect_atom(&cursor, &collect, symbol);
-        assert(copy && copy->kind == ATOM_SYMBOL && atom_symbol_current_id(copy) == id);
-        assert(copy == oem_collect_atom(&cursor, &collect, symbol));
-        if (own_symbols)
-            assert(copy->arena_id == target.identity);
-        else
-            assert(copy == atom_symbol_canonical(id));
-        arena_free(&source);
-        assert(copy->kind == ATOM_SYMBOL && atom_symbol_current_id(copy) == id);
-        arena_free(&target);
-        free(collect.keys);
-        free(collect.values);
-        free(cursor.walk);
+        for (unsigned spelled = 0u; spelled < 2u; spelled++) {
+#if !CETTA_MANAGED_SYMBOLS
+            if (spelled)
+                continue;
+#endif
+            Arena source, target;
+            arena_init(&source);
+            arena_init(&target);
+            arena_set_own_symbols(&target, own_symbols != 0u);
+            char text[96];
+            snprintf(text, sizeof(text), "gc-symbol-policy-%u-%u",
+                     own_symbols, spelled);
+            Atom *symbol = spelled
+                ? atom_symbol_data_n(&source, text, (uint32_t)strlen(text))
+                : atom_symbol(&source, text);
+            if (spelled)
+                assert(atom_symbol_is_spelled(symbol));
+            SymbolId id = atom_symbol_current_id(symbol);
+            if (spelled)
+                assert(id == SYMBOL_ID_NONE);
+            CettaOpenEquationCursor cursor = {0};
+            OemCollect collect = {.from_identity = source.identity, .to = &target};
+            assert(oem_trace_atom(&cursor, &collect, symbol));
+            /* The collector starts copying with a fresh alias table. */
+            free(collect.keys);
+            free(collect.values);
+            collect.keys = NULL;
+            collect.values = NULL;
+            collect.cap = collect.len = 0u;
+            Atom *copy = oem_collect_atom(&cursor, &collect, symbol);
+            assert(copy && copy->kind == ATOM_SYMBOL && atom_symbol_current_id(copy) == id);
+            assert(copy == oem_collect_atom(&cursor, &collect, symbol));
+            if (spelled)
+                assert(atom_symbol_is_spelled(symbol));
+            if (own_symbols || spelled)
+                assert(copy->arena_id == target.identity);
+            else
+                assert(copy == atom_symbol_canonical(id));
+            arena_free(&source);
+            assert(copy->kind == ATOM_SYMBOL && atom_symbol_equals_cstr(copy, text));
+            arena_free(&target);
+            free(collect.keys);
+            free(collect.values);
+            free(cursor.walk);
+        }
     }
     puts("PASS: collection preserves canonical and owned symbol policies with shared aliases");
 }
@@ -161,6 +209,70 @@ static void test_collection_leaf_ownership(void) {
     puts("PASS: collection preserves leaf aliases, large shared bytes, variable spelling, managed owners and HE marks");
 }
 
+static size_t test_collection_staging_refusal(size_t refuse) {
+    CettaOpenEquationCursor cursor={0};arena_init(&cursor.region);
+    GcOwnerProbe owner={0};
+    Atom *left=atom_symbol_data_n(&cursor.region,"staged-left",11u);
+    Atom *right=atom_symbol_data_n(&cursor.region,"staged-right",12u);
+    Atom *held=atom_native_handle_identifier(&cursor.region,42,&owner,
+        gc_owner_retain,gc_owner_release);
+    Atom *root=atom_expr3(&cursor.region,left,right,held);
+    cursor.destination=root;
+    collection_allocation_index=0u;collection_refuse_at=refuse;
+    collection_allocation_tracking=true;
+    bool complete=oem_collect_generation(&cursor,0u,true,true);
+    collection_allocation_tracking=false;
+    size_t reached=collection_allocation_index;
+    if(!refuse)assert(complete);
+    if(refuse)assert(reached>=refuse);
+    if(complete) {
+        assert(cursor.old_ready && cursor.stats.collections==1u);
+        assert(atom_is_symbol(cursor.destination->expr.elems[0],"staged-left"));
+        assert(atom_is_symbol(cursor.destination->expr.elems[1],"staged-right"));
+        assert(atom_native_handle_identifier_matches(cursor.destination->expr.elems[2],
+            &owner,gc_owner_retain,gc_owner_release));
+    } else {
+        /* No new root/generation is published. This does not claim that the
+         * failed cursor can resume: temporary forwarding headers may change. */
+        assert(cursor.destination==root && !cursor.old_ready && !cursor.stats.collections);
+        assert(atom_is_symbol(left,"staged-left") && atom_is_symbol(right,"staged-right"));
+    }
+    assert(owner.references==1u && !owner.final_releases);
+    if(cursor.old_ready)arena_free(&cursor.old);
+    arena_free(&cursor.region);
+    assert(!owner.references && owner.final_releases==1u);
+    free(cursor.walk);free(cursor.resolve_stack);free(cursor.resolve_results);
+    return reached;
+}
+
+static void test_collection_ordered_roots(void) {
+    Arena source,target;arena_init(&source);arena_init(&target);
+    Atom *left=atom_symbol_data_n(&source,"left-label",10u);
+    Atom *right=atom_symbol_data_n(&source,"right-label",11u);
+    Atom *a=atom_expr3(&source,left,right,left);
+    Atom *b=atom_expr2(&source,right,a);
+    Atom **roots=arena_alloc(&source,3u*sizeof(*roots));assert(roots);
+    roots[0]=a;roots[1]=a;roots[2]=b;
+    CettaOpenEquationCursor cursor={0};
+    OemCollect collect={.from_identity=source.identity,.to=&target};
+    for(unsigned i=0u;i<3u;i++) assert(oem_trace_atom(&cursor,&collect,roots[i]));
+    free(collect.keys);free(collect.values);
+    collect.keys=NULL;collect.values=NULL;collect.cap=collect.len=0u;
+    bool ok=true;
+    Atom **moved=oem_collect_slots(&cursor,&collect,roots,3u,false,&ok);
+    assert(ok && moved && moved[0]==moved[1] && moved[0]!=moved[2]);
+    assert(moved[0]->expr.len==3u && moved[2]->expr.len==2u);
+    assert(moved[0]->expr.elems[0]==moved[0]->expr.elems[2]);
+    assert(moved[2]->expr.elems[0]==moved[0]->expr.elems[1]);
+    assert(moved[2]->expr.elems[1]==moved[0]);
+    arena_free(&source);
+    assert(atom_is_symbol(moved[0]->expr.elems[0],"left-label"));
+    assert(atom_is_symbol(moved[0]->expr.elems[1],"right-label"));
+    arena_free(&target);free(collect.keys);free(collect.values);
+    free(cursor.walk);free(cursor.resolve_stack);free(cursor.resolve_results);
+    puts("PASS: collection preserves ordered roots, duplicate occurrences and labelled shared children");
+}
+
 int main(void) {
     SymbolTable symbols;
     symbol_table_init(&symbols);
@@ -169,7 +281,12 @@ int main(void) {
     g_hashcons = NULL;
     g_var_intern = NULL;
     test_collection_symbol_policy();
+    test_collection_ordered_roots();
     test_collection_leaf_ownership();
+    size_t allocations=test_collection_staging_refusal(0u);
+    assert(allocations>0u);
+    for(size_t at=1u;at<=allocations;at++)test_collection_staging_refusal(at);
+    printf("PASS: %zu collector staging refusals publish no partial root and balance ownership\n",allocations);
     Arena persistent, source;
     arena_init(&persistent);
     arena_init(&source);

@@ -1,0 +1,4 @@
+:- chr_constraint gcd/1.
+gcd_zero @ gcd(0) <=> true.
+gcd_reduce @ gcd(N) \ gcd(M) <=> N =< M | L is M mod N, gcd(L).
+?- gcd(84),gcd(30),gcd(18).

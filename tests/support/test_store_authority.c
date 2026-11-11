@@ -6,6 +6,7 @@
 #include "eval.h"
 #include "shared_transition.h"
 #include "petta_specializer.h"
+#include "runtime_names.h"
 #include <pthread.h>
 #include <stdatomic.h>
 #include <sched.h>
@@ -22,6 +23,7 @@ static Atom *program_edit;
 static bool race_publication;
 static atomic_bool editor_attempted,commit_returned,editor_valid;
 static pthread_t editor;
+static CettaNameContext editor_names;
 static CettaLibraryContext *closing_watch_context;
 static uint64_t closing_watch_identity;
 #define check(test) do { ++checks; if (!(test)) { \
@@ -39,7 +41,8 @@ bool __wrap_space_program_token_matches_live_space(SpaceProgramToken token,const
     return __real_space_program_token_matches_live_space(token,root);
 }
 static void *edit_program(void *unused) {
-    (void)unused;cetta_shared_transition_scope_enter();
+    /* Names are thread-local: the editor borrows the test's engine names. */
+    (void)unused;cetta_name_context_install(&editor_names);cetta_shared_transition_scope_enter();
     atomic_store_explicit(&editor_attempted,true,memory_order_release);
     {
         CETTA_SCOPED_SHARED_TRANSITION(program_editor);
@@ -53,6 +56,7 @@ CettaDiskStoreStatus __wrap_cetta_disk_store_commit(CettaDiskStore *owner,const 
         const CettaDiskOp *ops,size_t count,CettaDiskStoreView **out) {
     if (!race_publication) return __real_cetta_disk_store_commit(owner,view,ops,count,out);
     check(cetta_shared_transition_guard_held_by_current_thread());
+    editor_names=cetta_name_context_current();
     check(!pthread_create(&editor,NULL,edit_program,NULL));
     while (!atomic_load_explicit(&editor_attempted,memory_order_acquire)) sched_yield();
     CettaDiskStoreStatus status=__real_cetta_disk_store_commit(owner,view,ops,count,out);

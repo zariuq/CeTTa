@@ -321,8 +321,9 @@ bool cetta_instantiate_frame_terms_within(Arena *dst, Atom **terms,
     cetta_var_map_init(&inventory);
     FrameSyntaxImport instance = {&inventory, identity};
     RewriteMap map = {frame_instantiate_variable, &instance, true};
-    bool ok = atom_deep_copy_terms_mapped(dst, terms, staged, count,
-        rewrite_map_leaf, &map);
+    bool ok = staged != NULL &&
+        atom_deep_copy_terms_mapped(dst, terms, staged, count,
+            rewrite_map_leaf, &map);
     cetta_var_map_free(&inventory);
     if (ok) {
         memcpy(terms, staged, count * sizeof(*terms));
@@ -384,9 +385,11 @@ bool cetta_var_map_reserve(CettaVarMap *map, uint32_t needed) {
     }
     if ((uint64_t)next_cap * sizeof(CettaVarMapEntry) > SIZE_MAX)
         return false;
-    map->items = map->items
+    CettaVarMapEntry *items = map->items
         ? cetta_realloc(map->items, sizeof(CettaVarMapEntry) * next_cap)
         : cetta_malloc(sizeof(CettaVarMapEntry) * next_cap);
+    if (!items) return false;
+    map->items = items;
     map->cap = next_cap;
     return true;
 }

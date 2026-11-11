@@ -2499,13 +2499,20 @@ CettaNativeQueryStatus cetta_native_query_run(
     TermUniverse *universe = query->source->native.universe;
     if (!universe)
         return CETTA_NATIVE_QUERY_DECLINED;
-    /* These loops address the native row indexes. An occurrence source has
-     * no such rows: its empty native shadow is not an empty answer bag.
-     * Leave it to the ordinary incremental matcher. Listed rows are already
-     * values and use the source only for its term universe. */
-    if (!query->rows &&
-        !space_match_backend_has_native_occurrences(query->source))
-        return CETTA_NATIVE_QUERY_DECLINED;
+    /* These loops address the native row indexes. An occurrence source or
+     * a source whose rows live only in a forced PathMap index has no such
+     * rows: leave it to the ordinary incremental matcher. Listed rows are
+     * already values and use the source only for its term universe. */
+    if (!query->rows) {
+        if (!query->sources &&
+            (!space_match_backend_has_native_occurrences(query->source) ||
+             space_match_backend_index_forced_without_rows(query->source)))
+            return CETTA_NATIVE_QUERY_DECLINED;
+        for (size_t i = 0u; query->sources && i < query->pattern_count; i++)
+            if (!space_match_backend_has_native_occurrences(query->sources[i]) ||
+                space_match_backend_index_forced_without_rows(query->sources[i]))
+                return CETTA_NATIVE_QUERY_DECLINED;
+    }
     /* Proof storage falls back to ordinary owned rows before any consumer
      * effect. A refused conversion is a real allocation/storage failure. */
     for (size_t i = 0u; !query->rows && i < query->pattern_count; i++) {

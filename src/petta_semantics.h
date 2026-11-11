@@ -61,6 +61,7 @@ typedef enum {
     PETTA_FORM_ASSERTZ_PREDICATE,
     PETTA_FORM_RETRACT_PREDICATE,
     PETTA_FORM_TABLED,
+    PETTA_FORM_TABLED_LATTICE,
     PETTA_FORM_ADD_TRANSLATOR_RULE,
     PETTA_FORM_REMOVE_TRANSLATOR_RULE,
     PETTA_FORM_CUT,
@@ -181,6 +182,11 @@ typedef enum {
 } PeTTaRuntimeHead;
 
 PeTTaRuntimeHead petta_semantics_runtime_head(SymbolId head);
+/* Internal host-dispatch classification; it does not change the public
+ * ordinary/data/function meaning of a name when a library is unavailable. */
+bool petta_semantics_native_library_head(SymbolId head);
+PeTTaForm petta_semantics_form_and_native_library(
+    SymbolId head, bool *native_library_out);
 PeTTaNamedArity petta_semantics_named_arity(
     struct Space *space, Arena *scratch, Atom *head,
     CettaExprLen supplied);
@@ -289,6 +295,14 @@ bool petta_semantics_cons_tail_is_flat_list(const Atom *tail);
  * Head prepended, in amortized constant time; onto anything else, an open
  * tail included, it is a cell. */
 Atom *petta_semantics_cons_value(Arena *arena, Atom *head, Atom *tail);
+/* CeTTa's term-language natives write a sequence (cons Head Tail) ... nil
+ * with one constructor, and PeTTa has two values that print so.  Export
+ * spells the cells of a value as such terms (a complete list as its flat
+ * expression); import gives each (cons Head Tail) of a term back as the
+ * value PeTTa's cons builds from its parts.  Each shares what it leaves
+ * unchanged, and returns NULL only when allocation fails. */
+Atom *petta_semantics_term_export(Arena *arena, Atom *atom);
+Atom *petta_semantics_term_import(Arena *arena, Atom *atom);
 /* A list value or a list pattern with a rest as its chain of cells. */
 Atom *petta_semantics_flat_list_spine(
     Arena *arena, Atom *flat_list);
@@ -367,6 +381,13 @@ Atom *petta_semantics_closed_list(Arena *arena, Atom *list);
  * type_error(list, Value): NULL with `*type_error` set. */
 Atom *petta_semantics_sort_value(Arena *arena, Atom *value, bool total,
                                  bool *type_error);
+/* PeTTa's `sort` of one value, SWI's sort/2: as msort, with each run of
+ * elements the standard order calls equal, which are == terms, kept once.
+ * Errors as petta_semantics_sort_value's. */
+Atom *petta_semantics_sort_unique_value(Arena *arena, Atom *value,
+                                        bool *type_error);
+/* Whether `head` is `sort`, whose one-argument call is SWI's sort/2. */
+bool petta_semantics_is_sort(SymbolId head);
 /* The errors the reference raises, as its catch gives them: Prolog's
  * error(Formal, Context) reads (Error Formal Context), and an unbound
  * context is a fresh variable.
@@ -462,17 +483,27 @@ Atom *petta_semantics_materialize_closed_logical_list(
     Arena *arena, Atom *list);
 /* Reify the complete logical-list carrier for observation.  Closed spines
  * become the kind they end in: PeTTa's flat expression carrier, or a list
- * value for cells ending in one; an unresolved or improper tail is retained
- * as authored `(cons Head Tail)` syntax.  The private carrier tag is never
- * observable in either case. */
+ * value for cells ending in one; an unresolved or improper tail remains
+ * a cell value, distinct from authored `(cons Head Tail)` data. */
 Atom *petta_semantics_materialize_logical_list(
     Arena *arena, Atom *list);
+
+/* One graph observation can encounter many shared spine suffixes. Its
+ * cached views borrow unchanged input nodes until the observation ends. */
+typedef struct PeTTaTermBoundarySlot PeTTaTermBoundarySlot;
+typedef struct {
+    PeTTaTermBoundarySlot *slots;
+    size_t cap;
+    size_t used;
+} PeTTaTermBoundaryMemo;
+Atom *petta_semantics_materialize_spine_view(
+    Arena *arena, Atom *source, PeTTaTermBoundaryMemo *memo);
 
 /* Constructor and observation policies used by generated machines.  An
  * evaluated `(cons Head Tail)` becomes the internal O(1) list carrier;
  * unrelated constructors remain ordinary expressions.  Observation copies
- * a carrier graph to an arena-owned PeTTa value, preserving an unresolved
- * tail as authored `cons` syntax. */
+ * a carrier graph to an arena-owned PeTTa value, preserving unresolved
+ * tails as cell values. */
 Atom *petta_semantics_construct_value(
     Arena *arena, Atom **elements, CettaExprLen length);
 /* Whether petta_semantics_construct_value builds an ordinary expression,
@@ -491,6 +522,17 @@ Atom *petta_semantics_materialize_value(
  * non-NULL even when the input vector is NULL. */
 Atom *const *petta_semantics_materialize_arguments(
     Arena *arena, Atom *const *arguments, CettaExprLen arity);
+/* Whether the materialized values of `left` and `right` are atom_value_eq,
+ * decided without building either.  UNDECIDED where materializing is the
+ * only exact answer: an improper or open cons chain, a chain spelling a quote
+ * or closure, a rational term, a resource with identity, or a value whose
+ * structural facts are unknown. */
+typedef enum {
+    PETTA_OBSERVED_EQUAL,
+    PETTA_OBSERVED_DIFFERENT,
+    PETTA_OBSERVED_UNDECIDED,
+} PeTTaObservedEquality;
+PeTTaObservedEquality petta_semantics_observed_equal(Atom *left, Atom *right);
 /* True exactly when materialize_value has an observable open-cons carrier
  * to erase.  Opaque closures and quoted syntax are not observation
  * boundaries, so carriers below them deliberately do not count.  Allocation
