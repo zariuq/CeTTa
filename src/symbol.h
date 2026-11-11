@@ -17,6 +17,8 @@ enum {
     CETTA_SYMBOL_FLAG_TYPE_PURE_GROUNDED_OP = 1u << 1,
     CETTA_SYMBOL_FLAG_LIBRARY_NATIVE_OP = 1u << 2,
     CETTA_SYMBOL_FLAG_CORE_GROUNDED_OP = 1u << 3,
+    /* Negative result of the transform-name classifier, owned by this table. */
+    CETTA_SYMBOL_FLAG_NOT_TRANSFORM_NAME = 1u << 4,
 };
 
 typedef struct {
@@ -939,7 +941,13 @@ extern _Thread_local BuiltinSyms g_builtin_syms;
 /* Builtin syntax symbols occupy the table's initial contiguous interval.
  * This distinguishes evaluator syntax from later interned constructor/data
  * heads without spelling the builtin set again in each consumer. */
-bool symbol_id_is_builtin(SymbolId id);
+static inline bool symbol_id_is_builtin(SymbolId id) {
+    return id != SYMBOL_ID_NONE &&
+           (id <= g_builtin_syms.native_handle ||
+            id == g_builtin_syms.empty_form ||
+            (id >= g_builtin_syms.work_new &&
+             id <= g_builtin_syms.work_exists));
+}
 
 /* The next key of the sequence every table that places untrusted content
  * draws its placement key from: seeded once a process, by
@@ -978,6 +986,8 @@ uint32_t symbol_len(const SymbolTable *st, SymbolId id);
 int symbol_compare(const SymbolTable *st, SymbolId left, SymbolId right);
 uint64_t symbol_hash_value(const SymbolTable *st, SymbolId id);
 uint32_t symbol_flags(const SymbolTable *st, SymbolId id);
+/* Classification flags are monotonic within a table incarnation. */
+void symbol_table_add_flags(SymbolTable *st, SymbolId id, uint32_t flags);
 uint32_t symbol_builtin_policy(const SymbolTable *st, SymbolId id);
 /* The value depends only on the name, so concurrent callers record the same. */
 void symbol_set_builtin_policy(SymbolTable *st, SymbolId id, uint32_t value);

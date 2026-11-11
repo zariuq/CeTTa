@@ -3,3 +3,8 @@
 [()]
 [((transform <space> (take (job $j)) (done $j)))]
 [(a b)]
+[()]
+[()]
+[(transform <space> (take (reduced $x)) (served $x))]
+[%Undefined%]
+[(program-space ((= (ticket $x) (reduced $x))))]

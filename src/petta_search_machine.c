@@ -24416,9 +24416,11 @@ static bool petta_machine_start_tabled_call(
 
     PettaTableEntry *entry =
         &machine->table_shared->entries[entry_index];
-    if (inserted && !memoized && machine->host.tabled_relation_join)
-        entry->lattice_join = machine->host.tabled_relation_join(
-            machine->host.context, head, arity);
+    if (inserted && !memoized && machine->host.optional_services &&
+        machine->host.optional_services->tabled_relation_join)
+        entry->lattice_join =
+            machine->host.optional_services->tabled_relation_join(
+                machine->host.context, head, arity);
     if (memoized) {
         if (inserted) {
             if (UINT64_MAX -
@@ -38557,14 +38559,16 @@ static bool petta_machine_dispatch_solve(
     }
 
     if (form == PETTA_FORM_TABLED && nargs == 1u) {
+        const PettaMachineOptionalServices *services =
+            machine->host.optional_services;
         Atom *relation = petta_machine_apply_bindings(machine,
             environment, &machine->heap,
             expression->expr.elems[1]);
         if (!relation || relation->kind != ATOM_EXPR ||
             relation->expr.len == 0u ||
             relation->expr.elems[0]->kind != ATOM_SYMBOL ||
-            !machine->host.tabled_relation_set ||
-            !machine->host.tabled_relation_set(
+            !services || !services->tabled_relation_set ||
+            !services->tabled_relation_set(
                 machine->host.context,
                 relation->expr.elems[0]->sym_id,
                 relation->expr.len - 1u, true)) {
@@ -38578,6 +38582,8 @@ static bool petta_machine_dispatch_solve(
     /* (tabled-lattice CALL JOIN): CALL tabled, the answers for each instance
      * of it joined by JOIN: min or max, or a function of two arguments. */
     if (form == PETTA_FORM_TABLED_LATTICE && nargs == 2u) {
+        const PettaMachineOptionalServices *services =
+            machine->host.optional_services;
         Atom *relation = petta_machine_apply_bindings(machine,
             environment, &machine->heap,
             expression->expr.elems[1]);
@@ -38588,13 +38594,13 @@ static bool petta_machine_dispatch_solve(
             relation->expr.len == 0u ||
             relation->expr.elems[0]->kind != ATOM_SYMBOL ||
             !join || join->kind != ATOM_SYMBOL ||
-            !machine->host.tabled_relation_set ||
-            !machine->host.tabled_relation_join_set ||
-            !machine->host.tabled_relation_join_set(
+            !services || !services->tabled_relation_set ||
+            !services->tabled_relation_join_set ||
+            !services->tabled_relation_join_set(
                 machine->host.context,
                 relation->expr.elems[0]->sym_id,
                 relation->expr.len - 1u, join->sym_id) ||
-            !machine->host.tabled_relation_set(
+            !services->tabled_relation_set(
                 machine->host.context,
                 relation->expr.elems[0]->sym_id,
                 relation->expr.len - 1u, true)) {
@@ -38608,12 +38614,14 @@ static bool petta_machine_dispatch_solve(
     if ((form == PETTA_FORM_ADD_TRANSLATOR_RULE ||
          form == PETTA_FORM_REMOVE_TRANSLATOR_RULE) &&
         nargs == 1u) {
+        const PettaMachineOptionalServices *services =
+            machine->host.optional_services;
         Atom *rule = petta_machine_apply_bindings(machine,
             environment, &machine->heap,
             expression->expr.elems[1]);
         if (!rule || rule->kind != ATOM_SYMBOL ||
-            !machine->host.translator_rule_set ||
-            !machine->host.translator_rule_set(
+            !services || !services->translator_rule_set ||
+            !services->translator_rule_set(
                 machine->host.context, rule->sym_id,
                 form == PETTA_FORM_ADD_TRANSLATOR_RULE)) {
             return false;
@@ -42133,6 +42141,70 @@ fail_exports:
     return false;
 }
 
+/* A root evaluation normally destroys its machine before the next one starts.
+ * Keep that thread's last implementation shell for the next root instead of
+ * repeatedly returning the same large, fully cleared object to malloc.  Nested
+ * or concurrent machines still allocate independently; the one-slot stock is
+ * released at thread exit and contains no live machine-owned resource. */
+static _Thread_local PettaMachineImpl *g_petta_machine_stock;
+static _Thread_local bool g_petta_machine_stock_registered;
+static pthread_key_t g_petta_machine_stock_key;
+static pthread_once_t g_petta_machine_stock_once = PTHREAD_ONCE_INIT;
+
+#if defined(__SANITIZE_ADDRESS__)
+#define PETTA_MACHINE_STOCK_ASAN 1
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define PETTA_MACHINE_STOCK_ASAN 1
+#endif
+#endif
+#ifdef PETTA_MACHINE_STOCK_ASAN
+#include <sanitizer/asan_interface.h>
+#define PETTA_MACHINE_STOCK_POISON(impl) \
+    ASAN_POISON_MEMORY_REGION((impl), sizeof(*(impl)))
+#define PETTA_MACHINE_STOCK_UNPOISON(impl) \
+    ASAN_UNPOISON_MEMORY_REGION((impl), sizeof(*(impl)))
+#else
+#define PETTA_MACHINE_STOCK_POISON(impl) ((void)(impl))
+#define PETTA_MACHINE_STOCK_UNPOISON(impl) ((void)(impl))
+#endif
+
+static void petta_machine_stock_release(void *unused) {
+    (void)unused;
+    if (g_petta_machine_stock)
+        PETTA_MACHINE_STOCK_UNPOISON(g_petta_machine_stock);
+    free(g_petta_machine_stock);
+    g_petta_machine_stock = NULL;
+}
+
+static void petta_machine_stock_key_init(void) {
+    (void)pthread_key_create(
+        &g_petta_machine_stock_key, petta_machine_stock_release);
+}
+
+static PettaMachineImpl *petta_machine_stock_take(void) {
+    PettaMachineImpl *impl = g_petta_machine_stock;
+    g_petta_machine_stock = NULL;
+    if (impl)
+        PETTA_MACHINE_STOCK_UNPOISON(impl);
+    return impl;
+}
+
+static void petta_machine_stock_put(PettaMachineImpl *impl) {
+    if (g_petta_machine_stock) {
+        free(impl);
+        return;
+    }
+    if (!g_petta_machine_stock_registered) {
+        (void)pthread_once(
+            &g_petta_machine_stock_once, petta_machine_stock_key_init);
+        (void)pthread_setspecific(g_petta_machine_stock_key, (void *)1);
+        g_petta_machine_stock_registered = true;
+    }
+    PETTA_MACHINE_STOCK_POISON(impl);
+    g_petta_machine_stock = impl;
+}
+
 static bool petta_machine_init_internal(
     PettaMachine *machine, Space *space, Arena *answer_arena,
     Atom *query, const PettaPlanNode *query_plan,
@@ -42154,7 +42226,9 @@ static bool petta_machine_init_internal(
     uint64_t source_root = cetta_source_root_new();
     if (!source_root)
         return false;
-    PettaMachineImpl *impl = cetta_malloc(sizeof(*impl));
+    PettaMachineImpl *impl = petta_machine_stock_take();
+    if (!impl)
+        impl = cetta_malloc(sizeof(*impl));
     if (!impl) return false;
     memset(impl, 0, sizeof(*impl));
     impl->instance_id = petta_machine_fresh_instance_id();
@@ -42257,7 +42331,7 @@ static bool petta_machine_init_internal(
         else if (impl->borrowed_root_table)
             petta_table_root_release(impl->table_shared);
         arena_free(&impl->plan_arena);
-        free(impl);
+        petta_machine_stock_put(impl);
         return false;
     }
     cetta_runtime_stats_update_max(
@@ -42867,7 +42941,7 @@ static void petta_machine_destroy_local(PettaMachineImpl *impl) {
     /* The plan also leases any private allocation universe; release it after
      * the final table and repository observer, including suspended machines. */
     arena_free(&impl->plan_arena);
-    free(impl);
+    petta_machine_stock_put(impl);
 }
 
 void petta_machine_set_answers_collected_whole(PettaMachine *machine) {

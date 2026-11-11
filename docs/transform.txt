@@ -4,6 +4,13 @@ Transform
 Import (library lib_transform) in PeTTa or HE. The extended profiles also
 provide transform directly. Plain profiles leave it as data before import.
 
+Under an extended profile the operation belongs to the profile's signature:
+its names are calls and their arguments stay syntax, and the program's space
+holds no declaration or equation for them. A program that never names
+transform runs as it does under the plain profile, at no added cost. An import
+publishes the library's own declarations and equations into the importing
+space, as any import does.
+
 The native implementation uses these short internal names:
 
   tf:propose     enumerate candidates against the entry store
