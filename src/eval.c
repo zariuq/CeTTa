@@ -49738,6 +49738,10 @@ static PrimeNeedArgumentMode prime_need_argument_mode(
                           PRIME_NEED_ARGUMENT_STRUCTURE),
         PRIME_DEMAND_RULE(subtraction_atom, 2u, 2u, 0u, 1u,
                           PRIME_NEED_ARGUMENT_STRUCTURE),
+        /* The removed item is compared with each element, as subtraction
+         * compares its operands: neither may arrive as an unread cell. */
+        PRIME_DEMAND_RULE(remove_all_atom, 2u, 2u, 0u, 1u,
+                          PRIME_NEED_ARGUMENT_STRUCTURE),
         PRIME_DEMAND_RULE(unify, 2u, UINT64_MAX, 0u, 1u,
                           PRIME_NEED_ARGUMENT_PATTERN),
         PRIME_DEMAND_RULE(alpha_eq, 2u, 2u, 0u, 1u,
