@@ -16620,8 +16620,12 @@ bool space_match_exists_ground_exact(Space *s, Atom *pattern,
 
     if (out_applicable)
         *out_applicable = false;
+    /* A source backend or an overlay base keeps rows outside this space's
+     * own exact index, so a miss there proves nothing: decline. */
     if (!s || !pattern || atom_has_vars(pattern) ||
         !atom_is_exact_indexable(pattern) || space_has_dependencies(s) ||
+        s->match_backend.kind == SPACE_ENGINE_SOURCE ||
+        space_has_overlay_base(s) ||
         (pattern->kind == ATOM_EXPR &&
          space_match_pattern_is_connective(pattern->expr.elems,
                                            pattern->expr.len))) {
