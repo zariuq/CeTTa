@@ -78274,13 +78274,17 @@ static Atom *petta_region_fire_query(PettaRegion *region,
  * region: the region run as rounds, which answer nothing.  Declined, having
  * done nothing, where QUERY is no such call or the region is not one whose
  * rounds reach what the depth-first run reaches. */
+/* A call a native region strategy declined: the program it read and the
+ * call's head, which is only compared. */
+typedef struct {
+    SpaceProgramToken token;
+    SymbolId head;
+} PettaDeclinedRegion;
+
 static CettaNativeQueryStatus petta_saturation_region_run(
     void *context, Space *root, Arena *arena, Atom *query, bool count_only,
     bool wrap_collection, Atom **value) {
-    static struct {
-        SpaceProgramToken token;
-        SymbolId head;
-    } declined[8];
+    static PettaDeclinedRegion declined[8];
     static unsigned declined_next;
     PettaEvalMachineContext *eval_context = context;
     if (query->kind != ATOM_EXPR || query->expr.len != 4u ||
@@ -78710,10 +78714,7 @@ static Atom *petta_relax_collect(void *context, Space *root, Arena *arena,
 static CettaNativeQueryStatus petta_relaxation_region_run(
     void *context, Space *root, Arena *arena, Atom *query, bool count_only,
     bool wrap_collection, Atom **value) {
-    static struct {
-        SpaceProgramToken token;
-        SymbolId head;
-    } declined[8];
+    static PettaDeclinedRegion declined[8];
     static unsigned declined_next;
     PettaEvalMachineContext *eval_context = context;
     if (!petta_relax_is(query, g_builtin_syms.let, 4u) ||
@@ -86908,7 +86909,7 @@ typedef struct {
     bool noncontext;
 } PrimeNeedCallInputSpace;
 typedef struct {
-    SymbolId name;
+    SymbolId symbol; /* &self, &here or &home */
     Space *space;
     uint64_t instance;
     int self_policy;
@@ -88512,7 +88513,7 @@ static bool prime_need_call_observe_context(void *raw,Space *program,SymbolId na
     PrimeNeedCallInputs *inputs=source->input_context;
     for(size_t i=0u;i<inputs->context_count;i++) {
         PrimeNeedCallInputContext *input=&inputs->contexts[i];
-        if(input->name!=name) continue;
+        if(input->symbol!=name) continue;
         if(input->space==space && input->instance==space_instance_id(space) &&
             input->self_policy==(self ? g_context_self_policy : -1)) {
             /* Inputs are shared by frozen prefix cuts. Observations belong
@@ -88927,8 +88928,8 @@ static PrimeNeedCallInputs *prime_need_call_inputs_new(Space *space,
                 SymbolId name=atom_symbol_current_id(atom);
                 bool known=false;
                 for(size_t i=0u;i<inputs->context_count;i++)
-                    known=known || inputs->contexts[i].name==name;
-                PrimeNeedCallInputContext input={.name=name,.space=context_space,
+                    known=known || inputs->contexts[i].symbol==name;
+                PrimeNeedCallInputContext input={.symbol=name,.space=context_space,
                     .instance=space_instance_id(context_space),
                     .self_policy=name==g_builtin_syms.self ? g_context_self_policy : -1};
                 if(!known && !prime_need_call_input_append((void **)&inputs->contexts,
@@ -89327,9 +89328,9 @@ static CettaMatchCompletion prime_need_call_inputs_equal_roles(Arena *arena,
     }
     for(size_t i=0u;i<left->context_count;i++) {
         const PrimeNeedCallInputContext *a=&left->contexts[i],*b=NULL;
-        if(!(source->context_names_observed & prime_need_context_name_bit(a->name))) continue;
+        if(!(source->context_names_observed & prime_need_context_name_bit(a->symbol))) continue;
         for(size_t j=0u;j<right->context_count;j++)
-            if(right->contexts[j].name==a->name) {b=&right->contexts[j];break;}
+            if(right->contexts[j].symbol==a->symbol) {b=&right->contexts[j];break;}
         if(!b || a->space!=b->space || a->instance!=b->instance ||
             a->self_policy!=b->self_policy) return CETTA_MATCH_REFUTED;
     }
