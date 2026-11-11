@@ -1267,7 +1267,7 @@ static void cetta_library_petta_memo_control_cache_refresh(void) {
 
 static bool cetta_library_petta_memo_control_lookup(
     SymbolId head, CettaPettaMemoControl *control_out) {
-    if (head == SYMBOL_ID_NONE || !g_symbols)
+    if (head == SYMBOL_ID_NONE || symbol_id_is_builtin(head) || !g_symbols)
         return false;
     uint64_t table_instance = symbol_table_instance_id(g_symbols);
     if (g_petta_memo_control_cache.table != g_symbols ||
@@ -1314,6 +1314,7 @@ bool cetta_library_petta_memo_control_imported(
     CettaPettaMemoControl control;
     return ctx &&
         ctx->session.language_id == CETTA_LANGUAGE_PETTA &&
+        (ctx->active_mask & CETTA_LIBRARY_PETTA_MEMO) &&
         cetta_library_petta_memo_control_lookup(head, &control) &&
         ctx->petta_memo.imported_controls[control];
 }
@@ -1324,6 +1325,7 @@ PeTTaNamedArity cetta_library_petta_memo_control_named_arity(
     CettaPettaMemoControl control;
     if (!ctx ||
         ctx->session.language_id != CETTA_LANGUAGE_PETTA ||
+        !(ctx->active_mask & CETTA_LIBRARY_PETTA_MEMO) ||
         !cetta_library_petta_memo_control_lookup(head, &control) ||
         !ctx->petta_memo.imported_controls[control]) {
         return (PeTTaNamedArity){0};
@@ -12698,6 +12700,10 @@ bool cetta_library_call_native(CettaLibraryContext *ctx, Space *space,
     return ctx && ctx->foreign_runtime &&
            cetta_foreign_call_native(ctx->foreign_runtime,
                                      space, a, head, args, nargs, out);
+}
+
+bool cetta_library_result_pretenure_enabled(const CettaLibraryContext *ctx) {
+    return ctx && (ctx->active_mask & CETTA_LIBRARY_CLINGO);
 }
 
 bool cetta_library_result_long_lived(const CettaLibraryContext *ctx, SymbolId head) {

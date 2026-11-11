@@ -6780,8 +6780,9 @@ static inline __attribute__((always_inline)) bool atom_walk_any(
             root_seen = true;
         }
         /* Behind a barrier nothing is visited; met again or not, the
-         * answer is the same, so the barrier comes before the seen set. */
-        if (barrier && node != root && barrier(node, context))
+         * answer is the same, so the single barrier check comes before the
+         * seen set. */
+        if (barrier && barrier(node, context))
             continue;
         /* A subexpression met again was answered where it was first met. */
         if (unique && node != root && node->kind == ATOM_EXPR && node->expr.len &&
@@ -6797,8 +6798,6 @@ static inline __attribute__((always_inline)) bool atom_walk_any(
             cetta_oom(next > SIZE_MAX / sizeof(*seen.slots)
                 ? SIZE_MAX : next * sizeof(*seen.slots));
         }
-        if (barrier && barrier(node, context))
-            continue;
         if (complete) {
             if (!allowance)
                 goto incomplete;
