@@ -59,6 +59,23 @@
    (function
      (chain (eval (__cetta_lib_str sha256 $text)) $result (return $result))))
 
+; Hash initial bytes, then each text record framed by its U64 big-endian byte
+; length. Returns (Sha256ChainV1 initial-digest ((bytes digest prefix-digest) ...)).
+; Every occurrence contributes, including equal and empty records. Input is
+; read once; prefix snapshots neither finalize nor mutate earlier snapshots.
+(= (str:sha256-chain $initial $records)
+   (function
+     (chain (eval (__cetta_lib_str sha256-chain $initial $records)) $result (return $result))))
+
+; Unicode strip, using Python's whitespace set by default. The second form
+; strips only members of the supplied character set, including embedded NUL.
+(= (str:strip-python $text)
+   (function
+     (chain (eval (__cetta_lib_str strip-python $text PythonWhitespace)) $result (return $result))))
+(= (str:strip-python $text $characters)
+   (function
+     (chain (eval (__cetta_lib_str strip-python $text $characters)) $result (return $result))))
+
 ; -1, 0 or 1 by byte order, a proper prefix first.
 (= (str:compare $lhs $rhs)
    (function

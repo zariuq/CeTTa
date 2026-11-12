@@ -37025,6 +37025,16 @@ $(TEXT_STREAMING_NATIVE_TEST_V1): tests/support/test_text_streaming_v1.c src/str
 	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections -o $@ tests/support/test_text_streaming_v1.c src/str_stream.c src/str_natives.c src/string_ops.c src/native_sha256.c src/atom.c src/binding/frame_identity.c $(SYMBOL_STANDALONE_SRC) $(LDFLAGS) -Wl,--gc-sections
 
 STR_ENVELOPES_TEST = runtime/test-str-envelopes-$(BUILD_OBJ_TAG)
+TEXT_HASH_CHAIN_TEST = runtime/test-text-hash-chain-$(BUILD_OBJ_TAG)
+$(TEXT_HASH_CHAIN_TEST): tests/support/test_text_hash_chain.c src/str_natives.c src/str_stream.c src/string_ops.c src/native_sha256.c src/atom.c src/binding/frame_identity.c $(SYMBOL_STANDALONE_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections -o $@ tests/support/test_text_hash_chain.c src/str_natives.c src/str_stream.c src/string_ops.c src/native_sha256.c src/atom.c src/binding/frame_identity.c $(SYMBOL_STANDALONE_SRC) $(LDFLAGS) -Wl,--gc-sections,--wrap=malloc
+.PHONY: test-text-hash-chain
+test-all: test-text-hash-chain
+test-text-hash-chain: $(TEXT_HASH_CHAIN_TEST) value-worker $(BIN)
+	@$(call cetta_exec,./$(TEXT_HASH_CHAIN_TEST))
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_text_hash_chain.py ./$(VALUE_WORKER_BIN) --he-cetta "$(CETTA_SCRIPT_BIN)"
+
 $(STR_ENVELOPES_TEST): tests/support/test_str_envelopes.c src/str_stream.c src/str_stream.h src/str_natives.c src/string_ops.c src/utf8.h src/native_sha256.c src/atom.c src/binding/frame_identity.c $(SYMBOL_STANDALONE_SRC) src/stats.h tests/test_runtime_stats_stubs.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections -o $@ tests/support/test_str_envelopes.c src/str_stream.c src/str_natives.c src/string_ops.c src/native_sha256.c src/atom.c src/binding/frame_identity.c $(SYMBOL_STANDALONE_SRC) $(LDFLAGS) -Wl,--gc-sections,--wrap=malloc,--wrap=realloc

@@ -864,6 +864,55 @@ static Atom *str_sha256(Arena *a, Atom *const *args, CettaStrRefusal *r) {
     return atom_string(a, digest);
 }
 
+/* A length-framed SHA-256 fold. Snapshotting the state makes all prefix
+ * digests linear in input bytes, without rebuilding earlier concatenations.
+ * Each record contributes its byte length as U64 big endian, then its bytes. */
+static Atom *str_sha256_chain(Arena *a, Atom *const *args, CettaStrRefusal *r) {
+    const char *seed;
+    size_t seed_len;
+    Atom *const *records = NULL; CettaExprLen count = 0u;
+    if (!str_text(args[0], &seed, &seed_len) || !atom_sequence_view(args[1], &records, &count))
+        return str_expects(r, "expected initial text and an expression of text records");
+    uint64_t total = seed_len;
+    if (total > UINT64_MAX / 8u) return str_refuses(r, "StrCapacityV1", 0u);
+    for (CettaExprLen i = 0; i < count; ++i) {
+        const char *bytes; size_t len;
+        if (!str_text(records[i], &bytes, &len))
+            return str_expects(r, "expected text record");
+        if (total > UINT64_MAX / 8u - 8u || len > UINT64_MAX / 8u - 8u - total)
+            return str_refuses(r, "StrCapacityV1", i);
+        total += 8u + len;
+    }
+    if ((size_t)count > SIZE_MAX / sizeof(Atom *))
+        return str_refuses(r, "StrCapacityV1", 0u);
+    Atom **rows = count ? malloc(count * sizeof(*rows)) : NULL;
+    if (count && !rows) return str_refuses(r, "StrCapacityV1", 0u);
+    CettaNativeSha256 state, copy;
+    cetta_native_sha256_init(&state);
+    cetta_native_sha256_update(&state, (const uint8_t *)seed, seed_len);
+    char digest[65];
+    copy = state; cetta_native_sha256_finish_hex(&copy, digest);
+    Atom *initial = atom_string(a, digest);
+    for (CettaExprLen i = 0; i < count; ++i) {
+        const char *bytes = NULL; size_t len = 0u;
+        if (!str_text(records[i], &bytes, &len)) {
+            free(rows); return str_expects(r, "expected text record");
+        }
+        uint64_t width = len; uint8_t header[8];
+        for (size_t j = 0; j < 8u; ++j) { header[7u-j] = (uint8_t)width; width >>= 8u; }
+        cetta_native_sha256_update(&state, header, sizeof(header));
+        cetta_native_sha256_update(&state, (const uint8_t *)bytes, len);
+        copy = state; cetta_native_sha256_finish_hex(&copy, digest);
+        Atom *prefix = atom_string(a, digest);
+        cetta_native_sha256_hex((const uint8_t *)bytes, len, digest);
+        Atom *row[] = {atom_int(a, (int64_t)len), atom_string(a, digest), prefix};
+        rows[i] = atom_expr(a, row, 3u);
+    }
+    Atom *all = atom_expr(a, rows, (uint32_t)count);
+    free(rows);
+    return atom_expr3(a, atom_symbol(a, "Sha256ChainV1"), initial, all);
+}
+
 /* ASCII letters in lower case; every other byte unchanged. */
 static Atom *str_lower(Arena *a, Atom *const *args, CettaStrRefusal *r) {
     const char *text;
@@ -931,18 +980,45 @@ static Atom *str_char_slice(Arena *a, Atom *const *args, CettaStrRefusal *r) {
  * parentheses. A stray close parenthesis is outside text; an unfinished form
  * or quote leaves the whole input unchanged. No comments or reader macros are
  * interpreted. Whitespace is the Unicode 15 Python str.isspace set. */
-static bool str_envelope_space(uint32_t c) {
+static bool str_python_space(uint32_t c) {
     return (c >= 9u && c <= 13u) || (c >= 0x1cu && c <= 0x20u) ||
         c == 0x85u || c == 0xa0u || c == 0x1680u ||
         (c >= 0x2000u && c <= 0x200au) || c == 0x2028u ||
         c == 0x2029u || c == 0x202fu || c == 0x205fu || c == 0x3000u;
 }
 
+/* Python's strip over Unicode scalars; default whitespace differs from the
+ * C-locale byte trim. A character set is a set, never a prefix or suffix. */
+static Atom *str_strip_python(Arena *a, Atom *const *args, CettaStrRefusal *r) {
+    const char *text, *characters = NULL; size_t len, characters_len = 0u;
+    bool whitespace = atom_is_symbol(args[1], "PythonWhitespace");
+    if (!str_text(args[0], &text, &len) ||
+        (!whitespace && !str_text(args[1], &characters, &characters_len)))
+        return str_expects(r, "expected text and whitespace or a character set");
+    for (size_t at = 0; at < characters_len;) {
+        uint32_t c, width;
+        if (!cetta_utf8_decode_one((const uint8_t *)characters, characters_len, at, &c, &width))
+            return str_refuses(r, "StrMalformedUtf8V1", at);
+        at += width;
+    }
+    size_t first = len, last = len;
+    for (size_t at = 0; at < len;) {
+        uint32_t c, width;
+        if (!cetta_utf8_decode_one((const uint8_t *)text, len, at, &c, &width))
+            return str_refuses(r, "StrMalformedUtf8V1", at);
+        bool member = whitespace ? str_python_space(c) :
+            (characters_len && str_memmem(characters, characters_len, text + at, width));
+        if (!member) { if (first == len) first = at; last = at + width; }
+        at += width;
+    }
+    return atom_string_n(a, text + first, last - first);
+}
+
 static size_t str_envelope_skip_space(const char *text, size_t at, size_t end) {
     while (at < end) {
         uint32_t c, width;
         if (!cetta_utf8_decode_one((const uint8_t *)text, end, at, &c, &width) ||
-            !str_envelope_space(c)) break;
+            !str_python_space(c)) break;
         at += width;
     }
     return at;
@@ -998,7 +1074,7 @@ static Atom *str_unwrap_envelopes(Arena *arena, Atom *const *args,
         uint32_t c, width;
         if (!cetta_utf8_decode_one((const uint8_t *)head, head_len, at, &c, &width))
             return str_refuses(r, "StrMalformedUtf8V1", at);
-        if (str_envelope_space(c) || c == '(' || c == ')' || c == '"')
+        if (str_python_space(c) || c == '(' || c == ')' || c == '"')
             return str_expects(r, "expected a single envelope head word");
         at += width;
     }
@@ -1103,6 +1179,8 @@ static const CettaStrNative str_natives[] = {
     {"escape", 2u, 0u, str_escape, CETTA_STR_RESULT_ATOM},
     {"unescape", 2u, 0u, str_unescape, CETTA_STR_RESULT_ATOM},
     {"sha256", 1u, 0u, str_sha256, CETTA_STR_RESULT_ATOM},
+    {"sha256-chain", 2u, 1u << 1, str_sha256_chain, CETTA_STR_RESULT_STRUCTURE},
+    {"strip-python", 2u, 0u, str_strip_python, CETTA_STR_RESULT_ATOM},
     {"lower", 1u, 0u, str_lower, CETTA_STR_RESULT_ATOM},
     {"char-length", 1u, 0u, str_char_length, CETTA_STR_RESULT_ATOM},
     {"char-slice", 3u, 0u, str_char_slice, CETTA_STR_RESULT_ATOM},
