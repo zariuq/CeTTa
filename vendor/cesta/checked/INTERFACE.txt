@@ -1,13 +1,14 @@
-Checked byte-buffer functions
+Checked scalar-span functions
 =============================
 
-checked-c/1 is a sequential, typed byte-buffer fragment. It compiles through
+checked-c/1 is a sequential, typed scalar-span fragment. It compiles through
 cesta cc and cesta build, and export-c writes ordinary C. Plain C continues
 to use the native compiler directly.
 
     cesta checked check checked/examples/ByteViews.cesta
     cesta checked plan checked/examples/ByteViews.cesta -o permissions.plan
     cesta checked header checked/examples/ByteViews.cesta -o byte_views.h
+    cesta checked contract checked/examples/ByteViews.cesta -o byte_views.contract.json
     cesta export-c checked/examples/ByteViews.cesta -o byte_views.c --
     cesta cc -c checked/examples/ByteViews.cesta
 
@@ -57,6 +58,38 @@ does not imply a speedup on every programme.
 
 Types and interfaces
 --------------------
+
+Typed spans use (span ELEMENT read), (span ELEMENT write), or (span ELEMENT own).
+ELEMENT is bool, u8, u16, u32, u64 or usize. The short spellings read, write and
+own continue to mean u8 spans and retain their existing descriptor ABI.
+len and slice offsets/counts are measured in elements. at returns the element
+type and put requires exactly that type; no integer or pointer reinterpretation
+is implicit. Calls, moves and returned borrows preserve the element type.
+
+  (fn fill (params (words (span u32 write)) (value u32))
+    (returns unit) (effects)
+    (body (for index words (body (put words index value))) (return)))
+
+  (array words u32 8)
+  (allocate words u32 count (then ...) (else ...))
+
+The omitted element type in the old array/allocate forms still means u8.
+Typed descriptors are cesta_read_ELEMENT_span, cesta_write_ELEMENT_span and
+cesta_owned_ELEMENT_span, except u8 uses the established cesta_*_bytes names.
+They contain a typed data pointer and size_t element count. bool is an ordinary
+C bool array, not packed bits; its supported ABI has one-byte bool objects.
+Foreign borrowed spans lower to a typed pointer and element count.
+
+Before allocation the count is bounded by PTRDIFF_MAX / sizeof(ELEMENT).
+Zero count succeeds without calling the allocator. Returned allocation alignment
+is checked before conversion to the element pointer; a misaligned allocation is
+released and takes the allocation-failure branch. Initialization uses typed zero
+stores. Descriptor parameters check null/count, maximum extent and alignment;
+the actual initialized storage extent remains a caller obligation.
+
+Bounds and arithmetic checks remain observable in generated C. They are not
+unchecked compiler assumptions. Standard C input still takes the ordinary C
+compiler route, without needing checked-span annotations or a proof backend.
 
 unit is the result of a procedure. bool, u8, u16, u32, u64 and usize are
 scalar types. read and write are borrowed byte views; own is an allocated
@@ -109,6 +142,32 @@ all ranges are valid and initialized, exclusive or consumed arguments do not
 alias other arguments, and owners belong to this module's allocator pair.
 An owned result is initialized and exclusive. A borrowed result lies in the
 initialized range of its declared source and retains no longer lifetime.
+
+A borrowed foreign parameter may select its native argument projection:
+
+    (params (fields (span u32 read) data)
+            (guards (span u32 read) data_len)
+            (output (span u32 write) data))
+
+data emits only the typed pointer; data_len emits pointer followed by size_t
+element count. Omission retains data_len. These annotations are restricted to
+borrowed parameters of foreign declarations; owning parameters still transfer
+their descriptor. The checked caller retains the complete extent, root and
+permission even when only the pointer crosses the ABI. Projection neither
+proves the callee's bounds nor relaxes aliasing or lifetime checks.
+
+Compile against the authoritative native header, for example with
+cesta cc -include native_api.h, so the C compiler checks the emitted prototype
+against the real declaration. Counts use size_t; an ABI needing a different
+count type requires a compatible explicit interface. The optional contract
+output records foreign projections and obligations. Permission plans retain
+their abstract span signatures and do not certify native ABI compatibility.
+
+Calls bind a let or return directly. To branch on a call result, use an
+explicit binding, preserving the evaluation point and its permission effects:
+
+    (let accepted bool (call prepare source destination))
+    (if (not accepted) (then (return false)) (else))
 
 Statements
 ----------
@@ -168,6 +227,30 @@ not supported.
 Proof and testing boundary
 -------------------------
 
+The optional contract command emits cesta-span-contract/1 JSON after checking
+the actual bodies. It records parameter names/types, element byte widths for
+the declared word width, access modes, exclusive parameter pairs, result
+lifetimes and the contiguous prefix of entry require expressions. A later
+require is not an entry assumption. The actual C alignment remains c-alignof;
+word-bits alone does not establish a target ABI. Scalar parameters use a scalar
+type object; byte aliases normalize to the u8 element. Expressions are nested
+arrays of symbol strings. Strings encode source octets as JSON codepoints
+U+0000 through U+00FF; decoding those codepoints recovers the original bytes,
+including foreign obligation text. Contract generation is not part of an
+ordinary build.
+
+These are boundary obligations, not evidence of a native caller's storage.
+CheckedSpanPlacement interprets permission roots using a finite live-allocation
+table, incarnation-bearing views and initialized extents. It derives physical
+non-overlap from two independently usable permissions, allocation separation
+and checked subranges. The connection to admitted plans applies at intermediate
+execution prefixes, including branches and loops, while views remain live;
+it does not rely on the empty permission state after return cleanup.
+Stale incarnations, uninitialized tails and unrepresentable
+addresses are refused, including empty views at the address-space boundary.
+No runtime table is introduced. The allocator, native caller or enclosing proof
+must establish that this interpretation describes the actual memory.
+
 The emitted cesta-permissions/1 plan is a projection of root permissions,
 transfers, borrowed-result origins and structured control flow. Scalar work,
 condition values and iteration counts are erased; it is not an exact effect
@@ -185,6 +268,24 @@ imports may repeat a record. Interface laws do not establish which native
 object a linker binds to a public name; supplied objects must implement their
 recorded definitions.
 
+Units using non-byte spans emit cesta-permissions/2 with explicit element types
+on signatures, permission actions and call arguments. CheckedScalarSpans checks
+these against an independent element-state machine composed with the existing
+buffer ownership transitions. Its no-fault and return-contract laws cover every
+finite execution of the recorded control flow. The new checker also admits
+version-one byte plans. Count-to-byte and slice-index arithmetic have separate
+generic laws; the permission plan still erases scalar expressions and indices.
+It does not model general C execution or prove C code generation.
+
+CheckedScalarOperations gives independent operational primitives for arithmetic
+guards and counted memory access. An intentional failure is distinct from an
+invalid primitive operation. The arithmetic proofs relate subtraction/division
+overflow guards to unbounded mathematical specifications; span reads and writes
+prove fault avoidance under the actual storage extent, with preservation of
+unrelated cells. Invalid caller-provided storage remains an explicit fault.
+These are independent laws and test oracles for Cesta's checked operations.
+They do not require a complete function interpreter or an exported execution IR.
+
 Native allocator validity, foreign implementations, the source-to-plan
 projection, scalar lowering, printed C and GCC/Clang compilation are outside
 those permission proofs. Native runs, sanitizer controls and refused source
@@ -195,6 +296,12 @@ arbitrary pointers or shared graphs.
 make test-checked-core runs native and authored GCC/Clang controls.
 make test-checked-libraries checks byte packing and numeric formatting.
 make test-checked-imports checks calls, ownership and incremental builds across modules.
+make test-checked-spans checks every scalar element type, native views and export identity.
+make test-checked-spans-admission admits actual typed plans and refuses element mutations.
+make test-checked-operations checks scalar and memory behavior under GCC/Clang and sanitizers.
+make test-checked-operations-admission checks the same cases against the Lean operations.
+make qualify-hol-copy separately qualifies the span-copy compiler artifacts;
+its external proof dependencies and scope are in adapters/hol/INTERFACE.txt.
 make test-checked-sanitizers adds ASan/UBSan.
 make test-checked-model checks the laws and their proof dependencies.
 make test-checked-admission admits actual emitted plans and refuses mutations.

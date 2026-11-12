@@ -87,9 +87,56 @@ const CeAbi ce_abi_x86_64_windows = {
     .max_align = 16, .enum_policy = CE_ENUM_INT, .record_layout = CE_RECORD_MS
 };
 
+/* AArch64 AAPCS64, LP64, as Clang's aarch64-none-elf target implements it.
+   Plain char is unsigned and long double is IEEE binary128. The natural
+   scalar/record corpus is compiler-probed; the distinct layout tag keeps
+   target-specific rules explicit as the corpus grows. */
+const CeAbi ce_abi_aarch64_aapcs64 = {
+    .name = "aarch64-aapcs64-lp64",
+    .size = {
+        [CE_T_BOOL]=1, [CE_T_CHAR]=1, [CE_T_SCHAR]=1, [CE_T_UCHAR]=1, [CE_T_SHORT]=2, [CE_T_USHORT]=2,
+        [CE_T_INT]=4, [CE_T_UINT]=4, [CE_T_LONG]=8, [CE_T_ULONG]=8, [CE_T_LLONG]=8, [CE_T_ULLONG]=8,
+        [CE_T_INT128]=16, [CE_T_UINT128]=16, [CE_T_FLOAT]=4, [CE_T_DOUBLE]=8, [CE_T_LDOUBLE]=16,
+        [CE_T_FLOAT16]=2, [CE_T_BFLOAT16]=2, [CE_T_POINTER]=8
+    },
+    .align = {
+        [CE_T_BOOL]=1, [CE_T_CHAR]=1, [CE_T_SCHAR]=1, [CE_T_UCHAR]=1, [CE_T_SHORT]=2, [CE_T_USHORT]=2,
+        [CE_T_INT]=4, [CE_T_UINT]=4, [CE_T_LONG]=8, [CE_T_ULONG]=8, [CE_T_LLONG]=8, [CE_T_ULLONG]=8,
+        [CE_T_INT128]=16, [CE_T_UINT128]=16, [CE_T_FLOAT]=4, [CE_T_DOUBLE]=8, [CE_T_LDOUBLE]=16,
+        [CE_T_FLOAT16]=2, [CE_T_BFLOAT16]=2, [CE_T_POINTER]=8
+    },
+    .precision = {
+        [CE_T_FLOAT]=24, [CE_T_DOUBLE]=53, [CE_T_LDOUBLE]=113,
+        [CE_T_FLOAT16]=11, [CE_T_BFLOAT16]=8
+    },
+    .char_signed = false,
+    .size_type = CE_T_ULONG, .ptrdiff_type = CE_T_LONG, .wchar_type = CE_T_UINT,
+    .char16_type = CE_T_USHORT, .char32_type = CE_T_UINT, .word_type = CE_T_LONG,
+    .max_align = 16, .enum_policy = CE_ENUM_GNU, .record_layout = CE_RECORD_AAPCS64
+};
+
 const CeAbi *ce_abi_named(const char *name) {
-    const CeAbi *abis[] = {&ce_abi_x86_64_sysv,&ce_abi_i386_sysv,&ce_abi_x86_64_windows};
-    for (size_t i = 0; i < 3; ++i) if (!strcmp(abis[i]->name,name)) return abis[i];
+    const CeAbi *abis[] = {&ce_abi_x86_64_sysv,&ce_abi_i386_sysv,&ce_abi_x86_64_windows,
+                           &ce_abi_aarch64_aapcs64};
+    for (size_t i = 0; i < sizeof(abis)/sizeof(*abis); ++i) if (!strcmp(abis[i]->name,name)) return abis[i];
+    return NULL;
+}
+
+const CeAbi *ce_abi_predefined(const char *macros) {
+    if (!macros) return NULL;
+    if (strstr(macros,"#define __aarch64__ 1\n") &&
+        strstr(macros,"#define __ARM_PCS_AAPCS64 1\n") &&
+        strstr(macros,"#define __SIZEOF_POINTER__ 8\n") &&
+        strstr(macros,"#define __SIZEOF_LONG__ 8\n") &&
+        strstr(macros,"#define __SIZEOF_LONG_DOUBLE__ 16\n") &&
+        strstr(macros,"#define __LDBL_MANT_DIG__ 113\n") &&
+        strstr(macros,"#define __CHAR_UNSIGNED__ 1\n")) return &ce_abi_aarch64_aapcs64;
+    if (strstr(macros,"#define __x86_64__ 1\n") && strstr(macros,"#define __SIZEOF_POINTER__ 8\n")) {
+        if (strstr(macros,"#define __SIZEOF_LONG__ 8\n")) return &ce_abi_x86_64_sysv;
+        if (strstr(macros,"#define __SIZEOF_LONG__ 4\n")) return &ce_abi_x86_64_windows;
+    }
+    if (strstr(macros,"#define __i386__ 1\n") && strstr(macros,"#define __SIZEOF_POINTER__ 4\n"))
+        return &ce_abi_i386_sysv;
     return NULL;
 }
 

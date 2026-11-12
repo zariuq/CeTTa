@@ -13,6 +13,11 @@ void ce_macros_share_lexer(CeMacros *macros, CeLazyLexer *lexer);
 void ce_macros_readable(CeMacros *macros);
 /* Record each readable use: rule, written arguments and the names chosen. */
 void ce_macros_plan(CeMacros *macros, FILE *plan);
+void ce_macros_check_ownership(CeMacros *macros, bool enabled);
+/* Add instantiated family contracts to an explicitly selected ownership check.
+   The contracts use the same names as the generated C declarations. */
+const CeAtom *ce_macros_ownership(const CeMacros *macros, CeArena *arena,
+                                  const CeAtom *declaration);
 void ce_macros_free(CeMacros *macros);
 bool ce_macros_load(CeMacros *macros, const char *path, const char *theory, CeError *error);
 bool ce_macros_accepts(const CeMacros *macros, const CeAtom *atom, int sort);

@@ -9,6 +9,7 @@
 #include "protocol.h"
 #include "project.h"
 #include "checked.h"
+#include "link.h"
 
 #include <string.h>
 
@@ -35,9 +36,11 @@ int main(int argc, char **argv) {
         !(argc > 2 && strlen(argv[2]) > 3 && !strcmp(argv[2]+strlen(argv[2])-3,".cf")))
         return ce_build_command(argc,argv);
     if (argc > 1 && !strcmp(argv[1],"expand")) return ce_expand_command(argc,argv);
+    if (argc > 1 && !strcmp(argv[1],"link-check")) return ce_link_command(argc,argv);
     if (argc > 1 && !strcmp(argv[1],"check-macros")) return ce_macro_command(argc,argv);
     if (argc > 1 && !strcmp(argv[1],"export-header")) return ce_export_command(argc,argv);
     if (argc > 1 && !strcmp(argv[1],"export-c")) return ce_export_c_command(argc,argv);
+    if (argc > 1 && !strcmp(argv[1],"export-interface")) return ce_export_interface_command(argc,argv);
     if (argc > 1 && !strcmp(argv[1],"layout")) return ce_layout_command(argc,argv);
     if (argc > 1 && !strcmp(argv[1],"tables")) return ce_table_command(argc,argv);
     if (argc > 1 && !strcmp(argv[1],"protocol")) return ce_protocol_command(argc,argv);
@@ -78,12 +81,14 @@ int main(int argc, char **argv) {
     if (argc < 3 || (strcmp(argv[1], "check-grammar") && strcmp(argv[1], "parse") &&
                     strcmp(argv[1], "read") && strcmp(argv[1], "write") && strcmp(argv[1], "check-module") && strcmp(argv[1], "module-grammar") && strcmp(argv[1], "lr-table") && strcmp(argv[1], "parse-lr") && strcmp(argv[1],"build") && strcmp(argv[1],"check-program") && strcmp(argv[1],"run") && strcmp(argv[1],"export-metadata"))) {
         fputs("usage: cesta check-grammar GRAMMAR.cf\n"
-              "       cesta cc [--cc COMPILER] [--read-warnings] FLAGS SOURCES [OBJECTS/LIBRARIES]\n"
+              "       cesta cc [--cc COMPILER] [--read-warnings] [--contracts RECORD] FLAGS SOURCES [OBJECTS/LIBRARIES]\n"
+              "       cesta link-check [--obligations FILE] [--program NAME] RECORD...\n"
               "       cesta expand [--cc COMPILER] [--presentation native-c/1] [-o OUTPUT.c] INPUT.cesta [-- NATIVE-FLAGS]\n"
               "       cesta check-macros MODULE THEORY\n"
-              "       cesta checked check|plan|header FILE.cesta [-o OUTPUT]\n"
+              "       cesta checked check|plan|header|contract FILE.cesta [-o OUTPUT]\n"
               "       cesta export-header [--plan PLAN] EXPORT-SPEC -o OUTPUT.h\n"
               "       cesta export-c [--cc COMPILER] [-o OUTPUT.c] INPUT.cesta [-- NATIVE-FLAGS]\n"
+              "       cesta export-interface [--cc COMPILER] [-o HEADER.ownership] HEADER INPUT.cesta [-- NATIVE-FLAGS]\n"
               "       cesta layout check|functions MODULE THEORY\n"
               "       cesta layout header MODULE THEORY -o OUTPUT.h\n"
               "       cesta tables check|rows|header BUNDLE [TABLE [COLUMN ...]] [-o HEADER]\n"

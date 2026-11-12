@@ -485,7 +485,8 @@ static void write_token(PP *pp, const Token *t) {
     CeArena scratch = {0};
     CeText text = t->kind == CE_PP_IDENTIFIER ? identifier_output(pp,&scratch,t->text) : t->text;
     pp->origins[pp->norigins++] = (CePPOrigin){pp->out_bytes,text.len,t->file ? t->file->path : "",
-                                               t->line,t->column,t->expansion,t->argument,(t->flags & T_PASTED) != 0};
+                                               t->line,t->column,t->expansion,t->argument,(t->flags & T_PASTED) != 0,
+                                               pp->depth ? pp->frames[pp->depth-1].presumed : "",t->expansion_line};
     emit_bytes(pp,text.data,text.len);
     ce_arena_free(&scratch);
     pp->out_bol = false; pp->last = *t;

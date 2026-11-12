@@ -6,11 +6,31 @@ REFERENCE_SYNTAX ?= ../hyperon/MeTTaIL/GSLT/src/main/bnfc/metta_venus.cf
 REFERENCE_FIXTURES ?= ../hyperon/MeTTaIL/GSLT/src/test/module
 CETTA_SOURCE ?= ../hyperon/cetta-cesta-corpus-opt-106cc2f2/src
 C11PARSER_TESTS ?= ../repos/C11parser/tests
-LIBSOURCES = src/base.c src/atom.c src/wire.c src/grammar.c src/dfa.c src/forest.c src/lr.c src/scope.c src/tree.c src/module.c src/compile.c src/metadata.c src/view.c src/bind.c src/ctype.c src/elaborate.c
+LIBSOURCES = src/base.c src/digest.c src/atom.c src/wire.c src/grammar.c src/dfa.c src/forest.c src/lr.c src/scope.c src/tree.c src/module.c src/compile.c src/metadata.c src/view.c src/bind.c src/ctype.c src/elaborate.c
 SOURCES = $(LIBSOURCES) src/main.c
 
 .PHONY: all test test-reference test-c test-examples test-driver test-literal-bytes
 all: build/cesta
+
+# Independent artifact qualification; no HOL dependency in ordinary tiers.
+.PHONY: qualify-hol-copy
+qualify-hol-copy: build/cesta
+	python3 -B adapters/hol/pilot/run.py $(HOL_COPY_FLAGS)
+
+.PHONY: qualify-mixed-leaves qualify-hol-mixed-leaves
+qualify-mixed-leaves: build/cesta
+	python3 -B adapters/tisa/run.py $(MIXED_LEAF_FLAGS)
+
+qualify-hol-mixed-leaves: build/cesta
+	python3 -B adapters/tisa/run.py --prove $(MIXED_LEAF_FLAGS)
+
+# Optional host adapter; ordinary builds do not depend on the tcalc checkout.
+TISA_RUNTIME ?= ../tcalc
+build/cesta-tisa: adapters/tisa/cesta_tisa.c src/base.c src/atom.c src/digest.c src/cesta.h src/digest.h $(TISA_RUNTIME)/tisa/tisa.h $(TISA_RUNTIME)/tisa/tisa_core.c $(TISA_RUNTIME)/tisa/tisa_emit_x86.c $(TISA_RUNTIME)/tisa/tisa_specialize.c
+	mkdir -p build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror -ffunction-sections -fdata-sections -Wl,--gc-sections -Isrc -I$(TISA_RUNTIME) adapters/tisa/cesta_tisa.c src/base.c src/atom.c src/digest.c $(TISA_RUNTIME)/tisa/tisa_core.c $(TISA_RUNTIME)/tisa/tisa_emit_x86.c $(TISA_RUNTIME)/tisa/tisa_specialize.c -o $@
+
+build/cesta build/cesta-bootstrap: src/digest.h
 
 build/test-foundation build/test-modules build/test-c-scope build/test-grammar-trees build/syntax-probe build/test-presentations build/test-presentation-coverage build/test-whole-program-trees: src/sema.h
 
@@ -28,8 +48,8 @@ build/CPPGNU.cf: build/cesta-bootstrap grammar/CPreprocessing.module grammar/GNU
 build/language-data.c: build/embed build/C11.cf build/CGNU.cf build/CPPGNU.cf grammar/TheoryModule.cf grammar/C11.profile grammar/CGNU.profile grammar/CGNUC11.profile grammar/CClang.profile grammar/CClangC11.profile presentations/CompactC.module presentations/CompactC2.module presentations/CMeraStyle.module
 	./build/embed C11Grammar build/C11.cf CGNUGrammar build/CGNU.cf CPPGNUGrammar build/CPPGNU.cf TheoryModuleSyntax grammar/TheoryModule.cf C11Profile grammar/C11.profile CGNUProfile grammar/CGNU.profile CGNUC11Profile grammar/CGNUC11.profile CClangProfile grammar/CClang.profile CClangC11Profile grammar/CClangC11.profile CompactCModule presentations/CompactC.module CompactC2Module presentations/CompactC2.module CMeraStyleModule presentations/CMeraStyle.module > $@
 
-build/cesta: $(SOURCES) src/cesta.h src/sema.h src/pp.h src/native.h src/macro.h src/export.h src/layout.h src/operation.h src/table.h src/protocol.h src/diagnose.h src/project.h src/checked.h src/ownership.h src/ownership.c src/driver.c src/diagnose.c src/project.c src/checked.c src/ownership.c src/view_driver.c src/native.c src/macro.c src/export.c src/layout.c src/operation.c src/table.c src/protocol.c src/sema.c src/source.c src/pp.c build/language-data.c
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARN) -Isrc -DCE_BUILTIN_LANGUAGES $(SOURCES) src/driver.c src/diagnose.c src/project.c src/checked.c src/ownership.c src/view_driver.c src/native.c src/macro.c src/export.c src/layout.c src/operation.c src/table.c src/protocol.c src/sema.c src/source.c src/pp.c build/language-data.c -o $@
+build/cesta: $(SOURCES) src/cesta.h src/sema.h src/pp.h src/native.h src/macro.h src/export.h src/layout.h src/operation.h src/table.h src/protocol.h src/diagnose.h src/project.h src/checked.h src/ownership.h src/ownership_signature.h src/link.h src/link.c src/ownership_signature.c src/ownership.c src/driver.c src/diagnose.c src/project.c src/checked.c src/ownership.c src/view_driver.c src/native.c src/macro.c src/export.c src/layout.c src/operation.c src/table.c src/protocol.c src/sema.c src/source.c src/pp.c build/language-data.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARN) -Isrc -DCE_BUILTIN_LANGUAGES $(SOURCES) src/driver.c src/diagnose.c src/project.c src/checked.c src/ownership.c src/ownership_signature.c src/link.c src/view_driver.c src/native.c src/macro.c src/export.c src/layout.c src/operation.c src/table.c src/protocol.c src/sema.c src/source.c src/pp.c build/language-data.c -o $@
 
 build/test-foundation: tests/foundation.c $(LIBSOURCES) src/cesta.h
 	mkdir -p build
@@ -125,6 +145,13 @@ test-macro-narrowing: build/cesta
 .PHONY: test-macro-worklists
 test-macro-worklists: build/cesta
 	python3 -B tests/macro_worklists.py
+
+.PHONY: test-macro-records test-macro-records-admission
+test-macro-records: build/cesta
+	python3 -B tests/macro_records.py
+
+test-macro-records-admission: build/cesta test-ownership-model
+	python3 -B tests/macro_records.py --admit
 
 
 .PHONY: test-macro-sizes test-macro-probes
@@ -281,6 +308,7 @@ test-presentation-semantics: build/cesta
 test-semantics: build/cesta
 	python3 -B tests/semantic_controls.py
 	python3 -B tests/conversion_boundaries.py
+	python3 -B tests/aarch64_abi.py
 
 
 test-semantic-corpora: build/cesta
@@ -424,7 +452,7 @@ test-table-admission: build/cesta test-table-model
 test-operation-protocol: build/cesta test-operation-model
 	python3 -B tests/operation_protocol.py $(OPERATION_PROTOCOL_TEST_FLAGS)
 
-.PHONY: test-protocols test-protocol-model test-protocol-admission test-protocol-loops test-protocol-loop-admission test-protocol-certificates test-protocol-call-once
+.PHONY: test-protocols test-protocol-model test-protocol-admission test-protocol-loops test-protocol-loop-admission test-protocol-certificates test-protocol-call-once test-protocol-bound-resources
 test-protocols: build/cesta
 	python3 -B tests/protocols.py
 
@@ -436,6 +464,9 @@ test-protocol-certificates: build/cesta
 
 test-protocol-call-once: build/cesta
 	python3 -B tests/protocol_call_once.py
+
+test-protocol-bound-resources: build/cesta test-protocol-model
+	python3 -B tests/protocol_bound_resources.py
 
 test-protocol-loop-admission: build/cesta test-protocol-model
 	python3 -B tests/protocol_loop_admission.py $(PROTOCOL_ADMISSION_TEST_FLAGS)
@@ -449,6 +480,27 @@ test-protocol-admission: build/cesta test-protocol-model
 .PHONY: test-checked-core test-checked-libraries test-checked-imports test-checked-model test-checked-admission test-checked-sanitizers test-checked-generated test-checked-hints
 test-checked-core: build/cesta
 	python3 -B tests/checked_core.py
+
+.PHONY: test-checked-spans test-checked-spans-admission test-checked-flat-spans
+test-checked-spans: build/cesta
+	python3 -B tests/checked_spans.py
+
+test-checked-spans-admission: build/cesta test-checked-model
+	python3 -B tests/checked_spans_admission.py $(CHECKED_SPANS_ADMISSION_TEST_FLAGS)
+
+.PHONY: test-checked-contracts test-checked-contracts-admission
+test-checked-contracts: build/cesta
+	python3 -B tests/checked_contracts.py
+
+test-checked-contracts-admission: build/cesta test-checked-model
+	python3 -B tests/checked_contracts.py --lean $(CHECKED_CONTRACT_TEST_FLAGS)
+
+.PHONY: test-checked-foreign-abi
+test-checked-foreign-abi: build/cesta
+	python3 -B tests/checked_foreign_abi.py $(CHECKED_FOREIGN_ABI_TEST_FLAGS)
+
+test-checked-flat-spans: build/cesta
+	python3 -B tests/checked_flat_spans.py $(CHECKED_FLAT_SPANS_TEST_FLAGS)
 
 test-checked-hints: build/cesta
 	python3 -B tests/checked_hints.py
@@ -468,6 +520,7 @@ test-checked-admission: build/cesta test-checked-model
 test-checked-sanitizers: build/cesta
 	python3 -B tests/checked_core.py --sanitizers
 	python3 -B tests/checked_libraries.py --sanitizers
+	python3 -B tests/checked_spans.py --sanitizers
 
 test-checked-generated: build/cesta test-checked-model
 	python3 -B tests/checked_fuzz.py $(CHECKED_GENERATED_TEST_FLAGS)
@@ -484,29 +537,132 @@ CHECK_GATES := test-tiers test-foundation test-source-core test-pp-core test-qua
 	test-reference test-wire test-literal-bytes test-coverage test-presentations test-presentation-coverage \
 	test-unicode-names test-source-driver test-driver test-macro-prescan test-macro-definition-ports \
 	test-macro-export test-macro-program-export test-export-counters test-layouts test-layout-edges test-tables test-protocols test-protocol-loops \
-	test-checked-core test-checked-libraries
-TEST_GATES := $(CHECK_GATES) test-c test-modules test-semantics test-compiler-builds test-gnu-extensions test-half-floats test-ownership-core test-ownership-runtime test-ownership-views test-checked-hints test-protocol-certificates test-protocol-call-once \
-	test-checked-imports \
+	test-checked-core test-checked-libraries test-checked-spans test-checked-contracts
+TEST_GATES := $(CHECK_GATES) test-c test-modules test-semantics test-compiler-builds test-gnu-extensions test-half-floats test-ownership-core test-ownership-arrays test-ownership-nullable-loops test-ownership-switch test-ownership-unchecked test-ownership-runtime test-ownership-views test-checked-hints test-protocol-certificates test-protocol-call-once \
+	test-ownership-control-flow \
+	test-checked-imports test-checked-flat-spans test-checked-foreign-abi test-checked-operations test-ownership-record-results test-ownership-record-values test-ownership-whole-views test-ownership-callbacks test-ownership-interfaces test-ownership-link test-ownership-refinement test-ownership-callback-interfaces test-ownership-abi \
 	test-native-authoring test-one-language test-project-build test-macro-engine test-macro-native-names test-macro-types test-macro-narrowing \
-	test-macro-worklists test-macro-sizes test-macro-probes test-provenance-core test-c-printer test-examples \
+	test-macro-worklists test-macro-records test-macro-sizes test-macro-probes test-provenance-core test-c-printer test-examples \
 	test-compact-examples test-grammar-trees test-whole-program-trees test-presentation-driver \
 	test-presentation-semantics test-build-dependencies
-QUALIFY_GATES := $(TEST_GATES) test-corpora test-c11parser test-lean test-macro-admission \
+QUALIFY_GATES := $(TEST_GATES) test-compiler-sanitizers test-corpora test-c11parser test-lean test-macro-admission \
+	test-ownership-control-flow-admission \
 	test-macro-port-admission test-metadata test-conflict-admission test-schema-extension-admission \
 	test-type-admission test-presentation-admission test-presentation-corpora test-semantic-corpora \
 	test-pp-corpora test-provenance-corpora test-mutants test-petta test-portable-readers test-workbench \
 	test-source test-export-counters-cetta test-export-admission test-layout-admission test-layout-cetta \
 	test-layout-sanitizers test-layout-bridge test-layout-model test-operation-audit test-operation-model \
 	test-operations test-operation-proposal test-table-model test-table-admission test-operation-protocol \
-	test-protocol-model test-protocol-admission test-protocol-loop-admission test-checked-model test-checked-admission test-checked-sanitizers test-checked-generated \
-	test-ownership-model test-ownership-admission test-ownership-views-admission
+	test-protocol-model test-protocol-admission test-protocol-loop-admission test-protocol-bound-resources test-checked-model test-checked-admission test-checked-sanitizers test-checked-generated \
+	test-ownership-model test-ownership-admission test-ownership-views-admission test-ownership-staging test-ownership-switch-exhaustive test-ownership-arrays-admission test-ownership-nullable-loops-admission test-checked-spans-admission test-checked-contracts-admission test-checked-operations-admission test-ownership-record-results-admission test-ownership-record-values-admission test-ownership-whole-views-admission test-ownership-callbacks-admission test-ownership-interfaces-admission test-ownership-refinement-admission test-ownership-callback-interfaces-admission test-macro-records-admission test-tcalc-event-view test-tcalc-recorded-cursor
 
-.PHONY: test-ownership-smoke test-ownership-core test-ownership-runtime test-ownership-model test-ownership-admission test-ownership-views test-ownership-views-admission
+.PHONY: test-ownership-smoke test-ownership-core test-ownership-switch test-ownership-runtime test-ownership-model test-ownership-admission test-ownership-views test-ownership-views-admission test-ownership-staging
 test-ownership-smoke: build/cesta
 	python3 -B tests/ownership_core.py --quick --output build/ownership-smoke.json
 
 test-ownership-core: build/cesta
 	python3 -B tests/ownership_core.py
+
+.PHONY: test-ownership-arrays
+test-ownership-arrays: build/cesta
+	python3 -B tests/ownership_arrays.py --cesta build/cesta --runtime
+
+.PHONY: test-ownership-nullable-loops
+test-ownership-nullable-loops: build/cesta
+	python3 -B tests/ownership_nullable_loops.py --cesta build/cesta
+
+.PHONY: test-ownership-arrays-admission test-ownership-nullable-loops-admission
+test-ownership-arrays-admission: build/cesta test-ownership-model
+	python3 -B tests/ownership_arrays.py --cesta build/cesta --admit
+
+test-ownership-nullable-loops-admission: build/cesta test-ownership-model
+	python3 -B tests/ownership_nullable_loops.py --cesta build/cesta --admit
+
+test-ownership-switch: build/cesta
+	python3 -B tests/ownership_switch.py
+
+.PHONY: test-ownership-record-results test-ownership-record-results-admission
+test-ownership-record-results: build/cesta
+	python3 -B tests/ownership_record_results.py
+
+test-ownership-record-results-admission: build/cesta test-ownership-model
+	python3 -B tests/ownership_record_results.py --admit
+
+.PHONY: test-ownership-record-values test-ownership-record-values-admission
+test-ownership-record-values: build/cesta
+	python3 -B tests/ownership_record_values.py
+
+test-ownership-record-values-admission: build/cesta test-ownership-model
+	python3 -B tests/ownership_record_values.py --admit
+
+.PHONY: test-ownership-whole-views test-ownership-whole-views-admission
+.PHONY: test-ownership-control-flow test-ownership-control-flow-admission
+test-ownership-control-flow: build/cesta
+	python3 -B tests/ownership_control_flow.py
+
+test-ownership-control-flow-admission: build/cesta test-ownership-model
+	python3 -B tests/ownership_control_flow.py --admit
+
+test-ownership-whole-views: build/cesta
+	python3 -B tests/ownership_whole_views.py
+
+test-ownership-whole-views-admission: build/cesta test-ownership-model
+	python3 -B tests/ownership_whole_views.py --admit
+
+.PHONY: test-ownership-interfaces test-ownership-interfaces-admission
+test-ownership-interfaces: build/cesta
+	python3 -B tests/ownership_interfaces.py
+
+test-ownership-interfaces-admission: build/cesta test-ownership-model
+	python3 -B tests/ownership_interfaces.py --admit
+
+.PHONY: test-ownership-link
+test-ownership-link: build/cesta
+	python3 -B tests/ownership_link.py
+
+.PHONY: test-ownership-refinement test-ownership-refinement-admission test-ownership-callback-interfaces test-ownership-callback-interfaces-admission
+test-ownership-refinement: build/cesta
+	python3 -B tests/ownership_refinement.py
+
+test-ownership-refinement-admission: build/cesta test-ownership-model
+	python3 -B tests/ownership_refinement.py --admit
+
+test-ownership-callback-interfaces: build/cesta
+	python3 -B tests/ownership_callback_interfaces.py
+
+test-ownership-callback-interfaces-admission: build/cesta test-ownership-model
+	python3 -B tests/ownership_callback_interfaces.py --admit
+
+.PHONY: test-ownership-callbacks test-ownership-callbacks-admission
+test-ownership-callbacks: build/cesta
+	python3 -B tests/ownership_callbacks.py
+
+test-ownership-callbacks-admission: build/cesta test-ownership-model
+	python3 -B tests/ownership_callbacks.py --admit
+
+.PHONY: test-ownership-abi
+test-ownership-abi: build/cesta
+	python3 -B tests/ownership_abi.py
+
+.PHONY: test-checked-operations test-checked-operations-admission
+test-checked-operations: build/cesta
+	python3 -B tests/checked_operations.py
+
+test-checked-operations-admission: build/cesta test-checked-model
+	python3 -B tests/checked_operations.py --admit $(CHECKED_OPERATIONS_TEST_FLAGS)
+
+# Optional live consumer; the ordinary Cesta build has no tcalc dependency.
+.PHONY: test-tcalc-event-view
+test-tcalc-event-view: build/cesta test-ownership-model
+	python3 -B tests/tcalc_event_view.py --admit $(TCALC_EVENT_VIEW_TEST_FLAGS)
+
+.PHONY: test-tcalc-recorded-cursor
+test-tcalc-recorded-cursor: build/cesta test-ownership-model
+	python3 -B tests/tcalc_recorded_cursor.py --admit $(TCALC_CURSOR_TEST_FLAGS)
+
+.PHONY: test-ownership-unchecked
+test-ownership-unchecked: build/cesta
+	python3 -B tests/ownership_unchecked.py --cesta build/cesta
 
 test-ownership-runtime: build/cesta
 	python3 -B tests/ownership_runtime.py
@@ -523,7 +679,18 @@ test-ownership-model: build/cesta
 test-ownership-admission: build/cesta test-ownership-model
 	python3 -B tests/ownership_admission.py
 
+test-ownership-staging: build/cesta test-ownership-model
+	python3 -B tests/ownership_staging.py
+
 .PHONY: check test qualify
 check: $(CHECK_GATES)
 test: $(TEST_GATES)
 qualify: $(QUALIFY_GATES)
+
+.PHONY: test-compiler-sanitizers
+test-compiler-sanitizers: build/cesta
+	python3 -B tests/compiler_builds.py --sanitizers-only
+
+.PHONY: test-ownership-switch-exhaustive
+test-ownership-switch-exhaustive: build/cesta test-ownership-model
+	python3 -B tests/ownership_switch_exhaustive.py

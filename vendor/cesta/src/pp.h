@@ -80,6 +80,11 @@ typedef struct {
     const CePPExpansion *expansion;   /* the replacement list it came from; NULL for source tokens */
     const CePPExpansion *argument;    /* the expansion it was last substituted into as an argument */
     bool pasted;                      /* formed by ##: spelled by no single place in a file */
+    /* Where the token is reported, as __FILE__ and __LINE__ would name it:
+       after #line directives, and at the invocation of the macro that
+       produced it. */
+    const char *presumed_file;
+    unsigned presumed_line;
 } CePPOrigin;
 typedef struct { const char *file; bool system; } CePPDependency;
 typedef struct {
