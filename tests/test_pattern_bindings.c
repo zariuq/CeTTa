@@ -5,12 +5,566 @@
 #include "variant_shape.h"
 #if defined(CETTA_PATTERN_ACTUAL_PRIME_HOOKS)
 #include "prime_semantics.h"
+#include "eval.h"
+#include "library.h"
+#include "parser.h"
+#include "symbol.h"
 #else
 #include "tests/test_runtime_stats_stubs.h"
 #endif
 
 #include <assert.h>
 #include <stdio.h>
+
+#if defined(CETTA_PATTERN_ACTUAL_PRIME_HOOKS)
+static bool interpretation_fail_calloc, interpretation_fail_malloc;
+static size_t interpretation_fail_malloc_after;
+void *__real_calloc(size_t count, size_t bytes);
+void *__real_malloc(size_t bytes);
+void *__wrap_calloc(size_t count, size_t bytes) {
+    if (interpretation_fail_calloc) { interpretation_fail_calloc = false; return NULL; }
+    return __real_calloc(count, bytes);
+}
+void *__wrap_malloc(size_t bytes) {
+    if (interpretation_fail_malloc) { interpretation_fail_malloc = false; return NULL; }
+    if (interpretation_fail_malloc_after && !--interpretation_fail_malloc_after)
+        return NULL;
+    return __real_malloc(bytes);
+}
+
+static int interpretation_read(CettaLibraryContext *context, const char *text) {
+    Arena arena; arena_init_detached(&arena);
+    TermUniverse universe; term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &arena);
+    AtomId *ids = NULL; char error[512];
+    CettaLibraryContext *previous = eval_swap_library_context(context);
+    int count = prime_semantics_read_source_text_ids(NULL, text, &universe,
+        &ids, error, sizeof(error));
+    eval_swap_library_context(previous);
+    free(ids); term_universe_free(&universe); arena_free(&arena);
+    return count;
+}
+
+static bool interpretation_inner(CettaLibraryContext *context, const char *head) {
+    Arena arena; arena_init_detached(&arena);
+    char text[256];
+    snprintf(text, sizeof(text), "(let $x outer (%s seed $x $x))", head);
+    size_t position = 0u;
+    CettaLibraryContext *previous = eval_swap_library_context(context);
+    Atom *form = parse_sexpr(&arena, text, &position);
+    Atom *query = prime_semantics_elaborate_form(&arena, form);
+    assert(query && query->kind == ATOM_EXPR && query->expr.len >= 4u);
+    Atom *outer = query->expr.elems[1], *body = query->expr.elems[3];
+    assert(outer->kind == ATOM_VAR && body->kind == ATOM_EXPR && body->expr.len == 4u &&
+        body->expr.elems[2]->kind == ATOM_VAR && body->expr.elems[3]->kind == ATOM_VAR &&
+        var_id_eq(body->expr.elems[2]->var_id, body->expr.elems[3]->var_id));
+    bool inner = !var_id_eq(outer->var_id, body->expr.elems[2]->var_id);
+    eval_swap_library_context(previous); arena_free(&arena);
+    return inner;
+}
+
+static Atom *interpretation_width_declaration(Arena *arena, const char *head,
+                                             size_t values, bool repeat) {
+    size_t count = values + 3u + (repeat ? 1u : 0u);
+    Atom **items = arena_alloc(arena, count * sizeof(*items));
+    assert(items);
+    items[0] = atom_symbol(arena, head);
+    for (size_t i = 0u; i < values; i++) items[i + 1u] = atom_symbol(arena, "value");
+    items[values + 1u] = atom_symbol(arena, "pattern");
+    items[values + 2u] = atom_symbol(arena, "body");
+    if (repeat) items[count - 1u] = atom_symbol(arena, "...");
+    return atom_expr2(arena, atom_symbol(arena, "scope:binder"),
+        atom_expr(arena, items, count));
+}
+
+static void interpretation_width_check(CettaLibraryContext *context,
+        const char *head, size_t values, size_t repeats, bool binds) {
+    Arena arena; arena_init_detached(&arena);
+    Atom *x = atom_var(&arena, "width-x");
+    size_t count = 1u + repeats * (values + 2u);
+    Atom **items = arena_alloc(&arena, count * sizeof(*items));
+    assert(items);
+    items[0] = atom_symbol(&arena, head);
+    for (size_t r = 0u; r < repeats; r++) {
+        size_t start = 1u + r * (values + 2u);
+        for (size_t i = 0u; i < values; i++) items[start + i] = x;
+        items[start + values] = items[start + values + 1u] = x;
+    }
+    Atom *body = atom_expr(&arena, items, count);
+    Atom *form = atom_expr(&arena, (Atom *[]){atom_symbol(&arena, "let"),
+        x, atom_symbol(&arena, "outer"), body}, 4u);
+    CettaLibraryContext *previous = eval_swap_library_context(context);
+    Atom *out = prime_semantics_elaborate_form(&arena, form);
+    if (!out || out->kind != ATOM_EXPR || out->expr.len < 4u)
+        fprintf(stderr, "width elaboration: %s values=%zu repeats=%zu binds=%d: %s\n",
+            head, values, repeats, binds, prime_semantics_elaboration_error());
+    assert(out && out->kind == ATOM_EXPR && out->expr.len >= 4u);
+    Atom *outer = out->expr.elems[1], *inner = out->expr.elems[3];
+    assert(outer->kind == ATOM_VAR && inner->kind == ATOM_EXPR && inner->expr.len == count);
+    for (size_t r = 0u; r < repeats; r++) {
+        size_t start = 1u + r * (values + 2u);
+        for (size_t i = 0u; i < values; i++)
+            assert(inner->expr.elems[start + i]->kind == ATOM_VAR &&
+                var_id_eq(outer->var_id, inner->expr.elems[start + i]->var_id));
+        Atom *pattern = inner->expr.elems[start + values];
+        Atom *use = inner->expr.elems[start + values + 1u];
+        assert(pattern->kind == ATOM_VAR && use->kind == ATOM_VAR &&
+            var_id_eq(pattern->var_id, use->var_id));
+        assert(var_id_eq(outer->var_id, pattern->var_id) == !binds);
+    }
+    eval_swap_library_context(previous);
+    arena_free(&arena);
+}
+
+static void interpretation_width_controls(void) {
+    VarInternTable variables; var_intern_init(&variables);
+    VarInternTable *previous_variables = g_var_intern; g_var_intern = &variables;
+    CettaLibraryContext *previous = eval_current_library_context();
+    CettaLibraryContext *source = calloc(1u, sizeof(*source));
+    CettaLibraryContext *copy = calloc(1u, sizeof(*copy));
+    assert(source && copy);
+    cetta_library_context_init_for_language_profile(source, CETTA_LANGUAGE_PRIME,
+        cetta_profile_prime_default());
+    eval_swap_library_context(source);
+    Arena arena; arena_init_detached(&arena);
+    TermUniverse universe; term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &arena);
+    static const size_t widths[] = {0u, 5u, 6u, 12u, 65u, 257u};
+    for (size_t i = 0u; i < sizeof(widths) / sizeof(*widths); i++) {
+        char head[64]; snprintf(head, sizeof(head), "width-pick-%zu", widths[i]);
+        AtomId id = term_universe_store_atom_id(&universe, &arena,
+            interpretation_width_declaration(&arena, head, widths[i], false));
+        assert(id != CETTA_ATOM_ID_NONE &&
+            prime_semantics_elaborate_read_forms(&universe, &id, 1u));
+        interpretation_width_check(source, head, widths[i], 1u, true);
+        interpretation_width_check(source, head, widths[i] + 1u, 1u, false);
+    }
+    AtomId repeating = term_universe_store_atom_id(&universe, &arena,
+        interpretation_width_declaration(&arena, "width-repeat", 257u, true));
+    assert(repeating != CETTA_ATOM_ID_NONE &&
+        prime_semantics_elaborate_read_forms(&universe, &repeating, 1u));
+    interpretation_width_check(source, "width-repeat", 257u, 2u, true);
+
+    Atom *word_declaration = interpretation_width_declaration(&arena,
+        "width-word", 257u, false);
+    Atom **word_roles = arena_alloc(&arena, 260u * sizeof(*word_roles));
+    assert(word_roles);
+    memcpy(word_roles, word_declaration->expr.elems[1]->expr.elems,
+        260u * sizeof(*word_roles));
+    word_roles[257] = atom_symbol(&arena, "marker");
+    word_declaration = atom_expr2(&arena, atom_symbol(&arena, "scope:binder"),
+        atom_expr(&arena, word_roles, 260u));
+    AtomId word_id = term_universe_store_atom_id(&universe, &arena, word_declaration);
+    assert(prime_semantics_elaborate_read_forms(&universe, &word_id, 1u));
+    interpretation_width_check(source, "width-word", 257u, 1u, false);
+
+    Atom **malformed_roles = arena_alloc(&arena, 260u * sizeof(*malformed_roles));
+    assert(malformed_roles);
+    memcpy(malformed_roles, word_roles, 260u * sizeof(*malformed_roles));
+    malformed_roles[0] = atom_symbol(&arena, "width-malformed");
+    malformed_roles[257] = atom_int(&arena, 7);
+    AtomId malformed_id = term_universe_store_atom_id(&universe, &arena,
+        atom_expr2(&arena, atom_symbol(&arena, "scope:binder"),
+            atom_expr(&arena, malformed_roles, 260u)));
+    CettaPrimeInterpretation *malformed_before = prime_interpretation_capture(source->prime_interpretation);
+    interpretation_fail_malloc = true;
+    assert(prime_semantics_elaborate_read_forms(&universe, &malformed_id, 1u) &&
+        interpretation_fail_malloc);
+    interpretation_fail_malloc = false;
+    CettaPrimeInterpretation *malformed_after = prime_interpretation_capture(source->prime_interpretation);
+    assert(malformed_after == malformed_before);
+    prime_interpretation_release(malformed_before);
+    prime_interpretation_release(malformed_after);
+    interpretation_width_check(source, "width-malformed", 257u, 1u, false);
+
+    Atom *source_declaration = interpretation_width_declaration(&arena,
+        "width-entry", 257u, false);
+    Atom **source_roles = arena_alloc(&arena, 260u * sizeof(*source_roles));
+    assert(source_roles);
+    memcpy(source_roles, source_declaration->expr.elems[1]->expr.elems,
+        260u * sizeof(*source_roles));
+    source_roles[259] = atom_symbol(&arena, "value");
+    Atom *source_shape = atom_expr(&arena, source_roles, 260u);
+    AtomId source_id = term_universe_store_atom_id(&universe, &arena,
+        atom_expr3(&arena, atom_symbol(&arena, "scope:source"),
+            atom_symbol(&arena, "width-join"), source_shape));
+    assert(prime_semantics_elaborate_read_forms(&universe, &source_id, 1u) &&
+        interpretation_read(source, "(scope:binder (width-join source body))") == 1);
+    Atom *source_x = atom_var(&arena, "source-width-x");
+    Atom *source_outer = atom_var(&arena, "source-width-outer");
+    Atom **source_items = arena_alloc(&arena, 260u * sizeof(*source_items));
+    assert(source_items);
+    source_items[0] = atom_symbol(&arena, "width-entry");
+    for (size_t i = 1u; i < 260u; i++) source_items[i] = source_outer;
+    source_items[258] = source_x;
+    Atom *source_form = atom_expr(&arena, (Atom *[]){atom_symbol(&arena, "let"),
+        source_outer, atom_symbol(&arena, "outer"),
+        atom_expr3(&arena, atom_symbol(&arena, "width-join"),
+            atom_expr(&arena, source_items, 260u), source_x)}, 4u);
+    Atom *source_out = prime_semantics_elaborate_form(&arena, source_form);
+    assert(source_out && source_out->kind == ATOM_EXPR && source_out->expr.len >= 4u);
+    Atom *outer_x = source_out->expr.elems[1];
+    Atom *join = source_out->expr.elems[3], *entry = join->expr.elems[1];
+    for (size_t i = 1u; i <= 257u; i++)
+        assert(var_id_eq(outer_x->var_id, entry->expr.elems[i]->var_id));
+    assert(!var_id_eq(source_x->var_id, entry->expr.elems[258]->var_id) &&
+        var_id_eq(outer_x->var_id, entry->expr.elems[259]->var_id) &&
+        var_id_eq(join->expr.elems[2]->var_id, entry->expr.elems[258]->var_id));
+
+    AtomId refused[] = {
+        term_universe_store_atom_id(&universe, &arena,
+            interpretation_width_declaration(&arena, "width-refuse-first", 258u, false)),
+        term_universe_store_atom_id(&universe, &arena,
+            interpretation_width_declaration(&arena, "width-refuse-second", 259u, false)),
+    };
+    CettaPrimeInterpretation *before = prime_interpretation_capture(source->prime_interpretation);
+    assert(before);
+    for (size_t at = 1u; at <= 3u; at++) {
+        interpretation_fail_malloc_after = at;
+        assert(!prime_semantics_elaborate_read_forms(&universe, refused, 2u) &&
+            !interpretation_fail_malloc_after);
+        CettaPrimeInterpretation *after = prime_interpretation_capture(source->prime_interpretation);
+        assert(after == before);
+        prime_interpretation_release(after);
+        interpretation_width_check(source, "width-refuse-first", 258u, 1u, false);
+        interpretation_width_check(source, "width-refuse-second", 259u, 1u, false);
+    }
+    assert(prime_semantics_elaborate_read_forms(&universe, refused, 2u));
+    interpretation_width_check(source, "width-refuse-first", 258u, 1u, true);
+    interpretation_width_check(source, "width-refuse-second", 259u, 1u, true);
+    prime_interpretation_release(before);
+
+    Atom *pending_head = atom_var(&arena, "width-pending-head");
+    Atom *pending_x = atom_var(&arena, "width-pending-x");
+    Atom **pending_items = arena_alloc(&arena, 260u * sizeof(*pending_items));
+    assert(pending_items);
+    pending_items[0] = pending_head;
+    for (size_t i = 1u; i < 260u; i++) pending_items[i] = pending_x;
+    Atom *pending_form = atom_expr(&arena, pending_items, 260u);
+    Bindings pending_bindings; bindings_init(&pending_bindings);
+    assert(bindings_add_var(&pending_bindings, pending_head,
+        atom_symbol(&arena, "width-pick-257")));
+    BindingsApplySession *pending = bindings_apply_session_new(&pending_bindings,
+        &arena, binding_value_from_atom(pending_form), true);
+    assert(pending);
+    Atom *pending_out = NULL; uint64_t used = 0u;
+    assert(bindings_apply_session_advance(pending, 1u, &pending_out, &used) ==
+        BINDINGS_APPLY_PENDING && used == 1u);
+
+    assert(cetta_library_context_init_prime_snapshot_from(copy, source));
+    CettaPrimeInterpretation *captured = prime_interpretation_capture(copy->prime_interpretation);
+    CettaStorageCensus census = {0};
+    prime_interpretation_selection_storage(source->prime_interpretation, &census);
+    size_t once = census.bytes;
+    prime_interpretation_storage(captured, &census);
+    assert(once > 257u && census.bytes == once && census.repeated && !census.incomplete);
+    cetta_storage_census_free(&census);
+    eval_swap_library_context(copy);
+    cetta_library_context_free(source); free(source);
+    interpretation_width_check(copy, "width-pick-257", 257u, 1u, true);
+    interpretation_width_check(copy, "width-repeat", 257u, 2u, true);
+    eval_swap_library_context(previous);
+    cetta_library_context_free(copy); free(copy);
+    prime_interpretation_release(captured);
+    BindingsApplyStatus status;
+    do {
+        status = bindings_apply_session_advance(pending, 1u, &pending_out, &used);
+        assert(used <= 1u);
+    } while (status == BINDINGS_APPLY_PENDING);
+    assert(status == BINDINGS_APPLY_COMPLETE && pending_out &&
+        pending_out->kind == ATOM_EXPR && pending_out->expr.len == 260u &&
+        !var_id_eq(pending_x->var_id, pending_out->expr.elems[258]->var_id) &&
+        var_id_eq(pending_out->expr.elems[258]->var_id, pending_out->expr.elems[259]->var_id));
+    for (size_t i = 1u; i <= 257u; i++)
+        assert(var_id_eq(pending_x->var_id, pending_out->expr.elems[i]->var_id));
+    bindings_apply_session_free(pending);
+    bindings_free(&pending_bindings);
+    term_universe_free(&universe); arena_free(&arena);
+    g_var_intern = previous_variables; var_intern_free(&variables);
+}
+
+static bool interpretation_capture_refused(void *context, void **owned) {
+    (void)context;
+    *owned = NULL;
+    return false;
+}
+
+static void interpretation_refusal_controls(CettaLibraryContext *context) {
+    CettaLibraryContext *previous = eval_swap_library_context(context);
+    CettaPrimeInterpretation *before = prime_interpretation_capture(context->prime_interpretation);
+    assert(before);
+    CettaPrimeScopeProfile profile = prime_scope_runtime_profile();
+    interpretation_fail_calloc = true;
+    assert(prime_scope_runtime_profile_set(profile) && interpretation_fail_calloc);
+    interpretation_fail_calloc = false;
+    interpretation_fail_malloc = true;
+    assert(prime_quote_seal_set(true) && interpretation_fail_malloc);
+    interpretation_fail_malloc = false;
+    assert(interpretation_read(context, "(scope:binder (snapshot-pick value pattern body))") == 1);
+    CettaPrimeScopeProfile changed = profile;
+    changed.lifetime = CETTA_PRIME_LIFETIME_PER_CLOSURE;
+    interpretation_fail_calloc = true;
+    assert(!prime_scope_runtime_profile_set(changed) && !interpretation_fail_calloc);
+    interpretation_fail_malloc = true;
+    assert(!prime_quote_seal_set(false) && !interpretation_fail_malloc);
+    interpretation_fail_calloc = true;
+    assert(!prime_interpretation_selection_copy(context->prime_interpretation) &&
+        !interpretation_fail_calloc);
+    CettaPrimeInterpretation *after = prime_interpretation_capture(context->prime_interpretation);
+    assert(after == before);
+    prime_interpretation_release(after);
+    Arena arena; arena_init_detached(&arena);
+    Bindings bindings; bindings_init(&bindings);
+    Atom *x = atom_var(&arena, "capture-refusal-x");
+    Atom *source = atom_expr2(&arena, atom_symbol(&arena, "Box"), x);
+    assert(bindings_add_var(&bindings, x, atom_int(&arena, 7)));
+    const BindingsStructureHooks *prior = bindings_structure_hooks();
+    BindingsStructureHooks rejecting = *prime_semantics_binding_hooks();
+    rejecting.capture = interpretation_capture_refused;
+    bindings_structure_hooks_set(&rejecting);
+    assert(!bindings_apply_session_new(&bindings, &arena, binding_value_from_atom(source), true));
+    Atom *ground = atom_expr2(&arena, atom_symbol(&arena, "Box"), atom_int(&arena, 7));
+    BindingsApplySession *identity = bindings_apply_session_new(&bindings, &arena,
+        binding_value_from_atom(ground), true);
+    assert(identity);
+    Atom *identity_result = NULL; uint64_t identity_used = 0u;
+    assert(bindings_apply_session_advance(identity, 8u, &identity_result, &identity_used) ==
+        BINDINGS_APPLY_COMPLETE && identity_result == ground);
+    bindings_apply_session_free(identity);
+    bindings_structure_hooks_set(prior);
+    BindingsStructureHooks invalid = *prime_semantics_binding_hooks(), closed = {0};
+    invalid.context = before; invalid.capture = NULL; invalid.retain = NULL;
+    assert(!bindings_structure_hooks_capture(&closed, &invalid) && !closed.context);
+    Atom *healthy = bindings_apply(&bindings, &arena, source);
+    assert(healthy && atom_eq(healthy->expr.elems[1], atom_int(&arena, 7)) &&
+        source->expr.elems[1] == x);
+    BindingsStructureHooks comparison = {0};
+    assert(bindings_structure_hooks_capture(&comparison, prime_semantics_binding_hooks()));
+    Atom *integer = atom_expr2(&arena, atom_symbol_id(&arena, g_builtin_syms.quote), atom_int(&arena, 1));
+    Atom *floating = atom_expr2(&arena, atom_symbol_id(&arena, g_builtin_syms.quote), atom_float(&arena, 1.0));
+    Bindings empty; bindings_init(&empty);
+    bool matched = true;
+    assert(comparison.code_match(comparison.context, &arena, integer, floating, &empty, &matched) &&
+        !matched && bindings_logically_empty(&empty));
+    CettaLibraryContext *he = calloc(1u, sizeof(*he)); assert(he);
+    cetta_library_context_init_for_language_profile(he, CETTA_LANGUAGE_HE, cetta_profile_he_compat());
+    eval_swap_library_context(he);
+    matched = true;
+    assert(!comparison.code_match(comparison.context, &arena, integer, floating, &empty, &matched) &&
+        !matched && bindings_logically_empty(&empty));
+    eval_swap_library_context(context);
+    assert(comparison.code_match(comparison.context, &arena, integer, integer, &empty, &matched) && matched);
+    bindings_structure_hooks_release(&comparison);
+    bindings_free(&empty); cetta_library_context_free(he); free(he);
+    bindings_free(&bindings); arena_free(&arena);
+    prime_interpretation_release(before);
+    eval_swap_library_context(previous);
+}
+
+static void interpretation_symbol_owner_controls(void) {
+    SymbolTable *runtime = g_symbols;
+    g_symbols = NULL;
+    CettaPrimeInterpretationSelection *early = prime_interpretation_selection_new(CETTA_LANGUAGE_PRIME, false, true);
+    assert(early && !prime_interpretation_capture(early));
+    g_symbols = runtime;
+    CettaPrimeInterpretation *bound = prime_interpretation_capture(early);
+    assert(bound && prime_interpretation_is_current(bound));
+    SymbolTable other; symbol_table_init(&other); g_symbols = &other;
+    assert(!prime_interpretation_capture(early) && !prime_interpretation_is_current(bound));
+    CettaPrimeInterpretationSelection *retired = prime_interpretation_selection_new(CETTA_LANGUAGE_PRIME, false, true);
+    CettaPrimeInterpretation *retained = prime_interpretation_capture(retired);
+    assert(retained);
+    g_symbols = runtime;
+    symbol_table_free(&other);
+    assert(!prime_interpretation_capture(retired) && !prime_interpretation_is_current(retained));
+    CettaStorageCensus census = {0};
+    prime_interpretation_selection_storage(retired, &census);
+    size_t bytes = census.bytes;
+    prime_interpretation_storage(retained, &census);
+    assert(bytes && census.bytes == bytes && census.repeated && !census.incomplete);
+    cetta_storage_census_free(&census);
+    prime_interpretation_release(retained);
+    prime_interpretation_selection_free(retired);
+    prime_interpretation_release(bound);
+    prime_interpretation_selection_free(early);
+}
+
+static void interpretation_profile_session(CettaLibraryContext *context) {
+    CettaLibraryContext *previous = eval_swap_library_context(context);
+    CettaPrimeScopeProfile original = prime_scope_runtime_profile(), wide = original;
+    wide.ownership = CETTA_PRIME_OWNERSHIP_QUERY_WIDE;
+    assert(prime_scope_runtime_profile_set(wide));
+    Arena arena; arena_init_detached(&arena);
+    Bindings bindings; bindings_init(&bindings);
+    Atom *head = atom_var(&arena, "profile-head"), *x = atom_var(&arena, "profile-x");
+    Atom *source = atom_expr(&arena,
+        (Atom *[]){head, atom_symbol(&arena, "seed"), x, x}, 4u);
+    assert(bindings_add_var(&bindings, head, atom_symbol(&arena, "snapshot-pick")));
+    BindingsApplySession *session = bindings_apply_session_new(&bindings, &arena,
+        binding_value_from_atom(source), true);
+    assert(session);
+    Atom *out = NULL; uint64_t used = 0u;
+    assert(bindings_apply_session_advance(session, 1u, &out, &used) == BINDINGS_APPLY_PENDING);
+    assert(prime_scope_runtime_profile_set(original));
+    Atom *later = bindings_apply(&bindings, &arena, source);
+    assert(later && later->expr.elems[2]->kind == ATOM_VAR &&
+        !var_id_eq(later->expr.elems[2]->var_id, x->var_id));
+    CettaLibraryContext *he = calloc(1u, sizeof(*he)); assert(he);
+    cetta_library_context_init_for_language_profile(he, CETTA_LANGUAGE_HE, cetta_profile_he_compat());
+    eval_swap_library_context(he);
+    BindingsApplyStatus status;
+    do { status = bindings_apply_session_advance(session, 1u, &out, &used); }
+    while (status == BINDINGS_APPLY_PENDING);
+    assert(status == BINDINGS_APPLY_COMPLETE && out &&
+        var_id_eq(out->expr.elems[2]->var_id, x->var_id) &&
+        var_id_eq(out->expr.elems[3]->var_id, x->var_id));
+    eval_swap_library_context(context); cetta_library_context_free(he); free(he);
+    bindings_apply_session_free(session); bindings_free(&bindings); arena_free(&arena);
+    eval_swap_library_context(previous);
+}
+
+static void interpretation_snapshot_controls(void) {
+    VarInternTable variables; var_intern_init(&variables);
+    VarInternTable *previous_variables = g_var_intern; g_var_intern = &variables;
+    CettaLibraryContext *previous = eval_current_library_context();
+    CettaLibraryContext *source = calloc(1u, sizeof(*source));
+    CettaLibraryContext *copy = calloc(1u, sizeof(*copy));
+    CettaLibraryContext *other = calloc(1u, sizeof(*other));
+    assert(source && copy && other);
+    cetta_library_context_init_for_language_profile(source, CETTA_LANGUAGE_PRIME,
+        cetta_profile_prime_default());
+    cetta_library_context_init_for_language_profile(other, CETTA_LANGUAGE_PRIME,
+        cetta_profile_prime_default());
+    assert(interpretation_read(source,
+        "(scope:binder (snapshot-pick value pattern body))\n"
+        "(scope:binder (ordered-pick pattern value body))\n"
+        "(scope:binder (ordered-pick value pattern body))") == 3);
+    assert(interpretation_inner(source, "snapshot-pick"));
+    assert(!interpretation_inner(source, "ordered-pick"));
+    interpretation_refusal_controls(source);
+    interpretation_profile_session(source);
+    assert(interpretation_read(other,
+        "(scope:binder (ordered-pick value pattern body))\n"
+        "(scope:binder (ordered-pick pattern value body))") == 2);
+    assert(interpretation_inner(other, "ordered-pick"));
+    assert(cetta_library_context_init_prime_snapshot_from(copy, source));
+    CettaPrimeInterpretation *captured = prime_interpretation_capture(copy->prime_interpretation);
+    assert(captured);
+    assert(interpretation_read(source,
+        "(scope:binder (later-pick value pattern body))") == 1);
+    assert(interpretation_inner(source, "later-pick"));
+    assert(!interpretation_inner(copy, "later-pick"));
+    eval_swap_library_context(source);
+    CettaPrimeScopeProfile wide = prime_scope_runtime_profile();
+    wide.ownership = CETTA_PRIME_OWNERSHIP_QUERY_WIDE;
+    assert(prime_scope_runtime_profile_set(wide));
+    assert(prime_quote_seal_set(false));
+    eval_swap_library_context(copy);
+    assert(prime_scope_runtime_profile().ownership == CETTA_PRIME_OWNERSHIP_LEXICAL_FRESH);
+    assert(prime_quote_seal_active());
+    prime_scope_document_reading(true);
+    assert(interpretation_read(copy,
+        "(scope:profile query-wide per-call reference)\n"
+        "(scope:binder (failed-profile-pick value pattern body))\n"
+        "(= (bad $x) (chain 1 $v $v){7})") < 0);
+    prime_scope_document_reading(false);
+    assert(prime_scope_runtime_profile().ownership == CETTA_PRIME_OWNERSHIP_LEXICAL_FRESH);
+    assert(!interpretation_inner(copy, "failed-profile-pick"));
+    CettaPrimeInterpretation *unchanged = prime_interpretation_capture(copy->prime_interpretation);
+    assert(unchanged && prime_interpretation_equal(captured, unchanged));
+    prime_interpretation_release(unchanged);
+    cetta_library_context_free(source); free(source);
+    assert(interpretation_inner(copy, "snapshot-pick"));
+    assert(!interpretation_inner(copy, "later-pick"));
+    CettaStorageCensus census = {0};
+    prime_interpretation_storage(captured, &census);
+    size_t before = census.bytes;
+    prime_interpretation_selection_storage(copy->prime_interpretation, &census);
+    assert(!census.incomplete && before && census.bytes > before && census.repeated);
+    cetta_storage_census_free(&census);
+    eval_swap_library_context(other);
+    cetta_library_context_free(copy); free(copy);
+    assert(prime_interpretation_is_current(captured));
+    prime_interpretation_release(captured);
+    eval_swap_library_context(previous);
+    cetta_library_context_free(other); free(other);
+    g_var_intern = previous_variables; var_intern_free(&variables);
+}
+
+static void interpretation_context_controls(void) {
+    VarInternTable variables; var_intern_init(&variables);
+    VarInternTable *previous_variables = g_var_intern; g_var_intern = &variables;
+    CettaLibraryContext *previous = eval_current_library_context();
+    const BindingsStructureHooks *previous_hooks = bindings_structure_hooks();
+    CettaPrimeScopeProfile previous_profile = prime_scope_runtime_profile();
+    bool previous_sealing = prime_quote_seal_active();
+    CettaLibraryContext *a = calloc(1u, sizeof(*a)), *b = calloc(1u, sizeof(*b));
+    assert(a && b);
+    cetta_library_context_init_for_language_profile(a, CETTA_LANGUAGE_PRIME, cetta_profile_prime_default());
+    cetta_library_context_init_for_language_profile(b, CETTA_LANGUAGE_PRIME, cetta_profile_prime_default());
+    assert(interpretation_read(b, "(scope:profile lexical-fresh per-call reference)") == 1);
+    bool before = interpretation_inner(b, "other-context-pick");
+    eval_set_library_context(b);
+    Arena arena; arena_init_detached(&arena);
+    Atom *h = atom_var(&arena, "pending-head"), *x = atom_var(&arena, "pending-x");
+    Atom *source = atom_expr(&arena, (Atom *[]){h, atom_symbol(&arena, "seed"), x, x}, 4u);
+    Bindings bindings; bindings_init(&bindings);
+    assert(bindings_add_var(&bindings, h, atom_symbol(&arena, "other-context-pick")));
+    BindingsApplySession *session = bindings_apply_session_new(&bindings, &arena,
+        binding_value_from_atom(source), true);
+    assert(session);
+    Atom *expected = bindings_apply(&bindings, &arena, source);
+    assert(expected && expected->kind == ATOM_EXPR && expected->expr.len == 4u &&
+        expected->expr.elems[2]->kind == ATOM_VAR &&
+        var_id_eq(expected->expr.elems[2]->var_id, x->var_id));
+    Atom *result = NULL; uint64_t used = 0u;
+    assert(bindings_apply_session_advance(session, 1u, &result, &used) == BINDINGS_APPLY_PENDING && used == 1u);
+    assert(interpretation_read(a,
+        "(scope:profile lexical-fresh per-call reference)\n"
+        "(scope:binder (other-context-pick value pattern body))") == 2);
+    bool after = interpretation_inner(b, "other-context-pick");
+    bool own_after = interpretation_inner(a, "other-context-pick");
+    bool failed_before = interpretation_inner(b, "failed-context-pick");
+    bool failed_self_before = interpretation_inner(a, "failed-context-pick");
+    int failed = interpretation_read(a,
+        "(scope:profile lexical-fresh per-call reference)\n"
+        "(scope:binder (failed-context-pick value pattern body))\n"
+        "(= (bad $x) (chain 1 $v $v){7})");
+    bool failed_after = interpretation_inner(b, "failed-context-pick");
+    bool failed_self_after = interpretation_inner(a, "failed-context-pick");
+    eval_set_library_context(b); cetta_library_context_free(a); free(a);
+    bool retired_after = interpretation_inner(b, "other-context-pick");
+    CettaLibraryContext *c = calloc(1u, sizeof(*c)); assert(c);
+    cetta_library_context_init_for_language_profile(c, CETTA_LANGUAGE_PRIME, cetta_profile_prime_default());
+    assert(interpretation_read(c,
+        "(scope:profile lexical-fresh per-call reference)\n"
+        "(scope:binder (other-context-pick value pattern body))") == 2);
+    bool receiver_binding = interpretation_inner(c, "other-context-pick");
+    eval_set_library_context(c); cetta_library_context_free(b); free(b);
+    BindingsApplyStatus status;
+    do {
+        status = bindings_apply_session_advance(session, 1u, &result, &used);
+        assert(used <= 1u);
+    } while (status == BINDINGS_APPLY_PENDING);
+    bool retained = status == BINDINGS_APPLY_COMPLETE && result && result->kind == ATOM_EXPR &&
+        result->expr.len == 4u && result->expr.elems[2]->kind == ATOM_VAR &&
+        result->expr.elems[3]->kind == ATOM_VAR &&
+        var_id_eq(result->expr.elems[2]->var_id, x->var_id) &&
+        var_id_eq(result->expr.elems[3]->var_id, x->var_id) && atom_eq(result, expected);
+    bindings_apply_session_free(session); bindings_free(&bindings); arena_free(&arena);
+    eval_set_library_context(previous); cetta_library_context_free(c); free(c);
+    prime_scope_runtime_profile_set(previous_profile); prime_quote_seal_set(previous_sealing);
+    bindings_structure_hooks_set(previous_hooks);
+    g_var_intern = previous_variables; var_intern_free(&variables);
+    if (before || after || retired_after || failed_before || failed_after || failed >= 0 ||
+            failed_self_before || failed_self_after || !own_after || !receiver_binding || !retained)
+        fprintf(stderr, "interpretation isolation: before=%d after=%d retired=%d failed_before=%d failed_after=%d failed_self=%d,%d failure=%d own=%d receiver=%d retained=%d\n",
+            before, after, retired_after, failed_before, failed_after,
+            failed_self_before, failed_self_after, failed, own_after, receiver_binding, retained);
+    assert(!before && !after && !retired_after && !failed_before && !failed_after && failed < 0 &&
+        !failed_self_before && !failed_self_after && own_after && receiver_binding && retained);
+}
+#endif
 
 static void saved_match(void) {
     Arena source, saved, destination;
@@ -264,7 +818,8 @@ static void shared_lexical_readings(void) {
 /* A controlled quotation reading exercises the hook contract even in the
  * standalone matcher build. The full-runtime build uses the actual Prime
  * reading for this case. */
-static Atom *quotation_graph_code_reading(Atom *image) {
+static Atom *quotation_graph_code_reading(const void *context, Atom *image) {
+    (void)context;
     if (image && image->kind == ATOM_EXPR && image->expr.len == 3u &&
         atom_is_symbol(image->expr.elems[0], "quote") &&
         image->expr.elems[2]->kind == ATOM_EXPR &&
@@ -274,15 +829,17 @@ static Atom *quotation_graph_code_reading(Atom *image) {
     return image;
 }
 
-static Atom *quotation_graph_formed_node(Arena *arena, Atom *node,
+static Atom *quotation_graph_formed_node(const void *context, Arena *arena, Atom *node,
                                          bool in_code) {
+    (void)context;
     return atom_expr3(arena,
         atom_symbol(arena, in_code ? "formed-code" : "formed-value"),
         node, atom_bool(arena, in_code));
 }
 
-static Atom *quotation_graph_rejected_form(Arena *arena, Atom *node,
+static Atom *quotation_graph_rejected_form(const void *context, Arena *arena, Atom *node,
                                            bool in_code) {
+    (void)context;
     (void)arena;
     return in_code ? NULL : node;
 }
@@ -756,6 +1313,12 @@ int main(void) {
     malformed_renaming();
     saved_carrier();
     opaque_context_scope();
+#if defined(CETTA_PATTERN_ACTUAL_PRIME_HOOKS)
+    interpretation_context_controls();
+    interpretation_snapshot_controls();
+    interpretation_symbol_owner_controls();
+    interpretation_width_controls();
+#endif
     symbol_table_free(&symbols);
     g_symbols = NULL;
 #if defined(CETTA_PATTERN_ACTUAL_PRIME_HOOKS)

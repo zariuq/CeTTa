@@ -12574,9 +12574,9 @@ static bool petta_machine_maybe_collect(
     bool tenured_due = tenured_syntax_due || resource_due || native_due;
     if (machine->choice_len != 0u) {
         bool nursery_due = nursery_live >= machine->heap_collect_after;
-        bool major_due =
-            arena_accounted_live_bytes(&machine->tenured) >= machine->tenured_major_after &&
-            petta_choice_major_heap_supported(machine);
+        /* Tenured pressure collects choices only where their heap supports a
+         * major collection. */
+        bool major_due = tenured_due && petta_choice_major_heap_supported(machine);
         if (nursery_due || major_due) {
             if (!petta_choice_heap_evacuation_supported(machine)) {
                 cetta_runtime_stats_inc(
@@ -12586,12 +12586,12 @@ static bool petta_machine_maybe_collect(
                         petta_machine_choice_collection_retry_threshold(
                             nursery_live,
                             petta_machine_nursery_window(machine));
-                if (tenured_syntax_due)
+                if (major_due && tenured_syntax_due)
                     machine->tenured_major_after =
                         petta_machine_next_major_threshold(tenured_live);
-                if (native_due)
+                if (major_due && native_due)
                     petta_machine_native_retry_later(machine);
-                if (resource_due) {
+                if (major_due && resource_due) {
                     size_t allowance = petta_machine_choice_scan_window(machine);
                     size_t floor = petta_machine_collect_sizes()->nursery_floor;
                     if (allowance < floor)
@@ -26314,7 +26314,8 @@ petta_machine_try_unobserved_collapse(
         source->expr.elems[1]->expr.len == 0u ||
         source->expr.elems[1]->expr.elems[0]->kind != ATOM_SYMBOL ||
         !space_head_declares_type(machine->space,
-                                  atom_symbol_current_id(source->expr.elems[1]->expr.elems[0])) ||
+                                  atom_symbol_current_id(
+                                      source->expr.elems[1]->expr.elems[0])) ||
         petta_machine_var_occurrences(body, binder->var_id) != 0u ||
         !petta_machine_native_collect_admitted(machine) ||
         !petta_machine_let_scope_local(machine, expression, plan, environment,
@@ -26750,7 +26751,8 @@ static bool petta_machine_answers_itself(PettaMachineImpl *machine,
                                          Atom *atom) {
     return petta_machine_is_rigid_data(machine, atom) &&
         !(atom->kind == ATOM_SYMBOL &&
-          petta_machine_has_equations(machine, atom_symbol_current_id(atom)));
+          petta_machine_has_equations(
+              machine, atom_symbol_current_id(atom)));
 }
 
 static bool petta_machine_start_foldall(
@@ -33098,7 +33100,8 @@ static bool petta_machine_prepared_call_blocked(
     return !call || call->kind != ATOM_EXPR || !call->expr.len ||
         call->expr.elems[0]->kind != ATOM_SYMBOL ||
         petta_machine_prepared_head_blocked(
-            machine, atom_symbol_current_id(call->expr.elems[0]), call->expr.len - 1u);
+            machine, atom_symbol_current_id(call->expr.elems[0]),
+            call->expr.len - 1u);
 }
 
 /* Read closedness at most once per call view.  The view is borrowed for one
@@ -33208,7 +33211,8 @@ static bool petta_machine_execute_prepared_query(
         !petta_machine_value_result_admitted(machine, expected) ||
         !query->head || query->head->kind != ATOM_SYMBOL ||
         petta_machine_prepared_head_blocked(
-            machine, atom_symbol_current_id(query->head), query->operands.count))
+            machine, atom_symbol_current_id(query->head),
+            query->operands.count))
         return false;
     CettaInvocation invocation = {
         .head = binding_value_from_atom(query->head), .supplied = query->operands,
@@ -33250,7 +33254,8 @@ static bool petta_machine_collect_closed_answers(
             machine, atom_symbol_current_id(query->head), query->operands.count) ||
         (machine->host.answer_cursor_declined &&
          machine->host.answer_cursor_declined(machine->host.context,
-             machine->space, atom_symbol_current_id(query->head), query->operands.count)))
+             machine->space, atom_symbol_current_id(query->head),
+             query->operands.count)))
         return false;
     ArenaMark mark = arena_mark(&machine->heap);
     Atom *call = petta_machine_materialize_space_query(machine, query);

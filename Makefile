@@ -193,13 +193,13 @@ ENABLE_PETTA_TYPECHECK_V2 ?= 1
 ENABLE_PETTA_TYPECHECK_CENSUS ?= 0
 ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS ?= 0
 CETTA_PROC_FORK_SPAWN ?= 0
-PRIME_NEED_ALGEBRA_CHECKS := 966
+PRIME_NEED_ALGEBRA_CHECKS := 974
 PRIME_NEED_CLOSURE_CAPTURE_GATE :=
 PRIME_NEED_CLOSURE_CAPTURE_STATS_GATE :=
 PRIME_EVAL_STACK_GATE :=
 PRIME_EVAL_STACK_STATS_GATE :=
 ifeq ($(ENABLE_PRIME_NEED_CLOSURE_CAPTURE),1)
-PRIME_NEED_ALGEBRA_CHECKS := 975
+PRIME_NEED_ALGEBRA_CHECKS := 983
 PRIME_NEED_CLOSURE_CAPTURE_GATE := test-prime-need-closure-capture
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 PRIME_NEED_CLOSURE_CAPTURE_STATS_GATE := test-prime-need-closure-capture-stats
@@ -812,10 +812,9 @@ endif
 ifeq ($(CETTA_PGO),generate)
 OPTIMIZE_CFLAGS += -fprofile-generate -fprofile-update=atomic
 else ifeq ($(CETTA_PGO),use)
-# GCC reports gaps in the counts (a callee the instrumented build inlined
-# away) as warnings without an option of their own; they stay warnings here.
-# The default build compiles the same sources with every warning an error.
-OPTIMIZE_CFLAGS += -fprofile-use -fprofile-partial-training -Wno-missing-profile -Wno-error
+# Correct inconsistent execution counts without demoting code diagnostics.
+# Untrained functions may lack profiles; structural mismatches remain errors.
+OPTIMIZE_CFLAGS += -fprofile-use -fprofile-partial-training -fprofile-correction -Wno-missing-profile
 else ifneq ($(CETTA_PGO),)
 $(error CETTA_PGO is generate or use)
 endif
@@ -1467,6 +1466,9 @@ RHOCALC_ABT_SUBSTITUTION_TEST_SRC = tests/support/test_rhocalc_abt_substitution.
 RHOCALC_ABT_SUBSTITUTION_TEST_OBJ = runtime/bootstrap/test_rhocalc_abt_substitution.$(BUILD_OBJ_TAG).o
 RHOCALC_ABT_SUBSTITUTION_TEST_BIN = runtime/test_rhocalc_abt_substitution-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 RHOCALC_ABT_SUBSTITUTION_TEST_LINK_OBJ = $(filter-out src/rhocalc_core.%,$(FALLBACK_EVAL_TEST_LINK_OBJ))
+RHOCALC_FRONTIER_TEST_SRC = tests/support/test_rhocalc_frontier.c
+RHOCALC_FRONTIER_TEST_OBJ = runtime/bootstrap/test_rhocalc_frontier.$(BUILD_OBJ_TAG).o
+RHOCALC_FRONTIER_TEST_BIN = runtime/test_rhocalc_frontier-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 RHOCALC_WORK_CENSUS_OBJ = runtime/bootstrap/test_rhocalc_work_census.$(BUILD_OBJ_TAG).o
 RHOCALC_WORK_CENSUS_BIN = runtime/test_rhocalc_work_census-$(BUILD_OBJ_TAG)
 LIB_PARSE_GLL_UTF8_FOREST_TEST_SRC = tests/support/test_lib_parse_gll_utf8_forest.c
@@ -2201,6 +2203,7 @@ ABT_BENCH_BIN = runtime/bench_abt-$(BUILD_OBJ_TAG)
 NAME_KEY_TEST_BIN = runtime/test_name_key-$(BUILD_OBJ_TAG)
 NAME_KEY_MUTATION_TEST_BIN = runtime/test_name_key_mutation-$(BUILD_OBJ_TAG)
 PRIME_NEED_TEST_BIN = runtime/test_prime_need-$(BUILD_OBJ_TAG)
+PRIME_NEED_AUDIT_TEST_BIN = runtime/test_prime_need_audit-$(BUILD_OBJ_TAG)
 PRIME_RECEIPT_GRAPH_ALLOC_TEST_BIN = runtime/test_prime_receipt_graph_alloc-$(BUILD_OBJ_TAG)
 PRIME_CONTEXT_MUTATION_TEST_BIN = runtime/test_prime_context_mutation-$(BUILD_OBJ_TAG)
 PRIME_NEED_UNIT_CPPFLAGS = -DCETTA_RUNTIME_STATS_NOOP=1
@@ -3587,6 +3590,7 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/need_demand_modes.metta \
 	tests/prime/atom_proc_roles.metta \
 	tests/prime/atom_proc_forwarding.metta \
+	tests/prime/declared_metatype_arguments.metta \
 	tests/prime/held_sequence_iteration.metta \
 	tests/prime/first_class_contexts.metta \
 	tests/prime/if_atom_data_boundary.metta \
@@ -3622,6 +3626,7 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/held_equality.metta \
 	tests/prime/held_patterns.metta \
 	tests/prime/held_value_pattern_inspection.metta \
+	tests/prime/read_value_operands.metta \
 	tests/prime/library_template_values.metta \
 	tests/prime/streaming_state_values.metta \
 	tests/prime/library_quote_declarations.metta \
@@ -3633,8 +3638,10 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/atom_result_type.metta \
 	tests/prime/computed_lambda_arguments.metta \
 	tests/prime/let_bound_learner.metta \
+	tests/prime/let_source_answers.metta \
 	tests/prime/data_head_patterns.metta \
 	tests/prime/lambda_names.metta \
+	tests/prime/binder_display_names.metta \
 	tests/prime/need_sequential_unification_refinement.metta \
 	tests/prime/relational_first_demand.metta \
 	tests/prime/first_answer_demand.metta \
@@ -4529,6 +4536,15 @@ test-all: test-binding-frame-relocation
 test-binding-frame-relocation: $(BINDING_FRAME_RELOCATION_TEST_BIN)
 	@$(call cetta_exec,./$(BINDING_FRAME_RELOCATION_TEST_BIN))
 
+CAPTURED_OWNER_VISIT_TEST_BIN = runtime/test_captured_owner_visit-$(BUILD_OBJ_TAG)
+$(CAPTURED_OWNER_VISIT_TEST_BIN): tests/test_captured_owner_visit.c src/match.h $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) -DCETTA_RUNTIME_STATS_IMPL=1 $(CFLAGS) -o $@ tests/test_captured_owner_visit.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(LDFLAGS)
+.PHONY: test-captured-owner-visit
+test-all: test-captured-owner-visit
+test-captured-owner-visit: $(CAPTURED_OWNER_VISIT_TEST_BIN)
+	@$(call cetta_exec,./$(CAPTURED_OWNER_VISIT_TEST_BIN))
+
 $(MATCH_WORKLIST_FRAMES_TEST_BIN): tests/test_match_worklist_frames.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) -DCETTA_TEST_HOOKS=1 -DCETTA_RUNTIME_STATS_IMPL=1 $(CFLAGS) -o $@ tests/test_match_worklist_frames.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(LDFLAGS)
@@ -4908,14 +4924,21 @@ test-root-substitution: $(ROOT_SUBSTITUTION_TEST_BIN)
 test-bindings-lookup-index test-petta-search-machine: test-root-substitution
 
 TERM_ORDER_GRAPH_TEST_BIN = runtime/test_term_order_graph-$(BUILD_OBJ_TAG)
-$(TERM_ORDER_GRAPH_TEST_BIN): tests/test_term_order_graph.c src/petta_semantics.c src/petta_semantics.h src/term_graph.c src/term_graph.h src/stats.h src/atom.c $(SYMBOL_STANDALONE_SRC) src/symbol.h src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/term_canon.c src/term_universe.c $(BUILD_CONFIG_HEADER)
+TERM_ORDER_GRAPH_HEAP_MUTANT = runtime/test_term_order_graph-heap-batch-$(BUILD_OBJ_TAG)
+$(TERM_ORDER_GRAPH_TEST_BIN) $(TERM_ORDER_GRAPH_HEAP_MUTANT): tests/test_term_order_graph.c src/petta_semantics.c src/petta_semantics.h src/term_graph.c src/term_graph.h src/stats.h src/atom.c $(SYMBOL_STANDALONE_SRC) src/symbol.h src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/term_canon.c src/term_universe.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) -DCETTA_RUNTIME_STATS_IMPL=1 $(CFLAGS) -ffunction-sections -fdata-sections -Wl,--gc-sections -o $@ tests/test_term_order_graph.c src/petta_semantics.c src/term_graph.c src/atom.c $(SYMBOL_STANDALONE_SRC) src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/term_canon.c src/term_universe.c $(LDFLAGS)
+	$(CC) $(CPPFLAGS) -DCETTA_RUNTIME_STATS_IMPL=1 $(CFLAGS) -ffunction-sections -fdata-sections -Wl,--gc-sections $(if $(filter $(TERM_ORDER_GRAPH_HEAP_MUTANT),$@),-DCETTA_TEST_MAPPED_BATCH_HEAP_REFERENCE=1 -Wl$(comma)--wrap=atom_deep_copy_terms_mapped,) -o $@ tests/test_term_order_graph.c src/petta_semantics.c src/term_graph.c src/atom.c $(SYMBOL_STANDALONE_SRC) src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/term_canon.c src/term_universe.c $(LDFLAGS)
 
 .PHONY: test-term-order-graph
 test-all: test-term-order-graph
-test-term-order-graph: $(TERM_ORDER_GRAPH_TEST_BIN)
+test-prime: test-term-order-graph
+test-term-order-graph: $(TERM_ORDER_GRAPH_TEST_BIN) $(TERM_ORDER_GRAPH_HEAP_MUTANT)
 	@$(call cetta_exec,./$(TERM_ORDER_GRAPH_TEST_BIN))
+	@status=0; output=$$($(call cetta_exec,./$(TERM_ORDER_GRAPH_HEAP_MUTANT)) 2>&1) || status=$$?; \
+	if [ "$$status" -ne 1 ] || ! printf '%s\n' "$$output" | grep -Fq 'FAIL: mapped batch retains transient heap session metadata'; then \
+		printf '%s\n' "$$output"; echo 'FAIL: mapped-batch heap mutation was not rejected by the metadata oracle'; exit 1; \
+	fi; \
+	echo 'PASS: mapped-batch heap mutation rejected by the independent metadata oracle'
 
 .PHONY: test-term-order-predicates
 TERM_MATCH_GRAPH_TEST_BIN = runtime/test_term_match_graph-$(BUILD_OBJ_TAG)
@@ -4964,7 +4987,7 @@ $(PATTERN_BINDINGS_TEST_BIN): tests/test_pattern_bindings.c src/petta_semantics.
 PATTERN_BINDINGS_PRIME_TEST_BIN = runtime/test_pattern_bindings_prime-$(BUILD_OBJ_TAG)
 $(PATTERN_BINDINGS_PRIME_TEST_BIN): tests/test_pattern_bindings.c src/match.h src/prime_semantics.h $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_PATTERN_ACTUAL_PRIME_HOOKS=1 -o $@ tests/test_pattern_bindings.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS) $(LDFLAGS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_PATTERN_ACTUAL_PRIME_HOOKS=1 -o $@ tests/test_pattern_bindings.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS) $(LDFLAGS) -Wl,--wrap=calloc -Wl,--wrap=malloc
 
 .PHONY: test-pattern-bindings
 test-all: test-pattern-bindings
@@ -5771,6 +5794,15 @@ test-name-key: $(NAME_KEY_TEST_BIN) $(NAME_KEY_MUTATION_TEST_BIN)
 $(PRIME_NEED_TEST_BIN): tests/test_prime_need.c $(PRIME_NEED_UNIT_SRC) $(PRIME_NEED_UNIT_HEADERS) $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(PRIME_NEED_UNIT_CPPFLAGS) $(CFLAGS) -o $@ tests/test_prime_need.c $(PRIME_NEED_UNIT_SRC) $(LDFLAGS)
+
+$(PRIME_NEED_AUDIT_TEST_BIN): tests/test_prime_need_audit.c $(PRIME_NEED_UNIT_SRC) $(PRIME_NEED_UNIT_HEADERS) $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(PRIME_NEED_UNIT_CPPFLAGS) $(CFLAGS) -o $@ tests/test_prime_need_audit.c $(PRIME_NEED_UNIT_SRC) $(LDFLAGS)
+
+.PHONY: test-prime-need-audit
+test-all: test-prime-need-audit
+test-prime-need-audit: $(PRIME_NEED_AUDIT_TEST_BIN)
+	@$(call cetta_exec,./$(PRIME_NEED_AUDIT_TEST_BIN))
 
 $(PRIME_CONTEXT_MUTATION_TEST_BIN): tests/test_prime_need.c $(PRIME_NEED_UNIT_SRC) $(PRIME_NEED_UNIT_HEADERS) $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
@@ -8157,6 +8189,7 @@ DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d) \
 	$(PRIME_READER_AST_ORACLE_OBJ:.o=.d) \
 	$(PAYLOAD_MAP_CAPACITY_TEST_OBJ:.o=.d) \
 	$(RHOCALC_ABT_SUBSTITUTION_TEST_OBJ:.o=.d) \
+	$(RHOCALC_FRONTIER_TEST_OBJ:.o=.d) \
 	$(RHOCALC_WORK_CENSUS_OBJ:.o=.d) \
 	$(OSLF_NATIVE_TYPE_VM_V1_OBJ:.o=.d) \
 	$(OSLF_NATIVE_TYPE_VM_V1_TEST_OBJ:.o=.d) \
@@ -9218,6 +9251,24 @@ $(RHOCALC_ABT_SUBSTITUTION_TEST_BIN): $(RHOCALC_ABT_SUBSTITUTION_TEST_OBJ) $(RHO
 $(RHOCALC_ABT_SUBSTITUTION_TEST_OBJ): $(RHOCALC_ABT_SUBSTITUTION_TEST_SRC) src/rhocalc_core.c src/segmented_array.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
+
+$(RHOCALC_FRONTIER_TEST_OBJ): $(RHOCALC_FRONTIER_TEST_SRC) src/rhocalc_core.c src/rhocalc_frontier.inc $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
+
+$(RHOCALC_FRONTIER_TEST_BIN): $(RHOCALC_FRONTIER_TEST_OBJ) $(RHOCALC_ABT_SUBSTITUTION_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-rhocalc-frontier.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+.PHONY: test-rhocalc-frontier
+test-rhocalc-frontier: $(RHOCALC_FRONTIER_TEST_BIN)
+	@./$(RHOCALC_FRONTIER_TEST_BIN)
+
+test-rhocalc: test-rhocalc-frontier
 
 $(RHOCALC_WORK_CENSUS_OBJ): $(RHOCALC_ABT_SUBSTITUTION_TEST_SRC) src/rhocalc_core.c src/segmented_array.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
@@ -23979,6 +24030,15 @@ runtime/test_prime_he_guest_boundary-$(BUILD_OBJ_TAG): tests/support/test_prime_
 
 test-prime-all: test-prime-he-guest-boundary
 
+test-prime-hosted-guest-registry: runtime/test_prime_hosted_guest_registry-$(BUILD_OBJ_TAG)
+	@"$<"
+
+runtime/test_prime_hosted_guest_registry-$(BUILD_OBJ_TAG): tests/test_prime_hosted_guest_registry.c src/eval.c $(BUILD_CONFIG_HEADER) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_prime_hosted_guest_registry.c \
+		$(filter-out src/eval.$(BUILD_OBJ_TAG).o src/eval.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(LDFLAGS)
+
+test-prime-all: test-prime-hosted-guest-registry
+
 test-prime-crossdialect: $(BIN)
 	@python3 scripts/check_prime_crossdialect.py "$(abspath $(BIN))"
 
@@ -24352,8 +24412,8 @@ test-prime-native-proof-search-mutations: $(BIN)
 	done; \
 	for mutation in native-check-disabled undetermined-accepted solved-slot-disabled result-executed; do \
 		case "$$mutation" in \
-			result-executed) source=src/grounded.c; \
-				objects="$(filter-out $(filter src/grounded.%,$(OBJ)),$(OBJ))";; \
+			result-executed) source=src/eval.c; \
+				objects="$(filter-out $(filter src/eval.%,$(OBJ)),$(OBJ))";; \
 			*) source=src/he_typing.c; \
 				objects="$(filter-out $(filter src/he_typing.%,$(OBJ)),$(OBJ))";; \
 		esac; \
@@ -24368,10 +24428,17 @@ test-prime-native-proof-search-mutations: $(BIN)
 			*) fixture=tests/prime/scoped/native_dependent_search;; \
 		esac; \
 		status=0; \
-		$(call cetta_exec,./$$mutation_dir/$$mutation) --lang prime "$$fixture.metta" \
+		timeout $(PRIME_COMPLETION_TIMEOUT) $(call cetta_exec,./$$mutation_dir/$$mutation) --lang prime "$$fixture.metta" \
 			>"$$mutation_dir/$$mutation.out" 2>&1 || status=$$?; \
 		if [ $$status -ne 0 ]; then \
 			echo "FAIL: $$mutation failed to execute (status $$status)"; exit 1; \
+		fi; \
+		if [ "$$mutation" = result-executed ]; then \
+			baseline_hits=$$(grep -c '^RESULT_PACKET_EXECUTED$$' "$$mutation_dir/baseline-native_dependent_search.out" || true); \
+			mutant_hits=$$(grep -c '^RESULT_PACKET_EXECUTED$$' "$$mutation_dir/result-executed.out" || true); \
+			if [ "$$baseline_hits" -ne 1 ] || [ "$$mutant_hits" -le "$$baseline_hits" ]; then \
+				echo 'FAIL: result-execution fault did not activate the returned packet'; exit 1; \
+			fi; \
 		fi; \
 		if cmp -s "$$fixture.expected" "$$mutation_dir/$$mutation.out"; then \
 			echo "FAIL: $$mutation survived proof-search controls"; exit 1; \
@@ -25294,6 +25361,56 @@ test-prime-route-agreement: $(BIN)
 	echo "Prime route agreement: $$pass passed, $$fail failed"; \
 	[ $$fail -eq 0 ]
 
+# Experimental: what explicit evaluation does with a residual, a value
+# returned in expression form (`--prime-eval-residuals answered|completed|
+# carried`, or the same pragma).  The fixture runs under each mode on every
+# route; the pragma spelling switches mid-file; an HE profile refuses the
+# flag.  `answered` is the default.
+PRIME_EVAL_RESIDUAL_FIXTURES = tests/prime/eval_residuals/residual_modes.metta
+.PHONY: test-prime-eval-residuals
+test-prime: test-prime-eval-residuals
+test-prime-eval-residuals: $(BIN)
+	@pass=0; fail=0; \
+	for f in $(PRIME_EVAL_RESIDUAL_FIXTURES); do \
+		for mode in answered completed carried; do \
+			exp="$${f%.metta}.$$mode.expected"; \
+			for route in default reference fuel; do \
+				flags=""; envs=""; \
+				if [ $$route = fuel ]; then flags="--fuel 1000000"; fi; \
+				if [ $$route = reference ]; then envs="CETTA_PRIME_RELATIONAL_PLAN_REFERENCE=1"; fi; \
+				result=$$(env $$envs timeout $(PRIME_COMPLETION_TIMEOUT) $(CETTA_BIN_INVOKE) --lang prime \
+					--prime-eval-residuals $$mode $$flags "$$f" 2>&1); \
+				status=$$?; \
+				if [ $$status -eq 0 ] && [ "$$result" = "$$(cat "$$exp")" ]; then \
+					pass=$$((pass + 1)); \
+				else \
+					echo "FAIL: $$f under $$mode on the $$route route (exit $$status)"; \
+					diff <(cat "$$exp") <(echo "$$result") | head -20; \
+					fail=$$((fail + 1)); \
+				fi; \
+			done; \
+		done; \
+	done; \
+	f=tests/prime/eval_residuals/residual_modes_pragma.metta; \
+	result=$$(timeout $(PRIME_COMPLETION_TIMEOUT) $(CETTA_BIN_INVOKE) --lang prime "$$f" 2>&1); \
+	if [ $$? -eq 0 ] && [ "$$result" = "$$(cat "$${f%.metta}.expected")" ]; then \
+		pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: $$f"; \
+		diff <(cat "$${f%.metta}.expected") <(echo "$$result") | head -20; \
+		fail=$$((fail + 1)); \
+	fi; \
+	if $(CETTA_BIN_INVOKE) --lang he --profile extended \
+		--prime-eval-residuals answered $(PRIME_EVAL_RESIDUAL_FIXTURES) \
+		>/dev/null 2>&1; then \
+		echo "FAIL: the Prime residual switch changed an HE profile"; \
+		fail=$$((fail + 1)); \
+	else \
+		pass=$$((pass + 1)); \
+	fi; \
+	echo "Prime eval residual modes: $$pass passed, $$fail failed"; \
+	[ $$fail -eq 0 ]
+
 # A connective's absorbed operand is never evaluated without the explicit
 # Prime stack either: the connective fixtures agree on every route of the
 # build with ENABLE_PRIME_EVAL_STACK=0.
@@ -25402,7 +25519,7 @@ test-prime-capability-opening: $(BIN) $(PRIME_CAPABILITY_OPEN_TEST_BIN)
 $(PRIME_CAPABILITY_OPEN_TEST_BIN): tests/test_prime_capability_opening.c src/eval.c $(BUILD_CONFIG_HEADER) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_prime_capability_opening.c \
-		$(filter-out src/eval.$(BUILD_OBJ_TAG).o src/eval.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS) $(LDFLAGS)
+		$(filter-out src/eval.$(BUILD_OBJ_TAG).o src/eval.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS) $(LDFLAGS) -Wl,--wrap=calloc,--wrap=cetta_library_call_native_prepared_view,--wrap=cetta_library_call_native
 
 # The evaluator paths Prime shares with PeTTa and HE are exercised here too,
 # so a change on those paths cannot regress Prime unseen: the conformance and
@@ -35073,7 +35190,7 @@ test-prime-compiled-reader-v1: test-prime-compiled-reader-direct-generated-v1 te
 	@result=$$(./$(PRIME_COMPILED_READER_TEST_BIN) 2>&1); \
 	printf '%s\n' "$$result"; \
 	if [ "$$(printf '%s\n' "$$result" | \
-		grep -Fxc '(PrimeCompiledReaderV1Summary 206 206 0 cases 85)')" -ne 1 ]; then \
+		grep -Fxc '(PrimeCompiledReaderV1Summary 211 211 0 cases 85)')" -ne 1 ]; then \
 		echo "FAIL: compiled Prime reader exact differential summary absent or duplicated"; \
 		exit 1; \
 	fi; \
@@ -51191,7 +51308,7 @@ $(NATIVE_PARENT_CHECKPOINT_TEST_BIN): $(NATIVE_PARENT_CHECKPOINT_TEST_SOURCE) te
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(NATIVE_PARENT_CHECKPOINT_TEST_SOURCE) \
 		$(if $(filter 1,$(ENABLE_PRIME_EVAL_STACK)),$(filter-out src/eval.$(BUILD_OBJ_TAG).o src/eval.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ)),$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS) $(LDFLAGS) \
-		$(if $(filter 1,$(ENABLE_PRIME_EVAL_STACK)),-Wl$(comma)--wrap=free -Wl$(comma)--wrap=calloc,)
+		$(if $(filter 1,$(ENABLE_PRIME_EVAL_STACK)),-Wl$(comma)--wrap=free -Wl$(comma)--wrap=calloc -Wl$(comma)--wrap=malloc -Wl$(comma)--wrap=cetta_fallible_malloc -Wl$(comma)--wrap=cetta_fallible_calloc -Wl$(comma)--wrap=cetta_fallible_realloc -Wl$(comma)--wrap=arena_retain_owner_with_storage,)
 .PHONY: test-native-parent-checkpoint
 test-native-parent-checkpoint: $(NATIVE_PARENT_CHECKPOINT_TEST_BIN)
 	@$(call cetta_exec,./$(NATIVE_PARENT_CHECKPOINT_TEST_BIN))
@@ -51214,7 +51331,9 @@ test-native-control-leases: $(NATIVE_CONTROL_LEASES_TEST_BIN)
 	@$(call cetta_exec,./$(NATIVE_CONTROL_LEASES_TEST_BIN))
 # The refusal controls must reject each faulty rule: a reader that takes a
 # refused call for a pause (it polls a state that nothing can change), and a
-# fallback that reruns a demand after a row or a world effect was observed.
+# fallback that reruns a demand after a row or a world effect was observed,
+# a nested refusal that terminates its owner, and a refusal masking a later
+# independent owner failure.
 # Each case names the failed check that must report it.
 NATIVE_CONTROL_LEASES_REFUSAL_MUTANT = runtime/test-native-control-leases-refusal-$(BUILD_OBJ_TAG)
 .PHONY: test-native-control-leases-refusal-mutation
@@ -51223,7 +51342,14 @@ test-native-control-leases-refusal-mutation: tests/test_native_control_leases.c 
 	@mkdir -p runtime
 	@set -eu; \
 	for case in 'REFUSAL_PAUSE:polls\.stalled' 'FALLBACK_AFTER_ROWS:demand\.driver\.top==frame' \
-		'FALLBACK_AFTER_EFFECTS:world_effects && slot->source->call_refusals && episode\.interrupted'; do \
+		'FALLBACK_AFTER_EFFECTS:world_effects && slot->source->call_refusals && episode\.interrupted' \
+		'REFUSAL_DEPENDENCY_TERMINAL:same && correct' \
+		'REFUSAL_MASKS_OWNER:restricted\.completion==reason' \
+		'CALL_REFUSAL_REQUEUE:work && parent && pending' \
+		'CALL_RETRY_PREFLIGHT_BYPASS:denied && retry->continuation.payload==work' \
+		'CALL_REFUSAL_FLAG_RESET:failed->agenda->failed' \
+		'SERVICE_UNPAID_ROW_CAPACITY:buffered && prime_native_control_closed' \
+		'BORROWED_PERMIT_SHORTCUT:!prime_eval_check_call_permits(space,call)'; do \
 		mutation=$${case%%:*}; expected=$${case#*:}; \
 		binary=$(NATIVE_CONTROL_LEASES_REFUSAL_MUTANT)-$$mutation; \
 		$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_PRIME_NEED_MUTATION_$$mutation=1 \
@@ -51808,7 +51934,7 @@ test-petta-pattern-structure: $(BIN)
 ARENA_RETAINED_OWNERSHIP_TEST_BIN = runtime/test_arena_retained_ownership-$(BUILD_OBJ_TAG)
 $(ARENA_RETAINED_OWNERSHIP_TEST_BIN): tests/test_arena_retained_ownership.c src/atom.c src/atom.h src/binding/frame_identity.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) -DCETTA_RUNTIME_STATS_NOOP=1 $(CFLAGS) -o $@ tests/test_arena_retained_ownership.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/term_canon.c $(LDFLAGS)
+	$(CC) $(CPPFLAGS) -DCETTA_RUNTIME_STATS_NOOP=1 $(CFLAGS) -o $@ tests/test_arena_retained_ownership.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/term_canon.c $(LDFLAGS) -Wl,--wrap=malloc -Wl,--wrap=calloc -Wl,--wrap=realloc
 
 .PHONY: test-arena-retained-ownership
 test-all: test-arena-retained-ownership
@@ -52303,7 +52429,7 @@ test-prime-interaction-commit-protocol: tests/test_interaction_commit_protocol.c
 	@for checked in 0 1; do \
 		$(CC) $(filter-out -Dia_commit_run_CHECKED=%,$(CPPFLAGS)) -Dia_commit_run_CHECKED=$$checked $(CFLAGS) \
 			-o $(INTERACTION_COMMIT_PROTOCOL_TEST_BIN)-$$checked tests/test_interaction_commit_protocol.c \
-			$(filter-out src/interaction_core.$(BUILD_OBJ_TAG).o src/interaction_core.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS) $(LDFLAGS) && \
+			$(filter-out src/interaction_core.$(BUILD_OBJ_TAG).o src/interaction_core.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS) $(LDFLAGS) -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc && \
 		$(call cetta_exec,./$(INTERACTION_COMMIT_PROTOCOL_TEST_BIN)-$$checked) || exit 1; \
 	done
 
@@ -52633,6 +52759,14 @@ test-incremental-compression: test-ic-reference test-ic-templates test-ic-archiv
 test-petta-semantics: test-petta-corrected-stable
 test-petta-corrected-stable: $(BIN)
 	python3 tests/support/check_petta_corrected_stable.py $(BIN)
+
+# A census rechecks C when its reader changes. Ordinary C objects depend on
+# their native inputs; source updates run fresh identity builds separately.
+ifeq ($(CESTA_BUILD),1)
+ifeq ($(CESTA_READ_WARNINGS),1)
+$(OBJ) $(STAGE0_OBJ) $(PARSER_COMPILER_CATALOG_OBJ): $(CESTA)
+endif
+endif
 
 .PHONY: test-petta-activation-source-budget
 test-petta-activation-source-budget: $(BIN)

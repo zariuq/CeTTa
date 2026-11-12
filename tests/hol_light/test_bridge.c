@@ -216,6 +216,67 @@ int main(int argc, char **argv) {
     printf("HolBridgeProofDag nodes=%zu source-bytes=%zu output-arena-bytes=%zu query-ms=%.3f\n",
            node_count, source_bytes, publication_bytes, elapsed_ms);
 
+    SECTION("immutable checking environments and nested theory changes");
+    Atom *checkpoint = call("checkpoint", (Atom *[]){k}, 1);
+    CHECK(handle(checkpoint, "hol-env"));
+    Atom *one_row = atom_expr(&arena, (Atom *[]){
+        atom_expr(&arena, (Atom *[]){sym("HolNode"), atom_int(&arena, 7),
+                                   refl_request, empty, claim}, 5)}, 1);
+    Atom *seven = atom_int(&arena, 7);
+    Atom *at_old = call("check-dag-at", (Atom *[]){checkpoint, one_row, seven}, 3);
+    CHECK(handle(at_old, "hol-thm"));
+    Atom *at_admitted = call("admits-at", (Atom *[]){checkpoint, at_old}, 2);
+    CHECK(at_admitted && at_admitted->kind == ATOM_GROUNDED &&
+          at_admitted->ground.gkind == GV_BOOL && at_admitted->ground.bval);
+    CHECK(atom_is_symbol(call("new-constant", (Atom *[]){k, str("later"), b}, 3), "hol:ok"));
+    Atom *later = two("c", str("later"), b);
+    Atom *later_value = call("term", (Atom *[]){k, later}, 2);
+    CHECK(handle(later_value, "hol-term"));
+    Atom *new_row = atom_expr(&arena, (Atom *[]){
+        atom_expr(&arena, (Atom *[]){sym("HolNode"), seven, one("REFL", later), empty}, 4)}, 1);
+    CHECK(handle(call("check-dag", (Atom *[]){k, new_row, seven}, 3), "hol-thm"));
+    CHECK(tag(call("check-dag-at", (Atom *[]){checkpoint, new_row, seven}, 3), "hol:refused"));
+    /* A sealed term is authentic, but not thereby available in an older
+     * environment. It cannot bypass the declaration-history check. */
+    Atom *borrowed_row = atom_expr(&arena, (Atom *[]){
+        atom_expr(&arena, (Atom *[]){sym("HolNode"), seven, one("REFL", later_value), empty}, 4)}, 1);
+    CHECK(tag(call("check-dag-at", (Atom *[]){checkpoint, borrowed_row, seven}, 3), "hol:refused"));
+    CHECK(handle(call("check-dag-at", (Atom *[]){checkpoint, one_row, seven}, 3), "hol-thm"));
+    /* Checking the old world must leave the new current world intact. */
+    CHECK(handle(call("term", (Atom *[]){k, later}, 2), "hol-term"));
+    Atom *other_kernel = call("kernel", NULL, 0);
+    Atom *other_env = call("checkpoint", (Atom *[]){other_kernel}, 1);
+    CHECK(tag(call("admits-at", (Atom *[]){other_env, at_old}, 2), "hol:refused"));
+    CHECK(tag(call("check-dag-at", (Atom *[]){sym("forged-environment"), one_row, seven}, 3), "hol:error"));
+
+    SECTION("equal surface names do not identify different definition histories");
+    CHECK(atom_is_symbol(call("restore", (Atom *[]){k, checkpoint}, 2), "hol:ok"));
+    Atom *branch_name = two("v", str("branch_identity"), bb);
+    Atom *eq_bb_type = atom_expr(&arena, (Atom *[]){sym("T"), str("fun"), bb,
+        atom_expr(&arena, (Atom *[]){sym("T"), str("fun"), bb, b}, 4)}, 4);
+    Atom *define_head = two("A", two("c", str("="), eq_bb_type), branch_name);
+    CHECK(handle(call("new-definition", (Atom *[]){k, two("A", define_head, two("L", x, x))}, 2), "hol-thm"));
+    Atom *left_env = call("checkpoint", (Atom *[]){k}, 1);
+    Atom *branch_constant = two("c", str("branch_identity"), bb);
+    Atom *left_term = call("term", (Atom *[]){k, branch_constant}, 2);
+    CHECK(handle(left_term, "hol-term"));
+    CHECK(atom_is_symbol(call("restore", (Atom *[]){k, checkpoint}, 2), "hol:ok"));
+    CHECK(handle(call("new-definition", (Atom *[]){k,
+        two("A", define_head, two("L", x, eq_xx))}, 2), "hol-thm"));
+    Atom *right_env = call("checkpoint", (Atom *[]){k}, 1);
+    Atom *branch_rows = atom_expr(&arena, (Atom *[]){
+        atom_expr(&arena, (Atom *[]){sym("HolNode"), seven, one("REFL", branch_constant), empty}, 4)}, 1);
+    Atom *left_proof = call("check-dag-at", (Atom *[]){left_env, branch_rows, seven}, 3);
+    Atom *right_proof = call("check-dag-at", (Atom *[]){right_env, branch_rows, seven}, 3);
+    CHECK(handle(left_proof, "hol-thm") && handle(right_proof, "hol-thm"));
+    Atom *right_admits_left = call("admits-at", (Atom *[]){right_env, left_proof}, 2);
+    CHECK(right_admits_left && right_admits_left->kind == ATOM_GROUNDED &&
+          right_admits_left->ground.gkind == GV_BOOL && !right_admits_left->ground.bval);
+    Atom *branch_borrow = atom_expr(&arena, (Atom *[]){
+        atom_expr(&arena, (Atom *[]){sym("HolNode"), seven, one("REFL", left_term), empty}, 4)}, 1);
+    CHECK(tag(call("check-dag-at", (Atom *[]){right_env, branch_borrow, seven}, 3), "hol:refused"));
+    CHECK(handle(call("check-dag-at", (Atom *[]){left_env, branch_borrow, seven}, 3), "hol-thm"));
+
     SECTION("shared sealed session across independent calling arenas");
     pthread_t threads[4];
     ConcurrentCheck work[4];

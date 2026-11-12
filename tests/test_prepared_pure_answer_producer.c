@@ -2,9 +2,9 @@
 #include "parser.h"
 #include "petta_semantics.h"
 #include "prepared_pure_machine.h"
+#include "stats.h"
 #include "open_equation_machine.h"
 #include "petta_program.h"
-#include "stats.h"
 #include "symbol.h"
 
 #include <assert.h>
@@ -160,9 +160,32 @@ static void test_need_pattern_admission(void) {
               }
             }
         }
+
+        /* Without the entry-value certificate a rigid Need comparison must
+         * retain its demand. A fresh binder still consumes only the value
+         * produced by its own structural source. */
+        CettaPreparedPureProgram *uncertified =
+            cetta_prepared_pure_program_compile_closed(
+                &fixture.space, parse(&fixture.source, call_text),
+                CETTA_GSLT_PURE_CALL_CALL_BY_NEED,
+                atom_bool, atom_expr,
+                cetta_prepared_pure_constructs_expression_always,
+                NULL, NULL, NULL, NULL, NULL, false, true,
+                (CettaMatchDecisionSemanticIdentity){0}, NULL);
+        if (bound) {
+            assert(!uncertified);
+        } else {
+            assert(uncertified);
+            Atom *value = NULL;
+            assert(cetta_prepared_pure_program_execute_closed(
+                uncertified, &fixture.scratch, 0u, &value));
+            assert(value && atom_eq(value,
+                parse(&fixture.source, "two")));
+        }
+        cetta_prepared_pure_program_free(uncertified);
         destroy(&fixture);
     }
-    puts("prepared Need patterns: 6 admission controls passed");
+    puts("prepared Need patterns: 8 readiness controls passed");
 }
 
 static bool interrupt(void *context) {
@@ -1694,7 +1717,8 @@ static CettaPreparedPureExpressionViewState zero_view(
 }
 
 static CettaPreparedPureExpressionViewState case_view(
-    Space *space, const Atom *expression, const CettaComputationPlan *computation,
+    Space *space, const Atom *expression,
+    const CettaComputationPlan *computation,
     CettaPreparedPureExpressionView *view) {
     if (expression && expression->kind == ATOM_EXPR &&
         expression->expr.len == 3u &&
@@ -2933,7 +2957,7 @@ static void test_owned_bounded_cursor_peer_service(void) {
     destroy(&service);
 }
 
-static void test_owned_final_authority_revalidation(void) {
+static void test_owned_final_survives_authority_change(void) {
     const char *equations[] = {"(= (owned-final 0) 0)"};
     for (unsigned during_accept = 0u; during_accept < 2u; ++during_accept) {
         Fixture fixture;
@@ -3504,7 +3528,7 @@ static CettaPreparedPureProgram *compile_result(Fixture *fixture,
         NULL, NULL, counted_zero_view, NULL, NULL, values, true,
         (CettaMatchDecisionSemanticIdentity){
             .compiler_identity = cetta_match_decision_compiler_identity(),
-        });
+        }, NULL);
 }
 
 static void test_shared_result_preparation(void) {
@@ -3879,7 +3903,7 @@ static void test_temporary_space_lifetime(void) {
         uint64_t identity = space_instance_id(space);
         void *pin = prepared ? NULL : space_lifetime_pin(space);
         CettaPreparedPureAnswerCursor *cursor = NULL;
-        CettaPreparedPureProgram *retained_program = NULL;
+        CettaPreparedPureProgram *cursor_program = NULL;
         if (prepared) {
             assert(space_admit_atom(space, &fixture.source,
                                     parse(&fixture.source, "(= (f) ok)")));
@@ -3891,13 +3915,14 @@ static void test_temporary_space_lifetime(void) {
                     NULL, NULL, NULL, NULL, NULL, true, true,
                     (CettaMatchDecisionSemanticIdentity){0}, NULL);
             assert(program);
-            retained_program = program;
             CettaPreparedPureAnswerCursorOptions options = {
                 .limits = fixture.limits,
                 .unmatched_call = CETTA_PREPARED_PURE_UNMATCHED_FAILS,
             };
             cursor = cetta_prepared_pure_answer_cursor_open(program, &options);
             assert(cursor);
+            /* The cursor keeps its own reference to the program. */
+            cursor_program = program;
             cetta_prepared_pure_program_free(program);
         } else {
             assert(pin);
@@ -3909,9 +3934,12 @@ static void test_temporary_space_lifetime(void) {
         assert(fixture.universe.root_provider_len > providers);
         assert(space_instance_id(space) == identity);
         if (prepared) {
-            Fixture retained_fixture = fixture;
-            retained_fixture.program = retained_program;
-            expect_answer(&retained_fixture, cursor, "ok");
+            /* The storage census compares the cursor with the program it
+             * runs, which here is the temporary space's, not the fixture's. */
+            CettaPreparedPureProgram *fixture_program = fixture.program;
+            fixture.program = cursor_program;
+            expect_answer(&fixture, cursor, "ok");
+            fixture.program = fixture_program;
             cetta_prepared_pure_answer_cursor_close(cursor);
         } else {
             space_lifetime_unpin(pin);
@@ -4067,9 +4095,6 @@ int main(void) {
     var_intern_init(&variables);
     g_var_intern = &variables;
     eval_set_library_context(NULL);
-    test_callee_cursor_entry_admission();
-    test_temporary_space_lifetime();
-    test_temporary_space_cycles();
     test_optional_register_worker();
     test_optional_declines_alternatives_and_faults();
     test_optional_retained_prefix_and_delivery();
@@ -4080,6 +4105,8 @@ int main(void) {
 #if CETTA_MANAGED_SYMBOLS
     test_spelled_value_across_prepared_choices();
 #endif
+    test_temporary_space_lifetime();
+    test_temporary_space_cycles();
     test_completed_occurrences();
     test_intrinsic_boolean_representation();
     test_intrinsic_result_roles();
@@ -4140,7 +4167,8 @@ int main(void) {
     test_owned_bounded_cursor_pending_reply();
     test_owned_bounded_cursor_silent_loop();
     test_owned_bounded_cursor_peer_service();
-    test_owned_final_authority_revalidation();
+    test_callee_cursor_entry_admission();
+    test_owned_final_survives_authority_change();
     test_owned_cursor_authority();
     test_owned_shared_payload();
     test_lexical_native_identifier_return();

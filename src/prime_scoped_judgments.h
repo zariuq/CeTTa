@@ -134,7 +134,11 @@ Atom *prime_scoped_typed_query_judge(Arena *a, Space *space, Atom *judgment,
  * space extended with what they give: the type `F@occurrence`, one
  * occurrence `F@x1@...@xn` for each stored atom (`#k` after the k-th copy
  * of one atom, from 2), and the argument maps `F@argi` with one equation
- * for each stored atom.  The extension is rebuilt when the space changes. */
+ * for each stored atom. The extension is a borrowed cached view, rebuilt
+ * when its source or that source's contents change. In a concurrent execution
+ * scope the caller retains the shared-transition guard through the entire
+ * use, including typing, elaboration and result construction. A getter-only
+ * guard does not keep the returned view stable. */
 Space *prime_scoped_stored_space(Arena *a, Space *space);
 
 /* Constructors of a datatype declared with parameters, written without

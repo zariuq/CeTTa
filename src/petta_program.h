@@ -394,6 +394,12 @@ bool petta_rule_snapshot_lease(Space *space, SymbolId head, unsigned admitted_fo
 typedef struct PettaProgram PettaProgram;
 typedef struct PettaDeclarationBlock PettaDeclarationBlock;
 
+/* A program-owned immutable plan remains at this address until program
+ * retirement, so it may serve as a semantic cache identity. Caller-owned
+ * and transient plans deliberately fail this test. */
+bool petta_program_retains_plan(
+    const PettaProgram *program, const PettaPlanNode *plan);
+
 /* Intern a normalized computation using already established source roles.
  * Children are plans owned by this program. This neither looks up a
  * declaration nor reclassifies Atom syntax. */

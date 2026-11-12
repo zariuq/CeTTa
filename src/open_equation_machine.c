@@ -7905,8 +7905,6 @@ struct CettaOpenEquationCursor {
      * under the authorities and the space program of the lookup. */
     struct OemAbsentHead *absent;
     uint32_t absent_len, absent_cap;
-    uint64_t *version_epochs;
-    uint32_t version_epoch_cap;
     uint32_t poll;
     CettaOpenEquationHandoff handoff;
     /* The depth bound failed an activation whose head matched. */
@@ -12114,11 +12112,12 @@ static __attribute__((noinline)) OemRun oem_applied_pure_step(
         const CettaOpenEquationProgram *program, Atom **locals,
         const OemStep *step, Atom *head, Atom *const *operands, uint32_t arity,
         Atom **value_out) {
-    if (!oem_applied_pure(cursor, program, atom_symbol_current_id(head), arity))
+    SymbolId head_id = atom_symbol_current_id(head);
+    if (!oem_applied_pure(cursor, program, head_id, arity))
         return OEM_RUN_DECLINED;
     Atom *size = NULL;
     if (arity == 1u && oem_sequence_size_value(
-            cursor, atom_symbol_current_id(head), operands[0], &size)) {
+            cursor, head_id, operands[0], &size)) {
         if (!size)
             return OEM_RUN_HANDOFF;
         OemUnify unified = oem_meet(cursor, program, locals, step, size);
@@ -13279,7 +13278,12 @@ static inline __attribute__((always_inline)) OemRun oem_pure_apply(
         if (!result)
             return OEM_RUN_HANDOFF;
     } else {
-        if (cursor->runtime.grounded_call) {
+        /* A host runs the native under its language's rules and completes
+         * the call: its value, an error value included, is the result.
+         * Declining that error would run the native a second time to find
+         * it again. */
+        bool hosted = cursor->runtime.grounded_call != NULL;
+        if (hosted) {
             /* A withdrawing HE consumer must leave undecided work to its
              * host before entry. A completed callback cannot be replayed
              * merely because its returned value is an error. */
@@ -13307,7 +13311,7 @@ static inline __attribute__((always_inline)) OemRun oem_pure_apply(
         } else {
             result = grounded_dispatch(&cursor->region, head, args, count);
         }
-        if (!result || (!cursor->runtime.grounded_call && atom_is_error(result)))
+        if (!result || (!hosted && atom_is_error(result)))
             return OEM_RUN_DECLINED;
         if (atom_is_petta_no_result(result))
             return OEM_RUN_FAILED;
@@ -13852,12 +13856,14 @@ static bool oem_template_may_be_call(const CettaOpenEquationProgram *program,
         head = first->literal;
     }
     if (!head || head->kind != ATOM_SYMBOL || !program->space ||
-        !space_equations_may_match_known_head(program->space, atom_symbol_current_id(head)))
+        !space_equations_may_match_known_head(
+            program->space, atom_symbol_current_id(head)))
         return false;
     SpaceEquationCursor cursor;
     SpaceEquationOccurrenceId id;
     size_t equations = 0u;
-    if (!space_equation_cursor_init(program->space, atom_symbol_current_id(head), &cursor))
+    if (!space_equation_cursor_init(
+            program->space, atom_symbol_current_id(head), &cursor))
         return false;
     for (;;) {
         SpaceEquationCursorStep next = space_equation_cursor_next(&cursor, &id);
@@ -18921,7 +18927,8 @@ static inline bool oem_stored_symbol_meets(const TermUniverse *universe,
     const CettaTermHdr *hdr = tu_hdr_stored(universe, part);
     if (!hdr || hdr->tag != ATOM_SYMBOL)
         return false;
-    *out = hdr->sym_or_head == atom_symbol_current_id(term) ? OEM_UNIFY_OK : OEM_UNIFY_FAIL;
+    *out = hdr->sym_or_head == atom_symbol_current_id(term)
+        ? OEM_UNIFY_OK : OEM_UNIFY_FAIL;
     return true;
 }
 
@@ -21261,7 +21268,6 @@ void cetta_open_equation_cursor_storage_census(const CettaOpenEquationCursor *cu
     cetta_storage_array(census, cursor->resolve_results, cursor->resolve_result_cap, sizeof(*cursor->resolve_results), 0u);
     cetta_storage_array(census, cursor->absent, cursor->absent_cap, sizeof(*cursor->absent), 0u);
     cetta_storage_array(census, cursor->versions, cursor->version_cap, sizeof(*cursor->versions), 0u);
-    cetta_storage_array(census, cursor->version_epochs, cursor->version_epoch_cap, sizeof(*cursor->version_epochs), 0u);
     cetta_storage_array(census, cursor->fresh_index.slots, cursor->fresh_index.cap, sizeof(*cursor->fresh_index.slots), 0u);
     cetta_storage_array(census, cursor->query_index.slots, cursor->query_index.cap, sizeof(*cursor->query_index.slots), 0u);
     size_t query_room = cursor->query_var_count ? cursor->query_var_count : 1u;
@@ -21270,7 +21276,7 @@ void cetta_open_equation_cursor_storage_census(const CettaOpenEquationCursor *cu
     size_t row_room = cursor->space_row_cap ? cursor->space_row_cap : 1u;
     cetta_storage_array(census, cursor->space_row_keys, row_room, sizeof(*cursor->space_row_keys), 0u);
     cetta_storage_array(census, cursor->space_row_parts, row_room, OEM_ROW_PARTS * sizeof(*cursor->space_row_parts), 0u);
-    if (cursor->version_len > cursor->version_cap || cursor->version_len > cursor->version_epoch_cap) {
+    if (cursor->version_len > cursor->version_cap) {
         cetta_storage_refuse(census, "OpenCursorVersionStorageShape"); return;
     }
     cetta_open_equation_program_storage_census(cursor->program, census);

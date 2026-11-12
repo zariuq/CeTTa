@@ -236,6 +236,27 @@ CettaOwnedReleaseStep rhocalc_run_release_poll(RhocalcRun **run,
     uint64_t allowance, bool allow_atomic, uint64_t *used);
 void rhocalc_run_close(RhocalcRun *run);
 
+/* The complete strict-core one-step frontier, as an ordered tuple of
+ * distinct canonical successors. This retains grammar validation, source
+ * normalization, every candidate traversal, key comparison and final copy.
+ * Zero allowance is inert and no provisional tuple is returned. The caller
+ * retains the complete immutable input graph and its symbol/resource owners
+ * until close. The completed tuple belongs to the result arena and outlives
+ * the cursor. This operation does not evaluate Rhometta payloads. */
+typedef struct RhocalcFrontier RhocalcFrontier;
+RhocalcFrontier *rhocalc_frontier_open_held(Arena *arena, Atom *proc);
+RhocalcRunStatus rhocalc_frontier_poll(RhocalcFrontier *frontier,
+    uint64_t allowance, uint64_t *used);
+bool rhocalc_frontier_result(const RhocalcFrontier *frontier, Atom **tuple);
+RhocalcRunAccount rhocalc_frontier_account(const RhocalcFrontier *frontier);
+const char *rhocalc_frontier_error(const RhocalcFrontier *frontier);
+/* True only for the retained grammar check's incompatible-input verdict.
+ * Allocation and execution refusals do not supply this evidence. */
+bool rhocalc_frontier_invalid_input(const RhocalcFrontier *frontier);
+CettaOwnedReleaseStep rhocalc_frontier_release_poll(RhocalcFrontier **frontier,
+    uint64_t allowance, bool allow_atomic, uint64_t *used);
+void rhocalc_frontier_close(RhocalcFrontier *frontier);
+
 const char *rhocalc_semantic_profile_name(RhocalcSemanticProfileId profile);
 bool rhocalc_process_well_formed_with_semantic_profile(
     Atom *proc, RhocalcSemanticProfileId semantic_profile);

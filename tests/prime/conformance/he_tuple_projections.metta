@@ -52,12 +52,13 @@
 
 ; The type the checker computes for a term, or Refused.
 (= (checked-type $term)
-   (case (hol-light:run HOL:Nil (signature))
+   (let $program (signature)
+     (case (hol-light:run HOL:Nil $program)
      (((Some $state)
         (case (hol-light:read $state $term)
           (((Some $value) (hol-light:term-type $value))
            ($refused Refused))))
-      ($refused NoSignature))))
+      ($refused NoSignature)))))
 
 !(Tuple (checked-type (tuple)))
 !(FirstComponent

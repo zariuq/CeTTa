@@ -63,7 +63,7 @@
 
 ; A parameter of meta-type `Atom` accepts every atom in HE; the contract has no
 ; type `Atom`.
-(: m (-> Proc B))
+(: m (-> Atom B))
 !(Law meta-type (collapse (get-type (m a))) (collapse (type:of &self (m a))))
 
 ; `pair` is a term former Prime's kernel reserves: a native route owns

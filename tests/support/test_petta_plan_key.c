@@ -183,6 +183,10 @@ int main(void) {
     leaf.source_position = 2u;
     const PettaPlanNode *other = petta_program_intern_plan(program, &leaf, false);
     assert(other && other != first);
+    assert(petta_program_retains_plan(program, first));
+    assert(petta_program_retains_plan(program, other));
+    assert(!petta_program_retains_plan(program, &leaf));
+    checks += 3u;
     leaf.source_position = 1u; leaf.source_debit = 0u;
     assert(petta_program_intern_plan(program, &leaf, false) != first);
     PettaPlanNode forward[] = {*first, *other}, backward[] = {*other, *first};

@@ -1386,6 +1386,24 @@ static __attribute__((noinline)) CettaIndex native_candidates_marked(
     return ncand;
 }
 
+static bool native_head_candidates(Space *s, Atom *pattern, CettaIndex **out, CettaIndex *count) {
+    CettaSpaceHeadCursor cursor;
+    if (!space_head_index_open(s, pattern, &cursor)) return false;
+    CettaIndex *rows = NULL, length = 0u, capacity = 0u, row;
+    while (space_head_index_next(&cursor, s->native.len, NULL, 0u, &row)) {
+        if (length == capacity) {
+            if (capacity > SIZE_MAX / sizeof(*rows) / 2u) { free(rows); return false; }
+            capacity = capacity ? capacity * 2u : 16u;
+            rows = cetta_realloc(rows, (size_t)capacity * sizeof(*rows));
+        }
+        rows[length++] = row;
+    }
+    *out = rows;
+    *count = length;
+    cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MATCH_NATIVE_CANDIDATES, length);
+    return true;
+}
+
 static CettaIndex native_candidates(Space *s, Atom *pattern, CettaIndex **out) {
     SpaceMatchNativeState *st = &s->match_backend.native;
     if (__builtin_expect(s->native.marked != 0u, 0))
@@ -1406,6 +1424,9 @@ static CettaIndex native_candidates(Space *s, Atom *pattern, CettaIndex **out) {
     if (space_match_native_exact_occurrences(s, pattern, out, &exact_count))
         return exact_count;
     CettaIndex cold_count = 0u;
+    if (s->native.len > MATCH_TRIE_THRESHOLD &&
+        native_head_candidates(s, pattern, out, &cold_count))
+        return cold_count;
     bool leads = space_path_index_leads(pattern);
     if (leads && space_path_index_may_select(pattern) &&
         space_path_index_candidates(s, pattern, out, &cold_count, NULL)) {
@@ -2388,15 +2409,17 @@ static void native_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out) {
     }
     /* The substitution tree indexes every row. Until it exists, a query's
      * candidates come from the space's candidate service (cold scans, then
-     * the maintained match trie) and are named as rows for the consumer to
-     * match; the tree is built only once the trie's candidates have cost as
+     * maintained head or discrimination indexes) and are named as rows for
+     * the consumer to match; the tree is built once those candidates cost as
      * many matches as it would rows: its build is paid by the queries that
      * would use it. A cold scan is a one-shot read and charges nothing. */
     if (!st->stree && st->stree_rent < s->native.len) {
         CettaIndex *positions = NULL;
         CettaIndex count = native_candidates(s, query, &positions);
-        if (st->match_trie)
-            st->stree_rent += count + 1u;
+        if (st->match_trie || (st->head_index && space_head_index_admits(query))) {
+            CettaCount remaining = st->stree_rent < s->native.len ? s->native.len - st->stree_rent : 0u;
+            st->stree_rent = count >= remaining ? s->native.len : st->stree_rent + count + 1u;
+        }
         for (CettaIndex next = 0u; next < count; next++)
             subst_matchset_push_row(out, positions[next]);
         free(positions);
@@ -7808,17 +7831,6 @@ static void imported_bucket_add_entry(ImportedBridgeState *st,
     ImportedFlatBuilder b = {0};
     imported_flatten_atom(&b, atom);
     imported_bucket_push_builder(st, bucket, &b, atom_idx, atom_has_vars(atom));
-}
-
-/* HEAD's bucket, the buckets made with the state's first entry with a
- * head. */
-static __attribute__((unused)) ImportedFlatBucket *imported_head_bucket(ImportedBridgeState *st,
-                                                SymbolId head) {
-    if (!st->buckets) {
-        st->buckets = cetta_malloc(sizeof(*st->buckets) * STREE_BUCKETS);
-        memset(st->buckets, 0, sizeof(*st->buckets) * STREE_BUCKETS);
-    }
-    return &st->buckets[stree_head_hash(head)];
 }
 
 static ImportedFlatBucket *imported_bucket_for_atom(ImportedBridgeState *st, Atom *atom) {

@@ -1184,16 +1184,6 @@ bool petta_machine_supply_he_source(PettaMachine *machine,
 Atom *petta_machine_pending_owned_call(const PettaMachine *machine, Atom **type);
 bool petta_machine_supply_owned_call(PettaMachine *machine,
     Atom *value, const Bindings *environment);
-/* Start a retained continuation by delivering an already-entered packet to
- * destination before solving query. The base world includes its environment
- * and captures. Completed payloads stay data; expressions enter their
- * authored interpretation and frontiers retain their completion policy.
- * The original producer is never invoked. Failure leaves no machine. */
-bool petta_machine_init_with_return(
-    PettaMachine *machine, Space *space, Arena *answer_arena,
-    Atom *query, const PettaPlanNode *plan, Atom *destination, CettaCallOutcome packet,
-    const Bindings *base_environment, const PettaMachineHost *host);
-
 /* Deliver an entered packet to one retained caller-DAG root. The graph's
  * immutable syntax and plans stay live through the machine; its temporary
  * arrays and binding vectors may be freed after successful initialization.

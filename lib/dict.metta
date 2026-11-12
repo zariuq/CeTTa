@@ -1,0 +1,88 @@
+; Functional key-value dictionaries backed by hash spaces.
+;
+; Algebraic domain: a dictionary is a functional relation R subset K x V
+; stored as `(dict:entry $key $val)` facts in a `hash` space.
+;   - `dict:get` enforces the functional invariant (`functional_iff_at_most_one`):
+;     0 matches -> `(empty)` (no answer);
+;     1 match   -> the unique value;
+;     >1 match  -> `(Error (dict:get $d $key) (AmbiguousDictKey $key))`.
+;   - Four explicit update policies over keys:
+;     `dict:put!`            (replace: overwrites any prior value for $key)
+;     `dict:put-keep-first!` (keep-first: preserves existing binding if present)
+;     `dict:put-reject!`     (reject: raises `DuplicateDictKey` if $key exists)
+;     `dict:put-merge!`      (merge: combines `$old` and `$val` with `$combine`)
+
+(= (dict:new)
+   (new-space hash))
+
+(= (dict:new-with $engine)
+   (new-space hash $engine))
+
+(= (dict:remove-list! $d $key $vals)
+   (if (== $vals ())
+       ()
+       (let ($head $tail) (decons-atom $vals)
+         (let $_ (remove-atom $d (dict:entry $key $head))
+           (dict:remove-list! $d $key $tail)))))
+
+(= (dict:remove! $d $key)
+   (let $vals (collapse (match $d (dict:entry $key $v) $v))
+     (dict:remove-list! $d $key $vals)))
+
+(= (dict:get $d $key)
+   (let $vals (collapse (match $d (dict:entry $key $v) $v))
+     (let $n (size-atom $vals)
+       (if (== $n 0)
+           (empty)
+           (if (== $n 1)
+               (car-atom $vals)
+               (Error (dict:get $d $key) (AmbiguousDictKey $key)))))))
+
+(= (dict:get-or $d $key $default)
+   (let $vals (collapse (match $d (dict:entry $key $v) $v))
+     (let $n (size-atom $vals)
+       (if (== $n 0)
+           $default
+           (if (== $n 1)
+               (car-atom $vals)
+               (Error (dict:get-or $d $key $default) (AmbiguousDictKey $key)))))))
+
+(= (dict:has-key? $d $key)
+   (let $vals (collapse (match $d (dict:entry $key $v) $v))
+     (> (size-atom $vals) 0)))
+
+(= (dict:put! $d $key $val)
+   (let $_ (dict:remove! $d $key)
+     (add-atom $d (dict:entry $key $val))))
+
+(= (dict:put-keep-first! $d $key $val)
+   (if (dict:has-key? $d $key)
+       ()
+       (add-atom $d (dict:entry $key $val))))
+
+(= (dict:put-reject! $d $key $val)
+   (if (dict:has-key? $d $key)
+       (Error (dict:put-reject! $d $key $val) (DuplicateDictKey $key))
+       (add-atom $d (dict:entry $key $val))))
+
+(= (dict:put-merge! $d $key $val $combine)
+   (let $vals (collapse (match $d (dict:entry $key $v) $v))
+     (let $n (size-atom $vals)
+       (if (== $n 0)
+           (add-atom $d (dict:entry $key $val))
+           (if (== $n 1)
+               (let $old (car-atom $vals)
+                 (let $_ (remove-atom $d (dict:entry $key $old))
+                   (let $merged ($combine $old $val)
+                     (add-atom $d (dict:entry $key $merged)))))
+               (Error (dict:put-merge! $d $key $val $combine) (AmbiguousDictKey $key)))))))
+
+(= (dict:keys $d)
+   (collapse-set (match $d (dict:entry $k $v) $k)))
+
+(= (dict:entries $d)
+   (collapse-bag (match $d (dict:entry $k $v) ($k $v))))
+
+(= (dict:size $d)
+   (let $keys (dict:keys $d)
+     (size-atom $keys)))

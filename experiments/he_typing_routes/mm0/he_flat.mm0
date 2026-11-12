@@ -1,0 +1,47 @@
+-- HE's typing as a theory of first-order prenex schemes, presented in MM0.
+--
+-- Types are first-order terms.  An HE arrow `(-> P1 ... Pn R)` is the n-ary type constructor
+-- `arrN`, and an application `(f a1 ... an)` the n-ary term constructor `apN`, so an
+-- application of another arity has no rule.  A declaration `(: c T)` is an axiom `ty c T`
+-- whose type variables are the axiom's variables: instantiating a prenex scheme is
+-- substituting into an MM0 axiom.  There are no binders and no conversion.
+
+delimiter $ ( ) $;
+strict provable sort wff;
+strict sort type;
+sort tm;
+
+term ty: tm > type > wff;
+
+term arr1: type > type > type;
+term arr2: type > type > type > type;
+term ap1: tm > tm > tm;
+term ap2: tm > tm > tm > tm;
+
+axiom ap1T (f a: tm) (A R: type): $ ty f (arr1 A R) $ > $ ty a A $ > $ ty (ap1 f a) R $;
+axiom ap2T (f a b: tm) (A B R: type):
+  $ ty f (arr2 A B R) $ > $ ty a A $ > $ ty b B $ > $ ty (ap2 f a b) R $;
+
+-- The separating programme:
+--   (: sA SA) (: sB SB) (: sk (-> SA (-> SB SC))) (: sg (-> SA SB SC))
+--   (: sapply (-> (-> $a $b) $a $b))
+term SA: type;
+term SB: type;
+term SC: type;
+term sA: tm;
+term sB: tm;
+term sk: tm;
+term sg: tm;
+term sapply: tm;
+axiom sA_ty: $ ty sA SA $;
+axiom sB_ty: $ ty sB SB $;
+axiom sk_ty: $ ty sk (arr1 SA (arr1 SB SC)) $;
+axiom sg_ty: $ ty sg (arr2 SA SB SC) $;
+axiom sapply_ty (a b: type): $ ty sapply (arr2 (arr1 a b) a b) $;
+
+-- ((sk sA) sB) : SC
+theorem s05: $ ty (ap1 (ap1 sk sA) sB) SC $;
+-- (sapply (sk sA) sB) : SC, with $a := SB and $b := SC
+theorem s08: $ ty (ap2 sapply (ap1 sk sA) sB) SC $;
+-- (sg sA sB) : SC
+theorem sg_sA_sB: $ ty (ap2 sg sA sB) SC $;

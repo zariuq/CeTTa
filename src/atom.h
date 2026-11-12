@@ -1059,6 +1059,7 @@ bool arena_frame_identity_owned_test(const Arena *a,
 #endif
 /* Retain an immutable external owner once per arena lifetime segment. A reset
  * releases owners first retained after its mark; earlier owners remain live.
+ * Refusal acquires no owner; allocated index capacity may remain charged.
  * Ordinary atom copies must still transport their payload into the destination. */
 bool arena_retain_owner_with_storage(Arena *a, void *owner,
     void (*retain)(void *), void (*release)(void *), CettaStorageVisitor storage);
@@ -1073,6 +1074,23 @@ bool arena_retains_owner(const Arena *a, const void *owner,
  * required; enumeration does not retain or synchronize the owner. */
 const void *arena_retained_owner_at(const Arena *arena,
     void (*release)(void *), size_t index);
+/* Inspect every actual retained-owner edge, in acquisition order. The exact
+ * stored release/storage identities are supplied without invoking them.
+ * Extent/index inconsistencies or a stopped predicate return false. The
+ * caller holds exclusive arena access and all existing lifetime shares;
+ * callbacks may inspect owners but must not mutate or release this arena.
+ * Empty inventories succeed. NULL arena/predicate arguments refuse. */
+bool arena_retained_owners_satisfy(const Arena *arena,
+    bool (*predicate)(const void *owner, void (*release)(void *),
+        CettaStorageVisitor storage, void *context), void *context);
+/* The complete finalizer chain also includes direct foreign/numeric payload
+ * holds which are not members of the deduplicated retained-owner ledger.
+ * This read-only walk supplies their exact pointer/release/storage records,
+ * newest first, with the same exclusive-access and stopped-predicate rules.
+ * Neither release nor storage callbacks are invoked. Cyclic chains refuse. */
+bool arena_finalizers_satisfy(const Arena *arena,
+    bool (*predicate)(const void *owner, void (*release)(void *),
+        CettaStorageVisitor storage, void *context), void *context);
 size_t arena_retained_owner_allocation_bytes(void);
 /* The same hold, charging BYTES of the immutable external resource on its
  * first acquisition in this arena segment. Repeated holds are uncharged;
@@ -1209,6 +1227,9 @@ void *arena_alloc(Arena *a, size_t size);
 bool atom_expr_allocation_bound(CettaExprLen length, size_t *bytes_out);
 char *arena_strdup(Arena *a, const char *s);
 bool  arena_owns_ptr(const Arena *a, const void *ptr);
+/* A nonempty span in the populated prefix of an active block. Spare blocks
+ * and capacity beyond the used prefix do not establish a live allocation. */
+bool  arena_has_live_span(const Arena *a, const void *ptr, size_t bytes);
 bool  arena_owns_atom(const Arena *a, const Atom *atom);
 /* Exact compositional ownership predicate: every arena-owned pointer in the
  * atom graph belongs to `arena`; globally owned immutable nodes are also
@@ -2389,6 +2410,14 @@ bool atom_deep_copy_session_loan_arenas(AtomDeepCopySession *session,
  * its callback inventory before reclaiming abandoned destination storage. */
 AtomDeepCopySession *atom_deep_copy_session_new_mapped(
     Arena *dst, AtomDeepCopyLeafMap map, void *context);
+/* Copy a finite expression DAG's roots in one call with the same mapped
+ * memo. Session storage stays local; payload ownership follows copy() and
+ * the mapper's contract. Inputs and mapper/context stay live throughout.
+ * On refusal a prefix of images
+ * may be populated: the caller stages roots and reclaims abandoned storage
+ * only after return. Destination-owned inputs are still mapped. */
+bool atom_deep_copy_terms_mapped(Arena *dst, Atom *const *sources, Atom **images,
+    size_t count, AtomDeepCopyLeafMap map, void *context);
 /* The session copies out of a region its caller releases right after it:
  * the atoms `arena` allocated since `mark`.  A copied atom of that region
  * then records its copy in place instead of in the session's table, since

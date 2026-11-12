@@ -1,0 +1,7 @@
+[(pair $a $a)]
+[(pair $a $a)]
+[(pair (pair $a $b) (pair $a $b))]
+[(pair (pair $a $a) (pair $a $a))]
+[(Combined (Pair $a $a) $a), (Combined (Pair $a $a) $a)]
+[(Combined (Pair (Node $a $b) (Node $a $b)) (Node $a $b)), (Combined (Pair (Node $a $b) (Node $a $b)) (Node $a $b))]
+[(Combined (Pair (Node $a $a) (Node $a $a)) (Node $a $a)), (Combined (Pair (Node $a $a) (Node $a $a)) (Node $a $a))]

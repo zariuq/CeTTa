@@ -163,6 +163,29 @@
 (= (transform $r $sources $template $dest)
    (let $i (__cetta_lib_interaction_fire $r $sources $template $dest) (ia:finish (ia:run $i))))
 
+; Experimental prepared-publication profile for plain native bags. Source
+; matching, computed guards, rights and continuations use the same engine.
+; Private replacement states are completed before any destination is changed.
+(scope:binder (transform-prepared value source body))
+(scope:binder (transform-prepared value source body value))
+(scope:source transform-prepared (, source ...))
+(scope:source transform-prepared (read value pattern))
+(scope:source transform-prepared (take value pattern))
+(scope:source transform-prepared (read pattern))
+(scope:source transform-prepared (take pattern))
+(scope:source transform-prepared (let pattern value))
+(scope:source transform-prepared (absent source))
+(scope:source transform-prepared (absent value pattern))
+(scope:source transform-prepared (every source))
+(scope:source transform-prepared (unique source))
+(scope:source transform-prepared (all source pattern))
+(: transform-prepared (-> %Undefined% Atom Atom %Undefined%))
+(: transform-prepared (-> %Undefined% Atom Atom %Undefined% %Undefined%))
+(= (transform-prepared $r $sources $template)
+   (let $i (__cetta_lib_interaction_fire-prepared $r $sources $template) (ia:finish (ia:run $i))))
+(= (transform-prepared $r $sources $template $dest)
+   (let $i (__cetta_lib_interaction_fire-prepared $r $sources $template $dest) (ia:finish (ia:run $i))))
+
 ;; ---- firing at once, later or always --------------------------------------------
 
 (: await (-> Atom %Undefined%))
@@ -200,14 +223,16 @@
        ia:budget-exhausted
        (ia:drain-on (ia:run (__cetta_lib_interaction_agenda-step ())) $budget)))
 
+; The next budget is a number before the next round starts, so the rounds do
+; not build a chain of pending subtractions.
 (= (ia:drain-on $i $budget)
    (case $i
      (((ia:done ia:quiescent) ia:quiescent)
       ((ia:done (ia:process $p))
-       (let $_ (collapse (eval $p)) (ia:drain (- $budget 1))))
+       (let $_ (collapse (eval $p)) (let $next (- $budget 1) (ia:drain $next))))
       ((ia:done (ia:fired $x))
-       (let $_ (collapse (eval $x)) (ia:drain (- $budget 1))))
-      ($other (ia:drain (- $budget 1))))))
+       (let $_ (collapse (eval $x)) (let $next (- $budget 1) (ia:drain $next))))
+      ($other (let $next (- $budget 1) (ia:drain $next))))))
 
 ;; ---- processes and names ---------------------------------------------------------
 

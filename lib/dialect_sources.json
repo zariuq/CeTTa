@@ -30,6 +30,36 @@
       "source": "durable/activity.metta",
       "old": "(: activity:match (-> Atom Atom %Undefined%))",
       "new": "(: activity:match (-> Atom Proc %Undefined%))"
+    },
+    {
+      "source": "lts.metta",
+      "old": "(: lts:transitions (-> Atom Atom %Undefined%))",
+      "new": "(: lts:transitions (-> Proc Atom %Undefined%))"
+    },
+    {
+      "source": "lts.metta",
+      "old": "(: lts:trace-2 (-> Atom Atom %Undefined%))",
+      "new": "(: lts:trace-2 (-> Proc Atom %Undefined%))"
+    },
+    {
+      "source": "lts.metta",
+      "old": "(: lts:is-normal-form (-> Atom Atom Bool))",
+      "new": "(: lts:is-normal-form (-> Proc Atom Bool))"
+    },
+    {
+      "source": "lts.metta",
+      "old": "(: lts:is-can-step (-> Atom Atom Bool))",
+      "new": "(: lts:is-can-step (-> Proc Atom Bool))"
+    },
+    {
+      "source": "lts.metta",
+      "old": "(: lts:box (-> Atom Atom Atom Bool))",
+      "new": "(: lts:box (-> Proc Proc Atom Bool))"
+    },
+    {
+      "source": "lts.metta",
+      "old": "(: lts:diamond (-> Atom Atom Atom Bool))",
+      "new": "(: lts:diamond (-> Proc Proc Atom Bool))"
     }
   ],
   "groups": [

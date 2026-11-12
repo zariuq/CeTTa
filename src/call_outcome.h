@@ -16,8 +16,10 @@
  *                the nearest handler: PeTTa's catch makes it a value, a
  *                dispatch decided at run time fails its own branch, and a
  *                static call's uncaught error stops the run.
- *   INTERRUPTED  cancellation or a requested exit stopped the call; its
- *                answers so far are not a finished answer bag.
+ *   INTERRUPTED  the call stopped before completing its answer bag. Its
+ *                completion owner carries the incomplete cause; bare
+ *                interrupted outcomes default to cancellation/requested exit.
+ *                A retained adapter carries that cause with the outcome.
  *   SUSPENDED    `term` is an answer that holds while the goals `delayed`
  *                on its variables hold: the caller suspends them in its
  *                delay service (delay_service.h), which wakes them when one

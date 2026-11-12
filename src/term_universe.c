@@ -6723,7 +6723,7 @@ AtomId term_universe_store_snapshot_image(TermUniverse *universe,
     if (!term_universe_insert_ptr_id(universe, id)) {
         universe->len--;
         (void)term_universe_set_decoded_at(universe, index, NULL);
-        universe->entries[index] = (TermEntry){.record=CETTA_TERM_ENTRY_BLOB_NONE};
+        universe->entries[index] = (TermEntry){.record = CETTA_TERM_ENTRY_BLOB_NONE};
         return CETTA_ATOM_ID_NONE;
     }
     universe->live_entries++;
@@ -7443,10 +7443,12 @@ Atom *term_universe_view_atom(const TermUniverse *universe, Arena *dst,
 
 Atom *term_universe_decoded_atom_at(const TermUniverse *universe, AtomId id) {
     size_t physical_index = 0;
-    return term_universe_atom_id_to_physical_index(universe, id, &physical_index)
+    return term_universe_atom_id_to_physical_index(universe, id,
+                                                   &physical_index)
         ? term_universe_decoded_at(universe, physical_index) : NULL;
 }
 
+/* Decode one entry and keep its atom. */
 static Atom *term_universe_decode_one(TermUniverse *universe, AtomId id,
                                       size_t physical_index, uint32_t depth) {
     Atom *decoded = term_universe_decode_atom(universe, id, depth);
@@ -8386,6 +8388,24 @@ static void term_universe_counting_trap(const TermUniverse *universe,
     abort();
 }
 #endif
+
+bool term_universe_prepare_releases(TermUniverse *universe, size_t count) {
+    if (!universe || !universe->counting || !count) return true;
+    size_t limit = SIZE_MAX / sizeof(*universe->zero);
+    if (universe->zero_len > limit || count > limit - universe->zero_len) return false;
+    size_t need = universe->zero_len + count;
+    if (need <= universe->zero_cap) return true;
+    size_t capacity = universe->zero_cap ? universe->zero_cap : 1024u;
+    while (capacity < need) {
+        if (capacity > limit / 2u) { capacity = need; break; }
+        capacity *= 2u;
+    }
+    size_t *reserved = realloc(universe->zero, capacity * sizeof(*reserved));
+    if (!reserved) return false;
+    universe->zero = reserved;
+    universe->zero_cap = capacity;
+    return true;
+}
 
 /* Make the entry at physical INDEX a candidate, once. */
 static void term_universe_zero_push(TermUniverse *universe, size_t index) {

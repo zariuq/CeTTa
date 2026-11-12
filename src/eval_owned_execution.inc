@@ -497,7 +497,7 @@ typedef struct {
  * tracker, and settles only the source work actually performed. */
 static CettaEvalCompletion eval_owned_residual_evaluate(
         EvalOwnedResidual *residual, Atom *body, const Bindings *bindings,
-        OutcomeSet *values) {
+        bool caller_entry, bool normalize_result, OutcomeSet *values) {
     __attribute__((cleanup(eval_gc_external_owner_guard_leave)))
     EvalGcExternalOwnerGuard borrowed = {0};
     eval_gc_external_owner_guard_enter(&borrowed);
@@ -505,15 +505,19 @@ static CettaEvalCompletion eval_owned_residual_evaluate(
     PettaHostBranchGuard branch = petta_host_branch_enter();
     CettaEvalEpisode episode;
     eval_completion_child_begin(&episode);
-    metta_call_with_env(residual->answers->space, residual->arena,
-        body, NULL, -1, bindings, values);
+    if (caller_entry)
+        eval_for_caller(residual->answers->space, residual->arena, NULL,
+            body, -1, bindings, normalize_result, values);
+    else
+        metta_call_with_env(residual->answers->space, residual->arena,
+            body, NULL, -1, bindings, values);
     return eval_completion_child_end(&episode);
 }
 
 /* The source evaluator has established these rows as values. Projection
  * retains each row's context and obligations; it never executes the value. */
 static inline CettaOwnedExecutionStep eval_owned_residual_project(
-        EvalOwnedResidual *residual, Outcome *outcome, bool normalize_result,
+        EvalOwnedResidual *residual, Outcome *outcome,
         CettaOwnedReturn *returned, CettaEvalCompletion *completion) {
     Atom *value = outcome_atom_materialize(residual->arena, outcome);
     if (!value) {
@@ -522,14 +526,11 @@ static inline CettaOwnedExecutionStep eval_owned_residual_project(
     }
     if (atom_is_legacy_empty_sentinel(value))
         return CETTA_OWNED_EXECUTION_PAUSED;
-    *returned = (CettaOwnedReturn){
-        .outcome = outcome->delayed ? cetta_call_suspended(value, outcome->delayed)
-                                   : cetta_call_completed_value(value),
-        .environment = &outcome->env,
-    };
-    returned->outcome.result_form = normalize_result && !outcome->delayed &&
-        outcome->result_form==CETTA_CALL_RESULT_EXPRESSION
-        ? CETTA_CALL_RESULT_COMPLETED_VALUE : outcome->result_form;
+    CettaCallOutcome projected=outcome->delayed
+        ?cetta_call_suspended(value,outcome->delayed):cetta_call_value(value);
+    if(!outcome->delayed)projected.result_form=outcome->result_form;
+    *returned = (CettaOwnedReturn){.outcome=projected,
+        .environment = &outcome->env};
     return CETTA_OWNED_EXECUTION_RETURN;
 }
 
@@ -539,7 +540,8 @@ static CettaOwnedExecutionStep eval_owned_residual_next(void *context,
     if (!work->started) {
         work->started = true;
         work->completion = eval_owned_residual_evaluate(work->residual,
-            work->body, work->bindings, &work->values);
+            work->body, work->bindings, work->caller_entry,
+            work->normalize_result, &work->values);
     }
     /* An interrupted buffered producer has no published occurrence. Its
      * effects remain entered, while the private value prefix is retired. */
@@ -549,8 +551,14 @@ static CettaOwnedExecutionStep eval_owned_residual_next(void *context,
     }
     if (work->position == work->values.len)
         return CETTA_OWNED_EXECUTION_COMPLETE;
-    return eval_owned_residual_project(work->residual,
-        &work->values.items[work->position++], work->normalize_result, returned, completion);
+    Outcome *outcome = &work->values.items[work->position++];
+    CettaOwnedExecutionStep step = eval_owned_residual_project(
+        work->residual, outcome, returned, completion);
+    if (step == CETTA_OWNED_EXECUTION_RETURN && work->normalize_result &&
+        !outcome->delayed &&
+        outcome->result_form == CETTA_CALL_RESULT_EXPRESSION)
+        returned->outcome.result_form = CETTA_CALL_RESULT_COMPLETED_VALUE;
+    return step;
 }
 
 static void eval_owned_residual_release(void *context) {
@@ -709,47 +717,6 @@ static bool eval_owned_residual_continue(void *context,
 static bool eval_owned_residual_body(Atom *body, const Bindings *bindings,
                                     void *context);
 
-/* A resumption consumes the same return packet as a terminal receiver.
- * Its expression-shaped hole must not reactivate an earned value. */
-static bool eval_owned_residual_return(Outcome *outcome,
-                                       EvalOwnedResidual *residual) {
-    Atom *value = outcome_atom_materialize(residual->arena, outcome);
-    if (!value) {
-        if (!eval_unwinding()) return true;
-        residual->ok = false;
-        return false;
-    }
-    if (atom_is_legacy_empty_sentinel(value))
-        return true;
-    if (!residual->resumption) {
-        CettaOwnedReturn returned = {
-            .outcome = outcome->delayed
-                ? cetta_call_suspended(value, outcome->delayed)
-                : cetta_call_completed_value(value),
-            .environment = &outcome->env,
-        };
-        returned.outcome.result_form = outcome->result_form;
-        residual->ok = residual->consume(residual->consumer, &returned);
-        return residual->ok;
-    }
-    CettaOwnedReturn returned={.outcome=outcome->delayed
-        ? cetta_call_suspended(value,outcome->delayed) : cetta_call_completed_value(value),
-        .environment=&outcome->env};
-    returned.outcome.result_form=outcome->result_form;
-    EvalOwnedResidualBind bind={.residual=residual};
-    CettaOwnedExecution execution={0};
-    if (!eval_owned_residual_continue(&bind,&returned,&execution)) return false;
-    CettaOwnedExecutionStep step;
-    do {
-        step=cetta_owned_execution_sequence(&execution,UINT64_MAX,residual->consume,residual->consumer);
-    } while (step==CETTA_OWNED_EXECUTION_PAUSED && !execution.has_pending);
-    CettaEvalCompletion completion=execution.completion;
-    cetta_owned_execution_cancel(&execution);
-    if (completion!=CETTA_EVAL_COMPLETE) eval_mark_incomplete(completion);
-    residual->ok=step==CETTA_OWNED_EXECUTION_COMPLETE && completion==CETTA_EVAL_COMPLETE;
-    return residual->ok;
-}
-
 /* The ordinary evaluator owns a declined equation body. Its already-decoded
  * caller becomes an owned child computation. Source acceptance and context
  * retirement are shared with compiled workers. Explicit source/child owners
@@ -763,10 +730,15 @@ static bool eval_owned_residual_body(Atom *body, const Bindings *bindings,
         OutcomeSet values;
         outcome_set_init(&values);
         CettaEvalCompletion completion = eval_owned_residual_evaluate(
-            residual, body, bindings, &values);
-        for (CettaCount index=0u;completion == CETTA_EVAL_COMPLETE &&
-                residual->ok && index<values.len;index++)
-            (void)eval_owned_residual_return(&values.items[index],residual);
+            residual, body, bindings, false, false, &values);
+        for (CettaCount index = 0u; completion == CETTA_EVAL_COMPLETE &&
+                residual->ok && index < values.len; index++) {
+            CettaOwnedReturn returned;
+            CettaOwnedExecutionStep step = eval_owned_residual_project(
+                residual, &values.items[index], &returned, &completion);
+            if (step == CETTA_OWNED_EXECUTION_RETURN)
+                residual->ok = residual->consume(residual->consumer, &returned);
+        }
         if (completion != CETTA_EVAL_COMPLETE) {
             eval_mark_incomplete(completion);
             residual->ok = false;
@@ -949,11 +921,13 @@ static bool eval_owned_fold_return(void *context, const CettaOwnedReturn *return
         return false;
     arena_reset(&fold->nursery, fold->nursery_origin);
     CettaCallOutcome completed = {0};
-    if (!cetta_prepared_pure_program_is_current(fold->step) ||
-        !cetta_prepared_pure_program_execute_controlled(fold->step, &fold->nursery,
+    CettaEvalCompletion completion = CETTA_EVAL_COMPLETE;
+    bool executed = cetta_prepared_pure_program_is_current(fold->step) &&
+        cetta_prepared_pure_program_execute_controlled(fold->step, &fold->nursery,
             fold->accumulator, returned->outcome.term,
-            eval_prepared_pure_interrupt_poll, NULL, &completed) ||
-        completed.kind != CETTA_CALL_VALUE ||
+            eval_prepared_pure_interrupt_poll, NULL, &completed, &completion);
+    if (completion != CETTA_EVAL_COMPLETE) eval_mark_interrupted(completion);
+    if (!executed || completion != CETTA_EVAL_COMPLETE || completed.kind != CETTA_CALL_VALUE ||
         completed.result_form != CETTA_CALL_RESULT_COMPLETED_VALUE ||
         !completed.term || atom_is_error(completed.term))
         return false;
@@ -1141,8 +1115,14 @@ typedef struct {
 static CettaOwnedExecutionStep prepared_native_completion_next(void *context,
         CettaOwnedReturn *returned, CettaEvalCompletion *completion) {
     PreparedNativeCompletion *work = context;
-    if (work->continuation)
-        return prepared_native_continuation_next(work->continuation, returned, completion);
+    if (work->continuation) {
+        cetta_eval_completion_record(completion, work->values.completion);
+        CettaOwnedExecutionStep step = prepared_native_continuation_next(
+            work->continuation, returned, completion);
+        cetta_eval_completion_record(completion, work->values.completion);
+        return step == CETTA_OWNED_EXECUTION_COMPLETE && *completion != CETTA_EVAL_COMPLETE
+            ? CETTA_OWNED_EXECUTION_INTERRUPTED : step;
+    }
     if (!work->started) {
         work->started = true;
         __attribute__((cleanup(eval_gc_external_owner_guard_leave)))
@@ -1163,10 +1143,18 @@ static CettaOwnedExecutionStep prepared_native_completion_next(void *context,
             }
             EvalNativeCallPlan plan = {work->invocation.head.skeleton,
                 (uint32_t)arity, EVAL_NATIVE_CLOSED_READY_ARGUMENTS};
-            if (!eval_native_callee_admitted(work->answers.space, plan.head, arity,
-                    EVAL_NATIVE_CLOSED_READY_ARGUMENTS) ||
-                !eval_native_invocation_on(work->answers.space, &work->arena,
-                    &plan, &work->invocation, NULL, work->environment, -1, &packet)) {
+            CettaEvalEpisode invocation_episode;
+            eval_completion_child_begin(&invocation_episode);
+            bool handled = !invocation_episode.interrupted &&
+                eval_native_callee_admitted(work->answers.space, plan.head, arity,
+                    EVAL_NATIVE_CLOSED_READY_ARGUMENTS) &&
+                eval_native_invocation_on(work->answers.space, &work->arena,
+                    &plan, &work->invocation, NULL, work->environment, -1, &packet);
+            cetta_eval_completion_record(&work->values.completion,
+                eval_completion_child_end(&invocation_episode));
+            if (!handled && work->values.completion != CETTA_EVAL_COMPLETE) {
+                packet = cetta_call_interrupted();
+            } else if (!handled) {
                 /* No definition or native owns this internal head. Its ready
                  * operands remain data in the unknown application. */
                 packet = cetta_call_completed_value(
@@ -1199,15 +1187,18 @@ static CettaOwnedExecutionStep prepared_native_completion_next(void *context,
             }
         }
 native_finished:
-        work->values.completion = eval_completion_child_end(&native);
+        cetta_eval_completion_record(&work->values.completion,
+            eval_completion_child_end(&native));
     }
     if (work->values.completion != CETTA_EVAL_COMPLETE) {
         cetta_eval_completion_record(completion, work->values.completion);
         return CETTA_OWNED_EXECUTION_INTERRUPTED;
     }
-    return work->has_terminal
-        ? cetta_call_return_next(&work->terminal, returned, completion)
-        : eval_owned_residual_next(&work->values, returned, completion);
+    if (work->has_terminal) {
+        cetta_eval_completion_record(completion, work->values.completion);
+        return cetta_call_return_next(&work->terminal, returned, completion);
+    }
+    return eval_owned_residual_next(&work->values, returned, completion);
 }
 
 static void prepared_native_completion_release(void *context) {
@@ -1222,7 +1213,8 @@ static void prepared_native_completion_release(void *context) {
 static bool prepared_native_completion_open(Space *space,
         CettaPreparedPureAnswerCursor *cursor,
         const CettaInvocation *invocation, bool entered,
-        const CettaOwnedReturn *returned, CettaOwnedExecution *execution,
+        const CettaOwnedReturn *returned, CettaEvalCompletion producer_completion,
+        CettaOwnedExecution *execution,
         bool *completes_callers) {
     *completes_callers = false;
     if (entered && !returned)
@@ -1249,7 +1241,10 @@ static bool prepared_native_completion_open(Space *space,
     arena_set_hashcons(&work->arena, NULL);
     work->answers.space = space;
     work->residual = (EvalOwnedResidual){.answers = &work->answers, .arena = &work->arena};
-    work->values = (EvalOwnedResidualWork){.residual = &work->residual, .started = true};
+    /* The cursor retains the producer's cause at native entry. This
+     * allocation may occur in a later, unrelated receiver episode. */
+    work->values = (EvalOwnedResidualWork){.residual = &work->residual, .started = true,
+        .completion = entered ? producer_completion : CETTA_EVAL_COMPLETE};
     outcome_set_init(&work->values.values);
     work->entered = entered;
     work->packet = entered ? returned->outcome : (CettaCallOutcome){0};
@@ -1310,13 +1305,15 @@ static CettaOwnedExecutionStep prepared_pure_next_return(Space *space,
             return step;
         CettaInvocation invocation;
         bool entered;
+        CettaEvalCompletion producer_completion;
         CettaOwnedReturn pending;
         CettaOwnedExecution replacement = {0};
         bool completes_callers = false;
         bool resumed = cetta_prepared_pure_answer_cursor_native_boundary(
-                cursor, &invocation, &entered, &pending) &&
+                cursor, &invocation, &entered, &pending, &producer_completion) &&
             prepared_native_completion_open(space, cursor, &invocation, entered,
-                entered ? &pending : NULL, &replacement, &completes_callers) &&
+                entered ? &pending : NULL, producer_completion,
+                &replacement, &completes_callers) &&
             cetta_prepared_pure_answer_cursor_complete_native(
                 cursor, &replacement, completes_callers);
         cetta_owned_execution_cancel(&replacement);

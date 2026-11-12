@@ -320,6 +320,82 @@ const CettaOccurrenceLog *cetta_shared_return_producer_log(
     return producer && !producer->copy_pending ? producer->log : NULL;
 }
 
+static bool shared_return_roster_valid(const CettaSharedReturnProducer *producer,
+        CettaOccurrenceLogInfo *info) {
+    if (!producer || !producer->references || producer->copy_pending ||
+        !producer->capture || !producer->compatible ||
+        !cetta_occurrence_log_valid(producer->log) ||
+        !cetta_occurrence_log_info(producer->log, info) ||
+        producer->checkpoint_pin_active != (producer->checkpoints != 0u))
+        return false;
+    const CettaSharedReturnCheckpoint *checkpoint = producer->checkpoint_head;
+    const CettaSharedReturnCheckpoint *previous = NULL;
+    uint64_t oldest = UINT64_MAX;
+    size_t count = 0u;
+    for (; checkpoint && count < producer->checkpoints; count++) {
+        if (checkpoint->producer != producer || checkpoint->previous != previous ||
+            !checkpoint->references || checkpoint->position < info->base ||
+            checkpoint->position > info->past_end)
+            return false;
+        if (checkpoint->position < oldest)
+            oldest = checkpoint->position;
+        previous = checkpoint;
+        checkpoint = checkpoint->next;
+    }
+    if (checkpoint || count != producer->checkpoints)
+        return false;
+    if (count) {
+        uint64_t pin = 0u;
+        if (!cetta_occurrence_log_position(producer->log, producer->checkpoint_pin, &pin) ||
+            pin != oldest)
+            return false;
+    }
+    return true;
+}
+
+bool cetta_shared_return_producer_is_complete_for(
+        const CettaSharedReturnProducer *producer, CettaSharedReturnCapture capture,
+        CettaSharedReturnCompatible compatible, const void *context) {
+    CettaOccurrenceLogInfo info;
+    return capture && compatible && shared_return_roster_valid(producer, &info) &&
+        !producer->detached && producer->capture == capture &&
+        producer->compatible == compatible && producer->context == context &&
+        producer->execution.computation && producer->execution.next &&
+        producer->execution.release && producer->execution.terminal &&
+        !producer->execution.has_pending && !producer->execution.retiring &&
+        producer->execution.completion == CETTA_EVAL_COMPLETE &&
+        producer->execution.stop == CETTA_OWNED_EXECUTION_COMPLETE && info.completed;
+}
+
+bool cetta_shared_return_producer_rows_satisfy(
+        const CettaSharedReturnProducer *producer,
+        CettaSharedReturnRowPredicate predicate, void *context) {
+    CettaOccurrenceLogInfo info;
+    if (!predicate || !shared_return_roster_valid(producer, &info))
+        return false;
+    for (size_t i = 0u; i < info.rows; i++) {
+        CettaOccurrenceRow row;
+        if (!cetta_occurrence_log_row(producer->log, i, &row) ||
+            !predicate(context, info.base + (uint64_t)i, &row))
+            return false;
+    }
+    return true;
+}
+
+bool cetta_shared_return_checkpoint_belongs_to(
+        const CettaSharedReturnCheckpoint *candidate,
+        const CettaSharedReturnProducer *producer) {
+    CettaOccurrenceLogInfo info;
+    if (!candidate || !shared_return_roster_valid(producer, &info))
+        return false;
+    for (const CettaSharedReturnCheckpoint *checkpoint = producer->checkpoint_head;
+         checkpoint; checkpoint = checkpoint->next) {
+        if (checkpoint == candidate)
+            return true;
+    }
+    return false;
+}
+
 static CettaSharedReturnCheckpoint *checkpoint_allocate(
     CettaSharedReturnProducer *producer, uint64_t position,bool retains_producer) {
     if (!producer || (retains_producer && producer->references == SIZE_MAX) ||

@@ -1617,8 +1617,16 @@ static bool petta_program_type_declaration_view(
 
 bool petta_program_form_id_may_affect_metadata(const TermUniverse *universe,
                                                AtomId id) {
-    if (!universe || tu_kind(universe, id) != ATOM_EXPR ||
-        tu_arity(universe, id) != 3u)
+    if (!universe || tu_kind(universe, id) != ATOM_EXPR)
+        return false;
+    CettaExprLen arity = tu_arity(universe, id);
+    /* Graded equations have a coefficient and possibly an admission field.
+     * They establish callability in the same declaration block as their
+     * ordinary callers. Use the common syntax view for these longer forms. */
+    if (arity == 4u || arity == 5u)
+        return space_equation_view(term_universe_get_atom(universe, id),
+                                   true, NULL, NULL, NULL);
+    if (arity != 3u)
         return false;
     SymbolId head = tu_head_sym(universe, id);
     return head == g_builtin_syms.equals ||
@@ -2869,6 +2877,9 @@ static PettaPlanNode *petta_plan_build_in(
                   cetta_petta_head_names_extension(head)
                       ? PETTA_PLAN_STATIC_CALL
                       : PETTA_PLAN_DATA;
+            /* Generated controls can have no PeTTa-specific form tag. Their
+             * source owns operand demand and collection/branch boundaries;
+             * a callable name does not license strict relation arguments. */
             node->execution = constructor_slot_frame
                 ? PETTA_PLAN_EXEC_CONSTRUCTOR_SLOTS
                 : host_intrinsic
@@ -2876,7 +2887,9 @@ static PettaPlanNode *petta_plan_build_in(
                 : petta_semantics_grounded_type_pure(head)
                     ? PETTA_PLAN_EXEC_PURE_GROUNDED_SLOTS
                     : node->role == PETTA_PLAN_STATIC_CALL &&
-                              form == PETTA_FORM_NONE
+                              form == PETTA_FORM_NONE &&
+                              !cetta_control_operation_is_control_form(
+                                  node->computation.control)
                         ? PETTA_PLAN_EXEC_RELATION_SLOTS
                         : PETTA_PLAN_EXEC_GENERIC;
         } else {
@@ -2911,7 +2924,7 @@ static PettaPlanNode *petta_plan_build_in(
             node->output = PETTA_PLAN_OUTPUT_CONSTRUCTOR;
         } else if (head_atom->kind == ATOM_SYMBOL) {
             SymbolId head = atom_symbol_current_id(head_atom);
-            PeTTaForm form = petta_semantics_form(head);
+            form = petta_semantics_form(head);
             if (form == PETTA_FORM_VALUE_LET)
                 form = PETTA_FORM_LET;
             CettaExprLen nargs = atom_authored_len(atom) - 1u;
@@ -3617,6 +3630,12 @@ static const PettaPlanNode *petta_program_intern_plan(
     };
     program->interned_plan_len++;
     return copy;
+}
+
+bool petta_program_retains_plan(
+        const PettaProgram *program, const PettaPlanNode *plan) {
+    return program && plan &&
+        arena_has_live_span(&program->plans, plan, sizeof(*plan));
 }
 
 __attribute__((cold, noinline)) const PettaPlanNode *petta_program_project_computation(
