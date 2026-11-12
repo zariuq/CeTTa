@@ -5570,8 +5570,9 @@ probe-petta-memory-plateau-pending: $(BIN)
 
 # The space root seam, traced in shadow from the global roots: a space
 # stored in an older space, in named state or in a closure is reached; a
-# cycle and dropped spaces are not, and neither yet is a space held only by
-# a running form or, inside a transaction, by the registry outside it.
+# cycle is not, and neither yet is a space held only by a running form or,
+# inside a transaction, by the registry outside it.  Dropped spaces are
+# freed and leave the counts.
 .PHONY: test-petta-space-reachability test-petta-space-reachability-body
 test-all: test-petta-space-reachability
 # The counts are runtime-stats! counters, which a runtime-stats build keeps.
@@ -5596,7 +5597,7 @@ test-petta-space-reachability-body: $(BIN)
 		diff -u tests/space_reachability_capture.expected <(printf '%s\n' "$$actual"); \
 		exit 1; \
 	fi; \
-	echo "PASS: spaces reached through rows, state and closures; a cycle and dropped spaces are unreached"
+	echo "PASS: spaces reached through rows, state and closures; a cycle is unreached and dropped spaces are freed"
 
 # runtime-stats! reports counters[i] under CETTA_RUNTIME_COUNTER_NAMES[i].
 .PHONY: test-runtime-counter-names

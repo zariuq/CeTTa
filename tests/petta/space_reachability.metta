@@ -4,9 +4,11 @@
 ;; are the registry's bindings and named states; a reached value reaches the
 ;; spaces it holds, a reached space the spaces its rows hold. Spaces form
 ;; cycles, so this is a trace: two spaces holding only each other are
-;; unreached. Nothing is freed; a form still running, choice points, trail
-;; entries and foreign code also hold values, so the count is not yet a
-;; collector's verdict.
+;; unreached. The trace frees nothing. A space lives while something holds
+;; it (a row, a name, a state, a running form's binding), and one that
+;; nothing holds is freed and leaves both counts. A form still running,
+;; choice points, trail entries and foreign code also hold values, so the
+;; unreached count is not yet a collector's verdict.
 (= (gauge $name) (match (runtime-stats!) (runtime-counter $name $n) $n))
 (= (spaces) ((gauge space-tracked-count) (gauge space-shadow-unreached-count)))
 !(let $_ (spaces) settled)
@@ -22,10 +24,10 @@
 ;; A space kept in named state is reached through the state.
 !(change-state! &kept (new-space))
 !(state-reaches (spaces))
-;; Spaces made and dropped in a loop.
+;; Spaces made and dropped in a loop are freed: neither count keeps them.
 (= (drop-loop $n) (if (== $n 0) done (let $s (new-space) (drop-loop (- $n 1)))))
 !(drop-loop 200)
-!(dropped-unreached (spaces))
+!(dropped-freed (spaces))
 ;; A space held only by a closure kept in named state is reached through the
 ;; closure's captured values.
 (= (adder) (let $s (new-space) (|-> ($x) (add-atom $s $x))))
@@ -50,8 +52,7 @@
 !(let* (($a (new-space)) ($b (new-space)))
    (progn (add-atom &rows (row 1 $a)) (add-atom &rows (row 2 $b)) rows))
 !(collapse (let $n (match &rows (row $n $s) $n) (between-answers $n (spaces))))
-;; A value can name a temporary space whose form has ended, here the
-;; inventory runtime-stats! returned, kept in named state: the trace never
-;; reads through such a pointer (under valgrind or ASan it would fault).
+;; A temporary space, here the inventory runtime-stats! returned, lives while
+;; named state holds it, and a temporary is not counted.
 !(change-state! &stale (runtime-stats!))
 !(stale-state-ignored (spaces))
