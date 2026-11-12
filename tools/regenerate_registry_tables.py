@@ -15,7 +15,8 @@ with tempfile.TemporaryDirectory(prefix="registry-tables-", dir=destination) as 
     generated = []
     for source, header in (("runtime_counters", "cetta_runtime_counters"),
                            ("runtime_counter_names", "cetta_runtime_counter_names"),
-                           ("profiles", "cetta_profiles")):
+                           ("profiles", "cetta_profiles"),
+                           ("builtin_symbols", "cetta_builtin_symbols")):
         target = destination / (header + ".generated.h")
         staged = Path(temporary) / target.name
         subprocess.run([args.cesta, "export-header",
