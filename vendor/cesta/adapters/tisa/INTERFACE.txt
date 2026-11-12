@@ -1,0 +1,73 @@
+Optional mixed native leaves
+============================
+
+Ordinary Cesta builds use readable C and the selected C compiler. They require
+neither tcalc nor HOL Light. This adapter is a separate experiment for selected
+scalar leaves; it does not replace the ordinary compiler route.
+
+  make build/cesta-tisa
+  build/cesta-tisa build/cesta SOURCE FUNCTION SYMBOL OUTPUT.S OUTPUT.json
+
+The adapter first checks the source through Cesta, then lowers the selected
+function directly into tcalc's existing TcIsaProgram and byte emitter. It accepts
+the unsigned-select/1 profile: bool, u32, u64 and 64-bit usize parameters/results,
+unsigned comparisons, scalar literals, and a return or pure returning conditional.
+It admits at most five parameters and refuses expressions beyond its register
+capacity. Pointer operations, allocation, loops and calls remain outside this
+initial profile. Other Cesta and standard C code retain the ordinary C route.
+
+The emitted function uses the existing t-ISA runtime-frame argument followed by
+its scalar arguments. Its scalar result is available in RAX and frame.ret_val;
+frame.status distinguishes success from exhaustion. Boolean and u32 inputs must
+be canonical values of their declared types. The target is x86-64 SysV LP64.
+The current execution policy retains fuel accounting, including budget zero.
+The function body has no spills; its ABI prologue still saves registers on the
+stack. Static target objects contain no executable-memory loader.
+
+The examples connect a selected prefix-length function to the existing u32 span
+copy module. MixedKernel.cesta supplies the ordinary-C two-call wrapper;
+MixedCopy.cesta is an independently checked caller with explicit bounds guards,
+slices and imported copy. The host owns each count call's frame.
+
+  make qualify-mixed-leaves
+  make qualify-hol-mixed-leaves
+
+MIXED_LEAF_FLAGS may pass --out, --tcalc, --s2n and --hol. The proof target needs
+external HOL Light and s2n-bignum checkouts. Qualification checks both GCC and
+Clang, source admission, scalar controls, paired copies, fuel outcomes,
+sanitizers, instruction identity, semantic mutations and exact ELF identities.
+It also rebuilds the exported C and assembly from a relocated directory without
+Cesta, HOL or the t-ISA emitter. SHA256SUMS is a flat list of the exported inputs;
+existing dependency licences accompany copied declarations.
+
+The runtime consumes a static copy of the complete linked text image. Symbols
+for the count, copy and wrapper select their original extents inside that image,
+so internal calls retain their exact relative instruction bytes. The proof
+derives decode rules from each actual function; unreachable linker padding has
+no execution rule. A proof cannot step into such a gap.
+
+PREFIX_COUNT_CORRECT proves the selected count artifact's result and frame
+writes with budget zero. COPY_GCC_CORRECT and COPY_CLANG_CORRECT prove their
+selected copy artifacts. MIXED_GCC_CORRECT and MIXED_CLANG_CORRECT compose the
+actual calls, including their stack and ABI return. Under valid, aligned,
+nonoverlapping ranges and the declared stack/frame conditions, the result is
+min(source.len,destination.len), that prefix is copied, and unrelated memory is
+preserved. Counts are elements; source/destination memory extents use four bytes
+per element. The copied input and destination capacities are below 2^61.
+
+The native copy's declared failure edge remains outside its admitted input
+contract. Nonzero fuel budgets have separate runtime controls; the first mixed
+machine theorems cover budget zero. Kernel privilege, interrupts, device memory
+and concurrent callers require their own execution contracts.
+
+The optional proof gate requires both complete caller theorems, a fresh process,
+an axiom audit and refusal of a semantically changed count instruction. A receipt
+with proof_status not-run is runtime evidence. Source lowering and the Cesta
+frontend remain tested boundaries; the selected artifact theorems do not prove
+the general emitter or general C execution. Changing compiler flags, headers,
+source or target requires qualification against the resulting artifacts.
+
+The benchmark compares the same compiled copy leaf with an ordinary C count and
+with the explicit t-ISA frame/count path. It reports repeated complete-call
+observations on the current host. It makes no general performance claim and
+does not change the default backend.

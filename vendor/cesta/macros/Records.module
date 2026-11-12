@@ -1,0 +1,137 @@
+Module Records {
+  Theory Worklists() {
+    Empty Terms {
+      Worklist . ExternalDeclaration ::= "(" "worklist" DeclarationSpecifiers DeclarationSpecifiers CGeneralName CGeneralName ")";
+    }
+    Equations {
+      (Worklist element count name push_name) == (Macro "cesta-macro/4"
+        (Profile "c11") (Ports)
+        (Arguments
+          (Arg element (CType void) "syntax" (Evaluation "syntax"))
+          (Arg count (CType void) "syntax" (Evaluation "syntax"))
+          (Arg name (CType void) "syntax" (Evaluation "syntax"))
+          (Arg push_name (CType void) "syntax" (Evaluation "syntax")))
+        (Result (CType void) "declarations")
+        (Locals
+          (Local record "tag" (Export name))
+          (Local record_type "ordinary" (Export name))
+          (Local push "ordinary" (Export push_name))
+          (Local data "member" record)
+          (Local len "member" record)
+          (Local cap "member" record)
+          (Local self "ordinary") (Local value "ordinary")
+          (Local resize "ordinary") (Local old "ordinary")
+          (Local next "ordinary") (Local limit "ordinary")
+          (Local replacement "ordinary"))
+        (Template (unit
+          ("typedef" ("struct" (LocalRef "tag" record)
+            (List (TypeArgument element) ("*" (LocalRef "member" data)))
+            (List (TypeArgument count) (LocalRef "member" len) (LocalRef "member" cap)))
+            (LocalRef "ordinary" record_type))
+          (fn ("static" inline int) (LocalRef "ordinary" push)
+            (List
+              (List (LocalRef "ordinary" record_type) ("*" (LocalRef "ordinary" self)))
+              (List (TypeArgument element) (LocalRef "ordinary" value))
+              (List void ("*" ("function" ("c:ParenthesizedDeclarator" ("*" (LocalRef "ordinary" resize)))
+                (List void ("*" (LocalRef "ordinary" old))) (TypeArgument count)))))
+            (_Static_assert (">" (cast (TypeArgument count) ("-" 1)) 0)
+              "\"worklist count must be unsigned\"")
+            ("if" ("!" (LocalRef "ordinary" self)) ("return" 0))
+            ("if" ("||" (">" (Member len (LocalRef "ordinary" self))
+                                (Member cap (LocalRef "ordinary" self)))
+                         ("&&" (Member cap (LocalRef "ordinary" self))
+                                ("!" (Member data (LocalRef "ordinary" self)))))
+              ("return" 0))
+            ("if" ("==" (Member len (LocalRef "ordinary" self))
+                         (Member cap (LocalRef "ordinary" self)))
+              (block
+                ("if" ("!" (LocalRef "ordinary" resize)) ("return" 0))
+                (var (TypeArgument count) (LocalRef "ordinary" limit) (cast (TypeArgument count) ("-" 1)))
+                ("if" (">" (Member cap (LocalRef "ordinary" self))
+                            ("/" (LocalRef "ordinary" limit) 2)) ("return" 0))
+                (var (TypeArgument count) (LocalRef "ordinary" next)
+                  ("?:" (Member cap (LocalRef "ordinary" self))
+                    ("*" (Member cap (LocalRef "ordinary" self)) 2) 8))
+                ("if" (">" (LocalRef "ordinary" next)
+                  ("/" (LocalRef "ordinary" limit) (sizeof type (TypeArgument element)))) ("return" 0))
+                (var (TypeArgument element) ("*" (LocalRef "ordinary" replacement))
+                  (call (LocalRef "ordinary" resize)
+                    (Member data (LocalRef "ordinary" self))
+                    ("*" (LocalRef "ordinary" next) (sizeof type (TypeArgument element)))))
+                ("if" ("!" (LocalRef "ordinary" replacement)) ("return" 0))
+                ("=" (Member data (LocalRef "ordinary" self)) (LocalRef "ordinary" replacement))
+                ("=" (Member cap (LocalRef "ordinary" self)) (LocalRef "ordinary" next))))
+            ("=" ("[]" (Member data (LocalRef "ordinary" self))
+                        (Member len (LocalRef "ordinary" self))) (LocalRef "ordinary" value))
+            ("++" (Member len (LocalRef "ordinary" self)))
+            ("return" 1)))));
+    }
+  }
+  Theory Cursors() {
+    Empty Terms {
+      Cursor . ExternalDeclaration ::= "(" "read-cursor" DeclarationSpecifiers DeclarationSpecifiers DeclarationSpecifiers CGeneralName CGeneralName ")";
+      StateCursor . ExternalDeclaration ::= "(" "state-cursor" DeclarationSpecifiers DeclarationSpecifiers DeclarationSpecifiers CGeneralName CGeneralName CGeneralName ")";
+    }
+    Equations {
+      (Cursor element context next_type name run_name) == (Macro "cesta-macro/4"
+        (Profile "c11") (Ports)
+        (Arguments
+          (Arg element (CType void) "syntax" (Evaluation "syntax"))
+          (Arg context (CType void) "syntax" (Evaluation "syntax"))
+          (Arg next_type (CType void) "syntax" (Evaluation "syntax"))
+          (Arg name (CType void) "syntax" (Evaluation "syntax"))
+          (Arg run_name (CType void) "syntax" (Evaluation "syntax")))
+        (Result (CType void) "declarations")
+        (Locals
+          (Local record "tag" (Export name))
+          (Local record_type "ordinary" (Export name))
+          (Local run "ordinary" (Export run_name))
+          (Local ctx "member" record) (Local next "member" record)
+          (Local self "ordinary"))
+        (Contracts
+          (record (LocalRef "ordinary" record_type)
+            (field (LocalRef "member" ctx) (borrow read))
+            (field (LocalRef "member" next) (callback (NameArgument next_type))))
+          (function (LocalRef "ordinary" run) ("returns-borrow" 0 (LocalRef "member" ctx))))
+        (Template (unit
+          ("typedef" ("struct" (LocalRef "tag" record)
+            (List ("const" (TypeArgument context)) ("*" (LocalRef "member" ctx)))
+            (List (TypeArgument next_type) (LocalRef "member" next))) (LocalRef "ordinary" record_type))
+          ("fn-shape" ("static" inline ("const" (TypeArgument element)))
+            ("*" ("function" (LocalRef "ordinary" run)
+              (List ("const" (LocalRef "ordinary" record_type)) ("*" (LocalRef "ordinary" self)))))
+            (List)
+            (block ("return" (call (Member next (LocalRef "ordinary" self)) (Member ctx (LocalRef "ordinary" self)))))))));
+      (StateCursor element context next_type origin name run_name) == (Macro "cesta-macro/4"
+        (Profile "c11") (Ports)
+        (Arguments
+          (Arg element (CType void) "syntax" (Evaluation "syntax"))
+          (Arg context (CType void) "syntax" (Evaluation "syntax"))
+          (Arg next_type (CType void) "syntax" (Evaluation "syntax"))
+          (Arg origin (CType void) "syntax" (Evaluation "syntax"))
+          (Arg name (CType void) "syntax" (Evaluation "syntax"))
+          (Arg run_name (CType void) "syntax" (Evaluation "syntax")))
+        (Result (CType void) "declarations")
+        (Locals
+          (Local record "tag" (Export name))
+          (Local record_type "ordinary" (Export name))
+          (Local run "ordinary" (Export run_name))
+          (Local ctx "member" record) (Local next "member" record)
+          (Local self "ordinary"))
+        (Contracts
+          (record (LocalRef "ordinary" record_type)
+            (field (LocalRef "member" next) (callback (NameArgument next_type))))
+          (function (LocalRef "ordinary" run)
+            ("returns-borrow" 0 (LocalRef "member" ctx) (NameArgument origin) nullable)))
+        (Template (unit
+          ("typedef" ("struct" (LocalRef "tag" record)
+            (List (TypeArgument context) (LocalRef "member" ctx))
+            (List (TypeArgument next_type) (LocalRef "member" next))) (LocalRef "ordinary" record_type))
+          ("fn-shape" ("static" inline ("const" (TypeArgument element)))
+            ("*" ("function" (LocalRef "ordinary" run)
+              (List (LocalRef "ordinary" record_type) ("*" (LocalRef "ordinary" self)))))
+            (List)
+            (block ("return" (call (Member next (LocalRef "ordinary" self)) ("&" (Member ctx (LocalRef "ordinary" self))))))))));
+    }
+  }
+}

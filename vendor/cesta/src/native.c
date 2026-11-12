@@ -133,10 +133,19 @@ static bool form(Native *native, const CeAtom *a, int sort, int parent, CeArena 
         CeText position = native->grammar->symbols[native->grammar->symbols[sort].sort].name;
         if (!ce_is(position,"ExternalDeclaration"))
             return ce_error(error,a->offset,"ownership declaration requires translation-unit scope");
-        return fputs("#if defined(__SIZEOF_POINTER__) && defined(__SIZEOF_LONG__)\n"
+        /* Checked units can be joined into one translation unit; the profile
+           assertion, with its probe enumerator, appears once. */
+        return fputs("#ifndef CESTA_OWNERSHIP_ABI_PROFILE\n#define CESTA_OWNERSHIP_ABI_PROFILE 1\n"
+            "#if defined(__aarch64__) && defined(__ARM_PCS_AAPCS64)\n"
+            "_Static_assert(__SIZEOF_POINTER__ == 8 && __SIZEOF_LONG__ == 8 && "
+            "__SIZEOF_LONG_DOUBLE__ == 16 && __LDBL_MANT_DIG__ == 113 && "
+            "(char)-1 > 0, \"ownership ABI profile requires AArch64 AAPCS64\");\n"
+            "#else\n#if defined(__SIZEOF_POINTER__) && defined(__SIZEOF_LONG__)\n"
             "_Static_assert(__SIZEOF_POINTER__ == 8 && __SIZEOF_LONG__ == 8, "
             "\"ownership ABI profile requires x86_64 SysV\");\n#endif\n"
-            "_Static_assert((unsigned char)256 == 0 && (char)-1 < 0 && "
+            "_Static_assert((char)-1 < 0, \"ownership ABI profile requires signed x86 plain char\");\n"
+            "#endif\n"
+            "_Static_assert((unsigned char)256 == 0 && "
             "sizeof(void *) == 8 && sizeof(long) == 8 && "
             "sizeof(int) == 4 && sizeof(short) == 2 && sizeof(long long) == 8 && "
             "sizeof(float) == 4 && sizeof(double) == 8 && sizeof(long double) == 16 && "
@@ -144,7 +153,7 @@ static bool form(Native *native, const CeAtom *a, int sort, int parent, CeArena 
             "_Alignof(void *) == 8 && _Alignof(long) == 8 && "
             "_Alignof(long double) == 16 && sizeof(struct { char a; long b; }) == 16 && "
             "sizeof(struct { char a; long double b; }) == 32, "
-            "\"ownership ABI profile requires x86_64 SysV\");\n",file) >= 0;
+            "\"ownership ABI profile requires a supported LP64 target\");\n#endif\n",file) >= 0;
     }
     if (head(a,"use-macros") || head(a,"use-protocols")) {
         CeText position = native->grammar->symbols[native->grammar->symbols[sort].sort].name;
@@ -317,6 +326,7 @@ bool ce_native_text_at(const CeGrammar *g, CeArena *arena, CeText source,
         if (ok) native.imports[native.nimports++] = (NativeImport){.atom=use,.begin=begin,.end=ce_macros_rules(native.macros)};
         if (!ok) error->offset = use->offset;
     }
+    if (native.macros) ce_macros_check_ownership(native.macros,out->ownership != NULL);
     ok = ok && ce_builtin_view(g,key,&profile,error) &&
         ce_view_expand_open(&profile,atom,g->entries[0],arena,&tree,extension,accepts,&native,error);
     for (size_t i = 0; i < native.nimports && ok; ++i) {
@@ -355,6 +365,7 @@ bool ce_native_text_at(const CeGrammar *g, CeArena *arena, CeText source,
                 out->dependencies[next++] = native.imports[i].dependencies[j];
         out->needs_macro_inventory = out->ndependencies != 0;
     }
+    if (ok) out->ownership = ce_macros_ownership(native.macros,arena,out->ownership);
     ce_macros_free(native.macros); ce_view_free(&profile); ce_lazy_lexer_free(&own); return ok;
 }
 const unsigned char *ce_native_line_sorts(const CeGrammar *g, CeArena *arena) {
@@ -412,10 +423,12 @@ bool ce_native_text(const CeGrammar *g, CeArena *arena, CeText source,
     return ok;
 }
 
-static int expand_command(int argc, char **argv, bool readable) {
+/* cesta expand and cesta export-c write C; cesta export-interface HEADER
+   writes the contracts the unit gives what HEADER declares. */
+static int expand_command(int argc, char **argv, bool readable, bool interface) {
     const char *plan_path = NULL; FILE *plan = NULL;
     char *plan_text = NULL; size_t plan_length = 0;
-    const char *path = NULL, *output = NULL, *presentation = NULL; bool gnu = true;
+    const char *path = NULL, *output = NULL, *presentation = NULL, *header = NULL; bool gnu = true;
     const char *compiler = getenv("CESTA_CC"), *cache = NULL;
     if (!compiler || !*compiler) compiler = "cc";
     CeArena arena = {0}; CeGrammar grammar = {0}; CeError error = {{0},0}; CeText source = {0}, text;
@@ -439,10 +452,12 @@ static int expand_command(int argc, char **argv, bool readable) {
             if (is_output) output = argv[i]; else presentation = argv[i];
         } else if (!strcmp(argv[i],"--std=c11")) { gnu = false; flags[nflags++] = "-std=c11"; }
         else if (!strcmp(argv[i],"--std=gnu11")) { gnu = true; flags[nflags++] = "-std=gnu11"; }
+        else if (interface && !header) header = argv[i];
         else if (path) { ce_error(&error,0,"expand takes one input file"); goto done; }
         else path = argv[i];
     }
-    if (!path) { ce_error(&error,0,"expand requires an input file"); goto done; }
+    if (!path) { ce_error(&error,0,interface ? "export-interface requires a header and a unit" : "expand requires an input file"); goto done; }
+    expanded.interface_of = header;
     cache = ce_generated_cache(&arena,output);
     flags[0] = (char *)compiler;
     if (!ce_read_file(&arena,path,&source,&error) || !ce_builtin_language(&grammar,gnu,&error) ||
@@ -460,19 +475,25 @@ static int expand_command(int argc, char **argv, bool readable) {
     /* Read every imported module before opening either output. An output alias
      * must not truncate source, including a transitive import or a hard link. */
     const char *outputs[] = {output,plan_path};
+    /* Everything has been read. An interface may replace the one beside its
+       header, which the check has read and merged. */
+    const char *beside = header ? ce_alloc(&arena,strlen(header)+11) : NULL;
+    if (beside) sprintf((char *)beside,"%s.ownership",header);
     for (size_t i = 0; i < 2; ++i) if (outputs[i]) {
         if (ce_same_file(outputs[i],path)) {
             ce_error(&error,0,"output would overwrite the input document"); goto done;
         }
         for (size_t j = 0; j < expanded.ndependencies; ++j)
-            if (ce_same_file(outputs[i],(const char *)expanded.dependencies[j].data)) {
+            if (ce_same_file(outputs[i],(const char *)expanded.dependencies[j].data) &&
+                !(beside && ce_same_file(outputs[i],beside))) {
                 ce_error(&error,0,"output would overwrite a source dependency"); goto done;
             }
     }
+    if (interface && !expanded.ownership) { ce_error(&error,0,"the unit has no ownership declaration"); goto done; }
     if (output && plan_path && ce_same_file(output,plan_path)) {
         ce_error(&error,0,"C and plan outputs must have distinct paths"); goto done;
     }
-    text = expanded.text;
+    text = interface ? expanded.interface : expanded.text;
     FILE *file = output ? fopen(output,"wb") : stdout;
     if (!file) { ce_error(&error,0,"cannot open expanded C: %s",strerror(errno)); goto done; }
     bool ok = bytes(file,text);
@@ -498,5 +519,6 @@ done:
     ce_grammar_free(&grammar); ce_arena_free(&arena); return result;
 }
 
-int ce_expand_command(int argc, char **argv) { return expand_command(argc,argv,false); }
-int ce_export_c_command(int argc, char **argv) { return expand_command(argc,argv,true); }
+int ce_expand_command(int argc, char **argv) { return expand_command(argc,argv,false,false); }
+int ce_export_c_command(int argc, char **argv) { return expand_command(argc,argv,true,false); }
+int ce_export_interface_command(int argc, char **argv) { return expand_command(argc,argv,false,true); }

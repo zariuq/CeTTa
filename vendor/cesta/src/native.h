@@ -19,6 +19,11 @@ typedef struct {
     /* Source dependencies alone do not require a compiler macro-name scan. */
     bool needs_macro_inventory;
     const CeAtom *ownership;
+    /* After an ownership check, the unit's link record (see ownership.h);
+       with interface_of set by the caller, the interface for that header. */
+    CeText contracts;
+    const char *interface_of;
+    CeText interface;
 } CeNativeOutput;
 /* lexer, when present, is lent for printing this grammar across renderings. */
 /* plan receives readable macro records or checked byte-buffer projections. */
@@ -38,6 +43,7 @@ bool ce_native_map_copy(CeArena *arena, const CeSourceMap *map, CeNativeOutput *
    nothing compiled from it records its path. CESTA_BUILD_DIR overrides both. */
 const char *ce_generated_cache(CeArena *arena, const char *output);
 int ce_expand_command(int argc, char **argv);
+int ce_export_interface_command(int argc, char **argv);
 int ce_export_c_command(int argc, char **argv);
 bool ce_native_prepare(const CeGrammar *grammar, CeArena *arena, CeText source,
                         const char *presentation, const char *identity,

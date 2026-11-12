@@ -1,8 +1,9 @@
-#define _POSIX_C_SOURCE 200809L
+#define _XOPEN_SOURCE 700
 #include "native.h"
 #include "project.h"
 #include "cesta.h"
 #include "diagnose.h"
+#include "link.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -305,17 +306,32 @@ static bool read_dependencies(CeArena *arena, const char *depfile, Words *names)
     return true;
 }
 
-static bool dependencies_current(CeArena *arena, const char *depfile, struct timespec object) {
+static bool suffix_is(const char *path, const char *suffix);
+
+/* A unit checked for ownership (its object has a contracts record) is also
+   checked with the contracts kept beside each header it reads, NAME.ownership.
+   The dependency file lists those the last check read. One beside a listed
+   header that is not itself listed has appeared since, whatever its
+   timestamp says, so the unit is checked again. */
+static bool dependencies_current(CeArena *arena, const char *depfile, const char *source,
+                                 struct timespec object, bool interfaces) {
     Words names = {0}; bool current = read_dependencies(arena,depfile,&names) && names.len != 0;
     for (size_t i = 0; current && i < names.len; ++i) {
         struct timespec t;
         current = mtime(names.items[i],&t) && !newer(t,object);
+        if (!current || !interfaces || suffix_is(names.items[i],".ownership") || ce_same_file(names.items[i],source))
+            continue;
+        const char *companion = join(arena,names.items[i],".ownership","");
+        if (!mtime(companion,&t)) continue;
+        bool listed = false;
+        for (size_t k = 0; !listed && k < names.len; ++k)
+            listed = suffix_is(names.items[k],".ownership") && ce_same_file(names.items[k],companion);
+        current = listed;
     }
     words_free(&names); return current;
 }
 
-typedef struct { pid_t pid; const char *output; char **identity; } Job;
-static bool suffix_is(const char *path, const char *suffix);
+typedef struct { pid_t pid; const char *output, *target; char **identity; } Job;
 
 static pid_t start(char **argv) {
     pid_t pid;
@@ -348,7 +364,33 @@ static void echo(char *const *argv) {
     fputc('\n',stderr);
 }
 
-typedef struct { const char *self, *compiler; size_t jobs; bool verbose; } Options;
+typedef struct { const char *self, *self_identity, *compiler, *compiler_identity; size_t jobs; bool verbose; } Options;
+
+static const char *tool_identity(CeArena *arena, const char *tool) {
+    char resolved[PATH_MAX] = {0};
+    if (strchr(tool,'/')) {
+        if (!realpath(tool,resolved)) snprintf(resolved,sizeof resolved,"%s",tool);
+    } else {
+        const char *path = getenv("PATH"); char *copy = path ? strdup(path) : NULL, *state = NULL;
+        for (char *directory = copy ? strtok_r(copy,":",&state) : NULL;
+             directory; directory = strtok_r(NULL,":",&state)) {
+            const char *candidate = join(arena,*directory ? directory : ".","/",tool);
+            if (!access(candidate,X_OK)) {
+                if (!realpath(candidate,resolved)) snprintf(resolved,sizeof resolved,"%s",candidate);
+                break;
+            }
+        }
+        free(copy);
+        if (!resolved[0]) snprintf(resolved,sizeof resolved,"%s",tool);
+    }
+    struct stat st; bool known = !stat(resolved,&st);
+    size_t capacity = strlen(resolved)+128; char *identity = ce_alloc(arena,capacity);
+    if (known) snprintf(identity,capacity,"%s:%llu:%llu:%lld:%ld",resolved,
+        (unsigned long long)st.st_dev,(unsigned long long)st.st_ino,
+        (long long)st.st_mtim.tv_sec,st.st_mtim.tv_nsec);
+    else snprintf(identity,capacity,"%s:unresolved",resolved);
+    return identity;
+}
 
 /* The target's sources: its patterns expanded in order, without repeats. */
 static bool target_sources(Project *p, const Target *t, Words *sources) {
@@ -391,6 +433,56 @@ static void source_flags(Project *p, const Target *t, const char *path, Words *o
         for (size_t k = 0; k < s->includes.len; ++k) push(out,join(p->arena,"-I",s->includes.items[k],""));
         for (size_t k = 0; k < s->defines.len; ++k) push(out,join(p->arena,"-D",s->defines.items[k],""));
     }
+}
+
+/* Compilation identity is independent of the consuming target. The shared
+   object keeps the source basename below a content-addressed directory so
+   archive member names and final artifact bytes remain unchanged. An
+   exported project compiles plain C without Cesta, on another machine: its
+   object names follow the source, its flags and the compiler's name, not
+   the tools installed here. */
+static const char *shared_object_path(Project *p, const Target *t, const Options *o,
+                                      const char *source, const Words *flags, bool exported) {
+    Words identity = {0};
+    bool uses_cesta = p->read_warnings || suffix_is(source,".cesta") || suffix_is(source,".csexp");
+    if (exported) push(&identity,(char *)o->compiler);
+    else {
+        if (uses_cesta) push(&identity,(char *)o->self_identity);
+        push(&identity,(char *)o->compiler_identity);
+        push(&identity,p->read_warnings ? "read-warnings" : "no-read-warnings");
+    }
+    push(&identity,(char *)source);
+    for (size_t i = 0; i < flags->len; ++i) push(&identity,flags->items[i]);
+    const Words *inputs = &p->compile_inputs[t-p->targets];
+    for (size_t i = 0; i < inputs->len; ++i) push(&identity,inputs->items[i]);
+    uint64_t hash = command_hash(identity.items); words_free(&identity);
+    char *key = ce_alloc(p->arena,17); snprintf(key,17,"%016llx",(unsigned long long)hash);
+    return join(p->arena,p->out,"/.objects/",join(p->arena,key,"/",join(p->arena,source,".o","")));
+}
+
+static bool same_inode(const char *left, const char *right) {
+    struct stat a, b;
+    return !stat(left,&a) && !stat(right,&b) && a.st_dev == b.st_dev && a.st_ino == b.st_ino;
+}
+
+static bool link_one(CeArena *arena, const char *source, const char *target) {
+    if (same_inode(source,target)) return true;
+    if (!make_directories(parent(arena,target))) return false;
+    if (unlink(target) && errno != ENOENT) return false;
+    return !link(source,target);
+}
+
+static bool materialize_object(CeArena *arena, const char *shared, const char *target) {
+    if (!link_one(arena,shared,target)) return false;
+    const char *suffixes[] = {".d",".cmd"};
+    for (size_t i = 0; i < sizeof suffixes/sizeof *suffixes; ++i)
+        if (!link_one(arena,join(arena,shared,suffixes[i],""),join(arena,target,suffixes[i],""))) return false;
+    /* Only a unit checked for ownership has a contracts record; an object
+       that no longer has one must not keep an earlier one beside it. */
+    const char *record = join(arena,shared,".contracts",""), *beside = join(arena,target,".contracts","");
+    struct stat st;
+    if (!stat(record,&st)) return link_one(arena,record,beside);
+    return !unlink(beside) || errno == ENOENT;
 }
 
 static const char *target_output(Project *p, const Target *t) {
@@ -544,6 +636,11 @@ static bool project_graph(Project *p) {
                 (!strncmp(output,objects,length) && (!output[length] || output[length] == '/')))
                 return fail(p,t->atom,"a target's output cannot be a target's build directory or lie within its object directory");
         }
+        const char *shared = normal_path(p->arena,join(p->arena,p->out,"/.objects",""));
+        size_t shared_length = strlen(shared);
+        if (!strcmp(output,shared) ||
+            (!strncmp(output,shared,shared_length) && output[shared_length] == '/'))
+            return fail(p,t->atom,"a target's output cannot replace the shared object directory");
         }
         for (size_t j = 0; j < t->depends.len; ++j) {
             size_t k;
@@ -640,6 +737,8 @@ static int build_generator(Project *p, const Target *t, const Options *o) {
     return 0;
 }
 
+static bool is_file(const char *path);
+
 /* Compile every out-of-date source of the target, at most `jobs` at a time;
    then link or archive when needed. */
 static int build_target(Project *p, const Target *t, const Options *o) {
@@ -656,7 +755,7 @@ static int build_target(Project *p, const Target *t, const Options *o) {
     const Profile *profile = profile_of(p,t);
     const char *directory = join(arena,p->out,"/",t->name);
     const char *output = target_output(p,t);
-    Words sources = {0}, objects = {0};
+    Words sources = {0}, objects = {0}, object_identities = {0};
     if (!target_sources(p,t,&sources)) return 1;
     size_t compiled = 0, current = 0, failures = 0;
     Job *running = ce_alloc(arena,(o->jobs ? o->jobs : 1)*sizeof(*running)); size_t nrunning = 0;
@@ -667,47 +766,66 @@ static int build_target(Project *p, const Target *t, const Options *o) {
             if (pid < 0) { if (errno == EINTR) continue; break; }
             for (size_t k = 0; k < nrunning; ++k) if (running[k].pid == pid) {
                 bool ok = WIFEXITED(status) && !WEXITSTATUS(status);
-                if (ok) record_command(arena,running[k].output,running[k].identity);
-                else { ++failures; unlink(running[k].output); }
+                if (ok) {
+                    record_command(arena,running[k].output,running[k].identity);
+                    ok = materialize_object(arena,running[k].output,running[k].target);
+                    if (!ok) fprintf(stderr,"cesta build: cannot share %s as %s\n",running[k].output,running[k].target);
+                }
+                else { ++failures; unlink(running[k].output); unlink(join(arena,running[k].output,".contracts","")); }
+                if (!ok && WIFEXITED(status) && !WEXITSTATUS(status)) ++failures;
                 running[k] = running[--nrunning]; break;
             }
         }
         if (i == sources.len) break;
         const char *source = sources.items[i];
         const char *object = join(arena,directory,"/obj/",join(arena,source,".o",""));
-        const char *depfile = join(arena,object,".d","");
+        Words flags = {0}; source_flags(p,t,source,&flags);
+        const char *shared = shared_object_path(p,t,o,source,&flags,false);
+        const char *depfile = join(arena,shared,".d","");
         push(&objects,(char *)object);
+        push(&object_identities,(char *)shared);
+        bool authored = suffix_is(source,".cesta") || suffix_is(source,".csexp");
+        const char *contracts = join(arena,shared,".contracts","");
         Words cc = {0};
         push(&cc,(char *)o->self); push(&cc,"cc"); push(&cc,"--cc"); push(&cc,(char *)o->compiler);
+        /* An authored unit records what it defines and what its checked
+           bodies call elsewhere, for the link check. */
+        if (authored) { push(&cc,"--contracts"); push(&cc,(char *)contracts); }
         if (p->read_warnings) push(&cc,"--read-warnings");
-        source_flags(p,t,source,&cc);
+        for (size_t k = 0; k < flags.len; ++k) push(&cc,flags.items[k]);
         push(&cc,"-MMD"); push(&cc,"-MF"); push(&cc,(char *)depfile);
-        push(&cc,"-c"); push(&cc,(char *)source); push(&cc,"-o"); push(&cc,(char *)object);
+        push(&cc,"-c"); push(&cc,(char *)source); push(&cc,"-o"); push(&cc,(char *)shared);
         struct timespec built;
         struct timespec generator;
-        bool uses_cesta = p->read_warnings || suffix_is(source,".cesta") || suffix_is(source,".csexp");
+        bool uses_cesta = p->read_warnings || authored;
+        struct stat record;
+        bool checked_unit = authored && !stat(contracts,&record);
         /* Plain inputs delegate unchanged: cache their native command. An
            authored input or census additionally depends on this Cesta tool. */
         char **identity = uses_cesta ? cc.items : cc.items+3;
         bool response_current = true;
-        if (mtime(object,&built)) for (size_t k = 0; k < p->compile_inputs[t-p->targets].len; ++k) {
+        if (mtime(shared,&built)) for (size_t k = 0; k < p->compile_inputs[t-p->targets].len; ++k) {
             struct timespec input;
             response_current &= mtime(p->compile_inputs[t-p->targets].items[k],&input) && !newer(input,built);
         }
-        if (mtime(object,&built) && same_command(arena,object,identity) &&
+        if (mtime(shared,&built) && same_command(arena,shared,identity) &&
             (!uses_cesta || (mtime(o->self,&generator) && !newer(generator,built))) &&
-            response_current && dependencies_current(arena,depfile,built)) {
-            ++current; words_free(&cc); continue;
+            response_current && dependencies_current(arena,depfile,source,built,checked_unit)) {
+            if (!materialize_object(arena,shared,object)) {
+                fprintf(stderr,"cesta build: cannot share %s as %s\n",shared,object); ++failures;
+            } else ++current;
+            words_free(&flags); words_free(&cc); continue;
         }
-        if (!make_directories(parent(arena,object))) {
-            fprintf(stderr,"cesta build: cannot create %s\n",parent(arena,object)); ++failures; words_free(&cc); continue;
+        if (!make_directories(parent(arena,shared))) {
+            fprintf(stderr,"cesta build: cannot create %s\n",parent(arena,shared)); ++failures;
+            words_free(&flags); words_free(&cc); continue;
         }
         if (o->verbose) echo(cc.items);
         char **argv = ce_alloc(arena,(cc.len+1)*sizeof(*argv));
-        memcpy(argv,cc.items,(cc.len+1)*sizeof(*argv)); words_free(&cc);
+        memcpy(argv,cc.items,(cc.len+1)*sizeof(*argv)); words_free(&flags); words_free(&cc);
         pid_t pid = start(argv);
         if (pid < 0) { ++failures; continue; }
-        running[nrunning++] = (Job){pid,object,uses_cesta ? argv : argv+3}; ++compiled;
+        running[nrunning++] = (Job){pid,shared,object,uses_cesta ? argv : argv+3}; ++compiled;
     }
     int result = failures ? 1 : 0;
     if (!result) {
@@ -721,7 +839,11 @@ static int build_target(Project *p, const Target *t, const Options *o) {
             for (size_t k = 0; k < t->link.len; ++k) push(&link,t->link.items[k]);
             push(&link,"-o"); push(&link,(char *)output);
         }
-        struct timespec linked; bool needed = !mtime(output,&linked) || !same_command(arena,output,link.items);
+        Words link_identity = {0};
+        for (size_t k = 0; k < link.len; ++k) push(&link_identity,link.items[k]);
+        push(&link_identity,"--cesta-object-identities--");
+        for (size_t k = 0; k < object_identities.len; ++k) push(&link_identity,object_identities.items[k]);
+        struct timespec linked; bool needed = !mtime(output,&linked) || !same_command(arena,output,link_identity.items);
         for (size_t k = 0; !needed && k < objects.len; ++k) {
             struct timespec t2;
             needed = !mtime(objects.items[k],&t2) || newer(t2,linked);
@@ -731,7 +853,28 @@ static int build_target(Project *p, const Target *t, const Options *o) {
             struct timespec t2;
             needed = !mtime(inputs->items[k],&t2) || newer(t2,linked);
         }
+        /* The link records of the program's checked units: its own objects,
+           then the archives and objects among its inputs. */
+        Words records = {0}; CeLinkSummary summary = {0}; CeError link_error = {{0},0};
+        const char *obligations = join(arena,directory,"/",join(arena,t->name,".obligations",""));
+        bool composed = true;
         if (needed) {
+            for (size_t k = 0; k < objects.len; ++k) {
+                const char *record = join(arena,objects.items[k],".contracts","");
+                if (is_file(record)) push(&records,(char *)record);
+            }
+            for (size_t k = 0; !archive && k < inputs->len; ++k) {
+                const char *record = join(arena,inputs->items[k],".contracts","");
+                if (is_file(record)) push(&records,(char *)record);
+            }
+            /* Every call a checked unit makes into another must meet the
+               definition linked here, or stay a listed obligation. */
+            if (!archive && records.len) {
+                composed = ce_link_check(arena,t->name,records.items,records.len,obligations,&summary,&link_error);
+                if (!composed) { fprintf(stderr,"cesta build: %s: %s\n",t->name,link_error.message); result = 1; }
+            } else if (!archive) unlink(obligations);
+        }
+        if (needed && composed) {
             if (!make_directories(parent(arena,output))) { fprintf(stderr,"cesta build: cannot create %s\n",parent(arena,output)); result = 1; }
             else {
                 if (archive) unlink(output);
@@ -742,14 +885,24 @@ static int build_target(Project *p, const Target *t, const Options *o) {
                     while (waitpid(pid,&status,0) < 0 && errno == EINTR) {}
                     result = WIFEXITED(status) && !WEXITSTATUS(status) ? 0 : 1;
                 }
-                if (!result) record_command(arena,output,link.items);
+                /* An archive carries its members' records to the programs that link it. */
+                if (!result && archive && !ce_link_merge(arena,records.items,records.len,join(arena,output,".contracts",""),&link_error)) {
+                    fprintf(stderr,"cesta build: %s: %s\n",t->name,link_error.message); result = 1;
+                }
+                if (!result) record_command(arena,output,link_identity.items);
             }
         }
         fprintf(stderr,"cesta build: %s: %zu compiled, %zu up to date; %s %s\n",t->name,compiled,current,
                 result ? "failed" : needed ? (archive ? "archived" : "linked") : "current",output);
-        words_free(&link);
+        if (needed && !result && !archive && records.len)
+            fprintf(stderr,"cesta build: %s: contracts: %zu units; %zu calls into other units meet checked definitions; "
+                    "%zu native and %zu unchecked functions remain obligations; "
+                    "%zu calls differ from their unchecked definitions (%s)\n",
+                    t->name,summary.units,summary.checked,summary.native,summary.unchecked,summary.differing,obligations);
+        words_free(&records);
+        words_free(&link); words_free(&link_identity);
     } else fprintf(stderr,"cesta build: %s: %zu of %zu sources failed\n",t->name,failures,sources.len);
-    words_free(&sources); words_free(&objects);
+    words_free(&sources); words_free(&objects); words_free(&object_identities);
     return result;
 }
 
@@ -866,7 +1019,7 @@ static int export_targets(Project *p, const Options *o, const char *into) {
     }
     fputs("\n",mk);
     int result = 0;
-    Words depfiles = {0};
+    Words depfiles = {0}, emitted_objects = {0};
     for (size_t position = 0; !result && position < p->ntargets; ++position) {
         size_t k = p->order[position];
         const Target *t = &p->targets[k];
@@ -904,35 +1057,47 @@ static int export_targets(Project *p, const Options *o, const char *into) {
             const char *source = sources.items[i], *exported = source;
             words_free(&flags); source_flags(p,t,source,&flags);
             if (!local_export_path(p,source)) { result = 1; break; }
+            const char *object = join(arena,p->out,"/",join(arena,t->name,"/obj/",join(arena,source,".o","")));
+            const char *shared = shared_object_path(p,t,o,source,&flags,true);
+            bool emitted = false;
+            for (size_t k = 0; k < emitted_objects.len; ++k) emitted |= !strcmp(emitted_objects.items[k],shared);
             if (suffix_is(source,".cesta") || suffix_is(source,".csexp")) {
                 char *c = join(arena,source,"",""); strcpy(c+strlen(c)-6,".c"); exported = c;
                 char *target_path = join(arena,into,"/",exported);
-                if (!make_directories(parent(arena,target_path))) { result = 1; break; }
-                Words cmd = {0};
-                push(&cmd,(char *)o->self); push(&cmd,"export-c"); push(&cmd,"--cc"); push(&cmd,(char *)o->compiler);
-                push(&cmd,"--presentation"); push(&cmd,"native-c/1");
-                push(&cmd,"-o"); push(&cmd,target_path); push(&cmd,(char *)source); push(&cmd,"--");
-                for (size_t f = 0; f < flags.len; ++f) push(&cmd,flags.items[f]);
-                if (o->verbose) echo(cmd.items);
-                pid_t pid = start(cmd.items); int status = 0;
-                if (pid < 0) result = 1;
-                else { while (waitpid(pid,&status,0) < 0 && errno == EINTR) {} if (!WIFEXITED(status) || WEXITSTATUS(status)) result = 1; }
-                words_free(&cmd);
-            } else if (!copy_file(source,join(arena,into,"/",source))) {
+                if (!emitted) {
+                    if (!make_directories(parent(arena,target_path))) { result = 1; break; }
+                    Words cmd = {0};
+                    push(&cmd,(char *)o->self); push(&cmd,"export-c"); push(&cmd,"--cc"); push(&cmd,(char *)o->compiler);
+                    push(&cmd,"--presentation"); push(&cmd,"native-c/1");
+                    push(&cmd,"-o"); push(&cmd,target_path); push(&cmd,(char *)source); push(&cmd,"--");
+                    for (size_t f = 0; f < flags.len; ++f) push(&cmd,flags.items[f]);
+                    if (o->verbose) echo(cmd.items);
+                    pid_t pid = start(cmd.items); int status = 0;
+                    if (pid < 0) result = 1;
+                    else { while (waitpid(pid,&status,0) < 0 && errno == EINTR) {} if (!WIFEXITED(status) || WEXITSTATUS(status)) result = 1; }
+                    words_free(&cmd);
+                }
+            } else if (!emitted && !copy_file(source,join(arena,into,"/",source))) {
                 fprintf(stderr,"cesta build: cannot copy %s\n",source); result = 1;
             }
             if (result) break;
-            const char *object = join(arena,p->out,"/",join(arena,t->name,"/obj/",join(arena,source,".o","")));
             const char *rendered = join(arena,into,"/",exported);
-            if (!export_headers(p,o,&flags,source,rendered,object,into)) { result = 1; break; }
+            if (!emitted && !export_headers(p,o,&flags,source,rendered,shared,into)) { result = 1; break; }
             push(&objects,(char *)object);
-            push(&depfiles,join(arena,object,".d",""));
-            fputc('\n',mk); make_path(mk,object); fputs(": ",mk); make_path(mk,exported);
-            for (size_t r = 0; r < p->compile_inputs[k].len; ++r) { fputc(' ',mk); make_path(mk,p->compile_inputs[k].items[r]); }
-            fputs(" GNUmakefile\n\t@mkdir -p \"$(@D)\"\n\t$(CC)",mk);
-            for (size_t f = 0; f < flags.len; ++f) { fputc(' ',mk); make_word(mk,flags.items[f]); }
-            fputs(" -MMD -MP -MF \"$@.d\" -MQ \"$@\" -c ",mk); make_word(mk,exported);
-            fputs(" -o \"$@\"\n",mk);
+            if (!emitted) {
+                push(&emitted_objects,(char *)shared);
+                unique_path(p,&depfiles,join(arena,shared,".d",""));
+                fputc('\n',mk); make_path(mk,shared); fputs(": ",mk); make_path(mk,exported);
+                for (size_t r = 0; r < p->compile_inputs[k].len; ++r) { fputc(' ',mk); make_path(mk,p->compile_inputs[k].items[r]); }
+                fputs(" GNUmakefile\n\t@mkdir -p \"$(@D)\"\n\t$(CC)",mk);
+                for (size_t f = 0; f < flags.len; ++f) { fputc(' ',mk); make_word(mk,flags.items[f]); }
+                fputs(" -MMD -MP -MF \"$@.d\" -MQ \"$@\" -c ",mk); make_word(mk,exported);
+                fputs(" -o \"$@\"\n",mk);
+            }
+            fputc('\n',mk); make_path(mk,object); fputs(": ",mk); make_path(mk,shared);
+            fputs("\n\t@mkdir -p ",mk); make_word(mk,parent(arena,object));
+            fputs("\n\tln -f ",mk); make_word(mk,shared);
+            fputs(" \"$@\"\n",mk);
         }
         if (!result) {
             const char *output = target_output(p,t);
@@ -958,7 +1123,7 @@ static int export_targets(Project *p, const Options *o, const char *into) {
     }
     fputs("\n-include",mk);
     for (size_t i = 0; i < depfiles.len; ++i) { fputc(' ',mk); make_path(mk,depfiles.items[i]); }
-    fputc('\n',mk); words_free(&depfiles);
+    fputc('\n',mk); words_free(&depfiles); words_free(&emitted_objects);
     if (fclose(mk)) result = 1;
     return result;
 }
@@ -999,6 +1164,8 @@ int ce_build_command(int argc, char **argv) {
     int result = 0;
     if (!read_project(&p) || !project_graph(&p)) result = 2;
     if (!o.compiler) o.compiler = p.compiler;
+    o.self_identity = tool_identity(&arena,o.self);
+    o.compiler_identity = tool_identity(&arena,o.compiler);
     if (!result && !select_targets(&p,wanted,nwanted)) result = 2;
     if (!result && export_directory) {
         bool *needed = ce_alloc(&arena,p.ntargets*sizeof(*needed));

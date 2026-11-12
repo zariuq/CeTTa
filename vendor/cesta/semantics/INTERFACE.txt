@@ -67,6 +67,7 @@ identity. Implementation-defined choices belong to a target ABI:
   x86_64-sysv-lp64      the default
   i386-sysv-ilp32
   x86_64-windows-llp64
+  aarch64-aapcs64-lp64
 
 An ABI gives scalar sizes and alignments, floating formats, the signedness of
 char, the types of size_t, ptrdiff_t and wchar_t, and how an enumeration's

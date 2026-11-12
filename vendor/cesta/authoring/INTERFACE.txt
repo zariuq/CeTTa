@@ -70,7 +70,7 @@ headers, definitions and target macros supply that context. Reader limitations
 are warnings, including under -Werror; native compiler failures keep their
 original exit status. Cesta does not replace or rewrite the plain C. -E, -M
 and -MM keep their normal preprocessing behavior. The type census currently
-has x86 SysV LP64/ILP32 and x86 Windows LLP64 models; other targets report the
+has x86 SysV LP64/ILP32, x86 Windows LLP64 and AArch64 AAPCS64 LP64 models; other targets report the
 missing model and continue the native compilation. This census does not admit
 an ownership plan or prove a plain-C function. cesta build --read-warnings
 enables the same census for a project's compiles.
@@ -149,6 +149,14 @@ including when only one target is requested or declarations are out of order.
 depends adds named target dependencies without adding linker arguments.
 Unknown targets, cycles and duplicate output paths are refused.
 
+An authored unit checked for ownership also writes a link record beside its
+object, and an archive carries its members' records beside it. A program is
+linked only when the records of its units compose: every call a checked body
+makes into another unit reaches a definition checked under the same contract,
+or rests on an obligation that is listed. The list is written to
+OUT/TARGET/TARGET.obligations (ownership/INTERFACE.txt, COMPOSITION AT LINK
+TIME).
+
 source adds one path in source order and appends its flags, include and define
 operands after the target's common options. No option leaks to another source.
 A repeated source declaration with separate options is refused.
@@ -177,8 +185,10 @@ at a time. cesta build --export-c DIR writes readable C for building without
 Cesta: each .cesta source exported as C (no #line directives), other sources,
 active project headers identified by the selected compiler/profile, response
 files and declared link inputs copied, and a Makefile derived from the same
-dependency graph. The exported Makefile tracks headers, response files and
-linker inputs, rebuilds after recipe
+dependency graph. Its object names follow each source, its flags and the
+compiler's name, not the tools installed where it was written, so another
+installation of Cesta writes the same recipe. The exported Makefile tracks
+headers, response files and linker inputs, rebuilds after recipe
 changes and builds the selected targets' prerequisite closure. Include "." is
 safe: export does not recursively copy the project or its output directories.
 Sources and outputs in an export stay within the project tree; absolute SDK

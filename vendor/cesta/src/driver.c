@@ -270,6 +270,39 @@ static bool publish_text(CeArena *arena, const char *path, CeText text, CeError 
     return ok || ce_error(error,0,"cannot publish generated C input: %s",strerror(errno));
 }
 
+/* --contracts FILE receives the link records of the units checked for
+   ownership, or is removed when no unit was, so that an earlier record never
+   outlives the unit it described. */
+static bool contracts_write(CeArena *arena, const char *path, const CeNativeOutput *outputs, size_t n,
+                            CeError *error) {
+    size_t length = 0;
+    for (size_t i = 0; i < n; ++i) length += outputs[i].contracts.len;
+    if (!length) {
+        if (unlink(path) && errno != ENOENT) return ce_error(error,0,"cannot remove %s: %s",path,strerror(errno));
+        return true;
+    }
+    static const char head[] = "(cesta link-contracts/1\n", tail[] = ")\n";
+    unsigned char *text = ce_alloc(arena,sizeof head+length+sizeof tail); size_t used = 0;
+    memcpy(text,head,sizeof head-1); used = sizeof head-1;
+    for (size_t i = 0; i < n; ++i) {
+        if (outputs[i].contracts.len)
+            memcpy(text+used,outputs[i].contracts.data,outputs[i].contracts.len);
+        used += outputs[i].contracts.len;
+    }
+    memcpy(text+used,tail,sizeof tail-1); used += sizeof tail-1;
+    char *temporary = ce_alloc(arena,strlen(path)+16);
+    sprintf(temporary,"%s.XXXXXX",path);
+    int fd = mkstemp(temporary);
+    if (fd < 0) return ce_error(error,0,"cannot create %s: %s",path,strerror(errno));
+    FILE *file = fdopen(fd,"wb");
+    if (!file) { close(fd); unlink(temporary); return ce_error(error,0,"cannot open %s",path); }
+    bool ok = fwrite(text,1,used,file) == used && !fchmod(fd,0644);
+    ok = fclose(file) == 0 && ok;
+    if (ok && rename(temporary,path)) ok = false;
+    if (!ok) { unlink(temporary); return ce_error(error,0,"cannot write %s: %s",path,strerror(errno)); }
+    return true;
+}
+
 static bool dependency_option(const char *a) {
     return !strcmp(a,"-M") || !strcmp(a,"-MM") || !strcmp(a,"-MD") || !strcmp(a,"-MMD") ||
         !strcmp(a,"-MP") || !strcmp(a,"-MG") || !strncmp(a,"-MF",3) || !strncmp(a,"-MT",3) || !strncmp(a,"-MQ",3);
@@ -344,7 +377,9 @@ static bool native_prepare(const CeGrammar *g, CeArena *arena, CeText source,
                            const char *presentation, const char *identity,
                            size_t n, char **args, const char *cache, CeLazyLexer *lexer, bool readable,
                            FILE *plan, CeNativeOutput *out, CeError *error) {
+    const char *interface_of = out->interface_of;
     if (!native_render(g,arena,source,presentation,identity,n,args,cache,lexer,readable,plan,out,error)) return false;
+    out->interface_of = interface_of;
     if (!out->ownership) return true;
     char **flags = ce_alloc(arena,(n+1)*sizeof(*flags)); size_t count = 1; flags[0] = args[0];
     for (size_t i = 1; i < n; ++i) {
@@ -358,7 +393,19 @@ static bool native_prepare(const CeGrammar *g, CeArena *arena, CeText source,
         flags[count++] = args[i];
         if (option_value(a) && i+1 < n) flags[count++] = args[++i];
     }
-    return ce_ownership_check(arena,out->ownership,out->text,identity,count,flags,plan,error);
+    CeOwnershipResult checked = {.interface_of=out->interface_of};
+    if (!ce_ownership_check(arena,out->ownership,out->text,identity,count,flags,plan,&checked,error))
+        return false;
+    out->contracts = checked.contracts; out->interface = checked.interface;
+    if (checked.ninterfaces) {
+        /* A changed interface file changes the check: the unit depends on it. */
+        CeText *all = ce_alloc(arena,(out->ndependencies+checked.ninterfaces)*sizeof(*all));
+        if (out->ndependencies) memcpy(all,out->dependencies,out->ndependencies*sizeof(*all));
+        for (size_t i = 0; i < checked.ninterfaces; ++i)
+            all[out->ndependencies+i] = (CeText){(unsigned char *)checked.interfaces[i],strlen(checked.interfaces[i])};
+        out->dependencies = all; out->ndependencies += checked.ninterfaces;
+    }
+    return true;
 }
 
 /* Both renderings print the same grammar, so they share one lexer. */
@@ -914,14 +961,7 @@ static void read_warnings(size_t n, char **arguments, bool gnu) {
             ce_dfa_lex(&grammar,&dfa,pp.text,&tokens,&error) &&
             ce_lr_parse(&grammar,&lr,&tokens,&forest,&error) &&
             ce_tree_from_forest(&grammar,&forest,&tokens,&arena,&tree,&error);
-        const CeAbi *abi = NULL;
-        const char *macros = (const char *)pp.predefined.data;
-        if (ok && macros) {
-            if (strstr(macros,"#define __x86_64__ 1\n") && strstr(macros,"#define __SIZEOF_POINTER__ 8\n")) {
-                if (strstr(macros,"#define __SIZEOF_LONG__ 8\n")) abi = &ce_abi_x86_64_sysv;
-                else if (strstr(macros,"#define __SIZEOF_LONG__ 4\n")) abi = &ce_abi_x86_64_windows;
-            } else if (strstr(macros,"#define __i386__ 1\n") && strstr(macros,"#define __SIZEOF_POINTER__ 4\n")) abi = &ce_abi_i386_sysv;
-        }
+        const CeAbi *abi = ok ? ce_abi_predefined((const char *)pp.predefined.data) : NULL;
         if (ok && !abi) ok = ce_error(&error,0,"type census has no ABI model for the selected compiler target");
         if (ok) {
             sema_ready = ce_sema_init(&sema,&grammar,pp.text,&error);
@@ -959,7 +999,7 @@ int ce_cc(int argc, char **argv) {
     free(expanded.values);
     const char *compiler = getenv("CESTA_CC");
     const char *presentation = NULL;
-    const char *dependency_path = NULL, *output_path = NULL;
+    const char *dependency_path = NULL, *output_path = NULL, *contracts_path = NULL;
     bool dependencies = false, dependency_only = false, stop_before_link = false;
     if (!compiler || !*compiler) compiler = "cc";
     char **arguments = ce_alloc(&arena,((size_t)argc+12)*sizeof(*arguments));
@@ -983,6 +1023,10 @@ int ce_cc(int argc, char **argv) {
             presentation = argv[i]; continue;
         }
         if (!after_options && !strcmp(argv[i],"--read-warnings")) continue;
+        if (!after_options && !strcmp(argv[i],"--contracts")) {
+            if (++i == argc) { ce_error(&error,0,"--contracts requires a file"); goto failed; }
+            contracts_path = argv[i]; continue;
+        }
         size_t at = n; arguments[n++] = argv[i];
         if (!after_options && !strcmp(argv[i],"--")) { after_options = true; continue; }
         if (!after_options && !strncmp(argv[i],"-std=",5)) {
@@ -1085,6 +1129,7 @@ int ce_cc(int argc, char **argv) {
         }
         if (documents) {
             int result = source_document_compile(&arena,n,arguments,input,contents,identities,cache,compiler,standard,argc,argv,&error);
+            if (!result && contracts_path && !contracts_write(&arena,contracts_path,native_outputs,0,&error)) result = 1;
             if (result && error.message[0]) fprintf(stderr,"cesta cc: %s\n",error.message);
             ce_grammar_free(&g); ce_arena_free(&arena); return result;
         }
@@ -1100,6 +1145,7 @@ int ce_cc(int argc, char **argv) {
     if (native_authoring) {
         const char *cache = ce_generated_cache(&arena,generated_beside(output_path,dependency_path,argc,argv));
         int result = native_authoring_compile(&arena,n,arguments,input,identities,native_outputs,authored,cache,&error);
+        if (!result && contracts_path && !contracts_write(&arena,contracts_path,native_outputs,n,&error)) result = 1;
         if (result && error.message[0]) fprintf(stderr,"cesta cc: %s\n",error.message);
         ce_grammar_free(&g); ce_arena_free(&arena); return result;
     }
@@ -1158,6 +1204,7 @@ int ce_cc(int argc, char **argv) {
                 }
             }
         }
+        if (!result && contracts_path && !contracts_write(&arena,contracts_path,native_outputs,0,&error)) result = 1;
         if (result && error.message[0]) fprintf(stderr,"cesta cc: %s\n",error.message);
         ce_grammar_free(&g); ce_arena_free(&arena); return result;
     }

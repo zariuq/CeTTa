@@ -11,24 +11,28 @@ typedef struct { CeText *items; size_t len; } Names;
 enum { PROTOCOL_OUTCOMES = 7 };
 typedef struct {
     CeText id, cname, kind;
-    Names requires, uses, proves, invalidates;
+    Names requires, uses, proves, invalidates, reads, writes;
 } Hook;
 typedef struct {
     CeText id, acquire, release, transfer;
     Names acquire_requires, transfer_requires;
+    CeText owner;
 } Resource;
+typedef struct { CeText fact; Names instances; } Dependency;
 typedef struct { CeText kind, id, cname; } Validator;
 typedef struct {
     CeText name, context;
     Hook *hooks; size_t nhooks;
     Resource *resources; size_t nresources;
     Names facts, entry_facts, entry_owned;
+    Names instances;
+    Dependency *dependencies; size_t ndependencies;
     Validator *validators; size_t nvalidators;
     Names reasons;
     Names limits;
     Names exit_facts[PROTOCOL_OUTCOMES];
     const CeAtom *checks, *exits;
-    bool checks_complete;
+    bool checks_complete, bound;
     CeAtom *written, *body, *target, *instrumented;
 } Protocol;
 typedef struct {
@@ -113,6 +117,16 @@ static size_t resource_index(const Protocol *p, CeText id) {
     for (size_t i = 0; i < p->nresources; ++i) if (ce_equal(p->resources[i].id,id)) return i;
     return SIZE_MAX;
 }
+static bool hook_writes_instance(const Hook *hook, CeText instance) {
+    return find(hook->writes,instance) != SIZE_MAX;
+}
+static bool hook_invalidates_fact(const Protocol *p, const Hook *hook, CeText fact) {
+    if (find(hook->invalidates,fact) != SIZE_MAX) return true;
+    for (size_t i = 0; i < p->ndependencies; ++i) if (ce_equal(p->dependencies[i].fact,fact))
+        for (size_t j = 0; j < p->dependencies[i].instances.len; ++j)
+            if (hook_writes_instance(hook,p->dependencies[i].instances.items[j])) return true;
+    return false;
+}
 static bool distinct_cname(Protocols *ps, Names *seen, CeText value, size_t offset, CeError *e) {
     if (find(*seen,value) != SIZE_MAX)
         return ce_error(e,offset,"native name %.*s is used more than once",(int)value.len,value.data);
@@ -132,9 +146,10 @@ static CeText guard_name(Protocols *ps, CeText name) {
     return (CeText){text,first+name.len+last};
 }
 static bool read_protocol(Protocols *ps, CeText id, CeAtom *a, Protocol *p, CeError *e) {
-    if (!form(a,"Protocol") || a->len < 7 || a->len > 9 || a->items[1]->kind != CE_ATOM_TEXT ||
-        !ce_is(a->items[1]->text,"cesta-protocol/1"))
-        return ce_error(e,a->offset,"expected (Protocol \"cesta-protocol/1\" (Context ...) (Hooks ...) (Resources ...) (Entry ...) (Body ...))");
+    if (!form(a,"Protocol") || a->len < 7 || a->len > 11 || a->items[1]->kind != CE_ATOM_TEXT ||
+        !(ce_is(a->items[1]->text,"cesta-protocol/1") || ce_is(a->items[1]->text,"cesta-protocol/2")))
+        return ce_error(e,a->offset,"expected Protocol cesta-protocol/1 or cesta-protocol/2 with Context, Hooks, Resources, Entry and Body");
+    p->bound = ce_is(a->items[1]->text,"cesta-protocol/2");
     p->name = id; p->written = a;
     if (!callable_name(id,a->offset,e)) return false;
     if (!shape(a->items[2],"Context",2,e) || !name(a->items[2]->items[1],&p->context,e)) return false;
@@ -154,8 +169,8 @@ static bool read_protocol(Protocols *ps, CeText id, CeAtom *a, Protocol *p, CeEr
     }
     for (size_t i = 0; i < p->nhooks; ++i) {
         const CeAtom *h = hs->items[i+1]; Hook *hook = &p->hooks[i];
-        if (!form(h,"Hook") || (h->len != 7 && h->len != 8))
-            return ce_error(e,h->offset,"Hook takes names, kind, Requires, Uses, Proves and optional Invalidates");
+        if (!form(h,"Hook") || h->len < 7 || (!p->bound && h->len > 8) || (p->bound && h->len > 10))
+            return ce_error(e,h->offset,"Hook takes names, kind, Requires, Uses, Proves and optional Invalidates/Reads/Writes");
         if (!name(h->items[1],&hook->id,e) ||
             !name(h->items[2],&hook->cname,e) || !callable_name(hook->cname,h->offset,e)) return false;
         for (size_t j = 0; j < i; ++j) if (ce_equal(p->hooks[j].id,hook->id))
@@ -167,26 +182,47 @@ static bool read_protocol(Protocols *ps, CeText id, CeAtom *a, Protocol *p, CeEr
         if (!names(ps,h->items[4],"Requires",&hook->requires,e) ||
             !names(ps,h->items[5],"Uses",&hook->uses,e) || !names(ps,h->items[6],"Proves",&hook->proves,e) ||
             !distinct_cname(ps,&cnames,hook->cname,h->offset,e)) return false;
-        if (h->len == 8 && !names(ps,h->items[7],"Invalidates",&hook->invalidates,e)) return false;
+        bool invalidates = false, reads = false, writes = false;
+        for (size_t j = 7; j < h->len; ++j) {
+            if (form(h->items[j],"Invalidates") && !invalidates) {
+                invalidates = true;
+                if (!names(ps,h->items[j],"Invalidates",&hook->invalidates,e)) return false;
+            } else if (p->bound && form(h->items[j],"Reads") && !reads) {
+                reads = true;
+                if (!names(ps,h->items[j],"Reads",&hook->reads,e)) return false;
+            } else if (p->bound && form(h->items[j],"Writes") && !writes) {
+                writes = true;
+                if (!names(ps,h->items[j],"Writes",&hook->writes,e)) return false;
+            } else return ce_error(e,h->items[j]->offset,"duplicate or unsupported Hook clause");
+        }
         for (size_t j = 0; j < hook->requires.len; ++j) add(ps,&p->facts,hook->requires.items[j]);
         for (size_t j = 0; j < hook->proves.len; ++j) add(ps,&p->facts,hook->proves.items[j]);
         for (size_t j = 0; j < hook->invalidates.len; ++j) add(ps,&p->facts,hook->invalidates.items[j]);
     }
     for (size_t i = 0; i < p->nresources; ++i) {
         const CeAtom *r = rs->items[i+1]; Resource *resource = &p->resources[i];
-        if (!form(r,"Resource") || (r->len != 5 && r->len != 7))
-            return ce_error(e,r->offset,"Resource takes four names and optional AcquireRequires/TransferRequires lists");
+        if (!form(r,"Resource") || r->len < 5 || (!p->bound && r->len != 5 && r->len != 7) || (p->bound && r->len > 8))
+            return ce_error(e,r->offset,"Resource takes four names and optional AcquireRequires/TransferRequires/BoundOwner clauses");
         if (!name(r->items[1],&resource->id,e) ||
             !name(r->items[2],&resource->acquire,e) || !name(r->items[3],&resource->release,e) ||
             !name(r->items[4],&resource->transfer,e) ||
             !callable_name(resource->acquire,r->offset,e) || !callable_name(resource->release,r->offset,e) ||
             !callable_name(resource->transfer,r->offset,e)) return false;
-        if (r->len == 7) {
-            if (!names(ps,r->items[5],"AcquireRequires",&resource->acquire_requires,e) ||
-                !names(ps,r->items[6],"TransferRequires",&resource->transfer_requires,e)) return false;
-            for (size_t j = 0; j < resource->acquire_requires.len; ++j) add(ps,&p->facts,resource->acquire_requires.items[j]);
-            for (size_t j = 0; j < resource->transfer_requires.len; ++j) add(ps,&p->facts,resource->transfer_requires.items[j]);
+        bool acquire_requires = false, transfer_requires = false, owner = false;
+        for (size_t j = 5; j < r->len; ++j) {
+            if (form(r->items[j],"AcquireRequires") && !acquire_requires) {
+                acquire_requires = true;
+                if (!names(ps,r->items[j],"AcquireRequires",&resource->acquire_requires,e)) return false;
+            } else if (form(r->items[j],"TransferRequires") && !transfer_requires) {
+                transfer_requires = true;
+                if (!names(ps,r->items[j],"TransferRequires",&resource->transfer_requires,e)) return false;
+            } else if (p->bound && form(r->items[j],"BoundOwner") && !owner && r->items[j]->len == 2) {
+                owner = true;
+                if (!name(r->items[j]->items[1],&resource->owner,e) || !callable_name(resource->owner,r->items[j]->offset,e)) return false;
+            } else return ce_error(e,r->items[j]->offset,"duplicate or unsupported Resource clause");
         }
+        for (size_t j = 0; j < resource->acquire_requires.len; ++j) add(ps,&p->facts,resource->acquire_requires.items[j]);
+        for (size_t j = 0; j < resource->transfer_requires.len; ++j) add(ps,&p->facts,resource->transfer_requires.items[j]);
         for (size_t j = 0; j < i; ++j) if (ce_equal(p->resources[j].id,resource->id))
             return ce_error(e,r->offset,"duplicate resource ID");
         if (!distinct_cname(ps,&cnames,resource->acquire,r->offset,e) ||
@@ -221,7 +257,30 @@ static bool read_protocol(Protocols *ps, CeText id, CeAtom *a, Protocol *p, CeEr
                 for (size_t k = 0; k < p->exit_facts[which].len; ++k)
                     add(ps,&p->facts,p->exit_facts[which].items[k]);
             }
-        } else return ce_error(e,clause->offset,"unknown or duplicate protocol clause; expected Checks or ExitRequires");
+        } else if (p->bound && form(clause,"Instances") && !p->instances.len) {
+            if (!names(ps,clause,"Instances",&p->instances,e) || !p->instances.len)
+                return ce_error(e,clause->offset,"Instances declares at least one resource instance");
+        } else if (p->bound && form(clause,"Dependencies") && !p->dependencies) {
+            if (clause->len < 2) return ce_error(e,clause->offset,"Dependencies declares at least one fact dependency");
+            p->ndependencies = clause->len-1;
+            p->dependencies = ce_alloc(&ps->arena,p->ndependencies*sizeof(*p->dependencies));
+            for (size_t j = 0; j < p->ndependencies; ++j) {
+                const CeAtom *dependency = clause->items[j+1]; Dependency *out = &p->dependencies[j];
+                if (!form(dependency,"Depends") || dependency->len < 3 ||
+                    !name(dependency->items[1],&out->fact,e))
+                    return ce_error(e,dependency->offset,"dependency is (Depends FACT INSTANCE...)");
+                for (size_t k = 0; k < j; ++k) if (ce_equal(p->dependencies[k].fact,out->fact))
+                    return ce_error(e,dependency->offset,"duplicate dependency fact");
+                out->instances.items = ce_alloc(&ps->arena,(dependency->len-2)*sizeof(*out->instances.items));
+                for (size_t k = 2; k < dependency->len; ++k) {
+                    CeText instance;
+                    if (!name(dependency->items[k],&instance,e) || find(out->instances,instance) != SIZE_MAX)
+                        return ce_error(e,dependency->items[k]->offset,"invalid or duplicate dependency instance");
+                    out->instances.items[out->instances.len++] = instance;
+                }
+                add(ps,&p->facts,out->fact);
+            }
+        } else return ce_error(e,clause->offset,"unknown or duplicate protocol clause");
     }
     if (p->checks) {
         const CeAtom *checks = p->checks;
@@ -240,6 +299,28 @@ static bool read_protocol(Protocols *ps, CeText id, CeAtom *a, Protocol *p, CeEr
                 if (ce_equal(out->kind,p->validators[j].kind) && ce_equal(out->id,p->validators[j].id))
                     return ce_error(e,v->offset,"duplicate validator for a fact or resource");
             if (!callable_name(out->cname,v->offset,e) || !distinct_cname(ps,&cnames,out->cname,v->offset,e)) return false;
+        }
+    }
+    if (p->bound) {
+        for (size_t i = 0; i < p->nhooks; ++i) {
+            Hook *hook = &p->hooks[i];
+            for (size_t j = 0; j < hook->reads.len; ++j)
+                if (find(p->instances,hook->reads.items[j]) == SIZE_MAX)
+                    return ce_error(e,hs->items[i+1]->offset,"hook reads an undeclared resource instance");
+            for (size_t j = 0; j < hook->writes.len; ++j)
+                if (find(p->instances,hook->writes.items[j]) == SIZE_MAX)
+                    return ce_error(e,hs->items[i+1]->offset,"hook writes an undeclared resource instance");
+        }
+        for (size_t i = 0; i < p->ndependencies; ++i)
+            for (size_t j = 0; j < p->dependencies[i].instances.len; ++j)
+                if (find(p->instances,p->dependencies[i].instances.items[j]) == SIZE_MAX)
+                    return ce_error(e,p->written->offset,"fact depends on an undeclared resource instance");
+        for (size_t i = 0; i < p->nresources; ++i) if (p->resources[i].owner.len) {
+            bool found = false;
+            for (size_t j = 0; j < p->nvalidators; ++j)
+                found |= ce_is(p->validators[j].kind,"own") && ce_equal(p->validators[j].id,p->resources[i].id) &&
+                         ce_equal(p->validators[j].cname,p->resources[i].owner);
+            if (!found) return ce_error(e,p->written->offset,"BoundOwner requires the matching (Own RESOURCE PREDICATE) validator");
         }
     }
     p->body = a->items[6]->items[1]; return true;
@@ -325,9 +406,8 @@ static bool check_body(Protocols *ps, Protocol *p, const CeAtom *a, State s,
             return ce_error(e,a->offset,"hook %.*s uses an unowned resource",(int)id.len,id.data);
         s.effect |= ce_is(hook->kind,"effect");
         State yes = state_copy(ps,p,s), no = state_copy(ps,p,s);
-        for (size_t i = 0; i < hook->invalidates.len; ++i)
-            yes.facts[find(p->facts,hook->invalidates.items[i])] =
-                no.facts[find(p->facts,hook->invalidates.items[i])] = false;
+        for (size_t i = 0; i < p->facts.len; ++i) if (hook_invalidates_fact(p,hook,p->facts.items[i]))
+            yes.facts[i] = no.facts[i] = false;
         for (size_t i = 0; i < hook->proves.len; ++i) yes.facts[find(p->facts,hook->proves.items[i])] = true;
         *target = node(ps,"IfCall",hook->cname,4);
         return check_body(ps,p,a->items[2],yes,loop,&(*target)->items[2],e) &&
@@ -336,8 +416,9 @@ static bool check_body(Protocols *ps, Protocol *p, const CeAtom *a, State s,
     size_t r = resource_index(p,id);
     if (r == SIZE_MAX) return ce_error(e,a->offset,"unknown statement or undeclared resource");
     const Resource *resource = &p->resources[r];
-    if (form(a,"Acquire")) {
-        if (a->len != 4 || s.owned[r]) return ce_error(e,a->offset,"Acquire needs an unowned resource and two branches");
+    bool claim = form(a,"Acquire") || (p->bound && (form(a,"Claim") || form(a,"Resume")));
+    if (claim) {
+        if (a->len != 4 || s.owned[r]) return ce_error(e,a->offset,"Acquire/Claim/Resume needs an unowned resource and two branches");
         for (size_t i = 0; i < resource->acquire_requires.len; ++i)
             if (!s.facts[find(p->facts,resource->acquire_requires.items[i])])
                 return ce_error(e,a->offset,"resource acquisition requires an unestablished fact");
@@ -346,14 +427,16 @@ static bool check_body(Protocols *ps, Protocol *p, const CeAtom *a, State s,
         return check_body(ps,p,a->items[2],yes,loop,&(*target)->items[2],e) &&
                check_body(ps,p,a->items[3],no,loop,&(*target)->items[3],e);
     }
-    if (form(a,"Release") || form(a,"Transfer")) {
+    bool release = form(a,"Release") || (p->bound && form(a,"Discharge"));
+    bool transfer = form(a,"Transfer") || (p->bound && form(a,"TransferTo"));
+    if (release || transfer) {
         if (a->len != 3 || !s.owned[r]) return ce_error(e,a->offset,"Release/Transfer needs an owned resource and a continuation");
-        if (form(a,"Transfer")) for (size_t i = 0; i < resource->transfer_requires.len; ++i)
+        if (transfer) for (size_t i = 0; i < resource->transfer_requires.len; ++i)
             if (!s.facts[find(p->facts,resource->transfer_requires.items[i])])
                 return ce_error(e,a->offset,"resource transfer requires an unestablished fact");
         State next = state_copy(ps,p,s); next.owned[r] = false;
-        next.effect |= form(a,"Transfer");
-        *target = node(ps,"VoidCall",form(a,"Release") ? resource->release : resource->transfer,3);
+        next.effect |= transfer;
+        *target = node(ps,"VoidCall",release ? resource->release : resource->transfer,3);
         return check_body(ps,p,a->items[2],next,loop,&(*target)->items[2],e);
     }
     return ce_error(e,a->offset,"unknown protocol statement");
@@ -432,9 +515,8 @@ static CeAtom *instrument_body(Protocols *ps, Protocol *p, const CeAtom *body, C
         const Hook *h = &p->hooks[hook_index(p,body->items[1]->text)];
         State yes = state_copy(ps,p,state), no = state_copy(ps,p,state);
         yes.effect |= ce_is(h->kind,"effect"); no.effect = yes.effect;
-        for (size_t i = 0; i < h->invalidates.len; ++i)
-            yes.facts[find(p->facts,h->invalidates.items[i])] =
-                no.facts[find(p->facts,h->invalidates.items[i])] = false;
+        for (size_t i = 0; i < p->facts.len; ++i) if (hook_invalidates_fact(p,h,p->facts.items[i]))
+            yes.facts[i] = no.facts[i] = false;
         for (size_t i = 0; i < h->proves.len; ++i) yes.facts[find(p->facts,h->proves.items[i])] = true;
         CeAtom *next = node(ps,"IfCall",h->cname,4);
         next->items[2] = instrument_body(ps,p,body->items[2],reply_key(ps,h->cname,true),yes,loop);
@@ -443,7 +525,7 @@ static CeAtom *instrument_body(Protocols *ps, Protocol *p, const CeAtom *body, C
         return validate_names(ps,p,"fact",h->requires,next);
     }
     const Resource *r = &p->resources[resource_index(p,body->items[1]->text)];
-    if (form(body,"Acquire")) {
+    if (form(body,"Acquire") || form(body,"Claim") || form(body,"Resume")) {
         State yes = state_copy(ps,p,state); yes.owned[resource_index(p,r->id)] = true;
         CeAtom *next = node(ps,"IfCall",r->acquire,4);
         next->items[2] = validate(ps,p,"own",r->id,true,
@@ -453,7 +535,7 @@ static CeAtom *instrument_body(Protocols *ps, Protocol *p, const CeAtom *body, C
         next = validate(ps,p,"own",r->id,false,next);
         return validate_names(ps,p,"fact",r->acquire_requires,next);
     }
-    bool transfer = form(body,"Transfer");
+    bool transfer = form(body,"Transfer") || form(body,"TransferTo");
     State after = state_copy(ps,p,state); after.owned[resource_index(p,r->id)] = false;
     after.effect |= transfer;
     CeAtom *next = node(ps,"VoidCall",transfer ? r->transfer : r->release,3);
@@ -524,6 +606,8 @@ static bool load(Protocols *ps, const char *path, const char *theory, CeError *e
             const Resource *r = &p->resources[j];
             if (find(exported,r->acquire) != SIZE_MAX || find(exported,r->release) != SIZE_MAX || find(exported,r->transfer) != SIZE_MAX)
                 return ce_error(e,p->written->offset,"resource hook conflicts with an exported declaration");
+            if (r->owner.len && find(exported,r->owner) != SIZE_MAX)
+                return ce_error(e,p->written->offset,"resource owner predicate conflicts with an exported declaration");
         }
         for (size_t j = 0; j < p->nvalidators; ++j) if (find(exported,p->validators[j].cname) != SIZE_MAX)
             return ce_error(e,p->written->offset,"validator conflicts with an exported declaration");
@@ -618,7 +702,7 @@ static void instrumentation_header(const Protocol *p, FILE *f) {
     }
 }
 static void header(Protocols *ps, FILE *f) {
-    fputs("/* Generated from cesta-protocol/1. Declare the context and native hooks first. */\n",f);
+    fputs("/* Generated from a declared Cesta protocol. Declare the context and native hooks first. */\n",f);
     for (size_t i = 0; i < ps->len; ++i) {
         const Protocol *p = &ps->items[i];
         fprintf(f,"\n#ifdef CESTA_PROTOCOL_%.*s_DEFINED\n#error \"duplicate protocol definition\"\n#endif\n#define CESTA_PROTOCOL_%.*s_DEFINED\n\n",
@@ -633,6 +717,7 @@ static void header(Protocols *ps, FILE *f) {
         for (size_t j = 0; j < p->nhooks; ++j) guard_macro(f,p->hooks[j].cname);
         for (size_t j = 0; j < p->nresources; ++j) {
             guard_macro(f,p->resources[j].acquire); guard_macro(f,p->resources[j].release); guard_macro(f,p->resources[j].transfer);
+            if (p->resources[j].owner.len) guard_macro(f,p->resources[j].owner);
         }
         for (size_t j = 0; j < p->nvalidators; ++j) guard_macro(f,p->validators[j].cname);
         /* The last three names are the documented configuration macros. */
@@ -653,7 +738,7 @@ static void header(Protocols *ps, FILE *f) {
 static void plans(const Protocols *ps, FILE *f) {
     for (size_t i = 0; i < ps->len; ++i) {
         const Protocol *p = &ps->items[i];
-        fprintf(f,"(cesta-protocol-plan/1 %.*s",(int)p->name.len,p->name.data);
+        fprintf(f,"(cesta-protocol-plan/%u %.*s",p->bound ? 2u : 1u,(int)p->name.len,p->name.data);
         for (size_t j = 2; j < 7; ++j) { fputc(' ',f); ce_atom_write(p->written->items[j],f); }
         fputs(" (Target ",f); ce_atom_write(p->target,f); fputs(") (Instrumentation ",f);
         if (p->checks) ce_atom_write(p->checks,f);
@@ -661,6 +746,10 @@ static void plans(const Protocols *ps, FILE *f) {
         if (p->checks_complete) { fputs(" (Target ",f); ce_atom_write(p->instrumented,f); fputc(')',f); }
         else fputs(" (Unavailable)",f);
         fputs(")",f);
+        if (p->bound) for (size_t j = 7; j < p->written->len; ++j)
+            if (form(p->written->items[j],"Instances") || form(p->written->items[j],"Dependencies")) {
+                fputc(' ',f); ce_atom_write(p->written->items[j],f);
+            }
         if (p->exits) { fputc(' ',f); ce_atom_write(p->exits,f); }
         fputs(")\n",f);
     }

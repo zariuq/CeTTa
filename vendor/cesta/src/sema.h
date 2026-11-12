@@ -120,9 +120,11 @@ typedef struct {
     unsigned record_layout;       /* target record and bit-field allocation policy */
 } CeAbi;
 enum { CE_ENUM_GNU, CE_ENUM_INT };
-enum { CE_RECORD_SYSV, CE_RECORD_MS };
-extern const CeAbi ce_abi_x86_64_sysv, ce_abi_i386_sysv, ce_abi_x86_64_windows;
+enum { CE_RECORD_SYSV, CE_RECORD_MS, CE_RECORD_AAPCS64 };
+extern const CeAbi ce_abi_x86_64_sysv, ce_abi_i386_sysv, ce_abi_x86_64_windows,
+    ce_abi_aarch64_aapcs64;
 const CeAbi *ce_abi_named(const char *name);
+const CeAbi *ce_abi_predefined(const char *macros);
 
 struct CeEntity;
 typedef struct CeType {

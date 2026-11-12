@@ -95,8 +95,8 @@ Binding markers
 LocalRef resolves to a declared slot identity. The definition checker uses
 Cesta's existing C scope program to require one C declaration in the right
 namespace, and rejects undeclared or multiply declared identities.
-ordinary, tag and label binders use that admission. Member binders require
-a record-owner port, which is not implemented yet.
+ordinary, tag and label binders use that admission. Member binders name the
+record that owns them; see the version 4 declaration templates.
 
 The native driver asks the selected compiler for an identifier inventory using
 -E -dD, with the project's headers and flags, before emitting final fresh names.
@@ -144,8 +144,71 @@ reject unavailable or macro-redefined intrinsics.
 
 This is partial hygiene admission. A finite native inventory is not a proof
 about arbitrary preprocessor programs that manufacture identifiers depending
-on the newly chosen spelling. Record-owner ports and the full native printing
-correspondence remain open.
+on the newly chosen spelling. The full native printing correspondence remains
+open.
+
+Declaration templates and record members, cesta-macro/4
+-------------------------------------------------------
+
+Version 4 has the same outer fields as version 3 and adds one result:
+
+  (Result (CType void) "declarations")
+
+at sort ExternalDeclaration. The template is a (unit ...) of ordinary C
+declarations: records, typedefs and function definitions. Every argument is
+syntax; Ports stays empty, because a declaration template names its C
+dependencies through its arguments. (List a b) writes the headless list
+(a b), as parameters and record members require.
+
+  (Locals
+    (Local record "tag" (Export name))
+    (Local push "ordinary" (Export push_name))
+    (Local data "member" record)
+    (Local self "ordinary"))
+
+Export takes its spelling from a CGeneralName argument: the caller chooses the
+public names. An exported name must be a C identifier, and two exports cannot
+collide in one C namespace. Every other ordinary or tag local is fresh.
+A member local names the tag identity of the record that owns it and keeps its
+written spelling, since member names are local to their record. The definition
+checker requires each member to be declared exactly once, in that record.
+
+  (Member data (LocalRef "ordinary" self))
+
+Member is the only way to project a declared member, and its receiver is
+explicit. The receiver must point to the owning record, with any
+qualification; a different record that happens to have a member of the same
+spelling is refused by the compiler. When the receiver is a parameter of the
+enclosing function definition, the check is one static assertion on entry.
+This holds for both spellings of a definition, (fn specifiers name parameters
+body...) and the general (fn-shape specifiers declarator declarations
+(block ...)). Elsewhere the check is an unevaluated expression at the use.
+The checks add no instruction. A plain -> or . with a member local is refused.
+
+Generated names are guarded against preprocessor macros of the same spelling.
+An argument that hides opaque native source is refused. The emitted plan
+records the use at position declarations.
+
+A declaration family may add Contracts between Locals and Template:
+
+  (Contracts
+    (record (LocalRef "ordinary" record_type)
+      (field (LocalRef "member" next) (callback (NameArgument next_type))))
+    (function (LocalRef "ordinary" run)
+      ("returns-borrow" 0 (LocalRef "member" ctx))))
+
+Contracts contains ordinary ownership record, function or callback declarations.
+LocalRef uses the same instantiated identity as the C template. NameArgument
+uses one C identifier supplied as a syntax argument, such as a callback typedef;
+compound types cannot stand in for a contract name. Quoted heads use the module
+syntax's normal convention for hyphenated names.
+
+An explicitly selected ownership check receives these instantiated declarations
+alongside the caller's declarations. Identical declarations are deduplicated;
+conflicting contracts are refused by the ownership checker. Without an ownership
+selection the contracts add no checking requirement. Contracts cannot introduce
+unchecked bodies or foreign assumptions. Generated bodies are checked normally,
+and their actual permission plans use the existing admission path.
 
 Formal and test boundary
 ------------------------
@@ -157,6 +220,11 @@ slot bounds and occurrence counts from exported module data.
 MacroDefinitionPorts proves acquisition and preservation of definition-site
 declaration identities under independently admitted caller freshness. Actual
 port registries and DefinitionRef requests are kernel checked separately.
+
+RecordMemberNames states the naming law for record members: qualified by
+their owner, distinct members stay distinct while different records may reuse
+a spelling. It is a model law; actual declaration templates are checked by the
+definition checker and the C compilers, not by kernel admission.
 
 The native implementation, C type/category checks, ordered side effects and
 object equivalence are tested separately with GCC and Clang. These results

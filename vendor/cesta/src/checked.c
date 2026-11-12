@@ -10,8 +10,25 @@
 
 typedef enum {
     CK_DEAD, CK_UNIT, CK_BOOL, CK_U8, CK_U16, CK_U32, CK_U64, CK_SIZE,
-    CK_READ, CK_WRITE, CK_OWN, CK_ARRAY
+    CK_READ, CK_WRITE, CK_OWN, CK_ARRAY,
+    CK_TYPED_SPAN = 16, CK_TYPE_LIMIT = CK_TYPED_SPAN + 6 * 4
 } CkType;
+
+/* Element and access mode are orthogonal. Byte spellings retain their old
+   representation so existing headers and permission records are unchanged. */
+static CkType span_kind(CkType t) {
+    return t >= CK_TYPED_SPAN ? (CkType)(CK_READ + (t - CK_TYPED_SPAN) % 4) : t;
+}
+
+static CkType span_element(CkType t) {
+    return t >= CK_TYPED_SPAN ? (CkType)(CK_BOOL + (t - CK_TYPED_SPAN) / 4) : CK_U8;
+}
+
+static CkType span_type(CkType element, CkType mode) {
+    return element == CK_U8 ? mode : (CkType)(CK_TYPED_SPAN + (element - CK_BOOL) * 4 + mode - CK_READ);
+}
+
+static bool is_kind(CkType t, CkType mode) { return span_kind(t) == mode; }
 
 typedef struct {
     CeText name;
@@ -27,7 +44,7 @@ typedef struct {
 } CkCell;
 
 typedef struct { CkCell *cells; bool reachable; } CkState;
-typedef struct { CeText name; CkType type; } CkParameter;
+typedef struct { CeText name; CkType type; bool data_only; } CkParameter;
 
 typedef struct {
     CeText name, native;
@@ -58,6 +75,8 @@ struct Checked {
     FILE *output, *plan;
     bool lines, needs_memory, needs_allocation;
     unsigned helpers;
+    unsigned span_types, reads, writes;
+    bool typed_spans;
     CeText *guards; size_t nguards, guard_capacity;
     CkMark *marks; size_t nmarks, mark_capacity;
 };
@@ -130,6 +149,7 @@ static bool identifier(Checked *m, const CeAtom *a, CeText *out) {
     }
     if (a->text.data[0] == '_' ||
         (a->text.len >= 6 && !memcmp(a->text.data,"cesta_",6)) ||
+        (a->text.len >= 14 && !memcmp(a->text.data,"CESTA_CHECKED_",14)) ||
         word_in(a->text,
         "auto break case char const continue default do double else enum extern "
         "float for goto if inline int long register restrict return short signed "
@@ -146,6 +166,13 @@ static bool identifier(Checked *m, const CeAtom *a, CeText *out) {
 }
 
 static CkType type_of(const CeAtom *a) {
+    if (form(a,"span") && a->len == 3 && a->items[1]->kind == CE_ATOM_SYMBOL &&
+        a->items[2]->kind == CE_ATOM_SYMBOL) {
+        CkType element = type_of(a->items[1]), mode = type_of(a->items[2]);
+        if (element >= CK_BOOL && element <= CK_SIZE && mode >= CK_READ && mode <= CK_OWN)
+            return span_type(element,mode);
+        return CK_DEAD;
+    }
     if (!a || a->kind != CE_ATOM_SYMBOL) return CK_DEAD;
     static const char *names[] = {"", "unit", "bool", "u8", "u16", "u32", "u64",
                                   "usize", "read", "write", "own"};
@@ -155,12 +182,30 @@ static CkType type_of(const CeAtom *a) {
 }
 
 static const char *type_name(CkType t) {
+    static const char *spans[6][4] = {
+        {"(span bool read)","(span bool write)","(span bool own)","(span bool array)"},
+        {"read","write","own","array"},
+        {"(span u16 read)","(span u16 write)","(span u16 own)","(span u16 array)"},
+        {"(span u32 read)","(span u32 write)","(span u32 own)","(span u32 array)"},
+        {"(span u64 read)","(span u64 write)","(span u64 own)","(span u64 array)"},
+        {"(span usize read)","(span usize write)","(span usize own)","(span usize array)"}};
+    if (t >= CK_TYPE_LIMIT) return "dead";
+    if (t >= CK_TYPED_SPAN) return spans[span_element(t)-CK_BOOL][span_kind(t)-CK_READ];
+    if (t > CK_ARRAY) return "dead";
     static const char *names[] = {"dead","unit","bool","u8","u16","u32","u64",
                                   "usize","read","write","own","array"};
     return names[t];
 }
 
 static const char *c_type(CkType t) {
+    static const char *spans[6][3] = {
+        {"cesta_read_bool_span","cesta_write_bool_span","cesta_owned_bool_span"},
+        {"cesta_read_bytes","cesta_write_bytes","cesta_owned_bytes"},
+        {"cesta_read_u16_span","cesta_write_u16_span","cesta_owned_u16_span"},
+        {"cesta_read_u32_span","cesta_write_u32_span","cesta_owned_u32_span"},
+        {"cesta_read_u64_span","cesta_write_u64_span","cesta_owned_u64_span"},
+        {"cesta_read_usize_span","cesta_write_usize_span","cesta_owned_usize_span"}};
+    if (t >= CK_TYPED_SPAN) return spans[span_element(t)-CK_BOOL][is_kind(t,CK_ARRAY) ? 1 : span_kind(t)-CK_READ];
     static const char *names[] = {"void","void","bool","uint8_t","uint16_t","uint32_t",
         "uint64_t","size_t","cesta_read_bytes","cesta_write_bytes","cesta_owned_bytes",
         "cesta_write_bytes"};
@@ -169,9 +214,30 @@ static const char *c_type(CkType t) {
 
 static bool scalar(CkType t) { return t >= CK_BOOL && t <= CK_SIZE; }
 static bool integer(CkType t) { return t >= CK_U8 && t <= CK_SIZE; }
-static bool span(CkType t) { return t >= CK_READ && t <= CK_ARRAY; }
-static bool loan(CkType t) { return t == CK_READ || t == CK_WRITE; }
-static bool owner(CkType t) { return t == CK_OWN || t == CK_ARRAY; }
+static bool span(CkType t) { return (t >= CK_READ && t <= CK_ARRAY) || (t >= CK_TYPED_SPAN && t < CK_TYPE_LIMIT); }
+static bool loan(CkType t) { return is_kind(t,CK_READ) || is_kind(t,CK_WRITE); }
+static bool owner(CkType t) { return is_kind(t,CK_OWN) || is_kind(t,CK_ARRAY); }
+
+static void note_type(Checked *m, CkType t) {
+    if (!span(t)) return;
+    m->span_types |= 1u << span_element(t);
+    m->typed_spans |= t >= CK_TYPED_SPAN;
+}
+
+static void discover_span_types(Checked *m, const CeAtom *a) {
+    note_type(m,type_of(a));
+    if ((form(a,"array") && a->len == 4) || (form(a,"allocate") && a->len == 6)) {
+        CkType element = type_of(a->items[2]);
+        if (scalar(element)) note_type(m,span_type(element,CK_OWN));
+    }
+    if (a->kind == CE_ATOM_LIST)
+        for (size_t i = 0; i < a->len; ++i) discover_span_types(m,a->items[i]);
+}
+
+static const char *memory_helper(Checked *m, const char *verb, CkType element) {
+    return print_string(m,"cesta_%.*s_%s%s%s",(int)m->name.len,m->name.data,verb,
+                        element == CK_U8 ? "" : "_",element == CK_U8 ? "" : type_name(element));
+}
 
 static unsigned width(Checked *m, CkType t) {
     if (t == CK_SIZE) return m->word_bits;
@@ -275,11 +341,18 @@ static bool parse_signature(Checked *m, const CeAtom *a, CkFunction *f) {
             f->params = ce_alloc(m->arena,f->nparams*sizeof(*f->params));
             for (size_t k = 0; k < f->nparams; ++k) {
                 const CeAtom *p = field->items[k+1];
-                if (p->kind != CE_ATOM_LIST || p->len != 2 ||
+                if (p->kind != CE_ATOM_LIST || (p->len != 2 && p->len != 3) ||
                     !identifier(m,p->items[0],&f->params[k].name)) return false;
                 CkType t = type_of(p->items[1]);
                 if (t == CK_DEAD || t == CK_UNIT) return bad(m,p,"invalid parameter type");
                 f->params[k].type = t;
+                if (p->len == 3) {
+                    if (!f->foreign || !loan(t) || p->items[2]->kind != CE_ATOM_SYMBOL ||
+                        (!ce_is(p->items[2]->text,"data") && !ce_is(p->items[2]->text,"data_len")))
+                        return bad(m,p,"data/data_len ABI projections require a borrowed foreign span");
+                    f->params[k].data_only = ce_is(p->items[2]->text,"data");
+                }
+                note_type(m,t);
                 for (size_t j = 0; j < k; ++j)
                     if (ce_equal(f->params[j].name,f->params[k].name))
                         return bad(m,p,"duplicate parameter");
@@ -289,6 +362,7 @@ static bool parse_signature(Checked *m, const CeAtom *a, CkFunction *f) {
             if (field->len != 2 && field->len != 4) return bad(m,field,"returns has a type and optional from parameter");
             f->result = type_of(field->items[1]);
             if (f->result == CK_DEAD) return bad(m,field,"unknown return type");
+            note_type(m,f->result);
             if (field->len == 4) {
                 if (!ce_is(field->items[2]->text,"from") ||
                     !identifier(m,field->items[3],&result_source)) return false;
@@ -315,7 +389,8 @@ static bool parse_signature(Checked *m, const CeAtom *a, CkFunction *f) {
         for (size_t i = 0; i < f->nparams; ++i)
             if (ce_equal(result_source,f->params[i].name)) f->from = (int)i;
         if (f->from < 0 || !loan(f->params[f->from].type) ||
-            (f->result == CK_WRITE && f->params[f->from].type != CK_WRITE))
+            span_element(f->result) != span_element(f->params[f->from].type) ||
+            (is_kind(f->result,CK_WRITE) && !is_kind(f->params[f->from].type,CK_WRITE)))
             return bad(m,a,"a returned view borrows from a compatible view parameter");
     } else if (result_source.len) return bad(m,a,"only a returned view has a from parameter");
     return true;
@@ -367,8 +442,8 @@ static bool parse_module(Checked *m, const CeAtom *doc) {
     for (size_t i = 0; i < m->nfunctions; ++i) {
         CkFunction *f = &m->functions[i];
         if (f->imported) continue;
-        bool owns = f->result == CK_OWN;
-        for (size_t k = 0; k < f->nparams; ++k) owns |= f->params[k].type == CK_OWN;
+        bool owns = is_kind(f->result,CK_OWN);
+        for (size_t k = 0; k < f->nparams; ++k) owns |= is_kind(f->params[k].type,CK_OWN);
         if (owns && !m->allocate.len) return bad(m,f->site,"own interfaces require an allocator pair");
         if (owns) m->needs_allocation = true;
     }
@@ -430,6 +505,8 @@ static bool import_module(Checked *m, const CeAtom *site) {
         function.origin = ce_cstr(m->arena,path);
         function.owner_allocate = child.allocate; function.owner_release = child.release;
         function.obligation = ce_cstr(m->arena,print_string(m,"Checked module interface: %.*s",(int)function.native.len,function.native.data));
+        note_type(m,function.result);
+        for (size_t k = 0; k < function.nparams; ++k) note_type(m,function.params[k].type);
         *add_function(m) = function;
     }
     return true;
@@ -479,6 +556,7 @@ static int bind_variable(CkBody *b, const CeAtom *site, CeText name, CkType type
     add_guard(m,name);
     b->visible[b->nvisible++] = id;
     b->state.cells[id] = (CkCell){.type=type,.root=id};
+    note_type(m,type);
     return (int)id;
 }
 
@@ -489,12 +567,12 @@ static bool ancestor(const CkCell *cell, size_t id) {
 
 static bool span_access(CkBody *b, const CeAtom *site, size_t id, bool writing) {
     CkCell *cell = &b->state.cells[id];
-    if (!span(cell->type) || (writing && cell->type == CK_READ))
+    if (!span(cell->type) || (writing && is_kind(cell->type,CK_READ)))
         return bad(b->module,site,"access requires a %s byte view",writing ? "writable" : "live");
     for (size_t i = 0; i < b->nvariables; ++i) {
         const CkCell *other = &b->state.cells[i];
         if (i == id || !loan(other->type) || other->root != cell->root || ancestor(cell,i)) continue;
-        if (writing || other->type == CK_WRITE)
+        if (writing || is_kind(other->type,CK_WRITE))
             return bad(b->module,site,"access conflicts with a live %s borrow",type_name(other->type));
     }
     return true;
@@ -564,8 +642,11 @@ static char *coerce_view(CkBody *b, size_t id, CkType type, bool foreign) {
 
 static int borrow_binding(CkBody *b, const CeAtom *site, CeText name,
                           size_t source, CkType type, bool copying) {
-    if (!span_access(b,site,source,type == CK_WRITE)) return -1;
+    if (!span_access(b,site,source,is_kind(type,CK_WRITE))) return -1;
     CkCell origin = b->state.cells[source];
+    if (span_element(origin.type) != span_element(type)) {
+        bad(b->module,site,"span element types disagree"); return -1;
+    }
     int id = bind_variable(b,site,name,type,false);
     if (id < 0) return -1;
     size_t extra = copying ? 0 : 1;
@@ -586,8 +667,8 @@ static bool call(CkBody *b, const CeAtom *a, CkExpression *out, int *borrow_sour
         if (ce_equal(a->items[1]->text,m->functions[i].name)) f = &m->functions[i];
     if (!f) return bad(m,a->items[1],"unknown checked function");
     if (a->len != f->nparams+2) return bad(m,a,"call argument count disagrees with function signature");
-    bool transfers = f->result == CK_OWN;
-    for (size_t i = 0; i < f->nparams; ++i) transfers |= f->params[i].type == CK_OWN;
+    bool transfers = is_kind(f->result,CK_OWN);
+    for (size_t i = 0; i < f->nparams; ++i) transfers |= is_kind(f->params[i].type,CK_OWN);
     if (f->imported && transfers && (!ce_equal(m->allocate,f->owner_allocate) || !ce_equal(m->release,f->owner_release)))
         return bad(m,a,"owned checked calls require the same allocator and release pair in both modules");
     for (size_t i = 0; i < f->neffects; ++i)
@@ -603,17 +684,21 @@ static bool call(CkBody *b, const CeAtom *a, CkExpression *out, int *borrow_sour
             int id = find_variable(b,arg);
             if (id < 0) return false;
             CkCell value = b->state.cells[id];
-            if (type == CK_OWN) {
-                if (value.type != CK_OWN || !unborrowed(b,arg,(size_t)id))
+            if (!span(value.type) || span_element(value.type) != span_element(type))
+                return bad(m,arg,"span argument element type disagrees with the signature");
+            if (is_kind(type,CK_OWN)) {
+                if (!is_kind(value.type,CK_OWN) || !unborrowed(b,arg,(size_t)id))
                     return bad(m,arg,"own parameter consumes an unborrowed allocated owner");
                 codes[i] = print_string(m,"%s",variable_name(b,(size_t)id));
             } else {
-                if (!span_access(b,arg,(size_t)id,type == CK_WRITE)) return false;
-                codes[i] = coerce_view(b,(size_t)id,type,f->foreign);
+                if (!span_access(b,arg,(size_t)id,is_kind(type,CK_WRITE))) return false;
+                codes[i] = f->foreign && f->params[i].data_only ?
+                    print_string(m,"%s.data",variable_name(b,(size_t)id)) :
+                    coerce_view(b,(size_t)id,type,f->foreign);
             }
             for (size_t j = 0; j < i; ++j)
                 if (arguments[j] >= 0 && b->state.cells[arguments[j]].root == value.root &&
-                    (type != CK_READ || f->params[j].type != CK_READ))
+                    (!is_kind(type,CK_READ) || !is_kind(f->params[j].type,CK_READ)))
                     return bad(m,arg,"call arguments alias an exclusive or consumed owner");
             arguments[i] = id;
         } else {
@@ -637,7 +722,7 @@ static bool call(CkBody *b, const CeAtom *a, CkExpression *out, int *borrow_sour
         fputs("))\n",m->plan);
     }
     for (size_t i = 0; i < f->nparams; ++i)
-        if (f->params[i].type == CK_OWN) b->state.cells[arguments[i]] = (CkCell){0};
+        if (is_kind(f->params[i].type,CK_OWN)) b->state.cells[arguments[i]] = (CkCell){0};
     return true;
 }
 
@@ -665,7 +750,7 @@ static bool expression(CkBody *b, const CeAtom *a, CkExpression *out) {
     if (form(a,"len") && a->len == 2) {
         int id = find_variable(b,a->items[1]);
         if (id < 0 || !span_access(b,a,(size_t)id,false)) return false;
-        event(b,"inspect",(size_t)id,0,CK_READ);
+        event(b,"inspect",(size_t)id,0,span_type(span_element(b->state.cells[id].type),CK_READ));
         *out = (CkExpression){CK_SIZE,print_string(m,"%s.len",variable_name(b,(size_t)id))}; return true;
     }
     if (form(a,"at") && a->len == 3) {
@@ -674,9 +759,11 @@ static bool expression(CkBody *b, const CeAtom *a, CkExpression *out) {
             !typed(b,a->items[2],index,CK_SIZE)) return false;
         m->needs_memory = true;
         m->helpers |= CK_HELP_READ|CK_HELP_FAIL;
-        event(b,"read",(size_t)id,0,CK_READ);
-        *out = (CkExpression){CK_U8,print_string(m,"cesta_%.*s_read(%s.data, %s.len, %s)",
-            (int)m->name.len,m->name.data,variable_name(b,(size_t)id),variable_name(b,(size_t)id),index.code)};
+        CkType element = span_element(b->state.cells[id].type);
+        m->reads |= 1u << element;
+        event(b,"read",(size_t)id,0,span_type(element,CK_READ));
+        *out = (CkExpression){element,print_string(m,"%s(%s.data, %s.len, %s)",
+            memory_helper(m,"read",element),variable_name(b,(size_t)id),variable_name(b,(size_t)id),index.code)};
         return true;
     }
     if ((form(a,"as") || form(a,"truncate")) && a->len == 3) {
@@ -754,7 +841,7 @@ static bool cleanup(CkBody *b, size_t mark, const CeAtom *site) {
             event(b,"end",id,0,cell.type);
         } else if (owner(cell.type)) {
             if (!unborrowed(b,site,id)) return false;
-            if (cell.type == CK_OWN) {
+            if (is_kind(cell.type,CK_OWN)) {
                 if (!m->release.len) return bad(m,site,"owned allocation requires an allocator pair");
                 if (!require_effect(b,site,"heap")) return false;
                 indent(b); fprintf(m->output,"if (%s.data) %.*s(%s.data);\n",
@@ -779,13 +866,16 @@ static bool return_statement(CkBody *b, const CeAtom *a) {
         } else if (span(expected)) {
             source = find_variable(b,value);
             if (source < 0) return false;
-            if (expected == CK_OWN) {
-                if (b->state.cells[source].type != CK_OWN || !unborrowed(b,value,(size_t)source))
+            CkType actual = b->state.cells[source].type;
+            if (!span(actual) || span_element(actual) != span_element(expected))
+                return bad(m,value,"returned span element type disagrees with the result");
+            if (is_kind(expected,CK_OWN)) {
+                if (!is_kind(actual,CK_OWN) || !unborrowed(b,value,(size_t)source))
                     return bad(m,value,"only an unborrowed allocated owner can be returned as own");
                 code = print_string(m,"%s",variable_name(b,(size_t)source));
-                b->state.cells[source] = (CkCell){0}; event(b,"take",(size_t)source,0,CK_OWN);
+                b->state.cells[source] = (CkCell){0}; event(b,"take",(size_t)source,0,expected);
             } else {
-                if (!span_access(b,value,(size_t)source,expected == CK_WRITE)) return false;
+                if (!span_access(b,value,(size_t)source,is_kind(expected,CK_WRITE))) return false;
                 code = coerce_view(b,(size_t)source,expected,false);
             }
         } else {
@@ -821,20 +911,22 @@ static bool declare_value(CkBody *b, const CeAtom *a) {
     } else if (span(type)) {
         origin = find_variable(b,a->items[3]);
         if (origin < 0) return false;
-        if (type == CK_OWN) {
-            if (b->state.cells[origin].type != CK_OWN || !unborrowed(b,a,(size_t)origin))
+        if (!span(b->state.cells[origin].type) || span_element(b->state.cells[origin].type) != span_element(type))
+            return bad(m,a,"span initializer element type disagrees");
+        if (is_kind(type,CK_OWN)) {
+            if (!is_kind(b->state.cells[origin].type,CK_OWN) || !unborrowed(b,a,(size_t)origin))
                 return bad(m,a,"own initializer moves an unborrowed allocated owner");
             moved = b->state.cells[origin]; moved_from = origin;
-            value = (CkExpression){CK_OWN,print_string(m,"%s",variable_name(b,(size_t)origin))};
+            value = (CkExpression){type,print_string(m,"%s",variable_name(b,(size_t)origin))};
         } else {
-            if (!span_access(b,a,(size_t)origin,type == CK_WRITE)) return false;
+            if (!span_access(b,a,(size_t)origin,is_kind(type,CK_WRITE))) return false;
             value = (CkExpression){type,coerce_view(b,(size_t)origin,type,false)};
         }
     } else if (!expression(b,a->items[3],&value) || !typed(b,a,value,type)) return false;
     int id = loan(type) ? borrow_binding(b,a,name,(size_t)origin,type,false) :
         bind_variable(b,a,name,type,form(a,"var"));
     if (id < 0) return false;
-    if (type == CK_OWN) {
+    if (is_kind(type,CK_OWN)) {
         if (!m->allocate.len) return bad(m,a,"own type requires an allocator pair");
         m->needs_allocation = true;
         if (moved_from >= 0) {
@@ -869,18 +961,22 @@ static bool statement(CkBody *b, const CeAtom *a, unsigned *flow) {
         if (!expression(b,a->items[2],&value) || !typed(b,a,value,b->state.cells[id].type)) return false;
         indent(b); fprintf(m->output,"%s = %s;\n",variable_name(b,(size_t)id),value.code); return true;
     }
-    if (form(a,"array") && a->len == 3) {
+    if (form(a,"array") && (a->len == 3 || a->len == 4)) {
         CeText name; uint64_t count;
+        CkType element = a->len == 4 ? type_of(a->items[2]) : CK_U8;
+        if (!scalar(element)) return bad(m,a,"array requires a supported scalar element type");
+        unsigned bytes = element == CK_BOOL ? 1 : width(m,element)/8;
         if (!identifier(m,a->items[1],&name) ||
-            !natural(m,a->items[2],maximum(m,CK_SIZE)>>1,&count)) return false;
-        int id = bind_variable(b,a,name,CK_ARRAY,false);
+            !natural(m,a->items[a->len-1],(maximum(m,CK_SIZE)>>1)/bytes,&count)) return false;
+        CkType type = span_type(element,CK_ARRAY);
+        int id = bind_variable(b,a,name,type,false);
         if (id < 0) return false;
         add_guard(m,ce_cstr(m->arena,print_string(m,"cesta_%d_storage",id)));
-        indent(b); fprintf(m->output,"uint8_t cesta_%d_storage[%" PRIu64 "] = {0};\n",id,count ? count : 1);
-        indent(b); fprintf(m->output,"cesta_write_bytes %.*s = {cesta_%d_storage, (size_t)UINT64_C(%" PRIu64 ")};\n",
-            (int)name.len,name.data,id,count);
+        indent(b); fprintf(m->output,"%s cesta_%d_storage[%" PRIu64 "] = {0};\n",c_type(element),id,count ? count : 1);
+        indent(b); fprintf(m->output,"%s %.*s = {cesta_%d_storage, (size_t)UINT64_C(%" PRIu64 ")};\n",
+            c_type(type),(int)name.len,name.data,id,count);
         indent(b); fprintf(m->output,"(void)%.*s;\n",(int)name.len,name.data);
-        event(b,"array",(size_t)id,0,CK_ARRAY); return true;
+        event(b,"array",(size_t)id,0,type); return true;
     }
     if (form(a,"borrow") && a->len == 4) {
         CeText name; CkType type = type_of(a->items[2]);
@@ -921,7 +1017,7 @@ static bool statement(CkBody *b, const CeAtom *a, unsigned *flow) {
         CkCell cell = b->state.cells[source];
         int id;
         if (form(a,"copy")) {
-            if (cell.type == CK_READ) id = borrow_binding(b,a,name,(size_t)source,CK_READ,true);
+            if (is_kind(cell.type,CK_READ)) id = borrow_binding(b,a,name,(size_t)source,cell.type,true);
             else if (scalar(cell.type)) id = bind_variable(b,a,name,cell.type,false);
             else return bad(m,a,"copy cannot duplicate an owner or exclusive borrow");
         } else {
@@ -953,7 +1049,7 @@ static bool statement(CkBody *b, const CeAtom *a, unsigned *flow) {
         if (id < 0 || !owner(b->state.cells[id].type)) return bad(m,a,"drop requires an owner");
         if (!unborrowed(b,a,(size_t)id)) return false;
         CkType type = b->state.cells[id].type;
-        if (type == CK_OWN) {
+        if (is_kind(type,CK_OWN)) {
             if (!m->release.len) return bad(m,a,"dropping own requires an allocator pair");
             if (!require_effect(b,a,"heap")) return false;
             indent(b); fprintf(m->output,"if (%s.data) %.*s(%s.data);\n",variable_name(b,(size_t)id),
@@ -966,16 +1062,18 @@ static bool statement(CkBody *b, const CeAtom *a, unsigned *flow) {
         int id = find_variable(b,a->items[1]); CkExpression index, value;
         if (id < 0 || !span_access(b,a,(size_t)id,true) ||
             !expression(b,a->items[2],&index) || !typed(b,a,index,CK_SIZE) ||
-            !expression(b,a->items[3],&value) || !typed(b,a,value,CK_U8)) return false;
-        event(b,"write",(size_t)id,0,CK_WRITE);
-        indent(b); fprintf(m->output,"cesta_%.*s_write(%s.data, %s.len, %s, %s);\n",
-            (int)m->name.len,m->name.data,variable_name(b,(size_t)id),variable_name(b,(size_t)id),index.code,value.code);
+            !expression(b,a->items[3],&value) || !typed(b,a,value,span_element(b->state.cells[id].type))) return false;
+        CkType element = span_element(b->state.cells[id].type);
+        m->writes |= 1u << element;
+        event(b,"write",(size_t)id,0,span_type(element,CK_WRITE));
+        indent(b); fprintf(m->output,"%s(%s.data, %s.len, %s, %s);\n",
+            memory_helper(m,"write",element),variable_name(b,(size_t)id),variable_name(b,(size_t)id),index.code,value.code);
         return true;
     }
     if (form(a,"call")) {
         CkExpression value; int from;
         if (!call(b,a,&value,&from)) return false;
-        if (value.type == CK_OWN) return bad(m,a,"an owned return must be bound or returned");
+        if (is_kind(value.type,CK_OWN)) return bad(m,a,"an owned return must be bound or returned");
         indent(b); fprintf(m->output,"%s%s;\n",value.type == CK_UNIT ? "" : "(void)",value.code); return true;
     }
     if (form(a,"return")) {
@@ -1026,7 +1124,7 @@ static bool statement(CkBody *b, const CeAtom *a, unsigned *flow) {
             if (view < 0 || !span_access(b,a,(size_t)view,false) || !identifier(m,a->items[1],&name)) return false;
             index = bind_variable(b,a,name,CK_SIZE,false);
             if (index < 0) return false;
-            event(b,"inspect",(size_t)view,0,CK_READ);
+            event(b,"inspect",(size_t)view,0,span_type(span_element(b->state.cells[view].type),CK_READ));
         } else if (!expression(b,a->items[1],&condition) || !typed(b,a,condition,CK_BOOL)) return false;
         CkState initial = copy_state(b,&b->state);
         const CkState *previous_entry = b->loop_entry;
@@ -1050,38 +1148,45 @@ static bool statement(CkBody *b, const CeAtom *a, unsigned *flow) {
         b->nvisible = mark; b->state.reachable = true;
         *flow = CK_NORMAL|(body_flow&CK_RETURN); return true;
     }
-    if (form(a,"allocate") && a->len == 5 && form(a->items[3],"then") && form(a->items[4],"else")) {
+    if (form(a,"allocate") && (a->len == 5 || a->len == 6) &&
+        form(a->items[a->len-2],"then") && form(a->items[a->len-1],"else")) {
         if (!m->allocate.len || !require_effect(b,a,"heap"))
             return bad(m,a,"allocate requires an allocator pair and the heap effect");
         CeText name; CkExpression count;
-        if (!identifier(m,a->items[1],&name) || !expression(b,a->items[2],&count) || !typed(b,a,count,CK_SIZE)) return false;
+        CkType element = a->len == 6 ? type_of(a->items[2]) : CK_U8;
+        if (!scalar(element)) return bad(m,a,"allocate requires a supported scalar element type");
+        CkType type = span_type(element,CK_OWN);
+        if (!identifier(m,a->items[1],&name) || !expression(b,a->items[a->len-3],&count) || !typed(b,a,count,CK_SIZE)) return false;
         CkState initial = copy_state(b,&b->state); size_t mark = b->nvisible;
-        int id = bind_variable(b,a,name,CK_OWN,false);
+        int id = bind_variable(b,a,name,type,false);
         if (id < 0) return false;
-        static const char *const temporaries[] = {"count","data","index"};
+        static const char *const temporaries[] = {"count","data","raw","index"};
         for (size_t k = 0; k < sizeof temporaries/sizeof *temporaries; ++k)
             add_guard(m,ce_cstr(m->arena,print_string(m,"cesta_%d_%s",id,temporaries[k])));
         m->needs_allocation = true;
         indent(b); fputs("{\n",m->output); ++b->indent;
         indent(b); fprintf(m->output,"const size_t cesta_%d_count = %s;\n",id,count.code);
-        indent(b); fprintf(m->output,"uint8_t *cesta_%d_data = NULL;\n",id);
-        indent(b); fprintf(m->output,"if (cesta_%d_count && cesta_%d_count <= PTRDIFF_MAX) cesta_%d_data = %.*s(cesta_%d_count);\n",
-            id,id,id,(int)m->allocate.len,m->allocate.data,id);
+        indent(b); fprintf(m->output,"void *cesta_%d_raw = NULL;\n",id);
+        indent(b); fprintf(m->output,"if (cesta_%d_count && cesta_%d_count <= (size_t)PTRDIFF_MAX / sizeof(%s)) cesta_%d_raw = %.*s(cesta_%d_count * sizeof(%s));\n",
+            id,id,c_type(element),id,(int)m->allocate.len,m->allocate.data,id,c_type(element));
+        indent(b); fprintf(m->output,"if (cesta_%d_raw && (uintptr_t)cesta_%d_raw %% _Alignof(%s)) { %.*s(cesta_%d_raw); cesta_%d_raw = NULL; }\n",
+            id,id,c_type(element),(int)m->release.len,m->release.data,id,id);
+        indent(b); fprintf(m->output,"%s *cesta_%d_data = cesta_%d_raw;\n",c_type(element),id,id);
         indent(b); fprintf(m->output,"if (cesta_%d_data || !cesta_%d_count) {\n",id,id);
         ++b->indent; unsigned good_flow, bad_flow;
-        indent(b); fprintf(m->output,"cesta_owned_bytes %.*s = {cesta_%d_data, cesta_%d_count};\n",
-            (int)name.len,name.data,id,id);
+        indent(b); fprintf(m->output,"%s %.*s = {cesta_%d_data, cesta_%d_count};\n",
+            c_type(type),(int)name.len,name.data,id,id);
         indent(b); fprintf(m->output,"for (size_t cesta_%d_index = 0; cesta_%d_index < cesta_%d_count; ++cesta_%d_index)\n",
             id,id,id,id);
         indent(b); fprintf(m->output,"    cesta_%d_data[cesta_%d_index] = 0;\n",id,id);
-        if (m->plan) { fputs("      (branch\n        (then\n",m->plan); event(b,"own",(size_t)id,0,CK_OWN); }
-        if (!block(b,a->items[3],&good_flow)) return false;
+        if (m->plan) { fputs("      (branch\n        (then\n",m->plan); event(b,"own",(size_t)id,0,type); }
+        if (!block(b,a->items[a->len-2],&good_flow)) return false;
         if (good_flow&CK_NORMAL) { if (!cleanup(b,mark,a)) return false; }
         CkState good = copy_state(b,&b->state); b->nvisible = mark;
         b->state = copy_state(b,&initial);
         --b->indent; indent(b); fputs("} else {\n",m->output); ++b->indent;
         if (m->plan) fputs("        )\n        (else\n",m->plan);
-        if (!block(b,a->items[4],&bad_flow)) return false;
+        if (!block(b,a->items[a->len-1],&bad_flow)) return false;
         --b->indent; indent(b); fputs("}\n",m->output);
         --b->indent; indent(b); fputs("}\n",m->output);
         if (m->plan) fputs("        )\n      )\n",m->plan);
@@ -1121,8 +1226,9 @@ static void signature(Checked *m, FILE *file, const CkFunction *f, bool names) {
     for (size_t i = 0; i < f->nparams; ++i) {
         if (i) fputs(", ",file);
         CkType type = f->params[i].type;
-        if (f->foreign && (type == CK_READ || type == CK_WRITE)) {
-            fprintf(file,"%suint8_t *, size_t",type == CK_READ ? "const " : "");
+        if (f->foreign && loan(type)) {
+            fprintf(file,"%s%s *",is_kind(type,CK_READ) ? "const " : "",c_type(span_element(type)));
+            if (!f->params[i].data_only) fputs(", size_t",file);
         } else {
             fputs(c_type(type),file);
             if (names) fprintf(file," %.*s",(int)f->params[i].name.len,f->params[i].name.data);
@@ -1182,8 +1288,11 @@ static bool function_body(Checked *m, CkFunction *f) {
         indent(&b); fprintf(m->output,"(void)%s;\n",variable_name(&b,(size_t)id));
         if (span(f->params[i].type)) {
             m->helpers |= CK_HELP_FAIL;
-            indent(&b); fprintf(m->output,"if ((%s.len && !%s.data) || %s.len > (size_t)PTRDIFF_MAX)\n",
-                variable_name(&b,(size_t)id),variable_name(&b,(size_t)id),variable_name(&b,(size_t)id));
+            CkType element = span_element(f->params[i].type);
+            const char *parameter = variable_name(&b,(size_t)id);
+            indent(&b); fprintf(m->output,"if ((%s.len && !%s.data) || %s.len > (size_t)PTRDIFF_MAX / sizeof(%s) ||\n"
+                "        (%s.len && (uintptr_t)%s.data %% _Alignof(%s)))\n",
+                parameter,parameter,parameter,c_type(element),parameter,parameter,c_type(element));
             indent(&b); fprintf(m->output,"    cesta_%.*s_fail();\n",(int)m->name.len,m->name.data);
         }
     }
@@ -1216,6 +1325,10 @@ static void prelude(Checked *m, FILE *file, bool helpers) {
     static const char *const helper_names[] = {"read","write","add","sub","mul","shift","fail","div"};
     for (size_t i = 0; i < sizeof helper_names/sizeof *helper_names; ++i)
         if (m->helpers&(1u<<i)) add_guard(m,ce_cstr(m->arena,print_string(m,"cesta_%.*s_%s",(int)m->name.len,m->name.data,helper_names[i])));
+    for (CkType element = CK_BOOL; element <= CK_SIZE; ++element) {
+        if (m->reads & (1u << element)) add_guard(m,ce_cstr(m->arena,memory_helper(m,"read",element)));
+        if (m->writes & (1u << element)) add_guard(m,ce_cstr(m->arena,memory_helper(m,"write",element)));
+    }
     for (size_t i = 0; i < m->nguards; ++i) {
         fprintf(file,"#ifdef %.*s\n#error \"checked identifier is a preprocessor macro\"\n#endif\n",
             (int)m->guards[i].len,m->guards[i].data);
@@ -1224,6 +1337,17 @@ static void prelude(Checked *m, FILE *file, bool helpers) {
           "typedef struct { const uint8_t *data; size_t len; } cesta_read_bytes;\n"
           "typedef struct { uint8_t *data; size_t len; } cesta_write_bytes;\n"
           "typedef struct { uint8_t *data; size_t len; } cesta_owned_bytes;\n#endif\n\n",file);
+    for (CkType element = CK_BOOL; element <= CK_SIZE; ++element) {
+        if (element == CK_U8 || !(m->span_types & (1u << element))) continue;
+        fprintf(file,"#ifndef CESTA_CHECKED_%s_SPANS_DEFINED\n#define CESTA_CHECKED_%s_SPANS_DEFINED\n",
+            type_name(element),type_name(element));
+        fprintf(file,"_Static_assert(sizeof(%s) * CHAR_BIT == %u, \"checked span element width disagrees with C target\");\n",
+            c_type(element),element == CK_BOOL ? 8 : width(m,element));
+        for (CkType mode = CK_READ; mode <= CK_OWN; ++mode)
+            fprintf(file,"typedef struct { %s%s *data; size_t len; } %s;\n",
+                mode == CK_READ ? "const " : "",c_type(element),c_type(span_type(element,mode)));
+        fputs("#endif\n\n",file);
+    }
     fprintf(file,"void %.*s(void);\n",(int)m->failure.len,m->failure.data);
     if (m->allocate.len) fprintf(file,"CESTA_CHECKED_ALLOC_SIZE void *%.*s(size_t);\nvoid %.*s(void *);\n",
         (int)m->allocate.len,m->allocate.data,(int)m->release.len,m->release.data);
@@ -1234,12 +1358,16 @@ static void prelude(Checked *m, FILE *file, bool helpers) {
     if (m->helpers&CK_HELP_FAIL)
         fprintf(file,"static CESTA_CHECKED_COLD _Noreturn void cesta_%s_fail(void)\n{\n    %.*s();\n    for (;;) {}\n}\n\n",
             name,(int)m->failure.len,m->failure.data);
-    if (m->helpers&CK_HELP_READ)
-        fprintf(file,"static inline uint8_t cesta_%s_read(const uint8_t *data, size_t len, size_t index)\n"
-                     "{\n    if (index >= len) cesta_%s_fail();\n    return data[index];\n}\n\n",name,name);
-    if (m->helpers&CK_HELP_WRITE)
-        fprintf(file,"static inline void cesta_%s_write(uint8_t *data, size_t len, size_t index, uint8_t value)\n"
-                     "{\n    if (index >= len) cesta_%s_fail();\n    data[index] = value;\n}\n\n",name,name);
+    for (CkType element = CK_BOOL; element <= CK_SIZE; ++element) {
+        if (m->reads & (1u << element))
+            fprintf(file,"static inline %s %s(const %s *data, size_t len, size_t index)\n"
+                         "{\n    if (index >= len) cesta_%s_fail();\n    return data[index];\n}\n\n",
+                c_type(element),memory_helper(m,"read",element),c_type(element),name);
+        if (m->writes & (1u << element))
+            fprintf(file,"static inline void %s(%s *data, size_t len, size_t index, %s value)\n"
+                         "{\n    if (index >= len) cesta_%s_fail();\n    data[index] = value;\n}\n\n",
+                memory_helper(m,"write",element),c_type(element),c_type(element),name);
+    }
     if (m->helpers&CK_HELP_ADD)
         fprintf(file,"static inline uint64_t cesta_%s_add(uint64_t a, uint64_t b, uint64_t limit)\n"
                      "{\n    if (b > limit || a > limit - b) cesta_%s_fail();\n    return a + b;\n}\n\n",name,name);
@@ -1280,13 +1408,14 @@ static void source_map(Checked *m, CeNativeOutput *out, size_t prefix) {
 
 static bool generate(Checked *m, const CeAtom *doc, bool header, CeNativeOutput *out) {
     if (!parse_module(m,doc) || !check_global_names(m)) return false;
+    discover_span_types(m,doc);
     char *body = NULL, *code = NULL; size_t body_length = 0, code_length = 0;
     FILE *functions = open_memstream(&body,&body_length);
     if (!functions) return bad(m,doc,"cannot allocate checked function output");
     m->output = functions;
     if (m->plan) {
-        fprintf(m->plan,"(CheckedPermissions \"cesta-permissions/1\" (module %.*s) (word-bits %u)\n",
-            (int)m->name.len,m->name.data,m->word_bits);
+        fprintf(m->plan,"(CheckedPermissions \"cesta-permissions/%u\" (module %.*s) (word-bits %u)\n",
+            m->typed_spans ? 2u : 1u,(int)m->name.len,m->name.data,m->word_bits);
         for (size_t i = 0; i < m->nfunctions; ++i)
             if (m->functions[i].foreign || m->functions[i].imported) plan_signature(m,&m->functions[i]);
     }
@@ -1320,11 +1449,101 @@ bool ce_checked_text(CeArena *arena, CeText source, const char *identity,
     return ok;
 }
 
+/* Optional interface evidence. This records boundary obligations, not a
+   promise that an arbitrary native caller supplies live initialized storage. */
+static void contract_string(FILE *file, CeText text) {
+    fputc('"',file);
+    for (size_t i = 0; i < text.len; ++i) {
+        unsigned c = text.data[i];
+        if (c == '"' || c == '\\') { fputc('\\',file); fputc((int)c,file); }
+        else if (c < 32 || c >= 127) fprintf(file,"\\u%04x",c);
+        else fputc((int)c,file);
+    }
+    fputc('"',file);
+}
+
+static void contract_atom(FILE *file, const CeAtom *a) {
+    if (a->kind != CE_ATOM_LIST) { contract_string(file,a->text); return; }
+    fputc('[',file);
+    for (size_t i = 0; i < a->len; ++i) {
+        if (i) fputc(',',file);
+        contract_atom(file,a->items[i]);
+    }
+    fputc(']',file);
+}
+
+static void contract_type(Checked *m, FILE *file, CkType type) {
+    if (!span(type)) { fprintf(file,"{\"scalar\":\"%s\"}",type_name(type)); return; }
+    CkType element = span_element(type);
+    unsigned bytes = element == CK_BOOL ? 1 : width(m,element)/8;
+    fprintf(file,"{\"element\":\"%s\",\"mode\":\"%s\",\"element_bytes\":%u,"
+        "\"alignment\":\"c-alignof\",\"count_limit\":\"PTRDIFF_MAX/element_bytes\"}",
+        type_name(element),type_name(span_kind(type)),bytes);
+}
+
+static void contract_module(Checked *m, FILE *file) {
+    fprintf(file,"{\"format\":\"cesta-span-contract/1\",\"module\":\"%.*s\","
+        "\"word_bits\":%u,\"functions\":[",(int)m->name.len,m->name.data,m->word_bits);
+    bool first = true;
+    for (size_t k = 0; k < m->nfunctions; ++k) {
+        CkFunction *f = &m->functions[k];
+        if (f->foreign || f->imported) continue;
+        if (!first) fputc(',',file);
+        first = false;
+        fprintf(file,"\n{\"name\":\"%.*s\",\"symbol\":\"%.*s_%.*s\",\"params\":[",
+            (int)f->name.len,f->name.data,(int)m->name.len,m->name.data,(int)f->name.len,f->name.data);
+        for (size_t i = 0; i < f->nparams; ++i) {
+            if (i) fputc(',',file);
+            fprintf(file,"{\"name\":\"%.*s\",\"type\":",(int)f->params[i].name.len,f->params[i].name.data);
+            contract_type(m,file,f->params[i].type); fputc('}',file);
+        }
+        fputs("],\"result\":",file); contract_type(m,file,f->result);
+        fprintf(file,",\"borrowed_from\":%d,\"separate\":[",f->from);
+        bool pair = false;
+        for (size_t i = 0; i < f->nparams; ++i) for (size_t j = i+1; j < f->nparams; ++j) {
+            CkType a = f->params[i].type, b = f->params[j].type;
+            if (!span(a) || !span(b) || (is_kind(a,CK_READ) && is_kind(b,CK_READ))) continue;
+            fprintf(file,"%s[%zu,%zu]",pair ? "," : "",i,j); pair = true;
+        }
+        fputs("],\"entry_requires\":[",file);
+        /* Only requirements before the first other statement are entry
+           conditions; later checks may depend on writes or local bindings. */
+        for (size_t i = 1; i < f->body->len && form(f->body->items[i],"require"); ++i) {
+            if (i > 1) fputc(',',file);
+            contract_atom(file,f->body->items[i]->items[1]);
+        }
+        fputs("]}",file);
+    }
+    fputc(']',file);
+    bool foreign = false;
+    for (size_t k = 0; k < m->nfunctions; ++k) {
+        CkFunction *f = &m->functions[k];
+        if (!f->foreign) continue;
+        fputs(foreign ? "," : ",\"foreign\":[",file); foreign = true;
+        fprintf(file,"{\"name\":\"%.*s\",\"symbol\":\"%.*s\",\"params\":[",
+            (int)f->name.len,f->name.data,(int)f->native.len,f->native.data);
+        for (size_t i = 0; i < f->nparams; ++i) {
+            if (i) fputc(',',file);
+            fprintf(file,"{\"name\":\"%.*s\",\"type\":",(int)f->params[i].name.len,f->params[i].name.data);
+            contract_type(m,file,f->params[i].type);
+            fprintf(file,",\"projection\":\"%s\"}",loan(f->params[i].type) ?
+                (f->params[i].data_only ? "data" : "data_len") :
+                (is_kind(f->params[i].type,CK_OWN) ? "descriptor" : "value"));
+        }
+        fputs("],\"result\":",file); contract_type(m,file,f->result);
+        fprintf(file,",\"borrowed_from\":%d,\"obligation\":",f->from);
+        contract_string(file,f->obligation); fputc('}',file);
+    }
+    if (foreign) fputc(']',file);
+    fputs("}\n",file);
+}
+
 int ce_checked_command(int argc, char **argv) {
-    const char *usage = "usage: cesta checked check|plan|header FILE.cesta [-o OUTPUT]\n";
+    const char *usage = "usage: cesta checked check|plan|header|contract FILE.cesta [-o OUTPUT]\n";
     if (argc < 4) { fputs(usage,stderr); return 2; }
     bool check = !strcmp(argv[2],"check"), plan = !strcmp(argv[2],"plan"), header = !strcmp(argv[2],"header");
-    if (!check && !plan && !header) { fputs(usage,stderr); return 2; }
+    bool contract = !strcmp(argv[2],"contract");
+    if (!check && !plan && !header && !contract) { fputs(usage,stderr); return 2; }
     const char *path = argv[3], *output = NULL;
     for (int i = 4; i < argc; ++i) {
         if (strcmp(argv[i],"-o") || output || i+1 == argc) { fputs(usage,stderr); return 2; }
@@ -1336,11 +1555,12 @@ int ce_checked_command(int argc, char **argv) {
     CeArena arena = {0}; CeError error = {{0},0}; CeText source = {0}; CeAtom *doc = NULL;
     bool ok = ce_read_file(&arena,path,&source,&error) && ce_atom_read(&arena,source,&doc,&error);
     char *record = NULL; size_t length = 0;
-    FILE *recording = plan ? open_memstream(&record,&length) : NULL;
-    if (plan && !recording) ok = ce_error(&error,0,"cannot allocate permission plan");
-    Checked m = {.arena=&arena,.error=&error,.source=source,.identity=path,.plan=recording};
+    FILE *recording = (plan || contract) ? open_memstream(&record,&length) : NULL;
+    if ((plan || contract) && !recording) ok = ce_error(&error,0,"cannot allocate checked evidence");
+    Checked m = {.arena=&arena,.error=&error,.source=source,.identity=path,.plan=plan ? recording : NULL};
     CeNativeOutput result = {0};
     if (ok) ok = generate(&m,doc,header,&result);
+    if (ok && contract) contract_module(&m,recording);
     if (recording && fclose(recording)) ok = ce_error(&error,0,"cannot finish permission plan");
     for (size_t i = 0; ok && output && i < result.ndependencies; ++i)
         if (ce_same_file(output,(const char *)result.dependencies[i].data))
@@ -1348,7 +1568,7 @@ int ce_checked_command(int argc, char **argv) {
     if (!ok && !error.message[0]) ce_error(&error,doc ? doc->offset : 0,"malformed checked declaration");
     if (ok && check) printf("checked: %zu function interfaces admitted\n",m.nfunctions);
     else if (ok) {
-        CeText text = plan ? (CeText){(unsigned char *)record,length} : result.text;
+        CeText text = (plan || contract) ? (CeText){(unsigned char *)record,length} : result.text;
         FILE *file = output ? fopen(output,"wb") : stdout;
         if (!file) ok = ce_error(&error,0,"cannot open checked output");
         else {

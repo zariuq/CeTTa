@@ -691,6 +691,10 @@ static void layout(Elab *e, CeRecord *r, bool is_union, Pending *items, size_t n
             }
             if (m.bit_width == 0) {
                 start = round_up(start,(unsigned long long)type_align*8);
+                /* AAPCS64 zero-width bit-fields impose their base type's
+                   alignment on the containing record, including first. */
+                if (e->sema->abi->record_layout == CE_RECORD_AAPCS64 && type_align > align)
+                    align = type_align;
             } else {
                 if (!packed && unit && (start % ((unsigned long long)type_align*8)) + m.bit_width > unit)
                     start = round_up(start,(unsigned long long)type_align*8);
@@ -2484,6 +2488,22 @@ static bool statement(Elab *e, const CeTree *t) {
 
 static void builtin_types(Elab *e) {
     CeSema *s = e->sema;
+    if (s->abi == &ce_abi_aarch64_aapcs64) {
+        CeEntity *tag = ce_sema_entity(s,CE_ENTITY_STRUCT,CE_SPACE_TAG,ce_cstr(&s->arena,"__va_list"),NULL);
+        tag->record = ce_alloc(&s->arena,sizeof(*tag->record));
+        *tag->record = (CeRecord){.size=32,.align=8,.complete=true};
+        CeType *pointer = ce_type_pointer(s,basic(e,CE_T_VOID)), *integer = basic(e,CE_T_INT);
+        tag->record->members = ce_alloc(&s->arena,5*sizeof(CeMember));
+        const char *names[] = {"__stack","__gr_top","__vr_top","__gr_offs","__vr_offs"};
+        CeType *types[] = {pointer,pointer,pointer,integer,integer};
+        unsigned long long offsets[] = {0,8,16,24,28};
+        for (size_t i = 0; i < 5; ++i)
+            tag->record->members[tag->record->nmembers++] =
+                (CeMember){.name=ce_cstr(&s->arena,names[i]),.type=types[i],.offset=offsets[i]};
+        tag->builtin_tag = true;
+        CeType *record = ce_type_new(s,CE_T_STRUCT); record->tag = tag;
+        s->va_list_type = record; return;
+    }
     if (s->abi != &ce_abi_x86_64_sysv) {
         s->va_list_type = ce_type_pointer(s,basic(e,CE_T_CHAR)); return;
     }

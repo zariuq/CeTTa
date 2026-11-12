@@ -80,6 +80,52 @@ invalidation is explicit. Native hook conformance remains an obligation.
 Current.module demonstrates a mutation followed by revalidation before
 publication. Omitting that revalidation is refused on either Boolean branch.
 
+Resource-indexed protocols
+--------------------------
+
+Version two retains the version-one control and ownership semantics and adds
+identities for the state on which certificates depend:
+
+  (Protocol "cesta-protocol/2"
+    ...
+    (Hooks
+      (Hook observe observe guard (Requires identity) (Uses job)
+        (Proves current) (Reads store) (Writes))
+      (Hook mutate mutate effect (Requires current) (Uses job)
+        (Proves) (Reads) (Writes store)))
+    (Resources
+      (Resource job claim discharge transfer
+        (AcquireRequires identity) (TransferRequires wake_registered)
+        (BoundOwner job_is_owned)))
+    ...
+    (Instances store)
+    (Dependencies (Depends current store))
+    ...)
+
+Reads and Writes contain declared instance names. Dependencies bind a fact to
+one or more instances. A hook which may write an instance forgets every fact
+depending on that instance on both Boolean branches. Proves then restores facts
+only on the successful branch. This makes "current until the next write" a
+checked rule without treating an immutable historical observation as a lease on
+current storage. Explicit Invalidates remains available and composes with the
+dependency rule.
+
+BoundOwner names the pure predicate which observes the persistent native owner
+of a resource. It must be the resource's exact Own validator; the exporter
+refuses a declaration which merely names a predicate without checking it.
+Claim and Resume are source-level names for Acquire. Discharge names Release,
+and TransferTo names Transfer. They retain the same linear rules: one live
+token, explicit transfer, and mandatory discharge on every terminal path.
+Existing cesta-protocol/1 declarations, plans and generated signatures are
+unchanged.
+
+BoundCurrent.module demonstrates a currentness fact invalidated by an overlapping
+write, explicit revalidation, a persistent job owner and suspension only after a
+wake obligation is established. The emitted resource metadata is admitted by
+MeTTapedia's ExecutableProtocol.Resources checker in addition to the ordinary
+and instrumented protocol checks. Hook conformance, scheduler fairness and the
+truth of native predicates remain separate obligations.
+
 Statements
 ----------
 

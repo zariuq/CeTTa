@@ -16,7 +16,7 @@ typedef struct {
     unsigned evaluation, category;
     size_t repetitions, uses;
 } MacroArgument;
-typedef struct { CeText name, space; } MacroLocal;
+typedef struct { CeText name, space, owner, exported; } MacroLocal;
 typedef struct {
     CeText key, name, header, type_name, alias;
     CeAtom *type;
@@ -24,7 +24,7 @@ typedef struct {
 } MacroPort;
 typedef struct {
     CeText label, head, path, theory;
-    bool gnu, type_parameters;
+    bool gnu, type_parameters, declarations;
     int result;
     MacroArgument *arguments;
     size_t arity;
@@ -33,6 +33,7 @@ typedef struct {
     MacroPort *ports;
     size_t nports;
     CeAtom *type, *body, *contract;
+    const CeAtom *ownership;
     CeText *helpers;
     size_t nhelpers;
 } MacroRule;
@@ -62,11 +63,12 @@ struct CeMacros {
     CeLazyLexer own_lexer, syntax_lexer, *lexer;
     /* Readable program export: names written in the unit or used by native
        macro definitions, which readable generated names must avoid. */
-    bool readable;
+    bool readable, check_ownership;
     CeText *visible; size_t nvisible;
     /* Native macros whose expansion differs at each copy. */
     CeText *positional; size_t npositional;
     FILE *plan;
+    CeAtom **ownership; size_t nownership;
 };
 static bool definition_shape(CeMacros *macros, MacroRule *rule, CeError *error);
 
@@ -175,6 +177,18 @@ static bool type_parameters_check(MacroRule *r, const CeAtom *a, const CeGrammar
     return true;
 }
 static bool template_check(MacroRule *r, const CeAtom *a, CeError *error) {
+    if (r->declarations && form(a,"Member")) {
+        CeText key;
+        if (!field(a,"Member",2,error) || !variable(a->items[1],&key,error)) return false;
+        bool found = false;
+        for (size_t i = 0; i < r->nlocals; ++i)
+            found |= ce_is(r->locals[i].space,"member") && ce_equal(r->locals[i].name,key) && r->locals[i].owner.len;
+        return (found || ce_error(error,a->offset,"Member requires a declared record-owned member")) &&
+            template_check(r,a->items[2],error);
+    }
+    if (r->declarations && (form(a,"->") || form(a,".")) && a->len == 3 &&
+        form(a->items[2],"LocalRef") && a->items[2]->len == 3 && ce_is(a->items[2]->items[1]->text,"member"))
+        return ce_error(error,a->offset,"record-owned projections use Member with an explicit receiver");
     if (form(a,"Argument")) {
         CeText key;
         if (!field(a,"Argument",1,error) || !variable(a->items[1],&key,error)) return false;
@@ -217,18 +231,43 @@ static bool template_check(MacroRule *r, const CeAtom *a, CeError *error) {
     return true;
 }
 
+static bool ownership_template(MacroRule *r, const CeAtom *a, CeError *error) {
+    if (form(a,"NameArgument")) {
+        CeText key;
+        if (!field(a,"NameArgument",1,error) || !variable(a->items[1],&key,error)) return false;
+        MacroArgument *arg = argument(r,key);
+        return (arg && arg->category == CATEGORY_SYNTAX) ||
+            ce_error(error,a->offset,"NameArgument requires a declared syntax parameter");
+    }
+    if (form(a,"LocalRef")) {
+        CeText ns, key;
+        return field(a,"LocalRef",2,error) && text(a->items[1],&ns,error) &&
+            variable(a->items[2],&key,error) &&
+            (local(r,ns,key) != SIZE_MAX || ce_error(error,a->offset,"contract LocalRef has no declared identity"));
+    }
+    if (form(a,"Argument") || form(a,"TypeArgument") || form(a,"Capture") || form(a,"DefinitionRef"))
+        return ce_error(error,a->offset,"family contracts use LocalRef or NameArgument identities");
+    for (size_t i = 0; i < a->len; ++i)
+        if (!ownership_template(r,a->items[i],error)) return false;
+    return true;
+}
 static bool contract(CeMacros *m, MacroRule *r, CeAtom *lhs, CeAtom *rhs,
                       const CeProduction *production, const CeGrammar *surface, CeError *error) {
-    bool ports = form(rhs,"Macro") && rhs->len == 8 && rhs->items[1]->kind == CE_ATOM_TEXT &&
-        (ce_is(rhs->items[1]->text,"cesta-macro/2") || ce_is(rhs->items[1]->text,"cesta-macro/3"));
-    r->type_parameters = ports && ce_is(rhs->items[1]->text,"cesta-macro/3");
+    bool ports = form(rhs,"Macro") && (rhs->len == 8 || rhs->len == 9) && rhs->items[1]->kind == CE_ATOM_TEXT &&
+        (ce_is(rhs->items[1]->text,"cesta-macro/2") || ce_is(rhs->items[1]->text,"cesta-macro/3") ||
+         ce_is(rhs->items[1]->text,"cesta-macro/4"));
+    bool version4 = ports && ce_is(rhs->items[1]->text,"cesta-macro/4");
+    bool contracts = ports && rhs->len == 9;
+    if (contracts && !version4)
+        return ce_error(error,rhs->offset,"family Contracts require cesta-macro/4");
+    r->type_parameters = ports && (ce_is(rhs->items[1]->text,"cesta-macro/3") || version4);
     if (!ports && (!form(rhs,"Macro") || rhs->len != 7 || rhs->items[1]->kind != CE_ATOM_TEXT ||
         !ce_is(rhs->items[1]->text,"cesta-macro/1")))
         return ce_error(error,rhs->offset,"macro interpretation requires a versioned cesta-macro contract");
     if (lhs->kind != CE_ATOM_LIST || lhs->len != r->arity+1)
         return ce_error(error,lhs->offset,"macro left side disagrees with Terms arity");
     const CeAtom *profile = rhs->items[2], *args = rhs->items[3+ports], *result = rhs->items[4+ports],
-                 *locals = rhs->items[5+ports], *body = rhs->items[6+ports];
+                 *locals = rhs->items[5+ports], *body = rhs->items[6+ports+contracts];
     inventory(m,rhs);
     if (ports) {
         const CeAtom *bindings = rhs->items[3];
@@ -309,24 +348,58 @@ static bool contract(CeMacros *m, MacroRule *r, CeAtom *lhs, CeAtom *rhs,
         !text(result->items[2],&category,error)) return false;
     r->type = result->items[1];
     CeText result_sort = m->grammar->symbols[m->grammar->symbols[r->result].sort].name;
-    if ((!ce_is(result_sort,"Expr") || !ce_is(category,"value")) &&
+    r->declarations = version4 && ce_is(result_sort,"ExternalDeclaration") && ce_is(category,"declarations");
+    if (!r->declarations && (!ce_is(result_sort,"Expr") || !ce_is(category,"value")) &&
         (!ce_is(result_sort,"Statement") || !ce_is(category,"statement")))
-        return ce_error(error,result->offset,"macro result must be Expr/value or Statement/statement");
+        return ce_error(error,result->offset,"macro result must be Expr/value, Statement/statement or version 4 ExternalDeclaration/declarations");
+    if (r->declarations) {
+        if (r->nports) return ce_error(error,result->offset,"declaration templates use explicit C declarations, not expression ports");
+        for (size_t i = 0; i < r->arity; ++i)
+            if (r->arguments[i].category != CATEGORY_SYNTAX)
+                return ce_error(error,args->offset,"declaration template arguments must be syntax");
+    }
     if (!r->gnu && ce_is(result_sort,"Expr"))
         return ce_error(error,result->offset,"C11 expression lowering is not admitted yet; use a statement macro or GNU profile");
     if (!form(locals,"Locals")) return ce_error(error,locals->offset,"macro contract requires Locals");
     r->nlocals = locals->len-1; r->locals = ce_alloc(&m->arena,r->nlocals*sizeof(*r->locals));
     for (size_t i = 0; i < r->nlocals; ++i) {
         const CeAtom *a = locals->items[i+1]; MacroLocal *l = &r->locals[i];
-        if (!field(a,"Local",2,error) || !variable(a->items[1],&l->name,error) ||
+        if (!form(a,"Local") || (a->len != 3 && !(version4 && a->len == 4)) ||
+            !variable(a->items[1],&l->name,error) ||
             !text(a->items[2],&l->space,error)) return false;
         if (!space(l->space)) return ce_error(error,a->offset,"unknown C binder namespace");
+        if (a->len == 4) {
+            if (ce_is(l->space,"member")) {
+                if (!variable(a->items[3],&l->owner,error)) return false;
+            } else {
+                if (!r->declarations || !field(a->items[3],"Export",1,error) ||
+                    !variable(a->items[3]->items[1],&l->exported,error)) return false;
+                MacroArgument *arg = argument(r,l->exported);
+                if (!arg || !ce_is(m->grammar->symbols[arg->sort].name,"CGeneralName"))
+                    return ce_error(error,a->offset,"Export requires a CGeneralName syntax parameter");
+            }
+        }
         for (size_t j = 0; j < i; ++j)
             if (ce_equal(l->name,r->locals[j].name) && ce_equal(l->space,r->locals[j].space))
                 return ce_error(error,a->offset,"duplicate binder identity");
     }
+    for (size_t i = 0; i < r->nlocals; ++i) if (r->locals[i].owner.len &&
+        local(r,ce_cstr(&m->arena,"tag"),r->locals[i].owner) == SIZE_MAX)
+        return ce_error(error,locals->offset,"member owner must name a declared tag identity");
     if (!field(body,"Template",1,error)) return false;
     r->body = body->items[1]; r->contract = rhs;
+    if (contracts) {
+        const CeAtom *items = rhs->items[7];
+        if (!r->declarations || !form(items,"Contracts") || items->len < 2)
+            return ce_error(error,items->offset,"Contracts require a nonempty declaration-family contract list");
+        for (size_t i = 1; i < items->len; ++i) {
+            const CeAtom *item = items->items[i];
+            if (!form(item,"record") && !form(item,"function") && !form(item,"callback"))
+                return ce_error(error,item->offset,"family Contracts declare records, functions or callbacks");
+            if (!ownership_template(r,item,error)) return false;
+        }
+        r->ownership = items;
+    }
     if (!type_parameters_check(r,r->type,m->grammar,true,error)) return false;
     for (size_t i = 0; i < r->arity; ++i)
         if (!type_parameters_check(r,r->arguments[i].type,m->grammar,true,error)) return false;
@@ -411,6 +484,20 @@ void ce_macros_environment(CeMacros *m, CeText identifiers, bool unguarded) {
 void ce_macros_share_lexer(CeMacros *m, CeLazyLexer *lexer) { m->lexer = lexer; }
 void ce_macros_readable(CeMacros *m) { m->readable = true; }
 void ce_macros_plan(CeMacros *m, FILE *plan) { m->plan = plan; }
+void ce_macros_check_ownership(CeMacros *m, bool enabled) { m->check_ownership = enabled; }
+const CeAtom *ce_macros_ownership(const CeMacros *m, CeArena *arena, const CeAtom *declaration) {
+    if (!declaration || !m || !m->nownership) return declaration;
+    CeAtom *out = ce_atom_new(arena,CE_ATOM_LIST,(CeText){0},declaration->len+m->nownership);
+    out->offset = declaration->offset;
+    for (size_t i = 0; i < declaration->len; ++i) out->items[i] = declaration->items[i];
+    out->len = declaration->len;
+    for (size_t i = 0; i < m->nownership; ++i) {
+        bool present = false;
+        for (size_t j = 1; j < out->len; ++j) present |= ce_atom_equal(out->items[j],m->ownership[i]);
+        if (!present) out->items[out->len++] = m->ownership[i];
+    }
+    return out;
+}
 static CeText fresh(CeMacros *m) {
     for (;;) {
         char buffer[64]; snprintf(buffer,sizeof(buffer),"cesta_macro_%zu",m->serial++);
@@ -436,7 +523,7 @@ void ce_macros_free(CeMacros *m) {
     ce_lazy_lexer_free(&m->own_lexer); ce_lazy_lexer_free(&m->syntax_lexer); free(m->visible); free(m->positional);
     for (size_t i = 0; i < m->len; ++i) free(m->rules[i].helpers);
     ce_arena_free(&m->arena); free(m->rules); free(m->reserved); free(m->safe);
-    free(m->private_atoms); free(m->private_trees); free(m->guards); free(m);
+    free(m->private_atoms); free(m->private_trees); free(m->guards); free(m->ownership); free(m);
 }
 bool ce_macros_load(CeMacros *m, const char *path, const char *theory, CeError *error) {
     CeModule *module; CePresentation presentation = {0}; CeGrammar surface = {0};
@@ -544,8 +631,142 @@ static unsigned private_extension(void *context, const CeAtom *a, int sort, int 
 typedef struct {
     CeMacros *macros; MacroRule *rule; CeAtom **arguments; CeText *locals; CeArena *arena;
     bool checking;
+    bool *receivers;
+    CeAtom **checks; size_t nchecks;
+    size_t *check_receivers, *check_owners;
 } Instance;
+static size_t parameter_local(MacroRule *r, const CeAtom *a) {
+    if (form(a,"LocalRef") && a->len == 3 && ce_is(a->items[1]->text,"ordinary"))
+        return local(r,a->items[1]->text,a->items[2]->text);
+    if ((form(a,"*") || form(a,"**") || form(a,"***")) && a->len >= 2)
+        return parameter_local(r,a->items[a->len-1]);
+    return SIZE_MAX;
+}
+static void receiver_parameter(Instance *body, const CeAtom *p) {
+    if (form(p,"List") && p->len == 3) {
+        size_t slot = parameter_local(body->rule,p->items[2]);
+        if (slot != SIZE_MAX) body->receivers[slot] = true;
+    }
+}
+/* The declarator that gives the defined name its parameters is the innermost
+   function declarator:  T *name(parameters)  and  T (*name(parameters))(other). */
+static const CeAtom *defining_function(const CeAtom *d) {
+    if (d->kind != CE_ATOM_LIST || !d->len) return NULL;
+    if (form(d,"function") && d->len >= 2) {
+        const CeAtom *inner = defining_function(d->items[1]);
+        return inner ? inner : d;
+    }
+    if (form(d,"*") || form(d,"**") || form(d,"***") || form(d,"ptr") ||
+        form(d,"c:ParenthesizedDeclarator") || (form(d,"List") && d->len == 2))
+        return defining_function(d->items[d->len-1]);
+    return NULL;
+}
 static CeAtom *instantiate(Instance *in, const CeAtom *a, CeError *error) {
+    /* A function definition checks each record receiver once, on entry.
+       Both spellings qualify: (fn specifiers name parameters body...) and the
+       general (fn-shape specifiers declarator declarations (block ...)). */
+    bool sugar = form(a,"fn") && a->len >= 4;
+    bool shaped = form(a,"fn-shape") && a->len == 5 && form(a->items[4],"block");
+    if (in->rule->declarations && !in->checking && (sugar || shaped)) {
+        Instance body = *in; body.nchecks = 0; body.checks = NULL;
+        body.check_receivers = body.check_owners = NULL;
+        body.receivers = ce_alloc(in->arena,in->rule->nlocals*sizeof(*body.receivers));
+        memset(body.receivers,0,in->rule->nlocals*sizeof(*body.receivers));
+        if (sugar) {
+            const CeAtom *params = a->items[3];
+            if (form(params,"List")) for (size_t i = 1; i < params->len; ++i)
+                receiver_parameter(&body,params->items[i]);
+        } else {
+            const CeAtom *function = defining_function(a->items[2]);
+            for (size_t i = 2; function && i < function->len; ++i)
+                receiver_parameter(&body,function->items[i]);
+        }
+        CeAtom **parts = ce_alloc(in->arena,a->len*sizeof(*parts));
+        for (size_t i = 0; i < a->len; ++i) {
+            parts[i] = instantiate(i < 4 ? in : &body,a->items[i],error);
+            if (!parts[i]) return NULL;
+        }
+        size_t at = 4; const CeAtom *host = a; CeAtom **items = parts;
+        if (shaped) { host = parts[4]; items = parts[4]->items; at = 1; }
+        CeAtom *out = ce_atom_new(in->arena,CE_ATOM_LIST,(CeText){0},host->len+body.nchecks);
+        out->offset = host->offset;
+        for (size_t i = 0; i < at; ++i) out->items[i] = items[i];
+        for (size_t i = 0; i < body.nchecks; ++i) out->items[i+at] = body.checks[i];
+        for (size_t i = at; i < host->len; ++i) out->items[i+body.nchecks] = items[i];
+        if (!shaped) return out;
+        CeAtom *definition = ce_atom_new(in->arena,CE_ATOM_LIST,(CeText){0},a->len);
+        definition->offset = a->offset;
+        for (size_t i = 0; i < 4; ++i) definition->items[i] = parts[i];
+        definition->items[4] = out;
+        return definition;
+    }
+    if (in->rule->declarations && form(a,"Member")) {
+        CeArena *arena = in->arena;
+        size_t index = local(in->rule,ce_cstr(arena,"member"),a->items[1]->text);
+        MacroLocal *member = &in->rule->locals[index];
+        size_t owner = local(in->rule,ce_cstr(arena,"tag"),member->owner);
+        CeAtom *receiver = instantiate(in,a->items[2],error);
+        if (!receiver) return NULL;
+        CeAtom *projection = list(arena,"->",2);
+        projection->items[1] = receiver; projection->items[2] = symbol(arena,in->locals[index],a->offset);
+        if (in->checking) return projection;
+        CeAtom *record = list(arena,"struct",1); record->items[1] = symbol(arena,in->locals[owner],a->offset);
+        CeAtom *check = list(arena,"_Generic",6); check->items[1] = receiver;
+        for (size_t q = 0; q < 4; ++q) {
+            CeAtom *qualified = record;
+            if (q & 1) { CeAtom *c = list(arena,"const",1); c->items[1]=qualified; qualified=c; }
+            if (q & 2) { CeAtom *v = list(arena,"volatile",1); v->items[1]=qualified; qualified=v; }
+            CeAtom *type = ce_atom_new(arena,CE_ATOM_LIST,(CeText){0},2);
+            type->items[0]=qualified; type->items[1]=word(arena,"*");
+            CeAtom *association = ce_atom_new(arena,CE_ATOM_LIST,(CeText){0},2);
+            association->items[0]=type; association->items[1]=word(arena,"1"); check->items[q+2]=association;
+        }
+        check->items[6]=list(arena,"default",1);
+        check->items[6]->items[1]=list(arena,"-",1); check->items[6]->items[1]->items[1]=word(arena,"1");
+        size_t receiver_slot = form(a->items[2],"LocalRef") ? parameter_local(in->rule,a->items[2]) : SIZE_MAX;
+        if (in->receivers && receiver_slot != SIZE_MAX && in->receivers[receiver_slot]) {
+            bool present = false;
+            for (size_t i = 0; i < in->nchecks; ++i)
+                present |= in->check_receivers[i] == receiver_slot && in->check_owners[i] == owner;
+            if (!present) {
+                check->items[6]->items[1]=word(arena,"0");
+                CeAtom *assertion = list(arena,"_Static_assert",2); assertion->items[1]=check;
+                assertion->items[2]=ce_atom_new(arena,CE_ATOM_TEXT,
+                    ce_cstr(arena,"\"record member receiver has its declared owner\""),0);
+                CeAtom **checks = ce_alloc(arena,(in->nchecks+1)*sizeof(*checks));
+                size_t *receivers = ce_alloc(arena,(in->nchecks+1)*sizeof(*receivers));
+                size_t *owners = ce_alloc(arena,(in->nchecks+1)*sizeof(*owners));
+                if (in->nchecks) {
+                    memcpy(checks,in->checks,in->nchecks*sizeof(*checks));
+                    memcpy(receivers,in->check_receivers,in->nchecks*sizeof(*receivers));
+                    memcpy(owners,in->check_owners,in->nchecks*sizeof(*owners));
+                }
+                checks[in->nchecks]=assertion; receivers[in->nchecks]=receiver_slot; owners[in->nchecks]=owner;
+                in->checks=checks; in->check_receivers=receivers; in->check_owners=owners; ++in->nchecks;
+            }
+            return projection;
+        }
+        CeAtom *array = list(arena,"abstract-array",2);
+        array->items[1]=ce_atom_new(arena,CE_ATOM_LIST,(CeText){0},0); array->items[2]=check;
+        CeAtom *abstract = list(arena,"abstract-declarator",1); abstract->items[1]=array;
+        CeAtom *type = ce_atom_new(arena,CE_ATOM_LIST,(CeText){0},2);
+        type->items[0]=word(arena,"char"); type->items[1]=abstract;
+        CeAtom *size = list(arena,"sizeof",2); size->items[1]=word(arena,"type"); size->items[2]=type;
+        CeAtom *discard = list(arena,"cast",2); discard->items[1]=word(arena,"void"); discard->items[2]=size;
+        CeAtom *address = list(arena,"&",1); address->items[1]=projection;
+        CeAtom *sequence = list(arena,",",2); sequence->items[1]=discard; sequence->items[2]=address;
+        CeAtom *place = list(arena,"*",1); place->items[1]=sequence;
+        return place;
+    }
+    if (in->rule->declarations && form(a,"List")) {
+        CeAtom *out = ce_atom_new(in->arena,CE_ATOM_LIST,(CeText){0},a->len-1);
+        out->offset = a->offset;
+        for (size_t i = 1; i < a->len; ++i) {
+            out->items[i-1] = instantiate(in,a->items[i],error);
+            if (!out->items[i-1]) return NULL;
+        }
+        return out;
+    }
     if (form(a,"TypeArgument")) {
         if (!type_parameter(in->rule,a,in->macros->grammar,error)) return NULL;
         if (in->checking) return word(in->arena,"int");
@@ -656,6 +877,15 @@ static bool explicit_references(const Shape *shape, const CeTree *tree, CeError 
         if (!explicit_references(shape,tree->children[i],error)) return false;
     return true;
 }
+static size_t member_declarations(const CeGrammar *g, const CeTree *tree, CeText name) {
+    /* A nested record owns its own members, even when declared inline. */
+    if (ce_tree_label(g,tree,"StructDefinition")) return 0;
+    if (ce_tree_label(g,tree,"NameDeclarator") && tree->len == 1)
+        return ce_equal(tree->children[0]->spelling,name);
+    size_t n = 0;
+    for (size_t i = 0; i < tree->len; ++i) n += member_declarations(g,tree->children[i],name);
+    return n;
+}
 static bool binder_admission(Shape *shape, CeError *error) {
     CeMacros *m = shape->instance.macros; MacroRule *r = shape->instance.rule;
     CeArena *arena = shape->instance.arena;
@@ -675,7 +905,8 @@ static bool binder_admission(Shape *shape, CeError *error) {
     if (!expr) function->items[5] = ret;
     unit->items[shape->ncaptures+1] = function;
     CeTree *tree;
-    if (!ce_view_expand_open(&m->view,unit,m->grammar->entries[0],arena,&tree,
+    if (r->declarations) tree = (CeTree *)shape->body;
+    else if (!ce_view_expand_open(&m->view,unit,m->grammar->entries[0],arena,&tree,
             shape_extension,shape_accepts,shape,error)) return false;
     CeSema sema = {0};
     if (!ce_sema_init(&sema,m->grammar,(CeText){0},error)) return false;
@@ -683,7 +914,26 @@ static bool binder_admission(Shape *shape, CeError *error) {
     for (size_t i = 0; i < r->nlocals && ok; ++i) {
         MacroLocal *local = &r->locals[i]; CeEntity *owner = NULL;
         if (ce_is(local->space,"member")) {
-            ok = ce_error(error,r->body->offset,"member binder admission requires a record-owner port"); break;
+            if (!local->owner.len) {
+                ok = ce_error(error,r->body->offset,"member binder admission requires a record-owner port"); break;
+            }
+            size_t owner_slot = SIZE_MAX;
+            for (size_t j = 0; j < r->nlocals; ++j)
+                if (ce_is(r->locals[j].space,"tag") && ce_equal(r->locals[j].name,local->owner)) owner_slot = j;
+            size_t own = 0, all = 0;
+            for (size_t j = 0; j < sema.nentities; ++j) {
+                CeEntity *tag = sema.entities[j];
+                if ((tag->kind != CE_ENTITY_STRUCT && tag->kind != CE_ENTITY_UNION) || !tag->definition) continue;
+                size_t count = 0;
+                for (size_t k = 0; k < tag->definition->len; ++k)
+                    count += member_declarations(m->grammar,tag->definition->children[k],shape->instance.locals[i]);
+                all += count;
+                if (owner_slot != SIZE_MAX && tag->kind == CE_ENTITY_STRUCT &&
+                    ce_equal(tag->name,shape->instance.locals[owner_slot])) own += count;
+            }
+            if (own != 1 || all != 1)
+                ok = ce_error(error,r->body->offset,"member identity must be declared exactly once in its owning record");
+            continue;
         }
         unsigned ns = ce_is(local->space,"tag") ? CE_SPACE_TAG :
                       ce_is(local->space,"label") ? CE_SPACE_LABEL : CE_SPACE_ORDINARY;
@@ -737,7 +987,7 @@ static bool definition_shape(CeMacros *m, MacroRule *r, CeError *error) {
     }
     capture_inventory(&shape,r->body);
     CeAtom *body = ok ? instantiate(&shape.instance,r->body,error) : NULL; CeTree *tree;
-    ok = ok && body && ce_view_expand_open(&m->view,body,r->result,&arena,&tree,
+    ok = ok && body && ce_view_expand_open(&m->view,body,r->declarations ? m->grammar->entries[0] : r->result,&arena,&tree,
         shape_extension,shape_accepts,&shape,error) && explicit_references(&shape,tree,error);
     if (ok) { shape.body = tree; ok = binder_admission(&shape,error); }
     free(shape.captures); ce_arena_free(&arena); return ok;
@@ -1273,6 +1523,105 @@ static unsigned expand_readable(CeMacros *m, const CeAtom *a, int sort, int pare
 done:
     free(taken); free(block.items); free(resolution.from); free(resolution.to); return result;
 }
+static CeAtom *instantiate_ownership(Instance *in, const CeAtom *call,
+                                      const CeAtom *a, CeError *error) {
+    if (form(a,"LocalRef")) {
+        size_t slot = local(in->rule,a->items[1]->text,a->items[2]->text);
+        return symbol(in->arena,in->locals[slot],call->offset);
+    }
+    if (form(a,"NameArgument")) {
+        MacroArgument *arg = argument(in->rule,a->items[1]->text);
+        const CeAtom *name = call->items[1+(size_t)(arg-in->rule->arguments)];
+        if (name->kind != CE_ATOM_SYMBOL || !identifier(name->text)) {
+            ce_error(error,name->offset,"family contract name argument requires one C identifier");
+            return NULL;
+        }
+        return symbol(in->arena,name->text,name->offset);
+    }
+    CeAtom *out = ce_atom_new(in->arena,a->kind,ce_text(in->arena,a->text.data,a->text.len),a->len);
+    out->offset = call->offset;
+    for (size_t i = 0; i < a->len; ++i) {
+        out->items[i] = instantiate_ownership(in,call,a->items[i],error);
+        if (!out->items[i]) return NULL;
+        if (!i && out->items[i]->kind == CE_ATOM_TEXT)
+            out->items[i] = symbol(in->arena,out->items[i]->text,call->offset);
+    }
+    return out;
+}
+static unsigned expand_declarations(CeMacros *m, MacroRule *r, const CeAtom *a,
+                                    int sort, int parent, CeArena *arena, CeTree **out,
+                                    CeAtomDecoder recurse, void *context, CeError *error, size_t depth) {
+    if (a->len != r->arity+1) {
+        ce_error(error,a->offset,"declaration macro has the wrong argument count"); return CE_EXTENSION_ERROR;
+    }
+    Instance in = {.macros=m,.rule=r,.arena=arena};
+    in.arguments = ce_alloc(arena,r->arity*sizeof(*in.arguments));
+    in.locals = ce_alloc(arena,r->nlocals*sizeof(*in.locals));
+    CeText *taken = NULL; size_t ntaken = 0; unsigned result = CE_EXTENSION_ERROR;
+    for (size_t i = 0; i < r->arity; ++i) {
+        CeTree *tree;
+        if (!recurse(context,a->items[i+1],r->arguments[i].sort,parent,arena,&tree,error,depth+1)) goto done;
+        if (!safe_tree(m,tree)) { ce_error(error,a->offset,"declaration arguments cannot hide opaque native source"); goto done; }
+        in.arguments[i] = own_argument(m,arena,tree,r->arguments[i].sort,a->items[i+1]);
+    }
+    /* Exported names are explicit API choices; all other ordinary/tag names
+       are fresh. Members retain their spelling within their declared owner. */
+    for (size_t i = 0; i < r->nlocals; ++i) {
+        MacroLocal *l = &r->locals[i];
+        if (l->exported.len) {
+            MacroArgument *arg = argument(r,l->exported);
+            const CeAtom *name = a->items[1+(size_t)(arg-r->arguments)];
+            if (name->kind != CE_ATOM_SYMBOL || !identifier(name->text)) {
+                ce_error(error,name->offset,"exported declaration name must be a C identifier"); goto done;
+            }
+            in.locals[i] = name->text;
+            for (size_t j = 0; j < i; ++j) if (ce_equal(r->locals[j].space,l->space) &&
+                ce_equal(in.locals[j],name->text)) {
+                ce_error(error,name->offset,"exported declaration names collide in one C namespace"); goto done;
+            }
+        } else if (ce_is(l->space,"member")) in.locals[i] = l->name;
+        else in.locals[i] = pick(m,arena,l->name,&taken,&ntaken);
+    }
+    CeAtom *contracts = r->ownership && m->check_ownership ? instantiate_ownership(&in,a,r->ownership,error) : NULL;
+    if (r->ownership && m->check_ownership && !contracts) goto done;
+    CeAtom *body = instantiate(&in,r->body,error); CeTree *tree;
+    if (!body || !ce_view_expand_open(&m->view,body,m->grammar->entries[0],arena,&tree,
+            private_extension,private_accepts,m,error)) goto done;
+    char *buffer = NULL; size_t length = 0; FILE *file = open_memstream(&buffer,&length);
+    if (!file) { ce_error(error,a->offset,"cannot allocate declaration output"); goto done; }
+    for (size_t i = 0; i < r->nlocals; ++i) guard(m,file,in.locals[i]);
+    bool ok = ce_tree_print_open_shared(m->grammar,m->lexer,tree,m->grammar->entries[0],file,error);
+    ok = !ferror(file) && ok; ok = fclose(file) == 0 && ok;
+    if (ok) {
+        CeTree *placed = ce_alloc(arena,sizeof(*placed));
+        placed->symbol=sort; placed->production=CE_TREE_SOURCE; placed->offset=a->offset;
+        placed->spelling=ce_text(arena,buffer,length); *out=placed;
+        m->safe=ce_resize(m->safe,m->nsafe+1,sizeof(*m->safe)); m->safe[m->nsafe++]=placed;
+        for (size_t i = 0; i < r->nlocals; ++i)
+            if (!ce_is(r->locals[i].space,"member")) see(m,in.locals[i]);
+        for (size_t i = 1; contracts && i < contracts->len; ++i) {
+            m->ownership = ce_resize(m->ownership,m->nownership+1,sizeof(*m->ownership));
+            m->ownership[m->nownership++] = contracts->items[i];
+        }
+        if (m->plan) {
+            fputs("(use cesta-export-plan/2 (rule ",m->plan); ce_quote(m->plan,r->path);
+            fputc(' ',m->plan); ce_quote(m->plan,r->theory); fputc(' ',m->plan); ce_quote(m->plan,r->label);
+            fputs(") (position declarations) (bindings",m->plan);
+            for (size_t i = 0; i < r->nlocals; ++i) {
+                fputs(" (",m->plan); ce_quote(m->plan,r->locals[i].name); fputc(' ',m->plan);
+                ce_quote(m->plan,r->locals[i].space); fputc(' ',m->plan); ce_quote(m->plan,r->locals[i].owner);
+                fputc(' ',m->plan); ce_quote(m->plan,in.locals[i]); fputc(')',m->plan);
+            }
+            fputc(')',m->plan);
+            if (contracts) { fputc(' ',m->plan); ce_atom_write(contracts,m->plan); }
+            fputs(")\n",m->plan);
+        }
+        result = CE_EXTENSION_EXPANDED;
+    }
+    free(buffer);
+done:
+    free(taken); return result;
+}
 unsigned ce_macros_expand(CeMacros *m, const CeAtom *a, int sort, int parent, CeArena *arena,
                           CeTree **out, CeAtomDecoder recurse, void *context, CeError *error, size_t depth) {
     if (!m) return CE_EXTENSION_UNHANDLED;
@@ -1281,6 +1630,10 @@ unsigned ce_macros_expand(CeMacros *m, const CeAtom *a, int sort, int parent, Ce
     if (!ce_macros_accepts(m,a,sort)) return CE_EXTENSION_UNHANDLED;
     bool outer = m->expanding == 0;
     if (outer) m->nguards = 0;
+    for (size_t i = 0; i < m->len; ++i)
+        if (m->rules[i].declarations && same(m->grammar,sort,m->rules[i].result) &&
+            ce_equal(a->items[0]->text,m->rules[i].head))
+            return expand_declarations(m,&m->rules[i],a,sort,parent,arena,out,recurse,context,error,depth);
     if (m->readable) {
         ++m->expanding;
         unsigned result = expand_readable(m,a,sort,parent,arena,out,recurse,context,error,depth);
