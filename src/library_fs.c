@@ -2,6 +2,7 @@
 #include "library_fs.h"
 #include "library.h"
 #include "eval.h"
+#include "native_sha256.h"
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -175,7 +176,7 @@ static const char *entry_hint(unsigned char type) {
 
 /* What a metadata answer adds after the identity: nothing, the modification
  * time, or the permission bits. */
-typedef enum { METADATA_PLAIN, METADATA_MODIFIED, METADATA_PERMISSIONS } MetadataExtra;
+typedef enum { METADATA_PLAIN, METADATA_MODIFIED, METADATA_PERMISSIONS, METADATA_OBSERVED } MetadataExtra;
 
 static Atom *metadata_value(Arena *arena, const struct stat *info,
                              const char *operation, const char *path, uint64_t observed,
@@ -189,6 +190,23 @@ static Atom *metadata_value(Arena *arena, const struct stat *info,
     snprintf(inode, sizeof(inode), "%ju", (uintmax_t)info->st_ino);
     Atom *identity = atom_expr3(arena, atom_symbol(arena, "fs:identity"),
         atom_string(arena, device), atom_string(arena, inode));
+    if (extra == METADATA_OBSERVED) {
+        if (info->st_blocks < 0 || (uintmax_t)info->st_blocks > INT64_MAX)
+            return os_failed(arena, operation, path, EOVERFLOW, observed, true);
+#ifdef __APPLE__
+        struct timespec modified = info->st_mtimespec, changed = info->st_ctimespec;
+#else
+        struct timespec modified = info->st_mtim, changed = info->st_ctim;
+#endif
+        return atom_expr(arena, (Atom *[]){atom_symbol(arena, "fs:info-v2"),
+            atom_symbol(arena, mode_kind(info->st_mode)), atom_int(arena, info->st_size), identity,
+            atom_expr3(arena, atom_symbol(arena, "fs:modified"),
+                atom_int(arena, (int64_t)modified.tv_sec), atom_int(arena, modified.tv_nsec)),
+            atom_expr3(arena, atom_symbol(arena, "fs:changed"),
+                atom_int(arena, (int64_t)changed.tv_sec), atom_int(arena, changed.tv_nsec)),
+            atom_expr2(arena, atom_symbol(arena, "fs:permissions"), atom_int(arena, info->st_mode & 07777)),
+            atom_expr2(arena, atom_symbol(arena, "fs:blocks"), atom_int(arena, info->st_blocks))}, 8u);
+    }
     if (extra == METADATA_PLAIN)
         return atom_expr(arena, (Atom *[]){atom_symbol(arena, "fs:info"),
             atom_symbol(arena, mode_kind(info->st_mode)), atom_int(arena, info->st_size),
@@ -218,6 +236,68 @@ static Atom *metadata(Arena *arena, const char *path, bool follow, MetadataExtra
     if ((follow ? stat(path, &info) : lstat(path, &info)) < 0)
         return os_failed(arena, "metadata", path, errno, 0u, true);
     return metadata_value(arena, &info, "metadata", path, 0u, extra);
+}
+
+/* A digest is published only after the opened regular file and its named
+ * path still describe the observed version. This is a version observation,
+ * not an OS snapshot or a lock against an uncooperative external writer. */
+static bool same_file_version(const struct stat *a, const struct stat *b) {
+#ifdef __APPLE__
+    struct timespec am = a->st_mtimespec, bm = b->st_mtimespec;
+    struct timespec ac = a->st_ctimespec, bc = b->st_ctimespec;
+#else
+    struct timespec am = a->st_mtim, bm = b->st_mtim;
+    struct timespec ac = a->st_ctim, bc = b->st_ctim;
+#endif
+    return a->st_dev == b->st_dev && a->st_ino == b->st_ino && a->st_size == b->st_size &&
+        a->st_mode == b->st_mode && am.tv_sec == bm.tv_sec && am.tv_nsec == bm.tv_nsec &&
+        ac.tv_sec == bc.tv_sec && ac.tv_nsec == bc.tv_nsec;
+}
+
+static Atom *hash_file(Arena *arena, const char *path, bool *interrupted) {
+    int fd = open_owned(path, O_RDONLY | O_NONBLOCK | O_NOCTTY, 0);
+    if (fd < 0) return os_failed(arena, "sha256-file", path, errno, 0u, true);
+    struct stat before, after, named;
+    uint64_t observed = 0;
+    int code = 0;
+    if (fstat(fd, &before) < 0) { code = errno; goto refused; }
+    if (!S_ISREG(before.st_mode)) { code = S_ISDIR(before.st_mode) ? EISDIR : EINVAL; goto refused; }
+    if (before.st_size < 0 || (uintmax_t)before.st_size > UINT64_MAX / 8u) {
+        code = EOVERFLOW; goto refused;
+    }
+    CettaNativeSha256 digest;
+    cetta_native_sha256_init(&digest);
+    unsigned char bytes[65536];
+    while (observed < (uint64_t)before.st_size) {
+        if (eval_native_interrupted()) { *interrupted = true; (void)close(fd); return NULL; }
+        uint64_t left = (uint64_t)before.st_size - observed;
+        size_t chunk = left < sizeof(bytes) ? (size_t)left : sizeof(bytes);
+        ssize_t got = read(fd, bytes, chunk);
+        if (got < 0) { if (errno == EINTR) continue; code = errno; goto refused; }
+        if (!got) { code = ESTALE; goto refused; }
+        cetta_native_sha256_update(&digest, bytes, (size_t)got);
+        observed += (uint64_t)got;
+    }
+    /* Proc-like regular files may report size zero while yielding bytes.
+     * Establish actual EOF; a size is not a completeness certificate. */
+    ssize_t extra;
+    do extra = read(fd, bytes, 1u); while (extra < 0 && errno == EINTR && !eval_native_interrupted());
+    if (extra < 0) { code = errno; goto refused; }
+    if (extra > 0) { observed += (uint64_t)extra; code = ESTALE; goto refused; }
+    if (fstat(fd, &after) < 0 || stat(path, &named) < 0) { code = errno; goto refused; }
+    if (after.st_blocks < 0 || (uintmax_t)after.st_blocks > INT64_MAX) { code = EOVERFLOW; goto refused; }
+    if (!same_file_version(&before, &after) || !same_file_version(&after, &named)) {
+        code = ESTALE; goto refused;
+    }
+    if (close(fd) < 0) return os_failed(arena, "sha256-file", path, errno, observed, true);
+    if (eval_native_interrupted()) { *interrupted = true; return NULL; }
+    char hex[65];
+    cetta_native_sha256_finish_hex(&digest, hex);
+    return atom_expr3(arena, atom_symbol(arena, "fs:hashed-v1"), atom_string(arena, hex),
+        metadata_value(arena, &after, "sha256-file", path, observed, METADATA_OBSERVED));
+refused:
+    (void)close(fd);
+    return os_failed(arena, "sha256-file", path, code, observed, true);
 }
 
 static char *joined_path(const char *parent, const char *name) {
@@ -629,6 +709,7 @@ static bool link_mode(Atom *atom, bool *follow, MetadataExtra *extra) {
     static const struct { const char *name; bool follow; MetadataExtra extra; } modes[] = {
         {"follow", true, METADATA_PLAIN}, {"no-follow", false, METADATA_PLAIN},
         {"follow-modified", true, METADATA_MODIFIED}, {"no-follow-modified", false, METADATA_MODIFIED},
+        {"follow-observed", true, METADATA_OBSERVED}, {"no-follow-observed", false, METADATA_OBSERVED},
         {"follow-permissions", true, METADATA_PERMISSIONS},
         {"no-follow-permissions", false, METADATA_PERMISSIONS},
     };
@@ -725,6 +806,12 @@ bool cetta_fs_call(CettaLibraryContext *ctx, Arena *arena, Atom *head,
         op == g_builtin_syms.lib_fs_open_directory || op == g_builtin_syms.lib_fs_walk_open) {
         if (!path) goto argument;
         if (op == g_builtin_syms.lib_fs_metadata) {
+            if (atom_is_symbol(args[1], "content-sha256")) {
+                bool interrupted = false;
+                value = hash_file(arena, path, &interrupted);
+                if (interrupted || eval_native_interrupted()) { *out = cetta_call_interrupted(); return true; }
+                goto completed;
+            }
             bool follow;
             MetadataExtra extra;
             if (!link_mode(args[1], &follow, &extra)) goto argument;
