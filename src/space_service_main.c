@@ -31,6 +31,7 @@
 
 /* Storage runs on one owner. Transport is nonblocking and bounded. There is
  * no evaluator entry point in this protocol: terms are stored and matched. */
+enum { WAITER_NAME_MAX = 128 };
 enum { CLIENTS = 32, STORES = 32, SNAPSHOTS = 64, RECEIPTS = 256,
        RECEIPT_BYTES = 16 * 1024 * 1024, QUERY_BYTES = 8 * 1024 * 1024,
        SNAPSHOT_BYTES = 32 * 1024 * 1024, PAGE_ROWS = 1024,
@@ -176,6 +177,12 @@ struct Client {
     bool watching;
     bool watch_dirty;
     Observation watched;
+    /* A watch may name its waiter: the account's wait for that name, and
+     * the waiter's generation (when it started).  A newer waiter's watch
+     * ends an older one's, so copies of one waiter hold one slot. */
+    bool waiter_named;
+    uint64_t waiter_generation;
+    char waiter_name[WAITER_NAME_MAX];
 };
 
 static volatile sig_atomic_t stopping;
@@ -1071,6 +1078,36 @@ static const char *view_admit(Service *s,uint32_t uid,size_t added,uint64_t byte
     const char *failure=view_room(s,uid,added,&available);
     return failure ? failure : bytes>available ? "account-view-byte-limit" : NULL;
 }
+static bool client_reply(Service *s,Client *c,Arena *a,Atom *request,Atom *answer);
+static void client_close(Service *s,Client *c);
+static bool same_waiter(const Client *c,const Client *waiter,const char *name) {
+    return c!=waiter && c->watching && c->waiter_named &&
+        c->principal.uid==waiter->principal.uid && !strcmp(c->waiter_name,name);
+}
+static bool waiter_superseded(Service *s,const Client *waiter,const char *name,
+                              uint64_t generation) {
+    if (s->clients) for (size_t i=0;i<CLIENTS;++i)
+        if (same_waiter(&s->clients[i],waiter,name) &&
+            s->clients[i].waiter_generation>generation) return true;
+    return false;
+}
+/* Answer an older copy's parked watch "superseded" and free its slot now,
+ * so the newer waiter is admitted against its account's own allowance. */
+static bool client_supersede(Service *s,Client *c) {
+    Arena a; arena_init_detached(&a); Atom *request=NULL;
+    bool ok=decode(&a,c->input,&request);
+    Atom *answer=ok ? error(&a,request,"superseded") : NULL;
+    c->watching=false; --s->watchers; c->waiter_named=false;
+    observation_free(s,&c->watched);
+    ok=ok && client_reply(s,c,&a,request,answer);
+    arena_free(&a); return ok;
+}
+static void supersede_waiters(Service *s,const Client *waiter,const char *name) {
+    if (s->clients) for (size_t i=0;i<CLIENTS;++i) {
+        Client *c=&s->clients[i];
+        if (same_waiter(c,waiter,name) && !client_supersede(s,c)) client_close(s,c);
+    }
+}
 static bool account_watch_full(Service *s,uint32_t uid) {
     size_t count,waits; uint64_t bytes;
     view_usage(s,uid,&count,&bytes,&waits);
@@ -1240,15 +1277,25 @@ static size_t observation_request_base_length(Atom *request) {
         atom_is_symbol(operation,"query-first-profile")) return 9;
     return 0;
 }
+/* A watch may end with (waiter NAME GENERATION), after any authority. */
+static Atom *watch_waiter(Atom *request) {
+    size_t length=request->expr.len;
+    return atom_is_symbol(part(request,2),"watch") && length>7 &&
+        shape(part(request,length-1),"waiter",3) ? part(request,length-1) : NULL;
+}
+static size_t observation_request_length(Atom *request) {
+    return request->expr.len-(watch_waiter(request) ? 1u : 0u);
+}
 static bool observation_request_shape(Atom *request) {
     size_t base=observation_request_base_length(request);
-    return base && (request->expr.len==base ||
-        (request->expr.len==base+1 && shape(part(request,base),"authority",2)));
+    size_t length=observation_request_length(request);
+    return base && (length==base ||
+        (length==base+1 && shape(part(request,base),"authority",2)));
 }
 static Atom *observation_authority_reference(Atom *request) {
     size_t base=observation_request_base_length(request);
-    return base && request->expr.len==base+1 && shape(part(request,base),"authority",2) ?
-        part(part(request,base),1) : NULL;
+    return base && observation_request_length(request)==base+1 &&
+        shape(part(request,base),"authority",2) ? part(part(request,base),1) : NULL;
 }
 static Atom *request_bundle(Atom *request) {
     if (atom_is_symbol(part(request,2),"append-authorized")) return part(request,7);
@@ -2379,6 +2426,17 @@ static Atom *dispatch(Service *s, Client *client, Arena *a, Atom *request, Bytes
         if (!integer(part(request,5),&revision) || revision > st->revision ||
             !integer(part(request,6),&duration) || duration > INT_MAX)
             return error(a,request,"invalid-watch");
+        const char *waiter_name=NULL; uint64_t waiter_generation=0;
+        Atom *waiter=watch_waiter(request);
+        if (waiter && (!text(part(waiter,1),&waiter_name) || !*waiter_name ||
+            strlen(waiter_name)>=WAITER_NAME_MAX ||
+            !integer(part(waiter,2),&waiter_generation)))
+            return error(a,request,"invalid-watch");
+        /* An older waiter cannot take its name from a newer one; a newer
+         * waiter's watch answers the older copies' watches "superseded". */
+        if (waiter_name && waiter_superseded(s,client,waiter_name,waiter_generation))
+            return error(a,request,"superseded");
+        if (waiter_name) supersede_waiters(s,client,waiter_name);
         if (revision != st->revision || !duration) {
             Atom *args[]={atom_string(a,s->uuid),atom_int(a,st->id),atom_int(a,st->revision)};
             return reply(a,request,true,form(a,revision != st->revision ? "changed" : "unchanged",args,3));
@@ -2389,6 +2447,10 @@ static Atom *dispatch(Service *s, Client *client, Arena *a, Atom *request, Bytes
         if (s->watchers >= s->max_watchers) return error(a,request,"watch-capacity");
         if (account_watch_full(s,client->principal.uid)) return error(a,request,"account-watch-limit");
         client->watching=true; ++s->watchers;
+        client->waiter_named=waiter_name!=NULL;
+        client->waiter_generation=waiter_generation;
+        if (waiter_name)
+            snprintf(client->waiter_name,sizeof(client->waiter_name),"%s",waiter_name);
         client->watch_source=st->id; client->watch_revision=revision;
         client->watch_authority_grant=authority.grant;
         client->watch_authority_generation=authority.generation;
@@ -3619,7 +3681,7 @@ static bool client_wake(Service *s,Client *c) {
         Atom *args[]={atom_string(&a,s->uuid),atom_int(&a,st->id),atom_int(&a,st->revision)};
         answer=reply(&a,request,true,form(&a,changed ? "changed" : "unchanged",args,3));
     }
-    c->watching=false; --s->watchers;
+    c->watching=false; --s->watchers; c->waiter_named=false;
     observation_free(s,&c->watched);
     ok=ok && client_reply(s,c,&a,request,answer);
     arena_free(&a); return ok;

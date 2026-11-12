@@ -88,6 +88,24 @@ static Atom *watch(Service *s, Client *c, Arena *a, uint64_t store, Atom *id, in
                     atom_int(a, duration)};
     return call(s, c, a, req(a, fresh_id(a), "observe-watch", args, 5));
 }
+/* A plain watch that names its waiter: (waiter NAME GENERATION). */
+static Atom *named_watch(Service *s, Client *c, Arena *a, uint64_t store, const char *name,
+                         int64_t generation) {
+    Atom *waiter[] = {atom_string(a, name), atom_int(a, generation)};
+    Atom *args[] = {atom_string(a, s->uuid), atom_int(a, (int64_t)store),
+                    atom_int(a, (int64_t)find_store(s, store)->revision), atom_int(a, 60000),
+                    form(a, "waiter", waiter, 2)};
+    return call(s, c, a, req(a, fresh_id(a), "watch", args, 5));
+}
+/* The answer a parked client was sent, if it was refused for `reason`. */
+static bool answered_refused(Client *c, Arena *a, const char *reason) {
+    if (!c->output.data) return false;
+    Atom *answer = NULL;
+    Bytes b = {c->output.data + 8, c->output.size - 8};
+    bool result = decode(a, b, &answer) && refused(answer, reason);
+    bytes_free(&c->output); bytes_free(&c->input);
+    return result;
+}
 static Atom *query_view(Service *s,Client *c,Arena *a,uint64_t store,Atom *pattern,int64_t limit) {
     Atom *args[]={atom_string(a,s->uuid),atom_int(a,store),pattern,pattern,
                   atom_int(a,limit),atom_int(a,60000)};
@@ -308,6 +326,34 @@ int main(void) {
     close_handle(s,alice,a,handle_id(owned)); close_handle(s,bob,a,handle_id(other));
     s->max_account_view_bytes=0;
     expect(!s->observation_bytes && !s->snapshot_bytes,"byte-accounting refusals retain no buffers");
+
+    /* T9: copies of one named waiter hold one slot; the newest wins. */
+    uint64_t waits = open_store(s, owner, a, "waits", "native-ordered");
+    grant(s, owner, a, waits, alice->principal.uid, RIGHT_OBSERVE | RIGHT_READ);
+    grant(s, owner, a, waits, bob->principal.uid, RIGHT_OBSERVE | RIGHT_READ);
+    Client *copy1 = &clients[3], *copy2 = &clients[4], *copy3 = &clients[5], *other_account = &clients[6];
+    *copy1 = (Client){.fd = -1, .principal = {.uid = s->process_uid + 1}};
+    *copy2 = (Client){.fd = -1, .principal = {.uid = s->process_uid + 1}};
+    *copy3 = (Client){.fd = -1, .principal = {.uid = s->process_uid + 1}};
+    *other_account = (Client){.fd = -1, .principal = {.uid = s->process_uid + 2}};
+    size_t held_before = s->watchers;
+    expect(!named_watch(s, copy1, a, waits, "argon", 1) && copy1->watching, "T9 a named waiter parks");
+    expect(!named_watch(s, copy2, a, waits, "argon", 2) && copy2->watching, "T9 a newer copy parks");
+    expect(!copy1->watching && answered_refused(copy1, a, "superseded"),
+           "T9 the older copy is answered superseded");
+    expect(refused(named_watch(s, copy3, a, waits, "argon", 1), "superseded") && !copy3->watching &&
+           copy2->watching, "T9 an older copy cannot take the name back");
+    expect(!named_watch(s, copy3, a, waits, "cc-cesta", 1) && copy3->watching && copy2->watching,
+           "T9 another name of the account is independent");
+    expect(!named_watch(s, other_account, a, waits, "argon", 1) && other_account->watching &&
+           copy2->watching, "T9 the same name in another account is independent");
+    expect(s->watchers == held_before + 3, "T9 three names hold three slots");
+    Atom *again = named_watch(s, copy1, a, waits, "argon", 2);
+    expect(!again && copy1->watching && !copy2->watching && answered_refused(copy2, a, "superseded"),
+           "T9 the same generation re-arming replaces the held copy");
+    expect(s->watchers == held_before + 3, "T9 re-arming holds no extra slot");
+    for (size_t i = 3; i <= 6; ++i) client_close(s, &clients[i]);
+    expect(s->watchers == held_before, "T9 closing releases every slot");
 
     /* T8: a member's scoped receipt is recovered under the member's account. */
     observed = observe(s, alice, a, ordered, form(a, "reads", NULL, 0), E1(a, "writes", message), 16);
