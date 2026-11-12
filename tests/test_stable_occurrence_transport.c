@@ -2474,7 +2474,8 @@ static void test_retained_occurs_match(void) {
         BindingsBuilder reference; assert(bindings_builder_init(&reference, &seed));
         CettaMatchCompletion expected = match_atoms_epoch_builder_checked(
             left, right, &reference, &source, reference_epoch, UINT64_MAX);
-        assert(expected == (cyclic ? CETTA_MATCH_INCOMPLETE : CETTA_MATCH_MATCHED));
+        /* A cycle the occurs check proves is a completed refutation. */
+        assert(expected == (cyclic ? CETTA_MATCH_REFUTED : CETTA_MATCH_MATCHED));
         bindings_builder_free(&reference);
         cetta_frame_identity_scope_clear(&reference_scope);
         CettaNativeCostLedger cost; CettaNativeCostScope scope;
@@ -2536,7 +2537,7 @@ static void test_retained_occurs_match(void) {
             assert(match_atoms_cursor_step(cursor, 0u) == CETTA_MATCH_CURSOR_PROGRESS);
             step = match_atoms_cursor_step(cursor, grants[run]);
         }
-        assert(step == (cyclic ? CETTA_MATCH_CURSOR_INCOMPLETE : CETTA_MATCH_CURSOR_MATCHED));
+        assert(step == (cyclic ? CETTA_MATCH_CURSOR_REFUTED : CETTA_MATCH_CURSOR_MATCHED));
         assert(polls && (run || polls > 100u));
         assert(cost.total.counts[CETTA_COST_MATCH_NODE] == (shape == 3u ? 1u : 4u));
         assert(cost.total.counts[CETTA_COST_MATCH_ATTEMPT] == 1u);

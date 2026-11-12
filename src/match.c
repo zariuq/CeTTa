@@ -14586,7 +14586,9 @@ static bool epoch_match_bind_evidence(MatchGraphCheck **check, Bindings *binding
     }
     match_graph_check_free(*check);
     *check = NULL;
-    return *verdict != BINDINGS_REACHABILITY_PRESENT;
+    /* A proved cycle is evidence as well: the bind refuses it, and the
+     * occurs check's refusal is a completed refutation, not a pause. */
+    return true;
 }
 
 static bool epoch_match_identity_evidence(MatchGraphCheck **check, Bindings *bindings,
