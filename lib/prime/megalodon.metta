@@ -29,8 +29,47 @@
 ; of checked operations, and a refused rule is an error
 ; (Error CALL (MegalodonRefused "reason")).  Exhausted budgets, resource
 ; stops, denied or conflicting publication and unfinished sessions have
-; their own error heads; none of them is a refusal.  See
-; docs/megalodon_native.md.
+; their own error heads; none of them is a refusal.  docs/megalodon.txt
+; describes the document checker built on these operations.
+
+; A Megalodon file read by the syntax presentations of langdef/megalodon/,
+; compiled to C when CeTTa is built: its tokens, (Megalodon.tokens T ...),
+; as the presentations build them (MgTk... terms); or its document items,
+; (Megalodon.items I ...), after the signature files SIGNATURES, an
+; expression of paths read in order.  A file the presentations have no
+; reading of is an error (MegalodonSyntax ...).
+(: mg:gslt-tokens (-> %Undefined% Atom))
+(: __cetta_lib_megalodon_gslt-tokens (-> Atom Atom))
+(= (mg:gslt-tokens $path)
+   (function (chain (eval (__cetta_lib_megalodon_gslt-tokens $path)) $result (return $result)){$result}))
+(: mg:gslt-items (-> %Undefined% %Undefined% Atom))
+(: __cetta_lib_megalodon_gslt-items (-> Atom Atom Atom))
+(= (mg:gslt-items $signatures $path)
+   (function (chain (eval (__cetta_lib_megalodon_gslt-items $signatures $path)) $result (return $result)){$result}))
+(: mg:try-gslt-tokens (-> %Undefined% Atom))
+(: __cetta_lib_megalodon_try-gslt-tokens (-> Atom Atom))
+(= (mg:try-gslt-tokens $path)
+   (function (chain (eval (__cetta_lib_megalodon_try-gslt-tokens $path)) $result (return $result)){$result}))
+(: mg:try-gslt-items (-> %Undefined% %Undefined% Atom))
+(: __cetta_lib_megalodon_try-gslt-items (-> Atom Atom Atom))
+(= (mg:try-gslt-items $signatures $path)
+   (function (chain (eval (__cetta_lib_megalodon_try-gslt-items $signatures $path)) $result (return $result)){$result}))
+
+; A Megalodon document checked by the elaborator with the kernel, after its
+; signatures: (Megalodon.document THEORY AUTHORITY VERDICT SUMMARY ENTRIES),
+; the theory it built, verified, not-verified or (failed MESSAGE), the
+; counts, and each axiom and theorem with its verdict.  OPTIONS: (theory
+; egal|hf|mizar|hoas|setmm), prove-aby (aby steps proved by search),
+; (theorem-work N) (each theorem's budget; 0: none), (aby-steps N),
+; allow-document-axioms.
+(: mg:check-document (-> %Undefined% %Undefined% %Undefined% Atom))
+(: __cetta_lib_megalodon_check-document (-> Atom Atom Atom Atom))
+(= (mg:check-document $signatures $path $options)
+   (function (chain (eval (__cetta_lib_megalodon_check-document $signatures $path $options)) $result (return $result)){$result}))
+(: mg:try-check-document (-> %Undefined% %Undefined% %Undefined% Atom))
+(: __cetta_lib_megalodon_try-check-document (-> Atom Atom Atom Atom))
+(= (mg:try-check-document $signatures $path $options)
+   (function (chain (eval (__cetta_lib_megalodon_try-check-document $signatures $path $options)) $result (return $result)){$result}))
 
 ; A fresh theory of PROFILE (hf egal mizar hoas setmm custom): (Megalodon.theory THEORY AUTHORITY).
 (: mg:new-theory (-> %Undefined% Atom))
