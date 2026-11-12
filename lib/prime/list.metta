@@ -285,6 +285,8 @@
 ; library's own (map-atom's definition, written out): its parameter is the
 ; variable the caller passed.  A literal `(map-atom L $item T)` would give
 ; Prime's template a parameter of its own, which the key does not mention.
+; The key is an Atom parameter, held syntax: only an explicit eval opens it
+; as code, once per item.
 (= (_minimal-retain-top-k-by-number $xs $count $item $key)
    (chain
      (metta
@@ -292,7 +294,7 @@
          (eval
            (_minimal-map-atom $xs $item
              (metta
-               (let $score $key
+               (let $score (eval $key)
                  (let $value (cons-atom $item ())
                    (cons-atom $score $value)){$value}){$score}
                %Undefined% (context-space)))))

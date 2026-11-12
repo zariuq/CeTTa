@@ -334,8 +334,8 @@
     {
       "source": "list.metta",
       "output": "list.metta",
-      "source_sha256": "afee6c3222a282a09224bc037a49272de537f49594d76e92f632d866699a49e6",
-      "output_sha256": "92a1849cbe19caf55362363bc3383a88fd17340f8b3627856142e1e5727188ec",
+      "source_sha256": "8850bac551a7b734601e58dda1a6e1fe4b64f8395cf3163d5f6b8d7ff6cac32d",
+      "output_sha256": "34138fcbe587d6f6e21dcac7a7d46f7171a66d2988957d0941cb08cb4b622f9f",
       "edits": 60,
       "code_diagnostics": 0
     },
