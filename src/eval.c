@@ -23244,6 +23244,14 @@ static Atom *prepared_full_demand_body_deep(Space *space, Arena *arena,
     Atom *unwrapped = prepared_full_demand_body(space, arena, body, NULL);
     if (unwrapped != body)
         return prepared_full_demand_body_deep(space, arena, unwrapped);
+    /* The counit: an explicit eval of held syntax runs the payload it holds,
+     * as the eval instruction does, so this position may say the payload. */
+    if (eval_current_language_id() == CETTA_LANGUAGE_PRIME && body &&
+        body->kind == ATOM_EXPR && body->expr.len == 2u &&
+        atom_is_symbol_id(body->expr.elems[0], g_builtin_syms.eval) &&
+        atom_prime_held_is(body->expr.elems[1]))
+        return prepared_full_demand_body_deep(space, arena,
+            atom_prime_held_payload(body->expr.elems[1]));
     /* An elaborated binding with no owned names needs no fresh slots. Its
      * crossing annotation has already selected the surrounding identities,
      * and the pure binder retains those identities, including repeated-name
