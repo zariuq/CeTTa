@@ -79,7 +79,6 @@ def main():
                 source = root / f'type-stack-{mode}-{depth}-{route}.metta'
                 source.write_text(
                     '(: deep-type (-> Number Number))\n'
-                    '(: deep-type (-> String Number))\n'
                     '(: deep-same (-> $t $t Bool))\n'
                     '(= (deep-same $x $y) True)\n'
                     '(= (nest $n $v) (if (== $n 0) $v '
