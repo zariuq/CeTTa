@@ -12,6 +12,13 @@
   (case (str:find $text $needle)
     (((TextNotFound $missing) False)
      ($position (>= $position 0)))))
+; A rejected run is reported with how it ended and what it wrote to stderr.
+(= (mutation:fail-observed $message $observation)
+  (case $observation
+    (((proc:result $status $cause $out $err $capture)
+      (mutation:fail (str:concat $message (str:concat ": "
+        (str:concat (repr ($status $cause $capture)) (str:concat "\n" $err))))))
+     ($other (mutation:fail (str:concat $message (str:concat ": " (repr $other))))))))
 
 ; Explicit selection avoids treating a fallback equation as an extra answer.
 ; The control and mutant cases below use case dispatch, not overload failure.
@@ -22,7 +29,7 @@
       (if (mutation:contains $out "PASS:")
         (mutation:mutant (proc:run ($mutant) ((timeout-ms 180000))) $assertion)
         (mutation:fail "control did not report PASS:")))
-     ($other (mutation:fail "control failed or capture is incomplete")))))
+     ($other (mutation:fail-observed "control failed or capture is incomplete" $other)))))
 (= (mutation:mutant $observation $assertion)
   (case $observation
     (((proc:result (proc:signaled $signal) proc:normal $out $err
@@ -31,8 +38,9 @@
         (system:write stdout
           (str:concat "PASS: native control accepted; mutation rejected by "
             (str:concat $assertion "\n")))
-        (mutation:fail "mutant aborted without the required assertion")))
-     ($other (mutation:fail "mutant did not abort with complete capture")))))
+        (mutation:fail-observed "mutant aborted without the required assertion"
+          $observation)))
+     ($other (mutation:fail-observed "mutant did not abort with complete capture" $other)))))
 
 !(if (== (system:argc) 3)
   (case (fs:try-canonical-path (system:arg 0))
