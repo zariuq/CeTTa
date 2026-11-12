@@ -275,3 +275,13 @@
      (let $timeout (+ $milliseconds 1000)
        (space:call $socket (request $rid watch $uuid $id $revision $milliseconds) $timeout)))
      (($result (return $result))))))
+
+; A watch that names its waiter: the account's wait for $name, and the
+; waiter's generation, when it started. A newer waiter's watch answers the
+; older copies' watches "superseded", and an older waiter is refused with
+; "superseded", so copies of one waiter hold one slot.
+(= (mailbox:watch-as $socket (space $uuid $id $ignored60 $ignored61 $ignored62 $revision $ignored63) $milliseconds $name $generation)
+   (function (case (let $rid (space:request-id)
+     (let $timeout (+ $milliseconds 1000)
+       (space:call $socket (request $rid watch $uuid $id $revision $milliseconds (waiter $name $generation)) $timeout)))
+     (($result (return $result))))))
