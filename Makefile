@@ -27755,9 +27755,12 @@ test-search-controller: $(BIN)
 		"$(CETTA_SCRIPT_BIN)"
 
 .PHONY: test-controller-diversity
+# Discovery imports the test module from tests/ by its file name.  The name
+# tests.test_bench_controller_diversity would resolve `tests` to any regular
+# package of that name on the interpreter's path, ahead of this directory.
 test-controller-diversity: $(BIN)
-	@$(CETTA_SCRIPT_RUN_ENV) python3 -m unittest \
-		tests/test_bench_controller_diversity.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 -m unittest discover -s tests \
+		-p test_bench_controller_diversity.py
 	@$(CETTA_SCRIPT_RUN_ENV) python3 \
 		scripts/bench_controller_diversity.py --run-current --runs 1 \
 		--cetta "$(CETTA_SCRIPT_BIN)"
@@ -38294,7 +38297,8 @@ ifeq ($(MORK_BRIDGE_ACTIVE),1)
 	done; \
 	echo 'PASS: upstream MM2 (Rust/MORK via C ABI) and authored GSLT agree exactly on 22 admitted programs'; \
 	MORK_REPO_DIR="$(MORK_REPO_DIR)" CETTA_BIN=./$(BIN) python3 -m unittest \
-		tests.test_mm2_to_metta.TranslatorGate.test_gslt_support_transform_v1_matches_native_corpus
+		discover -s tests -p test_mm2_to_metta.py \
+		-k TranslatorGate.test_gslt_support_transform_v1_matches_native_corpus
 else
 	@echo 'SKIP: MM2 ABI/GSLT differential (MORK bridge is not active)'
 endif
