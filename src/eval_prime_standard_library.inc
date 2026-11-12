@@ -1,6 +1,9 @@
 /* Standard definitions are retained as data independently of their editable
  * occurrences in program spaces. Native execution is an optimization of an
- * unchanged default; modified heads use the ordinary equation dispatcher. */
+ * unchanged default; modified heads use the ordinary equation dispatcher.
+ * CeTTa's own library may define a native head too: its equations are the
+ * relational meaning the native operation accelerates. Those library rows
+ * leave the head unchanged; only a program's own definition changes it. */
 
 typedef struct {
     SymbolId name;
@@ -10,6 +13,10 @@ typedef struct {
     size_t equation_count;
     Atom **types;
     size_t type_count;
+    Atom **library_equations;
+    size_t library_equation_count;
+    Atom **library_types;
+    size_t library_type_count;
 } PrimeStandardHead;
 
 typedef struct {
@@ -20,6 +27,9 @@ typedef struct {
     size_t count;
     uint64_t identity;
     uint64_t symbols;
+    /* Advances whenever a library row is recorded: memoized verdicts of an
+     * unchanged head depend on the rows as well as on the program. */
+    uint64_t library_rows;
 } PrimeStandardLibrary;
 
 static _Atomic uint64_t g_prime_standard_identity = 1u;
@@ -91,6 +101,8 @@ static void prime_standard_library_free(void *opaque) {
     for (size_t i = 0u; i < library->count; i++) {
         free(library->heads[i].equations);
         free(library->heads[i].types);
+        free(library->heads[i].library_equations);
+        free(library->heads[i].library_types);
     }
     free(library->heads);
     arena_free(&library->arena);
@@ -285,6 +297,143 @@ static bool prime_standard_is_forwarder(const PrimeStandardHead *head,
     return true;
 }
 
+/* Whether `row` is one of `rows`, up to renaming. */
+static bool prime_standard_row_listed(Atom *const *rows, size_t count, Atom *row) {
+    for (size_t i = 0u; i < count; i++)
+        if (atom_alpha_eq(rows[i], row)) return true;
+    return false;
+}
+
+/* Whether `space` is the program the standard library was installed in, or
+ * an overlay of it. */
+static bool prime_standard_space_is_program(const PrimeStandardLibrary *library,
+                                            const Space *space) {
+    const Space *base = space;
+    while (base && base->overlay_base) base = base->overlay_base;
+    return base && base == library->program &&
+        space_instance_id(base) == library->program_instance;
+}
+
+/* The native heads' rows a space shows before an import: an import of
+ * CeTTa's library records as library rows only the rows it adds, never a
+ * definition already made.  Any space: a library a module imports is
+ * imported into that module's space before the module reaches the program. */
+typedef struct {
+    size_t head;
+    bool type;
+    Atom *row;
+} PrimeStandardMarkedRow;
+
+typedef struct {
+    Arena arena;
+    PrimeStandardMarkedRow *rows;
+    size_t count;
+    uint64_t library;
+    bool active;
+} PrimeStandardImportMark;
+
+static void prime_standard_mark_add(PrimeStandardImportMark *mark, size_t head,
+                                    bool type, Atom *row) {
+    if (!row) return;
+    mark->rows = cetta_realloc(mark->rows, sizeof(*mark->rows) * (mark->count + 1u));
+    mark->rows[mark->count++] = (PrimeStandardMarkedRow){
+        .head = head, .type = type, .row = row};
+}
+
+static bool prime_standard_mark_has(const PrimeStandardImportMark *mark,
+                                    size_t head, bool type, Atom *row) {
+    for (size_t i = 0u; i < mark->count; i++)
+        if (mark->rows[i].head == head && mark->rows[i].type == type &&
+            atom_alpha_eq(mark->rows[i].row, row)) return true;
+    return false;
+}
+
+static bool eval_prime_standard_import_begin(Space *space,
+                                             PrimeStandardImportMark *mark) {
+    memset(mark, 0, sizeof(*mark));
+    PrimeStandardLibrary *library = prime_standard_library();
+    if (!library || !space) return false;
+    arena_init(&mark->arena);
+    arena_set_hashcons(&mark->arena, NULL);
+    mark->library = library->identity;
+    mark->active = true;
+    for (size_t i = 0u; i < library->count; i++) {
+        PrimeStandardHead *head = &library->heads[i];
+        if (!head->native) continue;
+        SpaceEquationCursor cursor;
+        if (space_equation_cursor_init(space, head->name, &cursor)) for (;;) {
+            SpaceEquationOccurrenceId id;
+            if (space_equation_cursor_next(&cursor, &id) !=
+                SPACE_EQUATION_CURSOR_ITEM) break;
+            SpaceEquationOccurrence row;
+            if (space_equation_occurrence_resolve(id, &row) && row.equation)
+                prime_standard_mark_add(mark, i, false,
+                    atom_deep_copy(&mark->arena, row.equation));
+        }
+        Atom **types = NULL;
+        uint32_t type_count = space_get_declared_types(space, &mark->arena,
+            atom_symbol_id(&mark->arena, head->name), &types);
+        for (uint32_t t = 0u; t < type_count; t++)
+            prime_standard_mark_add(mark, i, true,
+                atom_deep_copy(&mark->arena, types[t]));
+        free(types);
+    }
+    return true;
+}
+
+static void eval_prime_standard_import_end(PrimeStandardImportMark *mark) {
+    if (!mark->active) return;
+    free(mark->rows);
+    arena_free(&mark->arena);
+    mark->active = false;
+}
+
+/* Records, as library rows, the equations and declarations of native heads
+ * that an import of CeTTa's library added to the program. */
+static void prime_standard_note_library_rows(PrimeStandardLibrary *library,
+                                             Space *space,
+                                             const PrimeStandardImportMark *mark) {
+    for (size_t i = 0u; i < library->count; i++) {
+        PrimeStandardHead *head = &library->heads[i];
+        if (!head->native) continue;
+        SpaceEquationCursor cursor;
+        if (space_equation_cursor_init(space, head->name, &cursor)) for (;;) {
+            SpaceEquationOccurrenceId id;
+            if (space_equation_cursor_next(&cursor, &id) !=
+                SPACE_EQUATION_CURSOR_ITEM) break;
+            SpaceEquationOccurrence row;
+            if (!space_equation_occurrence_resolve(id, &row) || !row.equation ||
+                prime_standard_mark_has(mark, i, false, row.equation) ||
+                prime_standard_row_listed(head->equations,
+                    head->equation_count, row.equation) ||
+                prime_standard_row_listed(head->library_equations,
+                    head->library_equation_count, row.equation)) continue;
+            prime_standard_append(&head->library_equations,
+                &head->library_equation_count,
+                atom_deep_copy(&library->arena, row.equation));
+            library->library_rows++;
+        }
+        Arena scratch;
+        arena_init(&scratch);
+        Atom **types = NULL;
+        uint32_t type_count = space_get_declared_types(space, &scratch,
+            atom_symbol_id(&scratch, head->name), &types);
+        for (uint32_t t = 0u; t < type_count; t++) {
+            bool standard = false;
+            for (size_t j = 0u; !standard && j < head->type_count; j++)
+                standard = atom_alpha_eq(types[t], head->types[j]->expr.elems[2]);
+            if (standard || prime_standard_mark_has(mark, i, true, types[t]) ||
+                prime_standard_row_listed(head->library_types,
+                    head->library_type_count, types[t])) continue;
+            prime_standard_append(&head->library_types, &head->library_type_count,
+                atom_deep_copy(&library->arena, types[t]));
+            library->library_rows++;
+        }
+        free(types);
+        arena_free(&scratch);
+    }
+}
+
 /* A forwarder stands for a native head that has no equation of its arity
  * (prime_standard_delegate).  The standard library is installed before any
  * import, so a library imported later can define a head that its native
@@ -294,15 +443,19 @@ static bool prime_standard_is_forwarder(const PrimeStandardHead *head,
  * end when it declines, since its original then reaches this forwarder
  * again.  An import that makes an equation of a forwarder's arity visible in
  * the program retires that forwarder's occurrence there.  The standard
- * record keeps it, so std: still names the native original. */
-static void eval_prime_standard_note_import(Space *space) {
+ * record keeps it, so std: still names the native original.
+ *
+ * When the import read CeTTa's own library, the rows it added for native
+ * heads are recorded as library rows first (`mark` holds the rows shown
+ * before it).  Such a head stays unchanged, so its native operation runs
+ * first and its library equations answer when the operation declines. */
+static void eval_prime_standard_note_import(
+    Space *space, const PrimeStandardImportMark *mark, bool from_library) {
     PrimeStandardLibrary *library = prime_standard_library();
     if (!library || !space) return;
-    const Space *base = space;
-    while (base && base->overlay_base) base = base->overlay_base;
-    if (base != library->program ||
-        space_instance_id(base) != library->program_instance)
-        return;
+    if (from_library && mark && mark->active && mark->library == library->identity)
+        prime_standard_note_library_rows(library, space, mark);
+    if (!prime_standard_space_is_program(library, space)) return;
     for (size_t i = 0u; i < library->count; i++) {
         PrimeStandardHead *head = &library->heads[i];
         if (!head->native) continue;
@@ -334,7 +487,35 @@ static void eval_prime_standard_note_import(Space *space) {
     }
 }
 
-static bool prime_standard_head_unchanged(Space *space, SymbolId name) {
+/* The next standard row a program must show, from `found`: a forwarder that
+ * a library row of its arity retired is not shown any more, unless `row` is
+ * that forwarder itself. */
+static size_t prime_standard_skip_retired(const PrimeStandardHead *head,
+                                          size_t found, Atom *row) {
+    while (found < head->equation_count) {
+        Atom *standard = head->equations[found];
+        if (!prime_standard_is_forwarder(head, standard) ||
+            (row && atom_alpha_eq(row, standard))) break;
+        CettaExprLen width = standard->expr.elems[1]->expr.len;
+        bool retired = false;
+        for (size_t i = 0u; !retired && i < head->library_equation_count; i++) {
+            Atom *lhs = head->library_equations[i]->expr.elems[1];
+            retired = lhs->kind == ATOM_EXPR && lhs->expr.len == width;
+        }
+        if (!retired) break;
+        found++;
+    }
+    return found;
+}
+
+/* Whether `space` shows native head `name` as the standard library left it,
+ * up to library rows; `library_shown` reports whether it shows any.  An
+ * unchanged head runs natively.  Shown alone, its standard rows only name
+ * the native operation; library rows are the relational meaning that
+ * answers when the operation declines. */
+static bool prime_standard_head_verdict(Space *space, SymbolId name,
+                                        bool *library_shown) {
+    *library_shown = false;
     PrimeStandardHead *head = prime_standard_head(name);
     if (!head || !head->native) return true;
     PrimeStandardLibrary *library = prime_standard_library();
@@ -352,18 +533,25 @@ static bool prime_standard_head_unchanged(Space *space, SymbolId name) {
     if (!installed && !eval_space_has_equations_raw(space, name)) return true;
     static _Thread_local struct {
         uint64_t library;
+        uint64_t rows;
         SymbolId head;
         SpaceProgramToken token;
         bool unchanged;
+        bool library_shown;
     } cache[64];
     size_t slot = name % (sizeof cache / sizeof cache[0]);
     SpaceProgramToken token = space_program_token(space);
     /* Revalidation is real work in a native cost observation. Its memo is
      * shared by independent runs, so it cannot suppress recorded operations. */
     if (!cetta_native_cost_active() &&
-        cache[slot].library == library->identity && cache[slot].head == name &&
-        space_program_token_eq(cache[slot].token, token)) return cache[slot].unchanged;
+        cache[slot].library == library->identity &&
+        cache[slot].rows == library->library_rows && cache[slot].head == name &&
+        space_program_token_eq(cache[slot].token, token)) {
+        *library_shown = cache[slot].library_shown;
+        return cache[slot].unchanged;
+    }
     bool same = true;
+    bool shown = false;
     SpaceEquationCursor cursor;
     size_t found = 0u;
     if (!space_equation_cursor_init(space, name, &cursor)) same = false;
@@ -373,26 +561,62 @@ static bool prime_standard_head_unchanged(Space *space, SymbolId name) {
         if (step == SPACE_EQUATION_CURSOR_END) break;
         SpaceEquationOccurrence row;
         if (step != SPACE_EQUATION_CURSOR_ITEM ||
-            !space_equation_occurrence_resolve(id, &row) ||
-            found >= head->equation_count ||
-            !atom_alpha_eq(row.equation, head->equations[found++])) same = false;
+            !space_equation_occurrence_resolve(id, &row)) {
+            same = false;
+            break;
+        }
+        /* Standard rows keep their order; library rows may stand among them. */
+        found = prime_standard_skip_retired(head, found, row.equation);
+        if (found < head->equation_count &&
+            atom_alpha_eq(row.equation, head->equations[found])) {
+            found++;
+            continue;
+        }
+        same = prime_standard_row_listed(head->library_equations,
+            head->library_equation_count, row.equation);
+        shown = shown || same;
     }
+    found = prime_standard_skip_retired(head, found, NULL);
     same = same && found == head->equation_count;
     Arena scratch;
     arena_init(&scratch);
     Atom **types = NULL;
     uint32_t type_count = space_get_declared_types(space,
         &scratch, atom_symbol_id(&scratch, name), &types);
-    same = same && type_count == head->type_count;
-    for (uint32_t i = 0u; same && i < type_count; i++)
-        same = atom_alpha_eq(types[i], head->types[i]->expr.elems[2]);
+    size_t found_type = 0u;
+    for (uint32_t i = 0u; same && i < type_count; i++) {
+        if (found_type < head->type_count &&
+            atom_alpha_eq(types[i], head->types[found_type]->expr.elems[2])) {
+            found_type++;
+            continue;
+        }
+        same = prime_standard_row_listed(head->library_types,
+            head->library_type_count, types[i]);
+    }
+    same = same && found_type == head->type_count;
     free(types);
     arena_free(&scratch);
     cache[slot].library = library->identity;
+    cache[slot].rows = library->library_rows;
     cache[slot].head = name;
     cache[slot].token = token;
     cache[slot].unchanged = same;
+    cache[slot].library_shown = same && shown;
+    *library_shown = same && shown;
     return same;
+}
+
+static bool prime_standard_head_unchanged(Space *space, SymbolId name) {
+    bool library_shown;
+    return prime_standard_head_verdict(space, name, &library_shown);
+}
+
+/* Whether `space` runs native head `name` natively alone: unchanged and
+ * showing no library row, so its equations are not consulted. */
+static bool prime_standard_head_native_only(Space *space, SymbolId name) {
+    bool library_shown;
+    return prime_standard_head_verdict(space, name, &library_shown) &&
+        !library_shown;
 }
 
 static bool prime_standard_library_unchanged(Space *space) {
@@ -400,11 +624,13 @@ static bool prime_standard_library_unchanged(Space *space) {
     if (!library) return true;
     static _Thread_local struct {
         uint64_t library;
+        uint64_t rows;
         SpaceProgramToken token;
         bool unchanged;
     } cache;
     SpaceProgramToken token = space_program_token(space);
     if (!cetta_native_cost_active() && cache.library == library->identity &&
+        cache.rows == library->library_rows &&
         space_program_token_eq(cache.token, token)) return cache.unchanged;
     bool unchanged = true;
     for (size_t i = 0u; i < library->count; i++)
@@ -414,6 +640,7 @@ static bool prime_standard_library_unchanged(Space *space) {
             break;
         }
     cache.library = library->identity;
+    cache.rows = library->library_rows;
     cache.token = token;
     cache.unchanged = unchanged;
     return unchanged;
