@@ -6,3 +6,4 @@
 (: toml:parse (-> %Undefined% %Undefined%))
 (= (toml:to-json $text) (__cetta_lib_toml to-json ($text)))
 (= (toml:parse $text) (case (toml:to-json $text) (((toml:failed $kind $detail) (toml:failed $kind $detail)) ($json (json:parse $json)))))
+(= (toml:parse-value $text) (__cetta_lib_toml parse-value ($text)))
