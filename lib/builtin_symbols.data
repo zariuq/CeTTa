@@ -774,4 +774,5 @@
             (Row lib_provenance_supports "__cetta_lib_provenance_supports" false false false false false false false)
             (Row lib_provenance_supports_each "__cetta_lib_provenance_supports_each" false false false false false false false)
             (Row prime_eval_value "__cetta_prime_eval_value" false false false false false false false)
+            (Row lib_llm_response_body "__cetta_lib_llm_response_body" false false false false false false true)
         )))

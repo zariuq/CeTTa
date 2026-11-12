@@ -730,7 +730,8 @@
     cesta_table_apply_0(lib_ipasir_models, "__cetta_lib_ipasir_models") \
     cesta_table_apply_0(lib_provenance_supports, "__cetta_lib_provenance_supports") \
     cesta_table_apply_0(lib_provenance_supports_each, "__cetta_lib_provenance_supports_each") \
-    cesta_table_apply_0(prime_eval_value, "__cetta_prime_eval_value")
+    cesta_table_apply_0(prime_eval_value, "__cetta_prime_eval_value") \
+    cesta_table_apply_0(lib_llm_response_body, "__cetta_lib_llm_response_body")
 
 #define CETTA_PETTA_ONLY_BUILTIN_SYMBOL_ROWS(cesta_table_apply_0) \
     cesta_table_apply_0(petta_member) \
@@ -1089,7 +1090,8 @@
     cesta_table_apply_0(lib_rhometta_run_canonical) \
     cesta_table_apply_0(lib_rhometta_transitions) \
     cesta_table_apply_0(lib_rhometta_values) \
-    cesta_table_apply_0(if_text)
+    cesta_table_apply_0(if_text) \
+    cesta_table_apply_0(lib_llm_response_body)
 
 
 #endif
